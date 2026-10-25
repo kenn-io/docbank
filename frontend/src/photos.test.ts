@@ -3,7 +3,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import { HiddenAccess } from "./hiddenAccess.svelte.js";
 import { APIError } from "./api-transport.js";
 import * as download from "./download.js";
-import { Photos, loadDensity, photoQuery, mapPhotoLimit, type PhotoRow } from "./photos.svelte.js";
+import {
+  Photos,
+  lookupPhotoRows,
+  loadDensity,
+  photoQuery,
+  mapPhotoLimit,
+  type PhotoRow,
+} from "./photos.svelte.js";
 import {
   photo,
   photoTimelineCounts,
@@ -3157,9 +3164,7 @@ it("looks up large captured sets in at most four concurrent 64-ID queries, prese
         .map((id) => ({ ...photo(1), asset_id: id })),
     );
   });
-  const access = new HiddenAccess("session", vi.fn());
-  const photos = new Photos("session", vi.fn(), false, undefined, { hiddenAccess: access });
-  const result = photos.lookupMany(ids, new AbortController().signal);
+  const result = lookupPhotoRows("session", ids);
   await waitFor(() => expect(waiting).toHaveLength(4));
   waiting.splice(0).forEach((resolve) => resolve());
   await waitFor(() => expect(waiting).toHaveLength(2));
@@ -3167,7 +3172,6 @@ it("looks up large captured sets in at most four concurrent 64-ID queries, prese
   expect((await result).map((row) => row.asset_id)).toEqual(ids);
   expect(peak).toBe(4);
   expect(sizes).toEqual([64, 64, 64, 64, 64, 1]);
-  photos.dispose();
 });
 
 it("uses refreshed revisions after saving Hidden setup before the hide batch", async () => {

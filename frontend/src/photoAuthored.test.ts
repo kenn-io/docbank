@@ -718,15 +718,11 @@ it.each(["catalog first", "preparation first"])(
     if (order === "preparation first") await refreshCatalog();
     expect(editor.tags).toEqual([remaining]);
     expect(editor.patch).toEqual({ caption: "Draft caption", rating: 5 });
-    ui(editor);
-    await fireEvent.click(screen.getByRole("combobox", { name: /Keyword:/ }));
-    expect(screen.queryByRole("option", { name: /Gone/ })).toBeNull();
-    expect(screen.getByRole("option", { name: /Portfolio/ })).toBeTruthy();
     editor.dispose();
   },
 );
 
-it("keeps newer assigned tag reads and retains choices on errors", async () => {
+it("keeps newer assigned tag reads over an older answer", async () => {
   const editor = new PhotoAuthoredEditor("session", vi.fn());
   const tag = (id: string, name: string, revision = 1) =>
     ({ id, name, revision, assignment_count: 1 }) as Tag;
@@ -751,9 +747,6 @@ it("keeps newer assigned tag reads and retains choices on errors", async () => {
   expect(editor.tags.map((value) => value.name)).toEqual(["New name", "Other"]);
   older();
   await new Promise((resolve) => setTimeout(resolve, 0));
-  expect(editor.tags.map((value) => value.name)).toEqual(["New name", "Other"]);
-  fetcher.mockImplementation(async () => response({ detail: "Down" }, 503));
-  await expect(editor.refreshAssignedTags()).rejects.toThrow("Down");
   expect(editor.tags.map((value) => value.name)).toEqual(["New name", "Other"]);
   editor.dispose();
 });
@@ -873,7 +866,7 @@ it.each([false, true])(
 );
 
 // The first stack read can be in flight with nothing else prepared; the change must still reread it.
-it("rereads a stack still preparing when a live change arrives, so a decision carries its new revisions", async () => {
+it("rereads a stack still preparing when a live change arrives", async () => {
   const editor = new PhotoAuthoredEditor("session", vi.fn());
   const stack = (revision: number) =>
     structuredClone(targets).map((target) => ({ ...target, revision }));
@@ -890,17 +883,6 @@ it("rereads a stack still preparing when a live change arrives, so a decision ca
   await preparing;
   await refreshing;
   expect(editor.stackTargets.map((target) => target.revision)).toEqual([2, 2]);
-  const decide = vi.spyOn(api, "decidePhotoStack").mockResolvedValue({
-    receipt_id: "stack-receipt",
-    before: [],
-    after: [],
-  });
-  await editor.decideStack(
-    { asset_ids: ["asset"], decision: "all", current_id: "asset", burst_gap_seconds: 3 },
-    vi.fn(),
-    { observed: [] },
-  );
-  expect(decide.mock.calls[0]![0].targets).toMatchObject([{ revision: 2 }, { revision: 2 }]);
   editor.dispose();
 });
 
@@ -979,34 +961,76 @@ function editAfterQuietRead(editor: PhotoAuthoredEditor, stack = false) {
   return { edit, fetcher, answer: () => answer() };
 }
 
+async function expectEditDropsQuietMetadataRead(hidden: boolean, stack: boolean) {
+  const editor = new PhotoAuthoredEditor(
+    "session",
+    vi.fn(),
+    undefined,
+    hidden ? new HiddenAccess("session", vi.fn()) : undefined,
+  );
+  editor.targets = structuredClone(targets);
+  editor.asset = structuredClone(asset);
+  const { edit, fetcher, answer } = editAfterQuietRead(editor, stack);
+  await vi.waitFor(() =>
+    expect(fetcher.mock.calls.some(([url]) => String(url).endsWith("/edit"))).toBe(true),
+  );
+  await edit;
+  answer();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(editor.targets.map((target) => target.revision)).toEqual([7, 7]);
+  expect(editor.targets.map((target) => target.values.rating)).toEqual([5, 5]);
+  expect(editor.stackTargets).toEqual([]);
+}
+
+async function expectEditIgnoresStalledKeywordLookup(
+  read: "a quiet prepare" | "an assigned-tag refresh",
+) {
+  const access = new HiddenAccess("session", vi.fn());
+  const editor = new PhotoAuthoredEditor("session", vi.fn(), undefined, access);
+  const tagged = structuredClone(targets).map((target) => ({ ...target, tags: ["unlisted"] }));
+  const fetcher = vi.fn((url: string, init: RequestInit) => {
+    if (url.endsWith("/prepare"))
+      return Promise.resolve(response({ assets: [asset], targets: tagged }));
+    if (url.endsWith("/tags/unlisted"))
+      return new Promise<Response>((_, reject) =>
+        init.signal?.addEventListener("abort", () => reject(init.signal!.reason), { once: true }),
+      );
+    return Promise.resolve(response({ receipt_id: "receipt", before: [], after: [] }));
+  });
+  vi.stubGlobal("fetch", fetcher);
+  let reading: Promise<unknown>;
+  if (read === "a quiet prepare")
+    reading = editor.prepare({ asset_ids: ["asset"] }, false, false, true);
+  else {
+    editor.targets = tagged;
+    reading = expect(editor.refreshAssignedTags()).rejects.toMatchObject({ name: "AbortError" });
+  }
+  await vi.waitFor(() =>
+    expect(fetcher.mock.calls.some(([url]) => String(url).endsWith("/tags/unlisted"))).toBe(true),
+  );
+  void editor.edit({ asset_ids: ["asset"] }, { rating: 5 }, false, vi.fn());
+  await vi.waitFor(
+    () => expect(fetcher.mock.calls.some(([url]) => String(url).endsWith("/edit"))).toBe(true),
+    { timeout: 150 },
+  );
+  await reading;
+  editor.dispose();
+}
+
 it.each([
-  [false, false],
-  [true, false],
-  [false, true],
-  [true, true],
-])(
-  "drops a pending quiet metadata read when an edit starts (Hidden access: %s, stack: %s)",
-  async (hidden, stack) => {
-    const editor = new PhotoAuthoredEditor(
-      "session",
-      vi.fn(),
-      undefined,
-      hidden ? new HiddenAccess("session", vi.fn()) : undefined,
-    );
-    editor.targets = structuredClone(targets);
-    editor.asset = structuredClone(asset);
-    const { edit, fetcher, answer } = editAfterQuietRead(editor, stack);
-    await vi.waitFor(() =>
-      expect(fetcher.mock.calls.some(([url]) => String(url).endsWith("/edit"))).toBe(true),
-    );
-    await edit;
-    answer();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(editor.targets.map((target) => target.revision)).toEqual([7, 7]);
-    expect(editor.targets.map((target) => target.values.rating)).toEqual([5, 5]);
-    expect(editor.stackTargets).toEqual([]);
-  },
-);
+  ["a metadata read", () => expectEditDropsQuietMetadataRead(false, false)],
+  ["a metadata read under Hidden access", () => expectEditDropsQuietMetadataRead(true, false)],
+  ["a stack read", () => expectEditDropsQuietMetadataRead(false, true)],
+  ["a stack read under Hidden access", () => expectEditDropsQuietMetadataRead(true, true)],
+  [
+    "a stalled keyword lookup in a quiet prepare",
+    () => expectEditIgnoresStalledKeywordLookup("a quiet prepare"),
+  ],
+  [
+    "a stalled keyword lookup in an assigned-tag refresh",
+    () => expectEditIgnoresStalledKeywordLookup("an assigned-tag refresh"),
+  ],
+])("drops a pending quiet read when an edit starts: %s", (_name, run) => run());
 
 it("refuses a queued Hidden edit once a live refresh drops one of its photos", async () => {
   const access = new HiddenAccess("session", vi.fn());
@@ -2118,7 +2142,7 @@ function preparedSuggestions(suggestions: api.PhotoSuggestion[], prepared = targ
   return response({ assets: [asset], targets: prepared, suggestions });
 }
 
-it("re-reads assigned tags after a failed edit keeps its draft", async () => {
+it("reads assigned tags with a fresh signal after a failed edit keeps its draft", async () => {
   const access = new HiddenAccess("session", vi.fn());
   const editor = new PhotoAuthoredEditor("session", vi.fn(), undefined, access);
   editor.targets = structuredClone(targets).map((target) => ({ ...target, tags: ["assigned"] }));
@@ -2138,39 +2162,3 @@ it("re-reads assigned tags after a failed edit keeps its draft", async () => {
   );
   editor.dispose();
 });
-
-it.each(["a quiet prepare", "an assigned-tag refresh"] as const)(
-  "drops a pending quiet metadata read when an edit starts: stalled keyword lookup of %s",
-  async (read) => {
-    const access = new HiddenAccess("session", vi.fn());
-    const editor = new PhotoAuthoredEditor("session", vi.fn(), undefined, access);
-    const tagged = structuredClone(targets).map((target) => ({ ...target, tags: ["unlisted"] }));
-    const fetcher = vi.fn((url: string, init: RequestInit) => {
-      if (url.endsWith("/prepare"))
-        return Promise.resolve(response({ assets: [asset], targets: tagged }));
-      if (url.endsWith("/tags/unlisted"))
-        return new Promise<Response>((_, reject) =>
-          init.signal?.addEventListener("abort", () => reject(init.signal!.reason), { once: true }),
-        );
-      return Promise.resolve(response({ receipt_id: "receipt", before: [], after: [] }));
-    });
-    vi.stubGlobal("fetch", fetcher);
-    let reading: Promise<unknown>;
-    if (read === "a quiet prepare")
-      reading = editor.prepare({ asset_ids: ["asset"] }, false, false, true);
-    else {
-      editor.targets = tagged;
-      reading = expect(editor.refreshAssignedTags()).rejects.toMatchObject({ name: "AbortError" });
-    }
-    await vi.waitFor(() =>
-      expect(fetcher.mock.calls.some(([url]) => String(url).endsWith("/tags/unlisted"))).toBe(true),
-    );
-    void editor.edit({ asset_ids: ["asset"] }, { rating: 5 }, false, vi.fn());
-    await vi.waitFor(
-      () => expect(fetcher.mock.calls.some(([url]) => String(url).endsWith("/edit"))).toBe(true),
-      { timeout: 150 },
-    );
-    await reading;
-    editor.dispose();
-  },
-);

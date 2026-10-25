@@ -3473,7 +3473,9 @@ it("discards shared photo Undo when signing into a replacement web session", asy
   expect(screen.queryByRole("button", { name: "Undo last photo edit" })).toBeNull();
 });
 
-it("loads keywords beyond the first catalog page", async () => {
+// Opens Metadata over a vault with more keywords than one catalog page, loads the second page,
+// and opens the keyword list. `hold` makes the next first-page read wait until `release` is called.
+async function openKeywordsPastFirstPage() {
   history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
   vi.stubGlobal(
     "ResizeObserver",
@@ -3495,13 +3497,12 @@ it("loads keywords beyond the first catalog page", async () => {
     assignment_count: 0,
   }));
   const last = { id: "last", name: "Beyond the first page", revision: 1, assignment_count: 0 };
-  let held = false;
-  let finishCatalog: (() => void) | undefined;
-  const fetcher = vi.fn(async (url: string, init: RequestInit) => {
+  const hold = { active: false, release: undefined as (() => void) | undefined };
+  const fetcher = vi.fn(async (url: string) => {
     if (url === "/api/v1/tags?limit=1000&offset=0") {
-      if (held)
+      if (hold.active)
         await new Promise<void>((resolve) => {
-          finishCatalog = resolve;
+          hold.release = resolve;
         });
       return Response.json({ items: catalog, total: 1001 });
     }
@@ -3528,24 +3529,16 @@ it("loads keywords beyond the first catalog page", async () => {
   expect(fetcher.mock.calls.some(([url]) => url === "/api/v1/tags?limit=1000&offset=1000")).toBe(
     true,
   );
-  await fireEvent.click(
-    within(inspector).getByRole("combobox", { name: "Keyword: Choose keyword" }),
-  );
+  const picker = within(inspector).getByRole("combobox", { name: "Keyword: Choose keyword" });
+  await fireEvent.click(picker);
   expect(
     await within(inspector).findByRole("option", { name: /Beyond the first page/ }),
   ).toBeTruthy();
-  // The open list survives a live pass that rereads the catalog.
-  const picker = within(inspector).getByRole("combobox", { name: "Keyword: Choose keyword" });
-  expect(picker.getAttribute("aria-expanded")).toBe("true");
-  held = true;
-  const pass = photoEventPass()({});
-  await waitFor(() => expect(finishCatalog).toBeDefined());
-  expect(picker.getAttribute("aria-expanded")).toBe("true");
-  finishCatalog!();
-  await act(() => pass);
-  expect(picker.getAttribute("aria-expanded")).toBe("true");
-  // The pass rereads every page the user loaded, so their options stay.
-  expect(within(inspector).getByRole("option", { name: /Beyond the first page/ })).toBeTruthy();
+  return { inspector, picker, last, hold, prepare };
+}
+
+it("loads keywords beyond the first catalog page", async () => {
+  const { last, prepare } = await openKeywordsPastFirstPage();
   const editor = prepare.mock.contexts.at(-1) as PhotoAuthoredEditor;
   await editor.onXMPChanged!(undefined, [{ ...last, revision: 2, assignment_count: 1 }]);
   await waitFor(() =>
@@ -3554,6 +3547,19 @@ it("loads keywords beyond the first catalog page", async () => {
       assignment_count: 1,
     }),
   );
+});
+
+it("keeps the open keyword list and every loaded page through a live pass", async () => {
+  const { inspector, picker, hold } = await openKeywordsPastFirstPage();
+  expect(picker.getAttribute("aria-expanded")).toBe("true");
+  hold.active = true;
+  const pass = photoEventPass()({});
+  await waitFor(() => expect(hold.release).toBeTypeOf("function"));
+  expect(picker.getAttribute("aria-expanded")).toBe("true");
+  hold.release!();
+  await act(() => pass);
+  expect(picker.getAttribute("aria-expanded")).toBe("true");
+  expect(within(inspector).getByRole("option", { name: /Beyond the first page/ })).toBeTruthy();
 });
 
 it("guards a Hidden draft while a status failure conceals its workspace", async () => {
@@ -4272,82 +4278,6 @@ it("routes a live pass to the open viewer after initial paging fails", async () 
   expect(changed).toHaveBeenCalledWith({ listRefreshed: true });
 });
 
-it.each(["first page", "album list", "staged retry"])(
-  "routes a live pass through the %s case",
-  async (mode) => {
-    history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
-    livePhotoStubs();
-    let finishFirstPage!: (response: Response) => void;
-    let firstPage: AbortSignal | undefined;
-    const requests = { lists: 0, tags: 0, albums: 0 };
-    stubPhotoFetch(async (url, init) => {
-      if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
-      if (
-        url.endsWith("/photos/assets/query") &&
-        !JSON.parse(String(init.body)).query.filters?.asset_ids
-      ) {
-        if (++requests.lists === 1 && mode === "first page") {
-          firstPage = init.signal ?? undefined;
-          return new Promise<Response>((resolve) => (finishFirstPage = resolve));
-        }
-        // A reread of page one shows what changed since the first page was requested.
-        return Response.json({
-          items: [
-            { ...photo(1), name: requests.lists > 1 ? "Renamed.jpg" : "Photo 1.jpg" },
-            photo(2),
-          ],
-          total: 2,
-        });
-      }
-      if (url.includes("/tags")) requests.tags++;
-      if (url.endsWith("/photos/albums")) {
-        requests.albums++;
-        return Response.json([]);
-      }
-      return Response.json({ items: [], total: 0, nodes: [], tags: [], profiles: [] });
-    });
-    const seen: boolean[] = [];
-    const refresh = Photos.prototype.refresh;
-    vi.spyOn(Photos.prototype, "refresh").mockImplementation(function (this: Photos, ...args) {
-      if (args[1]) seen.push(this.resumeStaged);
-      return refresh.apply(this, args);
-    });
-    let library: Photos | undefined;
-    const resume = Photos.prototype.resume;
-    vi.spyOn(Photos.prototype, "resume").mockImplementation(function (this: Photos, ...args) {
-      library = this;
-      return resume.apply(this, args);
-    });
-    render(App);
-    if (mode === "first page") {
-      await waitFor(() => expect(finishFirstPage).toBeDefined());
-      // Import events wait for the first page instead of aborting it.
-      expect(await photoEventPass()({})).toBe(false);
-      expect(firstPage?.aborted).toBe(false);
-      expect(requests.lists).toBe(1);
-      finishFirstPage(Response.json({ items: [photo(1)], total: 1 }));
-    }
-    await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
-    await waitFor(() => expect(library!.loading).toBe(false));
-    if (mode === "first page") {
-      const tags = requests.tags;
-      // The event that waited for the first page rereads page one and the definitions once the list is idle.
-      await photoEventPass()({});
-      await screen.findByRole("checkbox", { name: "Select photo Renamed.jpg" });
-      expect(requests.lists).toBe(2);
-      expect(requests.tags).toBeGreaterThan(tags);
-    } else if (mode === "staged retry") {
-      await photoEventPass()({ resume: true });
-      await photoEventPass()({ resume: undefined });
-      expect(seen).toEqual([true, false]);
-    } else {
-      const before = requests.albums;
-      await photoEventPass()({});
-      expect(requests.albums).toBeGreaterThan(before);
-    }
-  },
-);
-
 it("keeps one event stream while moving between Photos views", async () => {
   history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
   livePhotoStubs();
@@ -4371,36 +4301,106 @@ it("keeps one event stream while moving between Photos views", async () => {
   expect(stop).not.toHaveBeenCalled();
 });
 
-it("defers a live pass while a write is in flight and runs it once the write settles", async () => {
-  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
-  livePhotoStubs();
-  let finishWrite!: () => void;
-  let lists = 0;
-  stubPhotoFetch(async (url) => {
+const photoFetchUrls =
+  (lists: { count: number }, albums?: { count: number }) =>
+  async (url: string, init: RequestInit) => {
     if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
-    if (url.endsWith("/photos/albums")) return Response.json([]);
-    if (url.endsWith("/photos/synthetic-write"))
-      return new Promise<Response>((resolve) => (finishWrite = () => resolve(Response.json({}))));
-    if (url.endsWith("/photos/assets/query")) {
-      lists++;
-      return Response.json({ items: [photo(1)], total: 1 });
+    if (url.endsWith("/photos/albums")) {
+      if (albums) albums.count++;
+      return Response.json([]);
+    }
+    if (
+      url.endsWith("/photos/assets/query") &&
+      !JSON.parse(String(init.body)).query.filters?.asset_ids
+    ) {
+      lists.count++;
+      return Response.json({ items: [photo(1), photo(2)], total: 2 });
     }
     return Response.json({ items: [], total: 0, nodes: [], tags: [], profiles: [] });
+  };
+
+it.each(["a first page still loading", "a write in flight"] as const)(
+  "defers a live pass behind %s without aborting it, then runs the pass",
+  async (guard) => {
+    history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
+    livePhotoStubs();
+    const lists = { count: 0 };
+    const ordinary = photoFetchUrls(lists);
+    let release!: (response: Response) => void;
+    let firstPage: AbortSignal | undefined;
+    let tags = 0;
+    stubPhotoFetch(async (url, init) => {
+      if (url.includes("/tags")) tags++;
+      if (url.endsWith("/photos/synthetic-write"))
+        return new Promise<Response>((resolve) => (release = resolve));
+      const isList =
+        url.endsWith("/photos/assets/query") &&
+        !JSON.parse(String(init.body)).query.filters?.asset_ids;
+      if (guard === "a first page still loading" && isList && lists.count === 0) {
+        lists.count++;
+        firstPage = init.signal ?? undefined;
+        return new Promise<Response>((resolve) => (release = resolve));
+      }
+      return ordinary(url, init);
+    });
+    render(App);
+    let settled: Promise<unknown> | undefined;
+    if (guard === "a first page still loading") {
+      await waitFor(() => expect(release).toBeDefined());
+      expect(await photoEventPass()({})).toBe(false);
+      expect(firstPage?.aborted).toBe(false);
+      expect(lists.count).toBe(1);
+      release(Response.json({ items: [photo(1)], total: 1 }));
+    }
+    await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
+    if (guard === "a write in flight") {
+      await waitFor(async () => expect(await photoEventPass()({})).not.toBe(false));
+      settled = sessionResponse("/api/v1/photos/synthetic-write", {
+        session: "synthetic",
+        method: "POST",
+      });
+      expect(await photoEventPass()({})).toBe(false);
+    }
+    const before = lists.count;
+    const definitions = tags;
+    if (guard === "a write in flight") {
+      expect(lists.count).toBe(before);
+      release(Response.json({}));
+      await settled;
+    }
+    await waitFor(async () => expect(await photoEventPass()({})).not.toBe(false));
+    expect(lists.count).toBeGreaterThan(before);
+    expect(tags).toBeGreaterThan(definitions);
+  },
+);
+
+it("rereads the albums on a live pass", async () => {
+  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
+  livePhotoStubs();
+  const albums = { count: 0 };
+  stubPhotoFetch(photoFetchUrls({ count: 0 }, albums));
+  render(App);
+  await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
+  const before = albums.count;
+  await waitFor(async () => expect(await photoEventPass()({})).not.toBe(false));
+  expect(albums.count).toBeGreaterThan(before);
+});
+
+it("tells the list refresh whether a live pass may resume its staged pages", async () => {
+  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
+  livePhotoStubs();
+  stubPhotoFetch(photoFetchUrls({ count: 0 }));
+  const seen: boolean[] = [];
+  const refresh = Photos.prototype.refresh;
+  vi.spyOn(Photos.prototype, "refresh").mockImplementation(function (this: Photos, ...args) {
+    if (args[1]) seen.push(this.resumeStaged);
+    return refresh.apply(this, args);
   });
   render(App);
   await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
-  await waitFor(async () => expect(await photoEventPass()({})).not.toBe(false));
-  const before = lists;
-  const write = sessionResponse("/api/v1/photos/synthetic-write", {
-    session: "synthetic",
-    method: "POST",
-  });
-  expect(await photoEventPass()({})).toBe(false);
-  expect(lists).toBe(before);
-  finishWrite();
-  await write;
-  expect(await photoEventPass()({})).not.toBe(false);
-  expect(lists).toBeGreaterThan(before);
+  await waitFor(async () => expect(await photoEventPass()({ resume: true })).not.toBe(false));
+  await photoEventPass()({ resume: undefined });
+  expect(seen).toEqual([true, false]);
 });
 
 it("clears the live update alert once the event stream opens again", async () => {

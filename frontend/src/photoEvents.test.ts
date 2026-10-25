@@ -81,16 +81,24 @@ it("recognizes change frames, bounds incomplete frames, and cancels reads", asyn
   expect(cancelled).toHaveBeenCalledOnce();
 });
 
-it("authenticates and queues exactly one more pass for events during a pass", async () => {
+it("authenticates the stream with the web session", async () => {
   vi.useFakeTimers();
-  const { stream, fetch } = serveStream();
-  let release!: () => void;
-  const refresh = vi.fn((_change: PhotoChange) => Promise.resolve());
-  const watcher = watchPhotoEvents("synthetic", refresh, vi.fn());
+  const { fetch } = serveStream();
+  const watcher = watchPhotoEvents("synthetic", vi.fn(), vi.fn());
   await vi.advanceTimersByTimeAsync(0);
   expect(new Headers(fetch.mock.calls[0][1]?.headers).get("X-Docbank-Web-Session")).toBe(
     "synthetic",
   );
+  watcher.stop();
+});
+
+it("folds events during a pass into one more pass, spaced by twice the pass's duration", async () => {
+  vi.useFakeTimers();
+  const { stream } = serveStream();
+  let release!: () => void;
+  const refresh = vi.fn((_change: PhotoChange) => Promise.resolve());
+  const watcher = watchPhotoEvents("synthetic", refresh, vi.fn());
+  await vi.advanceTimersByTimeAsync(0);
   refresh.mockImplementationOnce(() => new Promise<void>((resolve) => (release = resolve)));
   stream.write("data: {}\n\n");
   await vi.advanceTimersByTimeAsync(1000);
@@ -106,12 +114,21 @@ it("authenticates and queues exactly one more pass for events during a pass", as
   expect(refresh).toHaveBeenCalledTimes(3);
   await vi.advanceTimersByTimeAsync(10_000);
   expect(refresh).toHaveBeenCalledTimes(3);
-  // Returning to a hidden tab swaps the stream and refetches.
+  watcher.stop();
+});
+
+it("swaps the stream and refetches when the page becomes visible, and cancels it on stop", async () => {
+  vi.useFakeTimers();
+  const { stream, fetch } = serveStream();
+  const refresh = vi.fn((_change: PhotoChange) => Promise.resolve());
+  const watcher = watchPhotoEvents("synthetic", refresh, vi.fn());
+  await vi.advanceTimersByTimeAsync(0);
+  expect(refresh).toHaveBeenCalledTimes(1);
   document.dispatchEvent(new Event("visibilitychange"));
   await vi.advanceTimersByTimeAsync(1000);
   expect(fetch).toHaveBeenCalledTimes(2);
   expect(stream.cancel).toHaveBeenCalledOnce();
-  expect(refresh).toHaveBeenCalledTimes(4);
+  expect(refresh).toHaveBeenCalledTimes(2);
   watcher.stop();
   await vi.advanceTimersByTimeAsync(0);
   expect(stream.cancel).toHaveBeenCalledTimes(2);
