@@ -511,9 +511,10 @@ Events carry no photo, so every pass rereads what the tab shows: loaded lists,
 the open photo, Compare's destination, a completed Cull's regrouped stacks and
 unflagged remainder, the keyword and saved-query definitions, and the metadata
 editor's targets and stack. A pass waits while the tab has a write in flight.
-The API transport counts requests other than GET and HEAD from the call until the
-response headers arrive, and skips POSTs that only read, such as the photo list
-query, so scrolling never defers a pass. A deferred pass runs again after the
+The API transport counts requests other than GET and HEAD from the call until
+the caller has the answer, which for JSON writes is after the body is read, and
+skips POSTs that only read, such as the photo list query, so scrolling never
+defers a pass. A deferred pass runs again after the
 usual spacing.
 
 Reproduce the browser measurement with

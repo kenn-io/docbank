@@ -97,7 +97,7 @@ func BenchmarkPhotoImportMetadata(b *testing.B) {
 }
 
 // BenchmarkNonPhotoIngest measures the capture cost that document writes pay while a photo
-// stream is open, though none of their changes reach it.
+// stream is open. An ingest writes nodes, which the triggers watch, so each commit also publishes.
 func BenchmarkNonPhotoIngest(b *testing.B) {
 	const files = 1000
 	for _, subscribed := range []bool{false, true} {
