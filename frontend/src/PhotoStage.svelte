@@ -2,7 +2,7 @@
   import { tick, untrack } from "svelte";
   import type { Photos } from "./photos.svelte.js";
   import type { PhotoBrowseRow } from "./generated/docbank.js";
-  import type { PhotoPreviewCache } from "./photoPreviewCache.js";
+  import { previewSlotsKey, type PhotoPreviewCache } from "./photoPreviewCache.js";
   import type { PhotoView } from "./photoView.js";
   import { PhotoPreviewLoader } from "./photoPreview.svelte.js";
   import PhotoLoupeImage from "./PhotoLoupeImage.svelte";
@@ -44,9 +44,7 @@
   const identity = $derived.by(() => {
     const row = current;
     return untrack(() =>
-      [row.asset_id, row.content_version_id]
-        .concat(Object.values(row.previews).map((slot) => `${slot.state}${slot.generation_id}`))
-        .join(":"),
+      [row.asset_id, row.content_version_id, previewSlotsKey(row.previews)].join(":"),
     );
   });
   $effect(() => {

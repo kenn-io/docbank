@@ -42,7 +42,7 @@
     type PhotoReturn,
   } from "./photos.svelte.js";
   import { groupPhotos, ROW_HEIGHTS, type Density } from "./photoGrid.js";
-  import type { PhotoPreviewCache } from "./photoPreviewCache.js";
+  import { previewSlotsKey, type PhotoPreviewCache } from "./photoPreviewCache.js";
   import { isAppShortcutSuppressed } from "./shortcuts.js";
   import PhotoSmartSet from "./PhotoSmartSet.svelte";
   import PhotoGrid from "./PhotoGrid.svelte";
@@ -534,7 +534,8 @@
           ? { ...photo, ...("stack" in item ? { stack: item.stack } : {}) }
           : item,
       );
-    const previewChanged = JSON.stringify(direct?.previews) !== JSON.stringify(photo.previews);
+    const previewChanged =
+      !direct || previewSlotsKey(direct.previews) !== previewSlotsKey(photo.previews);
     if (previewChanged) reloadRevision++;
     direct = photo;
     detailError = "";
