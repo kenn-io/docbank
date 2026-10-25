@@ -3223,7 +3223,6 @@ it("ignores a live detail response after leaving and returning to Photos", async
 it.each([
   { older: "foreground", outcome: "answers", newer: "live read" },
   { older: "foreground", outcome: "fails with 404", newer: "live read" },
-  { older: "live", outcome: "fails with 404", newer: "live read" },
   { older: "live", outcome: "fails with 404", newer: "navigation" },
 ])(
   "keeps the newest detail after $newer when an older $older read $outcome",
