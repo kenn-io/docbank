@@ -9,14 +9,14 @@ import (
 func TestRejectInvalidNamesBeforeConnecting(t *testing.T) {
 	t.Parallel()
 	for _, c := range []Config{
-		{Schema: "", Owner: "owner"},
-		{Schema: "public", Owner: "owner"},
-		{Schema: "pg_temp", Owner: "owner"},
-		{Schema: "information_schema", Owner: "owner"},
-		{Schema: "MixedCase", Owner: "owner"},
-		{Schema: `docs"; DROP SCHEMA public; --`, Owner: "owner"},
-		{Schema: "documents", Owner: ""},
-		{Schema: "documents", Owner: `owner"`},
+		{Schema: "", SchemaOwner: "owner"},
+		{Schema: "public", SchemaOwner: "owner"},
+		{Schema: "pg_temp", SchemaOwner: "owner"},
+		{Schema: "information_schema", SchemaOwner: "owner"},
+		{Schema: "MixedCase", SchemaOwner: "owner"},
+		{Schema: `docs"; DROP SCHEMA public; --`, SchemaOwner: "owner"},
+		{Schema: "documents", SchemaOwner: ""},
+		{Schema: "documents", SchemaOwner: "owner\x00"},
 	} {
 		_, err := Setup(t.Context(), nil, c)
 		require.Error(t, err)

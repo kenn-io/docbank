@@ -1,5 +1,3 @@
-//go:build postgres
-
 package pgschema
 
 import (
@@ -19,12 +17,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The canonical runner supplies a disposable cluster. Every test also owns a
-// separate database, so it can exercise real role grants and failed DDL.
+// CI supplies a disposable cluster; local runs explicitly configure one.
+// Every test owns a separate database, so it can exercise real role grants and
+// failed DDL.
 func testDatabase(t *testing.T) (*sql.DB, string) {
 	t.Helper()
 	dsn := os.Getenv("DOCBANK_TEST_POSTGRES_DSN")
-	require.NotEmpty(t, dsn, "run make test-postgres to create a disposable cluster")
+	if dsn == "" {
+		t.Skip("set DOCBANK_TEST_POSTGRES_DSN to run PostgreSQL tests")
+	}
 	c, err := pgx.ParseConfig(dsn)
 	require.NoError(t, err)
 	admin := stdlib.OpenDB(*c)
@@ -45,7 +46,7 @@ func testDatabase(t *testing.T) (*sql.DB, string) {
 func TestSetupPreservesIdentity(t *testing.T) {
 	t.Parallel()
 	db, owner := testDatabase(t)
-	cfg := Config{Schema: "documents", Owner: owner}
+	cfg := Config{Schema: "documents", SchemaOwner: owner}
 	id, err := Setup(t.Context(), db, cfg)
 	require.NoError(t, err)
 	require.NotEqual(t, uuid.Nil(), id)
@@ -59,7 +60,7 @@ func TestSetupPreservesIdentity(t *testing.T) {
 	assert.Equal(t, 1, version)
 
 	// A separate schema is a separate vault, even within the same database.
-	other, err := Setup(t.Context(), db, Config{Schema: "other_documents", Owner: owner})
+	other, err := Setup(t.Context(), db, Config{Schema: "other_documents", SchemaOwner: owner})
 	require.NoError(t, err)
 	assert.NotEqual(t, id, other)
 }
@@ -68,7 +69,7 @@ func TestRuntimeCannotChangeSchema(t *testing.T) {
 	t.Parallel()
 	admin, _ := testDatabase(t)
 	idSuffix := uuid.New()
-	owner := fmt.Sprintf("owner_%x", idSuffix[:])
+	owner := fmt.Sprintf("Owner \"setup\" %x", idSuffix[:])
 	role := fmt.Sprintf("runtime_%x", idSuffix[:])
 	quotedOwner, quotedRole := pgx.Identifier{owner}.Sanitize(), pgx.Identifier{role}.Sanitize()
 	_, err := admin.ExecContext(t.Context(), "CREATE ROLE "+quotedOwner+" LOGIN PASSWORD 'fixture-owner-only'; CREATE ROLE "+quotedRole+" LOGIN NOINHERIT PASSWORD 'fixture-runtime-only'")
@@ -91,7 +92,7 @@ func TestRuntimeCannotChangeSchema(t *testing.T) {
 	}
 	setup := connect(owner, "fixture-owner-only")
 	runtime := connect(role, "fixture-runtime-only")
-	cfg := Config{Schema: "documents", Owner: owner}
+	cfg := Config{Schema: "documents", SchemaOwner: owner}
 	id, err := Setup(t.Context(), setup, cfg)
 	require.NoError(t, err)
 	_, err = admin.ExecContext(t.Context(), "GRANT USAGE ON SCHEMA documents TO "+quotedRole+"; GRANT SELECT ON documents.vault_metadata TO "+quotedRole)
@@ -143,6 +144,8 @@ func TestSetupRefusesUnownedOrInvalidState(t *testing.T) {
 	for _, tc := range []struct{ name, prepare string }{
 		{"empty schema", `CREATE SCHEMA documents`},
 		{"unrelated schema", `CREATE SCHEMA documents; CREATE TABLE documents.kept(value text); INSERT INTO documents.kept VALUES('keep me')`},
+		{"wrong singleton", `UPDATE documents.vault_metadata SET singleton=2`},
+		{"multiple identities", `INSERT INTO documents.vault_metadata VALUES (2,'11111111-1111-4111-8111-111111111111',1)`},
 		{"missing identity", `DELETE FROM documents.vault_metadata`},
 		{"nil identity", `UPDATE documents.vault_metadata SET vault_uid='00000000-0000-0000-0000-000000000000'`},
 		{"wrong table shape", `ALTER TABLE documents.vault_metadata DROP CONSTRAINT vault_metadata_pkey`},
@@ -152,7 +155,7 @@ func TestSetupRefusesUnownedOrInvalidState(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			db, owner := testDatabase(t)
-			cfg := Config{Schema: "documents", Owner: owner}
+			cfg := Config{Schema: "documents", SchemaOwner: owner}
 			if tc.name != "empty schema" && tc.name != "unrelated schema" {
 				_, err := Setup(t.Context(), db, cfg)
 				require.NoError(t, err)
@@ -176,7 +179,7 @@ func TestSetupPreservesUnsupportedVersion(t *testing.T) {
 		t.Run(strconv.Itoa(version), func(t *testing.T) {
 			t.Parallel()
 			db, owner := testDatabase(t)
-			cfg := Config{Schema: "documents", Owner: owner}
+			cfg := Config{Schema: "documents", SchemaOwner: owner}
 			original, err := Setup(t.Context(), db, cfg)
 			require.NoError(t, err)
 			_, err = db.ExecContext(t.Context(), `UPDATE documents.vault_metadata SET schema_version=$1`, version)
@@ -208,21 +211,21 @@ func TestSetupRollsBackFailedCommit(t *testing.T) {
 		CREATE EVENT TRIGGER install_failure ON ddl_command_end WHEN TAG IN ('CREATE TABLE')
 		EXECUTE FUNCTION public.install_commit_failure();`)
 	require.NoError(t, err)
-	_, err = Setup(t.Context(), db, Config{Schema: "documents", Owner: owner})
+	_, err = Setup(t.Context(), db, Config{Schema: "documents", SchemaOwner: owner})
 	require.ErrorContains(t, err, "test deferred commit failure")
 	var exists bool
 	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT EXISTS(SELECT 1 FROM pg_namespace WHERE nspname='documents')`).Scan(&exists))
 	assert.False(t, exists, "failed commit must not publish a schema or identity")
 	_, err = db.ExecContext(t.Context(), `DROP EVENT TRIGGER install_failure`)
 	require.NoError(t, err)
-	_, err = Setup(t.Context(), db, Config{Schema: "documents", Owner: owner})
+	_, err = Setup(t.Context(), db, Config{Schema: "documents", SchemaOwner: owner})
 	require.NoError(t, err)
 }
 
 func TestConcurrentSetup(t *testing.T) {
 	t.Parallel()
 	db, owner := testDatabase(t)
-	cfg := Config{Schema: "documents", Owner: owner}
+	cfg := Config{Schema: "documents", SchemaOwner: owner}
 	const count = 6
 	ids := make([]uuid.UUID, count)
 	errs := make([]error, count)
@@ -240,7 +243,7 @@ func TestConcurrentSetup(t *testing.T) {
 func TestSetupCancellationDoesNotPublish(t *testing.T) {
 	t.Parallel()
 	db, owner := testDatabase(t)
-	cfg := Config{Schema: "documents", Owner: owner}
+	cfg := Config{Schema: "documents", SchemaOwner: owner}
 	tx, err := db.BeginTx(t.Context(), nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })

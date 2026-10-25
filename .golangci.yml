@@ -8,7 +8,6 @@ run:
   # //go:build constraints.
   build-tags:
     - fts5
-    - postgres
 
 linters:
   # Opt-in linter set: only the linters listed under `enable` run. Using

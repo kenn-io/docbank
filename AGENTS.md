@@ -7,6 +7,12 @@ Instructions for autonomous coding agents working in this repository.
 - Use GitHub-hosted runners for repository workflows. See the
   [development guide](docs/internal/development.md#verification-contract)
   for CI routing.
+- PostgreSQL checks use `DOCBANK_TEST_POSTGRES_DSN` and `make test-pg` against
+  a disposable server. CI owns its service container; each test owns and drops
+  its database. An explicitly configured but unavailable server fails the test.
+  Do not start a container per test or repeat unrelated SQLite suites in the
+  PostgreSQL lane. Follow the existing main-pinned PR dispatcher and cache
+  ownership; branch changes to `ci.yml` only take effect for PRs after merge.
 - Go 1.27+ (go.mod is authoritative). Go 1.26 value-form `new(v)` and Go
   1.27 generic methods, promoted struct-literal fields, and assignment-context
   inference are in use; verify against the toolchain before treating unfamiliar
@@ -172,11 +178,21 @@ Instructions for autonomous coding agents working in this repository.
   surface is status, pack, and repack. Do not expose Kit's unpack primitive as
   a general API or CLI command; reserve it for tests, migrations, or a
   purpose-built emergency recovery workflow with a demonstrated need.
-- Treat every SQLite `CHECK` or composite `UNIQUE` constraint as a storage
-  compatibility commitment. Use constraints only for permanent structural
-  invariants. Enforce evolving product policy in shared Go validators used by
-  writes, restores, and audits.
-- Never encode enums or other closed value lists in a SQLite schema, including
+- Do not add SQL `CHECK` constraints to SQLite or PostgreSQL schemas or
+  migrations. Validate values in Go before writing, with shared validation for
+  normal writes, imports, restores and audits. Keep database constraints to
+  permanent structural relationships such as nullability, primary/foreign keys
+  and uniqueness. Existing released constraints stay until a separately
+  approved, compatible schema change removes them.
+- Keep PostgreSQL development consistent with msgvault and Kata: use pgx through
+  the existing `database/sql` store boundary, explicit schema and schema-owner
+  settings, setup-only DDL and validation-only runtime opening. Reuse existing
+  query, search and fixture facilities before adding another abstraction.
+  Follow Kata's canonical fresh DDL and numbered forward-migration discipline
+  for new PostgreSQL history, without converting msgvault's or SQLite's existing
+  history. The [PostgreSQL guide](docs/internal/development.md#postgresql-schema-lifecycle)
+  owns the concrete contracts and intentional differences.
+- Never encode enums or other closed value lists in either SQL schema, including
   states, phases, kinds, formats, and statuses. Store the value as text and
   reject unknown values in Go. Apply JSON and text size limits at input
   boundaries in Go before parsing or allocation; do not bake evolving contract

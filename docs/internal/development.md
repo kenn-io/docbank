@@ -181,8 +181,9 @@ daemon and embedded operations still use SQLite. This package currently owns
 only the native vault identity and PostgreSQL schema version, not the document
 catalogs, search, transfer, or recovery paths.
 
-`Setup` takes a caller-owned `database/sql` pool authenticated as the configured
-schema owner. It creates a dedicated schema, canonical DDL and a UUIDv4 vault
+`Setup` takes a caller-owned `database/sql` pool authenticated as `SchemaOwner`
+and uses the explicit `Schema` setting. It creates a dedicated schema, canonical
+DDL and a UUIDv4 vault
 identity in one transaction, under a schema-specific PostgreSQL advisory lock.
 Repeated setup preserves that identity. Existing empty, unrelated, malformed,
 wrong-owner and unsupported-version schemas are refused rather than repaired.
@@ -205,12 +206,62 @@ reaches main or a deployed database it is immutable; fix forward. Recovery uses
 a pre-upgrade backup and compatible binary, not down migrations. This discipline
 does not change SQLite's JSONL cutover policy.
 
-Run `make test-postgres` with Docker available. The runner creates and removes a
-fresh loopback-only cluster and tests real roles and transactions with the race
-detector. `DOCBANK_TEST_POSTGRES_IMAGE=postgres:18 make test-postgres` selects the
-other CI version; PostgreSQL 16 is the default. Neither command uses an existing
-vault or database. These checks qualify the schema foundation, not complete
-PostgreSQL document-store support.
+Do not add SQL `CHECK` constraints. Value validation belongs in Go and must be
+shared by writes, imports, restores and audits. Primary keys, foreign keys,
+nullability and uniqueness describe structural relationships. Existing released
+SQLite constraints are compatibility commitments; this rule does not authorize
+removing them from an immutable schema or migration.
+
+Keep the development and operator contracts consistent with the existing
+projects:
+
+| Reference | Shared contract | Deliberate difference |
+| --- | --- | --- |
+| [msgvault embedded archive](https://github.com/kenn-io/msgvault/blob/main/pkg/archive/archive.go) | pgx through `database/sql`; separate setup and validation-only opening | Docbank serializes setup itself and requires a dedicated schema; it does not copy ambient-schema defaults or the existing msgvault migration ledger |
+| [Kata PostgreSQL operations](https://github.com/kenn-io/kata/blob/main/docs/operations/postgres.md) | `Schema`/`SchemaOwner` naming, owner/runtime role separation, transaction advisory lock, exact version validation | This internal API accepts a pool and has separate setup/validate calls; connection configuration and a public vault are not exposed yet |
+| [Kata numbered migrations](https://github.com/kenn-io/kata/blob/main/docs/development/postgres-migrations.md) | Canonical fresh DDL, first supported release as the floor, immutable numbered forward SQL and atomic version stamps | Version numbers and history belong to Docbank; no fictitious historical transitions |
+| Both projects' PostgreSQL test lanes | Explicit test-server connection, isolated databases, real role and transaction behavior, CI service container | No pgvector dependency; document search has not been ported |
+
+Use existing Kit query/search facilities when implementing the actual store.
+Keep application schema ownership in Docbank; neither upstream project's
+`internal` packages are an importable shared migration library. Do not introduce
+a generic backend registry or a new SQL dialect layer before inspecting
+msgvault's existing dialect and the concrete Docbank queries it must support.
+
+For PostgreSQL tests, start a disposable server, never an operator database:
+
+```sh
+docker run --detach --rm --name docbank-pg-test \
+  --publish 127.0.0.1:15432:5432 \
+  --env POSTGRES_USER=docbank_test \
+  --env POSTGRES_PASSWORD=docbank_test \
+  --env POSTGRES_DB=docbank_test postgres:16
+docker exec docbank-pg-test pg_isready -h 127.0.0.1 -U docbank_test -d docbank_test
+```
+
+Once `pg_isready` reports `accepting connections`, run from the repository root:
+
+```sh
+DOCBANK_TEST_POSTGRES_DSN='postgres://docbank_test:docbank_test@127.0.0.1:15432/docbank_test?sslmode=disable' make test-pg
+docker rm --force docbank-pg-test
+```
+
+Always remove the disposable server after the run, including after a failure.
+Use `postgres:18` in the first command to check the other CI version. The tests
+create and drop a database per test and use separate real owner/runtime logins;
+the test administrator needs database, role and event-trigger creation for the
+rollback fixtures. These are test privileges, not runtime requirements.
+`make test-pg` requires the DSN, bypasses cached test results and runs the race
+detector. Without that variable, ordinary `make test` skips PostgreSQL tests.
+A supplied but invalid connection fails rather than skipping.
+
+CI supplies the server through its service-container configuration, uses the
+existing Linux cache group, and runs only the PostgreSQL package in this lane.
+Ordinary jobs still cover both SQLite builds. The main-pinned PR dispatcher
+means a new lane in `ci.yml` first runs for PRs after merge; run both PostgreSQL
+versions locally and validate the workflow with `actionlint` before that first
+merge. These checks qualify the schema foundation, not complete PostgreSQL
+document-store support.
 
 ### Change daemon lifecycle
 

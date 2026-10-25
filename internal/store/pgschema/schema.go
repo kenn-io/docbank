@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"strings"
 	"uuid"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // Version identifies the current PostgreSQL layout, independently of SQLite.
@@ -25,28 +27,29 @@ var schemaSQL string
 // operator provisions roles and grants; this package never creates roles or
 // shares ownership with a runtime credential.
 type Config struct {
-	Schema string
-	Owner  string
+	Schema      string
+	SchemaOwner string
 }
 
 var identifier = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
 
-func (c Config) validate() error {
+// Validate rejects ambient schemas and invalid names before connecting.
+func (c Config) Validate() error {
 	if !identifier.MatchString(c.Schema) || c.Schema == "public" || c.Schema == "information_schema" || strings.HasPrefix(c.Schema, "pg_") {
 		return errors.New("postgres metadata requires a dedicated lowercase schema name")
 	}
-	if !identifier.MatchString(c.Owner) {
-		return errors.New("postgres metadata requires a lowercase schema owner name")
+	if c.SchemaOwner == "" || len(c.SchemaOwner) > 63 || strings.ContainsRune(c.SchemaOwner, 0) {
+		return errors.New("postgres metadata requires an explicit schema owner name of at most 63 bytes")
 	}
 	return nil
 }
 
 // Setup installs a fresh schema atomically or validates an existing one without
-// changing its identity. The pool must authenticate as Config.Owner. Callers
+// changing its identity. The pool must authenticate as Config.SchemaOwner. Callers
 // own the pool and deadline; no credentials are parsed, cached or logged here.
 // Existing schemas without a valid identity are refused, including empty ones.
 func Setup(ctx context.Context, db *sql.DB, c Config) (uuid.UUID, error) {
-	if err := c.validate(); err != nil {
+	if err := c.Validate(); err != nil {
 		return uuid.Nil(), err
 	}
 	tx, err := db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
@@ -61,7 +64,7 @@ func Setup(ctx context.Context, db *sql.DB, c Config) (uuid.UUID, error) {
 	if err := tx.QueryRowContext(ctx, `SELECT current_user`).Scan(&user); err != nil {
 		return uuid.Nil(), err
 	}
-	if user != c.Owner {
+	if user != c.SchemaOwner {
 		return uuid.Nil(), errors.New("postgres metadata setup requires the schema owner role")
 	}
 	// Locks are database-local. Include the schema so unrelated vault setups do
@@ -76,19 +79,19 @@ func Setup(ctx context.Context, db *sql.DB, c Config) (uuid.UUID, error) {
 	err = tx.QueryRowContext(ctx, `SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname=$1`, c.Schema).Scan(&owner)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
-		// The names were restricted above, and remain quoted for SQL keywords.
-		if _, err := tx.ExecContext(ctx, `CREATE SCHEMA "`+c.Schema+`" AUTHORIZATION "`+c.Owner+`"`); err != nil {
+		// Use pgx's identifier quoting for the restricted schema and provisioned role.
+		if _, err := tx.ExecContext(ctx, `CREATE SCHEMA `+pgx.Identifier{c.Schema}.Sanitize()+` AUTHORIZATION `+pgx.Identifier{c.SchemaOwner}.Sanitize()); err != nil {
 			return uuid.Nil(), fmt.Errorf("create postgres metadata schema: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx, strings.ReplaceAll(schemaSQL, "{{schema}}", `"`+c.Schema+`"`)); err != nil {
+		if _, err := tx.ExecContext(ctx, strings.ReplaceAll(schemaSQL, "{{schema}}", pgx.Identifier{c.Schema}.Sanitize())); err != nil {
 			return uuid.Nil(), fmt.Errorf("install postgres metadata schema: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO "`+c.Schema+`".vault_metadata(singleton, vault_uid, schema_version) VALUES (1,$1,$2)`, uuid.New(), Version); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO `+pgx.Identifier{c.Schema}.Sanitize()+`.vault_metadata(singleton, vault_uid, schema_version) VALUES (1,$1,$2)`, uuid.New(), Version); err != nil {
 			return uuid.Nil(), fmt.Errorf("initialize postgres vault identity: %w", err)
 		}
 	case err != nil:
 		return uuid.Nil(), err
-	case owner != c.Owner:
+	case owner != c.SchemaOwner:
 		return uuid.Nil(), errors.New("postgres metadata schema has a different owner")
 	}
 	id, err := validateIdentity(ctx, tx, c)
@@ -105,7 +108,7 @@ func Setup(ctx context.Context, db *sql.DB, c Config) (uuid.UUID, error) {
 // DDL, grants or repairs. The runtime may read the identity, but must neither
 // own the schema, assume its owner role, create objects nor change the identity.
 func Validate(ctx context.Context, db *sql.DB, c Config) (uuid.UUID, error) {
-	if err := c.validate(); err != nil {
+	if err := c.Validate(); err != nil {
 		return uuid.Nil(), err
 	}
 	tx, err := db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
@@ -124,7 +127,7 @@ func Validate(ctx context.Context, db *sql.DB, c Config) (uuid.UUID, error) {
 		FROM pg_namespace WHERE nspname=$1`, c.Schema).Scan(&owner, &canCreate, &canAssumeOwner); err != nil {
 		return uuid.Nil(), fmt.Errorf("read postgres metadata schema: %w", err)
 	}
-	if owner != c.Owner || canCreate || canAssumeOwner {
+	if owner != c.SchemaOwner || canCreate || canAssumeOwner {
 		return uuid.Nil(), errors.New("postgres metadata requires a separate runtime role without schema ownership or CREATE")
 	}
 	id, err := validateIdentity(ctx, tx, c)
@@ -157,7 +160,7 @@ func validateIdentity(ctx context.Context, tx *sql.Tx, c Config) (uuid.UUID, err
 	if err != nil {
 		return uuid.Nil(), fmt.Errorf("read postgres vault identity table: %w", err)
 	}
-	if owner != c.Owner || kind != "r" || persistence != "p" {
+	if owner != c.SchemaOwner || kind != "r" || persistence != "p" {
 		return uuid.Nil(), errors.New("postgres vault identity must be a permanent table owned by the setup role")
 	}
 	// Check the structural keys as well as row contents. A missing key cannot
@@ -180,7 +183,7 @@ func validateIdentity(ctx context.Context, tx *sql.Tx, c Config) (uuid.UUID, err
 	if columns != 3 || keys != 2 {
 		return uuid.Nil(), errors.New("postgres vault identity has an unsupported table layout")
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT singleton, vault_uid, schema_version FROM "`+c.Schema+`".vault_metadata`)
+	rows, err := tx.QueryContext(ctx, `SELECT singleton, vault_uid, schema_version FROM `+pgx.Identifier{c.Schema}.Sanitize()+`.vault_metadata`)
 	if err != nil {
 		return uuid.Nil(), fmt.Errorf("read postgres vault identity: %w", err)
 	}

@@ -21,8 +21,25 @@ jobs:
     name: PostgreSQL ${{ matrix.version }} schema lifecycle
     runs-on: ubuntu-24.04
     strategy:
+      fail-fast: false
       matrix:
         version: [16, 18]
+    services:
+      postgres:
+        image: postgres:${{ matrix.version }}
+        env:
+          POSTGRES_USER: docbank_test
+          POSTGRES_PASSWORD: docbank_test
+          POSTGRES_DB: docbank_test
+          PGDATA: /pgdata/data
+        ports:
+          - 5432:5432
+        options: >-
+          --tmpfs /pgdata
+          --health-cmd "pg_isready -h 127.0.0.1 -U docbank_test -d docbank_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -37,10 +54,10 @@ jobs:
         uses: ./.github/actions/go-cache-restore
         with:
           group: linux-cgo
-      - name: Exercise setup and runtime roles in a disposable database
+      - name: Exercise setup and runtime roles
         env:
-          DOCBANK_TEST_POSTGRES_IMAGE: postgres:${{ matrix.version }}
-        run: make test-postgres
+          DOCBANK_TEST_POSTGRES_DSN: postgres://docbank_test:docbank_test@127.0.0.1:5432/docbank_test?sslmode=disable
+        run: make test-pg
 
   docs:
     name: Public documentation
