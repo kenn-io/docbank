@@ -928,3 +928,42 @@ func authenticatedRequest(remoteAddress string) *http.Request {
 	request.RemoteAddr = remoteAddress
 	return request
 }
+
+func TestFixedConnectionHTTPReadAndReacquisition(t *testing.T) {
+	daemon := newReadToolDaemon(t)
+	t.Cleanup(daemon.Close)
+	connection := daemonconn.New(daemon.URL, "synthetic-key")
+	server := NewServerWithConnection(connection, ServerOptions{})
+	httpServer, listener, err := ListenHTTP(t.Context(), server, "127.0.0.1:0", HTTPOptions{BearerToken: testMCPBearer})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+	assert.Equal(t, 10*time.Second, httpServer.ReadHeaderTimeout)
+	assert.Equal(t, 30*time.Second, httpServer.IdleTimeout)
+	current, err := server.daemon.acquire(t.Context())
+	require.NoError(t, err)
+	assert.Same(t, connection, current.daemonconn)
+	replaced, err := server.daemon.replace(t.Context(), current)
+	require.NoError(t, err)
+	assert.Same(t, connection, replaced.daemonconn)
+	result := decodeResult(t, exchangeRaw(t, server, requestFor("tools/call", map[string]any{
+		"name": "get_vault_info", "arguments": map[string]any{},
+	})))
+	assert.Equal(t, testVaultID, objectField(t, result, "structuredContent")["vault_id"])
+	listed := decodeResult(t, exchangeRaw(t, server, requestFor("tools/list", map[string]any{})))
+	names := listedToolNames(t, listed)
+	assert.Contains(t, names, "get_vault_info")
+	for _, name := range []string{"start_processing", "assign_package_custodian", "create_photo_asset", "start_export", "create_report"} {
+		assert.NotContains(t, names, name)
+	}
+
+}
+
+func TestFixedConnectionHTTPRejectsEqualKeyBeforeBinding(t *testing.T) {
+	connection := daemonconn.New("http://unused.invalid", testMCPBearer)
+	server := NewServerWithConnection(connection, ServerOptions{})
+	_, _, err := ListenHTTP(t.Context(), server, "127.0.0.1:0", HTTPOptions{BearerToken: testMCPBearer})
+	require.ErrorIs(t, err, errDaemonCredentialReuse)
+	assert.NotContains(t, err.Error(), testMCPBearer)
+	_, err = server.daemon.acquire(t.Context())
+	require.ErrorIs(t, err, errDaemonCredentialReuse, "future acquisitions keep the fixed client's exclusion")
+}

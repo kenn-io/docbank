@@ -129,14 +129,15 @@ func validASCIIHostname(hostname string) bool {
 }
 
 // MCPConfig controls the optional local MCP transports. The HTTP transport
-// remains disabled unless its separate inbound credential binding is named.
+// is hosted by the daemon only when a listen address is selected.
 type MCPConfig struct {
 	HTTP MCPHTTPConfig `toml:"http"`
 }
 
 // MCPHTTPConfig names the machine-local credential used to authenticate MCP
-// clients. The credential value is resolved only when the HTTP process starts.
+// clients. The credential value is resolved only when an HTTP listener starts.
 type MCPHTTPConfig struct {
+	Listen            string   `toml:"listen"`
 	AllowedHosts      []string `toml:"allowed_hosts"`
 	CredentialBinding string   `toml:"credential_binding"`
 }

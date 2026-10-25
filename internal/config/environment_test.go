@@ -14,7 +14,7 @@ import (
 
 func clearServerEnvironment(t *testing.T) {
 	t.Helper()
-	for _, name := range []string{"DOCBANK_BIND_ADDR", "DOCBANK_API_PORT", "DOCBANK_API_KEY", "DOCBANK_API_KEY_FILE", "DOCBANK_ALLOWED_HOSTS", "DOCBANK_MCP_HTTP_TOKEN", "DOCBANK_MCP_HTTP_TOKEN_FILE", "DOCBANK_MCP_HTTP_ALLOWED_HOSTS"} {
+	for _, name := range []string{"DOCBANK_BIND_ADDR", "DOCBANK_API_PORT", "DOCBANK_API_KEY", "DOCBANK_API_KEY_FILE", "DOCBANK_ALLOWED_HOSTS", "DOCBANK_MCP_HTTP_TOKEN", "DOCBANK_MCP_HTTP_TOKEN_FILE", "DOCBANK_MCP_HTTP_ALLOWED_HOSTS", "DOCBANK_MCP_HTTP_LISTEN"} {
 		t.Setenv(name, "")
 	}
 }
@@ -223,4 +223,23 @@ func TestPDFPasswordsPathResolvesAgainstConfigRoot(t *testing.T) {
 	cfg, err := Load(root)
 	require.NoError(t, err)
 	require.Equal(t, filepath.Join(root, "passwords"), cfg.Media.PDFPasswordsFile)
+}
+
+func TestDaemonMCPListenEnvironmentIsScoped(t *testing.T) {
+	clearServerEnvironment(t)
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "config.toml"), []byte("[mcp.http]\nlisten='127.0.0.1:7341'\n"), 0o600))
+	for _, value := range []string{"", "0.0.0.0:7342", "invalid-daemon-listen"} {
+		t.Setenv("DOCBANK_MCP_HTTP_LISTEN", value)
+		cfg, err := Load(root)
+		require.NoError(t, err)
+		want := value
+		if want == "" {
+			want = "127.0.0.1:7341"
+		}
+		assert.Equal(t, want, cfg.MCP.HTTP.Listen)
+		scoped, err := LoadMCPHTTP(root)
+		require.NoError(t, err)
+		assert.Equal(t, "127.0.0.1:7341", scoped.MCP.HTTP.Listen)
+	}
 }

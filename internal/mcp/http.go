@@ -579,33 +579,43 @@ func (writer *boundedResponseWriter) Flush() {
 	}
 }
 
-// ServeHTTP listens on one explicitly selected address until ctx is cancelled.
-func ServeHTTP(ctx context.Context, server *Server, address string, options HTTPOptions) error {
+// ListenHTTP validates and binds an authenticated MCP transport. The caller owns
+// serving, draining, and closing the returned server and listener.
+func ListenHTTP(ctx context.Context, server *Server, address string, options HTTPOptions) (*http.Server, net.Listener, error) {
 	if err := ValidateHTTPListenAddress(address); err != nil {
-		return err
+		return nil, nil, err
 	}
 	host, _, err := net.SplitHostPort(address)
 	if err != nil {
-		return fmt.Errorf("splitting MCP HTTP listen address: %w", err)
+		return nil, nil, fmt.Errorf("splitting MCP HTTP listen address: %w", err)
 	}
 	options.listenHost = host
 	if err := server.prepareHTTP(ctx, options.BearerToken); err != nil {
-		return err
+		return nil, nil, err
 	}
 	handler, err := server.HTTPTransportHandler(options)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	listener, err := net.Listen("tcp", address)
 	if err != nil {
-		return fmt.Errorf("listen for MCP HTTP: %w", err)
+		return nil, nil, fmt.Errorf("listen for MCP HTTP: %w", err)
 	}
-	defer func() { _ = listener.Close() }()
 	httpServer := &http.Server{
 		Handler: handler, ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout: 30 * time.Second, MaxHeaderBytes: maxHTTPHeaderBytes,
 		BaseContext: func(net.Listener) context.Context { return ctx },
 	}
+	return httpServer, listener, nil
+}
+
+// ServeHTTP listens on one explicitly selected address until ctx is cancelled.
+func ServeHTTP(ctx context.Context, server *Server, address string, options HTTPOptions) error {
+	httpServer, listener, err := ListenHTTP(ctx, server, address, options)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = listener.Close() }()
 	serveDone := make(chan error, 1)
 	go func() { serveDone <- httpServer.Serve(listener) }()
 	select {
