@@ -175,6 +175,33 @@ it("shows paging recovery and preserves fractional exposure with readable orient
   }
 });
 
+it("keeps the zoomed viewport when only the preview generation changes", async () => {
+  const { props, preview } = setup();
+  const view = render(PhotoLoupe, props);
+  await screen.findByText("Fit preview");
+  const viewport = view.container.querySelector<HTMLElement>(".photo-viewport")!;
+  const pan = viewport.querySelector<HTMLElement>(".pan")!;
+  await fireEvent.doubleClick(viewport, { clientX: 0, clientY: 0 });
+  await screen.findByText("Large preview");
+  const transform = pan.style.transform;
+  const published = {
+    ...props.photo,
+    previews: {
+      ...props.photo.previews,
+      fit: { state: "ready" as const, generation_id: "fit-new" },
+    },
+  };
+  await view.rerender({ ...props, photo: published });
+  await waitFor(() =>
+    expect(preview.mock.calls.some(([item]) => item.previews.fit.generation_id === "fit-new")).toBe(
+      true,
+    ),
+  );
+  expect(view.container.querySelector(".photo-viewport")).toBe(viewport);
+  expect(viewport.querySelector(".pan")).toBe(pan);
+  expect(pan.style.transform).toBe(transform);
+});
+
 it("keeps the reload note and reuses the large preview on zoom", async () => {
   const { props } = setup();
   const note = "This photo is no longer in the refreshed result.";
