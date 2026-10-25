@@ -904,6 +904,20 @@ it("rereads a stack still preparing when a live change arrives, so a decision ca
   editor.dispose();
 });
 
+it("lets a waiting live change finish when the editor is disposed during a stack read", async () => {
+  const editor = new PhotoAuthoredEditor("session", vi.fn());
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(() => new Promise<Response>(() => {})),
+  );
+  void editor.prepareStack(["asset"], false);
+  await vi.waitFor(() => expect(editor.stackLoading).toBe(true));
+  const waiting = editor.invalidate();
+  editor.dispose();
+  await waiting;
+  expect(editor.stackLoading).toBe(false);
+});
+
 // A live update refreshes the prepared stack in the background: the old members stay usable
 // until the new read lands, and a failed read keeps them and leaves the change pending.
 it("keeps the prepared stack usable while a live update refreshes it", async () => {

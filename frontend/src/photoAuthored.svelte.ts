@@ -598,7 +598,11 @@ export class PhotoAuthoredEditor {
   async invalidate() {
     const scope = this.scope;
     this.queued = true;
-    while (this.loading || this.stackLoading)
+    while (
+      (this.loading || this.stackLoading) &&
+      this.scope === scope &&
+      !this.controller.signal.aborted
+    )
       await new Promise<void>((resolve) => this.preparedWaiters.push(resolve));
     if (
       this.scope !== scope ||
@@ -633,6 +637,7 @@ export class PhotoAuthoredEditor {
       this.stackKey = "";
       this.stackError = "";
       this.stackLoading = false;
+      this.preparedWaiters.splice(0).forEach((resolve) => resolve());
     }
     if (!this.targets.length) {
       this.conflict = false;
@@ -1106,6 +1111,7 @@ export class PhotoAuthoredEditor {
     this.read.abort();
     this.stackRead.abort();
     this.loading = false;
+    this.stackLoading = false;
     this.preparedWaiters.splice(0).forEach((resolve) => resolve());
   }
 }
