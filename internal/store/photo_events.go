@@ -166,6 +166,7 @@ var photoCaptureDependencies = []struct{ table, ids, update string }{
 	{"visual_preview_heads", photoCaptureVersionIDs, ""},
 	{"visual_preview_generations", photoCaptureVersionIDs, "-"},
 	{"photo_quality_signals", photoCaptureVersionIDs, ""},
+	{"photo_suggestions", photoCaptureVersionIDs, ""},
 	{"person_document_assertions", photoCaptureVersionIDs, ""},
 	{"photo_faces", `SELECT f.asset_id AS id FROM content_versions v JOIN photo_files f ON f.node_id=v.node_id WHERE v.version_id=$row.content_version_id`, ""},
 	{"person_candidate_faces", photoCaptureVersionIDs, ""},

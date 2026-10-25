@@ -540,3 +540,15 @@ func TestPhotoEventsXMPConflictReceiptOnly(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []PhotoEvent{{AssetID: asset.ID}}, nextPhotoWake(t, events))
 }
+
+// A dismissal changes only photo_suggestions, yet removes the suggestion from other open views and from search results.
+func TestPhotoEventsSuggestionDismissal(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	asset := albumAsset(t, s, "dismiss.jpg")
+	proposal := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Caption: "A harbor."})
+	events := watchPhotoChanges(t, s)
+	_, err := s.RespondPhotoSuggestion(t.Context(), proposal.ID, dismissalOf(t.Context(), t, s, proposal))
+	require.NoError(t, err)
+	require.Equal(t, []PhotoEvent{{AssetID: asset.ID}}, nextPhotoWake(t, events))
+}
