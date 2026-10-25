@@ -514,7 +514,7 @@ it.each(["write", "draft", "loading"])(
   async (kind) => {
     const editor = new PhotoAuthoredEditor("scoped", vi.fn());
     let finish!: (response: Response) => void;
-    let preparing: Promise<void> | undefined;
+    let preparing: ReturnType<typeof editor.prepare> | undefined;
     if (kind === "write") {
       editor.busy = true;
       await editor.edit({}, { rating: 5 }, false, vi.fn());
