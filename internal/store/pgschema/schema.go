@@ -123,11 +123,14 @@ func Validate(ctx context.Context, db *sql.DB, c Config) (uuid.UUID, error) {
 	var canCreate, canAssumeOwner bool
 	// SET ROLE follows session_user, even if the pool changed current_user.
 	// PostgreSQL resolves indirect SET grants and inherited object privileges.
+	// Ownership survives revoked object ACLs; reject owner membership for both
+	// identities independently. MEMBER includes indirect role memberships.
 	if err := tx.QueryRowContext(ctx, `SELECT pg_get_userbyid(nspowner),
 		EXISTS(SELECT 1 FROM pg_roles r
 			WHERE (r.rolname=current_user OR pg_has_role(session_user, r.oid, 'SET'))
 			AND has_schema_privilege(r.oid, n.oid, 'CREATE')),
 		pg_has_role(current_user, nspowner, 'MEMBER')
+			OR pg_has_role(session_user, nspowner, 'MEMBER')
 		FROM pg_namespace n WHERE nspname=$1`, c.Schema).Scan(&owner, &canCreate, &canAssumeOwner); err != nil {
 		return uuid.Nil(), fmt.Errorf("read postgres metadata schema: %w", err)
 	}

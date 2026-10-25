@@ -151,10 +151,10 @@ func TestRuntimeCannotChangeSchema(t *testing.T) {
 		assert.Equal(t, id, actual)
 	})
 	t.Run("owner login with runtime role selected", func(t *testing.T) {
-		_, err := admin.ExecContext(t.Context(), "GRANT "+quotedRole+" TO "+quotedOwner)
+		_, err := admin.ExecContext(t.Context(), "GRANT "+quotedRole+" TO "+quotedOwner+"; REVOKE CREATE ON SCHEMA documents FROM "+quotedOwner+"; REVOKE INSERT,UPDATE,DELETE,TRUNCATE,TRIGGER ON documents.vault_metadata FROM "+quotedOwner)
 		require.NoError(t, err)
 		t.Cleanup(func() {
-			_, err := admin.ExecContext(context.Background(), "REVOKE "+quotedRole+" FROM "+quotedOwner)
+			_, err := admin.ExecContext(context.Background(), "REVOKE "+quotedRole+" FROM "+quotedOwner+"; GRANT CREATE ON SCHEMA documents TO "+quotedOwner+"; GRANT INSERT,UPDATE,DELETE,TRUNCATE,TRIGGER ON documents.vault_metadata TO "+quotedOwner)
 			require.NoError(t, err)
 		})
 		selected := connect(owner, "fixture-owner-only", role)

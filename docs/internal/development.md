@@ -198,6 +198,11 @@ and identity `SELECT` explicitly. Neither function creates roles or changes
 grants. Callers own connection lifetimes and deadlines. Schema setup does not
 grant ownership of blob roots or permit multiple vault writers.
 
+Neither the session login nor the selected role may belong to the schema owner
+role, directly or indirectly. This ownership check is separate from object
+privileges: an owner can revoke its own write privileges and still retain the
+authority to alter objects or grant those privileges again.
+
 PostgreSQL schema versions are independent of SQLite layout versions and JSONL
 format versions. The first supported PostgreSQL release establishes the upgrade
 floor. Fresh installs use canonical DDL; do not invent historical migrations for
