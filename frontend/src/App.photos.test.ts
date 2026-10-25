@@ -824,6 +824,51 @@ it.each(["server", "stale first page"])(
   },
 );
 
+it("keeps the album choices selectable while a live pass rereads the albums", async () => {
+  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(200);
+  Element.prototype.scrollIntoView = vi.fn();
+  stubPhotoTimeline();
+  storage();
+  let holdAlbums = false;
+  let finishAlbums: (() => void) | undefined;
+  stubPhotoFetch(
+    vi.fn(async (url: string) => {
+      if (url.endsWith("/photos/albums")) {
+        if (holdAlbums)
+          await new Promise<void>((resolve) => {
+            finishAlbums = resolve;
+          });
+        return albumResponse([photoAlbum()]);
+      }
+      if (url.endsWith("/photos/assets/query"))
+        return albumResponse({ items: [photo(1)], total: 1 });
+      if (url.includes("/nodes/1"))
+        return albumResponse({ id: 1, kind: "dir", name: "", revision: 1, path: "/" });
+      return albumResponse({ items: [], nodes: [], tags: [], profiles: [] });
+    }),
+  );
+  render(App);
+  await fireEvent.click(await screen.findByRole("button", { name: "Select Photo 1.jpg" }));
+  await fireEvent.click(screen.getByRole("button", { name: /Add to album/ }));
+  await screen.findByRole("option", { name: "Trip" });
+  holdAlbums = true;
+  const pass = photoEventPass()({});
+  await waitFor(() => expect(finishAlbums).toBeTypeOf("function"));
+  expect(screen.getByRole("option", { name: "Trip" })).toBeTruthy();
+  finishAlbums!();
+  await act(() => pass);
+  expect(screen.getByRole("option", { name: "Trip" })).toBeTruthy();
+});
+
 it("reloads Library album counts after adding photos to an album", async () => {
   history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
   vi.stubGlobal(

@@ -54,9 +54,10 @@ export class PhotoAlbums {
     private onmemberschange?: (id?: string) => Promise<void>,
   ) {}
 
-  async load(rethrow = false) {
+  // A quiet load keeps the loaded albums selectable while it reads.
+  async load(rethrow = false, quiet = false) {
     const request = ++this.generation;
-    this.loading = true;
+    if (!quiet) this.loading = true;
     try {
       const items = await api.listPhotoAlbums(this.options());
       if (this.controller.signal.aborted || request !== this.generation) return;

@@ -2811,7 +2811,7 @@
         (!affectedAlbumID || photos.query.filters?.set_ids?.includes(affectedAlbumID)),
     );
     await settleReads([
-      affectedAlbumID ? undefined : photoAlbums?.load(live),
+      affectedAlbumID ? undefined : photoAlbums?.load(live, live && photoAlbums.initialized),
       ...stale.map((photos) =>
         libraryWorkspace && photos === visible
           ? libraryWorkspace.refresh(live)
