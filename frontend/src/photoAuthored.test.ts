@@ -3,7 +3,7 @@ import { cleanup, render, screen, fireEvent, within } from "@testing-library/sve
 import userEvent from "@testing-library/user-event";
 import { tick } from "svelte";
 import * as api from "./generated/docbank.js";
-import { APIError } from "./api-transport.js";
+import { APIError, mutationsInFlight } from "./api-transport.js";
 import { PhotoAuthoredEditor, PhotoUndoState } from "./photoAuthored.svelte.js";
 import { HiddenAccess } from "./hiddenAccess.svelte.js";
 import { photoPreparation, preparedPhoto } from "./photo-test-fixtures.js";
@@ -913,6 +913,45 @@ it("keeps a draft's original revisions when a stack read lands after the draft s
   expect(edits[0]!.targets.map((target) => target.revision)).toEqual([1, 1]);
   expect(editor.conflict).toBe(true);
   expect(editor.patch).toEqual({ caption: "Draft" });
+  editor.dispose();
+});
+
+it("keeps an edit counted as a write while its keyword lookup and refresh run", async () => {
+  const editor = editorWithTargets();
+  let answerTag!: () => void;
+  let counted = -1;
+  const receipt = {
+    receipt_id: "edited",
+    before: [],
+    after: targets.map((target) => ({
+      file_id: target.file_id,
+      revision: 2,
+      values: { ...target.values, rating: 5 },
+    })),
+    keywords: [{ node_id: 1, tag_id: "kw", after: true }],
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((url: string) =>
+      url.endsWith("/tags/kw")
+        ? new Promise<Response>((resolve) => {
+            answerTag = () =>
+              resolve(response({ id: "kw", name: "Kw", revision: 1, assignment_count: 1 }));
+          })
+        : Promise.resolve(response(receipt)),
+    ),
+  );
+  const refresh = vi.fn(async () => {
+    counted = mutationsInFlight();
+  });
+  const editing = editor.edit({ asset_ids: ["asset"] }, { rating: 5 }, false, refresh);
+  await vi.waitFor(() => expect(answerTag).toBeDefined());
+  // Another tab's pass must not read between this receipt and its reconciliation.
+  expect(mutationsInFlight()).toBe(1);
+  answerTag();
+  await editing;
+  expect(counted).toBe(1);
+  expect(mutationsInFlight()).toBe(0);
   editor.dispose();
 });
 

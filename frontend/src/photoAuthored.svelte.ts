@@ -1,5 +1,5 @@
 import * as api from "./generated/docbank.js";
-import { APIError } from "./api-transport.js";
+import { APIError, holdMutations } from "./api-transport.js";
 import { settleReads } from "./photoEvents.js";
 import type { HiddenAccess } from "./hiddenAccess.svelte.js";
 
@@ -583,12 +583,14 @@ export class PhotoAuthoredEditor {
         this.receiptID = result.authored_receipt.receipt_id;
         this.undoState.summary = `Accepted ${[...(caption ? ["caption"] : []), ...(tags.length ? ["tags"] : [])].join(" and ")}`;
       }
-      this.endWrite(write);
-      await this.reload();
-      const refreshedTags = result.authored_receipt
-        ? await this.refreshKeywords(result.authored_receipt)
-        : [];
-      await refresh?.(result.authored_receipt, refreshedTags);
+      await holdMutations(async () => {
+        this.endWrite(write);
+        await this.reload();
+        const refreshedTags = result.authored_receipt
+          ? await this.refreshKeywords(result.authored_receipt)
+          : [];
+        await refresh?.(result.authored_receipt, refreshedTags);
+      });
     } catch (cause) {
       this.suggestionsError = this.failure(cause);
       this.conflict = cause instanceof APIError && [404, 409, 412].includes(cause.status);
@@ -902,9 +904,11 @@ export class PhotoAuthoredEditor {
       }
       this.receiptID = receipt.receipt_id;
       this.undoState.summary = `${receipt.after.length} file${receipt.after.length === 1 ? "" : "s"} updated: ${edits.join(", ")}`;
-      const tags = await this.refreshKeywords(receipt);
-      this.endWrite(write);
-      await refresh(receipt, tags);
+      await holdMutations(async () => {
+        const tags = await this.refreshKeywords(receipt);
+        this.endWrite(write);
+        await refresh(receipt, tags);
+      });
       if (this.suggestions.length) await this.reload();
     } catch (cause) {
       if (!this.controller.signal.aborted) {
@@ -1061,8 +1065,10 @@ export class PhotoAuthoredEditor {
       }
       this.receiptID = receipt.receipt_id;
       this.undoState.summary = receipt.after.length ? "Stack updated" : "Representative chosen";
-      this.endWrite(write);
-      await refresh(receipt, []);
+      await holdMutations(async () => {
+        this.endWrite(write);
+        await refresh(receipt, []);
+      });
       return true;
     } catch (cause) {
       if (!this.controller.signal.aborted) {
@@ -1095,9 +1101,11 @@ export class PhotoAuthoredEditor {
       }
       this.notice = receipt.receipt_id ? "Edit undone" : "No changes to undo";
       if (!receipt.receipt_id) return;
-      const tags = await this.refreshKeywords(receipt);
-      this.endWrite(write);
-      await refresh(receipt, tags);
+      await holdMutations(async () => {
+        const tags = await this.refreshKeywords(receipt);
+        this.endWrite(write);
+        await refresh(receipt, tags);
+      });
       if (this.suggestions.length) await this.reload();
     } catch (cause) {
       if (!this.controller.signal.aborted) {

@@ -52,6 +52,12 @@ function counted<T>(url: string, method: string | undefined, run: () => Promise<
   return request;
 }
 
+/** Keeps a write counted while its caller applies the answer, so no pass reads in between. */
+export function holdMutations<T>(apply: () => Promise<T>) {
+  mutations++;
+  return apply().finally(() => void mutations--);
+}
+
 const mutates = (url: string, method = "GET") =>
   !["GET", "HEAD"].includes(method.toUpperCase()) &&
   !readOnlyPosts.test(url.replace(/^[a-z][a-z\d+.-]*:\/\/[^/]*/i, "").split(/[?#]/, 1)[0]!);
