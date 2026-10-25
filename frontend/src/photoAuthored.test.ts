@@ -2118,58 +2118,6 @@ function preparedSuggestions(suggestions: api.PhotoSuggestion[], prepared = targ
   return response({ assets: [asset], targets: prepared, suggestions });
 }
 
-it("foreground edits bypass live tag reads", async () => {
-  const access = new HiddenAccess("session", vi.fn());
-  const editor = new PhotoAuthoredEditor("session", vi.fn(), undefined, access);
-  editor.targets = [preparedPhoto(1, { tags: ["assigned"] })];
-  let release!: (response: Response) => void;
-  const fetcher = vi.fn((url: string, options?: RequestInit) => {
-    if (url.endsWith("/tags/assigned")) {
-      return new Promise<Response>((resolve, reject) => {
-        release = resolve;
-        options?.signal?.addEventListener("abort", () => reject(options.signal!.reason), {
-          once: true,
-        });
-      });
-    }
-    if (url.endsWith("/photos/authored/edit")) {
-      return Promise.resolve(
-        Response.json({
-          receipt_id: "updated",
-          before: [preparedPhoto(1)],
-          after: [
-            preparedPhoto(1, {
-              revision: 2,
-              values: { ...preparedPhoto(1).values, rating: 5 },
-            }),
-          ],
-        }),
-      );
-    }
-    throw new Error(`Unexpected request: ${url}`);
-  });
-  vi.stubGlobal("fetch", fetcher);
-  const reading = expect(editor.refreshAssignedTags()).rejects.toMatchObject({
-    name: "AbortError",
-  });
-  await vi.waitFor(() => expect(release).toBeDefined());
-  const writing = editor.edit({ asset_ids: ["photo-1"] }, { rating: 5 }, false, async () => {});
-  try {
-    await vi.waitFor(
-      () =>
-        expect(fetcher.mock.calls.some(([url]) => url.endsWith("/photos/authored/edit"))).toBe(
-          true,
-        ),
-      { timeout: 150 },
-    );
-  } finally {
-    release(Response.json({ id: "assigned", name: "Assigned", revision: 1, assignment_count: 1 }));
-    await reading;
-    await writing;
-    editor.dispose();
-  }
-});
-
 it("re-reads assigned tags after a failed edit keeps its draft", async () => {
   const access = new HiddenAccess("session", vi.fn());
   const editor = new PhotoAuthoredEditor("session", vi.fn(), undefined, access);
@@ -2191,30 +2139,38 @@ it("re-reads assigned tags after a failed edit keeps its draft", async () => {
   editor.dispose();
 });
 
-it("sends an edit without waiting for a stalled keyword lookup of a quiet read", async () => {
-  const access = new HiddenAccess("session", vi.fn());
-  const editor = new PhotoAuthoredEditor("session", vi.fn(), undefined, access);
-  const tagged = structuredClone(targets).map((target) => ({ ...target, tags: ["unlisted"] }));
-  const fetcher = vi.fn((url: string, init: RequestInit) => {
-    if (url.endsWith("/prepare"))
-      return Promise.resolve(response({ assets: [asset], targets: tagged }));
-    if (url.endsWith("/tags/unlisted"))
-      return new Promise<Response>((_, reject) =>
-        init.signal?.addEventListener("abort", () => reject(init.signal!.reason), { once: true }),
-      );
-    return Promise.resolve(response({ receipt_id: "receipt", before: [], after: [] }));
-  });
-  vi.stubGlobal("fetch", fetcher);
-  const reading = editor.prepare({ asset_ids: ["asset"] }, false, false, true);
-  const settled = reading;
-  await vi.waitFor(() =>
-    expect(fetcher.mock.calls.some(([url]) => String(url).endsWith("/tags/unlisted"))).toBe(true),
-  );
-  void editor.edit({ asset_ids: ["asset"] }, { rating: 5 }, false, vi.fn());
-  await vi.waitFor(
-    () => expect(fetcher.mock.calls.some(([url]) => String(url).endsWith("/edit"))).toBe(true),
-    { timeout: 150 },
-  );
-  await settled;
-  editor.dispose();
-});
+it.each(["a quiet prepare", "an assigned-tag refresh"] as const)(
+  "drops a pending quiet metadata read when an edit starts: stalled keyword lookup of %s",
+  async (read) => {
+    const access = new HiddenAccess("session", vi.fn());
+    const editor = new PhotoAuthoredEditor("session", vi.fn(), undefined, access);
+    const tagged = structuredClone(targets).map((target) => ({ ...target, tags: ["unlisted"] }));
+    const fetcher = vi.fn((url: string, init: RequestInit) => {
+      if (url.endsWith("/prepare"))
+        return Promise.resolve(response({ assets: [asset], targets: tagged }));
+      if (url.endsWith("/tags/unlisted"))
+        return new Promise<Response>((_, reject) =>
+          init.signal?.addEventListener("abort", () => reject(init.signal!.reason), { once: true }),
+        );
+      return Promise.resolve(response({ receipt_id: "receipt", before: [], after: [] }));
+    });
+    vi.stubGlobal("fetch", fetcher);
+    let reading: Promise<unknown>;
+    if (read === "a quiet prepare")
+      reading = editor.prepare({ asset_ids: ["asset"] }, false, false, true);
+    else {
+      editor.targets = tagged;
+      reading = expect(editor.refreshAssignedTags()).rejects.toMatchObject({ name: "AbortError" });
+    }
+    await vi.waitFor(() =>
+      expect(fetcher.mock.calls.some(([url]) => String(url).endsWith("/tags/unlisted"))).toBe(true),
+    );
+    void editor.edit({ asset_ids: ["asset"] }, { rating: 5 }, false, vi.fn());
+    await vi.waitFor(
+      () => expect(fetcher.mock.calls.some(([url]) => String(url).endsWith("/edit"))).toBe(true),
+      { timeout: 150 },
+    );
+    await reading;
+    editor.dispose();
+  },
+);

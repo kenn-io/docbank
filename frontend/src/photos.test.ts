@@ -3315,7 +3315,6 @@ it("retains the loaded prefix when the old tail moves to the front", async () =>
     );
   });
   await photos.refresh(undefined, true);
-  expect(photos.items).toHaveLength(500);
-  expect(photos.items.some((row) => row.asset_id === "photo-400")).toBe(true);
+  expect(photos.items.map((row) => row.asset_id)).toEqual(ordered.map((row) => row.asset_id));
   photos.dispose();
 });

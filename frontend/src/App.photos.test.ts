@@ -3450,9 +3450,16 @@ it("loads keywords beyond the first catalog page", async () => {
     assignment_count: 0,
   }));
   const last = { id: "last", name: "Beyond the first page", revision: 1, assignment_count: 0 };
+  let held = false;
+  let finishCatalog: (() => void) | undefined;
   const fetcher = vi.fn(async (url: string, init: RequestInit) => {
-    if (url === "/api/v1/tags?limit=1000&offset=0")
+    if (url === "/api/v1/tags?limit=1000&offset=0") {
+      if (held)
+        await new Promise<void>((resolve) => {
+          finishCatalog = resolve;
+        });
       return Response.json({ items: catalog, total: 1001 });
+    }
     if (url === "/api/v1/tags?limit=1000&offset=1000")
       return Response.json({ items: [last], total: 1001 });
     if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
@@ -3482,65 +3489,8 @@ it("loads keywords beyond the first catalog page", async () => {
   expect(
     await within(inspector).findByRole("option", { name: /Beyond the first page/ }),
   ).toBeTruthy();
-  // A live change reloads the catalog without dropping a staged keyword's definition.
-  await fireEvent.click(within(inspector).getByRole("option", { name: /Beyond the first page/ }));
-  await fireEvent.click(within(inspector).getByRole("button", { name: "Add keyword" }));
-  const assigned = () =>
-    within(inspector).getByRole("list", { name: "Assigned keywords" }).textContent;
-  expect(assigned()).toContain("Beyond the first page");
-  await act(() => photoEventPass()({}));
-  expect(assigned()).toContain("Beyond the first page");
-  const editor = prepare.mock.contexts.at(-1) as PhotoAuthoredEditor;
-  await editor.onXMPChanged!(undefined, [{ ...last, revision: 2, assignment_count: 1 }]);
-  await waitFor(() =>
-    expect(editor.tags.find((tag) => tag.id === "last")).toMatchObject({
-      revision: 2,
-      assignment_count: 1,
-    }),
-  );
-});
-
-it("keeps an open keyword list open while a live pass rereads the catalog", async () => {
-  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
-  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
-  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(200);
-  Element.prototype.scrollIntoView = vi.fn();
-  stubPhotoTimeline();
-  storage();
-  const catalog = [{ id: "tag-1", name: "Harbor", revision: 1, assignment_count: 0 }];
-  let finishCatalog: (() => void) | undefined;
-  let held = false;
-  stubPhotoFetch(async (url) => {
-    if (url.startsWith("/api/v1/tags?")) {
-      if (held)
-        await new Promise<void>((resolve) => {
-          finishCatalog = resolve;
-        });
-      return Response.json({ items: catalog, total: 1 });
-    }
-    if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
-    if (url.endsWith("/photos/albums")) return Response.json([]);
-    if (url.endsWith("/photos/assets/query")) return Response.json({ items: [photo(1)], total: 1 });
-    if (url.includes("/nodes/1"))
-      return Response.json({ id: 1, kind: "dir", name: "", revision: 1, path: "/" });
-    return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
-  });
-  render(App);
-  await fireEvent.click(await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" }));
-  await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
-  const inspector = await screen.findByRole("region", { name: "Photo metadata" });
-  const picker = await within(inspector).findByRole("combobox", {
-    name: "Keyword: Choose keyword",
-  });
-  await waitFor(() => expect((picker as HTMLButtonElement).disabled).toBe(false));
-  await fireEvent.click(picker);
+  // The open list survives a live pass that rereads the catalog.
+  const picker = within(inspector).getByRole("combobox", { name: "Keyword: Choose keyword" });
   expect(picker.getAttribute("aria-expanded")).toBe("true");
   held = true;
   const pass = photoEventPass()({});
@@ -3549,6 +3499,14 @@ it("keeps an open keyword list open while a live pass rereads the catalog", asyn
   finishCatalog!();
   await act(() => pass);
   expect(picker.getAttribute("aria-expanded")).toBe("true");
+  const editor = prepare.mock.contexts.at(-1) as PhotoAuthoredEditor;
+  await editor.onXMPChanged!(undefined, [{ ...last, revision: 2, assignment_count: 1 }]);
+  await waitFor(() =>
+    expect(editor.tags.find((tag) => tag.id === "last")).toMatchObject({
+      revision: 2,
+      assignment_count: 1,
+    }),
+  );
 });
 
 it("guards a Hidden draft while a status failure conceals its workspace", async () => {

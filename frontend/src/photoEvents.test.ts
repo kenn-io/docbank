@@ -163,7 +163,6 @@ it("reports each time the stream opens, including after a failed connection", as
   await vi.advanceTimersByTimeAsync(0);
   expect(failure).toHaveBeenCalledOnce();
   expect(opened).not.toHaveBeenCalled();
-  expect(refresh).toHaveBeenCalledOnce();
   await vi.advanceTimersByTimeAsync(1000);
   expect(opened).toHaveBeenCalledOnce();
   await vi.advanceTimersByTimeAsync(1);

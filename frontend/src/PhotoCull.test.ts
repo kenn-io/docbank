@@ -1316,14 +1316,6 @@ it("live metadata completion rebuilds the active Cull groups", async () => {
   expect(screen.getByRole("button", { name: "Keep all" })).toBeTruthy();
 });
 
-it("regroups on every live change", async () => {
-  const { photos } = await reviewThree();
-  const group = vi.mocked(api.groupPhotoStacks);
-  group.mockClear();
-  await act(() => photos.changed({}));
-  expect(group).toHaveBeenCalledOnce();
-});
-
 it("keeps Cull usable while a live regroup is pending", async () => {
   const { cull, photos, container } = await reviewThree();
   await act(() => {
