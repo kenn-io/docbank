@@ -121,10 +121,14 @@ func Validate(ctx context.Context, db *sql.DB, c Config) (uuid.UUID, error) {
 	}
 	var owner string
 	var canCreate, canAssumeOwner bool
+	// SET ROLE follows session_user, even if the pool changed current_user.
+	// PostgreSQL resolves indirect SET grants and inherited object privileges.
 	if err := tx.QueryRowContext(ctx, `SELECT pg_get_userbyid(nspowner),
-		has_schema_privilege(current_user, oid, 'CREATE'),
+		EXISTS(SELECT 1 FROM pg_roles r
+			WHERE (r.rolname=current_user OR pg_has_role(session_user, r.oid, 'SET'))
+			AND has_schema_privilege(r.oid, n.oid, 'CREATE')),
 		pg_has_role(current_user, nspowner, 'MEMBER')
-		FROM pg_namespace WHERE nspname=$1`, c.Schema).Scan(&owner, &canCreate, &canAssumeOwner); err != nil {
+		FROM pg_namespace n WHERE nspname=$1`, c.Schema).Scan(&owner, &canCreate, &canAssumeOwner); err != nil {
 		return uuid.Nil(), fmt.Errorf("read postgres metadata schema: %w", err)
 	}
 	if owner != c.SchemaOwner || canCreate || canAssumeOwner {
@@ -135,8 +139,10 @@ func Validate(ctx context.Context, db *sql.DB, c Config) (uuid.UUID, error) {
 		return uuid.Nil(), err
 	}
 	var canWrite bool
-	if err := tx.QueryRowContext(ctx, `SELECT has_table_privilege(current_user, c.oid, 'INSERT,UPDATE,DELETE,TRUNCATE,TRIGGER')
-		OR has_any_column_privilege(current_user, c.oid, 'INSERT,UPDATE')
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pg_roles r
+		WHERE (r.rolname=current_user OR pg_has_role(session_user, r.oid, 'SET'))
+		AND (has_table_privilege(r.oid, c.oid, 'INSERT,UPDATE,DELETE,TRUNCATE,TRIGGER')
+			OR has_any_column_privilege(r.oid, c.oid, 'INSERT,UPDATE')))
 		FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
 		WHERE n.nspname=$1 AND c.relname='vault_metadata'`, c.Schema).Scan(&canWrite); err != nil {
 		return uuid.Nil(), err

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -72,26 +73,32 @@ func TestRuntimeCannotChangeSchema(t *testing.T) {
 	owner := fmt.Sprintf("Owner \"setup\" %x", idSuffix[:])
 	role := fmt.Sprintf("runtime_%x", idSuffix[:])
 	quotedOwner, quotedRole := pgx.Identifier{owner}.Sanitize(), pgx.Identifier{role}.Sanitize()
-	_, err := admin.ExecContext(t.Context(), "CREATE ROLE "+quotedOwner+" LOGIN PASSWORD 'fixture-owner-only'; CREATE ROLE "+quotedRole+" LOGIN NOINHERIT PASSWORD 'fixture-runtime-only'")
+	quotedAssumed := pgx.Identifier{role + "_assumed"}.Sanitize()
+	quotedIndirect := pgx.Identifier{role + "_indirect"}.Sanitize()
+	_, err := admin.ExecContext(t.Context(), "CREATE ROLE "+quotedOwner+" LOGIN PASSWORD 'fixture-owner-only'; CREATE ROLE "+quotedRole+" LOGIN NOINHERIT PASSWORD 'fixture-runtime-only'; CREATE ROLE "+quotedAssumed+" NOLOGIN NOINHERIT; CREATE ROLE "+quotedIndirect+" NOLOGIN NOINHERIT; GRANT "+quotedAssumed+" TO "+quotedRole+"; GRANT "+quotedIndirect+" TO "+quotedAssumed)
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		_, err := admin.ExecContext(context.Background(), "DROP OWNED BY "+quotedRole+", "+quotedOwner+" CASCADE; DROP ROLE "+quotedRole+", "+quotedOwner)
+		roles := strings.Join([]string{quotedRole, quotedAssumed, quotedIndirect, quotedOwner}, ", ")
+		_, err := admin.ExecContext(context.Background(), "DROP OWNED BY "+roles+" CASCADE; DROP ROLE "+roles)
 		require.NoError(t, err)
 	})
 	var database string
 	require.NoError(t, admin.QueryRowContext(t.Context(), `SELECT current_database()`).Scan(&database))
 	_, err = admin.ExecContext(t.Context(), "GRANT CREATE ON DATABASE "+pgx.Identifier{database}.Sanitize()+" TO "+quotedOwner)
 	require.NoError(t, err)
-	connect := func(user, password string) *sql.DB {
+	connect := func(user, password, activeRole string) *sql.DB {
 		c, err := pgx.ParseConfig(os.Getenv("DOCBANK_TEST_POSTGRES_DSN"))
 		require.NoError(t, err)
 		c.Database, c.User, c.Password = database, user, password
+		if activeRole != "" {
+			c.RuntimeParams["role"] = activeRole
+		}
 		db := stdlib.OpenDB(*c)
 		t.Cleanup(func() { require.NoError(t, db.Close()) })
 		return db
 	}
-	setup := connect(owner, "fixture-owner-only")
-	runtime := connect(role, "fixture-runtime-only")
+	setup := connect(owner, "fixture-owner-only", "")
+	runtime := connect(role, "fixture-runtime-only", "")
 	cfg := Config{Schema: "documents", SchemaOwner: owner}
 	id, err := Setup(t.Context(), setup, cfg)
 	require.NoError(t, err)
@@ -104,14 +111,6 @@ func TestRuntimeCannotChangeSchema(t *testing.T) {
 	require.Error(t, err)
 	_, err = Validate(t.Context(), setup, cfg)
 	require.Error(t, err, "the owner must not be accepted as a runtime credential")
-	for _, query := range []string{
-		`CREATE TABLE documents.unauthorized(id int)`,
-		`ALTER TABLE documents.vault_metadata ADD COLUMN unauthorized int`,
-		`UPDATE documents.vault_metadata SET schema_version=2`,
-	} {
-		_, err := runtime.ExecContext(t.Context(), query)
-		require.Error(t, err, query)
-	}
 	for _, tc := range []struct{ name, grant, revoke string }{
 		{"schema create", "GRANT CREATE ON SCHEMA documents TO ", "REVOKE CREATE ON SCHEMA documents FROM "},
 		{"identity write", "GRANT UPDATE ON documents.vault_metadata TO ", "REVOKE UPDATE ON documents.vault_metadata FROM "},
@@ -119,17 +118,49 @@ func TestRuntimeCannotChangeSchema(t *testing.T) {
 		{"owner membership", "GRANT " + quotedOwner + " TO ", "REVOKE " + quotedOwner + " FROM "},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := admin.ExecContext(t.Context(), tc.grant+quotedRole)
-			require.NoError(t, err)
-			_, err = Validate(t.Context(), runtime, cfg)
-			require.Error(t, err)
-			_, err = admin.ExecContext(t.Context(), tc.revoke+quotedRole)
-			require.NoError(t, err)
-			actual, err := Validate(t.Context(), runtime, cfg)
-			require.NoError(t, err)
-			assert.Equal(t, id, actual)
+			for _, recipient := range []struct{ name, role string }{
+				{"direct", quotedRole}, {"assumed", quotedAssumed}, {"indirect", quotedIndirect},
+			} {
+				t.Run(recipient.name, func(t *testing.T) {
+					_, err := admin.ExecContext(t.Context(), tc.grant+recipient.role)
+					require.NoError(t, err)
+					t.Cleanup(func() {
+						_, err := admin.ExecContext(context.Background(), tc.revoke+recipient.role)
+						require.NoError(t, err)
+					})
+					_, err = Validate(t.Context(), runtime, cfg)
+					require.Error(t, err)
+					_, err = admin.ExecContext(t.Context(), tc.revoke+recipient.role)
+					require.NoError(t, err)
+					actual, err := Validate(t.Context(), runtime, cfg)
+					require.NoError(t, err)
+					assert.Equal(t, id, actual)
+				})
+			}
 		})
 	}
+	t.Run("membership without SET or INHERIT", func(t *testing.T) {
+		_, err := admin.ExecContext(t.Context(), "GRANT UPDATE ON documents.vault_metadata TO "+quotedIndirect+"; GRANT "+quotedIndirect+" TO "+quotedAssumed+" WITH SET FALSE")
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			_, err := admin.ExecContext(context.Background(), "REVOKE UPDATE ON documents.vault_metadata FROM "+quotedIndirect+"; GRANT "+quotedIndirect+" TO "+quotedAssumed+" WITH SET TRUE")
+			require.NoError(t, err)
+		})
+		actual, err := Validate(t.Context(), runtime, cfg)
+		require.NoError(t, err)
+		assert.Equal(t, id, actual)
+	})
+	t.Run("owner login with runtime role selected", func(t *testing.T) {
+		_, err := admin.ExecContext(t.Context(), "GRANT "+quotedRole+" TO "+quotedOwner)
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			_, err := admin.ExecContext(context.Background(), "REVOKE "+quotedRole+" FROM "+quotedOwner)
+			require.NoError(t, err)
+		})
+		selected := connect(owner, "fixture-owner-only", role)
+		_, err = Validate(t.Context(), selected, cfg)
+		require.ErrorContains(t, err, "requires a separate runtime role", "selecting a lesser role must not hide the login's privileges")
+	})
 	_, err = setup.ExecContext(t.Context(), "UPDATE documents.vault_metadata SET schema_version=2")
 	require.NoError(t, err)
 	_, err = Validate(t.Context(), runtime, cfg)

@@ -190,10 +190,13 @@ wrong-owner and unsupported-version schemas are refused rather than repaired.
 
 `Validate` only reads. Its runtime role must be separate from the owner, unable
 to assume the owner role, and lack schema `CREATE` and identity-table write
-privileges. The operator provisions roles and grants schema `USAGE` and identity
-`SELECT` explicitly. Neither function creates roles or changes grants. Callers
-own connection lifetimes and deadlines. Schema setup does not grant ownership
-of blob roots or permit multiple vault writers.
+privileges. Validation checks the current role and every role the session login
+can assume, including indirect memberships. `NOINHERIT` alone does not prevent
+`SET ROLE`; PostgreSQL's [role privilege checks](https://www.postgresql.org/docs/16/functions-info.html#FUNCTIONS-INFO-ACCESS-TABLE)
+resolve those grants. The operator provisions roles and grants schema `USAGE`
+and identity `SELECT` explicitly. Neither function creates roles or changes
+grants. Callers own connection lifetimes and deadlines. Schema setup does not
+grant ownership of blob roots or permit multiple vault writers.
 
 PostgreSQL schema versions are independent of SQLite layout versions and JSONL
 format versions. The first supported PostgreSQL release establishes the upgrade
