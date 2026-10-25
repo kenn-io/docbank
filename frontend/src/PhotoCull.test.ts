@@ -1306,6 +1306,95 @@ it("swaps a changed photo in place and marks one that left the view unavailable"
   expect(screen.queryByText("This photo is no longer in this view.")).toBeNull();
 });
 
+it("live metadata removes obsolete stack decisions", async () => {
+  const { cull, photos, rows } = await reviewThree();
+  await act(() => {
+    cull.run = { ...cull.run!, groups: [["photo-1", "photo-2"]], burstGapSeconds: 2 };
+  });
+  await readyButton("Keep all");
+  const corrected = { ...rows[1], capture_time: "2025-06-01T13:00:00" };
+  vi.mocked(photos.lookupMany).mockImplementation(async (ids) =>
+    [rows[0], corrected, rows[2]].filter((row) => ids.includes(row.asset_id)),
+  );
+  vi.mocked(api.groupPhotoStacks).mockResolvedValue({
+    groups: [],
+    unavailable_ids: [],
+    burst_gap_seconds: 2,
+  });
+  await act(() => photos.changed(photoChange("photo-2")));
+  expect(screen.queryByRole("button", { name: "Keep all" })).toBeNull();
+});
+
+it("live metadata completion rebuilds the active Cull groups", async () => {
+  const { cull, photos } = await reviewThree();
+  await act(() => {
+    cull.run = { ...cull.run!, groups: [], burstGapSeconds: 2, groupingIncomplete: true };
+  });
+  await screen.findByText(/Some camera details are missing or outdated/);
+  vi.mocked(api.groupPhotoStacks).mockResolvedValue({
+    groups: [["photo-1", "photo-2"]],
+    unavailable_ids: [],
+    burst_gap_seconds: 2,
+  });
+  await act(() => photos.changed(photoChange("photo-1", "photo-2")));
+  expect(screen.queryByText(/Some camera details are missing or outdated/)).toBeNull();
+  expect(screen.getByRole("button", { name: "Keep all" })).toBeTruthy();
+});
+
+it("regroups an ID-free live change but not a change to a photo Cull does not hold", async () => {
+  const { photos } = await reviewThree();
+  const group = vi.mocked(api.groupPhotoStacks);
+  group.mockClear();
+  await act(() => photos.changed(photoChange("photo-9")));
+  expect(group).not.toHaveBeenCalled();
+  await act(() => photos.changed(idFreeChange));
+  expect(group).toHaveBeenCalledOnce();
+});
+
+it("keeps Cull usable while a live regroup is pending", async () => {
+  const { cull, photos, container } = await reviewThree();
+  await act(() => {
+    cull.run = { ...cull.run!, groups: [["photo-1", "photo-2"]], burstGapSeconds: 2 };
+  });
+  await readyButton("Keep all");
+  let finish!: (value: Awaited<ReturnType<typeof api.groupPhotoStacks>>) => void;
+  vi.mocked(api.groupPhotoStacks).mockImplementationOnce(
+    () => new Promise((resolve) => (finish = resolve)),
+  );
+  const changing = photos.changed(photoChange("photo-2"));
+  await waitFor(() => expect(finish).toBeDefined());
+  expect(cull.stackLoading).toBe(false);
+  expect(screen.queryByText("Grouping bursts...")).toBeNull();
+  await readyButton("Next");
+  await readyButton("Exit cull");
+  await fireEvent.keyDown(container.querySelector(".photo-cull")!, { key: "ArrowRight" });
+  await waitFor(() => expect(cull.currentID).toBe("photo-2"));
+  await act(async () => {
+    finish({ groups: [], unavailable_ids: [], burst_gap_seconds: 2 });
+  });
+  await changing;
+  expect(cull.currentID).toBe("photo-2");
+  expect(screen.queryByRole("button", { name: "Keep all" })).toBeNull();
+});
+
+it("keeps the previous groups when a live regroup fails and tries again on the retry", async () => {
+  const { cull, photos } = await reviewThree();
+  await act(() => {
+    cull.run = { ...cull.run!, groups: [["photo-1", "photo-2"]], burstGapSeconds: 2 };
+  });
+  await readyButton("Keep all");
+  const group = vi.mocked(api.groupPhotoStacks);
+  group.mockRejectedValueOnce(new APIError("Groups down", 503, "unavailable"));
+  await expect(act(() => photos.changed(photoChange("photo-2")))).rejects.toThrow("Groups down");
+  expect(cull.stackError).toBe("");
+  expect(cull.stackLoading).toBe(false);
+  expect(screen.queryByText("Groups down")).toBeNull();
+  expect(screen.getByRole("button", { name: "Keep all" })).toBeTruthy();
+  group.mockResolvedValueOnce({ groups: [], unavailable_ids: [], burst_gap_seconds: 2 });
+  await act(() => photos.changed(photoChange("photo-2")));
+  expect(screen.queryByRole("button", { name: "Keep all" })).toBeNull();
+});
+
 it.each([
   ["a run photo", photoChange("photo-1"), 2, false],
   ["a photo outside the run", photoChange("photo-9"), 1, false],
@@ -1467,6 +1556,11 @@ it.each([1, 7])("keeps all with fresh revisions after stack member %i changes", 
       checkpoint: { ...cull.run!.checkpoint, pass: stack },
     };
   });
+  vi.mocked(api.groupPhotoStacks).mockResolvedValue({
+    groups: [stack],
+    unavailable_ids: [],
+    burst_gap_seconds: 2,
+  });
   await readyButton("Keep all");
   expect(screen.queryByRole("button", { name: "Show Photo 7.jpg" })).toBeNull();
   rows[changed - 1] = { ...rows[changed - 1]!, revision: 2, rating: 4 };
@@ -1500,6 +1594,11 @@ it("keeps newer Cull values after a delayed stack receipt", async () => {
   await act(() => {
     cull.run = { ...cull.run!, groups: [["photo-1", "photo-2"]], burstGapSeconds: 2 };
   });
+  vi.mocked(api.groupPhotoStacks).mockResolvedValue({
+    groups: [["photo-1", "photo-2"]],
+    unavailable_ids: [],
+    burst_gap_seconds: 2,
+  });
   await fireEvent.click(await readyButton("Keep all"));
   await waitFor(() => expect(decide).toHaveBeenCalledOnce());
   vi.mocked(photos.lookupMany).mockResolvedValue([{ ...photo(1), rating: 4 }, photo(2), photo(3)]);
@@ -1527,6 +1626,11 @@ it("keeps Keep all and Exit cull usable while an ID-free update refreshes the st
   const { cull, photos } = await reviewThree();
   await act(() => {
     cull.run = { ...cull.run!, groups: [["photo-1", "photo-2"]], burstGapSeconds: 2 };
+  });
+  vi.mocked(api.groupPhotoStacks).mockResolvedValue({
+    groups: [["photo-1", "photo-2"]],
+    unavailable_ids: [],
+    burst_gap_seconds: 2,
   });
   await readyButton("Keep all");
   let finish!: (prepared: Awaited<ReturnType<typeof api.preparePhotoAuthored>>) => void;

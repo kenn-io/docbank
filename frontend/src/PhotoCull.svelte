@@ -199,8 +199,8 @@
   $effect(() => {
     if (complete && pass) untrack(() => void cull.checkRemainder());
   });
-  // A live change reads the shown photos again and swaps their rows in place. Nothing here
-  // sets `loading` or `busy`, so shortcuts, Undo, navigation, and Exit keep working.
+  // A live change reads the shown photos and the stack groups again and swaps them in place. Nothing
+  // here sets `loading`, `busy`, or `stackLoading`, so shortcuts, Undo, navigation, and Exit keep working.
   let runIDs: { ids: string[]; set: Set<string> } | undefined;
   let writesInFlight = 0;
   let changedDuringWrite: PhotoChange | undefined;
@@ -208,9 +208,12 @@
     if (writesInFlight || editor.busy) changedDuringWrite = change;
     const ids = cull.run!.ids;
     if (runIDs?.ids !== ids) runIDs = { ids, set: new Set(ids) };
-    if (change.idFree || [...change.ids].some((id) => runIDs!.set.has(id))) cull.flagsChanged();
+    const held = change.idFree || [...change.ids].some((id) => runIDs!.set.has(id));
+    if (held) cull.flagsChanged();
     const shown = shownIDs.filter((id) => affectsPhoto(change, id));
     await settleReads([
+      // New capture times can move frames between stacks, so the groups are read again too.
+      held ? cull.regroup(true) : undefined,
       shown.length ? reread(shown) : undefined,
       cull.complete ? revalidateRemainder() : undefined,
       // Prepared stack revisions are read again, so a decision checks the refreshed rows.

@@ -117,15 +117,22 @@ export class PhotoCull {
       if (this.settingsRead === controller) this.settingsRead = undefined;
     }
   }
-  /** Regroup the current pass's IDs, so a stack never holds a frame the pass doesn't show. */
-  async regroup() {
+  /**
+   * Regroup the current pass's IDs, so a stack never holds a frame the pass doesn't show.
+   * A quiet regroup, for a live change, leaves the controls and the previous groups alone and
+   * throws on failure so the caller retries; one that finds a regroup already loading takes it over.
+   */
+  async regroup(quiet = false) {
     const run = this.run;
     if (!run || this.stale) return;
     const controller = new AbortController();
+    quiet &&= !this.stackLoading;
     this.stackRead?.abort();
     this.stackRead = controller;
-    this.stackLoading = true;
-    this.stackError = "";
+    if (!quiet) {
+      this.stackLoading = true;
+      this.stackError = "";
+    }
     const current = () =>
       !controller.signal.aborted &&
       this.run?.checkpoint.runID === run.checkpoint.runID &&
@@ -145,9 +152,11 @@ export class PhotoCull {
           burstGapSeconds: regrouped.burst_gap_seconds,
         };
     } catch (cause) {
-      if (current()) this.stackError = this.sessionFailure(cause);
+      if (!current()) return;
+      if (quiet) throw cause;
+      this.stackError = this.sessionFailure(cause);
     } finally {
-      if (this.stackRead === controller) this.stackLoading = false;
+      if (this.stackRead === controller && !quiet) this.stackLoading = false;
     }
   }
   private passStacks() {
