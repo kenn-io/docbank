@@ -1395,6 +1395,26 @@ it("keeps the previous groups when a live regroup fails and tries again on the r
   expect(screen.queryByRole("button", { name: "Keep all" })).toBeNull();
 });
 
+it("restores Cull decisions after a live refresh recovers a grouping failure", async () => {
+  const { cull, photos } = await reviewThree();
+  await act(() => {
+    cull.run = { ...cull.run!, groups: [["photo-1", "photo-2"]], burstGapSeconds: 2 };
+  });
+  await readyButton("Keep all");
+  const group = vi.mocked(api.groupPhotoStacks);
+  group.mockRejectedValueOnce(new APIError("Groups temporarily unavailable", 503, "unavailable"));
+  await act(() => cull.regroup());
+  expect(screen.getByRole("button", { name: "Keep all" }).matches(":disabled")).toBe(true);
+  group.mockResolvedValueOnce({
+    groups: [["photo-1", "photo-2"]],
+    unavailable_ids: [],
+    burst_gap_seconds: 2,
+  });
+  await act(() => photos.changed(photoChange("photo-2")));
+  expect(cull.stackError).toBe("");
+  expect(screen.getByRole("button", { name: "Keep all" }).matches(":disabled")).toBe(false);
+});
+
 async function reviewTwoStacks() {
   const rows = [photo(1), photo(2), photo(3), photo(4)];
   const review = await reviewPhoto(rows[0]);

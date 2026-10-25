@@ -144,13 +144,16 @@ export class PhotoCull {
         { session: this.session, signal: controller.signal },
       );
       controller.signal.throwIfAborted();
-      if (current())
+      if (current()) {
         this.run = {
           ...this.run!,
           groups: regrouped.groups,
           groupingIncomplete: regrouped.grouping_incomplete,
           burstGapSeconds: regrouped.burst_gap_seconds,
         };
+        // A quiet regroup can recover an earlier foreground failure.
+        this.stackError = "";
+      }
     } catch (cause) {
       if (!current()) return;
       if (quiet) throw cause;
