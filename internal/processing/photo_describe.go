@@ -1,0 +1,343 @@
+package processing
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"image/jpeg"
+	"io"
+	"log/slog"
+	"slices"
+	"strings"
+	"time"
+
+	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/media"
+	"go.kenn.io/docbank/document/upload"
+	"go.kenn.io/docbank/internal/blob"
+	"go.kenn.io/docbank/internal/jobs"
+	"go.kenn.io/docbank/internal/store"
+)
+
+var errPhotoDescriptionInput = errors.New("photo preview input unavailable")
+
+// profileRenditionInput names what a profile's provider receives: a derived
+// preview for photo description, the original file otherwise.
+func profileRenditionInput(profile configuredProfile) document.RenditionInputKind {
+	if profile.portable.Rendition != nil && profile.portable.Rendition.AdapterContract == document.VisionAdapterContract {
+		return document.RenditionInputDerivedUpload
+	}
+	return document.RenditionInputOriginalFile
+}
+
+func (service *Service) inspectPlannedRendition(ctx context.Context, node store.Node, version store.ContentVersion, profile configuredProfile) (media.CapabilityRecord, error) {
+	if profileRenditionInput(profile) == document.RenditionInputDerivedUpload {
+		return service.planPhotoDescription(ctx, version, profile)
+	}
+	return inspectRenditionSource(ctx, service.blobs, node, version, profile)
+}
+
+// planPhotoDescription checks the preview bytes a start would upload.
+func (service *Service) planPhotoDescription(ctx context.Context, version store.ContentVersion, profile configuredProfile) (media.CapabilityRecord, error) {
+	_, capability, err := photoDescriptionInput(ctx, service.catalog, service.blobs, version, profile)
+	if errors.Is(err, ErrSourceIneligible) {
+		return capability, nil
+	}
+	return capability, err
+}
+
+// photoDescriptionPreview distinguishes preview readiness from missing source authority.
+func photoDescriptionPreview(ctx context.Context, catalog *store.Store, versionID string) (store.VisualPreviewView, media.CapabilityReason, error) {
+	fingerprints, err := document.CurrentPhotoQualityFingerprints()
+	if err != nil {
+		return store.VisualPreviewView{}, "", err
+	}
+	view, err := catalog.ContentVersionVisualPreviewByRecipe(ctx, versionID, fingerprints.GridRecipe)
+	if errors.Is(err, store.ErrNotFound) {
+		return view, "preview_missing", nil
+	}
+	if err != nil {
+		return view, "", err
+	}
+	if view.Generation.Preview.State != document.VisualPreviewReady || view.Generation.Preview.Output == nil {
+		return view, "preview_unavailable", nil
+	}
+	return view, "", nil
+}
+
+// photoDescriptionBinding names the job a request admits: this version and this
+// verified preview, whether the request is automatic or explicit.
+func (service *Service) photoDescriptionBinding(ctx context.Context, version store.ContentVersion) (string, error) {
+	view, reason, err := photoDescriptionPreview(ctx, service.catalog, version.ID)
+	if err != nil {
+		return "", err
+	}
+	if reason != "" {
+		return "", fmt.Errorf("%w: %s", ErrSourceIneligible, reason)
+	}
+	return store.PhotoDescriptionInputBinding(version.ID, view.Generation.Checksum), nil
+}
+
+// photoDescriptionInput returns the copy of the verified grid preview that a
+// provider receives, with the capability record that binds it.
+func photoDescriptionInput(ctx context.Context, catalog *store.Store, blobs *blob.Store, version store.ContentVersion, profile configuredProfile) ([]byte, media.CapabilityRecord, error) {
+	eligible, err := catalog.PhotoDescriptionEligible(ctx, version.ID)
+	if err != nil {
+		return nil, media.CapabilityRecord{}, err
+	}
+	if !eligible {
+		return nil, media.CapabilityRecord{Reason: "photo_not_eligible"}, fmt.Errorf("%w: photo_not_eligible", ErrSourceIneligible)
+	}
+	view, reason, err := photoDescriptionPreview(ctx, catalog, version.ID)
+	if err != nil {
+		return nil, media.CapabilityRecord{}, err
+	}
+	if reason != "" {
+		return nil, media.CapabilityRecord{Reason: reason}, fmt.Errorf("%w: %s", ErrSourceIneligible, reason)
+	}
+	output := view.Generation.Preview.Output
+	source, size, err := blobs.OpenStreamContext(ctx, output.BlobSHA256)
+	if err != nil {
+		return nil, media.CapabilityRecord{}, fmt.Errorf("%w: %w", errPhotoDescriptionInput, err)
+	}
+	if size != output.Size {
+		return nil, media.CapabilityRecord{}, errors.Join(store.ErrPackageConflict, source.Close())
+	}
+	raw, err := io.ReadAll(io.LimitReader(source, output.Size+1))
+	if err = errors.Join(err, source.Verify(), source.Close()); err != nil {
+		return nil, media.CapabilityRecord{}, fmt.Errorf("%w: %w", errPhotoDescriptionInput, err)
+	}
+	stripped, err := stripPhotoPreview(ctx, raw)
+	if err != nil {
+		return nil, media.CapabilityRecord{Reason: "preview_unavailable"}, err
+	}
+	policy := inspectionPolicy("preview.jpg", store.ContentVersion{BlobHash: output.BlobSHA256, Size: output.Size, MimeType: "image/jpeg"}, profile)
+	digest := sha256.Sum256(stripped)
+	policy.InputKind, policy.MaxPixels = document.RenditionInputDerivedUpload, 1024*1024
+	policy.ExpectedBytes, policy.ExpectedSHA256 = int64(len(stripped)), hex.EncodeToString(digest[:])
+	if int64(len(stripped)) > policy.MaxSourceBytes {
+		return nil, media.CapabilityRecord{Reason: media.CapabilityReasonSourceBytes}, fmt.Errorf("%w: %s", ErrSourceIneligible, media.CapabilityReasonSourceBytes)
+	}
+	capability, err := media.InspectCapability(bytes.NewReader(stripped), policy)
+	return stripped, capability, err
+}
+
+// stripPhotoPreview decodes a verified preview within the grid recipe's edge
+// bound and encodes its pixels again with the encoder that made it. A restored
+// preview can carry metadata the producer never wrote; this copy carries none.
+func stripPhotoPreview(ctx context.Context, raw []byte) ([]byte, error) {
+	grid, err := document.BuiltInVisualPreviewRecipe("grid")
+	if err != nil {
+		return nil, err
+	}
+	config, err := jpeg.DecodeConfig(bytes.NewReader(raw))
+	if err != nil || config.Width > grid.MaxEdgePixels || config.Height > grid.MaxEdgePixels {
+		return nil, fmt.Errorf("%w: preview_unavailable", ErrSourceIneligible)
+	}
+	decoded, err := jpeg.Decode(bytes.NewReader(raw))
+	if err != nil {
+		return nil, fmt.Errorf("%w: preview_unavailable", ErrSourceIneligible)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return encodeVisualPreviewJPEG(decoded)
+}
+
+func preparePhotoDescription(ctx context.Context, catalog *store.Store, blobs *blob.Store, version store.ContentVersion, profile configuredProfile, spool string, clock func() time.Time, withUpload bool) (providerExecution, error) {
+	data, capability, err := photoDescriptionInput(ctx, catalog, blobs, version, profile)
+	if err != nil {
+		return providerExecution{}, err
+	}
+	if !capability.Eligible {
+		return providerExecution{}, fmt.Errorf("%w: %s", ErrSourceIneligible, capability.Reason)
+	}
+	metadata := document.AuthorizedUploadMetadata{MediaFamily: "image", MediaType: "image/jpeg", ByteLength: int64(len(data)), SHA256: capability.SourceSHA256, CapabilityRecordChecksum: capability.Checksum, InputKind: document.RenditionInputDerivedUpload}
+	maximum := int(profile.portable.Rendition.MaxResponseBytes)
+	result, err := newProviderExecution(profile, version, metadata, document.RenditionAuthorization{AllowedArtifactRoles: []document.EvidenceArtifactRole{document.EvidenceArtifactStructured}, MaxArtifactBytes: maximum, MaxArtifacts: 1, MaxTotalResultBytes: maximum})
+	if err != nil {
+		return providerExecution{}, err
+	}
+	if withUpload {
+		sealed, err := upload.Authorize(ctx, upload.Source{Reader: io.NopCloser(bytes.NewReader(data)), Directory: spool}, capability, upload.UploadMetadata{Filename: "preview.jpg"})
+		if err != nil {
+			return providerExecution{}, err
+		}
+		result.Upload = &boundAuthorizedUpload{AuthorizedUpload: sealed, metadata: result.metadata}
+	}
+	result.openAuthorization(clock)
+	return result, nil
+}
+
+// HasPhotoDescriptionProfiles reports whether automatic photo work is configured.
+func (service *Service) HasPhotoDescriptionProfiles() bool {
+	return len(service.visionProfileNames()) > 0
+}
+
+func (service *Service) visionProfileNames() []string {
+	var names []string
+	for name, profile := range service.profiles {
+		if profileRenditionInput(profile) == document.RenditionInputDerivedUpload {
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
+	return names
+}
+
+// PhotoDescriptionBackfill admits bounded work for eligible photos once a
+// ready profile has consent. Callers start it only when HasPhotoDescriptionProfiles.
+// The ordinary rendition worker runs the jobs.
+func (service *Service) PhotoDescriptionBackfill(ctx context.Context, logger *slog.Logger, workers int) error {
+	workers = max(workers, 1)
+	backfill := Backfill[photoDescriptionTarget]{Name: "photo-descriptions", Page: 50, IdleDelay: time.Second, Logger: logger,
+		Key: func(value photoDescriptionTarget) string { return value.version.ID },
+		List: func(ctx context.Context, after string, limit int) ([]photoDescriptionTarget, error) {
+			return service.photoDescriptionTargets(ctx, logger, after, limit, workers)
+		},
+		Process: service.admitPhotoDescription,
+	}
+	return backfill.Run(ctx)
+}
+
+// admitPhotoDescription queues one listed photo as automatic work.
+func (service *Service) admitPhotoDescription(ctx context.Context, value photoDescriptionTarget) error {
+	profile := service.profiles[value.profile]
+	node, err := service.catalog.NodeByID(ctx, value.version.NodeID)
+	if err != nil {
+		return err
+	}
+	binding, err := service.photoDescriptionBinding(ctx, value.version)
+	if err != nil {
+		return err
+	}
+	_, _, err = service.enqueueRendition(ctx, node, value.version, profile, service.renditionConsentRequest(profile), binding, false)
+	return err
+}
+
+// photoDescriptionTarget is one photo to describe with the profile that was ready when it was listed.
+type photoDescriptionTarget struct {
+	profile string
+	version store.ContentVersion
+}
+
+// photoDescriptionTargets lists photos once fewer than workers requests wait,
+// so a large library cannot flood the queue. Fresh photos go to the first ready
+// profile only. Photos with restored unresolved fields also go to the other
+// ready profiles, each at most once, so no photo is described by two providers.
+func (service *Service) photoDescriptionTargets(ctx context.Context, logger *slog.Logger, after string, limit, workers int) ([]photoDescriptionTarget, error) {
+	names, err := service.photoDescriptionProfiles(ctx, logger)
+	if err != nil {
+		return nil, err
+	}
+	sources := make([]photoDescriptionSource, len(names))
+	for i, name := range names {
+		if sources[i], err = service.photoDescriptionProfileTargets(ctx, name, i > 0, after, limit, workers); err != nil {
+			return nil, err
+		}
+	}
+	return mergePhotoDescriptionTargets(sources, limit), nil
+}
+
+// photoDescriptionSource is one profile's page. More marks a page that filled
+// its room, so the profile may have further targets past its last key.
+type photoDescriptionSource struct {
+	targets []photoDescriptionTarget
+	more    bool
+}
+
+// mergePhotoDescriptionTargets joins the profiles' pages in version order, each
+// photo once, for the first profile that listed it. The page ends at the
+// smallest last key of a profile with more to list, because the caller resumes
+// after the page's last key and must not skip that profile's remaining photos.
+func mergePhotoDescriptionTargets(sources []photoDescriptionSource, limit int) []photoDescriptionTarget {
+	var out []photoDescriptionTarget
+	seen := map[string]bool{}
+	bound := ""
+	for _, source := range sources {
+		if source.more && len(source.targets) > 0 {
+			if last := source.targets[len(source.targets)-1].version.ID; bound == "" || last < bound {
+				bound = last
+			}
+		}
+		for _, target := range source.targets {
+			if !seen[target.version.ID] {
+				seen[target.version.ID] = true
+				out = append(out, target)
+			}
+		}
+	}
+	slices.SortFunc(out, func(a, b photoDescriptionTarget) int { return strings.Compare(a.version.ID, b.version.ID) })
+	if bound != "" {
+		out = slices.DeleteFunc(out, func(target photoDescriptionTarget) bool { return target.version.ID > bound })
+	}
+	return out[:min(len(out), limit)]
+}
+
+// photoDescriptionProfileTargets lists the photos one profile wants described,
+// leaving room for work already waiting. Only restored photos are listed
+// when restoredOnly is set.
+func (service *Service) photoDescriptionProfileTargets(ctx context.Context, name string, restoredOnly bool, after string, limit, workers int) (photoDescriptionSource, error) {
+	profile := service.profiles[name]
+	var waiting int
+	for {
+		var err error
+		waiting, err = service.catalog.UnclaimedPhotoDescriptionWaiters(ctx, profile.record.Fingerprint, service.clock())
+		if err != nil {
+			return photoDescriptionSource{}, err
+		}
+		if waiting < workers {
+			break
+		}
+		if restoredOnly {
+			return photoDescriptionSource{}, nil
+		}
+		if err := jobs.Wait(ctx, time.Second); err != nil {
+			return photoDescriptionSource{}, err
+		}
+	}
+	room := min(limit, workers-waiting)
+	started := service.clock()
+	versions, err := service.catalog.PhotoDescriptionTargets(ctx, profile.record.Fingerprint, profile.record.RenditionRequestFingerprint, after, room, restoredOnly)
+	duration := service.clock().Sub(started)
+	if err != nil {
+		return photoDescriptionSource{}, err
+	}
+	if len(versions) == 0 && after == "" {
+		if err := jobs.Wait(ctx, 100*duration); err != nil {
+			return photoDescriptionSource{}, err
+		}
+	}
+	out := make([]photoDescriptionTarget, len(versions))
+	for i, version := range versions {
+		out[i] = photoDescriptionTarget{profile: name, version: version}
+	}
+	return photoDescriptionSource{targets: out, more: len(versions) == room}, nil
+}
+
+// photoDescriptionProfiles lists, by name, the description profiles that have
+// consent and a provider that answers its probe. A consented profile whose
+// provider does not answer is logged once, until it answers again.
+func (service *Service) photoDescriptionProfiles(ctx context.Context, logger *slog.Logger) ([]string, error) {
+	var ready []string
+	for _, name := range service.visionProfileNames() {
+		err := service.requireVisionReadiness(ctx, service.profiles[name])
+		switch {
+		case err == nil:
+			service.visionNotReady.Delete(name)
+			ready = append(ready, name)
+		case errors.Is(err, ErrRenditionRuntimeUnavailable):
+			if _, logged := service.visionNotReady.LoadOrStore(name, true); !logged && logger != nil {
+				logger.Warn("photo descriptions are paused: the vision provider did not pass its probe", "profile", name, "error", err)
+			}
+		case errors.Is(err, store.ErrProcessingConsentRequired), errors.Is(err, store.ErrProcessingConsentExpired),
+			errors.Is(err, store.ErrProcessingConsentRevoked):
+		default:
+			return nil, err
+		}
+	}
+	return ready, nil
+}

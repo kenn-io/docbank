@@ -573,6 +573,9 @@ func photoMetadataTablesForSchema(version int) []metadataRecordCodec {
 	if version >= photoCheckoutsStorageSchemaVersion {
 		tables = append(tables, photoCheckoutMetadataTables...)
 	}
+	if version >= photoSuggestionsStorageSchemaVersion {
+		tables = append(tables, photoSuggestionMetadata)
+	}
 	if version >= photoHiddenStorageSchemaVersion {
 		return append(tables, photoHiddenMetadataTables...)
 	}

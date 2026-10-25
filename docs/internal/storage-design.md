@@ -521,7 +521,7 @@ and append no receipt.
 
 Hidden photos store nullable `photo_assets.hidden_at`. Revisioned hide/unhide writes use the existing asset receipts. Disable reads only hidden asset graphs and atomically clears their flags and authentication state. Reset preserves flags. Public Photos asset and preview reads require an active unlock for hidden assets; ordinary Documents reads retain access.
 
-Vault-wide hidden credentials use fixed Argon2id parameters. Failure timestamps and five-minute lockout persist through restart and restore. JSONL versions 1 and 2 back up hidden flags, credentials, failed attempts, lockout expiry and decision receipts. Sessions store SHA-256 token digests, expire after five minutes, clear on restart, and stay outside backup. Schema 42 uses the existing deterministic JSONL rebuild for supported released schemas and retains the source database. Schemas 30 through 33 and 35 through 41 remain unsupported, unreleased sources. Recreate development vaults from those schemas with this binary; opening them fails the schema check. Released JSONL v1 backups through v0.15.2 restore through the logical metadata contract. Copy media through the supported backup and restore flow.
+Vault-wide hidden credentials use fixed Argon2id parameters. Failure timestamps and five-minute lockout persist through restart and restore. JSONL versions 1 and 2 back up hidden flags, credentials, failed attempts, lockout expiry and decision receipts. Sessions store SHA-256 token digests, expire after five minutes, clear on restart, and stay outside backup. Schema 43 uses the existing deterministic JSONL rebuild for supported released schemas, including schema 41 from v0.16.0, and retains the source database. Schemas 30 through 33, 35 through 40, and 42 remain unsupported, unreleased sources. Recreate development vaults from those schemas with this binary; opening them fails the schema check. Released JSONL v1 backups through v0.16.0 restore through the logical metadata contract. Copy media through the supported backup and restore flow.
 
 The `confirmed_fields` bit mask records supplied rating (1), flag (2), label (4), caption (8), creator (16), copyright (32) and rotation (64), including empty clears. On a first encounter, XMP sync confirms only non-default sidecar values. Once a retained packet exists, removing a previously present property imports a confirmed clear. Undo, audit and backup retain the mask. A revision-1 file has no decisions, so restore refuses one with authored values or confirmation bits.
 
@@ -617,6 +617,16 @@ Burst grouping partitions photos by the timeline `folder_key` and the displayed 
 ### Photo quality signals
 
 Schema 30 adds `photo_quality_signals`, a derived row per content version and evaluator fingerprint. It records focus, blur, brightness, color, framing, and aesthetics from the verified grid preview, or an unavailable result. It stays out of metadata JSONL and backups; the quality worker rebuilds it from ready previews.
+
+### Photo suggestions
+
+Schema 43 adds `photo_suggestions`, one row per content version and producer fingerprint. A row holds the pending caption, tags, and visible text, the dismissed flag, the accepted-caption flag and accepted tags, and an `awaiting` flag for a restored row that regenerates. Pending text lives only in the database. Metadata JSONL carries the `photo_suggestion` record with the decisions and `awaiting`, never the text.
+
+`photo_suggestion_fts` indexes pending text by the row's `id`, with tags joined by a private-use token so a phrase cannot span two tags. `tag_fts` indexes tag names by the tag's rowid, so a photo matches text search through any tag assigned to it. Triggers keep both current, including during restore, and both stay out of metadata backup.
+
+`photo_description_explicit_waiters` marks the waiters an explicit start created. Publication reads it to decide whether a shared description job may replace another producer's dismissal. It records in-flight intent only. Description jobs and waiters stay out of backups and rebuild after restore.
+
+`visual_preview_generations_ready` is a partial index on ready previews by recipe and content version. Photo description backfill walks it in version order, so an idle pass over settled photos stays an index scan.
 
 SQLite is Docbank's runtime query and transaction engine, but its historical
 page layout is not the intended long-lived backup contract. The logical

@@ -241,7 +241,7 @@ failed page again. Refresh and expired-cursor recovery keep the current grid vis
 
 ## Save and freeze a photo search
 
-Choose Plain words for ordinary words, or Query syntax for expressions such as `rating:5 pick label:red`. Changing the mode reruns typed text. In Query syntax, `pick` means `flag:pick`; quote `"pick"` to search for that word. Authored-text search matches caption, creator, and copyright on any live RAW, image, or video member. Photo search also includes camera and location metadata, filenames, and extracted text. Rating, flag, and color label facets use each asset's display file. Select None to find an empty flag or label.
+Choose Plain words for ordinary words, or Query syntax for expressions such as `rating:5 pick label:red`. Changing the mode reruns typed text. In Query syntax, `pick` means `flag:pick`; quote `"pick"` to search for that word. Authored-text search matches caption, creator, and copyright on any live RAW, image, or video member, plus every tag name assigned to the photo and any pending [photo suggestion](#suggested-metadata). Photo search also includes camera and location metadata, filenames, and extracted text. Rating, flag, and color label facets use each asset's display file. Select None to find an empty flag or label.
 
 Choose Save search to save the applied search. Albums lists saved queries whose kind filter contains only photos or videos as Smart sets. A `kind:photo` expression alone does not put a Documents query in this list; saving from Photos adds the kind filter. Ordering stays in the current view; reopening uses capture date, or relevance for a text query. The saved definition also runs in Documents: bare `pick` searches for the word, while `rating:` and `flag:` test each document file's authored decisions rather than the asset's display file. Hidden photo files remain accessible there. Use its saved-query editor to change or delete the definition.
 
@@ -311,7 +311,7 @@ without confirmation are refused.
 
 The first import reads supported XMP decisions into an original that has no catalog decisions. Photo decisions and keywords sync with each original's linked XMP sidecar inside the vault. Catalog edits create immutable sidecar versions. Rescanning a source folder imports outside edits with provenance and an undoable metadata receipt. Docbank writes only vault content; source folders stay unchanged.
 
-After an upgrade, the first background sync creates a vault sidecar for each photo with Docbank tags. Photos without tags or a linked sidecar remain without one until you edit their decisions or keywords.
+After an upgrade, the first background sync writes a vault sidecar for each photo with a Docbank decision, a tag, or a linked sidecar. Other photos get one when you edit their decisions or keywords.
 
 1. Edit decisions or keywords in Metadata; pending changes write a new sidecar version. A photo without a sidecar gets `<original-name>.xmp` beside its original.
 2. Rescan after editing outside XMP. Properties changed on one side merge automatically. Metadata offers **Undo sidecar import** while its file and keyword revisions still match.
@@ -703,7 +703,7 @@ and `lens:B` does not. A sidecar without camera metadata cannot make
 `NOT camera:A` match. Changing the display file changes these metadata matches.
 
 Photos text also searches camera and lens makes/models and location labels from
-active metadata heads. `name:` searches filenames only. Relevance orders filename matches, authored text, technical metadata, then retained content-only matches. Each group uses its own BM25 scores. Prefix, phrase and NEAR operands keep their matching meaning when scored.
+active metadata heads. `name:` searches filenames only. Relevance orders filename matches, authored text and tag names, pending suggestions, technical metadata, then retained content-only matches. A photo that matches the whole query only with pending suggestion text ranks in the suggestions group, below fully authored matches. Each group uses its own BM25 scores. Prefix, phrase and NEAR operands keep their matching meaning when scored.
 The best matching member supplies an asset's score, after the complete
 expression restricts eligible members. Authored caption, creator, and copyright match any live non-sidecar member of the asset, so a JPEG caption can match an asset selected by `extension:cr2`. Filename, technical metadata, retained content, name, extension, tag, and collection predicates still match
 individual members. One member must satisfy the complete expression, using
@@ -774,6 +774,14 @@ Over HTTP, send the same `query` and optional `coverage` to
 [HTTP reference](../architecture/http-api.md) lists its limits and errors.
 
 Apply or clear staged metadata edits before changing the selection, search, sort, or viewed photo, or hiding or trashing photos. Hide uses the prepared selection, including unloaded photos, and keeps failed targets selected with their captured revisions.
+
+## Suggested metadata
+
+With a [configured vision profile](../configuration.md#photo-descriptions) and processing consent, the inspector shows a suggested caption, tags, and read-only visible text for the displayed file. Choose **Accept selected** to write the checked caption or tags as authored metadata; accepted fields leave the suggestion, and **Dismiss** closes the rest without changing authored metadata. Undo or Ctrl/Cmd+Z restores the caption and tags from before the latest acceptance while their saved revisions still match. Undo leaves suggestion decisions unchanged, so accepted fields stay settled. Unchecked fields and visible text stay searchable until you dismiss them. Derivative purge and consent revocation leave pending suggestion text in place; dismissing the suggestion or purging the photo version removes it.
+
+Photo search matches suggested text below authored caption, creator, and copyright and above technical metadata. **Matched AI suggestion** appears on a result that needs suggested text to match. Accepted tags are ordinary tags, so every tag name assigned to a photo matches text search, including after a rename or a content replacement.
+
+Changing the profile keeps existing suggestions and dismissals. An explicit processing run with another profile replaces a dismissed suggestion only. Backups keep dismissals and accepted-field decisions but not suggestion text; after restore and fresh consent, only undecided fields are described again, and a description with nothing left to decide is not described again. A profile you dismissed on a photo never regenerates another profile's undecided fields there; those go to another ready profile that you have not dismissed there, which automatic work tries for restored photos.
 
 ## Export photos
 

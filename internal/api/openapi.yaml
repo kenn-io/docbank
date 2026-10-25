@@ -12710,6 +12710,10 @@ components:
           items:
             $ref: "#/components/schemas/PhotoAsset"
           type: array
+        suggestions:
+          items:
+            $ref: "#/components/schemas/PhotoSuggestion"
+          type: array
         targets:
           items:
             $ref: "#/components/schemas/PhotoPreparedTarget"
@@ -13056,6 +13060,8 @@ components:
           type:
             - string
             - "null"
+        matched_ai_suggestion:
+          type: boolean
         media_type:
           type: string
         name:
@@ -13534,6 +13540,26 @@ components:
         - sourceID
         - revision
       type: object
+    PhotoDescription:
+      additionalProperties: false
+      properties:
+        caption:
+          type: string
+        tags:
+          items:
+            type: string
+          type: array
+        visible_text:
+          type: string
+      required:
+        - caption
+        - tags
+        - visible_text
+      type: object
+      x-go-type: document.PhotoDescription
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     PhotoExportSelection:
       additionalProperties: false
       properties:
@@ -14643,6 +14669,97 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    PhotoSuggestion:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoSuggestion.json
+          format: uri
+          readOnly: true
+          type: string
+        asset_id:
+          type: string
+        asset_revision:
+          format: int64
+          type: integer
+        authored_receipt:
+          $ref: "#/components/schemas/PhotoAuthoredReceipt"
+        content_version_id:
+          type: string
+        node_revision:
+          format: int64
+          type: integer
+        source_revision:
+          format: int64
+          type: integer
+        suggestion_id:
+          type: string
+        target:
+          type: string
+        value:
+          $ref: "#/components/schemas/PhotoDescription"
+      required:
+        - asset_id
+        - asset_revision
+        - source_revision
+        - node_revision
+        - suggestion_id
+        - content_version_id
+        - target
+        - value
+      type: object
+      x-go-type: store.PhotoSuggestion
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
+    PhotoSuggestionResponse:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoSuggestionResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        asset_id:
+          type: string
+        asset_revision:
+          format: int64
+          type: integer
+        caption:
+          type: boolean
+        node_revision:
+          format: int64
+          type: integer
+        response:
+          enum:
+            - accepted
+            - dismissed
+          type: string
+        source_revision:
+          format: int64
+          type: integer
+        tags:
+          items:
+            type: string
+          maxItems: 64
+          type: array
+      required:
+        - asset_id
+        - asset_revision
+        - source_revision
+        - node_revision
+        - response
+        - caption
+        - tags
+      type: object
+      x-go-type: store.PhotoSuggestionResponse
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
     PhotoTimeline:
       additionalProperties: false
       properties:
@@ -15404,6 +15521,10 @@ components:
           format: int64
           minimum: 0
           type: integer
+        scope:
+          description: Work beyond the selected source that consent starts.
+          maxLength: 256
+          type: string
         source_bytes:
           format: int64
           minimum: 0
@@ -28095,6 +28216,36 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Group explicit photos into bursts
+  /api/v1/photos/suggestions/{suggestion_id}/response:
+    post:
+      operationId: respondPhotoSuggestion
+      parameters:
+        - in: path
+          name: suggestion_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PhotoSuggestionResponse"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoSuggestion"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Accept selected fields or dismiss a photo proposal
   /api/v1/photos/versions/{content_version_id}/face-decisions:
     post:
       operationId: decidePhotoFace

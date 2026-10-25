@@ -126,6 +126,23 @@ func TestPhotoStackRelevancePage(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, unavailable)
 	require.Equal(t, [][]string{{last, first}}, groups)
+
+	for _, id := range []string{first, single, last} {
+		asset, err := s.PhotoAssetByID(t.Context(), id)
+		require.NoError(t, err)
+		putPhotoSuggestion(t, s, asset, document.PhotoDescription{Caption: "harbor"})
+	}
+	for _, sort := range []string{"relevance", "capture_time"} {
+		request.Query = snapshotTestQuery(t, `{"text":"harbor","sort":{"field":"`+sort+`","direction":"desc"}}`)
+		request.PageSize = 3
+		page, err = s.ListPhotoAssets(t.Context(), request, nil)
+		require.NoError(t, err)
+		require.Len(t, page.Items, 3)
+		require.Equal(t, []PhotoStack{{AssetIDs: []string{first, last}, RepresentativeID: first}}, page.Stacks)
+		for _, row := range page.Items {
+			require.True(t, row.MatchedAISuggestion, "%s: %s", sort, row.AssetID)
+		}
+	}
 }
 
 func TestPhotoStackOtherKeysetSortsKeepIndividualRows(t *testing.T) {

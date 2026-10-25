@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/docling"
+	"go.kenn.io/docbank/document/vision"
 )
 
 func TestLoadMissingFileReturnsDefaults(t *testing.T) {
@@ -1208,4 +1209,55 @@ func TestMistralOCRRuntime(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, filepath.Join(root, "manifests", "mistral.json"), c.RenditionProfiles["ocr"].Runtime.CapabilityManifest)
 	})
+}
+
+func TestVisionRuntimeConfig(t *testing.T) {
+	profile := validRenditionRuntimeConfig(t).RenditionProfiles["primary"]
+	profile.AdapterContract = vision.AdapterContract
+	profile.Model = "synthetic-vision"
+	profile.RequestedArtifacts = []string{string(document.EvidenceArtifactStructured)}
+	profile.DiscloseFilename = false
+	profile.MaxResponseBytes = 1 << 20
+	profile.Runtime.TotalTimeout = 0
+	profile.Runtime.PollInterval = 0
+	profile.Runtime.MaxPollAttempts = 0
+	profile.Runtime.RequestTimeout = Duration(10 * time.Minute)
+	cfg := validRenditionRuntimeConfig(t)
+	descriptor, err := vision.Descriptor(profile.Model, document.RenditionTrustOperatorNetwork)
+	require.NoError(t, err)
+	profile.DescriptorID, profile.DescriptorFingerprint = descriptor.ID, descriptor.Fingerprint
+	cfg.RenditionProfiles["primary"] = profile
+	processingProfile := cfg.ProcessingProfiles["archive"]
+	processingProfile.RetainSanitizedMarkdown = false
+	processingProfile.Embeddings = nil
+	cfg.ProcessingProfiles["archive"] = processingProfile
+	require.NoError(t, cfg.Validate())
+
+	t.Run("model on another adapter", func(t *testing.T) {
+		other := validRenditionRuntimeConfig(t)
+		docling := other.RenditionProfiles["primary"]
+		docling.Model = "synthetic-vision"
+		other.RenditionProfiles["primary"] = docling
+		require.ErrorContains(t, other.Validate(), "model is only supported for "+vision.AdapterContract)
+	})
+
+	for _, tc := range []struct {
+		name      string
+		change    func(*RenditionProfileConfig)
+		wantError string
+	}{
+		{name: "zero timeout", change: func(p *RenditionProfileConfig) { p.Runtime.RequestTimeout = 0 }, wantError: "request_timeout"},
+		{name: "excessive timeout", change: func(p *RenditionProfileConfig) { p.Runtime.RequestTimeout = Duration(11 * time.Minute) }, wantError: "request_timeout"},
+		{name: "filename disclosure", change: func(p *RenditionProfileConfig) { p.DiscloseFilename = true }, wantError: "vision requires a withheld filename"},
+		{name: "excessive response", change: func(p *RenditionProfileConfig) { p.MaxResponseBytes = 1<<20 + 1 }, wantError: "at most 1 MiB response"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			current := profile
+			runtime := *profile.Runtime
+			current.Runtime = &runtime
+			tc.change(&current)
+			err := validateRenditionRuntimeConfig(current, "vision")
+			require.ErrorContains(t, err, tc.wantError)
+		})
+	}
 }

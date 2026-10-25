@@ -101,6 +101,7 @@ var storeErrCodes = []struct {
 	status int
 	code   string
 }{
+	{store.ErrInvalidPhotoSuggestionResponse, http.StatusUnprocessableEntity, "invalid_photo_suggestion_response"},
 	{store.ErrSearchQueryRequired, http.StatusUnprocessableEntity, "search_query_required"},
 	{store.ErrNotFound, http.StatusNotFound, "not_found"},
 	{store.ErrExists, http.StatusConflict, "exists"},

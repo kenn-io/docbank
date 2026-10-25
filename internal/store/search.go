@@ -2491,15 +2491,40 @@ func contentSearchMatches(match, generation string, profile *string) (cte, join,
 		`JOIN matched_versions mv ON mv.version_id=cv.version_id`, `mv.best_rank`, args
 }
 
-// Filename, authored text, and technical metadata precede retained content evidence.
-func photoSearchCandidates(namesMatch, textMatch, generation string, profile *string) (sqlquery.Query, error) {
+// photoAssetTextCandidates ranks every member of the asset that owns matching
+// evidence. evidenceJoin joins the index to evidence, a photo_files row, and
+// extra narrows the evidence further.
+func photoAssetTextCandidates(tier int, index, evidenceJoin, extra string) string {
+	return ` UNION ALL SELECT member.node_id,` + strconv.Itoa(tier) + ` tier,-bm25(` + index + `) score FROM ` + index + ` ` + evidenceJoin +
+		` JOIN nodes sibling ON sibling.id=evidence.node_id JOIN content_versions sibling_version ON sibling_version.version_id=sibling.current_version_id AND sibling_version.node_id=sibling.id` +
+		` JOIN photo_files member ON member.asset_id=evidence.asset_id WHERE evidence.role<>'sidecar' AND sibling.kind='file' AND sibling.trashed_at IS NULL` + extra +
+		` AND ` + index + ` MATCH ?`
+}
+
+// photoEvidenceCandidates ranks filename, tag-name, authored-text, and suggestion
+// matches, which precede technical metadata and retained content evidence.
+func photoEvidenceCandidates(namesMatch, textMatch string) (sqlquery.Query, error) {
 	names, err := nameSearchCandidates(namesMatch)
 	if err != nil {
 		return sqlquery.Query{}, err
 	}
-	result := sqlquery.Query{SQL: `SELECT doc_key node_id,4 tier,score FROM (` + names.SQL + `)`, Args: names.Args}
+	result := sqlquery.Query{SQL: `SELECT doc_key node_id,5 tier,score FROM (` + names.SQL + `)`, Args: names.Args}
 	if textMatch == "" {
 		return result, nil
+	}
+	result.SQL += photoAssetTextCandidates(4, "photo_authored_fts", `JOIN photo_files evidence ON evidence.node_id=photo_authored_fts.rowid`, ``) +
+		photoAssetTextCandidates(4, "tag_fts", `JOIN tags t ON t.id=tag_fts.tag_id JOIN node_tags nt ON nt.tag_id=t.id JOIN photo_files evidence ON evidence.node_id=nt.node_id`, ``) +
+		photoAssetTextCandidates(3, "photo_suggestion_fts", `JOIN photo_suggestions s ON s.id=photo_suggestion_fts.rowid JOIN content_versions sv ON sv.version_id=s.content_version_id JOIN photo_files evidence ON evidence.node_id=sv.node_id`,
+			` AND s.content_version_id=sibling.current_version_id AND evidence.file_id=(SELECT display_file_id FROM photo_assets WHERE asset_id=evidence.asset_id)`)
+	result.Args = append(result.Args, textMatch, textMatch, textMatch)
+	return result, nil
+}
+
+// photoSearchCandidates adds technical metadata and retained content evidence.
+func photoSearchCandidates(namesMatch, textMatch, generation string, profile *string) (sqlquery.Query, error) {
+	result, err := photoEvidenceCandidates(namesMatch, textMatch)
+	if err != nil || textMatch == "" {
+		return result, err
 	}
 	helper, err := sqlitefts.New(sqlitefts.WithIndexTable("photo_metadata_fts"), sqlitefts.WithIndexKey("generation_id"), sqlitefts.WithSourceTable("photo_technical_metadata"), sqlitefts.WithSourceKey("generation_id"))
 	if err != nil {
@@ -2513,8 +2538,6 @@ func photoSearchCandidates(namesMatch, textMatch, generation string, profile *st
   JOIN source_metadata_heads h ON h.generation_id=matched.doc_key
   JOIN content_versions cv ON cv.blob_hash=h.source_sha256 JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id`
 	result.Args = append(result.Args, metadata.Args...)
-	result.SQL += ` UNION ALL SELECT member.node_id,3 tier,-bm25(photo_authored_fts) score FROM photo_authored_fts JOIN photo_files evidence ON evidence.node_id=photo_authored_fts.rowid JOIN nodes sibling ON sibling.id=evidence.node_id JOIN content_versions sibling_version ON sibling_version.version_id=sibling.current_version_id AND sibling_version.node_id=sibling.id JOIN photo_files member ON member.asset_id=evidence.asset_id WHERE evidence.role<>'sidecar' AND sibling.kind='file' AND sibling.trashed_at IS NULL AND photo_authored_fts MATCH ?`
-	result.Args = append(result.Args, textMatch)
 	cte, _, rank, args := contentSearchMatches(textMatch, generation, profile)
 	from := `matched_blobs mb CROSS JOIN content_versions cv ON cv.blob_hash=mb.blob_hash CROSS JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id JOIN text_searchable_versions tsv ON tsv.version_id=cv.version_id`
 	if generation != "" {

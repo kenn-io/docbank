@@ -13,6 +13,11 @@ import (
 )
 
 const (
+	// VisionAdapterContract identifies the photo description adapter contract.
+	VisionAdapterContract = "docbank-compatible-vision/v1"
+	// VisionProbePrompt is the question the adapter's readiness probe asks of a
+	// synthetic red and blue image, and the text test fixtures recognize it by.
+	VisionProbePrompt = "What are the colors of the left and right halves of this image? Reply with two lowercase color names separated by a comma and no other text."
 	// RenditionExecutionIdentityContractV1 is the stable shared-build input
 	// contract. It excludes only the transient authorization interval.
 	RenditionExecutionIdentityContractV1 = "rendition-execution-identity/v1"
@@ -181,6 +186,10 @@ func ValidateRenditionExecutionProfileV1(
 	if err != nil {
 		return err
 	}
+	expectedInput := RenditionInputOriginalFile
+	if canonicalProfile.Rendition != nil && canonicalProfile.Rendition.AdapterContract == VisionAdapterContract {
+		expectedInput = RenditionInputDerivedUpload
+	}
 	if canonicalProfile.Rendition == nil ||
 		identity.Authorization.RenditionRequestFingerprint != fingerprints.RenditionRequest ||
 		identity.Authorization.ProviderID != canonicalProfile.Rendition.Descriptor.ID ||
@@ -188,7 +197,7 @@ func ValidateRenditionExecutionProfileV1(
 		identity.Authorization.DiscloseFilename != canonicalProfile.Rendition.DiscloseFilename ||
 		identity.EvidencePolicy != expectedEvidence.Identity() ||
 		identity.RenditionPolicy != expectedRendition.Identity() ||
-		identity.Upload.InputKind != RenditionInputOriginalFile ||
+		identity.Upload.InputKind != expectedInput ||
 		!renditionExecutionAuthorizationMatchesProfileV1(identity, *canonicalProfile.Rendition) {
 		return errors.New("rendition execution identity does not match executable profile")
 	}
@@ -200,7 +209,7 @@ func renditionExecutionAuthorizationMatchesProfileV1(
 ) bool {
 	authorization := identity.Authorization
 	if identity.Upload.ByteLength > binding.MaxDocumentBytes ||
-		authorization.SourceBytes > binding.MaxDocumentBytes ||
+		authorization.InputKind != RenditionInputDerivedUpload && authorization.SourceBytes > binding.MaxDocumentBytes ||
 		int64(authorization.MaxProviderMarkdownBytes) > binding.MaxResponseBytes ||
 		int64(authorization.MaxArtifactBytes) > binding.MaxResponseBytes ||
 		int64(authorization.MaxTotalResultBytes) > binding.MaxResponseBytes {
@@ -430,8 +439,8 @@ func validateRenditionExecutionIdentity(identity RenditionExecutionIdentityV1) e
 			return err
 		}
 	}
-	if authorization.SourceSHA256 != identity.Upload.SHA256 ||
-		authorization.SourceBytes != identity.Upload.ByteLength ||
+	if identity.Upload.InputKind == RenditionInputOriginalFile && (authorization.SourceSHA256 != identity.Upload.SHA256 ||
+		authorization.SourceBytes != identity.Upload.ByteLength) ||
 		authorization.CapabilityRecordChecksum != identity.Upload.CapabilityRecordChecksum ||
 		authorization.ProviderMetadataChecksum != identity.Upload.ProviderMetadataChecksum ||
 		authorization.MediaFamily != identity.Upload.MediaFamily ||

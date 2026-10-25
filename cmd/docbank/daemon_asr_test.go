@@ -1021,6 +1021,7 @@ func writeDaemonASRConfig(root string, cfg config.Config) error {
 	renditionProfiles := make(map[string]any, len(cfg.RenditionProfiles))
 	for name, profile := range cfg.RenditionProfiles {
 		value := map[string]any{
+			"model":            profile.Model,
 			"adapter_contract": profile.AdapterContract, "authorization_fingerprint": profile.AuthorizationFingerprint,
 			"credential_binding": profile.CredentialBinding, "deployment_fingerprint": profile.DeploymentFingerprint,
 			"descriptor_id": profile.DescriptorID, "descriptor_fingerprint": profile.DescriptorFingerprint,

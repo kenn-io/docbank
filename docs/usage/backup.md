@@ -121,7 +121,7 @@ Create and list output include recorded coverage: photo assets and files, distin
 
 Upgrade Docbank before restoring snapshots that record coverage version 1 with a binary predating that coverage format. Older binaries refuse publication with a statistics mismatch; the manifest’s physical reader version does not express this application requirement.
 
-Coverage excludes browser sessions, hidden unlock sessions, transient storage operations, checkout destination bindings, and rebuildable search indexes, photo timelines, quality signals, `photo_technical_metadata`, and vector indexes. Hidden passcodes and lockout decisions remain included. Ingest provenance, saved-query runs, and term-report history remain included too. The trashed-photo count includes any asset with at least one trashed managed file, even when another member remains live. Restored checkouts are unbound until you explicitly rebind them.
+Coverage excludes browser sessions, hidden unlock sessions, transient storage operations, checkout destination bindings, and rebuildable search indexes, photo timelines, quality signals, `photo_technical_metadata`, vector indexes, and pending photo suggestion text. Suggestion dismissals and accepted-field decisions are backed up but not counted in coverage; restore describes the undecided fields again after fresh consent. Hidden passcodes and lockout decisions remain included. Ingest provenance, saved-query runs, and term-report history remain included too. The trashed-photo count includes any asset with at least one trashed managed file, even when another member remains live. Restored checkouts are unbound until you explicitly rebind them.
 
 ## Remove recovery points and reclaim storage
 
@@ -183,6 +183,8 @@ stored embedding results. Restore rebuilds and validates these records without
 calling processing providers. See
 [Backup architecture](../architecture/backup.md#which-retained-records-must-round-trip)
 for retained records and rebuildable indexes.
+
+Snapshots keep photo suggestion dismissals and accepted-field decisions but omit suggestion text. After restore and fresh processing consent, only undecided fields are described again.
 
 ## Restore and prove a snapshot
 

@@ -457,3 +457,9 @@ the profile refuses by size, keeps the 60-second deadline.
 
 A source may need both its stage and durable loose copy on disk during
 publication. Provider execution may also hold a sealed spool copy.
+
+## Photo description suggestions
+
+A vision profile runs through the shared rendition queue as a `derived_upload` job on one content version. The input binding hashes the version with the verified grid-preview checksum, and automatic and explicit requests for one version share a single job. Planning inspects the cached preview locally, verifying, decoding, and re-encoding it without a provider call. Enqueue and the worker each repeat that inspection, so the provider receives a JPEG that carries no metadata. Egress and publication recheck consent, display membership, hidden state, and the preview checksum.
+
+Publication writes one `photo_suggestions` row per content version instead of a rendition artifact. Parsing drops an invalid caption or an oversized tag alone and clips visible text at 16 KB. Automatic backfill treats a version with a row as settled, except a restored row that still awaits regeneration, and an explicit run replaces only a dismissal. When a shared job has an explicit waiter, publication applies the explicit rule. Accepting fields goes through the authored edit transaction and clears them from the row in the same transaction. Suggested text lives in `photo_suggestion_fts` and tag names in `tag_fts`, so search needs no provenance state. Metadata JSONL keeps dismissals, per-field resolution, and whether a row still awaits regeneration, without text. A row with pending text restores as awaiting and regenerates, filling only the open fields; a row with nothing pending restores settled. Derived-upload jobs rebuild after restore. See [suggested metadata](../usage/photos.md#suggested-metadata).

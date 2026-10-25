@@ -650,3 +650,12 @@ func TestDaemonStartsConfiguredRenditionWorker(t *testing.T) {
 	}
 	t.Fatal("configured rendition worker did not start")
 }
+
+func TestExecutableProcessingProfilesRejectsVisionDisclosureThatDoesNotBindTheEndpoint(t *testing.T) {
+	cfg := visionProcessingConfig(t, "http://127.0.0.1:5001")
+	binding := cfg.RenditionProfiles["vision"]
+	binding.DisclosureFingerprint = strings.Repeat("a", 64)
+	cfg.RenditionProfiles["vision"] = binding
+	_, err := executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
+	require.ErrorContains(t, err, "vision disclosure fingerprint does not bind runtime endpoint")
+}

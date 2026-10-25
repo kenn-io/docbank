@@ -741,7 +741,8 @@ func fromProcessingPlan(plan processing.Plan) ProcessingPlan {
 		BackupConsequence:         plan.BackupConsequence,
 		RenditionIneligibleReason: plan.RenditionIneligibleReason,
 		Estimate: ProcessingEstimate{SourceBytes: plan.Estimate.SourceBytes,
-			ProviderCalls: plan.Estimate.ProviderCalls, VectorSpaces: plan.Estimate.VectorSpaces},
+			ProviderCalls: plan.Estimate.ProviderCalls, VectorSpaces: plan.Estimate.VectorSpaces,
+			Scope: plan.Estimate.Scope},
 		Flow: make([]ProcessingFlowHop, len(plan.Flow))}
 	for index, hop := range plan.Flow {
 		result.Flow[index] = ProcessingFlowHop{Capability: hop.Capability,
@@ -760,6 +761,10 @@ func fromProcessingPlan(plan processing.Plan) ProcessingPlan {
 }
 
 func fromProcessingError(err error) error {
+	detailPrefix := ""
+	if errors.Is(err, processing.ErrConsentSaved) {
+		detailPrefix = "processing consent was saved: "
+	}
 	for _, item := range []struct {
 		target error
 		status int
@@ -768,6 +773,7 @@ func fromProcessingError(err error) error {
 	}{
 		{processing.ErrMediaSearchInvalid, http.StatusUnprocessableEntity, "invalid_media_search",
 			"media search selectors or mode are invalid"},
+		{processing.ErrRenditionRuntimeUnavailable, http.StatusServiceUnavailable, "rendition_runtime_unavailable", "the rendition provider is not ready"},
 		{processing.ErrRenditionFailed, http.StatusUnprocessableEntity, "rendition_failed", "document rendition failed"},
 		{processing.ErrSourceIneligible, http.StatusUnprocessableEntity, "rendition_source_ineligible",
 			"source is not eligible for the rendition profile; see the plan's rendition_ineligible_reason"},
@@ -791,19 +797,23 @@ func fromProcessingError(err error) error {
 		{vectorindex.ErrSimilarSearchScoringBudgetExceeded, http.StatusUnprocessableEntity, "similar_search_too_large", "similar search scope exceeds the scoring budget; narrow the source scope"},
 	} {
 		if errors.Is(err, item.target) {
-			return NewError(item.status, item.code, cmp.Or(item.detail, err.Error()))
+			detail := item.detail
+			if failure, ok := errors.AsType[*processing.RuntimeUnavailableError](err); ok {
+				detail += ": " + failure.Cause.Error()
+			}
+			return NewError(item.status, item.code, detailPrefix+cmp.Or(detail, err.Error()))
 		}
 	}
 	if scopeError, ok := errors.AsType[*store.ProcessingSourceFenceScopeError](err); ok {
 		result := NewError(http.StatusUnprocessableEntity, "scope_too_large",
-			"source scope exceeds 4096 current live content versions; narrow the source scope")
+			detailPrefix+"source scope exceeds 4096 current live content versions; narrow the source scope")
 		result.ObservedScopeCount = scopeError.ObservedScopeCount
 		return result
 	}
 	if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrVersionNodeMismatch) || errors.Is(err, store.ErrSearchQueryRequired) {
 		return FromStoreError(err)
 	}
-	return NewError(http.StatusInternalServerError, "processing_failed", "document processing failed")
+	return NewError(http.StatusInternalServerError, "processing_failed", detailPrefix+"document processing failed")
 }
 
 func resolveDocumentSourceFence(ctx context.Context, service *processing.Service, input DocumentSourceFenceResolveRequest) (DocumentSourceFenceResolution, error) {
