@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/document/vision"
 	"go.kenn.io/docbank/document/vision/visiontest"
 	"go.kenn.io/docbank/internal/api"
@@ -39,6 +40,9 @@ func check(err error) {
 
 func main() {
 	suggestions := flag.Bool("suggestions", false, "Include synthetic photo suggestions")
+	namesakes := flag.Bool("namesakes", false, "Include people with the same name and distinct identities")
+	manyNamesakes := flag.Bool("many-namesakes", false, "Include 300 people named Alex")
+	faceSearch := flag.Bool("face-search", false, "Include later people-search matches and a rotated namesake preview")
 	bursts := flag.Bool("bursts", false, "Include synthetic burst stacks")
 	singleYear := flag.Bool("single-year", false, "Place every photo in one year")
 	mapGPS := flag.Bool("map", false, "Include synthetic GPS locations")
@@ -69,12 +73,44 @@ func main() {
 	s, err := store.Open(layout.DBPath())
 	check(err)
 	defer func() { check(s.Close()) }()
+	var pairedPerson string
+	if *namesakes {
+		for _, email := range []string{"alex-a@example.test", "alex-b@example.test"} {
+			person, err := s.CreatePerson(ctx, "Alex Smith", "operator")
+			check(err)
+			if pairedPerson == "" {
+				pairedPerson = person.PersonID
+			}
+			_, err = s.AddPersonIdentity(ctx, person.PersonID, person.Revision, store.PersonIdentity{
+				Kind: "email", ValueDisplay: email, Origin: "operator", EvidenceKind: "operator_assertion",
+				EvidenceID: "synthetic-chooser", Confidence: "operator_asserted",
+			})
+			check(err)
+		}
+	}
+	if *manyNamesakes {
+		for range 300 {
+			_, err := s.CreatePerson(ctx, "Alex", "operator")
+			check(err)
+		}
+	}
+	if *faceSearch {
+		for index := range 100 {
+			_, err := s.CreatePerson(ctx, fmt.Sprintf("Aaron %03d Smith", index), "operator")
+			check(err)
+		}
+		for _, name := range []string{"Smith", "Robin", "Robin"} {
+			_, err := s.CreatePerson(ctx, name, "operator")
+			check(err)
+		}
+	}
 	blobs, err := blob.New(store.NewPackCatalog(s), layout.BlobsDir())
 	check(err)
 	defer func() { check(blobs.Close()) }()
 	recipe, err := processing.VisualPreviewRecipeForSize("grid")
 	check(err)
 	type sample struct {
+		source    []byte
 		hash      string
 		size      int64
 		canonical []byte
@@ -101,6 +137,29 @@ func main() {
 				frame.SetRGBA(x, y, shade)
 			}
 		}
+		if *faceSearch || *namesakes {
+			centers := [][2]float64{{0.25, 0.4}, {0.75, 0.4}}
+			if *namesakes {
+				centers = append(centers, [2]float64{0.5, 0.5})
+			}
+			for y := 0; y < height; y++ {
+				for x := 0; x < width; x++ {
+					for faceIndex, center := range centers {
+						dx, dy := float64(x)/float64(width)-center[0], float64(y)/float64(height)-center[1]
+						if dx*dx/0.01+dy*dy/0.01 < 1 {
+							shade := color.RGBA{240, 180, 100, 255}
+							if faceIndex == 1 {
+								shade = color.RGBA{120, 190, 240, 255}
+							}
+							if (math.Abs(dx-0.035) < 0.012 || math.Abs(dx+0.035) < 0.012) && math.Abs(dy+0.03) < 0.015 || math.Abs(dx) < 0.045 && math.Abs(dy-0.06) < 0.01 {
+								shade = color.RGBA{25, 30, 40, 255}
+							}
+							frame.SetRGBA(x, y, shade)
+						}
+					}
+				}
+			}
+		}
 		var encoded bytes.Buffer
 		check(jpeg.Encode(&encoded, frame, &jpeg.Options{Quality: 85}))
 		hash, size, err := blobs.Write(bytes.NewReader(encoded.Bytes()))
@@ -113,7 +172,7 @@ func main() {
 		check(err)
 		canonical, _, err := document.MarshalVisualPreviewV1(product.Preview)
 		check(err)
-		samples[index] = sample{hash: hash, size: size, canonical: canonical, physical: store.BlobPhysical{Encoding: encoding, StoredBytes: receipt.StoredSize}}
+		samples[index] = sample{source: encoded.Bytes(), hash: hash, size: size, canonical: canonical, physical: store.BlobPhysical{Encoding: encoding, StoredBytes: receipt.StoredSize}}
 		date := fmt.Sprintf("2022-06-15T%02d:00:00", index%10)
 		if *bursts {
 			date = fmt.Sprintf("2022-06-15T12:%02d:%02d", (index/3*10)/60, (index/3*10)%60+index%3*2)
@@ -200,7 +259,7 @@ func main() {
 			node, err = s.CreateFile(ctx, s.RootID(), name, item.hash, item.size, "image/jpeg")
 		}
 		check(err)
-		if (*rotateCover || *manyKeywords) && index == 0 {
+		if (*rotateCover || *manyKeywords || *faceSearch) && index == 0 {
 			asset, err := s.PhotoAssetForNode(ctx, node.ID)
 			check(err)
 			firstAssetID = asset.ID
@@ -226,13 +285,32 @@ func main() {
 			}
 			seedSuggestion(ctx, s, blobs, layout.BlobsDir(), node, value)
 		}
-		if *pair && index == 0 {
+		if (*pair && index == 0) || (*namesakes && index == 1) {
 			asset, err := s.PhotoAssetForNode(ctx, node.ID)
 			check(err)
-			raw, err := s.CreateFile(ctx, s.RootID(), "Synthetic-photo-00001.cr2", item.hash, item.size, "application/octet-stream")
+			rawHash, rawSize, rawMIME := item.hash, item.size, "application/octet-stream"
+			if *namesakes && index == 1 {
+				// This portrait RAW preview is framed differently from its landscape JPEG.
+				rawBytes := mediatest.TIFFWithEmbeddedJPEG(1, mediatest.TIFFJPEGPreview{Data: samples[0].source})
+				rawHash, rawSize, err = blobs.Write(bytes.NewReader(rawBytes))
+				check(err)
+				rawMIME = "image/x-canon-cr2"
+			}
+			raw, err := s.CreateFile(ctx, s.RootID(), fmt.Sprintf("Synthetic-photo-%05d.cr2", index+1), rawHash, rawSize, rawMIME)
 			check(err)
+			if *namesakes && index == 1 {
+				singleton, err := s.PhotoAssetForNode(ctx, raw.ID)
+				check(err)
+				_, err = s.DetachPhotoFile(ctx, singleton.ID, singleton.Revision, singleton.Files[0].ID, store.PhotoDetachOptions{})
+				check(err)
+			}
 			asset, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, raw.ID, store.PhotoRoleRAW, nil)
 			check(err)
+			if *namesakes && index == 1 {
+				_, _, err = s.CreatePhotoFace(ctx, raw.CurrentVersionID, "00000000-0000-4000-8000-000000000001", document.FaceBox{X: .15, Y: .3, Width: .2, Height: .2}, pairedPerson)
+				check(err)
+			}
+
 			var display string
 			for _, file := range asset.Files {
 				if file.NodeID == node.ID {
@@ -242,6 +320,20 @@ func main() {
 			_, err = s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, &display)
 			check(err)
 			_, err = s.CreateTag(ctx, "Portfolio")
+			check(err)
+		}
+	}
+	if *namesakes {
+		// Two newer unavailable photos keep the paired RAW inside the three-preview bound.
+		unavailable, err := s.BeginIngest(ctx, "cli", "unavailable namesake photos")
+		check(err)
+		for index := range 2 {
+			hash, size, err := blobs.Write(bytes.NewReader(fmt.Appendf(nil, "synthetic undecodable JPEG %d", index)))
+			check(err)
+			name := fmt.Sprintf("Unavailable-namesake-%d.jpg", index)
+			node, err := s.IngestFileExact(ctx, unavailable, s.RootID(), name, hash, size, "image/jpeg", "/synthetic/unavailable/"+name, fmt.Sprintf("2026-10-0%dT12:00:00Z", index+1))
+			check(err)
+			_, _, err = s.CreatePhotoFace(ctx, node.CurrentVersionID, fmt.Sprintf("00000000-0000-4000-8000-%012d", index+2), document.FaceBox{Width: .2, Height: .2}, pairedPerson)
 			check(err)
 		}
 	}
@@ -272,18 +364,20 @@ func main() {
 		}
 		seedRejects(ctx, s)
 	}
-	if *rotateCover {
+	if *rotateCover || *faceSearch {
 		first, err := s.PhotoAssetByID(ctx, firstAssetID)
 		check(err)
 		prepared, err := s.PreparePhotoAuthored(ctx, store.PhotoSetSelection{AssetIDs: []string{first.ID}})
 		check(err)
 		_, err = s.EditPhotoAuthoredBatch(ctx, store.PhotoAuthoredBatch{Targets: editTargets(prepared.Targets), Patch: store.PhotoAuthoredPatch{Rotation: new(90)}})
 		check(err)
-		cover := &first.ID
-		current, err := s.PhotoSet(ctx, album.ID, "")
-		check(err)
-		_, err = s.UpdatePhotoSet(ctx, album.ID, current.Revision, nil, nil, &cover)
-		check(err)
+		if *rotateCover {
+			cover := &first.ID
+			current, err := s.PhotoSet(ctx, album.ID, "")
+			check(err)
+			_, err = s.UpdatePhotoSet(ctx, album.ID, current.Revision, nil, nil, &cover)
+			check(err)
+		}
 	}
 	check(s.Checkpoint(ctx))
 	fmt.Printf("seeded %d synthetic photos\n", count)

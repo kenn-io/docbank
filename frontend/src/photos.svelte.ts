@@ -49,6 +49,7 @@ import { PhotoAuthoredEditor, type PhotoUndoState } from "./photoAuthored.svelte
 import type { HiddenAccess } from "./hiddenAccess.svelte.js";
 import type { PhotoCull } from "./photoCull.svelte.js";
 import { fittedPhotoView, type PhotoView } from "./photoView.js";
+import { PhotoFaces } from "./photoFaces.svelte.js";
 
 export const maxComparePhotos = 8;
 export const photoQuery = parseQuery(
@@ -176,6 +177,8 @@ export const capturedNewest = (sort?: QuerySort) =>
 export class Photos {
   readonly authored: PhotoAuthoredEditor;
   cullEditor = $state.raw<PhotoAuthoredEditor>();
+  readonly faceEditor: PhotoFaces;
+  faceAssetID = "";
   cull?: PhotoCull;
   cullVaultID = "";
   culling = $state(false);
@@ -324,6 +327,7 @@ export class Photos {
   query = $state.raw<Query>(photoQuery);
   // The active jump's month stays pending while pages load. Clearing it cancels the jump.
   seek = $state("");
+  personFilter = $state<{ id: string; name: string }>();
   // queryResets counts accepted resetQuery calls; the search box remounts on it.
   queryResets = $state(0);
   timeline = $state<CaptureDayFacet | undefined>();
@@ -431,6 +435,7 @@ export class Photos {
   ) {
     this.projection = projection;
     this.hiddenAccess = hiddenAccess;
+    this.faceEditor = new PhotoFaces(session, onauthfailure, hidden, undefined, hiddenAccess);
     this.authored = new PhotoAuthoredEditor(
       session,
       (cause) => {
@@ -438,6 +443,7 @@ export class Photos {
       },
       undoState,
       hidden ? hiddenAccess : undefined,
+      () => !!this.faceEditor?.busy,
     );
     this.query = query;
     this.withoutCounts = Boolean(query.filters?.set_ids?.length) || this.projection === "map";
@@ -1028,6 +1034,10 @@ export class Photos {
     return Object.assign(rotations, { stacksUnresolved });
   }
 
+  get dependsOnPeople() {
+    return !!this.query.filters.person_ids?.length || !!this.query.text.trim();
+  }
+
   /** Whether a metadata edit can change which photos this view lists or how it orders them. */
   get dependsOnAuthored() {
     const filters = this.query.filters ?? {};
@@ -1264,6 +1274,11 @@ export class Photos {
     this.authFailure(cause);
   }
 
+  concealMetadata() {
+    this.authored.conceal();
+    this.faceEditor.conceal();
+  }
+
   private async replace(
     mode: "refresh" | "expiry",
     preserve?: () => (() => Promise<void>) | undefined,
@@ -1272,7 +1287,7 @@ export class Photos {
   ) {
     if (this.disposed) return false;
     // A live refresh leaves metadata editing usable; revalidate drops targets that left.
-    if (!live) this.authored.conceal();
+    if (!live) this.concealMetadata();
     this.controller.abort();
     this.controller = new AbortController();
     this.facetsController.abort();
@@ -1745,6 +1760,7 @@ export class Photos {
     this.lifetime.abort();
     this.clearFrozen();
     this.authored.dispose();
+    this.faceEditor.dispose();
     this.cullEditor?.dispose();
     this.cull?.cancel();
     this.viewerReturn = undefined;

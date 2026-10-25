@@ -1,6 +1,7 @@
 <script lang="ts">
   import { reportAction, reportFailure, reportSearch } from "./action-events.js";
   import PhotoSearch from "./PhotoSearch.svelte";
+  import { photoSearchSort } from "./photoSearch.js";
   import * as generated from "./generated/docbank.js";
   import { onMount, tick, untrack } from "svelte";
   import ActivityIcon from "@lucide/svelte/icons/activity";
@@ -386,6 +387,7 @@
     window.addEventListener("pageshow", resume);
     if (document.visibilityState === "hidden") untrack(leave);
     return () => {
+      access.dispose();
       document.removeEventListener("visibilitychange", visibility);
       window.removeEventListener("pagehide", pagehide);
       window.removeEventListener("pageshow", resume);
@@ -557,10 +559,9 @@
     photoConcealed = true;
     photoAccessVersion++;
     albumPhotos?.cancelPending();
-    photoState?.photos.authored.conceal();
-    albumPhotos?.authored.conceal();
+    albumPhotos?.concealMetadata();
     mapPhotos?.cancelPending();
-    mapPhotos?.authored.conceal();
+    mapPhotos?.concealMetadata();
     return concealPhotoWorkspace(photoState);
   }
   // Album views share Library's preview cache, so revalidation refreshes whichever list is open.
@@ -634,12 +635,14 @@
     photoConcealed = false;
     photoValidated = true;
     photoAccessError = "";
+    applyPersonPhotos();
   }
 
   $effect(() => {
     if (!webSession) return;
     return () => {
       hiddenPhotoActionError = "";
+      pendingPerson = undefined;
       discardLibrary();
       photoValidated = false;
       photoChangeID = undefined;
@@ -734,14 +737,17 @@
       pending = true;
       controller = new AbortController();
       try {
+        const requestedAt = Date.now();
         const configuredVersion = hiddenAccess!.configuredVersion;
         const result = await generated.getPhotoHiddenState({
           session,
           signal: AbortSignal.any([controller.signal, AbortSignal.timeout(2000)]),
         });
         failures = 0;
-        if (current && !controller.signal.aborted)
+        if (current && !controller.signal.aborted) {
+          hiddenAccess?.acceptState(result, requestedAt);
           await acceptPhotoAccess(result, configuredVersion);
+        }
       } catch (cause) {
         if (!current || controller.signal.aborted) return;
         const denied = cause instanceof APIError && (cause.status === 401 || cause.status === 403);
@@ -849,6 +855,53 @@
       photoAlbums.noticeID = "";
       photoAlbums.error = "";
     }
+  }
+
+  let pendingPerson = $state<{ id: string; name: string }>();
+  function applyPersonPhotos() {
+    if (!pendingPerson) return false;
+    const photos = hiddenMode
+      ? hiddenWorkspace?.activePhotos()
+      : photoValidated
+        ? photoState?.photos
+        : undefined;
+    if (!photos) return false;
+    const { id: personID, name } = pendingPerson;
+    if (retainedPhotoEditor() && !retainedPhotoEditor()!.canChangeTarget()) {
+      pendingPerson = undefined;
+      return false;
+    }
+    if (
+      !photos.setQuery({
+        ...photos.query,
+        text: "",
+        sort: photoSearchSort({ text: "", syntax: photos.query.syntax }),
+        filters: { person_ids: [personID] },
+      })
+    ) {
+      pendingPerson = undefined;
+      return false;
+    }
+    photos.personFilter = { id: personID, name };
+    pendingPerson = undefined;
+    return true;
+  }
+  function openPersonPhotos(personID: string, name: string) {
+    const photos = activePhotos();
+    if (photos?.hiding || photos?.trashing) {
+      pendingPerson = undefined;
+      retainedPhotoEditor()?.unavailable(
+        "A photo change is in progress. Try again when it finishes.",
+      );
+      return;
+    }
+    if (retainedPhotoEditor() && !retainedPhotoEditor()!.canChangeTarget()) return;
+    pendingPerson = { id: personID, name };
+    if (hiddenMode) {
+      if (applyPersonPhotos()) navigatePhotos("/photos/hidden");
+    } else if (photoState && photoValidated) {
+      if (applyPersonPhotos()) navigatePhotos("/photos");
+    } else navigatePhotos("/photos");
   }
 
   function navigatePhotos(path: string) {
@@ -2521,16 +2574,7 @@
       )
     )
       void photoAlbums?.load();
-    const source = activePhotos();
-    const siblings = [photoState?.photos, albumPhotos, mapPhotos, hiddenWorkspace?.activePhotos()];
-    for (const photos of new Set(siblings)) {
-      if (
-        !photos ||
-        photos === source ||
-        (source && photos.hidden !== source.hidden) ||
-        !(photos.started || photos.loading)
-      )
-        continue;
+    for (const photos of siblingPhotoLists()) {
       const rotations = receipt ? photos.metadataChanged(receipt) : new Map<string, number>();
       const preparedChanged = receipt
         ? photos.authored.targets.some((target) =>
@@ -2543,13 +2587,37 @@
           : Promise.resolve();
       if (preparedChanged) void refresh.then(() => photos.authored.reload());
     }
-    if (receipt) for (const file of receipt.after) pendingPhotoNodes.add(file.node_id);
-    else pendingPhotoDocuments = true;
-    if (!photoMode) refreshPhotoDocuments();
+    queuePhotoDocumentsRefresh(receipt?.after.map((file) => file.node_id));
+  }
+
+  function* siblingPhotoLists() {
+    const source = activePhotos();
+    const siblings = [photoState?.photos, albumPhotos, mapPhotos, hiddenWorkspace?.activePhotos()];
+    for (const photos of new Set(siblings)) {
+      if (
+        !photos ||
+        photos === source ||
+        (source && photos.hidden !== source.hidden) ||
+        !(photos.started || photos.loading)
+      )
+        continue;
+      yield photos;
+    }
+  }
+
+  function handlePhotoFacesChanged(): void {
+    for (const photos of siblingPhotoLists()) if (photos.dependsOnPeople) void photos.refresh();
+    queuePhotoDocumentsRefresh();
   }
 
   const pendingPhotoNodes = new Set<number>();
   let pendingPhotoDocuments = false;
+  // Without node IDs, refresh every retained Documents observation.
+  function queuePhotoDocumentsRefresh(nodeIDs?: number[]): void {
+    if (nodeIDs) for (const nodeID of nodeIDs) pendingPhotoNodes.add(nodeID);
+    else pendingPhotoDocuments = true;
+    if (!photoMode) refreshPhotoDocuments();
+  }
   $effect(() => {
     if (!photoMode) untrack(refreshPhotoDocuments);
   });
@@ -3506,6 +3574,7 @@
       {#if photoMode}
         {#if photoEventError}<p role="alert">{photoEventError}</p>{/if}
         {#if hiddenMode && hiddenAccess}<HiddenPhotos
+            onperson={openPersonPhotos}
             access={hiddenAccess}
             undoState={photoUndo}
             onhelp={openShortcutHelp}
@@ -3516,6 +3585,7 @@
             onloadtags={loadTagCatalog}
             onloadmoretags={() => loadTagCatalog(true)}
             onmetadatachanged={handlePhotoMetadataChanged}
+            onfaceschanged={handlePhotoFacesChanged}
             shortcuts={shortcutManager}
             bind:this={hiddenWorkspace}
             onexport={requestExport}
@@ -3555,6 +3625,7 @@
                 }}
               />{/if}
           {:else if albumID}{#if albumPhotos}{#key albumPhotos}<PhotosWorkspace
+                  onperson={openPersonPhotos}
                   {vaultID}
                   onhelp={openShortcutHelp}
                   tags={tagCatalog}
@@ -3564,6 +3635,7 @@
                   onloadtags={loadTagCatalog}
                   onloadmoretags={() => loadTagCatalog(true)}
                   onmetadatachanged={handlePhotoMetadataChanged}
+                  onfaceschanged={handlePhotoFacesChanged}
                   shortcuts={shortcutManager}
                   bind:this={libraryWorkspace}
                   onexport={requestExport}
@@ -3585,6 +3657,7 @@
                 ></EmptyState
               >
             {:else if !tiles.tile_url}<PhotosWorkspace
+                onperson={openPersonPhotos}
                 {vaultID}
                 onhelp={openShortcutHelp}
                 tags={tagCatalog}
@@ -3594,12 +3667,14 @@
                 onloadtags={loadTagCatalog}
                 onloadmoretags={() => loadTagCatalog(true)}
                 onmetadatachanged={handlePhotoMetadataChanged}
+                onfaceschanged={handlePhotoFacesChanged}
                 shortcuts={shortcutManager}
                 {mapMode}
                 {tiles}
                 photos={photoState.photos}
                 cache={photoState.cache}
               />{:else if mapPhotos}{#key mapPhotos}<PhotosWorkspace
+                  onperson={openPersonPhotos}
                   {vaultID}
                   onhelp={openShortcutHelp}
                   tags={tagCatalog}
@@ -3609,6 +3684,7 @@
                   onloadtags={loadTagCatalog}
                   onloadmoretags={() => loadTagCatalog(true)}
                   onmetadatachanged={handlePhotoMetadataChanged}
+                  onfaceschanged={handlePhotoFacesChanged}
                   shortcuts={shortcutManager}
                   {mapMode}
                   {tiles}
@@ -3626,6 +3702,7 @@
                   oninvalidate={invalidateLibrary}
                 />{/key}{/if}
           {:else}{#key photoState.photos.contextID}<PhotosWorkspace
+                onperson={openPersonPhotos}
                 {vaultID}
                 onhelp={openShortcutHelp}
                 tags={tagCatalog}
@@ -3635,6 +3712,7 @@
                 onloadtags={loadTagCatalog}
                 onloadmoretags={() => loadTagCatalog(true)}
                 onmetadatachanged={handlePhotoMetadataChanged}
+                onfaceschanged={handlePhotoFacesChanged}
                 shortcuts={shortcutManager}
                 uploadChannelError={uploadChannelError ||
                   (!uploadChannel ? "The verified upload channel is unavailable." : "")}

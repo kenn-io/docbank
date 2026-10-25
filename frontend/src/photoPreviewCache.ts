@@ -19,12 +19,13 @@ export function previewObjectURL(
   onload: (url: string) => void,
   onfailure: (cause: unknown) => void,
   reload = false,
+  personID?: string,
 ) {
   const controller = new AbortController();
   let current = true;
   let url = "";
   void cache
-    .get(assetID, generationID, controller.signal, reload)
+    .get(assetID, generationID, controller.signal, reload, personID)
     .then((blob) => {
       if (current) {
         url = URL.createObjectURL(blob);
@@ -79,14 +80,21 @@ export class PhotoPreviewCache {
     }
   }
 
-  get(assetID: string, generationID: string, caller?: AbortSignal, reload = false): Promise<Blob> {
+  get(
+    assetID: string,
+    generationID: string,
+    caller?: AbortSignal,
+    reload = false,
+    personID?: string,
+  ): Promise<Blob> {
     const signal = AbortSignal.any([this.controller.signal, ...(caller ? [caller] : [])]);
     return this.read(
       assetID,
       generationID,
-      getReadPhotoPreviewUrl(assetID, generationID),
+      getReadPhotoPreviewUrl(assetID, generationID, personID ? { person_id: personID } : undefined),
       signal,
       reload,
+      personID,
     ).catch((cause) => {
       if (
         !signal.aborted &&
@@ -104,6 +112,7 @@ export class PhotoPreviewCache {
     path: string,
     signal: AbortSignal,
     reload: boolean,
+    personID?: string,
   ): Promise<Blob> {
     signal.throwIfAborted();
     let onabort: () => void;
@@ -133,11 +142,17 @@ export class PhotoPreviewCache {
       try {
         const fetchSignal = AbortSignal.any([signal, AbortSignal.timeout(30_000)]);
         // The browser HTTP cache would keep bytes of photos hidden later; this class owns retention.
-        const response = await readPhotoPreview(assetID, generationID, undefined, {
-          session: this.session,
-          signal: fetchSignal,
-          cache: "no-store",
-        });
+        const response = await readPhotoPreview(
+          assetID,
+          generationID,
+          personID ? { person_id: personID } : undefined,
+          undefined,
+          {
+            session: this.session,
+            signal: fetchSignal,
+            cache: "no-store",
+          },
+        );
         noStore = /(?:^|,)\s*no-store\s*(?:,|$)/i.test(response.headers.get("Cache-Control") ?? "");
         bytes = await response.arrayBuffer();
       } finally {

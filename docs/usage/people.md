@@ -14,12 +14,34 @@ uses the revision returned by the preceding read.
 ## List and search
 
 `GET /api/v1/people?query=ada&limit=100` lists active people in folded
-display-name order. The CLI equivalent is:
+display-name order. Search matches the beginning of any word, so `Smith` finds `John Smith` and `John—Smith`. The CLI equivalent is:
 
 `docbank people list ada`
 
 MCP clients use `find_people`. Cursors are bound to the query and the
 requested person page.
+
+## Browser names and visibility
+
+Namesakes share one chooser, including case variants such as `Alex` and `ALEX`. The chooser lists every candidate with a visible email, phone, or scoped handle, or their creation date when no identity is available. Each row includes the full person ID. Select an existing person or **New person named …**. **Mark person in photo** also accepts a new name through **Create person** and saves the person and whole-photo mark together. Undoing a face's new-name decision through the API or CLI retires the new person unless it was edited or has other evidence. Clearing a name or a whole-photo mark leaves the person.
+
+Choose **Photos** on a candidate to load up to three linked-photo previews in the current Hidden scope. Only one candidate expands at a time; opening the chooser loads no previews. Linked photos follow timeline order and may include the current photo. Missing grid previews are prepared from up to three linked-photo candidates for the expanded person. Switching candidates cancels the previous requests and clears their previews.
+
+Previews crop the assigned face from its exact current source version, including a paired RAW with different framing. Replacing a source member removes its old face evidence from the chooser and person Library filter. When identity details distinguish the choices, **Whole photo** labels evidence without a face box. When details tie, only matching face crops appear; **Preview unavailable** means no assigned crop could be prepared.
+
+- Browser name search omits people whose only evidence is sensitive document actors or blind-copy assertions, even with Hidden unlocked.
+- Browser typeahead hides people whose only evidence is in locked Hidden photos until you unlock Hidden.
+- Browser results require at least one of:
+    - A retained depicted-photo assertion on a visible photo.
+    - An active non-blind-copy operator assertion or suppression on a visible document. These names are searchable before document publication.
+    - A published non-sensitive document link.
+    - A manually created unlinked person, including imported people.
+- Clearing a face name retains its photo evidence. Browser search hides that person while its only depicted evidence is in locked Hidden photos and restores the same person after unlock.
+- Automatically provisioned exact-identifier people stay hidden while processing is pending or failed, until a visible assertion or non-sensitive published document link supports their name.
+- Unlinked people with supplied identities remain searchable with blank identity labels.
+- When Hidden locks or expires, open name results, identity labels, and namesake previews clear.
+- API-key, CLI, and MCP name searches include all active people, including people whose only photo evidence is Hidden.
+- The picker explains that omitted people may share the typed name. You can create the person directly and merge a duplicate after unlock.
 
 ## Create and inspect
 

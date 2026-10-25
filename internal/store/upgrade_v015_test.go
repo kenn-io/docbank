@@ -246,7 +246,7 @@ func TestEveryReleasedSchemaFixtureUpgrades(t *testing.T) {
 				require.NoError(t, err)
 				face, _, err := s.CreatePhotoFace(t.Context(), currentNode.CurrentVersionID, uuid.New().String(), document.FaceBox{Width: 0.2, Height: 0.2}, person.PersonID)
 				require.NoError(t, err)
-				faces, _, err := s.PhotoFaces(t.Context(), currentNode.CurrentVersionID)
+				faces, _, _, err := s.PhotoFacePersonNames(t.Context(), currentNode.CurrentVersionID)
 				require.NoError(t, err)
 				require.Equal(t, []PhotoFace{face}, faces)
 				page, err := s.ListPhotoAssets(t.Context(), PhotoBrowseRequest{Query: snapshotTestQuery(t, `{"sort":{"field":"capture_time","direction":"desc"}}`)}, nil)
@@ -665,7 +665,7 @@ func TestJSONLOmittedPhotoMarkSurvivesFaceRetraction(t *testing.T) {
 			person, err := source.CreatePerson(ctx, "Ada", "operator")
 			require.NoError(t, err)
 			node, face := faceForDecisionTest(t, source, person.PersonID)
-			_, err = source.MarkPersonInPhoto(ctx, node.CurrentVersionID, person.PersonID)
+			_, err = source.MarkPersonInPhoto(ctx, node.CurrentVersionID, person.PersonID, "")
 			require.NoError(t, err)
 
 			var backup bytes.Buffer

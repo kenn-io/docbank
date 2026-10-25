@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
 )
 
 func TestCustodianScopeRejectsMixedCoordinates(t *testing.T) {
@@ -304,27 +305,6 @@ func TestCustodianAuthorityRejectsInvalidValuesAndReferences(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidPerson)
 }
 
-func TestPeopleByDisplayNameUsesFoldedStableCursor(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	grace, err := s.CreatePerson(ctx, "Grace Hopper", "operator")
-	require.NoError(t, err)
-	_, err = s.CreatePerson(ctx, "Ada Lovelace", "operator")
-	require.NoError(t, err)
-	secondGrace, err := s.CreatePerson(ctx, "GRACE Murray Hopper", "operator")
-	require.NoError(t, err)
-
-	page, err := s.PeopleByDisplayName(ctx, "grace", "", "", 1)
-	require.NoError(t, err)
-	require.Len(t, page, 1)
-	require.Equal(t, grace.PersonID, page[0].PersonID)
-	next, err := s.PeopleByDisplayName(ctx, "grace", page[0].DisplayNameFolded, page[0].PersonID, 10)
-	require.NoError(t, err)
-	require.Len(t, next, 1)
-	require.Equal(t, secondGrace.PersonID, next[0].PersonID)
-}
-
 func TestResolveCustodianPreservesSenderClaimAndResolvesAlias(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -370,4 +350,348 @@ func TestOperatorPackageCustodianDoesNotReplaceSenderPrimary(t *testing.T) {
 	_, err = s.SetOperatorPackageCustodian(ctx, CustodianRequest{Scope: scope, RawLabel: "Operator Owner",
 		Rank: "primary", Basis: "operator_assigned", SourceRef: "operator", IfMatchRevision: 1})
 	require.ErrorIs(t, err, ErrCustodianConflict)
+}
+
+func TestPeopleByDisplayNameEvidenceVisibility(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	hidden := browsePhotoNode(t, s, "hidden.jpg", fakeHash("search-hidden"), "image/jpeg")
+	asset, err := s.PhotoAssetForNode(ctx, hidden.ID)
+	require.NoError(t, err)
+	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
+	require.NoError(t, err)
+	unlocked := WithPhotoHiddenToken(ctx, token)
+	t.Run("suppression retains visible non-blind-copy evidence", func(t *testing.T) {
+		visible := browsePhotoNode(t, s, "suppressed-visible.jpg", fakeHash("suppressed-visible"), "image/jpeg")
+		for _, tc := range []struct {
+			name, role, version string
+			visible             bool
+		}{
+			{"Visible Sender", "sender", visible.CurrentVersionID, true},
+			{"Hidden Sender", "sender", hidden.CurrentVersionID, false},
+			{"Blind Copy", "blind_copy", visible.CurrentVersionID, false},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				person, err := s.CreatePerson(ctx, tc.name, "operator")
+				require.NoError(t, err)
+				_, err = s.AssertDocumentPerson(unlocked, PersonDocumentAssertion{ContentVersionID: tc.version, PersonID: person.PersonID, Role: tc.role, Action: "suppress", Revision: 1})
+				require.NoError(t, err)
+				people, err := s.PeopleByDisplayName(ctx, tc.name, "", "", 10, true)
+				require.NoError(t, err)
+				if !tc.visible {
+					require.Empty(t, people)
+					return
+				}
+				require.Len(t, people, 1)
+				require.Equal(t, person.PersonID, people[0].PersonID)
+			})
+		}
+	})
+	t.Run("hidden-only people are skipped while paging", func(t *testing.T) {
+		visible := browsePhotoNode(t, s, "visible.jpg", fakeHash("search-visible"), "image/jpeg")
+		var hiddenOnlyID string
+		var visibleIDs []string
+		for _, action := range []string{"assert", "suppress", "withdrawn"} {
+			for _, version := range []string{hidden.CurrentVersionID, visible.CurrentVersionID} {
+				prefix := "Alex Z"
+				if version == hidden.CurrentVersionID {
+					prefix = "Alex A"
+				}
+				p, err := s.CreatePerson(ctx, prefix+action+version, "operator")
+				require.NoError(t, err)
+				_, err = s.AssertDocumentPerson(unlocked, PersonDocumentAssertion{ContentVersionID: version, PersonID: p.PersonID, Role: "depicted", Action: action, Revision: 1})
+				require.NoError(t, err)
+				if version == hidden.CurrentVersionID {
+					if action == "assert" {
+						hiddenOnlyID = p.PersonID
+					}
+				} else {
+					visibleIDs = append(visibleIDs, p.PersonID)
+				}
+			}
+		}
+		afterName, afterID := "", ""
+		for _, id := range visibleIDs {
+			page, err := s.PeopleByDisplayName(ctx, "Alex", afterName, afterID, 1, true)
+			require.NoError(t, err)
+			require.Len(t, page, 1)
+			require.Equal(t, id, page[0].PersonID)
+			afterName, afterID = page[0].DisplayNameFolded, page[0].PersonID
+		}
+		withHiddenPhoto, err := s.PeopleByDisplayName(unlocked, "Alex", "", "", 1, true)
+		require.NoError(t, err)
+		require.Len(t, withHiddenPhoto, 1)
+		require.Equal(t, hiddenOnlyID, withHiddenPhoto[0].PersonID)
+	})
+	t.Run("visible evidence retains a hidden person", func(t *testing.T) {
+		retainedHidden, err := s.CreatePerson(ctx, "Hidden Ada", "operator")
+		require.NoError(t, err)
+		mark, err := s.MarkPersonInPhoto(unlocked, hidden.CurrentVersionID, retainedHidden.PersonID, "")
+		require.NoError(t, err)
+		retainedHidden, _, err = s.PersonByID(ctx, retainedHidden.PersonID)
+		require.NoError(t, err)
+		_, err = s.AddPersonIdentity(ctx, retainedHidden.PersonID, retainedHidden.Revision, PersonIdentity{
+			Kind: "email", ValueDisplay: "ada@example.test", Origin: "operator",
+			EvidenceKind: "operator_assertion", EvidenceID: "visible-derived-author", Confidence: "operator_asserted",
+		})
+		require.NoError(t, err)
+		derivedVersion := seedDocumentPeopleEvent(t, s, "visible-person-author.txt", "d9", nil)
+		derived := publishLifecycleDocumentPeople(t, s, derivedVersion.ID)
+		require.Equal(t, retainedHidden.PersonID, derived.PersonID)
+		locked, err := s.PeopleByDisplayName(ctx, "Hidden Ada", "", "", 100, true)
+		require.NoError(t, err)
+		personIDs := func(people []PersonSearchResult) []string {
+			ids := make([]string, 0, len(people))
+			for _, person := range people {
+				ids = append(ids, person.PersonID)
+			}
+			return ids
+		}
+		require.Equal(t, []string{retainedHidden.PersonID}, personIDs(locked))
+		all, err := s.PeopleByDisplayName(ctx, "Hidden Ada", "", "", 100, false)
+		require.NoError(t, err)
+		require.Equal(t, []string{retainedHidden.PersonID}, personIDs(all))
+		withAccess, err := s.PeopleByDisplayName(unlocked, "Hidden Ada", "", "", 100, true)
+		require.NoError(t, err)
+		require.Equal(t, personIDs(locked), personIDs(withAccess))
+		for _, action := range []string{"suppress", "withdrawn"} {
+			mark.Action = action
+			mark, err = s.AssertDocumentPerson(unlocked, mark)
+			require.NoError(t, err)
+			visibleDerived, err := s.PeopleByDisplayName(ctx, "Hidden Ada", "", "", 10, true)
+			require.NoError(t, err)
+			require.Len(t, visibleDerived, 1)
+			require.Equal(t, retainedHidden.PersonID, visibleDerived[0].PersonID)
+		}
+	})
+	for _, state := range []string{"stale", "trashed"} {
+		t.Run(state, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			version := seedDocumentPeopleEvent(t, s, "retained-person.txt", "d9", nil)
+			person := publishLifecycleDocumentPeople(t, s, version.ID)
+			if state == "stale" {
+				_, _, err := s.ReplaceContent(ctx, version.NodeID, UnconditionalRev, fakeHash("e9"), 1, "text/plain")
+				require.NoError(t, err)
+			} else {
+				_, _, err := s.Trash(ctx, version.NodeID, UnconditionalRev)
+				require.NoError(t, err)
+			}
+			var retained int
+			require.NoError(t, s.db.QueryRowContext(ctx, `SELECT count(*) FROM document_people WHERE person_id=?`, person.PersonID).Scan(&retained))
+			require.Positive(t, retained)
+			all, err := s.PeopleByDisplayName(ctx, person.DisplayName, "", "", 10, false)
+			require.NoError(t, err)
+			require.Len(t, all, 1)
+			retainedVisible, err := s.PeopleByDisplayName(ctx, person.DisplayName, "", "", 10, true)
+			require.NoError(t, err)
+			require.Equal(t, all, retainedVisible)
+		})
+	}
+	t.Run("document publication stages", func(t *testing.T) {
+		var sensitiveID, visibleID string
+		var versions []string
+		for _, sensitive := range []bool{true, false} {
+			address, name, seed := "visible@example.test", "Published Visible", "d1"
+			if sensitive {
+				address, name, seed = "sensitive@example.test", "Published Sensitive", "d2"
+			}
+			version := seedDocumentPeopleEvent(t, s, seed+".txt", seed, []document.DocumentEventActorV1{{
+				ActorKey: "email:" + address, Address: address, DisplayName: name,
+				Claim: name, Role: "author", Sensitive: sensitive,
+			}})
+			input, err := s.PrepareDocumentPeopleInputs(ctx, version.ID)
+			require.NoError(t, err)
+			require.Len(t, input.Actors, 1)
+			require.Equal(t, sensitive, input.Actors[0].Sensitive)
+			versions = append(versions, version.ID)
+		}
+		for _, stage := range []string{"pending", "failed", "published"} {
+			for _, versionID := range versions {
+				input, err := s.PrepareDocumentPeopleInputs(ctx, versionID)
+				require.NoError(t, err)
+				switch stage {
+				case "failed":
+					require.NoError(t, s.MarkDocumentPeopleFailed(ctx, input, "derivation_failed"))
+				case "published":
+					publication := documentPeoplePublicationForInput(t, input)
+					publication.People.Edges[0].Sensitive = input.Actors[0].Sensitive
+					_, err = s.PublishDocumentPeople(ctx, publication)
+					require.NoError(t, err)
+					if input.Actors[0].Sensitive {
+						sensitiveID = publication.People.Edges[0].PersonID
+					} else {
+						visibleID = publication.People.Edges[0].PersonID
+					}
+				}
+			}
+			t.Run(stage, func(t *testing.T) {
+				global, err := s.PeopleByDisplayName(ctx, "Published", "", "", 10, false)
+				require.NoError(t, err)
+				require.Len(t, global, 2)
+				browser, err := s.PeopleByDisplayName(ctx, "Published", "", "", 10, true)
+				require.NoError(t, err)
+				if stage != "published" {
+					require.Empty(t, browser)
+					return
+				}
+				require.Equal(t, sensitiveID, global[0].PersonID)
+				require.Equal(t, "Published Sensitive", global[0].DisplayName)
+				require.Equal(t, visibleID, global[1].PersonID)
+				require.Len(t, browser, 1)
+				require.Equal(t, visibleID, browser[0].PersonID)
+			})
+		}
+	})
+}
+
+func TestPeopleByDisplayNameOperatorCandidateAcceptance(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	version := seedDocumentPeopleEvent(t, s, "candidate.txt", "b2", []document.DocumentEventActorV1{{ActorKey: "name_alias:alex sensitive", DisplayName: "Alex Sensitive", Claim: "Alex Sensitive", Role: "author", Sensitive: true}})
+	_, err := s.PrepareDocumentPeopleInputs(ctx, version.ID)
+	require.NoError(t, err)
+	candidates, _, err := s.PersonCandidates(ctx, "open", 10, 0)
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	decided, err := s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: candidates[0].CandidateID, Action: "new_person", ExpectedRevision: candidates[0].Revision})
+	require.NoError(t, err)
+	assertions, err := s.DocumentPersonAssertions(ctx, version.ID)
+	require.NoError(t, err)
+	require.Len(t, assertions, 1)
+	require.Equal(t, "author", assertions[0].Role)
+	browser, err := s.PeopleByDisplayName(ctx, "Alex Sensitive", "", "", 10, true)
+	require.NoError(t, err)
+	require.Len(t, browser, 1)
+	require.Equal(t, decided.DecidedPersonID, browser[0].PersonID)
+}
+
+func TestPeopleByDisplayNameMatchesWordPrefixes(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	for _, name := range []string{"John Smith", "Smith Jones", "Alice Smith", "Grace Hopper", "GRACE Murray Hopper", "Straße", "STRASSE", "Rate %_One"} {
+		_, err := s.CreatePerson(ctx, name, "operator")
+		require.NoError(t, err)
+	}
+	page, err := s.PeopleByDisplayName(ctx, "Smith", "", "", 1, false)
+	require.NoError(t, err)
+	require.Equal(t, "Alice Smith", page[0].DisplayName)
+	next, err := s.PeopleByDisplayName(ctx, "Smith", page[0].DisplayNameFolded, page[0].PersonID, 10, false)
+	require.NoError(t, err)
+	require.Equal(t, []string{"John Smith", "Smith Jones"}, []string{next[0].DisplayName, next[1].DisplayName})
+	literal, err := s.PeopleByDisplayName(ctx, "%_", "", "", 10, false)
+	require.NoError(t, err)
+	require.Len(t, literal, 1)
+	require.Equal(t, "Rate %_One", literal[0].DisplayName)
+	for _, query := range []string{"grace", "strasse"} {
+		first, err := s.PeopleByDisplayName(ctx, query, "", "", 1, false)
+		require.NoError(t, err)
+		require.Len(t, first, 1)
+		second, err := s.PeopleByDisplayName(ctx, query, first[0].DisplayNameFolded, first[0].PersonID, 10, false)
+		require.NoError(t, err)
+		require.Len(t, second, 1)
+		if query == "grace" {
+			require.Equal(t, "Grace Hopper", first[0].DisplayName)
+			require.Equal(t, "GRACE Murray Hopper", second[0].DisplayName)
+		} else {
+			require.Equal(t, "strasse", first[0].DisplayNameFolded)
+			require.Equal(t, "strasse", second[0].DisplayNameFolded)
+			require.ElementsMatch(t, []string{"Straße", "STRASSE"}, []string{first[0].DisplayName, second[0].DisplayName})
+		}
+	}
+}
+
+func TestPeopleSearchIdentityLabelsRespectEvidenceVisibility(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	visible := browsePhotoNode(t, s, "identity-visible.jpg", fakeHash("identity-visible"), "image/jpeg")
+	hidden := browsePhotoNode(t, s, "identity-hidden.jpg", fakeHash("identity-hidden"), "image/jpeg")
+	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	asset, err := s.PhotoAssetForNode(ctx, hidden.ID)
+	require.NoError(t, err)
+	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
+	require.NoError(t, err)
+	for index, test := range []struct {
+		name, kind, value, origin, scopeKind, scopeValue, expected string
+		sensitive, hidden                                          bool
+		additional                                                 []PersonIdentity
+	}{
+		{name: "identity order", kind: "phone", value: "+12025550123", origin: "operator", expected: "a@example.test", additional: []PersonIdentity{
+			{Kind: "email", ValueDisplay: "z@example.test", Origin: "operator", EvidenceKind: "operator_assertion", EvidenceID: "label-order", Confidence: "operator_asserted"},
+			{Kind: "email", ValueDisplay: "a@example.test", Origin: "operator", EvidenceKind: "operator_assertion", EvidenceID: "label-order", Confidence: "operator_asserted"},
+		}},
+		{name: "visible", kind: "email", value: "visible@example.test", origin: "derived", expected: "visible@example.test"},
+		{name: "unsupported", kind: "email", value: "unsupported@example.test", origin: "derived"},
+		{name: "sensitive", kind: "email", value: "sensitive@example.test", origin: "derived", sensitive: true},
+		{name: "hidden", kind: "email", value: "hidden@example.test", origin: "derived", hidden: true},
+		{name: "phone", kind: "phone", value: "+12025550123", origin: "operator", expected: "+12025550123"},
+		{name: "handle", kind: "handle", value: "chat/user-a", origin: "operator", scopeKind: "workspace", scopeValue: "example", expected: "chat/user-a (workspace: example)"},
+		{name: "unscoped", kind: "handle", value: "chat/user-a", origin: "operator"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			person, err := s.CreatePerson(ctx, "Alex "+test.name, "operator")
+			require.NoError(t, err)
+			_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: visible.CurrentVersionID, PersonID: person.PersonID, Role: "depicted", Action: "assert", Revision: 1})
+			require.NoError(t, err)
+			person, _, err = s.PersonByID(ctx, person.PersonID)
+			require.NoError(t, err)
+			_, err = s.AddPersonIdentity(ctx, person.PersonID, person.Revision, PersonIdentity{
+				Kind: test.kind, ValueDisplay: test.value, Origin: test.origin, ScopeKind: test.scopeKind, ScopeValue: test.scopeValue,
+				EvidenceKind: "source_metadata", EvidenceID: "identity-source", Confidence: "exact_identifier",
+			})
+			require.NoError(t, err)
+			for _, identity := range test.additional {
+				person.Revision++
+				_, err = s.AddPersonIdentity(ctx, person.PersonID, person.Revision, identity)
+				require.NoError(t, err)
+			}
+			if test.name != "unsupported" && test.origin != "operator" {
+				version := seedDocumentPeopleEvent(t, s, test.name+".txt", fmt.Sprintf("d%x", index), []document.DocumentEventActorV1{{
+					ActorKey: test.kind + ":" + test.value, Address: test.value, DisplayName: person.DisplayName,
+					Claim: person.DisplayName, Role: "author", Sensitive: test.sensitive,
+				}})
+				if test.hidden {
+					asset, err := s.PhotoAssetForNode(WithPhotoHiddenToken(ctx, token), hidden.ID)
+					require.NoError(t, err)
+					_, err = s.AttachPhotoFile(WithPhotoHiddenToken(ctx, token), asset.ID, asset.Revision, version.NodeID, PhotoRoleSidecar, &asset.Files[0].ID)
+					require.NoError(t, err)
+				}
+				if test.sensitive {
+					_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: version.ID, PersonID: person.PersonID, Role: "recipient", Action: "assert", Revision: 1})
+					require.NoError(t, err)
+				}
+				input, err := s.PrepareDocumentPeopleInputs(ctx, version.ID)
+				require.NoError(t, err)
+				publication := documentPeoplePublicationForInput(t, input)
+				publication.People.Edges[0].Sensitive = test.sensitive
+				if test.sensitive {
+					assertion := input.Assertions[0]
+					publication.People.Edges = append(publication.People.Edges, document.DocumentPersonEdgeV1{
+						PersonID: person.PersonID, Role: assertion.Role, EvidenceKind: "operator_assertion", EvidenceID: assertion.AssertionID,
+						Basis: "operator_assigned", Confidence: "operator_asserted", ClaimCount: 1,
+					})
+				}
+				_, err = s.PublishDocumentPeople(ctx, publication)
+				require.NoError(t, err)
+			}
+			page, err := s.PeopleByDisplayName(ctx, person.DisplayName, "", "", 10, true)
+			require.NoError(t, err)
+			require.Len(t, page, 1)
+			require.Equal(t, test.expected, page[0].IdentityLabel)
+			if test.hidden {
+				page, err = s.PeopleByDisplayName(WithPhotoHiddenToken(ctx, token), person.DisplayName, "", "", 10, true)
+				require.NoError(t, err)
+				require.Equal(t, test.value, page[0].IdentityLabel)
+			}
+		})
+	}
 }

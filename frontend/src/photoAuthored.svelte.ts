@@ -386,6 +386,7 @@ export class PhotoAuthoredEditor {
     private onfailure: (cause: unknown) => void,
     readonly undoState = new PhotoUndoState(),
     private readonly hiddenAccess?: HiddenAccess,
+    private readonly targetBusy: () => boolean = () => false,
   ) {}
   private request<T>(request: () => Promise<T>) {
     return this.hiddenAccess ? this.hiddenAccess.run(request) : request();
@@ -422,9 +423,9 @@ export class PhotoAuthoredEditor {
       this.unavailable();
       return false;
     }
-    if (!this.dirty && !this.busy) return true;
+    if (!this.dirty && !this.busy && !this.targetBusy()) return true;
     this.unavailable(
-      this.busy
+      this.busy || this.targetBusy()
         ? "An edit is in progress. Wait for it to finish."
         : "Apply or clear your metadata edits before changing photos.",
     );

@@ -81,7 +81,7 @@ func TestProduceVisualPreviewForRecipe(t *testing.T) {
 		{"png", "image/png", mediatest.PNG(3000, 30, color.White), 3000, 30},
 		{"gif", "image/gif", mediatest.GIF(3000, 30, 2), 3000, 30},
 		{"webp", "image/webp", webpSource, 3000, 30},
-		{"raw", "image/x-adobe-dng", syntheticRAWPreviewTIFF(6, mediatest.JPEG(3000, 30, color.White)), 30, 3000},
+		{"raw", "image/x-adobe-dng", mediatest.TIFFWithEmbeddedJPEG(6, mediatest.TIFFJPEGPreview{Data: mediatest.JPEG(3000, 30, color.White)}), 30, 3000},
 		{"raf", "image/x-fuji-raf", syntheticRAF(), 30, 40},
 		{"small-png", "image/png", mediatest.PNG(3, 2, color.White), 3, 2},
 	} {

@@ -16,14 +16,24 @@
     PhotoAuthoredReceipt,
     Tag,
   } from "./generated/docbank.js";
+  import PhotoPeople from "./PhotoPeople.svelte";
+  import type { PhotoFaces } from "./photoFaces.svelte.js";
   let {
     editor,
+    faces,
+    session = "",
+    cache,
+    onperson,
     count = 1,
     actionDisabled = false,
     onedit,
     onresponse,
   }: {
     editor: PhotoAuthoredEditor;
+    faces?: PhotoFaces;
+    session?: string;
+    cache?: import("./photoPreviewCache.js").PhotoPreviewCache;
+    onperson?: (id: string, name: string) => void;
     count?: number;
     actionDisabled?: boolean;
     onresponse?: (receipt?: PhotoAuthoredReceipt, tags?: Tag[]) => Promise<void>;
@@ -365,6 +375,12 @@
       disabled={editor.busy || editor.loading}
       onclick={() => editor.clearDraft()}>Clear edits</Button
     >{/if}
+  {#if count === 1 && faces?.version && !faces.concealed}<PhotoPeople
+      {faces}
+      {session}
+      {onperson}
+      {cache}
+    />{/if}
 </section>
 
 <style>

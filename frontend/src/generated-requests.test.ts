@@ -155,6 +155,7 @@ it("preserves a conditional photo preview's empty 304 response", async () => {
   const response = await api.readPhotoPreview(
     "00000000-0000-4000-8000-000000000001",
     "a".repeat(64),
+    undefined,
     { "If-None-Match": etag },
     { session: "synthetic-session" },
   );
