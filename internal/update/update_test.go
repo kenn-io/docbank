@@ -25,6 +25,7 @@ import (
 	"go.kenn.io/kit/selfupdate"
 
 	"go.kenn.io/docbank/internal/update"
+	"go.kenn.io/docbank/internal/version"
 )
 
 // buildRelease returns an archive containing a fake docbank binary and its
@@ -308,6 +309,54 @@ func TestUpdateDeclinedConfirmation(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Contains(t, out.String(), "aborted")
+	got, err := os.ReadFile(dest)
+	require.NoError(t, err)
+	assert.Equal(t, "old", string(got))
+}
+
+// packagedBy stamps the build as owned by a package manager, as the
+// Distribution ldflag does, for the rest of the test.
+func packagedBy(t *testing.T, distribution string) {
+	t.Helper()
+	prev := version.Distribution
+	version.Distribution = distribution
+	t.Cleanup(func() { version.Distribution = prev })
+}
+
+func TestUpdateRefusesPackageManagedInstall(t *testing.T) {
+	packagedBy(t, "homebrew")
+	ts, _ := fakeReleaseServer(t, "9.9.9")
+	c := newFakeClient(t, ts, "0.0.1")
+
+	dest := filepath.Join(t.TempDir(), "docbank")
+	require.NoError(t, os.WriteFile(dest, []byte("old"), 0o755))
+
+	var out strings.Builder
+	err := update.Run(t.Context(), &out, withoutDaemon(update.Options{
+		Yes: true, Force: true, Client: &c, Root: t.TempDir(), Destination: dest,
+	}))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "brew upgrade docbank")
+	got, err := os.ReadFile(dest)
+	require.NoError(t, err)
+	assert.Equal(t, "old", string(got), "a Homebrew-managed binary must not replace itself")
+}
+
+func TestUpdateCheckOnlyGivesPackageManagerGuidance(t *testing.T) {
+	packagedBy(t, "homebrew")
+	ts, _ := fakeReleaseServer(t, "9.9.9")
+	c := newFakeClient(t, ts, "0.0.1")
+
+	dest := filepath.Join(t.TempDir(), "docbank")
+	require.NoError(t, os.WriteFile(dest, []byte("old"), 0o755))
+
+	var out strings.Builder
+	err := update.Run(t.Context(), &out, update.Options{
+		CheckOnly: true, Client: &c, Root: t.TempDir(), Destination: dest,
+	})
+	require.NoError(t, err)
+	assert.Contains(t, out.String(), "9.9.9")
+	assert.Contains(t, out.String(), "brew upgrade docbank")
 	got, err := os.ReadFile(dest)
 	require.NoError(t, err)
 	assert.Equal(t, "old", string(got))
