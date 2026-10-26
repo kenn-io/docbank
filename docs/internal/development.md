@@ -257,7 +257,8 @@ Kata, so a prune committed between its reads cannot remove a version from that
 response. A later request sees the prune. History counts and pages remain one
 statement. Shared queries introduce numbered parameters in ascending order:
 SQLite assigns their bindings by first appearance, while PostgreSQL uses the
-number itself.
+number itself. Exercise shared queries on both backends to catch binding and
+result differences.
 
 The content-history tests reuse the node-query fixture and the real SQLite
 schema. They cover version projection, ownership, pagination and a prune
@@ -292,6 +293,10 @@ node and content-history query tests. `make test-pg` requires the DSN, bypasses
 cached test results, and runs these groups under the race detector. Without
 that variable, ordinary `make test` skips PostgreSQL tests.
 A supplied but invalid connection fails rather than skipping.
+
+Name PostgreSQL tests in `internal/store` with the `Postgres` suffix. The target
+selects them with `-run 'Postgres$'`, so adding a test needs no Makefile edit.
+It runs the entire `internal/store/pgschema` package separately.
 
 CI supplies the server through its service-container configuration, uses the
 existing Linux cache group, and runs only the PostgreSQL tests in this lane.
