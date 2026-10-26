@@ -220,7 +220,7 @@
         </div>
       </div>
       {#if error}<p role="alert" class="tool-error">{error}</p>{/if}
-      {#if !preview && !job}
+      {#if !job}
         <div class="tool-actions">
           {#if busy}<span class="tool-muted" role="status"
               ><Spinner size={14} />
@@ -231,7 +231,8 @@
             tone="info"
             surface="solid"
             disabled={busy || !file}
-            onclick={() => void previewPackage()}>Upload and preview</Button
+            onclick={() => void previewPackage()}
+            >{preview ? "Refresh preview" : "Upload and preview"}</Button
           >
         </div>
       {/if}

@@ -1481,6 +1481,66 @@ it("supersedes a pending search when Advanced sorts the previously displayed que
   });
 });
 
+it("supersedes a pending search when Advanced sorts that same query", async () => {
+  const small = { ...node(2, "small.txt", baseVersion), size: 10 };
+  const large = { ...node(3, "large.txt", rerankedVersion), size: 500 };
+  const harness = installHarness({
+    profiles: [
+      {
+        name: "private",
+        fingerprint: "a".repeat(64),
+        rendition: true,
+        embedding_bindings: ["embed"],
+        reranking_available: false,
+      },
+    ],
+    files: [small, large],
+    baseReport: report("hybrid", [
+      result(small, 1, "small excerpt"),
+      result(large, 2, "large excerpt"),
+    ]),
+  });
+  let resolvePending!: (response: Response) => void;
+  const pending = new Promise<Response>((resolve) => {
+    resolvePending = resolve;
+  });
+  const fetch = harness.fetchMock.getMockImplementation()!;
+  render(App);
+  await screen.findByRole("searchbox", { name: "Search documents" });
+  harness.fetchMock.mockImplementation((input, init) => {
+    if (String(input) === "/api/v1/search") {
+      harness.fetchMock.mockImplementation(fetch);
+      return pending;
+    }
+    return fetch(input, init);
+  });
+  await submitSearch("annual report");
+  await waitFor(() =>
+    expect(harness.fetchMock.mock.calls.some(([url]) => String(url) === "/api/v1/search")).toBe(
+      true,
+    ),
+  );
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  await fireEvent.click(screen.getByRole("combobox", { name: /^Sort by:/ }));
+  await fireEvent.click(screen.getByRole("option", { name: "Size" }));
+  await fireEvent.click(screen.getByRole("combobox", { name: "Direction: Ascending" }));
+  await fireEvent.click(screen.getByRole("option", { name: "Descending" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  await act(async () => {
+    resolvePending(json(report("hybrid", [result(small, 1, "stale excerpt")])));
+    await pending;
+  });
+  await waitFor(() => {
+    expect(screen.getByText("small excerpt")).toBeTruthy();
+    expect(screen.queryByText("stale excerpt")).toBeNull();
+    expect(screen.getByRole("columnheader", { name: "Size" }).getAttribute("aria-sort")).toBe(
+      "descending",
+    );
+    const rows = screen.getAllByRole("row").filter((row) => row.textContent?.includes("txt"));
+    expect(rows[0].textContent).toContain("large.txt");
+  });
+});
+
 it("keeps a first search by meaning when Advanced only changes the sort", async () => {
   const file = node(2, "report.txt", baseVersion);
   const harness = installHarness({
