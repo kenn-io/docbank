@@ -306,6 +306,10 @@ body .app-shell .search-controls .kit-button--outline.kit-button--neutral {
   min-height: 0;
 }
 
+.snapshot-browser:not(:has(.facets)) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .snapshot-results {
   display: flex;
   flex-direction: column;

@@ -618,3 +618,28 @@ it("shows current running work ahead of a retained failure in the same lane", as
   expect(within(lane).getByText("Earlier operation failed")).toBeTruthy();
   expect(screen.getByRole("row", { name: "Moving stored files Running" })).toBeTruthy();
 });
+
+it("labels queued work separately and counts only busy lanes as running", async () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    jobsResponse([
+      {
+        name: "storage:queued",
+        lane: "photo_import",
+        status: "queued",
+        busy: false,
+        started_at: "2026-07-23T12:00:00Z",
+      },
+      {
+        name: "extract:plain-text",
+        lane: "extract:plain-text",
+        status: "running",
+        busy: true,
+        started_at: "2026-07-23T12:00:00Z",
+      },
+    ]),
+  );
+  render(JobsDrawer, { session: "synthetic", onclose: vi.fn(), onauthfailure: vi.fn() });
+  const queued = await screen.findByRole("region", { name: "Importing photos" });
+  expect(within(queued).getByText("Queued")).toBeTruthy();
+  expect(screen.getByText("1 running")).toBeTruthy();
+});

@@ -68,7 +68,7 @@ describe("activity lanes", () => {
         can_cancel: true,
       }),
     ]);
-    expect(lane).toMatchObject({ active: true, visible: true, status: "queued" });
+    expect(lane).toMatchObject({ active: false, visible: true, status: "queued" });
     expect(lane.members).toHaveLength(1);
     const [idle] = jobLanes([job({ status: "completed", busy: false })]);
     expect(idle.visible).toBe(false);
@@ -136,7 +136,7 @@ describe("activity lanes", () => {
       title: "Photo checkout",
       completed: 1,
       total: 3,
-      active: true,
+      active: false,
       visible: true,
       control,
     });

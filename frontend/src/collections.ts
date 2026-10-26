@@ -197,27 +197,7 @@ export async function setCollectionLabel(
   return result;
 }
 
-// CLI import sources use Go-quoted paths; older imports may have plain text.
-export function sourcePaths(collection: Pick<Collection, "source_description">): string[] {
-  try {
-    const source = collection.source_description.replace(/\\U([0-9a-fA-F]{8})/g, (_, hex) =>
-      String.fromCodePoint(parseInt(hex, 16)),
-    );
-    const value: unknown = JSON.parse(source);
-    if (Array.isArray(value) && value.every((path) => typeof path === "string")) return value;
-  } catch {
-    /* Older imports may have a plain-text source. */
-  }
-  return [collection.source_description];
-}
-
-// What the UI calls an import: its label, else the folder it came from.
-export function displayName(
-  collection: Pick<Collection, "id" | "label" | "source_description">,
-): string {
-  return (
-    collection.label ??
-    sourcePaths(collection)[0]?.replace(/\\/g, "/").replace(/\/$/, "").split("/").pop() ??
-    `Import ${collection.id.slice(0, 8)}`
-  );
+// What the UI calls an import when no label has been saved.
+export function displayName(collection: Pick<Collection, "id" | "label">): string {
+  return collection.label ?? `Unlabeled import ${collection.id.slice(0, 8)}`;
 }

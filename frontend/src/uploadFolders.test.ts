@@ -3,41 +3,37 @@ import { uploadParent } from "./uploadFolders.js";
 
 afterEach(() => vi.restoreAllMocks());
 
-it("finds a matching existing folder beyond the first page by parent ID", async () => {
-  const file = new File(["report"], "report.txt");
-  Object.defineProperty(file, "webkitRelativePath", { value: "Reports/report.txt" });
-  const reads: string[] = [];
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    if (init?.method === "POST") return Response.json({ code: "exists" }, { status: 409 });
-    const url = String(input);
-    reads.push(url);
-    return Response.json({
-      items: url.includes("offset=0")
-        ? Array.from({ length: 1000 }, (_, index) => ({
-            id: index + 10,
-            name: `Archive ${index}`,
-            kind: "dir",
-          }))
-        : [{ id: 7, name: "Reports", kind: "dir" }],
-      total: 1001,
-      limit: 1000,
-      offset: url.includes("offset=0") ? 0 : 1000,
+it.each([
+  ["/", "/api/v1/path?path=%2FReports"],
+  ["/Archive", "/api/v1/path?path=%2FArchive%2FReports"],
+])(
+  "resolves an existing folder under %s once without listing its siblings",
+  async (rootPath, url) => {
+    const file = new File(["report"], "report.txt");
+    Object.defineProperty(file, "webkitRelativePath", { value: "Reports/report.txt" });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      if (init?.method === "POST") return Response.json({ code: "exists" }, { status: 409 });
+      if (String(input) === url)
+        return Response.json({ id: 7, name: "Reports", kind: "dir", path: "/Reports" });
+      throw new Error(`Unexpected request ${input}`);
     });
-  });
-  const parent = await uploadParent(
-    file,
-    3,
-    new Map(),
-    "session",
-    new AbortController().signal,
-    () => {},
-  );
-  expect(parent).toBe(7);
-  expect(reads).toEqual([
-    "/api/v1/nodes/3/children?limit=1000&offset=0",
-    "/api/v1/nodes/3/children?limit=1000&offset=1000",
-  ]);
-});
+    const oncreate = vi.fn();
+    const directories = new Map<string, number>();
+    expect(
+      await uploadParent(
+        file,
+        { id: 3, path: rootPath },
+        directories,
+        "session",
+        new AbortController().signal,
+        oncreate,
+      ),
+    ).toBe(7);
+    expect(directories.get("Reports")).toBe(7);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(oncreate).not.toHaveBeenCalled();
+  },
+);
 
 it("rejects a file that occupies a required folder name", async () => {
   const file = new File(["report"], "report.txt");
@@ -45,9 +41,16 @@ it("rejects a file that occupies a required folder name", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) =>
     init?.method === "POST"
       ? Response.json({ code: "exists" }, { status: 409 })
-      : Response.json({ items: [{ id: 7, name: "Reports", kind: "file" }], total: 1 }),
+      : Response.json({ id: 7, name: "Reports", kind: "file" }),
   );
   await expect(
-    uploadParent(file, 3, new Map(), "session", new AbortController().signal, () => {}),
+    uploadParent(
+      file,
+      { id: 3, path: "/" },
+      new Map(),
+      "session",
+      new AbortController().signal,
+      () => {},
+    ),
   ).rejects.toThrow("A file already uses the folder name Reports.");
 });

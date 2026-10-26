@@ -1,10 +1,7 @@
 <script lang="ts">
   import { tick, untrack } from "svelte";
-  import { Button, SearchInput, SelectDropdown, Spinner } from "@kenn-io/kit-ui";
+  import { Button, FindBar, SelectDropdown, Spinner } from "@kenn-io/kit-ui";
   import AppTooltip from "./AppTooltip.svelte";
-  import IconAction from "./IconAction.svelte";
-  import ArrowUpIcon from "@lucide/svelte/icons/arrow-up";
-  import ArrowDownIcon from "@lucide/svelte/icons/arrow-down";
   import ShieldCheckIcon from "@lucide/svelte/icons/shield-check";
   import { APIError } from "./api-transport.js";
   import { previewEligibility, readVerifiedPreview } from "./download.js";
@@ -181,37 +178,27 @@
   {#if text || resolution?.state === "verified_empty"}
     <div class="text-controls">
       {#if text}
-        <SearchInput
-          size="sm"
-          value={find}
+        <FindBar
+          query={find}
+          matchCount={findMatches.length}
+          currentIndex={Math.min(activeMatch, Math.max(0, findMatches.length - 1))}
+          autofocus={false}
           placeholder="Find"
-          ariaLabel="Find in verified text"
+          inputAriaLabel="Find in verified text"
+          previousLabel="Previous text match"
+          nextLabel="Next text match"
+          closeLabel="Clear text search"
           oninput={(value) => {
             find = value.slice(0, 256);
             activeMatch = 0;
           }}
-          onkeydown={(event) => {
-            if (event.key === "Enter") {
-              event.preventDefault();
-              moveMatch(event.shiftKey ? -1 : 1);
-            }
+          onnext={() => moveMatch(1)}
+          onprev={() => moveMatch(-1)}
+          onclose={() => {
+            find = "";
+            activeMatch = 0;
           }}
         />
-        {#if find}
-          <span aria-live="polite"
-            >{findMatches.length
-              ? `${Math.min(activeMatch + 1, findMatches.length)} of ${findMatches.length}`
-              : "No matches"}</span
-          >
-          {#if findMatches.length}
-            <IconAction size="sm" ariaLabel="Previous text match" onclick={() => moveMatch(-1)}
-              ><ArrowUpIcon size={13} /></IconAction
-            >
-            <IconAction size="sm" ariaLabel="Next text match" onclick={() => moveMatch(1)}
-              ><ArrowDownIcon size={13} /></IconAction
-            >
-          {/if}
-        {/if}
         {#if highlightSets.length}
           <SelectDropdown
             value={highlightSetID}

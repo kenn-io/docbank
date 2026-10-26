@@ -1,7 +1,7 @@
 import type { Job, LaneControl } from "./generated/docbank.js";
 import { timestampComparable } from "./format.js";
 
-const activeJob = (job: Job): boolean => job.busy || job.status === "queued";
+const activeJob = (job: Job): boolean => job.busy;
 
 export function laneTitle(lane: string): string {
   const titles: Record<string, string> = {
@@ -62,7 +62,7 @@ export function jobLanes(jobs: Job[], controls: LaneControl[] = []) {
         timestampComparable(b.started_at).localeCompare(timestampComparable(a.started_at)) ||
         b.name.localeCompare(a.name),
     );
-    const active = members.filter(activeJob);
+    const active = members.filter((member) => activeJob(member) || member.status === "queued");
     const failed = members.find((member) => member.status === "failed");
     const job = active.find((member) => member.busy) ?? active[0] ?? failed ?? members[0];
     const progressJobs = active.length ? active : members.slice(0, 1);
@@ -83,7 +83,7 @@ export function jobLanes(jobs: Job[], controls: LaneControl[] = []) {
       total: known
         ? progressJobs.reduce((sum, member) => sum + member.total_objects!, 0)
         : undefined,
-      active: active.length > 0,
+      active: members.some(activeJob),
       failed: failed !== undefined,
       visible: active.length > 0,
     };

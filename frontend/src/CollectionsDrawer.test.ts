@@ -349,7 +349,7 @@ describe("collections drawer", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Reload label" }));
     expect(await screen.findByDisplayValue("Externally labeled")).toBeTruthy();
     await fireEvent.click(screen.getByRole("button", { name: "Clear" }));
-    expect(await screen.findByRole("heading", { name: "discovery" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Unlabeled import 11111111" })).toBeTruthy();
     expect(new Headers(requests[1]?.headers).get("If-Match")).toBe('"4"');
     expect(JSON.parse(String(requests[1]?.body))).toEqual({ label: null });
   });
@@ -387,28 +387,44 @@ describe("collections drawer", () => {
   });
 });
 
-it("names an unlabeled import from its first source and copies a full source path", async () => {
-  const sources = String.raw`["/synthetic/drop/\U0001f4c4 invoices", "/synthetic/drop/notes"]`;
-  const writeText = vi.fn().mockResolvedValue(undefined);
-  vi.stubGlobal("navigator", Object.create(navigator, { clipboard: { value: { writeText } } }));
-  vi.spyOn(globalThis, "fetch").mockResolvedValue(
-    json({
-      items: [{ ...collection, label: null, source_description: sources }],
+it.each([
+  String.raw`["/synthetic/\a", "/synthetic/\\U0001f4c4"]`,
+  String.raw`["/synthetic/reports", "/synthetic/reports"]`,
+])("shows the source description verbatim: %s", async (description) => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (String(input).includes("/members?"))
+      return json({
+        collection: { ...collection, source_description: description },
+        items: [],
+        total: 0,
+        limit: 100,
+        offset: 0,
+      });
+    if (String(input).endsWith("/label"))
+      return json(
+        {
+          ingest_id: collectionID,
+          label: collection.label,
+          revision: 3,
+          updated_at: collection.label_updated_at,
+        },
+        '"3"',
+      );
+    return json({
+      items: [{ ...collection, source_description: description }],
       total: 1,
       limit: 100,
       offset: 0,
-    }),
-  );
+    });
+  });
   render(CollectionsDrawer, {
     session: "synthetic",
     onclose: vi.fn(),
     onauthfailure: vi.fn(),
     onopenmember: vi.fn(),
   });
-  const row = await screen.findByRole("button", { name: "Browse import 📄 invoices" });
-  await fireEvent.click(row);
   await fireEvent.click(
-    screen.getByRole("button", { name: "Copy source path /synthetic/drop/notes" }),
+    await screen.findByRole("button", { name: "Browse import Discovery batch" }),
   );
-  await waitFor(() => expect(writeText).toHaveBeenCalledWith("/synthetic/drop/notes"));
+  expect(await screen.findByText(description)).toBeTruthy();
 });

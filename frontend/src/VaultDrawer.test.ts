@@ -57,7 +57,7 @@ it("slides in once and stays put while switching tabs", async () => {
   expect(shell().classList.contains("still")).toBe(true);
 });
 
-it("shows what usage reporting sends and a copyable opt-out", async () => {
+it("explains how to disable usage reporting in the daemon environment", async () => {
   mockSystemRequests();
   render(VaultDrawer, {
     session: "synthetic",
@@ -68,9 +68,9 @@ it("shows what usage reporting sends and a copyable opt-out", async () => {
   const page = within(screen.getByRole("region", { name: "Usage reporting" }));
   expect(page.queryByText("On")).toBeNull();
   expect(page.getByText(/search queries stay private/)).toBeTruthy();
-  expect(page.getByRole("button", { name: "Copy opt-out command" }).title).toBe(
-    "DOCBANK_TELEMETRY_ENABLED=0 docbank daemon restart",
-  );
+  expect(page.getByText(/in the environment that starts the daemon, then run/)).toBeTruthy();
+  expect(page.getByText("DOCBANK_TELEMETRY_ENABLED=0")).toBeTruthy();
+  expect(page.getByText("docbank daemon restart")).toBeTruthy();
 });
 
 it("keeps navigation and close inside the active tool's dialog", async () => {

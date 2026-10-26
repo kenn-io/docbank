@@ -392,3 +392,20 @@ it("submits original expanding names and leaves out invalid or over-cap operands
   await fireEvent.click(screen.getByRole("button", { name: "SONY, 2 documents, selected" }));
   expect(onchange.mock.calls.at(-1)?.[0].filters.cameras).toEqual(["strasse"]);
 });
+
+it("omits the whole Filters panel when no group can narrow one result", () => {
+  render(FacetSidebar, {
+    query: originalQuery,
+    onchange: vi.fn(),
+    facets: [
+      facet("extension", {
+        total: 1,
+        missing: 0,
+        other: 0,
+        values: [{ key: "pdf", label: "pdf", count: 1, selected: false }],
+      }),
+    ],
+  });
+  expect(screen.queryByRole("complementary", { name: "Snapshot facets" })).toBeNull();
+  expect(screen.queryByRole("heading", { name: "Filters" })).toBeNull();
+});

@@ -1,10 +1,10 @@
 import { APIError } from "./api-transport.js";
-import { createNode, listChildren } from "./generated/docbank.js";
+import { createNode, resolvePath, type Node } from "./generated/docbank.js";
 import { localFilePath } from "./localFiles.js";
 
 export async function uploadParent(
   file: File,
-  rootID: number,
+  root: Pick<Node, "id" | "path">,
   directories: Map<string, number>,
   session: string,
   signal: AbortSignal,
@@ -14,7 +14,7 @@ export async function uploadParent(
   if (parts.some((part) => !part || part === "." || part === ".."))
     throw new Error(`Invalid file path: ${localFilePath(file)}`);
   parts.pop();
-  let parentID = rootID;
+  let parentID = root.id;
   let path = "";
   for (const name of parts) {
     signal.throwIfAborted();
@@ -35,20 +35,12 @@ export async function uploadParent(
     } catch (cause) {
       if (!(cause instanceof APIError) || cause.status !== 409 || cause.code !== "exists")
         throw cause;
-      let offset = 0;
-      for (;;) {
-        const page = await listChildren(parentID, { limit: 1000, offset }, { session, signal });
-        const existing = page.items.find((item) => item.name === name);
-        if (existing) {
-          if (existing.kind !== "dir")
-            throw new Error(`A file already uses the folder name ${name}.`);
-          id = existing.id;
-          break;
-        }
-        offset += page.items.length;
-        if (!page.items.length || offset >= page.total) break;
-      }
-      if (id === undefined) throw cause;
+      const existing = await resolvePath(
+        { path: `${root.path === "/" ? "" : root.path}/${path}` },
+        { session, signal },
+      );
+      if (existing.kind !== "dir") throw new Error(`A file already uses the folder name ${name}.`);
+      id = existing.id;
     }
     directories.set(path, id);
     parentID = id;

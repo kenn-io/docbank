@@ -5,7 +5,6 @@
   import StorageDrawer from "./StorageDrawer.svelte";
   import JobsDrawer from "./JobsDrawer.svelte";
   import AuditEvidenceDrawer from "./AuditEvidenceDrawer.svelte";
-  import CommandBox from "./CommandBox.svelte";
   import TabStrip from "./TabStrip.svelte";
   import { drawerNavigation } from "./drawerNavigation.js";
 
@@ -62,14 +61,10 @@
         searches that find nothing, failed actions, and session length. Document content, filenames,
         paths, tags, and search queries stay private.
       </p>
-      <div class="opt-out">
-        <span class="label">Turn off</span>
-        <CommandBox
-          label="opt-out command"
-          command="DOCBANK_TELEMETRY_ENABLED=0 docbank daemon restart"
-        />
-        <span class="hint">Add the variable to your shell profile to keep it off.</span>
-      </div>
+      <p>
+        To turn reporting off, set <code>DOCBANK_TELEMETRY_ENABLED=0</code> in the environment that
+        starts the daemon, then run <code>docbank daemon restart</code>.
+      </p>
     </section>
   </DrawerShell>
 {/if}
@@ -86,18 +81,5 @@
     margin: 0;
     max-width: 72ch;
     color: var(--text-primary);
-  }
-  .opt-out {
-    display: grid;
-    justify-items: start;
-    gap: var(--space-2);
-    max-width: 100%;
-    min-width: 0;
-  }
-  .label {
-    color: var(--text-muted);
-  }
-  .hint {
-    color: var(--text-muted);
   }
 </style>

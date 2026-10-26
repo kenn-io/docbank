@@ -315,57 +315,59 @@
   }
 </script>
 
-<aside class="facets" aria-label={unit === "photos" ? "Photo facets" : "Snapshot facets"}>
-  <h2>{unit === "photos" ? "Refine photos" : "Filters"}</h2>
-  {#each facets as facet (facet.dimension)}
-    {#if !empty(facet)}
-      <section role="group" aria-label={`${names[facet.dimension]} facet`}>
-        <h3>{names[facet.dimension]}</h3>
-        {#if !facet.available}
-          <p class="unavailable">Unavailable · {facet.reason?.replaceAll("_", " ")}</p>
-        {:else}
-          <div class="values">
-            {#each shown(facet) as value (value.key)}
-              {@const valueLabel = label(facet.dimension, value)}
-              {#if actionable(facet.dimension, value)}
-                <button
-                  type="button"
-                  class:selected={selected(facet.dimension, value)}
-                  aria-pressed={selected(facet.dimension, value)}
-                  {disabled}
-                  aria-label={`${valueLabel}, ${value.count} ${unit}${selected(facet.dimension, value) ? ", selected" : ""}`}
-                  onclick={() => apply(facet.dimension, value)}
-                >
-                  <span>{valueLabel}</span><strong>{value.count}</strong>
-                </button>
-              {:else}
-                <span class="informational">{valueLabel} · {value.count} · informational</span>
-              {/if}
-            {/each}
-          </div>
-          {@const wording = summary[facet.dimension]}
-          {@const missing =
-            wording && (facet.missing ?? 0) > 0 ? `${facet.missing} ${wording.missing}` : ""}
-          {@const other = (facet.other ?? 0) > 0 ? wording?.other?.(facet.other!) : ""}
-          {#if missing || other || (facet.dimension === "tags" && (query.filters.no_tags || query.filters.tag_ids?.length))}
-            <div class="summary">
-              {#if facet.dimension === "tags" && (missing || query.filters.no_tags || query.filters.tag_ids?.length)}
-                <button
-                  type="button"
-                  class:selected={query.filters.no_tags === true}
-                  aria-pressed={query.filters.no_tags === true}
-                  {disabled}
-                  onclick={toggleMissingTags}>{missing || "No tags"}</button
-                >
-              {:else if missing}<span>{missing}</span>{/if}
-              {#if other}<span>{other}</span>{/if}
+{#if unit === "photos" || facets.some((facet) => !empty(facet))}
+  <aside class="facets" aria-label={unit === "photos" ? "Photo facets" : "Snapshot facets"}>
+    <h2>{unit === "photos" ? "Refine photos" : "Filters"}</h2>
+    {#each facets as facet (facet.dimension)}
+      {#if !empty(facet)}
+        <section role="group" aria-label={`${names[facet.dimension]} facet`}>
+          <h3>{names[facet.dimension]}</h3>
+          {#if !facet.available}
+            <p class="unavailable">Unavailable · {facet.reason?.replaceAll("_", " ")}</p>
+          {:else}
+            <div class="values">
+              {#each shown(facet) as value (value.key)}
+                {@const valueLabel = label(facet.dimension, value)}
+                {#if actionable(facet.dimension, value)}
+                  <button
+                    type="button"
+                    class:selected={selected(facet.dimension, value)}
+                    aria-pressed={selected(facet.dimension, value)}
+                    {disabled}
+                    aria-label={`${valueLabel}, ${value.count} ${unit}${selected(facet.dimension, value) ? ", selected" : ""}`}
+                    onclick={() => apply(facet.dimension, value)}
+                  >
+                    <span>{valueLabel}</span><strong>{value.count}</strong>
+                  </button>
+                {:else}
+                  <span class="informational">{valueLabel} · {value.count} · informational</span>
+                {/if}
+              {/each}
             </div>
+            {@const wording = summary[facet.dimension]}
+            {@const missing =
+              wording && (facet.missing ?? 0) > 0 ? `${facet.missing} ${wording.missing}` : ""}
+            {@const other = (facet.other ?? 0) > 0 ? wording?.other?.(facet.other!) : ""}
+            {#if missing || other || (facet.dimension === "tags" && (query.filters.no_tags || query.filters.tag_ids?.length))}
+              <div class="summary">
+                {#if facet.dimension === "tags" && (missing || query.filters.no_tags || query.filters.tag_ids?.length)}
+                  <button
+                    type="button"
+                    class:selected={query.filters.no_tags === true}
+                    aria-pressed={query.filters.no_tags === true}
+                    {disabled}
+                    onclick={toggleMissingTags}>{missing || "No tags"}</button
+                  >
+                {:else if missing}<span>{missing}</span>{/if}
+                {#if other}<span>{other}</span>{/if}
+              </div>
+            {/if}
           {/if}
-        {/if}
-      </section>
-    {/if}
-  {/each}
-</aside>
+        </section>
+      {/if}
+    {/each}
+  </aside>
+{/if}
 
 <style>
   .facets {

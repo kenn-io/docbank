@@ -6,9 +6,8 @@
   import DrawerShell from "./DrawerShell.svelte";
   import CopyValue from "./CopyValue.svelte";
   import { APIError } from "./api-transport.js";
-  import { type Node, type ProvenanceFact, type ProvenancePage } from "./generated/docbank.js";
+  import { type Node, type ProvenancePage } from "./generated/docbank.js";
   import { basename, formatDate } from "./format.js";
-  import { sourcePaths } from "./collections.js";
 
   let {
     session,
@@ -63,10 +62,6 @@
       if (request === generation) loading = false;
     }
   }
-
-  function sourceReferences(fact: ProvenanceFact): string[] {
-    return sourcePaths(fact).filter((value) => value !== fact.original_path);
-  }
 </script>
 
 <DrawerShell
@@ -115,10 +110,10 @@
                   <dt>Source type</dt>
                   <dd>{fact.source_kind}</dd>
                 </div>
-                {#each sourceReferences(fact) as reference}<div>
+                {#if fact.source_description !== fact.original_path}<div>
                     <dt>Source</dt>
-                    <dd><CopyValue value={reference} label="source reference" /></dd>
-                  </div>{/each}
+                    <dd>{fact.source_description}</dd>
+                  </div>{/if}
                 {#if fact.original_mtime}<div>
                     <dt>Source modified</dt>
                     <dd>

@@ -4,7 +4,7 @@
   import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
   import SearchIcon from "@lucide/svelte/icons/search";
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
-  import { Button, CopyButton, IconButton, Spinner, TextInput } from "@kenn-io/kit-ui";
+  import { Button, IconButton, Spinner, TextInput } from "@kenn-io/kit-ui";
   import "./toolForm.css";
   import InspectorDetails from "./InspectorDetails.svelte";
   import { APIError } from "./api-transport.js";
@@ -15,7 +15,6 @@
     collections,
     displayName,
     setCollectionLabel,
-    sourcePaths,
     type Collection,
     type CollectionLabel,
   } from "./collections.js";
@@ -326,13 +325,7 @@
             { label: "Imported", value: formatDate(current.started_at) },
           ]}
         />
-        {#each sourcePaths(current) as path, index (path)}
-          <div class="source-row">
-            <span class="tool-muted">{index === 0 ? "Source" : ""}</span>
-            <span class="tool-truncate-start" title={path}><bdi>{path}</bdi></span>
-            <CopyButton text={path} ariaLabel={`Copy source path ${path}`} />
-          </div>
-        {/each}
+        <p class="tool-muted">{current.source_description}</p>
         <div class="tool-field">
           <label for="import-label">Label</label>
           {#if labelLoading && !observedLabel}
@@ -437,7 +430,7 @@
                 class="import-summary"
                 type="button"
                 aria-label={`Browse import ${displayName(collection)}`}
-                title={sourcePaths(collection).join("\n")}
+                title={collection.source_description}
                 onclick={() => void browse(collection)}
               >
                 <span class="tool-row-main">
@@ -504,14 +497,6 @@
     font-size: var(--font-size-md);
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-  .source-row {
-    display: grid;
-    grid-template-columns: 76px minmax(0, 1fr) auto;
-    align-items: center;
-    gap: var(--space-3);
-    margin-top: calc(-1 * var(--space-2));
-    font-size: var(--font-size-sm);
   }
   .label-controls {
     display: flex;

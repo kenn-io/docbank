@@ -124,7 +124,7 @@
         );
         const parentID = await uploadParent(
           queued.file,
-          directory.id,
+          directory,
           directories,
           session,
           active.signal,
