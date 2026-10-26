@@ -117,28 +117,42 @@ func (c *blockedBeginConnection) BeginTx(ctx context.Context, _ driver.TxOptions
 	}
 }
 
+func holdTestSQLiteWriter(t *testing.T, s *Store, busyTimeout time.Duration) *sql.Tx {
+	t.Helper()
+	if busyTimeout != 0 {
+		require.NoError(t, s.writeDB.Close())
+		var err error
+		s.writeDB, err = s.driver.Open(s.path, docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate, BusyTimeout: busyTimeout})
+		require.NoError(t, err)
+		s.writeDB.SetMaxOpenConns(1)
+	}
+	writer, err := s.driver.Open(s.path, docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, writer.Close()) })
+	lock, err := writer.BeginTx(t.Context(), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		if err := lock.Rollback(); err != nil {
+			require.ErrorIs(t, err, sql.ErrTxDone)
+		}
+	})
+	return lock
+}
+
 func TestStorageTransactionRetryBegin(t *testing.T) {
 	t.Parallel()
 	for _, mode := range []string{"ordinary busy and callback once", "cancel", "deadline"} {
 		t.Run(mode, func(t *testing.T) {
 			s := newTestStore(t)
+			var busyTimeout time.Duration
 			if mode == "ordinary busy and callback once" {
-				require.NoError(t, s.writeDB.Close())
-				var err error
-				s.writeDB, err = s.driver.Open(s.path, docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate, BusyTimeout: 10 * time.Millisecond})
-				require.NoError(t, err)
-				s.writeDB.SetMaxOpenConns(1)
+				busyTimeout = 10 * time.Millisecond
 			}
-			writer, err := s.driver.Open(s.path, docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate})
-			require.NoError(t, err)
-			defer func() { require.NoError(t, writer.Close()) }()
-			lock, err := writer.BeginTx(t.Context(), nil)
-			require.NoError(t, err)
-			defer func() { _ = lock.Rollback() }()
+			lock := holdTestSQLiteWriter(t, s, busyTimeout)
 			if mode == "ordinary busy and callback once" {
 				ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 				defer cancel()
-				err = s.withStorageTx(ctx, func(*sql.Tx) error {
+				err := s.withStorageTx(ctx, func(*sql.Tx) error {
 					t.Error("ordinary callback ran while another writer held the lock")
 					return nil
 				})
@@ -169,7 +183,7 @@ func TestStorageTransactionRetryBegin(t *testing.T) {
 			}
 			defer cancel()
 			start := time.Now()
-			err = s.withStorageTxRetryBegin(ctx, func(*sql.Tx) error {
+			err := s.withStorageTxRetryBegin(ctx, func(*sql.Tx) error {
 				t.Error("callback ran while another writer held the lock")
 				return nil
 			})

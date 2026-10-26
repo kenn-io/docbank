@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"strings"
 	"testing"
 	"time"
@@ -10,7 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
-	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
 func TestEmailDocumentsReleaseWaitsForWriter(t *testing.T) {
@@ -22,20 +20,7 @@ func TestEmailDocumentsReleaseWaitsForWriter(t *testing.T) {
 		require.NoError(t, err)
 		receipt, err := s.PublishEmailDocuments(t.Context(), attachmentRequest(t, s, view, "contended-publication"))
 		require.NoError(t, err)
-		require.NoError(t, s.writeDB.Close())
-		s.writeDB, err = s.driver.Open(s.path, docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate, BusyTimeout: 10 * time.Millisecond})
-		require.NoError(t, err)
-		s.writeDB.SetMaxOpenConns(1)
-		writer, err := s.driver.Open(s.path, docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate})
-		require.NoError(t, err)
-		defer func() { require.NoError(t, writer.Close()) }()
-		lock, err := writer.BeginTx(t.Context(), nil)
-		require.NoError(t, err)
-		defer func() {
-			if err := lock.Rollback(); err != nil {
-				require.ErrorIs(t, err, sql.ErrTxDone)
-			}
-		}()
+		lock := holdTestSQLiteWriter(t, s, 10*time.Millisecond)
 		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 		done := make(chan error, 1)
