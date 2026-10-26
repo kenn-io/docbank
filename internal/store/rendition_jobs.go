@@ -127,7 +127,7 @@ func (s *Store) RunningRenditionJobs(ctx context.Context, at time.Time) ([]Rendi
 		}
 		job.CreatedAt, err = time.Parse(timestampLayout, created)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("reading rendition job creation time: %w", err)
 		}
 		result = append(result, job)
 	}
