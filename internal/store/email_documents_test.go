@@ -46,7 +46,9 @@ func TestEmailDocumentsReleaseWaitsForWriter(t *testing.T) {
 				require.True(t, s.driver.IsBusy(err), "expected busy error, got %v", err)
 				require.NoError(t, lock.Rollback())
 				busyErr, calls := err, 0
-				err = s.withStorageTxRetryBegin(t.Context(), func(*sql.Tx) error {
+				ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+				defer cancel()
+				err = s.withStorageTxRetryBegin(ctx, func(*sql.Tx) error {
 					calls++
 					return busyErr
 				})
