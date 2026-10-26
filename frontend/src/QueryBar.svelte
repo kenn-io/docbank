@@ -59,6 +59,7 @@
   let timer: ReturnType<typeof setTimeout> | undefined;
   let controller: AbortController | undefined;
   let currentIdentity = "";
+  let currentText = untrack(() => query.text);
   let executionProfile = $state(untrack(() => profile));
   let pageSize = $state(untrack(() => initialPageSize));
   const originalPageSize = untrack(() => initialPageSize);
@@ -179,10 +180,16 @@
         invalidate();
         return;
       }
-      if (canonical !== currentIdentity && !schemaError) {
-        draft = parseQuery(canonical);
-        facets = JSON.stringify(draft.filters, null, 2);
+      if (canonical !== currentIdentity) {
+        const current = parseQuery(canonical);
+        if (schemaError) {
+          if (current.text !== currentText) draft = { ...draft, text: current.text };
+        } else {
+          draft = current;
+          facets = JSON.stringify(draft.filters, null, 2);
+        }
       }
+      currentText = query.text;
       if (activeSession) validate(false);
       else invalidate();
     });

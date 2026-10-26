@@ -979,3 +979,103 @@ it("retains edits made while a submitted search is still running", async () => {
   expect(screen.getByRole("combobox", { name: "Documents per page: 50" })).toBeTruthy();
   expect((screen.getByLabelText("Filters JSON") as HTMLTextAreaElement).value).toBe('{"size_min":');
 });
+
+it("resolves referenced import names when paging interrupts a pending read", async () => {
+  history.replaceState(
+    null,
+    "",
+    `/#web_session=synthetic&web_upload_secret=proof&query=${encodeURIComponent(JSON.stringify(initialQuery))}`,
+  );
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  const collectionID = "33333333-3333-4333-8333-333333333333";
+  const collection = {
+    id: collectionID,
+    source_kind: "cli",
+    source_description: "/synthetic/import",
+    started_at: "2026-09-11T12:00:00Z",
+    file_count: 2,
+    total_bytes: 2000,
+    label: "Synthetic import",
+    label_revision: 1,
+    label_updated_at: "2026-09-11T12:00:00Z",
+  };
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let first = snapshot(
+    initialQuery,
+    Array.from({ length: 100 }, (_, index) => ({
+      ...row(index + 1),
+      display_collection_id: collectionID,
+    })),
+    { next_cursor: "next" },
+  );
+  let last = snapshot(initialQuery, [{ ...row(101), display_collection_id: collectionID }], {
+    previous_cursor: "previous",
+  });
+  const json = (value: unknown) => new Response(JSON.stringify(value));
+  const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url === `/api/v1/collections/${collectionID}`) {
+      await pending;
+      return json(collection);
+    }
+    if (url.startsWith("/api/v1/collections?")) {
+      await pending;
+      return json({ items: [collection], total: 1, limit: 100, offset: 0 });
+    }
+    if (url === "/api/v1/workspace/queries") {
+      const { query } = JSON.parse(String(init?.body));
+      first = {
+        ...first,
+        query,
+        query_fingerprint: `sha256:${createHash("sha256").update(canonicalQuery(query)).digest("hex")}`,
+      };
+      last = { ...last, query, query_fingerprint: first.query_fingerprint };
+      return json(first);
+    }
+    if (url === `/api/v1/workspace/queries/${first.snapshot_id}/pages`) return json(last);
+    if (url === "/api/v1/queries/parse") {
+      const query = JSON.parse(String(init?.body));
+      return json({
+        query,
+        query_fingerprint: `sha256:${createHash("sha256").update(canonicalQuery(query)).digest("hex")}`,
+        dependencies: [],
+      });
+    }
+    if (url.includes("/path?"))
+      return json({
+        id: 1000,
+        name: "",
+        kind: "dir",
+        path: "/",
+        revision: 1,
+        size: 0,
+        created_at: first.created_at,
+        modified_at: first.created_at,
+      });
+    if (url.includes("/children?")) return json({ items: [], total: 0, limit: 1000, offset: 0 });
+    return json({ items: [], total: 0, limit: 1000, offset: 0 });
+  });
+  render(App);
+  await fireEvent.click(await screen.findByRole("button", { name: "Search" }));
+  await screen.findByRole("cell", { name: "/records/report-1.pdf" });
+  await waitFor(() =>
+    expect(fetch.mock.calls.some(([url]) => String(url).includes("/collections"))).toBe(true),
+  );
+  await fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+  await screen.findByRole("cell", { name: "/records/report-101.pdf" });
+  release();
+  expect(await screen.findByText("Synthetic import")).toBeTruthy();
+  expect(
+    fetch.mock.calls.filter(([url]) => String(url).startsWith("/api/v1/collections?")),
+  ).toHaveLength(0);
+});

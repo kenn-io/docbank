@@ -2,7 +2,6 @@
   import type { ActionJournalAccess, PersistedAction } from "./actionJournal.js";
 
   export interface ActionRecoveryJournal extends ActionJournalAccess {
-    verifyCheckpoint(bytes: Uint8Array): Promise<void>;
     confirmResume(actionID: string): Promise<void>;
     pause(): Promise<void>;
     abandon(): Promise<void>;
@@ -91,8 +90,7 @@
     onprogress(stored);
   }
 
-  // Downloads the recovery file and returns the bytes it holds; undefined when encoding failed.
-  async function saveCheckpoint(): Promise<Uint8Array | undefined> {
+  async function saveCheckpoint(): Promise<void> {
     failure = "";
     try {
       const bytes = await encodeRecovery(action);
@@ -103,7 +101,6 @@
       link.download = `docbank-tag-action-${action.action_id}.json`;
       link.click();
       URL.revokeObjectURL(url);
-      return bytes;
     } catch (cause) {
       failure = cause instanceof Error ? cause.message : String(cause);
     }
@@ -117,13 +114,6 @@
     abandonWarning = false;
     controller = new AbortController();
     try {
-      // The first Apply saves the recovery file the journal requires before it sends anything.
-      if (!action.checkpoint_verified) {
-        const bytes = await saveCheckpoint();
-        if (!bytes) return;
-        await journal.verifyCheckpoint(bytes);
-        await reload();
-      }
       // Pressing Apply is the explicit confirmation the runner requires.
       await journal.confirmResume(action.action_id);
       const result = await runAction(session, journal, controller.signal, (next, receipt) => {

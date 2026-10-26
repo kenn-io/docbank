@@ -69,7 +69,9 @@ const (
 // InspectionPolicy binds finite preflight limits and downstream authority to
 // one exact source. Every supported family must have an enforceable bound.
 type InspectionPolicy struct {
-	PDFPasswords      []string `json:"-"`
+	// SupportsFormat checks the provider bound by DescriptorFingerprint before sealing.
+	SupportsFormat    func(document.RenditionFormatCapability) bool `json:"-"`
+	PDFPasswords      []string                                      `json:"-"`
 	pdfPassword       *string
 	UnlockPDF         bool   `json:"-"`
 	Filename          string `json:"filename"`
@@ -303,6 +305,11 @@ func (record *CapabilityRecord) UnmarshalJSON(data []byte) error {
 func sealCapabilityRecord(
 	policy InspectionPolicy, sourceBytes int64, sourceSHA256 string, record CapabilityRecord,
 ) (CapabilityRecord, error) {
+	if record.Eligible && policy.SupportsFormat != nil && !policy.SupportsFormat(document.RenditionFormatCapability{
+		MediaFamily: record.MediaFamily, MediaType: record.MediaType, InputKind: policy.InputKind,
+	}) {
+		record.Eligible, record.Reason = false, CapabilityReasonUnsupported
+	}
 	policyEncoded, err := json.Marshal(policy, json.Deterministic(true))
 	if err != nil {
 		return CapabilityRecord{}, fmt.Errorf("media: encode inspection policy: %w", err)

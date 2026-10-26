@@ -386,7 +386,7 @@ the receipts connect back to the frozen document revision. Other document
 changes still make it stale. Once prepared, an action keeps its original
 requests and expected revisions.
 
-**Apply** saves a recovery file, then runs the batches in the same dialog, with
+**Apply** runs the batches in the same dialog, with
 progress and **Pause**. Pressing **Apply** is the explicit confirmation.
 **Review documents** lists the vault and action identities and,
 in pages of 50, node IDs, content versions, hashes, sizes, and expected
@@ -406,9 +406,12 @@ results again.
 A daemon restart creates a fresh browser origin and session, so choose
 **Tag all…** → **Resume from file…** and select the saved recovery file to
 continue. Import validates and stages the action but does not run it. The
-vault must match, and the new session still requires reading the file back
-and **Apply**. A stale document revision blocks the action. Docbank does not
-silently refresh its target or partially apply that batch.
+vault must match, and the new session still requires **Apply**. A stale document
+revision blocks the action. Docbank does not silently refresh its target or
+partially apply that batch.
+
+Without a recovery file, run **Tag all…** again. Tags that already landed are
+left unchanged.
 
 Recovery files contain instructions supplied by their creator. Checksums detect
 inconsistent files, but they do not authenticate the creator. Review the
@@ -1150,7 +1153,7 @@ accepts that credential for the following operations:
 | Search people; read and draw photo faces; name or clear a face | Naming a face can create its person. Standalone person creation requires the API key. Face edits require the face revision. Drawing creates a box. The browser can mark an existing person or create a person by name in a whole photo and clear whole-photo marks. Person links filter the current workspace; Hidden links stay in the unlocked Hidden view. Hidden face reads and edits require an unlock. |
 | Set or clear a collection label | Requires the inspected collection-label revision. |
 | Create and page a frozen query snapshot | Uses complete validated query intent. Handles remain bound to this session and daemon lifetime. |
-| Apply a tag to an exact frozen population | Requires captured node revisions, a saved recovery file, and confirmation. Retries preserve the original operation identities. |
+| Apply a tag to an exact frozen population | Requires captured node revisions and confirmation. Retries preserve the original operation identities. |
 
 Use the bookmark button to [manage saved queries and highlights](#saved-queries-and-highlights)
 or **Advanced** to [validate and run a complete query](#edit-a-complete-query).

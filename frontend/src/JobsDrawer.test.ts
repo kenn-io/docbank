@@ -551,3 +551,33 @@ describe("background jobs drawer", () => {
     expect(screen.getByText("2 clean, 1 conflict")).toBeTruthy();
   });
 });
+
+it("shows current running work ahead of a retained failure in the same lane", async () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    jobsResponse([
+      {
+        name: "storage:old",
+        kind: "place",
+        lane: "place",
+        operation_id: "old",
+        status: "failed",
+        started_at: "2026-07-23T11:00:00Z",
+        error: "Earlier operation failed",
+      },
+      {
+        name: "storage:current",
+        kind: "place",
+        lane: "place",
+        operation_id: "current",
+        status: "running",
+        busy: true,
+        started_at: "2026-07-23T12:00:00Z",
+      },
+    ]),
+  );
+  render(JobsDrawer, { session: "session", onclose: vi.fn(), onauthfailure: vi.fn() });
+  const lane = await screen.findByRole("region", { name: "Moving stored files" });
+  expect(screen.getByText("1 running")).toBeTruthy();
+  expect(within(lane).getByText("Earlier operation failed")).toBeTruthy();
+  expect(screen.getByRole("row", { name: "Moving stored files Running" })).toBeTruthy();
+});

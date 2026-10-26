@@ -42,8 +42,6 @@ export async function runAction(
 ): Promise<PersistedAction> {
   let action = await journal.load();
   if (!action) throw new Error("No recoverable action is available.");
-  if (!action.checkpoint_verified)
-    throw new Error("Select and verify the saved recovery checkpoint before mutation.");
   if (!journal.consumeResumeConfirmation(action.action_id))
     throw new Error("Explicitly confirm this action with the fresh session before mutation.");
   const vaultID = await readActionVaultID(session);

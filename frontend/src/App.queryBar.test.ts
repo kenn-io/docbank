@@ -271,3 +271,31 @@ it("keeps a saved plain-words search's filters when the search text changes", as
   await waitFor(() => expect(searches).toHaveLength(2));
   expect(searches[1]).toMatchObject({ text: "receipts", filters: { extensions: ["pdf"] } });
 });
+
+it("uses current search text after repairing retained invalid filters", async () => {
+  const fetch = start(false);
+  const search = await screen.findByRole("searchbox", { name: "Search documents" });
+  await fireEvent.input(search, { target: { value: "old text" } });
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  await fireEvent.input(screen.getByLabelText("Filters JSON"), {
+    target: { value: '{"size_min":' },
+  });
+  await fireEvent.keyDown(window, { key: "Escape" });
+  await fireEvent.input(search, { target: { value: "new text" } });
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  expect((screen.getByLabelText("Filters JSON") as HTMLTextAreaElement).value).toBe('{"size_min":');
+  await fireEvent.input(screen.getByLabelText("Filters JSON"), {
+    target: { value: '{"size_min":10}' },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  await waitFor(() =>
+    expect(fetch.mock.calls.some(([url]) => String(url) === "/api/v1/workspace/queries")).toBe(
+      true,
+    ),
+  );
+  const request = fetch.mock.calls.find(([url]) => String(url) === "/api/v1/workspace/queries")!;
+  expect(JSON.parse(String(request[1]?.body)).query).toMatchObject({
+    text: "new text",
+    filters: { size_min: 10 },
+  });
+});

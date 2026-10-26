@@ -108,6 +108,9 @@ func TestInspectionAndPrepareRejectMediaTypeOmittedByProvider(t *testing.T) {
 	capability, err := inspectRenditionSource(t.Context(), fixture.blobs, node, version, profile)
 	require.NoError(t, err)
 	require.Equal(t, media.CapabilityReasonUnsupported, capability.Reason)
+	require.NoError(t, media.ValidateCapabilityRecord(capability))
+	_, sealed := capability.InspectionPolicy()
+	require.True(t, sealed, "provider eligibility must be decided before sealing")
 	_, err = prepareProviderExecution(t.Context(), fixture.catalog, fixture.blobs, t.TempDir(), node, version, profile, time.Now, true)
 	require.ErrorIs(t, err, ErrSourceIneligible)
 }

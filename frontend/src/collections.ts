@@ -218,16 +218,3 @@ export function displayName(
     `Import ${collection.id.slice(0, 8)}`
   );
 }
-
-export async function loadCollectionNames(
-  session: string,
-  signal?: AbortSignal,
-): Promise<Record<string, string>> {
-  const names: Record<string, string> = {};
-  const limit = 100;
-  for (let offset = 0; ; offset += limit) {
-    const page = await generated.listCollections({ limit, offset }, { session, signal });
-    for (const collection of page.items) names[collection.id] = displayName(collection);
-    if (offset + limit >= page.total) return names;
-  }
-}

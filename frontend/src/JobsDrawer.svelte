@@ -143,9 +143,9 @@
 
   function laneState(lane: Lane): string {
     if (lane.control?.paused) return "Paused";
-    if (lane.failed) return "Failed";
     if (lane.active) return "Running";
     if (lane.members.some((member) => member.status === "queued")) return "Queued";
+    if (lane.failed) return "Failed";
     return lane.status && lane.status !== "running" ? statusLabel(lane.status) : "Idle";
   }
 

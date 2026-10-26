@@ -97,7 +97,7 @@
   import SavedQueriesDrawer from "./SavedQueriesDrawer.svelte";
   import QueryBar from "./QueryBar.svelte";
   import { searchSyntaxOptions } from "./searchSyntax.js";
-  import { loadCollectionNames } from "./collections.js";
+  import { collectionByID, displayName } from "./collections.js";
   import PanelResizer from "./PanelResizer.svelte";
   import { readPanelWidth } from "./panelWidth.js";
   import ResultName from "./ResultName.svelte";
@@ -1187,26 +1187,31 @@
             selectedSource.blobHash !== currentInspectorNode.blob_hash ||
             selectedSource.size !== currentInspectorNode.size))),
   );
-  // Imports are named from the Import history list; the results only carry their IDs.
   let inspectorWidth = $state(readPanelWidth("documents"));
   let collectionNames = $state<Record<string, string>>({});
-  let collectionNamesKey = "";
   $effect(() => {
     const session = webSession;
-    const page = snapshotPage;
-    const key = `${session}:${page?.snapshot_id}`;
-    const hasCollections = page?.rows.some((row) => row.display_collection_id);
-    if (!session || !page || !hasCollections || key === collectionNamesKey) return;
-    collectionNamesKey = key;
-    const controller = new AbortController();
-    void loadCollectionNames(session, controller.signal)
-      .then((names) => {
-        if (!controller.signal.aborted) collectionNames = names;
-      })
-      .catch(() => {
-        // Unnamed imports show their short ID.
-      });
-    return () => controller.abort();
+    const ids = new Set(
+      snapshotPage?.rows.flatMap((row) =>
+        row.display_collection_id ? [row.display_collection_id] : [],
+      ),
+    );
+    let current = true;
+    collectionNames = {};
+    if (session) {
+      for (const id of ids) {
+        void collectionByID(session, id)
+          .then((collection) => {
+            if (current) collectionNames = { ...collectionNames, [id]: displayName(collection) };
+          })
+          .catch(() => {
+            // Unnamed imports show their short ID.
+          });
+      }
+    }
+    return () => {
+      current = false;
+    };
   });
   const selectedSnapshotOverlay = $derived(
     selectedSnapshot ? snapshotOverlay(selectedSnapshot) : undefined,

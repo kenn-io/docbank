@@ -189,21 +189,23 @@ describe("recoverable action runner", () => {
     },
   );
 
-  it("does not mutate without checkpoint verification and explicit fresh confirmation", async () => {
+  it("requires explicit confirmation even without a recovery-file import", async () => {
     const action = { ...(await persisted()), checkpoint_verified: false };
     const journal = new MemoryJournal(action);
-    const fetch = vi.spyOn(globalThis, "fetch");
-    await expect(
-      runAction("fresh-session", journal, new AbortController().signal, () => {}),
-    ).rejects.toThrow("checkpoint");
-    expect(fetch).not.toHaveBeenCalled();
-
-    journal.action = { ...journal.action, checkpoint_verified: true };
     journal.confirmed = false;
+    const fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async (input) =>
+        input === "/api/v1/audit/status" ? audit() : new Response(JSON.stringify(receipt(action))),
+      );
     await expect(
-      runAction("fresh-session", journal, new AbortController().signal, () => {}),
+      runAction("session", journal, new AbortController().signal, () => {}),
     ).rejects.toThrow("confirm");
     expect(fetch).not.toHaveBeenCalled();
+    journal.confirmed = true;
+    const completed = await runAction("session", journal, new AbortController().signal, () => {});
+    expect(completed.state).toBe("complete");
+    expect(completed.checkpoint_verified).toBe(false);
   });
 
   it("rejects a wrong current vault before mutation", async () => {

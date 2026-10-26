@@ -6,7 +6,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/sv
 import ActionRecoveryModal, { type ActionRecoveryJournal } from "./ActionRecoveryModal.svelte";
 import { APIError } from "./api-transport.js";
 import { ActionJournal, type PersistedAction } from "./actionJournal.js";
-import { decodeRecovery, encodeRecovery } from "./actionRecovery.js";
+import { encodeRecovery } from "./actionRecovery.js";
 import type { BatchTagReceipt } from "./batch-tags.js";
 import { snapshotMemberHash, type SnapshotMember, type SnapshotPage } from "./snapshots.js";
 
@@ -56,7 +56,6 @@ class MemoryJournal implements ActionRecoveryJournal {
   confirmation = "";
   batchCalls = 0;
   checkpointReads = 0;
-  readsAtFirstSend: number | undefined;
 
   constructor(action: PersistedAction) {
     this.action = action;
@@ -87,7 +86,6 @@ class MemoryJournal implements ActionRecoveryJournal {
   }
   async markSending(index: number) {
     this.batchCalls++;
-    this.readsAtFirstSend ??= this.checkpointReads;
     const action = this.action!;
     this.action = {
       ...action,
@@ -193,14 +191,9 @@ it.each([
   expect(onauthfailure).toHaveBeenCalledTimes(expired ? 1 : 0);
 });
 
-it("saves a credential-free recovery file on Apply and reads it back before the first mutation", async () => {
+it("applies a fresh action without downloading or reading a recovery file", async () => {
   const action = await prepared();
   const journal = new MemoryJournal(action);
-  let saved: Blob | undefined;
-  vi.mocked(URL.createObjectURL).mockImplementation((blob) => {
-    saved = blob as Blob;
-    return "blob:checkpoint";
-  });
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     if (String(input) === "/api/v1/audit/status") {
       return new Response(JSON.stringify({ vault_id: vaultID }), { status: 200 });
@@ -242,13 +235,9 @@ it("saves a credential-free recovery file on Apply and reads it back before the 
   await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
   await screen.findByText("Added “Review” to 1 document.");
   expect(journal.batchCalls).toBe(1);
-  expect(journal.checkpointReads).toBe(1);
-  expect(journal.readsAtFirstSend).toBe(1);
-  const text = await saved!.text();
-  expect(text).not.toContain("browser-session-secret");
-  const decoded = await decodeRecovery(Uint8Array.from(new TextEncoder().encode(text)));
-  expect(decoded.action_id).toBe(action.action_id);
-  expect(decoded.plan_digest).toBe(action.plan_digest);
+  expect(journal.checkpointReads).toBe(0);
+  expect(URL.createObjectURL).not.toHaveBeenCalled();
+  expect(journal.action?.checkpoint_verified).toBe(false);
 });
 
 it("refuses a mismatched vault and explains stale actions require a new action", async () => {
@@ -319,31 +308,6 @@ it("retries an uncertain batch with the exact retained operation and revisions",
   expect(sent).toEqual(uncertain.batches[0].request);
 });
 
-it("refuses a recovery file that fails readback before scheduling any batch", async () => {
-  const action = await prepared();
-  const journal = new MemoryJournal(action);
-  journal.verifyCheckpoint = async () => {
-    journal.checkpointReads++;
-    throw new Error("The selected checkpoint does not match the prepared action and vault.");
-  };
-  render(ActionRecoveryModal, {
-    session: "fresh-session",
-    sessionVaultID: vaultID,
-    journal,
-    initialAction: action,
-    tag,
-    onprogress: vi.fn(),
-    onclose: vi.fn(),
-    onauthfailure: vi.fn(),
-  });
-
-  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
-  await screen.findByText(/does not match the prepared action and vault/);
-  expect(journal.checkpointReads).toBe(1);
-  expect(journal.confirmation).toBe("");
-  expect(journal.batchCalls).toBe(0);
-});
-
 it("shows a paused reload as retained work that needs explicit resume", async () => {
   const base = await prepared();
   const paused: PersistedAction = { ...base, state: "paused", checkpoint_verified: true };
@@ -362,6 +326,8 @@ it("shows a paused reload as retained work that needs explicit resume", async ()
   expect(screen.getByText("Paused · 0 of 1 document done")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Resume" })).toBeTruthy();
   expect(journal.batchCalls).toBe(0);
+  await fireEvent.click(screen.getByRole("button", { name: "Save recovery file" }));
+  await waitFor(() => expect(URL.createObjectURL).toHaveBeenCalledOnce());
 });
 
 it("keeps a deleted-tag action available for checkpoint export and abandonment", async () => {
@@ -578,4 +544,17 @@ it("does not expire the session from a replaced view's pending error reload", as
   await reloading;
   await new Promise((resolve) => setTimeout(resolve, 0));
   expect(onauthfailure).not.toHaveBeenCalled();
+});
+
+it("journals a fresh batch without a recovery-file import", async () => {
+  vi.stubGlobal("Uint8Array", new TextEncoder().encode("").constructor);
+  const action = await prepared();
+  const journal = await ActionJournal.open(vaultID);
+  await journal.prepare(action);
+  await journal.markSending(0);
+  expect(await journal.load()).toMatchObject({
+    state: "sending",
+    checkpoint_verified: false,
+    batches: [{ state: "sending" }],
+  });
 });

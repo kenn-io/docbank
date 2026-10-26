@@ -2308,13 +2308,6 @@ func inspectRenditionSource(ctx context.Context, blobs *blob.Store, node store.N
 			return media.CapabilityRecord{}, errors.Join(inspectErr, closeErr)
 		}
 	}
-	// A provider whose descriptor omits the inspected format would refuse the
-	// upload, so the plan reports that before consent rather than after.
-	if capability.Eligible && !profile.provider.Descriptor().Supports(
-		document.RenditionFormatCapability{MediaFamily: capability.MediaFamily,
-			MediaType: capability.MediaType, InputKind: document.RenditionInputOriginalFile}) {
-		capability.Eligible, capability.Reason = false, media.CapabilityReasonUnsupported
-	}
 	return capability, nil
 }
 
@@ -2352,7 +2345,8 @@ func inspectionPolicy(filename string, version store.ContentVersion, profile con
 		declaredMediaType = baseType
 	}
 	return media.InspectionPolicy{Filename: filename, DeclaredMediaType: declaredMediaType,
-		ExpectedBytes: version.Size, ExpectedSHA256: version.BlobHash,
+		SupportsFormat: profile.provider.Descriptor().Supports,
+		ExpectedBytes:  version.Size, ExpectedSHA256: version.BlobHash,
 		DescriptorFingerprint: profile.provider.Descriptor().Fingerprint,
 		ProfileFingerprint:    profile.record.Fingerprint,
 		DisclosureFingerprint: profile.portable.Rendition.DisclosureFingerprint,
