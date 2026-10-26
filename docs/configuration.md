@@ -318,16 +318,32 @@ producer offers a close/rename handoff.
 
 A file that disappears during observation, or is still held exclusively by a
 Windows producer, is treated as unsettled and retried from a fresh window.
-Other read failures appear as job errors.
+If a retryable observation failure prevents a complete source inventory, the
+daemon defers all mutations for that watch, including changes to readable
+siblings. The watch job stays running with a visible error, and the daemon logs
+the incomplete-inventory block once. A complete scan resumes pending work and
+clears that signal; an active notification failure remains visible.
+A symlink replacing a known source file is skipped without following its target.
+A directory replacing that file uses normal confined traversal and exact-destination
+rules. These conclusive changes do not by themselves defer readable siblings;
+the archived file and durable cursor remain. An occupied old path never authorizes
+a rename join. A symlink hiding previously observed descendants, a known path
+becoming another nonregular file, or a known path crossing a filesystem boundary
+blocks reconciliation and appears in the watch job error until it recovers.
+An incomplete directory inventory still defers all mutations. Other permission or
+native observation failures stop the watch with a job error.
 
 Docbank identifies each watched source by `(name, relative source path)`.
 Keep the watch name when moving its local `source` root. Later content changes
 then add versions to the same Docbank node, even if someone moved that node in
 the virtual tree.
 
-Renaming the relative source path creates a new source identity. Each identity
-owns one Docbank node, and two watched sources cannot claim the same node.
-Deleting a source file does not delete its Docbank node.
+A live, unambiguous source rename can move that watch cursor to the current
+relative path while its original provenance and archived virtual location stay
+unchanged. The daemon needs unique native object and birth evidence from a
+complete scan; see [watched inboxes](usage/importing.md#continuously-ingest-a-local-inbox)
+for the limits. Each current cursor owns one Docbank node. Deleting a source
+file does not delete its Docbank node.
 
 Docbank separately remembers the last bytes accepted from each source. If a
 person edits or reverts the Docbank node while the source stays unchanged, a
@@ -339,7 +355,7 @@ Watchers run as jobs named `watch:<name>`. `docbank watch list` and
 destination, capture mode (`settled` or `prompt`), settle window,
 minimum source age, scan interval, and exclusion policy. JSON reports
 `capture_on_change` as a boolean. Use `--json` when an agent needs the complete rules. `docbank jobs`
-and `GET /api/v1/jobs` remain the all-task view. A source, destination, or
+and `GET /api/v1/jobs` remain the all-task view. A permanent source, destination, or
 read failure leaves the named job in the failed state and records the reason.
 Restart the daemon after correcting the problem.
 Per-file successes are written to the daemon log. Prompt notifications are

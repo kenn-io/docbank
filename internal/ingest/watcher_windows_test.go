@@ -39,6 +39,33 @@ func TestOpenWatchLeafRetriesDirectoryReplacement(t *testing.T) {
 	require.NotErrorIs(t, err, ErrSourceChanged)
 }
 
+func TestWatcherRetriesDirectoryReplacementDuringCollection(t *testing.T) {
+	watcher, root, ing, source, siblingID := watcherFinalPair(t)
+	require.NoError(t, os.WriteFile(filepath.Join(source, "b.md"), []byte("changed sibling"), 0o600))
+	aPath := filepath.Join(source, "a.md")
+	preserved := filepath.Join(source, "a-preserved.md")
+	watcher.beforeObserve = func(ref string) {
+		if ref != "a.md" {
+			return
+		}
+		watcher.beforeObserve = nil
+		// The collection observed a regular file; replace it with a directory
+		// before the Windows open returns ERROR_ACCESS_DENIED.
+		require.NoError(t, os.Rename(aPath, preserved))
+		require.NoError(t, os.Mkdir(aPath, 0o700))
+	}
+	complete, err := watcher.scanWithHints(t.Context(), root, watchScanHints{Reconcile: true})
+	require.NoError(t, err)
+	require.False(t, complete)
+	assert.NotNil(t, watcher.observations["a.md"].accepted)
+	requireSiblingVersions(t, ing, siblingID, 1)
+
+	require.NoError(t, os.Remove(aPath))
+	require.NoError(t, os.Rename(preserved, aPath))
+	requireScanComplete(t, checkedScan(watcher.scanWithHints(t.Context(), root, watchScanHints{Reconcile: true})))
+	requireSiblingVersions(t, ing, siblingID, 2)
+}
+
 func TestWatcherImportsLongPath(t *testing.T) {
 	ing := newTestIngester(t)
 	rel := strings.Repeat("nested-directory/", 20) + "document.txt"
