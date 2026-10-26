@@ -35,7 +35,7 @@ test("a change in one photo tab shows up in the other through one shared stream"
         .first()
         .getByRole("button", { name: /^Select / })
         .click();
-      await page.getByRole("button", { name: "Metadata", exact: true }).click();
+      await expect(page.getByRole("region", { name: "Photo metadata" })).toBeVisible();
       tabs.push(page);
     }
     const [editing, watching] = tabs as [(typeof tabs)[number], (typeof tabs)[number]];
