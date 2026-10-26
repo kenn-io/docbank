@@ -19,7 +19,7 @@ import (
 
 func TestEmailDocumentsReleaseWaitsForWriter(t *testing.T) {
 	t.Parallel()
-	for _, outcome := range []string{"release", "ordinary transaction"} {
+	for _, outcome := range []string{"release", "ordinary mutation returns busy and busy callback runs once"} {
 		t.Run(outcome, func(t *testing.T) {
 			s := newTestStore(t)
 			f := newEmailFixture(t, s, "source.eml")
@@ -41,7 +41,7 @@ func TestEmailDocumentsReleaseWaitsForWriter(t *testing.T) {
 					require.ErrorIs(t, err, sql.ErrTxDone)
 				}
 			}()
-			if outcome == "ordinary transaction" {
+			if outcome == "ordinary mutation returns busy and busy callback runs once" {
 				err = s.withStorageTx(t.Context(), func(*sql.Tx) error {
 					t.Error("callback ran while another writer held the lock")
 					return nil
