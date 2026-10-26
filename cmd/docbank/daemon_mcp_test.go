@@ -29,7 +29,8 @@ func daemonMCPEnvironment(t *testing.T) string {
 	t.Setenv("DOCBANK_API_PORT", "0")
 	t.Setenv("DOCBANK_BIND_ADDR", "127.0.0.1")
 	for _, name := range []string{"DOCBANK_API_KEY", "DOCBANK_API_KEY_FILE", "DOCBANK_ALLOWED_HOSTS",
-		"DOCBANK_MCP_HTTP_LISTEN", "DOCBANK_MCP_HTTP_TOKEN", "DOCBANK_MCP_HTTP_TOKEN_FILE", "DOCBANK_MCP_HTTP_ALLOWED_HOSTS"} {
+		"DOCBANK_MCP_HTTP_ENABLED", "DOCBANK_MCP_HTTP_PORT", "DOCBANK_MCP_HTTP_TOKEN", "DOCBANK_MCP_HTTP_TOKEN_FILE",
+		"DOCBANK_MCP_HTTP_ALLOWED_HOSTS"} {
 		t.Setenv(name, "")
 	}
 	return root
@@ -61,66 +62,95 @@ func assertDaemonMCPCleanedUp(t *testing.T, root string, addresses ...string) {
 	require.NoError(t, heldRoot.Close())
 }
 
+func postMCPVaultInfo(t *testing.T, url, host, bearer string) (int, string) {
+	t.Helper()
+	body := fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":%q,"io.modelcontextprotocol/clientCapabilities":{}},"name":"get_vault_info","arguments":{}}}`, docmcp.ProtocolVersion)
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, url, strings.NewReader(body))
+	require.NoError(t, err)
+	request.Host = host
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "application/json, text/event-stream")
+	request.Header.Set("Mcp-Protocol-Version", docmcp.ProtocolVersion)
+	request.Header.Set("Mcp-Method", "tools/call")
+	request.Header.Set("Mcp-Name", "get_vault_info")
+	request.Header.Set("Authorization", "Bearer "+bearer)
+	response, err := http.DefaultClient.Do(request)
+	require.NoError(t, err)
+	defer func() { _ = response.Body.Close() }()
+	data, err := io.ReadAll(response.Body)
+	require.NoError(t, err)
+	return response.StatusCode, string(data)
+}
+
 func TestDaemonMCPHTTPReadsSameVaultAndShutsDown(t *testing.T) {
-	root := daemonMCPEnvironment(t)
-	address := unusedMCPAddress(t)
-	_, port, err := net.SplitHostPort(address)
-	require.NoError(t, err)
-	t.Setenv("DOCBANK_MCP_HTTP_LISTEN", "0.0.0.0:"+port)
-	t.Setenv("DOCBANK_MCP_HTTP_TOKEN", "synthetic-mcp-bearer")
-	t.Setenv("DOCBANK_MCP_HTTP_ALLOWED_HOSTS", "docbank:7341")
-	stop := startServe(t)
-	record := waitForDaemon(t, root)
-	connection := daemonconn.New("http://"+record.Address, record.Metadata["api_key"])
-	info, err := connection.API().VaultInfo(t.Context())
-	require.NoError(t, err)
 	for _, test := range []struct {
-		name, bearer, host string
-		status             int
-	}{
-		{"valid", "synthetic-mcp-bearer", "docbank:7341", 200},
-		{"API key", record.Metadata["api_key"], "docbank:7341", 401},
-		{"unlisted Host", "synthetic-mcp-bearer", "unlisted.example", 403},
-	} {
+		name     string
+		separate bool
+	}{{name: "shared API port"}, {name: "separate port", separate: true}} {
 		t.Run(test.name, func(t *testing.T) {
-			body := fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":%q,"io.modelcontextprotocol/clientCapabilities":{}},"name":"get_vault_info","arguments":{}}}`, docmcp.ProtocolVersion)
-			request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://"+address+"/mcp", strings.NewReader(body))
-			require.NoError(t, err)
-			request.Host = test.host
-			request.Header.Set("Content-Type", "application/json")
-			request.Header.Set("Accept", "application/json, text/event-stream")
-			request.Header.Set("Mcp-Protocol-Version", docmcp.ProtocolVersion)
-			request.Header.Set("Mcp-Method", "tools/call")
-			request.Header.Set("Mcp-Name", "get_vault_info")
-			request.Header.Set("Authorization", "Bearer "+test.bearer)
-			response, err := http.DefaultClient.Do(request)
-			require.NoError(t, err)
-			defer func() { _ = response.Body.Close() }()
-			data, err := io.ReadAll(response.Body)
-			require.NoError(t, err)
-			require.Equal(t, test.status, response.StatusCode, string(data))
-			if test.status == http.StatusOK {
-				var wire struct {
-					Result struct {
-						IsError bool `json:"isError"`
-						Content struct {
-							VaultID string `json:"vault_id"`
-						} `json:"structuredContent"`
-					} `json:"result"`
-				}
-				require.NoError(t, json.Unmarshal(data, &wire))
-				assert.False(t, wire.Result.IsError, string(data))
-				assert.Equal(t, info.VaultID, wire.Result.Content.VaultID, string(data))
+			root := daemonMCPEnvironment(t)
+			separate := ""
+			if test.separate {
+				separate = unusedMCPAddress(t)
+				_, port, err := net.SplitHostPort(separate)
+				require.NoError(t, err)
+				t.Setenv("DOCBANK_MCP_HTTP_PORT", port)
 			}
+			// Hosting is on by default for a loopback API once the token resolves.
+			t.Setenv("DOCBANK_MCP_HTTP_TOKEN", "synthetic-mcp-bearer")
+			t.Setenv("DOCBANK_MCP_HTTP_ALLOWED_HOSTS", "docbank:7341")
+			if test.separate {
+				t.Setenv("DOCBANK_MCP_HTTP_ENABLED", "true")
+			}
+			stop := startServe(t)
+			record := waitForDaemon(t, root)
+			connection := daemonconn.New("http://"+record.Address, record.Metadata["api_key"])
+			info, err := connection.API().VaultInfo(t.Context())
+			require.NoError(t, err)
+			mcpAddress := record.Address
+			if test.separate {
+				mcpAddress = separate
+			}
+			for _, call := range []struct {
+				name, bearer, host string
+				status             int
+			}{
+				{"valid", "synthetic-mcp-bearer", "docbank:7341", http.StatusOK},
+				{"API key", record.Metadata["api_key"], "docbank:7341", http.StatusUnauthorized},
+				{"unlisted Host", "synthetic-mcp-bearer", "unlisted.example", http.StatusForbidden},
+			} {
+				status, data := postMCPVaultInfo(t, "http://"+mcpAddress+"/mcp", call.host, call.bearer)
+				require.Equal(t, call.status, status, "%s: %s", call.name, data)
+				if call.status == http.StatusOK {
+					var wire struct {
+						Result struct {
+							IsError bool `json:"isError"`
+							Content struct {
+								VaultID string `json:"vault_id"`
+							} `json:"structuredContent"`
+						} `json:"result"`
+					}
+					require.NoError(t, json.Unmarshal([]byte(data), &wire))
+					assert.False(t, wire.Result.IsError, data)
+					assert.Equal(t, info.VaultID, wire.Result.Content.VaultID, data)
+				}
+			}
+			// The MCP bearer never authorizes the API beside it.
+			_, err = daemonconn.New("http://"+record.Address, "synthetic-mcp-bearer").API().VaultInfo(t.Context())
+			require.Error(t, err)
+			stop()
+			addresses := []string{record.Address}
+			if test.separate {
+				addresses = append(addresses, separate)
+			}
+			assertDaemonMCPCleanedUp(t, root, addresses...)
 		})
 	}
-	stop()
-	assertDaemonMCPCleanedUp(t, root, record.Address, address)
 }
 
 func TestDaemonMCPHTTPStartupFailuresReleaseOwnership(t *testing.T) {
-	for _, test := range []struct{ name, config, token, listen, message string }{
-		{name: "invalid listen", listen: "localhost:7341", message: "explicit IP"},
+	for _, test := range []struct{ name, config, token, port, message string }{
+		{name: "invalid port", port: "70000", message: "DOCBANK_MCP_HTTP_PORT"},
 		{name: "unknown config", config: "[mcp.http]\nbogus=true\n", message: "unknown key"},
 		{name: "missing binding", message: "credential_binding is required"},
 		{name: "equal API key", token: "synthetic-api-key", message: "must differ"},
@@ -129,17 +159,15 @@ func TestDaemonMCPHTTPStartupFailuresReleaseOwnership(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			root := daemonMCPEnvironment(t)
 			t.Setenv("DOCBANK_API_KEY", "synthetic-api-key")
-			listen := test.listen
-			if listen == "" {
-				listen = "127.0.0.1:0"
-			}
+			t.Setenv("DOCBANK_MCP_HTTP_ENABLED", "true")
 			if test.name == "occupied port" {
 				listener, err := net.Listen("tcp", "127.0.0.1:0")
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = listener.Close() })
-				listen = listener.Addr().String()
+				_, test.port, err = net.SplitHostPort(listener.Addr().String())
+				require.NoError(t, err)
 			}
-			t.Setenv("DOCBANK_MCP_HTTP_LISTEN", listen)
+			t.Setenv("DOCBANK_MCP_HTTP_PORT", test.port)
 			t.Setenv("DOCBANK_MCP_HTTP_TOKEN", test.token)
 			if test.config != "" {
 				require.NoError(t, os.WriteFile(filepath.Join(root, "config.toml"), []byte(test.config), 0o600))
@@ -153,20 +181,31 @@ func TestDaemonMCPHTTPStartupFailuresReleaseOwnership(t *testing.T) {
 	}
 }
 
-func TestDaemonMCPHTTPDisabledLeavesSelectedCredentialUnread(t *testing.T) {
-	root := daemonMCPEnvironment(t)
-	// With no listener, the selected but missing secret stays unread.
-	t.Setenv("DOCBANK_MCP_HTTP_TOKEN_FILE", filepath.Join(root, "missing"))
-	stop := startServe(t)
-	record := waitForDaemon(t, root)
-	stop()
-	assertDaemonMCPCleanedUp(t, root, record.Address)
+func TestDaemonMCPHTTPNotHostedWithoutUsableCredentialOrWhenDisabled(t *testing.T) {
+	for _, test := range []struct{ name, enabled, tokenFile, token string }{
+		{name: "default with unreadable credential", tokenFile: "missing"},
+		{name: "explicitly disabled", enabled: "false", token: "synthetic-mcp-bearer"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := daemonMCPEnvironment(t)
+			t.Setenv("DOCBANK_MCP_HTTP_ENABLED", test.enabled)
+			t.Setenv("DOCBANK_MCP_HTTP_TOKEN", test.token)
+			if test.tokenFile != "" {
+				t.Setenv("DOCBANK_MCP_HTTP_TOKEN_FILE", filepath.Join(root, test.tokenFile))
+			}
+			stop := startServe(t)
+			record := waitForDaemon(t, root)
+			status, data := postMCPVaultInfo(t, "http://"+record.Address+"/mcp", record.Address, "synthetic-mcp-bearer")
+			assert.Equal(t, http.StatusUnauthorized, status, data)
+			stop()
+			assertDaemonMCPCleanedUp(t, root, record.Address)
+		})
+	}
 }
 
 func TestDaemonMCPHTTPDisablesBackgroundIdleTimeout(t *testing.T) {
 	root := daemonMCPEnvironment(t)
 	t.Setenv(daemonconn.EnvBackgroundDaemon, "1")
-	t.Setenv("DOCBANK_MCP_HTTP_LISTEN", "127.0.0.1:0")
 	t.Setenv("DOCBANK_MCP_HTTP_TOKEN", "synthetic-mcp-bearer")
 	require.NoError(t, os.WriteFile(filepath.Join(root, "config.toml"), []byte("[server]\nidle_timeout = \"30ms\"\n"), 0o600))
 	stop := startServe(t)
@@ -206,8 +245,10 @@ func TestDaemonMCPHTTPDrainKeepsAPIAvailable(t *testing.T) {
 	})}
 	stop, done := make(chan struct{}), make(chan error, 1)
 	go func() {
-		done <- serveDaemonHTTP(t.Context(), stop, []servingHTTP{{"API", apiHTTP, apiListener}, {"MCP HTTP", mcpHTTP, mcpListener}}, mcpHTTP,
-			func() {}, func(context.Context) error { return nil })
+		done <- serveDaemonHTTP(t.Context(), stop, []servingHTTP{
+			{name: "API", server: apiHTTP, listener: apiListener},
+			{name: "MCP HTTP", server: mcpHTTP, listener: mcpListener, drainedFirst: true},
+		}, drainHTTPServer(mcpHTTP), func() {}, func(context.Context) error { return nil })
 	}()
 	t.Cleanup(func() { _ = mcpHTTP.Close(); _ = apiHTTP.Close() })
 	result := make(chan string, 1)
@@ -237,6 +278,100 @@ func TestDaemonMCPHTTPDrainKeepsAPIAvailable(t *testing.T) {
 	require.NoError(t, <-done)
 }
 
+func TestDaemonMCPHTTPSharedDrainKeepsAPIAvailable(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	base := "http://" + listener.Addr().String()
+	api := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("synthetic-vault")) })
+	started, release := make(chan struct{}), make(chan struct{})
+	releaseRead := sync.OnceFunc(func() { close(release) })
+	t.Cleanup(releaseRead)
+	var once sync.Once
+	gate := docmcp.NewRequestGate()
+	mcp := gate.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		once.Do(func() { close(started) })
+		<-release
+		request, requestErr := http.NewRequestWithContext(r.Context(), http.MethodGet, base+"/api", nil)
+		if requestErr != nil {
+			http.Error(w, "request failed", http.StatusInternalServerError)
+			return
+		}
+		response, requestErr := http.DefaultClient.Do(request)
+		if requestErr != nil {
+			http.Error(w, "API unavailable", http.StatusInternalServerError)
+			return
+		}
+		defer func() { _ = response.Body.Close() }()
+		_, _ = io.Copy(w, response.Body)
+	}))
+	server := &http.Server{ReadHeaderTimeout: 10 * time.Second, Handler: withMCPRoute(api, mcp)}
+	t.Cleanup(func() { _ = server.Close() })
+	stop, done := make(chan struct{}), make(chan error, 1)
+	go func() {
+		done <- serveDaemonHTTP(t.Context(), stop, []servingHTTP{{name: "API", server: server, listener: listener}},
+			gate.Shutdown, func() {}, func(context.Context) error { return nil })
+	}()
+	result := make(chan string, 1)
+	go func() {
+		response, err := http.Post(base+"/mcp", "application/json", strings.NewReader("{}"))
+		if err != nil {
+			result <- err.Error()
+			return
+		}
+		defer func() { _ = response.Body.Close() }()
+		data, _ := io.ReadAll(response.Body)
+		result <- string(data)
+	}()
+	<-started
+	close(stop)
+	// Once the drain starts, new MCP requests are refused on the shared port.
+	require.Eventually(t, func() bool {
+		response, err := http.Post(base+"/mcp", "application/json", strings.NewReader("{}"))
+		if err != nil {
+			return false
+		}
+		_ = response.Body.Close()
+		return response.StatusCode == http.StatusServiceUnavailable
+	}, time.Second*5, time.Millisecond*10)
+	releaseRead()
+	assert.Equal(t, "synthetic-vault", <-result)
+	require.NoError(t, <-done)
+}
+
+func TestDaemonMCPHTTPSharedDrainIsBounded(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	started, canceled := make(chan struct{}), make(chan struct{})
+	gate := docmcp.NewRequestGate()
+	mcp := gate.Wrap(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-r.Context().Done()
+		close(canceled)
+	}))
+	server := &http.Server{ReadHeaderTimeout: 10 * time.Second, Handler: withMCPRoute(http.NotFoundHandler(), mcp)}
+	t.Cleanup(func() { _ = server.Close() })
+	stop, done := make(chan struct{}), make(chan error, 1)
+	var apiShutdownErr error
+	go func() {
+		done <- serveDaemonHTTP(t.Context(), stop, []servingHTTP{{name: "API", server: server, listener: listener}},
+			gate.Shutdown, func() {}, func(ctx context.Context) error { apiShutdownErr = ctx.Err(); return nil })
+	}()
+	requestDone := make(chan struct{})
+	go func() {
+		defer close(requestDone)
+		response, err := http.Post("http://"+listener.Addr().String()+"/mcp", "application/json", strings.NewReader("{}"))
+		if err == nil {
+			_ = response.Body.Close()
+		}
+	}()
+	<-started
+	close(stop)
+	require.ErrorIs(t, <-done, context.DeadlineExceeded)
+	require.NoError(t, apiShutdownErr)
+	<-canceled
+	<-requestDone
+}
+
 func TestDaemonMCPHTTPDrainIsBoundedAndClosesActiveRequests(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -256,8 +391,9 @@ func TestDaemonMCPHTTPDrainIsBoundedAndClosesActiveRequests(t *testing.T) {
 	stop, done := make(chan struct{}), make(chan error, 1)
 	var apiShutdownErr error
 	go func() {
-		done <- serveDaemonHTTP(t.Context(), stop, []servingHTTP{{"MCP HTTP", server, listener}}, server,
-			func() { close(jobsStopped) },
+		done <- serveDaemonHTTP(t.Context(), stop,
+			[]servingHTTP{{name: "MCP HTTP", server: server, listener: listener, drainedFirst: true}},
+			drainHTTPServer(server), func() { close(jobsStopped) },
 			func(ctx context.Context) error { apiShutdownErr = ctx.Err(); return nil })
 	}()
 	requestDone := make(chan struct{})
@@ -286,9 +422,10 @@ func TestDaemonMCPHTTPServeFailurePropagatesAndDrainsAPI(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = apiListener.Close() })
 	mcpHTTP, apiHTTP := &http.Server{ReadHeaderTimeout: 10 * time.Second}, &http.Server{ReadHeaderTimeout: 10 * time.Second}
-	err = serveDaemonHTTP(t.Context(), nil,
-		[]servingHTTP{{"API", apiHTTP, apiListener}, {"MCP HTTP", mcpHTTP, listener}}, mcpHTTP,
-		func() {}, func(context.Context) error { return nil })
+	err = serveDaemonHTTP(t.Context(), nil, []servingHTTP{
+		{name: "API", server: apiHTTP, listener: apiListener},
+		{name: "MCP HTTP", server: mcpHTTP, listener: listener, drainedFirst: true},
+	}, drainHTTPServer(mcpHTTP), func() {}, func(context.Context) error { return nil })
 	require.ErrorIs(t, err, net.ErrClosed)
 	require.ErrorContains(t, err, "daemon MCP HTTP server")
 	// Shutdown can precede the API goroutine's entry into Serve.
@@ -300,9 +437,11 @@ func TestDaemonMCPHTTPServeFailurePropagatesAndDrainsAPI(t *testing.T) {
 	}, daemonShutdownTimeout, 10*time.Millisecond)
 }
 
-func TestDaemonMCPHTTPTOMLListenSelectsMountedBinding(t *testing.T) {
+func TestDaemonMCPHTTPTOMLPortSelectsMountedBinding(t *testing.T) {
 	root := daemonMCPEnvironment(t)
 	address := unusedMCPAddress(t)
+	_, port, err := net.SplitHostPort(address)
+	require.NoError(t, err)
 	secret := filepath.Join(root, "mcp-bearer")
 	file, err := safefileio.CreatePrivateFile(secret)
 	require.NoError(t, err)
@@ -312,7 +451,8 @@ func TestDaemonMCPHTTPTOMLListenSelectsMountedBinding(t *testing.T) {
 	t.Setenv("SYNTHETIC_MCP_BEARER_FILE", secret)
 	t.Setenv("SYNTHETIC_MCP_BEARER", "")
 	require.NoError(t, os.WriteFile(filepath.Join(root, "config.toml"), []byte(`[mcp.http]
-listen = "`+address+`"
+enabled = true
+port = `+port+`
 credential_binding = "credential:inbound"
 [credential_bindings.inbound]
 environment_variable = "SYNTHETIC_MCP_BEARER"

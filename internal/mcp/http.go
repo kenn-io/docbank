@@ -579,6 +579,17 @@ func (writer *boundedResponseWriter) Flush() {
 	}
 }
 
+// PrepareHTTPHandler binds the credential policy and returns the authenticated
+// transport for a listener on listenHost, for callers that serve it on an
+// existing listener.
+func PrepareHTTPHandler(ctx context.Context, server *Server, listenHost string, options HTTPOptions) (http.Handler, error) {
+	options.listenHost = listenHost
+	if err := server.prepareHTTP(ctx, options.BearerToken); err != nil {
+		return nil, err
+	}
+	return server.HTTPTransportHandler(options)
+}
+
 // ListenHTTP validates and binds an authenticated MCP transport. The caller owns
 // serving, draining, and closing the returned server and listener.
 func ListenHTTP(ctx context.Context, server *Server, address string, options HTTPOptions) (*http.Server, net.Listener, error) {
@@ -589,11 +600,7 @@ func ListenHTTP(ctx context.Context, server *Server, address string, options HTT
 	if err != nil {
 		return nil, nil, fmt.Errorf("splitting MCP HTTP listen address: %w", err)
 	}
-	options.listenHost = host
-	if err := server.prepareHTTP(ctx, options.BearerToken); err != nil {
-		return nil, nil, err
-	}
-	handler, err := server.HTTPTransportHandler(options)
+	handler, err := PrepareHTTPHandler(ctx, server, host, options)
 	if err != nil {
 		return nil, nil, err
 	}

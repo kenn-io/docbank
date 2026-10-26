@@ -120,27 +120,27 @@ settings and secret-file failure behavior.
 
 ## Run MCP in the same container
 
-The daemon can host authenticated, read-only MCP tools in the same process.
-Create a second random secret, owned and readable by UID `1000`, and mount it
-at `/run/secrets/mcp-bearer` when creating the container. Add these startup
-environment settings to the `docker run` command:
+The daemon can host authenticated, read-only MCP tools at `/mcp` on its API
+port. Create a second random secret, owned and readable by UID `1000`, and
+mount it at `/run/secrets/mcp-bearer` when creating the container. Add these
+startup environment settings to the `docker run` command:
 
 ```text
--e DOCBANK_MCP_HTTP_LISTEN=0.0.0.0:7341
+-e DOCBANK_MCP_HTTP_ENABLED=true
 -e DOCBANK_MCP_HTTP_TOKEN_FILE=/run/secrets/mcp-bearer
--e DOCBANK_MCP_HTTP_ALLOWED_HOSTS=docbank:7341
+-e DOCBANK_MCP_HTTP_ALLOWED_HOSTS=docbank:8485
 ```
 
-A client on `docbank-private` connects to `http://docbank:7341/mcp` with that
-bearer, sending `Host: docbank:7341`. The hosted catalog is read-only; there
-are no daemon flags to enable MCP writes. No second process or proxy is needed.
-The listener is disabled by default. A credential or Host setting alone does
-not enable it.
+A client on `docbank-private` connects to `http://docbank:8485/mcp` with that
+bearer, sending `Host: docbank:8485`. The hosted catalog is read-only; there
+are no daemon flags to enable MCP writes. No second process, port, or proxy is
+needed. The image binds a network address, so hosting stays off until
+`DOCBANK_MCP_HTTP_ENABLED` is set. The MCP bearer authorizes only `/mcp`, and
+the API key is rejected there.
 
-An invalid selected credential, a bearer equal to the effective daemon API
-key, or a failed MCP bind stops daemon startup. Stopping the daemon gives
-in-flight MCP reads up to five seconds to finish before closing its API, then
-releases both listeners. The container's
+An invalid selected credential or a bearer equal to the effective daemon API
+key stops daemon startup. Stopping the daemon gives in-flight MCP reads up to
+five seconds to finish before closing its API. The container's
 restart policy supervises the one daemon; restart it after changing MCP
 settings or rotating the bearer.
 

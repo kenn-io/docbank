@@ -79,13 +79,18 @@ client registration, scopes, or token refresh. A client may connect locally or
 through a trusted tunnel, but it must be able to set the Authorization header.
 Clients that require the MCP HTTP OAuth flow are not supported.
 
-To host the same read-only HTTP tools inside the daemon, set
-`DOCBANK_MCP_HTTP_LISTEN=127.0.0.1:7341` or `[mcp.http] listen`. The daemon
-uses the same credential and Host rules. Hosting is disabled by default;
-credential settings alone do not enable it. MCP reads use that daemon's API.
-On shutdown, in-flight reads get up to five seconds to finish before the API
-closes. A daemon hosting MCP does not idle out. Invalid credentials or a failed
-bind stop daemon startup. Restart
+The daemon also hosts the same read-only HTTP tools at `/mcp` on its API port.
+For a loopback API this is on by default once the MCP bearer resolves in the
+daemon's environment; without it, the daemon logs why and starts without MCP.
+Set `[mcp.http] enabled` or `DOCBANK_MCP_HTTP_ENABLED` to `true` to require it,
+or `false` to turn it off. `[mcp.http] port` moves it to a separate loopback
+port. The API port is ephemeral unless `[server] api_port` is set, so pin it
+for a stable client URL; the daemon logs the MCP URL at startup. The daemon uses
+the same credential and Host rules, and its API key is rejected at `/mcp`.
+MCP reads use that daemon's API. On shutdown, in-flight reads get up to five
+seconds to finish before the API closes. A daemon hosting MCP does not idle
+out. With hosting enabled explicitly, invalid credentials or a failed bind stop
+daemon startup. Restart
 the daemon to rotate its bearer. See the [configuration reference](../configuration.md#mcp-http-credential)
 and [container example](containers.md#run-mcp-in-the-same-container).
 
@@ -121,7 +126,7 @@ named credential binding, overriding a TOML binding for this process.
 Alternatively, retain the TOML example above and supply either its named
 variable or `<variable>_FILE`. Conflicting nonempty values and invalid selected
 files fail HTTP startup; they never fall back to another source. The daemon
-reads the MCP bearer only when its MCP listener is enabled. Restart the hosting
+reads the MCP bearer only when MCP hosting is enabled explicitly or by default. Restart the hosting
 process to rotate it.
 
 List accepted client authorities in `[mcp.http] allowed_hosts`, the

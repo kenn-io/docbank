@@ -1612,11 +1612,12 @@ for explicit control, such as inspecting logs before sending data commands.
 It normally invokes `daemon run` in the background; foreground use is useful
 for debugging.
 
-`DOCBANK_MCP_HTTP_LISTEN` or `[mcp.http] listen` opts into hosting read-only
-MCP HTTP tools in the daemon process. Hosting is disabled by default. See the
-[configuration reference](configuration.md#mcp-http-credential) for credential
-settings and the [MCP guide](usage/mcp.md#connect-over-a-trusted-network) for
-Host settings and client access.
+The daemon hosts read-only MCP HTTP tools at `/mcp` on its API port when
+`[mcp.http] enabled` is true, or by default for a loopback API once its MCP
+bearer resolves. `[mcp.http] port` moves MCP to a separate loopback port. See
+the [configuration reference](configuration.md#mcp-http-credential) for
+credential settings and the [MCP guide](usage/mcp.md#connect-over-a-trusted-network)
+for Host settings and client access.
 
 Start, restart, and automatic startup also replace an incompatible daemon.
 If its version or API protocol differs from the invoking binary, the CLI stops

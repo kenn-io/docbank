@@ -129,6 +129,13 @@ func validateMCPCommandOptions(transport, listen string) error {
 	}
 }
 
+// errMCPHTTPCredentialUnset and errMCPHTTPCredentialUnavailable mark
+// configurations that select no inbound bearer.
+var (
+	errMCPHTTPCredentialUnset       = errors.New("[mcp.http] credential_binding is required for HTTP")
+	errMCPHTTPCredentialUnavailable = errors.New("MCP HTTP credential is unavailable")
+)
+
 // loadMCPHTTPConfig reads MCP HTTP policy and resolves the bearer from its
 // selected named binding, independently of daemon startup policy.
 func loadMCPHTTPConfig(root string) (config.Config, string, error) {
@@ -138,7 +145,7 @@ func loadMCPHTTPConfig(root string) (config.Config, string, error) {
 	}
 	reference := cfg.MCP.HTTP.CredentialBinding
 	if reference == "" {
-		return config.Config{}, "", errors.New("[mcp.http] credential_binding is required for HTTP")
+		return config.Config{}, "", errMCPHTTPCredentialUnset
 	}
 	name := strings.TrimPrefix(reference, "credential:")
 	binding, ok := cfg.CredentialBindings[name]
@@ -149,8 +156,11 @@ func loadMCPHTTPConfig(root string) (config.Config, string, error) {
 	if err != nil {
 		return config.Config{}, "", err
 	}
-	if !selected || !docmcp.ValidHTTPBearerToken(token) {
-		return config.Config{}, "", errors.New("MCP HTTP credential is unavailable")
+	if !selected {
+		return config.Config{}, "", errMCPHTTPCredentialUnavailable
+	}
+	if !docmcp.ValidHTTPBearerToken(token) {
+		return config.Config{}, "", errors.New("MCP HTTP credential is invalid")
 	}
 	return cfg, token, nil
 }

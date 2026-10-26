@@ -167,15 +167,17 @@ func runServe(ctx context.Context) (retErr error) {
 		return fmt.Errorf("%w: %w", daemonconn.ErrDaemonConfigInvalid, err)
 	}
 
+	// An explicit enable requires the credential. The default enable hosts MCP
+	// only when the credential resolves and otherwise starts without it.
 	var mcpToken string
-	if cfg.MCP.HTTP.Listen != "" {
-		if err := docmcp.ValidateHTTPListenAddress(cfg.MCP.HTTP.Listen); err != nil {
-			return fmt.Errorf("%w: %w", daemonconn.ErrDaemonConfigInvalid, err)
-		}
+	var mcpSkipped error
+	mcpEnabled := cfg.MCP.HTTP.Enabled != nil && *cfg.MCP.HTTP.Enabled
+	if mcpEnabled || cfg.MCPHTTPDefaultOn() {
 		_, mcpToken, err = loadMCPHTTPConfig(layout.Root)
-		if err != nil {
+		if err != nil && mcpEnabled {
 			return fmt.Errorf("%w: %w", daemonconn.ErrDaemonConfigInvalid, err)
 		}
+		mcpSkipped = err
 	}
 
 	background := os.Getenv(daemonconn.EnvBackgroundDaemon) == "1"
@@ -456,20 +458,45 @@ func runServe(ctx context.Context) (retErr error) {
 	}
 	cfg.Server.APIKey = apiKey
 
+	// Hosted MCP is served at /mcp on the API listener, or on its own loopback
+	// listener when [mcp.http] port differs from the API port.
 	var mcpHTTP *http.Server
 	var mcpListener net.Listener
-	if cfg.MCP.HTTP.Listen != "" {
+	var mcpHandler http.Handler
+	var drainMCP func(context.Context) error
+	mcpURL := ""
+	if mcpSkipped != nil {
+		if errors.Is(mcpSkipped, errMCPHTTPCredentialUnset) || errors.Is(mcpSkipped, errMCPHTTPCredentialUnavailable) {
+			logger.Info("docbank MCP HTTP not hosted; no MCP credential is set")
+		} else {
+			logger.Warn("docbank MCP HTTP not hosted", "error", mcpSkipped)
+		}
+	}
+	if mcpToken != "" {
 		connection := daemonconn.New("http://"+addr, apiKey)
 		defer func() { _ = connection.Close() }()
 		mcpServer := docmcp.NewServerWithConnection(connection, docmcp.ServerOptions{Logger: logger})
-		mcpHTTP, mcpListener, err = docmcp.ListenHTTP(context.WithoutCancel(ctx), mcpServer,
-			cfg.MCP.HTTP.Listen, docmcp.HTTPOptions{
-				BearerToken: mcpToken, AllowedHosts: cfg.MCP.HTTP.AllowedHosts, Logger: logger,
-			})
-		if err != nil {
-			return fmt.Errorf("starting daemon MCP HTTP: %w", err)
+		options := docmcp.HTTPOptions{
+			BearerToken: mcpToken, AllowedHosts: cfg.MCP.HTTP.AllowedHosts, Logger: logger,
 		}
-		defer func() { _ = mcpListener.Close() }()
+		if cfg.MCPHTTPSharesAPIListener() {
+			handler, err := docmcp.PrepareHTTPHandler(context.WithoutCancel(ctx), mcpServer, cfg.Server.BindAddr, options)
+			if err != nil {
+				return fmt.Errorf("starting daemon MCP HTTP: %w", err)
+			}
+			gate := docmcp.NewRequestGate()
+			mcpHandler, drainMCP = gate.Wrap(handler), gate.Shutdown
+			mcpURL = "http://" + listener.Addr().String() + mcpHTTPPath
+		} else {
+			mcpHTTP, mcpListener, err = docmcp.ListenHTTP(context.WithoutCancel(ctx), mcpServer,
+				cfg.MCPHTTPListenAddr(), options)
+			if err != nil {
+				return fmt.Errorf("starting daemon MCP HTTP: %w", err)
+			}
+			defer func() { _ = mcpListener.Close() }()
+			drainMCP = drainHTTPServer(mcpHTTP)
+			mcpURL = "http://" + mcpListener.Addr().String() + mcpHTTPPath
+		}
 	}
 
 	rtStore := daemonconn.RuntimeStore(layout.Root)
@@ -580,29 +607,33 @@ func runServe(ctx context.Context) (retErr error) {
 		TelemetryCapture:      telemetry.CaptureHandler(telemetryReporter, layout.Root),
 	})
 	defer srv.Close()
-	newHTTPServer := func() *http.Server {
+	newHTTPServer := func(handler http.Handler) *http.Server {
 		return &http.Server{
-			Handler:           srv.Handler(),
+			Handler:           handler,
 			ReadHeaderTimeout: 10 * time.Second,
 			BaseContext:       func(net.Listener) context.Context { return context.WithoutCancel(ctx) },
 		}
 	}
-	servers := []servingHTTP{{name: "API", server: newHTTPServer(), listener: listener}}
+	mainHandler := srv.Handler()
+	if mcpHandler != nil {
+		mainHandler = withMCPRoute(mainHandler, mcpHandler)
+	}
+	servers := []servingHTTP{{name: "API", server: newHTTPServer(mainHandler), listener: listener}}
 	if localListener != nil {
 		servers = append(servers,
-			servingHTTP{name: "local API", server: newHTTPServer(), listener: localListener})
+			servingHTTP{name: "local API", server: newHTTPServer(srv.Handler()), listener: localListener})
 	}
 	if webListener != nil {
 		servers = append(servers,
-			servingHTTP{name: "web", server: newHTTPServer(), listener: webListener})
+			servingHTTP{name: "web", server: newHTTPServer(srv.Handler()), listener: webListener})
 	}
 
 	if mcpHTTP != nil {
-		servers = append(servers, servingHTTP{name: "MCP HTTP", server: mcpHTTP, listener: mcpListener})
+		servers = append(servers, servingHTTP{name: "MCP HTTP", server: mcpHTTP, listener: mcpListener, drainedFirst: true})
 	}
 
 	if background && cfg.Server.IdleTimeout.Std() > 0 && len(cfg.Watches) == 0 &&
-		cfg.Storage.PackInterval.Std() == 0 && mcpHTTP == nil {
+		cfg.Storage.PackInterval.Std() == 0 && drainMCP == nil {
 		if err := jobSupervisor.Start("daemon.idle-timeout", func(ctx context.Context) error {
 			idleWatch(ctx, tracker, cfg.Server.IdleTimeout.Std(), logger, stop)
 			return nil
@@ -616,11 +647,11 @@ func runServe(ctx context.Context) (retErr error) {
 		logger.Info("docbank web application listening", "addr", webListener.Addr().String())
 	}
 
-	if mcpListener != nil {
-		logger.Info("docbank MCP HTTP listening", "addr", mcpListener.Addr().String())
+	if mcpURL != "" {
+		logger.Info("docbank MCP HTTP listening", "url", mcpURL)
 	}
 
-	return serveDaemonHTTP(sigCtx, stopCh, servers, mcpHTTP, func() {
+	return serveDaemonHTTP(sigCtx, stopCh, servers, drainMCP, func() {
 		logger.Info("docbank daemon shutting down")
 		jobSupervisor.Stop()
 	}, srv.Shutdown)
@@ -630,6 +661,34 @@ type servingHTTP struct {
 	name     string
 	server   *http.Server
 	listener net.Listener
+	// drainedFirst marks the dedicated MCP server, which drainMCP shuts down.
+	drainedFirst bool
+}
+
+const mcpHTTPPath = "/mcp"
+
+// drainHTTPServer shuts server down, force-closing it when ctx ends first so
+// stalled handlers see their request contexts canceled.
+func drainHTTPServer(server *http.Server) func(context.Context) error {
+	return func(ctx context.Context) error {
+		err := server.Shutdown(ctx)
+		if err != nil {
+			_ = server.Close()
+		}
+		return err
+	}
+}
+
+// withMCPRoute serves hosted MCP at /mcp ahead of the API middleware. The MCP
+// transport applies its own bearer, Host, and Origin checks.
+func withMCPRoute(api, mcp http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == mcpHTTPPath {
+			mcp.ServeHTTP(w, r)
+			return
+		}
+		api.ServeHTTP(w, r)
+	})
 }
 
 // mcpDrainTimeout caps the MCP drain so API shutdown keeps the rest of the
@@ -637,10 +696,11 @@ type servingHTTP struct {
 const mcpDrainTimeout = daemon.HTTPDrainTimeout / 2
 
 // serveDaemonHTTP keeps the local API available until MCP reads have drained
-// or their share of the drain deadline expires. All listeners share one
-// deadline, including session cleanup and forced closes.
+// or their share of the drain deadline expires. drainMCP is nil when the
+// daemon does not host MCP. All listeners share one deadline, including
+// session cleanup and forced closes.
 func serveDaemonHTTP(ctx context.Context, stopCh <-chan struct{}, servers []servingHTTP,
-	mcpHTTP *http.Server, stopJobs func(), shutdownAPI func(context.Context) error,
+	drainMCP func(context.Context) error, stopJobs func(), shutdownAPI func(context.Context) error,
 ) error {
 	type serveResult struct {
 		name string
@@ -667,20 +727,19 @@ func serveDaemonHTTP(ctx context.Context, stopCh <-chan struct{}, servers []serv
 		context.Background(), daemon.HTTPDrainTimeout)
 	defer cancel()
 	// Drain MCP while its API-backed reads can still complete against the API.
-	// Force-closing a stalled read cancels its request context.
+	// A stalled read has its request context canceled.
 	var shutdownErr error
-	if mcpHTTP != nil {
+	if drainMCP != nil {
 		mcpCtx, cancelMCP := context.WithTimeout(shutdownCtx, mcpDrainTimeout)
-		err := mcpHTTP.Shutdown(mcpCtx)
+		err := drainMCP(mcpCtx)
 		cancelMCP()
 		if err != nil {
-			_ = mcpHTTP.Close()
 			shutdownErr = fmt.Errorf("draining daemon MCP HTTP requests: %w", err)
 		}
 	}
 	shutdownErr = errors.Join(shutdownErr, shutdownAPI(shutdownCtx))
 	for _, running := range servers {
-		if running.server == mcpHTTP {
+		if running.drainedFirst {
 			continue
 		}
 		if err := running.server.Shutdown(shutdownCtx); err != nil {

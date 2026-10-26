@@ -38,8 +38,19 @@ func applyEnvironment(c Config) (Config, error) {
 	if selected {
 		c.Server.APIKey = key
 	}
-	if value := os.Getenv("DOCBANK_MCP_HTTP_LISTEN"); value != "" {
-		c.MCP.HTTP.Listen = value
+	if value := os.Getenv("DOCBANK_MCP_HTTP_ENABLED"); value != "" {
+		enabled, err := strconv.ParseBool(value)
+		if err != nil {
+			return Config{}, errors.New("DOCBANK_MCP_HTTP_ENABLED must be true or false")
+		}
+		c.MCP.HTTP.Enabled = &enabled
+	}
+	if value := os.Getenv("DOCBANK_MCP_HTTP_PORT"); value != "" {
+		port, err := strconv.Atoi(value)
+		if err != nil || port < 0 || port > 65535 {
+			return Config{}, errors.New("DOCBANK_MCP_HTTP_PORT must be an integer from 0 through 65535")
+		}
+		c.MCP.HTTP.Port = port
 	}
 	return applyMCPEnvironment(c), nil
 }
@@ -52,7 +63,7 @@ func applyMCPEnvironment(c Config) Config {
 		}
 	}
 	// The conventional inbound MCP secret selects a named process-local binding.
-	// Its value is resolved only when an MCP HTTP listener is enabled.
+	// Its value is resolved only when an MCP HTTP listener starts.
 	if os.Getenv("DOCBANK_MCP_HTTP_TOKEN") != "" || os.Getenv("DOCBANK_MCP_HTTP_TOKEN_FILE") != "" {
 		const prefix = "docbank-mcp-http-env"
 		if c.CredentialBindings == nil {
