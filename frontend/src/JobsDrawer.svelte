@@ -146,6 +146,7 @@
     if (lane.active) return "Running";
     if (lane.members.some((member) => member.status === "queued")) return "Queued";
     if (lane.failed) return "Failed";
+    if (lane.members.some((member) => member.error)) return "Waiting";
     return lane.status && lane.status !== "running" ? statusLabel(lane.status) : "Idle";
   }
 
@@ -309,7 +310,14 @@
             {#each lanes as lane (lane.key)}
               <tr>
                 <th scope="row">{lane.title}</th>
-                <td><span class="state" data-state={laneState(lane)}>{laneState(lane)}</span></td>
+                <td
+                  ><span class="state" data-state={laneState(lane)}>{laneState(lane)}</span>
+                  {#if !lane.visible}
+                    {#each lane.members.filter((member) => member.error) as member (member.name)}
+                      <p class="error">{member.error}</p>
+                    {/each}
+                  {/if}
+                </td>
                 <td
                   >{#if !lane.visible}<div class="controls">
                       {@render laneControls(lane)}

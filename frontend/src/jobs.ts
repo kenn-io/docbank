@@ -63,7 +63,7 @@ export function jobLanes(jobs: Job[], controls: LaneControl[] = []) {
         b.name.localeCompare(a.name),
     );
     const active = members.filter(activeJob);
-    const failed = members.find((member) => member.status === "failed" || member.error);
+    const failed = members.find((member) => member.status === "failed");
     const job = active.find((member) => member.busy) ?? active[0] ?? failed ?? members[0];
     const progressJobs = active.length ? active : members.slice(0, 1);
     const known =
@@ -85,10 +85,7 @@ export function jobLanes(jobs: Job[], controls: LaneControl[] = []) {
         : undefined,
       active: members.some((member) => member.busy),
       failed: failed !== undefined,
-      visible:
-        active.length > 0 ||
-        failed !== undefined ||
-        controls.some((control) => control.lane === lane && control.paused),
+      visible: members.some((member) => member.busy),
     };
   }).sort((a, b) => a.lane.localeCompare(b.lane));
 }

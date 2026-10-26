@@ -141,3 +141,32 @@ it("disables trash until the view is refreshed", () => {
     (screen.getByRole("button", { name: "Move to trash" }) as HTMLButtonElement).disabled,
   ).toBe(true);
 });
+
+it.each(["file", "dir"] as const)(
+  "disables %s trash while another move is pending",
+  async (kind) => {
+    const ontrash = vi.fn();
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    const props = { ...fileProps, node: { ...fileProps.node, kind }, ontrash, trashing: true };
+    const view = render(DocumentInspector, props);
+    if (kind === "dir") {
+      await fireEvent.click(screen.getByRole("button", { name: "Document actions" }));
+      expect(
+        screen.getByRole("menuitem", { name: "Move to trash" }).getAttribute("aria-disabled"),
+      ).toBe("true");
+    } else {
+      expect(
+        (screen.getByRole("button", { name: "Move to trash" }) as HTMLButtonElement).disabled,
+      ).toBe(true);
+      await view.rerender({ ...props, trashing: false });
+      await fireEvent.click(screen.getByRole("button", { name: "Move to trash" }));
+      expect(ontrash).toHaveBeenCalledOnce();
+    }
+  },
+);

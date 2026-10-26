@@ -40,7 +40,7 @@ describe("activity lanes", () => {
     );
     expect(lane.control?.paused).toBe(true);
     expect(lane.status).toBe("failed");
-    expect(lane.visible).toBe(true);
+    expect(lane.visible).toBe(false);
     expect(lane.members.map((member) => member.operation_id)).toEqual(["c", "b", "a"]);
     const controls = [
       { lane: "repair", paused: false, concurrency: 1, revision: 1, can_set_concurrency: false },
@@ -58,9 +58,9 @@ describe("activity lanes", () => {
     expect(after.map(({ key }) => key)).toEqual(idle.map(({ key }) => key));
   });
 
-  it("keeps a queued operation visible before a worker picks it up", () => {
+  it("keeps a queued operation in its lane before a worker picks it up", () => {
     const [lane] = jobLanes([job({ status: "queued", busy: false, can_cancel: true })]);
-    expect(lane.visible).toBe(true);
+    expect(lane.visible).toBe(false);
     expect(lane.members).toHaveLength(1);
     const [idle] = jobLanes([job({ status: "completed", busy: false })]);
     expect(idle.visible).toBe(false);
@@ -129,7 +129,7 @@ describe("activity lanes", () => {
       completed: 1,
       total: 3,
       active: false,
-      visible: true,
+      visible: false,
       control,
     });
     expect(

@@ -72,7 +72,7 @@ describe("background jobs drawer", () => {
     expect(screen.getByRole("row", { name: "Extracting text Idle" })).toBeTruthy();
     await fireEvent.click(screen.getByRole("button", { name: "Pause Making previews" }));
     await waitFor(() =>
-      expect(screen.getByRole("region", { name: "Making previews" })).toBeTruthy(),
+      expect(screen.getByRole("row", { name: /Making previews Paused/ })).toBeTruthy(),
     );
     expect(screen.getByRole("button", { name: "Resume Making previews" })).toBeTruthy();
     const write = fetchSpy.mock.calls.find(([, options]) => options?.method === "PUT")!;
@@ -80,6 +80,43 @@ describe("background jobs drawer", () => {
     expect(JSON.parse(String(write[1]?.body))).toEqual({ paused: true, concurrency: 1 });
     expect(new Headers(write[1]?.headers).get("If-Match")).toBe('"1"');
   });
+
+  it.each(["paused", "failed", "waiting"])(
+    "keeps an idle %s worker below Nothing running",
+    async (state) => {
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        jobsResponse(
+          [
+            {
+              name: "extract:plain-text",
+              lane: "extract:plain-text",
+              status: state === "failed" ? "failed" : "running",
+              busy: false,
+              started_at: "2026-07-23T12:00:00Z",
+              error: state === "paused" ? undefined : "source is unavailable",
+            },
+          ],
+          [
+            {
+              lane: "extract:plain-text",
+              paused: state === "paused",
+              concurrency: 1,
+              revision: 1,
+              can_set_concurrency: false,
+            },
+          ],
+        ),
+      );
+      render(JobsDrawer, { session: "short-lived", onclose: vi.fn(), onauthfailure: vi.fn() });
+      const label = state === "paused" ? "Paused" : state === "failed" ? "Failed" : "Waiting";
+      expect(
+        await screen.findByRole("row", { name: new RegExp(`Extracting text ${label}`) }),
+      ).toBeTruthy();
+      expect(screen.getByText("Nothing running")).toBeTruthy();
+      expect(screen.queryByRole("region")).toBeNull();
+      if (state !== "paused") expect(screen.getByText("source is unavailable")).toBeTruthy();
+    },
+  );
 
   it.each(["initial load", "lane controls"])(
     "shows a retry for unavailable %s and recovers to the empty state",
@@ -378,7 +415,7 @@ describe("background jobs drawer", () => {
     });
 
     expect(await screen.findByRole("region", { name: "Extracting text" })).toBeTruthy();
-    const failed = within(screen.getByRole("region", { name: "Watching inbox" }));
+    const failed = within(screen.getByRole("row", { name: /Watching inbox Failed/ }));
     expect(failed.getByText("Failed")).toBeTruthy();
     expect(failed.getByText("source is unavailable")).toBeTruthy();
     expect(screen.getByText("1 running")).toBeTruthy();

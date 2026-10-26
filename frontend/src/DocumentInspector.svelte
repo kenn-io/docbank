@@ -44,6 +44,7 @@
     tagsDisabled = false,
     tagsDisabledReason = "",
     actionsDisabled = false,
+    trashing = false,
     previewAvailable = false,
     preview,
     session,
@@ -72,6 +73,7 @@
     tagsDisabled?: boolean;
     tagsDisabledReason?: string;
     actionsDisabled?: boolean;
+    trashing?: boolean;
     previewAvailable?: boolean;
     preview?: Snippet<[(source: SelectedSource, revision: number) => void]>;
     session?: string;
@@ -144,14 +146,16 @@
       >
       <MenuContent ariaLabel="Document actions">
         <MenuItem onselect={() => (protect = true)}>Protect permanently…</MenuItem>
-        {#if ontrash}<MenuItem tone="danger" disabled={actionsDisabled} onselect={ontrash}
-            >Move to trash</MenuItem
+        {#if ontrash}<MenuItem
+            tone="danger"
+            disabled={actionsDisabled || trashing}
+            onselect={ontrash}>Move to trash</MenuItem
           >{/if}
       </MenuContent>
     </Menu>{:else if ontrash}<IconAction
       ariaLabel="Move to trash"
       tip={actionsDisabled ? "Refresh this view first" : "Move to trash"}
-      disabled={actionsDisabled}
+      disabled={actionsDisabled || trashing}
       onclick={ontrash}><Trash2Icon size={16} aria-hidden="true" /></IconAction
     >{/if}
 {/snippet}

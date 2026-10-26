@@ -1694,3 +1694,48 @@ it.each([
     );
   },
 );
+
+it.each(["top bar", "Advanced"])(
+  "retains the sort draft after a failed search from %s",
+  async (entry) => {
+    const options = {
+      profiles: [
+        {
+          name: "private",
+          fingerprint: "a".repeat(64),
+          rendition: true,
+          embedding_bindings: ["embed"],
+          reranking_available: false,
+        },
+      ],
+      files: [node(2, "report.txt", baseVersion)],
+      baseReport: report("hybrid", [
+        result(node(2, "report.txt", baseVersion), 1, "report excerpt"),
+      ]),
+      baseSearchStatus: 0,
+      legacySearchStatus: 0,
+    };
+    installHarness(options);
+    render(App);
+    await submitSearch("first search");
+    await screen.findByText("report excerpt");
+    options.baseSearchStatus = 500;
+    options.legacySearchStatus = 500;
+    await fireEvent.input(screen.getByRole("searchbox", { name: "Search documents" }), {
+      target: { value: "annual report" },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+    await fireEvent.click(screen.getByRole("combobox", { name: "Sort by: Path" }));
+    await fireEvent.click(screen.getByRole("option", { name: "Size" }));
+    if (entry === "top bar") {
+      await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+      await submitSearch("annual report");
+    } else {
+      await fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    }
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("HTTP 500"));
+    if (!screen.queryByRole("dialog", { name: "Filters and sort" }))
+      await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+    expect(screen.getByRole("combobox", { name: "Sort by: Size" })).toBeTruthy();
+  },
+);

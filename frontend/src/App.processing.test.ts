@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/svelte";
 import App from "./App.svelte";
+import { hop } from "./processing-test-fixtures.js";
 
 afterEach(() => {
   cleanup();
@@ -91,23 +92,7 @@ it.each(["header", "text"])("opens exact-version processing from %s", async (ent
         vault_uid: versionID,
         selector: { node_id: 2, content_version_id: versionID, profile: "private" },
         profile_fingerprint: fingerprint,
-        flow: [
-          {
-            capability: "rendition",
-            provider_id: "plaintext.in-process-v1",
-            trust_boundary: "local_process",
-            input_classes: ["original_file"],
-            disclose_filename: false,
-            runtime_disclosure: {
-              immediate_processor: "plaintext.in-process-v1",
-              ultimate_processor: "plaintext.in-process-v1",
-              endpoint: "in-process",
-              deployment: "d".repeat(64),
-              metadata_classes: ["byte_length"],
-              retained_artifact_roles: ["sanitized_markdown"],
-            },
-          },
-        ],
+        flow: [hop()],
         disclosed_classes: ["original_file"],
         retained_classes: ["sanitized_markdown"],
         estimate: { source_bytes: 2048, provider_calls: 1, vector_spaces: 0 },

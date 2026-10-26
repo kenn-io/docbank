@@ -27,9 +27,8 @@ const json = (value: unknown) =>
     headers: { "Content-Type": "application/json" },
   });
 
-it("names what moved and how many items a folder held", () => {
-  expect(trashedMessage(node(), 24)).toBe("Moved “clients” (24 items) to trash");
-  expect(trashedMessage(node(), 1)).toBe("Moved “clients” (1 item) to trash");
+it("names the item moved to trash", () => {
+  expect(trashedMessage(node())).toBe("Moved “clients” to trash");
   expect(trashedMessage(node({ name: "a.txt" }))).toBe("Moved “a.txt” to trash");
 });
 
@@ -43,7 +42,7 @@ it("says where a restore landed", () => {
   expect(parentPath("/a/b.txt")).toBe("/a");
 });
 
-it("counts a folder's items, trashes it with its revision, and undoes through restore", async () => {
+it("trashes a folder with its revision and undoes through restore", async () => {
   const calls: Array<[string, string | null]> = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
@@ -56,15 +55,14 @@ it("counts a folder's items, trashes it with its revision, and undoes through re
   });
 
   const moved = await moveToTrash("s", node());
-  expect(moved.message).toBe("Moved “clients” (24 items) to trash");
+  expect(moved.message).toBe("Moved “clients” to trash");
 
   const undone = await undoTrash("s", moved.receipt);
   expect(undone.notice).toBe("Restored to /older");
   expect(calls.map(([url]) => url.split("/").slice(-1)[0]?.split("?")[0])).toEqual([
-    "children",
     "trash",
     "restore",
   ]);
-  expect(calls[1]![1]).toBe("1");
-  expect(calls[2]![1]).toBe("2");
+  expect(calls[0]![1]).toBe("1");
+  expect(calls[1]![1]).toBe("2");
 });

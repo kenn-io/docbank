@@ -1964,6 +1964,7 @@
     naturalSearchController = controller;
     const session = webSession;
     const mode = naturalSearchMode;
+    const draftRevision = queryDraftRevision;
     const profile = naturalProfile;
     let accepted = false;
     searchPending = true;
@@ -2157,6 +2158,8 @@
         naturalProfileDefaultPending.session === webSession;
       const acceptedQuery = accepted ? query : "";
       if (request === generation) {
+        if (accepted && submitted && !queryBarOpen && draftRevision === queryDraftRevision)
+          closeQueryDraft();
         searchPending = false;
         loading = false;
         naturalRerankPending = false;
@@ -2401,7 +2404,7 @@
       );
       return;
     }
-    closeQueryDraft();
+    queryBarOpen = false;
     naturalSearchMode = naturalProfile ? "auto" : "names";
     const outcome = await runSearch(undefined, undefined, true, sortOnly);
     if (outcome) reportSearch(webSession, outcome.type, outcome.empty);
@@ -2428,7 +2431,7 @@
       discardQueryDraft();
       return;
     }
-    closeQueryDraft();
+    queryBarOpen = false;
     searchQuery = query.text;
     naturalSearchMode = "auto";
     const outcome = await runSearch(undefined, undefined, true, query.sort);
@@ -3084,7 +3087,7 @@
     else showToast(cause instanceof Error ? cause.message : String(cause), { tone: "danger" });
   }
 
-  let trashing = false;
+  let trashing = $state(false);
   async function trashRow(target: Row): Promise<void> {
     if (trashing) return;
     trashing = true;
@@ -4603,6 +4606,7 @@
                         };
                     }
                   : undefined}
+                {trashing}
                 ontrash={currentInspectorNode && !currentInspectorNode.trashed_at
                   ? () => void trashSnapshotDocument()
                   : undefined}
@@ -4703,6 +4707,7 @@
                         };
                     }
                   : undefined}
+                {trashing}
                 ontrash={() => {
                   if (selected) void trashRow(selected);
                 }}

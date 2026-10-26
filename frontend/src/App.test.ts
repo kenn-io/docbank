@@ -764,6 +764,7 @@ it("trashes a nested child in one click and brings it back with Undo", async () 
       headers: { "Content-Type": "application/json" },
     });
   let trashed = false;
+  let finishTrash!: () => void;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     if (url === "/api/v1/path?path=%2F") return json(root);
@@ -790,6 +791,9 @@ it("trashes a nested child in one click and brings it back with Undo", async () 
       return json({ items: [], total: 0, limit: 1000, offset: 0 });
     }
     if (url === "/api/v1/nodes/3/trash" && init?.method === "POST") {
+      await new Promise<void>((resolve) => {
+        finishTrash = resolve;
+      });
       trashed = true;
       return json({
         ...quarterlyReport,
@@ -810,6 +814,13 @@ it("trashes a nested child in one click and brings it back with Undo", async () 
 
   await fireEvent.click(screen.getByRole("button", { name: "Move to trash" }));
 
+  try {
+    expect(
+      (screen.getByRole("button", { name: "Move to trash" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+  } finally {
+    finishTrash();
+  }
   expect(screen.queryByRole("dialog")).toBeNull();
   const notice = await screen.findByText("Moved “quarterly-report.txt” to trash");
   expect(notice).toBeTruthy();

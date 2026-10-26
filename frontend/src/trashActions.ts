@@ -1,4 +1,3 @@
-import * as generated from "./generated/docbank.js";
 import type { Node } from "./generated/docbank.js";
 import { restoreNode, trashNode } from "./receipts.js";
 
@@ -7,9 +6,8 @@ export function parentPath(path: string): string {
   return split <= 0 ? "/" : path.slice(0, split);
 }
 
-export function trashedMessage(node: Pick<Node, "name">, items?: number): string {
-  const count = items ? ` (${items} item${items === 1 ? "" : "s"})` : "";
-  return `Moved “${node.name}”${count} to trash`;
+export function trashedMessage(node: Pick<Node, "name">): string {
+  return `Moved “${node.name}” to trash`;
 }
 
 // The restore response carries where the item landed; the message reports that.
@@ -22,24 +20,12 @@ export function restoredMessage(
   return `Restored to ${parentPath(restored.path ?? "/")}`;
 }
 
-// A folder's direct item count, as the browser shows it. Missing counts leave
-// the message plain rather than blocking the move.
-async function itemCount(session: string, node: Node): Promise<number | undefined> {
-  if (node.kind !== "dir") return undefined;
-  try {
-    return (await generated.listChildren(node.id, { limit: 1, offset: 0 }, { session })).total;
-  } catch {
-    return undefined;
-  }
-}
-
 export async function moveToTrash(
   session: string,
   node: Node,
 ): Promise<{ receipt: Node; message: string }> {
-  const items = await itemCount(session, node);
   const receipt = await trashNode(session, node.id, node.revision);
-  return { receipt, message: trashedMessage(node, items) };
+  return { receipt, message: trashedMessage(node) };
 }
 
 // Undo goes through the same restore call as the Trash drawer.
