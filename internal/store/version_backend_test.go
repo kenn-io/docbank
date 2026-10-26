@@ -8,8 +8,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/require"
-
-	"go.kenn.io/docbank/internal/pgtest"
 )
 
 const (
@@ -29,12 +27,7 @@ func TestContentVersionQueriesSQLite(t *testing.T) {
 
 func TestContentVersionQueriesPostgres(t *testing.T) {
 	t.Parallel()
-	db, _ := pgtest.NewDatabase(t)
-	_, err := db.ExecContext(t.Context(), postgresNodeFixture)
-	require.NoError(t, err)
-	s := &Store{db: db, writeDB: db}
-	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT id FROM nodes WHERE parent_id IS NULL`).Scan(&s.rootID))
-	checkContentVersionQueries(t, s)
+	checkContentVersionQueries(t, newPostgresQueryStore(t))
 }
 
 // Seed only retained authority used by these queries, including a reverted
@@ -132,11 +125,8 @@ func checkContentVersionQueries(t *testing.T, s *Store) {
 func TestContentVersionSnapshotPostgres(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
-	db, _ := pgtest.NewDatabase(t)
-	_, err := db.ExecContext(ctx, postgresNodeFixture)
-	require.NoError(t, err)
-	s := &Store{db: db, writeDB: db}
-	require.NoError(t, db.QueryRowContext(ctx, `SELECT id FROM nodes WHERE parent_id IS NULL`).Scan(&s.rootID))
+	s := newPostgresQueryStore(t)
+	db := s.db
 	nodeID, _ := seedContentHistory(t, s)
 
 	conn, err := db.Conn(ctx)

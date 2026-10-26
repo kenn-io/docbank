@@ -177,16 +177,26 @@ in `releasedSchemaFixtures`. Three checks enforce this:
 
 `internal/store/pgschema` provides the internal schema installation and
 validation foundation. A PostgreSQL-backed vault is not available yet: ordinary
-daemon and embedded operations still use SQLite. This package currently owns
-only the native vault identity and PostgreSQL schema version, not the document
-catalogs, search, transfer, or recovery paths.
+daemon and embedded operations still use SQLite. This package owns the native
+vault identity, PostgreSQL schema version, and the core `nodes`, `blobs`,
+`blob_checksums`, and `content_versions` catalogs. Complete mutations, the
+remaining catalogs, search, transfer, and recovery are not available yet.
 
 `Setup` takes a caller-owned `database/sql` pool authenticated as `SchemaOwner`
 and uses the explicit `Schema` setting. It creates a dedicated schema, canonical
-DDL and a UUIDv4 vault
-identity in one transaction, under a schema-specific PostgreSQL advisory lock.
-Repeated setup preserves that identity. Existing empty, unrelated, malformed,
-wrong-owner and unsupported-version schemas are refused rather than repaired.
+DDL, a UUIDv4 vault identity, and the root directory in one transaction, under a
+schema-specific PostgreSQL advisory lock. Repeated setup preserves the identity,
+root, and existing data. Existing empty or unrelated schemas, malformed
+identities, wrong owners, and unsupported versions are refused rather than repaired.
+
+The catalogs keep content-version and operation IDs as text, numeric node IDs,
+sizes and revisions as `BIGINT`, and timestamps as fixed-width UTC text. This
+matches the shared store queries and their lexical timestamp ordering. Node
+IDs use a PostgreSQL identity sequence; imports must eventually restore its
+allocation high-water mark before accepting writes. Foreign keys retain node
+ownership of the current version, version provenance, and blob references.
+Value validation and immutable-record rules belong to the Go mutation paths;
+these tables alone do not provide a complete writable store.
 
 `Validate` only reads. Its runtime role must be separate from the owner, unable
 to assume the owner role, and lack schema `CREATE` and identity-table write
@@ -195,8 +205,10 @@ can assume, including indirect memberships. `NOINHERIT` alone does not prevent
 `SET ROLE`; PostgreSQL's [role privilege checks](https://www.postgresql.org/docs/16/functions-info.html#FUNCTIONS-INFO-ACCESS-TABLE)
 resolve those grants. The operator provisions roles and grants schema `USAGE`
 and identity `SELECT` explicitly. Neither function creates roles or changes
-grants. Callers own connection lifetimes and deadlines. Schema setup does not
-grant ownership of blob roots or permit multiple vault writers.
+grants. `Validate` checks identity/version and role separation; it does not
+qualify the remaining store operations. Callers own connection lifetimes and
+deadlines. Schema setup does not grant ownership of blob roots or permit
+multiple vault writers.
 
 Neither the session login nor the selected role may belong to the schema owner
 role, directly or indirectly. This ownership check is separate from object
@@ -206,7 +218,9 @@ authority to alter objects or grant those privileges again.
 PostgreSQL schema versions are independent of SQLite layout versions and JSONL
 format versions. The first supported PostgreSQL release establishes the upgrade
 floor. Fresh installs use canonical DDL; do not invent historical migrations for
-this unreleased foundation. Later supported layouts require numbered
+this unreleased foundation. Internal layout 2 rejects the earlier identity-only
+layout 1 without changing it. Recreate disposable test databases when moving
+between these internal layouts. Later supported layouts require numbered
 `NNNNNN_description.up.sql` transitions, with the target version in the filename.
 Keep one complete forward chain, and commit each transition and its version
 together under the setup lock. Runtime startup never migrates. Once a migration
@@ -245,9 +259,11 @@ the remaining catalogs still require SQLite.
 
 The shared node-query tests exercise allocation, current-version projection,
 live-child lookup, rollback, and name reuse after trashing. They use the real
-SQLite schema and a limited PostgreSQL query fixture containing only the
-tables those queries read. That fixture is not a vault schema and does not
-qualify the full directory or file mutation on PostgreSQL.
+SQLite schema and PostgreSQL catalogs installed by `pgschema.Setup`. PostgreSQL
+queries run through a separate runtime login with explicit schema, table and
+sequence grants. Reuse this setup for new query tests instead of copying DDL
+into fixtures. These tests do not qualify the full directory or file mutation
+on PostgreSQL.
 
 Retained content-version lookups and history pages also use shared SQL. They
 preserve node ownership, revision ordering, source-version provenance and
@@ -260,8 +276,8 @@ SQLite assigns their bindings by first appearance, while PostgreSQL uses the
 number itself. Exercise shared queries on both backends to catch binding and
 result differences.
 
-The content-history tests reuse the node-query fixture and the real SQLite
-schema. They cover version projection, ownership, pagination and a prune
+The content-history tests reuse the same setup and the real SQLite schema.
+They cover version projection, ownership, pagination and a prune
 committed between the view's reads. This qualifies the read queries only;
 PostgreSQL content mutations and a public vault remain unavailable.
 
