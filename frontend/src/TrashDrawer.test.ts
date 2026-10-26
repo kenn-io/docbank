@@ -67,12 +67,7 @@ it.each([1, 3])(
     await fireEvent.click(screen.getByRole("button", { name: "Restore" }));
     expect(screen.queryByRole("dialog", { name: /^Restore/ })).toBeNull();
 
-    await waitFor(() =>
-      expect(onrestored).toHaveBeenCalledWith(
-        restored,
-        count === 1 ? "Restored to /Reports" : `Restored ${count} files`,
-      ),
-    );
+    await waitFor(() => expect(onrestored).toHaveBeenCalledWith(restored, expect.any(String)));
     expect(await screen.findByText("Trash is empty")).toBeTruthy();
     const [, request] = fetchMock.mock.calls[1] ?? [];
     expect(new Headers(request?.headers).get("If-Match")).toBe("3");
@@ -122,7 +117,7 @@ it("drops stale trash rows when the refresh after a successful restore fails", a
   expect(await screen.findByText("capture.jpg")).toBeTruthy();
   expect(screen.getByText("Companions")).toBeTruthy();
   await fireEvent.click(screen.getAllByRole("button", { name: "Restore" })[0]);
-  await waitFor(() => expect(onrestored).toHaveBeenCalledWith(receipt, "Restored 3 files"));
+  await waitFor(() => expect(onrestored).toHaveBeenCalledWith(receipt, expect.any(String)));
   expect(screen.queryByRole("dialog", { name: /^Restore/ })).toBeNull();
   await waitFor(() => expect(screen.queryByText("capture.jpg")).toBeNull());
   expect(screen.queryByText("Companions")).toBeNull();

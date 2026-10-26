@@ -326,27 +326,3 @@ it("invalidates the old session before accepting a new preview", async () => {
     "replacement",
   );
 });
-
-it("runs top-bar text with filters and the accepted page size", async () => {
-  vi.spyOn(globalThis, "fetch").mockResolvedValue(response());
-  const onrun = vi.fn();
-  render(QueryBar, {
-    session: "session",
-    query,
-    initialPageSize: 50,
-    onrun,
-    onchange: vi.fn(),
-    onsave: vi.fn(),
-    onclose: vi.fn(),
-    oncancel: vi.fn(),
-    onauthfailure: vi.fn(),
-  });
-  await fireEvent.input(screen.getByLabelText("Filters JSON"), {
-    target: { value: '{"size_min":10}' },
-  });
-  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
-  expect(onrun).toHaveBeenCalledWith(
-    { ...query, filters: { size_min: 10 } },
-    expect.objectContaining({ page_size: 50 }),
-  );
-});

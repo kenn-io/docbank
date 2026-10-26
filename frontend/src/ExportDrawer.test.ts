@@ -576,9 +576,24 @@ it("captures current album members on reopen while retaining settings retries an
   expect(plans.at(-1).photo_render.quality).toBe(80);
 });
 
-it.each([false, true])(
-  "releases a document export and handles a retained request: %s",
-  async (retainedRequest) => {
+it.each(["release", "retained request", "download"])(
+  "releases a document export and handles %s",
+  async (outcome) => {
+    const retainedRequest = outcome === "retained request";
+    const receipt = {
+      format: "docbank-bundle-v1",
+      plan_fingerprint: "a".repeat(64),
+      sha256: "b".repeat(64),
+      size: 120,
+      entries: 4,
+    };
+    const ticketURL = `/api/daemon/web-download/file?ticket=${"t".repeat(43)}`;
+    const clicked: string[] = [];
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+      this: HTMLAnchorElement,
+    ) {
+      clicked.push(this.getAttribute("href") ?? "");
+    });
     const { exportMemberHash } = await import("./exports.js");
     const memberHash = await exportMemberHash(input.members),
       hash = "a".repeat(64),
@@ -632,15 +647,17 @@ it.each([false, true])(
             { role: "original", available_members: 1, unavailable_members: 0, files: 1, bytes: 12 },
           ],
         });
+      if (path.endsWith("/download")) return Response.json({ url: ticketURL, receipt });
       if (path.endsWith("/jobs"))
         return Response.json({
           id: body.operation_id,
           plan_id: plan.id,
           fingerprint: hash,
-          state: "canceled",
+          state: outcome === "download" ? "completed" : "canceled",
+          receipt: outcome === "download" ? receipt : undefined,
           sequence: 1,
-          completed_roles: 0,
-          completed_bytes: 0,
+          completed_roles: outcome === "download" ? 1 : 0,
+          completed_bytes: outcome === "download" ? 12 : 0,
           attempt: 1,
           created_at: source.created_at,
           deadline: future,
@@ -665,6 +682,12 @@ it.each([false, true])(
     await fireEvent.click(screen.getByRole("combobox", { name: /^Duplicate outputs/ }));
     await fireEvent.click(screen.getByRole("option", { name: "Share exact duplicate outputs" }));
     await fireEvent.click(screen.getByRole("button", { name: "Download ZIP" }));
+    if (outcome === "download") {
+      await waitFor(() => expect(clicked).toEqual([ticketURL]));
+      expect(screen.queryByRole("button", { name: "Download anyway" })).toBeNull();
+      expect(await screen.findByText("Download started in your browser.")).toBeTruthy();
+      return;
+    }
     await screen.findByRole("button", { name: "New export" });
     if (retainedRequest) await view.rerender({ notice: "Your previous export is still retained." });
     await fireEvent.click(screen.getByRole("button", { name: "New export" }));
@@ -682,103 +705,3 @@ it.each([false, true])(
     expect(plans[1].duplicate_policy).toBe("collapse_exact_content");
   },
 );
-
-it("builds and offers the ZIP from one Download ZIP click when every output is available", async () => {
-  const { exportMemberHash } = await import("./exports.js");
-  const memberHash = await exportMemberHash(input.members),
-    hash = "a".repeat(64),
-    future = "2099-01-01T00:00:00Z";
-  const receipt = {
-    format: "docbank-bundle-v1",
-    plan_fingerprint: hash,
-    sha256: "b".repeat(64),
-    size: 120,
-    entries: 4,
-  };
-  const ticketURL = `/api/daemon/web-download/file?ticket=${"t".repeat(43)}`;
-  let source: any, plan: any;
-  const paths: string[] = [];
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
-    const path = String(url),
-      body = init?.body ? JSON.parse(String(init.body)) : undefined;
-    paths.push(path);
-    if (path.endsWith("/sources")) {
-      source = {
-        id: body.operation_id,
-        request_sha256: hash,
-        kind: "explicit",
-        state: "sealed",
-        member_hash: memberHash,
-        total: 1,
-        source_bytes: 12,
-        created_at: "2026-01-01T00:00:00Z",
-        expires_at: future,
-      };
-      return Response.json(source);
-    }
-    if (path.endsWith("/plans")) {
-      plan = {
-        format: "docbank-bundle-v1",
-        id: body.operation_id,
-        vault_id: input.members[0]!.version_id,
-        toolchain: "go1.27",
-        source,
-        roles: body.roles,
-        fingerprint: hash,
-        total: 1,
-        role_entries: 1,
-        role_bytes: 12,
-        metadata_bytes: 100,
-        created_at: source.created_at,
-        expires_at: future,
-      };
-      return Response.json(plan);
-    }
-    if (path.endsWith("/preview"))
-      return Response.json({
-        plan_id: plan.id,
-        fingerprint: hash,
-        member_hash: memberHash,
-        total: 1,
-        roles: [
-          { role: "original", available_members: 1, unavailable_members: 0, files: 1, bytes: 12 },
-        ],
-      });
-    if (path.endsWith("/download")) return Response.json({ url: ticketURL, receipt });
-    if (path.endsWith("/jobs"))
-      return Response.json({
-        id: body.operation_id,
-        plan_id: plan.id,
-        fingerprint: hash,
-        state: "completed",
-        sequence: 1,
-        completed_roles: 1,
-        completed_bytes: 12,
-        attempt: 1,
-        receipt,
-        created_at: source.created_at,
-        deadline: future,
-        expires_at: future,
-      });
-    throw new Error(`unexpected request ${path}`);
-  });
-  const clicked: string[] = [];
-  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
-    this: HTMLAnchorElement,
-  ) {
-    clicked.push(this.getAttribute("href") ?? "");
-  });
-  render(ExportDrawer, {
-    session: "s",
-    input,
-    open: true,
-    onclose: vi.fn(),
-    onauthfailure: vi.fn(),
-  });
-
-  await fireEvent.click(screen.getByRole("button", { name: "Download ZIP" }));
-  await waitFor(() => expect(clicked).toEqual([ticketURL]));
-  expect(screen.queryByRole("button", { name: "Download anyway" })).toBeNull();
-  expect(paths.filter((path) => path.endsWith("/download"))).toHaveLength(1);
-  expect(await screen.findByText("Download started in your browser.")).toBeTruthy();
-});

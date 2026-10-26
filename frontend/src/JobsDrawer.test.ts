@@ -28,38 +28,7 @@ function jobsResponse(
 }
 
 describe("background jobs drawer", () => {
-  it("shows Nothing running when a paused lane has only queued work", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      jobsResponse(
-        [
-          {
-            name: "storage:queued",
-            lane: "photo_import",
-            status: "queued",
-            busy: false,
-            started_at: "2026-07-23T12:00:00Z",
-          },
-        ],
-        [
-          {
-            lane: "photo_import",
-            paused: true,
-            concurrency: 1,
-            revision: 1,
-            can_set_concurrency: false,
-          },
-        ],
-      ),
-    );
-    render(JobsDrawer, { session: "synthetic", onclose: vi.fn(), onauthfailure: vi.fn() });
-    expect(await screen.findByText("Nothing running")).toBeTruthy();
-    expect(screen.queryByRole("region")).toBeNull();
-    const workers = screen.getByRole("table", { name: "All workers" });
-    expect(within(workers).getByRole("row", { name: /Importing photos Paused/ })).toBeTruthy();
-    expect(within(workers).getByRole("button", { name: "Resume Importing photos" })).toBeTruthy();
-  });
-
-  it("lists every worker below the running work and pauses idle ones", async () => {
+  it("pauses an idle worker", async () => {
     let paused = false;
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, options) => {
       if (options?.method === "PUT") paused = JSON.parse(String(options.body)).paused;
@@ -92,15 +61,7 @@ describe("background jobs drawer", () => {
       );
     });
     render(JobsDrawer, { session: "short-lived", onclose: vi.fn(), onauthfailure: vi.fn() });
-    expect(await screen.findByText("Nothing running")).toBeTruthy();
-    expect(screen.queryByRole("region")).toBeNull();
-    expect(document.querySelector("details")).toBeNull();
-    const workers = screen.getByRole("table", { name: "All workers" });
-    expect(
-      screen.getByText("Nothing running").compareDocumentPosition(workers) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    expect(screen.getByRole("row", { name: "Extracting text Idle" })).toBeTruthy();
+    await screen.findByRole("button", { name: "Pause Making previews" });
     await fireEvent.click(screen.getByRole("button", { name: "Pause Making previews" }));
     await waitFor(() =>
       expect(screen.getByRole("row", { name: /Making previews Paused/ })).toBeTruthy(),
@@ -110,42 +71,78 @@ describe("background jobs drawer", () => {
     expect(String(write[0])).toContain("/lanes/derive%3Avisual-previews");
   });
 
-  it.each(["paused", "failed", "waiting"])(
-    "keeps an idle %s worker below Nothing running",
-    async (state) => {
-      vi.spyOn(globalThis, "fetch").mockResolvedValue(
-        jobsResponse(
-          [
-            {
-              name: "extract:plain-text",
-              lane: "extract:plain-text",
-              status: state === "failed" ? "failed" : "running",
-              busy: false,
-              started_at: "2026-07-23T12:00:00Z",
-              error: state === "paused" ? undefined : "source is unavailable",
-            },
-          ],
-          [
-            {
-              lane: "extract:plain-text",
-              paused: state === "paused",
-              concurrency: 1,
-              revision: 1,
-              can_set_concurrency: false,
-            },
-          ],
-        ),
-      );
-      render(JobsDrawer, { session: "short-lived", onclose: vi.fn(), onauthfailure: vi.fn() });
-      const label = state === "paused" ? "Paused" : state === "failed" ? "Failed" : "Waiting";
-      expect(
-        await screen.findByRole("row", { name: new RegExp(`Extracting text ${label}`) }),
-      ).toBeTruthy();
-      expect(screen.getByText("Nothing running")).toBeTruthy();
-      expect(screen.queryByRole("region")).toBeNull();
-      if (state !== "paused") expect(screen.getByText("source is unavailable")).toBeTruthy();
+  it.each([
+    {
+      state: "queued in a paused lane",
+      lane: "photo_import",
+      status: "queued",
+      paused: true,
+      label: "Importing photos Paused",
+      error: undefined,
     },
-  );
+    {
+      state: "idle",
+      lane: "extract:plain-text",
+      status: "running",
+      paused: false,
+      label: "Extracting text Idle",
+      error: undefined,
+    },
+    {
+      state: "paused",
+      lane: "extract:plain-text",
+      status: "running",
+      paused: true,
+      label: "Extracting text Paused",
+      error: undefined,
+    },
+    {
+      state: "failed",
+      lane: "extract:plain-text",
+      status: "failed",
+      paused: false,
+      label: "Extracting text Failed",
+      error: "source is unavailable",
+    },
+    {
+      state: "waiting",
+      lane: "extract:plain-text",
+      status: "running",
+      paused: false,
+      label: "Extracting text Waiting",
+      error: "source is unavailable",
+    },
+    {
+      state: "queued",
+      lane: "photo_import",
+      status: "queued",
+      paused: false,
+      label: "Importing photos Queued",
+      error: undefined,
+    },
+  ])("keeps $state work below Nothing running", async ({ lane, status, paused, label, error }) => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jobsResponse(
+        [{ name: lane, lane, status, busy: false, started_at: "2026-07-23T12:00:00Z", error }],
+        [{ lane, paused, concurrency: 1, revision: 1, can_set_concurrency: false }],
+      ),
+    );
+    render(JobsDrawer, { session: "synthetic", onclose: vi.fn(), onauthfailure: vi.fn() });
+    expect(await screen.findByText("Nothing running")).toBeTruthy();
+    expect(screen.queryByRole("region")).toBeNull();
+    expect(document.querySelector("details")).toBeNull();
+    const workers = screen.getByRole("table", { name: "All workers" });
+    expect(
+      screen.getByText("Nothing running").compareDocumentPosition(workers) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(within(workers).getByRole("row", { name: new RegExp(`^${label}(?: |$)`) })).toBeTruthy();
+    if (paused)
+      expect(
+        within(workers).getByRole("button", { name: `Resume ${label.replace(/ Paused$/, "")}` }),
+      ).toBeTruthy();
+    if (error) expect(screen.getByText(error)).toBeTruthy();
+  });
 
   it.each(["initial load", "lane controls"])(
     "shows a retry for unavailable %s and recovers to the empty state",
@@ -288,12 +285,14 @@ describe("background jobs drawer", () => {
         lane: "place",
         operation_id: "a",
         status: "completed",
+        busy: false,
         started_at: "2026-07-23T12:00:00Z",
       },
       {
         name: "extract:plain-text",
         lane: "extract:plain-text",
         status: "completed",
+        busy: false,
         started_at: "2026-07-23T12:00:00Z",
       },
     ];
@@ -429,6 +428,7 @@ describe("background jobs drawer", () => {
           name: "watch:inbox",
           lane: "watch:inbox",
           status: "failed",
+          busy: false,
           started_at: "2026-07-23T11:00:00Z",
           finished_at: "2026-07-23T11:02:00Z",
           error: "source is unavailable",
@@ -602,6 +602,7 @@ describe("background jobs drawer", () => {
             kind: "photo_checkout_commit",
             lane: "photo_checkout",
             status: "failed",
+            busy: false,
             started_at: "2026-01-01T00:00:00Z",
             checkout_results: { clean: 2, conflict: 1 },
           },
@@ -627,6 +628,7 @@ it("shows current running work ahead of a retained failure in the same lane", as
         lane: "place",
         operation_id: "old",
         status: "failed",
+        busy: false,
         started_at: "2026-07-23T11:00:00Z",
         error: "Earlier operation failed",
       },
@@ -646,30 +648,4 @@ it("shows current running work ahead of a retained failure in the same lane", as
   expect(screen.getByText("1 running")).toBeTruthy();
   expect(within(lane).getByText("Earlier operation failed")).toBeTruthy();
   expect(screen.getByRole("row", { name: "Moving stored files Running" })).toBeTruthy();
-});
-
-it("labels queued work in All workers and counts only busy lanes as running", async () => {
-  vi.spyOn(globalThis, "fetch").mockResolvedValue(
-    jobsResponse([
-      {
-        name: "storage:queued",
-        lane: "photo_import",
-        status: "queued",
-        busy: false,
-        started_at: "2026-07-23T12:00:00Z",
-      },
-      {
-        name: "extract:plain-text",
-        lane: "extract:plain-text",
-        status: "running",
-        busy: true,
-        started_at: "2026-07-23T12:00:00Z",
-      },
-    ]),
-  );
-  render(JobsDrawer, { session: "synthetic", onclose: vi.fn(), onauthfailure: vi.fn() });
-  const workers = await screen.findByRole("table", { name: "All workers" });
-  expect(within(workers).getByRole("row", { name: "Importing photos Queued" })).toBeTruthy();
-  expect(screen.queryByRole("region", { name: "Importing photos" })).toBeNull();
-  expect(screen.getByText("1 running")).toBeTruthy();
 });

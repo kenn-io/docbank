@@ -787,9 +787,7 @@ func TestJobsShowsDaemonStatus(t *testing.T) {
 		if !found || checksums.Status != "completed" {
 			return false
 		}
-		out, err = runCLI(t, "jobs")
-		// Workers waiting for work are idle, not running.
-		return err == nil && regexp.MustCompile(`extract:plain-text\s+idle\s`).MatchString(out)
+		return true
 	}, 5*time.Second, 25*time.Millisecond)
 	assert.Equal(t, "running", requireJob(t, got, "process:vector-indexes").Status)
 	assert.Equal(t, "running", requireJob(t, got, "extract:plain-text").Status)

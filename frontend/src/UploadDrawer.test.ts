@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/sv
 import UploadDrawer from "./UploadDrawer.svelte";
 import { APIError } from "./api-transport.js";
 import * as upload from "./upload.js";
+import * as folders from "./uploadFolders.js";
 
 afterEach(() => {
   cleanup();
@@ -289,7 +290,7 @@ describe("upload documents drawer", () => {
   });
 });
 
-it("preserves the selected root and subfolders, reuses cached folders, and retries in place", async () => {
+it("passes folder uploads to uploadParent and retries in place", async () => {
   vi.spyOn(upload, "hashFile").mockResolvedValue("a".repeat(64));
   const parents: number[] = [];
   let fail = true;
@@ -317,18 +318,7 @@ it("preserves the selected root and subfolders, reuses cached folders, and retri
       };
     },
   };
-  const created: { parent_id: number; name: string; kind: string }[] = [];
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    const url = String(input);
-    if (init?.method === "POST" && url === "/api/v1/nodes") {
-      const body = JSON.parse(String(init.body));
-      created.push(body);
-      if (body.name === "Reports")
-        return Response.json({ id: 11, parent_id: 3, name: "Reports", kind: "dir" });
-      return Response.json({ id: 12, parent_id: 11, name: "2026", kind: "dir" });
-    }
-    throw new Error(`Unexpected request ${url}`);
-  });
+  const uploadParent = vi.spyOn(folders, "uploadParent").mockResolvedValue(12);
   const complete = vi.fn();
   render(UploadDrawer, {
     session: "session",
@@ -360,8 +350,9 @@ it("preserves the selected root and subfolders, reuses cached folders, and retri
   await fireEvent.click(screen.getByRole("button", { name: "Upload 1 file" }));
   await waitFor(() => expect(complete).toHaveBeenCalledTimes(2));
   expect(parents).toEqual([12, 12, 12]);
-  expect(created).toEqual([
-    { parent_id: 3, name: "Reports", kind: "dir" },
-    { parent_id: 11, name: "2026", kind: "dir" },
+  expect(uploadParent.mock.calls.map(([file, root]) => [file.name, root.id, root.path])).toEqual([
+    ["first.txt", 3, "/Work"],
+    ["second.txt", 3, "/Work"],
+    ["first.txt", 3, "/Work"],
   ]);
 });

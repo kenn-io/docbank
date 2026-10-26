@@ -104,26 +104,6 @@ it("labels and invokes the visible-page CSV action for the current selection", a
   expect(oncsv).toHaveBeenCalledOnce();
 });
 
-it("offers one tagging action for the snapshot selection", async () => {
-  const ontags = vi.fn();
-  render(SelectionDock, {
-    props: {
-      selectedCount: 1,
-      visibleDocumentCount: 2,
-      truncated: true,
-      context: "snapshot",
-      wholeQueryCount: 101,
-      onclear: vi.fn(),
-      onselectvisible: vi.fn(),
-      ontags,
-    },
-  });
-
-  expect(screen.getByText("1 selected")).toBeTruthy();
-  await fireEvent.click(screen.getByRole("button", { name: "Tag selected…" }));
-  expect(ontags).toHaveBeenCalledOnce();
-});
-
 it.each(["live", "snapshot"] as const)(
   "offers the same document actions in the %s view and stays closed until something is selected",
   async (context) => {
@@ -140,6 +120,9 @@ it.each(["live", "snapshot"] as const)(
     const view = render(SelectionDock, { props: { ...props, selectedCount: 0 } });
     expect(screen.queryByRole("button", { name: "Tag selected…" })).toBeNull();
     await view.rerender({ selectedCount: 1 });
+    expect(
+      screen.getByText(context === "snapshot" ? "1 selected" : "1 selected on this page"),
+    ).toBeTruthy();
     expect(
       screen
         .getAllByRole("button")

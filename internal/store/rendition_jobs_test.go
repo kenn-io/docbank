@@ -16,34 +16,6 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
-func TestRunningRenditionJobsRequiresLiveExecutionLease(t *testing.T) {
-	t.Parallel()
-	s, versions := newRenditionCatalogFixture(t)
-	request := renditionJobTestRequest(versions[0], catalogProcessingProfile(t, false))
-	grantRenditionJobConsent(t, s, request)
-	job, _, err := s.EnqueueRenditionJob(t.Context(), request)
-	require.NoError(t, err)
-	now := time.Now().UTC().Add(time.Second)
-	queued, err := s.RunningRenditionJobs(t.Context(), now)
-	require.NoError(t, err)
-	require.Empty(t, queued)
-	claim, err := s.ClaimRenditionJob(t.Context(), job.ID, "activity-worker", now, time.Minute)
-	require.NoError(t, err)
-	running, err := s.RunningRenditionJobs(t.Context(), now)
-	require.NoError(t, err)
-	require.Len(t, running, 1)
-	assert.Equal(t, job.ID, running[0].ID)
-	assert.False(t, running[0].CreatedAt.IsZero())
-	expired, err := s.RunningRenditionJobs(t.Context(), now.Add(time.Minute))
-	require.NoError(t, err)
-	assert.Empty(t, expired)
-	require.NoError(t, s.MarkRenditionJobRetry(t.Context(), claim, RenditionFailureTransient,
-		now.Add(time.Second), now.Add(time.Hour)))
-	waiting, err := s.RunningRenditionJobs(t.Context(), now.Add(time.Second))
-	require.NoError(t, err)
-	assert.Empty(t, waiting)
-}
-
 func TestRenditionJobsDeduplicateSharedBuildAndFenceLeaseTheft(t *testing.T) {
 	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)

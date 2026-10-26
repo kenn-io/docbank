@@ -428,74 +428,39 @@ func runProcessingForCoverage(t *testing.T, ts *httptest.Server, node store.Node
 	processingJobFromStream(t, jobBody)
 }
 
-func TestReviewOneRenditionHasOneActivity(t *testing.T) {
+func TestBrowserProcessingHasOneActivity(t *testing.T) {
 	t.Parallel()
-	inner, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
-	require.NoError(t, err)
-	provider := &blockingProcessingProvider{inner: inner, started: make(chan struct{}), release: make(chan struct{})}
-	registry := processing.NewRenditionRuntimeRegistry()
-	supervisor := jobs.New(t.Context(), slog.New(slog.DiscardHandler))
-	t.Cleanup(func() { require.NoError(t, supervisor.Shutdown(context.Background())) })
-	var service *processing.Service
-	var worker *processing.RenditionWorker
-	ts, catalog := newTestServer(t, func(deps *api.Deps) {
-		configureProcessingTestServiceWithProviderAndRegistry(t, provider, registry)(deps)
-		deps.Jobs, service = supervisor, deps.Processing
-		worker, err = processing.NewRenditionWorker(processing.RenditionWorkerConfig{
-			Catalog: deps.Store, Blobs: deps.Blobs, Runtime: registry, Gate: deps.Gate,
-			Owner: "test-second-worker", LeaseDuration: time.Minute, IdleDelay: time.Minute,
-		})
-		require.NoError(t, err)
-	})
-	t.Cleanup(func() { closeProcessingSignal(provider.release) })
-	node := createFileWithContent(t, ts, catalog, "/queued.txt", "one queued extraction\n")
-	selector := processing.Selector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "private"}
-	plan, err := service.Plan(t.Context(), selector)
-	require.NoError(t, err)
-	_, err = service.StartWithProgress(t.Context(), processing.StartRequest{
-		Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true,
-	}, func(processing.Job) {
-		require.NoError(t, supervisor.Start("process:renditions:2", worker.Run))
-		select {
-		case <-provider.started:
-		case <-time.After(10 * time.Second):
-			t.Fatal("queued provider did not start")
-		}
-		response, body := get(t, ts, "/api/v1/jobs", nil)
-		require.Equal(t, http.StatusOK, response.StatusCode, body)
-		var active api.JobList
-		require.NoError(t, json.Unmarshal([]byte(body), &active))
-		busy := 0
-		for _, job := range active.Items {
-			if job.Busy {
-				busy++
+	for _, name := range []string{"rendition", "rendition with second worker", "embedding only", "embedding with rendition"} {
+		t.Run(name, func(t *testing.T) {
+			if name == "embedding only" || name == "embedding with rendition" {
+				provider := &blockingProcessingEmbeddingProvider{
+					inner: newProcessingTestEmbeddingProvider(t), started: make(chan struct{}), release: make(chan struct{}),
+				}
+				assertBrowserProcessingActivity(t,
+					configureProcessingTestServiceWithEmbeddingProvider(t, provider, name == "embedding with rendition"), provider.started, provider.release, nil)
+				return
 			}
-		}
-		assert.Equal(t, 1, busy, "one extraction must have one activity")
-		closeProcessingSignal(provider.release)
-	})
-	require.NoError(t, err)
-}
-
-func TestProcessingStartedFromBrowserAppearsBusy(t *testing.T) {
-	t.Parallel()
-	inner, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
-	require.NoError(t, err)
-	provider := &blockingProcessingProvider{
-		inner: inner, started: make(chan struct{}), release: make(chan struct{}),
-	}
-	assertBrowserProcessingActivity(t, configureProcessingTestServiceWithProvider(t, provider), provider.started, provider.release)
-}
-
-func TestReviewBrowserEmbeddingAppearsBusy(t *testing.T) {
-	t.Parallel()
-	for _, withRendition := range []bool{false, true} {
-		t.Run(fmt.Sprintf("with_rendition=%t", withRendition), func(t *testing.T) {
-			provider := &blockingProcessingEmbeddingProvider{
-				inner: newProcessingTestEmbeddingProvider(t), started: make(chan struct{}), release: make(chan struct{}),
-			}
-			assertBrowserProcessingActivity(t,
-				configureProcessingTestServiceWithEmbeddingProvider(t, provider, withRendition), provider.started, provider.release)
+			inner, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
+			require.NoError(t, err)
+			provider := &blockingProcessingProvider{inner: inner, started: make(chan struct{}), release: make(chan struct{})}
+			registry := processing.NewRenditionRuntimeRegistry()
+			configure := configureProcessingTestServiceWithProviderAndRegistry(t, provider, registry)
+			var startWorker func()
+			assertBrowserProcessingActivity(t, func(deps *api.Deps) {
+				configure(deps)
+				if name == "rendition with second worker" {
+					worker, err := processing.NewRenditionWorker(processing.RenditionWorkerConfig{
+						Catalog: deps.Store, Blobs: deps.Blobs, Runtime: registry, Gate: deps.Gate,
+						Owner: "test-second-worker", LeaseDuration: time.Minute, IdleDelay: time.Minute,
+					})
+					require.NoError(t, err)
+					startWorker = func() { require.NoError(t, deps.Jobs.Start("process:renditions:2", worker.Run)) }
+				}
+			}, provider.started, provider.release, func() {
+				if startWorker != nil {
+					startWorker()
+				}
+			})
 		})
 	}
 }
@@ -505,12 +470,12 @@ func configureSupervisedProcessing(t *testing.T, configure func(*api.Deps)) func
 	supervisor := jobs.New(t.Context(), slog.New(slog.DiscardHandler))
 	t.Cleanup(func() { require.NoError(t, supervisor.Shutdown(context.Background())) })
 	return func(deps *api.Deps) {
-		configure(deps)
 		deps.Jobs = supervisor
+		configure(deps)
 	}
 }
 
-func assertBrowserProcessingActivity(t *testing.T, configure func(*api.Deps), started, release chan struct{}) {
+func assertBrowserProcessingActivity(t *testing.T, configure func(*api.Deps), started, release chan struct{}, afterQueued func()) {
 	t.Helper()
 	ts, catalog := newTestServer(t, configureSupervisedProcessing(t, configure))
 	t.Cleanup(func() { closeProcessingSignal(release) })
@@ -544,6 +509,9 @@ func assertBrowserProcessingActivity(t *testing.T, configure func(*api.Deps), st
 	var event api.ProcessingJobEvent
 	require.NoError(t, json.Unmarshal(scanner.Bytes(), &event))
 	require.NotNil(t, event.Job)
+	if afterQueued != nil {
+		afterQueued()
+	}
 	select {
 	case <-started:
 	case <-time.After(10 * time.Second):

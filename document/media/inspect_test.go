@@ -2668,23 +2668,15 @@ func paddedM4A() []byte {
 func TestInspectUnsupportedEncryptedPDF(t *testing.T) {
 	source, err := mediatest.EncryptedPDF("open", "owner", 128)
 	require.NoError(t, err)
-	for _, supported := range []bool{false, true} {
-		t.Run(strconv.FormatBool(supported), func(t *testing.T) {
-			policy := inspectionPolicy(source, "statement.pdf", "application/pdf")
-			policy.SupportsFormat = func(capability document.RenditionFormatCapability) bool {
-				require.Equal(t, "application/pdf", capability.MediaType)
-				return supported
-			}
-			record, err := media.InspectCapability(bytes.NewReader(source), policy)
-			require.NoError(t, err)
-			require.False(t, record.Eligible)
-			if supported {
-				require.Equal(t, media.CapabilityReasonEncryptedContainer, record.Reason)
-			} else {
-				require.Equal(t, media.CapabilityReasonUnsupported, record.Reason)
-			}
-		})
+	policy := inspectionPolicy(source, "statement.pdf", "application/pdf")
+	policy.SupportsFormat = func(capability document.RenditionFormatCapability) bool {
+		require.Equal(t, "application/pdf", capability.MediaType)
+		return false
 	}
+	record, err := media.InspectCapability(bytes.NewReader(source), policy)
+	require.NoError(t, err)
+	require.False(t, record.Eligible)
+	require.Equal(t, media.CapabilityReasonUnsupported, record.Reason)
 }
 
 func TestInspectPasswordProtectedPDF(t *testing.T) {

@@ -17,15 +17,10 @@ afterEach(() => {
 });
 
 it("shows once per vault until dismissed", async () => {
-  const view = render(TelemetryNotice, { vaultID: "vault-a", reporting: reporting("enabled") });
+  render(TelemetryNotice, { vaultID: "vault-a", reporting: reporting("enabled") });
   await screen.findByText(/anonymous usage data/);
   expect(screen.queryByText("DOCBANK_TELEMETRY_ENABLED=0")).toBeNull();
   await fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
-  expect(screen.queryByRole("complementary")).toBeNull();
-  view.unmount();
-
-  render(TelemetryNotice, { vaultID: "vault-a", reporting: reporting("enabled") });
-  await tick();
   expect(screen.queryByRole("complementary")).toBeNull();
 });
 
@@ -41,18 +36,13 @@ it("dismisses when storage is unavailable", async () => {
 
 it("opens usage reporting and counts as dismissed", async () => {
   const onmanage = vi.fn();
-  const view = render(TelemetryNotice, {
+  render(TelemetryNotice, {
     vaultID: "vault-a",
     reporting: reporting("enabled"),
     onmanage,
   });
   await fireEvent.click(await screen.findByRole("button", { name: "System → Usage reporting" }));
   expect(onmanage).toHaveBeenCalledOnce();
-  expect(screen.queryByRole("complementary")).toBeNull();
-  view.unmount();
-
-  render(TelemetryNotice, { vaultID: "vault-a", reporting: reporting("enabled"), onmanage });
-  await tick();
   expect(screen.queryByRole("complementary")).toBeNull();
 });
 

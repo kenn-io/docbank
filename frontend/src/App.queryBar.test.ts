@@ -42,15 +42,24 @@ function start(withQuery = true) {
   });
   const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
-    if (url === "/api/v1/workspace/queries")
+    if (url === "/api/v1/workspace/queries") {
+      const request = JSON.parse(String(init?.body));
       return new Response(
         JSON.stringify(
-          await snapshotEnvelope(
-            parseQuery(JSON.stringify(JSON.parse(String(init?.body)).query)),
-            [],
-          ),
+          await snapshotEnvelope(parseQuery(JSON.stringify(request.query)), [], {
+            page_size: request.page_size,
+            facets: (request.facets ?? []).map((dimension: string) => ({
+              dimension,
+              available: true,
+              total: 0,
+              missing: 0,
+              other: 0,
+              values: [],
+            })),
+          }),
         ),
       );
+    }
     if (url === "/api/v1/queries/parse")
       return new Response(
         JSON.stringify({
@@ -113,12 +122,24 @@ it("opens URL intent and passes the entire edited query to Save without executin
 });
 
 it("retains unfinished edits on Escape, then discards them with Cancel", async () => {
-  start();
-  await screen.findByRole("dialog", { name: "Filters and sort" });
+  const fetch = start(false);
+  const search = await screen.findByRole("searchbox", { name: "Search documents" });
+  await fireEvent.input(search, { target: { value: "annual report" } });
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  await waitFor(() =>
+    expect(fetch.mock.calls.some(([url]) => String(url) === "/api/v1/workspace/queries")).toBe(
+      true,
+    ),
+  );
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Filters and sort" })).toBeNull(),
+  );
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
   await fireEvent.input(screen.getByLabelText("Filters JSON"), {
     target: { value: '{"size_min":' },
   });
-  await fireEvent.input(screen.getByLabelText("Query syntax"), {
+  await fireEvent.input(search, {
     target: { value: "unfinished draft" },
   });
   await fireEvent.keyDown(window, { key: "Escape" });
@@ -127,11 +148,13 @@ it("retains unfinished edits on Escape, then discards them with Cancel", async (
   expect((await screen.findByRole("tooltip")).textContent).toBe("Unapplied changes");
   await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
   expect((screen.getByLabelText("Filters JSON") as HTMLTextAreaElement).value).toBe('{"size_min":');
-  expect((screen.getByLabelText("Query syntax") as HTMLTextAreaElement).value).toBe(
-    "unfinished draft",
-  );
+  expect((search as HTMLInputElement).value).toBe("unfinished draft");
+  await fireEvent.input(search, { target: { value: "different draft" } });
   await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
   expect(location.hash).toBe("");
+  expect(
+    (screen.getByRole("searchbox", { name: "Search documents" }) as HTMLInputElement).value,
+  ).toBe("annual report");
   await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
   expect((screen.getByLabelText("Filters JSON") as HTMLTextAreaElement).value).toBe("{}");
 });

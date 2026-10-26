@@ -91,3 +91,35 @@ it("rejects a file that occupies a required folder name", async () => {
     ),
   ).rejects.toThrow("A file already uses the folder name Reports.");
 });
+
+it("creates nested folders under the selected root and reuses them for later files", async () => {
+  const created: { parent_id: number; name: string; kind: string }[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    expect(String(input)).toBe("/api/v1/nodes");
+    expect(init?.method).toBe("POST");
+    const body = JSON.parse(String(init?.body));
+    created.push(body);
+    return Response.json({ id: body.name === "Reports" ? 11 : 12, ...body });
+  });
+  const directories = new Map<string, number>();
+  const oncreate = vi.fn();
+  for (const name of ["first.txt", "second.txt", "first.txt"]) {
+    const file = new File(["a"], name);
+    Object.defineProperty(file, "webkitRelativePath", { value: `Reports/2026/${name}` });
+    expect(
+      await uploadParent(
+        file,
+        { id: 3, path: "/Work" },
+        directories,
+        "session",
+        new AbortController().signal,
+        oncreate,
+      ),
+    ).toBe(12);
+  }
+  expect(created).toEqual([
+    { parent_id: 3, name: "Reports", kind: "dir" },
+    { parent_id: 11, name: "2026", kind: "dir" },
+  ]);
+  expect(oncreate).toHaveBeenCalledTimes(2);
+});

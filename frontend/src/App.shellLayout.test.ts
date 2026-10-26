@@ -75,8 +75,8 @@ it("reports the restore destination with only a dismiss action", async () => {
   });
   await fireEvent.click((await screen.findAllByRole("button", { name: "Recoverable trash" }))[0]!);
   await fireEvent.click(await screen.findByRole("button", { name: "Restore" }));
-  const message = await screen.findByText("Restored to /");
-  const notice = within(message.closest('[role="status"]') as HTMLElement);
+  const dismiss = await screen.findByRole("button", { name: "Dismiss" });
+  const notice = within(dismiss.closest('[role="status"]') as HTMLElement);
   expect(
     notice
       .getAllByRole("button")

@@ -1498,21 +1498,6 @@ it("runs a filtered snapshot and explains that it replaces a meaning search", as
   await waitFor(() => expect(screen.queryByText("Filters search names and text only.")).toBeNull());
 });
 
-it("keeps the applied search text when Advanced is cancelled", async () => {
-  installHarness({ profiles: [], files: [], baseReport: report("lexical", []) });
-  render(App);
-  await submitSearch("annual report");
-  await waitFor(() => expect(screen.queryByRole("status", { name: /search/i })).toBeNull());
-  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
-  await fireEvent.input(screen.getByRole("searchbox", { name: "Search documents" }), {
-    target: { value: "different draft" },
-  });
-  await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-  expect(
-    (screen.getByRole("searchbox", { name: "Search documents" }) as HTMLInputElement).value,
-  ).toBe("annual report");
-});
-
 it.each([
   ["Advanced", false],
   ["top bar", false],
