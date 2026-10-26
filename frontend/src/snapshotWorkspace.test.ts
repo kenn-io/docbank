@@ -10,6 +10,8 @@ import {
   type WorkspaceQueryResponse,
 } from "./snapshots.js";
 import { SnapshotWorkspace } from "./snapshotWorkspace.svelte.js";
+import { snapshotEnvelope } from "./snapshot-test-fixtures.js";
+import { parseQuery } from "./query.js";
 
 const vaultID = "11111111-1111-4111-8111-111111111111";
 const member: SnapshotMember = {
@@ -103,10 +105,35 @@ it("notices an unfinished run without touching its in-flight batch", async () =>
 it("shows a retained run instead of enumerating results for a new Tag all", async () => {
   const actionID = await retainSendingAction();
   const workspace = new SnapshotWorkspace(() => "session", vi.fn(), vi.fn());
-  workspace.state = {
-    status: "ready",
-    firstPage: { snapshot_id: "b".repeat(32), total: 101 },
-  } as unknown as SnapshotWorkspace["state"];
+  const query = parseQuery(JSON.stringify({ text: "report" }));
+  const rows = Array.from({ length: 100 }, (_, index) => ({
+    ...member,
+    node_id: index + 1,
+    name: `report-${index + 1}.txt`,
+    path: `/report-${index + 1}.txt`,
+    mime_type: "text/plain",
+    media_family: "text" as const,
+    modified_at: "2026-10-01T00:00:00Z",
+    sort_key: `report-${index + 1}.txt`,
+    tags: [],
+    collection_ids: [],
+  }));
+  vi.mocked(fetch).mockImplementation(async (input) =>
+    String(input) === "/api/v1/workspace/queries"
+      ? Response.json(
+          await snapshotEnvelope(query, rows, {
+            page_size: 100,
+            total: 101,
+            total_bytes: 101 * member.size,
+            member_hash: await snapshotMemberHash([...rows, { ...member, node_id: 101 }]),
+            next_cursor: "next-page",
+          }),
+        )
+      : Response.json({ vault_id: vaultID }),
+  );
+  await workspace.run(query, { page_size: 100 });
+  await workspace.refreshRetained();
+  vi.mocked(fetch).mockClear();
   workspace.openActions("query");
 
   await workspace.startAction({

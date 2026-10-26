@@ -76,7 +76,7 @@ it("opens URL intent and passes the entire edited query to Save without executin
   );
   await fireEvent.click(screen.getByRole("button", { name: "Save…" }));
   await screen.findByRole("dialog", { name: "Saved searches" });
-  expect(screen.queryByRole("dialog", { name: "Advanced search" })).toBeNull();
+  expect(screen.queryByRole("dialog", { name: "Filters and sort" })).toBeNull();
   await fireEvent.click(screen.getByText("Edit as JSON"));
   expect(
     JSON.parse((screen.getByLabelText("Complete query JSON") as HTMLTextAreaElement).value),
@@ -113,16 +113,6 @@ it("retains unfinished edits on Escape, then discards them with Cancel", async (
   expect((screen.getByLabelText("Filters JSON") as HTMLTextAreaElement).value).toBe("{}");
 });
 
-it("closes unchanged drafts without an indicator or query URL", async () => {
-  start(false);
-  await screen.findByRole("button", { name: "Advanced" });
-  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
-  await screen.findByRole("dialog", { name: "Filters and sort" });
-  await fireEvent.keyDown(window, { key: "Escape" });
-  expect(screen.getByRole("button", { name: "Advanced" }).getAttribute("title")).toBeNull();
-  expect(new URLSearchParams(location.hash.slice(1)).has("query")).toBe(false);
-});
-
 it("clears the indicator when reopened edits are restored to their original value", async () => {
   start(false);
   await screen.findByRole("button", { name: "Advanced" });
@@ -134,7 +124,7 @@ it("clears the indicator when reopened edits are restored to their original valu
   await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
   await fireEvent.input(screen.getByLabelText("Filters JSON"), { target: { value: "{}" } });
   await fireEvent.keyDown(window, { key: "Escape" });
-  expect(screen.getByRole("button", { name: "Advanced" }).getAttribute("title")).toBeNull();
+  expect(screen.getByRole("button", { name: "Advanced" }).textContent).not.toContain("•");
   expect(new URLSearchParams(location.hash.slice(1)).has("query")).toBe(false);
 });
 

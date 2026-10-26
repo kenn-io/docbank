@@ -531,5 +531,5 @@ it("disables tagging during reruns and ignores the old selection's late receipt"
   }
   await mutation;
   await new Promise((resolve) => setTimeout(resolve, 0));
-  expect(screen.queryByText("Added: Review")).toBeNull();
+  expect(screen.queryByText(/^Added “Review” to \d+ documents?\.$/)).toBeNull();
 });

@@ -56,7 +56,6 @@ func TestInspectionAndPrepareReadPasswordsOnlyForEncryptedPDF(t *testing.T) {
 		{"supported.pdf", "application/pdf", encrypted, true, 1, media.CapabilityReasonPDFPasswordRequired, nil, nil},
 		{"empty-passwords-owner-only.pdf", "application/pdf", ownerOnly, true, 1, media.CapabilityReasonEligible, nil, []string{}},
 		{"unreadable.pdf", "application/pdf", encrypted, true, 1, "", passwordErr, nil},
-		{"notes.txt", "text/plain", []byte("synthetic notes\n"), true, 0, media.CapabilityReasonUnsupported, nil, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fixture := newPublicationFixture(t)
@@ -82,10 +81,6 @@ func TestInspectionAndPrepareReadPasswordsOnlyForEncryptedPDF(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, tc.reason, capability.Reason)
 			require.Equal(t, tc.calls, provider.calls)
-			if tc.reason == media.CapabilityReasonUnsupported {
-				_, err = prepareProviderExecution(t.Context(), fixture.catalog, fixture.blobs, t.TempDir(), node, version, profile, time.Now, true)
-				require.ErrorIs(t, err, ErrSourceIneligible)
-			}
 			if tc.reason == media.CapabilityReasonPDFPasswordRequired {
 				_, err = prepareProviderExecution(t.Context(), fixture.catalog, fixture.blobs, t.TempDir(), node, version, profile, time.Now, false)
 				require.NoError(t, err)
@@ -94,4 +89,25 @@ func TestInspectionAndPrepareReadPasswordsOnlyForEncryptedPDF(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestInspectionAndPrepareRejectMediaTypeOmittedByProvider(t *testing.T) {
+	t.Parallel()
+	fixture := newPublicationFixture(t)
+	provider := newWorkerProvider(t)
+	stored := workerProcessingProfile(t, provider.Descriptor())
+	var portable document.ProcessingProfileV1
+	require.NoError(t, json.Unmarshal(stored.CanonicalProfile, &portable))
+	profile := configuredProfile{portable: portable, record: stored, provider: provider}
+	written, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewBufferString("synthetic notes\n"))
+	require.NoError(t, err)
+	node, err := fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), "notes.txt", written.Hash, written.Size, "text/plain", processingBlobPhysical(t, written))
+	require.NoError(t, err)
+	version, err := fixture.catalog.ContentVersionByID(t.Context(), node.CurrentVersionID)
+	require.NoError(t, err)
+	capability, err := inspectRenditionSource(t.Context(), fixture.blobs, node, version, profile)
+	require.NoError(t, err)
+	require.Equal(t, media.CapabilityReasonUnsupported, capability.Reason)
+	_, err = prepareProviderExecution(t.Context(), fixture.catalog, fixture.blobs, t.TempDir(), node, version, profile, time.Now, true)
+	require.ErrorIs(t, err, ErrSourceIneligible)
 }

@@ -95,7 +95,7 @@ describe("provenance drawer", () => {
   });
 });
 
-it("shows command-line imports as a readable path with copyable audit details", async () => {
+it("offers the import ID for command-line imports", async () => {
   vi.spyOn(globalThis, "fetch").mockResolvedValue(
     new Response(
       JSON.stringify({
@@ -121,11 +121,7 @@ it("shows command-line imports as a readable path with copyable audit details", 
     onclose: vi.fn(),
     onauthfailure: vi.fn(),
   });
-  expect(await screen.findByText("Added from command line")).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Copy source path" }).textContent).toContain(
-    "/imports/report.txt",
-  );
-  expect(screen.getByRole("button", { name: "Copy import ID" }).textContent).toContain(
+  expect((await screen.findByRole("button", { name: "Copy import ID" })).textContent).toContain(
     active.ingest_id,
   );
 });

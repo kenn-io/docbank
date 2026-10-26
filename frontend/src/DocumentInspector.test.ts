@@ -19,44 +19,31 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it("offers text extraction only when a rendition profile is configured", async () => {
-  const onprocess = vi.fn();
-  const file = {
-    ...folder,
-    kind: "file" as const,
-    name: "report.txt",
-    mime_type: "text/plain",
-    current_version_id: "version-1",
-    size: 64,
-  };
-  const profile = {
-    name: "Text",
-    rendition: true,
-    fingerprint: "a".repeat(64),
-    embedding_bindings: [],
-    query_embedding_bindings: [],
-  };
-  const props = {
-    node: file,
-    path: "/report.txt",
-    session: "test-session",
-    tags: [],
-    tagsLoading: false,
-    tagsError: "",
-    onprovenance: vi.fn(),
-    onhistory: vi.fn(),
-    onauthfailure: vi.fn(),
-    onprocess,
-  };
-  const view = render(DocumentInspector, props);
-  expect(screen.getByText("Plain text · 64 B")).toBeTruthy();
-  expect(screen.queryByRole("button", { name: "Extract text" })).toBeNull();
-  await view.rerender({ ...props, profiles: [profile] });
-  await fireEvent.click(await screen.findByRole("button", { name: "Extract text" }));
-  expect(onprocess).toHaveBeenCalledOnce();
-});
+it.each([
+  { label: "Extract text", rendition: true, embedding_bindings: [], query_embedding_bindings: [] },
+  {
+    label: "Index for search",
+    rendition: false,
+    embedding_bindings: ["text"],
+    query_embedding_bindings: ["text"],
+  },
+])(
+  "offers $label when a matching processing profile is configured",
+  async ({ label, ...capabilities }) => {
+    const onprocess = vi.fn();
+    const props = { ...fileProps, onprocess };
+    const view = render(DocumentInspector, props);
+    expect(screen.queryByRole("button", { name: label })).toBeNull();
+    await view.rerender({
+      ...props,
+      profiles: [{ name: "Processing", fingerprint: "a".repeat(64), ...capabilities }],
+    });
+    await fireEvent.click(await screen.findByRole("button", { name: label }));
+    expect(onprocess).toHaveBeenCalledOnce();
+  },
+);
 
-it("opens the folder protection command from its actions and copies the exact folder ID", async () => {
+it("opens folder protection from its actions and copies the command", async () => {
   const writeText = vi.fn().mockResolvedValue(undefined);
   vi.stubGlobal(
     "ResizeObserver",
@@ -130,26 +117,6 @@ const fileProps = {
   onprovenance: vi.fn(),
   onhistory: vi.fn(),
 };
-
-it("keeps indexing available when only embedding profiles are configured", async () => {
-  const onprocess = vi.fn();
-  render(DocumentInspector, {
-    ...fileProps,
-    onprocess,
-    profiles: [
-      {
-        name: "Search",
-        rendition: false,
-        fingerprint: "a".repeat(64),
-        embedding_bindings: ["text"],
-        query_embedding_bindings: ["text"],
-      },
-    ],
-  });
-
-  await fireEvent.click(screen.getByRole("button", { name: "Index for search" }));
-  expect(onprocess).toHaveBeenCalledOnce();
-});
 
 it("trashes a file from one icon button and keeps identifiers behind a disclosure", async () => {
   const ontrash = vi.fn();

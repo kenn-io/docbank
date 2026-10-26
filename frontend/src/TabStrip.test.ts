@@ -27,7 +27,7 @@ it("moves between tabs with the arrow keys and wraps", async () => {
   expect(onchange).toHaveBeenLastCalledWith("b");
 });
 
-it("keeps one tab stop and the same weight whichever tab is selected", () => {
+it("keeps one tab stop whichever tab is selected", () => {
   render(TabStrip, { tabs, value: "a", ariaLabel: "Sections", onchange: vi.fn() });
   expect(screen.getAllByRole("tab").map((tab) => tab.getAttribute("tabindex"))).toEqual([
     "0",

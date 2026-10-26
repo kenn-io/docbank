@@ -13,9 +13,15 @@ it("finds a matching existing folder beyond the first page by parent ID", async 
     reads.push(url);
     return Response.json({
       items: url.includes("offset=0")
-        ? [{ id: 2, name: "Archive", kind: "dir" }]
+        ? Array.from({ length: 1000 }, (_, index) => ({
+            id: index + 10,
+            name: `Archive ${index}`,
+            kind: "dir",
+          }))
         : [{ id: 7, name: "Reports", kind: "dir" }],
-      total: 2,
+      total: 1001,
+      limit: 1000,
+      offset: url.includes("offset=0") ? 0 : 1000,
     });
   });
   const parent = await uploadParent(
@@ -29,7 +35,7 @@ it("finds a matching existing folder beyond the first page by parent ID", async 
   expect(parent).toBe(7);
   expect(reads).toEqual([
     "/api/v1/nodes/3/children?limit=1000&offset=0",
-    "/api/v1/nodes/3/children?limit=1000&offset=1",
+    "/api/v1/nodes/3/children?limit=1000&offset=1000",
   ]);
 });
 

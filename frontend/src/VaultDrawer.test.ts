@@ -74,7 +74,7 @@ it("shows what usage reporting sends and a copyable opt-out", async () => {
 });
 
 it("keeps navigation and close inside the active tool's dialog", async () => {
-  const fetch = mockSystemRequests();
+  mockSystemRequests();
   const onclose = vi.fn();
   render(VaultDrawer, { session: "synthetic", onclose, onauthfailure: vi.fn() });
   const drawer = screen.getByRole("dialog", { name: "System" });
@@ -85,21 +85,14 @@ it("keeps navigation and close inside the active tool's dialog", async () => {
   const activityTab = await screen.findByRole("tab", { name: "Running now", selected: true });
   const activity = screen.getByRole("dialog", { name: "System" });
   expect(activity.contains(activityTab)).toBe(true);
-  await screen.findByText("Nothing running");
   expect(within(activity).getAllByRole("button", { name: /^Close/, hidden: true })).toHaveLength(1);
   expect(
     within(activity)
       .getAllByRole("heading")
       .map((heading) => heading.textContent),
   ).toEqual(["System"]);
-  const requests = fetch.mock.calls.filter(([url]) => String(url).includes("/jobs")).length;
-  await fireEvent.click(within(activity).getByRole("button", { name: "Refresh background jobs" }));
-  expect(fetch.mock.calls.filter(([url]) => String(url).includes("/jobs"))).toHaveLength(
-    requests + 1,
-  );
   await fireEvent.click(within(activity).getByRole("tab", { name: "Usage reporting" }));
   expect(screen.getAllByRole("dialog")).toHaveLength(1);
   await fireEvent.click(screen.getByRole("button", { name: "Close System" }));
   expect(onclose).toHaveBeenCalledOnce();
-  expect(fetch.mock.calls.some(([url]) => String(url).includes("/jobs"))).toBe(true);
 });

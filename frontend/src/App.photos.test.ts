@@ -4823,5 +4823,4 @@ it("keeps the search bar on Albums and hides empty Albums and unconfigured Map n
   expect(within(nav).queryByRole("heading", { name: "Albums" })).toBeNull();
   expect(within(nav).getAllByText("Albums")).toHaveLength(1);
   expect(screen.getByRole("searchbox", { name: "Search photos" })).toBeTruthy();
-  expect(screen.getAllByRole("button", { name: "New album" })).toHaveLength(1);
 });

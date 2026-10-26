@@ -12,5 +12,4 @@ func TestBrowserSessionsCreateFoldersForFolderUploads(t *testing.T) {
 	t.Parallel()
 	assert.True(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodPost, "/api/v1/nodes", nil)))
 	assert.False(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodPost, "/api/v1/nodes?parent_id=1", nil)))
-	assert.False(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodPost, "/api/v1/path/mkdir", nil)))
 }

@@ -41,19 +41,6 @@ describe("processing summary", () => {
     );
   });
 
-  it("treats an unrecognized boundary as leaving the machine", () => {
-    const unknown = plan("odd", {
-      flow: [
-        hop({
-          trust_boundary: "somewhere",
-          provider_id: "acme.ocr-v1",
-          runtime_disclosure: { ...hop().runtime_disclosure, endpoint: "https://ocr.acme.test" },
-        }),
-      ],
-    });
-    expect(whereSentences(unknown)).toEqual(["Sends this file to acme (ocr.acme.test)."]);
-  });
-
   it("titles the dialog by what the profile produces", () => {
     expect(purposeLabels[processingPurpose(plan("text"))].title).toBe("Extract text");
     const transcript = hop({

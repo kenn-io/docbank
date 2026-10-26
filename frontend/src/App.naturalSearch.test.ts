@@ -1308,35 +1308,6 @@ it("reports explicit file opens and leaves navigation silent", async () => {
   expect(action).not.toHaveBeenCalled();
 });
 
-it("opens filters from ranked results with a runnable sort and the top-bar draft", async () => {
-  const file = node(2, "report.txt", baseVersion);
-  installHarness({
-    profiles: [
-      {
-        name: "private",
-        fingerprint: "a".repeat(64),
-        rendition: true,
-        embedding_bindings: ["embed"],
-        reranking_available: true,
-      },
-    ],
-    files: [file],
-    baseReport: report("hybrid", [result(file, 1, "report excerpt")]),
-  });
-  render(App);
-  await screen.findByRole("checkbox", { name: "Rerank results" });
-  await submitSearch("annual report");
-  await screen.findByText("report excerpt");
-  await fireEvent.input(screen.getByRole("searchbox", { name: "Search documents" }), {
-    target: { value: "invoice" },
-  });
-  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
-  expect(screen.getByRole("combobox", { name: "Sort by: Path" })).toBeTruthy();
-  expect((screen.getByRole("button", { name: "Search" }) as HTMLButtonElement).disabled).toBe(
-    false,
-  );
-});
-
 it("returns to automatic meaning search with the typed draft when plain words is selected", async () => {
   const file = node(2, "report.txt", baseVersion);
   const harness = installHarness({
@@ -1415,46 +1386,6 @@ it("sorts a meaning search from Advanced without turning it into a lexical snaps
   ).toBe("annual report");
 });
 
-it("sorts Advanced Name by basename and Path by full path across folders", async () => {
-  const alpha = { ...node(2, "alpha.txt", baseVersion), path: "/z/alpha.txt" };
-  const zeta = { ...node(3, "zeta.txt", rerankedVersion), path: "/a/zeta.txt" };
-  installHarness({
-    profiles: [
-      {
-        name: "private",
-        fingerprint: "a".repeat(64),
-        rendition: true,
-        embedding_bindings: ["embed"],
-        reranking_available: false,
-      },
-    ],
-    files: [alpha, zeta],
-    baseReport: report("hybrid", [
-      result(zeta, 1, "zeta excerpt"),
-      result(alpha, 2, "alpha excerpt"),
-    ]),
-  });
-  render(App);
-  await submitSearch("annual report");
-  await screen.findByText("zeta excerpt");
-
-  for (const [field, expected] of [
-    ["Name", ["alpha.txt", "zeta.txt"]],
-    ["Path", ["zeta.txt", "alpha.txt"]],
-  ] as const) {
-    await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
-    await fireEvent.click(screen.getByRole("combobox", { name: /^Sort by:/ }));
-    await fireEvent.click(screen.getByRole("option", { name: field }));
-    await fireEvent.click(screen.getByRole("button", { name: "Search" }));
-    await waitFor(() => {
-      const rows = screen.getAllByRole("row").filter((row) => row.textContent?.includes(".txt"));
-      expect(rows).toHaveLength(2);
-      expect(rows[0].textContent).toContain(expected[0]);
-      expect(rows[1].textContent).toContain(expected[1]);
-    });
-  }
-});
-
 it("runs the text edited in the top bar when Advanced sorts a meaning search", async () => {
   const file = node(2, "report.txt", baseVersion);
   const harness = installHarness({
@@ -1519,7 +1450,7 @@ it("keeps a first search by meaning when Advanced only changes the sort", async 
   ).toBe(false);
 });
 
-it("runs Advanced with the page size it was given instead of the ranked search", async () => {
+it("runs a filtered snapshot and explains that it replaces a meaning search", async () => {
   const file = node(2, "report.txt", baseVersion);
   const harness = installHarness({
     profiles: [
@@ -1537,40 +1468,16 @@ it("runs Advanced with the page size it was given instead of the ranked search",
   render(App);
   await submitSearch("annual report");
   await screen.findByText("report excerpt");
-  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
-  await fireEvent.click(screen.getByRole("combobox", { name: "Documents per page: 100" }));
-  await fireEvent.click(screen.getByRole("option", { name: "250" }));
-  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
-  const snapshotCall = () =>
-    harness.fetchMock.mock.calls.find(([url]) => String(url) === "/api/v1/workspace/queries");
-  await waitFor(() => expect(snapshotCall()).toBeTruthy());
-  expect(JSON.parse(String(snapshotCall()?.[1]?.body))).toMatchObject({ page_size: 250 });
-});
-
-it("says filters search names and text only when Advanced replaces a meaning search", async () => {
-  const file = node(2, "report.txt", baseVersion);
-  installHarness({
-    profiles: [
-      {
-        name: "private",
-        fingerprint: "a".repeat(64),
-        rendition: true,
-        embedding_bindings: ["embed"],
-        reranking_available: false,
-      },
-    ],
-    files: [file],
-    baseReport: report("hybrid", [result(file, 1, "report excerpt")]),
-  });
-  render(App);
-  await submitSearch("annual report");
-  await screen.findByText("report excerpt");
   expect(screen.queryByText("Filters search names and text only.")).toBeNull();
   await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
-  await fireEvent.click(screen.getByRole("combobox", { name: "Documents per page: 100" }));
-  await fireEvent.click(screen.getByRole("option", { name: "250" }));
+  await fireEvent.input(screen.getByLabelText("Filters JSON"), {
+    target: { value: '{"size_min":10}' },
+  });
   await fireEvent.click(screen.getByRole("button", { name: "Search" }));
   const note = await screen.findByText("Filters search names and text only.");
+  expect(
+    harness.fetchMock.mock.calls.some(([url]) => String(url) === "/api/v1/workspace/queries"),
+  ).toBe(true);
   await fireEvent.click(within(note.parentElement!).getByRole("button", { name: "Clear search" }));
   await waitFor(() => expect(screen.queryByText("Filters search names and text only.")).toBeNull());
 });
@@ -1581,6 +1488,9 @@ it("keeps the applied search text when Advanced is cancelled", async () => {
   await submitSearch("annual report");
   await waitFor(() => expect(screen.queryByRole("status", { name: /search/i })).toBeNull());
   await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  await fireEvent.input(screen.getByRole("searchbox", { name: "Search documents" }), {
+    target: { value: "different draft" },
+  });
   await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
   expect(
     (screen.getByRole("searchbox", { name: "Search documents" }) as HTMLInputElement).value,

@@ -1,7 +1,6 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import LocalFilePicker from "./LocalFilePicker.svelte";
-import { localFilePath } from "./localFiles.js";
 
 afterEach(() => {
   cleanup();
@@ -25,7 +24,6 @@ it.each(["files", "folder"] as const)("chooses %s and preserves folder paths", a
   });
   await fireEvent.change(input, { target: { files: [file] } });
   expect(onchoose).toHaveBeenCalledWith([file], kind);
-  expect(localFilePath(file)).toBe(kind === "folder" ? "Reports/2026/report.txt" : "report.txt");
 });
 
 it("ignores selections while disabled", async () => {

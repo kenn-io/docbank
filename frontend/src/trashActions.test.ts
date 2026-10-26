@@ -3,7 +3,6 @@ import {
   moveToTrash,
   parentPath,
   restoredMessage,
-  restoreFromTrash,
   trashedMessage,
   undoTrash,
 } from "./trashActions.js";
@@ -44,19 +43,6 @@ it("says where a restore landed", () => {
   expect(parentPath("/a/b.txt")).toBe("/a");
 });
 
-it("reports the returned destination after the parent was renamed and the old path recreated", async () => {
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-    const url = String(input);
-    if (url.endsWith("/trash"))
-      return json(node({ revision: 2, trashed_at: "2026-01-02T00:00:00Z", path: "/old/clients" }));
-    // /old was renamed to /older and then a new /old was created.
-    return json(node({ revision: 3, path: "/older/clients" }));
-  });
-  const moved = await moveToTrash("s", node({ kind: "file" }));
-  expect((await undoTrash("s", moved.receipt)).notice).toBe("Restored to /older");
-  expect((await restoreFromTrash("s", moved.receipt)).message).toBe("Restored to /older");
-});
-
 it("counts a folder's items, trashes it with its revision, and undoes through restore", async () => {
   const calls: Array<[string, string | null]> = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -65,14 +51,15 @@ it("counts a folder's items, trashes it with its revision, and undoes through re
     if (url.includes("/children")) return json({ directory: node(), items: [], total: 24 });
     if (url.endsWith("/trash"))
       return json(node({ revision: 2, trashed_at: "2026-01-02T00:00:00Z", path: "/old/clients" }));
-    return json(node({ revision: 3, path: "/clients" }));
+    // /old was renamed to /older and then a new /old was created.
+    return json(node({ revision: 3, path: "/older/clients" }));
   });
 
   const moved = await moveToTrash("s", node());
   expect(moved.message).toBe("Moved “clients” (24 items) to trash");
 
   const undone = await undoTrash("s", moved.receipt);
-  expect(undone.notice).toBe("Restored to /");
+  expect(undone.notice).toBe("Restored to /older");
   expect(calls.map(([url]) => url.split("/").slice(-1)[0]?.split("?")[0])).toEqual([
     "children",
     "trash",

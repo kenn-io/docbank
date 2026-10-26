@@ -44,7 +44,7 @@ it("shows exact source scope and original warning before any server work, with e
   });
   expect(await screen.findByText("Selected documents")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Download ZIP" }).hasAttribute("disabled")).toBe(false);
-  expect(screen.queryByRole("button", { name: "Start reviewed export" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Download anyway" })).toBeNull();
   await fireEvent.click(screen.getByRole("combobox", { name: /^Text export policy/ }));
   expect(screen.getByRole("option", { name: "If available" })).toBeTruthy();
   expect(fetcher).not.toHaveBeenCalled();

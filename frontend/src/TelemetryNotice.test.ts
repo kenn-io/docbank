@@ -27,9 +27,8 @@ it("shows once per vault until dismissed", async () => {
   expect(screen.queryByRole("complementary")).toBeNull();
 });
 
-it("still shows for a different vault and when storage is unavailable", async () => {
-  localStorage.setItem("docbank:telemetry-notice:v1:vault-a", "dismissed");
-  render(TelemetryNotice, { vaultID: "vault-b", reporting: reporting("enabled") });
+it("dismisses when storage is unavailable", async () => {
+  render(TelemetryNotice, { vaultID: "vault-a", reporting: reporting("enabled") });
   await screen.findByRole("complementary", { name: "Anonymous usage" });
   vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
     throw new Error("blocked");

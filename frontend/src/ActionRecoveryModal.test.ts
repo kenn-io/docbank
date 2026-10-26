@@ -225,8 +225,6 @@ it("saves a credential-free recovery file on Apply and reads it back before the 
   expect(screen.getByText("Adds “Review” to 1 document. Undo with Remove.")).toBeTruthy();
   expect(screen.queryByText(/recovery/i)).toBeNull();
   expect(screen.queryByRole("button", { name: "Save recovery file" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "Open saved file…" })).toBeNull();
-  expect(screen.queryByLabelText("Open saved recovery file")).toBeNull();
   expect((screen.getByRole("button", { name: "Apply" }) as HTMLButtonElement).disabled).toBe(false);
   expect(journal.batchCalls).toBe(0);
 

@@ -66,7 +66,7 @@ it("lists one page of attachments and opens a row", async () => {
   await waitFor(() => expect(within(outgoing).getAllByRole("listitem")).toHaveLength(50));
   expect(calls).toHaveLength(2);
   expect(screen.queryByRole("region", { name: "Attached to" })).toBeNull();
-  expect(screen.queryByText("No attachments")).toBeNull();
+  expect(screen.queryByText("No published attachments")).toBeNull();
   await fireEvent.click(within(outgoing).getByRole("button", { name: "Show more" }));
   await waitFor(() => expect(within(outgoing).getAllByRole("listitem")).toHaveLength(51));
   expect(within(outgoing).queryByRole("button", { name: "Show more" })).toBeNull();
@@ -170,5 +170,5 @@ it("keeps unavailable occurrences visible and fences replaced-source and denied 
   expect(await screen.findByText(/Parent relations unavailable: Not allowed/)).toBeTruthy();
   expect(screen.getByText("encrypted")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "same.txt" })).toBeNull();
-  expect(screen.queryByText("No attachments")).toBeNull();
+  expect(screen.queryByText("No published attachments")).toBeNull();
 });

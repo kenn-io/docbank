@@ -289,7 +289,7 @@ describe("upload documents drawer", () => {
   });
 });
 
-it("preserves the selected root and subfolders, reuses existing folders, and retries in place", async () => {
+it("preserves the selected root and subfolders, reuses cached folders, and retries in place", async () => {
   vi.spyOn(upload, "hashFile").mockResolvedValue("a".repeat(64));
   const parents: number[] = [];
   let fail = true;
@@ -324,11 +324,9 @@ it("preserves the selected root and subfolders, reuses existing folders, and ret
       const body = JSON.parse(String(init.body));
       created.push(body);
       if (body.name === "Reports")
-        return Response.json({ code: "exists", detail: "Already exists" }, { status: 409 });
+        return Response.json({ id: 11, parent_id: 3, name: "Reports", kind: "dir" });
       return Response.json({ id: 12, parent_id: 11, name: "2026", kind: "dir" });
     }
-    if (url.startsWith("/api/v1/nodes/3/children"))
-      return Response.json({ items: [{ id: 11, name: "Reports", kind: "dir" }], total: 1 });
     throw new Error(`Unexpected request ${url}`);
   });
   const complete = vi.fn();

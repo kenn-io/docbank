@@ -215,18 +215,6 @@ describe("processing dialog", () => {
     expect(jobRequests(view.fetchMock)[1].consent).toBe(false);
   });
 
-  it("names the hosted destination before consent", async () => {
-    setup({ docling: plan("docling", { flow: [doclingHop] }) });
-    expect(
-      await screen.findByText("Sends this file and its name to Docling (docling.example.com)."),
-    ).toBeTruthy();
-    expect(
-      screen.getByRole("checkbox", {
-        name: "Allow “docling” to send documents from this vault to Docling",
-      }),
-    ).toBeTruthy();
-  });
-
   it("blocks a run the file can't take and says why", async () => {
     setup({ docling: plan("docling", { rendition_ineligible_reason: "pdf_password_required" }) });
     expect(

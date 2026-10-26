@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import App from "./App.svelte";
 import { root } from "./version-test-fixtures.js";
-import { readPanelWidth } from "./panelWidth.js";
+import { savePanelWidth } from "./panelWidth.js";
 
 beforeEach(() => localStorage.clear());
 afterEach(() => {
@@ -47,19 +47,9 @@ it("tells the user the back button has nowhere to go instead of claiming a top f
   expect((await screen.findByRole("tooltip")).textContent).toBe("No previous folder");
 });
 
-it("resizes the inspector from the keyboard, remembers the width, and resets on double-click", async () => {
+it("applies the saved inspector width", async () => {
+  savePanelWidth("documents", 380);
   start();
-  const handle = await screen.findByRole("separator", { name: "Resize document inspector" });
-  const workspace = screen.getByRole("main");
-  const first = workspace.style.getPropertyValue("--inspector-width");
-  expect(first).toBe("clamp(420px, 32vw, 480px)");
-
-  await fireEvent.keyDown(handle, { key: "ArrowLeft" });
-  const saved = readPanelWidth("documents");
-  expect(saved).toBeGreaterThanOrEqual(320);
-  expect(workspace.style.getPropertyValue("--inspector-width")).toBe(`min(${saved}px, 50vw)`);
-
-  await fireEvent.dblClick(handle);
-  expect(readPanelWidth("documents")).toBeUndefined();
-  expect(workspace.style.getPropertyValue("--inspector-width")).toBe(first);
+  const workspace = await screen.findByRole("main");
+  expect(workspace.style.getPropertyValue("--inspector-width")).toBe("min(380px, 50vw)");
 });

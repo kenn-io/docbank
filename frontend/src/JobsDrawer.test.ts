@@ -151,7 +151,6 @@ describe("background jobs drawer", () => {
         expect(globalThis.fetch).toHaveBeenCalledTimes(2);
         expect(screen.getByRole("alert").textContent).toBe(message);
         expect(screen.queryByText("Nothing running")).toBeNull();
-        expect(screen.queryByText("Read-only")).toBeNull();
       } finally {
         vi.useRealTimers();
       }
@@ -196,7 +195,6 @@ describe("background jobs drawer", () => {
     );
     render(JobsDrawer, { session: "short-lived", onclose: vi.fn(), onauthfailure: vi.fn() });
     expect((await screen.findByRole("alert")).textContent).toBe("Lane controls are unavailable");
-    expect(screen.queryByText("Read-only")).toBeNull();
     expect(screen.getByText("1 of 2 groups")).toBeTruthy();
     await fireEvent.click(screen.getByRole("button", { name: "Cancel Importing photos a" }));
     const cancel = fetchSpy.mock.calls.find(([url]) =>

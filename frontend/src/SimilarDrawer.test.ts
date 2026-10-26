@@ -102,6 +102,7 @@ describe("similar documents drawer", () => {
   });
 
   it("ignores a result that arrives after close", async () => {
+    const action = vi.spyOn(actions, "reportSearch").mockImplementation(() => {});
     let finish!: (value: DocumentSimilarReport) => void;
     const similar = vi.spyOn(processingAPI, "documentSimilar").mockImplementation(
       () =>
@@ -116,7 +117,6 @@ describe("similar documents drawer", () => {
       finish(report);
       await similar.mock.results[0]!.value;
     });
-    expect(view.props.onclose).not.toHaveBeenCalled();
-    expect(screen.queryByText(report.results[0]!.path)).toBeNull();
+    expect(action).not.toHaveBeenCalled();
   });
 });

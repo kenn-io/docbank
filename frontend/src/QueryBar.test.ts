@@ -131,24 +131,6 @@ it("runs the complete locally valid draft with explicit snapshot options", async
   );
 });
 
-it("restores the accepted page size when editing a previous search", async () => {
-  vi.spyOn(globalThis, "fetch").mockResolvedValue(response());
-  const onrun = vi.fn();
-  render(QueryBar, {
-    session: "session",
-    query,
-    initialPageSize: 50,
-    onrun,
-    onchange: vi.fn(),
-    onsave: vi.fn(),
-    onclose: vi.fn(),
-    oncancel: vi.fn(),
-    onauthfailure: vi.fn(),
-  });
-  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
-  expect(onrun).toHaveBeenCalledWith(query, expect.objectContaining({ page_size: 50 }));
-});
-
 it.each([
   { mode: "semantic", sort: query.sort, message: /unsupported search method/ },
   { mode: "hybrid", sort: query.sort, message: /unsupported search method/ },
@@ -344,12 +326,13 @@ it("invalidates the old session before accepting a new preview", async () => {
   );
 });
 
-it("runs top-bar text with filters and page size without a second expression field", async () => {
+it("runs top-bar text with filters and the accepted page size", async () => {
   vi.spyOn(globalThis, "fetch").mockResolvedValue(response());
   const onrun = vi.fn();
   render(QueryBar, {
     session: "session",
     query,
+    initialPageSize: 50,
     onrun,
     onchange: vi.fn(),
     onsave: vi.fn(),
@@ -363,6 +346,6 @@ it("runs top-bar text with filters and page size without a second expression fie
   await fireEvent.click(screen.getByRole("button", { name: "Search" }));
   expect(onrun).toHaveBeenCalledWith(
     { ...query, filters: { size_min: 10 } },
-    expect.objectContaining({ page_size: 100 }),
+    expect.objectContaining({ page_size: 50 }),
   );
 });
