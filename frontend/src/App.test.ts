@@ -644,8 +644,11 @@ it.each(["browse", "search"] as const)(
     );
     await waitFor(() => expect(manage.hasAttribute("disabled")).toBe(false));
     await fireEvent.click(screen.getByRole("button", { name: "Manage" }));
+    const dialog = await screen.findByRole("dialog", {
+      name: "Manage tags for quarterly-tax-report.txt",
+    });
     const auditReadsBeforeRemoval = targetAuditReads;
-    await fireEvent.click(screen.getByRole("button", { name: "Remove tag tax" }));
+    await fireEvent.click(within(dialog).getByRole("button", { name: "Remove tag tax" }));
 
     await waitFor(() =>
       expect(screen.queryByRole("cell", { name: "/quarterly-tax-report.txt" })).toBeNull(),
@@ -669,7 +672,7 @@ it.each(["browse", "search"] as const)(
 
     await waitFor(() => expect(searchReads).toBe(3));
     await waitFor(() =>
-      expect(screen.queryByRole("button", { name: "Remove tag tax" })).toBeNull(),
+      expect(within(dialog).queryByRole("button", { name: "Remove tag tax" })).toBeNull(),
     );
     resolveRemovalSearch(
       json({
@@ -686,7 +689,7 @@ it.each(["browse", "search"] as const)(
     await fireEvent.input(tagToAssign, { target: { value: "tax" } });
     await fireEvent.click(screen.getByRole("option", { name: "tax (0)" }));
     await waitFor(() => expect(searchReads).toBe(4));
-    const removeReviewed = screen.getByRole("button", {
+    const removeReviewed = within(dialog).getByRole("button", {
       name: "Remove tag matter/acme/reviewed",
     });
     expect(removeReviewed.hasAttribute("disabled")).toBe(true);
@@ -1294,7 +1297,8 @@ it("uses refreshed live metadata for the selected row and tag actions", async ()
   await screen.findByRole("cell", { name: "renamed.txt" });
   expect(screen.getByText("/renamed.txt")).toBeTruthy();
   await fireEvent.click(screen.getByRole("button", { name: "Manage" }));
-  await fireEvent.click(await screen.findByRole("button", { name: "Remove tag tax" }));
+  const dialog = await screen.findByRole("dialog", { name: "Manage tags for renamed.txt" });
+  await fireEvent.click(await within(dialog).findByRole("button", { name: "Remove tag tax" }));
   await screen.findByText("No tags assigned.");
   expect(revisions).toEqual(["2"]);
 });
@@ -2169,7 +2173,8 @@ it("waits for a pending tag shortcut before opening tag editors with updated tag
   expect(editTags.hasAttribute("disabled")).toBe(false);
   expect(manage.hasAttribute("disabled")).toBe(false);
   await fireEvent.click(manage);
-  expect(await screen.findByRole("button", { name: "Remove tag tax" })).toBeTruthy();
+  const dialog = await screen.findByRole("dialog", { name: "Manage tags for zeta.txt" });
+  expect(await within(dialog).findByRole("button", { name: "Remove tag tax" })).toBeTruthy();
 });
 
 it("suppresses repeated pending tag writes and discards completion after selection changes", async () => {

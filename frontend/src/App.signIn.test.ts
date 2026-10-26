@@ -190,7 +190,7 @@ it("clears an open Manage tags dialog after session expiry before signing in aga
     "/api/v1/nodes/3/tags?limit=1000&offset=0",
   );
   expect(dialog.textContent).toContain("tax");
-  await fireEvent.click(screen.getByRole("button", { name: "Remove tag tax" }));
+  await fireEvent.click(within(dialog).getByRole("button", { name: "Remove tag tax" }));
   await screen.findByLabelText("API key");
   await waitFor(() =>
     expect(screen.queryByRole("dialog", { name: "Manage tags for readme.txt" })).toBeNull(),
@@ -303,8 +303,8 @@ it("keeps a new sign-in after an old tag request returns a delayed 401", async (
   await fireEvent.click(await screen.findByRole("cell", { name: "readme.txt" }));
   await screen.findByRole("group", { name: "Assigned tags" });
   await fireEvent.click(await screen.findByRole("button", { name: "Manage" }));
-  await screen.findByRole("dialog", { name: "Manage tags for readme.txt" });
-  await fireEvent.click(screen.getByRole("button", { name: "Remove tag tax" }));
+  const dialog = await screen.findByRole("dialog", { name: "Manage tags for readme.txt" });
+  await fireEvent.click(within(dialog).getByRole("button", { name: "Remove tag tax" }));
   await deleteStarted;
 
   const signOut = document.querySelector<HTMLButtonElement>('button[aria-label="Sign out"]');

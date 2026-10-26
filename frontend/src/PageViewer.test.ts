@@ -280,7 +280,7 @@ function renderedInventory(dpis = [144]) {
   return { inventory, imageResponse };
 }
 
-it("navigates retained mixed-size pages within bounds and revokes URLs on page and tab changes", async () => {
+it("navigates mixed-size pages, retains the page across tabs, and revokes URLs on page changes and unmount", async () => {
   const fixture = renderedInventory(),
     revoke = vi.fn(),
     close = vi.fn();
@@ -335,6 +335,15 @@ it("navigates retained mixed-size pages within bounds and revokes URLs on page a
   expect(revoke).not.toHaveBeenCalledWith("blob:page-2");
   await fireEvent.click(screen.getByRole("tab", { name: "Duplicates" }));
   expect(screen.queryByRole("img")).toBeNull();
+  expect(revoke).not.toHaveBeenCalledWith("blob:page-2");
+  await fireEvent.click(screen.getByRole("tab", { name: "Preview" }));
+  expect(await screen.findByRole("img", { name: "Verified page 2 of renamed.pdf" })).toBe(second);
+  expect(second.getAttribute("src")).toBe("blob:page-2");
+  expect(second.parentElement?.style.width).toBe("288px");
+  expect(fetcher.mock.calls.filter(([url]) => String(url).includes("/pages/image"))).toHaveLength(
+    2,
+  );
+  view.unmount();
   expect(revoke).toHaveBeenCalledWith("blob:page-2");
   expect(close).toHaveBeenCalledTimes(2);
   expect(fetcher.mock.calls.filter(([url]) => String(url).endsWith("/jobs"))).toHaveLength(0);
