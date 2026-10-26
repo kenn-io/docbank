@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -74,4 +75,22 @@ func TestSourceSelectionExclusionWinsAndDoesNotPruneDirectoriesByInclude(t *test
 	assert.False(t, selection.excluded(root, keep))
 	assert.True(t, selection.included(root, keep))
 	assert.False(t, selection.excluded(root, filepath.Join(root, "nested")))
+}
+
+func validFuzzRelative(rel string) bool {
+	parts := strings.Split(rel, "/")
+	if len(parts) > 4 {
+		return false
+	}
+	for _, part := range parts {
+		if part == "" || part == "." || part == ".." || len(part) > 20 {
+			return false
+		}
+		for _, c := range part {
+			if !strings.ContainsRune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-", c) {
+				return false
+			}
+		}
+	}
+	return true
 }

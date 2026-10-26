@@ -92,7 +92,10 @@ func (s sourceSelection) matches(sourceRoot, sourcePath string, rules []sourceRu
 	if rel == "." {
 		rel = ""
 	}
-	name := filepath.Base(sourcePath)
+	return matchesRelative(rel, filepath.Base(sourcePath), rules)
+}
+
+func matchesRelative(rel, name string, rules []sourceRule) bool {
 	for _, rule := range rules {
 		subject := rel
 		if rule.basename {

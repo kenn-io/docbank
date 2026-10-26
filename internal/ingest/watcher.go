@@ -308,7 +308,7 @@ func NewWatcher(
 	if err := validateVirtualDestination(cfg.Destination); err != nil {
 		return nil, err
 	}
-	excludes, err := compileExclusions(cfg.Exclude)
+	excludes, err := compileExclusions(cfg.Exclude, cfg.ExcludePatterns)
 	if err != nil {
 		return nil, fmt.Errorf("watch %q exclusions: %w", cfg.Name, err)
 	}

@@ -224,8 +224,8 @@ or `*`. Matching is case-sensitive, including on Windows.
 
 Repeat a flag for each rule. Commas are literal characters. Empty rules,
 absolute paths, parent traversal, and malformed patterns are rejected before
-the walk. Watched-inbox exclusions remain literal and do not use this glob
-syntax.
+the walk. Watched inboxes use this syntax in `exclude_patterns`; their
+`exclude` entries remain literal. See [watched inboxes](../configuration.md#watched-inboxes).
 
 When the source argument is a single file, a basename rule such as `*.pdf`
 matches it. A path-form rule such as `reports/*.pdf` applies to a directory

@@ -646,3 +646,59 @@ func TestWatcherCheckoutAdmission(t *testing.T) {
 		})
 	}
 }
+
+func TestWatchExcludePatternsRejectInvalidConfiguration(t *testing.T) {
+	for _, pattern := range []string{"[", `a\*.swp`} {
+		cfg := config.WatchConfig{Name: "invalid-pattern", Source: t.TempDir(), Destination: "/archive", SettleTime: config.Duration(time.Second), ScanInterval: config.Duration(time.Second), ExcludePatterns: []string{pattern}}
+		_, err := NewWatcher(newTestIngester(t), t.TempDir(), cfg, runTestMutation, slog.New(slog.DiscardHandler))
+		require.ErrorContains(t, err, `watch "invalid-pattern" exclusions`)
+		_, err = NewFolderScanner(cfg, func(context.Context, FolderFile) error { return nil }, failOnReject(t))
+		require.ErrorContains(t, err, `watch "invalid-pattern" exclusions`)
+	}
+}
+
+func TestWatcherExcludePatternsSkipFilesAndPruneDirectories(t *testing.T) {
+	ing := newTestIngester(t)
+	source := writeTree(t, map[string]string{"note.md": "note", ".syncthing.note.md.tmp": "partial", "a/b/x.swp": "swap", "cache-1/data.bin": "cached", "keep/real.md": "real"})
+	watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{Name: "patterns", Source: source, Destination: "/archive", SettleTime: config.Duration(time.Second), ScanInterval: config.Duration(time.Second), ExcludePatterns: []string{".syncthing.*.tmp", "*.swp", "cache-*"}}, runTestMutation, slog.New(slog.DiscardHandler))
+	require.NoError(t, err)
+	var excluded, descended []string
+	watcher.excluded = func(_ context.Context, ref string) error {
+		excluded = append(excluded, filepath.ToSlash(ref))
+		return nil
+	}
+	watcher.beforeDescend = func(ref string) { descended = append(descended, filepath.ToSlash(ref)) }
+	root := openWatcherRoot(t, watcher)
+	at := time.Unix(1_700_000_000, 0)
+	require.NoError(t, scanWatcherAt(t.Context(), watcher, root, at))
+	require.NoError(t, scanWatcherAt(t.Context(), watcher, root, at.Add(time.Second)))
+	for _, ref := range []string{"note.md", "keep/real.md"} {
+		_, err := ing.Store.NodeByPath(t.Context(), "/archive/"+ref)
+		require.NoError(t, err)
+	}
+	for _, ref := range []string{".syncthing.note.md.tmp", "a/b/x.swp", "cache-1"} {
+		assert.Contains(t, excluded, ref)
+		_, err := ing.Store.NodeByPath(t.Context(), "/archive/"+ref)
+		require.Error(t, err)
+	}
+	assert.NotContains(t, descended, "cache-1")
+	assert.NotContains(t, excluded, "cache-1/data.bin")
+}
+
+func TestWatchTreeExcludePatternsPruneStartupTraversal(t *testing.T) {
+	source := writeTree(t, map[string]string{"cache-1/inner/data.txt": "cached"})
+	root, err := os.OpenRoot(source)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, root.Close()) }()
+	mount, err := watchMountForRoot(root)
+	require.NoError(t, err)
+	target, err := os.Stat(filepath.Join(source, "cache-1", "inner"))
+	require.NoError(t, err)
+	excludes, err := compileExclusions(nil, []string{"cache-*"})
+	require.NoError(t, err)
+	var descended []string
+	contains, err := watchTreeContainsAnyDirectory(t.Context(), root, mount, []fs.FileInfo{target}, excludes, "", func(rel string) { descended = append(descended, rel) })
+	require.NoError(t, err)
+	assert.False(t, contains)
+	assert.NotContains(t, descended, "cache-1")
+}
