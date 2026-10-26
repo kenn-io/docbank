@@ -17,19 +17,20 @@ Instructions for autonomous coding agents working in this repository.
   1.27 generic methods, promoted struct-literal fields, and assignment-context
   inference are in use; verify against the toolchain before treating unfamiliar
   syntax as an error.
-- Every build and test needs the fts5 tag: `make test` or
-  `go test -tags fts5 ./...`. CGO builds use mattn SQLite; the supported
-  pure-Go path uses `CGO_ENABLED=0` and modernc SQLite. Keep the complete suite
-  passing in both modes.
+- Every build and test needs the fts5 tag. Run the tests covering your change:
+  `go test -tags fts5 ./internal/<pkg>/ -run <Name>`. CGO builds use mattn
+  SQLite; the supported pure-Go path uses `CGO_ENABLED=0` and modernc SQLite.
+  `make test` runs the complete suite; CI runs it in both modes.
 - Lint with `make lint` (golangci-lint, fts5 tag). Docs build strict with
   `make docs-build`; fix every warning.
 - Linux, macOS, and Windows are supported. Windows CI runs the complete CLI,
   daemon, lock, backup, and restore suite on amd64 and arm64; do not replace
   real platform behavior with compile-only stubs.
 - The embedded web application uses Node 24+ and its dependencies are locked in
-  `frontend/package-lock.json`. Run `make frontend-test` for format, lint, type,
-  kit-ui, unit, and production-build checks. Fix formatting with
-  `npm --prefix frontend run fmt`. Release CI builds the frontend once and embeds
+  `frontend/package-lock.json`. Run the tests covering your change:
+  `npm --prefix frontend test -- <files>`. CI runs `make frontend-test` for
+  format, lint, type, kit-ui, unit, and production-build checks. Fix formatting
+  with `npm --prefix frontend run fmt`. Release CI builds the frontend once and embeds
   those exact assets in all six platform archives.
 - Real documentation screenshots use the repository-owned Playwright harness in
   `frontend/screenshots/`. Run `make docs-screenshots`; captures must use
