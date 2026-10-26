@@ -2666,7 +2666,7 @@ func paddedM4A() []byte {
 	return padded
 }
 
-func TestReviewMalformedSupportedImageKeepsFileFailure(t *testing.T) {
+func TestMalformedSupportedImageKeepsFileFailure(t *testing.T) {
 	t.Parallel()
 	data := []byte("\x89PNG\r\n\x1a\n")
 	descriptor, err := docling.DocumentDescriptor(document.RenditionTrustOperatorNetwork)

@@ -428,7 +428,7 @@ func runProcessingForCoverage(t *testing.T, ts *httptest.Server, node store.Node
 	processingJobFromStream(t, jobBody)
 }
 
-func TestReviewRejectedProcessingDoesNotAccumulateWorkers(t *testing.T) {
+func TestRejectedProcessingDoesNotAccumulateWorkers(t *testing.T) {
 	t.Parallel()
 	for _, rejected := range []bool{true, false} {
 		t.Run(fmt.Sprintf("rejected=%t", rejected), func(t *testing.T) {

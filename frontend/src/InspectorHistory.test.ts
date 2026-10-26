@@ -11,7 +11,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it("review: generic API upload history does not invent a browser origin", async () => {
+it("generic API upload history does not invent a browser origin", async () => {
   vi.spyOn(api, "listContentVersions").mockResolvedValue({
     items: [],
     total: 0,

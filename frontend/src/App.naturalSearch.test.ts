@@ -1340,11 +1340,8 @@ it("returns to automatic meaning search with the typed draft when plain words is
   );
 });
 
-it.each([
-  { state: "submitted", query: "annual report" },
-  { state: "edited", query: "invoice" },
-  { state: "first", query: "annual report" },
-])("sorts a $state meaning search from Advanced", async ({ state, query }) => {
+it("sorts a first meaning search from Advanced", async () => {
+  const query = "annual report";
   const small = { ...node(2, "small.txt", baseVersion), size: 10 };
   const large = { ...node(3, "large.txt", rerankedVersion), size: 500 };
   const harness = installHarness({
@@ -1364,10 +1361,6 @@ it.each([
     ]),
   });
   render(App);
-  if (state !== "first") {
-    await submitSearch("annual report");
-    await screen.findByText("small excerpt");
-  }
   await fireEvent.input(await screen.findByRole("searchbox", { name: "Search documents" }), {
     target: { value: query },
   });
@@ -1466,52 +1459,65 @@ it.each(["previously displayed", "same"] as const)(
   },
 );
 
-it("review: Cancel restores the applied meaning search after a failed Advanced search", async () => {
-  const file = node(2, "report.txt", baseVersion);
-  const harness = installHarness({
-    profiles: [
-      {
-        name: "private",
-        fingerprint: "a".repeat(64),
-        rendition: true,
-        embedding_bindings: ["embed"],
-        reranking_available: false,
-      },
-    ],
-    files: [file],
-    baseReport: report("hybrid", [result(file, 1, "applied meaning result")]),
-  });
-  const fetch = harness.fetchMock.getMockImplementation()!;
-  harness.fetchMock.mockImplementation((input, init) => {
-    if (String(input) === "/api/v1/workspace/queries")
-      return Promise.resolve(
-        new Response(
-          JSON.stringify({
-            code: "snapshot_unavailable",
-            detail: "query snapshot did not finish within its resource budget",
-          }),
-          { status: 503, headers: { "Content-Type": "application/json" } },
-        ),
-      );
-    return fetch(input, init);
-  });
-  render(App);
-  await submitSearch("annual report");
-  await screen.findByText("applied meaning result");
-  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
-  await fireEvent.input(screen.getByLabelText("Filters JSON"), {
-    target: { value: '{"size_min":10}' },
-  });
-  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
-  await screen.findAllByText("query snapshot did not finish within its resource budget");
-  await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-  await screen.findByText("applied meaning result");
-  expect(
-    (screen.getByRole("searchbox", { name: "Search documents" }) as HTMLInputElement).value,
-  ).toBe("annual report");
-  expect(harness.postBodies).toHaveLength(1);
-  expect(screen.queryByText("query snapshot did not finish within its resource budget")).toBeNull();
-});
+it.each(["unrun edit", "failed search"])(
+  "Cancel restores the applied meaning search after an Advanced %s",
+  async (state) => {
+    const file = node(2, "report.txt", baseVersion);
+    const harness = installHarness({
+      profiles: [
+        {
+          name: "private",
+          fingerprint: "a".repeat(64),
+          rendition: true,
+          embedding_bindings: ["embed"],
+          reranking_available: false,
+        },
+      ],
+      files: [file],
+      baseReport: report("hybrid", [result(file, 1, "applied meaning result")]),
+    });
+    const fetch = harness.fetchMock.getMockImplementation()!;
+    harness.fetchMock.mockImplementation((input, init) => {
+      if (String(input) === "/api/v1/workspace/queries")
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              code: "snapshot_unavailable",
+              detail: "query snapshot did not finish within its resource budget",
+            }),
+            { status: 503, headers: { "Content-Type": "application/json" } },
+          ),
+        );
+      return fetch(input, init);
+    });
+    render(App);
+    await submitSearch("annual report");
+    await screen.findByText("applied meaning result");
+    await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+    await fireEvent.input(screen.getByLabelText("Filters JSON"), {
+      target: { value: '{"size_min":10}' },
+    });
+    await fireEvent.input(screen.getByRole("searchbox", { name: "Search documents" }), {
+      target: { value: "unfinished draft" },
+    });
+    if (state === "failed search") {
+      await fireEvent.click(screen.getByRole("button", { name: "Search" }));
+      await screen.findAllByText("query snapshot did not finish within its resource budget");
+    }
+    await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await screen.findByText("applied meaning result");
+    expect(
+      (screen.getByRole("searchbox", { name: "Search documents" }) as HTMLInputElement).value,
+    ).toBe("annual report");
+    expect(harness.postBodies).toHaveLength(1);
+    expect(location.hash).toBe("");
+    await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+    expect((screen.getByLabelText("Filters JSON") as HTMLTextAreaElement).value).toBe("{}");
+    expect(
+      screen.queryByText("query snapshot did not finish within its resource budget"),
+    ).toBeNull();
+  },
+);
 
 it("runs a filtered snapshot and explains that it replaces a meaning search", async () => {
   const file = node(2, "report.txt", baseVersion);

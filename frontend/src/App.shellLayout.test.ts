@@ -48,7 +48,7 @@ it("applies the saved inspector width", async () => {
   expect(workspace.style.getPropertyValue("--inspector-width")).toBe("min(380px, 50vw)");
 });
 
-it("reports the restore destination with only a dismiss action", async () => {
+it("shows a restore notice with Dismiss only and no Undo", async () => {
   start();
   const original = vi.mocked(fetch).getMockImplementation()!;
   const node = {

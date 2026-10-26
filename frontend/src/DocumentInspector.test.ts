@@ -118,14 +118,17 @@ const fileProps = {
   onhistory: vi.fn(),
 };
 
-it("trashes a file from one icon button and keeps identifiers behind a disclosure", async () => {
+it("trashes a file from one icon button", async () => {
   const ontrash = vi.fn();
   render(DocumentInspector, { ...fileProps, ontrash });
 
   expect(screen.queryByRole("button", { name: "Document actions" })).toBeNull();
   await fireEvent.click(screen.getByRole("button", { name: "Move to trash" }));
   expect(ontrash).toHaveBeenCalledOnce();
+});
 
+it("keeps identifiers behind a Details disclosure", () => {
+  render(DocumentInspector, fileProps);
   const disclosure = screen.getByText("Details").closest("details")!;
   expect(disclosure.open).toBe(false);
   expect(disclosure.textContent).toContain("text/plain");
@@ -135,38 +138,38 @@ it("trashes a file from one icon button and keeps identifiers behind a disclosur
   expect(screen.getByText("Size").closest("details")).toBeNull();
 });
 
-it("disables trash until the view is refreshed", () => {
-  render(DocumentInspector, { ...fileProps, ontrash: vi.fn(), actionsDisabled: true });
-  expect(
-    (screen.getByRole("button", { name: "Move to trash" }) as HTMLButtonElement).disabled,
-  ).toBe(true);
+it.each([
+  { kind: "file", state: "another move is pending", trashing: true, actionsDisabled: false },
+  { kind: "dir", state: "another move is pending", trashing: true, actionsDisabled: false },
+  { kind: "file", state: "the view needs a refresh", trashing: false, actionsDisabled: true },
+] as const)("disables $kind trash while $state", async ({ kind, trashing, actionsDisabled }) => {
+  const ontrash = vi.fn();
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const props = {
+    ...fileProps,
+    node: { ...fileProps.node, kind },
+    ontrash,
+    trashing,
+    actionsDisabled,
+  };
+  render(DocumentInspector, props);
+  if (kind === "dir") {
+    await fireEvent.click(screen.getByRole("button", { name: "Document actions" }));
+    expect(
+      screen.getByRole("menuitem", { name: "Move to trash" }).getAttribute("aria-disabled"),
+    ).toBe("true");
+  } else {
+    expect(
+      (screen.getByRole("button", { name: "Move to trash" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+  }
 });
-
-it.each(["file", "dir"] as const)(
-  "disables %s trash while another move is pending",
-  async (kind) => {
-    const ontrash = vi.fn();
-    vi.stubGlobal(
-      "ResizeObserver",
-      class {
-        observe() {}
-        disconnect() {}
-      },
-    );
-    const props = { ...fileProps, node: { ...fileProps.node, kind }, ontrash, trashing: true };
-    render(DocumentInspector, props);
-    if (kind === "dir") {
-      await fireEvent.click(screen.getByRole("button", { name: "Document actions" }));
-      expect(
-        screen.getByRole("menuitem", { name: "Move to trash" }).getAttribute("aria-disabled"),
-      ).toBe("true");
-    } else {
-      expect(
-        (screen.getByRole("button", { name: "Move to trash" }) as HTMLButtonElement).disabled,
-      ).toBe(true);
-    }
-  },
-);
 
 it("removes an assigned tag directly and disables removal while tags are unavailable", async () => {
   const onremovetag = vi.fn();

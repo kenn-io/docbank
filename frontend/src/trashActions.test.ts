@@ -1,11 +1,5 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
-import {
-  moveToTrash,
-  parentPath,
-  restoredMessage,
-  trashedMessage,
-  undoTrash,
-} from "./trashActions.js";
+import { moveToTrash, parentPath, restoredMessage, undoTrash } from "./trashActions.js";
 import type { Node } from "./generated/docbank.js";
 
 afterEach(() => vi.restoreAllMocks());
@@ -26,11 +20,6 @@ const json = (value: unknown) =>
     status: 200,
     headers: { "Content-Type": "application/json" },
   });
-
-it("names the item moved to trash", () => {
-  expect(trashedMessage(node())).toBe("Moved “clients” to trash");
-  expect(trashedMessage(node({ name: "a.txt" }))).toBe("Moved “a.txt” to trash");
-});
 
 it("says where a restore landed", () => {
   expect(restoredMessage(node(), { path: "/archive/clients" })).toBe("Restored to /archive");

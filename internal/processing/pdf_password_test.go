@@ -99,7 +99,7 @@ func TestInspectionAndPrepareReadPasswordsOnlyForEncryptedPDF(t *testing.T) {
 	}
 }
 
-func TestInspectionAndPrepareRejectMediaTypeOmittedByProvider(t *testing.T) {
+func TestPrepareRejectsMediaTypeOmittedByProvider(t *testing.T) {
 	t.Parallel()
 	fixture := newPublicationFixture(t)
 	provider := newWorkerProvider(t)
@@ -113,35 +113,8 @@ func TestInspectionAndPrepareRejectMediaTypeOmittedByProvider(t *testing.T) {
 	require.NoError(t, err)
 	version, err := fixture.catalog.ContentVersionByID(t.Context(), node.CurrentVersionID)
 	require.NoError(t, err)
-	capability, err := inspectRenditionSource(t.Context(), fixture.blobs, node, version, profile)
-	require.NoError(t, err)
-	require.Equal(t, media.CapabilityReasonUnsupported, capability.Reason)
 	_, err = prepareProviderExecution(t.Context(), fixture.catalog, fixture.blobs, t.TempDir(), node, version, profile, time.Now, true)
 	require.ErrorIs(t, err, ErrSourceIneligible)
-}
-
-func TestReviewUnsupportedProfileStaysUnsupportedAcrossFileSizes(t *testing.T) {
-	t.Parallel()
-	for _, data := range []string{"", "notes", "notes exceed the profile limit"} {
-		t.Run(data, func(t *testing.T) {
-			fixture := newPublicationFixture(t)
-			provider := newWorkerProvider(t)
-			stored := workerProcessingProfile(t, provider.Descriptor())
-			var portable document.ProcessingProfileV1
-			require.NoError(t, json.Unmarshal(stored.CanonicalProfile, &portable))
-			portable.Rendition.MaxDocumentBytes = 10
-			profile := configuredProfile{portable: portable, record: stored, provider: provider}
-			written, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewBufferString(data))
-			require.NoError(t, err)
-			node, err := fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), "notes.txt", written.Hash, written.Size, "text/plain", processingBlobPhysical(t, written))
-			require.NoError(t, err)
-			version, err := fixture.catalog.ContentVersionByID(t.Context(), node.CurrentVersionID)
-			require.NoError(t, err)
-			capability, err := inspectRenditionSource(t.Context(), fixture.blobs, node, version, profile)
-			require.NoError(t, err)
-			require.Equal(t, media.CapabilityReasonUnsupported, capability.Reason)
-		})
-	}
 }
 
 func TestRenditionReadinessPreservesApplicableReason(t *testing.T) {
@@ -150,6 +123,9 @@ func TestRenditionReadinessPreservesApplicableReason(t *testing.T) {
 		name, mime, data string
 		reason           media.CapabilityReason
 	}{
+		{"empty.txt", "text/plain", "", media.CapabilityReasonUnsupported},
+		{"short.txt", "text/plain", "notes", media.CapabilityReasonUnsupported},
+		{"large.txt", "text/plain", "notes exceed the profile limit", media.CapabilityReasonUnsupported},
 		{"empty.pdf", "application/pdf", "", media.CapabilityReasonEmptySource},
 		{"large.pdf", "application/pdf", "larger than the profile limit", media.CapabilityReasonSourceBytes},
 		{"empty.png", "image/png", "", media.CapabilityReasonUnsupported},

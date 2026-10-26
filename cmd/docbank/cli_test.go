@@ -784,10 +784,7 @@ func TestJobsShowsDaemonStatus(t *testing.T) {
 			return false
 		}
 		checksums, found := jobNamed(got, "maintenance:auxiliary-checksums")
-		if !found || checksums.Status != "completed" {
-			return false
-		}
-		return true
+		return found && checksums.Status == "completed"
 	}, 5*time.Second, 25*time.Millisecond)
 	assert.Equal(t, "running", requireJob(t, got, "process:vector-indexes").Status)
 	assert.Equal(t, "running", requireJob(t, got, "extract:plain-text").Status)

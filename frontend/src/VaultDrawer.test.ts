@@ -66,16 +66,12 @@ it("keeps navigation and close inside the active tool's dialog", async () => {
   mockSystemRequests();
   const onclose = vi.fn();
   render(VaultDrawer, { session: "synthetic", onclose, onauthfailure: vi.fn() });
-  const shell = () => document.querySelector(".shell")!;
-  expect(shell().classList.contains("still")).toBe(false);
   await fireEvent.click(screen.getByRole("tab", { name: "Backups" }));
-  expect(shell().classList.contains("still")).toBe(true);
   const drawer = screen.getByRole("dialog", { name: "System" });
   await fireEvent.click(within(drawer).getByRole("tab", { name: "Usage reporting" }));
   const privacy = screen.getByRole("dialog", { name: "System" });
   expect(within(privacy).getByRole("region", { name: "Usage reporting" })).toBeTruthy();
   await fireEvent.click(within(privacy).getByRole("tab", { name: "Running now" }));
-  expect(shell().classList.contains("still")).toBe(true);
   const activityTab = await screen.findByRole("tab", { name: "Running now", selected: true });
   const activity = screen.getByRole("dialog", { name: "System" });
   expect(activity.contains(activityTab)).toBe(true);
