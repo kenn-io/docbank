@@ -268,7 +268,8 @@ without `/` matches basenames at any depth, and exclusions win. Include rules
 filter regular files only, so a directory remains traversable when a descendant
 may match. Preflight stops at filesystem metadata: it never opens a regular
 file, hydrates cloud content, creates a destination, records an ingest, or
-writes a blob. Watched-inbox exclusions use a separate literal matcher. The
+writes a blob. Watched inboxes combine literal `exclude` entries with
+`exclude_patterns` compiled and matched by the shared source-selection code. The
 report therefore predicts selection and size-policy outcomes, not future
 readability. Detailed findings and extension groups are bounded while their
 aggregate counts remain complete, preventing an adversarial tree from creating
@@ -1008,7 +1009,7 @@ changed-source observations reuse the audited operational observation path.
 Content replacement and its observation commit together.
 
 The client-side scanner reuses watched-inbox confined traversal, filesystem
-boundaries, literal exclusions, and stability fingerprints. Its processor has
+boundaries, literal and glob exclusions, and stability fingerprints. Its processor has
 only an opened read-only source descriptor and an HTTP connection, not a vault.
 One-shot push uses an eight-file processing window. Each worker owns its source
 until verification and upload finish; cancellation joins all workers before the

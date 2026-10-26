@@ -88,19 +88,24 @@ type PreflightReport struct {
 	FindingsTruncated  bool
 }
 
-// exclusionRule is retained for watched-inbox configuration, whose patterns
-// are literal by contract and must not use request-scoped glob selection.
+// exclusionRule keeps watched-inbox exclude entries literal. Glob exclude_patterns
+// use the same compiled source rules as docbank add.
 type exclusionRule struct {
 	name string
 	path string
 }
 
 type exclusions struct {
-	rules []exclusionRule
+	rules    []exclusionRule
+	patterns []sourceRule
 }
 
-func compileExclusions(values []string) (exclusions, error) {
-	result := exclusions{rules: make([]exclusionRule, 0, len(values))}
+func compileExclusions(values, patterns []string) (exclusions, error) {
+	compiled, err := compileSourceRules("exclude pattern", patterns)
+	if err != nil {
+		return exclusions{}, err
+	}
+	result := exclusions{rules: make([]exclusionRule, 0, len(values)), patterns: compiled}
 	for _, raw := range values {
 		if raw == "" {
 			return exclusions{}, errors.New("exclude rule must not be empty")
@@ -150,7 +155,7 @@ func (e exclusions) matchNameAndRelative(name, rel string) bool {
 			return true
 		}
 	}
-	return false
+	return matchesRelative(filepath.ToSlash(rel), name, e.patterns)
 }
 
 // ValidateOptions checks source-selection rules without touching the

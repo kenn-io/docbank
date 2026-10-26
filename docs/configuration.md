@@ -166,6 +166,7 @@ settle_time = "30s"
 minimum_age = "168h" # optional; 7 days since source modification
 scan_interval = "5s"
 exclude = [".DS_Store", "cache/"]
+exclude_patterns = [".syncthing.*.tmp", "*.sync-conflict-*"]
 ```
 
 - **`bind_addr`** — the interface the API listens on. Defaults to loopback.
@@ -275,9 +276,29 @@ the complete transport boundary.
 Each `[[watch]]` entry makes the daemon poll one local directory recursively.
 `source` must be absolute or begin with `~/`. `destination` is an absolute path
 in Docbank's virtual tree. Symlinks and other non-regular entries inside the
-source are ignored. `exclude` is a literal name-or-relative-path rule. It
-is independent of the glob include and exclude patterns accepted by
-`docbank add`.
+source are ignored. `exclude` stays a literal name-or-relative-path rule,
+including names containing `*`, `?`, or `[`. Add `exclude_patterns` for glob
+rules with the same [syntax as `docbank add`](usage/importing.md#choose-files-with-include-and-exclude-rules):
+a pattern without `/` matches basenames at any depth; one with `/` matches
+paths relative to the source root. Use `/` separators on every platform.
+Matching is case-sensitive; `*` and `?` do not cross `/`, and `**` is not
+recursive. A match in either list skips the entry. Matching directories are
+pruned during both startup checks and scanning.
+
+For a Syncthing inbox, for example:
+
+```toml
+[[watch]]
+name = "synced-notes"
+source = "~/synced-notes"
+destination = "/notes"
+exclude = [".stversions", ".git"]
+exclude_patterns = [".syncthing.*.tmp", "*.sync-conflict-*"]
+```
+
+Empty, absolute, parent-traversal, malformed, and backslash-containing glob
+rules fail watcher or folder-scanner construction with the watch name.
+Restart the daemon after changing watch rules.
 
 Traversal stays on the source's filesystem mount. It does not enter symlinks,
 Windows directory reparse points, or nested mounts. Configure another
@@ -329,7 +350,8 @@ change at the watched source appends another version.
 Watchers run as jobs named `watch:<name>`. `docbank watch list` and
 `GET /api/v1/watches` pair each runner's state with its effective source,
 destination, settle window, minimum source age, scan interval, and exclusion
-policy. Use `--json` when an agent needs the complete rules. `docbank jobs`
+policy. `EXCLUDES` counts both literal and glob rules. Use `--json` when an
+agent needs the separate `exclude` and `exclude_patterns` lists. `docbank jobs`
 and `GET /api/v1/jobs` remain the all-task view. A source, destination, or
 read failure leaves the named job in the failed state and records the reason.
 Restart the daemon after correcting the problem.

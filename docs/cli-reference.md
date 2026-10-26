@@ -397,7 +397,8 @@ Preflight and import share these selection rules:
 - Commas are ordinary characters. Repeat the flag for multiple patterns.
 - Patterns are case-sensitive on every platform, including Windows.
 
-Watch configuration uses separate literal exclusion rules.
+Watch configuration uses these glob rules in `exclude_patterns`, while
+`exclude` keeps literal name-or-relative-path matching.
 
 ### Read progress and failures
 

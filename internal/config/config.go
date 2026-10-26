@@ -183,6 +183,8 @@ type WatchConfig struct {
 	MinimumAge   Duration `toml:"minimum_age"`
 	ScanInterval Duration `toml:"scan_interval"`
 	Exclude      []string `toml:"exclude"`
+	// ExcludePatterns uses docbank add glob semantics; Exclude stays literal.
+	ExcludePatterns []string `toml:"exclude_patterns"`
 }
 
 // RenditionProfileConfig names a deployment binding for one pinned rendition

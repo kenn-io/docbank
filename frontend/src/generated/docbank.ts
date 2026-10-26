@@ -8488,6 +8488,7 @@ export interface VersionPruneRequest {
 export interface WatchedInbox {
   destination: string;
   exclude: string[];
+  exclude_patterns: string[];
   job?: Job;
   minimum_age: string;
   name: string;
