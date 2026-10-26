@@ -230,7 +230,8 @@ it.each(["success", "invalid", "backend"])(
     );
     await new Promise((done) => setTimeout(done, 30));
     await tick();
-    expect(screen.queryByText(/Query validated|Old failure/)).toBeNull();
+    expect(screen.queryByRole("status", { name: "Query valid" })).toBeNull();
+    expect(screen.queryByText("Old failure")).toBeNull();
     expect((screen.getByLabelText("Query syntax") as HTMLTextAreaElement).value).toBe(
       "new expression",
     );

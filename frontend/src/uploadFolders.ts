@@ -40,6 +40,8 @@ export async function uploadParent(
         { session, signal },
       );
       if (existing.kind !== "dir") throw new Error(`A file already uses the folder name ${name}.`);
+      if (existing.parent_id !== parentID)
+        throw new Error(`The parent of folder ${name} changed. Try uploading again.`);
       id = existing.id;
     }
     directories.set(path, id);

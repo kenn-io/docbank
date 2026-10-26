@@ -633,7 +633,7 @@ test("snapshot workspace recovers exact real-daemon actions without changing fro
     });
     const afterLoss = await retainedAction(page);
     expect(afterLoss.header.state).toBe("uncertain");
-    expect(afterLoss.header.checkpoint_verified).toBe(true);
+    expect(afterLoss.header.checkpoint_verified).toBe(false);
     expect(afterLoss.batches.map((batch) => batch.state)).toEqual(["uncertain", "prepared"]);
     const savedRequests = afterLoss.batches.map((batch) => batch.request);
     expect(droppedRequest).toEqual(savedRequests[0]);

@@ -14,7 +14,13 @@ it.each([
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       if (init?.method === "POST") return Response.json({ code: "exists" }, { status: 409 });
       if (String(input) === url)
-        return Response.json({ id: 7, name: "Reports", kind: "dir", path: "/Reports" });
+        return Response.json({
+          id: 7,
+          parent_id: 3,
+          name: "Reports",
+          kind: "dir",
+          path: "/Reports",
+        });
       throw new Error(`Unexpected request ${input}`);
     });
     const oncreate = vi.fn();
@@ -34,6 +40,37 @@ it.each([
     expect(oncreate).not.toHaveBeenCalled();
   },
 );
+
+it("rejects a folder resolved under a different parent after a conflict", async () => {
+  const file = new File(["report"], "report.txt");
+  Object.defineProperty(file, "webkitRelativePath", { value: "Reports/report.txt" });
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (init?.method === "POST") {
+      expect(JSON.parse(String(init.body))).toEqual({ parent_id: 3, name: "Reports", kind: "dir" });
+      return Response.json({ code: "exists" }, { status: 409 });
+    }
+    expect(String(input)).toBe("/api/v1/path?path=%2FArchive%2FReports");
+    return Response.json({
+      id: 7,
+      parent_id: 4,
+      name: "Reports",
+      kind: "dir",
+      path: "/Archive/Reports",
+    });
+  });
+  const directories = new Map<string, number>();
+  await expect(
+    uploadParent(
+      file,
+      { id: 3, path: "/Archive" },
+      directories,
+      "session",
+      new AbortController().signal,
+      () => {},
+    ),
+  ).rejects.toThrow("The parent of folder Reports changed. Try uploading again.");
+  expect(directories.size).toBe(0);
+});
 
 it("rejects a file that occupies a required folder name", async () => {
   const file = new File(["report"], "report.txt");

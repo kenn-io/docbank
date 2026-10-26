@@ -2834,16 +2834,16 @@
     loading = false;
     naturalRerankPending = false;
     naturalProfileDefaultPending = null;
-    keepQueryDraft(query);
     return snapshot.run(query, options);
   }
 
-  async function submitSnapshot(query: Query, options: SnapshotOptions): Promise<void> {
+  async function submitSnapshot(query: Query, options: SnapshotOptions, preserveDraft = false): Promise<void> {
     const revision = queryDraftRevision;
+    if (!preserveDraft) keepQueryDraft(query);
     const outcome = await runSnapshot(query, options);
     if (outcome?.type === "failed") reportFailure(webSession, "search", outcome.cause);
     else if (outcome) {
-      if (revision === queryDraftRevision) {
+      if (!preserveDraft && revision === queryDraftRevision) {
         queryBarOpen = false;
         queryDraftChanged = false;
         queryDraftSettings = null;
@@ -2855,12 +2855,13 @@
 
   function runSnapshotAgain(): void {
     if (!snapshot.state.query || !snapshot.state.options) return;
-    void submitSnapshot(snapshot.state.query, snapshot.state.options);
+    void submitSnapshot(snapshot.state.query, snapshot.state.options, true);
   }
 
   function changeSnapshotQuery(query: Query): void {
     if (!snapshot.state.options) return;
     querySettingsApplied = true;
+    keepQueryDraft(query);
     void runSnapshot(query, snapshot.state.options);
   }
 

@@ -747,7 +747,7 @@ it("refreshes live metadata and download authority after tagging an inspected fr
   );
 });
 
-it("keeps the filtered result in view after trashing an inspected frozen row", async () => {
+it("keeps the filtered result and unapplied draft after trashing and undoing a frozen row", async () => {
   history.replaceState(
     null,
     "",
@@ -812,16 +812,43 @@ it("keeps the filtered result in view after trashing an inspected frozen row", a
     if (url === "/api/v1/audit/status?node_id=1") return json({ enabled: false, scopes: [] });
     if (url === "/api/v1/nodes/1/trash" && init?.method === "POST")
       return json({ ...live, revision: 4, trashed_at: "2026-09-11T13:00:00Z" });
+    if (url === "/api/v1/nodes/1/restore" && init?.method === "POST")
+      return json({ ...live, revision: 5 });
     throw new Error(`unexpected request: ${url}`);
   });
   render(App);
   await fireEvent.click(await screen.findByRole("button", { name: "Search" }));
   await screen.findByRole("region", { name: "Frozen query results" });
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Filters and sort" })).toBeNull(),
+  );
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  await fireEvent.input(screen.getByLabelText("Filters JSON"), {
+    target: { value: '{"size_min":10}' },
+  });
+  await fireEvent.input(screen.getByLabelText("Filters JSON"), {
+    target: { value: '{"size_min":' },
+  });
+  await fireEvent.keyDown(window, { key: "Escape" });
   await fireEvent.click(await screen.findByRole("button", { name: "Move to trash" }));
   await screen.findByText(`Moved “${frozen.name}” to trash`);
   await waitFor(() => expect(searches).toHaveLength(2));
   expect(searches[1]).toMatchObject({ text: initialQuery.text, filters: initialQuery.filters });
   expect(screen.getByRole("region", { name: "Frozen query results" })).toBeTruthy();
+  for (const count of [2, 3]) {
+    if (count === 3) {
+      await fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+      await waitFor(() => expect(searches).toHaveLength(3));
+      expect(searches[2]).toEqual(searches[0]);
+    }
+    await fireEvent.focusIn(screen.getByRole("button", { name: "Advanced" }));
+    expect((await screen.findByRole("tooltip")).textContent).toBe("Unapplied changes");
+    await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+    expect(((await screen.findByLabelText("Filters JSON")) as HTMLTextAreaElement).value).toBe(
+      '{"size_min":',
+    );
+    await fireEvent.keyDown(window, { key: "Escape" });
+  }
 });
 
 it("reports a submitted frozen run that finds nothing or fails", async () => {
