@@ -799,7 +799,7 @@ or prune history.
 
 ## Understand where a document came from
 
-The **History** section shows the five most recent versions and imports together, newest first. Click an import entry, such as **Added from command line**, to see its complete import history.
+The **History** section shows the five most recent versions and imports together, newest first. Choose **All imports** to see the document's complete import history.
 Each entry shows how the document arrived, its copyable source path or
 filename, and the import date. Corrected entries show **Superseded**.
 
@@ -868,13 +868,10 @@ limit. See [Searching](searching.md) for limits and truncation.
 
 ## Read permanent audited history
 
-The authority card checks the selected node's audit membership. A green
-**Protected** badge means ordinary deletion, version pruning, garbage
+The details panel shows a green **Protected** badge beside the name when the selected node belongs to a permanent audit scope. Ordinary deletion, version pruning, garbage
 collection, and repacking cannot erase that node's history.
-**Not audited** means audit authority exists in the vault but the selected node
-is outside every permanent scope. **Dormant** means no scope has been enabled.
 
-Choose **Audit history** on a protected node to open a wide timeline without
+Click **Protected** to open the audit timeline without
 losing the current folder, search results, or selection. The timeline is newest
 first and explains the primary change for each event: live and retained-trash
 paths, content-version transitions, tag definitions and assignments, or
@@ -1208,8 +1205,10 @@ Refreshing a folder resolves its node ID, current canonical path, and
 children in one metadata snapshot, so a concurrent CLI or agent move cannot
 leave the browser constructing child paths beneath an obsolete name.
 
-The current web application does not compare versions, recursively import
-folders, edit, revert, prune, move live nodes between folders, empty trash,
+Choose **Add → Upload folder** to upload a folder and its subfolders while preserving their structure.
+
+The current web application does not compare versions,
+edit, revert, prune, move live nodes between folders, empty trash,
 enroll audit scopes, or run maintenance, backup creation, backup verification,
 general metadata/content verification, or restore operations. Frozen-query tag
 actions are capped at 250,000 documents. Use an authenticated API client
