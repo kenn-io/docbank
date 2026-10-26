@@ -1,8 +1,13 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
+import { cleanup, render, screen } from "@testing-library/svelte";
+import DuplicatesTab from "./DuplicatesTab.svelte";
 import { readDuplicateContext } from "./duplicates.js";
 import type { SelectedSource } from "./selectedSource.js";
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 const source: SelectedSource = {
   kind: "snapshot",
@@ -53,6 +58,7 @@ it("loads only the exact selected current duplicate group", async () => {
 });
 
 it.each([
+  ["single reference", { reference_count: 1, references: [reference(7)] }],
   ["wrong hash", { sha256: "b".repeat(64) }],
   ["widened receipt", { extra: true }],
   ["invalid schema link", { $schema: 7 }],
@@ -77,4 +83,36 @@ it.each([
   await expect(
     readDuplicateContext("session", source, new AbortController().signal),
   ).rejects.toThrow(/Malformed duplicate context/);
+});
+
+it("renders loading until the validated duplicate group arrives", async () => {
+  let resolve!: (response: Response) => void;
+  vi.spyOn(globalThis, "fetch").mockReturnValue(
+    new Promise<Response>((done) => {
+      resolve = done;
+    }),
+  );
+  render(DuplicatesTab, { session: "session", source, onopen: vi.fn(), onauthfailure: vi.fn() });
+  expect(screen.getByRole("status", { name: "Loading" })).toBeDefined();
+  resolve(
+    new Response(
+      JSON.stringify({
+        sha256: source.blobHash,
+        size: source.size,
+        reference_count: 2,
+        references: [reference(7), reference(9)],
+        references_truncated: false,
+      }),
+    ),
+  );
+  await screen.findByText("2 copies");
+  expect(screen.getAllByRole("listitem")).toHaveLength(2);
+  expect(screen.queryByText("No duplicates")).toBeNull();
+});
+
+it("renders the missing group response as no duplicates", async () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}", { status: 404 }));
+  render(DuplicatesTab, { session: "session", source, onopen: vi.fn(), onauthfailure: vi.fn() });
+  await screen.findByText("No duplicates");
+  expect(screen.queryByRole("list")).toBeNull();
 });

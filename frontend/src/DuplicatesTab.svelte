@@ -18,7 +18,7 @@
   let references = $state<LiveSelectedSource[]>([]);
   let total = $state(0);
   let truncated = $state(false);
-  let loading = $state(false);
+  let loading = $state(true);
   let error = $state("");
 
   $effect(() => {
@@ -59,7 +59,6 @@
 <div class="duplicates">
   {#if loading}<p role="status"><Spinner size={14} /> Loading…</p>
   {:else if error}<p role="status">{error}</p>
-  {:else if references.length < 2}<p role="status">No duplicates</p>
   {:else}
     <div>
       <span>{total} copies{truncated ? ", first 16 shown" : ""}</span>
