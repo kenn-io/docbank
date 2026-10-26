@@ -70,6 +70,7 @@
       onrestored(receipt, notice);
       void refresh();
     } catch (cause) {
+      if (session !== requestSession) return;
       if (cause instanceof APIError && cause.status === 401) {
         onauthfailure(cause);
         return;

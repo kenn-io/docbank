@@ -193,3 +193,40 @@ it("keeps stale restore authority visible for a fresh decision", async () => {
     false,
   );
 });
+
+it("ignores a restore failure from an old session", async () => {
+  const trashed = {
+    id: 42,
+    name: "quarterly-report.txt",
+    kind: "file",
+    size: 74,
+    revision: 3,
+    created_at: "2026-07-28T12:00:00Z",
+    modified_at: "2026-07-28T12:00:00Z",
+    trashed_at: "2026-07-28T12:01:00Z",
+  };
+  let finishRestore!: (response: Response) => void;
+  vi.spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(
+      new Response(JSON.stringify({ items: [trashed], total: 1, limit: 1000, offset: 0 })),
+    )
+    .mockImplementationOnce(() => new Promise((resolve) => (finishRestore = resolve)));
+  const onauthfailure = vi.fn();
+  const view = render(TrashDrawer, {
+    session: "old-session",
+    onclose: vi.fn(),
+    onrestored: vi.fn(),
+    onauthfailure,
+  });
+
+  await fireEvent.click(await screen.findByRole("button", { name: "Restore" }));
+  await view.rerender({ session: "new-session" });
+  finishRestore(new Response(JSON.stringify({ detail: "Restore failed" }), { status: 500 }));
+  await waitFor(() =>
+    expect((screen.getByRole("button", { name: "Restore" }) as HTMLButtonElement).disabled).toBe(
+      false,
+    ),
+  );
+  expect(getToasts()).toEqual([]);
+  expect(onauthfailure).not.toHaveBeenCalled();
+});
