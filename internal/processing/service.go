@@ -2310,7 +2310,7 @@ func inspectRenditionSource(ctx context.Context, blobs *blob.Store, node store.N
 	}
 	// A provider whose descriptor omits the inspected format would refuse the
 	// upload, so the plan reports that before consent rather than after.
-	if capability.Eligible && !slices.Contains(profile.provider.Descriptor().SupportedFormats,
+	if capability.Eligible && !profile.provider.Descriptor().Supports(
 		document.RenditionFormatCapability{MediaFamily: capability.MediaFamily,
 			MediaType: capability.MediaType, InputKind: document.RenditionInputOriginalFile}) {
 		capability.Eligible, capability.Reason = false, media.CapabilityReasonUnsupported

@@ -2391,14 +2391,10 @@
     // A draft sorted only keeps an ordinary search; its sort is applied to the results.
     const draft = currentQueryDraft();
     const sortOnly =
-      !snapshotActive &&
       !querySettingsApplied &&
-      searchSyntax === "simple" &&
-      naturalProfile &&
       queryDraftChanged &&
       !queryDraftSettings?.invalid &&
-      naturalOptionsKept(queryDraftSettings?.options) &&
-      isSortOnly(draft)
+      keepsNaturalSearch(draft, queryDraftSettings?.options)
         ? draft.sort
         : undefined;
     if (!sortOnly && (searchSyntax === "advanced" || querySettingsApplied || queryDraftChanged)) {
@@ -2421,33 +2417,18 @@
     if (outcome) reportSearch(webSession, outcome.type, outcome.empty);
   }
 
-  // Advanced changed nothing but the order.
-  function isSortOnly(query: Query): boolean {
-    const ordinary = ordinaryQuery();
-    return (
-      canonicalQuery({ ...query, text: ordinary.text, sort: ordinary.sort }) ===
-      canonicalQuery(ordinary)
-    );
-  }
-
-  // Advanced would run exactly what the ranked search already runs, apart from its text and order.
-  function keepsNaturalSearch(query: Query, options: SnapshotOptions): boolean {
+  // Whether the draft is the plain-words search plus an order, which the ranked search can run.
+  // The ranked search always asks for 100 results from its own profile.
+  function keepsNaturalSearch(query: Query, options?: SnapshotOptions): boolean {
+    const ordinary = { ...ordinaryQuery(), text: query.text };
     return !!(
       !snapshotActive &&
-      activeQuery &&
-      naturalSearchMode !== "names" &&
       naturalProfile &&
       searchSyntax === "simple" &&
-      isSortOnly(query) &&
-      naturalOptionsKept(options)
-    );
-  }
-
-  // The ranked search always asks for 100 results from its own profile.
-  function naturalOptionsKept(options?: SnapshotOptions): boolean {
-    return (
+      query.text.trim() &&
       (options?.page_size ?? 100) === 100 &&
-      (!options?.profile || options.profile === naturalProfile?.name)
+      (!options?.profile || options.profile === naturalProfile.name) &&
+      canonicalQuery({ ...query, sort: ordinary.sort }) === canonicalQuery(ordinary)
     );
   }
 
@@ -2459,6 +2440,7 @@
     }
     closeQueryDraft();
     searchQuery = query.text;
+    naturalSearchMode = "auto";
     const outcome = await runSearch(undefined, undefined, true);
     applyResultSort(query.sort);
     if (outcome) reportSearch(webSession, outcome.type, outcome.empty);

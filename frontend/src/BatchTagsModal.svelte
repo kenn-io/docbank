@@ -5,9 +5,9 @@
   import { APIError } from "./api-transport.js";
   import { type Tag } from "./generated/docbank.js";
   import { randomUUID } from "./crypto.js";
+  import { TagChangeRun } from "./tagChangeRun.svelte.js";
   import type { SelectionTarget } from "./selection.js";
   import {
-    runBatchTagChange,
     previewBatchTags,
     type BatchTagRequest,
     type BatchTagReceipt,
@@ -37,18 +37,31 @@
   let currentTargets = $state(untrack(() => targets.map((target) => ({ ...target }))));
   let tagID = $state("");
   let preview = $state<BatchTagPreview>();
-  let uncertain = $state<BatchTagRequest>();
   let loading = $state(false);
-  let pending = $state(false);
-  let stale = $state(false);
   let closingUncertain = $state(false);
-  let failure = $state("");
   let notice = $state("");
   let generation = 0;
   let alive = true;
+  const run = new TagChangeRun({
+    session: untrack(() => session),
+    onauthfailure: (cause) => onauthfailure(cause),
+    onconfirmed: (receipt) => {
+      currentTargets = receipt.nodes.map((node) => ({
+        node_id: node.node_id,
+        revision: node.revision,
+      }));
+      notice = `Operation confirmed: ${receipt.nodes.filter((node) => node.changed).length} changed, ${receipt.nodes.filter((node) => !node.changed).length} already in the requested state.`;
+      onchanged(receipt);
+      void loadPreview();
+    },
+  });
+  const pending = $derived(run.pending);
+  const stale = $derived(run.stale);
+  const uncertain = $derived(run.uncertain);
   onDestroy(() => {
     alive = false;
     generation++;
+    run.destroy();
   });
 
   const assignedCount = $derived(preview?.nodes.filter((node) => node.assigned).length ?? 0);
@@ -67,7 +80,7 @@
   async function loadPreview() {
     const requestGeneration = ++generation;
     preview = undefined;
-    failure = "";
+    run.failure = "";
     if (!tagID) return;
     loading = true;
     try {
@@ -79,10 +92,10 @@
         onauthfailure(cause);
         return;
       }
-      stale =
+      run.stale =
         cause instanceof APIError &&
         (cause.code === "stale_revision" || cause.code === "not_found");
-      failure = cause instanceof Error ? cause.message : String(cause);
+      run.failure = cause instanceof Error ? cause.message : String(cause);
     } finally {
       if (alive && requestGeneration === generation) loading = false;
     }
@@ -96,32 +109,9 @@
     if (created) change(true);
   }
 
-  async function submit(request: BatchTagRequest) {
-    pending = true;
-    failure = "";
+  function submit(request: BatchTagRequest): Promise<void> {
     closingUncertain = false;
-    const outcome = await runBatchTagChange(session, request);
-    if (!alive) return;
-    pending = false;
-    if (outcome.kind === "confirmed") {
-      const receipt = outcome.receipt;
-      uncertain = undefined;
-      currentTargets = receipt.nodes.map((node) => ({
-        node_id: node.node_id,
-        revision: node.revision,
-      }));
-      notice = `Operation confirmed: ${receipt.nodes.filter((node) => node.changed).length} changed, ${receipt.nodes.filter((node) => !node.changed).length} already in the requested state.`;
-      onchanged(receipt);
-      await loadPreview();
-      return;
-    }
-    uncertain = outcome.kind === "unknown" ? request : undefined;
-    if (outcome.kind === "auth") {
-      onauthfailure(outcome.cause);
-      return;
-    }
-    if (outcome.kind === "rejected") stale = outcome.stale;
-    failure = outcome.cause instanceof Error ? outcome.cause.message : String(outcome.cause);
+    return run.submit(request);
   }
 
   function change(assign: boolean) {
@@ -135,7 +125,7 @@
       };
       void submit(request);
     } catch (cause) {
-      failure = cause instanceof Error ? cause.message : String(cause);
+      run.failure = cause instanceof Error ? cause.message : String(cause);
     }
   }
 </script>
@@ -194,7 +184,7 @@
     </div>
     {#if pending}<div class="loading"><Spinner size={16} /> Confirming operation…</div>{/if}
     {#if notice}<p role="status">{notice}</p>{/if}
-    {#if failure}<p role="alert">{failure}</p>{/if}
+    {#if run.failure}<p role="alert">{run.failure}</p>{/if}
     {#if stale}<p>
         Close and refresh your selection before starting another operation. Expected revisions have
         not been replaced automatically.

@@ -16,7 +16,8 @@
   import { randomUUID } from "./crypto.js";
   import type { SelectionTarget } from "./selection.js";
   import { ACTION_MAX_BYTES } from "./actionRecovery.js";
-  import { runBatchTagChange, type BatchTagReceipt, type BatchTagRequest } from "./batch-tags.js";
+  import type { BatchTagReceipt } from "./batch-tags.js";
+  import { TagChangeRun } from "./tagChangeRun.svelte.js";
   import { documentCount, tagChangeConsequence, tagChangeDone } from "./tagChangeText.js";
 
   interface Props {
@@ -57,18 +58,30 @@
   }: Props = $props();
   let tag = $state<Tag>();
   let assign = $state(true);
-  let applying = $state(false);
   let reading = $state(false);
-  let failure = $state("");
-  let stale = $state(false);
-  let uncertain = $state<BatchTagRequest>();
+  let readFailure = $state("");
   let receipt = $state<BatchTagReceipt>();
+  const run = new TagChangeRun({
+    session: untrack(() => session),
+    onauthfailure: (cause) => onauthfailure(cause),
+    onconfirmed: (confirmed) => {
+      receipt = confirmed;
+      onchanged?.(confirmed);
+    },
+    unknownMessage: "The result is unknown.",
+    staleMessage: "Some documents changed. Close and select them again.",
+  });
+  const applying = $derived(run.pending);
+  const stale = $derived(run.stale);
+  const uncertain = $derived(run.uncertain);
+  const failure = $derived(readFailure || run.failure);
   let fileInput = $state<HTMLInputElement>();
   // The selection is captured when the dialog opens; later clicks on the page do not change it.
   const captured = untrack(() => targets.map((target) => ({ ...target })));
   let alive = true;
   onDestroy(() => {
     alive = false;
+    run.destroy();
   });
 
   const busy = $derived(disabled || preparing || applying || reading);
@@ -81,46 +94,18 @@
 
   function apply(): void {
     if (locked || !tag || count === 0) return;
-    failure = "";
+    readFailure = "";
+    run.failure = "";
     if (scope === "query") {
       onstart({ scope, tagID: tag.id, assign });
       return;
     }
-    void submit({
+    void run.submit({
       operation_id: randomUUID(),
       tag_id: tag.id,
       assign,
       nodes: captured.map((target) => ({ ...target })),
     });
-  }
-
-  async function submit(request: BatchTagRequest): Promise<void> {
-    applying = true;
-    failure = "";
-    const outcome = await runBatchTagChange(session, request);
-    if (!alive) return;
-    applying = false;
-    if (outcome.kind === "confirmed") {
-      uncertain = undefined;
-      receipt = outcome.receipt;
-      onchanged?.(outcome.receipt);
-    } else if (outcome.kind === "unknown") {
-      // The daemon may have committed; Retry resends the same operation identity.
-      uncertain = request;
-      failure = "The result is unknown.";
-    } else {
-      uncertain = undefined;
-      if (outcome.kind === "auth") {
-        onauthfailure(outcome.cause);
-        return;
-      }
-      stale = outcome.stale;
-      failure = stale
-        ? "Some documents changed. Close and select them again."
-        : outcome.cause instanceof Error
-          ? outcome.cause.message
-          : String(outcome.cause);
-    }
   }
 
   async function importFile(event: Event): Promise<void> {
@@ -129,14 +114,15 @@
     input.value = "";
     if (!file || busy) return;
     reading = true;
-    failure = "";
+    readFailure = "";
+    run.failure = "";
     try {
       if (file.size > ACTION_MAX_BYTES)
         throw new Error("The action recovery file exceeds 128 MiB.");
       const bytes = new Uint8Array(await file.arrayBuffer());
       if (alive) onimport(bytes);
     } catch (cause) {
-      failure = cause instanceof Error ? cause.message : String(cause);
+      readFailure = cause instanceof Error ? cause.message : String(cause);
     } finally {
       reading = false;
     }
@@ -235,7 +221,7 @@
           tone="info"
           surface="solid"
           disabled={applying}
-          onclick={() => uncertain && void submit(uncertain)}>Retry</Button
+          onclick={() => uncertain && void run.submit(uncertain)}>Retry</Button
         >
       {:else}
         <Button tone="info" surface="solid" disabled={locked || !tag || count === 0} onclick={apply}

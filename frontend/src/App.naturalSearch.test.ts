@@ -1448,6 +1448,37 @@ it("runs the text edited in the top bar when Advanced sorts a meaning search", a
   ).toBe("invoice");
 });
 
+it("keeps a first search by meaning when Advanced only changes the sort", async () => {
+  const file = node(2, "report.txt", baseVersion);
+  const harness = installHarness({
+    profiles: [
+      {
+        name: "private",
+        fingerprint: "a".repeat(64),
+        rendition: true,
+        embedding_bindings: ["embed"],
+        reranking_available: false,
+      },
+    ],
+    files: [file],
+    baseReport: report("hybrid", [result(file, 1, "report excerpt")]),
+  });
+  render(App);
+  await fireEvent.input(await screen.findByRole("searchbox", { name: "Search documents" }), {
+    target: { value: "annual report" },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  await fireEvent.click(screen.getByRole("combobox", { name: /^Sort by:/ }));
+  await fireEvent.click(screen.getByRole("option", { name: "Size" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  await waitFor(() =>
+    expect(harness.postBodies.at(-1)).toMatchObject({ mode: "hybrid", query: "annual report" }),
+  );
+  expect(
+    harness.fetchMock.mock.calls.some(([url]) => String(url) === "/api/v1/workspace/queries"),
+  ).toBe(false);
+});
+
 it("runs Advanced with the page size it was given instead of the ranked search", async () => {
   const file = node(2, "report.txt", baseVersion);
   const harness = installHarness({

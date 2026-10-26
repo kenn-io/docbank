@@ -1,7 +1,7 @@
 <script lang="ts">
   import { reportAction, reportFailure } from "./action-events.js";
   import "./inspector.css";
-  import { tick, untrack } from "svelte";
+  import { tick } from "svelte";
   import { Button } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
   import AttachmentsTab from "./AttachmentsTab.svelte";
@@ -13,8 +13,7 @@
   import OriginalPreview from "./OriginalPreview.svelte";
   import PageViewer from "./PageViewer.svelte";
   import { parseMediaType, type HighlightTerm } from "./query.js";
-  import { resolveRenditionText, type RenditionObservation } from "./renditionText.js";
-  import { previewEligibility } from "./download.js";
+  import type { RenditionObservation } from "./renditionText.js";
   import type {
     LiveSelectedSource,
     RelatedSelectedSource,
@@ -74,14 +73,13 @@
   let frozenKey = "";
   const relatedSource = $derived(relatedSources.at(-1));
   const displayedSource = $derived(relatedSource ?? duplicateSource ?? source);
-  let redundantText = $state(false);
   const displayedObservation = $derived(duplicateSource || relatedSource ? undefined : observed);
   const isEmail = $derived(parseMediaType(displayedSource.mimeType) === "message/rfc822");
   // An email has its own tab; its Preview would only say it cannot render.
   const showPreview = $derived(!isEmail);
   const fallbackTab = $derived(showPreview ? "preview" : "email");
   const displayedTab = $derived(
-    (activeTab === "text" && redundantText) || (activeTab === "email" && !isEmail)
+    activeTab === "email" && !isEmail
       ? fallbackTab
       : activeTab === "preview" && !showPreview
         ? fallbackTab
@@ -89,7 +87,7 @@
   );
   const tabList = $derived([
     ...(showPreview ? [{ value: "preview", label: "Preview" }] : []),
-    ...(!redundantText ? [{ value: "text", label: "Text" }] : []),
+    { value: "text", label: "Text" },
     { value: "duplicates", label: "Duplicates" },
     { value: "attachments", label: "Attachments" },
     ...(isEmail ? [{ value: "email", label: "Email" }] : []),
@@ -97,38 +95,6 @@
   const displayedRevision = $derived(
     relatedSource?.mutationRevision ?? duplicateSource?.mutationRevision ?? authorizationRevision,
   );
-
-  $effect(() => {
-    const selected = displayedSource;
-    const revision = displayedRevision;
-    const currentSession = session;
-    const profile = profileName;
-    const observation = displayedObservation;
-    redundantText = false;
-    try {
-      if (previewEligibility(selected.mimeType, selected.size).kind !== "text") return;
-    } catch {
-      return;
-    }
-    const controller = new AbortController();
-    void resolveRenditionText(
-      currentSession,
-      selected,
-      revision,
-      profile,
-      observation,
-      controller.signal,
-    )
-      .then((resolution) => {
-        if (!controller.signal.aborted)
-          redundantText = resolution.state === "unconfigured" || resolution.state === "unprocessed";
-      })
-      .catch((cause: unknown) => {
-        if (!controller.signal.aborted && cause instanceof APIError && cause.status === 401)
-          untrack(() => onauthfailure(cause));
-      });
-    return () => controller.abort();
-  });
 
   $effect(() => {
     const key = `${session}:${source.key}`;

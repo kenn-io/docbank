@@ -379,7 +379,7 @@ it.each([
   ["failed", "Text processing failed for this selected version."],
   ["unprocessed", ""],
   ["unconfigured", ""],
-])("shows original Preview for %s text while retaining failures", async (state, message) => {
+])("keeps the Text view with Find for %s text while retaining failures", async (state, message) => {
   const bytes = new TextEncoder().encode("Synthetic fallback evidence");
   const selected = source(bytes, "66666666-6666-4666-8666-666666666666");
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -420,10 +420,8 @@ it.each([
   });
   expect(await screen.findByText("Synthetic fallback evidence")).toBeTruthy();
   if (message) expect(screen.getByText(message).getAttribute("role")).toBe("status");
-  else {
-    await waitFor(() => expect(screen.queryByRole("tab", { name: "Text" })).toBeNull());
-    expect(screen.getByRole("tab", { name: "Preview" }).getAttribute("aria-selected")).toBe("true");
-  }
+  expect(screen.getByRole("tab", { name: "Text" }).getAttribute("aria-selected")).toBe("true");
+  expect(screen.getByRole("searchbox", { name: "Find in verified text" })).toBeTruthy();
 });
 
 it.each([0, 64 * 1024 * 1024 + 1])(

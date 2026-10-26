@@ -147,6 +147,33 @@ describe("processing dialog", () => {
     expect(options).toEqual(["docling", "text"]);
   });
 
+  it("does not offer a photo-description profile for a text file", async () => {
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    Object.defineProperty(Element.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    setup({
+      docling: plan("docling", { flow: [doclingHop] }),
+      text: plan("text"),
+      vision: plan("vision", { rendition_ineligible_reason: "photo_not_eligible" }),
+    });
+    const picker = await screen.findByRole("combobox", { name: /Profile/ });
+    await waitFor(() => expect(picker.hasAttribute("disabled")).toBe(false));
+    await fireEvent.click(picker);
+    const options = (await screen.findAllByRole("option")).map((option) =>
+      option.textContent?.trim(),
+    );
+    expect(options).toEqual(["docling", "text"]);
+  });
+
   it("names a profile whose plan couldn't be built instead of dropping it silently", async () => {
     setup(
       { docling: plan("docling", { flow: [doclingHop] }), text: plan("text") },

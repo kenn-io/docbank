@@ -41,7 +41,11 @@
 
   type Option = { name: string; plan: ProcessingPlan };
   // Refusals about the file's type rather than this particular file.
-  const unsupportedReasons = new Set(["unsupported_media_type", "unbounded_media_family"]);
+  const unsupportedReasons = new Set([
+    "unsupported_media_type",
+    "unbounded_media_family",
+    "photo_not_eligible",
+  ]);
 
   let options = $state<Option[]>([]);
   let profileName = $state("");
