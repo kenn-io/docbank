@@ -23,7 +23,8 @@ name race get a typed `name already exists` error, not corruption.
 
 Email attachment receipt release retries a busy transaction start until the
 request ends or the writer lock clears, then runs its transaction callback once.
-Other storage mutations retain their ordinary busy timeout.
+Each attempt releases the pooled writer connection and restores its ordinary
+busy timeout before reuse. Other storage mutations retain that timeout.
 
 ## What SQLite can't handle
 

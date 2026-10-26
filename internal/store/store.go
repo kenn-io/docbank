@@ -4,6 +4,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	_ "embed"
 	"errors"
 	"fmt"
@@ -280,19 +281,44 @@ func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) er
 }
 
 func (s *Store) withStorageTxRetryBegin(ctx context.Context, fn func(tx *sql.Tx) error) error {
-	return s.withStorageTxBegin(ctx, func(conn *sql.Conn) (*sql.Tx, error) {
-		tx, err := backoff.Retry(ctx, func() (*sql.Tx, error) {
-			tx, err := conn.BeginTx(ctx, nil)
-			if err != nil && !s.driver.IsBusy(err) {
-				return nil, backoff.Permanent(err)
-			}
-			return tx, err
-		}, backoff.WithBackOff(backoff.NewConstantBackOff(10*time.Millisecond)), backoff.WithMaxTries(0), backoff.WithMaxElapsedTime(0))
-		if err != nil {
-			return nil, errors.Join(ctx.Err(), backoff.AsRetryError(err).LastErr)
+	_, err := backoff.Retry(ctx, func() (struct{}, error) {
+		if err := ctx.Err(); err != nil {
+			return struct{}{}, backoff.Permanent(err)
 		}
-		return tx, nil
-	}, fn)
+		busy := false
+		err := s.withStorageTxBegin(ctx, func(conn *sql.Conn) (*sql.Tx, error) {
+			beginCtx := context.WithoutCancel(ctx)
+			var timeout int
+			if err := conn.QueryRowContext(beginCtx, "PRAGMA busy_timeout").Scan(&timeout); err != nil {
+				return nil, err
+			}
+			if _, err := conn.ExecContext(beginCtx, "PRAGMA busy_timeout=0"); err != nil {
+				return nil, err
+			}
+			tx, beginErr := conn.BeginTx(beginCtx, nil)
+			if _, restoreErr := conn.ExecContext(beginCtx, fmt.Sprintf("PRAGMA busy_timeout=%d", timeout)); restoreErr != nil {
+				if tx != nil {
+					restoreErr = errors.Join(restoreErr, tx.Rollback())
+				}
+				// A connection with the wrong timeout must not return to the pool.
+				discardErr := conn.Raw(func(any) error { return driver.ErrBadConn })
+				return nil, errors.Join(beginErr, restoreErr, discardErr)
+			}
+			if tx != nil && ctx.Err() != nil {
+				return nil, errors.Join(ctx.Err(), tx.Rollback())
+			}
+			busy = s.driver.IsBusy(beginErr)
+			return tx, beginErr
+		}, fn)
+		if err != nil && !busy {
+			return struct{}{}, backoff.Permanent(err)
+		}
+		return struct{}{}, err
+	}, backoff.WithBackOff(backoff.NewConstantBackOff(10*time.Millisecond)), backoff.WithMaxTries(0), backoff.WithMaxElapsedTime(0))
+	if err != nil {
+		return errors.Join(ctx.Err(), backoff.AsRetryError(err).LastErr)
+	}
+	return nil
 }
 
 func (s *Store) withStorageTxBegin(ctx context.Context, begin func(*sql.Conn) (*sql.Tx, error), fn func(tx *sql.Tx) error) (retErr error) {
