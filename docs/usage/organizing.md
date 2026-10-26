@@ -129,11 +129,10 @@ operation fails without changing assignments. Documents whose assignment is
 already correct keep their node revisions. Actual changes record the normal
 audit events.
 
-If the response is lost, keep the dialog open and choose **Retry same
-operation**. The daemon returns the original receipt without applying the
-change twice. After a conflict, close the dialog and refresh the selection.
-Closing the dialog while the outcome is uncertain discards the browser's retry
-request. It does not undo a change the daemon already committed.
+If the result is uncertain, the dialog locks and the view refreshes. Check the
+documents' tags before trying again. Applying the same addition or removal
+again is safe because assignments that already match stay unchanged. After a
+conflict, close the dialog and refresh the selection.
 
 API clients use `POST /api/v1/batch/tags` with one tag ID, an operation UUID,
 an assignment choice, and node/revision pairs. Docbank keeps receipts
