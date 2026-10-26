@@ -303,6 +303,12 @@ func TestPhotoDescriptionFlow(t *testing.T) {
 func TestPhotoDescriptionJobFailureIsLogged(t *testing.T) {
 	t.Parallel()
 	f := newPhotoDescriptionFixture(t)
+	// Provider authorization uses real time; only retry scheduling moves ahead.
+	for _, runtime := range f.service.renditions.runtimes {
+		provider, ok := runtime.(*providerRenditionRuntime)
+		require.True(t, ok)
+		provider.clock = time.Now
+	}
 	f.grant(t, f.service, "vision")
 	f.mu.Lock()
 	f.reply = "A harbor at dusk."
@@ -315,16 +321,14 @@ func TestPhotoDescriptionJobFailureIsLogged(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, targets, 1)
 	require.NoError(t, f.service.admitPhotoDescription(t.Context(), targets[0]))
-	require.Eventually(t, func() bool {
-		for {
-			processed, err := worker.RunOne(t.Context())
-			require.NoError(t, err)
-			if !processed {
-				break
-			}
+	for attempt := range 3 {
+		if attempt > 0 {
+			f.skew.Add(int64(time.Duration(attempt) * time.Second))
 		}
-		return logs.Len() > 0
-	}, 10*time.Second, 100*time.Millisecond)
+		processed, err := worker.RunOne(t.Context())
+		require.NoError(t, err)
+		require.True(t, processed, "attempt %d", attempt+1)
+	}
 	_, describes := f.counts()
 	require.Equal(t, 3, describes, "unparseable replies stop after three provider attempts")
 
