@@ -3010,9 +3010,7 @@
         "This collection member moved or its old path now belongs to another document. Reload the collection before opening it.",
       );
     }
-    const split = path.lastIndexOf("/");
-    const parentPath = split === 0 ? "/" : path.slice(0, split);
-    const parent = await generated.resolvePath({ path: parentPath }, { session });
+    const parent = await generated.resolvePath({ path: parentPath(path) }, { session });
     if (session !== webSession || !current()) return;
     if (parent.kind !== "dir") {
       throw new Error("The collection member's parent is no longer a live directory.");

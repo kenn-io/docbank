@@ -197,10 +197,13 @@ export async function setCollectionLabel(
   return result;
 }
 
-// Import sources are a JSON array of paths; older imports may have plain text.
+// CLI import sources use Go-quoted paths; older imports may have plain text.
 export function sourcePaths(collection: Pick<Collection, "source_description">): string[] {
   try {
-    const value: unknown = JSON.parse(collection.source_description);
+    const source = collection.source_description.replace(/\\U([0-9a-fA-F]{8})/g, (_, hex) =>
+      String.fromCodePoint(parseInt(hex, 16)),
+    );
+    const value: unknown = JSON.parse(source);
     if (Array.isArray(value) && value.every((path) => typeof path === "string")) return value;
   } catch {
     /* Older imports may have a plain-text source. */

@@ -388,12 +388,12 @@ describe("collections drawer", () => {
 });
 
 it("names an unlabeled import from its first source and copies a full source path", async () => {
-  const sources = ["/synthetic/drop/invoices", "/synthetic/drop/notes"];
+  const sources = String.raw`["/synthetic/drop/\U0001f4c4 invoices", "/synthetic/drop/notes"]`;
   const writeText = vi.fn().mockResolvedValue(undefined);
   vi.stubGlobal("navigator", Object.create(navigator, { clipboard: { value: { writeText } } }));
   vi.spyOn(globalThis, "fetch").mockResolvedValue(
     json({
-      items: [{ ...collection, label: null, source_description: JSON.stringify(sources) }],
+      items: [{ ...collection, label: null, source_description: sources }],
       total: 1,
       limit: 100,
       offset: 0,
@@ -405,7 +405,7 @@ it("names an unlabeled import from its first source and copies a full source pat
     onauthfailure: vi.fn(),
     onopenmember: vi.fn(),
   });
-  const row = await screen.findByRole("button", { name: "Browse import invoices" });
+  const row = await screen.findByRole("button", { name: "Browse import 📄 invoices" });
   await fireEvent.click(row);
   await fireEvent.click(
     screen.getByRole("button", { name: "Copy source path /synthetic/drop/notes" }),
