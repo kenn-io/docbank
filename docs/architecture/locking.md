@@ -22,8 +22,8 @@ requests interleave safely. The schema enforces invariants, and losers of a
 name race get a typed `name already exists` error, not corruption.
 
 Email attachment receipt release retries a busy transaction start until the
-request ends or the writer lock clears. Its transaction callback runs once;
-other storage mutations retain their ordinary busy timeout.
+request ends or the writer lock clears, then runs its transaction callback once.
+Other storage mutations retain their ordinary busy timeout.
 
 ## What SQLite can't handle
 

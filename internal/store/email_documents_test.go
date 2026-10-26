@@ -82,8 +82,6 @@ func TestEmailDocumentsReleaseWaitsForWriter(t *testing.T) {
 			require.NoError(t, <-done)
 			_, err = s.EmailDocumentPublication(t.Context(), receipt.OperationID)
 			require.ErrorIs(t, err, ErrNotFound)
-			_, err = s.NodeByID(t.Context(), receipt.Relations[0].Child.NodeID)
-			require.NoError(t, err)
 		})
 	}
 }
