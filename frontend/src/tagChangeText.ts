@@ -5,7 +5,7 @@ export function documentCount(count: number): string {
 /** One line that says what Apply changes. */
 export function tagChangeConsequence(assign: boolean, tagName: string, count: number): string {
   return assign
-    ? `Adds “${tagName}” to ${documentCount(count)}. Undo with Remove.`
+    ? `Adds “${tagName}” to ${documentCount(count)}.`
     : `Removes “${tagName}” from ${documentCount(count)}.`;
 }
 

@@ -88,7 +88,7 @@ it("states what a whole-result change does before continuing", async () => {
   const next = screen.getByRole("button", { name: "Continue" }) as HTMLButtonElement;
   expect(next.disabled).toBe(true);
   await chooseReview();
-  await screen.findByText("Adds “Review” to 101 documents. Undo with Remove.");
+  await screen.findByText("Adds “Review” to 101 documents.");
   await fireEvent.click(screen.getByRole("radio", { name: "Remove" }));
   expect(screen.getByText("Removes “Review” from 101 documents.")).toBeTruthy();
   await fireEvent.click(next);
@@ -115,7 +115,7 @@ it("tags the selection captured at open and reports what changed", async () => {
   expect(screen.queryByRole("button", { name: "Resume from file…" })).toBeNull();
   await view.rerender(props({ scope: "selection", count: 2, targets: [], onchanged, onstart }));
   await chooseReview();
-  await screen.findByText("Adds “Review” to 2 documents. Undo with Remove.");
+  await screen.findByText("Adds “Review” to 2 documents.");
   await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
 
   await screen.findByText("Added “Review” to 1 document. 1 already had it.");
@@ -124,6 +124,41 @@ it("tags the selection captured at open and reports what changed", async () => {
   expect(onchanged).toHaveBeenCalledOnce();
   expect(onstart).not.toHaveBeenCalled();
   expect(screen.getByRole("button", { name: "Done" })).toBeTruthy();
+});
+
+it("preserves an existing assignment when following the tag dialog's undo advice", async () => {
+  const assigned = new Set([7]);
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+    const request = JSON.parse(String(init?.body)) as BatchTagRequest;
+    const unchanged = request.nodes
+      .filter((node) => assigned.has(node.node_id) === request.assign)
+      .map((node) => node.node_id);
+    for (const node of request.nodes) {
+      if (request.assign) assigned.add(node.node_id);
+      else assigned.delete(node.node_id);
+    }
+    return Response.json(await receiptFor(request, unchanged));
+  });
+  const view = render(SnapshotActions, props({ scope: "selection", count: 2, targets }));
+  await chooseReview();
+  const advice = screen.getByText(/Adds “Review” to 2 documents/).textContent;
+  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+  await screen.findByText("Added “Review” to 1 document. 1 already had it.");
+  expect([...assigned]).toEqual([7, 9]);
+
+  if (advice?.includes("Undo with Remove")) {
+    view.unmount();
+    render(
+      SnapshotActions,
+      props({ scope: "selection", count: 2, targets: [targets[0], { node_id: 9, revision: 5 }] }),
+    );
+    await chooseReview();
+    await fireEvent.click(screen.getByRole("radio", { name: "Remove" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    await screen.findByText("Removed “Review” from 2 documents.");
+  }
+
+  expect(assigned.has(7)).toBe(true);
 });
 
 it("refreshes observations and locks an unknown selection result", async () => {

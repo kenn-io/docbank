@@ -353,9 +353,10 @@ on at most 1,000 documents. Type a new name and choose **Create “name”** to
 create the tag, then apply it to every selected document.
 Folders and undisplayed query results are not included in page selection.
 
-Keep the dialog open if the result is uncertain: **Retry**
-reuses its original identity and revisions. A stale selection requires you to
-refresh. The browser does not retry automatically against newer documents.
+If the result is uncertain, the dialog locks and the browser refreshes the view.
+Close the dialog and check the documents' tags before trying again. Applying
+the same addition or removal again is safe. A stale selection requires you to
+close the dialog and select again.
 After confirmation, the browser reloads current observations. The retained
 receipt may describe an earlier successful operation. See
 [selected-set tagging](organizing.md#tag-a-selected-set-atomically) for retention
@@ -368,14 +369,16 @@ and backup behavior.
 In a frozen snapshot, the results header shows the result count and
 **Tag all…**, and the selection dock shows **Tag selected…** for the checked
 rows on the visible page. Both open the same dialog: choose or create a tag,
-pick **Add** or **Remove**, and read the line under it, such as “Adds
-“Reviewed” to 128 documents. Undo with Remove.”, before you apply. Removing a
-tag can't be undone automatically.
+pick **Add** or **Remove**, and read the line under it, such as
+`Adds “Reviewed” to 128 documents.`, before you apply. Tag changes can't be undone
+automatically. **Remove** affects the whole selection, including documents
+that already had the tag before an addition.
 
 **Tag selected…** applies one atomic, revision-checked change to at most 1,000
-documents and reports how many changed. If the response is lost, **Retry**
-resends the same operation without applying it twice. A stale document means
-you close the dialog and select again.
+documents and reports how many changed. If the result is uncertain, the dialog
+locks and the view refreshes. Close it and check the documents' tags before
+trying again. Applying the same addition or removal again is safe. A stale
+document means you close the dialog and select again.
 
 **Tag all…** → **Continue** captures every result, up to 250,000 documents,
 and prepares revision-checked batches of at most 1,000. The captured

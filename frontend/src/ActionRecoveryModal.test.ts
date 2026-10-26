@@ -226,7 +226,7 @@ it("applies a fresh action without downloading or reading a recovery file", asyn
     onauthfailure: vi.fn(),
   });
 
-  expect(screen.getByText("Adds “Review” to 1 document. Undo with Remove.")).toBeTruthy();
+  expect(screen.getByText("Adds “Review” to 1 document.")).toBeTruthy();
   expect(screen.queryByText(/recovery/i)).toBeNull();
   expect(screen.queryByRole("button", { name: "Save recovery file" })).toBeNull();
   expect((screen.getByRole("button", { name: "Apply" }) as HTMLButtonElement).disabled).toBe(false);
