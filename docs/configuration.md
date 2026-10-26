@@ -1281,6 +1281,8 @@ Each event carries these fields:
 - `application=docbank`, `source=daemon`, the Docbank `version` and `commit`,
   `goos`, `goarch`, and `install_age_hours` (whole hours since the install ID
   was created)
+- `distribution`: who shipped the build, such as `kenn` for official downloads
+  or `homebrew`; empty for other builds
 - `$process_person_profile=false` and `$geoip_disable=true`
 - fields the PostHog Go library adds: `$lib` and `$lib_version`
 - `session_ended` also carries `surface` as `web` or `tui` and `duration_bucket`

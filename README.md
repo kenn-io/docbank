@@ -143,8 +143,9 @@ Docbank sends anonymous usage events by default:
 
 Asynchronous imports from the CLI or the web mailbox and load-file drawers, and `push`, send no core actions.
 
-Each event carries a random per-vault install ID, the version and commit, and
-the operating system and architecture. Events never include document content,
+Each event carries a random per-vault install ID, the version and commit, the
+operating system and architecture, and the distribution channel, such as
+`homebrew`. Events never include document content,
 names, paths, or queries. Set `DOCBANK_TELEMETRY_ENABLED=0` or
 `DO_NOT_TRACK=1` to turn telemetry off. See
 [anonymous usage telemetry](docs/configuration.md#anonymous-usage-telemetry).

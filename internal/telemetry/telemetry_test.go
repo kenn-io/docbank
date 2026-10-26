@@ -163,8 +163,9 @@ func TestEnabledReporterSendsOnlyAllowlistedFields(t *testing.T) {
 			assert.Equal(t, "test-commit", props["commit"])
 			assert.Equal(t, runtime.GOOS, props["goos"])
 			assert.Equal(t, runtime.GOARCH, props["goarch"])
+			assert.Equal(t, "", props["distribution"], "a build without the distribution ldflag reports an empty channel")
 			assert.ElementsMatch(t, []string{
-				"application", "source", "version", "commit", "goos", "goarch", "install_age_hours",
+				"application", "source", "version", "commit", "goos", "goarch", "install_age_hours", "distribution",
 				"$lib", "$lib_version", "$process_person_profile", "$geoip_disable",
 			}, slices.Collect(maps.Keys(props)))
 		}
