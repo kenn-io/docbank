@@ -107,7 +107,7 @@ test("qualifies selected reports and original exports", async ({ page }) => {
       const detail = String(cause).replaceAll(session, "[redacted]");
       throw new Error("Could not open the synthetic browser session", { cause: new Error(detail) });
     }
-    const drawer = page.getByRole("dialog", { name: "Search exports", exact: true });
+    const drawer = page.getByRole("dialog", { name: "Search term report", exact: true });
     const exportDrawer = page.getByRole("dialog", { name: "Verified export", exact: true });
 
     await test.step("strict missing-text refusal leaves history unchanged", async () => {
@@ -115,14 +115,17 @@ test("qualifies selected reports and original exports", async ({ page }) => {
       await page.getByRole("checkbox", { name: "Select missing.bin", exact: true }).check();
       await page.getByRole("button", { name: "Report selected documents", exact: true }).click();
       await drawer.getByRole("textbox", { name: "Expression for term 1" }).fill("alpha");
-      await expect(drawer.getByRole("combobox", { name: "Coverage policy" })).toHaveValue("strict");
+      await drawer.getByText("Options", { exact: true }).click();
+      await expect(
+        drawer.getByRole("combobox", { name: /^Coverage policy:/ }),
+      ).toHaveAccessibleName("Coverage policy: Stop on incomplete coverage");
       const creating = post("/api/v1/search-exports");
       await drawer.getByRole("button", { name: "Create report", exact: true }).click();
       const response = await creating;
       expect(response.status()).toBe(422);
       expect(await response.json()).toMatchObject({ code: "incomplete_coverage" });
       await expect(drawer.getByRole("alert")).toBeVisible();
-      await expect(drawer.getByRole("table")).toHaveCount(0);
+      await expect(drawer.getByRole("table", { name: "Search report counts" })).toHaveCount(0);
       await expect(drawer.getByRole("button", { name: "Download evidence ZIP" })).toHaveCount(0);
       expect(await history()).toEqual(before);
       await drawer.getByRole("button", { name: "Close search term report" }).click();
@@ -139,7 +142,8 @@ test("qualifies selected reports and original exports", async ({ page }) => {
       await page.getByRole("button", { name: "Export selection", exact: true }).click();
       const sourcing = post("/api/v1/exports/sources");
       const planning = post("/api/v1/exports/plans");
-      await exportDrawer.getByRole("button", { name: "Preview export", exact: true }).click();
+      const downloading = page.waitForEvent("download");
+      await exportDrawer.getByRole("button", { name: "Download ZIP", exact: true }).click();
       const source = await sourcing;
       expect(source.status()).toBe(200);
       const submittedSource = source.request().postDataJSON();
@@ -155,13 +159,13 @@ test("qualifies selected reports and original exports", async ({ page }) => {
       expect(plan.volume_limits).toBeUndefined();
       expect(plan.duplicate_policy ?? "preserve").toBe("preserve");
       fingerprint = plan.fingerprint;
+      await exportDrawer.getByText("Details", { exact: true }).click();
       await expect(exportDrawer.getByTestId("export-plan-fingerprint")).toHaveText(fingerprint);
-      await exportDrawer.getByRole("button", { name: "Start reviewed export" }).click();
       await expect(
-        exportDrawer.getByText("Archive verified and ready", { exact: true }),
+        exportDrawer.getByRole("heading", { name: "Archive ready", exact: true }),
       ).toBeVisible({ timeout: 30_000 });
       await exportDrawer
-        .getByRole("button", { name: "Download verified ZIP" })
+        .getByRole("button", { name: "Download ZIP", exact: true })
         .scrollIntoViewIfNeeded();
       await page.screenshot({
         path: path.join(captures!, "export-ready.png"),
@@ -171,8 +175,6 @@ test("qualifies selected reports and original exports", async ({ page }) => {
       const size = Number(
         await exportDrawer.getByTestId("export-archive-size").getAttribute("data-bytes"),
       );
-      const downloading = page.waitForEvent("download");
-      await exportDrawer.getByRole("button", { name: "Download verified ZIP" }).click();
       const download = await downloading;
       await download.saveAs(archive);
       expect(await download.failure()).toBeNull();
@@ -192,9 +194,9 @@ test("qualifies selected reports and original exports", async ({ page }) => {
       await drawer.getByRole("textbox", { name: "Expression for term 1" }).fill("alpha");
       await drawer.getByRole("button", { name: "Add term", exact: true }).click();
       await drawer.getByRole("textbox", { name: "Expression for term 2" }).fill("beta");
-      await drawer
-        .getByRole("combobox", { name: "Coverage policy" })
-        .selectOption("available_only");
+      await drawer.getByText("Options", { exact: true }).click();
+      await drawer.getByRole("combobox", { name: /^Coverage policy:/ }).click();
+      await page.getByRole("option", { name: "Count available text", exact: true }).click();
       const creating = post("/api/v1/search-exports");
       await drawer.getByRole("button", { name: "Create report", exact: true }).click();
       const response = await creating;
@@ -216,7 +218,7 @@ test("qualifies selected reports and original exports", async ({ page }) => {
       const parent: Summary = await response.json();
       expect(parent).toMatchObject({ state: "needs_review", unresolved_dates: 1 });
       expect(parent.counts ?? []).toEqual([]);
-      await expect(drawer.getByRole("table")).toHaveCount(0);
+      await expect(drawer.getByRole("table", { name: "Search report counts" })).toHaveCount(0);
       await expect(drawer.getByRole("button", { name: "Download evidence ZIP" })).toHaveCount(0);
       const loading = page.waitForResponse(
         (r) => new URL(r.url()).pathname === `/api/v1/search-exports/${parent.id}/dates`,
@@ -288,7 +290,7 @@ test("qualifies selected reports and original exports", async ({ page }) => {
       expect(child!.coverage).toMatchObject(coverage);
       expect(child!.row_coverage).toHaveLength(2);
       for (const row of child!.row_coverage!) expect(row).toMatchObject(coverage);
-      const table = drawer.getByRole("table", { name: "Search export counts" });
+      const table = drawer.getByRole("table", { name: "Search report counts" });
       for (const [index, term] of ["alpha", "beta"].entries()) {
         const cells = table
           .getByRole("row")
@@ -305,12 +307,9 @@ test("qualifies selected reports and original exports", async ({ page }) => {
           "1",
         ]);
       }
-      await expect(
-        drawer.getByText(
-          "3 scoped · 2 searchable · 1 missing text · 0 incomplete families · 1 fallback dates",
-          { exact: true },
-        ),
-      ).toBeVisible();
+      await expect(drawer.getByRole("paragraph").filter({ hasText: "3 scoped" })).toContainText(
+        "3 scoped · 2 searchable · 1 missing text · 0 incomplete families · 1 fallback dates · expires",
+      );
       await table.scrollIntoViewIfNeeded();
       await page.screenshot({
         path: path.join(captures!, "report-counts.png"),
@@ -473,7 +472,10 @@ print('Verified report evidence, CSV and all three original byte streams')
       expect(before.items.map((item: { summary: Summary }) => item.summary.id)).toContain(
         child!.id,
       );
-      const completed = drawer.locator(".history-item").filter({ hasText: "Counts ready" });
+      const completed = drawer
+        .getByRole("region", { name: "Recent reports" })
+        .getByRole("listitem")
+        .filter({ hasText: "Counts ready" });
       await completed.getByRole("button", { name: "Use as draft" }).click();
       const creating = post("/api/v1/search-exports");
       await drawer.getByRole("button", { name: "Create report", exact: true }).click();
@@ -484,7 +486,7 @@ print('Verified report evidence, CSV and all three original byte streams')
       await expect(drawer.getByRole("alert")).toHaveText(
         "Selected documents changed. Refresh the workspace and reselect the intended current versions.",
       );
-      await expect(drawer.getByRole("table")).toHaveCount(0);
+      await expect(drawer.getByRole("table", { name: "Search report counts" })).toHaveCount(0);
       expect(await history()).toEqual(before);
     });
 
