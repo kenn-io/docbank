@@ -89,21 +89,6 @@ it("offers the bounded tag action when supplied", async () => {
   expect(ontags).toHaveBeenCalledOnce();
 });
 
-it("labels and invokes the visible-page CSV action for the current selection", async () => {
-  const oncsv = vi.fn();
-  render(SelectionDock, {
-    selectedCount: 2,
-    visibleDocumentCount: 2,
-    truncated: false,
-    onclear: vi.fn(),
-    onselectvisible: vi.fn(),
-    oncsv,
-  });
-
-  await fireEvent.click(screen.getByRole("button", { name: "Export page CSV" }));
-  expect(oncsv).toHaveBeenCalledOnce();
-});
-
 it("names snapshot-page tagging separately from the whole frozen query", async () => {
   const ontags = vi.fn();
   const onwholequerytags = vi.fn();

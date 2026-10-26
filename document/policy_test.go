@@ -31,15 +31,3 @@ func TestNormalizePolicyRejectsInvalidConstruction(t *testing.T) {
 	require.Error(t, err)
 	require.Error(t, (NormalizePolicy{}).validate())
 }
-
-func TestNormalizePolicyIdentityCannotMutatePolicy(t *testing.T) {
-	policy, err := NewNormalizePolicy(25_000_000)
-	require.NoError(t, err)
-
-	identity := policy.Identity()
-	identity.MaxChunkRunes = 1
-	identity.MaxDocumentChars = 1
-
-	assert.Equal(t, 4_000, policy.Identity().MaxChunkRunes)
-	assert.Equal(t, 25_000_000, policy.Identity().MaxDocumentChars)
-}

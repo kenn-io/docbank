@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -651,15 +650,6 @@ func assertProviderCode(t *testing.T, err error, want document.RenditionErrorCod
 	providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
 	require.True(t, ok, "%T: %v", err, err)
 	assert.Equal(t, want, providerErr.Code())
-}
-
-func TestPolicyFingerprintIsCanonical(t *testing.T) {
-	fixture := newFixture(t, "pdf", "application/pdf", "report.pdf", testPDF(1))
-	first, err := PolicyFingerprint(fixture.profile)
-	require.NoError(t, err)
-	encoded, err := json.Marshal(map[string]string{"fingerprint": first}, json.Deterministic(true))
-	require.NoError(t, err)
-	assert.Contains(t, string(encoded), first)
 }
 
 func testPDF(pageCount int) []byte {

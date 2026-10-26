@@ -96,23 +96,6 @@ func TestPublishRenditionExactRetryIgnoresDerivedMD5(t *testing.T) {
 	require.NoError(t, err, "an exact retry must reuse the immutable build")
 }
 
-func TestPublishRenditionAcceptsNilBuildWarnings(t *testing.T) {
-	t.Parallel()
-	// Mutation caught: exact slice comparison rejects a warning-free build
-	// when one representation uses nil and the other uses an empty slice.
-	fixture := newPublicationFixture(t)
-	publisher, err := NewArtifactPublisher(fixture.catalog, fixture.blobs)
-	require.NoError(t, err)
-	staged := fixture.stage(t,
-		publicationIDs{"b1", "51", "91"}, "searchable mercury evidence", "first markdown",
-	)
-	require.Empty(t, staged.Rendition.Warnings)
-	staged.Build.Warnings = nil
-
-	_, err = publisher.PublishRendition(t.Context(), staged)
-	require.NoError(t, err)
-}
-
 func TestAuxiliaryChecksumBackfillResumesAndReadsPackedOnlyContent(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()

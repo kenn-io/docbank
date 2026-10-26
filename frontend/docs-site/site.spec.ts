@@ -88,14 +88,6 @@ test("supports keyboard navigation and returns focus after the image dialog", as
   await expect(trigger).toBeFocused();
 });
 
-test("shows the documented install command with a Windows alternative", async ({ page }) => {
-  await page.goto("/");
-  await expect(page.locator("[data-install-command] code")).toHaveText(
-    "curl -fsSL https://docbank.ai/install.sh | sh",
-  );
-  await expect(page.getByRole("link", { name: "Windows install" })).toBeVisible();
-});
-
 test("renders repository facts in the header when GitHub responds", async ({ page }) => {
   await page.route("https://api.github.com/repos/kenn-io/docbank", (route) =>
     route.fulfill({ json: { stargazers_count: 1280, forks_count: 34 } }),

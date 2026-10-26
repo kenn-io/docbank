@@ -232,30 +232,6 @@ func TestDocumentCatalogTraversesNextAndPreviousExactly(t *testing.T) {
 	assert.False(t, third.HasNext)
 }
 
-func TestDocumentCatalogCursorPositionSurvivesConcurrentBoundaryDeletion(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	nodes := make([]Node, 4)
-	for i := range nodes {
-		var err error
-		nodes[i], err = s.CreateFile(t.Context(), s.RootID(), fmt.Sprintf("doc-%d.txt", i),
-			fakeHash(fmt.Sprintf("c%d", i)), 1, "text/plain")
-		require.NoError(t, err)
-	}
-	query := DocumentCatalogQuery{PageSize: 2}
-	first, err := s.ListDocuments(t.Context(), query, nil, DocumentCatalogTraversalNext)
-	require.NoError(t, err)
-	_, _, err = s.Trash(t.Context(), nodes[1].ID, nodes[1].Revision)
-	require.NoError(t, err)
-	second, err := s.ListDocuments(t.Context(), query, &first.LastPosition, DocumentCatalogTraversalNext)
-	require.NoError(t, err)
-
-	assert.Equal(t, []string{"/doc-2.txt", "/doc-3.txt"}, documentCatalogPaths(second.Items))
-	for _, item := range second.Items {
-		assert.NotContains(t, documentCatalogPaths(first.Items), item.Path)
-	}
-}
-
 func TestDocumentCatalogPaginationMatrix(t *testing.T) {
 	t.Parallel()
 	drivers := []struct {

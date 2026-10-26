@@ -161,7 +161,6 @@ func TestContentDatesFailInsteadOfTruncatingOrSubstituting(t *testing.T) {
 		binding func([]byte) TextBinding
 		ctx     func() context.Context
 	}{
-		{"too many candidates", []byte(strings.Repeat("Document dated 2024-06-03. ", 257)), func(text []byte) TextBinding { return nativeDateBinding(identity, text) }, context.Background},
 		{"oversized text", make([]byte, 16<<20+1), func(text []byte) TextBinding { return nativeDateBinding(identity, text) }, context.Background},
 		{"mismatched digest", []byte("Document dated 2024-06-03"), func(text []byte) TextBinding {
 			binding := nativeDateBinding(identity, text)

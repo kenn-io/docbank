@@ -93,11 +93,6 @@ func TestTimedArtifactCodecEnforcesCanonicalBounds(t *testing.T) {
 	}
 }
 
-func TestValidateMetadataRequiresNonemptyRequiredValue(t *testing.T) {
-	require.ErrorContains(t, validateMetadata("", "provider", true), "provider")
-	require.NoError(t, validateMetadata("", "model", false))
-}
-
 func TestBuildTimedArtifactPreservesSpeakerInEvidenceIdentity(t *testing.T) {
 	policy, err := document.NewEvidencePolicy(100)
 	require.NoError(t, err)

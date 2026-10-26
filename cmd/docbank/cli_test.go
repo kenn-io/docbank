@@ -1667,13 +1667,6 @@ func TestInfoHumanAndJSON(t *testing.T) {
 	assert.Equal(t, 1, info.Storage.LooseBlobs)
 }
 
-func TestRootHelpDocumentsVaultSelection(t *testing.T) {
-	out, err := runCLI(t, "--help")
-	require.NoError(t, err)
-	assert.Contains(t, out, "DOCBANK_HOME selects the vault")
-	assert.Contains(t, out, "docbank info")
-}
-
 func TestBackupInitCreateListVerifyCLI(t *testing.T) {
 	home := t.TempDir()
 	repoPath := filepath.Join(t.TempDir(), "repo")

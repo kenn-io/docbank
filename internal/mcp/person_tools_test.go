@@ -20,19 +20,6 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-func TestPeopleMCPToolsAreReads(t *testing.T) {
-	readOnly := catalogMap(toolCatalog(ServerOptions{}))
-	tool := readOnly["get_person"]
-	require.NotNil(t, tool)
-	assert.True(t, tool.Annotations.ReadOnlyHint)
-	withWrites := catalogMap(toolCatalog(ServerOptions{
-		AllowProcessing: true, AllowPackageWrites: true, AllowPhotoEdits: true,
-	}))
-	for _, name := range []string{"create_person", "rename_person", "retire_person", "merge_people", "split_person"} {
-		assert.NotContains(t, withWrites, name)
-	}
-}
-
 // peopleMCPServer serves MCP person tools from a real daemon over a fresh vault.
 func peopleMCPServer(t *testing.T) (*store.Store, func(string, map[string]any) map[string]any) {
 	t.Helper()

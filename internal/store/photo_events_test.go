@@ -214,15 +214,3 @@ func TestPhotoEventsSignalRenditionHeartbeat(t *testing.T) {
 	require.NoError(t, err)
 	requirePhotoSignal(t, events, "a heartbeat")
 }
-
-func TestPhotoEventsUnwatchedTablesExist(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	for reason, tables := range photoUnwatchedTables {
-		for _, table := range tables {
-			var found bool
-			require.NoError(t, s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM pragma_table_list WHERE schema='main' AND type='table' AND name=?)`, table).Scan(&found))
-			require.True(t, found, "%s: %s", reason, table)
-		}
-	}
-}

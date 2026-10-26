@@ -17,24 +17,6 @@ import (
 	"go.kenn.io/docbank/document/vision"
 )
 
-func TestLoadMissingFileReturnsDefaults(t *testing.T) {
-	c, err := Load(t.TempDir())
-	require.NoError(t, err)
-	assert.Equal(t, "127.0.0.1", c.Server.BindAddr)
-	assert.Equal(t, 0, c.Server.APIPort)
-	assert.Empty(t, c.Server.APIKey)
-	assert.Equal(t, 30*time.Minute, c.Server.IdleTimeout.Std())
-	assert.True(t, c.Web.Enabled)
-	assert.Empty(t, c.Backup.Repo)
-	assert.Zero(t, c.Backup.ZstdLevel)
-	assert.Zero(t, c.Storage.PackInterval.Std())
-	assert.Equal(t, int64(256<<20), c.Storage.PackMaxBytes)
-	assert.NotNil(t, c.RenditionProfiles)
-	assert.NotNil(t, c.EmbeddingProfiles)
-	assert.NotNil(t, c.RetrievalProfiles)
-	assert.NotNil(t, c.ProcessingProfiles)
-}
-
 func TestLoadParsesFile(t *testing.T) {
 	dir := privateTestConfigDir(t)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte(

@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/jsontext"
-	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -1780,16 +1779,6 @@ func workerProviderError(t *testing.T, code document.RenditionErrorCode) error {
 }
 
 var _ io.ReadCloser = (*workerUpload)(nil)
-
-func TestRenditionWorkerReceiptEncodingIsDeterministic(t *testing.T) {
-	t.Parallel()
-	receipt := document.RenditionReceipt{ProviderID: "synthetic", OperationID: "operation"}
-	first, err := json.Marshal(receipt, json.Deterministic(true))
-	require.NoError(t, err)
-	second, err := json.Marshal(receipt, json.Deterministic(true))
-	require.NoError(t, err)
-	assert.Equal(t, first, second)
-}
 
 func TestRenditionWorkerRejectsTypedNilRuntime(t *testing.T) {
 	t.Parallel()

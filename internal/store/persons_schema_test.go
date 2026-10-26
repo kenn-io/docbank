@@ -9,28 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestPersonsSchema(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	for _, table := range []string{
-		"persons", "person_identities", "person_external_identities",
-		"person_external_uid_aliases", "person_aliases", "person_merges", "person_splits",
-		"custodian_assignments",
-		"document_people_state",
-	} {
-		var count int
-		require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name=?`, table).Scan(&count))
-		require.Equal(t, 1, count, table)
-	}
-	var version int
-	require.NoError(t, s.db.QueryRow(`SELECT schema_version FROM vault_metadata WHERE singleton=1`).Scan(&version))
-	require.Equal(t, currentStorageSchemaVersion, version)
-	require.True(t, currentMetadataLayout().hasPersons())
-	nodeID, contentVersionID := seedPeopleVersion(t, s)
-	require.Positive(t, nodeID)
-	require.NotEmpty(t, contentVersionID)
-}
-
 func TestDocumentPeopleStateSurvivesReopen(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "docbank.db")

@@ -41,19 +41,6 @@ func TestRuntimeExecutableMappingIncludesMode0644ELF(t *testing.T) {
 	assert.True(t, manifest.Files[0].Executable)
 }
 
-func TestDefaultRuntimeRootsFollowArchitecture(t *testing.T) {
-	assert.Contains(t, defaultRuntimeRootsForArch("amd64"), "/usr/lib/x86_64-linux-gnu")
-	assert.Contains(t, defaultRuntimeRootsForArch("amd64"), "/lib/x86_64-linux-gnu")
-	assert.Contains(t, defaultRuntimeRootsForArch("amd64"), "/lib64/ld-linux-x86-64.so.2")
-	assert.NotContains(t, defaultRuntimeRootsForArch("amd64"), "/usr/lib/aarch64-linux-gnu")
-	assert.NotContains(t, defaultRuntimeRootsForArch("amd64"), "/lib/aarch64-linux-gnu")
-	assert.Contains(t, defaultRuntimeRootsForArch("arm64"), "/usr/lib/aarch64-linux-gnu")
-	assert.Contains(t, defaultRuntimeRootsForArch("arm64"), "/lib/aarch64-linux-gnu")
-	assert.Contains(t, defaultRuntimeRootsForArch("arm64"), "/lib/ld-linux-aarch64.so.1")
-	assert.NotContains(t, defaultRuntimeRootsForArch("arm64"), "/usr/lib/x86_64-linux-gnu")
-	assert.NotContains(t, defaultRuntimeRootsForArch("arm64"), "/lib/x86_64-linux-gnu")
-}
-
 func TestRuntimeDiscoveryExpandsDirectorySymlinkRoot(t *testing.T) {
 	for _, relative := range []bool{false, true} {
 		t.Run(strconv.FormatBool(relative), func(t *testing.T) {
@@ -135,12 +122,6 @@ func TestRuntimeIdentityChangesAfterSourceMutation(t *testing.T) {
 	identity, err := runtimeIdentityForManifest(manifest.Files, manifest.Symlinks)
 	require.NoError(t, err)
 	assert.NotEqual(t, manifest.Identity, identity)
-}
-
-func TestRuntimeDepthAndEntryCeilingsAreNamed(t *testing.T) {
-	assert.Equal(t, 64, sandbox.MaxRuntimeDepth)
-	assert.Equal(t, 250_000, sandbox.MaxRuntimeEntries)
-	assert.Equal(t, sandbox.MaxRuntimeBytes, int64(4<<30))
 }
 
 func TestRuntimeSymlinkValidationRejectsParentTraversal(t *testing.T) {

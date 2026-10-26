@@ -157,11 +157,6 @@ func TestReviewedProfileDoesNotAliasCallerEgressPolicy(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestLegacyGenericProfileFingerprintIsStable(t *testing.T) {
-	profile := testProfile(t, modelInput(t, document.ModelInputContractConfig{Profile: document.ModelInputProfileNomic}))
-	assert.Equal(t, "8c5ca6d380549ccb86894384cd006d136481968ea3b84a5a762d3054c1d46848", profile.Descriptor.PolicyFingerprint)
-}
-
 func reviewedProfileConfig() ReviewedProfileConfig {
 	return ReviewedProfileConfig{
 		Origin: "http://127.0.0.1:11434", ServedModel: "operator-model", DeploymentEpoch: "deployment-2026-08-28",

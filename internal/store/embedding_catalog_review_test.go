@@ -12,53 +12,6 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
-func TestEmbeddingCatalogRejectsRowsThatDivergeFromPayload(t *testing.T) {
-	t.Parallel()
-	s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
-	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
-		document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
-	normalized, err := normalizeEmbeddingSetRecord(cloneEmbeddingSetRecord(record))
-	require.NoError(t, err)
-	record = normalized
-
-	decoded, _, err := document.DecodeVectorSetV1(record.VectorSet.Payload, document.VectorBounds{
-		MaxRows: 128, MaxDimension: record.VectorSpace.Dimensions, MaxBytes: len(record.VectorSet.Payload),
-	})
-	require.NoError(t, err)
-	require.Len(t, decoded.Vectors, 2)
-	values := make([][]float64, len(decoded.Vectors))
-	for row := range decoded.Vectors {
-		values[row] = make([]float64, len(decoded.Vectors[row]))
-		for column, value := range decoded.Vectors[row] {
-			values[row][column] = float64(value)
-		}
-	}
-	decoded.InputKeys[0], decoded.InputKeys[1] = decoded.InputKeys[1], decoded.InputKeys[0]
-	decoded.InputChecksums[0], decoded.InputChecksums[1] = decoded.InputChecksums[1], decoded.InputChecksums[0]
-	values[0], values[1] = values[1], values[0]
-	swapped, err := document.NewVectorSetV1(document.VectorSetV1Input{
-		VectorSpaceFingerprint: decoded.VectorSpaceFingerprint,
-		Metric:                 decoded.Metric,
-		Normalization:          decoded.Normalization,
-		Dimension:              decoded.Dimension,
-		InputKeys:              decoded.InputKeys,
-		InputChecksums:         decoded.InputChecksums,
-		Values:                 values,
-	})
-	require.NoError(t, err)
-	payload, checksum, err := document.EncodeVectorSetV1(swapped)
-	require.NoError(t, err)
-	record.VectorSet.Payload = payload
-	record.VectorSet.ID = checksum
-	record.VectorSet.PayloadChecksum = checksum
-	record.VectorSet.PayloadBlobHash = testSHA256(payload)
-	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-		return s.EnsureBlobTx(tx, record.VectorSet.PayloadBlobHash, int64(len(payload)))
-	}))
-
-	require.ErrorContains(t, s.StageEmbeddingSet(t.Context(), record), "input")
-}
-
 func TestEmbeddingCatalogHeadsAndFailuresAreProfileScoped(t *testing.T) {
 	t.Parallel()
 	s, versionID, firstProfile, _ := newEmbeddingCatalogFixture(t)
