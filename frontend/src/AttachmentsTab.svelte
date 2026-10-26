@@ -40,7 +40,7 @@
     {onopen}
     {onauthfailure}
   />
-  {#if outgoingTotal === 0 && incomingTotal === 0}<p>No attachments</p>{/if}
+  {#if outgoingTotal === 0 && incomingTotal === 0}<p>No published attachments</p>{/if}
 </div>
 
 <style>

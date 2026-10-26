@@ -74,7 +74,7 @@ it("lists one page of attachments and opens a row", async () => {
   expect(onopen).toHaveBeenCalledWith(child);
 });
 
-it("shows one quiet line when there are no attachments or parents", async () => {
+it("qualifies an empty relation list as no published attachments", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async () => Response.json(empty));
   render(AttachmentsTab, {
     session: "session",
@@ -82,7 +82,7 @@ it("shows one quiet line when there are no attachments or parents", async () => 
     onopen: vi.fn(),
     onauthfailure: vi.fn(),
   });
-  expect(await screen.findByText("No attachments")).toBeTruthy();
+  expect(await screen.findByText("No published attachments")).toBeTruthy();
   expect(screen.queryByRole("region")).toBeNull();
 });
 

@@ -250,7 +250,7 @@ reason.
 Choose **Attachments** in the content inspector to list the documents
 attached to the selected version under **Attachments** and the messages it is
 attached to under **Attached to**. A document with neither shows **No
-attachments**. Repeated filenames and identical bytes stay separate rows.
+published attachments**. Repeated filenames and identical bytes stay separate rows.
 **Show more** requests another page, up to 1,000 rows per group. An
 unavailable read reports an error, and an empty list then does not mean the
 message has no attachments. Rows without a published document show their

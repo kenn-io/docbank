@@ -131,6 +131,26 @@ const fileProps = {
   onhistory: vi.fn(),
 };
 
+it("keeps indexing available when only embedding profiles are configured", async () => {
+  const onprocess = vi.fn();
+  render(DocumentInspector, {
+    ...fileProps,
+    onprocess,
+    profiles: [
+      {
+        name: "Search",
+        rendition: false,
+        fingerprint: "a".repeat(64),
+        embedding_bindings: ["text"],
+        query_embedding_bindings: ["text"],
+      },
+    ],
+  });
+
+  await fireEvent.click(screen.getByRole("button", { name: "Index for search" }));
+  expect(onprocess).toHaveBeenCalledOnce();
+});
+
 it("trashes a file from one icon button and keeps identifiers behind a disclosure", async () => {
   const ontrash = vi.fn();
   render(DocumentInspector, { ...fileProps, ontrash });

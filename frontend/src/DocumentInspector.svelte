@@ -108,7 +108,7 @@
     const saved = new Set(snapshot.tags.map((tag) => tag.id));
     return tags.length !== saved.size || tags.some((tag) => !saved.has(tag.id));
   });
-  // The dialog checks the file itself; here only whether any profile could extract text.
+  // The dialog checks which profiles accept the file.
   const canExtract = $derived(profiles.some((profile) => profile.rendition));
   const mime = $derived(snapshot?.mime_type ?? node?.mime_type);
   const size = $derived(snapshot?.size ?? node?.size);
@@ -131,9 +131,10 @@
     />
   {/if}
   {#if onopen}<Button size="sm" tone="info" surface="solid" onclick={onopen}>Open</Button>{/if}
-  {#if onprocess && canExtract}<AppTooltip text={actionsDisabled ? "Refresh this view first" : ""}
+  {#if onprocess && profiles.length > 0}<AppTooltip
+      text={actionsDisabled ? "Refresh this view first" : ""}
       ><Button size="sm" surface="soft" disabled={actionsDisabled} onclick={onprocess}
-        >Extract text</Button
+        >{canExtract ? "Extract text" : "Index for search"}</Button
       ></AppTooltip
     >{/if}
   {#if kind === "dir" && node && !protectedItem}<Menu align="end">
