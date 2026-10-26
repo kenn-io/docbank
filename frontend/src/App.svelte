@@ -2029,23 +2029,6 @@
         controller.signal,
       );
       if (request !== generation || session !== webSession || controller.signal.aborted) return;
-      if (resolution.fence.content_version_ids.length === 0) {
-        applySearchRows([], query, requestedTagID, false, preferredSelectedID, refreshing);
-        accepted = true;
-        if (requestedSort) applyResultSort(requestedSort);
-        naturalSearchNote = "No documents match the current filter.";
-        loading = false;
-        // No search ran, so there is no search_run; a submission still counts as an empty search.
-        if (submitted) {
-          try {
-            parseQuery(JSON.stringify({ text: query }));
-          } catch {
-            return;
-          }
-          reportAction(session, "search_empty", mapped.mode === "auto" ? "lexical" : mapped.mode);
-        }
-        return;
-      }
       const baseRequest: generated.DocumentSearchRequest = {
         query,
         mode: mapped.mode,
@@ -2055,23 +2038,62 @@
         fence: resolution.fence,
         explain: true,
       };
-      const baseReport = await documentSearch(session, baseRequest, controller.signal);
+      const baseReport = resolution.fence.content_version_ids.length
+        ? await documentSearch(session, baseRequest, controller.signal)
+        : undefined;
       if (request !== generation || session !== webSession || controller.signal.aborted) return;
       const nodes = new Map<number, Node | undefined>();
-      const baseRows = await hydrateProcessingRows(
-        baseReport,
-        session,
-        request,
-        controller.signal,
-        mode,
-        nodes,
+      const baseRows = baseReport
+        ? await hydrateProcessingRows(baseReport, session, request, controller.signal, mode, nodes)
+        : [];
+      if (request !== generation || session !== webSession || controller.signal.aborted) return;
+      const nameReport = await generated.search(
+        { q: query, limit: 1000, ...(requestedTagID ? { tag_id: requestedTagID } : {}) },
+        { session, signal: controller.signal },
       );
       if (request !== generation || session !== webSession || controller.signal.aborted) return;
+      if ((nameReport.tag_id ?? "") !== requestedTagID)
+        throw new Error("Search results did not honor the selected tag filter.");
+      const nameRows: Row[] = nameReport.hits
+        .filter((hit) => hit.match === "name")
+        .map((hit) => ({
+          node: hit.node,
+          path: hit.path,
+          match: hit.match,
+        }));
+      const withNames = (processingRows: Row[]): Row[] => [
+        ...processingRows,
+        ...nameRows.filter((row) => !processingRows.some((other) => other.node.id === row.node.id)),
+      ];
+      if (!baseReport) {
+        applySearchRows(
+          nameRows,
+          query,
+          requestedTagID,
+          nameReport.truncated,
+          preferredSelectedID,
+          refreshing,
+        );
+        accepted = true;
+        if (requestedSort) applyResultSort(requestedSort);
+        naturalSearchNote = nameRows.length ? "" : "No documents match the current filter.";
+        loading = false;
+        // No document search ran, so there is no search_run to report.
+        if (submitted && nameRows.length === 0) {
+          try {
+            parseQuery(JSON.stringify({ text: query }));
+          } catch {
+            return;
+          }
+          reportAction(session, "search_empty", mapped.mode === "auto" ? "lexical" : mapped.mode);
+        }
+        return;
+      }
       applySearchRows(
-        baseRows,
+        withNames(baseRows),
         query,
         requestedTagID,
-        baseReport.truncated,
+        baseReport.truncated || nameReport.truncated,
         preferredSelectedID,
         refreshing,
       );
@@ -2084,7 +2106,10 @@
       loading = false;
       searchPending = false;
       // The base results are accepted, so the search counts however reranking ends.
-      let outcome = { type: baseReport.actual_mode, empty: baseRows.length === 0 };
+      let outcome = {
+        type: baseReport.actual_mode,
+        empty: baseRows.length === 0 && nameRows.length === 0,
+      };
       if (!naturalSearchRerank(profile, mode, naturalRerank)) return outcome;
       naturalRerankPending = true;
       try {
@@ -2125,16 +2150,19 @@
         )
           return outcome;
         applySearchRows(
-          rerankedRows,
+          withNames(rerankedRows),
           query,
           requestedTagID,
-          reranked.truncated,
+          reranked.truncated || nameReport.truncated,
           preferredSelectedID,
           true,
           true,
         );
         naturalSearchNote = rerankingNote("applied");
-        outcome = { type: reranked.actual_mode, empty: rerankedRows.length === 0 };
+        outcome = {
+          type: reranked.actual_mode,
+          empty: rerankedRows.length === 0 && nameRows.length === 0,
+        };
       } catch (cause) {
         if (cause instanceof APIError && cause.status === 401) {
           handleFailure(cause);

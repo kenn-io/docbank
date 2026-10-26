@@ -298,10 +298,17 @@ function installHarness(options: HarnessOptions) {
         if (options.legacyFailurePending) return legacyFailurePending;
         return new Response("legacy search failure", { status: 500 });
       }
-      if (options.legacyPending) return legacyPending;
+      if (options.legacyPending && legacyCalls === 1) return legacyPending;
       if (options.legacySearchStatus)
         return new Response("legacy search failure", { status: options.legacySearchStatus });
-      return json(options.tagSearch ?? { hits: [], limit: 1000, truncated: false });
+      return json(
+        options.tagSearch ?? {
+          hits: [],
+          limit: 1000,
+          truncated: false,
+          tag_id: new URL(url, "https://example.com").searchParams.get("tag_id") ?? undefined,
+        },
+      );
     }
     if (url.startsWith("/api/v1/audit/status?")) return json({ enabled: false, scopes: [] });
     if (url.startsWith("/api/v1/nodes/") && url.includes("/tags?"))
@@ -337,6 +344,67 @@ async function submitSearch(value: string): Promise<void> {
   await fireEvent.input(input, { target: { value } });
   await fireEvent.submit(input.closest("form")!);
 }
+
+it.each([false, true])(
+  "ReviewMeaningSearchKeepsFolderNameMatches, live files=%s",
+  async (liveFiles) => {
+    const folder: Node = {
+      id: 3,
+      parent_id: 1,
+      name: "invoices",
+      kind: "dir",
+      size: 0,
+      revision: 1,
+      created_at: "2026-09-21T00:00:00Z",
+      modified_at: "2026-09-21T00:00:00Z",
+      path: "/invoices",
+    };
+    const file = node(2, "invoices.txt", baseVersion);
+    const harness = installHarness({
+      profiles: [
+        {
+          name: "private",
+          fingerprint: "a".repeat(64),
+          rendition: true,
+          embedding_bindings: ["embed"],
+          reranking_available: true,
+        },
+      ],
+      files: liveFiles ? [folder, file] : [folder],
+      emptyFence: !liveFiles,
+      baseReport: report("hybrid", liveFiles ? [result(file, 1, "invoice excerpt")] : []),
+      rerankReport: report("hybrid", [result(file, 1, "invoice excerpt")], {
+        outcome: "applied",
+        candidate_count: 1,
+      }),
+      tagSearch: {
+        hits: [
+          { node: folder, path: folder.path, match: "name" },
+          ...(liveFiles ? [{ node: file, path: file.path, match: "name" }] : []),
+        ],
+        limit: 1000,
+        truncated: false,
+      },
+    });
+    render(App);
+    await screen.findByRole("button", { name: "Open" });
+    await submitSearch("invoices");
+    expect(await screen.findByRole("cell", { name: "/invoices" })).toBeTruthy();
+    if (liveFiles) {
+      await screen.findByText("invoice excerpt");
+      await fireEvent.click(screen.getByRole("checkbox", { name: "Rerank results" }));
+      await screen.findByText("Reranked results applied.");
+      expect(screen.getByRole("cell", { name: "/invoices" })).toBeTruthy();
+      expect(
+        screen.getAllByRole("row").filter((row) => row.textContent?.includes("invoices.txt")),
+      ).toHaveLength(1);
+      expect(harness.postBodies.at(-1)).toMatchObject({ mode: "hybrid", rerank: true });
+    } else {
+      expect(screen.queryByText("No documents match the current filter.")).toBeNull();
+      expect(harness.postBodies).toHaveLength(0);
+    }
+  },
+);
 
 it("keeps names and text on GET without a processing profile", async () => {
   const file = node(2, "existing.txt", baseVersion);
@@ -1175,10 +1243,13 @@ it("ignores an aborted natural search completion", async () => {
   harness.resolveBase(json(report("hybrid", [result(file, 1, "stale excerpt")])));
   await new Promise((resolve) => setTimeout(resolve, 0));
   expect(screen.queryByText("stale excerpt")).toBeNull();
-  expect(
-    harness.fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/search?"))
-      .length,
-  ).toBe(0);
+  const nameRequests = harness.fetchMock.mock.calls.filter(([input]) =>
+    String(input).startsWith("/api/v1/search?"),
+  );
+  expect(nameRequests).toHaveLength(1);
+  expect(new URL(String(nameRequests[0][0]), "https://example.com").searchParams.get("q")).toBe(
+    "new query",
+  );
 });
 
 it("shows why natural search controls could not load", async () => {
@@ -1224,9 +1295,8 @@ it.each([500, 401])(
       expect(screen.queryByText("unavailable excerpt")).toBeNull();
       expect(screen.getByRole("combobox", { name: "Search syntax: Plain words" })).toBeTruthy();
     }
-    expect(
-      harness.fetchMock.mock.calls.some(([input]) => String(input).startsWith("/api/v1/search?")),
-    ).toBe(false);
+    expect(harness.legacyCalls()).toBe(status === 401 ? 0 : 1);
+    expect(screen.queryByText(/Natural-language search unavailable/)).toBeNull();
   },
 );
 
