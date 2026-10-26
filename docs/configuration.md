@@ -1281,6 +1281,8 @@ Each event carries these fields:
 - `application=docbank`, `source=daemon`, the Docbank `version` and `commit`,
   `goos`, `goarch`, and `install_age_hours` (whole hours since the install ID
   was created)
+- `distribution`: who shipped the build, such as `kenn` for official downloads
+  or `homebrew`; empty for other builds
 - `$process_person_profile=false` and `$geoip_disable=true`
 - fields the PostHog Go library adds: `$lib` and `$lib_version`
 - `session_ended` also carries `surface` as `web` or `tui` and `duration_bucket`
@@ -1296,9 +1298,10 @@ The install ID lives in `telemetry-install.json` at the vault root (see the
 [layout](#vault-location) above). The daemon creates it the first time it runs
 unless telemetry is turned off. Each vault has its own ID.
 
-Only release builds send telemetry, because they set the PostHog project key at
-link time. Builds without the key, including source builds, send nothing.
-Telemetry also stays off in CI. To opt out, set
+Only release builds send telemetry. A build needs the PostHog project key,
+which `make build`, `make install`, and release builds set at link time, and a
+plain release version such as `v1.2.3`. Plain `go build` and `go test` binaries
+have no key and send nothing. Telemetry also stays off in CI. To opt out, set
 `DOCBANK_TELEMETRY_ENABLED=0`, `TELEMETRY_ENABLED=0`, or `DO_NOT_TRACK=1` in the
 environment that starts the daemon, then run `docbank daemon restart`. A CLI
 command that starts the daemon automatically passes its own environment, so

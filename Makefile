@@ -11,11 +11,26 @@ VERSION := dev
 endif
 COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
-LDFLAGS := -X go.kenn.io/docbank/internal/version.Version=$(VERSION) \
-           -X go.kenn.io/docbank/internal/version.Commit=$(COMMIT)
+# Public PostHog ingest key, not a credential. Builds without it send no
+# telemetry; kit also sends nothing unless VERSION is a plain release tag.
+POSTHOG_PROJECT_KEY ?= phc_AzHd9YvuHR7M5poKzC6eW654d3SgKyBdoQPuwkWhimUf
+
+# Who ships the binary: kenn for official direct downloads, or a package
+# manager such as homebrew. A package manager makes docbank update refuse to
+# replace the binary and name that package manager. Telemetry reports it too.
+DISTRIBUTION ?=
+
+LDFLAGS = -X go.kenn.io/docbank/internal/version.Version=$(VERSION) \
+           -X go.kenn.io/docbank/internal/version.Commit=$(COMMIT) \
+           -X go.kenn.io/docbank/internal/version.Distribution=$(DISTRIBUTION) \
+           -X go.kenn.io/kit/telemetry/posthog.distribution=$(DISTRIBUTION) \
+           -X go.kenn.io/kit/telemetry/posthog.projectKey=$(POSTHOG_PROJECT_KEY)
 
 # fts5: enable the SQLite FTS5 full-text search extension
 BUILD_TAGS := fts5
+
+# Output directory for make homebrew.
+BINDIR ?= bin
 
 DEFAULT_GOLANGCI_LINT_CACHE := $(shell git rev-parse --path-format=absolute --git-path golangci-lint-cache)
 GOLANGCI_LINT_CACHE ?= $(DEFAULT_GOLANGCI_LINT_CACHE)
@@ -24,10 +39,17 @@ export GOLANGCI_LINT_CACHE
 # golangci-lint built with kit's kennlint plugin; rebuilt when its pins change.
 CUSTOM_GCL := $(CURDIR)/.cache/golangci-lint/custom-gcl$(if $(filter Windows_NT,$(OS)),.exe)
 
-.PHONY: build install clean test test-v openapi generate-api generate-photo-policy frontend frontend-test frontend-dev report-export-browser-test photo-map-browser-test photo-tabs-browser-test docs-screenshots fmt lint lint-ci tidy install-hooks docs-install docs-subpath-test docs-assets-test docs-assets-sync docs-build docs-serve docs-link docs-deploy help
+.PHONY: build homebrew install clean test test-v openapi generate-api generate-photo-policy frontend frontend-test frontend-dev report-export-browser-test photo-map-browser-test photo-tabs-browser-test docs-screenshots fmt lint lint-ci tidy install-hooks docs-install docs-subpath-test docs-assets-test docs-assets-sync docs-build docs-serve docs-link docs-deploy help
 
 build: frontend
 	CGO_ENABLED=1 go build -tags "$(BUILD_TAGS)" -ldflags="$(LDFLAGS)" -o bin/ ./cmd/docbank
+
+# The build Homebrew formulas run: make build plus a reproducible path and
+# DISTRIBUTION=homebrew, so docbank update defers to brew upgrade.
+homebrew: DISTRIBUTION := homebrew
+homebrew: frontend
+	@mkdir -p "$(BINDIR)"
+	CGO_ENABLED=1 go build -trimpath -buildvcs=false -tags "$(BUILD_TAGS)" -ldflags="$(LDFLAGS)" -o "$(BINDIR)/docbank" ./cmd/docbank
 
 install: frontend
 	@mkdir -p "$(HOME)/.local/bin"
@@ -155,4 +177,4 @@ docs-deploy:
 	./scripts/deploy-docs.sh
 
 help:
-	@echo "Targets: build install clean test test-pg test-v openapi generate-api generate-photo-policy frontend frontend-test frontend-dev report-export-browser-test photo-map-browser-test photo-tabs-browser-test docs-screenshots fmt lint lint-ci tidy install-hooks docs-install docs-subpath-test docs-assets-test docs-assets-sync docs-build docs-serve docs-link docs-deploy"
+	@echo "Targets: build homebrew install clean test test-pg test-v openapi generate-api generate-photo-policy frontend frontend-test frontend-dev report-export-browser-test photo-map-browser-test photo-tabs-browser-test docs-screenshots fmt lint lint-ci tidy install-hooks docs-install docs-subpath-test docs-assets-test docs-assets-sync docs-build docs-serve docs-link docs-deploy"

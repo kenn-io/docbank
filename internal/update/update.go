@@ -55,7 +55,16 @@ type Options struct {
 // Run checks for a newer docbank release and, unless CheckOnly, installs it:
 // stopping a running daemon before the binary swap and restarting it after
 // (with the new binary, since Start re-execs os.Executable()).
+//
+// A binary whose version.Distribution names a package manager never replaces
+// itself: installing returns an error pointing at that package manager, and
+// CheckOnly reports the latest release with the same guidance. Official
+// direct downloads ("kenn") and unstamped builds update normally.
 func Run(ctx context.Context, out io.Writer, opts Options) error {
+	managed := packageManaged(version.Distribution)
+	if managed && !opts.CheckOnly {
+		return fmt.Errorf("refusing to self-update: %s", managedUpdateGuidance(version.Distribution))
+	}
 	c := opts.Client
 	if c == nil {
 		layout, err := home.Resolve()
@@ -88,6 +97,11 @@ func Run(ctx context.Context, out io.Writer, opts Options) error {
 		return nil
 	}
 	_, _ = fmt.Fprintf(out, "current: %s\nlatest:  %s\n", c.CurrentVersion, info.LatestVersion)
+	if managed {
+		// Only CheckOnly reaches here; installs were refused above.
+		_, _ = fmt.Fprintf(out, "%s; the package may trail GitHub releases\n", managedUpdateGuidance(version.Distribution))
+		return nil
+	}
 	if info.IsDevBuild && !opts.Force {
 		_, _ = fmt.Fprintln(out, "dev build: pass --force to replace it")
 		return nil
@@ -167,4 +181,20 @@ func Run(ctx context.Context, out io.Writer, opts Options) error {
 		}
 		return nil
 	})
+}
+
+// packageManaged reports whether a package manager, rather than docbank
+// update, owns upgrades for a binary stamped with distribution. Official
+// direct downloads are stamped "kenn" and replace themselves.
+func packageManaged(distribution string) bool {
+	return distribution != "" && distribution != "kenn"
+}
+
+// managedUpdateGuidance tells the user how to upgrade a binary owned by the
+// named package manager.
+func managedUpdateGuidance(distribution string) string {
+	if distribution == "homebrew" {
+		return "Homebrew manages this installation; use `brew upgrade docbank`"
+	}
+	return fmt.Sprintf("package manager %q manages this installation; upgrade docbank through it", distribution)
 }

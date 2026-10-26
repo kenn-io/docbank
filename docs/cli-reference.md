@@ -1804,6 +1804,11 @@ old daemon.
 
 The command refuses a release without a published SHA256 checksum.
 
+A binary built for a package manager such as Homebrew never replaces itself.
+The command refuses to install and names the package manager's upgrade
+command, such as `brew upgrade docbank`. `--check` still reports the latest
+release, with the same guidance.
+
 ## docbank openapi
 
 ```
