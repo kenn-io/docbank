@@ -1358,9 +1358,6 @@
               >
             </div>
           </div>
-          {#if !mapMode && photos.groupingIncomplete}<p class="photo-search-limit" role="status">
-              Some camera details are missing or outdated. Stacks can change once they update.
-            </p>{/if}
           {#if photos.actionError && !onactionerror}<p role="alert">{photos.actionError}</p>{/if}
           {#if albums && modal !== "duplicate"}<PhotoAlbumPending {albums} {onnavigate} />{/if}
           {#if albums?.error}<div class="photo-error" role="alert">{albums.error}</div>{/if}
@@ -1516,7 +1513,7 @@
                     >{/if}
                 </div>{/if}
             </div>
-            {#if metadataOpen && !photoID}<PanelResizer
+            {#if metadataOpen && !photoID && (selectionCount || photos.allResults)}<PanelResizer
                 name="photos"
                 label="Resize photo details"
                 bind:width={detailsWidth}
@@ -1543,7 +1540,11 @@
                     mime={inspected && "media_type" in inspected ? inspected.media_type : undefined}
                     onedit={edit}
                     onresponse={suggestionRefresh}
-                  />{:else}<EmptyState title="Select a photo" />{/if}
+                  />{/if}
+                {#if !mapMode && photos.groupingIncomplete}<Notice
+                    tone="warning"
+                    message="Some camera details are missing or outdated. Stacks can change once they update."
+                  />{/if}
               </aside>{/if}
           </div>
           {#if !photoID}

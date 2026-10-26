@@ -1789,6 +1789,7 @@ it("opens the details panel at the width saved for Photos", () => {
 it("starts metadata open and remembers the toggle across the library, viewer, and remounts", async () => {
   localStorage.removeItem("docbank.photoMetadata");
   const photos = workspaceWithPreparedPhoto();
+  photos.selection = { selectedIDs: new Set(["photo-1"]), anchorID: "photo-1" };
   photos.authored.inspectedID = "";
   vi.spyOn(photos, "lookup").mockResolvedValue(photo(1));
   vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue(photoPreparation([preparedPhoto(1)]));
@@ -1813,6 +1814,31 @@ it("starts metadata open and remembers the toggle across the library, viewer, an
   expect(screen.getByRole("complementary", { name: "Photo details" })).toBeTruthy();
   photos.dispose();
 });
+
+it.each(["library", "filters", "album"])(
+  "shows details only while photos are selected in %s",
+  async (view) => {
+    localStorage.setItem("docbank.photoMetadata", "open");
+    const photos = workspaceWithPreparedPhoto();
+    photos.authored.reset();
+    stubPhotoFetch(vi.fn());
+    vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue(photoPreparation([preparedPhoto(1)]));
+    photos.filtersOpen = view === "filters";
+    render(PhotosWorkspace, {
+      photos,
+      cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+      albumID: view === "album" ? "album-1" : "",
+    });
+    expect(screen.queryByRole("complementary", { name: "Photo details" })).toBeNull();
+    expect(screen.queryByRole("separator", { name: "Resize photo details" })).toBeNull();
+    await fireEvent.click(await screen.findByRole("button", { name: "Select Photo 1.jpg" }));
+    expect(screen.getByRole("complementary", { name: "Photo details" })).toBeTruthy();
+    await fireEvent.click(screen.getByRole("button", { name: "Clear selection" }));
+    expect(screen.queryByRole("complementary", { name: "Photo details" })).toBeNull();
+    expect(screen.queryByRole("separator", { name: "Resize photo details" })).toBeNull();
+    photos.dispose();
+  },
+);
 
 it("opens the viewer with details open on double-click after the panel was collapsed", async () => {
   localStorage.setItem("docbank.photoMetadata", "closed");
@@ -3300,14 +3326,17 @@ it("shows a loading pill while a page loads and Load more when it settles", asyn
   await cache.dispose();
 });
 
-it("explains paused grouping in the Library without a burst gap field", async () => {
+it("explains paused grouping inside the selected photo's details", async () => {
+  localStorage.setItem("docbank.photoMetadata", "open");
   const photos = new Photos("scoped", vi.fn());
   photos.items = [photo(1)];
   photos.total = 1;
   photos.started = true;
   photos.groupingIncomplete = true;
+  photos.selection = { selectedIDs: new Set(["photo-1"]), anchorID: "photo-1" };
   render(PhotosWorkspace, { photos, cache: new PhotoPreviewCache("scoped", vi.fn()) });
-  await screen.findByText(/Some camera details are missing or outdated/);
+  const panel = await screen.findByRole("complementary", { name: "Photo details" });
+  await within(panel).findByText(/Some camera details are missing or outdated/);
   expect(screen.queryByRole("spinbutton", { name: /Burst gap/ })).toBeNull();
   photos.dispose();
 });

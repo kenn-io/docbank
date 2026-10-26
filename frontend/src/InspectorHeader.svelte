@@ -47,8 +47,8 @@
 
 <style>
   .inspector-header {
-    display: grid;
-    grid-template-columns: 40px minmax(0, 1fr) auto;
+    display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: var(--space-5);
   }
@@ -57,6 +57,7 @@
     place-items: center;
     width: 40px;
     height: 40px;
+    flex-shrink: 0;
     border-radius: var(--radius-lg);
     background: var(--bg-inset);
   }
@@ -66,6 +67,8 @@
     justify-content: center;
   }
   .heading {
+    flex: 1 1 max-content;
+    max-width: calc(100% - 40px - var(--space-5));
     min-width: 0;
   }
   .title {
@@ -89,6 +92,8 @@
   }
   .inspector-actions {
     display: flex;
+    flex-wrap: wrap;
+    margin-left: auto;
     align-items: center;
     gap: var(--space-4);
     justify-content: flex-end;
