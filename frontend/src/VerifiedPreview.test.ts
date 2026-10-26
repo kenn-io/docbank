@@ -397,7 +397,7 @@ it.each([
   expect(await screen.findByText("Synthetic fallback evidence")).toBeTruthy();
   if (message) expect(screen.getByText(message).getAttribute("role")).toBe("status");
   expect(screen.getByRole("tab", { name: "Text" }).getAttribute("aria-selected")).toBe("true");
-  expect(screen.getByRole("searchbox", { name: "Find in verified text" })).toBeTruthy();
+  expect(screen.getByRole("textbox", { name: "Find in verified text" })).toBeTruthy();
 });
 
 it.each([0, 64 * 1024 * 1024 + 1])(

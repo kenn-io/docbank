@@ -59,7 +59,15 @@ func TestInspectionAndPrepareReadPasswordsOnlyForEncryptedPDF(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fixture := newPublicationFixture(t)
-			provider := &passwordCountingProvider{RenditionProvider: newWorkerProvider(t), passwords: tc.passwords, supported: tc.supported, err: tc.err}
+			base := newWorkerProvider(t)
+			descriptor := base.Descriptor()
+			descriptor.Fingerprint = ""
+			descriptor.SupportedFormats = append(descriptor.SupportedFormats, document.RenditionFormatCapability{
+				MediaFamily: "presentation", MediaType: "application/vnd.openxmlformats-officedocument.presentationml.presentation", InputKind: document.RenditionInputOriginalFile,
+			})
+			base.descriptor, err = document.NewRenditionDescriptor(descriptor)
+			require.NoError(t, err)
+			provider := &passwordCountingProvider{RenditionProvider: base, passwords: tc.passwords, supported: tc.supported, err: tc.err}
 			stored := workerProcessingProfile(t, provider.Descriptor())
 			var portable document.ProcessingProfileV1
 			require.NoError(t, json.Unmarshal(stored.CanonicalProfile, &portable))
