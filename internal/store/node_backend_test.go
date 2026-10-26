@@ -8,6 +8,7 @@ import (
 	"uuid"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/require"
 
@@ -35,8 +36,9 @@ func newPostgresQueryStore(t *testing.T) *Store {
 	})
 	_, err = setup.ExecContext(ctx, "GRANT USAGE ON SCHEMA documents TO "+quotedRole+
 		"; GRANT SELECT ON documents.vault_metadata TO "+quotedRole+
-		"; GRANT SELECT,INSERT,UPDATE,DELETE ON documents.nodes,documents.blobs,documents.blob_checksums,documents.content_versions TO "+quotedRole+
-		"; GRANT USAGE ON ALL SEQUENCES IN SCHEMA documents TO "+quotedRole)
+		"; GRANT SELECT,INSERT,UPDATE,DELETE ON documents.nodes,documents.blobs,documents.content_versions TO "+quotedRole+
+		"; GRANT SELECT,INSERT ON documents.blob_checksums TO "+quotedRole+
+		"; GRANT USAGE ON SEQUENCE documents.nodes_id_seq TO "+quotedRole)
 	require.NoError(t, err)
 	config, err := pgx.ParseConfig(os.Getenv("DOCBANK_TEST_POSTGRES_DSN"))
 	require.NoError(t, err)
@@ -60,7 +62,15 @@ func TestNodeQueriesSQLite(t *testing.T) {
 
 func TestNodeQueriesPostgres(t *testing.T) {
 	t.Parallel()
-	checkNodeQueries(t, newPostgresQueryStore(t))
+	s := newPostgresQueryStore(t)
+	// Ordinary writes must not bypass allocation; restoring IDs needs an
+	// explicit import path that also restores the sequence high-water mark.
+	_, err := s.writeDB.ExecContext(t.Context(), `INSERT INTO nodes(id,parent_id,name,kind,created_at,modified_at)
+		VALUES(1000,$1,'imported','dir',$2,$2)`, s.RootID(), "2026-01-01T00:00:00.000000000Z")
+	var pgErr *pgconn.PgError
+	require.ErrorAs(t, err, &pgErr)
+	require.Equal(t, "428C9", pgErr.Code) // generated_always
+	checkNodeQueries(t, s)
 }
 
 func checkNodeQueries(t *testing.T, s *Store) {

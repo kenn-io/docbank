@@ -191,9 +191,13 @@ identities, wrong owners, and unsupported versions are refused rather than repai
 
 The catalogs keep content-version and operation IDs as text, numeric node IDs,
 sizes and revisions as `BIGINT`, and timestamps as fixed-width UTC text. This
-matches the shared store queries and their lexical timestamp ordering. Node
-IDs use a PostgreSQL identity sequence; imports must eventually restore its
-allocation high-water mark before accepting writes. Foreign keys retain node
+matches the shared store queries and their lexical timestamp ordering. Both
+backends use `schemaformat.TimestampLayout`. Node IDs use `GENERATED ALWAYS AS
+IDENTITY`, matching Kata: ordinary inserts cannot supply their own ID. A future
+import must deliberately use `OVERRIDING SYSTEM VALUE` and restore the sequence
+above both the retained IDs and the exported allocation high-water mark before
+accepting writes. Taking only `MAX(id)` loses IDs deleted before export. The
+override itself does not advance the sequence. Foreign keys retain node
 ownership of the current version, version provenance, and blob references.
 Value validation and immutable-record rules belong to the Go mutation paths;
 these tables alone do not provide a complete writable store.
@@ -209,6 +213,29 @@ grants. `Validate` checks identity/version and role separation; it does not
 qualify the remaining store operations. Callers own connection lifetimes and
 deadlines. Schema setup does not grant ownership of blob roots or permit
 multiple vault writers.
+
+For the current catalog queries, provision the runtime role separately and
+grant the following privileges after setup. This example uses schema
+`documents` and an existing role `docbank_runtime`:
+
+```sql
+GRANT USAGE ON SCHEMA documents TO docbank_runtime;
+GRANT SELECT ON documents.vault_metadata TO docbank_runtime;
+GRANT SELECT, INSERT, UPDATE, DELETE
+    ON documents.nodes, documents.blobs, documents.content_versions
+    TO docbank_runtime;
+GRANT SELECT, INSERT ON documents.blob_checksums TO docbank_runtime;
+GRANT USAGE ON SEQUENCE documents.nodes_id_seq TO docbank_runtime;
+```
+
+Checksum rows are inserted or compared with the existing value, never updated;
+deleting the owning blob cascades to its checksum. Pin every runtime connection's
+`search_path` to `documents,pg_catalog`, substituting the configured schema. The
+pgx connection config uses `RuntimeParams["search_path"]` for this setting;
+setting it on one borrowed connection does not configure the pool. Keep schema
+ownership, `CREATE`, and identity-table writes with the setup role. These grants
+qualify the current queries; they do not enable a public PostgreSQL vault or
+replace validation of the complete runtime catalog contract.
 
 Neither the session login nor the selected role may belong to the schema owner
 role, directly or indirectly. This ownership check is separate from object
@@ -249,6 +276,43 @@ Keep application schema ownership in Docbank; neither upstream project's
 `internal` packages are an importable shared migration library. Do not introduce
 a generic backend registry or a new SQL dialect layer before inspecting
 msgvault's existing dialect and the concrete Docbank queries it must support.
+
+#### Catalog maintenance during writes
+
+!!! info "Planned"
+
+    Use shared Go mutation code for logical catalog maintenance on both
+    backends. Perform related changes in the same SQL transaction as the node
+    or content-version change, and publish subscriber notifications only after
+    commit. This keeps one implementation of the operation's meaning; PostgreSQL
+    will not gain a second set of these maintenance triggers.
+
+    SQLite currently owns these effects in triggers. They are separate from
+    value validation and must not disappear when a write is ported:
+
+    | Change | Required catalog effect |
+    | --- | --- |
+    | Insert a content version | Remove its blob from `rendition_blob_staging` and `derivative_blob_purge_pending` |
+    | Delete a version with person assertions | Advance `document_people_state.binding_epoch` and its update timestamp before cascades remove those assertions |
+    | Delete a photo's version | Queue its node in `photo_timeline_pending` |
+    | Change a photo node's current version | Queue its node when the version changes |
+    | Record a checksum | Keep the existing value immutable; reject a conflicting value in Go and omit runtime `UPDATE` privileges |
+
+    This table identifies the immediate dependencies of the core catalogs,
+    not the complete trigger inventory. Bulk and cascading deletions must
+    capture affected identities before deleting the rows that identify them.
+    Each port must cover normal and audited writes, imports, restores and
+    maintenance paths, and verify both commit and rollback effects on both
+    backends. Engine-specific index maintenance, such as SQLite FTS5, remains
+    part of that engine's search implementation.
+
+    Preserve released SQLite schemas and their triggers. Replace each trigger
+    through the supported SQLite layout cutover only when its shared Go owner
+    is present. Do not run both owners for an effect such as advancing a binding
+    epoch. PostgreSQL mutations remain unavailable until their related catalog
+    effects are implemented; successful SQL alone does not qualify a write.
+
+#### Shared query qualification
 
 Node row allocation and direct node lookups use the same SQL on both engines:
 numbered `$1` parameters and `INSERT ... RETURNING id`. Both SQLite drivers and

@@ -14,6 +14,8 @@ import (
 	"uuid"
 
 	"github.com/jackc/pgx/v5"
+
+	"go.kenn.io/docbank/internal/store/schemaformat"
 )
 
 // Version identifies the current PostgreSQL layout, independently of SQLite.
@@ -91,7 +93,7 @@ func Setup(ctx context.Context, db *sql.DB, c Config) (uuid.UUID, error) {
 			return uuid.Nil(), fmt.Errorf("initialize postgres vault identity: %w", err)
 		}
 		// Shared queries compare timestamps as text, using fixed-width UTC values.
-		now := time.Now().UTC().Format("2006-01-02T15:04:05.000000000Z")
+		now := time.Now().UTC().Format(schemaformat.TimestampLayout)
 		if _, err := tx.ExecContext(ctx, `INSERT INTO `+pgx.Identifier{c.Schema}.Sanitize()+`.nodes(name, kind, created_at, modified_at) VALUES ('','dir',$1,$1)`, now); err != nil {
 			return uuid.Nil(), fmt.Errorf("initialize postgres root: %w", err)
 		}
