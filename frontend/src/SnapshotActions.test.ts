@@ -126,22 +126,22 @@ it("tags the selection captured at open and reports what changed", async () => {
   expect(screen.getByRole("button", { name: "Done" })).toBeTruthy();
 });
 
-it("retries an unknown selection result with the same operation", async () => {
-  const sent: BatchTagRequest[] = [];
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
-    const request = JSON.parse(String(init?.body)) as BatchTagRequest;
-    sent.push(request);
-    if (sent.length === 1) throw new TypeError("Synthetic response loss");
-    return Response.json(await receiptFor(request));
-  });
-  render(SnapshotActions, props({ scope: "selection", count: 2, targets }));
+it("refreshes observations and locks an unknown selection result", async () => {
+  const fetch = vi
+    .spyOn(globalThis, "fetch")
+    .mockRejectedValueOnce(new TypeError("Synthetic response loss"));
+  const onunknown = vi.fn();
+  render(SnapshotActions, props({ scope: "selection", count: 2, targets, onunknown }));
   await chooseReview();
   await fireEvent.click(await screen.findByRole("button", { name: "Apply" }));
-  await screen.findByText("The result is unknown.");
+  await screen.findByText(
+    "The result is unknown. Check these documents' tags before trying again.",
+  );
   expect((screen.getByRole("combobox", { name: "Tag" }) as HTMLInputElement).disabled).toBe(true);
-  await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-  await screen.findByText("Added “Review” to 2 documents.");
-  expect(sent[1]).toEqual(sent[0]);
+  expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  expect((screen.getByRole("button", { name: "Apply" }) as HTMLButtonElement).disabled).toBe(true);
+  expect(fetch).toHaveBeenCalledOnce();
+  expect(onunknown).toHaveBeenCalledOnce();
 });
 
 it("reads a recovery file without starting an action", async () => {

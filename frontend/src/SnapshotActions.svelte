@@ -33,6 +33,7 @@
     preparing?: boolean;
     onstart?: (choice: SnapshotActionChoice) => void;
     onchanged?: (receipt: BatchTagReceipt) => void;
+    onunknown?: () => void;
     oncreated?: () => void;
     onimport?: (bytes: Uint8Array) => void;
     onclose: () => void;
@@ -50,6 +51,7 @@
     preparing = false,
     onstart,
     onchanged,
+    onunknown,
     oncreated,
     onimport,
     onclose,
@@ -68,12 +70,12 @@
       receipt = confirmed;
       onchanged?.(confirmed);
     },
-    unknownMessage: "The result is unknown.",
+    onunknown: () => onunknown?.(),
+    unknownMessage: "The result is unknown. Check these documents' tags before trying again.",
     staleMessage: "Some documents changed. Close and select them again.",
   });
   const applying = $derived(run.pending);
   const stale = $derived(run.stale);
-  const uncertain = $derived(run.uncertain);
   const failure = $derived(readFailure || run.failure);
   let fileInput = $state<HTMLInputElement>();
   // The selection is captured when the dialog opens; later clicks on the page do not change it.
@@ -85,7 +87,7 @@
   });
 
   const busy = $derived(disabled || preparing || applying || reading);
-  const locked = $derived(busy || stale || uncertain !== undefined || receipt !== undefined);
+  const locked = $derived(busy || stale || receipt !== undefined);
   const consequence = $derived(
     tag
       ? tagChangeConsequence(assign, tag.name, count)
@@ -216,18 +218,9 @@
       <Button tone="info" surface="solid" onclick={onclose}>Done</Button>
     {:else}
       <Button surface="soft" disabled={applying} onclick={close}>Cancel</Button>
-      {#if uncertain}
-        <Button
-          tone="info"
-          surface="solid"
-          disabled={applying}
-          onclick={() => uncertain && void run.submit(uncertain)}>Retry</Button
-        >
-      {:else}
-        <Button tone="info" surface="solid" disabled={locked || !tag || count === 0} onclick={apply}
-          >{scope === "query" ? "Continue" : "Apply"}</Button
-        >
-      {/if}
+      <Button tone="info" surface="solid" disabled={locked || !tag || count === 0} onclick={apply}
+        >{scope === "query" ? "Continue" : "Apply"}</Button
+      >
     {/if}
   {/snippet}
 </Modal>

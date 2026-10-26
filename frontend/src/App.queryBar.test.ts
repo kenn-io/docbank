@@ -272,7 +272,7 @@ it("keeps a saved plain-words search's filters when the search text changes", as
   expect(searches[1]).toMatchObject({ text: "receipts", filters: { extensions: ["pdf"] } });
 });
 
-it("uses current search text after repairing retained invalid filters", async () => {
+it("uses submitted top-bar text after repairing retained invalid filters", async () => {
   const fetch = start(false);
   const search = await screen.findByRole("searchbox", { name: "Search documents" });
   await fireEvent.input(search, { target: { value: "old text" } });
@@ -282,7 +282,7 @@ it("uses current search text after repairing retained invalid filters", async ()
   });
   await fireEvent.keyDown(window, { key: "Escape" });
   await fireEvent.input(search, { target: { value: "new text" } });
-  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  await fireEvent.submit(search.closest("form")!);
   expect((screen.getByLabelText("Filters JSON") as HTMLTextAreaElement).value).toBe('{"size_min":');
   await fireEvent.input(screen.getByLabelText("Filters JSON"), {
     target: { value: '{"size_min":10}' },

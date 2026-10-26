@@ -5,6 +5,7 @@ export interface TagChangeRunOptions {
   onauthfailure: (cause: unknown) => void;
   /** Called with the receipt once the daemon confirms the change. */
   onconfirmed: (receipt: BatchTagReceipt) => void;
+  onunknown?: () => void;
   /** Shown instead of the error text when no answer arrived. */
   unknownMessage?: string;
   /** Shown instead of the error text when a selected document changed. */
@@ -15,8 +16,6 @@ export interface TagChangeRunOptions {
 export class TagChangeRun {
   pending = $state(false);
   stale = $state(false);
-  // The daemon may have committed; Retry resends the same operation identity.
-  uncertain = $state<BatchTagRequest>();
   failure = $state("");
   private alive = true;
 
@@ -33,11 +32,11 @@ export class TagChangeRun {
     if (!this.alive) return;
     this.pending = false;
     if (outcome.kind === "confirmed") {
-      this.uncertain = undefined;
       this.options.onconfirmed(outcome.receipt);
       return;
     }
-    this.uncertain = outcome.kind === "unknown" ? request : undefined;
+    if (outcome.kind === "unknown") this.stale = true;
+    if (outcome.kind === "unknown") this.options.onunknown?.();
     if (outcome.kind === "auth") {
       this.options.onauthfailure(outcome.cause);
       return;

@@ -2386,7 +2386,7 @@
     if (!sortOnly && (searchSyntax === "advanced" || querySettingsApplied || queryDraftChanged)) {
       // A draft Advanced can't run yet must show its error instead of running the last valid one.
       if (queryDraftSettings?.invalid) {
-        queryBarOpen = true;
+        openQueryEditor();
         return;
       }
       querySettingsApplied ||= queryDraftChanged;
@@ -5053,6 +5053,7 @@
         catalog={tagCatalog}
         disabled={loading}
         onchanged={handleBatchTagsChanged}
+        onunknown={refreshCurrentView}
         oncreated={() => void loadTagCatalog(false, true)}
         onclose={() => (batchTagsTargets = null)}
         onauthfailure={handleFailure}
@@ -5072,6 +5073,10 @@
         errorMessage={snapshot.actionError}
         onstart={(choice) => void startSnapshotAction(choice)}
         onchanged={handleSnapshotSelectionTagged}
+        onunknown={() => {
+          if (snapshot.state.query)
+            void submitSnapshot(snapshot.state.query, snapshot.state.options ?? { page_size: 100 });
+        }}
         oncreated={() => void loadTagCatalog(false, true)}
         onimport={(bytes) => void snapshot.importAction(bytes)}
         onclose={() => snapshot.cancelAction()}

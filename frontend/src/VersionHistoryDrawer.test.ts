@@ -270,10 +270,17 @@ describe("version history drawer", () => {
   });
 
   it("lists a linked version older than the loaded history first", async () => {
-    const newest = version(currentVersionID, 3, "content_replace", "c");
+    const newer = Array.from({ length: 1000 }, (_, index) =>
+      version(
+        `33333333-3333-4333-8333-${String(index).padStart(12, "0")}`,
+        1001 - index,
+        "content_replace",
+        "c",
+      ),
+    );
     const older = version(createdVersionID, 1, "content_create", "a");
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-      Response.json({ items: [newest], total: 2, limit: 1000, offset: 0 }),
+      Response.json({ items: newer, total: 1001, limit: 1000, offset: 0 }),
     );
     render(VersionHistoryDrawer, {
       session: "short-lived",
@@ -284,8 +291,8 @@ describe("version history drawer", () => {
       onclose: vi.fn(),
       onauthfailure: vi.fn(),
     });
-    await screen.findByText("2 versions");
-    expect(rows()).toHaveLength(2);
+    await screen.findByText("1001 versions");
+    expect(rows()).toHaveLength(1001);
     expect(within(rows()[0]!).getByText("Created")).toBeTruthy();
     expect(screen.getByText(createdVersionID)).toBeTruthy();
   });

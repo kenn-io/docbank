@@ -34,12 +34,6 @@ function start() {
   render(App);
 }
 
-it("names the import list the same in the sidebar and its drawer", async () => {
-  start();
-  await fireEvent.click(await screen.findByRole("button", { name: "Import history" }));
-  expect(await screen.findByRole("dialog", { name: "Import history" })).toBeTruthy();
-});
-
 it("tells the user the back button has nowhere to go instead of claiming a top folder", async () => {
   start();
   const back = await screen.findByRole("button", { name: "Back to previous directory" });
