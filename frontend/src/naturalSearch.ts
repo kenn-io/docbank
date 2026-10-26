@@ -14,12 +14,9 @@ function naturalQueryBindings(profile: ProcessingProfileSummary): string[] {
 export function selectNaturalSearchProfile(
   profiles: ProcessingProfileSummary[],
 ): ProcessingProfileSummary | undefined {
-  return (
-    [...profiles]
-      .sort((left, right) => left.name.localeCompare(right.name))
-      .find((profile) => naturalQueryBindings(profile).length > 0) ??
-    [...profiles].sort((left, right) => left.name.localeCompare(right.name))[0]
-  );
+  return [...profiles]
+    .sort((left, right) => left.name.localeCompare(right.name))
+    .find((profile) => naturalQueryBindings(profile).length > 0);
 }
 
 export function naturalSearchPlaceholder(syntax: "simple" | "advanced"): string {

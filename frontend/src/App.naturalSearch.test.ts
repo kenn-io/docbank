@@ -5,6 +5,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import App from "./App.svelte";
 import { snapshotEnvelope } from "./snapshot-test-fixtures.js";
 import { parseQuery } from "./query.js";
+import type { Node } from "./generated/docbank.js";
 
 const vaultID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const baseVersion = "11111111-1111-4111-8111-111111111111";
@@ -110,7 +111,7 @@ interface HarnessOptions {
   profiles: unknown[];
   profilesStatus?: number;
   profilesPending?: boolean;
-  files: ReturnType<typeof node>[];
+  files: (ReturnType<typeof node> | Node)[];
   baseReport: unknown;
   baseSearchStatus?: number;
   legacySearchStatus?: number;
@@ -701,36 +702,48 @@ it("keeps base rows with a named degradation note", async () => {
   expect(harness.postBodies).toHaveLength(2);
 });
 
-it("allows lexical reranking when the profile has no embedding binding", async () => {
-  const file = node(2, "lexical.txt", baseVersion);
-  const harness = installHarness({
-    profiles: [
-      {
-        name: "private",
-        fingerprint: "a".repeat(64),
-        rendition: true,
-        embedding_bindings: [],
-        reranking_available: true,
+it.each([false, true])(
+  "finds folder names without embeddings, live files=%s",
+  async (liveFiles) => {
+    const folder: Node = {
+      id: 3,
+      parent_id: 1,
+      name: "invoices",
+      kind: "dir",
+      size: 0,
+      revision: 1,
+      created_at: "2026-09-21T00:00:00Z",
+      modified_at: "2026-09-21T00:00:00Z",
+      path: "/invoices",
+    };
+    const harness = installHarness({
+      profiles: [
+        {
+          name: "private",
+          fingerprint: "a".repeat(64),
+          rendition: true,
+          embedding_bindings: [],
+          reranking_available: true,
+        },
+      ],
+      files: liveFiles ? [folder, node(2, "existing.txt", baseVersion)] : [folder],
+      emptyFence: !liveFiles,
+      baseReport: report("lexical", []),
+      tagSearch: {
+        hits: [{ node: folder, path: folder.path, match: "name" }],
+        limit: 1000,
+        truncated: false,
       },
-    ],
-    files: [file],
-    baseReport: report("lexical", [result(file, 1, "lexical excerpt")]),
-    rerankReport: report("lexical", [result(file, 1, "lexical excerpt")], {
-      outcome: "applied",
-      candidate_count: 1,
-    }),
-  });
-  render(App);
-  await screen.findAllByText("lexical.txt");
-  await screen.findByRole("button", { name: "Move to trash" });
-  await fireEvent.click(screen.getByRole("checkbox", { name: "Rerank results" }));
-  await submitSearch("lexical phrase");
-  await screen.findByText("lexical excerpt");
-  await waitFor(() => expect(harness.postBodies).toHaveLength(2));
-  expect(harness.postBodies[0]?.mode).toBe("lexical");
-  expect(harness.postBodies[0]?.binding_id).toBeUndefined();
-  expect(harness.postBodies[1]?.rerank).toBe(true);
-});
+    });
+    render(App);
+    await screen.findByRole("button", { name: "Open" });
+    await submitSearch("invoices");
+    expect(await screen.findByRole("cell", { name: "/invoices" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Open" })).toBeTruthy();
+    expect(harness.legacyCalls()).toBe(1);
+    expect(harness.postBodies).toHaveLength(0);
+  },
+);
 
 it("keeps a legacy profile-load fallback on GET when profiles are empty", async () => {
   const file = node(2, "legacy.txt", baseVersion);
