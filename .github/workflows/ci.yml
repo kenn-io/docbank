@@ -93,9 +93,28 @@ jobs:
           echo "$PWD/.vercel-tools/bin" >> "$GITHUB_PATH"
 
       - name: Install browser test dependencies
+        run: npm ci --prefix frontend
+
+      - name: Start Playwright browser server
+        id: browser_server
+        timeout-minutes: 10
+        working-directory: frontend
         run: |
-          npm ci --prefix frontend
-          node frontend/node_modules/@playwright/test/cli.js install --with-deps chromium webkit
+          version=$(node -p 'require("./node_modules/@playwright/test/package.json").version')
+          image="mcr.microsoft.com/playwright:v$version-noble"
+          if ! docker pull "$image"; then
+            echo "::error::Could not pull $image. Microsoft may not have published the image for this @playwright/test version yet."
+            exit 1
+          fi
+          cid=$(docker run -d --name playwright-browser-server --init --ipc=host --network host \
+            -v "$PWD:$PWD:ro" -w "$PWD" \
+            "$image" \
+            node node_modules/@playwright/test/cli.js run-server \
+            --port 3000 --host 127.0.0.1)
+          until curl -s http://127.0.0.1:3000/; do
+            [ "$(docker inspect -f '{{.State.Running}}' "$cid")" = true ] || { docker logs "$cid"; exit 1; }
+            sleep 1
+          done
 
       - name: Verify documentation sources and assets
         run: |
@@ -109,9 +128,15 @@ jobs:
         run: node scripts/docs/check-upload-inputs.mjs
 
       - name: Verify documentation in Chromium and WebKit
+        env:
+          PW_TEST_CONNECT_WS_ENDPOINT: ws://127.0.0.1:3000/
         run: |
           npm --prefix frontend run docs-site:check
           npm --prefix frontend run docs-site:test
+
+      - name: Print Playwright browser server logs on failure
+        if: failure() && steps.browser_server.outcome == 'success'
+        run: docker logs playwright-browser-server
 
   frontend:
     name: Web application
