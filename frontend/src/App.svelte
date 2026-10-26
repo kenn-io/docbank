@@ -3087,12 +3087,13 @@
     await loadDirectory(parent.id, true, exact.id, false, { node: exact, path });
   }
 
-  function handleTrashed(_receipt?: Node, source?: Photos): void {
+  function handleTrashed(receipt?: Node, source?: Photos): void {
+    const liveParent = receipt?.kind === "dir" && receipt.path ? parentPath(receipt.path) : "/";
     void photosChanged(source);
     selectNode(undefined);
 
     // Cached views may contain the removed node or pre-trash parent revisions.
-    // Return to a freshly loaded root rather than leaving the current view
+    // Return to a freshly loaded live parent rather than leaving the current view
     // stranded without a valid Back destination.
     stack = [];
     directory = null;
@@ -3105,7 +3106,8 @@
     taggedTotal = 0;
     taggedTrashed = 0;
     truncated = false;
-    void loadRoot();
+    if (liveParent === "/") void loadRoot();
+    else void openPath(liveParent);
     void loadTagCatalog();
   }
 
@@ -3164,8 +3166,15 @@
     try {
       const { receipt, message } = await moveToTrash(session, target.node);
       if (session !== webSession) return;
-      selectNode(undefined);
-      reloadAfterChange();
+      if (
+        target.node.kind === "dir" &&
+        (directory?.path === target.path || directory?.path?.startsWith(`${target.path}/`))
+      ) {
+        handleTrashed({ ...target.node, path: target.path });
+      } else {
+        selectNode(undefined);
+        reloadAfterChange();
+      }
       showToast(message, { action: { label: "Undo", run: () => undoMove(session, receipt) } });
     } catch (cause) {
       failToast(cause, session);

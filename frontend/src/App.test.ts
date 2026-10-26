@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import App from "./App.svelte";
 import * as appOpened from "./app-opened.js";
 import { batchTagRequestDigest } from "./batch-tags.js";
+import { clearToasts } from "./toast.svelte.js";
 
 afterEach(() => {
   cleanup();
@@ -836,6 +837,113 @@ it("trashes a nested child in one click and brings it back with Undo", async () 
   expect(await screen.findByRole("cell", { name: "quarterly-report.txt" })).toBeTruthy();
   expect(screen.queryByText("Moved “quarterly-report.txt” to trash")).toBeNull();
 });
+
+it.each(["/Reports", "/Work/Reports", "/Work/Reports/Quarterly"])(
+  "ReviewTrashSearchedCurrentFolderLeavesLiveNavigation: %s",
+  async (viewedPath) => {
+    clearToasts();
+    prepareSelectionApp();
+    const root = selectionNode(1, "", "dir", undefined);
+    const work = selectionNode(4, "Work", "dir", 1);
+    const reports = {
+      ...selectionNode(2, "Reports", "dir", viewedPath === "/Reports" ? 1 : 4),
+      path: viewedPath === "/Reports" ? "/Reports" : "/Work/Reports",
+    };
+    const quarterly = {
+      ...selectionNode(5, "Quarterly", "dir", 2),
+      path: `${reports.path}/Quarterly`,
+    };
+    const parent = viewedPath === "/Reports" ? root : work;
+    let trashed = false;
+    const staleReads = vi.fn();
+    const json = (value: unknown, status = 200) => Response.json(value, { status });
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.startsWith("/api/v1/path?")) {
+        const path = new URL(url, "http://example.com").searchParams.get("path");
+        if (path === "/Work") return json(work);
+        if (path === "/") return json(root);
+        throw new Error(`unexpected path: ${path}`);
+      }
+      const children = url.match(/^\/api\/v1\/nodes\/(\d+)\/children\?/);
+      if (children) {
+        const id = Number(children[1]);
+        if (trashed && (id === 2 || id === 5)) {
+          staleReads(id);
+          return json({ detail: "This directory was moved to trash or removed." }, 404);
+        }
+        const directory = [root, work, reports, quarterly].find((node) => node.id === id)!;
+        const items = trashed
+          ? id === 1 && parent.id === 4
+            ? [work]
+            : []
+          : id === 1
+            ? [parent.id === 1 ? reports : work]
+            : id === 4
+              ? [reports]
+              : id === 2
+                ? [quarterly]
+                : [];
+        return json({ directory, items, total: items.length, limit: 1000, offset: 0 });
+      }
+      if (url.startsWith("/api/v1/search?")) {
+        return json({
+          hits: trashed ? [] : [{ node: reports, path: reports.path, match: "name" }],
+          limit: 1000,
+          truncated: false,
+        });
+      }
+      if (url === "/api/v1/nodes/2/trash" && init?.method === "POST") {
+        trashed = true;
+        return json({ ...reports, revision: 2, trashed_at: "2026-09-09T12:00:00Z" });
+      }
+      if (url === "/api/v1/tags?limit=1000&offset=0") {
+        return json({ items: [], total: 0, limit: 1000, offset: 0 });
+      }
+      if (url === "/api/v1/audit/status?node_id=2") return json({ enabled: false, scopes: [] });
+      if (url === "/api/v1/nodes/2/tags?limit=1000&offset=0") {
+        return json({ items: [], total: 0, limit: 1000, offset: 0 });
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+    render(App);
+    if (parent.id === 4)
+      await fireEvent.dblClick(await screen.findByRole("cell", { name: "Work" }));
+    await fireEvent.dblClick(await screen.findByRole("cell", { name: "Reports" }));
+    await screen.findByRole("cell", { name: "Quarterly" });
+    if (viewedPath.endsWith("/Quarterly")) {
+      await fireEvent.dblClick(screen.getByRole("cell", { name: "Quarterly" }));
+      await waitFor(() =>
+        expect(screen.getByRole("navigation", { name: "Folder path" }).textContent).toContain(
+          "Quarterly",
+        ),
+      );
+    }
+    const search = screen.getByRole("searchbox", { name: "Search documents" });
+    await fireEvent.input(search, { target: { value: "Reports" } });
+    await fireEvent.submit(search.closest("form")!);
+    await fireEvent.click(await screen.findByRole("cell", { name: reports.path }));
+    await fireEvent.click(screen.getByRole("button", { name: "Document actions" }));
+    await fireEvent.click(await screen.findByRole("menuitem", { name: "Move to trash" }));
+    await screen.findByText("Moved “Reports” to trash");
+    const clear = screen.queryByRole("button", { name: "Clear search" });
+    if (clear) await fireEvent.click(clear);
+    await waitFor(() => expect(screen.queryByText("Loading vault…")).toBeNull());
+    expect(staleReads).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(screen.getByRole("navigation", { name: "Folder path" }).textContent).not.toContain(
+        "Reports",
+      ),
+    );
+    expect(screen.queryByText(/This directory was moved to trash or removed/)).toBeNull();
+    await waitFor(() =>
+      expect(screen.getByRole("navigation", { name: "Folder path" }).textContent).toContain(
+        parent.id === 4 ? "Work" : "All files",
+      ),
+    );
+    expect(screen.getByRole("button", { name: "Undo" })).toBeTruthy();
+  },
+);
 
 it("keeps the document listed and shows the reason when trashing fails", async () => {
   history.replaceState(null, "", "/#web_session=short-lived&web_upload_secret=proof");
