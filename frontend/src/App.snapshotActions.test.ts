@@ -217,7 +217,7 @@ it.each([false, true])(
     await fireEvent.click(screen.getByRole("option", { name: "Review (0)" }));
     await fireEvent.click(await screen.findByRole("button", { name: "Continue" }));
 
-    await screen.findByRole("button", { name: "Save recovery file" }, { timeout: 10_000 });
+    await screen.findByRole("button", { name: "Apply" }, { timeout: 10_000 });
     expect(journalState.pageReadsBeforePrepare).toBe(1);
     expect(journalState.action?.total).toBe(101);
     expect(journalState.action?.source.member_hash).toBe(first.member_hash);
@@ -338,7 +338,7 @@ it("shows validated receipt overlays without refreshing frozen membership, count
   });
   await fireEvent.click(screen.getByRole("option", { name: "Review (0)" }));
   await fireEvent.click(await screen.findByRole("button", { name: "Continue" }));
-  await screen.findByRole("button", { name: "Save recovery file" }, { timeout: 10_000 });
+  await screen.findByRole("button", { name: "Apply" }, { timeout: 10_000 });
   expect(journalState.action?.batches[0].request.nodes[0]).toEqual({ node_id: 1, revision: 4 });
   expect(first.rows[0].revision).toBe(3);
 });
@@ -423,7 +423,7 @@ it.each([
   }
   await delayed;
   await new Promise((resolve) => setTimeout(resolve, 0));
-  expect(screen.queryByRole("button", { name: "Save recovery file" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Apply" })).toBeNull();
   if (pending !== "tag") expect(journalState.action).toBeNull();
 });
 

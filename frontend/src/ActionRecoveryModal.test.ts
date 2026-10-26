@@ -5,7 +5,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/sv
 import ActionRecoveryModal, { type ActionRecoveryJournal } from "./ActionRecoveryModal.svelte";
 import { APIError } from "./api-transport.js";
 import { type PersistedAction } from "./actionJournal.js";
-import { ACTION_MAX_BYTES, encodeRecovery } from "./actionRecovery.js";
+import { decodeRecovery } from "./actionRecovery.js";
 import type { BatchTagReceipt } from "./batch-tags.js";
 import { snapshotMemberHash, type SnapshotMember, type SnapshotPage } from "./snapshots.js";
 
@@ -55,6 +55,7 @@ class MemoryJournal implements ActionRecoveryJournal {
   confirmation = "";
   batchCalls = 0;
   checkpointReads = 0;
+  readsAtFirstSend: number | undefined;
 
   constructor(action: PersistedAction) {
     this.action = action;
@@ -85,6 +86,7 @@ class MemoryJournal implements ActionRecoveryJournal {
   }
   async markSending(index: number) {
     this.batchCalls++;
+    this.readsAtFirstSend ??= this.checkpointReads;
     const action = this.action!;
     this.action = {
       ...action,
@@ -180,14 +182,12 @@ it.each([
   expect(onauthfailure).toHaveBeenCalledTimes(expired ? 1 : 0);
 });
 
-it("saves a credential-free checkpoint and requires its readback before the first mutation", async () => {
+it("saves a credential-free recovery file on Apply and reads it back before the first mutation", async () => {
   const action = await prepared();
   const journal = new MemoryJournal(action);
-  let persistedText = "";
+  let saved: Blob | undefined;
   vi.mocked(URL.createObjectURL).mockImplementation((blob) => {
-    void (blob as Blob).text().then((text) => {
-      persistedText = text;
-    });
+    saved = blob as Blob;
     return "blob:checkpoint";
   });
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -223,27 +223,23 @@ it("saves a credential-free checkpoint and requires its readback before the firs
   });
 
   expect(screen.getByText("Adds “Review” to 1 document. Undo with Remove.")).toBeTruthy();
-  expect(screen.getByText("Contains private document IDs and hashes.")).toBeTruthy();
-  expect((screen.getByRole("button", { name: "Apply" }) as HTMLButtonElement).disabled).toBe(true);
-  await fireEvent.click(screen.getByRole("button", { name: "Save recovery file" }));
-  await waitFor(() => expect(persistedText).not.toBe(""));
-  expect(persistedText).not.toContain("browser-session-secret");
-  expect(journal.batchCalls).toBe(0);
-
-  const bytes = await encodeRecovery(action);
-  const file = new File([Uint8Array.from(bytes)], "action.docbank-action.json", {
-    type: "application/json",
-  });
-  await fireEvent.change(screen.getByLabelText("Open saved recovery file"), {
-    target: { files: [file] },
-  });
-  await screen.findByText("Recovery file checked.");
-  expect(journal.checkpointReads).toBe(1);
+  expect(screen.queryByText(/recovery/i)).toBeNull();
+  expect(screen.queryByRole("button", { name: "Save recovery file" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Open saved file…" })).toBeNull();
+  expect(screen.queryByLabelText("Open saved recovery file")).toBeNull();
+  expect((screen.getByRole("button", { name: "Apply" }) as HTMLButtonElement).disabled).toBe(false);
   expect(journal.batchCalls).toBe(0);
 
   await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
   await screen.findByText("Added “Review” to 1 document.");
   expect(journal.batchCalls).toBe(1);
+  expect(journal.checkpointReads).toBe(1);
+  expect(journal.readsAtFirstSend).toBe(1);
+  const text = await saved!.text();
+  expect(text).not.toContain("browser-session-secret");
+  const decoded = await decodeRecovery(Uint8Array.from(new TextEncoder().encode(text)));
+  expect(decoded.action_id).toBe(action.action_id);
+  expect(decoded.plan_digest).toBe(action.plan_digest);
 });
 
 it("refuses a mismatched vault and explains stale actions require a new action", async () => {
@@ -314,7 +310,7 @@ it("retries an uncertain batch with the exact retained operation and revisions",
   expect(sent).toEqual(uncertain.batches[0].request);
 });
 
-it("refuses a tampered checkpoint before scheduling any batch", async () => {
+it("refuses a recovery file that fails readback before scheduling any batch", async () => {
   const action = await prepared();
   const journal = new MemoryJournal(action);
   journal.verifyCheckpoint = async () => {
@@ -332,12 +328,10 @@ it("refuses a tampered checkpoint before scheduling any batch", async () => {
     onauthfailure: vi.fn(),
   });
 
-  const file = new File([new Uint8Array([9, 9, 9])], "tampered.json", { type: "application/json" });
-  await fireEvent.change(screen.getByLabelText("Open saved recovery file"), {
-    target: { files: [file] },
-  });
+  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
   await screen.findByText(/does not match the prepared action and vault/);
   expect(journal.checkpointReads).toBe(1);
+  expect(journal.confirmation).toBe("");
   expect(journal.batchCalls).toBe(0);
 });
 
@@ -428,7 +422,7 @@ it("drops a never-sent action on Cancel and keeps a started one for later", asyn
 });
 
 it("shows exact file-supplied identities before target confirmation", async () => {
-  const action = await prepared();
+  const action = { ...(await prepared()), checkpoint_verified: true };
   render(ActionRecoveryModal, {
     session: "session",
     sessionVaultID: vaultID,
@@ -439,7 +433,6 @@ it("shows exact file-supplied identities before target confirmation", async () =
     onclose: vi.fn(),
     onauthfailure: vi.fn(),
   });
-  expect((screen.getByRole("button", { name: "Apply" }) as HTMLButtonElement).disabled).toBe(true);
   await fireEvent.click(screen.getByText("Review documents"));
   expect(screen.getByRole("cell", { name: "7" })).toBeTruthy();
   expect(screen.getByText(member.content_version_id)).toBeTruthy();
@@ -528,28 +521,4 @@ it("does not expire the session from a replaced view's pending error reload", as
   await reloading;
   await new Promise((resolve) => setTimeout(resolve, 0));
   expect(onauthfailure).not.toHaveBeenCalled();
-});
-
-it("rejects an oversized checkpoint before reading or verifying it", async () => {
-  const action = await prepared();
-  const journal = new MemoryJournal(action);
-  render(ActionRecoveryModal, {
-    session: "session",
-    sessionVaultID: vaultID,
-    journal,
-    initialAction: action,
-    tag,
-    onprogress: vi.fn(),
-    onclose: vi.fn(),
-    onauthfailure: vi.fn(),
-  });
-  const file = new File(["{}"], "oversized-checkpoint.json", { type: "application/json" });
-  Object.defineProperty(file, "size", { value: ACTION_MAX_BYTES + 1 });
-  const read = vi.spyOn(file, "arrayBuffer");
-  await fireEvent.change(screen.getByLabelText("Open saved recovery file"), {
-    target: { files: [file] },
-  });
-  expect(read).not.toHaveBeenCalled();
-  expect(journal.checkpointReads).toBe(0);
-  expect(screen.getByRole("alert").textContent).toContain("128 MiB");
 });

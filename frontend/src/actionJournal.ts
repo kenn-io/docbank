@@ -364,7 +364,7 @@ export class ActionJournal implements ActionJournalAccess {
   async markSending(index: number): Promise<void> {
     await this.#update(index, (header, batch, transaction) => {
       if (!header.checkpoint_verified)
-        abort(transaction, "Select and verify the saved recovery file before mutation.");
+        abort(transaction, "Save the recovery file before mutation.");
       if (header.state === "paused" || header.state === "stale" || header.state === "complete")
         abort(transaction, "The action is not schedulable.");
       // Another tab may have stopped before recording its receipt. Reusing the

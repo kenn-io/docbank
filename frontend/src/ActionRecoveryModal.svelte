@@ -16,7 +16,7 @@
   import { Button, Modal, Spinner, Table } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
   import type { Tag } from "./generated/docbank.js";
-  import { ACTION_MAX_BYTES, encodeRecovery } from "./actionRecovery.js";
+  import { encodeRecovery } from "./actionRecovery.js";
   import { runAction, type ActionProgress } from "./actionRunner.js";
   import { documentCount, tagChangeConsequence, tagChangeDone } from "./tagChangeText.js";
 
@@ -45,13 +45,11 @@
   }: Props = $props();
   let action = $state<PersistedAction>(untrack(() => initialAction));
   let running = $state(false);
-  let checking = $state(false);
   let failure = $state("");
   let notice = $state("");
   let abandonWarning = $state(false);
   let targetBatch = $state(0);
   let targetOffset = $state(0);
-  let fileInput = $state<HTMLInputElement>();
   let controller: AbortController | undefined;
   let alive = true;
   onDestroy(() => {
@@ -79,16 +77,7 @@
   const untouched = $derived(
     action.state === "prepared" && action.batches.every((item) => item.state === "prepared"),
   );
-  const needsCheckpoint = $derived(!action.checkpoint_verified && !finished);
-  const runnable = $derived(
-    !disabled &&
-      tag !== null &&
-      vaultMatches &&
-      action.checkpoint_verified &&
-      !finished &&
-      !running &&
-      !checking,
-  );
+  const runnable = $derived(!disabled && tag !== null && vaultMatches && !finished && !running);
   const applyLabel = $derived(
     action.state === "uncertain" ? "Retry" : untouched && doneDocuments === 0 ? "Apply" : "Resume",
   );
@@ -101,7 +90,8 @@
     onprogress(stored);
   }
 
-  async function saveCheckpoint(): Promise<void> {
+  // Downloads the recovery file and returns the bytes it holds; undefined when encoding failed.
+  async function saveCheckpoint(): Promise<Uint8Array | undefined> {
     failure = "";
     try {
       const bytes = await encodeRecovery(action);
@@ -112,29 +102,9 @@
       link.download = `docbank-tag-action-${action.action_id}.json`;
       link.click();
       URL.revokeObjectURL(url);
+      return bytes;
     } catch (cause) {
       failure = cause instanceof Error ? cause.message : String(cause);
-    }
-  }
-
-  async function verifyCheckpoint(event: Event): Promise<void> {
-    const input = event.currentTarget as HTMLInputElement;
-    const file = input.files?.[0];
-    input.value = "";
-    if (!file || checking || running) return;
-    checking = true;
-    failure = "";
-    notice = "";
-    try {
-      if (file.size > ACTION_MAX_BYTES)
-        throw new Error("The action recovery file exceeds 128 MiB.");
-      await journal.verifyCheckpoint(new Uint8Array(await file.arrayBuffer()));
-      await reload();
-      notice = "Recovery file checked.";
-    } catch (cause) {
-      failure = cause instanceof Error ? cause.message : String(cause);
-    } finally {
-      checking = false;
     }
   }
 
@@ -146,6 +116,13 @@
     abandonWarning = false;
     controller = new AbortController();
     try {
+      // The first Apply saves the recovery file the journal requires before it sends anything.
+      if (!action.checkpoint_verified) {
+        const bytes = await saveCheckpoint();
+        if (!bytes) return;
+        await journal.verifyCheckpoint(bytes);
+        await reload();
+      }
       // Pressing Apply is the explicit confirmation the runner requires.
       await journal.confirmResume(action.action_id);
       const result = await runAction(session, journal, controller.signal, (next, receipt) => {
@@ -196,7 +173,7 @@
   }
 
   function close(): void {
-    if (running || checking) return;
+    if (running) return;
     if (untouched) void abandon();
     else onclose();
   }
@@ -209,7 +186,7 @@
   maxWidth="min(480px, calc(100vw - 32px))"
   ariaLabel="Tag all results"
   onclose={close}
-  closeOnOverlayClick={!running && !checking}
+  closeOnOverlayClick={!running}
 >
   <div class="run">
     {#if action.state !== "complete"}
@@ -246,31 +223,7 @@
       </p>
     {/if}
 
-    {#if needsCheckpoint}
-      <ol class="steps" aria-label="Before applying">
-        <li>
-          <Button size="sm" disabled={running || checking} onclick={() => void saveCheckpoint()}
-            ><DownloadIcon size={14} aria-hidden="true" /> Save recovery file</Button
-          >
-          <span class="privacy">Contains private document IDs and hashes.</span>
-        </li>
-        <li>
-          <Button size="sm" disabled={running || checking} onclick={() => fileInput?.click()}
-            >{checking ? "Checking…" : "Open saved file…"}</Button
-          >
-          <input
-            class="file"
-            type="file"
-            accept="application/json,.json"
-            aria-label="Open saved recovery file"
-            tabindex="-1"
-            bind:this={fileInput}
-            disabled={running || checking}
-            onchange={(event) => void verifyCheckpoint(event)}
-          />
-        </li>
-      </ol>
-    {:else if !finished && !running && action.state !== "sending"}
+    {#if !untouched && !finished && !running && action.state !== "sending"}
       <p class="privacy">
         <Button size="sm" surface="soft" onclick={() => void saveCheckpoint()}
           ><DownloadIcon size={14} aria-hidden="true" /> Save recovery file</Button
@@ -284,9 +237,11 @@
 
     <details>
       <summary>Review documents</summary>
-      <p class="note">
-        Recovery files can come from anyone. Apply only if these are the documents you expect.
-      </p>
+      {#if action.checkpoint_verified}
+        <p class="note">
+          Recovery files can come from anyone. Apply only if these are the documents you expect.
+        </p>
+      {/if}
       <dl>
         <dt>Vault</dt>
         <dd><code>{action.vault_id}</code></dd>
@@ -379,7 +334,7 @@
     {#if action.state === "complete"}
       <Button tone="info" surface="solid" onclick={onclose}>Done</Button>
     {:else}
-      <Button surface="soft" disabled={running || checking} onclick={close}
+      <Button surface="soft" disabled={running} onclick={close}
         >{untouched ? "Cancel" : "Finish later"}</Button
       >
       {#if running}
@@ -425,34 +380,9 @@
     font-size: var(--font-size-sm);
   }
   .note,
-  .privacy,
-  .steps li > span {
+  .privacy {
     color: var(--text-muted);
     font-size: var(--font-size-xs);
-  }
-  .steps {
-    display: grid;
-    gap: var(--space-2);
-    margin: 0;
-    padding-inline-start: var(--space-5);
-  }
-  .steps li {
-    padding-inline-start: var(--space-1);
-  }
-  .steps li::marker {
-    color: var(--text-muted);
-    font-size: var(--font-size-sm);
-  }
-  .steps li > span {
-    display: block;
-    margin-block-start: var(--space-1);
-  }
-  .file {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    opacity: 0;
-    pointer-events: none;
   }
   .confirm,
   .pager {

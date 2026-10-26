@@ -386,10 +386,9 @@ the receipts connect back to the frozen document revision. Other document
 changes still make it stale. Once prepared, an action keeps its original
 requests and expected revisions.
 
-Before a prepared action can change the vault, **Save recovery file**, then
-**Open saved file…** to read it back. **Apply** then runs the batches in the
-same dialog, with progress and **Pause**. Pressing **Apply** is the explicit
-confirmation. **Review documents** lists the vault and action identities and,
+**Apply** saves a recovery file, then runs the batches in the same dialog, with
+progress and **Pause**. Pressing **Apply** is the explicit confirmation.
+**Review documents** lists the vault and action identities and,
 in pages of 50, node IDs, content versions, hashes, sizes, and expected
 revisions. **Cancel** before anything was sent drops the prepared action.
 
@@ -1149,7 +1148,7 @@ accepts that credential for the following operations:
 | Search people; read and draw photo faces; name or clear a face | Naming a face can create its person. Standalone person creation requires the API key. Face edits require the face revision. Drawing creates a box. The browser can mark an existing person or create a person by name in a whole photo and clear whole-photo marks. Person links filter the current workspace; Hidden links stay in the unlocked Hidden view. Hidden face reads and edits require an unlock. |
 | Set or clear a collection label | Requires the inspected collection-label revision. |
 | Create and page a frozen query snapshot | Uses complete validated query intent. Handles remain bound to this session and daemon lifetime. |
-| Apply a tag to an exact frozen population | Requires captured node revisions, checkpoint readback, and confirmation. Retries preserve the original operation identities. |
+| Apply a tag to an exact frozen population | Requires captured node revisions, a saved recovery file, and confirmation. Retries preserve the original operation identities. |
 
 Use the bookmark button to [manage saved queries and highlights](#saved-queries-and-highlights)
 or **Advanced** to [validate and run a complete query](#edit-a-complete-query).
