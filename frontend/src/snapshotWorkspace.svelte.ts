@@ -3,7 +3,7 @@ import type { Tag } from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
 import type { BatchTagReceipt } from "./batch-tags.js";
 import { ActionJournal, type PersistedAction } from "./actionJournal.js";
-import { prepareAction, decodeRecovery } from "./actionRecovery.js";
+import { prepareAction, decodeRecovery, type PreparedAction } from "./actionRecovery.js";
 import { readActionVaultID } from "./actionRunner.js";
 import { SnapshotSession, type SnapshotState } from "./snapshotState.js";
 import { captureSnapshotTargets, type SnapshotOptions, type SnapshotRow } from "./snapshots.js";
@@ -231,6 +231,20 @@ export class SnapshotWorkspace {
     this.actionsOpen = false;
   }
 
+  // A finished run stays retained for its receipts until the next run replaces it.
+  private async prepareJournal(
+    vaultID: string,
+    prepared: PreparedAction,
+    operation: ReturnType<SnapshotWorkspace["beginAction"]>,
+  ): Promise<ActionJournal | undefined> {
+    const journal = await ActionJournal.open(vaultID);
+    const observed = await journal.load();
+    if (!operation.current()) return undefined;
+    const completed = observed?.state === "complete" ? observed.action_id : undefined;
+    await journal.prepare(prepared, operation.signal, completed);
+    return journal;
+  }
+
   async startAction(choice: SnapshotActionChoice): Promise<void> {
     if (this.actionBusy || this.state.status !== "ready") return;
     this.actionError = "";
@@ -258,16 +272,10 @@ export class SnapshotWorkspace {
         this.overlays,
       );
       if (!operation.current()) return;
-      const journal = await ActionJournal.open(vaultID);
-      // A finished run stays retained for its receipts until the next run replaces it.
-      const observed = await journal.load();
       const prepared = await prepareAction(vaultID, targets, choice.tagID, choice.assign);
       if (!operation.current()) return;
-      await journal.prepare(
-        prepared,
-        operation.signal,
-        observed?.state === "complete" ? observed.action_id : undefined,
-      );
+      const journal = await this.prepareJournal(vaultID, prepared, operation);
+      if (!journal) return;
       const action = await journal.load();
       if (!action) throw new Error("The prepared action was not retained in durable storage.");
       await this.showRecovery(journal, action, vaultID, operation);
@@ -293,9 +301,8 @@ export class SnapshotWorkspace {
       if (!operation.current()) return;
       if (prepared.vault_id !== vaultID)
         throw new Error("The recovery action belongs to a different vault.");
-      const journal = await ActionJournal.open(vaultID);
-      if (!operation.current()) return;
-      await journal.prepare(prepared, operation.signal);
+      const journal = await this.prepareJournal(vaultID, prepared, operation);
+      if (!journal) return;
       await journal.verifyCheckpoint(bytes);
       const action = await journal.load();
       if (!action) throw new Error("The imported action was not retained in durable storage.");

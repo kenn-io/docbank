@@ -36,8 +36,8 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-async function retainSendingAction(): Promise<string> {
-  const prepared = await prepareAction(
+async function prepareOne() {
+  return prepareAction(
     vaultID,
     {
       snapshot: {
@@ -53,6 +53,10 @@ async function retainSendingAction(): Promise<string> {
     "22222222-2222-4222-8222-222222222222",
     true,
   );
+}
+
+async function retainSendingAction(): Promise<string> {
+  const prepared = await prepareOne();
   const journal = await ActionJournal.open(vaultID);
   await journal.prepare(prepared);
   await journal.verifyCheckpoint(await encodeRecovery(prepared));
@@ -230,4 +234,42 @@ it("preserves another tab's sending run when completed-run replacement pauses", 
   expect(retained.batches[0].state).toBe("sending");
   expect(tabA.recoveryAction).toBeNull();
   expect(tabA.actionError).not.toBe("");
+});
+
+it("opens an imported run in place of a finished one", async () => {
+  await retainSendingAction();
+  const journal = await ActionJournal.open(vaultID);
+  const finished = (await journal.load())!;
+  const batch = finished.batches[0];
+  await journal.recordReceipt(0, {
+    version: 1,
+    operation_id: batch.operation_id,
+    request_digest: batch.request_digest,
+    tag_id: finished.tag_id,
+    assign: true,
+    tag_revision: 2,
+    assignment_count: 1,
+    completed_at: "2026-10-01T00:00:00.000000000Z",
+    nodes: [{ node_id: 7, expected_revision: 3, revision: 4, changed: true }],
+  });
+  expect((await journal.load())?.state).toBe("complete");
+  const imported = await prepareOne();
+  const workspace = new SnapshotWorkspace(() => "session", vi.fn(), vi.fn());
+
+  await workspace.importAction(await encodeRecovery(imported));
+
+  expect(workspace.actionError).toBe("");
+  expect(workspace.recoveryAction?.action_id).toBe(imported.action_id);
+  expect((await ActionJournal.peek(vaultID))?.action_id).toBe(imported.action_id);
+});
+
+it("refuses an imported run while another is unfinished", async () => {
+  const actionID = await retainSendingAction();
+  const workspace = new SnapshotWorkspace(() => "session", vi.fn(), vi.fn());
+
+  await workspace.importAction(await encodeRecovery(await prepareOne()));
+
+  expect(workspace.actionError).toContain("already has an action retained");
+  expect(workspace.recoveryAction).toBeNull();
+  expect((await ActionJournal.peek(vaultID))?.action_id).toBe(actionID);
 });
