@@ -58,9 +58,11 @@ type Options struct {
 //
 // A binary whose version.Distribution names a package manager never replaces
 // itself: installing returns an error pointing at that package manager, and
-// CheckOnly reports the latest release with the same guidance.
+// CheckOnly reports the latest release with the same guidance. Official
+// direct downloads ("kenn") and unstamped builds update normally.
 func Run(ctx context.Context, out io.Writer, opts Options) error {
-	if version.Distribution != "" && !opts.CheckOnly {
+	managed := packageManaged(version.Distribution)
+	if managed && !opts.CheckOnly {
 		return fmt.Errorf("refusing to self-update: %s", managedUpdateGuidance(version.Distribution))
 	}
 	c := opts.Client
@@ -95,7 +97,7 @@ func Run(ctx context.Context, out io.Writer, opts Options) error {
 		return nil
 	}
 	_, _ = fmt.Fprintf(out, "current: %s\nlatest:  %s\n", c.CurrentVersion, info.LatestVersion)
-	if version.Distribution != "" {
+	if managed {
 		// Only CheckOnly reaches here; installs were refused above.
 		_, _ = fmt.Fprintf(out, "%s; the package may trail GitHub releases\n", managedUpdateGuidance(version.Distribution))
 		return nil
@@ -179,6 +181,13 @@ func Run(ctx context.Context, out io.Writer, opts Options) error {
 		}
 		return nil
 	})
+}
+
+// packageManaged reports whether a package manager, rather than docbank
+// update, owns upgrades for a binary stamped with distribution. Official
+// direct downloads are stamped "kenn" and replace themselves.
+func packageManaged(distribution string) bool {
+	return distribution != "" && distribution != "kenn"
 }
 
 // managedUpdateGuidance tells the user how to upgrade a binary owned by the

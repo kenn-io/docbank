@@ -6,8 +6,9 @@ package version
 var (
 	Version = "dev"
 	Commit  = "unknown"
-	// Distribution names the package manager that owns this binary, such as
-	// "homebrew". Empty means a release archive or source build that may
-	// replace itself with docbank update.
+	// Distribution names who shipped this binary: "kenn" for official
+	// direct downloads, or a package manager such as "homebrew" that owns
+	// upgrades. Empty means a local or source build. Only a package manager
+	// stops docbank update from replacing the binary.
 	Distribution string
 )

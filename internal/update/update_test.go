@@ -361,3 +361,31 @@ func TestUpdateCheckOnlyGivesPackageManagerGuidance(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "old", string(got))
 }
+
+// Official direct downloads are stamped "kenn" and must keep updating
+// themselves exactly like an unstamped build.
+func TestUpdateOfficialDownloadStillSelfUpdates(t *testing.T) {
+	packagedBy(t, "kenn")
+	ts, _ := fakeReleaseServer(t, "9.9.9")
+	c := newFakeClient(t, ts, "0.0.1")
+
+	dest := filepath.Join(t.TempDir(), "docbank")
+	require.NoError(t, os.WriteFile(dest, []byte("old"), 0o755))
+
+	var out strings.Builder
+	err := update.Run(t.Context(), &out, update.Options{
+		CheckOnly: true, Client: &c, Root: t.TempDir(), Destination: dest,
+	})
+	require.NoError(t, err)
+	assert.Contains(t, out.String(), "9.9.9")
+	assert.NotContains(t, out.String(), "manages this installation")
+
+	out.Reset()
+	err = update.Run(t.Context(), &out, withoutDaemon(update.Options{
+		Yes: true, Client: &c, Root: t.TempDir(), Destination: dest,
+	}))
+	require.NoError(t, err, out.String())
+	got, err := os.ReadFile(dest)
+	require.NoError(t, err)
+	assert.Contains(t, string(got), "9.9.9")
+}
