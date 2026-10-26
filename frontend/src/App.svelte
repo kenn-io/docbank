@@ -22,6 +22,7 @@
   import MapPinIcon from "@lucide/svelte/icons/map-pin";
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
   import SearchIcon from "@lucide/svelte/icons/search";
+  import StampIcon from "@lucide/svelte/icons/stamp";
   import BookmarkIcon from "@lucide/svelte/icons/bookmark";
   import TagIcon from "@lucide/svelte/icons/tag";
   import KeyboardIcon from "@lucide/svelte/icons/keyboard";
@@ -3713,7 +3714,7 @@
               class="nav-item"
               onclick={() => openPanel({ kind: "productions" })}
             >
-              <FoldersIcon size="16" aria-hidden="true" />Productions
+              <StampIcon size="16" aria-hidden="true" />Productions
             </button>
           {/if}
           <button
