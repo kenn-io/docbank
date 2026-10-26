@@ -13,6 +13,7 @@
     Modal,
     Spinner,
   } from "@kenn-io/kit-ui";
+  import XIcon from "@lucide/svelte/icons/x";
   import EllipsisIcon from "@lucide/svelte/icons/ellipsis";
   import AppTooltip from "./AppTooltip.svelte";
   import InspectorHeader from "./InspectorHeader.svelte";
@@ -59,6 +60,7 @@
     ontrash,
     onhistory,
     ontags,
+    onremovetag,
   }: {
     node?: Node;
     path: string;
@@ -88,6 +90,7 @@
     ontrash?: () => void;
     onhistory: () => void;
     ontags?: () => void;
+    onremovetag?: (tag: Tag) => void;
   } = $props();
   let protect = $state(false);
   let displayed = $state<{ origin: string; source: SelectedSource; revision: number }>();
@@ -268,7 +271,18 @@
           size="sm"
           ariaLabel={snapshot ? "Current tags" : "Assigned tags"}
         >
-          {#snippet chip(tag)}<TagLabel {tag} size="sm" />{/snippet}
+          {#snippet chip(tag)}
+            <span class="assigned-tag">
+              <TagLabel {tag} size="sm" />
+              {#if onremovetag}<button
+                  type="button"
+                  class="remove-tag"
+                  aria-label={`Remove tag ${tag.name}`}
+                  disabled={tagsDisabled}
+                  onclick={() => onremovetag?.(tag)}><XIcon size={12} aria-hidden="true" /></button
+                >{/if}
+            </span>
+          {/snippet}
         </ChipStack>
       {/if}
       {#if ontags}<AppTooltip text={tagsDisabled ? tagsDisabledReason : ""}
@@ -293,6 +307,39 @@
 {/if}
 
 <style>
+  .assigned-tag {
+    position: relative;
+    display: inline-flex;
+    min-width: 0;
+  }
+  .remove-tag {
+    position: absolute;
+    right: -6px;
+    top: -6px;
+    display: grid;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: 1px solid var(--border-default);
+    border-radius: 50%;
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    cursor: pointer;
+    opacity: 0;
+  }
+  .assigned-tag:hover .remove-tag,
+  .remove-tag:focus-visible {
+    opacity: 1;
+  }
+  .remove-tag:disabled {
+    cursor: default;
+  }
+  @media (hover: none) {
+    .remove-tag {
+      opacity: 1;
+    }
+  }
   .document-inspector {
     padding: var(--space-6);
   }

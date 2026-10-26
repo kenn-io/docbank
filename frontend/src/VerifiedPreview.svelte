@@ -64,6 +64,7 @@
     onauthfailure: (cause: unknown) => void;
     ondisplay?: (source: SelectedSource, revision: number) => void;
   } = $props();
+  let visited = $state<{ key: string; tabs: string[] }>({ key: "", tabs: [] });
   let duplicateSource = $state<LiveSelectedSource | undefined>();
   let relatedSources = $state<RelatedSelectedSource[]>([]);
   let navigationPending = $state(false);
@@ -95,6 +96,8 @@
   const displayedRevision = $derived(
     relatedSource?.mutationRevision ?? duplicateSource?.mutationRevision ?? authorizationRevision,
   );
+  const contentKey = $derived(`${session}:${displayedSource.key}:${displayedRevision}`);
+  const visitedTabs = $derived(visited.key === contentKey ? visited.tabs : []);
 
   $effect(() => {
     const key = `${session}:${source.key}`;
@@ -120,6 +123,7 @@
   function chooseTab(tab: typeof activeTab): void {
     cancelNavigation();
     navigationError = "";
+    visited = { key: contentKey, tabs: [...new Set([...visitedTabs, displayedTab])] };
     activeTab = tab;
   }
   async function openRelated(target: AttachmentIdentity): Promise<void> {
@@ -253,57 +257,70 @@
   {#if navigationPending}<p role="status">Loading document…</p>{/if}
   {#if navigationError}<p role="status">Related document unavailable: {navigationError}</p>{/if}
   <div class="tab-content inspector-content">
-    {#if displayedTab === "preview"}
-      {#if displayedSource.mimeType === "application/pdf" || displayedSource.mimeType === "image/png"}
-        <PageViewer
-          {session}
-          source={displayedSource}
-          authorizationRevision={displayedRevision}
-          {onauthfailure}
-        />
-      {:else}
-        <OriginalPreview
-          {session}
-          source={displayedSource}
-          authorizationRevision={displayedRevision}
-          {onauthfailure}
-        />
-      {/if}
-    {:else}
-      {#if displayedTab === "email"}
-        {#key `${session}:${displayedSource.key}:${displayedRevision}`}
-          <EmailViewer
-            {session}
-            source={displayedSource}
-            authorizationRevision={displayedRevision}
-            onattachments={() => chooseTab("attachments")}
-            {onauthfailure}
-          />
-        {/key}
-      {:else if displayedTab === "text"}
-        <VerifiedText
-          {session}
-          source={displayedSource}
-          authorizationRevision={displayedRevision}
-          {profileName}
-          observed={displayedObservation}
-          {queryTerms}
-          {queryHighlightError}
-          {highlightSets}
-          onprocess={onprocess ? () => onprocess?.(displayedSource) : undefined}
-          {onauthfailure}
-        />
-      {:else if displayedTab === "attachments"}
-        <AttachmentsTab
-          {session}
-          source={displayedSource}
-          onopen={(target) => void openRelated(target)}
-          {onauthfailure}
-        />
-      {:else}
-        <DuplicatesTab {session} source={displayedSource} onopen={openDuplicate} {onauthfailure} />
-      {/if}
-    {/if}
+    {#key contentKey}
+      {#each tabList as tab (tab.value)}
+        {#if tab.value === displayedTab || visitedTabs.includes(tab.value)}
+          <div hidden={tab.value !== displayedTab}>
+            {#if tab.value === "preview"}
+              {#if displayedSource.mimeType === "application/pdf" || displayedSource.mimeType === "image/png"}
+                <PageViewer
+                  {session}
+                  source={displayedSource}
+                  authorizationRevision={displayedRevision}
+                  {onauthfailure}
+                />
+              {:else}
+                <OriginalPreview
+                  {session}
+                  source={displayedSource}
+                  authorizationRevision={displayedRevision}
+                  {onauthfailure}
+                />
+              {/if}
+            {:else}
+              {#if tab.value === "email"}
+                {#key `${session}:${displayedSource.key}:${displayedRevision}`}
+                  <EmailViewer
+                    {session}
+                    source={displayedSource}
+                    authorizationRevision={displayedRevision}
+                    onattachments={() => chooseTab("attachments")}
+                    {onauthfailure}
+                  />
+                {/key}
+              {:else if tab.value === "text"}
+                <VerifiedText
+                  {session}
+                  source={displayedSource}
+                  authorizationRevision={displayedRevision}
+                  {profileName}
+                  observed={displayedObservation}
+                  {queryTerms}
+                  {queryHighlightError}
+                  {highlightSets}
+                  onprocess={onprocess ? () => onprocess?.(displayedSource) : undefined}
+                  {onauthfailure}
+                />
+              {:else if tab.value === "attachments"}
+                <AttachmentsTab
+                  {session}
+                  source={displayedSource}
+                  onopen={(target) => void openRelated(target)}
+                  {onauthfailure}
+                />
+              {:else}
+                <DuplicatesTab
+                  {session}
+                  source={displayedSource}
+                  onopen={openDuplicate}
+                  {onauthfailure}
+                />
+              {/if}
+            {/if}
+          </div>
+        {/if}
+      {/each}
+    {/key}
   </div>
 </section>
 

@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { listPackages, type PackageSummary } from "./generated/docbank.js";
+  import InspectorDetails from "./InspectorDetails.svelte";
   import DrawerShell from "./DrawerShell.svelte";
   import { onDestroy } from "svelte";
   import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
@@ -34,11 +36,13 @@
 
   interface Props {
     session: string;
+    mode?: "create" | "productions";
     onclose: () => void;
     onauthfailure: (cause: unknown) => void;
   }
 
-  let { session, onclose, onauthfailure }: Props = $props();
+  let { session, mode = "create", onclose, onauthfailure }: Props = $props();
+  let packages = $state<PackageSummary[]>([]);
   let sources = $state<BatesSource[]>([]);
   let namespaces = $state<BatesNamespace[]>([]);
   let history = $state<BatesExport[]>([]);
@@ -129,19 +133,45 @@
     error = "";
     historyError = "";
     try {
-      const [nextSources, nextNamespaces] = await Promise.all([
-        listBatesSources(current, signal),
-        listBatesNamespaces(current, signal),
-      ]);
-      if (signal.aborted || current !== session) return;
-      sources = nextSources;
-      namespaces = nextNamespaces;
-      sourceID = nextSources.find(eligible)?.package_id ?? "";
-      namespaceID = nextNamespaces[0]?.namespace_id ?? "";
-      restore();
+      if (mode === "productions") {
+        const items: PackageSummary[] = [];
+        let after: string | undefined;
+        do {
+          const page = await listPackages(
+            { limit: 250, ...(after ? { after } : {}) },
+            { session: current, signal },
+          );
+          if (signal.aborted || current !== session) return;
+          items.push(...page.items);
+          if (page.next_after && page.next_after === after)
+            throw new Error("The package list did not advance.");
+          after = page.next_after;
+        } while (after);
+        packages = items;
+      } else {
+        const [nextSources, nextNamespaces] = await Promise.all([
+          listBatesSources(current, signal),
+          listBatesNamespaces(current, signal),
+        ]);
+        if (signal.aborted || current !== session) return;
+        sources = nextSources;
+        namespaces = nextNamespaces;
+        sourceID = nextSources.find(eligible)?.package_id ?? "";
+        namespaceID = nextNamespaces[0]?.namespace_id ?? "";
+        restore();
+      }
       try {
-        const page = await listBatesExports(current, signal);
-        if (!signal.aborted && current === session) history = page.items;
+        const items: BatesExport[] = [];
+        let after: string | undefined;
+        do {
+          const page = await listBatesExports(current, signal, after);
+          if (signal.aborted || current !== session) return;
+          items.push(...page.items);
+          if (page.next_after && page.next_after === after)
+            throw new Error("The export list did not advance.");
+          after = mode === "productions" ? page.next_after : undefined;
+        } while (after);
+        history = items;
       } catch (cause) {
         if (!signal.aborted && current === session && !aborted(cause) && !unauthorized(cause))
           historyError = message(cause);
@@ -351,9 +381,8 @@
 {/snippet}
 
 <DrawerShell
-  title="Bates-numbered PDFs"
-  ariaLabel="Bates-numbered PDFs"
-  closeLabel="Close Bates export"
+  title={mode === "productions" ? "Productions" : "Bates-numbered PDFs"}
+  closeLabel={mode === "productions" ? "Close Productions" : "Close Bates export"}
   {onclose}
 >
   <div class="tool-body">
@@ -361,263 +390,303 @@
     {#if task}<p class="tool-muted" role="status"><Spinner size={14} /> {task}</p>{/if}
     {#if error}<p class="tool-error" role="alert">{error}</p>{/if}
 
-    {#if !loading && sources.length === 0}
-      <p class="tool-muted">
-        No PDF packages yet. Import a load-file package with PDF pages from Add → Import load files.
-      </p>
-    {:else if sources.length > 0}
-      <section class="tool-section" aria-label="Bates settings">
-        <div class="tool-grid">
-          <div
-            class="tool-field"
-            class:tool-span-3={namespaces.length > 0}
-            class:tool-span-all={namespaces.length === 0}
-          >
-            <span class="tool-label">Package</span>
-            <SelectDropdown
-              title="Bates source package"
-              value={selectedSource?.package_id ?? ""}
-              options={sourceOptions}
-              disabled={locked}
-              onchange={(value) => {
-                sourceID = value;
-                resetReview();
-              }}
-            />
-          </div>
-          {#if namespaces.length > 0}
-            <div class="tool-field tool-span-3">
-              <span class="tool-label">Namespace</span>
-              <SelectDropdown
-                title="Bates namespace"
-                value={selectedNamespace?.namespace_id ?? ""}
-                options={namespaceOptions}
-                disabled={locked}
-                onchange={(value) => {
-                  namespaceID = value;
-                  resetReview();
-                }}
-              />
-            </div>
-          {/if}
-          {#if selectedNamespace}
-            <div class="tool-field tool-span-2">
-              <label for="bates-start">First number</label>
-              <TextInput
-                id="bates-start"
-                ariaLabel="First Bates number"
-                bind:value={startAt}
-                placeholder="Next available"
-                oninput={() => resetReview()}
-                disabled={locked}
-                block
-              />
-            </div>
-            <div class="tool-field tool-span-2">
-              <span class="tool-label">Position</span>
-              <SelectDropdown
-                title="Bates position"
-                value={position}
-                options={positionOptions}
-                disabled={locked}
-                onchange={(value) => {
-                  position = value as BatesPosition;
-                  resetReview();
-                }}
-              />
-            </div>
-            <div class="tool-field tool-span-2">
-              <label for="bates-margin">Margin, points</label>
-              <TextInput
-                id="bates-margin"
-                ariaLabel="Bates margin points"
-                bind:value={margin}
-                oninput={() => resetReview()}
-                disabled={locked}
-                block
-              />
-            </div>
-          {/if}
-        </div>
-      </section>
-
-      {#snippet namespaceForm()}
-        <div class="tool-grid namespace-form">
-          <div class="tool-field tool-span-2">
-            <label for="bates-prefix">Prefix</label>
-            <TextInput
-              id="bates-prefix"
-              ariaLabel="Bates prefix"
-              bind:value={prefix}
-              disabled={locked}
-              block
-            />
-          </div>
-          <div class="tool-field tool-span-2">
-            <label for="bates-suffix">Suffix</label>
-            <TextInput
-              id="bates-suffix"
-              ariaLabel="Bates suffix"
-              bind:value={suffix}
-              disabled={locked}
-              block
-            />
-          </div>
-          <div class="tool-field tool-span-2">
-            <span class="tool-label">Padding</span>
-            <SelectDropdown
-              title="Bates padding"
-              value={padding}
-              options={Array.from({ length: 10 }, (_, index) => ({
-                value: String(index + 1),
-                label: `${index + 1} digits`,
-              }))}
-              disabled={locked}
-              onchange={(value) => (padding = value)}
-            />
-          </div>
-        </div>
-        <div class="tool-actions">
-          <Button
-            tone={namespaces.length ? "neutral" : "info"}
-            surface={namespaces.length ? "outline" : "solid"}
-            disabled={locked}
-            onclick={() => void createNamespace()}
-            >{task === "Creating namespace…" ? task : "Create namespace"}</Button
-          >
-        </div>
-      {/snippet}
-
-      {#if namespaces.length === 0}
-        <section class="tool-section" aria-labelledby="bates-namespace-heading">
-          <h3 id="bates-namespace-heading">New namespace</h3>
-          {@render namespaceForm()}
+    {#if mode === "productions"}
+      {#if !loading && !error && !historyError && !packages.length && !history.length}
+        <p class="tool-muted">No productions yet</p>
+      {/if}
+      {#if packages.length}
+        <section class="tool-section" aria-label="Load-file sets">
+          <h3>Load-file sets</h3>
+          <ul class="tool-list">
+            {#each packages as item (item.package_id)}
+              <li>
+                <details class="tool-disclosure">
+                  <summary
+                    ><ChevronRightIcon size="14" aria-hidden="true" /><span
+                      >{item.package_name}</span
+                    ></summary
+                  >
+                  <InspectorDetails
+                    facts={[
+                      {
+                        label: "Direction",
+                        value: item.direction === "received" ? "Imported" : "Exported",
+                      },
+                      { label: "State", value: item.state },
+                      { label: "Documents", value: String(item.member_count) },
+                      { label: "Pages", value: String(item.page_count) },
+                      { label: "Party", value: item.party_label },
+                      { label: "Created", value: formatDate(item.created_at) },
+                    ]}
+                  />
+                </details>
+              </li>
+            {/each}
+          </ul>
         </section>
-      {:else}
-        <details class="tool-disclosure">
-          <summary
-            ><ChevronRightIcon size="14" aria-hidden="true" /><span class="tool-label"
-              >New namespace</span
-            ></summary
-          >
-          <div class="tool-section">{@render namespaceForm()}</div>
-        </details>
-        {#if !plan}
+      {/if}
+    {:else}
+      {#if !loading && sources.length === 0}
+        <p class="tool-muted">
+          No PDF packages yet. Import a load-file package with PDF pages from Add → Import load
+          files.
+        </p>
+      {:else if sources.length > 0}
+        <section class="tool-section" aria-label="Bates settings">
+          <div class="tool-grid">
+            <div
+              class="tool-field"
+              class:tool-span-3={namespaces.length > 0}
+              class:tool-span-all={namespaces.length === 0}
+            >
+              <span class="tool-label">Package</span>
+              <SelectDropdown
+                title="Bates source package"
+                value={selectedSource?.package_id ?? ""}
+                options={sourceOptions}
+                disabled={locked}
+                onchange={(value) => {
+                  sourceID = value;
+                  resetReview();
+                }}
+              />
+            </div>
+            {#if namespaces.length > 0}
+              <div class="tool-field tool-span-3">
+                <span class="tool-label">Namespace</span>
+                <SelectDropdown
+                  title="Bates namespace"
+                  value={selectedNamespace?.namespace_id ?? ""}
+                  options={namespaceOptions}
+                  disabled={locked}
+                  onchange={(value) => {
+                    namespaceID = value;
+                    resetReview();
+                  }}
+                />
+              </div>
+            {/if}
+            {#if selectedNamespace}
+              <div class="tool-field tool-span-2">
+                <label for="bates-start">First number</label>
+                <TextInput
+                  id="bates-start"
+                  ariaLabel="First Bates number"
+                  bind:value={startAt}
+                  placeholder="Next available"
+                  oninput={() => resetReview()}
+                  disabled={locked}
+                  block
+                />
+              </div>
+              <div class="tool-field tool-span-2">
+                <span class="tool-label">Position</span>
+                <SelectDropdown
+                  title="Bates position"
+                  value={position}
+                  options={positionOptions}
+                  disabled={locked}
+                  onchange={(value) => {
+                    position = value as BatesPosition;
+                    resetReview();
+                  }}
+                />
+              </div>
+              <div class="tool-field tool-span-2">
+                <label for="bates-margin">Margin, points</label>
+                <TextInput
+                  id="bates-margin"
+                  ariaLabel="Bates margin points"
+                  bind:value={margin}
+                  oninput={() => resetReview()}
+                  disabled={locked}
+                  block
+                />
+              </div>
+            {/if}
+          </div>
+        </section>
+
+        {#snippet namespaceForm()}
+          <div class="tool-grid namespace-form">
+            <div class="tool-field tool-span-2">
+              <label for="bates-prefix">Prefix</label>
+              <TextInput
+                id="bates-prefix"
+                ariaLabel="Bates prefix"
+                bind:value={prefix}
+                disabled={locked}
+                block
+              />
+            </div>
+            <div class="tool-field tool-span-2">
+              <label for="bates-suffix">Suffix</label>
+              <TextInput
+                id="bates-suffix"
+                ariaLabel="Bates suffix"
+                bind:value={suffix}
+                disabled={locked}
+                block
+              />
+            </div>
+            <div class="tool-field tool-span-2">
+              <span class="tool-label">Padding</span>
+              <SelectDropdown
+                title="Bates padding"
+                value={padding}
+                options={Array.from({ length: 10 }, (_, index) => ({
+                  value: String(index + 1),
+                  label: `${index + 1} digits`,
+                }))}
+                disabled={locked}
+                onchange={(value) => (padding = value)}
+              />
+            </div>
+          </div>
           <div class="tool-actions">
             <Button
-              tone="info"
-              surface="solid"
-              disabled={locked || !selectedSource}
-              onclick={() => void preview()}
-              >{task === "Checking selected pages…" ? task : "Preview Bates labels"}</Button
+              tone={namespaces.length ? "neutral" : "info"}
+              surface={namespaces.length ? "outline" : "solid"}
+              disabled={locked}
+              onclick={() => void createNamespace()}
+              >{task === "Creating namespace…" ? task : "Create namespace"}</Button
             >
           </div>
-        {/if}
-      {/if}
-    {/if}
+        {/snippet}
 
-    {#if plan}
-      <section class="tool-section" aria-label="Tentative Bates labels">
-        <div class="tool-heading">
-          <h3>{plan.labels[0]?.label}–{plan.labels.at(-1)?.label}</h3>
-          <Chip size="xs" tone={allocation ? "neutral" : "warning"}
-            >{allocation ? "Reserved" : pending ? "Reservation pending" : "Not reserved"}</Chip
-          >
-        </div>
-        {#if !activeExport && allocation}<p class="tool-muted">Reserved below. Not stamped yet.</p>
-        {:else if !activeExport && restored}<p class="tool-muted">
-            This tab didn't finish this export. Resume reserves the same range and stamps it.
-          </p>
-        {:else if !activeExport && pending}<p class="tool-muted">
-            The reservation didn't finish. Retry sends the same request, so it can't reserve a
-            second range.
-          </p>{/if}
-        <div class="label-list" role="table" aria-label="Labels">
-          <div class="label-row label-head" role="row">
-            <span role="columnheader">Label</span><span role="columnheader">Source page</span><span
-              role="columnheader">Output page</span
+        {#if namespaces.length === 0}
+          <section class="tool-section" aria-labelledby="bates-namespace-heading">
+            <h3 id="bates-namespace-heading">New namespace</h3>
+            {@render namespaceForm()}
+          </section>
+        {:else}
+          <details class="tool-disclosure">
+            <summary
+              ><ChevronRightIcon size="14" aria-hidden="true" /><span class="tool-label"
+                >New namespace</span
+              ></summary
             >
-          </div>
-          {#each plan.labels as label (label.ordinal)}
-            <div class="label-row" role="row">
-              <span role="cell"><code>{label.label}</code></span><span role="cell"
-                ><span class="kit-sr-only">{"Source page "}</span>{label.source_page}</span
-              ><span role="cell"
-                ><span class="kit-sr-only">{"Output page "}</span>{label.output_page}</span
+            <div class="tool-section">{@render namespaceForm()}</div>
+          </details>
+          {#if !plan}
+            <div class="tool-actions">
+              <Button
+                tone="info"
+                surface="solid"
+                disabled={locked || !selectedSource}
+                onclick={() => void preview()}
+                >{task === "Checking selected pages…" ? task : "Preview Bates labels"}</Button
               >
             </div>
-          {/each}
-        </div>
-        {#if unsaved}<p class="tool-error">
-            This browser can't remember the reservation. Keep this drawer open until the export
-            finishes.
-          </p>{/if}
-        {#if pending && allocation}<p class="tool-muted">
-            Discarding forgets this review here. Reserved numbers stay reserved and are never
-            reused.
-          </p>{/if}
-        <div class="tool-actions">
-          {#if pending}<Button disabled={busy} onclick={discard}>Discard review</Button>{/if}
-          {#if !pending}<Button disabled={busy} onclick={resetReview}>Change settings</Button>{/if}
-          {#if !pending && !activeExport}<Button
-              tone="info"
-              surface="solid"
-              disabled={busy}
-              onclick={() => void reserve()}
-              >Reserve {plan.labels[0]?.label}–{plan.labels.at(-1)?.label}</Button
-            >
-          {:else if !allocation && restored}<Button
-              tone="info"
-              surface="solid"
-              disabled={busy}
-              onclick={() => void resume()}>Resume Bates export</Button
-            >
-          {:else if !allocation}<Button
-              tone="info"
-              surface="solid"
-              disabled={busy}
-              onclick={() => void reserve()}>Retry reserve</Button
-            >{/if}
-        </div>
-      </section>
-    {/if}
+          {/if}
+        {/if}
+      {/if}
 
-    {#if allocation}
-      <section class="tool-section" aria-label="Reserved range">
-        <div class="tool-heading">
-          <h3>Range reserved</h3>
-          <Chip size="xs" tone="success">reserved</Chip>
-        </div>
-        <dl class="tool-stats">
-          <div>
-            <dt>Labels</dt>
-            <dd>{allocation.labels[0]?.label}–{allocation.labels.at(-1)?.label}</dd>
-          </div>
-          <div>
-            <dt>Pages</dt>
-            <dd>{allocation.labels.length}</dd>
-          </div>
-        </dl>
-        <dl class="hash">
-          <div>
-            <dt>Recipe SHA-256</dt>
-            <dd>
-              <code>{allocation.recipe_sha256}</code><CopyButton
-                text={allocation.recipe_sha256}
-                ariaLabel="Copy Bates recipe hash"
-              />
-            </dd>
-          </div>
-        </dl>
-        {#if !activeExport}<div class="tool-actions">
-            <Button tone="info" surface="solid" disabled={busy} onclick={() => void start()}
-              >Start Bates export</Button
+      {#if plan}
+        <section class="tool-section" aria-label="Tentative Bates labels">
+          <div class="tool-heading">
+            <h3>{plan.labels[0]?.label}–{plan.labels.at(-1)?.label}</h3>
+            <Chip size="xs" tone={allocation ? "neutral" : "warning"}
+              >{allocation ? "Reserved" : pending ? "Reservation pending" : "Not reserved"}</Chip
             >
-          </div>{/if}
-      </section>
-    {/if}
+          </div>
+          {#if !activeExport && allocation}<p class="tool-muted">
+              Reserved below. Not stamped yet.
+            </p>
+          {:else if !activeExport && restored}<p class="tool-muted">
+              This tab didn't finish this export. Resume reserves the same range and stamps it.
+            </p>
+          {:else if !activeExport && pending}<p class="tool-muted">
+              The reservation didn't finish. Retry sends the same request, so it can't reserve a
+              second range.
+            </p>{/if}
+          <div class="label-list" role="table" aria-label="Labels">
+            <div class="label-row label-head" role="row">
+              <span role="columnheader">Label</span><span role="columnheader">Source page</span
+              ><span role="columnheader">Output page</span>
+            </div>
+            {#each plan.labels as label (label.ordinal)}
+              <div class="label-row" role="row">
+                <span role="cell"><code>{label.label}</code></span><span role="cell"
+                  ><span class="kit-sr-only">{"Source page "}</span>{label.source_page}</span
+                ><span role="cell"
+                  ><span class="kit-sr-only">{"Output page "}</span>{label.output_page}</span
+                >
+              </div>
+            {/each}
+          </div>
+          {#if unsaved}<p class="tool-error">
+              This browser can't remember the reservation. Keep this drawer open until the export
+              finishes.
+            </p>{/if}
+          {#if pending && allocation}<p class="tool-muted">
+              Discarding forgets this review here. Reserved numbers stay reserved and are never
+              reused.
+            </p>{/if}
+          <div class="tool-actions">
+            {#if pending}<Button disabled={busy} onclick={discard}>Discard review</Button>{/if}
+            {#if !pending}<Button disabled={busy} onclick={resetReview}>Change settings</Button
+              >{/if}
+            {#if !pending && !activeExport}<Button
+                tone="info"
+                surface="solid"
+                disabled={busy}
+                onclick={() => void reserve()}
+                >Reserve {plan.labels[0]?.label}–{plan.labels.at(-1)?.label}</Button
+              >
+            {:else if !allocation && restored}<Button
+                tone="info"
+                surface="solid"
+                disabled={busy}
+                onclick={() => void resume()}>Resume Bates export</Button
+              >
+            {:else if !allocation}<Button
+                tone="info"
+                surface="solid"
+                disabled={busy}
+                onclick={() => void reserve()}>Retry reserve</Button
+              >{/if}
+          </div>
+        </section>
+      {/if}
 
-    {#if activeExport}{@render exportCard(activeExport, "Stamped PDF ready")}{/if}
+      {#if allocation}
+        <section class="tool-section" aria-label="Reserved range">
+          <div class="tool-heading">
+            <h3>Range reserved</h3>
+            <Chip size="xs" tone="success">reserved</Chip>
+          </div>
+          <dl class="tool-stats">
+            <div>
+              <dt>Labels</dt>
+              <dd>{allocation.labels[0]?.label}–{allocation.labels.at(-1)?.label}</dd>
+            </div>
+            <div>
+              <dt>Pages</dt>
+              <dd>{allocation.labels.length}</dd>
+            </div>
+          </dl>
+          <dl class="hash">
+            <div>
+              <dt>Recipe SHA-256</dt>
+              <dd>
+                <code>{allocation.recipe_sha256}</code><CopyButton
+                  text={allocation.recipe_sha256}
+                  ariaLabel="Copy Bates recipe hash"
+                />
+              </dd>
+            </div>
+          </dl>
+          {#if !activeExport}<div class="tool-actions">
+              <Button tone="info" surface="solid" disabled={busy} onclick={() => void start()}
+                >Start Bates export</Button
+              >
+            </div>{/if}
+        </section>
+      {/if}
+
+      {#if activeExport}{@render exportCard(activeExport, "Stamped PDF ready")}{/if}
+    {/if}
     {#if viewedExport}{@render exportCard(
         viewedExport,
         "Earlier Bates export",
@@ -626,7 +695,9 @@
 
     {#if history.length || historyError}
       <section class="tool-section" aria-labelledby="bates-history-heading">
-        <h3 id="bates-history-heading">Recent exports</h3>
+        <h3 id="bates-history-heading">
+          {mode === "productions" ? "Bates exports" : "Recent exports"}
+        </h3>
         {#if historyError}<p class="tool-error" role="alert">
             Publication history is unavailable: {historyError}
           </p>
@@ -641,9 +712,14 @@
                   disabled={busy}
                   onclick={() => view(item)}
                 >
-                  <span>{formatDate(item.created_at)}</span><span class="tool-muted"
-                    >{item.page_count} pages</span
-                  ><Chip size="xs" tone="success">{item.state}</Chip>
+                  <span
+                    >{mode === "productions"
+                      ? `${item.pages[0]?.label}–${item.pages.at(-1)?.label}`
+                      : formatDate(item.created_at)}</span
+                  ><span class="tool-muted">{item.page_count} pages</span><Chip
+                    size="xs"
+                    tone="success">{item.state}</Chip
+                  >
                 </button>
               </li>{/each}
           </ul>{/if}

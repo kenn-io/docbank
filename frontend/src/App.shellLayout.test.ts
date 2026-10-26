@@ -83,3 +83,13 @@ it("reports the restore destination with only a dismiss action", async () => {
       .map((button) => button.getAttribute("aria-label") ?? button.textContent?.trim()),
   ).toEqual(["Dismiss"]);
 });
+
+it("opens all production sets from the sidebar between saved searches and import history", async () => {
+  start();
+  const production = await screen.findByRole("button", { name: "Productions" });
+  expect(production.previousElementSibling?.textContent).toContain("Saved searches");
+  expect(production.nextElementSibling?.textContent).toContain("Import history");
+  await fireEvent.click(production);
+  expect(await screen.findByRole("dialog", { name: "Productions" })).toBeTruthy();
+  expect(await screen.findByText("No productions yet")).toBeTruthy();
+});

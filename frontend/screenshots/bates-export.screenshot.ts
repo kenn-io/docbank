@@ -70,6 +70,14 @@ test("publishes selected pages from a sealed synthetic package through the real 
       fullPage: true,
       animations: "disabled",
     });
+    await drawer.getByRole("button", { name: "Close Bates export" }).click();
+    await page.getByRole("button", { name: "Productions", exact: true }).click();
+    const productions = page.getByRole("dialog", { name: "Productions" });
+    await productions.locator("summary", { hasText: "Synthetic-Bates-production" }).click();
+    await expect(productions.getByText("Exported", { exact: true })).toBeVisible();
+    await productions.getByRole("button", { name: /Open Bates export/ }).click();
+    await expect(productions.getByRole("button", { name: "Download verified PDF" })).toBeVisible();
+    await page.screenshot({ path: path.join(output!, "productions-exported.png"), fullPage: true });
   } finally {
     try {
       await docbank("daemon", "stop");

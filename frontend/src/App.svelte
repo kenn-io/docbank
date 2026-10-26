@@ -231,6 +231,7 @@
           | "storage"
           | "backups"
           | "bates"
+          | "productions"
           | "export"
           | "savedQueries"
           | "collections"
@@ -259,6 +260,7 @@
     storage: "storage",
     backups: "backups",
     bates: "bates",
+    productions: "bates",
     export: "export",
     savedQueries: "saved_queries",
     collections: "collections",
@@ -1002,6 +1004,7 @@
   });
 
   let tagHotkeys = $state<TagHotkeyBindings>({});
+  let removingTag = $state(false);
   let pendingTagHotkey = $state<TagHotkey | "">("");
   let shortcutNotice = $state("");
   let searchFocused = $state(false);
@@ -1622,7 +1625,7 @@
   }
 
   async function toggleInspectedTag(key: TagHotkey, event: KeyboardEvent): Promise<void> {
-    if (event.repeat || pendingTagHotkey) return;
+    if (event.repeat || pendingTagHotkey || removingTag) return;
     clearShortcutFeedback();
     const tagID = tagHotkeys[key];
     if (!tagID) {
@@ -3154,6 +3157,22 @@
     }
   }
 
+  async function removeInspectedTag(tag: Tag): Promise<void> {
+    const node = currentInspectorNode;
+    if (!node || selectedTagsLoading || selectedTagsError || pendingTagHotkey || removingTag)
+      return;
+    const session = webSession;
+    removingTag = true;
+    try {
+      const receipt = await changeNodeTag(session, node.id, node.revision, tag.id, false);
+      if (session === webSession) handleTagChanged(receipt, false);
+    } catch (cause) {
+      if (session === webSession) handleFailure(cause);
+    } finally {
+      removingTag = false;
+    }
+  }
+
   function handleTagChanged(receipt: TagAssignmentReceipt, assigned: boolean): void {
     const selectedChanged =
       selectedID === receipt.node.id ||
@@ -3648,6 +3667,9 @@
             }}
           >
             <BookmarkIcon size="16" aria-hidden="true" />Saved searches
+          </button>
+          <button type="button" class="nav-item" onclick={() => openPanel({ kind: "productions" })}>
+            <FoldersIcon size="16" aria-hidden="true" />Productions
           </button>
           <button
             type="button"
@@ -4592,7 +4614,10 @@
                 onversions={() => (activePanel = { kind: "versions" })}
                 onprovenance={() => (activePanel = { kind: "provenance" })}
                 onhistory={() => (activePanel = { kind: "history" })}
-                tagsDisabled={selectedTagsLoading || selectedTagsError !== ""}
+                onremovetag={currentInspectorNode && !currentInspectorNode.trashed_at
+                  ? removeInspectedTag
+                  : undefined}
+                tagsDisabled={removingTag || selectedTagsLoading || selectedTagsError !== ""}
                 tagsDisabledReason={selectedTagsError !== ""
                   ? "Tags couldn't be loaded"
                   : "Loading tags…"}
@@ -4654,7 +4679,9 @@
                 tags={selectedTags}
                 tagsLoading={selectedTagsLoading}
                 tagsError={selectedTagsError}
-                tagsDisabled={loading ||
+                onremovetag={removeInspectedTag}
+                tagsDisabled={removingTag ||
+                  loading ||
                   selectedTagsLoading ||
                   selectedTagsError !== "" ||
                   pendingTagHotkey !== "" ||
@@ -4917,9 +4944,10 @@
         />
       {/if}
 
-      {#if panel.kind === "bates"}
+      {#if panel.kind === "bates" || panel.kind === "productions"}
         {#key webSession}
           <BatesExportDrawer
+            mode={panel.kind === "productions" ? "productions" : "create"}
             session={webSession}
             onclose={closePanel(panel)}
             onauthfailure={handleFailure}

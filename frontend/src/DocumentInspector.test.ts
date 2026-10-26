@@ -167,3 +167,16 @@ it.each(["file", "dir"] as const)(
     }
   },
 );
+
+it("removes an assigned tag directly and disables removal while tags are unavailable", async () => {
+  const onremovetag = vi.fn();
+  const tag = { id: "tag-review", name: "Review", revision: 1, assignment_count: 1 };
+  const props = { ...fileProps, tags: [tag], onremovetag };
+  const view = render(DocumentInspector, props);
+  await fireEvent.click(screen.getByRole("button", { name: "Remove tag Review" }));
+  expect(onremovetag).toHaveBeenCalledExactlyOnceWith(tag);
+  await view.rerender({ ...props, tagsDisabled: true });
+  expect(
+    (screen.getByRole("button", { name: "Remove tag Review" }) as HTMLButtonElement).disabled,
+  ).toBe(true);
+});

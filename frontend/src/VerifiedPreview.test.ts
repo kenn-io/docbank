@@ -438,3 +438,32 @@ it("opens an email on its Email tab and offers no Preview it cannot render", asy
   expect(screen.queryByRole("tab", { name: "Preview" })).toBeNull();
   expect(screen.getByRole("tab", { name: "Email" }).getAttribute("aria-selected")).toBe("true");
 });
+
+it("keeps completed tabs mounted and loads an unvisited tab only when opened", async () => {
+  const bytes = new TextEncoder().encode("Already verified document");
+  const selected = source(bytes, "11111111-1111-4111-8111-111111111111");
+  const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (init?.method === "POST") return ready(selected, "cached-preview");
+    if (String(input).endsWith("ticket=cached-preview")) return body(selected, bytes);
+    if (String(input).includes("duplicates")) return Response.json({}, { status: 404 });
+    throw new Error(`Unexpected request ${String(input)}`);
+  });
+  render(VerifiedPreview, {
+    session: "session",
+    source: selected,
+    authorizationRevision: 8,
+    onauthfailure: vi.fn(),
+  });
+  const preview = await screen.findByText("Already verified document");
+  expect(fetcher.mock.calls.filter(([input]) => String(input).includes("duplicates"))).toHaveLength(
+    0,
+  );
+  await fireEvent.click(screen.getByRole("tab", { name: "Duplicates" }));
+  await screen.findByText("No duplicates");
+  const completedRequests = fetcher.mock.calls.length;
+  await fireEvent.click(screen.getByRole("tab", { name: "Preview" }));
+  expect(screen.getByText("Already verified document")).toBe(preview);
+  await fireEvent.click(screen.getByRole("tab", { name: "Duplicates" }));
+  expect(screen.getByText("No duplicates")).toBeTruthy();
+  expect(fetcher).toHaveBeenCalledTimes(completedRequests);
+});

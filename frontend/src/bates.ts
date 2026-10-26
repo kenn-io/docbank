@@ -373,8 +373,14 @@ export async function readBatesExport(
 export async function listBatesExports(
   session: string,
   signal?: AbortSignal,
+  after?: string,
 ): Promise<BatesExportPage> {
-  const page = record(await generated.listBatesExports({ limit: 50 }, { session, signal }));
+  const page = record(
+    await generated.listBatesExports(
+      { limit: 50, ...(after ? { after } : {}) },
+      { session, signal },
+    ),
+  );
   valid(
     Array.isArray(page.items) &&
       safeInteger(page.total) &&

@@ -421,3 +421,55 @@ it("shows why publication history failed and signs out on an expired session", a
   await waitFor(() => expect(onauthfailure).toHaveBeenCalledOnce());
   expect(onclose).toHaveBeenCalledOnce();
 });
+
+it("lists imported and exported production sets across every page without requiring PDF pages", async () => {
+  const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = new URL(String(input), "http://docbank.test");
+    if (url.pathname === "/api/v1/packages")
+      return json({
+        items: url.searchParams.has("after")
+          ? [
+              {
+                package_id: "second",
+                package_name: "Exported images",
+                direction: "produced",
+                state: "sealed",
+                page_count: 0,
+                member_count: 2,
+              },
+            ]
+          : [
+              {
+                package_id: "first",
+                package_name: "Imported load file",
+                direction: "received",
+                state: "partial",
+                page_count: 0,
+                member_count: 3,
+              },
+            ],
+        next_after: url.searchParams.has("after") ? undefined : "first",
+        limit: 250,
+      });
+    if (url.pathname === "/api/v1/bates/exports")
+      return json({
+        items: url.searchParams.has("after") ? [earlier] : [],
+        next_after: url.searchParams.has("after") ? undefined : "earlier",
+        total: 1,
+      });
+    throw new Error(`Unexpected production request ${String(input)}`);
+  });
+  render(BatesExportDrawer, {
+    mode: "productions",
+    session: "session",
+    onclose: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  expect(await screen.findByText("Imported load file")).toBeTruthy();
+  expect(await screen.findByText("Exported images")).toBeTruthy();
+  await fireEvent.click(
+    await screen.findByRole("button", { name: `Open Bates export ${earlier.allocation_id}` }),
+  );
+  expect(await screen.findByRole("button", { name: "Download verified PDF" })).toBeTruthy();
+  expect(fetcher.mock.calls.every(([, init]) => !init?.method || init.method === "GET")).toBe(true);
+});
