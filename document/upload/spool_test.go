@@ -54,6 +54,26 @@ func TestAuthorizeReturnsOnlyValidatedUnlinkedExactBytes(t *testing.T) {
 	assert.Empty(t, spoolEntries(t, directory), "the named spool must be gone before handoff")
 }
 
+func TestAuthorizeAfterInspectingProviderFormatSupport(t *testing.T) {
+	data := []byte("alpha\nbeta\n")
+	policy := inspectionPolicy(data, "notes.txt", "text/plain")
+	policy.SupportsFormat = func(format document.RenditionFormatCapability) bool {
+		return format.MediaFamily == "text" && format.MediaType == "text/plain" &&
+			format.InputKind == document.RenditionInputOriginalFile
+	}
+	record, err := media.InspectCapability(bytes.NewReader(data), policy)
+	require.NoError(t, err)
+	require.True(t, record.Eligible)
+	upload, err := Authorize(t.Context(), Source{
+		Reader: io.NopCloser(bytes.NewReader(data)), Directory: t.TempDir(),
+	}, record, UploadMetadata{Filename: "notes.txt"})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, upload.Close()) })
+	got, err := io.ReadAll(upload)
+	require.NoError(t, err)
+	assert.Equal(t, data, got)
+}
+
 // TestAuthorizeCarriesExactLocalCapabilityValue catches an authorized upload
 // that drops the locally inspected capability authority or exposes mutable
 // shared state to a provider adapter.

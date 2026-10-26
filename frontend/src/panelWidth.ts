@@ -2,6 +2,15 @@ import { localPreferenceStorage } from "./browser-storage.js";
 
 const prefix = "docbank.panelWidth.";
 
+export function watchWidth(element: HTMLElement, onwidth: (width: number) => void) {
+  if (typeof ResizeObserver === "undefined") return;
+  const observer = new ResizeObserver(([entry]) => {
+    if (entry) onwidth(entry.contentRect.width);
+  });
+  observer.observe(element);
+  return () => observer.disconnect();
+}
+
 // A saved width is a number of pixels; anything else means "use the default".
 export function readPanelWidth(name: string): number | undefined {
   try {

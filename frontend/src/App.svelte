@@ -99,7 +99,7 @@
   import { searchSyntaxOptions } from "./searchSyntax.js";
   import { collectionByID, displayName } from "./collections.js";
   import PanelResizer from "./PanelResizer.svelte";
-  import { readPanelWidth } from "./panelWidth.js";
+  import { readPanelWidth, watchWidth } from "./panelWidth.js";
   import ResultName from "./ResultName.svelte";
   import { resultColumns } from "./resultColumns.js";
   import ResultsPager from "./ResultsPager.svelte";
@@ -1009,22 +1009,6 @@
   let browserWidth = $state(1000);
   // Advanced results sit beside their filters, so the table has less room.
   let snapshotResultsWidth = $state(700);
-  function watchWidth(element: HTMLElement) {
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(([entry]) => {
-      if (entry) browserWidth = entry.contentRect.width;
-    });
-    observer.observe(element);
-    return () => observer.disconnect();
-  }
-  function watchSnapshotWidth(element: HTMLElement) {
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(([entry]) => {
-      if (entry) snapshotResultsWidth = entry.contentRect.width;
-    });
-    observer.observe(element);
-    return () => observer.disconnect();
-  }
   let shortcutError = $state("");
   let shortcutHelpOpen = $state(false);
   let searchInputEl = $state<HTMLInputElement>();
@@ -3144,24 +3128,9 @@
     }
   }
 
-  function handleRestored(receipt: Node, message: string): void {
+  function handleRestored(_receipt: Node, message: string): void {
     reloadAfterChange();
-    showToast(message, { action: { label: "Show", run: () => showNode(receipt) } });
-  }
-
-  async function showNode(node: Node): Promise<void> {
-    const session = webSession;
-    activePanel = null;
-    try {
-      const parent = await generated.resolvePath(
-        { path: parentPath(node.path ?? "/") },
-        { session },
-      );
-      if (session !== webSession) return;
-      await loadDirectory(parent.id, true, node.id);
-    } catch (cause) {
-      failToast(cause, session);
-    }
+    showToast(message);
   }
 
   async function processInspectedSource(source: SelectedSource): Promise<void> {
@@ -4080,7 +4049,7 @@
             class:hide-type={!columns.type}
             class:hide-match={!columns.match}
             aria-label="Vault browser"
-            {@attach watchWidth}
+            {@attach (element) => watchWidth(element, (width) => (browserWidth = width))}
           >
             {#if snapshotActive}
               <div class="browser-toolbar">
@@ -4136,7 +4105,8 @@
                   <section
                     class="snapshot-results"
                     aria-label="Frozen query results"
-                    {@attach watchSnapshotWidth}
+                    {@attach (element) =>
+                      watchWidth(element, (width) => (snapshotResultsWidth = width))}
                     data-snapshot-id={snapshotPage.snapshot_id}
                     data-member-hash={snapshotPage.member_hash}
                   >

@@ -1,6 +1,6 @@
 import * as actions from "./action-events.js";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { act, cleanup, render, screen } from "@testing-library/svelte";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import SimilarDrawer from "./SimilarDrawer.svelte";
 import * as processingAPI from "./receipts.js";
 import contract from "../../internal/daemonconn/testdata/processing_responses.json";
@@ -9,26 +9,32 @@ import { plan, versionID } from "./processing-test-fixtures.js";
 
 afterEach(() => {
   cleanup();
+  vi.unstubAllGlobals();
+  Reflect.deleteProperty(Element.prototype, "scrollIntoView");
   vi.restoreAllMocks();
 });
 
 const report = contract.similar_report as DocumentSimilarReport;
 
-function setup(scope: string[] = [versionID], bindings = ["semantic"]) {
+function setup(scope: string[] = [versionID], bindings = ["semantic"], failFirstProfile = false) {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
     if (path === "/api/v1/processing/profiles")
-      return Response.json([
-        {
-          name: "private",
+      return Response.json(
+        (failFirstProfile ? ["private", "working"] : ["private"]).map((name) => ({
+          name,
           fingerprint: "a".repeat(64),
           rendition: true,
           embedding_bindings: bindings,
           query_embedding_bindings: [],
-        },
-      ]);
-    if (path === "/api/v1/processing/plans")
-      return Response.json(plan(JSON.parse(String(init?.body)).selector.profile));
+        })),
+      );
+    if (path === "/api/v1/processing/plans") {
+      const profile = JSON.parse(String(init?.body)).selector.profile;
+      if (failFirstProfile && profile === "private")
+        return Response.json({ detail: "Cannot read password file" }, { status: 422 });
+      return Response.json(plan(profile));
+    }
     throw new Error(`unexpected request: ${path}`);
   });
   const props = {
@@ -52,6 +58,32 @@ function setup(scope: string[] = [versionID], bindings = ["semantic"]) {
 }
 
 describe("similar documents drawer", () => {
+  it("can switch profiles after a plan fails", async () => {
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    Object.defineProperty(Element.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    const similar = vi.spyOn(processingAPI, "documentSimilar").mockResolvedValue(report);
+    setup([versionID], ["semantic"], true);
+    expect(await screen.findByRole("alert")).toHaveProperty(
+      "textContent",
+      "Cannot read password file",
+    );
+    await fireEvent.click(screen.getByRole("combobox", { name: /Profile/ }));
+    await fireEvent.click(await screen.findByRole("option", { name: "working" }));
+    expect(await screen.findByText(report.results[0]!.path)).toBeTruthy();
+    expect(similar).toHaveBeenCalledOnce();
+    expect(similar.mock.calls[0]?.[1].selector.profile).toBe("working");
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
   it("searches the loaded view and groups identical copies", async () => {
     const action = vi.spyOn(actions, "reportSearch").mockImplementation(() => {});
     const similar = vi

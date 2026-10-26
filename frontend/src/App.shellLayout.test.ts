@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
-import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/svelte";
 import App from "./App.svelte";
 import { root } from "./version-test-fixtures.js";
 import { savePanelWidth } from "./panelWidth.js";
@@ -52,4 +52,40 @@ it("applies the saved inspector width", async () => {
   start();
   const workspace = await screen.findByRole("main");
   expect(workspace.style.getPropertyValue("--inspector-width")).toBe("min(380px, 50vw)");
+});
+
+it("reports the restore destination with only a dismiss action", async () => {
+  start();
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  const node = {
+    ...root,
+    id: 42,
+    name: "Reports",
+    path: "/Reports",
+    trashed_at: "2026-07-28T12:00:00Z",
+  };
+  let restored = false;
+  vi.mocked(fetch).mockImplementation(async (input, init) => {
+    if (String(input).startsWith("/api/v1/trash?"))
+      return Response.json({
+        items: restored ? [] : [node],
+        total: restored ? 0 : 1,
+        limit: 1000,
+        offset: 0,
+      });
+    if (String(input) === "/api/v1/nodes/42/restore") {
+      restored = true;
+      return Response.json({ ...node, trashed_at: undefined, revision: 2 });
+    }
+    return original(input, init);
+  });
+  await fireEvent.click((await screen.findAllByRole("button", { name: "Recoverable trash" }))[0]!);
+  await fireEvent.click(await screen.findByRole("button", { name: "Restore" }));
+  const message = await screen.findByText("Restored to /");
+  const notice = within(message.closest('[role="status"]') as HTMLElement);
+  expect(
+    notice
+      .getAllByRole("button")
+      .map((button) => button.getAttribute("aria-label") ?? button.textContent?.trim()),
+  ).toEqual(["Dismiss"]);
 });

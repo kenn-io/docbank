@@ -123,7 +123,7 @@
     <p class="file" title={path}>{path}</p>
     {#if loading && profiles.length === 0}
       <p class="muted"><Spinner size={14} /> Loading…</p>
-    {:else if error}
+    {:else if error && profiles.length === 0}
       <p class="error" role="alert">{error}</p>
     {:else if profiles.length === 0}
       <p>
@@ -143,7 +143,9 @@
           onchange={chooseProfile}
         />
       {/if}
-      {#if scopeVersionIDs.length > maxScope}
+      {#if error}
+        <p class="error" role="alert">{error}</p>
+      {:else if scopeVersionIDs.length > maxScope}
         <p class="warning">Narrow this view to at most 4,096 files.</p>
       {:else if busy}
         <p class="muted"><Spinner size={14} /> Finding similar files…</p>

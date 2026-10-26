@@ -310,6 +310,7 @@ func sealCapabilityRecord(
 	}) {
 		record.Eligible, record.Reason = false, CapabilityReasonUnsupported
 	}
+	policy.SupportsFormat = nil
 	policyEncoded, err := json.Marshal(policy, json.Deterministic(true))
 	if err != nil {
 		return CapabilityRecord{}, fmt.Errorf("media: encode inspection policy: %w", err)
