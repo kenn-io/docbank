@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"syscall"
 
 	"golang.org/x/sys/unix"
 )
@@ -30,4 +31,12 @@ func (mount watchMount) same(other watchMount) bool { return mount == other }
 
 func transientWatchObservationError(err error) bool {
 	return errors.Is(err, fs.ErrNotExist)
+}
+
+func fileChangeTime(_ *os.File, info fs.FileInfo) int64 {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return 0
+	}
+	return stat.Ctim.Nano()
 }
