@@ -830,7 +830,6 @@ func pathContains(parent, child string) bool {
 }
 
 func (w *Watcher) scan(ctx context.Context, root *watchRoot) error {
-	jobs.ReportBusy(ctx, true)
 	defer jobs.ReportBusy(ctx, false)
 	if err := ctx.Err(); err != nil {
 		return err
@@ -1084,6 +1083,7 @@ func (w *Watcher) scanDirectory(
 				(minimumAge > 0 && observedAt.Sub(time.Unix(0, fingerprint.modTime)) < minimumAge) {
 				continue
 			}
+			jobs.ReportBusy(ctx, true)
 			if w.process != nil {
 				err = w.process(ctx, rel, &observation, source.open)
 			} else {

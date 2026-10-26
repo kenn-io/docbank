@@ -149,7 +149,11 @@ export class ActionJournal implements ActionJournalAccess {
     return new ActionJournal(vaultID, await idbRequest(request));
   }
 
-  async prepare(action: PreparedAction, signal?: AbortSignal): Promise<void> {
+  async prepare(
+    action: PreparedAction,
+    signal?: AbortSignal,
+    completedActionID?: string,
+  ): Promise<void> {
     const bytes = await encodeRecovery(action);
     const normalized = await decodeRecovery(bytes);
     signal?.throwIfAborted();
@@ -171,10 +175,16 @@ export class ActionJournal implements ActionJournalAccess {
         await transactionDone(transaction);
         return;
       }
-      abort(
-        transaction,
-        "This vault already has an action retained in the journal. Abandon it explicitly before preparing another.",
-      );
+      if (existing.action_id !== completedActionID || existing.state !== "complete")
+        abort(
+          transaction,
+          "This vault already has an action retained in the journal. Abandon it explicitly before preparing another.",
+        );
+      actions.delete(this.vaultID);
+      transaction
+        .objectStore(batchStore)
+        .delete(IDBKeyRange.bound([this.vaultID], [this.vaultID, []]));
+      this.#confirmedActionID = undefined;
     }
     const { batches, ...preparedHeader } = normalized;
     // File receipts are unauthenticated. Only a daemon response recorded by

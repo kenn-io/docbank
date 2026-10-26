@@ -9,7 +9,7 @@
   import { Button, IconButton, Spinner } from "@kenn-io/kit-ui";
   import "./toolForm.css";
   import { APIError } from "./api-transport.js";
-  import { restoreFromTrash } from "./trashActions.js";
+  import { undoTrash } from "./trashActions.js";
   import { showToast } from "./toast.svelte.js";
   import { type Node, type TrashPage } from "./generated/docbank.js";
   import { formatBytes, formatDate } from "./format.js";
@@ -62,12 +62,12 @@
     const requestSession = session;
     restoring = node.id;
     try {
-      const { receipt, message } = await restoreFromTrash(requestSession, node);
+      const { receipt, notice } = await undoTrash(requestSession, node);
       if (session !== requestSession) return;
       // Restoring one item can bring back companions in other folders, so no
       // listed row is trusted until the refresh lands.
       page = null;
-      onrestored(receipt, message);
+      onrestored(receipt, notice);
       void refresh();
     } catch (cause) {
       if (cause instanceof APIError && cause.status === 401) {

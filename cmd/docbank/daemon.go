@@ -953,7 +953,12 @@ func validateCheckoutBinding(ctx context.Context, catalog *store.Store, binding 
 }
 
 func waitForCheckoutValidation(ctx context.Context, check func(context.Context) error, logger *slog.Logger) error {
-	return ingest.WaitForCheckoutSeparation(ctx, check, func(err error) {
+	jobs.ReportBusy(ctx, false)
+	return ingest.WaitForCheckoutSeparation(ctx, func(ctx context.Context) error {
+		jobs.ReportBusy(ctx, true)
+		defer jobs.ReportBusy(ctx, false)
+		return check(ctx)
+	}, func(err error) {
 		logger.Warn("checkout path validation is waiting", "error", err)
 	})
 }

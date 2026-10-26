@@ -45,6 +45,14 @@ const journal = vi.hoisted(() => ({
   async markUncertain() {},
   async markStale() {},
   async pause() {},
+  async discardUnsent(actionID: string) {
+    if (
+      journalState.action?.action_id === actionID &&
+      journalState.action.state === "prepared" &&
+      journalState.action.batches.every((batch) => batch.state === "prepared")
+    )
+      journalState.action = null;
+  },
   async abandon() {
     journalState.action = null;
   },

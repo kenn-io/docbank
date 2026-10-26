@@ -152,3 +152,82 @@ it("shows a retained run instead of enumerating results for a new Tag all", asyn
   // The retained run is untouched.
   expect((await ActionJournal.peek(vaultID))?.action_id).toBe(actionID);
 });
+
+it("preserves another tab's sending run when completed-run replacement pauses", async () => {
+  await retainSendingAction();
+  const journal = await ActionJournal.open(vaultID);
+  const action = (await journal.load())!;
+  const batch = action.batches[0];
+  await journal.recordReceipt(0, {
+    version: 1,
+    operation_id: batch.operation_id,
+    request_digest: batch.request_digest,
+    tag_id: action.tag_id,
+    assign: true,
+    tag_revision: 2,
+    assignment_count: 1,
+    completed_at: "2026-10-01T00:00:00.000000000Z",
+    nodes: [{ node_id: 7, expected_revision: 3, revision: 4, changed: true }],
+  });
+  const query = parseQuery(JSON.stringify({ text: "report" }));
+  const page = await snapshotEnvelope(query, [
+    {
+      ...member,
+      name: "report.txt",
+      path: "/report.txt",
+      mime_type: "text/plain",
+      media_family: "text" as const,
+      modified_at: "2026-10-01T00:00:00Z",
+      sort_key: "report.txt",
+      tags: [],
+      collection_ids: [],
+    },
+  ]);
+  vi.mocked(fetch).mockImplementation(async (input) =>
+    String(input) === "/api/v1/workspace/queries"
+      ? Response.json(page)
+      : Response.json({ vault_id: vaultID }),
+  );
+  const tabA = new SnapshotWorkspace(() => "session", vi.fn(), vi.fn());
+  const tabB = new SnapshotWorkspace(() => "session", vi.fn(), vi.fn());
+  await tabA.run(query, { page_size: 250 });
+  await tabB.run(query, { page_size: 250 });
+  let notifyPaused!: () => void;
+  const paused = new Promise<void>((resolve) => {
+    notifyPaused = resolve;
+  });
+  let resume!: () => void;
+  const resumed = new Promise<void>((resolve) => {
+    resume = resolve;
+  });
+  const open = ActionJournal.open.bind(ActionJournal);
+  vi.spyOn(ActionJournal, "open").mockImplementationOnce(async (id) => {
+    const opened = await open(id);
+    const load = opened.load.bind(opened);
+    vi.spyOn(opened, "load").mockImplementationOnce(async () => {
+      const observed = await load();
+      notifyPaused();
+      await resumed;
+      return observed;
+    });
+    return opened;
+  });
+  const choice = { scope: "query" as const, tagID: action.tag_id, assign: true };
+  const startingA = tabA.startAction(choice);
+  await paused;
+  await tabB.startAction(choice);
+  expect(tabB.actionError).toBe("");
+  const next = (await ActionJournal.peek(vaultID))!;
+  expect(next.action_id).not.toBe(action.action_id);
+  const sending = await open(vaultID);
+  await sending.verifyCheckpoint(await encodeRecovery(next));
+  await sending.markSending(0);
+  resume();
+  await startingA;
+
+  const retained = (await ActionJournal.peek(vaultID))!;
+  expect(retained.action_id).toBe(next.action_id);
+  expect(retained.batches[0].state).toBe("sending");
+  expect(tabA.recoveryAction).toBeNull();
+  expect(tabA.actionError).not.toBe("");
+});

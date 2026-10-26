@@ -38,6 +38,45 @@ func scanWatcherAt(ctx context.Context, watcher *Watcher, root *watchRoot, at ti
 	return watcher.scan(ctx, root)
 }
 
+func TestWatcherReportsBusyOnlyWhenIngesting(t *testing.T) {
+	ing := newTestIngester(t)
+	watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{
+		Name: "activity", Source: writeTree(t, map[string]string{"report.txt": "report"}), Destination: "/archive",
+		SettleTime: config.Duration(time.Second), ScanInterval: config.Duration(time.Second),
+	}, func(fn func() error) error { return fn() }, slog.New(slog.DiscardHandler))
+	require.NoError(t, err)
+	root := openWatcherRoot(t, watcher)
+	supervisor := jobs.New(t.Context(), slog.New(slog.DiscardHandler))
+	t.Cleanup(func() { require.NoError(t, supervisor.Shutdown(context.Background())) })
+	at := time.Now()
+	processed := 0
+	watcher.now = func() time.Time {
+		assert.False(t, supervisor.Snapshot()[0].Busy, "observing files is idle")
+		return at
+	}
+	watcher.process = func(context.Context, string, *watchObservation, localFileOpener) error {
+		assert.True(t, supervisor.Snapshot()[0].Busy, "ingesting a settled file is busy")
+		processed++
+		return nil
+	}
+	done := make(chan error, 1)
+	require.NoError(t, supervisor.Start("watch:activity", func(ctx context.Context) error {
+		jobs.ReportBusy(ctx, false)
+		for range 3 {
+			if err := watcher.scan(ctx, root); err != nil {
+				done <- err
+				return err
+			}
+			assert.False(t, supervisor.Snapshot()[0].Busy, "the scan finished")
+			at = at.Add(time.Second)
+		}
+		done <- nil
+		return nil
+	}))
+	require.NoError(t, <-done)
+	assert.Equal(t, 1, processed)
+}
+
 func TestWatcherWaitsForStabilityAndUpdatesTheSameMovedNode(t *testing.T) {
 	ing := newTestIngester(t)
 	expectedUpdatedContent := []byte("{\"message\":\"second\"}\n")

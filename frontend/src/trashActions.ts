@@ -50,11 +50,3 @@ export async function undoTrash(
   const restored = await restoreNode(session, receipt.id, receipt.revision);
   return { receipt: restored, notice: restoredMessage(receipt, restored) };
 }
-
-export async function restoreFromTrash(
-  session: string,
-  node: Node,
-): Promise<{ receipt: Node; message: string }> {
-  const receipt = await restoreNode(session, node.id, node.revision);
-  return { receipt, message: restoredMessage(node, receipt) };
-}

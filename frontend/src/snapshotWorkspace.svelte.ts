@@ -260,10 +260,14 @@ export class SnapshotWorkspace {
       if (!operation.current()) return;
       const journal = await ActionJournal.open(vaultID);
       // A finished run stays retained for its receipts until the next run replaces it.
-      if ((await journal.load())?.state === "complete") await journal.abandon();
+      const observed = await journal.load();
       const prepared = await prepareAction(vaultID, targets, choice.tagID, choice.assign);
       if (!operation.current()) return;
-      await journal.prepare(prepared, operation.signal);
+      await journal.prepare(
+        prepared,
+        operation.signal,
+        observed?.state === "complete" ? observed.action_id : undefined,
+      );
       const action = await journal.load();
       if (!action) throw new Error("The prepared action was not retained in durable storage.");
       await this.showRecovery(journal, action, vaultID, operation);
