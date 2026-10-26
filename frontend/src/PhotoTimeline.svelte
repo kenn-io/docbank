@@ -160,6 +160,9 @@
     width: 100%;
     border: 0;
     border-left: 2px solid transparent;
+    /* The selected month paints this edge. Square corners keep that bar straight. */
+    border-start-start-radius: 0;
+    border-end-start-radius: 0;
     background: transparent;
     color: var(--text-secondary);
     text-align: left;

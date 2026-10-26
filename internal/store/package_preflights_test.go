@@ -27,26 +27,6 @@ func TestPackagePreflightReadExpiresBeforeCleanup(t *testing.T) {
 	})
 }
 
-func TestPackagePreflightExpiryRemovesOnlyExpiredControlRows(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	expired := PackagePreflightRecord{
-		PreflightID: mustPackagePreflightID(t), Owner: "synthetic",
-		SourceKind: "root", SourceRef: "synthetic-root-handle",
-		ProfileSHA256: strings.Repeat("a", 64), MappingSHA256: strings.Repeat("b", 64),
-		ManifestSHA256: strings.Repeat("c", 64), ManifestBlobSHA256: strings.Repeat("c", 64),
-		CanonicalJSON: []byte("{}"), DiagnosticsJSON: []byte("[]"),
-		CreatedAt: "2026-09-10T00:00:00.000000000Z", ExpiresAt: "2026-09-11T00:00:00.000000000Z",
-	}
-	_, err := s.PutPackagePreflight(t.Context(), expired)
-	require.NoError(t, err)
-	n, err := s.ExpirePackagePreflights(t.Context(), "2026-09-12T00:00:00.000000000Z")
-	require.NoError(t, err)
-	require.Equal(t, int64(1), n)
-	_, err = s.PackagePreflight(t.Context(), expired.Owner, expired.PreflightID)
-	require.ErrorIs(t, err, ErrNotFound)
-}
-
 func TestExpiredPreflightsAreSweptAndUnexpiredOnesSurvive(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

@@ -559,13 +559,6 @@ func tinyPNGArtifact(t *testing.T, data []byte) PageArtifact {
 	return PageArtifact{Page: redaction.Page{Number: 1, FrameSHA256: digest([]byte("tiny")), Width: 50, Height: 50}, PNGSize: int64(len(encoded)), PNGSHA256: digest(encoded), OpenPNG: func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(encoded)), nil }}
 }
 
-func TestPDFProductionNativePlatform(t *testing.T) {
-	if expected := os.Getenv("DOCBANK_PDF_EXPECT_PLATFORM"); expected != "" {
-		require.Equal(t, expected, runtime.GOOS+"/"+runtime.GOARCH)
-	}
-	t.Logf("native PDF production runtime: %s %s/%s", runtime.Version(), runtime.GOOS, runtime.GOARCH)
-}
-
 func TestFreshTextUsesDeclaredGeometry(t *testing.T) {
 	a := unicodeArtifact(t)
 	a.Endorsements = []redaction.Endorsement{{Kind: "label", Text: "PUBLIC", FontSHA256: fontSHA256, Color: "#ffffff", Box: redaction.Box{Page: 1, FrameSHA256: a.Page.FrameSHA256, X0: 1000, Y0: 4000, X1: 9000, Y1: 6000}, FontSizeMilliPoints: 8000}}

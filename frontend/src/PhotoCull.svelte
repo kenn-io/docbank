@@ -976,6 +976,9 @@
   }
   .stack-divider {
     border-left: 2px solid var(--border-default);
+    /* A stack boundary is a straight line, including when the row is rounded. */
+    border-start-start-radius: 0;
+    border-end-start-radius: 0;
     align-self: stretch;
   }
   .frame-select {

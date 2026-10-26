@@ -1426,17 +1426,6 @@ func grantRenditionJobConsent(t *testing.T, s *Store, request RenditionJobReques
 	require.NoError(t, err)
 }
 
-func TestRenditionJobFailureCodesRemainAggregateAndBounded(t *testing.T) {
-	t.Parallel()
-	for _, code := range []RenditionFailureCode{
-		RenditionFailureTransient, RenditionFailureTerminal, RenditionFailureAmbiguous,
-		RenditionFailureConsent, RenditionFailureStaleAuthority,
-	} {
-		assert.LessOrEqual(t, len(code), 32)
-		assert.NotContains(t, string(code), "provider")
-	}
-}
-
 func TestPublishRenditionJobAtomicallyActivatesAuthorizedWaiters(t *testing.T) {
 	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)

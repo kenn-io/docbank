@@ -4,6 +4,7 @@ name: Render PDF
 # must exercise this job without changing the main-pinned CI workflow.
 on:
   pull_request:
+  workflow_dispatch:
   push:
     branches: [main]
 
@@ -34,10 +35,26 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Install LibreOffice Writer, Impress, Calc, and Poppler runtimes
+      - name: Select package archive cache key
+        id: apt_key
+        run: echo "key=pdf-apt-${ImageOS}-${ImageVersion}-$(dpkg --print-architecture)-${{ hashFiles('.github/workflows/render-pdf.yml') }}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore package archives
+        id: apt_cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/pdf-apt-archives/*.deb
+          key: ${{ steps.apt_key.outputs.key }}
+
+      - name: Download package archives on a cache miss
+        if: steps.apt_cache.outputs.cache-hit != 'true'
         run: |
+          mkdir -p "$RUNNER_TEMP/pdf-apt-archives/partial"
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y libreoffice-writer libreoffice-impress libreoffice-calc poppler-utils
+          sudo apt-get -o Dir::Cache::archives="$RUNNER_TEMP/pdf-apt-archives" install --download-only --no-install-recommends -y libreoffice-writer libreoffice-impress libreoffice-calc poppler-utils
+
+      - name: Install LibreOffice Writer, Impress, Calc, and Poppler runtimes
+        run: sudo apt-get -o Dir::Cache::archives="$RUNNER_TEMP/pdf-apt-archives" install --no-download --no-install-recommends -y "$RUNNER_TEMP"/pdf-apt-archives/*.deb
 
       - name: Run mandatory page rendering proof
         env:
@@ -86,3 +103,13 @@ jobs:
           go test -tags fts5 -v ./document/internal/providerutil/sandbox/ ./document/trafilatura/ -count=1
           go test -tags fts5 -v ./document/renderpdf/ -run '^TestLibreOffice' -count=1
           go test -tags fts5 -v ./document/mistral/ -run '^(TestDOCXLibreOfficeRoute|TestRenderLaneLibreOfficeRoute)$' -count=1
+
+      - name: Save package archives
+        if: >-
+          steps.apt_cache.outputs.cache-hit != 'true'
+          && ((github.event_name == 'push' && github.ref == 'refs/heads/main')
+          || github.event_name == 'workflow_dispatch')
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/pdf-apt-archives/*.deb
+          key: ${{ steps.apt_key.outputs.key }}

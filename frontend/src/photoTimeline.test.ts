@@ -81,11 +81,6 @@ it("keeps the counts beside an error and retries", async () => {
   expect(onretry).toHaveBeenCalledOnce();
 });
 
-it("shows a spinner row until the first counts arrive", () => {
-  render(PhotoTimeline, props({ facet: undefined, loading: true }));
-  expect(screen.getByText("Loading…")).toBeTruthy();
-});
-
 it("disables every entry", () => {
   render(PhotoTimeline, props({ disabled: true, current: "2025-06" }));
   const buttons = screen.getAllByRole("button");

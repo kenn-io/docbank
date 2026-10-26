@@ -81,7 +81,7 @@ func (s *Store) NodeByID(ctx context.Context, id int64) (Node, error) {
 
 func nodeByIDQuery(ctx context.Context, queryer rowQuerier, id int64) (Node, error) {
 	row := queryer.QueryRowContext(ctx,
-		`SELECT `+nodeCols+` FROM `+nodeFrom+` WHERE n.id = ?`, id)
+		`SELECT `+nodeCols+` FROM `+nodeFrom+` WHERE n.id = $1`, id)
 	n, err := scanNode(row)
 	if err != nil {
 		return Node{}, fmt.Errorf("node %d: %w", id, err)

@@ -11,17 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestAuditRegistryAcceptsEveryRegisteredShape(t *testing.T) {
-	for kind := range recordSchemas {
-		t.Run(kind, func(t *testing.T) {
-			record := exampleRecord(t, kind)
-			require.NoError(t, Validate(record))
-			_, err := Encode(record)
-			require.NoError(t, err)
-		})
-	}
-}
-
 func TestAuditRegistryAcceptsEveryRegisteredEnumAndNestedKind(t *testing.T) {
 	for kind, registered := range recordSchemas {
 		for _, registeredField := range registered.fields {

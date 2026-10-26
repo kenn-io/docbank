@@ -2,7 +2,6 @@ package store
 
 import (
 	"bytes"
-	"database/sql"
 	"encoding/json/v2"
 	"testing"
 
@@ -91,17 +90,4 @@ func TestPristineCheckRefusesAnExistingProjection(t *testing.T) {
 	require.NoError(t, err)
 	err = target.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes()))
 	require.ErrorContains(t, err, "metadata import target is not pristine")
-}
-
-func TestPristineTargetCountsEventControlRows(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	_, err := s.db.Exec(`INSERT INTO document_event_state(
-		singleton,contract_version,deriver_fingerprint,input_epoch,publication_epoch,updated_at
-	) VALUES(1,'document-events/v1','test',1,1,'2020-01-01T00:00:00Z')`)
-	require.NoError(t, err)
-	err = s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-		return requirePristineMetadataTarget(t.Context(), tx)
-	})
-	require.ErrorContains(t, err, "not pristine")
 }

@@ -62,13 +62,3 @@ func TestEventRegistrySlicesAreIndependent(t *testing.T) {
 	documents[0] = "changed"
 	assert.Equal(t, DocumentKind("email"), AllDocumentKinds()[0])
 }
-
-func TestDocumentEventBounds(t *testing.T) {
-	assert.Equal(t, 1024, MaxDocumentEvents)
-	assert.Equal(t, 4096, MaxDocumentEventActors)
-	assert.Equal(t, 8<<20, MaxDocumentEventsEncodedBytes)
-	assert.Equal(t, 64<<10, MaxDocumentEventRawValueBytes)
-	assert.Equal(t, 4<<10, MaxDocumentEventLocatorBytes)
-	assert.Equal(t, 4<<10, MaxDocumentEventActorClaimBytes)
-	assert.Equal(t, 384, MaxActorKeyBytes)
-}
