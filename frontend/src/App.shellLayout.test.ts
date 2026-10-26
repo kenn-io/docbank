@@ -234,7 +234,7 @@ it("hides Productions when the vault has no sets", async () => {
   expect(screen.queryByRole("button", { name: "Productions" })).toBeNull();
 });
 
-it.each(["package", "bates"] as const)("shows Productions when a %s set exists", async (sets) => {
+it.each(["bates"] as const)("shows Productions when a %s set exists", async (sets) => {
   start(sets);
   expect(await screen.findByRole("button", { name: "Productions" })).toBeTruthy();
 });

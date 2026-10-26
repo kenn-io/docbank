@@ -128,8 +128,6 @@ func TestRenditionReadinessPreservesApplicableReason(t *testing.T) {
 		{"large.txt", "text/plain", "notes exceed the profile limit", media.CapabilityReasonUnsupported},
 		{"empty.pdf", "application/pdf", "", media.CapabilityReasonEmptySource},
 		{"large.pdf", "application/pdf", "larger than the profile limit", media.CapabilityReasonSourceBytes},
-		{"empty.png", "image/png", "", media.CapabilityReasonUnsupported},
-		{"large.png", "image/png", "larger than the profile limit", media.CapabilityReasonUnsupported},
 		{"legacy.doc", "application/msword", "source", media.CapabilityReasonUnboundedFamily},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

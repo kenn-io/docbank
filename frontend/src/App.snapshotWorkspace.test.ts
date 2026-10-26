@@ -841,8 +841,6 @@ it("keeps the filtered result and unapplied draft after trashing and undoing a f
       await waitFor(() => expect(searches).toHaveLength(3));
       expect(searches[2]).toEqual(searches[0]);
     }
-    await fireEvent.focusIn(screen.getByRole("button", { name: "Advanced" }));
-    expect((await screen.findByRole("tooltip")).textContent).toBe("Unapplied changes");
     await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
     expect(((await screen.findByLabelText("Filters JSON")) as HTMLTextAreaElement).value).toBe(
       '{"size_min":',

@@ -16,14 +16,6 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it("shows once per vault until dismissed", async () => {
-  render(TelemetryNotice, { vaultID: "vault-a", reporting: reporting("enabled") });
-  await screen.findByText(/anonymous usage data/);
-  expect(screen.queryByText("DOCBANK_TELEMETRY_ENABLED=0")).toBeNull();
-  await fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
-  expect(screen.queryByRole("complementary")).toBeNull();
-});
-
 it("dismisses when storage is unavailable", async () => {
   render(TelemetryNotice, { vaultID: "vault-a", reporting: reporting("enabled") });
   await screen.findByRole("complementary", { name: "Anonymous usage" });

@@ -144,58 +144,19 @@ describe("background jobs drawer", () => {
     if (error) expect(screen.getByText(error)).toBeTruthy();
   });
 
-  it.each(["initial load", "lane controls"])(
-    "shows a retry for unavailable %s and recovers to the empty state",
-    async (failure) => {
-      vi.spyOn(globalThis, "fetch")
-        .mockResolvedValueOnce(
-          failure === "initial load"
-            ? new Response(JSON.stringify({ detail: "busy" }), {
-                status: 503,
-                headers: { "Content-Type": "application/json" },
-              })
-            : new Response(
-                JSON.stringify({ items: [], lane_controls_error: "Lane controls are unavailable" }),
-                { headers: { "Content-Type": "application/json" } },
-              ),
-        )
-        .mockResolvedValueOnce(jobsResponse([]));
-      render(JobsDrawer, { session: "short-lived", onclose: vi.fn(), onauthfailure: vi.fn() });
-      expect((await screen.findByRole("alert")).textContent).toBe(
-        failure === "initial load" ? "busy" : "Lane controls are unavailable",
-      );
-      expect(screen.queryByText("Nothing running")).toBeNull();
-      await fireEvent.click(screen.getByRole("button", { name: "Try again" }));
-      expect(await screen.findByText("Nothing running")).toBeTruthy();
-      expect(screen.queryByRole("alert")).toBeNull();
-      expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
-    },
-  );
-
   it.each([
     ["initial load", 503, { detail: "busy" }, "busy"],
     [
       "lane controls",
       200,
       {
-        items: [
-          {
-            name: "storage:a",
-            kind: "photo_import",
-            lane: "photo_import",
-            operation_id: "a",
-            status: "running",
-            busy: true,
-            started_at: "2026-07-23T12:00:00Z",
-            can_cancel: true,
-          },
-        ],
+        items: [],
         lane_controls_error: "Lane controls are unavailable",
       },
       "Lane controls are unavailable",
     ],
   ])(
-    "keeps the unavailable %s error while a poll is pending",
+    "keeps the unavailable %s error while a poll is pending and recovers through retry",
     async (_failure, status, body, message) => {
       vi.useFakeTimers();
       try {
@@ -206,14 +167,21 @@ describe("background jobs drawer", () => {
               headers: { "Content-Type": "application/json" },
             }),
           )
-          .mockReturnValueOnce(new Promise<Response>(() => {}));
+          .mockReturnValueOnce(new Promise<Response>(() => {}))
+          .mockResolvedValueOnce(jobsResponse([]));
         render(JobsDrawer, { session: "short-lived", onclose: vi.fn(), onauthfailure: vi.fn() });
         await vi.advanceTimersByTimeAsync(0);
         expect(screen.getByRole("alert").textContent).toBe(message);
+        expect(screen.queryByText("Nothing running")).toBeNull();
         await vi.advanceTimersByTimeAsync(2000);
         expect(globalThis.fetch).toHaveBeenCalledTimes(2);
         expect(screen.getByRole("alert").textContent).toBe(message);
         expect(screen.queryByText("Nothing running")).toBeNull();
+        await fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+        await vi.advanceTimersByTimeAsync(0);
+        expect(screen.getByText("Nothing running")).toBeTruthy();
+        expect(screen.queryByRole("alert")).toBeNull();
+        expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
       } finally {
         vi.useRealTimers();
       }
