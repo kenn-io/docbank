@@ -245,21 +245,16 @@ trust_boundary = "local_process"
       const body = await started.text();
       if (!started.ok || !body.includes('"state":"completed"')) throw Error(body);
     }
-    const mode = page.getByRole("combobox", { name: "Search mode: Words and meaning (auto)" });
-    await expect(mode).toBeVisible();
-    await mode.click();
-    await expect(page.getByRole("option", { name: "Names and text" })).toBeVisible();
-    await expect(page.getByRole("option", { name: "Auto" })).toBeVisible();
-    await expect(page.getByRole("option", { name: "Words", exact: true })).toBeVisible();
-    await expect(page.getByRole("option", { name: "Meaning", exact: true })).toBeVisible();
-    await expect(
-      page.getByRole("option", { name: "Words and meaning", exact: true }),
-    ).toBeVisible();
+    const syntax = page.getByRole("combobox", { name: "Search syntax: Plain words" });
+    await expect(syntax).toBeVisible();
+    await syntax.click();
+    await expect(page.getByRole("option", { name: "Plain words", exact: true })).toBeVisible();
+    await expect(page.getByRole("option", { name: "Query syntax", exact: true })).toBeVisible();
     await page.keyboard.press("Escape");
     const search = page.getByRole("searchbox", { name: "Search documents" });
     await search.fill("solar maintenance");
     await search.press("Enter");
-    const resultPath = page.getByLabel("Vault browser").getByText("/source.txt", { exact: true });
+    const resultPath = page.getByLabel("Vault browser").getByRole("row", { name: /source\.txt/ });
     await expect(resultPath).toBeVisible();
     await expect(page.getByText("Document text", { exact: true }).first()).toBeVisible();
     await expect(page.getByText("Text", { exact: true }).first()).toBeVisible();
@@ -267,12 +262,8 @@ trust_boundary = "local_process"
       await page.setViewportSize({ width, height: 960 });
       if (width === 400) {
         await page.getByRole("button", { name: "Open navigation" }).click();
-        for (const name of [
-          "Recoverable trash",
-          "Backup snapshots",
-          "Saved queries and highlights",
-        ]) {
-          await expect(page.getByRole("button", { name })).toBeVisible();
+        for (const name of ["Recoverable trash", "System", "Saved searches"]) {
+          await expect(page.getByRole("button", { name, exact: true })).toBeVisible();
         }
         await page.getByRole("button", { name: "Close navigation" }).click();
       }
@@ -280,7 +271,7 @@ trust_boundary = "local_process"
       await page.screenshot({ path: path.join(output!, "web-natural-" + width + ".png") });
     }
     console.log(
-      "natural search screenshot: modes=Names and text,Auto,Lexical,Semantic,Hybrid rows=live excerpt=true evidence=true widths=1440,1280,768,400",
+      "natural search screenshot: syntax=Plain words,Query syntax rows=live excerpt=true evidence=true widths=1440,1280,768,400",
     );
     const socket = `docbank-natural-${process.pid}`;
     const tmux = async (args: string[]) =>

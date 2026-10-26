@@ -47,7 +47,7 @@ test("DB24 actual attachment navigation preserves frozen authority", async ({ pa
       response.request().method() === "POST",
   );
   await page
-    .getByRole("dialog", { name: "Advanced search" })
+    .getByRole("dialog", { name: "Filters and sort" })
     .getByRole("button", { name: "Search", exact: true })
     .click();
   const snapshot = (await (await accepted).json()) as SnapshotPage;
@@ -109,7 +109,7 @@ test("DB24 actual attachment navigation preserves frozen authority", async ({ pa
     predicate: (request) =>
       new URL(request.url()).pathname === `/api/v1/versions/${fixture.child.version_id}`,
   });
-  await page.getByRole("tab", { name: "Preview", exact: true }).click();
+  await page.getByRole("tab", { name: "Email", exact: true }).click();
   release();
   await cancelled;
   await expect(page.locator(`[data-source-version="${fixture.parent.version_id}"]`)).toBeVisible();
@@ -119,7 +119,7 @@ test("DB24 actual attachment navigation preserves frozen authority", async ({ pa
   await expect(
     page.getByText("Pinned child edition, verified from its exact version.", { exact: true }),
   ).toBeVisible();
-  await expect(page.getByText("SHA-256 verified", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Verified", { exact: true }).first()).toBeVisible();
   expect(tickets.at(-1)).toMatchObject({
     node_id: fixture.child.node_id,
     version_id: fixture.child.version_id,

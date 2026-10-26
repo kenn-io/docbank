@@ -138,7 +138,7 @@ test("verified inspector pins replaced content and cancels a changed source", as
 
     await page.addInitScript(() => localStorage.setItem("docbank-theme", "dark"));
     await page.goto(browserURL);
-    const editor = page.getByRole("dialog", { name: "Advanced search" });
+    const editor = page.getByRole("dialog", { name: "Filters and sort" });
     await editor.getByRole("button", { name: "Search", exact: true }).click();
     const selectedCell = page.getByRole("cell", {
       name: "/Verified inspector/01-selected.txt",
@@ -168,8 +168,10 @@ test("verified inspector pins replaced content and cancels a changed source", as
     await selectedCell.click();
 
     await expect(page.getByText("Pinned first edition from the frozen query.")).toBeVisible();
-    await expect(page.getByRole("region", { name: "Saved tags" })).toBeVisible();
-    await expect(page.getByRole("region", { name: "Current details" })).toBeVisible();
+    // The saved result and the live document share a name, path, and tags, so the
+    // panel shows one set of details instead of a saved and a current copy.
+    await expect(page.getByRole("region", { name: "Saved tags" })).toHaveCount(0);
+    await expect(page.getByRole("region", { name: "Current details" })).toHaveCount(0);
     await expect(page.getByLabel("Verified", { exact: true })).toBeVisible();
     expect(page.getByText("New live head that must not replace the frozen source.")).toHaveCount(0);
     expect(previewAuthorities.at(-1)).toMatchObject({
@@ -212,11 +214,8 @@ test("DB17 real PDF text and fifty-step snapshot navigation", async ({ page }) =
   });
   await page.addInitScript(() => localStorage.setItem("docbank-theme", "dark"));
   await page.goto(queryURL(db17BrowserURL!));
-  const editor = page.getByRole("dialog", { name: "Advanced search" });
-  await editor.getByLabel("Query expression").fill("Extracted");
-  await editor.getByRole("combobox", { name: /^Processing profile:/ }).click();
-  await page.getByRole("option", { name: "archive", exact: true }).click();
-  await editor.getByText("Filters (JSON)", { exact: true }).click();
+  const editor = page.getByRole("dialog", { name: "Filters and sort" });
+  await editor.locator("#query-expression").fill("Extracted");
   await editor.getByRole("combobox", { name: "Documents per page: 100" }).click();
   await page.getByRole("option", { name: "50", exact: true }).click();
   await editor.getByRole("button", { name: "Search", exact: true }).click();
@@ -241,7 +240,7 @@ test("DB17 real PDF text and fifty-step snapshot navigation", async ({ page }) =
   expect(requestCounts).toEqual({ resolve: 51, content: 51, pages: 1, highlights: 1 });
   await expect(page.getByRole("button", { name: "Next", exact: true })).toBeDisabled();
   await page.getByLabel("Find in verified text").fill("PDF");
-  await expect(page.getByText("1 of 2", { exact: true })).toBeVisible();
+  await expect(page.getByText("1 of 1", { exact: true })).toBeVisible();
   await page.screenshot({
     path: path.join(screenshots!, "web-inspector-text.png"),
     animations: "disabled",

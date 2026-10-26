@@ -31,10 +31,10 @@
     disabled: boolean;
     /** Whole-result preparation is running in the workspace. */
     preparing?: boolean;
-    onstart: (choice: SnapshotActionChoice) => void;
+    onstart?: (choice: SnapshotActionChoice) => void;
     onchanged?: (receipt: BatchTagReceipt) => void;
     oncreated?: () => void;
-    onimport: (bytes: Uint8Array) => void;
+    onimport?: (bytes: Uint8Array) => void;
     onclose: () => void;
     onauthfailure: (cause: unknown) => void;
     errorMessage?: string;
@@ -97,7 +97,7 @@
     readFailure = "";
     run.failure = "";
     if (scope === "query") {
-      onstart({ scope, tagID: tag.id, assign });
+      onstart?.({ scope, tagID: tag.id, assign });
       return;
     }
     void run.submit({
@@ -120,7 +120,7 @@
       if (file.size > ACTION_MAX_BYTES)
         throw new Error("The action recovery file exceeds 128 MiB.");
       const bytes = new Uint8Array(await file.arrayBuffer());
-      if (alive) onimport(bytes);
+      if (alive) onimport?.(bytes);
     } catch (cause) {
       readFailure = cause instanceof Error ? cause.message : String(cause);
     } finally {

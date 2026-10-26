@@ -22,10 +22,10 @@ function publish(
   }
 }
 
-export async function readActionVaultID(session: string): Promise<string> {
+export async function readActionVaultID(session: string, signal?: AbortSignal): Promise<string> {
   if (typeof session !== "string" || session.length === 0)
     throw new Error("A fresh authenticated browser session is required.");
-  const value: unknown = await auditStatus(undefined, { session });
+  const value: unknown = await auditStatus(undefined, { session, signal });
   if (typeof value !== "object" || value === null || Array.isArray(value))
     throw new Error("The daemon returned an invalid vault identity.");
   const vaultID = (value as Record<string, unknown>).vault_id;

@@ -52,7 +52,13 @@ const journal = vi.hoisted(() => ({
 
 vi.mock("./actionJournal.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./actionJournal.js")>();
-  return { ...actual, ActionJournal: { open: vi.fn(async () => journal) } };
+  return {
+    ...actual,
+    ActionJournal: {
+      open: vi.fn(async () => journal),
+      peek: vi.fn(async () => journalState.action),
+    },
+  };
 });
 
 import App from "./App.svelte";
@@ -372,6 +378,8 @@ it.each([
   });
   let waiting = false;
   let captureSignal: AbortSignal | undefined;
+  // Set once Continue is pressed, so the searches before it are not held.
+  let armed = false;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     if (url === "/api/v1/path?path=%2F") return json(root);
@@ -389,8 +397,9 @@ it.each([
         : url === `/api/v1/tags/${tag.id}`
           ? "tag"
           : undefined;
-    if (stage === "pages") captureSignal = init?.signal ?? undefined;
-    if (stage === pending && (pending !== "audit" || captureSignal)) {
+    if (armed && (stage === "pages" || stage === "audit"))
+      captureSignal = init?.signal ?? undefined;
+    if (armed && stage === pending) {
       waiting = true;
       return delayed;
     }
@@ -407,7 +416,9 @@ it.each([
     target: { value: "Rev" },
   });
   await fireEvent.click(screen.getByRole("option", { name: "Review (0)" }));
-  await fireEvent.click(await screen.findByRole("button", { name: "Continue" }));
+  const next = await screen.findByRole("button", { name: "Continue" });
+  armed = true;
+  await fireEvent.click(next);
   await waitFor(() => expect(waiting).toBe(true));
   try {
     if (discard === "Search again") {

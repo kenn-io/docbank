@@ -1629,7 +1629,8 @@ docbank jobs concurrency derive:visual-previews <1-4>
 
 Shows daemon-owned background tasks in stable name order, including status,
 start and finish timestamps, and the bounded error recorded for a failed task.
-Running tasks have no finish timestamp. Terminal worker records remain visible
+Running tasks have no finish timestamp. A worker that is waiting for work shows
+as `idle` instead of `running`. Terminal worker records remain visible
 until the daemon restarts. Storage records follow their retention and preserve
 pending cleanup. `--json` emits `{"items": [...]}` plus optional `lanes` for
 automation.

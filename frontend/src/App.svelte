@@ -62,7 +62,6 @@
   import FacetSidebar from "./FacetSidebar.svelte";
   import FileTypeIcon, { fileTypeLabel } from "./FileTypeIcon.svelte";
   import ManageTagsModal from "./ManageTagsModal.svelte";
-  import BatchTagsModal from "./BatchTagsModal.svelte";
   import type { BatchTagReceipt } from "./batch-tags.js";
   import ProcessingDialog from "./ProcessingDialog.svelte";
   import SimilarDrawer from "./SimilarDrawer.svelte";
@@ -3101,7 +3100,7 @@
     trashing = true;
     const session = webSession;
     try {
-      const { receipt, message } = await moveToTrash(session, target.node, target.path);
+      const { receipt, message } = await moveToTrash(session, target.node);
       if (session !== webSession) return;
       selectNode(undefined);
       reloadAfterChange();
@@ -3120,7 +3119,7 @@
     trashing = true;
     const session = webSession;
     try {
-      const { receipt, message } = await moveToTrash(session, target, currentInspectorPath);
+      const { receipt, message } = await moveToTrash(session, target);
       if (session !== webSession) return;
       reloadAfterChange();
       showToast(message, { action: { label: "Undo", run: () => undoMove(session, receipt) } });
@@ -5072,14 +5071,16 @@
       />
     {/if}
     {#if batchTagsTargets}
-      <BatchTagsModal
+      <SnapshotActions
         session={webSession}
+        scope="selection"
+        count={batchTagsTargets.length}
         targets={batchTagsTargets}
         catalog={tagCatalog}
-        catalogTotal={tagCatalogTotal}
         disabled={loading}
-        onclose={() => (batchTagsTargets = null)}
         onchanged={handleBatchTagsChanged}
+        oncreated={() => void loadTagCatalog(false, true)}
+        onclose={() => (batchTagsTargets = null)}
         onauthfailure={handleFailure}
       />
     {/if}

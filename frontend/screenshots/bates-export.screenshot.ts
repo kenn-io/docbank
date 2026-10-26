@@ -44,8 +44,9 @@ test("publishes selected pages from a sealed synthetic package through the real 
     await page.setViewportSize({ width: 1440, height: 1400 });
     await page.addInitScript(() => localStorage.setItem("docbank-theme", "dark"));
     await page.goto(webURL, { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "Bates export", exact: true }).click();
-    const drawer = page.getByRole("dialog", { name: "Bates export" });
+    await page.getByRole("button", { name: "Export", exact: true }).click();
+    await page.getByRole("menuitem", { name: /^Bates-numbered PDFs/ }).click();
+    const drawer = page.getByRole("dialog", { name: "Bates-numbered PDFs" });
     await expect(drawer.getByText("Synthetic-Bates-production", { exact: false })).toBeVisible();
     await drawer.getByRole("textbox", { name: "Bates prefix" }).fill("CASE");
     await drawer.getByRole("button", { name: "Create namespace", exact: true }).click();

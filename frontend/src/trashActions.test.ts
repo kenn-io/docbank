@@ -3,6 +3,7 @@ import {
   moveToTrash,
   parentPath,
   restoredMessage,
+  restoreFromTrash,
   trashedMessage,
   undoTrash,
 } from "./trashActions.js";
@@ -33,18 +34,27 @@ it("names what moved and how many items a folder held", () => {
   expect(trashedMessage(node({ name: "a.txt" }))).toBe("Moved “a.txt” to trash");
 });
 
-it("says where a restore landed, and which folder was gone", () => {
-  const restored = { path: "/archive/clients" };
-  expect(restoredMessage(node(), restored, undefined)).toBe("Restored to /archive");
-  expect(restoredMessage(node(), restored, "/archive")).toBe("Restored to /archive");
-  expect(restoredMessage(node(), { path: "/clients" }, "/old/place")).toBe(
-    "Restored to / — /old/place no longer exists",
-  );
-  expect(restoredMessage(node({ photo_asset_id: "p", photo_file_count: 3 }), restored, "/x")).toBe(
+it("says where a restore landed", () => {
+  expect(restoredMessage(node(), { path: "/archive/clients" })).toBe("Restored to /archive");
+  expect(restoredMessage(node(), { path: "/clients" })).toBe("Restored to /");
+  expect(restoredMessage(node({ photo_asset_id: "p", photo_file_count: 3 }), { path: "/x" })).toBe(
     "Restored 3 files",
   );
   expect(parentPath("/a")).toBe("/");
   expect(parentPath("/a/b.txt")).toBe("/a");
+});
+
+it("reports the returned destination after the parent was renamed and the old path recreated", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = String(input);
+    if (url.endsWith("/trash"))
+      return json(node({ revision: 2, trashed_at: "2026-01-02T00:00:00Z", path: "/old/clients" }));
+    // /old was renamed to /older and then a new /old was created.
+    return json(node({ revision: 3, path: "/older/clients" }));
+  });
+  const moved = await moveToTrash("s", node({ kind: "file" }));
+  expect((await undoTrash("s", moved.receipt)).notice).toBe("Restored to /older");
+  expect((await restoreFromTrash("s", moved.receipt)).message).toBe("Restored to /older");
 });
 
 it("counts a folder's items, trashes it with its revision, and undoes through restore", async () => {
@@ -58,11 +68,11 @@ it("counts a folder's items, trashes it with its revision, and undoes through re
     return json(node({ revision: 3, path: "/clients" }));
   });
 
-  const moved = await moveToTrash("s", node(), "/old/clients");
+  const moved = await moveToTrash("s", node());
   expect(moved.message).toBe("Moved “clients” (24 items) to trash");
 
   const undone = await undoTrash("s", moved.receipt);
-  expect(undone.notice).toBe("Restored to / — /old no longer exists");
+  expect(undone.notice).toBe("Restored to /");
   expect(calls.map(([url]) => url.split("/").slice(-1)[0]?.split("?")[0])).toEqual([
     "children",
     "trash",

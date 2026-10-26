@@ -1175,11 +1175,11 @@ it("opens bounded tag assignment for the exact page selection", async () => {
   await fireEvent.click(await screen.findByRole("checkbox", { name: "Select readme.txt" }));
   await fireEvent.click(screen.getByRole("button", { name: "Tag selected…" }));
   const dialog = await screen.findByRole("dialog", { name: "Tag selected documents" });
-  expect(within(dialog).getByText(/1 selected document\./)).toBeTruthy();
+  expect(within(dialog).getByText("Adds a tag to 1 document.")).toBeTruthy();
   expect(
-    (within(dialog).getByRole("button", { name: "Add to all" }) as HTMLButtonElement).disabled,
+    (within(dialog).getByRole("button", { name: "Apply" }) as HTMLButtonElement).disabled,
   ).toBe(true);
-  await fireEvent.click(within(dialog).getByRole("button", { name: "Done" }));
+  await fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
   expect(screen.queryByRole("dialog", { name: "Tag selected documents" })).toBeNull();
 });
 
@@ -1238,12 +1238,11 @@ it("keeps the inspected source after batch tagging when the folder refresh fails
   await screen.findByRole("region", { name: "Verified content of readme.txt" });
   await fireEvent.click(screen.getByRole("checkbox", { name: "Select readme.txt" }));
   await fireEvent.click(screen.getByRole("button", { name: "Tag selected…" }));
-  await fireEvent.input(screen.getByRole("combobox", { name: "Tag for selected documents" }), {
+  await fireEvent.input(screen.getByRole("combobox", { name: "Tag" }), {
     target: { value: "tax" },
   });
   await fireEvent.click(screen.getByRole("option", { name: /^tax \(\d+\)$/ }));
-  await screen.findByText("0 of 1 selected documents have this tag.");
-  await fireEvent.click(screen.getByRole("button", { name: "Add to all" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Apply" }));
 
   await screen.findByText("Folder refresh unavailable");
   await waitFor(() =>

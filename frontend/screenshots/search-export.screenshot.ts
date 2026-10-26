@@ -74,27 +74,30 @@ test("reports selected versions and preserves historical downloads", async ({ pa
       });
     }
     await page.goto(url);
-    await page.getByRole("button", { name: "Search exports", exact: true }).click();
-    const drawer = page.getByRole("dialog", { name: "Search exports" });
+    await page.getByRole("button", { name: "Export", exact: true }).click();
+    await page.getByRole("menuitem", { name: /^Search term report/ }).click();
+    const drawer = page.getByRole("dialog", { name: "Search term report" });
     await expect(drawer).toBeVisible();
     await drawer.getByRole("textbox", { name: "Expression for term 1" }).fill("alpha");
-    await drawer.getByRole("combobox", { name: "Coverage policy" }).selectOption("available_only");
+    await drawer.getByText("Options", { exact: true }).click();
+    await drawer.getByRole("combobox", { name: /^Coverage policy/ }).click();
+    await page.getByRole("option", { name: "Count available text", exact: true }).click();
     await drawer.getByRole("button", { name: "Create report" }).click();
-    await expect(drawer.getByText("Counts ready", { exact: true }).first()).toBeVisible();
+    await expect(drawer.getByText(/^Counts ready/).first()).toBeVisible();
     await expect(drawer.getByText(/2 scoped · 2 searchable · 0 missing text/)).toBeVisible();
     await expect(drawer.getByRole("button", { name: "Download evidence ZIP" })).toBeVisible();
-    await drawer.getByText("Current export", { exact: true }).scrollIntoViewIfNeeded();
+    await drawer.getByRole("button", { name: "Download evidence ZIP" }).scrollIntoViewIfNeeded();
 
     await drawer.getByRole("button", { name: "Use as draft" }).first().click();
-    await expect(drawer.getByText(/Loaded the .* request/)).toBeVisible();
-    await drawer.getByRole("radio", { name: "Selected collections" }).check();
+    await expect(drawer.getByText(/Loaded the .* report/)).toBeVisible();
+    await drawer.getByRole("radio", { name: "Selected imports" }).click();
     await expect(drawer.getByRole("checkbox").first()).toBeVisible();
     await drawer.getByRole("checkbox").first().check();
     await drawer.getByRole("button", { name: "Create report" }).click();
     await expect(drawer.getByRole("button", { name: "Use as draft" })).toHaveCount(2);
     await expect(drawer.getByText(/1 scoped · 1 searchable · 0 missing text/)).toBeVisible();
-    await expect(drawer.getByText("1 collection").first()).toBeVisible();
-    await drawer.getByText("Recent exports", { exact: true }).scrollIntoViewIfNeeded();
+    await expect(drawer.getByText("1 import").first()).toBeVisible();
+    await drawer.getByText("Recent reports", { exact: true }).scrollIntoViewIfNeeded();
     await page.screenshot({
       path: path.join(screenshots!, "web-recent-exports.png"),
       animations: "disabled",
@@ -103,9 +106,11 @@ test("reports selected versions and preserves historical downloads", async ({ pa
     await drawer.getByRole("button", { name: "Close search term report" }).click();
     await page.getByRole("checkbox", { name: "Select synthetic-review.txt", exact: true }).check();
     await page.getByRole("button", { name: "Report selected documents", exact: true }).click();
+    await drawer.getByText("Options", { exact: true }).click();
     await expect(drawer.getByText("Selected documents (1)", { exact: true })).toBeVisible();
     await drawer.getByRole("textbox", { name: "Expression for term 1" }).fill("alpha");
-    await drawer.getByRole("combobox", { name: "Coverage policy" }).selectOption("available_only");
+    await drawer.getByRole("combobox", { name: /^Coverage policy/ }).click();
+    await page.getByRole("option", { name: "Count available text", exact: true }).click();
     await page.screenshot({
       path: path.join(screenshots!, "selected-report-draft.png"),
       animations: "disabled",
@@ -142,7 +147,7 @@ test("reports selected versions and preserves historical downloads", async ({ pa
     expect(await run("search-export", "verify", packetPath)).toContain(
       "internally consistent: true",
     );
-    await drawer.getByText("Current export", { exact: true }).scrollIntoViewIfNeeded();
+    await drawer.getByRole("button", { name: "Download evidence ZIP" }).scrollIntoViewIfNeeded();
     await page.screenshot({
       path: path.join(screenshots!, "selected-report-result.png"),
       animations: "disabled",

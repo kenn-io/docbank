@@ -97,9 +97,7 @@ test("import collections, label conflicts and stable document navigation", async
       .getByRole("textbox", { name: "Import label", exact: true })
       .fill("Proposal review");
     await drawer.getByRole("button", { name: "Save label", exact: true }).click();
-    await expect(
-      drawer.getByRole("button", { name: "Browse import Proposal review", exact: true }),
-    ).toBeVisible();
+    await expect(drawer.getByRole("heading", { name: "Proposal review", level: 3 })).toBeVisible();
     expect(new URL(page.url()).hash).not.toContain("web_session");
     await page.screenshot({
       path: path.join(screenshots, "web-collections.png"),
@@ -129,8 +127,8 @@ test("import collections, label conflicts and stable document navigation", async
       animations: "disabled",
     });
     await drawer.getByRole("button", { name: "Reload label", exact: true }).click();
-    await expect(drawer.getByRole("button", { name: "Clear label", exact: true })).toBeEnabled();
-    await drawer.getByRole("button", { name: "Clear label", exact: true }).click();
+    await expect(drawer.getByRole("button", { name: "Clear", exact: true })).toBeEnabled();
+    await drawer.getByRole("button", { name: "Clear", exact: true }).click();
     await expect.poll(async () => (await (await api(labelRoute)).json()).label).toBeNull();
     await drawer.getByRole("button", { name: "Quality", exact: true }).click();
     const quality = drawer.getByRole("region", { name: "Collection quality" });
@@ -145,21 +143,23 @@ test("import collections, label conflicts and stable document navigation", async
     await quality
       .getByRole("button", { name: "New query for selected extension", exact: true })
       .click();
-    const editor = page.getByRole("dialog", { name: "Advanced search" });
+    const editor = page.getByRole("dialog", { name: "Filters and sort" });
     await expect(editor).toBeVisible();
-    await expect(
-      editor.getByRole("textbox", { name: "Query expression", exact: true }),
-    ).toHaveValue('(extension:"txt")');
+    await expect(editor.getByRole("textbox", { name: "Query syntax", exact: true })).toHaveValue(
+      '(extension:"txt")',
+    );
     await expect(editor.getByRole("button", { name: "Search", exact: true })).toBeEnabled();
     await expect(editor.getByRole("status", { name: "Query valid" })).toBeVisible();
     await page.screenshot({
       path: path.join(screenshots, "web-collection-quality-suggestion.png"),
       animations: "disabled",
     });
+    await page.keyboard.press("Escape");
+    await expect(editor).toBeHidden();
     await page.getByRole("button", { name: "Import history", exact: true }).click();
     await drawer
       .getByRole("button", {
-        name: `Browse import Unlabeled import ${collectionID.slice(0, 8)}`,
+        name: "Browse import Discovery",
         exact: true,
       })
       .click();
@@ -183,7 +183,7 @@ test("import collections, label conflicts and stable document navigation", async
     await page.getByRole("button", { name: "Import history", exact: true }).click();
     await drawer
       .getByRole("button", {
-        name: `Browse import Unlabeled import ${collectionID.slice(0, 8)}`,
+        name: "Browse import Discovery",
         exact: true,
       })
       .click();

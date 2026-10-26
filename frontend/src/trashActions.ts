@@ -2,11 +2,6 @@ import * as generated from "./generated/docbank.js";
 import type { Node } from "./generated/docbank.js";
 import { restoreNode, trashNode } from "./receipts.js";
 
-// The daemon restores to a node's original folder when it still exists and to
-// the top folder otherwise, and it does not say which. The browser remembers
-// where it trashed things from so the restore message can.
-const origins = new Map<number, string>();
-
 export function parentPath(path: string): string {
   const split = path.lastIndexOf("/");
   return split <= 0 ? "/" : path.slice(0, split);
@@ -17,17 +12,14 @@ export function trashedMessage(node: Pick<Node, "name">, items?: number): string
   return `Moved “${node.name}”${count} to trash`;
 }
 
+// The restore response carries where the item landed; the message reports that.
 export function restoredMessage(
-  trashed: Pick<Node, "id" | "photo_asset_id" | "photo_file_count">,
+  trashed: Pick<Node, "photo_asset_id" | "photo_file_count">,
   restored: Pick<Node, "path">,
-  origin = origins.get(trashed.id),
 ): string {
   const files = trashed.photo_asset_id ? (trashed.photo_file_count ?? 0) : 0;
   if (files > 1) return `Restored ${files} files`;
-  const destination = parentPath(restored.path ?? "/");
-  return origin && origin !== destination
-    ? `Restored to ${destination} — ${origin} no longer exists`
-    : `Restored to ${destination}`;
+  return `Restored to ${parentPath(restored.path ?? "/")}`;
 }
 
 // A folder's direct item count, as the browser shows it. Missing counts leave
@@ -44,28 +36,19 @@ async function itemCount(session: string, node: Node): Promise<number | undefine
 export async function moveToTrash(
   session: string,
   node: Node,
-  path: string,
 ): Promise<{ receipt: Node; message: string }> {
   const items = await itemCount(session, node);
   const receipt = await trashNode(session, node.id, node.revision);
-  origins.set(node.id, parentPath(path));
   return { receipt, message: trashedMessage(node, items) };
 }
 
-// Undo goes through the same restore call as the Trash drawer. It speaks up
-// only when the folder it came from is gone.
+// Undo goes through the same restore call as the Trash drawer.
 export async function undoTrash(
   session: string,
   receipt: Node,
-): Promise<{ receipt: Node; notice?: string }> {
+): Promise<{ receipt: Node; notice: string }> {
   const restored = await restoreNode(session, receipt.id, receipt.revision);
-  const origin = origins.get(receipt.id);
-  origins.delete(receipt.id);
-  const moved = !!origin && origin !== parentPath(restored.path ?? "/");
-  return {
-    receipt: restored,
-    notice: moved ? restoredMessage(receipt, restored, origin) : undefined,
-  };
+  return { receipt: restored, notice: restoredMessage(receipt, restored) };
 }
 
 export async function restoreFromTrash(
@@ -73,7 +56,5 @@ export async function restoreFromTrash(
   node: Node,
 ): Promise<{ receipt: Node; message: string }> {
   const receipt = await restoreNode(session, node.id, node.revision);
-  const message = restoredMessage(node, receipt);
-  origins.delete(node.id);
-  return { receipt, message };
+  return { receipt, message: restoredMessage(node, receipt) };
 }

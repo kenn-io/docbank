@@ -123,8 +123,7 @@ those assignments are removed.
 ## Tag a selected set atomically
 
 In the web app, select document checkboxes and choose **Tag selected…**. Pick one
-tag to see how many selected documents have it, then choose **Add to all** or
-**Remove from all**. Each operation accepts at most 1,000 selected documents.
+tag, choose **Add** or **Remove**, then press **Apply**. Each operation accepts at most 1,000 selected documents.
 If any target is missing, trashed, or has changed since selection, the whole
 operation fails without changing assignments. Documents whose assignment is
 already correct keep their node revisions. Actual changes record the normal

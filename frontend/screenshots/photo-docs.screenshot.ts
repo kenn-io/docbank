@@ -52,7 +52,6 @@ test("photo library, viewer, timeline, search, albums, cull and trash", async ({
     await page.locator(".photo-cell .photo-image").first().dblclick();
     const viewer = page.getByRole("dialog", { name: /^Photo viewer/ });
     await expect(page.getByText("Fit preview", { exact: true })).toBeVisible({ timeout: 60_000 });
-    await viewer.getByRole("button", { name: "Metadata", exact: true }).click();
     await expect(viewer.getByRole("complementary", { name: "Photo details" })).toBeVisible();
     await expect(viewer.getByText(/^Loading metadata/)).toHaveCount(0);
     await page.screenshot({ path: path.join(output, "web-photo-viewer.png") });
@@ -60,8 +59,7 @@ test("photo library, viewer, timeline, search, albums, cull and trash", async ({
     await expect(viewer).toHaveCount(0);
 
     await openLibrary(page, fixture.run);
-    await page.getByRole("button", { name: "Timeline", exact: true }).click();
-    await expect(page.getByRole("navigation", { name: "Timeline years" })).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "Timeline", exact: true })).toBeVisible();
     await capture(page, "web-photo-timeline.png");
 
     await openLibrary(page, fixture.run);
@@ -103,7 +101,7 @@ test("photo library, viewer, timeline, search, albums, cull and trash", async ({
     await openLibrary(page, fixture.run);
     await selectFirst(page, 3);
     await page.getByRole("button", { name: "Export selection", exact: true }).click();
-    await expect(page.getByRole("button", { name: "Prepare", exact: true })).toBeInViewport();
+    await expect(page.getByRole("button", { name: "Download ZIP", exact: true })).toBeInViewport();
     await page.screenshot({
       path: path.join(output, "web-photo-export.png"),
       animations: "disabled",

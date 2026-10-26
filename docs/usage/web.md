@@ -347,13 +347,13 @@ applying it to newer state.
 ### Tag selected documents
 
 Use the document checkboxes to select files on the displayed page, then choose
-**Tag selected…** in the selection dock. The picker shows whether all, some, or none
-of the selected documents have the chosen tag. **Add to all** and **Remove from
-all** apply one atomic, revision-checked operation to at most 1,000 documents.
-Type a new name and choose **Create “name”** to create the tag and add it to every selected document.
+**Tag selected…** in the selection dock. Pick a tag, choose **Add** or
+**Remove**, and press **Apply** to run one atomic, revision-checked operation
+on at most 1,000 documents. Type a new name and choose **Create “name”** to
+create the tag, then apply it to every selected document.
 Folders and undisplayed query results are not included in page selection.
 
-Keep the dialog open if the result is uncertain: **Retry same operation**
+Keep the dialog open if the result is uncertain: **Retry**
 reuses its original identity and revisions. A stale selection requires you to
 refresh. The browser does not retry automatically against newer documents.
 After confirmation, the browser reloads current observations. The retained
@@ -399,7 +399,9 @@ tab, the results header shows that it didn't finish, with **Resume** and
 identities, requests, and expected revisions are retried. If a response is
 lost after the daemon commits, **Retry** recovers the retained receipt without
 applying the change twice. Starting a new **Tag all…** replaces a finished
-run.
+run. While an earlier run is unfinished, **Continue** closes the dialog and
+shows that run's **Resume** and **Discard…** notice instead of capturing the
+results again.
 
 A daemon restart creates a fresh browser origin and session, so choose
 **Tag all…** → **Resume from file…** and select the saved recovery file to

@@ -99,3 +99,29 @@ it("notices an unfinished run without touching its in-flight batch", async () =>
   await workspace.refreshRetained();
   expect(workspace.retained).toBeNull();
 });
+
+it("shows a retained run instead of enumerating results for a new Tag all", async () => {
+  const actionID = await retainSendingAction();
+  const workspace = new SnapshotWorkspace(() => "session", vi.fn(), vi.fn());
+  workspace.state = {
+    status: "ready",
+    firstPage: { snapshot_id: "b".repeat(32), total: 101 },
+  } as unknown as SnapshotWorkspace["state"];
+  workspace.openActions("query");
+
+  await workspace.startAction({
+    scope: "query",
+    tagID: "22222222-2222-4222-8222-222222222222",
+    assign: true,
+  });
+
+  const retained = workspace.retained;
+  expect(retained !== null && retained !== "unreadable" && retained.action_id).toBe(actionID);
+  expect(workspace.actionsOpen).toBe(false);
+  expect(workspace.actionError).toBe("");
+  expect(workspace.recoveryAction).toBeNull();
+  // Only the vault identity was read; no result page was enumerated.
+  expect(vi.mocked(fetch).mock.calls.map(([url]) => String(url))).toEqual(["/api/v1/audit/status"]);
+  // The retained run is untouched.
+  expect((await ActionJournal.peek(vaultID))?.action_id).toBe(actionID);
+});

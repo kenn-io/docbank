@@ -90,9 +90,7 @@ it("states what a whole-result change does before continuing", async () => {
   await chooseReview();
   await screen.findByText("Adds “Review” to 101 documents. Undo with Remove.");
   await fireEvent.click(screen.getByRole("radio", { name: "Remove" }));
-  expect(
-    screen.getByText("Removes “Review” from 101 documents. This can't be undone."),
-  ).toBeTruthy();
+  expect(screen.getByText("Removes “Review” from 101 documents.")).toBeTruthy();
   await fireEvent.click(next);
   expect(onstart).toHaveBeenCalledExactlyOnceWith({
     scope: "query",

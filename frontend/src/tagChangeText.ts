@@ -2,11 +2,11 @@ export function documentCount(count: number): string {
   return `${count.toLocaleString()} document${count === 1 ? "" : "s"}`;
 }
 
-/** One line that says what Apply changes and whether it can be undone. */
+/** One line that says what Apply changes. */
 export function tagChangeConsequence(assign: boolean, tagName: string, count: number): string {
   return assign
     ? `Adds “${tagName}” to ${documentCount(count)}. Undo with Remove.`
-    : `Removes “${tagName}” from ${documentCount(count)}. This can't be undone.`;
+    : `Removes “${tagName}” from ${documentCount(count)}.`;
 }
 
 export function tagChangeDone(assign: boolean, tagName: string, changed: number, total: number) {

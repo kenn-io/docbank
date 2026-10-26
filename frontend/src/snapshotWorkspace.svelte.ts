@@ -238,6 +238,17 @@ export class SnapshotWorkspace {
     if (!firstPage || firstPage.total === 0) return;
     const operation = this.beginAction();
     try {
+      const vaultID = await readActionVaultID(operation.session, operation.signal);
+      if (!operation.current()) return;
+      // One run is retained at a time. Show an unfinished one before enumerating
+      // a population that the journal would then refuse.
+      const retained = await ActionJournal.peek(vaultID);
+      if (!operation.current()) return;
+      if (retained && retained.state !== "complete") {
+        this.retained = retained;
+        this.actionsOpen = false;
+        return;
+      }
       // Complete enumeration and hash/byte verification happen before random
       // operation identities are prepared or anything is persisted.
       const targets = await captureSnapshotTargets(
@@ -246,8 +257,6 @@ export class SnapshotWorkspace {
         operation.signal,
         this.overlays,
       );
-      if (!operation.current()) return;
-      const vaultID = await readActionVaultID(operation.session);
       if (!operation.current()) return;
       const journal = await ActionJournal.open(vaultID);
       // A finished run stays retained for its receipts until the next run replaces it.
