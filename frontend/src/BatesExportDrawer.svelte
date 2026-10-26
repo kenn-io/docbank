@@ -39,9 +39,10 @@
     mode?: "create" | "productions";
     onclose: () => void;
     onauthfailure: (cause: unknown) => void;
+    oncomplete?: () => void;
   }
 
-  let { session, mode = "create", onclose, onauthfailure }: Props = $props();
+  let { session, mode = "create", onclose, onauthfailure, oncomplete }: Props = $props();
   let packages = $state<PackageSummary[]>([]);
   let sources = $state<BatesSource[]>([]);
   let namespaces = $state<BatesNamespace[]>([]);
@@ -291,6 +292,7 @@
       controller.signal,
     );
     activeExport = published;
+    oncomplete?.();
     history = [
       published,
       ...history.filter((item) => item.allocation_id !== published.allocation_id),

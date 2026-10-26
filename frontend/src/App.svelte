@@ -277,6 +277,32 @@
   };
 
   let webSession = $state("");
+  let hasProductions = $state(false);
+  $effect(() => {
+    const session = webSession;
+    hasProductions = false;
+    if (!session) return;
+    const controller = new AbortController();
+    void Promise.all([
+      generated.listPackages({ limit: 1 }, { session, signal: controller.signal }),
+      generated.listBatesExports({ limit: 1 }, { session, signal: controller.signal }),
+    ])
+      .then(([packages, exports]) => {
+        if (!controller.signal.aborted && session === webSession) {
+          hasProductions ||= packages.items.length > 0 || exports.items.length > 0;
+        }
+      })
+      .catch((cause: unknown) => {
+        if (
+          !controller.signal.aborted &&
+          session === webSession &&
+          cause instanceof APIError &&
+          cause.status === 401
+        )
+          handleFailure(cause);
+      });
+    return () => controller.abort();
+  });
   let nodeVersionHash = $state(location.hash);
   const nodeVersionSelection = $derived(parseNodeVersionLink(nodeVersionHash));
   const nodeVersionKey = $derived(
@@ -3681,9 +3707,15 @@
           >
             <BookmarkIcon size="16" aria-hidden="true" />Saved searches
           </button>
-          <button type="button" class="nav-item" onclick={() => openPanel({ kind: "productions" })}>
-            <FoldersIcon size="16" aria-hidden="true" />Productions
-          </button>
+          {#if hasProductions}
+            <button
+              type="button"
+              class="nav-item"
+              onclick={() => openPanel({ kind: "productions" })}
+            >
+              <FoldersIcon size="16" aria-hidden="true" />Productions
+            </button>
+          {/if}
           <button
             type="button"
             class="nav-item"
@@ -4967,6 +4999,9 @@
           <BatesExportDrawer
             mode={panel.kind === "productions" ? "productions" : "create"}
             session={webSession}
+            oncomplete={() => {
+              hasProductions = true;
+            }}
             onclose={closePanel(panel)}
             onauthfailure={handleFailure}
           />
@@ -5059,6 +5094,7 @@
           destination={panel.target.path ?? "/"}
           onclose={closePanel(panel)}
           oncomplete={async () => {
+            hasProductions = true;
             if (activePanel === panel) await loadDirectory(panel.target.id, false);
           }}
           onauthfailure={handleFailure}
