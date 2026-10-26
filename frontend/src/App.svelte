@@ -2840,7 +2840,11 @@
     return snapshot.run(query, options);
   }
 
-  async function submitSnapshot(query: Query, options: SnapshotOptions, preserveDraft = false): Promise<void> {
+  async function submitSnapshot(
+    query: Query,
+    options: SnapshotOptions,
+    preserveDraft = false,
+  ): Promise<void> {
     const revision = queryDraftRevision;
     if (!preserveDraft) keepQueryDraft(query);
     const outcome = await runSnapshot(query, options);
