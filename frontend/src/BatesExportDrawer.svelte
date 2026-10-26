@@ -1,10 +1,5 @@
 <script lang="ts">
-  import {
-    listPackages,
-    listPackageMembers,
-    readBatesAllocation,
-    type PackageSummary,
-  } from "./generated/docbank.js";
+  import { listPackages, readBatesAllocation, type PackageSummary } from "./generated/docbank.js";
   import InspectorDetails from "./InspectorDetails.svelte";
   import DrawerShell from "./DrawerShell.svelte";
   import { onDestroy } from "svelte";
@@ -51,7 +46,6 @@
   let packages = $state<PackageSummary[]>([]);
   let history = $state<BatesExport[]>([]);
   let exportSnapshots = $state<Record<string, string>>({});
-  let packageRanges = $state<Record<string, string>>({});
   const productions = $derived([
     ...history.map((receipt) => ({
       id: receipt.allocation_id,
@@ -72,7 +66,7 @@
         id: item.package_id,
         package: item,
         receipt: null,
-        range: packageRanges[item.package_id] ?? "",
+        range: "",
         pages: item.page_count,
       })),
   ]);
@@ -160,104 +154,82 @@
     error = message(cause);
   }
 
+  async function loadPackages(current: string, signal: AbortSignal): Promise<void> {
+    const items: PackageSummary[] = [];
+    let after: string | undefined;
+    do {
+      const page = await listPackages(
+        { limit: 250, ...(after ? { after } : {}) },
+        { session: current, signal },
+      );
+      if (signal.aborted || current !== session) return;
+      items.push(...page.items);
+      packages = [...items];
+      if (page.next_after && page.next_after === after)
+        throw new Error("The package list did not advance.");
+      after = page.next_after;
+    } while (after);
+  }
+
+  async function loadHistory(current: string, signal: AbortSignal): Promise<void> {
+    const items: BatesExport[] = [];
+    let after: string | undefined;
+    do {
+      const page = await listBatesExports(current, signal, after);
+      if (signal.aborted || current !== session) return;
+      items.push(...page.items);
+      history = [...items];
+      if (page.next_after && page.next_after === after)
+        throw new Error("The export list did not advance.");
+      after = mode === "productions" ? page.next_after : undefined;
+    } while (after);
+    if (mode !== "productions") return;
+    for (const item of items) {
+      try {
+        const allocation = await readBatesAllocation(item.allocation_id, {
+          session: current,
+          signal,
+        });
+        if (signal.aborted || current !== session) return;
+        exportSnapshots[item.allocation_id] = allocation.snapshot_id;
+      } catch (cause) {
+        if (signal.aborted || current !== session || aborted(cause) || unauthorized(cause)) return;
+        historyError = message(cause);
+      }
+    }
+  }
+
   async function load(current: string, signal: AbortSignal): Promise<void> {
     loading = true;
     error = "";
     historyError = "";
     try {
-      if (mode === "productions") {
-        const items: PackageSummary[] = [];
-        let after: string | undefined;
-        do {
-          const page = await listPackages(
-            { limit: 250, ...(after ? { after } : {}) },
-            { session: current, signal },
-          );
+      try {
+        if (mode === "productions") {
+          await loadPackages(current, signal);
+        } else {
+          const [nextSources, nextNamespaces] = await Promise.all([
+            listBatesSources(current, signal),
+            listBatesNamespaces(current, signal),
+          ]);
           if (signal.aborted || current !== session) return;
-          items.push(...page.items);
-          if (page.next_after && page.next_after === after)
-            throw new Error("The package list did not advance.");
-          after = page.next_after;
-        } while (after);
-        packages = items;
-      } else {
-        const [nextSources, nextNamespaces] = await Promise.all([
-          listBatesSources(current, signal),
-          listBatesNamespaces(current, signal),
-        ]);
-        if (signal.aborted || current !== session) return;
-        sources = nextSources;
-        namespaces = nextNamespaces;
-        sourceID = nextSources.find(eligible)?.package_id ?? "";
-        namespaceID = nextNamespaces[0]?.namespace_id ?? "";
-        restore();
+          sources = nextSources;
+          namespaces = nextNamespaces;
+          sourceID = nextSources.find(eligible)?.package_id ?? "";
+          namespaceID = nextNamespaces[0]?.namespace_id ?? "";
+          restore();
+        }
+      } catch (cause) {
+        if (signal.aborted || current !== session || aborted(cause)) return;
+        if (unauthorized(cause)) return;
+        error = message(cause);
       }
       try {
-        const items: BatesExport[] = [];
-        let after: string | undefined;
-        do {
-          const page = await listBatesExports(current, signal, after);
-          if (signal.aborted || current !== session) return;
-          items.push(...page.items);
-          if (page.next_after && page.next_after === after)
-            throw new Error("The export list did not advance.");
-          after = mode === "productions" ? page.next_after : undefined;
-        } while (after);
-        if (mode === "productions") {
-          const snapshots: Record<string, string> = {};
-          for (const item of items) {
-            const allocation = await readBatesAllocation(item.allocation_id, {
-              session: current,
-              signal,
-            });
-            snapshots[item.allocation_id] = allocation.snapshot_id;
-          }
-          const ranges: Record<string, string> = {};
-          for (const item of packages.filter(
-            (item) => !item.snapshot_id || !Object.values(snapshots).includes(item.snapshot_id),
-          )) {
-            const labels: string[] = [];
-            let after = 0;
-            do {
-              const page = await listPackageMembers(
-                item.package_id,
-                { limit: 250, after_ordinal: after },
-                { session: current, signal },
-              );
-              for (const member of page.items) {
-                const fields = JSON.parse(member.frozen_fields_json);
-                if (!Array.isArray(fields)) continue;
-                for (const field of fields) {
-                  if (
-                    [
-                      "loadfile.label.begin",
-                      "loadfile.label.end",
-                      "loadfile.label.assigned.begin",
-                      "loadfile.label.assigned.end",
-                    ].includes(field.canonical) &&
-                    field.raw
-                  )
-                    labels.push(field.raw);
-                }
-              }
-              if (page.next_after_ordinal && page.next_after_ordinal <= after)
-                throw new Error("The package members did not advance.");
-              after = page.next_after_ordinal ?? 0;
-            } while (after);
-            labels.sort();
-            ranges[item.package_id] = labels.length ? `${labels[0]}–${labels.at(-1)}` : "";
-          }
-          if (signal.aborted || current !== session) return;
-          exportSnapshots = snapshots;
-          packageRanges = ranges;
-        }
-        history = items;
+        await loadHistory(current, signal);
       } catch (cause) {
         if (!signal.aborted && current === session && !aborted(cause) && !unauthorized(cause))
           historyError = message(cause);
       }
-    } catch (cause) {
-      if (!signal.aborted && current === session) fail(cause);
     } finally {
       if (!signal.aborted && current === session) loading = false;
     }

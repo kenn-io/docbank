@@ -28,8 +28,7 @@ export function naturalSearchRequest(
   profile: ProcessingProfileSummary,
 ): NaturalSearchRequestMode | undefined {
   if (mode === "names") return undefined;
-  const bindingID = naturalQueryBindings(profile)[0];
-  return bindingID ? { mode: "hybrid", binding_id: bindingID } : { mode: "lexical" };
+  return { mode: "hybrid", binding_id: naturalQueryBindings(profile)[0] };
 }
 
 export function naturalSearchRerank(

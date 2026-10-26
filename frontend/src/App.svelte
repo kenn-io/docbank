@@ -11,6 +11,7 @@
   import ArrowLeftIcon from "@lucide/svelte/icons/arrow-left";
   import FileIcon from "@lucide/svelte/icons/file";
   import FolderIcon from "@lucide/svelte/icons/folder";
+  import HistoryIcon from "@lucide/svelte/icons/history";
   import FoldersIcon from "@lucide/svelte/icons/folders";
   import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
   import HouseIcon from "@lucide/svelte/icons/house";
@@ -3699,13 +3700,13 @@
           <button
             type="button"
             class="nav-item"
-            aria-label="Saved searches"
+            aria-label="Searches"
             onclick={() => {
               navOpen = false;
               openSavedQueries(false);
             }}
           >
-            <BookmarkIcon size="16" aria-hidden="true" />Saved searches
+            <BookmarkIcon size="16" aria-hidden="true" />Searches
           </button>
           {#if hasProductions}
             <button
@@ -3719,10 +3720,10 @@
           <button
             type="button"
             class="nav-item"
-            aria-label="Import history"
+            aria-label="Imports"
             onclick={() => openPanel({ kind: "collections" })}
           >
-            <FoldersIcon size="16" aria-hidden="true" />Import history
+            <HistoryIcon size="16" aria-hidden="true" />Imports
           </button>
           <button
             type="button"
@@ -4059,7 +4060,7 @@
         {:else if photoAccessError}<div class="photo-access-error">
             <p role="alert">{photoAccessError}</p>
             <Button onclick={() => void checkPhotoAccess?.()}>Retry</Button>
-          </div>{:else}<Spinner />
+          </div>{:else}<div class="photo-access-loading"><Spinner /></div>
         {/if}
       {:else}
         {#if queryURLError}<p class="error" role="alert">
@@ -5201,6 +5202,12 @@
   }
   .app-nav :global(.kit-tooltip-trigger) {
     width: 100%;
+  }
+  .photo-access-loading {
+    display: flex;
+    flex: 1;
+    align-items: center;
+    justify-content: center;
   }
   .photo-access-error {
     display: flex;

@@ -80,7 +80,7 @@
     {:else if !page?.items.length}
       <p class="empty">No provenance recorded</p>
     {:else}
-      <ol aria-label="Import history">
+      <ol aria-label="Imports">
         {#each page.items as fact (fact.identity)}
           <li>
             <div class="import-heading">

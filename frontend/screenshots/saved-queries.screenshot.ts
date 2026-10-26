@@ -51,7 +51,7 @@ test("saved queries and literal highlight management", async ({ page }) => {
       .getByRole("dialog", { name: "Filters and sort" })
       .getByRole("button", { name: "Save…" })
       .click();
-    const drawer = page.getByRole("dialog", { name: "Saved searches" });
+    const drawer = page.getByRole("dialog", { name: "Searches" });
     await expect(drawer).toBeVisible();
     await drawer.getByLabel("Definition name").fill("Unreviewed proposals");
     await drawer

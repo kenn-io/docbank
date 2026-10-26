@@ -44,8 +44,8 @@ test("complete query validation uses the real compiler without executing", async
     );
     await run("add", path.join(workspace, "manual.txt"), "--dest", "/");
     await page.goto(await run("web", "--no-browser"));
-    await page.getByRole("button", { name: "Import history", exact: true }).click();
-    const collections = page.getByRole("dialog", { name: "Import history" });
+    await page.getByRole("button", { name: "Imports", exact: true }).click();
+    const collections = page.getByRole("dialog", { name: "Imports" });
     await collections
       .getByRole("button", { name: /Browse import/ })
       .first()
@@ -73,7 +73,7 @@ test("complete query validation uses the real compiler without executing", async
     await expect(editor.getByLabel("Query syntax", { exact: true })).toBeFocused();
     await page.screenshot({ path: path.join(screenshots!, "web-query-error.png"), fullPage: true });
     await editor.getByRole("button", { name: "Save…" }).click();
-    const saved = page.getByRole("dialog", { name: "Saved searches" });
+    const saved = page.getByRole("dialog", { name: "Searches" });
     await saved.getByLabel("Definition name", { exact: true }).fill("Synthetic review");
     await saved.getByRole("button", { name: "Save as new", exact: true }).click();
     await expect(saved.getByText("Saved Synthetic review.", { exact: true })).toBeVisible();

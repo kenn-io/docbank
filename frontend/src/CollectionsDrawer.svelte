@@ -254,16 +254,11 @@
   }
 </script>
 
-<DrawerShell
-  title="Import history"
-  ariaLabel="Import history"
-  closeLabel="Close import history"
-  onclose={close}
->
+<DrawerShell title="Imports" ariaLabel="Imports" closeLabel="Close Imports" onclose={close}>
   {#snippet actions()}
     <IconButton
       size="sm"
-      ariaLabel="Refresh import history"
+      ariaLabel="Refresh imports"
       title="Refresh"
       disabled={loading}
       onclick={() => void refresh()}
@@ -422,7 +417,7 @@
       </section>
     {:else}
       {#if error}<p class="tool-error" role="alert">{error}</p>{/if}
-      <section class="tool-section" aria-label="Import history">
+      <section class="tool-section" aria-label="Imports">
         <ul class="tool-list">
           {#each items as collection (collection.id)}
             <li class="import-row">

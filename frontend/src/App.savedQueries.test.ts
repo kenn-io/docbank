@@ -66,9 +66,9 @@ it("restores a full query beside sign-in without running it as empty-text folder
     ),
   ).toBe(false);
   await fireEvent.keyDown(window, { key: "Escape" });
-  await fireEvent.click(screen.getByRole("button", { name: "Saved searches" }));
-  await screen.findByRole("dialog", { name: "Saved searches" });
-  await screen.findByText(/No saved searches/);
+  await fireEvent.click(screen.getByRole("button", { name: "Searches" }));
+  await screen.findByRole("dialog", { name: "Searches" });
+  await screen.findByText(/No searches/);
   await fireEvent.click(screen.getByRole("button", { name: "Close" }));
   expect(JSON.parse(new URLSearchParams(location.hash.slice(1)).get("query")!)).toEqual(query);
   expect(

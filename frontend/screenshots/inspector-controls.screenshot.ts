@@ -57,8 +57,8 @@ test("keeps inspector tabs stable and tag removal accessible", async ({ page }) 
       "solid",
     );
     await page.screenshot({ path: path.join(output!, "details-keyboard.png") });
-    await page.getByRole("button", { name: "Import history", exact: true }).click();
-    const imports = page.getByRole("dialog", { name: "Import history" });
+    await page.getByRole("button", { name: "Imports", exact: true }).click();
+    const imports = page.getByRole("dialog", { name: "Imports" });
     await imports
       .getByRole("button", { name: /Browse import/ })
       .first()

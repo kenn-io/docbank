@@ -93,7 +93,7 @@ it("opens URL intent and passes the entire edited query to Save without executin
     }),
   );
   await fireEvent.click(screen.getByRole("button", { name: "Save…" }));
-  await screen.findByRole("dialog", { name: "Saved searches" });
+  await screen.findByRole("dialog", { name: "Searches" });
   expect(screen.queryByRole("dialog", { name: "Filters and sort" })).toBeNull();
   await fireEvent.click(screen.getByText("Edit as JSON"));
   expect(
@@ -226,7 +226,7 @@ it("keeps a saved plain-words search's filters when the search text changes", as
     return new Response(JSON.stringify(value));
   });
   render(App);
-  await fireEvent.click(await screen.findByRole("button", { name: "Saved searches" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Searches" }));
   await fireEvent.click(await screen.findByRole("button", { name: "Run Invoices" }));
   await waitFor(() => expect(searches).toHaveLength(1));
   const search = await screen.findByRole("searchbox", { name: "Search documents" });

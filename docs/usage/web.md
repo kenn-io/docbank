@@ -49,7 +49,7 @@ Photos shows **Library**, **Map**, **Albums**, and your album list in the sideba
 Documents/Photos switches keep your place until the session locks. Leaving an album resets its view. Open Library at `/photos`, the
 album index at `/photos/albums`, or an album at `/photos/albums/{id}`. Map requires [tile configuration](../configuration.md#photo-map-tiles) and a restart. See [Browse photos](photos.md#browse-in-the-web-app).
 
-Use the sidebar for **All files**, **Saved searches**, **Import history**, and
+Use the sidebar for **All files**, **Searches**, **Imports**, and
 **Trash**. **Export** offers **Download files…**, **Search term report…**, and
 **Bates-numbered PDFs…**. **System** groups **Disk use**, **Running now**, **Backups**,
 **Protected folders**, and **Usage reporting**. On a narrow screen, **Open navigation** reveals the
@@ -156,8 +156,8 @@ validates each edited draft after a short pause. Errors appear beside the
 expression or filters. **Focus query error** selects the reported part of an
 expression. A newer edit cancels an older validation request.
 
-**Save…** opens a new definition in **Saved searches** with the entire draft.
-**Run** beside a saved search opens its results. From an import in **Import history**,
+**Save…** opens a new definition in **Searches** with the entire draft.
+**Run** beside a saved search opens its results. From an import in **Imports**,
 **Search this import** starts a draft scoped to that import.
 Escape, clicking outside, or toggling **Advanced** closes the modal. Edited
 drafts stay in the tab, with a dot on **Advanced**; reopening restores unfinished
@@ -471,7 +471,7 @@ count definitions, and expiry limits.
 
 ## Saved queries and highlights
 
-Open **Saved searches** in the sidebar to run, rename, or delete a saved search.
+Open **Searches** in the sidebar to run, rename, or delete a saved search.
 Create searches from **Advanced → Save…**. **Rename** opens the name and
 description fields; **Edit as JSON** reveals the complete definition. Choose
 **Save changes** to update it or **Save as new** to keep a copy. The list is
@@ -485,7 +485,7 @@ tab, or an expired or rejected session clears the draft and its URL fragment.
 Drafts do not carry over when you open a new session with `docbank web`. Save a
 named definition before reloading or leaving the session if you need it later.
 
-Saved searches retain the search definition. **Run** creates a new result set
+Searches retain the search definition. **Run** creates a new result set
 using current documents. Keeping or saving the draft alone does not run it or
 change the current live results. This browser run does not produce the durable
 saved-run receipt that the authenticated HTTP API exposes. Unknown fields are
@@ -992,7 +992,7 @@ path.
 
 ## Browse import history
 
-Choose **Import history** in the sidebar.
+Choose **Imports** in the sidebar.
 Each row shows its label or source folder name, import time, document count,
 and size. Select an import to see its source paths, each with a copy button,
 browse its current live members, and open a document by its node identity. Counts are

@@ -239,11 +239,11 @@ it.each(["package", "bates"] as const)("shows Productions when a %s set exists",
   expect(await screen.findByRole("button", { name: "Productions" })).toBeTruthy();
 });
 
-it("opens production sets from the sidebar between saved searches and import history", async () => {
+it("opens production sets from the sidebar between Searches and Imports", async () => {
   start("package");
   const production = await screen.findByRole("button", { name: "Productions" });
-  expect(production.previousElementSibling?.textContent).toContain("Saved searches");
-  expect(production.nextElementSibling?.textContent).toContain("Import history");
+  expect(production.previousElementSibling?.textContent).toContain("Searches");
+  expect(production.nextElementSibling?.textContent).toContain("Imports");
   await fireEvent.click(production);
   expect(await screen.findByRole("dialog", { name: "Productions" })).toBeTruthy();
   expect(await screen.findByText("Review set")).toBeTruthy();

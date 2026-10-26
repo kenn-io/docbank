@@ -262,7 +262,7 @@ trust_boundary = "local_process"
       await page.setViewportSize({ width, height: 960 });
       if (width === 400) {
         await page.getByRole("button", { name: "Open navigation" }).click();
-        for (const name of ["Recoverable trash", "System", "Saved searches"]) {
+        for (const name of ["Recoverable trash", "System", "Searches"]) {
           await expect(page.getByRole("button", { name, exact: true })).toBeVisible();
         }
         await page.getByRole("button", { name: "Close navigation" }).click();

@@ -911,7 +911,7 @@ trust_boundary = "local_process"
     await page.goto(webURL);
     await page.getByRole("button", { name: "Open navigation", exact: true }).click();
     await expect(page.getByRole("navigation", { name: "Docbank navigation" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Saved searches", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Searches", exact: true })).toBeVisible();
     await page.screenshot({
       path: screenshotPathFor("web-navigation-mobile.png"),
       animations: "disabled",

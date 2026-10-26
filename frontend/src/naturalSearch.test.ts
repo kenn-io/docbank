@@ -34,12 +34,6 @@ describe("natural search mapping", () => {
     ).toBe("beta");
   });
 
-  it("keeps Auto lexical when no embedding binding exists", () => {
-    const noBinding = profile("private", [], true);
-    expect(naturalSearchRequest("auto", noBinding)).toEqual({ mode: "lexical" });
-    expect(naturalSearchRerank(noBinding, "auto", true)).toBe(true);
-  });
-
   it("maps embedding-backed Auto to hybrid and omits rerank when off", () => {
     const withBinding = profile("private", ["embed"], true);
     expect(naturalSearchRequest("auto", withBinding)).toEqual({
@@ -53,7 +47,6 @@ describe("natural search mapping", () => {
     const directOnly = profile("direct", ["direct-file"], false, []);
     const mixed = profile("mixed", ["direct-file", "semantic"], false, ["semantic"]);
     expect(selectNaturalSearchProfile([directOnly, mixed])?.name).toBe("mixed");
-    expect(naturalSearchRequest("auto", directOnly)).toEqual({ mode: "lexical" });
     expect(naturalSearchRequest("auto", mixed)).toEqual({ mode: "hybrid", binding_id: "semantic" });
   });
 

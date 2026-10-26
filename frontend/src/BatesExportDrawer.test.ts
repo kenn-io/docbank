@@ -442,6 +442,7 @@ it("lists imported and exported production sets across every page without requir
               {
                 package_id: "first",
                 package_name: "Imported load file",
+                snapshot_id: "44444444-4444-4444-8444-444444444444",
                 direction: "received",
                 state: "partial",
                 page_count: 0,
@@ -452,17 +453,7 @@ it("lists imported and exported production sets across every page without requir
         limit: 250,
       });
     if (url.pathname.startsWith("/api/v1/packages/by-id/"))
-      return json({
-        items: [
-          {
-            frozen_fields_json: JSON.stringify([
-              { canonical: "loadfile.label.begin", raw: "EXT000001" },
-              { canonical: "loadfile.label.end", raw: "EXT000002" },
-            ]),
-          },
-        ],
-        limit: 250,
-      });
+      return json({ detail: "Browser sessions cannot read package members." }, 403);
     if (url.pathname.startsWith("/api/v1/bates/allocations/"))
       return json({ snapshot_id: snapshotID });
     if (url.pathname === "/api/v1/bates/exports")
@@ -483,7 +474,9 @@ it("lists imported and exported production sets across every page without requir
   expect(await screen.findByText("Exported images")).toBeTruthy();
   const list = screen.getByRole("list", { name: "Productions" });
   expect(within(list).getAllByRole("listitem")).toHaveLength(3);
-  expect(within(list).getAllByText("EXT000001–EXT000002")).toHaveLength(2);
+  expect(fetcher.mock.calls.map(([url]) => String(url))).not.toContainEqual(
+    expect.stringContaining("/members"),
+  );
   expect(within(list).getByText("Imported")).toBeTruthy();
   expect(within(list).getAllByText("Exported")).toHaveLength(2);
   expect(list.querySelectorAll("details[open]")).toHaveLength(0);
@@ -565,4 +558,32 @@ it("shows a package and its Bates export once with receipt actions inside the co
   expect(requests).toContain(`/api/v1/bates/exports/${receipt.allocation_id}/download`);
   await fireEvent.click(name);
   expect(row.querySelector("details")?.open).toBe(false);
+});
+
+it.each(["packages", "allocation"])("keeps loaded exports when %s fails", async (failure) => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = String(input);
+    if (url.startsWith("/api/v1/packages?"))
+      return failure === "packages"
+        ? json({ detail: "Package index unavailable." }, 503)
+        : json({ items: [], limit: 250 });
+    if (url === "/api/v1/bates/exports?limit=50") return json({ items: [earlier], total: 1 });
+    if (url.startsWith("/api/v1/bates/allocations/"))
+      return failure === "allocation"
+        ? json({ detail: "Allocation unavailable." }, 503)
+        : json({ snapshot_id: snapshotID });
+    throw new Error(`Unexpected request ${url}`);
+  });
+  render(BatesExportDrawer, {
+    mode: "productions",
+    session: "session",
+    onclose: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  expect(await screen.findByText("Bates export")).toBeTruthy();
+  expect(
+    await screen.findByText(
+      failure === "packages" ? "Package index unavailable." : /Allocation unavailable/,
+    ),
+  ).toBeTruthy();
 });

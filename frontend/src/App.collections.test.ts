@@ -139,8 +139,8 @@ it.each(["%2FArchive%2Freport.txt", "%2FArchive"])(
 
     render(App);
     await screen.findByText("Empty folder");
-    await fireEvent.click(screen.getByRole("button", { name: "Import history" }));
-    const drawer = await screen.findByRole("dialog", { name: "Import history" });
+    await fireEvent.click(screen.getByRole("button", { name: "Imports" }));
+    const drawer = await screen.findByRole("dialog", { name: "Imports" });
     await fireEvent.click(
       await within(drawer).findByRole("button", { name: "Browse import Discovery batch" }),
     );
@@ -149,12 +149,12 @@ it.each(["%2FArchive%2Freport.txt", "%2FArchive"])(
     );
 
     expect(await screen.findByRole("cell", { name: "report.txt" })).toBeTruthy();
-    expect(screen.queryByRole("dialog", { name: "Import history" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Imports" })).toBeNull();
     expect(screen.getByRole("heading", { name: "report.txt" })).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "first.txt" })).toBeNull();
 
-    await fireEvent.click(screen.getByRole("button", { name: "Import history" }));
-    const reopened = await screen.findByRole("dialog", { name: "Import history" });
+    await fireEvent.click(screen.getByRole("button", { name: "Imports" }));
+    const reopened = await screen.findByRole("dialog", { name: "Imports" });
     await fireEvent.click(
       await within(reopened).findByRole("button", { name: "Browse import Discovery batch" }),
     );
@@ -172,17 +172,15 @@ it.each(["%2FArchive%2Freport.txt", "%2FArchive"])(
     await fireEvent.click(
       within(reopened).getByRole("button", { name: "Open document /Archive/report.txt" }),
     );
-    await fireEvent.click(within(reopened).getByRole("button", { name: "Close import history" }));
+    await fireEvent.click(within(reopened).getByRole("button", { name: "Close Imports" }));
     resolveMemberRead(json(member));
-    await waitFor(() =>
-      expect(screen.queryByRole("dialog", { name: "Import history" })).toBeNull(),
-    );
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Imports" })).toBeNull());
     await Promise.resolve();
     expect(parentReads).toBe(1);
 
     deferMemberRead = false;
-    await fireEvent.click(screen.getByRole("button", { name: "Import history" }));
-    const expired = await screen.findByRole("dialog", { name: "Import history" });
+    await fireEvent.click(screen.getByRole("button", { name: "Imports" }));
+    const expired = await screen.findByRole("dialog", { name: "Imports" });
     await fireEvent.click(
       await within(expired).findByRole("button", { name: "Browse import Discovery batch" }),
     );
@@ -191,6 +189,6 @@ it.each(["%2FArchive%2Freport.txt", "%2FArchive"])(
       await within(expired).findByRole("button", { name: "Open document /Archive/report.txt" }),
     );
     expect(await screen.findByText("Open your Docbank")).toBeTruthy();
-    expect(screen.queryByRole("dialog", { name: "Import history" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Imports" })).toBeNull();
   },
 );

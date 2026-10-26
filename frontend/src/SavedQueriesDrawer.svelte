@@ -199,7 +199,7 @@
 </script>
 
 <DrawerShell
-  title="Saved searches"
+  title="Searches"
   onclose={() => {
     if (!pending) onclose();
   }}
@@ -211,7 +211,7 @@
     >
     <IconButton
       size="sm"
-      ariaLabel="Refresh saved searches"
+      ariaLabel="Refresh searches"
       title="Refresh"
       disabled={pending || loading}
       onclick={() => void refresh()}><RefreshCwIcon size="14" aria-hidden="true" /></IconButton
@@ -394,7 +394,7 @@
             {/each}
           </ul>
         {:else if !loading}<p class="tool-muted">
-            No saved searches yet. Save one from Advanced → Save….
+            No searches yet. Save one from Advanced → Save….
           </p>{/if}
         {#if total > 100}<div class="tool-actions">
             <span class="tool-muted">{offset + 1}–{offset + items.length} of {total}</span>
