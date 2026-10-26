@@ -3,6 +3,7 @@
   import { onMount } from "svelte";
   import ShieldCheckIcon from "@lucide/svelte/icons/shield-check";
   import DrawerShell from "./DrawerShell.svelte";
+  import CopyValue from "./CopyValue.svelte";
   import {
     Button,
     Card,
@@ -415,7 +416,7 @@
           </div>{/if}
         {#if state.ingest_id}<div>
             <dt>Ingest</dt>
-            <dd><code>{state.ingest_id}</code></dd>
+            <dd><CopyValue value={state.ingest_id} label="ingest ID" /></dd>
           </div>{/if}
         {#if state.original_path !== undefined}
           <div>
@@ -573,6 +574,11 @@
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: var(--space-3);
+  }
+
+  .attachment-states dl > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-2);
   }
 
   @media (max-width: 760px) {
