@@ -28,6 +28,37 @@ function jobsResponse(
 }
 
 describe("background jobs drawer", () => {
+  it("shows Nothing running when a paused lane has only queued work", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jobsResponse(
+        [
+          {
+            name: "storage:queued",
+            lane: "photo_import",
+            status: "queued",
+            busy: false,
+            started_at: "2026-07-23T12:00:00Z",
+          },
+        ],
+        [
+          {
+            lane: "photo_import",
+            paused: true,
+            concurrency: 1,
+            revision: 1,
+            can_set_concurrency: false,
+          },
+        ],
+      ),
+    );
+    render(JobsDrawer, { session: "synthetic", onclose: vi.fn(), onauthfailure: vi.fn() });
+    expect(await screen.findByText("Nothing running")).toBeTruthy();
+    expect(screen.queryByRole("region")).toBeNull();
+    const workers = screen.getByRole("table", { name: "All workers" });
+    expect(within(workers).getByRole("row", { name: /Importing photos Paused/ })).toBeTruthy();
+    expect(within(workers).getByRole("button", { name: "Resume Importing photos" })).toBeTruthy();
+  });
+
   it("lists every worker below the running work and pauses idle ones", async () => {
     let paused = false;
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, options) => {
@@ -617,7 +648,7 @@ it("shows current running work ahead of a retained failure in the same lane", as
   expect(screen.getByRole("row", { name: "Moving stored files Running" })).toBeTruthy();
 });
 
-it("labels queued work separately and counts only busy lanes as running", async () => {
+it("labels queued work in All workers and counts only busy lanes as running", async () => {
   vi.spyOn(globalThis, "fetch").mockResolvedValue(
     jobsResponse([
       {
@@ -637,7 +668,8 @@ it("labels queued work separately and counts only busy lanes as running", async 
     ]),
   );
   render(JobsDrawer, { session: "synthetic", onclose: vi.fn(), onauthfailure: vi.fn() });
-  const queued = await screen.findByRole("region", { name: "Importing photos" });
-  expect(within(queued).getByText("Queued")).toBeTruthy();
+  const workers = await screen.findByRole("table", { name: "All workers" });
+  expect(within(workers).getByRole("row", { name: "Importing photos Queued" })).toBeTruthy();
+  expect(screen.queryByRole("region", { name: "Importing photos" })).toBeNull();
   expect(screen.getByText("1 running")).toBeTruthy();
 });

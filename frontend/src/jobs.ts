@@ -85,7 +85,7 @@ export function jobLanes(jobs: Job[], controls: LaneControl[] = []) {
         : undefined,
       active: members.some(activeJob),
       failed,
-      visible: active.length > 0,
+      visible: members.some(activeJob),
     };
   }).sort((a, b) => a.lane.localeCompare(b.lane));
 }
