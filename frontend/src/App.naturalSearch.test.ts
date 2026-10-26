@@ -268,7 +268,7 @@ function installHarness(options: HarnessOptions) {
               reject(new DOMException("Aborted", "AbortError")),
             ),
           );
-        if (options.rerankPending) return rerankPending;
+        if (options.rerankPending) return rerankPending.then((response) => response.clone());
         return json(options.rerankReport ?? options.baseReport);
       }
       baseCalls += 1;
@@ -1496,3 +1496,79 @@ it("keeps the applied search text when Advanced is cancelled", async () => {
     (screen.getByRole("searchbox", { name: "Search documents" }) as HTMLInputElement).value,
   ).toBe("annual report");
 });
+
+it.each([
+  ["Advanced", false],
+  ["top bar", false],
+  ["Advanced", true],
+  ["top bar", true],
+])(
+  "keeps table sorting after %s submits a sorted search, superseded=%s",
+  async (submission, superseded) => {
+    const small = { ...node(2, "small.txt", baseVersion), size: 10 };
+    const large = { ...node(3, "large.txt", rerankedVersion), size: 500 };
+    const harness = installHarness({
+      profiles: [
+        {
+          name: "private",
+          fingerprint: "a".repeat(64),
+          rendition: true,
+          embedding_bindings: ["embed"],
+          reranking_available: true,
+        },
+      ],
+      files: [small, large],
+      baseReport: report("hybrid", [
+        result(small, 1, "small excerpt"),
+        result(large, 2, "large excerpt"),
+      ]),
+      rerankPending: true,
+    });
+    render(App);
+    await submitSearch("first search");
+    await screen.findByText("small excerpt");
+    await fireEvent.click(screen.getByRole("checkbox", { name: "Rerank results" }));
+    await fireEvent.input(screen.getByRole("searchbox", { name: "Search documents" }), {
+      target: { value: "second search" },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+    await fireEvent.click(screen.getByRole("combobox", { name: /^Sort by:/ }));
+    await fireEvent.click(screen.getByRole("option", { name: "Size" }));
+    await fireEvent.click(screen.getByRole("combobox", { name: "Direction: Ascending" }));
+    await fireEvent.click(screen.getByRole("option", { name: "Descending" }));
+    if (submission === "Advanced")
+      await fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    else {
+      await fireEvent.keyDown(window, { key: "Escape" });
+      await fireEvent.submit(
+        screen.getByRole("searchbox", { name: "Search documents" }).closest("form")!,
+      );
+    }
+    await waitFor(() =>
+      expect(harness.postBodies.at(-1)).toMatchObject({ query: "second search", rerank: true }),
+    );
+    expect(screen.getByRole("columnheader", { name: "Size" }).getAttribute("aria-sort")).toBe(
+      "descending",
+    );
+    if (superseded) {
+      await submitSearch("newer search");
+      await waitFor(() =>
+        expect(harness.postBodies.at(-1)).toMatchObject({ query: "newer search", rerank: true }),
+      );
+    }
+    await fireEvent.click(screen.getByRole("button", { name: "Document" }));
+    harness.resolveRerank(
+      json(
+        report(
+          "hybrid",
+          [result(small, 1, "reranked excerpt"), result(large, 2, "large excerpt")],
+          { outcome: "applied", candidate_count: 2 },
+        ),
+      ),
+    );
+    await screen.findByText("reranked excerpt");
+    expect(screen.getByRole("columnheader", { name: "Document" }).getAttribute("aria-sort")).toBe(
+      "ascending",
+    );
+  },
+);

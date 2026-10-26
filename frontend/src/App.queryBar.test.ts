@@ -42,6 +42,15 @@ function start(withQuery = true) {
   });
   const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
+    if (url === "/api/v1/workspace/queries")
+      return new Response(
+        JSON.stringify(
+          await snapshotEnvelope(
+            parseQuery(JSON.stringify(JSON.parse(String(init?.body)).query)),
+            [],
+          ),
+        ),
+      );
     if (url === "/api/v1/queries/parse")
       return new Response(
         JSON.stringify({
@@ -86,7 +95,21 @@ it("opens URL intent and passes the entire edited query to Save without executin
   expect((screen.getByLabelText("Query syntax") as HTMLTextAreaElement).value).toBe(
     "NOT tag:missing",
   );
-  expect(fetch.mock.calls.some(([url]) => String(url).startsWith("/api/v1/search"))).toBe(false);
+  expect(
+    fetch.mock.calls.some(
+      ([url, init]) =>
+        String(url).startsWith("/api/v1/search") ||
+        (String(url) === "/api/v1/workspace/queries" && init?.method === "POST"),
+    ),
+  ).toBe(false);
+  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  await waitFor(() =>
+    expect(
+      fetch.mock.calls.filter(
+        ([url, init]) => String(url) === "/api/v1/workspace/queries" && init?.method === "POST",
+      ),
+    ).toHaveLength(1),
+  );
 });
 
 it("retains unfinished edits on Escape, then discards them with Cancel", async () => {

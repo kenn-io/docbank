@@ -1086,3 +1086,121 @@ it("resolves referenced import names when paging interrupts a pending read", asy
     fetch.mock.calls.filter(([url]) => String(url).startsWith("/api/v1/collections?")),
   ).toHaveLength(0);
 });
+
+it("keeps a tagged snapshot and its selection when the inspector removes the active tag", async () => {
+  history.replaceState(null, "", "/#web_session=synthetic&web_upload_secret=proof");
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  Object.defineProperty(Element.prototype, "scrollIntoView", {
+    configurable: true,
+    value: vi.fn(),
+  });
+  const frozen = row(1);
+  const tag = { ...frozen.tags[0], assignment_count: 1 };
+  const root = { id: 1000, name: "", kind: "dir", path: "/", revision: 1, size: 0 };
+  const live = {
+    ...root,
+    id: 1,
+    parent_id: 1000,
+    kind: "file",
+    name: frozen.name,
+    path: frozen.path,
+    revision: 3,
+    current_version_id: frozen.content_version_id,
+    blob_hash: frozen.blob_hash,
+    size: frozen.size,
+    mime_type: frozen.mime_type,
+  };
+  const json = (value: unknown) => new Response(JSON.stringify(value));
+  const requests: string[] = [];
+  let removed = false;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    requests.push(url);
+    if (url.includes("/path?")) return json(root);
+    if (url.includes("/children?"))
+      return json({ directory: root, items: [], total: 0, limit: 1000, offset: 0 });
+    if (url.startsWith("/api/v1/tags?"))
+      return json({ items: [tag], total: 1, limit: 1000, offset: 0 });
+    if (url.startsWith(`/api/v1/tags/${tag.id}/nodes?`))
+      return json({
+        items: [{ node: live, path: live.path }],
+        total: 1,
+        limit: 1000,
+        offset: 0,
+        omitted_trashed: 0,
+      });
+    if (url === "/api/v1/workspace/queries")
+      return json(snapshot(JSON.parse(String(init?.body)).query, [frozen], {}, 1));
+    if (url === "/api/v1/nodes/1") return json({ ...live, revision: removed ? 4 : 3 });
+    if (url.startsWith("/api/v1/nodes/1/tags?"))
+      return json({ items: removed ? [] : [tag], total: removed ? 0 : 1, limit: 1000, offset: 0 });
+    if (url === `/api/v1/nodes/1/tags/${tag.id}` && init?.method === "DELETE") {
+      removed = true;
+      return json({
+        node: { ...live, revision: 4 },
+        tag: { ...tag, revision: 3, assignment_count: 0 },
+        changed: true,
+      });
+    }
+    if (url.startsWith("/api/v1/audit/status?")) return json({ enabled: false, scopes: [] });
+    if (url === "/api/v1/queries/parse") {
+      const query = JSON.parse(String(init?.body));
+      return json({
+        query,
+        query_fingerprint: `sha256:${createHash("sha256").update(canonicalQuery(query)).digest("hex")}`,
+        dependencies: [],
+      });
+    }
+    return json({ items: [], total: 0, limit: 1000, offset: 0 });
+  });
+  render(App);
+  await waitFor(() =>
+    expect(
+      (
+        screen.getByRole("combobox", {
+          name: "Browse or filter by tag: All tags",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false),
+  );
+  await fireEvent.click(
+    await screen.findByRole("combobox", { name: "Browse or filter by tag: All tags" }),
+  );
+  await fireEvent.click(await screen.findByRole("option", { name: "frozen (1)" }));
+  await screen.findByText("Documents tagged");
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  await screen.findByRole("region", { name: "Frozen query results" });
+  await fireEvent.click(screen.getByRole("checkbox", { name: `Select ${frozen.path}` }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Manage" }));
+  const before = requests.length;
+  await fireEvent.click(await screen.findByRole("button", { name: "Remove tag frozen" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: "Remove tag frozen" })).toBeNull(),
+  );
+  expect(screen.getByRole("region", { name: "Frozen query results" })).toBeTruthy();
+  expect(screen.getByText("1 selected")).toBeTruthy();
+  expect(screen.getByRole("region", { name: "Saved tags" }).textContent).toContain("frozen");
+  expect(
+    within(screen.getByRole("region", { name: "Current details" })).queryByRole("group", {
+      name: "Current tags",
+    }),
+  ).toBeNull();
+  expect(
+    requests
+      .slice(before)
+      .some(
+        (url) =>
+          url.includes(`/tags/${tag.id}/nodes`) ||
+          url.startsWith("/api/v1/search") ||
+          url === "/api/v1/workspace/queries",
+      ),
+  ).toBe(false);
+});

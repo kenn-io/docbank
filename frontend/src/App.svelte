@@ -1941,6 +1941,7 @@
     preferredSelectedID = selectedID,
     queryOverride?: string,
     submitted = false,
+    requestedSort?: Query["sort"],
   ): Promise<{ type: string; empty: boolean } | undefined> {
     invalidateTagHotkeyMutation();
     leaveSnapshotMode();
@@ -1982,6 +1983,7 @@
           controller.signal,
         );
         accepted = !!outcome;
+        if (accepted && request === generation && requestedSort) applyResultSort(requestedSort);
         return outcome;
       }
       const mapped = naturalSearchRequest(mode, profile);
@@ -1995,6 +1997,7 @@
       if (resolution.fence.content_version_ids.length === 0) {
         applySearchRows([], query, requestedTagID, false, preferredSelectedID, refreshing);
         accepted = true;
+        if (requestedSort) applyResultSort(requestedSort);
         naturalSearchNote = "No documents match the current filter.";
         loading = false;
         // No search ran, so there is no search_run; a submission still counts as an empty search.
@@ -2038,6 +2041,7 @@
         refreshing,
       );
       accepted = true;
+      if (requestedSort) applyResultSort(requestedSort);
       naturalSearchNote =
         baseReport.degradations.length > 0
           ? `Search note: ${baseReport.degradations.join(", ")}`
@@ -2137,6 +2141,7 @@
             note,
           );
           accepted = !!outcome;
+          if (accepted && request === generation && requestedSort) applyResultSort(requestedSort);
           return outcome;
         } catch (fallbackCause) {
           if (request === generation && session === webSession && !controller.signal.aborted) {
@@ -2398,8 +2403,7 @@
     }
     closeQueryDraft();
     naturalSearchMode = naturalProfile ? "auto" : "names";
-    const outcome = await runSearch(undefined, undefined, true);
-    if (sortOnly) applyResultSort(sortOnly);
+    const outcome = await runSearch(undefined, undefined, true, sortOnly);
     if (outcome) reportSearch(webSession, outcome.type, outcome.empty);
   }
 
@@ -2427,8 +2431,7 @@
     closeQueryDraft();
     searchQuery = query.text;
     naturalSearchMode = "auto";
-    const outcome = await runSearch(undefined, undefined, true);
-    applyResultSort(query.sort);
+    const outcome = await runSearch(undefined, undefined, true, query.sort);
     if (outcome) reportSearch(webSession, outcome.type, outcome.empty);
   }
 
@@ -3195,7 +3198,7 @@
       }
     }
     tagCatalog = tagCatalog.map((tag) => (tag.id === receipt.tag.id ? receipt.tag : tag));
-    if (activeTagID === receipt.tag.id) {
+    if (!snapshotActive && activeTagID === receipt.tag.id) {
       if (assigned) {
         const target = manageTagsTarget;
         if (target && !rows.some((row) => row.node.id === receipt.node.id)) {

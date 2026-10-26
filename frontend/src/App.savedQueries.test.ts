@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
-import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import App from "./App.svelte";
 import { root } from "./version-test-fixtures.js";
 
@@ -59,14 +59,24 @@ it("restores a full query beside sign-in without running it as empty-text folder
   render(App);
   await screen.findByRole("dialog", { name: "Filters and sort" });
   expect(JSON.parse(new URLSearchParams(location.hash.slice(1)).get("query")!)).toEqual(query);
-  expect(fetch.mock.calls.some(([url]) => String(url).includes("/search"))).toBe(false);
+  expect(
+    fetch.mock.calls.some(
+      ([url]) =>
+        String(url).startsWith("/api/v1/search") || String(url) === "/api/v1/workspace/queries",
+    ),
+  ).toBe(false);
   await fireEvent.keyDown(window, { key: "Escape" });
   await fireEvent.click(screen.getByRole("button", { name: "Saved searches" }));
   await screen.findByRole("dialog", { name: "Saved searches" });
   await screen.findByText(/No saved searches/);
   await fireEvent.click(screen.getByRole("button", { name: "Close" }));
   expect(JSON.parse(new URLSearchParams(location.hash.slice(1)).get("query")!)).toEqual(query);
-  expect(fetch.mock.calls.some(([url]) => String(url).includes("/search"))).toBe(false);
+  expect(
+    fetch.mock.calls.some(
+      ([url]) =>
+        String(url).startsWith("/api/v1/search") || String(url) === "/api/v1/workspace/queries",
+    ),
+  ).toBe(false);
 
   await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
   await fireEvent.click(screen.getByRole("button", { name: "Save…" }));
@@ -94,6 +104,12 @@ it("restores a full query beside sign-in without running it as empty-text folder
   });
   await fireEvent.click(screen.getByRole("button", { name: "Keep query draft" }));
   expect((await screen.findByRole("alert")).textContent).toContain("8192");
+  expect(
+    fetch.mock.calls.some(
+      ([url]) =>
+        String(url).startsWith("/api/v1/search") || String(url) === "/api/v1/workspace/queries",
+    ),
+  ).toBe(false);
   await fireEvent.click(screen.getByRole("button", { name: "New highlight list" }));
   expect(screen.getByLabelText("Term 1")).toBeTruthy();
   await fireEvent.click(screen.getByRole("button", { name: "Close" }));
@@ -110,6 +126,22 @@ it("restores a full query beside sign-in without running it as empty-text folder
   expect(
     JSON.parse((screen.getByLabelText("Complete query JSON") as HTMLTextAreaElement).value).sort,
   ).toEqual({ field: "name", direction: "asc" });
+  expect(
+    fetch.mock.calls.some(
+      ([url]) =>
+        String(url).startsWith("/api/v1/search") || String(url) === "/api/v1/workspace/queries",
+    ),
+  ).toBe(false);
+  await fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  await waitFor(() =>
+    expect(
+      fetch.mock.calls.filter(
+        ([url, init]) => String(url) === "/api/v1/workspace/queries" && init?.method === "POST",
+      ),
+    ).toHaveLength(1),
+  );
 });
 
 it("shows malformed query fragments on the sign-in screen", async () => {

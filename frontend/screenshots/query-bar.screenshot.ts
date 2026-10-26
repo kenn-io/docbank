@@ -27,6 +27,15 @@ test("complete query validation uses the real compiler without executing", async
         },
       )
     ).stdout.trim();
+  const searches: string[] = [];
+  page.on("request", (request) => {
+    const pathname = new URL(request.url()).pathname;
+    if (
+      pathname === "/api/v1/search" ||
+      (pathname === "/api/v1/workspace/queries" && request.method() === "POST")
+    )
+      searches.push(request.url());
+  });
   try {
     await writeFile(
       path.join(workspace, "manual.txt"),
@@ -48,10 +57,6 @@ test("complete query validation uses the real compiler without executing", async
       new URLSearchParams(new URL(page.url()).hash.slice(1)).get("query")!,
     );
     expect(initial.filters.collection_ids).toHaveLength(1);
-    const searches: string[] = [];
-    page.on("request", (request) => {
-      if (new URL(request.url()).pathname === "/api/v1/search") searches.push(request.url());
-    });
     // Syntax lives in the top bar, so close the editor, switch it, and reopen.
     await page.keyboard.press("Escape");
     await expect(editor).toBeHidden();
@@ -72,6 +77,7 @@ test("complete query validation uses the real compiler without executing", async
     await saved.getByLabel("Definition name", { exact: true }).fill("Synthetic review");
     await saved.getByRole("button", { name: "Save as new", exact: true }).click();
     await expect(saved.getByText("Saved Synthetic review.", { exact: true })).toBeVisible();
+    expect(searches).toEqual([]);
     await saved.getByRole("button", { name: "Run Synthetic review" }).click();
     await expect(saved).toBeHidden();
     const retained = JSON.parse(
@@ -79,7 +85,8 @@ test("complete query validation uses the real compiler without executing", async
     );
     expect(retained.text).toBe("NOT tag:missing-tag");
     expect(retained.filters).toEqual(initial.filters);
-    expect(searches).toEqual([]);
+    await expect.poll(() => searches.length).toBe(1);
+    expect(new URL(searches[0]).pathname).toBe("/api/v1/workspace/queries");
   } finally {
     await run("daemon", "stop");
     const status = JSON.parse(await run("daemon", "status", "--json"));
