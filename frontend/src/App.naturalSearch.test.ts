@@ -1415,6 +1415,67 @@ it("sorts a meaning search from Advanced without turning it into a lexical snaps
   ).toBe("annual report");
 });
 
+it("runs the text edited in the top bar when Advanced sorts a meaning search", async () => {
+  const file = node(2, "report.txt", baseVersion);
+  const harness = installHarness({
+    profiles: [
+      {
+        name: "private",
+        fingerprint: "a".repeat(64),
+        rendition: true,
+        embedding_bindings: ["embed"],
+        reranking_available: false,
+      },
+    ],
+    files: [file],
+    baseReport: report("hybrid", [result(file, 1, "report excerpt")]),
+  });
+  render(App);
+  await submitSearch("annual report");
+  await screen.findByText("report excerpt");
+  await fireEvent.input(screen.getByRole("searchbox", { name: "Search documents" }), {
+    target: { value: "invoice" },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  await fireEvent.click(screen.getByRole("combobox", { name: "Sort by: Path" }));
+  await fireEvent.click(screen.getByRole("option", { name: "Size" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  await waitFor(() =>
+    expect(harness.postBodies.at(-1)).toMatchObject({ mode: "hybrid", query: "invoice" }),
+  );
+  expect(
+    (screen.getByRole("searchbox", { name: "Search documents" }) as HTMLInputElement).value,
+  ).toBe("invoice");
+});
+
+it("runs Advanced with the page size it was given instead of the ranked search", async () => {
+  const file = node(2, "report.txt", baseVersion);
+  const harness = installHarness({
+    profiles: [
+      {
+        name: "private",
+        fingerprint: "a".repeat(64),
+        rendition: true,
+        embedding_bindings: ["embed"],
+        reranking_available: false,
+      },
+    ],
+    files: [file],
+    baseReport: report("hybrid", [result(file, 1, "report excerpt")]),
+  });
+  render(App);
+  await submitSearch("annual report");
+  await screen.findByText("report excerpt");
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  await fireEvent.click(screen.getByRole("combobox", { name: "Documents per page: 100" }));
+  await fireEvent.click(screen.getByRole("option", { name: "250" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  const snapshotCall = () =>
+    harness.fetchMock.mock.calls.find(([url]) => String(url) === "/api/v1/workspace/queries");
+  await waitFor(() => expect(snapshotCall()).toBeTruthy());
+  expect(JSON.parse(String(snapshotCall()?.[1]?.body))).toMatchObject({ page_size: 250 });
+});
+
 it("keeps the applied search text when Advanced is cancelled", async () => {
   installHarness({ profiles: [], files: [], baseReport: report("lexical", []) });
   render(App);

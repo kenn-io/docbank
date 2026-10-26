@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { provenanceSourceLabel } from "./provenanceLabel.js";
   import { untrack } from "svelte";
   import { Button, Spinner } from "@kenn-io/kit-ui";
   import * as api from "./generated/docbank.js";
@@ -42,7 +43,7 @@
       ...imports.map((fact) => ({
         id: `import:${fact.identity}`,
         date: fact.ingest_started_at,
-        label: sourceLabel(fact.source_kind),
+        label: provenanceSourceLabel(fact.source_kind),
         path: fact.original_path,
       })),
     ]
@@ -78,28 +79,6 @@
     });
     return () => controller.abort();
   });
-
-  function sourceLabel(kind: string): string {
-    switch (kind) {
-      case "cli":
-        return "Added from command line";
-      case "upload":
-      case "web":
-        return "Uploaded in browser";
-      case "mail":
-      case "mailbox":
-      case "msgvault":
-        return "Imported from mailbox";
-      case "watch":
-        return "Added from watched folder";
-      case "filesystem":
-        return "Added from folder";
-      case "photo-import":
-        return "Imported photos";
-      default:
-        return "Imported document";
-    }
-  }
 </script>
 
 <section class="history" aria-label="History">

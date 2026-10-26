@@ -2395,6 +2395,7 @@
       naturalProfile &&
       queryDraftChanged &&
       !queryDraftSettings?.invalid &&
+      naturalOptionsKept(queryDraftSettings?.options) &&
       isSortOnly(draft)
         ? draft.sort
         : undefined;
@@ -2425,6 +2426,40 @@
       canonicalQuery({ ...query, text: ordinary.text, sort: ordinary.sort }) ===
       canonicalQuery(ordinary)
     );
+  }
+
+  // Advanced would run exactly what the ranked search already runs, apart from its text and order.
+  function keepsNaturalSearch(query: Query, options: SnapshotOptions): boolean {
+    return !!(
+      !snapshotActive &&
+      activeQuery &&
+      naturalSearchMode !== "names" &&
+      naturalProfile &&
+      searchSyntax === "simple" &&
+      isSortOnly(query) &&
+      naturalOptionsKept(options)
+    );
+  }
+
+  // The ranked search always asks for 100 results from its own profile.
+  function naturalOptionsKept(options?: SnapshotOptions): boolean {
+    return (
+      (options?.page_size ?? 100) === 100 &&
+      (!options?.profile || options.profile === naturalProfile?.name)
+    );
+  }
+
+  async function runNaturalSearchSorted(query: Query): Promise<void> {
+    if (query.text === activeQuery) {
+      applyResultSort(query.sort);
+      discardQueryDraft();
+      return;
+    }
+    closeQueryDraft();
+    searchQuery = query.text;
+    const outcome = await runSearch(undefined, undefined, true);
+    applyResultSort(query.sort);
+    if (outcome) reportSearch(webSession, outcome.type, outcome.empty);
   }
 
   function applyResultSort(sort: Query["sort"]): void {
@@ -4022,16 +4057,8 @@
                 queryDraftSettings = settings;
               }}
               onrun={(query, options) => {
-                if (
-                  !snapshotActive &&
-                  activeQuery &&
-                  naturalSearchMode !== "names" &&
-                  naturalProfile &&
-                  searchSyntax === "simple" &&
-                  isSortOnly(query)
-                ) {
-                  applyResultSort(query.sort);
-                  discardQueryDraft();
+                if (keepsNaturalSearch(query, options)) {
+                  void runNaturalSearchSorted(query);
                   return;
                 }
                 querySettingsApplied = true;

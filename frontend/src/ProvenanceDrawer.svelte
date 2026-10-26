@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { provenanceSourceLabel } from "./provenanceLabel.js";
   import * as generated from "./generated/docbank.js";
   import { onMount } from "svelte";
   import { Chip, Spinner } from "@kenn-io/kit-ui";
@@ -66,28 +67,6 @@
   function sourceReferences(fact: ProvenanceFact): string[] {
     return sourcePaths(fact).filter((value) => value !== fact.original_path);
   }
-
-  function sourceLabel(fact: ProvenanceFact): string {
-    switch (fact.source_kind) {
-      case "cli":
-        return "Added from command line";
-      case "upload":
-      case "web":
-        return "Uploaded in browser";
-      case "mail":
-      case "mailbox":
-      case "msgvault":
-        return "Imported from mailbox";
-      case "watch":
-        return "Added from watched folder";
-      case "filesystem":
-        return "Added from folder";
-      case "photo-import":
-        return "Imported photos";
-      default:
-        return "Imported document";
-    }
-  }
 </script>
 
 <DrawerShell
@@ -110,7 +89,7 @@
         {#each page.items as fact (fact.identity)}
           <li>
             <div class="import-heading">
-              <strong>{sourceLabel(fact)}</strong>
+              <strong>{provenanceSourceLabel(fact.source_kind)}</strong>
               {#if !fact.active}<Chip size="xs" tone="muted">Superseded</Chip>{/if}
             </div>
             <CopyValue value={fact.original_path} label="source path" />

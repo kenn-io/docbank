@@ -1,6 +1,5 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
-import * as api from "./generated/docbank.js";
+import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import DocumentInspector from "./DocumentInspector.svelte";
 import type { Node } from "./generated/docbank.js";
 
@@ -20,23 +19,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it("offers text extraction only after a configured rendition profile accepts the selected version", async () => {
-  const eligiblePlan: api.ProcessingPlan = {
-    selector: { node_id: 42, content_version_id: "version-1", profile: "Text" },
-    fingerprint: "a".repeat(64),
-    profile_fingerprint: "b".repeat(64),
-    vault_uid: "test-vault",
-    backup_consequence: "",
-    consent_required: false,
-    consent_state: "active",
-    disclosed_classes: [],
-    retained_classes: [],
-    flow: [],
-    estimate: { provider_calls: 1, source_bytes: 64, vector_spaces: 0 },
-  };
-  const plan = vi
-    .spyOn(api, "planDocumentProcessing")
-    .mockResolvedValue({ ...eligiblePlan, rendition_ineligible_reason: "Unsupported media type" });
+it("offers text extraction only when a rendition profile is configured", async () => {
   const onprocess = vi.fn();
   const file = {
     ...folder,
@@ -68,21 +51,8 @@ it("offers text extraction only after a configured rendition profile accepts the
   const view = render(DocumentInspector, props);
   expect(screen.getByText("Plain text · 64 B")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Extract text" })).toBeNull();
-  expect(plan).not.toHaveBeenCalled();
   await view.rerender({ ...props, profiles: [profile] });
-  await waitFor(() => expect(plan).toHaveBeenCalledOnce());
-  expect(screen.queryByRole("button", { name: "Extract text" })).toBeNull();
-  plan.mockResolvedValue(eligiblePlan);
-  await view.rerender({
-    ...props,
-    profiles: [profile],
-    node: { ...file, current_version_id: "version-2" },
-  });
   await fireEvent.click(await screen.findByRole("button", { name: "Extract text" }));
-  expect(plan).toHaveBeenLastCalledWith(
-    { selector: { node_id: 42, content_version_id: "version-2", profile: "Text" } },
-    { session: "test-session", signal: expect.any(AbortSignal) },
-  );
   expect(onprocess).toHaveBeenCalledOnce();
 });
 

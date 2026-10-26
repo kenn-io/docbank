@@ -3129,7 +3129,6 @@ it("refuses draft navigation until Clear edits releases it", async () => {
   await screen.findByRole("button", { name: "Open Photo 1.jpg" });
   await fireEvent.click(screen.getByRole("button", { name: "Open Photo 1.jpg" }));
   const viewer = await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
-  await fireEvent.click(within(viewer).getByRole("button", { name: "Metadata" }));
   const caption = await within(viewer).findByRole("textbox", { name: "Caption" });
   await waitFor(() => expect(caption.hasAttribute("disabled")).toBe(false));
   await fireEvent.input(caption, { target: { value: "Keep my caption" } });
@@ -3243,7 +3242,6 @@ it("closes the viewer to the grid after refusing a typed photo hash", async () =
   render(App);
   await fireEvent.click(await screen.findByRole("button", { name: "Open Photo 1.jpg" }));
   const viewer = await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
-  await fireEvent.click(within(viewer).getByRole("button", { name: "Metadata" }));
   const caption = await within(viewer).findByRole("textbox", { name: "Caption" });
   await waitFor(() => expect(caption.hasAttribute("disabled")).toBe(false));
   await fireEvent.input(caption, { target: { value: "Draft caption" } });
@@ -3841,7 +3839,6 @@ it("keeps a Hidden viewer's return point while a status failure refuses to close
   await fireEvent.click(screen.getByRole("button", { name: "Hidden" }));
   await fireEvent.click(await screen.findByRole("button", { name: "Open Photo 1.jpg" }));
   const viewer = await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
-  await fireEvent.click(within(viewer).getByRole("button", { name: "Metadata" }));
   const caption = await within(viewer).findByRole("textbox", { name: "Caption" });
   await waitFor(() => expect(caption.hasAttribute("disabled")).toBe(false));
   await fireEvent.input(caption, { target: { value: "Retained Hidden caption" } });
@@ -3851,8 +3848,6 @@ it("keeps a Hidden viewer's return point while a status failure refuses to close
   unavailable = false;
   await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   const restored = await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
-  if (!within(restored).queryByRole("button", { name: "Clear edits" }))
-    await fireEvent.click(within(restored).getByRole("button", { name: "Metadata" }));
   await fireEvent.click(await within(restored).findByRole("button", { name: "Clear edits" }));
   await fireEvent.keyDown(restored, { key: "ArrowRight" });
   await screen.findByRole("dialog", { name: "Photo viewer, Photo 2.jpg" });
@@ -3899,7 +3894,6 @@ it.each(["while open", "after a status failure"])(
     await fireEvent.click(await screen.findByRole("button", { name: "Open Photo 1.jpg" }));
     const viewer = await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
     expect(location.hash).toContain("photo=photo-1");
-    await fireEvent.click(within(viewer).getByRole("button", { name: "Metadata" }));
     const caption = await within(viewer).findByRole("textbox", { name: "Caption" });
     await waitFor(() => expect(caption.hasAttribute("disabled")).toBe(false));
     await fireEvent.input(caption, { target: { value: "Discarded Hidden caption" } });
@@ -4212,8 +4206,7 @@ it.each([
     }
     await screen.findByRole("button", { name: `Select ${other.name}` });
     await fireEvent.doubleClick(await screen.findByRole("button", { name: `Select ${item.name}` }));
-    const viewer = await screen.findByRole("dialog", { name: /^Photo viewer,/ });
-    await fireEvent.click(within(viewer).getByRole("button", { name: "Metadata" }));
+    await screen.findByRole("dialog", { name: /^Photo viewer,/ });
     const card = await screen.findByRole("button", { name: "Ada" });
     await waitFor(() =>
       expect(

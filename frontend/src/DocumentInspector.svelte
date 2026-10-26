@@ -1,8 +1,6 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
-  import { untrack } from "svelte";
   import * as api from "./generated/docbank.js";
-  import { APIError } from "./api-transport.js";
   import "./inspector.css";
   import {
     Button,
@@ -90,7 +88,6 @@
     ontags?: () => void;
   } = $props();
   let protect = $state(false);
-  let canExtract = $state(false);
   let displayed = $state<{ origin: string; source: SelectedSource; revision: number }>();
   const download = $derived(displayed?.origin === source?.key ? displayed : undefined);
   function showSource(next: SelectedSource, revision: number): void {
@@ -111,44 +108,12 @@
     const saved = new Set(snapshot.tags.map((tag) => tag.id));
     return tags.length !== saved.size || tags.some((tag) => !saved.has(tag.id));
   });
+  // The dialog checks the file itself; here only whether any profile could extract text.
+  const canExtract = $derived(profiles.some((profile) => profile.rendition));
   const mime = $derived(snapshot?.mime_type ?? node?.mime_type);
   const size = $derived(snapshot?.size ?? node?.size);
   // Browser sessions exclude audit preview/enable. Enrollment stays in the CLI.
   const protectCommand = $derived(`docbank audit enable --node-id ${node?.id}`);
-  $effect(() => {
-    const id = node?.id;
-    const version = source?.versionID ?? node?.current_version_id;
-    const candidates = profiles.filter((profile) => profile.rendition);
-    const token = session;
-    const process = onprocess;
-    void node?.revision;
-    const controller = new AbortController();
-    canExtract = false;
-    if (id && version && token && process) {
-      void (async () => {
-        for (const profile of candidates) {
-          try {
-            const plan = await api.planDocumentProcessing(
-              { selector: { node_id: id, content_version_id: version, profile: profile.name } },
-              { session: token, signal: controller.signal },
-            );
-            if (controller.signal.aborted) return;
-            if (!plan.rendition_ineligible_reason) {
-              canExtract = true;
-              return;
-            }
-          } catch (cause) {
-            if (controller.signal.aborted) return;
-            if (cause instanceof APIError && cause.status === 401) {
-              untrack(() => onauthfailure?.(cause));
-              return;
-            }
-          }
-        }
-      })();
-    }
-    return () => controller.abort();
-  });
   $effect(() => {
     void path;
     void snapshotID;
