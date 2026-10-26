@@ -1101,6 +1101,39 @@ function workspaceWithPreparedPhoto(target = preparedPhoto(1), projection?: "map
   return photos;
 }
 
+it("ReviewCreatingKeywordDoesNotApplyMetadataDraft", async () => {
+  Element.prototype.scrollIntoView = vi.fn();
+  const photos = workspaceWithPreparedPhoto();
+  photos.selectLoaded();
+  const tag = { id: "new-keyword", name: "Harbor", revision: 1, assignment_count: 0 };
+  vi.spyOn(api, "createTag").mockResolvedValue(tag);
+  const edit = vi
+    .spyOn(api, "editPhotoAuthored")
+    .mockResolvedValue({ receipt_id: "", before: [], after: [] });
+  stubPhotoFetch(vi.fn());
+  render(PhotosWorkspace, {
+    photos,
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
+  const caption = await screen.findByRole("textbox", { name: "Caption" });
+  await fireEvent.input(caption, { target: { value: "Unfinished caption" } });
+  await fireEvent.input(screen.getByRole("combobox", { name: /Keyword/ }), {
+    target: { value: "Harbor" },
+  });
+  await fireEvent.click(await screen.findByRole("option", { name: "Create “Harbor”" }));
+  await screen.findByRole("button", { name: "Apply" });
+  expect(edit).not.toHaveBeenCalled();
+  expect((caption as HTMLTextAreaElement).value).toBe("Unfinished caption");
+  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+  await waitFor(() => expect(edit).toHaveBeenCalledOnce());
+  expect(edit.mock.calls[0]![0]).toMatchObject({
+    patch: { caption: "Unfinished caption" },
+    keywords: [{ tag_id: tag.id, assign: true }],
+  });
+  photos.dispose();
+});
+
 it("refreshes a filtered view and restarts pending reads after a metadata edit", async () => {
   Object.defineProperty(Element.prototype, "scrollIntoView", {
     configurable: true,

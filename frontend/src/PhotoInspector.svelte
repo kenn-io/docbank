@@ -303,7 +303,7 @@
           if (created) {
             editor.tags = [...editor.tags, tag];
             editor.tagsTotal += 1;
-            onedit({}, [{ tag_id: tag.id, assign: true }]);
+            editor.stage({}, [{ tag_id: tag.id, assign: true }]);
           }
         }}
       />
