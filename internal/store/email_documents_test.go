@@ -1,11 +1,116 @@
 package store
 
 import (
-	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/document"
+	"context"
+	"database/sql"
 	"strings"
 	"testing"
+	"testing/synctest"
+	"time"
+
+	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/docbank/document"
+	docsqlite "go.kenn.io/docbank/sqlite"
 )
+
+func TestEmailDocumentsReleaseWaitsForWriter(t *testing.T) {
+	t.Parallel()
+	for _, outcome := range []string{"release", "cancel", "ordinary transaction"} {
+		t.Run(outcome, func(t *testing.T) {
+			s := newTestStore(t)
+			f := newEmailFixture(t, s, "source.eml")
+			view, err := s.PublishEmailGeneration(t.Context(), f.publication)
+			require.NoError(t, err)
+			receipt, err := s.PublishEmailDocuments(t.Context(), attachmentRequest(t, s, view, "contended-publication"))
+			require.NoError(t, err)
+			require.NoError(t, s.writeDB.Close())
+			s.writeDB, err = s.driver.Open(s.path, docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate, BusyTimeout: 10 * time.Millisecond})
+			require.NoError(t, err)
+			s.writeDB.SetMaxOpenConns(1)
+			writer, err := s.driver.Open(s.path, docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate})
+			require.NoError(t, err)
+			defer func() { require.NoError(t, writer.Close()) }()
+			lock, err := writer.BeginTx(t.Context(), nil)
+			require.NoError(t, err)
+			defer func() {
+				if err := lock.Rollback(); err != nil {
+					require.ErrorIs(t, err, sql.ErrTxDone)
+				}
+			}()
+			if outcome == "ordinary transaction" {
+				err = s.withStorageTx(t.Context(), func(*sql.Tx) error {
+					t.Error("callback ran while another writer held the lock")
+					return nil
+				})
+				require.True(t, s.driver.IsBusy(err), "expected busy error, got %v", err)
+				require.NoError(t, lock.Rollback())
+				busyErr, calls := err, 0
+				err = s.withStorageTxRetryBegin(t.Context(), func(*sql.Tx) error {
+					calls++
+					return busyErr
+				})
+				require.ErrorIs(t, err, busyErr)
+				require.Equal(t, 1, calls)
+				return
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			done := make(chan error, 1)
+			started := make(chan struct{})
+			go func() {
+				close(started)
+				done <- s.RemoveEmailDocumentPublication(ctx, receipt.OperationID, receipt.RequestDigest)
+			}()
+			<-started
+			select {
+			case err := <-done:
+				t.Fatalf("release returned while the writer lock was held: %v", err)
+			case <-time.After(100 * time.Millisecond): //nolint:kennlint // Real SQLite contention must outlast the driver's wall-clock busy timeout.
+			}
+			if outcome == "cancel" {
+				cancel()
+				require.ErrorIs(t, <-done, context.Canceled)
+				retained, err := s.EmailDocumentPublication(t.Context(), receipt.OperationID)
+				require.NoError(t, err)
+				require.Equal(t, receipt, retained)
+				return
+			}
+			require.NoError(t, lock.Rollback())
+			require.NoError(t, <-done)
+			_, err = s.EmailDocumentPublication(t.Context(), receipt.OperationID)
+			require.ErrorIs(t, err, ErrNotFound)
+			_, err = s.NodeByID(t.Context(), receipt.Relations[0].Child.NodeID)
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestEmailDocumentsReleaseCancellationAfterBegin(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		s := newTestStore(t)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		calls := 0
+		err := s.withStorageTxRetryBegin(ctx, func(tx *sql.Tx) error {
+			calls++
+			if _, err := tx.ExecContext(ctx, `UPDATE nodes SET name='canceled' WHERE id=?`, s.RootID()); err != nil {
+				return err
+			}
+			cancel()
+			synctest.Wait()
+			return nil
+		})
+		require.ErrorIs(t, err, context.Canceled)
+		require.Equal(t, 1, calls)
+		root, err := s.NodeByID(t.Context(), s.RootID())
+		require.NoError(t, err)
+		require.Empty(t, root.Name)
+		_, err = s.Mkdir(t.Context(), s.RootID(), "after-cancellation")
+		require.NoError(t, err)
+	})
+}
 
 func attachmentRequest(t *testing.T, s *Store, view EmailMetadataView, operation string) document.EmailDocumentPublicationRequest {
 	t.Helper()

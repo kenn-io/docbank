@@ -272,7 +272,30 @@ func (s *Store) Checkpoint(ctx context.Context) error {
 // recording, and physical storage maintenance. User-visible metadata mutations
 // use withLogicalTx so audited vaults fail closed unless that mutation has an
 // explicit audit implementation in Go.
-func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) (retErr error) {
+func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
+	return s.withStorageTxBegin(ctx, func(conn *sql.Conn) (*sql.Tx, error) {
+		// Own cancellation so ordinary mutations wait for their rollback.
+		return conn.BeginTx(context.WithoutCancel(ctx), nil)
+	}, fn)
+}
+
+func (s *Store) withStorageTxRetryBegin(ctx context.Context, fn func(tx *sql.Tx) error) error {
+	return s.withStorageTxBegin(ctx, func(conn *sql.Conn) (*sql.Tx, error) {
+		tx, err := backoff.Retry(ctx, func() (*sql.Tx, error) {
+			tx, err := conn.BeginTx(ctx, nil)
+			if err != nil && !s.driver.IsBusy(err) {
+				return nil, backoff.Permanent(err)
+			}
+			return tx, err
+		}, backoff.WithBackOff(backoff.NewConstantBackOff(10*time.Millisecond)), backoff.WithMaxTries(0), backoff.WithMaxElapsedTime(0))
+		if err != nil {
+			return nil, errors.Join(ctx.Err(), backoff.AsRetryError(err).LastErr)
+		}
+		return tx, nil
+	}, fn)
+}
+
+func (s *Store) withStorageTxBegin(ctx context.Context, begin func(*sql.Conn) (*sql.Tx, error), fn func(tx *sql.Tx) error) (retErr error) {
 	defer func() {
 		// Cancellation may roll back before the callback or Commit observes it.
 		// Preserve cancellation alongside ErrTxDone.

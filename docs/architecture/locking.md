@@ -21,6 +21,10 @@ with `BEGIN IMMEDIATE` write transactions and a busy timeout. Concurrent API
 requests interleave safely. The schema enforces invariants, and losers of a
 name race get a typed `name already exists` error, not corruption.
 
+Email attachment receipt release retries a busy transaction start until the
+request ends or the writer lock clears. Its transaction callback runs once;
+other storage mutations retain their ordinary busy timeout.
+
 ## What SQLite can't handle
 
 Garbage collection must coordinate its database query with file deletion.

@@ -270,7 +270,7 @@ func (s *Store) EmailDocumentPublication(ctx context.Context, operationID string
 // RemoveEmailDocumentPublication releases one exact receipt and its references.
 // Ordinary child files survive; callers explicitly give up this retry identity.
 func (s *Store) RemoveEmailDocumentPublication(ctx context.Context, operationID, digest string) error {
-	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+	return s.withStorageTxRetryBegin(ctx, func(tx *sql.Tx) error {
 		v, err := loadEmailDocumentPublication(ctx, tx, operationID)
 		if err != nil {
 			return err
