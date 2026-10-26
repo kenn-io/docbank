@@ -58,7 +58,7 @@ func (s *Store) ContentVersionByID(ctx context.Context, id string) (ContentVersi
 		return ContentVersion{}, fmt.Errorf("content version %q: %w", id, ErrNotFound)
 	}
 	v, err := scanContentVersion(s.db.QueryRowContext(ctx,
-		`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id = ?`, id))
+		`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id = $1`, id))
 	if err != nil {
 		return ContentVersion{}, fmt.Errorf("content version %q: %w", id, err)
 	}
@@ -75,7 +75,9 @@ func (s *Store) ContentVersionViewByID(
 			"content version %q: %w", versionID, ErrNotFound,
 		)
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	// The node and retained version must survive concurrent pruning in the
+	// same snapshot; PostgreSQL's default takes a new snapshot per statement.
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 	if err != nil {
 		return ContentVersionView{}, fmt.Errorf("starting content-version snapshot: %w", err)
 	}
@@ -87,7 +89,7 @@ func (s *Store) ContentVersionViewByID(
 	}
 	version, err := scanContentVersion(tx.QueryRowContext(ctx,
 		`SELECT `+contentVersionCols+`
-		 FROM content_versions WHERE version_id = ? AND node_id = ?`,
+		 FROM content_versions WHERE version_id = $1 AND node_id = $2`,
 		versionID, nodeID))
 	if err != nil {
 		return ContentVersionView{}, fmt.Errorf(
@@ -115,16 +117,16 @@ func (s *Store) ContentVersions(
 	// concurrent trash-empty observes either side of deletion, never a mixture.
 	rows, err := s.db.QueryContext(ctx,
 		`WITH target AS (
-		   SELECT kind FROM nodes WHERE id = ?
+		   SELECT kind FROM nodes WHERE id = $1
 		 ), page AS (
 		   SELECT version_id, node_id, blob_hash, size, mime_type, recorded_at,
 		          node_revision, introduced_operation_id, transition_kind,
 		          source_version_id
 		   FROM content_versions
-		   WHERE node_id = ?
-		   ORDER BY node_revision DESC, version_id LIMIT ? OFFSET ?
+		   WHERE node_id = $1
+		   ORDER BY node_revision DESC, version_id LIMIT $2 OFFSET $3
 		 ), totals AS (
-		   SELECT COUNT(*) AS total FROM content_versions WHERE node_id = ?
+		   SELECT COUNT(*) AS total FROM content_versions WHERE node_id = $1
 		 )
 		 SELECT target.kind, totals.total,
 		        COALESCE(page.version_id, ''), COALESCE(page.node_id, 0),
@@ -137,7 +139,7 @@ func (s *Store) ContentVersions(
 		        COALESCE(page.transition_kind, ''), page.source_version_id
 		 FROM target CROSS JOIN totals LEFT JOIN page ON true
 		 ORDER BY page.node_revision DESC, page.version_id`,
-		nodeID, nodeID, limit, offset, nodeID)
+		nodeID, limit, offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("listing content versions of node %d: %w", nodeID, err)
 	}
