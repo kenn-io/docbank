@@ -42,6 +42,8 @@ type Snapshot struct {
 
 type state struct {
 	Snapshot
+
+	transient bool
 }
 
 type reportErrorKey struct{}
@@ -64,7 +66,7 @@ func ReportError(ctx context.Context, err error) {
 	}
 }
 
-// Supervisor owns a fixed set of uniquely named goroutines. Stop prevents new
+// Supervisor owns uniquely named goroutines. Stop prevents new
 // jobs and cancels the shared root; Shutdown additionally waits for every job
 // to return before the daemon closes resources they may use.
 type Supervisor struct {
@@ -96,6 +98,16 @@ func New(parent context.Context, logger *slog.Logger) *Supervisor {
 // Start registers and launches one job. Names remain reserved after a job
 // finishes so status does not silently switch to a different run.
 func (s *Supervisor) Start(name string, run func(context.Context) error) error {
+	return s.start(name, run, false)
+}
+
+// StartTransient registers a job only until its runner returns. Shutdown still
+// cancels and waits for it, but completed requests do not remain in Snapshot.
+func (s *Supervisor) StartTransient(name string, run func(context.Context) error) error {
+	return s.start(name, run, true)
+}
+
+func (s *Supervisor) start(name string, run func(context.Context) error, transient bool) error {
 	if err := validate(name, run); err != nil {
 		return err
 	}
@@ -108,7 +120,7 @@ func (s *Supervisor) Start(name string, run func(context.Context) error) error {
 		return fmt.Errorf("job %q: %w", name, ErrDuplicate)
 	}
 	job := &state{
-		Name: name, Status: StatusRunning, Busy: true, StartedAt: time.Now().UTC()}
+		Name: name, Status: StatusRunning, Busy: true, StartedAt: time.Now().UTC(), transient: transient}
 	s.jobs[name] = job
 	s.active++
 	go s.run(job, run)
@@ -156,6 +168,9 @@ func (s *Supervisor) finish(job *state, runErr error) {
 		job.Status = StatusFailed
 		job.Error = boundedError(runErr)
 		s.logger.Error("background job failed", "job", job.Name, "error", runErr)
+	}
+	if job.transient {
+		delete(s.jobs, job.Name)
 	}
 	s.active--
 	if s.stopping && s.active == 0 {

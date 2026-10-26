@@ -3490,6 +3490,7 @@
 
   // Cancel puts the search box back to the search that is applied.
   function discardQueryDraft(): void {
+    if (snapshotActive && !snapshot.state.firstPage) leaveSnapshotMode(true);
     closeQueryDraft();
     searchQuery =
       snapshot.state.query?.text ?? (searchPending ? submittedSearchQuery : activeQuery);

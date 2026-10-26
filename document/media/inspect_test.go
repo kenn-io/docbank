@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/docling"
 	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/media/mediatest"
 )
@@ -2663,6 +2664,19 @@ func paddedM4A() []byte {
 	mdat := bytes.Index(padded, []byte("mdat")) - 4
 	binary.BigEndian.PutUint32(padded[mdat:mdat+4], (16<<20)+12)
 	return padded
+}
+
+func TestReviewMalformedSupportedImageKeepsFileFailure(t *testing.T) {
+	t.Parallel()
+	data := []byte("\x89PNG\r\n\x1a\n")
+	descriptor, err := docling.DocumentDescriptor(document.RenditionTrustOperatorNetwork)
+	require.NoError(t, err)
+	policy := inspectionPolicy(data, "damaged.png", "image/png")
+	policy.SupportsFormat = descriptor.Supports
+	record, err := media.InspectCapability(bytes.NewReader(data), policy)
+	require.NoError(t, err)
+	assert.False(t, record.Eligible)
+	assert.Equal(t, media.CapabilityReasonMalformed, record.Reason)
 }
 
 func TestInspectUnsupportedEncryptedPDF(t *testing.T) {

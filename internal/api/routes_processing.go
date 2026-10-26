@@ -464,7 +464,7 @@ func startProcessingRun(ctx context.Context, d Deps, request processing.StartReq
 		go func() { _ = run(ctx) }()
 		return nil
 	}
-	return d.Jobs.Start("process:browser:"+uuid.New().String(), run)
+	return d.Jobs.StartTransient("process:browser:"+uuid.New().String(), run)
 }
 
 func logPDFPasswordsFailure(ctx context.Context, d Deps, err error) {

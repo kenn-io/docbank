@@ -305,7 +305,7 @@ func (record *CapabilityRecord) UnmarshalJSON(data []byte) error {
 func sealCapabilityRecord(
 	policy InspectionPolicy, sourceBytes int64, sourceSHA256 string, record CapabilityRecord,
 ) (CapabilityRecord, error) {
-	if record.MediaType != "" && record.Reason != CapabilityReasonUnboundedFamily && policy.SupportsFormat != nil && !policy.SupportsFormat(document.RenditionFormatCapability{
+	if record.MediaFamily != "" && record.MediaType != "" && record.Reason != CapabilityReasonUnboundedFamily && policy.SupportsFormat != nil && !policy.SupportsFormat(document.RenditionFormatCapability{
 		MediaFamily: record.MediaFamily, MediaType: record.MediaType, InputKind: policy.InputKind,
 	}) {
 		record.Eligible, record.Reason = false, CapabilityReasonUnsupported

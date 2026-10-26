@@ -428,6 +428,44 @@ func runProcessingForCoverage(t *testing.T, ts *httptest.Server, node store.Node
 	processingJobFromStream(t, jobBody)
 }
 
+func TestReviewRejectedProcessingDoesNotAccumulateWorkers(t *testing.T) {
+	t.Parallel()
+	for _, rejected := range []bool{true, false} {
+		t.Run(fmt.Sprintf("rejected=%t", rejected), func(t *testing.T) {
+			supervisor := jobs.New(t.Context(), slog.New(slog.DiscardHandler))
+			t.Cleanup(func() { require.NoError(t, supervisor.Shutdown(context.Background())) })
+			configure := configureProcessingTestService(t)
+			ts, catalog := newTestServer(t, func(deps *api.Deps) {
+				deps.Jobs = supervisor
+				configure(deps)
+			})
+			node := createFileWithContent(t, ts, catalog, "/request.txt", "synthetic processing request\n")
+			selector := api.ProcessingSelector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "private"}
+			for range 3 {
+				response, body := do(t, ts, http.MethodPost, "/api/v1/processing/plans", nil, api.ProcessingPlanRequest{Selector: selector})
+				require.Equal(t, http.StatusOK, response.StatusCode, body)
+				var plan api.ProcessingPlan
+				require.NoError(t, json.Unmarshal([]byte(body), &plan))
+				fingerprint := plan.Fingerprint
+				if rejected {
+					fingerprint = processingTestHash("stale")
+				}
+				response, body = do(t, ts, http.MethodPost, "/api/v1/processing/jobs", nil,
+					api.StartProcessingRequest{Selector: selector, PlanFingerprint: fingerprint, Consent: true})
+				if rejected {
+					require.Equal(t, http.StatusConflict, response.StatusCode, body)
+					require.Contains(t, body, `"code":"processing_plan_changed"`)
+				} else {
+					require.Equal(t, http.StatusOK, response.StatusCode, body)
+					processingJobFromStream(t, body)
+				}
+			}
+			require.Eventually(t, func() bool { return len(supervisor.Snapshot()) == 0 }, time.Second, time.Millisecond,
+				"finished requests must leave the worker registry")
+		})
+	}
+}
+
 func TestBrowserProcessingHasOneActivity(t *testing.T) {
 	t.Parallel()
 	for _, name := range []string{"rendition", "rendition with second worker", "embedding only", "embedding with rendition"} {
