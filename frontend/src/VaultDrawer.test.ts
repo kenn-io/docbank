@@ -10,7 +10,6 @@ afterEach(() => {
 function mockSystemRequests() {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
-    if (url === "/api/v1/info") return Response.json({ tracked_blobs: 0 });
     if (url.includes("/storage"))
       return new Response(
         JSON.stringify({

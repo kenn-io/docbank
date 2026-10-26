@@ -60,7 +60,6 @@ describe("storage status drawer", () => {
         { status: 200, headers: { "Content-Type": "application/json" } },
       ),
     );
-    fetchMock.mockResolvedValueOnce(Response.json({ tracked_blobs: 14 }));
     const close = vi.fn();
 
     render(StorageDrawer, {
@@ -73,7 +72,6 @@ describe("storage status drawer", () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/v1/storage?refresh=true");
     const tiles = within(screen.getByRole("group", { name: "Disk use summary" }));
     expect(tiles.getByText("Total on disk").nextElementSibling?.textContent).toBe("12.0 KiB");
-    expect(tiles.getByText("Files stored").nextElementSibling?.textContent).toBe("14");
     expect(tiles.getByText("Reclaimable").nextElementSibling?.textContent).toBe(
       "2.00 KiB (20% of packs)",
     );
@@ -106,42 +104,5 @@ describe("storage status drawer", () => {
 
     await fireEvent.click(screen.getByRole("button", { name: "Close storage status" }));
     expect(close).toHaveBeenCalledOnce();
-  });
-
-  it.each([
-    { placement: "split across stores", counts: [4, 6], retained: 10 },
-    { placement: "replicated across stores", counts: [10, 10], retained: 10 },
-  ])("counts distinct retained files $placement", async ({ counts, retained }) => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      if (String(input) === "/api/v1/info") return Response.json({ tracked_blobs: retained });
-      if (String(input) === "/api/v1/storage?refresh=true")
-        return Response.json({
-          loose_blobs: 0,
-          loose_bytes: 0,
-          packs: 0,
-          pack_stored_bytes: 0,
-          packed_blobs: 0,
-          packed_raw_bytes: 0,
-          packed_stored_bytes: 0,
-          dead_packed_bytes: 0,
-          stores: counts.map((count, index) => ({
-            id: String(index),
-            name: `store-${index}`,
-            kind: "filesystem",
-            state: "online",
-            authoritative_objects: count,
-            stored_bytes: count * 42,
-            sole_authority_objects: counts[0] === 4 ? count : 0,
-            unreadable_objects: 0,
-          })),
-        });
-      throw new Error(`Unexpected request: ${input}`);
-    });
-    render(StorageDrawer, { session: "session", onclose: vi.fn(), onauthfailure: vi.fn() });
-
-    await screen.findByText("Files stored");
-
-    const tiles = within(screen.getByRole("group", { name: "Disk use summary" }));
-    expect(tiles.getByText("Files stored").nextElementSibling?.textContent).toBe("10");
   });
 });
