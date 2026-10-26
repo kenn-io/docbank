@@ -109,7 +109,7 @@ it("restores a full query beside sign-in without running it as empty-text folder
   await fireEvent.click(screen.getByText("Edit as JSON"));
   expect(
     JSON.parse((screen.getByLabelText("Complete query JSON") as HTMLTextAreaElement).value).sort,
-  ).toEqual({ field: "path", direction: "asc" });
+  ).toEqual({ field: "name", direction: "asc" });
 });
 
 it("shows malformed query fragments on the sign-in screen", async () => {
