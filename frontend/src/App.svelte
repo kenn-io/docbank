@@ -1730,6 +1730,7 @@
 
   function resetLocalSessionUI(): void {
     clearToasts();
+    taggingOutcomeUnknown = false;
     leaveSnapshotMode();
     activePanel = null;
     savedQueryDraft = null;
@@ -2704,7 +2705,8 @@
   }
 
   function refreshDocumentsView(): void {
-    if (activeQuery) void runSearch();
+    if (snapshotActive) runSnapshotAgain();
+    else if (activeQuery) void runSearch(selectedID, activeQuery);
     else if (activeTagID) void loadTaggedNodes(activeTagID);
     else if (directory) void loadDirectory(directory.id, false, selectedID, true);
     else void loadRoot();
@@ -3082,9 +3084,13 @@
     void photosChanged();
     void hiddenWorkspace?.refresh();
     void loadTagCatalog();
-    // Reloading the live view would end a frozen result; run it again with its own query.
-    if (snapshotActive) runSnapshotAgain();
-    else refreshDocumentsView();
+    refreshDocumentsView();
+  }
+
+  let taggingOutcomeUnknown = $state(false);
+  function handleUnknownTagging(): void {
+    taggingOutcomeUnknown = true;
+    refreshCurrentView();
   }
 
   function failToast(cause: unknown, session: string): void {
@@ -5099,7 +5105,7 @@
         catalog={tagCatalog}
         disabled={loading}
         onchanged={handleBatchTagsChanged}
-        onunknown={refreshCurrentView}
+        onunknown={handleUnknownTagging}
         oncreated={() => void loadTagCatalog(false, true)}
         onclose={() => (batchTagsTargets = null)}
         onauthfailure={handleFailure}
@@ -5119,10 +5125,7 @@
         errorMessage={snapshot.actionError}
         onstart={(choice) => void startSnapshotAction(choice)}
         onchanged={handleSnapshotSelectionTagged}
-        onunknown={() => {
-          if (snapshot.state.query)
-            void submitSnapshot(snapshot.state.query, snapshot.state.options ?? { page_size: 100 });
-        }}
+        onunknown={handleUnknownTagging}
         oncreated={() => void loadTagCatalog(false, true)}
         onimport={(bytes) => void snapshot.importAction(bytes)}
         onclose={() => snapshot.cancelAction()}
@@ -5141,6 +5144,14 @@
         onclose={() => snapshot.dismissRecovery()}
         onauthfailure={handleFailure}
       />
+    {/if}
+    {#if taggingOutcomeUnknown}
+      <Modal title="Tagging result unknown" onclose={() => (taggingOutcomeUnknown = false)}>
+        <p role="alert">The result is unknown. Check these documents' tags before trying again.</p>
+        {#snippet footer()}
+          <Button onclick={() => (taggingOutcomeUnknown = false)}>Dismiss</Button>
+        {/snippet}
+      </Modal>
     {/if}
   </div>
 {/if}

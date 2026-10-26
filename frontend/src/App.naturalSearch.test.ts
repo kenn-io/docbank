@@ -1618,3 +1618,70 @@ it.each(["top bar", "Advanced"])(
     expect(screen.getByRole("combobox", { name: "Sort by: Size" })).toBeTruthy();
   },
 );
+
+it.each(["names", "meaning"])(
+  "keeps unapplied drafts while trash and Undo refresh %s results",
+  async (mode) => {
+    const file = node(2, "report.txt", baseVersion);
+    const harness = installHarness({
+      profiles:
+        mode === "meaning"
+          ? [
+              {
+                name: "private",
+                fingerprint: "a".repeat(64),
+                rendition: true,
+                embedding_bindings: ["embed"],
+                reranking_available: false,
+              },
+            ]
+          : [],
+      files: [file],
+      baseReport: report("hybrid", [result(file, 1, "report excerpt")]),
+      tagSearch: { hits: [{ node: file, path: file.path }], limit: 1000, truncated: false },
+    });
+    const fetch = harness.fetchMock.getMockImplementation()!;
+    harness.fetchMock.mockImplementation((input, init) => {
+      const url = String(input);
+      if (url === "/api/v1/nodes/2/trash")
+        return Promise.resolve(json({ ...file, revision: 2, trashed_at: "2026-09-21T01:00:00Z" }));
+      if (url === "/api/v1/nodes/2/restore") return Promise.resolve(json({ ...file, revision: 3 }));
+      return fetch(input, init);
+    });
+    render(App);
+    await screen.findByRole("combobox", { name: "Search syntax: Plain words" });
+    await submitSearch("annual report");
+    await screen.findByRole("button", { name: "Move to trash" });
+    const search = screen.getByRole("searchbox", { name: "Search documents" });
+    await fireEvent.input(search, { target: { value: "unfinished draft" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+    await fireEvent.input(screen.getByLabelText("Filters JSON"), {
+      target: { value: '{"size_min":' },
+    });
+    await fireEvent.keyDown(window, { key: "Escape" });
+    for (const [action, count] of [
+      ["Move to trash", 2],
+      ["Undo", 3],
+    ] as const) {
+      await fireEvent.click(screen.getByRole("button", { name: action }));
+      await waitFor(() =>
+        expect(mode === "meaning" ? harness.postBodies.length : harness.legacyCalls()).toBe(count),
+      );
+      if (mode === "meaning") expect(harness.postBodies.at(-1)?.query).toBe("annual report");
+      else {
+        const requests = harness.fetchMock.mock.calls.filter(([url]) =>
+          String(url).startsWith("/api/v1/search?"),
+        );
+        expect(
+          new URL(String(requests.at(-1)![0]), "https://example.com").searchParams.get("q"),
+        ).toBe("annual report");
+      }
+      expect((search as HTMLInputElement).value).toBe("unfinished draft");
+      await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+      expect((screen.getByLabelText("Filters JSON") as HTMLTextAreaElement).value).toBe(
+        '{"size_min":',
+      );
+      await fireEvent.keyDown(window, { key: "Escape" });
+    }
+  },
+);

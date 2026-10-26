@@ -71,8 +71,10 @@ test("activity lanes and controls use the real daemon", async ({ browser }) => {
     await page.getByRole("tab", { name: "Running now", exact: true }).click();
     const drawer = page.getByRole("dialog", { name: "System" });
     const importing = page.getByRole("region", { name: "Importing photos" });
-    await expect(importing).toBeVisible();
-    await expect(importing.getByText("Paused", { exact: true })).toBeVisible();
+    const pausedImport = page.getByRole("table", { name: "All workers" }).getByRole("row", {
+      name: /^Importing photos Paused/,
+    });
+    await expect(pausedImport).toBeVisible();
     await expect(page.getByRole("button", { name: "Resume Importing photos" })).toBeVisible();
     await expect(page.getByRole("button", { name: /^Cancel Importing photos/ })).toHaveCount(2);
     await expect(page.getByRole("button", { name: "Resume Moving stored files" })).toBeVisible();
@@ -80,12 +82,13 @@ test("activity lanes and controls use the real daemon", async ({ browser }) => {
     await expect
       .poll(async () => (await bulkImport())?.completed_objects ?? 0, { timeout: 60_000 })
       .toBeGreaterThan(0);
+    await expect(importing).toBeVisible();
     await expect(importing.getByText(/^\d+ of \d+ groups$/)).toBeVisible();
     await page.getByRole("button", { name: "Pause Importing photos" }).click();
     await expect(page.getByRole("button", { name: "Resume Importing photos" })).toBeVisible();
     await expect.poll(async () => (await bulkImport())?.status, { timeout: 30_000 }).toBe("queued");
-    await expect(importing.getByText("Paused", { exact: true })).toBeVisible();
-    await importing.evaluate((element) =>
+    await expect(pausedImport).toBeVisible();
+    await pausedImport.evaluate((element) =>
       element.scrollIntoView({ block: "start", behavior: "instant" }),
     );
     for (const theme of ["dark", "light"] as const) {
@@ -96,7 +99,7 @@ test("activity lanes and controls use the real daemon", async ({ browser }) => {
       });
     }
     await page.setViewportSize({ width: 390, height: 844 });
-    await importing.evaluate((element) =>
+    await pausedImport.evaluate((element) =>
       element.scrollIntoView({ block: "start", behavior: "instant" }),
     );
     for (const theme of ["dark", "light"] as const) {
