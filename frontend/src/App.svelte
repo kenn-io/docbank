@@ -2446,7 +2446,6 @@
   function keepsNaturalSearch(query: Query, options?: SnapshotOptions): boolean {
     const ordinary = { ...ordinaryQuery(), text: query.text };
     return !!(
-      !snapshotActive &&
       naturalProfile &&
       searchSyntax === "simple" &&
       query.text.trim() &&
@@ -2457,7 +2456,7 @@
   }
 
   async function runNaturalSearchSorted(query: Query): Promise<void> {
-    if (!searchPending && query.text === activeQuery) {
+    if (!snapshotActive && !searchPending && query.text === activeQuery) {
       applyResultSort(query.sort);
       discardQueryDraft();
       return;

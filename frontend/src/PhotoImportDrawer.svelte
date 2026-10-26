@@ -1,8 +1,8 @@
 <script lang="ts">
   import { reportAction, reportFailure } from "./action-events.js";
   import { onDestroy } from "svelte";
-  import XIcon from "@lucide/svelte/icons/x";
-  import { Button, DetailDrawer, IconButton, TextInput } from "@kenn-io/kit-ui";
+  import { Button, TextInput } from "@kenn-io/kit-ui";
+  import DrawerShell from "./DrawerShell.svelte";
   import { APIError } from "./api-transport.js";
   import {
     UploadChannelError,
@@ -389,13 +389,7 @@
   }
 </script>
 
-<DetailDrawer width="min(720px, 100vw)" ariaLabel="Add photos" {onclose}>
-  {#snippet header()}
-    <div class="drawer-heading">
-      <h2>Add photos</h2>
-      <IconButton ariaLabel="Close add photos" onclick={onclose}><XIcon size="18" /></IconButton>
-    </div>
-  {/snippet}
+<DrawerShell title="Add photos" closeLabel="Close add photos" {onclose}>
   <div class="photo-import">
     {#if disabledReason || error}
       <p role="alert">{disabledReason || error}</p>
@@ -482,12 +476,11 @@
       </div>
     {/if}
   </div>
-</DetailDrawer>
+</DrawerShell>
 
 <PhotoCullConfirmation bind:this={confirmation} />
 
 <style>
-  .drawer-heading,
   .controls,
   .totals {
     display: flex;
@@ -495,11 +488,6 @@
     gap: var(--space-2);
     flex-wrap: wrap;
   }
-  .drawer-heading {
-    justify-content: space-between;
-    width: 100%;
-  }
-  h2,
   p {
     margin: 0;
   }

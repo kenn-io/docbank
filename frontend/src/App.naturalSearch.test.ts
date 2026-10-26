@@ -5,6 +5,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import App from "./App.svelte";
 import { snapshotEnvelope } from "./snapshot-test-fixtures.js";
 import { parseQuery } from "./query.js";
+import type { SnapshotRow } from "./snapshots.js";
 import type { Node } from "./generated/docbank.js";
 
 const vaultID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -128,6 +129,7 @@ interface HarnessOptions {
   emptyFence?: boolean;
   nodeFailure?: { id: number; status: number };
   tagSearch?: unknown;
+  snapshotRows?: SnapshotRow[];
 }
 
 function installHarness(options: HarnessOptions) {
@@ -226,11 +228,25 @@ function installHarness(options: HarnessOptions) {
     if (url === "/api/v1/workspace/queries") {
       const body = JSON.parse(String(init?.body));
       return json(
-        await snapshotEnvelope(parseQuery(JSON.stringify(body.query)), [], {
+        await snapshotEnvelope(parseQuery(JSON.stringify(body.query)), options.snapshotRows ?? [], {
           page_size: body.page_size,
+          facets: (body.facets ?? []).map((dimension: string) => ({
+            dimension,
+            available: true,
+            total: options.snapshotRows?.length ?? 0,
+            missing: 0,
+            other: 0,
+            values: [],
+          })),
         }),
       );
     }
+    if (url === "/api/v1/queries/parse")
+      return json({
+        query: JSON.parse(String(init?.body)),
+        query_fingerprint: `sha256:${createHash("sha256").update(String(init?.body)).digest("hex")}`,
+        dependencies: [],
+      });
     if (url === "/api/v1/processing/profiles") {
       if (options.profilesPending) return profilesPending;
       return options.profilesStatus
@@ -1532,7 +1548,7 @@ it.each(["unrun edit", "failed search"])(
   },
 );
 
-it("runs a filtered snapshot and explains that it replaces a meaning search", async () => {
+it("restores meaning search after removing the last advanced filter", async () => {
   const file = node(2, "report.txt", baseVersion);
   const harness = installHarness({
     profiles: [
@@ -1550,12 +1566,75 @@ it("runs a filtered snapshot and explains that it replaces a meaning search", as
   render(App);
   await submitSearch("annual report");
   await screen.findByText("report excerpt");
-  expect(screen.queryByText("Filters search names and text only.")).toBeNull();
   await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
   await fireEvent.input(screen.getByLabelText("Filters JSON"), {
     target: { value: '{"size_min":10}' },
   });
   await fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Filters and sort" })).toBeNull(),
+  );
+  await screen.findByRole("region", { name: "Frozen query results" });
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  await fireEvent.input(screen.getByLabelText("Filters JSON"), {
+    target: { value: "{}" },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  await waitFor(() => expect(harness.postBodies).toHaveLength(2));
+  expect(harness.postBodies[1]).toMatchObject({ mode: "hybrid", query: "annual report" });
+  await screen.findByText("report excerpt");
+  expect(screen.queryByRole("region", { name: "Frozen query results" })).toBeNull();
+  expect(screen.queryByRole("dialog", { name: "Filters and sort" })).toBeNull();
+  expect(screen.queryByText("Filters search names and text only.")).toBeNull();
+});
+
+it("filtered search walkthrough reaches accepted results", async () => {
+  const file = node(2, "report.txt", baseVersion);
+  const harness = installHarness({
+    profiles: [
+      {
+        name: "private",
+        fingerprint: "a".repeat(64),
+        rendition: true,
+        embedding_bindings: ["embed"],
+        reranking_available: false,
+      },
+    ],
+    files: [file],
+    snapshotRows: [
+      {
+        node_id: file.id,
+        content_version_id: baseVersion,
+        blob_hash: file.blob_hash,
+        size: 32,
+        revision: 1,
+        name: "report.txt",
+        path: "/report.txt",
+        mime_type: "text/plain",
+        media_family: "text",
+        modified_at: "2026-09-21T00:00:00Z",
+        sort_key: "/report.txt",
+        tags: [],
+        collection_ids: [],
+      },
+    ],
+    baseReport: report("hybrid", [result(file, 1, "report excerpt")]),
+  });
+  render(App);
+  await submitSearch("annual report");
+  await screen.findByText("report excerpt");
+  expect(screen.queryByText("Filters search names and text only.")).toBeNull();
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  await fireEvent.input(screen.getByLabelText("Filters JSON"), {
+    target: { value: '{"size_min":10}' },
+  });
+  await screen.findByRole("status", { name: "Query valid" });
+  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Filters and sort" })).toBeNull(),
+  );
+  const results = await screen.findByRole("region", { name: "Frozen query results" });
+  expect(within(results).getByText("report.txt")).toBeTruthy();
   const note = await screen.findByText("Filters search names and text only.");
   expect(
     harness.fetchMock.mock.calls.some(([url]) => String(url) === "/api/v1/workspace/queries"),
