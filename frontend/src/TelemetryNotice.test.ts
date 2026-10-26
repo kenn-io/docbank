@@ -2,7 +2,6 @@ import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import TelemetryNotice from "./TelemetryNotice.svelte";
 
-const status = (vault_id: string) => new Response(JSON.stringify({ vault_id }));
 const reporting = (reason: "enabled" | "disabled" | "checking") => ({
   onQuietChange(listener: (quiet: boolean, reason: "enabled" | "disabled" | "checking") => void) {
     listener(reason !== "enabled", reason);
@@ -17,23 +16,20 @@ afterEach(() => {
 });
 
 it("shows once per vault until dismissed", async () => {
-  vi.spyOn(globalThis, "fetch").mockImplementation(async () => status("vault-a"));
-  const view = render(TelemetryNotice, { session: "session", reporting: reporting("enabled") });
+  const view = render(TelemetryNotice, { vaultID: "vault-a", reporting: reporting("enabled") });
   await screen.findByText(/anonymous usage data/);
   expect(screen.queryByText("DOCBANK_TELEMETRY_ENABLED=0")).toBeNull();
   await fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
   expect(screen.queryByRole("complementary")).toBeNull();
   view.unmount();
 
-  render(TelemetryNotice, { session: "session", reporting: reporting("enabled") });
-  await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+  render(TelemetryNotice, { vaultID: "vault-a", reporting: reporting("enabled") });
   expect(screen.queryByRole("complementary")).toBeNull();
 });
 
 it("still shows for a different vault and when storage is unavailable", async () => {
   localStorage.setItem("docbank:telemetry-notice:v1:vault-a", "dismissed");
-  vi.spyOn(globalThis, "fetch").mockImplementation(async () => status("vault-b"));
-  render(TelemetryNotice, { session: "session", reporting: reporting("enabled") });
+  render(TelemetryNotice, { vaultID: "vault-b", reporting: reporting("enabled") });
   await screen.findByRole("complementary", { name: "Anonymous usage" });
   vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
     throw new Error("blocked");
@@ -43,10 +39,9 @@ it("still shows for a different vault and when storage is unavailable", async ()
 });
 
 it("opens usage reporting and counts as dismissed", async () => {
-  vi.spyOn(globalThis, "fetch").mockImplementation(async () => status("vault-c"));
   const onmanage = vi.fn();
   const view = render(TelemetryNotice, {
-    session: "session",
+    vaultID: "vault-a",
     reporting: reporting("enabled"),
     onmanage,
   });
@@ -55,18 +50,28 @@ it("opens usage reporting and counts as dismissed", async () => {
   expect(screen.queryByRole("complementary")).toBeNull();
   view.unmount();
 
-  render(TelemetryNotice, { session: "session", reporting: reporting("enabled"), onmanage });
-  await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+  render(TelemetryNotice, { vaultID: "vault-a", reporting: reporting("enabled"), onmanage });
   expect(screen.queryByRole("complementary")).toBeNull();
 });
 
 it("stays hidden while the daemon is not accepting usage data", async () => {
-  vi.spyOn(globalThis, "fetch").mockImplementation(async () => status("vault-d"));
   for (const reason of ["disabled", "checking"] as const) {
-    const view = render(TelemetryNotice, { session: "session", reporting: reporting(reason) });
-    await vi.waitFor(() => expect(fetch).toHaveBeenCalled());
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    const view = render(TelemetryNotice, { vaultID: "vault-a", reporting: reporting(reason) });
     expect(screen.queryByRole("complementary", { name: "Anonymous usage" })).toBeNull();
     view.unmount();
   }
+});
+
+it("waits for the supplied vault identity and keeps dismissals scoped to that vault", async () => {
+  const view = render(TelemetryNotice, { vaultID: "", reporting: reporting("enabled") });
+  expect(screen.queryByRole("complementary")).toBeNull();
+
+  await view.rerender({ vaultID: "vault-a" });
+  await fireEvent.click(await screen.findByRole("button", { name: "Dismiss" }));
+  expect(localStorage.getItem("docbank:telemetry-notice:v1:vault-a")).toBe("dismissed");
+
+  await view.rerender({ vaultID: "vault-b" });
+  expect(await screen.findByRole("complementary", { name: "Anonymous usage" })).toBeTruthy();
+  await view.rerender({ vaultID: "vault-a" });
+  expect(screen.queryByRole("complementary")).toBeNull();
 });

@@ -2,8 +2,8 @@
   import { onMount } from "svelte";
   import FileTextIcon from "@lucide/svelte/icons/file-text";
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
-  import XIcon from "@lucide/svelte/icons/x";
-  import { Button, Card, Chip, DetailDrawer, IconButton, Spinner } from "@kenn-io/kit-ui";
+  import DrawerShell from "./DrawerShell.svelte";
+  import { Button, Card, Chip, IconButton, Spinner } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
   import { renditionArtifact, type RenditionArtifact } from "./receipts.js";
 
@@ -56,31 +56,25 @@
   }
 </script>
 
-<DetailDrawer width="min(880px, 100vw)" ariaLabel="Sanitized Markdown rendition" {onclose}>
-  {#snippet header()}
-    <div class="drawer-heading">
-      <div>
-        <span>Sanitized markdown</span>
-        <strong>{path}</strong>
-        <small>Verified retained bytes · active attachment {attachmentID.slice(0, 12)}…</small>
-      </div>
-      <div class="drawer-actions">
-        <IconButton
-          size="sm"
-          ariaLabel="Refresh sanitized Markdown"
-          disabled={loading}
-          onclick={() => void load()}
-        >
-          <RefreshCwIcon size="14" aria-hidden="true" />
-        </IconButton>
-        <IconButton size="sm" ariaLabel="Close sanitized Markdown" onclick={onclose}>
-          <XIcon size="14" aria-hidden="true" />
-        </IconButton>
-      </div>
-    </div>
+<DrawerShell
+  title="Sanitized markdown"
+  ariaLabel="Sanitized Markdown rendition"
+  closeLabel="Close sanitized Markdown"
+  {onclose}
+>
+  {#snippet actions()}
+    <IconButton
+      size="sm"
+      ariaLabel="Refresh sanitized Markdown"
+      disabled={loading}
+      onclick={() => void load()}
+    >
+      <RefreshCwIcon size="14" aria-hidden="true" />
+    </IconButton>
   {/snippet}
 
   <div class="rendition-shell">
+    <code class="source-path">{path}</code>
     {#if loading && !rendition}
       <div class="loading"><Spinner size={16} /> Verifying retained Markdown…</div>
     {:else if error && !rendition}
@@ -152,41 +146,17 @@
       </article>
     {/if}
   </div>
-</DetailDrawer>
+</DrawerShell>
 
 <style>
-  .drawer-heading {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-4);
-    width: 100%;
+  .source-path {
+    overflow-wrap: anywhere;
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
   }
-  .drawer-heading > div:first-child {
-    display: grid;
-    gap: var(--space-1);
-    min-width: 0;
-  }
-  .drawer-heading span {
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
-    font-weight: var(--font-weight-medium);
-  }
-  .drawer-heading strong {
-    overflow: hidden;
-    color: var(--text-primary);
-    font-size: var(--font-size-lg);
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .drawer-heading small,
   .identity-grid small {
     color: var(--text-muted);
     font-size: var(--font-size-xs);
-  }
-  .drawer-actions {
-    display: flex;
-    gap: var(--space-2);
   }
   .rendition-shell {
     display: grid;

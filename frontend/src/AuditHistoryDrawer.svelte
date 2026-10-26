@@ -2,15 +2,13 @@
   import * as generated from "./generated/docbank.js";
   import { onMount } from "svelte";
   import ShieldCheckIcon from "@lucide/svelte/icons/shield-check";
-  import XIcon from "@lucide/svelte/icons/x";
+  import DrawerShell from "./DrawerShell.svelte";
   import {
     Button,
     Card,
     Chip,
     CopyButton,
-    DetailDrawer,
     EmptyState,
-    IconButton,
     Spinner,
     Timeline,
     TimelineItem,
@@ -108,26 +106,17 @@
   }
 </script>
 
-<DetailDrawer
-  width="min(980px, 100vw)"
+<DrawerShell
+  title={`Permanent audit history · ${historyLabel}`}
   ariaLabel={`Permanent audit history for ${historyCoordinate}`}
+  closeLabel="Close audit history"
   {onclose}
 >
-  {#snippet header()}
-    <div class="drawer-heading">
-      <div>
-        <span>Permanent audit history</span>
-        <strong>{historyLabel}</strong>
-        <code>{historyCoordinate}</code>
-      </div>
-      <div class="drawer-actions">
-        <Chip tone="success" size="sm" dot>Protected</Chip>
-        <IconButton size="sm" ariaLabel="Close audit history" onclick={onclose}>
-          <XIcon size="14" aria-hidden="true" />
-        </IconButton>
-      </div>
-    </div>
+  {#snippet actions()}
+    <Chip tone="success" size="sm" dot>Protected</Chip>
   {/snippet}
+
+  <p class="history-path"><code>{historyCoordinate}</code></p>
 
   <div class="history-shell">
     <section class="event-list" aria-label="Recorded events">
@@ -372,7 +361,7 @@
       {/if}
     </section>
   </div>
-</DetailDrawer>
+</DrawerShell>
 
 {#snippet attachmentState(label: string, state: AuditAttachmentState | undefined)}
   <Card level="inset" padding="sm" eyebrow={label} title={state ? "Present" : "Absent"}>
@@ -452,31 +441,18 @@
 {/snippet}
 
 <style>
-  .drawer-heading {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-4);
-    width: 100%;
-    min-width: 0;
+  .history-path {
+    margin: 0;
+    padding: var(--space-3) var(--space-5);
+    overflow-wrap: anywhere;
   }
 
-  .drawer-heading > div:not(.drawer-actions),
   .section-heading > div {
     display: flex;
     flex-direction: column;
     min-width: 0;
   }
 
-  .drawer-actions {
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    gap: var(--space-3);
-    flex-shrink: 0;
-  }
-
-  .drawer-heading span,
   .section-heading span,
   .attachment-heading > span {
     color: var(--text-muted);
@@ -484,22 +460,9 @@
     font-weight: var(--font-weight-medium);
   }
 
-  .drawer-heading strong {
-    color: var(--text-primary);
-    font-size: var(--font-size-lg);
-  }
-
-  .drawer-heading code {
-    overflow: hidden;
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
   .history-shell {
     display: grid;
-    grid-template-columns: minmax(300px, 0.85fr) minmax(360px, 1.15fr);
+    grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
     min-height: 100%;
   }
 

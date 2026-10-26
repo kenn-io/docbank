@@ -2,7 +2,7 @@ import type { Node } from "./generated/docbank.js";
 import { fileTypeLabel } from "./FileTypeIcon.svelte";
 
 export type SortDirection = "asc" | "desc";
-export type SortField = "relevance" | "name" | "type" | "size" | "modified";
+export type SortField = "relevance" | "name" | "path" | "type" | "size" | "modified";
 export type SortableRow = { node: Node; path: string };
 export type SearchView = {
   sortField: SortField;
@@ -14,7 +14,6 @@ export function orderRows<Row extends SortableRow>(
   rows: readonly Row[],
   field: SortField,
   direction: SortDirection,
-  searchResults: boolean,
 ): Row[] {
   const ordered = [...rows];
   if (field === "relevance") return ordered;
@@ -34,8 +33,8 @@ export function orderRows<Row extends SortableRow>(
       if (result === 0)
         return left.node.name.localeCompare(right.node.name) || left.node.id - right.node.id;
     } else {
-      const leftName = searchResults ? left.path : left.node.name;
-      const rightName = searchResults ? right.path : right.node.name;
+      const leftName = field === "path" ? left.path : left.node.name;
+      const rightName = field === "path" ? right.path : right.node.name;
       result = leftName.localeCompare(rightName);
     }
     if (result === 0) result = left.node.id - right.node.id;
@@ -55,7 +54,7 @@ export function reconcileSearchView<Row extends SortableRow>(
   const refreshing = query === previousQuery;
   const sortField = refreshing ? previousSortField : "relevance";
   const sortDirection = refreshing ? previousSortDirection : "asc";
-  const ordered = orderRows(rows, sortField, sortDirection, true);
+  const ordered = orderRows(rows, sortField, sortDirection);
   const selectedID =
     refreshing && rows.some((row) => row.node.id === previousSelectedID)
       ? previousSelectedID

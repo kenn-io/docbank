@@ -1415,6 +1415,46 @@ it("sorts a meaning search from Advanced without turning it into a lexical snaps
   ).toBe("annual report");
 });
 
+it("sorts Advanced Name by basename and Path by full path across folders", async () => {
+  const alpha = { ...node(2, "alpha.txt", baseVersion), path: "/z/alpha.txt" };
+  const zeta = { ...node(3, "zeta.txt", rerankedVersion), path: "/a/zeta.txt" };
+  installHarness({
+    profiles: [
+      {
+        name: "private",
+        fingerprint: "a".repeat(64),
+        rendition: true,
+        embedding_bindings: ["embed"],
+        reranking_available: false,
+      },
+    ],
+    files: [alpha, zeta],
+    baseReport: report("hybrid", [
+      result(zeta, 1, "zeta excerpt"),
+      result(alpha, 2, "alpha excerpt"),
+    ]),
+  });
+  render(App);
+  await submitSearch("annual report");
+  await screen.findByText("zeta excerpt");
+
+  for (const [field, expected] of [
+    ["Name", ["alpha.txt", "zeta.txt"]],
+    ["Path", ["zeta.txt", "alpha.txt"]],
+  ] as const) {
+    await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+    await fireEvent.click(screen.getByRole("combobox", { name: /^Sort by:/ }));
+    await fireEvent.click(screen.getByRole("option", { name: field }));
+    await fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    await waitFor(() => {
+      const rows = screen.getAllByRole("row").filter((row) => row.textContent?.includes(".txt"));
+      expect(rows).toHaveLength(2);
+      expect(rows[0].textContent).toContain(expected[0]);
+      expect(rows[1].textContent).toContain(expected[1]);
+    });
+  }
+});
+
 it("runs the text edited in the top bar when Advanced sorts a meaning search", async () => {
   const file = node(2, "report.txt", baseVersion);
   const harness = installHarness({

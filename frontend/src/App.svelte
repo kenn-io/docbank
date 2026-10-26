@@ -1236,9 +1236,7 @@
   const similarAvailable = $derived(
     naturalProfiles.some((profile) => profile.embedding_bindings.length > 0),
   );
-  const sortedRows = $derived(
-    orderRows(rows, sortField, sortDirection, activeQuery !== "" || tagBrowse),
-  );
+  const sortedRows = $derived(orderRows(rows, sortField, sortDirection));
   const visibleDocumentCount = $derived(
     sortedRows.filter((row) => row.node.kind === "file").length,
   );
@@ -2448,7 +2446,7 @@
   function applyResultSort(sort: Query["sort"]): void {
     const fields: Partial<Record<Query["sort"]["field"], SortField>> = {
       name: "name",
-      path: "name",
+      path: "path",
       modified_at: "modified",
       media_type: "type",
       size: "size",
@@ -2698,7 +2696,7 @@
       sortDirection = sortDirection === "asc" ? "desc" : "asc";
     } else {
       sortField = field;
-      sortDirection = field === "name" || field === "type" ? "asc" : "desc";
+      sortDirection = field === "name" || field === "path" || field === "type" ? "asc" : "desc";
     }
   }
 
@@ -3338,9 +3336,7 @@
               ? "modified_at"
               : sortField === "type"
                 ? "media_type"
-                : sortField === "name" && (activeQuery !== "" || tagBrowse)
-                  ? "path"
-                  : sortField,
+                : sortField,
         direction: sortDirection,
       },
     };
@@ -3546,7 +3542,7 @@
 {:else}
   <div class="app-shell">
     <TelemetryNotice
-      session={webSession}
+      {vaultID}
       reporting={telemetryReporting}
       onmanage={() => openPanel({ kind: "telemetry" })}
     />
@@ -4437,8 +4433,11 @@
                     <TableHeaderCell
                       label="Document"
                       sortable
-                      sortDirection={sortField === "name" ? sortDirection : null}
-                      onsort={() => sortBy("name")}
+                      sortDirection={sortField ===
+                      (activeQuery !== "" || tagBrowse ? "path" : "name")
+                        ? sortDirection
+                        : null}
+                      onsort={() => sortBy(activeQuery !== "" || tagBrowse ? "path" : "name")}
                     />
                     <TableHeaderCell
                       class="col-type"

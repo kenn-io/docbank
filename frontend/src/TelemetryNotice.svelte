@@ -2,15 +2,14 @@
   import { IconButton } from "@kenn-io/kit-ui";
   import XIcon from "@lucide/svelte/icons/x";
   import { localPreferenceStorage } from "./browser-storage.js";
-  import * as generated from "./generated/docbank.js";
   import type { BrowserTelemetryQuietReason } from "@kenn-io/kit-ui/utils/browser-telemetry";
 
   let {
-    session,
+    vaultID,
     reporting,
     onmanage,
   }: {
-    session: string;
+    vaultID: string;
     // The reporter that knows whether the daemon accepts usage data.
     reporting?: {
       onQuietChange(
@@ -48,18 +47,8 @@
   }
 
   $effect(() => {
-    const token = session;
-    const controller = new AbortController();
-    key = "";
-    generated
-      .auditStatus({}, { session: token, signal: controller.signal })
-      .then((status) => {
-        const storageKey = `docbank:telemetry-notice:v1:${status.vault_id}`;
-        if (!controller.signal.aborted && status.vault_id && !dismissed(storageKey))
-          key = storageKey;
-      })
-      .catch(() => {});
-    return () => controller.abort();
+    const storageKey = vaultID ? `docbank:telemetry-notice:v1:${vaultID}` : "";
+    key = storageKey && !dismissed(storageKey) ? storageKey : "";
   });
 </script>
 

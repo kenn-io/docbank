@@ -26,7 +26,7 @@ describe("orderRows", () => {
       { node: node(2, "second.txt"), path: "/second.txt" },
     ];
 
-    expect(orderRows(rows, "relevance", "asc", true).map((row) => row.node.id)).toEqual([3, 1, 2]);
+    expect(orderRows(rows, "relevance", "asc").map((row) => row.node.id)).toEqual([3, 1, 2]);
   });
 
   it("sorts by the type shown, keeping names A to Z inside a type and folders first", () => {
@@ -41,17 +41,20 @@ describe("orderRows", () => {
       typed(4, "dir", "", "dir"),
     ];
 
-    expect(orderRows(rows, "type", "asc", false).map((row) => row.node.id)).toEqual([4, 3, 1, 2]);
-    expect(orderRows(rows, "type", "desc", false).map((row) => row.node.id)).toEqual([4, 2, 3, 1]);
+    expect(orderRows(rows, "type", "asc").map((row) => row.node.id)).toEqual([4, 3, 1, 2]);
+    expect(orderRows(rows, "type", "desc").map((row) => row.node.id)).toEqual([4, 2, 3, 1]);
   });
 
-  it("sorts search documents by the full path displayed in the table", () => {
+  it("sorts names by basename and paths by folder across search results", () => {
     const rows = [
       { node: node(1, "a.txt"), path: "/zeta/a.txt" },
       { node: node(2, "z.txt"), path: "/alpha/z.txt" },
     ];
 
-    expect(orderRows(rows, "name", "asc", true).map((row) => row.node.id)).toEqual([2, 1]);
+    expect(orderRows(rows, "name", "asc").map((row) => row.node.id)).toEqual([1, 2]);
+    expect(orderRows(rows, "path", "asc").map((row) => row.node.id)).toEqual([2, 1]);
+    expect(orderRows(rows, "name", "desc").map((row) => row.node.id)).toEqual([2, 1]);
+    expect(orderRows(rows, "path", "desc").map((row) => row.node.id)).toEqual([1, 2]);
   });
 
   it("preserves an explicit sort and selection when refreshing the same search", () => {
