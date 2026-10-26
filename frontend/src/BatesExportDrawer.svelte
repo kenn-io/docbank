@@ -1,5 +1,10 @@
 <script lang="ts">
-  import { listPackages, type PackageSummary } from "./generated/docbank.js";
+  import {
+    listPackages,
+    listPackageMembers,
+    readBatesAllocation,
+    type PackageSummary,
+  } from "./generated/docbank.js";
   import InspectorDetails from "./InspectorDetails.svelte";
   import DrawerShell from "./DrawerShell.svelte";
   import { onDestroy } from "svelte";
@@ -44,9 +49,35 @@
 
   let { session, mode = "create", onclose, onauthfailure, oncomplete }: Props = $props();
   let packages = $state<PackageSummary[]>([]);
+  let history = $state<BatesExport[]>([]);
+  let exportSnapshots = $state<Record<string, string>>({});
+  let packageRanges = $state<Record<string, string>>({});
+  const productions = $derived([
+    ...history.map((receipt) => ({
+      id: receipt.allocation_id,
+      receipt,
+      package: packages.find((item) => item.snapshot_id === exportSnapshots[receipt.allocation_id]),
+      range: `${receipt.pages[0]?.label}–${receipt.pages.at(-1)?.label}`,
+      pages: receipt.page_count,
+    })),
+    ...packages
+      .filter(
+        (item) =>
+          !history.some(
+            (receipt) =>
+              item.snapshot_id && item.snapshot_id === exportSnapshots[receipt.allocation_id],
+          ),
+      )
+      .map((item) => ({
+        id: item.package_id,
+        package: item,
+        receipt: null,
+        range: packageRanges[item.package_id] ?? "",
+        pages: item.page_count,
+      })),
+  ]);
   let sources = $state<BatesSource[]>([]);
   let namespaces = $state<BatesNamespace[]>([]);
-  let history = $state<BatesExport[]>([]);
   let sourceID = $state("");
   let namespaceID = $state("");
   let startAt = $state("");
@@ -172,6 +203,54 @@
             throw new Error("The export list did not advance.");
           after = mode === "productions" ? page.next_after : undefined;
         } while (after);
+        if (mode === "productions") {
+          const snapshots: Record<string, string> = {};
+          for (const item of items) {
+            const allocation = await readBatesAllocation(item.allocation_id, {
+              session: current,
+              signal,
+            });
+            snapshots[item.allocation_id] = allocation.snapshot_id;
+          }
+          const ranges: Record<string, string> = {};
+          for (const item of packages.filter(
+            (item) => !item.snapshot_id || !Object.values(snapshots).includes(item.snapshot_id),
+          )) {
+            const labels: string[] = [];
+            let after = 0;
+            do {
+              const page = await listPackageMembers(
+                item.package_id,
+                { limit: 250, after_ordinal: after },
+                { session: current, signal },
+              );
+              for (const member of page.items) {
+                const fields = JSON.parse(member.frozen_fields_json);
+                if (!Array.isArray(fields)) continue;
+                for (const field of fields) {
+                  if (
+                    [
+                      "loadfile.label.begin",
+                      "loadfile.label.end",
+                      "loadfile.label.assigned.begin",
+                      "loadfile.label.assigned.end",
+                    ].includes(field.canonical) &&
+                    field.raw
+                  )
+                    labels.push(field.raw);
+                }
+              }
+              if (page.next_after_ordinal && page.next_after_ordinal <= after)
+                throw new Error("The package members did not advance.");
+              after = page.next_after_ordinal ?? 0;
+            } while (after);
+            labels.sort();
+            ranges[item.package_id] = labels.length ? `${labels[0]}–${labels.at(-1)}` : "";
+          }
+          if (signal.aborted || current !== session) return;
+          exportSnapshots = snapshots;
+          packageRanges = ranges;
+        }
         history = items;
       } catch (cause) {
         if (!signal.aborted && current === session && !aborted(cause) && !unauthorized(cause))
@@ -341,10 +420,10 @@
 
 {#snippet exportCard(item: BatesExport, title: string, onhide?: () => void)}
   <section class="tool-section" aria-label={title}>
-    <div class="tool-heading">
-      <h3>{title}</h3>
-      <Chip size="xs" tone="success">verified</Chip>
-    </div>
+    {#if title}<div class="tool-heading">
+        <h3>{title}</h3>
+        <Chip size="xs" tone="success">verified</Chip>
+      </div>{/if}
     <dl class="tool-stats">
       <div>
         <dt>Pages</dt>
@@ -396,37 +475,46 @@
       {#if !loading && !error && !historyError && !packages.length && !history.length}
         <p class="tool-muted">No productions yet</p>
       {/if}
-      {#if packages.length}
-        <section class="tool-section" aria-label="Load-file sets">
-          <h3>Load-file sets</h3>
-          <ul class="tool-list">
-            {#each packages as item (item.package_id)}
-              <li>
-                <details class="tool-disclosure">
-                  <summary
-                    ><ChevronRightIcon size="14" aria-hidden="true" /><span
-                      >{item.package_name}</span
-                    ></summary
+      {#if !loading && productions.length}
+        <ul class="tool-list" aria-label="Productions">
+          {#each productions as item (item.id)}
+            <li class="production-item">
+              <details class="tool-disclosure">
+                <summary>
+                  <ChevronRightIcon size="14" aria-hidden="true" />
+                  <span class="production-name"
+                    >{item.package?.package_name ?? "Bates export"}<span class="production-range"
+                      >{item.range || "—"}</span
+                    ></span
                   >
-                  <InspectorDetails
-                    facts={[
-                      {
-                        label: "Direction",
-                        value: item.direction === "received" ? "Imported" : "Exported",
-                      },
-                      { label: "State", value: item.state },
-                      { label: "Documents", value: String(item.member_count) },
-                      { label: "Pages", value: String(item.page_count) },
-                      { label: "Party", value: item.party_label },
-                      { label: "Created", value: formatDate(item.created_at) },
-                    ]}
-                  />
-                </details>
-              </li>
-            {/each}
-          </ul>
-        </section>
+                  <span class="tool-muted">{item.pages} {item.pages === 1 ? "page" : "pages"}</span>
+                  <span
+                    >{item.receipt || item.package?.direction === "produced"
+                      ? "Exported"
+                      : "Imported"}</span
+                  >
+                </summary>
+                <div class="production-details">
+                  {#if item.package}
+                    <InspectorDetails
+                      facts={[
+                        { label: "Documents", value: item.package.member_count },
+                        { label: "Party", value: item.package.party_label },
+                        { label: "Created", value: formatDate(item.package.created_at) },
+                        { label: "Fingerprint", value: item.package.manifest_sha256, copy: true },
+                      ]}
+                    />
+                  {/if}
+                  {#if item.receipt}{@render exportCard(item.receipt, "")}{/if}
+                </div>
+              </details>
+            </li>
+          {/each}
+        </ul>
       {/if}
+      {#if historyError}<p class="tool-error" role="alert">
+          Publication history is unavailable: {historyError}
+        </p>{/if}
     {:else}
       {#if !loading && sources.length === 0}
         <p class="tool-muted">
@@ -689,17 +777,15 @@
 
       {#if activeExport}{@render exportCard(activeExport, "Stamped PDF ready")}{/if}
     {/if}
-    {#if viewedExport}{@render exportCard(
+    {#if mode === "create" && viewedExport}{@render exportCard(
         viewedExport,
         "Earlier Bates export",
         () => (viewedExport = null),
       )}{/if}
 
-    {#if history.length || historyError}
+    {#if mode === "create" && (history.length || historyError)}
       <section class="tool-section" aria-labelledby="bates-history-heading">
-        <h3 id="bates-history-heading">
-          {mode === "productions" ? "Bates exports" : "Recent exports"}
-        </h3>
+        <h3 id="bates-history-heading">Recent exports</h3>
         {#if historyError}<p class="tool-error" role="alert">
             Publication history is unavailable: {historyError}
           </p>
@@ -714,14 +800,9 @@
                   disabled={busy}
                   onclick={() => view(item)}
                 >
-                  <span
-                    >{mode === "productions"
-                      ? `${item.pages[0]?.label}–${item.pages.at(-1)?.label}`
-                      : formatDate(item.created_at)}</span
-                  ><span class="tool-muted">{item.page_count} pages</span><Chip
-                    size="xs"
-                    tone="success">{item.state}</Chip
-                  >
+                  <span>{formatDate(item.created_at)}</span><span class="tool-muted"
+                    >{item.page_count} pages</span
+                  ><Chip size="xs" tone="success">{item.state}</Chip>
                 </button>
               </li>{/each}
           </ul>{/if}
@@ -731,6 +812,30 @@
 </DrawerShell>
 
 <style>
+  .tool-list > li.production-item {
+    padding: 0;
+    display: block;
+  }
+  .production-item .tool-disclosure {
+    border: 0;
+  }
+  .production-item summary {
+    gap: var(--space-4);
+  }
+  .production-name {
+    flex: 1;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .production-range {
+    display: block;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+  .production-details {
+    display: grid;
+    gap: var(--space-5);
+  }
   .label-list {
     display: grid;
     max-height: 240px;

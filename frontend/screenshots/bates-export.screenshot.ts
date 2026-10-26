@@ -73,9 +73,20 @@ test("publishes selected pages from a sealed synthetic package through the real 
     await drawer.getByRole("button", { name: "Close Bates export" }).click();
     await page.getByRole("button", { name: "Productions", exact: true }).click();
     const productions = page.getByRole("dialog", { name: "Productions" });
-    await productions.locator("summary", { hasText: "Synthetic-Bates-production" }).click();
-    await expect(productions.getByText("Exported", { exact: true })).toBeVisible();
-    await productions.getByRole("button", { name: /Open Bates export/ }).click();
+    const rows = productions.getByRole("list", { name: "Productions" }).getByRole("listitem");
+    await expect(rows).toHaveCount(1);
+    await expect(rows.locator("summary")).toContainText("Synthetic-Bates-production");
+    await expect(rows.locator("summary")).toContainText("CASE000001–CASE000002");
+    await expect(rows.locator("summary")).toContainText("2 pages");
+    await expect(rows.locator("summary")).toContainText("Exported");
+    await expect(productions.locator("details[open]")).toHaveCount(0);
+    await expect(productions.getByRole("button", { name: "Download verified PDF" })).toBeHidden();
+    await page.screenshot({
+      path: path.join(output!, "productions-collapsed.png"),
+      fullPage: true,
+      animations: "disabled",
+    });
+    await rows.locator("summary").click();
     await expect(productions.getByRole("button", { name: "Download verified PDF" })).toBeVisible();
     await page.screenshot({ path: path.join(output!, "productions-exported.png"), fullPage: true });
   } finally {

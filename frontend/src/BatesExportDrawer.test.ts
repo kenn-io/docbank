@@ -451,6 +451,20 @@ it("lists imported and exported production sets across every page without requir
         next_after: url.searchParams.has("after") ? undefined : "first",
         limit: 250,
       });
+    if (url.pathname.startsWith("/api/v1/packages/by-id/"))
+      return json({
+        items: [
+          {
+            frozen_fields_json: JSON.stringify([
+              { canonical: "loadfile.label.begin", raw: "EXT000001" },
+              { canonical: "loadfile.label.end", raw: "EXT000002" },
+            ]),
+          },
+        ],
+        limit: 250,
+      });
+    if (url.pathname.startsWith("/api/v1/bates/allocations/"))
+      return json({ snapshot_id: snapshotID });
     if (url.pathname === "/api/v1/bates/exports")
       return json({
         items: url.searchParams.has("after") ? [earlier] : [],
@@ -467,9 +481,88 @@ it("lists imported and exported production sets across every page without requir
   });
   expect(await screen.findByText("Imported load file")).toBeTruthy();
   expect(await screen.findByText("Exported images")).toBeTruthy();
-  await fireEvent.click(
-    await screen.findByRole("button", { name: `Open Bates export ${earlier.allocation_id}` }),
-  );
+  const list = screen.getByRole("list", { name: "Productions" });
+  expect(within(list).getAllByRole("listitem")).toHaveLength(3);
+  expect(within(list).getAllByText("EXT000001–EXT000002")).toHaveLength(2);
+  expect(within(list).getByText("Imported")).toBeTruthy();
+  expect(within(list).getAllByText("Exported")).toHaveLength(2);
+  expect(list.querySelectorAll("details[open]")).toHaveLength(0);
+  await fireEvent.click(within(list).getByText("Bates export"));
   expect(await screen.findByRole("button", { name: "Download verified PDF" })).toBeTruthy();
   expect(fetcher.mock.calls.every(([, init]) => !init?.method || init.method === "GET")).toBe(true);
+});
+
+it("shows a package and its Bates export once with receipt actions inside the collapsed row", async () => {
+  const receipt = {
+    ...earlier,
+    page_count: 2,
+    pages: labels.map((label) => ({ ...label, source_blob_sha256: "c".repeat(64) })),
+  };
+  const requests: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = String(input);
+    requests.push(url);
+    if (url.startsWith("/api/v1/packages?"))
+      return json({
+        items: [
+          {
+            package_id: "produced-set",
+            package_name: "Review production",
+            snapshot_id: snapshotID,
+            direction: "produced",
+            state: "sealed",
+            page_count: 2,
+            member_count: 1,
+            manifest_sha256: "1".repeat(64),
+            created_at: "2026-09-21T00:00:00Z",
+          },
+        ],
+        limit: 250,
+      });
+    if (url === "/api/v1/bates/exports?limit=50") return json({ items: [receipt], total: 1 });
+    if (url === `/api/v1/bates/allocations/${receipt.allocation_id}`)
+      return json({ snapshot_id: snapshotID });
+    if (url === `/api/v1/bates/exports/${receipt.allocation_id}`) return json(receipt);
+    if (url === `/api/v1/bates/exports/${receipt.allocation_id}/download`)
+      return json({
+        allocation_id: receipt.allocation_id,
+        blob_sha256: receipt.blob_sha256,
+        size: receipt.size,
+        url: "/api/daemon/web-download/file?ticket=synthetic",
+        name: "review.pdf",
+      });
+    throw new Error(`Unexpected production request ${url}`);
+  });
+  const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+  render(BatesExportDrawer, {
+    mode: "productions",
+    session: "session",
+    onclose: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  const name = await screen.findByText("Review production");
+  const list = screen.getByRole("list", { name: "Productions" });
+  const row = within(list).getByRole("listitem");
+  expect(within(list).getAllByRole("listitem")).toHaveLength(1);
+  expect(row.querySelector("summary")?.textContent).toContain("ACME000041–ACME000042");
+  expect(row.querySelector("summary")?.textContent).toContain("2 pages");
+  expect(row.querySelector("summary")?.textContent).toContain("Exported");
+  expect(row.querySelector("details")?.open).toBe(false);
+
+  await fireEvent.click(name);
+  expect(row.querySelector("details")?.open).toBe(true);
+  expect(within(row).getByText("1".repeat(64))).toBeTruthy();
+  expect(within(row).getByText(receipt.blob_sha256)).toBeTruthy();
+  await fireEvent.click(within(row).getByRole("button", { name: "Refresh receipt" }));
+  await waitFor(() => expect(requests).toContain(`/api/v1/bates/exports/${receipt.allocation_id}`));
+  await waitFor(() =>
+    expect(
+      within(row).getByRole("button", { name: "Download verified PDF" }).hasAttribute("disabled"),
+    ).toBe(false),
+  );
+  await fireEvent.click(within(row).getByRole("button", { name: "Download verified PDF" }));
+  await waitFor(() => expect(click).toHaveBeenCalledOnce());
+  expect(requests).toContain(`/api/v1/bates/exports/${receipt.allocation_id}/download`);
+  await fireEvent.click(name);
+  expect(row.querySelector("details")?.open).toBe(false);
 });
