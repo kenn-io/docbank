@@ -26,12 +26,11 @@ export const purposeLabels: Record<
   index: { title: "Index for search", running: "Indexing…", done: "Indexed." },
 };
 
-export function processingPurpose(plan: ProcessingPlan): ProcessingPurpose {
+export function processingPurpose(plan: ProcessingPlan, mediaType?: string): ProcessingPurpose {
   const rendition = plan.flow.find((hop) => hop.capability === "rendition");
   if (!rendition) return "index";
   if (rendition.input_classes.includes("derived_upload")) return "describe";
-  if (rendition.runtime_disclosure.retained_artifact_roles.includes("provider_transcript"))
-    return "transcribe";
+  if (mediaType?.startsWith("audio/")) return "transcribe";
   return "extract";
 }
 

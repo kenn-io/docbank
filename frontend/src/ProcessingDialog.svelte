@@ -63,7 +63,7 @@
 
   const selected = $derived(options.find((option) => option.name === profileName) ?? null);
   const plan = $derived(selected?.plan ?? null);
-  const purpose = $derived(plan ? processingPurpose(plan) : "extract");
+  const purpose = $derived(plan ? processingPurpose(plan, node.mime_type) : "extract");
   const labels = $derived(purposeLabels[purpose]);
   const title = $derived(labels.title);
   const done = $derived(status?.state === "completed");

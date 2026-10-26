@@ -118,6 +118,15 @@ function jobRequests(fetchMock: ReturnType<typeof setup>["fetchMock"]): { consen
 }
 
 describe("processing dialog", () => {
+  it("offers transcription when the audio plan retains only text", async () => {
+    const { rerender, props } = setup({ audio: plan("audio", { consent_required: false }) });
+    await rerender({ node: { ...props.node, mime_type: "audio/wav" } });
+    expect(await screen.findByRole("dialog", { name: "Transcribe" })).toBeTruthy();
+    const run = screen.getByRole("button", { name: "Transcribe" });
+    await waitFor(() => expect(run.hasAttribute("disabled")).toBe(false));
+    expect(screen.getByText("Saves the transcript in the vault and its backups.")).toBeTruthy();
+  });
+
   it("offers only profiles that accept the file type and starts on a local one", async () => {
     vi.stubGlobal(
       "ResizeObserver",

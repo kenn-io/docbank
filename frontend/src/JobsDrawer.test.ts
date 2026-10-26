@@ -589,6 +589,34 @@ describe("background jobs drawer", () => {
   });
 });
 
+it.each(["failed", "running"])(
+  "shows a completed retry ahead of an older %s run",
+  async (status) => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jobsResponse([
+        {
+          name: "storage:old",
+          lane: "place",
+          status,
+          busy: false,
+          started_at: "2026-07-23T11:00:00Z",
+          error: "Earlier operation failed",
+        },
+        {
+          name: "storage:retry",
+          lane: "place",
+          status: "completed",
+          busy: false,
+          started_at: "2026-07-23T12:00:00Z",
+        },
+      ]),
+    );
+    render(JobsDrawer, { session: "session", onclose: vi.fn(), onauthfailure: vi.fn() });
+    const row = await screen.findByRole("row", { name: /^Moving stored files Completed/ });
+    expect(within(row).getByText("Completed")).toBeTruthy();
+  },
+);
+
 it("shows current running work ahead of a retained failure in the same lane", async () => {
   vi.spyOn(globalThis, "fetch").mockResolvedValue(
     jobsResponse([

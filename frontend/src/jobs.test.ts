@@ -39,7 +39,8 @@ describe("activity lanes", () => {
       [{ lane: "place", paused: true, concurrency: 1, revision: 2, can_set_concurrency: false }],
     );
     expect(lane.control?.paused).toBe(true);
-    expect(lane.status).toBe("failed");
+    expect(lane.status).toBe("cancelled");
+    expect(lane.failed).toBe(false);
     expect(lane.visible).toBe(false);
     expect(lane.members.map((member) => member.operation_id)).toEqual(["c", "b", "a"]);
     const controls = [
@@ -56,6 +57,25 @@ describe("activity lanes", () => {
       ["repair", "repair"],
     ]);
     expect(after.map(({ key }) => key)).toEqual(idle.map(({ key }) => key));
+  });
+
+  it("uses the newest finished run while a retry is queued", () => {
+    const [lane] = jobLanes([
+      job({ status: "failed", busy: false }),
+      job({
+        name: "storage:retry",
+        status: "completed",
+        busy: false,
+        started_at: "2026-07-23T12:01:00Z",
+      }),
+      job({
+        name: "storage:queued",
+        status: "queued",
+        busy: false,
+        started_at: "2026-07-23T12:02:00Z",
+      }),
+    ]);
+    expect(lane).toMatchObject({ status: "queued", failed: false });
   });
 
   it("shows a queued photo import before a worker picks it up", () => {

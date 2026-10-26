@@ -146,7 +146,7 @@
     if (lane.active) return "Running";
     if (lane.members.some((member) => member.status === "queued")) return "Queued";
     if (lane.failed) return "Failed";
-    if (lane.members.some((member) => member.error)) return "Waiting";
+    if (lane.members.find((member) => member.status !== "queued")?.error) return "Waiting";
     return lane.status && lane.status !== "running" ? statusLabel(lane.status) : "Idle";
   }
 
