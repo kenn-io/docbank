@@ -11,8 +11,13 @@ VERSION := dev
 endif
 COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
+# Public PostHog ingest key, not a credential. Builds without it send no
+# telemetry; kit also sends nothing unless VERSION is a plain release tag.
+POSTHOG_PROJECT_KEY ?= phc_AzHd9YvuHR7M5poKzC6eW654d3SgKyBdoQPuwkWhimUf
+
 LDFLAGS := -X go.kenn.io/docbank/internal/version.Version=$(VERSION) \
-           -X go.kenn.io/docbank/internal/version.Commit=$(COMMIT)
+           -X go.kenn.io/docbank/internal/version.Commit=$(COMMIT) \
+           -X go.kenn.io/kit/telemetry/posthog.projectKey=$(POSTHOG_PROJECT_KEY)
 
 # fts5: enable the SQLite FTS5 full-text search extension
 BUILD_TAGS := fts5
