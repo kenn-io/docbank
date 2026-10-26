@@ -118,6 +118,17 @@ func registerJobRoutes(api huma.API, d Deps) {
 				applyControl(&job, controls, job.Lane, job.CanCancel)
 				out.Body.Items = append(out.Body.Items, job)
 			}
+			renditions, err := d.Store.RunningRenditionJobs(ctx, time.Now())
+			if err != nil {
+				return nil, FromStoreError(err)
+			}
+			for _, rendition := range renditions {
+				out.Body.Items = append(out.Body.Items, Job{
+					Name: "rendition:" + rendition.ID, Lane: "process:renditions",
+					Status: string(jobs.StatusRunning), Busy: true,
+					StartedAt: rendition.CreatedAt.Format(time.RFC3339Nano),
+				})
+			}
 		}
 		if d.Jobs != nil {
 			for _, snapshot := range d.Jobs.Snapshot() {

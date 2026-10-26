@@ -9,6 +9,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -30,6 +31,7 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/retrieval"
 	"go.kenn.io/docbank/internal/store"
@@ -424,6 +426,89 @@ func runProcessingForCoverage(t *testing.T, ts *httptest.Server, node store.Node
 		map[string]any{"selector": selector, "plan_fingerprint": plan.Fingerprint, "consent": true})
 	require.Equal(t, http.StatusOK, jobResponse.StatusCode, jobBody)
 	processingJobFromStream(t, jobBody)
+}
+
+func TestProcessingStartedFromBrowserAppearsBusy(t *testing.T) {
+	t.Parallel()
+	inner, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
+	require.NoError(t, err)
+	provider := &blockingProcessingProvider{
+		inner: inner, started: make(chan struct{}), release: make(chan struct{}),
+	}
+	registry := processing.NewRenditionRuntimeRegistry()
+	supervisor := jobs.New(t.Context(), slog.New(slog.DiscardHandler))
+	t.Cleanup(func() { require.NoError(t, supervisor.Shutdown(context.Background())) })
+	ts, catalog := newTestServer(t, func(deps *api.Deps) {
+		configureProcessingTestServiceWithProviderAndRegistry(t, provider, registry)(deps)
+		deps.Jobs = supervisor
+		worker, workerErr := processing.NewRenditionWorker(processing.RenditionWorkerConfig{
+			Catalog: deps.Store, Blobs: deps.Blobs, Runtime: registry, Gate: deps.Gate,
+			Owner: "test-polling-worker", LeaseDuration: time.Minute, IdleDelay: time.Minute,
+		})
+		require.NoError(t, workerErr)
+		require.NoError(t, supervisor.Start("process:renditions", worker.Run))
+	})
+	t.Cleanup(func() { closeProcessingSignal(provider.release) })
+	require.Eventually(t, func() bool { return !supervisor.Snapshot()[0].Busy }, time.Second, time.Millisecond)
+	node := createFileWithContent(t, ts, catalog, "/activity.txt", "synthetic processing activity\n")
+	response, body := do(t, ts, http.MethodPost, "/api/daemon/web-session", nil, nil)
+	require.Equal(t, http.StatusCreated, response.StatusCode, body)
+	var session struct {
+		Token string `json:"token"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &session))
+	headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: session.Token}
+	selector := api.ProcessingSelector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "private"}
+	response, body = do(t, ts, http.MethodPost, "/api/v1/processing/plans", headers, api.ProcessingPlanRequest{Selector: selector})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var plan api.ProcessingPlan
+	require.NoError(t, json.Unmarshal([]byte(body), &plan))
+	payload, err := json.Marshal(api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true})
+	require.NoError(t, err)
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+"/api/v1/processing/jobs", bytes.NewReader(payload))
+	require.NoError(t, err)
+	request.Header.Set("Content-Type", "application/json")
+	for key, value := range headers {
+		request.Header[key] = []string{value}
+	}
+	response, err = ts.Client().Do(request)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, response.Body.Close()) }()
+	require.Equal(t, http.StatusOK, response.StatusCode)
+	scanner := bufio.NewScanner(response.Body)
+	require.True(t, scanner.Scan())
+	var event api.ProcessingJobEvent
+	require.NoError(t, json.Unmarshal(scanner.Bytes(), &event))
+	require.NotNil(t, event.Job)
+	select {
+	case <-provider.started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("provider did not start")
+	}
+	assert.False(t, supervisor.Snapshot()[0].Busy, "the polling worker did not claim this job")
+	jobResponse, jobBody := get(t, ts, "/api/v1/jobs", headers)
+	require.Equal(t, http.StatusOK, jobResponse.StatusCode, jobBody)
+	var active api.JobList
+	require.NoError(t, json.Unmarshal([]byte(jobBody), &active))
+	busy := false
+	for _, job := range active.Items {
+		busy = busy || job.Lane == "process:renditions" && job.Busy
+	}
+	assert.True(t, busy, "Running must include browser-started provider execution")
+	closeProcessingSignal(provider.release)
+	for scanner.Scan() {
+		require.NoError(t, json.Unmarshal(scanner.Bytes(), &event))
+	}
+	require.NoError(t, scanner.Err())
+	require.NotNil(t, event.Status)
+	require.Equal(t, "completed", event.Status.State)
+	jobResponse, jobBody = get(t, ts, "/api/v1/jobs", headers)
+	require.Equal(t, http.StatusOK, jobResponse.StatusCode, jobBody)
+	var finished api.JobList
+	require.NoError(t, json.Unmarshal([]byte(jobBody), &finished))
+	for _, job := range finished.Items {
+		assert.False(t, job.Busy, "completed processing must leave Running")
+	}
 }
 
 func TestProcessingJobStreamPublishesDurableIdentityAndSurvivesDisconnect(t *testing.T) {
