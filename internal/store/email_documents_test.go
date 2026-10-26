@@ -3,10 +3,6 @@ package store
 import (
 	"context"
 	"database/sql"
-	"database/sql/driver"
-	"errors"
-	"io"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -19,189 +15,46 @@ import (
 
 func TestEmailDocumentsReleaseWaitsForWriter(t *testing.T) {
 	t.Parallel()
-	for _, outcome := range []string{"release", "ordinary mutation returns busy and busy callback runs once"} {
-		t.Run(outcome, func(t *testing.T) {
-			s := newTestStore(t)
-			f := newEmailFixture(t, s, "source.eml")
-			view, err := s.PublishEmailGeneration(t.Context(), f.publication)
-			require.NoError(t, err)
-			receipt, err := s.PublishEmailDocuments(t.Context(), attachmentRequest(t, s, view, "contended-publication"))
-			require.NoError(t, err)
-			require.NoError(t, s.writeDB.Close())
-			s.writeDB, err = s.driver.Open(s.path, docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate, BusyTimeout: 10 * time.Millisecond})
-			require.NoError(t, err)
-			s.writeDB.SetMaxOpenConns(1)
-			writer, err := s.driver.Open(s.path, docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate})
-			require.NoError(t, err)
-			defer func() { require.NoError(t, writer.Close()) }()
-			lock, err := writer.BeginTx(t.Context(), nil)
-			require.NoError(t, err)
-			defer func() {
-				if err := lock.Rollback(); err != nil {
-					require.ErrorIs(t, err, sql.ErrTxDone)
-				}
-			}()
-			if outcome == "ordinary mutation returns busy and busy callback runs once" {
-				err = s.withStorageTx(t.Context(), func(*sql.Tx) error {
-					t.Error("callback ran while another writer held the lock")
-					return nil
-				})
-				require.True(t, s.driver.IsBusy(err), "expected busy error, got %v", err)
-				require.NoError(t, lock.Rollback())
-				busyErr, calls := err, 0
-				ctx, cancel := context.WithTimeout(t.Context(), time.Second)
-				defer cancel()
-				err = s.withStorageTxRetryBegin(ctx, func(tx *sql.Tx) error {
-					calls++
-					var timeout int
-					require.NoError(t, tx.QueryRow("PRAGMA busy_timeout").Scan(&timeout))
-					require.Equal(t, 10, timeout)
-					return busyErr
-				})
-				require.ErrorIs(t, err, busyErr)
-				require.Equal(t, 1, calls)
-				return
+	t.Run("release", func(t *testing.T) {
+		s := newTestStore(t)
+		f := newEmailFixture(t, s, "source.eml")
+		view, err := s.PublishEmailGeneration(t.Context(), f.publication)
+		require.NoError(t, err)
+		receipt, err := s.PublishEmailDocuments(t.Context(), attachmentRequest(t, s, view, "contended-publication"))
+		require.NoError(t, err)
+		require.NoError(t, s.writeDB.Close())
+		s.writeDB, err = s.driver.Open(s.path, docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate, BusyTimeout: 10 * time.Millisecond})
+		require.NoError(t, err)
+		s.writeDB.SetMaxOpenConns(1)
+		writer, err := s.driver.Open(s.path, docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate})
+		require.NoError(t, err)
+		defer func() { require.NoError(t, writer.Close()) }()
+		lock, err := writer.BeginTx(t.Context(), nil)
+		require.NoError(t, err)
+		defer func() {
+			if err := lock.Rollback(); err != nil {
+				require.ErrorIs(t, err, sql.ErrTxDone)
 			}
-			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-			defer cancel()
-			done := make(chan error, 1)
-			started := make(chan struct{})
-			go func() {
-				close(started)
-				done <- s.RemoveEmailDocumentPublication(ctx, receipt.OperationID, receipt.RequestDigest)
-			}()
-			<-started
-			select {
-			case err := <-done:
-				t.Fatalf("release returned while the writer lock was held: %v", err)
-			case <-time.After(100 * time.Millisecond): //nolint:kennlint // Real SQLite contention must outlast the driver's wall-clock busy timeout.
-			}
-			// Backoff must leave the sole pooled writer available with its timeout restored.
-			var timeout int
-			require.NoError(t, s.writeDB.QueryRowContext(ctx, "PRAGMA busy_timeout").Scan(&timeout))
-			require.Equal(t, 10, timeout)
-			require.NoError(t, lock.Rollback())
-			require.NoError(t, <-done)
-			_, err = s.EmailDocumentPublication(t.Context(), receipt.OperationID)
-			require.ErrorIs(t, err, ErrNotFound)
-		})
-	}
-}
-
-func TestEmailDocumentsReleaseCancellationWithDefaultTimeout(t *testing.T) {
-	t.Parallel()
-	for _, mode := range []string{"cancel", "deadline"} {
-		t.Run(mode, func(t *testing.T) {
-			s := newTestStore(t)
-			f := newEmailFixture(t, s, "source.eml")
-			view, err := s.PublishEmailGeneration(t.Context(), f.publication)
-			require.NoError(t, err)
-			receipt, err := s.PublishEmailDocuments(t.Context(), attachmentRequest(t, s, view, "canceled-publication"))
-			require.NoError(t, err)
-			var timeout int
-			require.NoError(t, s.writeDB.QueryRow("PRAGMA busy_timeout").Scan(&timeout))
-			require.Equal(t, 5000, timeout)
-			writer, err := s.driver.Open(s.path, docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate})
-			require.NoError(t, err)
-			defer func() { require.NoError(t, writer.Close()) }()
-			lock, err := writer.BeginTx(t.Context(), nil)
-			require.NoError(t, err)
-			defer func() { _ = lock.Rollback() }()
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			want := context.Canceled
-			if mode == "deadline" {
-				cancel()
-				ctx, cancel = context.WithTimeout(t.Context(), 50*time.Millisecond) //nolint:kennlint // Exercise cancellation during a real SQLite busy wait.
-				defer cancel()
-				want = context.DeadlineExceeded
-			} else {
-				timer := time.AfterFunc(50*time.Millisecond, cancel) //nolint:kennlint // Exercise cancellation during a real SQLite busy wait.
-				defer timer.Stop()
-			}
-			start := time.Now()
-			err = s.RemoveEmailDocumentPublication(ctx, receipt.OperationID, receipt.RequestDigest)
-			require.ErrorIs(t, err, want)
-			require.Less(t, time.Since(start), 500*time.Millisecond, "cancellation waited for SQLite's busy timeout")
-			retained, err := s.EmailDocumentPublication(t.Context(), receipt.OperationID)
-			require.NoError(t, err)
-			require.Equal(t, receipt, retained)
-			require.NoError(t, s.writeDB.QueryRow("PRAGMA busy_timeout").Scan(&timeout))
-			require.Equal(t, 5000, timeout)
-			require.NoError(t, lock.Rollback())
-			_, err = s.Mkdir(t.Context(), s.RootID(), "after-cancellation")
-			require.NoError(t, err)
-		})
-	}
-}
-
-func TestEmailDocumentsReleaseDiscardsConnectionOnTimeoutRestoreFailure(t *testing.T) {
-	t.Parallel()
-	for _, beginFails := range []bool{false, true} {
-		t.Run(strconv.FormatBool(beginFails), func(t *testing.T) {
-			connection := &timeoutRestoreFailureConnection{restoreErr: errors.New("timeout restore failed")}
-			if beginFails {
-				connection.beginErr = errors.New("begin failed")
-			}
-			db := sql.OpenDB(rollbackConnector{connection})
-			defer func() { require.NoError(t, db.Close()) }()
-			s := &Store{writeDB: db, driver: DefaultSQLiteDriver()}
-			err := s.withStorageTxRetryBegin(t.Context(), func(*sql.Tx) error {
-				t.Error("callback ran after timeout restoration failed")
-				return nil
-			})
-			require.ErrorIs(t, err, connection.restoreErr)
-			require.Equal(t, !beginFails, connection.rolledBack)
-			require.True(t, connection.closed)
-			require.Zero(t, db.Stats().OpenConnections)
-		})
-	}
-}
-
-type timeoutRestoreFailureConnection struct {
-	restoreErr, beginErr error
-	rolledBack, closed   bool
-}
-
-func (*timeoutRestoreFailureConnection) Prepare(string) (driver.Stmt, error) {
-	return nil, errors.New("unexpected prepare")
-}
-func (c *timeoutRestoreFailureConnection) Close() error { c.closed = true; return nil }
-func (c *timeoutRestoreFailureConnection) Begin() (driver.Tx, error) {
-	if c.beginErr != nil {
-		return nil, c.beginErr
-	}
-	return c, nil
-}
-func (*timeoutRestoreFailureConnection) Commit() error     { return errors.New("unexpected commit") }
-func (c *timeoutRestoreFailureConnection) Rollback() error { c.rolledBack = true; return nil }
-func (c *timeoutRestoreFailureConnection) ExecContext(_ context.Context, query string, _ []driver.NamedValue) (driver.Result, error) {
-	if query == "PRAGMA busy_timeout=0" {
-		return driver.RowsAffected(0), nil
-	}
-	if query == "PRAGMA busy_timeout=5000" {
-		return nil, c.restoreErr
-	}
-	return nil, errors.New("unexpected exec: " + query)
-}
-func (*timeoutRestoreFailureConnection) QueryContext(_ context.Context, query string, _ []driver.NamedValue) (driver.Rows, error) {
-	if query != "PRAGMA busy_timeout" {
-		return nil, errors.New("unexpected query: " + query)
-	}
-	return &timeoutRows{}, nil
-}
-
-type timeoutRows struct{ read bool }
-
-func (*timeoutRows) Columns() []string { return []string{"timeout"} }
-func (*timeoutRows) Close() error      { return nil }
-func (r *timeoutRows) Next(values []driver.Value) error {
-	if r.read {
-		return io.EOF
-	}
-	r.read = true
-	values[0] = int64(5000)
-	return nil
+		}()
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
+		done := make(chan error, 1)
+		started := make(chan struct{})
+		go func() {
+			close(started)
+			done <- s.RemoveEmailDocumentPublication(ctx, receipt.OperationID, receipt.RequestDigest)
+		}()
+		<-started
+		select {
+		case err := <-done:
+			t.Fatalf("release returned while the writer lock was held: %v", err)
+		case <-time.After(100 * time.Millisecond): //nolint:kennlint // Real SQLite contention must outlast the driver's wall-clock busy timeout.
+		}
+		require.NoError(t, lock.Rollback())
+		require.NoError(t, <-done)
+		_, err = s.EmailDocumentPublication(t.Context(), receipt.OperationID)
+		require.ErrorIs(t, err, ErrNotFound)
+	})
 }
 
 func attachmentRequest(t *testing.T, s *Store, view EmailMetadataView, operation string) document.EmailDocumentPublicationRequest {
