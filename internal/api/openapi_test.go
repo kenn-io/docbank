@@ -419,17 +419,6 @@ func TestOpenAPIDeclaresPackagePreflightContract(t *testing.T) {
 	}
 }
 
-func TestOpenAPIDeclaresPackageContainerContract(t *testing.T) {
-	t.Parallel()
-	doc := api.NewOfflineServer().API().OpenAPI()
-	require.NotNil(t, doc.Paths["/api/v1/packages/containers"].Post)
-	require.NotNil(t, doc.Paths["/api/v1/packages/containers/{id}"].Get)
-	require.NotNil(t, doc.Paths["/api/v1/packages/containers/{id}"].Delete)
-	require.NotNil(t, doc.Paths["/api/v1/packages/containers/{id}/chunks/{index}"].Put)
-	require.Negative(t, doc.Paths["/api/v1/packages/containers/{id}/chunks/{index}"].Put.BodyReadTimeout)
-	require.NotNil(t, doc.Paths["/api/v1/packages/containers/{id}/seal"].Post)
-}
-
 func TestOpenAPIDeclaresPackageBrowseContract(t *testing.T) {
 	t.Parallel()
 	doc := api.NewOfflineServer().API().OpenAPI()

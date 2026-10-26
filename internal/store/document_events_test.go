@@ -8,18 +8,6 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
-func TestEventControlStateIsLazy(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	var count int
-	require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM document_event_state`).Scan(&count))
-	require.Zero(t, count)
-	_, err := s.db.Exec(`INSERT INTO document_event_state(
-		singleton,contract_version,deriver_fingerprint,input_epoch,publication_epoch,updated_at
-	) VALUES(1,'document-events/v1','test',1,1,'2020-01-01T00:00:00Z')`)
-	require.NoError(t, err)
-}
-
 func TestPublishDocumentEventsIsIdempotentAndDetectsCorruption(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

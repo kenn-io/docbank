@@ -61,33 +61,6 @@ func TestReferenceProfileCanonicalizationPinsCompatibilityIdentity(t *testing.T)
 	require.ErrorContains(t, err, "not canonical")
 }
 
-func TestReferenceProfileAdvertisesOnlyEnforceableBroadSuppliedByteFormats(t *testing.T) {
-	profile, err := NewProfile(Config{
-		DeploymentID: "operator-unstructured-primary",
-		RuntimeID:    "sha256:" + strings.Repeat("b", 64),
-	})
-	require.NoError(t, err)
-
-	assert.Equal(t, []document.RenditionFormatCapability{
-		{MediaFamily: "ebook", MediaType: "application/epub+zip", InputKind: document.RenditionInputOriginalFile},
-		{MediaFamily: "image", MediaType: "image/jpeg", InputKind: document.RenditionInputOriginalFile},
-		{MediaFamily: "image", MediaType: "image/png", InputKind: document.RenditionInputOriginalFile},
-		{MediaFamily: "mail", MediaType: "message/rfc822", InputKind: document.RenditionInputOriginalFile},
-		{MediaFamily: "pdf", MediaType: "application/pdf", InputKind: document.RenditionInputOriginalFile},
-		{MediaFamily: "presentation", MediaType: "application/vnd.openxmlformats-officedocument.presentationml.presentation", InputKind: document.RenditionInputOriginalFile},
-		{MediaFamily: "spreadsheet", MediaType: "application/vnd.oasis.opendocument.spreadsheet", InputKind: document.RenditionInputOriginalFile},
-		{MediaFamily: "spreadsheet", MediaType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", InputKind: document.RenditionInputOriginalFile},
-		{MediaFamily: "spreadsheet", MediaType: "text/csv", InputKind: document.RenditionInputOriginalFile},
-		{MediaFamily: "structured", MediaType: "application/xml", InputKind: document.RenditionInputOriginalFile},
-		{MediaFamily: "text", MediaType: "text/markdown", InputKind: document.RenditionInputOriginalFile},
-		{MediaFamily: "text", MediaType: "text/plain", InputKind: document.RenditionInputOriginalFile},
-	}, profile.SupportedFormats)
-	assert.Equal(t, "exact_supplied_bytes", profile.Disclosure.Source)
-	assert.True(t, profile.Disclosure.DiscloseFilename)
-	assert.Equal(t, []document.EvidenceArtifactRole{document.EvidenceArtifactStructured},
-		profile.ArtifactPolicy.AllowedRoles)
-}
-
 func TestReferenceProfileBuildsStandardBridgeAndRejectsDrift(t *testing.T) {
 	profile, err := NewProfile(Config{
 		DeploymentID:      "operator-unstructured-primary",

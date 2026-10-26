@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json/jsontext"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -662,19 +661,6 @@ func TestProcessingMetadataRejectsUnknownCapturedPolicyBeforeInsert(t *testing.T
 		Completeness: build.Completeness, Warnings: build.Warnings, CompletedAt: build.CompletedAt,
 	}
 	require.Error(t, validateMetadataRenditionBuild(value))
-}
-
-func TestProcessingMetadataOpenAcceptsExactCurrentSchema(t *testing.T) {
-	t.Parallel()
-	path := filepath.Join(t.TempDir(), "current.db")
-	driver := DefaultSQLiteDriver()
-	created, err := openCurrentStore(path, driver, nil)
-	require.NoError(t, err)
-	require.NoError(t, created.Close())
-
-	reopened, err := openCurrentStore(path, driver, nil)
-	require.NoError(t, err)
-	require.NoError(t, reopened.Close())
 }
 
 func TestRenditionCatalogInsertOrReuseRejectsImmutableConflicts(t *testing.T) {

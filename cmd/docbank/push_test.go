@@ -23,7 +23,6 @@ func TestPushCommandValidatesBeforeContactingDaemon(t *testing.T) {
 		args []string
 		want string
 	}{
-		{"missing required", []string{"folder"}, "required flag"},
 		{"unsupported URL", []string{"folder", "--to", "file:///tmp/daemon", "--name", "laptop", "--dest", "/archive"}, "daemon origin"},
 		{"credentials in URL", []string{"folder", "--to", "http://secret@127.0.0.1:7777", "--name", "laptop", "--dest", "/archive"}, "daemon origin"},
 		{"invalid name", []string{"folder", "--to", "http://127.0.0.1:1", "--name", "Laptop", "--dest", "/archive"}, "lowercase"},

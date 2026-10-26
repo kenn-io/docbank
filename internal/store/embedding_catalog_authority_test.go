@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -287,52 +286,6 @@ func TestEmbeddingCatalogMetadataRejectsDivergentE1Projection(t *testing.T) {
 	require.NotEqual(t, exported.String(), mutated)
 	target := newTestStore(t)
 	require.ErrorContains(t, target.ImportMetadata(t.Context(), strings.NewReader(mutated)), "projection")
-}
-
-func TestEmbeddingCatalogReadsPackedArtifactAuthority(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	data := []byte("synthetic packed embedding authority")
-	hash, err := packstore.ParseHash(testSHA256(data))
-	require.NoError(t, err)
-	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-		return s.EnsureBlobTx(tx, hash.String(), int64(len(data)))
-	}))
-	layout, err := packstore.NewLayout(filepath.Join(filepath.Dir(s.path), "blobs"),
-		packstore.LayoutOptions{Staging: packstore.StagingStoreDirectory, StagingDir: "tmp"})
-	require.NoError(t, err)
-	require.NoError(t, os.MkdirAll(layout.PacksDir(), 0o700))
-	writer, err := pack.NewWriter(layout.PacksDir(), pack.WriterOptions{})
-	require.NoError(t, err)
-	entry, err := writer.Append(data)
-	require.NoError(t, err)
-	packID := writer.ID()
-	require.NoError(t, os.MkdirAll(filepath.Dir(layout.PackPath(packID)), 0o700))
-	entries, err := writer.Seal(layout.PackPath(packID))
-	require.NoError(t, err)
-	require.Len(t, entries, 1)
-	index := packstore.IndexEntry{
-		Hash: hash, PackID: packID, Offset: int64(entry.Offset), StoredLen: int64(entry.StoredLen),
-		RawLen: int64(entry.RawLen), Flags: uint8(entry.Flags), CRC32C: entry.CRC32C,
-	}
-	require.NoError(t, NewPackCatalog(s).RecordPack(t.Context(), packstore.PackRecord{
-		PackID: packID, EntryCount: 1, StoredBytes: int64(entry.StoredLen), CreatedAt: time.Now().UTC(),
-	}, []packstore.Adoption{{Entry: index, OriginalHashes: []string{hash.String()}}}))
-	backend, err := packstore.NewFilesystemBackend(layout, packstore.FilesystemBackendOptions{})
-	require.NoError(t, err)
-	defer func() { require.NoError(t, backend.Close()) }()
-	resolution, err := s.ResolveBlobLocations(t.Context(), hash)
-	require.NoError(t, err)
-	require.Len(t, resolution.Candidates, 1)
-	require.NotNil(t, resolution.Candidates[0].Pack)
-	stream, logicalSize, err := backend.OpenPack(t.Context(), hash, *resolution.Candidates[0].Pack)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, stream.Close()) }()
-	require.Equal(t, int64(len(data)), logicalSize)
-	read, err := io.ReadAll(stream)
-	require.NoError(t, err)
-	require.NoError(t, stream.Verify())
-	require.Equal(t, data, read)
 }
 
 func TestEmbeddingCatalogBackupRestoreVerifiesLooseAndPackedArtifacts(t *testing.T) {

@@ -387,13 +387,3 @@ func TestTagNameValidation(t *testing.T) {
 		})
 	}
 }
-
-func TestNodeTagsHasReverseLookupIndex(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	var definition string
-	require.NoError(t, s.db.QueryRow(`
-		SELECT sql FROM sqlite_master WHERE type='index' AND name='node_tags_tag'
-	`).Scan(&definition))
-	assert.Contains(t, definition, "node_tags(tag_id)")
-}

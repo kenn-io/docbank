@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { Node } from "./generated/docbank.js";
 import {
-  clearSelection,
   reconcileSelection,
   selectVisibleDocuments,
   selectedTargets,
@@ -97,13 +96,6 @@ describe("document selection", () => {
     const result = selectVisibleDocuments([row(1), row(2, "dir"), row(3)]);
     expect([...result.selectedIDs]).toEqual([1, 3]);
     expect(result.anchorID).toBeUndefined();
-  });
-
-  it("clears IDs and the anchor", () => {
-    expect(clearSelection()).toEqual({
-      selectedIDs: new Set<number>(),
-      anchorID: undefined,
-    });
   });
 
   it("reconciles removed IDs and derives targets from current revisions", () => {

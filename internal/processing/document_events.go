@@ -12,8 +12,6 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-const documentEventsDeriverDescriptor = store.DocumentEventsDeriverDescriptor
-
 // DocumentEventsDeriverFingerprint aliases the single recipe identity owned
 // by the durable store catalog.
 const DocumentEventsDeriverFingerprint = store.DocumentEventsDeriverFingerprint

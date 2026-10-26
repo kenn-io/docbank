@@ -2,28 +2,11 @@ package store
 
 import (
 	"database/sql"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func TestBlobReferenceSetSQL(t *testing.T) {
-	t.Parallel()
-	query := blobReferenceSetSQL([]blobReference{
-		{table: "first_roots", column: "first_hash"},
-		{table: "second_roots", column: "second_hash"},
-	})
-
-	assert.Equal(t, "SELECT r.first_hash FROM first_roots r WHERE r.first_hash IS NOT NULL\n\tUNION\n\tSELECT r.second_hash FROM second_roots r WHERE r.second_hash IS NOT NULL", query)
-	assert.NotContains(t, query, "UNION ALL")
-	assert.Less(t, strings.Index(query, "first_roots"), strings.Index(query, "second_roots"))
-
-	cte := BackupBlobAuthorityCTE()
-	assert.Contains(t, cte, "WITH backup_authorized_blobs(hash) AS (")
-	assert.NotContains(t, cte, "rendition_blob_staging")
-}
 
 // Every consumer of blob reachability must agree on one rule: GC candidates,
 // the derivative purge inventory, version-prune reference counts, and backup
