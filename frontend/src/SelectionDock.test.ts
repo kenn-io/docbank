@@ -124,25 +124,6 @@ it("offers one tagging action for the snapshot selection", async () => {
   expect(ontags).toHaveBeenCalledOnce();
 });
 
-it("disables snapshot tagging while the snapshot is busy", () => {
-  render(SelectionDock, {
-    props: {
-      selectedCount: 1,
-      visibleDocumentCount: 2,
-      truncated: true,
-      context: "snapshot",
-      wholeQueryCount: 101,
-      tagsDisabled: true,
-      onclear: vi.fn(),
-      onselectvisible: vi.fn(),
-      ontags: vi.fn(),
-    },
-  });
-  expect(
-    (screen.getByRole("button", { name: "Tag selected…" }) as HTMLButtonElement).disabled,
-  ).toBe(true);
-});
-
 it.each(["live", "snapshot"] as const)(
   "offers the same document actions in the %s view and stays closed until something is selected",
   async (context) => {

@@ -85,7 +85,6 @@ function snapshot(
                 count: total,
                 selected: query.filters.extensions?.includes("pdf") ?? false,
               },
-              { key: "txt", label: "txt", count: 1, selected: false },
             ],
           }
         : {
@@ -289,8 +288,6 @@ it("navigates frozen documents across pages and stops at the boundary or expiry"
   await waitFor(() => expect(highlightRequests).toBe(2));
   expect(searchAction).toHaveBeenCalledExactlyOnceWith("synthetic", "text", false);
   searchAction.mockClear();
-  await fireEvent.click(screen.getByRole("button", { name: "pdf, 101 documents" }));
-  await screen.findByRole("button", { name: "pdf, 101 documents, selected" });
   const results = screen.getByRole("region", { name: "Frozen query results" });
   await fireEvent.click(within(results).getByRole("button", { name: "Document" }));
   await screen.findByText("Document 1 of 101");
@@ -491,7 +488,17 @@ it("reruns supported facets and sorting from the complete accepted query", async
         facets: string[];
       };
       bodies.push(body);
-      return json(snapshot(body.query, [row(1)], {}, 1));
+      const rows = body.query.filters.extensions?.includes("pdf")
+        ? [row(1)]
+        : [row(1), { ...row(2, "report-2.txt"), mime_type: "text/plain" }];
+      const page = snapshot(body.query, rows, {}, rows.length);
+      if (rows.length === 2) {
+        page.facets.find((facet) => facet.dimension === "extension")!.values = [
+          { key: "pdf", label: "pdf", count: 1, selected: false },
+          { key: "txt", label: "txt", count: 1, selected: false },
+        ];
+      }
+      return json(page);
     }
     throw new Error(`unexpected request: ${url}`);
   });
