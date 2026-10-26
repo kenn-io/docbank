@@ -143,7 +143,7 @@ func TestEmailDocumentsReleaseDiscardsConnectionOnTimeoutRestoreFailure(t *testi
 			if beginFails {
 				connection.beginErr = errors.New("begin failed")
 			}
-			db := sql.OpenDB(timeoutRestoreFailureConnector{connection})
+			db := sql.OpenDB(rollbackConnector{connection})
 			defer func() { require.NoError(t, db.Close()) }()
 			s := &Store{writeDB: db, driver: DefaultSQLiteDriver()}
 			err := s.withStorageTxRetryBegin(t.Context(), func(*sql.Tx) error {
@@ -158,37 +158,9 @@ func TestEmailDocumentsReleaseDiscardsConnectionOnTimeoutRestoreFailure(t *testi
 	}
 }
 
-func TestEmailDocumentsReleaseCancellationBeforeCallback(t *testing.T) {
-	t.Parallel()
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	connection := &timeoutRestoreFailureConnection{cancelOnRestore: cancel}
-	db := sql.OpenDB(timeoutRestoreFailureConnector{connection})
-	defer func() { require.NoError(t, db.Close()) }()
-	s := &Store{writeDB: db, driver: DefaultSQLiteDriver()}
-	err := s.withStorageTxRetryBegin(ctx, func(*sql.Tx) error {
-		t.Error("callback ran after request cancellation")
-		return nil
-	})
-	require.ErrorIs(t, err, context.Canceled)
-	require.True(t, connection.rolledBack)
-	require.False(t, connection.closed)
-}
-
-type timeoutRestoreFailureConnector struct {
-	connection *timeoutRestoreFailureConnection
-}
-
-func (c timeoutRestoreFailureConnector) Connect(context.Context) (driver.Conn, error) {
-	return c.connection, nil
-}
-func (c timeoutRestoreFailureConnector) Driver() driver.Driver            { return c }
-func (c timeoutRestoreFailureConnector) Open(string) (driver.Conn, error) { return c.connection, nil }
-
 type timeoutRestoreFailureConnection struct {
 	restoreErr, beginErr error
 	rolledBack, closed   bool
-	cancelOnRestore      context.CancelFunc
 }
 
 func (*timeoutRestoreFailureConnection) Prepare(string) (driver.Stmt, error) {
@@ -208,9 +180,6 @@ func (c *timeoutRestoreFailureConnection) ExecContext(_ context.Context, query s
 		return driver.RowsAffected(0), nil
 	}
 	if query == "PRAGMA busy_timeout=5000" {
-		if c.cancelOnRestore != nil {
-			c.cancelOnRestore()
-		}
 		return nil, c.restoreErr
 	}
 	return nil, errors.New("unexpected exec: " + query)

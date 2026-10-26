@@ -282,9 +282,6 @@ func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) er
 
 func (s *Store) withStorageTxRetryBegin(ctx context.Context, fn func(tx *sql.Tx) error) error {
 	_, err := backoff.Retry(ctx, func() (struct{}, error) {
-		if err := ctx.Err(); err != nil {
-			return struct{}{}, backoff.Permanent(err)
-		}
 		busy := false
 		err := s.withStorageTxBegin(ctx, func(conn *sql.Conn) (*sql.Tx, error) {
 			beginCtx := context.WithoutCancel(ctx)
@@ -303,9 +300,6 @@ func (s *Store) withStorageTxRetryBegin(ctx context.Context, fn func(tx *sql.Tx)
 				// A connection with the wrong timeout must not return to the pool.
 				discardErr := conn.Raw(func(any) error { return driver.ErrBadConn })
 				return nil, errors.Join(beginErr, restoreErr, discardErr)
-			}
-			if tx != nil && ctx.Err() != nil {
-				return nil, errors.Join(ctx.Err(), tx.Rollback())
 			}
 			busy = s.driver.IsBusy(beginErr)
 			return tx, beginErr
