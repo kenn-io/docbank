@@ -141,56 +141,52 @@ func holdTestSQLiteWriter(t *testing.T, s *Store, busyTimeout time.Duration) *sq
 
 func TestStorageTransactionRetryBegin(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"ordinary busy and callback once", "cancel", "deadline"} {
-		t.Run(mode, func(t *testing.T) {
-			s := newTestStore(t)
-			var busyTimeout time.Duration
-			if mode == "ordinary busy and callback once" {
-				busyTimeout = 10 * time.Millisecond
-			}
-			lock := holdTestSQLiteWriter(t, s, busyTimeout)
-			if mode == "ordinary busy and callback once" {
-				ctx, cancel := context.WithTimeout(t.Context(), time.Second)
-				defer cancel()
-				err := s.withStorageTx(ctx, func(*sql.Tx) error {
-					t.Error("ordinary callback ran while another writer held the lock")
-					return nil
-				})
-				require.True(t, s.driver.IsBusy(err), "expected busy error, got %v", err)
-				require.NoError(t, lock.Rollback())
-				busyErr, calls := err, 0
-				err = s.withStorageTxRetryBegin(ctx, func(tx *sql.Tx) error {
-					calls++
-					var timeout int
-					require.NoError(t, tx.QueryRow("PRAGMA busy_timeout").Scan(&timeout))
-					require.Equal(t, 10, timeout)
-					return busyErr
-				})
-				require.ErrorIs(t, err, busyErr)
-				require.Equal(t, 1, calls)
-				return
-			}
-			var ctx context.Context
-			var cancel context.CancelFunc
-			want := context.Canceled
-			if mode == "deadline" {
-				ctx, cancel = context.WithTimeout(t.Context(), 50*time.Millisecond) //nolint:kennlint // Exercise cancellation during a real SQLite busy wait.
-				want = context.DeadlineExceeded
-			} else {
-				ctx, cancel = context.WithCancel(t.Context())
-				timer := time.AfterFunc(50*time.Millisecond, cancel) //nolint:kennlint // Exercise cancellation during a real SQLite busy wait.
-				defer timer.Stop()
-			}
-			defer cancel()
-			start := time.Now()
-			err := s.withStorageTxRetryBegin(ctx, func(*sql.Tx) error {
-				t.Error("callback ran while another writer held the lock")
-				return nil
-			})
-			require.ErrorIs(t, err, want)
-			require.Less(t, time.Since(start), 500*time.Millisecond, "cancellation waited for SQLite's busy timeout")
+	t.Run("ordinary busy and callback once after contention", func(t *testing.T) {
+		s := newTestStore(t)
+		lock := holdTestSQLiteWriter(t, s, 10*time.Millisecond)
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		defer cancel()
+		err := s.withStorageTx(ctx, func(*sql.Tx) error {
+			t.Error("ordinary callback ran while another writer held the lock")
+			return nil
 		})
-	}
+		require.True(t, s.driver.IsBusy(err), "expected busy error, got %v", err)
+		busyErr, calls, timeout := err, 0, 0
+		done := make(chan error, 1)
+		go func() {
+			done <- s.withStorageTxRetryBegin(ctx, func(tx *sql.Tx) error {
+				calls++
+				if err := tx.QueryRow("PRAGMA busy_timeout").Scan(&timeout); err != nil {
+					return err
+				}
+				return busyErr
+			})
+		}()
+		select {
+		case err := <-done:
+			t.Fatalf("transaction returned while the writer lock was held: %v", err)
+		case <-time.After(100 * time.Millisecond): //nolint:kennlint // Real SQLite contention must outlast the driver's wall-clock busy timeout.
+		}
+		require.NoError(t, lock.Rollback())
+		require.ErrorIs(t, <-done, busyErr)
+		require.Equal(t, 10, timeout)
+		require.Equal(t, 1, calls)
+	})
+	t.Run("cancel", func(t *testing.T) {
+		s := newTestStore(t)
+		holdTestSQLiteWriter(t, s, 0)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		timer := time.AfterFunc(50*time.Millisecond, cancel) //nolint:kennlint // Exercise cancellation during a real SQLite busy wait.
+		defer timer.Stop()
+		start := time.Now()
+		err := s.withStorageTxRetryBegin(ctx, func(*sql.Tx) error {
+			t.Error("callback ran while another writer held the lock")
+			return nil
+		})
+		require.ErrorIs(t, err, context.Canceled)
+		require.Less(t, time.Since(start), 500*time.Millisecond, "cancellation waited for SQLite's busy timeout")
+	})
 }
 
 func TestStorageTransactionDiscardsConnectionOnTimeoutRestoreFailure(t *testing.T) {

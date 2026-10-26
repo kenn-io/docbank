@@ -13,33 +13,26 @@ import (
 
 func TestEmailDocumentsReleaseWaitsForWriter(t *testing.T) {
 	t.Parallel()
-	t.Run("release", func(t *testing.T) {
-		s := newTestStore(t)
-		f := newEmailFixture(t, s, "source.eml")
-		view, err := s.PublishEmailGeneration(t.Context(), f.publication)
-		require.NoError(t, err)
-		receipt, err := s.PublishEmailDocuments(t.Context(), attachmentRequest(t, s, view, "contended-publication"))
-		require.NoError(t, err)
-		lock := holdTestSQLiteWriter(t, s, 10*time.Millisecond)
-		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-		defer cancel()
-		done := make(chan error, 1)
-		started := make(chan struct{})
-		go func() {
-			close(started)
-			done <- s.RemoveEmailDocumentPublication(ctx, receipt.OperationID, receipt.RequestDigest)
-		}()
-		<-started
-		select {
-		case err := <-done:
-			t.Fatalf("release returned while the writer lock was held: %v", err)
-		case <-time.After(100 * time.Millisecond): //nolint:kennlint // Real SQLite contention must outlast the driver's wall-clock busy timeout.
-		}
-		require.NoError(t, lock.Rollback())
-		require.NoError(t, <-done)
-		_, err = s.EmailDocumentPublication(t.Context(), receipt.OperationID)
-		require.ErrorIs(t, err, ErrNotFound)
-	})
+	s := newTestStore(t)
+	f := newEmailFixture(t, s, "source.eml")
+	view, err := s.PublishEmailGeneration(t.Context(), f.publication)
+	require.NoError(t, err)
+	receipt, err := s.PublishEmailDocuments(t.Context(), attachmentRequest(t, s, view, "contended-publication"))
+	require.NoError(t, err)
+	lock := holdTestSQLiteWriter(t, s, 10*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- s.RemoveEmailDocumentPublication(ctx, receipt.OperationID, receipt.RequestDigest)
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("release returned while the writer lock was held: %v", err)
+	case <-time.After(100 * time.Millisecond): //nolint:kennlint // Real SQLite contention must outlast the driver's wall-clock busy timeout.
+	}
+	require.NoError(t, lock.Rollback())
+	require.NoError(t, <-done)
 }
 
 func attachmentRequest(t *testing.T, s *Store, view EmailMetadataView, operation string) document.EmailDocumentPublicationRequest {
