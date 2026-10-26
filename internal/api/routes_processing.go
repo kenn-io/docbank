@@ -13,9 +13,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"uuid"
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/retrieval"
 	"go.kenn.io/docbank/internal/store"
@@ -95,10 +97,6 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 	})
 
 	type startInput struct{ Body StartProcessingRequest }
-	type startResult struct {
-		job processing.Job
-		err error
-	}
 	processingEventSchema := api.OpenAPI().Components.Schemas.Schema(
 		reflect.TypeFor[ProcessingJobEvent](), true, "ProcessingJobEvent")
 	huma.Register(api, huma.Operation{
@@ -116,19 +114,12 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 				ContentVersionID: input.Body.Selector.ContentVersionID, Profile: input.Body.Selector.Profile},
 			PlanFingerprint: input.Body.PlanFingerprint, Consent: input.Body.Consent,
 		}
-		started, done := make(chan processing.Job, 1), make(chan startResult, 1)
-		go func() {
-			job, err := d.Processing.StartWithProgress(ctx, request, func(job processing.Job) {
-				select {
-				case started <- job:
-				default:
-				}
-			})
-			logPDFPasswordsFailure(ctx, d, err)
-			done <- startResult{job: job, err: err}
-		}()
+		started, done := make(chan processing.Job, 1), make(chan processingStartResult, 1)
+		if err := startProcessingRun(ctx, d, request, started, done); err != nil {
+			return nil, processingUnavailable()
+		}
 		var first processing.Job
-		var completed *startResult
+		var completed *processingStartResult
 		select {
 		case first = <-started:
 		case result := <-done:
@@ -150,7 +141,7 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 			stream := newEventStreamWriter[ProcessingJobEvent](hctx.BodyWriter(), func() {})
 			wireJob := fromProcessingJob(first)
 			stream.send(ProcessingJobEvent{Sequence: 1, Type: "job", Job: &wireJob})
-			var result startResult
+			var result processingStartResult
 			if completed != nil {
 				result = *completed
 			} else {
@@ -441,6 +432,39 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		}
 		return &searchOutput{Body: report}, nil
 	})
+}
+
+type processingStartResult struct {
+	job processing.Job
+	err error
+}
+
+func startProcessingRun(ctx context.Context, d Deps, request processing.StartRequest,
+	started chan<- processing.Job, done chan<- processingStartResult,
+) error {
+	run := func(runCtx context.Context) error {
+		jobs.ReportBusy(runCtx, false)
+		runCtx, cancel := context.WithCancel(runCtx)
+		defer cancel()
+		stopRequest := context.AfterFunc(ctx, cancel)
+		defer stopRequest()
+		job, err := d.Processing.StartWithProgress(runCtx, request, func(job processing.Job) {
+			// Accepted work belongs to the service even if the browser disconnects.
+			stopRequest()
+			select {
+			case started <- job:
+			default:
+			}
+		})
+		logPDFPasswordsFailure(ctx, d, err)
+		done <- processingStartResult{job: job, err: err}
+		return err
+	}
+	if d.Jobs == nil {
+		go func() { _ = run(ctx) }()
+		return nil
+	}
+	return d.Jobs.Start("process:browser:"+uuid.New().String(), run)
 }
 
 func logPDFPasswordsFailure(ctx context.Context, d Deps, err error) {

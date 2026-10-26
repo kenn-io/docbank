@@ -21,6 +21,9 @@ func observableJob(snapshot jobs.Snapshot) Job {
 		Busy:      snapshot.Busy,
 		StartedAt: snapshot.StartedAt.Format(time.RFC3339Nano), Error: snapshot.Error,
 	}
+	if strings.HasPrefix(snapshot.Name, "process:browser:") {
+		job.Lane = "process:renditions"
+	}
 	if snapshot.FinishedAt != nil {
 		job.FinishedAt = snapshot.FinishedAt.Format(time.RFC3339Nano)
 	}
@@ -117,17 +120,6 @@ func registerJobRoutes(api huma.API, d Deps) {
 					operation.State == store.StorageOperationRunning
 				applyControl(&job, controls, job.Lane, job.CanCancel)
 				out.Body.Items = append(out.Body.Items, job)
-			}
-			renditions, err := d.Store.RunningRenditionJobs(ctx, time.Now())
-			if err != nil {
-				return nil, FromStoreError(err)
-			}
-			for _, rendition := range renditions {
-				out.Body.Items = append(out.Body.Items, Job{
-					Name: "rendition:" + rendition.ID, Lane: "process:renditions",
-					Status: string(jobs.StatusRunning), Busy: true,
-					StartedAt: rendition.CreatedAt.Format(time.RFC3339Nano),
-				})
 			}
 		}
 		if d.Jobs != nil {

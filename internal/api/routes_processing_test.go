@@ -428,6 +428,55 @@ func runProcessingForCoverage(t *testing.T, ts *httptest.Server, node store.Node
 	processingJobFromStream(t, jobBody)
 }
 
+func TestReviewOneRenditionHasOneActivity(t *testing.T) {
+	t.Parallel()
+	inner, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
+	require.NoError(t, err)
+	provider := &blockingProcessingProvider{inner: inner, started: make(chan struct{}), release: make(chan struct{})}
+	registry := processing.NewRenditionRuntimeRegistry()
+	supervisor := jobs.New(t.Context(), slog.New(slog.DiscardHandler))
+	t.Cleanup(func() { require.NoError(t, supervisor.Shutdown(context.Background())) })
+	var service *processing.Service
+	var worker *processing.RenditionWorker
+	ts, catalog := newTestServer(t, func(deps *api.Deps) {
+		configureProcessingTestServiceWithProviderAndRegistry(t, provider, registry)(deps)
+		deps.Jobs, service = supervisor, deps.Processing
+		worker, err = processing.NewRenditionWorker(processing.RenditionWorkerConfig{
+			Catalog: deps.Store, Blobs: deps.Blobs, Runtime: registry, Gate: deps.Gate,
+			Owner: "test-second-worker", LeaseDuration: time.Minute, IdleDelay: time.Minute,
+		})
+		require.NoError(t, err)
+	})
+	t.Cleanup(func() { closeProcessingSignal(provider.release) })
+	node := createFileWithContent(t, ts, catalog, "/queued.txt", "one queued extraction\n")
+	selector := processing.Selector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "private"}
+	plan, err := service.Plan(t.Context(), selector)
+	require.NoError(t, err)
+	_, err = service.StartWithProgress(t.Context(), processing.StartRequest{
+		Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true,
+	}, func(processing.Job) {
+		require.NoError(t, supervisor.Start("process:renditions:2", worker.Run))
+		select {
+		case <-provider.started:
+		case <-time.After(10 * time.Second):
+			t.Fatal("queued provider did not start")
+		}
+		response, body := get(t, ts, "/api/v1/jobs", nil)
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+		var active api.JobList
+		require.NoError(t, json.Unmarshal([]byte(body), &active))
+		busy := 0
+		for _, job := range active.Items {
+			if job.Busy {
+				busy++
+			}
+		}
+		assert.Equal(t, 1, busy, "one extraction must have one activity")
+		closeProcessingSignal(provider.release)
+	})
+	require.NoError(t, err)
+}
+
 func TestProcessingStartedFromBrowserAppearsBusy(t *testing.T) {
 	t.Parallel()
 	inner, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
@@ -435,21 +484,36 @@ func TestProcessingStartedFromBrowserAppearsBusy(t *testing.T) {
 	provider := &blockingProcessingProvider{
 		inner: inner, started: make(chan struct{}), release: make(chan struct{}),
 	}
-	registry := processing.NewRenditionRuntimeRegistry()
+	assertBrowserProcessingActivity(t, configureProcessingTestServiceWithProvider(t, provider), provider.started, provider.release)
+}
+
+func TestReviewBrowserEmbeddingAppearsBusy(t *testing.T) {
+	t.Parallel()
+	for _, withRendition := range []bool{false, true} {
+		t.Run(fmt.Sprintf("with_rendition=%t", withRendition), func(t *testing.T) {
+			provider := &blockingProcessingEmbeddingProvider{
+				inner: newProcessingTestEmbeddingProvider(t), started: make(chan struct{}), release: make(chan struct{}),
+			}
+			assertBrowserProcessingActivity(t,
+				configureProcessingTestServiceWithEmbeddingProvider(t, provider, withRendition), provider.started, provider.release)
+		})
+	}
+}
+
+func configureSupervisedProcessing(t *testing.T, configure func(*api.Deps)) func(*api.Deps) {
+	t.Helper()
 	supervisor := jobs.New(t.Context(), slog.New(slog.DiscardHandler))
 	t.Cleanup(func() { require.NoError(t, supervisor.Shutdown(context.Background())) })
-	ts, catalog := newTestServer(t, func(deps *api.Deps) {
-		configureProcessingTestServiceWithProviderAndRegistry(t, provider, registry)(deps)
+	return func(deps *api.Deps) {
+		configure(deps)
 		deps.Jobs = supervisor
-		worker, workerErr := processing.NewRenditionWorker(processing.RenditionWorkerConfig{
-			Catalog: deps.Store, Blobs: deps.Blobs, Runtime: registry, Gate: deps.Gate,
-			Owner: "test-polling-worker", LeaseDuration: time.Minute, IdleDelay: time.Minute,
-		})
-		require.NoError(t, workerErr)
-		require.NoError(t, supervisor.Start("process:renditions", worker.Run))
-	})
-	t.Cleanup(func() { closeProcessingSignal(provider.release) })
-	require.Eventually(t, func() bool { return !supervisor.Snapshot()[0].Busy }, time.Second, time.Millisecond)
+	}
+}
+
+func assertBrowserProcessingActivity(t *testing.T, configure func(*api.Deps), started, release chan struct{}) {
+	t.Helper()
+	ts, catalog := newTestServer(t, configureSupervisedProcessing(t, configure))
+	t.Cleanup(func() { closeProcessingSignal(release) })
 	node := createFileWithContent(t, ts, catalog, "/activity.txt", "synthetic processing activity\n")
 	response, body := do(t, ts, http.MethodPost, "/api/daemon/web-session", nil, nil)
 	require.Equal(t, http.StatusCreated, response.StatusCode, body)
@@ -481,21 +545,23 @@ func TestProcessingStartedFromBrowserAppearsBusy(t *testing.T) {
 	require.NoError(t, json.Unmarshal(scanner.Bytes(), &event))
 	require.NotNil(t, event.Job)
 	select {
-	case <-provider.started:
+	case <-started:
 	case <-time.After(10 * time.Second):
 		t.Fatal("provider did not start")
 	}
-	assert.False(t, supervisor.Snapshot()[0].Busy, "the polling worker did not claim this job")
 	jobResponse, jobBody := get(t, ts, "/api/v1/jobs", headers)
 	require.Equal(t, http.StatusOK, jobResponse.StatusCode, jobBody)
 	var active api.JobList
 	require.NoError(t, json.Unmarshal([]byte(jobBody), &active))
-	busy := false
+	busy := 0
 	for _, job := range active.Items {
-		busy = busy || job.Lane == "process:renditions" && job.Busy
+		if job.Busy {
+			assert.Equal(t, "process:renditions", job.Lane)
+			busy++
+		}
 	}
-	assert.True(t, busy, "Running must include browser-started provider execution")
-	closeProcessingSignal(provider.release)
+	assert.Equal(t, 1, busy, "Running must include exactly one browser-started provider execution")
+	closeProcessingSignal(release)
 	for scanner.Scan() {
 		require.NoError(t, json.Unmarshal(scanner.Bytes(), &event))
 	}
@@ -519,7 +585,7 @@ func TestProcessingJobStreamPublishesDurableIdentityAndSurvivesDisconnect(t *tes
 		inner: inner, started: make(chan struct{}), release: make(chan struct{}),
 	}
 	t.Cleanup(func() { closeProcessingSignal(provider.release) })
-	ts, catalog := newTestServer(t, configureProcessingTestServiceWithProvider(t, provider))
+	ts, catalog := newTestServer(t, configureSupervisedProcessing(t, configureProcessingTestServiceWithProvider(t, provider)))
 	node := createFileWithContent(t, ts, catalog, "/stream.txt", "durable before provider completion\n")
 	selector := map[string]any{"node_id": node.ID,
 		"content_version_id": node.CurrentVersionID, "profile": "private"}
@@ -533,7 +599,7 @@ func TestEmbeddingOnlyJobSurvivesDisconnectAfterDurableIdentity(t *testing.T) {
 		inner: inner, started: make(chan struct{}), release: make(chan struct{}),
 	}
 	t.Cleanup(func() { closeProcessingSignal(provider.release) })
-	ts, catalog := newTestServer(t, configureProcessingTestServiceWithEmbeddingProvider(t, provider, false))
+	ts, catalog := newTestServer(t, configureSupervisedProcessing(t, configureProcessingTestServiceWithEmbeddingProvider(t, provider, false)))
 	node := createFileWithContent(t, ts, catalog, "/embedding-only.txt", "embed after disconnect\n")
 	selector := map[string]any{"node_id": node.ID,
 		"content_version_id": node.CurrentVersionID, "profile": "private"}
@@ -551,7 +617,7 @@ func TestProcessingShutdownDrainsAcceptedJobAndPreservesRecovery(t *testing.T) {
 		EmbeddingProvider: inner, started: make(chan struct{}),
 		cancelled: make(chan struct{}), release: make(chan struct{}),
 	}
-	ts, catalog := newTestServer(t, configureProcessingTestServiceWithEmbeddingProvider(t, provider, false))
+	ts, catalog := newTestServer(t, configureSupervisedProcessing(t, configureProcessingTestServiceWithEmbeddingProvider(t, provider, false)))
 	t.Cleanup(func() { closeProcessingSignal(provider.release) })
 	node := createFileWithContent(t, ts, catalog, "/shutdown.txt", "recover accepted processing after shutdown\n")
 	c := daemonconn.New(ts.URL, testAPIKey)
