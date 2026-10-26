@@ -1711,52 +1711,59 @@ it("guards loupe navigation through the metadata editor", async () => {
   photos.dispose();
 });
 
-it.each([false, true])(
-  "opens a photo on double-click while metadata is loading, stack=%s",
-  async (stacked) => {
-    localStorage.removeItem("docbank.photoMetadata");
-    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
-    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
-    const prepare = vi
-      .spyOn(api, "preparePhotoAuthored")
-      .mockImplementation((scope) =>
-        stacked && !scope.stack
-          ? Promise.resolve(photoPreparation([preparedPhoto(1), preparedPhoto(2)]))
-          : new Promise(() => {}),
-      );
-    const photos = new Photos("scoped", vi.fn());
-    photos.started = true;
-    photos.items = stacked
-      ? [
-          {
-            ...photo(1),
-            stack: { asset_ids: ["photo-1", "photo-2"], representative_id: "photo-1" },
-          },
-          photo(2),
-        ]
-      : [photo(1)];
-    photos.total = 1;
-    const onphotochange = vi.fn().mockReturnValue(true);
-    vi.spyOn(photos, "lookup").mockResolvedValue(photo(1));
-    const view = render(PhotosWorkspace, {
-      photos,
-      onphotochange,
-      cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
-    });
-    const image = await screen.findByRole("button", { name: "Select Photo 1.jpg" });
+it.each([
+  { state: "metadata loading", stacked: false, collapsed: false },
+  { state: "stack metadata loading", stacked: true, collapsed: false },
+  { state: "details collapsed", stacked: false, collapsed: true },
+])("opens the viewer with details on double-click with $state", async ({ stacked, collapsed }) => {
+  if (collapsed) localStorage.setItem("docbank.photoMetadata", "closed");
+  else localStorage.removeItem("docbank.photoMetadata");
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+  const prepare = vi
+    .spyOn(api, "preparePhotoAuthored")
+    .mockImplementation((scope) =>
+      collapsed || (stacked && !scope.stack)
+        ? Promise.resolve(photoPreparation([preparedPhoto(1), preparedPhoto(2)]))
+        : new Promise(() => {}),
+    );
+  const photos = new Photos("scoped", vi.fn());
+  photos.started = true;
+  photos.items = stacked
+    ? [
+        {
+          ...photo(1),
+          stack: { asset_ids: ["photo-1", "photo-2"], representative_id: "photo-1" },
+        },
+        photo(2),
+      ]
+    : [photo(1)];
+  photos.total = 1;
+  const onphotochange = vi.fn().mockReturnValue(true);
+  vi.spyOn(photos, "lookup").mockResolvedValue(photo(1));
+  const view = render(PhotosWorkspace, {
+    photos,
+    onphotochange,
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+  });
+  const image = await screen.findByRole("button", { name: "Select Photo 1.jpg" });
+  if (collapsed) {
+    expect(screen.queryByRole("complementary", { name: "Photo details" })).toBeNull();
+  } else {
     await fireEvent.click(image);
     await waitFor(() => expect(prepare).toHaveBeenCalled());
     await waitFor(() =>
       expect(stacked ? photos.authored.stackLoading : photos.authored.loading).toBe(true),
     );
-    await fireEvent.doubleClick(image);
-    expect(onphotochange).toHaveBeenCalledWith("photo-1", "open");
-    await view.rerender({ photoID: "photo-1" });
-    await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
-    expect(photos.authored.patch).toEqual({});
-    photos.dispose();
-  },
-);
+  }
+  await fireEvent.doubleClick(image);
+  expect(onphotochange).toHaveBeenCalledWith("photo-1", "open");
+  await view.rerender({ photoID: "photo-1" });
+  const viewer = await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
+  expect(within(viewer).getByRole("complementary", { name: "Photo details" })).toBeTruthy();
+  expect(photos.authored.patch).toEqual({});
+  photos.dispose();
+});
 
 it("puts Add photos, the more menu, and the details toggle last, in that order", () => {
   const photos = workspaceWithPreparedPhoto();
@@ -1839,28 +1846,6 @@ it.each(["library", "filters", "album"])(
     photos.dispose();
   },
 );
-
-it("opens the viewer with details open on double-click after the panel was collapsed", async () => {
-  localStorage.setItem("docbank.photoMetadata", "closed");
-  const photos = workspaceWithPreparedPhoto();
-  vi.spyOn(photos, "lookup").mockResolvedValue(photo(1));
-  vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue(photoPreparation([preparedPhoto(1)]));
-  const onphotochange = vi.fn().mockReturnValue(true);
-  const props = {
-    photos,
-    onphotochange,
-    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
-    photoID: "",
-  };
-  const view = render(PhotosWorkspace, props);
-  expect(screen.queryByRole("complementary", { name: "Photo details" })).toBeNull();
-  await fireEvent.doubleClick(await screen.findByRole("button", { name: "Select Photo 1.jpg" }));
-  expect(onphotochange).toHaveBeenCalledWith("photo-1", "open");
-  await view.rerender({ ...props, photoID: "photo-1" });
-  const viewer = await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
-  expect(within(viewer).getByRole("complementary", { name: "Photo details" })).toBeTruthy();
-  photos.dispose();
-});
 
 it("keeps the metadata toggle usable when browser storage is blocked", async () => {
   vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {

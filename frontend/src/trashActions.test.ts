@@ -47,7 +47,6 @@ it("trashes a folder with its revision and undoes through restore", async () => 
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     calls.push([url, new Headers(init?.headers).get("If-Match")]);
-    if (url.includes("/children")) return json({ directory: node(), items: [], total: 24 });
     if (url.endsWith("/trash"))
       return json(node({ revision: 2, trashed_at: "2026-01-02T00:00:00Z", path: "/old/clients" }));
     // /old was renamed to /older and then a new /old was created.

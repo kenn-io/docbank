@@ -776,8 +776,6 @@ func TestJobsShowsDaemonStatus(t *testing.T) {
 	out, err := runCLI(t, "jobs")
 	require.NoError(t, err)
 	assert.Contains(t, out, "extract:plain-text")
-	// Workers waiting for work are idle, not running.
-	assert.Regexp(t, `extract:plain-text\s+idle\s`, out)
 
 	var got api.JobList
 	require.Eventually(t, func() bool {
@@ -786,7 +784,12 @@ func TestJobsShowsDaemonStatus(t *testing.T) {
 			return false
 		}
 		checksums, found := jobNamed(got, "maintenance:auxiliary-checksums")
-		return found && checksums.Status == "completed"
+		if !found || checksums.Status != "completed" {
+			return false
+		}
+		out, err = runCLI(t, "jobs")
+		// Workers waiting for work are idle, not running.
+		return err == nil && regexp.MustCompile(`extract:plain-text\s+idle\s`).MatchString(out)
 	}, 5*time.Second, 25*time.Millisecond)
 	assert.Equal(t, "running", requireJob(t, got, "process:vector-indexes").Status)
 	assert.Equal(t, "running", requireJob(t, got, "extract:plain-text").Status)

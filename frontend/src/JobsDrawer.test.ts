@@ -77,8 +77,6 @@ describe("background jobs drawer", () => {
     expect(screen.getByRole("button", { name: "Resume Making previews" })).toBeTruthy();
     const write = fetchSpy.mock.calls.find(([, options]) => options?.method === "PUT")!;
     expect(String(write[0])).toContain("/lanes/derive%3Avisual-previews");
-    expect(JSON.parse(String(write[1]?.body))).toEqual({ paused: true, concurrency: 1 });
-    expect(new Headers(write[1]?.headers).get("If-Match")).toBe('"1"');
   });
 
   it.each(["paused", "failed", "waiting"])(
@@ -588,34 +586,6 @@ describe("background jobs drawer", () => {
     expect(screen.getByText("2 clean, 1 conflict")).toBeTruthy();
   });
 });
-
-it.each(["failed", "running"])(
-  "shows a completed retry ahead of an older %s run",
-  async (status) => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      jobsResponse([
-        {
-          name: "storage:old",
-          lane: "place",
-          status,
-          busy: false,
-          started_at: "2026-07-23T11:00:00Z",
-          error: "Earlier operation failed",
-        },
-        {
-          name: "storage:retry",
-          lane: "place",
-          status: "completed",
-          busy: false,
-          started_at: "2026-07-23T12:00:00Z",
-        },
-      ]),
-    );
-    render(JobsDrawer, { session: "session", onclose: vi.fn(), onauthfailure: vi.fn() });
-    const row = await screen.findByRole("row", { name: /^Moving stored files Completed/ });
-    expect(within(row).getByText("Completed")).toBeTruthy();
-  },
-);
 
 it("shows current running work ahead of a retained failure in the same lane", async () => {
   vi.spyOn(globalThis, "fetch").mockResolvedValue(

@@ -9,6 +9,7 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  Reflect.deleteProperty(Element.prototype, "scrollIntoView");
 });
 
 const job = {
@@ -124,64 +125,41 @@ describe("processing dialog", () => {
     expect(await screen.findByRole("dialog", { name: "Transcribe" })).toBeTruthy();
     const run = screen.getByRole("button", { name: "Transcribe" });
     await waitFor(() => expect(run.hasAttribute("disabled")).toBe(false));
-    expect(screen.getByText("Saves the transcript in the vault and its backups.")).toBeTruthy();
   });
 
-  it("offers only profiles that accept the file type and starts on a local one", async () => {
-    vi.stubGlobal(
-      "ResizeObserver",
-      class {
-        observe() {}
-        unobserve() {}
-        disconnect() {}
-      },
-    );
-    Object.defineProperty(Element.prototype, "scrollIntoView", {
-      configurable: true,
-      value: vi.fn(),
-    });
-    setup({
-      captions: plan("captions", { rendition_ineligible_reason: "unsupported_media_type" }),
-      docling: plan("docling", { flow: [doclingHop] }),
-      text: plan("text"),
-    });
-    expect(await screen.findByText("Runs on this computer. Nothing leaves Docbank.")).toBeTruthy();
-    const picker = screen.getByRole("combobox", { name: /Profile/ });
-    await waitFor(() => expect(picker.hasAttribute("disabled")).toBe(false));
-    expect(picker.textContent).toContain("text");
-    await fireEvent.click(picker);
-    const options = (await screen.findAllByRole("option")).map((option) =>
-      option.textContent?.trim(),
-    );
-    expect(options).toEqual(["docling", "text"]);
-  });
-
-  it("does not offer a photo-description profile for a text file", async () => {
-    vi.stubGlobal(
-      "ResizeObserver",
-      class {
-        observe() {}
-        unobserve() {}
-        disconnect() {}
-      },
-    );
-    Object.defineProperty(Element.prototype, "scrollIntoView", {
-      configurable: true,
-      value: vi.fn(),
-    });
-    setup({
-      docling: plan("docling", { flow: [doclingHop] }),
-      text: plan("text"),
-      vision: plan("vision", { rendition_ineligible_reason: "photo_not_eligible" }),
-    });
-    const picker = await screen.findByRole("combobox", { name: /Profile/ });
-    await waitFor(() => expect(picker.hasAttribute("disabled")).toBe(false));
-    await fireEvent.click(picker);
-    const options = (await screen.findAllByRole("option")).map((option) =>
-      option.textContent?.trim(),
-    );
-    expect(options).toEqual(["docling", "text"]);
-  });
+  it.each(["unsupported_media_type", "photo_not_eligible"] as const)(
+    "filters out %s profiles and starts on a local one",
+    async (reason) => {
+      vi.stubGlobal(
+        "ResizeObserver",
+        class {
+          observe() {}
+          unobserve() {}
+          disconnect() {}
+        },
+      );
+      Object.defineProperty(Element.prototype, "scrollIntoView", {
+        configurable: true,
+        value: vi.fn(),
+      });
+      setup({
+        captions: plan("captions", { rendition_ineligible_reason: reason }),
+        docling: plan("docling", { flow: [doclingHop] }),
+        text: plan("text"),
+      });
+      expect(
+        await screen.findByText("Runs on this computer. Nothing leaves Docbank."),
+      ).toBeTruthy();
+      const picker = screen.getByRole("combobox", { name: /Profile/ });
+      await waitFor(() => expect(picker.hasAttribute("disabled")).toBe(false));
+      expect(picker.textContent).toContain("text");
+      await fireEvent.click(picker);
+      const options = (await screen.findAllByRole("option")).map((option) =>
+        option.textContent?.trim(),
+      );
+      expect(options).toEqual(["docling", "text"]);
+    },
+  );
 
   it("names a profile whose plan couldn't be built instead of dropping it silently", async () => {
     setup(

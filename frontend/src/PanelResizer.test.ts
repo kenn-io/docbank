@@ -43,8 +43,3 @@ it("resets to the default width on double-click", async () => {
   await fireEvent.dblClick(separator);
   expect(readPanelWidth("test")).toBeUndefined();
 });
-
-it("ignores a saved width that is not a number of pixels", () => {
-  localStorage.setItem("docbank.panelWidth.test", "wide");
-  expect(readPanelWidth("test")).toBeUndefined();
-});

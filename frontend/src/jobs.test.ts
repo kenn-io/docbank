@@ -59,6 +59,22 @@ describe("activity lanes", () => {
     expect(after.map(({ key }) => key)).toEqual(idle.map(({ key }) => key));
   });
 
+  it.each(["failed", "running"] as const)(
+    "uses a completed retry ahead of an older %s run",
+    (status) => {
+      const [lane] = jobLanes([
+        job({
+          status,
+          busy: false,
+          started_at: "2026-07-23T11:00:00Z",
+          error: "Earlier operation failed",
+        }),
+        job({ name: "storage:retry", status: "completed", busy: false }),
+      ]);
+      expect(lane).toMatchObject({ status: "completed", failed: false });
+    },
+  );
+
   it("uses the newest finished run while a retry is queued", () => {
     const [lane] = jobLanes([
       job({ status: "failed", busy: false }),

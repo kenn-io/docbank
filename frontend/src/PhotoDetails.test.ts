@@ -1,7 +1,23 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import PhotoDetails from "./PhotoDetails.svelte";
+import type { AuditStatus } from "./generated/docbank.js";
 import { photo } from "./photo-test-fixtures.js";
+
+const auditStatus = (input: RequestInfo | URL): AuditStatus => ({
+  enabled: false,
+  vault_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  allocation_entry_count: 0,
+  operation_sequence_high_water: 0,
+  scopes: [],
+  membership: {
+    protected: false,
+    node_id: Number(new URL(String(input), "http://docbank.test").searchParams.get("node_id")),
+    baseline_digests: [],
+    scope_ids: [],
+    trashed: false,
+  },
+});
 
 afterEach(() => {
   cleanup();
@@ -14,7 +30,7 @@ it("copies the displayed photo version and IDs, including after moving to anothe
   vi.stubGlobal("navigator", { clipboard: { writeText } });
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
-    if (url.includes("/audit/status")) return Response.json({ membership: { protected: false } });
+    if (url.includes("/audit/status")) return Response.json(auditStatus(input));
     const id = Number(url.split("/").at(-1));
     return Response.json({ id, current_version_id: photo(id).content_version_id });
   });
@@ -49,8 +65,7 @@ it("copies the current file path and hash and discards a previous photo's late d
         size: 64,
         modified_at: "2026-01-01T00:00:00Z",
       });
-    if (url.startsWith("/api/v1/audit/status?"))
-      return Response.json({ membership: { protected: false } });
+    if (url.startsWith("/api/v1/audit/status?")) return Response.json(auditStatus(input));
     throw new Error(`Unexpected request ${url}`);
   });
   const view = render(PhotoDetails, { photo: first, session: "synthetic", onauthfailure: vi.fn() });
@@ -79,7 +94,7 @@ it("keeps a replaced file's details separate from the displayed photo version", 
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
     Response.json(
       String(input).includes("/audit/status")
-        ? { membership: { protected: false } }
+        ? auditStatus(input)
         : {
             id: 1,
             path: "/photos/replaced.jpg",

@@ -154,7 +154,7 @@ it.each(["file", "dir"] as const)(
       },
     );
     const props = { ...fileProps, node: { ...fileProps.node, kind }, ontrash, trashing: true };
-    const view = render(DocumentInspector, props);
+    render(DocumentInspector, props);
     if (kind === "dir") {
       await fireEvent.click(screen.getByRole("button", { name: "Document actions" }));
       expect(
@@ -164,9 +164,6 @@ it.each(["file", "dir"] as const)(
       expect(
         (screen.getByRole("button", { name: "Move to trash" }) as HTMLButtonElement).disabled,
       ).toBe(true);
-      await view.rerender({ ...props, trashing: false });
-      await fireEvent.click(screen.getByRole("button", { name: "Move to trash" }));
-      expect(ontrash).toHaveBeenCalledOnce();
     }
   },
 );

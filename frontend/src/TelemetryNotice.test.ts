@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
+import { tick } from "svelte";
 import TelemetryNotice from "./TelemetryNotice.svelte";
 
 const reporting = (reason: "enabled" | "disabled" | "checking") => ({
@@ -24,6 +25,7 @@ it("shows once per vault until dismissed", async () => {
   view.unmount();
 
   render(TelemetryNotice, { vaultID: "vault-a", reporting: reporting("enabled") });
+  await tick();
   expect(screen.queryByRole("complementary")).toBeNull();
 });
 
@@ -50,12 +52,14 @@ it("opens usage reporting and counts as dismissed", async () => {
   view.unmount();
 
   render(TelemetryNotice, { vaultID: "vault-a", reporting: reporting("enabled"), onmanage });
+  await tick();
   expect(screen.queryByRole("complementary")).toBeNull();
 });
 
 it("stays hidden while the daemon is not accepting usage data", async () => {
   for (const reason of ["disabled", "checking"] as const) {
     const view = render(TelemetryNotice, { vaultID: "vault-a", reporting: reporting(reason) });
+    await tick();
     expect(screen.queryByRole("complementary", { name: "Anonymous usage" })).toBeNull();
     view.unmount();
   }
@@ -63,6 +67,7 @@ it("stays hidden while the daemon is not accepting usage data", async () => {
 
 it("waits for the supplied vault identity and keeps dismissals scoped to that vault", async () => {
   const view = render(TelemetryNotice, { vaultID: "", reporting: reporting("enabled") });
+  await tick();
   expect(screen.queryByRole("complementary")).toBeNull();
 
   await view.rerender({ vaultID: "vault-a" });
@@ -72,5 +77,6 @@ it("waits for the supplied vault identity and keeps dismissals scoped to that va
   await view.rerender({ vaultID: "vault-b" });
   expect(await screen.findByRole("complementary", { name: "Anonymous usage" })).toBeTruthy();
   await view.rerender({ vaultID: "vault-a" });
+  await tick();
   expect(screen.queryByRole("complementary")).toBeNull();
 });

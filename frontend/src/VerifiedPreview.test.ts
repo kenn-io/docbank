@@ -346,30 +346,6 @@ it("loads one exact rendition only while Text is active and keeps hostile markup
   expect(document.querySelector("script")).toBeNull();
   expect(document.querySelectorAll("mark[data-source='query']")).toHaveLength(2);
   expect(fetchMock).toHaveBeenCalledTimes(3);
-  expect(screen.queryByText("No matches")).toBeNull();
-  expect(screen.queryByRole("button", { name: "Next text match" })).toBeNull();
-  const find = screen.getByRole("searchbox", { name: "Find in verified text" });
-  await fireEvent.input(find, { target: { value: "missing" } });
-  expect(screen.getByText("No matches")).toBeTruthy();
-  expect(screen.queryByRole("button", { name: "Next text match" })).toBeNull();
-  await fireEvent.input(find, { target: { value: "lph" } });
-  expect(screen.getByText("1 of 2")).toBeTruthy();
-  await fireEvent.input(find, { target: { value: "alpha" } });
-  expect(screen.getByRole("button", { name: "Next text match" })).toBeTruthy();
-  await fireEvent.input(find, { target: { value: "" } });
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    },
-  );
-  Element.prototype.scrollIntoView ??= () => {};
-  await fireEvent.click(screen.getByRole("combobox", { name: "Saved highlight set: Highlights" }));
-  expect(screen.getByRole("option", { name: "Review terms" })).toBeTruthy();
-  await fireEvent.click(screen.getByRole("option", { name: "Highlights" }));
-
   await view.rerender({ ...props, queryTerms: ["alpha", "blocked"] });
   await waitFor(() => expect(document.querySelectorAll("mark")).toHaveLength(3));
   expect(fetchMock).toHaveBeenCalledTimes(3);

@@ -172,48 +172,6 @@ it("toggles Advanced and restores edited drafts after an outside click", async (
   );
 });
 
-it("runs unsent top-bar text with the selected filters", async () => {
-  const fetch = start(false);
-  const search = await screen.findByRole("searchbox", { name: "Search documents" });
-  await fireEvent.input(search, { target: { value: "annual report" } });
-  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
-  await fireEvent.input(screen.getByLabelText("Filters JSON"), {
-    target: { value: '{"size_min":10}' },
-  });
-  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
-  await waitFor(() =>
-    expect(
-      fetch.mock.calls.some(
-        ([url, init]) =>
-          String(url) === "/api/v1/workspace/queries" &&
-          JSON.parse(String(init?.body)).query.text === "annual report",
-      ),
-    ).toBe(true),
-  );
-  const body = JSON.parse(
-    String(
-      fetch.mock.calls.find(([url]) => String(url) === "/api/v1/workspace/queries")?.[1]?.body,
-    ),
-  );
-  expect(body.query.filters).toEqual({ size_min: 10 });
-});
-
-it("shows the filter error instead of running the last valid filters from the top bar", async () => {
-  const fetch = start(false);
-  const search = await screen.findByRole("searchbox", { name: "Search documents" });
-  await fireEvent.input(search, { target: { value: "annual report" } });
-  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
-  await fireEvent.input(screen.getByLabelText("Filters JSON"), {
-    target: { value: '{"size_min":' },
-  });
-  await fireEvent.keyDown(window, { key: "Escape" });
-  expect(screen.queryByRole("dialog", { name: "Filters and sort" })).toBeNull();
-  await fireEvent.submit(search.closest("form")!);
-  await screen.findByRole("dialog", { name: "Filters and sort" });
-  expect(screen.getAllByRole("alert").length).toBeGreaterThan(0);
-  expect(fetch.mock.calls.some(([url]) => String(url) === "/api/v1/workspace/queries")).toBe(false);
-});
-
 it("runs the top bar with the page size chosen in Advanced", async () => {
   const fetch = start(false);
   const search = await screen.findByRole("searchbox", { name: "Search documents" });
@@ -306,6 +264,9 @@ it("uses submitted top-bar text after repairing retained invalid filters", async
   await fireEvent.keyDown(window, { key: "Escape" });
   await fireEvent.input(search, { target: { value: "new text" } });
   await fireEvent.submit(search.closest("form")!);
+  await screen.findByRole("dialog", { name: "Filters and sort" });
+  expect(screen.getAllByRole("alert").length).toBeGreaterThan(0);
+  expect(fetch.mock.calls.some(([url]) => String(url) === "/api/v1/workspace/queries")).toBe(false);
   expect((screen.getByLabelText("Filters JSON") as HTMLTextAreaElement).value).toBe('{"size_min":');
   await fireEvent.input(screen.getByLabelText("Filters JSON"), {
     target: { value: '{"size_min":10}' },

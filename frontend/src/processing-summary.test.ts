@@ -43,15 +43,10 @@ describe("processing summary", () => {
 
   it("titles the dialog by its input even when typed artifacts are not retained", () => {
     expect(purposeLabels[processingPurpose(plan("text"))].title).toBe("Extract text");
-    const transcript = hop({
-      runtime_disclosure: {
-        ...hop().runtime_disclosure,
-        retained_artifact_roles: ["normalized_evidence", "sanitized_markdown"],
-      },
-    });
-    expect(
-      purposeLabels[processingPurpose(plan("audio", { flow: [transcript] }), "audio/wav")].title,
-    ).toBe("Transcribe");
+    const audio = plan("audio");
+    const purpose = processingPurpose(audio, "audio/wav");
+    expect(purposeLabels[purpose].title).toBe("Transcribe");
+    expect(keptSentence(audio, purpose)).toBe("Saves the transcript in the vault and its backups.");
     const photo = hop({ input_classes: ["derived_upload"] });
     expect(purposeLabels[processingPurpose(plan("photos", { flow: [photo] }))].title).toBe(
       "Describe photo",

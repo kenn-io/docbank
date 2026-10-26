@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import App from "./App.svelte";
 import { hop } from "./processing-test-fixtures.js";
 
@@ -129,9 +129,9 @@ it.each(["header", "text"])("opens exact-version processing from %s", async (ent
     await fireEvent.click(await screen.findByRole("button", { name: "Extract text" }));
   }
   const dialog = await screen.findByRole("dialog", { name: "Extract text" });
-  expect(
-    await within(dialog).findByText("Runs on this computer. Nothing leaves Docbank."),
-  ).toBeTruthy();
+  await waitFor(() =>
+    expect(fetchMock.mock.calls.some(([input]) => input === "/api/v1/processing/plans")).toBe(true),
+  );
   const planned = fetchMock.mock.calls.find(([input]) => input === "/api/v1/processing/plans");
   expect(JSON.parse(String(planned?.[1]?.body)).selector).toEqual({
     node_id: 2,

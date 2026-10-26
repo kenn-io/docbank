@@ -33,7 +33,7 @@ const input = {
   ],
 };
 
-it("shows exact source scope and original warning before any server work, with explicit role omission choices", async () => {
+it("shows exact source scope before any server work, with explicit role omission choices", async () => {
   const fetcher = vi.spyOn(globalThis, "fetch");
   render(ExportDrawer, {
     session: "s",

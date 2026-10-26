@@ -1,6 +1,7 @@
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import * as panelWidth from "./panelWidth.js";
 
+beforeEach(() => localStorage.clear());
 afterEach(() => vi.unstubAllGlobals());
 
 it("observes each results pane independently and disconnects on unmount", () => {
@@ -41,4 +42,9 @@ it("observes each results pane independently and disconnects on unmount", () => 
   stopAdvanced?.();
   expect(observers[0]!.disconnect).toHaveBeenCalledOnce();
   expect(observers[1]!.disconnect).toHaveBeenCalledOnce();
+});
+
+it("ignores a saved width that is not a number of pixels", () => {
+  localStorage.setItem("docbank.panelWidth.test", "wide");
+  expect(panelWidth.readPanelWidth("test")).toBeUndefined();
 });

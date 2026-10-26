@@ -56,7 +56,7 @@ function open() {
   return { ...view, onchange, onrun, onclose, oncancel };
 }
 
-it("offers advanced search in a modal and lets Cancel discard the draft", async () => {
+it("offers advanced search in a modal and calls oncancel when Cancel is clicked", async () => {
   vi.spyOn(globalThis, "fetch").mockResolvedValue(response());
   const { oncancel } = open();
   expect(screen.getByRole("dialog", { name: "Filters and sort" })).toBeTruthy();
