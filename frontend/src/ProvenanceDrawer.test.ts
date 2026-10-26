@@ -49,6 +49,28 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+it("review: generic API upload history does not invent a browser origin", async () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    Response.json({
+      node,
+      items: [{ ...active, source_kind: "upload" }],
+      total: 1,
+      limit: 1000,
+      offset: 0,
+    }),
+  );
+  render(ProvenanceDrawer, {
+    session: "test-session",
+    node,
+    path: "/Reports/quarterly-report.txt",
+    onclose: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await screen.findByText(activeIdentity);
+  expect(screen.queryByText("Uploaded in browser")).toBeNull();
+  expect(screen.getByText("Uploaded")).toBeTruthy();
+});
+
 describe("provenance drawer", () => {
   it("uses authoritative node state and exposes supersession history", async () => {
     const authoritativeNode = {

@@ -119,6 +119,17 @@ function jobRequests(fetchMock: ReturnType<typeof setup>["fetchMock"]): { consen
 }
 
 describe("processing dialog", () => {
+  it("review: hides a PDF-only profile for an oversized text document", async () => {
+    const { rerender, props } = setup({
+      "pdf-only": plan("pdf-only", { rendition_ineligible_reason: "unsupported_media_type" }),
+      text: plan("text", { rendition_ineligible_reason: "source_bytes_exceeded" }),
+    });
+    await rerender({ node: { ...props.node, mime_type: "text/plain", size: 2 ** 30 + 1 } });
+    expect(await screen.findByText("This file is too large for this profile.")).toBeTruthy();
+    expect(screen.queryByRole("combobox", { name: /Profile/ })).toBeNull();
+    expect(screen.queryByText("pdf-only")).toBeNull();
+  });
+
   it("offers transcription when the audio plan retains only text", async () => {
     const { rerender, props } = setup({ audio: plan("audio", { consent_required: false }) });
     await rerender({ node: { ...props.node, mime_type: "audio/wav" } });

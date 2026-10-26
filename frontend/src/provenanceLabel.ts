@@ -4,6 +4,7 @@ export function provenanceSourceLabel(kind: string): string {
     case "cli":
       return "Added from command line";
     case "upload":
+      return "Uploaded";
     case "web":
       return "Uploaded in browser";
     case "mail":

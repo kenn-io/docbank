@@ -104,36 +104,6 @@ type RenditionJob struct {
 	PublishedWaiterCount              int
 }
 
-// RenditionJobActivity identifies execution with a live durable lease,
-// including work started directly by a processing request.
-type RenditionJobActivity struct {
-	ID        string
-	CreatedAt time.Time
-}
-
-func (s *Store) RunningRenditionJobs(ctx context.Context, at time.Time) ([]RenditionJobActivity, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT job_id,created_at FROM rendition_jobs
-		WHERE state='running' AND lease_expires_at>? ORDER BY job_id`, at.UTC().Format(timestampLayout))
-	if err != nil {
-		return nil, fmt.Errorf("reading running rendition jobs: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	var result []RenditionJobActivity
-	for rows.Next() {
-		var job RenditionJobActivity
-		var created string
-		if err := rows.Scan(&job.ID, &created); err != nil {
-			return nil, err
-		}
-		job.CreatedAt, err = time.Parse(timestampLayout, created)
-		if err != nil {
-			return nil, fmt.Errorf("reading rendition job creation time: %w", err)
-		}
-		result = append(result, job)
-	}
-	return result, rows.Err()
-}
-
 // RenditionJobWaiter is one version/profile authority waiting to attach the
 // shared build. Its ID is not part of build identity or artifact bytes.
 type RenditionJobWaiter struct {

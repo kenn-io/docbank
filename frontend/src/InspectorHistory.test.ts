@@ -11,6 +11,42 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+it("review: generic API upload history does not invent a browser origin", async () => {
+  vi.spyOn(api, "listContentVersions").mockResolvedValue({
+    items: [],
+    total: 0,
+    limit: 5,
+    offset: 0,
+  });
+  vi.spyOn(api, "listNodeProvenance").mockResolvedValue({
+    node,
+    total: 1,
+    limit: 5,
+    offset: 0,
+    items: [
+      {
+        identity: "upload",
+        ingest_id: "import-1",
+        node_id: node.id,
+        ingest_started_at: "2026-07-26T12:00:00Z",
+        source_kind: "upload",
+        source_description: "Upload",
+        original_path: "report.txt",
+        active: true,
+      },
+    ],
+  });
+  render(InspectorHistory, {
+    session: "test-session",
+    node,
+    onprovenance: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await screen.findByText("report.txt");
+  expect(screen.queryByText("Uploaded in browser")).toBeNull();
+  expect(screen.getByText("Uploaded")).toBeTruthy();
+});
+
 it.each([false, true])(
   "merges history and opens complete records when newer versions fill the list: %s",
   async (newerVersions) => {

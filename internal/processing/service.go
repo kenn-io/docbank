@@ -2271,6 +2271,19 @@ func inspectRenditionSource(ctx context.Context, blobs *blob.Store, node store.N
 	version store.ContentVersion, profile configuredProfile,
 ) (media.CapabilityRecord, error) {
 	policy := renditionInspectionPolicy(node, version, profile)
+	if version.Size == 0 || version.Size > admittedSourceBytes(policy, profile) {
+		// These sources cannot be inspected. Use the canonical declared type
+		// to reject incompatible profiles before reporting source readiness.
+		known := slices.ContainsFunc(document.FormatMetadataCatalog(), func(format document.FormatMetadata) bool {
+			return format.MediaType == policy.DeclaredMediaType
+		})
+		supported := slices.ContainsFunc(profile.provider.Descriptor().SupportedFormats, func(format document.RenditionFormatCapability) bool {
+			return format.MediaType == policy.DeclaredMediaType && format.InputKind == policy.InputKind
+		})
+		if known && !supported {
+			return media.CapabilityRecord{Reason: media.CapabilityReasonUnsupported}, nil
+		}
+	}
 	switch {
 	case version.Size == 0:
 		return media.CapabilityRecord{Reason: media.CapabilityReasonEmptySource}, nil
