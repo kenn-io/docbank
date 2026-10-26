@@ -2423,7 +2423,7 @@
   }
 
   async function runNaturalSearchSorted(query: Query): Promise<void> {
-    if (query.text === activeQuery) {
+    if (query.text === (searchPending ? submittedSearchQuery : activeQuery)) {
       applyResultSort(query.sort);
       discardQueryDraft();
       return;

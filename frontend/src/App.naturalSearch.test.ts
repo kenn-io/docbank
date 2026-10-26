@@ -1,7 +1,7 @@
 import * as actions from "./action-events.js";
 import { createHash } from "node:crypto";
 import { afterEach, expect, it, vi } from "vite-plus/test";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import App from "./App.svelte";
 import { snapshotEnvelope } from "./snapshot-test-fixtures.js";
 import { parseQuery } from "./query.js";
@@ -1417,6 +1417,68 @@ it("runs the text edited in the top bar when Advanced sorts a meaning search", a
   expect(
     (screen.getByRole("searchbox", { name: "Search documents" }) as HTMLInputElement).value,
   ).toBe("invoice");
+});
+
+it("supersedes a pending search when Advanced sorts the previously displayed query", async () => {
+  const small = { ...node(2, "small.txt", baseVersion), size: 10 };
+  const large = { ...node(3, "large.txt", rerankedVersion), size: 500 };
+  const harness = installHarness({
+    profiles: [
+      {
+        name: "private",
+        fingerprint: "a".repeat(64),
+        rendition: true,
+        embedding_bindings: ["embed"],
+        reranking_available: false,
+      },
+    ],
+    files: [small, large],
+    baseReport: report("hybrid", [
+      result(small, 1, "small excerpt"),
+      result(large, 2, "large excerpt"),
+    ]),
+  });
+  let resolvePending!: (response: Response) => void;
+  const pending = new Promise<Response>((resolve) => {
+    resolvePending = resolve;
+  });
+  const fetch = harness.fetchMock.getMockImplementation()!;
+  const pendingSearch = vi.fn(() => pending);
+  harness.fetchMock.mockImplementation((input, init) => {
+    if (String(input) === "/api/v1/search" && JSON.parse(String(init?.body)).query === "query B")
+      return pendingSearch();
+    return fetch(input, init);
+  });
+  render(App);
+  await submitSearch("query A");
+  await screen.findByText("small excerpt");
+  await submitSearch("query B");
+  await waitFor(() => expect(pendingSearch).toHaveBeenCalledOnce());
+  await fireEvent.input(screen.getByRole("searchbox", { name: "Search documents" }), {
+    target: { value: "query A" },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  await fireEvent.click(screen.getByRole("combobox", { name: /^Sort by:/ }));
+  await fireEvent.click(screen.getByRole("option", { name: "Size" }));
+  await fireEvent.click(screen.getByRole("combobox", { name: "Direction: Ascending" }));
+  await fireEvent.click(screen.getByRole("option", { name: "Descending" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  await act(async () => {
+    resolvePending(json(report("hybrid", [result(small, 1, "query B excerpt")])));
+    await pending;
+  });
+  await waitFor(() => {
+    expect(screen.getByText("small excerpt")).toBeTruthy();
+    expect(screen.queryByText("query B excerpt")).toBeNull();
+    expect(
+      (screen.getByRole("searchbox", { name: "Search documents" }) as HTMLInputElement).value,
+    ).toBe("query A");
+    expect(screen.getByRole("columnheader", { name: "Size" }).getAttribute("aria-sort")).toBe(
+      "descending",
+    );
+    const rows = screen.getAllByRole("row").filter((row) => row.textContent?.includes("txt"));
+    expect(rows[0].textContent).toContain("large.txt");
+  });
 });
 
 it("keeps a first search by meaning when Advanced only changes the sort", async () => {
