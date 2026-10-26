@@ -285,24 +285,26 @@
     hasProductions = false;
     if (!session) return;
     const controller = new AbortController();
-    void Promise.all([
+    for (const listing of [
       generated.listPackages({ limit: 1 }, { session, signal: controller.signal }),
       generated.listBatesExports({ limit: 1 }, { session, signal: controller.signal }),
-    ])
-      .then(([packages, exports]) => {
-        if (!controller.signal.aborted && session === webSession) {
-          hasProductions ||= packages.items.length > 0 || exports.items.length > 0;
-        }
-      })
-      .catch((cause: unknown) => {
-        if (
-          !controller.signal.aborted &&
-          session === webSession &&
-          cause instanceof APIError &&
-          cause.status === 401
-        )
-          handleFailure(cause);
-      });
+    ]) {
+      void listing
+        .then((result) => {
+          if (!controller.signal.aborted && session === webSession) {
+            hasProductions ||= result.items.length > 0;
+          }
+        })
+        .catch((cause: unknown) => {
+          if (
+            !controller.signal.aborted &&
+            session === webSession &&
+            cause instanceof APIError &&
+            cause.status === 401
+          )
+            handleFailure(cause);
+        });
+    }
     return () => controller.abort();
   });
   let nodeVersionHash = $state(location.hash);

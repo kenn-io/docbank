@@ -134,7 +134,7 @@ it("shows Productions after creating a Bates export without reloading", async ()
   expect(await screen.findByRole("button", { name: "Productions" })).toBeTruthy();
 });
 
-function start(sets: "empty" | "package" | "bates" = "empty") {
+function start(sets: "empty" | "package" | "bates" = "empty", failedListing?: string) {
   history.replaceState(null, "", "/#web_session=synthetic&web_upload_secret=proof");
   vi.stubGlobal(
     "ResizeObserver",
@@ -146,6 +146,7 @@ function start(sets: "empty" | "package" | "bates" = "empty") {
   );
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
+    if (url === failedListing) return new Response("listing unavailable", { status: 500 });
     const value = url.startsWith("/api/v1/packages?")
       ? {
           items:
@@ -238,6 +239,17 @@ it.each(["bates"] as const)("shows Productions when a %s set exists", async (set
   start(sets);
   expect(await screen.findByRole("button", { name: "Productions" })).toBeTruthy();
 });
+
+it.each([
+  { sets: "package", failedListing: "/api/v1/bates/exports?limit=1" },
+  { sets: "bates", failedListing: "/api/v1/packages?limit=1" },
+] as const)(
+  "shows Productions when $sets loads and the other listing fails",
+  async ({ sets, failedListing }) => {
+    start(sets, failedListing);
+    expect(await screen.findByRole("button", { name: "Productions" })).toBeTruthy();
+  },
+);
 
 it("opens production sets from the sidebar between Searches and Imports", async () => {
   start("package");
