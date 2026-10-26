@@ -104,7 +104,7 @@ func BenchmarkRestoreNameCollision(b *testing.B) {
 					if i > 0 {
 						name = fmt.Sprintf("report (%d).pdf", i+1)
 					}
-					if _, err := s.mkdirTx(tx, s.RootID(), name, "2026-01-01T00:00:00Z"); err != nil {
+					if _, err := s.mkdirTx(b.Context(), tx, s.RootID(), name, "2026-01-01T00:00:00Z"); err != nil {
 						return err
 					}
 				}

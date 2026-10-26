@@ -45,6 +45,7 @@ test:
 test-pg:
 	@test -n "$${DOCBANK_TEST_POSTGRES_DSN:-}" || (echo 'Set DOCBANK_TEST_POSTGRES_DSN to a disposable PostgreSQL test server' >&2; exit 1)
 	go test -race -count=1 -timeout 3m -tags "$(BUILD_TAGS)" ./internal/store/pgschema
+	go test -race -count=1 -timeout 3m -tags "$(BUILD_TAGS)" ./internal/store -run '^TestNodeQueriesPostgres$$'
 
 test-v:
 	go test -timeout 20m -tags "$(BUILD_TAGS)" -v ./...

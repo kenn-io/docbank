@@ -18,7 +18,7 @@ env:
 
 jobs:
   postgres:
-    name: PostgreSQL ${{ matrix.version }} schema lifecycle
+    name: PostgreSQL ${{ matrix.version }} metadata
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -54,7 +54,7 @@ jobs:
         uses: ./.github/actions/go-cache-restore
         with:
           group: linux-cgo
-      - name: Exercise setup and runtime roles
+      - name: Exercise schema lifecycle and node queries
         env:
           DOCBANK_TEST_POSTGRES_DSN: postgres://docbank_test:docbank_test@127.0.0.1:5432/docbank_test?sslmode=disable
         run: make test-pg

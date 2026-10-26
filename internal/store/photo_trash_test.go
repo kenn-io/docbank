@@ -543,7 +543,7 @@ func BenchmarkTrashEmptyLarge(b *testing.B) {
 						var node Node
 						var err error
 						if kind == "folders" {
-							node, err = s.mkdirTx(tx, s.RootID(), fmt.Sprintf("folder-%d", i), nowRFC3339())
+							node, err = s.mkdirTx(b.Context(), tx, s.RootID(), fmt.Sprintf("folder-%d", i), nowRFC3339())
 							if err == nil {
 								_, _, err = s.createFileTx(b.Context(), tx, node.ID, "notes.txt", fakeHash("b2"), 1, "text/plain")
 							}

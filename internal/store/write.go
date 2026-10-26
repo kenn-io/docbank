@@ -9,7 +9,7 @@ import (
 )
 
 func nodeByIDTx(tx *sql.Tx, id int64) (Node, error) {
-	n, err := scanNode(tx.QueryRow(`SELECT `+nodeCols+` FROM `+nodeFrom+` WHERE n.id = ?`, id))
+	n, err := scanNode(tx.QueryRow(`SELECT `+nodeCols+` FROM `+nodeFrom+` WHERE n.id = $1`, id))
 	if err != nil {
 		return Node{}, fmt.Errorf("node %d: %w", id, err)
 	}
@@ -121,7 +121,7 @@ func (s *Store) mkdirNodeTx(
 		return Node{}, err
 	}
 	if !active {
-		return s.mkdirTx(tx, parentID, name, nowRFC3339())
+		return s.mkdirTx(ctx, tx, parentID, name, nowRFC3339())
 	}
 	priorParent, err := liveDirTx(tx, parentID)
 	if err != nil {
@@ -136,7 +136,7 @@ func (s *Store) mkdirNodeTx(
 		return Node{}, err
 	}
 	recordedAt := nowRFC3339()
-	created, err := s.mkdirTx(tx, parentID, name, recordedAt)
+	created, err := s.mkdirTx(ctx, tx, parentID, name, recordedAt)
 	if err != nil {
 		return Node{}, err
 	}
@@ -152,28 +152,33 @@ func (s *Store) mkdirNodeTx(
 }
 
 func (s *Store) mkdirTx(
-	tx *sql.Tx, parentID int64, name, recordedAt string,
+	ctx context.Context, tx *sql.Tx, parentID int64, name, recordedAt string,
 ) (Node, error) {
 	if _, err := liveDirTx(tx, parentID); err != nil {
 		return Node{}, err
 	}
-	res, err := tx.Exec(
-		`INSERT INTO nodes (parent_id, name, kind, created_at, modified_at)
-		 VALUES (?, ?, 'dir', ?, ?)`, parentID, name, recordedAt, recordedAt)
+	id, err := insertNodeTx(ctx, tx, parentID, name, nodeKindDir, nil, recordedAt)
 	if s.driver.IsUniqueViolation(err) {
 		return Node{}, fmt.Errorf("mkdir %q under node %d: %w", name, parentID, ErrExists)
 	}
 	if err != nil {
 		return Node{}, fmt.Errorf("mkdir %q under node %d: %w", name, parentID, err)
 	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		return Node{}, fmt.Errorf("mkdir %q: reading id: %w", name, err)
-	}
 	if err := bumpRevisionTx(tx, parentID, recordedAt); err != nil {
 		return Node{}, err
 	}
 	return nodeByIDTx(tx, id)
+}
+
+// insertNodeTx returns the identity from the inserted row on both metadata
+// backends. A file's deferred version reference is completed by its caller.
+func insertNodeTx(ctx context.Context, tx *sql.Tx, parentID int64, name, kind string, versionID *string, recordedAt string) (int64, error) {
+	var id int64
+	err := tx.QueryRowContext(ctx, `INSERT INTO nodes
+		(parent_id, name, kind, current_version_id, created_at, modified_at)
+		VALUES ($1, $2, $3, $4, $5, $5) RETURNING id`,
+		parentID, name, kind, versionID, recordedAt).Scan(&id)
+	return id, err
 }
 
 // ChildByName returns the live child of parentID named name.
@@ -194,7 +199,7 @@ func (s *Store) childByName(ctx context.Context, dirID int64, name string) (Node
 func childByName(ctx context.Context, q rowQuerier, dirID int64, name string) (Node, error) {
 	row := q.QueryRowContext(ctx,
 		`SELECT `+nodeCols+` FROM `+nodeFrom+`
-		 WHERE n.parent_id = ? AND n.name = ? AND n.trashed_at IS NULL`, dirID, name)
+		 WHERE n.parent_id = $1 AND n.name = $2 AND n.trashed_at IS NULL`, dirID, name)
 	return scanNode(row)
 }
 
@@ -351,10 +356,7 @@ func (s *Store) createFileWithOperationTx(
 	if err := s.EnsureBlobTx(tx, blobHash, size, physical...); err != nil {
 		return Node{}, ContentVersion{}, err
 	}
-	res, err := tx.Exec(
-		`INSERT INTO nodes (parent_id, name, kind, current_version_id, created_at, modified_at)
-		 VALUES (?, ?, 'file', ?, ?, ?)`,
-		parentID, name, operation.versionID, operation.recordedAt, operation.recordedAt)
+	id, err := insertNodeTx(ctx, tx, parentID, name, nodeKindFile, &operation.versionID, operation.recordedAt)
 	if s.driver.IsUniqueViolation(err) {
 		return Node{}, ContentVersion{}, fmt.Errorf(
 			"creating file %q under node %d: %w", name, parentID, ErrExists)
@@ -362,10 +364,6 @@ func (s *Store) createFileWithOperationTx(
 	if err != nil {
 		return Node{}, ContentVersion{}, fmt.Errorf(
 			"creating file %q under node %d: %w", name, parentID, err)
-	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		return Node{}, ContentVersion{}, fmt.Errorf("creating file %q: reading id: %w", name, err)
 	}
 	var storedMime any
 	if mimeType != "" {

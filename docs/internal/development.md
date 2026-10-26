@@ -236,6 +236,19 @@ Keep application schema ownership in Docbank; neither upstream project's
 a generic backend registry or a new SQL dialect layer before inspecting
 msgvault's existing dialect and the concrete Docbank queries it must support.
 
+Node row allocation and direct node lookups use the same SQL on both engines:
+numbered `$1` parameters and `INSERT ... RETURNING id`. Both SQLite drivers and
+pgx support these statements, so these operations need no dialect adapter.
+Directory and file creation retain their existing mutation transactions and
+error handling. Recursive path queries, the rest of those transactions, and
+the remaining catalogs still require SQLite.
+
+The shared node-query tests exercise allocation, current-version projection,
+live-child lookup, rollback, and name reuse after trashing. They use the real
+SQLite schema and a limited PostgreSQL query fixture containing only the
+tables those queries read. That fixture is not a vault schema and does not
+qualify the full directory or file mutation on PostgreSQL.
+
 For PostgreSQL tests, start a disposable server, never an operator database:
 
 ```sh
@@ -259,17 +272,20 @@ Use `postgres:18` in the first command to check the other CI version. The tests
 create and drop a database per test and use separate real owner/runtime logins;
 the test administrator needs database, role and event-trigger creation for the
 rollback fixtures. These are test privileges, not runtime requirements.
-`make test-pg` requires the DSN, bypasses cached test results and runs the race
-detector. Without that variable, ordinary `make test` skips PostgreSQL tests.
+`internal/pgtest` owns database creation and cleanup for both the schema and
+node-query tests. `make test-pg` requires the DSN, bypasses cached test results,
+and runs both groups under the race detector. Without that variable, ordinary
+`make test` skips PostgreSQL tests.
 A supplied but invalid connection fails rather than skipping.
 
 CI supplies the server through its service-container configuration, uses the
-existing Linux cache group, and runs only the PostgreSQL package in this lane.
+existing Linux cache group, and runs only the PostgreSQL tests in this lane.
 Ordinary jobs still cover both SQLite builds. The main-pinned PR dispatcher
-means a new lane in `ci.yml` first runs for PRs after merge; run both PostgreSQL
-versions locally and validate the workflow with `actionlint` before that first
-merge. These checks qualify the schema foundation, not complete PostgreSQL
-document-store support.
+uses the workflow from `main` and the checked-out branch's `make test-pg`.
+Changes to the target run in that PR; changes to the workflow take effect
+after merge. Run both PostgreSQL versions locally and validate workflow edits
+with `actionlint`. These checks qualify the schema foundation and shared node
+queries, not complete PostgreSQL document-store support.
 
 ### Change daemon lifecycle
 
