@@ -249,6 +249,21 @@ SQLite schema and a limited PostgreSQL query fixture containing only the
 tables those queries read. That fixture is not a vault schema and does not
 qualify the full directory or file mutation on PostgreSQL.
 
+Retained content-version lookups and history pages also use shared SQL. They
+preserve node ownership, revision ordering, source-version provenance and
+auxiliary checksums, including retained history for trashed files. A node/version
+view requests a read-only `REPEATABLE READ` transaction, following msgvault and
+Kata, so a prune committed between its reads cannot remove a version from that
+response. A later request sees the prune. History counts and pages remain one
+statement. Shared queries introduce numbered parameters in ascending order:
+SQLite assigns their bindings by first appearance, while PostgreSQL uses the
+number itself.
+
+The content-history tests reuse the node-query fixture and the real SQLite
+schema. They cover version projection, ownership, pagination and a prune
+committed between the view's reads. This qualifies the read queries only;
+PostgreSQL content mutations and a public vault remain unavailable.
+
 For PostgreSQL tests, start a disposable server, never an operator database:
 
 ```sh
@@ -273,9 +288,9 @@ create and drop a database per test and use separate real owner/runtime logins;
 the test administrator needs database, role and event-trigger creation for the
 rollback fixtures. These are test privileges, not runtime requirements.
 `internal/pgtest` owns database creation and cleanup for both the schema and
-node-query tests. `make test-pg` requires the DSN, bypasses cached test results,
-and runs both groups under the race detector. Without that variable, ordinary
-`make test` skips PostgreSQL tests.
+node and content-history query tests. `make test-pg` requires the DSN, bypasses
+cached test results, and runs these groups under the race detector. Without
+that variable, ordinary `make test` skips PostgreSQL tests.
 A supplied but invalid connection fails rather than skipping.
 
 CI supplies the server through its service-container configuration, uses the
