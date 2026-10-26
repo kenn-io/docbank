@@ -15,8 +15,13 @@ COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 # telemetry; kit also sends nothing unless VERSION is a plain release tag.
 POSTHOG_PROJECT_KEY ?= phc_AzHd9YvuHR7M5poKzC6eW654d3SgKyBdoQPuwkWhimUf
 
+# Package manager that owns the binary, such as homebrew. A non-empty value
+# makes docbank update refuse to replace itself and name that package manager.
+DISTRIBUTION ?=
+
 LDFLAGS := -X go.kenn.io/docbank/internal/version.Version=$(VERSION) \
            -X go.kenn.io/docbank/internal/version.Commit=$(COMMIT) \
+           -X go.kenn.io/docbank/internal/version.Distribution=$(DISTRIBUTION) \
            -X go.kenn.io/kit/telemetry/posthog.projectKey=$(POSTHOG_PROJECT_KEY)
 
 # fts5: enable the SQLite FTS5 full-text search extension
