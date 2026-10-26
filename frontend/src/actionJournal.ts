@@ -453,6 +453,30 @@ export class ActionJournal implements ActionJournalAccess {
     await transactionDone(transaction);
   }
 
+  async discardUnsent(actionID: string): Promise<void> {
+    const transaction = this.#database.transaction([headerStore, batchStore], "readwrite", {
+      durability: "strict",
+    });
+    const actions = transaction.objectStore(headerStore);
+    const header = await idbRequest(
+      actions.get(this.vaultID) as IDBRequest<StoredHeader | undefined>,
+    );
+    const range = IDBKeyRange.bound([this.vaultID], [this.vaultID, []]);
+    const batches = transaction.objectStore(batchStore);
+    const stored = await idbRequest(batches.getAll(range) as IDBRequest<StoredBatch[]>);
+    if (
+      header?.action_id === actionID &&
+      header.state === "prepared" &&
+      stored.length === header.batch_count &&
+      stored.every((batch) => batch.state === "prepared")
+    ) {
+      actions.delete(this.vaultID);
+      batches.delete(range);
+      this.#confirmedActionID = undefined;
+    }
+    await transactionDone(transaction);
+  }
+
   async abandon(): Promise<void> {
     const transaction = this.#database.transaction([headerStore, batchStore], "readwrite", {
       durability: "strict",

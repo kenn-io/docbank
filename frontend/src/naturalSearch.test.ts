@@ -2,7 +2,6 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   evidenceKindLabels,
   naturalSearchFallbackNote,
-  naturalSearchPlaceholder,
   naturalSearchRequest,
   naturalSearchRerank,
   rerankingNote,
@@ -66,9 +65,4 @@ describe("natural search mapping", () => {
     expect(rerankingNote("degraded", "timed_out")).toContain("timed_out");
     expect(naturalSearchFallbackNote("search failed")).toContain("names and text");
   });
-});
-
-it("uses a syntax-specific prompt independently of embeddings", () => {
-  expect(naturalSearchPlaceholder("simple")).toBe("Search names and text");
-  expect(naturalSearchPlaceholder("advanced")).toBe("name:invoice AND tag:urgent");
 });

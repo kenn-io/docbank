@@ -1,11 +1,12 @@
 import { prepareAction } from "./actionRecovery.js";
 import { webcrypto } from "node:crypto";
+import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import ActionRecoveryModal, { type ActionRecoveryJournal } from "./ActionRecoveryModal.svelte";
 import { APIError } from "./api-transport.js";
-import { type PersistedAction } from "./actionJournal.js";
-import { decodeRecovery } from "./actionRecovery.js";
+import { ActionJournal, type PersistedAction } from "./actionJournal.js";
+import { decodeRecovery, encodeRecovery } from "./actionRecovery.js";
 import type { BatchTagReceipt } from "./batch-tags.js";
 import { snapshotMemberHash, type SnapshotMember, type SnapshotPage } from "./snapshots.js";
 
@@ -24,8 +25,8 @@ const member: SnapshotMember = {
   revision: 3,
 };
 
-async function prepared(): Promise<PersistedAction> {
-  const memberHash = await snapshotMemberHash([member]);
+async function prepared(members = [member]): Promise<PersistedAction> {
+  const memberHash = await snapshotMemberHash(members);
   const action = await prepareAction(
     vaultID,
     {
@@ -34,10 +35,10 @@ async function prepared(): Promise<PersistedAction> {
         snapshot_fingerprint: `sha256:${"c".repeat(64)}`,
         query_fingerprint: `sha256:${"d".repeat(64)}`,
         member_hash: memberHash,
-        total: 1,
-        total_bytes: member.size,
+        total: members.length,
+        total_bytes: members.reduce((sum, item) => sum + item.size, 0),
       } as SnapshotPage,
-      members: [member],
+      members,
     },
     tag.id,
     true,
@@ -132,10 +133,20 @@ class MemoryJournal implements ActionRecoveryJournal {
   async abandon() {
     this.action = null;
   }
+  async discardUnsent(actionID: string) {
+    if (
+      this.action?.action_id === actionID &&
+      this.action.state === "prepared" &&
+      this.action.batches.every((batch) => batch.state === "prepared")
+    )
+      this.action = null;
+  }
 }
 
 beforeEach(() => {
   vi.stubGlobal("crypto", webcrypto);
+  vi.stubGlobal("indexedDB", new IDBFactory());
+  vi.stubGlobal("IDBKeyRange", IDBKeyRange);
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -383,8 +394,10 @@ it("keeps a deleted-tag action available for checkpoint export and abandonment",
 });
 
 it("drops a never-sent action on Cancel and keeps a started one for later", async () => {
+  vi.stubGlobal("Uint8Array", new TextEncoder().encode("").constructor);
   const untouched = await prepared();
-  const fresh = new MemoryJournal(untouched);
+  const fresh = await ActionJournal.open(vaultID);
+  await fresh.prepare(untouched);
   const onclose = vi.fn();
   render(ActionRecoveryModal, {
     session: "session",
@@ -398,7 +411,7 @@ it("drops a never-sent action on Cancel and keeps a started one for later", asyn
   });
   await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
   await waitFor(() => expect(onclose).toHaveBeenCalledOnce());
-  expect(fresh.action).toBeNull();
+  expect(await fresh.load()).toBeNull();
   cleanup();
 
   const paused: PersistedAction = { ...untouched, state: "paused", checkpoint_verified: true };
@@ -418,6 +431,52 @@ it("drops a never-sent action on Cancel and keeps a started one for later", asyn
   expect(closeStarted).toHaveBeenCalledOnce();
   expect(started.action).not.toBeNull();
 });
+
+it.each(["sending", "uncertain", "resumed", "replaced"] as const)(
+  "Cancel keeps the journal when another tab has %s work",
+  async (progress) => {
+    // Keep the encoder and byte checks in the same realm under jsdom.
+    vi.stubGlobal("Uint8Array", new TextEncoder().encode("").constructor);
+    const action = await prepared(
+      progress === "resumed"
+        ? Array.from({ length: 1_001 }, (_, index) => ({ ...member, node_id: index + 1 }))
+        : [member],
+    );
+    const journal = await ActionJournal.open(vaultID);
+    await journal.prepare(action);
+    const otherTab = await ActionJournal.open(vaultID);
+    const onclose = vi.fn();
+    render(ActionRecoveryModal, {
+      session: "session",
+      sessionVaultID: vaultID,
+      journal,
+      initialAction: action,
+      tag,
+      onprogress: vi.fn(),
+      onclose,
+      onauthfailure: vi.fn(),
+    });
+    if (progress === "replaced") {
+      await otherTab.abandon();
+      await otherTab.prepare(await prepared());
+    } else {
+      await otherTab.verifyCheckpoint(await encodeRecovery(action));
+      const batchIndex = progress === "resumed" ? 1 : 0;
+      await otherTab.markSending(batchIndex);
+      if (progress !== "sending") await otherTab.markUncertain(batchIndex);
+      if (progress === "resumed") {
+        await otherTab.pause();
+        await otherTab.confirmResume(action.action_id);
+      }
+    }
+    const retained = await otherTab.load();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() => expect(onclose).toHaveBeenCalledOnce());
+    expect(await otherTab.load()).toEqual(retained);
+  },
+);
 
 it("shows exact file-supplied identities before target confirmation", async () => {
   const action = { ...(await prepared()), checkpoint_verified: true };

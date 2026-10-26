@@ -6,6 +6,7 @@
     confirmResume(actionID: string): Promise<void>;
     pause(): Promise<void>;
     abandon(): Promise<void>;
+    discardUnsent(actionID: string): Promise<void>;
   }
 </script>
 
@@ -73,7 +74,7 @@
     ),
   );
   const finished = $derived(action.state === "complete" || action.state === "stale");
-  // Nothing was ever sent, so closing can drop the journal without losing a receipt.
+  // The journal rechecks stored progress before discarding on close.
   const untouched = $derived(
     action.state === "prepared" && action.batches.every((item) => item.state === "prepared"),
   );
@@ -172,10 +173,14 @@
     }
   }
 
-  function close(): void {
+  async function close(): Promise<void> {
     if (running) return;
-    if (untouched) void abandon();
-    else onclose();
+    try {
+      if (untouched) await journal.discardUnsent(action.action_id);
+      onclose();
+    } catch (cause) {
+      failure = cause instanceof Error ? cause.message : String(cause);
+    }
   }
 </script>
 

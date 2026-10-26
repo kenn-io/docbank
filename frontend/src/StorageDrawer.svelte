@@ -18,6 +18,7 @@
   let { session, onclose, onauthfailure }: Props = $props();
 
   let status = $state<StorageStatus | null>(null);
+  let fileCount = $state(0);
   let loading = $state(true);
   let error = $state("");
   let generation = 0;
@@ -30,9 +31,6 @@
   );
   const stores = $derived(status?.stores ?? []);
   const totalBytes = $derived(status ? status.loose_bytes + status.pack_stored_bytes : 0);
-  const fileCount = $derived(
-    status ? Math.max(0, ...stores.map((store) => store.authoritative_objects)) : 0,
-  );
   const tiles = $derived([
     { label: "Total on disk", value: formatBytes(totalBytes) },
     { label: "Files stored", value: String(fileCount) },
@@ -81,9 +79,13 @@
     loading = true;
     error = "";
     try {
-      const next = await generated.storageStatus({ refresh: true }, { session });
+      const [next, info] = await Promise.all([
+        generated.storageStatus({ refresh: true }, { session }),
+        generated.vaultInfo({ session }),
+      ]);
       if (request !== generation) return;
       status = next;
+      fileCount = info.tracked_blobs;
     } catch (cause) {
       if (request !== generation) return;
       if (cause instanceof APIError && cause.status === 401) {
