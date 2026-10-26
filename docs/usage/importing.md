@@ -441,14 +441,21 @@ pack_interval = "1h"
 pack_max_bytes = 268435456
 ```
 
-The daemon observes a file's filesystem identity, size, and modification time
-for a full settle window before reading it. `minimum_age = "168h"` additionally
-requires seven days since the source's last modification, which is useful when
-an append-heavy session may pause for minutes or hours without being closed.
+The daemon observes a file's filesystem identity, size, modification time, and
+change time for a full settle window before reading it. `minimum_age = "168h"`
+additionally requires seven days since the source's last modification, which is
+useful when an append-heavy session may pause for minutes or hours without being
+closed.
 The minimum-age gate survives restart. The settle observation does not, so
 after a restart every file must again stay unchanged for a full settle window.
 Set `minimum_age = "0s"` or omit it for ordinary inboxes that need only the
 settle window.
+
+Change time catches edits that keep the same size and restore modification time.
+Any change to file metadata (permissions, ownership, extended attributes, hard
+links, or timestamps) restarts the settle window and costs one more read, but adds
+no version when the bytes match. A drive that reports no change time falls back
+to size and modification time.
 
 Docbank then verifies that the confined source path still names the same
 unchanged object. It never follows entries that are symlinks and never changes
