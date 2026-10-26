@@ -1,7 +1,7 @@
 import * as actions from "./action-events.js";
 import { createHash } from "node:crypto";
 import { afterEach, expect, it, vi } from "vite-plus/test";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import App from "./App.svelte";
 import { snapshotEnvelope } from "./snapshot-test-fixtures.js";
 import { parseQuery } from "./query.js";
@@ -1474,6 +1474,34 @@ it("runs Advanced with the page size it was given instead of the ranked search",
     harness.fetchMock.mock.calls.find(([url]) => String(url) === "/api/v1/workspace/queries");
   await waitFor(() => expect(snapshotCall()).toBeTruthy());
   expect(JSON.parse(String(snapshotCall()?.[1]?.body))).toMatchObject({ page_size: 250 });
+});
+
+it("says filters search names and text only when Advanced replaces a meaning search", async () => {
+  const file = node(2, "report.txt", baseVersion);
+  installHarness({
+    profiles: [
+      {
+        name: "private",
+        fingerprint: "a".repeat(64),
+        rendition: true,
+        embedding_bindings: ["embed"],
+        reranking_available: false,
+      },
+    ],
+    files: [file],
+    baseReport: report("hybrid", [result(file, 1, "report excerpt")]),
+  });
+  render(App);
+  await submitSearch("annual report");
+  await screen.findByText("report excerpt");
+  expect(screen.queryByText("Filters search names and text only.")).toBeNull();
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  await fireEvent.click(screen.getByRole("combobox", { name: "Documents per page: 100" }));
+  await fireEvent.click(screen.getByRole("option", { name: "250" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  const note = await screen.findByText("Filters search names and text only.");
+  await fireEvent.click(within(note.parentElement!).getByRole("button", { name: "Clear search" }));
+  await waitFor(() => expect(screen.queryByText("Filters search names and text only.")).toBeNull());
 });
 
 it("keeps the applied search text when Advanced is cancelled", async () => {

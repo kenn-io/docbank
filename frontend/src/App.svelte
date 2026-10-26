@@ -1068,6 +1068,8 @@
 
   let queryBarOpen = $state(false);
   let querySettingsApplied = $state(false);
+  // Filters run as a names-and-text snapshot, so a meaning search that took them lost its meaning.
+  let filtersReplacedMeaningSearch = $state(false);
   let queryDraftChanged = $state(false);
   let queryEditorVersion = $state(0);
   let queryDraftFromDefinition = $state(false);
@@ -2826,6 +2828,7 @@
   }
 
   function leaveSnapshotMode(resumeLive = false): void {
+    filtersReplacedMeaningSearch = false;
     const deferredProfileDefault =
       resumeLive &&
       naturalProfileDefaultPending?.request === profileGeneration &&
@@ -4062,6 +4065,13 @@
                   return;
                 }
                 querySettingsApplied = true;
+                if (
+                  !snapshotActive &&
+                  activeQuery &&
+                  naturalSearchMode !== "names" &&
+                  naturalProfile
+                )
+                  filtersReplacedMeaningSearch = true;
                 void submitSnapshot(query, options);
               }}
               onsave={() => {
@@ -4104,6 +4114,9 @@
                   </div>
                 </div>
                 <div class="toolbar-actions">
+                  {#if filtersReplacedMeaningSearch}<span role="status"
+                      >Filters search names and text only.</span
+                    >{/if}
                   {#if snapshot.state.options?.profile}<span
                       >Profile: {snapshot.state.options.profile}</span
                     >{/if}
