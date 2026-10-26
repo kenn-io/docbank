@@ -1207,8 +1207,11 @@ it("keeps a tagged snapshot and its selection when the inspector removes the act
   await screen.findByRole("region", { name: "Frozen query results" });
   await fireEvent.click(screen.getByRole("checkbox", { name: `Select ${frozen.path}` }));
   await fireEvent.click(await screen.findByRole("button", { name: "Manage" }));
+  const dialog = await screen.findByRole("dialog", {
+    name: `Manage tags for ${frozen.name}`,
+  });
   const before = requests.length;
-  await fireEvent.click(await screen.findByRole("button", { name: "Remove tag frozen" }));
+  await fireEvent.click(await within(dialog).findByRole("button", { name: "Remove tag frozen" }));
   await waitFor(() =>
     expect(screen.queryByRole("button", { name: "Remove tag frozen" })).toBeNull(),
   );

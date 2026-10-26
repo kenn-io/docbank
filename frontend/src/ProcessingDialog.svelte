@@ -35,9 +35,10 @@
     onclose: () => void;
     onauthfailure: (cause: unknown) => void;
     onrendition: (attachmentID: string) => void;
+    oncomplete?: () => void;
   }
 
-  let { session, node, path, onclose, onauthfailure, onrendition }: Props = $props();
+  let { session, node, path, onclose, onauthfailure, onrendition, oncomplete }: Props = $props();
 
   type Option = { name: string; plan: ProcessingPlan };
   // Refusals about the file's type rather than this particular file.
@@ -218,6 +219,7 @@
       if (processingController !== active) return;
       job = result.job;
       status = result.status;
+      if (result.status.state === "completed") oncomplete?.();
       const fresh = await planProfile(profileName);
       if (processingController !== active) return;
       options = options.map((option) =>

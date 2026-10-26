@@ -178,7 +178,7 @@ describe("processing dialog", () => {
     });
     const line = await screen.findByText(/No processing profile handles this file type/);
     expect(within(line).getByRole("link", { name: "Set one up" }).getAttribute("href")).toBe(
-      "https://docbank.ai/docs/usage/configuration/",
+      "https://docbank.ai/docs/configuration/",
     );
     expect(screen.queryByRole("button", { name: "Extract text" })).toBeNull();
   });

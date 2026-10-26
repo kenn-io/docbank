@@ -2,7 +2,7 @@ import type { ProcessingFlowHop, ProcessingPlan } from "./generated/docbank.js";
 
 export type ProcessingPurpose = "extract" | "transcribe" | "describe" | "index";
 
-export const processingSetupURL = "https://docbank.ai/docs/usage/configuration/";
+export const processingSetupURL = "https://docbank.ai/docs/configuration/";
 
 export const purposeLabels: Record<
   ProcessingPurpose,

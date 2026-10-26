@@ -27,6 +27,7 @@
     session,
     source,
     authorizationRevision,
+    processingRevision = 0,
     profileName = "",
     observed,
     activeTab = $bindable("preview"),
@@ -47,6 +48,7 @@
     session: string;
     source: SelectedSource;
     authorizationRevision: number;
+    processingRevision?: number;
     profileName?: string;
     activeTab?: "preview" | "text" | "duplicates" | "attachments" | "email";
     observed?: RenditionObservation;
@@ -96,7 +98,9 @@
   const displayedRevision = $derived(
     relatedSource?.mutationRevision ?? duplicateSource?.mutationRevision ?? authorizationRevision,
   );
-  const contentKey = $derived(`${session}:${displayedSource.key}:${displayedRevision}`);
+  const contentKey = $derived(
+    `${session}:${displayedSource.key}:${displayedRevision}:${processingRevision}`,
+  );
   const visitedTabs = $derived(visited.key === contentKey ? visited.tabs : []);
 
   $effect(() => {

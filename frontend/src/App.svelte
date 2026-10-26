@@ -3141,6 +3141,8 @@
     showToast(message);
   }
 
+  let processingRevision = $state(0);
+
   async function processInspectedSource(source: SelectedSource): Promise<void> {
     const session = webSession;
     try {
@@ -4638,6 +4640,7 @@
                 {#snippet preview(ondisplay)}
                   <VerifiedPreview
                     {ondisplay}
+                    {processingRevision}
                     onprocess={(source) => void processInspectedSource(source)}
                     bind:activeTab={inspectorContentTab}
                     session={webSession}
@@ -4741,6 +4744,7 @@
                 {#snippet preview(ondisplay)}
                   <VerifiedPreview
                     {ondisplay}
+                    {processingRevision}
                     onprocess={(source) => void processInspectedSource(source)}
                     bind:activeTab={inspectorContentTab}
                     highlightSets={inspectorHighlightSets}
@@ -4881,6 +4885,9 @@
           path={panel.target.path}
           onclose={closePanel(panel)}
           onauthfailure={handleFailure}
+          oncomplete={() => {
+            if (activePanel === panel) processingRevision += 1;
+          }}
           onrendition={(attachmentID) => {
             if (activePanel !== panel) return;
             activePanel = { kind: "rendition", target: { attachmentID, path: panel.target.path } };

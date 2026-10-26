@@ -130,7 +130,9 @@ describe("similar documents drawer", () => {
 
   it("points to setup when no profile stores vectors", async () => {
     setup([versionID], []);
-    expect(await screen.findByRole("link", { name: "Set one up" })).toBeTruthy();
+    expect((await screen.findByRole("link", { name: "Set one up" })).getAttribute("href")).toBe(
+      "https://docbank.ai/docs/configuration/",
+    );
   });
 
   it("ignores a result that arrives after close", async () => {
