@@ -53,12 +53,12 @@ func ensureBlobChecksumTx(tx *sql.Tx, record BlobChecksumRecord) error {
 	if err := validateBlobChecksumRecord(record); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`INSERT INTO blob_checksums(blob_sha256,md5) VALUES(?,?)
+	if _, err := tx.Exec(`INSERT INTO blob_checksums(blob_sha256,md5) VALUES($1,$2)
 		ON CONFLICT(blob_sha256) DO NOTHING`, record.BlobSHA256, record.MD5); err != nil {
 		return fmt.Errorf("recording auxiliary checksum for blob %s: %w", record.BlobSHA256, err)
 	}
 	var stored string
-	if err := tx.QueryRow(`SELECT md5 FROM blob_checksums WHERE blob_sha256=?`,
+	if err := tx.QueryRow(`SELECT md5 FROM blob_checksums WHERE blob_sha256=$1`,
 		record.BlobSHA256).Scan(&stored); err != nil {
 		return fmt.Errorf("reading auxiliary checksum for blob %s: %w", record.BlobSHA256, err)
 	}
@@ -75,7 +75,7 @@ func (s *Store) BlobChecksums(ctx context.Context, sha256 string) (BlobChecksumR
 	}
 	record := BlobChecksumRecord{}
 	if err := s.db.QueryRowContext(ctx,
-		`SELECT blob_sha256,md5 FROM blob_checksums WHERE blob_sha256=?`, sha256,
+		`SELECT blob_sha256,md5 FROM blob_checksums WHERE blob_sha256=$1`, sha256,
 	).Scan(&record.BlobSHA256, &record.MD5); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return BlobChecksumRecord{}, ErrNotFound
@@ -94,7 +94,7 @@ func (s *Store) RecordVerifiedBlobChecksum(ctx context.Context, record BlobCheck
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var present int
 		if err := tx.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM blobs WHERE hash=?`, record.BlobSHA256,
+			`SELECT COUNT(*) FROM blobs WHERE hash=$1`, record.BlobSHA256,
 		).Scan(&present); err != nil {
 			return fmt.Errorf("checking blob checksum target %s: %w", record.BlobSHA256, err)
 		}

@@ -300,6 +300,55 @@ Keep application schema ownership in Docbank; neither upstream project's
 a generic backend registry or a new SQL dialect layer before inspecting
 msgvault's existing dialect and the concrete Docbank queries it must support.
 
+#### Storage transactions and checksum recording
+
+The internal PostgreSQL store serializes storage mutations with a
+transaction-scoped advisory lock, following Kata's lock pattern. Its key is
+derived from `docbank:storage:` and the configured schema; PostgreSQL keeps
+these locks within one database. Different vault schemas can write independently.
+The pool's pinned search path and the store's schema binding must agree.
+
+`withStorageTx` explicitly uses `READ COMMITTED` on PostgreSQL and acquires the
+writer lock before calling the mutation. Protected rows are read in later
+statements, so a writer admitted after another commits sees that commit even
+when the server defaults to repeatable read. SQLite keeps its immediate
+transaction on the single-connection writer pool. This serializes metadata
+changes; it does not replace the exclusive vault and blob-root ownership.
+
+Cancellation reaches connection acquisition, `BEGIN`, and the PostgreSQL lock
+wait. After the cancellation handoff from `BEGIN`, the store owns rollback and
+its errors. If cancellation races a successful `BEGIN`, `database/sql` can
+start its own rollback first. The store then receives `sql.ErrTxDone` without
+that rollback's error. Closing the dedicated connection still waits for the
+rollback to finish before the store returns cancellation. Callback and commit
+failures propagate to the caller; the store never retries a mutation callback.
+
+Subscriber notifications follow successful commit only. PostgreSQL
+conservatively signals every storage commit; SQLite's temporary capture
+triggers narrow that signal to changes in tables Photos reads. Unread signals
+still coalesce.
+
+`RecordVerifiedBlobChecksum` and `BlobChecksums` use shared SQL on both backends.
+Recording requires an existing blob, accepts an identical checksum again, and
+rejects a conflicting checksum without changing the retained value. The runtime
+role needs only `SELECT` and `INSERT` on `blob_checksums`. SHA-256 remains the
+blob identity; MD5 is auxiliary metadata. This qualifies checksum recording and
+readback, not the backfill target query, complete blob publication, or document
+mutations, which still depend on catalogs that have not been ported.
+
+!!! info "Planned"
+
+    Runtime opening must reject a connection whose `current_schema()` differs
+    from the configured vault schema. Each pool must pin that same search path,
+    so writers to one schema use the same advisory lock key.
+
+    Photos checkout writes currently rely on SQLite's single-connection writer
+    pool. Their PostgreSQL implementation must use `withStorageTx` for every
+    metadata write. Publication intent must commit before the filesystem copy;
+    recording its result or clearing an unused intent needs a separate
+    transaction that survives request cancellation. A database transaction
+    must not span the filesystem publication callback.
+
 #### Catalog maintenance during writes
 
 !!! info "Planned"
@@ -332,8 +381,9 @@ msgvault's existing dialect and the concrete Docbank queries it must support.
     Preserve released SQLite schemas and their triggers. Replace each trigger
     through the supported SQLite layout cutover only when its shared Go owner
     is present. Do not run both owners for an effect such as advancing a binding
-    epoch. PostgreSQL mutations remain unavailable until their related catalog
-    effects are implemented; successful SQL alone does not qualify a write.
+    epoch. Complete PostgreSQL document mutations remain unavailable until
+    their related catalog effects are implemented; successful SQL alone does
+    not qualify a write.
 
 #### Shared query qualification
 
