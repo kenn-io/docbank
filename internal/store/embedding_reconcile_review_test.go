@@ -63,6 +63,36 @@ func TestEmbeddingJobsDistinguishSelectedVectorSpace(t *testing.T) {
 			require.Equal(t, testCase.state, status.State)
 		})
 	}
+
+	t.Run("explicit selection retries failed replacement", func(t *testing.T) {
+		t.Parallel()
+		s, version, source, _ := newEmbeddingCatalogFixture(t)
+		var portable document.ProcessingProfileV1
+		require.NoError(t, json.Unmarshal(source.CanonicalProfile, &portable))
+		portable.Embeddings[0].DisclosureFingerprint = testSHA256([]byte("replacement-disclosure"))
+		canonical, fp, err := document.CanonicalProfile(portable)
+		require.NoError(t, err)
+		target := source
+		target.CanonicalProfile, target.Fingerprint = canonical, fp.Profile
+		target.RetentionDisclosureFingerprint = fp.RetentionDisclosure
+		require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error { return ensureProcessingProfileTx(t.Context(), tx, target) }))
+		request := embeddingJobTestRequest(t, s, version, target, "explicit-selection-retry")
+		request.SourceProfileFingerprint = source.Fingerprint
+		job, err := s.EnqueueEmbeddingJob(t.Context(), request)
+		require.NoError(t, err)
+		claim, work, found, err := s.ClaimEmbeddingWork(t.Context(), job.ID, "worker:recovery", time.Now(), time.Minute, []string{request.Descriptor.Fingerprint})
+		require.NoError(t, err)
+		require.True(t, found)
+		require.NoError(t, s.FailEmbeddingWork(t.Context(), claim, work, EmbeddingFailureInputRejected, EmbeddingAttemptReceipt{AttemptID: job.ID}, time.Now()))
+		request.SourceProfileFingerprint = ""
+		selected, err := s.EnqueueEmbeddingJob(t.Context(), request)
+		require.NoError(t, err)
+		require.Equal(t, job.ID, selected.ID, "explicit selection retries the existing target job")
+		_, work, found, err = s.ClaimEmbeddingWork(t.Context(), selected.ID, "worker:explicit", time.Now().Add(time.Second), time.Minute, []string{request.Descriptor.Fingerprint})
+		require.NoError(t, err)
+		require.True(t, found)
+		require.Empty(t, work.SourceProfileFingerprint, "explicit selection admits provider fallback")
+	})
 }
 
 func TestEmbeddingReconciliationUsesCurrentGenerationBeforeJobState(t *testing.T) {
@@ -234,18 +264,10 @@ func TestEmbeddingReconciliationRuntimePolicyReplacementAuthority(t *testing.T) 
 			require.NoError(t, err)
 			require.Len(t, jobs, 1)
 			require.Equal(t, "queued", jobs[0].State)
-			claim, work, found, err := s.ClaimEmbeddingWork(t.Context(), jobs[0].ID, "worker:recovery", time.Now(), time.Minute, []string{descriptor.Fingerprint})
+			_, work, found, err := s.ClaimEmbeddingWork(t.Context(), jobs[0].ID, "worker:recovery", time.Now(), time.Minute, []string{descriptor.Fingerprint})
 			require.NoError(t, err)
 			require.True(t, found)
 			require.Equal(t, source.Profile.Fingerprint, work.SourceProfileFingerprint)
-			require.NoError(t, s.FailEmbeddingWork(t.Context(), claim, work, EmbeddingFailureInputRejected, EmbeddingAttemptReceipt{AttemptID: jobs[0].ID}, time.Now()))
-			selected, err := s.EnqueueEmbeddingJob(t.Context(), current)
-			require.NoError(t, err)
-			require.Equal(t, jobs[0].ID, selected.ID, "explicit selection retries the existing target job")
-			_, work, found, err = s.ClaimEmbeddingWork(t.Context(), selected.ID, "worker:explicit", time.Now().Add(time.Second), time.Minute, []string{descriptor.Fingerprint})
-			require.NoError(t, err)
-			require.True(t, found)
-			require.Empty(t, work.SourceProfileFingerprint, "explicit selection admits provider fallback")
 		})
 	}
 }
