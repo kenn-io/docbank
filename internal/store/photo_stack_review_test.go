@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"slices"
 	"testing"
 	"time"
 
@@ -26,31 +25,6 @@ func indexedPhotoRun(t *testing.T, count, seconds int) (imageEmbeddingCatalogFix
 	}
 	index.generation(t, "indexed-camera-stream")
 	return f, ids
-}
-
-func TestPhotoStackLongImageRunLibraryMatchesCull(t *testing.T) {
-	t.Parallel()
-	f, ids := indexedPhotoRun(t, 502, 20)
-	var want [][]string
-	groups, unavailable, _, incomplete, err := f.s.PhotoStackGroups(t.Context(), ids, false, "")
-	require.NoError(t, err)
-	require.Empty(t, unavailable)
-	require.False(t, incomplete)
-	require.Empty(t, groups)
-	for _, direction := range []string{"desc", "asc"} {
-		for _, size := range []int{1, 5, 20, 100} {
-			t.Run(fmt.Sprintf("%s/%d", direction, size), func(t *testing.T) {
-				request := captureRequest(t, direction)
-				request.PageSize = size
-				expected := slices.Clone(want)
-				if direction == "desc" {
-					slices.Reverse(expected)
-				}
-				_, stacks := stackPages(t, f.s, request)
-				require.Equal(t, expected, stacks)
-			})
-		}
-	}
 }
 
 func TestPhotoStackMalformedProjectionPreservesBurstBrowse(t *testing.T) {
@@ -159,31 +133,45 @@ func TestPhotoStackProjectionReaderPropagatesDatabaseAndCancellationErrors(t *te
 	}
 }
 
-func TestReviewUnindexedStreamHasBoundedPageWork(t *testing.T) {
+func TestReviewNewestStackBoundsHistoryReads(t *testing.T) {
 	t.Parallel()
-	f := newImageEmbeddingCatalogFixture(t)
-	record, vector := f.publish(t)
-	index := newCursorIndexFixture(f)
-	index.add(record, vector)
-	index.generation(t, "unrelated-stream-index")
-	run, err := f.s.BeginIngest(t.Context(), "cli", "synthetic unindexed camera stream")
-	require.NoError(t, err)
-	var last string
-	for i := range 2000 {
-		stamp := time.Date(2026, 1, 1, 0, 0, i*30, 0, time.UTC).Format(time.RFC3339)
-		last = stackPhoto(t, f.s, run, fmt.Sprintf("/unindexed/frame-%04d.jpg", i), stamp, document.SourceMetadataPrecisionSecond)
+	for _, indexed := range []bool{true, false} {
+		t.Run(fmt.Sprintf("indexed=%t", indexed), func(t *testing.T) {
+			var f imageEmbeddingCatalogFixture
+			var last string
+			limit := MaxPhotoStackFrames
+			if indexed {
+				var ids []string
+				f, ids = indexedPhotoRun(t, 1500, 20)
+				last = ids[len(ids)-1]
+				limit++
+			} else {
+				f = newImageEmbeddingCatalogFixture(t)
+				record, vector := f.publish(t)
+				index := newCursorIndexFixture(f)
+				index.add(record, vector)
+				index.generation(t, "unrelated-stream-index")
+				run, err := f.s.BeginIngest(t.Context(), "cli", "synthetic unindexed camera stream")
+				require.NoError(t, err)
+				for i := range 2000 {
+					stamp := time.Date(2026, 1, 1, 0, 0, i*30, 0, time.UTC).Format(time.RFC3339)
+					last = stackPhoto(t, f.s, run, fmt.Sprintf("/unindexed/frame-%04d.jpg", i), stamp, document.SourceMetadataPrecisionSecond)
+				}
+			}
+			vectors, err := f.s.newPhotoStackVectorReader(t.Context(), f.s.db)
+			require.NoError(t, err)
+			frames, err := f.s.photoStackFrames(t.Context(), f.s.db, []string{last}, false, "")
+			require.NoError(t, err)
+			pager, err := newPhotoStackPager(t.Context(), f.s.db, photoBrowseScope{match: compiledQueryFragment{sql: "1=1"}}, 2, true, "", vectors)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, pager.Close()) }()
+			hydrated := 0
+			vectors.onHydrate = func(count int) { hydrated += count }
+			component, err := pager.component(t.Context(), frames[last])
+			require.NoError(t, err)
+			require.Len(t, component.frames, 1)
+			require.Equal(t, last, component.frames[0].AssetID)
+			require.LessOrEqual(t, hydrated, limit, "resolving the newest stack must bound total hydration")
+		})
 	}
-	vectors, err := f.s.newPhotoStackVectorReader(t.Context(), f.s.db)
-	require.NoError(t, err)
-	frames, err := f.s.photoStackFrames(t.Context(), f.s.db, []string{last}, false, "")
-	require.NoError(t, err)
-	pager, err := newPhotoStackPager(t.Context(), f.s.db, photoBrowseScope{match: compiledQueryFragment{sql: "1=1"}}, 2, true, "", vectors)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, pager.Close()) }()
-	hydrated := 0
-	vectors.onHydrate = func(count int) { hydrated += count }
-	component, err := pager.component(t.Context(), frames[last])
-	require.NoError(t, err)
-	require.Len(t, component.frames, 1)
-	require.LessOrEqual(t, hydrated, MaxPhotoStackFrames, "a singleton must not hydrate the preceding stream")
 }

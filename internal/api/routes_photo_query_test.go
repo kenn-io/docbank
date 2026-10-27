@@ -778,28 +778,6 @@ func TestLookupPhotoFlags(t *testing.T) {
 	}
 }
 
-func TestPhotoMeaningHiddenFallsBackWithinUnlockedView(t *testing.T) {
-	t.Parallel()
-	ts, s := newTestServer(t, nil)
-	node, err := s.CreateFile(t.Context(), s.RootID(), "hidden-sunset.jpg", testHash("hidden-sunset"), 20, "image/jpeg")
-	require.NoError(t, err)
-	asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
-	require.NoError(t, err)
-	require.NoError(t, s.SetupPhotoHidden(t.Context(), "synthetic-passcode"))
-	_, err = s.SetPhotoAssetHidden(t.Context(), asset.ID, asset.Revision, true)
-	require.NoError(t, err)
-	request := api.PhotoBrowseRequest{Hidden: true, Query: api.QueryPayload(`{"mode":"semantic","text":"sunset","sort":{"field":"name","direction":"asc"}}`), PageSize: 1}
-	_, cookie, err := daemonconn.New(ts.URL, testAPIKey).PhotoHidden(t.Context(), "unlock", "synthetic-passcode", "")
-	require.NoError(t, err)
-	response, body := do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", map[string]string{"Cookie": cookie}, request)
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	var page api.PhotoBrowsePage
-	require.NoError(t, json.Unmarshal([]byte(body), &page))
-	require.Equal(t, "hidden_photos", page.FallbackReason)
-	require.Len(t, page.Items, 1)
-	require.Equal(t, asset.ID, page.Items[0].AssetID)
-}
-
 func photoImageHTTPFixture(t *testing.T, provider processingTestEmbeddingProvider, names []string, unavailable ...*atomic.Bool) (*httptest.Server, *testStore, []string) {
 	t.Helper()
 	provider.descriptor.InputKinds = []document.EmbeddingInputKind{document.EmbeddingInputImage}

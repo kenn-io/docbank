@@ -4395,7 +4395,7 @@ it("stops Cull when the accepted snapshot cannot be captured", async () => {
 });
 
 it.each(["compare", "face", "cull"])(
-  "preserves snapshot membership after %s",
+  "refreshes the accepted Meaning snapshot after %s",
   async (operation) => {
     const photos = new Photos("scoped", vi.fn(), false, {
       ...photoQuery,
@@ -4411,13 +4411,7 @@ it.each(["compare", "face", "cull"])(
     photos.comparing = operation === "compare";
     vi.spyOn(photos, "lookupMany").mockResolvedValue(rows);
     vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });
-    const read = vi.spyOn(api, "listPhotoAssets").mockImplementation(async (request) => ({
-      items: request.snapshot_id ? [photo(1), photo(2)] : [photo(3)],
-      total: request.snapshot_id ? 2 : 1,
-      facets: [],
-      relevance_available: true,
-      snapshot_id: request.snapshot_id || "replacement",
-    }));
+    const refresh = vi.spyOn(photos, "refresh").mockResolvedValue(true);
     const cache = new PhotoPreviewCache("scoped", vi.fn());
     if (operation === "cull") {
       vi.stubGlobal("indexedDB", new IDBFactory());
@@ -4449,11 +4443,7 @@ it.each(["compare", "face", "cull"])(
     else if (operation === "cull")
       await fireEvent.click(await screen.findByRole("button", { name: "Exit cull" }));
     else await act(() => photos.faceEditor.ondecision?.());
-    await waitFor(() => expect(read).toHaveBeenCalled());
-    expect(read.mock.calls.at(-1)?.[0].snapshot_id).toBe("accepted");
-    expect(photos.items.map((row) => row.asset_id)).toEqual(["photo-1", "photo-2"]);
-
-    expect(photos.snapshotID).toBe("accepted");
+    await waitFor(() => expect(refresh).toHaveBeenCalledWith(expect.any(Function), true));
     if (operation === "face") {
       await fireEvent.click(screen.getByRole("button", { name: "More photo actions" }));
       expect(

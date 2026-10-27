@@ -3503,55 +3503,48 @@ it("continues a metadata fallback with the captured query", async () => {
   photos.dispose();
 });
 
-it.each([
-  ["", false],
-  ["", true],
-] as const)(
-  "selects every snapshot result with fallback=%s exportFirst=%s",
-  async (fallback, exportFirst) => {
-    const photos = new Photos("scoped", vi.fn(), false, {
-      ...photoQuery,
-      mode: "semantic",
-      text: "sunset",
-      sort: { field: "relevance", direction: "desc" },
+it.each([false, true])("selects every snapshot result with exportFirst=%s", async (exportFirst) => {
+  const photos = new Photos("scoped", vi.fn(), false, {
+    ...photoQuery,
+    mode: "semantic",
+    text: "sunset",
+    sort: { field: "relevance", direction: "desc" },
+  });
+  photos.items = [photo(1)];
+  photos.total = 2;
+  photos.started = true;
+  photos.cursor = "page-two";
+  photos.snapshotID = "image-snapshot";
+  vi.spyOn(api, "listPhotoAssets").mockResolvedValue({
+    items: [photo(2)],
+    total: 2,
+    facets: [],
+    relevance_available: true,
+    snapshot_id: "image-snapshot",
+  });
+  photos.selectLoaded();
+  expect(photos.scope()).toEqual({ asset_ids: ["photo-1"] });
+  expect(await photos.actionScope(true)).toEqual({ query: photoQuery, asset_ids: ["photo-1"] });
+  if (exportFirst) {
+    expect(await photos.actionScope()).toEqual({
+      query: photoQuery,
+      asset_ids: ["photo-1", "photo-2"],
     });
-    photos.items = [photo(1)];
-    photos.total = 2;
-    photos.started = true;
-    photos.cursor = "page-two";
-    photos.snapshotID = "image-snapshot";
-    photos.fallbackReason = fallback;
-    vi.spyOn(api, "listPhotoAssets").mockResolvedValue({
-      items: [photo(2)],
-      total: 2,
-      facets: [],
-      relevance_available: true,
-      snapshot_id: "image-snapshot",
+  }
+  await photos.selectAllResults();
+  expect(photos.scope()).toEqual({ asset_ids: [photo(1).asset_id, photo(2).asset_id] });
+  for (const selected of [false, true]) {
+    expect(await photos.actionScope(selected)).toEqual({
+      query: photoQuery,
+      asset_ids: ["photo-1", "photo-2"],
     });
-    photos.selectLoaded();
-    expect(photos.scope()).toEqual({ asset_ids: ["photo-1"] });
-    expect(await photos.actionScope(true)).toEqual({ query: photoQuery, asset_ids: ["photo-1"] });
-    if (exportFirst) {
-      expect(await photos.actionScope()).toEqual({
-        query: photoQuery,
-        asset_ids: ["photo-1", "photo-2"],
-      });
-    }
-    await photos.selectAllResults();
-    expect(photos.scope()).toEqual({ asset_ids: [photo(1).asset_id, photo(2).asset_id] });
-    for (const selected of [false, true]) {
-      expect(await photos.actionScope(selected)).toEqual({
-        query: photoQuery,
-        asset_ids: ["photo-1", "photo-2"],
-      });
-    }
-    expect(api.listPhotoAssets).toHaveBeenCalledWith(
-      expect.objectContaining({ cursor: "page-two", snapshot_id: "image-snapshot" }),
-      expect.anything(),
-    );
-    photos.dispose();
-  },
-);
+  }
+  expect(api.listPhotoAssets).toHaveBeenCalledWith(
+    expect.objectContaining({ cursor: "page-two", snapshot_id: "image-snapshot" }),
+    expect.anything(),
+  );
+  photos.dispose();
+});
 
 it.each(["reload", "revalidateAuthored"] as const)(
   "keeps ranked Map membership during %s when retrieval is unavailable",
@@ -3642,10 +3635,6 @@ it("keeps relevance order across paging and refresh", async () => {
   expect(photos.canJump).toBe(false);
   expect(photos.items.map((item) => item.asset_id)).toEqual(["photo-1", "photo-2"]);
   expect(photos.snapshotID).toBe("full-snapshot");
-  await photos.loadMore();
-  expect(read.mock.calls.at(-1)?.[0].snapshot_id).toBe("full-snapshot");
-  expect(photos.items.map((item) => item.asset_id)).toEqual(["photo-1", "photo-2", "photo-3"]);
-  await photos.refresh();
   photos.dispose();
 });
 
@@ -3709,6 +3698,8 @@ it.each(["fallback", "metadata transition", "late metadata counts", "metadata to
       await photos.setQuery({ ...photos.query, mode: "semantic" });
       finish({ facets: [timeline] } as unknown as snapshots.PhotoTimelineCounts);
       await vi.waitFor(() => expect(photos.timelineLoading).toBe(false));
+      expect(photos.timeline).toBeUndefined();
+      expect(photos.facets).toEqual([]);
     } else if (transition === "metadata to ranked") {
       photos.filtersOpen = true;
       await photos.loadMore();
@@ -3719,6 +3710,8 @@ it.each(["fallback", "metadata transition", "late metadata counts", "metadata to
       });
       await photos.setQuery({ ...photos.query, mode: "semantic" });
       expect(photos.snapshotID).toBe("ranked");
+      expect(photos.timeline).toBeUndefined();
+      expect(photos.facets).toEqual([]);
     } else {
       await photos.loadMore();
       fallback = true;

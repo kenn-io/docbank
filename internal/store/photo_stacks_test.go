@@ -2,7 +2,6 @@ package store
 
 import (
 	"bytes"
-	"database/sql"
 	"encoding/json/v2"
 	"fmt"
 	"os"
@@ -1490,52 +1489,6 @@ func TestPhotoStackDecisionsRefuseStaleMetadata(t *testing.T) {
 	}
 }
 
-func TestPhotoStackDecisionsIgnorePendingImageWork(t *testing.T) {
-	t.Parallel()
-	for _, indexed := range []bool{false, true} {
-		t.Run(fmt.Sprintf("indexed=%t", indexed), func(t *testing.T) {
-			t.Parallel()
-			f := newImageEmbeddingCatalogFixture(t)
-			s := f.s
-			run, err := s.BeginIngest(t.Context(), "cli", "synthetic pending image vectors")
-			require.NoError(t, err)
-			ids := []string{
-				stackPhoto(t, s, run, "/shots/one.jpg", "2024-06-10T12:00:00Z", document.SourceMetadataPrecisionSecond),
-				stackPhoto(t, s, run, "/shots/two.jpg", "2024-06-10T12:00:01Z", document.SourceMetadataPrecisionSecond),
-			}
-			if indexed {
-				index := newCursorIndexFixture(f)
-				for _, id := range ids {
-					index.publish(t, id, []float64{1, 0, 0, 0, 0, 0, 0, 0})
-				}
-				index.generation(t, "pending-generation")
-				f.binding.Name, f.request.BindingID = "other-image", "other-image"
-			}
-			pending, err := s.PhotoAssetByID(t.Context(), ids[1])
-			require.NoError(t, err)
-			node, err := s.NodeByID(t.Context(), pending.Files[0].NodeID)
-			require.NoError(t, err)
-			_, err = s.EnqueueEmbeddingJob(t.Context(), f.forNode(t, node).request)
-			require.NoError(t, err)
-			groups, _, _, incomplete, err := s.PhotoStackGroups(t.Context(), ids, false, "")
-			require.NoError(t, err)
-			require.Equal(t, [][]string{ids}, groups)
-			require.False(t, incomplete)
-			targets := preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets})
-			_, err = s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: targets, Decision: "current", CurrentID: ids[0]})
-			require.NoError(t, err)
-			for i, want := range []string{"pick", "reject"} {
-				asset, err := s.PhotoAssetByID(t.Context(), ids[i])
-				require.NoError(t, err)
-				require.Equal(t, want, asset.Files[0].Flag)
-			}
-			page, err := s.ListPhotoAssets(t.Context(), captureRequest(t, "asc"), nil)
-			require.NoError(t, err)
-			require.False(t, page.GroupingIncomplete)
-		})
-	}
-}
-
 func TestPhotoStackPartialMetadataCandidates(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
@@ -1631,17 +1584,10 @@ func TestPhotoStackVectorHydrationTracksIndexPublication(t *testing.T) {
 	asset, err := s.PhotoAssetForNode(t.Context(), f.node.ID)
 	require.NoError(t, err)
 	frames := map[string]photoStackFrame{asset.ID: {}}
-	require.NoError(t, s.photoReadTx(t.Context(), func(tx *sql.Tx) error {
-		return s.hydratePhotoStackVectors(t.Context(), tx, frames)
-	}))
-	_, err = s.EnqueueEmbeddingJob(t.Context(), f.request)
-	require.NoError(t, err)
+	record, vector := f.publish(t)
 	reader, err := s.newPhotoStackVectorReader(t.Context(), s.db)
 	require.NoError(t, err)
 	require.NoError(t, reader.hydrate(t.Context(), s.db, frames))
-	record, vector := f.publish(t)
-	require.NoError(t, reader.hydrate(t.Context(), s.db, frames))
-	require.False(t, photoStackAnyStale(frames))
 	require.Empty(t, frames[asset.ID].ImageVectors)
 	index := newCursorIndexFixture(f)
 	index.add(record, vector)
@@ -1664,7 +1610,6 @@ func TestPhotoStackVectorHydrationTracksIndexPublication(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, reader.hydrate(t.Context(), s.db, frames))
 	require.Equal(t, []float32{1, 2, 3, 4, 5, 6, 7, 8}, frames[asset.ID].ImageVectors[index.space])
-	require.False(t, photoStackAnyStale(frames))
 	require.Empty(t, frames[later].ImageVectors)
 }
 

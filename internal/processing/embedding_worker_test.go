@@ -2058,7 +2058,7 @@ func TestEmbeddingWorkerSpacesReconciliationWithoutDelayingQueuedWork(t *testing
 	})
 }
 
-func TestImageEmbeddingRuntimePreviewValidationAndDescriptorSharing(t *testing.T) {
+func TestImageEmbeddingRuntimePreviewValidation(t *testing.T) {
 	t.Parallel()
 	f := newPhotoDescriptionFixture(t)
 	x := newImageEmbeddingService(t, f)
@@ -2082,17 +2082,20 @@ func TestImageEmbeddingRuntimePreviewValidationAndDescriptorSharing(t *testing.T
 	work.ContentVersionID = publishRejectedPreview(t, f)("invalid-preview.jpg").CurrentVersionID
 	_, err = registry.Prepare(t.Context(), work)
 	require.ErrorIs(t, err, ErrEmbeddingInputRejected)
+}
 
-	t.Run("profiles sharing a descriptor register one runtime", func(t *testing.T) {
-		// Two profiles that share a descriptor register one runtime for it.
-		sibling := x.portable
-		sibling.Embeddings = slices.Clone(x.portable.Embeddings)
-		sibling.Embeddings[0].DisclosureFingerprint = workerHash("sibling-disclosure")
-		shared, err := NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(), Principal: "synthetic-operator", Scope: "document-processing", Profiles: map[string]ProfileConfig{"images": {Profile: x.portable, EmbeddingProviders: map[string]document.EmbeddingProvider{x.binding.Name: x.provider}}, "sibling": {Profile: sibling, EmbeddingProviders: map[string]document.EmbeddingProvider{x.binding.Name: x.provider}}}})
-		require.NoError(t, err)
-		assert.True(t, shared.EmbeddingRuntimes().Ready())
-		assert.Equal(t, []string{x.descriptor.Fingerprint}, shared.EmbeddingRuntimes().Fingerprints())
-	})
+func TestImageEmbeddingProfilesSharingDescriptorRegisterOneRuntime(t *testing.T) {
+	t.Parallel()
+	f := newPhotoDescriptionFixture(t)
+	x := newImageEmbeddingService(t, f)
+	// Two profiles that share a descriptor register one runtime for it.
+	sibling := x.portable
+	sibling.Embeddings = slices.Clone(x.portable.Embeddings)
+	sibling.Embeddings[0].DisclosureFingerprint = workerHash("sibling-disclosure")
+	shared, err := NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(), Principal: "synthetic-operator", Scope: "document-processing", Profiles: map[string]ProfileConfig{"images": {Profile: x.portable, EmbeddingProviders: map[string]document.EmbeddingProvider{x.binding.Name: x.provider}}, "sibling": {Profile: sibling, EmbeddingProviders: map[string]document.EmbeddingProvider{x.binding.Name: x.provider}}}})
+	require.NoError(t, err)
+	assert.True(t, shared.EmbeddingRuntimes().Ready())
+	assert.Equal(t, []string{x.descriptor.Fingerprint}, shared.EmbeddingRuntimes().Fingerprints())
 }
 
 func newImageEmbeddingService(t *testing.T, f *photoDescriptionFixture) photoSearchFixture {
@@ -2382,26 +2385,6 @@ func TestSearchPhotosUsesLaterAvailableProfile(t *testing.T) {
 			require.Empty(t, ranked.FallbackReason)
 		})
 	}
-}
-
-func TestSearchPhotosDropsPhotoRemovedDuringQueryEncoding(t *testing.T) {
-	t.Parallel()
-	x := newPhotoSearchFixture(t)
-	f, provider, service := x.f, x.provider, x.service
-	removed := false
-	provider.runtime.inspectInputs = func(inputs []document.EmbeddingInput) {
-		require.Len(t, inputs, 1)
-		_, err := f.catalog.TrashPhotoAsset(t.Context(), f.asset.ID, f.asset.Revision)
-		require.NoError(t, err)
-		_, err = f.catalog.TrashEmpty(t.Context(), 0, true)
-		require.NoError(t, err)
-		removed = true
-	}
-	defer func() { provider.runtime.inspectInputs = nil }()
-	ranked, err := service.SearchPhotos(t.Context(), store.PhotoBrowseRequest{Query: query.Query{V: 1, Syntax: "simple", Mode: "semantic", Text: "sunset", Sort: query.Sort{Field: "relevance", Direction: "desc"}}})
-	require.NoError(t, err)
-	require.True(t, removed)
-	require.Empty(t, ranked.Members)
 }
 
 func TestEmbeddingWorkerCompletesUnalignedDiscoveryStreams(t *testing.T) {

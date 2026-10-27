@@ -34,6 +34,10 @@ func TestSavedPhotoRankingPreservesDefinitionIdentity(t *testing.T) {
 			require.Equal(t, http.StatusOK, response.StatusCode, body)
 			var result api.SavedQueryRunResult
 			require.NoError(t, json.Unmarshal([]byte(body), &result))
+			require.Equal(t, mode, result.Snapshot.RequestedMode)
+			require.Equal(t, mode, result.Snapshot.ActualMode)
+			require.Empty(t, result.Snapshot.FallbackReason)
+			require.NotEmpty(t, result.Run.RunID)
 			require.Equal(t, saved.Fingerprint, result.Run.QueryFingerprint)
 			require.EqualValues(t, 1, result.Run.Total)
 			require.EqualValues(t, 1, result.Snapshot.Total)
@@ -43,22 +47,16 @@ func TestSavedPhotoRankingPreservesDefinitionIdentity(t *testing.T) {
 
 func TestReviewClearedSavedMeaningSearchRuns(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"semantic", "hybrid"} {
-		for _, text := range []string{"", "   "} {
-			t.Run(fmt.Sprintf("%s/text=%q", mode, text), func(t *testing.T) {
-				ts, _, observer := photoObservedFixture(t)
-				saved, etag := createSavedQuery(t, ts.URL, "Synthetic cleared query", fmt.Sprintf(`{"mode":%q,"text":%q,"filters":{"extensions":["jpg"]},"sort":{"field":"name","direction":"asc"}}`, mode, text))
-				response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/saved-queries/"+saved.ID+"/runs", map[string]string{"X-Api-Key": testAPIKey, "If-Match": etag}, `{"photos":true}`)
-				require.Equal(t, http.StatusOK, response.StatusCode, body)
-				var result api.SavedQueryRunResult
-				require.NoError(t, json.Unmarshal([]byte(body), &result))
-				require.Equal(t, saved.Fingerprint, result.Run.QueryFingerprint)
-				require.EqualValues(t, 1, result.Run.Total)
-				require.EqualValues(t, 1, result.Snapshot.Total)
-				require.Zero(t, observer.calls.Load())
-			})
-		}
-	}
+	ts, _, observer := photoObservedFixture(t)
+	saved, etag := createSavedQuery(t, ts.URL, "Synthetic cleared query", `{"mode":"semantic","text":"   ","filters":{"extensions":["jpg"]},"sort":{"field":"name","direction":"asc"}}`)
+	response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/saved-queries/"+saved.ID+"/runs", map[string]string{"X-Api-Key": testAPIKey, "If-Match": etag}, `{"photos":true}`)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var result api.SavedQueryRunResult
+	require.NoError(t, json.Unmarshal([]byte(body), &result))
+	require.Equal(t, saved.Fingerprint, result.Run.QueryFingerprint)
+	require.EqualValues(t, 1, result.Run.Total)
+	require.EqualValues(t, 1, result.Snapshot.Total)
+	require.Zero(t, observer.calls.Load())
 }
 
 func (p *photoQueryObserver) Embed(ctx context.Context, inputs []document.EmbeddingInput, authorization document.EmbeddingAuthorization) (document.EmbeddingResult, error) {

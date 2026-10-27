@@ -286,11 +286,11 @@ it("shows a query syntax example as the placeholder in query syntax mode", async
   photos.dispose();
 });
 it.each([
-  ["semantic", "provider_unavailable", "text"],
-  ["semantic", "", "semantic"],
+  ["provider_unavailable", "text"],
+  ["", "semantic"],
 ] as const)(
   "reports metadata fallback as the executed search mode: %s %s",
-  async (mode, fallback_reason, executed) => {
+  async (fallback_reason, executed) => {
     const searchOutcome = vi.mocked(actions.reportSearch);
     vi.stubGlobal(
       "fetch",
@@ -301,10 +301,8 @@ it.each([
     const photos = new Photos("scoped", vi.fn());
     photos.started = true;
     render(PhotoSearch, { photos });
-    if (mode === "semantic") {
-      await fireEvent.click(screen.getByRole("combobox", { name: "Find by: Metadata" }));
-      await fireEvent.click(await screen.findByRole("option", { name: "Meaning" }));
-    }
+    await fireEvent.click(screen.getByRole("combobox", { name: "Find by: Metadata" }));
+    await fireEvent.click(await screen.findByRole("option", { name: "Meaning" }));
     const search = screen.getByRole("searchbox", { name: "Search photos" });
     await fireEvent.input(search, { target: { value: "sunset" } });
     await fireEvent.submit(search.closest("form")!);
@@ -315,9 +313,9 @@ it.each([
   },
 );
 
-it.each(["semantic", "hybrid"] as const)("clears %s search into metadata browse", async (mode) => {
+it("clears Meaning search into metadata browse", async () => {
   const photos = new Photos("synthetic", vi.fn());
-  photos.query = { ...photos.query, text: "sunset", mode };
+  photos.query = { ...photos.query, text: "sunset", mode: "semantic" };
   const submit = vi.spyOn(photos, "setQuery").mockResolvedValue(undefined);
   render(PhotoSearch, { photos });
   await fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
