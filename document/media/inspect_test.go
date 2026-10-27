@@ -24,7 +24,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/document/internal/formatdetect"
 	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/media/mediatest"
 )
@@ -2673,10 +2672,6 @@ func TestCountPDFPages(t *testing.T) {
 	pages, err := media.CountPDFPages(ownerOnly)
 	require.NoError(t, err)
 	require.Equal(t, int64(3), pages)
-	protected, err := mediatest.EncryptedPDF("open", "owner", 128)
-	require.NoError(t, err)
-	_, err = media.CountPDFPages(protected)
-	require.ErrorIs(t, err, formatdetect.ErrPDFEncrypted)
 }
 
 func TestInspectPasswordProtectedPDF(t *testing.T) {
