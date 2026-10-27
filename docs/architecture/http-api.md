@@ -1473,7 +1473,7 @@ With 50,000 people, 10,000 mail contacts, and 2,025,400 assertions on an AMD EPY
 | `page-100-recent-prefix-none` | 13.03 ms |
 | `page-24-recent-unranked-tail` | 453.82 ms |
 
-The assertion index occupies 141,463,552 bytes, about 134.9 MiB, on that fixture. It excludes timestamps and version IDs to limit its storage cost. A broad `p` prefix measured 85.9 ms at 5,000 people and 393 ms on the mail-heavy fixture, compared with 171.4 ms and 3.39 s before the indexed lookups. Measure the standard cases with `CGO_ENABLED=1 go test -tags fts5 ./internal/store -run '^$' -bench 'BenchmarkPeopleRecentAtVaultScale/50000' -benchtime=1x`.
+The assertion index occupies 141,463,552 bytes, about 134.9 MiB, on that fixture. It excludes timestamps and version IDs to limit its storage cost. A broad `p` prefix measured 85.9 ms at 5,000 people and 393 ms on the mail-heavy fixture, compared with 171.4 ms and 3.39 s before the indexed lookups. Measure the standard cases with `CGO_ENABLED=1 go test -tags fts5 ./internal/store -run '^$' -bench 'BenchmarkPeopleRecentAtVaultScale/50000' -benchtime=300ms -count=1`.
 
 Browser rename and merge apply the same visibility rule to the canonical person inside the write transaction. A person the browser can't list, such as a sensitive-only person or a locked Hidden-only person, returns `404 not_found`. While Hidden is locked, browser merges require unlocking if either person has assertions or face candidate evidence on a Hidden photo. A merge replay resolves the survivor through aliases and checks its current visibility before returning the original receipt, even after another merge. Browser sessions receive merge receipts with zero moved-evidence counts and an empty absorbed name. API-key writes keep their full scope.
 
