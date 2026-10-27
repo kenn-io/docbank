@@ -1530,6 +1530,8 @@
       ) {
         return;
       }
+      if (!photoMode && docsPage && event.key !== "/" && !(event.shiftKey && event.key === "?"))
+        return;
       shortcutManager.handleKeydown(event);
     };
     window.addEventListener("keydown", handleShortcut);
@@ -3735,7 +3737,6 @@
     }}
     onopenquery={(query) => {
       onclose();
-      leavePage();
       querySettingsApplied = true;
       void submitSnapshot(query, snapshot.state.options ?? {});
     }}

@@ -2,7 +2,8 @@ import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import App from "./App.svelte";
 import { root } from "./version-test-fixtures.js";
-import { canonicalQuery, queryFingerprint, type Query } from "./query.js";
+import { queryFingerprint, type Query } from "./query.js";
+import { savedSmartSet } from "./photo-test-fixtures.js";
 import { snapshotEnvelope } from "./snapshot-test-fixtures.js";
 
 const query: Query = {
@@ -28,17 +29,12 @@ async function savedQueriesPage() {
   const fingerprint = await queryFingerprint(query);
   return Response.json({
     items: [
-      {
-        id: "00000000-0000-4000-8000-000000000001",
+      savedSmartSet(query, fingerprint, {
         name: "Alpha documents",
         description: "Synthetic definition",
-        kind: "query",
-        payload: JSON.parse(canonicalQuery(query)),
-        fingerprint,
-        revision: 1,
         created_at: "2026-09-20T12:00:00Z",
         updated_at: "2026-09-20T12:00:00Z",
-      },
+      }),
     ],
     total: 1,
     limit: 100,

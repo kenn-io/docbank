@@ -2148,6 +2148,79 @@ it("persists a vault-scoped tag binding and applies it only to the inspected fil
   );
 });
 
+it.each([
+  ["Searches", "Searches"],
+  ["Productions", "Productions"],
+  ["Imports", "Imports"],
+  ["Recoverable trash", "Trash"],
+])(
+  "blocks hidden document actions on the %s page",
+  async (label, title) => {
+  prepareKeyboardApp();
+  const backend = installKeyboardBackend();
+  const fetchMock = vi.mocked(globalThis.fetch);
+  const original = fetchMock.getMockImplementation()!;
+  fetchMock.mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url.startsWith("/api/v1/packages?"))
+      return Response.json({
+        items: [
+          {
+            package_id: "review",
+            package_name: "Review set",
+            direction: "received",
+            state: "complete",
+            page_count: 0,
+            member_count: 1,
+          },
+        ],
+        limit: 250,
+      });
+    if (/^\/api\/v1\/(saved-queries|search-exports|collections|trash)\?/.test(url))
+      return Response.json({ items: [], total: 0, limit: 100, offset: 0 });
+    return original(input, init);
+  });
+  render(App);
+  await screen.findByLabelText("Document details for zeta.txt");
+  await configureFirstTagHotkey();
+  await fireEvent.click(screen.getByRole("checkbox", { name: "Select zeta.txt" }));
+  await fireEvent.click(screen.getByRole("button", { name: label }));
+  const page = await screen.findByRole("main", { name: title });
+  const heading = within(page).getByRole("heading", { name: title, level: 1 });
+  for (const key of "0123456789") await fireEvent.keyDown(heading, { key });
+  expect(backend.writes).toEqual([]);
+
+  await fireEvent.keyDown(heading, { key: "?", shiftKey: true });
+  expect(screen.getByRole("dialog", { name: "Keyboard shortcuts" })).toBeTruthy();
+  await fireEvent.click(screen.getByRole("button", { name: "Done" }));
+  await fireEvent.keyDown(heading, { key: "/" });
+  expect(document.activeElement).toBe(screen.getByRole("searchbox", { name: "Search documents" }));
+
+  for (const key of ["j", "k", " ", "Escape"]) {
+    await fireEvent.keyDown(screen.getByRole("heading", { name: title, level: 1 }), { key });
+    expect(screen.queryByRole("status", { name: "Keyboard shortcut status" })).toBeNull();
+    history.back();
+    await waitFor(() => expect(location.pathname).toBe("/"));
+    expect(await screen.findByLabelText("Document details for zeta.txt")).toBeTruthy();
+    expect(
+      (screen.getByRole("checkbox", { name: "Select zeta.txt" }) as HTMLInputElement).checked,
+    ).toBe(true);
+    await fireEvent.click(screen.getByRole("button", { name: label }));
+    await screen.findByRole("main", { name: title });
+  }
+
+  history.back();
+  await waitFor(() => expect(location.pathname).toBe("/"));
+  await fireEvent.click(await screen.findByRole("cell", { name: "Reports" }));
+  await screen.findByLabelText("Folder details for Reports");
+  await fireEvent.click(screen.getByRole("button", { name: label }));
+  const currentPage = await screen.findByRole("main", { name: title });
+  await fireEvent.keyDown(within(currentPage).getByRole("heading", { name: title, level: 1 }), {
+    key: "Enter",
+  });
+  expect(backend.getReportsReads()).toBe(0);
+});
+
 it.each(["Albums", "Map", "People"])(
   "blocks Documents tag shortcuts on the Photos %s view",
   async (view) => {

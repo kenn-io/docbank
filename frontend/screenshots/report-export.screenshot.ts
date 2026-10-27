@@ -128,7 +128,7 @@ test("qualifies selected reports and original exports", async ({ page }) => {
       await expect(drawer.getByRole("table", { name: "Search report counts" })).toHaveCount(0);
       await expect(drawer.getByRole("button", { name: "Download evidence ZIP" })).toHaveCount(0);
       expect(await history()).toEqual(before);
-      await drawer.getByRole("button", { name: "Close search term report" }).click();
+      await drawer.getByRole("button", { name: "Close reports" }).click();
       await page.getByRole("checkbox", { name: "Select missing.bin", exact: true }).uncheck();
     });
 
