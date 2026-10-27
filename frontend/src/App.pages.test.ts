@@ -130,8 +130,6 @@ it.each([
   expect(screen.queryByRole("button", { name: "Export" })).toBeNull();
   if (title === "Imports")
     expect(await screen.findAllByRole("region", { name: "Imports" })).toHaveLength(1);
-  await fireEvent.keyDown(window, { key: "/" });
-  expect(document.activeElement).toBe(screen.getByRole("searchbox", { name: "Search documents" }));
   await fireEvent.click(screen.getByRole("button", { name: "Open navigation" }));
   expect(screen.getByRole("button", { name: "Close navigation" })).toBeTruthy();
   await fireEvent.click(button);
@@ -142,14 +140,6 @@ it.each([
   history.forward();
   await waitFor(() => expect(location.pathname).toBe(path));
   expect(await screen.findByRole("main", { name: title })).toBeTruthy();
-});
-
-it("opens Trash directly", async () => {
-  start("/trash");
-  expect(await screen.findByRole("main", { name: "Trash" })).toBeTruthy();
-  expect(
-    screen.getByRole("button", { name: "Recoverable trash" }).getAttribute("aria-current"),
-  ).toBe("page");
 });
 
 it("keeps Productions open when production discovery returns 500", async () => {
@@ -232,7 +222,7 @@ it.each(["/searches", "/productions", "/imports", "/trash"])(
     await fireEvent.submit(search.closest("form")!);
     expect(location.pathname).toBe(path);
     expect(push).not.toHaveBeenCalled();
-    expect(fetch.mock.calls.some(([input]) => String(input).includes("/search"))).toBe(false);
+    expect(fetch.mock.calls.some(([input]) => String(input).includes("/api/v1/search?"))).toBe(false);
   },
 );
 

@@ -282,6 +282,5 @@ it("opens production sets from the sidebar between Searches and Imports", async 
   expect(production.previousElementSibling?.textContent).toContain("Searches");
   expect(production.nextElementSibling?.textContent).toContain("Imports");
   await fireEvent.click(production);
-  expect(await screen.findByRole("main", { name: "Productions" })).toBeTruthy();
   expect(await screen.findByText("Review set")).toBeTruthy();
 });

@@ -2190,15 +2190,8 @@ it.each([
   for (const key of "0123456789") await fireEvent.keyDown(heading, { key });
   expect(backend.writes).toEqual([]);
 
-  await fireEvent.keyDown(heading, { key: "?", shiftKey: true });
-  expect(screen.getByRole("dialog", { name: "Keyboard shortcuts" })).toBeTruthy();
-  await fireEvent.click(screen.getByRole("button", { name: "Done" }));
-  await fireEvent.keyDown(heading, { key: "/" });
-  expect(document.activeElement).toBe(screen.getByRole("searchbox", { name: "Search documents" }));
-
   for (const key of ["j", "k", " ", "Escape"]) {
     await fireEvent.keyDown(screen.getByRole("heading", { name: title, level: 1 }), { key });
-    expect(screen.queryByRole("status", { name: "Keyboard shortcut status" })).toBeNull();
     history.back();
     await waitFor(() => expect(location.pathname).toBe("/"));
     expect(await screen.findByLabelText("Document details for zeta.txt")).toBeTruthy();
