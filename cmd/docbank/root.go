@@ -20,9 +20,9 @@ const (
 var rootCmd = &cobra.Command{
 	Use:   "docbank",
 	Short: "Keep, find, and verify documents in a local vault",
-	Long: `Docbank keeps documents in a local vault: a virtual folder tree (/cases/a.pdf)
-over immutable, hash-verified content versions. A background daemon owns the
-vault; data commands start it automatically ("docbank daemon stop" ends it).
+	Long: `Docbank keeps immutable, hash-verified document versions in virtual folders
+(/cases/a.pdf). A daemon owns the vault; data commands start it.
+"docbank daemon stop" ends it.
 
 DOCBANK_HOME selects the vault (default ~/.docbank); the first data command
 creates it. "docbank info" confirms the selected vault's path and identity.

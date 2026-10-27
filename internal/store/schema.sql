@@ -1,5 +1,13 @@
 -- docbank core schema. Idempotent: applied on every Open.
 
+-- Private daemon-local state; never included in logical metadata exports.
+CREATE TABLE IF NOT EXISTS miss_log_records (
+    id TEXT PRIMARY KEY,
+    created_at TEXT NOT NULL,
+    receipt TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS miss_log_records_created ON miss_log_records(created_at DESC, id DESC);
+
 CREATE TABLE IF NOT EXISTS export_sources (
     id TEXT PRIMARY KEY,
     owner TEXT NOT NULL,

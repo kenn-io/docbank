@@ -101,6 +101,9 @@ func apiSchemaName(t reflect.Type, hint string) string {
 	for t.Kind() == reflect.Pointer || t.Kind() == reflect.Slice || t.Kind() == reflect.Array {
 		t = t.Elem()
 	}
+	if t.PkgPath() == "go.kenn.io/docbank/internal/misslog" {
+		return "MissLog" + name
+	}
 	if t.PkgPath() == "go.kenn.io/docbank/document/redaction" {
 		return "PDFRedaction" + name
 	}

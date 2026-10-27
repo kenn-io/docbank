@@ -4,8 +4,10 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/spf13/cobra"
@@ -24,9 +26,10 @@ const (
 // attempt fell back to lexical search. An empty reason means hybrid search was
 // not attempted. err keeps a failure that has no stable daemon problem code.
 type automaticSearchOutcome struct {
-	report *api.DocumentSearchReport
-	reason string
-	err    error
+	report  *api.DocumentSearchReport
+	request api.DocumentSearchRequest
+	reason  string
+	err     error
 }
 
 // automaticSearchJSON adds folder name matches to the hybrid report, because
@@ -70,10 +73,10 @@ func tryAutomaticSearch(ctx context.Context, c *daemonconn.Connection, query str
 	fence := api.DocumentSourceFence{VaultUID: scope.Fence.VaultUID, ContentVersionIDs: scope.Fence.ContentVersionIDs}
 	var first automaticSearchOutcome
 	for _, candidate := range candidates {
-		report, searchErr := c.SearchDocuments(ctx, api.DocumentSearchRequest{Query: query, Mode: "hybrid",
-			Profile: candidate.profile, BindingID: candidate.binding, Limit: limit, Fence: fence})
+		request := api.DocumentSearchRequest{Query: query, Mode: "hybrid", Profile: candidate.profile, BindingID: candidate.binding, Limit: limit, Fence: fence, SkipMissLog: true}
+		report, searchErr := c.SearchDocuments(ctx, request)
 		if searchErr == nil {
-			return automaticSearchOutcome{report: &report}, nil
+			return automaticSearchOutcome{report: &report, request: request}, nil
 		}
 		outcome, err := automaticSearchFallback(ctx, searchErr)
 		if err != nil {
@@ -185,4 +188,21 @@ func writeSearchDegradation(cmd *cobra.Command, outcome automaticSearchOutcome) 
 		return fmt.Errorf("writing search degradation: %w", err)
 	}
 	return nil
+}
+
+// finalizeAutomaticSearchMiss records the one result page that the user sees.
+// Intermediate document and live-folder searches suppress their own records.
+// Best-effort completion must not leave ready results waiting indefinitely.
+func finalizeAutomaticSearchMiss(ctx context.Context, c *daemonconn.Connection, outcome *automaticSearchOutcome, empty bool) {
+	if !empty || outcome.report == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	completion, err := c.CompleteEmptySearch(ctx, api.EmptySearchCompletionRequest{Search: outcome.request, ActualMode: outcome.report.ActualMode, Coverage: outcome.report.Coverage})
+	if err != nil {
+		slog.Warn("miss_log_completion_failed")
+		return
+	}
+	outcome.report.MissLogID = completion.MissLogID
 }

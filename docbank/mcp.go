@@ -37,6 +37,8 @@ func (v *Vault) CallReadTool(ctx context.Context, vaultID uuid.UUID, req *sdkmcp
 	if err != nil || vaultID == uuid.Nil() || vaultID != current {
 		return nil, ErrReadScope
 	}
-	v.documentReadsOnce.Do(func() { v.documentReads = api.NewDocumentReader(v.metadata, v.blobs, v.vaultRoot, v.processing) })
+	v.documentReadsOnce.Do(func() {
+		v.documentReads = api.NewDocumentReader(v.metadata, v.blobs, v.vaultRoot, v.processing, v.missLog)
+	})
 	return internalmcp.CallDocumentReadTool(ctx, v.documentReads, req)
 }

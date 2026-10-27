@@ -52,6 +52,8 @@ import (
 	docweb "go.kenn.io/docbank/internal/web"
 )
 
+var daemonMissLog bool
+
 var daemonRunCmd = &cobra.Command{
 	Example: `  docbank daemon run # foreground, logs to stderr; DOCBANK_LOG_LEVEL=debug`,
 	Use:     "run",
@@ -162,6 +164,9 @@ func runServe(ctx context.Context) (retErr error) {
 	cfg, err := config.Load(layout.Root)
 	if err != nil {
 		return fmt.Errorf("%w: %w", daemonconn.ErrDaemonConfigInvalid, err)
+	}
+	if daemonMissLog {
+		cfg.MissLog.Enabled = true
 	}
 	if err := cfg.Validate(); err != nil {
 		return fmt.Errorf("%w: %w", daemonconn.ErrDaemonConfigInvalid, err)

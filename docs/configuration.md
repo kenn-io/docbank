@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-17
+last_edited: 2026-10-27
 title: Configuration
 description: Vault location, data layout, config.toml, and environment variables.
 ---
@@ -1368,3 +1368,51 @@ max_zoom = 19
 ```
 
 The URL must have a fixed HTTPS origin and all three placeholders in its path. The host must be a hostname, an IPv4 address or a bracketed IPv6 address. Attribution is plain text. Docbank connects directly to the configured host and ignores proxy settings. The daemon fetches tiles for signed-in browsers, so the URL and any key in it stay on the server and the web page carries only the provider's host name. The provider sees the daemon host's IP address and the viewed map areas, with no Referer. Docbank refuses redirects, accepts only responses up to 2 MiB whose bytes identify them as PNG, JPEG, GIF or WebP, and gives up after 10 seconds. The daemon does not cache tiles. Tiles carry a one-hour private cache lifetime that varies by browser session, except under key login, where responses are never cached. Provider failures log only a status code or error class, never the URL. Choose a provider that permits this; the [public OpenStreetMap tile service requires a Referer](https://operations.osmfoundation.org/policies/tiles/) and is incompatible with this policy.
+
+## Private search miss log
+
+The operator can enable a local log of searches that return no hits. It is off
+by default. On a shared daemon, enabling it lets the operator read every
+caller's recorded queries. Records live in the vault's metadata store, under
+its operator's control.
+
+```toml
+[miss_log]
+enabled = false
+retention_days = 90
+max_records = 5000
+```
+
+`retention_days` accepts 1–365 days. `max_records` accepts 1–100000 records.
+`docbank daemon run --miss-log` enables recording for that foreground daemon
+run without changing the configuration file. There is no environment switch.
+
+The daemon records successful empty searches from HTTP, CLI, and MCP, including
+an explicitly empty document scope. Errors and searches with hits create no
+records. Receipts preserve the query, time, vault, requested and actual search
+modes, profile, search options and scope. They omit document excerpts. A receipt
+ID appears as `miss_log_id` in structured search output only after storage
+succeeds. A failed automatic write leaves the search available and emits a
+sanitized diagnostic. During maintenance or ordinary write contention, recording
+may be skipped so an empty search stays available. Private receipt endpoints
+sanitize validation errors instead of echoing rejected values. Automatic CLI
+searches combine document and folder results before recording one miss. Their
+receipts identify the source as `client_finalized`; the operator's CLI supplies
+that final outcome. Direct search receipts identify the source as `daemon`.
+
+Use `docbank miss-log list`, `show <id>`, `delete <id>`,
+`delete --before <RFC3339 timestamp>`, or `purge` to manage records through the
+daemon. These operations require the master API credential. List and show
+responses use `Cache-Control: no-store`. Browser sessions and MCP have no history
+management tools. Management remains available when
+recording is disabled. Records expire by age and then count on enabled startup
+and writes; idle daemons prune lazily. Disabled startup preserves existing rows.
+
+The log is excluded from anonymous telemetry, logical backups, portable bundle
+metadata, imports, and federation. A restored vault has no miss records.
+Filesystem snapshots, raw database copies, and retained SQLite upgrade recovery
+databases can contain them. Deleting records is not secure erasure: database
+free pages, WAL files, snapshots, and external backups can retain old bytes.
+Live GET filters describe the search at that time; they are not immutable replay
+scopes. An unlabeled miss does not establish that the answer is absent from the
+vault.

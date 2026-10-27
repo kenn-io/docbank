@@ -182,6 +182,12 @@ JSONL cutover from an exact released-schema fixture, not an in-place migration
 ladder. Preserve the source database until the rebuilt current database has
 imported and validated logical authority and restored its physical pack catalog.
 
+The private `miss_log_records` table is local state. Keep it outside the metadata
+JSONL registry, portable bundles, imports, and federation. Existing released
+layouts predate it, so their upgrades create an empty table. A cutover from a
+released layout that contains private local state must preserve it separately
+from public metadata, as it does for local operation state.
+
 Every release's storage schema version belongs in
 `releasedStorageSchemaVersions` in `internal/store/upgrade.go`, with its exact
 `schema.sql` saved as `internal/store/testdata/schema-<tag>.sql` and registered
