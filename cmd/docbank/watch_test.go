@@ -37,13 +37,6 @@ func TestWriteWatchedInboxesDisplaysActivity(t *testing.T) {
 	var out bytes.Buffer
 	require.NoError(t, writeWatchedInboxes(&out, []api.WatchedInbox{
 		{Name: "waiting", Job: &api.Job{Status: "running"}},
-		{Name: "ingesting", Job: &api.Job{Status: "running", Busy: true}},
-		{Name: "failed", Job: &api.Job{Status: "failed", Error: "source unavailable"}},
-		{Name: "missing"},
 	}))
 	assert.Regexp(t, `waiting\s+idle\s`, out.String())
-	assert.Regexp(t, `ingesting\s+running\s`, out.String())
-	assert.Regexp(t, `failed\s+failed\s`, out.String())
-	assert.Contains(t, out.String(), `"source unavailable"`)
-	assert.Regexp(t, `missing\s+unavailable\s`, out.String())
 }

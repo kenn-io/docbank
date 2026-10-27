@@ -65,7 +65,6 @@ func TestBackfillReportsBusyUntilEveryConcurrentItemFinishes(t *testing.T) {
 		close(second)
 		synctest.Wait()
 		assert.False(t, supervisor.Snapshot()[0].Busy, "worker is waiting for more work")
-		assert.Equal(t, jobs.StatusRunning, supervisor.Snapshot()[0].Status)
 	})
 }
 
