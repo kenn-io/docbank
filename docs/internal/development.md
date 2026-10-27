@@ -387,16 +387,28 @@ mutations, which still depend on catalogs that have not been ported.
 
 #### Shared query qualification
 
-Node row allocation and direct node lookups use the same SQL on both engines:
-numbered `$1` parameters and `INSERT ... RETURNING id`. Both SQLite drivers and
-pgx support these statements, so these operations need no dialect adapter.
-Directory and file creation retain their existing mutation transactions and
-error handling. Recursive path queries, the rest of those transactions, and
-the remaining catalogs still require SQLite.
+Node allocation, direct lookups, single-node canonical paths and directory
+pages use the same SQL on both engines. Numbered `$1` parameters,
+`INSERT ... RETURNING id` and a recursive ancestry query work with both SQLite
+drivers and pgx, without a dialect adapter. Directory and file creation retain
+their existing mutation transactions and error handling. Multi-segment path
+resolution, batched paths, the rest of those mutations and the remaining
+catalogs still require SQLite.
+
+Node views and directory pages request read-only `REPEATABLE READ`
+transactions. Their metadata, canonical path, child count and selected page
+must come from one snapshot. PostgreSQL's default `READ COMMITTED` gives each
+statement a new snapshot and can combine an old node name with a renamed path.
+SQLite retains its existing transaction snapshot. This follows the explicit
+snapshot pattern in msgvault and Kata; apply it to each multi-statement
+snapshot read as that operation is ported.
 
 The shared node-query tests exercise allocation, current-version projection,
-live-child lookup, rollback, and name reuse after trashing. They use the real
-SQLite schema and PostgreSQL catalogs installed by `pgschema.Setup`. PostgreSQL
+live-child lookup, canonical paths, directory paging, rollback and name reuse
+after trashing. Concurrent-write cases commit a rename or new child between
+reads and verify that a response stays on its original snapshot while a later
+request sees the change. They use the real SQLite schema and PostgreSQL
+catalogs installed by `pgschema.Setup`. PostgreSQL
 queries run through a separate runtime login with explicit schema, table and
 sequence grants. Reuse this setup for new query tests instead of copying DDL
 into fixtures. These tests do not qualify the full directory or file mutation
