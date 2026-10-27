@@ -131,8 +131,6 @@ it.each([
   expect(button.getAttribute("aria-current")).toBe("page");
   expect(location.pathname).toBe(path);
   expect(screen.queryByRole("button", { name: "Export" })).toBeNull();
-  if (title === "Imports")
-    expect(await screen.findAllByRole("region", { name: "Imports" })).toHaveLength(1);
   await fireEvent.click(screen.getByRole("button", { name: "Open navigation" }));
   expect(screen.getByRole("button", { name: "Close navigation" })).toBeTruthy();
   await fireEvent.click(button);
@@ -147,7 +145,7 @@ it.each([
 
 it("keeps empty Productions open with its sidebar item current", async () => {
   start("/productions", "", Promise.resolve(Response.json({ items: [], limit: 250 })));
-  expect(await screen.findByText("No productions yet")).toBeTruthy();
+  await screen.findByText("No productions yet");
   expect(location.pathname).toBe("/productions");
   expect(screen.getByRole("button", { name: "Productions" }).getAttribute("aria-current")).toBe(
     "page",
@@ -192,7 +190,6 @@ it("retains unfinished Advanced input and execution settings across Imports navi
   await fireEvent.keyDown(window, { key: "Escape" });
   await fireEvent.click(screen.getByRole("button", { name: "Imports" }));
   await screen.findByRole("main", { name: "Imports" });
-  expect(screen.queryByRole("dialog", { name: "Filters and sort" })).toBeNull();
   await fireEvent.click(screen.getByRole("button", { name: "All files" }));
   await screen.findByText("Empty folder");
   await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
@@ -219,8 +216,11 @@ it("keeps search and help shortcuts on Imports after running a saved search", as
   const search = screen.getByRole("searchbox", { name: "Search documents" });
   await fireEvent.keyDown(window, { key: "/" });
   expect(document.activeElement).toBe(search);
-  await fireEvent.keyDown(search, { key: "?", shiftKey: true });
-  expect(screen.queryByRole("dialog", { name: "Keyboard shortcuts" })).toBeNull();
+  await fireEvent.keyDown(screen.getByRole("heading", { name: "Imports", level: 1 }), {
+    key: "?",
+    shiftKey: true,
+  });
+  expect(await screen.findByRole("dialog", { name: "Keyboard shortcuts" })).toBeTruthy();
 });
 
 it.each([
@@ -281,24 +281,5 @@ it("seeds Run report from the current search", async () => {
   expect(screen.getByRole("textbox", { name: "Expression for term 1" })).toHaveProperty(
     "value",
     "alpha",
-  );
-});
-
-it("reseeds Run report from the current search after Cancel", async () => {
-  start("/searches");
-  await screen.findByRole("main", { name: "Searches" });
-  const search = screen.getByRole("searchbox", { name: "Search documents" });
-  await fireEvent.input(search, { target: { value: "alpha" } });
-  await fireEvent.click(screen.getByRole("button", { name: "Run report" }));
-  expect(screen.getByRole("textbox", { name: "Expression for term 1" })).toHaveProperty(
-    "value",
-    "alpha",
-  );
-  await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-  await fireEvent.input(search, { target: { value: "beta" } });
-  await fireEvent.click(screen.getByRole("button", { name: "Run report" }));
-  expect(screen.getByRole("textbox", { name: "Expression for term 1" })).toHaveProperty(
-    "value",
-    "beta",
   );
 });

@@ -62,7 +62,9 @@ it("restores a full query beside sign-in without running it as empty-text folder
   expect(
     fetch.mock.calls.some(
       ([url]) =>
-        String(url).startsWith("/api/v1/search?") || String(url) === "/api/v1/workspace/queries",
+        String(url) === "/api/v1/search" ||
+        String(url).startsWith("/api/v1/search?") ||
+        String(url) === "/api/v1/workspace/queries",
     ),
   ).toBe(false);
   await fireEvent.keyDown(window, { key: "Escape" });
@@ -74,7 +76,9 @@ it("restores a full query beside sign-in without running it as empty-text folder
   expect(
     fetch.mock.calls.some(
       ([url]) =>
-        String(url).startsWith("/api/v1/search?") || String(url) === "/api/v1/workspace/queries",
+        String(url) === "/api/v1/search" ||
+        String(url).startsWith("/api/v1/search?") ||
+        String(url) === "/api/v1/workspace/queries",
     ),
   ).toBe(false);
 
@@ -107,7 +111,9 @@ it("restores a full query beside sign-in without running it as empty-text folder
   expect(
     fetch.mock.calls.some(
       ([url]) =>
-        String(url).startsWith("/api/v1/search?") || String(url) === "/api/v1/workspace/queries",
+        String(url) === "/api/v1/search" ||
+        String(url).startsWith("/api/v1/search?") ||
+        String(url) === "/api/v1/workspace/queries",
     ),
   ).toBe(false);
   await fireEvent.click(screen.getByRole("button", { name: "New highlight list" }));
@@ -129,7 +135,9 @@ it("restores a full query beside sign-in without running it as empty-text folder
   expect(
     fetch.mock.calls.some(
       ([url]) =>
-        String(url).startsWith("/api/v1/search?") || String(url) === "/api/v1/workspace/queries",
+        String(url) === "/api/v1/search" ||
+        String(url).startsWith("/api/v1/search?") ||
+        String(url) === "/api/v1/workspace/queries",
     ),
   ).toBe(false);
   await fireEvent.click(screen.getByRole("button", { name: "Close" }));
