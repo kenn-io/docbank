@@ -3,10 +3,11 @@
   import { DetailDrawer } from "@kenn-io/kit-ui";
   import XIcon from "@lucide/svelte/icons/x";
   import IconAction from "./IconAction.svelte";
-  import { drawerNavigation, type DrawerNavigation } from "./drawerNavigation.js";
+  import { drawerPage, drawerNavigation, type DrawerNavigation } from "./drawerNavigation.js";
 
   let {
     title,
+    level = 1,
     ariaLabel = title,
     onclose,
     closeLabel = "Close",
@@ -16,6 +17,7 @@
     footer,
   }: {
     title: string;
+    level?: 1 | 2;
     ariaLabel?: string;
     onclose: () => void;
     closeLabel?: string;
@@ -25,41 +27,63 @@
     footer?: Snippet;
   } = $props();
   const navigation = getContext<DrawerNavigation | undefined>(drawerNavigation);
+  const page = getContext<boolean>(drawerPage);
   const still = navigation?.switched ?? false;
 </script>
 
-<div class="shell" class:still>
-  <DetailDrawer
-    width="min(720px, 100vw)"
-    ariaLabel={navigation ? "System" : ariaLabel}
-    {onclose}
-    {closeOnOverlayClick}
-    {footer}
-  >
-    {#snippet header()}
-      <div class="header">
-        <div class="heading">
-          <h2>{navigation ? "System" : title}</h2>
-          <div class="actions">
-            {@render actions?.()}
-            <IconAction
-              size="sm"
-              ariaLabel={navigation ? "Close System" : closeLabel}
-              tip="Close (Esc)"
-              onclick={onclose}
-            >
-              <XIcon size="16" aria-hidden="true" />
-            </IconAction>
-          </div>
-        </div>
-        {@render navigation?.tabs()}
-      </div>
-    {/snippet}
+{#if page}
+  <div>
+    <header class="browser-toolbar">
+      <svelte:element this={level === 1 ? "h1" : "h2"} class="page-title">{title}</svelte:element>
+      <div class="actions">{@render actions?.()}</div>
+    </header>
     {@render children?.()}
-  </DetailDrawer>
-</div>
+    {@render footer?.()}
+  </div>
+{:else}
+  <div class="shell" class:still>
+    <DetailDrawer
+      width="min(720px, 100vw)"
+      ariaLabel={navigation ? "System" : ariaLabel}
+      {onclose}
+      {closeOnOverlayClick}
+      {footer}
+    >
+      {#snippet header()}
+        <div class="header">
+          <div class="heading">
+            <h2>{navigation ? "System" : title}</h2>
+            <div class="actions">
+              {@render actions?.()}
+              <IconAction
+                size="sm"
+                ariaLabel={navigation ? "Close System" : closeLabel}
+                tip="Close (Esc)"
+                onclick={onclose}
+              >
+                <XIcon size="16" aria-hidden="true" />
+              </IconAction>
+            </div>
+          </div>
+          {@render navigation?.tabs()}
+        </div>
+      {/snippet}
+      {@render children?.()}
+    </DetailDrawer>
+  </div>
+{/if}
 
 <style>
+  .page-title {
+    margin: 0;
+    color: var(--text-primary);
+    font-size: var(--font-size-xl);
+    font-weight: 600;
+  }
+  .browser-toolbar {
+    padding-inline: var(--space-6);
+    border-bottom: 1px solid var(--border-default);
+  }
   .shell {
     display: contents;
   }

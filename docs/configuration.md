@@ -200,7 +200,7 @@ exclude_patterns = [".syncthing.*.tmp", "*.sync-conflict-*"]
 - **`[web] enabled`**: serves the embedded web application at `/`.
   `docbank web` starts or reconnects to the compatible daemon and opens an
   authenticated browser session on a fresh per-daemon loopback origin,
-  independent of a configured `api_port`. Disabling it 404s `/`, `/photos`, `/photos/people`, `/photos/map`, `/photos/map/{set_id}`, `/photos/albums`, canonical `/photos/albums/{id}`, and `/assets/`.
+  independent of a configured `api_port`. Disabling it 404s `/`, `/searches`, `/productions`, `/imports`, `/trash`, `/photos`, `/photos/people`, `/photos/map`, `/photos/map/{set_id}`, `/photos/albums`, canonical `/photos/albums/{id}`, and `/assets/`.
   The API and `/docs` are unaffected. See [Web application](usage/web.md).
 - **`[mcp.http] enabled`**: hosts read-only MCP HTTP in the daemon. When unset,
   the daemon hosts it if the API binds loopback, `port` is unset, and the MCP

@@ -107,7 +107,7 @@ test("qualifies selected reports and original exports", async ({ page }) => {
       const detail = String(cause).replaceAll(session, "[redacted]");
       throw new Error("Could not open the synthetic browser session", { cause: new Error(detail) });
     }
-    const drawer = page.getByRole("dialog", { name: "Search term report", exact: true });
+    const drawer = page.getByRole("dialog", { name: "Reports", exact: true });
     const exportDrawer = page.getByRole("dialog", { name: "Verified export", exact: true });
 
     await test.step("strict missing-text refusal leaves history unchanged", async () => {

@@ -1,6 +1,7 @@
 <script lang="ts">
   import VaultDrawer from "./VaultDrawer.svelte";
   import TelemetryNotice from "./TelemetryNotice.svelte";
+  import ToolPage from "./ToolPage.svelte";
   import ExportMenu from "./ExportMenu.svelte";
   import { reportAction, reportFailure, reportSearch } from "./action-events.js";
   import PhotoSearch from "./PhotoSearch.svelte";
@@ -237,10 +238,8 @@
           | "storage"
           | "backups"
           | "bates"
-          | "productions"
           | "export"
           | "savedQueries"
-          | "collections"
           | "trash"
           | "tagCatalog"
           | "telemetry"
@@ -266,10 +265,8 @@
     storage: "storage",
     backups: "backups",
     bates: "bates",
-    productions: "bates",
     export: "export",
     savedQueries: "saved_queries",
-    collections: "collections",
     trash: "trash",
     tagCatalog: "tag_catalog",
     telemetry: "telemetry",
@@ -498,15 +495,39 @@
   function pushPhotoHistory(state: Record<string, unknown> | null, url: string) {
     photoNavigation.push(state, url);
     nodeVersionHash = location.hash;
+    if (!isPhotoPath(location.pathname)) docsPage = pageAt(location.pathname);
   }
   function guardPhotoUnload(event: BeforeUnloadEvent) {
     if (!photoMode || !retainedPhotoEditor()?.dirty) return;
     event.preventDefault();
     event.returnValue = "";
   }
+  type DocsPage = "searches" | "productions" | "imports" | "trash";
+  function pageAt(path: string): DocsPage | null {
+    return path === "/searches" ||
+      path === "/productions" ||
+      path === "/imports" ||
+      path === "/trash"
+      ? (path.slice(1) as DocsPage)
+      : null;
+  }
+  let docsPage = $state(pageAt(location.pathname));
+  const docsScreens = {
+    searches: "saved_queries",
+    productions: "bates",
+    imports: "collections",
+    trash: "trash",
+  } as const;
+  function openDocsPage(page: DocsPage | null) {
+    navOpen = false;
+    if (docsPage === page) return;
+    pushPhotoHistory(null, `${page ? `/${page}` : "/"}${location.search}${location.hash}`);
+  }
+  const leavePage = () => openDocsPage(null);
   function syncPhotoLocation() {
     if (photoNavigation.blocked()) return;
     nodeVersionHash = location.hash;
+    if (!isPhotoPath(location.pathname)) docsPage = pageAt(location.pathname);
     clearPhotoNotice();
     const id = new URLSearchParams(location.hash.slice(1)).get("photo") ?? "",
       path = location.pathname;
@@ -1061,13 +1082,19 @@
     }
     clearPhotoNotice();
     navOpen = false;
-    if (!photoMode) return;
+    if (!photoMode) {
+      leavePage();
+      return;
+    }
     hiddenPhotoActionError = "";
     const previous = activePhotos();
     if (previous) previous.viewerReturn = undefined;
     photoID = "";
     photoMode = false;
-    pushPhotoHistory(null, `/${location.search}${hashWithoutPhoto()}`);
+    pushPhotoHistory(
+      null,
+      `${docsPage ? `/${docsPage}` : "/"}${location.search}${hashWithoutPhoto()}`,
+    );
   }
   let uploadChannel = $state<VerifiedUploadChannel | null>(null);
   let uploadChannelError = $state("");
@@ -1209,6 +1236,7 @@
       : snapshot.actionsOpen
         ? "snapshot_actions"
         : (panelScreen ??
+          (!photoMode && docsPage ? docsScreens[docsPage] : null) ??
           (snapshotActive
             ? "snapshot"
             : activeQuery || queryBarOpen
@@ -2528,6 +2556,7 @@
   }
 
   async function submitDocumentSearch(): Promise<void> {
+    leavePage();
     // A draft sorted only keeps an ordinary search; its sort is applied to the results.
     const draft = currentQueryDraft();
     const sortOnly =
@@ -3169,6 +3198,7 @@
     }
     if (!current()) return;
     activePanel = null;
+    leavePage();
     await loadDirectory(parent.id, true, exact.id, false, { node: exact, path });
   }
 
@@ -3646,6 +3676,7 @@
   }
 
   function openQueryEditor(value?: Query): void {
+    leavePage();
     try {
       if (value) {
         queryEditorVersion++;
@@ -3689,6 +3720,39 @@
     }
   }
 </script>
+
+{#snippet savedQueries(create: boolean, onclose: () => void)}
+  <SavedQueriesDrawer
+    session={webSession}
+    createSearch={create}
+    initialQuery={queryEditorInitial}
+    onload={(query) => {
+      queryEditorVersion++;
+      queryDraftRevision++;
+      queryDraftFromDefinition = true;
+      keepQueryDraft(query);
+      queryDraftChanged = true;
+    }}
+    onopenquery={(query) => {
+      onclose();
+      leavePage();
+      querySettingsApplied = true;
+      void submitSnapshot(query, snapshot.state.options ?? {});
+    }}
+    {onclose}
+    onauthfailure={handleFailure}
+  />
+{/snippet}
+
+{#snippet trash(onclose: () => void)}
+  <TrashDrawer
+    session={webSession}
+    currentSession={() => (mounted ? webSession : "")}
+    {onclose}
+    onrestored={handleRestored}
+    onauthfailure={handleFailure}
+  />
+{/snippet}
 
 <svelte:window
   onpopstate={syncPhotoLocation}
@@ -3853,9 +3917,12 @@
           <button
             type="button"
             class="nav-item"
-            aria-current={!snapshotActive && !activeQuery && !tagBrowse ? "page" : undefined}
+            aria-current={!docsPage && !snapshotActive && !activeQuery && !tagBrowse
+              ? "page"
+              : undefined}
             onclick={() => {
               navOpen = false;
+              leavePage();
               void openPath("/");
             }}
           >
@@ -3865,10 +3932,8 @@
             type="button"
             class="nav-item"
             aria-label="Searches"
-            onclick={() => {
-              navOpen = false;
-              openSavedQueries(false);
-            }}
+            aria-current={docsPage === "searches" ? "page" : undefined}
+            onclick={() => openDocsPage("searches")}
           >
             <BookmarkIcon size="16" aria-hidden="true" />Searches
           </button>
@@ -3876,7 +3941,8 @@
             <button
               type="button"
               class="nav-item"
-              onclick={() => openPanel({ kind: "productions" })}
+              aria-current={docsPage === "productions" ? "page" : undefined}
+              onclick={() => openDocsPage("productions")}
             >
               <StampIcon size="16" aria-hidden="true" />Productions
             </button>
@@ -3885,7 +3951,8 @@
             type="button"
             class="nav-item"
             aria-label="Imports"
-            onclick={() => openPanel({ kind: "collections" })}
+            aria-current={docsPage === "imports" ? "page" : undefined}
+            onclick={() => openDocsPage("imports")}
           >
             <HistoryIcon size="16" aria-hidden="true" />Imports
           </button>
@@ -3893,7 +3960,8 @@
             type="button"
             class="nav-item"
             aria-label="Recoverable trash"
-            onclick={() => openPanel({ kind: "trash" })}
+            aria-current={docsPage === "trash" ? "page" : undefined}
+            onclick={() => openDocsPage("trash")}
           >
             <Trash2Icon size="16" aria-hidden="true" />Trash
           </button>
@@ -3980,8 +4048,9 @@
               <AppTooltip text={queryDraftChanged ? "Unapplied changes" : ""}>
                 <Button
                   size="sm"
-                  ariaExpanded={queryBarOpen}
-                  onclick={() => (queryBarOpen ? closeQueryEditor() : openQueryEditor())}
+                  ariaExpanded={queryBarOpen && !docsPage}
+                  onclick={() =>
+                    queryBarOpen && !docsPage ? closeQueryEditor() : openQueryEditor()}
                 >
                   <SlidersHorizontalIcon size="14" aria-hidden="true" />Advanced
                   {#if queryDraftChanged}<span aria-hidden="true">•</span>{/if}
@@ -4017,12 +4086,11 @@
         {/snippet}
         {#snippet right()}
           <div class="top-actions">
-            {#if !photoMode}
+            {#if !photoMode && !docsPage}
               <ExportMenu
                 downloadDisabled={!exportHasJob &&
                   (snapshotActive ? (snapshotPage?.total ?? 0) === 0 : visibleDocumentCount === 0)}
                 ondownload={() => openExport()}
-                onreport={() => openPanel({ kind: "termReports" })}
                 onbates={() => openPanel({ kind: "bates" })}
               />
               <span class="divider" aria-hidden="true"></span>
@@ -4231,6 +4299,45 @@
             <Button onclick={() => void checkPhotoAccess?.()}>Retry</Button>
           </div>{:else}<div class="photo-access-loading"><Spinner /></div>
         {/if}
+      {:else if docsPage}
+        <ToolPage
+          title={docsPage === "searches"
+            ? "Searches"
+            : docsPage === "productions"
+              ? "Productions"
+              : docsPage === "imports"
+                ? "Imports"
+                : "Trash"}
+        >
+          {#if docsPage === "searches"}
+            {@render savedQueries(false, leavePage)}
+            <TermReportDrawer
+              session={webSession}
+              initialExpression={searchQuery}
+              onclose={leavePage}
+              onauthfailure={handleFailure}
+            />
+          {:else if docsPage === "productions"}
+            <BatesExportDrawer
+              mode="productions"
+              session={webSession}
+              onclose={leavePage}
+              onauthfailure={handleFailure}
+            />
+          {:else if docsPage === "imports"}
+            <CollectionsDrawer
+              session={webSession}
+              onclose={leavePage}
+              onauthfailure={handleFailure}
+              onopenmember={openCollectionMember}
+              onqualityquery={openQueryEditor}
+              onnewquery={(id) =>
+                openQueryEditor(parseQuery(JSON.stringify({ filters: { collection_ids: [id] } })))}
+            />
+          {:else if docsPage === "trash"}
+            {@render trash(leavePage)}
+          {/if}
+        </ToolPage>
       {:else}
         {#if queryURLError}<p class="error" role="alert">
             Query URL could not be loaded: {queryURLError}
@@ -5122,50 +5229,14 @@
           onauthfailure={handleFailure}
         />
       {/if}
-      {#if panel.kind === "collections"}
-        <CollectionsDrawer
-          session={webSession}
-          onclose={closePanel(panel)}
-          onauthfailure={handleFailure}
-          onopenmember={openCollectionMember}
-          onqualityquery={(query) => {
-            openQueryEditor(query);
-            closePanel(panel)();
-          }}
-          onnewquery={(id) => {
-            openQueryEditor(parseQuery(JSON.stringify({ filters: { collection_ids: [id] } })));
-            closePanel(panel)();
-          }}
-        />
-      {/if}
-
       {#if panel.kind === "savedQueries"}
-        <SavedQueriesDrawer
-          session={webSession}
-          createSearch={createSavedSearch}
-          initialQuery={queryEditorInitial}
-          onload={(query) => {
-            queryEditorVersion++;
-            queryDraftRevision++;
-            queryDraftFromDefinition = true;
-            keepQueryDraft(query);
-            queryDraftChanged = true;
-          }}
-          onopenquery={(query) => {
-            closePanel(panel)();
-            // The saved query's filters are settings: a new search text keeps them.
-            querySettingsApplied = true;
-            void submitSnapshot(query, snapshot.state.options ?? {});
-          }}
-          onclose={closePanel(panel)}
-          onauthfailure={handleFailure}
-        />
+        {@render savedQueries(createSavedSearch, closePanel(panel))}
       {/if}
 
-      {#if panel.kind === "bates" || panel.kind === "productions"}
+      {#if panel.kind === "bates"}
         {#key webSession}
           <BatesExportDrawer
-            mode={panel.kind === "productions" ? "productions" : "create"}
+            mode="create"
             session={webSession}
             oncomplete={() => {
               hasProductions = true;
@@ -5186,13 +5257,7 @@
       {/if}
 
       {#if panel.kind === "trash"}
-        <TrashDrawer
-          session={webSession}
-          currentSession={() => (mounted ? webSession : "")}
-          onclose={closePanel(panel)}
-          onrestored={handleRestored}
-          onauthfailure={handleFailure}
-        />
+        {@render trash(closePanel(panel))}
       {/if}
       {#if panel.kind === "tagCatalog"}
         <TagCatalogModal

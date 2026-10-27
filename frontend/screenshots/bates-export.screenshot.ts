@@ -72,7 +72,7 @@ test("publishes selected pages from a sealed synthetic package through the real 
     });
     await drawer.getByRole("button", { name: "Close Bates export" }).click();
     await page.getByRole("button", { name: "Productions", exact: true }).click();
-    const productions = page.getByRole("dialog", { name: "Productions" });
+    const productions = page.getByRole("main", { name: "Productions" });
     const rows = productions.getByRole("list", { name: "Productions" }).getByRole("listitem");
     await expect(rows).toHaveCount(1);
     await expect(rows.locator("summary")).toContainText("Synthetic-Bates-production");

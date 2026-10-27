@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -220,6 +221,9 @@ func clearLongRunningBodyReadDeadlines(api huma.API) {
 // web assets carry no vault data. Everything else requires the key —
 // the daemon always has one; see NewServer.
 func authExempt(path string) bool {
+	if slices.Contains(documentPages, path) {
+		return true
+	}
 	if isPhotoAlbumPage(path) || isPhotoMapPage(path) {
 		return true
 	}

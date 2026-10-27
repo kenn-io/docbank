@@ -5,12 +5,10 @@
   let {
     downloadDisabled = false,
     ondownload,
-    onreport,
     onbates,
   }: {
     downloadDisabled?: boolean;
     ondownload: () => void;
-    onreport: () => void;
     onbates: () => void;
   } = $props();
 </script>
@@ -29,13 +27,6 @@
           class="export-help"
           text="Download documents and their metadata in a ZIP file."
           align="end">Download files…</Tooltip
-        >
-      </MenuItem>
-      <MenuItem onselect={onreport}>
-        <Tooltip
-          class="export-help"
-          text="Count search-term hits across documents and date ranges."
-          align="end">Search term report…</Tooltip
         >
       </MenuItem>
       <MenuItem onselect={onbates}>

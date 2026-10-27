@@ -18,7 +18,7 @@ or complete retained text, use [document export bundles](export-bundles.md).
 
 ## Create an export in the browser
 
-1. Open **Export → Search term report…**, or select documents on the displayed
+1. Open **Searches → Run report**, or select documents on the displayed
    workspace or query-result page and choose **Report selected documents**.
 2. Under **Options**, choose **All documents** or **Selected imports**. A workspace
    selection opens a fixed **Selected documents (N)** scope. It uses only those

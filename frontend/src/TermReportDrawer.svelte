@@ -1,6 +1,7 @@
 <script lang="ts">
+  import { drawerPage } from "./drawerNavigation.js";
   import DrawerShell from "./DrawerShell.svelte";
-  import { untrack } from "svelte";
+  import { getContext, untrack } from "svelte";
   import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
   import PlusIcon from "@lucide/svelte/icons/plus";
   import XIcon from "@lucide/svelte/icons/x";
@@ -40,6 +41,9 @@
     onauthfailure: (cause: unknown) => void;
   }
   let { session, initialExpression, initialDocuments, onclose, onauthfailure }: Props = $props();
+
+  const page = getContext<boolean>(drawerPage);
+  let editing = $state(!page);
 
   const today = new Date().toISOString().slice(0, 10);
   const zone = "UTC";
@@ -202,6 +206,7 @@
   }
 
   function useHistory(item: TermReportHistory): void {
+    editing = true;
     const source = item.request;
     draft = {
       ...source,
@@ -415,16 +420,8 @@
   }
 </script>
 
-<DrawerShell
-  title="Search term report"
-  ariaLabel="Search term report"
-  closeLabel="Close search term report"
-  {onclose}
->
-  <div class="tool-body">
-    {#if error}<p class="tool-error" role="alert">{error}</p>{/if}
-    {#if notice}<p role="status">{notice}</p>{/if}
-
+{#snippet reportBody()}
+  {#snippet reportForm()}
     <section class="tool-section" aria-label="Report terms">
       <div class="terms" role="table" aria-label="Terms">
         <div class="term-row term-head" role="row">
@@ -578,10 +575,17 @@
     </details>
 
     <div class="tool-actions">
+      {#if page}<Button disabled={busy} onclick={() => (editing = false)}>Cancel</Button>{/if}
       <Button tone="info" surface="solid" disabled={busy} onclick={() => void run()}
         >{busy ? "Creating report…" : "Create report"}</Button
       >
     </div>
+  {/snippet}
+  <div class="tool-body">
+    {#if error}<p class="tool-error" role="alert">{error}</p>{/if}
+    {#if notice}<p role="status">{notice}</p>{/if}
+
+    {#if editing}{@render reportForm()}{/if}
 
     {#if active}
       <Card level="default" padding="sm" title={draftChanged ? "Previous report" : "Report"}>
@@ -798,6 +802,14 @@
         </div>{/if}
     </section>
   </div>
+{/snippet}
+
+<DrawerShell title="Reports" level={page ? 2 : 1} closeLabel="Close reports" {onclose}>
+  {#snippet actions()}
+    {#if page && !editing}<Button size="sm" onclick={() => (editing = true)}>Run report</Button
+      >{/if}
+  {/snippet}
+  {@render reportBody()}
 </DrawerShell>
 
 <style>

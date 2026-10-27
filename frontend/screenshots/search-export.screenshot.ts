@@ -74,9 +74,9 @@ test("reports selected versions and preserves historical downloads", async ({ pa
       });
     }
     await page.goto(url);
-    await page.getByRole("button", { name: "Export", exact: true }).click();
-    await page.getByRole("menuitem", { name: /^Search term report/ }).click();
-    const drawer = page.getByRole("dialog", { name: "Search term report" });
+    await page.getByRole("button", { name: "Searches", exact: true }).click();
+    let drawer = page.getByRole("main", { name: "Searches" });
+    await drawer.getByRole("button", { name: "Run report", exact: true }).click();
     await expect(drawer).toBeVisible();
     await drawer.getByRole("textbox", { name: "Expression for term 1" }).fill("alpha");
     await drawer.getByText("Options", { exact: true }).click();
@@ -103,9 +103,10 @@ test("reports selected versions and preserves historical downloads", async ({ pa
       animations: "disabled",
     });
 
-    await drawer.getByRole("button", { name: "Close search term report" }).click();
+    await page.getByRole("button", { name: "All files", exact: true }).click();
     await page.getByRole("checkbox", { name: "Select synthetic-review.txt", exact: true }).check();
     await page.getByRole("button", { name: "Report selected documents", exact: true }).click();
+    drawer = page.getByRole("dialog", { name: "Reports" });
     await drawer.getByText("Options", { exact: true }).click();
     await expect(drawer.getByText("Selected documents (1)", { exact: true })).toBeVisible();
     await drawer.getByRole("textbox", { name: "Expression for term 1" }).fill("alpha");

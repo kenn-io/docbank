@@ -58,7 +58,7 @@ test("keeps inspector tabs stable and tag removal accessible", async ({ page }) 
     );
     await page.screenshot({ path: path.join(output!, "details-keyboard.png") });
     await page.getByRole("button", { name: "Imports", exact: true }).click();
-    const imports = page.getByRole("dialog", { name: "Imports" });
+    const imports = page.getByRole("main", { name: "Imports" });
     await imports
       .getByRole("button", { name: /Browse import/ })
       .first()
@@ -70,7 +70,7 @@ test("keeps inspector tabs stable and tag removal accessible", async ({ page }) 
       "none",
     );
     await page.screenshot({ path: path.join(output!, "imports-mouse.png") });
-    await imports.getByRole("button", { name: "Close Imports", exact: true }).click();
+    await page.getByRole("button", { name: "All files", exact: true }).click();
 
     const preview = inspector.locator(".original-preview pre");
     await expect(preview).toHaveText("Synthetic document for inspector controls.");

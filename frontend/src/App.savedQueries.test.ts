@@ -62,19 +62,19 @@ it("restores a full query beside sign-in without running it as empty-text folder
   expect(
     fetch.mock.calls.some(
       ([url]) =>
-        String(url).startsWith("/api/v1/search") || String(url) === "/api/v1/workspace/queries",
+        String(url).startsWith("/api/v1/search?") || String(url) === "/api/v1/workspace/queries",
     ),
   ).toBe(false);
   await fireEvent.keyDown(window, { key: "Escape" });
   await fireEvent.click(screen.getByRole("button", { name: "Searches" }));
-  await screen.findByRole("dialog", { name: "Searches" });
+  await screen.findByRole("main", { name: "Searches" });
   await screen.findByText(/No searches/);
-  await fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  await fireEvent.click(screen.getByRole("button", { name: "All files" }));
   expect(JSON.parse(new URLSearchParams(location.hash.slice(1)).get("query")!)).toEqual(query);
   expect(
     fetch.mock.calls.some(
       ([url]) =>
-        String(url).startsWith("/api/v1/search") || String(url) === "/api/v1/workspace/queries",
+        String(url).startsWith("/api/v1/search?") || String(url) === "/api/v1/workspace/queries",
     ),
   ).toBe(false);
 
@@ -107,7 +107,7 @@ it("restores a full query beside sign-in without running it as empty-text folder
   expect(
     fetch.mock.calls.some(
       ([url]) =>
-        String(url).startsWith("/api/v1/search") || String(url) === "/api/v1/workspace/queries",
+        String(url).startsWith("/api/v1/search?") || String(url) === "/api/v1/workspace/queries",
     ),
   ).toBe(false);
   await fireEvent.click(screen.getByRole("button", { name: "New highlight list" }));
@@ -129,7 +129,7 @@ it("restores a full query beside sign-in without running it as empty-text folder
   expect(
     fetch.mock.calls.some(
       ([url]) =>
-        String(url).startsWith("/api/v1/search") || String(url) === "/api/v1/workspace/queries",
+        String(url).startsWith("/api/v1/search?") || String(url) === "/api/v1/workspace/queries",
     ),
   ).toBe(false);
   await fireEvent.click(screen.getByRole("button", { name: "Close" }));

@@ -1169,7 +1169,7 @@ dropping it.
 
 These root-level routes are outside `/api/v1` and auth-exempt: `GET /health`,
 `GET /api/ping` (daemon discovery), `GET /docs` and the OpenAPI documents,
-and `/`, `/photos`, `/photos/people`, `/photos/map`, `/photos/map/{set_id}`, `/photos/albums`, `/photos/albums/{set_id}`, and `/assets/` (the static web application, when `[web] enabled`). Album page IDs must be canonical UUIDv4 values.
+and `/`, `/searches`, `/productions`, `/imports`, `/trash`, `/photos`, `/photos/people`, `/photos/map`, `/photos/map/{set_id}`, `/photos/albums`, `/photos/albums/{set_id}`, and `/assets/` (the static web application, when `[web] enabled`). Album page IDs must be canonical UUIDv4 values.
 
 A hidden `POST /api/daemon/shutdown` (not in the OpenAPI document) backs
 `docbank daemon stop`. It isn't auth-exempt: it requires both the API key and
@@ -2332,7 +2332,7 @@ Host checks precede authentication and accept loopback, the concrete bind IP,
 the dedicated browser origin, and explicit `allowed_hosts`; wildcard listeners
 do not accept arbitrary names. Server-path ingest remains loopback-peer only.
 `/health`, `/api/ping`, `/docs`, the OpenAPI documents, and the static web application at
-`/`, `/photos`, `/photos/people`, `/photos/map`, `/photos/map/{set_id}`, `/photos/albums`, canonical `/photos/albums/{id}` pages, and `/assets/` are auth-exempt. Everything else, including the shutdown
+`/`, `/searches`, `/productions`, `/imports`, `/trash`, `/photos`, `/photos/people`, `/photos/map`, `/photos/map/{set_id}`, `/photos/albums`, canonical `/photos/albums/{id}` pages, and `/assets/` are auth-exempt. Everything else, including the shutdown
 route, requires the key.
 
 ## Error mapping

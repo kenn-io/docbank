@@ -151,3 +151,29 @@ func TestPhotoAlbumPages(t *testing.T) {
 		require.Equal(t, status, response.Code, tc.path)
 	}
 }
+
+func TestDocumentPages(t *testing.T) {
+	t.Parallel()
+	mux := http.NewServeMux()
+	registerWeb(mux, true, "http://localhost", "", config.MapTilesConfig{}, nil)
+	for _, tc := range []struct {
+		path    string
+		allowed bool
+	}{
+		{"/searches", true},
+		{"/productions", true},
+		{"/imports", true},
+		{"/trash", true},
+		{"/searches/x", false},
+	} {
+		require.Equal(t, tc.allowed, authExempt(tc.path), tc.path)
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, tc.path, nil))
+		if tc.allowed {
+			require.Equal(t, http.StatusOK, response.Code, tc.path)
+			require.Contains(t, response.Header().Get("Content-Type"), "text/html")
+		} else {
+			require.Equal(t, http.StatusNotFound, response.Code, tc.path)
+		}
+	}
+}

@@ -48,11 +48,10 @@ test("centers Photos access loading and replaces it with loaded photos", async (
     const imports = page.getByRole("button", { name: "Imports", exact: true });
     await expect(imports.locator("svg.lucide-history")).toBeVisible();
     await imports.click();
-    await expect(page.getByRole("dialog", { name: "Imports", exact: true })).toBeVisible();
+    await expect(page.getByRole("main", { name: "Imports", exact: true })).toBeVisible();
     await page.screenshot({ animations: "disabled", path: path.join(output!, "imports.png") });
-    await page.getByRole("button", { name: /Close/ }).click();
     await page.getByRole("button", { name: "Searches", exact: true }).click();
-    await expect(page.getByRole("dialog", { name: "Searches", exact: true })).toBeVisible();
+    await expect(page.getByRole("main", { name: "Searches", exact: true })).toBeVisible();
     await page.screenshot({ animations: "disabled", path: path.join(output!, "searches.png") });
   });
 });
