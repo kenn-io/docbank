@@ -814,7 +814,12 @@
   </div>
 {/snippet}
 
-<DrawerShell title="Reports" level={page ? 2 : 1} closeLabel="Close reports" {onclose}>
+<DrawerShell
+  title={page ? "Reports" : "Search term report"}
+  level={page ? 2 : 1}
+  closeLabel="Close search term report"
+  {onclose}
+>
   {#snippet actions()}
     {#if page && !editing}<Button size="sm" onclick={openDraft}>Run report</Button>{/if}
   {/snippet}

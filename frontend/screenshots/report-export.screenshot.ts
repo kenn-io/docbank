@@ -107,7 +107,7 @@ test("qualifies selected reports and original exports", async ({ page }) => {
       const detail = String(cause).replaceAll(session, "[redacted]");
       throw new Error("Could not open the synthetic browser session", { cause: new Error(detail) });
     }
-    const drawer = page.getByRole("dialog", { name: "Reports", exact: true });
+    const drawer = page.getByRole("dialog", { name: "Search term report", exact: true });
     const exportDrawer = page.getByRole("dialog", { name: "Verified export", exact: true });
 
     await test.step("strict missing-text refusal leaves history unchanged", async () => {
@@ -128,7 +128,7 @@ test("qualifies selected reports and original exports", async ({ page }) => {
       await expect(drawer.getByRole("table", { name: "Search report counts" })).toHaveCount(0);
       await expect(drawer.getByRole("button", { name: "Download evidence ZIP" })).toHaveCount(0);
       expect(await history()).toEqual(before);
-      await drawer.getByRole("button", { name: "Close reports" }).click();
+      await drawer.getByRole("button", { name: "Close search term report" }).click();
       await page.getByRole("checkbox", { name: "Select missing.bin", exact: true }).uncheck();
     });
 

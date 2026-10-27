@@ -106,7 +106,7 @@ test("reports selected versions and preserves historical downloads", async ({ pa
     await page.getByRole("button", { name: "All files", exact: true }).click();
     await page.getByRole("checkbox", { name: "Select synthetic-review.txt", exact: true }).check();
     await page.getByRole("button", { name: "Report selected documents", exact: true }).click();
-    drawer = page.getByRole("dialog", { name: "Reports" });
+    drawer = page.getByRole("dialog", { name: "Search term report" });
     await drawer.getByText("Options", { exact: true }).click();
     await expect(drawer.getByText("Selected documents (1)", { exact: true })).toBeVisible();
     await drawer.getByRole("textbox", { name: "Expression for term 1" }).fill("alpha");

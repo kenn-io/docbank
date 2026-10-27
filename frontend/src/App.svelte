@@ -281,14 +281,11 @@
 
   let webSession = $state("");
   let hasProductions = $state(false);
-  let productionsDiscovered = $state(false);
   let productionsDiscoveryRevision = $state(0);
   $effect(() => {
     void productionsDiscoveryRevision;
     const session = webSession;
     if (!session) return;
-    productionsDiscovered = false;
-    let pending = 2;
     const controller = new AbortController();
     for (const listing of [
       generated.listPackages({ limit: 1 }, { session, signal: controller.signal }),
@@ -299,11 +296,6 @@
           if (!controller.signal.aborted && session === webSession) {
             hasProductions ||= result.items.length > 0;
           }
-        })
-        .then(() => {
-          pending--;
-          if (!controller.signal.aborted && session === webSession && pending === 0)
-            productionsDiscovered = true;
         })
         .catch((cause: unknown) => {
           if (
@@ -520,13 +512,6 @@
       : null;
   }
   let docsPage = $state(pageAt(location.pathname));
-  $effect(() => {
-    if (!photoMode && docsPage === "productions" && productionsDiscovered && !hasProductions) {
-      photoNavigation.replace(history.state, `/${location.search}${location.hash}`);
-      nodeVersionHash = location.hash;
-      docsPage = null;
-    }
-  });
   const docsScreens = {
     searches: "saved_queries",
     productions: "bates",
@@ -1590,7 +1575,6 @@
     disposeBrowserSession?.();
     webSession = session.token;
     hasProductions = false;
-    productionsDiscovered = false;
     keySession = keyLogin;
     error = "";
     uploadChannelError = "";
@@ -3757,6 +3741,7 @@
       queryDraftChanged = true;
     }}
     onopenquery={(query) => {
+      leavePage();
       onclose();
       querySettingsApplied = true;
       void submitSnapshot(query, snapshot.state.options ?? {});
@@ -3959,7 +3944,7 @@
           >
             <BookmarkIcon size="16" aria-hidden="true" />Searches
           </button>
-          {#if hasProductions}
+          {#if hasProductions || docsPage === "productions"}
             <button
               type="button"
               class="nav-item"
@@ -4371,24 +4356,24 @@
                 : "Trash"}
         >
           {#if docsPage === "searches"}
-            {@render savedQueries(false, leavePage)}
+            {@render savedQueries(false, () => {})}
             <TermReportDrawer
               session={webSession}
               initialExpression={searchQuery}
-              onclose={leavePage}
+              onclose={() => {}}
               onauthfailure={handleFailure}
             />
           {:else if docsPage === "productions"}
             <BatesExportDrawer
               mode="productions"
               session={webSession}
-              onclose={leavePage}
+              onclose={() => {}}
               onauthfailure={handleFailure}
             />
           {:else if docsPage === "imports"}
             <CollectionsDrawer
               session={webSession}
-              onclose={leavePage}
+              onclose={() => {}}
               onauthfailure={handleFailure}
               onopenmember={openCollectionMember}
               onqualityquery={openQueryEditor}
@@ -4396,7 +4381,7 @@
                 openQueryEditor(parseQuery(JSON.stringify({ filters: { collection_ids: [id] } })))}
             />
           {:else if docsPage === "trash"}
-            {@render trash(leavePage)}
+            {@render trash(() => {})}
           {/if}
         </ToolPage>
       {:else}

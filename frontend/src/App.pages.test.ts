@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import App from "./App.svelte";
 import { productionPackage } from "./package-test-fixtures.js";
 import { root } from "./version-test-fixtures.js";
@@ -145,60 +145,35 @@ it.each([
   expect(await screen.findByRole("main", { name: title })).toBeTruthy();
 });
 
-it("keeps Productions open when production discovery returns 500", async () => {
-  let finishPackages!: (response: Response) => void;
-  const packages = new Promise<Response>((resolve) => {
-    finishPackages = resolve;
-  });
-  start("/productions", "", packages);
-  await screen.findByRole("main", { name: "Productions" });
-  await act(() =>
-    finishPackages(Response.json({ detail: "Package index unavailable." }, { status: 500 })),
-  );
-  await waitFor(() => expect(screen.queryByText("Loading…")).toBeNull());
+it("keeps empty Productions open with its sidebar item current", async () => {
+  start("/productions", "", Promise.resolve(Response.json({ items: [], limit: 250 })));
+  expect(await screen.findByText("No productions yet")).toBeTruthy();
   expect(location.pathname).toBe("/productions");
-  expect(screen.getByRole("main", { name: "Productions" })).toBeTruthy();
-});
-
-it("replaces unavailable Productions with All files after both listings resolve", async () => {
-  let finishPackages!: (response: Response) => void;
-  const packages = new Promise<Response>((resolve) => {
-    finishPackages = resolve;
-  });
-  start("/productions", "", packages);
-  await screen.findByRole("main", { name: "Productions" });
-  expect(location.pathname).toBe("/productions");
-  const entries = history.length;
-  const push = vi.spyOn(history, "pushState");
-  finishPackages(Response.json({ items: [], limit: 250 }));
-  await screen.findByText("Empty folder");
-  expect(location.pathname).toBe("/");
-  expect(history.length).toBe(entries);
-  expect(push).not.toHaveBeenCalled();
-  expect(screen.getByRole("button", { name: "All files" }).getAttribute("aria-current")).toBe(
+  expect(screen.getByRole("button", { name: "Productions" }).getAttribute("aria-current")).toBe(
     "page",
   );
-  expect(screen.queryByRole("main", { name: "Productions" })).toBeNull();
 });
 
-it("keeps the Photos URL when empty production discovery finishes after leaving Productions", async () => {
-  let finishPackages!: (response: Response) => void;
-  const packages = new Promise<Response>((resolve) => {
-    finishPackages = resolve;
-  });
-  start("/productions", "", packages);
-  await screen.findByRole("main", { name: "Productions" });
-  await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
-  expect(location.pathname).toBe("/photos");
-  await act(() => finishPackages(Response.json({ items: [], limit: 250 })));
-  await waitFor(() => expect(screen.queryByRole("button", { name: "Productions" })).toBeNull());
-  expect(location.pathname).toBe("/photos");
-  expect(screen.getByRole("button", { name: "Photos" }).getAttribute("aria-current")).toBe("page");
-  history.back();
+it.each([
+  ["Searches", "/searches", "/api/v1/search-exports?"],
+  ["Searches", "/searches", "/api/v1/saved-queries?"],
+  ["Productions", "/productions", "/api/v1/bates/exports?"],
+  ["Imports", "/imports", "/api/v1/collections?"],
+  ["Recoverable trash", "/trash", "/api/v1/trash?"],
+])("keeps %s at %s when %s returns 401", async (label, path, endpoint) => {
+  const fetch = start();
   await screen.findByText("Empty folder");
-  expect(location.pathname).toBe("/");
-  history.forward();
-  await waitFor(() => expect(location.pathname).toBe("/photos"));
+  const original = fetch.getMockImplementation()!;
+  fetch.mockImplementation(async (input, init) => {
+    if (String(input).startsWith(endpoint))
+      return Response.json({ detail: "Session expired" }, { status: 401 });
+    return original(input, init);
+  });
+  const entries = history.length;
+  await fireEvent.click(await screen.findByRole("button", { name: label }));
+  await screen.findByText("Open your Docbank");
+  expect(location.pathname).toBe(path);
+  expect(history.length).toBe(entries + 1);
 });
 
 it.each(["Searches", "Productions", "Imports", "Recoverable trash"])(
@@ -281,6 +256,16 @@ it.each(["/searches", "/productions", "/imports", "/trash"])(
   },
 );
 
+it("leaves the tool page when submitting a search", async () => {
+  start("/imports");
+  await screen.findByRole("main", { name: "Imports" });
+  const search = screen.getByRole("searchbox", { name: "Search documents" });
+  await fireEvent.input(search, { target: { value: "alpha" } });
+  await fireEvent.submit(search.closest("form")!);
+  await waitFor(() => expect(location.pathname).toBe("/"));
+  expect(screen.queryByRole("main", { name: "Imports" })).toBeNull();
+});
+
 it("opens Advanced on the first click after loading Imports with a query", async () => {
   start("/imports", `&query=${encodeURIComponent(JSON.stringify(query))}`);
   await screen.findByRole("main", { name: "Imports" });
@@ -309,7 +294,8 @@ it("keeps Imports through a Documents and Photos round trip", async () => {
 
 it("seeds Run report from the current search and keeps an edited draft", async () => {
   start("/searches");
-  await screen.findByRole("main", { name: "Searches" });
+  const main = await screen.findByRole("main", { name: "Searches" });
+  expect(within(main).getByRole("heading", { name: "Reports", level: 2 })).toBeTruthy();
   const search = screen.getByRole("searchbox", { name: "Search documents" });
   await fireEvent.input(search, { target: { value: "alpha" } });
   await fireEvent.click(screen.getByRole("button", { name: "Run report" }));

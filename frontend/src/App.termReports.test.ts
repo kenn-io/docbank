@@ -212,14 +212,15 @@ it.each(["live", "query page", "missing identity"])(
     await fireEvent.click(checkbox);
     await fireEvent.click(screen.getByRole("button", { name: "Report selected documents" }));
     if (mode === "missing identity") {
-      expect(screen.queryByRole("dialog", { name: "Reports" })).toBeNull();
+      expect(screen.queryByRole("dialog", { name: "Search term report" })).toBeNull();
       expect(
         await screen.findByText(/Select current documents with complete version identities/),
       ).toBeTruthy();
       expect(submitted).toHaveLength(0);
       return;
     }
-    const drawer = await screen.findByRole("dialog", { name: "Reports" });
+    const drawer = await screen.findByRole("dialog", { name: "Search term report" });
+    expect(within(drawer).getByRole("button", { name: "Close search term report" })).toBeTruthy();
     expect(within(drawer).getByText("Selected documents (1)")).toBeTruthy();
     if (mode === "live") {
       const before = listings;
