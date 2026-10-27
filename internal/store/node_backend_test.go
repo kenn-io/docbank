@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"testing"
@@ -17,12 +18,16 @@ import (
 )
 
 // Queries use setup-owned DDL and an explicitly granted runtime login. This
-// constructs only the query surface; complete PostgreSQL vaults are not openable.
+// constructs the qualified store surface; complete PostgreSQL vaults are not openable.
 func newPostgresQueryStore(t *testing.T) *Store {
 	t.Helper()
-	ctx := t.Context()
 	setup, owner := pgtest.NewDatabase(t)
-	cfg := pgschema.Config{Schema: "documents", SchemaOwner: owner}
+	return newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+}
+
+func newPostgresSchemaStore(t *testing.T, setup *sql.DB, cfg pgschema.Config) *Store {
+	t.Helper()
+	ctx := t.Context()
 	id, err := pgschema.Setup(ctx, setup, cfg)
 	require.NoError(t, err)
 
@@ -34,23 +39,24 @@ func newPostgresQueryStore(t *testing.T) *Store {
 		_, err := setup.ExecContext(context.Background(), "DROP OWNED BY "+quotedRole+"; DROP ROLE "+quotedRole)
 		require.NoError(t, err)
 	})
-	_, err = setup.ExecContext(ctx, "GRANT USAGE ON SCHEMA documents TO "+quotedRole+
-		"; GRANT SELECT ON documents.vault_metadata TO "+quotedRole+
-		"; GRANT SELECT,INSERT,UPDATE,DELETE ON documents.nodes,documents.blobs,documents.content_versions TO "+quotedRole+
-		"; GRANT SELECT,INSERT ON documents.blob_checksums TO "+quotedRole+
-		"; GRANT USAGE ON SEQUENCE documents.nodes_id_seq TO "+quotedRole)
+	schema := pgx.Identifier{cfg.Schema}.Sanitize()
+	_, err = setup.ExecContext(ctx, "GRANT USAGE ON SCHEMA "+schema+" TO "+quotedRole+
+		"; GRANT SELECT ON "+schema+".vault_metadata TO "+quotedRole+
+		"; GRANT SELECT,INSERT,UPDATE,DELETE ON "+schema+".nodes,"+schema+".blobs,"+schema+".content_versions TO "+quotedRole+
+		"; GRANT SELECT,INSERT ON "+schema+".blob_checksums TO "+quotedRole+
+		"; GRANT USAGE ON SEQUENCE "+schema+".nodes_id_seq TO "+quotedRole)
 	require.NoError(t, err)
 	config, err := pgx.ParseConfig(os.Getenv("DOCBANK_TEST_POSTGRES_DSN"))
 	require.NoError(t, err)
 	require.NoError(t, setup.QueryRowContext(ctx, `SELECT current_database()`).Scan(&config.Database))
 	config.User, config.Password = role, "fixture-query-only"
-	config.RuntimeParams["search_path"] = "documents,pg_catalog"
+	config.RuntimeParams["search_path"] = schema + ",pg_catalog"
 	db := stdlib.OpenDB(*config)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	actual, err := pgschema.Validate(ctx, db, cfg)
 	require.NoError(t, err)
 	require.Equal(t, id, actual)
-	s := &Store{db: db, writeDB: db}
+	s := &Store{db: db, writeDB: db, postgresSchema: cfg.Schema}
 	require.NoError(t, db.QueryRowContext(ctx, `SELECT id FROM nodes WHERE parent_id IS NULL`).Scan(&s.rootID))
 	return s
 }
