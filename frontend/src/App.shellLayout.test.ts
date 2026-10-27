@@ -16,7 +16,10 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it("shows Productions after importing load files without reloading", async () => {
+it.each([
+  ["shows Productions after importing load files without reloading", false],
+  ["review discovers completed imports after closing the drawer", true],
+] as const)("%s", async (_name, closeWhileQueued) => {
   vi.spyOn(VerifiedUploadChannel.prototype, "connect").mockResolvedValue();
   vi.spyOn(loadfile, "uploadPackageZIP").mockResolvedValue({
     container_id: "container",
@@ -55,7 +58,7 @@ it("shows Productions after importing load files without reloading", async () =>
     updated_at: "now",
   };
   vi.spyOn(loadfile, "startPackageImport").mockResolvedValue(job);
-  vi.spyOn(loadfile, "readPackageImport").mockResolvedValue({
+  const readImport = vi.spyOn(loadfile, "readPackageImport").mockResolvedValue({
     ...job,
     state: "complete",
     committed: 1,
@@ -71,6 +74,20 @@ it("shows Productions after importing load files without reloading", async () =>
   await fireEvent.click(screen.getByRole("button", { name: "Upload and preview" }));
   await fireEvent.click(await screen.findByRole("button", { name: "Import package" }));
   expect(screen.queryByRole("button", { name: "Productions" })).toBeNull();
+  if (closeWhileQueued) {
+    await screen.findByText(/queued/);
+    await fireEvent.click(screen.getByRole("button", { name: "Close load-file import" }));
+    const original = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) =>
+      String(input).startsWith("/api/v1/packages?")
+        ? Response.json({ items: [{ package_id: job.package_id, state: "complete" }] })
+        : original(input, init),
+    );
+    await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
+    expect(await screen.findByRole("button", { name: "Productions" })).toBeTruthy();
+    expect(readImport).not.toHaveBeenCalled();
+    return;
+  }
   await waitFor(() => expect(screen.getByRole("button", { name: "Productions" })).toBeTruthy(), {
     timeout: 2000,
   });

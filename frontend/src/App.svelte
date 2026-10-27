@@ -280,7 +280,9 @@
 
   let webSession = $state("");
   let hasProductions = $state(false);
+  let productionsDiscoveryRevision = $state(0);
   $effect(() => {
+    void productionsDiscoveryRevision;
     const session = webSession;
     hasProductions = false;
     if (!session) return;
@@ -2757,6 +2759,7 @@
   }
 
   function refreshCurrentView(): void {
+    productionsDiscoveryRevision += 1;
     void loadTagCatalog();
     refreshDocumentsView();
   }

@@ -98,9 +98,7 @@
   const displayedRevision = $derived(
     relatedSource?.mutationRevision ?? duplicateSource?.mutationRevision ?? authorizationRevision,
   );
-  const contentKey = $derived(
-    `${session}:${displayedSource.key}:${displayedRevision}:${processingRevision}`,
-  );
+  const contentKey = $derived(`${session}:${displayedSource.key}:${displayedRevision}`);
   const visitedTabs = $derived(visited.key === contentKey ? visited.tabs : []);
 
   $effect(() => {
@@ -263,7 +261,7 @@
   <div class="tab-content inspector-content">
     {#key contentKey}
       {#each tabList as tab (tab.value)}
-        {#if tab.value === displayedTab || (tab.value !== "text" && visitedTabs.includes(tab.value))}
+        {#if tab.value === displayedTab || visitedTabs.includes(tab.value)}
           <div hidden={tab.value !== displayedTab}>
             {#if tab.value === "preview"}
               {#if displayedSource.mimeType === "application/pdf" || displayedSource.mimeType === "image/png"}
@@ -295,6 +293,8 @@
               {:else if tab.value === "text"}
                 <VerifiedText
                   {session}
+                  active={displayedTab === "text"}
+                  {processingRevision}
                   source={displayedSource}
                   authorizationRevision={displayedRevision}
                   {profileName}

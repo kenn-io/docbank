@@ -20,6 +20,8 @@
     session,
     source,
     authorizationRevision,
+    active = true,
+    processingRevision = 0,
     profileName = "",
     observed,
     queryTerms = [],
@@ -31,6 +33,8 @@
     session: string;
     source: SelectedSource;
     authorizationRevision: number;
+    active?: boolean;
+    processingRevision?: number;
     profileName?: string;
     observed?: RenditionObservation;
     queryTerms?: string[];
@@ -69,25 +73,32 @@
   const marked = $derived(markText(text, find ? { find } : { highlightTerms, queryTerms }));
 
   const findMatches = $derived(find ? marked.matches : []);
+  const refreshKey = $derived(`${loadKey}:${active}:${processingRevision}`);
+  let completedKey = "";
+  let completedResolution = "";
 
   $effect(() => {
     const key = loadKey;
+    void refreshKey;
     const inputs = untrack(() => ({
+      active,
       session,
       source,
       authorizationRevision,
       profileName,
       observed,
     }));
+    if (!inputs.active) return;
     const controller = new AbortController();
     let current = true;
-    void key;
-    resolution = null;
-    text = "";
+    if (key !== completedKey) {
+      resolution = null;
+      text = "";
+      originalFallback = false;
+      loading = true;
+      activeMatch = 0;
+    }
     error = "";
-    originalFallback = false;
-    loading = true;
-    activeMatch = 0;
     void resolveRenditionText(
       inputs.session,
       inputs.source,
@@ -98,6 +109,13 @@
     )
       .then(async (next) => {
         if (!current) return;
+        const fingerprint = JSON.stringify(next);
+        if (key === completedKey && fingerprint === completedResolution) return;
+        completedKey = "";
+        loading = true;
+        text = "";
+        originalFallback = false;
+        activeMatch = 0;
         resolution = next;
         if (next.state === "ready") {
           const received = await readVerifiedRenditionText(
@@ -108,33 +126,32 @@
             controller.signal,
           );
           if (current) text = received;
-          return;
+        } else if (next.state !== "verified_empty") {
+          let eligibility;
+          try {
+            eligibility = previewEligibility(inputs.source.mimeType, inputs.source.size);
+          } catch {
+            eligibility = undefined;
+          }
+          if (eligibility?.kind === "text") {
+            const fallback = await readVerifiedPreview(
+              inputs.session,
+              inputs.source,
+              inputs.authorizationRevision,
+              controller.signal,
+              () => undefined,
+            );
+            if (fallback.kind === "image") URL.revokeObjectURL(fallback.url);
+            else if (current) {
+              originalFallback = true;
+              text = fallback.text;
+            }
+          }
         }
-        if (next.state === "verified_empty") return;
-        let eligibility;
-        try {
-          eligibility = previewEligibility(inputs.source.mimeType, inputs.source.size);
-        } catch {
-          return;
+        if (current) {
+          completedKey = key;
+          completedResolution = fingerprint;
         }
-        if (eligibility.kind !== "text") return;
-        const fallback = await readVerifiedPreview(
-          inputs.session,
-          inputs.source,
-          inputs.authorizationRevision,
-          controller.signal,
-          () => undefined,
-        );
-        if (!current) {
-          if (fallback.kind === "image") URL.revokeObjectURL(fallback.url);
-          return;
-        }
-        if (fallback.kind !== "text") {
-          URL.revokeObjectURL(fallback.url);
-          return;
-        }
-        originalFallback = true;
-        text = fallback.text;
       })
       .catch((cause: unknown) => {
         if (!current || (cause instanceof DOMException && cause.name === "AbortError")) return;
@@ -147,9 +164,6 @@
     return () => {
       current = false;
       controller.abort();
-      text = "";
-      resolution = null;
-      error = "";
     };
   });
 

@@ -349,6 +349,14 @@ it("loads one exact rendition only while Text is active and keeps hostile markup
   await view.rerender({ ...props, queryTerms: ["alpha", "blocked"] });
   await waitFor(() => expect(document.querySelectorAll("mark")).toHaveLength(3));
   expect(fetchMock).toHaveBeenCalledTimes(3);
+  await fireEvent.click(screen.getByRole("tab", { name: "Preview" }));
+  await fireEvent.click(screen.getByRole("tab", { name: "Text" }));
+  expect(screen.queryByText("Loading text…")).toBeNull();
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
+  expect(document.querySelectorAll("mark")).toHaveLength(3);
+  expect(
+    fetchMock.mock.calls.filter(([input]) => String(input).includes("/renditions/text/content?")),
+  ).toHaveLength(1);
 });
 
 it.each(["unprocessed", "unconfigured"])(
@@ -435,6 +443,61 @@ it("opens an email on its Email tab and offers no Preview it cannot render", asy
 
   expect(screen.queryByRole("tab", { name: "Preview" })).toBeNull();
   expect(screen.getByRole("tab", { name: "Email" }).getAttribute("aria-selected")).toBe("true");
+});
+
+it.each([
+  "review revisits completed Text without a loading flash",
+  "review retains Text Find when revisiting inspector tabs",
+])("%s", async (name) => {
+  const bytes = new TextEncoder().encode("Synthetic report text");
+  const selected = source(bytes, "11111111-1111-4111-8111-111111111111");
+  const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/v1/renditions/text")
+      return Response.json({
+        state: "unprocessed",
+        source: {
+          node_id: selected.nodeID,
+          revision: 8,
+          version_id: selected.versionID,
+          blob_hash: selected.blobHash,
+          size: selected.size,
+          media_type: selected.mimeType,
+        },
+        profile: { name: "", configuration: "configured", fingerprint: "b".repeat(64) },
+        generation_id: "",
+        attachment_id: "",
+        build_id: "",
+      });
+    if (init?.method === "POST") return ready(selected, "text");
+    if (path.endsWith("ticket=text")) return body(selected, bytes);
+    if (path.includes("duplicates")) return Response.json({}, { status: 404 });
+    throw new Error(`Unexpected request ${path}`);
+  });
+  render(VerifiedPreview, {
+    session: "session",
+    source: selected,
+    authorizationRevision: 8,
+    activeTab: "text",
+    onauthfailure: vi.fn(),
+  });
+  await screen.findByText("Synthetic report text");
+  await fireEvent.input(screen.getByRole("textbox", { name: "Find in verified text" }), {
+    target: { value: "report" },
+  });
+  await fireEvent.click(screen.getByRole("tab", { name: "Duplicates" }));
+  await screen.findByText("No duplicates");
+  const downloads = fetcher.mock.calls.filter(([input]) => String(input).endsWith("ticket=text"));
+  await fireEvent.click(screen.getByRole("tab", { name: "Text" }));
+  if (name.includes("loading flash")) {
+    expect(screen.queryByText("Loading text…")).toBeNull();
+  } else {
+    const find = await screen.findByRole("textbox", { name: "Find in verified text" });
+    expect((find as HTMLInputElement).value).toBe("report");
+  }
+  expect(
+    fetcher.mock.calls.filter(([input]) => String(input).endsWith("ticket=text")),
+  ).toHaveLength(downloads.length);
 });
 
 it("keeps completed tabs mounted and loads an unvisited tab only when opened", async () => {
