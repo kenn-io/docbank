@@ -12,6 +12,7 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/media/mediatest"
+	"go.kenn.io/docbank/document/plaintext"
 )
 
 type passwordCountingProvider struct {
@@ -59,15 +60,7 @@ func TestInspectionAndPrepareReadPasswordsOnlyForEncryptedPDF(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fixture := newPublicationFixture(t)
-			base := newWorkerProvider(t)
-			descriptor := base.Descriptor()
-			descriptor.Fingerprint = ""
-			descriptor.SupportedFormats = append(descriptor.SupportedFormats, document.RenditionFormatCapability{
-				MediaFamily: "presentation", MediaType: "application/vnd.openxmlformats-officedocument.presentationml.presentation", InputKind: document.RenditionInputOriginalFile,
-			})
-			base.descriptor, err = document.NewRenditionDescriptor(descriptor)
-			require.NoError(t, err)
-			provider := &passwordCountingProvider{RenditionProvider: base, passwords: tc.passwords, supported: tc.supported, err: tc.err}
+			provider := &passwordCountingProvider{RenditionProvider: newWorkerProvider(t), passwords: tc.passwords, supported: tc.supported, err: tc.err}
 			stored := workerProcessingProfile(t, provider.Descriptor())
 			var portable document.ProcessingProfileV1
 			require.NoError(t, json.Unmarshal(stored.CanonicalProfile, &portable))
@@ -105,9 +98,9 @@ func TestRenditionReadinessPreservesApplicableReason(t *testing.T) {
 		name, mime, data string
 		reason           media.CapabilityReason
 	}{
-		{"empty.txt", "text/plain", "", media.CapabilityReasonUnsupported},
+		{"empty.txt", "text/plain", "", media.CapabilityReasonEmptySource},
 		{"short.txt", "text/plain", "notes", media.CapabilityReasonUnsupported},
-		{"large.txt", "text/plain", "notes exceed the profile limit", media.CapabilityReasonUnsupported},
+		{"large.txt", "text/plain", "notes exceed the profile limit", media.CapabilityReasonSourceBytes},
 		{"empty.pdf", "application/pdf", "", media.CapabilityReasonEmptySource},
 		{"large.pdf", "application/pdf", "larger than the profile limit", media.CapabilityReasonSourceBytes},
 		{"legacy.doc", "application/msword", "source", media.CapabilityReasonUnboundedFamily},
@@ -131,4 +124,25 @@ func TestRenditionReadinessPreservesApplicableReason(t *testing.T) {
 			require.Equal(t, tc.reason, capability.Reason)
 		})
 	}
+}
+
+func TestRenditionReadinessPreservesMalformedJSONForPlaintext(t *testing.T) {
+	t.Parallel()
+	fixture := newPublicationFixture(t)
+	provider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
+	require.NoError(t, err)
+	stored := workerProcessingProfile(t, provider.Descriptor())
+	var portable document.ProcessingProfileV1
+	require.NoError(t, json.Unmarshal(stored.CanonicalProfile, &portable))
+	profile := configuredProfile{portable: portable, record: stored, provider: provider}
+	written, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewBufferString("{broken"))
+	require.NoError(t, err)
+	node, err := fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), "broken.json", written.Hash, written.Size, "application/json", processingBlobPhysical(t, written))
+	require.NoError(t, err)
+	version, err := fixture.catalog.ContentVersionByID(t.Context(), node.CurrentVersionID)
+	require.NoError(t, err)
+	capability, err := inspectRenditionSource(t.Context(), fixture.blobs, node, version, profile)
+	require.NoError(t, err)
+	require.False(t, capability.Eligible)
+	require.Equal(t, media.CapabilityReasonMalformed, capability.Reason)
 }

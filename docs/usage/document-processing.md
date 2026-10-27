@@ -39,9 +39,7 @@ vector space where applicable, provider-visible metadata, and retained artifact
 roles. These runtime disclosures are part of the plan fingerprint. Re-run the
 preview when the source, profile, or provider destination changes. The consent
 state shown in a plan is advisory and does not change the fingerprint.
-Execution checks consent again. When the profile's provider doesn't accept the
-file's format, the plan reports `unsupported_media_type` and a build fails with
-`rendition_source_ineligible`. The web app shows the reason and disables Run processing.
+Execution checks consent again.
 
 Run only the reviewed plan:
 
@@ -268,6 +266,11 @@ its plan shows the reason on an `ineligible:` line and `processing build`
 fails with `rendition_source_ineligible`. A locked PDF instead ends with
 `pdf_password_required` when no configured password opens it or no password
 file is configured.
+
+When local inspection admits a file but the profile's provider doesn't accept its
+format, the plan reports `unsupported_media_type`. Starting that plan fails with
+`rendition_source_ineligible`. The web app shows the reason and disables Run
+processing.
 
 Import the original, inspect its plan, and consent to the exact destination:
 

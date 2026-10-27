@@ -2265,20 +2265,6 @@ func inspectRenditionSource(ctx context.Context, blobs *blob.Store, node store.N
 	version store.ContentVersion, profile configuredProfile,
 ) (media.CapabilityRecord, error) {
 	policy := renditionInspectionPolicy(node, version, profile)
-	if version.Size == 0 || version.Size > admittedSourceBytes(policy, profile) {
-		// These sources cannot be inspected. Use the canonical declared type
-		// to reject incompatible profiles before reporting source readiness.
-		known := slices.ContainsFunc(document.FormatMetadataCatalog(), func(format document.FormatMetadata) bool {
-			return format.MediaType == policy.DeclaredMediaType
-		})
-		supported := slices.ContainsFunc(profile.provider.Descriptor().SupportedFormats, func(format document.RenditionFormatCapability) bool {
-			// Media family requires inspection; match only the declared type and input kind here.
-			return format.MediaType == policy.DeclaredMediaType && format.InputKind == policy.InputKind
-		})
-		if known && !supported {
-			return media.CapabilityRecord{Reason: media.CapabilityReasonUnsupported}, nil
-		}
-	}
 	switch {
 	case version.Size == 0:
 		return media.CapabilityRecord{Reason: media.CapabilityReasonEmptySource}, nil
@@ -2322,6 +2308,11 @@ func inspectRenditionSource(ctx context.Context, blobs *blob.Store, node store.N
 			return media.CapabilityRecord{}, errors.Join(inspectErr, closeErr)
 		}
 	}
+	if capability.Eligible && !profile.provider.Descriptor().Supports(document.RenditionFormatCapability{
+		MediaFamily: capability.MediaFamily, MediaType: capability.MediaType, InputKind: policy.InputKind,
+	}) {
+		capability.Eligible, capability.Reason = false, media.CapabilityReasonUnsupported
+	}
 	return capability, nil
 }
 
@@ -2359,8 +2350,7 @@ func inspectionPolicy(filename string, version store.ContentVersion, profile con
 		declaredMediaType = baseType
 	}
 	return media.InspectionPolicy{Filename: filename, DeclaredMediaType: declaredMediaType,
-		SupportsFormat: profile.provider.Descriptor().Supports,
-		ExpectedBytes:  version.Size, ExpectedSHA256: version.BlobHash,
+		ExpectedBytes: version.Size, ExpectedSHA256: version.BlobHash,
 		DescriptorFingerprint: profile.provider.Descriptor().Fingerprint,
 		ProfileFingerprint:    profile.record.Fingerprint,
 		DisclosureFingerprint: profile.portable.Rendition.DisclosureFingerprint,
