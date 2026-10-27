@@ -58,9 +58,10 @@ func TestNineReadToolHandlersReturnBoundedPrivateStructuredResults(t *testing.T)
 			assert.Equal(t, testVaultID, output["vault_id"])
 			assert.NotContains(t, output, "vault_path")
 		}},
-		{name: "list_documents", arguments: map[string]any{"page_size": 1, "cursor": "opaque.token"}, check: func(t *testing.T, output map[string]any, result *sdkmcp.CallToolResult) {
+		{name: "list_documents", arguments: map[string]any{"page_size": 1, "cursor": "opaque.token", "source_present": true}, check: func(t *testing.T, output map[string]any, result *sdkmcp.CallToolResult) {
 			t.Helper()
 			assert.Equal(t, "next.token", output["next_cursor"])
+			assert.Equal(t, true, output["source_present"])
 			assert.Contains(t, resourceLinkURIs(result), canonicalTestRenditionURI())
 		}},
 		{name: "search_documents", arguments: map[string]any{"query": "synthetic", "profile": "local",
@@ -436,6 +437,11 @@ func TestSearchReadValidatesEmptyFenceWithoutCallingSearch(t *testing.T) {
 			daemon := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 				switch request.URL.Path {
 				case "/api/v1/processing/source-fences/resolve":
+					var scope api.DocumentSourceFenceResolveRequest
+					if !assert.NoError(t, json.UnmarshalRead(request.Body, &scope)) || !assert.NotNil(t, scope.Filters) {
+						return
+					}
+					assert.True(t, scope.Filters.SourcePresent)
 					writeDaemonJSON(t, response, api.DocumentSourceFenceResolution{
 						Fence:            api.ResolvedDocumentSourceFence{VaultUID: testVaultID, ContentVersionIDs: []string{}},
 						FenceFingerprint: emptyFingerprint, ObservedScopeCount: 0,
@@ -469,7 +475,7 @@ func TestSearchReadValidatesEmptyFenceWithoutCallingSearch(t *testing.T) {
 
 			result, err := invokeReadTool(t.Context(), lease, "search_documents", map[string]any{
 				"query": test.query, "mode": "lexical", "limit": 1, "profile": test.profile,
-				"filters": map[string]any{},
+				"filters": map[string]any{"source_present": true},
 			})
 			assert.Equal(t, 1, validationCalls)
 			assert.Zero(t, searchCalls)
@@ -618,12 +624,14 @@ func newReadToolDaemon(t *testing.T) *httptest.Server {
 		case "/api/v1/documents":
 			if request.URL.Query().Has("cursor") {
 				assert.Equal(t, "opaque.token", request.URL.Query().Get("cursor"))
+				assert.Equal(t, "true", request.URL.Query().Get("source_present"))
 			}
 			pathPrefix := request.URL.Query().Get("path_prefix")
 			if pathPrefix == "" {
 				pathPrefix = "/"
 			}
-			writeDaemonJSON(t, response, api.DocumentPage{PathPrefix: pathPrefix, Sort: "path", Direction: "asc", PageSize: 1,
+			writeDaemonJSON(t, response, api.DocumentPage{SourcePresent: request.URL.Query().Get("source_present") == "true",
+				PathPrefix: pathPrefix, Sort: "path", Direction: "asc", PageSize: 1,
 				Items: []api.DocumentSummary{{NodeID: 7, ContentVersionID: testVersionID,
 					Path: "/synthetic.md", Name: "synthetic.md", MediaType: "text/markdown", Size: 12,
 					ModifiedAt: "2026-08-28T00:00:00Z", ActiveRenditions: []api.DocumentRenditionIdentity{{

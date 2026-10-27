@@ -4173,6 +4173,8 @@ components:
             - size
             - media_type
           type: string
+        source_present:
+          type: boolean
       required:
         - path_prefix
         - sort
@@ -4671,6 +4673,8 @@ components:
         modified_since:
           format: date-time
           type: string
+        source_present:
+          type: boolean
         tag_id:
           format: uuid
           type: string
@@ -18322,6 +18326,8 @@ components:
           type: string
         modified_since:
           type: string
+        source_present:
+          type: boolean
         tag_id:
           type: string
         truncated:
@@ -20563,6 +20569,8 @@ components:
     WatchedInbox:
       additionalProperties: false
       properties:
+        capture_on_change:
+          type: boolean
         destination:
           type: string
         exclude:
@@ -20586,6 +20594,7 @@ components:
         source:
           type: string
       required:
+        - capture_on_change
         - name
         - source
         - destination
@@ -22585,6 +22594,11 @@ paths:
           name: cursor
           schema:
             type: string
+        - explode: false
+          in: query
+          name: source_present
+          schema:
+            type: boolean
       responses:
         "200":
           content:
@@ -29587,7 +29601,7 @@ paths:
       summary: Run one revision-fenced saved query and retain its receipt
   /api/v1/search:
     get:
-      description: Name matches retain their established BM25 order and appear first; content-only matches follow in their own BM25 order. Every hit names its match source. The query may be empty when a tag or modification-time bound makes the page bounded; such filter-only results are ordered by modification time descending. An optional stable tag ID requires that assignment for every result. An optional parameter-free MIME type matches the current file version with or without parameters. An optional live directory node ID restricts results to its descendants. Optional absolute modification timestamps form an inclusive-since, exclusive-before interval. fuzzy=true appends bounded ASCII one-edit filename/path discovery after ordinary hits and includes a coverage receipt; it requires a nonblank query, and text outside the supplemental syntax reports not_run.
+      description: Name matches retain their established BM25 order and appear first; content-only matches follow in their own BM25 order. Every hit names its match source. The query may be empty when a tag or modification-time bound makes the page bounded; such filter-only results are ordered by modification time descending. An optional stable tag ID requires that assignment for every result. An optional parameter-free MIME type matches the current file version with or without parameters. An optional live directory node ID restricts results to its descendants. Optional absolute modification timestamps form an inclusive-since, exclusive-before interval. source_present=true excludes documents whose watched source is observed gone; push-owned documents remain included. fuzzy=true appends bounded ASCII one-edit filename/path discovery after ordinary hits and includes a coverage receipt; it requires a nonblank query, and text outside the supplemental syntax reports not_run.
       operationId: search
       parameters:
         - explode: false
@@ -29598,6 +29612,11 @@ paths:
         - explode: false
           in: query
           name: fuzzy
+          schema:
+            type: boolean
+        - explode: false
+          in: query
+          name: source_present
           schema:
             type: boolean
         - explode: false

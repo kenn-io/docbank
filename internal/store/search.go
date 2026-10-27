@@ -331,6 +331,7 @@ func boundedExplainedSearchExcerpt(value string) string {
 // descendants of one live directory. ModifiedSince is inclusive and
 // ModifiedBefore is exclusive; both accept absolute RFC3339 timestamps.
 type SearchOptions struct {
+	SourcePresent     bool
 	SelectedBuilds    []SearchSelectedBuild
 	TagID             string
 	MIMEType          string
@@ -2337,6 +2338,9 @@ func searchFilterSQL(opts SearchOptions) (string, []any) {
 		clauses []string
 		args    []any
 	)
+	if opts.SourcePresent {
+		clauses = append(clauses, "AND "+sourcePresentSQL)
+	}
 	if len(opts.ContentVersionIDs) != 0 {
 		encoded, err := json.Marshal(opts.ContentVersionIDs)
 		if err != nil {

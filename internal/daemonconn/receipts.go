@@ -972,6 +972,7 @@ func IsCanonicalUUIDv4(value string) bool {
 // live directory's descendants, and an optional half-open modification-time
 // interval.
 type SearchOptions struct {
+	SourcePresent  bool
 	Fuzzy          bool
 	TagID          string
 	MIMEType       string
@@ -1006,6 +1007,9 @@ func (c *Connection) SearchWithOptions(
 		return out, err
 	}
 	params := apiclient.SearchQuery{}
+	if opts.SourcePresent {
+		params.SourcePresent = new(true)
+	}
 	params.Q = new(query)
 	params.Limit = new(int64(limit))
 	if opts.Fuzzy {
@@ -1031,7 +1035,7 @@ func (c *Connection) SearchWithOptions(
 		return out, err
 	}
 	out = *apiResponse
-	if out.TagID != opts.TagID || out.MIMEType != mimeType ||
+	if out.SourcePresent != opts.SourcePresent || out.TagID != opts.TagID || out.MIMEType != mimeType ||
 		out.UnderNodeID != opts.UnderNodeID || out.ModifiedSince != modifiedSince ||
 		out.ModifiedBefore != modifiedBefore {
 		return api.SearchReport{}, errors.New("search response has inconsistent filter authority")

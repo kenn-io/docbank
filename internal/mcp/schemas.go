@@ -585,6 +585,7 @@ func fenceInputProperties() schema {
 			"type": "array", "items": uuidSchema(), "minItems": 1, "maxItems": 4096, "uniqueItems": true,
 		},
 		"filters": objectSchema(schema{
+			"source_present":  booleanSchema(),
 			"tag_id":          uuidSchema(),
 			"mime_type":       stringSchema(255),
 			"under_node_id":   integerSchema(1, 0),
@@ -619,13 +620,15 @@ func getVaultInfoSchemas() (schema, schema) {
 
 func listDocumentsSchemas() (schema, schema) {
 	input := rootObjectSchema(schema{
-		"path_prefix": schema{"type": "string", "maxLength": maxPathCharacters, "pattern": "^/"},
-		"sort":        enumSchema("path", "name", "modified_at", "size", "media_type"),
-		"direction":   enumSchema("asc", "desc"),
-		"page_size":   integerSchema(1, 250),
-		"cursor":      cursorSchema(),
+		"source_present": booleanSchema(),
+		"path_prefix":    schema{"type": "string", "maxLength": maxPathCharacters, "pattern": "^/"},
+		"sort":           enumSchema("path", "name", "modified_at", "size", "media_type"),
+		"direction":      enumSchema("asc", "desc"),
+		"page_size":      integerSchema(1, 250),
+		"cursor":         cursorSchema(),
 	})
 	output := rootObjectSchema(withPrivateCache(schema{
+		"source_present":  booleanSchema(),
 		"path_prefix":     schema{"type": "string", "maxLength": maxPathCharacters, "pattern": "^/"},
 		"sort":            enumSchema("path", "name", "modified_at", "size", "media_type"),
 		"direction":       enumSchema("asc", "desc"),

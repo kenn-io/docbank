@@ -1,7 +1,7 @@
 ---
 title: Importing documents
 description: Import folders, preview large sources, retry partial imports, and keep changing files up to date.
-last_edited: 2026-10-05
+last_edited: 2026-10-25
 ---
 
 # Importing documents
@@ -441,14 +441,56 @@ pack_interval = "1h"
 pack_max_bytes = 268435456
 ```
 
-The daemon observes a file's filesystem identity, size, and modification time
-for a full settle window before reading it. `minimum_age = "168h"` additionally
-requires seven days since the source's last modification, which is useful when
-an append-heavy session may pause for minutes or hours without being closed.
-The minimum-age gate survives restart. The settle observation does not, so
-after a restart every file must again stay unchanged for a full settle window.
-Set `minimum_age = "0s"` or omit it for ordinary inboxes that need only the
-settle window.
+By default, the daemon observes a file's filesystem identity, size, and
+modification time for a full settle window before reading it. When the
+filesystem supplies a native change timestamp, Docbank also observes that
+timestamp; it catches edits that preserve size and restore modification time.
+If no change timestamp is available, the watcher falls back to size and
+modification time. Any observed metadata change restarts settling and costs one
+more read, but adds no version when the bytes match.
+
+`minimum_age = "168h"` additionally requires seven days since the source's last
+modification, which is useful when an append-heavy session may pause for minutes
+or hours without being closed. The minimum-age gate survives restart. The
+settle observation does not, so in settled mode each file again waits for a
+full window after restart. Set `minimum_age = "0s"` or omit it for ordinary
+inboxes that need only the settle window.
+
+For working notes that you want to archive promptly, opt in on a separate
+watch:
+
+```toml
+[[watch]]
+name = "working-notes"
+source = "~/notes"
+destination = "/archives/notes"
+capture_on_change = true
+settle_time = "30s"
+minimum_age = "0s"
+scan_interval = "1h"
+```
+
+Prompt capture reads the initial readable file immediately and uses filesystem
+notifications to wake the same confined scanner after changes. The settle
+window does not delay prompt reads, including after restart; `minimum_age`
+still applies. Each content Docbank reads and commits becomes a version.
+Notifications can merge writes, and a source can be overwritten before Docbank
+reads it. Slow reading or ingest can miss intermediate saves. Prompt capture
+may also archive readable intermediate content or temporary files unless an
+`exclude` rule skips them; it cannot know an application's logical save
+boundary. It does not guarantee one version per save.
+
+The watcher keeps periodic scans at `scan_interval` even in prompt mode.
+Notification hints never authorize a direct path read. Each pass uses the
+existing root, symlink, mount, exclusion, stable-read, and mutation checks.
+A native notification failure or the 32,768-entry-unit subscription budget
+closes subscriptions, reports degraded polling in the watch job and daemon
+log, and leaves periodic scans running. Each watched directory costs one unit
+plus its immediate entry count, to account conservatively for macOS handles.
+Pending hints hold at most 1,024 paths; overflow asks for a full scan. A
+directory that vanishes during subscription is retried at the next periodic
+scan. Without a usable native change timestamp or notification event, a
+same-size, restored-mtime edit may remain unseen.
 
 Docbank then verifies that the confined source path still names the same
 unchanged object. It never follows entries that are symlinks and never changes
@@ -456,15 +498,34 @@ or deletes source data. A time window cannot prove that a producer formally
 closed a file, so use a conservative age or point the watch at a completed-file
 handoff directory when one is available.
 
-The watch name and slash-separated relative source path form a stable, portable
-provenance identity. The first stable observation creates the file under
-`destination`. Later byte changes append content versions to that same node.
-This remains true if a person or agent moves or renames the Docbank node after
-ingestion. Docbank remembers the last content accepted from the source
-independently of the node's current version, so an unchanged source does not
-overwrite a later edit or revert after daemon restart. Removing the source
-leaves the archived node alone. Renaming a source-relative path creates a new
-identity. Docbank does not treat it as a move.
+The first stable observation creates a file under `destination` and records
+its original source-relative path as immutable provenance. Later byte changes
+append versions to that node. The watch name and current relative path form
+the operational cursor. The daemon can follow a live source rename when a
+complete scan finds one unique native file identity with a valid birth time,
+the old path is absent, and a final confined check confirms both facts.
+It updates the cursor without moving or renaming the archived node. A later
+source edit still appends to that node, even if you independently moved or
+renamed it inside Docbank.
+
+Rename continuity uses the native identity associated with the document through
+successful ingestion at the bound source path. Merely observing a replacement
+does not establish that ownership. If an editor atomically replaces a file and
+renames the replacement before Docbank accepts it at the old path, the new path
+is a new source—even if a complete scan saw it waiting to settle or meet minimum
+age. Once eligible, it creates a separate document if its archive destination is
+vacant; a destination conflict is reported otherwise. The earlier document and
+history remain. Successful acceptance at the old path can establish the new
+object's identity even when unchanged bytes need no new content version.
+
+Docbank remembers the last content accepted from the source independently of
+the node's selected version. An unchanged source does not overwrite a manual
+edit or revert after restart. Deleting a source leaves the archived node and
+history intact. A rename made while the daemon is stopped, a copy, a hard-link
+alias, an ambiguous replacement, or a filesystem without usable native birth
+evidence does not carry rename continuity. A newly seen path then follows the
+ordinary exact-destination rule; a collision is reported instead of silently
+joining documents.
 
 For an agent-session archive, use the source tree itself for the organization
 you want to retain. For example,

@@ -854,7 +854,7 @@ func resolveDocumentSourceFence(ctx context.Context, service *processing.Service
 	}
 	var filters *store.SearchOptions
 	if input.Filters != nil {
-		filters = &store.SearchOptions{TagID: input.Filters.TagID,
+		filters = &store.SearchOptions{SourcePresent: input.Filters.SourcePresent, TagID: input.Filters.TagID,
 			MIMEType: input.Filters.MIMEType, UnderNodeID: input.Filters.UnderNodeID,
 			ModifiedSince: input.Filters.ModifiedSince, ModifiedBefore: input.Filters.ModifiedBefore}
 	}

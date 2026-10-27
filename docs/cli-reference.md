@@ -964,7 +964,7 @@ Selecting a photo member restores its whole group. Companions inside trashed fol
 ## docbank search
 
 ```
-docbank search [<query>...] [--tag <name-or-id>] [--mime-type <type/subtype>] [--under <path-or-id>] [--modified-since <timestamp>] [--modified-before <timestamp>] [--fuzzy] [--limit <n>] [--agent | --json]
+docbank search [<query>...] [--tag <name-or-id>] [--mime-type <type/subtype>] [--under <path-or-id>] [--modified-since <timestamp>] [--modified-before <timestamp>] [--source-present] [--fuzzy] [--limit <n>] [--agent | --json]
 ```
 
 Query words are joined. When a processing profile has a query embedding

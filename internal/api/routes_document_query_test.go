@@ -16,7 +16,34 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/store"
 )
+
+func TestSourcePresentHTTPReads(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, configureProcessingTestService(t))
+	run, err := s.BeginIngest(t.Context(), "watch", "notes")
+	require.NoError(t, err)
+	_, err = s.IngestFileExact(t.Context(), run, s.RootID(), "draft.md", testHash("draft"), 5, "text/plain", "draft.md", "")
+	require.NoError(t, err)
+	require.NoError(t, s.ReconcileWatchSourcePresence(t.Context(), "notes", store.WatchPresenceScan{ListedDirs: []string{""}}, time.Now()))
+	for _, route := range []string{"/api/v1/documents?", "/api/v1/search?q=draft&"} {
+		response, body := get(t, ts, route+"source_present=false", nil)
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+		require.Contains(t, body, "draft.md")
+		require.NotContains(t, body, `"source_present"`)
+		response, body = get(t, ts, route+"source_present=true", nil)
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+		require.NotContains(t, body, "draft.md")
+		require.Contains(t, body, `"source_present":true`, "the response binds the applied filter")
+	}
+	response, body := do(t, ts, http.MethodPost, "/api/v1/processing/source-fences/resolve", nil,
+		map[string]any{"filters": map[string]any{"source_present": true}})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var fence api.DocumentSourceFenceResolution
+	require.NoError(t, json.Unmarshal([]byte(body), &fence))
+	require.Zero(t, fence.ObservedScopeCount)
+}
 
 func TestDocumentCatalogRouteReturnsNormalizedBoundedPages(t *testing.T) {
 	t.Parallel()
@@ -44,6 +71,8 @@ func TestDocumentCatalogRouteReturnsNormalizedBoundedPages(t *testing.T) {
 	require.Len(t, first.Items, 2)
 	assert.Equal(t, "/docs/a.txt", first.Items[0].Path)
 	assert.NotEmpty(t, first.NextCursor)
+	changed, changedBody := get(t, ts, "/api/v1/documents?path_prefix=%2Fdocs&page_size=2&source_present=true&cursor="+url.QueryEscape(first.NextCursor), nil)
+	require.Equal(t, http.StatusUnprocessableEntity, changed.StatusCode, changedBody)
 	assert.Empty(t, first.PreviousCursor)
 
 	resp, body = get(t, ts, "/api/v1/documents?path_prefix=%2Fdocs&page_size=2&cursor="+

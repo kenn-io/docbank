@@ -925,6 +925,7 @@ type SearchReport struct {
 	Hits           []SearchHit   `json:"hits"`
 	Limit          int           `json:"limit"`
 	Truncated      bool          `json:"truncated"`
+	SourcePresent  bool          `json:"source_present,omitzero"`
 	TagID          string        `json:"tag_id,omitzero"`
 	MIMEType       string        `json:"mime_type,omitzero"`
 	UnderNodeID    int64         `json:"under_node_id,omitzero"`
@@ -1295,6 +1296,7 @@ type JobList struct {
 // state for one local watched source. Source is intentionally machine-local;
 // Destination is a path in the Docbank virtual tree.
 type WatchedInbox struct {
+	CaptureOnChange bool     `json:"capture_on_change"`
 	Name            string   `json:"name"`
 	Source          string   `json:"source"`
 	Destination     string   `json:"destination"`

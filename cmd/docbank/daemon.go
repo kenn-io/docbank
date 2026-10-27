@@ -202,6 +202,13 @@ func runServe(ctx context.Context) (retErr error) {
 	if err := validateConfiguredWatchStores(cfg, catalogStores); err != nil {
 		return err
 	}
+	watchNames := make([]string, 0, len(cfg.Watches))
+	for _, watch := range cfg.Watches {
+		watchNames = append(watchNames, watch.Name)
+	}
+	if err := s.DeleteWatchSourceAbsencesExcept(sigCtx, watchNames); err != nil {
+		return err
+	}
 	storeSpecs, err := validateConfiguredCheckoutStartup(sigCtx, cfg, catalogStores, func(ctx context.Context, binding config.StoreBindingConfig) error {
 		return validateCheckoutBinding(ctx, s, binding)
 	})

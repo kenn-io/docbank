@@ -84,3 +84,29 @@ func TestResolveDocumentSummariesRejectsDuplicateIdentity(t *testing.T) {
 		api.DocumentSummaryResolveRequest{Identities: []api.DocumentIdentity{identity, identity}})
 	require.ErrorIs(t, err, store.ErrInvalidDocumentQuery)
 }
+
+func TestSourcePresentReadsRequireDaemonBinding(t *testing.T) {
+	for _, bound := range []bool{false, true} {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+			assert.Equal(t, "true", request.URL.Query().Get("source_present"))
+			w.Header().Set("Content-Type", "application/json")
+			if request.URL.Path == "/api/v1/search" {
+				_ = json.MarshalWrite(w, api.SearchReport{Hits: []api.SearchHit{}, Limit: 10, SourcePresent: bound})
+				return
+			}
+			_ = json.MarshalWrite(w, api.DocumentPage{SourcePresent: bound,
+				PathPrefix: "/", Sort: "path", Direction: "asc", PageSize: 50, Items: []api.DocumentSummary{}})
+		}))
+		c := daemonconn.New(ts.URL, "daemon-key")
+		_, listErr := c.ListDocuments(t.Context(), api.DocumentQuery{SourcePresent: true})
+		_, searchErr := c.SearchWithOptions(t.Context(), "draft", 10, daemonconn.SearchOptions{SourcePresent: true})
+		ts.Close()
+		if bound {
+			require.NoError(t, listErr)
+			require.NoError(t, searchErr)
+		} else {
+			require.ErrorContains(t, listErr, "does not bind its query")
+			require.ErrorContains(t, searchErr, "inconsistent filter authority")
+		}
+	}
+}

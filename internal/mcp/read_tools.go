@@ -327,11 +327,12 @@ func getVaultInfo(ctx context.Context, session documentReadSession, raw []byte) 
 }
 
 type listDocumentsInput struct {
-	PathPrefix string `json:"path_prefix"`
-	Sort       string `json:"sort"`
-	Direction  string `json:"direction"`
-	PageSize   int    `json:"page_size"`
-	Cursor     string `json:"cursor"`
+	SourcePresent bool   `json:"source_present"`
+	PathPrefix    string `json:"path_prefix"`
+	Sort          string `json:"sort"`
+	Direction     string `json:"direction"`
+	PageSize      int    `json:"page_size"`
+	Cursor        string `json:"cursor"`
 }
 
 type listDocumentsOutput struct {
@@ -352,7 +353,7 @@ func listDocuments(
 	}
 	result, err := documentRead(ctx, session, func(ctx context.Context, c documentClient) (response, error) {
 		page, callErr := c.ListDocuments(ctx, api.DocumentQuery{PathPrefix: input.PathPrefix,
-			Sort: input.Sort, Direction: input.Direction, PageSize: input.PageSize, Cursor: input.Cursor})
+			Sort: input.Sort, Direction: input.Direction, PageSize: input.PageSize, Cursor: input.Cursor, SourcePresent: input.SourcePresent})
 		if callErr != nil {
 			return response{}, callErr
 		}

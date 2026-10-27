@@ -2633,11 +2633,12 @@ func (c *Client) ListDocuments(ctx context.Context, options *ListDocumentsReques
 	var err error
 
 	queryEncoding := map[string]runtime.QueryEncoding{
-		"cursor":      {Style: "form", Explode: &[]bool{false}[0]},
-		"direction":   {Style: "form", Explode: &[]bool{false}[0]},
-		"page_size":   {Style: "form", Explode: &[]bool{false}[0]},
-		"path_prefix": {Style: "form", Explode: &[]bool{false}[0]},
-		"sort":        {Style: "form", Explode: &[]bool{false}[0]},
+		"cursor":         {Style: "form", Explode: &[]bool{false}[0]},
+		"direction":      {Style: "form", Explode: &[]bool{false}[0]},
+		"page_size":      {Style: "form", Explode: &[]bool{false}[0]},
+		"path_prefix":    {Style: "form", Explode: &[]bool{false}[0]},
+		"sort":           {Style: "form", Explode: &[]bool{false}[0]},
+		"source_present": {Style: "form", Explode: &[]bool{false}[0]},
 	}
 	reqParams := runtime.RequestOptionsParameters{
 		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/documents",
@@ -12761,6 +12762,7 @@ func (c *Client) Search(ctx context.Context, options *SearchRequestOptions, reqE
 		"modified_before": {Style: "form", Explode: &[]bool{false}[0]},
 		"modified_since":  {Style: "form", Explode: &[]bool{false}[0]},
 		"q":               {Style: "form", Explode: &[]bool{false}[0]},
+		"source_present":  {Style: "form", Explode: &[]bool{false}[0]},
 		"tag_id":          {Style: "form", Explode: &[]bool{false}[0]},
 		"under_node_id":   {Style: "form", Explode: &[]bool{false}[0]},
 	}
@@ -26769,11 +26771,12 @@ type GetDocumentProcessingCoverageQuery struct {
 }
 
 type ListDocumentsQuery struct {
-	PathPrefix *string                      `json:"path_prefix,omitempty"`
-	Sort       *ListDocumentsQuerySort      `json:"sort,omitempty"`
-	Direction  *ListDocumentsQueryDirection `json:"direction,omitempty"`
-	PageSize   *int64                       `json:"page_size,omitempty"`
-	Cursor     *string                      `json:"cursor,omitempty"`
+	PathPrefix    *string                      `json:"path_prefix,omitempty"`
+	Sort          *ListDocumentsQuerySort      `json:"sort,omitempty"`
+	Direction     *ListDocumentsQueryDirection `json:"direction,omitempty"`
+	PageSize      *int64                       `json:"page_size,omitempty"`
+	Cursor        *string                      `json:"cursor,omitempty"`
+	SourcePresent *bool                        `json:"source_present,omitempty"`
 }
 
 type ListDuplicateContentQuery struct {
@@ -27012,6 +27015,7 @@ type ListSavedQueriesQuery struct {
 type SearchQuery struct {
 	Q              *string `json:"q,omitempty"`
 	Fuzzy          *bool   `json:"fuzzy,omitempty"`
+	SourcePresent  *bool   `json:"source_present,omitempty"`
 	Limit          *int64  `json:"limit,omitempty"`
 	TagID          *string `json:"tag_id,omitempty"`
 	MimeType       *string `json:"mime_type,omitempty"`

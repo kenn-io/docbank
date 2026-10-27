@@ -249,6 +249,11 @@ quota. The size bound accommodates paths up to 16 KiB. Tampered, expired,
 reused-for-another-query, or daemon-restart-invalidated cursors fail instead of
 restarting at page one.
 
+`list_documents.source_present` and `search_documents.filters.source_present`
+optionally exclude documents whose watched source is known to be gone.
+Both default to false. Push-owned documents remain included. The filter is
+applied before pagination and source-fence limits.
+
 Before searching, `search_documents` resolves its selector to a source fence:
 the exact set of current, live versions it will search. Filters may select a
 tag UUID, a MIME type of at most 255 characters, a positive ancestor node ID,

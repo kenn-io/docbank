@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-17
+last_edited: 2026-10-25
 title: Configuration
 description: Vault location, data layout, config.toml, and environment variables.
 ---
@@ -167,6 +167,7 @@ destination = "/archives/agents"
 settle_time = "30s"
 minimum_age = "168h" # optional; 7 days since source modification
 scan_interval = "5s"
+capture_on_change = false # opt in to prompt reads for working files
 exclude = [".DS_Store", "cache/"]
 exclude_patterns = [".syncthing.*.tmp", "*.sync-conflict-*"]
 ```
@@ -286,7 +287,10 @@ the complete transport boundary.
 
 ### Watched inboxes
 
-Each `[[watch]]` entry makes the daemon poll one local directory recursively.
+Each `[[watch]]` entry makes the daemon scan one local directory recursively.
+The default settled mode polls at `scan_interval`. Set
+`capture_on_change = true` for prompt reads after filesystem notifications,
+with periodic reconciliation at the same interval.
 `source` must be absolute or begin with `~/`. `destination` is an absolute path
 in Docbank's virtual tree. Symlinks and other non-regular entries inside the
 source are ignored. `exclude` stays a literal name-or-relative-path rule,
@@ -321,20 +325,24 @@ own input.
 
 The daemon checks each file in this order:
 
-1. Observe the same filesystem object, size, and modification time for the
-   complete `settle_time`.
+1. In settled mode, observe the same filesystem identity, size, modification
+   time, and native change timestamp when available for the complete
+   `settle_time`; fall back to size and modification time when it is absent.
+   Prompt mode skips only this delay.
 2. Require the source modification time to satisfy `minimum_age`, if enabled.
 3. Read the file, then check that the source path still names the same object.
    If it changed, do not accept the read as a Docbank node.
 
 For example, `minimum_age = "168h"` requires a file to be at least seven days
-old and unchanged for the complete settle window. The default `"0s"` disables
-this age check. The source timestamp still applies after a daemon restart,
-but the in-memory settle observation starts again. This helps with sessions or
+old and, in settled mode, unchanged for the complete settle window. The default
+`"0s"` disables this age check. The source timestamp still applies after a
+daemon restart, but only settled mode starts a new in-memory settle window. This helps with sessions or
 recordings that pause before they finish.
 
-`scan_interval` controls observation frequency. Zero settle and scan values
-select the defaults shown above. Any other value must be positive.
+`scan_interval` controls periodic observation frequency. Zero settle and scan
+values select the defaults shown above. `capture_on_change` defaults to
+`false`; prompt mode still uses the configured positive `settle_time` value
+for configuration compatibility, but it does not delay admission. Any other value must be positive.
 `minimum_age` must not be negative.
 
 Minimum age is a conservative time policy, not proof that the producing
@@ -344,16 +352,47 @@ producer offers a close/rename handoff.
 
 A file that disappears during observation, or is still held exclusively by a
 Windows producer, is treated as unsettled and retried from a fresh window.
-Other read failures appear as job errors.
+If a retryable observation failure prevents a complete source inventory, the
+daemon defers all mutations for that watch, including changes to readable
+siblings. The watch job stays running with a visible error, and the daemon logs
+the incomplete-inventory block once. A complete scan resumes pending work and
+clears that signal; an active notification failure remains visible.
+A symlink replacing a known source file is skipped without following its target.
+A directory replacing that file uses normal confined traversal and exact-destination
+rules. These conclusive changes do not by themselves defer readable siblings;
+the archived file and durable cursor remain. An occupied old path never authorizes
+a rename join. A symlink hiding previously observed descendants, a known path
+becoming another nonregular file, or a known path crossing a filesystem boundary
+blocks reconciliation and appears in the watch job error until it recovers.
+An incomplete directory inventory still defers all mutations. Other permission or
+native observation failures stop the watch with a job error.
 
 Docbank identifies each watched source by `(name, relative source path)`.
 Keep the watch name when moving its local `source` root. Later content changes
 then add versions to the same Docbank node, even if someone moved that node in
 the virtual tree.
 
-Renaming the relative source path creates a new source identity. Each identity
-owns one Docbank node, and two watched sources cannot claim the same node.
-Deleting a source file does not delete its Docbank node.
+A live, unambiguous source rename can move that watch cursor to the current
+relative path while its original provenance and archived virtual location stay
+unchanged. The daemon needs unique native object and birth evidence from a
+complete scan; see [watched inboxes](usage/importing.md#continuously-ingest-a-local-inbox)
+for the limits. Each current cursor owns one Docbank node. Deleting a source
+file does not delete its Docbank node.
+
+After each complete scan, Docbank records when a cursor's source was first
+observed gone. The deepest directory listed on its path must lack it, so a
+deleted or renamed folder marks every file below it, and a directory or symlink
+at the old filename counts as gone. A folder that still exists but was not
+listed, such as a symlink, skipped subtree, excluded path, or filesystem
+boundary, leaves the files below it unchanged, as do uncertain rename
+candidates and incomplete scans. A regular file's
+return or a successful live rename clears the mark. Trashed documents are
+observed too, without restoring them.
+
+These observations stay local to storage and are not exported in metadata.
+Startup clears marks for watches no longer configured. Search and the document
+catalog can omit marked documents with `source_present`; defaults include
+them, and documents owned by push are always included by this filter.
 
 Docbank separately remembers the last bytes accepted from each source. If a
 person edits or reverts the Docbank node while the source stays unchanged, a
@@ -362,15 +401,29 @@ change at the watched source appends another version.
 
 Watchers run as jobs named `watch:<name>`. `docbank watch list` and
 `GET /api/v1/watches` pair each runner's state with its effective source,
-destination, settle window, minimum source age, scan interval, and exclusion
-policy. `docbank watch list` shows a waiting watcher as `idle` and an ingesting
-watcher as `running`. `EXCLUDES` counts both literal and glob rules. Use
-`--json` when an agent needs the separate `exclude` and `exclude_patterns`
-lists. `docbank jobs` and `GET /api/v1/jobs` remain the all-task view. A source,
-destination, or read failure leaves the named job in the failed state and
-records the reason.
+destination, capture mode (`settled` or `prompt`), settle window,
+minimum source age, scan interval, and exclusion policy. JSON reports
+`capture_on_change` as a boolean. `docbank watch list` shows a waiting watcher
+as `idle` and an ingesting watcher as `running`. `EXCLUDES` counts both literal
+and glob rules. Use `--json` when an agent needs the separate `exclude` and
+`exclude_patterns` lists. `docbank jobs` and `GET /api/v1/jobs` remain the
+all-task view. A permanent source, destination, or read failure leaves the
+named job in the failed state and records the reason.
 Restart the daemon after correcting the problem.
-Per-file successes are written to the daemon log. A configured watch keeps a
+Per-file successes are written to the daemon log. Prompt notifications are
+best effort: coalesced events and slow ingestion can miss intervening writes,
+and readable intermediate content may be captured. The scanner still enforces
+the same root, exclusion, symlink, mount, stable-read, and mutation boundaries.
+Notification hints use at most 1,024 pending paths; overflow requests full
+reconciliation. Native subscriptions use at most 32,768 entry units, one plus
+the current immediate entry count for each admitted directory. That count
+covers handles a macOS backend may open for children, though the OS can fail
+earlier. A backend or budget failure closes all subscriptions and visibly
+degrades to periodic scans until restart; a directory vanished during
+subscription is retried once at the next periodic scan. The watch job and log
+report the failure and any restoration.
+
+A configured watch keeps a
 background daemon alive regardless of `idle_timeout`.
 
 Inspect the source facts recorded for an imported file with

@@ -243,6 +243,9 @@ func TestEveryReleasedSchemaFixtureUpgrades(t *testing.T) {
 				person, err := s.CreatePerson(t.Context(), "Ada", "operator")
 				require.NoError(t, err)
 				currentNode, err := s.NodeByID(t.Context(), node.ID)
+				var absenceCount int
+				require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM watch_source_absences`).Scan(&absenceCount))
+				require.Zero(t, absenceCount)
 				require.NoError(t, err)
 				face, _, err := s.CreatePhotoFace(t.Context(), currentNode.CurrentVersionID, uuid.New().String(), document.FaceBox{Width: 0.2, Height: 0.2}, person.PersonID)
 				require.NoError(t, err)
