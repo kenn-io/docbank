@@ -62,6 +62,17 @@ function start(path = "/", fragment = "", packages?: Promise<Response>) {
   });
   const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
+    if (url === "/api/v1/processing/profiles")
+      return Response.json(
+        ["archive", "default"].map((name) => ({
+          name,
+          fingerprint: "a".repeat(64),
+          rendition: true,
+          embedding_bindings: [],
+          query_embedding_bindings: [],
+          reranking_available: false,
+        })),
+      );
     if (url.includes("/path?")) return Response.json(root);
     if (url.includes("/children?"))
       return Response.json({ directory: root, items: [], total: 0, limit: 1000, offset: 0 });
@@ -178,6 +189,56 @@ it("replaces unavailable Productions with All files after both listings resolve"
   expect(screen.queryByRole("main", { name: "Productions" })).toBeNull();
 });
 
+it("keeps the Photos URL when empty production discovery finishes after leaving Productions", async () => {
+  let finishPackages!: (response: Response) => void;
+  const packages = new Promise<Response>((resolve) => {
+    finishPackages = resolve;
+  });
+  start("/productions", "", packages);
+  await screen.findByRole("main", { name: "Productions" });
+  await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
+  expect(location.pathname).toBe("/photos");
+  await act(() => finishPackages(Response.json({ items: [], limit: 250 })));
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Productions" })).toBeNull());
+  expect(location.pathname).toBe("/photos");
+  expect(screen.getByRole("button", { name: "Photos" }).getAttribute("aria-current")).toBe("page");
+  history.back();
+  await screen.findByText("Empty folder");
+  expect(location.pathname).toBe("/");
+  history.forward();
+  await waitFor(() => expect(location.pathname).toBe("/photos"));
+});
+
+it.each(["Searches", "Productions", "Imports", "Recoverable trash"])(
+  "retains unfinished Advanced input and execution settings across %s navigation",
+  async (page) => {
+    start();
+    await screen.findByText("Empty folder");
+    await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+    await fireEvent.click(
+      await screen.findByRole("combobox", { name: "Processing profile: Default" }),
+    );
+    await fireEvent.click(screen.getByRole("option", { name: "archive" }));
+    await fireEvent.click(screen.getByRole("combobox", { name: "Documents per page: 100" }));
+    await fireEvent.click(screen.getByRole("option", { name: "250" }));
+    await fireEvent.input(screen.getByLabelText("Filters JSON"), {
+      target: { value: '{"size_min":' },
+    });
+    await fireEvent.keyDown(window, { key: "Escape" });
+    await fireEvent.click(screen.getByRole("button", { name: page }));
+    await screen.findByRole("main", { name: page === "Recoverable trash" ? "Trash" : page });
+    expect(screen.queryByRole("dialog", { name: "Filters and sort" })).toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: "All files" }));
+    await screen.findByText("Empty folder");
+    await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+    expect((screen.getByLabelText("Filters JSON") as HTMLTextAreaElement).value).toBe(
+      '{"size_min":',
+    );
+    expect(screen.getByRole("combobox", { name: "Processing profile: archive" })).toBeTruthy();
+    expect(screen.getByRole("combobox", { name: "Documents per page: 250" })).toBeTruthy();
+  },
+);
+
 it.each([
   ["Searches", "Searches"],
   ["Productions", "Productions"],
@@ -222,7 +283,9 @@ it.each(["/searches", "/productions", "/imports", "/trash"])(
     await fireEvent.submit(search.closest("form")!);
     expect(location.pathname).toBe(path);
     expect(push).not.toHaveBeenCalled();
-    expect(fetch.mock.calls.some(([input]) => String(input).includes("/api/v1/search?"))).toBe(false);
+    expect(fetch.mock.calls.some(([input]) => String(input).includes("/api/v1/search?"))).toBe(
+      false,
+    );
   },
 );
 

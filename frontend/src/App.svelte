@@ -521,7 +521,7 @@
   }
   let docsPage = $state(pageAt(location.pathname));
   $effect(() => {
-    if (docsPage === "productions" && productionsDiscovered && !hasProductions) {
+    if (!photoMode && docsPage === "productions" && productionsDiscovered && !hasProductions) {
       photoNavigation.replace(history.state, `/${location.search}${location.hash}`);
       nodeVersionHash = location.hash;
       docsPage = null;
@@ -4148,6 +4148,45 @@
             >Retry lock</Button
           >
         </div>{/if}
+      {#if savedQueryDraft && (queryBarOpen || queryDraftChanged)}
+        {#key queryEditorVersion}
+          <QueryBar
+            open={queryBarOpen && !photoMode && !docsPage}
+            session={webSession}
+            query={savedQueryDraft}
+            showExpression={queryDraftFromDefinition}
+            profile={snapshot.state.options?.profile ?? ""}
+            initialPageSize={snapshot.state.options?.page_size ?? 100}
+            runError={snapshot.state.error?.message}
+            profiles={naturalProfiles}
+            onchange={keepQueryDraft}
+            ondirty={(dirty, settings) => {
+              queryDraftRevision++;
+              queryDraftChanged = queryDraftFromDefinition || dirty;
+              queryDraftSettings = settings;
+            }}
+            onrun={(query, options) => {
+              if (keepsNaturalSearch(query, options)) {
+                void runNaturalSearchSorted(query);
+                return;
+              }
+              querySettingsApplied = true;
+              if (!snapshotActive && activeQuery && naturalSearchMode !== "names" && naturalProfile)
+                filtersReplacedMeaningSearch = true;
+              void submitSnapshot(query, options);
+            }}
+            onsave={() => {
+              queryDraftChanged = true;
+              queryBarOpen = false;
+              openSavedQueries();
+            }}
+            onclose={closeQueryEditor}
+            oncancel={discardQueryDraft}
+            onauthfailure={handleFailure}
+          />
+        {/key}
+      {/if}
+
       {#if photoMode}
         {#if photoEventError}<p role="alert">{photoEventError}</p>{/if}
         {#if hiddenMode && hiddenAccess}<HiddenPhotos
@@ -4364,49 +4403,6 @@
         {#if queryURLError}<p class="error" role="alert">
             Query URL could not be loaded: {queryURLError}
           </p>{/if}
-        {#if savedQueryDraft && (queryBarOpen || queryDraftChanged)}
-          {#key queryEditorVersion}
-            <QueryBar
-              open={queryBarOpen}
-              session={webSession}
-              query={savedQueryDraft}
-              showExpression={queryDraftFromDefinition}
-              profile={snapshot.state.options?.profile ?? ""}
-              initialPageSize={snapshot.state.options?.page_size ?? 100}
-              runError={snapshot.state.error?.message}
-              profiles={naturalProfiles}
-              onchange={keepQueryDraft}
-              ondirty={(dirty, settings) => {
-                queryDraftRevision++;
-                queryDraftChanged = queryDraftFromDefinition || dirty;
-                queryDraftSettings = settings;
-              }}
-              onrun={(query, options) => {
-                if (keepsNaturalSearch(query, options)) {
-                  void runNaturalSearchSorted(query);
-                  return;
-                }
-                querySettingsApplied = true;
-                if (
-                  !snapshotActive &&
-                  activeQuery &&
-                  naturalSearchMode !== "names" &&
-                  naturalProfile
-                )
-                  filtersReplacedMeaningSearch = true;
-                void submitSnapshot(query, options);
-              }}
-              onsave={() => {
-                queryDraftChanged = true;
-                queryBarOpen = false;
-                openSavedQueries();
-              }}
-              onclose={closeQueryEditor}
-              oncancel={discardQueryDraft}
-              onauthfailure={handleFailure}
-            />
-          {/key}
-        {/if}
 
         <main
           class="workspace"
