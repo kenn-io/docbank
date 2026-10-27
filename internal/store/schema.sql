@@ -2861,6 +2861,7 @@ CREATE TABLE IF NOT EXISTS person_splits (
 );
 
 CREATE INDEX IF NOT EXISTS persons_name_folded ON persons(display_name_folded, person_id);
+CREATE INDEX IF NOT EXISTS person_document_assertions_person ON person_document_assertions(person_id, role, action);
 CREATE INDEX IF NOT EXISTS person_identities_person ON person_identities(person_id, kind);
 CREATE INDEX IF NOT EXISTS person_external_person ON person_external_identities(person_id);
 CREATE INDEX IF NOT EXISTS custodian_assignments_person ON custodian_assignments(person_id, scope_kind);
