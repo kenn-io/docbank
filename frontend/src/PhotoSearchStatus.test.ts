@@ -12,11 +12,7 @@ it.each([
   ],
   ["consent_required", false, "Image search needs consent. Showing metadata matches."],
   ["provider_unavailable", false, "Image search is unavailable. Showing metadata matches."],
-  [
-    "similarity_floor_unset",
-    false,
-    "Image search needs min_query_similarity. Showing metadata matches.",
-  ],
+  ["similarity_floor_unset", false, "Image search isn't set up. Showing metadata matches."],
   ["", true, "Some photos aren't indexed yet. Showing available image matches."],
 ] as const)("explains image search status: %s incomplete: %s", (reason, incomplete, message) => {
   render(PhotoSearchStatus, {

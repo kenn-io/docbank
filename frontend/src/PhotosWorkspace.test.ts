@@ -4457,7 +4457,9 @@ it.each(["compare", "face", "cull"])(
     if (operation === "face") {
       await fireEvent.click(screen.getByRole("button", { name: "More photo actions" }));
       expect(
-        screen.getByRole("menuitem", { name: "Move rejects" }).getAttribute("aria-disabled"),
+        screen
+          .getByRole("menuitem", { name: "Trash rejected photos" })
+          .getAttribute("aria-disabled"),
       ).toBe("true");
     }
     photos.dispose();

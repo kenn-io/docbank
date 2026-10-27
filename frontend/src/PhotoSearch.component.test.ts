@@ -314,3 +314,20 @@ it.each([
     photos.dispose();
   },
 );
+
+it.each(["semantic", "hybrid"] as const)("clears %s search into metadata browse", async (mode) => {
+  const photos = new Photos("synthetic", vi.fn());
+  photos.query = { ...photos.query, text: "sunset", mode };
+  const submit = vi.spyOn(photos, "setQuery").mockResolvedValue(undefined);
+  render(PhotoSearch, { photos });
+  await fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
+  expect(submit).toHaveBeenCalledWith(
+    expect.objectContaining({
+      text: "",
+      mode: "lexical",
+      sort: { field: "capture_time", direction: "desc" },
+    }),
+    undefined,
+  );
+  photos.dispose();
+});

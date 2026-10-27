@@ -1,6 +1,7 @@
 package processing
 
 import (
+	"encoding/json/v2"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -59,4 +60,37 @@ func TestPhotoSemanticScopeKeepsBarePickFilter(t *testing.T) {
 			require.Equal(t, tc.scope, scope.Text)
 		})
 	}
+}
+
+func TestDocumentsHybridSearchExcludesImageBindings(t *testing.T) {
+	t.Parallel()
+	x := newPhotoSearchFixture(t)
+	report, err := x.service.Search(t.Context(), SearchRequest{Profile: "images", Query: "unmatchednebula", Mode: "hybrid", Fence: SourceFence{VaultUID: x.f.catalog.VaultID(), ContentVersionIDs: []string{x.f.node.CurrentVersionID}}})
+	require.NoError(t, err)
+	require.Empty(t, report.Results)
+	require.Empty(t, x.service.Profiles()[0].QueryEmbeddingBindings)
+}
+
+func TestDocumentSearchSelectsTextBindingInMixedProfile(t *testing.T) {
+	t.Parallel()
+	f := newPhotoDescriptionFixture(t)
+	x := newImageEmbeddingService(t, f)
+	var base document.ProcessingProfileV1
+	require.NoError(t, json.Unmarshal(x.fake.profile.CanonicalProfile, &base))
+	original := base.Embeddings[1]
+	image := x.binding
+	image.Name = "image"
+	portable := x.portable
+	portable.Embeddings = []document.EmbeddingBindingV1{image, original}
+	service, err := NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(), Profiles: map[string]ProfileConfig{"mixed": {Profile: portable, EmbeddingProviders: map[string]document.EmbeddingProvider{
+		image.Name:    &embeddingWorkerProvider{runtime: x.fake.runtime, binding: image.Name, descriptor: x.descriptor},
+		original.Name: &embeddingWorkerProvider{runtime: x.fake.runtime, binding: original.Name, descriptor: x.fake.descriptor},
+	}}}})
+	require.NoError(t, err)
+	require.Equal(t, []string{original.Name}, service.Profiles()[0].QueryEmbeddingBindings)
+	prepared, err := service.prepareSearch(SearchRequest{Query: "synthetic", Mode: "hybrid"}, service.profiles["mixed"])
+	require.NoError(t, err)
+	require.Equal(t, original.Name, prepared.bindingID)
+	err = service.ValidateSearch(t.Context(), SearchRequest{Profile: "mixed", Query: "synthetic", Mode: "hybrid", BindingID: image.Name})
+	require.ErrorIs(t, err, store.ErrNotFound)
 }

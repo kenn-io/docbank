@@ -468,7 +468,7 @@ func (s *Store) discoverImageEmbeddingJobs(ctx context.Context, request Embeddin
 // lacks a head or job for the binding and no derivative purge suppresses it.
 func imageEmbeddingMissingTx(ctx context.Context, tx *sql.Tx, version, profile string, binding document.EmbeddingBindingV1, recipe string) (bool, error) {
 	var missing bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM visual_preview_generations vp WHERE vp.content_version_id=? AND vp.recipe_fingerprint=? AND vp.state='ready' AND `+currentImageEmbeddingSQL("vp.content_version_id", "vp.checksum")+`
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM visual_preview_generations vp WHERE vp.content_version_id=? AND vp.recipe_fingerprint=? AND vp.state='ready'
                   AND NOT EXISTS(SELECT 1 FROM embedding_heads eh JOIN embedding_sets es ON es.embedding_set_id=eh.embedding_set_id JOIN embedding_input_generations eig ON eig.generation_id=es.input_generation_id WHERE eh.content_version_id=vp.content_version_id AND eh.profile_fingerprint=? AND eh.binding_id=? AND eh.input_kind='image' AND eig.evidence_fingerprint=vp.checksum)
                   AND NOT EXISTS(SELECT 1 FROM embedding_jobs j JOIN embedding_input_generations eig ON eig.generation_id=j.generation_id WHERE j.content_version_id=vp.content_version_id AND j.profile_fingerprint=? AND j.binding_id=? AND j.input_kind='image' AND eig.evidence_fingerprint=vp.checksum))`, version, recipe, profile, binding.Name, profile, binding.Name).Scan(&missing); err != nil || !missing {
 		return false, err

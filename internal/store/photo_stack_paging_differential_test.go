@@ -113,3 +113,111 @@ func TestPhotoStackIndexedOversizedRunKeepsIndividualPhotos(t *testing.T) {
 		require.ElementsMatch(t, append(slices.Clone(ids), coverage.ID), slices.Concat(items...))
 	}
 }
+
+func TestReviewNoModelBurstCrossesClockHour(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	run, err := s.BeginIngest(t.Context(), "cli", "synthetic clock boundary")
+	require.NoError(t, err)
+	var ids []string
+	stamp := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for i := range 502 {
+		switch i {
+		case 179:
+			stamp = stamp.Add(19 * time.Second)
+		case 180:
+			stamp = stamp.Add(-19 * time.Second)
+		}
+		ids = append(ids, stackPhoto(t, s, run, fmt.Sprintf("/clock/%d.jpg", i), stamp.Format(time.RFC3339), document.SourceMetadataPrecisionSecond))
+		stamp = stamp.Add(20 * time.Second)
+	}
+	want := [][]string{ids[179:181]}
+	t.Run("Cull", func(t *testing.T) {
+		groups, unavailable, _, _, err := s.PhotoStackGroups(t.Context(), ids, false, "")
+		require.NoError(t, err)
+		require.Empty(t, unavailable)
+		require.Equal(t, want, groups)
+	})
+	for _, direction := range []string{"asc", "desc"} {
+		t.Run(direction, func(t *testing.T) {
+			request := captureRequest(t, direction)
+			request.PageSize = 250
+			_, stacks := stackPages(t, s, request)
+			require.Equal(t, want, stacks)
+		})
+	}
+}
+
+func TestReviewOversizedNoModelBurstStaysIndividual(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	run, err := s.BeginIngest(t.Context(), "cli", "synthetic oversized clock burst")
+	require.NoError(t, err)
+	var ids []string
+	stamp := time.Date(2026, 1, 1, 0, 55, 0, 0, time.UTC)
+	for i := range 502 {
+		ids = append(ids, stackPhoto(t, s, run, fmt.Sprintf("/oversized-clock/%d.jpg", i), stamp.Add(time.Duration(i)*time.Second).Format(time.RFC3339), document.SourceMetadataPrecisionSecond))
+	}
+	t.Run("Cull", func(t *testing.T) {
+		groups, unavailable, _, _, err := s.PhotoStackGroups(t.Context(), ids, false, "")
+		require.NoError(t, err)
+		require.Empty(t, unavailable)
+		require.Empty(t, groups)
+	})
+	for _, direction := range []string{"asc", "desc"} {
+		t.Run(direction, func(t *testing.T) {
+			request := captureRequest(t, direction)
+			request.PageSize = 250
+			items, stacks := stackPages(t, s, request)
+			require.Empty(t, stacks)
+			require.ElementsMatch(t, ids, slices.Concat(items...))
+		})
+	}
+}
+
+func TestPhotoStackIndexedBurstCrossesClockHour(t *testing.T) {
+	t.Parallel()
+	f := newImageEmbeddingCatalogFixture(t)
+	run, err := f.s.BeginIngest(t.Context(), "cli", "synthetic indexed clock boundary")
+	require.NoError(t, err)
+	index := newCursorIndexFixture(f)
+	var ids []string
+	for i := range 502 {
+		stamp := time.Date(2026, 1, 1, 0, 0, i*20+20, 0, time.UTC)
+		switch i {
+		case 179:
+			stamp = stamp.Add(-time.Second)
+		case 180:
+			stamp = stamp.Add(-20 * time.Second)
+		}
+		id := stackPhoto(t, f.s, run, fmt.Sprintf("/indexed-clock/%d.jpg", i), stamp.Format(time.RFC3339), document.SourceMetadataPrecisionSecond)
+		ids = append(ids, id)
+		index.publish(t, id, []float64{1, 0, 0, 0, 0, 0, 0, 0})
+	}
+	index.generation(t, "indexed-clock")
+	groups, unavailable, _, _, err := f.s.PhotoStackGroups(t.Context(), ids, false, "")
+	require.NoError(t, err)
+	require.Empty(t, unavailable)
+	paired := false
+	for _, group := range groups {
+		if slices.Contains(group, ids[179]) {
+			require.Contains(t, group, ids[180])
+			paired = true
+		}
+	}
+	require.True(t, paired)
+	for _, direction := range []string{"asc", "desc"} {
+		for _, size := range []int{1, 250} {
+			t.Run(fmt.Sprintf("%s/%d", direction, size), func(t *testing.T) {
+				request := captureRequest(t, direction)
+				request.PageSize = size
+				_, stacks := stackPages(t, f.s, request)
+				want := slices.Clone(groups)
+				if direction == "desc" {
+					slices.Reverse(want)
+				}
+				require.Equal(t, want, stacks)
+			})
+		}
+	}
+}

@@ -984,3 +984,22 @@ func TestPhotoStackGenerationStaysLocalAfterConsentRevoked(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &grouped))
 	require.Equal(t, [][]string{page.Stacks[0].AssetIDs}, grouped.Groups)
 }
+
+func TestClearedMeaningSearchMatchesLexicalBrowse(t *testing.T) {
+	t.Parallel()
+	ts, catalog := newTestServer(t, nil)
+	_, err := catalog.CreateFile(t.Context(), catalog.RootID(), "synthetic.jpg", testHash("cleared-search"), 20, "image/jpeg")
+	require.NoError(t, err)
+	var expected api.PhotoBrowsePage
+	for _, mode := range []string{"lexical", "semantic", "hybrid"} {
+		response, body := do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, api.PhotoBrowseRequest{Query: api.QueryPayload(fmt.Sprintf(`{"mode":%q,"text":"","sort":{"field":"capture_time","direction":"desc"}}`, mode)), PageSize: 10, Stacks: true})
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+		var page api.PhotoBrowsePage
+		require.NoError(t, json.Unmarshal([]byte(body), &page))
+		if mode == "lexical" {
+			expected = page
+		} else {
+			require.Equal(t, expected, page)
+		}
+	}
+}

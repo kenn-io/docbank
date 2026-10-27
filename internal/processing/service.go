@@ -675,7 +675,7 @@ func (service *Service) Profiles() []ProfileSummary {
 		queryBindings := make([]string, 0, len(profile.portable.Embeddings))
 		for _, binding := range profile.portable.Embeddings {
 			bindings = append(bindings, binding.Name)
-			if provider, ok := profile.embedders[binding.Name]; ok && provider.Descriptor().SupportsTextQuery {
+			if provider, ok := profile.embedders[binding.Name]; ok && binding.InputKind != document.EmbeddingInputImage && provider.Descriptor().SupportsTextQuery {
 				queryBindings = append(queryBindings, binding.Name)
 			}
 		}
@@ -1547,8 +1547,8 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 	if request.MediaSources != nil {
 		return service.searchMediaSources(ctx, request, ids, prepared)
 	}
-	if len(profile.portable.Embeddings) != 0 && (prepared.mode == retrieval.ModeSemantic || prepared.mode == retrieval.ModeHybrid) {
-		binding, err := selectEmbeddingBinding(profile.portable, prepared.bindingID)
+	if prepared.authorization.ProviderID != "" && (prepared.mode == retrieval.ModeSemantic || prepared.mode == retrieval.ModeHybrid) {
+		binding, err := selectDocumentSearchBinding(profile.portable, prepared.bindingID)
 		if err != nil {
 			return retrieval.Report{}, err
 		}
@@ -1630,16 +1630,20 @@ func (service *Service) prepareSearch(
 		MediaEvidence: service.mediaEvidence}
 	var authorization document.EmbeddingAuthorization
 	if len(profile.portable.Embeddings) != 0 {
-		binding, bindingErr := selectEmbeddingBinding(profile.portable, request.BindingID)
-		if bindingErr != nil {
+		binding, bindingErr := selectDocumentSearchBinding(profile.portable, request.BindingID)
+		if errors.Is(bindingErr, store.ErrNotFound) && request.BindingID == "" && mode != retrieval.ModeSemantic {
+			mode = retrieval.ModeLexical
+		} else if bindingErr != nil {
 			return preparedSearch{}, bindingErr
 		}
-		request.BindingID = binding.Name
-		searcherConfig.Encoders = service.embeddings
-		authorization = document.EmbeddingAuthorization{ProviderID: binding.Descriptor.ID,
-			DescriptorFingerprint: binding.Descriptor.Fingerprint,
-			PolicyFingerprint:     profile.embedders[binding.Name].Descriptor().PolicyFingerprint,
-			MaxBatchItems:         1, MaxInputBytes: binding.MaxInputBytes, MaxResponseBytes: binding.MaxResponseBytes}
+		if bindingErr == nil {
+			request.BindingID = binding.Name
+			searcherConfig.Encoders = service.embeddings
+			authorization = document.EmbeddingAuthorization{ProviderID: binding.Descriptor.ID,
+				DescriptorFingerprint: binding.Descriptor.Fingerprint,
+				PolicyFingerprint:     profile.embedders[binding.Name].Descriptor().PolicyFingerprint,
+				MaxBatchItems:         1, MaxInputBytes: binding.MaxInputBytes, MaxResponseBytes: binding.MaxResponseBytes}
+		}
 	}
 	var rerankingAuth *rerankingAuthorizer
 	if request.Rerank {
@@ -1967,6 +1971,17 @@ func selectEmbeddingBinding(profile document.ProcessingProfileV1,
 	}
 	for _, binding := range profile.Embeddings {
 		if binding.Name == name {
+			return binding, nil
+		}
+	}
+	return document.EmbeddingBindingV1{}, fmt.Errorf("embedding binding %q: %w", name, store.ErrNotFound)
+}
+
+func selectDocumentSearchBinding(profile document.ProcessingProfileV1,
+	name string,
+) (document.EmbeddingBindingV1, error) {
+	for _, binding := range profile.Embeddings {
+		if binding.InputKind != document.EmbeddingInputImage && (name == "" || binding.Name == name) {
 			return binding, nil
 		}
 	}

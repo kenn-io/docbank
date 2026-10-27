@@ -77,6 +77,9 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 		if err != nil {
 			return nil, NewError(http.StatusUnprocessableEntity, "invalid_query", err.Error())
 		}
+		if value.Mode != query.ModeLexical && strings.TrimSpace(value.Text) == "" {
+			value.Mode = query.ModeLexical
+		}
 		if value.Mode != query.ModeLexical {
 			value.Sort = query.Sort{Field: "relevance", Direction: "desc"}
 		}

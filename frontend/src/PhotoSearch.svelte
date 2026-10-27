@@ -68,7 +68,11 @@
     placeholder={syntax === "advanced" ? "rating:5 pick label:red" : "Search photos"}
     bind:value={search}
     onclear={() => {
-      if (photos.query.text && !submit()) search = photos.query.text;
+      mode = "lexical";
+      if (photos.query.text && !submit()) {
+        search = photos.query.text;
+        mode = photos.query.mode;
+      }
     }}
   />
 </form>
