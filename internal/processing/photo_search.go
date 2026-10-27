@@ -99,7 +99,7 @@ func (service *Service) searchPhotoBinding(ctx context.Context, request store.Ph
 	for _, hit := range report.Results {
 		assetID, found := assetIDs[hit.Document.NodeID]
 		if !found {
-			return result, store.ErrNotFound
+			continue
 		}
 		result.Members = append(result.Members, store.SnapshotMember{AssetID: assetID, NodeID: hit.Document.NodeID, ContentVersionID: hit.Document.ContentVersionID})
 	}

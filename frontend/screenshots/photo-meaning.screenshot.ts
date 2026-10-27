@@ -26,7 +26,7 @@ test("Meaning search explains metadata fallback and captures it for Cull", async
     );
     await page.getByRole("searchbox", { name: "Search photos" }).press("Enter");
     const body = await (await response).json();
-    expect(body.snapshot_id).toBeUndefined();
+    expect(body.snapshot_id).toEqual(expect.any(String));
     expect(body.actual_mode).toBe("lexical");
     await expect(
       page.getByText("Image search is unavailable. Showing metadata matches."),
@@ -40,12 +40,13 @@ test("Meaning search explains metadata fallback and captures it for Cull", async
       animations: "disabled",
     });
     const cull = page.waitForRequest(
-      (request) => request.url().includes("/workspace/queries") && request.method() === "POST",
+      (request) => request.url().includes("/photos/assets/flags") && request.method() === "POST",
     );
     await page.getByRole("button", { name: "Cull", exact: true }).click();
     const capture = (await cull).postDataJSON();
-    expect(capture.snapshot_id).toBeUndefined();
-    expect(capture.query).toMatchObject({ mode: "lexical", text: "Synthetic" });
+    expect(capture.asset_ids).toEqual(
+      body.items.map((item: { asset_id: string }) => item.asset_id),
+    );
     await expect(page.getByRole("dialog", { name: "Cull photos", exact: true })).toBeVisible();
     await page.screenshot({
       path: path.join(output!, "photo-meaning-cull.png"),

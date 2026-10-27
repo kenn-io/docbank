@@ -4175,6 +4175,36 @@ it("names the photo being edited in the metadata panel header", async () => {
   expect(within(panel).queryByRole("heading", { name: "Metadata" })).toBeNull();
   photos.dispose();
 });
+it("starts Cull with captured fallback IDs", async () => {
+  vi.stubGlobal("indexedDB", new IDBFactory());
+  vi.stubGlobal("IDBKeyRange", IDBKeyRange);
+  vi.spyOn(api, "getPhotoSettings").mockResolvedValue({ revision: 1, burst_gap_seconds: 2 });
+  vi.spyOn(PhotoCull.prototype, "probe").mockResolvedValue();
+  const start = vi.spyOn(PhotoCull.prototype, "start").mockResolvedValue(false);
+  const photos = new Photos("scoped", vi.fn(), false, {
+    ...photoQuery,
+    mode: "semantic",
+    text: "sunset",
+  });
+  photos.items = [photo(1)];
+  photos.total = 1;
+  photos.started = true;
+  photos.snapshotID = "fallback-snapshot";
+  photos.fallbackReason = "provider_unavailable";
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  render(PhotosWorkspace, { photos, cache, vaultID: "vault" });
+  await fireEvent.click(screen.getByRole("button", { name: "Cull" }));
+  await waitFor(() =>
+    expect(start).toHaveBeenCalledWith(
+      expect.objectContaining({ mode: "lexical", text: "sunset" }),
+      expect.any(Function),
+      ["photo-1"],
+    ),
+  );
+  photos.dispose();
+  await cache.dispose();
+});
+
 it("forwards the accepted photo action scope to export", async () => {
   vi.stubGlobal(
     "ResizeObserver",

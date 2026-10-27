@@ -181,9 +181,7 @@
         : await review.start(
             photos.fallbackReason ? { ...photos.query, mode: "lexical" } : photos.query,
             (message) => cullConfirmation!.confirm(message, "Replace"),
-            photos.query.mode !== "lexical" && !photos.fallbackReason
-              ? (await photos.actionScope())?.asset_ids
-              : undefined,
+            photos.snapshotID ? (await photos.actionScope())?.asset_ids : undefined,
           );
       if (captured && review === cull && !culling && !comparing && editor.canChangeTarget())
         photos.culling = true;

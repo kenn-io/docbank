@@ -582,8 +582,7 @@ export class Photos {
     if (!this.authored.inspectedID && this.authored.targets.length)
       return { asset_ids: [...this.selectedIDs] };
     if (this.allResults) {
-      if (this.query.mode !== "lexical" && !this.fallbackReason)
-        return { asset_ids: [...this.selection.selectedIDs] };
+      if (this.snapshotID) return { asset_ids: [...this.selection.selectedIDs] };
       return { query: { ...structuredClone(this.query), mode: "lexical" } };
     }
     return { asset_ids: [...this.selection.selectedIDs] };
@@ -1841,19 +1840,19 @@ export class Photos {
     this.pruneTrashTargets();
   }
   actionScope(selected = false) {
-    const ranked = this.query.mode !== "lexical" && !this.fallbackReason;
+    const frozen = !!this.snapshotID;
     const scope = () => {
       const selection = {
-        query: structuredClone(ranked ? photoQuery : { ...this.query, mode: "lexical" as const }),
+        query: structuredClone(frozen ? photoQuery : { ...this.query, mode: "lexical" as const }),
         asset_ids: selected
           ? (this.scope().asset_ids ?? [])
-          : ranked
+          : frozen
             ? this.items.map((item) => item.asset_id)
             : [],
       };
-      return ranked && !selection.asset_ids.length ? undefined : selection;
+      return frozen && !selection.asset_ids.length ? undefined : selection;
     };
-    if (ranked && !selected && this.cursor)
+    if (frozen && !selected && this.cursor)
       return this.loadRankedResults().then((loaded) => (loaded ? scope() : undefined));
     return scope();
   }
@@ -1868,7 +1867,7 @@ export class Photos {
   }
   async selectAllResults() {
     if (!this.authored.canChangeTarget()) return;
-    if (this.query.mode !== "lexical" && !this.fallbackReason) {
+    if (this.snapshotID) {
       if (!(await this.loadRankedResults())) return;
     }
     this.selectLoaded();

@@ -3507,35 +3507,56 @@ it.each(["semantic", "hybrid"] as const)(
   },
 );
 
-it("selects every visual result from the accepted snapshot", async () => {
-  const photos = new Photos("scoped", vi.fn(), false, {
-    ...photoQuery,
-    mode: "semantic",
-    text: "sunset",
-    sort: { field: "relevance", direction: "desc" },
-  });
-  photos.items = [photo(1)];
-  photos.total = 2;
-  photos.started = true;
-  photos.cursor = "page-two";
-  photos.snapshotID = "image-snapshot";
-  vi.spyOn(api, "listPhotoAssets").mockResolvedValue({
-    items: [photo(2)],
-    total: 2,
-    facets: [],
-    relevance_available: true,
-    snapshot_id: "image-snapshot",
-  });
-  photos.selectLoaded();
-  expect(photos.scope()).toEqual({ asset_ids: ["photo-1"] });
-  await photos.selectAllResults();
-  expect(photos.scope()).toEqual({ asset_ids: [photo(1).asset_id, photo(2).asset_id] });
-  expect(api.listPhotoAssets).toHaveBeenCalledWith(
-    expect.objectContaining({ cursor: "page-two", snapshot_id: "image-snapshot" }),
-    expect.anything(),
-  );
-  photos.dispose();
-});
+it.each([
+  ["", false],
+  ["provider_unavailable", false],
+  ["provider_unavailable", true],
+] as const)(
+  "selects every snapshot result with fallback=%s exportFirst=%s",
+  async (fallback, exportFirst) => {
+    const photos = new Photos("scoped", vi.fn(), false, {
+      ...photoQuery,
+      mode: "semantic",
+      text: "sunset",
+      sort: { field: "relevance", direction: "desc" },
+    });
+    photos.items = [photo(1)];
+    photos.total = 2;
+    photos.started = true;
+    photos.cursor = "page-two";
+    photos.snapshotID = "image-snapshot";
+    photos.fallbackReason = fallback;
+    vi.spyOn(api, "listPhotoAssets").mockResolvedValue({
+      items: [photo(2)],
+      total: 2,
+      facets: [],
+      relevance_available: true,
+      snapshot_id: "image-snapshot",
+    });
+    photos.selectLoaded();
+    expect(photos.scope()).toEqual({ asset_ids: ["photo-1"] });
+    expect(await photos.actionScope(true)).toEqual({ query: photoQuery, asset_ids: ["photo-1"] });
+    if (exportFirst) {
+      expect(await photos.actionScope()).toEqual({
+        query: photoQuery,
+        asset_ids: ["photo-1", "photo-2"],
+      });
+    }
+    await photos.selectAllResults();
+    expect(photos.scope()).toEqual({ asset_ids: [photo(1).asset_id, photo(2).asset_id] });
+    for (const selected of [false, true]) {
+      expect(await photos.actionScope(selected)).toEqual({
+        query: photoQuery,
+        asset_ids: ["photo-1", "photo-2"],
+      });
+    }
+    expect(api.listPhotoAssets).toHaveBeenCalledWith(
+      expect.objectContaining({ cursor: "page-two", snapshot_id: "image-snapshot" }),
+      expect.anything(),
+    );
+    photos.dispose();
+  },
+);
 
 it.each(["reload", "revalidateAuthored"] as const)(
   "keeps ranked Map membership during %s when retrieval is unavailable",

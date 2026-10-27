@@ -359,7 +359,7 @@ func strippedPhotoPreview(ctx context.Context, catalog *store.Store, blobs *blob
 	}
 	stripped, err := stripPhotoPreview(ctx, raw)
 	if err != nil {
-		return nil, view.Generation.Checksum, "", err
+		return nil, view.Generation.Checksum, "preview_unavailable", err
 	}
 	return stripped, view.Generation.Checksum, "", nil
 }
