@@ -637,7 +637,7 @@ embedding service, it also prepares the document for search by meaning.
 Configure a [processing profile](../configuration.md) first. A new vault has
 none.
 
-1. Select a document and choose **Extract text** beside its name. This action appears when a configured profile can extract text from the file.
+1. Select a document and choose **Extract text** beside its name. This action appears when a configured profile includes text extraction. The processing dialog checks which profiles accept the file. Profiles that only prepare search vectors show **Index for search** instead.
 2. Read where the file goes. A local profile says it runs on this computer;
    a network or hosted profile names the service and its address, and says
    whether the file name goes too. **Details** lists the exact plan, service,
@@ -674,7 +674,7 @@ review and consent. See [Find similar documents](document-processing.md#find-sim
 
 ## Download verified content
 
-The inspector puts the preview above details, tags, and **History**. Drag the inspector's left edge, or focus it and press the arrow keys, to resize it. Double-click the edge to reset. Your browser remembers the width. Click a path, version ID, SHA-256, or ID to copy its full value. **Download** saves the selected version. **Extract text** appears beside it when a configured profile fits the file. The **⋯** menu holds **Move to trash**. Folders have an **Open** button.
+The inspector puts the preview above details, tags, and **History**. Drag the inspector's left edge, or focus it and press the arrow keys, to resize it. Double-click the edge to reset. Your browser remembers the width. Click a path, version ID, SHA-256, or ID to copy its full value. **Download** saves the selected version. **Extract text** appears beside it when a configured profile includes text extraction; otherwise, configured profiles offer **Index for search**. The processing dialog checks which profiles accept the file. Files have a direct **Move to trash** button. Folders have an **Open** button, and unprotected folders have **Move to trash** in **⋯**.
 
 Protected items show a **Protected** chip that opens **Audit history**. For an unprotected folder, choose **Protect permanently…** in **⋯** to copy its command-line preview command. The command previews retained history and vault-wide metadata before you explicitly enable irreversible protection.
 
@@ -714,7 +714,7 @@ attachment, build, artifact, length, and digest before decoding the text. A
 check icon shows verification. **Find** searches within the displayed text
 and shows its matches in place of query and saved highlights;
 match counts and arrows appear when there is a query and matches, respectively.
-The Text tab stays hidden when it would repeat a plain-text original in Preview.
+The **Text** tab remains available for plain-text files, even when **Preview** shows the same text.
 Processing failures, verified-empty text, and unavailable historical renditions
 remain distinct. Eligible original UTF-8 text is a fallback for that same version
 when no readable rendition is available. Without a processing profile, **Set up**

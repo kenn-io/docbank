@@ -18,10 +18,13 @@
         class="card kit-popover-card"
         class:danger={toast.tone === "danger"}
         role={toast.tone === "danger" ? "alert" : "status"}
-        onmouseenter={() => holdToast(toast.id)}
-        onmouseleave={() => releaseToast(toast.id)}
-        onfocusin={() => holdToast(toast.id)}
-        onfocusout={() => releaseToast(toast.id)}
+        onmouseenter={() => holdToast(toast.id, "pointer")}
+        onmouseleave={() => releaseToast(toast.id, "pointer")}
+        onfocusin={() => holdToast(toast.id, "focus")}
+        onfocusout={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null))
+            releaseToast(toast.id, "focus");
+        }}
       >
         <span class="message">{toast.message}</span>
         {#if toast.action}

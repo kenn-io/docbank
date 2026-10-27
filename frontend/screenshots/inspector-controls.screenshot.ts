@@ -70,7 +70,7 @@ test("keeps inspector tabs stable and tag removal accessible", async ({ page }) 
       "none",
     );
     await page.screenshot({ path: path.join(output!, "imports-mouse.png") });
-    await imports.getByRole("button", { name: "Close import history", exact: true }).click();
+    await imports.getByRole("button", { name: "Close Imports", exact: true }).click();
 
     const preview = inspector.locator(".original-preview pre");
     await expect(preview).toHaveText("Synthetic document for inspector controls.");

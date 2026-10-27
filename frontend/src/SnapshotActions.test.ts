@@ -99,6 +99,14 @@ it("states what a whole-result change does before continuing", async () => {
   });
 });
 
+it("review_fresh_tag_run_has_no_recovery", () => {
+  render(SnapshotActions, props());
+
+  expect(screen.getByRole("button", { name: "Continue" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Resume from file…" })).toBeNull();
+  expect(screen.queryByLabelText("Resume from a recovery file")).toBeNull();
+});
+
 it("tags the selection captured at open and reports what changed", async () => {
   const sent: BatchTagRequest[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
@@ -182,7 +190,9 @@ it("refreshes observations and locks an unknown selection result", async () => {
 it("reads a recovery file without starting an action", async () => {
   const onstart = vi.fn();
   const onimport = vi.fn();
-  render(SnapshotActions, props({ onstart, onimport }));
+  render(SnapshotActions, props({ interrupted: true, onstart, onimport }));
+
+  expect(screen.getByRole("button", { name: "Resume from file…" })).toBeTruthy();
 
   const file = new File([new Uint8Array([1, 2, 3])], "action.docbank-action.json", {
     type: "application/json",
@@ -200,7 +210,7 @@ it("discards a recovery file whose read finishes after the dialog closes", async
   const onimport = vi.fn();
   const view = render(
     SnapshotActions,
-    props({ count: 1, onimport, onclose: () => view.unmount() }),
+    props({ count: 1, interrupted: true, onimport, onclose: () => view.unmount() }),
   );
   let release!: (bytes: ArrayBuffer) => void;
   const reading = new Promise<ArrayBuffer>((resolve) => {
@@ -221,7 +231,7 @@ it("discards a recovery file whose read finishes after the dialog closes", async
 
 it("rejects an oversized recovery file before reading it", async () => {
   const onimport = vi.fn();
-  render(SnapshotActions, props({ count: 1, onimport }));
+  render(SnapshotActions, props({ count: 1, interrupted: true, onimport }));
   const file = new File(["{}"], "oversized-action.json", { type: "application/json" });
   Object.defineProperty(file, "size", { value: ACTION_MAX_BYTES + 1 });
   const read = vi.spyOn(file, "arrayBuffer");
