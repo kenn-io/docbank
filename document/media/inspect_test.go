@@ -2696,6 +2696,23 @@ func TestCountPDFPages(t *testing.T) {
 	}
 }
 
+func TestCountPDFPagesCompressedOwnerPassword(t *testing.T) {
+	plain := syntheticPDFPages(1500, "compressed page count")
+	var packed, encrypted, decrypted bytes.Buffer
+	require.NoError(t, api.Optimize(bytes.NewReader(plain), &packed, model.NewDefaultConfiguration()))
+	require.NoError(t, api.Encrypt(bytes.NewReader(packed.Bytes()), &encrypted, model.NewAESConfiguration("", "owner", 128)))
+	require.Contains(t, encrypted.String(), "/ObjStm")
+	configuration := model.NewDefaultConfiguration()
+	configuration.WriteObjectStream = false
+	configuration.WriteXRefStream = false
+	require.NoError(t, api.Decrypt(bytes.NewReader(encrypted.Bytes()), &decrypted, configuration))
+	require.Greater(t, decrypted.Len(), encrypted.Len())
+
+	pages, err := media.CountPDFPages(encrypted.Bytes())
+	require.NoError(t, err)
+	require.Equal(t, int64(1500), pages)
+}
+
 func TestInspectPasswordProtectedPDF(t *testing.T) {
 	source, err := mediatest.EncryptedPDF("open", "owner", 128)
 	require.NoError(t, err)

@@ -493,12 +493,22 @@ func InspectPDF(data []byte, limits PDFLimits) (PDFMeasurements, error) {
 // CountPDFPages returns the authoritative page-tree count without decoding
 // unrelated content streams. Parsing remains bounded by the source size.
 func CountPDFPages(data []byte) (int64, error) {
+	return countPDFPages(data, false)
+}
+
+// CountPDFPagesWithEmptyPassword also counts encrypted PDFs that open with an
+// empty user password. It uses the same parsing limits as CountPDFPages.
+func CountPDFPagesWithEmptyPassword(data []byte) (int64, error) {
+	return countPDFPages(data, true)
+}
+
+func countPDFPages(data []byte, allowEmptyPassword bool) (int64, error) {
 	sourceBytes := int64(len(data))
-	context, err := validatePDFObjectGraph(data, PDFLimits{
+	context, err := validatePDFObjectGraphWithEmptyPassword(data, PDFLimits{
 		MaxExpandedBytes: sourceBytes,
 		MaxEntryBytes:    sourceBytes,
 		MaxEntries:       sourceBytes,
-	})
+	}, allowEmptyPassword)
 	if err != nil {
 		return 0, err
 	}
@@ -626,6 +636,10 @@ func pdfConfiguration(sourceBytes int, limits PDFLimits) *model.Configuration {
 }
 
 func validatePDFObjectGraph(data []byte, limits PDFLimits) (*model.Context, error) {
+	return validatePDFObjectGraphWithEmptyPassword(data, limits, false)
+}
+
+func validatePDFObjectGraphWithEmptyPassword(data []byte, limits PDFLimits, allowEmptyPassword bool) (*model.Context, error) {
 	configuration := pdfConfiguration(len(data), limits)
 	context, err := api.ReadAndValidate(bytes.NewReader(data), configuration)
 	if err != nil {
@@ -637,13 +651,20 @@ func validatePDFObjectGraph(data []byte, limits PDFLimits) (*model.Context, erro
 		}
 		return nil, fmt.Errorf("validate PDF object graph: %w", err)
 	}
-	return checkPDFReferences(context)
+	if !allowEmptyPassword {
+		return checkPDFReferences(context)
+	}
+	return checkPDFExternalReferences(context)
 }
 
 func checkPDFReferences(context *model.Context) (*model.Context, error) {
 	if context.Encrypt != nil {
 		return nil, ErrPDFEncrypted
 	}
+	return checkPDFExternalReferences(context)
+}
+
+func checkPDFExternalReferences(context *model.Context) (*model.Context, error) {
 	external, err := pdfHasExternalReference(context)
 	if err != nil {
 		if errors.Is(err, filter.ErrDecodeLimitExceeded) {

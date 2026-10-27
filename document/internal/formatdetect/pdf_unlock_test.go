@@ -49,6 +49,26 @@ func TestUnlockPDF(t *testing.T) {
 	require.NotErrorIs(t, err, formatdetect.ErrPDFEncrypted)
 }
 
+func TestCountPDFPagesPasswordPolicy(t *testing.T) {
+	for _, user := range []string{"", "open"} {
+		t.Run("user password="+user, func(t *testing.T) {
+			source, err := mediatest.EncryptedPDF(user, "owner", 128)
+			require.NoError(t, err)
+			_, err = formatdetect.CountPDFPages(source)
+			require.ErrorIs(t, err, formatdetect.ErrPDFEncrypted)
+
+			pages, err := formatdetect.CountPDFPagesWithEmptyPassword(source)
+			if user != "" {
+				require.ErrorIs(t, err, formatdetect.ErrPDFEncrypted)
+				require.Zero(t, pages)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, int64(1), pages)
+		})
+	}
+}
+
 func TestUnlockPDFBoundsExpandedObjectOutput(t *testing.T) {
 	// Encrypted object streams compress these repetitive annotations.
 	// Decryption writes ordinary objects, expanding them beyond the limit.
