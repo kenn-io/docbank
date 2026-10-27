@@ -175,10 +175,18 @@ func TestVectorIdentityTracksReviewedDeploymentRevisions(t *testing.T) {
 	}
 	original, err := build(reviewedProfileConfig()).VectorIdentity()
 	require.NoError(t, err)
-	for _, field := range []string{"endpoint", "timeout", "weights", "tokenizer"} {
-		t.Run(field, func(t *testing.T) {
+	for _, testCase := range []struct {
+		field string
+		same  bool
+	}{
+		{field: "endpoint", same: true},
+		{field: "timeout", same: true},
+		{field: "weights"},
+		{field: "tokenizer"},
+	} {
+		t.Run(testCase.field, func(t *testing.T) {
 			config := reviewedProfileConfig()
-			switch field {
+			switch testCase.field {
 			case "endpoint":
 				config.Origin = "http://127.0.0.1:11435"
 			case "timeout":
@@ -190,11 +198,7 @@ func TestVectorIdentityTracksReviewedDeploymentRevisions(t *testing.T) {
 			}
 			changed, err := build(config).VectorIdentity()
 			require.NoError(t, err)
-			if field == "endpoint" || field == "timeout" {
-				require.Equal(t, original, changed)
-			} else {
-				require.NotEqual(t, original, changed)
-			}
+			require.Equal(t, testCase.same, original == changed)
 		})
 	}
 }

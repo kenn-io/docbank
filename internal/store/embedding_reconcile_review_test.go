@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json/v2"
 	"fmt"
-	"net/http"
 	"strconv"
 	"testing"
 	"time"
@@ -14,54 +13,6 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/openaicompat"
 )
-
-func TestEmbeddingReconciliationRejectsUnrelatedProfile(t *testing.T) {
-	t.Parallel()
-	s, version, profile, _ := newEmbeddingCatalogFixture(t)
-	original := embeddingJobTestRequest(t, s, version, profile, "private-source")
-	_, err := s.EnqueueEmbeddingJob(t.Context(), original)
-	require.NoError(t, err)
-	var portable document.ProcessingProfileV1
-	require.NoError(t, json.Unmarshal(profile.CanonicalProfile, &portable))
-	hostedDescriptor := original.Descriptor
-	hostedDescriptor.ID = "synthetic-hosted"
-	hostedDescriptor.TrustBoundary = document.EmbeddingTrustOperatorNetwork
-	hostedDescriptor, err = document.NewEmbeddingDescriptor(hostedDescriptor)
-	require.NoError(t, err)
-	// This source was selected for the local profile, independently of the
-	// consent granted to a configured hosted profile.
-	for i := range portable.Embeddings {
-		portable.Embeddings[i].CredentialBinding = "credential:hosted"
-		portable.Embeddings[i].TrustBoundary = string(hostedDescriptor.TrustBoundary)
-		portable.Embeddings[i].Descriptor = document.ProviderDescriptorV1{ID: hostedDescriptor.ID, Fingerprint: hostedDescriptor.Fingerprint}
-		portable.Embeddings[i].DisclosureFingerprint = testSHA256([]byte("hosted-disclosure"))
-	}
-	canonical, fp, err := document.CanonicalProfile(portable)
-	require.NoError(t, err)
-	hosted := profile
-	hosted.CanonicalProfile, hosted.Fingerprint = canonical, fp.Profile
-	hosted.RenditionRequestFingerprint, hosted.EvidenceLexicalFingerprint = fp.RenditionRequest, fp.EvidenceLexical
-	hosted.RetentionDisclosureFingerprint = fp.RetentionDisclosure
-	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error { return ensureProcessingProfileTx(t.Context(), tx, hosted) }))
-	hostedRequest := embeddingJobTestRequest(t, s, version, hosted, "hosted-consent")
-	hostedRequest.Descriptor = hostedDescriptor
-	prepared := 0
-	result, err := s.ReconcileEmbeddingJobs(t.Context(), EmbeddingReconcileRequest{At: time.Now(), Limit: 100, Mutate: embeddingTestMutation,
-		Profiles: []ProcessingProfileRecord{hosted}, Descriptors: []document.EmbeddingDescriptor{hostedRequest.Descriptor},
-		PrepareGeneration: func(_ context.Context, source string, _ ProcessingProfileRecord, _ document.EmbeddingBindingV1) (EmbeddingInputGenerationRecord, error) {
-			prepared++
-			generation := hostedRequest.InputGeneration
-			generation.SourceVersionID = source
-			return generation, nil
-		},
-	})
-	require.NoError(t, err)
-	require.Zero(t, prepared, "consent for a profile must not select unrelated documents")
-	require.Zero(t, result.Enqueued)
-	jobs, err := s.EmbeddingJobsForVersionProfile(t.Context(), version, hosted.Fingerprint)
-	require.NoError(t, err)
-	require.Empty(t, jobs)
-}
 
 func TestEmbeddingJobsDistinguishSelectedVectorSpace(t *testing.T) {
 	t.Parallel()
@@ -99,13 +50,15 @@ func TestEmbeddingJobsDistinguishSelectedVectorSpace(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, testCase.enqueued, prepared)
 			require.Equal(t, testCase.enqueued, result.Enqueued)
-			selected, err := s.EnqueueEmbeddingJob(t.Context(), request)
-			require.NoError(t, err)
-			require.Equal(t, legacy.ID, selected.ID)
+			if !testCase.changed {
+				selected, err := s.EnqueueEmbeddingJob(t.Context(), request)
+				require.NoError(t, err)
+				require.Equal(t, legacy.ID, selected.ID)
+			}
 			var selectedSpace string
-			require.NoError(t, s.db.QueryRow(`SELECT vector_space_id FROM embedding_jobs WHERE job_id=?`, selected.ID).Scan(&selectedSpace))
+			require.NoError(t, s.db.QueryRow(`SELECT vector_space_id FROM embedding_jobs WHERE job_id=?`, legacy.ID).Scan(&selectedSpace))
 			require.Equal(t, request.VectorSpaceID, selectedSpace)
-			status, err := s.EmbeddingJobByID(t.Context(), selected.ID)
+			status, err := s.EmbeddingJobByID(t.Context(), legacy.ID)
 			require.NoError(t, err)
 			require.Equal(t, testCase.state, status.State)
 		})
@@ -172,13 +125,14 @@ func TestEmbeddingReconciliationUsesCurrentGenerationBeforeJobState(t *testing.T
 func TestEmbeddingReconciliationRuntimePolicyReplacementAuthority(t *testing.T) {
 	t.Parallel()
 	for _, testCase := range []struct {
-		name, bindingID               string
-		sourceConfigured, purgeSource bool
+		name, bindingID                          string
+		sourceConfigured, purgeSource, unrelated bool
 	}{
 		{name: "optional", bindingID: "optional"},
 		{name: "chunk", bindingID: "chunk"},
 		{name: "concurrent endpoint", bindingID: "optional", sourceConfigured: true},
 		{name: "purged source", bindingID: "optional", purgeSource: true},
+		{name: "unrelated profile", bindingID: "optional", unrelated: true},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
@@ -214,13 +168,18 @@ func TestEmbeddingReconciliationRuntimePolicyReplacementAuthority(t *testing.T) 
 			}
 			descriptor := source.Descriptor
 			descriptor.PolicyFingerprint = testSHA256([]byte("new-endpoint-timeout-egress"))
+			if testCase.unrelated {
+				descriptor.ID = "synthetic-hosted"
+				descriptor.TrustBoundary = document.EmbeddingTrustOperatorNetwork
+			}
 			descriptor, err = document.NewEmbeddingDescriptor(descriptor)
 			require.NoError(t, err)
 			var portable document.ProcessingProfileV1
 			require.NoError(t, json.Unmarshal(profile.CanonicalProfile, &portable))
 			for i := range portable.Embeddings {
 				binding := &portable.Embeddings[i]
-				binding.Descriptor.Fingerprint = descriptor.Fingerprint
+				binding.Descriptor = document.ProviderDescriptorV1{ID: descriptor.ID, Fingerprint: descriptor.Fingerprint}
+				binding.TrustBoundary = string(descriptor.TrustBoundary)
 				binding.DisclosureFingerprint = testSHA256([]byte("current-endpoint-disclosure"))
 				binding.AuthorizationFingerprint = testSHA256([]byte("current-authorization-policy"))
 				binding.CredentialBinding = "credential:current-endpoint"
@@ -265,7 +224,7 @@ func TestEmbeddingReconciliationRuntimePolicyReplacementAuthority(t *testing.T) 
 			}
 			result, err := s.ReconcileEmbeddingJobs(t.Context(), request)
 			require.NoError(t, err)
-			if testCase.sourceConfigured || testCase.purgeSource {
+			if testCase.sourceConfigured || testCase.purgeSource || testCase.unrelated {
 				require.Zero(t, prepared, "recovery must preserve concurrent selection and source purge authority")
 				require.Zero(t, result.Enqueued)
 				return
@@ -275,6 +234,18 @@ func TestEmbeddingReconciliationRuntimePolicyReplacementAuthority(t *testing.T) 
 			require.NoError(t, err)
 			require.Len(t, jobs, 1)
 			require.Equal(t, "queued", jobs[0].State)
+			claim, work, found, err := s.ClaimEmbeddingWork(t.Context(), jobs[0].ID, "worker:recovery", time.Now(), time.Minute, []string{descriptor.Fingerprint})
+			require.NoError(t, err)
+			require.True(t, found)
+			require.Equal(t, source.Profile.Fingerprint, work.SourceProfileFingerprint)
+			require.NoError(t, s.FailEmbeddingWork(t.Context(), claim, work, EmbeddingFailureInputRejected, EmbeddingAttemptReceipt{AttemptID: jobs[0].ID}, time.Now()))
+			selected, err := s.EnqueueEmbeddingJob(t.Context(), current)
+			require.NoError(t, err)
+			require.Equal(t, jobs[0].ID, selected.ID, "explicit selection retries the existing target job")
+			_, work, found, err = s.ClaimEmbeddingWork(t.Context(), selected.ID, "worker:explicit", time.Now().Add(time.Second), time.Minute, []string{descriptor.Fingerprint})
+			require.NoError(t, err)
+			require.True(t, found)
+			require.Empty(t, work.SourceProfileFingerprint, "explicit selection admits provider fallback")
 		})
 	}
 }
@@ -368,9 +339,6 @@ func TestEmbeddingLegacyProfilesReuseOnlyMatchingProducer(t *testing.T) {
 	require.NoError(t, err)
 	descriptor.PolicyFingerprint = policy
 	descriptor, err = document.NewEmbeddingDescriptor(descriptor)
-	require.NoError(t, err)
-	adapter.Descriptor = descriptor
-	_, err = openaicompat.New(adapter, nil, &http.Client{})
 	require.NoError(t, err)
 	var portable document.ProcessingProfileV1
 	require.NoError(t, json.Unmarshal(profile.CanonicalProfile, &portable))

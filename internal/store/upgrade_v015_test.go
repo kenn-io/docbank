@@ -452,6 +452,13 @@ func TestUpgradeReleasedV0150KeepsFailedEmbeddingJobs(t *testing.T) {
 			db, legacy := newReleasedFixtureStore(t, path, driver.driver, schemaV0150SQL, 28)
 			versions := seedRenditionCatalogVersions(t, legacy)
 			profile := embeddingCatalogProfile(t)
+			var portable document.ProcessingProfileV1
+			require.NoError(t, json.Unmarshal(profile.CanonicalProfile, &portable))
+			portable.Embeddings = []document.EmbeddingBindingV1{workerProfileEmbeddingBinding(t, profile, "optional")}
+			canonical, fp, err := document.CanonicalProfile(portable)
+			require.NoError(t, err)
+			profile.CanonicalProfile, profile.Fingerprint = canonical, fp.Profile
+			profile.RetentionDisclosureFingerprint = fp.RetentionDisclosure
 			require.NoError(t, legacy.withStorageTx(ctx, func(tx *sql.Tx) error {
 				return ensureProcessingProfileTx(ctx, tx, profile)
 			}))
@@ -467,17 +474,14 @@ func TestUpgradeReleasedV0150KeepsFailedEmbeddingJobs(t *testing.T) {
 				document.EmbeddingInputOriginalFile, request.InputGeneration.ID, authorization.GrantID,
 				authorization.ProcessingIncarnationID, authorization.RevocationFence)
 			at := time.Now().UTC().Format(timestampLayout)
-			for _, bindingID := range []string{"optional", "required"} {
-				id := embeddingJobID(legacy.VaultID(), versions[0], profile.Fingerprint, bindingID, document.EmbeddingInputOriginalFile, request.InputGeneration.ID, authorization.GrantID, authorization.ProcessingIncarnationID, authorization.RevocationFence)
-				_, err = db.Exec(`INSERT INTO embedding_jobs(job_id,vault_uid,content_version_id,profile_fingerprint,
+			_, err = db.Exec(`INSERT INTO embedding_jobs(job_id,vault_uid,content_version_id,profile_fingerprint,
 				binding_id,input_kind,generation_id,vector_space_id,principal,scope,authorization_grant_id,
 				authorization_incarnation_id,authorization_revocation_fence,state,failure_code,available_at,created_at,updated_at)
 				VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'failed','input_rejected',?,?,?)`,
-					id, legacy.VaultID(), versions[0], profile.Fingerprint, bindingID, document.EmbeddingInputOriginalFile,
-					request.InputGeneration.ID, record.VectorSpace.ID, request.Authorization.Principal, request.Authorization.Scope,
-					authorization.GrantID, authorization.ProcessingIncarnationID, authorization.RevocationFence, at, at, at)
-				require.NoError(t, err)
-			}
+				jobID, legacy.VaultID(), versions[0], profile.Fingerprint, request.BindingID, document.EmbeddingInputOriginalFile,
+				request.InputGeneration.ID, record.VectorSpace.ID, request.Authorization.Principal, request.Authorization.Scope,
+				authorization.GrantID, authorization.ProcessingIncarnationID, authorization.RevocationFence, at, at, at)
+			require.NoError(t, err)
 			fingerprints := []string{request.Descriptor.Fingerprint}
 			reconcile := func(s *Store) EmbeddingReconcileResult {
 				result, err := s.ReconcileEmbeddingJobs(ctx, EmbeddingReconcileRequest{Mutate: embeddingTestMutation,

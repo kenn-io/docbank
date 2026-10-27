@@ -19,7 +19,6 @@ import (
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/document/openaicompat"
 	"go.kenn.io/docbank/internal/store"
-	"go.kenn.io/docbank/internal/vectorworker"
 )
 
 type recoveryEmbeddingProvider interface {
@@ -179,16 +178,6 @@ func (f embeddingRecoveryFixture) grant(t *testing.T, service *Service, query bo
 	}
 }
 
-func (f embeddingRecoveryFixture) rebuild(t *testing.T, space string) {
-	t.Helper()
-	index, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{Catalog: f.catalog, Mutate: newTestOperationGate().MutateContext, Owner: "embedding-recovery-index", BuildLease: time.Minute, ReaderLease: time.Minute, IdleDelay: time.Millisecond, ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
-		return f.catalog.ReadVectorIndexVectorSet(ctx, f.blobs, member)
-	}})
-	require.NoError(t, err)
-	_, err = index.Rebuild(t.Context(), space)
-	require.NoError(t, err)
-}
-
 func TestEmbeddingRestartCarriesCurrentProfile(t *testing.T) {
 	t.Parallel()
 	for _, testCase := range []struct {
@@ -225,33 +214,12 @@ func TestEmbeddingRestartCarriesCurrentProfile(t *testing.T) {
 			require.Equal(t, 2, processed)
 			assert.Equal(t, testCase.documents, provider.documents.Load())
 			if testCase.corrupt && !testCase.sameProfile {
-				target := service.profiles["current"]
-				binding := target.portable.Embeddings[0]
 				for _, version := range f.versions {
 					jobs, err := f.catalog.EmbeddingJobsForVersionProfile(t.Context(), version, service.profiles["current"].record.Fingerprint)
 					require.NoError(t, err)
 					require.Len(t, jobs, 1)
 					assert.Equal(t, "failed", jobs[0].State)
-					generation, err := service.EmbeddingReconciliation().PrepareGeneration(t.Context(), version, target.record, binding)
-					require.NoError(t, err)
-					selected, err := f.catalog.EnqueueEmbeddingJob(t.Context(), store.EmbeddingJobRequest{
-						ContentVersionID: version, Profile: target.record, BindingID: binding.Name, Descriptor: descriptor,
-						VectorSpaceID: target.vectorSpaces[binding.Name], InputGeneration: generation,
-						Authorization: store.ProviderOperationAuthorizationRequest{
-							Principal: service.principal, Scope: service.scope, ProfileFingerprint: target.record.Fingerprint,
-							DisclosureFingerprint: binding.DisclosureFingerprint, InputClasses: []string{string(binding.InputKind)},
-							RetainedArtifactClasses: []string{"embedding_vector_set"},
-						},
-					})
-					require.NoError(t, err)
-					require.Equal(t, jobs[0].ID, selected.ID, "explicit selection retries the existing target job")
 				}
-				worker, err = NewEmbeddingWorker(config)
-				require.NoError(t, err)
-				processed, err = worker.ScanOnce(t.Context())
-				require.NoError(t, err)
-				require.Equal(t, 2, processed)
-				require.Equal(t, int64(2), provider.documents.Load(), "explicit selection admits provider fallback")
 			}
 		})
 	}
@@ -260,16 +228,33 @@ func TestEmbeddingRestartCarriesCurrentProfile(t *testing.T) {
 func TestEmbeddingUpgradeRetainsLocalSimilarityAfterConsentRevocation(t *testing.T) {
 	t.Parallel()
 	f := newEmbeddingRecoveryFixture(t, true)
-	f.rebuild(t, f.legacySpace)
-	_, err := f.catalog.RevokeConsent(t.Context(), store.ProcessingConsentRevocationRequest{Principal: f.request.Authorization.Principal, Scope: f.request.Authorization.Scope})
+	provider := newRecoveryProvider(t, f.request.Descriptor)
+	service := f.service(t, provider.Descriptor(), provider)
+	space, err := provider.VectorIdentity()
+	require.NoError(t, err)
+	require.Equal(t, space, service.profiles["current"].vectorSpaces[f.request.BindingID])
+	for _, id := range f.versions {
+		version, err := f.catalog.ContentVersionByID(t.Context(), id)
+		require.NoError(t, err)
+		selector := Selector{Profile: "current", NodeID: version.NodeID, ContentVersionID: version.ID}
+		plan, err := service.Plan(t.Context(), selector)
+		require.NoError(t, err)
+		_, err = service.Start(t.Context(), StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true})
+		require.NoError(t, err)
+	}
+	version, err := f.catalog.ContentVersionByID(t.Context(), f.versions[0])
+	require.NoError(t, err)
+	search, err := service.Search(t.Context(), SearchRequest{Profile: "current", Fence: SourceFence{VaultUID: f.catalog.VaultID(), ContentVersionIDs: []string{version.ID}}, Query: "synthetic", Mode: "semantic", Limit: 1})
+	require.NoError(t, err)
+	require.Len(t, search.Results, 1)
+	require.Equal(t, version.ID, search.Results[0].Document.ContentVersionID)
+	_, err = f.catalog.RevokeConsent(t.Context(), store.ProcessingConsentRevocationRequest{Principal: f.request.Authorization.Principal, Scope: f.request.Authorization.Scope})
 	require.NoError(t, err)
 	var before, after bytes.Buffer
 	require.NoError(t, f.catalog.ExportMetadata(t.Context(), &before))
-	service := f.service(t, f.request.Descriptor, f.provider)
-	require.Equal(t, f.legacySpace, service.profiles["current"].vectorSpaces[f.request.BindingID])
+	service = f.service(t, provider.Descriptor(), provider)
+	require.Equal(t, space, service.profiles["current"].vectorSpaces[f.request.BindingID])
 	fence := SourceFence{VaultUID: f.catalog.VaultID(), ContentVersionIDs: f.versions}
-	version, err := f.catalog.ContentVersionByID(t.Context(), f.versions[0])
-	require.NoError(t, err)
 	report, err := service.FindSimilar(t.Context(), SimilarRequest{Selector: Selector{Profile: "current", NodeID: version.NodeID, ContentVersionID: version.ID}, Fence: fence})
 	require.NoError(t, err)
 	require.Len(t, report.Results, 1)
@@ -278,24 +263,6 @@ func TestEmbeddingUpgradeRetainsLocalSimilarityAfterConsentRevocation(t *testing
 	require.Equal(t, 2, coverage.Embeddings[0].Complete)
 	require.NoError(t, f.catalog.ExportMetadata(t.Context(), &after))
 	require.Equal(t, before.String(), after.String())
-}
-
-func TestEmbeddingSynchronousStartRebuildsCurrentVectorSpace(t *testing.T) {
-	t.Parallel()
-	f := newEmbeddingRecoveryFixture(t, true)
-	provider := newRecoveryProvider(t, f.request.Descriptor)
-	service := f.service(t, provider.Descriptor(), provider)
-	version, err := f.catalog.ContentVersionByID(t.Context(), f.versions[0])
-	require.NoError(t, err)
-	selector := Selector{Profile: "current", NodeID: version.NodeID, ContentVersionID: version.ID}
-	plan, err := service.Plan(t.Context(), selector)
-	require.NoError(t, err)
-	_, err = service.Start(t.Context(), StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true})
-	require.NoError(t, err)
-	report, err := service.Search(t.Context(), SearchRequest{Profile: "current", Fence: SourceFence{VaultUID: f.catalog.VaultID(), ContentVersionIDs: []string{version.ID}}, Query: "synthetic", Mode: "semantic", Limit: 1})
-	require.NoError(t, err)
-	require.Len(t, report.Results, 1)
-	require.Equal(t, version.ID, report.Results[0].Document.ContentVersionID)
 }
 
 type corruptRetainedVectors struct {
