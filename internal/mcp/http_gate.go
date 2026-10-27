@@ -47,6 +47,7 @@ func (g *RequestGate) Wrap(next http.Handler) http.Handler {
 // Shutdown rejects new requests and waits for admitted ones. When ctx ends
 // first, it cancels their contexts and returns ctx's error.
 func (g *RequestGate) Shutdown(ctx context.Context) error {
+	defer g.cancel()
 	g.mu.Lock()
 	g.stopped = true
 	g.mu.Unlock()
@@ -59,7 +60,6 @@ func (g *RequestGate) Shutdown(ctx context.Context) error {
 	case <-done:
 		return nil
 	case <-ctx.Done():
-		g.cancel()
 		return ctx.Err()
 	}
 }

@@ -173,7 +173,8 @@ func runServe(ctx context.Context) (retErr error) {
 	var mcpSkipped error
 	mcpEnabled := cfg.MCP.HTTP.Enabled != nil && *cfg.MCP.HTTP.Enabled
 	if mcpEnabled || cfg.MCPHTTPDefaultOn() {
-		_, mcpToken, err = loadMCPHTTPConfig(layout.Root)
+		// Resolve from the loaded config so environment overrides still apply.
+		mcpToken, err = resolveMCPHTTPBearer(cfg)
 		if err != nil && mcpEnabled {
 			return fmt.Errorf("%w: %w", daemonconn.ErrDaemonConfigInvalid, err)
 		}

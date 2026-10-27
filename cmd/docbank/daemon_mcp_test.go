@@ -203,6 +203,20 @@ func TestDaemonMCPHTTPNotHostedWithoutUsableCredentialOrWhenDisabled(t *testing.
 	}
 }
 
+func TestDaemonMCPHTTPUsesEnvironmentOverriddenPort(t *testing.T) {
+	root := daemonMCPEnvironment(t)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "config.toml"), []byte("[mcp.http]\nport = 70000\n"), 0o600))
+	t.Setenv("DOCBANK_MCP_HTTP_PORT", "0")
+	t.Setenv("DOCBANK_MCP_HTTP_ENABLED", "true")
+	t.Setenv("DOCBANK_MCP_HTTP_TOKEN", "synthetic-mcp-bearer")
+	stop := startServe(t)
+	record := waitForDaemon(t, root)
+	status, data := postMCPVaultInfo(t, "http://"+record.Address+"/mcp", record.Address, "synthetic-mcp-bearer")
+	assert.Equal(t, http.StatusOK, status, data)
+	stop()
+	assertDaemonMCPCleanedUp(t, root, record.Address)
+}
+
 func TestDaemonMCPHTTPDisablesBackgroundIdleTimeout(t *testing.T) {
 	root := daemonMCPEnvironment(t)
 	t.Setenv(daemonconn.EnvBackgroundDaemon, "1")
@@ -289,7 +303,13 @@ func TestDaemonMCPHTTPSharedDrainKeepsAPIAvailable(t *testing.T) {
 	var once sync.Once
 	gate := docmcp.NewRequestGate()
 	mcp := gate.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		once.Do(func() { close(started) })
+		fixture := false
+		once.Do(func() { fixture = true; close(started) })
+		if !fixture {
+			// A probe admitted before the drain started returns at once.
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
 		<-release
 		request, requestErr := http.NewRequestWithContext(r.Context(), http.MethodGet, base+"/api", nil)
 		if requestErr != nil {
@@ -325,8 +345,9 @@ func TestDaemonMCPHTTPSharedDrainKeepsAPIAvailable(t *testing.T) {
 	<-started
 	close(stop)
 	// Once the drain starts, new MCP requests are refused on the shared port.
+	probe := &http.Client{Timeout: time.Second}
 	require.Eventually(t, func() bool {
-		response, err := http.Post(base+"/mcp", "application/json", strings.NewReader("{}"))
+		response, err := probe.Post(base+"/mcp", "application/json", strings.NewReader("{}"))
 		if err != nil {
 			return false
 		}
@@ -354,7 +375,15 @@ func TestDaemonMCPHTTPSharedDrainIsBounded(t *testing.T) {
 	var apiShutdownErr error
 	go func() {
 		done <- serveDaemonHTTP(t.Context(), stop, []servingHTTP{{name: "API", server: server, listener: listener}},
-			gate.Shutdown, func() {}, func(ctx context.Context) error { apiShutdownErr = ctx.Err(); return nil })
+			gate.Shutdown, func() {}, func(ctx context.Context) error {
+				// The gate must cancel the stalled read before the API deadline.
+				select {
+				case <-canceled:
+				case <-ctx.Done():
+				}
+				apiShutdownErr = ctx.Err()
+				return nil
+			})
 	}()
 	requestDone := make(chan struct{})
 	go func() {
@@ -366,9 +395,10 @@ func TestDaemonMCPHTTPSharedDrainIsBounded(t *testing.T) {
 	}()
 	<-started
 	close(stop)
-	require.ErrorIs(t, <-done, context.DeadlineExceeded)
+	err = <-done
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.ErrorContains(t, err, "draining daemon MCP HTTP requests")
 	require.NoError(t, apiShutdownErr)
-	<-canceled
 	<-requestDone
 }
 

@@ -143,26 +143,35 @@ func loadMCPHTTPConfig(root string) (config.Config, string, error) {
 	if err != nil {
 		return config.Config{}, "", err
 	}
+	token, err := resolveMCPHTTPBearer(cfg)
+	if err != nil {
+		return config.Config{}, "", err
+	}
+	return cfg, token, nil
+}
+
+// resolveMCPHTTPBearer reads the bearer named by an already validated config.
+func resolveMCPHTTPBearer(cfg config.Config) (string, error) {
 	reference := cfg.MCP.HTTP.CredentialBinding
 	if reference == "" {
-		return config.Config{}, "", errMCPHTTPCredentialUnset
+		return "", errMCPHTTPCredentialUnset
 	}
 	name := strings.TrimPrefix(reference, "credential:")
 	binding, ok := cfg.CredentialBindings[name]
 	if !ok {
-		return config.Config{}, "", errors.New("MCP HTTP credential binding is not configured")
+		return "", errors.New("MCP HTTP credential binding is not configured")
 	}
 	token, selected, err := config.EnvironmentSecret(binding.EnvironmentVariable)
 	if err != nil {
-		return config.Config{}, "", err
+		return "", err
 	}
 	if !selected {
-		return config.Config{}, "", errMCPHTTPCredentialUnavailable
+		return "", errMCPHTTPCredentialUnavailable
 	}
 	if !docmcp.ValidHTTPBearerToken(token) {
-		return config.Config{}, "", errors.New("MCP HTTP credential is invalid")
+		return "", errors.New("MCP HTTP credential is invalid")
 	}
-	return cfg, token, nil
+	return token, nil
 }
 
 func init() {
