@@ -157,6 +157,7 @@ func benchmarkPeopleRecent(b *testing.B, people, contacts, photos int) {
 		{name: "page-24-recent-cursor", recentFirst: true},
 		{name: "page-24-recent-summary", recentFirst: true, photoSummary: true},
 		{name: "page-100-recent-prefix", query: "person 0000", recentFirst: true, limit: 100, rows: 10},
+		{name: "page-100-recent-prefix-broad", query: "p", recentFirst: true, limit: 100},
 		{name: "page-100-recent-prefix-none", query: "nobody named this", recentFirst: true, limit: 100, none: true},
 		{name: "page-24-recent-unranked-tail", recentFirst: true, tail: true, unranked: true},
 	} {

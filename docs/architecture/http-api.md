@@ -1460,7 +1460,23 @@ Active operator assertions other than `blind_copy` make names searchable on visi
 
 `recent_first=true` ranks name groups by the newest `recorded_at` among active, visible `depicted` assertions, then by folded name and ID. Namesakes share their group's rank and stay together. Naming a person on a new photo records a new assertion and moves the group up. Adding a face or whole-photo mark to an existing active assertion preserves its time. Merges preserve retained and moved assertion times. Locked Hidden evidence supplies no rank. People with no visible depicted evidence follow in name order. Paging reads live ranks: a falling rank can repeat a person, and a rising rank can move a group ahead of the cursor and skip it for the rest of that pass. Restart from the first page to see skipped groups. Cursors bind the query, projection, order, and Hidden scope for browser, photo-summary, and recent-first listings. A refused cursor returns `422 cursor_expired`; restart from the first page.
 
-Recent-first ranking walks active `depicted` assertions newest first, finishes timestamp ties, and stops when the page fills. It then fills any remaining places with unranked people in name order. The query plan scans `person_document_assertions`, including unrelated mail assertions. Measured costs at 100,000 people are about 124 ms for a 24-card page and 93 ms for a 100-row prefix picker. With 50,000 people and 10,000 mail contacts on an AMD EPYC 7763, one iteration measured 2.72 s for `page-24-name`, 3.35 s for `page-24-recent`, 0.89 s for `page-24-name-summary`, 1.00 s for `page-24-recent-summary`, 3.42 s for `page-100-recent-prefix`, 0.28 s for `page-100-recent-prefix-none`, and 5.96 s for `page-24-recent-unranked-tail`. `photo_summary` reads only the listed people's assertions. Measure with `go test -tags fts5 ./internal/store -run '^$' -bench 'BenchmarkPeopleRecentAtVaultScale/50000' -benchtime=1x`.
+Recent-first ranking starts typed-name searches from matching active people and looks up each person's newest eligible `depicted` assertion through the timestamp-ordered `person_document_assertions_person` index. Namesakes share the newest time. Empty queries scan the assertion table, including unrelated mail assertions, and finish timestamp ties before stopping.
+
+Measured costs on an AMD EPYC 7763 with CGO SQLite use two fixtures: 3,000 people and 40,000 photos; and 50,000 people, 10,000 mail contacts, and 2,025,400 assertions.
+
+| Benchmark case | 3,000 people / 40,000 photos | 50,000 people / mail-heavy |
+| --- | ---: | ---: |
+| `page-24-name` | 0.796 ms | 0.812 ms |
+| `page-24-recent` | 607.109 ms | 281.015 ms |
+| `page-24-name-summary` | 418.499 ms | 334.208 ms |
+| `page-24-recent-cursor` | 611.103 ms | 325.532 ms |
+| `page-24-recent-summary` | 617.731 ms | 322.855 ms |
+| `page-100-recent-prefix` | 3.011 ms | 24.040 ms |
+| `page-100-recent-prefix-broad` | 101.775 ms | 442.267 ms |
+| `page-100-recent-prefix-none` | 2.035 ms | 23.165 ms |
+| `page-24-recent-unranked-tail` | N/A | 352.098 ms |
+
+The assertion index occupies 201.8 MiB on the mail-heavy fixture. An existing vault builds the index once on its first open after upgrade. Measure the standard cases with `CGO_ENABLED=1 go test -tags fts5 ./internal/store -run '^$' -bench 'BenchmarkPeopleRecentAtVaultScale/(3000|50000)' -benchtime=3x -count=1`.
 
 Browser rename and merge apply the same visibility rule to the canonical person inside the write transaction. A person the browser can't list, such as a sensitive-only person or a locked Hidden-only person, returns `404 not_found`. While Hidden is locked, browser merges require unlocking if either person has assertions or face candidate evidence on a Hidden photo. A merge replay resolves the survivor through aliases and checks its current visibility before returning the original receipt, even after another merge. Browser sessions receive merge receipts with zero moved-evidence counts and an empty absorbed name. API-key writes keep their full scope.
 

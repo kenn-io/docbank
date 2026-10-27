@@ -258,16 +258,16 @@ func personDerivedExactIdentitySQL(alias string) string {
 }
 
 // personVisibleSQL is the browser's person visibility rule for a page of
-// people. It binds visibleOnly, then hideLocked twice. Its uncorrelated
-// subqueries read person_document_assertions, which has no person_id index,
-// once per query. visiblePersonByIDSQL applies the same rule to one person.
+// people. It binds visibleOnly, then hideLocked twice. Its correlated
+// subqueries use the person index. visiblePersonByIDSQL applies the same rule
+// to one person.
 func personVisibleSQL(person string) string {
-	return `(?=0 OR (` + person + ` NOT IN (SELECT a.person_id FROM person_document_assertions a)
+	return `(?=0 OR (NOT EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.person_id=` + person + `)
 		AND NOT EXISTS(SELECT 1 FROM document_people p WHERE p.person_id=` + person + `)
 		AND NOT EXISTS(SELECT 1 FROM person_identities i WHERE i.person_id=` + person + `
-			AND ` + personDerivedExactIdentitySQL("i") + `)) OR ` + person + ` IN (
-		SELECT a.person_id FROM person_document_assertions a
-		WHERE ` + personVisibleAssertionSQL("a", "?") + `) OR EXISTS(
+			AND ` + personDerivedExactIdentitySQL("i") + `)) OR EXISTS(
+		SELECT 1 FROM person_document_assertions a
+		WHERE a.person_id=` + person + ` AND ` + personVisibleAssertionSQL("a", "?") + `) OR EXISTS(
 		SELECT 1 FROM document_people p WHERE p.person_id=` + person + `
 		AND ` + personVisibleActorSQL("p", "?") + `))`
 }
@@ -358,7 +358,8 @@ func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, after
 		}
 		hideLocked := scope != nil && scope.ExpiresAt == nil
 		// The recent walk adds its own photo check, reusing its evidence joins.
-		candidates, args := peopleCandidatesSQL(document.FoldPersonName(query), options.PhotoSummary && !options.RecentFirst, !hideLocked)
+		prefix := document.FoldPersonName(query)
+		candidates, args := peopleCandidatesSQL(prefix, options.PhotoSummary && !options.RecentFirst, !hideLocked)
 		// Photo eligibility already supplies visible, non-sensitive evidence.
 		// Identity labels still use visibleOnly below.
 		if visibleOnly && !options.PhotoSummary {
@@ -366,7 +367,7 @@ func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, after
 			args = append(args, true, hideLocked, hideLocked)
 		}
 		if options.RecentFirst {
-			people, err = peopleRecentTx(ctx, tx, candidates, args, afterName, afterID, options.AfterRecent, limit, visibleOnly, hideLocked, options.PhotoSummary)
+			people, err = peopleRecentTx(ctx, tx, candidates, args, afterName, afterID, options.AfterRecent, limit, visibleOnly, hideLocked, options.PhotoSummary, prefix)
 		} else {
 			people, err = peopleByDisplayNameTx(ctx, tx, candidates, args, afterName, afterID, limit, visibleOnly, hideLocked)
 		}
@@ -402,24 +403,55 @@ func peopleByDisplayNameTx(ctx context.Context, tx *sql.Tx, candidates string, a
 	return people, rows.Err()
 }
 
-// peopleRecentTx walks depicted evidence newest first, so unrelated people and
-// mail assertions don't contribute to a ranked page's cost. A group's first
-// readable assertion gives every active namesake its rank. Finish timestamp
-// ties before stopping so folded name and ID remain the tie breakers.
-func peopleRecentTx(ctx context.Context, tx *sql.Tx, candidates string, args []any, afterName, afterID, afterRecent string, limit int, visibleOnly, hideLocked, photosOnly bool) ([]PersonSearchResult, error) {
+// peopleRecentTx probes each matching person's newest eligible evidence for
+// typed prefixes. Empty queries walk assertions and finish timestamp ties.
+func peopleRecentTx(ctx context.Context, tx *sql.Tx, candidates string, args []any, afterName, afterID, afterRecent string, limit int, visibleOnly, hideLocked, photosOnly bool, prefix string) ([]PersonSearchResult, error) {
 	joins, where := personPhotoSource(!hideLocked)
-	walkCandidates := candidates
+	walkCandidates, walkArgs := peopleCandidatesSQL(prefix, false, !hideLocked)
+	if visibleOnly && !photosOnly {
+		walkCandidates += "(persons.person_id=person.person_id OR " + personVisibleSQL("persons.person_id") + ") AND "
+		walkArgs = append(walkArgs, true, hideLocked, hideLocked)
+	}
 	if photosOnly {
 		walkCandidates += personHasPhotoSQL(!hideLocked, "person") + " AND "
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT persons.person_id,persons.display_name_folded,assertion.recorded_at
- FROM person_document_assertions assertion
+	// Empty queries read all assertions. A sequential table scan avoids
+	// fetching each evidence row through the person index.
+	query := `SELECT persons.person_id,persons.display_name_folded,assertion.recorded_at
+ FROM person_document_assertions assertion NOT INDEXED
  CROSS JOIN persons person ON person.person_id=assertion.person_id
  CROSS JOIN persons ON persons.display_name_folded=person.display_name_folded
- CROSS JOIN content_versions cv ON cv.version_id=assertion.content_version_id`+joins+where+`
+ CROSS JOIN content_versions cv ON cv.version_id=assertion.content_version_id` + joins + where + `
  AND assertion.role='depicted' AND assertion.action='assert' AND person.state<>'retired'
- AND `+walkCandidates+` persons.state<>'retired'
- ORDER BY assertion.recorded_at DESC`, args...)
+ AND ` + walkCandidates + ` persons.state<>'retired'
+ ORDER BY assertion.recorded_at DESC`
+	var rankedSQL string
+	var rankedArgs []any
+	if prefix != "" {
+		matches, matchArgs := peopleCandidatesSQL(prefix, false, !hideLocked)
+		rankedSQL = `WITH own AS MATERIALIZED (
+ SELECT persons.*, (SELECT assertion.recorded_at FROM person_document_assertions assertion
+ CROSS JOIN content_versions cv ON cv.version_id=assertion.content_version_id` + joins + where + `
+ AND assertion.person_id=persons.person_id AND assertion.role='depicted' AND assertion.action='assert'
+ ORDER BY assertion.recorded_at DESC LIMIT 1) own
+ FROM persons WHERE ` + matches + ` state<>'retired'),
+ ranked AS (SELECT own.*,MAX(own) OVER (PARTITION BY display_name_folded) rank FROM own)
+ `
+		rankedArgs = matchArgs
+		eligible := "rank IS NOT NULL AND "
+		if photosOnly {
+			eligible += "own IS NOT NULL AND "
+		} else if visibleOnly {
+			eligible += personVisibleSQL("persons.person_id") + " AND "
+			matchArgs = append(slices.Clone(matchArgs), true, hideLocked, hideLocked)
+		}
+		query = rankedSQL + `SELECT person_id,display_name_folded,rank FROM ranked persons WHERE ` + eligible + `
+ (?='' OR rank<? OR (rank=? AND (display_name_folded>? OR (display_name_folded=? AND person_id>?))))
+ ORDER BY rank DESC,display_name_folded,person_id LIMIT ?`
+		matchArgs = append(matchArgs, afterName, afterRecent, afterRecent, afterName, afterName, afterID, limit)
+		walkArgs = matchArgs
+	}
+	rows, err := tx.QueryContext(ctx, query, walkArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -431,6 +463,10 @@ func peopleRecentTx(ctx context.Context, tx *sql.Tx, candidates string, args []a
 		var person PersonSearchResult
 		if err := rows.Scan(&person.PersonID, &person.DisplayNameFolded, &person.RecentRank); err != nil {
 			return nil, err
+		}
+		if prefix != "" {
+			people = append(people, person)
+			continue
 		}
 		if len(people) >= limit && person.RecentRank < people[limit-1].RecentRank {
 			break
@@ -474,6 +510,25 @@ func peopleRecentTx(ctx context.Context, tx *sql.Tx, candidates string, args []a
 		slices.SortFunc(people, comparePeopleRecent)
 	}
 	if len(people) < limit {
+		if prefix != "" {
+			// The cursor can skip ranked groups. Exclude those groups from the
+			// existing unranked tail as well as groups returned on this page.
+			rankedRows, err := tx.QueryContext(ctx, rankedSQL+`SELECT DISTINCT display_name_folded FROM ranked WHERE rank IS NOT NULL`, rankedArgs...)
+			if err != nil {
+				return nil, err
+			}
+			defer func() { _ = rankedRows.Close() }()
+			for rankedRows.Next() {
+				var name string
+				if err := rankedRows.Scan(&name); err != nil {
+					return nil, err
+				}
+				names[name] = true
+			}
+			if err := errors.Join(rankedRows.Err(), rankedRows.Close()); err != nil {
+				return nil, err
+			}
+		}
 		// Exhausting the walk identifies all eligible ranked groups. The rest
 		// use the name index and stop as soon as the page fills.
 		if photosOnly {
@@ -514,8 +569,7 @@ func WithVisiblePeopleOnly(ctx context.Context) context.Context {
 // visiblePersonByIDSQL is personVisibleSQL for the person bound as ?1, with
 // hideLocked as ?2. Correlated EXISTS stops at the person's first assertion
 // instead of collecting every person's assertions, so the browser write fence
-// stays cheap in a mail-heavy vault. Checking for no evidence first scans the
-// assertions once for a person who has none.
+// stays cheap in a mail-heavy vault.
 var visiblePersonByIDSQL = `SELECT EXISTS(SELECT 1 FROM persons WHERE person_id=?1 AND (
  (NOT EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.person_id=?1)
 	AND NOT EXISTS(SELECT 1 FROM document_people p WHERE p.person_id=?1)
