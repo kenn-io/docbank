@@ -770,7 +770,7 @@ func (m Model) renderJobRow(job api.Job) string {
 		line += "  " + pad(formatJobTime(job.StartedAt), 17)
 	}
 	if m.width >= 88 {
-		finished := "running"
+		finished := "-"
 		if job.FinishedAt != "" {
 			finished = formatJobTime(job.FinishedAt)
 		}
@@ -805,7 +805,7 @@ func (m Model) jobDetailLines(width int) []string {
 		" Started: " + job.StartedAt,
 	}
 	if job.FinishedAt == "" {
-		fields = append(fields, " Finished: still running")
+		fields = append(fields, " Finished: -")
 	} else {
 		fields = append(fields, " Finished: "+job.FinishedAt)
 	}

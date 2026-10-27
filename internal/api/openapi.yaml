@@ -20553,6 +20553,10 @@ components:
           items:
             type: string
           type: array
+        exclude_patterns:
+          items:
+            type: string
+          type: array
         job:
           $ref: "#/components/schemas/Job"
         minimum_age:
@@ -20573,6 +20577,7 @@ components:
         - minimum_age
         - scan_interval
         - exclude
+        - exclude_patterns
       type: object
       x-go-type: api.WatchedInbox
       x-go-type-import:

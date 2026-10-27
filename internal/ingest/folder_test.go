@@ -347,3 +347,12 @@ func TestFolderScannerScanOnceSourceChangePolicy(t *testing.T) {
 		})
 	}
 }
+
+func TestFolderScannerExcludePatterns(t *testing.T) {
+	source := writeTree(t, map[string]string{"note.md": "real", "nested/x.swp": "swap", "cache-1/data.bin": "cached"})
+	var observed []string
+	scanner, err := NewFolderScanner(config.WatchConfig{Name: "patterns", Source: source, Destination: "/archive", SettleTime: config.Duration(time.Second), ScanInterval: config.Duration(time.Second), ExcludePatterns: []string{"*.swp", "cache-*"}}, func(_ context.Context, file FolderFile) error { observed = append(observed, file.Ref); return nil }, failOnReject(t))
+	require.NoError(t, err)
+	require.NoError(t, scanner.ScanOnce(t.Context(), 1))
+	assert.Equal(t, []string{"note.md"}, observed)
+}

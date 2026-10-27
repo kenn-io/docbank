@@ -10,6 +10,8 @@ Instructions for autonomous coding agents working in this repository.
 - PostgreSQL checks use `DOCBANK_TEST_POSTGRES_DSN` and `make test-pg` against
   a disposable server. CI owns its service container; each test owns and drops
   its database. An explicitly configured but unavailable server fails the test.
+  Store query tests use `pgschema.Setup` and a separate runtime role; do not
+  maintain a second copy of the catalog DDL in fixtures.
   Do not start a container per test or repeat unrelated SQLite suites in the
   PostgreSQL lane. Follow the existing main-pinned PR dispatcher and cache
   ownership; branch changes to `ci.yml` only take effect for PRs after merge.
@@ -21,6 +23,12 @@ Instructions for autonomous coding agents working in this repository.
   `go test -tags fts5 ./internal/<pkg>/ -run <Name>`. CGO builds use mattn
   SQLite; the supported pure-Go path uses `CGO_ENABLED=0` and modernc SQLite.
   `make test` runs the complete suite; CI runs it in both modes.
+- Never locate files from a path returned by `runtime.Caller` or a stack
+  trace; builds use `-trimpath`, so those paths are module-relative. Tests run
+  from their package directory, so use paths relative to it.
+- A test package that loads a named time zone must import `time/tzdata` in a
+  `_test.go` file. Trimmed builds cannot fall back to GOROOT's zone database,
+  and Windows has no system database.
 - Lint with `make lint` (golangci-lint, fts5 tag). Docs build strict with
   `make docs-build`; fix every warning.
 - Linux, macOS, and Windows are supported. Windows CI runs the complete CLI,
@@ -185,6 +193,12 @@ Instructions for autonomous coding agents working in this repository.
   permanent structural relationships such as nullability, primary/foreign keys
   and uniqueness. Existing released constraints stay until a separately
   approved, compatible schema change removes them.
+- Before extending PostgreSQL support, review AgentsView's shared query and
+  backend-parity patterns, then msgvault and Kata. The development guide's
+  [reference implementations](docs/internal/development.md#postgresql-reference-implementations)
+  identify the reusable contracts and intentional differences. Preserve one
+  implementation of Docbank's operation semantics; isolate concrete SQL and
+  driver differences rather than copying an entire backend.
 - Keep PostgreSQL development consistent with msgvault and Kata: use pgx through
   the existing `database/sql` store boundary, explicit schema and schema-owner
   settings, setup-only DDL and validation-only runtime opening. Reuse existing

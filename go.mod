@@ -36,7 +36,7 @@ require (
 	github.com/tdewolff/parse/v2 v2.8.16
 	github.com/tetratelabs/wazero v1.12.0
 	github.com/yuin/goldmark v1.8.5
-	go.kenn.io/kit v0.44.0
+	go.kenn.io/kit v0.45.0
 	golang.org/x/crypto v0.58.0
 	golang.org/x/image v0.44.0
 	golang.org/x/net v0.61.0
@@ -49,7 +49,7 @@ require (
 )
 
 require (
-	github.com/andybalholm/brotli v1.2.6 // indirect
+	github.com/andybalholm/brotli v1.2.7 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.24 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.20.4 // indirect

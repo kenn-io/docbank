@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -21,7 +22,8 @@ func TestBackfillReportsBusyUntilEveryConcurrentItemFinishes(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		supervisor := jobs.New(t.Context(), slog.New(slog.DiscardHandler))
 		defer func() { require.NoError(t, supervisor.Shutdown(context.Background())) }()
-		paused := true
+		var paused atomic.Bool
+		paused.Store(true)
 		first, second := make(chan struct{}), make(chan struct{})
 		listed := false
 		worker := &Backfill[string]{
@@ -35,7 +37,7 @@ func TestBackfillReportsBusyUntilEveryConcurrentItemFinishes(t *testing.T) {
 			},
 			Key: func(key string) string { return key },
 			Control: func(context.Context) (store.LaneControl, error) {
-				return store.LaneControl{Paused: paused, Concurrency: 2}, nil
+				return store.LaneControl{Paused: paused.Load(), Concurrency: 2}, nil
 			},
 			Process: func(ctx context.Context, key string) error {
 				release := first
@@ -53,7 +55,7 @@ func TestBackfillReportsBusyUntilEveryConcurrentItemFinishes(t *testing.T) {
 		require.NoError(t, supervisor.Start("derive:visual-previews", worker.Run))
 		synctest.Wait()
 		assert.False(t, supervisor.Snapshot()[0].Busy, "paused before dispatch")
-		paused = false
+		paused.Store(false)
 		time.Sleep(jobs.LanePollInterval)
 		synctest.Wait()
 		assert.True(t, supervisor.Snapshot()[0].Busy)
@@ -63,7 +65,6 @@ func TestBackfillReportsBusyUntilEveryConcurrentItemFinishes(t *testing.T) {
 		close(second)
 		synctest.Wait()
 		assert.False(t, supervisor.Snapshot()[0].Busy, "worker is waiting for more work")
-		assert.Equal(t, jobs.StatusRunning, supervisor.Snapshot()[0].Status)
 	})
 }
 

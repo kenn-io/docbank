@@ -917,6 +917,9 @@ waiting for work, a quiet **Nothing running** line sits above the worker list.
 The list below shows every worker and its status, and offers pause controls for
 idle workers. Queued operations stay in that list until they start.
 
+A worker waiting for work shows Idle, and the header counts only work in
+progress.
+
 Pause or resume photo imports, visual previews, and the storage lanes `place`,
 `evacuate`, `repair`, and `salvage`. Pause takes effect at the next safe item
 boundary. Visual preview concurrency accepts 1 through 4. A paused lane keeps

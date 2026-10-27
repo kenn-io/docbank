@@ -104,7 +104,7 @@ func (source watchSource) digest(ctx context.Context, expected watchFingerprint)
 	return (FolderFile{File: f, Info: info}).Digest(ctx)
 }
 
-// FolderScanner shares watched-inbox traversal, literal exclusions, mount
+// FolderScanner shares watched-inbox traversal, exclusions, mount
 // boundaries and stability observations without opening a local vault.
 type FolderScanner struct {
 	// VerifyRoot checks the opened source root before traversal.
@@ -143,9 +143,9 @@ func NewFolderScanner(
 	if cfg.SettleTime.Std() <= 0 || cfg.ScanInterval.Std() <= 0 || cfg.MinimumAge.Std() < 0 {
 		return nil, errors.New("settle time and scan interval must be positive; minimum age must not be negative")
 	}
-	excludes, err := compileExclusions(cfg.Exclude)
+	excludes, err := compileExclusions(cfg.Exclude, cfg.ExcludePatterns)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("watch %q exclusions: %w", cfg.Name, err)
 	}
 	w := &Watcher{config: cfg, excludes: excludes, now: time.Now, logger: slog.Default(), observations: make(map[string]watchObservation), reject: reject}
 	scanner := &FolderScanner{watcher: w}

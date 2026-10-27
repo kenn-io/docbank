@@ -1026,6 +1026,7 @@ test("photo loupe keeps painted geometry and crop through delayed resolution upg
     ...process.env,
     DOCBANK_HOME: path.join(workspace, "vault"),
     DOCBANK_LOCK_DIR: path.join(workspace, "locks"),
+    DOCBANK_TELEMETRY_ENABLED: "0",
   };
   const run = async (...args: string[]) =>
     (await exec(binary, args, { cwd: repository, env, timeout: 60_000 })).stdout.trim();
@@ -1243,6 +1244,7 @@ test("photo loupe opens, upgrades, navigates, restores focus and reloads a direc
     ...process.env,
     DOCBANK_HOME: vault,
     DOCBANK_LOCK_DIR: path.join(workspace, "locks"),
+    DOCBANK_TELEMETRY_ENABLED: "0",
   };
   const run = async (...args: string[]) =>
     (await exec(binary, args, { cwd: repository, env, timeout: 60_000 })).stdout.trim();

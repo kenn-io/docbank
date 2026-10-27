@@ -308,7 +308,7 @@ func NewWatcher(
 	if err := validateVirtualDestination(cfg.Destination); err != nil {
 		return nil, err
 	}
-	excludes, err := compileExclusions(cfg.Exclude)
+	excludes, err := compileExclusions(cfg.Exclude, cfg.ExcludePatterns)
 	if err != nil {
 		return nil, fmt.Errorf("watch %q exclusions: %w", cfg.Name, err)
 	}
@@ -830,7 +830,6 @@ func pathContains(parent, child string) bool {
 }
 
 func (w *Watcher) scan(ctx context.Context, root *watchRoot) error {
-	defer jobs.ReportBusy(ctx, false)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -1097,6 +1096,7 @@ func (w *Watcher) scanDirectory(
 					})
 				})
 			}
+			jobs.ReportBusy(ctx, false)
 		}
 		if access, ok := errors.AsType[*SourceAccessError](err); ok && w.reject != nil &&
 			!errors.Is(err, ErrSourceChanged) &&

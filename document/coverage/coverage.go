@@ -210,15 +210,9 @@ func descriptorSupports(
 	if capability == document.CapabilityTranscript && metadata.Family != "audio_video" {
 		return false
 	}
-	formatMatch := false
-	for _, format := range descriptor.SupportedFormats {
-		if format.MediaFamily == metadata.Family && format.MediaType == metadata.MediaType &&
-			format.InputKind == document.RenditionInputOriginalFile {
-			formatMatch = true
-			break
-		}
-	}
-	if !formatMatch {
+	if !descriptor.Supports(document.RenditionFormatCapability{
+		MediaFamily: metadata.Family, MediaType: metadata.MediaType, InputKind: document.RenditionInputOriginalFile,
+	}) {
 		return false
 	}
 	var role document.EvidenceArtifactRole

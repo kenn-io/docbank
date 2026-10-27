@@ -253,10 +253,10 @@ The response includes `fingerprint`, `vault_uid`, `selector`,
 When the profile has a rendition stage, the daemon inspects the source locally
 before it answers. If inspection refuses the source,
 `rendition_ineligible_reason` names the inspector's reason, such as
-`unbounded_media_family` or `semantic_units_exceeded`, and starting the plan
-fails with `rendition_source_ineligible`, except for locked PDFs. When no
-configured password opens a PDF, or no password file is configured, starting
-creates a job that ends `failed` with `failure_code=pdf_password_required`.
+`unbounded_media_family`, `semantic_units_exceeded`, or `unsupported_media_type`,
+and starting the plan fails with `rendition_source_ineligible`, except for locked
+PDFs. When no configured password opens a PDF, or no password file is configured,
+starting creates a job that ends `failed` with `failure_code=pdf_password_required`.
 If the configured password file is refused, planning or starting returns
 409 `rendition_operator_required` with the fixed detail `PDF passwords file can't be read; check media.pdf_passwords_file`. The detail omits the file's path. Other operator-required errors use `document rendition requires operator intervention`.
 Each flow identifies the provider,
@@ -1381,7 +1381,8 @@ with API-key clients.
 
 `GET /watches` returns `{items: [...]}` in stable watch-name order. Each item
 joins the effective machine-local source, virtual destination, settle and scan
-durations, and literal exclusions with its current `watch:<name>` job record.
+durations, and the `exclude` and `exclude_patterns` lists with its current
+`watch:<name>` job record.
 The job is omitted only when no runner has been registered, which is not an
 ordinary live-daemon state. Configuration remains file-owned: this endpoint
 does not create, edit, or restart watches.
@@ -1880,7 +1881,8 @@ subtree. The preflight and ingest implementations share this compiler so
 reviewed selection and actual selection cannot drift. Patterns must be relative.
 Invalid syntax and parent traversal are rejected before filesystem access. Use
 bracket expressions such as `report[[]1].txt` for literal metacharacters instead
-of backslash escaping. Watched-inbox exclusions are a separate literal contract.
+of backslash escaping. Watched inboxes share this compiler for
+`exclude_patterns`; their `exclude` entries keep the literal contract.
 
 ## Addendum: ingest-run collections
 

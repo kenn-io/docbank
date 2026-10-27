@@ -399,7 +399,10 @@ func (worker *EmbeddingWorker) ScanOnce(ctx context.Context) (int, error) {
 			return processed, nil
 		}
 		processed++
-		if err := worker.processClaim(ctx, claim, work); err != nil {
+		jobs.ReportBusy(ctx, true)
+		err := worker.processClaim(ctx, claim, work)
+		jobs.ReportBusy(ctx, false)
+		if err != nil {
 			if ctx.Err() != nil {
 				return processed, err
 			}
@@ -442,7 +445,9 @@ func (worker *EmbeddingWorker) RunJob(ctx context.Context, jobID string) (bool, 
 		return processed, ctx.Err()
 	}
 	if err == nil && processed {
+		reportProcessingRunBusy(ctx, true)
 		err = worker.processClaim(ctx, claim, work)
+		reportProcessingRunBusy(ctx, false)
 	}
 	if err != nil {
 		if ctx.Err() != nil {
@@ -462,8 +467,6 @@ func (worker *EmbeddingWorker) RunJob(ctx context.Context, jobID string) (bool, 
 }
 
 func (worker *EmbeddingWorker) processClaim(ctx context.Context, claim EmbeddingWorkClaim, work EmbeddingWork) (retErr error) {
-	jobs.ReportBusy(ctx, true)
-	defer jobs.ReportBusy(ctx, false)
 	started := worker.clock().UTC()
 	receipt := EmbeddingAttemptReceipt{AttemptID: claim.AttemptID, ProviderFingerprint: work.Descriptor.Fingerprint,
 		ProfileFingerprint: work.ProcessingProfile.Fingerprint, BindingID: work.Binding.Name,

@@ -24,6 +24,7 @@ test("photo map privacy, clusters, marker return and mobile grid", async ({ page
     ...process.env,
     DOCBANK_HOME: vault,
     DOCBANK_LOCK_DIR: path.join(workspace, "locks"),
+    DOCBANK_TELEMETRY_ENABLED: "0",
     DOCBANK_MAP_TILE_TEST_CA: path.join(workspace, "tls", "ca.pem"),
     GOCACHE: process.env.GOCACHE,
   };

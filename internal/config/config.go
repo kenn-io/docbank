@@ -128,17 +128,42 @@ func validASCIIHostname(hostname string) bool {
 	return err == nil && ascii == hostname
 }
 
-// MCPConfig controls the optional local MCP transports. The HTTP transport
-// remains disabled unless its separate inbound credential binding is named.
+// MCPConfig controls the optional local MCP transports.
 type MCPConfig struct {
 	HTTP MCPHTTPConfig `toml:"http"`
 }
 
-// MCPHTTPConfig names the machine-local credential used to authenticate MCP
-// clients. The credential value is resolved only when the HTTP process starts.
+// MCPHTTPConfig controls daemon-hosted MCP HTTP and names the machine-local
+// credential used to authenticate MCP clients. The credential value is
+// resolved only when an HTTP listener starts.
 type MCPHTTPConfig struct {
+	// Enabled nil follows MCPHTTPDefaultOn.
+	Enabled           *bool    `toml:"enabled"`
+	Port              int      `toml:"port"`
 	AllowedHosts      []string `toml:"allowed_hosts"`
 	CredentialBinding string   `toml:"credential_binding"`
+}
+
+// MCPHTTPDefaultOn reports whether an unset [mcp.http] enabled hosts MCP when
+// its credential resolves: only for a loopback API without a separate port.
+func (c Config) MCPHTTPDefaultOn() bool {
+	return c.MCP.HTTP.Enabled == nil && c.MCP.HTTP.Port == 0 && isLoopbackHost(c.Server.BindAddr)
+}
+
+// MCPHTTPSharesAPIListener reports whether daemon-hosted MCP is served at
+// /mcp on the API listener instead of a separate loopback listener.
+func (c Config) MCPHTTPSharesAPIListener() bool {
+	return c.MCP.HTTP.Port == 0 || c.MCP.HTTP.Port == c.Server.APIPort
+}
+
+// MCPHTTPListenAddr returns the separate MCP listener address. It stays on
+// loopback even when the API listener faces a network.
+func (c Config) MCPHTTPListenAddr() string {
+	host := "127.0.0.1"
+	if ip := net.ParseIP(c.Server.BindAddr); ip != nil && ip.IsLoopback() {
+		host = ip.String()
+	}
+	return net.JoinHostPort(host, strconv.Itoa(c.MCP.HTTP.Port))
 }
 
 // BackupConfig configures the default immutable snapshot repository and its
@@ -183,6 +208,8 @@ type WatchConfig struct {
 	MinimumAge   Duration `toml:"minimum_age"`
 	ScanInterval Duration `toml:"scan_interval"`
 	Exclude      []string `toml:"exclude"`
+	// ExcludePatterns uses docbank add glob semantics; Exclude stays literal.
+	ExcludePatterns []string `toml:"exclude_patterns"`
 }
 
 // RenditionProfileConfig names a deployment binding for one pinned rendition
@@ -757,6 +784,9 @@ func (c Config) Validate() error {
 }
 
 func validateMCPConfig(c Config) error {
+	if c.MCP.HTTP.Port < 0 || c.MCP.HTTP.Port > 65535 {
+		return errors.New("[mcp.http] port must be from 0 through 65535")
+	}
 	if err := httpboundary.ValidateHosts(c.MCP.HTTP.AllowedHosts); err != nil {
 		return fmt.Errorf("[mcp.http] allowed_hosts: %w", err)
 	}

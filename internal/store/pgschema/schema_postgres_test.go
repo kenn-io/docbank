@@ -27,14 +27,29 @@ func TestSetupPreservesIdentity(t *testing.T) {
 	id, err := Setup(t.Context(), db, cfg)
 	require.NoError(t, err)
 	require.NotEqual(t, uuid.Nil(), id)
+	var rootID, childID int64
+	var rootCreated string
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT id,created_at FROM documents.nodes WHERE parent_id IS NULL`).Scan(&rootID, &rootCreated))
+	const childTime = "2026-01-01T00:00:00.000000000Z"
+	require.NoError(t, db.QueryRowContext(t.Context(), `INSERT INTO documents.nodes(parent_id,name,kind,created_at,modified_at)
+		VALUES($1,'kept','dir',$2,$2) RETURNING id`, rootID, childTime).Scan(&childID))
 	again, err := Setup(t.Context(), db, cfg)
 	require.NoError(t, err)
 	assert.Equal(t, id, again)
+	var keptRootID, keptParent int64
+	var keptCreated, keptName string
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT id,created_at FROM documents.nodes WHERE parent_id IS NULL`).Scan(&keptRootID, &keptCreated))
+	assert.Equal(t, rootID, keptRootID)
+	assert.Equal(t, rootCreated, keptCreated)
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT parent_id,name,created_at FROM documents.nodes WHERE id=$1`, childID).Scan(&keptParent, &keptName, &keptCreated))
+	assert.Equal(t, rootID, keptParent)
+	assert.Equal(t, "kept", keptName)
+	assert.Equal(t, childTime, keptCreated)
 	var stored uuid.UUID
 	var version int
 	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT vault_uid, schema_version FROM documents.vault_metadata WHERE singleton=1`).Scan(&stored, &version))
 	assert.Equal(t, id, stored)
-	assert.Equal(t, 1, version)
+	assert.Equal(t, 2, version)
 
 	// A separate schema is a separate vault, even within the same database.
 	other, err := Setup(t.Context(), db, Config{Schema: "other_documents", SchemaOwner: owner})
@@ -137,13 +152,13 @@ func TestRuntimeCannotChangeSchema(t *testing.T) {
 		_, err = Validate(t.Context(), selected, cfg)
 		require.ErrorContains(t, err, "requires a separate runtime role", "selecting a lesser role must not hide the login's privileges")
 	})
-	_, err = setup.ExecContext(t.Context(), "UPDATE documents.vault_metadata SET schema_version=2")
+	_, err = setup.ExecContext(t.Context(), "UPDATE documents.vault_metadata SET schema_version=3")
 	require.NoError(t, err)
 	_, err = Validate(t.Context(), runtime, cfg)
 	require.Error(t, err)
 	var version int
 	require.NoError(t, runtime.QueryRowContext(t.Context(), `SELECT schema_version FROM documents.vault_metadata`).Scan(&version))
-	assert.Equal(t, 2, version, "runtime validation must not repair an unsupported version")
+	assert.Equal(t, 3, version, "runtime validation must not repair an unsupported version")
 }
 
 func TestSetupRefusesUnownedOrInvalidState(t *testing.T) {
@@ -152,7 +167,7 @@ func TestSetupRefusesUnownedOrInvalidState(t *testing.T) {
 		{"empty schema", `CREATE SCHEMA documents`},
 		{"unrelated schema", `CREATE SCHEMA documents; CREATE TABLE documents.kept(value text); INSERT INTO documents.kept VALUES('keep me')`},
 		{"wrong singleton", `UPDATE documents.vault_metadata SET singleton=2`},
-		{"multiple identities", `INSERT INTO documents.vault_metadata VALUES (2,'11111111-1111-4111-8111-111111111111',1)`},
+		{"multiple identities", `INSERT INTO documents.vault_metadata VALUES (2,'11111111-1111-4111-8111-111111111111',2)`},
 		{"missing identity", `DELETE FROM documents.vault_metadata`},
 		{"nil identity", `UPDATE documents.vault_metadata SET vault_uid='00000000-0000-0000-0000-000000000000'`},
 		{"wrong table shape", `ALTER TABLE documents.vault_metadata DROP CONSTRAINT vault_metadata_pkey`},
@@ -182,7 +197,7 @@ func TestSetupRefusesUnownedOrInvalidState(t *testing.T) {
 
 func TestSetupPreservesUnsupportedVersion(t *testing.T) {
 	t.Parallel()
-	for _, version := range []int{0, 2} {
+	for _, version := range []int{0, 1, 3} {
 		t.Run(strconv.Itoa(version), func(t *testing.T) {
 			t.Parallel()
 			db, owner := pgtest.NewDatabase(t)
@@ -212,8 +227,11 @@ func TestSetupRollsBackFailedCommit(t *testing.T) {
 		BEGIN RAISE EXCEPTION 'test deferred commit failure'; END $$;
 		CREATE FUNCTION public.install_commit_failure() RETURNS event_trigger LANGUAGE plpgsql AS $$
 		BEGIN
-		  CREATE CONSTRAINT TRIGGER reject_commit AFTER INSERT ON documents.vault_metadata
-		  DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.reject_identity_commit();
+		  IF EXISTS (SELECT 1 FROM pg_event_trigger_ddl_commands()
+		      WHERE object_identity='documents.vault_metadata' AND command_tag='CREATE TABLE') THEN
+		    CREATE CONSTRAINT TRIGGER reject_commit AFTER INSERT ON documents.vault_metadata
+		    DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.reject_identity_commit();
+		  END IF;
 		END $$;
 		CREATE EVENT TRIGGER install_failure ON ddl_command_end WHEN TAG IN ('CREATE TABLE')
 		EXECUTE FUNCTION public.install_commit_failure();`)

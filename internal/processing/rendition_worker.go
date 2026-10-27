@@ -404,7 +404,9 @@ func (worker *RenditionWorker) RunJob(ctx context.Context, jobID string) (
 		})
 	})
 	if err == nil && claim.JobID != "" {
+		reportProcessingRunBusy(ctx, true)
 		processed, err = worker.runClaim(ctx, claim)
+		reportProcessingRunBusy(ctx, false)
 	}
 	if err != nil && ctx.Err() == nil && !errors.Is(err, store.ErrRenditionJobFenced) &&
 		!isRenditionWorkerFatal(err) && !isRenditionWorkerRetryable(err) {
@@ -433,14 +435,14 @@ func (worker *RenditionWorker) runOne(ctx context.Context) (
 	if err != nil || !found {
 		return found, err
 	}
+	jobs.ReportBusy(ctx, true)
+	defer jobs.ReportBusy(ctx, false)
 	return worker.runClaim(ctx, claim)
 }
 
 func (worker *RenditionWorker) runClaim(ctx context.Context,
 	claim store.RenditionJobClaim,
 ) (processed bool, retErr error) {
-	jobs.ReportBusy(ctx, true)
-	defer jobs.ReportBusy(ctx, false)
 	leaseCtx, stopLease := worker.keepLease(ctx, claim)
 	defer func() {
 		leaseErr := stopLease()

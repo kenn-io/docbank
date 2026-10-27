@@ -386,6 +386,13 @@ describe("background jobs drawer", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
       jobsResponse([
         {
+          name: "extract:email",
+          lane: "extract:email",
+          status: "running",
+          busy: false,
+          started_at: "2026-07-23T12:00:00Z",
+        },
+        {
           name: "extract:plain-text",
           lane: "extract:plain-text",
           status: "running",
@@ -444,6 +451,7 @@ describe("background jobs drawer", () => {
           lane: "photo_import",
           operation_id: "b",
           status: "queued",
+          busy: false,
           started_at: "2026-07-23T12:00:20Z",
           total_objects: 1,
           can_cancel: true,
@@ -465,6 +473,7 @@ describe("background jobs drawer", () => {
           lane: "place",
           operation_id: placeId,
           status: "queued",
+          busy: false,
           started_at: "2026-07-23T12:01:00Z",
           can_cancel: true,
         },

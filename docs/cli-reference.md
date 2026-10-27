@@ -397,7 +397,8 @@ Preflight and import share these selection rules:
 - Commas are ordinary characters. Repeat the flag for multiple patterns.
 - Patterns are case-sensitive on every platform, including Windows.
 
-Watch configuration uses separate literal exclusion rules.
+Watch configuration uses these glob rules in `exclude_patterns`, while
+`exclude` keeps literal name-or-relative-path matching.
 
 ### Read progress and failures
 
@@ -1345,7 +1346,8 @@ No flag enables another flag's tools; combine the flags to allow more than one
 kind of work.
 
 See [Model Context Protocol](usage/mcp.md) for client setup, tool and resource
-catalogs, transport limits, caching, and unsupported capabilities.
+catalogs, transport limits, caching, and unsupported capabilities. For read-only
+HTTP hosting in the daemon process, see [docbank daemon](#docbank-daemon).
 
 ## docbank trash
 
@@ -1610,6 +1612,13 @@ for explicit control, such as inspecting logs before sending data commands.
 It normally invokes `daemon run` in the background; foreground use is useful
 for debugging.
 
+The daemon hosts read-only MCP HTTP tools at `/mcp` on its API port when
+`[mcp.http] enabled` is true, or by default for a loopback API once its MCP
+bearer resolves. `[mcp.http] port` moves MCP to a separate loopback port. See
+the [configuration reference](configuration.md#mcp-http-credential) for
+credential settings and the [MCP guide](usage/mcp.md#connect-over-a-trusted-network)
+for Host settings and client access.
+
 Start, restart, and automatic startup also replace an incompatible daemon.
 If its version or API protocol differs from the invoking binary, the CLI stops
 it and starts the matching one. It prints
@@ -1779,7 +1788,8 @@ docbank watch list [--json]
 Lists the daemon's effective watched-inbox configuration in stable name order:
 the machine-local source, virtual-tree destination, complete settle window,
 minimum source age (`0s` when disabled), scan interval, exclusion count, and
-current runner state. Human output quotes source and destination paths so
+current runner state. A waiting watcher shows `idle`; it shows `running` while
+ingesting a file. Human output quotes source and destination paths so
 terminal control characters cannot disguise them. `--json` includes the
 complete exclusion rules and the corresponding job record for agents and
 automation.
@@ -1804,6 +1814,11 @@ old daemon.
   development build. It does not reinstall an already-current release.
 
 The command refuses a release without a published SHA256 checksum.
+
+A binary built for a package manager such as Homebrew never replaces itself.
+The command refuses to install and names the package manager's upgrade
+command, such as `brew upgrade docbank`. `--check` still reports the latest
+release, with the same guidance.
 
 ## docbank openapi
 

@@ -1,6 +1,7 @@
 package processing
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"encoding/json/v2"
@@ -18,8 +19,60 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/media"
+	"go.kenn.io/docbank/document/plaintext"
 	"go.kenn.io/docbank/internal/store"
 )
+
+func TestRenditionReadinessPreservesMalformedJSONForPlaintext(t *testing.T) {
+	t.Parallel()
+	fixture := newPublicationFixture(t)
+	provider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
+	require.NoError(t, err)
+	stored := workerProcessingProfile(t, provider.Descriptor())
+	var portable document.ProcessingProfileV1
+	require.NoError(t, json.Unmarshal(stored.CanonicalProfile, &portable))
+	profile := configuredProfile{portable: portable, record: stored, provider: provider}
+	written, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewBufferString("{broken"))
+	require.NoError(t, err)
+	node, err := fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), "broken.json", written.Hash, written.Size, "application/json", processingBlobPhysical(t, written))
+	require.NoError(t, err)
+	version, err := fixture.catalog.ContentVersionByID(t.Context(), node.CurrentVersionID)
+	require.NoError(t, err)
+	capability, err := inspectRenditionSource(t.Context(), fixture.blobs, node, version, profile)
+	require.NoError(t, err)
+	require.False(t, capability.Eligible)
+	require.Equal(t, media.CapabilityReasonMalformed, capability.Reason)
+}
+
+func TestProcessingServiceRefusesUnsupportedFormatBeforeEnqueue(t *testing.T) {
+	t.Parallel()
+	fixture := newPublicationFixture(t)
+	provider := newWorkerProvider(t)
+	stored := workerProcessingProfile(t, provider.Descriptor())
+	var profile document.ProcessingProfileV1
+	require.NoError(t, json.Unmarshal(stored.CanonicalProfile, &profile))
+	profile.Rendition.TrustBoundary = string(provider.Descriptor().TrustBoundary)
+	service, err := NewService(ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
+		Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(),
+		Profiles: map[string]ProfileConfig{"pdf": {Profile: profile, RenditionProvider: provider}},
+	})
+	require.NoError(t, err)
+	written, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewBufferString("synthetic text"))
+	require.NoError(t, err)
+	node, err := fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), "notes.txt", written.Hash, written.Size, "text/plain", processingBlobPhysical(t, written))
+	require.NoError(t, err)
+	selector := Selector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "pdf"}
+	plan, err := service.Plan(t.Context(), selector)
+	require.NoError(t, err)
+	require.Equal(t, string(media.CapabilityReasonUnsupported), plan.RenditionIneligibleReason)
+	job, err := service.Start(t.Context(), StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true})
+	require.ErrorIs(t, err, ErrSourceIneligible)
+	require.Empty(t, job.ID)
+	_, queued, err := fixture.catalog.ClaimNextRenditionJob(t.Context(), "synthetic-worker", time.Now(), time.Minute)
+	require.NoError(t, err)
+	require.False(t, queued)
+}
 
 func TestProcessingServiceSourceFenceIsBoundedCanonicalAuthority(t *testing.T) {
 	t.Parallel()

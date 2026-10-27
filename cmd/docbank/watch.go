@@ -59,7 +59,7 @@ func writeWatchedInboxes(w io.Writer, items []api.WatchedInbox) error {
 	for _, item := range items {
 		status, problem := "unavailable", "-"
 		if item.Job != nil {
-			status = item.Job.Status
+			status = item.Job.DisplayStatus()
 			if item.Job.Error != "" {
 				problem = strconv.QuoteToASCII(item.Job.Error)
 			}
@@ -67,7 +67,7 @@ func writeWatchedInboxes(w io.Writer, items []api.WatchedInbox) error {
 		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\n",
 			item.Name, status, strconv.QuoteToASCII(item.Source),
 			strconv.QuoteToASCII(item.Destination), item.SettleTime,
-			item.MinimumAge, item.ScanInterval, len(item.Exclude), problem); err != nil {
+			item.MinimumAge, item.ScanInterval, len(item.Exclude)+len(item.ExcludePatterns), problem); err != nil {
 			return fmt.Errorf("writing watched-inbox row: %w", err)
 		}
 	}

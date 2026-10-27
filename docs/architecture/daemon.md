@@ -54,6 +54,9 @@ During graceful shutdown, the daemon:
 6. Removes the runtime record used for discovery.
 
 HTTP draining and background-task draining each have a ten-second ceiling.
+A daemon hosting MCP HTTP drains MCP first, for at most half of the HTTP
+budget, so in-flight MCP reads can finish against its API. A read still
+running after that is cancelled, leaving the rest of the budget for the API.
 Clients allow 25 seconds for graceful exit before forced termination. The extra
 time covers scheduling and cleanup without consuming either drain budget.
 
@@ -174,7 +177,8 @@ A background-spawned daemon (started via auto-start, `daemon start`, or
 `daemon restart`) exits after `[server] idle_timeout` (default 30
 minutes) with no requests, so spawned daemons don't accumulate across
 sessions. `idle_timeout = "0"` disables idle shutdown. A foreground
-`docbank daemon run` never idles out. It runs until signaled or stopped.
+`docbank daemon run`, or any daemon hosting MCP HTTP, never idles out. It runs
+until signaled or stopped.
 An open photo event stream counts as an in-flight request, so a visible Photos tab keeps a background daemon from reaching its idle timeout.
 
 ## Background tasks
@@ -182,8 +186,9 @@ An open photo event stream counts as an in-flight request, so a visible Photos t
 Every daemon-owned task runs under one supervisor rooted in the daemon's
 shutdown context. Names are unique and stable for the lifetime of that daemon.
 A task panic is recovered and recorded as a failure, so it does not crash the
-process. `docbank jobs` and authenticated `GET /api/v1/jobs` expose running and
-terminal state in deterministic order. Worker records remain until restart.
+process. `docbank jobs` and authenticated `GET /api/v1/jobs` expose worker
+activity and terminal state in deterministic order. Workers waiting for work
+show idle. Worker records remain until restart.
 The list includes the newest 1,000 durable storage records. Finished storage
 operations clear within an hour after their retention ends unless they still
 own pending cleanup.

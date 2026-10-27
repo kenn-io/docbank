@@ -418,7 +418,7 @@ facets, frozen authority, and forward/backward pages. See
 
 ## Preview a field-aware query
 
-In the web application, choose **Advanced** for expression editing, structured
+In the web application, choose **Edit query** for expression editing, structured
 facet summaries, syntax help, and positioned server errors. A saved query can
 open in the same editor, and an import collection can start a new
 collection-scoped draft. Text, facets, mode, and sort remain together when saved or kept in the
@@ -535,7 +535,8 @@ text containing NUL bytes remain stored and readable but are not body-indexed.
 Newly ingested or replaced content may take a few seconds to appear while the
 daemon job reaches it. A transient open, read, or verification error leaves the
 item queued and is retried on a bounded delay. It does not become a permanent
-extraction failure. `docbank jobs` lists that worker and shows it as idle when it has nothing to do.
+extraction failure. `docbank jobs` shows the worker as idle while it waits for
+work and running while it processes an item.
 
 ## Which text is not searched?
 

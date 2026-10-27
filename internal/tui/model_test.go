@@ -2503,15 +2503,22 @@ func TestJobsViewShowsLifecycleAndCompleteFailure(t *testing.T) {
 	assert.Contains(t, content, `"watch:inbox"`)
 	assert.Equal(t, 1, backend.jobCalls)
 
+	row := model.renderJobRow(model.jobs[1])
+	assert.True(t, strings.HasSuffix(row, "  -"), row)
+	model, _ = updateModel(t, model, key(tea.KeyDown))
+	model, _ = updateModel(t, model, key(tea.KeyEnter))
+	detail := strings.Join(model.jobDetailLines(model.width), "\n")
+	assert.Contains(t, detail, "Finished: -")
+	model, _ = updateModel(t, model, key(tea.KeyEscape))
+
 	backend.jobs[1].Status = "failed"
 	backend.jobs[1].FinishedAt = "2026-07-22T11:05:00Z"
 	backend.jobs[1].Error = "source is temporarily unavailable; check the configured inbox path"
 	model, cmd = updateModel(t, model, runeKey('r'))
 	model = runModelCommand(t, model, cmd)
-	model, _ = updateModel(t, model, key(tea.KeyDown))
 	model, _ = updateModel(t, model, key(tea.KeyEnter))
 	assert.True(t, model.jobDetail)
-	detail := strings.Join(model.jobDetailLines(model.width), "\n")
+	detail = strings.Join(model.jobDetailLines(model.width), "\n")
 	assert.Contains(t, detail, "Status: failed")
 	assert.Contains(t, detail,
 		"source is temporarily unavailable; check the configured inbox path")

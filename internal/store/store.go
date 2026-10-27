@@ -12,6 +12,7 @@ import (
 
 	"github.com/cenkalti/backoff/v7"
 
+	"go.kenn.io/docbank/internal/store/schemaformat"
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
@@ -22,6 +23,7 @@ var schemaSQL string
 type Store struct {
 	db                     *sql.DB
 	writeDB                *sql.DB
+	postgresSchema         string // Empty for SQLite; PostgreSQL pools use this schema as their search path.
 	path                   string
 	rootID                 int64
 	vaultID                string
@@ -283,9 +285,28 @@ func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) (r
 		return fmt.Errorf("acquiring transaction connection: %w", err)
 	}
 	defer func() { retErr = errors.Join(retErr, conn.Close()) }()
-	// Own cancellation so a mutation cannot return while database/sql is
-	// still rolling back and closing a connection in another goroutine.
-	tx, err := conn.BeginTx(context.WithoutCancel(ctx), nil)
+	// Let cancellation reach BEGIN's network I/O, then detach it so we can
+	// handle cancellation and rollback errors during the mutation.
+	beginCtx, cancelBegin := context.WithCancel(context.WithoutCancel(ctx))
+	defer cancelBegin()
+	beginCancelled := make(chan struct{})
+	stopBeginCancel := context.AfterFunc(ctx, func() {
+		cancelBegin()
+		close(beginCancelled)
+	})
+	var opts *sql.TxOptions
+	if s.postgresSchema != "" {
+		// A waiting writer must read the preceding commit, not a snapshot
+		// taken by the lock statement before that commit.
+		opts = &sql.TxOptions{Isolation: sql.LevelReadCommitted}
+	}
+	// Cancellation racing a successful BEGIN may let database/sql roll back
+	// first. Our Rollback then returns ErrTxDone without the driver's rollback
+	// error; the deferred Conn.Close still waits for that rollback to finish.
+	tx, err := conn.BeginTx(beginCtx, opts)
+	if !stopBeginCancel() {
+		<-beginCancelled
+	}
 	if err != nil {
 		return fmt.Errorf("beginning transaction: %w", err)
 	}
@@ -306,7 +327,20 @@ func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) (r
 			retErr = errors.Join(retErr, err)
 		}
 	}()
-	capture, dropped := s.hasPhotoSubscribers(), false
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if s.postgresSchema != "" {
+		// Match SQLite's single-writer admission across PostgreSQL connections.
+		// Locks are database-local; unrelated vault schemas have separate keys.
+		if _, err := tx.ExecContext(ctx, `SELECT pg_catalog.pg_advisory_xact_lock(
+			pg_catalog.hashtextextended('docbank:storage:' || $1, 0))`, s.postgresSchema); err != nil {
+			return fmt.Errorf("acquiring storage writer: %w", err)
+		}
+	}
+	// PostgreSQL uses the existing broad post-commit invalidation. SQLite's
+	// temporary triggers can narrow that signal to tables Photos reads.
+	capture, dropped := s.postgresSchema == "" && s.hasPhotoSubscribers(), false
 	if capture {
 		if capture, err = s.photoEvents.beginPhotoCapture(ctx, tx); err != nil {
 			return err
@@ -352,11 +386,7 @@ func (s *Store) withLogicalTx(ctx context.Context, fn func(tx *sql.Tx) error) er
 	})
 }
 
-// timestampLayout is RFC 3339 UTC with fixed-width nanoseconds. Timestamps
-// are compared and sorted as strings in SQL (EmptyTrash, TrashedRoots), so
-// lexicographic order must match chronological order; RFC3339Nano trims
-// trailing zeros and breaks that within a second.
-const timestampLayout = "2006-01-02T15:04:05.000000000Z07:00"
+const timestampLayout = schemaformat.TimestampLayout
 
 func nowRFC3339() string {
 	return time.Now().UTC().Format(timestampLayout)

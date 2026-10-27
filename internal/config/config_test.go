@@ -777,7 +777,7 @@ func TestLoadParsesWatchedInboxesAndAppliesDefaults(t *testing.T) {
 	relativeHomeSource := "~/agent-sessions"
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte(
 		"[[watch]]\nname = \"documents\"\nsource = \""+filepath.ToSlash(source)+"\"\n"+
-			"destination = \"/inbox/documents\"\nexclude = [\".tmp\", \"cache/\"]\n"+
+			"destination = \"/inbox/documents\"\nexclude = [\".tmp\", \"cache/\"]\nexclude_patterns = [\"*.swp\", \".syncthing.*.tmp\"]\n"+
 			"settle_time = \"45s\"\nminimum_age = \"168h\"\nscan_interval = \"3s\"\n\n"+
 			"[[watch]]\nname = \"sessions\"\nsource = \""+relativeHomeSource+"\"\n"+
 			"destination = \"/agents/sessions\"\n"), 0o600))
@@ -791,6 +791,8 @@ func TestLoadParsesWatchedInboxesAndAppliesDefaults(t *testing.T) {
 	assert.Equal(t, 7*24*time.Hour, c.Watches[0].MinimumAge.Std())
 	assert.Equal(t, 3*time.Second, c.Watches[0].ScanInterval.Std())
 	assert.Equal(t, []string{".tmp", "cache/"}, c.Watches[0].Exclude)
+	assert.Equal(t, []string{"*.swp", ".syncthing.*.tmp"}, c.Watches[0].ExcludePatterns)
+	assert.Empty(t, c.Watches[1].ExcludePatterns)
 	home, err := os.UserHomeDir()
 	require.NoError(t, err)
 	assert.Equal(t, filepath.Join(home, "agent-sessions"), c.Watches[1].Source)

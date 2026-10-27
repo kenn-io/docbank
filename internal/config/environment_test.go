@@ -14,7 +14,7 @@ import (
 
 func clearServerEnvironment(t *testing.T) {
 	t.Helper()
-	for _, name := range []string{"DOCBANK_BIND_ADDR", "DOCBANK_API_PORT", "DOCBANK_API_KEY", "DOCBANK_API_KEY_FILE", "DOCBANK_ALLOWED_HOSTS", "DOCBANK_MCP_HTTP_TOKEN", "DOCBANK_MCP_HTTP_TOKEN_FILE", "DOCBANK_MCP_HTTP_ALLOWED_HOSTS"} {
+	for _, name := range []string{"DOCBANK_BIND_ADDR", "DOCBANK_API_PORT", "DOCBANK_API_KEY", "DOCBANK_API_KEY_FILE", "DOCBANK_ALLOWED_HOSTS", "DOCBANK_MCP_HTTP_TOKEN", "DOCBANK_MCP_HTTP_TOKEN_FILE", "DOCBANK_MCP_HTTP_ALLOWED_HOSTS", "DOCBANK_MCP_HTTP_ENABLED", "DOCBANK_MCP_HTTP_PORT"} {
 		t.Setenv(name, "")
 	}
 }
@@ -223,4 +223,61 @@ func TestPDFPasswordsPathResolvesAgainstConfigRoot(t *testing.T) {
 	cfg, err := Load(root)
 	require.NoError(t, err)
 	require.Equal(t, filepath.Join(root, "passwords"), cfg.Media.PDFPasswordsFile)
+}
+
+func TestDaemonMCPEnvironmentOverridesTOML(t *testing.T) {
+	clearServerEnvironment(t)
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "config.toml"), []byte("[mcp.http]\nenabled=false\nport=7341\n"), 0o600))
+	cfg, err := Load(root)
+	require.NoError(t, err)
+	require.NotNil(t, cfg.MCP.HTTP.Enabled)
+	assert.False(t, *cfg.MCP.HTTP.Enabled)
+	assert.Equal(t, 7341, cfg.MCP.HTTP.Port)
+
+	t.Setenv("DOCBANK_MCP_HTTP_ENABLED", "true")
+	t.Setenv("DOCBANK_MCP_HTTP_PORT", "7342")
+	cfg, err = Load(root)
+	require.NoError(t, err)
+	require.NotNil(t, cfg.MCP.HTTP.Enabled)
+	assert.True(t, *cfg.MCP.HTTP.Enabled)
+	assert.Equal(t, 7342, cfg.MCP.HTTP.Port)
+
+	for name, value := range map[string]string{"DOCBANK_MCP_HTTP_ENABLED": "sometimes", "DOCBANK_MCP_HTTP_PORT": "70000"} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(name, value)
+			_, err := Load(root)
+			require.ErrorContains(t, err, name)
+		})
+	}
+}
+
+func TestMCPHTTPPlacementFollowsAPIListener(t *testing.T) {
+	enabled := true
+	for _, test := range []struct {
+		name               string
+		bind               string
+		apiPort, mcpPort   int
+		enabled            *bool
+		defaultOn, shares  bool
+		separateListenAddr string
+	}{
+		{name: "loopback default", bind: "127.0.0.1", defaultOn: true, shares: true},
+		{name: "explicit enable", bind: "127.0.0.1", enabled: &enabled, shares: true},
+		{name: "same port as API", bind: "127.0.0.1", apiPort: 7341, mcpPort: 7341, shares: true},
+		{name: "separate port", bind: "::1", mcpPort: 7342, separateListenAddr: "[::1]:7342"},
+		{name: "network API keeps separate port on loopback", bind: "0.0.0.0", apiPort: 7341, mcpPort: 7342, separateListenAddr: "127.0.0.1:7342"},
+		{name: "network API shares its port", bind: "0.0.0.0", apiPort: 7341, shares: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := Default()
+			cfg.Server.BindAddr, cfg.Server.APIPort = test.bind, test.apiPort
+			cfg.MCP.HTTP.Port, cfg.MCP.HTTP.Enabled = test.mcpPort, test.enabled
+			assert.Equal(t, test.defaultOn, cfg.MCPHTTPDefaultOn())
+			assert.Equal(t, test.shares, cfg.MCPHTTPSharesAPIListener())
+			if !test.shares {
+				assert.Equal(t, test.separateListenAddr, cfg.MCPHTTPListenAddr())
+			}
+		})
+	}
 }

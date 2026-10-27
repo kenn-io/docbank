@@ -107,6 +107,9 @@ daemon. If installation fails, Docbank attempts to restart the old daemon.
 `daemon start`, `daemon restart`, and command auto-start also replace a daemon
 whose binary or API protocol is incompatible with the invoking CLI.
 
+If Homebrew installed Docbank, run `brew upgrade docbank` instead.
+`docbank update` refuses to replace a binary that a package manager owns.
+
 For unattended installation, use `docbank update --yes`. Do not use `--force`
 as a routine upgrade flag. It exists to bypass cached release metadata and to
 allow replacing an unversioned development build.

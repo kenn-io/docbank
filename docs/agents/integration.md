@@ -56,7 +56,8 @@ docbank watch list --json
 ```
 
 Each item reports the local source, virtual destination, settle window,
-minimum source age, scan interval, literal exclusions, and current job record.
+minimum source age, scan interval, the literal `exclude` and glob
+`exclude_patterns` lists, and current job record.
 The settle window is the time a file must remain unchanged. A nonzero minimum
 age adds a separate check. It does not replace that window.
 
@@ -544,10 +545,11 @@ curl --fail-with-body \
 ```
 
 The response is `{items: [...]}`, sorted by task name. Branch on `status`:
-`running` is active, and `completed`, `failed`, and `cancelled` are terminal
-for this daemon run. Surface a failed task's `error` to the operator, but do
-not parse its prose as a protocol. An absent item is not proof that work
-completed. It can mean the feature is unconfigured or the daemon restarted,
+`running` with `busy: false` is waiting, and `running` with `busy: true` is
+working. `completed`, `failed`, and `cancelled` are terminal for this daemon
+run. Surface a failed task's `error` to the operator, but do not parse its
+prose as a protocol. An absent item is not proof that work completed. It can
+mean the feature is unconfigured or the daemon restarted,
 because status history lives only in the daemon process.
 
 ## Use revisions for read-modify-write
@@ -811,7 +813,8 @@ rejected. A pattern without `/` matches basenames at any depth. Exclusions
 win, and include patterns do not prune directories. Invalid patterns are
 rejected before traversal. Use bracket expressions such as
 `report[[]1].txt` for literal metacharacters instead of backslash escaping.
-Watched-inbox exclusions remain literal.
+Watched inboxes accept the same glob syntax in `exclude_patterns`;
+`exclude` entries remain literal.
 
 For streaming progress, send the same body to `POST /api/v1/ingest/stream`
 with `Accept: application/x-ndjson`. Read every line through EOF. `progress`

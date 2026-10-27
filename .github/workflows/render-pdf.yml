@@ -18,6 +18,8 @@ concurrency:
 env:
   # "|" falls back to the source repo on any proxy error, including HTTP/2 stream resets mid-download.
   GOPROXY: https://proxy.golang.org|direct
+  # Compile without absolute source paths, like the Makefile does.
+  GOFLAGS: -trimpath
 
 jobs:
   libreoffice-owner:

@@ -45,6 +45,29 @@ and needs no running vault. The rendition and embedding bridge schemas remain
 with their independent contracts in `document/bridge/` and
 `document/embeddingbridge/`.
 
+## Share the Go build cache across worktrees
+
+Make targets and CI compile Go with `-trimpath`, so binaries record
+module-relative source paths instead of absolute ones. Without it, Go caches
+every package separately for each checkout directory, and each git worktree
+grows the build cache by another full copy. With it, identical source in any
+checkout reuses the same cache entries.
+
+- Run `make <target> GOFLAGS=-trimpath=false` to opt out for one command.
+- Plain `go` commands outside Make do not add the flag. Run
+  `go env -w GOFLAGS=-trimpath` to make it your default; Make keeps any value
+  saved that way.
+
+Debuggers need a source mapping for trimmed binaries:
+
+- `dlv debug` and `dlv test` inherit `GOFLAGS` and cannot find source files.
+  Pass `--build-flags=-trimpath=false`. Debug builds disable optimizations, so
+  they never shared cache entries anyway.
+- For `dlv exec` or `dlv attach` on a trimmed binary, start Delve from the
+  repository root and run `config substitute-path -guess` (Delve 1.24 or
+  later). It maps the module path to your checkout, the standard library to
+  `GOROOT`, and dependencies to the module cache.
+
 ## Package ownership
 
 | Area | Owns | Must not own |
@@ -177,16 +200,30 @@ in `releasedSchemaFixtures`. Three checks enforce this:
 
 `internal/store/pgschema` provides the internal schema installation and
 validation foundation. A PostgreSQL-backed vault is not available yet: ordinary
-daemon and embedded operations still use SQLite. This package currently owns
-only the native vault identity and PostgreSQL schema version, not the document
-catalogs, search, transfer, or recovery paths.
+daemon and embedded operations still use SQLite. This package owns the native
+vault identity, PostgreSQL schema version, and the core `nodes`, `blobs`,
+`blob_checksums`, and `content_versions` catalogs. Complete mutations, the
+remaining catalogs, search, transfer, and recovery are not available yet.
 
 `Setup` takes a caller-owned `database/sql` pool authenticated as `SchemaOwner`
 and uses the explicit `Schema` setting. It creates a dedicated schema, canonical
-DDL and a UUIDv4 vault
-identity in one transaction, under a schema-specific PostgreSQL advisory lock.
-Repeated setup preserves that identity. Existing empty, unrelated, malformed,
-wrong-owner and unsupported-version schemas are refused rather than repaired.
+DDL, a UUIDv4 vault identity, and the root directory in one transaction, under a
+schema-specific PostgreSQL advisory lock. Repeated setup preserves the identity,
+root, and existing data. Existing empty or unrelated schemas, malformed
+identities, wrong owners, and unsupported versions are refused rather than repaired.
+
+The catalogs keep content-version and operation IDs as text, numeric node IDs,
+sizes and revisions as `BIGINT`, and timestamps as fixed-width UTC text. This
+matches the shared store queries and their lexical timestamp ordering. Both
+backends use `schemaformat.TimestampLayout`. Node IDs use `GENERATED ALWAYS AS
+IDENTITY`, matching Kata: ordinary inserts cannot supply their own ID. A future
+import must deliberately use `OVERRIDING SYSTEM VALUE` and restore the sequence
+above both the retained IDs and the exported allocation high-water mark before
+accepting writes. Taking only `MAX(id)` loses IDs deleted before export. The
+override itself does not advance the sequence. Foreign keys retain node
+ownership of the current version, version provenance, and blob references.
+Value validation and immutable-record rules belong to the Go mutation paths;
+these tables alone do not provide a complete writable store.
 
 `Validate` only reads. Its runtime role must be separate from the owner, unable
 to assume the owner role, and lack schema `CREATE` and identity-table write
@@ -195,8 +232,33 @@ can assume, including indirect memberships. `NOINHERIT` alone does not prevent
 `SET ROLE`; PostgreSQL's [role privilege checks](https://www.postgresql.org/docs/16/functions-info.html#FUNCTIONS-INFO-ACCESS-TABLE)
 resolve those grants. The operator provisions roles and grants schema `USAGE`
 and identity `SELECT` explicitly. Neither function creates roles or changes
-grants. Callers own connection lifetimes and deadlines. Schema setup does not
-grant ownership of blob roots or permit multiple vault writers.
+grants. `Validate` checks identity/version and role separation; it does not
+qualify the remaining store operations. Callers own connection lifetimes and
+deadlines. Schema setup does not grant ownership of blob roots or permit
+multiple vault writers.
+
+For the current catalog queries, provision the runtime role separately and
+grant the following privileges after setup. This example uses schema
+`documents` and an existing role `docbank_runtime`:
+
+```sql
+GRANT USAGE ON SCHEMA documents TO docbank_runtime;
+GRANT SELECT ON documents.vault_metadata TO docbank_runtime;
+GRANT SELECT, INSERT, UPDATE, DELETE
+    ON documents.nodes, documents.blobs, documents.content_versions
+    TO docbank_runtime;
+GRANT SELECT, INSERT ON documents.blob_checksums TO docbank_runtime;
+GRANT USAGE ON SEQUENCE documents.nodes_id_seq TO docbank_runtime;
+```
+
+Checksum rows are inserted or compared with the existing value, never updated;
+deleting the owning blob cascades to its checksum. Pin every runtime connection's
+`search_path` to `documents,pg_catalog`, substituting the configured schema. The
+pgx connection config uses `RuntimeParams["search_path"]` for this setting;
+setting it on one borrowed connection does not configure the pool. Keep schema
+ownership, `CREATE`, and identity-table writes with the setup role. These grants
+qualify the current queries; they do not enable a public PostgreSQL vault or
+replace validation of the complete runtime catalog contract.
 
 Neither the session login nor the selected role may belong to the schema owner
 role, directly or indirectly. This ownership check is separate from object
@@ -206,7 +268,9 @@ authority to alter objects or grant those privileges again.
 PostgreSQL schema versions are independent of SQLite layout versions and JSONL
 format versions. The first supported PostgreSQL release establishes the upgrade
 floor. Fresh installs use canonical DDL; do not invent historical migrations for
-this unreleased foundation. Later supported layouts require numbered
+this unreleased foundation. Internal layout 2 rejects the earlier identity-only
+layout 1 without changing it. Recreate disposable test databases when moving
+between these internal layouts. Later supported layouts require numbered
 `NNNNNN_description.up.sql` transitions, with the target version in the filename.
 Keep one complete forward chain, and commit each transition and its version
 together under the setup lock. Runtime startup never migrates. Once a migration
@@ -220,34 +284,190 @@ nullability and uniqueness describe structural relationships. Existing released
 SQLite constraints are compatibility commitments; this rule does not authorize
 removing them from an immutable schema or migration.
 
-Keep the development and operator contracts consistent with the existing
-projects:
+#### PostgreSQL reference implementations
+
+Start with AgentsView's [backend parity rules][av-storage], shared
+[`readbase.Catalog`][av-catalog], and [`QueryDialect`][av-dialect]. They show how
+to share operation semantics while keeping SQL syntax and typed loaders with
+the backend. Then compare msgvault's native archive and Kata's lifecycle code.
+The references below identify concrete implementations to reuse as patterns;
+their `internal` packages are not importable shared libraries.
 
 | Reference | Shared contract | Deliberate difference |
 | --- | --- | --- |
-| [msgvault embedded archive](https://github.com/kenn-io/msgvault/blob/main/pkg/archive/archive.go) | pgx through `database/sql`; separate setup and validation-only opening | Docbank serializes setup itself and requires a dedicated schema; it does not copy ambient-schema defaults or the existing msgvault migration ledger |
-| [Kata PostgreSQL operations](https://github.com/kenn-io/kata/blob/main/docs/operations/postgres.md) | `Schema`/`SchemaOwner` naming, owner/runtime role separation, transaction advisory lock, exact version validation | This internal API accepts a pool and has separate setup/validate calls; connection configuration and a public vault are not exposed yet |
-| [Kata numbered migrations](https://github.com/kenn-io/kata/blob/main/docs/development/postgres-migrations.md) | Canonical fresh DDL, first supported release as the floor, immutable numbered forward SQL and atomic version stamps | Version numbers and history belong to Docbank; no fictitious historical transitions |
-| Both projects' PostgreSQL test lanes | Explicit test-server connection, isolated databases, real role and transaction behavior, CI service container | No pgvector dependency; document search has not been ported |
+| AgentsView [catalog adapter][av-pg-catalog] and [query dialect][av-dialect] | Shared filtering, pagination and result assembly; explicit backend SQL and typed scanning | Docbank is an authoritative vault, not a disposable mirror. Keep its existing `Store` and mutation helpers; no replica registry or second implementation of audit and publication |
+| AgentsView [pool opening][av-connect] and [hosted validation][av-hosted] | Configure every pooled connection, validate effective schema at opening, and account for connection reuse | Its tenant/RLS schema is a separate design, not Docbank's permission model. Do not copy its CHECK constraints, tenant tables or triggers |
+| [msgvault embedded archive][mv-archive] | pgx through `database/sql`; separate setup and validation-only opening; `current_schema()` check | Docbank serializes setup itself and requires a dedicated schema; it does not copy ambient-schema defaults or msgvault's migration ledger |
+| [Kata PostgreSQL operations][kata-operations] | `Schema`/`SchemaOwner` naming, owner/runtime role separation, transaction advisory lock, exact version validation | This internal API accepts a pool and has separate setup/validate calls; connection configuration and a public vault are not exposed yet |
+| [Kata numbered migrations][kata-migrations] and [sequence export][kata-sequences] | Canonical fresh DDL, immutable forward SQL, atomic version stamps, and preservation of allocated IDs through transfer | Version history belongs to Docbank; sequence state must also preserve Docbank's audit allocation authority |
+| AgentsView [behavior parity][av-parity] and [pool tests][av-pool-tests]; msgvault and Kata PostgreSQL lanes | Exercise real backends and their public operations, including errors, filtering and reused connections | Keep Docbank's canonical setup fixture, separate runtime role, PostgreSQL 16/18 lanes and both SQLite builds; no new fixture schema or per-test container |
 
-Use existing Kit query/search facilities when implementing the actual store.
-Keep application schema ownership in Docbank; neither upstream project's
-`internal` packages are an importable shared migration library. Do not introduce
-a generic backend registry or a new SQL dialect layer before inspecting
-msgvault's existing dialect and the concrete Docbank queries it must support.
+Keep validation, result bounds, ordering and domain error meanings in the
+existing operation owner. Use shared SQL where it already works. Add a narrow
+backend-specific operation only for a demonstrated difference, such as a
+sequence query or typed SQLSTATE classification; msgvault's
+[`Dialect`][mv-dialect] separates these concerns. Do not rewrite SQL with a new
+general-purpose placeholder parser or copy the entire dialect interface.
 
-Node row allocation and direct node lookups use the same SQL on both engines:
-numbered `$1` parameters and `INSERT ... RETURNING id`. Both SQLite drivers and
-pgx support these statements, so these operations need no dialect adapter.
-Directory and file creation retain their existing mutation transactions and
-error handling. Recursive path queries, the rest of those transactions, and
-the remaining catalogs still require SQLite.
+AgentsView's [curation retries][av-retries] and Kata's
+[transaction helper][kata-transactions] retry complete SQL transactions whose
+effects roll back together. This is not permission to retry Docbank mutation
+callbacks: filesystem publication and external work do not roll back with SQL.
+Keep the transaction and publication contract below. Multi-statement reads
+that need one view of data require an explicit snapshot, not the server's
+default isolation level.
+
+Use the existing Kit `search/sqlquery`, `search/postgres`, `search/lexical`,
+`search/hybrid` and `vector` packages before adding search machinery. Their
+presence does not establish Docbank search parity: retained-version eligibility,
+rendition selection, counts and cursors still belong to Docbank. Keep relevance
+differences explicit; do not promise identical FTS5 and PostgreSQL scores.
+
+[av-storage]: https://github.com/kenn-io/agentsview/blob/666b82857ec5458590396cca83401ad96fdf063b/docs/agents/storage.md#backend-parity
+[av-catalog]: https://github.com/kenn-io/agentsview/blob/666b82857ec5458590396cca83401ad96fdf063b/internal/readbase/catalog.go
+[av-dialect]: https://github.com/kenn-io/agentsview/blob/666b82857ec5458590396cca83401ad96fdf063b/internal/db/query_dialect.go
+[av-pg-catalog]: https://github.com/kenn-io/agentsview/blob/666b82857ec5458590396cca83401ad96fdf063b/internal/postgres/catalog.go
+[av-connect]: https://github.com/kenn-io/agentsview/blob/666b82857ec5458590396cca83401ad96fdf063b/internal/postgres/connect.go
+[av-hosted]: https://github.com/kenn-io/agentsview/blob/666b82857ec5458590396cca83401ad96fdf063b/internal/postgres/hosted_tenant.go
+[av-parity]: https://github.com/kenn-io/agentsview/blob/666b82857ec5458590396cca83401ad96fdf063b/internal/postgres/search_content_parity_pg_test.go
+[av-pool-tests]: https://github.com/kenn-io/agentsview/blob/666b82857ec5458590396cca83401ad96fdf063b/internal/postgres/hosted_tenant_pgtest_test.go
+[av-retries]: https://github.com/kenn-io/agentsview/blob/666b82857ec5458590396cca83401ad96fdf063b/internal/postgres/curation_retry.go
+[mv-archive]: https://github.com/kenn-io/msgvault/blob/0700dc36231fa7e02e56269141eaed0665e69742/pkg/archive/archive.go
+[mv-dialect]: https://github.com/kenn-io/msgvault/blob/0700dc36231fa7e02e56269141eaed0665e69742/internal/store/dialect.go
+[kata-operations]: https://github.com/kenn-io/kata/blob/0d49cbca0aaec5e09f5ff8edeac374966181f630/docs/operations/postgres.md
+[kata-migrations]: https://github.com/kenn-io/kata/blob/0d49cbca0aaec5e09f5ff8edeac374966181f630/docs/development/postgres-migrations.md
+[kata-sequences]: https://github.com/kenn-io/kata/blob/0d49cbca0aaec5e09f5ff8edeac374966181f630/internal/db/pgstore/export.go
+[kata-transactions]: https://github.com/kenn-io/kata/blob/0d49cbca0aaec5e09f5ff8edeac374966181f630/internal/db/pgstore/transaction.go
+
+#### Storage transactions and checksum recording
+
+The internal PostgreSQL store serializes storage mutations with a
+transaction-scoped advisory lock, following Kata's lock pattern. Its key is
+derived from `docbank:storage:` and the configured schema; PostgreSQL keeps
+these locks within one database. Different vault schemas can write independently.
+The pool's pinned search path and the store's schema binding must agree.
+
+`withStorageTx` explicitly uses `READ COMMITTED` on PostgreSQL and acquires the
+writer lock before calling the mutation. Protected rows are read in later
+statements, so a writer admitted after another commits sees that commit even
+when the server defaults to repeatable read. SQLite keeps its immediate
+transaction on the single-connection writer pool. This serializes metadata
+changes; it does not replace the exclusive vault and blob-root ownership.
+
+Cancellation reaches connection acquisition, `BEGIN`, and the PostgreSQL lock
+wait. After the cancellation handoff from `BEGIN`, the store owns rollback and
+its errors. If cancellation races a successful `BEGIN`, `database/sql` can
+start its own rollback first. The store then receives `sql.ErrTxDone` without
+that rollback's error. Closing the dedicated connection still waits for the
+rollback to finish before the store returns cancellation. Callback and commit
+failures propagate to the caller; the store never retries a mutation callback.
+
+Subscriber notifications follow successful commit only. PostgreSQL
+conservatively signals every storage commit; SQLite's temporary capture
+triggers narrow that signal to changes in tables Photos reads. Unread signals
+still coalesce.
+
+`RecordVerifiedBlobChecksum` and `BlobChecksums` use shared SQL on both backends.
+Recording requires an existing blob, accepts an identical checksum again, and
+rejects a conflicting checksum without changing the retained value. The runtime
+role needs only `SELECT` and `INSERT` on `blob_checksums`. SHA-256 remains the
+blob identity; MD5 is auxiliary metadata. This qualifies checksum recording and
+readback, not the backfill target query, complete blob publication, or document
+mutations, which still depend on catalogs that have not been ported.
+
+!!! info "Planned"
+
+    Runtime opening must reject a connection whose `current_schema()` differs
+    from the configured vault schema. Each pool must pin that same search path,
+    so writers to one schema use the same advisory lock key.
+
+    Photos checkout writes currently rely on SQLite's single-connection writer
+    pool. Their PostgreSQL implementation must use `withStorageTx` for every
+    metadata write. Publication intent must commit before the filesystem copy;
+    recording its result or clearing an unused intent needs a separate
+    transaction that survives request cancellation. A database transaction
+    must not span the filesystem publication callback.
+
+#### Catalog maintenance during writes
+
+!!! info "Planned"
+
+    Use shared Go mutation code for logical catalog maintenance on both
+    backends. Perform related changes in the same SQL transaction as the node
+    or content-version change, and publish subscriber notifications only after
+    commit. This keeps one implementation of the operation's meaning; PostgreSQL
+    will not gain a second set of these maintenance triggers.
+
+    SQLite currently owns these effects in triggers. They are separate from
+    value validation and must not disappear when a write is ported:
+
+    | Change | Required catalog effect |
+    | --- | --- |
+    | Insert a content version | Remove its blob from `rendition_blob_staging` and `derivative_blob_purge_pending` |
+    | Delete a version with person assertions | Advance `document_people_state.binding_epoch` and its update timestamp before cascades remove those assertions |
+    | Delete a photo's version | Queue its node in `photo_timeline_pending` |
+    | Change a photo node's current version | Queue its node when the version changes |
+    | Record a checksum | Keep the existing value immutable; reject a conflicting value in Go and omit runtime `UPDATE` privileges |
+
+    This table identifies the immediate dependencies of the core catalogs,
+    not the complete trigger inventory. Bulk and cascading deletions must
+    capture affected identities before deleting the rows that identify them.
+    Each port must cover normal and audited writes, imports, restores and
+    maintenance paths, and verify both commit and rollback effects on both
+    backends. Engine-specific index maintenance, such as SQLite FTS5, remains
+    part of that engine's search implementation.
+
+    Preserve released SQLite schemas and their triggers. Replace each trigger
+    through the supported SQLite layout cutover only when its shared Go owner
+    is present. Do not run both owners for an effect such as advancing a binding
+    epoch. Complete PostgreSQL document mutations remain unavailable until
+    their related catalog effects are implemented; successful SQL alone does
+    not qualify a write.
+
+#### Shared query qualification
+
+Node allocation, direct lookups, single-node canonical paths and directory
+pages use the same SQL on both engines. Numbered `$1` parameters,
+`INSERT ... RETURNING id` and a recursive ancestry query work with both SQLite
+drivers and pgx, without a dialect adapter. Directory and file creation retain
+their existing mutation transactions and error handling. Multi-segment path
+resolution, batched paths, the rest of those mutations and the remaining
+catalogs still require SQLite.
+
+Node views and directory pages request read-only `REPEATABLE READ`
+transactions. Their metadata, canonical path, child count and selected page
+must come from one snapshot. PostgreSQL's default `READ COMMITTED` gives each
+statement a new snapshot and can combine an old node name with a renamed path.
+SQLite retains its existing transaction snapshot. This follows the explicit
+snapshot pattern in msgvault and Kata; apply it to each multi-statement
+snapshot read as that operation is ported.
 
 The shared node-query tests exercise allocation, current-version projection,
-live-child lookup, rollback, and name reuse after trashing. They use the real
-SQLite schema and a limited PostgreSQL query fixture containing only the
-tables those queries read. That fixture is not a vault schema and does not
-qualify the full directory or file mutation on PostgreSQL.
+live-child lookup, canonical paths, directory paging, rollback and name reuse
+after trashing. Concurrent-write cases commit a rename or new child between
+reads and verify that a response stays on its original snapshot while a later
+request sees the change. They use the real SQLite schema and PostgreSQL
+catalogs installed by `pgschema.Setup`. PostgreSQL
+queries run through a separate runtime login with explicit schema, table and
+sequence grants. Reuse this setup for new query tests instead of copying DDL
+into fixtures. These tests do not qualify the full directory or file mutation
+on PostgreSQL.
+
+Retained content-version lookups and history pages also use shared SQL. They
+preserve node ownership, revision ordering, source-version provenance and
+auxiliary checksums, including retained history for trashed files. A node/version
+view requests a read-only `REPEATABLE READ` transaction, following msgvault and
+Kata, so a prune committed between its reads cannot remove a version from that
+response. A later request sees the prune. History counts and pages remain one
+statement. Shared queries introduce numbered parameters in ascending order:
+SQLite assigns their bindings by first appearance, while PostgreSQL uses the
+number itself. Exercise shared queries on both backends to catch binding and
+result differences.
+
+The content-history tests reuse the same setup and the real SQLite schema.
+They cover version projection, ownership, pagination and a prune
+committed between the view's reads. This qualifies the read queries only;
+PostgreSQL content mutations and a public vault remain unavailable.
 
 For PostgreSQL tests, start a disposable server, never an operator database:
 
@@ -273,10 +493,14 @@ create and drop a database per test and use separate real owner/runtime logins;
 the test administrator needs database, role and event-trigger creation for the
 rollback fixtures. These are test privileges, not runtime requirements.
 `internal/pgtest` owns database creation and cleanup for both the schema and
-node-query tests. `make test-pg` requires the DSN, bypasses cached test results,
-and runs both groups under the race detector. Without that variable, ordinary
-`make test` skips PostgreSQL tests.
+node and content-history query tests. `make test-pg` requires the DSN, bypasses
+cached test results, and runs these groups under the race detector. Without
+that variable, ordinary `make test` skips PostgreSQL tests.
 A supplied but invalid connection fails rather than skipping.
+
+Name PostgreSQL tests in `internal/store` with the `Postgres` suffix. The target
+selects them with `-run 'Postgres$'`, so adding a test needs no Makefile edit.
+It runs the entire `internal/store/pgschema` package separately.
 
 CI supplies the server through its service-container configuration, uses the
 existing Linux cache group, and runs only the PostgreSQL tests in this lane.
@@ -333,6 +557,26 @@ The HTTP route and CLI carry the same opt-in bit. The route projects the
 retrieval receipt without requiring `explain`; daemon clients reject an
 unrequested, missing, or malformed receipt. Keep the base search path free of
 provider construction and calls.
+
+### Change the container image
+
+`Dockerfile` is the only image recipe. `docker-bake.hcl` wraps it in the
+`oci-amd64` and `oci-arm64` targets that the central release pipeline builds,
+each on a native Linux runner. The pipeline sets `VERSION`, `OCI_VERSION`,
+`COMMIT`, `REVISION`, `BUILD_DATE`, and `OCI_OUTPUT_DIR`, then expects
+`<arch>.oci.tar` in that directory. Keep those target names, variables, and
+file names stable, and keep the binary's version string the same as in the
+native archives.
+
+To export both archives locally, use a builder that can write OCI archives for
+both architectures, such as a `docker-container` builder:
+
+```bash
+docker buildx bake oci
+```
+
+The archives go to ignored `dist/` unless `OCI_OUTPUT_DIR` names another
+directory.
 
 ## Design and documentation updates
 
