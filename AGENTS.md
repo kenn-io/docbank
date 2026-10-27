@@ -193,6 +193,12 @@ Instructions for autonomous coding agents working in this repository.
   permanent structural relationships such as nullability, primary/foreign keys
   and uniqueness. Existing released constraints stay until a separately
   approved, compatible schema change removes them.
+- Before extending PostgreSQL support, review AgentsView's shared query and
+  backend-parity patterns, then msgvault and Kata. The development guide's
+  [reference implementations](docs/internal/development.md#postgresql-reference-implementations)
+  identify the reusable contracts and intentional differences. Preserve one
+  implementation of Docbank's operation semantics; isolate concrete SQL and
+  driver differences rather than copying an entire backend.
 - Keep PostgreSQL development consistent with msgvault and Kata: use pgx through
   the existing `database/sql` store boundary, explicit schema and schema-owner
   settings, setup-only DDL and validation-only runtime opening. Reuse existing
