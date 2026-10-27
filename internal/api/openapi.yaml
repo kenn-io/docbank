@@ -4378,6 +4378,8 @@ components:
           type: array
         media_source_selection:
           type: boolean
+        miss_log_id:
+          type: string
         requested_mode:
           type: string
         reranking:
@@ -4452,6 +4454,8 @@ components:
           minLength: 1
           type: string
         rerank:
+          type: boolean
+        skip_miss_log:
           type: boolean
       required:
         - query
@@ -4768,7 +4772,6 @@ components:
           items:
             type: string
           maxItems: 4096
-          minItems: 1
           type: array
           uniqueItems: true
         vault_uid:
@@ -6628,6 +6631,52 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/document
         name: document
+    EmptySearchCompletion:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/EmptySearchCompletion.json
+          format: uri
+          readOnly: true
+          type: string
+        miss_log_id:
+          type: string
+      type: object
+      x-go-type: api.EmptySearchCompletion
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    EmptySearchCompletionRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/EmptySearchCompletionRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        actual_mode:
+          enum:
+            - lexical
+            - semantic
+            - hybrid
+          type: string
+        coverage:
+          $ref: "#/components/schemas/DocumentSearchCoverage"
+        search:
+          $ref: "#/components/schemas/DocumentSearchRequest"
+      required:
+        - search
+        - actual_mode
+        - coverage
+      type: object
+      x-go-type: api.EmptySearchCompletionRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     EmptyTrashRequest:
       additionalProperties: false
       properties:
@@ -9550,6 +9599,89 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/mailbox
         name: mailbox
+    MissLogPage:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/MissLogPage.json
+          format: uri
+          readOnly: true
+          type: string
+        items:
+          items:
+            $ref: "#/components/schemas/MissLogReceipt"
+          type: array
+        limit:
+          format: int64
+          type: integer
+        offset:
+          format: int64
+          type: integer
+      required:
+        - items
+        - limit
+        - offset
+      type: object
+      x-go-type: api.MissLogPage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    MissLogReceipt:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/MissLogReceipt.json
+          format: uri
+          readOnly: true
+          type: string
+        actual_mode:
+          type: string
+        coverage:
+          additionalProperties: {}
+          type: object
+        created_at:
+          format: date-time
+          type: string
+        fence_fingerprint:
+          type: string
+        id:
+          type: string
+        profile:
+          type: string
+        query:
+          type: string
+        requested_mode:
+          type: string
+        scope:
+          additionalProperties: {}
+          type: object
+        source:
+          type: string
+        triggers:
+          items:
+            type: string
+          type: array
+        vault_uid:
+          type: string
+      required:
+        - source
+        - id
+        - created_at
+        - vault_uid
+        - query
+        - requested_mode
+        - actual_mode
+        - scope
+        - triggers
+      type: object
+      x-go-type: misslog.Receipt
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/misslog
+        name: misslog
     MkdirPathRequest:
       additionalProperties: false
       properties:
@@ -18755,6 +18887,8 @@ components:
           type: integer
         mime_type:
           type: string
+        miss_log_id:
+          type: string
         modified_before:
           type: string
         modified_since:
@@ -25167,6 +25301,111 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Read one exact retained media transcript
+  /api/v1/miss-log:
+    delete:
+      operationId: deleteMissLog
+      parameters:
+        - explode: false
+          in: query
+          name: before
+          schema:
+            maxLength: 64
+            type: string
+      responses:
+        "204":
+          description: No Content
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Purge private search misses or delete by date (operator only)
+    get:
+      operationId: listMissLog
+      parameters:
+        - explode: false
+          in: query
+          name: limit
+          schema:
+            default: 20
+            format: int64
+            maximum: 100
+            minimum: 1
+            type: integer
+        - explode: false
+          in: query
+          name: offset
+          schema:
+            default: 0
+            format: int64
+            minimum: 0
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MissLogPage"
+          description: OK
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: List private search misses (operator only)
+  /api/v1/miss-log/{id}:
+    delete:
+      operationId: deleteMissLogRecord
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            maxLength: 128
+            type: string
+      responses:
+        "204":
+          description: No Content
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Delete one private search miss (operator only)
+    get:
+      operationId: getMissLogRecord
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            maxLength: 128
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MissLogReceipt"
+          description: OK
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Read one private search miss (operator only)
   /api/v1/nodes:
     post:
       description: kind must be "dir"; file creation is POST /api/v1/ingest for server-side paths or digest-checked POST /api/v1/uploads for remote bytes.
@@ -30328,7 +30567,13 @@ paths:
           in: query
           name: q
           schema:
+            maxLength: 32768
             type: string
+        - explode: false
+          in: query
+          name: skip_miss_log
+          schema:
+            type: boolean
         - explode: false
           in: query
           name: fuzzy
@@ -30645,6 +30890,29 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Create an export with reviewed dates
+  /api/v1/search/complete-empty:
+    post:
+      operationId: completeEmptySearch
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmptySearchCompletionRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmptySearchCompletion"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Record the final empty automatic CLI search (operator only)
   /api/v1/search/similar:
     post:
       operationId: findSimilarDocuments
