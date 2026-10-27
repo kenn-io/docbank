@@ -1365,9 +1365,14 @@ func inspectPDF(data []byte, policy *InspectionPolicy) CapabilityRecord {
 }
 
 // CountPDFPages returns the page count from the authoritative PDF object graph.
-// Owner-only PDFs with an empty user password are counted. InspectCapability
-// still requires a password file for encrypted PDFs.
+// It rejects encrypted PDFs.
 func CountPDFPages(data []byte) (int64, error) {
+	return formatdetect.CountPDFPages(data)
+}
+
+// CountPDFPagesWithEmptyPassword returns the page count from the authoritative
+// PDF object graph, including encrypted PDFs that open with an empty user password.
+func CountPDFPagesWithEmptyPassword(data []byte) (int64, error) {
 	return formatdetect.CountPDFPagesWithEmptyPassword(data)
 }
 
