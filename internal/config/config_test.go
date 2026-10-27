@@ -1179,10 +1179,20 @@ func TestImageEmbeddingProfileUsesStandardBridge(t *testing.T) {
 	for _, tc := range []struct {
 		adapter, endpoint, wantError string
 		chunkPolicy                  bool
+		floor                        *float64
+		inputKind, metric            string
 	}{
-		{"docbank-standard-embedding-bridge/v1", "http://embedding.example.invalid", "", false},
-		{"docbank-voyage-embeddings/v1", "https://api.voyageai.com/v1", "image input requires the standard embedding bridge", false},
-		{"docbank-standard-embedding-bridge/v1", "http://embedding.example.invalid", "image input must not define chunk policy or max input tokens", true},
+		{"docbank-standard-embedding-bridge/v1", "http://embedding.example.invalid", "", false, nil, "", ""},
+		{"docbank-voyage-embeddings/v1", "https://api.voyageai.com/v1", "image input requires the standard embedding bridge", false, nil, "", ""},
+		{"docbank-standard-embedding-bridge/v1", "http://embedding.example.invalid", "image input must not define chunk policy or max input tokens", true, nil, "", ""},
+		{"docbank-standard-embedding-bridge/v1", "http://embedding.example.invalid", "", false, new(0.2), "", ""},
+		{"docbank-standard-embedding-bridge/v1", "http://embedding.example.invalid", "", false, new(-1.0), "", ""},
+		{"docbank-standard-embedding-bridge/v1", "http://embedding.example.invalid", "", false, new(1.0), "", ""},
+		{"docbank-standard-embedding-bridge/v1", "http://embedding.example.invalid", "", false, new(2.0), "", "dot_product"},
+		{"docbank-standard-embedding-bridge/v1", "http://embedding.example.invalid", "min_query_similarity", false, new(1.1), "", ""},
+		{"docbank-standard-embedding-bridge/v1", "http://embedding.example.invalid", "min_query_similarity", false, new(-1.1), "", ""},
+		{"docbank-standard-embedding-bridge/v1", "http://embedding.example.invalid", "min_query_similarity", false, new(0.2), "", "l2"},
+		{"docbank-standard-embedding-bridge/v1", "http://embedding.example.invalid", "min_query_similarity", true, new(0.2), "rendition_chunk", ""},
 	} {
 		t.Run(tc.adapter+tc.wantError, func(t *testing.T) {
 			t.Parallel()
@@ -1190,13 +1200,19 @@ func TestImageEmbeddingProfileUsesStandardBridge(t *testing.T) {
 			cfg.CredentialBindings = map[string]CredentialBindingConfig{"embedding-primary": {EnvironmentVariable: "DOCBANK_EMBEDDING_PRIMARY_KEY"}}
 			profile := cfg.EmbeddingProfiles["semantic"]
 			profile.InputKind = "image"
+			if tc.inputKind != "" {
+				profile.InputKind = tc.inputKind
+			}
+			if tc.metric != "" {
+				profile.Metric = tc.metric
+			}
 			if !tc.chunkPolicy {
 				profile.MaxInputTokens, profile.Chunk = 0, EmbeddingChunkConfig{}
 			}
 			profile.ModelInput = EmbeddingModelInputConfig{Profile: string(document.ModelInputProfileNomic)}
 			profile.CompatibilityID = "nomic/search/v1"
 			profile.TrustBoundary = "operator_network"
-			profile.Runtime = &EmbeddingRuntimeConfig{AdapterContract: tc.adapter, Endpoint: tc.endpoint, ModelRevision: "v1", RequestTimeout: Duration(time.Second), MaxRequestBytes: 1 << 20, AllowedCIDRs: []string{"192.0.2.0/24"}, ProxyMode: "disabled", ConnectTimeout: Duration(time.Second), KeepAlive: Duration(time.Second), TLSHandshakeTimeout: Duration(time.Second)}
+			profile.Runtime = &EmbeddingRuntimeConfig{MinQuerySimilarity: tc.floor, AdapterContract: tc.adapter, Endpoint: tc.endpoint, ModelRevision: "v1", RequestTimeout: Duration(time.Second), MaxRequestBytes: 1 << 20, AllowedCIDRs: []string{"192.0.2.0/24"}, ProxyMode: "disabled", ConnectTimeout: Duration(time.Second), KeepAlive: Duration(time.Second), TLSHandshakeTimeout: Duration(time.Second)}
 			cfg.EmbeddingProfiles["semantic"] = profile
 			if tc.wantError != "" {
 				require.ErrorContains(t, cfg.Validate(), tc.wantError)

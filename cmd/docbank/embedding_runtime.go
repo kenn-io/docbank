@@ -201,10 +201,11 @@ func executableProcessingProfiles(cfg config.Config,
 		}
 		executable := true
 		configured := processing.ProfileConfig{Profile: portable,
-			EmbeddingProviders:   make(map[string]document.EmbeddingProvider),
-			EmbeddingDisclosures: make(map[string]processing.RuntimeDisclosure),
-			EmbeddingClassifiers: make(map[string]func(error) (processing.EmbeddingProviderFailure, time.Duration)),
-			Tokenizers:           make(map[string]document.Tokenizer)}
+			EmbeddingSimilarityFloors: make(map[string]float64),
+			EmbeddingProviders:        make(map[string]document.EmbeddingProvider),
+			EmbeddingDisclosures:      make(map[string]processing.RuntimeDisclosure),
+			EmbeddingClassifiers:      make(map[string]func(error) (processing.EmbeddingProviderFailure, time.Duration)),
+			Tokenizers:                make(map[string]document.Tokenizer)}
 		if runtime, ok := rerankingRuntimes[name]; ok {
 			configured = applyRerankingRuntime(configured, runtime)
 		}
@@ -229,6 +230,9 @@ func executableProcessingProfiles(cfg config.Config,
 				return nil, err
 			}
 			if runtime := bindingConfig.Runtime; runtime != nil {
+				if runtime.MinQuerySimilarity != nil {
+					configured.EmbeddingSimilarityFloors[binding.Name] = *runtime.MinQuerySimilarity
+				}
 				deployment := runtime.DeploymentEpoch
 				if deployment == "" {
 					deployment = runtime.ModelRevision

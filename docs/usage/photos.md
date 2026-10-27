@@ -225,6 +225,8 @@ Choose **Metadata**, **Meaning**, or **Hybrid** beside the search box. Meaning s
 
 Meaning and Hybrid retain up to 1,000 ranked matches. When more matches exist, the results show that limit. Select all, export, albums, and Cull use the retained matches. Narrow the search to retrieve a smaller scope. Metadata fallback shows the best 250 metadata matches. Choose Metadata and sort by capture date to see all. Cull starts from the accepted ranked IDs and reads their current flags.
 
+Meaning includes only photos that meet the image binding's configured similarity threshold. When none qualify, it shows an empty result without falling back to metadata. Hybrid keeps metadata matches even when no photos meet the similarity threshold. A binding without a threshold shows the image-search-unavailable metadata fallback. See [image/text retrieval configuration](../configuration.md#imagetext-retrieval).
+
 When the provider, consent, or image index is unavailable, a status line explains why metadata matches are shown. Advanced Boolean queries that cannot preserve their meaning also use metadata search. Expired provider credentials also use metadata fallback. Docbank sign-in failures remain errors.
 
 Open **Filters** beside the title to narrow the grid by Camera, Lens, Location, and Albums. Hidden also offers Year. Library shows Year while a saved search has an active capture range, so you can edit or clear it. Filters starts closed and loads counts when you open it. Its badge counts active filters you can edit in the panel, counting both ends of a range once. Counts cover the

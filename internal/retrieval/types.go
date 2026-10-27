@@ -172,6 +172,7 @@ type Query struct {
 	// Lane limits bound candidates before fusion. Zero uses Limit.
 	LexicalLimit                 int
 	VectorLimit                  int
+	MinVectorScore               *float64
 	ContentFirst                 bool
 	Scope                        store.SearchOptions
 	ProcessingProfileFingerprint string

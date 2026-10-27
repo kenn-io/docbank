@@ -32,7 +32,8 @@ func (service *Service) SearchPhotos(ctx context.Context, request store.PhotoBro
 		profile := service.profiles[name]
 		for _, binding := range profile.portable.Embeddings {
 			provider := profile.embedders[binding.Name]
-			if binding.InputKind != document.EmbeddingInputImage || provider == nil || !provider.Descriptor().SupportsTextQuery {
+			_, hasFloor := profile.embeddingSimilarityFloors[binding.Name]
+			if binding.InputKind != document.EmbeddingInputImage || provider == nil || !provider.Descriptor().SupportsTextQuery || !hasFloor {
 				continue
 			}
 			selected, err := service.searchPhotoBinding(ctx, request, semanticText, scope, profile, binding, provider)
@@ -66,7 +67,8 @@ func (service *Service) searchPhotoBinding(ctx context.Context, request store.Ph
 	}
 	semanticRequest := request
 	semanticRequest.Query = scope
-	report, err := searcher.Search(ctx, retrieval.Query{Text: semanticText, Mode: retrieval.Mode(request.Query.Mode), Limit: 1000, LexicalLimit: 1000, VectorLimit: 1000, ProcessingProfileFingerprint: profile.record.Fingerprint, BindingID: binding.Name, Authorization: authorization, Scope: store.SearchOptions{PhotoScope: &semanticRequest, PhotoLexicalQuery: &request.Query}})
+	floor := profile.embeddingSimilarityFloors[binding.Name]
+	report, err := searcher.Search(ctx, retrieval.Query{Text: semanticText, Mode: retrieval.Mode(request.Query.Mode), Limit: 1000, LexicalLimit: 1000, VectorLimit: 1000, MinVectorScore: &floor, ProcessingProfileFingerprint: profile.record.Fingerprint, BindingID: binding.Name, Authorization: authorization, Scope: store.SearchOptions{PhotoScope: &semanticRequest, PhotoLexicalQuery: &request.Query}})
 	fence.Close()
 	if err != nil {
 		if ctx.Err() != nil {

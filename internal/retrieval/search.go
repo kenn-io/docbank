@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -423,6 +424,14 @@ func (searcher *Searcher) semantic(ctx context.Context, query Query) (_ []Candid
 	neighbors, err := generation.SearchRows(embedded.Vectors[0].Values, authority.ANNRows)
 	if err != nil {
 		return nil, coverage, false, err
+	}
+	if query.MinVectorScore != nil {
+		if descriptor.Metric == document.VectorMetricL2 {
+			return nil, coverage, false, errors.New("minimum vector score requires cosine or dot_product metric")
+		}
+		neighbors = neighbors[:sort.Search(len(neighbors), func(i int) bool {
+			return neighbors[i].Score < *query.MinVectorScore
+		})]
 	}
 	candidates := make([]Candidate, 0, min(query.VectorLimit, len(neighbors)))
 	seen := make(map[int64]struct{})

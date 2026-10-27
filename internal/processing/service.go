@@ -67,18 +67,19 @@ var (
 )
 
 type ProfileConfig struct {
-	Profile                document.ProcessingProfileV1
-	RenditionProvider      document.RenditionProvider
-	RenditionDisclosure    RuntimeDisclosure
-	RerankingProvider      retrieval.RerankingProvider
-	RerankingProfile       retrieval.RerankingProfile
-	RerankingDisclosure    RuntimeDisclosure
-	RerankingDeadline      time.Duration
-	RerankingFailurePolicy retrieval.ProviderFailurePolicy
-	EmbeddingProviders     map[string]document.EmbeddingProvider
-	EmbeddingDisclosures   map[string]RuntimeDisclosure
-	EmbeddingClassifiers   map[string]func(error) (EmbeddingProviderFailure, time.Duration)
-	Tokenizers             map[string]document.Tokenizer
+	Profile                   document.ProcessingProfileV1
+	RenditionProvider         document.RenditionProvider
+	RenditionDisclosure       RuntimeDisclosure
+	RerankingProvider         retrieval.RerankingProvider
+	RerankingProfile          retrieval.RerankingProfile
+	RerankingDisclosure       RuntimeDisclosure
+	RerankingDeadline         time.Duration
+	RerankingFailurePolicy    retrieval.ProviderFailurePolicy
+	EmbeddingProviders        map[string]document.EmbeddingProvider
+	EmbeddingSimilarityFloors map[string]float64
+	EmbeddingDisclosures      map[string]RuntimeDisclosure
+	EmbeddingClassifiers      map[string]func(error) (EmbeddingProviderFailure, time.Duration)
+	Tokenizers                map[string]document.Tokenizer
 }
 
 type ServiceConfig struct {
@@ -101,21 +102,22 @@ type ServiceConfig struct {
 }
 
 type configuredProfile struct {
-	vectorSpaces           map[string]string
-	mediaMaxBytes          int64
-	portable               document.ProcessingProfileV1
-	record                 store.ProcessingProfileRecord
-	provider               document.RenditionProvider
-	rerankingProvider      retrieval.RerankingProvider
-	rerankingProfile       retrieval.RerankingProfile
-	rerankingDisclosure    RuntimeDisclosure
-	rerankingDeadline      time.Duration
-	rerankingFailurePolicy retrieval.ProviderFailurePolicy
-	embedders              map[string]document.EmbeddingProvider
-	embeddingRuntimes      map[string]*ProviderEmbeddingRuntime
-	tokenizers             map[string]document.Tokenizer
-	renderDisclosure       RuntimeDisclosure
-	embedDisclosures       map[string]RuntimeDisclosure
+	vectorSpaces              map[string]string
+	mediaMaxBytes             int64
+	portable                  document.ProcessingProfileV1
+	record                    store.ProcessingProfileRecord
+	provider                  document.RenditionProvider
+	rerankingProvider         retrieval.RerankingProvider
+	rerankingProfile          retrieval.RerankingProfile
+	rerankingDisclosure       RuntimeDisclosure
+	rerankingDeadline         time.Duration
+	rerankingFailurePolicy    retrieval.ProviderFailurePolicy
+	embedders                 map[string]document.EmbeddingProvider
+	embeddingSimilarityFloors map[string]float64
+	embeddingRuntimes         map[string]*ProviderEmbeddingRuntime
+	tokenizers                map[string]document.Tokenizer
+	renderDisclosure          RuntimeDisclosure
+	embedDisclosures          map[string]RuntimeDisclosure
 }
 
 type Service struct {
@@ -471,8 +473,9 @@ func NewService(config ServiceConfig) (*Service, error) {
 			return nil, fmt.Errorf("processing profile %q canonical decode: %w", name, err)
 		}
 		configured := configuredProfile{vectorSpaces: make(map[string]string), portable: profile, provider: supplied.RenditionProvider,
-			mediaMaxBytes:     service.mediaMaxBytes,
-			rerankingProvider: supplied.RerankingProvider, rerankingProfile: supplied.RerankingProfile,
+			embeddingSimilarityFloors: maps.Clone(supplied.EmbeddingSimilarityFloors),
+			mediaMaxBytes:             service.mediaMaxBytes,
+			rerankingProvider:         supplied.RerankingProvider, rerankingProfile: supplied.RerankingProfile,
 			rerankingDeadline: supplied.RerankingDeadline, rerankingFailurePolicy: supplied.RerankingFailurePolicy,
 			embedders:         make(map[string]document.EmbeddingProvider, len(supplied.EmbeddingProviders)),
 			embeddingRuntimes: make(map[string]*ProviderEmbeddingRuntime, len(profile.Embeddings)),

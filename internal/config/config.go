@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math"
 	"net"
 	"net/netip"
 	"net/url"
@@ -279,6 +280,7 @@ type EmbeddingRuntimeConfig struct {
 
 	AdapterContract        string   `toml:"adapter_contract"`
 	ModelRevision          string   `toml:"model_revision"`
+	MinQuerySimilarity     *float64 `toml:"min_query_similarity"`
 	DeploymentEpoch        string   `toml:"deployment_epoch"`
 	ProviderRevisionHeader string   `toml:"provider_revision_header"`
 	CapabilityManifest     string   `toml:"capability_manifest"`
@@ -1345,6 +1347,14 @@ func validateEmbeddingProfileConfig(profile EmbeddingProfileConfig, prefix strin
 	}
 	if profile.Runtime != nil {
 		runtime := profile.Runtime
+		if floor := runtime.MinQuerySimilarity; floor != nil {
+			if profile.InputKind != string(document.EmbeddingInputImage) || profile.Metric == document.VectorMetricL2 {
+				return fmt.Errorf("%s runtime min_query_similarity requires image input with cosine or dot_product metric", prefix)
+			}
+			if math.IsNaN(*floor) || math.IsInf(*floor, 0) || profile.Metric == document.VectorMetricCosine && (*floor < -1 || *floor > 1) {
+				return fmt.Errorf("%s runtime min_query_similarity must be finite and within [-1, 1] for cosine", prefix)
+			}
+		}
 		if profile.InputKind == string(document.EmbeddingInputImage) && runtime.AdapterContract != "docbank-standard-embedding-bridge/v1" {
 			return fmt.Errorf("%s image input requires the standard embedding bridge", prefix)
 		}

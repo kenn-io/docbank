@@ -2109,7 +2109,7 @@ func newImageEmbeddingService(t *testing.T, f *photoDescriptionFixture) photoSea
 	portable.Embeddings = []document.EmbeddingBindingV1{binding}
 	provider := &embeddingWorkerProvider{runtime: fake.runtime, binding: binding.Name, descriptor: descriptor}
 	fake.runtime.consumeOriginal = true
-	service, err := NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(), Principal: "synthetic-operator", Scope: "document-processing", Profiles: map[string]ProfileConfig{"images": {Profile: portable, EmbeddingProviders: map[string]document.EmbeddingProvider{binding.Name: provider}, EmbeddingClassifiers: map[string]func(error) (EmbeddingProviderFailure, time.Duration){binding.Name: fake.runtime.Classify}}}})
+	service, err := NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(), Principal: "synthetic-operator", Scope: "document-processing", Profiles: map[string]ProfileConfig{"images": {Profile: portable, EmbeddingSimilarityFloors: map[string]float64{binding.Name: 0.2}, EmbeddingProviders: map[string]document.EmbeddingProvider{binding.Name: provider}, EmbeddingClassifiers: map[string]func(error) (EmbeddingProviderFailure, time.Duration){binding.Name: fake.runtime.Classify}}}})
 	require.NoError(t, err)
 	return photoSearchFixture{f: f, fake: fake, descriptor: descriptor, portable: portable, binding: binding, provider: provider, service: service}
 }
@@ -2167,7 +2167,7 @@ func (x photoSearchFixture) alternate(t *testing.T, consent, indexed bool) (*Ser
 	alternate.Embeddings = slices.Clone(portable.Embeddings)
 	alternate.Embeddings[0].Descriptor.Fingerprint = alternateDescriptor.Fingerprint
 	alternateProvider := &embeddingWorkerProvider{runtime: x.fake.runtime, binding: binding.Name, descriptor: alternateDescriptor}
-	two, err := NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(), Principal: service.principal, Scope: service.scope, Profiles: map[string]ProfileConfig{"z-images": {Profile: portable, EmbeddingProviders: map[string]document.EmbeddingProvider{binding.Name: provider}}, "a-images": {Profile: alternate, EmbeddingProviders: map[string]document.EmbeddingProvider{binding.Name: alternateProvider}}}})
+	two, err := NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(), Principal: service.principal, Scope: service.scope, Profiles: map[string]ProfileConfig{"z-images": {Profile: portable, EmbeddingSimilarityFloors: map[string]float64{binding.Name: 0.2}, EmbeddingProviders: map[string]document.EmbeddingProvider{binding.Name: provider}}, "a-images": {Profile: alternate, EmbeddingSimilarityFloors: map[string]float64{binding.Name: 0.2}, EmbeddingProviders: map[string]document.EmbeddingProvider{binding.Name: alternateProvider}}}})
 	require.NoError(t, err)
 	if consent {
 		f.grant(t, two, "a-images")
@@ -2187,6 +2187,47 @@ func (x photoSearchFixture) alternate(t *testing.T, consent, indexed bool) (*Ser
 		require.NoError(t, err)
 	}
 	return two, alternate, alternateProvider
+}
+
+func TestSearchPhotosMeaningOmitsPhotosBelowSimilarityFloor(t *testing.T) {
+	t.Parallel()
+	x := newPhotoSearchFixture(t)
+	// The indexed image is [1, 2]; this query has zero cosine similarity.
+	x.fake.runtime.mutate[x.binding.Name] = func(result document.EmbeddingResult) document.EmbeddingResult {
+		result.Vectors[0].Values = []float32{2, -1}
+		return result
+	}
+	request := store.PhotoBrowseRequest{Query: query.Query{V: 1, Syntax: "simple", Mode: "semantic", Text: "a dog", Sort: query.Sort{Field: "relevance", Direction: "desc"}}}
+	ranked, err := x.service.SearchPhotos(t.Context(), request)
+	require.NoError(t, err)
+	require.Equal(t, "semantic", ranked.ActualMode)
+	require.Empty(t, ranked.FallbackReason)
+	require.Empty(t, ranked.Members)
+
+	request.Query.Mode, request.Query.Text = "hybrid", "last-photo"
+	ranked, err = x.service.SearchPhotos(t.Context(), request)
+	require.NoError(t, err)
+	require.Equal(t, "hybrid", ranked.ActualMode)
+	require.Empty(t, ranked.FallbackReason)
+	require.Len(t, ranked.Members, 1)
+	require.Equal(t, x.f.asset.ID, ranked.Members[0].AssetID)
+
+	// A matching query still passes the floor before reciprocal-rank scoring.
+	x.fake.runtime.mutate[x.binding.Name] = nil
+	request.Query.Mode, request.Query.Text = "semantic", "a dog"
+	ranked, err = x.service.SearchPhotos(t.Context(), request)
+	require.NoError(t, err)
+	require.Equal(t, "semantic", ranked.ActualMode)
+	require.Empty(t, ranked.FallbackReason)
+	require.Len(t, ranked.Members, 1)
+	require.Equal(t, x.f.asset.ID, ranked.Members[0].AssetID)
+
+	delete(x.service.profiles["images"].embeddingSimilarityFloors, x.binding.Name)
+	ranked, err = x.service.SearchPhotos(t.Context(), request)
+	require.NoError(t, err)
+	require.Equal(t, "lexical", ranked.ActualMode)
+	require.Equal(t, "provider_unavailable", ranked.FallbackReason)
+	require.Empty(t, ranked.Members)
 }
 
 func TestSearchPhotosRanksAndFiltersSupportedQueries(t *testing.T) {

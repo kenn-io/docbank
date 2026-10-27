@@ -1044,6 +1044,10 @@ It records malformed responses separately from rejected document input.
 
 Use `docbank-standard-embedding-bridge/v1` with `input_kind = "image"` for Photos Meaning and Hybrid search. The bridge receives verified, stripped JPEG grid previews and text queries in the same vector space. Originals and filenames stay local. Use the bridge endpoint origin, pinned `model_revision`, provider disclosure, and explicit transport policy described above. Grant image and query-text consent before searching; missing consent, provider access, or an active index returns metadata matches with a visible reason.
 
+Set `min_query_similarity` in the image binding's runtime config to a threshold calibrated for the pinned model revision. There is no default. It accepts a finite score for cosine or dot product; cosine values must be in `[-1, 1]`. Other input kinds and L2 bindings reject this setting. An image binding without a threshold uses the `provider_unavailable` metadata fallback for Meaning and Hybrid search.
+
+Docbank applies the threshold to raw similarity before ranking or combining the semantic and metadata results. Meaning returns an empty result without fallback when every photo falls below it. Hybrid retains metadata matches. Changing the threshold leaves all fingerprints unchanged and requires no reindexing.
+
 ```toml
 [processing_profiles.photos]
 embeddings = ["images"]
@@ -1056,6 +1060,8 @@ input_kind = "image"
 adapter_contract = "docbank-standard-embedding-bridge/v1"
 endpoint = "https://embedding.example.invalid"
 model_revision = "provisioned-image-model-v1"
+# Example only: calibrate this value for the pinned model revision.
+min_query_similarity = 0.2
 # Supply the disclosure, credentials, limits, and transport policy above.
 ```
 
