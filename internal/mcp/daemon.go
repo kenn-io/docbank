@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
 )
 
@@ -309,6 +310,14 @@ func daemonAcquisitionError(err error) error {
 
 func sanitizedDaemonError(message, cause error) error {
 	facts, _ := daemonconn.ExtractProblemFacts(cause)
+	// Answer profile selection can fail locally within a daemon read. Retain
+	// only its stable codes, never the native error or its provider details.
+	if native, ok := errors.AsType[*api.Error](cause); ok {
+		switch native.Code {
+		case "processing_unavailable", "processing_profile_unavailable", "reranking_unavailable":
+			facts = daemonconn.ProblemFacts{Code: native.Code}
+		}
+	}
 	diagnostic := "daemon_request_failed"
 	switch {
 	case daemonconn.IsTransportError(cause):
