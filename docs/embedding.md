@@ -73,6 +73,28 @@ Cursors belong to the reader's vault and process lifetime; restart listing
 after reopening the vault. Responses retain `cacheScope: private` and
 `ttlMs: 0`.
 
+### Record private search misses
+
+Embedded owners can opt in to the same private log for `SearchDocuments` and
+native MCP reads:
+
+```go
+vault, err := docbank.New(ctx, docbank.Config{
+    Root: root,
+    MissLog: docbank.MissLogOptions{Enabled: true},
+})
+```
+
+Zero `RetentionDays` and `MaxRecords` select the default bounds. The application
+must disclose recording to its callers: the vault owner can read stored query
+text. See the [miss log configuration](configuration.md#private-search-miss-log)
+for retention and backup exclusions. To use the daemon's management CLI on this
+root, close the embedded vault first and select that root with `DOCBANK_HOME`.
+The CLI never opens a vault behind its current owner's lock.
+
+Automatic miss logging is best effort. If another vault write is busy, the
+search can return without a receipt.
+
 ### Reuse other read definitions
 
 `ReadTool(name)` returns an independent copy of the selected native read-only

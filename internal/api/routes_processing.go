@@ -424,10 +424,11 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		Path: "/api/v1/search", Summary: "Search document versions by fence or live scope",
 		MaxBodyBytes: 16 << 20,
 	}, func(ctx context.Context, input *searchInput) (*searchOutput, error) {
-		report, err := searchDocuments(ctx, d.Processing, input.Body)
+		report, err := searchDocuments(ctx, d.Processing, d.Store, input.Body)
 		if err != nil {
 			return nil, err
 		}
+		report.MissLogID = recordDocumentSearch(ctx, d.MissLog, input.Body, report)
 		return &searchOutput{Body: report}, nil
 	})
 }
@@ -886,9 +887,33 @@ func validateDocumentSearch(ctx context.Context, service *processing.Service, in
 	return nil
 }
 
-func searchDocuments(ctx context.Context, service *processing.Service, input DocumentSearchRequest) (DocumentSearchReport, error) {
+func searchDocuments(ctx context.Context, service *processing.Service, st *store.Store, input DocumentSearchRequest) (DocumentSearchReport, error) {
 	if service == nil {
 		return DocumentSearchReport{}, processingUnavailable()
+	}
+	if input.Scope == nil && len(input.Fence.ContentVersionIDs) == 0 {
+		if st == nil || input.Fence.VaultUID != st.VaultID() {
+			return DocumentSearchReport{}, fromProcessingError(processing.ErrForeignVault)
+		}
+		if err := validateDocumentSearch(ctx, service, DocumentSearchValidationRequest{Query: input.Query, Mode: input.Mode, Profile: input.Profile, Limit: input.Limit, BindingID: input.BindingID, Explain: input.Explain, Rerank: input.Rerank, ContentFirst: input.ContentFirst}); err != nil {
+			return DocumentSearchReport{}, err
+		}
+		mode := input.Mode
+		if mode == "" {
+			mode = "auto"
+		}
+		actual := mode
+		if mode == "auto" {
+			actual = "lexical"
+		}
+		if input.MediaSources != nil {
+			return DocumentSearchReport{}, fromProcessingError(processing.ErrMediaSearchInvalid)
+		}
+		report := DocumentSearchReport{RequestedMode: mode, ActualMode: actual, Coverage: DocumentSearchCoverage{State: "complete"}, Degradations: []string{}, Results: []DocumentSearchResult{}, Trace: []DocumentSearchTrace{}}
+		if input.Rerank {
+			report.Reranking = &DocumentSearchRerankingReceipt{Outcome: "skipped"}
+		}
+		return report, nil
 	}
 	var allLive *store.SearchOptions
 	if input.Scope != nil {

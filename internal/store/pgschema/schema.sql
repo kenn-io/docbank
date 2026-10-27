@@ -13,6 +13,17 @@ CREATE TABLE {{schema}}.node_allocation (
     high_water BIGINT NOT NULL
 );
 -- Text uses SQLite byte order, independent of the database locale.
+
+-- Private local records are excluded from portable metadata.
+CREATE TABLE {{schema}}.miss_log_records (
+    id TEXT PRIMARY KEY,
+    created_at TEXT NOT NULL,
+    receipt TEXT NOT NULL
+);
+CREATE INDEX miss_log_records_created ON {{schema}}.miss_log_records(created_at DESC, id DESC);
+
+-- Keep timestamps and content identities in the shared store's text form.
+-- Identity allocation must not reuse a committed node ID after deletion.
 CREATE TABLE {{schema}}.nodes (
     id                 BIGINT PRIMARY KEY,
     parent_id          BIGINT REFERENCES {{schema}}.nodes(id) ON DELETE CASCADE,

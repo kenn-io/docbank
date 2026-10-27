@@ -416,7 +416,7 @@ type sourceFenceOutput struct {
 
 type searchDocumentsOutput struct {
 	privateCache
-
+	MissLogID          string                              `json:"miss_log_id,omitzero"`
 	VaultID            string                              `json:"vault_id,omitzero"`
 	Fence              *sourceFenceOutput                  `json:"fence,omitzero"`
 	FenceFingerprint   string                              `json:"fence_fingerprint,omitzero"`
@@ -445,7 +445,7 @@ func searchDocuments(
 	if err != nil {
 		return searchDocumentsOutput{}, nil, err
 	}
-	output := searchDocumentsOutput{VaultID: result.vaultID,
+	output := searchDocumentsOutput{MissLogID: result.report.MissLogID, VaultID: result.vaultID,
 		RequestedMode: result.report.RequestedMode, ActualMode: result.report.ActualMode,
 		Coverage: searchCoverageOutput{BindingRequired: result.report.Coverage.BindingRequired,
 			ScopedDocuments:   result.report.Coverage.ScopedDocuments,
@@ -534,13 +534,6 @@ func effectiveSearchMode(mode string) string {
 		return "auto"
 	}
 	return mode
-}
-
-func effectiveEmptySearchMode(mode string) string {
-	if mode == "semantic" || mode == "hybrid" {
-		return mode
-	}
-	return "lexical"
 }
 
 type getDocumentInput struct {

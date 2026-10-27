@@ -6,11 +6,13 @@ import (
 	"encoding/hex"
 	"encoding/json/v2"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -27,6 +29,8 @@ type automaticSearchCase struct {
 	profileError, searchError       string
 	malformed, cold, mixed          bool
 	empty                           bool
+	noDocumentHits, noFolderHits    bool
+	wantCompletion                  int
 	folderFirst, wantTruncated      bool
 	wantResults, wantFolders        int
 	jsonCLI, humanCLI, agentCLI     bool
@@ -52,8 +56,10 @@ func TestAutomaticSearchSelectionAndFallback(t *testing.T) {
 		{name: "JSON lexical truncation", profiles: profiles, limit: 1, jsonCLI: true, wantSearch: 1, wantHybrid: true, wantResults: 1, wantTruncated: true},
 		{name: "human folder fills page", profiles: profiles, limit: 1, folderFirst: true, humanCLI: true, wantSearch: 1, wantHybrid: true, wantTruncated: true},
 		{name: "human hybrid", profiles: profiles, limit: 50, humanCLI: true, wantSearch: 1, wantHybrid: true},
-		{name: "human empty scope", profiles: profiles, limit: 50, humanCLI: true, empty: true, wantSearch: 1, wantHybrid: true},
+		{name: "human empty scope", profiles: profiles, limit: 50, humanCLI: true, empty: true, wantSearch: 1, wantHybrid: true, wantCompletion: 1},
 		{name: "agent hybrid", profiles: profiles, limit: 50, agentCLI: true, wantSearch: 1, wantHybrid: true},
+		{name: "empty merged result", profiles: profiles, limit: 50, jsonCLI: true, wantSearch: 1, wantHybrid: true, noDocumentHits: true, noFolderHits: true, wantCompletion: 1},
+		{name: "folder prevents miss", profiles: profiles, limit: 50, jsonCLI: true, wantSearch: 1, wantHybrid: true, noDocumentHits: true, wantFolders: 1},
 		{name: "query length boundary", query: strings.Repeat("界", 8192), profiles: profiles, limit: 50, jsonCLI: true, wantSearch: 1, wantHybrid: true, wantResults: 1, wantFolders: 1},
 		{name: "query too long", query: strings.Repeat("界", 8193), profiles: profiles, limit: 50, jsonCLI: true, skipped: true},
 		{name: "blank query", query: " ", profiles: profiles, limit: 50, skipped: true},
@@ -118,6 +124,8 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 ) http.HandlerFunc {
 	t.Helper()
 	const vault = "22222222-2222-4222-8222-222222222222"
+	completions := 0
+	t.Cleanup(func() { assert.Equal(t, tc.wantCompletion, completions) })
 	problem := func(w http.ResponseWriter, code string) {
 		status := http.StatusInternalServerError
 		switch code {
@@ -144,12 +152,22 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 			assert.NoError(t, json.MarshalWrite(w, map[string]string{"proof": daemonauth.Proof("synthetic-token", nonce)}))
 		case "GET /api/v1/search/text-coverage":
 			assert.NoError(t, json.MarshalWrite(w, api.SearchTextCoverage{Families: []string{}}))
+		case "POST /api/v1/search/complete-empty":
+			completions++
+			var request api.EmptySearchCompletionRequest
+			assert.NoError(t, json.UnmarshalRead(r.Body, &request))
+			assert.Equal(t, tc.query, request.Search.Query)
+			assert.NoError(t, json.MarshalWrite(w, api.EmptySearchCompletion{MissLogID: strings.Repeat("a", 48)}))
 		case "GET /api/v1/search":
+			assert.Equal(t, tc.wantHybrid, r.URL.Query().Get("skip_miss_log") == "true")
 			assert.Equal(t, tc.query, r.URL.Query().Get("q"))
 			assert.Equal(t, tc.wantSearch, *searchCalls, "lexical search must run after every hybrid attempt")
 			matches := []api.SearchHit{
 				{Node: api.Node{ID: 42, Kind: "file", Name: "query.txt"}, Path: "/query.txt", Match: "name"},
 				{Node: api.Node{ID: 7, Kind: "dir", Name: "query folder"}, Path: "/query folder", Match: "name"},
+			}
+			if tc.noFolderHits {
+				matches = matches[:1]
 			}
 			if tc.folderFirst {
 				matches[0], matches[1] = matches[1], matches[0]
@@ -180,6 +198,7 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 			var body api.DocumentSearchRequest
 			assert.NoError(t, json.Unmarshal(raw, &body))
 			assert.Equal(t, tc.query, body.Query)
+			assert.True(t, body.SkipMissLog)
 			assert.Equal(t, "hybrid", body.Mode)
 			expectedProfile, expectedBinding := "alpha", "a"
 			if *searchCalls == 2 {
@@ -204,6 +223,8 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 				_, _ = w.Write([]byte(`{"actual_mode":"semantic"}`))
 			case tc.empty:
 				assert.NoError(t, json.MarshalWrite(w, api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete"}}))
+			case tc.noDocumentHits:
+				assert.NoError(t, json.MarshalWrite(w, api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete", BindingRequired: true, ScopedDocuments: 1, CompleteDocuments: 1}, Results: []api.DocumentSearchResult{}}))
 			default:
 				assert.NoError(t, json.MarshalWrite(w, api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete", BindingRequired: true, ScopedDocuments: 1, CompleteDocuments: 1}, Results: []api.DocumentSearchResult{{VaultUID: vault, NodeID: 42, ContentVersionID: processingTestVersionID, Rank: 1, Score: .75, Path: "/query.txt", Excerpt: "query words", LexicalRank: 1, Evidence: []api.DocumentEvidenceReference{{Kind: "node_name"}}}}}))
 			}
@@ -354,4 +375,100 @@ func TestSearchCLIForwardsPDFFilter(t *testing.T) {
 	require.NoError(t, err)
 	_, err = runCLI(t, "search", "--pdf-filter", filter, "--json")
 	require.NoError(t, err)
+}
+
+func TestAutomaticMissLogFinalizationDoesNotBlockCompletedSearch(t *testing.T) {
+	t.Parallel()
+	tc := automaticSearchCase{query: "query words", limit: 50, wantHybrid: true, wantSearch: 1, noDocumentHits: true, noFolderHits: true,
+		profiles: []api.ProcessingProfileSummary{{Name: "alpha", EmbeddingBindings: []string{"a"}, QueryEmbeddingBindings: []string{"a"}}}}
+	var record kitdaemon.RuntimeRecord
+	var profileCalls, searchCalls int
+	base := automaticSearchDaemon(t, tc, &record, &profileCalls, &searchCalls)
+	started, cancelled := make(chan struct{}), make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/search/complete-empty" {
+			base.ServeHTTP(w, r)
+			return
+		}
+		var request api.EmptySearchCompletionRequest
+		assert.NoError(t, json.UnmarshalRead(r.Body, &request))
+		close(started)
+		<-r.Context().Done()
+		close(cancelled)
+	}))
+	defer server.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	connection := daemonconn.New(server.URL, "key")
+	outcome, err := tryAutomaticSearch(ctx, connection, tc.query, tc.limit, daemonconn.SearchOptions{})
+	require.NoError(t, err)
+	require.NotNil(t, outcome.report)
+	lexical, err := connection.SearchWithOptions(ctx, tc.query, tc.limit, daemonconn.SearchOptions{SkipMissLog: true})
+	require.NoError(t, err)
+	require.Len(t, lexical.Hits, 1)
+	require.Empty(t, outcome.report.Results)
+	before := *outcome.report
+	done := make(chan struct{})
+	go func() { finalizeAutomaticSearchMiss(ctx, connection, &outcome, true); close(done) }()
+	defer func() { cancel(); <-done }()
+	guard, stop := context.WithTimeout(t.Context(), 3*time.Second)
+	defer stop()
+	select {
+	case <-started:
+	case <-guard.Done():
+		t.Fatal("completion request did not reach the daemon")
+	}
+	select {
+	case <-done:
+	case <-guard.Done():
+		t.Fatal("optional finalization withheld the completed search")
+	}
+	require.NoError(t, ctx.Err(), "optional timeout must not cancel the caller")
+	require.Equal(t, before, *outcome.report)
+	require.Empty(t, outcome.report.MissLogID)
+	select {
+	case <-cancelled:
+	case <-guard.Done():
+		t.Fatal("completion HTTP request was not cancelled")
+	}
+}
+
+func TestAutomaticMissLogFinalizationHonorsCallerCancellation(t *testing.T) {
+	t.Parallel()
+	called := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called <- struct{}{}
+		w.Header().Set("Content-Type", "application/json")
+		assert.NoError(t, json.MarshalWrite(w, api.EmptySearchCompletion{MissLogID: strings.Repeat("a", 48)}))
+	}))
+	defer server.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	outcome := automaticSearchOutcome{report: &api.DocumentSearchReport{ActualMode: "hybrid"}}
+	finalizeAutomaticSearchMiss(ctx, daemonconn.New(server.URL, "key"), &outcome, true)
+	require.Empty(t, outcome.report.MissLogID)
+	select {
+	case <-called:
+		t.Fatal("finalization ignored caller cancellation")
+	default:
+	}
+}
+
+func TestAutomaticMissLogFailureIsSanitized(t *testing.T) {
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"status":500,"code":"internal","detail":"private query and upstream payload must not escape"}`))
+	}))
+	defer server.Close()
+	outcome := automaticSearchOutcome{report: &api.DocumentSearchReport{ActualMode: "hybrid"}, request: api.DocumentSearchRequest{Query: "private query and upstream payload"}}
+	finalizeAutomaticSearchMiss(t.Context(), daemonconn.New(server.URL, "key"), &outcome, true)
+	require.Empty(t, outcome.report.MissLogID)
+	require.Contains(t, logs.String(), "miss_log_completion_failed")
+	require.NotContains(t, logs.String(), "private query")
+	require.NotContains(t, logs.String(), "upstream payload")
 }
