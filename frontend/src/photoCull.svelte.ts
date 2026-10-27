@@ -24,7 +24,12 @@ const failure = (cause: unknown) => (cause instanceof Error ? cause.message : St
 
 export class PhotoCull {
   run = $state.raw<
-    CullRun & { groups?: string[][]; burstGapSeconds?: number; groupingIncomplete?: boolean }
+    CullRun & {
+      groups?: string[][];
+      burstGapSeconds?: number;
+      groupingIncomplete?: boolean;
+      vectorGenerationID?: string;
+    }
   >();
   private stackIndex = new WeakMap<string[][], ReadonlyMap<string, string[]>>();
   private stackRead?: AbortController;
@@ -109,7 +114,11 @@ export class PhotoCull {
       this.run.checkpoint.pass === run.checkpoint.pass;
     try {
       const settings = await getPhotoSettings({ session: this.session, signal: controller.signal });
-      if (current() && settings.burst_gap_seconds !== this.run!.burstGapSeconds)
+      if (
+        current() &&
+        (settings.burst_gap_seconds !== this.run!.burstGapSeconds ||
+          settings.vector_generation_id !== this.run!.vectorGenerationID)
+      )
         await this.regroup();
     } catch (cause) {
       if (current()) this.stackError = this.sessionFailure(cause);
@@ -150,6 +159,7 @@ export class PhotoCull {
           groups: regrouped.groups,
           groupingIncomplete: regrouped.grouping_incomplete,
           burstGapSeconds: regrouped.burst_gap_seconds,
+          vectorGenerationID: regrouped.vector_generation_id,
         };
         // A quiet regroup can recover an earlier foreground failure.
         this.stackError = "";

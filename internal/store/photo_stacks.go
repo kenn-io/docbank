@@ -12,6 +12,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"go.kenn.io/docbank/internal/vectorindex"
 )
 
 // MaxPhotoStackFrames bounds a stack to one decision request. A longer
@@ -23,6 +25,11 @@ const MaxPhotoStackTargets = 2_000
 
 // MaxPhotoStackGroupIDs bounds one explicit-ID grouping request to a Cull run.
 const MaxPhotoStackGroupIDs = 250_000
+
+const (
+	photoStackImageWindowSeconds    = 60
+	photoStackImageSimilarityCutoff = 0.95
+)
 
 const photoStackKeyLayout = "2006-01-02T15:04:05.000000000"
 
@@ -37,6 +44,7 @@ type PhotoStack struct {
 // photoStackFrame is one live asset's grouping input. Folder is empty when the
 // photo cannot join a stack.
 type photoStackFrame struct {
+	ImageVector      []float32
 	AssetID          string
 	Folder           string
 	CameraMake       string
@@ -94,8 +102,18 @@ func photoStackReach(key string, gap int, forward bool) (string, bool) {
 
 // photoStackChained reports whether next follows previous in one stack.
 func photoStackChained(previous, next photoStackFrame, gap int) bool {
+	if previous.Folder == "" || previous.partition() != next.partition() {
+		return false
+	}
 	reach, ok := photoStackReach(previous.SortKey, gap, true)
-	return ok && previous.Folder != "" && previous.partition() == next.partition() && next.SortKey <= reach
+	if ok && next.SortKey <= reach {
+		return true
+	}
+	reach, ok = photoStackReach(previous.SortKey, photoStackImageWindowSeconds, true)
+	if !ok || next.SortKey > reach || len(previous.ImageVector) == 0 || len(previous.ImageVector) != len(next.ImageVector) {
+		return false
+	}
+	return vectorindex.Cosine(previous.ImageVector, next.ImageVector)+1e-7 >= photoStackImageSimilarityCutoff
 }
 
 // groupPhotoStackFrames returns the stacks among frames, each in ascending
@@ -174,13 +192,13 @@ func newPhotoStack(group []photoStackFrame) PhotoStack {
 
 // groupRankedPhotoPage groups only the returned relevance matches. Each burst
 // occupies its highest-ranked member's position, keeping rank order within it.
-func groupRankedPhotoPage(ctx context.Context, q metadataQuerier, page *PhotoBrowsePage, hidden bool, gap int, fingerprint string) error {
+func (s *Store) groupRankedPhotoPage(ctx context.Context, q metadataQuerier, page *PhotoBrowsePage, hidden bool, gap int, fingerprint string) error {
 	ids := make([]string, len(page.Items))
 	rows := make(map[string]PhotoBrowseRow, len(page.Items))
 	for i, row := range page.Items {
 		ids[i], rows[row.AssetID] = row.AssetID, row
 	}
-	frames, err := photoStackFrames(ctx, q, ids, hidden, fingerprint)
+	frames, err := s.photoStackFrames(ctx, q, ids, hidden, fingerprint)
 	if err != nil {
 		return err
 	}
@@ -242,7 +260,7 @@ const photoStackCameraColumns = `COALESCE(p.camera_make_folded,''),COALESCE(p.ca
 const photoStackFrameColumns = `a.asset_id,CASE WHEN a.kind='photo' THEN COALESCE(pl.folder_key,'') ELSE '' END,COALESCE(pl.sort_key,''),` + photoStackCameraColumns + `,` + photoStackFileCount
 
 // photoStackFrames reads the live, visible members of ids. Missing IDs are unavailable.
-func photoStackFrames(ctx context.Context, q metadataQuerier, ids []string, hidden bool, fingerprint string) (map[string]photoStackFrame, error) {
+func (s *Store) photoStackFrames(ctx context.Context, q metadataQuerier, ids []string, hidden bool, fingerprint string) (map[string]photoStackFrame, error) {
 	frames := make(map[string]photoStackFrame, len(ids))
 	err := queryInChunks(ctx, q, `SELECT `+photoStackFrameColumns+`,COALESCE(mg.extractor_fingerprint,'') FROM `+photoBrowseDisplayFrom+` WHERE `+photoBrowseLiveDisplay+` AND `+photoVisibilityPredicate(hidden)+` AND a.asset_id IN (`, ids, func(rows *sql.Rows) error {
 		var frame photoStackFrame
@@ -254,6 +272,9 @@ func photoStackFrames(ctx context.Context, q metadataQuerier, ids []string, hidd
 		frames[frame.AssetID] = frame
 		return nil
 	})
+	if err == nil {
+		err = s.hydratePhotoStackVectors(ctx, q, frames)
+	}
 	return frames, err
 }
 
@@ -282,7 +303,7 @@ func (s *Store) PhotoStackGroups(ctx context.Context, ids []string, hidden bool,
 			return err
 		}
 		gap = settings.BurstGapSeconds
-		frames, err := photoStackFrames(ctx, tx, ids, hidden, fingerprint)
+		frames, err := s.photoStackFrames(ctx, tx, ids, hidden, fingerprint)
 		if err != nil {
 			return err
 		}
@@ -377,7 +398,7 @@ func (s *Store) DecidePhotoStack(ctx context.Context, request PhotoStackDecision
 		}
 		// Only the observed query or frozen run defines membership, so unseen
 		// neighboring imports stay untouched.
-		found, err := photoStackFrames(ctx, tx, request.AssetIDs, request.Hidden, request.SourceMetadataFingerprint)
+		found, err := s.photoStackFrames(ctx, tx, request.AssetIDs, request.Hidden, request.SourceMetadataFingerprint)
 		if err != nil {
 			return err
 		}
@@ -548,7 +569,9 @@ type photoStackPager struct {
 	probes      [2]*sql.Stmt
 	args        []any
 	components  map[string]*photoStackComponent
-	fileCounts  map[string]int
+	frames      map[string]photoStackFrame
+	vectors     *photoStackVectorReader
+	reach       int
 	fingerprint string
 }
 
@@ -570,14 +593,17 @@ const photoStackProbeFrom = `photo_timeline pl INDEXED BY photo_timeline_folder
  LEFT JOIN source_metadata_generations mg ON mg.generation_id=h.generation_id
  LEFT JOIN photo_technical_metadata p ON p.generation_id=h.generation_id`
 
-func newPhotoStackPager(ctx context.Context, q metadataQuerier, scope photoBrowseScope, gap int, descending bool, fingerprint string) (*photoStackPager, error) {
+func newPhotoStackPager(ctx context.Context, q metadataQuerier, scope photoBrowseScope, gap int, descending bool, fingerprint string, vectors *photoStackVectorReader) (*photoStackPager, error) {
 	preparer, ok := q.(interface {
 		PrepareContext(ctx context.Context, query string) (*sql.Stmt, error)
 	})
 	if !ok {
 		return nil, errors.New("photo stack paging requires a statement-preparing connection")
 	}
-	pager := &photoStackPager{q: q, scope: scope, gap: gap, fingerprint: fingerprint, descending: descending, components: map[string]*photoStackComponent{}, fileCounts: map[string]int{}}
+	pager := &photoStackPager{q: q, scope: scope, gap: gap, fingerprint: fingerprint, descending: descending, components: map[string]*photoStackComponent{}, frames: map[string]photoStackFrame{}, vectors: vectors, reach: gap}
+	if vectors.index != nil {
+		pager.reach = max(gap, photoStackImageWindowSeconds)
+	}
 	// Each probe reads the in-scope frames after one frame, up to a window bound.
 	for i, bounds := range [2]string{
 		`pl.sort_key<=? AND pl.sort_key>=? AND (pl.sort_key<? OR a.asset_id<?) ORDER BY pl.sort_key DESC,a.asset_id DESC LIMIT ?`,
@@ -634,13 +660,26 @@ func (p *photoStackPager) probe(ctx context.Context, current photoStackFrame, wi
 		next.applyMetadataFingerprint(actual, p.fingerprint)
 		frames = append(frames, next)
 	}
-	return frames, rows.Err()
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return nil, err
+	}
+	inputs := make(map[string]photoStackFrame, len(frames))
+	for _, frame := range frames {
+		inputs[frame.AssetID] = frame
+	}
+	if err := p.vectors.hydrate(ctx, p.q, inputs); err != nil {
+		return nil, err
+	}
+	for i := range frames {
+		frames[i] = inputs[frames[i].AssetID]
+	}
+	return frames, nil
 }
 
 // walk appends frame's chain in one direction until it breaks or exceeds the cap.
 func (p *photoStackPager) walk(ctx context.Context, frame photoStackFrame, forward bool, component *photoStackComponent) error {
 	for current := frame; len(component.frames) <= MaxPhotoStackFrames; {
-		window, ok := photoStackReach(current.SortKey, p.gap*photoStackProbeGaps, forward)
+		window, ok := photoStackReach(current.SortKey, p.reach*photoStackProbeGaps, forward)
 		if !ok {
 			return nil
 		}
@@ -657,7 +696,7 @@ func (p *photoStackPager) walk(ctx context.Context, frame photoStackFrame, forwa
 		}
 		// Continue only while unread frames could still join: the window was
 		// full, or the last frame's reach passes the window bound.
-		reach, ok := photoStackReach(current.SortKey, p.gap, forward)
+		reach, ok := photoStackReach(current.SortKey, p.reach, forward)
 		if !ok || len(read) <= MaxPhotoStackFrames && (forward && reach <= window || !forward && reach >= window) {
 			return nil
 		}
@@ -697,18 +736,28 @@ func (p *photoStackPager) prime(ctx context.Context, batch []PhotoBrowseRow, aft
 	for i, row := range batch {
 		ids[i] = row.AssetID
 	}
+	inputs := make(map[string]photoStackFrame, len(batch))
+	for _, row := range batch {
+		inputs[row.AssetID] = p.frame(row)
+	}
 	if err := queryInChunks(ctx, p.q, `SELECT a.asset_id,`+photoStackFileCount+` FROM photo_assets a WHERE a.asset_id IN (`, ids, func(rows *sql.Rows) error {
 		var id string
 		var count int
 		if err := rows.Scan(&id, &count); err != nil {
 			return err
 		}
-		p.fileCounts[id] = count
+		frame := inputs[id]
+		frame.Files = count
+		inputs[id] = frame
 		return nil
 	}); err != nil {
 		return err
 	}
 
+	if err := p.vectors.hydrate(ctx, p.q, inputs); err != nil {
+		return err
+	}
+	p.frames = inputs
 	if after != nil && after.Missing {
 		return nil
 	}
@@ -742,7 +791,7 @@ func (p *photoStackPager) prime(ctx context.Context, batch []PhotoBrowseRow, aft
 		if edge == "" {
 			return true
 		}
-		reach, ok := photoStackReach(frame.SortKey, p.gap, forward)
+		reach, ok := photoStackReach(frame.SortKey, p.reach, forward)
 		return ok && (forward && reach < edge || !forward && reach > edge)
 	}
 	for _, frames := range partitions {
@@ -773,7 +822,10 @@ func (p *photoStackPager) prime(ctx context.Context, batch []PhotoBrowseRow, aft
 }
 
 func (p *photoStackPager) frame(row PhotoBrowseRow) photoStackFrame {
-	frame := photoStackFrame{AssetID: row.AssetID, Folder: row.folderKey, CameraMake: row.cameraMake, CameraModel: row.cameraModel, BodySerialNumber: row.bodySerialNumber, SortKey: row.position.Key, Files: p.fileCounts[row.AssetID]}
+	if frame, ok := p.frames[row.AssetID]; ok {
+		return frame
+	}
+	frame := photoStackFrame{AssetID: row.AssetID, Folder: row.folderKey, CameraMake: row.cameraMake, CameraModel: row.cameraModel, BodySerialNumber: row.bodySerialNumber, SortKey: row.position.Key}
 	frame.applyMetadataFingerprint(row.metadataFingerprint, p.fingerprint)
 	return frame
 }
@@ -884,8 +936,8 @@ func (p *photoStackPager) fill(ctx context.Context, page *PhotoBrowsePage, group
 func (p *photoStackPager) frontier(ctx context.Context, boundary *PhotoBrowsePosition) (fingerprint string, err error) {
 	hash := sha256.New()
 	if !boundary.Missing {
-		low, _ := photoStackReach(boundary.Key, p.gap, false)
-		high, _ := photoStackReach(boundary.Key, p.gap, true)
+		low, _ := photoStackReach(boundary.Key, p.reach, false)
+		high, _ := photoStackReach(boundary.Key, p.reach, true)
 		from, _, _ := photoBrowseOrder("capture_time")
 		statement, args, err := p.scope.bind(`SELECT a.asset_id,pl.folder_key,pl.sort_key,`+photoStackCameraColumns+`,`+photoStackFileCount+`,COALESCE(mg.extractor_fingerprint,'') FROM `+from+p.scope.queue+` WHERE `+p.scope.where()+` AND a.kind='photo' AND pl.folder_key IS NOT NULL AND pl.sort_key>=? AND pl.sort_key<=?`, low, high)
 		if err != nil {
@@ -909,6 +961,16 @@ func (p *photoStackPager) frontier(ctx context.Context, boundary *PhotoBrowsePos
 		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 			return "", err
 		}
+		inputs := make(map[string]photoStackFrame, len(seeds))
+		for _, seed := range seeds {
+			inputs[seed.AssetID] = seed
+		}
+		if err := p.vectors.hydrate(ctx, p.q, inputs); err != nil {
+			return "", err
+		}
+		for i := range seeds {
+			seeds[i] = inputs[seeds[i].AssetID]
+		}
 		seen := map[*photoStackComponent]bool{}
 		position := photoStackFrame{AssetID: boundary.AssetID, SortKey: boundary.Key}
 		for _, seed := range seeds {
@@ -921,7 +983,12 @@ func (p *photoStackPager) frontier(ctx context.Context, boundary *PhotoBrowsePos
 			}
 			seen[component] = true
 			first := slices.MinFunc(component.frames, p.compare)
-			if p.compare(first, position) <= 0 {
+			// Wider image probes also find completed stacks far behind the cursor.
+			// Only stacks crossing it or within the burst gap affect its frontier.
+			last := slices.MaxFunc(component.frames, p.compare)
+			edge, _ := photoStackReach(boundary.Key, p.gap, p.descending)
+			near := !p.descending && last.SortKey >= edge || p.descending && last.SortKey <= edge
+			if p.compare(first, position) <= 0 && near {
 				members = append(members, component.frames...)
 			}
 		}
@@ -945,7 +1012,11 @@ func (s *Store) listPhotoStackPage(
 	boundary *PhotoBrowsePosition, identity string,
 	readRaw func(*PhotoBrowsePosition, int) ([]PhotoBrowseRow, error), page *PhotoBrowsePage, fingerprint string,
 ) (err error) {
-	pager, err := newPhotoStackPager(ctx, q, scope, gap, descending, fingerprint)
+	vectors, err := s.newPhotoStackVectorReader(ctx, q)
+	if err != nil {
+		return err
+	}
+	pager, err := newPhotoStackPager(ctx, q, scope, gap, descending, fingerprint, vectors)
 	if err != nil {
 		return err
 	}

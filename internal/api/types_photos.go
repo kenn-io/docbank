@@ -44,12 +44,12 @@ type PhotoAsset struct {
 }
 
 type PhotoSettings struct {
-	BurstGapSeconds             int    `json:"burst_gap_seconds" minimum:"1" maximum:"30"`
-	HiddenUnlockLifetimeSeconds *int64 `json:"hidden_unlock_lifetime_seconds,omitzero"`
-
-	Preference *string `json:"preference,omitzero" enum:"raw,image"`
-	Revision   int64   `json:"revision" minimum:"1"`
-	UpdatedAt  string  `json:"updated_at,omitzero" format:"date-time"`
+	VectorGenerationID          string  `json:"vector_generation_id,omitempty"`
+	BurstGapSeconds             int     `json:"burst_gap_seconds" minimum:"1" maximum:"30"`
+	HiddenUnlockLifetimeSeconds *int64  `json:"hidden_unlock_lifetime_seconds,omitzero"`
+	Preference                  *string `json:"preference,omitzero" enum:"raw,image"`
+	Revision                    int64   `json:"revision" minimum:"1"`
+	UpdatedAt                   string  `json:"updated_at,omitzero" format:"date-time"`
 }
 
 type CreatePhotoAssetRequest struct {
@@ -133,6 +133,7 @@ type GroupPhotoStacksRequest struct {
 }
 
 type GroupPhotoStacksResponse struct {
+	VectorGenerationID string     `json:"vector_generation_id,omitempty"`
 	GroupingIncomplete bool       `json:"grouping_incomplete,omitempty" doc:"Photos with stale source metadata group as photos with no serial until it updates, so their stacks can change."`
 	BurstGapSeconds    int        `json:"burst_gap_seconds" minimum:"1" maximum:"30"`
 	Groups             [][]string `json:"groups" doc:"Bursts of two or more submitted photos, in request order; other available photos are single."`

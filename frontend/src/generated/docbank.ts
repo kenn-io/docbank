@@ -3479,6 +3479,7 @@ export interface GroupPhotoStacksResponse {
   groups: string[][];
   /** Submitted photos that are no longer live in this library. */
   unavailable_ids: string[];
+  vector_generation_id?: string;
 }
 
 export interface HighlightSetTermV1Schema {
@@ -6669,6 +6670,7 @@ export interface PhotoSettings {
   /** @minimum 1 */
   revision: number;
   updated_at?: string;
+  vector_generation_id?: string;
 }
 
 export type PhotoStackDecisionRequestDecision = typeof PhotoStackDecisionRequestDecision[keyof typeof PhotoStackDecisionRequestDecision];

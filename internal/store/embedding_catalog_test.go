@@ -1964,7 +1964,7 @@ func newImageEmbeddingCatalogFixture(t *testing.T) imageEmbeddingCatalogFixture 
 	return imageEmbeddingCatalogFixture{s, node, request, binding}
 }
 
-func (f imageEmbeddingCatalogFixture) publish(t *testing.T) {
+func (f imageEmbeddingCatalogFixture) publish(t *testing.T, values ...[]float64) (EmbeddingSetRecord, document.VectorSetV1) {
 	t.Helper()
 	s, version, profile, bindingID, descriptor, consent, binding := f.s, f.node.CurrentVersionID, f.request.Profile, f.request.BindingID, f.request.Descriptor, f.request.Authorization, f.binding
 	job, err := s.EnqueueEmbeddingJob(t.Context(), f.request)
@@ -1972,7 +1972,9 @@ func (f imageEmbeddingCatalogFixture) publish(t *testing.T) {
 	claim, work, found, err := s.ClaimEmbeddingWork(t.Context(), job.ID, "photo-vectors", time.Now(), time.Minute, []string{descriptor.Fingerprint})
 	require.NoError(t, err)
 	require.True(t, found)
-	values := [][]float64{{1, 2, 3, 4, 5, 6, 7, 8}}
+	if len(values) == 0 {
+		values = [][]float64{{1, 2, 3, 4, 5, 6, 7, 8}}
+	}
 	vector, err := document.NewVectorSetV1(document.VectorSetV1Input{VectorSpaceFingerprint: work.VectorSpaceID, Metric: binding.Metric, Normalization: binding.Normalization, Dimension: binding.Dimensions, InputKeys: []string{work.InputGeneration.Inputs[0].ID}, InputChecksums: []string{work.InputGeneration.Inputs[0].RenderedChecksum}, Values: values})
 	require.NoError(t, err)
 	payload, checksum, err := document.EncodeVectorSetV1(vector)
@@ -1986,6 +1988,8 @@ func (f imageEmbeddingCatalogFixture) publish(t *testing.T) {
 	head := EmbeddingHeadRecord{Key: EmbeddingHeadKey{ContentVersionID: version, BindingID: bindingID, InputKind: document.EmbeddingInputImage}, SetID: record.ID, VectorSpaceID: work.VectorSpaceID, ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime, FencingToken: claim.Epoch}
 	err = s.PublishEmbeddingWork(t.Context(), claim, work, head, prior, EmbeddingAttemptReceipt{}, time.Now())
 	require.NoError(t, err)
+
+	return record, vector
 }
 
 func TestEnqueueEmbeddingJobRejectsInvalidImageGeneration(t *testing.T) {
@@ -2086,4 +2090,19 @@ func TestEmbeddingReconciliationDiscoversImagesAcrossPagesOnce(t *testing.T) {
 		}
 	}
 	require.Equal(t, 2, calls, "published images must not reopen their previews")
+}
+
+func (f imageEmbeddingCatalogFixture) forNode(t *testing.T, node Node) imageEmbeddingCatalogFixture {
+	t.Helper()
+	recipe, err := document.BuiltInVisualPreviewRecipe("grid")
+	require.NoError(t, err)
+	preview, err := f.s.PublishVisualPreview(t.Context(), node.CurrentVersionID, readyVisualPreviewWithRecipe(t, node.BlobHash, testSHA256([]byte("grid-"+node.CurrentVersionID)), 9, recipe), &BlobPhysical{Encoding: looseEncodingRaw, StoredBytes: 9})
+	require.NoError(t, err)
+	f.node = node
+	f.request.ContentVersionID = node.CurrentVersionID
+	f.request.InputGeneration.SourceVersionID = node.CurrentVersionID
+	f.request.InputGeneration.Inputs = []EmbeddingInputReference{{ID: node.CurrentVersionID, RenderedChecksum: f.request.InputGeneration.GenerationChecksum}}
+	f.request.InputGeneration.EvidenceFingerprint = preview.Checksum
+	f.request.InputGeneration.ID = ImageEmbeddingGenerationID(node.CurrentVersionID, f.request.Profile.Fingerprint, f.binding.Name, preview.Checksum)
+	return f
 }

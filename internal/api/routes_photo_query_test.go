@@ -987,3 +987,38 @@ func TestImageOnlyStartHTTPReportsMissingPreview(t *testing.T) {
 	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
 	require.Contains(t, body, "preview_missing")
 }
+
+func TestPhotoStackGenerationStaysLocalAfterConsentRevoked(t *testing.T) {
+	t.Parallel()
+	provider := newProcessingTestEmbeddingProvider(t)
+	provider.descriptor.InputKinds = []document.EmbeddingInputKind{document.EmbeddingInputImage}
+	var err error
+	provider.descriptor, err = document.NewEmbeddingDescriptor(provider.descriptor)
+	require.NoError(t, err)
+	ts, _, _ := photoImageHTTPProfilesFixture(t, map[string]document.EmbeddingProvider{"private": &provider, "same-space": &provider}, []string{"one.jpg", "two.jpg"}, true)
+	response, body := do(t, ts, http.MethodGet, "/api/v1/photos/settings", nil, nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var before api.PhotoSettings
+	require.NoError(t, json.Unmarshal([]byte(body), &before))
+	require.NotEmpty(t, before.VectorGenerationID)
+	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, api.PhotoBrowseRequest{Query: api.QueryPayload(`{"mode":"lexical","text":"jpg","sort":{"field":"relevance","direction":"desc"}}`), Stacks: true})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var page api.PhotoBrowsePage
+	require.NoError(t, json.Unmarshal([]byte(body), &page))
+	require.Len(t, page.Stacks, 1)
+	require.Len(t, page.Stacks[0].AssetIDs, 2)
+
+	response, body = do(t, ts, http.MethodPost, "/api/v1/processing/consent/revocations", nil, document.ProcessingConsentRevocationRequest{Principal: "embedded:operator", Scope: "document-processing"})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	response, body = do(t, ts, http.MethodGet, "/api/v1/photos/settings", nil, nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var after api.PhotoSettings
+	require.NoError(t, json.Unmarshal([]byte(body), &after))
+	require.Equal(t, before.VectorGenerationID, after.VectorGenerationID)
+	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/stacks/group", nil, api.GroupPhotoStacksRequest{AssetIDs: page.Stacks[0].AssetIDs})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var grouped api.GroupPhotoStacksResponse
+	require.NoError(t, json.Unmarshal([]byte(body), &grouped))
+	require.Equal(t, before.VectorGenerationID, grouped.VectorGenerationID)
+	require.Equal(t, [][]string{page.Stacks[0].AssetIDs}, grouped.Groups)
+}

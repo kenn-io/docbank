@@ -264,7 +264,7 @@ func (s *Store) ListPhotoAssets(
 				return err
 			}
 			if request.Stacks {
-				if err := groupRankedPhotoPage(ctx, q, &page, request.Hidden, settings.BurstGapSeconds, request.SourceMetadataFingerprint); err != nil {
+				if err := s.groupRankedPhotoPage(ctx, q, &page, request.Hidden, settings.BurstGapSeconds, request.SourceMetadataFingerprint); err != nil {
 					return err
 				}
 			}

@@ -3286,7 +3286,7 @@ it("refuses draft navigation until Clear edits releases it", async () => {
   expect(unloadBlocked()).toBe(false);
 });
 
-it("guards reload for a failed cull decision after vault identity arrives", async () => {
+async function openSyntheticCull() {
   vi.stubGlobal("indexedDB", new IDBFactory());
   vi.stubGlobal("IDBKeyRange", IDBKeyRange);
   history.replaceState(null, "", "/#web_session=synthetic&web_upload_secret=proof");
@@ -3349,6 +3349,11 @@ it("guards reload for a failed cull decision after vault identity arrives", asyn
   await fireEvent.click(screen.getByRole("button", { name: "Cull" }));
   const dialog = await screen.findByRole("dialog", { name: "Cull photos" });
   await within(dialog).findByText("Photo 1.jpg");
+  return dialog;
+}
+
+it("guards reload for a failed cull decision after vault identity arrives", async () => {
+  const dialog = await openSyntheticCull();
   await fireEvent.keyDown(dialog.querySelector(".photo-cull")!, { key: "x" });
   await within(dialog).findByRole("button", { name: "Discard edit" });
   const event = new Event("beforeunload", { cancelable: true });
@@ -5457,4 +5462,20 @@ it("refreshes a ranked sibling Library after an accepted reject receipt", async 
   );
   expect(library.snapshotID).toBe("ranked");
   expect(changed.mock.calls[0][0]).toEqual(expect.objectContaining({ receipt_id: "rotated" }));
+});
+
+it("polls cull settings while culling photos", async () => {
+  let poll!: () => void;
+  const interval = globalThis.setInterval;
+  vi.spyOn(globalThis, "setInterval").mockImplementation((callback, delay, ...args) => {
+    if (delay === 2000) {
+      poll = callback as () => void;
+      return 0 as unknown as ReturnType<typeof setInterval>;
+    }
+    return interval(callback, delay, ...args);
+  });
+  const checkSettings = vi.spyOn(PhotoCull.prototype, "checkSettings").mockResolvedValue();
+  await openSyntheticCull();
+  await act(async () => poll());
+  expect(checkSettings).toHaveBeenCalledOnce();
 });
