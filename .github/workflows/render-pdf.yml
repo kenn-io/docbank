@@ -122,12 +122,8 @@ jobs:
       DOCBANK_TEST_REQUIRE_SANDBOX: "1"
     permissions:
       contents: read
-      packages: read
     container:
       image: ${{ needs.ensure_image.outputs.image }}
-      credentials:
-        username: ${{ github.actor }}
-        password: ${{ github.token }}
       options: --privileged
     steps:
       - name: Check out repository
