@@ -110,6 +110,10 @@ model, dimensions, metric, normalization, scalar encoding, and input
 formatters all matter. Destination-sensitive disclosure identities are checked
 separately. Matching dimensions alone do not establish compatibility.
 
+OpenAI-compatible runtimes select a vector-space identity separately from the runtime pin. New v2 spaces include every vector-producing descriptor field and the complete deployment contract, including weights and tokenizer revisions. Endpoint, credentials, timeouts, limits, and egress policy remain part of the runtime pin and consent. An unchanged upgrade keeps an existing v1 space when its full descriptor matches, so its first query retains coverage without rewriting saved vectors. An existing matching v2 space takes precedence.
+
+After a policy change, reconciliation prepares current-profile inputs under current consent and republishes compatible retained values into the selected space. It verifies ordered input IDs, rendered checksums, and payload authority before reuse. Legacy BGE-M3 and Qwen3 sets require the full descriptor pin to match because v1 records cannot prove their deployment revisions after a policy change. Their first move can require recomputation. Search and similarity read one selected space through the usual index leases and source checks.
+
 The [profile contract](https://github.com/kenn-io/docbank/blob/main/document/profile.go)
 owns these identities. The [embedding contract](https://github.com/kenn-io/docbank/blob/main/document/embedding.go)
 owns provider requests and compatibility checks.

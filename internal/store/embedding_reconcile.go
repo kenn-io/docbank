@@ -6,18 +6,23 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"go.kenn.io/docbank/document"
 )
 
-// EmbeddingReconcileRequest bounds one durable discovery page. Descriptor
-// fingerprints are process-local executable authority, never catalog intent.
+// EmbeddingReconcileRequest bounds one durable discovery page. Descriptors
+// are process-local executable authority, never catalog intent.
 type EmbeddingReconcileRequest struct {
+	DescriptorFingerprints []string
+	VectorSpaces           map[string]string
 	After                  string
 	Limit                  int
 	At                     time.Time
-	DescriptorFingerprints []string
+	Descriptors            []document.EmbeddingDescriptor
+	Profiles               []ProcessingProfileRecord
+	PrepareGeneration      func(context.Context, string, ProcessingProfileRecord, document.EmbeddingBindingV1) (EmbeddingInputGenerationRecord, error)
 	HydrateGeneration      func(context.Context, EmbeddingInputGenerationRecord) (EmbeddingInputGenerationRecord, error)
 	// Mutate guards only enqueue mutations; discovery and blob reads run outside it.
 	Mutate func(context.Context, func() error) error
@@ -39,19 +44,36 @@ type embeddingReconcileCandidate struct {
 	space        EmbeddingVectorSpaceRecord
 }
 
-// ReconcileEmbeddingJobs discovers only already-materialized E1/E2 or direct
-// generations for current versions. It never creates input authority, grants
-// consent, or contacts a provider.
+// ReconcileEmbeddingJobs discovers processed current versions and prepares
+// configured-profile inputs under existing consent. Providers run through jobs.
 func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingReconcileRequest) (EmbeddingReconcileResult, error) {
-	if request.Limit < 1 || request.Limit > 1000 || request.At.IsZero() || len(request.DescriptorFingerprints) == 0 || request.Mutate == nil {
+	if request.Limit < 1 || request.Limit > 1000 || request.At.IsZero() || (len(request.Descriptors) == 0 && len(request.DescriptorFingerprints) == 0) || request.Mutate == nil {
 		return EmbeddingReconcileResult{}, errors.New("embedding reconciliation request is invalid")
 	}
-	executable := make(map[string]struct{}, len(request.DescriptorFingerprints))
-	for _, fingerprint := range request.DescriptorFingerprints {
+	executable := make(map[string]document.EmbeddingDescriptor, len(request.Descriptors))
+	for _, descriptor := range request.Descriptors {
+		fingerprint := descriptor.Fingerprint
 		if err := validateCatalogSHA256(fingerprint, "embedding runtime descriptor fingerprint"); err != nil {
 			return EmbeddingReconcileResult{}, err
 		}
-		executable[fingerprint] = struct{}{}
+		executable[fingerprint] = descriptor
+	}
+	type targetProfile struct {
+		record       ProcessingProfileRecord
+		portable     document.ProcessingProfileV1
+		fingerprints document.FingerprintSet
+	}
+	targets := make([]targetProfile, 0, len(request.Profiles))
+	for _, record := range request.Profiles {
+		var portable document.ProcessingProfileV1
+		if err := json.Unmarshal(record.CanonicalProfile, &portable); err != nil {
+			return EmbeddingReconcileResult{}, err
+		}
+		_, fingerprints, err := document.CanonicalProfile(portable)
+		if err != nil {
+			return EmbeddingReconcileResult{}, err
+		}
+		targets = append(targets, targetProfile{record, portable, fingerprints})
 	}
 	var generationIDs []string
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
@@ -73,92 +95,110 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 	}
 	var candidates []embeddingReconcileCandidate
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		seen := make(map[[3]string]bool)
 		for _, generationID := range generationIDs {
 			generation, err := loadInputGenerationTx(ctx, tx, generationID)
 			if err != nil {
 				return err
 			}
-			profile, err := loadProcessingProfile(ctx, tx, generation.ProcessingProfileFingerprint)
-			if err != nil {
-				return err
+
+			localTargets := targets
+			if len(request.Profiles) == 0 {
+				record, err := loadProcessingProfile(ctx, tx, generation.ProcessingProfileFingerprint)
+				if err != nil {
+					return err
+				}
+				var portable document.ProcessingProfileV1
+				if err := json.Unmarshal(record.CanonicalProfile, &portable); err != nil {
+					return err
+				}
+				_, fingerprints, err := document.CanonicalProfile(portable)
+				if err != nil {
+					return err
+				}
+				localTargets = []targetProfile{{record, portable, fingerprints}}
+				for _, binding := range portable.Embeddings {
+					if !slices.Contains(request.DescriptorFingerprints, binding.Descriptor.Fingerprint) {
+						continue
+					}
+					space, err := loadVectorSpaceTx(ctx, tx, fingerprints.VectorSpace[binding.Name])
+					if errors.Is(err, ErrNotFound) {
+						continue
+					}
+					if err != nil {
+						return err
+					}
+					executable[space.DescriptorFingerprint] = space.Descriptor
+				}
 			}
-			var portable document.ProcessingProfileV1
-			if err := json.Unmarshal(profile.CanonicalProfile, &portable); err != nil {
-				return err
-			}
-			_, fingerprints, err := document.CanonicalProfile(portable)
-			if err != nil {
-				return err
-			}
-			for _, binding := range portable.Embeddings {
-				if (binding.InputKind == document.EmbeddingInputRenditionChunk) != (generation.GenerationBlobHash != "") {
-					continue
-				}
-				space, err := loadVectorSpaceTx(ctx, tx, fingerprints.VectorSpace[binding.Name])
-				if errors.Is(err, ErrNotFound) {
-					continue
-				}
-				if err != nil {
-					return err
-				}
-				if _, ok := executable[space.Descriptor.Fingerprint]; !ok ||
-					space.Descriptor.Fingerprint != binding.Descriptor.Fingerprint {
-					continue
-				}
-				eligible, err := embeddingGenerationCurrentTx(ctx, tx, generation, profile.Fingerprint)
-				if err != nil {
-					return err
-				}
-				if !eligible {
-					continue
-				}
-				satisfied, err := exactEmbeddingHeadExistsTx(ctx, tx, generation.SourceVersionID,
-					profile.Fingerprint, binding, generation.ID, space.ID)
-				if err != nil {
-					return err
-				}
-				if satisfied {
-					continue
-				}
-				suppression, err := loadEmbeddingPurgeSuppressionTx(ctx, tx,
-					EmbeddingHeadKey{generation.SourceVersionID, binding.Name, binding.InputKind}, profile.Fingerprint)
-				if err != nil && !errors.Is(err, ErrNotFound) {
-					return err
-				}
-				if err == nil && suppression.active {
-					continue
-				}
-				consent, found, err := embeddingReconcileConsentTx(ctx, tx, s.vaultID, profile.Fingerprint,
-					binding.DisclosureFingerprint, binding.InputKind, request.At.UTC())
-				if err != nil {
-					return err
-				}
-				if !found {
-					continue
-				}
-				prior := consent.PriorAuthorization
-				if prior == nil {
-					return errors.New("embedding reconciliation consent lacks admission authority")
-				}
-				jobID := embeddingJobID(s.vaultID, generation.SourceVersionID, profile.Fingerprint,
-					binding.Name, binding.InputKind, generation.ID, prior.GrantID,
-					prior.ProcessingIncarnationID, prior.RevocationFence)
-				var state string
-				var failure sql.NullString
-				err = tx.QueryRowContext(ctx, `SELECT state,failure_code
+			for _, target := range localTargets {
+				profile, portable, fingerprints := target.record, target.portable, target.fingerprints
+				for _, binding := range portable.Embeddings {
+					if (binding.InputKind == document.EmbeddingInputRenditionChunk) != (generation.GenerationBlobHash != "") {
+						continue
+					}
+					descriptor, ok := executable[binding.Descriptor.Fingerprint]
+					if !ok {
+						continue
+					}
+					spaceID := request.VectorSpaces[profile.Fingerprint+"/"+binding.Name]
+					if spaceID == "" {
+						spaceID = fingerprints.VectorSpace[binding.Name]
+					}
+					space := EmbeddingVectorSpaceRecord{ID: spaceID, Descriptor: descriptor}
+					key := [3]string{generation.SourceVersionID, profile.Fingerprint, binding.Name}
+					if seen[key] {
+						continue
+					}
+					satisfied, err := exactEmbeddingHeadExistsTx(ctx, tx, generation.SourceVersionID, profile.Fingerprint, binding, "", spaceID)
+					if err != nil {
+						return err
+					}
+					if satisfied {
+						seen[key] = true
+						continue
+					}
+					suppression, err := loadEmbeddingPurgeSuppressionTx(ctx, tx,
+						EmbeddingHeadKey{generation.SourceVersionID, binding.Name, binding.InputKind}, profile.Fingerprint)
+					if err != nil && !errors.Is(err, ErrNotFound) {
+						return err
+					}
+					if err == nil && suppression.active {
+						continue
+					}
+					consent, found, err := embeddingReconcileConsentTx(ctx, tx, s.vaultID, profile.Fingerprint,
+						binding.DisclosureFingerprint, binding.InputKind, request.At.UTC())
+					if err != nil {
+						return err
+					}
+					if !found {
+						continue
+					}
+					seen[key] = true
+					prior := consent.PriorAuthorization
+					if prior == nil {
+						return errors.New("embedding reconciliation consent lacks admission authority")
+					}
+					jobID := embeddingJobID(s.vaultID, generation.SourceVersionID, profile.Fingerprint,
+						binding.Name, binding.InputKind, generation.ID, prior.GrantID,
+						prior.ProcessingIncarnationID, prior.RevocationFence)
+					var state string
+					var failure sql.NullString
+					err = tx.QueryRowContext(ctx, `SELECT state,failure_code
 					FROM embedding_jobs WHERE job_id=?`, jobID).Scan(&state, &failure)
-				if err != nil && !errors.Is(err, sql.ErrNoRows) {
-					return err
+					if err != nil && !errors.Is(err, sql.ErrNoRows) {
+						return err
+					}
+					recoverableAuthorization := state == "failed" && failure.Valid &&
+						EmbeddingFailureCode(failure.String) == EmbeddingFailureAuthorization
+					if err == nil && state != "abandoned" && !recoverableAuthorization {
+						continue
+					}
+					candidates = append(candidates, embeddingReconcileCandidate{request: EmbeddingJobRequest{
+						ContentVersionID: generation.SourceVersionID, Profile: profile, BindingID: binding.Name,
+						VectorSpaceID: space.ID, Descriptor: space.Descriptor, InputGeneration: generation, Authorization: consent,
+					}, binding: binding, fingerprints: fingerprints, space: space})
 				}
-				recoverableAuthorization := state == "failed" && failure.Valid &&
-					EmbeddingFailureCode(failure.String) == EmbeddingFailureAuthorization
-				if err == nil && state != "abandoned" && !recoverableAuthorization {
-					continue
-				}
-				candidates = append(candidates, embeddingReconcileCandidate{request: EmbeddingJobRequest{
-					ContentVersionID: generation.SourceVersionID, Profile: profile, BindingID: binding.Name,
-					Descriptor: space.Descriptor, InputGeneration: generation, Authorization: consent,
-				}, binding: binding, fingerprints: fingerprints, space: space})
 			}
 			result.Examined++
 		}
@@ -168,6 +208,18 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 		return EmbeddingReconcileResult{}, err
 	}
 	for _, candidate := range candidates {
+		if request.PrepareGeneration != nil {
+			generation, err := request.PrepareGeneration(ctx, candidate.request.ContentVersionID, candidate.request.Profile, candidate.binding)
+			if err != nil {
+				if ctx.Err() != nil {
+					return result, ctx.Err()
+				}
+				result.Skipped++
+				continue
+			}
+			candidate.request.InputGeneration = generation
+		}
+
 		if candidate.binding.InputKind == document.EmbeddingInputRenditionChunk {
 			if request.HydrateGeneration == nil {
 				return EmbeddingReconcileResult{}, errors.New("embedding reconciliation requires exact E2 hydration")
@@ -226,11 +278,13 @@ func exactEmbeddingHeadExistsTx(ctx context.Context, tx *sql.Tx, versionID, prof
 	binding document.EmbeddingBindingV1, generationID, spaceID string,
 ) (bool, error) {
 	var exists bool
-	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM embedding_heads h
-		JOIN embedding_sets s ON s.embedding_set_id=h.embedding_set_id
-		WHERE h.content_version_id=? AND h.binding_id=? AND h.input_kind=?
-		AND s.profile_fingerprint=? AND s.input_generation_id=? AND s.vector_space_id=?)`,
-		versionID, binding.Name, binding.InputKind, profile, generationID, spaceID).Scan(&exists)
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM embedding_heads eh
+ JOIN embedding_sets es ON es.embedding_set_id=eh.embedding_set_id
+ JOIN embedding_input_generations eig ON eig.generation_id=es.input_generation_id
+ WHERE eh.content_version_id=? AND eh.binding_id=? AND eh.input_kind=?
+ AND es.profile_fingerprint=? AND (?='' OR es.input_generation_id=?) AND es.vector_space_id=?
+ AND (es.input_kind='original_file' OR `+currentRenditionChunkAuthoritySQL+`))`,
+		versionID, binding.Name, binding.InputKind, profile, generationID, generationID, spaceID).Scan(&exists)
 	return exists, err
 }
 

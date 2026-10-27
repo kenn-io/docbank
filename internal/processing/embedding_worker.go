@@ -8,6 +8,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"io"
 	"reflect"
 	"slices"
 	"sync"
@@ -43,6 +44,7 @@ type EmbeddingWork = store.EmbeddingJobWork
 type EmbeddingAttemptReceipt = store.EmbeddingAttemptReceipt
 
 type embeddingWorkerCatalog interface {
+	FindReusableEmbeddingSet(ctx context.Context, work store.EmbeddingJobWork) (store.EmbeddingSetRecord, error)
 	ReconcileEmbeddingJobs(ctx context.Context, request store.EmbeddingReconcileRequest) (store.EmbeddingReconcileResult, error)
 	ClaimNextEmbeddingWork(ctx context.Context, owner string, at time.Time, lease time.Duration, fingerprints []string) (EmbeddingWorkClaim, EmbeddingWork, bool, error)
 	RenewEmbeddingWork(ctx context.Context, claim EmbeddingWorkClaim, at time.Time, lease time.Duration) (EmbeddingWorkClaim, error)
@@ -103,6 +105,20 @@ type EmbeddingRuntimeRegistry struct {
 
 type embeddingRuntimeBinding struct {
 	profileFingerprint, bindingID, descriptorFingerprint string
+}
+
+func (registry *EmbeddingRuntimeRegistry) Descriptors() []document.EmbeddingDescriptor {
+	registry.mu.RLock()
+	defer registry.mu.RUnlock()
+	var descriptors []document.EmbeddingDescriptor
+	for _, runtime := range registry.runtimes {
+		if provider, ok := runtime.(interface {
+			Descriptors() []document.EmbeddingDescriptor
+		}); ok {
+			descriptors = append(descriptors, provider.Descriptors()...)
+		}
+	}
+	return descriptors
 }
 
 func (registry *EmbeddingRuntimeRegistry) Fingerprints() []string {
@@ -199,8 +215,7 @@ func (registry *EmbeddingRuntimeRegistry) Prepare(ctx context.Context, work Embe
 	return execution, err
 }
 
-// ResolveQueryEncoder implements retrieval.QueryEncoderResolver without
-// weakening the descriptor identity stored with the vector space.
+// ResolveQueryEncoder selects the current runtime pinned by the query profile.
 func (registry *EmbeddingRuntimeRegistry) ResolveQueryEncoder(_ context.Context,
 	descriptor document.EmbeddingDescriptor,
 ) (document.EmbeddingProvider, error) {
@@ -243,6 +258,7 @@ type EmbeddingWorkerConfig struct {
 	MaxVectorBlobBytes     int64
 	Clock                  func() time.Time
 	Wait                   func(context.Context, time.Duration) error
+	Reconciliation         store.EmbeddingReconcileRequest
 	DescriptorFingerprints []string
 }
 
@@ -263,6 +279,7 @@ type EmbeddingWorker struct {
 	clock                                          func() time.Time
 	wait                                           func(context.Context, time.Duration) error
 	descriptorFingerprints                         []string
+	reconciliation                                 store.EmbeddingReconcileRequest
 	reconcileAfter                                 string
 	reconcileAt                                    time.Time
 }
@@ -308,6 +325,7 @@ func NewEmbeddingWorker(config EmbeddingWorkerConfig) (*EmbeddingWorker, error) 
 		maxRows: config.MaxRows, maxDimensions: config.MaxDimensions,
 		maxVectorBlobBytes: config.MaxVectorBlobBytes, clock: config.Clock, wait: config.Wait,
 		descriptorFingerprints: slices.Clone(config.DescriptorFingerprints),
+		reconciliation:         config.Reconciliation,
 	}, nil
 }
 
@@ -363,7 +381,7 @@ func (worker *EmbeddingWorker) ScanOnce(ctx context.Context) (int, error) {
 			result, err := worker.catalog.ReconcileEmbeddingJobs(ctx, store.EmbeddingReconcileRequest{
 				Mutate: worker.gate.MutateContext,
 				After:  worker.reconcileAfter, Limit: 100, At: worker.clock().UTC(),
-				DescriptorFingerprints: worker.descriptorFingerprints,
+				Descriptors: worker.reconciliation.Descriptors, VectorSpaces: worker.reconciliation.VectorSpaces, DescriptorFingerprints: worker.descriptorFingerprints, Profiles: worker.reconciliation.Profiles, PrepareGeneration: worker.reconciliation.PrepareGeneration,
 				HydrateGeneration: func(ctx context.Context, generation store.EmbeddingInputGenerationRecord) (store.EmbeddingInputGenerationRecord, error) {
 					return hydrateEmbeddingGeneration(ctx, worker.generationBlobs, generation)
 				},
@@ -461,6 +479,21 @@ func (worker *EmbeddingWorker) RunJob(ctx context.Context, jobID string) (bool, 
 }
 
 func (worker *EmbeddingWorker) processClaim(ctx context.Context, claim EmbeddingWorkClaim, work EmbeddingWork) (retErr error) {
+	descriptors := worker.reconciliation.Descriptors
+	if runtime, ok := worker.runtime.(interface {
+		Descriptors() []document.EmbeddingDescriptor
+	}); ok {
+		descriptors = runtime.Descriptors()
+	}
+	for _, descriptor := range descriptors {
+		if descriptor.Fingerprint == work.Binding.Descriptor.Fingerprint {
+			work.Descriptor = descriptor
+			break
+		}
+	}
+	if expected := worker.reconciliation.VectorSpaces[work.ProcessingProfile.Fingerprint+"/"+work.Binding.Name]; expected != "" && expected != work.VectorSpaceID {
+		return ErrEmbeddingWorkFenced
+	}
 	started := worker.clock().UTC()
 	receipt := EmbeddingAttemptReceipt{AttemptID: claim.AttemptID, ProviderFingerprint: work.Descriptor.Fingerprint,
 		ProfileFingerprint: work.ProcessingProfile.Fingerprint, BindingID: work.Binding.Name,
@@ -495,7 +528,21 @@ func (worker *EmbeddingWorker) processClaim(ctx context.Context, claim Embedding
 	}
 
 	materializedGeneration := work.InputGeneration
-	result, authorization, code, err := worker.executeBatches(attemptCtx, claim, work, &materializedGeneration, &receipt, started)
+	result, reused, err := worker.reuseVectors(attemptCtx, work, &materializedGeneration)
+	var authorization store.ProviderOperationAuthorization
+	var code store.EmbeddingFailureCode
+	if err == nil && reused {
+		var fence *store.ProviderEgressFence
+		authorization, fence, err = worker.catalog.BeginEmbeddingProviderEgress(attemptCtx, claim, work, nil, worker.clock().UTC())
+		if fence != nil {
+			fence.Close()
+		}
+		if isEmbeddingConsentFailure(err) {
+			code = store.EmbeddingFailureAuthorization
+		}
+	} else if err == nil {
+		result, authorization, code, err = worker.executeBatches(attemptCtx, claim, work, &materializedGeneration, &receipt, started)
+	}
 	if err != nil {
 		if isEmbeddingWorkFence(err) {
 			return ErrEmbeddingWorkFenced
@@ -853,7 +900,7 @@ func validateEmbeddingWork(work EmbeddingWork, maxRows, maxDimensions int) error
 	}
 	canonical, fingerprints, err := document.CanonicalProfile(profile)
 	if err != nil || !bytes.Equal(canonical, work.ProcessingProfile.CanonicalProfile) ||
-		fingerprints.Profile != work.ProcessingProfile.Fingerprint || fingerprints.VectorSpace[work.Binding.Name] != work.VectorSpaceID {
+		fingerprints.Profile != work.ProcessingProfile.Fingerprint {
 		return errors.New("embedding processing profile authority drifted")
 	}
 	found := false
@@ -920,6 +967,17 @@ func buildEmbeddingSet(work EmbeddingWork, result document.EmbeddingResult, now 
 	}
 	space := store.EmbeddingVectorSpaceRecord{ID: work.VectorSpaceID,
 		ContractVersion: store.EmbeddingVectorSpaceContractV1, Descriptor: work.Descriptor}
+	var profile document.ProcessingProfileV1
+	if err := json.Unmarshal(work.ProcessingProfile.CanonicalProfile, &profile); err != nil {
+		return store.EmbeddingSetRecord{}, nil, err
+	}
+	_, fingerprints, err := document.CanonicalProfile(profile)
+	if err != nil {
+		return store.EmbeddingSetRecord{}, nil, err
+	}
+	if work.VectorSpaceID != fingerprints.VectorSpace[work.Binding.Name] {
+		space.ContractVersion = store.EmbeddingVectorSpaceContractV2
+	}
 	vectorSet := store.EmbeddingVectorSetRecord{ID: checksum, ContractVersion: store.EmbeddingVectorSetContractV1,
 		VectorSpaceID: work.VectorSpaceID, PayloadBlobHash: workerHashBytes(payload), PayloadSize: int64(len(payload)),
 		PayloadChecksum: checksum, Payload: payload}
@@ -963,4 +1021,39 @@ func embeddingInterfaceNil(value any) bool {
 	}
 	reflected := reflect.ValueOf(value)
 	return reflected.Kind() == reflect.Pointer && reflected.IsNil()
+}
+
+func (worker *EmbeddingWorker) reuseVectors(ctx context.Context, work EmbeddingWork, generation *store.EmbeddingInputGenerationRecord) (document.EmbeddingResult, bool, error) {
+	retained, err := worker.catalog.FindReusableEmbeddingSet(ctx, work)
+	if errors.Is(err, store.ErrNotFound) {
+		return document.EmbeddingResult{}, false, nil
+	}
+	if err != nil {
+		return document.EmbeddingResult{}, false, err
+	}
+	reader, err := worker.generationBlobs.OpenContext(ctx, retained.VectorSet.PayloadBlobHash)
+	if err != nil {
+		return document.EmbeddingResult{}, false, nil //nolint:nilerr // Unreadable retained values use normal provider execution.
+	}
+	payload, readErr := io.ReadAll(io.LimitReader(reader, worker.maxVectorBlobBytes+1))
+	closeErr := reader.Close()
+	if readErr != nil || closeErr != nil {
+		return document.EmbeddingResult{}, false, nil //nolint:nilerr // Damaged retained values use provider execution.
+	}
+	decoded, err := store.ValidateReusableEmbeddingPayload(retained, payload)
+	if err != nil || len(decoded.InputKeys) > worker.maxRows || decoded.Dimension > worker.maxDimensions {
+		return document.EmbeddingResult{}, false, nil //nolint:nilerr // Damaged retained values use provider execution.
+	}
+	if work.Binding.InputKind == document.EmbeddingInputRenditionChunk {
+		hydrated, hydrateErr := hydrateEmbeddingGeneration(ctx, worker.generationBlobs, work.InputGeneration)
+		if hydrateErr != nil {
+			return document.EmbeddingResult{}, false, hydrateErr
+		}
+		*generation = hydrated
+	}
+	result := document.EmbeddingResult{Vectors: make([]document.EmbeddingVector, len(decoded.InputKeys))}
+	for i, key := range decoded.InputKeys {
+		result.Vectors[i] = document.EmbeddingVector{Key: key, Values: decoded.Vectors[i]}
+	}
+	return result, true, nil
 }

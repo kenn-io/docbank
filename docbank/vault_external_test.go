@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -29,6 +31,7 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/document/mediatranscript"
+	"go.kenn.io/docbank/document/openaicompat"
 	"go.kenn.io/docbank/document/plaintext"
 	"go.kenn.io/docbank/document/suppliedtranscript"
 	"go.kenn.io/docbank/internal/store"
@@ -1113,15 +1116,52 @@ func TestEmbeddedProcessingBuildsChunkEmbeddingsFromNormalizedEvidence(t *testin
 	t.Parallel()
 	renditionProvider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
 	require.NoError(t, err)
-	embeddingProvider := newSyntheticEmbeddingProvider(t)
+	var documentCalls atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Input []string `json:"input"`
+		}
+		if !assert.NoError(t, json.UnmarshalRead(r.Body, &request)) {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		if !assert.Len(t, request.Input, 1) {
+			http.Error(w, "invalid batch", http.StatusBadRequest)
+			return
+		}
+		if !strings.HasPrefix(request.Input[0], "query:") {
+			documentCalls.Add(1)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, err := io.WriteString(w, `{"object":"list","model":"synthetic","data":[{"object":"embedding","index":0,"embedding":[1,0]}]}`)
+		assert.NoError(t, err)
+	}))
+	t.Cleanup(server.Close)
+	descriptor := newSyntheticEmbeddingProvider(t).descriptor
+	descriptor.ID, descriptor.TrustBoundary = openaicompat.ProviderID, document.EmbeddingTrustOperatorNetwork
+	descriptor.InputKinds = []document.EmbeddingInputKind{document.EmbeddingInputRenditionChunk}
+	descriptor.DocumentFormatter, descriptor.QueryFormatter = openaicompat.DocumentFormatterV1, openaicompat.QueryFormatterV1
+	endpoint := openaicompat.Profile{Origin: server.URL, Descriptor: descriptor, ModelInput: descriptor.ModelInput, DeploymentEpoch: descriptor.ModelRevision, RequestTimeout: time.Second, MaxBatchItems: 8, MaxInputBytes: 1 << 20, MaxRequestBytes: 2 << 20, MaxResponseBytes: 1 << 20}
+	newProvider := func() *openaicompat.Client {
+		var err error
+		endpoint.Descriptor.PolicyFingerprint, err = openaicompat.PolicyFingerprint(endpoint)
+		require.NoError(t, err)
+		endpoint.Descriptor, err = document.NewEmbeddingDescriptor(endpoint.Descriptor)
+		require.NoError(t, err)
+		client, err := openaicompat.New(endpoint, nil, server.Client())
+		require.NoError(t, err)
+		return client
+	}
+	embeddingProvider := newProvider()
 	profile := embeddedProcessingProfile(t, renditionProvider.Descriptor())
-	profile.Embeddings = []document.EmbeddingBindingV1{syntheticChunkEmbeddingBinding(embeddingProvider.descriptor)}
-	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir(),
+	profile.Embeddings = []document.EmbeddingBindingV1{syntheticChunkEmbeddingBinding(embeddingProvider.Descriptor())}
+	config := docbank.Config{Root: t.TempDir(),
 		Processing: docbank.ProcessingOptions{Profiles: map[string]docbank.ProcessingProfileConfig{
 			"private": {Profile: profile, RenditionProvider: renditionProvider,
 				EmbeddingProviders: map[string]document.EmbeddingProvider{"chunks": embeddingProvider},
-				Tokenizers:         map[string]document.Tokenizer{"chunks": syntheticRuneTokenizer{}}},
-		}}})
+				Tokenizers:         map[string]document.Tokenizer{"chunks": syntheticRuneTokenizer{}}, EmbeddingDisclosures: map[string]docbank.ProcessingRuntimeDisclosure{"chunks": {Endpoint: server.URL}}},
+		}}}
+	vault, err := docbank.New(t.Context(), config)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
 	receipt, err := vault.Put(t.Context(), "/private.txt", strings.NewReader("chunk semantic needle"),
@@ -1141,6 +1181,28 @@ func TestEmbeddedProcessingBuildsChunkEmbeddingsFromNormalizedEvidence(t *testin
 	require.Len(t, report.Results, 1)
 	require.Equal(t, receipt.Version.ID, report.Results[0].ContentVersionID)
 	require.Equal(t, "rendition_chunk", report.Results[0].Evidence[0].InputKind)
+	require.NoError(t, vault.Close())
+	documentCalls.Store(0)
+	endpoint.RequestTimeout = 2 * time.Second
+	embeddingProvider = newProvider()
+	profile.Embeddings = []document.EmbeddingBindingV1{syntheticChunkEmbeddingBinding(embeddingProvider.Descriptor())}
+	config.Processing.Profiles["private"] = docbank.ProcessingProfileConfig{Profile: profile, RenditionProvider: renditionProvider, EmbeddingProviders: map[string]document.EmbeddingProvider{"chunks": embeddingProvider}, Tokenizers: map[string]document.Tokenizer{"chunks": syntheticRuneTokenizer{}}, EmbeddingDisclosures: map[string]docbank.ProcessingRuntimeDisclosure{"chunks": {Endpoint: server.URL}}}
+	vault, err = docbank.New(t.Context(), config)
+	require.NoError(t, err)
+	planRequest := docbank.ProcessingPlanRequest{Selector: selector}
+	plan, err = vault.PlanProcessing(t.Context(), planRequest)
+	require.NoError(t, err)
+	_, err = vault.GrantProcessingPlanConsent(t.Context(), docbank.ProcessingConsentGrantRequest{PlanRequest: planRequest, PlanFingerprint: plan.Fingerprint})
+	require.NoError(t, err)
+	require.NoError(t, vault.Close())
+	vault, err = docbank.New(t.Context(), config)
+	require.NoError(t, err)
+	require.EventuallyWithT(t, func(collect *assert.CollectT) {
+		report, err := vault.SearchDocuments(t.Context(), docbank.DocumentSearchRequest{Query: "needle", Mode: docbank.DocumentSearchSemantic, Profile: "private", BindingID: "chunks", Fence: fence})
+		require.NoError(collect, err)
+		require.Len(collect, report.Results, 1)
+	}, 10*time.Second, 20*time.Millisecond)
+	require.Zero(t, documentCalls.Load())
 }
 
 func TestEmbeddedProcessingPreservesTimedEvidenceAcrossSearchLanes(t *testing.T) {

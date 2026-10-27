@@ -356,7 +356,8 @@ func runServe(ctx context.Context) (retErr error) {
 	if err := startEmbeddingWorkerIfReady(jobSupervisor, embeddingRuntimeRegistry,
 		func() (embeddingJobRunner, error) {
 			worker, workerErr := processing.NewEmbeddingWorker(processing.EmbeddingWorkerConfig{
-				Catalog: s, Authority: s, Blobs: blobs, GenerationBlobs: blobs, Runtime: embeddingRuntimeRegistry,
+				Reconciliation: processingService.EmbeddingReconciliation(),
+				Catalog:        s, Authority: s, Blobs: blobs, GenerationBlobs: blobs, Runtime: embeddingRuntimeRegistry,
 				Gate: operationGate, Owner: "daemon-embedding-worker",
 				LeaseDuration: 5 * time.Minute, IdleDelay: time.Second,
 				RetryLimit: 3, RetryBaseDelay: time.Second, MaxRetryDelay: 30 * time.Second,

@@ -101,6 +101,7 @@ type ServiceConfig struct {
 }
 
 type configuredProfile struct {
+	vectorSpaces           map[string]string
 	mediaMaxBytes          int64
 	portable               document.ProcessingProfileV1
 	record                 store.ProcessingProfileRecord
@@ -469,7 +470,7 @@ func NewService(config ServiceConfig) (*Service, error) {
 		if err := json.Unmarshal(canonical, &profile, json.RejectUnknownMembers(true)); err != nil {
 			return nil, fmt.Errorf("processing profile %q canonical decode: %w", name, err)
 		}
-		configured := configuredProfile{portable: profile, provider: supplied.RenditionProvider,
+		configured := configuredProfile{vectorSpaces: make(map[string]string), portable: profile, provider: supplied.RenditionProvider,
 			mediaMaxBytes:     service.mediaMaxBytes,
 			rerankingProvider: supplied.RerankingProvider, rerankingProfile: supplied.RerankingProfile,
 			rerankingDeadline: supplied.RerankingDeadline, rerankingFailurePolicy: supplied.RerankingFailurePolicy,
@@ -541,9 +542,24 @@ func NewService(config ServiceConfig) (*Service, error) {
 			default:
 				return nil, fmt.Errorf("processing profile %q embedding %q has an invalid trust boundary", name, binding.Name)
 			}
+			canonicalDescriptor, err := document.NewEmbeddingDescriptor(descriptor)
+			if err != nil || !reflect.DeepEqual(canonicalDescriptor, descriptor) {
+				return nil, fmt.Errorf("processing profile %q embedding %q descriptor is not canonical", name, binding.Name)
+			}
+			vectorSpace := fingerprints.VectorSpace[binding.Name]
+			if semantic, ok := provider.(document.EmbeddingVectorIdentityProvider); ok {
+				id, err := semantic.VectorIdentity()
+				if err != nil {
+					return nil, err
+				}
+				vectorSpace, err = config.Catalog.SelectEmbeddingVectorSpace(context.Background(), vectorSpace, id, descriptor)
+				if err != nil {
+					return nil, err
+				}
+			}
+			configured.vectorSpaces[binding.Name] = vectorSpace
 			disclosure, disclosureErr := embeddingRuntimeDisclosure(
-				supplied.EmbeddingDisclosures[binding.Name], binding, descriptor,
-				fingerprints.VectorSpace[binding.Name])
+				supplied.EmbeddingDisclosures[binding.Name], binding, descriptor, vectorSpace)
 			if disclosureErr != nil {
 				return nil, fmt.Errorf("processing profile %q embedding %q disclosure: %w",
 					name, binding.Name, disclosureErr)
@@ -568,6 +584,7 @@ func NewService(config ServiceConfig) (*Service, error) {
 				return nil, fmt.Errorf("processing profile %q embedding %q conflicts with "+
 					"another profile's provider for the same descriptor", name, binding.Name)
 			}
+			runtime.vectorSpaceID = vectorSpace
 			bindingKey := embeddingRuntimeBinding{configured.record.Fingerprint, binding.Name, descriptor.Fingerprint}
 			if existingCustom, exists := registeredEmbeddingBindings[bindingKey]; exists {
 				if existingCustom || customClassifier {
@@ -1435,7 +1452,7 @@ func (service *Service) Coverage(ctx context.Context, profileName string, fence 
 	}
 	bindings := make([]store.ProcessingCoverageBinding, len(profile.portable.Embeddings))
 	for i, binding := range profile.portable.Embeddings {
-		bindings[i] = store.ProcessingCoverageBinding{BindingID: binding.Name,
+		bindings[i] = store.ProcessingCoverageBinding{BindingID: binding.Name, VectorSpaceID: profile.vectorSpaces[binding.Name],
 			Required: binding.Activation == document.EmbeddingRequired}
 	}
 	snapshot, err := service.catalog.ProcessingCoverage(ctx, store.ProcessingCoverageScope{
@@ -1535,9 +1552,15 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 			prepared.rerankingAuthorizer.queryFenceHeld = true
 		}
 	}
+	searchScope := store.SearchOptions{ContentVersionIDs: ids}
+	if provider := profile.embedders[prepared.bindingID]; provider != nil {
+		descriptor := provider.Descriptor()
+		searchScope.EmbeddingDescriptor = &descriptor
+		searchScope.VectorSpaceID = profile.vectorSpaces[prepared.bindingID]
+	}
 	return prepared.searcher.Search(ctx, retrieval.Query{Text: request.Query, Mode: prepared.mode,
 		LexicalLimit: profile.portable.Retrieval.LexicalLimit, VectorLimit: profile.portable.Retrieval.VectorLimit,
-		Limit: prepared.limit, Scope: store.SearchOptions{ContentVersionIDs: ids}, ContentFirst: request.ContentFirst,
+		Limit: prepared.limit, Scope: searchScope, ContentFirst: request.ContentFirst,
 		ProcessingProfileFingerprint: profile.record.Fingerprint, BindingID: prepared.bindingID,
 		Authorization: prepared.authorization})
 }
@@ -1624,6 +1647,54 @@ func (service *Service) prepareSearch(
 		rerankingAuthorizer: rerankingAuth}, nil
 }
 
+// EmbeddingReconciliation snapshots configured target authority for background recovery.
+func (service *Service) EmbeddingReconciliation() store.EmbeddingReconcileRequest {
+	profiles := make(map[string]configuredProfile, len(service.profiles))
+	var records []store.ProcessingProfileRecord
+	descriptors := []document.EmbeddingDescriptor{}
+	spaces := make(map[string]string)
+	for _, profile := range service.profiles {
+		profiles[profile.record.Fingerprint] = profile
+		record := profile.record
+		record.CanonicalProfile = slices.Clone(record.CanonicalProfile)
+		records = append(records, record)
+		for binding, provider := range profile.embedders {
+			descriptors = append(descriptors, provider.Descriptor())
+			spaces[record.Fingerprint+"/"+binding] = profile.vectorSpaces[binding]
+		}
+	}
+	return store.EmbeddingReconcileRequest{Descriptors: descriptors, VectorSpaces: spaces, Profiles: records, PrepareGeneration: func(ctx context.Context, versionID string, record store.ProcessingProfileRecord, binding document.EmbeddingBindingV1) (store.EmbeddingInputGenerationRecord, error) {
+		profile := profiles[record.Fingerprint]
+		version, err := service.catalog.ContentVersionByID(ctx, versionID)
+		if err != nil {
+			return store.EmbeddingInputGenerationRecord{}, err
+		}
+		if binding.InputKind == document.EmbeddingInputOriginalFile {
+			_, fingerprints, err := document.CanonicalProfile(profile.portable)
+			if err != nil {
+				return store.EmbeddingInputGenerationRecord{}, err
+			}
+			return directEmbeddingGeneration(version, record.Fingerprint, fingerprints.EmbeddingInput[binding.Name], binding), nil
+		}
+		if _, err := service.catalog.ActiveRendition(ctx, versionID, record.Fingerprint); errors.Is(err, store.ErrNotFound) {
+			node, err := service.catalog.NodeByID(ctx, version.NodeID)
+			if err != nil {
+				return store.EmbeddingInputGenerationRecord{}, err
+			}
+			job, waiter, err := service.enqueueRendition(ctx, node, version, profile, service.renditionConsentRequest(profile), "", false)
+			if err != nil {
+				return store.EmbeddingInputGenerationRecord{}, err
+			}
+			if _, err := service.runRenditionJob(ctx, job.ID, waiter.ID); err != nil {
+				return store.EmbeddingInputGenerationRecord{}, err
+			}
+		} else if err != nil {
+			return store.EmbeddingInputGenerationRecord{}, err
+		}
+		return service.chunkEmbeddingGeneration(ctx, version, profile, binding)
+	}}
+}
+
 func (service *Service) runEmbeddings(ctx context.Context, version store.ContentVersion,
 	profile configuredProfile, principal, scope, consentSetGrantID string, onEnqueued func([]string),
 ) ([]string, error) {
@@ -1672,7 +1743,7 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 			var err error
 			job, err = service.catalog.EnqueueEmbeddingJob(ctx, store.EmbeddingJobRequest{
 				ContentVersionID: version.ID, Profile: profile.record, BindingID: binding.Name,
-				Descriptor: profile.embedders[binding.Name].Descriptor(), InputGeneration: generation,
+				VectorSpaceID: profile.vectorSpaces[binding.Name], Descriptor: profile.embedders[binding.Name].Descriptor(), InputGeneration: generation,
 				Authorization: authorization,
 			})
 			return err
@@ -1698,7 +1769,7 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 			RetryLimit: 3, RetryBaseDelay: time.Millisecond, MaxRetryDelay: time.Second,
 			AttemptLifetime: 10 * time.Minute, MaxRows: 100_000, MaxDimensions: 1_048_576,
 			MaxVectorBlobBytes: 64 << 20, Clock: service.clock,
-			DescriptorFingerprints: []string{binding.Descriptor.Fingerprint},
+			DescriptorFingerprints: []string{binding.Descriptor.Fingerprint}, Reconciliation: service.EmbeddingReconciliation(),
 		})
 		if err != nil {
 			return jobIDs, err
@@ -1731,7 +1802,7 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 			}
 			if status.State == "completed" || status.State == "failed" {
 				if status.State == "completed" {
-					vectorSpaces = append(vectorSpaces, fingerprints.VectorSpace[binding.Name])
+					vectorSpaces = append(vectorSpaces, profile.vectorSpaces[binding.Name])
 				}
 				break
 			}

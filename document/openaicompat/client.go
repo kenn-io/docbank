@@ -30,6 +30,7 @@ import (
 	"go.kenn.io/docbank/document/providerhttp"
 	"go.kenn.io/kit/embedclient"
 	"go.kenn.io/kit/embedconfig"
+	"go.kenn.io/kit/embedmodel"
 	"go.kenn.io/kit/vector"
 )
 
@@ -171,6 +172,32 @@ type wireEmbedding struct {
 type wireUsage struct {
 	PromptTokens int64 `json:"prompt_tokens"`
 	TotalTokens  int64 `json:"total_tokens"`
+}
+
+// VectorIdentity includes the complete model-side declaration, including its absence.
+func (client *Client) VectorIdentity() (string, error) {
+	normalization := embedconfig.NormalizationNone
+	if client.descriptor.Normalization == document.VectorNormalizationUnitLength {
+		normalization = embedconfig.NormalizationL2
+	}
+	model, err := (embedmodel.Descriptor{Model: embedconfig.Model{
+		Name: client.descriptor.Model, Revision: client.descriptor.ModelRevision,
+		Dimensions: client.descriptor.Dimension, Metric: embedconfig.MetricCosine, Normalization: normalization,
+	}, Roles: embedconfig.Roles{DocumentFormatter: client.descriptor.DocumentFormatter, QueryFormatter: client.descriptor.QueryFormatter}}).VectorIdentity()
+	if err != nil {
+		return "", fmt.Errorf("openaicompat: model vector identity: %w", err)
+	}
+	encoded, err := json.Marshal(struct {
+		Version    string                       `json:"version"`
+		Model      string                       `json:"model"`
+		Descriptor document.EmbeddingDescriptor `json:"descriptor"`
+		Deployment *DeploymentContract          `json:"deployment"`
+	}{"openaicompat-vector/v2", model, document.EmbeddingVectorProjection(client.descriptor), client.profile.DeploymentContract}, json.Deterministic(true))
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(encoded)
+	return hex.EncodeToString(digest[:]), nil
 }
 
 // PolicyFingerprint returns the canonical profile identity expected in the

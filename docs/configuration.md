@@ -758,6 +758,8 @@ the endpoint, transport policy, or environment binding.
 
 ### Embedding workers and credentials
 
+Moving an embedding endpoint or changing its timeout still requires the updated descriptor fingerprint and consent for the current profile. Docbank reuses compatible saved vectors after consent. An unchanged configuration keeps its existing vector space across upgrades. Legacy BGE-M3 and Qwen3 profiles may require recomputation on their first policy change because their old records omit deployment revisions.
+
 The daemon runs retained embedding jobs for its configured OpenAI-compatible
 and Voyage runtimes. Other [provider packages](document-understanding.md) are
 available to Go applications. The daemon cannot run them.

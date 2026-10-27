@@ -19,6 +19,20 @@ const (
 	EmbeddingProviderContractVersion = 1
 )
 
+// EmbeddingVectorIdentityProvider declares the complete producer identity separately
+// from the runtime pin. Providers without this capability keep profile identity.
+type EmbeddingVectorIdentityProvider interface {
+	VectorIdentity() (string, error)
+}
+
+// EmbeddingVectorProjection removes only transport policy from a canonical descriptor.
+func EmbeddingVectorProjection(descriptor EmbeddingDescriptor) EmbeddingDescriptor {
+	descriptor.PolicyFingerprint = ""
+	descriptor.TrustBoundary = ""
+	descriptor.Fingerprint = ""
+	return descriptor
+}
+
 // EmbeddingInputQueryText is query-time text. It is not a persistent source
 // representation and is therefore intentionally absent from profile bindings.
 const EmbeddingInputQueryText EmbeddingInputKind = "query_text"
