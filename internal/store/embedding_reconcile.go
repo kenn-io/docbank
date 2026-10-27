@@ -494,6 +494,10 @@ func validateImageEmbeddingGenerationTx(ctx context.Context, tx *sql.Tx, generat
 	if err := validateImageEmbeddingGeneration(generation, bindingID); err != nil {
 		return err
 	}
+	return validateImageEmbeddingPreviewTx(ctx, tx, generation)
+}
+
+func validateImageEmbeddingPreviewTx(ctx context.Context, tx *sql.Tx, generation EmbeddingInputGenerationRecord) error {
 	eligible, err := photoDescriptionEligibleTx(ctx, tx, generation.SourceVersionID)
 	if err != nil {
 		return err

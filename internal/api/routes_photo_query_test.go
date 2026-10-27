@@ -330,6 +330,10 @@ func TestPhotoBrowseCursorAfterLongName(t *testing.T) {
 	require.Len(t, second.Items, 1)
 	require.NotEqual(t, first.Items[0].AssetID, second.Items[0].AssetID)
 	require.Empty(t, second.NextCursor)
+	require.Empty(t, first.RequestedMode)
+	require.Empty(t, first.ActualMode)
+	require.Empty(t, second.RequestedMode)
+	require.Empty(t, second.ActualMode)
 }
 
 func TestReadPhotoPreviewVerifiedBytes(t *testing.T) {
@@ -906,7 +910,11 @@ func TestPhotoFallbackCursorSurvivesProviderRecovery(t *testing.T) {
 	hash, size, err := catalog.Blobs.Write(bytes.NewReader(mediatest.JPEG(24, 24, color.White)))
 	require.NoError(t, err)
 	for i := 1; i < 51; i++ {
-		_, err := catalog.CreateFile(t.Context(), catalog.RootID(), fmt.Sprintf("sunset-%02d.jpg", i), hash, size, "image/jpeg")
+		name := fmt.Sprintf("sunset-%02d.jpg", i)
+		if i == 50 {
+			name = "sunset.jpg"
+		}
+		_, err := catalog.CreateFile(t.Context(), catalog.RootID(), name, hash, size, "image/jpeg")
 		require.NoError(t, err)
 	}
 	const mode = "semantic"
@@ -917,27 +925,66 @@ func TestPhotoFallbackCursorSurvivesProviderRecovery(t *testing.T) {
 	var first api.PhotoBrowsePage
 	require.NoError(t, json.Unmarshal([]byte(body), &first))
 	require.Equal(t, "provider_unavailable", first.FallbackReason)
+	require.NotEmpty(t, first.SnapshotID, "fallback retains relevance order across pages")
 	require.NotEmpty(t, first.NextCursor)
 	require.Equal(t, mode, first.RequestedMode)
 	require.Equal(t, "lexical", first.ActualMode)
 	require.Len(t, first.Items, 50)
+	require.Equal(t, "sunset.jpg", first.Items[0].Name, "the exact name match ranks ahead of partial name matches")
 	unavailable.Store(false)
-	request.Cursor = first.NextCursor
+	request.SnapshotID, request.Cursor = first.SnapshotID, first.NextCursor
+	var next api.PhotoBrowsePage
 	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, request)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	var next api.PhotoBrowsePage
 	require.NoError(t, json.Unmarshal([]byte(body), &next))
 	require.Equal(t, "lexical", next.ActualMode)
 	require.Equal(t, "provider_unavailable", next.FallbackReason)
-	require.Empty(t, next.SnapshotID)
+	require.Equal(t, first.SnapshotID, next.SnapshotID)
 	require.Len(t, next.Items, 1)
-	require.Equal(t, "sunset-50.jpg", next.Items[0].Name)
+	for _, item := range first.Items {
+		require.NotEqual(t, item.AssetID, next.Items[0].AssetID)
+	}
+	request.SnapshotID = ""
 	request.Cursor = ""
 	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, request)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	require.NoError(t, json.Unmarshal([]byte(body), &next))
 	require.Equal(t, mode, next.ActualMode)
 	require.NotEmpty(t, next.SnapshotID)
+}
+
+func TestPhotoSnapshotCannotChangeHiddenScope(t *testing.T) {
+	t.Parallel()
+	ts, catalog, _ := photoImageHTTPFixture(t, newProcessingTestEmbeddingProvider(t), []string{"sunset.jpg"})
+	require.NoError(t, catalog.SetupPhotoHidden(t.Context(), "synthetic-passcode"))
+	request := api.PhotoBrowseRequest{Query: api.QueryPayload(`{"mode":"semantic","text":"sunset"}`), PageSize: 1}
+	response, body := do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, request)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var first api.PhotoBrowsePage
+	require.NoError(t, json.Unmarshal([]byte(body), &first))
+	require.NotEmpty(t, first.SnapshotID)
+	require.Len(t, first.Items, 1)
+	request.SnapshotID, request.Hidden = first.SnapshotID, true
+	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, request)
+	require.Equal(t, http.StatusBadRequest, response.StatusCode, body)
+	require.Contains(t, body, "invalid_cursor")
+}
+
+func TestImageOnlyStartHTTPReportsMissingPreview(t *testing.T) {
+	t.Parallel()
+	ts, catalog, _ := photoImageHTTPFixture(t, newProcessingTestEmbeddingProvider(t), nil)
+	hash, size, err := catalog.Blobs.Write(bytes.NewReader(mediatest.JPEG(24, 24, color.White)))
+	require.NoError(t, err)
+	node, err := catalog.CreateFile(t.Context(), catalog.RootID(), "without-preview.jpg", hash, size, "image/jpeg")
+	require.NoError(t, err)
+	selector := api.ProcessingSelector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "private"}
+	response, body := do(t, ts, http.MethodPost, "/api/v1/processing/plans", nil, map[string]any{"selector": selector})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var plan api.ProcessingPlan
+	require.NoError(t, json.Unmarshal([]byte(body), &plan))
+	response, body = do(t, ts, http.MethodPost, "/api/v1/processing/jobs", nil, api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true})
+	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+	require.Contains(t, body, "preview_missing")
 }
 
 func TestPhotoRankedRoutes(t *testing.T) {

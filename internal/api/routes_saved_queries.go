@@ -248,12 +248,9 @@ func registerSavedQueryRunRoute(
 			}
 			request.Query = value
 			if value.Mode != photoQueryModeLexical {
-				ranking := store.PhotoRanking{RequestedMode: value.Mode, ActualMode: photoQueryModeLexical, FallbackReason: "provider_unavailable"}
-				if d.Processing != nil {
-					ranking, err = d.Processing.SearchPhotos(ctx, store.PhotoBrowseRequest{Query: value, Coverage: coverage})
-					if err != nil {
-						return nil, workspaceQueryError(err)
-					}
+				ranking, err := photoQueryRanking(ctx, d, store.PhotoBrowseRequest{Query: value, Coverage: coverage})
+				if err != nil {
+					return nil, workspaceQueryError(err)
 				}
 				request.PhotoRanking = &ranking
 			}

@@ -580,7 +580,6 @@ func markSuggestionOnlyMatches(
 		id := items[i].AssetID
 		items[i].MatchedAISuggestion = !plain[id] && (lexical == nil || lexical[id])
 	}
-
 	return nil
 }
 

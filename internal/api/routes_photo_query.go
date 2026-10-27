@@ -25,6 +25,16 @@ import (
 
 const photoQueryModeLexical = "lexical"
 
+func photoQueryRanking(ctx context.Context, d Deps, request store.PhotoBrowseRequest) (store.PhotoRanking, error) {
+	ranking := store.PhotoRanking{RequestedMode: request.Query.Mode, ActualMode: photoQueryModeLexical, FallbackReason: "provider_unavailable"}
+	if request.Hidden {
+		ranking.FallbackReason = "hidden_photos"
+	} else if d.Processing != nil {
+		return d.Processing.SearchPhotos(ctx, request)
+	}
+	return ranking, nil
+}
+
 type LookupPhotoFlagsRequest struct {
 	AssetIDs []string `json:"asset_ids" format:"uuid" minItems:"1" maxItems:"20000"`
 }
@@ -69,6 +79,9 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 		if err != nil {
 			return nil, NewError(http.StatusUnprocessableEntity, "invalid_query", err.Error())
 		}
+		if value.Mode != photoQueryModeLexical {
+			value.Sort = query.Sort{Field: "relevance", Direction: "desc"}
+		}
 		request := store.PhotoBrowseRequest{
 			SourceMetadataFingerprint: processing.SourceMetadataExtractorFingerprint,
 			Query:                     value, Hidden: in.Body.Hidden, Stacks: in.Body.Stacks && in.Body.Projection != "map",
@@ -89,22 +102,14 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 			frozen = false
 		}
 		if value.Mode != photoQueryModeLexical && in.Body.SnapshotID == "" && boundary == nil {
-			ranking = store.PhotoRanking{RequestedMode: value.Mode, ActualMode: photoQueryModeLexical, FallbackReason: "provider_unavailable"}
-			if request.Hidden {
-				ranking.FallbackReason = "hidden_photos"
-			} else if d.Processing != nil {
-				ranking, err = d.Processing.SearchPhotos(ctx, request)
-			}
+			ranking, err = photoQueryRanking(ctx, d, request)
 			if err != nil {
 				return nil, workspaceQueryError(err)
 			}
-			if ranking.ActualMode == photoQueryModeLexical {
+			if request.Hidden && ranking.ActualMode == photoQueryModeLexical {
 				request.Query.Mode = photoQueryModeLexical
 				frozen = false
 			}
-		}
-		if frozen && value.Mode != photoQueryModeLexical {
-			value.Sort = query.Sort{Field: "relevance", Direction: "desc"}
 		}
 		if in.Body.Projection == "map" {
 			request.Recipes = map[string]string{"grid": recipes["grid"]}
@@ -120,9 +125,9 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 				return nil, NewError(http.StatusServiceUnavailable, "workspace_unavailable", "workspace query snapshots are unavailable")
 			}
 			if in.Body.SnapshotID != "" {
-				snapshot, err = snapshots.PhotoPage(ctx, owner, in.Body.SnapshotID, in.Body.Cursor, store.SnapshotRequest{Photos: true, Query: value, Coverage: request.Coverage, PageSize: min(request.PageSize, 250), PhotoProjection: in.Body.Projection})
+				snapshot, err = snapshots.PhotoPage(ctx, owner, in.Body.SnapshotID, in.Body.Cursor, store.SnapshotRequest{PhotoHidden: request.Hidden, Photos: true, Query: value, Coverage: request.Coverage, PageSize: min(request.PageSize, 250), PhotoProjection: in.Body.Projection})
 			} else {
-				snapshot, err = snapshots.Create(ctx, owner, store.SnapshotRequest{PhotoProjection: in.Body.Projection, Photos: true, Query: value, Coverage: request.Coverage, PageSize: min(request.PageSize, 250), PhotoRanking: &ranking, PhotoRecipes: recipes})
+				snapshot, err = snapshots.Create(ctx, owner, store.SnapshotRequest{PhotoProjection: in.Body.Projection, Photos: true, Query: value, Coverage: request.Coverage, PageSize: min(request.PageSize, 250), PhotoRanking: &ranking})
 			}
 			if err == nil {
 				page, err = snapshots.CurrentPhotoPage(ctx, snapshot, request.Recipes)
@@ -130,7 +135,6 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 		} else {
 			page, err = d.Store.ListPhotoAssets(ctx, request, boundary)
 		}
-
 		if err != nil {
 			return nil, workspaceQueryError(err)
 		}
@@ -139,7 +143,7 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 			Items:              make([]PhotoBrowseRow, len(page.Items)), Total: page.Total, BurstGapSeconds: page.BurstGapSeconds,
 			Facets: fromStoreFacets(page.Facets), RelevanceAvailable: page.RelevanceAvailable,
 		}
-		if !frozen && ranking.RequestedMode != "" {
+		if !frozen && value.Mode != photoQueryModeLexical {
 			wire.PhotoSearchStatus = fromStorePhotoSearchStatus(&ranking)
 		}
 		if frozen {

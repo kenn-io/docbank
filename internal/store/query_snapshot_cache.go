@@ -332,8 +332,7 @@ func (s *QuerySnapshotService) prepareSnapshot(
 		return preparedQuerySnapshot{}, errors.New("query snapshot owner is required")
 	}
 	buildCtx, cancel := context.WithCancel(ctx)
-	protected := request.ReplacesSnapshotID
-	build, err := s.admitNewBuild(owner, cancel, request.FacetsOnly, protected)
+	build, err := s.admitNewBuild(owner, cancel, request.FacetsOnly, request.ReplacesSnapshotID)
 	if err != nil {
 		cancel()
 		return preparedQuerySnapshot{}, err
@@ -996,6 +995,10 @@ func (s *QuerySnapshotService) FirstPage(ctx context.Context, owner, snapshotID 
 
 // PhotoPage binds continuation inputs to the admitted view, including its projection.
 func (s *QuerySnapshotService) PhotoPage(ctx context.Context, owner, id, cursor string, request SnapshotRequest) (SnapshotPage, error) {
+	// Photo snapshots contain Library members only.
+	if request.PhotoHidden {
+		return SnapshotPage{}, ErrSnapshotCursor
+	}
 	cached, err := s.lookup(owner, id)
 	if err != nil {
 		return SnapshotPage{}, err
@@ -1056,7 +1059,6 @@ func (s *QuerySnapshotService) CurrentPhotoPage(ctx context.Context, snapshot Sn
 		for i, row := range snapshot.Rows {
 			page.Items[i].MatchedAISuggestion = row.SuggestionMatch
 		}
-
 		return nil
 	})
 	return page, err

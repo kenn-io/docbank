@@ -39,7 +39,7 @@ var ErrQuerySnapshotTooLarge = errors.New("query snapshot exceeds its materializ
 type SnapshotRequest struct {
 	PhotoProjection    string            `json:"-"`
 	PhotoRanking       *PhotoRanking     `json:"-"`
-	PhotoRecipes       map[string]string `json:"-"`
+	PhotoHidden        bool              `json:"-"`
 	ReplacesSnapshotID string            `json:"replaces_snapshot_id,omitempty"`
 	Photos             bool              `json:"photos,omitempty"`
 	FacetsOnly         bool              `json:"facets_only,omitempty"`
@@ -137,7 +137,6 @@ type SnapshotProjection struct {
 
 type snapshotMaterializeOptions struct {
 	PhotoRanking       *PhotoRanking
-	PhotoRecipes       map[string]string
 	MaterializeFacet   func(context.Context, string) (SnapshotFacet, error)
 	MaxRows            int64
 	MaxRowBytes        int64
@@ -216,7 +215,7 @@ func (s *Store) materializeNormalizedQuerySnapshot(
 	ctx context.Context, request SnapshotRequest, options snapshotMaterializeOptions,
 ) (SnapshotProjection, error) {
 	options = options.withDefaults()
-	options.PhotoRanking, options.PhotoRecipes = request.PhotoRanking, request.PhotoRecipes
+	options.PhotoRanking = request.PhotoRanking
 	pageSize, facets := request.PageSize, request.Facets
 	coverage, err := normalizeCoverageSelection(request.Coverage)
 	if err != nil {
@@ -281,6 +280,9 @@ func (s *Store) materializeNormalizedQuerySnapshot(
 				return err
 			}
 			execution := compiled
+			if options.PhotoRanking != nil {
+				execution.Query.Sort = query.Sort{Field: "relevance", Direction: "desc"}
+			}
 			if options.Photos && execution.Query.Sort.Field == "path" {
 				execution.Query.Sort.Field = "name"
 				execution.Query.Sort.Direction = "asc"

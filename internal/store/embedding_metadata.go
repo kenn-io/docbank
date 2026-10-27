@@ -417,7 +417,7 @@ func validateRestoredEmbeddingAuthority(ctx context.Context, tx metadataQuerier,
 	}
 	if set.InputKind == document.EmbeddingInputImage {
 		if set.InputGeneration.GenerationBlobHash != "" || set.InputGeneration.GenerationEncodedSize != 0 || set.InputGeneration.AttachmentID != "" || len(set.InputGeneration.Inputs) != 1 || set.InputGeneration.Inputs[0] != (EmbeddingInputReference{ID: set.ContentVersionID, RenderedChecksum: set.InputGeneration.GenerationChecksum}) {
-			return errors.New("stored image generation does not match preview bytes")
+			return errors.New("stored image generation has invalid artifact fields or input checksum reference")
 		}
 		return nil
 	}

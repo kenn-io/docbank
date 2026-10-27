@@ -922,7 +922,7 @@ display-file row per matching asset, an `asset_id`, and its frozen display-file 
 uses Photos filters and sorts and requires an empty facet list. It uses the
 same snapshot paging and expiry rules below. When `profile` is omitted, photo
 snapshots skip profile selection and use `unconfigured` processing coverage.
-With `photos: true`, `snapshot_id` copies the membership, order, query, and coverage of a Photos snapshot the same caller owns, and ignores `query`. A semantic or hybrid `mode` without `snapshot_id` returns `422 invalid_query`.
+The request requires `query` and rejects `snapshot_id`. A semantic or hybrid `mode` returns `422 invalid_query`; use a saved photo query run to capture those modes.
 
 The response freezes the canonical query, dependency revisions, selected
 lexical generation and processing coverage, ordered row metadata, and exact
@@ -988,7 +988,7 @@ lookup uses the saved-query index and reads only that definition's run history.
 Snapshot execution supports duplicate and text-coverage constraints.
 Text-coverage predicates require a configured processing profile. Documents reject
 semantic and hybrid modes with positioned `422 invalid_query` errors. Photos saved-query
-runs support both modes and record retrieval status in `photo_ranking`.
+runs support both modes and return retrieval status directly on `snapshot` through `requested_mode`, `actual_mode`, `truncated`, `coverage_incomplete`, and an optional `fallback_reason`.
 Relevance ordering is supported for Photos and rejected for Documents snapshots. A Photos snapshot executes a saved
 `path` sort as `name asc`, retaining the original definition and query fingerprint.
 

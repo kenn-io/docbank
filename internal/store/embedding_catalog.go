@@ -983,7 +983,7 @@ func validateEmbeddingSetFencesTx(ctx context.Context, tx *sql.Tx, record Embedd
 		return errors.New("chunk embedding set requires rendition attachment authority")
 	}
 	if record.InputKind == document.EmbeddingInputImage {
-		if err := validateImageEmbeddingGenerationTx(ctx, tx, record.InputGeneration, record.BindingID); err != nil {
+		if err := validateImageEmbeddingPreviewTx(ctx, tx, record.InputGeneration); err != nil {
 			return err
 		}
 	}
