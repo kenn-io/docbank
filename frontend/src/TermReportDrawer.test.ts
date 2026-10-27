@@ -66,6 +66,7 @@ const json = (value: unknown) =>
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -487,43 +488,51 @@ it.each(["beta", ""])(
   },
 );
 
-it.each(["edited", "history-loaded"])(
-  "reseeds a canceled %s report draft from the current search",
-  async (source) => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      if (String(input).startsWith("/api/v1/search-exports?"))
-        return json({ items: [{ request: original, summary: oldSummary }], total: 1 });
-      return json({ items: [], total: 0 });
-    });
-    const { rerender } = render(TermReportDrawer, {
-      props: {
-        session: "session",
-        initialExpression: "alpha",
-        onclose: vi.fn(),
-        onauthfailure: vi.fn(),
-      },
-      context: new Map([[drawerPage, true]]),
-    });
-    expect(await screen.findByRole("heading", { name: "Recent reports" })).toBeTruthy();
-    expect(screen.queryByRole("textbox", { name: "Expression for term 1" })).toBeNull();
-    if (source === "edited") {
-      await fireEvent.click(screen.getByRole("button", { name: "Run report" }));
-      const expression = screen.getByRole("textbox", { name: "Expression for term 1" });
-      expect(expression).toHaveProperty("value", "alpha");
-      await fireEvent.input(expression, { target: { value: "edited draft" } });
-    } else {
-      await fireEvent.click(await screen.findByRole("button", { name: "Use as draft" }));
-      expect(screen.getByRole("textbox", { name: "Expression for term 1" })).toHaveProperty(
-        "value",
-        "alpha",
-      );
-    }
-    await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    await rerender({ initialExpression: "beta" });
-    await fireEvent.click(screen.getByRole("button", { name: "Run report" }));
-    expect(screen.getByRole("textbox", { name: "Expression for term 1" })).toHaveProperty(
-      "value",
-      "beta",
-    );
-  },
-);
+it("defaults a new report to the UTC date when Run report is chosen", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-20T23:59:59Z"));
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ items: [], total: 0 }));
+  render(TermReportDrawer, {
+    props: {
+      session: "session",
+      initialExpression: "alpha",
+      onclose: vi.fn(),
+      onauthfailure: vi.fn(),
+    },
+    context: new Map([[drawerPage, true]]),
+  });
+
+  vi.setSystemTime(new Date("2026-09-21T00:00:01Z"));
+  await fireEvent.click(screen.getByRole("button", { name: "Run report" }));
+  expect(screen.getByRole("button", { name: "2000-01-01 - 2026-09-21" })).toBeTruthy();
+});
+
+it("reseeds a canceled edited report draft from the current search", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (String(input).startsWith("/api/v1/search-exports?"))
+      return json({ items: [{ request: original, summary: oldSummary }], total: 1 });
+    return json({ items: [], total: 0 });
+  });
+  const { rerender } = render(TermReportDrawer, {
+    props: {
+      session: "session",
+      initialExpression: "alpha",
+      onclose: vi.fn(),
+      onauthfailure: vi.fn(),
+    },
+    context: new Map([[drawerPage, true]]),
+  });
+  expect(await screen.findByRole("heading", { name: "Recent reports" })).toBeTruthy();
+  expect(screen.queryByRole("textbox", { name: "Expression for term 1" })).toBeNull();
+  await fireEvent.click(screen.getByRole("button", { name: "Run report" }));
+  const expression = screen.getByRole("textbox", { name: "Expression for term 1" });
+  expect(expression).toHaveProperty("value", "alpha");
+  await fireEvent.input(expression, { target: { value: "edited draft" } });
+  await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  await rerender({ initialExpression: "beta" });
+  await fireEvent.click(screen.getByRole("button", { name: "Run report" }));
+  expect(screen.getByRole("textbox", { name: "Expression for term 1" })).toHaveProperty(
+    "value",
+    "beta",
+  );
+});

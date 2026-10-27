@@ -45,9 +45,9 @@
   const page = getContext<boolean>(drawerPage);
   let editing = $state(!page);
 
-  const today = new Date().toISOString().slice(0, 10);
   const zone = "UTC";
   function newTerm(number: number, expression = ""): Term {
+    const today = new Date().toISOString().slice(0, 10);
     return { number, expression, syntax: "simple", dates: { start: "2000-01-01", end: today } };
   }
   function newDraft(): Request {
