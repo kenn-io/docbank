@@ -4,7 +4,8 @@ LABEL org.opencontainers.image.source="https://github.com/kenn-io/docbank"
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get \
+RUN echo 'path-include=/usr/share/doc/libreoffice-common/examples/*' > /etc/dpkg/dpkg.cfg.d/zz-libreoffice-examples \
+    && apt-get \
       -o Acquire::Retries=5 \
       -o Acquire::http::Timeout=30 \
       -o Acquire::https::Timeout=30 \
@@ -16,4 +17,5 @@ RUN apt-get \
       install -y --no-install-recommends \
       libreoffice-writer libreoffice-impress libreoffice-calc poppler-utils \
       ca-certificates python3 procps git fonts-dejavu-core tzdata \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home proof

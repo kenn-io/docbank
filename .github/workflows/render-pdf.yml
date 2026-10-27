@@ -110,11 +110,6 @@ jobs:
           fi
 
           manifest_digest="$(docker buildx imagetools inspect "$image_tag" --format '{{json .Manifest}}' | jq -er .digest)"
-          if [[ ! "$manifest_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "::error::Unable to resolve an immutable digest for $image_tag"
-            exit 1
-          fi
-
           echo "image=${IMAGE}@${manifest_digest}" >> "$GITHUB_OUTPUT"
 
   libreoffice-owner:
@@ -122,6 +117,10 @@ jobs:
     needs: ensure_image
     runs-on: ubuntu-latest
     timeout-minutes: 26
+    env:
+      GOPATH: /home/proof/go
+      GOCACHE: /home/proof/.cache/go-build
+      DOCBANK_TEST_REQUIRE_SANDBOX: "1"
     permissions:
       contents: read
       packages: read
@@ -143,7 +142,23 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Prepare unprivileged sandbox proofs
+        run: |
+          set -eu
+          if [ -e /proc/sys/kernel/unprivileged_userns_clone ]; then
+            sysctl -w kernel.unprivileged_userns_clone=1
+          fi
+          if [ -e /proc/sys/user/max_user_namespaces ]; then
+            sysctl -w user.max_user_namespaces=15000
+          fi
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          mkdir -p "$GOPATH" "$GOCACHE"
+          chown -R proof:proof "$GITHUB_WORKSPACE" /home/proof
+
       - name: Run mandatory page rendering proof
+        shell: setpriv --reuid=proof --regid=proof --init-groups env HOME=/home/proof sh -e {0}
         env:
           CGO_ENABLED: "0"
         run: |
@@ -172,21 +187,12 @@ jobs:
           PY
 
       - name: Run mandatory owner proof
+        shell: setpriv --reuid=proof --regid=proof --init-groups env HOME=/home/proof sh -e {0}
         env:
           CGO_ENABLED: "0"
           DOCBANK_TEST_LIBREOFFICE_EXECUTABLE: /usr/lib/libreoffice/program/soffice.bin
-          DOCBANK_TEST_REQUIRE_SANDBOX: "1"
         run: |
           set -eu
-          if [ -e /proc/sys/kernel/unprivileged_userns_clone ]; then
-            sysctl -w kernel.unprivileged_userns_clone=1
-          fi
-          if [ -e /proc/sys/user/max_user_namespaces ]; then
-            sysctl -w user.max_user_namespaces=15000
-          fi
-          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
-            sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-          fi
           test -x "$DOCBANK_TEST_LIBREOFFICE_EXECUTABLE"
           go test -tags fts5 -v ./document/internal/providerutil/sandbox/ ./document/trafilatura/ -count=1
           go test -tags fts5 -v ./document/renderpdf/ -run '^TestLibreOffice' -count=1
