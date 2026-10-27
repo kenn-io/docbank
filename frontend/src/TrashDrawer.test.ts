@@ -225,3 +225,37 @@ it("ignores a restore failure from an old session", async () => {
   expect(getToasts()).toEqual([]);
   expect(onauthfailure).not.toHaveBeenCalled();
 });
+
+it("ReviewClosedRestoreCannotNotifyANewSession", async () => {
+  const trashed = {
+    id: 42,
+    name: "report.txt",
+    kind: "file",
+    size: 74,
+    revision: 3,
+    created_at: "2026-07-28T12:00:00Z",
+    modified_at: "2026-07-28T12:00:00Z",
+    trashed_at: "2026-07-28T12:01:00Z",
+  };
+  let finishRestore!: (response: Response) => void;
+  const fetchMock = vi
+    .spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(Response.json({ items: [trashed], total: 1, limit: 1000, offset: 0 }))
+    .mockImplementationOnce(() => new Promise((resolve) => (finishRestore = resolve)));
+  const onrestored = vi.fn();
+  const view = render(TrashDrawer, {
+    session: "old-session",
+    onclose: vi.fn(),
+    onrestored,
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Restore" }));
+  view.unmount();
+  finishRestore(
+    Response.json({ ...trashed, revision: 4, trashed_at: undefined, path: "/report.txt" }),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(onrestored).not.toHaveBeenCalled();
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+  expect(getToasts()).toEqual([]);
+});

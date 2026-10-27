@@ -263,7 +263,7 @@
   <div class="tab-content inspector-content">
     {#key contentKey}
       {#each tabList as tab (tab.value)}
-        {#if tab.value === displayedTab || visitedTabs.includes(tab.value)}
+        {#if tab.value === displayedTab || (tab.value !== "text" && visitedTabs.includes(tab.value))}
           <div hidden={tab.value !== displayedTab}>
             {#if tab.value === "preview"}
               {#if displayedSource.mimeType === "application/pdf" || displayedSource.mimeType === "image/png"}

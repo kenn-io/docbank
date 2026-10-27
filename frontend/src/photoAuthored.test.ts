@@ -2238,7 +2238,7 @@ it("reads assigned tags with a fresh signal after a failed edit keeps its draft"
   editor.dispose();
 });
 
-it("creates and assigns a keyword from the shared picker", async () => {
+it("creates and stages a keyword from the shared picker", async () => {
   setupPhotoUI();
   const editor = editorWithTargets();
   const onedit = vi.fn();
@@ -2253,9 +2253,8 @@ it("creates and assigns a keyword from the shared picker", async () => {
   const input = screen.getByRole("combobox", { name: "Keyword" });
   await fireEvent.input(input, { target: { value: "Review" } });
   await fireEvent.keyDown(input, { key: "Enter" });
-  await vi.waitFor(() =>
-    expect(onedit).toHaveBeenCalledWith({}, [{ tag_id: tag.id, assign: true }]),
-  );
+  await vi.waitFor(() => expect(editor.keywords).toEqual([{ tag_id: tag.id, assign: true }]));
+  expect(onedit).not.toHaveBeenCalled();
   expect(editor.tags).toContainEqual(tag);
 });
 

@@ -10,7 +10,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function setup(entry: "header" | "text") {
+function setup(entry: "header" | "text", deferCompletion = false) {
   history.replaceState(null, "", "/#web_session=short-lived&web_upload_secret=proof");
   vi.stubGlobal(
     "ResizeObserver",
@@ -51,6 +51,7 @@ function setup(entry: "header" | "text") {
   };
   const json = (value: unknown) => Response.json(value);
   let extracted = false;
+  let finishProcessing!: () => void;
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
     if (url === "/api/v1/path?path=%2F") return json(root);
@@ -79,31 +80,49 @@ function setup(entry: "header" | "text") {
         build_id: "",
       });
     if (url === "/api/v1/processing/jobs") {
-      extracted = true;
       const jobID = "c".repeat(64);
+      const encoder = new TextEncoder();
       return new Response(
-        `${JSON.stringify({
-          sequence: 1,
-          type: "job",
-          job: {
-            id: jobID,
-            attachment_id: "d".repeat(64),
-            embedding_job_ids: [],
-            profile_fingerprint: fingerprint,
-            content_version_id: versionID,
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(
+              encoder.encode(
+                `${JSON.stringify({
+                  sequence: 1,
+                  type: "job",
+                  job: {
+                    id: jobID,
+                    attachment_id: "d".repeat(64),
+                    embedding_job_ids: [],
+                    profile_fingerprint: fingerprint,
+                    content_version_id: versionID,
+                  },
+                })}\n`,
+              ),
+            );
+            finishProcessing = () => {
+              extracted = true;
+              controller.enqueue(
+                encoder.encode(
+                  `${JSON.stringify({
+                    sequence: 2,
+                    type: "status",
+                    status: {
+                      job_id: jobID,
+                      state: "completed",
+                      phase: "published",
+                      embedding_job_ids: [],
+                      completed_bindings: 0,
+                    },
+                    terminal: true,
+                  })}\n`,
+                ),
+              );
+              controller.close();
+            };
+            if (!deferCompletion) finishProcessing();
           },
-        })}\n${JSON.stringify({
-          sequence: 2,
-          type: "status",
-          status: {
-            job_id: jobID,
-            state: "completed",
-            phase: "published",
-            embedding_job_ids: [],
-            completed_bindings: 0,
-          },
-          terminal: true,
-        })}\n`,
+        }),
         { headers: { "Content-Type": "application/x-ndjson" } },
       );
     }
@@ -151,7 +170,7 @@ function setup(entry: "header" | "text") {
   });
 
   render(App);
-  return { fetchMock, versionID };
+  return { fetchMock, versionID, finishProcessing: () => finishProcessing() };
 }
 
 it.each(["header", "text"] as const)("opens exact-version processing from %s", async (entry) => {
@@ -199,6 +218,25 @@ it("refreshes cached text after extraction and a tab round trip", async () => {
   await fireEvent.click(run);
   await within(dialog).findByText("Text extracted.");
   await fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+  await fireEvent.click(screen.getByRole("tab", { name: "Preview" }));
+  await fireEvent.click(screen.getByRole("tab", { name: "Text" }));
+  expect(
+    await screen.findByText("Processing verified that this document has no readable text."),
+  ).toBeTruthy();
+});
+
+it("ReviewClosedProcessingRefreshesTextAfterCompletion", async () => {
+  const { finishProcessing } = setup("text", true);
+  await fireEvent.click(await screen.findByRole("cell", { name: "report.pdf" }));
+  await fireEvent.click(await screen.findByRole("tab", { name: "Text" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Process…" }));
+  const dialog = await screen.findByRole("dialog", { name: "Extract text" });
+  const run = await within(dialog).findByRole("button", { name: "Extract text" });
+  await waitFor(() => expect(run.hasAttribute("disabled")).toBe(false));
+  await fireEvent.click(run);
+  await within(dialog).findByRole("button", { name: /Extracting…/ });
+  await fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+  finishProcessing();
   await fireEvent.click(screen.getByRole("tab", { name: "Preview" }));
   await fireEvent.click(screen.getByRole("tab", { name: "Text" }));
   expect(

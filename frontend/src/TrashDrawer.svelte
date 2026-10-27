@@ -32,11 +32,12 @@
   onMount(() => {
     void refresh();
     return () => {
-      generation += 1;
+      generation = -1;
     };
   });
 
   async function refresh(): Promise<void> {
+    if (generation < 0) return;
     const request = ++generation;
     loading = true;
     error = "";
@@ -63,14 +64,14 @@
     restoring = node.id;
     try {
       const { receipt, notice } = await undoTrash(requestSession, node);
-      if (session !== requestSession) return;
+      if (generation < 0 || session !== requestSession) return;
       // Restoring one item can bring back companions in other folders, so no
       // listed row is trusted until the refresh lands.
       page = null;
       onrestored(receipt, notice);
       void refresh();
     } catch (cause) {
-      if (session !== requestSession) return;
+      if (generation < 0 || session !== requestSession) return;
       if (cause instanceof APIError && cause.status === 401) {
         onauthfailure(cause);
         return;
