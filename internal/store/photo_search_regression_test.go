@@ -60,6 +60,19 @@ func TestPhotoFallbackSnapshotCapsMembership(t *testing.T) {
 	for _, count := range []int{1000, 1001} {
 		if count == 1001 {
 			browsePhotoNode(t, s, "sunset-1000.jpg", browseHash("sunset-1000.jpg"), "image/jpeg")
+			lexical := snapshotTestQuery(t, `{"mode":"lexical","text":"sunset","sort":{"field":"relevance","direction":"desc"}}`)
+			compiled, err := (queryCompiler{photoDisplayMetadata: true}).compile(t.Context(), lexical, queryResolver{q: s.db})
+			require.NoError(t, err)
+			ranked, err := rankedPhotoRows(t.Context(), s.db, compiled, "", CoverageSelection{}, 1001)
+			require.NoError(t, err)
+			best := ranked[0]
+			_, err = s.MkdirAll(t.Context(), "/trips/2024")
+			require.NoError(t, err)
+			_, _, err = s.MovePath(t.Context(), "/"+best.Name, "/trips/2024")
+			require.NoError(t, err)
+			ranked, err = rankedPhotoRows(t.Context(), s.db, compiled, "", CoverageSelection{}, 1001)
+			require.NoError(t, err)
+			require.Equal(t, best.AssetID, ranked[0].AssetID)
 		}
 		for _, mode := range []string{"semantic", "hybrid"} {
 			t.Run(fmt.Sprintf("%s/%d", mode, count), func(t *testing.T) {

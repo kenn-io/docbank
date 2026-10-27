@@ -1038,7 +1038,7 @@
             ],
           },
         });
-      } else if (affected.has(photos) && photos.dependsOnPeople) void photos.refresh();
+      } else if (affected.has(photos) && photos.dependsOnPeople) void refreshForPeople(photos);
     }
     queuePhotoDocumentsRefresh();
   }
@@ -2947,8 +2947,13 @@
     }
   }
 
+  function refreshForPeople(photos: Photos) {
+    return photos.snapshotID ? photos.refresh(undefined, true).catch(() => {}) : photos.refresh();
+  }
+
   function handlePhotoFacesChanged(): void {
-    for (const photos of siblingPhotoLists()) if (photos.dependsOnPeople) void photos.refresh();
+    for (const photos of siblingPhotoLists())
+      if (photos.dependsOnPeople) void refreshForPeople(photos);
     queuePhotoDocumentsRefresh();
   }
 

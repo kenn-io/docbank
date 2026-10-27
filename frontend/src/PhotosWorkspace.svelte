@@ -1112,7 +1112,7 @@
 {#snippet searchStatus()}
   <PhotoSearchStatus
     status={{
-      fallback_reason: photos.query.text.trim() ? photos.fallbackReason : undefined,
+      fallback_reason: photos.fallbackReason,
       truncated: photos.truncated,
       coverage_incomplete: photos.coverageIncomplete,
     }}

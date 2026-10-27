@@ -284,30 +284,6 @@ it("keeps empty-library guidance when clearing filters", async () => {
   await cache.dispose();
 });
 
-it("hides the unsupported-query reason while a meaning search has no text", async () => {
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
-  stubPhotoFetch(vi.fn(() => Promise.resolve(Response.json({ items: [], total: 0, facets: [] }))));
-  const photos = new Photos("scoped", vi.fn());
-  photos.started = true;
-  const cache = new PhotoPreviewCache("scoped", vi.fn());
-  render(PhotosWorkspace, { photos, cache });
-  const reason = /No searchable text or unsupported syntax/;
-  photos.query = { ...photos.query, mode: "semantic", text: "" };
-  photos.fallbackReason = "unsupported_query";
-  await tick();
-  expect(screen.queryByText(reason)).toBeNull();
-  photos.query = { ...photos.query, text: "pick" };
-  await screen.findByText(reason);
-  photos.dispose();
-  await cache.dispose();
-});
-
 it("keeps failed confirmation visible and closes after cancellation or success", async () => {
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);

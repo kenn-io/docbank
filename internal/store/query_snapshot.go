@@ -417,8 +417,10 @@ func materializeSnapshotRows(
 	annotatePhotos := options.Photos && options.PhotoRanking != nil &&
 		(options.PhotoRanking.ActualMode == query.ModeLexical || options.PhotoRanking.ActualMode == "hybrid")
 	photoColumns := `'','',NULL`
+	photoOrder := ""
 	if options.Photos {
 		photoColumns = `m.asset_id,printf('%020d',m.photo_position),(SELECT f.flag FROM photo_files f JOIN photo_assets a ON a.display_file_id=f.file_id WHERE a.asset_id=m.asset_id)`
+		photoOrder = ` ORDER BY m.photo_position`
 	}
 	coverageCTE, coverageJoin, coverageColumns := "", "", `'', '', ''`
 	if coverage.Configuration == "configured" {
@@ -449,7 +451,7 @@ func materializeSnapshotRows(
 			`+coverageColumns+`,`+photoColumns+`
 		FROM matched_members m JOIN nodes n ON n.id=m.node_id
 		JOIN content_versions cv ON cv.node_id=n.id AND cv.version_id=m.content_version_id
-		JOIN tree_paths tp ON tp.node_id=n.id AND tp.parent_id IS NULL `+coverageJoin, args...)
+		JOIN tree_paths tp ON tp.node_id=n.id AND tp.parent_id IS NULL `+coverageJoin+photoOrder, args...)
 	if err != nil {
 		return fmt.Errorf("materializing query snapshot rows: %w", err)
 	}
