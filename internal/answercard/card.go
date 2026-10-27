@@ -20,7 +20,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const MaxBytes = 64 << 10
+const (
+	MaxBytes            = 64 << 10
+	MaxStaleReasonChars = 300
+)
 
 var ErrNotCard = errors.New("not an answer card")
 
@@ -143,13 +146,13 @@ func Parse(data []byte) (Card, error) {
 	if !validPhrase(c.Question) {
 		return Card{}, errors.New("invalid question")
 	}
-	seen := map[string]bool{normalize(c.Question): true}
+	seen := map[string]bool{phrasingKey(c.Question): true}
 	alternates := make([]string, 0, len(c.Alternates))
 	for _, a := range c.Alternates {
 		if !validPhrase(a) {
 			return Card{}, errors.New("invalid alternate")
 		}
-		key := normalize(a)
+		key := phrasingKey(a)
 		if !seen[key] {
 			alternates = append(alternates, a)
 			seen[key] = true
@@ -221,13 +224,10 @@ func (c Card) Validate() error {
 	if c.Marker != 1 || !validPhrase(c.Question) || len(c.Alternates) > 20 || len(c.Citations) < 1 || len(c.Citations) > 16 || !utf8.ValidString(c.Answer) || utf8.RuneCountInString(c.Answer) < 1 || utf8.RuneCountInString(c.Answer) > 4000 {
 		return errors.New("invalid card content")
 	}
-	seen := map[string]bool{normalize(c.Question): true}
+	seen := map[string]bool{phrasingKey(c.Question): true}
 	for _, a := range c.Alternates {
-		if !validPhrase(a) {
-			return errors.New("invalid or duplicate alternate")
-		}
-		key := normalize(a)
-		if seen[key] {
+		key := phrasingKey(a)
+		if !validPhrase(a) || seen[key] {
 			return errors.New("invalid or duplicate alternate")
 		}
 		seen[key] = true
@@ -243,7 +243,7 @@ func (c Card) Validate() error {
 	if c.State != "" && c.State != Draft && c.State != Approved && c.State != Stale {
 		return errors.New("invalid card state")
 	}
-	if c.State == Stale && (c.Stale == nil || c.Stale.Reason == "" || c.Stale.Citation < 0 || c.Stale.Citation >= len(c.Citations)) {
+	if c.State == Stale && (c.Stale == nil || c.Stale.Reason == "" || utf8.RuneCountInString(c.Stale.Reason) > MaxStaleReasonChars || c.Stale.Citation < 0 || c.Stale.Citation >= len(c.Citations)) {
 		return errors.New("invalid stale record")
 	}
 	return nil
@@ -253,12 +253,8 @@ func validPhrase(s string) bool {
 	if !utf8.ValidString(s) || n < 1 || n > 300 {
 		return false
 	}
-	for _, r := range s {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
-			return true
-		}
-	}
-	return false
+	tokens, _ := scoreTokens(s)
+	return len(tokens) > 0
 }
 func normalize(s string) string {
 	var b strings.Builder

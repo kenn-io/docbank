@@ -15,6 +15,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.kenn.io/docbank/document/bundle"
+	"go.kenn.io/docbank/internal/answercard"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/kataclient"
@@ -67,6 +68,7 @@ type toolDefinition struct {
 }
 
 var readToolDefinitions = []toolDefinition{
+	answerCardsTool,
 	originalContentTool,
 	textCitationTool, checkAnswerTool, textOutlineTool, textSectionTool,
 	kataContextTool,
@@ -440,6 +442,8 @@ func stableDomainError(err error) (string, int) {
 	}
 	var scope *daemonconn.SourceFenceScopeTooLargeError
 	switch {
+	case errors.Is(err, answercard.ErrCardLimit):
+		return "card_limit", 0
 	case errors.As(err, &scope):
 		return "scope_too_large", scope.ObservedScopeCount
 	case errors.Is(err, store.ErrNotFound):
@@ -593,6 +597,8 @@ func domainErrorMessage(code string) string {
 		return "The Kata operation failed; inspect the issue before deliberately retrying the same request."
 	case "kata_outcome_unknown":
 		return "The Kata write may have succeeded without a usable reply. Do not retry automatically; inspect the issue and deliberately retry the same create key or exact append selection."
+	case "card_limit":
+		return "Answer card discovery or response exceeds its limit; narrow the card root."
 	case "invalid_text_navigation":
 		return "Fetch the outline for this rendition and correct the section bounds or offset."
 	case "text_navigation_limit":

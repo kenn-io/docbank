@@ -2016,13 +2016,6 @@ docbank version
 Prints the build version and commit (`dev (unknown)` for untagged local
 builds; release builds inject both via `-ldflags`).
 
-## Environment variables
-
-`DOCBANK_HOME` selects the vault (see [Configuration](configuration.md)).
-`DOCBANK_LOG_LEVEL` sets the daemon or MCP process log level (`debug`, `info`,
-`warn`, `error`; default `info`) for `docbank daemon run`, background-spawned
-daemons, and `docbank mcp` diagnostics.
-
 ## docbank cards check
 
 ```text
@@ -2046,9 +2039,10 @@ frontmatter and an answer body. Set `docbank_answer_card: 1`, `question`, an
 optional `alternates` list, and a `citations` list. Each citation contains all
 fields of a [saved text citation](usage/mcp.md#saved-text-citations), plus
 `quote` containing the exact resolved text. Questions and alternates are 1–300
-characters and must contain a letter or digit; a card can have up to 20 alternates, 1–16 citations, and an answer
+characters and must contain at least one searchable, non-stopword word; a card can have up to 20 alternates, 1–16 citations, and an answer
 of 1–4,000 characters. Citations must belong to the current vault. The state
-may be `draft`, `approved`, or `stale`; omitted state means draft.
+may be `draft`, `approved`, or `stale`; omitted state means draft. Stale reasons
+are limited to 300 characters; an overlong reason makes the card invalid.
 
 Approval fields are a writer-trust convention: anyone who can edit a card can
 forge them. A report observes source state while it runs, not as an atomic
@@ -2071,3 +2065,40 @@ The command checks the sources again after confirmation and writes the approval
 only if the card revision still matches.
 Source checks are not an atomic snapshot. A stale card stays stale until it is
 approved again after its citations are updated.
+
+
+## docbank cards match
+
+```text
+docbank cards match <question...> [--root /answer-cards] [--limit 3] [--json]
+```
+
+Finds approved answers whose question or alternate phrasing matches the query.
+The limit is 1–10. Matching uses Unicode-normalized token overlap, a fixed
+stopword list, and a minimum Dice score of 0.75. Numeric expressions must agree,
+including decimal and date order. Empty searchable token sets never match.
+Each phrasing is scored separately; the highest score wins. Ties use the number
+of phrasings above the threshold, then the card path.
+
+The command checks each candidate's current sources and resolves its exact
+quotations. It rechecks the card's current version and location before returning
+it. Changed, trashed, moved, or edited cards cannot supply an answer. Reads are
+sequential observations; a change after the final read remains possible.
+
+JSON returns `status` (`matched` or `no_match`), `matches`, `excluded` counts for
+stale, draft, invalid, and non-card files, and up to ten matching `stale_cards`
+with reasons. The `draft` count also includes matching candidates that disappear,
+move, become trashed, or change version during the final card check. Each match
+includes its card identity, question, matched phrasing,
+score, answer, and citations with quotes. Discovery scans at most 2,000 files
+and 32 MiB of text candidates. Results are limited to 512 KiB. Exceeding a bound
+fails with `card_limit`, without partial answers. Operational errors also fail
+the command. Matching never writes lifecycle fields.
+
+
+## Environment variables
+
+`DOCBANK_HOME` selects the vault (see [Configuration](configuration.md)).
+`DOCBANK_LOG_LEVEL` sets the daemon or MCP process log level (`debug`, `info`,
+`warn`, `error`; default `info`) for `docbank daemon run`, background-spawned
+daemons, and `docbank mcp` diagnostics.

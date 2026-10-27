@@ -368,3 +368,36 @@ func TestCardsApproveNormalizedRoot(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, before.CurrentVersionID, after.CurrentVersionID)
 }
+
+func TestCardsMatchApprovedAndChangedSource(t *testing.T) {
+	c, _ := setupApprovalCard(t, "test")
+	_, err := runCLI(t, "cards", "approve", "/answer-cards/card.md", "--yes")
+	require.NoError(t, err)
+	for _, q := range []string{"What is the source text?", "source text"} {
+		out, err := runCLI(t, "cards", "match", q, "--json")
+		require.NoError(t, err)
+		require.Contains(t, out, `"status":"matched"`)
+		require.Contains(t, out, `"quote":"test"`)
+	}
+	out, err := runCLI(t, "cards", "match", "unrelated library hours", "--json")
+	require.NoError(t, err)
+	require.Contains(t, out, `"status":"no_match"`)
+	_, card := readApprovalCard(t, c, resolveApprovalCard(t, c))
+	source, err := c.API().GetNode(t.Context(), &apiclient.GetNodeRequestOptions{PathParams: &apiclient.GetNodePath{ID: card.Citations[0].NodeID}})
+	require.NoError(t, err)
+	replacement := writeSourceFile(t, "replacement.txt", "changed synthetic source")
+	_, err = runCLI(t, "put", replacement, source.Path)
+	require.NoError(t, err)
+	out, err = runCLI(t, "cards", "match", "source text", "--json")
+	require.NoError(t, err)
+	require.Contains(t, out, `"status":"no_match"`)
+	require.Contains(t, out, `"reason":"new_version"`)
+}
+
+func TestCardsMatchRejectsLimit(t *testing.T) {
+	setupVaultHome(t)
+	for _, limit := range []string{"0", "11"} {
+		_, err := runCLI(t, "cards", "match", "policy renewal", "--limit", limit)
+		require.ErrorContains(t, err, "limit must be between 1 and 10")
+	}
+}

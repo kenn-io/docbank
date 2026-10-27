@@ -272,3 +272,73 @@ func TestEmptyQuoteNeedsApprovalResolution(t *testing.T) {
 		t.Fatalf("unresolved quotation became approved: %+v", got)
 	}
 }
+
+func TestStaleReasonLength(t *testing.T) {
+	for _, tc := range []struct {
+		name, reason string
+		valid        bool
+	}{
+		{"ASCII boundary", strings.Repeat("x", 300), true},
+		{"ASCII oversized", strings.Repeat("x", 301), false},
+		{"Unicode boundary", strings.Repeat("界", 300), true},
+		{"Unicode oversized", strings.Repeat("界", 301), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			card, err := Parse([]byte(sample))
+			if err != nil {
+				t.Fatal(err)
+			}
+			card.State = Stale
+			card.Stale = &StaleInfo{Reason: tc.reason, Citation: 0}
+			if err := card.Validate(); (err == nil) != tc.valid {
+				t.Fatalf("Validate()=%v; valid=%v", err, tc.valid)
+			}
+			front, err := yaml.Marshal(card)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = Parse([]byte("---\n" + string(front) + "---\n" + card.Answer))
+			if (err == nil) != tc.valid {
+				t.Fatalf("Parse()=%v; valid=%v", err, tc.valid)
+			}
+		})
+	}
+}
+
+func TestNumericAlternatesPreserved(t *testing.T) {
+	for _, tc := range []struct{ question, alternate string }{
+		{"renewal 01/02/2026", "renewal 01-02-2026"},
+		{"rate .5 percent", "rate 5 percent"},
+		{"rate -.5 percent", "rate .5 percent"},
+	} {
+		t.Run(tc.alternate, func(t *testing.T) {
+			c, err := Parse([]byte(sample))
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.Question = tc.question
+			c.Alternates = []string{tc.alternate}
+			if err := c.Validate(); err != nil {
+				t.Fatalf("distinct numeric alternate rejected: %v", err)
+			}
+			front, err := yaml.Marshal(c)
+			if err != nil {
+				t.Fatal(err)
+			}
+			parsed, err := Parse([]byte("---\n" + string(front) + "---\n" + c.Answer))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(parsed.Alternates) != 1 || parsed.Alternates[0] != tc.alternate {
+				t.Fatalf("alternate lost: %v", parsed.Alternates)
+			}
+			score, phrase, _ := parsed.score(tc.alternate)
+			if score != 1 || phrase != tc.alternate {
+				t.Fatalf("explicit alternate did not match: %v %q", score, phrase)
+			}
+			if parsed.Hash() != c.Hash() {
+				t.Fatal("round trip changed canonical content")
+			}
+		})
+	}
+}
