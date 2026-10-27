@@ -245,6 +245,18 @@ func (s *Store) PersonByID(ctx context.Context, id string) (Person, string, erro
 	return personByIDTx(ctx, s.db, id)
 }
 
+func personVisibleAssertionSQL(alias, hideLocked string) string {
+	return alias + `.role<>'blind_copy' AND (` + hideLocked + `=0 OR ` + personVersionVisibleSQL(alias+".content_version_id") + `)`
+}
+
+func personVisibleActorSQL(alias, hideLocked string) string {
+	return alias + `.sensitive=0 AND (` + hideLocked + `=0 OR ` + personVersionVisibleSQL(alias+".content_version_id") + `)`
+}
+
+func personDerivedExactIdentitySQL(alias string) string {
+	return alias + `.origin='derived' AND ` + alias + `.confidence='exact_identifier'`
+}
+
 // personVisibleSQL is the browser's person visibility rule for a page of
 // people. It binds visibleOnly, then hideLocked twice. Its uncorrelated
 // subqueries read person_document_assertions, which has no person_id index,
@@ -253,11 +265,11 @@ func personVisibleSQL(person string) string {
 	return `(?=0 OR (` + person + ` NOT IN (SELECT a.person_id FROM person_document_assertions a)
 		AND NOT EXISTS(SELECT 1 FROM document_people p WHERE p.person_id=` + person + `)
 		AND NOT EXISTS(SELECT 1 FROM person_identities i WHERE i.person_id=` + person + `
-			AND i.origin='derived' AND i.confidence='exact_identifier')) OR ` + person + ` IN (
+			AND ` + personDerivedExactIdentitySQL("i") + `)) OR ` + person + ` IN (
 		SELECT a.person_id FROM person_document_assertions a
-		WHERE a.role<>'blind_copy' AND (?=0 OR ` + personVersionVisibleSQL("a.content_version_id") + `)) OR EXISTS(
+		WHERE ` + personVisibleAssertionSQL("a", "?") + `) OR EXISTS(
 		SELECT 1 FROM document_people p WHERE p.person_id=` + person + `
-		AND p.sensitive=0 AND (?=0 OR ` + personVersionVisibleSQL("p.content_version_id") + `)))`
+		AND ` + personVisibleActorSQL("p", "?") + `))`
 }
 
 // Materialize the bounded matches before reading their visible identity labels.
@@ -508,11 +520,11 @@ var visiblePersonByIDSQL = `SELECT EXISTS(SELECT 1 FROM persons WHERE person_id=
  (NOT EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.person_id=?1)
 	AND NOT EXISTS(SELECT 1 FROM document_people p WHERE p.person_id=?1)
 	AND NOT EXISTS(SELECT 1 FROM person_identities i WHERE i.person_id=?1
-		AND i.origin='derived' AND i.confidence='exact_identifier'))
- OR EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.person_id=?1 AND a.role<>'blind_copy'
-	AND (?2=0 OR ` + personVersionVisibleSQL("a.content_version_id") + `))
- OR EXISTS(SELECT 1 FROM document_people p WHERE p.person_id=?1 AND p.sensitive=0
-	AND (?2=0 OR ` + personVersionVisibleSQL("p.content_version_id") + `))))`
+		AND ` + personDerivedExactIdentitySQL("i") + `))
+ OR EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.person_id=?1
+	AND ` + personVisibleAssertionSQL("a", "?2") + `)
+ OR EXISTS(SELECT 1 FROM document_people p WHERE p.person_id=?1
+	AND ` + personVisibleActorSQL("p", "?2") + `)))`
 
 // fenceVisiblePeopleTx reports a person concealed from a browser write as not
 // found, so a person that Hidden locking or sensitivity conceals from the list

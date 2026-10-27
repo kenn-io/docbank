@@ -348,7 +348,7 @@ func TestBrowserWriteFenceMatchesBrowserList(t *testing.T) {
 		{name: "Sensitive actor", version: mail, evidence: evidence{people: "1"}},
 		{name: "Hidden actor", version: hidden, evidence: evidence{people: "0"}, unlocked: true},
 		{name: "Exact identifier", evidence: evidence{identity: "exact_identifier"}},
-		{name: "Probable identifier", evidence: evidence{identity: "probable"}, locked: true, unlocked: true},
+		{name: "Supplied identifier", evidence: evidence{identity: "supplied_identity"}, locked: true, unlocked: true},
 	}
 	people := map[string]visibility{}
 	for _, test := range cases {
