@@ -57,6 +57,7 @@ it.each([1, 3])(
 
     render(TrashDrawer, {
       session: "short-lived",
+      currentSession: () => "short-lived",
       onclose: vi.fn(),
       onrestored,
       onauthfailure: vi.fn(),
@@ -110,6 +111,7 @@ it("drops stale trash rows when the refresh after a successful restore fails", a
   const onrestored = vi.fn();
   render(TrashDrawer, {
     session: "short-lived",
+    currentSession: () => "short-lived",
     onclose: vi.fn(),
     onrestored,
     onauthfailure: vi.fn(),
@@ -171,6 +173,7 @@ it("keeps stale restore authority visible for a fresh decision", async () => {
 
   render(TrashDrawer, {
     session: "short-lived",
+    currentSession: () => "short-lived",
     onclose: vi.fn(),
     onrestored: vi.fn(),
     onauthfailure: vi.fn(),
@@ -189,59 +192,73 @@ it("keeps stale restore authority visible for a fresh decision", async () => {
   );
 });
 
-it.each(["failure after rerender", "success after unmount"] as const)(
-  "ignores a late restore response: %s",
-  async (scenario) => {
-    const trashed = {
-      id: 42,
-      name: "quarterly-report.txt",
-      kind: "file",
-      size: 74,
-      revision: 3,
-      created_at: "2026-07-28T12:00:00Z",
-      modified_at: "2026-07-28T12:00:00Z",
-      trashed_at: "2026-07-28T12:01:00Z",
-    };
-    let finishRestore!: (response: Response) => void;
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ items: [trashed], total: 1, limit: 1000, offset: 0 })),
-      )
-      .mockImplementationOnce(() => new Promise((resolve) => (finishRestore = resolve)));
-    const onauthfailure = vi.fn();
-    const onrestored = vi.fn();
-    const view = render(TrashDrawer, {
-      session: "old-session",
-      onclose: vi.fn(),
-      onrestored,
-      onauthfailure,
-    });
+it.each([
+  "failure after rerender",
+  "success after session ends",
+  "success after drawer closes",
+  "failure after drawer closes",
+] as const)("handles a late restore response for the current session: %s", async (scenario) => {
+  const trashed = {
+    id: 42,
+    name: "quarterly-report.txt",
+    kind: "file",
+    size: 74,
+    revision: 3,
+    created_at: "2026-07-28T12:00:00Z",
+    modified_at: "2026-07-28T12:00:00Z",
+    trashed_at: "2026-07-28T12:01:00Z",
+  };
+  let finishRestore!: (response: Response) => void;
+  const fetchMock = vi
+    .spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(
+      new Response(JSON.stringify({ items: [trashed], total: 1, limit: 1000, offset: 0 })),
+    )
+    .mockImplementationOnce(() => new Promise((resolve) => (finishRestore = resolve)));
+  const onauthfailure = vi.fn();
+  const onrestored = vi.fn();
+  let currentSession = "old-session";
+  const restored = {
+    ...trashed,
+    revision: 4,
+    trashed_at: undefined,
+    path: "/quarterly-report.txt",
+  };
+  const view = render(TrashDrawer, {
+    session: "old-session",
+    currentSession: () => currentSession,
+    onclose: vi.fn(),
+    onrestored,
+    onauthfailure,
+  });
 
-    await fireEvent.click(await screen.findByRole("button", { name: "Restore" }));
-    if (scenario === "failure after rerender") {
-      await view.rerender({ session: "new-session" });
-      finishRestore(Response.json({ detail: "Restore failed" }, { status: 500 }));
-      await waitFor(() =>
-        expect(
-          (screen.getByRole("button", { name: "Restore" }) as HTMLButtonElement).disabled,
-        ).toBe(false),
-      );
-    } else {
-      view.unmount();
-      finishRestore(
-        Response.json({
-          ...trashed,
-          revision: 4,
-          trashed_at: undefined,
-          path: "/quarterly-report.txt",
-        }),
-      );
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    }
-    expect(getToasts()).toEqual([]);
-    expect(onauthfailure).not.toHaveBeenCalled();
-    expect(onrestored).not.toHaveBeenCalled();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-  },
-);
+  await fireEvent.click(await screen.findByRole("button", { name: "Restore" }));
+  if (scenario === "failure after rerender") {
+    currentSession = "new-session";
+    await view.rerender({ session: "new-session" });
+    finishRestore(Response.json({ detail: "Restore failed" }, { status: 500 }));
+    await waitFor(() =>
+      expect((screen.getByRole("button", { name: "Restore" }) as HTMLButtonElement).disabled).toBe(
+        false,
+      ),
+    );
+  } else {
+    if (scenario === "success after session ends") currentSession = "";
+    view.unmount();
+    finishRestore(
+      scenario === "failure after drawer closes"
+        ? Response.json({ detail: "Restore failed" }, { status: 500 })
+        : Response.json(restored),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  if (scenario === "failure after drawer closes") {
+    expect(getToasts().map((toast) => toast.message)).toEqual(["Restore failed"]);
+    expect(getToasts()[0]!.tone).toBe("danger");
+  } else expect(getToasts()).toEqual([]);
+  expect(onauthfailure).not.toHaveBeenCalled();
+  if (scenario === "success after drawer closes") {
+    expect(onrestored).toHaveBeenCalledExactlyOnceWith(restored, "Restored to /");
+  } else expect(onrestored).not.toHaveBeenCalled();
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+});

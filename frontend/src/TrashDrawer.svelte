@@ -16,12 +16,13 @@
 
   interface Props {
     session: string;
+    currentSession: () => string;
     onclose: () => void;
     onrestored: (receipt: Node, message: string) => void;
     onauthfailure: (cause: unknown) => void;
   }
 
-  let { session, onclose, onrestored, onauthfailure }: Props = $props();
+  let { session, currentSession, onclose, onrestored, onauthfailure }: Props = $props();
 
   let page = $state<TrashPage | null>(null);
   let loading = $state(true);
@@ -64,14 +65,15 @@
     restoring = node.id;
     try {
       const { receipt, notice } = await undoTrash(requestSession, node);
-      if (generation < 0 || session !== requestSession) return;
+      // Closing Trash leaves its restore pending in the same browser session.
+      if (currentSession() !== requestSession) return;
       // Restoring one item can bring back companions in other folders, so no
       // listed row is trusted until the refresh lands.
       page = null;
       onrestored(receipt, notice);
       void refresh();
     } catch (cause) {
-      if (generation < 0 || session !== requestSession) return;
+      if (currentSession() !== requestSession) return;
       if (cause instanceof APIError && cause.status === 401) {
         onauthfailure(cause);
         return;

@@ -1715,6 +1715,7 @@ it.each([false, true])(
     let unlocked = true;
     let rootReads = 0;
     let hiddenReads = 0;
+    let finishRestore!: (response: Response) => void;
     const fetcher = vi.fn(async (url: string, options?: RequestInit) => {
       if (url.endsWith("/photos/hidden/lock")) {
         unlocked = false;
@@ -1741,7 +1742,7 @@ it.each([false, true])(
       }
       if (url.endsWith("/nodes/2/restore")) {
         trashed = false;
-        return Response.json({ ...node, revision: 3, path: "/Photo 1.jpg" });
+        return new Promise<Response>((resolve) => (finishRestore = resolve));
       }
       if (url.startsWith("/api/v1/trash?"))
         return Response.json({
@@ -1792,7 +1793,11 @@ it.each([false, true])(
     const before = hiddenReads;
     await fireEvent.click(screen.getByRole("button", { name: "Recoverable trash" }));
     await fireEvent.click(await screen.findByRole("button", { name: "Restore" }));
-    await screen.findByText(/^Restored/);
+    await waitFor(() => expect(finishRestore).toBeTypeOf("function"));
+    await fireEvent.click(screen.getByRole("button", { name: "Close recoverable trash" }));
+    const beforeRestore = rootReads;
+    finishRestore(Response.json({ ...node, revision: 3, path: "/Photo 1.jpg" }));
+    await waitFor(() => expect(rootReads).toBe(beforeRestore + 1));
     if (locked) {
       expect(screen.getByRole("button", { name: "Unlock" })).toBeTruthy();
       expect(hiddenReads).toBe(before);
@@ -1800,7 +1805,6 @@ it.each([false, true])(
       await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
       expect(hiddenReads).toBe(before + 1);
     }
-    await fireEvent.click(screen.getByRole("button", { name: "Close recoverable trash" }));
     await fireEvent.click(screen.getByRole("button", { name: "Documents" }));
     await screen.findByRole("cell", { name: "Photo 1.jpg" });
   },

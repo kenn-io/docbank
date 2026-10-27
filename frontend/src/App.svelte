@@ -5060,6 +5060,7 @@
       {#if panel.kind === "trash"}
         <TrashDrawer
           session={webSession}
+          currentSession={() => (mounted ? webSession : "")}
           onclose={closePanel(panel)}
           onrestored={handleRestored}
           onauthfailure={handleFailure}
