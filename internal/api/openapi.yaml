@@ -7660,8 +7660,6 @@ components:
           items:
             type: string
           type: array
-        vector_generation_id:
-          type: string
       required:
         - burst_gap_seconds
         - groups
@@ -15177,8 +15175,6 @@ components:
           type: integer
         updated_at:
           format: date-time
-          type: string
-        vector_generation_id:
           type: string
       required:
         - burst_gap_seconds

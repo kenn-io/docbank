@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -1632,10 +1633,7 @@ func TestPhotoStackVectorHydrationTracksIndexPublication(t *testing.T) {
 	require.NoError(t, err)
 	frames := map[string]photoStackFrame{asset.ID: {}}
 	require.NoError(t, s.photoReadTx(t.Context(), func(tx *sql.Tx) error {
-		q := &membershipCountingQuerier{Tx: tx}
-		require.NoError(t, s.hydratePhotoStackVectors(t.Context(), q, frames))
-		require.Zero(t, q.queries, "a vault without image heads or jobs needs no vector hydration queries")
-		return nil
+		return s.hydratePhotoStackVectors(t.Context(), tx, frames)
 	}))
 	_, err = s.EnqueueEmbeddingJob(t.Context(), f.request)
 	require.NoError(t, err)
@@ -1645,14 +1643,14 @@ func TestPhotoStackVectorHydrationTracksIndexPublication(t *testing.T) {
 	record, vector := f.publish(t)
 	require.NoError(t, reader.hydrate(t.Context(), s.db, frames))
 	require.False(t, photoStackAnyStale(frames))
-	require.Empty(t, frames[asset.ID].ImageVector)
+	require.Empty(t, frames[asset.ID].ImageVectors)
 	index := newCursorIndexFixture(f)
 	index.add(record, vector)
-	generationID := index.generation(t, "photo-vector-generation")
+	index.generation(t, "photo-vector-generation")
 	reader, err = s.newPhotoStackVectorReader(t.Context(), s.db)
 	require.NoError(t, err)
 	require.NoError(t, reader.hydrate(t.Context(), s.db, frames))
-	require.Equal(t, []float32{1, 2, 3, 4, 5, 6, 7, 8}, frames[asset.ID].ImageVector)
+	require.Equal(t, []float32{1, 2, 3, 4, 5, 6, 7, 8}, frames[asset.ID].ImageVectors[index.space])
 	// A head published after the generation was built is not in the active index.
 	run, err := s.BeginIngest(t.Context(), "cli", "synthetic later image")
 	require.NoError(t, err)
@@ -1665,11 +1663,10 @@ func TestPhotoStackVectorHydrationTracksIndexPublication(t *testing.T) {
 	frames = map[string]photoStackFrame{asset.ID: {}, later: {}}
 	reader, err = s.newPhotoStackVectorReader(t.Context(), s.db)
 	require.NoError(t, err)
-	require.Equal(t, generationID, reader.id)
 	require.NoError(t, reader.hydrate(t.Context(), s.db, frames))
-	require.Equal(t, []float32{1, 2, 3, 4, 5, 6, 7, 8}, frames[asset.ID].ImageVector)
+	require.Equal(t, []float32{1, 2, 3, 4, 5, 6, 7, 8}, frames[asset.ID].ImageVectors[index.space])
 	require.False(t, photoStackAnyStale(frames))
-	require.Empty(t, frames[later].ImageVector)
+	require.Empty(t, frames[later].ImageVectors)
 }
 
 func TestPhotoStackConflictingImageBindingsKeepGroupingStable(t *testing.T) {
@@ -1813,4 +1810,136 @@ func TestPhotoStackVectorsSkipUnknownProducerPolicy(t *testing.T) {
 	require.Empty(t, unavailable)
 	require.False(t, incomplete)
 	require.Empty(t, groups)
+}
+
+func TestPhotoStackImageLinksBoundedByFirstFrame(t *testing.T) {
+	t.Parallel()
+	for _, count := range []int{180, MaxPhotoStackFrames + 2} {
+		t.Run(strconv.Itoa(count), func(t *testing.T) {
+			frames := make([]photoStackFrame, count)
+			for i := range frames {
+				second := i * 20
+				if count > 180 && i > 0 {
+					second = 1
+					if i > 1 {
+						second = (i-2)*20 + 61
+					}
+				}
+				frames[i] = photoStackFrame{AssetID: strconv.Itoa(i), Folder: "/shots", SortKey: time.Date(2026, 1, 1, 12, 0, second, 0, time.UTC).Format(photoStackKeyLayout), ImageVectors: map[string][]float32{"image": {1, 0}}, Files: 1}
+			}
+			groups := groupPhotoStackFrames(frames, 2)
+			require.NotEmpty(t, groups, "a long similar run must preserve its initial burst")
+			firstSize := 4
+			if count > 180 {
+				firstSize = 2
+			}
+			require.Len(t, groups[0], firstSize)
+			require.Equal(t, frames[:firstSize], groups[0])
+			for _, group := range groups {
+				require.LessOrEqual(t, len(group), 4, "image similarity must not chain across an hour")
+			}
+		})
+	}
+}
+
+func TestReviewUnrelatedImageSpacePreservesStacks(t *testing.T) {
+	t.Parallel()
+	f := newImageEmbeddingCatalogFixture(t)
+	s := f.s
+	run, err := s.BeginIngest(t.Context(), "cli", "synthetic multiple image spaces")
+	require.NoError(t, err)
+	ids := []string{
+		stackPhoto(t, s, run, "/A/one.jpg", "2024-06-10T12:00:00Z", document.SourceMetadataPrecisionSecond),
+		stackPhoto(t, s, run, "/A/two.jpg", "2024-06-10T12:00:30Z", document.SourceMetadataPrecisionSecond),
+	}
+	index := newCursorIndexFixture(f)
+	for _, id := range ids {
+		index.publish(t, id, []float64{1, 0, 0, 0, 0, 0, 0, 0})
+	}
+	index.generation(t, "shared-image-space")
+	groups, _, _, incomplete, err := s.PhotoStackGroups(t.Context(), ids, false, "")
+	require.NoError(t, err)
+	require.False(t, incomplete)
+	require.Equal(t, [][]string{ids}, groups)
+
+	// A different model publishes only an unrelated photo. Choose a
+	// lower space ID so this catches selecting just the first active space.
+	other := f
+	var portable document.ProcessingProfileV1
+	require.NoError(t, json.Unmarshal(f.request.Profile.CanonicalProfile, &portable))
+	for i := 0; ; i++ {
+		other.request.Descriptor.Model = fmt.Sprintf("synthetic-model-%d", i)
+		other.request.Descriptor, err = document.NewEmbeddingDescriptor(other.request.Descriptor)
+		require.NoError(t, err)
+		portable.Embeddings = []document.EmbeddingBindingV1{f.binding}
+		portable.Embeddings[0].Model = other.request.Descriptor.Model
+		portable.Embeddings[0].Descriptor.Fingerprint = other.request.Descriptor.Fingerprint
+		canonical, fingerprints, err := document.CanonicalProfile(portable)
+		require.NoError(t, err)
+		if fingerprints.VectorSpace[f.binding.Name] >= index.space {
+			continue
+		}
+		other.binding = portable.Embeddings[0]
+		other.request.Profile.CanonicalProfile = canonical
+		other.request.Profile.Fingerprint = fingerprints.Profile
+		other.request.Profile.RenditionRequestFingerprint = fingerprints.RenditionRequest
+		other.request.Profile.EvidenceLexicalFingerprint = fingerprints.EvidenceLexical
+		other.request.Profile.RetentionDisclosureFingerprint = fingerprints.RetentionDisclosure
+		other.request.Authorization.ProfileFingerprint = fingerprints.Profile
+		other.request.InputGeneration.ProcessingProfileFingerprint = fingerprints.Profile
+		break
+	}
+	_, err = s.GrantConsent(t.Context(), ProcessingConsentGrantRequest{Principal: other.request.Authorization.Principal, Scope: other.request.Authorization.Scope, ProfileFingerprint: other.request.Profile.Fingerprint, DisclosureFingerprint: other.binding.DisclosureFingerprint, InputClasses: other.request.Authorization.InputClasses, RetainedArtifactClasses: other.request.Authorization.RetainedArtifactClasses})
+	require.NoError(t, err)
+	otherIndex := newCursorIndexFixture(other)
+	unrelated := stackPhoto(t, s, run, "/B/unrelated.jpg", "2024-06-10T18:00:00Z", document.SourceMetadataPrecisionSecond)
+	otherIndex.publish(t, unrelated, []float64{0, 1, 0, 0, 0, 0, 0, 0})
+	otherIndex.generation(t, "unrelated-lower-image-space")
+	groups, _, _, incomplete, err = s.PhotoStackGroups(t.Context(), ids, false, "")
+	require.NoError(t, err)
+	require.False(t, incomplete)
+	require.Equal(t, [][]string{ids}, groups)
+	for _, direction := range []string{"asc", "desc"} {
+		_, stacks := stackPages(t, s, captureRequest(t, direction))
+		require.Equal(t, [][]string{ids}, stacks)
+	}
+}
+
+func TestPhotoStackImageLinksCompareFirstVector(t *testing.T) {
+	t.Parallel()
+	frames := []photoStackFrame{
+		{AssetID: "first", Folder: "/shots", SortKey: "2026-01-01T12:00:00.000000000", ImageVectors: map[string][]float32{"image": {1, 0}}},
+		{AssetID: "second", Folder: "/shots", SortKey: "2026-01-01T12:00:20.000000000", ImageVectors: map[string][]float32{"image": {0.9659258, 0.2588190}}},
+		{AssetID: "third", Folder: "/shots", SortKey: "2026-01-01T12:00:40.000000000", ImageVectors: map[string][]float32{"image": {0.8660254, 0.5}}},
+	}
+	require.Equal(t, [][]photoStackFrame{frames[:2]}, groupPhotoStackFrames(frames, 2))
+}
+
+func TestPhotoStackImageWindowPagesAgreeWithGrouping(t *testing.T) {
+	t.Parallel()
+	f := newImageEmbeddingCatalogFixture(t)
+	s := f.s
+	run, err := s.BeginIngest(t.Context(), "cli", "synthetic bounded image run")
+	require.NoError(t, err)
+	var ids []string
+	index := newCursorIndexFixture(f)
+	for i := range 9 {
+		stamp := time.Date(2026, 1, 1, 12, 0, i*20, 0, time.UTC).Format(time.RFC3339)
+		id := stackPhoto(t, s, run, fmt.Sprintf("/A/frame-%d.jpg", i), stamp, document.SourceMetadataPrecisionSecond)
+		ids = append(ids, id)
+		index.publish(t, id, []float64{1, 0, 0, 0, 0, 0, 0, 0})
+	}
+	index.generation(t, "bounded-image-generation")
+	groups, _, _, incomplete, err := s.PhotoStackGroups(t.Context(), ids, false, "")
+	require.NoError(t, err)
+	require.False(t, incomplete)
+	require.Equal(t, [][]string{ids[:4], ids[4:8]}, groups)
+	for _, direction := range []string{"asc", "desc"} {
+		for _, size := range []int{1, 5, 20} {
+			request := captureRequest(t, direction)
+			request.PageSize = size
+			_, stacks := stackPages(t, s, request)
+			require.ElementsMatch(t, groups, stacks, "%s size %d", direction, size)
+		}
+	}
 }

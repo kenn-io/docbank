@@ -13,7 +13,6 @@ import (
 	"github.com/cenkalti/backoff/v7"
 
 	"go.kenn.io/docbank/internal/store/schemaformat"
-	"go.kenn.io/docbank/internal/vectorindex"
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
@@ -25,7 +24,6 @@ type Store struct {
 	db                     *sql.DB
 	writeDB                *sql.DB
 	postgresSchema         string // Empty for SQLite; PostgreSQL pools use this schema as their search path.
-	photoStackVectors      vectorindex.GenerationCache
 	path                   string
 	rootID                 int64
 	vaultID                string
@@ -253,9 +251,7 @@ func (s *Store) SQLiteDriver() docsqlite.Driver { return s.driver }
 // Close closes both database pools.
 func (s *Store) Close() error {
 	s.closePhotoEvents()
-	err := errors.Join(s.db.Close(), s.writeDB.Close())
-	s.photoStackVectors.Clear()
-	return err
+	return errors.Join(s.db.Close(), s.writeDB.Close())
 }
 
 // Checkpoint truncates the WAL after all application writes have completed.

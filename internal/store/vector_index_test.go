@@ -71,7 +71,9 @@ func TestVectorIndexPublicationFencesMembershipDriftAndKeepsPriorHead(t *testing
 	require.True(t, claimed)
 	prior := vectorIndexGenerationFixture("prior", source, []byte("prior-generation"), now)
 	require.NoError(t, s.StageVectorIndexGeneration(t.Context(), claim, prior, now))
+	events := watchPhotoChanges(t, s)
 	require.NoError(t, s.PublishVectorIndexGeneration(t.Context(), claim, prior.ID, now))
+	requirePhotoSignal(t, events, "index publication refreshes Photos and Cull")
 
 	staleClaim, claimed, err := s.ClaimVectorIndexBuild(t.Context(), first.VectorSpace.ID,
 		source.ManifestChecksum, "stale-worker", now.Add(2*time.Minute), time.Minute)

@@ -5464,7 +5464,8 @@ it("refreshes a ranked sibling Library after an accepted reject receipt", async 
   expect(changed.mock.calls[0][0]).toEqual(expect.objectContaining({ receipt_id: "rotated" }));
 });
 
-it("polls cull settings while culling photos", async () => {
+it("keeps Cull decisions available across access polls and live index changes", async () => {
+  stubPhotoTimeline();
   let poll!: () => void;
   const interval = globalThis.setInterval;
   vi.spyOn(globalThis, "setInterval").mockImplementation((callback, delay, ...args) => {
@@ -5474,8 +5475,28 @@ it("polls cull settings while culling photos", async () => {
     }
     return interval(callback, delay, ...args);
   });
-  const checkSettings = vi.spyOn(PhotoCull.prototype, "checkSettings").mockResolvedValue();
-  await openSyntheticCull();
+  const dialog = await openSyntheticCull();
+  const cull = vi.mocked(PhotoCull.prototype.start).mock.contexts.at(-1) as PhotoCull;
+  await act(() => {
+    cull.run = { ...cull.run!, groups: [["photo-1", "photo-2"]], burstGapSeconds: 2 };
+  });
+  const keep = await within(dialog).findByRole("button", { name: "Keep all" });
+  await waitFor(() => expect(keep.matches(":disabled")).toBe(false));
+  vi.spyOn(api, "getPhotoSettings").mockRejectedValue(new Error("Settings offline"));
   await act(async () => poll());
-  expect(checkSettings).toHaveBeenCalledOnce();
+  expect(keep.matches(":disabled")).toBe(false);
+
+  let finish!: (value: Awaited<ReturnType<typeof api.groupPhotoStacks>>) => void;
+  vi.spyOn(api, "groupPhotoStacks").mockImplementationOnce(
+    () => new Promise((resolve) => (finish = resolve)),
+  );
+  vi.spyOn(api, "listPhotoAlbums").mockResolvedValue([]);
+  const changed = photoEventPass()({});
+  await waitFor(() => expect(finish).toBeDefined());
+  expect(keep.matches(":disabled")).toBe(false);
+  await act(async () => {
+    finish({ groups: [["photo-1", "photo-2"]], unavailable_ids: [], burst_gap_seconds: 2 });
+    await changed;
+  });
+  expect(keep.matches(":disabled")).toBe(false);
 });

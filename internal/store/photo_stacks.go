@@ -44,7 +44,7 @@ type PhotoStack struct {
 // photoStackFrame is one live asset's grouping input. Folder is empty when the
 // photo cannot join a stack.
 type photoStackFrame struct {
-	ImageVector      []float32
+	ImageVectors     map[string][]float32
 	AssetID          string
 	Folder           string
 	CameraMake       string
@@ -101,7 +101,7 @@ func photoStackReach(key string, gap int, forward bool) (string, bool) {
 }
 
 // photoStackChained reports whether next follows previous in one stack.
-func photoStackChained(previous, next photoStackFrame, gap int) bool {
+func photoStackChained(head, previous, next photoStackFrame, gap int) bool {
 	if previous.Folder == "" || previous.partition() != next.partition() {
 		return false
 	}
@@ -109,11 +109,16 @@ func photoStackChained(previous, next photoStackFrame, gap int) bool {
 	if ok && next.SortKey <= reach {
 		return true
 	}
-	reach, ok = photoStackReach(previous.SortKey, photoStackImageWindowSeconds, true)
-	if !ok || next.SortKey > reach || len(previous.ImageVector) == 0 || len(previous.ImageVector) != len(next.ImageVector) {
+	reach, ok = photoStackReach(head.SortKey, photoStackImageWindowSeconds, true)
+	if !ok || next.SortKey > reach {
 		return false
 	}
-	return vectorindex.Cosine(previous.ImageVector, next.ImageVector)+1e-7 >= photoStackImageSimilarityCutoff
+	for _, space := range slices.Sorted(maps.Keys(head.ImageVectors)) {
+		if vector := next.ImageVectors[space]; len(vector) > 0 && vectorindex.Cosine(head.ImageVectors[space], vector)+1e-7 >= photoStackImageSimilarityCutoff {
+			return true
+		}
+	}
+	return false
 }
 
 // groupPhotoStackFrames returns the stacks among frames, each in ascending
@@ -126,7 +131,7 @@ func groupPhotoStackFrames(frames []photoStackFrame, gap int) [][]photoStackFram
 	var groups [][]photoStackFrame
 	for start := 0; start < len(frames); {
 		end := start + 1
-		for end < len(frames) && photoStackChained(frames[end-1], frames[end], gap) {
+		for end < len(frames) && photoStackChained(frames[start], frames[end-1], frames[end], gap) {
 			end++
 		}
 		if eligiblePhotoStack(frames[start:end]) {
@@ -601,7 +606,7 @@ func newPhotoStackPager(ctx context.Context, q metadataQuerier, scope photoBrows
 		return nil, errors.New("photo stack paging requires a statement-preparing connection")
 	}
 	pager := &photoStackPager{q: q, scope: scope, gap: gap, fingerprint: fingerprint, descending: descending, components: map[string]*photoStackComponent{}, frames: map[string]photoStackFrame{}, vectors: vectors, reach: gap}
-	if vectors.index != nil {
+	if len(vectors.indexes) > 0 {
 		pager.reach = max(gap, photoStackImageWindowSeconds)
 	}
 	// Each probe reads the in-scope frames after one frame, up to a window bound.
@@ -629,14 +634,6 @@ func (p *photoStackPager) Close() error {
 		}
 	}
 	return err
-}
-
-// linked reports whether next continues the chain from current in the walk direction.
-func (p *photoStackPager) linked(current, next photoStackFrame, forward bool) bool {
-	if forward {
-		return photoStackChained(current, next, p.gap)
-	}
-	return photoStackChained(next, current, p.gap)
 }
 
 // probe reads the in-scope frames after current in one direction, up to window.
@@ -676,9 +673,12 @@ func (p *photoStackPager) probe(ctx context.Context, current photoStackFrame, wi
 	return frames, nil
 }
 
-// walk appends frame's chain in one direction until it breaks or exceeds the cap.
+// walk reads preceding candidates or appends the stack's following frames.
 func (p *photoStackPager) walk(ctx context.Context, frame photoStackFrame, forward bool, component *photoStackComponent) error {
-	for current := frame; len(component.frames) <= MaxPhotoStackFrames; {
+	// Image grouping needs the earliest head, even when browsing backwards.
+	// Read preceding candidates by time first, then group them in capture order.
+	imageCandidates := !forward && len(p.vectors.indexes) > 0
+	for current := frame; imageCandidates || len(component.frames) <= MaxPhotoStackFrames; {
 		window, ok := photoStackReach(current.SortKey, p.reach*photoStackProbeGaps, forward)
 		if !ok {
 			return nil
@@ -688,7 +688,16 @@ func (p *photoStackPager) walk(ctx context.Context, frame photoStackFrame, forwa
 			return err
 		}
 		for _, next := range read {
-			if !p.linked(current, next, forward) {
+			var linked bool
+			if forward {
+				linked = photoStackChained(component.frames[0], current, next, p.gap)
+			} else if imageCandidates {
+				reach, ok := photoStackReach(next.SortKey, p.reach, true)
+				linked = ok && current.SortKey <= reach
+			} else {
+				linked = photoStackChained(next, next, current, p.gap)
+			}
+			if !linked {
 				return nil
 			}
 			component.frames = append(component.frames, next)
@@ -704,16 +713,32 @@ func (p *photoStackPager) walk(ctx context.Context, frame photoStackFrame, forwa
 	return nil
 }
 
-// component walks frame's stack in both directions, stopping once it exceeds the cap.
+// component resolves frame's stack from its first frame in capture order.
 func (p *photoStackPager) component(ctx context.Context, frame photoStackFrame) (*photoStackComponent, error) {
 	if found := p.components[frame.AssetID]; found != nil {
 		return found, nil
 	}
 	component := &photoStackComponent{frames: []photoStackFrame{frame}}
-	for _, forward := range []bool{false, true} {
-		if err := p.walk(ctx, frame, forward, component); err != nil {
-			return nil, err
+	if err := p.walk(ctx, frame, false, component); err != nil {
+		return nil, err
+	}
+	if len(p.vectors.indexes) > 0 {
+		slices.SortFunc(component.frames, comparePhotoStackFrames)
+		frames := component.frames
+		for first := 0; first < len(frames); {
+			next := first + 1
+			for next < len(frames) && photoStackChained(frames[first], frames[next-1], frames[next], p.gap) {
+				next++
+			}
+			component = &photoStackComponent{frames: slices.Clone(frames[first:next])}
+			if next < len(frames) {
+				p.remember(component)
+			}
+			first = next
 		}
+	}
+	if err := p.walk(ctx, frame, true, component); err != nil {
+		return nil, err
 	}
 	p.remember(component)
 	return component, nil
@@ -758,6 +783,11 @@ func (p *photoStackPager) prime(ctx context.Context, batch []PhotoBrowseRow, aft
 		return err
 	}
 	p.frames = inputs
+	// A partial batch cannot establish the first frame of an image stack.
+	// Resolve it through the folder probes in capture order instead.
+	if len(p.vectors.indexes) > 0 {
+		return nil
+	}
 	if after != nil && after.Missing {
 		return nil
 	}
@@ -798,7 +828,7 @@ func (p *photoStackPager) prime(ctx context.Context, batch []PhotoBrowseRow, aft
 		slices.SortFunc(frames, comparePhotoStackFrames)
 		for first := 0; first < len(frames); {
 			next := first + 1
-			for next < len(frames) && photoStackChained(frames[next-1], frames[next], p.gap) {
+			for next < len(frames) && photoStackChained(frames[first], frames[next-1], frames[next], p.gap) {
 				next++
 			}
 			chain := frames[first:next]

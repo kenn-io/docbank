@@ -840,8 +840,6 @@
         if (current && !controller.signal.aborted) {
           hiddenAccess?.acceptState(result, requestedAt);
           await acceptPhotoAccess(result, configuredVersion);
-          const photos = activePhotos();
-          if (photos?.culling) await photos.cull?.checkSettings();
         }
       } catch (cause) {
         if (!current || controller.signal.aborted) return;

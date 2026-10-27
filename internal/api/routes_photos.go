@@ -213,10 +213,6 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 			return nil, FromStoreError(err)
 		}
 		body := fromStorePhotoSettings(settings)
-		body.VectorGenerationID, err = d.Store.PhotoStackVectorGeneration(ctx)
-		if err != nil {
-			return nil, FromStoreError(err)
-		}
 		return &photoSettingsOutput{ETag: revisionETag(settings.Revision), Body: body}, nil
 	})
 
@@ -248,15 +244,11 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 		OperationID: "groupPhotoStacks", Method: http.MethodPost, Path: "/api/v1/photos/stacks/group",
 		Summary: "Group explicit photos into bursts", MaxBodyBytes: 16 << 20,
 	}, func(ctx context.Context, in *struct{ Body GroupPhotoStacksRequest }) (*struct{ Body GroupPhotoStacksResponse }, error) {
-		generation, err := d.Store.PhotoStackVectorGeneration(ctx)
-		if err != nil {
-			return nil, FromStoreError(err)
-		}
 		groups, unavailable, gap, incomplete, err := d.Store.PhotoStackGroups(ctx, in.Body.AssetIDs, in.Body.Hidden, processing.SourceMetadataExtractorFingerprint)
 		if err != nil {
 			return nil, workspaceQueryError(err)
 		}
-		return &struct{ Body GroupPhotoStacksResponse }{GroupPhotoStacksResponse{VectorGenerationID: generation, GroupingIncomplete: incomplete, Groups: groups, UnavailableIDs: unavailable, BurstGapSeconds: gap}}, nil
+		return &struct{ Body GroupPhotoStacksResponse }{GroupPhotoStacksResponse{GroupingIncomplete: incomplete, Groups: groups, UnavailableIDs: unavailable, BurstGapSeconds: gap}}, nil
 	})
 }
 

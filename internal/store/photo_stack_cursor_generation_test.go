@@ -128,7 +128,7 @@ func (x *cursorIndexFixture) add(record EmbeddingSetRecord, vector document.Vect
 	x.vectors, x.checksums, x.space = append(x.vectors, vector), append(x.checksums, record.VectorSet.ID), record.VectorSpace.ID
 }
 
-func (x *cursorIndexFixture) generation(t *testing.T, label string) string {
+func (x *cursorIndexFixture) generation(t *testing.T, label string) {
 	t.Helper()
 	manifest, err := vectorindex.NewManifest(x.checksums)
 	require.NoError(t, err)
@@ -138,5 +138,4 @@ func (x *cursorIndexFixture) generation(t *testing.T, label string) string {
 	require.NoError(t, err)
 	id := browseHash(label)
 	require.NoError(t, putVectorIndexGenerationForTest(t, x.f.s, VectorIndexGenerationRecord{ID: id, VectorSpaceID: x.space, SourceManifestChecksum: source.ManifestChecksum, IndexManifestChecksum: index.Metadata().Manifest.Checksum, Bytes: index.Bytes(), RowCount: len(x.vectors), BuiltAt: embeddingCatalogTime}))
-	return id
 }
