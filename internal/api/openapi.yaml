@@ -4255,6 +4255,8 @@ components:
           type: array
         media_source_selection:
           type: boolean
+        miss_log_capability:
+          type: string
         miss_log_id:
           type: string
         requested_mode:
@@ -6517,6 +6519,8 @@ components:
             - https://example.com/schemas/EmptySearchCompletion.json
           format: uri
           readOnly: true
+          type: string
+        miss_log_capability:
           type: string
         miss_log_id:
           type: string
@@ -9407,6 +9411,89 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/mailbox
         name: mailbox
+    MissLogFeedback:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/MissLogFeedback.json
+          format: uri
+          readOnly: true
+          type: string
+        expected:
+          items:
+            $ref: "#/components/schemas/MissLogIdentity"
+          maxItems: 20
+          type: array
+        note:
+          maxLength: 1000
+          type: string
+        verdict:
+          enum:
+            - wrong
+            - missing
+            - low_confidence
+            - none_in_vault
+          type: string
+      required:
+        - verdict
+      type: object
+      x-go-type: misslog.Feedback
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/misslog
+        name: misslog
+    MissLogHit:
+      additionalProperties: false
+      properties:
+        content_version_id:
+          maxLength: 36
+          type: string
+        evidence_ids:
+          items:
+            maxLength: 1024
+            type: string
+          maxItems: 64
+          type: array
+        node_id:
+          format: int64
+          minimum: 1
+          type: integer
+        path:
+          maxLength: 16384
+          type: string
+        rank:
+          format: int64
+          minimum: 1
+          type: integer
+        score:
+          format: double
+          type: number
+      required:
+        - rank
+        - node_id
+      type: object
+      x-go-type: misslog.Hit
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/misslog
+        name: misslog
+    MissLogIdentity:
+      additionalProperties: false
+      properties:
+        content_version_id:
+          maxLength: 36
+          type: string
+        node_id:
+          format: int64
+          minimum: 1
+          type: integer
+      required:
+        - node_id
+      type: object
+      x-go-type: misslog.Identity
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/misslog
+        name: misslog
     MissLogPage:
       additionalProperties: false
       properties:
@@ -9454,8 +9541,14 @@ components:
         created_at:
           format: date-time
           type: string
+        feedback:
+          $ref: "#/components/schemas/MissLogFeedback"
         fence_fingerprint:
           type: string
+        hits:
+          items:
+            $ref: "#/components/schemas/MissLogHit"
+          type: array
         id:
           type: string
         profile:
@@ -18385,6 +18478,93 @@ components:
           readOnly: true
           type: string
       type: object
+    SearchCompletionRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/SearchCompletionRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        actual_mode:
+          enum:
+            - lexical
+            - semantic
+            - hybrid
+          type: string
+        coverage:
+          $ref: "#/components/schemas/DocumentSearchCoverage"
+        hits:
+          items:
+            $ref: "#/components/schemas/MissLogHit"
+          maxItems: 10
+          type: array
+        search:
+          $ref: "#/components/schemas/DocumentSearchRequest"
+        truncated:
+          type: boolean
+      required:
+        - search
+        - actual_mode
+        - coverage
+        - hits
+      type: object
+      x-go-type: api.SearchCompletionRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    SearchFeedbackRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/SearchFeedbackRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        capability:
+          maxLength: 64
+          type: string
+        feedback:
+          $ref: "#/components/schemas/MissLogFeedback"
+        id:
+          maxLength: 48
+          minLength: 48
+          type: string
+      required:
+        - id
+        - capability
+        - feedback
+      type: object
+      x-go-type: api.SearchFeedbackRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    SearchFeedbackResult:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/SearchFeedbackResult.json
+          format: uri
+          readOnly: true
+          type: string
+        id:
+          type: string
+        success:
+          type: boolean
+      required:
+        - id
+        - success
+      type: object
+      x-go-type: api.SearchFeedbackResult
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     SearchHit:
       additionalProperties: false
       properties:
@@ -18429,6 +18609,8 @@ components:
           format: int64
           type: integer
         mime_type:
+          type: string
+        miss_log_capability:
           type: string
         miss_log_id:
           type: string
@@ -24715,7 +24897,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
           description: Error
-      summary: List private search misses (operator only)
+      summary: List private search receipts (operator only)
   /api/v1/miss-log/{id}:
     delete:
       operationId: deleteMissLogRecord
@@ -24735,7 +24917,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
           description: Error
-      summary: Delete one private search miss (operator only)
+      summary: Delete one private search receipt (operator only)
     get:
       operationId: getMissLogRecord
       parameters:
@@ -24762,7 +24944,37 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
           description: Error
-      summary: Read one private search miss (operator only)
+      summary: Read one private search receipt (operator only)
+  /api/v1/miss-log/{id}/feedback:
+    post:
+      operationId: labelMissLogRecord
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            maxLength: 128
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MissLogFeedback"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchFeedbackResult"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Label one private search receipt (operator only)
   /api/v1/nodes:
     post:
       description: kind must be "dir"; file creation is POST /api/v1/ingest for server-side paths or digest-checked POST /api/v1/uploads for remote bytes.
@@ -29896,6 +30108,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/SearchReport"
           description: OK
+          headers:
+            Cache-Control:
+              schema:
+                type: string
         default:
           content:
             application/problem+json:
@@ -29918,6 +30134,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/DocumentSearchReport"
           description: OK
+          headers:
+            Cache-Control:
+              schema:
+                type: string
         default:
           content:
             application/problem+json:
@@ -30160,6 +30380,33 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Create an export with reviewed dates
+  /api/v1/search/complete:
+    post:
+      operationId: completeSearch
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SearchCompletionRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmptySearchCompletion"
+          description: OK
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Record the final merged CLI search (operator only)
   /api/v1/search/complete-empty:
     post:
       operationId: completeEmptySearch
@@ -30176,6 +30423,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/EmptySearchCompletion"
           description: OK
+          headers:
+            Cache-Control:
+              schema:
+                type: string
         default:
           content:
             application/problem+json:
@@ -30183,6 +30434,29 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Record the final empty automatic CLI search (operator only)
+  /api/v1/search/feedback:
+    post:
+      operationId: recordSearchFeedback
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SearchFeedbackRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchFeedbackResult"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Record feedback using a search capability
   /api/v1/search/similar:
     post:
       operationId: findSimilarDocuments

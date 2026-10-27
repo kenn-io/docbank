@@ -2080,6 +2080,7 @@ export interface DocumentSearchReport {
   /** @maxItems 4096 */
   media_selections?: DocumentMediaSelection[];
   media_source_selection?: boolean;
+  miss_log_capability?: string;
   miss_log_id?: string;
   requested_mode: string;
   reranking?: DocumentSearchRerankingReceipt;
@@ -2969,6 +2970,7 @@ export interface EmailPending {
 export interface EmptySearchCompletion {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  miss_log_capability?: string;
   miss_log_id?: string;
 }
 
@@ -3966,6 +3968,50 @@ export interface Message {
   start: number;
 }
 
+export type MissLogFeedbackVerdict = typeof MissLogFeedbackVerdict[keyof typeof MissLogFeedbackVerdict];
+
+
+export const MissLogFeedbackVerdict = {
+  wrong: 'wrong',
+  missing: 'missing',
+  low_confidence: 'low_confidence',
+  none_in_vault: 'none_in_vault',
+} as const;
+
+export interface MissLogIdentity {
+  /** @maxLength 36 */
+  content_version_id?: string;
+  /** @minimum 1 */
+  node_id: number;
+}
+
+export interface MissLogFeedback {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @maxItems 20 */
+  expected?: MissLogIdentity[];
+  /** @maxLength 1000 */
+  note?: string;
+  verdict: MissLogFeedbackVerdict;
+}
+
+export interface MissLogHit {
+  /** @maxLength 36 */
+  content_version_id?: string;
+  /**
+     * @maxItems 64
+     * @items.maxLength 1024
+     */
+  evidence_ids?: string[];
+  /** @minimum 1 */
+  node_id: number;
+  /** @maxLength 16384 */
+  path?: string;
+  /** @minimum 1 */
+  rank: number;
+  score?: number;
+}
+
 export type MissLogReceiptCoverage = {[key: string]: unknown};
 
 export type MissLogReceiptScope = {[key: string]: unknown};
@@ -3976,7 +4022,9 @@ export interface MissLogReceipt {
   actual_mode: string;
   coverage?: MissLogReceiptCoverage;
   created_at: string;
+  feedback?: MissLogFeedback;
   fence_fingerprint?: string;
+  hits?: MissLogHit[];
   id: string;
   profile?: string;
   query: string;
@@ -7787,6 +7835,46 @@ export interface SealExportSourceRequest {
   readonly $schema?: string;
 }
 
+export type SearchCompletionRequestActualMode = typeof SearchCompletionRequestActualMode[keyof typeof SearchCompletionRequestActualMode];
+
+
+export const SearchCompletionRequestActualMode = {
+  lexical: 'lexical',
+  semantic: 'semantic',
+  hybrid: 'hybrid',
+} as const;
+
+export interface SearchCompletionRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  actual_mode: SearchCompletionRequestActualMode;
+  coverage: DocumentSearchCoverage;
+  /** @maxItems 10 */
+  hits: MissLogHit[];
+  search: DocumentSearchRequest;
+  truncated?: boolean;
+}
+
+export interface SearchFeedbackRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @maxLength 64 */
+  capability: string;
+  feedback: MissLogFeedback;
+  /**
+     * @minLength 48
+     * @maxLength 48
+     */
+  id: string;
+}
+
+export interface SearchFeedbackResult {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  id: string;
+  success: boolean;
+}
+
 export type SearchHitMatch = typeof SearchHitMatch[keyof typeof SearchHitMatch];
 
 
@@ -7811,6 +7899,7 @@ export interface SearchReport {
   hits: SearchHit[];
   limit: number;
   mime_type?: string;
+  miss_log_capability?: string;
   miss_log_id?: string;
   modified_before?: string;
   modified_since?: string;
@@ -14223,7 +14312,7 @@ export const getListMissLogUrl = (params?: ListMissLogParams,) => {
 }
 
 /**
- * @summary List private search misses (operator only)
+ * @summary List private search receipts (operator only)
  */
 export const listMissLog = async (params?: ListMissLogParams, options?: Parameters<typeof sessionJSON>[1]): Promise<MissLogPage> => {
 
@@ -14247,7 +14336,7 @@ export const getDeleteMissLogRecordUrl = (id: string,) => {
 }
 
 /**
- * @summary Delete one private search miss (operator only)
+ * @summary Delete one private search receipt (operator only)
  */
 export const deleteMissLogRecord = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
 
@@ -14271,7 +14360,7 @@ export const getGetMissLogRecordUrl = (id: string,) => {
 }
 
 /**
- * @summary Read one private search miss (operator only)
+ * @summary Read one private search receipt (operator only)
  */
 export const getMissLogRecord = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<MissLogReceipt> => {
 
@@ -14281,6 +14370,45 @@ export const getMissLogRecord = async (id: string, options?: Parameters<typeof s
     method: 'GET'
 
 
+  }
+);}
+
+
+
+export const getLabelMissLogRecordUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/miss-log/${encodeURIComponent(String(id))}/feedback`
+}
+
+/**
+ * @summary Label one private search receipt (operator only)
+ */
+export const labelMissLogRecord = async (id: string,
+    missLogFeedback: NonReadonly<MissLogFeedback>, options?: Parameters<typeof sessionJSON>[1]): Promise<SearchFeedbackResult> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<SearchFeedbackResult>(getLabelMissLogRecordUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(missLogFeedback)
   }
 );}
 
@@ -19855,6 +19983,44 @@ return sessionJSON<Summary>(getReviseTermReportUrl(id),
 
 
 
+export const getCompleteSearchUrl = () => {
+
+
+
+
+  return `/api/v1/search/complete`
+}
+
+/**
+ * @summary Record the final merged CLI search (operator only)
+ */
+export const completeSearch = async (searchCompletionRequest: NonReadonly<SearchCompletionRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<EmptySearchCompletion> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<EmptySearchCompletion>(getCompleteSearchUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(searchCompletionRequest)
+  }
+);}
+
+
+
 export const getCompleteEmptySearchUrl = () => {
 
 
@@ -19888,6 +20054,44 @@ return sessionJSON<EmptySearchCompletion>(getCompleteEmptySearchUrl(),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(emptySearchCompletionRequest)
+  }
+);}
+
+
+
+export const getRecordSearchFeedbackUrl = () => {
+
+
+
+
+  return `/api/v1/search/feedback`
+}
+
+/**
+ * @summary Record feedback using a search capability
+ */
+export const recordSearchFeedback = async (searchFeedbackRequest: NonReadonly<SearchFeedbackRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<SearchFeedbackResult> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<SearchFeedbackResult>(getRecordSearchFeedbackUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(searchFeedbackRequest)
   }
 );}
 

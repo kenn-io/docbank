@@ -5930,7 +5930,7 @@ func (c *Client) DeleteMissLog(ctx context.Context, options *DeleteMissLogReques
 	return responseParser(ctx, resp)
 }
 
-// ListMissLog List private search misses (operator only)
+// ListMissLog List private search receipts (operator only)
 func (c *Client) ListMissLog(ctx context.Context, options *ListMissLogRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListMissLogResponse, error) {
 	var err error
 
@@ -5982,7 +5982,7 @@ func (c *Client) ListMissLog(ctx context.Context, options *ListMissLogRequestOpt
 	return responseParser(ctx, resp)
 }
 
-// DeleteMissLogRecord Delete one private search miss (operator only)
+// DeleteMissLogRecord Delete one private search receipt (operator only)
 func (c *Client) DeleteMissLogRecord(ctx context.Context, options *DeleteMissLogRecordRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
@@ -6022,7 +6022,7 @@ func (c *Client) DeleteMissLogRecord(ctx context.Context, options *DeleteMissLog
 	return responseParser(ctx, resp)
 }
 
-// GetMissLogRecord Read one private search miss (operator only)
+// GetMissLogRecord Read one private search receipt (operator only)
 func (c *Client) GetMissLogRecord(ctx context.Context, options *GetMissLogRecordRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetMissLogRecordResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
@@ -6059,6 +6059,53 @@ func (c *Client) GetMissLogRecord(ctx context.Context, options *GetMissLogRecord
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/miss-log/{id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// LabelMissLogRecord Label one private search receipt (operator only)
+func (c *Client) LabelMissLogRecord(ctx context.Context, options *LabelMissLogRecordRequestOptions, reqEditors ...runtime.RequestEditorFn) (*LabelMissLogRecordResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/miss-log/{id}/feedback",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*LabelMissLogRecordResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(LabelMissLogRecordResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "LabelMissLogRecordResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[LabelMissLogRecordErrorResponse](resp, "LabelMissLogRecordErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/miss-log/{id}/feedback")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -13446,6 +13493,53 @@ func (c *Client) ReviseTermReport(ctx context.Context, options *ReviseTermReport
 	return responseParser(ctx, resp)
 }
 
+// CompleteSearch Record the final merged CLI search (operator only)
+func (c *Client) CompleteSearch(ctx context.Context, options *CompleteSearchRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CompleteSearchResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/search/complete",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CompleteSearchResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(CompleteSearchResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CompleteSearchResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CompleteSearchErrorResponse](resp, "CompleteSearchErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/search/complete")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // CompleteEmptySearch Record the final empty automatic CLI search (operator only)
 func (c *Client) CompleteEmptySearch(ctx context.Context, options *CompleteEmptySearchRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CompleteEmptySearchResponse, error) {
 	var err error
@@ -13484,6 +13578,53 @@ func (c *Client) CompleteEmptySearch(ctx context.Context, options *CompleteEmpty
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/search/complete-empty")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// RecordSearchFeedback Record feedback using a search capability
+func (c *Client) RecordSearchFeedback(ctx context.Context, options *RecordSearchFeedbackRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RecordSearchFeedbackResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/search/feedback",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*RecordSearchFeedbackResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(RecordSearchFeedbackResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "RecordSearchFeedbackResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[RecordSearchFeedbackErrorResponse](resp, "RecordSearchFeedbackErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/search/feedback")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -19431,6 +19572,41 @@ func (o *GetMissLogRecordRequestOptions) GetHeader() (map[string]string, error) 
 	return nil, nil
 }
 
+// LabelMissLogRecordRequestOptions is the options needed to make a request to LabelMissLogRecord.
+type LabelMissLogRecordRequestOptions struct {
+	PathParams *LabelMissLogRecordPath
+	Body       *LabelMissLogRecordBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *LabelMissLogRecordRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *LabelMissLogRecordRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *LabelMissLogRecordRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *LabelMissLogRecordRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // CreateNodeRequestOptions is the options needed to make a request to CreateNode.
 type CreateNodeRequestOptions struct {
 	Body *CreateNodeBody
@@ -24374,6 +24550,34 @@ func (o *ReviseTermReportRequestOptions) GetHeader() (map[string]string, error) 
 	return nil, nil
 }
 
+// CompleteSearchRequestOptions is the options needed to make a request to CompleteSearch.
+type CompleteSearchRequestOptions struct {
+	Body *CompleteSearchBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CompleteSearchRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *CompleteSearchRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CompleteSearchRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CompleteSearchRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // CompleteEmptySearchRequestOptions is the options needed to make a request to CompleteEmptySearch.
 type CompleteEmptySearchRequestOptions struct {
 	Body *CompleteEmptySearchBody
@@ -24399,6 +24603,34 @@ func (o *CompleteEmptySearchRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *CompleteEmptySearchRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// RecordSearchFeedbackRequestOptions is the options needed to make a request to RecordSearchFeedback.
+type RecordSearchFeedbackRequestOptions struct {
+	Body *RecordSearchFeedbackBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *RecordSearchFeedbackRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *RecordSearchFeedbackRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *RecordSearchFeedbackRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *RecordSearchFeedbackRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
@@ -26292,6 +26524,10 @@ type GetMissLogRecordPath struct {
 	ID string `json:"id"`
 }
 
+type LabelMissLogRecordPath struct {
+	ID string `json:"id"`
+}
+
 type GetNodePath struct {
 	ID int64 `json:"id"`
 }
@@ -26848,6 +27084,8 @@ type ImportMediaArtifactBody struct {
 
 type RetryMediaSourceBody = MediaRetryBody
 
+type LabelMissLogRecordBody = MissLogFeedback
+
 type CreateNodeBody = CreateNodeRequest
 
 type MoveNodeBody = MoveNodeRequest
@@ -27024,7 +27262,11 @@ type IssueTermReportDownloadBody = IssueTermReportDownloadRequest
 
 type ReviseTermReportBody = ReviseTermReportRequest
 
+type CompleteSearchBody = SearchCompletionRequest
+
 type CompleteEmptySearchBody = EmptySearchCompletionRequest
+
+type RecordSearchFeedbackBody = SearchFeedbackRequest
 
 type FindSimilarDocumentsBody = DocumentSimilarRequest
 
@@ -27952,6 +28194,10 @@ type GetMissLogRecordResponse = misslog.Receipt
 
 type GetMissLogRecordErrorResponse = Error
 
+type LabelMissLogRecordResponse = api.SearchFeedbackResult
+
+type LabelMissLogRecordErrorResponse = Error
+
 type CreateNodeResponse = api.Node
 
 type CreateNodeErrorResponse = Error
@@ -28694,9 +28940,17 @@ type ReviseTermReportResponse = report.Summary
 
 type ReviseTermReportErrorResponse = Error
 
+type CompleteSearchResponse = api.EmptySearchCompletion
+
+type CompleteSearchErrorResponse = Error
+
 type CompleteEmptySearchResponse = api.EmptySearchCompletion
 
 type CompleteEmptySearchErrorResponse = Error
+
+type RecordSearchFeedbackResponse = api.SearchFeedbackResult
+
+type RecordSearchFeedbackErrorResponse = Error
 
 type FindSimilarDocumentsResponse = api.DocumentSimilarReport
 
@@ -29598,6 +29852,12 @@ type MergePersonRequest = api.MergePersonRequest
 
 type Message = mailbox.Message
 
+type MissLogFeedback = misslog.Feedback
+
+type MissLogHit = misslog.Hit
+
+type MissLogIdentity = misslog.Identity
+
 type MissLogPage = api.MissLogPage
 
 type MissLogReceipt = misslog.Receipt
@@ -30338,6 +30598,12 @@ type SealExportSourceRequest struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema *string `json:"$schema,omitempty"`
 }
+
+type SearchCompletionRequest = api.SearchCompletionRequest
+
+type SearchFeedbackRequest = api.SearchFeedbackRequest
+
+type SearchFeedbackResult = api.SearchFeedbackResult
 
 type SearchHit = api.SearchHit
 
