@@ -5203,7 +5203,6 @@
         catalog={tagCatalog}
         disabled={snapshotActive && snapshot.state.status !== "ready"}
         preparing={snapshot.actionBusy}
-        interrupted={snapshot.retained !== null}
         errorMessage={snapshot.actionError}
         onstart={(choice) => void startSnapshotAction(choice)}
         onchanged={handleSnapshotSelectionTagged}

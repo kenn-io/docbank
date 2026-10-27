@@ -31,7 +31,6 @@
     disabled: boolean;
     /** Whole-result preparation is running in the workspace. */
     preparing?: boolean;
-    interrupted?: boolean;
     onstart?: (choice: SnapshotActionChoice) => void;
     onchanged?: (receipt: BatchTagReceipt) => void;
     onunknown?: () => void;
@@ -50,7 +49,6 @@
     catalog,
     disabled,
     preparing = false,
-    interrupted = false,
     onstart,
     onchanged,
     onunknown,
@@ -199,7 +197,7 @@
     {#if failure || errorMessage}<p class="alert" role="alert">{failure || errorMessage}</p>{/if}
   </div>
   {#snippet footer()}
-    {#if scope === "query" && interrupted && !receipt}
+    {#if scope === "query" && !receipt}
       <span class="footer-start">
         <Button size="sm" surface="soft" disabled={busy} onclick={() => fileInput?.click()}
           >{reading ? "Reading…" : "Resume from file…"}</Button
