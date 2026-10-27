@@ -253,10 +253,10 @@ The response includes `fingerprint`, `vault_uid`, `selector`,
 When the profile has a rendition stage, the daemon inspects the source locally
 before it answers. If inspection refuses the source,
 `rendition_ineligible_reason` names the inspector's reason, such as
-`unbounded_media_family`, `semantic_units_exceeded`, or `unsupported_media_type`, and starting the plan
-fails with `rendition_source_ineligible`, except for locked PDFs. When no
-configured password opens a PDF, or no password file is configured, starting
-creates a job that ends `failed` with `failure_code=pdf_password_required`.
+`unbounded_media_family`, `semantic_units_exceeded`, or `unsupported_media_type`,
+and starting the plan fails with `rendition_source_ineligible`, except for locked
+PDFs. When no configured password opens a PDF, or no password file is configured,
+starting creates a job that ends `failed` with `failure_code=pdf_password_required`.
 If the configured password file is refused, planning or starting returns
 409 `rendition_operator_required` with the fixed detail `PDF passwords file can't be read; check media.pdf_passwords_file`. The detail omits the file's path. Other operator-required errors use `document rendition requires operator intervention`.
 Each flow identifies the provider,

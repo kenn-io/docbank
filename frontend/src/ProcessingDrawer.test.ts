@@ -1011,7 +1011,10 @@ describe("document processing drawer", () => {
     expect(screen.queryByText("Durable job")).toBeNull();
   });
 
-  it("blocks a run when local inspection refuses the source", async () => {
+  it.each([
+    ["unbounded_media_family", "unbounded media family"],
+    ["unsupported_media_type", "unsupported media type"],
+  ])("blocks a run when the source is refused with %s", async (reason, message) => {
     const versionID = "11111111-1111-4111-8111-111111111111";
     const fingerprint = "a".repeat(64);
     const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
@@ -1033,7 +1036,7 @@ describe("document processing drawer", () => {
           consent_required: true,
           consent_state: "required",
           backup_consequence: "none",
-          rendition_ineligible_reason: "unbounded_media_family",
+          rendition_ineligible_reason: reason,
         });
       if (path.startsWith("/api/v1/coverage?"))
         return Response.json({
@@ -1076,9 +1079,7 @@ describe("document processing drawer", () => {
     });
 
     const run = await screen.findByRole("button", { name: "Consent and run" });
-    expect(
-      screen.getByText("This profile can't process this file: unbounded media family."),
-    ).toBeTruthy();
+    expect(screen.getByText(`This profile can't process this file: ${message}.`)).toBeTruthy();
     expect((run as HTMLButtonElement).disabled).toBe(true);
     await fireEvent.click(run);
     expect(fetch.mock.calls.map(([input]) => String(input))).not.toContain(

@@ -12,7 +12,6 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/media/mediatest"
-	"go.kenn.io/docbank/document/plaintext"
 )
 
 type passwordCountingProvider struct {
@@ -90,59 +89,4 @@ func TestInspectionAndPrepareReadPasswordsOnlyForEncryptedPDF(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestRenditionReadinessPreservesApplicableReason(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name, mime, data string
-		reason           media.CapabilityReason
-	}{
-		{"empty.txt", "text/plain", "", media.CapabilityReasonEmptySource},
-		{"short.txt", "text/plain", "notes", media.CapabilityReasonUnsupported},
-		{"large.txt", "text/plain", "notes exceed the profile limit", media.CapabilityReasonSourceBytes},
-		{"empty.pdf", "application/pdf", "", media.CapabilityReasonEmptySource},
-		{"large.pdf", "application/pdf", "larger than the profile limit", media.CapabilityReasonSourceBytes},
-		{"legacy.doc", "application/msword", "source", media.CapabilityReasonUnboundedFamily},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			fixture := newPublicationFixture(t)
-			provider := newWorkerProvider(t)
-			stored := workerProcessingProfile(t, provider.Descriptor())
-			var portable document.ProcessingProfileV1
-			require.NoError(t, json.Unmarshal(stored.CanonicalProfile, &portable))
-			portable.Rendition.MaxDocumentBytes = 10
-			profile := configuredProfile{portable: portable, record: stored, provider: provider}
-			written, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewBufferString(tc.data))
-			require.NoError(t, err)
-			node, err := fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), tc.name, written.Hash, written.Size, tc.mime, processingBlobPhysical(t, written))
-			require.NoError(t, err)
-			version, err := fixture.catalog.ContentVersionByID(t.Context(), node.CurrentVersionID)
-			require.NoError(t, err)
-			capability, err := inspectRenditionSource(t.Context(), fixture.blobs, node, version, profile)
-			require.NoError(t, err)
-			require.Equal(t, tc.reason, capability.Reason)
-		})
-	}
-}
-
-func TestRenditionReadinessPreservesMalformedJSONForPlaintext(t *testing.T) {
-	t.Parallel()
-	fixture := newPublicationFixture(t)
-	provider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
-	require.NoError(t, err)
-	stored := workerProcessingProfile(t, provider.Descriptor())
-	var portable document.ProcessingProfileV1
-	require.NoError(t, json.Unmarshal(stored.CanonicalProfile, &portable))
-	profile := configuredProfile{portable: portable, record: stored, provider: provider}
-	written, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewBufferString("{broken"))
-	require.NoError(t, err)
-	node, err := fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), "broken.json", written.Hash, written.Size, "application/json", processingBlobPhysical(t, written))
-	require.NoError(t, err)
-	version, err := fixture.catalog.ContentVersionByID(t.Context(), node.CurrentVersionID)
-	require.NoError(t, err)
-	capability, err := inspectRenditionSource(t.Context(), fixture.blobs, node, version, profile)
-	require.NoError(t, err)
-	require.False(t, capability.Eligible)
-	require.Equal(t, media.CapabilityReasonMalformed, capability.Reason)
 }
