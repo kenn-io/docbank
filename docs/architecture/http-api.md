@@ -1459,40 +1459,40 @@ Active operator assertions other than `blind_copy` make names searchable on visi
 
 `recent_first=true` ranks name groups by the newest `recorded_at` among active, visible `depicted` assertions, then by folded name and ID. Namesakes share their group's rank and stay together. Naming a person on a new photo records a new assertion and moves the group up. Adding a face or whole-photo mark to an existing active assertion preserves its time. Merges preserve retained and moved assertion times. Locked Hidden evidence supplies no rank. People with no visible depicted evidence follow in name order. Paging reads live ranks: a falling rank can repeat a person, and a rising rank can move a group ahead of the cursor and skip it for the rest of that pass. Restart from the first page to see skipped groups. Cursors bind the query, projection, order, and Hidden scope for browser, photo-summary, and recent-first listings. A refused cursor returns `422 cursor_expired`; restart from the first page.
 
-Recent-first ranking starts a typed-name search from matching people, joins their namesakes, and looks up their active `depicted` assertions through `person_document_assertions_person`, indexed by `(person_id, role, action)`. Browser visibility checks also use per-person assertion lookups. SQLite reads and sorts all matching people's visible evidence before returning ranked rows. The application consumes those rows newest first and stops after filling the page and finishing timestamp ties. It then fills any remaining places with unranked people in name order. An empty query keeps the assertion-first scan, including unrelated mail assertions. Photo summaries apply to the listed people; photo eligibility and the unranked tail retain their existing queries.
+Recent-first ranking starts a typed-name search from matching active people. Each person supplies their newest eligible `depicted` assertion through a timestamp-ordered lookup on `person_document_assertions_person`, indexed by `(person_id, role, action, recorded_at)`. A window query shares the newest time among namesakes. Browser visibility checks also use per-person assertion lookups. SQLite applies the ranked cursor, orders timestamp ties by folded name and ID, and limits the results before the application reads identity labels. If the page has space left, the application collects all ranked names, including those ahead of the cursor, and fills the remaining places through the existing unranked query.
 
-The tables compare back-to-back runs before and after the indexed lookups on an AMD EPYC 7763 using CGO SQLite in one session, both with `-benchtime=3x -count=1`. Timings vary with cache state and system load.
+An empty query keeps the assertion-first walk, including unrelated mail assertions. It explicitly scans the assertion table because scanning the person index caused scattered row fetches on the photo-heavy fixture. A walked person's own eligible photo already establishes browser visibility; only namesakes need another visibility check. The application finishes timestamp ties before stopping. Photo summaries apply to the listed people; photo eligibility and the unranked tail retain their existing queries.
+
+The tables compare consecutive main and candidate runs on an AMD EPYC 7763 using CGO SQLite in one session, both with `-benchtime=3x -count=1`. Every measured candidate case is faster than main. Timings vary with cache state and system load.
 
 The mail-heavy fixture has 50,000 people, 10,000 mail contacts, and 2,025,400 assertions.
 
-| Benchmark case | Before | Indexed lookups |
+| Benchmark case | Main | Candidate |
 | --- | ---: | ---: |
-| `page-24-name` | 2,730.01 ms | 0.774 ms |
-| `page-24-recent` | 3,355.31 ms | 343.85 ms |
-| `page-24-name-summary` | 868.57 ms | 340.70 ms |
-| `page-24-recent-cursor` | 3,365.18 ms | 355.32 ms |
-| `page-24-recent-summary` | 848.51 ms | 321.76 ms |
-| `page-100-recent-prefix` | 3,261.70 ms | 24.94 ms |
-| `page-100-recent-prefix-broad` | 3,392.19 ms | 414.75 ms |
-| `page-100-recent-prefix-none` | 238.98 ms | 11.78 ms |
-| `page-24-recent-unranked-tail` | 6,097.63 ms | 367.75 ms |
+| `page-24-name` | 2,751.173 ms | 0.812 ms |
+| `page-24-recent` | 3,635.423 ms | 281.015 ms |
+| `page-24-name-summary` | 1,040.591 ms | 334.208 ms |
+| `page-24-recent-cursor` | 3,390.341 ms | 325.532 ms |
+| `page-24-recent-summary` | 859.855 ms | 322.855 ms |
+| `page-100-recent-prefix` | 3,244.732 ms | 24.040 ms |
+| `page-100-recent-prefix-broad` | 3,457.259 ms | 442.267 ms |
+| `page-100-recent-prefix-none` | 241.601 ms | 23.165 ms |
+| `page-24-recent-unranked-tail` | 6,290.040 ms | 352.098 ms |
 
 The photo-heavy fixture has 3,000 people, 40,000 photos, and 120,000 depicted assertions, with no mail assertions. Every person has ranked evidence, so it has no unranked-tail case.
 
-| Benchmark case | Before | Indexed lookups |
+| Benchmark case | Main | Candidate |
 | --- | ---: | ---: |
-| `page-24-name` | 609.84 ms | 0.787 ms |
-| `page-24-recent` | 1,407.05 ms | 1,535.86 ms |
-| `page-24-name-summary` | 465.40 ms | 418.09 ms |
-| `page-24-recent-cursor` | 1,406.59 ms | 1,591.27 ms |
-| `page-24-recent-summary` | 705.02 ms | 617.82 ms |
-| `page-100-recent-prefix` | 750.17 ms | 9.58 ms |
-| `page-100-recent-prefix-broad` | 1,489.31 ms | 1,995.54 ms |
-| `page-100-recent-prefix-none` | 121.97 ms | 1.64 ms |
+| `page-24-name` | 600.612 ms | 0.796 ms |
+| `page-24-recent` | 1,329.446 ms | 607.109 ms |
+| `page-24-name-summary` | 462.210 ms | 418.499 ms |
+| `page-24-recent-cursor` | 1,361.695 ms | 611.103 ms |
+| `page-24-recent-summary` | 673.769 ms | 617.731 ms |
+| `page-100-recent-prefix` | 768.088 ms | 3.011 ms |
+| `page-100-recent-prefix-broad` | 1,542.704 ms | 101.775 ms |
+| `page-100-recent-prefix-none` | 123.756 ms | 2.035 ms |
 
-On the photo-heavy fixture, empty-query recent pages and cursor pages remain slower because correlated visibility probes run per assertion, and the broad prefix remains slower because the person-index walk seeks and fetches every matching assertion row.
-
-The assertion index occupies 141,463,552 bytes, about 134.9 MiB, on the mail-heavy fixture. Creating it on the warm 2,025,400-assertion fixture took 1.67 s, including autocommit. It excludes timestamps and version IDs to limit its storage cost. The broad `p` prefix matches every person's name in both fixtures. Measure the standard cases with `CGO_ENABLED=1 go test -tags fts5 ./internal/store -run '^$' -bench 'BenchmarkPeopleRecentAtVaultScale/(3000|50000)' -benchtime=3x -count=1`.
+The assertion index occupies 211,582,976 bytes, about 201.8 MiB, on the mail-heavy fixture. A temporary transaction dropped the index and measured the increase in free pages, 51,656 pages of 4,096 bytes, then rolled back. Keeping `recorded_at` in the index lets typed searches stop at each person's newest eligible assertion. The broad `p` prefix matches every person's name in both fixtures. Measure the standard cases with `CGO_ENABLED=1 go test -tags fts5 ./internal/store -run '^$' -bench 'BenchmarkPeopleRecentAtVaultScale/(3000|50000)' -benchtime=3x -count=1`.
 
 Browser rename and merge apply the same visibility rule to the canonical person inside the write transaction. A person the browser can't list, such as a sensitive-only person or a locked Hidden-only person, returns `404 not_found`. While Hidden is locked, browser merges require unlocking if either person has assertions or face candidate evidence on a Hidden photo. A merge replay resolves the survivor through aliases and checks its current visibility before returning the original receipt, even after another merge. Browser sessions receive merge receipts with zero moved-evidence counts and an empty absorbed name. API-key writes keep their full scope.
 

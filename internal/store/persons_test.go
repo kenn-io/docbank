@@ -313,6 +313,13 @@ func TestPeopleRecentFirstFollowsVisibleEvidence(t *testing.T) {
 	for _, limit := range []int{1, 2, 3, 100} {
 		require.Equal(t, append([]string{people["Bob"].PersonID}, append(slices.Clone(zoes), people["Ada"].PersonID, people["Cy"].PersonID)...), page(WithPhotoHiddenToken(ctx, token), "", recent, limit))
 	}
+	zora, err := s.CreatePerson(ctx, "Zora", "operator")
+	require.NoError(t, err)
+	for _, limit := range []int{1, 2, 3, 100} {
+		require.Equal(t, append(slices.Clone(zoes), zora.PersonID), page(WithPhotoHiddenToken(ctx, token), "Zo", recent, limit))
+	}
+	_, err = s.RetirePerson(ctx, zora.PersonID, zora.Revision)
+	require.NoError(t, err)
 	// A retired namesake supplies neither a result nor a rank to its namesakes.
 	_, err = s.RetirePerson(ctx, people["Zoe"].PersonID, people["Zoe"].Revision)
 	require.NoError(t, err)
