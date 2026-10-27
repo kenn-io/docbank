@@ -560,6 +560,8 @@ function delayedReplyFixture(isDelayed: (url: string, init?: RequestInit) => boo
       document.querySelector<HTMLButtonElement>('button[aria-label="Sign out"]')!,
     );
     await signIn();
+    const nav = screen.getByRole("navigation", { name: "Docbank navigation" });
+    await fireEvent.click(within(nav).getByRole("button", { name: "All files" }));
     await fireEvent.click(await screen.findByRole("cell", { name: "readme.txt" }));
     await screen.findByRole("group", { name: "Assigned tags" });
   };
