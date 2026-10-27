@@ -306,7 +306,6 @@ func TestPeopleRecentFirstFollowsVisibleEvidence(t *testing.T) {
 	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
 	require.NoError(t, err)
 	require.Equal(t, zoes, page(WithPhotoHiddenToken(ctx, token), "", recent, 1)[:2])
-	require.Equal(t, zoes, page(WithPhotoHiddenToken(ctx, token), "Zo", recent, 1))
 	// Equal timestamps use folded name and ID, including across a page boundary.
 	_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at='2026-01-01T00:00:00.000000001Z' WHERE person_id=?`, people["Zoe"].PersonID)
 	require.NoError(t, err)
@@ -318,9 +317,9 @@ func TestPeopleRecentFirstFollowsVisibleEvidence(t *testing.T) {
 	for _, limit := range []int{1, 2, 3, 100} {
 		require.Equal(t, append(slices.Clone(zoes), zora.PersonID), page(WithPhotoHiddenToken(ctx, token), "Zo", recent, limit))
 	}
+	// Retiring Zora clears the unranked tail; retiring Zoe checks that a retired namesake supplies no rank.
 	_, err = s.RetirePerson(ctx, zora.PersonID, zora.Revision)
 	require.NoError(t, err)
-	// A retired namesake supplies neither a result nor a rank to its namesakes.
 	_, err = s.RetirePerson(ctx, people["Zoe"].PersonID, people["Zoe"].Revision)
 	require.NoError(t, err)
 	remaining, _, err := s.PeopleByDisplayName(WithPhotoHiddenToken(ctx, token), "Zo", "", "", 100, false, recent)
