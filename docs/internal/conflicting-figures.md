@@ -69,6 +69,8 @@ Each figure retains the extraction-accepted date spans as byte offsets in its
 normalized clause for same-package consumers. Consumers use these decisions
 instead of recognizing dates again, so rejected dates do not silently become
 accepted period evidence or text removed from a subject.
+Subject preparation removes only accepted date spans; rejected date-shaped text
+and years remain as subject discriminators.
 
 ## Prefer omission to an ambiguous value
 
@@ -81,8 +83,9 @@ the recognition contract and needs positive and negative regression coverage.
 Currency symbols and ISO codes remain distinct, so a dollar symbol does not
 imply USD. A clause with a combined code and symbol, such as `CAD $5`, is
 omitted rather than assigning it a currency. Partial snippet clauses are marked for callers to exclude.
-Both Unicode ellipses and ASCII runs of three or more dots mark adjacent
-fragments as partial. Negation detection recognizes `not`, `cannot`, `never`,
+Unicode ellipses and runs of three or more ASCII or normalization-equivalent
+fullwidth periods mark adjacent fragments as partial. Negation detection
+recognizes `not`, `cannot`, `never`,
 `neither`, `nor`, `no`, `without`, `no longer`, `anything but`, and contractions
 with ASCII or typographic apostrophes. `no more than` and
 `no less than` remain bounds, and `No.` remains an identifier label.
@@ -246,8 +249,9 @@ Money, percentages, durations and counts share one continuation check. When a
 recognized match is part of an unsupported numeric expression, extraction omits
 the entire clause, including later figures. Rejected numeric ranges and
 overlong numeric tokens follow the same rule. Examples include arithmetic such as
-`$7 + $10`, `$100 less $10`, `5 days less than 10 days`, or `50% off $100`, uncertainty such as `7 ± 1 days`, repeated-unit ranges such as `7 days - 10 days` or
-`7 days through 10 days`, malformed unit tokens such as `7%2`, and fractions
+`$7 + $10`, `$100 less $10`, `5 days less than 10 days`, or `50% off $100`,
+uncertainty such as `7 ± 1 days`, repeated-unit ranges such as `7 days - 10 days`
+or `7 days through 10 days`, malformed unit tokens such as `7%2`, and fractions
 such as `7 days and a half`. An interrupted
 range such as `$7 to about $10` or `between 7 and at most 10 days` never leaves
 an exact or bounded endpoint.
@@ -269,7 +273,9 @@ returns the numeric figure. An explicit `number`, `no.` or `ID` marker retains
 identifier precedence.
 Rejected identifiers retain that precedence: a mask or unsupported continuation
 does not turn embedded currency or date text into another figure.
-Compound clock durations such as `7 days and 3 hours` retain both components.
+Compound clock durations such as `7 days and 3 hours` retain both components;
+comparison skips clauses with multiple independent figures rather than
+assigning components to subjects.
 An approximation attached to coordinated figures of the same kind omits the
 affected group.
 A duration followed by `excluding`, `except`, or `less` is omitted, including joined
@@ -280,11 +286,12 @@ normalize as ordinary days.
 A slash rate such as `$5/month` or `$5/2 devices` retains the numerator and
 any recognized numeric denominator for later rate classification. A denominator
 must include a noun; a bare numeric divisor remains an unsupported fraction.
-Arithmetic following a rate still causes the whole clause to be omitted. A
-postfix bound on a rate also suppresses its denominator across wrapped
-whitespace, as in `$5 [maximum  ] per 2 devices`.
-Unsupported fractions and numerals grouped with spaces, comma-space, underscores or apostrophes
-never produce a smaller component value. A digit-bearing or all-uppercase identifier group after whitespace causes
+Unsupported fractions or arithmetic following a rate still cause the whole
+clause to be omitted. A postfix bound on a rate also suppresses its denominator
+across wrapped whitespace, as in `$5 [maximum  ] per 2 devices`.
+Unsupported fractions and numerals grouped with spaces, comma-space, underscores
+or apostrophes never produce a smaller component value. A digit-bearing or
+all-uppercase identifier group after whitespace causes
 omission rather than retaining only the first group.
 
 Passages over 4,096 bytes are skipped in full. A clause with more than 64
@@ -293,3 +300,46 @@ other clauses remain eligible. Numeric tokens over 128 characters are rejected.
 These limits bound work and avoid extracting a misleading prefix.
 Normalized values may exceed that source-token limit after unit conversion.
 The tests cover original offsets and normalization with Go's native fuzzing.
+
+## Compare figures across documents
+
+`Find` compares eligible figures from different caller-supplied document
+identities. The kinds, units, qualifiers, and range shapes must match. Shared
+query terms, subject overlap, and preserved discriminators restrict alignment.
+Named variants, years, free versus paid entitlements, and different units remain
+separate.
+
+Clauses with multiple independent figures are skipped instead of assigning
+figures to subjects by position. Numeric rate denominators do not count as
+independent figures. When partial or ambiguous figures leave no eligible figure,
+`Skipped` reports `partial` or `ambiguous`. An eligible clause keeps its passage
+available for comparison.
+
+Rates require matching denominators. The bounded grammar recognizes `per`,
+`each`, `/`, `a`, and `an` immediately after a figure, followed by an optional
+number or range, an optional time/count modifier (`business`, `working`,
+`calendar`, `free`, `paid`, `additional`, `extra`), and one noun. The denominator
+is retained separately from the subject's word set, so shared nouns elsewhere
+cannot hide its role. Accepted rate spans are removed from the subject, so
+`$5 per month`, `$5/month`, and `$5 a month` agree. Numeric denominator figures
+are excluded from independent comparison. Thus `$5 per month` and `$60 per year`
+are not comparable; rate conversion is outside this package's scope. Ordinary
+duration conversions such as `24 hours` and `1 day` still agree, and differing
+numerators with the same denominator can conflict. Unsupported fractions or
+arithmetic after a rate omit the whole clause.
+
+Clauses with multiple rates or unbound `per`, `each`, `every`, or `/` markers are
+skipped. This includes prefix rates such as `Per device the fee is $5.`
+
+Each reported conflict is an explicit pair with exact source spans. Date
+precision and subject similarity are not transitive, so the package does not
+merge chains of pairwise matches into one claim. Month-precision dates can agree
+with a date in that month without making different days equivalent. Stated
+periods may explain a dated change but never select a winner.
+
+The report distinguishes `CONFLICTING`, `NO_CONFLICT`, and `NOT_COMPARABLE`.
+`NO_CONFLICT` covers only aligned figures in a complete comparison. `Find`
+examines at most 20 passages and 10,000 candidate pairs, and retains at most 100
+conflict edges. `Truncated` marks incomplete input, work, or output; an incomplete
+comparison without a retained conflict is `NOT_COMPARABLE`. Cutoffs follow input
+rank, so truncated subsets may change when rank changes.
