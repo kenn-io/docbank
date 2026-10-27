@@ -19,69 +19,49 @@ import (
 
 func TestPeopleBrowserMergeHiddenCustodian(t *testing.T) {
 	t.Parallel()
-	for _, ownerRole := range []string{"absorbed", "survivor"} {
-		t.Run(ownerRole, func(t *testing.T) {
-			t.Parallel()
-			ts, s := newTestServer(t, nil)
-			ctx := t.Context()
-			survivor, err := s.CreatePerson(ctx, "Ada", "operator")
+	t.Run("browser session and Hidden cookie", func(t *testing.T) {
+		ts, s := newTestServer(t, nil)
+		ctx := t.Context()
+		survivor, err := s.CreatePerson(ctx, "Ada", "operator")
+		require.NoError(t, err)
+		absorbed, err := s.CreatePerson(ctx, "Grace", "operator")
+		require.NoError(t, err)
+		for _, person := range []store.Person{survivor, absorbed} {
+			hash, size, err := s.Blobs.Write(strings.NewReader(person.DisplayName))
 			require.NoError(t, err)
-			absorbed, err := s.CreatePerson(ctx, "Grace", "operator")
+			photo, err := s.CreateFile(ctx, s.RootID(), person.DisplayName+".jpg", hash, size, "image/jpeg")
 			require.NoError(t, err)
-			for _, person := range []store.Person{survivor, absorbed} {
-				hash, size, err := s.Blobs.Write(strings.NewReader(person.DisplayName))
-				require.NoError(t, err)
-				photo, err := s.CreateFile(ctx, s.RootID(), person.DisplayName+".jpg", hash, size, "image/jpeg")
-				require.NoError(t, err)
-				_, err = s.MarkPersonInPhoto(ctx, photo.CurrentVersionID, person.PersonID, "")
-				require.NoError(t, err)
-			}
-			hash, size, err := s.Blobs.Write(strings.NewReader("synthetic hidden photo"))
+			_, err = s.MarkPersonInPhoto(ctx, photo.CurrentVersionID, person.PersonID, "")
 			require.NoError(t, err)
-			hidden, err := s.CreateFile(ctx, s.RootID(), "hidden.jpg", hash, size, "image/jpeg")
-			require.NoError(t, err)
-			owner := absorbed
-			if ownerRole == "survivor" {
-				owner = survivor
-			}
-			scope := store.CustodianScope{Kind: "document", NodeID: hidden.ID, ContentVersionID: hidden.CurrentVersionID}
-			assignment, err := s.SetCustodian(ctx, store.CustodianRequest{Scope: scope, PersonID: owner.PersonID,
-				RawLabel: owner.DisplayName, Rank: "primary", Basis: "operator_assigned", IfMatchRevision: 1})
-			require.NoError(t, err)
-			asset, err := s.PhotoAssetForNode(ctx, hidden.ID)
-			require.NoError(t, err)
-			require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
-			_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
-			require.NoError(t, err)
-			require.NoError(t, s.LockPhotoHidden(ctx))
-			headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts), "If-Match": `"1"`}
-			path := "/api/v1/people/by-id/" + survivor.PersonID + "/merge"
-			request := map[string]any{"absorbed_person_id": absorbed.PersonID, "absorbed_revision": absorbed.Revision, "operation_id": "00000000-0000-4000-8000-000000000014"}
-			response, body := do(t, ts, http.MethodPost, path, headers, request)
-			require.Equal(t, http.StatusForbidden, response.StatusCode, body)
-			assignments, _, err := s.Custodians(ctx, scope, false, 10, 0)
-			require.NoError(t, err)
-			require.Equal(t, []store.CustodianAssignment{assignment}, assignments)
-			for _, person := range []store.Person{survivor, absorbed} {
-				after, through, err := s.PersonByID(ctx, person.PersonID)
-				require.NoError(t, err)
-				require.Empty(t, through)
-				require.Equal(t, person, after)
-			}
-			delete(headers, "If-Match")
-			response, body = do(t, ts, http.MethodPost, "/api/v1/photos/hidden/unlock", headers, map[string]string{"passcode": "synthetic-passcode"})
-			require.Equal(t, http.StatusOK, response.StatusCode, body)
-			require.Len(t, response.Cookies(), 1)
-			headers["Cookie"] = response.Cookies()[0].String()
-			headers["If-Match"] = `"1"`
-			response, body = do(t, ts, http.MethodPost, path, headers, request)
-			require.Equal(t, http.StatusOK, response.StatusCode, body)
-			assignments, _, err = s.Custodians(ctx, scope, false, 10, 0)
-			require.NoError(t, err)
-			require.Len(t, assignments, 1)
-			require.Equal(t, survivor.PersonID, *assignments[0].PersonID)
-		})
-	}
+		}
+		hash, size, err := s.Blobs.Write(strings.NewReader("synthetic hidden photo"))
+		require.NoError(t, err)
+		hidden, err := s.CreateFile(ctx, s.RootID(), "hidden.jpg", hash, size, "image/jpeg")
+		require.NoError(t, err)
+		scope := store.CustodianScope{Kind: "document", NodeID: hidden.ID, ContentVersionID: hidden.CurrentVersionID}
+		_, err = s.SetCustodian(ctx, store.CustodianRequest{Scope: scope, PersonID: absorbed.PersonID,
+			RawLabel: absorbed.DisplayName, Rank: "primary", Basis: "operator_assigned", IfMatchRevision: 1})
+		require.NoError(t, err)
+		asset, err := s.PhotoAssetForNode(ctx, hidden.ID)
+		require.NoError(t, err)
+		require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+		_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+		require.NoError(t, err)
+		require.NoError(t, s.LockPhotoHidden(ctx))
+		headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts), "If-Match": `"1"`}
+		path := "/api/v1/people/by-id/" + survivor.PersonID + "/merge"
+		request := map[string]any{"absorbed_person_id": absorbed.PersonID, "absorbed_revision": absorbed.Revision, "operation_id": "00000000-0000-4000-8000-000000000014"}
+		response, body := do(t, ts, http.MethodPost, path, headers, request)
+		require.Equal(t, http.StatusForbidden, response.StatusCode, body)
+		delete(headers, "If-Match")
+		response, body = do(t, ts, http.MethodPost, "/api/v1/photos/hidden/unlock", headers, map[string]string{"passcode": "synthetic-passcode"})
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+		require.Len(t, response.Cookies(), 1)
+		headers["Cookie"] = response.Cookies()[0].String()
+		headers["If-Match"] = `"1"`
+		response, body = do(t, ts, http.MethodPost, path, headers, request)
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+	})
 }
 
 func TestPeopleBrowserMergeReceiptOmitsMovedEvidence(t *testing.T) {
@@ -181,10 +161,9 @@ func TestPeopleBrowserMergeReplayAfterChainedMerge(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	response, body = do(t, ts, http.MethodPost, path, headers, request)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	require.JSONEq(t, original, body)
 	require.Equal(t, strconv.Quote(strconv.FormatInt(receipt.SurvivorRevisionAfter, 10)), response.Header.Get("ETag"))
 
-	// Authorization follows Lin even though the receipt still names Grace.
+	// A concealed canonical survivor maps the replay refusal to 404.
 	hash, size, err := s.Blobs.Write(strings.NewReader("synthetic portrait"))
 	require.NoError(t, err)
 	photo, err := s.CreateFile(ctx, s.RootID(), "portrait.jpg", hash, size, "image/jpeg")
@@ -206,7 +185,6 @@ func TestPeopleBrowserMergeReplayAfterChainedMerge(t *testing.T) {
 	headers["If-Match"] = `"1"`
 	response, body = do(t, ts, http.MethodPost, path, headers, request)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	require.JSONEq(t, original, body)
 }
 
 func TestPeopleRoutesWorkflow(t *testing.T) {

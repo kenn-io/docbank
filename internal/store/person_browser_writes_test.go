@@ -311,6 +311,21 @@ func TestBrowserPersonWritesRequireVisibility(t *testing.T) {
 		replayed, err := s.MergePersons(browser, visible.PersonID, absorbed.PersonID, operation, survivorRevision, absorbed.Revision)
 		require.NoError(t, err)
 		require.Equal(t, first.MergeID, replayed.MergeID)
+		lin, err := s.CreatePerson(ctx, "Lin", "operator")
+		require.NoError(t, err)
+		_, err = s.MergePersons(browser, lin.PersonID, visible.PersonID, uuid.NewString(), lin.Revision, first.SurvivorRevisionAfter)
+		require.NoError(t, err)
+		replayed, err = s.MergePersons(browser, visible.PersonID, absorbed.PersonID, operation, survivorRevision, absorbed.Revision)
+		require.NoError(t, err)
+		require.Equal(t, first, replayed)
+		// Replay authorization follows Lin, while the receipt names the retired survivor.
+		_, err = s.MarkPersonInPhoto(unlocked, hiddenPhoto.CurrentVersionID, lin.PersonID, "")
+		require.NoError(t, err)
+		_, err = s.MergePersons(browser, visible.PersonID, absorbed.PersonID, operation, survivorRevision, absorbed.Revision)
+		require.ErrorIs(t, err, ErrNotFound)
+		replayed, err = s.MergePersons(WithVisiblePeopleOnly(unlocked), visible.PersonID, absorbed.PersonID, operation, survivorRevision, absorbed.Revision)
+		require.NoError(t, err)
+		require.Equal(t, first, replayed)
 	})
 }
 

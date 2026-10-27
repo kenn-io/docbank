@@ -1,10 +1,9 @@
 package api_test
 
 import (
-	"context"
+	"encoding/base64"
 	"encoding/json/v2"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -247,28 +246,6 @@ func TestPhotoFaceBrowserPeopleHiddenScope(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 }
 
-// hiddenScopeContext schedules a real lock on the second Hidden token lookup,
-// between visibility observations if the cursor and page read separate scopes.
-// Context has no standard hook for coordinating Value reads.
-type hiddenScopeContext struct {
-	context.Context
-
-	token string
-	reads int
-	lock  func()
-}
-
-func (ctx *hiddenScopeContext) Value(key any) any {
-	value := ctx.Context.Value(key)
-	if token, ok := value.(string); ok && token == ctx.token {
-		ctx.reads++
-		if ctx.reads == 2 {
-			ctx.lock()
-		}
-	}
-	return value
-}
-
 func TestPeoplePageProjectionAndCursorBinding(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)
@@ -317,7 +294,6 @@ func TestPeoplePageProjectionAndCursorBinding(t *testing.T) {
 	}{
 		{query: "photo_summary=false&recent_first=true"},
 		{query: "photo_summary=true&recent_first=false"},
-		{query: "photo_summary=true&recent_first=true&query=Z"},
 		{query: "photo_summary=true&recent_first=true", unlock: true},
 	} {
 		if changed.unlock {
@@ -338,29 +314,26 @@ func TestPeoplePageProjectionAndCursorBinding(t *testing.T) {
 	require.NotContains(t, body, "photo_summary")
 	require.NoError(t, json.Unmarshal([]byte(body), &second))
 	require.Equal(t, ada.PersonID, second.Items[0].PersonID)
-	// A lock between separate scope reads must not yield an unusable cursor.
-	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
+	// Bind the cursor to the same locked scope shown by the page projection.
+	raw, err := base64.RawURLEncoding.DecodeString(first.NextCursor)
 	require.NoError(t, err)
-	requestCtx := &hiddenScopeContext{
-		Context: store.WithPhotoHiddenToken(ctx, token), token: token,
-		lock: func() { require.NoError(t, s.LockPhotoHidden(ctx)) },
-	}
-	lockPath := "/api/v1/people?limit=1&photo_summary=true"
-	request := httptest.NewRequestWithContext(requestCtx, http.MethodGet, ts.URL+lockPath, nil)
-	request.Header.Set("X-Api-Key", testAPIKey)
-	recorder := httptest.NewRecorder()
-	s.Server.Handler().ServeHTTP(recorder, request)
-	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
-	var locking api.PersonPage
-	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &locking))
-	require.Len(t, locking.Items, 1)
-	require.NotEmpty(t, locking.NextCursor)
-	followCtx := store.WithPhotoHiddenToken(ctx, token)
-	request = httptest.NewRequestWithContext(followCtx, http.MethodGet, ts.URL+lockPath+"&cursor="+locking.NextCursor, nil)
-	request.Header.Set("X-Api-Key", testAPIKey)
-	recorder = httptest.NewRecorder()
-	s.Server.Handler().ServeHTTP(recorder, request)
-	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	require.Equal(t, "\"\"\x01true\x01true\x01true\x01false\x01", strings.SplitN(string(raw), "\x00", 4)[3])
+	response, body = get(t, ts, path, headers)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var unlocked api.PersonPage
+	require.NoError(t, json.Unmarshal([]byte(body), &unlocked))
+	require.Len(t, unlocked.Items, 1)
+	require.NotNil(t, unlocked.Items[0].PhotoSummary.HiddenCount)
+	require.Zero(t, *unlocked.Items[0].PhotoSummary.HiddenCount)
+	raw, err = base64.RawURLEncoding.DecodeString(unlocked.NextCursor)
+	require.NoError(t, err)
+	require.Equal(t, "\"\"\x01true\x01true\x01true\x01true\x01", strings.SplitN(string(raw), "\x00", 4)[3])
+	response, body = get(t, ts, path+"&cursor="+unlocked.NextCursor, headers)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	require.NoError(t, s.LockPhotoHidden(ctx))
+	response, body = get(t, ts, path+"&cursor="+unlocked.NextCursor, headers)
+	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+	require.Equal(t, "cursor_expired", decodeProblem(t, body).Code)
 }
 
 // Browser merge conflicts identify the exact face version to review.

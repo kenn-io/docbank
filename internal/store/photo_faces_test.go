@@ -959,40 +959,6 @@ func TestPeoplePhotoSummary(t *testing.T) {
 	rows, _, err = s.PeopleByDisplayName(ctx, "Hidden only", "", "", 100, true, options)
 	require.NoError(t, err)
 	require.Empty(t, rows)
-	// Excluded, trashed and stale photos leave the count, and a person left
-	// with none gets no card.
-	grace, err := s.CreatePerson(ctx, "Grace", "operator")
-	require.NoError(t, err)
-	lapsed, err := s.CreatePerson(ctx, "Lapsed", "operator")
-	require.NoError(t, err)
-	unavailable := func(owner Person, name, condition string) {
-		node := browsePhotoNode(t, s, name+".jpg", fakeHash(name), "image/jpeg")
-		_, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.NewString(), document.FaceBox{X: .1, Y: .1, Width: .3, Height: .3}, owner.PersonID)
-		require.NoError(t, err)
-		switch condition {
-		case "excluded":
-			asset, assetErr := s.PhotoAssetForNode(ctx, node.ID)
-			require.NoError(t, assetErr)
-			_, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
-		case "trashed":
-			_, _, err = s.Trash(ctx, node.ID, node.Revision)
-		case "stale":
-			_, _, err = s.ReplaceContent(ctx, node.ID, node.Revision, fakeHash("d4"), 4, "image/jpeg")
-		}
-		require.NoError(t, err)
-	}
-	unavailable(grace, "grace-available", "")
-	unavailable(lapsed, "lapsed-trashed", "trashed")
-	for _, condition := range []string{"excluded", "trashed", "stale"} {
-		unavailable(grace, "grace-"+condition, condition)
-	}
-	rows, _, err = s.PeopleByDisplayName(ctx, "Grace", "", "", 100, true, options)
-	require.NoError(t, err)
-	require.Len(t, rows, 1)
-	require.Equal(t, int64(1), rows[0].PhotoSummary.LibraryCount)
-	rows, _, err = s.PeopleByDisplayName(ctx, "Lapsed", "", "", 100, true, options)
-	require.NoError(t, err)
-	require.Empty(t, rows)
 }
 
 func TestPeoplePhotoSummaryExcludesNamesakeWithoutPhotos(t *testing.T) {

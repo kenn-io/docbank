@@ -756,6 +756,7 @@ it("conceals People after a failed Hidden lock until retry succeeds", async () =
         content_version_id: "version",
         generation_id: "ready",
         rotation: 0,
+        box: { x: 0.1, y: 0.1, width: 0.2, height: 0.2 },
       },
     },
   });

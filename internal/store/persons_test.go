@@ -323,13 +323,15 @@ func TestPeopleRecentIgnoresUnavailablePhotoEvidence(t *testing.T) {
 			require.NoError(t, err)
 			bob, err := s.CreatePerson(ctx, "Bob", "operator")
 			require.NoError(t, err)
-			for index, person := range []Person{ada, bob} {
+			lapsed, err := s.CreatePerson(ctx, "Lapsed", "operator")
+			require.NoError(t, err)
+			for index, person := range []Person{ada, bob, lapsed} {
 				node := browsePhotoNode(t, s, person.DisplayName+".jpg", fakeHash(person.DisplayName), "image/jpeg")
 				_, err := s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: node.CurrentVersionID, PersonID: person.PersonID, Role: "depicted", Action: "assert", Revision: 1})
 				require.NoError(t, err)
 				_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at=? WHERE person_id=?`, fmt.Sprintf("2026-0%d-01T00:00:00.000000000Z", index+1), person.PersonID)
 				require.NoError(t, err)
-				if index == 1 {
+				if index > 0 {
 					switch condition {
 					case "excluded":
 						asset, assetErr := s.PhotoAssetForNode(ctx, node.ID)
@@ -356,6 +358,14 @@ func TestPeopleRecentIgnoresUnavailablePhotoEvidence(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, bob.PersonID, rows[0].PersonID)
 			require.Equal(t, "2025-12-01T00:00:00.000000000Z", rows[0].RecentRank)
+			// Only Bob's older photo remains eligible for his card.
+			rows, _, err = s.PeopleByDisplayName(ctx, "Bo", "", "", 10, true, PeopleSearchOptions{PhotoSummary: true})
+			require.NoError(t, err)
+			require.Len(t, rows, 1)
+			require.Equal(t, int64(1), rows[0].PhotoSummary.LibraryCount)
+			rows, _, err = s.PeopleByDisplayName(ctx, "Lapsed", "", "", 10, true, PeopleSearchOptions{PhotoSummary: true})
+			require.NoError(t, err)
+			require.Empty(t, rows)
 		})
 	}
 }

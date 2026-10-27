@@ -369,52 +369,43 @@ it("refreshes People when a merge is confirmed after leaving and returning", asy
   people.dispose();
 });
 
-it.each(["network failure", 503])("replays an uncertain merge after %s once", async (status) => {
-  vi.spyOn(api, "listPeople").mockResolvedValue({ items: [grace] });
-  const merge = vi
-    .spyOn(api, "mergePerson")
-    .mockRejectedValueOnce(
-      typeof status === "number"
-        ? new APIError("Response lost", status, "")
-        : new TypeError("Response lost"),
-    )
-    .mockImplementation(async (_, request) => personMergeReceipt(ada, grace, request.operation_id));
-  const changed = vi.fn();
-  const people = new People("session", vi.fn(), undefined, changed);
-  merging(people);
-  expect(await people.submitMerge()).toBe(true);
-  expect(merge).toHaveBeenCalledTimes(2);
-  expect(merge.mock.calls[1]).toEqual(merge.mock.calls[0]);
-  expect(changed).toHaveBeenCalledExactlyOnceWith("ada", "Grace", "grace");
-  expect(people.merge).toBeUndefined();
-  expect(people.selected).toEqual([]);
-  people.dispose();
-});
-
-it("replays a merge when its response body fails", async () => {
-  vi.spyOn(api, "listPeople").mockResolvedValue({ items: [grace] });
-  const merge = vi
-    .spyOn(api, "mergePerson")
-    .mockResolvedValueOnce(
-      new Response(
-        new ReadableStream({
-          start(controller) {
-            controller.error(new TypeError("Response body lost"));
-          },
-        }),
-        { status: 200 },
-      ),
-    )
-    .mockImplementation(async (_, request) => personMergeReceipt(ada, grace, request.operation_id));
-  const changed = vi.fn();
-  const people = new People("session", vi.fn(), undefined, changed);
-  merging(people);
-  expect(await people.submitMerge()).toBe(true);
-  expect(merge).toHaveBeenCalledTimes(2);
-  expect(merge.mock.calls[1]).toEqual(merge.mock.calls[0]);
-  expect(changed).toHaveBeenCalledExactlyOnceWith("ada", "Grace", "grace");
-  people.dispose();
-});
+it.each(["network failure", 503, "body fails"])(
+  "replays an uncertain merge after %s once",
+  async (status) => {
+    vi.spyOn(api, "listPeople").mockResolvedValue({ items: [grace] });
+    const merge = vi.spyOn(api, "mergePerson");
+    if (status === "body fails")
+      merge.mockResolvedValueOnce(
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.error(new TypeError("Response body lost"));
+            },
+          }),
+          { status: 200 },
+        ),
+      );
+    else
+      merge.mockRejectedValueOnce(
+        typeof status === "number"
+          ? new APIError("Response lost", status, "")
+          : new TypeError("Response lost"),
+      );
+    merge.mockImplementation(async (_, request) =>
+      personMergeReceipt(ada, grace, request.operation_id),
+    );
+    const changed = vi.fn();
+    const people = new People("session", vi.fn(), undefined, changed);
+    merging(people);
+    expect(await people.submitMerge()).toBe(true);
+    expect(merge).toHaveBeenCalledTimes(2);
+    expect(merge.mock.calls[1]).toEqual(merge.mock.calls[0]);
+    expect(changed).toHaveBeenCalledExactlyOnceWith("ada", "Grace", "grace");
+    expect(people.merge).toBeUndefined();
+    expect(people.selected).toEqual([]);
+    people.dispose();
+  },
+);
 
 it.each([404, 412, 503, "invalid receipt"])(
   "leaves a merge unconfirmed after replay %s",
@@ -437,6 +428,7 @@ it.each([404, 412, 503, "invalid receipt"])(
     expect(changed).not.toHaveBeenCalled();
     expect(merge).toHaveBeenCalledTimes(2);
     expect(merge.mock.calls[1]).toEqual(merge.mock.calls[0]);
+    expect(people.selected).toEqual([]);
     people.dispose();
   },
 );

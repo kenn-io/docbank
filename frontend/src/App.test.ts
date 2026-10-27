@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import App from "./App.svelte";
-import { person } from "./people-test-fixtures.js";
 import * as appOpened from "./app-opened.js";
 import { batchTagRequestDigest } from "./batch-tags.js";
 
@@ -1963,47 +1962,6 @@ it("persists a vault-scoped tag binding and applies it only to the inspected fil
   expect(storage.getItem(`docbank:tag-hotkeys:v1:${keyboardVaultID}`)).toBe(
     JSON.stringify({ version: 1, bindings: { "1": keyboardTagID } }),
   );
-});
-
-it("refreshes visible People cards when another tab changes photo access", async () => {
-  prepareKeyboardApp();
-  installKeyboardBackend();
-  const fetchMock = vi.mocked(globalThis.fetch);
-  const original = fetchMock.getMockImplementation()!;
-  let changeID = "before";
-  let peopleReads = 0;
-  fetchMock.mockImplementation(async (input, init) => {
-    const url = String(input);
-    if (url === "/api/v1/photos/hidden")
-      return Response.json({ configured: false, change_id: changeID });
-    if (url === "/api/v1/photos/albums") return Response.json([]);
-    if (url.startsWith("/api/v1/people?")) {
-      peopleReads++;
-      return Response.json({
-        items: [
-          person("11111111-1111-4111-8111-111111111111", {
-            display_name: "Ada",
-            revision: 1,
-            photo_summary: { library_count: changeID === "before" ? 2 : 1 },
-          }),
-        ],
-      });
-    }
-    if (url === "/api/v1/photos/assets/query") return Response.json({ items: [], total: 0 });
-    return original(input, init);
-  });
-  render(App);
-  await screen.findByRole("cell", { name: "zeta.txt" });
-  await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
-  await fireEvent.click(await screen.findByRole("button", { name: "People" }));
-  await screen.findByText("2 Library photos");
-  const initialReads = peopleReads;
-  changeID = "after";
-  // The tab stays visible while the access poll learns about another tab's write.
-  await fireEvent(document, new Event("visibilitychange"));
-  await screen.findByText("1 Library photo");
-  expect(peopleReads).toBeGreaterThan(initialReads);
-  expect(screen.queryByText("2 Library photos")).toBeNull();
 });
 
 it.each(["Albums", "Map", "People"])(

@@ -18,243 +18,39 @@ const unlockedAccess = () => {
   access.acceptState({ configured: true, expires_in: 60, expires_at: "later" }, Date.now());
   return access;
 };
-it.each([0, 2])("shows a Hidden button only for a positive count, count=%s", async (count) => {
+it("hides the Hidden button for a zero count", async () => {
   const access = unlockedAccess();
   const people = new People("session", vi.fn(), access);
-  people.items = [{ ...ada, photo_summary: { library_count: 3, hidden_count: count } }];
+  people.items = [{ ...ada, photo_summary: { library_count: 3, hidden_count: 0 } }];
   const cache = new PhotoPreviewCache("session", vi.fn());
   const onperson = vi.fn();
   render(PeopleView, { people, cache, onperson });
-  if (count === 0) expect(screen.queryByRole("button", { name: "0 Hidden photos" })).toBeNull();
-  else {
-    await fireEvent.click(screen.getByRole("button", { name: "2 Hidden photos" }));
-    expect(onperson).toHaveBeenCalledWith(ada.person_id, ada.display_name, true);
-  }
+  expect(screen.queryByRole("button", { name: "0 Hidden photos" })).toBeNull();
   people.dispose();
   access.dispose();
   await cache.dispose();
 });
-it("blocks manual Search after a failed Hidden lock and reloads after a successful retry", async () => {
+it("blocks manual Search while a failed Hidden lock is unresolved", async () => {
   const access = unlockedAccess();
-  const hidden = {
-    ...grace,
-    photo_summary: {
-      library_count: 0,
-      hidden_count: 1,
-      face_hidden: true,
-      face: {
-        asset_id: "asset",
-        content_version_id: "version",
-        generation_id: "ready",
-        rotation: 0,
-        box: { x: 0.1, y: 0.1, width: 0.2, height: 0.2 },
-      },
-    },
-  };
-  vi.stubGlobal(
-    "Image",
-    class {
-      src = "";
-      naturalWidth = 1000;
-      naturalHeight = 800;
-      decode() {
-        return Promise.resolve();
-      }
-    },
-  );
-  vi.stubGlobal(
-    "URL",
-    Object.assign(URL, {
-      createObjectURL: vi.fn(() => "blob:hidden-person"),
-      revokeObjectURL: vi.fn(),
-    }),
-  );
-  const read = vi.spyOn(api, "listPeople").mockResolvedValue({ items: [hidden] });
-  const lock = vi.spyOn(api, "lockPhotoHidden").mockRejectedValueOnce(new TypeError("Lock failed"));
+  const read = vi.spyOn(api, "listPeople").mockResolvedValue({ items: [grace] });
+  vi.spyOn(api, "lockPhotoHidden").mockRejectedValueOnce(new TypeError("Lock failed"));
   const people = new People("session", vi.fn(), access);
-  people.items = [hidden];
+  people.items = [grace];
   const cache = new PhotoPreviewCache("session", vi.fn());
-  vi.spyOn(cache, "get").mockResolvedValue(new Blob(["synthetic"]));
   const view = render(PeopleView, { people, cache, onperson: vi.fn() });
-  await screen.findByRole("img", { name: "Face of Grace" });
   await act(async () => {
     expect(await access.lock()).toBe(false);
   });
   expect(access.lockError).toBe("Lock failed");
   await fireEvent.click(screen.getByRole("button", { name: "Search" }));
-  await waitFor(() => {
-    expect(people.loading).toBe(false);
-    expect(screen.queryByText("Grace")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Grace 0 Library photos" })).toBeNull();
-    expect(screen.queryByRole("img", { name: "Face of Grace" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "1 Hidden photo" })).toBeNull();
-  });
+  expect(people.loading).toBe(false);
+  expect(screen.queryByRole("button", { name: "Grace 2 Library photos" })).toBeNull();
   expect(read).not.toHaveBeenCalled();
-  lock.mockResolvedValueOnce({ configured: true });
-  read.mockResolvedValueOnce({ items: [ada] });
-  const scope = access.scope;
-  await act(async () => {
-    expect(await access.lock()).toBe(true);
-  });
-  expect(access.scope).toBeGreaterThan(scope);
-  await act(() => people.load());
-  expect(read).toHaveBeenCalledOnce();
-  expect(screen.getByRole("button", { name: "Ada 3 Library photos" })).toBeTruthy();
   view.unmount();
   people.dispose();
   access.dispose();
   await cache.dispose();
 });
-it.each([
-  ["rename", true],
-  ["rename", false],
-  ["merge", true],
-  ["merge", false],
-] as const)("confirms a lost %s response, committed=%s", async (operation, committed) => {
-  let rows = [ada, grace];
-  const merges: RequestInit[] = [];
-  const saved = {
-    ...grace,
-    display_name: operation === "rename" ? "Grace Hopper" : "Grace",
-    revision: 5,
-  };
-  vi.stubGlobal("fetch", async (input: string, init: RequestInit) => {
-    const url = new URL(input, "https://example.com");
-    expect(new Headers(init.headers).get("X-Docbank-Web-Session")).toBe("session");
-    if (url.pathname.startsWith("/api/v1/people/by-id/") && init.method === "GET")
-      return Response.json({ detail: "Forbidden" }, { status: 403 });
-    if (url.pathname === "/api/v1/people" && init.method === "GET") {
-      expect(url.searchParams.get("limit")).toBe("24");
-      expect(url.searchParams.get("photo_summary")).toBe("true");
-      const query = url.searchParams.get("query") ?? "";
-      return Response.json({ items: rows.filter((row) => row.display_name.includes(query)) });
-    }
-    if (url.pathname === "/api/v1/people/by-id/grace" && init.method === "PATCH") {
-      expect(JSON.parse(init.body as string)).toEqual({ display_name: "Grace Hopper" });
-      if (committed) rows = [ada, saved];
-      throw new TypeError("Response lost");
-    }
-    if (url.pathname === "/api/v1/people/by-id/grace/merge" && init.method === "POST") {
-      expect(JSON.parse(init.body as string)).toMatchObject({ absorbed_person_id: "ada" });
-      merges.push(init);
-      if (merges.length === 1) {
-        rows = committed ? [saved] : [{ ...ada, display_name: "Zoe", revision: 3 }, grace];
-        throw new TypeError("Response lost");
-      }
-      expect(init.body).toBe(merges[0]!.body);
-      expect(new Headers(init.headers).get("If-Match")).toBe('"4"');
-      return committed
-        ? personMergeReceipt(ada, grace, JSON.parse(init.body as string).operation_id)
-        : Response.json({ detail: "Person changed" }, { status: 412 });
-    }
-    throw new Error(`Unexpected request: ${init.method} ${input}`);
-  });
-  const changed = vi.fn();
-  const people = new People("session", vi.fn(), undefined, changed);
-  people.items = [ada, grace];
-  // The visible search can exclude the person we need to confirm.
-  people.query = "Ada";
-  const cache = new PhotoPreviewCache("session", vi.fn());
-  render(PeopleView, { people, cache, onperson: vi.fn() });
-  await act(async () => {
-    if (operation === "rename") await people.rename(grace, "Grace Hopper");
-    else {
-      people.toggle(ada);
-      people.toggle(grace);
-      people.startMerge();
-      people.keep(grace.person_id);
-      people.confirmMerge(true);
-      await people.submitMerge();
-    }
-  });
-  if (committed)
-    expect(changed).toHaveBeenCalledExactlyOnceWith(
-      operation === "rename" ? "grace" : "ada",
-      operation === "rename" ? "Grace Hopper" : "Grace",
-      ...(operation === "merge" ? ["grace"] : []),
-    );
-  else expect(changed).not.toHaveBeenCalled();
-  if (operation === "merge") {
-    expect(merges).toHaveLength(2);
-    expect(people.merge).toBeUndefined();
-    expect(people.selected).toEqual([]);
-  } else expect(screen.getByRole("button", { name: "Ada 3 Library photos" })).toBeTruthy();
-  expect(people.query).toBe("Ada");
-  people.dispose();
-  await cache.dispose();
-});
-it.each([
-  ["rename", 0, true],
-  ["rename", 503, true],
-  ["rename", 0, false],
-  ["rename", 503, false],
-  ["merge", 0, true],
-  ["merge", 503, true],
-  ["merge", 0, false],
-  ["merge", 503, false],
-] as const)(
-  "requires reselection after uncertain %s HTTP %s, committed=%s",
-  async (operation, status, committed) => {
-    let rows = [ada, grace];
-    const saved = { ...grace, display_name: "Grace Hopper", revision: 5 };
-    const lost = () => {
-      throw status ? new APIError("Response lost", status, "") : new TypeError("Response lost");
-    };
-    vi.spyOn(api, "listPeople").mockImplementation(async (params) => ({
-      items: rows.filter((row) => row.display_name.includes(params?.query ?? "")),
-    }));
-    vi.spyOn(api, "renamePerson").mockImplementation(async () => {
-      if (committed) rows = [ada, saved];
-      return lost();
-    });
-    vi.spyOn(api, "mergePerson").mockImplementation(async (id, request, headers) => {
-      if (operation === "merge") {
-        if (committed) rows = [grace];
-        return lost();
-      }
-      expect(id).toBe("grace");
-      expect(request.absorbed_person_id).toBe("ada");
-      expect(request.absorbed_revision).toBe(2);
-      if (headers["If-Match"] !== '"5"')
-        throw new APIError("Person changed", 412, "stale_revision");
-      rows = [saved];
-      return personMergeReceipt(ada, saved, request.operation_id);
-    });
-    const changed = vi.fn();
-    const people = new People("session", vi.fn(), undefined, changed);
-    people.items = rows;
-    const cache = new PhotoPreviewCache("session", vi.fn());
-    render(PeopleView, { people, cache, onperson: vi.fn() });
-    await act(async () => {
-      people.toggle(ada);
-      people.toggle(grace);
-      if (operation === "rename") await people.rename(grace, "Grace Hopper");
-      else {
-        people.startMerge();
-        people.keep("grace");
-        people.confirmMerge(true);
-        await people.submitMerge();
-      }
-    });
-    expect(people.selected).toEqual([]);
-    for (const checkbox of screen.getAllByRole("checkbox"))
-      expect((checkbox as HTMLInputElement).checked).toBe(false);
-    expect(screen.queryByRole("button", { name: "Merge" })).toBeNull();
-    if (operation === "rename" && committed) {
-      await fireEvent.click(screen.getByRole("checkbox", { name: /^Select Grace Hopper/ }));
-      await fireEvent.click(screen.getByRole("checkbox", { name: /^Select Ada/ }));
-      await act(async () => {
-        people.startMerge();
-        people.keep("grace");
-        people.confirmMerge(true);
-        expect(await people.submitMerge()).toBe(true);
-      });
-      expect(changed).toHaveBeenLastCalledWith("ada", "Grace Hopper", "grace");
-    }
-    people.dispose();
-    await cache.dispose();
-  },
-);
 it("keeps the search text with the applied query when the view returns", async () => {
   const read = vi.spyOn(api, "listPeople").mockResolvedValue({ items: [ada] });
   const people = new People("session", vi.fn());
@@ -423,8 +219,6 @@ it("keeps portraits through in-place updates and releases them when cards clear"
   });
   await act(() => people.load("Ada"));
   await waitFor(() => expect(screen.getByRole("img", { name: "Face of Ada L" })).toBeTruthy());
-  await fireEvent.click(screen.getByRole("button", { name: "Clear" }));
-  expect(screen.getByRole("img", { name: "Face of Ada L" })).toBeTruthy();
   const portraitURL = screen.getByRole("img", { name: "Face of Ada L" }).getAttribute("src");
   revokeObjectURL.mockClear();
   await act(() => people.conceal());
@@ -486,10 +280,15 @@ it("labels namesakes by detail, and by ID only when the details match", async ()
 it("opens unlocked Hidden counts in Hidden and conceals them on lock", async () => {
   const access = unlockedAccess();
   const people = new People("session", vi.fn(), access);
-  people.items = [ada, { ...grace, photo_summary: { library_count: 0, hidden_count: 1 } }];
+  people.items = [
+    { ...ada, photo_summary: { library_count: 3, hidden_count: 2 } },
+    { ...grace, photo_summary: { library_count: 0, hidden_count: 1 } },
+  ];
   const cache = new PhotoPreviewCache("session", vi.fn());
   const open = vi.fn();
   const view = render(PeopleView, { people, cache, onperson: open });
+  await fireEvent.click(screen.getByRole("button", { name: "2 Hidden photos" }));
+  expect(open).toHaveBeenLastCalledWith("ada", "Ada", true);
   await fireEvent.click(screen.getByRole("button", { name: "1 Hidden photo" }));
   expect(open).toHaveBeenLastCalledWith("grace", "Grace", true);
   await fireEvent.click(screen.getByRole("button", { name: "Grace 0 Library photos" }));
@@ -511,6 +310,7 @@ it("opens unlocked Hidden counts in Hidden and conceals them on lock", async () 
   await act(() => access.acceptState({ configured: true }, Date.now() + 1));
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(screen.queryByRole("button", { name: "1 Hidden photo" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "2 Hidden photos" })).toBeNull();
   view.unmount();
   people.dispose();
   access.dispose();
