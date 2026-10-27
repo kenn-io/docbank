@@ -22,7 +22,7 @@ func indexedPhotoRun(t *testing.T, count, seconds int) (imageEmbeddingCatalogFix
 	for i := range ids {
 		stamp := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).Add(time.Duration(i*seconds) * time.Second).Format(time.RFC3339)
 		ids[i] = stackPhoto(t, f.s, run, fmt.Sprintf("/indexed/frame-%04d.jpg", i), stamp, document.SourceMetadataPrecisionSecond)
-		index.publish(t, ids[i], []float64{1, 0, 0, 0, 0, 0, 0, 0})
+		index.publish(t, ids[i], []float64{1, float64(i%7) * .01, 0, 0, 0, 0, 0, 0})
 	}
 	index.generation(t, "indexed-camera-stream")
 	return f, ids

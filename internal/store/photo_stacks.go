@@ -719,7 +719,8 @@ func (p *photoStackPager) hydrate(ctx context.Context, inputs map[string]photoSt
 	return nil
 }
 
-// walk hydrates bounded probes and stops when a preceding frame cannot link.
+// walk reads back to a time boundary before grouping in capture order.
+// A vectorless frame also proves a boundary when it follows a burst gap.
 // Image runs still resolve their first frame before applying the decision cap.
 func (p *photoStackPager) walk(ctx context.Context, frame photoStackFrame, forward bool, component *photoStackComponent) error {
 	imageCandidates := !forward && len(p.vectors.indexes) > 0
@@ -778,7 +779,7 @@ func (p *photoStackPager) walk(ctx context.Context, frame photoStackFrame, forwa
 				}
 			}
 			reach, ok := photoStackReach(current.SortKey, p.gap, forward)
-			if imageCandidates {
+			if imageCandidates && len(current.ImageVectors) > 0 {
 				reach, ok = photoStackReach(current.SortKey, p.reach, false)
 			} else if forward && len(p.vectors.indexes) > 0 {
 				imageReach, imageOK := photoStackReach(component.frames[0].SortKey, photoStackImageWindowSeconds, true)
@@ -791,10 +792,6 @@ func (p *photoStackPager) walk(ctx context.Context, frame photoStackFrame, forwa
 				break
 			}
 			if imageCandidates {
-				if !photoStackChained(next, next, current, p.gap) {
-					stopped = true
-					break
-				}
 				burstReach, ok := photoStackReach(next.SortKey, p.gap, true)
 				if ok && current.SortKey <= burstReach {
 					burstFrames++
@@ -824,15 +821,6 @@ func (p *photoStackPager) walk(ctx context.Context, frame photoStackFrame, forwa
 	for i := range component.frames {
 		component.frames[i] = inputs[component.frames[i].AssetID]
 	}
-	if forward {
-		slices.SortFunc(component.frames, comparePhotoStackFrames)
-		// Conservative time reads may pass a dissimilar frame. Keep only the
-		// segment that starts at this stack's already resolved first frame.
-		for segment := range photoStackSegments(component.frames, p.gap) {
-			component.frames = segment
-			break
-		}
-	}
 	return nil
 }
 
@@ -845,25 +833,24 @@ func (p *photoStackPager) component(ctx context.Context, frame photoStackFrame) 
 	if err := p.walk(ctx, frame, false, component); err != nil {
 		return nil, err
 	}
-	if len(p.vectors.indexes) == 0 && len(component.frames) > MaxPhotoStackFrames {
-		p.remember(component)
-		return component, nil
-	}
-	if len(p.vectors.indexes) > 0 {
-		slices.SortFunc(component.frames, comparePhotoStackFrames)
-		frames := component.frames
-		for segment := range photoStackSegments(frames, p.gap) {
-			component = &photoStackComponent{frames: slices.Clone(segment)}
-			if segment[len(segment)-1].AssetID != frame.AssetID {
-				p.remember(component)
-			}
-		}
-	}
-	if err := p.walk(ctx, frame, true, component); err != nil {
+	forward := &photoStackComponent{frames: []photoStackFrame{frame}}
+	if err := p.walk(ctx, frame, true, forward); err != nil {
 		return nil, err
 	}
-	p.remember(component)
-	return component, nil
+	window := slices.Concat(component.frames, forward.frames[1:])
+	for _, group := range groupPhotoStackFrames(window, p.gap) {
+		// Groups starting after this entry may extend beyond the forward probe.
+		if comparePhotoStackFrames(group[0], frame) <= 0 {
+			p.remember(&photoStackComponent{frames: group})
+		}
+	}
+	slices.SortFunc(window, comparePhotoStackFrames)
+	for segment := range photoStackSegments(window, p.gap) {
+		if !eligiblePhotoStack(segment) && comparePhotoStackFrames(segment[0], frame) <= 0 {
+			p.remember(&photoStackComponent{frames: segment})
+		}
+	}
+	return p.components[frame.AssetID], nil
 }
 
 func (p *photoStackPager) remember(component *photoStackComponent) {
