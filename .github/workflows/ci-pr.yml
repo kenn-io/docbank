@@ -4,9 +4,21 @@ name: CI
 # runners. Changes to ci.yml take effect for PRs after they merge to main.
 on:
   pull_request:
+  merge_group:
+    types: [checks_requested]
 
 permissions: read-all
 
 jobs:
   run:
     uses: kenn-io/docbank/.github/workflows/ci.yml@main
+
+  gate:
+    name: CI gate
+    needs: run
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require successful CI
+        if: needs.run.result != 'success'
+        run: exit 1
