@@ -77,22 +77,18 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 		if err != nil {
 			return nil, NewError(http.StatusUnprocessableEntity, "invalid_query", err.Error())
 		}
-		if value.Mode != query.ModeLexical && strings.TrimSpace(value.Text) == "" {
-			value.Mode = query.ModeLexical
-		}
-		if value.Mode != query.ModeLexical {
-			value.Sort = query.Sort{Field: "relevance", Direction: "desc"}
-		}
-		request := store.PhotoBrowseRequest{
-			SourceMetadataFingerprint: processing.SourceMetadataExtractorFingerprint,
-			Query:                     value, Hidden: in.Body.Hidden, Stacks: in.Body.Stacks && in.Body.Projection != "map",
-			Coverage: store.CoverageSelection{Configuration: in.Body.Coverage.Configuration, ProfileFingerprint: in.Body.Coverage.ProfileFingerprint},
-			PageSize: in.Body.PageSize, Recipes: recipes, Facets: in.Body.Facets,
-		}
+		metadataSort := value.Sort
+		value = photoRankingQuery(value)
+		request := photoRankingRequest(value, in.Body.Hidden, store.CoverageSelection{Configuration: in.Body.Coverage.Configuration, ProfileFingerprint: in.Body.Coverage.ProfileFingerprint})
+		request.Stacks = in.Body.Stacks && in.Body.Projection != "map"
+		request.PageSize, request.Recipes, request.Facets = in.Body.PageSize, recipes, in.Body.Facets
 		var boundary *store.PhotoBrowsePosition
 		frozen := value.Mode != query.ModeLexical || in.Body.SnapshotID != ""
 		var ranking store.PhotoRanking
 		if in.Body.Cursor != "" && in.Body.SnapshotID == "" {
+			if value.Mode != query.ModeLexical && !request.Hidden {
+				return nil, FromStoreError(store.ErrInvalidPhotoCursor)
+			}
 			cursor, cursorErr := service.decodePhotoCursor(in.Body.Cursor)
 			if cursorErr != nil {
 				return nil, FromStoreError(cursorErr)
@@ -102,9 +98,10 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 			request.Query.Mode = query.ModeLexical
 			frozen = false
 		}
-		if value.Mode != query.ModeLexical && in.Body.SnapshotID == "" && boundary == nil && request.Hidden {
+		if value.Mode != query.ModeLexical && in.Body.SnapshotID == "" && request.Hidden {
 			ranking = store.PhotoRanking{RequestedMode: value.Mode, ActualMode: query.ModeLexical, FallbackReason: "hidden_photos"}
 			request.Query.Mode = query.ModeLexical
+			request.Query.Sort = metadataSort
 			frozen = false
 		}
 		if in.Body.Projection == "map" {
@@ -354,6 +351,21 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 			_, _ = hctx.BodyWriter().Write(body)
 		}}, nil
 	})
+}
+
+// photoRankingQuery keeps live and saved photo queries on the same browse path.
+func photoRankingQuery(value query.Query) query.Query {
+	if value.Mode != query.ModeLexical && strings.TrimSpace(value.Text) == "" {
+		value.Mode = query.ModeLexical
+	}
+	if value.Mode != query.ModeLexical {
+		value.Sort = query.Sort{Field: "relevance", Direction: "desc"}
+	}
+	return value
+}
+
+func photoRankingRequest(value query.Query, hidden bool, coverage store.CoverageSelection) store.PhotoBrowseRequest {
+	return store.PhotoBrowseRequest{Query: value, Hidden: hidden, Coverage: coverage, SourceMetadataFingerprint: processing.SourceMetadataExtractorFingerprint}
 }
 
 type photoCursorPayload struct {

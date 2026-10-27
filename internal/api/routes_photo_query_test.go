@@ -1003,3 +1003,49 @@ func TestClearedMeaningSearchMatchesLexicalBrowse(t *testing.T) {
 		}
 	}
 }
+
+func TestPhotoRankedCursorRequiresSnapshot(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	for _, hidden := range []bool{false, true} {
+		t.Run(strconv.FormatBool(hidden), func(t *testing.T) {
+			headers := map[string]string{}
+			for i := range 2 {
+				node, err := s.CreateFile(t.Context(), s.RootID(), fmt.Sprintf("cursor-%t-%d.jpg", hidden, i), testHash(fmt.Sprintf("cursor-%t-%d", hidden, i)), 20, "image/jpeg")
+				require.NoError(t, err)
+				if hidden {
+					if i == 0 {
+						require.NoError(t, s.SetupPhotoHidden(t.Context(), "synthetic-passcode"))
+					}
+					asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
+					require.NoError(t, err)
+					_, err = s.SetPhotoAssetHidden(t.Context(), asset.ID, asset.Revision, true)
+					require.NoError(t, err)
+				}
+			}
+			if hidden {
+				_, cookie, err := daemonconn.New(ts.URL, testAPIKey).PhotoHidden(t.Context(), "unlock", "synthetic-passcode", "")
+				require.NoError(t, err)
+				headers["Cookie"] = cookie
+			}
+			request := api.PhotoBrowseRequest{Hidden: hidden, Query: api.QueryPayload(`{"syntax":"advanced","text":"name:cursor","sort":{"field":"name","direction":"asc"}}`), PageSize: 1}
+			response, body := do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", headers, request)
+			require.Equal(t, http.StatusOK, response.StatusCode, body)
+			var page api.PhotoBrowsePage
+			require.NoError(t, json.Unmarshal([]byte(body), &page))
+			require.NotEmpty(t, page.NextCursor)
+			request.Query = api.QueryPayload(`{"mode":"semantic","syntax":"advanced","text":"name:cursor","sort":{"field":"name","direction":"asc"}}`)
+			request.Cursor = page.NextCursor
+			response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", headers, request)
+			if hidden {
+				require.Equal(t, http.StatusOK, response.StatusCode, body)
+				require.NoError(t, json.Unmarshal([]byte(body), &page))
+				require.Equal(t, "hidden_photos", page.FallbackReason)
+				require.Len(t, page.Items, 1)
+			} else {
+				require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+				require.Equal(t, "invalid_photo_cursor", decodeProblem(t, body).Code)
+			}
+		})
+	}
+}
