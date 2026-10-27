@@ -67,6 +67,7 @@ var readToolDefinitions = []toolDefinition{
 	{name: "get_export_status", title: "Get export status", description: "Read one retained export job without downloading it.", schemas: getExportStatusSchemas},
 	{name: "get_vault_info", title: "Get vault info", description: "Summarize the selected vault without exposing its host path.", schemas: getVaultInfoSchemas},
 	{name: "list_documents", title: "List documents", description: "Page through current, live documents with bounded stable ordering.", schemas: listDocumentsSchemas},
+	{name: "find_conflicts", title: "Find conflicting figures", description: "Compare search excerpts for differing figures. Prefer lexical or hybrid search; snippets can omit context and results are leads. For CONFLICTING present each value with its citation and date without choosing one. NO_CONFLICT covers only aligned figures; NOT_COMPARABLE is not agreement.", schemas: findConflictsSchemas},
 	{name: "search_documents", title: "Search documents", description: "Search an exact bounded current-version source fence and report coverage.", schemas: searchDocumentsSchemas},
 	{name: "get_document", title: "Get document", description: "Read metadata for one exact current document identity.", schemas: getDocumentSchemas},
 	{name: "list_document_versions", title: "List document versions", description: "Page through immutable content versions for one stable document node.", schemas: listDocumentVersionsSchemas},
@@ -298,7 +299,7 @@ func validToolSemantics(name string, arguments map[string]any) bool {
 	case "list_documents":
 		return stringBytesWithin(arguments, "path_prefix", maxPathBytes) &&
 			stringBytesWithin(arguments, "cursor", maxCursorBytes)
-	case "search_documents":
+	case "search_documents", "find_conflicts":
 		filters, ok := arguments["filters"].(map[string]any)
 		if !ok {
 			return arguments["filters"] == nil

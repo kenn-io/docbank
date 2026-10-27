@@ -59,7 +59,7 @@ var embeddedDocumentSchemas = func() map[string]documentToolSchemas {
 	out := map[string]documentToolSchemas{}
 	for _, tool := range toolCatalog(ServerOptions{}) {
 		switch tool.Name {
-		case "get_vault_info", "list_documents", "search_documents":
+		case "get_vault_info", "list_documents", "search_documents", "find_conflicts":
 			out[tool.Name] = documentToolSchemas{mustResolveSchema(tool.InputSchema), mustResolveSchema(tool.OutputSchema)}
 		}
 	}
@@ -90,6 +90,8 @@ func CallDocumentReadTool(ctx context.Context, reader *api.DocumentReader, req *
 		out, links, err = listDocuments(ctx, session, req.Params.Arguments)
 	case "search_documents":
 		out, links, err = searchDocuments(ctx, session, req.Params.Arguments)
+	case "find_conflicts":
+		out, err = findConflicts(ctx, session, req.Params.Arguments)
 	case "get_vault_info":
 		out, err = getVaultInfo(ctx, session, req.Params.Arguments)
 	}

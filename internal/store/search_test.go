@@ -811,6 +811,20 @@ func TestSearchPathsPreserveResultOrder(t *testing.T) {
 	require.NoError(t, s.addSearchPaths(ctx, nil))
 }
 
+func TestBoundedHighlightedExcerptDisclosesClipping(t *testing.T) {
+	t.Parallel()
+	input := "\x01fee\x02 " + strings.Repeat("x", 600)
+	excerpt := boundedExplainedSearchExcerpt(input)
+	require.LessOrEqual(t, len([]rune(excerpt)), maxExplainedSearchExcerptRunes)
+	require.True(t, strings.HasSuffix(excerpt, "…"), "clipped highlighted excerpt must disclose truncation: %q", excerpt)
+	require.NotContains(t, excerpt, "\x01")
+	require.NotContains(t, excerpt, "\x02")
+	tail := boundedExplainedSearchExcerpt(strings.Repeat("x", 600) + " \x01fee\x02 is $5.")
+	require.True(t, strings.HasPrefix(tail, "…"), "leading clip undisclosed: %q", tail)
+	require.False(t, strings.HasSuffix(tail, "…"), "uncut end marked clipped: %q", tail)
+	require.Equal(t, "fee is $5.", boundedExplainedSearchExcerpt("\x01fee\x02 is $5."))
+}
+
 func TestSearchExplainedLexicalCandidatesBoundsLongNameExcerpt(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

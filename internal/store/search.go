@@ -314,13 +314,34 @@ func scanExplainedLexicalRow(row interface{ Scan(dest ...any) error }, candidate
 
 func boundedExplainedSearchExcerpt(value string) string {
 	runes := []rune(value)
+	clippedHighlight := len(runes) > maxExplainedSearchExcerptRunes && slices.Contains(runes, rune(1))
+	cutStart, cutEnd := false, false
 	if len(runes) > maxExplainedSearchExcerptRunes {
 		match := max(slices.Index(runes, rune(1)), 0)
 		start := max(0, min(match-maxExplainedSearchExcerptRunes/2,
 			len(runes)-maxExplainedSearchExcerptRunes))
+		cutStart, cutEnd = start > 0, start+maxExplainedSearchExcerptRunes < len(runes)
 		runes = runes[start : start+maxExplainedSearchExcerptRunes]
 	}
 	runes = slices.DeleteFunc(runes, func(value rune) bool { return value == 1 || value == 2 })
+	if clippedHighlight {
+		markers := 0
+		if cutStart {
+			markers++
+		}
+		if cutEnd {
+			markers++
+		}
+		if len(runes)+markers > maxExplainedSearchExcerptRunes {
+			runes = runes[:maxExplainedSearchExcerptRunes-markers]
+		}
+		if cutStart {
+			runes = append([]rune{'…'}, runes...)
+		}
+		if cutEnd {
+			runes = append(runes, '…')
+		}
+	}
 	return string(runes)
 }
 

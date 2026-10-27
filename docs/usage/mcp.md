@@ -197,6 +197,7 @@ resource links, is capped at 1 MiB.
 | `get_export_status` | Reads one retained native export job, including progress, failure code, and any completed receipt. It never downloads or releases the job. |
 | `get_vault_info` | Returns the stable vault ID and aggregate live, trash, version, and blob counts. It never returns the host vault path. |
 | `list_documents` | Lists current, live files. `path_prefix` defaults to `/` and is capped at 16,384 Unicode characters and 16 KiB of UTF-8. Sorts are `path`, `name`, `modified_at`, `size`, and `media_type`, in `asc` or `desc` order. Page size defaults to 50 and is capped at 250. |
+| `find_conflicts` | Searches the same source selector as `search_documents`, then compares eligible content excerpts for differing figures. The limit defaults to 20 and cannot exceed 20. |
 | `search_documents` | Requires a 1–8,192-character query, a 1–128-character processing profile name, and exactly one source selector: 1–4,096 unique content-version IDs or metadata filters. Mode defaults to `auto` and may be `auto`, `lexical`, `semantic`, or `hybrid`; result limit defaults to 20 and is capped at 100. Optional binding IDs are capped at 128 characters. |
 | `get_document` | Requires an exact positive node ID and current content-version UUID. A stale, trashed, moved-to-another-version, or mismatched identity is rejected. |
 | `read_document_content` | Reads original bytes from a selected immutable version as base64. Requires the exact vault, node, version, SHA-256 and size from `list_document_versions`. Originals are limited to 32 MiB; byte windows default to 64 KiB and are capped at 256 KiB. Returns offset, next offset and EOF. Verify the assembled size and SHA-256 before using the bytes. No export job or local file is created. |
@@ -249,6 +250,8 @@ quota. The size bound accommodates paths up to 16 KiB. Tampered, expired,
 reused-for-another-query, or daemon-restart-invalidated cursors fail instead of
 restarting at page one.
 
+### Document search
+
 Before searching, `search_documents` resolves its selector to a source fence:
 the exact set of current, live versions it will search. Filters may select a
 tag UUID, a MIME type of at most 255 characters, a positive ancestor node ID,
@@ -260,6 +263,37 @@ reasons, and truncation state. It returns at most 100 hits. Each excerpt is
 capped at 512 characters and each hit has at most 64 evidence identities of at
 most 1,024 characters each. A result contains at most 64 skipped-reason codes
 of at most 64 characters each.
+
+### Find conflicting figures
+
+Use `find_conflicts` with the same query, profile, and source selector as
+`search_documents`. Its result limit defaults to 20 and cannot exceed 20.
+Prefer lexical or hybrid mode: semantic-only hits have no lexical excerpt.
+Name-only matches, excerpts that reach 512 characters or start or end in an ellipsis,
+and partial or ambiguous clauses cannot provide comparable evidence. A passage with only ambiguous
+figures reports `compared: false` and `skip_reason: "ambiguous"`, even when
+other passages agree. Both content-blob and rendition-segment lexical
+evidence are eligible. Snippets may omit context, so conflicts are leads for
+further review, not proof about the complete documents.
+
+For `CONFLICTING`, present each side's value, quote, source, and modification
+date without choosing a winner. Side passage indices refer to the returned
+`passages` array; quote and figure offsets count Unicode code points in that
+passage's excerpt. `NO_CONFLICT` describes only aligned figures, and
+`NOT_COMPARABLE` does not mean agreement. Modification dates are file dates,
+not necessarily the dates the statements took effect. A stale identity during
+summary resolution fails the call with `stale_version`.
+
+The tool returns at most 20 passages and 16 conflict edges. The detector stops
+after 10,000 figure comparisons or 100 retained edges. `conflicts_truncated`
+marks an incomplete detector scan, the 16-edge output limit, or edges removed
+to fit the complete 1 MiB MCP response. `passages_truncated` marks identities
+removed to fit that response. When pruning removes every conflict edge, or an
+incomplete scan finds none, the status is `NOT_COMPARABLE`. Search coverage and
+its separate `truncated` flag describe retrieval completeness. Pruning identities
+also prevents a `NO_CONFLICT` result.
+
+### Document and processing response bounds
 
 Document summaries use paths of at most 16,384 characters, names and MIME types
 of at most 255 characters, and at most 64 active rendition identities.

@@ -28,7 +28,7 @@ func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
 		"get_export_plan", "get_export_problems",
 		"get_report_summary", "get_report_dates",
 		"get_export_status",
-		"get_vault_info", "list_documents", "search_documents", "get_document",
+		"get_vault_info", "list_documents", "find_conflicts", "search_documents", "get_document",
 		"list_document_versions", "read_rendition_text", "get_processing_plan",
 		"get_processing_status", "get_processing_coverage", "get_package_import",
 		"get_package_preflight", "list_package_preflight_diagnostics",
