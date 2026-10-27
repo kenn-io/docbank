@@ -297,6 +297,10 @@ func TestPhotoRankedSnapshotFreezesModeAndAssetOrder(t *testing.T) {
 		current, err := service.CurrentPhotoPage(t.Context(), first, nil)
 		require.NoError(t, err)
 		require.Equal(t, "image-50.jpg", current.Items[0].Name)
+		hidden := SnapshotRequest{Photos: true, PhotoHidden: true, Query: first.Query, PageSize: 50}
+		_, err = service.PhotoPage(t.Context(), "owner", first.SnapshotID, first.NextCursor, hidden)
+		require.ErrorIs(t, err, ErrSnapshotCursor)
+
 		next, err := service.PhotoPage(t.Context(), "owner", first.SnapshotID, first.NextCursor, SnapshotRequest{Photos: true, Query: first.Query, PageSize: 50})
 		require.NoError(t, err)
 		require.Equal(t, "semantic", next.PhotoRanking.ActualMode)

@@ -33,7 +33,13 @@ func (service *Service) SearchPhotos(ctx context.Context, request store.PhotoBro
 		for _, binding := range profile.portable.Embeddings {
 			provider := profile.embedders[binding.Name]
 			_, hasFloor := profile.embeddingSimilarityFloors[binding.Name]
-			if binding.InputKind != document.EmbeddingInputImage || provider == nil || !provider.Descriptor().SupportsTextQuery || !hasFloor {
+			if binding.InputKind != document.EmbeddingInputImage || provider == nil || !provider.Descriptor().SupportsTextQuery {
+				continue
+			}
+			if !hasFloor {
+				if reason == "provider_unavailable" {
+					reason = "similarity_floor_unset"
+				}
 				continue
 			}
 			selected, err := service.searchPhotoBinding(ctx, request, semanticText, scope, profile, binding, provider)

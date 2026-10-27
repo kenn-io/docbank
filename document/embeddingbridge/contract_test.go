@@ -544,7 +544,7 @@ func TestImageUploadAndTextQueryReturnBothVectors(t *testing.T) {
 	input := document.EmbeddingInput{Key: "image-a", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputKind("image"), Source: &testUpload{Reader: bytes.NewReader(source), metadata: metadata}}
 	auth := fixture.authorization(2)
 	auth.DiscloseFilename = true
-	result, err := document.ExecuteEmbedding(context.Background(), fixture.client, []document.EmbeddingInput{input, {Key: "query-a", Role: document.EmbeddingRoleQuery, Kind: document.EmbeddingInputQueryText, Text: "sunset"}}, auth)
+	result, err := fixture.client.Embed(context.Background(), []document.EmbeddingInput{input, {Key: "query-a", Role: document.EmbeddingRoleQuery, Kind: document.EmbeddingInputQueryText, Text: "sunset"}}, auth)
 	select {
 	case serverErr := <-serverErrors:
 		require.NoError(t, serverErr)

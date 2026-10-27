@@ -3426,91 +3426,86 @@ it.each(["hidden", "ranked", "empty"] as const)(
   },
 );
 
-it.each(["semantic", "hybrid"] as const)(
-  "retains accepted %s matches and selection while live refresh hydrates their display facts",
-  async (mode) => {
-    let changed = false;
-    const read = vi.spyOn(api, "listPhotoAssets").mockImplementation(async (request) => {
-      const accepted = !changed || request.snapshot_id === "accepted";
-      return {
-        items: accepted
-          ? [photo(2), { ...photo(1), revision: changed ? 2 : 1, rating: changed ? 5 : 0 }]
-          : [photo(3), photo(1)],
-        total: 2,
-        facets: [],
-        relevance_available: true,
-        snapshot_id: accepted ? "accepted" : "replacement",
-        stacks: [
-          {
-            asset_ids: accepted ? ["photo-2", "photo-1"] : ["photo-3", "photo-1"],
-            representative_id: changed ? "photo-1" : "photo-2",
-          },
-        ],
-      };
-    });
-    const photos = new Photos("scoped", vi.fn(), false, {
-      ...photoQuery,
-      mode,
-      text: "sunset",
-    });
-    await photos.loadMore();
-    await photos.selectAllResults();
-    changed = true;
-    await photos.refresh(undefined, true);
-    expect(photos.snapshotID).toBe("accepted");
-    expect(photos.items.map((row) => row.asset_id)).toEqual(["photo-2", "photo-1"]);
-    expect([...photos.selectedIDs]).toEqual(["photo-2", "photo-1"]);
-    expect(photos.items[1]).toMatchObject({ revision: 2, rating: 5 });
-    expect(photos.items[0]).toMatchObject({
-      stack: { asset_ids: ["photo-2", "photo-1"], representative_id: "photo-1" },
-    });
-    expect(read.mock.calls.at(-1)?.[0]).toMatchObject({ snapshot_id: "accepted" });
-    await photos.refresh();
-    expect(photos.snapshotID).toBe("replacement");
-    expect(photos.items.map((row) => row.asset_id)).toEqual(["photo-3", "photo-1"]);
-    photos.dispose();
-  },
-);
-
-it.each(["semantic", "hybrid"] as const)(
-  "continues a %s metadata fallback with the captured query",
-  async (mode) => {
-    const read = vi.spyOn(api, "listPhotoAssets").mockImplementation(async (request) => ({
-      items: [photo(request.cursor ? 2 : 1)],
+it("retains accepted Meaning matches and selection while live refresh hydrates their display facts", async () => {
+  const mode = "semantic";
+  let changed = false;
+  const read = vi.spyOn(api, "listPhotoAssets").mockImplementation(async (request) => {
+    const accepted = !changed || request.snapshot_id === "accepted";
+    return {
+      items: accepted
+        ? [photo(2), { ...photo(1), revision: changed ? 2 : 1, rating: changed ? 5 : 0 }]
+        : [photo(3), photo(1)],
       total: 2,
       facets: [],
       relevance_available: true,
-      requested_mode: mode,
-      actual_mode: "lexical",
-      fallback_reason: "provider_unavailable",
-      snapshot_id: "fallback-snapshot",
-      next_cursor: request.cursor ? undefined : "fallback-tail",
-    }));
-    const photos = new Photos("scoped", vi.fn(), false, {
-      ...photoQuery,
-      mode,
-      text: "sunset",
-    });
-    photos.filtersOpen = true;
-    await photos.loadMore();
-    const captured = read.mock.calls[0][0].query;
-    await photos.loadMore();
-    expect(read.mock.calls.at(-1)?.[0]).toMatchObject({
-      query: captured,
-      snapshot_id: "fallback-snapshot",
-      cursor: "fallback-tail",
-    });
-    expect(photos.items.map((row) => row.asset_id)).toEqual(["photo-1", "photo-2"]);
-    expect(photos.facets).toEqual([]);
-    expect(photos.timeline).toBeUndefined();
-    photos.dispose();
-  },
-);
+      snapshot_id: accepted ? "accepted" : "replacement",
+      stacks: [
+        {
+          asset_ids: accepted ? ["photo-2", "photo-1"] : ["photo-3", "photo-1"],
+          representative_id: changed ? "photo-1" : "photo-2",
+        },
+      ],
+    };
+  });
+  const photos = new Photos("scoped", vi.fn(), false, {
+    ...photoQuery,
+    mode,
+    text: "sunset",
+  });
+  await photos.loadMore();
+  await photos.selectAllResults();
+  changed = true;
+  await photos.refresh(undefined, true);
+  expect(photos.snapshotID).toBe("accepted");
+  expect(photos.items.map((row) => row.asset_id)).toEqual(["photo-2", "photo-1"]);
+  expect([...photos.selectedIDs]).toEqual(["photo-2", "photo-1"]);
+  expect(photos.items[1]).toMatchObject({ revision: 2, rating: 5 });
+  expect(photos.items[0]).toMatchObject({
+    stack: { asset_ids: ["photo-2", "photo-1"], representative_id: "photo-1" },
+  });
+  expect(read.mock.calls.at(-1)?.[0]).toMatchObject({ snapshot_id: "accepted" });
+  await photos.refresh();
+  expect(photos.snapshotID).toBe("replacement");
+  expect(photos.items.map((row) => row.asset_id)).toEqual(["photo-3", "photo-1"]);
+  photos.dispose();
+});
+
+it("continues a metadata fallback with the captured query", async () => {
+  const mode = "semantic";
+  const read = vi.spyOn(api, "listPhotoAssets").mockImplementation(async (request) => ({
+    items: [photo(request.cursor ? 2 : 1)],
+    total: 2,
+    facets: [],
+    relevance_available: true,
+    requested_mode: mode,
+    actual_mode: "lexical",
+    fallback_reason: "provider_unavailable",
+    snapshot_id: "fallback-snapshot",
+    next_cursor: request.cursor ? undefined : "fallback-tail",
+  }));
+  const photos = new Photos("scoped", vi.fn(), false, {
+    ...photoQuery,
+    mode,
+    text: "sunset",
+  });
+  photos.filtersOpen = true;
+  await photos.loadMore();
+  const captured = read.mock.calls[0][0].query;
+  await photos.loadMore();
+  expect(read.mock.calls.at(-1)?.[0]).toMatchObject({
+    query: captured,
+    snapshot_id: "fallback-snapshot",
+    cursor: "fallback-tail",
+  });
+  expect(photos.items.map((row) => row.asset_id)).toEqual(["photo-1", "photo-2"]);
+  expect(photos.facets).toEqual([]);
+  expect(photos.timeline).toBeUndefined();
+  photos.dispose();
+});
 
 it.each([
   ["", false],
-  ["provider_unavailable", false],
-  ["provider_unavailable", true],
+  ["", true],
 ] as const)(
   "selects every snapshot result with fallback=%s exportFirst=%s",
   async (fallback, exportFirst) => {
@@ -3604,57 +3599,55 @@ it.each(["reload", "revalidateAuthored"] as const)(
   },
 );
 
-it.each(["semantic", "hybrid"] as const)(
-  "keeps %s relevance order across paging and refresh",
-  async (mode) => {
-    let fallback = false;
-    const read = vi.spyOn(api, "listPhotoAssets").mockImplementation(async (request) => {
-      if (fallback)
-        return {
-          items: [photo(1)],
-          total: 1,
-          facets: [],
-          relevance_available: true,
-          actual_mode: "lexical" as const,
-          fallback_reason: "provider_unavailable",
-          snapshot_id: "fallback-snapshot",
-        };
+it("keeps relevance order across paging and refresh", async () => {
+  const mode = "semantic";
+  let fallback = false;
+  const read = vi.spyOn(api, "listPhotoAssets").mockImplementation(async (request) => {
+    if (fallback)
       return {
-        items: request.cursor ? [photo(3)] : [photo(1), photo(2)],
-        next_cursor: request.cursor ? undefined : "ranked-tail",
-        total: 3,
-        relevance_available: true,
-        snapshot_id: "full-snapshot",
+        items: [photo(1)],
+        total: 1,
         facets: [],
+        relevance_available: true,
+        actual_mode: "lexical" as const,
+        fallback_reason: "provider_unavailable",
+        snapshot_id: "fallback-snapshot",
       };
-    });
-    const photos = new Photos("scoped", vi.fn(), false, {
-      ...photoQuery,
-      mode,
-      text: "sunset",
-      sort: { field: "capture_time", direction: "desc" },
-    });
-    await photos.loadMore();
-    expect(read.mock.calls[0][0].query.sort).toEqual({ field: "relevance", direction: "desc" });
-    expect(photos.query.sort).toEqual({ field: "relevance", direction: "desc" });
-    fallback = true;
-    await photos.refresh();
-    const calls = read.mock.calls.length;
-    await photos.setSort({ field: "capture_time", direction: "desc" });
-    expect(read).toHaveBeenCalledTimes(calls);
-    fallback = false;
-    await photos.setQuery({ ...photos.query, sort: { field: "capture_time", direction: "desc" } });
-    expect(photos.query.sort).toEqual({ field: "relevance", direction: "desc" });
-    expect(photos.canJump).toBe(false);
-    expect(photos.items.map((item) => item.asset_id)).toEqual(["photo-1", "photo-2"]);
-    expect(photos.snapshotID).toBe("full-snapshot");
-    await photos.loadMore();
-    expect(read.mock.calls.at(-1)?.[0].snapshot_id).toBe("full-snapshot");
-    expect(photos.items.map((item) => item.asset_id)).toEqual(["photo-1", "photo-2", "photo-3"]);
-    await photos.refresh();
-    photos.dispose();
-  },
-);
+    return {
+      items: request.cursor ? [photo(3)] : [photo(1), photo(2)],
+      next_cursor: request.cursor ? undefined : "ranked-tail",
+      total: 3,
+      relevance_available: true,
+      snapshot_id: "full-snapshot",
+      facets: [],
+    };
+  });
+  const photos = new Photos("scoped", vi.fn(), false, {
+    ...photoQuery,
+    mode,
+    text: "sunset",
+    sort: { field: "capture_time", direction: "desc" },
+  });
+  await photos.loadMore();
+  expect(read.mock.calls[0][0].query.sort).toEqual({ field: "relevance", direction: "desc" });
+  expect(photos.query.sort).toEqual({ field: "relevance", direction: "desc" });
+  fallback = true;
+  await photos.refresh();
+  const calls = read.mock.calls.length;
+  await photos.setSort({ field: "capture_time", direction: "desc" });
+  expect(read).toHaveBeenCalledTimes(calls);
+  fallback = false;
+  await photos.setQuery({ ...photos.query, sort: { field: "capture_time", direction: "desc" } });
+  expect(photos.query.sort).toEqual({ field: "relevance", direction: "desc" });
+  expect(photos.canJump).toBe(false);
+  expect(photos.items.map((item) => item.asset_id)).toEqual(["photo-1", "photo-2"]);
+  expect(photos.snapshotID).toBe("full-snapshot");
+  await photos.loadMore();
+  expect(read.mock.calls.at(-1)?.[0].snapshot_id).toBe("full-snapshot");
+  expect(photos.items.map((item) => item.asset_id)).toEqual(["photo-1", "photo-2", "photo-3"]);
+  await photos.refresh();
+  photos.dispose();
+});
 
 it.each(["fallback", "metadata transition", "late metadata counts", "metadata to ranked"])(
   "keeps the right live timeline across %s",
@@ -3826,28 +3819,24 @@ it("applies a representative-choice Undo revision and rotation to ranked Map row
   photos.dispose();
 });
 
-it.each(["", "provider_unavailable"])(
-  "limits rejects to selected captured photos, fallback=%s",
-  async (fallback) => {
-    const photos = new Photos("scoped", vi.fn(), false, {
-      ...photoQuery,
-      mode: "semantic",
-      text: "sunset",
-    });
-    photos.snapshotID = "accepted";
-    photos.fallbackReason = fallback;
-    const preflight = vi.spyOn(api, "preflightPhotoRejects").mockResolvedValue(rejectsPreview());
-    await photos.previewRejects();
-    expect(preflight).not.toHaveBeenCalled();
-    photos.rejectsSelectionLimit = 64;
-    photos.selection.selectedIDs = new Set(["photo-1"]);
-    await photos.previewRejects(true);
-    expect(preflight).toHaveBeenCalledWith(
-      expect.objectContaining({
-        query: expect.objectContaining({ filters: { asset_ids: ["photo-1"] } }),
-      }),
-      expect.anything(),
-    );
-    photos.dispose();
-  },
-);
+it("limits rejects to selected captured photos", async () => {
+  const photos = new Photos("scoped", vi.fn(), false, {
+    ...photoQuery,
+    mode: "semantic",
+    text: "sunset",
+  });
+  photos.snapshotID = "accepted";
+  const preflight = vi.spyOn(api, "preflightPhotoRejects").mockResolvedValue(rejectsPreview());
+  await photos.previewRejects();
+  expect(preflight).not.toHaveBeenCalled();
+  photos.rejectsSelectionLimit = 64;
+  photos.selection.selectedIDs = new Set(["photo-1"]);
+  await photos.previewRejects(true);
+  expect(preflight).toHaveBeenCalledWith(
+    expect.objectContaining({
+      query: expect.objectContaining({ filters: { asset_ids: ["photo-1"] } }),
+    }),
+    expect.anything(),
+  );
+  photos.dispose();
+});

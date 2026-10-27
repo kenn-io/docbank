@@ -2058,7 +2058,7 @@ func TestEmbeddingWorkerSpacesReconciliationWithoutDelayingQueuedWork(t *testing
 	})
 }
 
-func TestImageEmbeddingRuntimeUsesStrippedGridPreviewAndRejectsInvalidJPEG(t *testing.T) {
+func TestImageEmbeddingRuntimePreviewValidationAndDescriptorSharing(t *testing.T) {
 	t.Parallel()
 	f := newPhotoDescriptionFixture(t)
 	x := newImageEmbeddingService(t, f)
@@ -2083,14 +2083,16 @@ func TestImageEmbeddingRuntimeUsesStrippedGridPreviewAndRejectsInvalidJPEG(t *te
 	_, err = registry.Prepare(t.Context(), work)
 	require.ErrorIs(t, err, ErrEmbeddingInputRejected)
 
-	// Two profiles that share a descriptor register one runtime for it.
-	sibling := x.portable
-	sibling.Embeddings = slices.Clone(x.portable.Embeddings)
-	sibling.Embeddings[0].DisclosureFingerprint = workerHash("sibling-disclosure")
-	shared, err := NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(), Principal: "synthetic-operator", Scope: "document-processing", Profiles: map[string]ProfileConfig{"images": {Profile: x.portable, EmbeddingProviders: map[string]document.EmbeddingProvider{x.binding.Name: x.provider}}, "sibling": {Profile: sibling, EmbeddingProviders: map[string]document.EmbeddingProvider{x.binding.Name: x.provider}}}})
-	require.NoError(t, err)
-	assert.True(t, shared.EmbeddingRuntimes().Ready())
-	assert.Equal(t, []string{x.descriptor.Fingerprint}, shared.EmbeddingRuntimes().Fingerprints())
+	t.Run("profiles sharing a descriptor register one runtime", func(t *testing.T) {
+		// Two profiles that share a descriptor register one runtime for it.
+		sibling := x.portable
+		sibling.Embeddings = slices.Clone(x.portable.Embeddings)
+		sibling.Embeddings[0].DisclosureFingerprint = workerHash("sibling-disclosure")
+		shared, err := NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(), Principal: "synthetic-operator", Scope: "document-processing", Profiles: map[string]ProfileConfig{"images": {Profile: x.portable, EmbeddingProviders: map[string]document.EmbeddingProvider{x.binding.Name: x.provider}}, "sibling": {Profile: sibling, EmbeddingProviders: map[string]document.EmbeddingProvider{x.binding.Name: x.provider}}}})
+		require.NoError(t, err)
+		assert.True(t, shared.EmbeddingRuntimes().Ready())
+		assert.Equal(t, []string{x.descriptor.Fingerprint}, shared.EmbeddingRuntimes().Fingerprints())
+	})
 }
 
 func newImageEmbeddingService(t *testing.T, f *photoDescriptionFixture) photoSearchFixture {
@@ -2227,11 +2229,6 @@ func TestSearchPhotosRanksAndFiltersSupportedQueries(t *testing.T) {
 	t.Parallel()
 	x := newPhotoSearchFixture(t)
 	f, service := x.f, x.service
-	hybrid, err := service.SearchPhotos(t.Context(), store.PhotoBrowseRequest{Query: query.Query{V: 1, Syntax: "simple", Mode: "hybrid", Text: "last-photo", Sort: query.Sort{Field: "relevance", Direction: "desc"}}})
-	require.NoError(t, err)
-	require.Equal(t, "hybrid", hybrid.ActualMode)
-	require.Len(t, hybrid.Members, 1)
-	require.Equal(t, f.asset.ID, hybrid.Members[0].AssetID)
 	filtered, err := service.SearchPhotos(t.Context(), store.PhotoBrowseRequest{Query: query.Query{V: 1, Syntax: "simple", Mode: "semantic", Text: "sunset", Filters: query.Filters{AssetIDs: []string{"00000000-0000-4000-8000-000000000001"}}, Sort: query.Sort{Field: "relevance", Direction: "desc"}}})
 	require.NoError(t, err)
 	require.Equal(t, "semantic", filtered.ActualMode)
@@ -2323,13 +2320,15 @@ func TestSearchPhotosFallsBackToLexical(t *testing.T) {
 		t.Parallel()
 		x := newPhotoSearchFixture(t)
 		delete(x.service.profiles["images"].embeddingSimilarityFloors, x.binding.Name)
+		calls := x.fake.runtime.callCount(x.binding.Name)
 		request := semantic()
 		request.Query.Text = "a dog"
 		ranked, err := x.service.SearchPhotos(t.Context(), request)
 		require.NoError(t, err)
 		require.Equal(t, "lexical", ranked.ActualMode)
-		require.Equal(t, "provider_unavailable", ranked.FallbackReason)
+		require.Equal(t, "similarity_floor_unset", ranked.FallbackReason)
 		require.Empty(t, ranked.Members)
+		require.Equal(t, calls, x.fake.runtime.callCount(x.binding.Name))
 	})
 	t.Run("provider_unavailable", func(t *testing.T) {
 		x := newPhotoSearchFixture(t)

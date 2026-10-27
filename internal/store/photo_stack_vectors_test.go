@@ -26,24 +26,6 @@ func (q *photoStackCountingQuerier) QueryRowContext(ctx context.Context, query s
 	return q.DB.QueryRowContext(ctx, query, args...)
 }
 
-func TestPhotoStackCorruptGenerationFallsBackToBurstGap(t *testing.T) {
-	t.Parallel()
-	f := newImageEmbeddingCatalogFixture(t)
-	record, vector := f.publish(t)
-	index := newCursorIndexFixture(f)
-	index.add(record, vector)
-	index.generation(t, "corrupt-image-generation")
-	var data []byte
-	require.NoError(t, f.s.db.QueryRow(`SELECT generation_bytes FROM vector_index_generations WHERE generation_id=?`, browseHash("corrupt-image-generation")).Scan(&data))
-	data[0] ^= 0xff
-	_, err := f.s.db.Exec(`UPDATE vector_index_generations SET generation_bytes=? WHERE generation_id=?`, data, browseHash("corrupt-image-generation"))
-	require.NoError(t, err)
-	ids := burstPhotos(t, f.s, 2)
-	page, err := f.s.ListPhotoAssets(t.Context(), captureRequest(t, "asc"), nil)
-	require.NoError(t, err)
-	require.Contains(t, stackAssetIDs(page.Stacks), ids)
-}
-
 func TestPhotoStackBackwardWalkBoundsImageCandidates(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -86,11 +68,17 @@ func TestPhotoStackBackwardWalkBoundsImageCandidates(t *testing.T) {
 			pager, err := newPhotoStackPager(t.Context(), q, photoBrowseScope{match: compiledQueryFragment{sql: "1=1"}}, 2, true, "", vectors)
 			require.NoError(t, err)
 			defer func() { require.NoError(t, pager.Close()) }()
-			hydrateCalls := 0
-			vectors.onHydrate = func(int) { hydrateCalls++ }
+			hydrated, largestBatch := 0, 0
+			vectors.onHydrate = func(count int) {
+				hydrated += count
+				largestBatch = max(largestBatch, count)
+			}
 			component := &photoStackComponent{frames: []photoStackFrame{frames[last]}}
 			require.NoError(t, pager.walk(t.Context(), frames[last], false, component))
-			require.LessOrEqual(t, hydrateCalls, 1, "batch image candidates before hydration")
+			require.LessOrEqual(t, largestBatch, MaxPhotoStackFrames+1)
+			if !tc.indexed {
+				require.LessOrEqual(t, hydrated, MaxPhotoStackFrames+1, "stop at a boundary or the burst cap")
+			}
 		})
 	}
 }

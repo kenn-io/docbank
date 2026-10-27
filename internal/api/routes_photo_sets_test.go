@@ -99,7 +99,7 @@ func TestPhotoAlbumRoutesAndClient(t *testing.T) {
 	require.Equal(t, "photo_snapshot_member_not_in_library", decodeProblem(t, body).Code)
 }
 
-func TestSavedPhotoRun(t *testing.T) {
+func TestSavedPhotoMeaningRunUsesImageIndex(t *testing.T) {
 	t.Parallel()
 	ts, vault, _ := photoImageHTTPFixture(t, newProcessingTestEmbeddingProvider(t), []string{"sunset.jpg"})
 	saved, err := vault.CreateSavedQuery(t.Context(), "Meaning", "", store.SavedQueryKindQuery, []byte(`{"mode":"semantic","text":"sunset","sort":{"field":"relevance","direction":"desc"}}`))

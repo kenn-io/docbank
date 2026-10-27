@@ -241,25 +241,29 @@ func TestExecuteEmbeddingSealsOriginalFileUpload(t *testing.T) {
 	}
 }
 
-// This test fails if an original-file provider can read the source filename
-// without an explicit disclosure grant in the authorization.
+// Original-file names require disclosure; image names stay withheld.
 func TestExecuteEmbeddingWithholdsFilenameUnlessDisclosed(t *testing.T) {
 	descriptor := testEmbeddingDescriptor(t)
-	descriptor.InputKinds = []document.EmbeddingInputKind{document.EmbeddingInputOriginalFile}
+	descriptor.InputKinds = []document.EmbeddingInputKind{document.EmbeddingInputOriginalFile, document.EmbeddingInputImage}
 	descriptor.Fingerprint = ""
 	descriptor, err := document.NewEmbeddingDescriptor(descriptor)
 	require.NoError(t, err)
 	source := []byte("source")
 	for _, testCase := range []struct {
 		name     string
+		kind     document.EmbeddingInputKind
 		disclose bool
 		want     string
 	}{
-		{"withheld", false, ""},
-		{"disclosed", true, "source.pdf"},
+		{"withheld", document.EmbeddingInputOriginalFile, false, ""},
+		{"disclosed", document.EmbeddingInputOriginalFile, true, "source.pdf"},
+		{"image filename withheld even with disclosure", document.EmbeddingInputImage, true, ""},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			metadata := testEmbeddingUploadMetadata(int64(len(source)))
+			if testCase.kind == document.EmbeddingInputImage {
+				metadata.MediaFamily, metadata.MediaType, metadata.InputKind = "image", "image/jpeg", document.RenditionInputDerivedUpload
+			}
 			metadata.SHA256 = fmt.Sprintf("%x", sha256.Sum256(source))
 			upload := &trackingEmbeddingUpload{Reader: bytes.NewReader(source), metadata: metadata}
 			var providerFilename string
@@ -273,7 +277,7 @@ func TestExecuteEmbeddingWithholdsFilenameUnlessDisclosed(t *testing.T) {
 			authorization.DiscloseFilename = testCase.disclose
 
 			_, err := document.ExecuteEmbedding(t.Context(), provider, []document.EmbeddingInput{{
-				Key: "source", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputOriginalFile, Source: upload,
+				Key: "source", Role: document.EmbeddingRoleDocument, Kind: testCase.kind, Source: upload,
 			}}, authorization)
 			require.NoError(t, err)
 			assert.Equal(t, testCase.want, providerFilename)

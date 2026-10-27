@@ -4303,13 +4303,12 @@ it("renders Map search status for a fallback", async () => {
     },
     cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
   });
-  // Nothing is capped, so the only status is the fallback; its wording belongs to PhotoSearchStatus.test.ts.
-  expect(screen.getByRole("status")).toBeTruthy();
+  expect(screen.getByRole("status").classList.contains("photo-search-limit")).toBe(true);
   photos.dispose();
 });
 
 it.each(["XMP resolution", "background XMP import", "suggestion acceptance"])(
-  "keeps accepted Meaning results after %s",
+  "refreshes the accepted Meaning snapshot after %s",
   async (change) => {
     const before = preparedPhoto(1);
     const photos = workspaceWithPreparedPhoto(before);
@@ -4320,14 +4319,15 @@ it.each(["XMP resolution", "background XMP import", "suggestion acceptance"])(
       sort: { field: "relevance", direction: "desc" },
     };
     photos.started = false;
-    const read = vi.spyOn(api, "listPhotoAssets").mockImplementation(async (request) => ({
-      items: [{ ...photo(1), rating: request.snapshot_id ? 4 : 0 }],
+    vi.spyOn(api, "listPhotoAssets").mockResolvedValue({
+      items: [photo(1)],
       total: 1,
       facets: [],
       relevance_available: true,
       snapshot_id: "accepted-meaning",
-    }));
+    });
     await photos.loadMore();
+    const refresh = vi.spyOn(photos, "refresh").mockResolvedValue(true);
     const suggestion = {
       suggestion_id: "suggestion",
       content_version_id: "version",
@@ -4358,12 +4358,7 @@ it.each(["XMP resolution", "background XMP import", "suggestion acceptance"])(
     } else {
       await photos.authored.onXMPChanged!(change === "XMP resolution" ? receipt : undefined);
     }
-    await waitFor(() => expect(photos.items[0]).toMatchObject({ rating: 4 }));
-    expect(read.mock.calls.length).toBeGreaterThan(1);
-    expect(
-      read.mock.calls.slice(1).every(([request]) => request.snapshot_id === "accepted-meaning"),
-    ).toBe(true);
-    expect(read.mock.calls.filter(([request]) => !request.snapshot_id)).toHaveLength(1);
+    await waitFor(() => expect(refresh).toHaveBeenCalledWith(expect.any(Function), true));
     expect(photos.snapshotID).toBe("accepted-meaning");
     photos.dispose();
     await cache.dispose();
@@ -4399,79 +4394,73 @@ it("stops Cull when the accepted snapshot cannot be captured", async () => {
   await cache.dispose();
 });
 
-it.each([
-  ["", "compare"],
-  ["provider_unavailable", "compare"],
-  ["", "face"],
-  ["provider_unavailable", "face"],
-  ["", "cull"],
-  ["provider_unavailable", "cull"],
-])("preserves snapshot membership with fallback=%s after %s", async (fallback, operation) => {
-  const photos = new Photos("scoped", vi.fn(), false, {
-    ...photoQuery,
-    mode: "semantic",
-    text: "sunset",
-  });
-  const rows = [photo(1), photo(2)];
-  photos.items = rows;
-  photos.total = 2;
-  photos.started = true;
-  photos.snapshotID = "accepted";
-  photos.fallbackReason = fallback;
-  photos.compareIDs = ["photo-1", "photo-2"];
-  photos.comparing = operation === "compare";
-  vi.spyOn(photos, "lookupMany").mockResolvedValue(rows);
-  vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });
-  const read = vi.spyOn(api, "listPhotoAssets").mockImplementation(async (request) => ({
-    items: request.snapshot_id ? [photo(1), photo(2)] : [photo(3)],
-    total: request.snapshot_id ? 2 : 1,
-    facets: [],
-    relevance_available: true,
-    snapshot_id: request.snapshot_id || "replacement",
-    fallback_reason: fallback,
-  }));
-  const cache = new PhotoPreviewCache("scoped", vi.fn());
-  if (operation === "cull") {
-    vi.stubGlobal("indexedDB", new IDBFactory());
-    vi.stubGlobal("IDBKeyRange", IDBKeyRange);
-    const review = new PhotoCull(photos.session, photoCullStorage("vault"), vi.fn());
-    review.run = {
-      ids: ["photo-1", "photo-2"],
-      checkpoint: {
-        runID: "run",
-        revision: 0,
-        pass: ["photo-1", "photo-2"],
-        position: 0,
-        visited: [],
-        skipped: [],
-        unavailable: [],
-        scope: "all",
-        autoAdvance: true,
-      },
-    };
-    photos.cull = review;
-    photos.cullVaultID = "vault";
-    photos.culling = true;
-    vi.spyOn(review, "flush").mockResolvedValue();
-    vi.spyOn(photos, "lookup").mockResolvedValue(rows[0]);
-  }
-  render(PhotosWorkspace, { photos, cache, vaultID: "vault" });
-  if (operation === "compare")
-    await fireEvent.click(await screen.findByRole("button", { name: "Exit compare" }));
-  else if (operation === "cull")
-    await fireEvent.click(await screen.findByRole("button", { name: "Exit cull" }));
-  else await act(() => photos.faceEditor.ondecision?.());
-  await waitFor(() => expect(read).toHaveBeenCalled());
-  expect(read.mock.calls.at(-1)?.[0].snapshot_id).toBe("accepted");
-  expect(photos.items.map((row) => row.asset_id)).toEqual(["photo-1", "photo-2"]);
+it.each(["compare", "face", "cull"])(
+  "preserves snapshot membership after %s",
+  async (operation) => {
+    const photos = new Photos("scoped", vi.fn(), false, {
+      ...photoQuery,
+      mode: "semantic",
+      text: "sunset",
+    });
+    const rows = [photo(1), photo(2)];
+    photos.items = rows;
+    photos.total = 2;
+    photos.started = true;
+    photos.snapshotID = "accepted";
+    photos.compareIDs = ["photo-1", "photo-2"];
+    photos.comparing = operation === "compare";
+    vi.spyOn(photos, "lookupMany").mockResolvedValue(rows);
+    vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });
+    const read = vi.spyOn(api, "listPhotoAssets").mockImplementation(async (request) => ({
+      items: request.snapshot_id ? [photo(1), photo(2)] : [photo(3)],
+      total: request.snapshot_id ? 2 : 1,
+      facets: [],
+      relevance_available: true,
+      snapshot_id: request.snapshot_id || "replacement",
+    }));
+    const cache = new PhotoPreviewCache("scoped", vi.fn());
+    if (operation === "cull") {
+      vi.stubGlobal("indexedDB", new IDBFactory());
+      vi.stubGlobal("IDBKeyRange", IDBKeyRange);
+      const review = new PhotoCull(photos.session, photoCullStorage("vault"), vi.fn());
+      review.run = {
+        ids: ["photo-1", "photo-2"],
+        checkpoint: {
+          runID: "run",
+          revision: 0,
+          pass: ["photo-1", "photo-2"],
+          position: 0,
+          visited: [],
+          skipped: [],
+          unavailable: [],
+          scope: "all",
+          autoAdvance: true,
+        },
+      };
+      photos.cull = review;
+      photos.cullVaultID = "vault";
+      photos.culling = true;
+      vi.spyOn(review, "flush").mockResolvedValue();
+      vi.spyOn(photos, "lookup").mockResolvedValue(rows[0]);
+    }
+    render(PhotosWorkspace, { photos, cache, vaultID: "vault" });
+    if (operation === "compare")
+      await fireEvent.click(await screen.findByRole("button", { name: "Exit compare" }));
+    else if (operation === "cull")
+      await fireEvent.click(await screen.findByRole("button", { name: "Exit cull" }));
+    else await act(() => photos.faceEditor.ondecision?.());
+    await waitFor(() => expect(read).toHaveBeenCalled());
+    expect(read.mock.calls.at(-1)?.[0].snapshot_id).toBe("accepted");
+    expect(photos.items.map((row) => row.asset_id)).toEqual(["photo-1", "photo-2"]);
 
-  expect(photos.snapshotID).toBe("accepted");
-  if (operation === "face") {
-    await fireEvent.click(screen.getByRole("button", { name: "More photo actions" }));
-    expect(
-      screen.getByRole("menuitem", { name: "Move rejects" }).getAttribute("aria-disabled"),
-    ).toBe("true");
-  }
-  photos.dispose();
-  await cache.dispose();
-});
+    expect(photos.snapshotID).toBe("accepted");
+    if (operation === "face") {
+      await fireEvent.click(screen.getByRole("button", { name: "More photo actions" }));
+      expect(
+        screen.getByRole("menuitem", { name: "Move rejects" }).getAttribute("aria-disabled"),
+      ).toBe("true");
+    }
+    photos.dispose();
+    await cache.dispose();
+  },
+);

@@ -26,6 +26,7 @@
     {(
       {
         provider_unavailable: "Image search is unavailable",
+        similarity_floor_unset: "Image search needs min_query_similarity",
         hidden_photos: "Image search is unavailable for hidden photos",
         consent_required: "Image search needs consent",
         index_unavailable: "The image index is unavailable",

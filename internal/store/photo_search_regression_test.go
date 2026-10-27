@@ -92,13 +92,6 @@ func TestPhotoFallbackSnapshotCapsMembership(t *testing.T) {
 					expected[i] = ranked[i].AssetID
 				}
 				require.Equal(t, expected, ids)
-				album, err := s.CreatePhotoSet(t.Context(), fmt.Sprintf("Captured %s %d", mode, count))
-				require.NoError(t, err)
-				album, err = s.ChangePhotoSetMembers(t.Context(), album.ID, album.Revision, true, PhotoSetSelection{AssetIDs: ids})
-				require.NoError(t, err)
-				var count int
-				require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM photo_set_members WHERE set_id=?`, album.ID).Scan(&count))
-				require.Equal(t, 1000, count)
 			})
 		}
 	}

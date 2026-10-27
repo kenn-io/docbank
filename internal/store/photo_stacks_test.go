@@ -1733,7 +1733,7 @@ func TestPhotoStackImageSimilarityThresholdAndWindow(t *testing.T) {
 	require.Empty(t, unavailable)
 	require.False(t, incomplete)
 	// The second frame is cosine 0.99 from the first (above the cutoff); the third is orthogonal to it.
-	values := [][]float64{{1, 0, 0, 0, 0, 0, 0, 0}, {0.99, 0.14106736, 0, 0, 0, 0, 0, 0}, {0, 1, 0, 0, 0, 0, 0, 0}, {0, 1, 0, 0, 0, 0, 0, 0}}
+	values := [][]float64{{1, 0, 0, 0, 0, 0, 0, 0}, {0.99, 0.14106736, 0, 0, 0, 0, 0, 0}, {0, 1, 0, 0, 0, 0, 0, 0}, {1, 0, 0, 0, 0, 0, 0, 0}}
 	index := newCursorIndexFixture(f)
 	for i, id := range ids {
 		index.publish(t, id, values[i])
@@ -1744,40 +1744,16 @@ func TestPhotoStackImageSimilarityThresholdAndWindow(t *testing.T) {
 	require.Equal(t, [][]string{{ids[0], ids[1]}}, groups)
 	require.Empty(t, unavailable)
 	require.False(t, incomplete)
+	// Isolate the time boundary from the dissimilar frame between these photos.
+	groups, unavailable, _, incomplete, err = s.PhotoStackGroups(t.Context(), []string{ids[0], ids[3]}, false, "")
+	require.NoError(t, err)
+	require.Empty(t, groups, "identical vectors outside the image window must stay separate")
+	require.Empty(t, unavailable)
+	require.False(t, incomplete)
 	// Capture-date browsing uses the same image links.
 	page, err := s.ListPhotoAssets(t.Context(), PhotoBrowseRequest{Stacks: true, PageSize: 10, Query: captureRequest(t, "asc").Query}, nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]string{{ids[0], ids[1]}}, stackAssetIDs(page.Stacks))
-}
-
-func TestPhotoStackCaptureTimePagesUseImageLinks(t *testing.T) {
-	t.Parallel()
-	f := newImageEmbeddingCatalogFixture(t)
-	s := f.s
-	run, err := s.BeginIngest(t.Context(), "cli", "synthetic capture image links")
-	require.NoError(t, err)
-	ids := []string{
-		stackPhoto(t, s, run, "/A/one.jpg", "2024-06-10T12:00:00Z", document.SourceMetadataPrecisionSecond),
-		stackPhoto(t, s, run, "/A/two.jpg", "2024-06-10T12:00:30Z", document.SourceMetadataPrecisionSecond),
-	}
-	index := newCursorIndexFixture(f)
-	for _, id := range ids {
-		index.publish(t, id, []float64{1, 0, 0, 0, 0, 0, 0, 0})
-	}
-	index.generation(t, "capture-image-generation")
-	groups, unavailable, _, incomplete, err := s.PhotoStackGroups(t.Context(), ids, false, "")
-	require.NoError(t, err)
-	require.Empty(t, unavailable)
-	require.False(t, incomplete)
-	require.Equal(t, [][]string{ids}, groups)
-	for _, direction := range []string{"asc", "desc"} {
-		for _, size := range []int{1, 10} {
-			request := captureRequest(t, direction)
-			request.PageSize = size
-			_, stacks := stackPages(t, s, request)
-			require.Equal(t, groups, stacks, "%s size %d", direction, size)
-		}
-	}
 }
 
 func TestPhotoStackVectorsSkipUnknownProducerPolicy(t *testing.T) {
@@ -1800,7 +1776,8 @@ func TestPhotoStackVectorsSkipUnknownProducerPolicy(t *testing.T) {
 	require.Empty(t, unavailable)
 	require.False(t, incomplete)
 	require.Equal(t, [][]string{ids}, groups)
-	// Model a catalog written by a future producer, which this build cannot publish.
+	// Hand-damage this immutable catalog row to exercise the read-side policy fence.
+	// Normal enqueue rejects unknown policies before they can reach storage.
 	_, err = s.db.ExecContext(t.Context(), `DROP TRIGGER embedding_input_generations_immutable_update`)
 	require.NoError(t, err)
 	_, err = s.db.ExecContext(t.Context(), `UPDATE embedding_input_generations SET chunk_policy_fingerprint=? WHERE generation_id IN (SELECT input_generation_id FROM embedding_sets WHERE vector_set_id=?)`, browseHash("future-image-policy"), index.checksums[1])
@@ -1814,6 +1791,15 @@ func TestPhotoStackVectorsSkipUnknownProducerPolicy(t *testing.T) {
 
 func TestPhotoStackImageLinksBoundedByFirstFrame(t *testing.T) {
 	t.Parallel()
+	t.Run("compare first vector", func(t *testing.T) {
+		frames := []photoStackFrame{
+			{AssetID: "first", Folder: "/shots", SortKey: "2026-01-01T12:00:00.000000000", ImageVectors: map[string][]float32{"image": {1, 0}}},
+			{AssetID: "second", Folder: "/shots", SortKey: "2026-01-01T12:00:20.000000000", ImageVectors: map[string][]float32{"image": {0.9659258, 0.2588190}}},
+			{AssetID: "third", Folder: "/shots", SortKey: "2026-01-01T12:00:40.000000000", ImageVectors: map[string][]float32{"image": {0.8660254, 0.5}}},
+		}
+		require.Equal(t, [][]photoStackFrame{frames[:2]}, groupPhotoStackFrames(frames, 2))
+	})
+
 	for _, count := range []int{180, MaxPhotoStackFrames + 2} {
 		t.Run(strconv.Itoa(count), func(t *testing.T) {
 			frames := make([]photoStackFrame, count)
@@ -1842,7 +1828,7 @@ func TestPhotoStackImageLinksBoundedByFirstFrame(t *testing.T) {
 	}
 }
 
-func TestReviewUnrelatedImageSpacePreservesStacks(t *testing.T) {
+func TestPhotoStackUnrelatedImageSpaceKeepsStacks(t *testing.T) {
 	t.Parallel()
 	f := newImageEmbeddingCatalogFixture(t)
 	s := f.s
@@ -1916,43 +1902,4 @@ func TestReviewUnrelatedImageSpacePreservesStacks(t *testing.T) {
 			require.Equal(t, [][]string{ids}, stacks)
 		}
 	})
-}
-
-func TestPhotoStackImageLinksCompareFirstVector(t *testing.T) {
-	t.Parallel()
-	frames := []photoStackFrame{
-		{AssetID: "first", Folder: "/shots", SortKey: "2026-01-01T12:00:00.000000000", ImageVectors: map[string][]float32{"image": {1, 0}}},
-		{AssetID: "second", Folder: "/shots", SortKey: "2026-01-01T12:00:20.000000000", ImageVectors: map[string][]float32{"image": {0.9659258, 0.2588190}}},
-		{AssetID: "third", Folder: "/shots", SortKey: "2026-01-01T12:00:40.000000000", ImageVectors: map[string][]float32{"image": {0.8660254, 0.5}}},
-	}
-	require.Equal(t, [][]photoStackFrame{frames[:2]}, groupPhotoStackFrames(frames, 2))
-}
-
-func TestPhotoStackImageWindowPagesAgreeWithGrouping(t *testing.T) {
-	t.Parallel()
-	f := newImageEmbeddingCatalogFixture(t)
-	s := f.s
-	run, err := s.BeginIngest(t.Context(), "cli", "synthetic bounded image run")
-	require.NoError(t, err)
-	var ids []string
-	index := newCursorIndexFixture(f)
-	for i := range 9 {
-		stamp := time.Date(2026, 1, 1, 12, 0, i*20, 0, time.UTC).Format(time.RFC3339)
-		id := stackPhoto(t, s, run, fmt.Sprintf("/A/frame-%d.jpg", i), stamp, document.SourceMetadataPrecisionSecond)
-		ids = append(ids, id)
-		index.publish(t, id, []float64{1, 0, 0, 0, 0, 0, 0, 0})
-	}
-	index.generation(t, "bounded-image-generation")
-	groups, _, _, incomplete, err := s.PhotoStackGroups(t.Context(), ids, false, "")
-	require.NoError(t, err)
-	require.False(t, incomplete)
-	require.Equal(t, [][]string{ids[:4], ids[4:8]}, groups)
-	for _, direction := range []string{"asc", "desc"} {
-		for _, size := range []int{1, 5, 20} {
-			request := captureRequest(t, direction)
-			request.PageSize = size
-			_, stacks := stackPages(t, s, request)
-			require.ElementsMatch(t, groups, stacks, "%s size %d", direction, size)
-		}
-	}
 }

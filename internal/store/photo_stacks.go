@@ -674,12 +674,12 @@ func (p *photoStackPager) Close() error {
 }
 
 // probe reads the in-scope frames after current in one direction, up to window.
-func (p *photoStackPager) probe(ctx context.Context, current photoStackFrame, window string, forward bool) (frames []photoStackFrame, err error) {
+func (p *photoStackPager) probe(ctx context.Context, current photoStackFrame, window string, forward bool, limit int) (frames []photoStackFrame, err error) {
 	direction := 0
 	if forward {
 		direction = 1
 	}
-	args := append(slices.Clone(p.args), current.Folder, current.CameraMake, current.CameraModel, p.fingerprint, p.fingerprint, current.BodySerialNumber, current.SortKey, window, current.SortKey, current.AssetID, MaxPhotoStackFrames+1)
+	args := append(slices.Clone(p.args), current.Folder, current.CameraMake, current.CameraModel, p.fingerprint, p.fingerprint, current.BodySerialNumber, current.SortKey, window, current.SortKey, current.AssetID, limit)
 	rows, err := p.probes[direction].QueryContext(ctx, args...)
 	if err != nil {
 		return nil, err
@@ -719,8 +719,8 @@ func (p *photoStackPager) hydrate(ctx context.Context, inputs map[string]photoSt
 	return nil
 }
 
-// walk batches preceding time candidates before comparing vectors. The first
-// frame can lie beyond the decision cap; only resolved segments use that cap.
+// walk hydrates bounded probes and stops when a preceding frame cannot link.
+// Image runs still resolve their first frame before applying the decision cap.
 func (p *photoStackPager) walk(ctx context.Context, frame photoStackFrame, forward bool, component *photoStackComponent) error {
 	imageCandidates := !forward && len(p.vectors.indexes) > 0
 	// A complete earlier segment has already proved where its following stack
@@ -738,21 +738,36 @@ func (p *photoStackPager) walk(ctx context.Context, frame photoStackFrame, forwa
 		}
 	}
 	current := frame
+	burstFrames := 1
 	for {
-		gaps := photoStackProbeGaps
-		if imageCandidates {
-			gaps = MaxPhotoStackFrames + 1
-		}
-		window, ok := photoStackReach(current.SortKey, p.reach*gaps, forward)
+		window, ok := photoStackReach(current.SortKey, p.reach*photoStackProbeGaps, forward)
 		if !ok {
 			break
 		}
 		if imageCandidates && anchor > window {
 			window = anchor
 		}
-		read, err := p.probe(ctx, current, window, forward)
+		limit := MaxPhotoStackFrames + 1
+		if imageCandidates {
+			limit = min(photoStackProbeGaps, MaxPhotoStackFrames+1-burstFrames)
+		}
+		read, err := p.probe(ctx, current, window, forward, limit)
 		if err != nil {
 			return err
+		}
+		if imageCandidates {
+			inputs := map[string]photoStackFrame{current.AssetID: current}
+			for _, next := range read {
+				inputs[next.AssetID] = next
+			}
+			if err := p.hydrate(ctx, inputs); err != nil {
+				return err
+			}
+			current = inputs[current.AssetID]
+			component.frames[len(component.frames)-1] = current
+			for i := range read {
+				read[i] = inputs[read[i].AssetID]
+			}
 		}
 		stopped := false
 		for _, next := range read {
@@ -775,15 +790,27 @@ func (p *photoStackPager) walk(ctx context.Context, frame photoStackFrame, forwa
 				stopped = true
 				break
 			}
+			if imageCandidates {
+				if !photoStackChained(next, next, current, p.gap) {
+					stopped = true
+					break
+				}
+				burstReach, ok := photoStackReach(next.SortKey, p.gap, true)
+				if ok && current.SortKey <= burstReach {
+					burstFrames++
+				} else {
+					burstFrames = 1
+				}
+			}
 			component.frames = append(component.frames, next)
 			current = next
-			if !imageCandidates && len(component.frames) > MaxPhotoStackFrames {
+			if burstFrames > MaxPhotoStackFrames || !imageCandidates && len(component.frames) > MaxPhotoStackFrames {
 				stopped = true
 				break
 			}
 		}
 		reach, ok := photoStackReach(current.SortKey, p.reach, forward)
-		if stopped || !ok || len(read) <= MaxPhotoStackFrames && (forward && reach <= window || !forward && reach >= window) {
+		if stopped || !ok || len(read) < limit && (forward && reach <= window || !forward && reach >= window) {
 			break
 		}
 	}
