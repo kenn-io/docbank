@@ -377,6 +377,7 @@ type searchDocumentsInput struct {
 	Profile           string                          `json:"profile"`
 	BindingID         string                          `json:"binding_id"`
 	Explain           bool                            `json:"explain"`
+	Rerank            bool                            `json:"rerank"`
 	ContentVersionIDs []string                        `json:"content_version_ids"`
 	Filters           *api.DocumentSourceFenceFilters `json:"filters"`
 }
@@ -386,6 +387,7 @@ type searchResultOutput struct {
 	ContentVersionID string   `json:"content_version_id"`
 	Rank             int      `json:"rank"`
 	Score            float64  `json:"score"`
+	RerankRelevance  *float64 `json:"rerank_relevance,omitempty"`
 	Path             string   `json:"path"`
 	Excerpt          string   `json:"excerpt,omitempty"`
 	EvidenceIDs      []string `json:"evidence_ids"`
@@ -406,16 +408,17 @@ type sourceFenceOutput struct {
 type searchDocumentsOutput struct {
 	privateCache
 
-	VaultID            string               `json:"vault_id"`
-	Fence              sourceFenceOutput    `json:"fence"`
-	FenceFingerprint   string               `json:"fence_fingerprint"`
-	ObservedScopeCount int                  `json:"observed_scope_count"`
-	RequestedMode      string               `json:"requested_mode"`
-	ActualMode         string               `json:"actual_mode"`
-	Coverage           searchCoverageOutput `json:"coverage"`
-	SkippedReasons     []string             `json:"skipped_reasons"`
-	Results            []searchResultOutput `json:"results"`
-	Truncated          bool                 `json:"truncated"`
+	VaultID            string                              `json:"vault_id"`
+	Fence              sourceFenceOutput                   `json:"fence"`
+	FenceFingerprint   string                              `json:"fence_fingerprint"`
+	ObservedScopeCount int                                 `json:"observed_scope_count"`
+	RequestedMode      string                              `json:"requested_mode"`
+	ActualMode         string                              `json:"actual_mode"`
+	Coverage           searchCoverageOutput                `json:"coverage"`
+	SkippedReasons     []string                            `json:"skipped_reasons"`
+	Results            []searchResultOutput                `json:"results"`
+	Truncated          bool                                `json:"truncated"`
+	Reranking          *api.DocumentSearchRerankingReceipt `json:"reranking,omitempty"`
 }
 
 func searchDocuments(
@@ -441,20 +444,24 @@ func searchDocuments(
 		if len(resolution.Fence.ContentVersionIDs) == 0 {
 			callErr = c.ValidateDocumentSearch(ctx, api.DocumentSearchValidationRequest{
 				Query: input.Query, Mode: input.Mode, Limit: input.Limit, Profile: input.Profile,
-				BindingID: input.BindingID, Explain: input.Explain,
+				BindingID: input.BindingID, Explain: input.Explain, Rerank: input.Rerank,
 			})
 			if callErr != nil {
 				return response{}, callErr
 			}
+			var reranking *api.DocumentSearchRerankingReceipt
+			if input.Rerank {
+				reranking = &api.DocumentSearchRerankingReceipt{Outcome: "skipped"}
+			}
 			return response{resolution: resolution, report: api.DocumentSearchReport{
-				RequestedMode: effectiveSearchMode(input.Mode), ActualMode: effectiveEmptySearchMode(input.Mode),
+				Reranking: reranking, RequestedMode: effectiveSearchMode(input.Mode), ActualMode: effectiveEmptySearchMode(input.Mode),
 				Coverage:     api.DocumentSearchCoverage{State: "complete"},
 				Degradations: []string{}, Results: []api.DocumentSearchResult{}, Trace: []api.DocumentSearchTrace{},
 			}}, nil
 		}
 		report, callErr := c.SearchDocuments(ctx, api.DocumentSearchRequest{Query: input.Query,
 			Mode: input.Mode, Limit: input.Limit, Profile: input.Profile, BindingID: input.BindingID,
-			Explain: input.Explain, Fence: api.DocumentSourceFence{VaultUID: resolution.Fence.VaultUID,
+			Explain: input.Explain, Rerank: input.Rerank, Fence: api.DocumentSourceFence{VaultUID: resolution.Fence.VaultUID,
 				ContentVersionIDs: slices.Clone(resolution.Fence.ContentVersionIDs)}})
 		if callErr != nil {
 			return response{}, callErr
@@ -488,7 +495,7 @@ func searchDocuments(
 			CompleteDocuments: result.report.Coverage.CompleteDocuments, State: result.report.Coverage.State},
 		SkippedReasons: slices.Clone(result.report.Degradations),
 		Results:        make([]searchResultOutput, len(result.report.Results)), Truncated: result.report.Truncated,
-		privateCache: newPrivateCache()}
+		Reranking: result.report.Reranking, privateCache: newPrivateCache()}
 	for index, item := range result.report.Results {
 		evidence := make([]string, len(item.Evidence))
 		for evidenceIndex, identity := range item.Evidence {
@@ -500,7 +507,7 @@ func searchDocuments(
 		}
 		output.Results[index] = searchResultOutput{NodeID: item.NodeID,
 			ContentVersionID: item.ContentVersionID, Rank: item.Rank, Score: item.Score,
-			Path: item.Path, Excerpt: item.Excerpt, EvidenceIDs: evidence}
+			RerankRelevance: item.RerankRelevance, Path: item.Path, Excerpt: item.Excerpt, EvidenceIDs: evidence}
 	}
 	return output, documentResourceLinks(result.resolution.Fence.VaultUID, result.documents), nil
 }

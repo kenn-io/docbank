@@ -74,7 +74,7 @@ var readToolDefinitions = []toolDefinition{
 	{name: "get_export_status", title: "Get export status", description: "Read one retained export job without downloading it.", schemas: getExportStatusSchemas},
 	{name: "get_vault_info", title: "Get vault info", description: "Summarize the selected vault without exposing its host path.", schemas: getVaultInfoSchemas},
 	{name: "list_documents", title: "List documents", description: "Page through current, live documents with bounded stable ordering.", schemas: listDocumentsSchemas},
-	{name: "search_documents", title: "Search documents", description: "Search an exact bounded current-version source fence and report coverage.", schemas: searchDocumentsSchemas},
+	{name: "search_documents", title: "Search documents", description: "Search an exact bounded current-version source fence and report coverage. Opt-in reranking sends the query and bounded candidate excerpts to the configured provider under the profile's consent.", schemas: searchDocumentsSchemas},
 	{name: "get_document", title: "Get document", description: "Read metadata for one exact current document identity.", schemas: getDocumentSchemas},
 	{name: "list_document_versions", title: "List document versions", description: "Page through immutable content versions for one stable document node.", schemas: listDocumentVersionsSchemas},
 	{name: "read_rendition_text", title: "Read rendition text", description: "Read a bounded Unicode window from an active sanitized Markdown rendition.", schemas: readRenditionTextSchemas},
@@ -485,6 +485,8 @@ func stableDomainError(err error) (string, int) {
 		"kata_evidence_unsupported", "kata_evidence_limit", "kata_timeout", "kata_request_failed", "kata_unauthorized", "kata_forbidden", "kata_issue_unavailable",
 		"kata_token_invalid", "kata_evidence_integrity", "kata_idempotency_deleted":
 		return facts.Code, 0
+	case "reranking_unavailable", "reranking_failed":
+		return facts.Code, 0
 	case "invalid_text_navigation", "text_navigation_limit",
 		"invalid_text_citation", "citation_unavailable", "citation_limit", "invalid_citation_range",
 		"citation_timeout", "citation_canceled", "citation_integrity", "citation_failed":
@@ -563,6 +565,10 @@ func domainErrorMessage(code string) string {
 		return "The Kata operation failed; inspect the issue before deliberately retrying the same request."
 	case "kata_outcome_unknown":
 		return "The Kata write may have succeeded without a usable reply. Do not retry automatically; inspect the issue and deliberately retry the same create key or exact append selection."
+	case "reranking_unavailable":
+		return "The processing profile has no configured reranking provider; ask the operator to configure it."
+	case "reranking_failed":
+		return "Document reranking failed; check the daemon log before retrying."
 	case "invalid_text_navigation":
 		return "Fetch the outline for this rendition and correct the section bounds or offset."
 	case "text_navigation_limit":

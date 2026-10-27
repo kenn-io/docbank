@@ -296,6 +296,56 @@ func TestReadToolMapsSanitizedDaemonDomainErrors(t *testing.T) {
 	}
 }
 
+func TestSearchReadReturnsSafeRerankingDomainErrors(t *testing.T) {
+	for _, test := range []struct {
+		code   string
+		status int
+	}{
+		{code: "reranking_unavailable", status: http.StatusUnprocessableEntity},
+		{code: "reranking_failed", status: http.StatusBadGateway},
+	} {
+		t.Run(test.code, func(t *testing.T) {
+			daemon := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				switch request.URL.Path {
+				case "/api/v1/processing/source-fences/resolve":
+					writeDaemonJSON(t, response, api.DocumentSourceFenceResolution{Fence: api.ResolvedDocumentSourceFence{
+						VaultUID: testVaultID, ContentVersionIDs: []string{testVersionID}},
+						FenceFingerprint: testFenceFingerprint, ObservedScopeCount: 1})
+				case "/api/v1/search":
+					response.Header().Set("Content-Type", "application/problem+json")
+					response.WriteHeader(test.status)
+					writeDaemonJSON(t, response, map[string]any{
+						"status": test.status, "title": "Request failed", "code": test.code,
+						"detail": "private /synthetic/path key=secret raw-provider-response",
+					})
+				default:
+					http.NotFound(response, request)
+				}
+			}))
+			t.Cleanup(daemon.Close)
+			lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
+				return daemonconn.New(daemon.URL, ""), nil
+			}, func(*daemonconn.Connection) error { return nil })
+			server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, lease)
+
+			wire := exchangeRaw(t, server, requestFor("tools/call", map[string]any{
+				"name": "search_documents", "arguments": map[string]any{
+					"query": "synthetic", "mode": "lexical", "profile": "local",
+					"content_version_ids": []string{testVersionID}, "rerank": true,
+				},
+			}))
+			result := decodeResult(t, wire)
+			assert.Equal(t, true, result["isError"])
+			output := objectField(t, result, "structuredContent")
+			assert.Equal(t, test.code, output["code"])
+			assert.Contains(t, output["message"], "reranking")
+			assert.NotContains(t, string(wire), "/synthetic/path")
+			assert.NotContains(t, string(wire), "key=secret")
+			assert.NotContains(t, string(wire), "raw-provider-response")
+		})
+	}
+}
+
 func TestUnavailableDaemonReturnsDomainErrorAndSafeDiagnostics(t *testing.T) {
 	var logs bytes.Buffer
 	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
@@ -419,9 +469,10 @@ func TestSearchReadRejectsResultsOutsideResolvedFence(t *testing.T) {
 func TestSearchReadValidatesEmptyFenceWithoutCallingSearch(t *testing.T) {
 	for _, test := range []struct {
 		name, query, profile, wantCode string
-		wantError                      bool
+		wantError, rerank              bool
 	}{
 		{name: "valid empty result", query: "synthetic", profile: "local"},
+		{name: "reranked empty result", query: "synthetic", profile: "local", rerank: true},
 		{name: "whitespace query", query: "   ", profile: "local", wantCode: "processing_failed", wantError: true},
 		{name: "unconfigured profile", query: "synthetic", profile: "missing",
 			wantCode: "processing_profile_unavailable", wantError: true},
@@ -442,6 +493,12 @@ func TestSearchReadValidatesEmptyFenceWithoutCallingSearch(t *testing.T) {
 					})
 				case "/api/v1/search/validate":
 					validationCalls++
+					var body api.DocumentSearchValidationRequest
+					if !assert.NoError(t, json.UnmarshalRead(request.Body, &body)) {
+						http.Error(response, "invalid synthetic search request", http.StatusBadRequest)
+						return
+					}
+					assert.Equal(t, test.rerank, body.Rerank)
 					if test.wantError {
 						status := http.StatusInternalServerError
 						if test.wantCode == "processing_profile_unavailable" {
@@ -469,7 +526,7 @@ func TestSearchReadValidatesEmptyFenceWithoutCallingSearch(t *testing.T) {
 
 			result, err := invokeReadTool(t.Context(), lease, "search_documents", map[string]any{
 				"query": test.query, "mode": "lexical", "limit": 1, "profile": test.profile,
-				"filters": map[string]any{},
+				"filters": map[string]any{}, "rerank": test.rerank,
 			})
 			assert.Equal(t, 1, validationCalls)
 			assert.Zero(t, searchCalls)
@@ -485,6 +542,9 @@ func TestSearchReadValidatesEmptyFenceWithoutCallingSearch(t *testing.T) {
 			output := structuredMap(t, result.StructuredContent)
 			assert.Equal(t, []any{}, output["results"])
 			assert.EqualValues(t, 0, output["observed_scope_count"])
+			if test.rerank {
+				assert.Equal(t, map[string]any{"outcome": "skipped", "candidate_count": float64(0)}, output["reranking"])
+			}
 		})
 	}
 }
@@ -498,7 +558,14 @@ func TestSearchReadWithNonEmptyFenceAndNoHitsSkipsDocumentResolution(t *testing.
 				VaultUID: testVaultID, ContentVersionIDs: []string{testVersionID}},
 				FenceFingerprint: testFenceFingerprint, ObservedScopeCount: 1})
 		case "/api/v1/search":
+			var body api.DocumentSearchRequest
+			if !assert.NoError(t, json.UnmarshalRead(request.Body, &body)) {
+				http.Error(response, "invalid synthetic search request", http.StatusBadRequest)
+				return
+			}
+			assert.True(t, body.Rerank)
 			writeDaemonJSON(t, response, api.DocumentSearchReport{RequestedMode: "lexical", ActualMode: "lexical",
+				Reranking:    &api.DocumentSearchRerankingReceipt{Outcome: "skipped"},
 				Coverage:     api.DocumentSearchCoverage{ScopedDocuments: 1, CompleteDocuments: 1, State: "complete"},
 				Degradations: []string{}, Results: []api.DocumentSearchResult{}})
 		case "/api/v1/documents/resolve":
@@ -515,12 +582,14 @@ func TestSearchReadWithNonEmptyFenceAndNoHitsSkipsDocumentResolution(t *testing.
 
 	result, err := invokeReadTool(t.Context(), lease, "search_documents", map[string]any{
 		"query": "synthetic", "mode": "lexical", "limit": 1, "profile": "local",
-		"content_version_ids": []string{testVersionID},
+		"content_version_ids": []string{testVersionID}, "rerank": true,
 	})
 	require.NoError(t, err)
 	assert.Zero(t, resolveCalls)
 	assert.Empty(t, resourceLinkURIs(result))
-	assert.Equal(t, []any{}, structuredMap(t, result.StructuredContent)["results"])
+	output := structuredMap(t, result.StructuredContent)
+	assert.Equal(t, []any{}, output["results"])
+	assert.Equal(t, map[string]any{"outcome": "skipped", "candidate_count": float64(0)}, output["reranking"])
 }
 
 func TestSearchReadResolvesOneBoundedBatchOfCurrentDocumentsForResourceLinks(t *testing.T) {
@@ -767,4 +836,80 @@ func TestGetDocumentReturnsVaultInfoFailure(t *testing.T) {
 	}, func(*daemonconn.Connection) error { return nil })
 	_, _, err := getDocument(t.Context(), lease, []byte(`{"node_id":7,"content_version_id":"`+testVersionID+`"}`))
 	require.Error(t, err)
+}
+
+func TestSearchReadRerankOutputAndFalseBaseline(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		rerank  bool
+		outcome string
+	}{{"false", false, ""}, {"applied", true, "applied"}, {"degraded", true, "degraded"}} {
+		t.Run(tc.name, func(t *testing.T) {
+			daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v1/processing/source-fences/resolve":
+					writeDaemonJSON(t, w, api.DocumentSourceFenceResolution{Fence: api.ResolvedDocumentSourceFence{VaultUID: testVaultID, ContentVersionIDs: []string{testVersionID}}, FenceFingerprint: testFenceFingerprint, ObservedScopeCount: 1})
+				case "/api/v1/search":
+					var body map[string]any
+					if !assert.NoError(t, json.UnmarshalRead(r.Body, &body)) {
+						http.Error(w, "invalid synthetic search request", http.StatusBadRequest)
+						return
+					}
+					if tc.rerank {
+						assert.Equal(t, true, body["rerank"])
+					} else {
+						assert.NotContains(t, body, "rerank")
+					}
+					hit := map[string]any{"vault_uid": testVaultID, "node_id": 7, "content_version_id": testVersionID, "rank": 1, "score": 1.0 / 61, "path": "/synthetic.md", "lexical_rank": 1, "evidence": []any{map[string]any{"kind": "node_name"}}}
+					report := map[string]any{"requested_mode": "lexical", "actual_mode": "lexical", "coverage": map[string]any{"binding_required": false, "scoped_documents": 1, "complete_documents": 1, "state": "complete"}, "degradations": []any{}, "results": []any{hit}, "trace": []any{}, "truncated": false}
+					if tc.outcome == "applied" {
+						hit["score"] = 0.0
+						hit["rerank_relevance"] = 0.0
+						report["reranking"] = map[string]any{"outcome": "applied", "candidate_count": 1}
+					}
+					if tc.outcome == "degraded" {
+						report["reranking"] = map[string]any{"outcome": "degraded", "cause": "authorization_denied", "candidate_count": 1}
+						report["degradations"] = []string{"reranking_degraded"}
+					}
+					writeDaemonJSON(t, w, report)
+				case "/api/v1/documents/resolve":
+					writeDaemonJSON(t, w, map[string]any{"items": []api.DocumentSummary{{NodeID: 7, ContentVersionID: testVersionID, Path: "/synthetic.md", Name: "synthetic.md", MediaType: "text/markdown", ModifiedAt: "2026-08-28T00:00:00Z", ActiveRenditions: []api.DocumentRenditionIdentity{}}}})
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(daemon.Close)
+			lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) { return daemonconn.New(daemon.URL, ""), nil }, func(*daemonconn.Connection) error { return nil })
+			result, err := invokeReadTool(t.Context(), lease, "search_documents", map[string]any{"query": "synthetic", "mode": "lexical", "profile": "local", "filters": map[string]any{}, "rerank": tc.rerank})
+			require.NoError(t, err)
+			output := structuredMap(t, result.StructuredContent)
+			hits, ok := output["results"].([]any)
+			require.True(t, ok)
+			require.Len(t, hits, 1)
+			hit, ok := hits[0].(map[string]any)
+			require.True(t, ok)
+			if tc.outcome == "" {
+				encoded, err := json.Marshal(output)
+				require.NoError(t, err)
+				baseline := fmt.Sprintf(`{"ttlMs":0,"cacheScope":"private","vault_id":%q,"fence":{"vault_id":%q,"content_version_ids":[%q]},"fence_fingerprint":%q,"observed_scope_count":1,"requested_mode":"lexical","actual_mode":"lexical","coverage":{"binding_required":false,"scoped_documents":1,"complete_documents":1,"state":"complete"},"skipped_reasons":[],"results":[{"node_id":7,"content_version_id":%q,"rank":1,"score":0.01639344262295082,"path":"/synthetic.md","evidence_ids":["{\"kind\":\"node_name\"}"]}],"truncated":false}`, testVaultID, testVaultID, testVersionID, testFenceFingerprint, testVersionID)
+				assert.JSONEq(t, baseline, string(encoded))
+				require.NotEmpty(t, result.Content)
+				text, ok := result.Content[0].(*sdkmcp.TextContent)
+				require.True(t, ok)
+				assert.Equal(t, baseline, text.Text)
+				assert.NotContains(t, output, "reranking")
+				assert.NotContains(t, hit, "rerank_relevance")
+			} else {
+				receipt, ok := output["reranking"].(map[string]any)
+				require.True(t, ok)
+				assert.Equal(t, tc.outcome, receipt["outcome"])
+				if tc.outcome == "applied" {
+					assert.EqualValues(t, 0, hit["rerank_relevance"])
+				} else {
+					assert.NotContains(t, hit, "rerank_relevance")
+					assert.Equal(t, "authorization_denied", receipt["cause"])
+				}
+			}
+		})
+	}
 }

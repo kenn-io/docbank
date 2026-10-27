@@ -613,6 +613,13 @@ func validateDocumentSearchReport(request api.DocumentSearchRequest, report api.
 		if result.NodeID < 1 || result.Rank != index+1 || math.IsNaN(result.Score) || math.IsInf(result.Score, 0) {
 			return fmt.Errorf("result %d has invalid rank or document identity", index)
 		}
+		if relevance := result.RerankRelevance; relevance != nil {
+			if report.Reranking == nil || report.Reranking.Outcome != "applied" ||
+				index >= report.Reranking.CandidateCount ||
+				*relevance != result.Score {
+				return fmt.Errorf("result %d has invalid rerank relevance", index)
+			}
+		}
 		if !validDocumentSearchPath(result.Path) || !validDocumentSearchExcerpt(result.Excerpt) {
 			return fmt.Errorf("result %d has invalid path or excerpt", index)
 		}

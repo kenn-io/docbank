@@ -655,6 +655,7 @@ func searchDocumentsSchemas() (schema, schema) {
 	properties["profile"] = schema{"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-z][a-z0-9_-]*$"}
 	properties["binding_id"] = stringSchema(128)
 	properties["explain"] = booleanSchema()
+	properties["rerank"] = booleanSchema()
 	input := rootObjectSchema(properties, "query", "profile")
 	// Keep the exactly-one-scope rule without a root oneOf, which Anthropic rejects.
 	input["if"] = schema{"required": []string{"content_version_ids"}}
@@ -665,6 +666,7 @@ func searchDocumentsSchemas() (schema, schema) {
 		"content_version_id": uuidSchema(),
 		"rank":               integerSchema(1, 100),
 		"score":              schema{"type": "number"},
+		"rerank_relevance":   schema{"type": "number"},
 		"path":               schema{"type": "string", "minLength": 1, "maxLength": maxPathCharacters, "pattern": "^/"},
 		"excerpt":            stringSchema(512),
 		"evidence_ids":       arraySchema(stringSchema(1024), 64),
@@ -682,6 +684,11 @@ func searchDocumentsSchemas() (schema, schema) {
 			"complete_documents": integerSchema(0, 4096),
 			schemaStateField:     stringSchema(64),
 		}, "binding_required", "scoped_documents", "complete_documents", schemaStateField),
+		"reranking": objectSchema(schema{
+			"outcome":         enumSchema("applied", "skipped", "degraded"),
+			"cause":           stringSchema(64),
+			"candidate_count": integerSchema(0, 1000),
+		}, "outcome", "candidate_count"),
 		"skipped_reasons": arraySchema(stringSchema(64), 64),
 		"results":         arraySchema(result, 100),
 		"truncated":       booleanSchema(),

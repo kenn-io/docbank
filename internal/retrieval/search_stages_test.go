@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -101,6 +102,8 @@ func TestSearcherRerankingTimesOutAndReportsNamedDegradation(t *testing.T) {
 	report, err := searcher.Search(t.Context(), Query{Text: "private query", Mode: ModeLexical, Limit: 1})
 	require.NoError(t, err)
 	assert.Equal(t, []Degradation{DegradationRerankingDegraded}, report.Degradations)
+	require.Len(t, report.Results, 1)
+	assert.Nil(t, report.Results[0].RerankRelevance)
 	assert.Equal(t, []ProviderReceipt{{Stage: ProviderStageReranking,
 		Outcome: ProviderOutcomeTimedOut, CandidateCount: 1}}, report.Receipts)
 	assert.NotContains(t, fmt.Sprintf("%#v", report), "private query")
@@ -161,24 +164,42 @@ func TestSearcherProviderReceiptDoesNotRetainProfileText(t *testing.T) {
 func TestSearcherRerankingReordersOnlyAuthorizedCandidates(t *testing.T) {
 	t.Parallel()
 
-	reranker := &stageReranker{scores: []RerankScore{
-		{Document: DocumentIdentity{VaultID: "vault", NodeID: 1, ContentVersionID: "version-1"}, Score: 1},
-		{Document: DocumentIdentity{VaultID: "vault", NodeID: 2, ContentVersionID: "version-2"}, Score: 2},
-	}}
-	searcher, _ := stageSearcher(t, func(config *SearcherConfig) {
-		config.Reranking = RerankingConfig{Enabled: true,
-			Profile: RerankingProfile{ID: "reranking", MaxCandidates: 2}, Provider: reranker,
-			Authorizer: &stageAuthorizer{}, Deadline: time.Second, FailurePolicy: ProviderFailureFailClosed}
-	})
+	for _, maxCandidates := range []int{1, 2} {
+		t.Run(fmt.Sprintf("candidates=%d", maxCandidates), func(t *testing.T) {
+			reranker := &stageReranker{scores: []RerankScore{
+				{Document: DocumentIdentity{VaultID: "vault", NodeID: 1, ContentVersionID: "version-1"}, Score: 0},
+				{Document: DocumentIdentity{VaultID: "vault", NodeID: 2, ContentVersionID: "version-2"}, Score: 2},
+			}[:maxCandidates]}
+			searcher, _ := stageSearcher(t, func(config *SearcherConfig) {
+				config.Reranking = RerankingConfig{Enabled: true,
+					Profile: RerankingProfile{ID: "reranking", MaxCandidates: maxCandidates}, Provider: reranker,
+					Authorizer: &stageAuthorizer{}, Deadline: time.Second, FailurePolicy: ProviderFailureFailClosed}
+			})
 
-	report, err := searcher.Search(t.Context(), Query{Text: "original", Mode: ModeLexical, Limit: 2})
-	require.NoError(t, err)
-	assert.Equal(t, int64(2), report.Results[0].Document.NodeID)
-	assert.Equal(t, int64(1), report.Results[1].Document.NodeID)
-	assert.Equal(t, []RerankingCandidate{
-		{Document: DocumentIdentity{VaultID: "vault", NodeID: 1, ContentVersionID: "version-1"}, Excerpt: "one", Evidence: []EvidenceReference{{Kind: "node_name", VaultID: "vault", NodeID: 1, ContentVersionID: "version-1"}}},
-		{Document: DocumentIdentity{VaultID: "vault", NodeID: 2, ContentVersionID: "version-2"}, Excerpt: "two", Evidence: []EvidenceReference{{Kind: "node_name", VaultID: "vault", NodeID: 2, ContentVersionID: "version-2"}}},
-	}, reranker.candidates)
+			report, err := searcher.Search(t.Context(), Query{Text: "original", Mode: ModeLexical, Limit: 2})
+			require.NoError(t, err)
+			require.Len(t, report.Results, 2)
+			wantNodes, wantScores := []int64{2, 1}, []float64{2, 0}
+			if maxCandidates == 1 {
+				wantNodes, wantScores = []int64{1, 2}, []float64{0, 1.0 / 62}
+			}
+			for index, item := range report.Results {
+				assert.Equal(t, wantNodes[index], item.Document.NodeID)
+				assert.InDelta(t, wantScores[index], item.Score, 0)
+				if index < maxCandidates {
+					if assert.NotNil(t, item.RerankRelevance) {
+						assert.InDelta(t, wantScores[index], *item.RerankRelevance, 0)
+					}
+				} else {
+					assert.Nil(t, item.RerankRelevance)
+				}
+			}
+			assert.Equal(t, []RerankingCandidate{
+				{Document: DocumentIdentity{VaultID: "vault", NodeID: 1, ContentVersionID: "version-1"}, Excerpt: "one", Evidence: []EvidenceReference{{Kind: "node_name", VaultID: "vault", NodeID: 1, ContentVersionID: "version-1"}}},
+				{Document: DocumentIdentity{VaultID: "vault", NodeID: 2, ContentVersionID: "version-2"}, Excerpt: "two", Evidence: []EvidenceReference{{Kind: "node_name", VaultID: "vault", NodeID: 2, ContentVersionID: "version-2"}}},
+			}[:maxCandidates], reranker.candidates)
+		})
+	}
 }
 
 func TestSearcherRerankingReceivesOnlyBoundedAuthorizedCandidatePayload(t *testing.T) {
@@ -288,9 +309,14 @@ func TestSearcherRerankingAuthorizationPrecedesProviderEgress(t *testing.T) {
 			Authorizer: authorizer, Deadline: time.Second, FailurePolicy: ProviderFailureDegrade}
 	})
 
-	report, err := searcher.Search(t.Context(), Query{Text: "private query", Mode: ModeLexical, Limit: 1,
+	report, err := searcher.Search(t.Context(), Query{Text: "private query", Mode: ModeLexical, Limit: 2,
 		Scope: store.SearchOptions{MIMEType: "text/plain"}})
 	require.NoError(t, err)
+	require.Len(t, report.Results, 2)
+	for index, item := range report.Results {
+		assert.Nil(t, item.RerankRelevance)
+		assert.InDelta(t, 1/float64(61+index), item.Score, 0)
+	}
 	assert.Zero(t, reranker.calls)
 	require.Len(t, authorizer.operations, 1)
 	assert.Equal(t, ProviderInputQueryAndExcerpt, authorizer.operations[0].InputClass)
@@ -750,3 +776,22 @@ func (backend *stageBackend) NormalizeSearchOptions(_ context.Context, options s
 }
 
 func (authorizer *stageAuthorizer) Close() {}
+
+func FuzzRerankPreservesFiniteProviderScore(f *testing.F) {
+	f.Add(0.0)
+	f.Add(0.75)
+	f.Add(-1.0)
+	f.Fuzz(func(t *testing.T, score float64) {
+		if math.IsNaN(score) || math.IsInf(score, 0) {
+			t.Skip()
+		}
+		doc := DocumentIdentity{VaultID: "vault", NodeID: 1, ContentVersionID: "first"}
+		searcher := &Searcher{reranking: RerankingConfig{Enabled: true, Profile: RerankingProfile{ID: "reranking", MaxCandidates: 1}, Provider: &stageReranker{scores: []RerankScore{{Document: doc, Score: score}}}, Authorizer: &stageAuthorizer{}, Deadline: time.Second, FailurePolicy: ProviderFailureFailClosed}}
+		report, receipt, _, err := searcher.rerank(t.Context(), Query{Text: "query"}, Report{Results: []Result{{Document: doc, Excerpt: "text"}}})
+		require.NoError(t, err)
+		require.Equal(t, ProviderOutcomeApplied, receipt.Outcome)
+		require.NotNil(t, report.Results[0].RerankRelevance)
+		assert.InDelta(t, score, *report.Results[0].RerankRelevance, 0)
+		assert.InDelta(t, score, report.Results[0].Score, 0)
+	})
+}

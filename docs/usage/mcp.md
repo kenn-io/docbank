@@ -269,6 +269,17 @@ capped at 512 characters and each hit has at most 64 evidence identities of at
 most 1,024 characters each. A result contains at most 64 skipped-reason codes
 of at most 64 characters each.
 
+Set `rerank: true` to request the profile's configured reranker. The query and
+bounded candidate excerpts are sent to the provider only under the existing
+reranking consent grant. The optional `reranking` receipt reports `applied`,
+`skipped`, or `degraded`, the candidate count, and any failure cause. Scored
+hits include `rerank_relevance`, including zero; hits outside the candidate
+limit do not. A degraded search retains its original order and adds
+`reranking_degraded` to skipped reasons, unless the profile fails closed.
+MCP returns `reranking_unavailable` when no reranker is configured and
+`reranking_failed` when reranking fails under a fail-closed policy; these
+errors omit provider bodies, credentials, query text, and excerpts.
+
 Document summaries use paths of at most 16,384 characters, names and MIME types
 of at most 255 characters, and at most 64 active rendition identities.
 Processing-plan responses contain at most 129 flow hops, 129 disclosed classes,

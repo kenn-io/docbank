@@ -236,7 +236,7 @@ func TestToolSchemasPinInputsBoundsAndStableIdentities(t *testing.T) {
 		"query": "synthetic", "profile": "local", "content_version_ids": []any{"00000000-0000-4000-8000-000000000007"},
 	})
 	assertSchemaAccepts(t, search.InputSchema, map[string]any{
-		"query": "synthetic", "profile": "local", "filters": map[string]any{},
+		"query": "synthetic", "profile": "local", "filters": map[string]any{}, "rerank": true,
 	})
 	assertSchemaRejects(t, search.InputSchema, map[string]any{
 		"query": "synthetic", "profile": "local",
