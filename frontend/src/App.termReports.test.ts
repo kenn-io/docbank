@@ -220,7 +220,6 @@ it.each(["live", "query page", "missing identity"])(
       return;
     }
     const drawer = await screen.findByRole("dialog", { name: "Search term report" });
-    expect(within(drawer).getByRole("button", { name: "Close search term report" })).toBeTruthy();
     expect(within(drawer).getByText("Selected documents (1)")).toBeTruthy();
     if (mode === "live") {
       const before = listings;

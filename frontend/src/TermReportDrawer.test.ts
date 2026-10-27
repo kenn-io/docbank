@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import TermReportDrawer from "./TermReportDrawer.svelte";
+import { drawerPage } from "./drawerNavigation.js";
 
 beforeEach(() => {
   Object.defineProperty(Element.prototype, "scrollIntoView", {
@@ -430,3 +431,44 @@ it("offers Remove only when more than one term exists", async () => {
     (screen.getByRole("textbox", { name: "Expression for term 2" }) as HTMLInputElement).value,
   ).toBe("");
 });
+
+it.each(["edited", "history-loaded"])(
+  "keeps a %s report draft after canceling and changing the search",
+  async (source) => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input).startsWith("/api/v1/search-exports?"))
+        return json({ items: [{ request: original, summary: oldSummary }], total: 1 });
+      return json({ items: [], total: 0 });
+    });
+    const { rerender } = render(TermReportDrawer, {
+      props: {
+        session: "session",
+        initialExpression: "alpha",
+        onclose: vi.fn(),
+        onauthfailure: vi.fn(),
+      },
+      context: new Map([[drawerPage, true]]),
+    });
+    expect(await screen.findByRole("heading", { name: "Recent reports" })).toBeTruthy();
+    expect(screen.queryByRole("textbox", { name: "Expression for term 1" })).toBeNull();
+    if (source === "edited") {
+      await fireEvent.click(screen.getByRole("button", { name: "Run report" }));
+      const expression = screen.getByRole("textbox", { name: "Expression for term 1" });
+      expect(expression).toHaveProperty("value", "alpha");
+      await fireEvent.input(expression, { target: { value: "edited draft" } });
+    } else {
+      await fireEvent.click(await screen.findByRole("button", { name: "Use as draft" }));
+      expect(screen.getByRole("textbox", { name: "Expression for term 1" })).toHaveProperty(
+        "value",
+        "alpha",
+      );
+    }
+    await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await rerender({ initialExpression: "beta" });
+    await fireEvent.click(screen.getByRole("button", { name: "Run report" }));
+    expect(screen.getByRole("textbox", { name: "Expression for term 1" })).toHaveProperty(
+      "value",
+      source === "edited" ? "edited draft" : "alpha",
+    );
+  },
+);

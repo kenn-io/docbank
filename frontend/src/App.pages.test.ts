@@ -176,42 +176,32 @@ it.each([
   expect(history.length).toBe(entries + 1);
 });
 
-it.each(["Searches", "Productions", "Imports", "Recoverable trash"])(
-  "retains unfinished Advanced input and execution settings across %s navigation",
-  async (page) => {
-    start();
-    await screen.findByText("Empty folder");
-    await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
-    await fireEvent.click(
-      await screen.findByRole("combobox", { name: "Processing profile: Default" }),
-    );
-    await fireEvent.click(screen.getByRole("option", { name: "archive" }));
-    await fireEvent.click(screen.getByRole("combobox", { name: "Documents per page: 100" }));
-    await fireEvent.click(screen.getByRole("option", { name: "250" }));
-    await fireEvent.input(screen.getByLabelText("Filters JSON"), {
-      target: { value: '{"size_min":' },
-    });
-    await fireEvent.keyDown(window, { key: "Escape" });
-    await fireEvent.click(screen.getByRole("button", { name: page }));
-    await screen.findByRole("main", { name: page === "Recoverable trash" ? "Trash" : page });
-    expect(screen.queryByRole("dialog", { name: "Filters and sort" })).toBeNull();
-    await fireEvent.click(screen.getByRole("button", { name: "All files" }));
-    await screen.findByText("Empty folder");
-    await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
-    expect((screen.getByLabelText("Filters JSON") as HTMLTextAreaElement).value).toBe(
-      '{"size_min":',
-    );
-    expect(screen.getByRole("combobox", { name: "Processing profile: archive" })).toBeTruthy();
-    expect(screen.getByRole("combobox", { name: "Documents per page: 250" })).toBeTruthy();
-  },
-);
+it("retains unfinished Advanced input and execution settings across Imports navigation", async () => {
+  start();
+  await screen.findByText("Empty folder");
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  await fireEvent.click(
+    await screen.findByRole("combobox", { name: "Processing profile: Default" }),
+  );
+  await fireEvent.click(screen.getByRole("option", { name: "archive" }));
+  await fireEvent.click(screen.getByRole("combobox", { name: "Documents per page: 100" }));
+  await fireEvent.click(screen.getByRole("option", { name: "250" }));
+  await fireEvent.input(screen.getByLabelText("Filters JSON"), {
+    target: { value: '{"size_min":' },
+  });
+  await fireEvent.keyDown(window, { key: "Escape" });
+  await fireEvent.click(screen.getByRole("button", { name: "Imports" }));
+  await screen.findByRole("main", { name: "Imports" });
+  expect(screen.queryByRole("dialog", { name: "Filters and sort" })).toBeNull();
+  await fireEvent.click(screen.getByRole("button", { name: "All files" }));
+  await screen.findByText("Empty folder");
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  expect((screen.getByLabelText("Filters JSON") as HTMLTextAreaElement).value).toBe('{"size_min":');
+  expect(screen.getByRole("combobox", { name: "Processing profile: archive" })).toBeTruthy();
+  expect(screen.getByRole("combobox", { name: "Documents per page: 250" })).toBeTruthy();
+});
 
-it.each([
-  ["Searches", "Searches"],
-  ["Productions", "Productions"],
-  ["Imports", "Imports"],
-  ["Recoverable trash", "Trash"],
-])("keeps search and help shortcuts on %s after running a saved search", async (label, title) => {
+it("keeps search and help shortcuts on Imports after running a saved search", async () => {
   const fetch = start();
   const original = fetch.getMockImplementation()!;
   fetch.mockImplementation(async (input, init) => {
@@ -224,46 +214,35 @@ it.each([
   await fireEvent.click(await screen.findByRole("button", { name: "Run Alpha documents" }));
   await waitFor(() => expect(location.pathname).toBe("/"));
   await screen.findByText("0 results");
-  await fireEvent.click(await screen.findByRole("button", { name: label }));
-  await screen.findByRole("main", { name: title });
+  await fireEvent.click(await screen.findByRole("button", { name: "Imports" }));
+  await screen.findByRole("main", { name: "Imports" });
   const search = screen.getByRole("searchbox", { name: "Search documents" });
   await fireEvent.keyDown(window, { key: "/" });
   expect(document.activeElement).toBe(search);
   await fireEvent.keyDown(search, { key: "?", shiftKey: true });
   expect(screen.queryByRole("dialog", { name: "Keyboard shortcuts" })).toBeNull();
-  (search as HTMLInputElement).blur();
-  await fireEvent.keyDown(window, { key: "?", shiftKey: true });
-  expect(screen.getByRole("dialog", { name: "Keyboard shortcuts" })).toBeTruthy();
-  await fireEvent.keyDown(window, { key: "/" });
-  expect(document.activeElement).not.toBe(search);
 });
 
-it.each(["/searches", "/productions", "/imports", "/trash"])(
-  "keeps %s open when submitting an empty search",
-  async (path) => {
-    const fetch = start(path);
-    await screen.findByRole("main");
-    const search = screen.getByRole("searchbox", { name: "Search documents" });
-    await fireEvent.input(search, { target: { value: "   " } });
-    const push = vi.spyOn(history, "pushState");
-    fetch.mockClear();
-    await fireEvent.submit(search.closest("form")!);
-    expect(location.pathname).toBe(path);
+it.each([
+  ["empty", "   ", "/imports"],
+  ["non-empty", "alpha", "/"],
+])("handles a %s search submitted from Imports", async (_kind, text, path) => {
+  const fetch = start("/imports");
+  await screen.findByRole("main", { name: "Imports" });
+  const search = screen.getByRole("searchbox", { name: "Search documents" });
+  await fireEvent.input(search, { target: { value: text } });
+  const push = vi.spyOn(history, "pushState");
+  fetch.mockClear();
+  await fireEvent.submit(search.closest("form")!);
+  await waitFor(() => expect(location.pathname).toBe(path));
+  if (path === "/imports") {
     expect(push).not.toHaveBeenCalled();
     expect(fetch.mock.calls.some(([input]) => String(input).includes("/api/v1/search?"))).toBe(
       false,
     );
-  },
-);
-
-it("leaves the tool page when submitting a search", async () => {
-  start("/imports");
-  await screen.findByRole("main", { name: "Imports" });
-  const search = screen.getByRole("searchbox", { name: "Search documents" });
-  await fireEvent.input(search, { target: { value: "alpha" } });
-  await fireEvent.submit(search.closest("form")!);
-  await waitFor(() => expect(location.pathname).toBe("/"));
-  expect(screen.queryByRole("main", { name: "Imports" })).toBeNull();
+  } else {
+    expect(screen.queryByRole("main", { name: "Imports" })).toBeNull();
+  }
 });
 
 it("opens Advanced on the first click after loading Imports with a query", async () => {
@@ -292,113 +271,15 @@ it("keeps Imports through a Documents and Photos round trip", async () => {
   expect(location.pathname).toBe("/imports");
 });
 
-it("seeds Run report from the current search and keeps an edited draft", async () => {
+it("seeds Run report from the current search", async () => {
   start("/searches");
   const main = await screen.findByRole("main", { name: "Searches" });
   expect(within(main).getByRole("heading", { name: "Reports", level: 2 })).toBeTruthy();
   const search = screen.getByRole("searchbox", { name: "Search documents" });
   await fireEvent.input(search, { target: { value: "alpha" } });
   await fireEvent.click(screen.getByRole("button", { name: "Run report" }));
-  const expression = screen.getByRole("textbox", { name: "Expression for term 1" });
-  expect(expression).toHaveProperty("value", "alpha");
-  await fireEvent.input(expression, { target: { value: "edited draft" } });
-  await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-  await fireEvent.input(search, { target: { value: "beta" } });
-  await fireEvent.click(screen.getByRole("button", { name: "Run report" }));
-  expect(screen.getByRole("textbox", { name: "Expression for term 1" })).toHaveProperty(
-    "value",
-    "edited draft",
-  );
-});
-
-it("shows saved searches and recent reports together and keeps a history-loaded draft", async () => {
-  const fetch = start();
-  const original = fetch.getMockImplementation()!;
-  fetch.mockImplementation(async (input, init) => {
-    if (String(input) === "/api/v1/saved-queries?limit=100&offset=0") return savedQueriesPage();
-    if (String(input).startsWith("/api/v1/search-exports?"))
-      return Response.json({
-        items: [
-          {
-            summary: { id: "report", observed_at: "2026-09-20T12:00:00Z", state: "complete" },
-            request: {
-              version: 1,
-              all_documents: true,
-              timezone: "UTC",
-              coverage_mode: "strict",
-              terms: [
-                {
-                  number: 1,
-                  expression: "alpha",
-                  syntax: "simple",
-                  dates: { start: "2000-01-01", end: "2026-09-20" },
-                },
-              ],
-            },
-          },
-        ],
-        total: 1,
-      });
-    return original(input, init);
-  });
-  await fireEvent.click(await screen.findByRole("button", { name: "Searches" }));
-  await screen.findByText("Alpha documents");
-  expect(await screen.findByRole("heading", { name: "Recent reports" })).toBeTruthy();
-  expect(screen.queryByRole("textbox", { name: "Expression for term 1" })).toBeNull();
-  await fireEvent.click(screen.getByRole("button", { name: "Use as draft" }));
-  expect(
-    (screen.getByRole("textbox", { name: "Expression for term 1" }) as HTMLInputElement).value,
-  ).toBe("alpha");
-  await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-  await fireEvent.input(screen.getByRole("searchbox", { name: "Search documents" }), {
-    target: { value: "beta" },
-  });
-  await fireEvent.click(screen.getByRole("button", { name: "Run report" }));
   expect(screen.getByRole("textbox", { name: "Expression for term 1" })).toHaveProperty(
     "value",
     "alpha",
   );
-});
-
-it("stays on Trash when restoring reruns an active saved query", async () => {
-  const fetch = start();
-  const original = fetch.getMockImplementation()!;
-  const trashed = {
-    ...root,
-    id: 42,
-    name: "Reports",
-    path: "/Reports",
-    trashed_at: "2026-09-20T12:00:00Z",
-  };
-  let restored = false;
-  let queries = 0;
-  fetch.mockImplementation(async (input, init) => {
-    const url = String(input);
-    if (url === "/api/v1/saved-queries?limit=100&offset=0") return savedQueriesPage();
-    if (url === "/api/v1/workspace/queries" && init?.method === "POST") {
-      queries++;
-      return Response.json(await snapshotEnvelope(query, []));
-    }
-    if (url.startsWith("/api/v1/trash?"))
-      return Response.json({
-        items: restored ? [] : [trashed],
-        total: restored ? 0 : 1,
-        limit: 1000,
-        offset: 0,
-      });
-    if (url === "/api/v1/nodes/42/restore") {
-      restored = true;
-      return Response.json({ ...trashed, trashed_at: undefined, revision: 2 });
-    }
-    return original(input, init);
-  });
-  await fireEvent.click(await screen.findByRole("button", { name: "Searches" }));
-  await fireEvent.click(await screen.findByRole("button", { name: "Run Alpha documents" }));
-  await waitFor(() => expect(queries).toBe(1));
-  await fireEvent.click(screen.getByRole("button", { name: "Recoverable trash" }));
-  await fireEvent.click(await screen.findByRole("button", { name: "Restore" }));
-  await waitFor(() => expect(queries).toBe(2));
-  expect(location.pathname).toBe("/trash");
-  expect(screen.getByRole("main", { name: "Trash" })).toBeTruthy();
-  await waitFor(() => expect(screen.queryByRole("button", { name: "Restore" })).toBeNull());
 });

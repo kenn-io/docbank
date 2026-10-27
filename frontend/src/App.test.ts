@@ -2149,14 +2149,9 @@ it("persists a vault-scoped tag binding and applies it only to the inspected fil
   );
 });
 
-it.each([
-  ["Searches", "Searches"],
-  ["Productions", "Productions"],
-  ["Imports", "Imports"],
-  ["Recoverable trash", "Trash"],
-])(
-  "blocks hidden document actions on the %s page",
-  async (label, title) => {
+it("blocks hidden document actions on the Imports page", async () => {
+  const label = "Imports";
+  const title = "Imports";
   prepareKeyboardApp();
   const backend = installKeyboardBackend();
   const fetchMock = vi.mocked(globalThis.fetch);

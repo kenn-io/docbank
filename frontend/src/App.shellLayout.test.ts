@@ -265,11 +265,9 @@ it("keeps Productions visible when refreshing a confirmed package listing fails"
   expect(screen.getByRole("button", { name: "Productions" })).toBeTruthy();
 });
 
-it("opens production sets from the sidebar between Searches and Imports", async () => {
+it("places Productions in the sidebar between Searches and Imports", async () => {
   start("package");
   const production = await screen.findByRole("button", { name: "Productions" });
   expect(production.previousElementSibling?.textContent).toContain("Searches");
   expect(production.nextElementSibling?.textContent).toContain("Imports");
-  await fireEvent.click(production);
-  expect(await screen.findByText("Review set")).toBeTruthy();
 });

@@ -50,7 +50,7 @@ Documents/Photos switches keep your place until the session locks. Leaving an al
 album index at `/photos/albums`, People at `/photos/people`, or an album at `/photos/albums/{id}`. Map requires [tile configuration](../configuration.md#photo-map-tiles) and a restart. See [Browse photos](photos.md#browse-in-the-web-app).
 
 Use the sidebar for **All files**, **Searches**, **Productions** when sets exist, **Imports**, and
-**Trash**. Searches, Productions, Imports, and Trash open full pages at `/searches`, `/productions`, `/imports`, and `/trash`. Back and Forward keep the page. Reload returns to the same page once you sign in again. **Export** offers **Download files…** and
+**Trash**. Searches, Productions, Imports, and Trash open full pages at `/searches`, `/productions`, `/imports`, and `/trash`. Back and Forward keep the page. Reload keeps the page with API-key sign-in; `docbank web` starts at the root. **Export** offers **Download files…** and
 **Bates-numbered PDFs…**. **System** groups **Disk use**, **Running now**, **Backups**,
 **Protected folders**, and **Usage reporting**. On a narrow screen, **Open navigation** reveals the
 same menu.
