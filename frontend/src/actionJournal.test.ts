@@ -108,3 +108,15 @@ it.each(["unfinished", "replaced"])(
     expect(stored?.batches[0].state).toBe("sending");
   },
 );
+
+it("journals a fresh batch without a recovery-file import", async () => {
+  const action = await prepareAction(vaultID, await targets([member(7)]), tagID, true);
+  const journal = await ActionJournal.open(vaultID);
+  await journal.prepare(action);
+  await journal.markSending(0);
+  expect(await journal.load()).toMatchObject({
+    state: "sending",
+    checkpoint_verified: false,
+    batches: [{ state: "sending" }],
+  });
+});

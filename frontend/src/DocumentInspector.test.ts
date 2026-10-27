@@ -80,9 +80,8 @@ it("opens folder protection from its actions and copies the command", async () =
   expect(writeText).toHaveBeenCalledWith("docbank audit enable --node-id 42");
 });
 
-it("opens audit history from the protected chip and tag management from an empty Tags row", async () => {
+it("opens audit history from the protected chip", async () => {
   const onhistory = vi.fn();
-  const ontags = vi.fn();
   render(DocumentInspector, {
     node: folder,
     path: "/Records",
@@ -92,10 +91,22 @@ it("opens audit history from the protected chip and tag management from an empty
     tagsError: "",
     onprovenance: vi.fn(),
     onhistory,
-    ontags,
   });
   await fireEvent.click(screen.getByRole("button", { name: "Protected, open Audit history" }));
   expect(onhistory).toHaveBeenCalledOnce();
+});
+it("opens tag management from an empty Tags row", async () => {
+  const ontags = vi.fn();
+  render(DocumentInspector, {
+    node: folder,
+    path: "/Records",
+    tags: [],
+    tagsLoading: false,
+    tagsError: "",
+    onprovenance: vi.fn(),
+    onhistory: vi.fn(),
+    ontags,
+  });
   await fireEvent.click(screen.getByRole("button", { name: "Add tag" }));
   expect(ontags).toHaveBeenCalledOnce();
 });

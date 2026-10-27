@@ -237,7 +237,7 @@ it("creates from an empty catalog, then hands the new tag to assignment", async 
 it("doesn't offer creation for a normalized existing assigned tag", async () => {
   render(TagPicker, {
     value: "",
-    tags,
+    tags: [{ ...tags[2]!, name: "café" }],
     title: "Tag to assign",
     placeholder: "Tag name",
     session: "session",
@@ -245,7 +245,7 @@ it("doesn't offer creation for a normalized existing assigned tag", async () => 
     onchange: vi.fn(),
     onpick: vi.fn(),
   });
-  await fireEvent.input(screen.getByRole("combobox"), { target: { value: "important" } });
+  await fireEvent.input(screen.getByRole("combobox"), { target: { value: "  cafe\u0301  " } });
   expect(screen.queryByRole("option")).toBeNull();
 });
 

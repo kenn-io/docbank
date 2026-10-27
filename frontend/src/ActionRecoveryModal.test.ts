@@ -545,16 +545,3 @@ it("does not expire the session from a replaced view's pending error reload", as
   await new Promise((resolve) => setTimeout(resolve, 0));
   expect(onauthfailure).not.toHaveBeenCalled();
 });
-
-it("journals a fresh batch without a recovery-file import", async () => {
-  vi.stubGlobal("Uint8Array", new TextEncoder().encode("").constructor);
-  const action = await prepared();
-  const journal = await ActionJournal.open(vaultID);
-  await journal.prepare(action);
-  await journal.markSending(0);
-  expect(await journal.load()).toMatchObject({
-    state: "sending",
-    checkpoint_verified: false,
-    batches: [{ state: "sending" }],
-  });
-});

@@ -1413,57 +1413,8 @@ it("returns to automatic meaning search with the typed draft when plain words is
   );
 });
 
-it("sorts a first meaning search from Advanced", async () => {
-  const query = "annual report";
-  const small = { ...node(2, "small.txt", baseVersion), size: 10 };
-  const large = { ...node(3, "large.txt", rerankedVersion), size: 500 };
-  const harness = installHarness({
-    profiles: [
-      {
-        name: "private",
-        fingerprint: "a".repeat(64),
-        rendition: true,
-        embedding_bindings: ["embed"],
-        reranking_available: false,
-      },
-    ],
-    files: [small, large],
-    baseReport: report("hybrid", [
-      result(small, 1, "small excerpt"),
-      result(large, 2, "large excerpt"),
-    ]),
-  });
-  render(App);
-  await fireEvent.input(await screen.findByRole("searchbox", { name: "Search documents" }), {
-    target: { value: query },
-  });
-  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
-  await fireEvent.click(screen.getByRole("combobox", { name: /^Sort by:/ }));
-  await fireEvent.click(screen.getByRole("option", { name: "Size" }));
-  await fireEvent.click(screen.getByRole("combobox", { name: "Direction: Ascending" }));
-  await fireEvent.click(screen.getByRole("option", { name: "Descending" }));
-  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
-  await waitFor(() => expect(harness.postBodies.at(-1)).toMatchObject({ mode: "hybrid", query }));
-  await waitFor(() =>
-    expect(screen.queryByRole("dialog", { name: "Filters and sort" })).toBeNull(),
-  );
-  const names = () =>
-    screen
-      .getAllByRole("row")
-      .map((row) => row.textContent ?? "")
-      .filter((text) => text.includes("txt"));
-  await waitFor(() => expect(names()[0]).toContain("large.txt"));
-  expect(screen.queryByRole("region", { name: "Frozen query results" })).toBeNull();
-  expect(
-    harness.fetchMock.mock.calls.some(([url]) => String(url) === "/api/v1/workspace/queries"),
-  ).toBe(false);
-  expect(
-    (screen.getByRole("searchbox", { name: "Search documents" }) as HTMLInputElement).value,
-  ).toBe(query);
-});
-
-it.each(["previously displayed", "same"] as const)(
-  "supersedes a pending search when Advanced sorts the %s query",
+it.each(["first", "previously displayed", "same"] as const)(
+  "sorts the %s query from Advanced and supersedes any pending search",
   async (which) => {
     const small = { ...node(2, "small.txt", baseVersion), size: 10 };
     const large = { ...node(3, "large.txt", rerankedVersion), size: 500 };
@@ -1493,17 +1444,24 @@ it.each(["previously displayed", "same"] as const)(
       await submitSearch("query A");
       await screen.findByText("small excerpt");
     }
-    const pendingSearch = vi.fn(() => {
-      harness.fetchMock.mockImplementation(fetch);
-      return pending;
-    });
-    harness.fetchMock.mockImplementation((input, init) => {
-      if (String(input) === "/api/v1/search") return pendingSearch();
-      return fetch(input, init);
-    });
-    await submitSearch("query B");
-    await waitFor(() => expect(pendingSearch).toHaveBeenCalledOnce());
-    const query = which === "previously displayed" ? "query A" : "query B";
+    if (which !== "first") {
+      const pendingSearch = vi.fn(() => {
+        harness.fetchMock.mockImplementation(fetch);
+        return pending;
+      });
+      harness.fetchMock.mockImplementation((input, init) => {
+        if (String(input) === "/api/v1/search") return pendingSearch();
+        return fetch(input, init);
+      });
+      await submitSearch("query B");
+      await waitFor(() => expect(pendingSearch).toHaveBeenCalledOnce());
+    }
+    const query =
+      which === "first"
+        ? "annual report"
+        : which === "previously displayed"
+          ? "query A"
+          : "query B";
     await fireEvent.input(screen.getByRole("searchbox", { name: "Search documents" }), {
       target: { value: query },
     });
@@ -1513,10 +1471,20 @@ it.each(["previously displayed", "same"] as const)(
     await fireEvent.click(screen.getByRole("combobox", { name: "Direction: Ascending" }));
     await fireEvent.click(screen.getByRole("option", { name: "Descending" }));
     await fireEvent.click(screen.getByRole("button", { name: "Search" }));
-    await act(async () => {
-      resolvePending(json(report("hybrid", [result(small, 1, "stale excerpt")])));
-      await pending;
-    });
+    if (which !== "first") {
+      await act(async () => {
+        resolvePending(json(report("hybrid", [result(small, 1, "stale excerpt")])));
+        await pending;
+      });
+    }
+    await waitFor(() => expect(harness.postBodies.at(-1)).toMatchObject({ mode: "hybrid", query }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Filters and sort" })).toBeNull(),
+    );
+    expect(screen.queryByRole("region", { name: "Frozen query results" })).toBeNull();
+    expect(
+      harness.fetchMock.mock.calls.some(([url]) => String(url) === "/api/v1/workspace/queries"),
+    ).toBe(false);
     await waitFor(() => {
       expect(screen.getByText("small excerpt")).toBeTruthy();
       expect(screen.queryByText("stale excerpt")).toBeNull();

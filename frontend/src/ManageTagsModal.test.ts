@@ -205,7 +205,7 @@ it("ignores a pending authorization failure after the modal is destroyed", async
   expect(onauthfailure).not.toHaveBeenCalled();
 });
 
-it("creates and assigns the first tag without a second button", async () => {
+it("assigns the first tag selected from the shared picker", async () => {
   const onchanged = vi.fn();
   const created = { ...reviewed, name: "Review", revision: 1, assignment_count: 0 };
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (url, request) => {
@@ -238,7 +238,14 @@ it("creates and assigns the first tag without a second button", async () => {
     expect.objectContaining({ node: expect.objectContaining({ revision: 4 }) }),
     true,
   );
-  expect(new Headers(fetchMock.mock.calls[1]?.[1]?.headers).get("If-Match")).toBe("3");
+  expect(
+    new Headers(
+      fetchMock.mock.calls.find(
+        ([url, request]) =>
+          url === `/api/v1/nodes/${node.id}/tags/${created.id}` && request?.method === "PUT",
+      )?.[1]?.headers,
+    ).get("If-Match"),
+  ).toBe("3");
 });
 
 it("recognizes an assigned tag outside the loaded catalog", async () => {

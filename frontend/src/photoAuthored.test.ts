@@ -2238,7 +2238,7 @@ it("reads assigned tags with a fresh signal after a failed edit keeps its draft"
   editor.dispose();
 });
 
-it("creates and stages a keyword from the shared picker", async () => {
+it("stages a keyword selected from the shared picker", async () => {
   setupPhotoUI();
   const editor = editorWithTargets();
   const onedit = vi.fn();

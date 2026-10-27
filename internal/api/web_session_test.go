@@ -54,6 +54,7 @@ func TestWebSessionAllowsPhotoAlbumAuthoredAndEventRoutes(t *testing.T) {
 		require.True(t, webSessionRequestAllowed(httptest.NewRequest(route.method, route.path, nil)), route.path)
 	}
 	for _, route := range []struct{ method, path string }{
+		{http.MethodPost, "/api/v1/nodes"},
 		{http.MethodGet, photoEventsPath},
 		{http.MethodGet, "/api/v1/photos/albums"},
 		{http.MethodPost, "/api/v1/photos/albums"},
@@ -74,6 +75,7 @@ func TestWebSessionAllowsPhotoAlbumAuthoredAndEventRoutes(t *testing.T) {
 			require.False(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodGet, route.path, nil)))
 		}
 	}
+	require.False(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodPost, "/api/v1/nodes?parent_id=1", nil)))
 	xmp := "/api/v1/photos/authored/40000000-0000-4000-8000-000000000001/xmp"
 	require.True(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodPost, xmp, nil)))
 	require.False(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodGet, xmp, nil)))

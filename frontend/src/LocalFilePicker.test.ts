@@ -7,7 +7,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it.each(["files", "folder"] as const)("chooses %s and preserves folder paths", async (kind) => {
+it.each(["files", "folder"] as const)("chooses %s", async (kind) => {
   const onchoose = vi.fn();
   render(LocalFilePicker, { onchoose });
   const input = screen.getByLabelText(

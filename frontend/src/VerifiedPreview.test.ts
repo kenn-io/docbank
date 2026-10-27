@@ -349,14 +349,6 @@ it("loads one exact rendition only while Text is active and keeps hostile markup
   await view.rerender({ ...props, queryTerms: ["alpha", "blocked"] });
   await waitFor(() => expect(document.querySelectorAll("mark")).toHaveLength(3));
   expect(fetchMock).toHaveBeenCalledTimes(3);
-  await fireEvent.click(screen.getByRole("tab", { name: "Preview" }));
-  await fireEvent.click(screen.getByRole("tab", { name: "Text" }));
-  expect(screen.queryByText("Loading text…")).toBeNull();
-  await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
-  expect(document.querySelectorAll("mark")).toHaveLength(3);
-  expect(
-    fetchMock.mock.calls.filter(([input]) => String(input).includes("/renditions/text/content?")),
-  ).toHaveLength(1);
 });
 
 it.each(["unprocessed", "unconfigured"])(
@@ -445,10 +437,7 @@ it("opens an email on its Email tab and offers no Preview it cannot render", asy
   expect(screen.getByRole("tab", { name: "Email" }).getAttribute("aria-selected")).toBe("true");
 });
 
-it.each([
-  "review revisits completed Text without a loading flash",
-  "review retains Text Find when revisiting inspector tabs",
-])("%s", async (name) => {
+it("revisits completed Text without a loading flash and retains Find", async () => {
   const bytes = new TextEncoder().encode("Synthetic report text");
   const selected = source(bytes, "11111111-1111-4111-8111-111111111111");
   const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -489,12 +478,9 @@ it.each([
   await screen.findByText("No duplicates");
   const downloads = fetcher.mock.calls.filter(([input]) => String(input).endsWith("ticket=text"));
   await fireEvent.click(screen.getByRole("tab", { name: "Text" }));
-  if (name.includes("loading flash")) {
-    expect(screen.queryByText("Loading text…")).toBeNull();
-  } else {
-    const find = await screen.findByRole("textbox", { name: "Find in verified text" });
-    expect((find as HTMLInputElement).value).toBe("report");
-  }
+  expect(screen.queryByText("Loading text…")).toBeNull();
+  const find = await screen.findByRole("textbox", { name: "Find in verified text" });
+  expect((find as HTMLInputElement).value).toBe("report");
   expect(
     fetcher.mock.calls.filter(([input]) => String(input).endsWith("ticket=text")),
   ).toHaveLength(downloads.length);

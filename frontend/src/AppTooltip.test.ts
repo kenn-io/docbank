@@ -20,17 +20,17 @@ it("shows a tooltip only after the shared delay, and says why a disabled control
     },
   );
   render(IconAction, {
-    ariaLabel: "Back to previous directory",
-    tip: "No previous folder",
+    ariaLabel: "Example action",
+    tip: "Example action unavailable",
     disabled: true,
     children: (() => {}) as never,
   });
-  const button = screen.getByRole("button", { name: "Back to previous directory" });
+  const button = screen.getByRole("button", { name: "Example action" });
   expect(button.getAttribute("title")).toBe("");
 
   await fireEvent.mouseEnter(button.parentElement!);
   vi.advanceTimersByTime(TOOLTIP_DELAY_MS - 1);
   expect(screen.queryByRole("tooltip")).toBeNull();
   vi.advanceTimersByTime(2);
-  expect((await screen.findByRole("tooltip")).textContent).toBe("No previous folder");
+  expect((await screen.findByRole("tooltip")).textContent).toBe("Example action unavailable");
 });
