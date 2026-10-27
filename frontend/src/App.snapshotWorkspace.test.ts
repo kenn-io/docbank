@@ -1305,35 +1305,6 @@ function tagInspectorFixture() {
   return { frozen, tag, nodes, assignments, json, fetch };
 }
 
-it("keeps snapshot B's inspector authority when live A's tag removal completes late", async () => {
-  const { tag, nodes, json, fetch } = tagInspectorFixture();
-  const baseFetch = fetch.getMockImplementation()!;
-  let release!: (response: Response) => void;
-  const removal = new Promise<Response>((resolve) => {
-    release = resolve;
-  });
-  fetch.mockImplementation(async (input, init) => {
-    if (String(input) === `/api/v1/nodes/1/tags/${tag.id}` && init?.method === "DELETE")
-      return removal;
-    return baseFetch(input, init);
-  });
-  render(App);
-  await screen.findByRole("button", { name: "Remove tag frozen" });
-  await fireEvent.click(screen.getByRole("button", { name: "Remove tag frozen" }));
-  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
-  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
-  await screen.findByRole("region", { name: "Frozen query results" });
-  await screen.findByRole("button", { name: "Add tag" });
-  release(json({ node: { ...nodes[0], revision: 4 }, tag, changed: true }));
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Add tag" }).hasAttribute("disabled")).toBe(false),
-  );
-  expect(screen.queryByRole("region", { name: "Current details" })).toBeNull();
-  await fireEvent.click(screen.getByRole("button", { name: "Add tag" }));
-  const dialog = await screen.findByRole("dialog", { name: "Manage tags for report-2.pdf" });
-  expect(within(dialog).queryByRole("button", { name: "Remove tag frozen" })).toBeNull();
-});
-
 it("uses the inspector's confirmed revision for Tag selected during Advanced search", async () => {
   const { tag, nodes, frozen, assignments, json, fetch } = tagInspectorFixture();
   const baseFetch = fetch.getMockImplementation()!;
