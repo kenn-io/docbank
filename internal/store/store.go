@@ -285,8 +285,8 @@ func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) (r
 		return fmt.Errorf("acquiring transaction connection: %w", err)
 	}
 	defer func() { retErr = errors.Join(retErr, conn.Close()) }()
-	// Let cancellation reach BEGIN's network I/O, then detach it so we own
-	// rollback completion and its errors throughout the mutation.
+	// Let cancellation reach BEGIN's network I/O, then detach it so we can
+	// handle cancellation and rollback errors during the mutation.
 	beginCtx, cancelBegin := context.WithCancel(context.WithoutCancel(ctx))
 	defer cancelBegin()
 	beginCancelled := make(chan struct{})
@@ -300,6 +300,9 @@ func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) (r
 		// taken by the lock statement before that commit.
 		opts = &sql.TxOptions{Isolation: sql.LevelReadCommitted}
 	}
+	// Cancellation racing a successful BEGIN may let database/sql roll back
+	// first. Our Rollback then returns ErrTxDone without the driver's rollback
+	// error; the deferred Conn.Close still waits for that rollback to finish.
 	tx, err := conn.BeginTx(beginCtx, opts)
 	if !stopBeginCancel() {
 		<-beginCancelled

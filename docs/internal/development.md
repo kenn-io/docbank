@@ -293,12 +293,17 @@ transaction on the single-connection writer pool. This serializes metadata
 changes; it does not replace the exclusive vault and blob-root ownership.
 
 Cancellation reaches connection acquisition, `BEGIN`, and the PostgreSQL lock
-wait. Once the transaction begins, the store owns cancellation rollback and
-waits for it before returning. Callback and commit failures propagate to the
-caller; the store never retries a mutation callback. Subscriber notifications
-follow successful commit only. PostgreSQL conservatively signals every storage
-commit; SQLite's temporary capture triggers narrow that signal to changes in
-tables Photos reads. Unread signals still coalesce.
+wait. After the cancellation handoff from `BEGIN`, the store owns rollback and
+its errors. If cancellation races a successful `BEGIN`, `database/sql` can
+start its own rollback first. The store then receives `sql.ErrTxDone` without
+that rollback's error. Closing the dedicated connection still waits for the
+rollback to finish before the store returns cancellation. Callback and commit
+failures propagate to the caller; the store never retries a mutation callback.
+
+Subscriber notifications follow successful commit only. PostgreSQL
+conservatively signals every storage commit; SQLite's temporary capture
+triggers narrow that signal to changes in tables Photos reads. Unread signals
+still coalesce.
 
 `RecordVerifiedBlobChecksum` and `BlobChecksums` use shared SQL on both backends.
 Recording requires an existing blob, accepts an identical checksum again, and
@@ -307,6 +312,19 @@ role needs only `SELECT` and `INSERT` on `blob_checksums`. SHA-256 remains the
 blob identity; MD5 is auxiliary metadata. This qualifies checksum recording and
 readback, not the backfill target query, complete blob publication, or document
 mutations, which still depend on catalogs that have not been ported.
+
+!!! info "Planned"
+
+    Runtime opening must reject a connection whose `current_schema()` differs
+    from the configured vault schema. Each pool must pin that same search path,
+    so writers to one schema use the same advisory lock key.
+
+    Photos checkout writes currently rely on SQLite's single-connection writer
+    pool. Their PostgreSQL implementation must use `withStorageTx` for every
+    metadata write. Publication intent must commit before the filesystem copy;
+    recording its result or clearing an unused intent needs a separate
+    transaction that survives request cancellation. A database transaction
+    must not span the filesystem publication callback.
 
 #### Catalog maintenance during writes
 
