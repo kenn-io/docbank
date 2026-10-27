@@ -381,7 +381,11 @@ func (s *Store) withStorageTxRetryBegin(ctx context.Context, fn func(tx *sql.Tx)
 		return struct{}{}, err
 	}, backoff.WithBackOff(backoff.NewConstantBackOff(10*time.Millisecond)), backoff.WithMaxTries(0), backoff.WithMaxElapsedTime(0))
 	if err != nil {
-		return errors.Join(ctx.Err(), backoff.AsRetryError(err).LastErr)
+		lastErr := backoff.AsRetryError(err).LastErr
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return errors.Join(ctxErr, lastErr)
+		}
+		return lastErr
 	}
 	return nil
 }
