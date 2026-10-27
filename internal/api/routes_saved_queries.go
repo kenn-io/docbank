@@ -246,8 +246,8 @@ func registerSavedQueryRunRoute(
 			if err != nil {
 				return nil, workspaceQueryError(err)
 			}
-			value = photoRankingQuery(value)
 			request.Query = value
+			value = photoRankingQuery(value)
 			if value.Mode != query.ModeLexical {
 				request.RankPhotos = func(buildCtx context.Context) (store.PhotoRanking, error) {
 					return photoQueryRanking(buildCtx, d, photoRankingRequest(value, false, coverage))

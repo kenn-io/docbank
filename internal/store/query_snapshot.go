@@ -245,12 +245,13 @@ func (s *Store) materializeNormalizedQuerySnapshot(
 			}
 			value = *resolved.Query
 		}
-		if request.PhotoRanking != nil {
-			value.Mode = query.ModeLexical
+		executionValue := value
+		if request.PhotoRanking != nil || request.Photos && strings.TrimSpace(value.Text) == "" {
+			executionValue.Mode = query.ModeLexical
 		}
 		options.Photos = request.Photos
 		compiler := queryCompiler{photoDisplayMetadata: request.FacetsOnly || options.Photos}
-		compiled, err := compiler.compile(ctx, value, queryResolver{q: q})
+		compiled, err := compiler.compile(ctx, executionValue, queryResolver{q: q})
 		if err != nil {
 			return err
 		}
@@ -264,7 +265,7 @@ func (s *Store) materializeNormalizedQuerySnapshot(
 			}
 		}
 		projection = SnapshotProjection{
-			PhotoProjection: request.PhotoProjection, PhotoRanking: request.PhotoRanking, Photos: options.Photos, Query: compiled.Query, Dependencies: slices.Clone(compiled.Dependencies),
+			PhotoProjection: request.PhotoProjection, PhotoRanking: request.PhotoRanking, Photos: options.Photos, Query: value, Dependencies: slices.Clone(compiled.Dependencies),
 			Coverage: coverage, PageSize: pageSize,
 			ObservedAt: options.Now().UTC(), Rows: make([]SnapshotRow, 0), Facets: make([]SnapshotFacet, 0, len(facets)),
 			Generation: SnapshotGeneration{Kind: "native"},
@@ -273,9 +274,6 @@ func (s *Store) materializeNormalizedQuerySnapshot(
 			projection.Generation = SnapshotGeneration{Kind: "rendition", GenerationID: generation.ID}
 		}
 		if !request.FacetsOnly {
-			if request.PhotoRanking != nil {
-				projection.Query = request.Query
-			}
 			projection.QueryFingerprint, err = query.Fingerprint(projection.Query)
 			if err != nil {
 				return err

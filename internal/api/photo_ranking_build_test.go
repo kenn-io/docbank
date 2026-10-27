@@ -3,6 +3,7 @@ package api_test
 import (
 	"context"
 	"encoding/json/v2"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -20,6 +22,43 @@ type photoQueryObserver struct {
 
 	calls atomic.Int32
 	query func(context.Context, int32)
+}
+
+func TestSavedPhotoRankingPreservesDefinitionIdentity(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{"semantic", "hybrid"} {
+		t.Run(mode, func(t *testing.T) {
+			ts, _, _ := photoObservedFixture(t)
+			saved, etag := createSavedQuery(t, ts.URL, "Synthetic named query", fmt.Sprintf(`{"mode":%q,"text":"sunset","sort":{"field":"name","direction":"asc"}}`, mode))
+			response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/saved-queries/"+saved.ID+"/runs", map[string]string{"X-Api-Key": testAPIKey, "If-Match": etag}, `{"photos":true}`)
+			require.Equal(t, http.StatusOK, response.StatusCode, body)
+			var result api.SavedQueryRunResult
+			require.NoError(t, json.Unmarshal([]byte(body), &result))
+			require.Equal(t, saved.Fingerprint, result.Run.QueryFingerprint)
+			require.EqualValues(t, 1, result.Run.Total)
+			require.EqualValues(t, 1, result.Snapshot.Total)
+		})
+	}
+}
+
+func TestReviewClearedSavedMeaningSearchRuns(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{"semantic", "hybrid"} {
+		for _, text := range []string{"", "   "} {
+			t.Run(fmt.Sprintf("%s/text=%q", mode, text), func(t *testing.T) {
+				ts, _, observer := photoObservedFixture(t)
+				saved, etag := createSavedQuery(t, ts.URL, "Synthetic cleared query", fmt.Sprintf(`{"mode":%q,"text":%q,"filters":{"extensions":["jpg"]},"sort":{"field":"name","direction":"asc"}}`, mode, text))
+				response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/saved-queries/"+saved.ID+"/runs", map[string]string{"X-Api-Key": testAPIKey, "If-Match": etag}, `{"photos":true}`)
+				require.Equal(t, http.StatusOK, response.StatusCode, body)
+				var result api.SavedQueryRunResult
+				require.NoError(t, json.Unmarshal([]byte(body), &result))
+				require.Equal(t, saved.Fingerprint, result.Run.QueryFingerprint)
+				require.EqualValues(t, 1, result.Run.Total)
+				require.EqualValues(t, 1, result.Snapshot.Total)
+				require.Zero(t, observer.calls.Load())
+			})
+		}
+	}
 }
 
 func (p *photoQueryObserver) Embed(ctx context.Context, inputs []document.EmbeddingInput, authorization document.EmbeddingAuthorization) (document.EmbeddingResult, error) {
