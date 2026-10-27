@@ -722,7 +722,7 @@ it.each(["exact", "absent", "broad", "case"])(
     const grouped = result === "broad" || result === "case";
     const query = result === "broad" ? "Al" : "Alex";
     const people = Array.from({ length: 300 }, (_, index) =>
-      personSummary(`person-${index}`, {
+      personSummary(`00000000-0000-4000-8000-${String(index + 100).padStart(12, "0")}`, {
         display_name: "Alex",
         display_name_folded: "alex",
         revision: 1,
@@ -823,7 +823,7 @@ it.each(["exact", "absent", "broad", "case"])(
         }),
       );
       const dialog = await screen.findByRole("dialog", { name: "Choose Alex" });
-      const selectedID = result === "case" ? "person-299" : "person-100";
+      const selectedID = result === "case" ? people[299]!.person_id : people[100]!.person_id;
       await fireEvent.click(dialog.querySelector(`input[value="${selectedID}"]`)!);
       await fireEvent.click(screen.getByRole("button", { name: "Name face" }));
       await waitFor(() =>
@@ -845,7 +845,7 @@ it.each(["exact", "absent", "broad", "case"])(
         expect(write).toHaveBeenCalledWith(
           "version-a",
           expect.objectContaining(
-            result === "exact" ? { person_id: "person-100" } : { person_name: "Alex" },
+            result === "exact" ? { person_id: people[100]!.person_id } : { person_name: "Alex" },
           ),
           expect.anything(),
         ),
@@ -960,13 +960,13 @@ it("lists a person once when a rank change repeats them on the next page", async
   vi.spyOn(api, "listPhotoFaces").mockResolvedValue({ faces: [], assertions: [], people: [] });
   vi.spyOn(api, "listPeople")
     .mockResolvedValueOnce({
-      items: [personSummary("ada", { display_name: "Ada" })],
+      items: [personSummary("00000000-0000-4000-8000-000000000001", { display_name: "Ada" })],
       next_cursor: "next",
     })
     .mockResolvedValueOnce({
       items: [
-        personSummary("ada", { display_name: "Ada" }),
-        personSummary("bob", { display_name: "Bob" }),
+        personSummary("00000000-0000-4000-8000-000000000001", { display_name: "Ada" }),
+        personSummary("00000000-0000-4000-8000-000000000003", { display_name: "Bob" }),
       ],
     });
   const faces = new PhotoFaces("session", vi.fn());
@@ -984,11 +984,13 @@ it("restarts the picker after a load-more cursor expires", async () => {
   const search = vi
     .spyOn(api, "listPeople")
     .mockResolvedValueOnce({
-      items: [personSummary("ada", { display_name: "Ada" })],
+      items: [personSummary("00000000-0000-4000-8000-000000000001", { display_name: "Ada" })],
       next_cursor: "stale",
     })
     .mockRejectedValueOnce(new APIError("People scope changed", 422, "cursor_expired"))
-    .mockResolvedValueOnce({ items: [personSummary("grace", { display_name: "Grace" })] });
+    .mockResolvedValueOnce({
+      items: [personSummary("00000000-0000-4000-8000-000000000002", { display_name: "Grace" })],
+    });
   const faces = new PhotoFaces("session", vi.fn());
   await faces.load("version-a");
   render(PhotoPeople, { faces, session: "session" });

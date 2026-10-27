@@ -17,53 +17,6 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-func TestPeopleBrowserMergeHiddenCustodian(t *testing.T) {
-	t.Parallel()
-	t.Run("browser session and Hidden cookie", func(t *testing.T) {
-		ts, s := newTestServer(t, nil)
-		ctx := t.Context()
-		survivor, err := s.CreatePerson(ctx, "Ada", "operator")
-		require.NoError(t, err)
-		absorbed, err := s.CreatePerson(ctx, "Grace", "operator")
-		require.NoError(t, err)
-		for _, person := range []store.Person{survivor, absorbed} {
-			hash, size, err := s.Blobs.Write(strings.NewReader(person.DisplayName))
-			require.NoError(t, err)
-			photo, err := s.CreateFile(ctx, s.RootID(), person.DisplayName+".jpg", hash, size, "image/jpeg")
-			require.NoError(t, err)
-			_, err = s.MarkPersonInPhoto(ctx, photo.CurrentVersionID, person.PersonID, "")
-			require.NoError(t, err)
-		}
-		hash, size, err := s.Blobs.Write(strings.NewReader("synthetic hidden photo"))
-		require.NoError(t, err)
-		hidden, err := s.CreateFile(ctx, s.RootID(), "hidden.jpg", hash, size, "image/jpeg")
-		require.NoError(t, err)
-		scope := store.CustodianScope{Kind: "document", NodeID: hidden.ID, ContentVersionID: hidden.CurrentVersionID}
-		_, err = s.SetCustodian(ctx, store.CustodianRequest{Scope: scope, PersonID: absorbed.PersonID,
-			RawLabel: absorbed.DisplayName, Rank: "primary", Basis: "operator_assigned", IfMatchRevision: 1})
-		require.NoError(t, err)
-		asset, err := s.PhotoAssetForNode(ctx, hidden.ID)
-		require.NoError(t, err)
-		require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
-		_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
-		require.NoError(t, err)
-		require.NoError(t, s.LockPhotoHidden(ctx))
-		headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts), "If-Match": `"1"`}
-		path := "/api/v1/people/by-id/" + survivor.PersonID + "/merge"
-		request := map[string]any{"absorbed_person_id": absorbed.PersonID, "absorbed_revision": absorbed.Revision, "operation_id": "00000000-0000-4000-8000-000000000014"}
-		response, body := do(t, ts, http.MethodPost, path, headers, request)
-		require.Equal(t, http.StatusForbidden, response.StatusCode, body)
-		delete(headers, "If-Match")
-		response, body = do(t, ts, http.MethodPost, "/api/v1/photos/hidden/unlock", headers, map[string]string{"passcode": "synthetic-passcode"})
-		require.Equal(t, http.StatusOK, response.StatusCode, body)
-		require.Len(t, response.Cookies(), 1)
-		headers["Cookie"] = response.Cookies()[0].String()
-		headers["If-Match"] = `"1"`
-		response, body = do(t, ts, http.MethodPost, path, headers, request)
-		require.Equal(t, http.StatusOK, response.StatusCode, body)
-	})
-}
-
 func TestPeopleBrowserMergeReceiptOmitsMovedEvidence(t *testing.T) {
 	t.Parallel()
 	for _, firstClient := range []string{"browser", "api key"} {
@@ -88,9 +41,23 @@ func TestPeopleBrowserMergeReceiptOmitsMovedEvidence(t *testing.T) {
 					require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
 					_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
 					require.NoError(t, err)
+				} else {
+					// Both people remain visible while Hidden is locked.
+					_, err = s.MarkPersonInPhoto(ctx, photo.CurrentVersionID, absorbed.PersonID, "")
+					require.NoError(t, err)
 				}
 			}
+			path := "/api/v1/people/by-id/" + survivor.PersonID + "/merge"
+			request := map[string]any{"absorbed_person_id": absorbed.PersonID, "absorbed_revision": absorbed.Revision, "operation_id": "00000000-0000-4000-8000-000000000013"}
 			browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)}
+			if firstClient == "browser" {
+				require.NoError(t, s.LockPhotoHidden(ctx))
+				browser["If-Match"] = `"1"`
+				response, body := do(t, ts, http.MethodPost, path, browser, request)
+				require.Equal(t, http.StatusForbidden, response.StatusCode, body)
+				require.Equal(t, "hidden_locked", decodeProblem(t, body).Code)
+				delete(browser, "If-Match")
+			}
 			response, body := do(t, ts, http.MethodPost, "/api/v1/photos/hidden/unlock", browser, map[string]string{"passcode": "synthetic-passcode"})
 			require.Equal(t, http.StatusOK, response.StatusCode, body)
 			require.Len(t, response.Cookies(), 1)
@@ -101,8 +68,6 @@ func TestPeopleBrowserMergeReceiptOmitsMovedEvidence(t *testing.T) {
 			if firstClient == "api key" {
 				firstHeaders = key
 			}
-			path := "/api/v1/people/by-id/" + survivor.PersonID + "/merge"
-			request := map[string]any{"absorbed_person_id": absorbed.PersonID, "absorbed_revision": absorbed.Revision, "operation_id": "00000000-0000-4000-8000-000000000013"}
 			response, body = do(t, ts, http.MethodPost, path, firstHeaders, request)
 			require.Equal(t, http.StatusOK, response.StatusCode, body)
 			var first api.PersonMergeReceipt
@@ -112,7 +77,7 @@ func TestPeopleBrowserMergeReceiptOmitsMovedEvidence(t *testing.T) {
 				assert.Equal(t, api.PersonMergeMovedCounts{}, first.Moved, "first browser reply")
 			} else {
 				assert.Equal(t, "Hidden Absorbed", first.AbsorbedDisplayName)
-				assert.Equal(t, 1, first.Moved.Assertions)
+				assert.Equal(t, 2, first.Moved.Assertions)
 			}
 			require.NoError(t, s.LockPhotoHidden(ctx))
 			delete(browser, "Cookie")
@@ -132,7 +97,7 @@ func TestPeopleBrowserMergeReceiptOmitsMovedEvidence(t *testing.T) {
 			var full api.PersonMergeReceipt
 			require.NoError(t, json.Unmarshal([]byte(body), &full))
 			assert.Equal(t, "Hidden Absorbed", full.AbsorbedDisplayName)
-			assert.Equal(t, api.PersonMergeMovedCounts{Assertions: 1}, full.Moved)
+			assert.Equal(t, api.PersonMergeMovedCounts{Assertions: 2, DeduplicatedAssertions: 1}, full.Moved)
 			assert.Equal(t, first.MergeID, full.MergeID)
 		})
 	}

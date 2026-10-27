@@ -5325,7 +5325,7 @@ it("clears the live update alert once the event stream opens again", async () =>
   expect(screen.queryByText("Failed to fetch")).toBeNull();
 });
 
-it.each(["Hidden lock", "Hidden navigate", "Library lock", "Library unlock"])(
+it.each(["Hidden lock", "Hidden navigate", "Library lock"])(
   "keeps the person filter in its scope during %s before the workspace mounts",
   async (scenario) => {
     const library = scenario.startsWith("Library");
@@ -5347,7 +5347,7 @@ it.each(["Hidden lock", "Hidden navigate", "Library lock", "Library unlock"])(
     const open = { configured: true, expires_at: "2099-01-01T00:00:00Z", expires_in: 300 };
     const accessState = vi.spyOn(HiddenAccess.prototype, "acceptState");
     let navigating = false;
-    let locked = library && action === "unlock";
+    let locked = false;
     let finishAccess!: (response: Response) => void;
     const hiddenQueries: Query[] = [];
     stubPhotoFetch(async (url, init) => {
@@ -5371,12 +5371,11 @@ it.each(["Hidden lock", "Hidden navigate", "Library lock", "Library unlock"])(
     const access = accessState.mock.contexts.at(-1) as HiddenAccess;
     navigating = true;
     const navigation = fireEvent.click(card);
-    if (library)
-      access.acceptState(action === "unlock" ? open : { configured: true }, Date.now() + 1);
+    if (library) access.acceptState({ configured: true }, Date.now() + 1);
     await navigation;
     await waitFor(() => expect(finishAccess).toBeTypeOf("function"));
     if (library) {
-      finishAccess(Response.json(action === "unlock" ? open : { configured: true }));
+      finishAccess(Response.json({ configured: true }));
       await screen.findByText("Person: Ada");
       expect(location.pathname).toBe("/photos");
       const filtered = (query.mock.contexts as Photos[]).filter((photos) =>

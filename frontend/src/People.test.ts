@@ -18,39 +18,6 @@ const unlockedAccess = () => {
   access.acceptState({ configured: true, expires_in: 60, expires_at: "later" }, Date.now());
   return access;
 };
-it("hides the Hidden button for a zero count", async () => {
-  const access = unlockedAccess();
-  const people = new People("session", vi.fn(), access);
-  people.items = [{ ...ada, photo_summary: { library_count: 3, hidden_count: 0 } }];
-  const cache = new PhotoPreviewCache("session", vi.fn());
-  const onperson = vi.fn();
-  render(PeopleView, { people, cache, onperson });
-  expect(screen.queryByRole("button", { name: "0 Hidden photos" })).toBeNull();
-  people.dispose();
-  access.dispose();
-  await cache.dispose();
-});
-it("blocks manual Search while a failed Hidden lock is unresolved", async () => {
-  const access = unlockedAccess();
-  const read = vi.spyOn(api, "listPeople").mockResolvedValue({ items: [grace] });
-  vi.spyOn(api, "lockPhotoHidden").mockRejectedValueOnce(new TypeError("Lock failed"));
-  const people = new People("session", vi.fn(), access);
-  people.items = [grace];
-  const cache = new PhotoPreviewCache("session", vi.fn());
-  const view = render(PeopleView, { people, cache, onperson: vi.fn() });
-  await act(async () => {
-    expect(await access.lock()).toBe(false);
-  });
-  expect(access.lockError).toBe("Lock failed");
-  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
-  expect(people.loading).toBe(false);
-  expect(screen.queryByRole("button", { name: "Grace 2 Library photos" })).toBeNull();
-  expect(read).not.toHaveBeenCalled();
-  view.unmount();
-  people.dispose();
-  access.dispose();
-  await cache.dispose();
-});
 it("keeps the search text with the applied query when the view returns", async () => {
   const read = vi.spyOn(api, "listPeople").mockResolvedValue({ items: [ada] });
   const people = new People("session", vi.fn());
@@ -111,7 +78,7 @@ it.each([false, true])("submits the dialog's rename revision after refresh=%s", 
   }
   expect(rename).toHaveBeenCalledOnce();
   expect(rename.mock.calls[0]!.slice(0, 3)).toEqual([
-    "grace",
+    grace.person_id,
     { display_name: "Grace Hopper" },
     { "If-Match": `"${grace.revision}"` },
   ]);
@@ -160,9 +127,10 @@ it.each([false, true])("submits selected cards and reports a locked merge=%s", a
   await fireEvent.click(within(dialog).getByRole("checkbox", { name: "Confirm merge" }));
   await fireEvent.click(confirm);
   await waitFor(() => expect(merge).toHaveBeenCalledOnce());
-  expect(merge.mock.calls[0]![0]).toBe("grace");
-  expect(merge.mock.calls[0]![1].absorbed_person_id).toBe("ada");
+  expect(merge.mock.calls[0]![0]).toBe(grace.person_id);
+  expect(merge.mock.calls[0]![1].absorbed_person_id).toBe(ada.person_id);
   if (locked) expect(await screen.findByText("unlock Hidden and retry the merge")).toBeTruthy();
+  else await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   view.unmount();
   people.dispose();
   await cache.dispose();
@@ -183,10 +151,10 @@ it("keeps portraits through in-place updates and releases them when cards clear"
   const revokeObjectURL = vi.fn();
   vi.stubGlobal(
     "URL",
-    Object.assign(URL, {
-      createObjectURL: vi.fn(() => `blob:person-${++nextURL}`),
-      revokeObjectURL,
-    }),
+    class extends URL {
+      static createObjectURL = vi.fn(() => `blob:person-${++nextURL}`);
+      static revokeObjectURL = revokeObjectURL;
+    },
   );
   const people = new People("session", vi.fn());
   people.items = [
@@ -212,7 +180,7 @@ it("keeps portraits through in-place updates and releases them when cards clear"
   const get = vi.spyOn(cache, "get").mockResolvedValue(new Blob(["synthetic"]));
   const view = render(PeopleView, { people, cache, onperson: vi.fn() });
   await waitFor(() => expect(screen.getByRole("img", { name: "Face of Ada" })).toBeTruthy());
-  expect(get.mock.calls[0]![4]).toBe("ada");
+  expect(get.mock.calls[0]![4]).toBe(ada.person_id);
   // An in-place card update with the same face keeps its portrait.
   await act(() => (people.items = [{ ...people.items[0]!, display_name: "Ada L", revision: 3 }]));
   expect(screen.getByRole("img", { name: "Face of Ada L" })).toBeTruthy();
@@ -232,6 +200,7 @@ it("keeps portraits through in-place updates and releases them when cards clear"
   });
   await act(() => people.load("Ada"));
   await waitFor(() => expect(screen.getByRole("img", { name: "Face of Ada L" })).toBeTruthy());
+  await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
   const portraitURL = screen.getByRole("img", { name: "Face of Ada L" }).getAttribute("src");
   revokeObjectURL.mockClear();
   await act(() => people.conceal());
@@ -241,36 +210,39 @@ it("keeps portraits through in-place updates and releases them when cards clear"
   await cache.dispose();
 });
 it("labels namesakes by detail, and by ID only when the details match", async () => {
+  const alex1 = "00000000-0000-4000-8000-000000000011";
+  const alex2 = "00000000-0000-4000-8000-000000000012";
+  const alex3 = "00000000-0000-4000-8000-000000000013";
   const same = { ...grace, display_name: "Alex", display_name_folded: "alex" };
   const people = new People("session", vi.fn());
   people.items = [
-    { ...same, person_id: "alex-1" },
-    { ...same, person_id: "alex-2" },
-    { ...same, person_id: "alex-3", identity_label: "alex@example.org" },
+    { ...same, person_id: alex1 },
+    { ...same, person_id: alex2 },
+    { ...same, person_id: alex3, identity_label: "alex@example.org" },
   ];
   const cache = new PhotoPreviewCache("session", vi.fn());
   const view = render(PeopleView, { people, cache, onperson: vi.fn() });
   const detail = new Date(same.created_at).toLocaleDateString();
   const checkboxes = [
-    screen.getByRole("checkbox", { name: `Select Alex · ${detail} · alex-1` }),
-    screen.getByRole("checkbox", { name: `Select Alex · ${detail} · alex-2` }),
+    screen.getByRole("checkbox", { name: `Select Alex · ${detail} · ${alex1}` }),
+    screen.getByRole("checkbox", { name: `Select Alex · ${detail} · ${alex2}` }),
     screen.getByRole("checkbox", { name: "Select Alex · alex@example.org" }),
   ];
   await fireEvent.click(checkboxes[0]!);
   await fireEvent.click(checkboxes[1]!);
   expect(
     within(screen.getByRole("region", { name: "Selected people" })).getByText(
-      `Alex · ${detail} · alex-1 and Alex · ${detail} · alex-2 selected`,
+      `Alex · ${detail} · ${alex1} and Alex · ${detail} · ${alex2} selected`,
     ),
   ).toBeTruthy();
   await fireEvent.click(screen.getByRole("button", { name: "Merge" }));
   let dialog = screen.getByRole("dialog", { name: "Merge people" });
   await fireEvent.click(
-    within(dialog).getByRole("radio", { name: `Keep Alex · ${detail} · alex-2` }),
+    within(dialog).getByRole("radio", { name: `Keep Alex · ${detail} · ${alex2}` }),
   );
   expect(
     within(dialog).getByText(
-      `Keep Alex · ${detail} · alex-2. Move Alex · ${detail} · alex-1's records into this person.`,
+      `Keep Alex · ${detail} · ${alex2}. Move Alex · ${detail} · ${alex1}'s records into this person.`,
     ),
   ).toBeTruthy();
   await fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
@@ -282,7 +254,7 @@ it("labels namesakes by detail, and by ID only when the details match", async ()
   expect(within(dialog).getByRole("radio", { name: "Keep Alex · alex@example.org" })).toBeTruthy();
   await fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
   await act(
-    () => (people.items = [{ ...same, person_id: "alex-3", identity_label: "alex@example.org" }]),
+    () => (people.items = [{ ...same, person_id: alex3, identity_label: "alex@example.org" }]),
   );
   expect(screen.getByRole("button", { name: "Alex 2 Library photos" })).toBeTruthy();
   view.unmount();
@@ -296,17 +268,24 @@ it("opens unlocked Hidden counts in Hidden and conceals them on lock", async () 
   people.items = [
     { ...ada, photo_summary: { library_count: 3, hidden_count: 2 } },
     { ...grace, photo_summary: { library_count: 0, hidden_count: 1 } },
+    {
+      ...grace,
+      person_id: "00000000-0000-4000-8000-000000000003",
+      display_name: "Lin",
+      photo_summary: { library_count: 1, hidden_count: 0 },
+    },
   ];
   const cache = new PhotoPreviewCache("session", vi.fn());
   const open = vi.fn();
   const view = render(PeopleView, { people, cache, onperson: open });
+  expect(screen.queryByRole("button", { name: "0 Hidden photos" })).toBeNull();
   await fireEvent.click(screen.getByRole("button", { name: "2 Hidden photos" }));
-  expect(open).toHaveBeenLastCalledWith("ada", "Ada", true);
+  expect(open).toHaveBeenLastCalledWith(ada.person_id, "Ada", true);
   await fireEvent.click(screen.getByRole("button", { name: "1 Hidden photo" }));
-  expect(open).toHaveBeenLastCalledWith("grace", "Grace", true);
+  expect(open).toHaveBeenLastCalledWith(grace.person_id, "Grace", true);
   await fireEvent.click(screen.getByRole("button", { name: "Grace 0 Library photos" }));
-  expect(open).toHaveBeenLastCalledWith("grace", "Grace", true);
-  // An open merge closes along with the Hidden counts.
+  expect(open).toHaveBeenLastCalledWith(grace.person_id, "Grace", true);
+  // An access-scope change closes the merge dialog.
   await fireEvent.click(
     screen.getByRole("checkbox", {
       name: `Select Ada · ${new Date(ada.created_at).toLocaleDateString()}`,
@@ -322,6 +301,8 @@ it("opens unlocked Hidden counts in Hidden and conceals them on lock", async () 
   expect(within(dialog).getByText("3 Library photos")).toBeTruthy();
   await act(() => access.acceptState({ configured: true }, Date.now() + 1));
   expect(screen.queryByRole("dialog")).toBeNull();
+  // App conceals the old cards before loading the locked projection.
+  await act(() => people.conceal());
   expect(screen.queryByRole("button", { name: "1 Hidden photo" })).toBeNull();
   expect(screen.queryByRole("button", { name: "2 Hidden photos" })).toBeNull();
   view.unmount();

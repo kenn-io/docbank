@@ -14,7 +14,10 @@ import (
 func TestBrowserMergeHiddenCustodian(t *testing.T) {
 	t.Parallel()
 	for _, scopeKind := range []string{"document", "collection", "package", "package-snapshot", "package-record"} {
-		for _, ownerRole := range []string{"absorbed", "survivor"} {
+		for _, ownerRole := range []string{"absorbed", "survivor", "unrelated hidden"} {
+			if ownerRole == "unrelated hidden" && (scopeKind == "package-snapshot" || scopeKind == "package-record") {
+				continue
+			}
 			t.Run(scopeKind+"/"+ownerRole, func(t *testing.T) {
 				t.Parallel()
 				s := newTestStore(t)
@@ -61,6 +64,9 @@ func TestBrowserMergeHiddenCustodian(t *testing.T) {
 				assignment, err := s.SetCustodian(ctx, CustodianRequest{Scope: scope, PersonID: owner.PersonID,
 					RawLabel: owner.DisplayName, Rank: "primary", Basis: "operator_assigned", IfMatchRevision: 1})
 				require.NoError(t, err)
+				if ownerRole == "unrelated hidden" {
+					hidden = browsePhotoNode(t, s, "unrelated.jpg", fakeHash("unrelated"), "image/jpeg")
+				}
 				asset, err := s.PhotoAssetForNode(ctx, hidden.ID)
 				require.NoError(t, err)
 				require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
@@ -69,6 +75,14 @@ func TestBrowserMergeHiddenCustodian(t *testing.T) {
 				require.NoError(t, s.LockPhotoHidden(ctx))
 				operation := uuid.NewString()
 				_, err = s.MergePersons(WithVisiblePeopleOnly(ctx), survivor.PersonID, absorbed.PersonID, operation, survivor.Revision, absorbed.Revision)
+				if ownerRole == "unrelated hidden" {
+					require.NoError(t, err)
+					after, err := s.custodianByID(ctx, assignment.AssignmentID)
+					require.NoError(t, err)
+					require.Equal(t, survivor.PersonID, *after.PersonID)
+					require.Equal(t, assignment.Revision+1, after.Revision)
+					return
+				}
 				require.ErrorIs(t, err, ErrHiddenLocked)
 				after, err := s.custodianByID(ctx, assignment.AssignmentID)
 				require.NoError(t, err)
@@ -93,48 +107,6 @@ func TestBrowserMergeHiddenCustodian(t *testing.T) {
 				require.Equal(t, expectedRevision, after.Revision)
 			})
 		}
-	}
-}
-
-func TestBrowserMergeCustodianWithoutHiddenEvidence(t *testing.T) {
-	t.Parallel()
-	for _, scopeKind := range []string{"document", "collection", "package"} {
-		t.Run(scopeKind, func(t *testing.T) {
-			t.Parallel()
-			s := newTestStore(t)
-			ctx := t.Context()
-			survivor, err := s.CreatePerson(ctx, "Ada", "operator")
-			require.NoError(t, err)
-			absorbed, err := s.CreatePerson(ctx, "Grace", "operator")
-			require.NoError(t, err)
-			photo := browsePhotoNode(t, s, "visible.jpg", fakeHash("visible"), "image/jpeg")
-			scope := CustodianScope{Kind: "document", NodeID: photo.ID, ContentVersionID: photo.CurrentVersionID}
-			switch scopeKind {
-			case "collection":
-				ingest, err := s.BeginIngest(ctx, "cli", "Synthetic photos")
-				require.NoError(t, err)
-				addCollectionMembership(t, s, ingest, photo.ID, "visible.jpg", nil)
-				scope = CustodianScope{Kind: "collection", IngestID: ingest.ID()}
-			case "package":
-				pkg, _ := seedReceivedPackage(t, s, "synthetic-custody")
-				scope = CustodianScope{Kind: "package", PackageID: pkg.PackageID}
-			}
-			assignment, err := s.SetCustodian(ctx, CustodianRequest{Scope: scope, PersonID: absorbed.PersonID,
-				RawLabel: absorbed.DisplayName, Rank: "primary", Basis: "operator_assigned", IfMatchRevision: 1})
-			require.NoError(t, err)
-			hidden := browsePhotoNode(t, s, "unrelated.jpg", fakeHash("unrelated"), "image/jpeg")
-			asset, err := s.PhotoAssetForNode(ctx, hidden.ID)
-			require.NoError(t, err)
-			require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
-			_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
-			require.NoError(t, err)
-			_, err = s.MergePersons(WithVisiblePeopleOnly(ctx), survivor.PersonID, absorbed.PersonID, uuid.NewString(), survivor.Revision, absorbed.Revision)
-			require.NoError(t, err)
-			after, err := s.custodianByID(ctx, assignment.AssignmentID)
-			require.NoError(t, err)
-			require.Equal(t, survivor.PersonID, *after.PersonID)
-			require.Equal(t, assignment.Revision+1, after.Revision)
-		})
 	}
 }
 

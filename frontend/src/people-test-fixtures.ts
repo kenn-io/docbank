@@ -6,7 +6,7 @@ export const person = (id: string, overrides: Partial<PersonSummary> = {}): Pers
   display_name_folded: id,
   revision: 4,
   state: "curated",
-  created_at: "2026-01-01",
+  created_at: "2026-01-01T00:00:00Z",
   ...overrides,
 });
 export const personResponse = (person: PersonSummary, overrides: Partial<Person> = {}): Response =>
@@ -18,7 +18,7 @@ export const personResponse = (person: PersonSummary, overrides: Partial<Person>
       person_id: person.person_id,
       revision: person.revision,
       state: person.state,
-      updated_at: "2026-01-02",
+      updated_at: "2026-01-02T00:00:00Z",
       ...overrides,
     } satisfies Person,
     { headers: { ETag: `"${overrides.revision ?? person.revision}"` } },
@@ -50,12 +50,14 @@ export const personMergeReceipt = (
     } satisfies PersonMergeReceipt,
     { headers: { ETag: `"${survivor.revision + 1}"` } },
   );
-export const ada: PersonSummary = person("ada", {
+export const ada: PersonSummary = person("00000000-0000-4000-8000-000000000001", {
   display_name: "Ada",
+  display_name_folded: "ada",
   revision: 2,
   photo_summary: { library_count: 3 },
 });
-export const grace: PersonSummary = person("grace", {
+export const grace: PersonSummary = person("00000000-0000-4000-8000-000000000002", {
   display_name: "Grace",
+  display_name_folded: "grace",
   photo_summary: { library_count: 2 },
 });

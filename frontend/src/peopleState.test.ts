@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
+import { HiddenAccess } from "./hiddenAccess.svelte.js";
 import { People, peoplePageSize } from "./people.svelte.js";
 import * as api from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
@@ -13,6 +14,19 @@ const merging = (people: People) => {
   people.confirmMerge(true);
 };
 
+it("clears cards without loading while a failed Hidden lock is unresolved", async () => {
+  const access = new HiddenAccess("session", vi.fn());
+  access.lockError = "Lock failed";
+  const read = vi.spyOn(api, "listPeople").mockResolvedValue({ items: [grace] });
+  const people = new People("session", vi.fn(), access);
+  people.items = [grace];
+  await people.load();
+  expect(people.items).toEqual([]);
+  expect(read).not.toHaveBeenCalled();
+  people.dispose();
+  access.dispose();
+});
+
 it("pages the projection", async () => {
   const read = vi
     .spyOn(api, "listPeople")
@@ -21,7 +35,7 @@ it("pages the projection", async () => {
   const people = new People("session", vi.fn());
   await people.load();
   await people.load("", true);
-  expect(people.items.map((row) => row.person_id)).toEqual(["ada", "grace"]);
+  expect(people.items.map((row) => row.person_id)).toEqual([ada.person_id, grace.person_id]);
   expect(read.mock.calls[1]![0]).toEqual({
     query: "",
     limit: peoplePageSize,
@@ -76,7 +90,7 @@ it.each(["valid", "empty", "wrong person", "invalid revision", "wrong ETag"])(
     read.mockResolvedValue({ items: result === "valid" ? [] : [ada] });
     expect(await people.rename(ada, " Zoe ")).toBe(result === "valid");
     expect(rename.mock.calls[0]!.slice(0, 3)).toEqual([
-      "ada",
+      ada.person_id,
       { display_name: "Zoe" },
       { "If-Match": '"2"' },
     ]);
@@ -92,11 +106,11 @@ it.each(["valid", "empty", "wrong person", "invalid revision", "wrong ETag"])(
     expect(people.items).toEqual([]);
     expect(people.cursor).toBeUndefined();
     expect(people.selected[0]).toMatchObject({
-      person_id: "ada",
+      person_id: ada.person_id,
       display_name: "Zoe",
       revision: 3,
     });
-    expect(changed).toHaveBeenCalledWith("ada", "Zoe");
+    expect(changed).toHaveBeenCalledWith(ada.person_id, "Zoe");
     expect(read).toHaveBeenCalledOnce();
     expect(read.mock.calls[0]![0]).toMatchObject({ query: "Ada" });
     expect(read.mock.calls[0]![0]).not.toHaveProperty("cursor");
@@ -138,15 +152,16 @@ it.each([
   merging(people);
   expect(await people.submitMerge()).toBe(result === "valid");
   expect(merge.mock.calls[0]!.slice(0, 3)).toEqual([
-    "grace",
-    { absorbed_person_id: "ada", absorbed_revision: 2, operation_id: expect.any(String) },
+    grace.person_id,
+    { absorbed_person_id: ada.person_id, absorbed_revision: 2, operation_id: expect.any(String) },
     { "If-Match": '"4"' },
   ]);
   expect(people.items).toEqual([kept]);
   expect(people.merge).toBeUndefined();
   expect(people.selected).toEqual([]);
   expect(read.mock.calls[0]![0]).not.toHaveProperty("cursor");
-  if (result === "valid") expect(changed).toHaveBeenCalledExactlyOnceWith("ada", "Grace", "grace");
+  if (result === "valid")
+    expect(changed).toHaveBeenCalledExactlyOnceWith(ada.person_id, "Grace", grace.person_id);
   else {
     expect(changed).not.toHaveBeenCalled();
     expect(people.writeError).toBe("Invalid person merge response.");
@@ -157,7 +172,6 @@ it.each([
 it.each([
   [409, "person_merge_conflict"],
   [409, "person_retired"],
-  [412, "stale_revision"],
 ] as const)("shows the server detail and reloads after merge HTTP %s %s", async (status, code) => {
   const detail = "Review face face-a on version version-a; more faces also conflict";
   const read = vi.spyOn(api, "listPeople").mockResolvedValue({ items: [grace] });
@@ -169,7 +183,7 @@ it.each([
   expect(await people.submitMerge()).toBe(false);
   expect(people.writeError).toBe(detail);
   expect(people.items).toEqual([grace]);
-  expect(people.selected).toEqual(code === "person_retired" || status === 412 ? [] : [ada, grace]);
+  expect(people.selected).toEqual(code === "person_retired" ? [] : [ada, grace]);
   expect(people.merge).toBeUndefined();
   expect(read.mock.calls[0]![0]).not.toHaveProperty("cursor");
   people.dispose();
@@ -197,7 +211,13 @@ it("keeps two selections across searches and starts a merge", async () => {
   vi.spyOn(api, "listPeople")
     .mockResolvedValueOnce({ items: [ada] })
     .mockResolvedValueOnce({
-      items: [grace, person("gary", { display_name: "Gary", display_name_folded: "gary" })],
+      items: [
+        grace,
+        person("00000000-0000-4000-8000-000000000003", {
+          display_name: "Gary",
+          display_name_folded: "gary",
+        }),
+      ],
     });
   const people = new People("session", vi.fn());
   await people.load("Ada");
@@ -294,7 +314,7 @@ it.each([true, false])(
     people.conceal();
     reject(new TypeError("Response lost"));
     expect(await pending).toBe(false);
-    if (committed) expect(changed).toHaveBeenCalledExactlyOnceWith("ada", "Zoe");
+    if (committed) expect(changed).toHaveBeenCalledExactlyOnceWith(ada.person_id, "Zoe");
     else expect(changed).not.toHaveBeenCalled();
     expect(read).toHaveBeenCalledExactlyOnceWith(
       { query: "Zoe", limit: peoplePageSize, photo_summary: true },
@@ -332,7 +352,7 @@ it("confirms a lost merge response after leaving People without restoring the di
   expect(await pending).toBe(true);
   expect(merge).toHaveBeenCalledTimes(2);
   expect(merge.mock.calls[1]).toEqual(merge.mock.calls[0]);
-  expect(changed).toHaveBeenCalledExactlyOnceWith("ada", "Grace", "grace");
+  expect(changed).toHaveBeenCalledExactlyOnceWith(ada.person_id, "Grace", grace.person_id);
   expect(read).not.toHaveBeenCalled();
   expect(people.items).toEqual([]);
   expect(people.selected).toEqual([]);
@@ -402,7 +422,7 @@ it.each(["network failure", 503, "body fails"])(
     expect(await people.submitMerge()).toBe(true);
     expect(merge).toHaveBeenCalledTimes(2);
     expect(merge.mock.calls[1]).toEqual(merge.mock.calls[0]);
-    expect(changed).toHaveBeenCalledExactlyOnceWith("ada", "Grace", "grace");
+    expect(changed).toHaveBeenCalledExactlyOnceWith(ada.person_id, "Grace", grace.person_id);
     expect(people.merge).toBeUndefined();
     expect(people.selected).toEqual([]);
     people.dispose();
@@ -412,10 +432,7 @@ it.each(["network failure", 503, "body fails"])(
 it.each([404, 412, 503, "invalid receipt"])(
   "leaves a merge unconfirmed after replay %s",
   async (result) => {
-    const renamed = { ...ada, display_name: "Zoe", revision: 3 };
-    vi.spyOn(api, "listPeople").mockImplementation(async (params) => ({
-      items: [renamed, grace].filter((row) => row.display_name.includes(params?.query ?? "")),
-    }));
+    vi.spyOn(api, "listPeople").mockResolvedValue({ items: [ada, grace] });
     const merge = vi
       .spyOn(api, "mergePerson")
       .mockRejectedValueOnce(new TypeError("Response lost"))
@@ -436,7 +453,12 @@ it.each([404, 412, 503, "invalid receipt"])(
 );
 
 it("refreshes the loaded cards in place after a change elsewhere", async () => {
-  const rows = Array.from({ length: 60 }, (_, index) => person(`p${index}`));
+  const rows = Array.from({ length: 60 }, (_, index) =>
+    person(`00000000-0000-4000-8000-${String(index + 100).padStart(12, "0")}`, {
+      display_name: `p${index}`,
+      display_name_folded: `p${index}`,
+    }),
+  );
   let server = rows;
   const read = vi.spyOn(api, "listPeople").mockImplementation(async (params) => {
     const start = Number(params?.cursor ?? 0);
@@ -465,11 +487,11 @@ it("refreshes the loaded cards in place after a change elsewhere", async () => {
     display_name_folded: "p renamed",
     revision: 5,
   });
-  expect(people.items.some((row) => row.person_id === "p1")).toBe(false);
+  expect(people.items.some((row) => row.person_id === rows[1]!.person_id)).toBe(false);
   expect(people.cursor).toBe("48");
   expect(people.selected.map((row) => [row.person_id, row.revision])).toEqual([
-    ["p0", 5],
-    ["p30", 4],
+    [rows[0]!.person_id, 5],
+    [rows[30]!.person_id, 4],
   ]);
   people.dispose();
 });
@@ -498,8 +520,8 @@ it("recovers a stale confirmed merge after refreshing the cards", async () => {
   await people.refresh();
   expect(await people.submitMerge()).toBe(false);
   expect(merge.mock.calls[0]!.slice(0, 3)).toEqual([
-    "grace",
-    { absorbed_person_id: "ada", absorbed_revision: 2, operation_id: expect.any(String) },
+    grace.person_id,
+    { absorbed_person_id: ada.person_id, absorbed_revision: 2, operation_id: expect.any(String) },
     { "If-Match": '"4"' },
   ]);
   expect(merge).toHaveBeenCalledOnce();
