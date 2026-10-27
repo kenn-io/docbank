@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import App from "./App.svelte";
+import { productionPackage } from "./package-test-fixtures.js";
 import { root } from "./version-test-fixtures.js";
 import { savePanelWidth } from "./panelWidth.js";
 import { VerifiedUploadChannel } from "./upload.js";
@@ -166,19 +167,7 @@ function start(sets: "empty" | "package" | "bates" = "empty", failedListing?: st
     if (url === failedListing) return new Response("listing unavailable", { status: 500 });
     const value = url.startsWith("/api/v1/packages?")
       ? {
-          items:
-            sets === "package"
-              ? [
-                  {
-                    package_id: "review",
-                    package_name: "Review set",
-                    direction: "received",
-                    state: "complete",
-                    page_count: 0,
-                    member_count: 1,
-                  },
-                ]
-              : [],
+          items: sets === "package" ? [productionPackage()] : [],
           limit: 250,
         }
       : url.startsWith("/api/v1/bates/exports?")

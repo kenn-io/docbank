@@ -44,6 +44,7 @@
 
   const page = getContext<boolean>(drawerPage);
   let editing = $state(!page);
+  let draftStarted = !page;
 
   const today = new Date().toISOString().slice(0, 10);
   const zone = "UTC";
@@ -205,7 +206,16 @@
     draft.terms = [...draft.terms, newTerm(next)];
   }
 
+  function openDraft(): void {
+    if (!draftStarted) {
+      draft.terms[0].expression = initialExpression;
+      draftStarted = true;
+    }
+    editing = true;
+  }
+
   function useHistory(item: TermReportHistory): void {
+    draftStarted = true;
     editing = true;
     const source = item.request;
     draft = {
@@ -806,8 +816,7 @@
 
 <DrawerShell title="Reports" level={page ? 2 : 1} closeLabel="Close reports" {onclose}>
   {#snippet actions()}
-    {#if page && !editing}<Button size="sm" onclick={() => (editing = true)}>Run report</Button
-      >{/if}
+    {#if page && !editing}<Button size="sm" onclick={openDraft}>Run report</Button>{/if}
   {/snippet}
   {@render reportBody()}
 </DrawerShell>

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import App from "./App.svelte";
+import { productionPackage } from "./package-test-fixtures.js";
 import * as appOpened from "./app-opened.js";
 import { batchTagRequestDigest } from "./batch-tags.js";
 import { clearToasts } from "./toast.svelte.js";
@@ -2164,16 +2165,7 @@ it.each([
     const url = String(input);
     if (url.startsWith("/api/v1/packages?"))
       return Response.json({
-        items: [
-          {
-            package_id: "review",
-            package_name: "Review set",
-            direction: "received",
-            state: "complete",
-            page_count: 0,
-            member_count: 1,
-          },
-        ],
+        items: [productionPackage()],
         limit: 250,
       });
     if (/^\/api\/v1\/(saved-queries|search-exports|collections|trash)\?/.test(url))

@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import App from "./App.svelte";
+import { productionPackage } from "./package-test-fixtures.js";
 import { root } from "./version-test-fixtures.js";
 import { queryFingerprint, type Query } from "./query.js";
 import { savedSmartSet } from "./photo-test-fixtures.js";
@@ -98,16 +99,7 @@ function start(path = "/", fragment = "", packages?: Promise<Response>) {
     if (url.startsWith("/api/v1/packages?")) {
       if (packages) return (await packages).clone();
       return Response.json({
-        items: [
-          {
-            package_id: "review",
-            package_name: "Review set",
-            direction: "received",
-            state: "complete",
-            page_count: 0,
-            member_count: 1,
-          },
-        ],
+        items: [productionPackage()],
         limit: 250,
       });
     }
@@ -315,7 +307,25 @@ it("keeps Imports through a Documents and Photos round trip", async () => {
   expect(location.pathname).toBe("/imports");
 });
 
-it("shows saved searches, report creation, and recent reports together", async () => {
+it("seeds Run report from the current search and keeps an edited draft", async () => {
+  start("/searches");
+  await screen.findByRole("main", { name: "Searches" });
+  const search = screen.getByRole("searchbox", { name: "Search documents" });
+  await fireEvent.input(search, { target: { value: "alpha" } });
+  await fireEvent.click(screen.getByRole("button", { name: "Run report" }));
+  const expression = screen.getByRole("textbox", { name: "Expression for term 1" });
+  expect(expression).toHaveProperty("value", "alpha");
+  await fireEvent.input(expression, { target: { value: "edited draft" } });
+  await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  await fireEvent.input(search, { target: { value: "beta" } });
+  await fireEvent.click(screen.getByRole("button", { name: "Run report" }));
+  expect(screen.getByRole("textbox", { name: "Expression for term 1" })).toHaveProperty(
+    "value",
+    "edited draft",
+  );
+});
+
+it("shows saved searches and recent reports together and keeps a history-loaded draft", async () => {
   const fetch = start();
   const original = fetch.getMockImplementation()!;
   fetch.mockImplementation(async (input, init) => {
@@ -349,14 +359,19 @@ it("shows saved searches, report creation, and recent reports together", async (
   await screen.findByText("Alpha documents");
   expect(await screen.findByRole("heading", { name: "Recent reports" })).toBeTruthy();
   expect(screen.queryByRole("textbox", { name: "Expression for term 1" })).toBeNull();
-  await fireEvent.click(screen.getByRole("button", { name: "Run report" }));
-  expect(screen.getByRole("button", { name: "Create report" })).toBeTruthy();
-  await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-  expect(screen.queryByRole("textbox", { name: "Expression for term 1" })).toBeNull();
   await fireEvent.click(screen.getByRole("button", { name: "Use as draft" }));
   expect(
     (screen.getByRole("textbox", { name: "Expression for term 1" }) as HTMLInputElement).value,
   ).toBe("alpha");
+  await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  await fireEvent.input(screen.getByRole("searchbox", { name: "Search documents" }), {
+    target: { value: "beta" },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Run report" }));
+  expect(screen.getByRole("textbox", { name: "Expression for term 1" })).toHaveProperty(
+    "value",
+    "alpha",
+  );
 });
 
 it("stays on Trash when restoring reruns an active saved query", async () => {
