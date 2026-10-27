@@ -4,7 +4,6 @@ import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import ActionRecoveryModal, { type ActionRecoveryJournal } from "./ActionRecoveryModal.svelte";
-import { APIError } from "./api-transport.js";
 import { ActionJournal, type PersistedAction } from "./actionJournal.js";
 import { encodeRecovery } from "./actionRecovery.js";
 import type { BatchTagReceipt } from "./batch-tags.js";
@@ -167,14 +166,21 @@ afterEach(() => {
 });
 
 it.each([
-  { cause: new APIError("Access denied", 401, "unauthorized"), expired: true },
-  { cause: new Error("Confirm with the fresh session"), expired: false },
-])("classifies authentication errors by HTTP status: $expired", async ({ cause, expired }) => {
+  { message: "Access denied", expired: true },
+  { message: "Confirm with the fresh session", expired: false },
+])("classifies authentication errors by HTTP status: $expired", async ({ message, expired }) => {
   const action = { ...(await prepared()), checkpoint_verified: true };
   const journal = new MemoryJournal(action);
-  journal.confirmResume = async () => {
-    throw cause;
-  };
+  if (expired) {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      expect(String(input)).toBe("/api/v1/audit/status");
+      return new Response(JSON.stringify({ detail: message, code: "unauthorized" }), { status: 401 });
+    });
+  } else {
+    journal.confirmResume = async () => {
+      throw new Error(message);
+    };
+  }
   const onauthfailure = vi.fn();
   render(ActionRecoveryModal, {
     session: "session",
@@ -187,7 +193,7 @@ it.each([
     onauthfailure,
   });
   await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
-  await screen.findByText(cause.message);
+  await screen.findByText(message);
   expect(onauthfailure).toHaveBeenCalledTimes(expired ? 1 : 0);
 });
 
