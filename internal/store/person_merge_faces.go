@@ -8,26 +8,36 @@ import (
 	"strings"
 )
 
+type PersonFaceMergeConflict struct {
+	FaceID, ContentVersionID string
+}
+
 type PersonFaceMergeConflictError struct {
-	FaceIDs              []string
+	// Faces identifies each visible conflict on its exact version, including retained versions.
+	Faces                []PersonFaceMergeConflict
 	HiddenConflict       bool
 	InaccessibleConflict bool
 	More                 bool
 }
 
 func (e *PersonFaceMergeConflictError) Error() string {
-	message := "review contradictory face assignments and rejections before merging"
-	if len(e.FaceIDs) > 0 {
-		message += "; faces: " + strings.Join(e.FaceIDs, ", ")
+	var message strings.Builder
+	message.WriteString("review contradictory face assignments and rejections before merging")
+	for _, face := range e.Faces {
+		message.WriteString("; face " + face.FaceID + " on version " + face.ContentVersionID)
+	}
+	if e.More {
+		message.WriteString("; more faces also conflict")
 	}
 	if e.InaccessibleConflict {
-		message += "; an excluded or trashed photo also needs review"
+		message.WriteString("; an excluded or trashed photo also needs review")
 	}
 	if e.HiddenConflict {
-		message += "; a locked Hidden photo also needs review"
+		message.WriteString("; a locked Hidden photo also needs review")
 	}
-	return message
+	return message.String()
 }
+
 func (e *PersonFaceMergeConflictError) Is(target error) bool { return target == ErrPersonMergeConflict }
 
 type PersonMergeFaceCandidate struct {
@@ -63,8 +73,8 @@ func (s *Store) checkFaceMergeConflictsTx(ctx context.Context, tx *sql.Tx, a, b 
 			return err
 		}
 		found = true
-		if len(conflict.FaceIDs) < 20 {
-			conflict.FaceIDs = append(conflict.FaceIDs, id)
+		if len(conflict.Faces) < 20 {
+			conflict.Faces = append(conflict.Faces, PersonFaceMergeConflict{FaceID: id, ContentVersionID: version})
 		} else {
 			conflict.More = true
 		}

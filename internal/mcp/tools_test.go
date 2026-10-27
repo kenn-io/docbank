@@ -311,11 +311,12 @@ func TestExpectedDomainErrorsAreBoundedToolResults(t *testing.T) {
 		err       error
 		code      string
 		redaction string
+		message   string
 	}{
 		{name: "not found", err: store.ErrNotFound, code: "not_found"},
 		{name: "stale version", err: store.ErrProcessingSourceFenceStaleVersion, code: "stale_version"},
 		{name: "consent", err: daemonconn.ErrProcessingConsent, code: "consent_required"},
-		{name: "cursor", err: store.ErrDocumentCursorExpired, code: "cursor_expired"},
+		{name: "cursor", err: store.ErrDocumentCursorExpired, code: "cursor_expired", message: "The cursor expired; restart the listing from the first page."},
 		{name: "daemon unavailable", err: fmt.Errorf("private daemon detail: %w", errDaemonUnavailable),
 			code: "daemon_unavailable", redaction: "private daemon detail"},
 		{name: "invalid cursor", err: fmt.Errorf("private cursor detail: %w", store.ErrInvalidDocumentCursor),
@@ -336,6 +337,9 @@ func TestExpectedDomainErrorsAreBoundedToolResults(t *testing.T) {
 			structured, structuredOK := result.StructuredContent.(toolErrorOutput)
 			require.True(t, structuredOK)
 			assert.Equal(t, test.code, structured.Code)
+			if test.message != "" {
+				assert.Equal(t, test.message, structured.Message)
+			}
 			var wire map[string]any
 			text, isText := result.Content[0].(*sdkmcp.TextContent)
 			require.True(t, isText)

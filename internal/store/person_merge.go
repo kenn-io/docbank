@@ -130,8 +130,26 @@ func (s *Store) MergePersons(ctx context.Context, survivorID, absorbedID, operat
 	err = s.withLogicalTx(ctx, func(tx *sql.Tx) error {
 		stored, err := personMergeReceiptTx(ctx, tx, operationID)
 		replayed, found, err := replayReceipt(stored, err, stored.RequestSHA256 == requestHash, ErrPersonMergeConflict)
-		if err != nil || found {
+		if err != nil {
+			return err
+		}
+		if found {
+			if visible, _ := ctx.Value(visiblePersonContextKey{}).(bool); visible {
+				survivorID, err := resolvePersonIDTx(ctx, tx, replayed.SurvivorPersonID)
+				if err != nil {
+					return err
+				}
+				if err := s.fenceVisiblePeopleTx(ctx, tx, survivorID); err != nil {
+					return err
+				}
+			}
 			receipt = replayed
+			return nil
+		}
+		if err := s.fenceVisiblePeopleTx(ctx, tx, survivorID, absorbedID); err != nil {
+			return err
+		}
+		if err := s.fenceBrowserMergeHiddenTx(ctx, tx, survivorID, absorbedID); err != nil {
 			return err
 		}
 		if err := fencePersonTx(ctx, tx, survivorID, survivorRevision); err != nil {
@@ -235,6 +253,45 @@ func (s *Store) MergePersons(ctx context.Context, survivorID, absorbedID, operat
 		return err
 	})
 	return receipt, err
+}
+
+func (s *Store) fenceBrowserMergeHiddenTx(ctx context.Context, tx *sql.Tx, survivorID, absorbedID string) error {
+	if visible, _ := ctx.Value(visiblePersonContextKey{}).(bool); !visible {
+		return nil
+	}
+	if _, err := s.hiddenSession(ctx, tx); !errors.Is(err, ErrHiddenLocked) {
+		return err
+	}
+	var hidden bool
+	if err := tx.QueryRowContext(ctx, `WITH `+CollectionMembershipCTE+`
+	SELECT EXISTS(SELECT 1 FROM (
+		SELECT content_version_id FROM person_document_assertions WHERE person_id IN (?,?)
+		UNION
+		SELECT e.content_version_id FROM person_candidate_faces e JOIN person_match_candidates c ON c.candidate_id=e.candidate_id WHERE c.suggested_person_id IN (?,?)
+		UNION
+		SELECT content_version_id FROM custodian_assignments WHERE person_id IN (?,?) AND scope_kind='document'
+		UNION
+		SELECT n.current_version_id FROM custodian_assignments ca JOIN collection_members cm ON cm.ingest_id=ca.ingest_id JOIN nodes n ON n.id=cm.node_id
+		WHERE ca.person_id IN (?,?) AND ca.scope_kind='collection'
+		UNION
+		SELECT m.content_version_id FROM custodian_assignments ca JOIN packages p ON p.package_id=ca.package_id
+		JOIN collection_snapshot_members m ON m.snapshot_id=p.snapshot_id
+		WHERE ca.person_id IN (?,?) AND ca.scope_kind='package' AND (ca.package_record_id='' OR EXISTS(
+			SELECT 1 FROM package_records r WHERE r.package_id=p.package_id AND r.row_id=ca.package_record_id AND r.occurrence_id=m.occurrence_id))
+		UNION
+		SELECT r.content_version_id FROM custodian_assignments ca JOIN package_import_receipts r ON r.package_id=ca.package_id
+		WHERE ca.person_id IN (?,?) AND ca.scope_kind='package' AND (ca.package_record_id='' OR ca.package_record_id=r.record_key)
+		UNION
+		SELECT n.current_version_id FROM custodian_assignments ca JOIN packages p ON p.package_id=ca.package_id
+		JOIN collection_members cm ON cm.ingest_id=p.ingest_id JOIN nodes n ON n.id=cm.node_id
+		WHERE ca.person_id IN (?,?) AND ca.scope_kind='package' AND ca.package_record_id='' AND p.snapshot_id IS NULL
+	) affected WHERE NOT `+personVersionVisibleSQL("affected.content_version_id")+`)`, survivorID, absorbedID, survivorID, absorbedID, survivorID, absorbedID, survivorID, absorbedID, survivorID, absorbedID, survivorID, absorbedID, survivorID, absorbedID).Scan(&hidden); err != nil {
+		return err
+	}
+	if hidden {
+		return fmt.Errorf("%w: unlock Hidden and retry the merge", ErrHiddenLocked)
+	}
+	return nil
 }
 
 func personMergeReceiptTx(ctx context.Context, tx *sql.Tx, operationID string) (PersonMergeReceipt, error) {

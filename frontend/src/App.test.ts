@@ -2148,58 +2148,63 @@ it("persists a vault-scoped tag binding and applies it only to the inspected fil
   );
 });
 
-it.each(["Albums", "Map"])("blocks Documents tag shortcuts on the Photos %s view", async (view) => {
-  const preferences = prepareKeyboardApp();
-  preferences.setItem(
-    `docbank:tag-hotkeys:v1:${keyboardVaultID}`,
-    JSON.stringify({
-      version: 1,
-      bindings: { "1": keyboardTagID },
-    }),
-  );
-  const backend = installKeyboardBackend();
-  const fetchMock = vi.mocked(globalThis.fetch);
-  const original = fetchMock.getMockImplementation()!;
-  fetchMock.mockImplementation(async (input, init) => {
-    const url = String(input);
-    if (url === "/api/v1/photos/hidden") return new Response(JSON.stringify({ configured: false }));
-    if (url === "/api/v1/photos/albums") return new Response("[]");
-    if (url === "/api/v1/photos/assets/query")
-      return new Response(JSON.stringify({ items: [], total: 0 }));
-    return original(input, init);
-  });
-  // Map appears in the sidebar only once tiles are configured.
-  const tiles = document.createElement("meta");
-  tiles.name = "docbank-map-tiles";
-  tiles.content = JSON.stringify({
-    tile_url: "/api/daemon/web-map-tiles/{z}/{x}/{y}",
-    host: "tiles.example.org",
-    attribution: "Example",
-    max_zoom: 19,
-  });
-  document.head.append(tiles);
-  try {
-    render(App);
-
-    await fireEvent.click(await screen.findByRole("cell", { name: "zeta.txt" }));
-    await fireEvent.click(
-      screen.getByRole("button", { name: "Keyboard shortcuts and tag hotkeys" }),
+it.each(["Albums", "Map", "People"])(
+  "blocks Documents tag shortcuts on the Photos %s view",
+  async (view) => {
+    const preferences = prepareKeyboardApp();
+    preferences.setItem(
+      `docbank:tag-hotkeys:v1:${keyboardVaultID}`,
+      JSON.stringify({
+        version: 1,
+        bindings: { "1": keyboardTagID },
+      }),
     );
-    await screen.findByRole("combobox", { name: "Tag shortcut 1: tax" });
-    await fireEvent.click(screen.getByRole("button", { name: "Done" }));
-    await waitFor(() =>
-      expect(screen.queryByRole("dialog", { name: "Keyboard shortcuts" })).toBeNull(),
-    );
-    await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
-    await fireEvent.click(await screen.findByRole("button", { name: view }));
-    await fireEvent.keyDown(window, { key: "1" });
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    const backend = installKeyboardBackend();
+    const fetchMock = vi.mocked(globalThis.fetch);
+    const original = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === "/api/v1/photos/hidden")
+        return new Response(JSON.stringify({ configured: false }));
+      if (url === "/api/v1/photos/albums") return new Response("[]");
+      if (url.startsWith("/api/v1/people?")) return Response.json({ items: [] });
+      if (url === "/api/v1/photos/assets/query")
+        return new Response(JSON.stringify({ items: [], total: 0 }));
+      return original(input, init);
+    });
+    // Map appears in the sidebar only once tiles are configured.
+    const tiles = document.createElement("meta");
+    tiles.name = "docbank-map-tiles";
+    tiles.content = JSON.stringify({
+      tile_url: "/api/daemon/web-map-tiles/{z}/{x}/{y}",
+      host: "tiles.example.org",
+      attribution: "Example",
+      max_zoom: 19,
+    });
+    document.head.append(tiles);
+    try {
+      render(App);
 
-    expect(backend.writes).toEqual([]);
-  } finally {
-    tiles.remove();
-  }
-});
+      await fireEvent.click(await screen.findByRole("cell", { name: "zeta.txt" }));
+      await fireEvent.click(
+        screen.getByRole("button", { name: "Keyboard shortcuts and tag hotkeys" }),
+      );
+      await screen.findByRole("combobox", { name: "Tag shortcut 1: tax" });
+      await fireEvent.click(screen.getByRole("button", { name: "Done" }));
+      await waitFor(() =>
+        expect(screen.queryByRole("dialog", { name: "Keyboard shortcuts" })).toBeNull(),
+      );
+      await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
+      await fireEvent.click(await screen.findByRole("button", { name: view }));
+      await fireEvent.keyDown(window, { key: "1" });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(backend.writes).toEqual([]);
+    } finally {
+      tiles.remove();
+    }
+  },
+);
 
 it.each(["click", "Enter"] as const)(
   "reloads the inspector when %s reactivates the selected file",

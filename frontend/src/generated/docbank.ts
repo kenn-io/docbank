@@ -640,6 +640,11 @@ export interface Error {
   errors?: string[];
   /** @maxItems 20 */
   face_ids?: string[];
+  /**
+     * The content version of each face in face_ids, in the same order.
+     * @maxItems 20
+     */
+  face_version_ids?: string[];
   hidden_face_conflict?: boolean;
   inaccessible_face_conflict?: boolean;
   more?: boolean;
@@ -4850,12 +4855,21 @@ export interface PersonMergeReceipt {
   survivor_revision_before: number;
 }
 
+export interface PersonPhotoSummary {
+  face?: PersonFacePreview;
+  face_hidden?: boolean;
+  /** @nullable */
+  hidden_count?: number | null;
+  library_count: number;
+}
+
 export interface PersonSummary {
   created_at: string;
   display_name: string;
   display_name_folded: string;
   identity_label?: string;
   person_id: string;
+  photo_summary?: PersonPhotoSummary;
   revision: number;
   state: string;
 }
@@ -8925,6 +8939,11 @@ export type GetExportJobEventsDefault = {
   errors?: string[];
   /** @maxItems 20 */
   face_ids?: string[];
+  /**
+     * The content version of each face in face_ids, in the same order.
+     * @maxItems 20
+     */
+  face_version_ids?: string[];
   hidden_face_conflict?: boolean;
   inaccessible_face_conflict?: boolean;
   more?: boolean;
@@ -9312,6 +9331,14 @@ query?: string;
  */
 limit?: number;
 cursor?: string;
+/**
+ * Return only people with a visible photo, with Library photo counts and one readable card portrait. Include Hidden counts and allow a Hidden portrait while unlocked.
+ */
+photo_summary?: boolean;
+/**
+ * Rank name groups by their newest visible depicted evidence, then by name. Namesakes stay together.
+ */
+recent_first?: boolean;
 };
 
 export type GetPersonParams = {
@@ -15991,9 +16018,9 @@ export const getRenamePersonUrl = (personId: string,) => {
 /**
  * @summary Rename one canonical person
  */
-export const renamePerson = async (personId: string,
+export const renamePerson = (personId: string,
     renamePersonRequest: NonReadonly<RenamePersonRequest>,
-    headers: RenamePersonHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<Person> => {
+    headers: RenamePersonHeaders, options?: Parameters<typeof sessionResponse>[1]) => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -16009,7 +16036,7 @@ export const renamePerson = async (personId: string,
     }
     return headers;
   };
-return sessionJSON<Person>(getRenamePersonUrl(personId),
+return sessionResponse<Person>(getRenamePersonUrl(personId),
   {
     ...options,
     method: 'PATCH',
@@ -16031,9 +16058,9 @@ export const getMergePersonUrl = (personId: string,) => {
 /**
  * @summary Merge one person into another
  */
-export const mergePerson = async (personId: string,
+export const mergePerson = (personId: string,
     mergePersonRequest: NonReadonly<MergePersonRequest>,
-    headers: MergePersonHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PersonMergeReceipt> => {
+    headers: MergePersonHeaders, options?: Parameters<typeof sessionResponse>[1]) => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -16049,7 +16076,7 @@ export const mergePerson = async (personId: string,
     }
     return headers;
   };
-return sessionJSON<PersonMergeReceipt>(getMergePersonUrl(personId),
+return sessionResponse<PersonMergeReceipt>(getMergePersonUrl(personId),
   {
     ...options,
     method: 'POST',

@@ -769,7 +769,7 @@ Person name search evaluates `docbank_person_name_starts_with_word_v1` at read t
 
 ### Photo face authority
 
-`photo_faces` stores a content-version ID, normalized box, revision and optional assertion ID. Boxes are fractions of the EXIF-oriented preview before authored rotation; changing a photo's rotation leaves stored geometry unchanged. Naming writes the shared `person_document_assertions` row with role `depicted`; a whole-photo mark uses that row without inventing a face. Multiple faces of one person on one version share that row. Face reads return asserted people and suppressed records referenced by faces in the same Hidden-gated transaction.
+`photo_faces` stores a content-version ID, normalized box, revision, and optional assertion ID. Boxes are fractions of the EXIF-oriented preview before authored rotation; changing a photo's rotation leaves stored geometry unchanged. Naming writes the shared `person_document_assertions` row with role `depicted`; a whole-photo mark uses that row without inventing a face. Adding a face or whole-photo mark to an existing active assertion preserves its `recorded_at`. Multiple faces of one person on one version share that row. Face reads return asserted people and suppressed records referenced by faces in the same Hidden-gated transaction.
 
 Each photo version is limited to 1,000 faces and 1,000 depicted assertions, including suppressed rows. A write past either limit fails with `ErrPhotoFaceLimit`. A newly created assertion advances the binding epoch only when its version has a document-event head.
 
@@ -781,8 +781,7 @@ Schema 36 adds the person's key-face reference and the derived `person_candidate
 
 Face decisions store changed faces, assertions, candidates and key-face rows plus shared assertion dependencies in photo receipts. Receipts retain their photo asset as provenance. Automatic-withdrawal checks use a content-version receipt index and the typed receipt decoder, so regrouping photo files preserves undo. Undo compares each recorded after-state and advances restored revisions. Retracting the last face assignment preserves its assertion ID, note and history as `withdrawn`; explicit `suppress` remains an operator decision. Active person predicates ignore withdrawals. Merge advances affected face revisions, reviews assignment/rejection conflicts through Hidden authorization, and treats withdrawals as neutral. Split moves selected assertions with their faces; person detail pages eligible selectors, including retained photo versions.
 
-!!! info "Planned"
-    The People view will join canonical people to current document edges, operator assertions and photo faces. Document edges require the current binding epoch and generation; photo visibility follows the photo resolver.
+The People view lists canonical people visible to the browser. Its photo summary counts distinct current, live Library assets and, while Hidden is unlocked, Hidden assets separately. It selects a readable key face across those scopes; otherwise it prefers assigned Library faces over Hidden faces, then a ready preview, then the largest face box. Browser rename and merge enforce that same person visibility inside their write transactions. Name pickers rank name groups by the newest `recorded_at` among active, visible depicted assertions, then by folded name and ID. Namesakes share their group's rank. Naming a person on a new photo records a new assertion and moves the group up. Merging preserves retained and moved assertion times.
 
 ## Released schema policy
 

@@ -6616,6 +6616,12 @@ components:
             type: string
           maxItems: 20
           type: array
+        face_version_ids:
+          description: The content version of each face in face_ids, in the same order.
+          items:
+            type: string
+          maxItems: 20
+          type: array
         hidden_face_conflict:
           type: boolean
         inaccessible_face_conflict:
@@ -12219,6 +12225,28 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    PersonPhotoSummary:
+      additionalProperties: false
+      properties:
+        face:
+          $ref: "#/components/schemas/PersonFacePreview"
+        face_hidden:
+          type: boolean
+        hidden_count:
+          format: int64
+          type:
+            - integer
+            - "null"
+        library_count:
+          format: int64
+          type: integer
+      required:
+        - library_count
+      type: object
+      x-go-type: api.PersonPhotoSummary
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     PersonSplitReceipt:
       additionalProperties: false
       properties:
@@ -12279,6 +12307,8 @@ components:
           type: string
         person_id:
           type: string
+        photo_summary:
+          $ref: "#/components/schemas/PersonPhotoSummary"
         revision:
           format: int64
           type: integer
@@ -23163,6 +23193,12 @@ paths:
                       type: string
                     maxItems: 20
                     type: array
+                  face_version_ids:
+                    description: The content version of each face in face_ids, in the same order.
+                    items:
+                      type: string
+                    maxItems: 20
+                    type: array
                   hidden_face_conflict:
                     type: boolean
                   inaccessible_face_conflict:
@@ -26505,6 +26541,16 @@ paths:
           name: cursor
           schema:
             type: string
+        - description: Return only people with a visible photo, with Library photo counts and one readable card portrait. Include Hidden counts and allow a Hidden portrait while unlocked.
+          in: query
+          name: photo_summary
+          schema:
+            type: boolean
+        - description: Rank name groups by their newest visible depicted evidence, then by name. Namesakes stay together.
+          in: query
+          name: recent_first
+          schema:
+            type: boolean
       responses:
         "200":
           content:

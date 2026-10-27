@@ -56,7 +56,7 @@ func registerPeopleRoutes(api huma.API, d Deps, g *gate) {
 		}
 		var out *personOutput
 		err = g.mutate(func() error {
-			person, callErr := d.Store.UpdatePerson(ctx, in.PersonID, revision, in.Body.DisplayName)
+			person, callErr := d.Store.UpdatePerson(browserPeopleScope(ctx), in.PersonID, revision, in.Body.DisplayName)
 			if callErr != nil {
 				return FromStoreError(callErr)
 			}
@@ -103,9 +103,13 @@ func registerPeopleRoutes(api huma.API, d Deps, g *gate) {
 		}
 		var out *personMergeOutput
 		err = g.mutate(func() error {
-			receipt, callErr := d.Store.MergePersons(ctx, in.PersonID, in.Body.AbsorbedPersonID, in.Body.OperationID, revision, in.Body.AbsorbedRevision)
+			receipt, callErr := d.Store.MergePersons(browserPeopleScope(ctx), in.PersonID, in.Body.AbsorbedPersonID, in.Body.OperationID, revision, in.Body.AbsorbedRevision)
 			if callErr != nil {
 				return FromStoreError(callErr)
+			}
+			if browserSessionRequest(ctx) {
+				receipt.Moved = store.PersonMergeMoved{}
+				receipt.AbsorbedDisplayName = ""
 			}
 			out = &personMergeOutput{ETag: revisionETag(receipt.SurvivorRevisionAfter), Body: fromStorePersonMergeReceipt(receipt)}
 			return nil
@@ -142,4 +146,12 @@ func registerPeopleRoutes(api huma.API, d Deps, g *gate) {
 		})
 		return out, err
 	})
+}
+
+// browserPeopleScope limits browser writes to people the browser can list.
+func browserPeopleScope(ctx context.Context) context.Context {
+	if browserSessionRequest(ctx) {
+		return store.WithVisiblePeopleOnly(ctx)
+	}
+	return ctx
 }

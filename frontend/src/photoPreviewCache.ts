@@ -1,7 +1,13 @@
-import { getReadPhotoPreviewUrl, readPhotoPreview } from "./generated/docbank.js";
+import {
+  getReadPhotoPreviewUrl,
+  preparePhotoPreview,
+  readPhotoPreview,
+  type PersonFacePreview,
+} from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
 import { randomUUID } from "./crypto.js";
 import type { PhotoPreviewSlots } from "./generated/docbank.js";
+import { photoFaceCropStyle } from "./photoRotation.js";
 
 const cachePrefix = "docbank-photo-previews-";
 const maxFetches = 6;
@@ -42,6 +48,68 @@ export function previewObjectURL(
   };
 }
 
+// faceCrop prepares a person's grid preview when it is not ready yet, reads
+// it through the cache, and returns its object URL with a crop style around
+// the face. It returns undefined when the preview cannot be prepared. Each
+// object URL goes to track, whose release revokes it.
+export async function faceCrop(
+  cache: PhotoPreviewCache,
+  face: PersonFacePreview,
+  person: { id: string; hidden: boolean; size: number },
+  signal: AbortSignal,
+  track: (release: () => void) => void,
+) {
+  let generation = face.generation_id;
+  if (!generation) {
+    const slot = await preparePhotoPreview(
+      face.asset_id,
+      {
+        content_version_id: face.content_version_id,
+        person_id: person.id,
+        size: "grid",
+        hidden: person.hidden,
+      },
+      { session: cache.session, signal },
+    );
+    if (slot.state !== "ready" || !slot.generation_id) return undefined;
+    generation = slot.generation_id;
+  }
+  signal.throwIfAborted();
+  const url = await new Promise<string>((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    signal.addEventListener("abort", abort, { once: true });
+    const finish = (action: () => void) => {
+      signal.removeEventListener("abort", abort);
+      action();
+    };
+    track(
+      previewObjectURL(
+        cache,
+        face.asset_id,
+        generation,
+        (url) => finish(() => resolve(url)),
+        (cause) => finish(() => reject(cause)),
+        false,
+        person.id,
+      ),
+    );
+  });
+  const image = new Image();
+  image.src = url;
+  await image.decode();
+  signal.throwIfAborted();
+  return {
+    url,
+    style: photoFaceCropStyle(
+      face.box,
+      image.naturalWidth,
+      image.naturalHeight,
+      face.rotation,
+      person.size,
+    ),
+  };
+}
+
 export class PhotoPreviewCache {
   private controller = new AbortController();
   private name = `${cachePrefix}${randomUUID()}`;
@@ -55,7 +123,7 @@ export class PhotoPreviewCache {
   };
 
   constructor(
-    private session: string,
+    readonly session: string,
     private onauthfailure: (cause: unknown) => void,
     private hidden = false,
   ) {

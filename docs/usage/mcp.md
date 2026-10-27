@@ -222,7 +222,7 @@ resource links, is capped at 1 MiB.
 | `get_photo_faces` | Reads up to 100 face boxes and depicted-person assertions per page, plus canonical `people` with `person_id`, `display_name`, and `state` for that page. Pages shrink together to fit the response byte limit. Pass `next_offset` as `offset` to continue. |
 | `get_photo_asset` | Reads one photo asset by asset UUID or positive node ID. Returns the selected display source, `total_files`, `file_offset`, and a page of complete file decisions. Pass `next_file_offset` as `file_offset` to continue. Pages are live; restart if the asset revision or a member's file revision changes. |
 
-The browser applies [name visibility and namesake recognition rules](people.md#browser-names-and-visibility). MCP `find_people` keeps global search.
+The browser applies [name visibility and namesake recognition rules](people.md#browser-names-and-visibility). MCP `find_people` keeps global search. An invalid cursor or one from another query, projection, or ordering returns the tool error `cursor_expired`; restart from the first page.
 
 Starting the server with `--allow-photo-edits` adds these write tools:
 

@@ -742,6 +742,13 @@ func photoFaceBrowserRequestAllowed(r *http.Request) bool {
 		}
 		return true
 	}
+	if after, ok := strings.CutPrefix(r.URL.Path, "/api/v1/people/by-id/"); ok {
+		parts := strings.Split(after, "/")
+		if parts[0] == "" || r.URL.RawQuery != "" {
+			return false
+		}
+		return len(parts) == 1 && r.Method == http.MethodPatch || len(parts) == 2 && parts[1] == "merge" && r.Method == http.MethodPost
+	}
 	if r.URL.Path == "/api/v1/people" {
 		if r.Method != http.MethodGet {
 			return false
@@ -751,7 +758,7 @@ func photoFaceBrowserRequestAllowed(r *http.Request) bool {
 			return false
 		}
 		for key, entries := range values {
-			if (key != "query" && key != "limit" && key != "cursor") || len(entries) != 1 {
+			if (key != "query" && key != "limit" && key != "cursor" && key != "photo_summary" && key != "recent_first") || len(entries) != 1 {
 				return false
 			}
 		}

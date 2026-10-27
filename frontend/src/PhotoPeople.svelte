@@ -3,16 +3,15 @@
   import {
     listPeople,
     listPersonFacePreviews,
-    preparePhotoPreview,
     type PhotoFace,
     type PersonSummary,
     type PhotoPersonAssertion,
   } from "./generated/docbank.js";
   import type { PhotoFaces } from "./photoFaces.svelte.js";
-  import { previewObjectURL, type PhotoPreviewCache } from "./photoPreviewCache.js";
+  import { faceCrop, type PhotoPreviewCache } from "./photoPreviewCache.js";
   import { APIError } from "./api-transport.js";
   import PhotoCullConfirmation from "./PhotoCullConfirmation.svelte";
-  import { photoFaceCropStyle } from "./photoRotation.js";
+  import { personDetail as detail } from "./personLabel.js";
   let {
     faces,
     session,
@@ -57,8 +56,6 @@
     newName: string;
     people: PersonSummary[];
   }>();
-  const detail = (person: PersonSummary) =>
-    person.identity_label || new Date(person.created_at).toLocaleDateString();
   let selection = $state("");
   let expanded = $state("");
   let previews = $state.raw<
@@ -135,67 +132,23 @@
           continue;
         }
         try {
-          let generation = row.generation_id;
-          if (!generation) {
-            const slot = await preparePhotoPreview(
-              row.asset_id,
-              {
-                content_version_id: row.content_version_id,
-                person_id: person.person_id,
-                size: "grid",
-                hidden: faces.hidden,
-              },
-              { session, signal: request.signal },
-            );
-            if (slot.state !== "ready" || !slot.generation_id) {
-              failed = true;
-              continue;
-            }
-            generation = slot.generation_id;
+          const image = await faceCrop(
+            cache,
+            row,
+            { id: person.person_id, hidden: faces.hidden, size: 64 },
+            request.signal,
+            (release) => releases.push(release),
+          );
+          if (!image) {
+            failed = true;
+            continue;
           }
-          request.signal.throwIfAborted();
-          const url = await new Promise<string>((resolve, reject) => {
-            const abort = () => reject(request.signal.reason);
-            request.signal.addEventListener("abort", abort, { once: true });
-            const finish = (action: () => void) => {
-              request.signal.removeEventListener("abort", abort);
-              action();
-            };
-            releases.push(
-              previewObjectURL(
-                cache,
-                row.asset_id,
-                generation,
-                (url) => finish(() => resolve(url)),
-                (cause) => finish(() => reject(cause)),
-                false,
-                person.person_id,
-              ),
-            );
-          });
-          const image = new Image();
-          image.src = url;
-          await image.decode();
-          request.signal.throwIfAborted();
           const state = previews[person.person_id]!;
           previews = {
             ...previews,
             [person.person_id]: {
               ...state,
-              images: [
-                ...state.images,
-                {
-                  url,
-                  style: photoFaceCropStyle(
-                    row.box,
-                    image.naturalWidth,
-                    image.naturalHeight,
-                    row.rotation,
-                    64,
-                  ),
-                  wholePhoto: !row.box,
-                },
-              ],
+              images: [...state.images, { ...image, wholePhoto: !row.box }],
             },
           };
         } catch (cause) {
@@ -332,7 +285,12 @@
       const fetch = () => {
         request.signal.throwIfAborted();
         return listPeople(
-          { query: pending.query.trim(), limit: 100, ...(cursor ? { cursor } : {}) },
+          {
+            query: pending.query.trim(),
+            limit: 100,
+            recent_first: true,
+            ...(cursor ? { cursor } : {}),
+          },
           { session, signal: request.signal },
         );
       };
@@ -340,7 +298,13 @@
       if (owns())
         searchState = {
           ...pending,
-          people: [...pending.people, ...page.items],
+          // A falling rank can repeat a person; dedupe those rows. A rising
+          // rank can move a group ahead of the cursor and skip it until restart.
+          people: [
+            ...new Map(
+              [...pending.people, ...page.items].map((person) => [person.person_id, person]),
+            ).values(),
+          ],
           nextCursor: page.next_cursor,
           incompleteName:
             page.next_cursor && page.same_name_continues
@@ -351,8 +315,12 @@
     } catch (cause) {
       if (owns()) {
         previewFailure(cause);
+        const expired = cause instanceof APIError && cause.code === "cursor_expired";
         searchState = {
           ...pending,
+          ...(expired
+            ? { people: [], pendingCursor: undefined, nextCursor: undefined, incompleteName: "" }
+            : {}),
           status: "error",
           error: cause instanceof Error ? cause.message : String(cause),
         };

@@ -607,7 +607,7 @@ func domainErrorMessage(code string) string {
 	case "scope_too_large":
 		return "The exact source scope exceeds the supported limit; narrow the source scope."
 	case "cursor_expired":
-		return "The document cursor expired; restart the listing from the first page."
+		return "The cursor expired; restart the listing from the first page."
 	case "invalid_document_cursor":
 		return "The document cursor is invalid for this listing."
 	case "invalid_rendition_window":

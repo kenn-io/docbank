@@ -58,6 +58,8 @@ export default defineConfig({
           },
           ...Object.fromEntries(
             [
+              "renamePerson",
+              "mergePerson",
               "createExportSource",
               "sealExportSource",
               "createExportPlan",
