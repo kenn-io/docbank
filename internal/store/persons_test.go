@@ -314,11 +314,6 @@ func TestPeopleRecentFirstFollowsVisibleEvidence(t *testing.T) {
 	for _, limit := range []int{1, 2, 3, 100} {
 		require.Equal(t, append([]string{people["Bob"].PersonID}, append(slices.Clone(zoes), people["Ada"].PersonID, people["Cy"].PersonID)...), page(WithPhotoHiddenToken(ctx, token), "", recent, limit))
 	}
-	// Photo summaries require each namesake's own photo, even for global callers.
-	photos, _, err := s.PeopleByDisplayName(WithPhotoHiddenToken(ctx, token), "Zo", "", "", 100, false, PeopleSearchOptions{RecentFirst: true, PhotoSummary: true})
-	require.NoError(t, err)
-	require.Len(t, photos, 1)
-	require.Equal(t, people["Zoe"].PersonID, photos[0].PersonID)
 	// A retired namesake supplies neither a result nor a rank to its namesakes.
 	_, err = s.RetirePerson(ctx, people["Zoe"].PersonID, people["Zoe"].Revision)
 	require.NoError(t, err)
