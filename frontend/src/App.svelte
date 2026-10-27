@@ -827,7 +827,9 @@
       mapPhotos,
       hiddenWorkspace?.activePhotos(),
     ].filter((photos): photos is Photos => !!photos);
-    if (lists.some((photos) => photos.loading)) return false;
+    // The People directory reloads on return, so only an open one refreshes.
+    const people = photoPath === "/photos/people" ? peopleView : undefined;
+    if (lists.some((photos) => photos.loading) || people?.loading) return false;
     // Documents show the same files, so they reload when the user returns to them.
     pendingPhotoDocuments = true;
     for (const photos of lists)
@@ -838,6 +840,7 @@
         photosChanged(undefined, undefined, true),
         hiddenWorkspace?.refresh(true),
         refreshDefinitions(),
+        people?.refresh(),
       ]);
       listRefreshed = true;
     } finally {

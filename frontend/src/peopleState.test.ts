@@ -440,3 +440,46 @@ it.each([404, 412, 503, "invalid receipt"])(
     people.dispose();
   },
 );
+
+it("refreshes the loaded cards in place after a change elsewhere", async () => {
+  const rows = Array.from({ length: 60 }, (_, index) => person(`p${index}`));
+  let server = rows;
+  const read = vi.spyOn(api, "listPeople").mockImplementation(async (params) => {
+    const start = Number(params?.cursor ?? 0);
+    const end = start + params!.limit!;
+    return {
+      items: server.slice(start, end),
+      ...(end < server.length ? { next_cursor: String(end) } : {}),
+    };
+  });
+  const people = new People("session", vi.fn());
+  await people.load("p");
+  await people.load("p", true);
+  people.toggle(rows[0]!);
+  people.toggle(rows[30]!);
+  // Another tab renames p0 and merges p1 away.
+  server = [{ ...rows[0]!, display_name: "Renamed", revision: 5 }, ...rows.slice(2)];
+  read.mockClear();
+  await people.refresh();
+  expect(read.mock.calls.every(([params]) => params?.query === "p")).toBe(true);
+  expect(people.items).toHaveLength(48);
+  expect(people.items[0]).toMatchObject({ display_name: "Renamed", revision: 5 });
+  expect(people.items.some((row) => row.person_id === "p1")).toBe(false);
+  expect(people.cursor).toBe("48");
+  expect(people.selected.map((row) => [row.person_id, row.revision])).toEqual([
+    ["p0", 5],
+    ["p30", 4],
+  ]);
+  people.dispose();
+});
+
+it("keeps the cards and reports a failed People refresh", async () => {
+  vi.spyOn(api, "listPeople")
+    .mockResolvedValueOnce({ items: [ada, grace] })
+    .mockRejectedValueOnce(new APIError("Unavailable", 503, "unavailable"));
+  const people = new People("session", vi.fn());
+  await people.load();
+  await expect(people.refresh()).rejects.toThrow("Unavailable");
+  expect(people.items).toEqual([ada, grace]);
+  people.dispose();
+});

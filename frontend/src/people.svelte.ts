@@ -146,6 +146,43 @@ export class People {
   retry() {
     return this.load(this.query, !!this.items.length && !this.cursorExpired);
   }
+  // refresh rereads the loaded cards in place after a change elsewhere, such
+  // as another tab's rename or merge. It keeps the search, at least as many
+  // cards as were loaded, and the selection, with fresh names and revisions.
+  // A failure keeps the current cards and throws so the photo event pass
+  // retries.
+  async refresh() {
+    if (this.disposed || this.loading || this.access?.lockError) return;
+    const request = (this.controller = new AbortController());
+    const { query } = this;
+    const wanted = Math.max(this.items.length, peoplePageSize);
+    const rows: PersonSummary[] = [];
+    let cursor: string | undefined;
+    try {
+      do {
+        const page = await this.run(() => {
+          request.signal.throwIfAborted();
+          return listPeople(
+            { query, limit: peoplePageSize, photo_summary: true, ...(cursor ? { cursor } : {}) },
+            { session: this.session, signal: request.signal },
+          );
+        });
+        rows.push(...page.items);
+        cursor = page.next_cursor;
+      } while (cursor && rows.length < wanted);
+    } catch (cause) {
+      if (request.signal.aborted) return;
+      this.failure(cause);
+      throw cause;
+    }
+    if (request.signal.aborted) return;
+    const fresh = new Map(rows.map((person) => [person.person_id, person]));
+    this.items = [...fresh.values()];
+    this.cursor = cursor;
+    this.error = "";
+    this.cursorExpired = false;
+    this.selected = this.selected.map((person) => fresh.get(person.person_id) ?? person);
+  }
   private begin() {
     if (this.busy || this.disposed) return;
     const request = (this.writer = new AbortController());

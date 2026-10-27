@@ -5099,6 +5099,35 @@ it("stays in People when Library refuses the person filter", async () => {
   expect(screen.getByRole("heading", { name: "People" })).toBeTruthy();
 });
 
+it("refreshes open People cards after another client changes people", async () => {
+  history.replaceState(null, "", "/photos/people#web_session=synthetic&web_upload_secret=proof");
+  livePhotoStubs();
+  const ada = person("00000000-0000-4000-8000-000000000001", {
+    display_name: "Ada",
+    photo_summary: { library_count: 1 },
+  });
+  const grace = person("00000000-0000-4000-8000-000000000002", {
+    display_name: "Grace",
+    photo_summary: { library_count: 2 },
+  });
+  let rows = [ada, grace];
+  vi.spyOn(api, "listPeople").mockImplementation(async () => ({ items: rows }));
+  stubPhotoFetch(async (url) => {
+    if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
+    if (url.endsWith("/photos/albums")) return Response.json([]);
+    if (url.endsWith("/photos/assets/query"))
+      return Response.json({ items: [], total: 0, facets: [] });
+    return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+  });
+  render(App);
+  await screen.findByRole("button", { name: "Ada 1 Library photo" });
+  // Another client renames Ada and removes Grace's last photo.
+  rows = [{ ...ada, display_name: "Ada Lovelace", revision: 5 }];
+  await act(() => photoEventPass()({}));
+  await screen.findByRole("button", { name: "Ada Lovelace 1 Library photo" });
+  expect(screen.queryByRole("button", { name: "Grace 2 Library photos" })).toBeNull();
+});
+
 function photoEventPass() {
   const pass = vi.mocked(photoEvents.watchPhotoEvents).mock.calls.at(-1)?.[1];
   if (!pass) throw new Error("The event watcher has not started");

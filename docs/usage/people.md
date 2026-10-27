@@ -17,6 +17,8 @@ Open **Photos → People** to browse the people in your visible photos, 24 cards
 
 Select a card to open that person's Library photos, or their Hidden photos when they have none in Library. While Hidden is unlocked, a separate Hidden count opens that person's Hidden photos. Hidden-only people appear while Hidden is unlocked and clear when it locks or expires. A readable key face supplies the portrait, including Hidden while unlocked; otherwise Docbank prefers the newest assigned Library face.
 
+An open People page updates when another tab or the CLI changes people or photos. It keeps your search, the cards you loaded, and your selection. See [Live refresh](photos.md#live-refresh).
+
 Use **Rename** to change the name. The list reloads its first page and applies the current search again. A renamed person disappears from the results if their new name no longer matches.
 
 To merge two people, check **Select** on both cards, then choose **Merge**. Your selection stays while you search, so you can select people from different searches. Choose **Keep this one** on the person to keep, then confirm. The survivor keeps their name and receives the other person's records. The list reloads its first page with current counts. When both people have the same name and the same detail, the dialog also shows each person ID. Person filters chosen from a card or the face list follow renames and merges. A `person:` name typed in search keeps the old name, so update the search.
