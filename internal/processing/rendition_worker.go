@@ -433,14 +433,14 @@ func (worker *RenditionWorker) runOne(ctx context.Context) (
 	if err != nil || !found {
 		return found, err
 	}
+	jobs.ReportBusy(ctx, true)
+	defer jobs.ReportBusy(ctx, false)
 	return worker.runClaim(ctx, claim)
 }
 
 func (worker *RenditionWorker) runClaim(ctx context.Context,
 	claim store.RenditionJobClaim,
 ) (processed bool, retErr error) {
-	jobs.ReportBusy(ctx, true)
-	defer jobs.ReportBusy(ctx, false)
 	leaseCtx, stopLease := worker.keepLease(ctx, claim)
 	defer func() {
 		leaseErr := stopLease()

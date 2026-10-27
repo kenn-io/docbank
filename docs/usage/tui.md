@@ -49,9 +49,10 @@ empty timeline.
 Press <kbd>J</kbd> to inspect daemon-owned background work without leaving the
 document view. The activity screen shows each stable job name, whether it is
 idle, running, completed, failed, or cancelled, and its start and finish times.
-Workers waiting for work show idle. The running count includes only work in progress.
-Inspecting a job shows its complete final failure text. Refresh asks the daemon
-for a new snapshot. Closing the screen returns to the same document selection.
+Workers waiting for work show idle. The running count includes only work in
+progress. Inspecting a job shows its complete final failure text. Refresh asks
+the daemon for a new snapshot. Closing the screen returns to the same document
+selection.
 The current job report shows worker activity and lifecycle status.
 
 Press <kbd>O</kbd> for a read-only operational summary. It separates what the

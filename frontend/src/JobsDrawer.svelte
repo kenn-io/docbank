@@ -309,9 +309,7 @@
                           <div>
                             <dt>Status</dt>
                             <dd class="state" data-tone={member.status}>
-                              <span class="state-label">
-                                {statusLabel(member.status)}
-                              </span>
+                              <span class="state-label">{statusLabel(member.status)}</span>
                             </dd>
                           </div>
                         {/if}
