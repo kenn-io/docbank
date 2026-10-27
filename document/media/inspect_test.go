@@ -24,7 +24,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/document/docling"
 	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/media/mediatest"
 )
@@ -2666,31 +2665,31 @@ func paddedM4A() []byte {
 	return padded
 }
 
-func TestMalformedSupportedImageKeepsFileFailure(t *testing.T) {
+func TestInspectProviderSupportPreservesApplicableReason(t *testing.T) {
 	t.Parallel()
-	data := []byte("\x89PNG\r\n\x1a\n")
-	descriptor, err := docling.DocumentDescriptor(document.RenditionTrustOperatorNetwork)
+	encrypted, err := mediatest.EncryptedPDF("open", "owner", 128)
 	require.NoError(t, err)
-	policy := inspectionPolicy(data, "damaged.png", "image/png")
-	policy.SupportsFormat = descriptor.Supports
-	record, err := media.InspectCapability(bytes.NewReader(data), policy)
-	require.NoError(t, err)
-	assert.False(t, record.Eligible)
-	assert.Equal(t, media.CapabilityReasonMalformed, record.Reason)
-}
-
-func TestInspectUnsupportedEncryptedPDF(t *testing.T) {
-	source, err := mediatest.EncryptedPDF("open", "owner", 128)
-	require.NoError(t, err)
-	policy := inspectionPolicy(source, "statement.pdf", "application/pdf")
-	policy.SupportsFormat = func(capability document.RenditionFormatCapability) bool {
-		require.Equal(t, "application/pdf", capability.MediaType)
-		return false
+	for _, tc := range []struct {
+		name, mime string
+		data       []byte
+		supported  bool
+		reason     media.CapabilityReason
+	}{
+		{"damaged.png", "image/png", []byte("\x89PNG\r\n\x1a\n"), true, media.CapabilityReasonMalformed},
+		{"statement.pdf", "application/pdf", encrypted, false, media.CapabilityReasonUnsupported},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			policy := inspectionPolicy(tc.data, tc.name, tc.mime)
+			policy.SupportsFormat = func(capability document.RenditionFormatCapability) bool {
+				require.Equal(t, tc.mime, capability.MediaType)
+				return tc.supported
+			}
+			record, err := media.InspectCapability(bytes.NewReader(tc.data), policy)
+			require.NoError(t, err)
+			require.False(t, record.Eligible)
+			require.Equal(t, tc.reason, record.Reason)
+		})
 	}
-	record, err := media.InspectCapability(bytes.NewReader(source), policy)
-	require.NoError(t, err)
-	require.False(t, record.Eligible)
-	require.Equal(t, media.CapabilityReasonUnsupported, record.Reason)
 }
 
 func TestInspectPasswordProtectedPDF(t *testing.T) {

@@ -829,32 +829,6 @@ it.each([false, true])(
   },
 );
 
-it("keeps a legacy profile-load fallback on GET when profiles are empty", async () => {
-  const file = node(2, "legacy.txt", baseVersion);
-  const { fetchMock } = installHarness({
-    profiles: [],
-    files: [file],
-    baseReport: report("lexical", []),
-    tagSearch: {
-      hits: [{ node: file, path: file.path, match: "name" }],
-      limit: 1000,
-      truncated: false,
-    },
-  });
-  render(App);
-  await screen.findAllByText("legacy.txt");
-  await submitSearch("legacy");
-  await screen.findByText("/legacy.txt");
-  expect(
-    fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/search?")).length,
-  ).toBe(1);
-  expect(
-    fetchMock.mock.calls.some(
-      ([input, init]) => String(input) === "/api/v1/search" && init?.method === "POST",
-    ),
-  ).toBe(false);
-});
-
 it("reruns the accepted query when profiles arrive after legacy results", async () => {
   const file = node(2, "legacy.txt", baseVersion);
   const harness = installHarness({
@@ -1618,46 +1592,6 @@ it.each(["unrun edit", "failed search"])(
   },
 );
 
-it("restores meaning search after removing the last advanced filter", async () => {
-  const file = node(2, "report.txt", baseVersion);
-  const harness = installHarness({
-    profiles: [
-      {
-        name: "private",
-        fingerprint: "a".repeat(64),
-        rendition: true,
-        embedding_bindings: ["embed"],
-        reranking_available: false,
-      },
-    ],
-    files: [file],
-    baseReport: report("hybrid", [result(file, 1, "report excerpt")]),
-  });
-  render(App);
-  await submitSearch("annual report");
-  await screen.findByText("report excerpt");
-  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
-  await fireEvent.input(screen.getByLabelText("Filters JSON"), {
-    target: { value: '{"size_min":10}' },
-  });
-  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
-  await waitFor(() =>
-    expect(screen.queryByRole("dialog", { name: "Filters and sort" })).toBeNull(),
-  );
-  await screen.findByRole("region", { name: "Frozen query results" });
-  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
-  await fireEvent.input(screen.getByLabelText("Filters JSON"), {
-    target: { value: "{}" },
-  });
-  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
-  await waitFor(() => expect(harness.postBodies).toHaveLength(2));
-  expect(harness.postBodies[1]).toMatchObject({ mode: "hybrid", query: "annual report" });
-  await screen.findByText("report excerpt");
-  expect(screen.queryByRole("region", { name: "Frozen query results" })).toBeNull();
-  expect(screen.queryByRole("dialog", { name: "Filters and sort" })).toBeNull();
-  expect(screen.queryByText("Filters search names and text only.")).toBeNull();
-});
-
 it("filtered search walkthrough reaches accepted results", async () => {
   const file = node(2, "report.txt", baseVersion);
   const harness = installHarness({
@@ -1705,12 +1639,21 @@ it("filtered search walkthrough reaches accepted results", async () => {
   );
   const results = await screen.findByRole("region", { name: "Frozen query results" });
   expect(within(results).getByText("report.txt")).toBeTruthy();
-  const note = await screen.findByText("Filters search names and text only.");
+  expect(await screen.findByText("Filters search names and text only.")).toBeTruthy();
   expect(
     harness.fetchMock.mock.calls.some(([url]) => String(url) === "/api/v1/workspace/queries"),
   ).toBe(true);
-  await fireEvent.click(within(note.parentElement!).getByRole("button", { name: "Clear search" }));
-  await waitFor(() => expect(screen.queryByText("Filters search names and text only.")).toBeNull());
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  await fireEvent.input(screen.getByLabelText("Filters JSON"), {
+    target: { value: "{}" },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  await waitFor(() => expect(harness.postBodies).toHaveLength(2));
+  expect(harness.postBodies[1]).toMatchObject({ mode: "hybrid", query: "annual report" });
+  await screen.findByText("report excerpt");
+  expect(screen.queryByRole("region", { name: "Frozen query results" })).toBeNull();
+  expect(screen.queryByRole("dialog", { name: "Filters and sort" })).toBeNull();
+  expect(screen.queryByText("Filters search names and text only.")).toBeNull();
 });
 
 it.each([

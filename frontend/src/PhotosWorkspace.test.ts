@@ -1841,9 +1841,9 @@ it("starts metadata open and remembers the toggle across the library, viewer, an
   await view.rerender({ ...props, photoID: "photo-1" });
   const viewer = await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
   expect(within(viewer).queryByRole("complementary", { name: "Photo details" })).toBeNull();
-  await fireEvent.keyDown(viewer, { key: "i" });
-  expect(within(viewer).getByRole("complementary", { name: "Photo details" })).toBeTruthy();
   await view.rerender(props);
+  expect(screen.queryByRole("complementary", { name: "Photo details" })).toBeNull();
+  await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
   expect(screen.getByRole("complementary", { name: "Photo details" })).toBeTruthy();
   await fireEvent.keyDown(window, { key: "i" });
   expect(screen.queryByRole("complementary", { name: "Photo details" })).toBeNull();

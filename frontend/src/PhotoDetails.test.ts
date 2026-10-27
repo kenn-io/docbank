@@ -1,7 +1,8 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import PhotoDetails from "./PhotoDetails.svelte";
 import type { AuditStatus } from "./generated/docbank.js";
+import * as api from "./generated/docbank.js";
 import { photo } from "./photo-test-fixtures.js";
 
 const auditStatus = (input: RequestInfo | URL): AuditStatus => ({
@@ -68,25 +69,25 @@ it("copies the current file path and hash and discards a previous photo's late d
     if (url.startsWith("/api/v1/audit/status?")) return Response.json(auditStatus(input));
     throw new Error(`Unexpected request ${url}`);
   });
+  const getNode = vi.spyOn(api, "getNode");
   const view = render(PhotoDetails, { photo: first, session: "synthetic", onauthfailure: vi.fn() });
   await view.rerender({ photo: second, session: "synthetic", onauthfailure: vi.fn() });
   await fireEvent.click(await screen.findByRole("button", { name: "Copy Path" }));
   expect(writeText).toHaveBeenLastCalledWith("/photos/lake.jpg");
   await fireEvent.click(screen.getByRole("button", { name: "Copy SHA-256" }));
   expect(writeText).toHaveBeenLastCalledWith("b".repeat(64));
-  await act(() =>
+  await act(async () => {
     release(
       Response.json({
         id: 1,
         path: "/photos/old.jpg",
         current_version_id: first.content_version_id,
       }),
-    ),
-  );
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Copy Path" }).textContent).toContain(
-      "/photos/lake.jpg",
-    ),
+    );
+    await getNode.mock.results[0]!.value;
+  });
+  expect(screen.getByRole("button", { name: "Copy Path" }).textContent).toContain(
+    "/photos/lake.jpg",
   );
 });
 

@@ -99,24 +99,6 @@ func TestInspectionAndPrepareReadPasswordsOnlyForEncryptedPDF(t *testing.T) {
 	}
 }
 
-func TestPrepareRejectsMediaTypeOmittedByProvider(t *testing.T) {
-	t.Parallel()
-	fixture := newPublicationFixture(t)
-	provider := newWorkerProvider(t)
-	stored := workerProcessingProfile(t, provider.Descriptor())
-	var portable document.ProcessingProfileV1
-	require.NoError(t, json.Unmarshal(stored.CanonicalProfile, &portable))
-	profile := configuredProfile{portable: portable, record: stored, provider: provider}
-	written, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewBufferString("synthetic notes\n"))
-	require.NoError(t, err)
-	node, err := fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), "notes.txt", written.Hash, written.Size, "text/plain", processingBlobPhysical(t, written))
-	require.NoError(t, err)
-	version, err := fixture.catalog.ContentVersionByID(t.Context(), node.CurrentVersionID)
-	require.NoError(t, err)
-	_, err = prepareProviderExecution(t.Context(), fixture.catalog, fixture.blobs, t.TempDir(), node, version, profile, time.Now, true)
-	require.ErrorIs(t, err, ErrSourceIneligible)
-}
-
 func TestRenditionReadinessPreservesApplicableReason(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {

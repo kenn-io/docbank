@@ -119,16 +119,10 @@ function jobRequests(fetchMock: ReturnType<typeof setup>["fetchMock"]): { consen
 }
 
 describe("processing dialog", () => {
-  it("explains when a file exceeds the profile size limit", async () => {
-    const { rerender, props } = setup({
-      text: plan("text", { rendition_ineligible_reason: "source_bytes_exceeded" }),
-    });
-    await rerender({ node: { ...props.node, mime_type: "text/plain", size: 2 ** 30 + 1 } });
-    expect(await screen.findByText("This file is too large for this profile.")).toBeTruthy();
-  });
-
   it("offers transcription when the audio plan retains only text", async () => {
-    const { rerender, props } = setup({ audio: plan("audio", { consent_required: false }) });
+    const { rerender, props } = setup({
+      audio: plan("audio", { consent_required: false, consent_state: "active" }),
+    });
     await rerender({ node: { ...props.node, mime_type: "audio/wav" } });
     expect(await screen.findByRole("dialog", { name: "Transcribe" })).toBeTruthy();
     const run = screen.getByRole("button", { name: "Transcribe" });
@@ -210,11 +204,12 @@ describe("processing dialog", () => {
     expect(jobRequests(view.fetchMock)[1].consent).toBe(false);
   });
 
-  it("blocks a run the file can't take and says why", async () => {
-    setup({ docling: plan("docling", { rendition_ineligible_reason: "pdf_password_required" }) });
-    expect(
-      await screen.findByText("This PDF is locked. Add its password to the PDF password file."),
-    ).toBeTruthy();
+  it.each([
+    ["pdf_password_required", "This PDF is locked. Add its password to the PDF password file."],
+    ["source_bytes_exceeded", "This file is too large for this profile."],
+  ] as const)("blocks a run the file can't take and says why: %s", async (reason, sentence) => {
+    setup({ docling: plan("docling", { rendition_ineligible_reason: reason }) });
+    expect(await screen.findByText(sentence)).toBeTruthy();
     expect(screen.queryByRole("checkbox")).toBeNull();
     expect(screen.getByRole("button", { name: "Extract text" }).hasAttribute("disabled")).toBe(
       true,

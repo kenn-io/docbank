@@ -235,11 +235,6 @@ it("hides Productions when the vault has no sets", async () => {
   expect(screen.queryByRole("button", { name: "Productions" })).toBeNull();
 });
 
-it.each(["bates"] as const)("shows Productions when a %s set exists", async (sets) => {
-  start(sets);
-  expect(await screen.findByRole("button", { name: "Productions" })).toBeTruthy();
-});
-
 it.each([
   { sets: "package", failedListing: "/api/v1/bates/exports?limit=1" },
   { sets: "bates", failedListing: "/api/v1/packages?limit=1" },

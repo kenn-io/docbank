@@ -207,39 +207,28 @@ it.each(["header", "text"] as const)("opens exact-version processing from %s", a
   expect(await screen.findByRole("region", { name: "Similar documents" })).toBeTruthy();
 });
 
-it("refreshes cached text after extraction and a tab round trip", async () => {
-  setup("text");
-  await fireEvent.click(await screen.findByRole("cell", { name: "report.pdf" }));
-  await fireEvent.click(await screen.findByRole("tab", { name: "Text" }));
-  await fireEvent.click(await screen.findByRole("button", { name: "Process…" }));
-  const dialog = await screen.findByRole("dialog", { name: "Extract text" });
-  const run = await within(dialog).findByRole("button", { name: "Extract text" });
-  await waitFor(() => expect(run.hasAttribute("disabled")).toBe(false));
-  await fireEvent.click(run);
-  await within(dialog).findByText("Text extracted.");
-  await fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
-  await fireEvent.click(screen.getByRole("tab", { name: "Preview" }));
-  await fireEvent.click(screen.getByRole("tab", { name: "Text" }));
-  expect(
-    await screen.findByText("Processing verified that this document has no readable text."),
-  ).toBeTruthy();
-});
-
-it("ReviewClosedProcessingRefreshesTextAfterCompletion", async () => {
-  const { finishProcessing } = setup("text", true);
-  await fireEvent.click(await screen.findByRole("cell", { name: "report.pdf" }));
-  await fireEvent.click(await screen.findByRole("tab", { name: "Text" }));
-  await fireEvent.click(await screen.findByRole("button", { name: "Process…" }));
-  const dialog = await screen.findByRole("dialog", { name: "Extract text" });
-  const run = await within(dialog).findByRole("button", { name: "Extract text" });
-  await waitFor(() => expect(run.hasAttribute("disabled")).toBe(false));
-  await fireEvent.click(run);
-  await within(dialog).findByRole("button", { name: /Extracting…/ });
-  await fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
-  finishProcessing();
-  await fireEvent.click(screen.getByRole("tab", { name: "Preview" }));
-  await fireEvent.click(screen.getByRole("tab", { name: "Text" }));
-  expect(
-    await screen.findByText("Processing verified that this document has no readable text."),
-  ).toBeTruthy();
-});
+it.each([false, true])(
+  "refreshes cached text after extraction, closes before completion=%s",
+  async (closeBeforeCompletion) => {
+    const { finishProcessing } = setup("text", closeBeforeCompletion);
+    await fireEvent.click(await screen.findByRole("cell", { name: "report.pdf" }));
+    await fireEvent.click(await screen.findByRole("tab", { name: "Text" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Process…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Extract text" });
+    const run = await within(dialog).findByRole("button", { name: "Extract text" });
+    await waitFor(() => expect(run.hasAttribute("disabled")).toBe(false));
+    await fireEvent.click(run);
+    if (closeBeforeCompletion) {
+      await within(dialog).findByRole("button", { name: /Extracting…/ });
+    } else {
+      await within(dialog).findByText("Text extracted.");
+    }
+    await fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+    if (closeBeforeCompletion) finishProcessing();
+    await fireEvent.click(screen.getByRole("tab", { name: "Preview" }));
+    await fireEvent.click(screen.getByRole("tab", { name: "Text" }));
+    expect(
+      await screen.findByText("Processing verified that this document has no readable text."),
+    ).toBeTruthy();
+  },
+);
