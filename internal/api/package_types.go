@@ -1,5 +1,7 @@
 package api
 
+import "go.kenn.io/docbank/internal/store"
+
 type PackageContainer struct {
 	ContainerID string `json:"container_id"`
 	Format      string `json:"format"`
@@ -81,14 +83,17 @@ type PackageImportJob struct {
 	UpdatedAt   string   `json:"updated_at"`
 }
 
+type PersonPhotoSummary store.PersonPhotoSummary
+
 type PersonSummary struct {
-	IdentityLabel     string `json:"identity_label,omitzero"`
-	DisplayNameFolded string `json:"display_name_folded"`
-	CreatedAt         string `json:"created_at"`
-	PersonID          string `json:"person_id"`
-	DisplayName       string `json:"display_name"`
-	State             string `json:"state"`
-	Revision          int64  `json:"revision"`
+	PhotoSummary      *PersonPhotoSummary `json:"photo_summary,omitzero"`
+	IdentityLabel     string              `json:"identity_label,omitzero"`
+	DisplayNameFolded string              `json:"display_name_folded"`
+	CreatedAt         string              `json:"created_at"`
+	PersonID          string              `json:"person_id"`
+	DisplayName       string              `json:"display_name"`
+	State             string              `json:"state"`
+	Revision          int64               `json:"revision"`
 }
 
 type PersonPage struct {

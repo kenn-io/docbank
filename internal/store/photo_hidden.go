@@ -135,39 +135,49 @@ func (s *Store) hiddenSession(ctx context.Context, q metadataQuerier) (time.Time
 }
 
 func (s *Store) PhotoHiddenState(ctx context.Context) (PhotoHiddenState, error) {
-	var state PhotoHiddenState
-	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
-		if err := tx.QueryRowContext(ctx, `SELECT receipt_id FROM photo_change_receipts WHERE rowid IN (SELECT MAX(rowid) FROM photo_change_receipts WHERE operation='hide' UNION ALL SELECT MAX(rowid) FROM photo_change_receipts WHERE operation='unhide') ORDER BY rowid DESC LIMIT 1`).Scan(&state.ChangeID); err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return err
-		}
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_hidden_credentials)`).Scan(&state.Configured); err != nil {
-			return err
-		}
-		var until string
-		err := tx.QueryRowContext(ctx, `SELECT locked_until FROM photo_hidden_lockout WHERE singleton=1`).Scan(&until)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return err
-		}
-		if err == nil {
-			t, err := time.Parse(time.RFC3339Nano, until)
-			if err != nil {
-				return fmt.Errorf("reading hidden lockout expiry: %w", err)
-			}
-			if now := s.hiddenNow(); t.After(now) {
-				state.LockedUntil = &until
-				state.LockedFor = hiddenSecondsUntil(now, t)
-			}
-		}
-		expiry, err := s.hiddenSession(ctx, tx)
-		if err == nil {
-			state.ExpiresAt = new(expiry.Format(timestampLayout))
-			state.ExpiresIn = hiddenSecondsUntil(s.hiddenNow(), expiry)
-		} else if !errors.Is(err, ErrHiddenLocked) {
-			return err
-		}
-		return nil
+	var state *PhotoHiddenState
+	err := s.photoReadTx(ctx, func(tx *sql.Tx) (err error) {
+		state, err = s.photoHiddenStateTx(ctx, tx)
+		return err
 	})
-	return state, err
+	if err != nil {
+		return PhotoHiddenState{}, err
+	}
+	return *state, nil
+}
+
+// photoHiddenStateTx reads the Hidden scope inside the caller's snapshot.
+func (s *Store) photoHiddenStateTx(ctx context.Context, tx *sql.Tx) (*PhotoHiddenState, error) {
+	state := &PhotoHiddenState{}
+	if err := tx.QueryRowContext(ctx, `SELECT receipt_id FROM photo_change_receipts WHERE rowid IN (SELECT MAX(rowid) FROM photo_change_receipts WHERE operation='hide' UNION ALL SELECT MAX(rowid) FROM photo_change_receipts WHERE operation='unhide') ORDER BY rowid DESC LIMIT 1`).Scan(&state.ChangeID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_hidden_credentials)`).Scan(&state.Configured); err != nil {
+		return nil, err
+	}
+	var until string
+	err := tx.QueryRowContext(ctx, `SELECT locked_until FROM photo_hidden_lockout WHERE singleton=1`).Scan(&until)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	if err == nil {
+		t, err := time.Parse(time.RFC3339Nano, until)
+		if err != nil {
+			return nil, fmt.Errorf("reading hidden lockout expiry: %w", err)
+		}
+		if now := s.hiddenNow(); t.After(now) {
+			state.LockedUntil = &until
+			state.LockedFor = hiddenSecondsUntil(now, t)
+		}
+	}
+	expiry, err := s.hiddenSession(ctx, tx)
+	if err == nil {
+		state.ExpiresAt = new(expiry.Format(timestampLayout))
+		state.ExpiresIn = hiddenSecondsUntil(s.hiddenNow(), expiry)
+	} else if !errors.Is(err, ErrHiddenLocked) {
+		return nil, err
+	}
+	return state, nil
 }
 
 func clearHiddenAuthTx(ctx context.Context, tx *sql.Tx, credentials bool) error {

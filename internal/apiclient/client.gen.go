@@ -26923,6 +26923,12 @@ type ListPeopleQuery struct {
 	Query  *string `json:"query,omitempty"`
 	Limit  *int    `json:"limit,omitempty"`
 	Cursor *string `json:"cursor,omitempty"`
+
+	// PhotoSummary Return only people with a visible photo, with Library photo counts and one readable card portrait. Include Hidden counts and allow a Hidden portrait while unlocked.
+	PhotoSummary *bool `json:"photo_summary,omitempty"`
+
+	// RecentFirst Rank name groups by their newest visible depicted evidence, then by name. Namesakes stay together.
+	RecentFirst *bool `json:"recent_first,omitempty"`
 }
 
 type GetPersonQuery struct {
@@ -27334,12 +27340,14 @@ type DownloadExportArchiveErrorResponse = Error
 type GetExportJobEventsResponse = []byte
 
 type GetExportJobEventsErrorResponse struct {
-	BackupForget             *BackupForgetReport  `json:"backup_forget,omitempty"`
-	BackupPrune              *BackupPruneReport   `json:"backup_prune,omitempty"`
-	Code                     *string              `json:"code,omitempty"`
-	Detail                   *string              `json:"detail,omitempty"`
-	Errors                   []string             `json:"errors,omitempty"`
-	FaceIds                  []string             `json:"face_ids,omitempty"`
+	BackupForget *BackupForgetReport `json:"backup_forget,omitempty"`
+	BackupPrune  *BackupPruneReport  `json:"backup_prune,omitempty"`
+	Code         *string             `json:"code,omitempty"`
+	Detail       *string             `json:"detail,omitempty"`
+	Errors       []string            `json:"errors,omitempty"`
+	FaceIds      []string            `json:"face_ids,omitempty"`
+	// FaceVersionIds The content version of each face in face_ids, in the same order.
+	FaceVersionIds           []string             `json:"face_version_ids,omitempty"`
 	HiddenFaceConflict       *bool                `json:"hidden_face_conflict,omitempty"`
 	InaccessibleFaceConflict *bool                `json:"inaccessible_face_conflict,omitempty"`
 	More                     *bool                `json:"more,omitempty"`
@@ -29358,6 +29366,8 @@ type PersonMergeMovedCounts = api.PersonMergeMovedCounts
 type PersonMergeReceipt = api.PersonMergeReceipt
 
 type PersonPage = api.PersonPage
+
+type PersonPhotoSummary = api.PersonPhotoSummary
 
 type PersonSplitReceipt = api.PersonSplitReceipt
 

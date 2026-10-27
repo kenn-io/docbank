@@ -84,6 +84,9 @@
   import HiddenSetupModal from "./HiddenSetupModal.svelte";
   import PhotoActionError from "./PhotoActionError.svelte";
   import { HiddenAccess } from "./hiddenAccess.svelte.js";
+  import PeopleView from "./People.svelte";
+  import { People } from "./people.svelte.js";
+  import UserIcon from "@lucide/svelte/icons/user";
   import PhotoAlbumsIndex from "./PhotoAlbumsIndex.svelte";
   import { PhotoAlbums, photoDragType } from "./photoAlbums.svelte.js";
   import StarIcon from "@lucide/svelte/icons/star";
@@ -354,7 +357,7 @@
   const isMapPath = (path: string) => path === "/photos/map" || path.startsWith("/photos/map/");
   const isPhotoPath = (path: string) =>
     isMapPath(path) ||
-    ["/photos", "/photos/hidden", "/photos/albums"].includes(path) ||
+    ["/photos", "/photos/hidden", "/photos/albums", "/photos/people"].includes(path) ||
     path.startsWith("/photos/albums/");
   let photoMode = $state(isPhotoPath(location.pathname));
   let openedPhotos = false;
@@ -410,6 +413,7 @@
   );
   const albumScopeID = $derived(albumID || mapAlbumID);
   let photoAlbums = $state<PhotoAlbums>();
+  let peopleView = $state<People>();
   let albumPhotos = $state<Photos>();
   let mapPhotos = $state<Photos>();
   let dragOver = $state("");
@@ -532,6 +536,7 @@
   const photoSearchable = $derived(
     photoMode &&
       photoPath !== "/photos/albums" &&
+      photoPath !== "/photos/people" &&
       searchablePhotoView(albumID, mapMode) &&
       (hiddenMode || photoValidated),
   );
@@ -587,13 +592,16 @@
     if (photoAccessChecked && changed) void photoAlbums?.load();
     photoAccessChecked = true;
     photoChangeID = result.change_id;
-    if (!photoMode || hiddenMode) return;
+    if (!photoMode || hiddenMode) {
+      applyPersonPhotos();
+      return;
+    }
     const state = photoState;
     const photos = albumID
       ? albumPhotos
       : mapMode
         ? mapPhotos
-        : photoPath === "/photos/albums"
+        : photoPath === "/photos/albums" || photoPath === "/photos/people"
           ? undefined
           : state?.photos;
     if (photos?.hiding || photos?.trashing || (photoConcealed && photos?.loading)) return;
@@ -657,6 +665,31 @@
       albums.dispose();
       photoAlbums = undefined;
     };
+  });
+  $effect(() => {
+    if (!webSession) return;
+    const people = new People(webSession, handleFailure, hiddenAccess, onpersonchanged);
+    peopleView = people;
+    return () => {
+      people.dispose();
+      peopleView = undefined;
+    };
+  });
+  $effect(() => {
+    const people = peopleView;
+    const visible =
+      photoMode &&
+      photoPath === "/photos/people" &&
+      photoValidated &&
+      !photoConcealed &&
+      !hiddenAccess?.lockError;
+    void hiddenAccess?.scope;
+    if (!people) return;
+    untrack(() => {
+      people.conceal();
+      if (visible) void people.load();
+    });
+    return () => people.conceal();
   });
   function albumQuery(id: string): Query {
     return {
@@ -794,7 +827,9 @@
       mapPhotos,
       hiddenWorkspace?.activePhotos(),
     ].filter((photos): photos is Photos => !!photos);
-    if (lists.some((photos) => photos.loading)) return false;
+    // The People directory reloads on return, so only an open one refreshes.
+    const people = photoPath === "/photos/people" ? peopleView : undefined;
+    if (lists.some((photos) => photos.loading) || people?.loading) return false;
     // Documents show the same files, so they reload when the user returns to them.
     pendingPhotoDocuments = true;
     for (const photos of lists)
@@ -805,6 +840,7 @@
         photosChanged(undefined, undefined, true),
         hiddenWorkspace?.refresh(true),
         refreshDefinitions(),
+        people?.refresh(),
       ]);
       listRefreshed = true;
     } finally {
@@ -857,16 +893,22 @@
     }
   }
 
-  let pendingPerson = $state<{ id: string; name: string }>();
+  let pendingPerson = $state<{ id: string; name: string; hidden: boolean; scope?: number }>();
   function applyPersonPhotos() {
     if (!pendingPerson) return false;
-    const photos = hiddenMode
+    if (
+      pendingPerson.hidden &&
+      (pendingPerson.scope !== hiddenAccess?.scope || !hiddenAccess?.deadline)
+    ) {
+      pendingPerson = undefined;
+      return false;
+    }
+    const photos = pendingPerson.hidden
       ? hiddenWorkspace?.activePhotos()
       : photoValidated
         ? photoState?.photos
         : undefined;
     if (!photos) return false;
-    const { id: personID, name } = pendingPerson;
     if (retainedPhotoEditor() && !retainedPhotoEditor()!.canChangeTarget()) {
       pendingPerson = undefined;
       return false;
@@ -876,17 +918,27 @@
         ...photos.query,
         text: "",
         sort: photoSearchSort({ text: "", syntax: photos.query.syntax }),
-        filters: { person_ids: [personID] },
+        filters: { person_ids: [pendingPerson.id] },
       })
     ) {
       pendingPerson = undefined;
       return false;
     }
-    photos.personFilter = { id: personID, name };
+    photos.personFilter = { id: pendingPerson.id, name: pendingPerson.name };
     pendingPerson = undefined;
     return true;
   }
-  function openPersonPhotos(personID: string, name: string) {
+  $effect(() => {
+    if (
+      pendingPerson?.hidden &&
+      (!hiddenMode || pendingPerson.scope !== hiddenAccess?.scope || !hiddenAccess?.deadline)
+    ) {
+      pendingPerson = undefined;
+      return;
+    }
+    if (hiddenMode && hiddenWorkspace?.activePhotos() && pendingPerson) untrack(applyPersonPhotos);
+  });
+  function openPersonPhotos(personID: string, name: string, hidden = hiddenMode) {
     const photos = activePhotos();
     if (photos?.hiding || photos?.trashing) {
       pendingPerson = undefined;
@@ -896,12 +948,39 @@
       return;
     }
     if (retainedPhotoEditor() && !retainedPhotoEditor()!.canChangeTarget()) return;
-    pendingPerson = { id: personID, name };
-    if (hiddenMode) {
-      if (applyPersonPhotos()) navigatePhotos("/photos/hidden");
-    } else if (photoState && photoValidated) {
-      if (applyPersonPhotos()) navigatePhotos("/photos");
-    } else navigatePhotos("/photos");
+    pendingPerson = { id: personID, name, hidden, scope: hidden ? hiddenAccess?.scope : undefined };
+    // A refused filter clears pendingPerson and keeps the current view.
+    if (applyPersonPhotos() || pendingPerson) navigatePhotos(hidden ? "/photos/hidden" : "/photos");
+  }
+  function onpersonchanged(id: string, name: string, survivorID = id) {
+    const faces = activePhotos()?.faceEditor;
+    if (faces?.version) void faces.load(faces.version);
+    const affected = new Set([activePhotos(), ...siblingPhotoLists()]);
+    for (const photos of new Set([
+      photoState?.photos,
+      albumPhotos,
+      mapPhotos,
+      hiddenWorkspace?.activePhotos(),
+    ])) {
+      if (!photos) continue;
+      if (photos.personFilter?.id === id) photos.personFilter = { id: survivorID, name };
+      if (survivorID !== id && photos.query.filters.person_ids?.includes(id)) {
+        void photos.setQuery({
+          ...photos.query,
+          filters: {
+            ...photos.query.filters,
+            person_ids: [
+              ...new Set(
+                photos.query.filters.person_ids.map((personID) =>
+                  personID === id ? survivorID : personID,
+                ),
+              ),
+            ],
+          },
+        });
+      } else if (affected.has(photos) && photos.dependsOnPeople) void photos.refresh();
+    }
+    queuePhotoDocumentsRefresh();
   }
 
   function navigatePhotos(path: string) {
@@ -3300,6 +3379,13 @@
           <button
             type="button"
             class="nav-item"
+            aria-current={photoPath === "/photos/people" ? "page" : undefined}
+            onclick={() => navigatePhotos("/photos/people")}
+            ><UserIcon size="16" aria-hidden="true" />People</button
+          >
+          <button
+            type="button"
+            class="nav-item"
             aria-current={hiddenMode ? "page" : undefined}
             onclick={() => navigatePhotos("/photos/hidden")}
             ><EyeOffIcon size="16" aria-hidden="true" />Hidden</button
@@ -3614,7 +3700,12 @@
             message={hiddenPhotoActionError}
             ondismiss={() => (hiddenPhotoActionError = "")}
           />
-          {#if photoPath === "/photos/albums"}{#if photoAlbums}<PhotoAlbumsIndex
+          {#if photoPath === "/photos/people"}{#if peopleView}<PeopleView
+                people={peopleView}
+                cache={photoState.cache}
+                onperson={openPersonPhotos}
+              />{/if}
+          {:else if photoPath === "/photos/albums"}{#if photoAlbums}<PhotoAlbumsIndex
                 albums={photoAlbums}
                 cache={photoState.cache}
                 onnavigate={navigatePhotos}

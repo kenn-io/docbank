@@ -175,7 +175,7 @@ func TestPersonPhotoPreviewSourceFollowsAssignment(t *testing.T) {
 	_, err = s.DecidePhotoFace(ctx, source.CurrentVersionID, PhotoFaceDecisionRequest{Action: "name", FaceID: face.FaceID, PersonID: person.PersonID, Revision: face.Revision + 2})
 	require.NoError(t, err)
 	require.NoError(t, s.PersonPhotoPreviewSource(ctx, asset.ID, source.CurrentVersionID, person.PersonID))
-	_, _, err = s.ReplaceContent(ctx, source.ID, source.Revision, fakeHash("b2"), 20, "application/octet-stream")
+	_, _, err = s.ReplaceContent(ctx, source.ID, source.Revision, fakeHash("stale-preview"), 4, "image/jpeg")
 	require.NoError(t, err)
 	require.ErrorIs(t, s.PersonPhotoPreviewSource(ctx, asset.ID, source.CurrentVersionID, person.PersonID), ErrNotFound)
 }
@@ -874,4 +874,200 @@ func TestPhotoFaceGenericDepictedAuthorization(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.AssertDocumentPerson(WithPhotoHiddenToken(ctx, token), assertion)
 	require.NoError(t, err)
+}
+
+func TestPeoplePhotoSummary(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	person, err := s.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	_, err = s.CreatePerson(ctx, "A Contact", "operator")
+	require.NoError(t, err)
+	hiddenOnly, err := s.CreatePerson(ctx, "Hidden only", "operator")
+	require.NoError(t, err)
+	var nodes []Node
+	var assets []PhotoAsset
+	var faces []PhotoFace
+	for i := range 3 {
+		node := browsePhotoNode(t, s, fmt.Sprintf("summary-%d.jpg", i), fakeHash(fmt.Sprintf("%02x", i+30)), "image/jpeg")
+		browsePhotoMetadata(t, s, node, fmt.Sprintf("summary-%d", i), exifCapture(fmt.Sprintf("2026-01-%02dT12:00:00Z", i+1)))
+		asset, err := s.PhotoAssetForNode(ctx, node.ID)
+		require.NoError(t, err)
+		size := .4 - float64(i)*.1
+		face, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.NewString(), document.FaceBox{X: .1, Y: .1, Width: size, Height: size}, person.PersonID)
+		require.NoError(t, err)
+		nodes = append(nodes, node)
+		assets = append(assets, asset)
+		faces = append(faces, face)
+	}
+	// Repeated faces and whole-photo evidence count the asset once.
+	_, _, err = s.CreatePhotoFace(ctx, nodes[0].CurrentVersionID, uuid.NewString(), document.FaceBox{Width: .1, Height: .1}, person.PersonID)
+	require.NoError(t, err)
+	_, err = s.MarkPersonInPhoto(ctx, nodes[0].CurrentVersionID, person.PersonID, "")
+	require.NoError(t, err)
+	options := PeopleSearchOptions{PhotoSummary: true, GridRecipe: "grid"}
+	// The older, larger face wins over newer background faces.
+	rows, _, err := s.PeopleByDisplayName(ctx, "Ada", "", "", 100, true, options)
+	require.NoError(t, err)
+	require.Equal(t, nodes[0].CurrentVersionID, rows[0].PhotoSummary.Face.ContentVersionID)
+	// A ready preview wins even when its face is smaller.
+	generation, err := s.PublishVisualPreviewGeneration(ctx, nodes[1].CurrentVersionID, readyVisualPreviewWithRecipe(t, nodes[1].BlobHash, fakeHash("b1"), 9, visualPreviewRecipe()), &BlobPhysical{Encoding: looseEncodingRaw, StoredBytes: 9})
+	require.NoError(t, err)
+	options.GridRecipe = generation.RecipeFingerprint
+	rows, _, err = s.PeopleByDisplayName(ctx, "Ada", "", "", 100, true, options)
+	require.NoError(t, err)
+	require.Equal(t, nodes[1].CurrentVersionID, rows[0].PhotoSummary.Face.ContentVersionID)
+	p, _, err := s.PersonByID(ctx, person.PersonID)
+	require.NoError(t, err)
+	_, err = s.DecidePhotoFace(ctx, nodes[0].CurrentVersionID, PhotoFaceDecisionRequest{Action: "key", Revision: 1, PersonID: p.PersonID, PersonRevision: p.Revision, FaceID: faces[0].FaceID})
+	require.NoError(t, err)
+	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	_, err = s.SetPhotoAssetHidden(ctx, assets[2].ID, assets[2].Revision, true)
+	require.NoError(t, err)
+	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
+	require.NoError(t, err)
+	unlocked := WithPhotoHiddenToken(ctx, token)
+	_, err = s.MarkPersonInPhoto(unlocked, nodes[2].CurrentVersionID, hiddenOnly.PersonID, "")
+	require.NoError(t, err)
+	// Filter contacts before applying the page limit.
+	page, _, err := s.PeopleByDisplayName(ctx, "", "", "", 1, true, options)
+	require.NoError(t, err)
+	require.Len(t, page, 1)
+	require.Equal(t, person.PersonID, page[0].PersonID)
+	rows, _, err = s.PeopleByDisplayName(unlocked, "", "", "", 100, true, options)
+	require.NoError(t, err)
+	// A person without photo evidence gets no card.
+	require.Len(t, rows, 2)
+	require.Equal(t, int64(2), rows[0].PhotoSummary.LibraryCount)
+	require.Equal(t, int64(1), *rows[0].PhotoSummary.HiddenCount)
+	require.Equal(t, hiddenOnly.PersonID, rows[1].PersonID)
+	require.Equal(t, int64(1), *rows[1].PhotoSummary.HiddenCount)
+	require.Equal(t, nodes[0].CurrentVersionID, rows[0].PhotoSummary.Face.ContentVersionID)
+	rows, _, err = s.PeopleByDisplayName(ctx, "", "", "", 100, true, options)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Nil(t, rows[0].PhotoSummary.HiddenCount)
+	// Hiding the selected face makes the remaining readable face the card source.
+	_, err = s.SetPhotoAssetHidden(unlocked, assets[0].ID, assets[0].Revision, true)
+	require.NoError(t, err)
+	rows, _, err = s.PeopleByDisplayName(ctx, "Ada", "", "", 100, true, options)
+	require.NoError(t, err)
+	require.Equal(t, nodes[1].CurrentVersionID, rows[0].PhotoSummary.Face.ContentVersionID)
+	// Unlocking restores the Hidden key face.
+	rows, _, err = s.PeopleByDisplayName(unlocked, "Ada", "", "", 100, true, options)
+	require.NoError(t, err)
+	require.Equal(t, nodes[0].CurrentVersionID, rows[0].PhotoSummary.Face.ContentVersionID)
+	require.True(t, rows[0].PhotoSummary.FaceHidden)
+	// A Hidden-only person gets a portrait while unlocked.
+	_, _, err = s.CreatePhotoFace(unlocked, nodes[2].CurrentVersionID, uuid.NewString(), document.FaceBox{X: .5, Y: .5, Width: .2, Height: .2}, hiddenOnly.PersonID)
+	require.NoError(t, err)
+	rows, _, err = s.PeopleByDisplayName(unlocked, "Hidden only", "", "", 100, true, options)
+	require.NoError(t, err)
+	require.Equal(t, nodes[2].CurrentVersionID, rows[0].PhotoSummary.Face.ContentVersionID)
+	require.True(t, rows[0].PhotoSummary.FaceHidden)
+	require.Equal(t, int64(1), *rows[0].PhotoSummary.HiddenCount)
+	require.Zero(t, rows[0].PhotoSummary.LibraryCount)
+	rows, _, err = s.PeopleByDisplayName(ctx, "Hidden only", "", "", 100, true, options)
+	require.NoError(t, err)
+	require.Empty(t, rows)
+}
+
+func TestPeoplePhotoSummaryExcludesNamesakeWithoutPhotos(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	person, err := s.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	_, err = s.CreatePerson(ctx, "ada", "operator")
+	require.NoError(t, err)
+	node := browsePhotoNode(t, s, "ada.jpg", fakeHash("ada-photo"), "image/jpeg")
+	_, err = s.MarkPersonInPhoto(ctx, node.CurrentVersionID, person.PersonID, "")
+	require.NoError(t, err)
+	for _, recent := range []bool{false, true} {
+		for _, prefix := range []string{"", "ada"} {
+			rows, _, err := s.PeopleByDisplayName(ctx, prefix, "", "", 24, true, PeopleSearchOptions{PhotoSummary: true, RecentFirst: recent})
+			require.NoError(t, err)
+			require.Len(t, rows, 1)
+			require.Equal(t, person.PersonID, rows[0].PersonID)
+			require.Equal(t, int64(1), rows[0].PhotoSummary.LibraryCount)
+		}
+	}
+}
+
+func TestPeoplePhotoSummaryPairedSources(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	asset, nodes := photoTrashFixture(t, s)
+	imageFile := fileByRole(asset.Files, PhotoRoleImage)
+	_, err := s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, &imageFile.ID)
+	require.NoError(t, err)
+	person, err := s.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	for _, node := range nodes[:2] {
+		_, _, err = s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.NewString(), document.FaceBox{Width: .2, Height: .2}, person.PersonID)
+		require.NoError(t, err)
+	}
+	options := PeopleSearchOptions{PhotoSummary: true, GridRecipe: "grid"}
+	rows, _, err := s.PeopleByDisplayName(ctx, "Ada", "", "", 100, true, options)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), rows[0].PhotoSummary.LibraryCount)
+	// Once the RAW changes, its old face no longer supplies the crop.
+	_, _, err = s.ReplaceContent(ctx, nodes[0].ID, nodes[0].Revision, fakeHash("d4"), 4, "image/x-canon-cr2")
+	require.NoError(t, err)
+	rows, _, err = s.PeopleByDisplayName(ctx, "Ada", "", "", 100, true, options)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), rows[0].PhotoSummary.LibraryCount)
+	require.Equal(t, nodes[1].CurrentVersionID, rows[0].PhotoSummary.Face.ContentVersionID)
+}
+
+func TestPeoplePhotoSummarySharedPhotos(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	ada, err := s.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	bob, err := s.CreatePerson(ctx, "Bob", "operator")
+	require.NoError(t, err)
+	// Ada's faces are on the left and Bob's on the right.
+	left := map[string]float64{ada.PersonID: .1, bob.PersonID: .5}
+	for i, people := range [][]Person{{ada, bob}, {ada, bob}, {bob}} {
+		node := browsePhotoNode(t, s, fmt.Sprintf("shared-%d.jpg", i), fakeHash(fmt.Sprintf("%02x", i+60)), "image/jpeg")
+		for _, person := range people {
+			_, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.NewString(), document.FaceBox{X: left[person.PersonID], Y: .1, Width: .3, Height: .3}, person.PersonID)
+			require.NoError(t, err)
+		}
+	}
+	options := PeopleSearchOptions{PhotoSummary: true, GridRecipe: "grid"}
+	page, _, err := s.PeopleByDisplayName(ctx, "", "", "", 24, true, options)
+	require.NoError(t, err)
+	require.Len(t, page, 2)
+	// Photos shared by people on one page count for each of them.
+	require.Equal(t, int64(2), page[0].PhotoSummary.LibraryCount)
+	require.Equal(t, int64(3), page[1].PhotoSummary.LibraryCount)
+	// The portrait is the person's own face, not another face in the same photo.
+	require.InDelta(t, .1, page[0].PhotoSummary.Face.Box.X, 1e-9)
+	require.InDelta(t, .5, page[1].PhotoSummary.Face.Box.X, 1e-9)
+}
+
+func TestMarkPersonInPhotoNamedRetryAfterMerge(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	node := browsePhotoNode(t, s, "portrait.jpg", fakeHash("a1"), "image/jpeg")
+	id := uuid.NewString()
+	_, err := s.MarkPersonInPhoto(ctx, node.CurrentVersionID, id, "Ada duplicate")
+	require.NoError(t, err)
+	survivor, err := s.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	_, err = s.MergePersons(ctx, survivor.PersonID, id, uuid.NewString(), 1, 1)
+	require.NoError(t, err)
+	require.NoError(t, s.ValidateMetadata(ctx))
+	_, err = s.MarkPersonInPhoto(ctx, node.CurrentVersionID, id, "Ada duplicate")
+	require.ErrorIs(t, err, ErrNotFound)
+	require.NoError(t, s.ValidateMetadata(ctx))
+	var count int
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM persons WHERE person_id=?`, id).Scan(&count))
+	require.Zero(t, count)
 }

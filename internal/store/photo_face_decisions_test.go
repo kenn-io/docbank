@@ -406,14 +406,21 @@ func TestPhotoFaceMergeReviewsContradictions(t *testing.T) {
 			require.ErrorAs(t, err, &conflict)
 			require.Equal(t, test.hiddenConflict, conflict.HiddenConflict)
 			if hiddenFaceID != "" {
-				require.NotContains(t, conflict.FaceIDs, hiddenFaceID)
+				for _, face := range conflict.Faces {
+					require.NotEqual(t, hiddenFaceID, face.FaceID)
+				}
 				require.NotContains(t, err.Error(), hiddenFaceID)
 			}
-			require.Len(t, conflict.FaceIDs, test.visible)
+			require.Len(t, conflict.Faces, test.visible)
 			require.Equal(t, test.more, conflict.More)
+			if test.more {
+				require.Contains(t, err.Error(), "more faces also conflict")
+			}
 			require.Equal(t, test.inaccessible, conflict.InaccessibleConflict)
 			if test.visible == 1 {
-				require.Equal(t, []string{f.FaceID}, conflict.FaceIDs)
+				// A retained conflict names the replaced version, not the current one.
+				require.Equal(t, []PersonFaceMergeConflict{{FaceID: f.FaceID, ContentVersionID: n.CurrentVersionID}}, conflict.Faces)
+				require.Contains(t, err.Error(), "face "+f.FaceID+" on version "+n.CurrentVersionID)
 			}
 			if test.inaccessible {
 				require.NotContains(t, err.Error(), f.FaceID)
@@ -427,7 +434,7 @@ func TestPhotoFaceMergeReviewsContradictions(t *testing.T) {
 				require.NoError(t, err)
 				_, err = s.MergePersons(ctx, a.PersonID, b.PersonID, uuid.NewString(), 1, 1)
 				require.ErrorAs(t, err, &conflict)
-				require.Equal(t, []string{f.FaceID}, conflict.FaceIDs)
+				require.Equal(t, []PersonFaceMergeConflict{{FaceID: f.FaceID, ContentVersionID: n.CurrentVersionID}}, conflict.Faces)
 			}
 
 			if test.reactivated {
@@ -1088,6 +1095,10 @@ func TestPhotoFaceDecisionPhotoMarkClearAndUndo(t *testing.T) {
 			faces, assertions, _, err := restored.PhotoFacePersonNames(ctx, n.CurrentVersionID)
 			require.NoError(t, err)
 			require.True(t, assertions[0].PhotoMark)
+			if !named {
+				require.Len(t, faces, 1)
+				require.Empty(t, faces[0].AssertionID)
+			}
 			if named {
 				require.Equal(t, assertions[0].AssertionID, faces[0].AssertionID)
 				decideFaceForTest(t, restored, n, f.FaceID, "", "retract")
@@ -1181,7 +1192,7 @@ func TestPhotoFaceUndoRetiresUnusedCreatedPerson(t *testing.T) {
 			require.NoError(t, s.db.QueryRow(`SELECT state FROM persons WHERE person_id=?`, personID).Scan(&state))
 			if mode == "untouched" {
 				require.Equal(t, "retired", state)
-				people, err := s.PeopleByDisplayName(ctx, "Zed", "", "", 10, false)
+				people, _, err := s.PeopleByDisplayName(ctx, "Zed", "", "", 10, false, PeopleSearchOptions{})
 				require.NoError(t, err)
 				require.Empty(t, people)
 				_, err = s.UndoPhotoFaceDecision(ctx, undo.ReceiptID)

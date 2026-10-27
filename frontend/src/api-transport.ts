@@ -72,7 +72,7 @@ export const sessionResponse = <_T>(
 async function send(
   url: string,
   { session = "", ...init }: SessionOptions,
-  allowNotModified: boolean,
+  allowNotModified = false,
 ): Promise<Response> {
   const headers = new Headers(init.headers);
   if (init.body instanceof Blob && init.body.type.startsWith("multipart/form-data;")) {

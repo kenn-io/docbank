@@ -1,7 +1,7 @@
 ---
-last_edited: 2026-10-05
+last_edited: 2026-10-22
 title: People
-description: List and edit canonical people through the daemon API and CLI, and read them through MCP.
+description: Browse people and their photos, rename or merge people, and manage canonical records through the API and CLI.
 ---
 
 # People
@@ -11,6 +11,32 @@ daemon API and CLI can list, search, create, rename, retire, merge, and split
 these records. MCP can find and read them. Every edit to an existing person
 uses the revision returned by the preceding read.
 
+## People in Photos
+
+Open **Photos → People** to browse the people in your visible photos, 24 cards at a time. Each card shows an assigned face and the number of Library photos depicting that person. Several faces or paired RAW and JPEG files count as one photo. A card shows a person icon when no readable assigned face is available. People with no visible photo, such as email contacts, get no card.
+
+Select a card to open that person's Library photos, or their Hidden photos when they have none in Library. While Hidden is unlocked, a separate Hidden count opens that person's Hidden photos. Hidden-only people appear while Hidden is unlocked and clear when it locks or expires. A readable key face supplies the portrait, including Hidden while unlocked; otherwise Docbank prefers assigned Library faces over Hidden faces, then a ready preview, then the largest face box.
+
+An open People page updates when another tab or the CLI changes people or photos. It keeps your search, the cards you loaded, and your selection. See [Live refresh](photos.md#live-refresh).
+
+Use **Rename** to change the name. The list reloads its first page and applies the current search again. A renamed person disappears from the results if their new name no longer matches.
+
+To merge two people, check **Select** on both cards, then choose **Merge**. Your selection stays while you search, so you can select people from different searches. Choose **Keep this one** on the person to keep, then confirm. The survivor keeps their name and receives the other person's records. The list reloads its first page with current counts. When both people have the same name and the same detail, the dialog also shows each person ID. Person filters chosen from a card or the face list follow renames and merges. A `person:` name typed in search keeps the old name, so update the search.
+
+If someone else changed or removed either person first, the list reloads its first page; review the current cards and select again. A rejected name keeps your selection, and a failed merge keeps both people selected. An uncertain merge result also reloads the list so you can see whether it completed.
+
+A merge can stop when a face assigned to one person was rejected for the other. The error lists each visible conflicting face with its content version. Use the CLI or API key that made the rejection to review it:
+
+1. Read the face with `docbank photos faces list <content-version-id>`.
+2. Withdraw the rejection with `docbank photos faces withdraw-rejection <content-version-id> --face <face-id> --person <rejected-person-id> --revision <face-revision>`.
+3. Select both people again and retry the merge.
+
+A browser merge is refused while Hidden is locked if either person has Hidden photos. Unlock Hidden and retry the merge. Browser sessions receive merge receipts with zero moved-evidence counts and an empty absorbed name.
+
+Locked Hidden, excluded, or trashed conflicts return notices without face IDs. Unlock, reinclude, or restore the photo before reviewing its rejection. Locking Hidden clears the selection and dialog.
+
+Name pickers in the inspector list people by their newest active, visible photo assertion, then by name. Namesakes stay together and share their group's newest assertion time. Naming a person on a new photo moves the group up. Adding another face or a whole-photo mark for someone already named on that photo keeps the assertion's time. A merge preserves retained and moved assertion times.
+
 ## List and search
 
 `GET /api/v1/people?query=ada&limit=100` lists active people in folded
@@ -18,8 +44,7 @@ display-name order. Search matches the beginning of any word, so `Smith` finds `
 
 `docbank people list ada`
 
-MCP clients use `find_people`. Cursors are bound to the query and the
-requested person page.
+MCP clients use `find_people`. Cursors bind the query, projection, and ordering. Invalid or mismatched cursors return `cursor_expired`; restart from the first page.
 
 ## Browser names and visibility
 
