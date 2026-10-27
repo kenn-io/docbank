@@ -420,7 +420,9 @@ The receipt supports audit, not exact reproduction. Search may send the question
 to a query embedding provider under the daemon's existing consent policy.
 Reranking is optional and can disclose excerpts under that policy.
 When present, `relevance` preserves the applied reranker's score on its own
-scale; it is not necessarily normalized to 0–1.
+scale; it is not necessarily normalized to 0–1. The applied reranking receipt
+names the profile in `receipt.reranking.reranker_id`; skipped, degraded, and
+unrequested reranking omit that identity.
 
 Omit `profile` for automatic profile and binding retries, including when a vector
 index is stale or a query provider fails. If every binding fails, lexical search

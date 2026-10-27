@@ -1,9 +1,12 @@
 package retrieval
 
 import (
+	"context"
+	"errors"
 	"math"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -65,4 +68,44 @@ func TestValidateRerankingScoresRequiresOneFiniteScoreForEveryAllowedCandidate(t
 			assert.NotContains(t, err.Error(), "version-two")
 		})
 	}
+}
+
+func FuzzRerankingReceiptProfileIdentity(f *testing.F) {
+	f.Add("synthetic-reranker", uint8(0))
+	f.Add("模型/ reranker:v2\n", uint8(1))
+	f.Add(strings.Repeat("r", 4097), uint8(2))
+	f.Fuzz(func(t *testing.T, profileID string, choice uint8) {
+		if profileID == "" {
+			t.Skip() // Enabled reranking requires a nonempty profile ID.
+		}
+		searcher := &Searcher{reranking: RerankingConfig{Enabled: true,
+			Profile:  RerankingProfile{ID: profileID, MaxCandidates: 1},
+			Provider: &stageReranker{}, Authorizer: &stageAuthorizer{},
+			Deadline: time.Second, FailurePolicy: ProviderFailureDegrade}}
+		report := Report{Results: []Result{{Document: DocumentIdentity{NodeID: 1}, Excerpt: "evidence"}}}
+		wantID := ""
+		switch choice % 4 {
+		case 0:
+			wantID = profileID
+		case 1:
+			report.Results = nil
+		case 2:
+			searcher.reranking.Authorizer = &stageAuthorizer{err: errors.New("denied")}
+		case 3:
+			searcher.reranking.Enabled = false
+		}
+		_, receipt, _, err := searcher.rerank(context.Background(), Query{Text: "question"}, report)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if receipt == nil {
+			if choice%4 != 3 {
+				t.Fatal("missing reranking receipt")
+			}
+			return
+		}
+		if receipt.ProfileID != wantID {
+			t.Fatalf("receipt identity = %q, want %q (outcome %s)", receipt.ProfileID, wantID, receipt.Outcome)
+		}
+	})
 }

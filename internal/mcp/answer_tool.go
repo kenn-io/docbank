@@ -52,27 +52,33 @@ type answerProfile struct {
 	Name        string `json:"name"`
 	Fingerprint string `json:"fingerprint"`
 }
+type answerReranking struct {
+	RerankerID     string `json:"reranker_id,omitempty"`
+	Requested      bool   `json:"requested"`
+	Outcome        string `json:"outcome"`
+	CandidateCount int    `json:"candidate_count"`
+}
 type answerCitation struct {
 	NodeID           int64  `json:"node_id"`
 	ContentVersionID string `json:"content_version_id"`
 }
 type answerReceipt struct {
-	QuestionSHA256      string                              `json:"question_sha256"`
-	ExecutedQuerySHA256 string                              `json:"executed_query_sha256,omitempty"`
-	TermsSHA256         string                              `json:"terms_sha256,omitempty"`
-	SearchExecuted      bool                                `json:"search_executed"`
-	ObservedScopeCount  int                                 `json:"observed_scope_count"`
-	VaultID             string                              `json:"vault_id,omitempty"`
-	FenceFingerprint    string                              `json:"fence_fingerprint,omitempty"`
-	Profile             *answerProfile                      `json:"profile,omitempty"`
-	BindingID           string                              `json:"binding_id,omitempty"`
-	VectorSpaceIDs      []string                            `json:"vector_space_ids"`
-	RequestedMode       string                              `json:"requested_mode,omitempty"`
-	ActualMode          string                              `json:"actual_mode,omitempty"`
-	Degradations        []string                            `json:"degradations"`
-	Coverage            *api.DocumentSearchCoverage         `json:"coverage,omitempty"`
-	Reranking           *api.DocumentSearchRerankingReceipt `json:"reranking,omitempty"`
-	CitedVersions       []answerCitation                    `json:"cited_versions"`
+	QuestionSHA256      string                      `json:"question_sha256"`
+	ExecutedQuerySHA256 string                      `json:"executed_query_sha256,omitempty"`
+	TermsSHA256         string                      `json:"terms_sha256,omitempty"`
+	SearchExecuted      bool                        `json:"search_executed"`
+	ObservedScopeCount  int                         `json:"observed_scope_count"`
+	VaultID             string                      `json:"vault_id,omitempty"`
+	FenceFingerprint    string                      `json:"fence_fingerprint,omitempty"`
+	Profile             *answerProfile              `json:"profile,omitempty"`
+	BindingID           string                      `json:"binding_id,omitempty"`
+	VectorSpaceIDs      []string                    `json:"vector_space_ids"`
+	RequestedMode       string                      `json:"requested_mode,omitempty"`
+	ActualMode          string                      `json:"actual_mode,omitempty"`
+	Degradations        []string                    `json:"degradations"`
+	Coverage            *api.DocumentSearchCoverage `json:"coverage,omitempty"`
+	Reranking           *answerReranking            `json:"reranking,omitempty"`
+	CitedVersions       []answerCitation            `json:"cited_versions"`
 }
 type answerOutput struct {
 	privateCache
@@ -289,8 +295,19 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 	}
 	coverage := result.report.Coverage
 	out.Receipt.Coverage = &coverage
-	out.Receipt.Reranking = result.report.Reranking
-	out.CoverageComplete = (result.report.ActualMode == "semantic" || result.report.ActualMode == "hybrid") && coverage.State == "complete"
+	if result.report.Reranking != nil {
+		out.Receipt.Reranking = &answerReranking{Requested: input.Rerank, Outcome: result.report.Reranking.Outcome, CandidateCount: result.report.Reranking.CandidateCount}
+		if result.report.Reranking.Outcome == "applied" {
+			out.Receipt.Reranking.RerankerID = result.report.Reranking.ProfileID
+		}
+	} else {
+		outcome := "not_requested"
+		if input.Rerank {
+			outcome = "not_reported"
+		}
+		out.Receipt.Reranking = &answerReranking{Requested: input.Rerank, Outcome: outcome}
+	}
+	out.CoverageComplete = (result.report.ActualMode == "semantic" || result.report.ActualMode == "hybrid") && coverage.State == "complete" && coverage.CompleteDocuments == coverage.ScopedDocuments
 	if result.binding == "" || (result.report.ActualMode != "semantic" && result.report.ActualMode != "hybrid") {
 		if result.executed {
 			out.CoverageReasons = append(out.CoverageReasons, "semantic_unavailable")

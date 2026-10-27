@@ -719,6 +719,7 @@ func fromDocumentSearchReport(report processing.SearchReport, explain bool) Docu
 		switch receipt.Outcome {
 		case retrieval.ProviderOutcomeApplied:
 			converted.Outcome = "applied"
+			converted.ProfileID = receipt.ProfileID
 		case retrieval.ProviderOutcomeSkipped:
 			converted.Outcome = "skipped"
 		default:
