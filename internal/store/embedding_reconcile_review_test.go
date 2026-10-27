@@ -5,12 +5,14 @@ import (
 	"database/sql"
 	"encoding/json/v2"
 	"fmt"
+	"net/http"
 	"strconv"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/openaicompat"
 )
 
 func TestEmbeddingReconciliationRejectsUnrelatedProfile(t *testing.T) {
@@ -63,33 +65,51 @@ func TestEmbeddingReconciliationRejectsUnrelatedProfile(t *testing.T) {
 
 func TestEmbeddingJobsDistinguishSelectedVectorSpace(t *testing.T) {
 	t.Parallel()
-	s, version, profile, _ := newEmbeddingCatalogFixture(t)
-	request := embeddingJobTestRequest(t, s, version, profile, "configuration-round-trip")
-	record := embeddingSetFixture(s, version, profile.Fingerprint, document.EmbeddingInputOriginalFile, request.BindingID, "")
-	record.InputGeneration = request.InputGeneration
-	legacy := publishReconcileFixture(t, s, request, record)
-	request.VectorSpaceID = testSHA256([]byte("selected-v2-after-policy-round-trip"))
-	result, err := s.ReconcileEmbeddingJobs(t.Context(), EmbeddingReconcileRequest{At: time.Now(), Limit: 100, Mutate: embeddingTestMutation,
-		Profiles: []ProcessingProfileRecord{profile}, Descriptors: []document.EmbeddingDescriptor{request.Descriptor},
-		VectorSpaces: map[string]string{profile.Fingerprint + "/" + request.BindingID: request.VectorSpaceID},
-		PrepareGeneration: func(_ context.Context, _ string, _ ProcessingProfileRecord, binding document.EmbeddingBindingV1) (EmbeddingInputGenerationRecord, error) {
-			if binding.Name != request.BindingID {
-				return EmbeddingInputGenerationRecord{}, ErrNotFound
+	for _, testCase := range []struct {
+		name, state string
+		changed     bool
+		enqueued    int
+	}{
+		{name: "same space", state: "completed"},
+		{name: "changed space", state: "queued", changed: true, enqueued: 1},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			s, version, profile, _ := newEmbeddingCatalogFixture(t)
+			request := embeddingJobTestRequest(t, s, version, profile, "configuration-round-trip")
+			record := embeddingSetFixture(s, version, profile.Fingerprint, document.EmbeddingInputOriginalFile, request.BindingID, "")
+			record.InputGeneration = request.InputGeneration
+			legacy := publishReconcileFixture(t, s, request, record)
+			request.VectorSpaceID = record.VectorSpace.ID
+			if testCase.changed {
+				request.VectorSpaceID = testSHA256([]byte("selected-v2-after-policy-round-trip"))
 			}
-			return request.InputGeneration, nil
-		},
-	})
-	require.NoError(t, err)
-	require.Equal(t, 1, result.Enqueued)
-	selected, err := s.EnqueueEmbeddingJob(t.Context(), request)
-	require.NoError(t, err)
-	require.Equal(t, legacy.ID, selected.ID)
-	var selectedSpace string
-	require.NoError(t, s.db.QueryRow(`SELECT vector_space_id FROM embedding_jobs WHERE job_id=?`, selected.ID).Scan(&selectedSpace))
-	require.Equal(t, request.VectorSpaceID, selectedSpace)
-	status, err := s.EmbeddingJobByID(t.Context(), selected.ID)
-	require.NoError(t, err)
-	require.Equal(t, "queued", status.State)
+			prepared := 0
+			result, err := s.ReconcileEmbeddingJobs(t.Context(), EmbeddingReconcileRequest{At: time.Now(), Limit: 100, Mutate: embeddingTestMutation,
+				Profiles: []ProcessingProfileRecord{profile}, Descriptors: []document.EmbeddingDescriptor{request.Descriptor},
+				VectorSpaces: map[string]string{profile.Fingerprint + "/" + request.BindingID: request.VectorSpaceID},
+				PrepareGeneration: func(_ context.Context, _ string, _ ProcessingProfileRecord, binding document.EmbeddingBindingV1) (EmbeddingInputGenerationRecord, error) {
+					if binding.Name != request.BindingID {
+						return EmbeddingInputGenerationRecord{}, ErrNotFound
+					}
+					prepared++
+					return request.InputGeneration, nil
+				},
+			})
+			require.NoError(t, err)
+			require.Equal(t, testCase.enqueued, prepared)
+			require.Equal(t, testCase.enqueued, result.Enqueued)
+			selected, err := s.EnqueueEmbeddingJob(t.Context(), request)
+			require.NoError(t, err)
+			require.Equal(t, legacy.ID, selected.ID)
+			var selectedSpace string
+			require.NoError(t, s.db.QueryRow(`SELECT vector_space_id FROM embedding_jobs WHERE job_id=?`, selected.ID).Scan(&selectedSpace))
+			require.Equal(t, request.VectorSpaceID, selectedSpace)
+			status, err := s.EmbeddingJobByID(t.Context(), selected.ID)
+			require.NoError(t, err)
+			require.Equal(t, testCase.state, status.State)
+		})
+	}
 }
 
 func TestEmbeddingReconciliationUsesCurrentGenerationBeforeJobState(t *testing.T) {
@@ -149,11 +169,20 @@ func TestEmbeddingReconciliationUsesCurrentGenerationBeforeJobState(t *testing.T
 	}
 }
 
-func TestEmbeddingReconciliationAllowsRuntimePolicyReplacement(t *testing.T) {
+func TestEmbeddingReconciliationRuntimePolicyReplacementAuthority(t *testing.T) {
 	t.Parallel()
-	for _, bindingID := range []string{"optional", "chunk"} {
-		t.Run(bindingID, func(t *testing.T) {
+	for _, testCase := range []struct {
+		name, bindingID               string
+		sourceConfigured, purgeSource bool
+	}{
+		{name: "optional", bindingID: "optional"},
+		{name: "chunk", bindingID: "chunk"},
+		{name: "concurrent endpoint", bindingID: "optional", sourceConfigured: true},
+		{name: "purged source", bindingID: "optional", purgeSource: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
+			bindingID := testCase.bindingID
 			s, version, profile, attachment := newEmbeddingCatalogFixture(t)
 			makeRequest := func(profile ProcessingProfileRecord, descriptor document.EmbeddingDescriptor, attachment string) EmbeddingJobRequest {
 				binding := workerProfileEmbeddingBinding(t, profile, bindingID)
@@ -175,6 +204,14 @@ func TestEmbeddingReconciliationAllowsRuntimePolicyReplacement(t *testing.T) {
 			source := makeRequest(profile, initialDescriptor, attachment)
 			_, err := s.EnqueueEmbeddingJob(t.Context(), source)
 			require.NoError(t, err)
+			if testCase.purgeSource {
+				require.NoError(t, s.PutCurrentRenditionRoot(t.Context(), CurrentRenditionRoot{
+					ID: "retained-policy-input", Kind: RenditionRootRetention, TargetKind: RenditionRootEmbeddingGeneration,
+					TargetID: source.InputGeneration.ID, FencingToken: 1, RecordedAt: embeddingCatalogTime,
+				}))
+				_, err = s.PurgeDerivatives(t.Context(), PurgeRequest{ContentVersionIDs: []string{version}})
+				require.NoError(t, err)
+			}
 			descriptor := source.Descriptor
 			descriptor.PolicyFingerprint = testSHA256([]byte("new-endpoint-timeout-egress"))
 			descriptor, err = document.NewEmbeddingDescriptor(descriptor)
@@ -208,17 +245,31 @@ func TestEmbeddingReconciliationAllowsRuntimePolicyReplacement(t *testing.T) {
 				attachment = replacement.ID
 			}
 			current := makeRequest(target, descriptor, attachment)
-			prepare := func(_ context.Context, _ string, _ ProcessingProfileRecord, b document.EmbeddingBindingV1) (EmbeddingInputGenerationRecord, error) {
+			prepared := 0
+			prepare := func(_ context.Context, _ string, selected ProcessingProfileRecord, b document.EmbeddingBindingV1) (EmbeddingInputGenerationRecord, error) {
 				if b.Name != current.BindingID {
 					return EmbeddingInputGenerationRecord{}, ErrNotFound
 				}
+				if selected.Fingerprint == profile.Fingerprint {
+					return source.InputGeneration, nil
+				}
+				prepared++
 				return current.InputGeneration, nil
 			}
 			request := EmbeddingReconcileRequest{At: time.Now(), Limit: 100, Mutate: embeddingTestMutation, Profiles: []ProcessingProfileRecord{target}, Descriptors: []document.EmbeddingDescriptor{descriptor}, PrepareGeneration: prepare, HydrateGeneration: func(_ context.Context, g EmbeddingInputGenerationRecord) (EmbeddingInputGenerationRecord, error) {
 				return HydrateEmbeddingInputGeneration(g, current.InputGeneration.GenerationJSON, current.InputGeneration.EvidenceJSON)
 			}}
+			if testCase.sourceConfigured {
+				request.Profiles = append(request.Profiles, profile)
+				request.Descriptors = append(request.Descriptors, initialDescriptor)
+			}
 			result, err := s.ReconcileEmbeddingJobs(t.Context(), request)
 			require.NoError(t, err)
+			if testCase.sourceConfigured || testCase.purgeSource {
+				require.Zero(t, prepared, "recovery must preserve concurrent selection and source purge authority")
+				require.Zero(t, result.Enqueued)
+				return
+			}
 			require.Equal(t, 1, result.Enqueued)
 			jobs, err := s.EmbeddingJobsForVersionProfile(t.Context(), version, target.Fingerprint)
 			require.NoError(t, err)
@@ -248,27 +299,41 @@ func TestEmbeddingLegacyProfilesReuseOnlyMatchingProducer(t *testing.T) {
 	t.Parallel()
 	s, version, profile, _ := newEmbeddingCatalogFixture(t)
 	descriptor := embeddingCatalogDescriptor()
-	descriptor.ID = "openai-compatible.embeddings-v1"
+	descriptor.ID = openaicompat.ProviderID
 	descriptor.TrustBoundary = document.EmbeddingTrustOperatorNetwork
-	descriptor, err := document.NewEmbeddingDescriptor(descriptor)
+	descriptor.InputKinds = []document.EmbeddingInputKind{document.EmbeddingInputRenditionChunk}
+	descriptor.DocumentFormatter, descriptor.QueryFormatter = openaicompat.DocumentFormatterV1, openaicompat.QueryFormatterV1
+	adapter := openaicompat.Profile{Origin: "http://127.0.0.1:11434", Descriptor: descriptor, ModelInput: descriptor.ModelInput, DeploymentEpoch: descriptor.ModelRevision}
+	policy, err := openaicompat.PolicyFingerprint(adapter)
+	require.NoError(t, err)
+	descriptor.PolicyFingerprint = policy
+	descriptor, err = document.NewEmbeddingDescriptor(descriptor)
+	require.NoError(t, err)
+	adapter.Descriptor = descriptor
+	_, err = openaicompat.New(adapter, nil, &http.Client{})
 	require.NoError(t, err)
 	var portable document.ProcessingProfileV1
 	require.NoError(t, json.Unmarshal(profile.CanonicalProfile, &portable))
+	portable.Embeddings = []document.EmbeddingBindingV1{workerProfileEmbeddingBinding(t, profile, "chunk")}
 	for i := range portable.Embeddings {
 		portable.Embeddings[i].Descriptor = document.ProviderDescriptorV1{ID: descriptor.ID, Fingerprint: descriptor.Fingerprint}
 		portable.Embeddings[i].TrustBoundary = string(descriptor.TrustBoundary)
+		portable.Embeddings[i].DocumentFormatter, portable.Embeddings[i].QueryFormatter = descriptor.DocumentFormatter, descriptor.QueryFormatter
 	}
 	canonical, fingerprints, err := document.CanonicalProfile(portable)
 	require.NoError(t, err)
 	profile.CanonicalProfile, profile.Fingerprint = canonical, fingerprints.Profile
 	profile.RetentionDisclosureFingerprint = fingerprints.RetentionDisclosure
 	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error { return ensureProcessingProfileTx(t.Context(), tx, profile) }))
-	retained := embeddingSetFixture(s, version, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
+	build := catalogRenditionBuild(s, profile)
+	attachment := RenditionAttachmentRecord{ID: testSHA256([]byte("openai-compatible-attachment")), VaultID: s.VaultID(), ContentVersionID: version, BuildID: build.ID, Profile: profile, AttachedAt: embeddingCatalogTime}
+	require.NoError(t, publishRenditionForTest(t, s, attachment, embeddingCatalogTime, testSHA256([]byte("openai-compatible-lexical"))))
+	retained := embeddingSetFixture(s, version, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachment.ID)
 	retained.VectorSpace.Descriptor = descriptor
 	retained, err = normalizeEmbeddingSetRecord(retained)
 	require.NoError(t, err)
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), retained))
-	work := EmbeddingJobWork{ContentVersionID: version, Binding: workerOptionalEmbeddingBinding(t, profile), Descriptor: retained.VectorSpace.Descriptor, VectorSpaceID: testSHA256([]byte("new-space")), EmbeddingInputFingerprint: retained.EmbeddingInputFingerprint, InputGeneration: retained.InputGeneration}
+	work := EmbeddingJobWork{ContentVersionID: version, Binding: workerProfileEmbeddingBinding(t, profile, "chunk"), Descriptor: retained.VectorSpace.Descriptor, VectorSpaceID: testSHA256([]byte("new-space")), EmbeddingInputFingerprint: retained.EmbeddingInputFingerprint, InputGeneration: retained.InputGeneration}
 	found, err := s.FindReusableEmbeddingSet(t.Context(), work)
 	require.NoError(t, err)
 	require.Equal(t, retained.ID, found.ID)

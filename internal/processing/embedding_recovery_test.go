@@ -187,27 +187,36 @@ func (f embeddingRecoveryFixture) rebuild(t *testing.T, space string) {
 
 func TestEmbeddingRestartCarriesCurrentProfile(t *testing.T) {
 	t.Parallel()
-	f := newEmbeddingRecoveryFixture(t)
-	provider := newRecoveryProvider(t, f.request.Descriptor)
-	descriptor := provider.Descriptor()
-	service := f.service(t, descriptor, provider)
-	target := service.profiles["current"]
-	config := f.workerConfig
-	config.Runtime = service.embeddings
-	config.DescriptorFingerprints = []string{descriptor.Fingerprint}
-	config.Reconciliation = service.EmbeddingReconciliation()
-	worker, err := NewEmbeddingWorker(config)
-	require.NoError(t, err)
-	_, err = worker.ScanOnce(t.Context())
-	require.NoError(t, err)
-	f.grant(t, service, true)
-	worker.reconcileAt = time.Time{}
-	processed, err := worker.ScanOnce(t.Context())
-	require.NoError(t, err)
-	require.Equal(t, 2, processed)
-	require.Zero(t, provider.documents.Load())
-	canonical := target.vectorSpaces[f.request.BindingID]
-	require.Equal(t, canonical, f.service(t, f.request.Descriptor, f.provider).profiles["current"].vectorSpaces[f.request.BindingID])
+	for _, testCase := range []struct {
+		name      string
+		corrupt   bool
+		documents int64
+	}{
+		{name: "intact"},
+		{name: "corrupt", corrupt: true, documents: 2},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			f := newEmbeddingRecoveryFixture(t)
+			provider := newRecoveryProvider(t, f.request.Descriptor)
+			descriptor := provider.Descriptor()
+			service := f.service(t, descriptor, provider)
+			f.grant(t, service, false)
+			config := f.workerConfig
+			config.Runtime = service.embeddings
+			config.DescriptorFingerprints = []string{descriptor.Fingerprint}
+			config.Reconciliation = service.EmbeddingReconciliation()
+			if testCase.corrupt {
+				config.GenerationBlobs = corruptRetainedVectors{embeddingRuntimeBlobs: f.blobs, sets: f.sets}
+			}
+			worker, err := NewEmbeddingWorker(config)
+			require.NoError(t, err)
+			processed, err := worker.ScanOnce(t.Context())
+			require.NoError(t, err)
+			require.Equal(t, 2, processed)
+			require.Equal(t, testCase.documents, provider.documents.Load())
+		})
+	}
 }
 
 func TestEmbeddingUpgradeRetainsLocalSimilarityAfterConsentRevocation(t *testing.T) {
@@ -231,22 +240,6 @@ func TestEmbeddingUpgradeRetainsLocalSimilarityAfterConsentRevocation(t *testing
 	require.Equal(t, 2, coverage.Embeddings[0].Complete)
 	require.NoError(t, f.catalog.ExportMetadata(t.Context(), &after))
 	require.Equal(t, before.String(), after.String())
-}
-
-func TestEmbeddingRecoveryEmbedsCorruptPayload(t *testing.T) {
-	t.Parallel()
-	f := newEmbeddingRecoveryFixture(t)
-	f.worker.generationBlobs = corruptRetainedVectors{embeddingRuntimeBlobs: f.blobs, sets: f.sets}
-	provider := newRecoveryProvider(t, f.request.Descriptor)
-	service := f.service(t, provider.Descriptor(), provider)
-	f.grant(t, service, false)
-	f.worker.runtime = service.embeddings
-	f.worker.descriptorFingerprints = []string{provider.Descriptor().Fingerprint}
-	f.worker.reconciliation = service.EmbeddingReconciliation()
-	processed, err := f.worker.ScanOnce(t.Context())
-	require.NoError(t, err)
-	require.Equal(t, 2, processed)
-	require.Equal(t, int64(2), provider.documents.Load())
 }
 
 func TestEmbeddingSynchronousStartRebuildsCurrentVectorSpace(t *testing.T) {

@@ -45,6 +45,12 @@ type embeddingReconcileCandidate struct {
 	space        EmbeddingVectorSpaceRecord
 }
 
+// embeddingReconcilePreparation keeps one preparation attempt's own result.
+type embeddingReconcilePreparation struct {
+	generation EmbeddingInputGenerationRecord
+	err        error
+}
+
 // ReconcileEmbeddingJobs discovers processed current versions and prepares
 // configured-profile inputs under existing consent. Providers run through jobs.
 func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingReconcileRequest) (EmbeddingReconcileResult, error) {
@@ -101,22 +107,21 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 			if err != nil {
 				return err
 			}
-
+			sourceProfile, err := loadProcessingProfile(ctx, tx, generation.ProcessingProfileFingerprint)
+			if err != nil {
+				return err
+			}
 			localTargets := targets
 			if len(request.Profiles) == 0 {
-				record, err := loadProcessingProfile(ctx, tx, generation.ProcessingProfileFingerprint)
-				if err != nil {
-					return err
-				}
 				var portable document.ProcessingProfileV1
-				if err := json.Unmarshal(record.CanonicalProfile, &portable); err != nil {
+				if err := json.Unmarshal(sourceProfile.CanonicalProfile, &portable); err != nil {
 					return err
 				}
 				_, fingerprints, err := document.CanonicalProfile(portable)
 				if err != nil {
 					return err
 				}
-				localTargets = []targetProfile{{record, portable, fingerprints}}
+				localTargets = []targetProfile{{sourceProfile, portable, fingerprints}}
 				for _, binding := range portable.Embeddings {
 					if !slices.Contains(request.DescriptorFingerprints, binding.Descriptor.Fingerprint) {
 						continue
@@ -131,12 +136,9 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 					executable[space.DescriptorFingerprint] = space.Descriptor
 				}
 			}
-			sourceProfile, err := loadProcessingProfile(ctx, tx, generation.ProcessingProfileFingerprint)
-			if err != nil {
-				return err
-			}
 			for _, target := range localTargets {
-				if !embeddingReplacementProfile(sourceProfile, target.record) {
+				if !embeddingReplacementProfile(sourceProfile, target.record) ||
+					(sourceProfile.Fingerprint != target.record.Fingerprint && slices.ContainsFunc(targets, func(p targetProfile) bool { return p.record.Fingerprint == sourceProfile.Fingerprint })) {
 					continue
 				}
 				if request.PrepareGeneration == nil {
@@ -162,12 +164,9 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 						spaceID = fingerprints.VectorSpace[binding.Name]
 					}
 					space := EmbeddingVectorSpaceRecord{ID: spaceID, Descriptor: descriptor}
-					suppression, err := loadEmbeddingPurgeSuppressionTx(ctx, tx,
-						EmbeddingHeadKey{generation.SourceVersionID, binding.Name, binding.InputKind}, profile.Fingerprint)
-					if err != nil && !errors.Is(err, ErrNotFound) {
+					if settled, err := embeddingReconcileSettledTx(ctx, tx, generation, sourceProfile.Fingerprint, profile.Fingerprint, binding, spaceID); err != nil {
 						return err
-					}
-					if err == nil && suppression.active {
+					} else if settled {
 						continue
 					}
 					consent, found, err := embeddingReconcileConsentTx(ctx, tx, s.vaultID, profile.Fingerprint,
@@ -192,17 +191,24 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 		return EmbeddingReconcileResult{}, err
 	}
 	seen := make(map[[4]string]bool)
+	// Repeated candidates reuse one preparation attempt, including its error.
+	prepared := make(map[[3]string]embeddingReconcilePreparation)
 	for _, candidate := range candidates {
 		if request.PrepareGeneration != nil {
-			generation, err := request.PrepareGeneration(ctx, candidate.request.ContentVersionID, candidate.request.Profile, candidate.binding)
-			if err != nil {
+			key := [3]string{candidate.request.ContentVersionID, candidate.request.Profile.Fingerprint, candidate.binding.Name}
+			attempt, found := prepared[key]
+			if !found {
+				attempt.generation, attempt.err = request.PrepareGeneration(ctx, key[0], candidate.request.Profile, candidate.binding)
+				prepared[key] = attempt
+			}
+			if attempt.err != nil || attempt.generation.ID == "" {
 				if ctx.Err() != nil {
 					return result, ctx.Err()
 				}
 				result.Skipped++
 				continue
 			}
-			candidate.request.InputGeneration = generation
+			candidate.request.InputGeneration = attempt.generation
 		}
 
 		if candidate.binding.InputKind == document.EmbeddingInputRenditionChunk {
@@ -282,6 +288,24 @@ func embeddingReplacementProfile(source, target ProcessingProfileRecord) bool {
 		}
 	}
 	return reflect.DeepEqual(before, after)
+}
+
+// embeddingReconcileSettledTx reports whether a purge of the source or target
+// profile suppresses the binding, or a current head already satisfies it.
+func embeddingReconcileSettledTx(ctx context.Context, tx *sql.Tx, generation EmbeddingInputGenerationRecord,
+	source, profile string, binding document.EmbeddingBindingV1, spaceID string,
+) (bool, error) {
+	for _, fingerprint := range []string{source, profile} {
+		suppression, err := loadEmbeddingPurgeSuppressionTx(ctx, tx,
+			EmbeddingHeadKey{generation.SourceVersionID, binding.Name, binding.InputKind}, fingerprint)
+		if err == nil && suppression.active {
+			return true, nil
+		}
+		if err != nil && !errors.Is(err, ErrNotFound) {
+			return false, err
+		}
+	}
+	return exactEmbeddingHeadExistsTx(ctx, tx, generation.SourceVersionID, profile, binding, "", spaceID)
 }
 
 func (s *Store) embeddingReconcileEligible(ctx context.Context, candidate embeddingReconcileCandidate) (bool, error) {
