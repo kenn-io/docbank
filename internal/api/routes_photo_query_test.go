@@ -830,7 +830,7 @@ func photoImageHTTPProfilesFixture(t *testing.T, providers map[string]document.E
 			profile.RetentionDisclosure.RetainSanitizedMarkdown = false
 			profile.RetentionDisclosure.TrustBoundary = string(descriptor.TrustBoundary)
 			profile.Embeddings = []document.EmbeddingBindingV1{{Activation: document.EmbeddingOptional, AuthorizationFingerprint: processingTestHash("embedding-authorization"), CompatibilityID: descriptor.CompatibilityID, CredentialBinding: "credential:test", Descriptor: document.ProviderDescriptorV1{ID: descriptor.ID, Fingerprint: descriptor.Fingerprint}, Dimensions: descriptor.Dimension, DisclosureFingerprint: processingTestHash("embedding-disclosure"), DocumentFormatter: descriptor.DocumentFormatter, InputKind: document.EmbeddingInputImage, MaxBatchItems: 8, MaxInputBytes: 1 << 20, MaxResponseBytes: 1 << 20, Metric: descriptor.Metric, Model: descriptor.Model, ModelInput: descriptor.ModelInput, Name: "semantic", Normalization: descriptor.Normalization, QueryFormatter: descriptor.QueryFormatter, ScalarEncoding: descriptor.ScalarEncoding, TrustBoundary: string(descriptor.TrustBoundary)}}
-			profiles[name] = processing.ProfileConfig{Profile: profile, EmbeddingProviders: map[string]document.EmbeddingProvider{"semantic": provider}}
+			profiles[name] = processing.ProfileConfig{Profile: profile, EmbeddingProviders: map[string]document.EmbeddingProvider{"semantic": provider}, EmbeddingSimilarityFloors: map[string]float64{"semantic": 0}}
 		}
 		gate := api.NewOperationGate()
 		deps.Gate = gate
@@ -933,6 +933,11 @@ func TestPhotoFallbackCursorSurvivesProviderRecovery(t *testing.T) {
 	require.Equal(t, "sunset.jpg", first.Items[0].Name, "the exact name match ranks ahead of partial name matches")
 	unavailable.Store(false)
 	request.SnapshotID, request.Cursor = first.SnapshotID, first.NextCursor
+	changed := request
+	changed.Query = api.QueryPayload(`{"mode":"lexical","text":"sunset","sort":{"field":"relevance","direction":"desc"}}`)
+	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, changed)
+	require.Equal(t, http.StatusBadRequest, response.StatusCode, body)
+	require.Contains(t, body, "invalid_cursor")
 	var next api.PhotoBrowsePage
 	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, request)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
@@ -1003,6 +1008,7 @@ func TestPhotoRankedRoutes(t *testing.T) {
 		require.Equal(t, http.StatusOK, response.StatusCode, body)
 		var first api.PhotoBrowsePage
 		require.NoError(t, json.Unmarshal([]byte(body), &first))
+		require.Equal(t, "semantic", first.ActualMode)
 		require.NotEmpty(t, first.NextCursor)
 		beforePage := calls.Load()
 		request.SnapshotID, request.Cursor = first.SnapshotID, first.NextCursor

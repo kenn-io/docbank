@@ -229,7 +229,7 @@ Meaning includes only photos that meet the image binding's configured similarity
 
 When the provider, consent, or image index is unavailable, a status line explains why metadata matches are shown. Advanced Boolean queries that cannot preserve their meaning also use metadata search. Expired provider credentials also use metadata fallback. Docbank sign-in failures remain errors.
 
-Open **Filters** beside the title to narrow the grid by Camera, Lens, Location, and Albums. Hidden also offers Year. Library shows Year while a saved search has an active capture range, so you can edit or clear it. Filters starts closed and loads counts when you open it. Its badge counts active filters you can edit in the panel, counting both ends of a range once. Counts cover the
+Open **Filters** beside the title to narrow the grid by Camera, Lens, Location, and Albums. Hidden also offers Year. Library shows Year while a saved search has an active capture range, so you can edit or clear it. Filters starts closed and loads counts when you open it for live metadata results. Meaning and Hybrid omit counts, including during metadata fallback. Its badge counts active filters you can edit in the panel, counting both ends of a range once. Counts cover the
 whole matching library, including photos beyond the loaded page. Tiles appear before the separate count request finishes. Counts have a 30-second budget. Unavailable counts show their reason. Choose Retry counts after a timeout. Member or byte limits require a narrower search or filters. Each facet
 omits its own selected filter while retaining search and the other filters.
 Camera, lens, and location describe the selected display file; Year
@@ -697,7 +697,7 @@ expire 15 minutes after issuance. In metadata mode (`lexical`), relevance return
 
 Meaning (`semantic`) and Hybrid (`hybrid`) freeze their ranked matches. Their responses include `snapshot_id`, the captured membership `member_hash`, `requested_mode`, and `actual_mode`. Send the same `snapshot_id`, query, page size, and projection with each ranked cursor; omitting `snapshot_id` returns `invalid_photo_cursor`. Ranked pages show individual photos without stacks, filter counts, or a date timeline.
 
-`coverage_incomplete: true` means some photos in the filtered scope lack current image vectors; available image matches remain ranked. `truncated: true` means retrieval bounds left matches outside the captured set of up to 1,000 photos. Whole-result actions use the captured asset IDs. If image search falls back, `actual_mode` is `lexical` and `fallback_reason` explains why. Fallback uses live metadata paging without a snapshot; action requests use the same query in `lexical` mode.
+`coverage_incomplete: true` means some photos in the filtered scope lack current image vectors; available image matches remain ranked. `truncated: true` means retrieval bounds left matches outside the captured set of up to 1,000 photos. Whole-result actions use the captured asset IDs. If image search falls back, `actual_mode` is `lexical` and `fallback_reason` explains why. Metadata fallback retains a snapshot and uses the original requested query for continuation. Its pages omit stacks, filter counts, and the date timeline. Action requests use the captured asset IDs. Hidden view uses live metadata results without a snapshot.
 
 Use `kind:photo`, `camera:"Synthetic Camera"`, `lens:"Synthetic Lens"`,
 `location:"Paris, Île-de-France, France"`, `iso:400`, `iso_min:100`, `iso_max:800`, `capture_after:2024-01-01`,

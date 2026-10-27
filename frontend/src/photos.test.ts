@@ -3472,6 +3472,41 @@ it.each(["semantic", "hybrid"] as const)(
   },
 );
 
+it.each(["semantic", "hybrid"] as const)(
+  "continues a %s metadata fallback with the captured query",
+  async (mode) => {
+    const read = vi.spyOn(api, "listPhotoAssets").mockImplementation(async (request) => ({
+      items: [photo(request.cursor ? 2 : 1)],
+      total: 2,
+      facets: [],
+      relevance_available: true,
+      requested_mode: mode,
+      actual_mode: "lexical",
+      fallback_reason: "provider_unavailable",
+      snapshot_id: "fallback-snapshot",
+      next_cursor: request.cursor ? undefined : "fallback-tail",
+    }));
+    const photos = new Photos("scoped", vi.fn(), false, {
+      ...photoQuery,
+      mode,
+      text: "sunset",
+    });
+    photos.filtersOpen = true;
+    await photos.loadMore();
+    const captured = read.mock.calls[0][0].query;
+    await photos.loadMore();
+    expect(read.mock.calls.at(-1)?.[0]).toMatchObject({
+      query: captured,
+      snapshot_id: "fallback-snapshot",
+      cursor: "fallback-tail",
+    });
+    expect(photos.items.map((row) => row.asset_id)).toEqual(["photo-1", "photo-2"]);
+    expect(photos.facets).toEqual([]);
+    expect(photos.timeline).toBeUndefined();
+    photos.dispose();
+  },
+);
+
 it("selects every visual result from the accepted snapshot", async () => {
   const photos = new Photos("scoped", vi.fn(), false, {
     ...photoQuery,

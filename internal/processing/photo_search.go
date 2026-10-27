@@ -17,9 +17,9 @@ import (
 
 // SearchPhotos selects asset ranks for the existing owner-bound snapshot path.
 func (service *Service) SearchPhotos(ctx context.Context, request store.PhotoBrowseRequest) (store.PhotoRanking, error) {
-	result := store.PhotoRanking{RequestedMode: request.Query.Mode, ActualMode: "lexical"}
+	result := store.PhotoRanking{RequestedMode: request.Query.Mode, ActualMode: query.ModeLexical}
 	fallback := func(reason string) (store.PhotoRanking, error) { result.FallbackReason = reason; return result, nil }
-	if request.Query.Mode == "lexical" {
+	if request.Query.Mode == query.ModeLexical {
 		return result, nil
 	}
 	semanticText, scope, supported := photoSemanticScope(request.Query)
@@ -49,7 +49,7 @@ func (service *Service) SearchPhotos(ctx context.Context, request store.PhotoBro
 }
 
 func (service *Service) searchPhotoBinding(ctx context.Context, request store.PhotoBrowseRequest, semanticText string, scope query.Query, profile configuredProfile, binding document.EmbeddingBindingV1, provider document.EmbeddingProvider) (store.PhotoRanking, error) {
-	result := store.PhotoRanking{RequestedMode: request.Query.Mode, ActualMode: "lexical"}
+	result := store.PhotoRanking{RequestedMode: request.Query.Mode, ActualMode: query.ModeLexical}
 	fallback := func(reason string) (store.PhotoRanking, error) { result.FallbackReason = reason; return result, nil }
 	_, fence, err := service.catalog.BeginProviderEgress(ctx, store.ProviderOperationAuthorizationRequest{Principal: service.principal, Scope: service.scope, ProfileFingerprint: profile.record.Fingerprint, DisclosureFingerprint: binding.DisclosureFingerprint, InputClasses: []string{"query_text"}, RetainedArtifactClasses: []string{}})
 	if err != nil {
@@ -137,7 +137,7 @@ func photoSemanticScope(value query.Query) (string, query.Query, bool) {
 	if !visit(expression) || len(text) == 0 {
 		return "", value, false
 	}
-	value.Mode, value.Text, value.Syntax = "lexical", strings.Join(filters, " AND "), "advanced"
+	value.Mode, value.Text, value.Syntax = query.ModeLexical, strings.Join(filters, " AND "), "advanced"
 	value.Sort = query.Sort{Field: "name", Direction: "asc"}
 	return strings.Join(text, " "), value, true
 }

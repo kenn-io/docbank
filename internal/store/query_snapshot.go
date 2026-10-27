@@ -245,7 +245,7 @@ func (s *Store) materializeNormalizedQuerySnapshot(
 			value = *resolved.Query
 		}
 		if request.PhotoRanking != nil {
-			value.Mode = queryModeLexical
+			value.Mode = query.ModeLexical
 		}
 		options.Photos = request.Photos
 		compiler := queryCompiler{photoDisplayMetadata: request.FacetsOnly || options.Photos}
@@ -395,7 +395,7 @@ func materializeSnapshotRows(
 		var suggestions bool
 		if suggestions, err = photoSuggestionsExist(ctx, q); err == nil {
 			population, err = photoSnapshotPopulation(compiled, generationID, coverage, options.MaxRows, suggestions)
-			if options.PhotoRanking != nil && (options.PhotoRanking.Members != nil || options.PhotoRanking.ActualMode != queryModeLexical) {
+			if options.PhotoRanking != nil && (options.PhotoRanking.Members != nil || options.PhotoRanking.ActualMode != query.ModeLexical) {
 				population, err = rankedPhotoSnapshotPopulation(options.PhotoRanking)
 			}
 		}
@@ -419,7 +419,7 @@ func materializeSnapshotRows(
 		if err != nil {
 			return err
 		}
-		if options.PhotoRanking.ActualMode == queryModeLexical || options.PhotoRanking.ActualMode == "hybrid" {
+		if options.PhotoRanking.ActualMode == query.ModeLexical || options.PhotoRanking.ActualMode == "hybrid" {
 			if err := markSuggestionOnlyMatches(ctx, q, compiled, generationID, coverage, compiled.photoHidden, photos, options.PhotoRanking.ActualMode == "hybrid"); err != nil {
 				return err
 			}

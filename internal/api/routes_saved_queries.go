@@ -239,15 +239,12 @@ func registerSavedQueryRunRoute(
 			if err != nil {
 				return nil, workspaceQueryError(err)
 			}
-			if saved.Revision != revision {
-				return nil, workspaceQueryError(store.ErrStaleRevision)
-			}
 			value, err := query.Parse(saved.Payload)
 			if err != nil {
 				return nil, workspaceQueryError(err)
 			}
 			request.Query = value
-			if value.Mode != photoQueryModeLexical {
+			if value.Mode != query.ModeLexical {
 				ranking, err := photoQueryRanking(ctx, d, store.PhotoBrowseRequest{Query: value, Coverage: coverage})
 				if err != nil {
 					return nil, workspaceQueryError(err)

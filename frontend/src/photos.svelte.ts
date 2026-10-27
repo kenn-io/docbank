@@ -663,7 +663,7 @@ export class Photos {
     snapshotID = cursor ? this.snapshotID : "",
     fallbackReason = this.fallbackReason,
   ) {
-    if (fallbackReason) query = { ...query, mode: "lexical" };
+    if (fallbackReason && !snapshotID) query = { ...query, mode: "lexical" };
     const page = await listPhotoAssets(
       {
         query,

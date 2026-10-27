@@ -100,7 +100,7 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 			return nil, false, ErrInvalidPhotoQuery
 		}
 		request.Query = *opts.PhotoLexicalQuery
-		request.Query.Mode = queryModeLexical
+		request.Query.Mode = querypkg.ModeLexical
 		request.Query.Sort = querypkg.Sort{Field: "relevance", Direction: "desc"}
 		request.PageSize = min(limit+1, MaxPhotoMapPageSize)
 		request.Stacks = false
@@ -2234,7 +2234,7 @@ func (s *Store) SearchPageWithOptions(
 
 // photoSearchFragment compiles one photo query as lexical node membership.
 func photoSearchFragment(ctx context.Context, queryer rowQuerier, request PhotoBrowseRequest) (compiledQueryFragment, error) {
-	request.Query.Mode = queryModeLexical
+	request.Query.Mode = querypkg.ModeLexical
 	compiled, err := (queryCompiler{photoDisplayMetadata: true, photoHidden: request.Hidden}).compile(ctx, request.Query, queryResolver{q: queryer})
 	if err != nil {
 		return compiledQueryFragment{}, err
@@ -2641,5 +2641,3 @@ func photoSearchCandidates(namesMatch, textMatch, generation string, profile *st
 	result.Args = append(result.Args, args...)
 	return result, nil
 }
-
-const queryModeLexical = "lexical"

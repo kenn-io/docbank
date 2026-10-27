@@ -23,10 +23,8 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-const photoQueryModeLexical = "lexical"
-
 func photoQueryRanking(ctx context.Context, d Deps, request store.PhotoBrowseRequest) (store.PhotoRanking, error) {
-	ranking := store.PhotoRanking{RequestedMode: request.Query.Mode, ActualMode: photoQueryModeLexical, FallbackReason: "provider_unavailable"}
+	ranking := store.PhotoRanking{RequestedMode: request.Query.Mode, ActualMode: query.ModeLexical, FallbackReason: "provider_unavailable"}
 	if request.Hidden {
 		ranking.FallbackReason = "hidden_photos"
 	} else if d.Processing != nil {
@@ -79,7 +77,7 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 		if err != nil {
 			return nil, NewError(http.StatusUnprocessableEntity, "invalid_query", err.Error())
 		}
-		if value.Mode != photoQueryModeLexical {
+		if value.Mode != query.ModeLexical {
 			value.Sort = query.Sort{Field: "relevance", Direction: "desc"}
 		}
 		request := store.PhotoBrowseRequest{
@@ -89,7 +87,7 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 			PageSize: in.Body.PageSize, Recipes: recipes, Facets: in.Body.Facets,
 		}
 		var boundary *store.PhotoBrowsePosition
-		frozen := value.Mode != photoQueryModeLexical || in.Body.SnapshotID != ""
+		frozen := value.Mode != query.ModeLexical || in.Body.SnapshotID != ""
 		var ranking store.PhotoRanking
 		if in.Body.Cursor != "" && in.Body.SnapshotID == "" {
 			cursor, cursorErr := service.decodePhotoCursor(in.Body.Cursor)
@@ -97,17 +95,17 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 				return nil, FromStoreError(cursorErr)
 			}
 			boundary = &cursor.Position
-			ranking = store.PhotoRanking{RequestedMode: value.Mode, ActualMode: photoQueryModeLexical, FallbackReason: cursor.FallbackReason}
-			request.Query.Mode = photoQueryModeLexical
+			ranking = store.PhotoRanking{RequestedMode: value.Mode, ActualMode: query.ModeLexical}
+			request.Query.Mode = query.ModeLexical
 			frozen = false
 		}
-		if value.Mode != photoQueryModeLexical && in.Body.SnapshotID == "" && boundary == nil {
+		if value.Mode != query.ModeLexical && in.Body.SnapshotID == "" && boundary == nil {
 			ranking, err = photoQueryRanking(ctx, d, request)
 			if err != nil {
 				return nil, workspaceQueryError(err)
 			}
-			if request.Hidden && ranking.ActualMode == photoQueryModeLexical {
-				request.Query.Mode = photoQueryModeLexical
+			if request.Hidden && ranking.ActualMode == query.ModeLexical {
+				request.Query.Mode = query.ModeLexical
 				frozen = false
 			}
 		}
@@ -143,7 +141,7 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 			Items:              make([]PhotoBrowseRow, len(page.Items)), Total: page.Total, BurstGapSeconds: page.BurstGapSeconds,
 			Facets: fromStoreFacets(page.Facets), RelevanceAvailable: page.RelevanceAvailable,
 		}
-		if !frozen && value.Mode != photoQueryModeLexical {
+		if !frozen && value.Mode != query.ModeLexical {
 			wire.PhotoSearchStatus = fromStorePhotoSearchStatus(&ranking)
 		}
 		if frozen {
@@ -204,7 +202,7 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 			}
 		}
 		if page.Next != nil {
-			wire.NextCursor, err = service.encodePhotoCursor(*page.Next, ranking.FallbackReason)
+			wire.NextCursor, err = service.encodePhotoCursor(*page.Next)
 			if err != nil {
 				return nil, FromStoreError(err)
 			}
@@ -234,7 +232,7 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 		var view store.VisualPreviewView
 		err = gate.MutateContext(ctx, func() error {
 			page, err := d.Store.ListPhotoAssets(ctx, store.PhotoBrowseRequest{
-				Query: query.Query{V: 1, Syntax: "advanced", Mode: photoQueryModeLexical, Filters: query.Filters{AssetIDs: []string{in.AssetID}}, Sort: query.Sort{Field: "capture_time", Direction: "desc"}}, PageSize: 1, Hidden: in.Body.Hidden,
+				Query: query.Query{V: 1, Syntax: "advanced", Mode: query.ModeLexical, Filters: query.Filters{AssetIDs: []string{in.AssetID}}, Sort: query.Sort{Field: "capture_time", Direction: "desc"}}, PageSize: 1, Hidden: in.Body.Hidden,
 			}, nil)
 			if err != nil {
 				return err
@@ -359,14 +357,13 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 }
 
 type photoCursorPayload struct {
-	Type           string                    `json:"type"`
-	IssuedAt       int64                     `json:"iat"`
-	Position       store.PhotoBrowsePosition `json:"position"`
-	FallbackReason string                    `json:"fallback_reason,omitempty"`
+	Type     string                    `json:"type"`
+	IssuedAt int64                     `json:"iat"`
+	Position store.PhotoBrowsePosition `json:"position"`
 }
 
-func (service *documentQueryService) encodePhotoCursor(position store.PhotoBrowsePosition, fallbackReason string) (string, error) {
-	payload, err := json.Marshal(photoCursorPayload{Type: "photo-v2", IssuedAt: service.now().Unix(), Position: position, FallbackReason: fallbackReason})
+func (service *documentQueryService) encodePhotoCursor(position store.PhotoBrowsePosition) (string, error) {
+	payload, err := json.Marshal(photoCursorPayload{Type: "photo-v2", IssuedAt: service.now().Unix(), Position: position})
 	if err != nil {
 		return "", fmt.Errorf("encode photo cursor: %w", err)
 	}
