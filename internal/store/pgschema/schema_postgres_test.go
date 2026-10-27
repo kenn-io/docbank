@@ -49,7 +49,7 @@ func TestSetupPreservesIdentity(t *testing.T) {
 	var version int
 	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT vault_uid, schema_version FROM documents.vault_metadata WHERE singleton=1`).Scan(&stored, &version))
 	assert.Equal(t, id, stored)
-	assert.Equal(t, 2, version)
+	assert.Equal(t, Version, version)
 
 	// A separate schema is a separate vault, even within the same database.
 	other, err := Setup(t.Context(), db, Config{Schema: "other_documents", SchemaOwner: owner})
@@ -152,13 +152,13 @@ func TestRuntimeCannotChangeSchema(t *testing.T) {
 		_, err = Validate(t.Context(), selected, cfg)
 		require.ErrorContains(t, err, "requires a separate runtime role", "selecting a lesser role must not hide the login's privileges")
 	})
-	_, err = setup.ExecContext(t.Context(), "UPDATE documents.vault_metadata SET schema_version=3")
+	_, err = setup.ExecContext(t.Context(), "UPDATE documents.vault_metadata SET schema_version=$1", Version+1)
 	require.NoError(t, err)
 	_, err = Validate(t.Context(), runtime, cfg)
 	require.Error(t, err)
 	var version int
 	require.NoError(t, runtime.QueryRowContext(t.Context(), `SELECT schema_version FROM documents.vault_metadata`).Scan(&version))
-	assert.Equal(t, 3, version, "runtime validation must not repair an unsupported version")
+	assert.Equal(t, Version+1, version, "runtime validation must not repair an unsupported version")
 }
 
 func TestSetupRefusesUnownedOrInvalidState(t *testing.T) {
@@ -197,7 +197,7 @@ func TestSetupRefusesUnownedOrInvalidState(t *testing.T) {
 
 func TestSetupPreservesUnsupportedVersion(t *testing.T) {
 	t.Parallel()
-	for _, version := range []int{0, 1, 3} {
+	for _, version := range []int{0, 1, 2, Version + 1} {
 		t.Run(strconv.Itoa(version), func(t *testing.T) {
 			t.Parallel()
 			db, owner := pgtest.NewDatabase(t)
