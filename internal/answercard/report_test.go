@@ -2,10 +2,13 @@ package answercard
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"testing"
 
 	"go.kenn.io/docbank/document"
@@ -217,5 +220,111 @@ func TestDeepObservationDeduplicatesQuoteUnavailable(t *testing.T) {
 				t.Fatalf("want one quote_unavailable issue for citation 0, got %+v", got)
 			}
 		})
+	}
+}
+func TestCheckRunSkipsDisappearedCard(t *testing.T) {
+	card, err := Parse([]byte(sample))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := strings.Replace(sample, "state: draft", "state: approved\napproved_hash: "+card.Hash(), 1)
+	digest := sha256.Sum256([]byte(data))
+	const cardVersion = "00000000-0000-4000-8000-000000000003"
+	for _, status := range []int{http.StatusNotFound, http.StatusForbidden, http.StatusInternalServerError} {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/api/v1/info":
+					_ = json.NewEncoder(w).Encode(map[string]any{"vault_id": card.Citations[0].VaultUID.String()})
+				case "/api/v1/documents":
+					_ = json.NewEncoder(w).Encode(api.DocumentPage{
+						PathPrefix: "/answer-cards", Sort: "path", Direction: "asc", PageSize: 250,
+						Items: []api.DocumentSummary{{NodeID: 1, ContentVersionID: cardVersion,
+							Path: "/answer-cards/card.md", Name: "card.md", MediaType: "text/markdown; charset=utf-8",
+							Size: int64(len(data)), ModifiedAt: "2026-10-27T00:00:00Z"}},
+					})
+				case "/api/v1/versions/" + cardVersion + "/content":
+					w.Header().Set(api.ContentVersionHeader, cardVersion)
+					w.Header().Set(api.BlobHashHeader, hex.EncodeToString(digest[:]))
+					w.Header().Set(api.BlobSizeHeader, strconv.Itoa(len(data)))
+					w.Header().Set("Trailer", "Content-Digest")
+					_, _ = w.Write([]byte(data))
+					w.Header().Set("Content-Digest", "sha-256=:"+base64.StdEncoding.EncodeToString(digest[:])+":")
+				case "/api/v1/nodes/42":
+					_ = json.NewEncoder(w).Encode(api.Node{ID: 42, Kind: "file", TrashedAt: "2026-10-27T00:00:00Z"})
+				case "/api/v1/nodes/1":
+					code := "internal"
+					if status == http.StatusNotFound {
+						code = "not_found"
+					}
+					if status == http.StatusForbidden {
+						code = "forbidden"
+					}
+					w.WriteHeader(status)
+					_ = json.NewEncoder(w).Encode(map[string]any{"status": status, "code": code, "detail": "synthetic"})
+				default:
+					t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+					http.Error(w, "unexpected", http.StatusInternalServerError)
+				}
+			}))
+			defer server.Close()
+			report, err := CheckRun(t.Context(), daemonconn.New(server.URL, "synthetic-key"), "/answer-cards", false)
+			if status != http.StatusNotFound {
+				if err == nil {
+					t.Fatal("operational failure did not abort report")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(report.Items) != 1 || report.Items[0].Reason != "stale_revision" {
+				t.Fatalf("disappeared card not reported as skipped: %+v", report)
+			}
+		})
+	}
+}
+
+func TestCheckRunSkipsUnsafeYAML(t *testing.T) {
+	card, err := Parse([]byte(sample))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := strings.Replace(sample, "content_sha256: ", "content_sha256: &digest ", 1)
+	data = strings.Replace(data, "rendition_attachment_id: "+strings.Repeat("a", 64), "rendition_attachment_id: *digest", 1)
+	data = strings.Replace(data, "state: draft", "state: approved\napproved_hash: "+card.Hash(), 1)
+	digest := sha256.Sum256([]byte(data))
+	const version = "00000000-0000-4000-8000-000000000003"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/info":
+			_ = json.NewEncoder(w).Encode(map[string]any{"vault_id": card.Citations[0].VaultUID.String()})
+		case "/api/v1/documents":
+			_ = json.NewEncoder(w).Encode(api.DocumentPage{PathPrefix: "/answer-cards", Sort: "path", Direction: "asc", PageSize: 250, Items: []api.DocumentSummary{{NodeID: 1, ContentVersionID: version, Path: "/answer-cards/card.md", Name: "card.md", MediaType: "text/markdown", Size: int64(len(data)), ModifiedAt: "2026-10-27T00:00:00Z"}}})
+		case "/api/v1/versions/" + version + "/content":
+			w.Header().Set(api.ContentVersionHeader, version)
+			w.Header().Set(api.BlobHashHeader, hex.EncodeToString(digest[:]))
+			w.Header().Set(api.BlobSizeHeader, strconv.Itoa(len(data)))
+			w.Header().Set("Trailer", "Content-Digest")
+			_, _ = w.Write([]byte(data))
+			w.Header().Set("Content-Digest", "sha-256=:"+base64.StdEncoding.EncodeToString(digest[:])+":")
+		case "/api/v1/nodes/42":
+			_ = json.NewEncoder(w).Encode(api.Node{ID: 42, Kind: "file", TrashedAt: "2026-10-27T00:00:00Z"})
+		case "/api/v1/nodes/1":
+			_ = json.NewEncoder(w).Encode(api.Node{ID: 1, Kind: "file", Path: "/answer-cards/card.md", CurrentVersionID: version})
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			http.Error(w, "unexpected", http.StatusInternalServerError)
+		}
+	}))
+	defer server.Close()
+	report, err := CheckRun(t.Context(), daemonconn.New(server.URL, "key"), "/answer-cards", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Items) != 1 || report.Items[0].Reason != "rewrite_unsupported" {
+		t.Fatalf("unsafe card not reported as skipped: %+v", report)
 	}
 }

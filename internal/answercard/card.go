@@ -233,7 +233,7 @@ func (c Card) Validate() error {
 		seen[key] = true
 	}
 	for _, cite := range c.Citations {
-		if document.ValidateTextCitation(cite.TextCitation()) != nil || cite.Quote == "" || !utf8.ValidString(cite.Quote) || utf8.RuneCountInString(cite.Quote) != cite.End-cite.Start {
+		if document.ValidateTextCitation(cite.TextCitation()) != nil || !utf8.ValidString(cite.Quote) || (cite.Quote != "" && utf8.RuneCountInString(cite.Quote) != cite.End-cite.Start) {
 			return errors.New("invalid citation")
 		}
 	}
@@ -308,6 +308,11 @@ func (c Card) Effective(observations []Observation) Result {
 	}
 	if c.ApprovedHash != hash {
 		return Result{State: Draft, Reason: "edited_since_approval"}
+	}
+	for _, cite := range c.Citations {
+		if cite.Quote == "" {
+			return Result{State: Invalid, Reason: "unresolved quotation"}
+		}
 	}
 	for _, o := range observations {
 		if o.Reason != "" {

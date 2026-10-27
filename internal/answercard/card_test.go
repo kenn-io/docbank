@@ -257,3 +257,18 @@ func TestCanonicalEncodingFailureCannotApprove(t *testing.T) {
 		t.Fatal("failed encoding approved", got)
 	}
 }
+
+func TestEmptyQuoteNeedsApprovalResolution(t *testing.T) {
+	card, err := Parse([]byte(strings.Replace(sample, "quote: test", `quote: ""`, 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := card.Effective(nil); got.State != Draft {
+		t.Fatal(got)
+	}
+	card.State = Approved
+	card.ApprovedHash = card.Hash()
+	if got := card.Effective(nil); got.State != Invalid {
+		t.Fatalf("unresolved quotation became approved: %+v", got)
+	}
+}

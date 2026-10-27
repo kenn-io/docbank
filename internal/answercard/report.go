@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"mime"
+	"time"
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/store"
 )
 
 const MaxFiles = 2000
@@ -30,6 +32,19 @@ type Report struct {
 // Check reports cards under root. Any failed read aborts the report; only a
 // daemon's explicit not-found response is treated as deletion or pruning.
 func Check(ctx context.Context, c *daemonconn.Connection, root string, deep bool) (Report, error) {
+	return check(ctx, c, root, deep, false)
+}
+
+// CheckRun records newly observed stale states using a revision precondition.
+func CheckRun(ctx context.Context, c *daemonconn.Connection, root string, deep bool) (Report, error) {
+	return check(ctx, c, root, deep, true)
+}
+
+func shouldLatch(card Card, state Result) bool {
+	return card.State == Approved && card.Effective(nil).State == Approved && state.State == Stale
+}
+
+func check(ctx context.Context, c *daemonconn.Connection, root string, deep, run bool) (Report, error) {
 	report := Report{Items: []ReportItem{}}
 	info, err := c.API().VaultInfo(ctx)
 	if err != nil {
@@ -112,6 +127,43 @@ func Check(ctx context.Context, c *daemonconn.Connection, root string, deep bool
 					row.CitationIssues = observations
 				}
 				state = card.Effective(observations)
+			}
+			if run && shouldLatch(card, state) {
+				node, e := c.API().GetNode(ctx, &apiclient.GetNodeRequestOptions{PathParams: &apiclient.GetNodePath{ID: item.NodeID}})
+				if e != nil {
+					if code, _ := daemonconn.ProblemCode(e); code == "not_found" {
+						row.State = string(state.State)
+						row.Reason = "stale_revision"
+						report.Items = append(report.Items, row)
+						continue
+					}
+					return Report{}, e
+				}
+				if node.ID != item.NodeID || node.Path != item.Path || node.TrashedAt != "" || node.CurrentVersionID != item.ContentVersionID {
+					row.Reason = "stale_revision"
+					row.State = string(state.State)
+					report.Items = append(report.Items, row)
+					continue
+				}
+				out, e := rewriteLifecycle(buf.Bytes(), Stale, card.ApprovedHash, card.ApprovedAt, &StaleInfo{Reason: state.Reason, Citation: state.Citation, ObservedAt: time.Now().UTC().Format(time.RFC3339)})
+				if errors.Is(e, errUnsafeRewrite) {
+					row.State = string(state.State)
+					row.Reason = "rewrite_unsupported"
+					report.Items = append(report.Items, row)
+					continue
+				}
+				if e != nil {
+					return Report{}, e
+				}
+				if e = writeCard(ctx, c, *node, out); e != nil {
+					if errors.Is(e, store.ErrStaleRevision) {
+						row.State = string(state.State)
+						row.Reason = "stale_revision"
+						report.Items = append(report.Items, row)
+						continue
+					}
+					return Report{}, e
+				}
 			}
 			row.State = string(state.State)
 			row.Reason = state.Reason
