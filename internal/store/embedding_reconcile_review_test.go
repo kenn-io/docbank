@@ -55,12 +55,12 @@ func TestEmbeddingLegacyProfilesReuseOnlyMatchingProducer(t *testing.T) {
 	_, work, claimed, err := s.ClaimEmbeddingWork(t.Context(), job.ID, "worker:producer-reuse", time.Now(), time.Minute, []string{descriptor.Fingerprint})
 	require.NoError(t, err)
 	require.True(t, claimed)
-	found, err := s.FindReusableEmbeddingSet(t.Context(), work, "")
+	found, err := s.FindReusableEmbeddingSet(t.Context(), work, "", "")
 	require.NoError(t, err)
 	require.Equal(t, retained.ID, found.ID)
 	work.Descriptor.ModelRevision = "other-revision"
 	work.Descriptor, err = document.NewEmbeddingDescriptor(work.Descriptor)
 	require.NoError(t, err)
-	_, err = s.FindReusableEmbeddingSet(t.Context(), work, "")
+	_, err = s.FindReusableEmbeddingSet(t.Context(), work, "", "")
 	require.ErrorIs(t, err, ErrNotFound)
 }

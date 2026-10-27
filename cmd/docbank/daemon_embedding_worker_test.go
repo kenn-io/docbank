@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/BurntSushi/toml"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -23,9 +25,103 @@ import (
 	"go.kenn.io/docbank/document/openaicompat"
 	"go.kenn.io/docbank/document/voyage"
 	"go.kenn.io/docbank/document/voyage/voyagetest"
+	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/processing"
+	"go.kenn.io/docbank/internal/store"
 )
+
+func TestDaemonRecoversSemanticSpaceEmbeddingJob(t *testing.T) {
+	var calls atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			http.Error(w, "synthetic expired credential", http.StatusUnauthorized)
+			return
+		}
+		var body struct {
+			Input []string `json:"input"`
+		}
+		if !assert.NoError(t, json.UnmarshalRead(r.Body, &body)) {
+			return
+		}
+		data := make([]map[string]any, len(body.Input))
+		for i := range data {
+			data[i] = map[string]any{"index": i, "embedding": []float32{1, 2}, "object": "embedding"}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		assert.NoError(t, json.MarshalWrite(w, map[string]any{"data": data, "model": "synthetic-model", "object": "list"}))
+	}))
+	t.Cleanup(server.Close)
+	t.Setenv("DOCBANK_TEST_EMBEDDING_KEY", "synthetic-secret")
+	cfg, _ := syntheticLoopbackOpenAIConfig(t, server.URL, "DOCBANK_TEST_EMBEDDING_KEY")
+	fingerprint, err := plaintextProviderForDaemonTest()
+	require.NoError(t, err)
+	plain := plaintextProcessingConfig(fingerprint)
+	cfg.RenditionProfiles, cfg.RetrievalProfiles, cfg.ProcessingProfiles = plain.RenditionProfiles, plain.RetrievalProfiles, plain.ProcessingProfiles
+	profile := cfg.ProcessingProfiles["private-text"]
+	profile.Embeddings = []string{"semantic"}
+	cfg.ProcessingProfiles["private-text"] = profile
+	embedding := cfg.EmbeddingProfiles["semantic"]
+	embedding.Chunk.Tokenizer = "unicode-runes"
+	cfg.EmbeddingProfiles["semantic"] = embedding
+	require.NoError(t, cfg.Validate())
+	root := t.TempDir()
+	layout := home.Layout{Root: root}
+	require.NoError(t, layout.Ensure())
+	func() {
+		catalog, err := store.Open(layout.DBPath())
+		require.NoError(t, err)
+		defer func() { require.NoError(t, catalog.Close()) }()
+		blobs, err := blob.New(store.NewPackCatalog(catalog), layout.BlobsDir())
+		require.NoError(t, err)
+		defer func() { require.NoError(t, blobs.Close()) }()
+		bundle, err := configureEmbeddingRuntimeBundle(cfg, blobs, layout.BlobTmpDir())
+		require.NoError(t, err)
+		profiles, err := executableProcessingProfiles(cfg, bundle)
+		require.NoError(t, err)
+		service, err := processing.NewService(processing.ServiceConfig{Catalog: catalog, Blobs: blobs, Gate: api.NewOperationGate(), Profiles: profiles, Principal: "daemon:operator", Scope: "document-processing", SpoolDirectory: layout.BlobTmpDir(), Lifecycle: t.Context()})
+		require.NoError(t, err)
+		defer func() { require.NoError(t, service.Shutdown(t.Context())) }()
+		receipt, err := blobs.WriteDetailedContext(t.Context(), strings.NewReader("a selected document"))
+		require.NoError(t, err)
+		encoding, err := receipt.EncodingName()
+		require.NoError(t, err)
+		node, err := catalog.CreateFile(t.Context(), catalog.RootID(), "selected.txt", receipt.Hash, receipt.Size, "text/plain", store.BlobPhysical{Encoding: encoding, StoredBytes: receipt.StoredSize})
+		require.NoError(t, err)
+		selector := processing.Selector{Profile: "private-text", NodeID: node.ID, ContentVersionID: node.CurrentVersionID}
+		plan, err := service.Plan(t.Context(), selector)
+		require.NoError(t, err)
+		job, err := service.Start(t.Context(), processing.StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true})
+		require.NoError(t, err)
+		require.Len(t, job.EmbeddingJobIDs, 1)
+		failed, err := catalog.EmbeddingJobByID(t.Context(), job.EmbeddingJobIDs[0])
+		require.NoError(t, err)
+		require.Equal(t, "failed", failed.State)
+	}()
+	require.EqualValues(t, 1, calls.Load())
+	require.NoError(t, writeDaemonASRConfig(root, cfg))
+	var encoded bytes.Buffer
+	runtime := embedding.Runtime
+	embedding.Runtime = nil
+	require.NoError(t, toml.NewEncoder(&encoded).Encode(map[string]any{"embedding_profiles": map[string]any{"semantic": embedding}}))
+	encoded.WriteString("[embedding_profiles.semantic.runtime]\n")
+	require.NoError(t, toml.NewEncoder(&encoded).Encode(map[string]any{
+		"adapter_contract": runtime.AdapterContract, "endpoint": runtime.Endpoint, "model_revision": runtime.ModelRevision, "deployment_epoch": runtime.DeploymentEpoch,
+		"request_timeout": runtime.RequestTimeout.Std().String(), "max_request_bytes": runtime.MaxRequestBytes, "allowed_cidrs": runtime.AllowedCIDRs, "proxy_mode": runtime.ProxyMode,
+		"connect_timeout": runtime.ConnectTimeout.Std().String(), "keep_alive": runtime.KeepAlive.Std().String(), "tls_handshake_timeout": runtime.TLSHandshakeTimeout.Std().String(),
+	}))
+	file, err := os.OpenFile(filepath.Join(root, "config.toml"), os.O_APPEND|os.O_WRONLY, 0o600)
+	require.NoError(t, err)
+	_, err = file.Write(encoded.Bytes())
+	require.NoError(t, err)
+	require.NoError(t, file.Close())
+	t.Setenv("DOCBANK_HOME", root)
+	startServe(t)
+	waitForDaemon(t, root)
+	require.Eventually(t, func() bool { return calls.Load() == 2 }, 5*time.Second, 25*time.Millisecond, "background recovery must use the service-selected semantic space")
+}
 
 func TestStartEmbeddingWorkerIfReadySkipsMissingBindings(t *testing.T) {
 	starter := &fakeEmbeddingJobStarter{}

@@ -281,7 +281,6 @@ func runServe(ctx context.Context) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("configuring embedding runtimes: %w", err)
 	}
-	embeddingRuntimeRegistry := embeddingRuntimes.registry
 	processingProfiles, err := executableProcessingProfiles(cfg, embeddingRuntimes)
 	if err != nil {
 		return fmt.Errorf("configuring executable processing profiles: %w", err)
@@ -321,6 +320,7 @@ func runServe(ctx context.Context) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("configuring processing service: %w", err)
 	}
+	embeddingRuntimeRegistry := processingService.EmbeddingRuntimes()
 	runtimeRegistry.Seal()
 	renditionWorkers := 1
 	if emailPDFRuntime != nil {

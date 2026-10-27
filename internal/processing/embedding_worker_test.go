@@ -855,7 +855,7 @@ type embeddingWorkerFakeRuntime struct {
 	batchesByBinding  map[string][]int
 }
 
-func (c *embeddingWorkerFakeCatalog) FindReusableEmbeddingSet(context.Context, store.EmbeddingJobWork, string) (store.EmbeddingSetRecord, error) {
+func (c *embeddingWorkerFakeCatalog) FindReusableEmbeddingSet(context.Context, store.EmbeddingJobWork, string, string) (store.EmbeddingSetRecord, error) {
 	return store.EmbeddingSetRecord{}, store.ErrNotFound
 }
 

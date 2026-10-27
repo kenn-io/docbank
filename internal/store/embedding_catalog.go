@@ -1646,9 +1646,13 @@ func (s *Store) SelectEmbeddingVectorSpace(ctx context.Context, legacy, semantic
 
 // FindReusableEmbeddingSet finds retained values with exactly the same ordered
 // rendered inputs. The worker must verify the referenced payload before use.
-func (s *Store) FindReusableEmbeddingSet(ctx context.Context, work EmbeddingJobWork, after string) (EmbeddingSetRecord, error) {
+func (s *Store) FindReusableEmbeddingSet(ctx context.Context, work EmbeddingJobWork, after, semanticID string) (EmbeddingSetRecord, error) {
 	var found EmbeddingSetRecord
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		selected, err := loadVectorSpaceTx(ctx, tx, work.VectorSpaceID)
+		if err != nil {
+			return err
+		}
 		ids, err := stringColumnTx(ctx, tx, "reusable embedding sets", `SELECT embedding_set_id
 			FROM embedding_sets WHERE content_version_id=? AND binding_id=? AND input_kind=? AND embedding_set_id>?
 			ORDER BY embedding_set_id`, work.ContentVersionID, work.Binding.Name, work.Binding.InputKind, after)
@@ -1660,19 +1664,15 @@ func (s *Store) FindReusableEmbeddingSet(ctx context.Context, work EmbeddingJobW
 			if err != nil {
 				return err
 			}
-			compatible := candidate.VectorSpace.ID == work.VectorSpaceID
+			compatible := candidate.VectorSpace.ID == work.VectorSpaceID || selected.ContractVersion == EmbeddingVectorSpaceContractV1 && candidate.VectorSpace.ContractVersion == EmbeddingVectorSpaceContractV2 && candidate.VectorSpace.ID == semanticID
 			if candidate.VectorSpace.ContractVersion == EmbeddingVectorSpaceContractV1 && work.Descriptor.ID == "openai-compatible.embeddings-v1" {
 				compatible = sameEmbeddingVectorSemantics(candidate.VectorSpace.Descriptor, work.Descriptor)
 				if work.Descriptor.ModelInput.Profile == document.ModelInputProfileBGEM3 || work.Descriptor.ModelInput.Profile == document.ModelInputProfileQwen3 {
 					compatible = candidate.VectorSpace.Descriptor.Fingerprint == work.Descriptor.Fingerprint
 				}
 			}
-			if !compatible ||
-				candidate.EmbeddingInputFingerprint != work.EmbeddingInputFingerprint ||
-				!slices.Equal(candidate.InputGeneration.Inputs, work.InputGeneration.Inputs) {
-				continue
-			}
-			if err := validateEmbeddingVectorSet(candidate.VectorSet, candidate.VectorSpace, candidate.InputGeneration); err != nil {
+			if !compatible || candidate.EmbeddingInputFingerprint != work.EmbeddingInputFingerprint || !slices.Equal(candidate.InputGeneration.Inputs, work.InputGeneration.Inputs) ||
+				validateEmbeddingVectorSet(candidate.VectorSet, candidate.VectorSpace, candidate.InputGeneration) != nil {
 				continue
 			}
 			found = candidate

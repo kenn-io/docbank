@@ -43,7 +43,7 @@ type EmbeddingWork = store.EmbeddingJobWork
 type EmbeddingAttemptReceipt = store.EmbeddingAttemptReceipt
 
 type embeddingWorkerCatalog interface {
-	FindReusableEmbeddingSet(ctx context.Context, work store.EmbeddingJobWork, after string) (store.EmbeddingSetRecord, error)
+	FindReusableEmbeddingSet(ctx context.Context, work store.EmbeddingJobWork, after, semanticID string) (store.EmbeddingSetRecord, error)
 	ReconcileEmbeddingJobs(ctx context.Context, request store.EmbeddingReconcileRequest) (store.EmbeddingReconcileResult, error)
 	ClaimNextEmbeddingWork(ctx context.Context, owner string, at time.Time, lease time.Duration, fingerprints []string) (EmbeddingWorkClaim, EmbeddingWork, bool, error)
 	RenewEmbeddingWork(ctx context.Context, claim EmbeddingWorkClaim, at time.Time, lease time.Duration) (EmbeddingWorkClaim, error)
@@ -1035,8 +1035,8 @@ func embeddingInterfaceNil(value any) bool {
 }
 
 func (worker *EmbeddingWorker) reuseVectors(ctx context.Context, work EmbeddingWork, generation *store.EmbeddingInputGenerationRecord) (document.EmbeddingResult, bool, error) {
-	for after := ""; ; {
-		retained, err := worker.catalog.FindReusableEmbeddingSet(ctx, work, after)
+	for after, semanticID := "", worker.semanticVectorIdentity(work.Descriptor); ; {
+		retained, err := worker.catalog.FindReusableEmbeddingSet(ctx, work, after, semanticID)
 		if errors.Is(err, store.ErrNotFound) {
 			return document.EmbeddingResult{}, false, nil
 		}
@@ -1067,4 +1067,29 @@ func (worker *EmbeddingWorker) reuseVectors(ctx context.Context, work EmbeddingW
 		}
 		return result, true, nil
 	}
+}
+
+func (worker *EmbeddingWorker) semanticVectorIdentity(descriptor document.EmbeddingDescriptor) string {
+	runtime, ok := worker.runtime.(*ProviderEmbeddingRuntime)
+	if !ok {
+		registry, ok := worker.runtime.(*EmbeddingRuntimeRegistry)
+		if !ok {
+			return ""
+		}
+		registry.mu.RLock()
+		runtime, _ = registry.runtimes[descriptor.Fingerprint].(*ProviderEmbeddingRuntime)
+		registry.mu.RUnlock()
+	}
+	if runtime == nil || !reflect.DeepEqual(runtime.provider.Descriptor(), descriptor) {
+		return ""
+	}
+	identity, ok := runtime.provider.(document.EmbeddingVectorIdentityProvider)
+	if !ok {
+		return ""
+	}
+	id, err := identity.VectorIdentity()
+	if err != nil {
+		return ""
+	}
+	return id
 }
