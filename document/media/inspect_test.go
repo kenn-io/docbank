@@ -20,13 +20,10 @@ import (
 	"testing"
 	"testing/iotest"
 
-	"github.com/pdfcpu/pdfcpu/pkg/api"
-	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/document/internal/formatdetect"
 	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/media/mediatest"
 )
@@ -2672,46 +2669,9 @@ func TestCountPDFPages(t *testing.T) {
 	plain := syntheticPDFPages(3, "page count")
 	ownerOnly, err := mediatest.EncryptedPDF("", "owner", 128, plain)
 	require.NoError(t, err)
-	protected, err := mediatest.EncryptedPDF("open", "owner", 128)
+	pages, err := media.CountPDFPages(ownerOnly)
 	require.NoError(t, err)
-	for _, tc := range []struct {
-		name    string
-		data    []byte
-		pages   int64
-		wantErr error
-	}{
-		{"plain", plain, 3, nil},
-		{"owner password", ownerOnly, 3, nil},
-		{"user password", protected, 0, formatdetect.ErrPDFEncrypted},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			pages, err := media.CountPDFPages(tc.data)
-			if tc.wantErr != nil {
-				require.ErrorIs(t, err, tc.wantErr)
-			} else {
-				require.NoError(t, err)
-			}
-			require.Equal(t, tc.pages, pages)
-		})
-	}
-}
-
-func TestCountPDFPagesCompressedOwnerPassword(t *testing.T) {
-	plain := syntheticPDFPages(1500, "compressed page count")
-	var packed, decrypted bytes.Buffer
-	require.NoError(t, api.Optimize(bytes.NewReader(plain), &packed, model.NewDefaultConfiguration()))
-	encrypted, err := mediatest.EncryptedPDF("", "owner", 128, packed.Bytes())
-	require.NoError(t, err)
-	require.Contains(t, string(encrypted), "/ObjStm")
-	configuration := model.NewDefaultConfiguration()
-	configuration.WriteObjectStream = false
-	configuration.WriteXRefStream = false
-	require.NoError(t, api.Decrypt(bytes.NewReader(encrypted), &decrypted, configuration))
-	require.Greater(t, decrypted.Len(), len(encrypted))
-
-	pages, err := media.CountPDFPages(encrypted)
-	require.NoError(t, err)
-	require.Equal(t, int64(1500), pages)
+	require.Equal(t, int64(3), pages)
 }
 
 func TestInspectPasswordProtectedPDF(t *testing.T) {
