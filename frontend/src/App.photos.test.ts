@@ -21,7 +21,6 @@ import * as photoEvents from "./photoEvents.js";
 import App from "./App.svelte";
 import { sessionResponse } from "./api-transport.js";
 import { person, personResponse, personMergeReceipt } from "./people-test-fixtures.js";
-import * as api from "./generated/docbank.js";
 import { Photos } from "./photos.svelte.js";
 import { People } from "./people.svelte.js";
 import { VerifiedUploadChannel } from "./upload.js";
