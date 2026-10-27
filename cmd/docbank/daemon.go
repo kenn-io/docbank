@@ -588,6 +588,7 @@ func runServe(ctx context.Context) (retErr error) {
 	}
 	if telemetryReporter.Enabled() {
 		if err := jobSupervisor.Start(telemetry.HeartbeatJobName, func(ctx context.Context) error {
+			jobs.ReportBusy(ctx, false)
 			posthog.RunHeartbeat(ctx, telemetryReporter, logger)
 			return nil
 		}); err != nil {
@@ -969,6 +970,7 @@ func startRetentionMaintenance(
 		ticker := time.NewTicker(time.Hour)
 		defer ticker.Stop()
 		for {
+			jobs.ReportBusy(ctx, true)
 			if err := gate.MutateContext(ctx, func() error {
 				_, preflightErr := s.ExpirePackagePreflights(ctx, "")
 				_, storageErr := s.PruneExpiredStorageOperations(ctx, time.Now())
@@ -976,6 +978,7 @@ func startRetentionMaintenance(
 			}); err != nil && !errors.Is(err, context.Canceled) {
 				logger.Warn("retention maintenance failed", "error", err)
 			}
+			jobs.ReportBusy(ctx, false)
 			select {
 			case <-ctx.Done():
 				return nil
@@ -1078,7 +1081,12 @@ func validateCheckoutBinding(ctx context.Context, catalog *store.Store, binding 
 }
 
 func waitForCheckoutValidation(ctx context.Context, check func(context.Context) error, logger *slog.Logger) error {
-	return ingest.WaitForCheckoutSeparation(ctx, check, func(err error) {
+	jobs.ReportBusy(ctx, false)
+	return ingest.WaitForCheckoutSeparation(ctx, func(ctx context.Context) error {
+		jobs.ReportBusy(ctx, true)
+		defer jobs.ReportBusy(ctx, false)
+		return check(ctx)
+	}, func(err error) {
 		logger.Warn("checkout path validation is waiting", "error", err)
 	})
 }
@@ -1216,6 +1224,7 @@ func listenWebOriginWithIdentity(
 // spawned daemons don't accumulate. Foreground `daemon run` never idles out.
 func idleWatch(ctx context.Context, t *api.ActivityTracker, timeout time.Duration,
 	logger *slog.Logger, stop func()) {
+	jobs.ReportBusy(ctx, false)
 	// Clamp the poll interval: NewTicker panics on a non-positive duration,
 	// and a pathologically small configured timeout must not spin.
 	interval := max(timeout/10, 50*time.Millisecond)

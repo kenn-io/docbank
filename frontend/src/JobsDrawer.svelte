@@ -37,7 +37,7 @@
 
   let updating = $state(new Set<string>());
   const lanes = $derived(jobLanes(items, controls));
-  const running = $derived(items.filter((job) => job.status === "running").length);
+  const running = $derived(items.filter((job) => job.busy).length);
 
   onMount(() => {
     void refresh();
@@ -153,13 +153,14 @@
 
   function laneState(lane: Lane): { tone: string; label: string; details: string[] } {
     const paused = lane.control?.paused === true;
+    const idle = !lane.status || (lane.status === "running" && !lane.active);
     const details: string[] = [];
-    if (paused) details.push(lane.status ? statusLabel(lane.status) : "Idle");
+    if (paused) details.push(idle ? "Idle" : statusLabel(lane.status!));
     if (lane.members.length > 1) details.push(`${lane.members.length} operations`);
     if (lane.active && lane.total === undefined) details.push("Progress unavailable");
     if (paused) return { tone: "paused", label: "Paused", details };
-    if (!lane.status) return { tone: "idle", label: "Idle", details };
-    return { tone: lane.status, label: statusLabel(lane.status), details };
+    if (idle) return { tone: "idle", label: "Idle", details };
+    return { tone: lane.status!, label: statusLabel(lane.status!), details };
   }
 
   function unit(lane: string): string {
@@ -308,7 +309,11 @@
                           <div>
                             <dt>Status</dt>
                             <dd class="state" data-tone={member.status}>
-                              <span class="state-label">{statusLabel(member.status)}</span>
+                              <span class="state-label">
+                                {member.status === "running" && !member.busy
+                                  ? "Idle"
+                                  : statusLabel(member.status)}
+                              </span>
                             </dd>
                           </div>
                         {/if}

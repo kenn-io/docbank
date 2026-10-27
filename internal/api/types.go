@@ -1236,6 +1236,7 @@ type VerifyReport struct {
 // Job is the observable state of one daemon-owned background task. Names are
 // stable within a daemon run; durable storage operations follow their retention.
 type Job struct {
+	Busy              bool             `json:"busy" doc:"Whether this job is processing work rather than waiting for an item or its next scheduled run."`
 	Lane              string           `json:"lane"`
 	CheckoutResults   map[string]int64 `json:"checkout_results,omitempty"`
 	ProcessedBytes    int64            `json:"processed_bytes,omitzero"`
@@ -1256,6 +1257,15 @@ type Job struct {
 	TotalObjects      int64            `json:"total_objects,omitzero"`
 	CanCancel         bool             `json:"can_cancel,omitzero"`
 	CancelRequested   bool             `json:"cancel_requested,omitzero"`
+}
+
+// DisplayStatus reports a worker that is waiting for work as idle instead of
+// running, so a quiet vault doesn't list every worker as busy.
+func (j Job) DisplayStatus() string {
+	if j.Status == "running" && !j.Busy {
+		return "idle"
+	}
+	return j.Status
 }
 
 type LaneControl struct {

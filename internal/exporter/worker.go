@@ -17,6 +17,7 @@ import (
 
 	"go.kenn.io/docbank/document/bundle"
 	"go.kenn.io/docbank/internal/blob"
+	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/kit/atomicfile"
 	"go.kenn.io/kit/safefileio"
@@ -65,6 +66,7 @@ func New(catalog *store.Store, blobs *blob.Store, root string, gate Gate) (*Work
 }
 
 func (w *Worker) Run(ctx context.Context) error {
+	jobs.ReportBusy(ctx, false)
 	if err := w.retryCatalogMutation(ctx, func() error { return w.catalog.RevokeAbandonedExportSessions(ctx) }); err != nil {
 		return err
 	}
@@ -168,6 +170,8 @@ func (w *Worker) RunOne(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	jobs.ReportBusy(ctx, true)
+	defer jobs.ReportBusy(ctx, false)
 	deadline, err := time.Parse(time.RFC3339Nano, claim.Job.Deadline)
 	if err != nil {
 		return true, fmt.Errorf("export execution deadline: %w", err)

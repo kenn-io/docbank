@@ -34,6 +34,7 @@ const (
 type Snapshot struct {
 	Name       string
 	Status     Status
+	Busy       bool
 	StartedAt  time.Time
 	FinishedAt *time.Time
 	Error      string
@@ -44,6 +45,16 @@ type state struct {
 }
 
 type reportErrorKey struct{}
+type reportBusyKey struct{}
+
+// ReportBusy distinguishes processing an item from waiting for work. Long-lived
+// workers report false before polling and true only while processing items.
+// Calls outside a supervised job have no effect.
+func ReportBusy(ctx context.Context, busy bool) {
+	if report, ok := ctx.Value(reportBusyKey{}).(func(bool)); ok {
+		report(busy)
+	}
+}
 
 // ReportError updates a running job's observable error. A nil error clears it.
 // Calls outside a supervised job have no effect.
@@ -97,7 +108,7 @@ func (s *Supervisor) Start(name string, run func(context.Context) error) error {
 		return fmt.Errorf("job %q: %w", name, ErrDuplicate)
 	}
 	job := &state{
-		Name: name, Status: StatusRunning, StartedAt: time.Now().UTC()}
+		Name: name, Status: StatusRunning, Busy: true, StartedAt: time.Now().UTC()}
 	s.jobs[name] = job
 	s.active++
 	go s.run(job, run)
@@ -122,6 +133,11 @@ func (s *Supervisor) run(job *state, run func(context.Context) error) {
 			job.Error = boundedError(err)
 		}
 	})
+	ctx = context.WithValue(ctx, reportBusyKey{}, func(busy bool) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		job.Busy = busy
+	})
 	runErr = run(ctx)
 }
 
@@ -130,6 +146,7 @@ func (s *Supervisor) finish(job *state, runErr error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	job.FinishedAt = &now
+	job.Busy = false
 	switch {
 	case runErr == nil && s.ctx.Err() == nil:
 		job.Status = StatusCompleted

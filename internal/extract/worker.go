@@ -13,6 +13,7 @@ import (
 
 	"go.kenn.io/kit/packstore"
 
+	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -75,6 +76,7 @@ func New(
 // Run performs an immediate scan, drains all current work in bounded batches,
 // and then watches for newly admitted versions until the daemon stops.
 func (w *Worker) Run(ctx context.Context) error {
+	jobs.ReportBusy(ctx, false)
 	if err := w.mutate(ctx, func() error {
 		return w.catalog.SeedTextExtractionQueue(
 			ctx, TextExtractorName, TextExtractorVersion,
@@ -115,6 +117,8 @@ func (w *Worker) ScanOnce(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	jobs.ReportBusy(ctx, len(items) > 0)
+	defer jobs.ReportBusy(ctx, false)
 	for i, item := range items {
 		if err := ctx.Err(); err != nil {
 			return i, err

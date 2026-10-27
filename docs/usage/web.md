@@ -870,6 +870,8 @@ contention or interruption remains visible, and you can retry.
 
 ## Inspect background work
 
+A worker waiting for work shows Idle, and the header counts only work in progress.
+
 Choose **Background jobs** in the sidebar to see one card per storage operation
 kind or daemon worker. Active operations in a lane share progress when every
 operation has a known total. Workers without counts show numeric progress as

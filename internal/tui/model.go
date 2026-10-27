@@ -644,7 +644,7 @@ func (m Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.jobsTotal = len(msg.items)
 			m.jobsRunning = 0
 			for _, job := range msg.items {
-				if job.Status == "running" {
+				if job.Status == "running" && job.Busy {
 					m.jobsRunning++
 				}
 			}

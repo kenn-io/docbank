@@ -1,7 +1,7 @@
 import type { Job, LaneControl } from "./generated/docbank.js";
 import { timestampComparable } from "./format.js";
 
-const activeJob = (job: Job): boolean => job.status === "running" || job.status === "queued";
+const activeJob = (job: Job): boolean => job.busy;
 
 export function laneTitle(lane: string): string {
   const titles: Record<string, string> = {
@@ -37,8 +37,8 @@ export function jobLanes(jobs: Job[], controls: LaneControl[] = []) {
         timestampComparable(b.started_at).localeCompare(timestampComparable(a.started_at)) ||
         b.name.localeCompare(a.name),
     );
-    const active = members.filter(activeJob);
-    const job = active.find((member) => member.status === "running") ?? active[0] ?? members[0];
+    const active = members.filter((member) => activeJob(member) || member.status === "queued");
+    const job = active.find((member) => member.busy) ?? active[0] ?? members[0];
     const progressJobs = active.length ? active : members.slice(0, 1);
     const known =
       progressJobs.length > 0 &&
@@ -52,14 +52,12 @@ export function jobLanes(jobs: Job[], controls: LaneControl[] = []) {
       lane,
       title: laneTitle(lane),
       control: controls.find((control) => control.lane === lane),
-      status: active.some((member) => member.status === "running")
-        ? ("running" as const)
-        : job?.status,
+      status: active.some((member) => member.busy) ? ("running" as const) : job?.status,
       completed: progressJobs.reduce((sum, member) => sum + (member.completed_objects ?? 0), 0),
       total: known
         ? progressJobs.reduce((sum, member) => sum + member.total_objects!, 0)
         : undefined,
-      active: active.length > 0,
+      active: members.some(activeJob),
     };
   }).sort((a, b) => a.lane.localeCompare(b.lane));
 }

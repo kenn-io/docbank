@@ -61,6 +61,7 @@ type Backfill[T any] struct {
 // Run executes the backfill until ctx ends, or until the scan drains when
 // DrainOnce is set.
 func (b *Backfill[T]) Run(ctx context.Context) error {
+	jobs.ReportBusy(ctx, false)
 	if err := b.validate(); err != nil {
 		return err
 	}
@@ -150,6 +151,7 @@ func (b *Backfill[T]) processPage(
 	var recovered any
 	record := func(done result) {
 		active--
+		jobs.ReportBusy(ctx, active > 0)
 		if done.recovered != nil {
 			recovered = done.recovered
 			next = len(targets)
@@ -190,6 +192,7 @@ func (b *Backfill[T]) processPage(
 				target := targets[next]
 				next++
 				active++
+				jobs.ReportBusy(ctx, true)
 				attempted++
 				go func(done result) {
 					defer func() {

@@ -158,7 +158,7 @@ on a running daemon) and authenticates with `X-Api-Key` /
 | `GET /trash` · `POST /trash/empty` `{run, older_than}` | list nodes, grouping photos on paginated requests / report or hard-delete eligible complete groups | Implemented |
 | `POST /gc` `{run}` · `POST /verify` | reclaim unreachable blobs / validate metadata and re-hash all blobs | Implemented |
 | `GET /storage` · `POST /storage/pack` · `POST /storage/repack` | inspect usage / pack loose blobs / compact sparse packs | Implemented |
-| `GET /jobs` | inspect daemon-owned background tasks and terminal failures | Implemented |
+| `GET /jobs` | inspect daemon-owned background tasks and terminal failures; a `running` job with `busy: false` is waiting for work or its next run, and clients show it as idle | Implemented |
 | `GET /watches` | inspect effective watched-inbox configuration and runner state | Implemented |
 | `POST /backup/init` · `POST /backup/snapshots` · `POST /backup/snapshots/stream` · `GET /backup/snapshots` | initialize a repository / create with JSON or streamed progress / list snapshots | Implemented |
 

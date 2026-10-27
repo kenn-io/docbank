@@ -760,7 +760,7 @@ func (m Model) renderJobsHeading() string {
 }
 
 func (m Model) renderJobRow(job api.Job) string {
-	status := pad(strings.ToUpper(job.Status), 11)
+	status := pad(strings.ToUpper(job.DisplayStatus()), 11)
 	nameWidth := max(m.width-16, 1)
 	if m.width >= 72 {
 		nameWidth = 32
@@ -801,7 +801,7 @@ func (m Model) jobDetailLines(width int) []string {
 	}
 	fields := []string{
 		" Name: " + quoted(job.Name),
-		" Status: " + job.Status,
+		" Status: " + job.DisplayStatus(),
 		" Started: " + job.StartedAt,
 	}
 	if job.FinishedAt == "" {

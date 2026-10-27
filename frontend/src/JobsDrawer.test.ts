@@ -69,6 +69,7 @@ describe("background jobs drawer", () => {
             lane: "photo_import",
             operation_id: "a",
             status: "running",
+            busy: true,
             started_at: "2026-07-23T12:00:00Z",
             can_cancel: true,
           },
@@ -111,6 +112,7 @@ describe("background jobs drawer", () => {
       lane: "photo_import",
       operation_id: "a",
       status: "queued",
+      busy: false,
       started_at: "2026-07-23T12:00:00Z",
       completed_objects: 1,
       total_objects: 2,
@@ -169,12 +171,14 @@ describe("background jobs drawer", () => {
         lane: "place",
         operation_id: "a",
         status: "completed",
+        busy: false,
         started_at: "2026-07-23T12:00:00Z",
       },
       {
         name: "extract:plain-text",
         lane: "extract:plain-text",
         status: "completed",
+        busy: false,
         started_at: "2026-07-23T12:00:00Z",
       },
     ];
@@ -262,6 +266,7 @@ describe("background jobs drawer", () => {
       name: "derive:visual-previews",
       lane: "derive:visual-previews",
       status: "running",
+      busy: true,
       started_at: "2026-07-23T12:00:00Z",
       controllable: true,
       paused: false,
@@ -299,15 +304,24 @@ describe("background jobs drawer", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
       jobsResponse([
         {
+          name: "extract:email",
+          lane: "extract:email",
+          status: "running",
+          busy: false,
+          started_at: "2026-07-23T12:00:00Z",
+        },
+        {
           name: "extract:plain-text",
           lane: "extract:plain-text",
           status: "running",
+          busy: true,
           started_at: "2026-07-23T12:00:00Z",
         },
         {
           name: "watch:inbox",
           lane: "watch:inbox",
           status: "failed",
+          busy: false,
           started_at: "2026-07-23T11:00:00Z",
           finished_at: "2026-07-23T11:02:00Z",
           error: "source is unavailable",
@@ -324,12 +338,13 @@ describe("background jobs drawer", () => {
 
     expect(await screen.findByText("extract · plain text")).toBeTruthy();
     expect(screen.getByText("watch · inbox")).toBeTruthy();
+    expect(screen.getByText("Idle")).toBeTruthy();
     expect(screen.getByText("Failed")).toBeTruthy();
     expect(screen.getByText("Progress unavailable")).toBeTruthy();
-    expect(screen.getAllByText("Read-only")).toHaveLength(2);
+    expect(screen.getAllByText("Read-only")).toHaveLength(3);
     expect(screen.getByText("Finished")).toBeTruthy();
     expect(screen.getByText("source is unavailable")).toBeTruthy();
-    expect(screen.getByText("1 running · 2 total")).toBeTruthy();
+    expect(screen.getByText("1 running · 3 total")).toBeTruthy();
 
     await fireEvent.click(screen.getByRole("button", { name: "Close background jobs" }));
     expect(close).toHaveBeenCalledOnce();
@@ -346,6 +361,7 @@ describe("background jobs drawer", () => {
           lane: "photo_import",
           operation_id: id,
           status: "running",
+          busy: true,
           started_at: "2026-07-23T12:00:00Z",
           completed_objects: 75,
           total_objects: 300,
@@ -357,6 +373,7 @@ describe("background jobs drawer", () => {
           lane: "photo_import",
           operation_id: "b",
           status: "queued",
+          busy: false,
           started_at: "2026-07-23T12:00:20Z",
           total_objects: 1,
           can_cancel: true,
@@ -367,6 +384,7 @@ describe("background jobs drawer", () => {
           lane: "photo_checkout",
           operation_id: "checkout",
           status: "running",
+          busy: true,
           started_at: "2026-07-23T12:00:30Z",
           completed_objects: 1,
           total_objects: 2,
@@ -377,6 +395,7 @@ describe("background jobs drawer", () => {
           lane: "place",
           operation_id: placeId,
           status: "queued",
+          busy: false,
           started_at: "2026-07-23T12:01:00Z",
           can_cancel: true,
         },
@@ -384,6 +403,7 @@ describe("background jobs drawer", () => {
           name: "watch:inbox",
           lane: "watch:inbox",
           status: "running",
+          busy: true,
           started_at: "2026-07-23T11:00:00Z",
         },
       ]),
@@ -423,6 +443,7 @@ describe("background jobs drawer", () => {
         name: "extract:plain-text",
         lane: "extract:plain-text",
         status: "running",
+        busy: true,
         started_at: "2026-07-23T12:00:00Z",
       };
       const fetchSpy = vi
@@ -435,7 +456,9 @@ describe("background jobs drawer", () => {
           }),
         )
         .mockResolvedValueOnce(
-          jobsResponse([{ ...active, status: "completed", finished_at: "2026-07-23T12:05:00Z" }]),
+          jobsResponse([
+            { ...active, status: "completed", busy: false, finished_at: "2026-07-23T12:05:00Z" },
+          ]),
         );
 
       render(JobsDrawer, { session: "short-lived", onclose: vi.fn(), onauthfailure: vi.fn() });
@@ -463,6 +486,7 @@ describe("background jobs drawer", () => {
             kind: "photo_checkout_scan",
             lane: "photo_checkout",
             status: "running",
+            busy: true,
             started_at: "2026-01-01T00:00:00Z",
             total_objects: 2,
             completed_objects: 0,
@@ -475,6 +499,7 @@ describe("background jobs drawer", () => {
             kind: "photo_checkout_commit",
             lane: "photo_checkout",
             status: "failed",
+            busy: false,
             started_at: "2026-01-01T00:00:00Z",
             checkout_results: { clean: 2, conflict: 1 },
           },

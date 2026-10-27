@@ -17,6 +17,7 @@ import (
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/ingest"
+	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/loadfile"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -86,6 +87,7 @@ func NewPackageImportWorker(cfg PackageImportConfig) (*PackageImportWorker, erro
 }
 
 func (w *PackageImportWorker) Run(ctx context.Context) error {
+	jobs.ReportBusy(ctx, false)
 	delay := w.cfg.IdleDelay
 	for {
 		more, err := w.ProcessOnce(ctx)
@@ -125,6 +127,8 @@ func (w *PackageImportWorker) ProcessOnce(ctx context.Context) (more bool, err e
 	if err != nil {
 		return false, err
 	}
+	jobs.ReportBusy(ctx, true)
+	defer jobs.ReportBusy(ctx, false)
 	defer func() {
 		if err != nil {
 			releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
