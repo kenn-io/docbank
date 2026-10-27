@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"iter"
 	"maps"
 	"slices"
 	"strings"
@@ -129,17 +130,30 @@ func groupPhotoStackFrames(frames []photoStackFrame, gap int) [][]photoStackFram
 		return cmp.Or(strings.Compare(a.Folder, b.Folder), strings.Compare(a.CameraMake, b.CameraMake), strings.Compare(a.CameraModel, b.CameraModel), strings.Compare(a.BodySerialNumber, b.BodySerialNumber), comparePhotoStackFrames(a, b))
 	})
 	var groups [][]photoStackFrame
-	for start := 0; start < len(frames); {
-		end := start + 1
-		for end < len(frames) && photoStackChained(frames[start], frames[end-1], frames[end], gap) {
-			end++
+	for group := range photoStackSegments(frames, gap) {
+		if eligiblePhotoStack(group) {
+			groups = append(groups, group)
 		}
-		if eligiblePhotoStack(frames[start:end]) {
-			groups = append(groups, frames[start:end])
-		}
-		start = end
 	}
+
 	return groups
+}
+
+// photoStackSegments splits capture-ordered frames at the first-frame boundary.
+// Callers sort each camera partition before applying the decision size limit.
+func photoStackSegments(frames []photoStackFrame, gap int) iter.Seq[[]photoStackFrame] {
+	return func(yield func([]photoStackFrame) bool) {
+		for first := 0; first < len(frames); {
+			next := first + 1
+			for next < len(frames) && photoStackChained(frames[first], frames[next-1], frames[next], gap) {
+				next++
+			}
+			if !yield(frames[first:next]) {
+				return
+			}
+			first = next
+		}
+	}
 }
 
 // eligiblePhotoStack keeps every exposed stack within one authored edit.
@@ -683,82 +697,116 @@ func (p *photoStackPager) probe(ctx context.Context, current photoStackFrame, wi
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 		return nil, err
 	}
-	inputs := make(map[string]photoStackFrame, len(frames))
-	for _, frame := range frames {
-		inputs[frame.AssetID] = frame
-	}
-	if err := p.vectors.hydrate(ctx, p.q, inputs); err != nil {
-		return nil, err
-	}
-	for i := range frames {
-		frames[i] = inputs[frames[i].AssetID]
-	}
 	return frames, nil
 }
 
-// walk reads preceding candidates or appends the stack's following frames.
+// hydrate reuses page inputs and hydrates each walk's unread candidates together.
+func (p *photoStackPager) hydrate(ctx context.Context, inputs map[string]photoStackFrame) error {
+	missing := make(map[string]photoStackFrame)
+	for id, frame := range inputs {
+		if cached, ok := p.frames[id]; ok {
+			inputs[id] = cached
+		} else {
+			missing[id] = frame
+		}
+	}
+	if err := p.vectors.hydrate(ctx, p.q, missing); err != nil {
+		return err
+	}
+	for id, frame := range missing {
+		inputs[id], p.frames[id] = frame, frame
+	}
+	return nil
+}
+
+// walk batches preceding time candidates before comparing vectors. The first
+// frame can lie beyond the decision cap; only resolved segments use that cap.
 func (p *photoStackPager) walk(ctx context.Context, frame photoStackFrame, forward bool, component *photoStackComponent) error {
-	// Image grouping needs the earliest head, even when browsing backwards.
-	// Read preceding candidates by time first, then group them in capture order.
 	imageCandidates := !forward && len(p.vectors.indexes) > 0
-	for current := frame; len(component.frames) <= MaxPhotoStackFrames; {
-		window, ok := photoStackReach(current.SortKey, p.reach*photoStackProbeGaps, forward)
+	// A complete earlier segment has already proved where its following stack
+	// starts. Reuse that boundary instead of rereading the partition's history.
+	anchor := ""
+	if imageCandidates {
+		for _, known := range p.components {
+			if known.ineligible {
+				continue
+			}
+			last := known.frames[len(known.frames)-1]
+			if last.partition() == frame.partition() && comparePhotoStackFrames(last, frame) < 0 && last.SortKey > anchor {
+				anchor = last.SortKey
+			}
+		}
+	}
+	current := frame
+	for {
+		gaps := photoStackProbeGaps
+		if imageCandidates {
+			gaps = MaxPhotoStackFrames + 1
+		}
+		window, ok := photoStackReach(current.SortKey, p.reach*gaps, forward)
 		if !ok {
-			return nil
+			break
+		}
+		if imageCandidates && anchor > window {
+			window = anchor
 		}
 		read, err := p.probe(ctx, current, window, forward)
 		if err != nil {
 			return err
 		}
-		for i, next := range read {
-			var linked bool
-			if forward {
-				linked = photoStackChained(component.frames[0], current, next, p.gap)
-			} else if imageCandidates {
-				linked = p.imagePredecessorPossible(current, read[i:], window, len(read) > MaxPhotoStackFrames)
-			} else {
-				linked = photoStackChained(next, next, current, p.gap)
+		stopped := false
+		for _, next := range read {
+			if imageCandidates {
+				if known := p.components[next.AssetID]; known != nil && !known.ineligible {
+					stopped = true
+					break
+				}
 			}
-			if !linked {
-				return nil
+			reach, ok := photoStackReach(current.SortKey, p.gap, forward)
+			if imageCandidates {
+				reach, ok = photoStackReach(current.SortKey, p.reach, false)
+			} else if forward && len(p.vectors.indexes) > 0 {
+				imageReach, imageOK := photoStackReach(component.frames[0].SortKey, photoStackImageWindowSeconds, true)
+				if imageOK && (!ok || imageReach > reach) {
+					reach, ok = imageReach, true
+				}
+			}
+			if !ok || forward && next.SortKey > reach || !forward && next.SortKey < reach {
+				stopped = true
+				break
 			}
 			component.frames = append(component.frames, next)
-			if len(component.frames) > MaxPhotoStackFrames {
-				return nil
-			}
 			current = next
+			if !imageCandidates && len(component.frames) > MaxPhotoStackFrames {
+				stopped = true
+				break
+			}
 		}
-		// Continue only while unread frames could still join: the window was
-		// full, or the last frame's reach passes the window bound.
 		reach, ok := photoStackReach(current.SortKey, p.reach, forward)
-		if !ok || len(read) <= MaxPhotoStackFrames && (forward && reach <= window || !forward && reach >= window) {
-			return nil
+		if stopped || !ok || len(read) <= MaxPhotoStackFrames && (forward && reach <= window || !forward && reach >= window) {
+			break
+		}
+	}
+	inputs := make(map[string]photoStackFrame, len(component.frames))
+	for _, candidate := range component.frames {
+		inputs[candidate.AssetID] = candidate
+	}
+	if err := p.hydrate(ctx, inputs); err != nil {
+		return err
+	}
+	for i := range component.frames {
+		component.frames[i] = inputs[component.frames[i].AssetID]
+	}
+	if forward {
+		slices.SortFunc(component.frames, comparePhotoStackFrames)
+		// Conservative time reads may pass a dissimilar frame. Keep only the
+		// segment that starts at this stack's already resolved first frame.
+		for segment := range photoStackSegments(component.frames, p.gap) {
+			component.frames = segment
+			break
 		}
 	}
 	return nil
-}
-
-// imagePredecessorPossible checks every possible head within the image window.
-// A gap beyond the burst limit is a boundary once all those heads fail to link.
-func (p *photoStackPager) imagePredecessorPossible(current photoStackFrame, preceding []photoStackFrame, window string, full bool) bool {
-	reach, ok := photoStackReach(preceding[0].SortKey, p.gap, true)
-	if ok && current.SortKey <= reach {
-		return true
-	}
-	floor, ok := photoStackReach(current.SortKey, photoStackImageWindowSeconds, false)
-	if !ok {
-		return false
-	}
-	for _, head := range preceding {
-		if head.SortKey < floor {
-			return false
-		}
-		if photoStackChained(head, head, current, p.gap) {
-			return true
-		}
-	}
-	// A full probe or its time bound may leave possible heads unread.
-	return full && preceding[len(preceding)-1].SortKey >= floor || window > floor
 }
 
 // component resolves frame's stack from its first frame in capture order.
@@ -770,23 +818,18 @@ func (p *photoStackPager) component(ctx context.Context, frame photoStackFrame) 
 	if err := p.walk(ctx, frame, false, component); err != nil {
 		return nil, err
 	}
-	if len(component.frames) > MaxPhotoStackFrames {
+	if len(p.vectors.indexes) == 0 && len(component.frames) > MaxPhotoStackFrames {
 		p.remember(component)
 		return component, nil
 	}
 	if len(p.vectors.indexes) > 0 {
 		slices.SortFunc(component.frames, comparePhotoStackFrames)
 		frames := component.frames
-		for first := 0; first < len(frames); {
-			next := first + 1
-			for next < len(frames) && photoStackChained(frames[first], frames[next-1], frames[next], p.gap) {
-				next++
-			}
-			component = &photoStackComponent{frames: slices.Clone(frames[first:next])}
-			if next < len(frames) {
+		for segment := range photoStackSegments(frames, p.gap) {
+			component = &photoStackComponent{frames: slices.Clone(segment)}
+			if segment[len(segment)-1].AssetID != frame.AssetID {
 				p.remember(component)
 			}
-			first = next
 		}
 	}
 	if err := p.walk(ctx, frame, true, component); err != nil {
@@ -831,10 +874,9 @@ func (p *photoStackPager) prime(ctx context.Context, batch []PhotoBrowseRow, aft
 		return err
 	}
 
-	if err := p.vectors.hydrate(ctx, p.q, inputs); err != nil {
+	if err := p.hydrate(ctx, inputs); err != nil {
 		return err
 	}
-	p.frames = inputs
 	// A partial batch cannot establish the first frame of an image stack.
 	// Resolve it through the folder probes in capture order instead.
 	if len(p.vectors.indexes) > 0 {
@@ -878,13 +920,7 @@ func (p *photoStackPager) prime(ctx context.Context, batch []PhotoBrowseRow, aft
 	}
 	for _, frames := range partitions {
 		slices.SortFunc(frames, comparePhotoStackFrames)
-		for first := 0; first < len(frames); {
-			next := first + 1
-			for next < len(frames) && photoStackChained(frames[first], frames[next-1], frames[next], p.gap) {
-				next++
-			}
-			chain := frames[first:next]
-			first = next
+		for chain := range photoStackSegments(frames, p.gap) {
 			if known := slices.IndexFunc(chain, func(frame photoStackFrame) bool { return p.components[frame.AssetID] != nil }); known >= 0 {
 				// Probing stops at the cap. Connected rows beyond that
 				// point share the ineligible classification.
@@ -1047,7 +1083,7 @@ func (p *photoStackPager) frontier(ctx context.Context, boundary *PhotoBrowsePos
 		for _, seed := range seeds {
 			inputs[seed.AssetID] = seed
 		}
-		if err := p.vectors.hydrate(ctx, p.q, inputs); err != nil {
+		if err := p.hydrate(ctx, inputs); err != nil {
 			return "", err
 		}
 		for i := range seeds {

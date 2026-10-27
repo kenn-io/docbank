@@ -17,7 +17,6 @@ type photoStackCountingQuerier struct {
 	*sql.DB
 
 	generationReads int
-	hydratedFrames  int
 }
 
 func (q *photoStackCountingQuerier) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
@@ -25,13 +24,6 @@ func (q *photoStackCountingQuerier) QueryRowContext(ctx context.Context, query s
 		q.generationReads++
 	}
 	return q.DB.QueryRowContext(ctx, query, args...)
-}
-
-func (q *photoStackCountingQuerier) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
-	if strings.Contains(query, "evr.vector_set_id") {
-		q.hydratedFrames += len(args) - 1
-	}
-	return q.DB.QueryContext(ctx, query, args...)
 }
 
 func TestPhotoStackCorruptGenerationFallsBackToBurstGap(t *testing.T) {
@@ -94,15 +86,11 @@ func TestPhotoStackBackwardWalkBoundsImageCandidates(t *testing.T) {
 			pager, err := newPhotoStackPager(t.Context(), q, photoBrowseScope{match: compiledQueryFragment{sql: "1=1"}}, 2, true, "", vectors)
 			require.NoError(t, err)
 			defer func() { require.NoError(t, pager.Close()) }()
-			q.hydratedFrames = 0
+			hydrateCalls := 0
+			vectors.onHydrate = func(int) { hydrateCalls++ }
 			component := &photoStackComponent{frames: []photoStackFrame{frames[last]}}
 			require.NoError(t, pager.walk(t.Context(), frames[last], false, component))
-			if tc.seconds == 30 && !tc.indexed {
-				require.LessOrEqual(t, q.hydratedFrames, photoStackProbeGaps*2, "unindexed frames have a proven burst-gap boundary")
-			} else {
-				require.LessOrEqual(t, len(component.frames), MaxPhotoStackFrames+1)
-				require.LessOrEqual(t, q.hydratedFrames, MaxPhotoStackFrames*2+1)
-			}
+			require.LessOrEqual(t, hydrateCalls, 1, "batch image candidates before hydration")
 		})
 	}
 }

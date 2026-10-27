@@ -1903,6 +1903,19 @@ func TestReviewUnrelatedImageSpacePreservesStacks(t *testing.T) {
 		_, stacks := stackPages(t, s, captureRequest(t, direction))
 		require.Equal(t, [][]string{ids}, stacks)
 	}
+	// An unusable unrelated space must preserve the healthy shared space.
+	t.Run("corrupt other space", func(t *testing.T) {
+		_, err := s.db.Exec(`UPDATE vector_index_generations SET generation_bytes=zeroblob(byte_size) WHERE generation_id=?`, browseHash("unrelated-lower-image-space"))
+		require.NoError(t, err)
+		s.photoStackVectors = nil
+		groups, _, _, _, err := s.PhotoStackGroups(t.Context(), ids, false, "")
+		require.NoError(t, err)
+		require.Equal(t, [][]string{ids}, groups)
+		for _, direction := range []string{"asc", "desc"} {
+			_, stacks := stackPages(t, s, captureRequest(t, direction))
+			require.Equal(t, [][]string{ids}, stacks)
+		}
+	})
 }
 
 func TestPhotoStackImageLinksCompareFirstVector(t *testing.T) {
