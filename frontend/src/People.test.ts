@@ -73,35 +73,48 @@ it("keeps the search text with the applied query when the view returns", async (
   people.dispose();
   await cache.dispose();
 });
-it("submits a person rename from the dialog", async () => {
+it.each([false, true])("submits the dialog's rename revision after refresh=%s", async (refresh) => {
+  const current = { ...grace, display_name: "Grace Murray", revision: 5 };
   vi.spyOn(api, "listPeople").mockResolvedValue({
-    items: [{ ...grace, display_name: "Grace Hopper", revision: 5 }],
+    items: [refresh ? current : { ...grace, display_name: "Grace Hopper", revision: 5 }],
   });
   const access = new HiddenAccess("session", vi.fn());
   const people = new People("session", vi.fn(), access);
   people.items = [grace];
   const rename = vi
     .spyOn(api, "renamePerson")
-    .mockImplementation(async (_id, _request, _headers) =>
-      personResponse(grace, { display_name: "Grace Hopper", revision: 5 }),
-    );
+    .mockImplementation(async (_id, _request, headers) => {
+      if (refresh && headers?.["If-Match"] !== '"5"')
+        throw new APIError("Person changed; review the current name", 412, "stale_revision");
+      return personResponse(grace, { display_name: "Grace Hopper", revision: 5 });
+    });
   const cache = new PhotoPreviewCache("session", vi.fn());
   const view = render(PeopleView, { people, cache, onperson: vi.fn() });
   await fireEvent.click(screen.getByRole("button", { name: "Rename" }));
   const dialog = screen.getByRole("dialog", { name: "Rename Grace" });
+  if (refresh) await act(() => people.refresh());
   await fireEvent.input(within(dialog).getByRole("textbox", { name: "Person name" }), {
     target: { value: "Grace Hopper" },
   });
   await fireEvent.click(within(dialog).getByRole("button", { name: "Rename" }));
   await waitFor(() => expect(rename).toHaveBeenCalledOnce());
-  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  if (refresh) {
+    expect((await within(dialog).findByRole("alert")).textContent).toBe(
+      "Person changed; review the current name",
+    );
+    expect(
+      await screen.findByRole("button", { name: "Grace Murray 2 Library photos" }),
+    ).toBeTruthy();
+  } else {
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.getByRole("button", { name: "Grace Hopper 2 Library photos" })).toBeTruthy();
+  }
   expect(rename).toHaveBeenCalledOnce();
   expect(rename.mock.calls[0]!.slice(0, 3)).toEqual([
     "grace",
     { display_name: "Grace Hopper" },
     { "If-Match": `"${grace.revision}"` },
   ]);
-  expect(screen.getByRole("button", { name: "Grace Hopper 2 Library photos" })).toBeTruthy();
   view.unmount();
   people.dispose();
   access.dispose();

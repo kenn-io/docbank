@@ -476,24 +476,28 @@ it("keeps the cards and reports a failed People refresh", async () => {
   people.dispose();
 });
 
-it("refreshes the open merge before submitting its names and revisions", async () => {
+it("recovers a stale confirmed merge after refreshing the cards", async () => {
   const renamed = { ...ada, display_name: "Ada Lovelace", revision: 3 };
-  vi.spyOn(api, "listPeople").mockResolvedValue({ items: [renamed, grace] });
+  const currentGrace = { ...grace, revision: 5 };
+  const read = vi.spyOn(api, "listPeople").mockResolvedValue({ items: [renamed, currentGrace] });
   const merge = vi
     .spyOn(api, "mergePerson")
-    .mockImplementation(async (_, request) =>
-      personMergeReceipt(renamed, grace, request.operation_id),
-    );
+    .mockRejectedValue(new APIError("People changed; select them again", 412, "stale_revision"));
   const people = new People("session", vi.fn());
   people.items = [ada, grace];
   merging(people);
   await people.refresh();
-  expect(people.merge?.pair).toEqual([renamed, grace]);
-  expect(await people.submitMerge()).toBe(true);
+  expect(await people.submitMerge()).toBe(false);
   expect(merge.mock.calls[0]!.slice(0, 3)).toEqual([
     "grace",
-    { absorbed_person_id: "ada", absorbed_revision: 3, operation_id: expect.any(String) },
+    { absorbed_person_id: "ada", absorbed_revision: 2, operation_id: expect.any(String) },
     { "If-Match": '"4"' },
   ]);
+  expect(merge).toHaveBeenCalledOnce();
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(people.writeError).toBe("People changed; select them again");
+  expect(people.merge).toBeUndefined();
+  expect(people.selected).toEqual([]);
+  expect(people.items).toEqual([renamed, currentGrace]);
   people.dispose();
 });

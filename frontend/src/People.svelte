@@ -214,9 +214,7 @@
       class="rename-form"
       onsubmit={(event) => {
         event.preventDefault();
-        const current =
-          people.items.find((row) => row.person_id === editing!.person_id) ?? editing!;
-        void people.rename(current, name).then((saved) => {
+        void people.rename(editing!, name).then((saved) => {
           if (saved) close();
         });
       }}
