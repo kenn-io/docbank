@@ -289,6 +289,11 @@ nullability and uniqueness describe structural relationships. Existing released
 SQLite constraints are compatibility commitments; this rule does not authorize
 removing them from an immutable schema or migration.
 
+The `audit_record_single_genesis` partial unique index is the intentional
+exception to the closed-list rule: its three-kind predicate preserves one
+record per genesis kind, matching SQLite; it does not reject other kinds.
+Go still owns which record kinds are valid.
+
 #### PostgreSQL reference implementations
 
 Start with AgentsView's [backend parity rules][av-storage], shared
@@ -412,7 +417,21 @@ mutations, which still depend on catalogs that have not been ported.
     | Delete a version with person assertions | Advance `document_people_state.binding_epoch` and its update timestamp before cascades remove those assertions |
     | Delete a photo's version | Queue its node in `photo_timeline_pending` |
     | Change a photo node's current version | Queue its node when the version changes |
+    | Add or remove an audit membership | Queue eligible photo assets associated with that node in `photo_xmp_unsettled` |
+    | Add or remove audit authority | Queue every eligible photo asset in `photo_xmp_unsettled` |
     | Record a checksum | Keep the existing value immutable; reject a conflicting value in Go and omit runtime `UPDATE` privileges |
+
+    Shared audit mutation helpers must own the membership and authority effects
+    in the same transaction as those changes. PostgreSQL audit writes require
+    the photo catalogs and this maintenance; the audit tables alone are not
+    sufficient.
+
+    Shared Go validation must also enforce the audit invariants currently
+    covered by SQLite checks: one active authority row at `singleton=1`, known
+    record kinds, and positive stored operation sequences and entry counts
+    wherever present. Validate records before insertion and the complete
+    authority within the transaction, including imports and restores. The
+    PostgreSQL write paths must not rely on SQLite constraints for these rules.
 
     This table identifies the immediate dependencies of the core catalogs,
     not the complete trigger inventory. Bulk and cascading deletions must
