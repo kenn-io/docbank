@@ -300,6 +300,11 @@
             hasProductions ||= result.items.length > 0;
           }
         })
+        .then(() => {
+          pending--;
+          if (!controller.signal.aborted && session === webSession && pending === 0)
+            productionsDiscovered = true;
+        })
         .catch((cause: unknown) => {
           if (
             !controller.signal.aborted &&
@@ -308,11 +313,6 @@
             cause.status === 401
           )
             handleFailure(cause);
-        })
-        .finally(() => {
-          pending--;
-          if (!controller.signal.aborted && session === webSession && pending === 0)
-            productionsDiscovered = true;
         });
     }
     return () => controller.abort();

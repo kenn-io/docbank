@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import App from "./App.svelte";
 import { root } from "./version-test-fixtures.js";
 import { queryFingerprint, type Query } from "./query.js";
@@ -150,6 +150,21 @@ it("opens Trash directly", async () => {
   expect(
     screen.getByRole("button", { name: "Recoverable trash" }).getAttribute("aria-current"),
   ).toBe("page");
+});
+
+it("keeps Productions open when production discovery returns 500", async () => {
+  let finishPackages!: (response: Response) => void;
+  const packages = new Promise<Response>((resolve) => {
+    finishPackages = resolve;
+  });
+  start("/productions", "", packages);
+  await screen.findByRole("main", { name: "Productions" });
+  await act(() =>
+    finishPackages(Response.json({ detail: "Package index unavailable." }, { status: 500 })),
+  );
+  await waitFor(() => expect(screen.queryByText("Loading…")).toBeNull());
+  expect(location.pathname).toBe("/productions");
+  expect(screen.getByRole("main", { name: "Productions" })).toBeTruthy();
 });
 
 it("replaces unavailable Productions with All files after both listings resolve", async () => {
