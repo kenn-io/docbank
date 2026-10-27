@@ -1470,6 +1470,7 @@ With 50,000 people, 10,000 mail contacts, and 2,025,400 assertions on an AMD EPY
 | `page-24-name-summary` | 432.71 ms |
 | `page-24-recent-summary` | 361.33 ms |
 | `page-100-recent-prefix` | 27.72 ms |
+| `page-100-recent-prefix-broad` | 393 ms |
 | `page-100-recent-prefix-none` | 13.03 ms |
 | `page-24-recent-unranked-tail` | 453.82 ms |
 
