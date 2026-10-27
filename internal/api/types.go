@@ -214,7 +214,7 @@ type ProcessingJobEvent struct {
 
 type DocumentSourceFence struct {
 	VaultUID          string   `json:"vault_uid" format:"uuid"`
-	ContentVersionIDs []string `json:"content_version_ids" minItems:"1" maxItems:"4096" uniqueItems:"true"`
+	ContentVersionIDs []string `json:"content_version_ids" maxItems:"4096" uniqueItems:"true"`
 }
 
 type CoverageClass struct {
@@ -239,6 +239,7 @@ type CoverageReport struct {
 }
 
 type DocumentSearchRequest struct {
+	SkipMissLog  bool                `json:"skip_miss_log,omitzero"`
 	MediaSources MediaSearchSources  `json:"media_sources,omitzero" minItems:"1" maxItems:"4096" nullable:"false"`
 	Query        string              `json:"query" minLength:"1" maxLength:"8192"`
 	Mode         string              `json:"mode" enum:"auto,lexical,semantic,hybrid"`
@@ -403,6 +404,7 @@ type DocumentMediaSelection struct {
 }
 
 type DocumentSearchReport struct {
+	MissLogID            string                          `json:"miss_log_id,omitzero"`
 	MediaSelections      []DocumentMediaSelection        `json:"media_selections,omitzero" maxItems:"4096" nullable:"false"`
 	MediaSourceSelection bool                            `json:"media_source_selection,omitzero"`
 	RequestedMode        string                          `json:"requested_mode"`
@@ -921,6 +923,7 @@ type FuzzyReceipt struct {
 
 // SearchReport is one bounded search result page.
 type SearchReport struct {
+	MissLogID      string        `json:"miss_log_id,omitzero"`
 	Fuzzy          *FuzzyReceipt `json:"fuzzy,omitzero"`
 	Hits           []SearchHit   `json:"hits"`
 	Limit          int           `json:"limit"`

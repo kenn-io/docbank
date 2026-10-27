@@ -50,6 +50,35 @@ func (g *OperationGate) MutateContext(ctx context.Context, fn func() error) erro
 	return fn()
 }
 
+// TryMutateContext admits best-effort side effects without delaying a read
+// behind maintenance or a metadata freeze. Explicit mutations keep using the
+// ordinary admission path.
+func (g *OperationGate) TryMutateContext(ctx context.Context, fn func() error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	busy := func() error {
+		return NewError(http.StatusServiceUnavailable, "maintenance_busy", "vault mutation admission is busy")
+	}
+	if !g.admission.TryRLock() {
+		return busy()
+	}
+	if g.maintenance > 0 {
+		g.admission.RUnlock()
+		return busy()
+	}
+	admitted := g.mu.TryAcquire(1)
+	g.admission.RUnlock()
+	if !admitted {
+		return busy()
+	}
+	defer g.mu.Release(1)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return fn()
+}
+
 // MaintainContext runs daemon-owned physical maintenance with cancellation
 // while waiting for exclusive admission, using the same gate as HTTP maintenance.
 func (g *OperationGate) MaintainContext(ctx context.Context, fn func() error) error {

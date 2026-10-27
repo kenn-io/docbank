@@ -972,6 +972,7 @@ func IsCanonicalUUIDv4(value string) bool {
 // live directory's descendants, and an optional half-open modification-time
 // interval.
 type SearchOptions struct {
+	SkipMissLog    bool
 	Fuzzy          bool
 	TagID          string
 	MIMEType       string
@@ -1006,6 +1007,9 @@ func (c *Connection) SearchWithOptions(
 		return out, err
 	}
 	params := apiclient.SearchQuery{}
+	if opts.SkipMissLog {
+		params.SkipMissLog = new(true)
+	}
 	params.Q = new(query)
 	params.Limit = new(int64(limit))
 	if opts.Fuzzy {
@@ -1031,6 +1035,9 @@ func (c *Connection) SearchWithOptions(
 		return out, err
 	}
 	out = *apiResponse
+	if !validMissLogID(out.MissLogID) || (out.MissLogID != "" && (opts.SkipMissLog || len(out.Hits) != 0)) {
+		return api.SearchReport{}, errors.New("search response returned an invalid miss log receipt")
+	}
 	if out.TagID != opts.TagID || out.MIMEType != mimeType ||
 		out.UnderNodeID != opts.UnderNodeID || out.ModifiedSince != modifiedSince ||
 		out.ModifiedBefore != modifiedBefore {

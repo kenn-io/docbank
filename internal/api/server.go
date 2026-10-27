@@ -25,6 +25,7 @@ import (
 	"go.kenn.io/docbank/internal/exporter"
 	"go.kenn.io/docbank/internal/jobs"
 	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
+	"go.kenn.io/docbank/internal/misslog"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/reporting"
 	"go.kenn.io/docbank/internal/store"
@@ -58,6 +59,7 @@ type PublishEmailDocumentsFunc func(context.Context, *store.Store, *blob.Store, 
 
 // Deps assembles everything a Server needs to build its routes.
 type Deps struct {
+	MissLog               *misslog.Service
 	Store                 *store.Store
 	Blobs                 *blob.Store
 	VaultRoot             string // live vault root; backup restore must remain disjoint
@@ -129,8 +131,15 @@ func NewServer(d Deps) *Server {
 	if d.StartedAt.IsZero() {
 		d.StartedAt = time.Now()
 	}
+	if d.Gate == nil {
+		d.Gate = NewOperationGate()
+	}
+	if d.MissLog == nil {
+		d.MissLog = misslog.New(d.Store, d.Cfg.MissLog, d.Logger, d.Gate.MutateContext, d.Gate.TryMutateContext)
+	}
 	mux := http.NewServeMux()
 	cfg := huma.DefaultConfig("docbank", version.Version)
+	cfg.Transformers = append(cfg.Transformers, sanitizeMissLogErrorResponse)
 	cfg.Components.Schemas = huma.NewMapRegistry("#/components/schemas/", apiSchemaName)
 	jsonFormat := huma.Format{
 		Marshal: func(w io.Writer, value any) error {
@@ -171,9 +180,6 @@ func NewServer(d Deps) *Server {
 		s.termReports = reporting.NewCache(time.Now, s.reportBudget)
 	}
 	g := d.Gate
-	if g == nil {
-		g = NewOperationGate()
-	}
 	s.webSessions = newWebSessionRegistry(func(owner string) {
 		if d.Exports != nil {
 			d.Exports.CancelOwner(owner)
@@ -204,6 +210,7 @@ func NewServer(d Deps) *Server {
 
 	s.webSessions.login = newWebLoginPolicy(d)
 
+	registerMissLogRoutes(humaAPI, d, g)
 	registerReadRoutes(humaAPI, d) // Task 5 (stat-by-id lands in this task)
 	registerCollectionRoutes(humaAPI, d, g)
 	registerPeopleRebuildRoutes(humaAPI, d, g)

@@ -225,5 +225,36 @@ func validateIdentity(ctx context.Context, tx *sql.Tx, c Config) (uuid.UUID, err
 	if version != Version {
 		return uuid.Nil(), fmt.Errorf("postgres metadata schema version %d is not supported by this binary (requires %d)", version, Version)
 	}
+	if err := validateMissLogTable(ctx, tx, c); err != nil {
+		return uuid.Nil(), err
+	}
 	return id, nil
+}
+
+func validateMissLogTable(ctx context.Context, tx *sql.Tx, c Config) error {
+	var relation int64
+	var owner, kind, persistence string
+	err := tx.QueryRowContext(ctx, `SELECT c.oid, pg_get_userbyid(c.relowner), c.relkind, c.relpersistence
+		FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+		WHERE n.nspname=$1 AND c.relname='miss_log_records'`, c.Schema).Scan(&relation, &owner, &kind, &persistence)
+	if err != nil {
+		return fmt.Errorf("read postgres miss log table: %w", err)
+	}
+	if owner != c.SchemaOwner || kind != "r" || persistence != "p" {
+		return errors.New("postgres miss log must be a permanent table owned by the setup role")
+	}
+	var columns, keys int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM pg_attribute WHERE attrelid=$1 AND attnum>0 AND NOT attisdropped
+		AND attnotnull AND atttypid='text'::regtype AND attname IN ('id','created_at','receipt')`, relation).Scan(&columns); err != nil {
+		return err
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM pg_constraint c
+		JOIN pg_attribute a ON a.attrelid=c.conrelid AND c.conkey=ARRAY[a.attnum]
+		WHERE c.conrelid=$1 AND c.convalidated AND NOT c.condeferrable AND c.contype='p' AND a.attname='id'`, relation).Scan(&keys); err != nil {
+		return err
+	}
+	if columns != 3 || keys != 1 {
+		return errors.New("postgres miss log has an unsupported table layout")
+	}
+	return nil
 }

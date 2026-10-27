@@ -416,7 +416,7 @@ func TestSearchReadRejectsResultsOutsideResolvedFence(t *testing.T) {
 	assert.NotContains(t, err.Error(), otherVersion)
 }
 
-func TestSearchReadValidatesEmptyFenceWithoutCallingSearch(t *testing.T) {
+func TestSearchReadValidatesEmptyFenceThroughDaemonSearch(t *testing.T) {
 	for _, test := range []struct {
 		name, query, profile, wantCode string
 		wantError                      bool
@@ -428,7 +428,7 @@ func TestSearchReadValidatesEmptyFenceWithoutCallingSearch(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			searchCalls := 0
-			validationCalls := 0
+
 			emptyFingerprint, err := processing.SourceFenceFingerprint(processing.SourceFence{
 				VaultUID: testVaultID, ContentVersionIDs: []string{},
 			})
@@ -440,8 +440,14 @@ func TestSearchReadValidatesEmptyFenceWithoutCallingSearch(t *testing.T) {
 						Fence:            api.ResolvedDocumentSourceFence{VaultUID: testVaultID, ContentVersionIDs: []string{}},
 						FenceFingerprint: emptyFingerprint, ObservedScopeCount: 0,
 					})
-				case "/api/v1/search/validate":
-					validationCalls++
+				case "/api/v1/search":
+					searchCalls++
+					var input api.DocumentSearchRequest
+					if !assert.NoError(t, json.UnmarshalRead(request.Body, &input)) {
+						return
+					}
+					assert.Equal(t, testVaultID, input.Fence.VaultUID)
+					assert.Empty(t, input.Fence.ContentVersionIDs)
 					if test.wantError {
 						status := http.StatusInternalServerError
 						if test.wantCode == "processing_profile_unavailable" {
@@ -454,10 +460,7 @@ func TestSearchReadValidatesEmptyFenceWithoutCallingSearch(t *testing.T) {
 						})
 						return
 					}
-					writeDaemonJSON(t, response, api.DocumentSearchValidation{Valid: true})
-				case "/api/v1/search":
-					searchCalls++
-					http.Error(response, "search must not run for an empty fence", http.StatusInternalServerError)
+					writeDaemonJSON(t, response, api.DocumentSearchReport{MissLogID: strings.Repeat("a", 48), RequestedMode: "lexical", ActualMode: "lexical", Coverage: api.DocumentSearchCoverage{State: "complete"}, Results: []api.DocumentSearchResult{}})
 				default:
 					http.NotFound(response, request)
 				}
@@ -471,8 +474,7 @@ func TestSearchReadValidatesEmptyFenceWithoutCallingSearch(t *testing.T) {
 				"query": test.query, "mode": "lexical", "limit": 1, "profile": test.profile,
 				"filters": map[string]any{},
 			})
-			assert.Equal(t, 1, validationCalls)
-			assert.Zero(t, searchCalls)
+			assert.Equal(t, 1, searchCalls)
 			if test.wantError {
 				require.Error(t, err)
 				facts, ok := daemonProblemFacts(err)
@@ -484,6 +486,7 @@ func TestSearchReadValidatesEmptyFenceWithoutCallingSearch(t *testing.T) {
 			require.NoError(t, err)
 			output := structuredMap(t, result.StructuredContent)
 			assert.Equal(t, []any{}, output["results"])
+			assert.Equal(t, strings.Repeat("a", 48), output["miss_log_id"])
 			assert.EqualValues(t, 0, output["observed_scope_count"])
 		})
 	}

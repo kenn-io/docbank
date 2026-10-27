@@ -28,6 +28,7 @@ import (
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/mailbox"
 	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
+	"go.kenn.io/docbank/internal/misslog"
 	internalprocessing "go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 	docsqlite "go.kenn.io/docbank/sqlite"
@@ -103,10 +104,20 @@ type LooseCompressionOptions struct {
 	MinSavingsPercent int
 }
 
+// MissLogOptions enables private empty-search recording for an embedded owner.
+// Zero retention values select the daemon defaults. Records are excluded from
+// logical backups and portable metadata; raw database copies may retain them.
+type MissLogOptions struct {
+	Enabled       bool
+	RetentionDays int
+	MaxRecords    int
+}
+
 // Config selects one private vault root, its optional SQLite implementation,
 // and physical loose-storage policy. Nil SQLite uses mattn/go-sqlite3 in CGO
 // builds and modernc.org/sqlite when CGO is disabled.
 type Config struct {
+	MissLog          MissLogOptions
 	Root             string
 	SQLite           docsqlite.Driver
 	LooseCompression LooseCompressionOptions
@@ -138,6 +149,7 @@ type Vault struct {
 	spoolLock         *home.Lock
 	metadata          *store.Store
 	blobs             *blob.Store
+	missLog           *misslog.Service
 	documentReads     *api.DocumentReader
 	documentReadsOnce sync.Once
 	processing        *internalprocessing.Service
@@ -216,6 +228,13 @@ func normalizeVaultConfig(
 	}
 	bindingConfig := internalconfig.Default()
 	bindingConfig.StoreBindings = bindings
+	if config.MissLog.RetentionDays == 0 {
+		config.MissLog.RetentionDays = 90
+	}
+	if config.MissLog.MaxRecords == 0 {
+		config.MissLog.MaxRecords = 5000
+	}
+	bindingConfig.MissLog = internalconfig.MissLogConfig{Enabled: config.MissLog.Enabled, RetentionDays: config.MissLog.RetentionDays, MaxRecords: config.MissLog.MaxRecords}
 	if err := bindingConfig.Validate(); err != nil {
 		return Config{}, blob.Options{}, fmt.Errorf("docbank %w", err)
 	}
@@ -325,6 +344,8 @@ func openVaultWithRootOpener(
 		vaultRoot: config.Root, root: root, lock: lock, spoolLock: spoolLock, metadata: metadata, blobs: blobs,
 		emailSpoolParent: layout.BlobTmpDir(),
 	}
+	missLogGate := embeddedMutationGate{vault: vault}
+	vault.missLog = misslog.New(metadata, internalconfig.MissLogConfig{Enabled: config.MissLog.Enabled, RetentionDays: config.MissLog.RetentionDays, MaxRecords: config.MissLog.MaxRecords}, nil, missLogGate.MutateContext, missLogGate.TryMutateContext)
 	profiles := make(map[string]internalprocessing.ProfileConfig, len(config.Processing.Profiles))
 	for name, profile := range config.Processing.Profiles {
 		if profile.Profile.Rendition != nil && profile.Profile.Rendition.AdapterContract == document.VisionAdapterContract {
@@ -448,6 +469,24 @@ func (v *Vault) startProcessingWorker(ctx context.Context, run func(context.Cont
 }
 
 type embeddedMutationGate struct{ vault *Vault }
+
+var errEmbeddedMissLogBusy = errors.New("embedded miss log mutation admission is busy")
+
+func (gate embeddedMutationGate) TryMutateContext(ctx context.Context, fn func() error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// Automatic receipts are best effort; a long ordinary write must not
+	// make its caller's successful read wait for local diagnostics.
+	if !gate.vault.mutation.TryLock() {
+		return errEmbeddedMissLogBusy
+	}
+	defer gate.vault.mutation.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return fn()
+}
 
 func (gate embeddedMutationGate) MutateContext(ctx context.Context, fn func() error) error {
 	if err := ctx.Err(); err != nil {

@@ -143,6 +143,7 @@ var (
 // currentSchemaTables selects a subset of schema tables for column validation.
 var currentSchemaTables = [...]string{
 	"blobs", "blob_packs", "vault_metadata",
+	"miss_log_records",
 	"mailbox_containers", "mailbox_chunks",
 	"mailbox_archives", "mailbox_transfer_receipts",
 	"mailbox_jobs", "mailbox_occurrences",

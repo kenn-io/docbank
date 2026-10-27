@@ -406,6 +406,8 @@ type sourceFenceOutput struct {
 type searchDocumentsOutput struct {
 	privateCache
 
+	MissLogID string `json:"miss_log_id,omitempty"`
+
 	VaultID            string               `json:"vault_id"`
 	Fence              sourceFenceOutput    `json:"fence"`
 	FenceFingerprint   string               `json:"fence_fingerprint"`
@@ -438,20 +440,7 @@ func searchDocuments(
 		if callErr != nil {
 			return response{}, callErr
 		}
-		if len(resolution.Fence.ContentVersionIDs) == 0 {
-			callErr = c.ValidateDocumentSearch(ctx, api.DocumentSearchValidationRequest{
-				Query: input.Query, Mode: input.Mode, Limit: input.Limit, Profile: input.Profile,
-				BindingID: input.BindingID, Explain: input.Explain,
-			})
-			if callErr != nil {
-				return response{}, callErr
-			}
-			return response{resolution: resolution, report: api.DocumentSearchReport{
-				RequestedMode: effectiveSearchMode(input.Mode), ActualMode: effectiveEmptySearchMode(input.Mode),
-				Coverage:     api.DocumentSearchCoverage{State: "complete"},
-				Degradations: []string{}, Results: []api.DocumentSearchResult{}, Trace: []api.DocumentSearchTrace{},
-			}}, nil
-		}
+
 		report, callErr := c.SearchDocuments(ctx, api.DocumentSearchRequest{Query: input.Query,
 			Mode: input.Mode, Limit: input.Limit, Profile: input.Profile, BindingID: input.BindingID,
 			Explain: input.Explain, Fence: api.DocumentSourceFence{VaultUID: resolution.Fence.VaultUID,
@@ -477,7 +466,7 @@ func searchDocuments(
 	if err != nil {
 		return searchDocumentsOutput{}, nil, err
 	}
-	output := searchDocumentsOutput{VaultID: result.resolution.Fence.VaultUID,
+	output := searchDocumentsOutput{MissLogID: result.report.MissLogID, VaultID: result.resolution.Fence.VaultUID,
 		Fence: sourceFenceOutput{VaultID: result.resolution.Fence.VaultUID,
 			ContentVersionIDs: slices.Clone(result.resolution.Fence.ContentVersionIDs)},
 		FenceFingerprint:   result.resolution.FenceFingerprint,
@@ -510,13 +499,6 @@ func effectiveSearchMode(mode string) string {
 		return "auto"
 	}
 	return mode
-}
-
-func effectiveEmptySearchMode(mode string) string {
-	if mode == "semantic" || mode == "hybrid" {
-		return mode
-	}
-	return "lexical"
 }
 
 type getDocumentInput struct {

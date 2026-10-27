@@ -152,6 +152,16 @@ func TestRuntimeCannotChangeSchema(t *testing.T) {
 		_, err = Validate(t.Context(), selected, cfg)
 		require.ErrorContains(t, err, "requires a separate runtime role", "selecting a lesser role must not hide the login's privileges")
 	})
+	t.Run("missing miss log table", func(t *testing.T) {
+		_, err := setup.ExecContext(t.Context(), "ALTER TABLE documents.miss_log_records RENAME TO miss_log_records_hidden")
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			_, err := setup.ExecContext(context.Background(), "ALTER TABLE documents.miss_log_records_hidden RENAME TO miss_log_records")
+			require.NoError(t, err)
+		})
+		_, err = Validate(t.Context(), runtime, cfg)
+		require.Error(t, err)
+	})
 	_, err = setup.ExecContext(t.Context(), "UPDATE documents.vault_metadata SET schema_version=3")
 	require.NoError(t, err)
 	_, err = Validate(t.Context(), runtime, cfg)
