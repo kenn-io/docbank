@@ -3968,6 +3968,32 @@ export interface Message {
   start: number;
 }
 
+export interface MissLogIdentity {
+  /** @maxLength 36 */
+  content_version_id?: string;
+  /** @minimum 1 */
+  node_id: number;
+}
+
+export interface MissLogExportItem {
+  evidence_ids: string[];
+  expected: MissLogIdentity[];
+  question: string;
+  scope?: string;
+  source_record_id: string;
+}
+
+export type MissLogExportPageSkipped = {[key: string]: number};
+
+export interface MissLogExportPage {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  done: boolean;
+  items: MissLogExportItem[];
+  next_offset: number;
+  skipped: MissLogExportPageSkipped;
+}
+
 export type MissLogFeedbackVerdict = typeof MissLogFeedbackVerdict[keyof typeof MissLogFeedbackVerdict];
 
 
@@ -3977,13 +4003,6 @@ export const MissLogFeedbackVerdict = {
   low_confidence: 'low_confidence',
   none_in_vault: 'none_in_vault',
 } as const;
-
-export interface MissLogIdentity {
-  /** @maxLength 36 */
-  content_version_id?: string;
-  /** @minimum 1 */
-  node_id: number;
-}
 
 export interface MissLogFeedback {
   /** A URL to the JSON Schema for this object. */
@@ -9205,6 +9224,28 @@ limit?: number;
 offset?: number;
 };
 
+export type ExportMissLogParams = {
+format?: ExportMissLogFormat;
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+/**
+ * @minimum 0
+ * @maximum 100000
+ */
+offset?: number;
+};
+
+export type ExportMissLogFormat = typeof ExportMissLogFormat[keyof typeof ExportMissLogFormat];
+
+
+export const ExportMissLogFormat = {
+  eval: 'eval',
+  cards: 'cards',
+} as const;
+
 export type MoveNodeHeaders = {
 'If-Match': string;
 };
@@ -14317,6 +14358,37 @@ export const getListMissLogUrl = (params?: ListMissLogParams,) => {
 export const listMissLog = async (params?: ListMissLogParams, options?: Parameters<typeof sessionJSON>[1]): Promise<MissLogPage> => {
 
   return sessionJSON<MissLogPage>(getListMissLogUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getExportMissLogUrl = (params?: ExportMissLogParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/miss-log/export?${stringifiedParams}` : `/api/v1/miss-log/export`
+}
+
+/**
+ * @summary Export one bounded page of labeled search examples (operator only)
+ */
+export const exportMissLog = async (params?: ExportMissLogParams, options?: Parameters<typeof sessionJSON>[1]): Promise<MissLogExportPage> => {
+
+  return sessionJSON<MissLogExportPage>(getExportMissLogUrl(params),
   {
     ...options,
     method: 'GET'

@@ -9411,6 +9411,67 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/mailbox
         name: mailbox
+    MissLogExportItem:
+      additionalProperties: false
+      properties:
+        evidence_ids:
+          items:
+            type: string
+          type: array
+        expected:
+          items:
+            $ref: "#/components/schemas/MissLogIdentity"
+          type: array
+        question:
+          type: string
+        scope:
+          type: string
+        source_record_id:
+          type: string
+      required:
+        - source_record_id
+        - question
+        - expected
+        - evidence_ids
+      type: object
+      x-go-type: misslog.ExportItem
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/misslog
+        name: misslog
+    MissLogExportPage:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/MissLogExportPage.json
+          format: uri
+          readOnly: true
+          type: string
+        done:
+          type: boolean
+        items:
+          items:
+            $ref: "#/components/schemas/MissLogExportItem"
+          type: array
+        next_offset:
+          format: int64
+          type: integer
+        skipped:
+          additionalProperties:
+            format: int64
+            type: integer
+          type: object
+      required:
+        - items
+        - skipped
+        - next_offset
+        - done
+      type: object
+      x-go-type: misslog.ExportPage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/misslog
+        name: misslog
     MissLogFeedback:
       additionalProperties: false
       properties:
@@ -24898,6 +24959,54 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: List private search receipts (operator only)
+  /api/v1/miss-log/export:
+    get:
+      operationId: exportMissLog
+      parameters:
+        - explode: false
+          in: query
+          name: format
+          schema:
+            enum:
+              - eval
+              - cards
+            type: string
+        - explode: false
+          in: query
+          name: limit
+          schema:
+            default: 100
+            format: int64
+            maximum: 100
+            minimum: 1
+            type: integer
+        - explode: false
+          in: query
+          name: offset
+          schema:
+            default: 0
+            format: int64
+            maximum: 100000
+            minimum: 0
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MissLogExportPage"
+          description: OK
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Export one bounded page of labeled search examples (operator only)
   /api/v1/miss-log/{id}:
     delete:
       operationId: deleteMissLogRecord

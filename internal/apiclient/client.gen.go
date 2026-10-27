@@ -5982,6 +5982,59 @@ func (c *Client) ListMissLog(ctx context.Context, options *ListMissLogRequestOpt
 	return responseParser(ctx, resp)
 }
 
+// ExportMissLog Export one bounded page of labeled search examples (operator only)
+func (c *Client) ExportMissLog(ctx context.Context, options *ExportMissLogRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ExportMissLogResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"format": {Style: "form", Explode: &[]bool{false}[0]},
+		"limit":  {Style: "form", Explode: &[]bool{false}[0]},
+		"offset": {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/miss-log/export",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ExportMissLogResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ExportMissLogResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ExportMissLogResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ExportMissLogErrorResponse](resp, "ExportMissLogErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/miss-log/export")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // DeleteMissLogRecord Delete one private search receipt (operator only)
 func (c *Client) DeleteMissLogRecord(ctx context.Context, options *DeleteMissLogRecordRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
 	var err error
@@ -19510,6 +19563,37 @@ func (o *ListMissLogRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// ExportMissLogRequestOptions is the options needed to make a request to ExportMissLog.
+type ExportMissLogRequestOptions struct {
+	Query *ExportMissLogQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ExportMissLogRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ExportMissLogRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ExportMissLogRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ExportMissLogRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // DeleteMissLogRecordRequestOptions is the options needed to make a request to DeleteMissLogRecord.
 type DeleteMissLogRecordRequestOptions struct {
 	PathParams *DeleteMissLogRecordPath
@@ -26092,6 +26176,13 @@ const (
 	ListDocumentsQueryDirectionDesc ListDocumentsQueryDirection = "desc"
 )
 
+type ExportMissLogQueryFormat string
+
+const (
+	Cards ExportMissLogQueryFormat = "cards"
+	Eval  ExportMissLogQueryFormat = "eval"
+)
+
 type ListPackagesQueryDirection string
 
 const (
@@ -27487,6 +27578,12 @@ type ListMissLogQuery struct {
 	Offset *int64 `json:"offset,omitempty"`
 }
 
+type ExportMissLogQuery struct {
+	Format *ExportMissLogQueryFormat `json:"format,omitempty"`
+	Limit  *int64                    `json:"limit,omitempty"`
+	Offset *int64                    `json:"offset,omitempty"`
+}
+
 type ListChildrenQuery struct {
 	Limit  *int64 `json:"limit,omitempty"`
 	Offset *int64 `json:"offset,omitempty"`
@@ -28187,6 +28284,10 @@ type DeleteMissLogErrorResponse = Error
 type ListMissLogResponse = api.MissLogPage
 
 type ListMissLogErrorResponse = Error
+
+type ExportMissLogResponse = misslog.ExportPage
+
+type ExportMissLogErrorResponse = Error
 
 type DeleteMissLogRecordErrorResponse = Error
 
@@ -29851,6 +29952,10 @@ type Member = bundle.Member
 type MergePersonRequest = api.MergePersonRequest
 
 type Message = mailbox.Message
+
+type MissLogExportItem = misslog.ExportItem
+
+type MissLogExportPage = misslog.ExportPage
 
 type MissLogFeedback = misslog.Feedback
 
