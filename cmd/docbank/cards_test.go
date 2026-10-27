@@ -122,7 +122,7 @@ Test answer.
 
 // Seed synthetic retained evidence before the daemon acquires vault ownership.
 // Approval itself and every assertion use the ordinary daemon API.
-func setupApprovalCard(t *testing.T, quote string) (*daemonconn.Connection, api.Node) {
+func setupApprovalCard(t *testing.T, quote string, currentText ...string) (*daemonconn.Connection, api.Node) {
 	t.Helper()
 	root := t.TempDir()
 	f := newReportRenditionFixture(t)
@@ -179,6 +179,27 @@ state: draft
 Test answer.
 `, catalog.VaultID(), written.Node.ID, written.Node.CurrentVersionID, written.Node.BlobHash,
 		attachment.ID, build.ID, build.MarkdownChecksum, start, start+4, quote)
+	if len(currentText) > 0 {
+		receipt, err := blobs.WriteDetailedContext(t.Context(), strings.NewReader("replacement synthetic source"))
+		require.NoError(t, err)
+		encoding, err := receipt.EncodingName()
+		require.NoError(t, err)
+		node, _, err := catalog.ReplaceContent(t.Context(), written.Node.ID, written.Node.Revision,
+			receipt.Hash, receipt.Size, "application/pdf", store.BlobPhysical{
+				Encoding: encoding, StoredBytes: receipt.StoredSize, PackEligible: receipt.PackEligible,
+				MD5: receipt.MD5, Created: receipt.Created,
+			})
+		require.NoError(t, err)
+		if currentText[0] != "unavailable" {
+			f.publish(t, catalog, blobs, node, document.SourceEvidenceV1{
+				ContractVersion: document.SourceEvidenceContractV1, Completeness: document.EvidenceComplete,
+				Family: "pdf", UnitKind: document.EvidenceUnitPage,
+				Units: []document.SourceEvidenceUnitV1{{Order: 0, Text: currentText[0],
+					Locator: document.SourceEvidenceLocatorV1{Kind: document.EvidenceLocatorPage,
+						IndexOrigin: document.EvidenceIndexOriginOne, Start: 1, End: 1}}},
+			})
+		}
+	}
 	require.NoError(t, blobs.Close())
 	require.NoError(t, catalog.Close())
 	fixture := pdfReportFixture{reportRenditionFixture: f, root: root}

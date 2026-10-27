@@ -14,7 +14,7 @@ import (
 )
 
 var cardsRoot string
-var cardsDeep, cardsJSON, cardsRun, cardsYes bool
+var cardsDeep, cardsJSON, cardsRun, cardsYes, cardsRebind bool
 var cardsCmd = &cobra.Command{Use: "cards", Short: "Manage cards", Long: "Inspect answer cards and report whether their cited sources remain current.", GroupID: groupDocuments}
 var cardsCheckCmd = &cobra.Command{
 	Use: "check", Short: "Report answer card states", Args: cobra.NoArgs,
@@ -84,7 +84,11 @@ var cardsApproveCmd = &cobra.Command{
 		if !strings.HasPrefix(node.Path, strings.TrimSuffix(root, "/")+"/") {
 			return fmt.Errorf("invalid_card: card is outside root %s", root)
 		}
-		err = answercard.Approve(cmd.Context(), c, node, func(card answercard.Card, paths []string) (bool, error) {
+		approve := answercard.Approve
+		if cardsRebind {
+			approve = answercard.ApproveRebind
+		}
+		err = approve(cmd.Context(), c, node, func(card answercard.Card, paths []string) (bool, error) {
 			w := cmd.OutOrStdout()
 			if _, err := fmt.Fprintf(w, "Question: %s\n", card.Question); err != nil {
 				return false, fmt.Errorf("writing approval preview: %w", err)
@@ -131,6 +135,7 @@ func init() {
 	cardsCheckCmd.Flags().BoolVar(&cardsRun, "run", false, "record newly stale cards")
 	cardsApproveCmd.Flags().StringVar(&cardsRoot, "root", "/answer-cards", "card folder")
 	cardsApproveCmd.Flags().BoolVar(&cardsYes, "yes", false, "approve without prompting")
+	cardsApproveCmd.Flags().BoolVar(&cardsRebind, "rebind", false, "find saved quotes uniquely in current renditions before approval")
 	cardsCmd.AddCommand(cardsApproveCmd)
 	cardsCheckCmd.Flags().BoolVar(&cardsDeep, "deep", false, "resolve cited quotations")
 	cardsCheckCmd.Flags().BoolVar(&cardsJSON, "json", false, "print JSON to stdout")

@@ -33,7 +33,7 @@ func rewriteLifecycle(data []byte, state State, hash, at string, stale *StaleInf
 	return rewriteCard(data, state, hash, at, stale, nil)
 }
 
-// rewriteCard also fills quotation fields that were resolved for owner review.
+// rewriteCard updates citations shown for owner review while keeping annotations.
 func rewriteCard(data []byte, state State, hash, at string, stale *StaleInfo, citations []Citation) ([]byte, error) {
 	if _, err := Parse(data); err != nil {
 		return nil, err
@@ -84,21 +84,31 @@ func rewriteCard(data []byte, state State, hash, at string, stale *StaleInfo, ci
 			if mapping.Content[i].Value != "citations" {
 				continue
 			}
+			if len(mapping.Content[i+1].Content) != len(citations) {
+				return nil, errors.New("invalid_card: citation count changed during rewrite")
+			}
 			for j, citation := range mapping.Content[i+1].Content {
-				var quote *yaml.Node
-				for k := 0; k < len(citation.Content); k += 2 {
-					if citation.Content[k].Value == "quote" {
-						quote = citation.Content[k+1]
-						break
+				var replacement yaml.Node
+				if err := replacement.Encode(citations[j]); err != nil {
+					return nil, fmt.Errorf("encoding rebound citation: %w", err)
+				}
+				for k := 0; k < len(replacement.Content); k += 2 {
+					key, value := replacement.Content[k], replacement.Content[k+1]
+					found := false
+					for n := 0; n < len(citation.Content); n += 2 {
+						if citation.Content[n].Value == key.Value {
+							original := citation.Content[n+1]
+							value.HeadComment, value.LineComment, value.FootComment = original.HeadComment, original.LineComment, original.FootComment
+							value.Style = original.Style
+							citation.Content[n+1] = value
+							found = true
+							break
+						}
+					}
+					if !found {
+						citation.Content = append(citation.Content, key, value)
 					}
 				}
-				if quote == nil {
-					quote = &yaml.Node{Kind: yaml.ScalarNode}
-					citation.Content = append(citation.Content,
-						&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "quote"}, quote)
-				}
-				quote.Tag = "!!str"
-				quote.Value = citations[j].Quote
 			}
 		}
 	}
@@ -163,6 +173,10 @@ func loadCard(ctx context.Context, c *daemonconn.Connection, node api.Node) (Car
 // Approve validates and displays the card through confirm, then repeats all
 // source and quotation reads after confirmation before attempting the write.
 func Approve(ctx context.Context, c *daemonconn.Connection, node api.Node, confirm func(Card, []string) (bool, error)) error {
+	return approve(ctx, c, node, confirm, false)
+}
+
+func approve(ctx context.Context, c *daemonconn.Connection, node api.Node, confirm func(Card, []string) (bool, error), rebind bool) error {
 	card, data, err := loadCard(ctx, c, node)
 	if err != nil {
 		return err
@@ -174,6 +188,14 @@ func Approve(ctx context.Context, c *daemonconn.Connection, node api.Node, confi
 	for _, cite := range card.Citations {
 		if cite.VaultUID.String() != info.VaultID {
 			return errors.New("invalid_card: citation belongs to another vault")
+		}
+	}
+	if rebind {
+		for i, citation := range card.Citations {
+			card.Citations[i], err = rebindCitation(ctx, c, citation)
+			if err != nil {
+				return fmt.Errorf("citation %d: %w", i, err)
+			}
 		}
 	}
 	check := func(fill bool) ([]string, error) {

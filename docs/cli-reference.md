@@ -2053,7 +2053,7 @@ like ordinary documents and is not independent evidence for its own answer.
 ## docbank cards approve
 
 ```text
-docbank cards approve <path-or-id> [--root /answer-cards] [--yes]
+docbank cards approve <path-or-id> [--root /answer-cards] [--rebind] [--yes]
 ```
 
 Checks that each source is current and each quotation matches, then shows the
@@ -2065,6 +2065,18 @@ The command checks the sources again after confirmation and writes the approval
 only if the card revision still matches.
 Source checks are not an atomic snapshot. A stale card stays stale until it is
 approved again after its citations are updated.
+
+Use `--rebind` after a source update or revert to find each saved `quote` in
+the source's current rendition. The command chooses the active rendition with
+the lowest profile fingerprint, then attachment ID and build ID. It scans the
+complete rendition in windows of up to 16,000 Unicode code points and requires
+exactly one occurrence, including overlapping occurrences and window boundaries.
+Each citation scan is limited to 1,048,576 code points and 4 MiB of UTF-8 text.
+The rendition identity and full checksum must remain consistent throughout the
+scan. An empty, missing or ambiguous quote, an unavailable rendition, or a scan
+over the limit requires manual citation editing. Rebound citations and quotations
+are shown for approval and saved together only after the ordinary source and
+card revision checks pass. A refusal leaves the card unchanged.
 
 
 ## docbank cards match
