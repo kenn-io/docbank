@@ -25,6 +25,7 @@ func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
 	wantNames := []string{
 		"read_document_content",
 		"resolve_text_citation", "get_text_outline", "read_text_section",
+		"get_kata_context",
 		"get_export_plan", "get_export_problems",
 		"get_report_summary", "get_report_dates",
 		"get_export_status",
@@ -45,7 +46,7 @@ func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
 		assert.True(t, tool.Annotations.ReadOnlyHint)
 		assert.True(t, tool.Annotations.IdempotentHint)
 		assert.Equal(t, new(false), tool.Annotations.DestructiveHint)
-		assert.Equal(t, new(false), tool.Annotations.OpenWorldHint)
+		assert.Equal(t, new(tool.Name == "get_kata_context"), tool.Annotations.OpenWorldHint)
 		assertSchemaContract(t, tool.InputSchema)
 		assertSchemaContract(t, tool.OutputSchema)
 		assert.Equal(t, map[string]any{"maxResponseBytes": maxToolResponseBytes}, tool.Meta["io.docbank/bounds"])
@@ -76,6 +77,7 @@ func TestWriteToolsAreIndependentConstructionTimeOptIns(t *testing.T) {
 	}{
 		{},
 		{options: ServerOptions{AllowProcessing: true}, writes: []string{"start_processing"}},
+		{options: ServerOptions{AllowKataWrites: true}, writes: []string{"cite_kata_evidence"}},
 		{options: ServerOptions{AllowPackageWrites: true}, writes: []string{"preflight_load_file_package", "start_package_import", "resolve_package_custodian", "assign_package_custodian", "ensure_bates_namespace", "reserve_bates_range", "publish_bates_export", "export_bates_file", "export_load_file_package"}},
 		{options: ServerOptions{AllowProcessing: true, AllowPackageWrites: true}, writes: []string{"start_processing", "preflight_load_file_package", "start_package_import", "resolve_package_custodian", "assign_package_custodian", "ensure_bates_namespace", "reserve_bates_range", "publish_bates_export", "export_bates_file", "export_load_file_package"}},
 	} {
@@ -101,7 +103,7 @@ func TestWriteToolsAreIndependentConstructionTimeOptIns(t *testing.T) {
 }
 
 func TestToolsListTransmitsRegisteredSchemasAnnotationsAndBounds(t *testing.T) {
-	server := newServerWithOptions(testImplementation(), ServerOptions{AllowProcessing: true, AllowPackageWrites: true})
+	server := newServerWithOptions(testImplementation(), ServerOptions{AllowProcessing: true, AllowPackageWrites: true, AllowKataWrites: true})
 	listed := decodeResult(t, exchangeRaw(t, server, requestFor("tools/list", map[string]any{})))
 	assert.EqualValues(t, toolCatalogTTLMs, listed["ttlMs"])
 	assert.Equal(t, "public", listed["cacheScope"])
@@ -109,7 +111,7 @@ func TestToolsListTransmitsRegisteredSchemasAnnotationsAndBounds(t *testing.T) {
 	assert.Empty(t, listed["nextCursor"])
 	wireTools := listedToolsByName(t, listed)
 	registered := catalogMap(toolCatalog(ServerOptions{
-		AllowProcessing: true, AllowPackageWrites: true,
+		AllowProcessing: true, AllowPackageWrites: true, AllowKataWrites: true,
 	}))
 	require.Len(t, wireTools, len(registered))
 

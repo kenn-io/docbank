@@ -15,6 +15,8 @@ import (
 	redaction "go.kenn.io/docbank/document/redaction"
 	api "go.kenn.io/docbank/internal/api"
 	backupapp "go.kenn.io/docbank/internal/backupapp"
+	kataclient "go.kenn.io/docbank/internal/kataclient"
+	kataevidence "go.kenn.io/docbank/internal/kataevidence"
 	loadfile "go.kenn.io/docbank/internal/loadfile"
 	mailbox "go.kenn.io/docbank/internal/mailbox"
 	pdfproduction "go.kenn.io/docbank/internal/pdfproduction"
@@ -4517,6 +4519,100 @@ func (c *Client) CancelStorageOperation(ctx context.Context, options *CancelStor
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/jobs/{operation_id}/cancel")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// CiteKataEvidence Quote a verified document passage into a new or existing Kata issue
+func (c *Client) CiteKataEvidence(ctx context.Context, options *CiteKataEvidenceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CiteKataEvidenceResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/kata/cite",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CiteKataEvidenceResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(CiteKataEvidenceResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CiteKataEvidenceResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CiteKataEvidenceErrorResponse](resp, "CiteKataEvidenceErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/kata/cite")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetKataContext Read Docbank evidence and its current state from a Kata issue
+func (c *Client) GetKataContext(ctx context.Context, options *GetKataContextRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetKataContextResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/kata/context",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetKataContextResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetKataContextResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetKataContextResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetKataContextErrorResponse](resp, "GetKataContextErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/kata/context")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -18182,6 +18278,62 @@ func (o *CancelStorageOperationRequestOptions) GetHeader() (map[string]string, e
 	return nil, nil
 }
 
+// CiteKataEvidenceRequestOptions is the options needed to make a request to CiteKataEvidence.
+type CiteKataEvidenceRequestOptions struct {
+	Body *CiteKataEvidenceBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CiteKataEvidenceRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *CiteKataEvidenceRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CiteKataEvidenceRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CiteKataEvidenceRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetKataContextRequestOptions is the options needed to make a request to GetKataContext.
+type GetKataContextRequestOptions struct {
+	Body *GetKataContextBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetKataContextRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetKataContextRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetKataContextRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetKataContextRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // RegisterMailboxArchiveRequestOptions is the options needed to make a request to RegisterMailboxArchive.
 type RegisterMailboxArchiveRequestOptions struct {
 	Body *RegisterMailboxArchiveBody
@@ -26423,6 +26575,10 @@ type StreamIngestBody = IngestRequest
 
 type SetLaneControlBody = SetLaneControlRequest
 
+type CiteKataEvidenceBody = CiteRequest
+
+type GetKataContextBody = ContextRequest
+
 type RegisterMailboxArchiveBody = MailboxArchiveInput
 
 type BeginMailboxContainerBody = MailboxContainerInput
@@ -27436,6 +27592,54 @@ type GetStorageOperationErrorResponse = Error
 type CancelStorageOperationResponse = api.StorageOperation
 
 type CancelStorageOperationErrorResponse = Error
+
+type CiteKataEvidenceResponse = kataclient.Issue
+
+type CiteKataEvidenceErrorResponse api.Error
+
+type CiteKataEvidenceErrorResponseApplicationProblemPlusJSON api.Error
+
+type CiteKataEvidenceErrorResponseApplicationProblemPlusJSON403 api.Error
+
+type CiteKataEvidenceErrorResponseApplicationProblemPlusJSON404 api.Error
+
+type CiteKataEvidenceErrorResponseApplicationProblemPlusJSON409 api.Error
+
+type CiteKataEvidenceErrorResponseApplicationProblemPlusJSON413 api.Error
+
+type CiteKataEvidenceErrorResponseApplicationProblemPlusJSON422 api.Error
+
+type CiteKataEvidenceErrorResponseApplicationProblemPlusJSON500 api.Error
+
+type CiteKataEvidenceErrorResponseApplicationProblemPlusJSON502 api.Error
+
+type CiteKataEvidenceErrorResponseApplicationProblemPlusJSON503 api.Error
+
+type CiteKataEvidenceErrorResponseApplicationProblemPlusJSON504 api.Error
+
+type GetKataContextResponse = kataevidence.Context
+
+type GetKataContextErrorResponse api.Error
+
+type GetKataContextErrorResponseApplicationProblemPlusJSON api.Error
+
+type GetKataContextErrorResponseApplicationProblemPlusJSON403 api.Error
+
+type GetKataContextErrorResponseApplicationProblemPlusJSON404 api.Error
+
+type GetKataContextErrorResponseApplicationProblemPlusJSON409 api.Error
+
+type GetKataContextErrorResponseApplicationProblemPlusJSON413 api.Error
+
+type GetKataContextErrorResponseApplicationProblemPlusJSON422 api.Error
+
+type GetKataContextErrorResponseApplicationProblemPlusJSON500 api.Error
+
+type GetKataContextErrorResponseApplicationProblemPlusJSON502 api.Error
+
+type GetKataContextErrorResponseApplicationProblemPlusJSON503 api.Error
+
+type GetKataContextErrorResponseApplicationProblemPlusJSON504 api.Error
 
 type RegisterMailboxArchiveResponse = store.MailboxArchive
 
@@ -28704,6 +28908,8 @@ type CapabilityStateV1 = document.CapabilityStateV1
 
 type CatalogEntry = loadfile.CatalogEntry
 
+type CiteRequest = kataevidence.CiteRequest
+
 type Collection = api.Collection
 
 type CollectionLabel = api.CollectionLabel
@@ -28731,6 +28937,10 @@ type ContentVerification = api.ContentVerification
 type ContentVersion = api.ContentVersion
 
 type ContentVersionPage = api.ContentVersionPage
+
+type Context = kataevidence.Context
+
+type ContextRequest = kataevidence.ContextRequest
 
 type Counts = report.Counts
 
@@ -28813,6 +29023,8 @@ type DocumentMediaSourceSelector = api.DocumentMediaSourceSelector
 type DocumentMissingCoverage = api.DocumentMissingCoverage
 
 type DocumentPage = api.DocumentPage
+
+type DocumentReference = kataevidence.DocumentReference
 
 type DocumentRenditionIdentity = api.DocumentRenditionIdentity
 
@@ -28989,6 +29201,8 @@ type Error = api.Error
 
 type ErrorPosition = api.ErrorPosition
 
+type Evidence = kataevidence.Evidence
+
 type EvidenceLexicalPolicyV1 = document.EvidenceLexicalPolicyV1
 
 type EvidencePolicyIdentity = document.EvidencePolicyIdentity
@@ -29074,6 +29288,8 @@ type InitBackupRepositoryRequest struct {
 	Schema *string `json:"$schema,omitempty"`
 	Repo   *string `json:"repo,omitempty"`
 }
+
+type Issue = kataclient.Issue
 
 type IssueTermReportDownloadRequest struct {
 	// Schema A URL to the JSON Schema for this object.
@@ -29339,6 +29555,8 @@ type PageRuntimeIdentity = document.PageRuntimeIdentity
 type PageSelectionRequest = api.PageSelectionRequest
 
 type PageSource = document.PageSource
+
+type Pending = kataevidence.Pending
 
 type PendingFormatV1 = document.PendingFormatV1
 
@@ -29712,6 +29930,8 @@ type RedactionResolveRequest = processing.RedactionResolveRequest
 
 type RedactionReview = processing.RedactionReview
 
+type Reference = kataevidence.Reference
+
 type RegisterBlobStoreRequest struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema       *string `json:"$schema,omitempty"`
@@ -29802,6 +30022,8 @@ type RenditionTextWindow = api.RenditionTextWindow
 type RenditionWindowRequest = api.RenditionWindowRequest
 
 type Request = report.Request
+
+type Resolution = kataevidence.Resolution
 
 type ResolvedDocumentSourceFence = api.ResolvedDocumentSourceFence
 
@@ -29927,6 +30149,8 @@ type SearchHit = api.SearchHit
 type SearchReport = api.SearchReport
 
 type SelectedDocuments = report.SelectedDocuments
+
+type Selector = kataevidence.Selector
 
 type SetCollectionLabelRequest struct {
 	// Schema A URL to the JSON Schema for this object.

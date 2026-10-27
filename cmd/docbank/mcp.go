@@ -25,6 +25,7 @@ var (
 	mcpAllowPhotoEdits    bool
 	mcpAllowExportWrites  bool
 	mcpAllowReportWrites  bool
+	mcpAllowKataWrites    bool
 )
 
 var mcpCmd = &cobra.Command{
@@ -69,7 +70,7 @@ func runMCP(cmd *cobra.Command) (retErr error) {
 	server := docmcp.NewServerWithOptions(docmcp.ServerOptions{
 		AllowProcessing: mcpAllowProcessing, AllowPackageWrites: mcpAllowPackageWrites,
 		AllowPhotoEdits: mcpAllowPhotoEdits, AllowExportWrites: mcpAllowExportWrites,
-		AllowReportWrites: mcpAllowReportWrites, Logger: logger,
+		AllowReportWrites: mcpAllowReportWrites, AllowKataWrites: mcpAllowKataWrites, Logger: logger,
 	})
 	switch mcpTransport {
 	case "stdio":
@@ -188,5 +189,7 @@ func init() {
 		"allow native export preview, start, cancel, local download, and explicit release")
 	mcpCmd.Flags().BoolVar(&mcpAllowReportWrites, "allow-report-writes", false,
 		"allow frozen report creation, reviewed revisions, verified downloads, and explicit release")
+	mcpCmd.Flags().BoolVar(&mcpAllowKataWrites, "allow-kata-writes", false,
+		"allow quoting exact verified Docbank passages into Kata issues")
 	rootCmd.AddCommand(mcpCmd)
 }

@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-10
+last_edited: 2026-10-17
 title: Model Context Protocol
 description: Connect a local MCP client to Docbank's read-mostly document tools through the daemon.
 ---
@@ -100,7 +100,8 @@ Both transports have the fixed read catalog described below.
 changes. `--allow-photo-edits` permits photo asset mutations.
 `--allow-export-writes` enables native export jobs and local downloads.
 `--allow-report-writes` enables frozen report creation, revision, local delivery,
-and explicit release. Each flag is independent and applies only to standalone MCP. The daemon-hosted
+and explicit release. `--allow-kata-writes` permits quoting verified passages
+into Kata issues. Each flag is independent and applies only to standalone MCP. The daemon-hosted
 catalog stays read-only. Enable the combination you need at standalone startup.
 
 ## Connect over a trusted network
@@ -202,6 +203,7 @@ resource links, is capped at 1 MiB.
 | `read_document_content` | Reads original bytes from a selected immutable version as base64. Requires the exact vault, node, version, SHA-256 and size from `list_document_versions`. Originals are limited to 32 MiB; byte windows default to 64 KiB and are capped at 256 KiB. Returns offset, next offset and EOF. Verify the assembled size and SHA-256 before using the bytes. No export job or local file is created. |
 | `list_document_versions` | Lists immutable versions, including each original's `blob_hash` and size, for one live file. Limit defaults to 100 and is capped at 250; offset is capped at 1,000,000. |
 | `resolve_text_citation` | Reopens a [saved quotation](#saved-text-citations) from exact retained rendition text. |
+| `get_kata_context` | Reads an issue's [Docbank evidence and current source states](kata-evidence.md). |
 | `get_text_outline` | Reads the headings and whole-section bounds of [retained text](#read-complete-retained-sections). |
 | `read_text_section` | Reads an exact page of a retained section, with explicit completion. |
 | `read_rendition_text` | Reads the exact vault/node/version/attachment tuple described under [Resources](#resources-and-rendition-windows). |
@@ -223,6 +225,12 @@ resource links, is capped at 1 MiB.
 | `get_photo_asset` | Reads one photo asset by asset UUID or positive node ID. Returns the selected display source, `total_files`, `file_offset`, and a page of complete file decisions. Pass `next_file_offset` as `file_offset` to continue. Pages are live; restart if the asset revision or a member's file revision changes. |
 
 The browser applies [name visibility and namesake recognition rules](people.md#browser-names-and-visibility). MCP `find_people` keeps global search. An invalid cursor or one from another query, projection, or ordering returns the tool error `cursor_expired`; restart from the first page.
+
+Starting the server with `--allow-kata-writes` adds this write tool:
+
+| Tool | Contract and important bounds |
+| --- | --- |
+| `cite_kata_evidence` | Quotes up to 1,000 Unicode code points from a verified document passage into a new or existing [Kata issue](kata-evidence.md). |
 
 Starting the server with `--allow-photo-edits` adds these write tools:
 

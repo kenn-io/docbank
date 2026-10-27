@@ -28,6 +28,19 @@ does not start a local daemon. Commands never open the vault directly. `docbank 
 `docbank daemon stop` never start a daemon. See [Daemon](architecture/daemon.md)
 and [Ownership and concurrency](architecture/locking.md).
 
+## docbank kata
+
+```text
+docbank kata cite <path-or-id> --start N --end N [--quote TEXT] --title TITLE --idempotency-key KEY [--brief TEXT] [--json]
+docbank kata cite <path-or-id> --start N --end N --issue PROJECT#REF [--json]
+docbank kata cite <path-or-id> --citation citation.json --title TITLE --idempotency-key KEY [--json]
+docbank kata context <issue> [--offset N] [--json]
+```
+
+Create or append a verified passage and read its current source state. Requires
+an enabled Kata connection. See [Cite documents in Kata](usage/kata-evidence.md)
+for configuration, Unicode ranges, retry behavior and evidence compatibility.
+
 ## docbank mailbox
 
 ```text
