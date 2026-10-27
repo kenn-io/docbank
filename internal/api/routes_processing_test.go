@@ -428,7 +428,7 @@ func runProcessingForCoverage(t *testing.T, ts *httptest.Server, node store.Node
 	processingJobFromStream(t, jobBody)
 }
 
-func TestRejectedProcessingDoesNotAccumulateWorkers(t *testing.T) {
+func TestProcessingStartsTransientWorker(t *testing.T) {
 	t.Parallel()
 	for _, rejected := range []bool{true, false} {
 		t.Run(fmt.Sprintf("rejected=%t", rejected), func(t *testing.T) {
@@ -441,27 +441,25 @@ func TestRejectedProcessingDoesNotAccumulateWorkers(t *testing.T) {
 			})
 			node := createFileWithContent(t, ts, catalog, "/request.txt", "synthetic processing request\n")
 			selector := api.ProcessingSelector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "private"}
-			for range 3 {
-				response, body := do(t, ts, http.MethodPost, "/api/v1/processing/plans", nil, api.ProcessingPlanRequest{Selector: selector})
-				require.Equal(t, http.StatusOK, response.StatusCode, body)
-				var plan api.ProcessingPlan
-				require.NoError(t, json.Unmarshal([]byte(body), &plan))
-				fingerprint := plan.Fingerprint
-				if rejected {
-					fingerprint = processingTestHash("stale")
-				}
-				response, body = do(t, ts, http.MethodPost, "/api/v1/processing/jobs", nil,
-					api.StartProcessingRequest{Selector: selector, PlanFingerprint: fingerprint, Consent: true})
-				if rejected {
-					require.Equal(t, http.StatusConflict, response.StatusCode, body)
-					require.Contains(t, body, `"code":"processing_plan_changed"`)
-				} else {
-					require.Equal(t, http.StatusOK, response.StatusCode, body)
-					processingJobFromStream(t, body)
-				}
+			response, body := do(t, ts, http.MethodPost, "/api/v1/processing/plans", nil, api.ProcessingPlanRequest{Selector: selector})
+			require.Equal(t, http.StatusOK, response.StatusCode, body)
+			var plan api.ProcessingPlan
+			require.NoError(t, json.Unmarshal([]byte(body), &plan))
+			fingerprint := plan.Fingerprint
+			if rejected {
+				fingerprint = processingTestHash("stale")
 			}
-			require.Eventually(t, func() bool { return len(supervisor.Snapshot()) == 0 }, time.Second, time.Millisecond,
-				"finished requests must leave the worker registry")
+			response, body = do(t, ts, http.MethodPost, "/api/v1/processing/jobs", nil,
+				api.StartProcessingRequest{Selector: selector, PlanFingerprint: fingerprint, Consent: true})
+			if rejected {
+				require.Equal(t, http.StatusConflict, response.StatusCode, body)
+				require.Contains(t, body, `"code":"processing_plan_changed"`)
+			} else {
+				require.Equal(t, http.StatusOK, response.StatusCode, body)
+				processingJobFromStream(t, body)
+			}
+			require.NoError(t, supervisor.Shutdown(t.Context()))
+			assert.Empty(t, supervisor.Snapshot(), "processing must start a transient job")
 		})
 	}
 }
@@ -475,7 +473,7 @@ func TestBrowserProcessingHasOneActivity(t *testing.T) {
 					inner: newProcessingTestEmbeddingProvider(t), started: make(chan struct{}), release: make(chan struct{}),
 				}
 				assertBrowserProcessingActivity(t,
-					configureProcessingTestServiceWithEmbeddingProvider(t, provider, name == "embedding with rendition"), provider.started, provider.release, nil)
+					configureProcessingTestServiceWithEmbeddingProvider(t, provider, name == "embedding with rendition"), provider.started, provider.release)
 				return
 			}
 			inner, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
@@ -483,22 +481,21 @@ func TestBrowserProcessingHasOneActivity(t *testing.T) {
 			provider := &blockingProcessingProvider{inner: inner, started: make(chan struct{}), release: make(chan struct{})}
 			registry := processing.NewRenditionRuntimeRegistry()
 			configure := configureProcessingTestServiceWithProviderAndRegistry(t, provider, registry)
-			var startWorker func()
 			assertBrowserProcessingActivity(t, func(deps *api.Deps) {
 				configure(deps)
 				if name == "rendition with second worker" {
 					worker, err := processing.NewRenditionWorker(processing.RenditionWorkerConfig{
-						Catalog: deps.Store, Blobs: deps.Blobs, Runtime: registry, Gate: deps.Gate,
+						// An empty registry keeps this worker idle before it can claim browser work.
+						Catalog: deps.Store, Blobs: deps.Blobs, Runtime: processing.NewRenditionRuntimeRegistry(), Gate: deps.Gate,
 						Owner: "test-second-worker", LeaseDuration: time.Minute, IdleDelay: time.Minute,
 					})
 					require.NoError(t, err)
-					startWorker = func() { require.NoError(t, deps.Jobs.Start("process:renditions:2", worker.Run)) }
+					require.NoError(t, deps.Jobs.Start("process:renditions:1", worker.Run))
+					require.Eventually(t, func() bool {
+						return !deps.Jobs.Snapshot()[0].Busy
+					}, time.Second, time.Millisecond)
 				}
-			}, provider.started, provider.release, func() {
-				if startWorker != nil {
-					startWorker()
-				}
-			})
+			}, provider.started, provider.release)
 		})
 	}
 }
@@ -513,7 +510,7 @@ func configureSupervisedProcessing(t *testing.T, configure func(*api.Deps)) func
 	}
 }
 
-func assertBrowserProcessingActivity(t *testing.T, configure func(*api.Deps), started, release chan struct{}, afterQueued func()) {
+func assertBrowserProcessingActivity(t *testing.T, configure func(*api.Deps), started, release chan struct{}) {
 	t.Helper()
 	ts, catalog := newTestServer(t, configureSupervisedProcessing(t, configure))
 	t.Cleanup(func() { closeProcessingSignal(release) })
@@ -547,9 +544,6 @@ func assertBrowserProcessingActivity(t *testing.T, configure func(*api.Deps), st
 	var event api.ProcessingJobEvent
 	require.NoError(t, json.Unmarshal(scanner.Bytes(), &event))
 	require.NotNil(t, event.Job)
-	if afterQueued != nil {
-		afterQueued()
-	}
 	select {
 	case <-started:
 	case <-time.After(10 * time.Second):

@@ -1101,7 +1101,7 @@ function workspaceWithPreparedPhoto(target = preparedPhoto(1), projection?: "map
   return photos;
 }
 
-it("ReviewCreatingKeywordDoesNotApplyMetadataDraft", async () => {
+it("preserves the caption draft when creating a keyword and applies both together", async () => {
   Element.prototype.scrollIntoView = vi.fn();
   const photos = workspaceWithPreparedPhoto();
   photos.selectLoaded();
@@ -1123,7 +1123,6 @@ it("ReviewCreatingKeywordDoesNotApplyMetadataDraft", async () => {
   });
   await fireEvent.click(await screen.findByRole("option", { name: "Create “Harbor”" }));
   await screen.findByRole("button", { name: "Apply" });
-  expect(edit).not.toHaveBeenCalled();
   expect((caption as HTMLTextAreaElement).value).toBe("Unfinished caption");
   await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
   await waitFor(() => expect(edit).toHaveBeenCalledOnce());

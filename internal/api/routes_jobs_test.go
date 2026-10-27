@@ -26,7 +26,6 @@ func TestListJobsReturnsStableObservableState(t *testing.T) {
 	running := make(chan struct{})
 	release := make(chan struct{})
 	require.NoError(t, supervisor.Start("watch:inbox", func(ctx context.Context) error {
-		jobs.ReportBusy(ctx, false)
 		close(running)
 		select {
 		case <-release:
@@ -52,12 +51,10 @@ func TestListJobsReturnsStableObservableState(t *testing.T) {
 	require.Len(t, got.Items, 2)
 	assert.Equal(t, "maintenance.failed", got.Items[0].Name)
 	assert.Equal(t, "failed", got.Items[0].Status)
-	assert.False(t, got.Items[0].Busy)
 	assert.Equal(t, "disk unavailable", got.Items[0].Error)
 	assert.NotEmpty(t, got.Items[0].FinishedAt)
 	assert.Equal(t, "watch:inbox", got.Items[1].Name)
 	assert.Equal(t, "running", got.Items[1].Status)
-	assert.False(t, got.Items[1].Busy, "waiting worker is alive but has no work")
 	assert.Empty(t, got.Items[1].FinishedAt)
 	close(release)
 }

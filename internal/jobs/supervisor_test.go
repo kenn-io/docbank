@@ -26,6 +26,14 @@ func TestSupervisorTracksDeterministicTerminalStates(t *testing.T) {
 		require.NoError(t, s.Start("a-complete", func(context.Context) error { return nil }))
 		require.NoError(t, s.Start("m-failed", func(context.Context) error { return errors.New("broken") }))
 
+		transientRelease := make(chan struct{})
+		require.NoError(t, s.StartTransient("request", func(context.Context) error {
+			<-transientRelease
+			return nil
+		}))
+		assert.Len(t, s.Snapshot(), 4)
+		close(transientRelease)
+
 		synctest.Wait()
 		jobs := s.Snapshot()
 		require.True(t, len(jobs) == 3 && jobs[0].Status == StatusCompleted && jobs[1].Status == StatusFailed)

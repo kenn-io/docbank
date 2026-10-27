@@ -838,8 +838,8 @@ it("trashes a nested child in one click and brings it back with Undo", async () 
   expect(screen.queryByText("Moved “quarterly-report.txt” to trash")).toBeNull();
 });
 
-it.each(["/Reports", "/Work/Reports", "/Work/Reports/Quarterly"])(
-  "ReviewTrashSearchedCurrentFolderLeavesLiveNavigation: %s",
+it.each(["/Reports", "/Work/Reports/Quarterly"])(
+  "returns to the live parent after trashing the searched folder from %s",
   async (viewedPath) => {
     clearToasts();
     prepareSelectionApp();

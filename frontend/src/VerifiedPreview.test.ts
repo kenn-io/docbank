@@ -437,12 +437,11 @@ it("opens an email on its Email tab and offers no Preview it cannot render", asy
   expect(screen.getByRole("tab", { name: "Email" }).getAttribute("aria-selected")).toBe("true");
 });
 
-it("revisits completed Text without a loading flash and retains Find", async () => {
-  const bytes = new TextEncoder().encode("Synthetic report text");
+it("keeps completed tabs mounted and loads an unvisited tab only when opened", async () => {
+  const bytes = new TextEncoder().encode("Already verified document");
   const selected = source(bytes, "11111111-1111-4111-8111-111111111111");
   const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    const path = String(input);
-    if (path === "/api/v1/renditions/text")
+    if (String(input) === "/api/v1/renditions/text")
       return Response.json({
         state: "unprocessed",
         source: {
@@ -458,38 +457,6 @@ it("revisits completed Text without a loading flash and retains Find", async () 
         attachment_id: "",
         build_id: "",
       });
-    if (init?.method === "POST") return ready(selected, "text");
-    if (path.endsWith("ticket=text")) return body(selected, bytes);
-    if (path.includes("duplicates")) return Response.json({}, { status: 404 });
-    throw new Error(`Unexpected request ${path}`);
-  });
-  render(VerifiedPreview, {
-    session: "session",
-    source: selected,
-    authorizationRevision: 8,
-    activeTab: "text",
-    onauthfailure: vi.fn(),
-  });
-  await screen.findByText("Synthetic report text");
-  await fireEvent.input(screen.getByRole("textbox", { name: "Find in verified text" }), {
-    target: { value: "report" },
-  });
-  await fireEvent.click(screen.getByRole("tab", { name: "Duplicates" }));
-  await screen.findByText("No duplicates");
-  const downloads = fetcher.mock.calls.filter(([input]) => String(input).endsWith("ticket=text"));
-  await fireEvent.click(screen.getByRole("tab", { name: "Text" }));
-  expect(screen.queryByText("Loading text…")).toBeNull();
-  const find = await screen.findByRole("textbox", { name: "Find in verified text" });
-  expect((find as HTMLInputElement).value).toBe("report");
-  expect(
-    fetcher.mock.calls.filter(([input]) => String(input).endsWith("ticket=text")),
-  ).toHaveLength(downloads.length);
-});
-
-it("keeps completed tabs mounted and loads an unvisited tab only when opened", async () => {
-  const bytes = new TextEncoder().encode("Already verified document");
-  const selected = source(bytes, "11111111-1111-4111-8111-111111111111");
-  const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     if (init?.method === "POST") return ready(selected, "cached-preview");
     if (String(input).endsWith("ticket=cached-preview")) return body(selected, bytes);
     if (String(input).includes("duplicates")) return Response.json({}, { status: 404 });
@@ -507,10 +474,22 @@ it("keeps completed tabs mounted and loads an unvisited tab only when opened", a
   );
   await fireEvent.click(screen.getByRole("tab", { name: "Duplicates" }));
   await screen.findByText("No duplicates");
-  const completedRequests = fetcher.mock.calls.length;
+  await fireEvent.click(screen.getByRole("tab", { name: "Text" }));
+  const find = await screen.findByRole("textbox", { name: "Find in verified text" });
+  await fireEvent.input(find, { target: { value: "verified" } });
+  await fireEvent.click(screen.getByRole("tab", { name: "Duplicates" }));
+  const completedRequests = fetcher.mock.calls.filter(
+    ([input]) => String(input) !== "/api/v1/renditions/text",
+  ).length;
+  await fireEvent.click(screen.getByRole("tab", { name: "Text" }));
+  expect(screen.queryByText("Loading text…")).toBeNull();
+  expect(screen.getByRole("textbox", { name: "Find in verified text" })).toBe(find);
+  expect((find as HTMLInputElement).value).toBe("verified");
   await fireEvent.click(screen.getByRole("tab", { name: "Preview" }));
   expect(screen.getByText("Already verified document")).toBe(preview);
   await fireEvent.click(screen.getByRole("tab", { name: "Duplicates" }));
   expect(screen.getByText("No duplicates")).toBeTruthy();
-  expect(fetcher).toHaveBeenCalledTimes(completedRequests);
+  expect(
+    fetcher.mock.calls.filter(([input]) => String(input) !== "/api/v1/renditions/text"),
+  ).toHaveLength(completedRequests);
 });

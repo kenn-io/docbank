@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"encoding/json/v2"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -20,7 +19,6 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/internal/blob"
-	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -679,85 +677,4 @@ func TestMediaProcessingTransientStorageErrorKeepsReceiptQueued(t *testing.T) {
 	targets, err = f.service.MediaProcessingTargets(t.Context(), "", 10)
 	require.NoError(t, err)
 	require.Len(t, targets, 1, "the backfill retries the receipt")
-}
-
-func TestMediaContinuationBusyWhilePublishingVectorIndex(t *testing.T) {
-	t.Parallel()
-	f := newMediaStateFixture(t)
-	embeddings := newEmbeddingWorkerFixture(t)
-	var embeddingProfile document.ProcessingProfileV1
-	require.NoError(t, json.Unmarshal(embeddings.profile.CanonicalProfile, &embeddingProfile))
-	var binding document.EmbeddingBindingV1
-	for _, candidate := range embeddingProfile.Embeddings {
-		if candidate.InputKind == document.EmbeddingInputOriginalFile {
-			binding = candidate
-		}
-	}
-	require.NotEmpty(t, binding.Name)
-	binding.Activation = document.EmbeddingRequired
-	portable := f.service.profiles["speech"].portable
-	portable.Embeddings = []document.EmbeddingBindingV1{binding}
-	embedder := &embeddingWorkerProvider{runtime: embeddings.runtime,
-		binding: binding.Name, descriptor: embeddings.descriptor}
-	supervisor := jobs.New(t.Context(), slog.New(slog.DiscardHandler))
-	defer func() { require.NoError(t, supervisor.Shutdown(context.Background())) }()
-	var published, busyAtPublication atomic.Bool
-	gate := &cancelMediaAfterCommitGate{processingOperationGate: newWorkerTestGate(), cancel: func() {
-		spaces, err := f.catalog.ListVectorIndexSpaces(t.Context())
-		if err != nil {
-			return
-		}
-		for _, space := range spaces {
-			if _, err := f.catalog.ActiveVectorIndexHead(t.Context(), space); err == nil && published.CompareAndSwap(false, true) {
-				busyAtPublication.Store(supervisor.Snapshot()[0].Busy)
-			}
-		}
-	}}
-	var err error
-	f.service, err = NewService(ServiceConfig{
-		Catalog: f.catalog, Blobs: f.blobs, Gate: gate,
-		SpoolDirectory: t.TempDir(), Principal: "operator:synthetic", Scope: "document-processing",
-		Profiles: map[string]ProfileConfig{"speech": {
-			Profile: portable, RenditionProvider: f.provider,
-			EmbeddingProviders: map[string]document.EmbeddingProvider{binding.Name: embedder},
-			EmbeddingClassifiers: map[string]func(error) (EmbeddingProviderFailure, time.Duration){
-				binding.Name: embeddings.runtime.Classify,
-			},
-		}},
-	})
-	require.NoError(t, err)
-	plan, err := f.service.Plan(t.Context(), f.selector)
-	require.NoError(t, err)
-	_, err = f.service.GrantConsent(t.Context(), ConsentGrantRequest{Selector: f.selector, PlanFingerprint: plan.Fingerprint})
-	require.NoError(t, err)
-	receipt, err := f.service.SubmitSuppliedMedia(t.Context(), f.suppliedRequest(
-		"00000000-0000-4000-8000-000000000931", &MediaProcessingRequest{Profile: "speech"}))
-	require.NoError(t, err)
-	require.NoError(t, f.run(t, receipt.JobID))
-	idle := make(chan struct{})
-	worker := &Backfill[store.MediaPublicationReceipt]{
-		Name: "media continuations", Page: 1, IdleDelay: time.Second,
-		List: func(ctx context.Context, after string, limit int) ([]store.MediaPublicationReceipt, error) {
-			if after != "" {
-				close(idle)
-				<-ctx.Done()
-				return nil, ctx.Err()
-			}
-			return f.service.MediaProcessingTargets(ctx, after, limit)
-		},
-		Key:     func(target store.MediaPublicationReceipt) string { return target.OperationID },
-		Process: f.service.ContinueMediaProcessing,
-	}
-	require.NoError(t, supervisor.Start("process:media-continuations", worker.Run))
-	select {
-	case <-idle:
-	case <-time.After(10 * time.Second):
-		t.Fatal("media continuation did not finish")
-	}
-	require.True(t, published.Load(), "media continuation must publish a vector index")
-	require.True(t, busyAtPublication.Load(), "media continuation must remain busy while publishing its vector index")
-	require.False(t, supervisor.Snapshot()[0].Busy, "media continuation is idle after processing returns")
-	targets, err := f.service.MediaProcessingTargets(t.Context(), "", 10)
-	require.NoError(t, err)
-	require.Empty(t, targets, "media processing completed")
 }

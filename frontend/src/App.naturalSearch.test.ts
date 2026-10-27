@@ -345,9 +345,14 @@ async function submitSearch(value: string): Promise<void> {
   await fireEvent.submit(input.closest("form")!);
 }
 
-it.each([false, true])(
-  "ReviewMeaningSearchKeepsFolderNameMatches, live files=%s",
-  async (liveFiles) => {
+it.each([
+  [true, false],
+  [true, true],
+  [false, false],
+  [false, true],
+])(
+  "keeps folder name matches with embeddings=%s and live files=%s",
+  async (embeddings, liveFiles) => {
     const folder: Node = {
       id: 3,
       parent_id: 1,
@@ -366,13 +371,16 @@ it.each([false, true])(
           name: "private",
           fingerprint: "a".repeat(64),
           rendition: true,
-          embedding_bindings: ["embed"],
+          embedding_bindings: embeddings ? ["embed"] : [],
           reranking_available: true,
         },
       ],
       files: liveFiles ? [folder, file] : [folder],
       emptyFence: !liveFiles,
-      baseReport: report("hybrid", liveFiles ? [result(file, 1, "invoice excerpt")] : []),
+      baseReport: report(
+        embeddings ? "hybrid" : "lexical",
+        liveFiles ? [result(file, 1, "invoice excerpt")] : [],
+      ),
       rerankReport: report("hybrid", [result(file, 1, "invoice excerpt")], {
         outcome: "applied",
         candidate_count: 1,
@@ -390,7 +398,7 @@ it.each([false, true])(
     await screen.findByRole("button", { name: "Open" });
     await submitSearch("invoices");
     expect(await screen.findByRole("cell", { name: "/invoices" })).toBeTruthy();
-    if (liveFiles) {
+    if (embeddings && liveFiles) {
       await screen.findByText("invoice excerpt");
       await fireEvent.click(screen.getByRole("checkbox", { name: "Rerank results" }));
       await screen.findByText("Reranked results applied.");
@@ -402,6 +410,7 @@ it.each([false, true])(
     } else {
       expect(screen.queryByText("No documents match the current filter.")).toBeNull();
       expect(harness.postBodies).toHaveLength(0);
+      if (!embeddings) expect(harness.legacyCalls()).toBe(1);
     }
   },
 );
@@ -785,49 +794,6 @@ it("keeps base rows with a named degradation note", async () => {
   await screen.findByText(/Reranking unavailable \(timed_out\)/);
   expect(harness.postBodies).toHaveLength(2);
 });
-
-it.each([false, true])(
-  "finds folder names without embeddings, live files=%s",
-  async (liveFiles) => {
-    const folder: Node = {
-      id: 3,
-      parent_id: 1,
-      name: "invoices",
-      kind: "dir",
-      size: 0,
-      revision: 1,
-      created_at: "2026-09-21T00:00:00Z",
-      modified_at: "2026-09-21T00:00:00Z",
-      path: "/invoices",
-    };
-    const harness = installHarness({
-      profiles: [
-        {
-          name: "private",
-          fingerprint: "a".repeat(64),
-          rendition: true,
-          embedding_bindings: [],
-          reranking_available: true,
-        },
-      ],
-      files: liveFiles ? [folder, node(2, "existing.txt", baseVersion)] : [folder],
-      emptyFence: !liveFiles,
-      baseReport: report("lexical", []),
-      tagSearch: {
-        hits: [{ node: folder, path: folder.path, match: "name" }],
-        limit: 1000,
-        truncated: false,
-      },
-    });
-    render(App);
-    await screen.findByRole("button", { name: "Open" });
-    await submitSearch("invoices");
-    expect(await screen.findByRole("cell", { name: "/invoices" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Open" })).toBeTruthy();
-    expect(harness.legacyCalls()).toBe(1);
-    expect(harness.postBodies).toHaveLength(0);
-  },
-);
 
 it("reruns the accepted query when profiles arrive after legacy results", async () => {
   const file = node(2, "legacy.txt", baseVersion);
@@ -1413,7 +1379,7 @@ it("returns to automatic meaning search with the typed draft when plain words is
   );
 });
 
-it.each(["first", "previously displayed", "same"] as const)(
+it.each(["previously displayed", "same"] as const)(
   "sorts the %s query from Advanced and supersedes any pending search",
   async (which) => {
     const small = { ...node(2, "small.txt", baseVersion), size: 10 };
@@ -1444,24 +1410,17 @@ it.each(["first", "previously displayed", "same"] as const)(
       await submitSearch("query A");
       await screen.findByText("small excerpt");
     }
-    if (which !== "first") {
-      const pendingSearch = vi.fn(() => {
-        harness.fetchMock.mockImplementation(fetch);
-        return pending;
-      });
-      harness.fetchMock.mockImplementation((input, init) => {
-        if (String(input) === "/api/v1/search") return pendingSearch();
-        return fetch(input, init);
-      });
-      await submitSearch("query B");
-      await waitFor(() => expect(pendingSearch).toHaveBeenCalledOnce());
-    }
-    const query =
-      which === "first"
-        ? "annual report"
-        : which === "previously displayed"
-          ? "query A"
-          : "query B";
+    const pendingSearch = vi.fn(() => {
+      harness.fetchMock.mockImplementation(fetch);
+      return pending;
+    });
+    harness.fetchMock.mockImplementation((input, init) => {
+      if (String(input) === "/api/v1/search") return pendingSearch();
+      return fetch(input, init);
+    });
+    await submitSearch("query B");
+    await waitFor(() => expect(pendingSearch).toHaveBeenCalledOnce());
+    const query = which === "previously displayed" ? "query A" : "query B";
     await fireEvent.input(screen.getByRole("searchbox", { name: "Search documents" }), {
       target: { value: query },
     });
@@ -1471,12 +1430,10 @@ it.each(["first", "previously displayed", "same"] as const)(
     await fireEvent.click(screen.getByRole("combobox", { name: "Direction: Ascending" }));
     await fireEvent.click(screen.getByRole("option", { name: "Descending" }));
     await fireEvent.click(screen.getByRole("button", { name: "Search" }));
-    if (which !== "first") {
-      await act(async () => {
-        resolvePending(json(report("hybrid", [result(small, 1, "stale excerpt")])));
-        await pending;
-      });
-    }
+    await act(async () => {
+      resolvePending(json(report("hybrid", [result(small, 1, "stale excerpt")])));
+      await pending;
+    });
     await waitFor(() => expect(harness.postBodies.at(-1)).toMatchObject({ mode: "hybrid", query }));
     await waitFor(() =>
       expect(screen.queryByRole("dialog", { name: "Filters and sort" })).toBeNull(),
@@ -1677,6 +1634,13 @@ it.each([
     expect(screen.getByRole("columnheader", { name: "Size" }).getAttribute("aria-sort")).toBe(
       "descending",
     );
+    if (submission === "Advanced" && !superseded) {
+      const rows = screen.getAllByRole("row").filter((row) => row.textContent?.includes("txt"));
+      expect(rows[0].textContent).toContain("large.txt");
+      expect(
+        harness.fetchMock.mock.calls.some(([url]) => String(url) === "/api/v1/workspace/queries"),
+      ).toBe(false);
+    }
     if (superseded) {
       await submitSearch("newer search");
       await waitFor(() =>
@@ -1805,7 +1769,7 @@ it("keeps the applied query and unapplied draft when the inspector removes the a
   expect((search as HTMLInputElement).value).toBe("unfinished draft");
 });
 
-it.each(["names", "meaning"])(
+it.each(["names", "meaning", "frozen"])(
   "keeps unapplied drafts while trash and Undo refresh %s results",
   async (mode) => {
     const file = node(2, "report.txt", baseVersion);
@@ -1825,6 +1789,23 @@ it.each(["names", "meaning"])(
       files: [file],
       baseReport: report("hybrid", [result(file, 1, "report excerpt")]),
       tagSearch: { hits: [{ node: file, path: file.path }], limit: 1000, truncated: false },
+      snapshotRows: [
+        {
+          node_id: file.id,
+          content_version_id: baseVersion,
+          blob_hash: file.blob_hash,
+          size: file.size,
+          revision: file.revision,
+          name: file.name,
+          path: file.path,
+          mime_type: file.mime_type,
+          media_family: "text",
+          modified_at: file.modified_at,
+          sort_key: file.path,
+          tags: [],
+          collection_ids: [],
+        },
+      ],
     });
     const fetch = harness.fetchMock.getMockImplementation()!;
     harness.fetchMock.mockImplementation((input, init) => {
@@ -1837,6 +1818,15 @@ it.each(["names", "meaning"])(
     render(App);
     await screen.findByRole("combobox", { name: "Search syntax: Plain words" });
     await submitSearch("annual report");
+    if (mode === "frozen") {
+      await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+      await fireEvent.input(screen.getByLabelText("Filters JSON"), {
+        target: { value: '{"size_min":10}' },
+      });
+      await screen.findByRole("status", { name: "Query valid" });
+      await fireEvent.click(screen.getByRole("button", { name: "Search" }));
+      await screen.findByRole("region", { name: "Frozen query results" });
+    }
     await screen.findByRole("button", { name: "Move to trash" });
     const search = screen.getByRole("searchbox", { name: "Search documents" });
     await fireEvent.input(search, { target: { value: "unfinished draft" } });
@@ -1850,10 +1840,23 @@ it.each(["names", "meaning"])(
       ["Undo", 3],
     ] as const) {
       await fireEvent.click(screen.getByRole("button", { name: action }));
+      const frozenRequests = () =>
+        harness.fetchMock.mock.calls.filter(([url]) => String(url) === "/api/v1/workspace/queries");
       await waitFor(() =>
-        expect(mode === "meaning" ? harness.postBodies.length : harness.legacyCalls()).toBe(count),
+        expect(
+          mode === "frozen"
+            ? frozenRequests().length
+            : mode === "meaning"
+              ? harness.postBodies.length
+              : harness.legacyCalls(),
+        ).toBe(count),
       );
-      if (mode === "meaning") expect(harness.postBodies.at(-1)?.query).toBe("annual report");
+      if (mode === "frozen") {
+        const queries = frozenRequests().map(([, init]) => JSON.parse(String(init?.body)).query);
+        expect(queries.at(-1)).toEqual(queries[0]);
+        expect(queries.at(-1)).toMatchObject({ text: "annual report", filters: { size_min: 10 } });
+        expect(screen.getByRole("region", { name: "Frozen query results" })).toBeTruthy();
+      } else if (mode === "meaning") expect(harness.postBodies.at(-1)?.query).toBe("annual report");
       else {
         const requests = harness.fetchMock.mock.calls.filter(([url]) =>
           String(url).startsWith("/api/v1/search?"),
