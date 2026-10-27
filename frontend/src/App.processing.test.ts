@@ -225,8 +225,6 @@ it.each([false, true])(
     }
     await fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
     if (closeBeforeCompletion) finishProcessing();
-    await fireEvent.click(screen.getByRole("tab", { name: "Preview" }));
-    await fireEvent.click(screen.getByRole("tab", { name: "Text" }));
     expect(
       await screen.findByText("Processing verified that this document has no readable text."),
     ).toBeTruthy();

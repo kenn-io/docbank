@@ -50,7 +50,9 @@
     ...history.map((receipt) => ({
       id: receipt.allocation_id,
       receipt,
-      package: packages.find((item) => item.snapshot_id === exportSnapshots[receipt.allocation_id]),
+      package: packages.find(
+        (item) => item.snapshot_id && item.snapshot_id === exportSnapshots[receipt.allocation_id],
+      ),
       range: `${receipt.pages[0]?.label}–${receipt.pages.at(-1)?.label}`,
       pages: receipt.page_count,
     })),
@@ -184,19 +186,22 @@
       after = mode === "productions" ? page.next_after : undefined;
     } while (after);
     if (mode !== "productions") return;
-    for (const item of items) {
-      try {
-        const allocation = await readBatesAllocation(item.allocation_id, {
-          session: current,
-          signal,
-        });
-        if (signal.aborted || current !== session) return;
-        exportSnapshots[item.allocation_id] = allocation.snapshot_id;
-      } catch (cause) {
-        if (signal.aborted || current !== session || aborted(cause) || unauthorized(cause)) return;
-        historyError = message(cause);
-      }
-    }
+    await Promise.all(
+      items.map(async (item) => {
+        try {
+          const allocation = await readBatesAllocation(item.allocation_id, {
+            session: current,
+            signal,
+          });
+          if (signal.aborted || current !== session) return;
+          exportSnapshots[item.allocation_id] = allocation.snapshot_id;
+        } catch (cause) {
+          if (signal.aborted || current !== session || aborted(cause) || unauthorized(cause))
+            return;
+          historyError = message(cause);
+        }
+      }),
+    );
   }
 
   async function load(current: string, signal: AbortSignal): Promise<void> {
@@ -447,7 +452,7 @@
       {#if !loading && !error && !historyError && !packages.length && !history.length}
         <p class="tool-muted">No productions yet</p>
       {/if}
-      {#if !loading && productions.length}
+      {#if productions.length}
         <ul class="tool-list" aria-label="Productions">
           {#each productions as item (item.id)}
             <li class="production-item">

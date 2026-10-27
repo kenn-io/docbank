@@ -472,6 +472,7 @@ it("lists imported and exported production sets across every page without requir
   });
   expect(await screen.findByText("Imported load file")).toBeTruthy();
   expect(await screen.findByText("Exported images")).toBeTruthy();
+  await waitFor(() => expect(screen.queryByText("Loading…")).toBeNull());
   const list = screen.getByRole("list", { name: "Productions" });
   expect(within(list).getAllByRole("listitem")).toHaveLength(3);
   expect(fetcher.mock.calls.map(([url]) => String(url))).not.toContainEqual(
@@ -533,7 +534,11 @@ it("shows a package and its Bates export once with receipt actions inside the co
     onclose: vi.fn(),
     onauthfailure: vi.fn(),
   });
-  const name = await screen.findByText("Review production");
+  await waitFor(() => {
+    const name = screen.getByText("Review production");
+    expect(name.closest("summary")?.textContent).toContain("ACME000041–ACME000042");
+  });
+  const name = screen.getByText("Review production");
   const list = screen.getByRole("list", { name: "Productions" });
   const row = within(list).getByRole("listitem");
   expect(within(list).getAllByRole("listitem")).toHaveLength(1);
@@ -558,6 +563,57 @@ it("shows a package and its Bates export once with receipt actions inside the co
   expect(requests).toContain(`/api/v1/bates/exports/${receipt.allocation_id}/download`);
   await fireEvent.click(name);
   expect(row.querySelector("details")?.open).toBe(false);
+});
+
+it("shows Productions while an allocation is pending and loads other allocations independently", async () => {
+  let finishAllocation!: (response: Response) => void;
+  const nextAllocationID = "77777777-7777-4777-8777-777777777777";
+  const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = String(input);
+    if (url.startsWith("/api/v1/packages?"))
+      return json({
+        items: [
+          {
+            package_id: "produced-set",
+            package_name: "Review production",
+            snapshot_id: snapshotID,
+            direction: "produced",
+            state: "sealed",
+            page_count: 2,
+          },
+        ],
+        limit: 250,
+      });
+    if (url === "/api/v1/bates/exports?limit=50")
+      return json({ items: [earlier, { ...earlier, allocation_id: nextAllocationID }], total: 2 });
+    if (url === `/api/v1/bates/allocations/${earlier.allocation_id}`)
+      return new Promise<Response>((resolve) => {
+        finishAllocation = resolve;
+      });
+    if (url === `/api/v1/bates/allocations/${nextAllocationID}`)
+      return json({ snapshot_id: "88888888-8888-4888-8888-888888888888" });
+    throw new Error(`Unexpected request ${url}`);
+  });
+  render(BatesExportDrawer, {
+    mode: "productions",
+    session: "session",
+    onclose: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await waitFor(() => expect(finishAllocation).toBeTypeOf("function"));
+  const list = await screen.findByRole("list", { name: "Productions" });
+  expect(within(list).getByText("Review production")).toBeTruthy();
+  expect(within(list).getAllByRole("listitem")).toHaveLength(3);
+  await waitFor(() =>
+    expect(fetcher.mock.calls.map(([url]) => String(url))).toContain(
+      `/api/v1/bates/allocations/${nextAllocationID}`,
+    ),
+  );
+  finishAllocation(json({ snapshot_id: snapshotID }));
+  await waitFor(() => expect(within(list).getAllByRole("listitem")).toHaveLength(2));
+  expect(within(list).getByText("Review production").closest("summary")?.textContent).toContain(
+    "ACME000001–ACME000001",
+  );
 });
 
 it.each(["packages", "allocation"])("keeps loaded exports when %s fails", async (failure) => {

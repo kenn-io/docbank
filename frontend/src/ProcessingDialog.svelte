@@ -6,7 +6,7 @@
   import ArchiveIcon from "@lucide/svelte/icons/archive";
   import { Button, Checkbox, Modal, SelectDropdown, Spinner } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
-  import { startProcessing } from "./receipts.js";
+  import { startProcessing, type ProcessingRun } from "./receipts.js";
   import { formatBytes } from "./format.js";
   import InspectorDetails, { type InspectorFact } from "./InspectorDetails.svelte";
   import {
@@ -35,10 +35,10 @@
     onclose: () => void;
     onauthfailure: (cause: unknown) => void;
     onrendition: (attachmentID: string) => void;
-    oncomplete?: () => void;
+    onstart?: (run: Promise<ProcessingRun>) => void;
   }
 
-  let { session, node, path, onclose, onauthfailure, onrendition, oncomplete }: Props = $props();
+  let { session, node, path, onclose, onauthfailure, onrendition, onstart }: Props = $props();
 
   type Option = { name: string; plan: ProcessingPlan };
   // Refusals about the file's type rather than this particular file.
@@ -205,7 +205,8 @@
     job = null;
     status = null;
     try {
-      const result = await startProcessing(
+      // Accepted work and the app's completion observer outlive this dialog.
+      const run = startProcessing(
         session,
         plan.selector,
         plan.fingerprint,
@@ -214,12 +215,12 @@
         (event) => {
           if (processingController === active && event.job) job = event.job;
         },
-        active.signal,
       );
+      onstart?.(run);
+      const result = await run;
       if (processingController !== active) return;
       job = result.job;
       status = result.status;
-      if (result.status.state === "completed") oncomplete?.();
       const fresh = await planProfile(profileName);
       if (processingController !== active) return;
       options = options.map((option) =>

@@ -66,6 +66,7 @@
   import ManageTagsModal from "./ManageTagsModal.svelte";
   import type { BatchTagReceipt } from "./batch-tags.js";
   import ProcessingDialog from "./ProcessingDialog.svelte";
+  import type { ProcessingRun } from "./receipts.js";
   import SimilarDrawer from "./SimilarDrawer.svelte";
   import ScanSearchIcon from "@lucide/svelte/icons/scan-search";
   import ProvenanceDrawer from "./ProvenanceDrawer.svelte";
@@ -3224,6 +3225,15 @@
 
   let processingRevision = $state(0);
 
+  async function observeProcessing(session: string, run: Promise<ProcessingRun>): Promise<void> {
+    try {
+      const result = await run;
+      if (session === webSession && result.status.state === "completed") processingRevision += 1;
+    } catch {
+      // The dialog handles processing errors while it is open.
+    }
+  }
+
   async function processInspectedSource(source: SelectedSource): Promise<void> {
     const session = webSession;
     try {
@@ -4997,9 +5007,7 @@
           path={panel.target.path}
           onclose={closePanel(panel)}
           onauthfailure={handleFailure}
-          oncomplete={() => {
-            if (activePanel === panel) processingRevision += 1;
-          }}
+          onstart={(run) => void observeProcessing(webSession, run)}
           onrendition={(attachmentID) => {
             if (activePanel !== panel) return;
             activePanel = { kind: "rendition", target: { attachmentID, path: panel.target.path } };
