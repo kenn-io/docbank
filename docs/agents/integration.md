@@ -545,10 +545,11 @@ curl --fail-with-body \
 ```
 
 The response is `{items: [...]}`, sorted by task name. Branch on `status`:
-`running` is active, and `completed`, `failed`, and `cancelled` are terminal
-for this daemon run. Surface a failed task's `error` to the operator, but do
-not parse its prose as a protocol. An absent item is not proof that work
-completed. It can mean the feature is unconfigured or the daemon restarted,
+`running` with `busy: false` is waiting, and `running` with `busy: true` is
+working. `completed`, `failed`, and `cancelled` are terminal for this daemon
+run. Surface a failed task's `error` to the operator, but do not parse its
+prose as a protocol. An absent item is not proof that work completed. It can
+mean the feature is unconfigured or the daemon restarted,
 because status history lives only in the daemon process.
 
 ## Use revisions for read-modify-write
