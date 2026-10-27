@@ -2531,3 +2531,117 @@ it("shows the search shortcut badge only while the search box is idle", async ()
   await fireEvent.input(search, { target: { value: "tax" } });
   expect(screen.queryByLabelText("/")).toBeNull();
 });
+
+it.each(["before", "after"] as const)(
+  "keeps a refreshed tag listing that lands %s a delayed removal receipt",
+  async (listing) => {
+    prepareKeyboardApp();
+    const root = selectionNode(1, "", "dir", undefined);
+    const zeta = selectionNode(10, "zeta.txt", "file", 1, 3);
+    const tax = {
+      id: keyboardTagID,
+      name: "tax",
+      revision: 1,
+      assignment_count: 1,
+    };
+    const reviewed = {
+      id: keyboardReviewedTagID,
+      name: "reviewed",
+      revision: 1,
+      assignment_count: 1,
+    };
+    const json = (value: unknown) =>
+      new Response(JSON.stringify(value), {
+        headers: { "Content-Type": "application/json" },
+      });
+    let revision = 3;
+    let tagReads = 0;
+    let resolveRemoval: (response: Response) => void = () => {};
+    let resolveReload: (response: Response) => void = () => {};
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === "/api/v1/path?path=%2F") return json(root);
+      if (url === "/api/v1/nodes/1/children?limit=1000&offset=0") {
+        const items = [{ ...zeta, revision }];
+        return json({
+          directory: root,
+          items,
+          total: 1,
+          limit: 1000,
+          offset: 0,
+        });
+      }
+      if (url === "/api/v1/nodes/10") return json({ ...zeta, revision, path: "/zeta.txt" });
+      if (url === "/api/v1/tags?limit=1000&offset=0")
+        return json({
+          items: [tax, reviewed],
+          total: 2,
+          limit: 1000,
+          offset: 0,
+        });
+      if (url.startsWith("/api/v1/audit/status")) {
+        return json({
+          enabled: false,
+          vault_id: keyboardVaultID,
+          operation_sequence_high_water: 0,
+          allocation_entry_count: 0,
+          scopes: [],
+        });
+      }
+      if (url === "/api/v1/nodes/10/tags?limit=1000&offset=0") {
+        tagReads += 1;
+        if (tagReads === 1)
+          return json({
+            items: [reviewed, tax],
+            total: 2,
+            limit: 1000,
+            offset: 0,
+          });
+        return new Promise<Response>((resolve) => (resolveReload = resolve));
+      }
+      if (url === `/api/v1/nodes/10/tags/${keyboardTagID}` && init?.method === "DELETE") {
+        revision = 4;
+        return new Promise<Response>((resolve) => (resolveRemoval = resolve));
+      }
+      if (url === `/api/v1/nodes/10/tags/${keyboardTagID}` && init?.method === "PUT") {
+        return json({
+          tag: { ...tax, revision: 3 },
+          node: { ...zeta, revision: 5, path: "/zeta.txt" },
+          changed: true,
+        });
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+    const finishRemoval = () =>
+      resolveRemoval(
+        json({
+          tag: { ...tax, revision: 2, assignment_count: 0 },
+          node: { ...zeta, revision: 4, path: "/zeta.txt" },
+          changed: true,
+        }),
+      );
+    const finishReload = () =>
+      resolveReload(json({ items: [reviewed], total: 1, limit: 1000, offset: 0 }));
+
+    render(App);
+    await fireEvent.click(await screen.findByRole("cell", { name: "zeta.txt" }));
+    await configureFirstTagHotkey();
+    await fireEvent.click(await screen.findByRole("button", { name: "Remove tag tax" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
+    await waitFor(() => expect(tagReads).toBe(2));
+    if (listing === "before") {
+      finishReload();
+      await screen.findByRole("button", { name: "Remove tag reviewed" });
+      finishRemoval();
+    } else {
+      finishRemoval();
+      await new Promise((resolve) => setTimeout(resolve));
+      finishReload();
+    }
+
+    const removeReviewed = await screen.findByRole("button", { name: "Remove tag reviewed" });
+    await waitFor(() => expect(removeReviewed.hasAttribute("disabled")).toBe(false));
+    await fireEvent.keyDown(window, { key: "1" });
+    expect(await screen.findByText("Added tax to zeta.txt.")).toBeTruthy();
+  },
+);

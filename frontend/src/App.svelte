@@ -3248,7 +3248,8 @@
     removingTag = true;
     try {
       const receipt = await changeNodeTag(session, node.id, node.revision, tag.id, false);
-      if (session === webSession) handleTagChanged(receipt, false, node.revision);
+      if (session === webSession && currentInspectorNode?.revision === node.revision)
+        handleTagChanged(receipt, false, node.revision);
     } catch (cause) {
       if (session === webSession) handleFailure(cause);
     } finally {
