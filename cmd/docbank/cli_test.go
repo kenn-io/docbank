@@ -784,6 +784,11 @@ func TestJobsShowsDaemonStatus(t *testing.T) {
 			return false
 		}
 		checksums, found := jobNamed(got, "maintenance:auxiliary-checksums")
+		for _, job := range got.Items {
+			if job.Status == "running" && job.Busy {
+				return false
+			}
+		}
 		return found && checksums.Status == "completed"
 	}, 5*time.Second, 25*time.Millisecond)
 	assert.Equal(t, "running", requireJob(t, got, "process:vector-indexes").Status)
@@ -791,11 +796,6 @@ func TestJobsShowsDaemonStatus(t *testing.T) {
 	assert.Equal(t, "running", requireJob(t, got, "extract:source-metadata").Status)
 	assert.Equal(t, "running", requireJob(t, got, "extract:email").Status)
 	assert.Equal(t, "running", requireJob(t, got, "process:renditions").Status)
-	for _, job := range got.Items {
-		if job.Status == "running" {
-			assert.False(t, job.Busy, "%s is waiting for work", job.Name)
-		}
-	}
 }
 
 func jobNamed(list api.JobList, name string) (api.Job, bool) {

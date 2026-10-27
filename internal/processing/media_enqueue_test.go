@@ -702,13 +702,13 @@ func TestMediaContinuationBusyWhilePublishingVectorIndex(t *testing.T) {
 	supervisor := jobs.New(t.Context(), slog.New(slog.DiscardHandler))
 	defer func() { require.NoError(t, supervisor.Shutdown(context.Background())) }()
 	var published, busyAtPublication atomic.Bool
-	gate := mediaIndexActivityGate{processingOperationGate: newWorkerTestGate(), after: func(ctx context.Context) {
-		spaces, err := f.catalog.ListVectorIndexSpaces(ctx)
+	gate := &cancelMediaAfterCommitGate{processingOperationGate: newWorkerTestGate(), cancel: func() {
+		spaces, err := f.catalog.ListVectorIndexSpaces(t.Context())
 		if err != nil {
 			return
 		}
 		for _, space := range spaces {
-			if _, err := f.catalog.ActiveVectorIndexHead(ctx, space); err == nil && published.CompareAndSwap(false, true) {
+			if _, err := f.catalog.ActiveVectorIndexHead(t.Context(), space); err == nil && published.CompareAndSwap(false, true) {
 				busyAtPublication.Store(supervisor.Snapshot()[0].Busy)
 			}
 		}
@@ -760,17 +760,4 @@ func TestMediaContinuationBusyWhilePublishingVectorIndex(t *testing.T) {
 	targets, err := f.service.MediaProcessingTargets(t.Context(), "", 10)
 	require.NoError(t, err)
 	require.Empty(t, targets, "media processing completed")
-}
-
-type mediaIndexActivityGate struct {
-	processingOperationGate
-	after func(context.Context)
-}
-
-func (gate mediaIndexActivityGate) MutateContext(ctx context.Context, fn func() error) error {
-	err := gate.processingOperationGate.MutateContext(ctx, fn)
-	if err == nil {
-		gate.after(ctx)
-	}
-	return err
 }
