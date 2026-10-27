@@ -11,7 +11,7 @@ agents. It implements only MCP `2026-07-28`, using the official Go SDK at
 `github.com/modelcontextprotocol/go-sdk` v1.7.0. Older MCP versions and the
 legacy `initialize` flow are rejected. Clients start with `server/discover`.
 
-The MCP process is a client of the selected vault's daemon. It discovers or
+Standalone MCP is a client of the selected vault's daemon. It discovers or
 starts that daemon the same way the CLI does and never opens `docbank.db`, a
 blob, pack, or rendition directly. There is no MCP-only embedded-vault path and
 no remote-daemon option.
@@ -55,7 +55,7 @@ credential_binding = "credential:mcp-http"
 environment_variable = "DOCBANK_MCP_HTTP_TOKEN"
 ```
 
-Make `DOCBANK_MCP_HTTP_TOKEN` available only to the MCP process through the
+Make `DOCBANK_MCP_HTTP_TOKEN` available to the MCP process through the
 machine's secret or process manager, then start the listener:
 
 ```bash
@@ -66,11 +66,11 @@ Configure the client for `http://127.0.0.1:7341/mcp` and
 `Authorization: Bearer <token>`. `--listen` accepts an explicit IPv4 or IPv6 address and port, including
 wildcards. Hostnames and IPv6 zone identifiers are rejected.
 
-The HTTP credential is resolved from its environment binding when the MCP
-process starts and remains fixed for that process. Restart the MCP process to
+The HTTP credential is resolved from its environment binding when the listener
+starts and remains fixed for the hosting process. Restart that process to
 rotate it. It is separate from the daemon API key. Docbank refuses to start if
-the values match and repeats that check whenever it acquires a restarted
-daemon. The MCP bearer never appears in a flag, URL, runtime record, discovery
+the values match. Standalone MCP repeats that check whenever it acquires a
+restarted daemon. The MCP bearer never appears in a flag, URL, runtime record, discovery
 result, log, or error.
 
 This bearer is a fixed credential, not MCP OAuth. Docbank does not
@@ -79,20 +79,37 @@ client registration, scopes, or token refresh. A client may connect locally or
 through a trusted tunnel, but it must be able to set the Authorization header.
 Clients that require the MCP HTTP OAuth flow are not supported.
 
+The daemon also hosts the same read-only HTTP tools at `/mcp` on its API port.
+For a loopback API this is on by default once the MCP bearer resolves in the
+daemon's environment; without it, the daemon logs why and starts without MCP.
+Set `[mcp.http] enabled` or `DOCBANK_MCP_HTTP_ENABLED` to `true` to require it,
+or `false` to turn it off. `[mcp.http] port` moves it to a separate loopback
+port. The API port is ephemeral unless `[server] api_port` is set, so pin it
+for a stable client URL; the daemon logs the MCP URL at startup. The daemon uses
+the same credential and Host rules, and its API key is rejected at `/mcp`.
+MCP reads use that daemon's API. On shutdown, in-flight reads get up to five
+seconds to finish before the API closes. A daemon hosting MCP does not idle
+out. With hosting enabled explicitly, invalid credentials or a failed bind stop
+daemon startup. Restart
+the daemon to rotate its bearer. See the [configuration reference](../configuration.md#mcp-http-credential)
+and [container example](containers.md#run-mcp-in-the-same-container).
+
 Both transports have the fixed read catalog described below.
 `--allow-processing` adds only guarded processing start.
 `--allow-package-writes` permits load-file preflight, import, and custodian
 changes. `--allow-photo-edits` permits photo asset mutations.
 `--allow-export-writes` enables native export jobs and local downloads.
 `--allow-report-writes` enables frozen report creation, revision, local delivery,
-and explicit release. Each flag is independent. Enable the combination you need at startup.
+and explicit release. Each flag is independent and applies only to standalone MCP. The daemon-hosted
+catalog stays read-only. Enable the combination you need at standalone startup.
 
 ## Connect over a trusted network
 
 Choosing a non-loopback listener opts into sending the MCP bearer and returned
 vault data over the selected network. This is plain HTTP; use a trusted private
 container network, encrypted tunnel, or HTTPS proxy. The bearer grants the
-catalog selected by the MCP process's startup flags. It remains distinct from
+read-only catalog, with extra tools available only through standalone MCP's
+startup flags. It remains distinct from
 the daemon's full-authority API key. The MCP process still connects to its
 local daemon; remote-daemon configuration is not supported.
 
@@ -109,7 +126,8 @@ named credential binding, overriding a TOML binding for this process.
 Alternatively, retain the TOML example above and supply either its named
 variable or `<variable>_FILE`. Conflicting nonempty values and invalid selected
 files fail HTTP startup; they never fall back to another source. The daemon
-does not read the MCP bearer. Restart MCP to rotate it.
+reads the MCP bearer only when MCP hosting is enabled explicitly or by default. Restart the hosting
+process to rotate it.
 
 List accepted client authorities in `[mcp.http] allowed_hosts`, the
 comma-separated `DOCBANK_MCP_HTTP_ALLOWED_HOSTS` replacement, or additive,
@@ -122,7 +140,7 @@ A network client uses `http://docbank:7341/mcp` and
 `Authorization: Bearer <token>`. Missing or invalid credentials return `401`;
 unconfigured Hosts and cross-origin requests return `403` before authentication.
 The [container guide](containers.md#run-mcp-in-the-same-container) shows how to
-start the second process in the stock image.
+enable the daemon-hosted listener in the stock image.
 
 ## Exact protocol contract
 

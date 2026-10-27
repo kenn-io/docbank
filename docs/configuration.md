@@ -11,7 +11,7 @@ vault. Use `DOCBANK_HOME` to select its location. Add `config.toml` when you nee
 to change how the daemon runs.
 
 The file controls the listening address, authentication, idle timeout, backup
-repository, watched inboxes, the optional MCP HTTP credential binding, and
+repository, watched inboxes, the optional daemon MCP HTTP listener and credential binding, and
 secondary-store connections. A vault with only a primary store needs no
 configuration file. Each registered secondary store needs a matching
 connection profile after restart. Backup commands need either a configured
@@ -147,6 +147,8 @@ trust_private_network = false  # explicit trust for non-loopback HTTP
 session_lifetime = "24h"       # key-login lifetime, 1m..2160h; 0 = 24h
 
 [mcp.http]
+# enabled = true        # unset = hosted for a loopback API once the bearer resolves
+port = 0                # 0 = serve /mcp on the API port; otherwise a loopback port
 credential_binding = "" # empty = HTTP MCP cannot start without an env binding
 allowed_hosts = []      # additional MCP HTTP Host names, optionally with ports
 
@@ -193,14 +195,25 @@ exclude_patterns = [".syncthing.*.tmp", "*.sync-conflict-*"]
   using an SSH tunnel from another machine.
 - **`idle_timeout`**: how long a background daemon waits without
   requests before exiting on its own. `"0"` disables idle shutdown.
-  Foreground `docbank daemon run` ignores this and never idles out.
+  Foreground `docbank daemon run` ignores this and never idles out. A daemon
+  hosting MCP HTTP also never idles out.
 - **`[web] enabled`**: serves the embedded web application at `/`.
   `docbank web` starts or reconnects to the compatible daemon and opens an
   authenticated browser session on a fresh per-daemon loopback origin,
   independent of a configured `api_port`. Disabling it 404s `/`, `/photos`, `/photos/map`, `/photos/map/{set_id}`, `/photos/albums`, canonical `/photos/albums/{id}`, and `/assets/`.
   The API and `/docs` are unaffected. See [Web application](usage/web.md).
+- **`[mcp.http] enabled`**: hosts read-only MCP HTTP in the daemon. When unset,
+  the daemon hosts it if the API binds loopback, `port` is unset, and the MCP
+  bearer resolves in the daemon's environment; otherwise it logs why and starts
+  without MCP. `true` makes every daemon start need the bearer, including
+  automatic startup from a CLI command whose environment lacks it. `false`
+  never reads the bearer. `DOCBANK_MCP_HTTP_ENABLED` overrides TOML.
+- **`[mcp.http] port`**: `0`, or the API port, serves MCP at `/mcp` on the API
+  listener, including a network API listener. Any other port binds a separate
+  listener on loopback. `DOCBANK_MCP_HTTP_PORT` overrides TOML. Standalone
+  `docbank mcp --transport http` uses only its own `--listen` flag.
 - **`[mcp.http] credential_binding`**: names the separate inbound credential
-  used by `docbank mcp --transport http`. An empty value leaves stdio available
+  used by both daemon-hosted MCP HTTP and `docbank mcp --transport http`. An empty value leaves stdio available
   but makes HTTP startup fail unless an environment binding is selected.
   See [MCP HTTP credential](#mcp-http-credential).
 - **`[mcp.http] allowed_hosts`**: additional accepted MCP HTTP authorities.
@@ -234,7 +247,7 @@ reclamation operations.
 ### MCP HTTP credential
 
 The MCP HTTP listener requires a named credential binding. Configuration keeps
-only the environment-variable name. Supply the bearer to the MCP process
+only the environment-variable name. Supply the bearer to the process hosting MCP
 through that variable or its `_FILE` counterpart:
 
 ```toml
@@ -253,21 +266,21 @@ bytes.
 
 For startup without TOML, set `DOCBANK_MCP_HTTP_TOKEN` or
 `DOCBANK_MCP_HTTP_TOKEN_FILE`. This selects a process-local named binding and
-overrides `[mcp.http] credential_binding`; the daemon does not resolve its
-value. It does not replace existing entries in `[credential_bindings]`; when
+overrides `[mcp.http] credential_binding`. The daemon resolves its value only
+when MCP hosting is enabled explicitly or by default. It does not replace existing entries in `[credential_bindings]`; when
 the preferred internal name is already used, Docbank chooses an unused name.
 See [MCP network access](usage/mcp.md#connect-over-a-trusted-network).
 
-Docbank resolves the bearer once when the MCP HTTP process starts. Changing
-the environment does not rotate a running process. The bearer must differ from
-`[server] api_key` and from an ephemeral daemon key published in the runtime
-record. HTTP startup acquires the effective daemon first and refuses a reused
-value. The same exclusion remains active if the daemon later restarts and the
-MCP process reacquires it.
+Docbank resolves the bearer once when the MCP HTTP listener starts. Restart
+the hosting daemon or standalone MCP process to rotate it. The bearer must
+differ from `[server] api_key` and from an ephemeral daemon key published in the runtime
+record. HTTP startup checks the effective daemon key and refuses a reused
+value. Standalone MCP keeps that exclusion active when it reacquires a
+restarted daemon. Daemon-hosted MCP always uses its own daemon API.
 
 There is no raw bearer field in `config.toml`, command-line token flag, URL
 credential, or runtime-record publication. Supply the environment variable to
-the MCP child through an owner-controlled secret or process manager. This is a
+the hosting process through an owner-controlled secret or process manager. This is a
 fixed bearer, not OAuth. See [Model Context Protocol](usage/mcp.md) for
 the complete transport boundary.
 
@@ -1203,7 +1216,9 @@ forwarding headers do not change that peer check.
 | `DOCBANK_ALLOWED_HOSTS` | Comma-separated replacement for `[server] allowed_hosts`; spaces around entries are stripped. |
 | `DOCBANK_API_KEY` | Override `[server] api_key` with an explicit key. |
 | `DOCBANK_API_KEY_FILE` | Read the key from a mounted regular file instead of `DOCBANK_API_KEY`. |
-| `DOCBANK_MCP_HTTP_TOKEN` | Select an environment-backed MCP HTTP binding. Overrides the TOML binding; resolved only by MCP. |
+| `DOCBANK_MCP_HTTP_ENABLED` | Override `[mcp.http] enabled` with `true` or `false`; empty preserves TOML. |
+| `DOCBANK_MCP_HTTP_PORT` | Override `[mcp.http] port`; `0` serves `/mcp` on the API port. |
+| `DOCBANK_MCP_HTTP_TOKEN` | Select an environment-backed MCP HTTP binding. Overrides the TOML binding; resolved only when MCP HTTP is enabled. |
 | `DOCBANK_MCP_HTTP_TOKEN_FILE` | Supply that MCP bearer through a mounted regular file. |
 | `DOCBANK_MCP_HTTP_ALLOWED_HOSTS` | Comma-separated replacement for `[mcp.http] allowed_hosts`. |
 | `DOCBANK_HOME` | Vault location; see [Vault location](#vault-location) above. |

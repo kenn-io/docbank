@@ -14,6 +14,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/version"
 )
 
@@ -50,12 +51,28 @@ func NewServer() *Server {
 // NewServerWithOptions creates an exact-version server with a process-fixed
 // catalog. Processing and package writes each require an explicit opt-in.
 func NewServerWithOptions(options ServerOptions) *Server {
-	return newServerWithOptions(&sdkmcp.Implementation{
+	return newServerWithOptionsAndDaemon(defaultImplementation(), options, newDaemonLease())
+}
+
+// NewServerWithConnection creates a server whose reads always use the supplied
+// daemon connection, including retries. It never discovers or starts a daemon.
+func NewServerWithConnection(connection *daemonconn.Connection, options ServerOptions) *Server {
+	if connection == nil {
+		panic("nil daemon connection")
+	}
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
+		return connection, nil
+	}, func(c *daemonconn.Connection) error { return c.Close() })
+	return newServerWithOptionsAndDaemon(defaultImplementation(), options, lease)
+}
+
+func defaultImplementation() *sdkmcp.Implementation {
+	return &sdkmcp.Implementation{
 		Name:        "docbank",
 		Title:       "Docbank",
 		Description: "Self-sovereign document system",
 		Version:     version.Version,
-	}, options)
+	}
 }
 
 func newServerWithOptions(implementation *sdkmcp.Implementation, options ServerOptions) *Server {

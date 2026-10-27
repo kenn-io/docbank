@@ -120,28 +120,31 @@ settings and secret-file failure behavior.
 
 ## Run MCP in the same container
 
-MCP runs as a separate client of the vault's daemon and uses a separate bearer.
-Create a second random secret, owned and readable by UID `1000`, and mount it
-at `/run/secrets/mcp-bearer` when creating the container. Add these startup
-environment settings to the `docker run` command:
+The daemon can host authenticated, read-only MCP tools at `/mcp` on its API
+port. Create a second random secret, owned and readable by UID `1000`, and
+mount it at `/run/secrets/mcp-bearer` when creating the container. Add these
+startup environment settings to the `docker run` command:
 
 ```text
+-e DOCBANK_MCP_HTTP_ENABLED=true
 -e DOCBANK_MCP_HTTP_TOKEN_FILE=/run/secrets/mcp-bearer
--e DOCBANK_MCP_HTTP_ALLOWED_HOSTS=docbank:7341
+-e DOCBANK_MCP_HTTP_ALLOWED_HOSTS=docbank:8485
 ```
 
-Then start the second stock process:
+A client on `docbank-private` connects to `http://docbank:8485/mcp` with that
+bearer, sending `Host: docbank:8485`. The hosted catalog is read-only; there
+are no daemon flags to enable MCP writes. No second process, port, or proxy is
+needed. The image binds a network address, so hosting stays off until
+`DOCBANK_MCP_HTTP_ENABLED` is set. The MCP bearer authorizes only `/mcp`, and
+the API key is rejected there.
 
-```bash
-docker exec -d docbank docbank mcp --transport http --listen 0.0.0.0:7341
-```
+An invalid selected credential or a bearer equal to the effective daemon API
+key stops daemon startup. Stopping the daemon gives in-flight MCP reads up to
+five seconds to finish before closing its API. The container's
+restart policy supervises the one daemon; restart it after changing MCP
+settings or rotating the bearer.
 
-A client on `docbank-private` connects to `http://docbank:7341/mcp` with that
-bearer, sending `Host: docbank:7341`. The read catalog is the default; choose
-explicit `--allow-*` flags only when needed. For automatic process restart,
-configure your service manager to supervise both commands in the same container.
-No proxy or host rewriting is needed. Starting a second container against the
-vault is not this recipe: MCP discovery requires its local daemon's process
-identity and authenticated connection proof, as well as the shared lock registry.
-See [Model Context Protocol](mcp.md) for exact request headers and credential
-separation, including refusal when the daemon and MCP keys are equal.
+This is plain HTTP: use the trusted private network above, an encrypted tunnel,
+or an HTTPS proxy. See [Model Context Protocol](mcp.md) for exact request
+headers and the [configuration reference](../configuration.md#mcp-http-credential)
+for mounted secrets and named bindings.
