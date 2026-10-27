@@ -510,8 +510,7 @@ export async function sealExportSource(
       : { operation_id: operationID, kind, members: copied };
   let source = parseSource(
     await retryExportRequest(
-      async () =>
-        boundedJSON(await generated.createExportSourceWithJson(body, { session, signal })),
+      async () => boundedJSON(await generated.createExportSource(body, { session, signal })),
       signal,
     ),
   );
@@ -526,7 +525,7 @@ export async function sealExportSource(
     for (let offset = 0; offset < copied.length; offset += 1000) {
       await retryExportRequest(
         () =>
-          generated.putExportChunkWithJson(
+          generated.putExportChunk(
             operationID,
             offset / 1000,
             { members: copied.slice(offset, offset + 1000) },
@@ -565,7 +564,7 @@ export async function sealPhotoExportSource(
     await retryExportRequest(
       async () =>
         boundedJSON(
-          await generated.createExportSourceWithJson(
+          await generated.createExportSource(
             { operation_id: operationID, kind: "photos", photos },
             { session, signal },
           ),
@@ -596,7 +595,7 @@ export async function createExportPlan(
     await retryExportRequest(
       async () =>
         boundedJSON(
-          await generated.createExportPlanWithJson(
+          await generated.createExportPlan(
             {
               operation_id: id,
               source_id: source.id,
@@ -635,7 +634,7 @@ export async function sealMailboxExportSource(
     await retryExportRequest(
       async () =>
         boundedJSON(
-          await generated.createExportSourceWithJson(
+          await generated.createExportSource(
             { operation_id: operationID, kind: "mailbox_collection", collection_id: collectionID },
             { session, signal },
           ),
@@ -796,7 +795,7 @@ export async function startExportJob(
     await retryExportRequest(
       async () =>
         boundedJSON(
-          await generated.createExportJobWithJson(
+          await generated.createExportJob(
             { operation_id: id, plan_id: plan.id, fingerprint: plan.fingerprint },
             { session, signal },
           ),
@@ -911,7 +910,7 @@ export async function exportTicket(
     fail();
   const r = object(
     await boundedJSON(
-      await generated.downloadExportArchiveWithJson(
+      await generated.downloadExportArchive(
         job.id,
         { basename: safeExportBasename(basename) },
         { session, signal },

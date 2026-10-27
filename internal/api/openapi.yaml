@@ -13620,8 +13620,10 @@ components:
           format: int64
           type: integer
         revision:
+          format: uuid
           type: string
         sourceID:
+          format: uuid
           type: string
       required:
         - formatVersion
@@ -13630,8 +13632,10 @@ components:
       additionalProperties: false
       properties:
         revision:
+          format: uuid
           type: string
         sourceID:
+          format: uuid
           type: string
       required:
         - sourceID
@@ -14063,8 +14067,10 @@ components:
         pickerKind:
           type: string
         revision:
+          format: uuid
           type: string
         sourceID:
+          format: uuid
           type: string
       required:
         - sourceID
@@ -16612,6 +16618,7 @@ components:
       additionalProperties: false
       properties:
         id:
+          format: uuid
           pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$
           type: string
         selector:
@@ -17996,27 +18003,6 @@ components:
           type:
             - boolean
             - "null"
-      type: object
-    SavedQueryGPSBoundsSchema:
-      additionalProperties: false
-      properties:
-        east:
-          maxLength: 64
-          type: string
-        north:
-          maxLength: 64
-          type: string
-        south:
-          maxLength: 64
-          type: string
-        west:
-          maxLength: 64
-          type: string
-      required:
-        - south
-        - west
-        - north
-        - east
       type: object
     SavedQueryPage:
       additionalProperties: false
@@ -22940,11 +22926,6 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/EvidenceWindowRequest"
-          application/octet-stream:
-            schema:
-              contentMediaType: application/octet-stream
-              format: binary
-              type: string
         required: true
       responses:
         "200":
@@ -23014,11 +22995,6 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/JobRequest"
-          application/octet-stream:
-            schema:
-              contentMediaType: application/octet-stream
-              format: binary
-              type: string
         required: true
       responses:
         "200":
@@ -23114,11 +23090,6 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/DownloadRequest"
-          application/octet-stream:
-            schema:
-              contentMediaType: application/octet-stream
-              format: binary
-              type: string
         required: true
       responses:
         "200":
@@ -23231,11 +23202,6 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/PlanRequest"
-          application/octet-stream:
-            schema:
-              contentMediaType: application/octet-stream
-              format: binary
-              type: string
         required: true
       responses:
         "200":
@@ -23336,11 +23302,6 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/SourceRequest"
-          application/octet-stream:
-            schema:
-              contentMediaType: application/octet-stream
-              format: binary
-              type: string
         required: true
       responses:
         "200":
@@ -23407,11 +23368,6 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/PutExportChunkRequest"
-          application/octet-stream:
-            schema:
-              contentMediaType: application/octet-stream
-              format: binary
-              type: string
         required: true
       responses:
         "204":
@@ -28913,11 +28869,6 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/RedactionPreparationRequest"
-          application/octet-stream:
-            schema:
-              contentMediaType: application/octet-stream
-              format: binary
-              type: string
         required: true
       responses:
         "200":
@@ -29040,11 +28991,6 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/RedactionResolveRequest"
-          application/octet-stream:
-            schema:
-              contentMediaType: application/octet-stream
-              format: binary
-              type: string
         required: true
       responses:
         "200":
@@ -30614,11 +30560,6 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/TextOutlineRequest"
-          application/octet-stream:
-            schema:
-              contentMediaType: application/octet-stream
-              format: binary
-              type: string
         required: true
       responses:
         "200":
@@ -30700,11 +30641,6 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/TextCitation"
-          application/octet-stream:
-            schema:
-              contentMediaType: application/octet-stream
-              format: binary
-              type: string
         required: true
       responses:
         "200":
@@ -30786,11 +30722,6 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/TextSectionRequest"
-          application/octet-stream:
-            schema:
-              contentMediaType: application/octet-stream
-              format: binary
-              type: string
         required: true
       responses:
         "200":

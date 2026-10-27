@@ -1739,8 +1739,8 @@ stays visible and immutable. Operational CLI and watched-folder ingest facts
 cannot be superseded: they keep re-ingest idempotent. Record a newly learned
 origin as an additional fact instead.
 
-The encoded request body must be smaller than 1 MiB (1,048,576 bytes). A body
-at or above that limit receives `413` before the append runs.
+The encoded request body may be at most 1 MiB (1,048,576 bytes). A larger body
+receives `413` before the append runs.
 
 ### Email metadata and exact parts
 

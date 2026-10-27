@@ -26183,12 +26183,12 @@ type PromotePhotoNodePath struct {
 	NodeID int64 `json:"node_id"`
 }
 
-type RespondPhotoSuggestionPath struct {
-	SuggestionID uuid.UUID `json:"suggestion_id"`
-}
-
 type ListPersonFacePreviewsPath struct {
 	PersonID uuid.UUID `json:"person_id"`
+}
+
+type RespondPhotoSuggestionPath struct {
+	SuggestionID uuid.UUID `json:"suggestion_id"`
 }
 
 type DecidePhotoFacePath struct {
@@ -27346,6 +27346,7 @@ type GetExportJobEventsErrorResponse struct {
 	Detail       *string             `json:"detail,omitempty"`
 	Errors       []string            `json:"errors,omitempty"`
 	FaceIds      []string            `json:"face_ids,omitempty"`
+
 	// FaceVersionIds The content version of each face in face_ids, in the same order.
 	FaceVersionIds           []string             `json:"face_version_ids,omitempty"`
 	HiddenFaceConflict       *bool                `json:"hidden_face_conflict,omitempty"`
@@ -29430,14 +29431,14 @@ type PhotoCheckoutStatus = store.PhotoCheckoutStatus
 type PhotoCheckoutYears = store.PhotoCheckoutYears
 
 type PhotoCheckpointHeader struct {
-	FormatVersion int64   `json:"formatVersion"`
-	Revision      *string `json:"revision,omitempty"`
-	SourceID      *string `json:"sourceID,omitempty"`
+	FormatVersion int64      `json:"formatVersion"`
+	Revision      *uuid.UUID `json:"revision,omitempty"`
+	SourceID      *uuid.UUID `json:"sourceID,omitempty"`
 }
 
 type PhotoCheckpointIdentity struct {
-	Revision string `json:"revision"`
-	SourceID string `json:"sourceID"`
+	Revision uuid.UUID `json:"revision"`
+	SourceID uuid.UUID `json:"sourceID"`
 }
 
 type PhotoDescription = document.PhotoDescription
@@ -29467,12 +29468,12 @@ type PhotoHiddenPasscodeRequest = api.PhotoHiddenPasscodeRequest
 type PhotoHiddenState = store.PhotoHiddenState
 
 type PhotoImportCheckpoint struct {
-	Destination     string `json:"destination"`
-	ManifestHash    string `json:"manifestHash"`
-	ManifestVersion int64  `json:"manifestVersion"`
-	PickerKind      string `json:"pickerKind"`
-	Revision        string `json:"revision"`
-	SourceID        string `json:"sourceID"`
+	Destination     string    `json:"destination"`
+	ManifestHash    string    `json:"manifestHash"`
+	ManifestVersion int64     `json:"manifestVersion"`
+	PickerKind      string    `json:"pickerKind"`
+	Revision        uuid.UUID `json:"revision"`
+	SourceID        uuid.UUID `json:"sourceID"`
 }
 
 type PhotoImportStartRequest = api.PhotoImportStartRequest

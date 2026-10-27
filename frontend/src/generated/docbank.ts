@@ -7535,17 +7535,6 @@ export interface SavedQueryCreateRequest {
   payload: SavedQueryV1Schema | HighlightSetV1Schema;
 }
 
-export interface SavedQueryGPSBoundsSchema {
-  /** @maxLength 64 */
-  east: string;
-  /** @maxLength 64 */
-  north: string;
-  /** @maxLength 64 */
-  south: string;
-  /** @maxLength 64 */
-  west: string;
-}
-
 export interface SavedQueryPage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -12030,7 +12019,7 @@ export const downloadEmailPDF = (versionId: string,
 
 
 
-export const getReadEvidenceWindowWithJsonUrl = () => {
+export const getReadEvidenceWindowUrl = () => {
 
 
 
@@ -12041,7 +12030,7 @@ export const getReadEvidenceWindowWithJsonUrl = () => {
 /**
  * @summary Read one exact current/live evidence window
  */
-export const readEvidenceWindowWithJson = async (evidenceWindowRequest: NonReadonly<EvidenceWindowRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<EvidenceWindow> => {
+export const readEvidenceWindow = async (evidenceWindowRequest: NonReadonly<EvidenceWindowRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<EvidenceWindow> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -12057,7 +12046,7 @@ export const readEvidenceWindowWithJson = async (evidenceWindowRequest: NonReado
     }
     return headers;
   };
-return sessionJSON<EvidenceWindow>(getReadEvidenceWindowWithJsonUrl(),
+return sessionJSON<EvidenceWindow>(getReadEvidenceWindowUrl(),
   {
     ...options,
     method: 'POST',
@@ -12068,45 +12057,7 @@ return sessionJSON<EvidenceWindow>(getReadEvidenceWindowWithJsonUrl(),
 
 
 
-export const getReadEvidenceWindowWithBlobUrl = () => {
-
-
-
-
-  return `/api/v1/evidence/windows`
-}
-
-/**
- * @summary Read one exact current/live evidence window
- */
-export const readEvidenceWindowWithBlob = async (readEvidenceWindowBody: Blob, options?: Parameters<typeof sessionJSON>[1]): Promise<EvidenceWindow> => {
-
-    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Symbol.iterator in h) {
-      return Object.fromEntries(
-        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
-      );
-    }
-    const headers: Record<string, string | readonly string[]> = {};
-    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
-      if (value !== undefined) headers[name] = value;
-    }
-    return headers;
-  };
-return sessionJSON<EvidenceWindow>(getReadEvidenceWindowWithBlobUrl(),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/octet-stream', ...getHeaders(options?.headers) },
-    body: readEvidenceWindowBody
-  }
-);}
-
-
-
-export const getCreateExportJobWithJsonUrl = () => {
+export const getCreateExportJobUrl = () => {
 
 
 
@@ -12117,7 +12068,7 @@ export const getCreateExportJobWithJsonUrl = () => {
 /**
  * @summary Admit a durable verified export job
  */
-export const createExportJobWithJson = (jobRequest: NonReadonly<JobRequest>, options?: Parameters<typeof sessionResponse>[1]) => {
+export const createExportJob = (jobRequest: NonReadonly<JobRequest>, options?: Parameters<typeof sessionResponse>[1]) => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -12133,50 +12084,12 @@ export const createExportJobWithJson = (jobRequest: NonReadonly<JobRequest>, opt
     }
     return headers;
   };
-return sessionResponse<ExportJob>(getCreateExportJobWithJsonUrl(),
+return sessionResponse<ExportJob>(getCreateExportJobUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(jobRequest)
-  }
-);}
-
-
-
-export const getCreateExportJobWithBlobUrl = () => {
-
-
-
-
-  return `/api/v1/exports/jobs`
-}
-
-/**
- * @summary Admit a durable verified export job
- */
-export const createExportJobWithBlob = (createExportJobBody: Blob, options?: Parameters<typeof sessionResponse>[1]) => {
-
-    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Symbol.iterator in h) {
-      return Object.fromEntries(
-        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
-      );
-    }
-    const headers: Record<string, string | readonly string[]> = {};
-    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
-      if (value !== undefined) headers[name] = value;
-    }
-    return headers;
-  };
-return sessionResponse<ExportJob>(getCreateExportJobWithBlobUrl(),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/octet-stream', ...getHeaders(options?.headers) },
-    body: createExportJobBody
   }
 );}
 
@@ -12269,7 +12182,7 @@ return sessionJSON<void>(getCancelExportJobUrl(id),
 
 
 
-export const getDownloadExportArchiveWithJsonUrl = (id: string,) => {
+export const getDownloadExportArchiveUrl = (id: string,) => {
 
 
 
@@ -12280,7 +12193,7 @@ export const getDownloadExportArchiveWithJsonUrl = (id: string,) => {
 /**
  * @summary Issue a one-use ticket for a reverified archive
  */
-export const downloadExportArchiveWithJson = (id: string,
+export const downloadExportArchive = (id: string,
     downloadRequest: NonReadonly<DownloadRequest>, options?: Parameters<typeof sessionResponse>[1]) => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
@@ -12297,51 +12210,12 @@ export const downloadExportArchiveWithJson = (id: string,
     }
     return headers;
   };
-return sessionResponse<TicketOutputBody>(getDownloadExportArchiveWithJsonUrl(id),
+return sessionResponse<TicketOutputBody>(getDownloadExportArchiveUrl(id),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(downloadRequest)
-  }
-);}
-
-
-
-export const getDownloadExportArchiveWithBlobUrl = (id: string,) => {
-
-
-
-
-  return `/api/v1/exports/jobs/${encodeURIComponent(String(id))}/download`
-}
-
-/**
- * @summary Issue a one-use ticket for a reverified archive
- */
-export const downloadExportArchiveWithBlob = (id: string,
-    downloadExportArchiveBody: Blob, options?: Parameters<typeof sessionResponse>[1]) => {
-
-    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Symbol.iterator in h) {
-      return Object.fromEntries(
-        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
-      );
-    }
-    const headers: Record<string, string | readonly string[]> = {};
-    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
-      if (value !== undefined) headers[name] = value;
-    }
-    return headers;
-  };
-return sessionResponse<TicketOutputBody>(getDownloadExportArchiveWithBlobUrl(id),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/octet-stream', ...getHeaders(options?.headers) },
-    body: downloadExportArchiveBody
   }
 );}
 
@@ -12394,7 +12268,7 @@ return sessionResponse<Response>(getGetExportJobEventsUrl(id,params),
 
 
 
-export const getCreateExportPlanWithJsonUrl = () => {
+export const getCreateExportPlanUrl = () => {
 
 
 
@@ -12405,7 +12279,7 @@ export const getCreateExportPlanWithJsonUrl = () => {
 /**
  * @summary Freeze role availability and exact archive paths
  */
-export const createExportPlanWithJson = (planRequest: NonReadonly<PlanRequest>, options?: Parameters<typeof sessionResponse>[1]) => {
+export const createExportPlan = (planRequest: NonReadonly<PlanRequest>, options?: Parameters<typeof sessionResponse>[1]) => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -12421,50 +12295,12 @@ export const createExportPlanWithJson = (planRequest: NonReadonly<PlanRequest>, 
     }
     return headers;
   };
-return sessionResponse<Plan>(getCreateExportPlanWithJsonUrl(),
+return sessionResponse<Plan>(getCreateExportPlanUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(planRequest)
-  }
-);}
-
-
-
-export const getCreateExportPlanWithBlobUrl = () => {
-
-
-
-
-  return `/api/v1/exports/plans`
-}
-
-/**
- * @summary Freeze role availability and exact archive paths
- */
-export const createExportPlanWithBlob = (createExportPlanBody: Blob, options?: Parameters<typeof sessionResponse>[1]) => {
-
-    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Symbol.iterator in h) {
-      return Object.fromEntries(
-        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
-      );
-    }
-    const headers: Record<string, string | readonly string[]> = {};
-    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
-      if (value !== undefined) headers[name] = value;
-    }
-    return headers;
-  };
-return sessionResponse<Plan>(getCreateExportPlanWithBlobUrl(),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/octet-stream', ...getHeaders(options?.headers) },
-    body: createExportPlanBody
   }
 );}
 
@@ -12551,7 +12387,7 @@ export const getExportOutputProblems = (id: string,
 
 
 
-export const getCreateExportSourceWithJsonUrl = () => {
+export const getCreateExportSourceUrl = () => {
 
 
 
@@ -12562,7 +12398,7 @@ export const getCreateExportSourceWithJsonUrl = () => {
 /**
  * @summary Freeze exact export membership or begin a chunk upload
  */
-export const createExportSourceWithJson = (sourceRequest: NonReadonly<SourceRequest>, options?: Parameters<typeof sessionResponse>[1]) => {
+export const createExportSource = (sourceRequest: NonReadonly<SourceRequest>, options?: Parameters<typeof sessionResponse>[1]) => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -12578,50 +12414,12 @@ export const createExportSourceWithJson = (sourceRequest: NonReadonly<SourceRequ
     }
     return headers;
   };
-return sessionResponse<Source>(getCreateExportSourceWithJsonUrl(),
+return sessionResponse<Source>(getCreateExportSourceUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(sourceRequest)
-  }
-);}
-
-
-
-export const getCreateExportSourceWithBlobUrl = () => {
-
-
-
-
-  return `/api/v1/exports/sources`
-}
-
-/**
- * @summary Freeze exact export membership or begin a chunk upload
- */
-export const createExportSourceWithBlob = (createExportSourceBody: Blob, options?: Parameters<typeof sessionResponse>[1]) => {
-
-    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Symbol.iterator in h) {
-      return Object.fromEntries(
-        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
-      );
-    }
-    const headers: Record<string, string | readonly string[]> = {};
-    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
-      if (value !== undefined) headers[name] = value;
-    }
-    return headers;
-  };
-return sessionResponse<Source>(getCreateExportSourceWithBlobUrl(),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/octet-stream', ...getHeaders(options?.headers) },
-    body: createExportSourceBody
   }
 );}
 
@@ -12660,7 +12458,7 @@ export const getExportAttachmentPublications = (id: string,
 
 
 
-export const getPutExportChunkWithJsonUrl = (id: string,
+export const getPutExportChunkUrl = (id: string,
     index: number,) => {
 
 
@@ -12672,7 +12470,7 @@ export const getPutExportChunkWithJsonUrl = (id: string,
 /**
  * @summary Upload one idempotent exact-member chunk
  */
-export const putExportChunkWithJson = async (id: string,
+export const putExportChunk = async (id: string,
     index: number,
     putExportChunkRequest: NonReadonly<PutExportChunkRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
 
@@ -12690,53 +12488,12 @@ export const putExportChunkWithJson = async (id: string,
     }
     return headers;
   };
-return sessionJSON<void>(getPutExportChunkWithJsonUrl(id,index),
+return sessionJSON<void>(getPutExportChunkUrl(id,index),
   {
     ...options,
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(putExportChunkRequest)
-  }
-);}
-
-
-
-export const getPutExportChunkWithBlobUrl = (id: string,
-    index: number,) => {
-
-
-
-
-  return `/api/v1/exports/sources/${encodeURIComponent(String(id))}/chunks/${encodeURIComponent(String(index))}`
-}
-
-/**
- * @summary Upload one idempotent exact-member chunk
- */
-export const putExportChunkWithBlob = async (id: string,
-    index: number,
-    putExportChunkBody: Blob, options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
-
-    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Symbol.iterator in h) {
-      return Object.fromEntries(
-        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
-      );
-    }
-    const headers: Record<string, string | readonly string[]> = {};
-    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
-      if (value !== undefined) headers[name] = value;
-    }
-    return headers;
-  };
-return sessionJSON<void>(getPutExportChunkWithBlobUrl(id,index),
-  {
-    ...options,
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/octet-stream', ...getHeaders(options?.headers) },
-    body: putExportChunkBody
   }
 );}
 
@@ -18751,7 +18508,7 @@ return sessionJSON<QueryPreview>(getParseQueryUrl(),
 
 
 
-export const getPrepareNativePDFWithJsonUrl = () => {
+export const getPrepareNativePDFUrl = () => {
 
 
 
@@ -18762,7 +18519,7 @@ export const getPrepareNativePDFWithJsonUrl = () => {
 /**
  * @summary Inspect an exact retained native PDF for redaction preparation
  */
-export const prepareNativePDFWithJson = async (redactionPreparationRequest: NonReadonly<RedactionPreparationRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<RedactionPreparation> => {
+export const prepareNativePDF = async (redactionPreparationRequest: NonReadonly<RedactionPreparationRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<RedactionPreparation> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -18778,50 +18535,12 @@ export const prepareNativePDFWithJson = async (redactionPreparationRequest: NonR
     }
     return headers;
   };
-return sessionJSON<RedactionPreparation>(getPrepareNativePDFWithJsonUrl(),
+return sessionJSON<RedactionPreparation>(getPrepareNativePDFUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(redactionPreparationRequest)
-  }
-);}
-
-
-
-export const getPrepareNativePDFWithBlobUrl = () => {
-
-
-
-
-  return `/api/v1/redaction/prepare`
-}
-
-/**
- * @summary Inspect an exact retained native PDF for redaction preparation
- */
-export const prepareNativePDFWithBlob = async (prepareNativePDFBody: Blob, options?: Parameters<typeof sessionJSON>[1]): Promise<RedactionPreparation> => {
-
-    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Symbol.iterator in h) {
-      return Object.fromEntries(
-        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
-      );
-    }
-    const headers: Record<string, string | readonly string[]> = {};
-    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
-      if (value !== undefined) headers[name] = value;
-    }
-    return headers;
-  };
-return sessionJSON<RedactionPreparation>(getPrepareNativePDFWithBlobUrl(),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/octet-stream', ...getHeaders(options?.headers) },
-    body: prepareNativePDFBody
   }
 );}
 
@@ -18865,7 +18584,7 @@ return sessionJSON<Blob>(getRenderNativePDFUrl(),
 
 
 
-export const getResolveNativePDFWithJsonUrl = () => {
+export const getResolveNativePDFUrl = () => {
 
 
 
@@ -18876,7 +18595,7 @@ export const getResolveNativePDFWithJsonUrl = () => {
 /**
  * @summary Review explicit masks against a freshly inspected retained PDF
  */
-export const resolveNativePDFWithJson = async (redactionResolveRequest: NonReadonly<RedactionResolveRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<RedactionReview> => {
+export const resolveNativePDF = async (redactionResolveRequest: NonReadonly<RedactionResolveRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<RedactionReview> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -18892,50 +18611,12 @@ export const resolveNativePDFWithJson = async (redactionResolveRequest: NonReado
     }
     return headers;
   };
-return sessionJSON<RedactionReview>(getResolveNativePDFWithJsonUrl(),
+return sessionJSON<RedactionReview>(getResolveNativePDFUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(redactionResolveRequest)
-  }
-);}
-
-
-
-export const getResolveNativePDFWithBlobUrl = () => {
-
-
-
-
-  return `/api/v1/redaction/resolve`
-}
-
-/**
- * @summary Review explicit masks against a freshly inspected retained PDF
- */
-export const resolveNativePDFWithBlob = async (resolveNativePDFBody: Blob, options?: Parameters<typeof sessionJSON>[1]): Promise<RedactionReview> => {
-
-    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Symbol.iterator in h) {
-      return Object.fromEntries(
-        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
-      );
-    }
-    const headers: Record<string, string | readonly string[]> = {};
-    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
-      if (value !== undefined) headers[name] = value;
-    }
-    return headers;
-  };
-return sessionJSON<RedactionReview>(getResolveNativePDFWithBlobUrl(),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/octet-stream', ...getHeaders(options?.headers) },
-    body: resolveNativePDFBody
   }
 );}
 
@@ -20577,7 +20258,7 @@ export const listTagNodes = async (tagId: string,
 
 
 
-export const getGetTextOutlineWithJsonUrl = () => {
+export const getGetTextOutlineUrl = () => {
 
 
 
@@ -20588,7 +20269,7 @@ export const getGetTextOutlineWithJsonUrl = () => {
 /**
  * @summary Read the outline of an exact retained rendition
  */
-export const getTextOutlineWithJson = async (textOutlineRequest: NonReadonly<TextOutlineRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<TextOutlinePage> => {
+export const getTextOutline = async (textOutlineRequest: NonReadonly<TextOutlineRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<TextOutlinePage> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -20604,7 +20285,7 @@ export const getTextOutlineWithJson = async (textOutlineRequest: NonReadonly<Tex
     }
     return headers;
   };
-return sessionJSON<TextOutlinePage>(getGetTextOutlineWithJsonUrl(),
+return sessionJSON<TextOutlinePage>(getGetTextOutlineUrl(),
   {
     ...options,
     method: 'POST',
@@ -20615,45 +20296,7 @@ return sessionJSON<TextOutlinePage>(getGetTextOutlineWithJsonUrl(),
 
 
 
-export const getGetTextOutlineWithBlobUrl = () => {
-
-
-
-
-  return `/api/v1/text-citations/outline`
-}
-
-/**
- * @summary Read the outline of an exact retained rendition
- */
-export const getTextOutlineWithBlob = async (getTextOutlineBody: Blob, options?: Parameters<typeof sessionJSON>[1]): Promise<TextOutlinePage> => {
-
-    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Symbol.iterator in h) {
-      return Object.fromEntries(
-        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
-      );
-    }
-    const headers: Record<string, string | readonly string[]> = {};
-    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
-      if (value !== undefined) headers[name] = value;
-    }
-    return headers;
-  };
-return sessionJSON<TextOutlinePage>(getGetTextOutlineWithBlobUrl(),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/octet-stream', ...getHeaders(options?.headers) },
-    body: getTextOutlineBody
-  }
-);}
-
-
-
-export const getResolveTextCitationWithJsonUrl = () => {
+export const getResolveTextCitationUrl = () => {
 
 
 
@@ -20664,7 +20307,7 @@ export const getResolveTextCitationWithJsonUrl = () => {
 /**
  * @summary Resolve an exact quotation from retained rendition text
  */
-export const resolveTextCitationWithJson = async (textCitation: NonReadonly<TextCitation>, options?: Parameters<typeof sessionJSON>[1]): Promise<ResolvedTextCitation> => {
+export const resolveTextCitation = async (textCitation: NonReadonly<TextCitation>, options?: Parameters<typeof sessionJSON>[1]): Promise<ResolvedTextCitation> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -20680,7 +20323,7 @@ export const resolveTextCitationWithJson = async (textCitation: NonReadonly<Text
     }
     return headers;
   };
-return sessionJSON<ResolvedTextCitation>(getResolveTextCitationWithJsonUrl(),
+return sessionJSON<ResolvedTextCitation>(getResolveTextCitationUrl(),
   {
     ...options,
     method: 'POST',
@@ -20691,45 +20334,7 @@ return sessionJSON<ResolvedTextCitation>(getResolveTextCitationWithJsonUrl(),
 
 
 
-export const getResolveTextCitationWithBlobUrl = () => {
-
-
-
-
-  return `/api/v1/text-citations/resolve`
-}
-
-/**
- * @summary Resolve an exact quotation from retained rendition text
- */
-export const resolveTextCitationWithBlob = async (resolveTextCitationBody: Blob, options?: Parameters<typeof sessionJSON>[1]): Promise<ResolvedTextCitation> => {
-
-    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Symbol.iterator in h) {
-      return Object.fromEntries(
-        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
-      );
-    }
-    const headers: Record<string, string | readonly string[]> = {};
-    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
-      if (value !== undefined) headers[name] = value;
-    }
-    return headers;
-  };
-return sessionJSON<ResolvedTextCitation>(getResolveTextCitationWithBlobUrl(),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/octet-stream', ...getHeaders(options?.headers) },
-    body: resolveTextCitationBody
-  }
-);}
-
-
-
-export const getReadTextSectionWithJsonUrl = () => {
+export const getReadTextSectionUrl = () => {
 
 
 
@@ -20740,7 +20345,7 @@ export const getReadTextSectionWithJsonUrl = () => {
 /**
  * @summary Read a page of an exact retained text section
  */
-export const readTextSectionWithJson = async (textSectionRequest: NonReadonly<TextSectionRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<TextSectionPage> => {
+export const readTextSection = async (textSectionRequest: NonReadonly<TextSectionRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<TextSectionPage> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -20756,50 +20361,12 @@ export const readTextSectionWithJson = async (textSectionRequest: NonReadonly<Te
     }
     return headers;
   };
-return sessionJSON<TextSectionPage>(getReadTextSectionWithJsonUrl(),
+return sessionJSON<TextSectionPage>(getReadTextSectionUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(textSectionRequest)
-  }
-);}
-
-
-
-export const getReadTextSectionWithBlobUrl = () => {
-
-
-
-
-  return `/api/v1/text-citations/section`
-}
-
-/**
- * @summary Read a page of an exact retained text section
- */
-export const readTextSectionWithBlob = async (readTextSectionBody: Blob, options?: Parameters<typeof sessionJSON>[1]): Promise<TextSectionPage> => {
-
-    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Symbol.iterator in h) {
-      return Object.fromEntries(
-        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
-      );
-    }
-    const headers: Record<string, string | readonly string[]> = {};
-    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
-      if (value !== undefined) headers[name] = value;
-    }
-    return headers;
-  };
-return sessionJSON<TextSectionPage>(getReadTextSectionWithBlobUrl(),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/octet-stream', ...getHeaders(options?.headers) },
-    body: readTextSectionBody
   }
 );}
 
