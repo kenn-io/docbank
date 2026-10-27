@@ -23,6 +23,12 @@ Instructions for autonomous coding agents working in this repository.
   `go test -tags fts5 ./internal/<pkg>/ -run <Name>`. CGO builds use mattn
   SQLite; the supported pure-Go path uses `CGO_ENABLED=0` and modernc SQLite.
   `make test` runs the complete suite; CI runs it in both modes.
+- Never locate files from a path returned by `runtime.Caller` or a stack
+  trace; builds use `-trimpath`, so those paths are module-relative. Tests run
+  from their package directory, so use paths relative to it.
+- A test package that loads a named time zone must import `time/tzdata` in a
+  `_test.go` file. Trimmed builds cannot fall back to GOROOT's zone database,
+  and Windows has no system database.
 - Lint with `make lint` (golangci-lint, fts5 tag). Docs build strict with
   `make docs-build`; fix every warning.
 - Linux, macOS, and Windows are supported. Windows CI runs the complete CLI,
