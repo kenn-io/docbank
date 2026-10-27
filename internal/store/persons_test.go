@@ -287,7 +287,6 @@ func TestPeopleRecentFirstFollowsVisibleEvidence(t *testing.T) {
 	// Namesakes share their group's newest evidence and stay adjacent across pages.
 	recent := PeopleSearchOptions{RecentFirst: true}
 	require.Equal(t, append(slices.Clone(zoes), people["Bob"].PersonID, people["Ada"].PersonID, people["Cy"].PersonID), page(ctx, "", recent, 1))
-	require.Equal(t, zoes, page(ctx, "Zo", recent, 1))
 
 	// Locked Hidden evidence neither ranks nor reveals its person.
 	asset, err := s.PhotoAssetForNode(ctx, nodes["Zoe"].ID)

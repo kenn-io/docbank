@@ -1461,21 +1461,38 @@ Active operator assertions other than `blind_copy` make names searchable on visi
 
 Recent-first ranking starts a typed-name search from matching people, joins their namesakes, and looks up their active `depicted` assertions through `person_document_assertions_person`, indexed by `(person_id, role, action)`. Browser visibility checks also use per-person assertion lookups. SQLite reads and sorts all matching people's visible evidence before returning ranked rows. The application consumes those rows newest first and stops after filling the page and finishing timestamp ties. It then fills any remaining places with unranked people in name order. An empty query keeps the assertion-first scan, including unrelated mail assertions. Photo summaries apply to the listed people; photo eligibility and the unranked tail retain their existing queries.
 
-With 50,000 people, 10,000 mail contacts, and 2,025,400 assertions on an AMD EPYC 7763 using CGO SQLite, the table compares back-to-back runs before and after the indexed lookups in one session, both with `-benchtime=300ms -count=1`. Timings vary with cache state and system load.
+The tables compare back-to-back runs before and after the indexed lookups on an AMD EPYC 7763 using CGO SQLite in one session, both with `-benchtime=3x -count=1`. Timings vary with cache state and system load.
+
+The mail-heavy fixture has 50,000 people, 10,000 mail contacts, and 2,025,400 assertions.
 
 | Benchmark case | Before | Indexed lookups |
 | --- | ---: | ---: |
-| `page-24-name` | 2,904.39 ms | 0.483 ms |
-| `page-24-recent` | 3,344.23 ms | 364.55 ms |
-| `page-24-name-summary` | 858.14 ms | 352.47 ms |
-| `page-24-recent-cursor` | 3,375.61 ms | 415.68 ms |
-| `page-24-recent-summary` | 837.44 ms | 351.85 ms |
-| `page-100-recent-prefix` | 3,316.03 ms | 27.46 ms |
-| `page-100-recent-prefix-broad` | 3,412.49 ms | 422.43 ms |
-| `page-100-recent-prefix-none` | 236.89 ms | 12.17 ms |
-| `page-24-recent-unranked-tail` | 6,011.47 ms | 385.93 ms |
+| `page-24-name` | 2,730.01 ms | 0.774 ms |
+| `page-24-recent` | 3,355.31 ms | 343.85 ms |
+| `page-24-name-summary` | 868.57 ms | 340.70 ms |
+| `page-24-recent-cursor` | 3,365.18 ms | 355.32 ms |
+| `page-24-recent-summary` | 848.51 ms | 321.76 ms |
+| `page-100-recent-prefix` | 3,261.70 ms | 24.94 ms |
+| `page-100-recent-prefix-broad` | 3,392.19 ms | 414.75 ms |
+| `page-100-recent-prefix-none` | 238.98 ms | 11.78 ms |
+| `page-24-recent-unranked-tail` | 6,097.63 ms | 367.75 ms |
 
-The assertion index occupies 141,463,552 bytes, about 134.9 MiB, on that fixture. Creating it on the warm 2,025,400-assertion fixture took 1.67 s, including autocommit. It excludes timestamps and version IDs to limit its storage cost. The broad `p` prefix matches every person's name in this fixture. Measure the standard cases with `CGO_ENABLED=1 go test -tags fts5 ./internal/store -run '^$' -bench 'BenchmarkPeopleRecentAtVaultScale/50000' -benchtime=300ms -count=1`.
+The photo-heavy fixture has 3,000 people, 40,000 photos, and 120,000 depicted assertions, with no mail assertions. Every person has ranked evidence, so it has no unranked-tail case.
+
+| Benchmark case | Before | Indexed lookups |
+| --- | ---: | ---: |
+| `page-24-name` | 609.84 ms | 0.787 ms |
+| `page-24-recent` | 1,407.05 ms | 1,535.86 ms |
+| `page-24-name-summary` | 465.40 ms | 418.09 ms |
+| `page-24-recent-cursor` | 1,406.59 ms | 1,591.27 ms |
+| `page-24-recent-summary` | 705.02 ms | 617.82 ms |
+| `page-100-recent-prefix` | 750.17 ms | 9.58 ms |
+| `page-100-recent-prefix-broad` | 1,489.31 ms | 1,995.54 ms |
+| `page-100-recent-prefix-none` | 121.97 ms | 1.64 ms |
+
+On the photo-heavy fixture, empty-query recent pages and cursor pages remain slower because correlated visibility probes run per assertion, and the broad prefix remains slower because the person-index walk seeks and fetches every matching assertion row.
+
+The assertion index occupies 141,463,552 bytes, about 134.9 MiB, on the mail-heavy fixture. Creating it on the warm 2,025,400-assertion fixture took 1.67 s, including autocommit. It excludes timestamps and version IDs to limit its storage cost. The broad `p` prefix matches every person's name in both fixtures. Measure the standard cases with `CGO_ENABLED=1 go test -tags fts5 ./internal/store -run '^$' -bench 'BenchmarkPeopleRecentAtVaultScale/(3000|50000)' -benchtime=3x -count=1`.
 
 Browser rename and merge apply the same visibility rule to the canonical person inside the write transaction. A person the browser can't list, such as a sensitive-only person or a locked Hidden-only person, returns `404 not_found`. While Hidden is locked, browser merges require unlocking if either person has assertions or face candidate evidence on a Hidden photo. A merge replay resolves the survivor through aliases and checks its current visibility before returning the original receipt, even after another merge. Browser sessions receive merge receipts with zero moved-evidence counts and an empty absorbed name. API-key writes keep their full scope.
 
