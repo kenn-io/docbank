@@ -10,6 +10,8 @@ Instructions for autonomous coding agents working in this repository.
 - PostgreSQL checks use `DOCBANK_TEST_POSTGRES_DSN` and `make test-pg` against
   a disposable server. CI owns its service container; each test owns and drops
   its database. An explicitly configured but unavailable server fails the test.
+  Store query tests use `pgschema.Setup` and a separate runtime role; do not
+  maintain a second copy of the catalog DDL in fixtures.
   Do not start a container per test or repeat unrelated SQLite suites in the
   PostgreSQL lane. Follow the existing main-pinned PR dispatcher and cache
   ownership; branch changes to `ci.yml` only take effect for PRs after merge.

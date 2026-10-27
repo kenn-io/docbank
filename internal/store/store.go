@@ -12,6 +12,7 @@ import (
 
 	"github.com/cenkalti/backoff/v7"
 
+	"go.kenn.io/docbank/internal/store/schemaformat"
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
@@ -352,11 +353,7 @@ func (s *Store) withLogicalTx(ctx context.Context, fn func(tx *sql.Tx) error) er
 	})
 }
 
-// timestampLayout is RFC 3339 UTC with fixed-width nanoseconds. Timestamps
-// are compared and sorted as strings in SQL (EmptyTrash, TrashedRoots), so
-// lexicographic order must match chronological order; RFC3339Nano trims
-// trailing zeros and breaks that within a second.
-const timestampLayout = "2006-01-02T15:04:05.000000000Z07:00"
+const timestampLayout = schemaformat.TimestampLayout
 
 func nowRFC3339() string {
 	return time.Now().UTC().Format(timestampLayout)
