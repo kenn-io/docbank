@@ -3,10 +3,12 @@ package store
 import (
 	"database/sql"
 	"encoding/json/v2"
+	"testing"
+	"time"
+
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/openaicompat"
-	"testing"
 )
 
 func TestEmbeddingLegacyProfilesReuseOnlyMatchingProducer(t *testing.T) {
@@ -44,7 +46,15 @@ func TestEmbeddingLegacyProfilesReuseOnlyMatchingProducer(t *testing.T) {
 	retained, err = normalizeEmbeddingSetRecord(retained)
 	require.NoError(t, err)
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), retained))
-	work := EmbeddingJobWork{ContentVersionID: version, Binding: workerProfileEmbeddingBinding(t, profile, "chunk"), Descriptor: retained.VectorSpace.Descriptor, VectorSpaceID: testSHA256([]byte("new-space")), EmbeddingInputFingerprint: retained.EmbeddingInputFingerprint, InputGeneration: retained.InputGeneration}
+	binding := workerProfileEmbeddingBinding(t, profile, "chunk")
+	consent := ProviderOperationAuthorizationRequest{Principal: "operator:producer-reuse", Scope: "embedding:producer-reuse", ProfileFingerprint: profile.Fingerprint, DisclosureFingerprint: binding.DisclosureFingerprint, InputClasses: []string{string(binding.InputKind)}, RetainedArtifactClasses: []string{"embedding_vector_set"}}
+	_, err = s.GrantConsent(t.Context(), ProcessingConsentGrantRequest{Principal: consent.Principal, Scope: consent.Scope, ProfileFingerprint: consent.ProfileFingerprint, DisclosureFingerprint: consent.DisclosureFingerprint, InputClasses: consent.InputClasses, RetainedArtifactClasses: consent.RetainedArtifactClasses})
+	require.NoError(t, err)
+	job, err := s.EnqueueEmbeddingJob(t.Context(), EmbeddingJobRequest{ContentVersionID: version, Profile: profile, BindingID: binding.Name, Descriptor: descriptor, VectorSpaceID: testSHA256([]byte("new-space")), InputGeneration: retained.InputGeneration, Authorization: consent})
+	require.NoError(t, err)
+	_, work, claimed, err := s.ClaimEmbeddingWork(t.Context(), job.ID, "worker:producer-reuse", time.Now(), time.Minute, []string{descriptor.Fingerprint})
+	require.NoError(t, err)
+	require.True(t, claimed)
 	found, err := s.FindReusableEmbeddingSet(t.Context(), work)
 	require.NoError(t, err)
 	require.Equal(t, retained.ID, found.ID)

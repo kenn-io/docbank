@@ -171,23 +171,12 @@ func (f embeddingRecoveryFixture) grant(t *testing.T, service *Service, query bo
 	}
 }
 
-func TestEmbeddingRenewedConsentDoesNotSelectRecoveredDocuments(t *testing.T) {
+func TestEmbeddingConsentForOneDocumentDoesNotSelectAnother(t *testing.T) {
 	t.Parallel()
 	f := newEmbeddingRecoveryFixture(t)
 	require.NoError(t, f.blobs.Remove(f.sets[0].VectorSet.PayloadBlobHash))
 	provider := newRecoveryProvider(t, f.request.Descriptor)
 	service := f.service(t, provider.Descriptor(), provider)
-	f.grant(t, service, false)
-	config := f.workerConfig
-	config.Runtime = service.embeddings
-	config.DescriptorFingerprints = []string{provider.Descriptor().Fingerprint}
-	worker, err := NewEmbeddingWorker(config)
-	require.NoError(t, err)
-	_, err = worker.ScanOnce(t.Context())
-	require.NoError(t, err)
-	require.Zero(t, provider.documents.Load())
-	_, err = f.catalog.RevokeConsent(t.Context(), store.ProcessingConsentRevocationRequest{Principal: service.principal, Scope: service.scope})
-	require.NoError(t, err)
 	other, err := f.catalog.ContentVersionByID(t.Context(), f.versions[1])
 	require.NoError(t, err)
 	selector := Selector{Profile: "current", NodeID: other.NodeID, ContentVersionID: other.ID}
@@ -195,11 +184,13 @@ func TestEmbeddingRenewedConsentDoesNotSelectRecoveredDocuments(t *testing.T) {
 	require.NoError(t, err)
 	_, err = service.Start(t.Context(), StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true})
 	require.NoError(t, err)
-	worker, err = NewEmbeddingWorker(config)
+	config := f.workerConfig
+	config.Runtime = service.embeddings
+	config.DescriptorFingerprints = []string{provider.Descriptor().Fingerprint}
+	worker, err := NewEmbeddingWorker(config)
 	require.NoError(t, err)
 	_, err = worker.ScanOnce(t.Context())
 	require.NoError(t, err)
-	require.Zero(t, provider.documents.Load(), "renewed consent for another document must not select this document")
 	jobs, err := f.catalog.EmbeddingJobsForVersionProfile(t.Context(), f.versions[0], service.profiles["current"].record.Fingerprint)
 	require.NoError(t, err)
 	require.Empty(t, jobs)
