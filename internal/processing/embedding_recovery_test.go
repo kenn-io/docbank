@@ -398,6 +398,7 @@ func TestEmbeddingSemanticSearchAfterSecondEndpointMove(t *testing.T) {
 
 type rejectedEvidenceBlobs struct {
 	embeddingRuntimeBlobs
+
 	evidence string
 }
 
