@@ -79,6 +79,9 @@ func dumpReleasedTable(t *testing.T, q metadataQuerier, table string, out *strin
 	t.Helper()
 	columns, err := queryTableColumns(t.Context(), q, table)
 	require.NoError(t, err)
+	if table == "embedding_jobs" {
+		columns = slices.DeleteFunc(columns, func(column string) bool { return column == "source_profile_fingerprint" })
+	}
 	rows, err := q.QueryContext(t.Context(), `SELECT `+strings.Join(columns, ",")+` FROM `+table+` ORDER BY rowid`)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, rows.Close()) }()
@@ -453,22 +456,35 @@ func TestUpgradeReleasedV0150KeepsFailedEmbeddingJobs(t *testing.T) {
 				return ensureProcessingProfileTx(ctx, tx, profile)
 			}))
 			request := embeddingJobTestRequest(t, legacy, versions[0], profile, "upgrade-failed")
-			_, err := legacy.EnqueueEmbeddingJob(ctx, request)
+			// Seed the released operational row in its original layout. Current
+			// admission now records recovery provenance absent from this release.
+			record := embeddingSetFixture(legacy, versions[0], profile.Fingerprint, document.EmbeddingInputOriginalFile, request.BindingID, "")
+			record.InputGeneration = request.InputGeneration
+			require.NoError(t, legacy.StageEmbeddingSet(ctx, record))
+			authorization, err := legacy.AuthorizeProviderOperation(ctx, request.Authorization)
 			require.NoError(t, err)
-			at := time.Now().UTC()
+			jobID := embeddingJobID(legacy.VaultID(), versions[0], profile.Fingerprint, request.BindingID,
+				document.EmbeddingInputOriginalFile, request.InputGeneration.ID, authorization.GrantID,
+				authorization.ProcessingIncarnationID, authorization.RevocationFence)
+			at := time.Now().UTC().Format(timestampLayout)
+			for _, bindingID := range []string{"optional", "required"} {
+				id := embeddingJobID(legacy.VaultID(), versions[0], profile.Fingerprint, bindingID, document.EmbeddingInputOriginalFile, request.InputGeneration.ID, authorization.GrantID, authorization.ProcessingIncarnationID, authorization.RevocationFence)
+				_, err = db.Exec(`INSERT INTO embedding_jobs(job_id,vault_uid,content_version_id,profile_fingerprint,
+				binding_id,input_kind,generation_id,vector_space_id,principal,scope,authorization_grant_id,
+				authorization_incarnation_id,authorization_revocation_fence,state,failure_code,available_at,created_at,updated_at)
+				VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'failed','input_rejected',?,?,?)`,
+					id, legacy.VaultID(), versions[0], profile.Fingerprint, bindingID, document.EmbeddingInputOriginalFile,
+					request.InputGeneration.ID, record.VectorSpace.ID, request.Authorization.Principal, request.Authorization.Scope,
+					authorization.GrantID, authorization.ProcessingIncarnationID, authorization.RevocationFence, at, at, at)
+				require.NoError(t, err)
+			}
 			fingerprints := []string{request.Descriptor.Fingerprint}
-			claim, work, found, err := legacy.ClaimNextEmbeddingWork(ctx, "worker:released", at, time.Minute, fingerprints)
-			require.NoError(t, err)
-			require.True(t, found)
-			require.NoError(t, legacy.FailEmbeddingWork(ctx, claim, work, EmbeddingFailureInputRejected,
-				EmbeddingAttemptReceipt{AttemptID: claim.AttemptID}, at.Add(time.Second)))
 			reconcile := func(s *Store) EmbeddingReconcileResult {
 				result, err := s.ReconcileEmbeddingJobs(ctx, EmbeddingReconcileRequest{Mutate: embeddingTestMutation,
 					At: time.Now().UTC(), Limit: 100, DescriptorFingerprints: fingerprints})
 				require.NoError(t, err)
 				return result
 			}
-			reconcile(legacy)
 			var released strings.Builder
 			dumpReleasedTable(t, db, "embedding_jobs", &released)
 			require.NoError(t, db.Close())
@@ -481,7 +497,7 @@ func TestUpgradeReleasedV0150KeepsFailedEmbeddingJobs(t *testing.T) {
 			dumpReleasedTable(t, s.db, "embedding_jobs", &upgraded)
 			assert.Equal(t, released.String(), upgraded.String())
 			assert.Zero(t, reconcile(s).Enqueued, "reconciliation does not reopen released jobs")
-			_, _, ok, err := s.ClaimEmbeddingWork(ctx, claim.AttemptID, "worker:upgraded",
+			_, _, ok, err := s.ClaimEmbeddingWork(ctx, jobID, "worker:upgraded",
 				time.Now().UTC().Add(time.Second), time.Minute, fingerprints)
 			require.NoError(t, err)
 			assert.False(t, ok, "a permanently failed job stays failed")

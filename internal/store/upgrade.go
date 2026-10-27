@@ -910,6 +910,11 @@ func copyReleasedRows(ctx context.Context, source metadataQuerier, tx *sql.Tx, t
 	if err != nil {
 		return err
 	}
+	// Released embedding jobs predate background recovery across profiles.
+	// Their admitted provider authority remains unchanged after the cutover.
+	if table == "embedding_jobs" && !slices.Contains(sourceColumns, "source_profile_fingerprint") {
+		targetColumns = slices.DeleteFunc(targetColumns, func(column string) bool { return column == "source_profile_fingerprint" })
+	}
 	if len(sourceColumns) == 0 || !slices.Equal(sourceColumns, targetColumns) {
 		return fmt.Errorf("copying released %s: columns (%s) differ from current (%s)",
 			table, strings.Join(sourceColumns, ","), strings.Join(targetColumns, ","))

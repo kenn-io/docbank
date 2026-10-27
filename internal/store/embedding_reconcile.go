@@ -178,7 +178,7 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 						continue
 					}
 					candidates = append(candidates, embeddingReconcileCandidate{request: EmbeddingJobRequest{
-						ContentVersionID: generation.SourceVersionID, Profile: profile, BindingID: binding.Name,
+						ContentVersionID: generation.SourceVersionID, Profile: profile, BindingID: binding.Name, SourceProfileFingerprint: sourceProfile.Fingerprint,
 						VectorSpaceID: space.ID, Descriptor: space.Descriptor, InputGeneration: generation, Authorization: consent,
 					}, binding: binding, fingerprints: fingerprints, space: space})
 				}

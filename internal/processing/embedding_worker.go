@@ -529,6 +529,9 @@ func (worker *EmbeddingWorker) processClaim(ctx context.Context, claim Embedding
 
 	materializedGeneration := work.InputGeneration
 	result, reused, err := worker.reuseVectors(attemptCtx, work, &materializedGeneration)
+	if err == nil && !reused && work.SourceProfileFingerprint != "" && work.SourceProfileFingerprint != work.ProcessingProfile.Fingerprint {
+		return worker.failClaim(attemptCtx, claim, work, store.EmbeddingFailureInputRejected, &receipt, started)
+	}
 	var authorization store.ProviderOperationAuthorization
 	var code store.EmbeddingFailureCode
 	if err == nil && reused {

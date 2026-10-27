@@ -279,6 +279,66 @@ func TestEmbeddingReconciliationRuntimePolicyReplacementAuthority(t *testing.T) 
 	}
 }
 
+func TestEmbeddingReconciliationPurgeBeforeReplacementAdmission(t *testing.T) {
+	t.Parallel()
+	s, version, source, _ := newEmbeddingCatalogFixture(t)
+	admitted := embeddingJobTestRequest(t, s, version, source, "purge-before-replacement")
+	_, err := s.EnqueueEmbeddingJob(t.Context(), admitted)
+	require.NoError(t, err)
+	require.NoError(t, s.PutCurrentRenditionRoot(t.Context(), CurrentRenditionRoot{
+		ID: "retained-admission-input", Kind: RenditionRootRetention, TargetKind: RenditionRootEmbeddingGeneration,
+		TargetID: admitted.InputGeneration.ID, FencingToken: 1, RecordedAt: embeddingCatalogTime,
+	}))
+	descriptor := admitted.Descriptor
+	descriptor.PolicyFingerprint = testSHA256([]byte("replacement-endpoint-policy"))
+	descriptor, err = document.NewEmbeddingDescriptor(descriptor)
+	require.NoError(t, err)
+	var portable document.ProcessingProfileV1
+	require.NoError(t, json.Unmarshal(source.CanonicalProfile, &portable))
+	for i := range portable.Embeddings {
+		portable.Embeddings[i].Descriptor.Fingerprint = descriptor.Fingerprint
+	}
+	canonical, fingerprints, err := document.CanonicalProfile(portable)
+	require.NoError(t, err)
+	target := source
+	target.CanonicalProfile, target.Fingerprint = canonical, fingerprints.Profile
+	target.RenditionRequestFingerprint, target.EvidenceLexicalFingerprint = fingerprints.RenditionRequest, fingerprints.EvidenceLexical
+	target.RetentionDisclosureFingerprint = fingerprints.RetentionDisclosure
+	binding := workerProfileEmbeddingBinding(t, target, admitted.BindingID)
+	_, err = s.GrantConsent(t.Context(), ProcessingConsentGrantRequest{
+		Principal: "operator:replacement", Scope: "embedding:replacement", ProfileFingerprint: target.Fingerprint,
+		DisclosureFingerprint: binding.DisclosureFingerprint, InputClasses: []string{string(binding.InputKind)},
+		RetainedArtifactClasses: []string{"embedding_vector_set"},
+	})
+	require.NoError(t, err)
+	generation := admitted.InputGeneration
+	generation.ID = testSHA256([]byte("replacement-admission-generation"))
+	generation.ProcessingProfileFingerprint = target.Fingerprint
+	purged := false
+	result, err := s.ReconcileEmbeddingJobs(t.Context(), EmbeddingReconcileRequest{
+		At: time.Now(), Limit: 100, Profiles: []ProcessingProfileRecord{target}, Descriptors: []document.EmbeddingDescriptor{descriptor},
+		PrepareGeneration: func(ctx context.Context, _ string, _ ProcessingProfileRecord, selected document.EmbeddingBindingV1) (EmbeddingInputGenerationRecord, error) {
+			if selected.Name != binding.Name {
+				return EmbeddingInputGenerationRecord{}, ErrNotFound
+			}
+			var registered int
+			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM processing_profiles WHERE profile_fingerprint=?`, target.Fingerprint).Scan(&registered))
+			require.Zero(t, registered, "the target has consent but has not admitted any work")
+			_, err := s.PurgeDerivatives(ctx, PurgeRequest{ContentVersionIDs: []string{version}})
+			require.NoError(t, err)
+			purged = true
+			return generation, nil
+		},
+		Mutate: embeddingTestMutation,
+	})
+	require.NoError(t, err)
+	require.True(t, purged, "purge runs after discovery and immediately before admission")
+	var jobs int
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM embedding_jobs WHERE content_version_id=? AND profile_fingerprint=?`, version, target.Fingerprint).Scan(&jobs))
+	require.Zero(t, jobs, "the source purge must fence replacement work admitted under another profile")
+	require.Zero(t, result.Enqueued)
+}
+
 func publishReconcileFixture(t *testing.T, s *Store, request EmbeddingJobRequest, record EmbeddingSetRecord) EmbeddingJob {
 	t.Helper()
 	job, err := s.EnqueueEmbeddingJob(t.Context(), request)

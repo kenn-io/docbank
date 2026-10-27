@@ -78,10 +78,10 @@ type embeddingRecoveryFixture struct {
 	profile      document.ProcessingProfileV1
 	versions     []string
 	legacySpace  string
-	provider     document.EmbeddingProvider
+	provider     *recoveryTextProvider
 }
 
-func newEmbeddingRecoveryFixture(t *testing.T) embeddingRecoveryFixture {
+func newEmbeddingRecoveryFixture(t *testing.T, publishHeads bool) embeddingRecoveryFixture {
 	t.Helper()
 	kind := document.EmbeddingInputRenditionChunk
 	descriptor := embeddingWorkerDescriptor(t)
@@ -138,6 +138,10 @@ func newEmbeddingRecoveryFixture(t *testing.T) embeddingRecoveryFixture {
 		require.NoError(t, fixture.catalog.RecordRenditionBlob(t.Context(), receipt.Hash, receipt.Size, processingBlobPhysical(t, receipt)))
 		require.NoError(t, fixture.catalog.StageEmbeddingSetWithLease(t.Context(), record, claim.AttemptID, claim.Epoch, time.Now()))
 		result.sets = append(result.sets, record)
+		if !publishHeads {
+			require.NoError(t, fixture.catalog.AbandonEmbeddingWork(t.Context(), claim, time.Now()))
+			continue
+		}
 		prior, err := fixture.catalog.AuthorizeProviderOperation(t.Context(), request.Authorization)
 		require.NoError(t, err)
 		head := store.EmbeddingHeadRecord{Key: store.EmbeddingHeadKey{ContentVersionID: request.ContentVersionID, BindingID: request.BindingID, InputKind: kind}, SetID: record.ID, VectorSpaceID: result.legacySpace, ProcessingProfileFingerprint: request.Profile.Fingerprint, PublishedAt: metadataEmbeddingTime(time.Now()), FencingToken: claim.Epoch}
@@ -188,19 +192,24 @@ func (f embeddingRecoveryFixture) rebuild(t *testing.T, space string) {
 func TestEmbeddingRestartCarriesCurrentProfile(t *testing.T) {
 	t.Parallel()
 	for _, testCase := range []struct {
-		name      string
-		corrupt   bool
-		documents int64
+		name                 string
+		corrupt, sameProfile bool
+		documents            int64
 	}{
 		{name: "intact"},
-		{name: "corrupt", corrupt: true, documents: 2},
+		{name: "corrupt replacement", corrupt: true},
+		{name: "corrupt same profile", corrupt: true, sameProfile: true, documents: 2},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
-			f := newEmbeddingRecoveryFixture(t)
+			f := newEmbeddingRecoveryFixture(t, !testCase.sameProfile)
 			provider := newRecoveryProvider(t, f.request.Descriptor)
+			if testCase.sameProfile {
+				provider = f.provider
+			}
 			descriptor := provider.Descriptor()
 			service := f.service(t, descriptor, provider)
+			require.Equal(t, testCase.sameProfile, f.request.Profile.Fingerprint == service.profiles["current"].record.Fingerprint)
 			f.grant(t, service, false)
 			config := f.workerConfig
 			config.Runtime = service.embeddings
@@ -214,14 +223,43 @@ func TestEmbeddingRestartCarriesCurrentProfile(t *testing.T) {
 			processed, err := worker.ScanOnce(t.Context())
 			require.NoError(t, err)
 			require.Equal(t, 2, processed)
-			require.Equal(t, testCase.documents, provider.documents.Load())
+			assert.Equal(t, testCase.documents, provider.documents.Load())
+			if testCase.corrupt && !testCase.sameProfile {
+				target := service.profiles["current"]
+				binding := target.portable.Embeddings[0]
+				for _, version := range f.versions {
+					jobs, err := f.catalog.EmbeddingJobsForVersionProfile(t.Context(), version, service.profiles["current"].record.Fingerprint)
+					require.NoError(t, err)
+					require.Len(t, jobs, 1)
+					assert.Equal(t, "failed", jobs[0].State)
+					generation, err := service.EmbeddingReconciliation().PrepareGeneration(t.Context(), version, target.record, binding)
+					require.NoError(t, err)
+					selected, err := f.catalog.EnqueueEmbeddingJob(t.Context(), store.EmbeddingJobRequest{
+						ContentVersionID: version, Profile: target.record, BindingID: binding.Name, Descriptor: descriptor,
+						VectorSpaceID: target.vectorSpaces[binding.Name], InputGeneration: generation,
+						Authorization: store.ProviderOperationAuthorizationRequest{
+							Principal: service.principal, Scope: service.scope, ProfileFingerprint: target.record.Fingerprint,
+							DisclosureFingerprint: binding.DisclosureFingerprint, InputClasses: []string{string(binding.InputKind)},
+							RetainedArtifactClasses: []string{"embedding_vector_set"},
+						},
+					})
+					require.NoError(t, err)
+					require.Equal(t, jobs[0].ID, selected.ID, "explicit selection retries the existing target job")
+				}
+				worker, err = NewEmbeddingWorker(config)
+				require.NoError(t, err)
+				processed, err = worker.ScanOnce(t.Context())
+				require.NoError(t, err)
+				require.Equal(t, 2, processed)
+				require.Equal(t, int64(2), provider.documents.Load(), "explicit selection admits provider fallback")
+			}
 		})
 	}
 }
 
 func TestEmbeddingUpgradeRetainsLocalSimilarityAfterConsentRevocation(t *testing.T) {
 	t.Parallel()
-	f := newEmbeddingRecoveryFixture(t)
+	f := newEmbeddingRecoveryFixture(t, true)
 	f.rebuild(t, f.legacySpace)
 	_, err := f.catalog.RevokeConsent(t.Context(), store.ProcessingConsentRevocationRequest{Principal: f.request.Authorization.Principal, Scope: f.request.Authorization.Scope})
 	require.NoError(t, err)
@@ -244,7 +282,7 @@ func TestEmbeddingUpgradeRetainsLocalSimilarityAfterConsentRevocation(t *testing
 
 func TestEmbeddingSynchronousStartRebuildsCurrentVectorSpace(t *testing.T) {
 	t.Parallel()
-	f := newEmbeddingRecoveryFixture(t)
+	f := newEmbeddingRecoveryFixture(t, true)
 	provider := newRecoveryProvider(t, f.request.Descriptor)
 	service := f.service(t, provider.Descriptor(), provider)
 	version, err := f.catalog.ContentVersionByID(t.Context(), f.versions[0])

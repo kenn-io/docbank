@@ -19,13 +19,16 @@ var ErrEmbeddingJobFenced = errors.New("embedding job claim is fenced")
 const embeddingJobMaxClaims = 3
 
 type EmbeddingJobRequest struct {
-	VectorSpaceID    string
-	ContentVersionID string
-	Profile          ProcessingProfileRecord
-	BindingID        string
-	Descriptor       document.EmbeddingDescriptor
-	InputGeneration  EmbeddingInputGenerationRecord
-	Authorization    ProviderOperationAuthorizationRequest
+	// SourceProfileFingerprint identifies background recovery. An empty value
+	// means the caller explicitly selected this document for the target profile.
+	SourceProfileFingerprint string
+	VectorSpaceID            string
+	ContentVersionID         string
+	Profile                  ProcessingProfileRecord
+	BindingID                string
+	Descriptor               document.EmbeddingDescriptor
+	InputGeneration          EmbeddingInputGenerationRecord
+	Authorization            ProviderOperationAuthorizationRequest
 }
 
 type EmbeddingJob struct{ ID string }
@@ -55,6 +58,7 @@ type EmbeddingJobClaim struct {
 }
 
 type EmbeddingJobWork struct {
+	SourceProfileFingerprint  string
 	VaultID                   string
 	ContentVersionID          string
 	ProcessingProfile         ProcessingProfileRecord
@@ -89,6 +93,11 @@ func (s *Store) EnqueueEmbeddingJob(ctx context.Context, request EmbeddingJobReq
 	profile, err := normalizeProcessingProfileRecord(request.Profile)
 	if err != nil {
 		return EmbeddingJob{}, fmt.Errorf("enqueueing embedding job: %w", err)
+	}
+	if request.SourceProfileFingerprint != "" {
+		if err := validateCatalogSHA256(request.SourceProfileFingerprint, "embedding recovery source profile"); err != nil {
+			return EmbeddingJob{}, err
+		}
 	}
 	descriptor, err := document.NewEmbeddingDescriptor(request.Descriptor)
 	if err != nil || !reflect.DeepEqual(descriptor, request.Descriptor) {
@@ -140,13 +149,8 @@ func (s *Store) EnqueueEmbeddingJob(ctx context.Context, request EmbeddingJobReq
 	generationProjection.EvidenceJSON = nil
 	var jobID string
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		suppression, suppressionErr := loadEmbeddingPurgeSuppressionTx(ctx, tx,
-			EmbeddingHeadKey{request.ContentVersionID, binding.Name, binding.InputKind}, profile.Fingerprint)
-		if suppressionErr != nil && !errors.Is(suppressionErr, ErrNotFound) {
-			return suppressionErr
-		}
-		if suppressionErr == nil && suppression.active {
-			return ErrEmbeddingJobFenced
+		if err := requireEmbeddingJobPurgeAuthorityTx(ctx, tx, request.ContentVersionID, binding, profile.Fingerprint, request.SourceProfileFingerprint); err != nil {
+			return err
 		}
 		if err := ensureProcessingProfileTx(ctx, tx, profile); err != nil {
 			return err
@@ -184,14 +188,24 @@ func (s *Store) EnqueueEmbeddingJob(ctx context.Context, request EmbeddingJobReq
 			job_id,vault_uid,content_version_id,profile_fingerprint,binding_id,input_kind,
 			generation_id,vector_space_id,principal,scope,authorization_grant_id,
 			authorization_incarnation_id,authorization_revocation_fence,
-			state,available_at,created_at,updated_at
-		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(job_id) DO NOTHING`,
+			state,available_at,created_at,updated_at,source_profile_fingerprint
+		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULLIF(?,'')) ON CONFLICT(job_id) DO NOTHING`,
 			jobID, s.vaultID, request.ContentVersionID, profile.Fingerprint, binding.Name,
 			binding.InputKind, request.InputGeneration.ID, space.ID, authority.principal,
 			authority.scope, authorization.GrantID, authorization.ProcessingIncarnationID,
-			authorization.RevocationFence, initialState, now, now, now)
+			authorization.RevocationFence, initialState, now, now, now, request.SourceProfileFingerprint)
 		if err != nil {
 			return err
+		}
+		// Explicit selection admits provider work that background reuse could
+		// not perform. Preserve running claims and their recovery authority.
+		if request.SourceProfileFingerprint == "" {
+			if _, err := tx.ExecContext(ctx, `UPDATE embedding_jobs SET source_profile_fingerprint=NULL,
+				state=CASE WHEN state='failed' THEN 'queued' ELSE state END,
+				failure_code=NULL,available_at=?,updated_at=?
+				WHERE job_id=? AND source_profile_fingerprint<>profile_fingerprint AND state IN ('queued','abandoned','failed')`, now, now, jobID); err != nil {
+				return err
+			}
 		}
 		// The operational uniqueness key predates semantic spaces. A completed
 		// job may need a second publication after configuration returns to this
@@ -512,6 +526,9 @@ func validateEmbeddingWorkTx(ctx context.Context, tx *sql.Tx, vaultID string, cl
 	if !reflect.DeepEqual(current, work) {
 		return ErrEmbeddingJobFenced
 	}
+	if err := requireEmbeddingJobPurgeAuthorityTx(ctx, tx, work.ContentVersionID, work.Binding, work.ProcessingProfile.Fingerprint, work.SourceProfileFingerprint); err != nil {
+		return err
+	}
 	var eligible bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM content_versions v
 		JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id AND n.trashed_at IS NULL
@@ -699,13 +716,14 @@ func finishEmbeddingWorkTx(ctx context.Context, tx *sql.Tx, vaultID string, clai
 
 func loadEmbeddingJobWorkTx(ctx context.Context, tx *sql.Tx, vaultID, jobID string) (EmbeddingJobWork, error) {
 	var versionID, profileID, bindingID, generationID, spaceID, principal, scope string
+	var sourceProfile string
 	var grantID, incarnationID string
 	var revocationFence int64
 	err := tx.QueryRowContext(ctx, `SELECT content_version_id,profile_fingerprint,binding_id,generation_id,
 		vector_space_id,principal,scope,authorization_grant_id,authorization_incarnation_id,
-		authorization_revocation_fence FROM embedding_jobs WHERE job_id=?`, jobID).Scan(
+		authorization_revocation_fence,COALESCE(source_profile_fingerprint,'') FROM embedding_jobs WHERE job_id=?`, jobID).Scan(
 		&versionID, &profileID, &bindingID, &generationID, &spaceID, &principal, &scope,
-		&grantID, &incarnationID, &revocationFence)
+		&grantID, &incarnationID, &revocationFence, &sourceProfile)
 	if err != nil {
 		return EmbeddingJobWork{}, err
 	}
@@ -732,7 +750,7 @@ func loadEmbeddingJobWorkTx(ctx context.Context, tx *sql.Tx, vaultID, jobID stri
 		Scan(&sourceHash, &sourceBytes, &filename, &mediaType); err != nil {
 		return EmbeddingJobWork{}, err
 	}
-	return EmbeddingJobWork{VaultID: vaultID, ContentVersionID: versionID, ProcessingProfile: profile,
+	return EmbeddingJobWork{VaultID: vaultID, ContentVersionID: versionID, ProcessingProfile: profile, SourceProfileFingerprint: sourceProfile,
 		Binding: binding, Descriptor: space.Descriptor, VectorSpaceID: spaceID,
 		EmbeddingInputFingerprint: fingerprints.EmbeddingInput[binding.Name], InputGeneration: generation,
 		SourceBlobHash: sourceHash, SourceBytes: sourceBytes, SourceFilename: filename, SourceMediaType: mediaType,
@@ -741,6 +759,22 @@ func loadEmbeddingJobWorkTx(ctx context.Context, tx *sql.Tx, vaultID, jobID stri
 			InputClasses: []string{string(binding.InputKind)}, RetainedArtifactClasses: []string{"embedding_vector_set"},
 			PriorAuthorization: &ProviderOperationAuthorization{GrantID: grantID,
 				ProcessingIncarnationID: incarnationID, RevocationFence: revocationFence}}}, nil
+}
+
+func requireEmbeddingJobPurgeAuthorityTx(ctx context.Context, tx *sql.Tx, version string, binding document.EmbeddingBindingV1, profile, source string) error {
+	for _, fingerprint := range []string{profile, source} {
+		if fingerprint == "" {
+			continue
+		}
+		suppression, err := loadEmbeddingPurgeSuppressionTx(ctx, tx, EmbeddingHeadKey{version, binding.Name, binding.InputKind}, fingerprint)
+		if err != nil && !errors.Is(err, ErrNotFound) {
+			return err
+		}
+		if err == nil && suppression.active {
+			return ErrEmbeddingJobFenced
+		}
+	}
+	return nil
 }
 
 func sameProviderAuthorizationAuthority(left, right ProviderOperationAuthorization) bool {
