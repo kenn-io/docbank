@@ -284,7 +284,6 @@
   $effect(() => {
     void productionsDiscoveryRevision;
     const session = webSession;
-    hasProductions = false;
     if (!session) return;
     const controller = new AbortController();
     for (const listing of [
@@ -1462,6 +1461,7 @@
   function activateBrowserSession(session: BrowserSession, keyLogin = false): void {
     disposeBrowserSession?.();
     webSession = session.token;
+    hasProductions = false;
     keySession = keyLogin;
     error = "";
     uploadChannelError = "";

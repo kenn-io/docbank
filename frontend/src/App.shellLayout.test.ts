@@ -263,6 +263,19 @@ it.each([
   },
 );
 
+it("keeps Productions visible when refreshing a confirmed package listing fails", async () => {
+  start("package");
+  expect(await screen.findByRole("button", { name: "Productions" })).toBeTruthy();
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  const failedListing = vi.fn(async () => new Response("listing unavailable", { status: 500 }));
+  vi.mocked(fetch).mockImplementation(async (input, init) =>
+    String(input).startsWith("/api/v1/packages?") ? failedListing() : original(input, init),
+  );
+  await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
+  await waitFor(() => expect(failedListing).toHaveBeenCalledOnce());
+  expect(screen.getByRole("button", { name: "Productions" })).toBeTruthy();
+});
+
 it("opens production sets from the sidebar between Searches and Imports", async () => {
   start("package");
   const production = await screen.findByRole("button", { name: "Productions" });
