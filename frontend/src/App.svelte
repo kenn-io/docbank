@@ -946,8 +946,8 @@
     }
     if (retainedPhotoEditor() && !retainedPhotoEditor()!.canChangeTarget()) return;
     pendingPerson = { id: personID, name, hidden, scope: hidden ? hiddenAccess?.scope : undefined };
-    applyPersonPhotos();
-    navigatePhotos(hidden ? "/photos/hidden" : "/photos");
+    // A refused filter clears pendingPerson and keeps the current view.
+    if (applyPersonPhotos() || pendingPerson) navigatePhotos(hidden ? "/photos/hidden" : "/photos");
   }
   function onpersonchanged(id: string, name: string, survivorID = id) {
     const faces = activePhotos()?.faceEditor;

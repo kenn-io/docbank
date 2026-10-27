@@ -5066,6 +5066,39 @@ it("opens 1 Hidden photo in filtered Hidden photos", async () => {
   expect(location.pathname).toBe("/photos/hidden");
 });
 
+it("stays in People when Library refuses the person filter", async () => {
+  history.replaceState(null, "", "/photos/people#web_session=synthetic&web_upload_secret=proof");
+  storage();
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+  const ada = person("00000000-0000-4000-8000-000000000001", {
+    display_name: "Ada",
+    photo_summary: { library_count: 1 },
+  });
+  vi.spyOn(api, "listPeople").mockResolvedValue({ items: [ada] });
+  stubPhotoFetch(async (url) => {
+    if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
+    if (url.endsWith("/photos/albums")) return Response.json([]);
+    if (url.endsWith("/photos/assets/query"))
+      return Response.json({ items: [], total: 0, facets: [] });
+    return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+  });
+  // Library refuses a query change while it must keep its current view.
+  const query = vi.spyOn(Photos.prototype, "setQuery").mockReturnValue(undefined);
+  render(App);
+  await fireEvent.click(await screen.findByRole("button", { name: "Ada 1 Library photo" }));
+  expect(query).toHaveBeenCalled();
+  expect(location.pathname).toBe("/photos/people");
+  expect(screen.getByRole("heading", { name: "People" })).toBeTruthy();
+});
+
 function photoEventPass() {
   const pass = vi.mocked(photoEvents.watchPhotoEvents).mock.calls.at(-1)?.[1];
   if (!pass) throw new Error("The event watcher has not started");
