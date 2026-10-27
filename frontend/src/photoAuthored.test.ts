@@ -2274,6 +2274,7 @@ it("doesn't assign a newly created keyword to a replacement photo selection", as
   await fireEvent.input(input, { target: { value: "Review" } });
   await fireEvent.keyDown(input, { key: "Enter" });
   editor.targets = [preparedPhoto(3, { asset_id: "other", file_id: "other-file" })];
+  editor.stage({ caption: "Replacement draft" });
   await tick();
   reply(
     Response.json({
@@ -2285,4 +2286,7 @@ it("doesn't assign a newly created keyword to a replacement photo selection", as
   );
   await vi.waitFor(() => expect(input.hasAttribute("disabled")).toBe(false));
   expect(onedit).not.toHaveBeenCalled();
+  expect(editor.keywords).toEqual([]);
+  expect(editor.tags).toEqual([]);
+  expect(editor.patch).toEqual({ caption: "Replacement draft" });
 });

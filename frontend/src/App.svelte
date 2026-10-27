@@ -1099,7 +1099,8 @@
   let queryURLError = $state("");
   const snapshot = new SnapshotWorkspace(() => webSession, handleFailure, applySnapshotReceipt);
 
-  let manageTagsTarget = $state<Row | null>(null);
+  type TagChangeContext = { sourceKey?: string; snapshotID?: string };
+  let manageTagsTarget = $state<(Row & { context: TagChangeContext }) | null>(null);
   let batchTagsTargets = $state<SelectionTarget[] | null>(null);
   let snapshotActionsSnapshotID: string | undefined;
   let snapshotActionsEpoch = 0;
@@ -1180,8 +1181,10 @@
       : undefined,
   );
   const selectedSource = $derived(
-    selectedSnapshot
-      ? selectedSourceFromSnapshot(selectedSnapshot, snapshotPage?.observed_at ?? "")
+    snapshotActive
+      ? selectedSnapshot
+        ? selectedSourceFromSnapshot(selectedSnapshot, snapshotPage?.observed_at ?? "")
+        : undefined
       : selected?.node.kind === "file"
         ? selectedSourceFromNode(selected.node, selected.path)
         : undefined,
@@ -1691,6 +1694,7 @@
     const session = webSession;
     const expectedNodeID = target.node.id;
     const expectedRevision = target.node.revision;
+    const context = tagChangeContext();
     const assigned = selectedTags.some((item) => item.id === tagID);
     const request = ++tagHotkeyGeneration;
     pendingTagHotkey = key;
@@ -1711,7 +1715,7 @@
       ) {
         return;
       }
-      handleTagChanged(receipt, !assigned);
+      handleTagChanged(receipt, !assigned, expectedRevision, context);
       shortcutNotice = assigned
         ? `Removed ${receipt.tag.name} from ${target.node.name}.`
         : `Added ${receipt.tag.name} to ${target.node.name}.`;
@@ -3243,23 +3247,58 @@
     if (!node || selectedTagsLoading || selectedTagsError || pendingTagHotkey || removingTag)
       return;
     const session = webSession;
+    const context = tagChangeContext();
     removingTag = true;
     try {
       const receipt = await changeNodeTag(session, node.id, node.revision, tag.id, false);
-      if (session === webSession) handleTagChanged(receipt, false);
+      if (session === webSession) handleTagChanged(receipt, false, node.revision, context);
     } catch (cause) {
-      if (session === webSession) handleFailure(cause);
+      if (session === webSession && selectedSource?.key === context.sourceKey) handleFailure(cause);
     } finally {
       removingTag = false;
     }
   }
 
-  function handleTagChanged(receipt: TagAssignmentReceipt, assigned: boolean): void {
+  function tagChangeContext(): TagChangeContext {
+    return {
+      sourceKey: selectedSource?.key,
+      snapshotID: snapshotActive ? snapshot.state.firstPage?.snapshot_id : undefined,
+    };
+  }
+
+  function handleTagChanged(
+    receipt: TagAssignmentReceipt,
+    assigned: boolean,
+    expectedRevision: number,
+    context: TagChangeContext,
+  ): void {
     const selectedChanged =
-      selectedID === receipt.node.id ||
-      (snapshotActive && selectedSource?.nodeID === receipt.node.id);
+      (snapshotActive
+        ? selectedSource?.nodeID === receipt.node.id
+        : selectedID === receipt.node.id) &&
+      selectedSource?.key === context.sourceKey &&
+      context.snapshotID === (snapshotActive ? snapshot.state.firstPage?.snapshot_id : undefined);
     const modalChanged = manageTagsTarget?.node.id === receipt.node.id;
     if (!selectedChanged && !modalChanged) return;
+    if (selectedChanged && context.snapshotID) {
+      snapshot.overlays = applySnapshotReceiptOverlay(
+        snapshot.overlays,
+        {
+          tag_id: receipt.tag.id,
+          assign: assigned,
+          completed_at: receipt.node.modified_at,
+          nodes: [
+            {
+              node_id: receipt.node.id,
+              expected_revision: expectedRevision,
+              revision: receipt.node.revision,
+              changed: receipt.changed,
+            },
+          ],
+        },
+        receipt.tag.name,
+      );
+    }
     if (modalChanged && manageTagsTarget) {
       manageTagsTarget = {
         ...manageTagsTarget,
@@ -4715,6 +4754,7 @@
                         manageTagsTarget = {
                           node: currentInspectorNode,
                           path: currentInspectorPath,
+                          context: tagChangeContext(),
                         };
                     }
                   : undefined}
@@ -4789,7 +4829,8 @@
                 actionsDisabled={liveSelectionNeedsRefresh}
                 profiles={naturalProfiles}
                 ontags={() => {
-                  if (!loading && selected) manageTagsTarget = selected;
+                  if (!loading && selected)
+                    manageTagsTarget = { ...selected, context: tagChangeContext() };
                 }}
                 onopen={selected.node.kind === "dir"
                   ? () => {
@@ -5173,7 +5214,10 @@
         assignedTotal={selectedTagsTotal}
         disabled={loading}
         onclose={() => (manageTagsTarget = null)}
-        onchanged={handleTagChanged}
+        onchanged={(receipt, assigned) => {
+          const target = manageTagsTarget;
+          if (target) handleTagChanged(receipt, assigned, target.node.revision, target.context);
+        }}
         onauthfailure={handleFailure}
       />
     {/if}

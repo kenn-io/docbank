@@ -1232,3 +1232,165 @@ it("keeps a tagged snapshot and its selection when the inspector removes the act
       ),
   ).toBe(false);
 });
+
+function tagInspectorFixture() {
+  history.replaceState(null, "", "/#web_session=synthetic&web_upload_secret=proof");
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  Object.defineProperty(Element.prototype, "scrollIntoView", {
+    configurable: true,
+    value: vi.fn(),
+  });
+  const frozen = row(2);
+  const tag = { ...frozen.tags[0], assignment_count: 1 };
+  frozen.tags = [];
+  const root = { id: 1000, name: "", kind: "dir", path: "/", revision: 1, size: 0 };
+  const nodes = [1, 2].map((id) => {
+    const source = row(id);
+    return {
+      ...root,
+      id,
+      parent_id: root.id,
+      kind: "file",
+      name: source.name,
+      path: source.path,
+      revision: 3,
+      current_version_id: source.content_version_id,
+      blob_hash: source.blob_hash,
+      size: source.size,
+      mime_type: source.mime_type,
+      modified_at: source.modified_at,
+    };
+  });
+  const assignments = new Set([1]);
+  const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
+  const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url.includes("/path?")) return json(root);
+    if (url.includes("/children?"))
+      return json({ directory: root, items: [nodes[0]], total: 1, limit: 1000, offset: 0 });
+    if (url.startsWith("/api/v1/tags?"))
+      return json({ items: [tag], total: 1, limit: 1000, offset: 0 });
+    if (url === "/api/v1/queries/parse") {
+      const query = JSON.parse(String(init?.body));
+      return json({
+        query,
+        query_fingerprint: `sha256:${createHash("sha256").update(canonicalQuery(query)).digest("hex")}`,
+        dependencies: [],
+      });
+    }
+    if (url === "/api/v1/workspace/queries")
+      return json(snapshot(JSON.parse(String(init?.body)).query, [frozen], {}, 1));
+    const match = /^\/api\/v1\/nodes\/(\d+)(\/tags\?.*)?$/.exec(url);
+    if (match) {
+      const node = nodes.find((node) => node.id === Number(match[1]))!;
+      return match[2]
+        ? json({
+            items: assignments.has(node.id) ? [tag] : [],
+            total: assignments.has(node.id) ? 1 : 0,
+            limit: 1000,
+            offset: 0,
+          })
+        : json(node);
+    }
+    if (url.startsWith("/api/v1/audit/status")) return json({ enabled: false, scopes: [] });
+    throw new Error(`unexpected request: ${url} ${String(init?.method)}`);
+  });
+  return { frozen, tag, nodes, assignments, json, fetch };
+}
+
+it("keeps snapshot B's inspector authority when live A's tag removal completes late", async () => {
+  const { tag, nodes, json, fetch } = tagInspectorFixture();
+  const baseFetch = fetch.getMockImplementation()!;
+  let release!: (response: Response) => void;
+  const removal = new Promise<Response>((resolve) => {
+    release = resolve;
+  });
+  fetch.mockImplementation(async (input, init) => {
+    if (String(input) === `/api/v1/nodes/1/tags/${tag.id}` && init?.method === "DELETE")
+      return removal;
+    return baseFetch(input, init);
+  });
+  render(App);
+  await screen.findByRole("button", { name: "Remove tag frozen" });
+  await fireEvent.click(screen.getByRole("button", { name: "Remove tag frozen" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  await screen.findByRole("region", { name: "Frozen query results" });
+  await screen.findByRole("button", { name: "Add tag" });
+  release(json({ node: { ...nodes[0], revision: 4 }, tag, changed: true }));
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Add tag" }).hasAttribute("disabled")).toBe(false),
+  );
+  expect(screen.queryByRole("region", { name: "Current details" })).toBeNull();
+  await fireEvent.click(screen.getByRole("button", { name: "Add tag" }));
+  const dialog = await screen.findByRole("dialog", { name: "Manage tags for report-2.pdf" });
+  expect(within(dialog).queryByRole("button", { name: "Remove tag frozen" })).toBeNull();
+});
+
+it("uses the inspector's confirmed revision for Tag selected during Advanced search", async () => {
+  const { tag, nodes, frozen, assignments, json, fetch } = tagInspectorFixture();
+  const baseFetch = fetch.getMockImplementation()!;
+  const submitted: unknown[] = [];
+  fetch.mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url === `/api/v1/nodes/2/tags/${tag.id}` && init?.method === "PUT") {
+      expect(new Headers(init.headers).get("If-Match")).toBe("3");
+      nodes[1].revision = 4;
+      assignments.add(2);
+      return json({
+        node: nodes[1],
+        tag: { ...tag, revision: 3, assignment_count: 2 },
+        changed: true,
+      });
+    }
+    if (url === "/api/v1/batch/tags") {
+      const request = JSON.parse(String(init?.body));
+      submitted.push(request.nodes);
+      if (request.nodes[0].revision !== nodes[1].revision)
+        return json({ code: "stale_revision", detail: "stale_revision" }, 409);
+      return json({
+        version: 1,
+        operation_id: request.operation_id,
+        request_digest: await batchTagRequestDigest(request),
+        tag_id: tag.id,
+        assign: true,
+        tag_revision: 3,
+        assignment_count: 2,
+        completed_at: "2026-09-11T13:00:00.000000000Z",
+        nodes: [{ node_id: 2, expected_revision: 4, revision: 4, changed: false }],
+      });
+    }
+    return baseFetch(input, init);
+  });
+  render(App);
+  await screen.findByRole("button", { name: "Remove tag frozen" });
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Add tag" }));
+  const dialog = await screen.findByRole("dialog", { name: "Manage tags for report-2.pdf" });
+  await fireEvent.input(within(dialog).getByRole("combobox", { name: "Tag to assign" }), {
+    target: { value: "frozen" },
+  });
+  await fireEvent.click(await screen.findByRole("option", { name: "frozen (1)" }));
+  await within(dialog).findByRole("button", { name: "Remove tag frozen" });
+  await fireEvent.click(within(dialog).getByRole("button", { name: "Done" }));
+  await fireEvent.click(screen.getByRole("checkbox", { name: `Select ${frozen.path}` }));
+  await fireEvent.click(screen.getByRole("button", { name: "Tag selected…" }));
+  await fireEvent.input(screen.getByRole("combobox", { name: "Tag" }), {
+    target: { value: "frozen" },
+  });
+  await fireEvent.click(screen.getByRole("option", { name: "frozen (2)" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+  await waitFor(() => expect(submitted).toEqual([[{ node_id: 2, revision: 4 }]]));
+  expect(await screen.findByText("All 1 document already had “frozen”.")).toBeTruthy();
+  expect(screen.queryByText("stale_revision")).toBeNull();
+  expect(frozen.revision).toBe(3);
+  expect(within(screen.getByRole("region", { name: "Saved tags" })).getByText("None")).toBeTruthy();
+});

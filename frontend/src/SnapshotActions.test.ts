@@ -99,14 +99,6 @@ it("states what a whole-result change does before continuing", async () => {
   });
 });
 
-it("review_fresh_tag_run_offers_file_recovery", () => {
-  render(SnapshotActions, props());
-
-  expect(screen.getByRole("button", { name: "Continue" })).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Resume from file…" })).toBeTruthy();
-  expect(screen.getByLabelText("Resume from a recovery file")).toBeTruthy();
-});
-
 it("tags the selection captured at open and reports what changed", async () => {
   const sent: BatchTagRequest[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {

@@ -15,7 +15,7 @@ export type SnapshotReceiptOverlays = Record<number, SnapshotReceiptOverlay>;
 
 export function applySnapshotReceiptOverlay(
   overlays: Readonly<SnapshotReceiptOverlays>,
-  receipt: Readonly<BatchTagReceipt>,
+  receipt: Readonly<Pick<BatchTagReceipt, "nodes" | "tag_id" | "assign" | "completed_at">>,
   tagLabel: string,
 ): SnapshotReceiptOverlays {
   const next = { ...overlays };
