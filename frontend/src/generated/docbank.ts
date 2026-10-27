@@ -2287,6 +2287,7 @@ export interface DocumentSearchReport {
   /** @maxItems 4096 */
   media_selections?: DocumentMediaSelection[];
   media_source_selection?: boolean;
+  miss_log_id?: string;
   requested_mode: string;
   reranking?: DocumentSearchRerankingReceipt;
   results: DocumentSearchResult[];
@@ -2305,10 +2306,7 @@ export const DocumentSearchRequestMode = {
 } as const;
 
 export interface DocumentSourceFence {
-  /**
-     * @minItems 1
-     * @maxItems 4096
-     */
+  /** @maxItems 4096 */
   content_version_ids: string[];
   vault_uid: string;
 }
@@ -2368,6 +2366,7 @@ export interface DocumentSearchRequest {
   query: string;
   rerank?: boolean;
   scope?: DocumentSearchScope;
+  skip_miss_log?: boolean;
 }
 
 export interface DocumentSearchValidation {
@@ -3186,6 +3185,29 @@ export interface EmailPending {
   readonly $schema?: string;
   state: string;
   version: ContentVersion;
+}
+
+export interface EmptySearchCompletion {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  miss_log_id?: string;
+}
+
+export type EmptySearchCompletionRequestActualMode = typeof EmptySearchCompletionRequestActualMode[keyof typeof EmptySearchCompletionRequestActualMode];
+
+
+export const EmptySearchCompletionRequestActualMode = {
+  lexical: 'lexical',
+  semantic: 'semantic',
+  hybrid: 'hybrid',
+} as const;
+
+export interface EmptySearchCompletionRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  actual_mode: EmptySearchCompletionRequestActualMode;
+  coverage: DocumentSearchCoverage;
+  search: DocumentSearchRequest;
 }
 
 export interface EmptyTrashRequest {
@@ -4276,6 +4298,35 @@ export interface Message {
   separator: string;
   sequence: number;
   start: number;
+}
+
+export type MissLogReceiptCoverage = {[key: string]: unknown};
+
+export type MissLogReceiptScope = {[key: string]: unknown};
+
+export interface MissLogReceipt {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  actual_mode: string;
+  coverage?: MissLogReceiptCoverage;
+  created_at: string;
+  fence_fingerprint?: string;
+  id: string;
+  profile?: string;
+  query: string;
+  requested_mode: string;
+  scope: MissLogReceiptScope;
+  source: string;
+  triggers: string[];
+  vault_uid: string;
+}
+
+export interface MissLogPage {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  items: MissLogReceipt[];
+  limit: number;
+  offset: number;
 }
 
 export interface MkdirPathRequest {
@@ -8293,6 +8344,7 @@ export interface SearchReport {
   hits: SearchHit[];
   limit: number;
   mime_type?: string;
+  miss_log_id?: string;
   modified_before?: string;
   modified_since?: string;
   pdf_filter?: string;
@@ -9645,12 +9697,12 @@ limit?: number;
 };
 
 export type SubmitMediaSourceBodyTwo = {
-  file: Blob | File;
+  file: Blob | File | string;
   metadata: MediaSuppliedMetadata;
 };
 
 export type ImportMediaArtifactBody = {
-  file: Blob | File;
+  file: Blob | File | string;
   metadata: MediaArtifactMetadata;
 };
 
@@ -9660,6 +9712,25 @@ export type GetMediaTranscriptParams = {
  * @maxLength 256
  */
 content_version_id: string;
+};
+
+export type DeleteMissLogParams = {
+/**
+ * @maxLength 64
+ */
+before?: string;
+};
+
+export type ListMissLogParams = {
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+/**
+ * @minimum 0
+ */
+offset?: number;
 };
 
 export type MoveNodeHeaders = {
@@ -10113,7 +10184,7 @@ export type UploadPushFileHeaders = {
 };
 
 export type UploadPushFileBody = {
-  file: Blob | File;
+  file: Blob | File | string;
 };
 
 export type ReadRenditionTextParams = {
@@ -10206,7 +10277,11 @@ export type RunSavedQueryHeaders = {
 };
 
 export type SearchParams = {
+/**
+ * @maxLength 32768
+ */
 q?: string;
+skip_miss_log?: boolean;
 fuzzy?: boolean;
 source_present?: boolean;
 /**
@@ -10372,7 +10447,7 @@ export type UploadFileHeaders = {
 };
 
 export type UploadFileBody = {
-  file: Blob | File;
+  file: Blob | File | string;
 };
 
 export type GetContentVersionBytesHeaders = {
@@ -14751,6 +14826,116 @@ export const getMediaTranscript = async (sourceId: string,
     params: GetMediaTranscriptParams, options?: Parameters<typeof sessionJSON>[1]): Promise<MediaTranscript> => {
 
   return sessionJSON<MediaTranscript>(getGetMediaTranscriptUrl(sourceId,sourceVersionId,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getDeleteMissLogUrl = (params?: DeleteMissLogParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/miss-log?${stringifiedParams}` : `/api/v1/miss-log`
+}
+
+/**
+ * @summary Purge private search misses or delete by date (operator only)
+ */
+export const deleteMissLog = async (params?: DeleteMissLogParams, options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
+
+  return sessionJSON<void>(getDeleteMissLogUrl(params),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+export const getListMissLogUrl = (params?: ListMissLogParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/miss-log?${stringifiedParams}` : `/api/v1/miss-log`
+}
+
+/**
+ * @summary List private search misses (operator only)
+ */
+export const listMissLog = async (params?: ListMissLogParams, options?: Parameters<typeof sessionJSON>[1]): Promise<MissLogPage> => {
+
+  return sessionJSON<MissLogPage>(getListMissLogUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getDeleteMissLogRecordUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/miss-log/${encodeURIComponent(String(id))}`
+}
+
+/**
+ * @summary Delete one private search miss (operator only)
+ */
+export const deleteMissLogRecord = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
+
+  return sessionJSON<void>(getDeleteMissLogRecordUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+export const getGetMissLogRecordUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/miss-log/${encodeURIComponent(String(id))}`
+}
+
+/**
+ * @summary Read one private search miss (operator only)
+ */
+export const getMissLogRecord = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<MissLogReceipt> => {
+
+  return sessionJSON<MissLogReceipt>(getGetMissLogRecordUrl(id),
   {
     ...options,
     method: 'GET'
@@ -19353,7 +19538,7 @@ export const uploadPushFile = async (uploadPushFileBody: UploadPushFileBody,
     params: UploadPushFileParams,
     headers: UploadPushFileHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PushUploadReceipt> => {
     const formData = new FormData();
-formData.append(`file`, uploadPushFileBody.file);
+formData.append(`file`, uploadPushFileBody.file instanceof Blob ? uploadPushFileBody.file : new Blob([uploadPushFileBody.file], { type: '*/*' }));
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -20591,6 +20776,44 @@ return sessionJSON<Summary>(getReviseTermReportUrl(id),
 
 
 
+export const getCompleteEmptySearchUrl = () => {
+
+
+
+
+  return `/api/v1/search/complete-empty`
+}
+
+/**
+ * @summary Record the final empty automatic CLI search (operator only)
+ */
+export const completeEmptySearch = async (emptySearchCompletionRequest: NonReadonly<EmptySearchCompletionRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<EmptySearchCompletion> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<EmptySearchCompletion>(getCompleteEmptySearchUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(emptySearchCompletionRequest)
+  }
+);}
+
+
+
 export const getFindSimilarDocumentsUrl = () => {
 
 
@@ -21793,7 +22016,7 @@ export const uploadFile = async (uploadFileBody: UploadFileBody,
     params: UploadFileParams,
     headers: UploadFileHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<UploadReceipt> => {
     const formData = new FormData();
-formData.append(`file`, uploadFileBody.file, params.name);
+formData.append(`file`, uploadFileBody.file instanceof Blob ? uploadFileBody.file : new Blob([uploadFileBody.file], { type: '*/*' }));
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
