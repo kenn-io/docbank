@@ -1461,20 +1461,21 @@ Active operator assertions other than `blind_copy` make names searchable on visi
 
 Recent-first ranking starts a typed-name search from matching people, joins their namesakes, and looks up their active `depicted` assertions through `person_document_assertions_person`, indexed by `(person_id, role, action)`. Browser visibility checks also use per-person assertion lookups. SQLite reads and sorts all matching people's visible evidence before returning ranked rows. The application consumes those rows newest first and stops after filling the page and finishing timestamp ties. It then fills any remaining places with unranked people in name order. An empty query keeps the assertion-first scan, including unrelated mail assertions. Photo summaries apply to the listed people; photo eligibility and the unranked tail retain their existing queries.
 
-With 50,000 people, 10,000 mail contacts, and 2,025,400 assertions on an AMD EPYC 7763 using CGO SQLite, individual `-benchtime=300ms -count=1` measurements are below. Timings vary with cache state and system load.
+With 50,000 people, 10,000 mail contacts, and 2,025,400 assertions on an AMD EPYC 7763 using CGO SQLite, individual `-benchtime=300ms -count=1` measurements are below. The prefix comparisons use the same machine and session, with base commit `1475c2a3a` before the indexed lookups. Timings vary with cache state and system load.
 
-| Benchmark case | Time |
-| --- | ---: |
-| `page-24-name` | 0.469 ms |
-| `page-24-recent` | 433.85 ms |
-| `page-24-name-summary` | 432.71 ms |
-| `page-24-recent-summary` | 361.33 ms |
-| `page-100-recent-prefix` | 27.72 ms |
-| `page-100-recent-prefix-broad` | 393 ms |
-| `page-100-recent-prefix-none` | 13.03 ms |
-| `page-24-recent-unranked-tail` | 453.82 ms |
+| Benchmark case | Before | Indexed lookups |
+| --- | ---: | ---: |
+| `page-24-name` | Unmeasured | 0.448 ms |
+| `page-24-recent` | Unmeasured | 417.13 ms |
+| `page-24-name-summary` | Unmeasured | 337.42 ms |
+| `page-24-recent-cursor` | Unmeasured | 380.73 ms |
+| `page-24-recent-summary` | Unmeasured | 322.67 ms |
+| `page-100-recent-prefix` | 3,276.18 ms | 28.16 ms |
+| `page-100-recent-prefix-broad` | 3,626.16 ms | 477.47 ms |
+| `page-100-recent-prefix-none` | 248.72 ms | 13.32 ms |
+| `page-24-recent-unranked-tail` | Unmeasured | 394.25 ms |
 
-The assertion index occupies 141,463,552 bytes, about 134.9 MiB, on that fixture. Creating it on the warm 2,025,400-assertion fixture took 1.67 s, including autocommit. It excludes timestamps and version IDs to limit its storage cost. A broad `p` prefix measured 85.9 ms at 5,000 people and 393 ms on the mail-heavy fixture, compared with 171.4 ms and 3.39 s before the indexed lookups. Measure the standard cases with `CGO_ENABLED=1 go test -tags fts5 ./internal/store -run '^$' -bench 'BenchmarkPeopleRecentAtVaultScale/50000' -benchtime=300ms -count=1`.
+The assertion index occupies 141,463,552 bytes, about 134.9 MiB, on that fixture. Creating it on the warm 2,025,400-assertion fixture took 1.67 s, including autocommit. These earlier index measurements use the same index definition and mail-heavy fixture. It excludes timestamps and version IDs to limit its storage cost. The broad `p` prefix matches every person's name in this fixture. Measure the standard cases with `CGO_ENABLED=1 go test -tags fts5 ./internal/store -run '^$' -bench 'BenchmarkPeopleRecentAtVaultScale/50000' -benchtime=300ms -count=1`.
 
 Browser rename and merge apply the same visibility rule to the canonical person inside the write transaction. A person the browser can't list, such as a sensitive-only person or a locked Hidden-only person, returns `404 not_found`. While Hidden is locked, browser merges require unlocking if either person has assertions or face candidate evidence on a Hidden photo. A merge replay resolves the survivor through aliases and checks its current visibility before returning the original receipt, even after another merge. Browser sessions receive merge receipts with zero moved-evidence counts and an empty absorbed name. API-key writes keep their full scope.
 
