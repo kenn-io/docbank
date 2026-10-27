@@ -22,6 +22,15 @@ type embeddingRuntimeBlobs interface {
 	OpenContext(ctx context.Context, hash string) (io.ReadSeekCloser, error)
 }
 
+// ImageSourceIneligibleError preserves the preview reason when an image-only
+// start cannot enqueue any work.
+type ImageSourceIneligibleError struct {
+	Err error
+}
+
+func (err *ImageSourceIneligibleError) Error() string { return err.Err.Error() }
+func (err *ImageSourceIneligibleError) Unwrap() error { return err.Err }
+
 // ProviderEmbeddingRuntime reconstructs exact transient inputs from cataloged
 // blob authority for one already-validated provider descriptor.
 type ProviderEmbeddingRuntime struct {

@@ -868,5 +868,7 @@ func TestImageOnlyStartReportsMissingPreview(t *testing.T) {
 	_, err = x.service.Start(t.Context(), StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true})
 	require.ErrorIs(t, err, ErrSourceIneligible)
 	require.ErrorContains(t, err, "preview_missing")
+	_, imageSource := errors.AsType[*ImageSourceIneligibleError](err)
+	require.True(t, imageSource)
 	require.Zero(t, x.fake.runtime.callCount(x.binding.Name))
 }

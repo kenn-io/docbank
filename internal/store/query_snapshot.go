@@ -413,26 +413,10 @@ func materializeSnapshotRows(
 	if err != nil {
 		return err
 	}
-	var frozenPhotos map[string]bool
-	if options.Photos && options.PhotoRanking != nil {
-		var photos []PhotoBrowseRow
-		err = queryRows(ctx, q, `WITH frozen AS (`+statement+`) SELECT a.asset_id FROM `+photoBrowseDisplayFrom+` JOIN frozen ON frozen.asset_id=a.asset_id AND frozen.content_version_id=v.version_id`, args, func(rows *sql.Rows) error {
-			photos = append(photos, PhotoBrowseRow{})
-			return rows.Scan(&photos[len(photos)-1].AssetID)
-		})
-		if err != nil {
-			return err
-		}
-		if options.PhotoRanking.ActualMode == query.ModeLexical || options.PhotoRanking.ActualMode == "hybrid" {
-			if err := markSuggestionOnlyMatches(ctx, q, compiled, generationID, coverage, compiled.photoHidden, photos, options.PhotoRanking.ActualMode == "hybrid"); err != nil {
-				return err
-			}
-		}
-		frozenPhotos = map[string]bool{}
-		for _, photo := range photos {
-			frozenPhotos[photo.AssetID] = photo.MatchedAISuggestion
-		}
-	}
+	var photos []PhotoBrowseRow
+	var photoRowBytes []int64
+	annotatePhotos := options.Photos && options.PhotoRanking != nil &&
+		(options.PhotoRanking.ActualMode == query.ModeLexical || options.PhotoRanking.ActualMode == "hybrid")
 	photoColumns := `'','',NULL`
 	if options.Photos {
 		photoColumns = `m.asset_id,printf('%020d',m.photo_position),(SELECT f.flag FROM photo_files f JOIN photo_assets a ON a.display_file_id=f.file_id WHERE a.asset_id=m.asset_id)`
@@ -515,7 +499,6 @@ func materializeSnapshotRows(
 		if err != nil {
 			return err
 		}
-		row.SuggestionMatch = frozenPhotos[row.AssetID]
 		encoded, err := json.Marshal(row)
 		if err != nil {
 			return fmt.Errorf("encoding query snapshot row: %w", err)
@@ -532,12 +515,39 @@ func materializeSnapshotRows(
 		}
 		projection.TotalBytes += row.Size
 		projection.Rows = append(projection.Rows, row)
+		if annotatePhotos {
+			photos = append(photos, PhotoBrowseRow{AssetID: row.AssetID})
+			photoRowBytes = append(photoRowBytes, int64(len(encoded)))
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("materializing query snapshot rows: %w", err)
 	}
 	if err := rows.Close(); err != nil {
 		return fmt.Errorf("closing query snapshot rows: %w", err)
+	}
+	if annotatePhotos {
+		if err := markSuggestionOnlyMatches(ctx, q, compiled, generationID, coverage, compiled.photoHidden, photos, options.PhotoRanking.ActualMode == "hybrid"); err != nil {
+			return err
+		}
+		for i, photo := range photos {
+			if !photo.MatchedAISuggestion {
+				continue
+			}
+			row := &projection.Rows[i]
+			row.SuggestionMatch = true
+			encoded, err := json.Marshal(row)
+			if err != nil {
+				return fmt.Errorf("encoding query snapshot row: %w", err)
+			}
+			rowBytes := int64(len(encoded))
+			if rowBytes > options.MaxRowBytes {
+				return fmt.Errorf("%w: row %d encodes to %d bytes", ErrQuerySnapshotTooLarge, row.NodeID, options.MaxRowBytes)
+			}
+			if err := chargeSnapshotMaterialization(options, &projection.SerializedBytes, 0, rowBytes-photoRowBytes[i]); err != nil {
+				return err
+			}
+		}
 	}
 	projection.Total = int64(len(projection.Rows))
 	if options.Photos {

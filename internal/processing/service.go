@@ -1740,7 +1740,7 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 		}
 	}
 	if len(jobIDs) == 0 && profile.portable.Rendition == nil && ineligibleErr != nil {
-		return jobIDs, ineligibleErr
+		return jobIDs, &ImageSourceIneligibleError{Err: ineligibleErr}
 	}
 	for index, jobID := range jobIDs {
 		binding := bindings[index]

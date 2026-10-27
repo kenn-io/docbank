@@ -1478,7 +1478,38 @@ it.each(["success", "failure", "interrupted", "late"] as const)(
   },
 );
 
-it("explains the relevance limit, hiding it for complete results or capture dates and rewording it when fallback disables the sort", async () => {
+it("a paged fallback does not claim results stop at 250", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const photos = new Photos("scoped", vi.fn());
+  photos.started = true;
+  photos.items = Array.from({ length: 250 }, (_, i) => photo(i + 1));
+  photos.total = 500;
+  photos.query = {
+    ...photos.query,
+    mode: "semantic",
+    text: "sunset",
+    sort: { field: "relevance", direction: "desc" },
+  };
+  photos.snapshotID = "fallback-snapshot";
+  photos.fallbackReason = "provider_unavailable";
+  photos.cursor = "next-page";
+  photos.truncated = false;
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  render(PhotosWorkspace, { photos, cache });
+  await tick();
+  expect(screen.queryByText(/Showing the best 250/)).toBeNull();
+  expect(screen.queryByText(/Choose Metadata and sort by capture date to see all/)).toBeNull();
+  photos.dispose();
+  await cache.dispose();
+});
+
+it("explains the live metadata relevance limit, hiding it for complete results or capture dates and rewording it when fallback disables the sort", async () => {
   vi.stubGlobal(
     "ResizeObserver",
     class {

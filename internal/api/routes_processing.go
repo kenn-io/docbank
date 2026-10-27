@@ -796,8 +796,8 @@ func fromProcessingError(err error) error {
 	if errors.Is(err, processing.ErrConsentSaved) {
 		detailPrefix = "processing consent was saved: "
 	}
-	if errors.Is(err, processing.ErrSourceIneligible) {
-		return NewError(http.StatusUnprocessableEntity, "rendition_source_ineligible", detailPrefix+err.Error())
+	if imageSource, ok := errors.AsType[*processing.ImageSourceIneligibleError](err); ok {
+		return NewError(http.StatusUnprocessableEntity, "rendition_source_ineligible", detailPrefix+imageSource.Error())
 	}
 	for _, item := range []struct {
 		target error
@@ -809,6 +809,8 @@ func fromProcessingError(err error) error {
 			"media search selectors or mode are invalid"},
 		{processing.ErrRenditionRuntimeUnavailable, http.StatusServiceUnavailable, "rendition_runtime_unavailable", "the rendition provider is not ready"},
 		{processing.ErrRenditionFailed, http.StatusUnprocessableEntity, "rendition_failed", "document rendition failed"},
+		{processing.ErrSourceIneligible, http.StatusUnprocessableEntity, "rendition_source_ineligible",
+			"source is not eligible for the rendition profile; see the plan's rendition_ineligible_reason"},
 		{processing.ErrPDFPasswordsUnreadable, http.StatusConflict, "rendition_operator_required", processing.ErrPDFPasswordsUnreadable.Error()},
 		{processing.ErrRenditionOperatorRequired, http.StatusConflict, "rendition_operator_required", "document rendition requires operator intervention"},
 		{processing.ErrForeignVault, http.StatusUnprocessableEntity, "foreign_vault", "source fence belongs to another vault"},

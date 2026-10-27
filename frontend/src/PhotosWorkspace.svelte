@@ -1406,7 +1406,7 @@
                   }}>Open album</a
                 >{/if}
             </div>{/if}
-          {#if (photos.query.mode === "lexical" || photos.fallbackReason) && photos.query.sort?.field === "relevance" && photos.total > photos.items.length}
+          {#if !photos.snapshotID && (photos.query.mode === "lexical" || photos.fallbackReason) && photos.query.sort?.field === "relevance" && photos.total > photos.items.length}
             <p class="photo-search-limit">
               Showing the best 250 of {photos.total.toLocaleString()} matches. {photos.fallbackReason
                 ? "Choose Metadata and sort by capture date to see all."
