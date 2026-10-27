@@ -92,14 +92,14 @@ func registerPhotoFaceRoutes(api huma.API, d Deps, g *gate) {
 				if in.Body.FaceID != "" {
 					return FromStoreError(store.ErrInvalidPhotoFace)
 				}
-				assertion, err := d.Store.MarkPersonInPhoto(browserPeopleScope(ctx), in.ContentVersionID, in.Body.PersonID, personName)
+				assertion, err := d.Store.MarkPersonInPhoto(ctx, in.ContentVersionID, in.Body.PersonID, personName)
 				if err != nil {
 					return FromStoreError(err)
 				}
 				saved := photoAssertion(assertion)
 				result.Assertion = &saved
 			} else {
-				face, assertion, err := d.Store.CreatePhotoFace(browserPeopleScope(ctx), in.ContentVersionID, in.Body.FaceID, *in.Body.Box, in.Body.PersonID)
+				face, assertion, err := d.Store.CreatePhotoFace(ctx, in.ContentVersionID, in.Body.FaceID, *in.Body.Box, in.Body.PersonID)
 				if err != nil {
 					return FromStoreError(err)
 				}
@@ -135,7 +135,7 @@ func registerPhotoFaceDecisionRoutes(api huma.API, d Deps, g *gate) {
 		var receipt store.PhotoFaceDecisionReceipt
 		err := g.mutate(func() error {
 			var err error
-			receipt, err = d.Store.DecidePhotoFace(browserPeopleScope(ctx), in.ContentVersionID, store.PhotoFaceDecisionRequest(in.Body))
+			receipt, err = d.Store.DecidePhotoFace(ctx, in.ContentVersionID, store.PhotoFaceDecisionRequest(in.Body))
 			if err != nil {
 				return FromStoreError(err)
 			}

@@ -137,7 +137,7 @@ export class People {
     } catch (cause) {
       if (!request.signal.aborted) {
         this.error = this.failure(cause);
-        this.cursorExpired = cause instanceof APIError && cause.code === "people_cursor_expired";
+        this.cursorExpired = cause instanceof APIError && cause.code === "cursor_expired";
       }
     } finally {
       if (!request.signal.aborted) this.loading = false;
@@ -182,6 +182,14 @@ export class People {
     this.error = "";
     this.cursorExpired = false;
     this.selected = this.selected.map((person) => fresh.get(person.person_id) ?? person);
+    if (this.merge)
+      this.merge = {
+        ...this.merge,
+        pair: this.merge.pair.map((person) => fresh.get(person.person_id) ?? person) as [
+          PersonSummary,
+          PersonSummary,
+        ],
+      };
   }
   private begin() {
     if (this.busy || this.disposed) return;

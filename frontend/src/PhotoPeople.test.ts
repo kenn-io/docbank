@@ -987,7 +987,7 @@ it("restarts the picker after a load-more cursor expires", async () => {
       items: [personSummary("ada", { display_name: "Ada" })],
       next_cursor: "stale",
     })
-    .mockRejectedValueOnce(new APIError("People scope changed", 422, "people_cursor_expired"))
+    .mockRejectedValueOnce(new APIError("People scope changed", 422, "cursor_expired"))
     .mockResolvedValueOnce({ items: [personSummary("grace", { display_name: "Grace" })] });
   const faces = new PhotoFaces("session", vi.fn());
   await faces.load("version-a");

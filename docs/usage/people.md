@@ -44,7 +44,7 @@ display-name order. Search matches the beginning of any word, so `Smith` finds `
 
 `docbank people list ada`
 
-MCP clients use `find_people`. Cursors bind the query, projection, and ordering. Invalid or mismatched cursors return `people_cursor_expired`; restart from the first page.
+MCP clients use `find_people`. Cursors bind the query, projection, and ordering. Invalid or mismatched cursors return `cursor_expired`; restart from the first page.
 
 ## Browser names and visibility
 

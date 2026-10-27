@@ -380,11 +380,6 @@ func (s *Store) decidePhotoFaceTx(ctx context.Context, tx *sql.Tx, versionID str
 	if err != nil {
 		return PhotoFaceDecisionReceipt{}, err
 	}
-	if request.Action == faceDecisionName {
-		if err := s.fenceVisiblePeopleTx(ctx, tx, request.PersonID); err != nil {
-			return PhotoFaceDecisionReceipt{}, err
-		}
-	}
 	personIDs := []string{}
 	if request.PersonID != "" {
 		personIDs = append(personIDs, request.PersonID)

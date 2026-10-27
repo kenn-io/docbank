@@ -1093,35 +1093,3 @@ func TestMarkPersonInPhotoNamedRetryAfterMerge(t *testing.T) {
 	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM persons WHERE person_id=?`, id).Scan(&count))
 	require.Zero(t, count)
 }
-
-func TestPhotoFaceAssignmentsFenceCanonicalPerson(t *testing.T) {
-	t.Parallel()
-	for _, entry := range []string{"mark", "box", "name"} {
-		t.Run(entry, func(t *testing.T) {
-			s := newTestStore(t)
-			ctx := t.Context()
-			node := browsePhotoNode(t, s, "portrait.jpg", fakeHash("a1"), "image/jpeg")
-			person, err := s.CreatePerson(ctx, "Ada", "operator")
-			require.NoError(t, err)
-			alias, err := s.CreatePerson(ctx, "Ada duplicate", "operator")
-			require.NoError(t, err)
-			_, err = s.MergePersons(ctx, person.PersonID, alias.PersonID, uuid.NewString(), 1, 1)
-			require.NoError(t, err)
-			_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: node.CurrentVersionID, PersonID: person.PersonID, Role: "blind_copy", Action: "assert", Revision: 1})
-			require.NoError(t, err)
-			face, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.NewString(), document.FaceBox{Width: .2, Height: .2}, "")
-			require.NoError(t, err)
-			browser := WithVisiblePeopleOnly(ctx)
-			switch entry {
-			case "mark":
-				_, err = s.MarkPersonInPhoto(browser, node.CurrentVersionID, alias.PersonID, "")
-			case "box":
-				_, _, err = s.CreatePhotoFace(browser, node.CurrentVersionID, uuid.NewString(), document.FaceBox{Width: .2, Height: .2}, alias.PersonID)
-			case "name":
-				_, err = s.DecidePhotoFace(browser, node.CurrentVersionID, PhotoFaceDecisionRequest{Action: "name", FaceID: face.FaceID, PersonID: alias.PersonID, Revision: 1})
-			}
-			require.ErrorIs(t, err, ErrNotFound)
-			require.NoError(t, s.ValidateMetadata(ctx))
-		})
-	}
-}

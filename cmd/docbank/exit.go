@@ -79,7 +79,7 @@ func commandExitCode(err error, started bool) int {
 		return exitUsage
 	}
 	if code, ok := daemonconn.ProblemCode(err); ok &&
-		(code == "validation" || code == "audit_acknowledgment_required" || code == "people_cursor_expired") {
+		(code == "validation" || code == "audit_acknowledgment_required") {
 		return exitUsage
 	}
 	if !started {

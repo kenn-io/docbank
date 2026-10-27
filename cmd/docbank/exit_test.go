@@ -5,8 +5,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -22,15 +20,6 @@ import (
 )
 
 func TestCommandExitCode(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/problem+json")
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"status":400,"code":"people_cursor_expired","detail":"People cursor expired"}`))
-	}))
-	t.Cleanup(server.Close)
-	_, cursorErr := daemonconn.New(server.URL, "synthetic-key").People(t.Context(), "", "invalid", 24)
-	require.Error(t, cursorErr)
-
 	tests := []struct {
 		name    string
 		err     error
@@ -42,7 +31,6 @@ func TestCommandExitCode(t *testing.T) {
 		{name: "cobra usage", err: errors.New("unknown flag"), want: exitUsage},
 		{name: "search query required", err: store.ErrSearchQueryRequired, started: true, want: exitUsage},
 		{name: "semantic usage", err: usageError(errors.New("bad limit")), started: true, want: exitUsage},
-		{name: "expired people cursor", err: cursorErr, started: true, want: exitUsage},
 		{name: "not found", err: fmt.Errorf("lookup: %w", store.ErrNotFound), started: true, want: exitNotFound},
 		{name: "stale revision", err: store.ErrStaleRevision, started: true, want: exitStale},
 		{name: "stale preview", err: store.ErrAuditPreviewStale, started: true, want: exitStale},

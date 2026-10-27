@@ -35,7 +35,7 @@ it("retries from the first page when a saved People cursor expires", async () =>
   const read = vi
     .spyOn(api, "listPeople")
     .mockResolvedValueOnce({ items: [ada], next_cursor: "stale" })
-    .mockRejectedValueOnce(new APIError("People scope changed", 422, "people_cursor_expired"))
+    .mockRejectedValueOnce(new APIError("People scope changed", 422, "cursor_expired"))
     .mockResolvedValueOnce({ items: [grace] });
   const people = new People("session", vi.fn());
   await people.load();
@@ -481,5 +481,27 @@ it("keeps the cards and reports a failed People refresh", async () => {
   await people.load();
   await expect(people.refresh()).rejects.toThrow("Unavailable");
   expect(people.items).toEqual([ada, grace]);
+  people.dispose();
+});
+
+it("refreshes the open merge before submitting its names and revisions", async () => {
+  const renamed = { ...ada, display_name: "Ada Lovelace", revision: 3 };
+  vi.spyOn(api, "listPeople").mockResolvedValue({ items: [renamed, grace] });
+  const merge = vi
+    .spyOn(api, "mergePerson")
+    .mockImplementation(async (_, request) =>
+      personMergeReceipt(renamed, grace, request.operation_id),
+    );
+  const people = new People("session", vi.fn());
+  people.items = [ada, grace];
+  merging(people);
+  await people.refresh();
+  expect(people.merge?.pair).toEqual([renamed, grace]);
+  expect(await people.submitMerge()).toBe(true);
+  expect(merge.mock.calls[0]!.slice(0, 3)).toEqual([
+    "grace",
+    { absorbed_person_id: "ada", absorbed_revision: 3, operation_id: expect.any(String) },
+    { "If-Match": '"4"' },
+  ]);
   people.dispose();
 });

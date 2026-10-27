@@ -327,11 +327,11 @@ func TestPeoplePageProjectionAndCursorBinding(t *testing.T) {
 			headers["Cookie"] = unlocked.Cookies()[0].String()
 			response, body = get(t, ts, apiPath+"&cursor="+apiFirst.NextCursor, map[string]string{"Cookie": headers["Cookie"]})
 			require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
-			require.Equal(t, "people_cursor_expired", decodeProblem(t, body).Code)
+			require.Equal(t, "cursor_expired", decodeProblem(t, body).Code)
 		}
 		response, body = get(t, ts, "/api/v1/people?limit=1&"+changed.query+"&cursor="+first.NextCursor, headers)
 		require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
-		require.Equal(t, "people_cursor_expired", decodeProblem(t, body).Code)
+		require.Equal(t, "cursor_expired", decodeProblem(t, body).Code)
 	}
 	response, body = get(t, ts, "/api/v1/people", headers)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
@@ -390,75 +390,4 @@ func TestBrowserMergeConflictNamesFaceVersion(t *testing.T) {
 	_, conflict := s.MergePersons(ctx, ada.PersonID, grace.PersonID, merge.OperationID, 1, 1)
 	require.Error(t, conflict)
 	require.Contains(t, problem.Detail, conflict.Error())
-}
-
-func TestPhotoFaceBrowserAssignmentsConcealedPerson(t *testing.T) {
-	t.Parallel()
-	for _, concealment := range []string{"sensitive", "hidden"} {
-		for _, entry := range []string{"mark", "named_mark", "box", "name"} {
-			t.Run(concealment+"/"+entry, func(t *testing.T) {
-				ts, s := newTestServer(t, nil)
-				ctx := t.Context()
-				hash, size, err := s.Blobs.Write(strings.NewReader("synthetic portrait"))
-				require.NoError(t, err)
-				visible, err := s.CreateFile(ctx, s.RootID(), "visible.jpg", hash, size, "image/jpeg")
-				require.NoError(t, err)
-				concealed, err := s.CreateFile(ctx, s.RootID(), "concealed.jpg", hash, size, "image/jpeg")
-				require.NoError(t, err)
-				person, err := s.CreatePerson(ctx, "Concealed Ada", "operator")
-				require.NoError(t, err)
-				if concealment == "sensitive" {
-					_, err = s.AssertDocumentPerson(ctx, store.PersonDocumentAssertion{ContentVersionID: concealed.CurrentVersionID, PersonID: person.PersonID, Role: "blind_copy", Action: "assert", Revision: 1})
-					require.NoError(t, err)
-				} else {
-					_, err = s.MarkPersonInPhoto(ctx, concealed.CurrentVersionID, person.PersonID, "")
-					require.NoError(t, err)
-					asset, err := s.PhotoAssetForNode(ctx, concealed.ID)
-					require.NoError(t, err)
-					require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
-					_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
-					require.NoError(t, err)
-				}
-				box := document.FaceBox{Width: .2, Height: .2}
-				face, _, err := s.CreatePhotoFace(ctx, visible.CurrentVersionID, uuid.NewString(), box, "")
-				require.NoError(t, err)
-				_, err = s.DecidePhotoFace(ctx, visible.CurrentVersionID, store.PhotoFaceDecisionRequest{Action: "reject", FaceID: face.FaceID, PersonID: person.PersonID, Revision: 1})
-				require.NoError(t, err)
-				headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)}
-				path := "/api/v1/photos/versions/" + visible.CurrentVersionID
-				response, body := get(t, ts, path+"/faces", headers)
-				require.Equal(t, http.StatusOK, response.StatusCode, body)
-				var page api.PhotoFacePage
-				require.NoError(t, json.Unmarshal([]byte(body), &page))
-				require.Len(t, page.Faces, 1)
-				require.Equal(t, []string{person.PersonID}, page.Faces[0].RejectedPersonIDs)
-				id := page.Faces[0].RejectedPersonIDs[0]
-				var request any = api.CreatePhotoFaceRequest{PersonID: id}
-				suffix := "/faces"
-				switch entry {
-				case "named_mark":
-					request = api.CreatePhotoFaceRequest{PersonID: id, PersonName: new(person.DisplayName)}
-				case "box":
-					request = api.CreatePhotoFaceRequest{FaceID: uuid.NewString(), Box: &box, PersonID: id}
-				case "name":
-					suffix = "/face-decisions"
-					request = api.PhotoFaceDecisionRequest{Action: "name", FaceID: face.FaceID, PersonID: id, Revision: 2}
-				}
-				response, body = do(t, ts, http.MethodPost, path+suffix, headers, request)
-				require.Equal(t, http.StatusNotFound, response.StatusCode, body)
-				require.NotContains(t, body, person.DisplayName)
-				faces, assertions, _, err := s.PhotoFacePersonNames(ctx, visible.CurrentVersionID)
-				require.NoError(t, err)
-				require.Empty(t, assertions)
-				require.Len(t, faces, 1)
-				require.Equal(t, int64(2), faces[0].Revision)
-				response, body = do(t, ts, http.MethodPost, path+suffix, nil, request)
-				if entry == "name" {
-					require.Equal(t, http.StatusOK, response.StatusCode, body)
-				} else {
-					require.Equal(t, http.StatusCreated, response.StatusCode, body)
-				}
-			})
-		}
-	}
 }

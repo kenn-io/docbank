@@ -88,7 +88,7 @@ func registerPackageCustodianRoutes(mux *http.ServeMux, d Deps, g *gate) {
 		}
 		afterName, afterID, afterRecent, cursorScope, err := decodePeopleCursor(r.URL.Query().Get("cursor"), binding)
 		if err != nil {
-			writeError(w, peopleCursorExpiredError())
+			writeError(w, NewError(422, "cursor_expired", "invalid people cursor"))
 			return
 		}
 		people, scope, err := d.Store.PeopleByDisplayName(r.Context(), query, afterName, afterID, limit+1, browserSessionRequest(r.Context()), store.PeopleSearchOptions{RecentFirst: recentFirst, AfterRecent: afterRecent, PhotoSummary: projection, GridRecipe: gridRecipe})
@@ -99,7 +99,7 @@ func registerPackageCustodianRoutes(mux *http.ServeMux, d Deps, g *gate) {
 		// The cursor carries the Hidden scope this page was read under.
 		binding += peopleScopeBinding(scope)
 		if afterName != "" && cursorScope != peopleScopeBinding(scope) {
-			writeError(w, peopleCursorExpiredError())
+			writeError(w, NewError(422, "cursor_expired", "invalid people cursor"))
 			return
 		}
 		out := PersonPage{Items: make([]PersonSummary, min(limit, len(people)))}

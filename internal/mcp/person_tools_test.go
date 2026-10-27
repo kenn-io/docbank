@@ -62,8 +62,8 @@ func peopleMCPServer(t *testing.T) (*store.Store, func(string, map[string]any) m
 		})))
 		require.Equal(t, true, result["isError"])
 		content := objectField(t, result, "structuredContent")
-		require.Equal(t, "people_cursor_expired", content["code"])
-		require.Equal(t, "The people cursor is invalid for this listing; restart from the first page.", content["message"])
+		require.Equal(t, "cursor_expired", content["code"])
+		require.Equal(t, "The cursor expired; restart the listing from the first page.", content["message"])
 	})
 
 	call := func(name string, arguments map[string]any) map[string]any {
