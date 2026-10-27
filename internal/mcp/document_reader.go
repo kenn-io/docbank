@@ -23,6 +23,14 @@ type documentClient interface {
 
 type daemonDocumentClient struct{ *daemonconn.Connection }
 
+func (c daemonDocumentClient) ListDocumentProcessingProfiles(ctx context.Context) ([]api.ProcessingProfileSummary, error) {
+	profiles, err := c.API().ListDocumentProcessingProfiles(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return *profiles, nil
+}
+
 func (c daemonDocumentClient) VaultInfo(ctx context.Context) (api.VaultInfo, error) {
 	info, err := c.API().VaultInfo(ctx)
 	if err != nil {
@@ -105,6 +113,21 @@ func CallDocumentReadTool(ctx context.Context, reader *api.DocumentReader, req *
 
 func readToolFailure(logger *slog.Logger, name string, err error) (*sdkmcp.CallToolResult, error) {
 	logOperationError(logger, name, err)
+	if name == "answer_question" {
+		code, _ := daemonconn.ProblemCode(err)
+		if facts, ok := daemonProblemFacts(err); ok {
+			code = facts.Code
+		}
+		if native, ok := errors.AsType[*api.Error](err); ok {
+			code = native.Code
+		}
+		switch code {
+		case "processing_unavailable", "processing_profile_unavailable", "reranking_unavailable", "reranking_failed":
+			if result, ok := domainToolErrorResult(code, 0); ok {
+				return result, nil
+			}
+		}
+	}
 	if domain, ok := domainToolError(err); ok {
 		return domain, nil
 	}

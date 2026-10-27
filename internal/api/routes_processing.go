@@ -399,9 +399,6 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 			Selector:  processing.Selector{NodeID: input.Body.Selector.NodeID, ContentVersionID: input.Body.Selector.ContentVersionID, Profile: input.Body.Selector.Profile},
 			BindingID: input.Body.BindingID, Limit: input.Body.Limit,
 			Fence: processing.SourceFence{VaultUID: input.Body.Fence.VaultUID, ContentVersionIDs: input.Body.Fence.ContentVersionIDs}})
-		if errors.Is(err, store.ErrVectorIndexSourceStale) {
-			return nil, NewError(http.StatusConflict, "stale_index", "vector index source changed")
-		}
 		if err != nil {
 			return nil, fromProcessingError(err)
 		}
@@ -818,6 +815,7 @@ func fromProcessingError(err error) error {
 		{processing.ErrInvalidConsentExpiry, http.StatusUnprocessableEntity, "invalid_processing_consent_expiry", "processing consent expiry is invalid"},
 		{processing.ErrRerankingUnavailable, http.StatusUnprocessableEntity, "reranking_unavailable", "reranking is not configured"},
 		{retrieval.ErrRerankingFailed, http.StatusBadGateway, "reranking_failed", "document reranking failed"},
+		{store.ErrVectorIndexSourceStale, http.StatusConflict, "stale_index", "vector index source changed"},
 		{store.ErrInvalidProcessingSourceFence, http.StatusUnprocessableEntity, "validation", "source fence request is invalid"},
 		{store.ErrProcessingSourceFenceStaleVersion, http.StatusConflict, "stale_version", "content version is not current and live"},
 		{store.ErrProcessingConsentRequired, http.StatusPreconditionRequired, "processing_consent_required", "processing consent is required"},
