@@ -2,8 +2,10 @@ package processing
 
 import (
 	"bytes"
+	"context"
 	"encoding/json/v2"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -229,6 +231,52 @@ func TestEmbeddingBuildReusesRetainedPayload(t *testing.T) {
 	}
 }
 
+func TestEmbeddingBuildEmbedsWhenRetainedPayloadIsUnavailable(t *testing.T) {
+	t.Parallel()
+	f := newEmbeddingRecoveryFixture(t)
+	require.NoError(t, f.blobs.Remove(f.sets[0].VectorSet.PayloadBlobHash))
+	provider := newRecoveryProvider(t, f.request.Descriptor)
+	service := f.service(t, provider.Descriptor(), provider)
+	version, err := f.catalog.ContentVersionByID(t.Context(), f.versions[0])
+	require.NoError(t, err)
+	selector := Selector{Profile: "current", NodeID: version.NodeID, ContentVersionID: version.ID}
+	plan, err := service.Plan(t.Context(), selector)
+	require.NoError(t, err)
+	job, err := service.Start(t.Context(), StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true})
+	require.NoError(t, err)
+	require.Len(t, job.EmbeddingJobIDs, 1)
+	status, err := f.catalog.EmbeddingJobByID(t.Context(), job.EmbeddingJobIDs[0])
+	require.NoError(t, err)
+	require.Equal(t, "completed", status.State)
+	require.Positive(t, provider.documents.Load(), "a selected build without usable retained vectors must use the consented provider")
+}
+
+func TestEmbeddingConsentForOneDocumentDoesNotSelectAnother(t *testing.T) {
+	t.Parallel()
+	f := newEmbeddingRecoveryFixture(t)
+	require.NoError(t, f.blobs.Remove(f.sets[0].VectorSet.PayloadBlobHash))
+	provider := newRecoveryProvider(t, f.request.Descriptor)
+	service := f.service(t, provider.Descriptor(), provider)
+	other, err := f.catalog.ContentVersionByID(t.Context(), f.versions[1])
+	require.NoError(t, err)
+	selector := Selector{Profile: "current", NodeID: other.NodeID, ContentVersionID: other.ID}
+	plan, err := service.Plan(t.Context(), selector)
+	require.NoError(t, err)
+	_, err = service.Start(t.Context(), StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true})
+	require.NoError(t, err)
+	config := f.workerConfig
+	config.Runtime = service.embeddings
+	config.DescriptorFingerprints = []string{provider.Descriptor().Fingerprint}
+	worker, err := NewEmbeddingWorker(config)
+	require.NoError(t, err)
+	_, err = worker.ScanOnce(t.Context())
+	require.NoError(t, err)
+	jobs, err := f.catalog.EmbeddingJobsForVersionProfile(t.Context(), f.versions[0], service.profiles["current"].record.Fingerprint)
+	require.NoError(t, err)
+	require.Empty(t, jobs, "consent for one document must not enroll another document under the new profile")
+	require.Zero(t, provider.documents.Load(), "the unselected document must not reach the new endpoint")
+}
+
 func TestEmbeddingSelectedSpaceRecoversAbandonedJob(t *testing.T) {
 	t.Parallel()
 	f := newEmbeddingRecoveryFixture(t)
@@ -311,4 +359,89 @@ func TestEmbeddingUpgradeRetainsLocalSimilarityAfterConsentRevocation(t *testing
 	require.Equal(t, 2, coverage.Embeddings[0].Complete)
 	require.NoError(t, f.catalog.ExportMetadata(t.Context(), &after))
 	require.Equal(t, before.String(), after.String())
+}
+
+func TestEmbeddingSemanticSearchAfterSecondEndpointMove(t *testing.T) {
+	t.Parallel()
+	f := newEmbeddingRecoveryFixture(t)
+	first := newRecoveryProvider(t, f.request.Descriptor)
+	service := f.service(t, first.Descriptor(), first)
+	for _, id := range f.versions {
+		version, err := f.catalog.ContentVersionByID(t.Context(), id)
+		require.NoError(t, err)
+		selector := Selector{Profile: "current", NodeID: version.NodeID, ContentVersionID: version.ID}
+		plan, err := service.Plan(t.Context(), selector)
+		require.NoError(t, err)
+		_, err = service.Start(t.Context(), StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true})
+		require.NoError(t, err)
+	}
+	space, err := first.VectorIdentity()
+	require.NoError(t, err)
+	second := newRecoveryProvider(t, f.request.Descriptor)
+	require.NotEqual(t, first.Descriptor().Fingerprint, second.Descriptor().Fingerprint)
+	service = f.service(t, second.Descriptor(), second)
+	require.Equal(t, space, service.profiles["current"].vectorSpaces[f.request.BindingID])
+	version, err := f.catalog.ContentVersionByID(t.Context(), f.versions[0])
+	require.NoError(t, err)
+	selector := Selector{Profile: "current", NodeID: version.NodeID, ContentVersionID: version.ID}
+	plan, err := service.Plan(t.Context(), selector)
+	require.NoError(t, err)
+	_, err = service.Start(t.Context(), StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true})
+	require.NoError(t, err)
+	f.grant(t, service, true)
+	search, err := service.Search(t.Context(), SearchRequest{Profile: "current", Fence: SourceFence{VaultUID: f.catalog.VaultID(), ContentVersionIDs: []string{version.ID}}, Query: "synthetic", Mode: "semantic", Limit: 1})
+	require.NoError(t, err)
+	require.Len(t, search.Results, 1)
+	require.Equal(t, version.ID, search.Results[0].Document.ContentVersionID)
+	require.Zero(t, second.documents.Load(), "building and searching a retained space must not re-embed its documents")
+}
+
+type rejectedEvidenceBlobs struct {
+	embeddingRuntimeBlobs
+	evidence string
+}
+
+func (b rejectedEvidenceBlobs) OpenContext(ctx context.Context, hash string) (io.ReadSeekCloser, error) {
+	if hash == b.evidence {
+		return &embeddingRuntimeReadSeekCloser{Reader: bytes.NewReader([]byte("synthetic evidence that does not match its fingerprint"))}, nil
+	}
+	return b.embeddingRuntimeBlobs.OpenContext(ctx, hash)
+}
+
+func TestEmbeddingReuseRejectsInvalidRetainedEvidence(t *testing.T) {
+	t.Parallel()
+	f := newEmbeddingRecoveryFixture(t)
+	provider := newRecoveryProvider(t, f.request.Descriptor)
+	service := f.service(t, provider.Descriptor(), provider)
+	f.grant(t, service, false)
+	target := service.profiles["current"]
+	version, err := f.catalog.ContentVersionByID(t.Context(), f.versions[0])
+	require.NoError(t, err)
+	node, err := f.catalog.NodeByID(t.Context(), version.NodeID)
+	require.NoError(t, err)
+	rendition, waiter, err := service.enqueueRendition(t.Context(), node, version, target, service.renditionConsentRequest(target), "", false)
+	require.NoError(t, err)
+	_, err = service.runRenditionJob(t.Context(), rendition.ID, waiter.ID)
+	require.NoError(t, err)
+	binding := target.portable.Embeddings[0]
+	generation, err := service.chunkEmbeddingGeneration(t.Context(), version, target, binding)
+	require.NoError(t, err)
+	request := f.request
+	request.ContentVersionID, request.Profile, request.Descriptor = version.ID, target.record, provider.Descriptor()
+	request.VectorSpaceID, request.InputGeneration = target.vectorSpaces[binding.Name], generation
+	request.Authorization.ProfileFingerprint, request.Authorization.DisclosureFingerprint = target.record.Fingerprint, binding.DisclosureFingerprint
+	job, err := f.catalog.EnqueueEmbeddingJob(t.Context(), request)
+	require.NoError(t, err)
+	config := f.workerConfig
+	config.Runtime, config.DescriptorFingerprints = service.embeddings, []string{provider.Descriptor().Fingerprint}
+	config.GenerationBlobs = rejectedEvidenceBlobs{embeddingRuntimeBlobs: f.blobs, evidence: generation.EvidenceFingerprint}
+	worker, err := NewEmbeddingWorker(config)
+	require.NoError(t, err)
+	_, err = worker.ScanOnce(t.Context())
+	require.NoError(t, err)
+	status, err := f.catalog.EmbeddingJobByID(t.Context(), job.ID)
+	require.NoError(t, err)
+	require.Equal(t, "failed", status.State)
+	require.Equal(t, store.EmbeddingFailureInputRejected, status.FailureCode, "invalid retained evidence must fail like the provider path instead of retrying")
+	require.Zero(t, provider.documents.Load())
 }

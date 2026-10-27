@@ -13,8 +13,30 @@ import (
 
 func TestEmbeddingLegacyProfilesReuseOnlyMatchingProducer(t *testing.T) {
 	t.Parallel()
+	bge, err := document.NewModelInputContract(document.ModelInputContractConfig{Profile: document.ModelInputProfileBGEM3})
+	require.NoError(t, err)
+	for _, testCase := range []struct {
+		name                    string
+		modelInput              *document.ModelInputContract
+		reusedAfterPolicyChange bool
+	}{
+		{name: "custom input reuses after endpoint move", reusedAfterPolicyChange: true},
+		{name: "bge-m3 requires exact descriptor", modelInput: &bge},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			testLegacyProfileReuse(t, testCase.modelInput, testCase.reusedAfterPolicyChange)
+		})
+	}
+}
+
+func testLegacyProfileReuse(t *testing.T, modelInput *document.ModelInputContract, reusedAfterPolicyChange bool) {
+	t.Helper()
 	s, version, profile, _ := newEmbeddingCatalogFixture(t)
 	descriptor := embeddingCatalogDescriptor()
+	if modelInput != nil {
+		descriptor.ModelInput, descriptor.CompatibilityID = *modelInput, modelInput.CompatibilityID
+	}
 	descriptor.ID = openaicompat.ProviderID
 	descriptor.TrustBoundary = document.EmbeddingTrustOperatorNetwork
 	descriptor.InputKinds = []document.EmbeddingInputKind{document.EmbeddingInputRenditionChunk}
@@ -32,6 +54,7 @@ func TestEmbeddingLegacyProfilesReuseOnlyMatchingProducer(t *testing.T) {
 		portable.Embeddings[i].Descriptor = document.ProviderDescriptorV1{ID: descriptor.ID, Fingerprint: descriptor.Fingerprint}
 		portable.Embeddings[i].TrustBoundary = string(descriptor.TrustBoundary)
 		portable.Embeddings[i].DocumentFormatter, portable.Embeddings[i].QueryFormatter = descriptor.DocumentFormatter, descriptor.QueryFormatter
+		portable.Embeddings[i].ModelInput, portable.Embeddings[i].CompatibilityID = descriptor.ModelInput, descriptor.CompatibilityID
 	}
 	canonical, fingerprints, err := document.CanonicalProfile(portable)
 	require.NoError(t, err)
@@ -58,6 +81,17 @@ func TestEmbeddingLegacyProfilesReuseOnlyMatchingProducer(t *testing.T) {
 	found, err := s.FindReusableEmbeddingSet(t.Context(), work, "", "")
 	require.NoError(t, err)
 	require.Equal(t, retained.ID, found.ID)
+	moved := work
+	moved.Descriptor.PolicyFingerprint = testSHA256([]byte("moved-endpoint-policy"))
+	moved.Descriptor, err = document.NewEmbeddingDescriptor(moved.Descriptor)
+	require.NoError(t, err)
+	found, err = s.FindReusableEmbeddingSet(t.Context(), moved, "", "")
+	if reusedAfterPolicyChange {
+		require.NoError(t, err)
+		require.Equal(t, retained.ID, found.ID)
+	} else {
+		require.ErrorIs(t, err, ErrNotFound)
+	}
 	work.Descriptor.ModelRevision = "other-revision"
 	work.Descriptor, err = document.NewEmbeddingDescriptor(work.Descriptor)
 	require.NoError(t, err)

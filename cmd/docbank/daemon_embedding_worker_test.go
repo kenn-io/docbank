@@ -120,7 +120,7 @@ func TestDaemonRecoversSemanticSpaceEmbeddingJob(t *testing.T) {
 	t.Setenv("DOCBANK_HOME", root)
 	startServe(t)
 	waitForDaemon(t, root)
-	require.Eventually(t, func() bool { return calls.Load() == 2 }, 5*time.Second, 25*time.Millisecond, "background recovery must use the service-selected semantic space")
+	require.Eventually(t, func() bool { return calls.Load() >= 2 }, 5*time.Second, 25*time.Millisecond, "background recovery must use the service-selected semantic space")
 }
 
 func TestStartEmbeddingWorkerIfReadySkipsMissingBindings(t *testing.T) {

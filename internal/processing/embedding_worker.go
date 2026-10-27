@@ -542,7 +542,9 @@ func (worker *EmbeddingWorker) processClaim(ctx context.Context, claim Embedding
 	result, reused, err := worker.reuseVectors(attemptCtx, work, &materializedGeneration)
 	var authorization store.ProviderOperationAuthorization
 	var code store.EmbeddingFailureCode
-	if err == nil && reused {
+	if errors.Is(err, ErrEmbeddingInputRejected) {
+		code = store.EmbeddingFailureInputRejected
+	} else if err == nil && reused {
 		var fence *store.ProviderEgressFence
 		authorization, fence, err = worker.catalog.BeginEmbeddingProviderEgress(attemptCtx, claim, work, nil, worker.clock().UTC())
 		if fence != nil {

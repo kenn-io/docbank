@@ -181,6 +181,7 @@ func TestVectorIdentityTracksReviewedDeploymentRevisions(t *testing.T) {
 	}{
 		{field: "endpoint", same: true},
 		{field: "timeout", same: true},
+		{field: "batch limit", same: true},
 		{field: "weights"},
 		{field: "tokenizer"},
 	} {
@@ -191,6 +192,8 @@ func TestVectorIdentityTracksReviewedDeploymentRevisions(t *testing.T) {
 				config.Origin = "http://127.0.0.1:11435"
 			case "timeout":
 				config.RequestTimeout = 7 * time.Second
+			case "batch limit":
+				config.MaxBatchItems = 3
 			case "weights":
 				config.WeightsRevision = strings.Repeat("a", 40)
 			case "tokenizer":
