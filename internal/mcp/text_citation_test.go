@@ -39,7 +39,7 @@ func newCitationMCPFixture(t *testing.T) (*Server, document.TextCitation) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, blobs.Close()) })
 	hash, size, err := blobs.Write(strings.NewReader("MIME-Version: 1.0\r\n" +
-		"Content-Type: text/plain; charset=utf-8\r\n\r\naé界🙂z\r\n"))
+		"Content-Type: text/plain; charset=utf-8\r\n\r\naé界🙂z 2024. Revenue increased\r\n"))
 	require.NoError(t, err)
 	node, err := catalog.CreateFile(t.Context(), catalog.RootID(),
 		"quote.eml", hash, size, "message/rfc822")

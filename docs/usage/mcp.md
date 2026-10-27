@@ -203,6 +203,7 @@ resource links, is capped at 1 MiB.
 | `read_document_content` | Reads original bytes from a selected immutable version as base64. Requires the exact vault, node, version, SHA-256 and size from `list_document_versions`. Originals are limited to 32 MiB; byte windows default to 64 KiB and are capped at 256 KiB. Returns offset, next offset and EOF. Verify the assembled size and SHA-256 before using the bytes. No export job or local file is created. |
 | `list_document_versions` | Lists immutable versions, including each original's `blob_hash` and size, for one live file. Limit defaults to 100 and is capped at 250; offset is capped at 1,000,000. |
 | `resolve_text_citation` | Reopens a [saved quotation](#saved-text-citations) from exact retained rendition text. |
+| `check_answer` | Checks [answer figures](#check-figures-in-an-answer) against saved citations. |
 | `get_kata_context` | Reads an issue's [Docbank evidence and current source states](kata-evidence.md). |
 | `get_text_outline` | Reads the headings and whole-section bounds of [retained text](#read-complete-retained-sections). |
 | `read_text_section` | Reads an exact page of a retained section, with explicit completion. |
@@ -388,6 +389,81 @@ before any response starts, never after a domain failure.
 The [HTTP contract](../architecture/http-api.md#retained-text-citations) owns the
 complete field and error table. Current/live rendition resources and windows
 retain their existing behavior.
+
+## Check figures in an answer
+
+`check_answer` is a default read-only tool on stdio and HTTP. Send an `answer`
+and an ordered array of saved `citations`. The answer must contain 1–16,000
+Unicode code points; supply 1–8 citations. The tool also limits an answer to 256
+claims, 512 figure occurrences, and 512 marker references. It rejects invalid
+inputs before reading the vault.
+
+The tool resolves each distinct citation and checks numbers and identifiers in
+the answer against the cited text. Use literal, unescaped ASCII markers such as
+`[1]` or `[1, 2]` to scope a claim to those citation positions. Character
+references that display brackets or digits are data, not markers. For example,
+`&lbrack;1&rbrack;` does not select citation 1; if the answer has no actual
+markers, all citations are in scope and an unrelated citation may ground a figure.
+Bracketed numbers visible in cited text are checked as figures. A bracketed number immediately followed by `(`
+is not a marker, even if the link syntax is incomplete. When the answer has no
+markers, each claim uses and reports all citation indexes, including unavailable
+citations. If any marker appears, a figure in an
+unmarked claim is unverifiable, so the result is incomplete unless another
+claim is ungrounded. This also applies to intentionally mixed marked and
+unmarked claims. Sentence splitting at abbreviations can leave a figure without
+its intended marker. Markers immediately after sentence punctuation belong to
+that sentence.
+Markdown links, including reference links with a matching definition, do not
+scope citations; numbers displayed in their labels are still checked as figures.
+Link destinations, reference keys and definitions, raw HTML omitted by default
+Markdown rendering, and answer list prefixes are not figures or citation markers.
+Source ordered-list digits may count as evidence: a real list ordinal can therefore cause false grounding. A partial citation may lack the
+Markdown context needed to distinguish an ordinal from displayed text. Escaped
+bracket labels and brackets inside literal code remain checked figures and do
+not scope citations.
+Offsets in the result are Unicode code points in the answer. Each citation has a
+resolution status and, when resolved, a text digest. Each claim reports its
+figures and verdict; cited text is not returned. Use `resolve_text_citation` to
+read it. The result has private cache scope and zero TTL.
+
+An `ungrounded` result identifies missing figures or unknown markers. An
+`incomplete` result means a citation failed or a claim could not be verified;
+inspect the citation status before relying on the answer. A `grounded` result
+means the figures appear in the scoped text, not that they refer to the right
+subject or that the rest of the answer is true. This check does not perform
+arithmetic or unit conversion. Amounts are compared as numbers, and ISO dates
+are compared as identifiers; alternative date formats can produce false misses.
+A negative compact currency code such as `-USD20` is compared as `-20`. An
+unsigned compact form such as `USD20` is an identifier and can miss an equivalent
+spaced amount such as `USD 20`.
+
+Numbers normalize full-width digits, Markdown punctuation escapes, decimal marks
+and digit grouping. Backslashes in literal code remain literal. Recognized Markdown character references in displayed text
+are compared by their visible characters; references in literal code remain
+literal. Citation ranges are parsed independently and may lack surrounding
+Markdown context. A value such as `1,200` has both `1200` and `1.2` as
+candidates; the result lists that ambiguity. Numeric `-` and `−` signs are
+retained, and a leading decimal such as `.5` matches `0.5`. A leading-zero identifier such as
+`0042` stays distinct from `42`. Digit-first tokens with up to three trailing
+ASCII letters, such as `128GB` or `12AB`, compare as their numbers unless
+consumed as part of a supported spaced identifier. For example, `is 20kg` may
+be classified as the identifier `is20kg` and miss a citation containing only
+`20`. Inspect the reported figure or use an unambiguous citation. Identifiers
+compare without case or joining punctuation, as whole tokens: `K5` does not
+match `K50`. Mixed tokens containing ASCII digits retain Unicode letters, marks
+and other numeric characters; other scripts' digits are not converted to ASCII.
+Tokens with only unsupported numerals, such as `٢٥`, are ignored. A claim with
+only such figures can report `no_figures`, and the overall answer can still be
+`grounded`. The check does not equate composed and decomposed spellings. A complete unsigned digit run also matches a qualifying digit-only
+hyphenated identifier with the same digits, preserving leading zeros. Signed,
+grouped, decimal, unit-suffixed and currency-bearing numbers do not gain this
+cross-kind match. Spaced model names with letter suffixes, such as `ZQ 3S`, also
+match across case. A bare spaced form such as `IN 24` compares the number `24`
+on its own, so a different prefix with the same number can falsely ground it.
+Use a supported compact or joined identifier when the whole identity matters.
+Malformed numeric forms compare only as
+their complete literal values. Number words, relative dates and percentage-to-fraction conversion are
+not supported.
 
 ## Read complete retained sections
 
