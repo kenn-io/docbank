@@ -73,6 +73,7 @@ func (service *Service) searchPhotoBinding(ctx context.Context, request store.Ph
 	}
 	semanticRequest := request
 	semanticRequest.Query = scope
+	semanticRequest.Query.Filters.CollapseDuplicates = false
 	floor := profile.embeddingSimilarityFloors[binding.Name]
 	report, err := searcher.Search(ctx, retrieval.Query{Text: semanticText, Mode: retrieval.Mode(request.Query.Mode), Limit: 1000, LexicalLimit: 1000, VectorLimit: 1000, MinVectorScore: &floor, ProcessingProfileFingerprint: profile.record.Fingerprint, BindingID: binding.Name, Authorization: authorization, Scope: store.SearchOptions{PhotoScope: &semanticRequest, PhotoLexicalQuery: &request.Query}})
 	fence.Close()
@@ -98,7 +99,7 @@ func (service *Service) searchPhotoBinding(ctx context.Context, request store.Ph
 	for i, hit := range report.Results {
 		nodeIDs[i] = hit.Document.NodeID
 	}
-	assetIDs, err := service.catalog.PhotoAssetIDsForNodes(ctx, nodeIDs)
+	assetIDs, err := service.catalog.PhotoAssetIDsForNodes(ctx, nodeIDs, request.Query.Filters.CollapseDuplicates)
 	if err != nil {
 		return result, err
 	}

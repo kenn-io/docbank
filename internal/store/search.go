@@ -481,10 +481,10 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 	if err != nil {
 		return SearchCandidateRevalidation{}, err
 	}
-	filterSQL, filterArgs := searchFilterSQL(normalized)
 	var result SearchCandidateRevalidation
 	var allowedPositions []int
-	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+	err = s.withSearchOptionsTx(ctx, normalized, func(tx *sql.Tx, normalized SearchOptions) error {
+		filterSQL, filterArgs := searchFilterSQL(normalized)
 		if semanticProfileFingerprint != "" || semanticBindingID != "" {
 			if semanticProfileFingerprint == "" || semanticBindingID == "" {
 				return errors.New("semantic search coverage authority is incomplete")
@@ -758,7 +758,7 @@ func (s *Store) acquireSemanticSearchAuthority(ctx context.Context, profileFinge
 func (s *Store) semanticSearchAuthorityFence(ctx context.Context, profileFingerprint, bindingID string,
 	inputKind document.EmbeddingInputKind, vectorSpaceID string, opts SearchOptions, similar *similarSourceCapture,
 ) (source VectorIndexSource, required, complete int, annRows []vectorindex.RowIdentity, retErr error) {
-	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+	err := s.withSearchOptionsTx(ctx, opts, func(tx *sql.Tx, opts SearchOptions) error {
 		var err error
 		if similar != nil {
 			if err := similar.load(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID, opts); err != nil {
@@ -844,9 +844,9 @@ func (s *Store) ResolveSemanticCandidates(ctx context.Context, profileFingerprin
 	if err != nil {
 		return SemanticSearchResolution{}, err
 	}
-	filterSQL, filterArgs := searchFilterSQL(normalized)
 	var result SemanticSearchResolution
-	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+	err = s.withSearchOptionsTx(ctx, normalized, func(tx *sql.Tx, normalized SearchOptions) error {
+		filterSQL, filterArgs := searchFilterSQL(normalized)
 		current, captureErr := captureVectorIndexSourceTx(ctx, tx, vectorSpaceID)
 		if captureErr != nil {
 			if errors.Is(captureErr, ErrNotFound) {
@@ -2232,6 +2232,38 @@ func (s *Store) SearchPageWithOptions(
 	return hits, truncated, nil
 }
 
+// withSearchOptionsTx binds photo predicates to the transaction consuming them.
+// The generation lease also keeps publication from collecting their FTS rows.
+func (s *Store) withSearchOptionsTx(ctx context.Context, opts SearchOptions, fn func(*sql.Tx, SearchOptions) error) error {
+	return s.withStorageTx(ctx, func(tx *sql.Tx) (retErr error) {
+		if opts.PhotoScope != nil {
+			lease, err := s.acquireLexicalGeneration(ctx, tx)
+			if err != nil && !errors.Is(err, ErrNotFound) {
+				return err
+			}
+			if lease != nil {
+				defer func() { retErr = errors.Join(retErr, lease.Release()) }()
+			}
+		}
+		if opts.PhotoScope != nil {
+			request := *opts.PhotoScope
+			request.Query.Syntax = "advanced"
+			var err error
+			if opts.photoFilter, err = photoSearchFragment(ctx, tx, request); err != nil {
+				return err
+			}
+			if opts.PhotoLexicalQuery != nil {
+				request.Query = *opts.PhotoLexicalQuery
+				if opts.photoLexical, err = photoSearchFragment(ctx, tx, request); err != nil {
+					return err
+				}
+			}
+		}
+
+		return fn(tx, opts)
+	})
+}
+
 // photoSearchFragment compiles one photo query as lexical node membership.
 func photoSearchFragment(ctx context.Context, queryer rowQuerier, request PhotoBrowseRequest) (compiledQueryFragment, error) {
 	request.Query.Mode = querypkg.ModeLexical
@@ -2273,20 +2305,6 @@ func (s *Store) NormalizeSearchOptions(ctx context.Context, opts SearchOptions) 
 func (s *Store) normalizeSearchOptionsWithQuerier(
 	ctx context.Context, queryer rowQuerier, opts SearchOptions,
 ) (SearchOptions, error) {
-	if opts.PhotoScope != nil {
-		request := *opts.PhotoScope
-		request.Query.Syntax = "advanced"
-		var err error
-		if opts.photoFilter, err = photoSearchFragment(ctx, queryer, request); err != nil {
-			return SearchOptions{}, err
-		}
-		if opts.PhotoLexicalQuery != nil {
-			request.Query = *opts.PhotoLexicalQuery
-			if opts.photoLexical, err = photoSearchFragment(ctx, queryer, request); err != nil {
-				return SearchOptions{}, err
-			}
-		}
-	}
 	if len(opts.ContentVersionIDs) > MaxSearchSourceFenceIDs {
 		return SearchOptions{}, fmt.Errorf("search source fence exceeds %d content versions",
 			MaxSearchSourceFenceIDs)

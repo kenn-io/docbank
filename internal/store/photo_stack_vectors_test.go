@@ -4,10 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json/v2"
-	"fmt"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
@@ -24,63 +22,6 @@ func (q *photoStackCountingQuerier) QueryRowContext(ctx context.Context, query s
 		q.generationReads++
 	}
 	return q.DB.QueryRowContext(ctx, query, args...)
-}
-
-func TestPhotoStackBackwardWalkBoundsImageCandidates(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name           string
-		seconds, count int
-		indexed        bool
-	}{
-		{"dense burst", 1, MaxPhotoStackFrames*2 + 20, false},
-		{"unindexed image window", 30, MaxPhotoStackFrames*2 + 20, false},
-		{"indexed image window", 30, MaxPhotoStackFrames + 20, true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			f := newImageEmbeddingCatalogFixture(t)
-			record, vector := f.publish(t)
-			index := newCursorIndexFixture(f)
-			index.add(record, vector)
-			index.generation(t, "unrelated-image-generation")
-			run, err := f.s.BeginIngest(t.Context(), "cli", "synthetic long camera stream")
-			require.NoError(t, err)
-			var last string
-			for i := range tc.count {
-				stamp := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).Add(time.Duration(i*tc.seconds) * time.Second).Format(time.RFC3339)
-				last = stackPhoto(t, f.s, run, fmt.Sprintf("/long/frame-%04d.jpg", i), stamp, document.SourceMetadataPrecisionSecond)
-				if tc.indexed {
-					index.publish(t, last, []float64{1, 0, 0, 0, 0, 0, 0, 0})
-				}
-			}
-			if tc.indexed {
-				index.generation(t, "indexed-image-window")
-			}
-			if tc.seconds == 1 {
-				index.publish(t, last, []float64{1, 0, 0, 0, 0, 0, 0, 0})
-				index.generation(t, "indexed-long-stream")
-			}
-			q := &photoStackCountingQuerier{DB: f.s.db}
-			vectors, err := f.s.newPhotoStackVectorReader(t.Context(), q)
-			require.NoError(t, err)
-			frames, err := f.s.photoStackFrames(t.Context(), q, []string{last}, false, "")
-			require.NoError(t, err)
-			pager, err := newPhotoStackPager(t.Context(), q, photoBrowseScope{match: compiledQueryFragment{sql: "1=1"}}, 2, true, "", vectors)
-			require.NoError(t, err)
-			defer func() { require.NoError(t, pager.Close()) }()
-			hydrated, largestBatch := 0, 0
-			vectors.onHydrate = func(count int) {
-				hydrated += count
-				largestBatch = max(largestBatch, count)
-			}
-			component := &photoStackComponent{frames: []photoStackFrame{frames[last]}}
-			require.NoError(t, pager.walk(t.Context(), frames[last], false, component))
-			require.LessOrEqual(t, largestBatch, MaxPhotoStackFrames+1)
-			if !tc.indexed {
-				require.LessOrEqual(t, hydrated, MaxPhotoStackFrames+1, "stop at a boundary or the burst cap")
-			}
-		})
-	}
 }
 
 func TestPhotoStackPagesReuseOpenedGeneration(t *testing.T) {

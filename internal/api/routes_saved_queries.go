@@ -239,17 +239,18 @@ func registerSavedQueryRunRoute(
 			if err != nil {
 				return nil, workspaceQueryError(err)
 			}
+			if saved.Revision != revision {
+				return nil, workspaceQueryError(store.ErrStaleRevision)
+			}
 			value, err := query.Parse(saved.Payload)
 			if err != nil {
 				return nil, workspaceQueryError(err)
 			}
 			request.Query = value
 			if value.Mode != query.ModeLexical {
-				ranking, err := photoQueryRanking(ctx, d, store.PhotoBrowseRequest{Query: value, Coverage: coverage})
-				if err != nil {
-					return nil, workspaceQueryError(err)
+				request.RankPhotos = func(buildCtx context.Context) (store.PhotoRanking, error) {
+					return photoQueryRanking(buildCtx, d, store.PhotoBrowseRequest{Query: value, Coverage: coverage})
 				}
-				request.PhotoRanking = &ranking
 			}
 		}
 		run, page, err := snapshots.RunSaved(ctx, owner, in.SavedQueryID, revision, request, g.mutate)

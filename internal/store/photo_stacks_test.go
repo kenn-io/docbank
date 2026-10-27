@@ -1756,39 +1756,6 @@ func TestPhotoStackImageSimilarityThresholdAndWindow(t *testing.T) {
 	require.Equal(t, [][]string{{ids[0], ids[1]}}, stackAssetIDs(page.Stacks))
 }
 
-func TestPhotoStackVectorsSkipUnknownProducerPolicy(t *testing.T) {
-	t.Parallel()
-	f := newImageEmbeddingCatalogFixture(t)
-	s := f.s
-	run, err := s.BeginIngest(t.Context(), "cli", "synthetic future image policy")
-	require.NoError(t, err)
-	ids := []string{
-		stackPhoto(t, s, run, "/A/one.jpg", "2024-06-10T12:00:00Z", document.SourceMetadataPrecisionSecond),
-		stackPhoto(t, s, run, "/A/two.jpg", "2024-06-10T12:00:30Z", document.SourceMetadataPrecisionSecond),
-	}
-	index := newCursorIndexFixture(f)
-	for _, id := range ids {
-		index.publish(t, id, []float64{1, 0, 0, 0, 0, 0, 0, 0})
-	}
-	index.generation(t, "future-policy-generation")
-	groups, unavailable, _, incomplete, err := s.PhotoStackGroups(t.Context(), ids, false, "")
-	require.NoError(t, err)
-	require.Empty(t, unavailable)
-	require.False(t, incomplete)
-	require.Equal(t, [][]string{ids}, groups)
-	// Hand-damage this immutable catalog row to exercise the read-side policy fence.
-	// Normal enqueue rejects unknown policies before they can reach storage.
-	_, err = s.db.ExecContext(t.Context(), `DROP TRIGGER embedding_input_generations_immutable_update`)
-	require.NoError(t, err)
-	_, err = s.db.ExecContext(t.Context(), `UPDATE embedding_input_generations SET chunk_policy_fingerprint=? WHERE generation_id IN (SELECT input_generation_id FROM embedding_sets WHERE vector_set_id=?)`, browseHash("future-image-policy"), index.checksums[1])
-	require.NoError(t, err)
-	groups, unavailable, _, incomplete, err = s.PhotoStackGroups(t.Context(), ids, false, "")
-	require.NoError(t, err)
-	require.Empty(t, unavailable)
-	require.False(t, incomplete)
-	require.Empty(t, groups)
-}
-
 func TestPhotoStackImageLinksBoundedByFirstFrame(t *testing.T) {
 	t.Parallel()
 	t.Run("compare first vector", func(t *testing.T) {

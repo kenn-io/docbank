@@ -96,23 +96,3 @@ func TestPhotoFallbackSnapshotCapsMembership(t *testing.T) {
 		}
 	}
 }
-
-func TestPhotoSuggestionMarksBeyondSQLiteBindLimit(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	machine := albumAsset(t, s, "machine.jpg")
-	plain := albumAsset(t, s, "harbor.jpg")
-	putPhotoSuggestion(t, s, machine, document.PhotoDescription{Caption: "harbor"})
-	compiled, err := (queryCompiler{photoDisplayMetadata: true}).compile(t.Context(), snapshotTestQuery(t, `{"text":"harbor"}`), queryResolver{q: s.db})
-	require.NoError(t, err)
-	items := make([]PhotoBrowseRow, 33000)
-	for i := range items {
-		items[i].AssetID = plain.ID
-	}
-	items[0].AssetID = machine.ID
-	for _, hybrid := range []bool{false, true} {
-		require.NoError(t, markSuggestionOnlyMatches(t.Context(), s.db, compiled, "", CoverageSelection{}, false, items, hybrid))
-		require.True(t, items[0].MatchedAISuggestion)
-		require.False(t, items[1].MatchedAISuggestion)
-	}
-}

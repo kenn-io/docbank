@@ -99,15 +99,10 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 			request.Query.Mode = query.ModeLexical
 			frozen = false
 		}
-		if value.Mode != query.ModeLexical && in.Body.SnapshotID == "" && boundary == nil {
-			ranking, err = photoQueryRanking(ctx, d, request)
-			if err != nil {
-				return nil, workspaceQueryError(err)
-			}
-			if request.Hidden && ranking.ActualMode == query.ModeLexical {
-				request.Query.Mode = query.ModeLexical
-				frozen = false
-			}
+		if value.Mode != query.ModeLexical && in.Body.SnapshotID == "" && boundary == nil && request.Hidden {
+			ranking = store.PhotoRanking{RequestedMode: value.Mode, ActualMode: query.ModeLexical, FallbackReason: "hidden_photos"}
+			request.Query.Mode = query.ModeLexical
+			frozen = false
 		}
 		if in.Body.Projection == "map" {
 			request.Recipes = map[string]string{"grid": recipes["grid"]}
@@ -125,7 +120,9 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 			if in.Body.SnapshotID != "" {
 				snapshot, err = snapshots.PhotoPage(ctx, owner, in.Body.SnapshotID, in.Body.Cursor, store.SnapshotRequest{PhotoHidden: request.Hidden, Photos: true, Query: value, Coverage: request.Coverage, PageSize: min(request.PageSize, 250), PhotoProjection: in.Body.Projection})
 			} else {
-				snapshot, err = snapshots.Create(ctx, owner, store.SnapshotRequest{PhotoProjection: in.Body.Projection, Photos: true, Query: value, Coverage: request.Coverage, PageSize: min(request.PageSize, 250), PhotoRanking: &ranking})
+				snapshot, err = snapshots.Create(ctx, owner, store.SnapshotRequest{PhotoProjection: in.Body.Projection, Photos: true, Query: value, Coverage: request.Coverage, PageSize: min(request.PageSize, 250), RankPhotos: func(buildCtx context.Context) (store.PhotoRanking, error) {
+					return photoQueryRanking(buildCtx, d, request)
+				}})
 			}
 			if err == nil {
 				page, err = snapshots.CurrentPhotoPage(ctx, snapshot, request.Recipes)

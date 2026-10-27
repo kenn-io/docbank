@@ -331,7 +331,8 @@ func (s *QuerySnapshotService) prepareSnapshot(
 	if owner == "" {
 		return preparedQuerySnapshot{}, errors.New("query snapshot owner is required")
 	}
-	buildCtx, cancel := context.WithCancel(ctx)
+	options := defaultSnapshotMaterializeOptions()
+	buildCtx, cancel := context.WithTimeout(ctx, options.BuildTimeout)
 	build, err := s.admitNewBuild(owner, cancel, request.FacetsOnly, request.ReplacesSnapshotID)
 	if err != nil {
 		cancel()
@@ -346,7 +347,13 @@ func (s *QuerySnapshotService) prepareSnapshot(
 		}
 	}()
 
-	options := defaultSnapshotMaterializeOptions()
+	if normalized.RankPhotos != nil {
+		ranking, err := normalized.RankPhotos(buildCtx)
+		if err != nil {
+			return preparedQuerySnapshot{}, err
+		}
+		normalized.PhotoRanking = &ranking
+	}
 	options.Now = s.now
 	options.SavedQuery = saved
 	var chargedRows, chargedBytes int64

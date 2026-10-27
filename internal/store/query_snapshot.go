@@ -37,16 +37,17 @@ var ErrQuerySnapshotTooLarge = errors.New("query snapshot exceeds its materializ
 
 // SnapshotRequest selects one frozen QueryV1 projection and its optional facets.
 type SnapshotRequest struct {
-	PhotoProjection    string            `json:"-"`
-	PhotoRanking       *PhotoRanking     `json:"-"`
-	PhotoHidden        bool              `json:"-"`
-	ReplacesSnapshotID string            `json:"replaces_snapshot_id,omitempty"`
-	Photos             bool              `json:"photos,omitempty"`
-	FacetsOnly         bool              `json:"facets_only,omitempty"`
-	Query              query.Query       `json:"query"`
-	Coverage           CoverageSelection `json:"coverage"`
-	PageSize           int               `json:"page_size"`
-	Facets             []string          `json:"facets"`
+	RankPhotos         func(context.Context) (PhotoRanking, error) `json:"-"`
+	PhotoProjection    string                                      `json:"-"`
+	PhotoRanking       *PhotoRanking                               `json:"-"`
+	PhotoHidden        bool                                        `json:"-"`
+	ReplacesSnapshotID string                                      `json:"replaces_snapshot_id,omitempty"`
+	Photos             bool                                        `json:"photos,omitempty"`
+	FacetsOnly         bool                                        `json:"facets_only,omitempty"`
+	Query              query.Query                                 `json:"query"`
+	Coverage           CoverageSelection                           `json:"coverage"`
+	PageSize           int                                         `json:"page_size"`
+	Facets             []string                                    `json:"facets"`
 }
 
 // SnapshotMember is the exact node/content authority frozen by a snapshot.
