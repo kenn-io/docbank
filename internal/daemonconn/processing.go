@@ -720,9 +720,9 @@ func validateDocumentEvidenceIdentity(evidence api.DocumentEvidenceReference) er
 		if evidence.SegmentID != "" || !validSHA256Hex(evidence.VectorSpaceID) ||
 			!validSHA256Hex(evidence.EmbeddingSetID) || !validSHA256Hex(evidence.InputGenerationID) ||
 			!validBoundedSearchIdentity(evidence.InputID, 1024) ||
-			(evidence.InputKind != "rendition_chunk" && evidence.InputKind != "original_file") ||
+			(evidence.InputKind != "rendition_chunk" && evidence.InputKind != "original_file" && evidence.InputKind != "image") ||
 			(evidence.InputKind == "rendition_chunk" && !validSHA256Hex(evidence.BuildID)) ||
-			(evidence.InputKind == "original_file" && (evidence.BuildID != "" || evidence.TimeSpan != nil)) ||
+			(evidence.InputKind != "rendition_chunk" && (evidence.BuildID != "" || evidence.TimeSpan != nil)) ||
 			!validSHA256Hex(evidence.SourceManifestChecksum) {
 			return errors.New("embedding evidence identity is incomplete or inconsistent")
 		}

@@ -95,7 +95,7 @@ func (s *Store) MaterializeTermReportFrame(
 				return err
 			}
 			value := query.Query{V: 1, Text: term.Expression, Syntax: term.Syntax,
-				Mode: "lexical", Sort: query.Sort{Field: string(DocumentCatalogSortName), Direction: "asc"}}
+				Mode: queryModeLexical, Sort: query.Sort{Field: string(DocumentCatalogSortName), Direction: "asc"}}
 			compiled, err := compileQuery(ctx, value, queryResolver{q: q})
 			if err != nil {
 				return fmt.Errorf("term %d: %w", term.Number, err)

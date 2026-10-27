@@ -1417,7 +1417,7 @@ func configureProcessingTestServiceWithProviders(t *testing.T, rendition documen
 			CompatibilityID: descriptor.CompatibilityID, CredentialBinding: "credential:test",
 			Descriptor: document.ProviderDescriptorV1{ID: descriptor.ID, Fingerprint: descriptor.Fingerprint},
 			Dimensions: descriptor.Dimension, DisclosureFingerprint: processingTestHash("embedding-disclosure"),
-			DocumentFormatter: descriptor.DocumentFormatter, InputKind: document.EmbeddingInputOriginalFile,
+			DocumentFormatter: descriptor.DocumentFormatter, InputKind: descriptor.InputKinds[0],
 			MaxBatchItems: 8, MaxInputBytes: 1 << 20, MaxResponseBytes: 1 << 20,
 			Metric: descriptor.Metric, Model: descriptor.Model, ModelInput: descriptor.ModelInput,
 			Name: "semantic", Normalization: descriptor.Normalization, QueryFormatter: descriptor.QueryFormatter,
@@ -1438,7 +1438,10 @@ func configureProcessingTestServiceWithProviders(t *testing.T, rendition documen
 	}
 }
 
-type processingTestEmbeddingProvider struct{ descriptor document.EmbeddingDescriptor }
+type processingTestEmbeddingProvider struct {
+	descriptor document.EmbeddingDescriptor
+	onEmbed    func()
+}
 
 func newProcessingTestEmbeddingProvider(t *testing.T) processingTestEmbeddingProvider {
 	t.Helper()
@@ -1474,9 +1477,12 @@ func (provider processingTestEmbeddingProvider) Descriptor() document.EmbeddingD
 	return provider.descriptor
 }
 
-func (processingTestEmbeddingProvider) Embed(_ context.Context, inputs []document.EmbeddingInput,
+func (provider processingTestEmbeddingProvider) Embed(_ context.Context, inputs []document.EmbeddingInput,
 	_ document.EmbeddingAuthorization,
 ) (document.EmbeddingResult, error) {
+	if provider.onEmbed != nil {
+		provider.onEmbed()
+	}
 	vectors := make([]document.EmbeddingVector, len(inputs))
 	for index, input := range inputs {
 		vectors[index] = document.EmbeddingVector{Key: input.Key, Values: []float32{1, 0}}

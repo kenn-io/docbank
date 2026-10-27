@@ -323,6 +323,22 @@ func TestPhotoSuggestionRanksBelowAuthoredTextAndMarksItself(t *testing.T) {
 	require.False(t, page.Items[0].MatchedAISuggestion)
 	require.Equal(t, machine.ID, page.Items[1].AssetID)
 	require.True(t, page.Items[1].MatchedAISuggestion)
+	t.Run("hybrid snapshots mark suggestion-only matches", func(t *testing.T) {
+		snapshots := NewQuerySnapshotService(s)
+		t.Cleanup(func() { require.NoError(t, snapshots.Close()) })
+		members := make([]SnapshotMember, 0, len(page.Items)+1)
+		for _, row := range page.Items {
+			members = append(members, SnapshotMember{AssetID: row.AssetID, NodeID: row.NodeID, ContentVersionID: row.ContentVersionID})
+		}
+		visual, err := s.ListPhotoAssets(ctx, PhotoBrowseRequest{Query: snapshotTestQuery(t, fmt.Sprintf(`{"filters":{"asset_ids":[%q]}}`, owned.ID)), PageSize: 1}, nil)
+		require.NoError(t, err)
+		members = append(members, SnapshotMember{AssetID: owned.ID, NodeID: visual.Items[0].NodeID, ContentVersionID: visual.Items[0].ContentVersionID})
+		hybrid, err := snapshots.Create(ctx, "owner", SnapshotRequest{Photos: true, PhotoRanking: &PhotoRanking{RequestedMode: "hybrid", ActualMode: "hybrid", Members: members}, Query: snapshotTestQuery(t, `{"mode":"hybrid","syntax":"simple","text":"harbor","sort":{"field":"relevance","direction":"desc"}}`)})
+		require.NoError(t, err)
+		require.False(t, hybrid.Rows[0].SuggestionMatch)
+		require.True(t, hybrid.Rows[1].SuggestionMatch)
+		require.False(t, hybrid.Rows[2].SuggestionMatch)
+	})
 
 	for _, tc := range []struct{ form, marked string }{
 		{`{"syntax":"simple","text":"harbor","sort":{"field":"name","direction":"asc"}}`, machine.ID},

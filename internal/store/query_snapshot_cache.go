@@ -12,6 +12,8 @@ import (
 	"slices"
 	"sync"
 	"time"
+
+	"go.kenn.io/docbank/internal/query"
 )
 
 const (
@@ -330,7 +332,8 @@ func (s *QuerySnapshotService) prepareSnapshot(
 		return preparedQuerySnapshot{}, errors.New("query snapshot owner is required")
 	}
 	buildCtx, cancel := context.WithCancel(ctx)
-	build, err := s.admitNewBuild(owner, cancel, request.FacetsOnly, request.ReplacesSnapshotID)
+	protected := request.ReplacesSnapshotID
+	build, err := s.admitNewBuild(owner, cancel, request.FacetsOnly, protected)
 	if err != nil {
 		cancel()
 		return preparedQuerySnapshot{}, err
@@ -970,4 +973,91 @@ func (s *QuerySnapshotService) stats() snapshotCacheStats {
 		CachedBytes: s.cachedBytes, ReservedBytes: s.reservedBytes,
 		ActiveBuilders: int64(len(s.builds)),
 	}
+}
+
+// FirstPage reuses an admitted owner-bound snapshot without running its query again.
+func (s *QuerySnapshotService) FirstPage(ctx context.Context, owner, snapshotID string) (SnapshotPage, error) {
+	if err := ctx.Err(); err != nil {
+		return SnapshotPage{}, err
+	}
+	cached, err := s.lookup(owner, snapshotID)
+	if err != nil {
+		return SnapshotPage{}, err
+	}
+	page, err := s.renderPage(&cached, 0)
+	if err != nil {
+		return SnapshotPage{}, err
+	}
+	if err := s.validatePhotoSnapshotPage(ctx, page); err != nil {
+		return SnapshotPage{}, err
+	}
+	return page, nil
+}
+
+// PhotoPage binds continuation inputs to the admitted view, including its projection.
+func (s *QuerySnapshotService) PhotoPage(ctx context.Context, owner, id, cursor string, request SnapshotRequest) (SnapshotPage, error) {
+	cached, err := s.lookup(owner, id)
+	if err != nil {
+		return SnapshotPage{}, err
+	}
+	var first SnapshotProjection
+	if err := json.Unmarshal(cached.metadata, &first); err != nil {
+		return SnapshotPage{}, err
+	}
+	request, err = normalizeQuerySnapshotRequest(request)
+	if err != nil {
+		return SnapshotPage{}, err
+	}
+	fingerprint, err := query.Fingerprint(request.Query)
+	if err != nil {
+		return SnapshotPage{}, err
+	}
+	coverage, err := normalizeCoverageSelection(request.Coverage)
+	if err != nil {
+		return SnapshotPage{}, err
+	}
+	if fingerprint != first.QueryFingerprint || coverage != first.Coverage || request.PageSize != first.PageSize || request.PhotoProjection != first.PhotoProjection {
+		return SnapshotPage{}, ErrSnapshotCursor
+	}
+	if cursor == "" {
+		return s.FirstPage(ctx, owner, id)
+	}
+	return s.Page(ctx, owner, id, cursor)
+}
+
+func (s *Store) currentPhotoRowsTx(ctx context.Context, tx metadataQuerier, members []SnapshotMember, recipes map[string]string) ([]PhotoBrowseRow, error) {
+	if err := validatePhotoSnapshotMembersTx(ctx, tx, members); err != nil {
+		return nil, err
+	}
+	encoded, err := json.Marshal(members)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT `+photoBrowseSelect+`,'',0 FROM `+photoBrowseDisplayFrom+` JOIN json_each(?) frozen ON json_extract(frozen.value,'$.asset_id')=a.asset_id WHERE `+photoBrowseLiveDisplay+` ORDER BY CAST(frozen.key AS INTEGER)`, string(encoded))
+	if err != nil {
+		return nil, err
+	}
+	photos, err := scanPhotoBrowseRows(rows, PhotoBrowsePosition{})
+	if err == nil && recipes != nil {
+		err = s.hydratePhotoPreviews(ctx, tx, PhotoBrowseRequest{Recipes: recipes}, photos)
+	}
+	return photos, err
+}
+
+// CurrentPhotoPage reads current display values while retaining the accepted order.
+func (s *QuerySnapshotService) CurrentPhotoPage(ctx context.Context, snapshot SnapshotPage, recipes map[string]string) (PhotoBrowsePage, error) {
+	page := PhotoBrowsePage{Total: snapshot.Total, RelevanceAvailable: true}
+	err := s.store.photoReadTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		page.Items, err = s.store.currentPhotoRowsTx(ctx, tx, snapshotMembers(snapshot.Rows), recipes)
+		if err != nil {
+			return err
+		}
+		for i, row := range snapshot.Rows {
+			page.Items[i].MatchedAISuggestion = row.SuggestionMatch
+		}
+
+		return nil
+	})
+	return page, err
 }

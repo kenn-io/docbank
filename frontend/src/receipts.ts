@@ -680,7 +680,7 @@ function validateDocumentEvidenceIdentity(evidence: UnknownRecord): boolean {
       canonicalHash(field("embedding_set_id")) &&
       canonicalHash(field("input_generation_id")) &&
       boundedSearchIdentity(field("input_id"), 1024) &&
-      ["rendition_chunk", "original_file"].includes(field("input_kind")) &&
+      ["rendition_chunk", "original_file", "image"].includes(field("input_kind")) &&
       canonicalHash(field("source_manifest_checksum"))
     );
   }

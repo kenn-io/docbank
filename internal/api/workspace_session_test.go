@@ -128,3 +128,20 @@ func TestWorkspaceFacetResponseRetainsSelectedValueBeyondTopFifty(t *testing.T) 
 	require.Len(t, decoded.Facets[0].Values, 51)
 	assert.True(t, decoded.Facets[0].Values[50].Selected)
 }
+
+func TestWorkspacePagePreservesPhotoRankingStatus(t *testing.T) {
+	t.Parallel()
+	value, err := query.Parse([]byte(`{"mode":"semantic","text":"sunset","sort":{"field":"relevance","direction":"desc"}}`))
+	require.NoError(t, err)
+	wire, err := fromStoreWorkspacePage(store.SnapshotPage{
+		Query: value, PhotoRanking: &store.PhotoRanking{RequestedMode: "semantic", ActualMode: "semantic", Truncated: true, CoverageIncomplete: true},
+	})
+	require.NoError(t, err)
+	encoded, err := json.Marshal(wire)
+	require.NoError(t, err)
+	var fields map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &fields))
+	assert.Equal(t, "semantic", fields["actual_mode"])
+	assert.Equal(t, true, fields["truncated"])
+	assert.Equal(t, true, fields["coverage_incomplete"])
+}

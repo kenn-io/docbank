@@ -23,6 +23,7 @@ import (
 )
 
 var errPhotoDescriptionInput = errors.New("photo preview input unavailable")
+var errPhotoPreviewRejected = errors.New("verified photo preview rejected")
 
 // profileRenditionInput names what a profile's provider receives: a derived
 // preview for photo description, the original file otherwise.
@@ -31,6 +32,19 @@ func profileRenditionInput(profile configuredProfile) document.RenditionInputKin
 		return document.RenditionInputDerivedUpload
 	}
 	return document.RenditionInputOriginalFile
+}
+
+// photoDiscoveryScope discloses that consent for a photo description or image
+// embedding profile queues every eligible photo in the vault, not just the
+// planned one.
+func photoDiscoveryScope(profile configuredProfile) string {
+	images := slices.ContainsFunc(profile.portable.Embeddings, func(binding document.EmbeddingBindingV1) bool {
+		return binding.InputKind == document.EmbeddingInputImage
+	})
+	if images || profileRenditionInput(profile) == document.RenditionInputDerivedUpload {
+		return "Granting consent automatically queues eligible photos throughout this vault."
+	}
+	return ""
 }
 
 func (service *Service) inspectPlannedRendition(ctx context.Context, node store.Node, version store.ContentVersion, profile configuredProfile) (media.CapabilityRecord, error) {
@@ -84,37 +98,11 @@ func (service *Service) photoDescriptionBinding(ctx context.Context, version sto
 // photoDescriptionInput returns the copy of the verified grid preview that a
 // provider receives, with the capability record that binds it.
 func photoDescriptionInput(ctx context.Context, catalog *store.Store, blobs *blob.Store, version store.ContentVersion, profile configuredProfile) ([]byte, media.CapabilityRecord, error) {
-	eligible, err := catalog.PhotoDescriptionEligible(ctx, version.ID)
+	stripped, _, reason, err := strippedPhotoPreview(ctx, catalog, blobs, version.ID)
 	if err != nil {
-		return nil, media.CapabilityRecord{}, err
+		return nil, media.CapabilityRecord{Reason: reason}, err
 	}
-	if !eligible {
-		return nil, media.CapabilityRecord{Reason: "photo_not_eligible"}, fmt.Errorf("%w: photo_not_eligible", ErrSourceIneligible)
-	}
-	view, reason, err := photoDescriptionPreview(ctx, catalog, version.ID)
-	if err != nil {
-		return nil, media.CapabilityRecord{}, err
-	}
-	if reason != "" {
-		return nil, media.CapabilityRecord{Reason: reason}, fmt.Errorf("%w: %s", ErrSourceIneligible, reason)
-	}
-	output := view.Generation.Preview.Output
-	source, size, err := blobs.OpenStreamContext(ctx, output.BlobSHA256)
-	if err != nil {
-		return nil, media.CapabilityRecord{}, fmt.Errorf("%w: %w", errPhotoDescriptionInput, err)
-	}
-	if size != output.Size {
-		return nil, media.CapabilityRecord{}, errors.Join(store.ErrPackageConflict, source.Close())
-	}
-	raw, err := io.ReadAll(io.LimitReader(source, output.Size+1))
-	if err = errors.Join(err, source.Verify(), source.Close()); err != nil {
-		return nil, media.CapabilityRecord{}, fmt.Errorf("%w: %w", errPhotoDescriptionInput, err)
-	}
-	stripped, err := stripPhotoPreview(ctx, raw)
-	if err != nil {
-		return nil, media.CapabilityRecord{Reason: "preview_unavailable"}, err
-	}
-	policy := inspectionPolicy("preview.jpg", store.ContentVersion{BlobHash: output.BlobSHA256, Size: output.Size, MimeType: "image/jpeg"}, profile)
+	policy := inspectionPolicy("preview.jpg", store.ContentVersion{Size: int64(len(stripped)), MimeType: "image/jpeg"}, profile)
 	digest := sha256.Sum256(stripped)
 	policy.InputKind, policy.MaxPixels = document.RenditionInputDerivedUpload, 1024*1024
 	policy.ExpectedBytes, policy.ExpectedSHA256 = int64(len(stripped)), hex.EncodeToString(digest[:])
@@ -135,11 +123,11 @@ func stripPhotoPreview(ctx context.Context, raw []byte) ([]byte, error) {
 	}
 	config, err := jpeg.DecodeConfig(bytes.NewReader(raw))
 	if err != nil || config.Width > grid.MaxEdgePixels || config.Height > grid.MaxEdgePixels {
-		return nil, fmt.Errorf("%w: preview_unavailable", ErrSourceIneligible)
+		return nil, errors.Join(ErrSourceIneligible, errPhotoPreviewRejected)
 	}
 	decoded, err := jpeg.Decode(bytes.NewReader(raw))
 	if err != nil {
-		return nil, fmt.Errorf("%w: preview_unavailable", ErrSourceIneligible)
+		return nil, errors.Join(ErrSourceIneligible, errPhotoPreviewRejected)
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -340,4 +328,38 @@ func (service *Service) photoDescriptionProfiles(ctx context.Context, logger *sl
 		}
 	}
 	return ready, nil
+}
+
+func strippedPhotoPreview(ctx context.Context, catalog *store.Store, blobs *blob.Store, versionID string) ([]byte, string, media.CapabilityReason, error) {
+	eligible, err := catalog.PhotoDescriptionEligible(ctx, versionID)
+	if err != nil {
+		return nil, "", "", err
+	}
+	if !eligible {
+		return nil, "", "photo_not_eligible", fmt.Errorf("%w: photo_not_eligible", ErrSourceIneligible)
+	}
+	view, reason, err := photoDescriptionPreview(ctx, catalog, versionID)
+	if err != nil {
+		return nil, "", "", err
+	}
+	if reason != "" {
+		return nil, "", reason, fmt.Errorf("%w: %s", ErrSourceIneligible, reason)
+	}
+	output := view.Generation.Preview.Output
+	source, size, err := blobs.OpenStreamContext(ctx, output.BlobSHA256)
+	if err != nil {
+		return nil, view.Generation.Checksum, "", fmt.Errorf("%w: %w", errPhotoDescriptionInput, err)
+	}
+	if size != output.Size {
+		return nil, view.Generation.Checksum, "", errors.Join(store.ErrPackageConflict, source.Close())
+	}
+	raw, err := io.ReadAll(io.LimitReader(source, output.Size+1))
+	if err = errors.Join(err, source.Verify(), source.Close()); err != nil {
+		return nil, view.Generation.Checksum, "", fmt.Errorf("%w: %w", errPhotoDescriptionInput, err)
+	}
+	stripped, err := stripPhotoPreview(ctx, raw)
+	if err != nil {
+		return nil, view.Generation.Checksum, "", err
+	}
+	return stripped, view.Generation.Checksum, "", nil
 }

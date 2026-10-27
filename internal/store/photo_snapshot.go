@@ -112,3 +112,11 @@ func photoSnapshotLibraryMembersTx(ctx context.Context, tx rowQuerier, encoded [
 	}
 	return nil
 }
+
+func rankedPhotoSnapshotPopulation(ranking *PhotoRanking) (compiledQueryFragment, error) {
+	encoded, err := json.Marshal(ranking.Members)
+	if err != nil {
+		return compiledQueryFragment{}, err
+	}
+	return compiledQueryFragment{sql: `SELECT n.id node_id,v.version_id content_version_id,a.asset_id,CAST(rank.key AS INTEGER)+1 photo_position FROM json_each(?) rank JOIN photo_assets a ON a.asset_id=json_extract(rank.value,'$.asset_id') ` + strings.TrimPrefix(photoBrowseDisplayFrom, `photo_assets a`) + ` WHERE n.id=json_extract(rank.value,'$.node_id') AND v.version_id=json_extract(rank.value,'$.content_version_id') AND ` + photoBrowseLiveDisplay + ` AND ` + photoVisibilityPredicate(false) + ` ORDER BY CAST(rank.key AS INTEGER)`, args: []any{string(encoded)}}, nil
+}

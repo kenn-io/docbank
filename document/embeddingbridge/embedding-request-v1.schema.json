@@ -94,7 +94,7 @@
         "index": {"type": "integer", "minimum": 0, "maximum": 9999},
         "key": {"$ref": "#/$defs/stable_id"},
         "role": {"enum": ["document", "query"]},
-        "kind": {"enum": ["rendition_chunk", "query_text", "original_file"]},
+        "kind": {"enum": ["rendition_chunk", "query_text", "original_file", "image"]},
         "byte_length": {"type": "integer", "minimum": 1, "maximum": 1073741824},
         "sha256": {"$ref": "#/$defs/sha256"},
         "text": {"type": "string", "minLength": 1},
@@ -150,8 +150,18 @@
           },
           "properties": {
             "role": {"const": "document"},
-            "kind": {"const": "original_file"}
-          }
+            "kind": {"enum": ["original_file", "image"]}
+          },
+          "allOf": [{
+            "if": {"properties": {"kind": {"const": "image"}}},
+            "then": {"properties": {"upload": {"properties": {
+              "input_kind": {"const": "derived_upload"},
+              "media_family": {"const": "image"},
+              "media_type": {"const": "image/jpeg"},
+              "filename": {"const": ""}
+            }}}},
+            "else": {"properties": {"upload": {"properties": {"input_kind": {"const": "original_file"}}}}}
+          }]
         }
       ]
     },
@@ -192,7 +202,7 @@
         "sha256": {"$ref": "#/$defs/sha256"},
         "capability_record_checksum": {"$ref": "#/$defs/sha256"},
         "provider_metadata_checksum": {"$ref": "#/$defs/sha256"},
-        "input_kind": {"const": "original_file"}
+        "input_kind": {"enum": ["original_file", "derived_upload"]}
       }
     }
   }

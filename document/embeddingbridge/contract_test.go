@@ -291,7 +291,7 @@ func serveIndependentContractRequest(
 			return errors.New("independent server: input identity")
 		}
 		keys[index] = key
-		if kind != "original_file" {
+		if kind != "original_file" && kind != "image" {
 			continue
 		}
 		fileIndex, indexErr := independentInteger(input["file_index"])
@@ -521,4 +521,35 @@ func TestHeadingLengthMatchesPublishedSchemaBeforeTransmission(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestImageUploadAndTextQueryReturnBothVectors(t *testing.T) {
+	source := []byte("synthetic stripped JPEG")
+	requestValidator := compileContractSchema(t, "https://docbank.invalid/contracts/docbank-embedding/v1/request.schema.json", requestSchema)
+	responseValidator := compileContractSchema(t, "https://docbank.invalid/contracts/docbank-embedding/v1/response.schema.json", responseSchema)
+	var contract struct {
+		Canonicalization canonicalizationContract `json:"x-docbank-canonicalization"`
+	}
+	require.NoError(t, json.Unmarshal(requestSchema, &contract))
+	serverErrors := make(chan error, 1)
+	fixture := newBridgeFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := serveIndependentContractRequest(w, r, requestValidator, responseValidator, contract.Canonicalization, ""); err != nil {
+			serverErrors <- err
+			http.Error(w, "synthetic contract failure", http.StatusInternalServerError)
+		}
+	}), document.EmbeddingInputKind("image"))
+	metadata := uploadMetadata(source)
+	metadata.MediaFamily, metadata.MediaType = "image", "image/jpeg"
+	metadata.InputKind = document.RenditionInputDerivedUpload
+	input := document.EmbeddingInput{Key: "image-a", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputKind("image"), Source: &testUpload{Reader: bytes.NewReader(source), metadata: metadata}}
+	auth := fixture.authorization(2)
+	auth.DiscloseFilename = true
+	result, err := document.ExecuteEmbedding(context.Background(), fixture.client, []document.EmbeddingInput{input, {Key: "query-a", Role: document.EmbeddingRoleQuery, Kind: document.EmbeddingInputQueryText, Text: "sunset"}}, auth)
+	select {
+	case serverErr := <-serverErrors:
+		require.NoError(t, serverErr)
+	default:
+	}
+	require.NoError(t, err)
+	assert.Equal(t, []document.EmbeddingVector{{Key: "image-a", Values: []float32{0.5, 0.25}}, {Key: "query-a", Values: []float32{1.5, 1.25}}}, result.Vectors)
 }

@@ -310,6 +310,24 @@ describe("search result authority", () => {
     });
   });
 
+  it("accepts image evidence while rejecting rendition fields and incomplete identity", () => {
+    const report = valid();
+    const evidence = report.results[0]!.evidence[0]!;
+    evidence.input_kind = "image";
+    evidence.build_id = "";
+    expect(validateDocumentSearchReport(report, request).results[0]!.evidence[0]!.input_kind).toBe(
+      "image",
+    );
+    evidence.build_id = "f".repeat(64);
+    expect(() => validateDocumentSearchReport(report, request)).toThrow(/invalid search response/);
+    evidence.build_id = "";
+    Object.assign(evidence, { time_span: { start_ms: 0, end_ms: 1000 } });
+    expect(() => validateDocumentSearchReport(report, request)).toThrow(/invalid search response/);
+    Reflect.deleteProperty(evidence, "time_span");
+    evidence.input_generation_id = "";
+    expect(() => validateDocumentSearchReport(report, request)).toThrow(/invalid search response/);
+  });
+
   it("accepts rendition-chunk embedding evidence with a build and time span", () => {
     const report = valid();
     const mediaIdentity = { build_id: "f".repeat(64), time_span: { start_ms: 1000, end_ms: 2000 } };

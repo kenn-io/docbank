@@ -285,3 +285,33 @@ it("shows a query syntax example as the placeholder in query syntax mode", async
   expect(input.placeholder).toBe("rating:5 pick label:red");
   photos.dispose();
 });
+it.each([
+  ["semantic", "provider_unavailable", "text"],
+  ["semantic", "", "semantic"],
+  ["lexical", "", "text"],
+] as const)(
+  "reports metadata fallback as the executed search mode: %s %s",
+  async (mode, fallback_reason, executed) => {
+    const searchOutcome = vi.mocked(actions.reportSearch);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(Response.json({ items: [], total: 0, facets: [], fallback_reason })),
+      ),
+    );
+    const photos = new Photos("scoped", vi.fn());
+    photos.started = true;
+    render(PhotoSearch, { photos });
+    if (mode === "semantic") {
+      await fireEvent.click(screen.getByRole("combobox", { name: "Find by: Metadata" }));
+      await fireEvent.click(await screen.findByRole("option", { name: "Meaning" }));
+    }
+    const search = screen.getByRole("searchbox", { name: "Search photos" });
+    await fireEvent.input(search, { target: { value: "sunset" } });
+    await fireEvent.submit(search.closest("form")!);
+    await waitFor(() =>
+      expect(searchOutcome).toHaveBeenCalledExactlyOnceWith("scoped", executed, true),
+    );
+    photos.dispose();
+  },
+);

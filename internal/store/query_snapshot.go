@@ -37,6 +37,9 @@ var ErrQuerySnapshotTooLarge = errors.New("query snapshot exceeds its materializ
 
 // SnapshotRequest selects one frozen QueryV1 projection and its optional facets.
 type SnapshotRequest struct {
+	PhotoProjection    string            `json:"-"`
+	PhotoRanking       *PhotoRanking     `json:"-"`
+	PhotoRecipes       map[string]string `json:"-"`
 	ReplacesSnapshotID string            `json:"replaces_snapshot_id,omitempty"`
 	Photos             bool              `json:"photos,omitempty"`
 	FacetsOnly         bool              `json:"facets_only,omitempty"`
@@ -66,6 +69,8 @@ type SnapshotTag struct {
 // SnapshotRow freezes display metadata around one exact snapshot member.
 type SnapshotRow struct {
 	SnapshotMember
+
+	SuggestionMatch bool `json:"suggestion_match,omitzero"`
 
 	Flag                   *string       `json:"flag,omitzero"`
 	Name                   string        `json:"name"`
@@ -111,6 +116,8 @@ type SnapshotFacet struct {
 
 // SnapshotProjection is a complete immutable materialization without cache ownership.
 type SnapshotProjection struct {
+	PhotoProjection     string             `json:"photo_projection,omitempty"`
+	PhotoRanking        *PhotoRanking      `json:"photo_ranking,omitempty"`
 	Photos              bool               `json:"photos,omitempty"`
 	Query               query.Query        `json:"query"`
 	Dependencies        []query.Dependency `json:"dependencies"`
@@ -129,6 +136,8 @@ type SnapshotProjection struct {
 }
 
 type snapshotMaterializeOptions struct {
+	PhotoRanking       *PhotoRanking
+	PhotoRecipes       map[string]string
 	MaterializeFacet   func(context.Context, string) (SnapshotFacet, error)
 	MaxRows            int64
 	MaxRowBytes        int64
@@ -207,6 +216,7 @@ func (s *Store) materializeNormalizedQuerySnapshot(
 	ctx context.Context, request SnapshotRequest, options snapshotMaterializeOptions,
 ) (SnapshotProjection, error) {
 	options = options.withDefaults()
+	options.PhotoRanking, options.PhotoRecipes = request.PhotoRanking, request.PhotoRecipes
 	pageSize, facets := request.PageSize, request.Facets
 	coverage, err := normalizeCoverageSelection(request.Coverage)
 	if err != nil {
@@ -235,6 +245,9 @@ func (s *Store) materializeNormalizedQuerySnapshot(
 			}
 			value = *resolved.Query
 		}
+		if request.PhotoRanking != nil {
+			value.Mode = queryModeLexical
+		}
 		options.Photos = request.Photos
 		compiler := queryCompiler{photoDisplayMetadata: request.FacetsOnly || options.Photos}
 		compiled, err := compiler.compile(ctx, value, queryResolver{q: q})
@@ -251,7 +264,7 @@ func (s *Store) materializeNormalizedQuerySnapshot(
 			}
 		}
 		projection = SnapshotProjection{
-			Photos: options.Photos, Query: compiled.Query, Dependencies: slices.Clone(compiled.Dependencies),
+			PhotoProjection: request.PhotoProjection, PhotoRanking: request.PhotoRanking, Photos: options.Photos, Query: compiled.Query, Dependencies: slices.Clone(compiled.Dependencies),
 			Coverage: coverage, PageSize: pageSize,
 			ObservedAt: options.Now().UTC(), Rows: make([]SnapshotRow, 0), Facets: make([]SnapshotFacet, 0, len(facets)),
 			Generation: SnapshotGeneration{Kind: "native"},
@@ -260,7 +273,10 @@ func (s *Store) materializeNormalizedQuerySnapshot(
 			projection.Generation = SnapshotGeneration{Kind: "rendition", GenerationID: generation.ID}
 		}
 		if !request.FacetsOnly {
-			projection.QueryFingerprint, err = query.Fingerprint(compiled.Query)
+			if request.PhotoRanking != nil {
+				projection.Query = request.Query
+			}
+			projection.QueryFingerprint, err = query.Fingerprint(projection.Query)
 			if err != nil {
 				return err
 			}
@@ -269,10 +285,16 @@ func (s *Store) materializeNormalizedQuerySnapshot(
 				execution.Query.Sort.Field = "name"
 				execution.Query.Sort.Direction = "asc"
 			}
-			if err := materializeSnapshotRows(ctx, q, execution, generation.ID, coverage, options, &projection); err != nil {
+			err = materializeSnapshotRows(ctx, q, execution, generation.ID, coverage, options, &projection)
+			if err != nil {
 				return err
 			}
 			projection.MemberHash = snapshotMemberHash(snapshotMembers(projection.Rows))
+			if projection.PhotoRanking != nil {
+				ranking := *projection.PhotoRanking
+				ranking.Members = nil
+				projection.PhotoRanking = &ranking
+			}
 		}
 		projection.Facets, err = materializeSnapshotFacets(ctx, q, compiled, generation.ID, coverage, facets, projection.Rows, options, &projection.SerializedBytes)
 		if err != nil {
@@ -305,6 +327,16 @@ func (s *Store) materializeNormalizedQuerySnapshot(
 // ErrInvalidSnapshotRequest.
 func normalizeQuerySnapshotRequest(request SnapshotRequest) (SnapshotRequest, error) {
 	pageSize, err := normalizeSnapshotPageSize(request.PageSize)
+	if request.Photos {
+		pageSize = request.PageSize
+		if pageSize == 0 {
+			pageSize = querySnapshotDefaultPage
+		}
+		err = nil
+		if pageSize < 1 || pageSize > 250 {
+			err = ErrInvalidPhotoQuery
+		}
+	}
 	if err != nil {
 		return SnapshotRequest{}, fmt.Errorf("%w: %w", ErrInvalidSnapshotRequest, err)
 	}
@@ -361,6 +393,9 @@ func materializeSnapshotRows(
 		var suggestions bool
 		if suggestions, err = photoSuggestionsExist(ctx, q); err == nil {
 			population, err = photoSnapshotPopulation(compiled, generationID, coverage, options.MaxRows, suggestions)
+			if options.PhotoRanking != nil && (options.PhotoRanking.Members != nil || options.PhotoRanking.ActualMode != queryModeLexical) {
+				population, err = rankedPhotoSnapshotPopulation(options.PhotoRanking)
+			}
 		}
 	} else {
 		population, err = matchedPopulation(compiled, generationID, nil)
@@ -371,6 +406,26 @@ func materializeSnapshotRows(
 	statement, args, err := bindQueryPopulation(population, coverage, generationID)
 	if err != nil {
 		return err
+	}
+	var frozenPhotos map[string]bool
+	if options.Photos && options.PhotoRanking != nil {
+		var photos []PhotoBrowseRow
+		err = queryRows(ctx, q, `WITH frozen AS (`+statement+`) SELECT a.asset_id FROM `+photoBrowseDisplayFrom+` JOIN frozen ON frozen.asset_id=a.asset_id AND frozen.content_version_id=v.version_id`, args, func(rows *sql.Rows) error {
+			photos = append(photos, PhotoBrowseRow{})
+			return rows.Scan(&photos[len(photos)-1].AssetID)
+		})
+		if err != nil {
+			return err
+		}
+		if options.PhotoRanking.ActualMode == queryModeLexical || options.PhotoRanking.ActualMode == "hybrid" {
+			if err := markSuggestionOnlyMatches(ctx, q, compiled, generationID, coverage, compiled.photoHidden, photos, options.PhotoRanking.ActualMode == "hybrid"); err != nil {
+				return err
+			}
+		}
+		frozenPhotos = map[string]bool{}
+		for _, photo := range photos {
+			frozenPhotos[photo.AssetID] = photo.MatchedAISuggestion
+		}
 	}
 	photoColumns := `'','',NULL`
 	if options.Photos {
@@ -448,6 +503,7 @@ func materializeSnapshotRows(
 		if err != nil {
 			return err
 		}
+		row.SuggestionMatch = frozenPhotos[row.AssetID]
 		encoded, err := json.Marshal(row)
 		if err != nil {
 			return fmt.Errorf("encoding query snapshot row: %w", err)
@@ -549,6 +605,7 @@ func snapshotMemberHash(members []SnapshotMember) string {
 }
 
 type snapshotFingerprintPayload struct {
+	PhotoRanking *PhotoRanking      `json:"photo_ranking,omitempty"`
 	Photos       bool               `json:"photos"`
 	Query        query.Query        `json:"query"`
 	Dependencies []query.Dependency `json:"dependencies"`
@@ -561,7 +618,7 @@ type snapshotFingerprintPayload struct {
 func snapshotProjectionFingerprint(projection SnapshotProjection) (string, error) {
 	digest := sha256.New()
 	err := json.MarshalWrite(digest, snapshotFingerprintPayload{
-		Photos: projection.Photos, Query: projection.Query, Dependencies: projection.Dependencies, Generation: projection.Generation,
+		PhotoRanking: projection.PhotoRanking, Photos: projection.Photos, Query: projection.Query, Dependencies: projection.Dependencies, Generation: projection.Generation,
 		Coverage: projection.Coverage, Rows: projection.Rows, Facets: projection.Facets,
 	}, json.Deterministic(true))
 	if err != nil {

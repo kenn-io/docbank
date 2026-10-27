@@ -35,10 +35,10 @@ paths:
                 file:
                   type: array
                   description: >-
-                    Original files in ascending manifest file_index order. Every
+                    Original files or stripped JPEG image previews in ascending manifest file_index order. Every
                     element uses the repeated fixed multipart part name file.
                     The filename is empty when the execution boundary withholds it;
-                    authorization.disclose_filename records the disclosure grant.
+                    authorization.disclose_filename records the disclosure grant. Image inputs always use an empty filename and derived_upload authority.
                   maxItems: 10000
                   items: {type: string, format: binary}
             encoding:

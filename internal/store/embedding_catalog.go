@@ -982,6 +982,11 @@ func validateEmbeddingSetFencesTx(ctx context.Context, tx *sql.Tx, record Embedd
 	if record.InputKind == document.EmbeddingInputRenditionChunk && record.InputGeneration.AttachmentID == "" {
 		return errors.New("chunk embedding set requires rendition attachment authority")
 	}
+	if record.InputKind == document.EmbeddingInputImage {
+		if err := validateImageEmbeddingGenerationTx(ctx, tx, record.InputGeneration, record.BindingID); err != nil {
+			return err
+		}
+	}
 	if record.InputKind == document.EmbeddingInputOriginalFile {
 		if record.InputGeneration.AttachmentID != "" || len(record.InputGeneration.GenerationJSON) != 0 || len(record.InputGeneration.EvidenceJSON) != 0 ||
 			record.InputGeneration.GenerationBlobHash != "" || record.InputGeneration.GenerationEncodedSize != 0 ||
@@ -1046,6 +1051,11 @@ func validateEmbeddingBindingAuthority(record EmbeddingSetRecord, binding docume
 		descriptor.DocumentFormatter != binding.DocumentFormatter || descriptor.QueryFormatter != binding.QueryFormatter ||
 		descriptor.CompatibilityID != binding.CompatibilityID || descriptor.ModelInput != binding.ModelInput || !slices.Contains(descriptor.InputKinds, binding.InputKind) {
 		return errors.New("embedding descriptor differs from binding")
+	}
+	if record.InputKind == document.EmbeddingInputImage {
+		if err := validateImageEmbeddingGeneration(record.InputGeneration, binding.Name); err != nil {
+			return err
+		}
 	}
 	if record.InputKind == document.EmbeddingInputRenditionChunk {
 		if len(record.InputGeneration.GenerationJSON) == 0 {
@@ -1350,6 +1360,14 @@ func embeddingSetEligibleTx(ctx context.Context, tx *sql.Tx, set EmbeddingSetRec
 	if live != 1 {
 		return false, nil
 	}
+	if set.InputKind == document.EmbeddingInputImage {
+		if err := validateImageEmbeddingGenerationTx(ctx, tx, set.InputGeneration, set.BindingID); err != nil {
+			if errors.Is(err, ErrEmbeddingJobFenced) || errors.Is(err, ErrNotFound) {
+				return false, nil
+			}
+			return false, err
+		}
+	}
 	return embeddingAttachmentEligible(ctx, tx, set.ContentVersionID,
 		set.ProcessingProfileFingerprint, set.InputGeneration.AttachmentID)
 }
@@ -1427,7 +1445,7 @@ func validateEmbeddingFailureRecord(record EmbeddingFailureRecord) error {
 
 func validateEmbeddingInputKind(kind EmbeddingInputKind) error {
 	switch kind {
-	case document.EmbeddingInputRenditionChunk, document.EmbeddingInputOriginalFile:
+	case document.EmbeddingInputRenditionChunk, document.EmbeddingInputOriginalFile, document.EmbeddingInputImage:
 		return nil
 	default:
 		return fmt.Errorf("embedding input kind %q is unsupported", kind)

@@ -3398,7 +3398,7 @@ it("closes the viewer to the grid after refusing a typed photo hash", async () =
   expect(location.hash).not.toContain("photo=");
 });
 
-async function applyAlbumKeyword() {
+async function applyAlbumKeyword(ranked = false) {
   history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
   vi.stubGlobal(
     "ResizeObserver",
@@ -3443,17 +3443,35 @@ async function applyAlbumKeyword() {
     assignment_count: 1,
   };
   const before = preparedPhoto(1);
-  const rotated = { ...before, revision: 2, values: { ...before.values, rotation: 90 as const } };
+  const rotated = {
+    ...before,
+    revision: 2,
+    values: {
+      ...before.values,
+      rotation: ranked ? (0 as const) : (90 as const),
+      flag: ranked ? ("reject" as const) : ("" as const),
+    },
+  };
   const edited = { ...rotated, revision: 3 };
   let documentRevision = 1;
   let keywordApplied = false;
   let editCount = 0;
-  const fetcher = vi.fn(async (url: string) => {
+  const fetcher = vi.fn(async (url: string, init: RequestInit) => {
     if (url.endsWith("/photos/albums")) {
       albumRotations.push(coverRotation);
       return albumResponse([{ ...album, cover_rotation: coverRotation }]);
     }
-    if (url.endsWith("/photos/assets/query")) return albumResponse({ items: [photo(1)], total: 1 });
+    if (url.endsWith("/photos/assets/query")) {
+      const query = JSON.parse(String(init.body)).query;
+      const libraryRanked = ranked && query.mode !== "lexical" && !query.filters?.set_ids;
+      return albumResponse({
+        items: libraryRanked ? [photo(1), photo(2)] : [photo(1)],
+        total: libraryRanked ? 2 : 1,
+        ...(libraryRanked && {
+          snapshot_id: "ranked",
+        }),
+      });
+    }
     if (url === "/api/v1/path?path=%2F") return albumResponse(root);
     if (url === "/api/v1/nodes/1000/children?limit=1000&offset=0")
       return albumResponse({
@@ -3514,12 +3532,40 @@ async function applyAlbumKeyword() {
   const changed = vi.spyOn(Photos.prototype, "metadataChanged");
   render(App);
   await screen.findByRole("button", { name: "Select Photo 1.jpg" });
+  if (ranked) {
+    const mode = screen.getByRole("combobox", { name: "Find by: Metadata" });
+    await waitFor(() => expect(mode).toHaveProperty("disabled", false));
+    await fireEvent.click(mode);
+    await fireEvent.click(await screen.findByRole("option", { name: "Meaning" }));
+    await fireEvent.input(screen.getByRole("searchbox", { name: "Search photos" }), {
+      target: { value: "sunset" },
+    });
+    await fireEvent.submit(
+      screen.getByRole("searchbox", { name: "Search photos" }).closest("form")!,
+    );
+    await waitFor(() =>
+      expect(
+        fetcher.mock.calls.some(([url, init]) => {
+          if (!url.endsWith("/photos/assets/query")) return false;
+          const { query } = JSON.parse(String(init.body));
+          return query.mode === "semantic" && query.text === "sunset";
+        }),
+      ).toBe(true),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("searchbox", { name: "Search photos" })).toHaveProperty(
+        "disabled",
+        false,
+      ),
+    );
+  }
   await fireEvent.click(screen.getByRole("button", { name: /^Trip/ }));
   await fireEvent.click(await screen.findByRole("button", { name: "Select Photo 1.jpg" }));
-  await fireEvent.keyDown(window, { key: "r" });
-  await waitFor(() => expect(albumRotations).toContain(90));
+  await fireEvent.keyDown(window, { key: ranked ? "x" : "r" });
+  if (!ranked) await waitFor(() => expect(albumRotations).toContain(90));
   await waitFor(() => expect(changed).toHaveBeenCalledTimes(2));
   await waitFor(() => expect((changed.mock.contexts[1] as Photos).authored.busy).toBe(false));
+  if (ranked) return { changed, album, fetcher, albumRotations };
   await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
   await waitFor(() =>
     expect(screen.getByRole("combobox", { name: "Keyword" }).hasAttribute("disabled")).toBe(false),
@@ -5397,3 +5443,18 @@ it.each(["Hidden lock", "Hidden navigate", "Library lock"])(
     expect(screen.queryByText("Person: Ada")).toBeNull();
   },
 );
+it("refreshes a ranked sibling Library after an accepted reject receipt", async () => {
+  const { changed, fetcher } = await applyAlbumKeyword(true);
+  const library = changed.mock.contexts[0] as Photos;
+  await waitFor(() =>
+    expect(
+      fetcher.mock.calls.some(
+        ([url, init]) =>
+          url.endsWith("/photos/assets/query") &&
+          JSON.parse(String(init.body)).snapshot_id === "ranked",
+      ),
+    ).toBe(true),
+  );
+  expect(library.snapshotID).toBe("ranked");
+  expect(changed.mock.calls[0][0]).toEqual(expect.objectContaining({ receipt_id: "rotated" }));
+});

@@ -9,15 +9,20 @@
   let { photos }: { photos: Photos } = $props();
   let search = $state(untrack(() => photos.query.text));
   let syntax = $state(untrack(() => photos.query.syntax));
+  let mode = $state(untrack(() => photos.query.mode));
   const disabled = $derived(photos.blocking || photos.hiding || photos.trashing);
   const applyDraft = $derived(Boolean(search.trim()) || search !== photos.query.text);
   const appliedText = $derived(photos.query.text);
   const appliedSyntax = $derived(photos.query.syntax);
+  const appliedMode = $derived(photos.query.mode);
   $effect(() => {
     search = appliedText;
   });
   $effect(() => {
     syntax = appliedSyntax;
+  });
+  $effect(() => {
+    mode = appliedMode;
   });
   function submit(explicit = false) {
     const text = search.trim();
@@ -26,7 +31,8 @@
         ...photos.query,
         text: search,
         syntax,
-        sort: photoSearchSort({ text: search, syntax }),
+        mode,
+        sort: photoSearchSort({ text: search, syntax, mode }),
       },
       explicit
         ? (cause) => {
@@ -36,7 +42,12 @@
     );
     void pending?.then((outcome) => {
       if (!explicit || !text || !outcome) return;
-      if (outcome.accepted) return reportSearch(photos.session, "text", outcome.empty);
+      if (outcome.accepted)
+        return reportSearch(
+          photos.session,
+          photos.fallbackReason || mode === "lexical" ? "text" : mode,
+          outcome.empty,
+        );
       reportFailure(photos.session, "search", outcome.cause);
     });
     return pending;
@@ -61,6 +72,20 @@
     }}
   />
 </form>
+<SelectDropdown
+  title="Find by"
+  {disabled}
+  value={mode}
+  options={[
+    { value: "lexical", label: "Metadata" },
+    { value: "semantic", label: "Meaning" },
+    { value: "hybrid", label: "Hybrid" },
+  ]}
+  onchange={(value) => {
+    mode = value as "lexical" | "semantic" | "hybrid";
+    if (applyDraft && !submit()) mode = photos.query.mode;
+  }}
+/>
 <SelectDropdown
   title="Search mode"
   {disabled}

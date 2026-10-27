@@ -13389,11 +13389,15 @@ components:
           format: uri
           readOnly: true
           type: string
+        actual_mode:
+          type: string
         burst_gap_seconds:
           format: int64
           maximum: 30
           minimum: 1
           type: integer
+        coverage_incomplete:
+          type: boolean
         facets:
           items:
             additionalProperties: false
@@ -13430,6 +13434,8 @@ components:
               - values
             type: object
           type: array
+        fallback_reason:
+          type: string
         grouping_incomplete:
           description: Photos with stale source metadata group as photos with no serial until it updates, so their stacks can change.
           type: boolean
@@ -13441,10 +13447,16 @@ components:
           items:
             $ref: "#/components/schemas/PhotoMapRow"
           type: array
+        member_hash:
+          type: string
         next_cursor:
           type: string
         relevance_available:
           type: boolean
+        requested_mode:
+          type: string
+        snapshot_id:
+          type: string
         stacks:
           description: Bursts among items when stacks were requested; other items are single photos.
           items:
@@ -13454,6 +13466,8 @@ components:
           format: int64
           minimum: 0
           type: integer
+        truncated:
+          type: boolean
       required:
         - items
         - total
@@ -13509,6 +13523,8 @@ components:
           type: string
         query:
           $ref: "#/components/schemas/SavedQueryV1Schema"
+        snapshot_id:
+          type: string
         stacks:
           description: Group capture-time pages into whole bursts, extending page_size by up to 499 frames. Relevance groups only returned matches, placing each burst at its best-ranked member. Other sorts keep individual rows.
           type: boolean
@@ -14626,6 +14642,9 @@ components:
           type:
             - string
             - "null"
+        display_file_id:
+          format: uuid
+          type: string
         file_modified_time:
           description: Set only when the file modified time, not a capture date, placed the photo.
           format: date-time
@@ -14671,6 +14690,7 @@ components:
       required:
         - rotation
         - asset_id
+        - display_file_id
         - revision
         - name
         - capture_time
@@ -21427,8 +21447,12 @@ components:
           format: uri
           readOnly: true
           type: string
+        actual_mode:
+          type: string
         coverage:
           $ref: "#/components/schemas/WorkspaceQueryCoverage"
+        coverage_incomplete:
+          type: boolean
         created_at:
           format: date-time
           type: string
@@ -21476,6 +21500,8 @@ components:
             type: object
           maxItems: 8
           type: array
+        fallback_reason:
+          type: string
         generation:
           $ref: "#/components/schemas/WorkspaceQueryGeneration"
         member_hash:
@@ -21502,6 +21528,8 @@ components:
         query_fingerprint:
           pattern: ^sha256:[0-9a-f]{64}$
           type: string
+        requested_mode:
+          type: string
         rows:
           items:
             $ref: "#/components/schemas/WorkspaceQueryRow"
@@ -21523,6 +21551,8 @@ components:
           format: int64
           minimum: 0
           type: integer
+        truncated:
+          type: boolean
       required:
         - query
         - dependencies
