@@ -13,7 +13,7 @@ func TestReviewNewestStackBoundsHistoryReads(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, unavailable)
 	require.False(t, incomplete)
-	require.Contains(t, groups, ids[len(ids)-4:])
+	require.Empty(t, groups)
 	vectors, err := f.s.newPhotoStackVectorReader(t.Context(), f.s.db)
 	require.NoError(t, err)
 	last := ids[len(ids)-1]
@@ -30,6 +30,6 @@ func TestReviewNewestStackBoundsHistoryReads(t *testing.T) {
 	for _, frame := range component.frames {
 		got = append(got, frame.AssetID)
 	}
-	require.Equal(t, ids[len(ids)-4:], got)
+	require.Equal(t, []string{last}, got)
 	require.LessOrEqual(t, hydrated, MaxPhotoStackFrames+1, "resolving the newest stack must bound total hydration")
 }

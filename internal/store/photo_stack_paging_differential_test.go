@@ -33,14 +33,14 @@ func TestReviewImageStacksAgreeForNontransitiveSimilarity(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, unavailable)
 	require.False(t, incomplete)
-	require.Equal(t, [][]string{ids}, groups)
+	require.Equal(t, [][]string{ids[:2]}, groups)
 	for _, direction := range []string{"asc", "desc"} {
 		for _, size := range []int{1, 50, 250} {
 			t.Run(fmt.Sprintf("%s/%d", direction, size), func(t *testing.T) {
 				request := captureRequest(t, direction)
 				request.PageSize = size
 				items, stacks := stackPages(t, f.s, request)
-				require.Equal(t, [][]string{ids}, stacks)
+				require.Equal(t, [][]string{ids[:2]}, stacks)
 				require.ElementsMatch(t, append(slices.Clone(ids), coverage.ID), slices.Concat(items...))
 			})
 		}
@@ -182,14 +182,8 @@ func TestPhotoStackIndexedBurstCrossesClockHour(t *testing.T) {
 	require.NoError(t, err)
 	index := newCursorIndexFixture(f)
 	var ids []string
-	for i := range 502 {
-		stamp := time.Date(2026, 1, 1, 0, 0, i*20+20, 0, time.UTC)
-		switch i {
-		case 179:
-			stamp = stamp.Add(-time.Second)
-		case 180:
-			stamp = stamp.Add(-20 * time.Second)
-		}
+	for i := range 2 {
+		stamp := time.Date(2026, 1, 1, 12, 59, 55+i*10, 0, time.UTC)
 		id := stackPhoto(t, f.s, run, fmt.Sprintf("/indexed-clock/%d.jpg", i), stamp.Format(time.RFC3339), document.SourceMetadataPrecisionSecond)
 		ids = append(ids, id)
 		index.publish(t, id, []float64{1, 0, 0, 0, 0, 0, 0, 0})
@@ -198,14 +192,7 @@ func TestPhotoStackIndexedBurstCrossesClockHour(t *testing.T) {
 	groups, unavailable, _, _, err := f.s.PhotoStackGroups(t.Context(), ids, false, "")
 	require.NoError(t, err)
 	require.Empty(t, unavailable)
-	paired := false
-	for _, group := range groups {
-		if slices.Contains(group, ids[179]) {
-			require.Contains(t, group, ids[180])
-			paired = true
-		}
-	}
-	require.True(t, paired)
+	require.Equal(t, [][]string{ids}, groups)
 	for _, direction := range []string{"asc", "desc"} {
 		for _, size := range []int{1, 250} {
 			t.Run(fmt.Sprintf("%s/%d", direction, size), func(t *testing.T) {

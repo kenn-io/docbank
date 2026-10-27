@@ -57,7 +57,6 @@ func (s *Store) newPhotoStackVectorReader(ctx context.Context, q metadataQuerier
 	}
 	reader := &photoStackVectorReader{heads: heads}
 	s.photoStackVectorsMu.Lock()
-	defer s.photoStackVectorsMu.Unlock()
 	if s.photoStackVectors == nil {
 		s.photoStackVectors = make(map[string]photoStackOpenedGeneration)
 	}
@@ -66,29 +65,46 @@ func (s *Store) newPhotoStackVectorReader(ctx context.Context, q metadataQuerier
 			delete(s.photoStackVectors, space)
 		}
 	}
+	missing := make(map[string]string)
 	for space, id := range heads {
-		opened := s.photoStackVectors[space]
-		if opened.id != id {
-			stored, err := loadVectorIndexGenerationTx(ctx, q, id)
-			if errors.Is(err, errUnusableVectorIndexGeneration) {
-				continue
-			}
-			if err != nil {
-				return nil, err
-			}
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-			index, err := vectorindex.OpenGeneration(bytes.NewReader(stored.Bytes), int64(len(stored.Bytes)))
-			if err != nil {
-				// Indexes are disposable projections. Keep capture-gap grouping available
-				// when an active generation is damaged.
-				continue
-			}
-			opened = photoStackOpenedGeneration{id: id, index: index}
-			s.photoStackVectors[space] = opened
+		if opened := s.photoStackVectors[space]; opened.id == id {
+			reader.indexes = append(reader.indexes, opened.index)
+		} else {
+			missing[space] = id
 		}
-		reader.indexes = append(reader.indexes, opened.index)
+	}
+	s.photoStackVectorsMu.Unlock()
+	for space, id := range missing {
+		stored, err := loadVectorIndexGenerationTx(ctx, q, id)
+		if errors.Is(err, errUnusableVectorIndexGeneration) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		index, err := vectorindex.OpenGeneration(bytes.NewReader(stored.Bytes), int64(len(stored.Bytes)))
+		if err != nil {
+			// Indexes are disposable projections. Keep capture-gap grouping available
+			// when an active generation is damaged.
+			continue
+		}
+		current, err := photoStackVectorHeads(ctx, q)
+		if err != nil {
+			return nil, err
+		}
+		s.photoStackVectorsMu.Lock()
+		if current[space] == id {
+			if opened := s.photoStackVectors[space]; opened.id == id {
+				index = opened.index
+			} else {
+				s.photoStackVectors[space] = photoStackOpenedGeneration{id: id, index: index}
+			}
+		}
+		s.photoStackVectorsMu.Unlock()
+		reader.indexes = append(reader.indexes, index)
 	}
 	return reader, nil
 }

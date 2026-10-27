@@ -8,7 +8,6 @@ import (
 	"os"
 	"path"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -1754,45 +1753,6 @@ func TestPhotoStackImageSimilarityThresholdAndWindow(t *testing.T) {
 	page, err := s.ListPhotoAssets(t.Context(), PhotoBrowseRequest{Stacks: true, PageSize: 10, Query: captureRequest(t, "asc").Query}, nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]string{{ids[0], ids[1]}}, stackAssetIDs(page.Stacks))
-}
-
-func TestPhotoStackImageLinksBoundedByFirstFrame(t *testing.T) {
-	t.Parallel()
-	t.Run("compare first vector", func(t *testing.T) {
-		frames := []photoStackFrame{
-			{AssetID: "first", Folder: "/shots", SortKey: "2026-01-01T12:00:00.000000000", ImageVectors: map[string][]float32{"image": {1, 0}}},
-			{AssetID: "second", Folder: "/shots", SortKey: "2026-01-01T12:00:20.000000000", ImageVectors: map[string][]float32{"image": {0.9659258, 0.2588190}}},
-			{AssetID: "third", Folder: "/shots", SortKey: "2026-01-01T12:00:40.000000000", ImageVectors: map[string][]float32{"image": {0.8660254, 0.5}}},
-		}
-		require.Equal(t, [][]photoStackFrame{frames[:2]}, groupPhotoStackFrames(frames, 2))
-	})
-
-	for _, count := range []int{180, MaxPhotoStackFrames + 2} {
-		t.Run(strconv.Itoa(count), func(t *testing.T) {
-			frames := make([]photoStackFrame, count)
-			for i := range frames {
-				second := i * 20
-				if count > 180 && i > 0 {
-					second = 1
-					if i > 1 {
-						second = (i-2)*20 + 61
-					}
-				}
-				frames[i] = photoStackFrame{AssetID: strconv.Itoa(i), Folder: "/shots", SortKey: time.Date(2026, 1, 1, 12, 0, second, 0, time.UTC).Format(photoStackKeyLayout), ImageVectors: map[string][]float32{"image": {1, 0}}, Files: 1}
-			}
-			groups := groupPhotoStackFrames(frames, 2)
-			require.NotEmpty(t, groups, "a long similar run must preserve its initial burst")
-			firstSize := 4
-			if count > 180 {
-				firstSize = 2
-			}
-			require.Len(t, groups[0], firstSize)
-			require.Equal(t, frames[:firstSize], groups[0])
-			for _, group := range groups {
-				require.LessOrEqual(t, len(group), 4, "image similarity must not chain across an hour")
-			}
-		})
-	}
 }
 
 func TestPhotoStackUnrelatedImageSpaceKeepsStacks(t *testing.T) {

@@ -57,8 +57,6 @@ type photoStackFrame struct {
 	Rejected         bool
 	Files            int
 	Stale            bool
-	// Block bounds image links in a long run to one clock hour.
-	Block string
 }
 
 // applyMetadataFingerprint groups a frame read by an outdated extractor as one
@@ -104,23 +102,22 @@ func photoStackReach(key string, gap int, forward bool) (string, bool) {
 }
 
 // photoStackChained reports whether next follows previous in one stack.
-func photoStackChained(head, previous, next photoStackFrame, gap int) bool {
+func photoStackChained(previous, next photoStackFrame, gap int) bool {
+	reach, ok := photoStackReach(previous.SortKey, gap, true)
+	return ok && previous.Folder != "" && previous.partition() == next.partition() && next.SortKey <= reach
+}
+
+// photoStackImageLinked compares adjacent frames in a shared image space.
+func photoStackImageLinked(previous, next photoStackFrame) bool {
 	if previous.Folder == "" || previous.partition() != next.partition() {
 		return false
 	}
-	reach, ok := photoStackReach(previous.SortKey, gap, true)
-	if ok && next.SortKey <= reach {
-		return true
-	}
-	if head.Block != next.Block {
-		return false
-	}
-	reach, ok = photoStackReach(head.SortKey, photoStackImageWindowSeconds, true)
+	reach, ok := photoStackReach(previous.SortKey, photoStackImageWindowSeconds, true)
 	if !ok || next.SortKey > reach {
 		return false
 	}
-	for space, headVector := range head.ImageVectors {
-		if vector := next.ImageVectors[space]; len(vector) > 0 && vectorindex.Cosine(headVector, vector)+1e-7 >= photoStackImageSimilarityCutoff {
+	for space, vector := range previous.ImageVectors {
+		if other := next.ImageVectors[space]; len(other) > 0 && vectorindex.Cosine(vector, other)+1e-7 >= photoStackImageSimilarityCutoff {
 			return true
 		}
 	}
@@ -144,60 +141,36 @@ func groupPhotoStackFrames(frames []photoStackFrame, gap int) [][]photoStackFram
 	return groups
 }
 
-// photoStackSegments splits capture-ordered frames at the first-frame boundary.
-// Callers sort each camera partition before applying the decision size limit.
+// photoStackSegments accepts image chains spanning at most a minute and falls
+// back to capture-gap chains when the whole image chain cannot form a stack.
 func photoStackSegments(frames []photoStackFrame, gap int) iter.Seq[[]photoStackFrame] {
 	return func(yield func([]photoStackFrame) bool) {
-		imageLinks := slices.ContainsFunc(frames, func(frame photoStackFrame) bool { return len(frame.ImageVectors) > 0 })
-		for first, blocked := 0, photoStackBlocks(frames, imageLinks); first < len(frames); {
+		for first := 0; first < len(frames); {
 			next := first + 1
-			for next < len(frames) && photoStackChained(blocked[first], blocked[next-1], blocked[next], gap) {
+			for next < len(frames) && (photoStackChained(frames[next-1], frames[next], gap) || photoStackImageLinked(frames[next-1], frames[next])) {
 				next++
 			}
-			if !yield(frames[first:next]) {
-				return
-			}
+			chain := frames[first:next]
 			first = next
+			reach, ok := photoStackReach(chain[0].SortKey, photoStackImageWindowSeconds, true)
+			if ok && chain[len(chain)-1].SortKey <= reach && eligiblePhotoStack(chain) {
+				if !yield(chain) {
+					return
+				}
+				continue
+			}
+			for start := 0; start < len(chain); {
+				end := start + 1
+				for end < len(chain) && photoStackChained(chain[end-1], chain[end], gap) {
+					end++
+				}
+				if !yield(chain[start:end]) {
+					return
+				}
+				start = end
+			}
 		}
 	}
-}
-
-// photoStackBlocks marks where image links restart. An indexed run of more than
-// MaxPhotoStackFrames frames, each within the image window of the previous one,
-// restarts image comparisons at every clock hour. Burst-gap links cross hours.
-// Such an hour holding more than MaxPhotoStackFrames frames links only
-// by burst gap, so each hour contributes at most that many vectors.
-func photoStackBlocks(frames []photoStackFrame, imageLinks bool) []photoStackFrame {
-	blocked := slices.Clone(frames)
-	for first := 0; first < len(blocked); {
-		next := first + 1
-		for ; next < len(blocked) && blocked[next].partition() == blocked[first].partition(); next++ {
-			if reach, ok := photoStackReach(blocked[next-1].SortKey, photoStackImageWindowSeconds, true); !ok || blocked[next].SortKey > reach {
-				break
-			}
-		}
-		counts := map[string]int{}
-		for i := first; i < next; i++ {
-			if !imageLinks {
-				blocked[i].Block = ""
-			} else if next-first > MaxPhotoStackFrames {
-				blocked[i].Block = photoStackHour(blocked[i].SortKey)
-			}
-			counts[blocked[i].Block]++
-		}
-		for i := first; i < next; i++ {
-			if counts[blocked[i].Block] > MaxPhotoStackFrames {
-				blocked[i].ImageVectors = nil
-			}
-		}
-		first = next
-	}
-	return blocked
-}
-
-// photoStackHour is the clock-hour prefix of a capture sort key.
-func photoStackHour(key string) string {
-	return key[:min(len(key), len("2006-01-02T15"))]
 }
 
 // eligiblePhotoStack keeps every exposed stack within one authored edit.
@@ -666,8 +639,8 @@ type photoStackComponent struct {
 	ineligible bool
 }
 
-// A probe reads every in-scope frame within this many image windows, so one
-// query usually finishes a run in one direction.
+// A probe reads every in-scope frame within this many gaps, so one query
+// usually finishes a burst in one direction.
 const photoStackProbeGaps = 8
 
 const photoStackProbeFrom = `photo_timeline pl INDEXED BY photo_timeline_folder
@@ -717,13 +690,21 @@ func (p *photoStackPager) Close() error {
 	return err
 }
 
+// linked reports whether next continues the chain from current in the walk direction.
+func (p *photoStackPager) linked(current, next photoStackFrame, forward bool) bool {
+	if forward {
+		return photoStackChained(current, next, p.gap)
+	}
+	return photoStackChained(next, current, p.gap)
+}
+
 // probe reads the in-scope frames after current in one direction, up to window.
-func (p *photoStackPager) probe(ctx context.Context, current photoStackFrame, window string, forward bool, limit int) (frames []photoStackFrame, err error) {
+func (p *photoStackPager) probe(ctx context.Context, current photoStackFrame, window string, forward bool) (frames []photoStackFrame, err error) {
 	direction := 0
 	if forward {
 		direction = 1
 	}
-	args := append(slices.Clone(p.args), current.Folder, current.CameraMake, current.CameraModel, p.fingerprint, p.fingerprint, current.BodySerialNumber, current.SortKey, window, current.SortKey, current.AssetID, limit)
+	args := append(slices.Clone(p.args), current.Folder, current.CameraMake, current.CameraModel, p.fingerprint, p.fingerprint, current.BodySerialNumber, current.SortKey, window, current.SortKey, current.AssetID, MaxPhotoStackFrames+1)
 	rows, err := p.probes[direction].QueryContext(ctx, args...)
 	if err != nil {
 		return nil, err
@@ -738,10 +719,7 @@ func (p *photoStackPager) probe(ctx context.Context, current photoStackFrame, wi
 		next.applyMetadataFingerprint(actual, p.fingerprint)
 		frames = append(frames, next)
 	}
-	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-		return nil, err
-	}
-	return frames, nil
+	return frames, rows.Err()
 }
 
 // hydrate reuses page inputs and hydrates each walk's unread candidates together.
@@ -749,7 +727,6 @@ func (p *photoStackPager) hydrate(ctx context.Context, inputs map[string]photoSt
 	missing := make(map[string]photoStackFrame)
 	for id, frame := range inputs {
 		if cached, ok := p.frames[id]; ok {
-			cached.Block = frame.Block
 			inputs[id] = cached
 		} else {
 			missing[id] = frame
@@ -777,97 +754,93 @@ func (p *photoStackPager) hydrateFrames(ctx context.Context, frames []photoStack
 	return err
 }
 
-// walk appends up to MaxPhotoStackFrames in-scope frames of frame's camera
-// stream in one direction while each lies within the applicable capture gap.
+// walk appends frame's chain in one direction until it breaks or exceeds the cap.
 func (p *photoStackPager) walk(ctx context.Context, frame photoStackFrame, forward bool, component *photoStackComponent) error {
 	for current := frame; len(component.frames) <= MaxPhotoStackFrames; {
-		window, ok := photoStackReach(current.SortKey, p.reach*photoStackProbeGaps, forward)
+		window, ok := photoStackReach(current.SortKey, p.gap*photoStackProbeGaps, forward)
 		if !ok {
 			return nil
 		}
-		read, err := p.probe(ctx, current, window, forward, MaxPhotoStackFrames+1-len(component.frames))
-		if err != nil || len(read) == 0 {
+		read, err := p.probe(ctx, current, window, forward)
+		if err != nil {
 			return err
 		}
 		for _, next := range read {
-			reach, ok := photoStackReach(current.SortKey, p.reach, forward)
-			if !ok || forward && next.SortKey > reach || !forward && next.SortKey < reach {
+			if !p.linked(current, next, forward) {
 				return nil
 			}
 			component.frames = append(component.frames, next)
 			current = next
 		}
+		// Continue only while unread frames could still join: the window was
+		// full, or the last frame's reach passes the window bound.
+		reach, ok := photoStackReach(current.SortKey, p.gap, forward)
+		if !ok || len(read) <= MaxPhotoStackFrames && (forward && reach <= window || !forward && reach >= window) {
+			return nil
+		}
 	}
 	return nil
 }
 
-// component resolves frame's stack from its block: its run, or its hour of a long run.
+// component walks frame's stack in both directions, stopping once it exceeds the cap.
 func (p *photoStackPager) component(ctx context.Context, frame photoStackFrame) (*photoStackComponent, error) {
 	if found := p.components[frame.AssetID]; found != nil {
 		return found, nil
 	}
-	walks := [2]*photoStackComponent{{frames: []photoStackFrame{frame}}, {frames: []photoStackFrame{frame}}}
-	for i, walk := range walks {
-		if err := p.walk(ctx, frame, i == 1, walk); err != nil {
+	if len(p.vectors.indexes) > 0 {
+		chain, err := p.imageChain(ctx, frame)
+		if err != nil {
+			return nil, err
+		}
+		reach, ok := photoStackReach(chain[0].SortKey, photoStackImageWindowSeconds, true)
+		if ok && chain[len(chain)-1].SortKey <= reach && eligiblePhotoStack(chain) {
+			component := &photoStackComponent{frames: chain}
+			p.remember(component)
+			return component, nil
+		}
+	}
+	component := &photoStackComponent{frames: []photoStackFrame{frame}}
+	for _, forward := range []bool{false, true} {
+		if err := p.walk(ctx, frame, forward, component); err != nil {
 			return nil, err
 		}
 	}
-	window := slices.SortedFunc(slices.Values(slices.Concat(walks[0].frames, walks[1].frames[1:])), comparePhotoStackFrames)
-	blocked := photoStackBlocks(window, len(p.vectors.indexes) > 0)
-	position := slices.IndexFunc(blocked, func(candidate photoStackFrame) bool { return candidate.AssetID == frame.AssetID })
-	first, last := position, position+1
-	key := blocked[position].Block
-	for first > 0 && blocked[first-1].Block == key {
-		first--
-	}
-	for last < len(blocked) && blocked[last].Block == key {
-		last++
-	}
-	// Capture-gap chains keep their membership across image comparison boundaries.
-	for first > 0 {
-		reach, ok := photoStackReach(blocked[first-1].SortKey, p.gap, true)
-		if !ok || blocked[first].SortKey > reach {
-			break
-		}
-		first--
-		// An image stack in the previous hour may own this crossing burst.
-		// Include that hour so its first frame stays the grouping anchor.
-		previousBlock := blocked[first].Block
-		for first > 0 && blocked[first-1].Block == previousBlock {
-			first--
-		}
-	}
-	for last < len(blocked) {
-		reach, ok := photoStackReach(blocked[last-1].SortKey, p.gap, true)
-		if !ok || blocked[last].SortKey > reach {
-			break
-		}
-		last++
-	}
-	block := blocked[first:last]
-	for begin := 0; begin < len(block); {
-		end := begin + 1
-		for end < len(block) && block[end].Block == block[begin].Block {
-			end++
-		}
-		if end-begin <= MaxPhotoStackFrames {
-			if err := p.hydrateFrames(ctx, block[begin:end]); err != nil {
-				return nil, err
-			}
-		}
-		begin = end
-	}
-	for segment := range photoStackSegments(block, p.gap) {
-		// A truncated previous hour cannot establish its own image anchors.
-		if len(walks[0].frames) > MaxPhotoStackFrames && segment[0].Block == blocked[0].Block && blocked[0].Block != blocked[position].Block && len(segment) <= MaxPhotoStackFrames {
+	p.remember(component)
+	return component, nil
+}
+
+// imageChain probes far enough to accept a complete minute or reject a longer chain.
+func (p *photoStackPager) imageChain(ctx context.Context, frame photoStackFrame) ([]photoStackFrame, error) {
+	chain := []photoStackFrame{frame}
+	for _, forward := range []bool{false, true} {
+		window, ok := photoStackReach(frame.SortKey, 2*photoStackImageWindowSeconds, forward)
+		if !ok {
 			continue
 		}
-		// A probe limit can cut an edge chain; only an oversized one is certain.
-		if cut := len(walks[0].frames) > MaxPhotoStackFrames && segment[0].AssetID == window[0].AssetID || len(walks[1].frames) > MaxPhotoStackFrames && segment[len(segment)-1].AssetID == window[len(window)-1].AssetID; !cut || len(segment) > MaxPhotoStackFrames {
-			p.remember(&photoStackComponent{frames: segment})
+		read, err := p.probe(ctx, frame, window, forward)
+		if err != nil {
+			return nil, err
+		}
+		candidates := append([]photoStackFrame{frame}, read...)
+		if err := p.hydrateFrames(ctx, candidates); err != nil {
+			return nil, err
+		}
+		current := candidates[0]
+		chain[0] = current
+		for _, next := range candidates[1:] {
+			previous, following := current, next
+			if !forward {
+				previous, following = next, current
+			}
+			if !photoStackChained(previous, following, p.gap) && !photoStackImageLinked(previous, following) {
+				break
+			}
+			chain = append(chain, next)
+			current = next
 		}
 	}
-	return p.components[frame.AssetID], nil
+	slices.SortFunc(chain, comparePhotoStackFrames)
+	return chain, nil
 }
 
 func (p *photoStackPager) remember(component *photoStackComponent) {
@@ -908,11 +881,6 @@ func (p *photoStackPager) prime(ctx context.Context, batch []PhotoBrowseRow, aft
 	if err := p.hydrate(ctx, inputs); err != nil {
 		return err
 	}
-	// A partial batch cannot establish the first frame of an image stack.
-	// Resolve it through the folder probes in capture order instead.
-	if len(p.vectors.indexes) > 0 {
-		return nil
-	}
 	if after != nil && after.Missing {
 		return nil
 	}
@@ -951,19 +919,34 @@ func (p *photoStackPager) prime(ctx context.Context, batch []PhotoBrowseRow, aft
 	}
 	for _, frames := range partitions {
 		slices.SortFunc(frames, comparePhotoStackFrames)
-		for chain := range photoStackSegments(frames, p.gap) {
+		// Only gap walks create ineligible components. Propagate that result
+		// within each gap chain, even when image links connect separate bursts.
+		for first := 0; first < len(frames); {
+			next := first + 1
+			for next < len(frames) && photoStackChained(frames[next-1], frames[next], p.gap) {
+				next++
+			}
+			chain := frames[first:next]
+			first = next
 			if known := slices.IndexFunc(chain, func(frame photoStackFrame) bool { return p.components[frame.AssetID] != nil }); known >= 0 {
-				// Probing stops at the cap. Connected rows beyond that
-				// point share the ineligible classification.
 				if component := p.components[chain[known].AssetID]; component.ineligible {
 					for _, member := range chain {
 						p.components[member.AssetID] = component
 					}
 				}
-				continue
 			}
-			if inside(chain[0], false) && inside(chain[len(chain)-1], true) {
-				p.remember(&photoStackComponent{frames: slices.Clone(chain)})
+		}
+		for first := 0; first < len(frames); {
+			next := first + 1
+			for next < len(frames) && (photoStackChained(frames[next-1], frames[next], p.gap) || photoStackImageLinked(frames[next-1], frames[next])) {
+				next++
+			}
+			chain := frames[first:next]
+			first = next
+			if inside(chain[0], false) && inside(chain[len(chain)-1], true) && !slices.ContainsFunc(chain, func(frame photoStackFrame) bool { return p.components[frame.AssetID] != nil }) {
+				for group := range photoStackSegments(chain, p.gap) {
+					p.remember(&photoStackComponent{frames: slices.Clone(group)})
+				}
 			}
 		}
 	}

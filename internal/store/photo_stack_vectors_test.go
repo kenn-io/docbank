@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"encoding/json/v2"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
@@ -142,4 +144,52 @@ func TestPhotoStackVectorsUseOnlyCosineCompatibleSpaces(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestPhotoStackVectorReadersShareOneGeneration(t *testing.T) {
+	t.Parallel()
+	f := newImageEmbeddingCatalogFixture(t)
+	record, vector := f.publish(t)
+	index := newCursorIndexFixture(f)
+	index.add(record, vector)
+	index.generation(t, "concurrent-readers")
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	var loads atomic.Int32
+	loading := make(chan struct{})
+	q := photoStackLoadFailureQuerier{DB: f.s.db, beforeLoad: func() {
+		if loads.Add(1) == 8 {
+			close(loading)
+		}
+		select {
+		case <-loading:
+		case <-ctx.Done():
+		}
+	}}
+	type result struct {
+		reader *photoStackVectorReader
+		err    error
+	}
+	results := make(chan result, 8)
+	start := make(chan struct{})
+	for range 8 {
+		go func() {
+			<-start
+			reader, err := f.s.newPhotoStackVectorReader(ctx, q)
+			results <- result{reader, err}
+		}()
+	}
+	close(start)
+	var readers []*photoStackVectorReader
+	for range 8 {
+		got := <-results
+		require.NoError(t, got.err)
+		readers = append(readers, got.reader)
+	}
+	for _, reader := range readers {
+		require.Len(t, reader.indexes, 1)
+		require.Equal(t, map[string]string{index.space: browseHash("concurrent-readers")}, reader.heads)
+		require.Same(t, readers[0].indexes[0], reader.indexes[0])
+	}
+	require.Len(t, f.s.photoStackVectors, 1)
 }
