@@ -196,7 +196,9 @@ it("recovers after rename HTTP 422", async () => {
 it("keeps two selections across searches and starts a merge", async () => {
   vi.spyOn(api, "listPeople")
     .mockResolvedValueOnce({ items: [ada] })
-    .mockResolvedValueOnce({ items: [grace, person("zoe")] });
+    .mockResolvedValueOnce({
+      items: [grace, person("gary", { display_name: "Gary", display_name_folded: "gary" })],
+    });
   const people = new People("session", vi.fn());
   await people.load("Ada");
   people.toggle(people.items[0]!);
@@ -450,12 +452,19 @@ it("refreshes the loaded cards in place after a change elsewhere", async () => {
   people.toggle(rows[0]!);
   people.toggle(rows[30]!);
   // Another tab renames p0 and merges p1 away.
-  server = [{ ...rows[0]!, display_name: "Renamed", revision: 5 }, ...rows.slice(2)];
+  server = [
+    { ...rows[0]!, display_name: "P renamed", display_name_folded: "p renamed", revision: 5 },
+    ...rows.slice(2),
+  ];
   read.mockClear();
   await people.refresh();
   expect(read.mock.calls.every(([params]) => params?.query === "p")).toBe(true);
   expect(people.items).toHaveLength(48);
-  expect(people.items[0]).toMatchObject({ display_name: "Renamed", revision: 5 });
+  expect(people.items[0]).toMatchObject({
+    display_name: "P renamed",
+    display_name_folded: "p renamed",
+    revision: 5,
+  });
   expect(people.items.some((row) => row.person_id === "p1")).toBe(false);
   expect(people.cursor).toBe("48");
   expect(people.selected.map((row) => [row.person_id, row.revision])).toEqual([
