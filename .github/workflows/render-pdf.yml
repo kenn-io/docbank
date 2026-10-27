@@ -90,7 +90,6 @@ jobs:
           recipe_digest="$(sha256sum "$dockerfile" | cut -d' ' -f1)"
           image_tag="${IMAGE}:recipe-${recipe_digest:0:16}"
 
-          inspect_output=""
           if inspect_output="$(docker buildx imagetools inspect "$image_tag" 2>&1)"; then
             echo "Reusing $image_tag"
           elif grep -Eqi 'manifest unknown|not found|no such manifest' <<<"$inspect_output"; then

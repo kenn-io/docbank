@@ -4,6 +4,7 @@ LABEL org.opencontainers.image.source="https://github.com/kenn-io/docbank"
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+# The path-include keeps the targets of LibreOffice's /etc/libreoffice/registry/*.xcd.sample symlinks because renderpdf runtime discovery follows them.
 RUN echo 'path-include=/usr/share/doc/libreoffice-common/examples/*' > /etc/dpkg/dpkg.cfg.d/zz-libreoffice-examples \
     && apt-get \
       -o Acquire::Retries=5 \
