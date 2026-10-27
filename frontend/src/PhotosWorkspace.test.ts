@@ -4175,7 +4175,7 @@ it("names the photo being edited in the metadata panel header", async () => {
   expect(within(panel).queryByRole("heading", { name: "Metadata" })).toBeNull();
   photos.dispose();
 });
-it("starts Cull with captured fallback IDs", async () => {
+it("forwards the accepted photo action scope to Cull", async () => {
   vi.stubGlobal("indexedDB", new IDBFactory());
   vi.stubGlobal("IDBKeyRange", IDBKeyRange);
   vi.spyOn(api, "getPhotoSettings").mockResolvedValue({ revision: 1, burst_gap_seconds: 2 });
@@ -4191,6 +4191,8 @@ it("starts Cull with captured fallback IDs", async () => {
   photos.started = true;
   photos.snapshotID = "fallback-snapshot";
   photos.fallbackReason = "provider_unavailable";
+  const scope = { query: photoQuery, asset_ids: ["photo-2"] };
+  vi.spyOn(photos, "actionScope").mockResolvedValue(scope);
   const cache = new PhotoPreviewCache("scoped", vi.fn());
   render(PhotosWorkspace, { photos, cache, vaultID: "vault" });
   await fireEvent.click(screen.getByRole("button", { name: "Cull" }));
@@ -4198,7 +4200,7 @@ it("starts Cull with captured fallback IDs", async () => {
     expect(start).toHaveBeenCalledWith(
       expect.objectContaining({ mode: "lexical", text: "sunset" }),
       expect.any(Function),
-      ["photo-1"],
+      scope.asset_ids,
     ),
   );
   photos.dispose();

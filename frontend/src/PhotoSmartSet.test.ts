@@ -565,9 +565,8 @@ it("shows the frozen snapshot's search status", async () => {
       truncated: true,
     },
   });
-  render(PhotoSmartSet, { photos, albums, onnavigate: vi.fn() });
-  // The truncated and coverage-incomplete snapshot each get a search status, beside the frozen summary; the wording belongs to PhotoSearchStatus.test.ts.
-  expect(await screen.findAllByRole("status")).toHaveLength(3);
+  const { container } = render(PhotoSmartSet, { photos, albums, onnavigate: vi.fn() });
+  expect(container.querySelectorAll("p.photo-search-limit")).toHaveLength(2);
   photos.dispose();
   albums.dispose();
 });

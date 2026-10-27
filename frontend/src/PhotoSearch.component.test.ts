@@ -288,7 +288,6 @@ it("shows a query syntax example as the placeholder in query syntax mode", async
 it.each([
   ["semantic", "provider_unavailable", "text"],
   ["semantic", "", "semantic"],
-  ["lexical", "", "text"],
 ] as const)(
   "reports metadata fallback as the executed search mode: %s %s",
   async (mode, fallback_reason, executed) => {

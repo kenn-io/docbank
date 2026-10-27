@@ -3394,16 +3394,16 @@ it("retains the loaded prefix when the old tail moves to the front", async () =>
   photos.dispose();
 });
 
-it.each(["semantic", "ranked", "empty"] as const)(
+it.each(["hidden", "ranked", "empty"] as const)(
   "keeps %s actions within their accepted scope",
   async (mode) => {
-    const photos = new Photos("scoped", vi.fn(), false, {
+    const photos = new Photos("scoped", vi.fn(), mode === "hidden", {
       ...photoQuery,
       mode: "semantic",
       text: "sunset OR zzz",
     });
-    const fallback = mode === "semantic";
-    photos.fallbackReason = fallback ? "provider_unavailable" : "";
+    const fallback = mode === "hidden";
+    photos.fallbackReason = fallback ? "hidden_photos" : "";
     photos.snapshotID = fallback ? "" : "frozen";
     photos.items = mode === "empty" ? [] : [photo(1), photo(2)];
     photos.total = photos.items.length;
@@ -3617,6 +3617,7 @@ it.each(["semantic", "hybrid"] as const)(
           relevance_available: true,
           actual_mode: "lexical" as const,
           fallback_reason: "provider_unavailable",
+          snapshot_id: "fallback-snapshot",
         };
       return {
         items: request.cursor ? [photo(3)] : [photo(1), photo(2)],
@@ -3655,15 +3656,10 @@ it.each(["semantic", "hybrid"] as const)(
   },
 );
 
-it.each([
-  "fallback",
-  "metadata transition",
-  "late counts after recovery",
-  "refresh after recovery",
-])(
-  "keeps the right live timeline across %s between ranked and fallback results",
+it.each(["fallback", "metadata transition", "late metadata counts", "metadata to ranked"])(
+  "keeps the right live timeline across %s",
   async (transition) => {
-    const late = transition === "late counts after recovery";
+    const late = transition === "late metadata counts";
     const metadataFacet = {
       dimension: "camera",
       available: true,
@@ -3687,7 +3683,8 @@ it.each([
           })
         : Promise.resolve({ facets: [timeline] } as unknown as snapshots.PhotoTimelineCounts),
     );
-    let fallback = late || transition.endsWith("after recovery");
+    const recovering = late || transition === "metadata to ranked";
+    let fallback = false;
     vi.spyOn(api, "listPhotoAssets").mockImplementation(async (request) =>
       request.facets?.length
         ? { items: [], total: 7, facets: [metadataFacet], relevance_available: true }
@@ -3696,45 +3693,53 @@ it.each([
             total: 1,
             facets: [],
             relevance_available: true,
-            ...(fallback
-              ? {
-                  actual_mode: "lexical",
-                  fallback_reason:
-                    request.query.mode === "lexical" ? undefined : "provider_unavailable",
-                }
-              : { snapshot_id: "ranked" }),
+            ...(request.query.mode === "lexical"
+              ? { actual_mode: "lexical" }
+              : fallback
+                ? {
+                    actual_mode: "lexical",
+                    fallback_reason: "provider_unavailable",
+                    snapshot_id: "fallback-snapshot",
+                  }
+                : { snapshot_id: "ranked" }),
           },
     );
     const photos = new Photos("scoped", vi.fn(), false, {
       ...photoQuery,
-      mode: "semantic",
+      mode: recovering ? "lexical" : "semantic",
       text: "sunset",
     });
     if (late) {
       await photos.loadMore();
+      photos.resume();
       expect(finish).toBeTypeOf("function");
-      fallback = false;
-      await photos.refresh();
+      await photos.setQuery({ ...photos.query, mode: "semantic" });
       finish({ facets: [timeline] } as unknown as snapshots.PhotoTimelineCounts);
       await vi.waitFor(() => expect(photos.timelineLoading).toBe(false));
-    } else if (transition.endsWith("after recovery")) {
+    } else if (transition === "metadata to ranked") {
       photos.filtersOpen = true;
       await photos.loadMore();
+      photos.resume();
       await vi.waitFor(() => {
         expect(photos.timeline?.total).toBe(7);
         expect(photos.facets).toEqual([metadataFacet]);
       });
-      fallback = false;
-      await photos.refresh();
+      await photos.setQuery({ ...photos.query, mode: "semantic" });
       expect(photos.snapshotID).toBe("ranked");
     } else {
       await photos.loadMore();
       fallback = true;
       if (transition === "metadata transition") await photos.setQuery({ ...photoQuery });
       else await photos.refresh();
-      await vi.waitFor(() => expect(photos.timeline?.total).toBe(7));
-      expect(counts).toHaveBeenCalledOnce();
-      expect(counts.mock.calls[0][1].mode).toBe("lexical");
+      if (transition === "metadata transition") {
+        await vi.waitFor(() => expect(photos.timeline?.total).toBe(7));
+        expect(counts).toHaveBeenCalledOnce();
+        expect(counts.mock.calls[0][1].mode).toBe("lexical");
+      } else {
+        expect(photos.snapshotID).toBe("fallback-snapshot");
+        expect(photos.timeline).toBeUndefined();
+        expect(counts).not.toHaveBeenCalled();
+      }
     }
     photos.dispose();
   },

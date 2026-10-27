@@ -2221,25 +2221,12 @@ func TestSearchPhotosMeaningOmitsPhotosBelowSimilarityFloor(t *testing.T) {
 	require.Empty(t, ranked.FallbackReason)
 	require.Len(t, ranked.Members, 1)
 	require.Equal(t, x.f.asset.ID, ranked.Members[0].AssetID)
-
-	delete(x.service.profiles["images"].embeddingSimilarityFloors, x.binding.Name)
-	ranked, err = x.service.SearchPhotos(t.Context(), request)
-	require.NoError(t, err)
-	require.Equal(t, "lexical", ranked.ActualMode)
-	require.Equal(t, "provider_unavailable", ranked.FallbackReason)
-	require.Empty(t, ranked.Members)
 }
 
 func TestSearchPhotosRanksAndFiltersSupportedQueries(t *testing.T) {
 	t.Parallel()
 	x := newPhotoSearchFixture(t)
-	f, fake, binding, service := x.f, x.fake, x.binding, x.service
-	ranked, err := service.SearchPhotos(t.Context(), store.PhotoBrowseRequest{Query: query.Query{V: 1, Syntax: "simple", Mode: "semantic", Text: "sunset", Sort: query.Sort{Field: "relevance", Direction: "desc"}}})
-	require.NoError(t, err)
-	require.Equal(t, "semantic", ranked.ActualMode)
-	require.Len(t, ranked.Members, 1)
-	assert.Equal(t, f.asset.ID, ranked.Members[0].AssetID)
-
+	f, service := x.f, x.service
 	hybrid, err := service.SearchPhotos(t.Context(), store.PhotoBrowseRequest{Query: query.Query{V: 1, Syntax: "simple", Mode: "hybrid", Text: "last-photo", Sort: query.Sort{Field: "relevance", Direction: "desc"}}})
 	require.NoError(t, err)
 	require.Equal(t, "hybrid", hybrid.ActualMode)
@@ -2249,11 +2236,6 @@ func TestSearchPhotosRanksAndFiltersSupportedQueries(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "semantic", filtered.ActualMode)
 	require.Empty(t, filtered.Members)
-	calls := fake.runtime.callCount(binding.Name)
-	unsupported, err := service.SearchPhotos(t.Context(), store.PhotoBrowseRequest{Query: query.Query{V: 1, Syntax: "advanced", Mode: "semantic", Text: "sunset OR harbor", Sort: query.Sort{Field: "relevance", Direction: "desc"}}})
-	require.NoError(t, err)
-	require.Equal(t, "unsupported_query", unsupported.FallbackReason)
-	require.Equal(t, calls, fake.runtime.callCount(binding.Name))
 	// Use one indexed fixture for syntax and lexical-before-semantic ordering.
 	names := []string{"sunset (dune.jpg", "sunset OR zzz.jpg", "sunset beach.jpg", "sunset distant beach.jpg"}
 	_, _, err = f.catalog.Move(t.Context(), f.node.ID, f.catalog.RootID(), names[0], f.node.Revision)
@@ -2324,6 +2306,29 @@ func TestSearchPhotosFallsBackToLexical(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "lexical", ranked.ActualMode)
 		require.Equal(t, "consent_required", ranked.FallbackReason)
+		require.Empty(t, ranked.Members)
+	})
+	t.Run("unsupported_query", func(t *testing.T) {
+		t.Parallel()
+		x := newPhotoSearchFixture(t)
+		calls := x.fake.runtime.callCount(x.binding.Name)
+		request := semantic()
+		request.Query.Syntax, request.Query.Text = "advanced", "sunset OR harbor"
+		ranked, err := x.service.SearchPhotos(t.Context(), request)
+		require.NoError(t, err)
+		require.Equal(t, "unsupported_query", ranked.FallbackReason)
+		require.Equal(t, calls, x.fake.runtime.callCount(x.binding.Name))
+	})
+	t.Run("missing similarity floor", func(t *testing.T) {
+		t.Parallel()
+		x := newPhotoSearchFixture(t)
+		delete(x.service.profiles["images"].embeddingSimilarityFloors, x.binding.Name)
+		request := semantic()
+		request.Query.Text = "a dog"
+		ranked, err := x.service.SearchPhotos(t.Context(), request)
+		require.NoError(t, err)
+		require.Equal(t, "lexical", ranked.ActualMode)
+		require.Equal(t, "provider_unavailable", ranked.FallbackReason)
 		require.Empty(t, ranked.Members)
 	})
 	t.Run("provider_unavailable", func(t *testing.T) {

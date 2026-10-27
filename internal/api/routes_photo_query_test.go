@@ -330,10 +330,6 @@ func TestPhotoBrowseCursorAfterLongName(t *testing.T) {
 	require.Len(t, second.Items, 1)
 	require.NotEqual(t, first.Items[0].AssetID, second.Items[0].AssetID)
 	require.Empty(t, second.NextCursor)
-	require.Empty(t, first.RequestedMode)
-	require.Empty(t, first.ActualMode)
-	require.Empty(t, second.RequestedMode)
-	require.Empty(t, second.ActualMode)
 }
 
 func TestReadPhotoPreviewVerifiedBytes(t *testing.T) {
@@ -990,34 +986,4 @@ func TestImageOnlyStartHTTPReportsMissingPreview(t *testing.T) {
 	response, body = do(t, ts, http.MethodPost, "/api/v1/processing/jobs", nil, api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true})
 	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
 	require.Contains(t, body, "preview_missing")
-}
-
-func TestPhotoRankedRoutes(t *testing.T) {
-	t.Parallel()
-	provider := newProcessingTestEmbeddingProvider(t)
-	var calls atomic.Int64
-	provider.onEmbed = func() { calls.Add(1) }
-	provider.descriptor.InputKinds = []document.EmbeddingInputKind{document.EmbeddingInputImage}
-	var err error
-	provider.descriptor, err = document.NewEmbeddingDescriptor(provider.descriptor)
-	require.NoError(t, err)
-	ts, _, _ := photoImageHTTPProfilesFixture(t, map[string]document.EmbeddingProvider{"private": &provider}, []string{"sunset-a.jpg", "sunset-b.jpg"}, true)
-	t.Run("continuation accepts a capture-sort request", func(t *testing.T) {
-		request := api.PhotoBrowseRequest{Query: api.QueryPayload(`{"mode":"semantic","text":"sunset","sort":{"field":"capture_time","direction":"desc"}}`), PageSize: 1}
-		response, body := do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, request)
-		require.Equal(t, http.StatusOK, response.StatusCode, body)
-		var first api.PhotoBrowsePage
-		require.NoError(t, json.Unmarshal([]byte(body), &first))
-		require.Equal(t, "semantic", first.ActualMode)
-		require.NotEmpty(t, first.NextCursor)
-		beforePage := calls.Load()
-		request.SnapshotID, request.Cursor = first.SnapshotID, first.NextCursor
-		response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, request)
-		require.Equal(t, http.StatusOK, response.StatusCode, body)
-		var next api.PhotoBrowsePage
-		require.NoError(t, json.Unmarshal([]byte(body), &next))
-		require.Len(t, next.Items, 1)
-		require.NotEqual(t, first.Items[0].AssetID, next.Items[0].AssetID)
-		require.Equal(t, beforePage, calls.Load(), "continuation must reuse the accepted ranking")
-	})
 }

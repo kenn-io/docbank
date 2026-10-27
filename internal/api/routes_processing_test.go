@@ -1440,7 +1440,6 @@ func configureProcessingTestServiceWithProviders(t *testing.T, rendition documen
 
 type processingTestEmbeddingProvider struct {
 	descriptor document.EmbeddingDescriptor
-	onEmbed    func()
 }
 
 func newProcessingTestEmbeddingProvider(t *testing.T) processingTestEmbeddingProvider {
@@ -1480,9 +1479,6 @@ func (provider processingTestEmbeddingProvider) Descriptor() document.EmbeddingD
 func (provider processingTestEmbeddingProvider) Embed(_ context.Context, inputs []document.EmbeddingInput,
 	_ document.EmbeddingAuthorization,
 ) (document.EmbeddingResult, error) {
-	if provider.onEmbed != nil {
-		provider.onEmbed()
-	}
 	vectors := make([]document.EmbeddingVector, len(inputs))
 	for index, input := range inputs {
 		vectors[index] = document.EmbeddingVector{Key: input.Key, Values: []float32{1, 0}}
