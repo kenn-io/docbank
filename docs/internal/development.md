@@ -284,21 +284,60 @@ nullability and uniqueness describe structural relationships. Existing released
 SQLite constraints are compatibility commitments; this rule does not authorize
 removing them from an immutable schema or migration.
 
-Keep the development and operator contracts consistent with the existing
-projects:
+#### PostgreSQL reference implementations
+
+Start with AgentsView's [backend parity rules][av-storage], shared
+[`readbase.Catalog`][av-catalog], and [`QueryDialect`][av-dialect]. They show how
+to share operation semantics while keeping SQL syntax and typed loaders with
+the backend. Then compare msgvault's native archive and Kata's lifecycle code.
+The references below identify concrete implementations to reuse as patterns;
+their `internal` packages are not importable shared libraries.
 
 | Reference | Shared contract | Deliberate difference |
 | --- | --- | --- |
-| [msgvault embedded archive](https://github.com/kenn-io/msgvault/blob/main/pkg/archive/archive.go) | pgx through `database/sql`; separate setup and validation-only opening | Docbank serializes setup itself and requires a dedicated schema; it does not copy ambient-schema defaults or the existing msgvault migration ledger |
-| [Kata PostgreSQL operations](https://github.com/kenn-io/kata/blob/main/docs/operations/postgres.md) | `Schema`/`SchemaOwner` naming, owner/runtime role separation, transaction advisory lock, exact version validation | This internal API accepts a pool and has separate setup/validate calls; connection configuration and a public vault are not exposed yet |
-| [Kata numbered migrations](https://github.com/kenn-io/kata/blob/main/docs/development/postgres-migrations.md) | Canonical fresh DDL, first supported release as the floor, immutable numbered forward SQL and atomic version stamps | Version numbers and history belong to Docbank; no fictitious historical transitions |
-| Both projects' PostgreSQL test lanes | Explicit test-server connection, isolated databases, real role and transaction behavior, CI service container | No pgvector dependency; document search has not been ported |
+| AgentsView [catalog adapter][av-pg-catalog] and [query dialect][av-dialect] | Shared filtering, pagination and result assembly; explicit backend SQL and typed scanning | Docbank is an authoritative vault, not a disposable mirror. Keep its existing `Store` and mutation helpers; no replica registry or second implementation of audit and publication |
+| AgentsView [pool opening][av-connect] and [hosted validation][av-hosted] | Configure every pooled connection, validate effective schema at opening, and account for connection reuse | Its tenant/RLS schema is a separate design, not Docbank's permission model. Do not copy its CHECK constraints, tenant tables or triggers |
+| [msgvault embedded archive][mv-archive] | pgx through `database/sql`; separate setup and validation-only opening; `current_schema()` check | Docbank serializes setup itself and requires a dedicated schema; it does not copy ambient-schema defaults or msgvault's migration ledger |
+| [Kata PostgreSQL operations][kata-operations] | `Schema`/`SchemaOwner` naming, owner/runtime role separation, transaction advisory lock, exact version validation | This internal API accepts a pool and has separate setup/validate calls; connection configuration and a public vault are not exposed yet |
+| [Kata numbered migrations][kata-migrations] and [sequence export][kata-sequences] | Canonical fresh DDL, immutable forward SQL, atomic version stamps, and preservation of allocated IDs through transfer | Version history belongs to Docbank; sequence state must also preserve Docbank's audit allocation authority |
+| AgentsView [behavior parity][av-parity] and [pool tests][av-pool-tests]; msgvault and Kata PostgreSQL lanes | Exercise real backends and their public operations, including errors, filtering and reused connections | Keep Docbank's canonical setup fixture, separate runtime role, PostgreSQL 16/18 lanes and both SQLite builds; no new fixture schema or per-test container |
 
-Use existing Kit query/search facilities when implementing the actual store.
-Keep application schema ownership in Docbank; neither upstream project's
-`internal` packages are an importable shared migration library. Do not introduce
-a generic backend registry or a new SQL dialect layer before inspecting
-msgvault's existing dialect and the concrete Docbank queries it must support.
+Keep validation, result bounds, ordering and domain error meanings in the
+existing operation owner. Use shared SQL where it already works. Add a narrow
+backend-specific operation only for a demonstrated difference, such as a
+sequence query or typed SQLSTATE classification; msgvault's
+[`Dialect`][mv-dialect] separates these concerns. Do not rewrite SQL with a new
+general-purpose placeholder parser or copy the entire dialect interface.
+
+AgentsView's [curation retries][av-retries] and Kata's
+[transaction helper][kata-transactions] retry complete SQL transactions whose
+effects roll back together. This is not permission to retry Docbank mutation
+callbacks: filesystem publication and external work do not roll back with SQL.
+Keep the transaction and publication contract below. Multi-statement reads
+that need one view of data require an explicit snapshot, not the server's
+default isolation level.
+
+Use the existing Kit `search/sqlquery`, `search/postgres`, `search/lexical`,
+`search/hybrid` and `vector` packages before adding search machinery. Their
+presence does not establish Docbank search parity: retained-version eligibility,
+rendition selection, counts and cursors still belong to Docbank. Keep relevance
+differences explicit; do not promise identical FTS5 and PostgreSQL scores.
+
+[av-storage]: https://github.com/kenn-io/agentsview/blob/666b82857ec5458590396cca83401ad96fdf063b/docs/agents/storage.md#backend-parity
+[av-catalog]: https://github.com/kenn-io/agentsview/blob/666b82857ec5458590396cca83401ad96fdf063b/internal/readbase/catalog.go
+[av-dialect]: https://github.com/kenn-io/agentsview/blob/666b82857ec5458590396cca83401ad96fdf063b/internal/db/query_dialect.go
+[av-pg-catalog]: https://github.com/kenn-io/agentsview/blob/666b82857ec5458590396cca83401ad96fdf063b/internal/postgres/catalog.go
+[av-connect]: https://github.com/kenn-io/agentsview/blob/666b82857ec5458590396cca83401ad96fdf063b/internal/postgres/connect.go
+[av-hosted]: https://github.com/kenn-io/agentsview/blob/666b82857ec5458590396cca83401ad96fdf063b/internal/postgres/hosted_tenant.go
+[av-parity]: https://github.com/kenn-io/agentsview/blob/666b82857ec5458590396cca83401ad96fdf063b/internal/postgres/search_content_parity_pg_test.go
+[av-pool-tests]: https://github.com/kenn-io/agentsview/blob/666b82857ec5458590396cca83401ad96fdf063b/internal/postgres/hosted_tenant_pgtest_test.go
+[av-retries]: https://github.com/kenn-io/agentsview/blob/666b82857ec5458590396cca83401ad96fdf063b/internal/postgres/curation_retry.go
+[mv-archive]: https://github.com/kenn-io/msgvault/blob/0700dc36231fa7e02e56269141eaed0665e69742/pkg/archive/archive.go
+[mv-dialect]: https://github.com/kenn-io/msgvault/blob/0700dc36231fa7e02e56269141eaed0665e69742/internal/store/dialect.go
+[kata-operations]: https://github.com/kenn-io/kata/blob/0d49cbca0aaec5e09f5ff8edeac374966181f630/docs/operations/postgres.md
+[kata-migrations]: https://github.com/kenn-io/kata/blob/0d49cbca0aaec5e09f5ff8edeac374966181f630/docs/development/postgres-migrations.md
+[kata-sequences]: https://github.com/kenn-io/kata/blob/0d49cbca0aaec5e09f5ff8edeac374966181f630/internal/db/pgstore/export.go
+[kata-transactions]: https://github.com/kenn-io/kata/blob/0d49cbca0aaec5e09f5ff8edeac374966181f630/internal/db/pgstore/transaction.go
 
 #### Storage transactions and checksum recording
 
