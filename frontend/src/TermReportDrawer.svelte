@@ -44,7 +44,6 @@
 
   const page = getContext<boolean>(drawerPage);
   let editing = $state(!page);
-  let draftStarted = !page;
 
   const today = new Date().toISOString().slice(0, 10);
   const zone = "UTC";
@@ -207,15 +206,11 @@
   }
 
   function openDraft(): void {
-    if (!draftStarted) {
-      draft.terms[0].expression = initialExpression;
-      draftStarted = true;
-    }
+    draft.terms[0].expression = initialExpression;
     editing = true;
   }
 
   function useHistory(item: TermReportHistory): void {
-    draftStarted = true;
     editing = true;
     const source = item.request;
     draft = {

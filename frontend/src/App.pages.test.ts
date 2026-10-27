@@ -283,3 +283,22 @@ it("seeds Run report from the current search", async () => {
     "alpha",
   );
 });
+
+it("reseeds Run report from the current search after Cancel", async () => {
+  start("/searches");
+  await screen.findByRole("main", { name: "Searches" });
+  const search = screen.getByRole("searchbox", { name: "Search documents" });
+  await fireEvent.input(search, { target: { value: "alpha" } });
+  await fireEvent.click(screen.getByRole("button", { name: "Run report" }));
+  expect(screen.getByRole("textbox", { name: "Expression for term 1" })).toHaveProperty(
+    "value",
+    "alpha",
+  );
+  await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  await fireEvent.input(search, { target: { value: "beta" } });
+  await fireEvent.click(screen.getByRole("button", { name: "Run report" }));
+  expect(screen.getByRole("textbox", { name: "Expression for term 1" })).toHaveProperty(
+    "value",
+    "beta",
+  );
+});

@@ -433,7 +433,7 @@ it("offers Remove only when more than one term exists", async () => {
 });
 
 it.each(["edited", "history-loaded"])(
-  "keeps a %s report draft after canceling and changing the search",
+  "reseeds a canceled %s report draft from the current search",
   async (source) => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       if (String(input).startsWith("/api/v1/search-exports?"))
@@ -468,7 +468,7 @@ it.each(["edited", "history-loaded"])(
     await fireEvent.click(screen.getByRole("button", { name: "Run report" }));
     expect(screen.getByRole("textbox", { name: "Expression for term 1" })).toHaveProperty(
       "value",
-      source === "edited" ? "edited draft" : "alpha",
+      "beta",
     );
   },
 );
