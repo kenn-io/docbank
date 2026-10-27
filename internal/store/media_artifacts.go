@@ -258,7 +258,7 @@ func (s *Store) sealMediaContentTx(
 	}
 	const description = "Retained supplied media"
 	reference := "sha256:" + content.BlobHash
-	existing, err := nodeByPath(ctx, tx, s.rootID, virtualPath)
+	existing, err := s.nodeByPath(ctx, tx, virtualPath)
 	if err == nil {
 		if existing.IsDir() || existing.BlobHash != content.BlobHash ||
 			existing.Size != content.Size || existing.MimeType != content.MimeType {

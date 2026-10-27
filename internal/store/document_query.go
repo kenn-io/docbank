@@ -127,7 +127,7 @@ func (s *Store) ListDocuments(
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	root, err := nodeByPath(ctx, tx, s.rootID, normalized.PathPrefix)
+	root, err := s.nodeByPath(ctx, tx, normalized.PathPrefix)
 	if err != nil && !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrNotDir) {
 		return DocumentCatalogPage{}, fmt.Errorf("resolving document catalog prefix: %w", err)
 	}

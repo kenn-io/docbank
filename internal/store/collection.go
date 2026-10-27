@@ -198,7 +198,7 @@ func (s *Store) CollectionMembers(
 	if err := rows.Close(); err != nil {
 		return CollectionMemberPage{}, fmt.Errorf("closing collection %q members: %w", id, err)
 	}
-	paths, err := pathsOf(ctx, tx, ids)
+	paths, err := s.pathsOf(ctx, tx, ids)
 	if err != nil {
 		return CollectionMemberPage{}, err
 	}

@@ -126,7 +126,7 @@ func (s *Store) AuditHistoryPath(
 	ctx context.Context, path string, limit int, cursor string,
 ) (AuditEventPage, error) {
 	return s.auditHistorySnapshot(ctx, limit, cursor, func(tx *sql.Tx) (Node, error) {
-		return nodeByPath(ctx, tx, s.rootID, path)
+		return s.nodeByPath(ctx, tx, path)
 	})
 }
 

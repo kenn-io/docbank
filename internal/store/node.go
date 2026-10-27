@@ -100,7 +100,7 @@ func (s *Store) NodeViewByID(ctx context.Context, id int64) (NodeView, error) {
 // from one read transaction.
 func (s *Store) NodeViewByPath(ctx context.Context, path string) (NodeView, error) {
 	return s.nodeView(ctx, func(tx *sql.Tx) (Node, error) {
-		return nodeByPath(ctx, tx, s.rootID, path)
+		return s.nodeByPath(ctx, tx, path)
 	})
 }
 
@@ -167,10 +167,10 @@ type rowsQuerier interface {
 
 // NodeByPath walks live nodes from the root along the given /-separated path.
 func (s *Store) NodeByPath(ctx context.Context, path string) (Node, error) {
-	return nodeByPath(ctx, s.db, s.rootID, path)
+	return s.nodeByPath(ctx, s.db, path)
 }
 
-func nodeByPath(ctx context.Context, q rowQuerier, rootID int64, path string) (Node, error) {
+func (s *Store) nodeByPath(ctx context.Context, q rowQuerier, path string) (Node, error) {
 	segments := splitPath(path)
 	var nameErr error
 	for i, segment := range segments {
@@ -186,9 +186,9 @@ func nodeByPath(ctx context.Context, q rowQuerier, rootID int64, path string) (N
 	var err error
 	switch len(segments) {
 	case 0:
-		n, err = nodeByIDQuery(ctx, q, rootID)
+		n, err = nodeByIDQuery(ctx, q, s.rootID)
 	case 1:
-		n, err = childByName(ctx, q, rootID, segments[0])
+		n, err = childByName(ctx, q, s.rootID, segments[0])
 	default:
 		encoded, encodeErr := json.Marshal(segments)
 		if encodeErr != nil {
@@ -196,16 +196,18 @@ func nodeByPath(ctx context.Context, q rowQuerier, rootID int64, path string) (N
 		}
 		// Walk the live-name index, then load metadata only for the final node.
 		n, err = scanNode(q.QueryRowContext(ctx, `
-			WITH RECURSIVE resolved(id, depth) AS (
-				SELECT ?, 0
+			WITH RECURSIVE segments AS (`+s.jsonArrayRowsSQL()+`),
+			resolved(id, depth) AS (
+				SELECT CAST($2 AS BIGINT), 0
 				UNION ALL
 				SELECT child.id, resolved.depth + 1
-				FROM resolved JOIN nodes child ON child.parent_id = resolved.id
-					AND child.name = json_extract(?, '$[' || resolved.depth || ']')
+				FROM resolved JOIN segments ON segments.position = resolved.depth
+				JOIN nodes child ON child.parent_id = resolved.id
+					AND child.name = segments.value
 				WHERE child.trashed_at IS NULL
 			)
 			SELECT `+nodeCols+` FROM `+nodeFrom+`
-			WHERE n.id = (SELECT id FROM resolved WHERE depth = ?)`, rootID, string(encoded), len(segments)))
+			WHERE n.id = (SELECT id FROM resolved WHERE depth = $3)`, string(encoded), s.rootID, len(segments)))
 	}
 	if err != nil {
 		return Node{}, fmt.Errorf("path %q: %w", path, err)
@@ -370,7 +372,7 @@ func pathOf(ctx context.Context, q rowQuerier, id int64) (string, error) {
 }
 
 // pathsOf returns paths in input order, including repeated IDs. Every ID must exist.
-func pathsOf(ctx context.Context, q rowsQuerier, ids []int64) ([]string, error) {
+func (s *Store) pathsOf(ctx context.Context, q rowsQuerier, ids []int64) ([]string, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -381,16 +383,18 @@ func pathsOf(ctx context.Context, q rowsQuerier, ids []int64) ([]string, error) 
 	// Resolve only the selected nodes and their ancestors in one snapshot.
 	// Positions preserve ranking even when results share nodes or ancestors.
 	rows, err := q.QueryContext(ctx, `
-		WITH RECURSIVE ancestry(position, id, parent_id, name, depth) AS (
-			SELECT selected.key, n.id, n.parent_id, n.name, 0
-			FROM json_each(?) selected JOIN nodes n ON n.id = selected.value
+		WITH RECURSIVE selected AS (`+s.jsonArrayRowsSQL()+`),
+		ancestry(position, id, parent_id, path) AS (
+			SELECT selected.position, n.id, n.parent_id,
+				CASE WHEN n.parent_id IS NULL THEN '' ELSE '/' || n.name END
+			FROM selected JOIN nodes n ON n.id = CAST(selected.value AS BIGINT)
 			UNION ALL
-			SELECT a.position, n.id, n.parent_id, n.name, a.depth + 1
+			SELECT a.position, n.id, n.parent_id,
+				CASE WHEN n.parent_id IS NULL THEN a.path ELSE '/' || n.name || a.path END
 			FROM nodes n JOIN ancestry a ON n.id = a.parent_id
 		)
-		SELECT position, COALESCE('/' || GROUP_CONCAT(name, '/' ORDER BY depth DESC)
-			FILTER (WHERE parent_id IS NOT NULL), '/')
-		FROM ancestry GROUP BY position`, string(encoded))
+		SELECT position, COALESCE(NULLIF(path, ''), '/')
+		FROM ancestry WHERE parent_id IS NULL`, string(encoded))
 	if err != nil {
 		return nil, fmt.Errorf("querying node paths: %w", err)
 	}
@@ -413,4 +417,15 @@ func pathsOf(ctx context.Context, q rowsQuerier, ids []int64) ([]string, error) 
 		return nil, fmt.Errorf("computing node paths: %w", ErrNotFound)
 	}
 	return paths, nil
+}
+
+// jsonArrayRowsSQL expands the JSON array bound at $1 into zero-based positions
+// and values. Traversal and result assembly stay shared; only the engine's JSON
+// table function differs. One parameter avoids a bind limit on large batches.
+func (s *Store) jsonArrayRowsSQL() string {
+	if s.postgresSchema != "" {
+		return `SELECT ordinality - 1 AS position, value
+			FROM json_array_elements_text(CAST($1 AS json)) WITH ORDINALITY AS items(value, ordinality)`
+	}
+	return `SELECT key AS position, value FROM json_each($1)`
 }

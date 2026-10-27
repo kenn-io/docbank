@@ -315,7 +315,7 @@ func (s *Store) NodeSourceMetadataViewByID(ctx context.Context, id int64) (NodeS
 // from a single read snapshot.
 func (s *Store) NodeSourceMetadataViewByPath(ctx context.Context, path string) (NodeSourceMetadataView, error) {
 	return s.nodeSourceMetadataView(ctx, func(tx *sql.Tx) (Node, error) {
-		return nodeByPath(ctx, tx, s.rootID, path)
+		return s.nodeByPath(ctx, tx, path)
 	})
 }
 

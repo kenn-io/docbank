@@ -96,7 +96,7 @@ func (s *Store) MkdirPath(ctx context.Context, path string) (Node, string, error
 	var created Node
 	var createdPath string
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		parent, err := nodeByPath(ctx, tx, s.rootID, parentPath)
+		parent, err := s.nodeByPath(ctx, tx, parentPath)
 		if err != nil {
 			return fmt.Errorf("resolving directory parent %q: %w", parentPath, err)
 		}
@@ -563,7 +563,7 @@ func (s *Store) MovePathRevision(
 	var moved Node
 	var movedPath string
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		src, err := nodeByPath(ctx, tx, s.rootID, srcPath)
+		src, err := s.nodeByPath(ctx, tx, srcPath)
 		if err != nil {
 			return fmt.Errorf("resolving %q: %w", srcPath, err)
 		}
@@ -645,7 +645,7 @@ func (s *Store) resolveMoveTargetTx(
 		}
 		segs[i] = seg
 	}
-	if dest, err := nodeByPath(ctx, tx, s.rootID, destPath); err == nil {
+	if dest, err := s.nodeByPath(ctx, tx, destPath); err == nil {
 		if dest.IsDir() {
 			return dest.ID, keepName, nil
 		}
@@ -657,7 +657,7 @@ func (s *Store) resolveMoveTargetTx(
 		return 0, "", fmt.Errorf("destination %q: %w", destPath, ErrExists)
 	}
 	parentPath := "/" + strings.Join(segs[:len(segs)-1], "/")
-	parent, err := nodeByPath(ctx, tx, s.rootID, parentPath)
+	parent, err := s.nodeByPath(ctx, tx, parentPath)
 	if err != nil {
 		return 0, "", fmt.Errorf("resolving destination parent %q: %w", parentPath, err)
 	}

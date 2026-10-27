@@ -366,7 +366,7 @@ func (s *Store) changeTagAssignmentPath(
 ) (TagAssignmentChange, error) {
 	var result TagAssignmentChange
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		node, err := nodeByPath(ctx, tx, s.rootID, path)
+		node, err := s.nodeByPath(ctx, tx, path)
 		if err != nil {
 			return err
 		}
