@@ -473,9 +473,6 @@ it.each(["beta", ""])(
       expression,
     );
     expect(screen.queryByRole("textbox", { name: "Expression for term 2" })).toBeNull();
-    expect(
-      screen.getByRole("button", { name: `2000-01-01 - ${new Date().toISOString().slice(0, 10)}` }),
-    ).toBeTruthy();
     expect(screen.getByRole("radio", { name: "All documents" }).getAttribute("aria-checked")).toBe(
       "true",
     );
@@ -485,6 +482,17 @@ it.each(["beta", ""])(
     );
     expect(screen.getByRole("textbox", { name: "Report timezone" })).toHaveProperty("value", "UTC");
     expect(screen.queryByRole("checkbox", { name: /New source/ })).toBeNull();
+
+    await fireEvent.input(screen.getByRole("textbox", { name: "Expression for term 1" }), {
+      target: { value: "edited draft" },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await rerender({ initialExpression: "gamma" });
+    await fireEvent.click(screen.getByRole("button", { name: "Run report" }));
+    expect(screen.getByRole("textbox", { name: "Expression for term 1" })).toHaveProperty(
+      "value",
+      "gamma",
+    );
   },
 );
 
@@ -505,34 +513,4 @@ it("defaults a new report to the UTC date when Run report is chosen", async () =
   vi.setSystemTime(new Date("2026-09-21T00:00:01Z"));
   await fireEvent.click(screen.getByRole("button", { name: "Run report" }));
   expect(screen.getByRole("button", { name: "2000-01-01 - 2026-09-21" })).toBeTruthy();
-});
-
-it("reseeds a canceled edited report draft from the current search", async () => {
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-    if (String(input).startsWith("/api/v1/search-exports?"))
-      return json({ items: [{ request: original, summary: oldSummary }], total: 1 });
-    return json({ items: [], total: 0 });
-  });
-  const { rerender } = render(TermReportDrawer, {
-    props: {
-      session: "session",
-      initialExpression: "alpha",
-      onclose: vi.fn(),
-      onauthfailure: vi.fn(),
-    },
-    context: new Map([[drawerPage, true]]),
-  });
-  expect(await screen.findByRole("heading", { name: "Recent reports" })).toBeTruthy();
-  expect(screen.queryByRole("textbox", { name: "Expression for term 1" })).toBeNull();
-  await fireEvent.click(screen.getByRole("button", { name: "Run report" }));
-  const expression = screen.getByRole("textbox", { name: "Expression for term 1" });
-  expect(expression).toHaveProperty("value", "alpha");
-  await fireEvent.input(expression, { target: { value: "edited draft" } });
-  await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-  await rerender({ initialExpression: "beta" });
-  await fireEvent.click(screen.getByRole("button", { name: "Run report" }));
-  expect(screen.getByRole("textbox", { name: "Expression for term 1" })).toHaveProperty(
-    "value",
-    "beta",
-  );
 });

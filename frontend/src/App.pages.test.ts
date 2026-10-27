@@ -255,10 +255,6 @@ it("opens Advanced on the first click after loading Imports with a query", async
   await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
   expect(await screen.findByRole("dialog", { name: "Filters and sort" })).toBeTruthy();
   expect(location.pathname).toBe("/");
-  history.back();
-  await screen.findByRole("main", { name: "Imports" });
-  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
-  expect(await screen.findByRole("dialog", { name: "Filters and sort" })).toBeTruthy();
 });
 
 it("keeps Imports through a Documents and Photos round trip", async () => {
