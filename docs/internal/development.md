@@ -434,6 +434,26 @@ retrieval receipt without requiring `explain`; daemon clients reject an
 unrequested, missing, or malformed receipt. Keep the base search path free of
 provider construction and calls.
 
+### Change the container image
+
+`Dockerfile` is the only image recipe. `docker-bake.hcl` wraps it in the
+`oci-amd64` and `oci-arm64` targets that the central release pipeline builds,
+each on a native Linux runner. The pipeline sets `VERSION`, `OCI_VERSION`,
+`COMMIT`, `REVISION`, `BUILD_DATE`, and `OCI_OUTPUT_DIR`, then expects
+`<arch>.oci.tar` in that directory. Keep those target names, variables, and
+file names stable, and keep the binary's version string the same as in the
+native archives.
+
+To export both archives locally, use a builder that can write OCI archives for
+both architectures, such as a `docker-container` builder:
+
+```bash
+docker buildx bake oci
+```
+
+The archives go to ignored `dist/` unless `OCI_OUTPUT_DIR` names another
+directory.
+
 ## Design and documentation updates
 
 For every material design change:

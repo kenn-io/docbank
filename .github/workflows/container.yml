@@ -23,6 +23,22 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Check release Bake targets
+        env:
+          VERSION: v1.2.3
+          OCI_VERSION: 1.2.3
+          OCI_OUTPUT_DIR: /out
+        run: |
+          docker buildx bake --print oci > bake.json
+          for arch in amd64 arm64; do
+            jq -e --arg arch "$arch" '.target["oci-" + $arch]
+              | .platforms == ["linux/" + $arch]
+              and .args.VERSION == "1.2.3"
+              and .labels["org.opencontainers.image.version"] == "1.2.3"
+              and .output[0].type == "oci"
+              and .output[0].dest == "/out/" + $arch + ".oci.tar"' bake.json
+          done
+
       - name: Build nonroot image and check startup
         run: |
           trap 'docker rm -f docbank-smoke >/dev/null 2>&1 || true' EXIT

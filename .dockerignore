@@ -6,6 +6,7 @@
 .vercel-tools
 .cache
 site
+dist
 .site.next.*
 .site.previous
 docs/superpowers
