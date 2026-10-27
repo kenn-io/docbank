@@ -245,10 +245,10 @@ func (s *Store) PersonByID(ctx context.Context, id string) (Person, string, erro
 	return personByIDTx(ctx, s.db, id)
 }
 
-// personVisibleSQL is the browser's person visibility rule. It binds
-// visibleOnly, then hideLocked twice. Browser rename and merge use it inside
-// their write transactions, so a person that Hidden locking or sensitivity
-// conceals from the list cannot be edited by ID.
+// personVisibleSQL is the browser's person visibility rule for a page of
+// people. It binds visibleOnly, then hideLocked twice. Its uncorrelated
+// subqueries read person_document_assertions, which has no person_id index,
+// once per query. visiblePersonByIDSQL applies the same rule to one person.
 func personVisibleSQL(person string) string {
 	return `(?=0 OR (` + person + ` NOT IN (SELECT a.person_id FROM person_document_assertions a)
 		AND NOT EXISTS(SELECT 1 FROM document_people p WHERE p.person_id=` + person + `)
@@ -499,8 +499,24 @@ func WithVisiblePeopleOnly(ctx context.Context) context.Context {
 	return context.WithValue(ctx, visiblePersonContextKey{}, true)
 }
 
+// visiblePersonByIDSQL is personVisibleSQL for the person bound as ?1, with
+// hideLocked as ?2. Correlated EXISTS stops at the person's first assertion
+// instead of collecting every person's assertions, so the browser write fence
+// stays cheap in a mail-heavy vault. Checking for no evidence first scans the
+// assertions once for a person who has none.
+var visiblePersonByIDSQL = `SELECT EXISTS(SELECT 1 FROM persons WHERE person_id=?1 AND (
+ (NOT EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.person_id=?1)
+	AND NOT EXISTS(SELECT 1 FROM document_people p WHERE p.person_id=?1)
+	AND NOT EXISTS(SELECT 1 FROM person_identities i WHERE i.person_id=?1
+		AND i.origin='derived' AND i.confidence='exact_identifier'))
+ OR EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.person_id=?1 AND a.role<>'blind_copy'
+	AND (?2=0 OR ` + personVersionVisibleSQL("a.content_version_id") + `))
+ OR EXISTS(SELECT 1 FROM document_people p WHERE p.person_id=?1 AND p.sensitive=0
+	AND (?2=0 OR ` + personVersionVisibleSQL("p.content_version_id") + `))))`
+
 // fenceVisiblePeopleTx reports a person concealed from a browser write as not
-// found. API-key writes keep their full scope.
+// found, so a person that Hidden locking or sensitivity conceals from the list
+// cannot be edited by ID. API-key writes keep their full scope.
 func (s *Store) fenceVisiblePeopleTx(ctx context.Context, tx *sql.Tx, ids ...string) error {
 	if visible, _ := ctx.Value(visiblePersonContextKey{}).(bool); !visible {
 		return nil
@@ -512,8 +528,7 @@ func (s *Store) fenceVisiblePeopleTx(ctx context.Context, tx *sql.Tx, ids ...str
 	hideLocked := errors.Is(err, ErrHiddenLocked)
 	for _, id := range ids {
 		var found bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM persons WHERE person_id=? AND `+personVisibleSQL("persons.person_id")+`)`,
-			id, true, hideLocked, hideLocked).Scan(&found); err != nil {
+		if err := tx.QueryRowContext(ctx, visiblePersonByIDSQL, id, hideLocked).Scan(&found); err != nil {
 			return err
 		}
 		if !found {

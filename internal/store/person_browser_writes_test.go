@@ -1,6 +1,8 @@
 package store
 
 import (
+	"context"
+	"database/sql"
 	"strconv"
 	"testing"
 
@@ -310,4 +312,94 @@ func TestBrowserPersonWritesRequireVisibility(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, first.MergeID, replayed.MergeID)
 	})
+}
+
+// The browser can edit exactly the people its list shows, across each evidence
+// kind and both Hidden states.
+func TestBrowserWriteFenceMatchesBrowserList(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	library := browsePhotoNode(t, s, "library.jpg", fakeHash("f1"), "image/jpeg")
+	hidden := browsePhotoNode(t, s, "hidden.jpg", fakeHash("f2"), "image/jpeg")
+	mail := browsePhotoNode(t, s, "mail.txt", fakeHash("f3"), "text/plain")
+	asset, err := s.PhotoAssetForNode(ctx, hidden.ID)
+	require.NoError(t, err)
+	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
+	require.NoError(t, err)
+
+	type evidence struct{ assertion, people, identity string }
+	type visibility struct {
+		name             string
+		version          Node
+		evidence         evidence
+		locked, unlocked bool
+	}
+	cases := []visibility{
+		{name: "No evidence", locked: true, unlocked: true},
+		{name: "Library depicted", version: library, evidence: evidence{assertion: "depicted"}, locked: true, unlocked: true},
+		{name: "Hidden depicted", version: hidden, evidence: evidence{assertion: "depicted"}, unlocked: true},
+		{name: "Mail sender", version: mail, evidence: evidence{assertion: "sender"}, locked: true, unlocked: true},
+		{name: "Blind copy", version: mail, evidence: evidence{assertion: "blind_copy"}},
+		{name: "Open actor", version: mail, evidence: evidence{people: "0"}, locked: true, unlocked: true},
+		{name: "Sensitive actor", version: mail, evidence: evidence{people: "1"}},
+		{name: "Hidden actor", version: hidden, evidence: evidence{people: "0"}, unlocked: true},
+		{name: "Exact identifier", evidence: evidence{identity: "exact_identifier"}},
+		{name: "Probable identifier", evidence: evidence{identity: "probable"}, locked: true, unlocked: true},
+	}
+	people := map[string]visibility{}
+	for _, test := range cases {
+		person, err := s.CreatePerson(ctx, test.name, "operator")
+		require.NoError(t, err)
+		people[person.PersonID] = test
+		e := test.evidence
+		if e.assertion != "" {
+			_, err = s.db.ExecContext(ctx, `INSERT INTO person_document_assertions(assertion_id,content_version_id,person_id,role,action,note,recorded_at) VALUES(?,?,?,?,'assert','',?)`,
+				uuid.NewString(), test.version.CurrentVersionID, person.PersonID, e.assertion, nowRFC3339())
+			require.NoError(t, err)
+		}
+		if e.people != "" {
+			_, err = s.db.ExecContext(ctx, `INSERT INTO document_people(content_version_id,node_id,person_id,generation_id,role,actor_key,evidence_kind,evidence_id,confidence,basis,raw_label,claim_count,sensitive) VALUES(?,?,?,'g','author','actor','header','e','exact','header',?,1,?)`,
+				test.version.CurrentVersionID, test.version.ID, person.PersonID, test.name, e.people)
+			require.NoError(t, err)
+		}
+		if e.identity != "" {
+			_, err = s.db.ExecContext(ctx, `INSERT INTO person_identities(identity_id,person_id,kind,value_normalized,value_display,scope_kind,scope_value,normalization,origin,evidence_kind,evidence_id,confidence,recorded_at) VALUES(?,?,'email',?,?,'','','email_v1','derived','header','e',?,?)`,
+				uuid.NewString(), person.PersonID, person.PersonID+"@example.test", person.PersonID+"@example.test", e.identity, nowRFC3339())
+			require.NoError(t, err)
+		}
+	}
+	for _, scope := range []struct {
+		name     string
+		ctx      context.Context
+		unlocked bool
+	}{{"locked", ctx, false}, {"unlocked", WithPhotoHiddenToken(ctx, token), true}} {
+		t.Run(scope.name, func(t *testing.T) {
+			listed, _, err := s.PeopleByDisplayName(scope.ctx, "", "", "", 251, true, PeopleSearchOptions{})
+			require.NoError(t, err)
+			shown := map[string]bool{}
+			for _, person := range listed {
+				shown[person.PersonID] = true
+			}
+			browser := WithVisiblePeopleOnly(scope.ctx)
+			for id, test := range people {
+				want := test.locked
+				if scope.unlocked {
+					want = test.unlocked
+				}
+				require.Equal(t, want, shown[id], "%s listed", test.name)
+				err := s.withLogicalTx(browser, func(tx *sql.Tx) error {
+					return s.fenceVisiblePeopleTx(browser, tx, id)
+				})
+				if want {
+					require.NoError(t, err, "%s editable", test.name)
+				} else {
+					require.ErrorIs(t, err, ErrNotFound, "%s concealed", test.name)
+				}
+			}
+		})
+	}
 }
