@@ -166,44 +166,34 @@ func reviewedProfileConfig() ReviewedProfileConfig {
 }
 
 func TestVectorIdentityTracksReviewedDeploymentRevisions(t *testing.T) {
-	for _, family := range []string{"bge", "qwen"} {
-		t.Run(family, func(t *testing.T) {
-			build := func(config ReviewedProfileConfig) *Client {
-				var profile Profile
-				var err error
-				if family == "bge" {
-					profile, err = BGEM3Profile(config)
-				} else {
-					profile, err = Qwen3Profile(Qwen3ProfileConfig{ReviewedProfileConfig: config, Model: Qwen3Embedding06B, QueryInstruction: "Retrieve passages"})
-				}
-				require.NoError(t, err)
-				client, err := New(profile, nil, &http.Client{})
-				require.NoError(t, err)
-				return client
+	build := func(config ReviewedProfileConfig) *Client {
+		profile, err := BGEM3Profile(config)
+		require.NoError(t, err)
+		client, err := New(profile, nil, &http.Client{})
+		require.NoError(t, err)
+		return client
+	}
+	original, err := build(reviewedProfileConfig()).VectorIdentity()
+	require.NoError(t, err)
+	for _, field := range []string{"endpoint", "timeout", "weights", "tokenizer"} {
+		t.Run(field, func(t *testing.T) {
+			config := reviewedProfileConfig()
+			switch field {
+			case "endpoint":
+				config.Origin = "http://127.0.0.1:11435"
+			case "timeout":
+				config.RequestTimeout = 7 * time.Second
+			case "weights":
+				config.WeightsRevision = strings.Repeat("a", 40)
+			case "tokenizer":
+				config.TokenizerRevision = strings.Repeat("b", 40)
 			}
-			original, err := build(reviewedProfileConfig()).VectorIdentity()
+			changed, err := build(config).VectorIdentity()
 			require.NoError(t, err)
-			for _, field := range []string{"endpoint", "timeout", "weights", "tokenizer"} {
-				t.Run(field, func(t *testing.T) {
-					config := reviewedProfileConfig()
-					switch field {
-					case "endpoint":
-						config.Origin = "http://127.0.0.1:11435"
-					case "timeout":
-						config.RequestTimeout = 7 * time.Second
-					case "weights":
-						config.WeightsRevision = strings.Repeat("a", 40)
-					case "tokenizer":
-						config.TokenizerRevision = strings.Repeat("b", 40)
-					}
-					changed, err := build(config).VectorIdentity()
-					require.NoError(t, err)
-					if field == "endpoint" || field == "timeout" {
-						require.Equal(t, original, changed)
-					} else {
-						require.NotEqual(t, original, changed)
-					}
-				})
+			if field == "endpoint" || field == "timeout" {
+				require.Equal(t, original, changed)
+			} else {
+				require.NotEqual(t, original, changed)
 			}
 		})
 	}

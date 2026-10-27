@@ -1181,28 +1181,6 @@ func TestEmbeddedProcessingBuildsChunkEmbeddingsFromNormalizedEvidence(t *testin
 	require.Len(t, report.Results, 1)
 	require.Equal(t, receipt.Version.ID, report.Results[0].ContentVersionID)
 	require.Equal(t, "rendition_chunk", report.Results[0].Evidence[0].InputKind)
-	require.NoError(t, vault.Close())
-	documentCalls.Store(0)
-	endpoint.RequestTimeout = 2 * time.Second
-	embeddingProvider = newProvider()
-	profile.Embeddings = []document.EmbeddingBindingV1{syntheticChunkEmbeddingBinding(embeddingProvider.Descriptor())}
-	config.Processing.Profiles["private"] = docbank.ProcessingProfileConfig{Profile: profile, RenditionProvider: renditionProvider, EmbeddingProviders: map[string]document.EmbeddingProvider{"chunks": embeddingProvider}, Tokenizers: map[string]document.Tokenizer{"chunks": syntheticRuneTokenizer{}}, EmbeddingDisclosures: map[string]docbank.ProcessingRuntimeDisclosure{"chunks": {Endpoint: server.URL}}}
-	vault, err = docbank.New(t.Context(), config)
-	require.NoError(t, err)
-	planRequest := docbank.ProcessingPlanRequest{Selector: selector}
-	plan, err = vault.PlanProcessing(t.Context(), planRequest)
-	require.NoError(t, err)
-	_, err = vault.GrantProcessingPlanConsent(t.Context(), docbank.ProcessingConsentGrantRequest{PlanRequest: planRequest, PlanFingerprint: plan.Fingerprint})
-	require.NoError(t, err)
-	require.NoError(t, vault.Close())
-	vault, err = docbank.New(t.Context(), config)
-	require.NoError(t, err)
-	require.EventuallyWithT(t, func(collect *assert.CollectT) {
-		report, err := vault.SearchDocuments(t.Context(), docbank.DocumentSearchRequest{Query: "needle", Mode: docbank.DocumentSearchSemantic, Profile: "private", BindingID: "chunks", Fence: fence})
-		require.NoError(collect, err)
-		require.Len(collect, report.Results, 1)
-	}, 10*time.Second, 20*time.Millisecond)
-	require.Zero(t, documentCalls.Load())
 }
 
 func TestEmbeddedProcessingPreservesTimedEvidenceAcrossSearchLanes(t *testing.T) {

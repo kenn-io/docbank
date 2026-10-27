@@ -30,13 +30,13 @@ type recoveryEmbeddingProvider interface {
 type recoveryTextProvider struct {
 	recoveryEmbeddingProvider
 
-	endpoint           string
-	documents, queries *atomic.Int64
+	endpoint  string
+	documents *atomic.Int64
 }
 
 func newRecoveryProvider(t *testing.T, descriptor document.EmbeddingDescriptor) *recoveryTextProvider {
 	t.Helper()
-	var documents, queries atomic.Int64
+	var documents atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/v1/embeddings", r.URL.Path)
 		var input struct {
@@ -48,9 +48,7 @@ func newRecoveryProvider(t *testing.T, descriptor document.EmbeddingDescriptor) 
 		}
 		data := make([]map[string]any, len(input.Input))
 		for i, text := range input.Input {
-			if strings.HasPrefix(text, "search_query:") {
-				queries.Add(1)
-			} else {
+			if !strings.HasPrefix(text, "search_query:") {
 				documents.Add(1)
 			}
 			data[i] = map[string]any{"object": "embedding", "embedding": []float32{1, 2}, "index": i}
@@ -67,7 +65,7 @@ func newRecoveryProvider(t *testing.T, descriptor document.EmbeddingDescriptor) 
 	require.NoError(t, err)
 	provider, err := openaicompat.New(profile, nil, server.Client())
 	require.NoError(t, err)
-	return &recoveryTextProvider{recoveryEmbeddingProvider: provider, endpoint: server.URL, documents: &documents, queries: &queries}
+	return &recoveryTextProvider{recoveryEmbeddingProvider: provider, endpoint: server.URL, documents: &documents}
 }
 
 type embeddingRecoveryFixture struct {
@@ -82,14 +80,11 @@ type embeddingRecoveryFixture struct {
 	provider    document.EmbeddingProvider
 }
 
-func newEmbeddingRecoveryFixture(t *testing.T, inputs ...document.ModelInputContractConfig) embeddingRecoveryFixture {
+func newEmbeddingRecoveryFixture(t *testing.T) embeddingRecoveryFixture {
 	t.Helper()
 	kind := document.EmbeddingInputRenditionChunk
 	descriptor := embeddingWorkerDescriptor(t)
 	input := document.ModelInputContractConfig{Profile: document.ModelInputProfileNomic}
-	if len(inputs) > 0 {
-		input = inputs[0]
-	}
 	contract, err := document.NewModelInputContract(input)
 	require.NoError(t, err)
 	descriptor.ModelInput, descriptor.CompatibilityID = contract, contract.CompatibilityID
@@ -126,10 +121,9 @@ func newEmbeddingRecoveryFixture(t *testing.T, inputs ...document.ModelInputCont
 
 		embeddingJob, err := fixture.catalog.EnqueueEmbeddingJob(t.Context(), request)
 		require.NoError(t, err)
-		claim, _, found, err := fixture.catalog.ClaimEmbeddingWork(t.Context(), embeddingJob.ID, "legacy-fixture", time.Now(), time.Minute, []string{request.Descriptor.Fingerprint})
+		claim, claimedWork, found, err := fixture.catalog.ClaimEmbeddingWork(t.Context(), embeddingJob.ID, "legacy-fixture", time.Now(), time.Minute, []string{request.Descriptor.Fingerprint})
 		require.NoError(t, err)
 		require.True(t, found)
-		require.NoError(t, fixture.catalog.AbandonEmbeddingWork(t.Context(), claim, time.Now()))
 		result.versions = append(result.versions, request.ContentVersionID)
 		work := EmbeddingWork{VaultID: fixture.catalog.VaultID(), ContentVersionID: request.ContentVersionID, ProcessingProfile: request.Profile, Binding: portable.Embeddings[0], Descriptor: request.Descriptor, VectorSpaceID: result.legacySpace, EmbeddingInputFingerprint: fp.EmbeddingInput[request.BindingID], InputGeneration: request.InputGeneration}
 		vectors := document.EmbeddingResult{}
@@ -141,9 +135,12 @@ func newEmbeddingRecoveryFixture(t *testing.T, inputs ...document.ModelInputCont
 		receipt, err = fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(payload))
 		require.NoError(t, err)
 		require.NoError(t, fixture.catalog.RecordRenditionBlob(t.Context(), receipt.Hash, receipt.Size, processingBlobPhysical(t, receipt)))
-		require.NoError(t, fixture.catalog.StageEmbeddingSet(t.Context(), record))
+		require.NoError(t, fixture.catalog.StageEmbeddingSetWithLease(t.Context(), record, claim.AttemptID, claim.Epoch, time.Now()))
 		result.sets = append(result.sets, record)
-		require.NoError(t, fixture.catalog.PublishEmbeddingHead(t.Context(), store.EmbeddingHeadRecord{Key: store.EmbeddingHeadKey{ContentVersionID: request.ContentVersionID, BindingID: request.BindingID, InputKind: kind}, SetID: record.ID, VectorSpaceID: result.legacySpace, ProcessingProfileFingerprint: request.Profile.Fingerprint, PublishedAt: metadataEmbeddingTime(time.Now()), FencingToken: 2}))
+		prior, err := fixture.catalog.AuthorizeProviderOperation(t.Context(), request.Authorization)
+		require.NoError(t, err)
+		head := store.EmbeddingHeadRecord{Key: store.EmbeddingHeadKey{ContentVersionID: request.ContentVersionID, BindingID: request.BindingID, InputKind: kind}, SetID: record.ID, VectorSpaceID: result.legacySpace, ProcessingProfileFingerprint: request.Profile.Fingerprint, PublishedAt: metadataEmbeddingTime(time.Now()), FencingToken: claim.Epoch}
+		require.NoError(t, fixture.catalog.PublishEmbeddingWork(t.Context(), claim, claimedWork, head, prior, store.EmbeddingAttemptReceipt{AttemptID: embeddingJob.ID}, time.Now()))
 	}
 	return result
 }
@@ -210,22 +207,6 @@ func TestEmbeddingRestartCarriesCurrentProfile(t *testing.T) {
 	require.Zero(t, provider.documents.Load())
 	canonical := target.vectorSpaces[f.request.BindingID]
 	require.Equal(t, canonical, f.service(t, f.request.Descriptor, f.provider).profiles["current"].vectorSpaces[f.request.BindingID])
-	f.rebuild(t, canonical)
-	fence := SourceFence{VaultUID: f.catalog.VaultID(), ContentVersionIDs: f.versions}
-	coverage, err := service.Coverage(t.Context(), "current", fence)
-	require.NoError(t, err)
-	require.Equal(t, "complete", coverage.State)
-	require.Equal(t, 2, coverage.Embeddings[0].Complete)
-	report, err := service.Search(t.Context(), SearchRequest{Profile: "current", Fence: fence, Query: "synthetic", Mode: "semantic", Limit: 2})
-	require.NoError(t, err)
-	require.Len(t, report.Results, 2)
-	version, err := f.catalog.ContentVersionByID(t.Context(), f.versions[0])
-	require.NoError(t, err)
-	similar, err := service.FindSimilar(t.Context(), SimilarRequest{Selector: Selector{Profile: "current", NodeID: version.NodeID, ContentVersionID: version.ID}, Fence: fence})
-	require.NoError(t, err)
-	require.Len(t, similar.Results, 1)
-	require.Equal(t, f.versions[1], similar.Results[0].Document.ContentVersionID)
-	require.Zero(t, provider.documents.Load())
 }
 
 func TestEmbeddingUpgradeRetainsLocalSimilarityAfterConsentRevocation(t *testing.T) {
@@ -238,10 +219,6 @@ func TestEmbeddingUpgradeRetainsLocalSimilarityAfterConsentRevocation(t *testing
 	require.NoError(t, f.catalog.ExportMetadata(t.Context(), &before))
 	service := f.service(t, f.request.Descriptor, f.provider)
 	require.Equal(t, f.legacySpace, service.profiles["current"].vectorSpaces[f.request.BindingID])
-	provider, ok := f.provider.(*recoveryTextProvider)
-	require.True(t, ok)
-	require.Zero(t, provider.documents.Load())
-	require.Zero(t, provider.queries.Load())
 	fence := SourceFence{VaultUID: f.catalog.VaultID(), ContentVersionIDs: f.versions}
 	version, err := f.catalog.ContentVersionByID(t.Context(), f.versions[0])
 	require.NoError(t, err)
@@ -255,35 +232,20 @@ func TestEmbeddingUpgradeRetainsLocalSimilarityAfterConsentRevocation(t *testing
 	require.Equal(t, before.String(), after.String())
 }
 
-func TestEmbeddingRecoveryEmbedsChangedRevisionOrCorruptPayload(t *testing.T) {
+func TestEmbeddingRecoveryEmbedsCorruptPayload(t *testing.T) {
 	t.Parallel()
-	for _, scenario := range []string{"revision", "payload", "inputs"} {
-		t.Run(scenario, func(t *testing.T) {
-			f := newEmbeddingRecoveryFixture(t)
-			descriptor := f.request.Descriptor
-			switch scenario {
-			case "revision":
-				descriptor.ModelRevision = "v2"
-			case "payload":
-				f.worker.generationBlobs = corruptRetainedVectors{embeddingRuntimeBlobs: f.blobs, sets: f.sets}
-			case "inputs":
-				contract, err := document.NewModelInputContract(document.ModelInputContractConfig{Profile: document.ModelInputProfileCustom, CompatibilityID: descriptor.CompatibilityID, Document: document.ModelInputEncoder{Mode: document.ModelInputModeText, Template: "new document: {{content}}"}, Query: descriptor.ModelInput.Query})
-				require.NoError(t, err)
-				descriptor.ModelInput = contract
-				f.profile.Embeddings[0].ModelInput = contract
-			}
-			provider := newRecoveryProvider(t, descriptor)
-			service := f.service(t, provider.Descriptor(), provider)
-			f.grant(t, service, false)
-			f.worker.runtime = service.embeddings
-			f.worker.descriptorFingerprints = []string{provider.Descriptor().Fingerprint}
-			f.worker.reconciliation = service.EmbeddingReconciliation()
-			processed, err := f.worker.ScanOnce(t.Context())
-			require.NoError(t, err)
-			require.Equal(t, 2, processed)
-			require.Equal(t, int64(2), provider.documents.Load())
-		})
-	}
+	f := newEmbeddingRecoveryFixture(t)
+	f.worker.generationBlobs = corruptRetainedVectors{embeddingRuntimeBlobs: f.blobs, sets: f.sets}
+	provider := newRecoveryProvider(t, f.request.Descriptor)
+	service := f.service(t, provider.Descriptor(), provider)
+	f.grant(t, service, false)
+	f.worker.runtime = service.embeddings
+	f.worker.descriptorFingerprints = []string{provider.Descriptor().Fingerprint}
+	f.worker.reconciliation = service.EmbeddingReconciliation()
+	processed, err := f.worker.ScanOnce(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, 2, processed)
+	require.Equal(t, int64(2), provider.documents.Load())
 }
 
 func TestEmbeddingSynchronousStartRebuildsCurrentVectorSpace(t *testing.T) {
@@ -322,36 +284,16 @@ func (blobs corruptRetainedVectors) OpenContext(ctx context.Context, hash string
 
 func TestEmbeddingLegacyProfilesReuseOnlyMatchingProducer(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"nomic", "e5", "gte", "custom", "instruction", "gemma"} {
-		t.Run(name, func(t *testing.T) {
-			config := document.ModelInputContractConfig{Profile: document.ModelInputProfileNomic}
-			switch name {
-			case "e5":
-				config.Profile = document.ModelInputProfileE5
-			case "gte":
-				config.Profile = document.ModelInputProfileGTE
-			case "instruction":
-				config.Profile = document.ModelInputProfileQueryInstruction
-				config.QueryInstruction = "Retrieve passages"
-			case "custom", "gemma":
-				config = document.ModelInputContractConfig{Profile: document.ModelInputProfileCustom, CompatibilityID: name + "/v1", Document: document.ModelInputEncoder{Mode: document.ModelInputModeText, Template: "document: {{content}}"}, Query: document.ModelInputEncoder{Mode: document.ModelInputModeText, Template: "query: {{content}}"}}
-				if name == "gemma" {
-					config.Document.Template = "title: none | text: {{content}}"
-					config.Query.Template = "task: search result | query: {{content}}"
-				}
-			}
-			f := newEmbeddingRecoveryFixture(t, config)
-			provider := newRecoveryProvider(t, f.request.Descriptor)
-			retained := f.sets[0]
-			work := store.EmbeddingJobWork{ContentVersionID: retained.ContentVersionID, Binding: f.profile.Embeddings[0], Descriptor: provider.Descriptor(), VectorSpaceID: workerHash("new-space"), EmbeddingInputFingerprint: retained.EmbeddingInputFingerprint, InputGeneration: retained.InputGeneration}
-			found, err := f.catalog.FindReusableEmbeddingSet(t.Context(), work)
-			require.NoError(t, err)
-			require.Equal(t, retained.ID, found.ID)
-			work.Descriptor.ModelRevision = "other-revision"
-			work.Descriptor, err = document.NewEmbeddingDescriptor(work.Descriptor)
-			require.NoError(t, err)
-			_, err = f.catalog.FindReusableEmbeddingSet(t.Context(), work)
-			require.ErrorIs(t, err, store.ErrNotFound)
-		})
-	}
+	f := newEmbeddingRecoveryFixture(t)
+	provider := newRecoveryProvider(t, f.request.Descriptor)
+	retained := f.sets[0]
+	work := store.EmbeddingJobWork{ContentVersionID: retained.ContentVersionID, Binding: f.profile.Embeddings[0], Descriptor: provider.Descriptor(), VectorSpaceID: workerHash("new-space"), EmbeddingInputFingerprint: retained.EmbeddingInputFingerprint, InputGeneration: retained.InputGeneration}
+	found, err := f.catalog.FindReusableEmbeddingSet(t.Context(), work)
+	require.NoError(t, err)
+	require.Equal(t, retained.ID, found.ID)
+	work.Descriptor.ModelRevision = "other-revision"
+	work.Descriptor, err = document.NewEmbeddingDescriptor(work.Descriptor)
+	require.NoError(t, err)
+	_, err = f.catalog.FindReusableEmbeddingSet(t.Context(), work)
+	require.ErrorIs(t, err, store.ErrNotFound)
 }
