@@ -1745,6 +1745,66 @@ it.each(["top bar", "Advanced"])(
   },
 );
 
+it("keeps the applied query and unapplied draft when the inspector removes the active tag", async () => {
+  const file = node(2, "report.txt", baseVersion);
+  const tag = { id: tagID, name: "reviewed", revision: 1, assignment_count: 1 };
+  const tagSearch = {
+    hits: [{ node: file, path: file.path }],
+    limit: 1000,
+    truncated: false,
+    tag_id: tagID,
+  };
+  const harness = installHarness({
+    profiles: [],
+    files: [file],
+    baseReport: report("lexical", []),
+    tagSearch,
+  });
+  const fetch = harness.fetchMock.getMockImplementation()!;
+  let removed = false;
+  harness.fetchMock.mockImplementation((input, init) => {
+    const url = String(input);
+    if (url === `/api/v1/nodes/2/tags/${tagID}` && init?.method === "DELETE") {
+      removed = true;
+      tagSearch.hits = [];
+      return Promise.resolve(
+        json({
+          node: { ...file, revision: 2 },
+          tag: { ...tag, revision: 2, assignment_count: 0 },
+          changed: true,
+        }),
+      );
+    }
+    if (url.startsWith("/api/v1/nodes/2/tags?"))
+      return Promise.resolve(
+        json({ items: removed ? [] : [tag], total: removed ? 0 : 1, limit: 1000, offset: 0 }),
+      );
+    return fetch(input, init);
+  });
+  render(App);
+  await screen.findAllByText("report.txt");
+  await fireEvent.click(
+    screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }),
+  );
+  await fireEvent.click(await screen.findByRole("option", { name: "reviewed (1)" }));
+  await submitSearch("annual report");
+  await screen.findByText("Search results");
+  await screen.findByRole("button", { name: "Manage" });
+  const search = screen.getByRole("searchbox", { name: "Search documents" });
+  await fireEvent.input(search, { target: { value: "unfinished draft" } });
+  await fireEvent.click(screen.getByRole("button", { name: "Manage" }));
+  const dialog = await screen.findByRole("dialog", { name: "Manage tags for report.txt" });
+  await fireEvent.click(await within(dialog).findByRole("button", { name: "Remove tag reviewed" }));
+  await waitFor(() => expect(harness.legacyCalls()).toBe(2));
+  const requests = harness.fetchMock.mock.calls.filter(([url]) =>
+    String(url).startsWith("/api/v1/search?"),
+  );
+  const request = new URL(String(requests.at(-1)![0]), "https://example.com");
+  expect(request.searchParams.get("q")).toBe("annual report");
+  expect(request.searchParams.get("tag_id")).toBe(tagID);
+  expect((search as HTMLInputElement).value).toBe("unfinished draft");
+});
+
 it.each(["names", "meaning"])(
   "keeps unapplied drafts while trash and Undo refresh %s results",
   async (mode) => {

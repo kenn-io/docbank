@@ -3352,7 +3352,7 @@
           selectNode(rows[0]?.node.id);
         }
       }
-      if (activeQuery) void runSearch();
+      if (activeQuery) void runSearch(selectedID, activeQuery);
       else void loadTaggedNodes(receipt.tag.id);
     }
     void loadTagCatalog();
