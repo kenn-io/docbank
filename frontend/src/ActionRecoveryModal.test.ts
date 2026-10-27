@@ -174,7 +174,9 @@ it.each([
   if (expired) {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       expect(String(input)).toBe("/api/v1/audit/status");
-      return new Response(JSON.stringify({ detail: message, code: "unauthorized" }), { status: 401 });
+      return new Response(JSON.stringify({ detail: message, code: "unauthorized" }), {
+        status: 401,
+      });
     });
   } else {
     journal.confirmResume = async () => {
