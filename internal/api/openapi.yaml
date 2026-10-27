@@ -4543,6 +4543,8 @@ components:
           type: string
         outcome:
           type: string
+        profile_id:
+          type: string
       required:
         - outcome
         - candidate_count
