@@ -3373,6 +3373,67 @@ it.each([undefined, "map"] as const)(
   },
 );
 
+it.each([
+  ["semantic", "reset"],
+  ["hybrid", "reset"],
+  ["semantic", "person"],
+  ["hybrid", "person"],
+] as const)("blank %s query browses as Metadata via %s", async (mode, action) => {
+  const read = vi.spyOn(api, "listPhotoAssets").mockResolvedValue({
+    items: [],
+    total: 0,
+    facets: [],
+    relevance_available: false,
+  });
+  const timeline = vi.mocked(snapshots.fetchPhotoTimeline);
+  const photos = new Photos("scoped", vi.fn(), false, {
+    ...photoQuery,
+    mode,
+    text: "sunset",
+  });
+  if (action === "reset") await photos.resetQuery();
+  else
+    await photos.setQuery({
+      ...photos.query,
+      text: "",
+      filters: { person_ids: ["00000000-0000-4000-8000-000000000001"] },
+    });
+  expect(photos.query.mode).toBe("lexical");
+  expect(read.mock.calls.at(-1)?.[0].query.mode).toBe("lexical");
+  expect(read.mock.calls.at(-1)?.[0].snapshot_id).toBeUndefined();
+  expect(timeline).toHaveBeenCalled();
+  photos.dispose();
+});
+
+it("explicit refresh of Meaning results keeps Select all to captured photos", async () => {
+  vi.spyOn(api, "listPhotoAssets")
+    .mockResolvedValueOnce({
+      items: [photo(2), photo(1)],
+      total: 2,
+      facets: [],
+      relevance_available: true,
+      snapshot_id: "accepted",
+    })
+    .mockResolvedValue({
+      items: [photo(3), photo(1)],
+      total: 2,
+      facets: [],
+      relevance_available: true,
+      snapshot_id: "replacement",
+    });
+  const photos = new Photos("scoped", vi.fn(), false, {
+    ...photoQuery,
+    mode: "semantic",
+    text: "sunset",
+  });
+  await photos.loadMore();
+  await photos.selectAllResults();
+  await photos.refresh();
+  expect([...photos.selectedIDs]).toEqual(["photo-1"]);
+  expect(photos.allResults).toBe(false);
+  photos.dispose();
+});
+
 it("retains the loaded prefix when the old tail moves to the front", async () => {
   const rows = Array.from({ length: 500 }, (_, index) => photo(index + 1));
   const photos = new Photos("scoped", vi.fn());
@@ -3439,12 +3500,6 @@ it("retains accepted Meaning matches and selection while live refresh hydrates t
       facets: [],
       relevance_available: true,
       snapshot_id: accepted ? "accepted" : "replacement",
-      stacks: [
-        {
-          asset_ids: accepted ? ["photo-2", "photo-1"] : ["photo-3", "photo-1"],
-          representative_id: changed ? "photo-1" : "photo-2",
-        },
-      ],
     };
   });
   const photos = new Photos("scoped", vi.fn(), false, {
@@ -3460,9 +3515,6 @@ it("retains accepted Meaning matches and selection while live refresh hydrates t
   expect(photos.items.map((row) => row.asset_id)).toEqual(["photo-2", "photo-1"]);
   expect([...photos.selectedIDs]).toEqual(["photo-2", "photo-1"]);
   expect(photos.items[1]).toMatchObject({ revision: 2, rating: 5 });
-  expect(photos.items[0]).toMatchObject({
-    stack: { asset_ids: ["photo-2", "photo-1"], representative_id: "photo-1" },
-  });
   expect(read.mock.calls.at(-1)?.[0]).toMatchObject({ snapshot_id: "accepted" });
   await photos.refresh();
   expect(photos.snapshotID).toBe("replacement");

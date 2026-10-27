@@ -14,7 +14,8 @@ export function photoSearchSort(
 }
 
 export function rankedOrder(query: Query): Query {
-  return query.mode !== "lexical" && query.text.trim()
+  if (!query.text.trim()) return { ...query, mode: "lexical" };
+  return query.mode !== "lexical"
     ? { ...query, sort: { field: "relevance", direction: "desc" } }
     : query;
 }

@@ -1340,6 +1340,7 @@ export class Photos {
     live = false,
   ) {
     if (this.disposed) return false;
+    const snapshotID = this.snapshotID;
     // A live refresh leaves metadata editing usable; revalidate drops targets that left.
     if (!live) this.concealMetadata();
     this.controller.abort();
@@ -1446,10 +1447,13 @@ export class Photos {
       if (staged.fallbackReason && !staged.snapshotID && !this.timeline) void this.loadTimeline();
       if (!this.authored.targets.length)
         this.selection =
-          this.allResults && !captured
+          this.allResults && !captured && staged.snapshotID === snapshotID
             ? { selectedIDs: new Set(candidate.keys()), anchorID: undefined }
             : reconcileIDSelection(this.selection, eligible);
-      if (!this.authored.targets.length && !this.selection.selectedIDs.size)
+      if (
+        staged.snapshotID !== snapshotID ||
+        (!this.authored.targets.length && !this.selection.selectedIDs.size)
+      )
         this.allResults = false;
       // Selected photos beyond the window keep acting on the revisions just read.
       this.trashTargets = [

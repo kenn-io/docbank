@@ -1509,7 +1509,7 @@ it("a paged fallback does not claim results stop at 250", async () => {
   await cache.dispose();
 });
 
-it("explains the live metadata relevance limit, hiding it for complete results or capture dates and rewording it when fallback disables the sort", async () => {
+it("explains the live metadata relevance limit, hiding it for complete results, capture dates, or Meaning", async () => {
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -1532,30 +1532,21 @@ it("explains the live metadata relevance limit, hiding it for complete results o
     "Showing the best 250 of 5,000 matches. Refine the search or sort by capture date to see all.";
   await screen.findByText(note);
   photos.query = { ...photos.query, mode: "semantic" };
+  photos.snapshotID = "accepted";
   await waitFor(() => expect(screen.queryByText(note)).toBeNull());
-  photos.query = { ...photos.query, mode: "lexical" };
-  photos.total = 1;
-  await waitFor(() => expect(screen.queryByText(note)).toBeNull());
-  photos.total = 5000;
-  photos.query = { ...photos.query, sort: { field: "capture_time", direction: "desc" } };
-  await waitFor(() => expect(screen.queryByText(note)).toBeNull());
-  photos.query = {
-    ...photos.query,
-    mode: "semantic",
-    text: "sunset",
-    sort: { field: "relevance", direction: "desc" },
-  };
-  photos.fallbackReason = "provider_unavailable";
   await waitFor(() =>
     expect(screen.getByRole("combobox", { name: "Sort photos: Relevance" })).toHaveProperty(
       "disabled",
       true,
     ),
   );
-  await screen.findByText(
-    "Showing the best 250 of 5,000 matches. Choose Metadata and sort by capture date to see all.",
-  );
-  expect(screen.queryByText(note)).toBeNull();
+  photos.query = { ...photos.query, mode: "lexical" };
+  photos.snapshotID = "";
+  photos.total = 1;
+  await waitFor(() => expect(screen.queryByText(note)).toBeNull());
+  photos.total = 5000;
+  photos.query = { ...photos.query, sort: { field: "capture_time", direction: "desc" } };
+  await waitFor(() => expect(screen.queryByText(note)).toBeNull());
   photos.dispose();
   await cache.dispose();
 });

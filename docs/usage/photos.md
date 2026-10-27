@@ -855,7 +855,7 @@ Library groups adjacent capture times from the same import folder, camera make, 
 
 Clearing the search box returns to Metadata browse. Meaning and Hybrid requests with blank text also use Metadata browse.
 
-Meaning and Hybrid keep their result membership, order, and search status while paging and during background updates. Flags, ratings, rotation, and previews show current values on each page and background refresh. Only an explicit refresh or query change retrieves new matches. Ranked results show individual photos, without stacks, filter counts, or a date timeline. Hidden view uses authorized metadata matches and explains the fallback.
+Meaning and Hybrid keep their result membership, order, and search status while paging and during background updates. Flags, ratings, rotation, and previews show current values on each page and background refresh. Only an explicit refresh, trashing from the results, or a query change retrieves new matches; Select all keeps the photos it captured. Ranked results show individual photos, without stacks, filter counts, or a date timeline. Hidden view uses authorized metadata matches and explains the fallback.
 
 Choose a **Burst gap** from 1 to 30 seconds in the Cull header to regroup existing photos. Capture-time pages keep each stack together. A photo with missing or outdated camera details groups as one with no serial, so it stacks only with other photos that have no serial. Per-photo flags and ratings remain available. Unreadable originals leave camera details unavailable until they can be read; background extraction retries them. A notice says groups can change after details update, and Cull refreshes them when you choose **Retry grouping** or change the burst gap.
 
