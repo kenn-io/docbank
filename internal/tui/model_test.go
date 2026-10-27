@@ -2522,6 +2522,23 @@ func TestJobsViewShowsLifecycleAndCompleteFailure(t *testing.T) {
 	}
 }
 
+func TestIdleJobHasNoFinishTime(t *testing.T) {
+	backend := newFakeBackend()
+	backend.jobs = []api.Job{{Name: "watch:inbox", Status: "running", Busy: false, StartedAt: "2026-07-22T11:00:00Z"}}
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model.width, model.height = 100, 14
+	model, cmd := updateModel(t, model, runeKey('J'))
+	model = runModelCommand(t, model, cmd)
+	row := model.renderJobRow(model.jobs[0])
+	assert.Contains(t, row, "IDLE")
+	assert.True(t, strings.HasSuffix(row, "  -"), row)
+	model, _ = updateModel(t, model, key(tea.KeyEnter))
+	detail := strings.Join(model.jobDetailLines(model.width), "\n")
+	assert.Contains(t, detail, "Status: idle")
+	assert.Contains(t, detail, "Finished: -")
+}
+
 func TestClosingJobsInvalidatesDelayedLoad(t *testing.T) {
 	model, err := New(t.Context(), newFakeBackend())
 	require.NoError(t, err)

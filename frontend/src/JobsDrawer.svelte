@@ -310,9 +310,7 @@
                             <dt>Status</dt>
                             <dd class="state" data-tone={member.status}>
                               <span class="state-label">
-                                {member.status === "running" && !member.busy
-                                  ? "Idle"
-                                  : statusLabel(member.status)}
+                                {statusLabel(member.status)}
                               </span>
                             </dd>
                           </div>

@@ -57,7 +57,7 @@ export function jobLanes(jobs: Job[], controls: LaneControl[] = []) {
       total: known
         ? progressJobs.reduce((sum, member) => sum + member.total_objects!, 0)
         : undefined,
-      active: members.some(activeJob),
+      active: active.length > 0,
     };
   }).sort((a, b) => a.lane.localeCompare(b.lane));
 }

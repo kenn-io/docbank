@@ -119,7 +119,7 @@ describe("activity lanes", () => {
       title: "Photo checkout",
       completed: 1,
       total: 3,
-      active: false,
+      active: true,
       control,
     });
     expect(

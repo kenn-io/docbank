@@ -830,7 +830,6 @@ func pathContains(parent, child string) bool {
 }
 
 func (w *Watcher) scan(ctx context.Context, root *watchRoot) error {
-	defer jobs.ReportBusy(ctx, false)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -1097,6 +1096,7 @@ func (w *Watcher) scanDirectory(
 					})
 				})
 			}
+			jobs.ReportBusy(ctx, false)
 		}
 		if access, ok := errors.AsType[*SourceAccessError](err); ok && w.reject != nil &&
 			!errors.Is(err, ErrSourceChanged) &&
