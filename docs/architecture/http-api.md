@@ -1461,7 +1461,7 @@ Active operator assertions other than `blind_copy` make names searchable on visi
 
 Recent-first ranking starts a typed-name search from matching people, joins their namesakes, and looks up their active `depicted` assertions through `person_document_assertions_person`, indexed by `(person_id, role, action)`. Browser visibility checks also use per-person assertion lookups. SQLite reads and sorts all matching people's visible evidence before returning ranked rows. The application consumes those rows newest first and stops after filling the page and finishing timestamp ties. It then fills any remaining places with unranked people in name order. An empty query keeps the assertion-first scan, including unrelated mail assertions. Photo summaries apply to the listed people; photo eligibility and the unranked tail retain their existing queries.
 
-With 50,000 people, 10,000 mail contacts, and 2,025,400 assertions on an AMD EPYC 7763 using CGO SQLite, the table compares back-to-back runs of base `1475c2a3a` and head `7bbe346c7` in one session, both with `-benchtime=300ms -count=1`. Timings vary with cache state and system load.
+With 50,000 people, 10,000 mail contacts, and 2,025,400 assertions on an AMD EPYC 7763 using CGO SQLite, the table compares back-to-back runs before and after the indexed lookups in one session, both with `-benchtime=300ms -count=1`. Timings vary with cache state and system load.
 
 | Benchmark case | Before | Indexed lookups |
 | --- | ---: | ---: |
