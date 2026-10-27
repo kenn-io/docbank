@@ -1459,7 +1459,21 @@ Active operator assertions other than `blind_copy` make names searchable on visi
 
 `recent_first=true` ranks name groups by the newest `recorded_at` among active, visible `depicted` assertions, then by folded name and ID. Namesakes share their group's rank and stay together. Naming a person on a new photo records a new assertion and moves the group up. Adding a face or whole-photo mark to an existing active assertion preserves its time. Merges preserve retained and moved assertion times. Locked Hidden evidence supplies no rank. People with no visible depicted evidence follow in name order. Paging reads live ranks: a falling rank can repeat a person, and a rising rank can move a group ahead of the cursor and skip it for the rest of that pass. Restart from the first page to see skipped groups. Cursors bind the query, projection, order, and Hidden scope for browser, photo-summary, and recent-first listings. A refused cursor returns `422 cursor_expired`; restart from the first page.
 
-Recent-first ranking walks active `depicted` assertions newest first, finishes timestamp ties, and stops when the page fills. It then fills any remaining places with unranked people in name order. The query plan scans `person_document_assertions`, including unrelated mail assertions. Measured costs at 100,000 people are about 124 ms for a 24-card page and 93 ms for a 100-row prefix picker. With 50,000 people and 10,000 mail contacts on an AMD EPYC 7763, one iteration measured 2.72 s for `page-24-name`, 3.35 s for `page-24-recent`, 0.89 s for `page-24-name-summary`, 1.00 s for `page-24-recent-summary`, 3.42 s for `page-100-recent-prefix`, 0.28 s for `page-100-recent-prefix-none`, and 5.96 s for `page-24-recent-unranked-tail`. `photo_summary` reads only the listed people's assertions. Measure with `go test -tags fts5 ./internal/store -run '^$' -bench 'BenchmarkPeopleRecentAtVaultScale/50000' -benchtime=1x`.
+Recent-first ranking starts a typed-name search from matching people, joins their namesakes, and looks up their active `depicted` assertions through `person_document_assertions_person`, indexed by `(person_id, role, action)`. Browser visibility checks also use per-person assertion lookups. Ranking reads newest evidence first, finishes timestamp ties, and stops when the page fills. It then fills any remaining places with unranked people in name order. An empty query keeps the assertion-first scan, including unrelated mail assertions. Photo summaries apply to the listed people; photo eligibility and the unranked tail retain their existing queries.
+
+With 50,000 people, 10,000 mail contacts, and 2,025,400 assertions on an AMD EPYC 7763 using CGO SQLite, measured costs are:
+
+| Benchmark case | Time |
+| --- | ---: |
+| `page-24-name` | 0.469 ms |
+| `page-24-recent` | 433.85 ms |
+| `page-24-name-summary` | 432.71 ms |
+| `page-24-recent-summary` | 361.33 ms |
+| `page-100-recent-prefix` | 27.72 ms |
+| `page-100-recent-prefix-none` | 13.03 ms |
+| `page-24-recent-unranked-tail` | 453.82 ms |
+
+The assertion index occupies 141,463,552 bytes, about 134.9 MiB, on that fixture. It excludes timestamps and version IDs to limit its storage cost. A broad `p` prefix measured 85.9 ms at 5,000 people and 393 ms on the mail-heavy fixture, compared with 171.4 ms and 3.39 s before the indexed lookups. Measure the standard cases with `CGO_ENABLED=1 go test -tags fts5 ./internal/store -run '^$' -bench 'BenchmarkPeopleRecentAtVaultScale/50000' -benchtime=1x`.
 
 Browser rename and merge apply the same visibility rule to the canonical person inside the write transaction. A person the browser can't list, such as a sensitive-only person or a locked Hidden-only person, returns `404 not_found`. While Hidden is locked, browser merges require unlocking if either person has assertions or face candidate evidence on a Hidden photo. A merge replay resolves the survivor through aliases and checks its current visibility before returning the original receipt, even after another merge. Browser sessions receive merge receipts with zero moved-evidence counts and an empty absorbed name. API-key writes keep their full scope.
 
