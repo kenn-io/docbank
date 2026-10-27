@@ -28,6 +28,11 @@ func writeRedactionArchive(ctx context.Context, destination *os.File, pdf render
 		DecisionsSHA256: review.DecisionsSHA256, ReviewSHA256: review.SHA256, ResolvedSHA256: review.Resolved.SHA256,
 		Recipe: review.Recipe, PageCount: review.Resolved.PageCount, PDF: pdf.digest,
 		Text: RedactionFileDigest{Size: int64(len(text)), SHA256: sha256HexBytes(text)}}
+	if admitted.numbered != nil {
+		receipt.Contract = "native-pdf-numbered-result/v1"
+		receipt.AdmittedNodeRevision = 0
+		receipt.Numbered = admitted.numbered
+	}
 	encoded, err := canonical.Marshal(receipt)
 	if err != nil {
 		return RedactionArchive{}, err

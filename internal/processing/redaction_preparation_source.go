@@ -9,6 +9,7 @@ import (
 	"io"
 	"io/fs"
 
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/kit/pack"
 	"go.kenn.io/kit/packstore"
@@ -44,18 +45,22 @@ func (service *Service) readNativePDFSource(ctx context.Context, selection Nativ
 	if view.Version.MimeType != "application/pdf" {
 		return nil, ErrRedactionPreparationUnsupported
 	}
-	stream, size, err := service.blobs.OpenStreamContext(ctx, selection.Source.SHA256)
+	return service.readNativePDFBlob(ctx, selection.Source)
+}
+
+func (service *Service) readNativePDFBlob(ctx context.Context, source document.PageSource) ([]byte, error) {
+	stream, size, err := service.blobs.OpenStreamContext(ctx, source.SHA256)
 	if err != nil {
 		return nil, preparationSourceError(err)
 	}
-	data, readErr := io.ReadAll(io.LimitReader(&contextReader{ctx: ctx, reader: stream}, selection.Source.Size+1))
-	if readErr == nil && (size != selection.Source.Size || int64(len(data)) != size || !stream.Verified()) {
+	data, readErr := io.ReadAll(io.LimitReader(&contextReader{ctx: ctx, reader: stream}, source.Size+1))
+	if readErr == nil && (size != source.Size || int64(len(data)) != size || !stream.Verified()) {
 		readErr = ErrRedactionPreparationIntegrity
 	}
 	err = errors.Join(readErr, stream.Close(), ctx.Err())
 	if err == nil {
 		digest := sha256.Sum256(data)
-		if hex.EncodeToString(digest[:]) != selection.Source.SHA256 {
+		if hex.EncodeToString(digest[:]) != source.SHA256 {
 			err = ErrRedactionPreparationIntegrity
 		}
 	}

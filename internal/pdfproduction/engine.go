@@ -103,9 +103,11 @@ func QualifiedImageWrapperRecipeSHA256() string {
 	return hex.EncodeToString(digest[:])
 }
 
+var ErrVerifierVersion = errors.New("verifier version differs from the recorded recipe; use recorded-byte recovery or a matching Docbank version")
+
 func validateRecipe(r redaction.Recipe) error {
 	if r.WriterVersion != writerVersion || r.RendererSHA256 != wasmSHA256 || r.FontSHA256 != fontSHA256 || r.PaddingPixels != 2 {
-		return errors.New("PDF production recipe dependency identity mismatch")
+		return ErrVerifierVersion
 	}
 	if r.Contract != "raster-redaction/v1" || r.DPI != 300 && r.DPI != 600 || r.PaddingPixels < 0 || r.PaddingPixels > 16384 ||
 		r.MaxPixels <= 0 || r.MaxPixels > 40_000_000 || r.MaxAxis <= 0 || r.MaxAxis > 16384 ||

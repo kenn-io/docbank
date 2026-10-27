@@ -47,6 +47,21 @@ func classifyRedactionProblem(ctx context.Context, err error) *Error {
 		return NewError(503, "redaction_worker_timeout", "native PDF worker timed out")
 	case errors.Is(err, context.Canceled):
 		return NewError(500, "redaction_failed", "native PDF worker stopped; check daemon logs")
+	case errors.Is(err, store.ErrBatesReservationConflict), errors.Is(err, store.ErrBatesOverflow), errors.Is(err, store.ErrBatesLabelCollision), errors.Is(err, store.ErrInvalidBatesRequest):
+		switch {
+		case errors.Is(err, store.ErrBatesReservationConflict):
+			return NewError(409, "bates_reservation_conflict", "reservation conflicts with retained numbers or review; retry the original request")
+		case errors.Is(err, store.ErrBatesOverflow):
+			return NewError(422, "bates_overflow", "number range exceeds the namespace padding")
+		case errors.Is(err, store.ErrBatesLabelCollision):
+			return NewError(409, "bates_label_collision", "a label is already reserved")
+		default:
+			return NewError(422, "invalid_redaction_request", "numbered reservation is invalid")
+		}
+	case errors.Is(err, pdfproduction.ErrVerifierVersion):
+		return NewError(409, "redaction_verifier_version", err.Error())
+	case errors.Is(err, processing.ErrNumberedAllocationNotFound), errors.Is(err, processing.ErrNumberedNamespaceNotFound):
+		return NewError(404, "not_found", err.Error())
 	case errors.Is(err, store.ErrNotFound):
 		return NewError(404, "not_found", "selected PDF version is unavailable")
 	case errors.Is(err, processing.ErrRedactionInvalidRequest):
@@ -73,7 +88,7 @@ func classifyRedactionProblem(ctx context.Context, err error) *Error {
 			detail = "review the complete proposed selection, edit masks, and resolve again"
 		case "mapping_incomplete":
 			detail = "mask every ordered gap; unordered gaps require a whole-page mask"
-		case "invalid_decision", "decision_conflict":
+		case "invalid_decision", "decision_conflict", "endorsement_layout_conflict":
 		case "render_limit":
 			return NewError(422, "redaction_limit", "redaction exceeds its work limits; select a smaller region or review a whole-page mask")
 		default:

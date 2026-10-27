@@ -111,6 +111,7 @@ type exportBatesFileInput struct {
 type exportBatesFileOutput struct {
 	privateCache
 
+	Verification    string `json:"verification"`
 	AllocationID    string `json:"allocation_id"`
 	ArtifactID      string `json:"artifact_id"`
 	DestinationPath string `json:"destination_path"`
@@ -320,6 +321,7 @@ func exportBatesFile(ctx context.Context, lease *daemonLease, raw []byte, logger
 		}
 	}()
 	var verifiedSize int64
+	var verification string
 	receipt, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (*api.BatesExport, error) {
 		receipt, err := c.BatesExport(ctx, input.AllocationID)
 		if err != nil {
@@ -328,8 +330,9 @@ func exportBatesFile(ctx context.Context, lease *daemonLease, raw []byte, logger
 		if receipt.Size > maxBatesFileBytes {
 			return nil, errors.New("Bates export exceeds the local file export limit") //nolint:staticcheck // Bates is a proper name.
 		}
-		verified, err := c.DownloadBatesExportTo(ctx, receipt, staged)
+		verified, err := c.DownloadBatesExportTo(ctx, receipt, staged, nil)
 		verifiedSize = verified.Size
+		verification = verified.Verification
 		return &receipt, err
 	})
 	if err != nil {
@@ -352,7 +355,7 @@ func exportBatesFile(ctx context.Context, lease *daemonLease, raw []byte, logger
 	if publishErr != nil {
 		state = "published_durability_unknown"
 	}
-	return exportBatesFileOutput{privateCache: newPrivateCache(), AllocationID: receipt.AllocationID,
+	return exportBatesFileOutput{Verification: verification, privateCache: newPrivateCache(), AllocationID: receipt.AllocationID,
 		ArtifactID: receipt.ArtifactID, DestinationPath: input.DestinationPath, BlobSHA256: receipt.BlobSHA256,
 		ManifestSHA256: receipt.ManifestSHA256, Size: receipt.Size, State: state}, nil
 }

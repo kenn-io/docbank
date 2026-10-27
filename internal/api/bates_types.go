@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json/jsontext"
 	"fmt"
 
 	"go.kenn.io/docbank/internal/pdfstamp"
@@ -111,6 +112,7 @@ type BatesPlan struct {
 }
 
 type BatesAllocation struct {
+	RequestSHA256 string           `json:"request_sha256"`
 	AllocationID  string           `json:"allocation_id"`
 	NamespaceID   string           `json:"namespace_id"`
 	SnapshotID    string           `json:"snapshot_id"`
@@ -155,7 +157,7 @@ func batesPlanRequestStore(value BatesPlanRequest) store.BatesPlanRequest {
 }
 
 func batesAllocationDTO(value store.BatesAllocation) BatesAllocation {
-	return BatesAllocation{AllocationID: value.AllocationID, NamespaceID: value.NamespaceID,
+	return BatesAllocation{RequestSHA256: value.RequestSHA256, AllocationID: value.AllocationID, NamespaceID: value.NamespaceID,
 		SnapshotID: value.SnapshotID, RecipeSHA256: value.RecipeSHA256, State: value.State,
 		StartSequence: value.StartSequence, EndSequence: value.EndSequence, Labels: batesLabelsDTO(value.Labels),
 		CreatedAt: value.CreatedAt, CommittedAt: value.CommittedAt}
@@ -166,16 +168,13 @@ type BatesExportRequest struct {
 	Recipe       pdfstamp.Recipe `json:"recipe"`
 }
 
-type BatesArtifactPage struct {
-	Ordinal          int    `json:"ordinal"`
-	OccurrenceID     string `json:"occurrence_id"`
-	SourceBlobSHA256 string `json:"source_blob_sha256"`
-	SourcePage       int    `json:"source_page"`
-	OutputPage       int    `json:"output_page"`
-	Label            string `json:"label"`
-}
+// BatesArtifactPage uses the durable page receipt as its wire contract.
+type BatesArtifactPage = store.BatesArtifactPage
 
 type BatesExport struct {
+	Recipe         jsontext.Value      `json:"recipe,omitzero"`
+	Allocation     *BatesAllocation    `json:"allocation,omitzero"`
+	Namespace      *BatesNamespace     `json:"namespace,omitzero"`
 	ArtifactID     string              `json:"artifact_id"`
 	AllocationID   string              `json:"allocation_id"`
 	BlobSHA256     string              `json:"blob_sha256"`
@@ -241,11 +240,7 @@ type BatesDownloadTicket struct {
 
 func batesExportDTO(value store.BatesArtifact) BatesExport {
 	pages := make([]BatesArtifactPage, len(value.Pages))
-	for index, page := range value.Pages {
-		pages[index] = BatesArtifactPage{Ordinal: page.Ordinal, OccurrenceID: page.OccurrenceID,
-			SourceBlobSHA256: page.SourceBlobSHA256, SourcePage: page.SourcePage,
-			OutputPage: page.OutputPage, Label: page.Label}
-	}
+	copy(pages, value.Pages)
 	return BatesExport{ArtifactID: value.ArtifactID, AllocationID: value.AllocationID,
 		BlobSHA256: value.BlobSHA256, Size: value.Size, MediaType: value.MediaType,
 		PageCount: value.PageCount, RecipeSHA256: value.RecipeSHA256,

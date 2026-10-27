@@ -244,11 +244,7 @@ func batesAllocationFromStore(value store.BatesAllocation) BatesAllocation {
 
 func batesExportFromStore(value store.BatesArtifact) BatesExport {
 	pages := make([]BatesArtifactPage, len(value.Pages))
-	for index, page := range value.Pages {
-		pages[index] = BatesArtifactPage{Ordinal: page.Ordinal, OccurrenceID: page.OccurrenceID,
-			SourceBlobSHA256: page.SourceBlobSHA256, SourcePage: page.SourcePage,
-			OutputPage: page.OutputPage, Label: page.Label}
-	}
+	copy(pages, value.Pages)
 	return BatesExport{ArtifactID: value.ArtifactID, AllocationID: value.AllocationID,
 		BlobSHA256: value.BlobSHA256, Size: value.Size, MediaType: value.MediaType,
 		PageCount: value.PageCount, RecipeSHA256: value.RecipeSHA256,

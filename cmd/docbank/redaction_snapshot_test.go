@@ -143,7 +143,7 @@ func TestRedactionVerificationUsesOnlySnapshot(t *testing.T) {
 		require.Len(t, entries, 1)
 		require.Equal(t, "archive.zip", entries[0].Name())
 	}}
-	require.NoError(t, pdfproduction.VerifySaved(t.Context(), reader, contents.PDF.Size(), f.review.Resolved, f.review.Recipe))
+	require.NoError(t, pdfproduction.VerifySaved(t.Context(), reader, contents.PDF.Size(), f.review.Resolved, f.review.Recipe, nil))
 	require.Positive(t, reads)
 	require.Equal(t, redactionFixtureDigest(original).SHA256, snapshot.sha256)
 	info, err := snapshot.file.Stat()

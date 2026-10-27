@@ -2,7 +2,10 @@ package api_test
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json/v2"
+	"fmt"
+	"go.kenn.io/docbank/internal/canonical"
 	"net/http"
 	"strings"
 	"testing"
@@ -310,4 +313,46 @@ func TestBatesCandidateRouteRequiresOneSelectorAndReturnsBoundedCandidates(t *te
 	var page api.BatesCandidatePage
 	require.NoError(t, json.Unmarshal(found.Body.Bytes(), &page))
 	require.Empty(t, page.Items)
+}
+
+// Restore/publication carries the historical recipe as data. A dependency
+// upgrade must not turn this metadata read into an engine qualification check.
+func TestBatesReadRecordedStampEngine(t *testing.T) {
+	t.Parallel()
+	srv, s := newPackageTestServer(t)
+	snapshot, inputs := seedBatesSnapshot(t, s)
+	ns, err := s.EnsureBatesNamespace(t.Context(), "OLD", "", 6)
+	require.NoError(t, err)
+	recipe := batesTestRecipe(api.BatesNamespace{NamespaceID: ns.NamespaceID, Prefix: ns.Prefix, Padding: ns.Padding}, 1)
+	recipe.EngineIdentity.Version = "v0.14.0"
+	encoded, err := canonical.Marshal(recipe)
+	require.NoError(t, err)
+	request := store.BatesPlanRequest{NamespaceID: ns.NamespaceID, SnapshotID: snapshot.SnapshotID,
+		OperationID: uuid.NewString(), StartAt: 1, RecipeSHA256: fmt.Sprintf("%x", sha256.Sum256(encoded))}
+	for _, p := range inputs {
+		request.Pages = append(request.Pages, store.BatesPageInput{
+			OccurrenceID: p.OccurrenceID, UnstampedSHA256: p.UnstampedSHA256, SourcePage: p.SourcePage, VerifiedPageCount: p.VerifiedPageCount})
+	}
+	allocation, err := s.ReserveBatesRange(t.Context(), request)
+	require.NoError(t, err)
+	_, pages, err := s.BatesPublicationPlan(t.Context(), allocation.AllocationID)
+	require.NoError(t, err)
+	data := batesTestPDF(t, len(pages))
+	written, err := s.Blobs.WriteDetailedContext(t.Context(), bytes.NewReader(data))
+	require.NoError(t, err)
+	encoding, err := written.EncodingName()
+	require.NoError(t, err)
+	_, err = s.PublishBatesArtifact(t.Context(), store.BatesArtifactPublication{
+		ArtifactID: allocation.AllocationID, AllocationID: allocation.AllocationID, BlobSHA256: written.Hash, Size: written.Size,
+		PageCount: len(pages), RecipeJSON: encoded, Pages: pages}, store.BlobPhysical{Encoding: encoding,
+		StoredBytes: written.StoredSize, PackEligible: written.PackEligible, MD5: written.MD5, Created: written.Created})
+	require.NoError(t, err)
+	response := srv.get(t, "/api/v1/bates/exports/"+allocation.AllocationID)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var receipt api.BatesExport
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &receipt))
+	require.JSONEq(t, string(encoded), string(receipt.Recipe))
+	response = srv.get(t, "/api/v1/bates/exports/"+allocation.AllocationID+"/content")
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.Equal(t, data, response.Body.Bytes())
 }

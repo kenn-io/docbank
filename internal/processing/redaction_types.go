@@ -39,6 +39,7 @@ type RedactionResolveRequest struct {
 }
 
 type RedactionRenderRequest struct {
+	AllocationID uuid.UUID            `json:"allocation_id,omitzero" pattern:"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"`
 	Preparation  RedactionPreparation `json:"preparation"`
 	Masks        []RedactionMask      `json:"masks"`
 	ReviewSHA256 string               `json:"review_sha256"`
@@ -61,6 +62,7 @@ type RedactionFileDigest struct {
 }
 
 type RedactionReceipt struct {
+	Numbered             *NumberedDelivery   `json:"numbered,omitzero"`
 	Contract             string              `json:"contract"`
 	Selection            NativePDFSelection  `json:"selection"`
 	AdmittedNodeRevision int64               `json:"admitted_node_revision"`

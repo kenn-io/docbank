@@ -343,7 +343,8 @@ func TestPhotoDescriptionBackfillLoopAdmitsAndStops(t *testing.T) {
 	t.Parallel()
 	f := newPhotoDescriptionFixture(t)
 	f.grant(t, f.service, "vision")
-	drain, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	// The commit cancels the loop; elapsed time must not select a different exit.
+	drain, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	originalGate := f.service.gate
 	f.service.gate = &cancelMediaAfterCommitGate{processingOperationGate: originalGate, cancel: cancel}

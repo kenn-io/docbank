@@ -72,7 +72,7 @@ func (s *Store) PublishBatesArtifact(ctx context.Context, publication BatesArtif
 		return artifact, invalidBatesRequest("Bates artifact publication is incomplete")
 	}
 	recipeSHA := digestCatalogJSON(publication.RecipeJSON)
-	manifestSHA, err := batesArtifactManifestSHA(BatesArtifact{
+	manifestSHA, err := BatesArtifactManifestSHA(BatesArtifact{
 		ArtifactID: publication.ArtifactID, AllocationID: publication.AllocationID,
 		BlobSHA256: publication.BlobSHA256, Size: publication.Size, MediaType: batesArtifactMediaTypePDF,
 		PageCount: publication.PageCount, RecipeSHA256: recipeSHA, Pages: publication.Pages,
@@ -152,7 +152,7 @@ func (s *Store) PublishBatesArtifact(ctx context.Context, publication BatesArtif
 	return artifact, err
 }
 
-func batesArtifactManifestSHA(artifact BatesArtifact) (string, error) {
+func BatesArtifactManifestSHA(artifact BatesArtifact) (string, error) {
 	manifest, err := canonical.Marshal(struct {
 		Contract     string              `json:"contract"`
 		AllocationID string              `json:"allocation_id"`
@@ -299,7 +299,7 @@ func validateBatesArtifactState(ctx context.Context, q metadataQuerier) error {
 			artifact.PageCount > MaxBatesExportPages || artifact.PageCount != len(artifact.Pages) || artifact.RecipeSHA256 != digestCatalogJSON(artifact.RecipeJSON) {
 			return fmt.Errorf("validating Bates artifact %s: state, page count, or recipe differs: %w", id, ErrInvalidBatesLedger)
 		}
-		manifestSHA, err := batesArtifactManifestSHA(artifact)
+		manifestSHA, err := BatesArtifactManifestSHA(artifact)
 		if err != nil {
 			return fmt.Errorf("validating Bates artifact %s manifest: %w", id, err)
 		}

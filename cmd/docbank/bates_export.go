@@ -9,6 +9,7 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/processing"
 	"uuid"
 )
 
@@ -145,13 +146,32 @@ func newBatesExportHistoryCommand() *cobra.Command {
 }
 
 func newBatesExportDownloadCommand() *cobra.Command {
-	var overwrite bool
+	var overwrite, asJSON bool
+	var prepPath, masksPath, reviewPath string
 	command := &cobra.Command{
 		Example: `  docbank bates export download <allocation-id> ./stamped.pdf`,
 		Use:     "download <allocation-id> <local-file>",
 		Short:   "Download a hash-checked Bates export",
 		Args:    cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
+			if !daemonconn.IsCanonicalUUIDv4(args[0]) {
+				return usageError(errors.New("allocation must be a canonical lowercase UUIDv4"))
+			}
+			var review *processing.RedactionReview
+			if prepPath != "" || masksPath != "" || reviewPath != "" {
+				if prepPath == "" || masksPath == "" || reviewPath == "" {
+					return usageError(errors.New("provide --preparation, --masks and --review together"))
+				}
+				inputs, err := readRedactionInputs(prepPath, masksPath)
+				if err != nil {
+					return err
+				}
+				checked, err := readRedactionReview(reviewPath, inputs)
+				if err != nil {
+					return err
+				}
+				review = &checked
+			}
 			destination, err := prepareGetDestination(args[1], overwrite)
 			if err != nil {
 				return err
@@ -160,13 +180,14 @@ func newBatesExportDownloadCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			defer func() { _ = connection.Close() }()
 			artifact, err := connection.BatesExport(cmd.Context(), args[0])
 			if err != nil {
 				return err
 			}
-			data, err := connection.DownloadBatesExport(cmd.Context(), artifact)
+			data, verified, err := connection.DownloadBatesExport(cmd.Context(), artifact, review)
 			if err != nil {
-				return err
+				return redactionCLIError(err)
 			}
 			staging, err := makePrivateStagingDirAt(filepath.Dir(destination), "docbank-bates-export-")
 			if err != nil {
@@ -184,13 +205,39 @@ func newBatesExportDownloadCommand() *cobra.Command {
 			if err := publishGetFile(path, destination, overwrite); err != nil {
 				return err
 			}
+			if asJSON {
+				err := writeCLIJSON(cmd.OutOrStdout(), struct {
+					daemonconn.BatesDownloadResult
+
+					Destination string `json:"destination"`
+					State       string `json:"state"`
+				}{verified, destination, "published"})
+				if err != nil {
+					return fmt.Errorf("verified PDF is saved at %q: %w", destination, err)
+				}
+				return nil
+			}
+			claim := "Stamped labels verified."
+			switch verified.Verification {
+			case "recorded_bytes_and_numbers":
+				claim = "Recorded PDF bytes and numbering metadata verified; masks, approved text and rendered numbers were not rechecked."
+			case "masks_text_and_numbers":
+				claim = "PDF masks, text and numbers match the supplied review and reservation metadata."
+			}
+			if _, err = fmt.Fprintln(cmd.OutOrStdout(), claim); err != nil {
+				return fmt.Errorf("verified PDF is saved at %q: %w", destination, err)
+			}
 			_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s · %d pages · SHA-256 %s\n",
 				destination, artifact.PageCount, artifact.BlobSHA256)
 			if err != nil {
-				return fmt.Errorf("writing Bates export download receipt: %w", err)
+				return fmt.Errorf("verified PDF is saved at %q: %w", destination, err)
 			}
 			return nil
 		}}
+	command.Flags().BoolVar(&asJSON, "json", false, "print JSON saved identity and verification scope")
+	command.Flags().StringVar(&prepPath, "preparation", "", "preparation file for full numbered-PDF verification")
+	command.Flags().StringVar(&masksPath, "masks", "", "masks file for full numbered-PDF verification")
+	command.Flags().StringVar(&reviewPath, "review", "", "review file for full numbered-PDF verification")
 	command.Flags().BoolVar(&overwrite, "overwrite", false, "replace an existing destination")
 	return command
 }

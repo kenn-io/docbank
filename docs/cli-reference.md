@@ -1215,8 +1215,10 @@ expiry or revocation.
 ```
 docbank redaction prepare <path-or-id> [--version <version-uuid>] [--json]
 docbank redaction resolve <preparation.json> <masks.json> [--json]
+docbank redaction reserve <preparation.json> <masks.json> <review.json>
+  --namespace <uuid> --start <n> --retain-original [--json]
 docbank redaction render <preparation.json> <masks.json> <review.json> <output.zip>
-  [--overwrite] [--json]
+  [--allocation <uuid>] [--overwrite] [--json]
 docbank redaction verify <preparation.json> <masks.json> <review.json> <archive.zip> [--json]
 ```
 
@@ -1224,6 +1226,23 @@ Prepare, resolve and render use the daemon to inspect and redact a retained
 native PDF. Render saves one ZIP containing the fresh PDF, sanitized text and
 receipt. See [Review and render a native PDF](usage/document-processing.md#review-and-render-a-native-pdf)
 for masks, review files, runtime requirements and refusal handling.
+
+Reserve retains the unredacted original indefinitely and reserves a number per
+page. There is no release path. Render with `--allocation` adds the reserved
+footer labels, retains the verified PDF and saves the three-entry ZIP. Exact
+retries reuse the allocation and first published PDF. See
+[Numbered delivery](usage/document-processing.md#deliver-one-reviewed-pdf-with-bates-numbers)
+for retention consent and recovery by number.
+
+```
+docbank bates export download <allocation-id> <local-file> [--overwrite] [--json]
+  [--preparation <file> --masks <file> --review <file>]
+```
+
+Download without review inputs checks recorded bytes and numbering metadata for
+numbered output. All three inputs select full mask, text and number verification.
+JSON includes `verification`, size, SHA-256, page count, destination and state.
+Ordinary stamped PDFs keep their existing stamp verification.
 
 Verify checks a saved ZIP offline, without the source, a daemon or a configured
 page runtime. Embedded PDFium checks the PDF's masks, text and structure against

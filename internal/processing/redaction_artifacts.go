@@ -58,7 +58,7 @@ func renderRedactionArtifacts(ctx context.Context, dir string, admitted admitted
 	defer func() { resultErr = errors.Join(resultErr, engine.Close()) }()
 	source := pdfproduction.Source{Reader: bytes.NewReader(admitted.data), Size: int64(len(admitted.data)), SHA256: admitted.review.Selection.Source.SHA256, StagingDirectory: dir}
 	for _, page := range plan.Pages {
-		artifact, err := renderRedactionPage(ctx, engine, source, admitted.review, page, maxPNG)
+		artifact, err := renderRedactionPage(ctx, engine, source, admitted, page, maxPNG)
 		if err != nil {
 			return nil, redactionRenderFailure(err)
 		}
@@ -69,8 +69,9 @@ func renderRedactionArtifacts(ctx context.Context, dir string, admitted admitted
 }
 
 func renderRedactionPage(ctx context.Context, engine pdfproduction.Engine, source pdfproduction.Source,
-	review RedactionReview, page redaction.Page, maxPNG int64,
+	admitted admittedRedaction, page redaction.Page, maxPNG int64,
 ) (result redactionArtifact, resultErr error) {
+	review := admitted.review
 	raster, err := engine.Render(ctx, source, page, review.Recipe)
 	if err != nil {
 		return result, err
@@ -85,6 +86,16 @@ func renderRedactionPage(ctx context.Context, engine pdfproduction.Engine, sourc
 	if err != nil {
 		return result, err
 	}
+	layout := redaction.PageLayout{Source: page, Output: page}
+	endorsements := []redaction.Endorsement{}
+	if admitted.presentation != nil {
+		p := admitted.presentation[page.Number-1]
+		layout, endorsements = p.Layout, p.Endorsements
+		burned, err = pdfproduction.Endorse(burned, layout, endorsements, review.Recipe)
+		if err != nil {
+			return result, err
+		}
+	}
 	file, err := os.CreateTemp(source.StagingDirectory, "page-*.png")
 	if err != nil {
 		return result, err
@@ -95,12 +106,10 @@ func renderRedactionPage(ctx context.Context, engine pdfproduction.Engine, sourc
 	if err := png.Encode(writer, burned.Pixels); err != nil {
 		return result, fmt.Errorf("encoding redaction page: %w", err)
 	}
-	layout := redaction.PageLayout{Source: page, Output: page}
 	layoutBytes, err := canonical.Marshal(layout)
 	if err != nil {
 		return result, err
 	}
-	endorsements := []redaction.Endorsement{}
 	endorsementBytes, err := canonical.Marshal(endorsements)
 	if err != nil {
 		return result, err
@@ -115,7 +124,7 @@ func renderRedactionPage(ctx context.Context, engine pdfproduction.Engine, sourc
 	}
 	path := file.Name()
 	return redactionArtifact{path: path, text: text, artifact: pdfproduction.PageArtifact{
-		Page: page, Layout: layout, LayoutSHA256: sha256HexBytes(layoutBytes), Endorsements: endorsements,
+		Page: layout.Output, Layout: layout, LayoutSHA256: sha256HexBytes(layoutBytes), Endorsements: endorsements,
 		EndorsementsSHA256: sha256HexBytes(endorsementBytes), ResolvedSHA256: review.Resolved.SHA256, Runs: runs,
 		PNGSize: maxPNG - writer.remaining, PNGSHA256: hex.EncodeToString(hash.Sum(nil)),
 		OpenPNG: func() (io.ReadCloser, error) { return os.Open(path) },

@@ -991,6 +991,7 @@ export interface BatesAllocation {
   labels: BatesPageLabel[];
   namespace_id: string;
   recipe_sha256: string;
+  request_sha256: string;
   snapshot_id: string;
   start_sequence: number;
   state: string;
@@ -1053,17 +1054,30 @@ export interface BatesDownloadTicket {
   url: string;
 }
 
+export interface BatesNamespace {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  created_at: string;
+  namespace_id: string;
+  padding: number;
+  prefix: string;
+  suffix: string;
+}
+
 export interface BatesExport {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  allocation?: BatesAllocation;
   allocation_id: string;
   artifact_id: string;
   blob_sha256: string;
   created_at: string;
   manifest_sha256: string;
   media_type: string;
+  namespace?: BatesNamespace;
   page_count: number;
   pages: BatesArtifactPage[];
+  recipe?: unknown;
   recipe_sha256: string;
   size: number;
   state: string;
@@ -1108,16 +1122,6 @@ export interface BatesExportRequest {
   readonly $schema?: string;
   allocation_id: string;
   recipe: Recipe;
-}
-
-export interface BatesNamespace {
-  /** A URL to the JSON Schema for this object. */
-  readonly $schema?: string;
-  created_at: string;
-  namespace_id: string;
-  padding: number;
-  prefix: string;
-  suffix: string;
 }
 
 export interface BatesNamespacePage {
@@ -4043,6 +4047,179 @@ export interface NodePage {
   total: number;
 }
 
+export interface NumberedFooter {
+  font_sha256: string;
+  font_size_milli_points: number;
+  inset_bottom: number;
+  inset_top: number;
+  inset_x: number;
+  strip_height: number;
+}
+
+export interface NumberedNamespace {
+  id: string;
+  padding: number;
+  prefix: string;
+  start: number;
+  suffix: string;
+}
+
+export interface PDFRedactionPage {
+  frame_sha256: string;
+  height: number;
+  number: number;
+  span: PDFRedactionSpan;
+  width: number;
+}
+
+export interface PDFRedactionRecipe {
+  contract: string;
+  dpi: number;
+  font_sha256: string;
+  max_axis: number;
+  max_pixels: number;
+  max_staging_bytes: number;
+  padding_pixels: number;
+  page_timeout_seconds: number;
+  qualified_peak_rss_bytes: number;
+  renderer_sha256: string;
+  wasm_memory_bytes: number;
+  writer_version: string;
+}
+
+export interface NumberedRecipe {
+  contract: string;
+  decisions_sha256: string;
+  footer: NumberedFooter;
+  namespace: NumberedNamespace;
+  original_release_available: boolean;
+  original_retention: string;
+  page_count: number;
+  pages: PDFRedactionPage[];
+  preparation_sha256: string;
+  renderer: PDFRedactionRecipe;
+  resolved_sha256: string;
+  review_sha256: string;
+  selection: NativePDFSelection;
+  vault_uid: string;
+}
+
+export interface NumberedReservation {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  allocation_id: string;
+  contract: string;
+  pages: BatesArtifactPage[];
+  recipe: NumberedRecipe;
+  recipe_sha256: string;
+  request_sha256: string;
+  snapshot_id: string;
+  state: string;
+}
+
+export interface RedactionMask {
+  /** @pattern ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ */
+  id: string;
+  selector: PDFRedactionSelector;
+}
+
+export interface PageRational {
+  denominator: number;
+  numerator: number;
+}
+
+export interface PageFrameV1 {
+  axes: string;
+  contract: string;
+  /**
+     * @minItems 4
+     * @maxItems 4
+     */
+  crop_box: number[];
+  height: number;
+  input_units: string;
+  /**
+     * @minItems 4
+     * @maxItems 4
+     */
+  media_box: number[];
+  output_units: string;
+  page: number;
+  pixel_height?: number;
+  pixel_width?: number;
+  pixels_per_metre_x?: number;
+  pixels_per_metre_y?: number;
+  rotation: number;
+  source: PageSource;
+  /**
+     * @minItems 6
+     * @maxItems 6
+     */
+  transform: PageRational[];
+  width: number;
+}
+
+export interface PDFRedactionAtom {
+  boxes: PDFRedactionBox[];
+  span: PDFRedactionSpan;
+}
+
+export interface PDFRedactionGap {
+  anchor: number;
+  box: PDFRedactionBox;
+  unordered?: boolean;
+}
+
+export interface PDFRedactionUnit {
+  boxes: PDFRedactionBox[];
+  id: string;
+  kind: string;
+  spans: PDFRedactionSpan[];
+}
+
+export interface PDFRedactionTextMap {
+  atoms: PDFRedactionAtom[];
+  contract: string;
+  evidence_sha256: string;
+  gaps: PDFRedactionGap[];
+  pages: PDFRedactionPage[];
+  pdf_sha256: string;
+  sha256: string;
+  text: string;
+  units: PDFRedactionUnit[];
+}
+
+export interface PageBinding {
+  node_id: number;
+  revision: number;
+  source: PageSource;
+}
+
+export interface RedactionPreparation {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  contract: string;
+  evidence: NativePDFEvidence;
+  evidence_sha256: string;
+  frames: PageFrameV1[];
+  map: PDFRedactionTextMap;
+  selection: PageBinding;
+}
+
+export interface NumberedReservationRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  masks: RedactionMask[];
+  /** @pattern ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ */
+  namespace_id: string;
+  preparation: RedactionPreparation;
+  retain_original: boolean;
+  /** @pattern ^[0-9a-f]{64}$ */
+  review_sha256: string;
+  /** @minimum 1 */
+  start_at: number;
+}
+
 export interface OutputCounts {
   attachment_pdfs: number;
   attachments: number;
@@ -4071,40 +4248,6 @@ export interface OutputProblems {
   next: number;
   plan_id: string;
   total: number;
-}
-
-export interface PDFRedactionAtom {
-  boxes: PDFRedactionBox[];
-  span: PDFRedactionSpan;
-}
-
-export interface PDFRedactionGap {
-  anchor: number;
-  box: PDFRedactionBox;
-  unordered?: boolean;
-}
-
-export interface PDFRedactionPage {
-  frame_sha256: string;
-  height: number;
-  number: number;
-  span: PDFRedactionSpan;
-  width: number;
-}
-
-export interface PDFRedactionRecipe {
-  contract: string;
-  dpi: number;
-  font_sha256: string;
-  max_axis: number;
-  max_pixels: number;
-  max_staging_bytes: number;
-  padding_pixels: number;
-  page_timeout_seconds: number;
-  qualified_peak_rss_bytes: number;
-  renderer_sha256: string;
-  wasm_memory_bytes: number;
-  writer_version: string;
 }
 
 export interface PDFRedactionRedactionRegion {
@@ -4136,25 +4279,6 @@ export interface PDFRedactionResolved {
   runs: PDFRedactionRun[];
   sha256: string;
   uncertain_decision_ids: string[];
-}
-
-export interface PDFRedactionUnit {
-  boxes: PDFRedactionBox[];
-  id: string;
-  kind: string;
-  spans: PDFRedactionSpan[];
-}
-
-export interface PDFRedactionTextMap {
-  atoms: PDFRedactionAtom[];
-  contract: string;
-  evidence_sha256: string;
-  gaps: PDFRedactionGap[];
-  pages: PDFRedactionPage[];
-  pdf_sha256: string;
-  sha256: string;
-  text: string;
-  units: PDFRedactionUnit[];
 }
 
 export interface PackageBrowseVolume {
@@ -4517,48 +4641,6 @@ export interface PackageTimelineInputPage {
      */
   limit: number;
   next_after_row_id?: string;
-}
-
-export interface PageBinding {
-  node_id: number;
-  revision: number;
-  source: PageSource;
-}
-
-export interface PageRational {
-  denominator: number;
-  numerator: number;
-}
-
-export interface PageFrameV1 {
-  axes: string;
-  contract: string;
-  /**
-     * @minItems 4
-     * @maxItems 4
-     */
-  crop_box: number[];
-  height: number;
-  input_units: string;
-  /**
-     * @minItems 4
-     * @maxItems 4
-     */
-  media_box: number[];
-  output_units: string;
-  page: number;
-  pixel_height?: number;
-  pixel_width?: number;
-  pixels_per_metre_x?: number;
-  pixels_per_metre_y?: number;
-  rotation: number;
-  source: PageSource;
-  /**
-     * @minItems 6
-     * @maxItems 6
-     */
-  transform: PageRational[];
-  width: number;
 }
 
 export interface PageFrameView {
@@ -7105,23 +7187,6 @@ export interface QueryPreview {
   query_fingerprint: string;
 }
 
-export interface RedactionMask {
-  /** @pattern ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ */
-  id: string;
-  selector: PDFRedactionSelector;
-}
-
-export interface RedactionPreparation {
-  /** A URL to the JSON Schema for this object. */
-  readonly $schema?: string;
-  contract: string;
-  evidence: NativePDFEvidence;
-  evidence_sha256: string;
-  frames: PageFrameV1[];
-  map: PDFRedactionTextMap;
-  selection: PageBinding;
-}
-
 export interface RedactionPreparationRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -7131,6 +7196,8 @@ export interface RedactionPreparationRequest {
 export interface RedactionRenderRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  /** @pattern ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ */
+  allocation_id?: string;
   masks: RedactionMask[];
   preparation: RedactionPreparation;
   review_sha256: string;
@@ -18579,6 +18646,44 @@ return sessionJSON<Blob>(getRenderNativePDFUrl(),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(redactionRenderRequest)
+  }
+);}
+
+
+
+export const getReserveNumberedPDFUrl = () => {
+
+
+
+
+  return `/api/v1/redaction/reservations`
+}
+
+/**
+ * @summary Retain one reviewed original indefinitely and reserve its Bates numbers
+ */
+export const reserveNumberedPDF = async (numberedReservationRequest: NonReadonly<NumberedReservationRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<NumberedReservation> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<NumberedReservation>(getReserveNumberedPDFUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(numberedReservationRequest)
   }
 );}
 

@@ -145,7 +145,7 @@ var publishBatesExportToolDefinition = toolDefinition{
 
 var exportBatesFileToolDefinition = toolDefinition{
 	name: "export_bates_file", title: "Export Bates file",
-	description: "Write one exact retained Bates PDF to a local path after independent verification.",
+	description: "Write a retained Bates PDF to a local path. The verification field reports stamped_labels for ordinary exports with a matching engine or recorded_bytes_and_numbers for numbered redactions and different recorded engine versions. Recorded-byte recovery does not recheck masks, approved text or rendered numbers.",
 	schemas:     exportBatesFileSchemas, write: true, destructive: true,
 }
 

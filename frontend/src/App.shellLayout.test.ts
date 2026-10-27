@@ -120,6 +120,7 @@ it("shows Productions after creating a Bates export without reloading", async ()
     namespace_id: "namespace",
     snapshot_id: "snapshot",
     recipe_sha256: "a".repeat(64),
+    request_sha256: "e".repeat(64),
     state: "reserved",
     start_sequence: 1,
     end_sequence: 1,

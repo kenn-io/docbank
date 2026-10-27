@@ -48,6 +48,23 @@ type Recipe struct {
 }
 
 func (r Recipe) Validate() error {
+	if err := r.ValidateRecorded(); err != nil {
+		return err
+	}
+	if !r.QualifiedEngine() {
+		return errors.New("bates-stamp/v1 requires the qualified pdfcpu v0.15.0 engine")
+	}
+	return nil
+}
+
+// QualifiedEngine selects local re-verification before any PDF is read.
+func (r Recipe) QualifiedEngine() bool {
+	return r.EngineIdentity.Name == "pdfcpu" && r.EngineIdentity.Version == "v0.15.0" &&
+		r.EngineIdentity.API == "AddWatermarksMap" && slices.Equal(r.EngineIdentity.Options, []string{"onTop=true", "update=restamp"})
+}
+
+// ValidateRecorded checks the recorded contract independently of the local engine.
+func (r Recipe) ValidateRecorded() error {
 	r = r.Normalized()
 	if r.Contract != RecipeContractV1 {
 		return fmt.Errorf("invalid Bates stamp recipe contract %q", r.Contract)
@@ -85,11 +102,10 @@ func (r Recipe) Validate() error {
 	if r.RotationPolicy != "follow_page" {
 		return errors.New("bates-stamp/v1 requires the follow_page rotation policy")
 	}
-	wantOptions := []string{"onTop=true", "update=restamp"}
-	if r.EngineIdentity.Name != "pdfcpu" || r.EngineIdentity.Version != "v0.15.0" ||
-		r.EngineIdentity.API != "AddWatermarksMap" || !slices.Equal(r.EngineIdentity.Options, wantOptions) {
-		return errors.New("bates-stamp/v1 requires the qualified pdfcpu v0.15.0 engine")
+	if r.EngineIdentity.Name == "" || r.EngineIdentity.Version == "" || r.EngineIdentity.API == "" || len(r.EngineIdentity.Options) == 0 {
+		return errors.New("recorded stamp engine identity is incomplete")
 	}
+
 	return nil
 }
 
