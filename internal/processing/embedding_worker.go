@@ -8,7 +8,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"io"
 	"reflect"
 	"slices"
 	"sync"
@@ -44,7 +43,7 @@ type EmbeddingWork = store.EmbeddingJobWork
 type EmbeddingAttemptReceipt = store.EmbeddingAttemptReceipt
 
 type embeddingWorkerCatalog interface {
-	FindReusableEmbeddingSet(ctx context.Context, work store.EmbeddingJobWork) (store.EmbeddingSetRecord, error)
+	FindReusableEmbeddingSet(ctx context.Context, work store.EmbeddingJobWork, after string) (store.EmbeddingSetRecord, error)
 	ReconcileEmbeddingJobs(ctx context.Context, request store.EmbeddingReconcileRequest) (store.EmbeddingReconcileResult, error)
 	ClaimNextEmbeddingWork(ctx context.Context, owner string, at time.Time, lease time.Duration, fingerprints []string) (EmbeddingWorkClaim, EmbeddingWork, bool, error)
 	RenewEmbeddingWork(ctx context.Context, claim EmbeddingWorkClaim, at time.Time, lease time.Duration) (EmbeddingWorkClaim, error)
@@ -1036,36 +1035,36 @@ func embeddingInterfaceNil(value any) bool {
 }
 
 func (worker *EmbeddingWorker) reuseVectors(ctx context.Context, work EmbeddingWork, generation *store.EmbeddingInputGenerationRecord) (document.EmbeddingResult, bool, error) {
-	retained, err := worker.catalog.FindReusableEmbeddingSet(ctx, work)
-	if errors.Is(err, store.ErrNotFound) {
-		return document.EmbeddingResult{}, false, nil
-	}
-	if err != nil {
-		return document.EmbeddingResult{}, false, err
-	}
-	reader, err := worker.generationBlobs.OpenContext(ctx, retained.VectorSet.PayloadBlobHash)
-	if err != nil {
-		return document.EmbeddingResult{}, false, nil //nolint:nilerr // Unreadable retained values use normal provider execution.
-	}
-	payload, readErr := io.ReadAll(io.LimitReader(reader, worker.maxVectorBlobBytes+1))
-	closeErr := reader.Close()
-	if readErr != nil || closeErr != nil {
-		return document.EmbeddingResult{}, false, nil //nolint:nilerr // Damaged retained values use provider execution.
-	}
-	decoded, err := store.ValidateReusableEmbeddingPayload(retained, payload)
-	if err != nil || len(decoded.InputKeys) > worker.maxRows || decoded.Dimension > worker.maxDimensions {
-		return document.EmbeddingResult{}, false, nil //nolint:nilerr // Damaged retained values use provider execution.
-	}
-	if work.Binding.InputKind == document.EmbeddingInputRenditionChunk {
-		hydrated, hydrateErr := hydrateEmbeddingGeneration(ctx, worker.generationBlobs, work.InputGeneration)
-		if hydrateErr != nil {
-			return document.EmbeddingResult{}, false, hydrateErr
+	for after := ""; ; {
+		retained, err := worker.catalog.FindReusableEmbeddingSet(ctx, work, after)
+		if errors.Is(err, store.ErrNotFound) {
+			return document.EmbeddingResult{}, false, nil
 		}
-		*generation = hydrated
+		if err != nil {
+			return document.EmbeddingResult{}, false, err
+		}
+		after = retained.ID
+		if retained.VectorSet.PayloadSize > worker.maxVectorBlobBytes {
+			continue
+		}
+		payload, err := readExactEmbeddingBlob(ctx, worker.generationBlobs, retained.VectorSet.PayloadBlobHash, retained.VectorSet.PayloadSize)
+		if err != nil {
+			continue
+		}
+		decoded, err := store.ValidateReusableEmbeddingPayload(retained, payload)
+		if err != nil || len(decoded.InputKeys) > worker.maxRows || decoded.Dimension > worker.maxDimensions {
+			continue
+		}
+		if work.Binding.InputKind == document.EmbeddingInputRenditionChunk {
+			*generation, err = hydrateEmbeddingGeneration(ctx, worker.generationBlobs, work.InputGeneration)
+			if err != nil {
+				return document.EmbeddingResult{}, false, err
+			}
+		}
+		result := document.EmbeddingResult{Vectors: make([]document.EmbeddingVector, len(decoded.InputKeys))}
+		for i, key := range decoded.InputKeys {
+			result.Vectors[i] = document.EmbeddingVector{Key: key, Values: decoded.Vectors[i]}
+		}
+		return result, true, nil
 	}
-	result := document.EmbeddingResult{Vectors: make([]document.EmbeddingVector, len(decoded.InputKeys))}
-	for i, key := range decoded.InputKeys {
-		result.Vectors[i] = document.EmbeddingVector{Key: key, Values: decoded.Vectors[i]}
-	}
-	return result, true, nil
 }

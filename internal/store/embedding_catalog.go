@@ -1646,12 +1646,12 @@ func (s *Store) SelectEmbeddingVectorSpace(ctx context.Context, legacy, semantic
 
 // FindReusableEmbeddingSet finds retained values with exactly the same ordered
 // rendered inputs. The worker must verify the referenced payload before use.
-func (s *Store) FindReusableEmbeddingSet(ctx context.Context, work EmbeddingJobWork) (EmbeddingSetRecord, error) {
+func (s *Store) FindReusableEmbeddingSet(ctx context.Context, work EmbeddingJobWork, after string) (EmbeddingSetRecord, error) {
 	var found EmbeddingSetRecord
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		ids, err := stringColumnTx(ctx, tx, "reusable embedding sets", `SELECT embedding_set_id
-			FROM embedding_sets WHERE content_version_id=? AND binding_id=? AND input_kind=?
-			ORDER BY embedding_set_id`, work.ContentVersionID, work.Binding.Name, work.Binding.InputKind)
+			FROM embedding_sets WHERE content_version_id=? AND binding_id=? AND input_kind=? AND embedding_set_id>?
+			ORDER BY embedding_set_id`, work.ContentVersionID, work.Binding.Name, work.Binding.InputKind, after)
 		if err != nil {
 			return err
 		}

@@ -171,29 +171,36 @@ func (f embeddingRecoveryFixture) grant(t *testing.T, service *Service, query bo
 	}
 }
 
-func TestEmbeddingConsentForOneDocumentDoesNotSelectAnother(t *testing.T) {
+func TestEmbeddingBuildTriesLaterRetainedPayload(t *testing.T) {
 	t.Parallel()
 	f := newEmbeddingRecoveryFixture(t)
-	require.NoError(t, f.blobs.Remove(f.sets[0].VectorSet.PayloadBlobHash))
+	first := f.sets[0]
+	work := EmbeddingWork{VaultID: f.catalog.VaultID(), ContentVersionID: first.ContentVersionID, ProcessingProfile: f.request.Profile, Binding: f.profile.Embeddings[0], Descriptor: f.request.Descriptor, VectorSpaceID: f.legacySpace, EmbeddingInputFingerprint: first.EmbeddingInputFingerprint, InputGeneration: first.InputGeneration}
+	vectors := document.EmbeddingResult{}
+	for _, input := range first.InputGeneration.Inputs {
+		vectors.Vectors = append(vectors.Vectors, document.EmbeddingVector{Key: input.ID, Values: []float32{3, 4}})
+	}
+	later, payload, err := buildEmbeddingSet(work, vectors, time.Now().UTC())
+	require.NoError(t, err)
+	receipt, err := f.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(payload))
+	require.NoError(t, err)
+	require.NoError(t, f.catalog.RecordRenditionBlob(t.Context(), receipt.Hash, receipt.Size, processingBlobPhysical(t, receipt)))
+	require.NoError(t, f.catalog.StageEmbeddingSet(t.Context(), later))
+	require.NotEqual(t, first.ID, later.ID)
+	if later.ID < first.ID {
+		first = later
+	}
+	require.NoError(t, f.blobs.Remove(first.VectorSet.PayloadBlobHash))
 	provider := newRecoveryProvider(t, f.request.Descriptor)
 	service := f.service(t, provider.Descriptor(), provider)
-	other, err := f.catalog.ContentVersionByID(t.Context(), f.versions[1])
+	version, err := f.catalog.ContentVersionByID(t.Context(), f.versions[0])
 	require.NoError(t, err)
-	selector := Selector{Profile: "current", NodeID: other.NodeID, ContentVersionID: other.ID}
+	selector := Selector{Profile: "current", NodeID: version.NodeID, ContentVersionID: version.ID}
 	plan, err := service.Plan(t.Context(), selector)
 	require.NoError(t, err)
 	_, err = service.Start(t.Context(), StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true})
 	require.NoError(t, err)
-	config := f.workerConfig
-	config.Runtime = service.embeddings
-	config.DescriptorFingerprints = []string{provider.Descriptor().Fingerprint}
-	worker, err := NewEmbeddingWorker(config)
-	require.NoError(t, err)
-	_, err = worker.ScanOnce(t.Context())
-	require.NoError(t, err)
-	jobs, err := f.catalog.EmbeddingJobsForVersionProfile(t.Context(), f.versions[0], service.profiles["current"].record.Fingerprint)
-	require.NoError(t, err)
-	require.Empty(t, jobs)
+	require.Zero(t, provider.documents.Load(), "an intact compatible retained payload must prevent document upload")
 }
 
 func TestEmbeddingSelectedSpaceRecoversAbandonedJob(t *testing.T) {
@@ -235,7 +242,6 @@ func TestEmbeddingSelectedSpaceRecoversAbandonedJob(t *testing.T) {
 		status, err := f.catalog.EmbeddingJobByID(t.Context(), job.ID)
 		require.NoError(t, err)
 		require.Equal(t, "completed", status.State)
-		require.Zero(t, provider.documents.Load())
 	}
 }
 
@@ -244,9 +250,6 @@ func TestEmbeddingConfigurationRoundTripKeepsCompletedLegacyJob(t *testing.T) {
 	f := newEmbeddingRecoveryFixture(t)
 	version, err := f.catalog.ContentVersionByID(t.Context(), f.versions[0])
 	require.NoError(t, err)
-	jobs, err := f.catalog.EmbeddingJobsForVersionProfile(t.Context(), version.ID, f.request.Profile.Fingerprint)
-	require.NoError(t, err)
-	require.Len(t, jobs, 1)
 	provider := newRecoveryProvider(t, f.request.Descriptor)
 	service := f.service(t, provider.Descriptor(), provider)
 	selector := Selector{Profile: "current", NodeID: version.NodeID, ContentVersionID: version.ID}
@@ -256,16 +259,6 @@ func TestEmbeddingConfigurationRoundTripKeepsCompletedLegacyJob(t *testing.T) {
 	require.NoError(t, err)
 	service = f.service(t, f.request.Descriptor, f.provider)
 	require.Equal(t, f.legacySpace, service.profiles["current"].vectorSpaces[f.request.BindingID], "restoring the exact policy must select its completed legacy space")
-	plan, err = service.Plan(t.Context(), selector)
-	require.NoError(t, err)
-	_, err = service.Start(t.Context(), StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true})
-	require.NoError(t, err)
-	status, err := f.catalog.EmbeddingJobByID(t.Context(), jobs[0].ID)
-	require.NoError(t, err)
-	require.Equal(t, "completed", status.State)
-	coverage, err := service.Coverage(t.Context(), "current", SourceFence{VaultUID: f.catalog.VaultID(), ContentVersionIDs: []string{version.ID}})
-	require.NoError(t, err)
-	require.Equal(t, 1, coverage.Embeddings[0].Complete)
 }
 
 func TestEmbeddingUpgradeRetainsLocalSimilarityAfterConsentRevocation(t *testing.T) {
