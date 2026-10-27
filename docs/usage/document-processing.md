@@ -39,7 +39,9 @@ vector space where applicable, provider-visible metadata, and retained artifact
 roles. These runtime disclosures are part of the plan fingerprint. Re-run the
 preview when the source, profile, or provider destination changes. The consent
 state shown in a plan is advisory and does not change the fingerprint.
-Execution checks consent again.
+Execution checks consent again. When the profile's provider doesn't accept the
+file's format, the plan reports `unsupported_media_type` and a build fails with
+`rendition_source_ineligible`. The web app shows the reason and disables Run processing.
 
 Run only the reviewed plan:
 

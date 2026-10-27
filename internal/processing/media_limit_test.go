@@ -2,6 +2,7 @@ package processing
 
 import (
 	"bytes"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"os"
@@ -117,28 +118,44 @@ func TestPlanStreamsLargeSourceOnlyForAdmittedAudio(t *testing.T) {
 	f := newPublicationFixture(t)
 	name, profile, err := NewSuppliedMediaProfile(f.catalog, f.blobs, "synthetic:operator")
 	require.NoError(t, err)
+	textProvider := newWorkerProvider(t)
+	descriptor := textProvider.Descriptor()
+	descriptor.Fingerprint = ""
+	descriptor.SupportedFormats = []document.RenditionFormatCapability{{
+		MediaFamily: "text", MediaType: "text/plain", InputKind: document.RenditionInputOriginalFile,
+	}}
+	textProvider.descriptor, err = document.NewRenditionDescriptor(descriptor)
+	require.NoError(t, err)
+	textRecord := workerProcessingProfile(t, textProvider.Descriptor())
+	var textProfile document.ProcessingProfileV1
+	require.NoError(t, json.Unmarshal(textRecord.CanonicalProfile, &textProfile))
+	textProfile.Rendition.MaxDocumentBytes = 4 << 30
+	textProfile.Rendition.TrustBoundary = string(textProvider.Descriptor().TrustBoundary)
 	service, err := NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newWorkerTestGate(),
-		SpoolDirectory: t.TempDir(), MediaMaxBytes: 3 << 30, Profiles: map[string]ProfileConfig{name: profile}})
+		SpoolDirectory: t.TempDir(), MediaMaxBytes: 3 << 30, Profiles: map[string]ProfileConfig{
+			name:   profile,
+			"text": {Profile: textProfile, RenditionProvider: textProvider},
+		}})
 	require.NoError(t, err)
 	for i, test := range []struct {
-		filename, mediaType string
-		size                int64
-		long                bool
-		refusal             string
+		filename, mediaType, profile string
+		size                         int64
+		long                         bool
+		refusal                      string
 	}{
-		{"call.wav", "audio/wav", 2 << 30, true, ""},
-		{"call.mp3", "audio/mpeg", 3 << 30, true, ""},
-		{"call.wav", "audio/wav", 1 << 30, false, ""},
-		{"call.wav", "audio/wav", (3 << 30) + 1, false, "source_bytes_exceeded"},
-		{"call.m4a", "audio/mp4", 2 << 30, true, ""},
-		{"call.m4a", "audio/x-m4a", (3 << 30) + 1, false, "source_bytes_exceeded"},
-		{"notes.txt", "text/plain", 2 << 30, false, "source_bytes_exceeded"},
+		{"call.wav", "audio/wav", name, 2 << 30, true, ""},
+		{"call.mp3", "audio/mpeg", name, 3 << 30, true, ""},
+		{"call.wav", "audio/wav", name, 1 << 30, false, ""},
+		{"call.wav", "audio/wav", name, (3 << 30) + 1, false, "source_bytes_exceeded"},
+		{"call.m4a", "audio/mp4", name, 2 << 30, true, ""},
+		{"call.m4a", "audio/x-m4a", name, (3 << 30) + 1, false, "source_bytes_exceeded"},
+		{"notes.txt", "text/plain", "text", 2 << 30, false, "source_bytes_exceeded"},
 	} {
 		hash := fmt.Sprintf("%064x", i+1)
 		node, err := f.catalog.CreateFile(t.Context(), f.catalog.RootID(), fmt.Sprintf("%d-%s", i, test.filename), hash, test.size,
 			test.mediaType, store.BlobPhysical{Encoding: "raw", StoredBytes: test.size})
 		require.NoError(t, err)
-		selector := Selector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: name}
+		selector := Selector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: test.profile}
 		require.Equal(t, test.long, service.PlanStreamsLargeSource(t.Context(), selector), test.filename)
 		if test.refusal != "" {
 			plan, err := service.Plan(t.Context(), selector)
