@@ -80,11 +80,18 @@ func checkPathQueries(t *testing.T, s *Store, directory, file Node) {
 	require.NoError(t, err)
 	require.Equal(t, []string{"/café/renamed/leaf", "/café/renamed/leaf"}, paths)
 
-	// A trashed ancestor must stop forward traversal even if its descendants
-	// remain present. Display paths still describe retained trashed nodes.
-	_, err = s.writeDB.ExecContext(ctx, `UPDATE nodes SET parent_id=$1,trashed_at=$2 WHERE id=$3`,
-		s.RootID(), recordedAt, nestedID)
+	// Match trashNodeTx's topology: stamp the whole subtree, record the top
+	// node's origin, then detach it. Display paths still describe retained nodes.
+	trashTx, err := s.writeDB.BeginTx(ctx, nil)
 	require.NoError(t, err)
+	defer func() { _ = trashTx.Rollback() }()
+	_, err = trashTx.ExecContext(ctx, `UPDATE nodes SET trashed_at=$1 WHERE id=$2 OR id=$3`,
+		recordedAt, nestedID, leafID)
+	require.NoError(t, err)
+	_, err = trashTx.ExecContext(ctx, `UPDATE nodes SET parent_id=$1,trash_parent=$2,trash_name=name WHERE id=$3`,
+		s.RootID(), directory.ID, nestedID)
+	require.NoError(t, err)
+	require.NoError(t, trashTx.Commit())
 	_, err = s.NodeByPath(ctx, "/renamed/leaf")
 	require.ErrorIs(t, err, ErrNotFound)
 	paths, err = s.pathsOf(ctx, s.db, []int64{nestedID, leafID})
