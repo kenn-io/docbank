@@ -281,11 +281,14 @@
 
   let webSession = $state("");
   let hasProductions = $state(false);
+  let productionsDiscovered = $state(false);
   let productionsDiscoveryRevision = $state(0);
   $effect(() => {
     void productionsDiscoveryRevision;
     const session = webSession;
     if (!session) return;
+    productionsDiscovered = false;
+    let pending = 2;
     const controller = new AbortController();
     for (const listing of [
       generated.listPackages({ limit: 1 }, { session, signal: controller.signal }),
@@ -305,6 +308,11 @@
             cause.status === 401
           )
             handleFailure(cause);
+        })
+        .finally(() => {
+          pending--;
+          if (!controller.signal.aborted && session === webSession && pending === 0)
+            productionsDiscovered = true;
         });
     }
     return () => controller.abort();
@@ -512,6 +520,13 @@
       : null;
   }
   let docsPage = $state(pageAt(location.pathname));
+  $effect(() => {
+    if (docsPage === "productions" && productionsDiscovered && !hasProductions) {
+      photoNavigation.replace(history.state, `/${location.search}${location.hash}`);
+      nodeVersionHash = location.hash;
+      docsPage = null;
+    }
+  });
   const docsScreens = {
     searches: "saved_queries",
     productions: "bates",
@@ -1526,7 +1541,10 @@
           return;
         }
       } else if (
-        isAppShortcutSuppressed(event, !webSession || loading || searchPending || snapshotActive)
+        isAppShortcutSuppressed(
+          event,
+          !webSession || (!docsPage && (loading || searchPending || snapshotActive)),
+        )
       ) {
         return;
       }
@@ -1572,6 +1590,7 @@
     disposeBrowserSession?.();
     webSession = session.token;
     hasProductions = false;
+    productionsDiscovered = false;
     keySession = keyLogin;
     error = "";
     uploadChannelError = "";
@@ -2558,7 +2577,6 @@
   }
 
   async function submitDocumentSearch(): Promise<void> {
-    leavePage();
     // A draft sorted only keeps an ordinary search; its sort is applied to the results.
     const draft = currentQueryDraft();
     const sortOnly =
@@ -2575,12 +2593,15 @@
         return;
       }
       querySettingsApplied ||= queryDraftChanged;
+      leavePage();
       await submitSnapshot(
         draft,
         queryDraftSettings?.options ?? snapshot.state.options ?? { page_size: 100 },
       );
       return;
     }
+    if (docsPage && !draft.text.trim()) return;
+    leavePage();
     queryBarOpen = false;
     naturalSearchMode = naturalProfile ? "auto" : "names";
     const outcome = await runSearch(undefined, undefined, true, sortOnly);

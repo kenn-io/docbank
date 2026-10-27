@@ -42,7 +42,7 @@ async function savedQueriesPage() {
   });
 }
 
-function start(path = "/", fragment = "") {
+function start(path = "/", fragment = "", packages?: Promise<Response>) {
   history.replaceState(
     null,
     "",
@@ -84,7 +84,8 @@ function start(path = "/", fragment = "") {
         limit: 100,
         offset: 0,
       });
-    if (url.startsWith("/api/v1/packages?"))
+    if (url.startsWith("/api/v1/packages?")) {
+      if (packages) return (await packages).clone();
       return Response.json({
         items: [
           {
@@ -98,6 +99,7 @@ function start(path = "/", fragment = "") {
         ],
         limit: 250,
       });
+    }
     return Response.json({
       items: [],
       total: 0,
@@ -149,6 +151,75 @@ it("opens Trash directly", async () => {
     screen.getByRole("button", { name: "Recoverable trash" }).getAttribute("aria-current"),
   ).toBe("page");
 });
+
+it("replaces unavailable Productions with All files after both listings resolve", async () => {
+  let finishPackages!: (response: Response) => void;
+  const packages = new Promise<Response>((resolve) => {
+    finishPackages = resolve;
+  });
+  start("/productions", "", packages);
+  await screen.findByRole("main", { name: "Productions" });
+  expect(location.pathname).toBe("/productions");
+  const entries = history.length;
+  const push = vi.spyOn(history, "pushState");
+  finishPackages(Response.json({ items: [], limit: 250 }));
+  await screen.findByText("Empty folder");
+  expect(location.pathname).toBe("/");
+  expect(history.length).toBe(entries);
+  expect(push).not.toHaveBeenCalled();
+  expect(screen.getByRole("button", { name: "All files" }).getAttribute("aria-current")).toBe(
+    "page",
+  );
+  expect(screen.queryByRole("main", { name: "Productions" })).toBeNull();
+});
+
+it.each([
+  ["Searches", "Searches"],
+  ["Productions", "Productions"],
+  ["Imports", "Imports"],
+  ["Recoverable trash", "Trash"],
+])("keeps search and help shortcuts on %s after running a saved search", async (label, title) => {
+  const fetch = start();
+  const original = fetch.getMockImplementation()!;
+  fetch.mockImplementation(async (input, init) => {
+    if (String(input) === "/api/v1/saved-queries?limit=100&offset=0") return savedQueriesPage();
+    if (String(input) === "/api/v1/workspace/queries" && init?.method === "POST")
+      return Response.json(await snapshotEnvelope(query, []));
+    return original(input, init);
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Searches" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Run Alpha documents" }));
+  await waitFor(() => expect(location.pathname).toBe("/"));
+  await screen.findByText("0 results");
+  await fireEvent.click(await screen.findByRole("button", { name: label }));
+  await screen.findByRole("main", { name: title });
+  const search = screen.getByRole("searchbox", { name: "Search documents" });
+  await fireEvent.keyDown(window, { key: "/" });
+  expect(document.activeElement).toBe(search);
+  await fireEvent.keyDown(search, { key: "?", shiftKey: true });
+  expect(screen.queryByRole("dialog", { name: "Keyboard shortcuts" })).toBeNull();
+  (search as HTMLInputElement).blur();
+  await fireEvent.keyDown(window, { key: "?", shiftKey: true });
+  expect(screen.getByRole("dialog", { name: "Keyboard shortcuts" })).toBeTruthy();
+  await fireEvent.keyDown(window, { key: "/" });
+  expect(document.activeElement).not.toBe(search);
+});
+
+it.each(["/searches", "/productions", "/imports", "/trash"])(
+  "keeps %s open when submitting an empty search",
+  async (path) => {
+    const fetch = start(path);
+    await screen.findByRole("main");
+    const search = screen.getByRole("searchbox", { name: "Search documents" });
+    await fireEvent.input(search, { target: { value: "   " } });
+    const push = vi.spyOn(history, "pushState");
+    fetch.mockClear();
+    await fireEvent.submit(search.closest("form")!);
+    expect(location.pathname).toBe(path);
+    expect(push).not.toHaveBeenCalled();
+    expect(fetch.mock.calls.some(([input]) => String(input).includes("/search"))).toBe(false);
+  },
+);
 
 it("opens Advanced on the first click after loading Imports with a query", async () => {
   start("/imports", `&query=${encodeURIComponent(JSON.stringify(query))}`);
