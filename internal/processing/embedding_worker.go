@@ -121,6 +121,18 @@ func (registry *EmbeddingRuntimeRegistry) Descriptors() []document.EmbeddingDesc
 	return descriptors
 }
 
+func (registry *EmbeddingRuntimeRegistry) VectorSpaces() map[string]store.EmbeddingVectorSpaceRecord {
+	registry.mu.RLock()
+	defer registry.mu.RUnlock()
+	spaces := make(map[string]store.EmbeddingVectorSpaceRecord)
+	for binding, runtime := range registry.bindings {
+		if provider, ok := runtime.(*ProviderEmbeddingRuntime); ok && provider.vectorSpaceID != "" {
+			spaces[binding.profileFingerprint+"/"+binding.bindingID] = store.EmbeddingVectorSpaceRecord{ID: provider.vectorSpaceID, Descriptor: provider.provider.Descriptor()}
+		}
+	}
+	return spaces
+}
+
 func (registry *EmbeddingRuntimeRegistry) Fingerprints() []string {
 	if registry == nil {
 		return nil
@@ -258,7 +270,6 @@ type EmbeddingWorkerConfig struct {
 	MaxVectorBlobBytes     int64
 	Clock                  func() time.Time
 	Wait                   func(context.Context, time.Duration) error
-	Reconciliation         store.EmbeddingReconcileRequest
 	DescriptorFingerprints []string
 }
 
@@ -279,7 +290,6 @@ type EmbeddingWorker struct {
 	clock                                          func() time.Time
 	wait                                           func(context.Context, time.Duration) error
 	descriptorFingerprints                         []string
-	reconciliation                                 store.EmbeddingReconcileRequest
 	reconcileAfter                                 string
 	reconcileAt                                    time.Time
 }
@@ -325,7 +335,6 @@ func NewEmbeddingWorker(config EmbeddingWorkerConfig) (*EmbeddingWorker, error) 
 		maxRows: config.MaxRows, maxDimensions: config.MaxDimensions,
 		maxVectorBlobBytes: config.MaxVectorBlobBytes, clock: config.Clock, wait: config.Wait,
 		descriptorFingerprints: slices.Clone(config.DescriptorFingerprints),
-		reconciliation:         config.Reconciliation,
 	}, nil
 }
 
@@ -378,10 +387,16 @@ func (worker *EmbeddingWorker) ScanOnce(ctx context.Context) (int, error) {
 		found := false
 
 		if !reconciled && !worker.clock().Before(worker.reconcileAt) {
+			var spaces map[string]store.EmbeddingVectorSpaceRecord
+			if runtime, ok := worker.runtime.(interface {
+				VectorSpaces() map[string]store.EmbeddingVectorSpaceRecord
+			}); ok {
+				spaces = runtime.VectorSpaces()
+			}
 			result, err := worker.catalog.ReconcileEmbeddingJobs(ctx, store.EmbeddingReconcileRequest{
 				Mutate: worker.gate.MutateContext,
 				After:  worker.reconcileAfter, Limit: 100, At: worker.clock().UTC(),
-				Descriptors: worker.reconciliation.Descriptors, VectorSpaces: worker.reconciliation.VectorSpaces, DescriptorFingerprints: worker.descriptorFingerprints, Profiles: worker.reconciliation.Profiles, PrepareGeneration: worker.reconciliation.PrepareGeneration,
+				DescriptorFingerprints: worker.descriptorFingerprints, VectorSpaces: spaces,
 				HydrateGeneration: func(ctx context.Context, generation store.EmbeddingInputGenerationRecord) (store.EmbeddingInputGenerationRecord, error) {
 					return hydrateEmbeddingGeneration(ctx, worker.generationBlobs, generation)
 				},
@@ -479,7 +494,7 @@ func (worker *EmbeddingWorker) RunJob(ctx context.Context, jobID string) (bool, 
 }
 
 func (worker *EmbeddingWorker) processClaim(ctx context.Context, claim EmbeddingWorkClaim, work EmbeddingWork) (retErr error) {
-	descriptors := worker.reconciliation.Descriptors
+	var descriptors []document.EmbeddingDescriptor
 	if runtime, ok := worker.runtime.(interface {
 		Descriptors() []document.EmbeddingDescriptor
 	}); ok {
@@ -490,9 +505,6 @@ func (worker *EmbeddingWorker) processClaim(ctx context.Context, claim Embedding
 			work.Descriptor = descriptor
 			break
 		}
-	}
-	if expected := worker.reconciliation.VectorSpaces[work.ProcessingProfile.Fingerprint+"/"+work.Binding.Name]; expected != "" && expected != work.VectorSpaceID {
-		return ErrEmbeddingWorkFenced
 	}
 	started := worker.clock().UTC()
 	receipt := EmbeddingAttemptReceipt{AttemptID: claim.AttemptID, ProviderFingerprint: work.Descriptor.Fingerprint,
@@ -529,9 +541,6 @@ func (worker *EmbeddingWorker) processClaim(ctx context.Context, claim Embedding
 
 	materializedGeneration := work.InputGeneration
 	result, reused, err := worker.reuseVectors(attemptCtx, work, &materializedGeneration)
-	if err == nil && !reused && work.SourceProfileFingerprint != "" && work.SourceProfileFingerprint != work.ProcessingProfile.Fingerprint {
-		return worker.failClaim(attemptCtx, claim, work, store.EmbeddingFailureInputRejected, &receipt, started)
-	}
 	var authorization store.ProviderOperationAuthorization
 	var code store.EmbeddingFailureCode
 	if err == nil && reused {

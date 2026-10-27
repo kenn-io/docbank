@@ -24,6 +24,7 @@ import (
 	"github.com/spf13/cobra"
 	kitdaemon "go.kenn.io/kit/daemon"
 	kitlogging "go.kenn.io/kit/logging"
+	"go.kenn.io/kit/packstore"
 	"go.kenn.io/kit/telemetry/posthog"
 
 	"go.kenn.io/docbank/document"
@@ -107,6 +108,15 @@ func startVectorIndexWorker(starter embeddingJobStarter,
 		return errors.New("vector index worker builder returned nil")
 	}
 	return starter.Start("process:vector-indexes", worker.Run)
+}
+
+func vectorIndexRetryPolicy(isBusy func(error) bool) func(error) bool {
+	return func(err error) bool {
+		if errors.Is(err, packstore.ErrPhysicalCorrupt) || errors.Is(err, packstore.ErrStoreFenced) {
+			return false
+		}
+		return isBusy(err) || errors.Is(err, packstore.ErrStoreUnavailable)
+	}
 }
 
 func removeWebBootstrap(root string) {
@@ -346,8 +356,7 @@ func runServe(ctx context.Context) (retErr error) {
 	if err := startEmbeddingWorkerIfReady(jobSupervisor, embeddingRuntimeRegistry,
 		func() (embeddingJobRunner, error) {
 			worker, workerErr := processing.NewEmbeddingWorker(processing.EmbeddingWorkerConfig{
-				Reconciliation: processingService.EmbeddingReconciliation(),
-				Catalog:        s, Authority: s, Blobs: blobs, GenerationBlobs: blobs, Runtime: embeddingRuntimeRegistry,
+				Catalog: s, Authority: s, Blobs: blobs, GenerationBlobs: blobs, Runtime: embeddingRuntimeRegistry,
 				Gate: operationGate, Owner: "daemon-embedding-worker",
 				LeaseDuration: 5 * time.Minute, IdleDelay: time.Second,
 				RetryLimit: 3, RetryBaseDelay: time.Second, MaxRetryDelay: 30 * time.Second,
@@ -365,7 +374,7 @@ func runServe(ctx context.Context) (retErr error) {
 	if err := startVectorIndexWorker(jobSupervisor, func() (embeddingJobRunner, error) {
 		worker, workerErr := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{
 			Mutate:    operationGate.MutateContext,
-			Retryable: vectorworker.RetryPolicy(s.SQLiteDriver().IsBusy),
+			Retryable: vectorIndexRetryPolicy(s.SQLiteDriver().IsBusy),
 			ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
 				return s.ReadVectorIndexVectorSet(ctx, blobs, member)
 			},

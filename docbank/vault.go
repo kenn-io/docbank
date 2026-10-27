@@ -30,7 +30,6 @@ import (
 	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
 	internalprocessing "go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
-	"go.kenn.io/docbank/internal/vectorworker"
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
@@ -396,23 +395,10 @@ func openVaultWithRootOpener(
 				MaxRetryDelay: 30 * time.Second, AttemptLifetime: 30 * time.Minute,
 				MaxRows: 100_000, MaxDimensions: 1_048_576, MaxVectorBlobBytes: 64 << 20,
 				DescriptorFingerprints: embeddingRuntimes.Fingerprints(),
-				Reconciliation:         processingService.EmbeddingReconciliation(),
 			})
 		if err != nil {
 			return nil, err
 		}
-	}
-	indexWorker, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{
-		Catalog: metadata, Mutate: embeddedMutationGate{vault: vault}.MutateContext,
-		ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
-			return metadata.ReadVectorIndexVectorSet(ctx, blobs, member)
-		},
-		Retryable: vectorworker.RetryPolicy(metadata.SQLiteDriver().IsBusy),
-		Owner:     "embedded-vector-index-worker", BuildLease: 30 * time.Minute,
-		ReaderLease: 5 * time.Minute, IdleDelay: 25 * time.Millisecond,
-	})
-	if err != nil {
-		return nil, err
 	}
 	workerContext, cancelWorkers := context.WithCancel(context.Background())
 	vault.processingCancel = cancelWorkers
@@ -448,7 +434,6 @@ func openVaultWithRootOpener(
 	if embeddingWorker != nil {
 		vault.startProcessingWorker(workerContext, embeddingWorker.Run)
 	}
-	vault.startProcessingWorker(workerContext, indexWorker.Run)
 	return vault, nil
 }
 

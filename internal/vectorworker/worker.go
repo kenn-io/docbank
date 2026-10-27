@@ -14,20 +14,9 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/docbank/internal/vectorindex"
-	"go.kenn.io/kit/packstore"
 )
 
 var ErrVectorIndexCandidateInvalid = errors.New("vector index candidate is invalid")
-
-// RetryPolicy shares transient storage classification across worker owners.
-func RetryPolicy(isBusy func(error) bool) func(error) bool {
-	return func(err error) bool {
-		if errors.Is(err, packstore.ErrPhysicalCorrupt) || errors.Is(err, packstore.ErrStoreFenced) {
-			return false
-		}
-		return isBusy(err) || errors.Is(err, packstore.ErrStoreUnavailable)
-	}
-}
 
 type UnavailableVectorSet = store.VectorIndexUnavailableSet
 type UnavailableVectorCoverage = store.VectorIndexUnavailableCoverage

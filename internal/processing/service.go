@@ -1647,54 +1647,6 @@ func (service *Service) prepareSearch(
 		rerankingAuthorizer: rerankingAuth}, nil
 }
 
-// EmbeddingReconciliation snapshots configured target authority for background recovery.
-func (service *Service) EmbeddingReconciliation() store.EmbeddingReconcileRequest {
-	profiles := make(map[string]configuredProfile, len(service.profiles))
-	var records []store.ProcessingProfileRecord
-	descriptors := []document.EmbeddingDescriptor{}
-	spaces := make(map[string]string)
-	for _, profile := range service.profiles {
-		profiles[profile.record.Fingerprint] = profile
-		record := profile.record
-		record.CanonicalProfile = slices.Clone(record.CanonicalProfile)
-		records = append(records, record)
-		for binding, provider := range profile.embedders {
-			descriptors = append(descriptors, provider.Descriptor())
-			spaces[record.Fingerprint+"/"+binding] = profile.vectorSpaces[binding]
-		}
-	}
-	return store.EmbeddingReconcileRequest{Descriptors: descriptors, VectorSpaces: spaces, Profiles: records, PrepareGeneration: func(ctx context.Context, versionID string, record store.ProcessingProfileRecord, binding document.EmbeddingBindingV1) (store.EmbeddingInputGenerationRecord, error) {
-		profile := profiles[record.Fingerprint]
-		version, err := service.catalog.ContentVersionByID(ctx, versionID)
-		if err != nil {
-			return store.EmbeddingInputGenerationRecord{}, err
-		}
-		if binding.InputKind == document.EmbeddingInputOriginalFile {
-			_, fingerprints, err := document.CanonicalProfile(profile.portable)
-			if err != nil {
-				return store.EmbeddingInputGenerationRecord{}, err
-			}
-			return directEmbeddingGeneration(version, record.Fingerprint, fingerprints.EmbeddingInput[binding.Name], binding), nil
-		}
-		if _, err := service.catalog.ActiveRendition(ctx, versionID, record.Fingerprint); errors.Is(err, store.ErrNotFound) {
-			node, err := service.catalog.NodeByID(ctx, version.NodeID)
-			if err != nil {
-				return store.EmbeddingInputGenerationRecord{}, err
-			}
-			job, waiter, err := service.enqueueRendition(ctx, node, version, profile, service.renditionConsentRequest(profile), "", false)
-			if err != nil {
-				return store.EmbeddingInputGenerationRecord{}, err
-			}
-			if _, err := service.runRenditionJob(ctx, job.ID, waiter.ID); err != nil {
-				return store.EmbeddingInputGenerationRecord{}, err
-			}
-		} else if err != nil {
-			return store.EmbeddingInputGenerationRecord{}, err
-		}
-		return service.chunkEmbeddingGeneration(ctx, version, profile, binding)
-	}}
-}
-
 func (service *Service) runEmbeddings(ctx context.Context, version store.ContentVersion,
 	profile configuredProfile, principal, scope, consentSetGrantID string, onEnqueued func([]string),
 ) ([]string, error) {
@@ -1769,7 +1721,7 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 			RetryLimit: 3, RetryBaseDelay: time.Millisecond, MaxRetryDelay: time.Second,
 			AttemptLifetime: 10 * time.Minute, MaxRows: 100_000, MaxDimensions: 1_048_576,
 			MaxVectorBlobBytes: 64 << 20, Clock: service.clock,
-			DescriptorFingerprints: []string{binding.Descriptor.Fingerprint}, Reconciliation: service.EmbeddingReconciliation(),
+			DescriptorFingerprints: []string{binding.Descriptor.Fingerprint},
 		})
 		if err != nil {
 			return jobIDs, err

@@ -1458,7 +1458,6 @@ CREATE TABLE IF NOT EXISTS embedding_input_generations (
 -- remain the portable authority; this table only resumes bounded execution.
 CREATE TABLE IF NOT EXISTS embedding_jobs (
     job_id              TEXT PRIMARY KEY,
-    source_profile_fingerprint TEXT REFERENCES processing_profiles(profile_fingerprint),
     vault_uid           TEXT NOT NULL,
     content_version_id  TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,
     profile_fingerprint TEXT NOT NULL REFERENCES processing_profiles(profile_fingerprint),

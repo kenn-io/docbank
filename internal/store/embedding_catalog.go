@@ -1618,7 +1618,7 @@ func (s *Store) SelectEmbeddingVectorSpace(ctx context.Context, legacy, semantic
 	}
 	selected := semantic
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		for _, id := range []string{semantic, legacy} {
+		for _, id := range []string{legacy, semantic} {
 			record, err := loadVectorSpaceTx(ctx, tx, id)
 			if errors.Is(err, ErrNotFound) {
 				continue
