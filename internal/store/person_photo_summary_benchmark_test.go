@@ -160,7 +160,7 @@ func benchmarkPeopleRecent(b *testing.B, people, contacts int) {
 		// Email contacts have hundreds of sender assertions but no depicted
 		// evidence. Reuse synthetic message versions to bound fixture setup and disk use.
 		_, err = tx.ExecContext(ctx, `INSERT INTO person_document_assertions(assertion_id,content_version_id,person_id,role,action,note,recorded_at)
- SELECT persons.person_id || ':' || cv.version_id,cv.version_id,persons.person_id,'sender','assert','','2001-01-01T00:00:00.000000000Z'
+ SELECT lower(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' || substr(hex(randomblob(2)),2) || '-' || substr('89ab',abs(random() % 4)+1,1) || substr(hex(randomblob(2)),2) || '-' || hex(randomblob(6))),cv.version_id,persons.person_id,'sender','assert','','2001-01-01T00:00:00.000000000Z'
  FROM (SELECT person_id FROM persons ORDER BY display_name_folded LIMIT ? OFFSET ?) persons
  CROSS JOIN (SELECT version_id FROM content_versions WHERE mime_type='message/rfc822' LIMIT 200) cv`, contacts, evidencePeople)
 		return err
