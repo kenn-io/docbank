@@ -193,6 +193,17 @@ func (s *Store) EnqueueEmbeddingJob(ctx context.Context, request EmbeddingJobReq
 		if err != nil {
 			return err
 		}
+		// The operational uniqueness key predates semantic spaces. A completed
+		// job may need a second publication after configuration returns to this
+		// profile but selects its existing v2 space. Keep active attempts and
+		// permanent failures intact; abandoned work has no active publisher.
+		if _, err := tx.ExecContext(ctx, `UPDATE embedding_jobs SET vector_space_id=?,
+            state='queued',available_at=?,updated_at=?
+            WHERE job_id=? AND vector_space_id<>? AND state IN ('completed','abandoned')`,
+			space.ID, now, now, jobID, space.ID); err != nil {
+			return err
+		}
+
 		// A provider authorization failure may be retried only when this exact
 		// authority-bound job is enqueued again after its original grant passes the
 		// authorization check above. Revoked authority selects a different job
@@ -786,7 +797,10 @@ func validateEmbeddingJobGenerationTx(ctx context.Context, tx *sql.Tx, binding d
 	return nil
 }
 
-func embeddingJobID(values ...any) string {
+func embeddingJobID(vaultID, versionID, profileID, bindingID string, inputKind document.EmbeddingInputKind,
+	generationID, grantID, incarnationID string, revocationFence int64,
+) string {
+	values := []any{vaultID, versionID, profileID, bindingID, inputKind, generationID, grantID, incarnationID, revocationFence}
 	hash := sha256.New()
 	for _, value := range values {
 		_, _ = fmt.Fprint(hash, value, "\x00")

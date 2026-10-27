@@ -407,7 +407,7 @@ func openVaultWithRootOpener(
 		ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
 			return metadata.ReadVectorIndexVectorSet(ctx, blobs, member)
 		},
-		Retryable: metadata.SQLiteDriver().IsBusy,
+		Retryable: vectorworker.RetryPolicy(metadata.SQLiteDriver().IsBusy),
 		Owner:     "embedded-vector-index-worker", BuildLease: 30 * time.Minute,
 		ReaderLease: 5 * time.Minute, IdleDelay: 25 * time.Millisecond,
 	})

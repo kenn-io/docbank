@@ -153,7 +153,9 @@ func TestProcessingServiceWaitsForEmbeddingRetryAndHonorsCancellation(t *testing
 	require.NoError(t, err)
 	var portable document.ProcessingProfileV1
 	require.NoError(t, json.Unmarshal(request.Profile.CanonicalProfile, &portable))
-	profile := configuredProfile{portable: portable, record: request.Profile,
+	_, fingerprints, err := document.CanonicalProfile(portable)
+	require.NoError(t, err)
+	profile := configuredProfile{vectorSpaces: fingerprints.VectorSpace, portable: portable, record: request.Profile,
 		embedders:         map[string]document.EmbeddingProvider{request.BindingID: provider},
 		embeddingRuntimes: map[string]*ProviderEmbeddingRuntime{request.BindingID: runtime}}
 	var clockOffset atomic.Int64

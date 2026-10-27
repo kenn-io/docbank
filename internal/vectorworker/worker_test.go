@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -16,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/kit/packstore"
 )
 
 func TestIndexWorkerRebuildPublishesValidatedSearchableGeneration(t *testing.T) {
@@ -447,4 +449,22 @@ func TestIndexWorkerRestoresAndSearchesLargeDimensionVectors(t *testing.T) {
 	require.Equal(t, setID, neighbors[0].SetID)
 	require.InDelta(t, float64(1), neighbors[0].Score, 1e-12)
 	require.NoError(t, lease.Release(t.Context()))
+}
+
+func TestVectorIndexRetryPolicyClassifiesStoreFailures(t *testing.T) {
+	retryable := RetryPolicy(store.DefaultSQLiteDriver().IsBusy)
+	for _, testCase := range []struct {
+		name  string
+		cause error
+		want  bool
+	}{
+		{"temporarily unavailable", fmt.Errorf("reading vector payload: %w", packstore.ErrStoreUnavailable), true},
+		{"physically missing", packstore.ErrPhysicalMissing, false},
+		{"corrupt", packstore.ErrPhysicalCorrupt, false},
+		{"fenced", packstore.ErrStoreFenced, false},
+		{"unavailable and corrupt", errors.Join(packstore.ErrStoreUnavailable, packstore.ErrPhysicalCorrupt), false},
+		{"unavailable and fenced", errors.Join(packstore.ErrStoreUnavailable, packstore.ErrStoreFenced), false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) { require.Equal(t, testCase.want, retryable(testCase.cause)) })
+	}
 }

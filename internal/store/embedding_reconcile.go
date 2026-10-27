@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"time"
 
@@ -95,7 +96,6 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 	}
 	var candidates []embeddingReconcileCandidate
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		seen := make(map[[3]string]bool)
 		for _, generationID := range generationIDs {
 			generation, err := loadInputGenerationTx(ctx, tx, generationID)
 			if err != nil {
@@ -131,7 +131,23 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 					executable[space.DescriptorFingerprint] = space.Descriptor
 				}
 			}
+			sourceProfile, err := loadProcessingProfile(ctx, tx, generation.ProcessingProfileFingerprint)
+			if err != nil {
+				return err
+			}
 			for _, target := range localTargets {
+				if !embeddingReplacementProfile(sourceProfile, target.record) {
+					continue
+				}
+				if request.PrepareGeneration == nil {
+					current, err := embeddingGenerationCurrentTx(ctx, tx, generation, target.record.Fingerprint)
+					if err != nil {
+						return err
+					}
+					if !current {
+						continue
+					}
+				}
 				profile, portable, fingerprints := target.record, target.portable, target.fingerprints
 				for _, binding := range portable.Embeddings {
 					if (binding.InputKind == document.EmbeddingInputRenditionChunk) != (generation.GenerationBlobHash != "") {
@@ -146,18 +162,6 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 						spaceID = fingerprints.VectorSpace[binding.Name]
 					}
 					space := EmbeddingVectorSpaceRecord{ID: spaceID, Descriptor: descriptor}
-					key := [3]string{generation.SourceVersionID, profile.Fingerprint, binding.Name}
-					if seen[key] {
-						continue
-					}
-					satisfied, err := exactEmbeddingHeadExistsTx(ctx, tx, generation.SourceVersionID, profile.Fingerprint, binding, "", spaceID)
-					if err != nil {
-						return err
-					}
-					if satisfied {
-						seen[key] = true
-						continue
-					}
 					suppression, err := loadEmbeddingPurgeSuppressionTx(ctx, tx,
 						EmbeddingHeadKey{generation.SourceVersionID, binding.Name, binding.InputKind}, profile.Fingerprint)
 					if err != nil && !errors.Is(err, ErrNotFound) {
@@ -174,26 +178,6 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 					if !found {
 						continue
 					}
-					seen[key] = true
-					prior := consent.PriorAuthorization
-					if prior == nil {
-						return errors.New("embedding reconciliation consent lacks admission authority")
-					}
-					jobID := embeddingJobID(s.vaultID, generation.SourceVersionID, profile.Fingerprint,
-						binding.Name, binding.InputKind, generation.ID, prior.GrantID,
-						prior.ProcessingIncarnationID, prior.RevocationFence)
-					var state string
-					var failure sql.NullString
-					err = tx.QueryRowContext(ctx, `SELECT state,failure_code
-					FROM embedding_jobs WHERE job_id=?`, jobID).Scan(&state, &failure)
-					if err != nil && !errors.Is(err, sql.ErrNoRows) {
-						return err
-					}
-					recoverableAuthorization := state == "failed" && failure.Valid &&
-						EmbeddingFailureCode(failure.String) == EmbeddingFailureAuthorization
-					if err == nil && state != "abandoned" && !recoverableAuthorization {
-						continue
-					}
 					candidates = append(candidates, embeddingReconcileCandidate{request: EmbeddingJobRequest{
 						ContentVersionID: generation.SourceVersionID, Profile: profile, BindingID: binding.Name,
 						VectorSpaceID: space.ID, Descriptor: space.Descriptor, InputGeneration: generation, Authorization: consent,
@@ -207,6 +191,7 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 	if err != nil {
 		return EmbeddingReconcileResult{}, err
 	}
+	seen := make(map[[4]string]bool)
 	for _, candidate := range candidates {
 		if request.PrepareGeneration != nil {
 			generation, err := request.PrepareGeneration(ctx, candidate.request.ContentVersionID, candidate.request.Profile, candidate.binding)
@@ -243,6 +228,18 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 				continue
 			}
 		}
+		key := [4]string{candidate.request.ContentVersionID, candidate.request.Profile.Fingerprint, candidate.binding.Name, candidate.request.InputGeneration.ID}
+		if seen[key] {
+			continue
+		}
+		eligible, err := s.embeddingReconcileEligible(ctx, candidate)
+		if err != nil {
+			return result, err
+		}
+		if !eligible {
+			continue
+		}
+
 		if err := request.Mutate(ctx, func() error {
 			_, err := s.EnqueueEmbeddingJob(ctx, candidate.request)
 			return err
@@ -253,12 +250,67 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 			}
 			return EmbeddingReconcileResult{}, fmt.Errorf("reconciling embedding job: %w", err)
 		}
+		seen[key] = true
 		result.Enqueued++
 	}
 	if more && len(generationIDs) != 0 {
 		result.Next = generationIDs[len(generationIDs)-1]
 	}
 	return result, nil
+}
+
+// A policy move replaces only the embedding runtime policy. The
+// source's other processing choices must still describe the configured target.
+func embeddingReplacementProfile(source, target ProcessingProfileRecord) bool {
+	if source.Fingerprint == target.Fingerprint {
+		return true
+	}
+	var before, after document.ProcessingProfileV1
+	if json.Unmarshal(source.CanonicalProfile, &before) != nil || json.Unmarshal(target.CanonicalProfile, &after) != nil {
+		return false
+	}
+	for _, profile := range []*document.ProcessingProfileV1{&before, &after} {
+		for i := range profile.Embeddings {
+			profile.Embeddings[i].Descriptor.Fingerprint = ""
+			profile.Embeddings[i].DisclosureFingerprint = ""
+			profile.Embeddings[i].AuthorizationFingerprint = ""
+			profile.Embeddings[i].CredentialBinding = ""
+			profile.Embeddings[i].MaxBatchItems = 0
+			profile.Embeddings[i].MaxInputBytes = 0
+			profile.Embeddings[i].MaxInputTokens = 0
+			profile.Embeddings[i].MaxResponseBytes = 0
+		}
+	}
+	return reflect.DeepEqual(before, after)
+}
+
+func (s *Store) embeddingReconcileEligible(ctx context.Context, candidate embeddingReconcileCandidate) (bool, error) {
+	request := candidate.request
+	eligible := false
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		current, err := embeddingGenerationCurrentTx(ctx, tx, request.InputGeneration, request.Profile.Fingerprint)
+		if err != nil || !current {
+			return err
+		}
+		satisfied, err := exactEmbeddingHeadExistsTx(ctx, tx, request.ContentVersionID, request.Profile.Fingerprint, candidate.binding, request.InputGeneration.ID, request.VectorSpaceID)
+		if err != nil || satisfied {
+			return err
+		}
+		prior := request.Authorization.PriorAuthorization
+		if prior == nil {
+			return errors.New("embedding reconciliation consent lacks admission authority")
+		}
+		jobID := embeddingJobID(s.vaultID, request.ContentVersionID, request.Profile.Fingerprint, candidate.binding.Name, candidate.binding.InputKind, request.InputGeneration.ID, prior.GrantID, prior.ProcessingIncarnationID, prior.RevocationFence)
+		var state, spaceID string
+		var failure sql.NullString
+		err = tx.QueryRowContext(ctx, `SELECT state,failure_code,vector_space_id FROM embedding_jobs WHERE job_id=?`, jobID).Scan(&state, &failure, &spaceID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		eligible = errors.Is(err, sql.ErrNoRows) || state == "abandoned" || (state == "completed" && spaceID != request.VectorSpaceID) || (state == "failed" && failure.Valid && EmbeddingFailureCode(failure.String) == EmbeddingFailureAuthorization)
+		return nil
+	})
+	return eligible, err
 }
 
 func embeddingGenerationCurrentTx(ctx context.Context, tx *sql.Tx, generation EmbeddingInputGenerationRecord, profile string) (bool, error) {

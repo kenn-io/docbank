@@ -1200,10 +1200,11 @@ func (embeddingIntegrationTokenizer) Tokenize(text string, limit int) ([]documen
 
 func newRealEmbeddingWorker(t *testing.T, kind document.EmbeddingInputKind, additionalBindings ...string) (publicationFixture, *embeddingWorkerFixture, *EmbeddingWorker, store.EmbeddingJobRequest) {
 	t.Helper()
-	return newRealEmbeddingWorkerWithDescriptor(t, kind, nil, additionalBindings...)
+	fixture, fake, worker, request, _ := newRealEmbeddingWorkerWithDescriptor(t, kind, nil, additionalBindings...)
+	return fixture, fake, worker, request
 }
 
-func newRealEmbeddingWorkerWithDescriptor(t *testing.T, kind document.EmbeddingInputKind, descriptor *document.EmbeddingDescriptor, additionalBindings ...string) (publicationFixture, *embeddingWorkerFixture, *EmbeddingWorker, store.EmbeddingJobRequest) {
+func newRealEmbeddingWorkerWithDescriptor(t *testing.T, kind document.EmbeddingInputKind, descriptor *document.EmbeddingDescriptor, additionalBindings ...string) (publicationFixture, *embeddingWorkerFixture, *EmbeddingWorker, store.EmbeddingJobRequest, EmbeddingWorkerConfig) {
 	t.Helper()
 	fixture := newPublicationFixture(t)
 	fake := newEmbeddingWorkerFixture(t)
@@ -1316,14 +1317,15 @@ func newRealEmbeddingWorkerWithDescriptor(t *testing.T, kind document.EmbeddingI
 	}
 	runtime, err := NewProviderEmbeddingRuntime(&embeddingWorkerProvider{runtime: fake.runtime, binding: binding.Name, descriptor: fake.descriptor}, fixture.blobs, t.TempDir(), fake.runtime.Classify)
 	require.NoError(t, err)
-	worker, err := NewEmbeddingWorker(EmbeddingWorkerConfig{Catalog: fixture.catalog, Authority: fixture.catalog,
+	config := EmbeddingWorkerConfig{Catalog: fixture.catalog, Authority: fixture.catalog,
 		Blobs: fixture.blobs, GenerationBlobs: fixture.blobs, Runtime: runtime, Gate: newTestOperationGate(), Owner: "integration-worker",
 		LeaseDuration: 3 * time.Second, IdleDelay: time.Millisecond, RetryLimit: 3, MaxRetryDelay: time.Second,
 		AttemptLifetime: time.Minute, MaxRows: 100, MaxDimensions: 8, MaxVectorBlobBytes: 1 << 20,
 		DescriptorFingerprints: []string{fake.descriptor.Fingerprint},
-	})
+	}
+	worker, err := NewEmbeddingWorker(config)
 	require.NoError(t, err)
-	return fixture, fake, worker, request
+	return fixture, fake, worker, request, config
 }
 
 func TestEmbeddingWorkerReleasesMaintenanceGateDuringProviderCall(t *testing.T) {
