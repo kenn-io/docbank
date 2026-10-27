@@ -77,7 +77,7 @@ var readToolDefinitions = []toolDefinition{
 	{name: "list_changes", title: "List changes", description: "Without a cursor, return an empty page and the current checkpoint. Save next_cursor before scanning documents, then resume from it. Later calls return up to 500 changes; repeat while has_more is true.", schemas: listChangesSchemas},
 	{name: "list_documents", title: "List documents", description: "Page through current, live documents with bounded stable ordering.", schemas: listDocumentsSchemas},
 	{name: "answer_question", openWorld: true, title: "Answer question", description: "Return matched evidence and coverage without synthesizing an answer. Content passages require every word of the question to appear in one segment; key terms match better than a sentence. Open sources to verify excerpts. coverage_complete reports embedding coverage only; INCOMPLETE_COVERAGE can also reflect missing passage text or omitted evidence.", schemas: answerQuestionSchemas},
-	{name: "search_documents", title: "Search documents", description: "Search current live documents matching metadata filters, or an exact list of up to 4,096 versions, and report coverage. Opt-in reranking sends the query and bounded candidate excerpts to the configured provider under the profile's consent.", schemas: searchDocumentsSchemas, openWorld: true},
+	{name: "search_documents", title: "Search documents", description: "Search current live documents matching metadata filters, or an exact list of up to 4,096 versions, and report coverage and declared validity. Use as_of (YYYY-MM-DD) to evaluate validity on a date; each declared result includes its validity state and current successors. Opt-in reranking sends the query and bounded candidate excerpts to the configured provider under the profile's consent.", schemas: searchDocumentsSchemas, openWorld: true},
 	findConflictsTool,
 	{name: "get_document", title: "Get document", description: "Read metadata for one exact current document identity.", schemas: getDocumentSchemas},
 	{name: "list_document_versions", title: "List document versions", description: "Page through immutable content versions for one stable document node.", schemas: listDocumentVersionsSchemas},
@@ -328,6 +328,9 @@ func validToolSemantics(name string, arguments map[string]any) bool {
 		}
 		fallthrough
 	case "search_documents", "find_conflicts":
+		if name == "search_documents" && !validOptionalCalendarDate(arguments, "as_of") {
+			return false
+		}
 		filters, ok := arguments["filters"].(map[string]any)
 		if !ok {
 			return arguments["filters"] == nil
@@ -337,6 +340,19 @@ func validToolSemantics(name string, arguments map[string]any) bool {
 	default:
 		return true
 	}
+}
+
+func validOptionalCalendarDate(arguments map[string]any, field string) bool {
+	value, ok := arguments[field]
+	if !ok {
+		return true
+	}
+	text, ok := value.(string)
+	if !ok {
+		return false
+	}
+	_, err := time.Parse("2006-01-02", text)
+	return err == nil
 }
 
 func stringBytesWithin(arguments map[string]any, field string, maximum int) bool {

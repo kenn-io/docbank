@@ -407,7 +407,7 @@ func TestSearchReadRejectsResultsOutsideResolvedFence(t *testing.T) {
 				VaultUID: testVaultID, ContentVersionIDs: []string{testVersionID}},
 				FenceFingerprint: testFenceFingerprint, ObservedScopeCount: 1})
 		case "/api/v1/search":
-			writeDaemonJSON(t, response, api.DocumentSearchReport{RequestedMode: "lexical", ActualMode: "lexical",
+			writeDaemonJSON(t, response, api.DocumentSearchReport{AsOf: "2025-01-01", RequestedMode: "lexical", ActualMode: "lexical",
 				Coverage:     api.DocumentSearchCoverage{ScopedDocuments: 1, CompleteDocuments: 1, State: "complete"},
 				Degradations: []string{}, Results: []api.DocumentSearchResult{{
 					VaultUID: testVaultID, NodeID: 7, ContentVersionID: otherVersion,
