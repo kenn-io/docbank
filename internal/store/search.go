@@ -240,7 +240,7 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 		for i, candidate := range content {
 			ids[i] = candidate.Node.ID
 		}
-		paths, err := pathsOf(ctx, queryer, ids)
+		paths, err := s.pathsOf(ctx, queryer, ids)
 		if err != nil {
 			return err
 		}
@@ -585,7 +585,7 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 			result.Candidates[0].Path, err = pathOf(ctx, tx, ids[0])
 			return err
 		}
-		paths, pathErr := pathsOf(ctx, tx, ids)
+		paths, pathErr := s.pathsOf(ctx, tx, ids)
 		if pathErr != nil {
 			return pathErr
 		}
@@ -2461,7 +2461,7 @@ func (s *Store) addSearchPaths(ctx context.Context, hits []SearchHit) error {
 	for i := range hits {
 		ids[i] = hits[i].Node.ID
 	}
-	paths, err := pathsOf(ctx, s.db, ids)
+	paths, err := s.pathsOf(ctx, s.db, ids)
 	if err != nil {
 		return err
 	}

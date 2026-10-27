@@ -98,7 +98,7 @@ func (s *Store) BeginWalk(
 		}
 	}()
 
-	root, err := nodeByPath(ctx, tx, s.rootID, rootPath)
+	root, err := s.nodeByPath(ctx, tx, rootPath)
 	if err != nil {
 		return nil, fmt.Errorf("beginning tree walk at %q: %w", rootPath, err)
 	}

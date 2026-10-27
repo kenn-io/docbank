@@ -65,7 +65,7 @@ func TestNodeByPathUsesCallerSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	_, _, err = s.Move(ctx, directory.ID, s.RootID(), "after", UnconditionalRev)
 	require.NoError(t, err)
-	got, err := nodeByPath(ctx, tx, s.RootID(), "/before/nested/note.txt")
+	got, err := s.nodeByPath(ctx, tx, "/before/nested/note.txt")
 	require.NoError(t, err)
 	require.Equal(t, file, got)
 	require.NoError(t, tx.Commit())
@@ -93,14 +93,14 @@ func TestPathsOfUsesCallerSnapshot(t *testing.T) {
 	_, _, err = s.Move(ctx, directory.ID, s.RootID(), "after", UnconditionalRev)
 	require.NoError(t, err)
 	ids := []int64{file.ID, s.RootID(), directory.ID, file.ID}
-	paths, err := pathsOf(ctx, tx, ids)
+	paths, err := s.pathsOf(ctx, tx, ids)
 	require.NoError(t, err)
 	require.Equal(t, []string{
 		"/before/資料/note.txt", "/", "/before/資料", "/before/資料/note.txt",
 	}, paths)
 	require.NoError(t, tx.Commit())
 
-	paths, err = pathsOf(ctx, s.db, ids)
+	paths, err = s.pathsOf(ctx, s.db, ids)
 	require.NoError(t, err)
 	require.Equal(t, []string{
 		"/after/note.txt", "/", "/after", "/after/note.txt",

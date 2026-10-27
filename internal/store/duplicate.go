@@ -98,7 +98,7 @@ func (s *Store) DuplicateGroupByHash(ctx context.Context, hash string, size int6
 		return DuplicateGroup{}, fmt.Errorf("reading exact duplicate group %s: %w", hash, err)
 	}
 	groups := []DuplicateGroup{group}
-	if err := populateDuplicateReferences(ctx, tx, groups); err != nil {
+	if err := s.populateDuplicateReferences(ctx, tx, groups); err != nil {
 		return DuplicateGroup{}, err
 	}
 	group = groups[0]
@@ -178,7 +178,7 @@ func (s *Store) Duplicates(
 		return DuplicatePage{}, fmt.Errorf("closing duplicate groups: %w", err)
 	}
 
-	if err := populateDuplicateReferences(ctx, tx, page.Items); err != nil {
+	if err := s.populateDuplicateReferences(ctx, tx, page.Items); err != nil {
 		return DuplicatePage{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -187,7 +187,7 @@ func (s *Store) Duplicates(
 	return page, nil
 }
 
-func populateDuplicateReferences(ctx context.Context, tx *sql.Tx, groups []DuplicateGroup) error {
+func (s *Store) populateDuplicateReferences(ctx context.Context, tx *sql.Tx, groups []DuplicateGroup) error {
 	if len(groups) == 0 {
 		return nil
 	}
@@ -241,10 +241,10 @@ func populateDuplicateReferences(ctx context.Context, tx *sql.Tx, groups []Dupli
 	for i := range groups {
 		groups[i].ReferencesTruncated = groups[i].ReferenceCount > len(groups[i].References)
 	}
-	return populateDuplicateReferenceDetails(ctx, tx, groups)
+	return s.populateDuplicateReferenceDetails(ctx, tx, groups)
 }
 
-func populateDuplicateReferenceDetails(ctx context.Context, tx *sql.Tx, groups []DuplicateGroup) error {
+func (s *Store) populateDuplicateReferenceDetails(ctx context.Context, tx *sql.Tx, groups []DuplicateGroup) error {
 	ids := make([]int64, 0, len(groups)*maxDuplicatePageReferences)
 	references := make(map[int64]*DuplicateReference, cap(ids))
 	for _, group := range groups {
@@ -259,7 +259,7 @@ func populateDuplicateReferenceDetails(ctx context.Context, tx *sql.Tx, groups [
 	if len(ids) == 0 {
 		return nil
 	}
-	paths, err := pathsOf(ctx, tx, ids)
+	paths, err := s.pathsOf(ctx, tx, ids)
 	if err != nil {
 		return err
 	}

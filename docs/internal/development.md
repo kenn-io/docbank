@@ -429,10 +429,21 @@ mutations, which still depend on catalogs that have not been ported.
 Node allocation, direct lookups, single-node canonical paths and directory
 pages use the same SQL on both engines. Numbered `$1` parameters,
 `INSERT ... RETURNING id` and a recursive ancestry query work with both SQLite
-drivers and pgx, without a dialect adapter. Directory and file creation retain
-their existing mutation transactions and error handling. Multi-segment path
-resolution, batched paths, the rest of those mutations and the remaining
-catalogs still require SQLite.
+drivers and pgx. Multi-segment path resolution and batched display paths also
+share traversal and result assembly. Only JSON array expansion differs:
+SQLite uses `json_each`; PostgreSQL uses `json_array_elements_text` with
+ordinality. Both bind one JSON array, preserving exact integer IDs and input
+positions without one parameter per item. Recursive path assembly avoids a
+backend-specific ordered string aggregate.
+
+Path lookup preserves name normalization, case-sensitive matching and live
+ancestor traversal. An invalid segment reports an invalid name only after its
+valid prefix resolves; a missing prefix still reports not found. Batched paths
+retain input order and repeated IDs, include display paths for retained trashed
+nodes, and fail if any requested ID is missing. Both operations use their
+caller's transaction when supplied. Directory and file creation retain their
+existing mutation transactions and error handling; complete mutations and the
+remaining catalogs still require SQLite.
 
 Node views and directory pages request read-only `REPEATABLE READ`
 transactions. Their metadata, canonical path, child count and selected page
@@ -443,7 +454,8 @@ snapshot pattern in msgvault and Kata; apply it to each multi-statement
 snapshot read as that operation is ported.
 
 The shared node-query tests exercise allocation, current-version projection,
-live-child lookup, canonical paths, directory paging, rollback and name reuse
+live-child lookup, normalized path resolution, ordered batched paths,
+directory paging, rollback and name reuse
 after trashing. Concurrent-write cases commit a rename or new child between
 reads and verify that a response stays on its original snapshot while a later
 request sees the change. They use the real SQLite schema and PostgreSQL

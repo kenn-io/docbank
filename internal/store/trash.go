@@ -78,7 +78,7 @@ func (s *Store) TrashPathRevision(
 	var trashed Node
 	var origPath string
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		n, err := nodeByPath(ctx, tx, s.rootID, path)
+		n, err := s.nodeByPath(ctx, tx, path)
 		if err != nil {
 			return fmt.Errorf("resolving %q: %w", path, err)
 		}

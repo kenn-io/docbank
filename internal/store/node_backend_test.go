@@ -191,6 +191,7 @@ func checkNodeQueries(t *testing.T, s *Store) {
 	require.Equal(t, Node{ID: fileID, ParentID: new(dirID), Name: "report.pdf", Kind: nodeKindFile,
 		CurrentVersionID: versionID, BlobHash: hash, MD5: md5, Size: 17, MimeType: "application/pdf",
 		Revision: 1, CreatedAt: recordedAt, ModifiedAt: recordedAt}, file)
+	t.Run("path queries", func(t *testing.T) { checkPathQueries(t, s, dir, file) })
 
 	t.Run("canonical paths and directory pages", func(t *testing.T) {
 		view, err := s.NodeViewByID(ctx, fileID)
@@ -248,7 +249,7 @@ func checkNodeQueries(t *testing.T, s *Store) {
 		// Commit on a separate connection after node resolution, before the
 		// production nodeView reads its path. No timing race is required.
 		view, err := s.nodeView(ctx, func(read *sql.Tx) (Node, error) {
-			node, err := nodeByIDTx(read, nodeID)
+			node, err := s.nodeByPath(ctx, read, "/before/old")
 			if err != nil {
 				return Node{}, err
 			}
@@ -261,7 +262,7 @@ func checkNodeQueries(t *testing.T, s *Store) {
 		require.Equal(t, "old", view.Node.Name)
 		require.Equal(t, "/before/old", view.Path)
 
-		after, err := s.NodeViewByID(ctx, nodeID)
+		after, err := s.NodeViewByPath(ctx, "/after/new")
 		require.NoError(t, err)
 		require.Equal(t, "new", after.Node.Name)
 		require.Equal(t, "/after/new", after.Path)

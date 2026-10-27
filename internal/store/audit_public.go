@@ -106,7 +106,7 @@ func (s *Store) PreviewInitialAuditPath(
 	ctx context.Context, path, origin string, agentLabel *string,
 ) (*AuditEnrollmentPlan, error) {
 	return s.previewInitialAudit(ctx, origin, agentLabel, func(tx *sql.Tx) (int64, error) {
-		node, err := nodeByPath(ctx, tx, s.rootID, path)
+		node, err := s.nodeByPath(ctx, tx, path)
 		return node.ID, err
 	})
 }
@@ -289,7 +289,7 @@ func (s *Store) AuditStatus(ctx context.Context, nodeID *int64) (AuditStatus, er
 // read snapshot as the vault-wide authority evidence.
 func (s *Store) AuditStatusPath(ctx context.Context, path string) (AuditStatus, error) {
 	return s.auditStatusSnapshot(ctx, func(tx *sql.Tx) (*int64, error) {
-		node, err := nodeByPath(ctx, tx, s.rootID, path)
+		node, err := s.nodeByPath(ctx, tx, path)
 		if err != nil {
 			return nil, err
 		}
