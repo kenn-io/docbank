@@ -73,7 +73,7 @@ Management uses the master daemon credential even when recording is off.`}
 	show.Example = "  docbank miss-log show <record-id>"
 	remove.Example = "  docbank miss-log delete <record-id>\n  docbank miss-log delete --before 2026-01-01T00:00:00Z"
 	purge.Example = "  docbank miss-log purge"
-	command.AddCommand(list, show, remove, purge, newMissLogLabelCmd())
+	command.AddCommand(list, show, remove, purge, newMissLogLabelCmd(), newMissLogExportCmd())
 	return command
 }
 func init() { rootCmd.AddCommand(newMissLogCmd()) }

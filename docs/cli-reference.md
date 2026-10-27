@@ -1849,9 +1849,21 @@ docbank miss-log show <record-id>
 docbank miss-log delete <record-id>
 docbank miss-log delete --before 2026-01-01T00:00:00Z
 docbank miss-log purge
+docbank miss-log label <record-id> --verdict wrong --expected node:42
+docbank miss-log label <record-id> --verdict none_in_vault
+docbank miss-log export eval ./questions.csv
+docbank miss-log export cards ./card-candidates.jsonl
 ```
 
-List and show print JSON. Management uses the master daemon credential and
+List and show print JSON. Export writes labeled examples to a new owner-only
+file and prints only counts and skip reasons. Existing files are never replaced.
+Unlabeled misses are excluded; only `none_in_vault` means an empty expected
+answer. Positive eval examples require current expected versions in their
+recorded immutable scope. Card candidates carry matching-hit evidence when
+available. Both formats are provisional. CSV keeps question text unchanged;
+spreadsheet applications can interpret formula-leading text.
+
+Management uses the master daemon credential and
 remains available with recording disabled. See the [configuration
 reference](configuration.md#private-search-miss-log) for retention, shared-daemon
 privacy, and backup exclusions.

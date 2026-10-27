@@ -35,6 +35,7 @@ func missLogFailure() error {
 
 func registerMissLogRoutes(api huma.API, d Deps, _ *OperationGate) {
 	registerMissLogFeedbackRoutes(api, d)
+	registerMissLogExportRoute(api, d)
 
 	type recordOutput struct {
 		CacheControl string `header:"Cache-Control"`

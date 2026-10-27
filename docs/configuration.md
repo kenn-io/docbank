@@ -1393,7 +1393,47 @@ Unknown or contradictory identities are rejected. Labels replace previous
 feedback; receipt triggers preserve `no_match`, `correction`, and
 `low_confidence` observations.
 
-These management operations require the master API credential. List and show
+Export labeled examples with `docbank miss-log export eval <new-file.csv>` or
+`docbank miss-log export cards <new-file.jsonl>`. Both commands require the
+master daemon credential and create a new owner-only file. They refuse an
+existing destination and print counts and bounded skip reasons, never record
+contents. An unlabeled miss is excluded. `wrong`, `missing`, and
+`low_confidence` need expected documents before export; only `none_in_vault`
+produces an explicitly empty expected answer.
+
+The provisional eval CSV has columns `id,question,expected_ids,scope`.
+`expected_ids` contains `node:<id>` values separated by semicolons. `scope`
+contains the exact recorded fence as JSON, including `vault_uid` and
+`content_version_ids`. Positive examples require an immutable recorded fence
+and current, live expected versions belonging to it. An omitted expected
+version resolves to the document's current version. Unavailable, changed, or
+out-of-scope documents are skipped. Live-filter searches cannot produce
+positive eval examples; a `none_in_vault` example can have empty scope, which
+cannot replay the original population exactly.
+
+CSV question fields preserve their text, including formula-leading characters.
+This is machine input: spreadsheet applications may interpret those characters
+as formulas. Records use CRLF terminators without changing embedded newlines;
+some CSV readers normalize CRLF inside fields when reading them.
+
+The provisional card JSONL has `question`, `expected`, `evidence_ids`, and
+`source_record_id` fields. Expected identities include the current node and
+content-version IDs. Evidence comes only from recorded hits matching those
+exact identities. A card can have no matching evidence and still be a
+candidate; it needs review before use. Live-filter labels can produce card
+candidates. Notes, paths, excerpts, and feedback capabilities are excluded
+from both formats. The mappings may change when the eval and answer-card
+consumers settle their contracts.
+
+The operator-only `GET /api/v1/miss-log/export` route takes `format=eval|cards`,
+`limit` (1–100, default 100), and a nonnegative `offset`. Each page scans at
+most 8 MiB of receipts and returns at most 1 MiB of projected items, plus
+bounded skip counts. `next_offset` advances past scanned records; `done` marks
+the end. The CLI follows pages with a 100000-record and 128 MiB output limit.
+Pages read live history rather than a snapshot; avoid concurrent changes when
+a stable export is needed. Exports remain available with recording disabled.
+
+These management operations require the master API credential. Read and export
 responses use `Cache-Control: no-store`. Browser sessions have no log access.
 MCP's `record_search_feedback` tool requires the ID and capability from a
 search, accepts the same feedback, and returns only success and the ID. It
