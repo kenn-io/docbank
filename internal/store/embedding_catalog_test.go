@@ -2014,6 +2014,54 @@ func TestEnqueueEmbeddingJobRejectsInvalidImageGeneration(t *testing.T) {
 	}
 }
 
+func TestEmbeddingReconciliationRestoresPendingImageGenerationInMixedProfile(t *testing.T) {
+	t.Parallel()
+	f := newImageEmbeddingCatalogFixture(t)
+	require.NoError(t, f.s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+		return ensureProcessingProfileTx(t.Context(), tx, f.request.Profile)
+	}))
+	var secondVersion string
+	require.NoError(t, f.s.db.QueryRow(`SELECT version_id FROM content_versions WHERE blob_hash=? ORDER BY version_id LIMIT 1`, catalogSourceHash).Scan(&secondVersion))
+	record := embeddingSetFixture(f.s, secondVersion, f.request.Profile.Fingerprint, document.EmbeddingInputOriginalFile, "required", "")
+	require.NoError(t, f.s.StageEmbeddingSet(t.Context(), record))
+	require.NoError(t, f.s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
+		FencingToken: 1,
+		Key:          EmbeddingHeadKey{ContentVersionID: secondVersion, BindingID: "required", InputKind: document.EmbeddingInputOriginalFile},
+		SetID:        record.ID, VectorSpaceID: record.VectorSpace.ID,
+		ProcessingProfileFingerprint: f.request.Profile.Fingerprint, PublishedAt: embeddingCatalogTime,
+	}))
+	binding := workerProfileEmbeddingBinding(t, f.request.Profile, "required")
+	_, err := f.s.GrantConsent(t.Context(), ProcessingConsentGrantRequest{
+		Principal: "operator:original-reconcile", Scope: "embedding:required",
+		ProfileFingerprint: f.request.Profile.Fingerprint, DisclosureFingerprint: binding.DisclosureFingerprint,
+		InputClasses: []string{string(document.EmbeddingInputOriginalFile)}, RetainedArtifactClasses: []string{"embedding_vector_set"},
+	})
+	require.NoError(t, err)
+	_, err = f.s.EnqueueEmbeddingJob(t.Context(), f.request)
+	require.NoError(t, err)
+	// Restore retains pending generations but omits job rows.
+	_, err = f.s.db.Exec(`DELETE FROM embedding_jobs`)
+	require.NoError(t, err)
+	_, err = f.s.ReconcileEmbeddingJobs(t.Context(), EmbeddingReconcileRequest{
+		ImageProfiles: []ProcessingProfileRecord{f.request.Profile},
+		ImageAfter:    ImageReconcilePosition{ProfileFingerprint: f.request.Profile.Fingerprint, ContentVersionID: f.node.CurrentVersionID},
+		Limit:         100, At: time.Now(), Mutate: embeddingTestMutation,
+		DescriptorFingerprints: []string{f.request.Descriptor.Fingerprint, record.VectorSpace.Descriptor.Fingerprint},
+		PrepareImageGeneration: func(_ context.Context, _ ProcessingProfileRecord, _ document.EmbeddingBindingV1, _ string) (EmbeddingInputGenerationRecord, document.EmbeddingDescriptor, error) {
+			t.Fatal("discovery must start past the restored photo")
+			return EmbeddingInputGenerationRecord{}, document.EmbeddingDescriptor{}, nil
+		},
+	})
+	require.NoError(t, err)
+	var imageJobs, originalJobs int
+	require.NoError(t, f.s.db.QueryRow(`SELECT
+		(SELECT COUNT(*) FROM embedding_jobs WHERE content_version_id=? AND binding_id='optional' AND input_kind='image'),
+		(SELECT COUNT(*) FROM embedding_jobs WHERE content_version_id=? AND binding_id='required')`,
+		f.node.CurrentVersionID, f.node.CurrentVersionID).Scan(&imageJobs, &originalJobs))
+	require.Equal(t, 1, imageJobs)
+	require.Zero(t, originalJobs)
+}
+
 func TestEmbeddingReconciliationSkipsPurgeSuppressedImages(t *testing.T) {
 	t.Parallel()
 	f := newImageEmbeddingCatalogFixture(t)

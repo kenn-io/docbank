@@ -135,12 +135,8 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 			if err != nil {
 				return err
 			}
-			// Image and original-file inputs both omit a generation blob. Their jobs
-			// and sets retain the input kind needed to keep these bindings separate.
-			var imageGeneration bool
-			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM embedding_jobs WHERE generation_id=? AND input_kind='image') OR EXISTS(SELECT 1 FROM embedding_sets WHERE input_generation_id=? AND input_kind='image')`, generation.ID, generation.ID).Scan(&imageGeneration); err != nil {
-				return err
-			}
+			// Image generations carry the image producer policy; original-file generations never do.
+			imageGeneration := generation.ChunkPolicyFingerprint == ImageEmbeddingPolicyFingerprint()
 			for _, binding := range portable.Embeddings {
 				if (binding.InputKind == document.EmbeddingInputRenditionChunk) != (generation.GenerationBlobHash != "") || (binding.InputKind == document.EmbeddingInputOriginalFile && imageGeneration) {
 					continue
