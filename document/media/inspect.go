@@ -24,6 +24,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu"
 	webparse "github.com/tdewolff/parse/v2"
 	csslexer "github.com/tdewolff/parse/v2/css"
 
@@ -1366,7 +1367,19 @@ func inspectPDF(data []byte, policy *InspectionPolicy) CapabilityRecord {
 
 // CountPDFPages returns the page count from the authoritative PDF object graph.
 func CountPDFPages(data []byte) (int64, error) {
-	return formatdetect.CountPDFPages(data)
+	pages, err := formatdetect.CountPDFPages(data)
+	if !errors.Is(err, formatdetect.ErrPDFEncrypted) {
+		return pages, err
+	}
+	unlocked, err := formatdetect.DecryptPDF(data, "", int64(len(data)))
+	if errors.Is(err, pdfcpu.ErrWrongPassword) {
+		return 0, formatdetect.ErrPDFEncrypted
+	}
+	if err != nil {
+		return 0, err
+	}
+	defer clear(unlocked)
+	return formatdetect.CountPDFPages(unlocked)
 }
 
 // PDFMetadata contains optional metadata resolved after core PDF validation.

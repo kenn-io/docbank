@@ -20,10 +20,13 @@ import (
 	"testing"
 	"testing/iotest"
 
+	"github.com/pdfcpu/pdfcpu/pkg/api"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/internal/formatdetect"
 	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/media/mediatest"
 )
@@ -2663,6 +2666,34 @@ func paddedM4A() []byte {
 	mdat := bytes.Index(padded, []byte("mdat")) - 4
 	binary.BigEndian.PutUint32(padded[mdat:mdat+4], (16<<20)+12)
 	return padded
+}
+
+func TestCountPDFPages(t *testing.T) {
+	plain := syntheticPDFPages(3, "page count")
+	var ownerOnly bytes.Buffer
+	require.NoError(t, api.Encrypt(bytes.NewReader(plain), &ownerOnly, model.NewAESConfiguration("", "owner", 128)))
+	protected, err := mediatest.EncryptedPDF("open", "owner", 128)
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name    string
+		data    []byte
+		pages   int64
+		wantErr error
+	}{
+		{"plain", plain, 3, nil},
+		{"owner password", ownerOnly.Bytes(), 3, nil},
+		{"user password", protected, 0, formatdetect.ErrPDFEncrypted},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pages, err := media.CountPDFPages(tc.data)
+			if tc.wantErr != nil {
+				require.ErrorIs(t, err, tc.wantErr)
+			} else {
+				require.NoError(t, err)
+			}
+			require.Equal(t, tc.pages, pages)
+		})
+	}
 }
 
 func TestInspectPasswordProtectedPDF(t *testing.T) {
