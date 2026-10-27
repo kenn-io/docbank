@@ -4,7 +4,6 @@ package store
 import (
 	"context"
 	"database/sql"
-	"database/sql/driver"
 	_ "embed"
 	"errors"
 	"fmt"
@@ -269,53 +268,13 @@ func (s *Store) Checkpoint(ctx context.Context) error {
 	return nil
 }
 
+var errBeginTx = errors.New("beginning transaction")
+
 // withStorageTx is the transaction primitive for bootstrap, import, audit
 // recording, and physical storage maintenance. User-visible metadata mutations
 // use withLogicalTx so audited vaults fail closed unless that mutation has an
 // explicit audit implementation in Go.
-func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
-	return s.withStorageTxBegin(ctx, func(conn *sql.Conn) (*sql.Tx, error) {
-		// Own cancellation so ordinary mutations wait for their rollback.
-		return conn.BeginTx(context.WithoutCancel(ctx), nil)
-	}, fn)
-}
-
-func (s *Store) withStorageTxRetryBegin(ctx context.Context, fn func(tx *sql.Tx) error) error {
-	_, err := backoff.Retry(ctx, func() (struct{}, error) {
-		busy := false
-		err := s.withStorageTxBegin(ctx, func(conn *sql.Conn) (*sql.Tx, error) {
-			beginCtx := context.WithoutCancel(ctx)
-			var timeout int
-			if err := conn.QueryRowContext(beginCtx, "PRAGMA busy_timeout").Scan(&timeout); err != nil {
-				return nil, err
-			}
-			if _, err := conn.ExecContext(beginCtx, "PRAGMA busy_timeout=0"); err != nil {
-				return nil, err
-			}
-			tx, beginErr := conn.BeginTx(beginCtx, nil)
-			if _, restoreErr := conn.ExecContext(beginCtx, fmt.Sprintf("PRAGMA busy_timeout=%d", timeout)); restoreErr != nil {
-				if tx != nil {
-					restoreErr = errors.Join(restoreErr, tx.Rollback())
-				}
-				// A connection with the wrong timeout must not return to the pool.
-				discardErr := conn.Raw(func(any) error { return driver.ErrBadConn })
-				return nil, errors.Join(beginErr, restoreErr, discardErr)
-			}
-			busy = s.driver.IsBusy(beginErr)
-			return tx, beginErr
-		}, fn)
-		if err != nil && !busy {
-			return struct{}{}, backoff.Permanent(err)
-		}
-		return struct{}{}, err
-	}, backoff.WithBackOff(backoff.NewConstantBackOff(10*time.Millisecond)), backoff.WithMaxTries(0), backoff.WithMaxElapsedTime(0))
-	if err != nil {
-		return errors.Join(ctx.Err(), backoff.AsRetryError(err).LastErr)
-	}
-	return nil
-}
-
-func (s *Store) withStorageTxBegin(ctx context.Context, begin func(*sql.Conn) (*sql.Tx, error), fn func(tx *sql.Tx) error) (retErr error) {
+func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) (retErr error) {
 	defer func() {
 		// Cancellation may roll back before the callback or Commit observes it.
 		// Preserve cancellation alongside ErrTxDone.
@@ -351,7 +310,7 @@ func (s *Store) withStorageTxBegin(ctx context.Context, begin func(*sql.Conn) (*
 		<-beginCancelled
 	}
 	if err != nil {
-		return fmt.Errorf("beginning transaction: %w", err)
+		return fmt.Errorf("%w: %w", errBeginTx, err)
 	}
 	rollbackDone := make(chan struct{})
 	var rollbackErr error
@@ -409,6 +368,20 @@ func (s *Store) withStorageTxBegin(ctx context.Context, begin func(*sql.Conn) (*
 	}
 	if changed || !capture && s.hasPhotoSubscribers() {
 		s.publishPhotoChange()
+	}
+	return nil
+}
+
+func (s *Store) withStorageTxRetryBegin(ctx context.Context, fn func(tx *sql.Tx) error) error {
+	_, err := backoff.Retry(ctx, func() (struct{}, error) {
+		err := s.withStorageTx(ctx, fn)
+		if err != nil && (!errors.Is(err, errBeginTx) || !s.driver.IsBusy(err)) {
+			return struct{}{}, backoff.Permanent(err)
+		}
+		return struct{}{}, err
+	}, backoff.WithBackOff(backoff.NewConstantBackOff(10*time.Millisecond)), backoff.WithMaxTries(0), backoff.WithMaxElapsedTime(0))
+	if err != nil {
+		return errors.Join(ctx.Err(), backoff.AsRetryError(err).LastErr)
 	}
 	return nil
 }
