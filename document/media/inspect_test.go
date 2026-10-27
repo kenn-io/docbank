@@ -2668,13 +2668,15 @@ func paddedM4A() []byte {
 
 func TestCountPDFPages(t *testing.T) {
 	plain := syntheticPDFPages(3, "page count")
-	ownerOnly, err := mediatest.EncryptedPDF("", "owner", 128, plain)
+	ownerOnly, err := mediatest.EncryptPDF(plain, "", "owner", 128)
 	require.NoError(t, err)
-	_, err = media.CountPDFPages(ownerOnly)
-	require.ErrorIs(t, err, formatdetect.ErrPDFEncrypted)
-	pages, err := media.CountPDFPagesWithEmptyPassword(ownerOnly)
+	pages, err := media.CountPDFPages(ownerOnly)
 	require.NoError(t, err)
 	require.Equal(t, int64(3), pages)
+	protected, err := mediatest.EncryptedPDF("open", "owner", 128)
+	require.NoError(t, err)
+	_, err = media.CountPDFPages(protected)
+	require.ErrorIs(t, err, formatdetect.ErrPDFEncrypted)
 }
 
 func TestInspectPasswordProtectedPDF(t *testing.T) {

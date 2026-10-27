@@ -57,10 +57,32 @@ func TestCountPDFPagesPasswordPolicy(t *testing.T) {
 		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>",
 		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>",
 	})
-	ownerOnly, err := mediatest.EncryptedPDF("", "owner", 128, plain)
+	ownerOnly, err := mediatest.EncryptPDF(plain, "", "owner", 128)
 	require.NoError(t, err)
 	protected, err := mediatest.EncryptedPDF("open", "owner", 128)
 	require.NoError(t, err)
+	objects := []string{
+		"<< /Type /Catalog /Pages 2 0 R >>",
+		"",
+	}
+	kids := make([]string, 0, 1500)
+	for index := range 1500 {
+		kids = append(kids, fmt.Sprintf("%d 0 R", index+3))
+		objects = append(objects, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>")
+	}
+	objects[1] = "<< /Type /Pages /Kids [" + strings.Join(kids, " ") + "] /Count 1500 >>"
+	compressed := mediatest.PDFObjects("compressed page count", objects)
+	var packed, decrypted bytes.Buffer
+	require.NoError(t, api.Optimize(bytes.NewReader(compressed), &packed, model.NewDefaultConfiguration()))
+	encrypted, err := mediatest.EncryptPDF(packed.Bytes(), "", "owner", 128)
+	require.NoError(t, err)
+	require.Contains(t, string(encrypted), "/ObjStm")
+	configuration := model.NewDefaultConfiguration()
+	configuration.WriteObjectStream = false
+	configuration.WriteXRefStream = false
+	require.NoError(t, api.Decrypt(bytes.NewReader(encrypted), &decrypted, configuration))
+	require.Greater(t, decrypted.Len(), len(encrypted))
+
 	for _, tc := range []struct {
 		name    string
 		count   func([]byte) (int64, error)
@@ -71,6 +93,8 @@ func TestCountPDFPagesPasswordPolicy(t *testing.T) {
 		{"owner password", formatdetect.CountPDFPagesWithEmptyPassword, ownerOnly, 3, nil},
 		{"user password", formatdetect.CountPDFPagesWithEmptyPassword, protected, 0, formatdetect.ErrPDFEncrypted},
 		{"strict owner password", formatdetect.CountPDFPages, ownerOnly, 0, formatdetect.ErrPDFEncrypted},
+		{"strict user password", formatdetect.CountPDFPages, protected, 0, formatdetect.ErrPDFEncrypted},
+		{"compressed owner password", formatdetect.CountPDFPagesWithEmptyPassword, encrypted, 1500, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			pages, err := tc.count(tc.data)
@@ -82,34 +106,6 @@ func TestCountPDFPagesPasswordPolicy(t *testing.T) {
 			require.Equal(t, tc.pages, pages)
 		})
 	}
-}
-
-func TestCountPDFPagesCompressedOwnerPassword(t *testing.T) {
-	objects := []string{
-		"<< /Type /Catalog /Pages 2 0 R >>",
-		"",
-	}
-	kids := make([]string, 0, 1500)
-	for index := range 1500 {
-		kids = append(kids, fmt.Sprintf("%d 0 R", index+3))
-		objects = append(objects, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>")
-	}
-	objects[1] = "<< /Type /Pages /Kids [" + strings.Join(kids, " ") + "] /Count 1500 >>"
-	plain := mediatest.PDFObjects("compressed page count", objects)
-	var packed, decrypted bytes.Buffer
-	require.NoError(t, api.Optimize(bytes.NewReader(plain), &packed, model.NewDefaultConfiguration()))
-	encrypted, err := mediatest.EncryptedPDF("", "owner", 128, packed.Bytes())
-	require.NoError(t, err)
-	require.Contains(t, string(encrypted), "/ObjStm")
-	configuration := model.NewDefaultConfiguration()
-	configuration.WriteObjectStream = false
-	configuration.WriteXRefStream = false
-	require.NoError(t, api.Decrypt(bytes.NewReader(encrypted), &decrypted, configuration))
-	require.Greater(t, decrypted.Len(), len(encrypted))
-
-	pages, err := formatdetect.CountPDFPagesWithEmptyPassword(encrypted)
-	require.NoError(t, err)
-	require.Equal(t, int64(1500), pages)
 }
 
 func TestUnlockPDFBoundsExpandedObjectOutput(t *testing.T) {
@@ -127,12 +123,11 @@ func TestUnlockPDFBoundsExpandedObjectOutput(t *testing.T) {
 	}
 	objects[2] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Annots [" + annotations.String() + "] >>"
 	plain := mediatest.PDFObjects("compressed objects", objects)
-	var packed bytes.Buffer
+	var packed, encrypted bytes.Buffer
 	require.NoError(t, api.Optimize(bytes.NewReader(plain), &packed, model.NewDefaultConfiguration()))
-	encrypted, err := mediatest.EncryptedPDF("open", "owner", 128, packed.Bytes())
-	require.NoError(t, err)
-	require.Less(t, len(encrypted), 1<<20)
-	unlocked, _, err := formatdetect.UnlockPDF(encrypted, []string{"open"}, 1<<20)
+	require.NoError(t, api.Encrypt(bytes.NewReader(packed.Bytes()), &encrypted, model.NewAESConfiguration("open", "owner", 128)))
+	require.Less(t, encrypted.Len(), 1<<20)
+	unlocked, _, err := formatdetect.UnlockPDF(encrypted.Bytes(), []string{"open"}, 1<<20)
 	require.ErrorIs(t, err, formatdetect.ErrPDFExpandedBytes)
 	require.Nil(t, unlocked)
 }

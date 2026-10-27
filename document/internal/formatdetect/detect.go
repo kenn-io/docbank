@@ -492,7 +492,7 @@ func InspectPDF(data []byte, limits PDFLimits) (PDFMeasurements, error) {
 
 // CountPDFPages returns the authoritative page-tree count without decoding
 // unrelated content streams. Parsing remains bounded by the source size.
-// Provider callers rely on it refusing encrypted PDFs.
+// It rejects encrypted PDFs. Provider and generated-output callers rely on this refusal.
 func CountPDFPages(data []byte) (int64, error) {
 	return countPDFPages(data, false)
 }
@@ -648,13 +648,13 @@ func validatePDFObjectGraph(data []byte, limits PDFLimits, allowEmptyPassword bo
 		}
 		return nil, fmt.Errorf("validate PDF object graph: %w", err)
 	}
+	return checkPDFReferences(context, allowEmptyPassword)
+}
+
+func checkPDFReferences(context *model.Context, allowEmptyPassword bool) (*model.Context, error) {
 	if context.Encrypt != nil && !allowEmptyPassword {
 		return nil, ErrPDFEncrypted
 	}
-	return checkPDFExternalReferences(context)
-}
-
-func checkPDFExternalReferences(context *model.Context) (*model.Context, error) {
 	external, err := pdfHasExternalReference(context)
 	if err != nil {
 		if errors.Is(err, filter.ErrDecodeLimitExceeded) {
