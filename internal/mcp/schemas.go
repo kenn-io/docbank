@@ -14,6 +14,7 @@ import (
 const (
 	jsonSchemaDraft           = "https://json-schema.org/draft/2020-12/schema"
 	packageIDField            = "package_id"
+	versionField              = "content_version_id"
 	personIDField             = "person_id"
 	schemaStateField          = "state"
 	schemaRevisionField       = "revision"

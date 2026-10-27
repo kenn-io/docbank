@@ -60,6 +60,8 @@ func executeReadTool(
 		output, err = getVaultInfo(ctx, daemonDocumentSession(lease), raw)
 	case "list_documents":
 		output, links, err = listDocuments(ctx, daemonDocumentSession(lease), raw)
+	case "answer_question":
+		output, links, err = answerQuestion(ctx, daemonDocumentSession(lease), raw)
 	case "search_documents":
 		output, links, err = searchDocuments(ctx, daemonDocumentSession(lease), raw)
 	case "get_document":
@@ -490,19 +492,27 @@ func searchDocuments(
 		Results:        make([]searchResultOutput, len(result.report.Results)), Truncated: result.report.Truncated,
 		privateCache: newPrivateCache()}
 	for index, item := range result.report.Results {
-		evidence := make([]string, len(item.Evidence))
-		for evidenceIndex, identity := range item.Evidence {
-			encoded, marshalErr := json.Marshal(identity, json.Deterministic(true))
-			if marshalErr != nil || len(encoded) > 1024 {
-				return searchDocumentsOutput{}, nil, errors.New("search evidence identity is invalid")
-			}
-			evidence[evidenceIndex] = string(encoded)
+		evidence, err := encodeSearchEvidenceIDs(item.Evidence)
+		if err != nil {
+			return searchDocumentsOutput{}, nil, err
 		}
 		output.Results[index] = searchResultOutput{NodeID: item.NodeID,
 			ContentVersionID: item.ContentVersionID, Rank: item.Rank, Score: item.Score,
 			Path: item.Path, Excerpt: item.Excerpt, EvidenceIDs: evidence}
 	}
 	return output, documentResourceLinks(result.resolution.Fence.VaultUID, result.documents), nil
+}
+
+func encodeSearchEvidenceIDs(evidence []api.DocumentEvidenceReference) ([]string, error) {
+	ids := make([]string, len(evidence))
+	for index, identity := range evidence {
+		encoded, err := json.Marshal(identity, json.Deterministic(true))
+		if err != nil || len(encoded) > 1024 {
+			return nil, errors.New("search evidence identity is invalid")
+		}
+		ids[index] = string(encoded)
+	}
+	return ids, nil
 }
 
 func effectiveSearchMode(mode string) string {

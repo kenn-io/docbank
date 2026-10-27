@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -74,6 +75,7 @@ var readToolDefinitions = []toolDefinition{
 	{name: "get_export_status", title: "Get export status", description: "Read one retained export job without downloading it.", schemas: getExportStatusSchemas},
 	{name: "get_vault_info", title: "Get vault info", description: "Summarize the selected vault without exposing its host path.", schemas: getVaultInfoSchemas},
 	{name: "list_documents", title: "List documents", description: "Page through current, live documents with bounded stable ordering.", schemas: listDocumentsSchemas},
+	{name: "answer_question", title: "Answer question", description: "Return matched evidence and coverage without synthesizing an answer. Open sources to verify excerpts.", schemas: answerQuestionSchemas},
 	{name: "search_documents", title: "Search documents", description: "Search an exact bounded current-version source fence and report coverage.", schemas: searchDocumentsSchemas},
 	{name: "get_document", title: "Get document", description: "Read metadata for one exact current document identity.", schemas: getDocumentSchemas},
 	{name: "list_document_versions", title: "List document versions", description: "Page through immutable content versions for one stable document node.", schemas: listDocumentVersionsSchemas},
@@ -310,6 +312,17 @@ func validToolSemantics(name string, arguments map[string]any) bool {
 	case "list_documents":
 		return stringBytesWithin(arguments, "path_prefix", maxPathBytes) &&
 			stringBytesWithin(arguments, "cursor", maxCursorBytes)
+	case "answer_question":
+		question, _ := arguments["question"].(string)
+		if strings.TrimSpace(question) == "" {
+			return false
+		}
+		if _, binding := arguments["binding_id"]; binding {
+			if _, profile := arguments["profile"]; !profile {
+				return false
+			}
+		}
+		fallthrough
 	case "search_documents":
 		filters, ok := arguments["filters"].(map[string]any)
 		if !ok {
@@ -388,6 +401,10 @@ type toolErrorOutput struct {
 
 func domainToolError(err error) (*sdkmcp.CallToolResult, bool) {
 	code, observed := stableDomainError(err)
+	return domainToolErrorResult(code, observed)
+}
+
+func domainToolErrorResult(code string, observed int) (*sdkmcp.CallToolResult, bool) {
 	if code == "" {
 		return nil, false
 	}
@@ -423,6 +440,8 @@ func stableDomainError(err error) (string, int) {
 		return "processing_outcome_unknown", 0
 	case errors.Is(err, errKataOutcomeUnknown):
 		return "kata_outcome_unknown", 0
+	case errors.Is(err, errAnswerGateFailed):
+		return "answer_gate_failed", 0
 	case errors.Is(err, errReportIntegrity):
 		return "report_integrity", 0
 	case errors.Is(err, errReportLocalIO):
@@ -563,6 +582,12 @@ func domainErrorMessage(code string) string {
 		return "The Kata operation failed; inspect the issue before deliberately retrying the same request."
 	case "kata_outcome_unknown":
 		return "The Kata write may have succeeded without a usable reply. Do not retry automatically; inspect the issue and deliberately retry the same create key or exact append selection."
+	case "answer_gate_failed":
+		return "An evidence gate could not complete."
+	case "processing_unavailable", "processing_profile_unavailable":
+		return "The requested processing profile is unavailable."
+	case "reranking_unavailable", "reranking_failed":
+		return "The requested reranking could not be completed."
 	case "invalid_text_navigation":
 		return "Fetch the outline for this rendition and correct the section bounds or offset."
 	case "text_navigation_limit":
