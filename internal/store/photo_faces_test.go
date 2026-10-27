@@ -894,7 +894,8 @@ func TestPeoplePhotoSummary(t *testing.T) {
 		browsePhotoMetadata(t, s, node, fmt.Sprintf("summary-%d", i), exifCapture(fmt.Sprintf("2026-01-%02dT12:00:00Z", i+1)))
 		asset, err := s.PhotoAssetForNode(ctx, node.ID)
 		require.NoError(t, err)
-		face, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.NewString(), document.FaceBox{X: .1, Y: .1, Width: .3, Height: .3}, person.PersonID)
+		size := .4 - float64(i)*.1
+		face, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.NewString(), document.FaceBox{X: .1, Y: .1, Width: size, Height: size}, person.PersonID)
 		require.NoError(t, err)
 		nodes = append(nodes, node)
 		assets = append(assets, asset)
@@ -905,6 +906,18 @@ func TestPeoplePhotoSummary(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.MarkPersonInPhoto(ctx, nodes[0].CurrentVersionID, person.PersonID, "")
 	require.NoError(t, err)
+	options := PeopleSearchOptions{PhotoSummary: true, GridRecipe: "grid"}
+	// The older, larger face wins over newer background faces.
+	rows, _, err := s.PeopleByDisplayName(ctx, "Ada", "", "", 100, true, options)
+	require.NoError(t, err)
+	require.Equal(t, nodes[0].CurrentVersionID, rows[0].PhotoSummary.Face.ContentVersionID)
+	// A ready preview wins even when its face is smaller.
+	generation, err := s.PublishVisualPreviewGeneration(ctx, nodes[1].CurrentVersionID, readyVisualPreviewWithRecipe(t, nodes[1].BlobHash, fakeHash("b1"), 9, visualPreviewRecipe()), &BlobPhysical{Encoding: looseEncodingRaw, StoredBytes: 9})
+	require.NoError(t, err)
+	options.GridRecipe = generation.RecipeFingerprint
+	rows, _, err = s.PeopleByDisplayName(ctx, "Ada", "", "", 100, true, options)
+	require.NoError(t, err)
+	require.Equal(t, nodes[1].CurrentVersionID, rows[0].PhotoSummary.Face.ContentVersionID)
 	p, _, err := s.PersonByID(ctx, person.PersonID)
 	require.NoError(t, err)
 	_, err = s.DecidePhotoFace(ctx, nodes[0].CurrentVersionID, PhotoFaceDecisionRequest{Action: "key", Revision: 1, PersonID: p.PersonID, PersonRevision: p.Revision, FaceID: faces[0].FaceID})
@@ -917,13 +930,12 @@ func TestPeoplePhotoSummary(t *testing.T) {
 	unlocked := WithPhotoHiddenToken(ctx, token)
 	_, err = s.MarkPersonInPhoto(unlocked, nodes[2].CurrentVersionID, hiddenOnly.PersonID, "")
 	require.NoError(t, err)
-	options := PeopleSearchOptions{PhotoSummary: true, GridRecipe: "grid"}
 	// Filter contacts before applying the page limit.
 	page, _, err := s.PeopleByDisplayName(ctx, "", "", "", 1, true, options)
 	require.NoError(t, err)
 	require.Len(t, page, 1)
 	require.Equal(t, person.PersonID, page[0].PersonID)
-	rows, _, err := s.PeopleByDisplayName(unlocked, "", "", "", 100, true, options)
+	rows, _, err = s.PeopleByDisplayName(unlocked, "", "", "", 100, true, options)
 	require.NoError(t, err)
 	// A person without photo evidence gets no card.
 	require.Len(t, rows, 2)

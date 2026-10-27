@@ -54,11 +54,10 @@ func personPortraitSQL(unlocked bool) string {
  CASE WHEN g.state='ready' AND g.output_blob_hash IS NOT NULL THEN g.generation_id ELSE '' END generation_id,
  a.hidden_at IS NOT NULL hidden,
  ROW_NUMBER() OVER (PARTITION BY person.person_id ORDER BY face.face_id=person.key_face_id DESC,
- a.hidden_at IS NULL DESC,COALESCE(pl.sort_key,'') DESC,
+ a.hidden_at IS NULL DESC,
  ` + personFaceCropOrder + `) rank` + personEvidence + `
  CROSS JOIN photo_faces face ON face.assertion_id=assertion.assertion_id AND face.content_version_id=assertion.content_version_id
  CROSS JOIN content_versions cv ON cv.version_id=face.content_version_id` + joins + `
- LEFT JOIN photo_timeline pl ON pl.file_id=f.file_id
  LEFT JOIN visual_preview_generations g ON g.content_version_id=cv.version_id AND g.recipe_fingerprint=?2` + where + `)
  SELECT person_id,asset_id,version_id,rotation,x,y,width,height,generation_id,hidden FROM portraits WHERE rank=1`
 }
