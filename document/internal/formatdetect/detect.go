@@ -447,7 +447,7 @@ type PDFInfoMetadata struct {
 // supported stream under the supplied limits. Opaque image filters are rejected
 // because their decoded size cannot be established without rendering them.
 func InspectPDF(data []byte, limits PDFLimits) (PDFMeasurements, error) {
-	context, err := validatePDFObjectGraph(data, limits)
+	context, err := validatePDFObjectGraph(data, limits, false)
 	if err != nil {
 		return PDFMeasurements{}, err
 	}
@@ -492,6 +492,7 @@ func InspectPDF(data []byte, limits PDFLimits) (PDFMeasurements, error) {
 
 // CountPDFPages returns the authoritative page-tree count without decoding
 // unrelated content streams. Parsing remains bounded by the source size.
+// Provider callers rely on it refusing encrypted PDFs.
 func CountPDFPages(data []byte) (int64, error) {
 	return countPDFPages(data, false)
 }
@@ -504,7 +505,7 @@ func CountPDFPagesWithEmptyPassword(data []byte) (int64, error) {
 
 func countPDFPages(data []byte, allowEmptyPassword bool) (int64, error) {
 	sourceBytes := int64(len(data))
-	context, err := validatePDFObjectGraphWithEmptyPassword(data, PDFLimits{
+	context, err := validatePDFObjectGraph(data, PDFLimits{
 		MaxExpandedBytes: sourceBytes,
 		MaxEntryBytes:    sourceBytes,
 		MaxEntries:       sourceBytes,
@@ -635,11 +636,7 @@ func pdfConfiguration(sourceBytes int, limits PDFLimits) *model.Configuration {
 	}
 }
 
-func validatePDFObjectGraph(data []byte, limits PDFLimits) (*model.Context, error) {
-	return validatePDFObjectGraphWithEmptyPassword(data, limits, false)
-}
-
-func validatePDFObjectGraphWithEmptyPassword(data []byte, limits PDFLimits, allowEmptyPassword bool) (*model.Context, error) {
+func validatePDFObjectGraph(data []byte, limits PDFLimits, allowEmptyPassword bool) (*model.Context, error) {
 	configuration := pdfConfiguration(len(data), limits)
 	context, err := api.ReadAndValidate(bytes.NewReader(data), configuration)
 	if err != nil {
@@ -651,14 +648,7 @@ func validatePDFObjectGraphWithEmptyPassword(data []byte, limits PDFLimits, allo
 		}
 		return nil, fmt.Errorf("validate PDF object graph: %w", err)
 	}
-	if !allowEmptyPassword {
-		return checkPDFReferences(context)
-	}
-	return checkPDFExternalReferences(context)
-}
-
-func checkPDFReferences(context *model.Context) (*model.Context, error) {
-	if context.Encrypt != nil {
+	if context.Encrypt != nil && !allowEmptyPassword {
 		return nil, ErrPDFEncrypted
 	}
 	return checkPDFExternalReferences(context)

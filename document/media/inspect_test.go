@@ -2670,8 +2670,8 @@ func paddedM4A() []byte {
 
 func TestCountPDFPages(t *testing.T) {
 	plain := syntheticPDFPages(3, "page count")
-	var ownerOnly bytes.Buffer
-	require.NoError(t, api.Encrypt(bytes.NewReader(plain), &ownerOnly, model.NewAESConfiguration("", "owner", 128)))
+	ownerOnly, err := mediatest.EncryptedPDF("", "owner", 128, plain)
+	require.NoError(t, err)
 	protected, err := mediatest.EncryptedPDF("open", "owner", 128)
 	require.NoError(t, err)
 	for _, tc := range []struct {
@@ -2681,7 +2681,7 @@ func TestCountPDFPages(t *testing.T) {
 		wantErr error
 	}{
 		{"plain", plain, 3, nil},
-		{"owner password", ownerOnly.Bytes(), 3, nil},
+		{"owner password", ownerOnly, 3, nil},
 		{"user password", protected, 0, formatdetect.ErrPDFEncrypted},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2698,17 +2698,18 @@ func TestCountPDFPages(t *testing.T) {
 
 func TestCountPDFPagesCompressedOwnerPassword(t *testing.T) {
 	plain := syntheticPDFPages(1500, "compressed page count")
-	var packed, encrypted, decrypted bytes.Buffer
+	var packed, decrypted bytes.Buffer
 	require.NoError(t, api.Optimize(bytes.NewReader(plain), &packed, model.NewDefaultConfiguration()))
-	require.NoError(t, api.Encrypt(bytes.NewReader(packed.Bytes()), &encrypted, model.NewAESConfiguration("", "owner", 128)))
-	require.Contains(t, encrypted.String(), "/ObjStm")
+	encrypted, err := mediatest.EncryptedPDF("", "owner", 128, packed.Bytes())
+	require.NoError(t, err)
+	require.Contains(t, string(encrypted), "/ObjStm")
 	configuration := model.NewDefaultConfiguration()
 	configuration.WriteObjectStream = false
 	configuration.WriteXRefStream = false
-	require.NoError(t, api.Decrypt(bytes.NewReader(encrypted.Bytes()), &decrypted, configuration))
-	require.Greater(t, decrypted.Len(), encrypted.Len())
+	require.NoError(t, api.Decrypt(bytes.NewReader(encrypted), &decrypted, configuration))
+	require.Greater(t, decrypted.Len(), len(encrypted))
 
-	pages, err := media.CountPDFPages(encrypted.Bytes())
+	pages, err := media.CountPDFPages(encrypted)
 	require.NoError(t, err)
 	require.Equal(t, int64(1500), pages)
 }
