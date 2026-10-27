@@ -1,0 +1,13 @@
+.inspector-sections {
+  display: grid;
+  gap: var(--space-6);
+  min-width: 0;
+}
+
+.inspector-content {
+  min-width: 0;
+  padding: var(--space-5);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-inset);
+}

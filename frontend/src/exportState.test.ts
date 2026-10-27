@@ -796,7 +796,7 @@ it.each([
     detail: "Archive is retained",
     code: "export_retained",
     message:
-      "Your browser is still downloading this export. Choose Prepare another export again once the download finishes.",
+      "Your browser is still downloading this export. Choose New export again once the download finishes.",
     terminal: "completed",
   },
 ])(

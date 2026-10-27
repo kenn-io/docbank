@@ -113,6 +113,17 @@ export class ActionJournal implements ActionJournalAccess {
     }
   }
 
+  /** Loads the retained action without recovering interrupted sends. */
+  static async peek(vaultID: string): Promise<PersistedAction | null> {
+    const journal = await this.#connect(vaultID);
+    try {
+      await journal.#validateStoredAction();
+      return await journal.load();
+    } finally {
+      journal.#database.close();
+    }
+  }
+
   static async abandon(vaultID: string): Promise<void> {
     const journal = await this.#connect(vaultID);
     try {
@@ -138,7 +149,11 @@ export class ActionJournal implements ActionJournalAccess {
     return new ActionJournal(vaultID, await idbRequest(request));
   }
 
-  async prepare(action: PreparedAction, signal?: AbortSignal): Promise<void> {
+  async prepare(
+    action: PreparedAction,
+    signal?: AbortSignal,
+    completedActionID?: string,
+  ): Promise<void> {
     const bytes = await encodeRecovery(action);
     const normalized = await decodeRecovery(bytes);
     signal?.throwIfAborted();
@@ -160,10 +175,16 @@ export class ActionJournal implements ActionJournalAccess {
         await transactionDone(transaction);
         return;
       }
-      abort(
-        transaction,
-        "This vault already has an action retained in the journal. Abandon it explicitly before preparing another.",
-      );
+      if (existing.action_id !== completedActionID || existing.state !== "complete")
+        abort(
+          transaction,
+          "This vault already has an action retained in the journal. Abandon it explicitly before preparing another.",
+        );
+      actions.delete(this.vaultID);
+      transaction
+        .objectStore(batchStore)
+        .delete(IDBKeyRange.bound([this.vaultID], [this.vaultID, []]));
+      this.#confirmedActionID = undefined;
     }
     const { batches, ...preparedHeader } = normalized;
     // File receipts are unauthenticated. Only a daemon response recorded by
@@ -352,8 +373,6 @@ export class ActionJournal implements ActionJournalAccess {
 
   async markSending(index: number): Promise<void> {
     await this.#update(index, (header, batch, transaction) => {
-      if (!header.checkpoint_verified)
-        abort(transaction, "Select and verify the saved recovery file before mutation.");
       if (header.state === "paused" || header.state === "stale" || header.state === "complete")
         abort(transaction, "The action is not schedulable.");
       // Another tab may have stopped before recording its receipt. Reusing the
@@ -438,6 +457,30 @@ export class ActionJournal implements ActionJournalAccess {
     if (header.state !== "complete" && header.state !== "stale") {
       header.state = "paused";
       store.put(header);
+    }
+    await transactionDone(transaction);
+  }
+
+  async discardUnsent(actionID: string): Promise<void> {
+    const transaction = this.#database.transaction([headerStore, batchStore], "readwrite", {
+      durability: "strict",
+    });
+    const actions = transaction.objectStore(headerStore);
+    const header = await idbRequest(
+      actions.get(this.vaultID) as IDBRequest<StoredHeader | undefined>,
+    );
+    const range = IDBKeyRange.bound([this.vaultID], [this.vaultID, []]);
+    const batches = transaction.objectStore(batchStore);
+    const stored = await idbRequest(batches.getAll(range) as IDBRequest<StoredBatch[]>);
+    if (
+      header?.action_id === actionID &&
+      header.state === "prepared" &&
+      stored.length === header.batch_count &&
+      stored.every((batch) => batch.state === "prepared")
+    ) {
+      actions.delete(this.vaultID);
+      batches.delete(range);
+      this.#confirmedActionID = undefined;
     }
     await transactionDone(transaction);
   }

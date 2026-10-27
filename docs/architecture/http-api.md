@@ -158,7 +158,7 @@ on a running daemon) and authenticates with `X-Api-Key` /
 | `GET /trash` · `POST /trash/empty` `{run, older_than}` | list nodes, grouping photos on paginated requests / report or hard-delete eligible complete groups | Implemented |
 | `POST /gc` `{run}` · `POST /verify` | reclaim unreachable blobs / validate metadata and re-hash all blobs | Implemented |
 | `GET /storage` · `POST /storage/pack` · `POST /storage/repack` | inspect usage / pack loose blobs / compact sparse packs | Implemented |
-| `GET /jobs` | inspect daemon-owned background tasks and terminal failures | Implemented |
+| `GET /jobs` | inspect daemon-owned background tasks and terminal failures; a `running` job with `busy: false` is waiting for work or its next run, and clients show it as idle | Implemented |
 | `GET /watches` | inspect effective watched-inbox configuration and runner state | Implemented |
 | `POST /backup/init` · `POST /backup/snapshots` · `POST /backup/snapshots/stream` · `GET /backup/snapshots` | initialize a repository / create with JSON or streamed progress / list snapshots | Implemented |
 
@@ -253,10 +253,10 @@ The response includes `fingerprint`, `vault_uid`, `selector`,
 When the profile has a rendition stage, the daemon inspects the source locally
 before it answers. If inspection refuses the source,
 `rendition_ineligible_reason` names the inspector's reason, such as
-`unbounded_media_family` or `semantic_units_exceeded`, and starting the plan
-fails with `rendition_source_ineligible`, except for locked PDFs. When no
-configured password opens a PDF, or no password file is configured, starting
-creates a job that ends `failed` with `failure_code=pdf_password_required`.
+`unbounded_media_family`, `semantic_units_exceeded`, or `unsupported_media_type`,
+and starting the plan fails with `rendition_source_ineligible`, except for locked
+PDFs. When no configured password opens a PDF, or no password file is configured,
+starting creates a job that ends `failed` with `failure_code=pdf_password_required`.
 If the configured password file is refused, planning or starting returns
 409 `rendition_operator_required` with the fixed detail `PDF passwords file can't be read; check media.pdf_passwords_file`. The detail omits the file's path. Other operator-required errors use `document rendition requires operator intervention`.
 Each flow identifies the provider,
@@ -1224,7 +1224,8 @@ A hidden `GET /api/daemon/web-map-tiles/{z}/{x}/{y}` (not in the OpenAPI documen
 
 Browser session tokens authenticate only the routes used by the built-in
 document, photo browsing, album, tag-definition/assignment, saved-definition, recoverable-trash,
-storage, job, configured-backup, verified-download, map-tile, and usage-event workflows.
+folder-upload directory creation (`POST /api/v1/nodes`, directories only), storage, job,
+configured-backup, verified-download, map-tile, and usage-event workflows.
 They are not another general API credential. Browser file bytes use the
 hidden `/api/daemon/web-upload` WebSocket instead. The page verifies a
 challenge proof over the upload secret before sending bytes, binds the socket

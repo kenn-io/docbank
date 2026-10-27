@@ -121,9 +121,9 @@ describe("collections drawer", () => {
       onopenmember: vi.fn(),
     });
     await fireEvent.click(
-      await screen.findByRole("button", { name: "Browse collection Discovery batch" }),
+      await screen.findByRole("button", { name: "Browse import Discovery batch" }),
     );
-    await fireEvent.click(screen.getByRole("button", { name: "Inspect collection quality" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Quality" }));
     await screen.findByText("Choose a processing profile to inspect coverage.");
     await fireEvent.click(screen.getByRole("combobox", { name: /Coverage profile/ }));
     await fireEvent.click(await screen.findByRole("option", { name: "archive" }));
@@ -181,10 +181,10 @@ describe("collections drawer", () => {
       onopenmember: vi.fn(),
     });
     await fireEvent.click(
-      await screen.findByRole("button", { name: "Browse collection Discovery batch" }),
+      await screen.findByRole("button", { name: "Browse import Discovery batch" }),
     );
     expect(screen.queryByRole("region", { name: "Collection quality" })).toBeNull();
-    await fireEvent.click(screen.getByRole("button", { name: "Inspect collection quality" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Quality" }));
     await screen.findByText("Processing is not configured.");
   });
   it("starts a new query from the exact selected collection identity", async () => {
@@ -213,11 +213,9 @@ describe("collections drawer", () => {
       onnewquery,
     });
     await fireEvent.click(
-      await screen.findByRole("button", { name: "Browse collection Discovery batch" }),
+      await screen.findByRole("button", { name: "Browse import Discovery batch" }),
     );
-    await fireEvent.click(
-      await screen.findByRole("button", { name: "New query for this collection" }),
-    );
+    await fireEvent.click(await screen.findByRole("button", { name: "Search this import" }));
     expect(onnewquery).toHaveBeenCalledWith(collectionID);
   });
   it("shows supported collection facts and opens an exact direct member", async () => {
@@ -258,17 +256,16 @@ describe("collections drawer", () => {
     });
 
     const card = await screen.findByRole("button", {
-      name: "Browse collection Discovery batch",
+      name: "Browse import Discovery batch",
     });
-    expect(within(card).getByText("2 documents")).toBeTruthy();
-    expect(within(card).getByText("4.00 KiB")).toBeTruthy();
-    expect(within(card).getByText("/synthetic/drop/discovery")).toBeTruthy();
-    expect(within(card).getByText(/Imported /)).toBeTruthy();
+    expect(within(card).getByText(/2 documents/)).toBeTruthy();
+    expect(within(card).getByText(/4.00 KiB/)).toBeTruthy();
+    expect(screen.getByTitle("/synthetic/drop/discovery")).toBeTruthy();
     expect(screen.queryByText(/successful/i)).toBeNull();
 
     await fireEvent.click(card);
-    expect(await screen.findByText("Documents in this collection")).toBeTruthy();
-    expect(await screen.findByText(/^2 direct members/)).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Documents" })).toBeTruthy();
+    expect(await screen.findByText(/^2 documents/)).toBeTruthy();
     const open = await screen.findByRole("button", {
       name: "Open document /Archive/report.txt",
     });
@@ -339,9 +336,9 @@ describe("collections drawer", () => {
       onopenmember: vi.fn(),
     });
     await fireEvent.click(
-      await screen.findByRole("button", { name: "Browse collection Discovery batch" }),
+      await screen.findByRole("button", { name: "Browse import Discovery batch" }),
     );
-    const input = await screen.findByRole("textbox", { name: "Collection label" });
+    const input = await screen.findByRole("textbox", { name: "Import label" });
     await fireEvent.input(input, { target: { value: "Keep this draft" } });
     await fireEvent.click(screen.getByRole("button", { name: "Save label" }));
 
@@ -351,12 +348,8 @@ describe("collections drawer", () => {
 
     await fireEvent.click(screen.getByRole("button", { name: "Reload label" }));
     expect(await screen.findByDisplayValue("Externally labeled")).toBeTruthy();
-    await fireEvent.click(screen.getByRole("button", { name: "Clear label" }));
-    expect(
-      await screen.findByRole("button", {
-        name: `Browse collection Unlabeled import ${collectionID.slice(0, 8)}`,
-      }),
-    ).toBeTruthy();
+    await fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+    expect(await screen.findByRole("heading", { name: "Unlabeled import 11111111" })).toBeTruthy();
     expect(new Headers(requests[1]?.headers).get("If-Match")).toBe('"4"');
     expect(JSON.parse(String(requests[1]?.body))).toEqual({ label: null });
   });
@@ -381,17 +374,57 @@ describe("collections drawer", () => {
       onauthfailure: vi.fn(),
       onopenmember: vi.fn(),
     });
-    await screen.findByRole("button", { name: "Browse collection Discovery batch" });
+    await screen.findByRole("button", { name: "Browse import Discovery batch" });
 
     await view.rerender({ session: "fresh-session" });
     await waitFor(() => {
-      expect(
-        screen.queryByRole("button", { name: "Browse collection Discovery batch" }),
-      ).toBeNull();
+      expect(screen.queryByRole("button", { name: "Browse import Discovery batch" })).toBeNull();
     });
-    expect(screen.getByText("Loading import collections…")).toBeTruthy();
+    expect(screen.getByText("Loading…")).toBeTruthy();
 
     resolveFresh(json({ items: [], total: 0, limit: 100, offset: 0 }));
-    expect(await screen.findByText("No import collections")).toBeTruthy();
+    expect(await screen.findByText(/No imports yet/)).toBeTruthy();
   });
+});
+
+it.each([
+  String.raw`["/synthetic/\a", "/synthetic/\\U0001f4c4"]`,
+  String.raw`["/synthetic/reports", "/synthetic/reports"]`,
+])("shows the source description verbatim: %s", async (description) => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (String(input).includes("/members?"))
+      return json({
+        collection: { ...collection, source_description: description },
+        items: [],
+        total: 0,
+        limit: 100,
+        offset: 0,
+      });
+    if (String(input).endsWith("/label"))
+      return json(
+        {
+          ingest_id: collectionID,
+          label: collection.label,
+          revision: 3,
+          updated_at: collection.label_updated_at,
+        },
+        '"3"',
+      );
+    return json({
+      items: [{ ...collection, source_description: description }],
+      total: 1,
+      limit: 100,
+      offset: 0,
+    });
+  });
+  render(CollectionsDrawer, {
+    session: "synthetic",
+    onclose: vi.fn(),
+    onauthfailure: vi.fn(),
+    onopenmember: vi.fn(),
+  });
+  await fireEvent.click(
+    await screen.findByRole("button", { name: "Browse import Discovery batch" }),
+  );
+  expect(await screen.findByText(description)).toBeTruthy();
 });

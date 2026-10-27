@@ -132,8 +132,8 @@ it("previews selected pages before explicitly reserving the reviewed range", asy
 
   const preview = await screen.findByRole("region", { name: "Tentative Bates labels" });
   expect(within(preview).getByText("ACME000041")).toBeTruthy();
-  expect(within(preview).getByText("Source page 2")).toBeTruthy();
-  expect(screen.getByText("Nothing has been stamped or reserved.")).toBeTruthy();
+  expect(within(preview).getAllByRole("row")[1]!.textContent).toContain("Source page 2");
+  expect(within(preview).getByText("Not reserved")).toBeTruthy();
   expect(requests.find((request) => request.url.endsWith("/preview"))?.body).toMatchObject({
     namespace_id: namespace.namespace_id,
     snapshot_id: snapshotID,
@@ -187,7 +187,7 @@ it("creates and selects a namespace without reserving a range", async () => {
   });
 
   render(BatesExportDrawer, { session: "session", onclose: vi.fn(), onauthfailure: vi.fn() });
-  await screen.findByText(/Create the first namespace/);
+  await screen.findByRole("heading", { name: "New namespace" });
   await fireEvent.input(screen.getByRole("textbox", { name: "Bates prefix" }), {
     target: { value: "CASE" },
   });
@@ -341,11 +341,7 @@ it("opens a history export without replacing the reserved workflow", async () =>
 
   expect(await screen.findByText("Earlier Bates export")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Start Bates export" })).toBeTruthy();
-  expect(
-    screen.getByText(
-      "This reviewed preview is the exact range reserved below. Nothing has been stamped yet.",
-    ),
-  ).toBeTruthy();
+  expect(screen.getByText("Reserved below. Not stamped yet.")).toBeTruthy();
   expect(screen.queryByText("Stamped PDF ready")).toBeNull();
 });
 
@@ -360,9 +356,8 @@ it("retries a failed reservation with the same operation instead of a new previe
 
   expect((await screen.findByRole("alert")).textContent).toContain("The ledger is busy.");
   expect(screen.queryByRole("button", { name: /^Reserve / })).toBeNull();
-  expect(
-    screen.getByRole("button", { name: "Preview Bates labels" }).hasAttribute("disabled"),
-  ).toBe(true);
+  expect(screen.queryByRole("button", { name: "Preview Bates labels" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Change settings" })).toBeNull();
 
   await fireEvent.click(screen.getByRole("button", { name: "Retry reserve" }));
   await screen.findByText("Range reserved");
@@ -425,4 +420,226 @@ it("shows why publication history failed and signs out on an expired session", a
   render(BatesExportDrawer, { session: "session", onclose, onauthfailure });
   await waitFor(() => expect(onauthfailure).toHaveBeenCalledOnce());
   expect(onclose).toHaveBeenCalledOnce();
+});
+
+it("lists imported and exported production sets across every page without requiring PDF pages", async () => {
+  const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = new URL(String(input), "http://docbank.test");
+    if (url.pathname === "/api/v1/packages")
+      return json({
+        items: url.searchParams.has("after")
+          ? [
+              {
+                package_id: "second",
+                package_name: "Exported images",
+                direction: "produced",
+                state: "sealed",
+                page_count: 0,
+                member_count: 2,
+              },
+            ]
+          : [
+              {
+                package_id: "first",
+                package_name: "Imported load file",
+                snapshot_id: "44444444-4444-4444-8444-444444444444",
+                direction: "received",
+                state: "partial",
+                page_count: 0,
+                member_count: 3,
+              },
+            ],
+        next_after: url.searchParams.has("after") ? undefined : "first",
+        limit: 250,
+      });
+    if (url.pathname.startsWith("/api/v1/packages/by-id/"))
+      return json({ detail: "Browser sessions cannot read package members." }, 403);
+    if (url.pathname.startsWith("/api/v1/bates/allocations/"))
+      return json({ snapshot_id: snapshotID });
+    if (url.pathname === "/api/v1/bates/exports")
+      return json({
+        items: url.searchParams.has("after") ? [earlier] : [],
+        next_after: url.searchParams.has("after") ? undefined : "earlier",
+        total: 1,
+      });
+    throw new Error(`Unexpected production request ${String(input)}`);
+  });
+  render(BatesExportDrawer, {
+    mode: "productions",
+    session: "session",
+    onclose: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  expect(await screen.findByText("Imported load file")).toBeTruthy();
+  expect(await screen.findByText("Exported images")).toBeTruthy();
+  await waitFor(() => expect(screen.queryByText("Loading…")).toBeNull());
+  const list = screen.getByRole("list", { name: "Productions" });
+  expect(within(list).getAllByRole("listitem")).toHaveLength(3);
+  expect(fetcher.mock.calls.map(([url]) => String(url))).not.toContainEqual(
+    expect.stringContaining("/members"),
+  );
+  expect(within(list).getByText("Imported")).toBeTruthy();
+  expect(within(list).getAllByText("Exported")).toHaveLength(2);
+  expect(list.querySelectorAll("details[open]")).toHaveLength(0);
+  await fireEvent.click(within(list).getByText("Bates export"));
+  expect(await screen.findByRole("button", { name: "Download verified PDF" })).toBeTruthy();
+  expect(fetcher.mock.calls.every(([, init]) => !init?.method || init.method === "GET")).toBe(true);
+});
+
+it("shows a package and its Bates export once with receipt actions inside the collapsed row", async () => {
+  const receipt = {
+    ...earlier,
+    page_count: 2,
+    pages: labels.map((label) => ({ ...label, source_blob_sha256: "c".repeat(64) })),
+  };
+  const requests: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = String(input);
+    requests.push(url);
+    if (url.startsWith("/api/v1/packages?"))
+      return json({
+        items: [
+          {
+            package_id: "produced-set",
+            package_name: "Review production",
+            snapshot_id: snapshotID,
+            direction: "produced",
+            state: "sealed",
+            page_count: 2,
+            member_count: 1,
+            manifest_sha256: "1".repeat(64),
+            created_at: "2026-09-21T00:00:00Z",
+          },
+        ],
+        limit: 250,
+      });
+    if (url === "/api/v1/bates/exports?limit=50") return json({ items: [receipt], total: 1 });
+    if (url === `/api/v1/bates/allocations/${receipt.allocation_id}`)
+      return json({ snapshot_id: snapshotID });
+    if (url === `/api/v1/bates/exports/${receipt.allocation_id}`) return json(receipt);
+    if (url === `/api/v1/bates/exports/${receipt.allocation_id}/download`)
+      return json({
+        allocation_id: receipt.allocation_id,
+        blob_sha256: receipt.blob_sha256,
+        size: receipt.size,
+        url: "/api/daemon/web-download/file?ticket=synthetic",
+        name: "review.pdf",
+      });
+    throw new Error(`Unexpected production request ${url}`);
+  });
+  const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+  render(BatesExportDrawer, {
+    mode: "productions",
+    session: "session",
+    onclose: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await waitFor(() => {
+    const name = screen.getByText("Review production");
+    expect(name.closest("summary")?.textContent).toContain("ACME000041–ACME000042");
+  });
+  const name = screen.getByText("Review production");
+  const list = screen.getByRole("list", { name: "Productions" });
+  const row = within(list).getByRole("listitem");
+  expect(within(list).getAllByRole("listitem")).toHaveLength(1);
+  expect(row.querySelector("summary")?.textContent).toContain("ACME000041–ACME000042");
+  expect(row.querySelector("summary")?.textContent).toContain("2 pages");
+  expect(row.querySelector("summary")?.textContent).toContain("Exported");
+  expect(row.querySelector("details")?.open).toBe(false);
+
+  await fireEvent.click(name);
+  expect(row.querySelector("details")?.open).toBe(true);
+  expect(within(row).getByText("1".repeat(64))).toBeTruthy();
+  expect(within(row).getByText(receipt.blob_sha256)).toBeTruthy();
+  await fireEvent.click(within(row).getByRole("button", { name: "Refresh receipt" }));
+  await waitFor(() => expect(requests).toContain(`/api/v1/bates/exports/${receipt.allocation_id}`));
+  await waitFor(() =>
+    expect(
+      within(row).getByRole("button", { name: "Download verified PDF" }).hasAttribute("disabled"),
+    ).toBe(false),
+  );
+  await fireEvent.click(within(row).getByRole("button", { name: "Download verified PDF" }));
+  await waitFor(() => expect(click).toHaveBeenCalledOnce());
+  expect(requests).toContain(`/api/v1/bates/exports/${receipt.allocation_id}/download`);
+  await fireEvent.click(name);
+  expect(row.querySelector("details")?.open).toBe(false);
+});
+
+it("shows Productions while an allocation is pending and loads other allocations independently", async () => {
+  let finishAllocation!: (response: Response) => void;
+  const nextAllocationID = "77777777-7777-4777-8777-777777777777";
+  const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = String(input);
+    if (url.startsWith("/api/v1/packages?"))
+      return json({
+        items: [
+          {
+            package_id: "produced-set",
+            package_name: "Review production",
+            snapshot_id: snapshotID,
+            direction: "produced",
+            state: "sealed",
+            page_count: 2,
+          },
+        ],
+        limit: 250,
+      });
+    if (url === "/api/v1/bates/exports?limit=50")
+      return json({ items: [earlier, { ...earlier, allocation_id: nextAllocationID }], total: 2 });
+    if (url === `/api/v1/bates/allocations/${earlier.allocation_id}`)
+      return new Promise<Response>((resolve) => {
+        finishAllocation = resolve;
+      });
+    if (url === `/api/v1/bates/allocations/${nextAllocationID}`)
+      return json({ snapshot_id: "88888888-8888-4888-8888-888888888888" });
+    throw new Error(`Unexpected request ${url}`);
+  });
+  render(BatesExportDrawer, {
+    mode: "productions",
+    session: "session",
+    onclose: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await waitFor(() => expect(finishAllocation).toBeTypeOf("function"));
+  const list = await screen.findByRole("list", { name: "Productions" });
+  expect(within(list).getByText("Review production")).toBeTruthy();
+  expect(within(list).getAllByRole("listitem")).toHaveLength(3);
+  await waitFor(() =>
+    expect(fetcher.mock.calls.map(([url]) => String(url))).toContain(
+      `/api/v1/bates/allocations/${nextAllocationID}`,
+    ),
+  );
+  finishAllocation(json({ snapshot_id: snapshotID }));
+  await waitFor(() => expect(within(list).getAllByRole("listitem")).toHaveLength(2));
+  expect(within(list).getByText("Review production").closest("summary")?.textContent).toContain(
+    "ACME000001–ACME000001",
+  );
+});
+
+it.each(["packages", "allocation"])("keeps loaded exports when %s fails", async (failure) => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = String(input);
+    if (url.startsWith("/api/v1/packages?"))
+      return failure === "packages"
+        ? json({ detail: "Package index unavailable." }, 503)
+        : json({ items: [], limit: 250 });
+    if (url === "/api/v1/bates/exports?limit=50") return json({ items: [earlier], total: 1 });
+    if (url.startsWith("/api/v1/bates/allocations/"))
+      return failure === "allocation"
+        ? json({ detail: "Allocation unavailable." }, 503)
+        : json({ snapshot_id: snapshotID });
+    throw new Error(`Unexpected request ${url}`);
+  });
+  render(BatesExportDrawer, {
+    mode: "productions",
+    session: "session",
+    onclose: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  expect(await screen.findByText("Bates export")).toBeTruthy();
+  expect(
+    await screen.findByText(
+      failure === "packages" ? "Package index unavailable." : /Allocation unavailable/,
+    ),
+  ).toBeTruthy();
 });

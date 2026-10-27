@@ -133,7 +133,8 @@ test("real Takeout exports verified PDFs and explicit attachment occurrences thr
     };
     page.setDefaultTimeout(45_000);
     await page.goto(url.toString(), { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "Import mailbox", exact: true }).click();
+    await page.getByRole("button", { name: "Add", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Import mailbox", exact: true }).click();
     await page.getByLabel("Choose MBOX or Takeout ZIP", { exact: true }).setInputFiles(zipPath);
     await page.getByRole("button", { name: "Upload and preview", exact: true }).click();
     await expect(page.getByText("1 mailbox entry · mboxrd")).toBeVisible();

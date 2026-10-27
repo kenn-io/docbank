@@ -81,58 +81,44 @@ it("offers the bounded tag action when supplied", async () => {
     oncsv: vi.fn(),
   });
 
-  expect((screen.getByRole("button", { name: "Edit tags" }) as HTMLButtonElement).disabled).toBe(
-    true,
-  );
+  expect(
+    (screen.getByRole("button", { name: "Tag selected…" }) as HTMLButtonElement).disabled,
+  ).toBe(true);
   await rerender({ tagsDisabled: false });
-  await fireEvent.click(screen.getByRole("button", { name: "Edit tags" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Tag selected…" }));
   expect(ontags).toHaveBeenCalledOnce();
 });
 
-it("names snapshot-page tagging separately from the whole frozen query", async () => {
-  const ontags = vi.fn();
-  const onwholequerytags = vi.fn();
-  render(SelectionDock, {
-    props: {
-      selectedCount: 1,
+it.each(["live", "snapshot"] as const)(
+  "offers the same document actions in the %s view and stays closed until something is selected",
+  async (context) => {
+    const props = {
       visibleDocumentCount: 2,
-      truncated: true,
-      context: "snapshot",
-      wholeQueryCount: 101,
-      onclear: vi.fn(),
-      onselectvisible: vi.fn(),
-      ontags,
-      onwholequerytags,
-    },
-  });
-
-  expect(screen.getByText("1 selected on this frozen page")).toBeTruthy();
-  expect(screen.getByText("Visible selection only · whole query has 101 documents")).toBeTruthy();
-  await fireEvent.click(screen.getByRole("button", { name: "Tag visible selection" }));
-  expect(ontags).toHaveBeenCalledOnce();
-  await fireEvent.click(screen.getByRole("button", { name: "Tag whole query" }));
-  expect(onwholequerytags).toHaveBeenCalledOnce();
-});
-
-it("disables both snapshot tagging actions together", () => {
-  render(SelectionDock, {
-    props: {
-      selectedCount: 1,
-      visibleDocumentCount: 2,
-      truncated: true,
-      context: "snapshot",
-      wholeQueryCount: 101,
-      tagsDisabled: true,
+      truncated: false,
+      context,
       onclear: vi.fn(),
       onselectvisible: vi.fn(),
       ontags: vi.fn(),
-      onwholequerytags: vi.fn(),
-    },
-  });
-  expect(
-    (screen.getByRole("button", { name: "Tag visible selection" }) as HTMLButtonElement).disabled,
-  ).toBe(true);
-  expect(
-    (screen.getByRole("button", { name: "Tag whole query" }) as HTMLButtonElement).disabled,
-  ).toBe(true);
-});
+      onexport: vi.fn(),
+      onreport: vi.fn(),
+    };
+    const view = render(SelectionDock, { props: { ...props, selectedCount: 0 } });
+    expect(screen.queryByRole("button", { name: "Tag selected…" })).toBeNull();
+    await view.rerender({ selectedCount: 1 });
+    expect(
+      screen.getByText(context === "snapshot" ? "1 selected" : "1 selected on this page"),
+    ).toBeTruthy();
+    expect(
+      screen
+        .getAllByRole("button")
+        .map((button) => button.textContent?.trim())
+        .filter(Boolean),
+    ).toEqual([
+      "Select visible documents",
+      "Clear selection",
+      "Tag selected…",
+      "Report selected documents",
+      "Export selection",
+    ]);
+  },
+);

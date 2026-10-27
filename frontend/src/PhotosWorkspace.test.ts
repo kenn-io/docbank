@@ -75,6 +75,7 @@ vi.mock("./action-events.js", () => ({
 const tiles = { tile_url: "", host: "", attribution: "", max_zoom: 19 };
 
 beforeEach(() => {
+  localStorage.setItem("docbank.photoMetadata", "closed");
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -1100,6 +1101,38 @@ function workspaceWithPreparedPhoto(target = preparedPhoto(1), projection?: "map
   return photos;
 }
 
+it("preserves the caption draft when creating a keyword and applies both together", async () => {
+  Element.prototype.scrollIntoView = vi.fn();
+  const photos = workspaceWithPreparedPhoto();
+  photos.selectLoaded();
+  const tag = { id: "new-keyword", name: "Harbor", revision: 1, assignment_count: 0 };
+  vi.spyOn(api, "createTag").mockResolvedValue(tag);
+  const edit = vi
+    .spyOn(api, "editPhotoAuthored")
+    .mockResolvedValue({ receipt_id: "", before: [], after: [] });
+  stubPhotoFetch(vi.fn());
+  render(PhotosWorkspace, {
+    photos,
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
+  const caption = await screen.findByRole("textbox", { name: "Caption" });
+  await fireEvent.input(caption, { target: { value: "Unfinished caption" } });
+  await fireEvent.input(screen.getByRole("combobox", { name: /Keyword/ }), {
+    target: { value: "Harbor" },
+  });
+  await fireEvent.click(await screen.findByRole("option", { name: "Create “Harbor”" }));
+  await screen.findByRole("button", { name: "Apply" });
+  expect((caption as HTMLTextAreaElement).value).toBe("Unfinished caption");
+  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+  await waitFor(() => expect(edit).toHaveBeenCalledOnce());
+  expect(edit.mock.calls[0]![0]).toMatchObject({
+    patch: { caption: "Unfinished caption" },
+    keywords: [{ tag_id: tag.id, assign: true }],
+  });
+  photos.dispose();
+});
+
 it("refreshes a filtered view and restarts pending reads after a metadata edit", async () => {
   Object.defineProperty(Element.prototype, "scrollIntoView", {
     configurable: true,
@@ -1710,6 +1743,157 @@ it("guards loupe navigation through the metadata editor", async () => {
   photos.dispose();
 });
 
+it.each([
+  { state: "metadata loading", stacked: false, collapsed: false },
+  { state: "stack metadata loading", stacked: true, collapsed: false },
+  { state: "details collapsed", stacked: false, collapsed: true },
+])("opens the viewer with details on double-click with $state", async ({ stacked, collapsed }) => {
+  if (collapsed) localStorage.setItem("docbank.photoMetadata", "closed");
+  else localStorage.removeItem("docbank.photoMetadata");
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+  const prepare = vi
+    .spyOn(api, "preparePhotoAuthored")
+    .mockImplementation((scope) =>
+      collapsed || (stacked && !scope.stack)
+        ? Promise.resolve(photoPreparation([preparedPhoto(1), preparedPhoto(2)]))
+        : new Promise(() => {}),
+    );
+  const photos = new Photos("scoped", vi.fn());
+  photos.started = true;
+  photos.items = stacked
+    ? [
+        {
+          ...photo(1),
+          stack: { asset_ids: ["photo-1", "photo-2"], representative_id: "photo-1" },
+        },
+        photo(2),
+      ]
+    : [photo(1)];
+  photos.total = 1;
+  const onphotochange = vi.fn().mockReturnValue(true);
+  vi.spyOn(photos, "lookup").mockResolvedValue(photo(1));
+  const view = render(PhotosWorkspace, {
+    photos,
+    onphotochange,
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+  });
+  const image = await screen.findByRole("button", { name: "Select Photo 1.jpg" });
+  if (collapsed) {
+    expect(screen.queryByRole("complementary", { name: "Photo details" })).toBeNull();
+  } else {
+    await fireEvent.click(image);
+    await waitFor(() => expect(prepare).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(stacked ? photos.authored.stackLoading : photos.authored.loading).toBe(true),
+    );
+  }
+  await fireEvent.doubleClick(image);
+  expect(onphotochange).toHaveBeenCalledWith("photo-1", "open");
+  await view.rerender({ photoID: "photo-1" });
+  const viewer = await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
+  expect(within(viewer).getByRole("complementary", { name: "Photo details" })).toBeTruthy();
+  expect(photos.authored.patch).toEqual({});
+  photos.dispose();
+});
+
+it("puts Add photos, the more menu, and the details toggle last, in that order", () => {
+  const photos = workspaceWithPreparedPhoto();
+  render(PhotosWorkspace, {
+    photos,
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+    onadd: vi.fn(),
+  });
+  const add = screen.getByRole("button", { name: "Add photos" });
+  const more = screen.getByRole("button", { name: "More photo actions" });
+  const details = screen.getByRole("button", { name: "Metadata" });
+  const follows = (a: Element, b: Element) =>
+    Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+  expect(follows(add, more)).toBe(true);
+  expect(follows(more, details)).toBe(true);
+  photos.dispose();
+});
+
+it("opens the details panel at the width saved for Photos", () => {
+  localStorage.setItem("docbank.photoMetadata", "open");
+  localStorage.setItem("docbank.panelWidth.photos", "400");
+  const photos = workspaceWithPreparedPhoto();
+  render(PhotosWorkspace, { photos, cache: { get: vi.fn() } as unknown as PhotoPreviewCache });
+  const panel = screen.getByRole("complementary", { name: "Photo details" });
+  expect(panel.style.getPropertyValue("--details-width")).toBe("min(400px, 50vw)");
+  expect(screen.getByRole("separator", { name: "Resize photo details" })).toBeTruthy();
+  photos.dispose();
+});
+
+it("starts metadata open and remembers the toggle across the library, viewer, and remounts", async () => {
+  localStorage.removeItem("docbank.photoMetadata");
+  const photos = workspaceWithPreparedPhoto();
+  photos.selection = { selectedIDs: new Set(["photo-1"]), anchorID: "photo-1" };
+  photos.authored.inspectedID = "";
+  vi.spyOn(photos, "lookup").mockResolvedValue(photo(1));
+  vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue(photoPreparation([preparedPhoto(1)]));
+  const props = { photos, cache: { get: vi.fn() } as unknown as PhotoPreviewCache, photoID: "" };
+  const view = render(PhotosWorkspace, props);
+  expect(screen.getByRole("complementary", { name: "Photo details" })).toBeTruthy();
+  await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
+  expect(screen.queryByRole("complementary", { name: "Photo details" })).toBeNull();
+  await view.rerender({ ...props, photoID: "photo-1" });
+  const viewer = await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
+  expect(within(viewer).queryByRole("complementary", { name: "Photo details" })).toBeNull();
+  await view.rerender(props);
+  expect(screen.queryByRole("complementary", { name: "Photo details" })).toBeNull();
+  await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
+  expect(screen.getByRole("complementary", { name: "Photo details" })).toBeTruthy();
+  await fireEvent.keyDown(window, { key: "i" });
+  expect(screen.queryByRole("complementary", { name: "Photo details" })).toBeNull();
+  view.unmount();
+  render(PhotosWorkspace, props);
+  expect(screen.queryByRole("complementary", { name: "Photo details" })).toBeNull();
+  await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
+  expect(screen.getByRole("complementary", { name: "Photo details" })).toBeTruthy();
+  photos.dispose();
+});
+
+it.each(["library", "filters", "album"])(
+  "shows details only while photos are selected in %s",
+  async (view) => {
+    localStorage.setItem("docbank.photoMetadata", "open");
+    const photos = workspaceWithPreparedPhoto();
+    photos.authored.reset();
+    stubPhotoFetch(vi.fn());
+    vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue(photoPreparation([preparedPhoto(1)]));
+    photos.filtersOpen = view === "filters";
+    render(PhotosWorkspace, {
+      photos,
+      cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+      albumID: view === "album" ? "album-1" : "",
+    });
+    expect(screen.queryByRole("complementary", { name: "Photo details" })).toBeNull();
+    expect(screen.queryByRole("separator", { name: "Resize photo details" })).toBeNull();
+    await fireEvent.click(await screen.findByRole("button", { name: "Select Photo 1.jpg" }));
+    expect(screen.getByRole("complementary", { name: "Photo details" })).toBeTruthy();
+    await fireEvent.click(screen.getByRole("button", { name: "Clear selection" }));
+    expect(screen.queryByRole("complementary", { name: "Photo details" })).toBeNull();
+    expect(screen.queryByRole("separator", { name: "Resize photo details" })).toBeNull();
+    photos.dispose();
+  },
+);
+
+it("keeps the metadata toggle usable when browser storage is blocked", async () => {
+  vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+    throw new Error("Blocked");
+  });
+  vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    throw new Error("Blocked");
+  });
+  const photos = workspaceWithPreparedPhoto();
+  render(PhotosWorkspace, { photos, cache: { get: vi.fn() } as unknown as PhotoPreviewCache });
+  expect(screen.getByRole("complementary", { name: "Photo details" })).toBeTruthy();
+  await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
+  expect(screen.queryByRole("complementary", { name: "Photo details" })).toBeNull();
+  photos.dispose();
+});
+
 it("keeps a Library reload error through a list refresh", async () => {
   const photos = new Photos("scoped", vi.fn());
   photos.items = [photo(1)];
@@ -2236,7 +2420,7 @@ it("shows the Map count without Library controls", async () => {
   await fireEvent.click(screen.getByRole("button", { name: "More photo actions" }));
   const menu = screen.getByRole("menu");
   expect(within(menu).getByRole("menuitem", { name: "Refresh previews" })).toBeTruthy();
-  expect(within(menu).queryByRole("menuitem", { name: "Move rejects" })).toBeNull();
+  expect(within(menu).queryByRole("menuitem", { name: "Trash rejected photos" })).toBeNull();
   expect(within(menu).queryByRole("menuitem", { name: /^Cull/ })).toBeNull();
   await fireEvent.keyDown(document, { key: "Escape" });
   expect(document.querySelector(".photo-stack-controls")).toBeNull();
@@ -2553,7 +2737,7 @@ it.each([false, true])(
     await fireEvent.click(screen.getByRole("button", { name: "Cull" }));
     const cull = await screen.findByRole("dialog", { name: "Cull photos" });
     await within(cull).findByText("Photo 1.jpg");
-    await fireEvent.click(within(cull).getByRole("button", { name: "Pick (P)" }));
+    await fireEvent.click(within(cull).getByRole("button", { name: "Pick" }));
     await within(cull).findByText("Photo 2.jpg");
     expect([...photos.selectedIDs]).toEqual(ids);
     await fireEvent.click(within(cull).getByRole("button", { name: "Exit cull" }));
@@ -3159,15 +3343,18 @@ it("shows a loading pill while a page loads and Load more when it settles", asyn
   await cache.dispose();
 });
 
-it("explains paused grouping beside the Library stack controls", async () => {
+it("explains paused grouping inside the selected photo's details", async () => {
+  localStorage.setItem("docbank.photoMetadata", "open");
   const photos = new Photos("scoped", vi.fn());
   photos.items = [photo(1)];
   photos.total = 1;
   photos.started = true;
   photos.groupingIncomplete = true;
+  photos.selection = { selectedIDs: new Set(["photo-1"]), anchorID: "photo-1" };
   render(PhotosWorkspace, { photos, cache: new PhotoPreviewCache("scoped", vi.fn()) });
-  await screen.findByText(/Some camera details are missing or outdated/);
-  expect(screen.getByRole("spinbutton", { name: "Burst gap (seconds)" })).toBeTruthy();
+  const panel = await screen.findByRole("complementary", { name: "Photo details" });
+  await within(panel).findByText(/Some camera details are missing or outdated/);
+  expect(screen.queryByRole("spinbutton", { name: /Burst gap/ })).toBeNull();
   photos.dispose();
 });
 
@@ -3368,8 +3555,6 @@ it("keeps shortcuts and stack decisions usable during refresh", async () => {
   const refreshing = photos.refresh(undefined, true);
   await waitFor(() => expect(photos.loading).toBe(true));
   expect(photos.authored.loading).toBe(false);
-  const gap = screen.getByRole("spinbutton", { name: "Burst gap (seconds)" }) as HTMLInputElement;
-  expect(gap.disabled).toBe(false);
   shortcuts.handleKeydown(new KeyboardEvent("keydown", { key: "4", cancelable: true }));
   expect(edit).toHaveBeenCalledOnce();
   expect(screen.queryByText(/Try again when they finish/)).toBeNull();
@@ -3713,8 +3898,8 @@ async function facesWorkspaceSetup() {
     photos,
     cache: { get: vi.fn(async () => new Blob(["synthetic"])) } as unknown as PhotoPreviewCache,
   };
+  localStorage.setItem("docbank.photoMetadata", "open");
   const component = render(PhotosWorkspace, props);
-  await fireEvent.click(await screen.findByRole("button", { name: "Metadata" }));
   await screen.findByRole("button", { name: "Find or create a person: Ada" });
   return { component, props, onphotochange, photos, read };
 }
@@ -3733,12 +3918,7 @@ it.each([false, true])("revalidates People after refresh, readable=%s", async (r
   const { component, props, photos, read } = await facesWorkspaceSetup();
   await fireEvent.click(screen.getByRole("button", { name: "Open Photo 1.jpg" }));
   await component.rerender({ ...props, photoID: "photo-1" });
-  await fireEvent.click(
-    within(await screen.findByRole("dialog", { name: /^Photo viewer,/ })).getByRole("button", {
-      name: "Metadata",
-    }),
-  );
-  await within(screen.getByRole("dialog", { name: /^Photo viewer,/ })).findByRole("button", {
+  await within(await screen.findByRole("dialog", { name: /^Photo viewer,/ })).findByRole("button", {
     name: "Find or create a person: Ada",
   });
   expect(read).toHaveBeenCalledOnce();
@@ -3930,3 +4110,17 @@ it.each([false, true])(
     expect(read).toHaveBeenLastCalledWith("version-1", expect.anything());
   },
 );
+
+it("names the photo being edited in the metadata panel header", async () => {
+  localStorage.setItem("docbank.photoMetadata", "open");
+  const photos = workspaceWithPreparedPhoto();
+  photos.selectLoaded();
+  render(PhotosWorkspace, {
+    photos,
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+  });
+  const panel = await screen.findByRole("complementary", { name: "Photo details" });
+  expect(within(panel).getByRole("heading", { level: 2, name: photo(1).name })).toBeTruthy();
+  expect(within(panel).queryByRole("heading", { name: "Metadata" })).toBeNull();
+  photos.dispose();
+});

@@ -1,6 +1,14 @@
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import TermReportDrawer from "./TermReportDrawer.svelte";
+
+beforeEach(() => {
+  Object.defineProperty(Element.prototype, "scrollIntoView", {
+    configurable: true,
+    value: vi.fn(),
+  });
+});
+afterEach(() => Reflect.deleteProperty(Element.prototype, "scrollIntoView"));
 
 const collectionID = "11111111-1111-4111-8111-111111111111";
 const original = {
@@ -120,7 +128,7 @@ it("merges continued date evidence into one document card and retains its choice
     onclose: vi.fn(),
     onauthfailure: vi.fn(),
   });
-  await fireEvent.click(screen.getByRole("button", { name: "Create export" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Create report" }));
   const review = await screen.findByRole("button", { name: "Review dates" });
   await waitFor(() => expect(review.hasAttribute("disabled")).toBe(false));
   await fireEvent.click(review);
@@ -131,7 +139,7 @@ it("merges continued date evidence into one document card and retains its choice
   await fireEvent.click(screen.getByRole("button", { name: "More evidence" }));
   expect(await screen.findByText("Document 2")).toBeTruthy();
   expect(screen.getAllByText("Document 1")).toHaveLength(1);
-  const firstCard = screen.getByText("Document 1").parentElement!;
+  const firstCard = screen.getByRole("group", { name: "Document 1" });
   expect(within(firstCard).getByRole("radio", { name: /2026-01-15/ })).toHaveProperty(
     "checked",
     true,
@@ -208,7 +216,7 @@ it.each([false, true])(
       onclose: vi.fn(),
       onauthfailure: vi.fn(),
     });
-    await fireEvent.click(screen.getByRole("button", { name: "Create export" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Create report" }));
     const review = await screen.findByRole("button", { name: "Review dates" });
     await waitFor(() => expect(review.hasAttribute("disabled")).toBe(false));
     await fireEvent.click(review);
@@ -223,7 +231,7 @@ it.each([false, true])(
     );
     expect(revisions).toHaveLength(0);
     expect(screen.getByRole("radio", { name: /2026-02-31/ }).hasAttribute("disabled")).toBe(true);
-    await fireEvent.input(screen.getByRole("textbox", { name: "Reviewed date (YYYY-MM-DD)" }), {
+    await fireEvent.input(screen.getByRole("textbox", { name: "Reviewed date" }), {
       target: { value: "2026-01-02" },
     });
     await fireEvent.input(screen.getByRole("textbox", { name: "Source timezone" }), {
@@ -249,15 +257,12 @@ it.each([false, true])(
     await fireEvent.input(screen.getByRole("textbox", { name: "Reason" }), {
       target: { value: "Retain source date" },
     });
-    await fireEvent.change(screen.getByRole("combobox", { name: "Action" }), {
-      target: { value: "reclassify" },
-    });
-    await fireEvent.change(screen.getByRole("combobox", { name: "Reviewed role" }), {
-      target: { value: "created" },
-    });
-    await fireEvent.change(screen.getByRole("combobox", { name: "Action" }), {
-      target: { value: "select" },
-    });
+    await fireEvent.click(screen.getByRole("combobox", { name: /^Action/ }));
+    await fireEvent.click(screen.getByRole("option", { name: "Reclassify role" }));
+    await fireEvent.click(screen.getByRole("combobox", { name: /^Reviewed role/ }));
+    await fireEvent.click(screen.getByRole("option", { name: "created" }));
+    await fireEvent.click(screen.getByRole("combobox", { name: /^Action/ }));
+    await fireEvent.click(screen.getByRole("option", { name: "Select source date" }));
     await fireEvent.click(screen.getByRole("button", { name: "Create reviewed revision" }));
     await waitFor(() => expect(revisions).toHaveLength(2));
     expect(revisions[1].choices[0]).toMatchObject({ action: "select" });
@@ -309,9 +314,9 @@ it("loads a prior request, changes its source, and sends a fresh run without old
     onauthfailure: vi.fn(),
   });
   await fireEvent.click(await screen.findByRole("button", { name: "Use as draft" }));
-  await fireEvent.click(screen.getByRole("radio", { name: "Selected collections" }));
+  await fireEvent.click(screen.getByRole("radio", { name: "Selected imports" }));
   await fireEvent.click(await screen.findByRole("checkbox", { name: /New source/ }));
-  await fireEvent.click(screen.getByRole("button", { name: "Create export" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Create report" }));
   await waitFor(() => expect(submitted).toHaveLength(1));
   expect(submitted[0]).toMatchObject({
     all_documents: false,
@@ -321,9 +326,9 @@ it("loads a prior request, changes its source, and sends a fresh run without old
     date_choices: [],
   });
   expect(submitted[0]).not.toHaveProperty("counts");
-  const preview = await screen.findByRole("table", { name: "Search export counts" });
+  const preview = await screen.findByRole("table", { name: "Search report counts" });
   expect(within(preview).getByText("Terms")).toBeTruthy();
-  expect(within(preview).getByText("Date Range")).toBeTruthy();
+  expect(within(preview).getByText("Date range")).toBeTruthy();
   const reviewButton = screen.getByRole("button", { name: "Review dates" });
   await waitFor(() => expect(reviewButton.hasAttribute("disabled")).toBe(false));
   await fireEvent.click(reviewButton);
@@ -331,11 +336,7 @@ it("loads a prior request, changes its source, and sends a fresh run without old
   await fireEvent.input(screen.getByRole("textbox", { name: "Expression for term 1" }), {
     target: { value: "beta" },
   });
-  expect(
-    await screen.findByText(
-      /Draft changed; the counts and downloads below belong to the previous frozen run/,
-    ),
-  ).toBeTruthy();
+  expect(await screen.findByText(/These counts use your previous search/)).toBeTruthy();
 });
 
 it("keeps selected history fixed, clears review choices, and explains date-scoped counts and conflicts", async () => {
@@ -386,7 +387,7 @@ it("keeps selected history fixed, clears review choices, and explains date-scope
   await fireEvent.click(await screen.findByRole("button", { name: "Use as draft" }));
   expect(screen.getAllByText(/Selected documents \(2\)/).length).toBeGreaterThan(0);
   expect(screen.queryByRole("radio", { name: "All documents" })).toBeNull();
-  await fireEvent.click(screen.getByRole("button", { name: "Create export" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Create report" }));
   await waitFor(() => expect(submitted).toHaveLength(1));
   expect(submitted[0]).toMatchObject({
     all_documents: false,
@@ -394,24 +395,38 @@ it("keeps selected history fixed, clears review choices, and explains date-scope
     date_choices: [],
   });
   expect(await screen.findByText(/1 scoped · 1 searchable/)).toBeTruthy();
-  expect(screen.getByText(/Date eligibility can reduce the counted scope/)).toBeTruthy();
   await fireEvent.input(screen.getByRole("textbox", { name: "Expression for term 1" }), {
     target: { value: "beta" },
   });
-  expect(
-    await screen.findByText(
-      /Draft changed; the counts and downloads below belong to the previous frozen run/,
-    ),
-  ).toBeTruthy();
+  expect(await screen.findByText(/These counts use your previous search/)).toBeTruthy();
   await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Create export" }).hasAttribute("disabled")).toBe(
+    expect(screen.getByRole("button", { name: "Create report" }).hasAttribute("disabled")).toBe(
       false,
     ),
   );
-  await fireEvent.click(screen.getByRole("button", { name: "Create export" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Create report" }));
   expect(await screen.findByRole("alert")).toHaveProperty(
     "textContent",
     "Selected documents changed. Refresh the workspace and reselect the intended current versions.",
   );
   expect(submitted).toHaveLength(2);
+});
+
+it("offers Remove only when more than one term exists", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+    json({ items: [], total: 0, limit: 20, offset: 0 }),
+  );
+  render(TermReportDrawer, {
+    session: "session",
+    initialExpression: "alpha",
+    onclose: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  expect(screen.queryByRole("button", { name: /^Remove term/ })).toBeNull();
+  await fireEvent.click(screen.getByRole("button", { name: "Add term" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Remove term 1" }));
+  expect(screen.queryByRole("button", { name: /^Remove term/ })).toBeNull();
+  expect(
+    (screen.getByRole("textbox", { name: "Expression for term 2" }) as HTMLInputElement).value,
+  ).toBe("");
 });

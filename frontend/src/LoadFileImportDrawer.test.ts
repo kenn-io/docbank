@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import * as loadfile from "./loadfile.js";
+import { APIError } from "./api-transport.js";
 import LoadFileImportDrawer from "./LoadFileImportDrawer.svelte";
 
 afterEach(() => {
@@ -75,6 +76,68 @@ it("requires a successful review before starting the durable import", async () =
     expect.any(AbortSignal),
   );
   expect(await screen.findByText("Package import")).toBeTruthy();
+});
+
+it("refreshes an expired preview using the sealed upload before retrying import", async () => {
+  const upload = vi.spyOn(loadfile, "uploadPackageZIP").mockResolvedValue({
+    container_id: "source",
+    format: "zip",
+    state: "sealed",
+    sha256: "d".repeat(64),
+    size: 3,
+  });
+  const preflight = vi
+    .spyOn(loadfile, "preflightPackageZIP")
+    .mockResolvedValueOnce(preview)
+    .mockResolvedValueOnce({ ...preview, preflight_id: "refreshed-preflight", records: 3 });
+  const start = vi
+    .spyOn(loadfile, "startPackageImport")
+    .mockRejectedValueOnce(new APIError("not found", 404, "not_found"))
+    .mockResolvedValueOnce({
+      operation_id: "operation",
+      job_id: "job",
+      package_id: "package",
+      preflight_id: "refreshed-preflight",
+      state: "queued",
+      committed: 0,
+      total: 3,
+      gap_count: 0,
+      gaps: [],
+      created_at: "now",
+      updated_at: "now",
+    });
+  render(LoadFileImportDrawer, props);
+  await fireEvent.change(screen.getByLabelText("Choose load-file ZIP"), {
+    target: { files: [new File(["zip"], "review.zip")] },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Upload and preview" }));
+  expect(await screen.findByText("Package preview")).toBeTruthy();
+  await fireEvent.click(screen.getByRole("button", { name: "Import package" }));
+  expect((await screen.findByRole("alert")).textContent).toBe("not found");
+  expect(start.mock.calls[0][1].preflight_id).toBe("preflight");
+
+  await fireEvent.click(screen.getByRole("button", { name: "Refresh preview" }));
+  expect(await screen.findByText("Records")).toBeTruthy();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(upload).toHaveBeenCalledTimes(1);
+  expect(preflight).toHaveBeenNthCalledWith(
+    2,
+    "session",
+    upload.mock.calls[0][3],
+    "dat-concordance-v1",
+    "",
+    "utf-8",
+    expect.any(AbortSignal),
+  );
+  await fireEvent.click(screen.getByRole("button", { name: "Import package" }));
+  expect(start).toHaveBeenNthCalledWith(
+    2,
+    "session",
+    expect.objectContaining({ preflight_id: "refreshed-preflight", into: "/review" }),
+    expect.any(AbortSignal),
+  );
+  expect(await screen.findByText("Package import")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Refresh preview" })).toBeNull();
 });
 
 it("shows blocking diagnostics and disables import", async () => {

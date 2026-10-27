@@ -1,6 +1,7 @@
 import { hmac } from "@noble/hashes/hmac.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
+import { localFilePath } from "./localFiles.js";
 import { APIError } from "./api-transport.js";
 import { randomUUID } from "./crypto.js";
 import { type BrowserSession } from "./browser-session.js";
@@ -126,7 +127,7 @@ export function photoImportDeclaration(
     request_id: requestID,
     destination,
     files: files.map((file) => ({
-      relative_path: photoRelativePath(file),
+      relative_path: localFilePath(file),
       size: file.size,
       modified_time: file.lastModified,
       expected_hash: hashes
@@ -160,12 +161,8 @@ export interface PhotoImportTransport {
   ): Promise<PhotoGroupReceipt>;
 }
 
-export function photoRelativePath(file: File): string {
-  return (file.webkitRelativePath || file.name).normalize("NFC");
-}
-
 export function photoImportNeedsContentHash(file: File): boolean {
-  const name = photoRelativePath(file).split("/").at(-1) ?? file.name;
+  const name = localFilePath(file).split("/").at(-1) ?? file.name;
   return photoImportContentHashExtensions.has(name.slice(name.lastIndexOf(".")).toLowerCase());
 }
 

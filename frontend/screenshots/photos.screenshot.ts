@@ -2206,16 +2206,6 @@ test("photo layout keeps search and actions above Library with date navigation",
         animations: "disabled",
       });
     };
-    const expectStackAlignment = async () => {
-      const bar = await page.locator(".photo-bar").boundingBox();
-      const gap = page.getByRole("spinbutton", { name: "Burst gap (seconds)" });
-      await expect(gap).toBeInViewport();
-      const label = await gap.locator("..").boundingBox();
-      const padding = await page
-        .locator(".photo-bar")
-        .evaluate((element) => Number.parseFloat(getComputedStyle(element).paddingLeft));
-      expect(label!.x).toBeCloseTo(bar!.x + padding, 0);
-    };
     const expectCompactActions = async () => {
       const actions = page.locator(".photo-bar .toolbar-actions");
       await expectToolbarContained(page);
@@ -2272,7 +2262,6 @@ test("photo layout keeps search and actions above Library with date navigation",
     await rail.getByRole("button", { name: /^2024, / }).click();
     await expect(rail.locator(".rail-group.open .rail-year")).toContainText("2024");
     await expect(rail.locator(".rail-foot")).toContainText("undated");
-    await expectStackAlignment();
     await capture("library-1440");
     await page.setViewportSize({ width: 320, height: 800 });
     await capture("library-320");
@@ -2291,7 +2280,6 @@ test("photo layout keeps search and actions above Library with date navigation",
     await capture("filters-320");
     await page.getByRole("button", { name: "Filters", exact: true }).click();
     await page.setViewportSize({ width: 400, height: 800 });
-    await expectStackAlignment();
     await capture("library-400");
     const bar = page.locator(".photo-bar");
     await expect

@@ -115,7 +115,7 @@ it("navigates with keyboard focus after activating Undo", async () => {
       checkpoint: { ...cull.run!.checkpoint, pass: rows.map((row) => row.asset_id) },
     };
   });
-  await fireEvent.click(await readyButton("Pick (P)"));
+  await fireEvent.click(await readyButton("Pick"));
   await screen.findByText("Photo 2.jpg");
   const button = await readyButton(/^Undo$/);
   button.focus();
@@ -123,7 +123,7 @@ it("navigates with keyboard focus after activating Undo", async () => {
   await fireEvent.click(button);
   await waitFor(() => expect(undo).toHaveBeenCalledWith("pick", expect.anything()));
   await waitFor(() => expect(screen.queryByRole("button", { name: /^Undo$/ })).toBeNull());
-  await readyButton("Next");
+  await readyButton("Next photo");
   await fireEvent.keyDown(document.activeElement!, { key: "ArrowRight" });
   await waitFor(() => expect(cull.currentID).toBe("photo-3"));
   await screen.findByText("Photo 3.jpg");
@@ -193,14 +193,14 @@ it("blocks decisions, navigation, scope changes and exit during checkpoint check
     ])
       await fireEvent.keyDown(shell, { key });
     for (const name of [
-      "Previous",
-      "Next",
+      "Previous photo",
+      "Next photo",
       "Skip",
       "Exit cull",
-      "Scope: all",
-      "Pick (P)",
-      "Reject (X)",
-      "Clear flag (U)",
+      "All photos",
+      "Pick",
+      "Reject",
+      "Clear flag",
       "Show Photo 1.jpg",
       "Show Photo 3.jpg",
     ]) {
@@ -209,7 +209,7 @@ it("blocks decisions, navigation, scope changes and exit during checkpoint check
       await fireEvent.click(button);
     }
     // The toggle has no handler guard, so only a click that honors disabled proves it is blocked.
-    const toggle = screen.getByRole("button", { name: "Auto-advance: off" }) as HTMLButtonElement;
+    const toggle = screen.getByRole("switch", { name: "Auto-advance" }) as HTMLInputElement;
     expect(toggle.matches(":disabled")).toBe(true);
     await act(() => toggle.click());
     expect(cull.currentID).toBe("photo-2");
@@ -232,7 +232,7 @@ it("blocks decisions, navigation, scope changes and exit during checkpoint check
   }
   await act(() => finishWrite({ receipt_id: "", before: [], after: [] }));
   await readyButton("Exit cull");
-  await fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Next photo" }));
   expect(cull.currentID).toBe("photo-3");
   await fireEvent.click(screen.getByRole("button", { name: "Exit cull" }));
   expect(onclose).toHaveBeenCalledOnce();
@@ -244,7 +244,7 @@ it("retries a failed completion lookup and restores the unflagged remainder offe
     .mockRejectedValueOnce(new APIError("Service unavailable", 503, "unavailable"))
     .mockResolvedValue({ items: [photo(1)] });
   const { cull } = await reviewPhoto();
-  await fireEvent.click(await readyButton("Next"));
+  await fireEvent.click(await readyButton("Next photo"));
   await screen.findByRole("heading", { name: "Pass complete" });
   await screen.findByText("Service unavailable");
   expect(screen.queryByRole("button", { name: "Review unflagged remainder" })).toBeNull();
@@ -384,13 +384,13 @@ it("refreshes current and cached rows when a new pass starts on the same photo",
   vi.spyOn(api, "lookupPhotoFlags").mockResolvedValue({
     items: rows,
   });
-  await fireEvent.click(await readyButton("Scope: unflagged"));
+  await fireEvent.click(await readyButton("Unflagged photos"));
   await fireEvent.click(screen.getByRole("button", { name: "Reset pass" }));
-  await readyButton("Scope: picks");
+  await readyButton("Picks");
   expect(cull.currentID).toBe("photo-1");
   expect(cull.run!.checkpoint.autoAdvance).toBe(false);
   await screen.findByText("pick · 0 stars");
-  await fireEvent.click(await readyButton("Next"));
+  await fireEvent.click(await readyButton("Next photo"));
   await screen.findByText("Photo 2.jpg");
   await screen.findByText("pick · 0 stars");
 });
@@ -411,7 +411,7 @@ it("refuses a decision after another client changes the cached neighbor flag", a
   });
   await screen.findByRole("button", { name: "Show Photo 2.jpg" });
   const lookups = vi.mocked(photos.lookup).mock.calls.length;
-  await fireEvent.click(await readyButton("Next"));
+  await fireEvent.click(await readyButton("Next photo"));
   await screen.findByText("Photo 2.jpg");
   expect(photos.lookup).toHaveBeenCalledTimes(lookups);
   await screen.findByText("Unflagged · 0 stars");
@@ -448,7 +448,7 @@ it.each([
     .spyOn(api, "editPhotoAuthored")
     .mockResolvedValue({ receipt_id: "", before: [], after: [] });
   const { cull, photos } = await reviewPhoto();
-  await fireEvent.click(await readyButton("Pick (P)"));
+  await fireEvent.click(await readyButton("Pick"));
   await screen.findByText("This photo changed. Reload the photo before deciding.");
   expect(edit).not.toHaveBeenCalled();
   expect(photos.cullEditor!.dirty).toBe(false);
@@ -468,11 +468,11 @@ it("allows another decision after reconciling its own flag and rating with auto-
   );
   const { cull, photos, container } = await reviewPhoto();
   vi.spyOn(photos, "metadataChanged").mockReturnValue(new Map());
-  await fireEvent.click(await readyButton("Pick (P)"));
+  await fireEvent.click(await readyButton("Pick"));
   await screen.findByText("pick · 0 stars");
   await fireEvent.keyDown(container.querySelector(".photo-cull")!, { key: "4" });
   await screen.findByText("pick · 4 stars");
-  await fireEvent.click(await readyButton("Reject (X)"));
+  await fireEvent.click(await readyButton("Reject"));
   await screen.findByText("reject · 4 stars");
   expect(edit).toHaveBeenCalledTimes(3);
   expect(cull.currentID).toBe("photo-1");
@@ -545,7 +545,7 @@ it("shows prepared rotation after a no-op decision without replacing Undo", asyn
   photos.authored.undoState.receiptID = "previous-decision";
   photos.authored.undoState.summary = "Previous edit";
   expect(screen.getByText("pick · 4 stars")).toBeTruthy();
-  await fireEvent.click(screen.getByRole("button", { name: "Pick (P)" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Pick" }));
   await screen.findByText("No changes to apply");
   expect(edit).toHaveBeenCalledOnce();
   expect(edit.mock.calls[0]![0]).toMatchObject({
@@ -623,7 +623,7 @@ it("reloads stale content after a 412 without reapplying the decision", async ()
     };
   });
   await screen.findByRole("button", { name: "Show Photo 2.jpg" });
-  await fireEvent.click(await readyButton("Pick (P)"));
+  await fireEvent.click(await readyButton("Pick"));
   await screen.findByText("Photo changed");
   expect(edit).toHaveBeenCalledOnce();
   expect(edit.mock.calls[0]![0]).toMatchObject({
@@ -725,7 +725,7 @@ it.each(["before edit", "during preparation", "before Undo"])(
       vi.mocked(api.preparePhotoAuthored).mockReturnValueOnce(
         new Promise((resolve) => (finish = resolve)),
       );
-      await fireEvent.click(screen.getByRole("button", { name: "Pick (P)" }));
+      await fireEvent.click(screen.getByRole("button", { name: "Pick" }));
       await waitFor(() => expect(api.preparePhotoAuthored).toHaveBeenCalledOnce());
     }
     other.move(1);
@@ -737,7 +737,7 @@ it.each(["before edit", "during preparation", "before Undo"])(
         photos.cullEditor!.undoState.summary = "Photo picked";
       });
       await fireEvent.click(await readyButton(/^Undo$/));
-    } else await fireEvent.click(screen.getByRole("button", { name: "Pick (P)" }));
+    } else await fireEvent.click(screen.getByRole("button", { name: "Pick" }));
     await screen.findByText(
       "Progress could not be saved: Cull progress changed in another tab. Close and resume it.",
     );
@@ -748,7 +748,7 @@ it.each(["before edit", "during preparation", "before Undo"])(
 it("keeps a failed decision on screen and guards exit while its draft remains", async () => {
   vi.spyOn(api, "editPhotoAuthored").mockRejectedValue(new Error("Decision failed"));
   const { cull, onclose } = await reviewPhoto();
-  await fireEvent.click(screen.getByRole("button", { name: "Pick (P)" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Pick" }));
   await screen.findByText("Decision failed");
   await fireEvent.keyDown(document.querySelector(".photo-cull")!, { key: "Escape" });
   expect(
@@ -783,7 +783,7 @@ it("fetches only rail photos that are neither displayed nor already held", async
   expect(lookup.mock.calls.every(([ids]) => !ids.includes("photo-1"))).toBe(true);
   lookup.mockClear();
   vi.mocked(photos.lookup).mockClear();
-  await fireEvent.click(screen.getByRole("button", { name: /^Next$/ }));
+  await fireEvent.click(screen.getByRole("button", { name: "Next photo" }));
   await screen.findByRole("button", { name: "Show Photo 6.jpg" });
   expect(lookup).toHaveBeenCalledExactlyOnceWith(["photo-6"], expect.any(AbortSignal));
   expect(screen.getByRole("button", { name: "Show Photo 1.jpg" })).toBeTruthy();
@@ -819,9 +819,9 @@ it("reuses the held row after a decision on a RAW/JPEG pair", async () => {
   await screen.findByRole("button", { name: "Show Photo 2.jpg" });
   await screen.findByText("Photo 1.jpg");
   const lookups = vi.mocked(photos.lookup).mock.calls.length;
-  await fireEvent.click(await readyButton("Pick (P)"));
+  await fireEvent.click(await readyButton("Pick"));
   await screen.findByText("Photo 2.jpg");
-  await fireEvent.click(await readyButton("Previous"));
+  await fireEvent.click(await readyButton("Previous photo"));
   await screen.findByText("Photo 1.jpg");
   expect(photos.lookup).toHaveBeenCalledTimes(lookups);
 });
@@ -849,7 +849,7 @@ it.each([
     await fireEvent.keyDown(shell, { key });
     await screen.findByText("Failed to fetch");
     await fireEvent.click(await readyButton("Retry edit"));
-    await readyButton("Pick (P)");
+    await readyButton("Pick");
     expect(edit).toHaveBeenCalledTimes(2);
     for (const [request] of edit.mock.calls)
       expect(Object.values(request.targets).map((target) => target.file_id)).toEqual(targets);
@@ -860,7 +860,7 @@ it.each([
       );
     await fireEvent.keyDown(shell, { key: nextKey });
     await waitFor(() => expect(edit).toHaveBeenCalledTimes(3));
-    await readyButton("Pick (P)");
+    await readyButton("Pick");
     expect(Object.values(edit.mock.calls[2]![0].targets).map((target) => target.file_id)).toEqual([
       "raw-1",
       "file-1",
@@ -912,7 +912,7 @@ it.each(["Cancel", "Reset pass"])(
     const list = vi.spyOn(api, "lookupPhotoFlags").mockResolvedValue({
       items: [photo(1)],
     });
-    await fireEvent.click(await readyButton("Scope: all"));
+    await fireEvent.click(await readyButton("All photos"));
     await screen.findByRole("dialog", { name: "Change scope and reset this pass's progress?" });
     expect(list).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Exit cull" }).matches(":disabled")).toBe(true);
@@ -955,11 +955,11 @@ it("clears selected frames when All changes to Unflagged with the same photos", 
     "checked",
     true,
   );
-  await readyButton("Keep current (Return)");
-  await fireEvent.click(await readyButton("Scope: all"));
+  await readyButton("Keep current");
+  await fireEvent.click(await readyButton("All photos"));
   await screen.findByRole("dialog", { name: "Change scope and reset this pass's progress?" });
   await fireEvent.click(screen.getByRole("button", { name: "Reset pass" }));
-  await readyButton("Scope: unflagged");
+  await readyButton("Unflagged photos");
   expect(cull.run!.checkpoint.pass).toEqual(ids);
   expect(screen.getByRole("checkbox", { name: "Select Photo 2.jpg" })).toHaveProperty(
     "checked",
@@ -983,7 +983,7 @@ it.each(["missing", "different version"])(
         checkpoint: { ...cull.run!.checkpoint, pass: rows.map((row) => row.asset_id) },
       };
     });
-    await readyButton("Next");
+    await readyButton("Next photo");
     if (kind !== "missing") await screen.findByRole("button", { name: "Show Photo 2.jpg" });
     if (kind === "different version") {
       await act(() => {
@@ -993,7 +993,7 @@ it.each(["missing", "different version"])(
       });
     }
     vi.mocked(photos.lookup).mockClear();
-    await fireEvent.click(await readyButton("Next"));
+    await fireEvent.click(await readyButton("Next photo"));
     await screen.findByText("Looked up.jpg");
     expect(photos.lookup).toHaveBeenCalledExactlyOnceWith("photo-2", expect.any(AbortSignal));
   },
@@ -1034,14 +1034,14 @@ it.each(["rating only", "flag change", "unavailable mark and auto-advance toggle
         cull.run = { ...cull.run!, ids: [row.asset_id, photo(2).asset_id] };
       });
     }
-    await fireEvent.click(await readyButton("Next"));
+    await fireEvent.click(await readyButton("Next photo"));
     await screen.findByRole("heading", { name: "Pass complete" });
     await waitFor(() => expect(cull.busy).toBe(false));
     expect(flags).toHaveBeenCalledOnce();
     if (kind.startsWith("unavailable")) {
       await screen.findByText(/1 unavailable/);
       expect(cull.run!.checkpoint.unavailable).toEqual([photo(2).asset_id]);
-      await fireEvent.click(screen.getByRole("button", { name: "Auto-advance: off" }));
+      await fireEvent.click(screen.getByRole("switch", { name: "Auto-advance" }));
       await waitFor(() => expect(cull.busy).toBe(false));
       await act(() => cull.unavailable(row.asset_id));
       await waitFor(() => expect(cull.busy).toBe(false));
@@ -1097,7 +1097,7 @@ it("sends Keep all, selected, and representative through one receipt path and un
       checkpoint: { ...cull.run!.checkpoint, pass: rows.map((row) => row.asset_id) },
     };
   });
-  await readyButton("Keep current (Return)");
+  await readyButton("Keep current");
   expect(screen.getAllByLabelText("Stack boundary")).toHaveLength(2);
   await fireEvent.click(await readyButton("Keep all"));
   await waitFor(() => expect(decide).toHaveBeenCalledTimes(1));
@@ -1162,7 +1162,7 @@ it("keeps individual decisions available while camera details update", async () 
     cull.run = { ...cull.run!, groups: [], burstGapSeconds: 2, groupingIncomplete: true };
   });
   await screen.findByText(/Some camera details are missing or outdated/);
-  await readyButton("Pick (P)");
+  await readyButton("Pick");
   expect(screen.queryByRole("button", { name: "Keep all" })).toBeNull();
   const settings = vi.mocked(api.getPhotoSettings);
   settings.mockClear();
@@ -1232,7 +1232,7 @@ it("Return visits interleaved stacks and singletons once", async () => {
     ["photo-4", undefined],
   ]) {
     expect(cull.currentID).toBe(current);
-    await readyButton(current === "photo-4" ? "Pick (P)" : "Keep current (Return)");
+    await readyButton(current === "photo-4" ? "Pick" : "Keep current");
     await fireEvent.keyDown(shell, { key: "Enter" });
     await waitFor(() => expect(cull.currentID).toBe(next));
   }
@@ -1318,7 +1318,7 @@ it.each([
       await waitFor(() => expect(finish).toBeDefined());
       expect(cull.stackLoading).toBe(false);
       expect(screen.queryByText("Grouping bursts...")).toBeNull();
-      await readyButton("Next");
+      await readyButton("Next photo");
       await readyButton("Exit cull");
       await fireEvent.keyDown(container.querySelector(".photo-cull")!, { key: "ArrowRight" });
       await waitFor(() => expect(cull.currentID).toBe("photo-2"));
@@ -1441,7 +1441,7 @@ it.each([
     .spyOn(api, "lookupPhotoFlags")
     .mockImplementation(async () => ({ items: [photo(1)] }));
   const { cull, photos } = await reviewPhoto();
-  await fireEvent.click(await readyButton("Next"));
+  await fireEvent.click(await readyButton("Next photo"));
   await screen.findByRole("heading", { name: "Pass complete" });
   await waitFor(() => expect(cull.busy).toBe(false));
   expect(flags).toHaveBeenCalledOnce();
@@ -1585,7 +1585,7 @@ it("shows a cached neighbor's live row after navigation during its read", async 
   );
   const reading = photos.changed({});
   await waitFor(() => expect(finish).toBeDefined());
-  await fireEvent.click(await readyButton("Next"));
+  await fireEvent.click(await readyButton("Next photo"));
   await screen.findByText("Photo 2.jpg");
   await act(async () => {
     finish([rows[0]!, { ...rows[1]!, name: "Updated neighbor.jpg" }]);
@@ -1599,7 +1599,7 @@ it("shows a cached neighbor's live row after navigation during its read", async 
 it("commits the next pass when a live event arrives during its flag lookup", async () => {
   const flags = vi.spyOn(api, "lookupPhotoFlags").mockResolvedValue({ items: [photo(1)] });
   const { cull, photos } = await reviewPhoto();
-  await fireEvent.click(await readyButton("Next"));
+  await fireEvent.click(await readyButton("Next photo"));
   await screen.findByRole("heading", { name: "Pass complete" });
   await readyButton("Review unflagged remainder");
   let finish!: (value: Awaited<ReturnType<typeof api.lookupPhotoFlags>>) => void;
@@ -1715,4 +1715,88 @@ it("leaves saved progress alone when a live lookup finishes after Exit", async (
   expect(cull.run!.checkpoint.unavailable).toEqual([]);
   expect(signal.aborted).toBe(true);
   photos.dispose();
+});
+
+it("keeps audit history keys from rating or navigating the photo beneath it", async () => {
+  const row = photo(1);
+  vi.spyOn(api, "getNode").mockResolvedValue({
+    id: row.node_id,
+    name: row.name,
+    kind: "file",
+    current_version_id: row.content_version_id,
+    revision: 1,
+    size: 64,
+    path: "/photos/Photo 1.jpg",
+    created_at: "2026-01-01T00:00:00Z",
+    modified_at: "2026-01-01T00:00:00Z",
+  });
+  vi.spyOn(api, "auditStatus").mockResolvedValue({ membership: { protected: true } } as Awaited<
+    ReturnType<typeof api.auditStatus>
+  >);
+  vi.spyOn(api, "auditNodeHistory").mockResolvedValue({
+    items: [],
+    path: "/photos/Photo 1.jpg",
+    node: await api.getNode(row.node_id),
+    limit: 50,
+    total: 0,
+  });
+  const edit = vi.spyOn(api, "editPhotoAuthored");
+  const { cull, container, onclose } = await reviewPhoto(row);
+  const root = container.querySelector(".photo-cull")!;
+  await fireEvent.keyDown(root, { key: "i" });
+  await fireEvent.keyDown(root, { key: "i" });
+  await fireEvent.click(
+    await screen.findByRole("button", { name: "Protected, open Audit history" }),
+  );
+  const history = await screen.findByRole("dialog", {
+    name: "Permanent audit history for /photos/Photo 1.jpg",
+  });
+  await fireEvent.keyDown(history, { key: "1" });
+  await fireEvent.keyDown(history, { key: "ArrowRight" });
+  expect(edit).not.toHaveBeenCalled();
+  expect(cull.currentID).toBe(row.asset_id);
+  await fireEvent.keyDown(history, { key: "Escape" });
+  await waitFor(() => expect(history.isConnected).toBe(false));
+  expect(onclose).not.toHaveBeenCalled();
+});
+
+it("names controls plainly and keeps shortcuts in their tooltips", async () => {
+  await reviewPhoto();
+  for (const [name, title] of [
+    ["Pick", "Pick (P)"],
+    ["Reject", "Reject (X)"],
+    ["Clear flag", "Clear flag (U)"],
+    ["1:1 preview", "1:1 preview (Z)"],
+    ["Photo details", "Photo details (I)"],
+    ["Exit cull", "Exit cull (Esc)"],
+  ]) {
+    const button = await readyButton(name);
+    expect(button.getAttribute("title")).toBe("");
+    await fireEvent.focusIn(button);
+    expect((await screen.findByRole("tooltip")).textContent).toBe(title);
+    await fireEvent.focusOut(button);
+  }
+  expect(screen.getByRole("switch", { name: "Auto-advance" })).toBeTruthy();
+  expect(screen.queryByText(/Scope:/)).toBeNull();
+});
+
+it("changes the burst gap from the cull header and regroups the pass", async () => {
+  vi.spyOn(api, "getPhotoSettings").mockResolvedValue({ revision: 1, burst_gap_seconds: 2 });
+  const write = vi
+    .spyOn(api, "setPhotoSettings")
+    .mockResolvedValue({ revision: 2, burst_gap_seconds: 5 });
+  const { cull, photos } = await reviewPhoto();
+  const refresh = vi.spyOn(photos, "refresh").mockResolvedValue(true);
+  const check = vi.spyOn(cull, "checkSettings");
+  Element.prototype.scrollIntoView = vi.fn();
+  await fireEvent.click(screen.getByRole("combobox", { name: "Burst gap: 2 s" }));
+  await fireEvent.click(await screen.findByRole("option", { name: "5 s" }));
+  await waitFor(() => expect(photos.burstGapSeconds).toBe(5));
+  expect(write).toHaveBeenCalledWith(
+    { burst_gap_seconds: 5 },
+    { "If-Match": '"1"' },
+    expect.anything(),
+  );
+  expect(refresh).toHaveBeenCalled();
+  await waitFor(() => expect(check).toHaveBeenCalled());
 });

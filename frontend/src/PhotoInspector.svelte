@@ -1,4 +1,5 @@
 <script lang="ts">
+  import "./inspector.css";
   import {
     Button,
     Checkbox,
@@ -9,6 +10,7 @@
     TableHeaderCell,
   } from "@kenn-io/kit-ui";
   import TagPicker from "./TagPicker.svelte";
+  import InspectorHeader from "./InspectorHeader.svelte";
   import type { PhotoAuthoredEditor } from "./photoAuthored.svelte.js";
   import type {
     PhotoAuthoredPatch,
@@ -21,10 +23,13 @@
   let {
     editor,
     faces,
-    session = "",
+    session,
     cache,
     onperson,
+    onauthfailure,
     count = 1,
+    name,
+    mime,
     actionDisabled = false,
     onedit,
     onresponse,
@@ -34,7 +39,10 @@
     session?: string;
     cache?: import("./photoPreviewCache.js").PhotoPreviewCache;
     onperson?: (id: string, name: string) => void;
+    onauthfailure?: (cause: unknown) => void;
     count?: number;
+    name?: string;
+    mime?: string;
     actionDisabled?: boolean;
     onresponse?: (receipt?: PhotoAuthoredReceipt, tags?: Tag[]) => Promise<void>;
     onedit: (patch: PhotoAuthoredPatch, keywords?: PhotoKeywordEdit[]) => void;
@@ -117,8 +125,10 @@
   }
 </script>
 
-<section class="photo-inspector" aria-label="Photo metadata">
-  <h2>{count === 1 ? "Metadata" : `${count.toLocaleString()} photos`}</h2>
+<section class="photo-inspector inspector-sections" aria-label="Photo metadata">
+  {#if count === 1 && name}<InspectorHeader {name} {mime} />{:else}<h2>
+      {count === 1 ? "Metadata" : `${count.toLocaleString()} photos`}
+    </h2>{/if}
   {#if editor.concealed}{#if editor.validating}<span role="status"
         ><Spinner size={14} />Loading metadata…</span
       >{:else}<span role="status">Metadata unavailable</span>{/if}{:else}
@@ -226,21 +236,23 @@
         tone="warning"
         message={editor.suggestionsError}
       />{/if}
-    {#each choices as choice}
-      {@const value = editor.value(choice.field)}
-      <div class="field">
-        <span>{choice.label}</span><SelectDropdown
-          title={choice.label}
-          value={value === undefined ? "mixed" : String(value)}
-          options={[
-            ...(value === undefined ? [{ value: "mixed", label: "Mixed" }] : []),
-            ...choice.options,
-          ]}
-          {disabled}
-          onchange={(value) => select(choice.field, value)}
-        />
-      </div>
-    {/each}
+    <div class="decisions">
+      {#each choices as choice}
+        {@const value = editor.value(choice.field)}
+        <div class="field">
+          <span>{choice.label}</span><SelectDropdown
+            title={choice.label}
+            value={value === undefined ? "mixed" : String(value)}
+            options={[
+              ...(value === undefined ? [{ value: "mixed", label: "Mixed" }] : []),
+              ...choice.options,
+            ]}
+            {disabled}
+            onchange={(value) => select(choice.field, value)}
+          />
+        </div>
+      {/each}
+    </div>
     {#each fields as field}
       {@const value = editor.value(field)}
       <div class="field">
@@ -270,12 +282,30 @@
       >{/if}
     <div class="field">
       <span>Keywords</span><TagPicker
+        {session}
+        contextKey={JSON.stringify(
+          editor.files.map((file) => [
+            file.file_id,
+            file.node_id,
+            file.node_revision,
+            file.revision,
+          ]),
+        )}
+        {onauthfailure}
         value={keyword}
         tags={editor.tags}
         title="Keyword"
         placeholder="Choose keyword"
         disabled={disabled || editor.tagsLoading}
         onchange={(value) => (keyword = value)}
+        onpick={(tag, created) => {
+          keyword = tag.id;
+          if (created) {
+            editor.tags = [...editor.tags, tag];
+            editor.tagsTotal += 1;
+            editor.stage({}, [{ tag_id: tag.id, assign: true }]);
+          }
+        }}
       />
     </div>
     {#if keyword}<div class="keyword-actions">
@@ -377,7 +407,7 @@
     >{/if}
   {#if count === 1 && faces?.version && !faces.concealed}<PhotoPeople
       {faces}
-      {session}
+      session={session ?? ""}
       {onperson}
       {cache}
     />{/if}
@@ -499,10 +529,15 @@
       min-height: 32px;
     }
   }
-  .photo-inspector {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-3);
+  .decisions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-5);
+  }
+  .decisions .field :global(.kit-select-dropdown),
+  .decisions .field :global(.kit-select-dropdown__trigger) {
+    width: 100%;
+    min-width: 0;
   }
   h2 {
     margin: 0;
@@ -521,7 +556,7 @@
     width: 100%;
     box-sizing: border-box;
     resize: vertical;
-    padding: var(--space-3);
+    padding: var(--space-5);
     border: 1px solid var(--border-default);
     border-radius: var(--radius-md);
     background: var(--bg-surface);

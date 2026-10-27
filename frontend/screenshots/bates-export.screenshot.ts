@@ -44,8 +44,9 @@ test("publishes selected pages from a sealed synthetic package through the real 
     await page.setViewportSize({ width: 1440, height: 1400 });
     await page.addInitScript(() => localStorage.setItem("docbank-theme", "dark"));
     await page.goto(webURL, { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "Bates export", exact: true }).click();
-    const drawer = page.getByRole("dialog", { name: "Bates export" });
+    await page.getByRole("button", { name: "Export", exact: true }).click();
+    await page.getByRole("menuitem", { name: /^Bates-numbered PDFs/ }).click();
+    const drawer = page.getByRole("dialog", { name: "Bates-numbered PDFs" });
     await expect(drawer.getByText("Synthetic-Bates-production", { exact: false })).toBeVisible();
     await drawer.getByRole("textbox", { name: "Bates prefix" }).fill("CASE");
     await drawer.getByRole("button", { name: "Create namespace", exact: true }).click();
@@ -69,6 +70,25 @@ test("publishes selected pages from a sealed synthetic package through the real 
       fullPage: true,
       animations: "disabled",
     });
+    await drawer.getByRole("button", { name: "Close Bates export" }).click();
+    await page.getByRole("button", { name: "Productions", exact: true }).click();
+    const productions = page.getByRole("dialog", { name: "Productions" });
+    const rows = productions.getByRole("list", { name: "Productions" }).getByRole("listitem");
+    await expect(rows).toHaveCount(1);
+    await expect(rows.locator("summary")).toContainText("Synthetic-Bates-production");
+    await expect(rows.locator("summary")).toContainText("CASE000001–CASE000002");
+    await expect(rows.locator("summary")).toContainText("2 pages");
+    await expect(rows.locator("summary")).toContainText("Exported");
+    await expect(productions.locator("details[open]")).toHaveCount(0);
+    await expect(productions.getByRole("button", { name: "Download verified PDF" })).toBeHidden();
+    await page.screenshot({
+      path: path.join(output!, "productions-collapsed.png"),
+      fullPage: true,
+      animations: "disabled",
+    });
+    await rows.locator("summary").click();
+    await expect(productions.getByRole("button", { name: "Download verified PDF" })).toBeVisible();
+    await page.screenshot({ path: path.join(output!, "productions-exported.png"), fullPage: true });
   } finally {
     try {
       await docbank("daemon", "stop");

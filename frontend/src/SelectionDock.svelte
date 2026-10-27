@@ -18,12 +18,10 @@
     oncsv?: () => void;
     context?: "live" | "snapshot" | "photos";
     wholeQueryCount?: number;
-    onwholequerytags?: () => void;
     onexport?: () => void;
     exportDisabled?: boolean;
     exportHelp?: string;
     onreport?: () => void;
-    onexportquery?: () => void;
     photoActions?: Snippet;
     allResults?: boolean;
     onallresults?: () => void;
@@ -46,12 +44,10 @@
     oncsv,
     context = "live",
     wholeQueryCount = 0,
-    onwholequerytags,
     onexport,
     exportDisabled = false,
     exportHelp = "",
     onreport,
-    onexportquery,
     photoActions,
     allResults = false,
     onallresults,
@@ -64,8 +60,8 @@
   open={selectedCount > 0 || retainOpen}
   onclose={onclear}
   ariaLabel={context === "photos" ? "Selected photos" : "Selected documents"}
-  initialHeight={context === "photos" ? "auto" : "126px"}
-  minHeight={context === "photos" ? "min-content" : "112px"}
+  initialHeight="auto"
+  minHeight="min-content"
   maxHeight="var(--selection-dock-max-height)"
   closeTitle={context === "photos" ? "Clear selected photos" : "Clear selected documents"}
   closeAriaLabel={context === "photos" ? "Clear selected photos" : "Clear selected documents"}
@@ -76,13 +72,10 @@
       <strong
         >{allResults && selectedCount > 0
           ? `All ${wholeQueryCount.toLocaleString()} photos selected`
-          : `${selectedCount} selected ${context === "photos" ? (selectedCount === 1 ? "photo" : "photos") : `on this ${context === "snapshot" ? "frozen page" : "page"}`}`}</strong
+          : `${selectedCount} selected ${context === "photos" ? (selectedCount === 1 ? "photo" : "photos") : context === "snapshot" ? "" : "on this page"}`}</strong
       >
       {#if outsideCount}<span>{outsideCount} outside this view</span>{/if}
-      {#if context === "snapshot"}
-        <span>Visible selection only · whole query has {wholeQueryCount} documents</span>
-      {:else if truncated && context !== "photos"}<span>More results exist beyond this page</span
-        >{/if}
+      {#if truncated && context !== "photos"}<span>More results exist beyond this page</span>{/if}
     </div>
   {/snippet}
 
@@ -108,27 +101,23 @@
       >{/if}
     {#if photoActions}{@render photoActions()}{/if}
     {#if ontags}
-      <Button size="sm" disabled={tagsDisabled} onclick={ontags}
-        >{context === "snapshot" ? "Tag visible selection" : "Edit tags"}</Button
-      >
-    {/if}
-    {#if context === "snapshot" && onwholequerytags}
-      <Button size="sm" tone="info" disabled={tagsDisabled} onclick={onwholequerytags}
-        >Tag whole query</Button
+      <Button size="sm" disabled={tagsDisabled || selectedCount === 0} onclick={ontags}
+        >Tag selected…</Button
       >
     {/if}
     {#if ontrash}<Button size="sm" tone="danger" disabled={trashDisabled} onclick={ontrash}
         >Move to trash</Button
       >{/if}
     {#if oncsv}<Button size="sm" onclick={oncsv}>Export page CSV</Button>{/if}
-    {#if onreport}<Button size="sm" onclick={onreport}>Report selected documents</Button>{/if}
-    {#if onexport}<Button size="sm" disabled={exportDisabled} onclick={onexport}
-        >Export selection</Button
+    {#if onreport && selectedCount > 0}<Button size="sm" onclick={onreport}
+        >Report selected documents</Button
+      >{/if}
+    {#if onexport}<Button
+        size="sm"
+        disabled={exportDisabled || selectedCount === 0}
+        onclick={onexport}>Export selection</Button
       >{/if}
     {#if exportHelp}<span>{exportHelp}</span>{/if}
-    {#if context === "snapshot" && onexportquery}<Button size="sm" onclick={onexportquery}
-        >Export frozen query</Button
-      >{/if}
   </div>
 </BottomDock>
 

@@ -698,7 +698,7 @@ func TestWebSessionIsScopedRevocableAndDaemonLocal(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
 	require.NoError(t, resp.Body.Close())
 
-	resp = webRequest(http.MethodPost, "/api/v1/nodes")
+	resp = webRequest(http.MethodPost, "/api/v1/path/mkdir")
 	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
 	require.NoError(t, resp.Body.Close())
 

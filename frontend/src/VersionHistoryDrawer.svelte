@@ -1,24 +1,16 @@
 <script lang="ts">
   import * as generated from "./generated/docbank.js";
   import { untrack } from "svelte";
+  import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
+  import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
   import HistoryIcon from "@lucide/svelte/icons/history";
-  import XIcon from "@lucide/svelte/icons/x";
-  import {
-    Card,
-    Chip,
-    CopyButton,
-    DetailDrawer,
-    EmptyState,
-    IconButton,
-    Spinner,
-    Timeline,
-    TimelineItem,
-    type TimelineTone,
-  } from "@kenn-io/kit-ui";
+  import { Chip, EmptyState, Spinner } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
   import { type ContentVersion, type ContentVersionPage, type Node } from "./generated/docbank.js";
   import DownloadButton from "./DownloadButton.svelte";
+  import DrawerShell from "./DrawerShell.svelte";
   import EmailPDFButton from "./EmailPDFButton.svelte";
+  import InspectorDetails from "./InspectorDetails.svelte";
   import { basename, formatBytes, formatDate } from "./format.js";
 
   interface Props {
@@ -46,17 +38,28 @@
   }: Props = $props();
 
   let page = $state<ContentVersionPage | null>(null);
-  let selectedVersionID = $state("");
+  let opened = $state<Set<string>>(new Set());
   let loading = $state(true);
   let error = $state("");
   let generation = 0;
 
-  const selectedVersion = $derived(
-    onselect
-      ? resolving || unavailable
-        ? undefined
-        : pinnedVersion
-      : page?.items.find((version) => version.id === selectedVersionID),
+  // A link that is still resolving or failed offers no download, so the list can't stand in for it.
+  const locked = $derived(Boolean(onselect) && (resolving || unavailable !== ""));
+  // A linked version stays open; otherwise each version opens on its own.
+  const pinnedID = $derived(
+    onselect && !resolving && !unavailable ? (pinnedVersion?.id ?? "") : "",
+  );
+
+  // A linked version older than the loaded history still shows, first.
+  const listed = $derived(
+    page
+      ? [
+          ...(pinnedVersion && pinnedID && !page.items.some((item) => item.id === pinnedID)
+            ? [pinnedVersion]
+            : []),
+          ...page.items,
+        ]
+      : [],
   );
 
   const timelineKey = $derived(`${session}:${node.id}:${onselect ? node.current_version_id : ""}`);
@@ -81,7 +84,6 @@
       );
       if (request !== generation) return;
       page = next;
-      if (!onselect) selectedVersionID = next.items[0]?.id ?? "";
     } catch (cause) {
       if (request !== generation) return;
       if (cause instanceof APIError && cause.status === 401) {
@@ -95,367 +97,216 @@
     }
   }
 
-  function transitionLabel(kind: ContentVersion["transition_kind"]): string {
+  function isOpen(version: ContentVersion): boolean {
+    return onselect ? version.id === pinnedID : opened.has(version.id);
+  }
+
+  function toggle(version: ContentVersion): void {
+    if (onselect) {
+      onselect(version);
+      return;
+    }
+    const next = new Set(opened);
+    if (!next.delete(version.id)) next.add(version.id);
+    opened = next;
+  }
+
+  function label(kind: ContentVersion["transition_kind"]): string {
     switch (kind) {
       case "content_create":
         return "Created";
       case "content_replace":
         return "Replaced";
       case "content_revert":
-        return "Reverted";
+        return "Restored";
     }
   }
 
-  function transitionTone(kind: ContentVersion["transition_kind"]): TimelineTone {
-    switch (kind) {
-      case "content_create":
-        return "success";
-      case "content_replace":
-        return "info";
-      case "content_revert":
-        return "warning";
-    }
+  function facts(version: ContentVersion) {
+    return [
+      { label: "Version ID", value: version.id, copy: true },
+      { label: "SHA-256", value: version.blob_hash, copy: true },
+      { label: "Type", value: version.mime_type || "application/octet-stream" },
+      { label: "Restored from", value: version.source_version_id, copy: true },
+      { label: "Operation ID", value: version.introduced_operation_id, copy: true },
+    ];
   }
 </script>
 
-<DetailDrawer
-  width="min(920px, 100vw)"
-  ariaLabel={`Immutable version history for ${path}`}
+<DrawerShell
+  title={basename(path)}
+  ariaLabel={`Version history for ${path}`}
+  closeLabel="Close version history"
   {onclose}
 >
-  {#snippet header()}
-    <div class="drawer-heading">
-      <div>
-        <span>Immutable version history</span>
-        <strong>{basename(path)}</strong>
-        <span class="path">{path} · id:{node.id}</span>
-        {#if node.trashed_at}<Chip size="xs" tone="warning">Trash</Chip>{/if}
-      </div>
-      <IconButton size="sm" ariaLabel="Close version history" onclick={onclose}>
-        <XIcon size="14" aria-hidden="true" />
-      </IconButton>
-    </div>
-  {/snippet}
+  <div class="versions">
+    <p class="summary">
+      <span class="path">{path}</span>
+      {#if page}<span>{page.total} version{page.total === 1 ? "" : "s"}</span>{/if}
+      {#if node.trashed_at}<Chip size="xs" tone="warning">Trash</Chip>{/if}
+    </p>
+    {#if node.trashed_at}
+      <p class="note" role="note">Restore this file before downloading versions or email PDFs.</p>
+    {/if}
+    {#if resolving}
+      <p class="status"><Spinner size={16} /> Loading linked version…</p>
+    {:else if unavailable}
+      <p class="error" role="alert">{unavailable}</p>
+    {/if}
 
-  <div class="history-shell">
-    <section class="version-list" aria-label="Retained versions">
-      <div class="section-heading">
-        <span>Newest first</span>
-        <strong>{page?.total ?? 0} retained version{page?.total === 1 ? "" : "s"}</strong>
-      </div>
-
-      {#if loading}
-        <div class="loading"><Spinner size={16} /> Loading immutable versions…</div>
-      {:else if error}
-        <p class="error" role="alert">{error}</p>
-      {:else if !page || page.items.length === 0}
-        <EmptyState
-          title="No retained versions"
-          description="This file does not have an immutable content version."
-        >
-          {#snippet icon()}<HistoryIcon size="22" />{/snippet}
-        </EmptyState>
-      {:else}
-        <Timeline ariaLabel="Immutable content versions">
-          {#each page.items as version (version.id)}
-            <TimelineItem tone={transitionTone(version.transition_kind)}>
-              <Card
-                level="default"
-                padding="sm"
-                selected={version.id === selectedVersion?.id}
-                onclick={() => (onselect ? onselect(version) : (selectedVersionID = version.id))}
-                ariaLabel={`${transitionLabel(version.transition_kind)} at ${formatDate(version.recorded_at)}`}
-                eyebrow={transitionLabel(version.transition_kind)}
-                meta={formatDate(version.recorded_at)}
-              >
-                <div class="version-summary">
-                  <strong>Revision {version.node_revision}</strong>
-                  {#if version.id === page.items[0]?.id}
-                    <Chip size="xs" tone="success" dot>Current</Chip>
-                  {/if}
-                </div>
-                <p>{formatBytes(version.size)} · <code>{version.id.slice(0, 8)}</code></p>
-              </Card>
-            </TimelineItem>
-          {/each}
-        </Timeline>
-        {#if page.total > page.items.length}
-          <p class="limit-note">
-            Showing the newest {page.items.length} of {page.total} versions. Use the CLI or HTTP API for
-            older history.
-          </p>
-        {/if}
-      {/if}
-    </section>
-
-    <section class="version-detail" aria-label="Complete version authority">
-      {#if resolving}
-        <p class="loading"><Spinner size={16} /> Loading linked version…</p>
-      {:else if unavailable}
-        <p class="error" role="alert">{unavailable}</p>
-      {:else if selectedVersion}
-        <Card
-          level="inset"
-          eyebrow={transitionLabel(selectedVersion.transition_kind)}
-          eyebrowTone={transitionTone(selectedVersion.transition_kind)}
-          title="Complete version authority"
-          meta={`Revision ${selectedVersion.node_revision}`}
-        >
-          <dl>
-            <div class="identity">
-              <dt>Version</dt>
-              <dd>
-                <code>{selectedVersion.id}</code>
-                <CopyButton text={selectedVersion.id} ariaLabel="Copy version ID" />
-              </dd>
+    {#if loading}
+      <div class="status"><Spinner size={16} /> Loading versions…</div>
+    {:else if error}
+      <p class="error" role="alert">{error}</p>
+    {:else if !page || page.items.length === 0}
+      <EmptyState title="No versions">
+        {#snippet icon()}<HistoryIcon size="22" />{/snippet}
+      </EmptyState>
+    {:else}
+      <ol aria-label="Versions">
+        {#each listed as version (version.id)}
+          {@const expanded = isOpen(version)}
+          <li class:selected={version.id === pinnedID}>
+            <div class="row">
+              <div class="what">
+                <strong>{label(version.transition_kind)}</strong>
+                <span class="meta"
+                  >{formatDate(version.recorded_at)} · {formatBytes(version.size)}</span
+                >
+              </div>
+              {#if version.id === page.items[0]?.id}
+                <Chip size="xs" tone="success" uppercase={false}>Current</Chip>
+              {/if}
+              {#if !node.trashed_at && !locked}
+                <DownloadButton {session} {node} {version} surface="soft" {onauthfailure} />
+              {/if}
             </div>
-            <div>
-              <dt>Transition</dt>
-              <dd>{transitionLabel(selectedVersion.transition_kind)}</dd>
-            </div>
-            <div>
-              <dt>Recorded</dt>
-              <dd>{formatDate(selectedVersion.recorded_at)}</dd>
-            </div>
-            <div>
-              <dt>Canonical time</dt>
-              <dd><code>{selectedVersion.recorded_at}</code></dd>
-            </div>
-            <div>
-              <dt>Node</dt>
-              <dd>id:{selectedVersion.node_id}</dd>
-            </div>
-            <div>
-              <dt>Node revision</dt>
-              <dd>{selectedVersion.node_revision}</dd>
-            </div>
-            <div class="identity">
-              <dt>SHA-256</dt>
-              <dd>
-                <code>{selectedVersion.blob_hash}</code>
-                <CopyButton text={selectedVersion.blob_hash} ariaLabel="Copy SHA-256" />
-              </dd>
-            </div>
-            <div>
-              <dt>Size</dt>
-              <dd>{formatBytes(selectedVersion.size)} ({selectedVersion.size} bytes)</dd>
-            </div>
-            <div>
-              <dt>Media type</dt>
-              <dd>{selectedVersion.mime_type || "application/octet-stream"}</dd>
-            </div>
-            <div class="identity">
-              <dt>Operation</dt>
-              <dd>
-                <code>{selectedVersion.introduced_operation_id}</code>
-                <CopyButton
-                  text={selectedVersion.introduced_operation_id}
-                  ariaLabel="Copy introducing operation ID"
-                />
-              </dd>
-            </div>
-            {#if selectedVersion.source_version_id}
-              <div class="identity">
-                <dt>Revert source</dt>
-                <dd>
-                  <code>{selectedVersion.source_version_id}</code>
-                  <CopyButton
-                    text={selectedVersion.source_version_id}
-                    ariaLabel="Copy revert source version ID"
-                  />
-                </dd>
+            <button
+              type="button"
+              class="disclosure"
+              aria-expanded={expanded}
+              aria-label={`Details for ${label(version.transition_kind)} ${formatDate(version.recorded_at)}`}
+              onclick={() => toggle(version)}
+            >
+              {#if expanded}<ChevronDownIcon size="14" aria-hidden="true" />{:else}<ChevronRightIcon
+                  size="14"
+                  aria-hidden="true"
+                />{/if}Details
+            </button>
+            {#if expanded}
+              <div class="details">
+                <InspectorDetails label="Version details" facts={facts(version)} />
+                {#if !node.trashed_at && version.mime_type === "message/rfc822"}
+                  <EmailPDFButton {session} {node} {version} {onauthfailure} />
+                {/if}
               </div>
             {/if}
-          </dl>
-          {#if node.trashed_at}
-            <div class="version-actions">
-              <p class="limit-note" role="note">
-                Restore this file before downloading versions or email PDFs.
-              </p>
-            </div>
-          {:else}
-            <div class="version-actions">
-              {#key selectedVersion.id}
-                <DownloadButton
-                  {session}
-                  {node}
-                  version={selectedVersion}
-                  label="Download this version"
-                  {onauthfailure}
-                />
-              {/key}
-            </div>
-          {/if}
-          {#if !node.trashed_at && selectedVersion.mime_type === "message/rfc822"}
-            {#key selectedVersion.id}
-              <EmailPDFButton {session} {node} version={selectedVersion} {onauthfailure} />
-            {/key}
-          {/if}
-        </Card>
-      {:else}
-        <EmptyState
-          title="Select a version"
-          description="Choose a timeline entry to inspect its stable identity and complete content authority."
-        >
-          {#snippet icon()}<HistoryIcon size="22" />{/snippet}
-        </EmptyState>
+          </li>
+        {/each}
+      </ol>
+      {#if page.total > page.items.length}
+        <p class="note">
+          Showing the newest {page.items.length} of {page.total} versions. Use the CLI or HTTP API for
+          older history.
+        </p>
       {/if}
-    </section>
+    {/if}
   </div>
-</DetailDrawer>
+</DrawerShell>
 
 <style>
-  .drawer-heading {
+  .versions {
+    display: grid;
+    align-content: start;
+    gap: var(--space-5);
+    padding: var(--space-5);
+    font-size: var(--font-size-sm);
+  }
+  p {
+    margin: 0;
+  }
+  .summary {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    color: var(--text-muted);
+  }
+  .path {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .note {
+    color: var(--text-muted);
+  }
+  .status {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    color: var(--text-secondary);
+  }
+  .error {
+    color: var(--accent-red);
+  }
+  ol {
+    display: grid;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  li {
+    display: grid;
+    gap: var(--space-3);
+    justify-items: start;
+    padding: var(--space-4) var(--space-3);
+    border-bottom: 1px solid var(--border-muted);
+  }
+  li.selected {
+    background: var(--selection-bg);
+  }
+  .row {
+    display: flex;
+    align-items: center;
     gap: var(--space-4);
     width: 100%;
     min-width: 0;
   }
-
-  .drawer-heading > div,
-  .section-heading {
-    display: flex;
-    flex-direction: column;
+  .what {
+    display: grid;
+    flex: 1;
+    gap: var(--space-1);
     min-width: 0;
   }
-
-  .drawer-heading span,
-  .section-heading span {
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
+  .what strong {
+    color: var(--text-primary);
     font-weight: var(--font-weight-medium);
   }
-
-  .drawer-heading strong {
-    color: var(--text-primary);
-    font-size: var(--font-size-lg);
-  }
-
-  .drawer-heading .path {
-    overflow: hidden;
+  .meta {
     color: var(--text-muted);
-    font-size: var(--font-size-sm);
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
-
-  .history-shell {
-    display: grid;
-    grid-template-columns: minmax(290px, 0.8fr) minmax(360px, 1.2fr);
-    min-height: 100%;
-  }
-
-  .version-list,
-  .version-detail {
-    min-width: 0;
-    padding: var(--space-5);
-  }
-
-  .version-list {
-    border-right: 1px solid var(--border-default);
-    background: var(--bg-primary);
-  }
-
-  .section-heading {
-    margin-bottom: var(--space-5);
-  }
-
-  .section-heading strong {
-    color: var(--text-primary);
-    font-size: var(--font-size-md);
-  }
-
-  .version-summary {
-    display: flex;
+  .disclosure {
+    display: inline-flex;
     align-items: center;
-    justify-content: space-between;
-    gap: var(--space-3);
+    gap: var(--space-1);
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font: inherit;
   }
-
-  .version-summary strong {
+  .disclosure:hover {
     color: var(--text-primary);
-    font-size: var(--font-size-sm);
   }
-
-  .version-summary + p {
-    margin: 0;
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
+  .disclosure:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: 2px;
   }
-
-  .loading {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    color: var(--text-secondary);
-    font-size: var(--font-size-sm);
-  }
-
-  .error {
-    color: var(--accent-red);
-    font-size: var(--font-size-sm);
-  }
-
-  .limit-note {
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
-  }
-
-  dl {
-    display: grid;
-    gap: var(--space-4);
-    margin: 0;
-  }
-
-  dl > div {
-    display: grid;
-    grid-template-columns: 112px minmax(0, 1fr);
-    gap: var(--space-4);
-  }
-
-  dt {
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
-    font-weight: var(--font-weight-semibold);
-  }
-
-  dd {
+  .details {
+    width: 100%;
     min-width: 0;
-    margin: 0;
-    overflow-wrap: anywhere;
-    color: var(--text-secondary);
-    font-size: var(--font-size-sm);
   }
-
-  .identity dd {
-    display: flex;
-    align-items: flex-start;
-    gap: var(--space-2);
-  }
-
-  .version-actions {
-    margin-top: var(--space-5);
-    padding-top: var(--space-4);
-    border-top: 1px solid var(--border-default);
-  }
-
-  code {
-    min-width: 0;
-    overflow-wrap: anywhere;
-    color: var(--text-primary);
-    font-size: var(--font-size-xs);
-  }
-
-  @media (max-width: 760px) {
-    .history-shell {
-      grid-template-columns: 1fr;
-    }
-
-    .version-list {
-      border-right: 0;
-      border-bottom: 1px solid var(--border-default);
-    }
+  .details :global(.inspector-details) {
+    grid-template-columns: 8rem minmax(0, 1fr);
   }
 </style>

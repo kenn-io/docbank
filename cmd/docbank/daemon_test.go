@@ -595,6 +595,28 @@ func TestCheckoutValidationBacksOffAndLogsChangedErrors(t *testing.T) {
 	}
 }
 
+func TestCheckoutValidationReportsBusyOnlyWhileChecking(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		supervisor := jobs.New(t.Context(), slog.New(slog.DiscardHandler))
+		attempts := 0
+		require.NoError(t, supervisor.Start("checkout:startup:archive", func(ctx context.Context) error {
+			return waitForCheckoutValidation(ctx, func(context.Context) error {
+				assert.True(t, supervisor.Snapshot()[0].Busy)
+				attempts++
+				return os.ErrNotExist
+			}, slog.New(slog.DiscardHandler))
+		}))
+		synctest.Wait()
+		require.Equal(t, 1, attempts)
+		assert.False(t, supervisor.Snapshot()[0].Busy)
+		time.Sleep(time.Second)
+		synctest.Wait()
+		require.Equal(t, 2, attempts)
+		assert.False(t, supervisor.Snapshot()[0].Busy)
+		require.NoError(t, supervisor.Shutdown(context.Background()))
+	})
+}
+
 func TestCheckoutStartupMissingStoreWaitsUntilSeparated(t *testing.T) {
 	catalog, checkoutID, operationID, destination := newCheckoutReservationFixture(t)
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })

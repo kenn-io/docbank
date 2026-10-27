@@ -1,13 +1,10 @@
 <script lang="ts">
+  import DrawerShell from "./DrawerShell.svelte";
   import * as generated from "./generated/docbank.js";
   import { onMount } from "svelte";
-  import ArchiveIcon from "@lucide/svelte/icons/archive";
-  import DatabaseIcon from "@lucide/svelte/icons/database";
-  import HardDriveIcon from "@lucide/svelte/icons/hard-drive";
-  import ServerIcon from "@lucide/svelte/icons/server";
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
-  import XIcon from "@lucide/svelte/icons/x";
-  import { Button, Card, Chip, DetailDrawer, IconButton, Spinner } from "@kenn-io/kit-ui";
+  import { Button, Chip, IconButton, Spinner, Table } from "@kenn-io/kit-ui";
+  import InspectorDetails, { type InspectorFact } from "./InspectorDetails.svelte";
   import { APIError } from "./api-transport.js";
   import { type StorageStatus } from "./generated/docbank.js";
   import { formatBytes } from "./format.js";
@@ -25,7 +22,6 @@
   let error = $state("");
   let generation = 0;
 
-  const storedPayload = $derived(status ? status.loose_bytes + status.pack_stored_bytes : 0);
   const deadPackedBytes = $derived(status?.dead_packed_bytes ?? 0);
   const deadPercent = $derived(
     status && status.pack_stored_bytes > 0
@@ -33,6 +29,41 @@
       : 0,
   );
   const stores = $derived(status?.stores ?? []);
+  const totalBytes = $derived(status ? status.loose_bytes + status.pack_stored_bytes : 0);
+  const tiles = $derived([
+    { label: "Total on disk", value: formatBytes(totalBytes) },
+    ...(deadPackedBytes > 0
+      ? [
+          {
+            label: "Reclaimable",
+            value: `${formatBytes(deadPackedBytes)} (${deadPercent}% of packs)`,
+          },
+        ]
+      : []),
+  ]);
+  const internals = $derived<InspectorFact[]>(
+    status
+      ? [
+          {
+            label: "Loose files",
+            value: `${status.loose_blobs} · ${formatBytes(status.loose_bytes)}`,
+          },
+          {
+            label: "Packed",
+            value: `${status.packed_blobs} · ${formatBytes(status.packed_raw_bytes)} raw · ${formatBytes(status.packed_stored_bytes)} stored`,
+          },
+          {
+            label: "Pack files",
+            value: `${status.packs} · ${formatBytes(status.pack_stored_bytes)}`,
+          },
+          { label: "Waiting to compact", value: formatBytes(status.dead_packed_bytes) },
+        ]
+      : [],
+  );
+
+  function storeTone(state: string): "success" | "danger" | "warning" {
+    return state === "online" ? "success" : state === "fenced" ? "danger" : "warning";
+  }
 
   onMount(() => {
     void refresh();
@@ -46,7 +77,7 @@
     loading = true;
     error = "";
     try {
-      const next = await generated.storageStatus(true ? { refresh: true } : undefined, { session });
+      const next = await generated.storageStatus({ refresh: true }, { session });
       if (request !== generation) return;
       status = next;
     } catch (cause) {
@@ -63,41 +94,26 @@
   }
 </script>
 
-<DetailDrawer width="min(760px, 100vw)" ariaLabel="Physical storage status" {onclose}>
-  {#snippet header()}
-    <div class="drawer-heading">
-      <div>
-        <span>Physical storage</span>
-        <strong>Loose and packed content</strong>
-        <small>
-          {#if status}
-            {status.loose_blobs} loose file{status.loose_blobs === 1 ? "" : "s"}
-            · {status.packed_blobs} live packed object{status.packed_blobs === 1 ? "" : "s"}
-            · {formatBytes(storedPayload)} stored payload
-          {:else}
-            Current daemon inventory
-          {/if}
-        </small>
-      </div>
-      <div class="drawer-actions">
-        <IconButton
-          size="sm"
-          ariaLabel="Refresh storage status"
-          disabled={loading}
-          onclick={() => void refresh()}
-        >
-          <RefreshCwIcon size="14" aria-hidden="true" />
-        </IconButton>
-        <IconButton size="sm" ariaLabel="Close storage status" onclick={onclose}>
-          <XIcon size="14" aria-hidden="true" />
-        </IconButton>
-      </div>
-    </div>
+<DrawerShell
+  title="Disk use"
+  ariaLabel="Physical storage status"
+  closeLabel="Close storage status"
+  {onclose}
+>
+  {#snippet actions()}
+    <IconButton
+      size="sm"
+      ariaLabel="Refresh storage status"
+      disabled={loading}
+      onclick={() => void refresh()}
+    >
+      <RefreshCwIcon size="14" aria-hidden="true" />
+    </IconButton>
   {/snippet}
 
   <div class="storage">
     {#if loading && !status}
-      <div class="loading"><Spinner size={16} /> Reading storage inventory…</div>
+      <div class="loading"><Spinner size={16} /> Reading disk use…</div>
     {:else if error && !status}
       <div class="load-error">
         <p role="alert">{error}</p>
@@ -105,191 +121,70 @@
       </div>
     {:else if status}
       {#if error}<p class="error" role="alert">{error}</p>{/if}
-      <div class="storage-grid" aria-live="polite">
-        <Card
-          level="default"
-          padding="sm"
-          eyebrow="Loose content"
-          title={formatBytes(status.loose_bytes)}
-        >
-          {#snippet actions()}<HardDriveIcon size="18" aria-hidden="true" />{/snippet}
-          <p>
-            {status.loose_blobs} physical file{status.loose_blobs === 1 ? "" : "s"}
-            stored as raw or zstd. This inventory can include untracked or redundant loose files.
-          </p>
-        </Card>
-
-        <Card
-          level="default"
-          padding="sm"
-          eyebrow="Live packed content"
-          title={formatBytes(status.packed_stored_bytes)}
-        >
-          {#snippet actions()}<ArchiveIcon size="18" aria-hidden="true" />{/snippet}
-          <dl>
-            <div>
-              <dt>Objects</dt>
-              <dd>{status.packed_blobs}</dd>
-            </div>
-            <div>
-              <dt>Raw bytes</dt>
-              <dd>{formatBytes(status.packed_raw_bytes)}</dd>
-            </div>
-          </dl>
-        </Card>
-
-        <Card
-          level="default"
-          padding="sm"
-          eyebrow="Pack files"
-          title={formatBytes(status.pack_stored_bytes)}
-        >
-          {#snippet actions()}<DatabaseIcon size="18" aria-hidden="true" />{/snippet}
-          <p>
-            {status.packs} immutable pack{status.packs === 1 ? "" : "s"} contain{status.packs === 1
-              ? "s"
-              : ""}
-            live and logically dead stored payload.
-          </p>
-        </Card>
-
-        <Card
-          level="default"
-          padding="sm"
-          eyebrow="Pending repack"
-          title={formatBytes(status.dead_packed_bytes)}
-        >
-          {#snippet actions()}
-            <Chip size="xs" tone={deadPackedBytes > 0 ? "warning" : "success"}>
-              {deadPackedBytes > 0 ? `${deadPercent}% of packs` : "Compact"}
-            </Chip>
-          {/snippet}
-          <p>
-            {#if status.dead_packed_bytes > 0}
-              Logically dead payload still occupies immutable pack files.
-            {:else}
-              No stored pack payload is waiting to be reclaimed.
-            {/if}
-          </p>
-        </Card>
+      <div class="tiles" aria-label="Disk use summary" role="group" aria-live="polite">
+        {#each tiles as tile (tile.label)}
+          <div class="tile">
+            <span class="label">{tile.label}</span>
+            <span class="value">{tile.value}</span>
+          </div>
+        {/each}
       </div>
 
-      <section class="stores" aria-label="Content stores">
-        <div class="section-heading">
-          <div>
-            <span>Content stores</span>
-            <strong>{stores.length} physical location{stores.length === 1 ? "" : "s"}</strong>
-          </div>
-          <ServerIcon size="18" aria-hidden="true" />
-        </div>
+      <section class="locations" aria-label="Storage locations">
+        <h3>Locations</h3>
         {#if stores.length === 0}
-          <p class="empty">No store authority was reported.</p>
+          <p class="empty">No storage locations</p>
         {:else}
-          <div class="store-list">
-            {#each stores as store (store.id)}
-              <article class="store">
-                <div class="store-title">
-                  <div>
-                    <strong>{store.name}</strong>
-                    <span>{store.role} · {store.kind}</span>
-                  </div>
-                  <Chip
-                    size="xs"
-                    tone={store.state === "online"
-                      ? "success"
-                      : store.state === "fenced"
-                        ? "danger"
-                        : "warning"}
-                  >
-                    {store.state}
-                  </Chip>
-                </div>
-                <dl>
-                  <div>
-                    <dt>Authority</dt>
-                    <dd>
-                      {store.authoritative_objects} objects · {formatBytes(store.logical_bytes)}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Stored</dt>
-                    <dd>{formatBytes(store.stored_bytes)} · {store.pack_count} packs</dd>
-                  </div>
-                  <div>
-                    <dt>Sole copies</dt>
-                    <dd>{store.sole_authority_objects}</dd>
-                  </div>
-                  <div>
-                    <dt>Live documents</dt>
-                    <dd>{store.affected_documents}</dd>
-                  </div>
-                </dl>
+          <Table bare unsorted ariaLabel="Storage locations">
+            <thead>
+              <tr>
+                <th scope="col">Name</th>
+                <th scope="col">Kind</th>
+                <th scope="col" class="num">Size</th>
+                <th scope="col" class="num">Objects</th>
+                <th scope="col" class="num">Only copy</th>
+                <th scope="col">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each stores as store (store.id)}
+                <tr>
+                  <th scope="row">{store.name}</th>
+                  <td>{store.kind}</td>
+                  <td class="num">{formatBytes(store.stored_bytes)}</td>
+                  <td class="num">{store.authoritative_objects}</td>
+                  <td class="num">{store.sole_authority_objects}</td>
+                  <td><Chip size="xs" tone={storeTone(store.state)}>{store.state}</Chip></td>
+                </tr>
                 {#if store.unreadable_objects > 0}
-                  <p class="store-warning">
-                    {store.unreadable_objects} object{store.unreadable_objects === 1 ? "" : "s"}
-                    currently have no readable alternative.
-                  </p>
+                  <tr class="warning-row">
+                    <td colspan="6" class="store-warning">
+                      {store.unreadable_objects} object{store.unreadable_objects === 1 ? "" : "s"}
+                      currently have no readable alternative.
+                    </td>
+                  </tr>
                 {/if}
-              </article>
-            {/each}
-          </div>
+              {/each}
+            </tbody>
+          </Table>
         {/if}
       </section>
 
-      <aside class="maintenance-note">
-        <strong>This view never changes storage.</strong>
-        <p>
-          Dead packed bytes are not reclaimed space. Run
-          <code>docbank storage repack</code> explicitly when you want Docbank to rewrite eligible sparse
-          packs and retire their old files.
-        </p>
-      </aside>
+      <section class="internals" aria-label="Storage internals">
+        <h3>Storage</h3>
+        <InspectorDetails label="Storage breakdown" facts={internals} />
+      </section>
     {/if}
   </div>
-</DetailDrawer>
+</DrawerShell>
 
 <style>
-  .drawer-heading {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-4);
-    width: 100%;
-    min-width: 0;
-  }
-
-  .drawer-heading > div:first-child {
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-  }
-
-  .drawer-heading span {
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
-    font-weight: var(--font-weight-medium);
-  }
-
-  .drawer-heading strong {
-    color: var(--text-primary);
-    font-size: var(--font-size-lg);
-  }
-
-  .drawer-heading small {
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
-  }
-
-  .drawer-actions {
-    display: flex;
-    gap: var(--space-2);
-    flex-shrink: 0;
-  }
-
   .storage {
     display: grid;
-    gap: var(--space-5);
+    align-content: start;
+    gap: var(--space-6);
     padding: var(--space-5);
+    font-size: var(--font-size-sm);
   }
 
   .loading {
@@ -297,7 +192,6 @@
     align-items: center;
     gap: var(--space-3);
     color: var(--text-secondary);
-    font-size: var(--font-size-sm);
   }
 
   .load-error {
@@ -310,149 +204,100 @@
   .error {
     margin: 0;
     color: var(--accent-red);
-    font-size: var(--font-size-sm);
   }
 
-  .storage-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: var(--space-3);
-  }
-
-  .storage-grid p {
+  h3 {
     margin: 0;
-    color: var(--text-secondary);
     font-size: var(--font-size-sm);
-    line-height: 1.45;
-  }
-
-  dl {
-    display: grid;
-    gap: var(--space-2);
-    margin: 0;
-  }
-
-  dl > div {
-    display: flex;
-    justify-content: space-between;
-    gap: var(--space-3);
-  }
-
-  dt {
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
     font-weight: var(--font-weight-semibold);
   }
 
-  dd {
-    margin: 0;
-    color: var(--text-secondary);
-    font-variant-numeric: tabular-nums;
-    font-size: var(--font-size-sm);
-  }
-
-  .maintenance-note {
-    padding: var(--space-4);
-    border: 1px solid color-mix(in srgb, var(--accent-amber) 35%, var(--border-default));
-    border-radius: var(--radius-md);
-    background: color-mix(in srgb, var(--accent-amber) 7%, var(--bg-surface));
-  }
-
-  .stores {
-    display: grid;
-    gap: var(--space-3);
-    margin-top: var(--space-5);
-  }
-
-  .section-heading,
-  .store-title {
+  .tiles {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-3);
+    flex-wrap: wrap;
+    gap: var(--space-4);
   }
 
-  .section-heading > div,
-  .store-title > div {
-    display: grid;
-    min-width: 0;
-  }
-
-  .section-heading span,
-  .store-title span,
-  .store dt {
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
-  }
-
-  .store-list {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: var(--space-3);
-  }
-
-  .store {
-    border: 1px solid var(--border-default);
-    border-radius: var(--radius-md);
-    background: var(--bg-surface);
-    padding: var(--space-4);
-  }
-
-  .store dl {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: var(--space-3);
-    margin: var(--space-4) 0 0;
-  }
-
-  .store dl div {
+  .tile {
     display: grid;
     gap: var(--space-1);
+    min-width: 9rem;
+    padding: var(--space-4) var(--space-5);
+    border: 1px solid var(--border-muted);
+    border-radius: var(--radius-md);
+    background: var(--bg-inset);
   }
 
-  .store dd {
-    margin: 0;
+  .tile .label,
+  th {
+    color: var(--text-muted);
+    font-weight: var(--font-weight-normal);
+  }
+
+  .tile .value {
     color: var(--text-primary);
-    font-size: var(--font-size-sm);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .locations,
+  .internals {
+    display: grid;
+    gap: var(--space-3);
+  }
+
+  .locations :global(table) {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  th,
+  td {
+    padding: var(--space-3) var(--space-4) var(--space-3) 0;
+    border-bottom: 1px solid var(--border-muted);
+    text-align: left;
+    vertical-align: middle;
+  }
+
+  tbody th {
+    color: var(--text-primary);
+    font-weight: var(--font-weight-medium);
+  }
+
+  td {
+    color: var(--text-secondary);
+  }
+
+  .num {
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+  }
+
+  th.num,
+  td.num {
+    padding-right: var(--space-5);
+  }
+
+  .warning-row td {
+    padding-top: 0;
   }
 
   .store-warning {
-    margin: var(--space-3) 0 0;
     color: var(--color-warning-text, var(--text-primary));
-    font-size: var(--font-size-sm);
   }
 
   .empty {
+    margin: 0;
     color: var(--text-muted);
   }
 
-  @media (max-width: 640px) {
-    .store-list,
-    .store dl {
-      grid-template-columns: 1fr;
-    }
-  }
-
-  .maintenance-note strong {
-    color: var(--text-primary);
-    font-size: var(--font-size-sm);
-  }
-
-  .maintenance-note p {
-    margin: var(--space-2) 0 0;
-    color: var(--text-secondary);
-    font-size: var(--font-size-sm);
-    line-height: 1.5;
-  }
-
-  .maintenance-note code {
-    color: var(--text-primary);
-    font-family: var(--font-mono);
+  .internals :global(.inspector-details) {
+    grid-template-columns: 11rem minmax(0, 1fr);
   }
 
   @media (max-width: 640px) {
-    .storage-grid {
+    .internals :global(.inspector-details) {
       grid-template-columns: 1fr;
+      gap: var(--space-1);
     }
   }
 </style>

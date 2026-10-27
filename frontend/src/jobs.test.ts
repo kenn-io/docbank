@@ -8,6 +8,7 @@ const job = (fields: Partial<Job>): Job => ({
   kind: "place",
   lane: "place",
   status: "running",
+  busy: true,
   started_at: "2026-07-23T12:00:00Z",
   controllable: true,
   paused: false,
@@ -19,17 +20,19 @@ describe("activity lanes", () => {
   it("compares UTC timestamps at full fractional precision and retains paused idle lanes", () => {
     const [lane] = jobLanes(
       [
-        job({ status: "failed", started_at: "2026-07-23T12:00:00.1Z" }),
+        job({ status: "failed", busy: false, started_at: "2026-07-23T12:00:00.1Z" }),
         job({
           name: "storage:b",
           operation_id: "b",
           status: "completed",
+          busy: false,
           started_at: "2026-07-23T12:00:00.12Z",
         }),
         job({
           name: "storage:c",
           operation_id: "c",
           status: "cancelled",
+          busy: false,
           started_at: "2026-07-23T12:00:00.120000001Z",
         }),
       ],
@@ -37,6 +40,8 @@ describe("activity lanes", () => {
     );
     expect(lane.control?.paused).toBe(true);
     expect(lane.status).toBe("cancelled");
+    expect(lane.failed).toBe(false);
+    expect(lane.visible).toBe(false);
     expect(lane.members.map((member) => member.operation_id)).toEqual(["c", "b", "a"]);
     const controls = [
       { lane: "repair", paused: false, concurrency: 1, revision: 1, can_set_concurrency: false },
@@ -54,6 +59,25 @@ describe("activity lanes", () => {
     expect(after.map(({ key }) => key)).toEqual(idle.map(({ key }) => key));
   });
 
+  it("uses the newest finished run while a retry is queued", () => {
+    const [lane] = jobLanes([
+      job({ status: "failed", busy: false }),
+      job({
+        name: "storage:retry",
+        status: "completed",
+        busy: false,
+        started_at: "2026-07-23T12:01:00Z",
+      }),
+      job({
+        name: "storage:queued",
+        status: "queued",
+        busy: false,
+        started_at: "2026-07-23T12:02:00Z",
+      }),
+    ]);
+    expect(lane).toMatchObject({ status: "queued", failed: false });
+  });
+
   it("groups by API lane, summing only active progress", () => {
     const control = {
       lane: "photo_checkout",
@@ -69,6 +93,7 @@ describe("activity lanes", () => {
           name: "storage:b",
           operation_id: "b",
           status: "queued",
+          busy: false,
           total_objects: 7,
           completed_objects: 1,
         }),
@@ -76,6 +101,7 @@ describe("activity lanes", () => {
           name: "storage:c",
           operation_id: "c",
           status: "completed",
+          busy: false,
           total_objects: 99,
           completed_objects: 99,
         }),
@@ -85,6 +111,7 @@ describe("activity lanes", () => {
           kind: "photo_checkout",
           lane: "photo_checkout",
           status: "completed",
+          busy: false,
           total_objects: 2,
           completed_objects: 1,
         }),
@@ -93,6 +120,7 @@ describe("activity lanes", () => {
           kind: "photo_checkout_commit",
           lane: "photo_checkout",
           status: "queued",
+          busy: false,
           completed_objects: 1,
           total_objects: 3,
         }),
@@ -106,12 +134,14 @@ describe("activity lanes", () => {
       completed: 3,
       total: 12,
       status: "running",
+      active: true,
     });
     expect(lanes.find(({ lane }) => lane === "photo_checkout")).toMatchObject({
       title: "Photo checkout",
       completed: 1,
       total: 3,
-      active: true,
+      active: false,
+      visible: false,
       control,
     });
     expect(

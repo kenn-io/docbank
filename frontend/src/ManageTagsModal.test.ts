@@ -81,15 +81,17 @@ it("adds and removes existing tags under consecutive node revisions", async () =
     onauthfailure: vi.fn(),
   });
 
-  await fireEvent.click(screen.getByRole("combobox", { name: "Tag to assign: Choose a tag…" }));
+  await fireEvent.input(screen.getByRole("combobox", { name: "Tag to assign" }), {
+    target: { value: "reviewed" },
+  });
   expect(screen.getByText("matter/acme")).toBeTruthy();
   const reviewedOption = screen.getByRole("option", {
     name: "matter/acme/reviewed (2)",
   });
   expect(reviewedOption.textContent).not.toContain("matter/acme/reviewed");
   await fireEvent.click(reviewedOption);
-  await fireEvent.click(screen.getByRole("button", { name: "Add tag" }));
-  expect(await screen.findByText("Added matter/acme/reviewed.")).toBeTruthy();
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+  await screen.findByRole("button", { name: "Remove tag matter/acme/reviewed" });
   expect(screen.queryByRole("status", { name: "Loading" })).toBeNull();
   const assignedName = screen.getByText("matter/acme/reviewed");
   expect(
@@ -97,7 +99,7 @@ it("adds and removes existing tags under consecutive node revisions", async () =
   ).toBe("reviewed");
 
   await fireEvent.click(screen.getByRole("button", { name: "Remove tag tax" }));
-  expect(await screen.findByText("Removed tax.")).toBeTruthy();
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Remove tag tax" })).toBeNull());
 
   expect(fetchMock).toHaveBeenCalledTimes(2);
   expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("If-Match")).toBe("3");
@@ -148,9 +150,10 @@ it("keeps a stale assignment decision visible for refresh", async () => {
     onauthfailure: vi.fn(),
   });
 
-  await fireEvent.click(screen.getByRole("combobox", { name: "Tag to assign: Choose a tag…" }));
+  await fireEvent.input(screen.getByRole("combobox", { name: "Tag to assign" }), {
+    target: { value: "reviewed" },
+  });
   await fireEvent.click(screen.getByRole("option", { name: "matter/acme/reviewed (2)" }));
-  await fireEvent.click(screen.getByRole("button", { name: "Add tag" }));
 
   expect(await screen.findByText("node changed; refresh before assigning tags")).toBeTruthy();
   await waitFor(() =>
@@ -200,4 +203,66 @@ it("ignores a pending authorization failure after the modal is destroyed", async
   await new Promise((resolve) => setTimeout(resolve, 0));
 
   expect(onauthfailure).not.toHaveBeenCalled();
+});
+
+it("assigns the first tag selected from the shared picker", async () => {
+  const onchanged = vi.fn();
+  const created = { ...reviewed, name: "Review", revision: 1, assignment_count: 0 };
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (url, request) => {
+    if (url === "/api/v1/tags" && request?.method === "POST") return Response.json(created);
+    if (url === `/api/v1/nodes/${node.id}/tags/${created.id}` && request?.method === "PUT")
+      return Response.json({
+        tag: { ...created, revision: 2, assignment_count: 1 },
+        node: { ...node, revision: 4 },
+        changed: true,
+      });
+    throw new Error(`Unexpected request ${String(url)}`);
+  });
+  render(ManageTagsModal, {
+    session: "session",
+    node,
+    catalog: [],
+    catalogTotal: 0,
+    assignedTags: [],
+    assignedTotal: 0,
+    disabled: false,
+    onclose: vi.fn(),
+    onchanged,
+    onauthfailure: vi.fn(),
+  });
+  const input = screen.getByRole("combobox", { name: "Tag to assign" });
+  await fireEvent.input(input, { target: { value: "Review" } });
+  await fireEvent.keyDown(input, { key: "Enter" });
+  expect(await screen.findByRole("button", { name: "Remove tag Review" })).toBeTruthy();
+  expect(onchanged).toHaveBeenCalledWith(
+    expect.objectContaining({ node: expect.objectContaining({ revision: 4 }) }),
+    true,
+  );
+  expect(
+    new Headers(
+      fetchMock.mock.calls.find(
+        ([url, request]) =>
+          url === `/api/v1/nodes/${node.id}/tags/${created.id}` && request?.method === "PUT",
+      )?.[1]?.headers,
+    ).get("If-Match"),
+  ).toBe("3");
+});
+
+it("recognizes an assigned tag outside the loaded catalog", async () => {
+  render(ManageTagsModal, {
+    session: "session",
+    node,
+    catalog: [],
+    catalogTotal: 1001,
+    assignedTags: [tax],
+    assignedTotal: 1,
+    disabled: false,
+    onclose: vi.fn(),
+    onchanged: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.input(screen.getByRole("combobox", { name: "Tag to assign" }), {
+    target: { value: "tax" },
+  });
+  expect(screen.queryByRole("option")).toBeNull();
 });

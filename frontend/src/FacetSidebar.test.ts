@@ -87,21 +87,69 @@ const facets: SnapshotPage["facets"] = [
   }),
 ];
 
-it("shows every requested facet with selected-zero, missing, other, and unavailable evidence", () => {
+it("shows the facets that can narrow the results and leaves out the rest", () => {
   render(FacetSidebar, { facets, query: originalQuery, disabled: false, onchange: vi.fn() });
-  expect(screen.getAllByRole("heading", { level: 3 })).toHaveLength(8);
+  expect(screen.getAllByRole("heading", { level: 3 })).toHaveLength(7);
   expect(
     screen
       .getByRole("button", { name: "reviewed, 0 documents, selected" })
       .getAttribute("aria-pressed"),
   ).toBe("true");
-  expect(
-    within(screen.getByRole("group", { name: "Text coverage facet" })).getByText(
-      /coverage unconfigured/i,
-    ),
-  ).toBeTruthy();
-  expect(screen.queryByRole("button", { name: /unique/i })).toBeNull();
-  expect(screen.getByText("unique · 7 · informational")).toBeTruthy();
+  expect(screen.queryByRole("group", { name: "Text coverage facet" })).toBeNull();
+  expect(screen.queryByText(/coverage|informational|unavailable/i)).toBeNull();
+  expect(screen.queryByText(/unique/i)).toBeNull();
+});
+
+it("names imports and falls back to a short ID for an unnamed one", () => {
+  const named = "33333333-3333-4333-8333-333333333333";
+  const unnamed = "55555555-5555-4555-8555-555555555555";
+  render(FacetSidebar, {
+    facets: [
+      facet("collections", {
+        values: [
+          { key: named, label: named, count: 3, selected: false },
+          { key: unnamed, label: unnamed, count: 2, selected: false },
+        ],
+      }),
+    ],
+    query: originalQuery,
+    collectionNames: { [named]: "Intake box" },
+    onchange: vi.fn(),
+  });
+  expect(screen.getByRole("button", { name: "Intake box, 3 documents" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Import 55555555, 2 documents" })).toBeTruthy();
+});
+
+it("hides zero counts, single-value groups that cover everything, and unclickable values", async () => {
+  const view = render(FacetSidebar, {
+    facets: [
+      facet("extension", {
+        total: 9,
+        values: [
+          { key: "pdf", label: "pdf", count: 9, selected: false },
+          { key: "txt", label: "txt", count: 0, selected: false },
+        ],
+      }),
+      facet("media_family", {
+        total: 9,
+        values: [
+          { key: "text", label: "text", count: 7, selected: false },
+          { key: "image", label: "image", count: 2, selected: false },
+          { key: "audio_video", label: "audio video", count: 0, selected: false },
+        ],
+      }),
+    ],
+    query: originalQuery,
+    onchange: vi.fn(),
+  });
+  expect(screen.queryByRole("group", { name: "Extension facet" })).toBeNull();
+  const family = within(screen.getByRole("group", { name: "Media family facet" }));
+  expect(family.getAllByRole("button").map((button) => button.textContent?.trim())).toEqual([
+    "text7",
+    "image2",
+  ]);
+  expect(view.container.textContent).not.toContain("audio video");
+  expect(screen.getByRole("heading", { level: 2, name: "Filters" })).toBeTruthy();
 });
 
 it.each([
@@ -123,10 +171,16 @@ it.each([
   "shows positive %s counts in plain words and hides zeros",
   async (dimension, missing, other, singular) => {
     // The server lists the 50 largest buckets before counting the rest as other.
+    const key = (i: number) =>
+      dimension === "modified"
+        ? `${2000 + Math.floor(i / 12)}-${String((i % 12) + 1).padStart(2, "0")}`
+        : ["set", "collections", "tags"].includes(dimension)
+          ? `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`
+          : `v${i}`;
     const listed = (count: number) =>
       Array.from({ length: count }, (_, i) => ({
-        key: `v${i}`,
-        label: `v${i}`,
+        key: key(i),
+        label: key(i),
         count: 1,
         selected: false,
       }));
@@ -271,10 +325,10 @@ it("maps only tags missing and duplicate documents to supported QueryV1 filters"
   expect(onchange.mock.calls.at(-1)?.[0].filters.no_tags).toBe(true);
   await fireEvent.click(screen.getByRole("button", { name: "duplicate, 2 documents" }));
   expect(onchange.mock.calls.at(-1)?.[0].filters.has_duplicates).toBe(true);
-  expect(screen.getByText("unique · 7 · informational")).toBeTruthy();
+  expect(screen.queryByText(/unique/)).toBeNull();
 });
 
-it("submits original expanding names and leaves invalid or over-cap operands informational", async () => {
+it("submits original expanding names and leaves out invalid or over-cap operands", async () => {
   const raw = "ß".repeat(200),
     oversized = "x".repeat(300),
     onchange = vi.fn();
@@ -301,7 +355,7 @@ it("submits original expanding names and leaves invalid or over-cap operands inf
   });
   await fireEvent.click(screen.getByRole("button", { name: `${raw}, 2 documents` }));
   expect(onchange.mock.calls.at(-1)?.[0].filters.cameras).toEqual([raw]);
-  expect(screen.getAllByText(`${oversized} · 1 · informational`)).toHaveLength(2);
+  expect(screen.queryByText(oversized)).toBeNull();
   const selected = Array.from({ length: 64 }, (_, i) => `Camera ${i}`);
   await view.rerender({
     query: { ...originalQuery, filters: { locations: selected } },
@@ -309,7 +363,7 @@ it("submits original expanding names and leaves invalid or over-cap operands inf
       facet("location", { values: [{ key: "Other", label: "Other", count: 1, selected: false }] }),
     ],
   });
-  expect(screen.getByText("Other · 1 · informational")).toBeTruthy();
+  expect(screen.queryByText("Other")).toBeNull();
   await view.rerender({
     query: originalQuery,
     facets: names.map((value) =>
@@ -337,4 +391,21 @@ it("submits original expanding names and leaves invalid or over-cap operands inf
   });
   await fireEvent.click(screen.getByRole("button", { name: "SONY, 2 documents, selected" }));
   expect(onchange.mock.calls.at(-1)?.[0].filters.cameras).toEqual(["strasse"]);
+});
+
+it("omits the whole Filters panel when no group can narrow one result", () => {
+  render(FacetSidebar, {
+    query: originalQuery,
+    onchange: vi.fn(),
+    facets: [
+      facet("extension", {
+        total: 1,
+        missing: 0,
+        other: 0,
+        values: [{ key: "pdf", label: "pdf", count: 1, selected: false }],
+      }),
+    ],
+  });
+  expect(screen.queryByRole("complementary", { name: "Snapshot facets" })).toBeNull();
+  expect(screen.queryByRole("heading", { name: "Filters" })).toBeNull();
 });

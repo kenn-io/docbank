@@ -1,19 +1,12 @@
 <script lang="ts">
+  import { listPackages, readBatesAllocation, type PackageSummary } from "./generated/docbank.js";
+  import InspectorDetails from "./InspectorDetails.svelte";
+  import DrawerShell from "./DrawerShell.svelte";
   import { onDestroy } from "svelte";
+  import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
-  import XIcon from "@lucide/svelte/icons/x";
-  import {
-    Button,
-    Card,
-    Chip,
-    CopyButton,
-    DetailDrawer,
-    EmptyState,
-    IconButton,
-    SelectDropdown,
-    Spinner,
-    TextInput,
-  } from "@kenn-io/kit-ui";
+  import { Button, Chip, CopyButton, SelectDropdown, Spinner, TextInput } from "@kenn-io/kit-ui";
+  import "./toolForm.css";
   import { APIError } from "./api-transport.js";
   import { randomUUID } from "./crypto.js";
   import {
@@ -43,17 +36,47 @@
 
   interface Props {
     session: string;
+    mode?: "create" | "productions";
     onclose: () => void;
     onauthfailure: (cause: unknown) => void;
+    oncomplete?: () => void;
   }
 
-  let { session, onclose, onauthfailure }: Props = $props();
+  let { session, mode = "create", onclose, onauthfailure, oncomplete }: Props = $props();
+  let packages = $state<PackageSummary[]>([]);
+  let history = $state<BatesExport[]>([]);
+  let exportSnapshots = $state<Record<string, string>>({});
+  const productions = $derived([
+    ...history.map((receipt) => ({
+      id: receipt.allocation_id,
+      receipt,
+      package: packages.find(
+        (item) => item.snapshot_id && item.snapshot_id === exportSnapshots[receipt.allocation_id],
+      ),
+      range: `${receipt.pages[0]?.label}–${receipt.pages.at(-1)?.label}`,
+      pages: receipt.page_count,
+    })),
+    ...packages
+      .filter(
+        (item) =>
+          !history.some(
+            (receipt) =>
+              item.snapshot_id && item.snapshot_id === exportSnapshots[receipt.allocation_id],
+          ),
+      )
+      .map((item) => ({
+        id: item.package_id,
+        package: item,
+        receipt: null,
+        range: "",
+        pages: item.page_count,
+      })),
+  ]);
   let sources = $state<BatesSource[]>([]);
   let namespaces = $state<BatesNamespace[]>([]);
-  let history = $state<BatesExport[]>([]);
   let sourceID = $state("");
   let namespaceID = $state("");
-  let startAt = $state("0");
+  let startAt = $state("");
   let position = $state<BatesPosition>("bottom-right");
   let margin = $state("24");
   let prefix = $state("");
@@ -133,30 +156,85 @@
     error = message(cause);
   }
 
+  async function loadPackages(current: string, signal: AbortSignal): Promise<void> {
+    const items: PackageSummary[] = [];
+    let after: string | undefined;
+    do {
+      const page = await listPackages(
+        { limit: 250, ...(after ? { after } : {}) },
+        { session: current, signal },
+      );
+      if (signal.aborted || current !== session) return;
+      items.push(...page.items);
+      packages = [...items];
+      if (page.next_after && page.next_after === after)
+        throw new Error("The package list did not advance.");
+      after = page.next_after;
+    } while (after);
+  }
+
+  async function loadHistory(current: string, signal: AbortSignal): Promise<void> {
+    const items: BatesExport[] = [];
+    let after: string | undefined;
+    do {
+      const page = await listBatesExports(current, signal, after);
+      if (signal.aborted || current !== session) return;
+      items.push(...page.items);
+      history = [...items];
+      if (page.next_after && page.next_after === after)
+        throw new Error("The export list did not advance.");
+      after = mode === "productions" ? page.next_after : undefined;
+    } while (after);
+    if (mode !== "productions") return;
+    await Promise.all(
+      items.map(async (item) => {
+        try {
+          const allocation = await readBatesAllocation(item.allocation_id, {
+            session: current,
+            signal,
+          });
+          if (signal.aborted || current !== session) return;
+          exportSnapshots[item.allocation_id] = allocation.snapshot_id;
+        } catch (cause) {
+          if (signal.aborted || current !== session || aborted(cause) || unauthorized(cause))
+            return;
+          historyError = message(cause);
+        }
+      }),
+    );
+  }
+
   async function load(current: string, signal: AbortSignal): Promise<void> {
     loading = true;
     error = "";
     historyError = "";
     try {
-      const [nextSources, nextNamespaces] = await Promise.all([
-        listBatesSources(current, signal),
-        listBatesNamespaces(current, signal),
-      ]);
-      if (signal.aborted || current !== session) return;
-      sources = nextSources;
-      namespaces = nextNamespaces;
-      sourceID = nextSources.find(eligible)?.package_id ?? "";
-      namespaceID = nextNamespaces[0]?.namespace_id ?? "";
-      restore();
       try {
-        const page = await listBatesExports(current, signal);
-        if (!signal.aborted && current === session) history = page.items;
+        if (mode === "productions") {
+          await loadPackages(current, signal);
+        } else {
+          const [nextSources, nextNamespaces] = await Promise.all([
+            listBatesSources(current, signal),
+            listBatesNamespaces(current, signal),
+          ]);
+          if (signal.aborted || current !== session) return;
+          sources = nextSources;
+          namespaces = nextNamespaces;
+          sourceID = nextSources.find(eligible)?.package_id ?? "";
+          namespaceID = nextNamespaces[0]?.namespace_id ?? "";
+          restore();
+        }
+      } catch (cause) {
+        if (signal.aborted || current !== session || aborted(cause)) return;
+        if (unauthorized(cause)) return;
+        error = message(cause);
+      }
+      try {
+        await loadHistory(current, signal);
       } catch (cause) {
         if (!signal.aborted && current === session && !aborted(cause) && !unauthorized(cause))
           historyError = message(cause);
       }
-    } catch (cause) {
-      if (!signal.aborted && current === session) fail(cause);
     } finally {
       if (!signal.aborted && current === session) loading = false;
     }
@@ -171,7 +249,7 @@
     sourceID =
       sources.find((item) => item.snapshot_id === saved.snapshot_id)?.package_id ?? sourceID;
     namespaceID = saved.plan.namespace.namespace_id;
-    startAt = String(saved.recipe.start_at);
+    startAt = saved.recipe.start_at ? String(saved.recipe.start_at) : "";
     position = saved.recipe.position as BatesPosition;
     margin = String(saved.recipe.margin_points);
   }
@@ -270,6 +348,7 @@
       controller.signal,
     );
     activeExport = published;
+    oncomplete?.();
     history = [
       published,
       ...history.filter((item) => item.allocation_id !== published.allocation_id),
@@ -316,10 +395,13 @@
   }
 </script>
 
-{#snippet exportCard(item: BatesExport, title: string, eyebrow: string, onhide?: () => void)}
-  <Card level="default" padding="sm" {title} {eyebrow}>
-    {#snippet actions()}<Chip size="xs" tone="success">verified</Chip>{/snippet}
-    <dl>
+{#snippet exportCard(item: BatesExport, title: string, onhide?: () => void)}
+  <section class="tool-section" aria-label={title}>
+    {#if title}<div class="tool-heading">
+        <h3>{title}</h3>
+        <Chip size="xs" tone="success">verified</Chip>
+      </div>{/if}
+    <dl class="tool-stats">
       <div>
         <dt>Pages</dt>
         <dd>{item.page_count}</dd>
@@ -333,371 +415,403 @@
         <dd>{formatBytes(item.size)}</dd>
       </div>
     </dl>
-    <div class="identity">
-      <span>PDF SHA-256</span><code>{item.blob_sha256}</code><CopyButton
-        text={item.blob_sha256}
-        ariaLabel="Copy Bates PDF hash"
-      />
-    </div>
-    <div class="actions">
-      <Button size="sm" disabled={busy} onclick={() => void refreshExport(item)}
+    <dl class="hash">
+      <div>
+        <dt>PDF SHA-256</dt>
+        <dd>
+          <code>{item.blob_sha256}</code><CopyButton
+            text={item.blob_sha256}
+            ariaLabel="Copy Bates PDF hash"
+          />
+        </dd>
+      </div>
+    </dl>
+    <div class="tool-actions">
+      {#if onhide}<Button disabled={busy} onclick={onhide}>Close</Button>{/if}
+      <Button disabled={busy} onclick={() => void refreshExport(item)}
         ><RefreshCwIcon size="14" aria-hidden="true" /> Refresh receipt</Button
       >
-      {#if onhide}<Button size="sm" disabled={busy} onclick={onhide}>Close</Button>{/if}
-      <Button tone="info" disabled={busy} onclick={() => void download(item)}
+      <Button tone="info" surface="solid" disabled={busy} onclick={() => void download(item)}
         >Download verified PDF</Button
       >
     </div>
-    <p>Status refresh is explicit. Closing the drawer does not cancel server work.</p>
-  </Card>
+  </section>
 {/snippet}
 
-<DetailDrawer width="min(860px, 100vw)" ariaLabel="Bates export" {onclose}>
-  {#snippet header()}
-    <div class="drawer-heading">
-      <div>
-        <span>Bates export</span><strong>Review, reserve, and publish</strong><small
-          >Sealed selected pages · durable numbering ledger</small
-        >
-      </div>
-      <IconButton size="sm" ariaLabel="Close Bates export" onclick={onclose}
-        ><XIcon size="14" aria-hidden="true" /></IconButton
-      >
-    </div>
-  {/snippet}
+<DrawerShell
+  title={mode === "productions" ? "Productions" : "Bates-numbered PDFs"}
+  closeLabel={mode === "productions" ? "Close Productions" : "Close Bates export"}
+  {onclose}
+>
+  <div class="tool-body">
+    {#if loading}<p class="tool-muted" role="status"><Spinner size={14} /> Loading…</p>{/if}
+    {#if task}<p class="tool-muted" role="status"><Spinner size={14} /> {task}</p>{/if}
+    {#if error}<p class="tool-error" role="alert">{error}</p>{/if}
 
-  <div class="content">
-    {#if loading}<div class="loading" role="status">
-        <Spinner size={16} /> Loading Bates sources and namespaces…
-      </div>{/if}
-    {#if task}<div class="loading" role="status"><Spinner size={16} /> {task}</div>{/if}
-    {#if error}<p class="error" role="alert">{error}</p>{/if}
-
-    {#if !loading && sources.length === 0}
-      <EmptyState
-        title="No eligible page package"
-        description="Import a reviewed package with a sealed selected PDF before creating a Bates export."
-      />
-    {:else if sources.length > 0}
-      <section class="settings" aria-labelledby="bates-source-heading">
-        <div class="section-heading">
-          <div>
-            <span>Source</span><strong id="bates-source-heading">Sealed selected pages</strong>
-          </div>
-          <Chip size="xs" tone="neutral">{selectedSource?.page_count ?? 0} pages</Chip>
-        </div>
-        <SelectDropdown
-          title="Bates source package"
-          value={selectedSource?.package_id ?? ""}
-          options={sourceOptions}
-          disabled={locked}
-          onchange={(value) => {
-            sourceID = value;
-            resetReview();
-          }}
-        />
-        <p>
-          The reservation follows the package’s immutable selected-page order. Live document changes
-          cannot alter it.
+    {#if mode === "productions"}
+      {#if !loading && !error && !historyError && !packages.length && !history.length}
+        <p class="tool-muted">No productions yet</p>
+      {/if}
+      {#if productions.length}
+        <ul class="tool-list" aria-label="Productions">
+          {#each productions as item (item.id)}
+            <li class="production-item">
+              <details class="tool-disclosure">
+                <summary>
+                  <ChevronRightIcon size="14" aria-hidden="true" />
+                  <span class="production-name"
+                    >{item.package?.package_name ?? "Bates export"}<span class="production-range"
+                      >{item.range || "—"}</span
+                    ></span
+                  >
+                  <span class="tool-muted">{item.pages} {item.pages === 1 ? "page" : "pages"}</span>
+                  <span
+                    >{item.receipt || item.package?.direction === "produced"
+                      ? "Exported"
+                      : "Imported"}</span
+                  >
+                </summary>
+                <div class="production-details">
+                  {#if item.package}
+                    <InspectorDetails
+                      facts={[
+                        { label: "Documents", value: item.package.member_count },
+                        { label: "Party", value: item.package.party_label },
+                        { label: "Created", value: formatDate(item.package.created_at) },
+                        { label: "Fingerprint", value: item.package.manifest_sha256, copy: true },
+                      ]}
+                    />
+                  {/if}
+                  {#if item.receipt}{@render exportCard(item.receipt, "")}{/if}
+                </div>
+              </details>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+      {#if historyError}<p class="tool-error" role="alert">
+          Publication history is unavailable: {historyError}
+        </p>{/if}
+    {:else}
+      {#if !loading && sources.length === 0}
+        <p class="tool-muted">
+          No PDF packages yet. Import a load-file package with PDF pages from Add → Import load
+          files.
         </p>
-        {#if sources.some((item) => !eligible(item))}<p class="muted">
-            Packages over {maxBatesPages} pages cannot be stamped in one Bates export.
-          </p>{/if}
-      </section>
-
-      <section class="settings" aria-labelledby="bates-namespace-heading">
-        <div class="section-heading">
-          <div>
-            <span>Numbering</span><strong id="bates-namespace-heading">Namespace and stamp</strong>
-          </div>
-        </div>
-        {#if namespaces.length > 0}
-          <SelectDropdown
-            title="Bates namespace"
-            value={selectedNamespace?.namespace_id ?? ""}
-            options={namespaceOptions}
-            disabled={locked}
-            onchange={(value) => {
-              namespaceID = value;
-              resetReview();
-            }}
-          />
-        {:else}<p>
-            Create the first namespace. Prefix and suffix identities cannot later change padding.
-          </p>{/if}
-        <div class="fields">
-          <label for="bates-prefix"
-            >Prefix<TextInput
-              id="bates-prefix"
-              ariaLabel="Bates prefix"
-              bind:value={prefix}
-              disabled={locked}
-              block
-            /></label
-          >
-          <label for="bates-suffix"
-            >Suffix<TextInput
-              id="bates-suffix"
-              ariaLabel="Bates suffix"
-              bind:value={suffix}
-              disabled={locked}
-              block
-            /></label
-          >
-          <label
-            >Padding<SelectDropdown
-              title="Bates padding"
-              value={padding}
-              options={Array.from({ length: 10 }, (_, index) => ({
-                value: String(index + 1),
-                label: `${index + 1} digits`,
-              }))}
-              disabled={locked}
-              onchange={(value) => (padding = value)}
-            /></label
-          >
-        </div>
-        <Button size="sm" disabled={locked} onclick={() => void createNamespace()}
-          >{task === "Creating namespace…" ? task : "Create namespace"}</Button
-        >
-
-        {#if selectedNamespace}
-          <div class="fields">
-            <label for="bates-start"
-              >First number<TextInput
-                id="bates-start"
-                ariaLabel="First Bates number"
-                bind:value={startAt}
-                oninput={() => resetReview()}
-                disabled={locked}
-                block
-              /></label
+      {:else if sources.length > 0}
+        <section class="tool-section" aria-label="Bates settings">
+          <div class="tool-grid">
+            <div
+              class="tool-field"
+              class:tool-span-3={namespaces.length > 0}
+              class:tool-span-all={namespaces.length === 0}
             >
-            <label
-              >Position<SelectDropdown
-                title="Bates position"
-                value={position}
-                options={positionOptions}
+              <span class="tool-label">Package</span>
+              <SelectDropdown
+                title="Bates source package"
+                value={selectedSource?.package_id ?? ""}
+                options={sourceOptions}
                 disabled={locked}
                 onchange={(value) => {
-                  position = value as BatesPosition;
+                  sourceID = value;
                   resetReview();
                 }}
-              /></label
-            >
-            <label for="bates-margin"
-              >Margin points<TextInput
-                id="bates-margin"
-                ariaLabel="Bates margin points"
-                bind:value={margin}
-                oninput={() => resetReview()}
+              />
+            </div>
+            {#if namespaces.length > 0}
+              <div class="tool-field tool-span-3">
+                <span class="tool-label">Namespace</span>
+                <SelectDropdown
+                  title="Bates namespace"
+                  value={selectedNamespace?.namespace_id ?? ""}
+                  options={namespaceOptions}
+                  disabled={locked}
+                  onchange={(value) => {
+                    namespaceID = value;
+                    resetReview();
+                  }}
+                />
+              </div>
+            {/if}
+            {#if selectedNamespace}
+              <div class="tool-field tool-span-2">
+                <label for="bates-start">First number</label>
+                <TextInput
+                  id="bates-start"
+                  ariaLabel="First Bates number"
+                  bind:value={startAt}
+                  placeholder="Next available"
+                  oninput={() => resetReview()}
+                  disabled={locked}
+                  block
+                />
+              </div>
+              <div class="tool-field tool-span-2">
+                <span class="tool-label">Position</span>
+                <SelectDropdown
+                  title="Bates position"
+                  value={position}
+                  options={positionOptions}
+                  disabled={locked}
+                  onchange={(value) => {
+                    position = value as BatesPosition;
+                    resetReview();
+                  }}
+                />
+              </div>
+              <div class="tool-field tool-span-2">
+                <label for="bates-margin">Margin, points</label>
+                <TextInput
+                  id="bates-margin"
+                  ariaLabel="Bates margin points"
+                  bind:value={margin}
+                  oninput={() => resetReview()}
+                  disabled={locked}
+                  block
+                />
+              </div>
+            {/if}
+          </div>
+        </section>
+
+        {#snippet namespaceForm()}
+          <div class="tool-grid namespace-form">
+            <div class="tool-field tool-span-2">
+              <label for="bates-prefix">Prefix</label>
+              <TextInput
+                id="bates-prefix"
+                ariaLabel="Bates prefix"
+                bind:value={prefix}
                 disabled={locked}
                 block
-              /></label
+              />
+            </div>
+            <div class="tool-field tool-span-2">
+              <label for="bates-suffix">Suffix</label>
+              <TextInput
+                id="bates-suffix"
+                ariaLabel="Bates suffix"
+                bind:value={suffix}
+                disabled={locked}
+                block
+              />
+            </div>
+            <div class="tool-field tool-span-2">
+              <span class="tool-label">Padding</span>
+              <SelectDropdown
+                title="Bates padding"
+                value={padding}
+                options={Array.from({ length: 10 }, (_, index) => ({
+                  value: String(index + 1),
+                  label: `${index + 1} digits`,
+                }))}
+                disabled={locked}
+                onchange={(value) => (padding = value)}
+              />
+            </div>
+          </div>
+          <div class="tool-actions">
+            <Button
+              tone={namespaces.length ? "neutral" : "info"}
+              surface={namespaces.length ? "outline" : "solid"}
+              disabled={locked}
+              onclick={() => void createNamespace()}
+              >{task === "Creating namespace…" ? task : "Create namespace"}</Button
             >
           </div>
-          <p>Use 0 for the next available number. Preview does not reserve the range.</p>
-          <Button tone="info" disabled={locked || !selectedSource} onclick={() => void preview()}
-            >{task === "Checking selected pages…" ? task : "Preview Bates labels"}</Button
-          >
-        {/if}
-      </section>
-    {/if}
+        {/snippet}
 
-    {#if plan}
-      <section class="preview" aria-label="Tentative Bates labels">
-        <div class="section-heading">
-          <div>
-            <span>{allocation ? "REVIEWED" : "TENTATIVE"}</span><strong
-              >{plan.labels[0]?.label}–{plan.labels.at(-1)?.label}</strong
+        {#if namespaces.length === 0}
+          <section class="tool-section" aria-labelledby="bates-namespace-heading">
+            <h3 id="bates-namespace-heading">New namespace</h3>
+            {@render namespaceForm()}
+          </section>
+        {:else}
+          <details class="tool-disclosure">
+            <summary
+              ><ChevronRightIcon size="14" aria-hidden="true" /><span class="tool-label"
+                >New namespace</span
+              ></summary
             >
-          </div>
-          <Chip size="xs" tone={allocation ? "neutral" : "warning"}
-            >{allocation
-              ? "Reserved below"
-              : pending
-                ? "Reservation pending"
-                : "Not reserved"}</Chip
-          >
-        </div>
-        <p>
-          {#if activeExport}This reviewed preview produced the verified publication below.
-          {:else if allocation}This reviewed preview is the exact range reserved below. Nothing has
-            been stamped yet.
-          {:else if restored}This tab reviewed this range earlier but did not finish the export.
-            Resume to reserve the same range and stamp it.
-          {:else if pending}The reservation did not complete. Retry sends the same request, so it
-            cannot reserve a second range.
-          {:else}Nothing has been stamped or reserved.{/if}
-        </p>
-        <div class="label-list">
-          {#each plan.labels as label (label.ordinal)}
-            <div>
-              <code>{label.label}</code><span>Source page {label.source_page}</span><span
-                >Output page {label.output_page}</span
+            <div class="tool-section">{@render namespaceForm()}</div>
+          </details>
+          {#if !plan}
+            <div class="tool-actions">
+              <Button
+                tone="info"
+                surface="solid"
+                disabled={locked || !selectedSource}
+                onclick={() => void preview()}
+                >{task === "Checking selected pages…" ? task : "Preview Bates labels"}</Button
               >
             </div>
-          {/each}
-        </div>
-        {#if unsaved}<p class="muted">
-            This browser could not remember the reservation. Keep this drawer open until the export
-            finishes.
-          </p>{/if}
-        <div class="actions">
-          {#if !pending}<Button
-              tone="info"
-              disabled={busy || Boolean(activeExport)}
-              onclick={() => void reserve()}
-              >Reserve {plan.labels[0]?.label}–{plan.labels.at(-1)?.label}</Button
-            >
-          {:else if !allocation && restored}<Button
-              tone="info"
-              disabled={busy}
-              onclick={() => void resume()}>Resume Bates export</Button
-            >
-          {:else if !allocation}<Button tone="info" disabled={busy} onclick={() => void reserve()}
-              >Retry reserve</Button
-            >{/if}
-          {#if pending}<Button disabled={busy} onclick={discard}>Discard review</Button>{/if}
-        </div>
-        {#if pending && allocation}<p class="muted">
-            Discarding only forgets this review in this browser. The reserved numbers stay reserved
-            and are never reused.
-          </p>{/if}
-      </section>
-    {/if}
+          {/if}
+        {/if}
+      {/if}
 
-    {#if allocation}
-      <Card level="default" padding="sm" title="Range reserved" eyebrow="Durable ledger">
-        {#snippet actions()}<Chip size="xs" tone="success">reserved</Chip>{/snippet}
-        <dl>
-          <div>
-            <dt>Labels</dt>
-            <dd>{allocation.labels[0]?.label}–{allocation.labels.at(-1)?.label}</dd>
+      {#if plan}
+        <section class="tool-section" aria-label="Tentative Bates labels">
+          <div class="tool-heading">
+            <h3>{plan.labels[0]?.label}–{plan.labels.at(-1)?.label}</h3>
+            <Chip size="xs" tone={allocation ? "neutral" : "warning"}
+              >{allocation ? "Reserved" : pending ? "Reservation pending" : "Not reserved"}</Chip
+            >
           </div>
-          <div>
-            <dt>Pages</dt>
-            <dd>{allocation.labels.length}</dd>
+          {#if !activeExport && allocation}<p class="tool-muted">
+              Reserved below. Not stamped yet.
+            </p>
+          {:else if !activeExport && restored}<p class="tool-muted">
+              This tab didn't finish this export. Resume reserves the same range and stamps it.
+            </p>
+          {:else if !activeExport && pending}<p class="tool-muted">
+              The reservation didn't finish. Retry sends the same request, so it can't reserve a
+              second range.
+            </p>{/if}
+          <div class="label-list" role="table" aria-label="Labels">
+            <div class="label-row label-head" role="row">
+              <span role="columnheader">Label</span><span role="columnheader">Source page</span
+              ><span role="columnheader">Output page</span>
+            </div>
+            {#each plan.labels as label (label.ordinal)}
+              <div class="label-row" role="row">
+                <span role="cell"><code>{label.label}</code></span><span role="cell"
+                  ><span class="kit-sr-only">{"Source page "}</span>{label.source_page}</span
+                ><span role="cell"
+                  ><span class="kit-sr-only">{"Output page "}</span>{label.output_page}</span
+                >
+              </div>
+            {/each}
           </div>
-        </dl>
-        <div class="identity">
-          <span>Recipe SHA-256</span><code>{allocation.recipe_sha256}</code><CopyButton
-            text={allocation.recipe_sha256}
-            ariaLabel="Copy Bates recipe hash"
-          />
-        </div>
-        {#if !activeExport}<Button tone="info" disabled={busy} onclick={() => void start()}
-            >Start Bates export</Button
-          >{/if}
-      </Card>
-    {/if}
+          {#if unsaved}<p class="tool-error">
+              This browser can't remember the reservation. Keep this drawer open until the export
+              finishes.
+            </p>{/if}
+          {#if pending && allocation}<p class="tool-muted">
+              Discarding forgets this review here. Reserved numbers stay reserved and are never
+              reused.
+            </p>{/if}
+          <div class="tool-actions">
+            {#if pending}<Button disabled={busy} onclick={discard}>Discard review</Button>{/if}
+            {#if !pending}<Button disabled={busy} onclick={resetReview}>Change settings</Button
+              >{/if}
+            {#if !pending && !activeExport}<Button
+                tone="info"
+                surface="solid"
+                disabled={busy}
+                onclick={() => void reserve()}
+                >Reserve {plan.labels[0]?.label}–{plan.labels.at(-1)?.label}</Button
+              >
+            {:else if !allocation && restored}<Button
+                tone="info"
+                surface="solid"
+                disabled={busy}
+                onclick={() => void resume()}>Resume Bates export</Button
+              >
+            {:else if !allocation}<Button
+                tone="info"
+                surface="solid"
+                disabled={busy}
+                onclick={() => void reserve()}>Retry reserve</Button
+              >{/if}
+          </div>
+        </section>
+      {/if}
 
-    {#if activeExport}{@render exportCard(
-        activeExport,
-        "Stamped PDF ready",
-        "VERIFIED PUBLICATION",
-      )}{/if}
-    {#if viewedExport}{@render exportCard(
+      {#if allocation}
+        <section class="tool-section" aria-label="Reserved range">
+          <div class="tool-heading">
+            <h3>Range reserved</h3>
+            <Chip size="xs" tone="success">reserved</Chip>
+          </div>
+          <dl class="tool-stats">
+            <div>
+              <dt>Labels</dt>
+              <dd>{allocation.labels[0]?.label}–{allocation.labels.at(-1)?.label}</dd>
+            </div>
+            <div>
+              <dt>Pages</dt>
+              <dd>{allocation.labels.length}</dd>
+            </div>
+          </dl>
+          <dl class="hash">
+            <div>
+              <dt>Recipe SHA-256</dt>
+              <dd>
+                <code>{allocation.recipe_sha256}</code><CopyButton
+                  text={allocation.recipe_sha256}
+                  ariaLabel="Copy Bates recipe hash"
+                />
+              </dd>
+            </div>
+          </dl>
+          {#if !activeExport}<div class="tool-actions">
+              <Button tone="info" surface="solid" disabled={busy} onclick={() => void start()}
+                >Start Bates export</Button
+              >
+            </div>{/if}
+        </section>
+      {/if}
+
+      {#if activeExport}{@render exportCard(activeExport, "Stamped PDF ready")}{/if}
+    {/if}
+    {#if mode === "create" && viewedExport}{@render exportCard(
         viewedExport,
         "Earlier Bates export",
-        "HISTORY",
         () => (viewedExport = null),
       )}{/if}
 
-    <section class="history" aria-labelledby="bates-history-heading">
-      <div class="section-heading">
-        <div>
-          <span>History</span><strong id="bates-history-heading">Recent Bates exports</strong>
-        </div>
-      </div>
-      {#if historyError}<p class="error" role="alert">
-          Publication history is unavailable: {historyError}
-        </p>
-      {:else if history.length === 0}<p class="muted">No Bates exports have been published.</p>
-      {:else}<fieldset class="history-list" disabled={busy}>
-          {#each history as item (item.allocation_id)}<Card
-              level="default"
-              padding="sm"
-              ariaLabel={`Open Bates export ${item.allocation_id}`}
-              selected={viewedExport?.allocation_id === item.allocation_id}
-              onclick={() => view(item)}
-              ><div class="history-row">
-                <span>{formatDate(item.created_at)}</span><strong>{item.page_count} pages</strong
-                ><Chip size="xs" tone="success">{item.state}</Chip>
-              </div></Card
-            >{/each}
-        </fieldset>{/if}
-    </section>
+    {#if mode === "create" && (history.length || historyError)}
+      <section class="tool-section" aria-labelledby="bates-history-heading">
+        <h3 id="bates-history-heading">Recent exports</h3>
+        {#if historyError}<p class="tool-error" role="alert">
+            Publication history is unavailable: {historyError}
+          </p>
+        {:else}<ul class="tool-list">
+            {#each history as item (item.allocation_id)}<li class="history-item">
+                <button
+                  type="button"
+                  class="history-row"
+                  class:selected={viewedExport?.allocation_id === item.allocation_id}
+                  aria-label={`Open Bates export ${item.allocation_id}`}
+                  aria-pressed={viewedExport?.allocation_id === item.allocation_id}
+                  disabled={busy}
+                  onclick={() => view(item)}
+                >
+                  <span>{formatDate(item.created_at)}</span><span class="tool-muted"
+                    >{item.page_count} pages</span
+                  ><Chip size="xs" tone="success">{item.state}</Chip>
+                </button>
+              </li>{/each}
+          </ul>{/if}
+      </section>
+    {/if}
   </div>
-</DetailDrawer>
+</DrawerShell>
 
 <style>
-  .drawer-heading,
-  .section-heading,
-  .actions,
-  .identity {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-3);
+  .tool-list > li.production-item {
+    padding: 0;
+    display: block;
   }
-  .drawer-heading {
-    width: 100%;
+  .production-item .tool-disclosure {
+    border: 0;
   }
-  .drawer-heading > div,
-  .section-heading > div,
-  .content,
-  .settings,
-  .preview,
-  .history {
+  .production-item summary {
+    gap: var(--space-4);
+  }
+  .production-name {
+    flex: 1;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .production-range {
+    display: block;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+  .production-details {
     display: grid;
-    gap: var(--space-3);
-  }
-  .drawer-heading span,
-  .section-heading span,
-  .identity > span {
-    font-size: var(--font-size-xs);
-    font-weight: var(--font-weight-bold);
-    color: var(--text-muted);
-  }
-  .drawer-heading strong {
-    font-size: var(--font-size-lg);
-  }
-  .drawer-heading small,
-  .muted {
-    color: var(--text-muted);
-  }
-  .content {
-    padding: var(--space-5);
     gap: var(--space-5);
-    overflow: auto;
-  }
-  .settings,
-  .preview,
-  .history {
-    padding: var(--space-4);
-    border: 1px solid var(--border-muted);
-    border-radius: var(--radius-lg);
-    background: var(--bg-inset);
-  }
-  .fields {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: var(--space-3);
-  }
-  label {
-    display: grid;
-    gap: var(--space-2);
-    font-size: var(--font-size-sm);
-  }
-  p {
-    margin: 0;
-    font-size: var(--font-size-sm);
-    color: var(--text-secondary);
-    line-height: 1.5;
-  }
-  .error {
-    color: var(--accent-red);
   }
   .label-list {
     display: grid;
@@ -706,76 +820,70 @@
     border: 1px solid var(--border-muted);
     border-radius: var(--radius-md);
   }
-  .label-list > div {
+  .label-row {
     display: grid;
     grid-template-columns: minmax(150px, 1fr) 1fr 1fr;
-    gap: var(--space-3);
-    padding: var(--space-2) var(--space-3);
+    gap: var(--space-5);
+    padding: var(--space-3) var(--space-5);
     border-bottom: 1px solid var(--border-muted);
-    font-size: var(--font-size-sm);
+    font-variant-numeric: tabular-nums;
   }
-  .label-list > div:last-child {
+  .label-row:last-child {
     border-bottom: 0;
   }
+  .label-head {
+    position: sticky;
+    top: 0;
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-medium, 500);
+    background: var(--bg-inset);
+  }
   code {
-    font-size: var(--font-size-xs);
+    font-size: var(--font-size-sm);
     overflow-wrap: anywhere;
   }
-  .identity {
-    justify-content: flex-start;
-    flex-wrap: wrap;
-  }
-  .identity > span {
-    width: 100%;
-  }
-  dl {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: var(--space-3);
+  .hash {
     margin: 0;
   }
-  dt {
-    font-size: var(--font-size-xs);
-    color: var(--text-muted);
-  }
-  dd {
-    margin: var(--space-1) 0 0;
-    font-size: var(--font-size-sm);
-  }
-  .history-list {
-    display: grid;
+  .hash > div {
+    grid-template-columns: minmax(0, 1fr);
     gap: var(--space-2);
-    min-width: 0;
-    margin: 0;
+  }
+  .hash dd {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+  }
+  .tool-list > li.history-item {
     padding: 0;
-    border: 0;
   }
   .history-row {
     display: grid;
-    grid-template-columns: 1fr auto auto;
+    grid-template-columns: minmax(0, 1fr) auto auto;
     align-items: center;
-    gap: var(--space-3);
+    gap: var(--space-5);
+    width: 100%;
+    padding: var(--space-4) var(--space-3);
+    border: 0;
+    border-radius: var(--radius-md);
+    background: transparent;
     color: var(--text-primary);
+    font: inherit;
     text-align: left;
+    cursor: pointer;
   }
-  .history-list span {
-    font-size: var(--font-size-sm);
-    color: var(--text-secondary);
+  .history-row:hover:not(:disabled),
+  .history-row.selected {
+    background: var(--bg-inset);
   }
-  .loading {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
+  .history-row:focus-visible {
+    outline: 2px solid var(--accent-blue);
+    outline-offset: -2px;
   }
   @media (max-width: 640px) {
-    .fields,
-    .label-list > div,
-    dl {
-      grid-template-columns: 1fr;
-    }
-    .actions {
-      align-items: stretch;
-      flex-direction: column;
+    .label-row {
+      grid-template-columns: 1fr 1fr 1fr;
     }
   }
 </style>

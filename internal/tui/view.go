@@ -760,7 +760,7 @@ func (m Model) renderJobsHeading() string {
 }
 
 func (m Model) renderJobRow(job api.Job) string {
-	status := pad(strings.ToUpper(job.Status), 11)
+	status := pad(strings.ToUpper(job.DisplayStatus()), 11)
 	nameWidth := max(m.width-16, 1)
 	if m.width >= 72 {
 		nameWidth = 32
@@ -770,7 +770,7 @@ func (m Model) renderJobRow(job api.Job) string {
 		line += "  " + pad(formatJobTime(job.StartedAt), 17)
 	}
 	if m.width >= 88 {
-		finished := "running"
+		finished := "-"
 		if job.FinishedAt != "" {
 			finished = formatJobTime(job.FinishedAt)
 		}
@@ -801,11 +801,11 @@ func (m Model) jobDetailLines(width int) []string {
 	}
 	fields := []string{
 		" Name: " + quoted(job.Name),
-		" Status: " + job.Status,
+		" Status: " + job.DisplayStatus(),
 		" Started: " + job.StartedAt,
 	}
 	if job.FinishedAt == "" {
-		fields = append(fields, " Finished: still running")
+		fields = append(fields, " Finished: -")
 	} else {
 		fields = append(fields, " Finished: "+job.FinishedAt)
 	}

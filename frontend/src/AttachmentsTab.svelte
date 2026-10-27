@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Spinner } from "@kenn-io/kit-ui";
   import AttachmentRelations from "./AttachmentRelations.svelte";
   import type { AttachmentIdentity } from "./attachments.js";
   import type { SelectedSource } from "./selectedSource.js";
@@ -13,15 +14,33 @@
     onopen: (target: AttachmentIdentity) => void;
     onauthfailure: (cause: unknown) => void;
   } = $props();
+  let outgoingTotal = $state<number>();
+  let incomingTotal = $state<number>();
+  let outgoingBusy = $state(false);
+  let incomingBusy = $state(false);
 </script>
 
 <div class="attachments-tab">
-  <p>
-    Explicit published occurrences only. Inventory completeness and current processing are separate;
-    opening a document checks its current access and exact retained version.
-  </p>
-  <AttachmentRelations {session} {source} direction="outgoing" {onopen} {onauthfailure} />
-  <AttachmentRelations {session} {source} direction="incoming" {onopen} {onauthfailure} />
+  {#if outgoingBusy || incomingBusy}<p role="status"><Spinner size={14} /> Loading…</p>{/if}
+  <AttachmentRelations
+    {session}
+    {source}
+    direction="outgoing"
+    bind:total={outgoingTotal}
+    bind:busy={outgoingBusy}
+    {onopen}
+    {onauthfailure}
+  />
+  <AttachmentRelations
+    {session}
+    {source}
+    direction="incoming"
+    bind:total={incomingTotal}
+    bind:busy={incomingBusy}
+    {onopen}
+    {onauthfailure}
+  />
+  {#if outgoingTotal === 0 && incomingTotal === 0}<p>No published attachments</p>{/if}
 </div>
 
 <style>

@@ -1,11 +1,11 @@
 import { prepareAction } from "./actionRecovery.js";
 import { webcrypto } from "node:crypto";
+import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import ActionRecoveryModal, { type ActionRecoveryJournal } from "./ActionRecoveryModal.svelte";
-import { APIError } from "./api-transport.js";
-import { type PersistedAction } from "./actionJournal.js";
-import { ACTION_MAX_BYTES, encodeRecovery } from "./actionRecovery.js";
+import { ActionJournal, type PersistedAction } from "./actionJournal.js";
+import { encodeRecovery } from "./actionRecovery.js";
 import type { BatchTagReceipt } from "./batch-tags.js";
 import { snapshotMemberHash, type SnapshotMember, type SnapshotPage } from "./snapshots.js";
 
@@ -24,8 +24,8 @@ const member: SnapshotMember = {
   revision: 3,
 };
 
-async function prepared(): Promise<PersistedAction> {
-  const memberHash = await snapshotMemberHash([member]);
+async function prepared(members = [member]): Promise<PersistedAction> {
+  const memberHash = await snapshotMemberHash(members);
   const action = await prepareAction(
     vaultID,
     {
@@ -34,10 +34,10 @@ async function prepared(): Promise<PersistedAction> {
         snapshot_fingerprint: `sha256:${"c".repeat(64)}`,
         query_fingerprint: `sha256:${"d".repeat(64)}`,
         member_hash: memberHash,
-        total: 1,
-        total_bytes: member.size,
+        total: members.length,
+        total_bytes: members.reduce((sum, item) => sum + item.size, 0),
       } as SnapshotPage,
-      members: [member],
+      members,
     },
     tag.id,
     true,
@@ -130,10 +130,20 @@ class MemoryJournal implements ActionRecoveryJournal {
   async abandon() {
     this.action = null;
   }
+  async discardUnsent(actionID: string) {
+    if (
+      this.action?.action_id === actionID &&
+      this.action.state === "prepared" &&
+      this.action.batches.every((batch) => batch.state === "prepared")
+    )
+      this.action = null;
+  }
 }
 
 beforeEach(() => {
   vi.stubGlobal("crypto", webcrypto);
+  vi.stubGlobal("indexedDB", new IDBFactory());
+  vi.stubGlobal("IDBKeyRange", IDBKeyRange);
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -156,14 +166,23 @@ afterEach(() => {
 });
 
 it.each([
-  { cause: new APIError("Access denied", 401, "unauthorized"), expired: true },
-  { cause: new Error("Confirm with the fresh session"), expired: false },
-])("classifies authentication errors by HTTP status: $expired", async ({ cause, expired }) => {
+  { message: "Access denied", expired: true },
+  { message: "Confirm with the fresh session", expired: false },
+])("classifies authentication errors by HTTP status: $expired", async ({ message, expired }) => {
   const action = { ...(await prepared()), checkpoint_verified: true };
   const journal = new MemoryJournal(action);
-  journal.confirmResume = async () => {
-    throw cause;
-  };
+  if (expired) {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      expect(String(input)).toBe("/api/v1/audit/status");
+      return new Response(JSON.stringify({ detail: message, code: "unauthorized" }), {
+        status: 401,
+      });
+    });
+  } else {
+    journal.confirmResume = async () => {
+      throw new Error(message);
+    };
+  }
   const onauthfailure = vi.fn();
   render(ActionRecoveryModal, {
     session: "session",
@@ -175,22 +194,14 @@ it.each([
     onclose: vi.fn(),
     onauthfailure,
   });
-  await fireEvent.click(screen.getByRole("checkbox", { name: /I confirm this vault/ }));
-  await fireEvent.click(screen.getByRole("button", { name: "Confirm and run action" }));
-  await screen.findByText(cause.message);
+  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+  await screen.findByText(message);
   expect(onauthfailure).toHaveBeenCalledTimes(expired ? 1 : 0);
 });
 
-it("saves a credential-free checkpoint and requires its readback before the first mutation", async () => {
+it("applies a fresh action without downloading or reading a recovery file", async () => {
   const action = await prepared();
   const journal = new MemoryJournal(action);
-  let persistedText = "";
-  vi.mocked(URL.createObjectURL).mockImplementation((blob) => {
-    void (blob as Blob).text().then((text) => {
-      persistedText = text;
-    });
-    return "blob:checkpoint";
-  });
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     if (String(input) === "/api/v1/audit/status") {
       return new Response(JSON.stringify({ vault_id: vaultID }), { status: 200 });
@@ -223,35 +234,18 @@ it("saves a credential-free checkpoint and requires its readback before the firs
     onauthfailure: vi.fn(),
   });
 
-  expect(screen.getByText(/Add “Review”/)).toBeTruthy();
-  expect(screen.getByText(/1 exact document/)).toBeTruthy();
-  expect(
-    (screen.getByRole("button", { name: /Confirm and run/ }) as HTMLButtonElement).disabled,
-  ).toBe(true);
-  await fireEvent.click(screen.getByRole("button", { name: "Save recovery checkpoint" }));
-  await waitFor(() => expect(persistedText).not.toBe(""));
-  expect(persistedText).not.toContain("browser-session-secret");
+  expect(screen.getByText("Adds “Review” to 1 document.")).toBeTruthy();
+  expect(screen.queryByText(/recovery/i)).toBeNull();
+  expect(screen.queryByRole("button", { name: "Save recovery file" })).toBeNull();
+  expect((screen.getByRole("button", { name: "Apply" }) as HTMLButtonElement).disabled).toBe(false);
   expect(journal.batchCalls).toBe(0);
 
-  const bytes = await encodeRecovery(action);
-  const file = new File([Uint8Array.from(bytes)], "action.docbank-action.json", {
-    type: "application/json",
-  });
-  await fireEvent.change(screen.getByLabelText("Select the saved recovery checkpoint"), {
-    target: { files: [file] },
-  });
-  await screen.findByText("Recovery checkpoint verified.");
-  expect(journal.checkpointReads).toBe(1);
-  expect(journal.batchCalls).toBe(0);
-
-  await fireEvent.click(
-    screen.getByRole("checkbox", {
-      name: /I confirm this vault, action, tag, operation, and exact targets/,
-    }),
-  );
-  await fireEvent.click(screen.getByRole("button", { name: /Confirm and run/ }));
-  await screen.findByText(/Action complete/);
+  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+  await screen.findByText("Added “Review” to 1 document.");
   expect(journal.batchCalls).toBe(1);
+  expect(journal.checkpointReads).toBe(0);
+  expect(URL.createObjectURL).not.toHaveBeenCalled();
+  expect(journal.action?.checkpoint_verified).toBe(false);
 });
 
 it("refuses a mismatched vault and explains stale actions require a new action", async () => {
@@ -269,11 +263,10 @@ it("refuses a mismatched vault and explains stale actions require a new action",
     onauthfailure: vi.fn(),
   });
 
-  expect(screen.getByRole("alert").textContent).toContain("different vault");
-  expect(
-    screen.getByText(/Abandon this action and create a new one with a fresh selection/),
-  ).toBeTruthy();
-  expect(screen.queryByRole("button", { name: /Confirm and run/ })).toBeNull();
+  expect(screen.getByText("This run belongs to a different vault.")).toBeTruthy();
+  expect(screen.getByText(/so tagging stopped/)).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Apply" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Discard run…" })).toBeTruthy();
 });
 
 it("retries an uncertain batch with the exact retained operation and revisions", async () => {
@@ -317,38 +310,10 @@ it("retries an uncertain batch with the exact retained operation and revisions",
     onauthfailure: vi.fn(),
   });
 
-  expect(screen.getByText(/result is uncertain/)).toBeTruthy();
-  await fireEvent.click(screen.getByRole("checkbox", { name: /I confirm this vault/ }));
-  await fireEvent.click(screen.getByRole("button", { name: "Retry same operation" }));
-  await screen.findByText(/Action complete/);
+  expect(screen.getByText(/result is unknown/)).toBeTruthy();
+  await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  await screen.findByText("Added “Review” to 1 document.");
   expect(sent).toEqual(uncertain.batches[0].request);
-});
-
-it("refuses a tampered checkpoint before scheduling any batch", async () => {
-  const action = await prepared();
-  const journal = new MemoryJournal(action);
-  journal.verifyCheckpoint = async () => {
-    journal.checkpointReads++;
-    throw new Error("The selected checkpoint does not match the prepared action and vault.");
-  };
-  render(ActionRecoveryModal, {
-    session: "fresh-session",
-    sessionVaultID: vaultID,
-    journal,
-    initialAction: action,
-    tag,
-    onprogress: vi.fn(),
-    onclose: vi.fn(),
-    onauthfailure: vi.fn(),
-  });
-
-  const file = new File([new Uint8Array([9, 9, 9])], "tampered.json", { type: "application/json" });
-  await fireEvent.change(screen.getByLabelText("Select the saved recovery checkpoint"), {
-    target: { files: [file] },
-  });
-  await screen.findByText(/does not match the prepared action and vault/);
-  expect(journal.checkpointReads).toBe(1);
-  expect(journal.batchCalls).toBe(0);
 });
 
 it("shows a paused reload as retained work that needs explicit resume", async () => {
@@ -366,13 +331,19 @@ it("shows a paused reload as retained work that needs explicit resume", async ()
     onauthfailure: vi.fn(),
   });
 
-  expect(screen.getByText(/action is paused/i)).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Confirm and resume action" })).toBeTruthy();
+  expect(screen.getByText("Paused · 0 of 1 document done")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Resume" })).toBeTruthy();
   expect(journal.batchCalls).toBe(0);
+  await fireEvent.click(screen.getByRole("button", { name: "Save recovery file" }));
+  await waitFor(() => expect(URL.createObjectURL).toHaveBeenCalledOnce());
 });
 
 it("keeps a deleted-tag action available for checkpoint export and abandonment", async () => {
-  const action = { ...(await prepared()), checkpoint_verified: true };
+  const action: PersistedAction = {
+    ...(await prepared()),
+    state: "paused",
+    checkpoint_verified: true,
+  };
   const journal = new MemoryJournal(action);
   const onclose = vi.fn();
   render(ActionRecoveryModal, {
@@ -385,22 +356,104 @@ it("keeps a deleted-tag action available for checkpoint export and abandonment",
     onclose,
     onauthfailure: vi.fn(),
   });
-  expect(screen.getByText(/tag is no longer available/i)).toBeTruthy();
+  expect(screen.getByText("This tag no longer exists.")).toBeTruthy();
+  expect((screen.getByRole("button", { name: "Resume" }) as HTMLButtonElement).disabled).toBe(true);
   expect(
-    (screen.getByRole("button", { name: "Confirm and run action" }) as HTMLButtonElement).disabled,
-  ).toBe(true);
-  expect(
-    (screen.getByRole("button", { name: "Save recovery checkpoint" }) as HTMLButtonElement)
-      .disabled,
+    (screen.getByRole("button", { name: "Save recovery file" }) as HTMLButtonElement).disabled,
   ).toBe(false);
-  await fireEvent.click(screen.getByRole("button", { name: "Abandon action…" }));
-  await fireEvent.click(screen.getByRole("button", { name: "Abandon action without rollback" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Discard run…" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Discard run" }));
   await waitFor(() => expect(onclose).toHaveBeenCalledOnce());
   expect(journal.action).toBeNull();
 });
 
+it("drops a never-sent action on Cancel and keeps a started one for later", async () => {
+  vi.stubGlobal("Uint8Array", new TextEncoder().encode("").constructor);
+  const untouched = await prepared();
+  const fresh = await ActionJournal.open(vaultID);
+  await fresh.prepare(untouched);
+  const onclose = vi.fn();
+  render(ActionRecoveryModal, {
+    session: "session",
+    sessionVaultID: vaultID,
+    journal: fresh,
+    initialAction: untouched,
+    tag,
+    onprogress: vi.fn(),
+    onclose,
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(onclose).toHaveBeenCalledOnce());
+  expect(await fresh.load()).toBeNull();
+  cleanup();
+
+  const paused: PersistedAction = { ...untouched, state: "paused", checkpoint_verified: true };
+  const started = new MemoryJournal(paused);
+  const closeStarted = vi.fn();
+  render(ActionRecoveryModal, {
+    session: "session",
+    sessionVaultID: vaultID,
+    journal: started,
+    initialAction: paused,
+    tag,
+    onprogress: vi.fn(),
+    onclose: closeStarted,
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Finish later" }));
+  expect(closeStarted).toHaveBeenCalledOnce();
+  expect(started.action).not.toBeNull();
+});
+
+it.each(["sending", "uncertain", "resumed", "replaced"] as const)(
+  "Cancel keeps the journal when another tab has %s work",
+  async (progress) => {
+    // Keep the encoder and byte checks in the same realm under jsdom.
+    vi.stubGlobal("Uint8Array", new TextEncoder().encode("").constructor);
+    const action = await prepared(
+      progress === "resumed"
+        ? Array.from({ length: 1_001 }, (_, index) => ({ ...member, node_id: index + 1 }))
+        : [member],
+    );
+    const journal = await ActionJournal.open(vaultID);
+    await journal.prepare(action);
+    const otherTab = await ActionJournal.open(vaultID);
+    const onclose = vi.fn();
+    render(ActionRecoveryModal, {
+      session: "session",
+      sessionVaultID: vaultID,
+      journal,
+      initialAction: action,
+      tag,
+      onprogress: vi.fn(),
+      onclose,
+      onauthfailure: vi.fn(),
+    });
+    if (progress === "replaced") {
+      await otherTab.abandon();
+      await otherTab.prepare(await prepared());
+    } else {
+      await otherTab.verifyCheckpoint(await encodeRecovery(action));
+      const batchIndex = progress === "resumed" ? 1 : 0;
+      await otherTab.markSending(batchIndex);
+      if (progress !== "sending") await otherTab.markUncertain(batchIndex);
+      if (progress === "resumed") {
+        await otherTab.pause();
+        await otherTab.confirmResume(action.action_id);
+      }
+    }
+    const retained = await otherTab.load();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() => expect(onclose).toHaveBeenCalledOnce());
+    expect(await otherTab.load()).toEqual(retained);
+  },
+);
+
 it("shows exact file-supplied identities before target confirmation", async () => {
-  const action = await prepared();
+  const action = { ...(await prepared()), checkpoint_verified: true };
   render(ActionRecoveryModal, {
     session: "session",
     sessionVaultID: vaultID,
@@ -411,12 +464,11 @@ it("shows exact file-supplied identities before target confirmation", async () =
     onclose: vi.fn(),
     onauthfailure: vi.fn(),
   });
-  await fireEvent.click(screen.getByText("Review exact targets"));
+  await fireEvent.click(screen.getByText("Review documents"));
   expect(screen.getByRole("cell", { name: "7" })).toBeTruthy();
   expect(screen.getByText(member.content_version_id)).toBeTruthy();
   expect(screen.getByText(member.blob_hash)).toBeTruthy();
-  expect(screen.getByText(/Checksums detect inconsistent files/)).toBeTruthy();
-  expect(screen.getByRole("checkbox", { name: /exact targets$/ })).toBeTruthy();
+  expect(screen.getByText(/can come from anyone/)).toBeTruthy();
 });
 
 it("retains an in-flight receipt without publishing to a replaced recovery view", async () => {
@@ -444,8 +496,7 @@ it("retains an in-flight receipt without publishing to a replaced recovery view"
     onclose: vi.fn(),
     onauthfailure: vi.fn(),
   });
-  await fireEvent.click(screen.getByRole("checkbox", { name: /I confirm this vault/ }));
-  await fireEvent.click(screen.getByRole("button", { name: "Confirm and run action" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
   await waitFor(() => expect(sent).toBe(true));
   await view.unmount();
   onprogress.mockClear();
@@ -494,36 +545,11 @@ it("does not expire the session from a replaced view's pending error reload", as
     onclose: vi.fn(),
     onauthfailure,
   });
-  await fireEvent.click(screen.getByRole("checkbox", { name: /I confirm this vault/ }));
-  await fireEvent.click(screen.getByRole("button", { name: "Confirm and run action" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
   await waitFor(() => expect(load).toHaveBeenCalledTimes(2));
   await view.unmount();
   release(journal.action!);
   await reloading;
   await new Promise((resolve) => setTimeout(resolve, 0));
   expect(onauthfailure).not.toHaveBeenCalled();
-});
-
-it("rejects an oversized checkpoint before reading or verifying it", async () => {
-  const action = await prepared();
-  const journal = new MemoryJournal(action);
-  render(ActionRecoveryModal, {
-    session: "session",
-    sessionVaultID: vaultID,
-    journal,
-    initialAction: action,
-    tag,
-    onprogress: vi.fn(),
-    onclose: vi.fn(),
-    onauthfailure: vi.fn(),
-  });
-  const file = new File(["{}"], "oversized-checkpoint.json", { type: "application/json" });
-  Object.defineProperty(file, "size", { value: ACTION_MAX_BYTES + 1 });
-  const read = vi.spyOn(file, "arrayBuffer");
-  await fireEvent.change(screen.getByLabelText("Select the saved recovery checkpoint"), {
-    target: { files: [file] },
-  });
-  expect(read).not.toHaveBeenCalled();
-  expect(journal.checkpointReads).toBe(0);
-  expect(screen.getByRole("alert").textContent).toContain("128 MiB");
 });

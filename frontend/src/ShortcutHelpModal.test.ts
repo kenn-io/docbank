@@ -45,9 +45,9 @@ it("makes browsing shortcuts discoverable and edits bounded tag bindings", async
 
   expect(screen.getByRole("dialog", { name: "Keyboard shortcuts" })).toBeTruthy();
   expect(screen.getByText("Focus search")).toBeTruthy();
-  expect(screen.getByText("Next loaded row")).toBeTruthy();
-  expect(screen.getByText("Toggle inspected file selection")).toBeTruthy();
-  expect(screen.getByText(/Showing the first 1 of 2 tag definitions\./)).toBeTruthy();
+  expect(screen.getByText("Next row")).toBeTruthy();
+  expect(screen.getByText("Select current row")).toBeTruthy();
+  expect(screen.getByText("First 1 of 2 tags.")).toBeTruthy();
   expect(
     screen.getByRole("combobox", { name: `Tag shortcut 2: Not in loaded catalog · ${missing}` }),
   ).toBeTruthy();
@@ -76,9 +76,7 @@ it("explains why tag bindings are disabled without a trustworthy vault ID", () =
   });
 
   expect(
-    screen.getByText(
-      "Tag shortcuts are unavailable until this browser session confirms the vault identity.",
-    ),
+    screen.getByText("Tag hotkeys are available once the vault finishes loading."),
   ).toBeTruthy();
   expect(
     screen.getByRole("combobox", { name: "Tag shortcut 1: Unassigned" }).hasAttribute("disabled"),
@@ -103,7 +101,7 @@ it("lists registered Photos commands without document browsing or tag bindings",
   });
   expect(screen.getByText("Clear rating")).toBeTruthy();
   expect(screen.getByText("Show keyboard shortcuts")).toBeTruthy();
-  expect(screen.queryByText("Next loaded row")).toBeNull();
+  expect(screen.queryByText("Next row")).toBeNull();
   expect(screen.queryByText("Focus search")).toBeNull();
   expect(screen.queryByRole("combobox")).toBeNull();
 });

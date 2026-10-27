@@ -38,6 +38,51 @@ func scanWatcherAt(ctx context.Context, watcher *Watcher, root *watchRoot, at ti
 	return watcher.scan(ctx, root)
 }
 
+func TestWatcherReportsBusyOnlyWhenIngesting(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ing := newTestIngester(t)
+		processed := 0
+		source := writeTree(t, map[string]string{"report.txt": "report"})
+		var supervisor *jobs.Supervisor
+		watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{
+			Name: "activity", Source: source, Destination: "/archive",
+			SettleTime: config.Duration(time.Second), ScanInterval: config.Duration(time.Second),
+		}, func(fn func() error) error {
+			assert.True(t, supervisor.Snapshot()[0].Busy, "ingesting a settled file is busy")
+			err := fn()
+			if err == nil {
+				processed++
+			}
+			return err
+		}, slog.New(slog.DiscardHandler))
+		require.NoError(t, err)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		supervisor = jobs.New(ctx, slog.New(slog.DiscardHandler))
+		t.Cleanup(func() { require.NoError(t, supervisor.Shutdown(context.Background())) })
+		observedAfterIngest := false
+		watcher.now = func() time.Time {
+			assert.False(t, supervisor.Snapshot()[0].Busy, "observing files is idle")
+			if processed > 0 {
+				_, err := ing.Store.NodeByPath(ctx, "/archive/report.txt")
+				require.NoError(t, err)
+				observedAfterIngest = true
+			}
+			return time.Now()
+		}
+		require.NoError(t, supervisor.Start("watch:activity", watcher.Run))
+		synctest.Wait()
+		require.NoError(t, os.WriteFile(filepath.Join(source, "z-unsettled.txt"), []byte("still writing"), 0o600))
+		time.Sleep(time.Second)
+		synctest.Wait()
+		assert.Equal(t, 1, processed)
+		assert.True(t, observedAfterIngest, "scan inspected an unsettled file after the import committed")
+		assert.False(t, supervisor.Snapshot()[0].Busy, "the scan finished")
+		_, err = ing.Store.NodeByPath(ctx, "/archive/z-unsettled.txt")
+		require.ErrorIs(t, err, store.ErrNotFound)
+	})
+}
+
 func TestWatcherWaitsForStabilityAndUpdatesTheSameMovedNode(t *testing.T) {
 	ing := newTestIngester(t)
 	expectedUpdatedContent := []byte("{\"message\":\"second\"}\n")

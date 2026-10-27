@@ -42,20 +42,12 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it("loads one explicit page and checks partial inventory without collapsing equal occurrences", async () => {
+it("lists one page of attachments and opens a row", async () => {
   const calls: string[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const route = String(input);
     calls.push(route);
     if (route.includes("child_version_id=")) return Response.json(empty);
-    if (route.includes("email-document-publications"))
-      return Response.json({
-        operation_id: "synthetic",
-        request_digest: "e".repeat(64),
-        created_at: "2026-09-12T00:00:00Z",
-        inventory_state: "partial",
-        relations: Array.from({ length: 51 }, (_, i) => relation(i + 1)),
-      });
     const more = route.includes("after_order=");
     return Response.json({
       items: Array.from({ length: more ? 1 : 50 }, (_, i) => ({
@@ -70,21 +62,62 @@ it("loads one explicit page and checks partial inventory without collapsing equa
   });
   const onopen = vi.fn();
   render(AttachmentsTab, { session: "session", source, onopen, onauthfailure: vi.fn() });
-  const outgoing = screen.getByRole("region", { name: "Outgoing attachments" });
+  const outgoing = await screen.findByRole("region", { name: "Attachments" });
   await waitFor(() => expect(within(outgoing).getAllByRole("listitem")).toHaveLength(50));
   expect(calls).toHaveLength(2);
-  expect(screen.getByText(/No published parent occurrences/)).toBeTruthy();
-  await fireEvent.click(within(outgoing).getByRole("button", { name: "Load more attachments" }));
+  expect(screen.queryByRole("region", { name: "Attached to" })).toBeNull();
+  expect(screen.queryByText("No published attachments")).toBeNull();
+  await fireEvent.click(within(outgoing).getByRole("button", { name: "Show more" }));
   await waitFor(() => expect(within(outgoing).getAllByRole("listitem")).toHaveLength(51));
-  await fireEvent.click(
-    within(outgoing).getByRole("button", { name: "Check inventory for synthetic" }),
-  );
-  expect(await screen.findByText("Publication inventory: partial")).toBeTruthy();
-  expect(within(outgoing).getAllByText(/Processing: pending/)).toHaveLength(51);
-  await fireEvent.click(
-    within(outgoing).getByRole("button", { name: "Open attachment same.txt, part 1.52" }),
-  );
+  expect(within(outgoing).queryByRole("button", { name: "Show more" })).toBeNull();
+  await fireEvent.click(within(outgoing).getAllByRole("button", { name: "same.txt" })[0]);
   expect(onopen).toHaveBeenCalledWith(child);
+});
+
+it("qualifies an empty relation list as no published attachments", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => Response.json(empty));
+  render(AttachmentsTab, {
+    session: "session",
+    source,
+    onopen: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  expect(await screen.findByText("No published attachments")).toBeTruthy();
+  expect(screen.queryByRole("region")).toBeNull();
+});
+
+it("lists the documents an attachment belongs to by name", async () => {
+  const mail = { node_id: 3, version_id: version, sha256: "a".repeat(64), size: 12 };
+  const attached = { ...child, node_id: 2, version_id: child.version_id };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const route = String(input);
+    if (route.includes("/api/v1/nodes/3")) return Response.json({ id: 3, name: "mail.eml" });
+    if (route.includes("child_version_id="))
+      return Response.json({
+        items: [
+          {
+            relation: { ...relation(1), parent: mail, child: attached },
+            state: "decoded",
+            reason: "processing_not_requested",
+          },
+        ],
+        total: 1,
+        next_operation_id: "",
+        next_order: 0,
+      });
+    return Response.json(empty);
+  });
+  const onopen = vi.fn();
+  render(AttachmentsTab, {
+    session: "session",
+    source: { ...source, nodeID: 2, versionID: child.version_id, blobHash: child.sha256, size: 4 },
+    onopen,
+    onauthfailure: vi.fn(),
+  });
+  const group = await screen.findByRole("region", { name: "Attached to" });
+  await fireEvent.click(await within(group).findByRole("button", { name: "mail.eml" }));
+  expect(onopen).toHaveBeenCalledWith(mail);
+  expect(screen.queryByRole("region", { name: "Attachments" })).toBeNull();
 });
 
 it("keeps unavailable occurrences visible and fences replaced-source and denied reads", async () => {
@@ -131,63 +164,11 @@ it("keeps unavailable occurrences visible and fences replaced-source and denied 
     onopen: vi.fn(),
     onauthfailure: vi.fn(),
   });
-  expect(await screen.findByText(/MIME: encrypted/)).toBeTruthy();
+  expect(await screen.findByText("encrypted")).toBeTruthy();
   expect(oldSignal?.aborted).toBe(true);
   release(Response.json(empty));
   expect(await screen.findByText(/Parent relations unavailable: Not allowed/)).toBeTruthy();
-  expect(screen.getByText(/MIME: encrypted/)).toBeTruthy();
-  expect(screen.queryByRole("button", { name: /Open attachment/ })).toBeNull();
-});
-
-it("discards a delayed publication receipt after changing the selected source", async () => {
-  let release!: (response: Response) => void;
-  let signal: AbortSignal | null | undefined;
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    const route = String(input);
-    if (route.includes("email-document-publications")) {
-      signal = init?.signal;
-      return new Promise<Response>((resolve) => {
-        release = resolve;
-      });
-    }
-    return Response.json(
-      route.includes(`parent_version_id=${version}`)
-        ? {
-            ...empty,
-            items: [
-              { relation: relation(1), state: "decoded", reason: "processing_not_requested" },
-            ],
-            total: 1,
-          }
-        : empty,
-    );
-  });
-  const view = render(AttachmentsTab, {
-    session: "session",
-    source,
-    onopen: vi.fn(),
-    onauthfailure: vi.fn(),
-  });
-  await fireEvent.click(
-    await screen.findByRole("button", { name: "Check inventory for synthetic" }),
-  );
-  await waitFor(() => expect(release).toBeTypeOf("function"));
-  await view.rerender({
-    session: "session",
-    source: { ...source, key: "new-root", versionID: child.version_id },
-    onopen: vi.fn(),
-    onauthfailure: vi.fn(),
-  });
-  expect(signal?.aborted).toBe(true);
-  release(
-    Response.json({
-      operation_id: "synthetic",
-      request_digest: "e".repeat(64),
-      created_at: "2026-09-12T00:00:00Z",
-      inventory_state: "complete",
-      relations: [relation(1)],
-    }),
-  );
-  await waitFor(() => expect(screen.getByText(/No published attachment occurrences/)).toBeTruthy());
-  expect(screen.queryByText("Publication inventory: complete")).toBeNull();
+  expect(screen.getByText("encrypted")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "same.txt" })).toBeNull();
+  expect(screen.queryByText("No published attachments")).toBeNull();
 });

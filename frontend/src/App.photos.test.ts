@@ -53,6 +53,7 @@ vi.mock("./photoImportStorage.js", async (importOriginal) => ({
 }));
 
 beforeEach(() => {
+  localStorage.setItem("docbank.photoMetadata", "closed");
   vi.spyOn(photoEvents, "watchPhotoEvents").mockReturnValue({ stop() {} });
 });
 
@@ -645,7 +646,7 @@ it.each(["unhide", "trash", "rejects"])(
       await fireEvent.click(await screen.findByRole("menuitem", { name: "Unhide" }));
     } else if (action === "rejects") {
       await fireEvent.click(screen.getByRole("button", { name: "More photo actions" }));
-      await fireEvent.click(screen.getByRole("menuitem", { name: "Move rejects" }));
+      await fireEvent.click(screen.getByRole("menuitem", { name: "Trash rejected photos" }));
       await fireEvent.click(await screen.findByRole("button", { name: "Move 3 to trash" }));
     } else {
       await fireEvent.click(screen.getByRole("button", { name: "Move to trash" }));
@@ -1249,21 +1250,9 @@ it.each(["document trash", "delayed photo trash", "restore"])(
       await fireEvent.dblClick(await screen.findByRole("cell", { name: "Reports" }));
       await screen.findByRole("cell", { name: "photo-1.jpg" });
       await fireEvent.click(screen.getByRole("button", { name: "Move to trash" }));
-      await fireEvent.click(
-        within(screen.getByRole("dialog", { name: "Move photo-1.jpg to trash" })).getByRole(
-          "button",
-          { name: "Move to trash" },
-        ),
-      );
     } else if (operation === "restore") {
       await fireEvent.click(screen.getByRole("button", { name: "Recoverable trash" }));
       await fireEvent.click(await screen.findByRole("button", { name: "Restore" }));
-      await fireEvent.click(
-        within(screen.getByRole("dialog", { name: "Restore photo-1.jpg from trash" })).getByRole(
-          "button",
-          { name: "Restore" },
-        ),
-      );
     } else {
       await fireEvent.click(await screen.findByRole("button", { name: "Select Photo 1.jpg" }));
       await fireEvent.click(screen.getByRole("button", { name: "Move to trash" }));
@@ -1496,12 +1485,6 @@ it.each([false, true])(
     await waitFor(() => expect(finishConceal).toBeDefined());
     await fireEvent.click(screen.getByRole("button", { name: "Recoverable trash" }));
     await fireEvent.click(await screen.findByRole("button", { name: "Restore" }));
-    await fireEvent.click(
-      within(screen.getByRole("dialog", { name: "Restore Restored.jpg from trash" })).getByRole(
-        "button",
-        { name: "Restore" },
-      ),
-    );
     await waitFor(() => expect(finishRestore).toBeDefined());
     expect(concealSignal.aborted).toBe(true);
     finishConceal(Response.json({ items: [], total: 0 }));
@@ -1864,6 +1847,7 @@ it.each([false, true])(
     let unlocked = true;
     let rootReads = 0;
     let hiddenReads = 0;
+    let finishRestore!: (response: Response) => void;
     const fetcher = vi.fn(async (url: string, options?: RequestInit) => {
       if (url.endsWith("/photos/hidden/lock")) {
         unlocked = false;
@@ -1890,7 +1874,7 @@ it.each([false, true])(
       }
       if (url.endsWith("/nodes/2/restore")) {
         trashed = false;
-        return Response.json({ ...node, revision: 3, path: "/Photo 1.jpg" });
+        return new Promise<Response>((resolve) => (finishRestore = resolve));
       }
       if (url.startsWith("/api/v1/trash?"))
         return Response.json({
@@ -1941,13 +1925,11 @@ it.each([false, true])(
     const before = hiddenReads;
     await fireEvent.click(screen.getByRole("button", { name: "Recoverable trash" }));
     await fireEvent.click(await screen.findByRole("button", { name: "Restore" }));
-    await fireEvent.click(
-      within(screen.getByRole("dialog", { name: "Restore Photo 1.jpg from trash" })).getByRole(
-        "button",
-        { name: "Restore" },
-      ),
-    );
-    await screen.findByText("Restored Photo 1.jpg");
+    await waitFor(() => expect(finishRestore).toBeTypeOf("function"));
+    await fireEvent.click(screen.getByRole("button", { name: "Close recoverable trash" }));
+    const beforeRestore = rootReads;
+    finishRestore(Response.json({ ...node, revision: 3, path: "/Photo 1.jpg" }));
+    await waitFor(() => expect(rootReads).toBe(beforeRestore + 1));
     if (locked) {
       expect(screen.getByRole("button", { name: "Unlock" })).toBeTruthy();
       expect(hiddenReads).toBe(before);
@@ -1955,7 +1937,6 @@ it.each([false, true])(
       await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
       expect(hiddenReads).toBe(before + 1);
     }
-    await fireEvent.click(screen.getByRole("button", { name: "Close recoverable trash" }));
     await fireEvent.click(screen.getByRole("button", { name: "Documents" }));
     await screen.findByRole("cell", { name: "Photo 1.jpg" });
   },
@@ -2948,7 +2929,7 @@ it.each(["search", "tag", "snapshot"] as const)(
       await fireEvent.click(await screen.findByRole("option", { name: "reviewed (1)" }));
       await screen.findByText("Documents tagged");
     } else {
-      await fireEvent.click(await screen.findByRole("button", { name: "Run query" }));
+      await fireEvent.click(await screen.findByRole("button", { name: "Search" }));
       await screen.findByRole("region", { name: "Frozen query results" });
     }
     const before = { ...reads };
@@ -3133,7 +3114,7 @@ it("rereads sibling photo views, album covers, and a frozen Documents selection 
     return albumResponse({ items: [], nodes: [], tags: [], profiles: [] });
   });
   render(App);
-  await fireEvent.click(await screen.findByRole("button", { name: "Run query" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Search" }));
   await screen.findByRole("region", { name: "Frozen query results" });
   await fireEvent.click(await screen.findByRole("cell", { name: "/report.pdf" }));
   await waitFor(() => expect(reads.audit).toBeGreaterThan(0));
@@ -3284,7 +3265,6 @@ it("refuses draft navigation until Clear edits releases it", async () => {
   await screen.findByRole("button", { name: "Open Photo 1.jpg" });
   await fireEvent.click(screen.getByRole("button", { name: "Open Photo 1.jpg" }));
   const viewer = await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
-  await fireEvent.click(within(viewer).getByRole("button", { name: "Metadata" }));
   const caption = await within(viewer).findByRole("textbox", { name: "Caption" });
   await waitFor(() => expect(caption.hasAttribute("disabled")).toBe(false));
   await fireEvent.input(caption, { target: { value: "Keep my caption" } });
@@ -3398,7 +3378,6 @@ it("closes the viewer to the grid after refusing a typed photo hash", async () =
   render(App);
   await fireEvent.click(await screen.findByRole("button", { name: "Open Photo 1.jpg" }));
   const viewer = await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
-  await fireEvent.click(within(viewer).getByRole("button", { name: "Metadata" }));
   const caption = await within(viewer).findByRole("textbox", { name: "Caption" });
   await waitFor(() => expect(caption.hasAttribute("disabled")).toBe(false));
   await fireEvent.input(caption, { target: { value: "Draft caption" } });
@@ -3543,9 +3522,11 @@ async function applyAlbumKeyword() {
   await waitFor(() => expect((changed.mock.contexts[1] as Photos).authored.busy).toBe(false));
   await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
   await waitFor(() =>
-    expect(screen.getByRole("combobox", { name: /Keyword:/ }).hasAttribute("disabled")).toBe(false),
+    expect(screen.getByRole("combobox", { name: "Keyword" }).hasAttribute("disabled")).toBe(false),
   );
-  await fireEvent.click(screen.getByRole("combobox", { name: /Keyword:/ }));
+  await fireEvent.input(screen.getByRole("combobox", { name: "Keyword" }), {
+    target: { value: "Portfolio" },
+  });
   await fireEvent.click(screen.getByRole("option", { name: /Portfolio/ }));
   await fireEvent.click(screen.getByRole("button", { name: "Add keyword" }));
   await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
@@ -3569,14 +3550,14 @@ it("forwards photo edit and Undo receipts to Library, Albums, and Documents", as
   await fireEvent.click(screen.getByRole("button", { name: "Documents" }));
   await fireEvent.click(await screen.findByRole("cell", { name: "Photo 1.jpg" }));
   const inspector = await screen.findByRole("region", {
-    name: "Document authority for Photo 1.jpg",
+    name: "Document details for Photo 1.jpg",
   });
   await waitFor(() =>
     expect(within(inspector).getByRole("group", { name: "Assigned tags" }).textContent).toContain(
       "Portfolio",
     ),
   );
-  expect(within(inspector).getByText("Revision").nextElementSibling?.textContent).toBe("3");
+  expect(within(inspector).getByRole("button", { name: "Manage" })).toBeTruthy();
   await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
   await screen.findByRole("button", { name: "Select Photo 1.jpg" });
   await screen.findByText("1 photo");
@@ -3591,13 +3572,12 @@ it("forwards photo edit and Undo receipts to Library, Albums, and Documents", as
   await waitFor(() => expect((changed.mock.contexts[3] as Photos).authored.busy).toBe(false));
   await fireEvent.click(screen.getByRole("button", { name: "Documents" }));
   const undoneInspector = await screen.findByRole("region", {
-    name: "Document authority for Photo 1.jpg",
+    name: "Document details for Photo 1.jpg",
   });
   await waitFor(() =>
-    expect(within(undoneInspector).getByText("No tags are assigned to this node.")).toBeTruthy(),
+    expect(within(undoneInspector).getByRole("button", { name: "Add tag" })).toBeTruthy(),
   );
   expect(fetcher).toHaveBeenCalledWith("/api/v1/nodes/1", expect.anything());
-  expect(within(undoneInspector).getByText("Revision").nextElementSibling?.textContent).toBe("4");
 });
 
 it("refreshes a retained Documents person search after clearing a face in Photos", async () => {
@@ -3665,12 +3645,12 @@ it("refreshes a retained Documents person search after clearing a face in Photos
   });
   render(App);
   const search = await screen.findByRole("searchbox", { name: "Search documents" });
-  await screen.findByText("This folder is empty");
+  await screen.findByText("Empty folder");
   await fireEvent.input(search, { target: { value: "person:Ada" } });
   await fireEvent.submit(search.closest("form")!);
   await waitFor(() => expect(searches).toBe(1));
   await screen.findByRole("cell", { name: node.path });
-  await screen.findByText("1 item");
+  await screen.findByText("1 result");
   await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
   await fireEvent.click(await screen.findByRole("button", { name: `Select ${item.name}` }));
   await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
@@ -3684,7 +3664,7 @@ it("refreshes a retained Documents person search after clearing a face in Photos
   await fireEvent.click(screen.getByRole("button", { name: "Documents" }));
   await screen.findByText("No matching documents");
   expect(screen.queryByRole("cell", { name: node.path })).toBeNull();
-  expect(screen.getByText("0 items")).toBeTruthy();
+  expect(screen.getByText("0 results")).toBeTruthy();
   expect(searches).toBe(2);
   expect(
     (screen.getByRole("searchbox", { name: "Search documents" }) as HTMLInputElement).value,
@@ -3887,8 +3867,8 @@ async function openKeywordsPastFirstPage() {
   expect(fetcher.mock.calls.some(([url]) => url === "/api/v1/tags?limit=1000&offset=1000")).toBe(
     true,
   );
-  const picker = within(inspector).getByRole("combobox", { name: "Keyword: Choose keyword" });
-  await fireEvent.click(picker);
+  const picker = within(inspector).getByRole("combobox", { name: "Keyword" });
+  await fireEvent.input(picker, { target: { value: "Beyond the first page" } });
   expect(
     await within(inspector).findByRole("option", { name: /Beyond the first page/ }),
   ).toBeTruthy();
@@ -3961,7 +3941,6 @@ it("guards a Hidden draft while a status failure conceals its workspace", async 
   }
   unavailable = false;
   await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-  await fireEvent.click(await screen.findByRole("button", { name: "Metadata" }));
   expect(
     ((await screen.findByRole("textbox", { name: "Caption" })) as HTMLInputElement).value,
   ).toBe("Retained Hidden caption");
@@ -3996,7 +3975,6 @@ it("keeps a Hidden viewer's return point while a status failure refuses to close
   await fireEvent.click(screen.getByRole("button", { name: "Hidden" }));
   await fireEvent.click(await screen.findByRole("button", { name: "Open Photo 1.jpg" }));
   const viewer = await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
-  await fireEvent.click(within(viewer).getByRole("button", { name: "Metadata" }));
   const caption = await within(viewer).findByRole("textbox", { name: "Caption" });
   await waitFor(() => expect(caption.hasAttribute("disabled")).toBe(false));
   await fireEvent.input(caption, { target: { value: "Retained Hidden caption" } });
@@ -4006,8 +3984,6 @@ it("keeps a Hidden viewer's return point while a status failure refuses to close
   unavailable = false;
   await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   const restored = await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
-  if (!within(restored).queryByRole("button", { name: "Clear edits" }))
-    await fireEvent.click(within(restored).getByRole("button", { name: "Metadata" }));
   await fireEvent.click(await within(restored).findByRole("button", { name: "Clear edits" }));
   await fireEvent.keyDown(restored, { key: "ArrowRight" });
   await screen.findByRole("dialog", { name: "Photo viewer, Photo 2.jpg" });
@@ -4054,7 +4030,6 @@ it.each(["while open", "after a status failure"])(
     await fireEvent.click(await screen.findByRole("button", { name: "Open Photo 1.jpg" }));
     const viewer = await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
     expect(location.hash).toContain("photo=photo-1");
-    await fireEvent.click(within(viewer).getByRole("button", { name: "Metadata" }));
     const caption = await within(viewer).findByRole("textbox", { name: "Caption" });
     await waitFor(() => expect(caption.hasAttribute("disabled")).toBe(false));
     await fireEvent.input(caption, { target: { value: "Discarded Hidden caption" } });
@@ -4266,9 +4241,8 @@ it.each([false, true])(
       await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" }),
     );
     await fireEvent.click(screen.getByRole("button", { name: "Export selection" }));
-    await fireEvent.click(await screen.findByRole("button", { name: "Prepare" }));
-    await fireEvent.click(await screen.findByRole("button", { name: "Start reviewed export" }));
-    await screen.findByRole("button", { name: "Download verified ZIP" });
+    await fireEvent.click(await screen.findByRole("button", { name: "Download ZIP" }));
+    await screen.findByRole("button", { name: "New export" });
     await fireEvent.click(screen.getByRole("button", { name: "Close export" }));
     await fireEvent.click(screen.getByRole("button", { name: "Clear selection" }));
     await fireEvent.click(screen.getByRole("checkbox", { name: "Select photo Photo 2.jpg" }));
@@ -4278,9 +4252,10 @@ it.each([false, true])(
     await fireEvent.click(screen.getByRole("button", { name: "Documents" }));
     await screen.findByRole("cell", { name: "Synthetic document.txt" });
     await fireEvent.click(screen.getByRole("button", { name: "Export" }));
-    expect(screen.getByText("Photo export")).toBeTruthy();
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Download files…" }));
+    expect(screen.getByText("Download photos")).toBeTruthy();
     expect(screen.getByText("1 photo")).toBeTruthy();
-    await fireEvent.click(screen.getByRole("button", { name: "Prepare another export" }));
+    await fireEvent.click(screen.getByRole("button", { name: "New export" }));
     await waitFor(() => expect(screen.queryByRole("button", { name: "Close export" })).toBeNull());
     await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
     if (hidden) await fireEvent.click(screen.getByRole("button", { name: "Hidden" }));
@@ -4289,8 +4264,8 @@ it.each([false, true])(
     if (clear) await fireEvent.click(clear);
     await fireEvent.click(third);
     await fireEvent.click(screen.getByRole("button", { name: "Export selection" }));
-    await fireEvent.click(await screen.findByRole("button", { name: "Prepare" }));
-    await screen.findByRole("button", { name: "Start reviewed export" });
+    await fireEvent.click(await screen.findByRole("button", { name: "Download ZIP" }));
+    await waitFor(() => expect(selections).toHaveLength(2));
     expect(selections).toEqual([
       { asset_ids: ["photo-1"], hidden },
       { asset_ids: ["photo-3"], hidden },
@@ -4368,7 +4343,6 @@ it.each([
     await screen.findByRole("button", { name: `Select ${other.name}` });
     await fireEvent.doubleClick(await screen.findByRole("button", { name: `Select ${item.name}` }));
     await screen.findByRole("dialog", { name: /^Photo viewer,/ });
-    await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
     const card = await screen.findByRole("button", { name: "Ada" });
     await waitFor(() =>
       expect(
@@ -5325,6 +5299,24 @@ it("clears the live update alert once the event stream opens again", async () =>
   expect(screen.queryByText("Failed to fetch")).toBeNull();
 });
 
+it("keeps the search bar on Albums and hides empty Albums and unconfigured Map navigation", async () => {
+  history.replaceState(null, "", "/photos/albums#web_session=synthetic&web_upload_secret=proof");
+  storage();
+  stubPhotoFetch(
+    vi.fn(async (url: string) => {
+      if (url.endsWith("/photos/albums")) return albumResponse([]);
+      if (url.endsWith("/photos/hidden")) return albumResponse({ configured: true });
+      return albumResponse({ items: [], nodes: [], tags: [], profiles: [], total: 0 });
+    }),
+  );
+  render(App);
+  await screen.findByText("No albums yet");
+  const nav = screen.getByRole("navigation", { name: "Docbank navigation" });
+  expect(within(nav).queryByRole("button", { name: "Map" })).toBeNull();
+  expect(within(nav).queryByRole("heading", { name: "Albums" })).toBeNull();
+  expect(within(nav).getAllByText("Albums")).toHaveLength(1);
+  expect(screen.getByRole("searchbox", { name: "Search photos" })).toBeTruthy();
+});
 it.each(["Hidden lock", "Hidden navigate", "Library lock"])(
   "keeps the person filter in its scope during %s before the workspace mounts",
   async (scenario) => {
@@ -5393,9 +5385,10 @@ it.each(["Hidden lock", "Hidden navigate", "Library lock"])(
       await screen.findByRole("button", { name: "Unlock" });
     }
     await fireEvent.click(screen.getByRole("button", { name: /^Albums$/ }));
-    await screen.findByRole("heading", { name: "Albums" });
+    expect(location.pathname).toBe("/photos/albums");
     navigating = false;
     if (action === "navigate") finishAccess(Response.json({ configured: true }));
+    await screen.findByRole("heading", { name: "Albums" });
     locked = false;
     await fireEvent.click(screen.getByRole("button", { name: /^Hidden$/ }));
     await waitFor(() => expect(hiddenQueries.length).toBeGreaterThan(0));

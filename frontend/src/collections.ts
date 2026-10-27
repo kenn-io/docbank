@@ -196,3 +196,8 @@ export async function setCollectionLabel(
   );
   return result;
 }
+
+// What the UI calls an import when no label has been saved.
+export function displayName(collection: Pick<Collection, "id" | "label">): string {
+  return collection.label ?? `Unlabeled import ${collection.id.slice(0, 8)}`;
+}

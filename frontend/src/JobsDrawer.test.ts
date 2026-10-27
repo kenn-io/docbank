@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import JobsDrawer from "./JobsDrawer.svelte";
 
 afterEach(() => {
@@ -28,33 +28,121 @@ function jobsResponse(
 }
 
 describe("background jobs drawer", () => {
-  it.each(["initial load", "lane controls"])(
-    "shows a retry for unavailable %s and recovers to the empty state",
-    async (failure) => {
-      vi.spyOn(globalThis, "fetch")
-        .mockResolvedValueOnce(
-          failure === "initial load"
-            ? new Response(JSON.stringify({ detail: "busy" }), {
-                status: 503,
-                headers: { "Content-Type": "application/json" },
-              })
-            : new Response(
-                JSON.stringify({ items: [], lane_controls_error: "Lane controls are unavailable" }),
-                { headers: { "Content-Type": "application/json" } },
-              ),
-        )
-        .mockResolvedValueOnce(jobsResponse([]));
-      render(JobsDrawer, { session: "short-lived", onclose: vi.fn(), onauthfailure: vi.fn() });
-      expect((await screen.findByRole("alert")).textContent).toBe(
-        failure === "initial load" ? "busy" : "Lane controls are unavailable",
+  it("pauses an idle worker", async () => {
+    let paused = false;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, options) => {
+      if (options?.method === "PUT") paused = JSON.parse(String(options.body)).paused;
+      return jobsResponse(
+        [
+          {
+            name: "derive:visual-previews",
+            lane: "derive:visual-previews",
+            status: "running",
+            busy: false,
+            started_at: "2026-07-23T12:00:00Z",
+          },
+          {
+            name: "extract:plain-text",
+            lane: "extract:plain-text",
+            status: "running",
+            busy: false,
+            started_at: "2026-07-23T12:00:00Z",
+          },
+        ],
+        [
+          {
+            lane: "derive:visual-previews",
+            paused,
+            concurrency: 1,
+            revision: paused ? 2 : 1,
+            can_set_concurrency: true,
+          },
+        ],
       );
-      expect(screen.queryByText("No background jobs")).toBeNull();
-      await fireEvent.click(screen.getByRole("button", { name: "Try again" }));
-      expect(await screen.findByText("No background jobs")).toBeTruthy();
-      expect(screen.queryByRole("alert")).toBeNull();
-      expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+    });
+    render(JobsDrawer, { session: "short-lived", onclose: vi.fn(), onauthfailure: vi.fn() });
+    await screen.findByRole("button", { name: "Pause Making previews" });
+    await fireEvent.click(screen.getByRole("button", { name: "Pause Making previews" }));
+    await waitFor(() =>
+      expect(screen.getByRole("row", { name: /Making previews Paused/ })).toBeTruthy(),
+    );
+    expect(screen.getByRole("button", { name: "Resume Making previews" })).toBeTruthy();
+    const write = fetchSpy.mock.calls.find(([, options]) => options?.method === "PUT")!;
+    expect(String(write[0])).toContain("/lanes/derive%3Avisual-previews");
+  });
+
+  it.each([
+    {
+      state: "queued in a paused lane",
+      lane: "photo_import",
+      status: "queued",
+      paused: true,
+      label: "Importing photos Paused",
+      error: undefined,
     },
-  );
+    {
+      state: "idle",
+      lane: "extract:plain-text",
+      status: "running",
+      paused: false,
+      label: "Extracting text Idle",
+      error: undefined,
+    },
+    {
+      state: "paused",
+      lane: "extract:plain-text",
+      status: "running",
+      paused: true,
+      label: "Extracting text Paused",
+      error: undefined,
+    },
+    {
+      state: "failed",
+      lane: "extract:plain-text",
+      status: "failed",
+      paused: false,
+      label: "Extracting text Failed",
+      error: "source is unavailable",
+    },
+    {
+      state: "waiting",
+      lane: "extract:plain-text",
+      status: "running",
+      paused: false,
+      label: "Extracting text Waiting",
+      error: "source is unavailable",
+    },
+    {
+      state: "queued",
+      lane: "photo_import",
+      status: "queued",
+      paused: false,
+      label: "Importing photos Queued",
+      error: undefined,
+    },
+  ])("keeps $state work below Nothing running", async ({ lane, status, paused, label, error }) => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jobsResponse(
+        [{ name: lane, lane, status, busy: false, started_at: "2026-07-23T12:00:00Z", error }],
+        [{ lane, paused, concurrency: 1, revision: 1, can_set_concurrency: false }],
+      ),
+    );
+    render(JobsDrawer, { session: "synthetic", onclose: vi.fn(), onauthfailure: vi.fn() });
+    expect(await screen.findByText("Nothing running")).toBeTruthy();
+    expect(screen.queryByRole("region")).toBeNull();
+    expect(document.querySelector("details")).toBeNull();
+    const workers = screen.getByRole("table", { name: "All workers" });
+    expect(
+      screen.getByText("Nothing running").compareDocumentPosition(workers) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(within(workers).getByRole("row", { name: new RegExp(`^${label}(?: |$)`) })).toBeTruthy();
+    if (paused)
+      expect(
+        within(workers).getByRole("button", { name: `Resume ${label.replace(/ Paused$/, "")}` }),
+      ).toBeTruthy();
+    if (error) expect(screen.getByText(error)).toBeTruthy();
+  });
 
   it.each([
     ["initial load", 503, { detail: "busy" }, "busy"],
@@ -62,23 +150,13 @@ describe("background jobs drawer", () => {
       "lane controls",
       200,
       {
-        items: [
-          {
-            name: "storage:a",
-            kind: "photo_import",
-            lane: "photo_import",
-            operation_id: "a",
-            status: "running",
-            started_at: "2026-07-23T12:00:00Z",
-            can_cancel: true,
-          },
-        ],
+        items: [],
         lane_controls_error: "Lane controls are unavailable",
       },
       "Lane controls are unavailable",
     ],
   ])(
-    "keeps the unavailable %s error while a poll is pending",
+    "keeps the unavailable %s error while a poll is pending and recovers through retry",
     async (_failure, status, body, message) => {
       vi.useFakeTimers();
       try {
@@ -89,15 +167,21 @@ describe("background jobs drawer", () => {
               headers: { "Content-Type": "application/json" },
             }),
           )
-          .mockReturnValueOnce(new Promise<Response>(() => {}));
+          .mockReturnValueOnce(new Promise<Response>(() => {}))
+          .mockResolvedValueOnce(jobsResponse([]));
         render(JobsDrawer, { session: "short-lived", onclose: vi.fn(), onauthfailure: vi.fn() });
         await vi.advanceTimersByTimeAsync(0);
         expect(screen.getByRole("alert").textContent).toBe(message);
+        expect(screen.queryByText("Nothing running")).toBeNull();
         await vi.advanceTimersByTimeAsync(2000);
         expect(globalThis.fetch).toHaveBeenCalledTimes(2);
         expect(screen.getByRole("alert").textContent).toBe(message);
-        expect(screen.queryByText("No background jobs")).toBeNull();
-        expect(screen.queryByText("Read-only")).toBeNull();
+        expect(screen.queryByText("Nothing running")).toBeNull();
+        await fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+        await vi.advanceTimersByTimeAsync(0);
+        expect(screen.getByText("Nothing running")).toBeTruthy();
+        expect(screen.queryByRole("alert")).toBeNull();
+        expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
       } finally {
         vi.useRealTimers();
       }
@@ -110,7 +194,8 @@ describe("background jobs drawer", () => {
       kind: "photo_import",
       lane: "photo_import",
       operation_id: "a",
-      status: "queued",
+      status: "running",
+      busy: true,
       started_at: "2026-07-23T12:00:00Z",
       completed_objects: 1,
       total_objects: 2,
@@ -141,16 +226,15 @@ describe("background jobs drawer", () => {
     );
     render(JobsDrawer, { session: "short-lived", onclose: vi.fn(), onauthfailure: vi.fn() });
     expect((await screen.findByRole("alert")).textContent).toBe("Lane controls are unavailable");
-    expect(screen.queryByText("Read-only")).toBeNull();
     expect(screen.getByText("1 of 2 groups")).toBeTruthy();
-    await fireEvent.click(screen.getByRole("button", { name: "Cancel Photo import a" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Cancel Importing photos a" }));
     const cancel = fetchSpy.mock.calls.find(([url]) =>
       String(url).endsWith("/api/v1/jobs/a/cancel"),
     );
     expect(cancel?.[1]?.method).toBe("POST");
     available = true;
     await fireEvent.click(screen.getByRole("button", { name: "Refresh background jobs" }));
-    expect(await screen.findByRole("button", { name: "Resume Photo import" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Resume Importing photos" })).toBeTruthy();
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
@@ -169,12 +253,14 @@ describe("background jobs drawer", () => {
         lane: "place",
         operation_id: "a",
         status: "completed",
+        busy: false,
         started_at: "2026-07-23T12:00:00Z",
       },
       {
         name: "extract:plain-text",
         lane: "extract:plain-text",
         status: "completed",
+        busy: false,
         started_at: "2026-07-23T12:00:00Z",
       },
     ];
@@ -186,10 +272,12 @@ describe("background jobs drawer", () => {
         : jobsResponse(items, [control]),
     );
     render(JobsDrawer, { session: "short-lived", onclose: close, onauthfailure: auth });
-    await fireEvent.click(await screen.findByRole("button", { name: "Resume Storage placement" }));
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "Resume Moving stored files" }),
+    );
     await waitFor(() => expect(auth).toHaveBeenCalledOnce());
     expect(close).toHaveBeenCalledOnce();
-    expect(screen.getByText("Paused")).toBeTruthy();
+    expect(screen.getAllByText("Paused").length).toBeGreaterThan(0);
   });
 
   it("keeps a stale-revision warning across polls until another lane write succeeds", async () => {
@@ -220,13 +308,11 @@ describe("background jobs drawer", () => {
       });
       render(JobsDrawer, { session: "short-lived", onclose: vi.fn(), onauthfailure: vi.fn() });
       await vi.advanceTimersByTimeAsync(0);
-      expect(screen.getByText("Paused").parentElement?.textContent).toBe("Paused Idle");
-      expect(screen.getByRole("button", { name: "Pause Storage repair" })).toBeTruthy();
-      expect(screen.getAllByText("Idle")).toHaveLength(2);
-      expect(screen.queryByText("No background jobs")).toBeNull();
-      expect(screen.queryByText("Started")).toBeNull();
-      expect(screen.queryByRole("progressbar")).toBeNull();
-      await fireEvent.click(screen.getByRole("button", { name: "Resume Storage placement" }));
+      expect(screen.getAllByText("Paused").length).toBeGreaterThan(0);
+      expect(screen.getByRole("button", { name: "Pause Repairing storage" })).toBeTruthy();
+      await fireEvent.click(
+        screen.getAllByRole("button", { name: "Resume Moving stored files" })[0],
+      );
       await vi.advanceTimersByTimeAsync(0);
       expect(screen.getByRole("alert").textContent).toContain("changed elsewhere");
       await vi.advanceTimersByTimeAsync(2000);
@@ -234,9 +320,9 @@ describe("background jobs drawer", () => {
       const writes = fetchSpy.mock.calls.filter(([, options]) => options?.method === "PUT");
       expect(writes).toHaveLength(1);
       expect(new Headers(writes[0][1]?.headers).get("If-Match")).toBe('"4"');
-      await fireEvent.click(screen.getByRole("button", { name: "Pause Storage repair" }));
+      await fireEvent.click(screen.getByRole("button", { name: "Pause Repairing storage" }));
       await vi.advanceTimersByTimeAsync(0);
-      expect(screen.getByRole("button", { name: "Resume Storage repair" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Resume Repairing storage" })).toBeTruthy();
       const pause = fetchSpy.mock.calls.filter(([, options]) => options?.method === "PUT")[1];
       expect(JSON.parse(String(pause[1]?.body))).toEqual({ paused: true, concurrency: 1 });
       expect(screen.queryByRole("alert")).toBeNull();
@@ -262,6 +348,7 @@ describe("background jobs drawer", () => {
       name: "derive:visual-previews",
       lane: "derive:visual-previews",
       status: "running",
+      busy: true,
       started_at: "2026-07-23T12:00:00Z",
       controllable: true,
       paused: false,
@@ -279,18 +366,18 @@ describe("background jobs drawer", () => {
     );
     render(JobsDrawer, { session: "short-lived", onclose: vi.fn(), onauthfailure: vi.fn() });
     await fireEvent.click(
-      await screen.findByRole("combobox", { name: "Concurrency Visual previews: 1 worker" }),
+      await screen.findByRole("combobox", { name: "Workers for Making previews: 1 worker" }),
     );
     await fireEvent.click(screen.getByRole("option", { name: "3 workers" }));
     expect(
-      screen.getByRole("button", { name: "Pause Visual previews" }).hasAttribute("disabled"),
+      screen.getByRole("button", { name: "Pause Making previews" }).hasAttribute("disabled"),
     ).toBe(true);
     const write = fetchSpy.mock.calls.find(([, options]) => options?.method === "PUT")!;
     expect(JSON.parse(String(write[1]?.body))).toEqual({ paused: false, concurrency: 3 });
     complete(jobsResponse([]));
     await waitFor(() =>
       expect(
-        screen.getByRole("button", { name: "Pause Visual previews" }).hasAttribute("disabled"),
+        screen.getByRole("button", { name: "Pause Making previews" }).hasAttribute("disabled"),
       ).toBe(false),
     );
   });
@@ -299,15 +386,24 @@ describe("background jobs drawer", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
       jobsResponse([
         {
+          name: "extract:email",
+          lane: "extract:email",
+          status: "running",
+          busy: false,
+          started_at: "2026-07-23T12:00:00Z",
+        },
+        {
           name: "extract:plain-text",
           lane: "extract:plain-text",
           status: "running",
+          busy: true,
           started_at: "2026-07-23T12:00:00Z",
         },
         {
           name: "watch:inbox",
           lane: "watch:inbox",
           status: "failed",
+          busy: false,
           started_at: "2026-07-23T11:00:00Z",
           finished_at: "2026-07-23T11:02:00Z",
           error: "source is unavailable",
@@ -322,14 +418,11 @@ describe("background jobs drawer", () => {
       onauthfailure: vi.fn(),
     });
 
-    expect(await screen.findByText("extract · plain text")).toBeTruthy();
-    expect(screen.getByText("watch · inbox")).toBeTruthy();
-    expect(screen.getByText("Failed")).toBeTruthy();
-    expect(screen.getByText("Progress unavailable")).toBeTruthy();
-    expect(screen.getAllByText("Read-only")).toHaveLength(2);
-    expect(screen.getByText("Finished")).toBeTruthy();
-    expect(screen.getByText("source is unavailable")).toBeTruthy();
-    expect(screen.getByText("1 running · 2 total")).toBeTruthy();
+    expect(await screen.findByRole("region", { name: "Extracting text" })).toBeTruthy();
+    const failed = within(screen.getByRole("row", { name: /Watching inbox Failed/ }));
+    expect(failed.getByText("Failed")).toBeTruthy();
+    expect(failed.getByText("source is unavailable")).toBeTruthy();
+    expect(screen.getByText("1 running")).toBeTruthy();
 
     await fireEvent.click(screen.getByRole("button", { name: "Close background jobs" }));
     expect(close).toHaveBeenCalledOnce();
@@ -346,6 +439,7 @@ describe("background jobs drawer", () => {
           lane: "photo_import",
           operation_id: id,
           status: "running",
+          busy: true,
           started_at: "2026-07-23T12:00:00Z",
           completed_objects: 75,
           total_objects: 300,
@@ -357,6 +451,7 @@ describe("background jobs drawer", () => {
           lane: "photo_import",
           operation_id: "b",
           status: "queued",
+          busy: false,
           started_at: "2026-07-23T12:00:20Z",
           total_objects: 1,
           can_cancel: true,
@@ -367,6 +462,7 @@ describe("background jobs drawer", () => {
           lane: "photo_checkout",
           operation_id: "checkout",
           status: "running",
+          busy: true,
           started_at: "2026-07-23T12:00:30Z",
           completed_objects: 1,
           total_objects: 2,
@@ -377,6 +473,7 @@ describe("background jobs drawer", () => {
           lane: "place",
           operation_id: placeId,
           status: "queued",
+          busy: false,
           started_at: "2026-07-23T12:01:00Z",
           can_cancel: true,
         },
@@ -384,6 +481,7 @@ describe("background jobs drawer", () => {
           name: "watch:inbox",
           lane: "watch:inbox",
           status: "running",
+          busy: true,
           started_at: "2026-07-23T11:00:00Z",
         },
       ]),
@@ -395,19 +493,18 @@ describe("background jobs drawer", () => {
       onauthfailure: vi.fn(),
     });
 
-    const progress = await screen.findByRole("progressbar", { name: "Photo import progress" });
+    const progress = await screen.findByRole("progressbar", { name: "Importing photos progress" });
     expect(progress.getAttribute("aria-valuenow")).toBe("75");
     expect(progress.getAttribute("aria-valuemax")).toBe("301");
-    expect(screen.getByText("Photo import")).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Importing photos" })).toBeTruthy();
     expect(screen.getByText("75 of 301 groups")).toBeTruthy();
     expect(screen.getByText("1 of 2 files")).toBeTruthy();
     expect(screen.getAllByRole("button", { name: /^Cancel / })).toHaveLength(3);
-    expect(screen.getByText("2 operations")).toBeTruthy();
     expect(screen.getByText(id).tagName).toBe("CODE");
-    expect(screen.getByRole("button", { name: `Cancel Photo import ${id}` })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Cancel Photo import b" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: `Cancel Importing photos ${id}` })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Cancel Importing photos b" })).toBeTruthy();
 
-    await fireEvent.click(screen.getByRole("button", { name: /^Cancel Storage placement/ }));
+    await fireEvent.click(screen.getByRole("button", { name: /^Cancel Moving stored files/ }));
     const cancel = fetchSpy.mock.calls.find(([url]) =>
       String(url).endsWith(`/api/v1/jobs/${placeId}/cancel`),
     );
@@ -423,6 +520,7 @@ describe("background jobs drawer", () => {
         name: "extract:plain-text",
         lane: "extract:plain-text",
         status: "running",
+        busy: true,
         started_at: "2026-07-23T12:00:00Z",
       };
       const fetchSpy = vi
@@ -435,16 +533,21 @@ describe("background jobs drawer", () => {
           }),
         )
         .mockResolvedValueOnce(
-          jobsResponse([{ ...active, status: "completed", finished_at: "2026-07-23T12:05:00Z" }]),
+          jobsResponse([
+            { ...active, busy: false, status: "completed", finished_at: "2026-07-23T12:05:00Z" },
+          ]),
         );
 
       render(JobsDrawer, { session: "short-lived", onclose: vi.fn(), onauthfailure: vi.fn() });
       await vi.advanceTimersByTimeAsync(0);
       expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(screen.getByRole("region", { name: "Extracting text" })).toBeTruthy();
       await vi.advanceTimersByTimeAsync(2000);
       expect(fetchSpy).toHaveBeenCalledTimes(2);
       await vi.advanceTimersByTimeAsync(2000);
       expect(fetchSpy).toHaveBeenCalledTimes(3);
+      expect(screen.getByText("Nothing running")).toBeTruthy();
+      expect(screen.queryByRole("region", { name: "Extracting text" })).toBeNull();
       cleanup();
       await vi.advanceTimersByTimeAsync(4000);
       expect(fetchSpy).toHaveBeenCalledTimes(3);
@@ -463,6 +566,7 @@ describe("background jobs drawer", () => {
             kind: "photo_checkout_scan",
             lane: "photo_checkout",
             status: "running",
+            busy: true,
             started_at: "2026-01-01T00:00:00Z",
             total_objects: 2,
             completed_objects: 0,
@@ -475,6 +579,7 @@ describe("background jobs drawer", () => {
             kind: "photo_checkout_commit",
             lane: "photo_checkout",
             status: "failed",
+            busy: false,
             started_at: "2026-01-01T00:00:00Z",
             checkout_results: { clean: 2, conflict: 1 },
           },
@@ -483,12 +588,41 @@ describe("background jobs drawer", () => {
       ),
     );
     render(JobsDrawer, { session: "short-lived", onclose: vi.fn(), onauthfailure: vi.fn() });
-    expect(await screen.findByText("Verified")).toBeTruthy();
-    expect(screen.getByText("Photo checkout")).toBeTruthy();
-    expect(screen.getByText("Scan")).toBeTruthy();
-    expect(screen.getByText("Commit")).toBeTruthy();
-    expect(screen.getByText("1.00 KiB of 4.00 KiB")).toBeTruthy();
-    expect(screen.getByText("Clean")).toBeTruthy();
-    expect(screen.getByText("Conflict")).toBeTruthy();
+    expect(await screen.findByText("Verified 1.00 KiB of 4.00 KiB")).toBeTruthy();
+    const checkout = within(screen.getByRole("region", { name: "Photo checkout" }));
+    expect(checkout.getByText("Checking files")).toBeTruthy();
+    expect(checkout.getByText("Saving changes")).toBeTruthy();
+    expect(screen.getByText("2 clean, 1 conflict")).toBeTruthy();
   });
+});
+
+it("shows current running work ahead of a retained failure in the same lane", async () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    jobsResponse([
+      {
+        name: "storage:old",
+        kind: "place",
+        lane: "place",
+        operation_id: "old",
+        status: "failed",
+        busy: false,
+        started_at: "2026-07-23T11:00:00Z",
+        error: "Earlier operation failed",
+      },
+      {
+        name: "storage:current",
+        kind: "place",
+        lane: "place",
+        operation_id: "current",
+        status: "running",
+        busy: true,
+        started_at: "2026-07-23T12:00:00Z",
+      },
+    ]),
+  );
+  render(JobsDrawer, { session: "session", onclose: vi.fn(), onauthfailure: vi.fn() });
+  const lane = await screen.findByRole("region", { name: "Moving stored files" });
+  expect(screen.getByText("1 running")).toBeTruthy();
+  expect(within(lane).getByText("Earlier operation failed")).toBeTruthy();
+  expect(screen.getByRole("row", { name: "Moving stored files Running" })).toBeTruthy();
 });

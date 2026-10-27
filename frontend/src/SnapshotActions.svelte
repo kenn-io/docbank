@@ -8,217 +8,270 @@
 </script>
 
 <script lang="ts">
-  import { onDestroy } from "svelte";
-  import { Button, Modal, SelectDropdown, type SelectDropdownOption } from "@kenn-io/kit-ui";
+  import { onDestroy, untrack } from "svelte";
+  import CheckIcon from "@lucide/svelte/icons/check";
+  import { Button, Modal, SegmentedControl, Spinner } from "@kenn-io/kit-ui";
+  import TagPicker from "./TagPicker.svelte";
   import type { Tag } from "./generated/docbank.js";
+  import { randomUUID } from "./crypto.js";
+  import type { SelectionTarget } from "./selection.js";
   import { ACTION_MAX_BYTES } from "./actionRecovery.js";
+  import type { BatchTagReceipt } from "./batch-tags.js";
+  import { TagChangeRun } from "./tagChangeRun.svelte.js";
+  import { documentCount, tagChangeConsequence, tagChangeDone } from "./tagChangeText.js";
 
   interface Props {
-    selectedCount: number;
-    total: number;
+    session: string;
+    scope: SnapshotActionScope;
+    /** Documents the change covers: the selection, or every result. */
+    count: number;
+    /** Exact selected documents; used only for the selection scope. */
+    targets?: readonly SelectionTarget[];
     catalog: readonly Tag[];
-    catalogTotal: number;
     disabled: boolean;
-    onstart: (choice: SnapshotActionChoice) => void;
-    onimport: (bytes: Uint8Array) => void;
-    onresume: () => void;
-    onabandon: () => void;
+    /** Whole-result preparation is running in the workspace. */
+    preparing?: boolean;
+    onstart?: (choice: SnapshotActionChoice) => void;
+    onchanged?: (receipt: BatchTagReceipt) => void;
+    onunknown?: () => void;
+    oncreated?: () => void;
+    onimport?: (bytes: Uint8Array) => void;
     onclose: () => void;
+    onauthfailure: (cause: unknown) => void;
     errorMessage?: string;
   }
 
   let {
-    selectedCount,
-    total,
+    session,
+    scope,
+    count,
+    targets = [],
     catalog,
-    catalogTotal,
     disabled,
+    preparing = false,
     onstart,
+    onchanged,
+    onunknown,
+    oncreated,
     onimport,
-    onresume,
-    onabandon,
     onclose,
+    onauthfailure,
     errorMessage = "",
   }: Props = $props();
-  let tagID = $state("");
+  let tag = $state<Tag>();
+  let assign = $state(true);
   let reading = $state(false);
-  let failure = $state("");
-  let abandonWarning = $state(false);
-  let active = true;
+  let readFailure = $state("");
+  let receipt = $state<BatchTagReceipt>();
+  const run = new TagChangeRun({
+    session: untrack(() => session),
+    onauthfailure: (cause) => onauthfailure(cause),
+    onconfirmed: (confirmed) => {
+      receipt = confirmed;
+      onchanged?.(confirmed);
+    },
+    onunknown: () => onunknown?.(),
+    unknownMessage: "The result is unknown. Check these documents' tags before trying again.",
+    staleMessage: "Some documents changed. Close and select them again.",
+  });
+  const applying = $derived(run.pending);
+  const stale = $derived(run.stale);
+  const failure = $derived(readFailure || run.failure);
+  let fileInput = $state<HTMLInputElement>();
+  // The selection is captured when the dialog opens; later clicks on the page do not change it.
+  const captured = untrack(() => targets.map((target) => ({ ...target })));
+  let alive = true;
   onDestroy(() => {
-    active = false;
+    alive = false;
+    run.destroy();
   });
 
-  const options = $derived<SelectDropdownOption[]>([
-    { value: "", label: "Choose a tag…" },
-    ...catalog.map((tag) => ({ value: tag.id, label: tag.name })),
-  ]);
+  const busy = $derived(disabled || preparing || applying || reading);
+  const locked = $derived(busy || stale || receipt !== undefined);
+  const consequence = $derived(
+    tag
+      ? tagChangeConsequence(assign, tag.name, count)
+      : `${assign ? "Adds a tag to" : "Removes a tag from"} ${documentCount(count)}.`,
+  );
 
-  function start(scope: SnapshotActionScope, assign: boolean): void {
-    if (disabled || reading || !tagID || (scope === "selection" && selectedCount === 0)) return;
-    onstart({ scope, tagID, assign });
+  function apply(): void {
+    if (locked || !tag || count === 0) return;
+    readFailure = "";
+    run.failure = "";
+    if (scope === "query") {
+      onstart?.({ scope, tagID: tag.id, assign });
+      return;
+    }
+    void run.submit({
+      operation_id: randomUUID(),
+      tag_id: tag.id,
+      assign,
+      nodes: captured.map((target) => ({ ...target })),
+    });
   }
 
   async function importFile(event: Event): Promise<void> {
     const input = event.currentTarget as HTMLInputElement;
     const file = input.files?.[0];
     input.value = "";
-    if (!file || disabled || reading) return;
+    if (!file || busy) return;
     reading = true;
-    failure = "";
+    readFailure = "";
+    run.failure = "";
     try {
       if (file.size > ACTION_MAX_BYTES)
         throw new Error("The action recovery file exceeds 128 MiB.");
       const bytes = new Uint8Array(await file.arrayBuffer());
-      if (active) onimport(bytes);
+      if (alive) onimport?.(bytes);
     } catch (cause) {
-      failure = cause instanceof Error ? cause.message : String(cause);
+      readFailure = cause instanceof Error ? cause.message : String(cause);
     } finally {
       reading = false;
     }
   }
+
+  function close(): void {
+    if (applying) return;
+    onclose();
+  }
 </script>
 
 <Modal
-  title="Tag frozen snapshot"
+  title={scope === "query" ? "Tag all results" : "Tag selected documents"}
   tone="info"
-  width="680px"
-  maxWidth="min(680px, calc(100vw - 32px))"
-  ariaLabel="Tag frozen snapshot"
-  {onclose}
-  closeOnOverlayClick={!disabled && !reading}
+  width="480px"
+  maxWidth="min(480px, calc(100vw - 32px))"
+  ariaLabel={scope === "query" ? "Tag all results" : "Tag selected documents"}
+  onclose={close}
+  closeOnOverlayClick={!busy}
 >
-  <div class="snapshot-actions">
-    <p class="warning">
-      Recovery files contain private document identities, hashes, sizes, and revisions. Store them
-      with the same care as vault metadata.
-    </p>
+  <div class="tag-change">
+    <div class="choice">
+      <TagPicker
+        class="tag-change__picker"
+        {session}
+        value={tag?.id ?? ""}
+        tags={catalog}
+        title="Tag"
+        placeholder="Tag name"
+        disabled={locked}
+        reopenAfterPick={false}
+        onchange={(id) => (tag = catalog.find((item) => item.id === id))}
+        onpick={(picked, created) => {
+          tag = picked;
+          if (created) oncreated?.();
+        }}
+        {onauthfailure}
+      />
+      <SegmentedControl
+        ariaLabel="Tag change"
+        options={[
+          { value: "add", label: "Add" },
+          { value: "remove", label: "Remove" },
+        ]}
+        value={assign ? "add" : "remove"}
+        onchange={(value) => (assign = value === "add")}
+        disabled={locked}
+      />
+    </div>
 
-    <SelectDropdown
-      value={tagID}
-      {options}
-      title="Tag for snapshot action"
-      disabled={disabled || reading}
-      onchange={(value) => (tagID = value)}
-    />
-    {#if catalogTotal > catalog.length}
-      <p class="hint">Showing {catalog.length} of {catalogTotal} tag definitions.</p>
+    {#if receipt}
+      <p class="status done" role="status">
+        <CheckIcon size={14} aria-hidden="true" />
+        {tagChangeDone(
+          receipt.assign,
+          tag?.name ?? "",
+          receipt.nodes.filter((node) => node.changed).length,
+          receipt.nodes.length,
+        )}
+      </p>
+    {:else}
+      <p class="consequence" class:pending={!tag}>{consequence}</p>
     {/if}
-
-    <section aria-labelledby="visible-action-heading">
-      <h3 id="visible-action-heading">Visible selection</h3>
-      <p>
-        {selectedCount} document{selectedCount === 1 ? "" : "s"} selected on this visible page. This does
-        not include unselected or other snapshot pages.
+    {#if applying || preparing}
+      <p class="status" role="status">
+        <Spinner size={14} />
+        {preparing ? `Preparing ${documentCount(count)}…` : "Applying…"}
       </p>
-      <div class="actions">
-        <Button
-          tone="info"
-          disabled={disabled || reading || !tagID || selectedCount === 0}
-          onclick={() => start("selection", true)}>Add tag to visible selection</Button
+    {/if}
+    {#if failure || errorMessage}<p class="alert" role="alert">{failure || errorMessage}</p>{/if}
+  </div>
+  {#snippet footer()}
+    {#if scope === "query" && !receipt}
+      <span class="footer-start">
+        <Button size="sm" surface="soft" disabled={busy} onclick={() => fileInput?.click()}
+          >{reading ? "Reading…" : "Resume from file…"}</Button
         >
-        <Button
-          disabled={disabled || reading || !tagID || selectedCount === 0}
-          onclick={() => start("selection", false)}>Remove tag from visible selection</Button
-        >
-      </div>
-    </section>
-
-    <section aria-labelledby="whole-action-heading">
-      <h3 id="whole-action-heading">Whole frozen query</h3>
-      <p>
-        Prepare a recoverable action for all {total} documents in the frozen query, including pages not
-        currently visible.
-      </p>
-      <div class="actions">
-        <Button
-          tone="info"
-          disabled={disabled || reading || !tagID || total === 0}
-          onclick={() => start("query", true)}>Add tag to whole query</Button
-        >
-        <Button
-          disabled={disabled || reading || !tagID || total === 0}
-          onclick={() => start("query", false)}>Remove tag from whole query</Button
-        >
-      </div>
-    </section>
-
-    <section aria-labelledby="recover-action-heading">
-      <h3 id="recover-action-heading">Recover an action</h3>
-      <p>
-        Selecting a recovery file only validates and stages it. It never runs a mutation by itself.
-      </p>
-      <Button disabled={disabled || reading} onclick={onresume}>Resume retained action</Button>
-      {#if abandonWarning}
-        <p role="alert">
-          Delete the retained action for this vault, even if it cannot be opened. Completed or
-          in-flight changes are not rolled back. Keep a recovery file if you need its receipts.
-        </p>
-        <Button tone="danger" disabled={disabled || reading} onclick={onabandon}
-          >Abandon retained action without rollback</Button
-        >
-      {:else}
-        <Button disabled={disabled || reading} onclick={() => (abandonWarning = true)}
-          >Abandon retained action…</Button
-        >
-      {/if}
-      <label class:disabled={disabled || reading}>
-        <span>Import action recovery file</span>
         <input
+          class="file"
           type="file"
           accept="application/json,.json"
-          disabled={disabled || reading}
+          aria-label="Resume from a recovery file"
+          tabindex="-1"
+          bind:this={fileInput}
+          disabled={busy}
           onchange={(event) => void importFile(event)}
         />
-      </label>
-    </section>
-
-    {#if failure || errorMessage}<p role="alert">{failure || errorMessage}</p>{/if}
-  </div>
-  {#snippet footer()}<Button surface="soft" disabled={reading} onclick={onclose}>Cancel</Button
-    >{/snippet}
+      </span>
+    {/if}
+    {#if receipt}
+      <Button tone="info" surface="solid" onclick={onclose}>Done</Button>
+    {:else}
+      <Button surface="soft" disabled={applying} onclick={close}>Cancel</Button>
+      <Button tone="info" surface="solid" disabled={locked || !tag || count === 0} onclick={apply}
+        >{scope === "query" ? "Continue" : "Apply"}</Button
+      >
+    {/if}
+  {/snippet}
 </Modal>
 
 <style>
-  .snapshot-actions {
+  .tag-change {
     display: grid;
-    gap: var(--space-5);
+    gap: var(--space-4);
   }
-  .snapshot-actions p,
-  .snapshot-actions h3 {
+  .tag-change p {
     margin: 0;
   }
-  .snapshot-actions section {
-    display: grid;
-    gap: var(--space-3);
-    padding-block-start: var(--space-4);
-    border-top: 1px solid var(--border-default);
-  }
-  .snapshot-actions h3 {
-    font-size: var(--font-size-sm);
-  }
-  .actions {
+  .choice {
     display: flex;
-    flex-wrap: wrap;
+    align-items: center;
     gap: var(--space-3);
   }
-  .warning {
-    padding: var(--space-3);
-    border: 1px solid color-mix(in srgb, var(--accent-amber) 35%, var(--border-default));
-    border-radius: var(--radius-md);
-    background: color-mix(in srgb, var(--accent-amber) 8%, var(--bg-surface));
+  .choice :global(.tag-change__picker) {
+    flex: 1;
+    min-width: 0;
   }
-  .hint {
+  .consequence {
+    color: var(--text-primary);
+    font-weight: var(--font-weight-semibold, 600);
+  }
+  .consequence.pending {
     color: var(--text-muted);
-    font-size: var(--font-size-sm);
+    font-weight: inherit;
   }
-  label {
-    display: grid;
+  .status {
+    display: flex;
+    align-items: center;
     gap: var(--space-2);
+    color: var(--text-secondary);
     font-size: var(--font-size-sm);
-    font-weight: 600;
   }
-  label.disabled {
-    opacity: 0.6;
+  .status.done {
+    color: var(--accent-green);
+  }
+  .alert {
+    color: var(--accent-red);
+    font-size: var(--font-size-sm);
+  }
+  .footer-start {
+    margin-inline-end: auto;
+  }
+  .file {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    pointer-events: none;
   }
 </style>

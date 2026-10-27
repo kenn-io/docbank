@@ -274,3 +274,14 @@ it.each([
     photos.dispose();
   },
 );
+
+it("shows a query syntax example as the placeholder in query syntax mode", async () => {
+  const photos = new Photos("synthetic", vi.fn());
+  render(PhotoSearch, { photos });
+  const input = screen.getByRole("searchbox", { name: "Search photos" }) as HTMLInputElement;
+  expect(input.placeholder).toBe("Search photos");
+  photos.query = { ...photos.query, syntax: "advanced" };
+  await tick();
+  expect(input.placeholder).toBe("rating:5 pick label:red");
+  photos.dispose();
+});

@@ -220,7 +220,7 @@ it("keeps unsupported content on the verified-download fallback without a previe
   });
 
   expect(await screen.findByText(/not an eligible text or raster image preview/i)).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Download verified original" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Download" })).toBeTruthy();
   expect(fetchMock).not.toHaveBeenCalled();
 });
 
@@ -333,6 +333,9 @@ it("loads one exact rendition only while Text is active and keeps hostile markup
       buildID: authority.build,
     },
     queryTerms: ["alpha"],
+    highlightSets: [
+      { id: "review-terms", name: "Review terms", terms: [{ text: "beta", color: "#ffcc00" }] },
+    ],
     onauthfailure: vi.fn(),
   };
   const view = render(VerifiedPreview, props);
@@ -343,58 +346,57 @@ it("loads one exact rendition only while Text is active and keeps hostile markup
   expect(document.querySelector("script")).toBeNull();
   expect(document.querySelectorAll("mark[data-source='query']")).toHaveLength(2);
   expect(fetchMock).toHaveBeenCalledTimes(3);
-
   await view.rerender({ ...props, queryTerms: ["alpha", "blocked"] });
   await waitFor(() => expect(document.querySelectorAll("mark")).toHaveLength(3));
   expect(fetchMock).toHaveBeenCalledTimes(3);
 });
 
-it.each([
-  ["failed", "Text processing failed for this selected version."],
-  ["unprocessed", "This selected version has not been processed for text."],
-  ["unconfigured", "Text processing is not configured for this vault."],
-])("keeps the %s reason visible with verified original-text fallback", async (state, message) => {
-  const bytes = new TextEncoder().encode("Synthetic fallback evidence");
-  const selected = source(bytes, "66666666-6666-4666-8666-666666666666");
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    const path = String(input);
-    if (path === "/api/v1/renditions/text")
-      return new Response(
-        JSON.stringify({
-          state,
-          source: {
-            node_id: selected.nodeID,
-            revision: 8,
-            version_id: selected.versionID,
-            blob_hash: selected.blobHash,
-            size: selected.size,
-            media_type: selected.mimeType,
-          },
-          profile: {
-            name: "",
-            configuration: state === "unconfigured" ? "unconfigured" : "configured",
-            fingerprint: state === "unconfigured" ? "" : "b".repeat(64),
-          },
-          generation_id: "",
-          attachment_id: "",
-          build_id: "",
-        }),
-        { headers: { "Content-Type": "application/json" } },
-      );
-    if (init?.method === "POST") return ready(selected, "fallback");
-    if (path.endsWith("ticket=fallback")) return body(selected, bytes);
-    throw new Error(`unexpected request ${path}`);
-  });
-  render(VerifiedPreview, {
-    session: "session",
-    source: selected,
-    authorizationRevision: 8,
-    activeTab: "text",
-    onauthfailure: vi.fn(),
-  });
-  expect(await screen.findByText("Synthetic fallback evidence")).toBeTruthy();
-  expect(screen.getByText(message).getAttribute("role")).toBe("status");
-});
+it.each(["unprocessed", "unconfigured"])(
+  "keeps the Text view with Find for %s text",
+  async (state) => {
+    const bytes = new TextEncoder().encode("Synthetic fallback evidence");
+    const selected = source(bytes, "66666666-6666-4666-8666-666666666666");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const path = String(input);
+      if (path === "/api/v1/renditions/text")
+        return new Response(
+          JSON.stringify({
+            state,
+            source: {
+              node_id: selected.nodeID,
+              revision: 8,
+              version_id: selected.versionID,
+              blob_hash: selected.blobHash,
+              size: selected.size,
+              media_type: selected.mimeType,
+            },
+            profile: {
+              name: "",
+              configuration: state === "unconfigured" ? "unconfigured" : "configured",
+              fingerprint: state === "unconfigured" ? "" : "b".repeat(64),
+            },
+            generation_id: "",
+            attachment_id: "",
+            build_id: "",
+          }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      if (init?.method === "POST") return ready(selected, "fallback");
+      if (path.endsWith("ticket=fallback")) return body(selected, bytes);
+      throw new Error(`unexpected request ${path}`);
+    });
+    render(VerifiedPreview, {
+      session: "session",
+      source: selected,
+      authorizationRevision: 8,
+      activeTab: "text",
+      onauthfailure: vi.fn(),
+    });
+    expect(await screen.findByText("Synthetic fallback evidence")).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "Text" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("textbox", { name: "Find in verified text" })).toBeTruthy();
+  },
+);
 
 it.each([0, 64 * 1024 * 1024 + 1])(
   "offers download without requesting pages for a %i-byte PDF",
@@ -415,3 +417,79 @@ it.each([0, 64 * 1024 * 1024 + 1])(
     expect(fetcher).not.toHaveBeenCalled();
   },
 );
+
+it("opens an email on its Email tab and offers no Preview it cannot render", async () => {
+  const selected = source(
+    new TextEncoder().encode("From: a@example.com\r\n\r\nhello"),
+    "66666666-6666-4666-8666-666666666666",
+    "message/rfc822",
+  );
+  vi.spyOn(globalThis, "fetch").mockImplementation(() => new Promise(() => {}));
+
+  render(VerifiedPreview, {
+    session: "session",
+    source: selected,
+    authorizationRevision: 8,
+    onauthfailure: vi.fn(),
+  });
+
+  expect(screen.queryByRole("tab", { name: "Preview" })).toBeNull();
+  expect(screen.getByRole("tab", { name: "Email" }).getAttribute("aria-selected")).toBe("true");
+});
+
+it("keeps completed tabs mounted and loads an unvisited tab only when opened", async () => {
+  const bytes = new TextEncoder().encode("Already verified document");
+  const selected = source(bytes, "11111111-1111-4111-8111-111111111111");
+  const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (String(input) === "/api/v1/renditions/text")
+      return Response.json({
+        state: "unprocessed",
+        source: {
+          node_id: selected.nodeID,
+          revision: 8,
+          version_id: selected.versionID,
+          blob_hash: selected.blobHash,
+          size: selected.size,
+          media_type: selected.mimeType,
+        },
+        profile: { name: "", configuration: "configured", fingerprint: "b".repeat(64) },
+        generation_id: "",
+        attachment_id: "",
+        build_id: "",
+      });
+    if (init?.method === "POST") return ready(selected, "cached-preview");
+    if (String(input).endsWith("ticket=cached-preview")) return body(selected, bytes);
+    if (String(input).includes("duplicates")) return Response.json({}, { status: 404 });
+    throw new Error(`Unexpected request ${String(input)}`);
+  });
+  render(VerifiedPreview, {
+    session: "session",
+    source: selected,
+    authorizationRevision: 8,
+    onauthfailure: vi.fn(),
+  });
+  const preview = await screen.findByText("Already verified document");
+  expect(fetcher.mock.calls.filter(([input]) => String(input).includes("duplicates"))).toHaveLength(
+    0,
+  );
+  await fireEvent.click(screen.getByRole("tab", { name: "Duplicates" }));
+  await screen.findByText("No duplicates");
+  await fireEvent.click(screen.getByRole("tab", { name: "Text" }));
+  const find = await screen.findByRole("textbox", { name: "Find in verified text" });
+  await fireEvent.input(find, { target: { value: "verified" } });
+  await fireEvent.click(screen.getByRole("tab", { name: "Duplicates" }));
+  const completedRequests = fetcher.mock.calls.filter(
+    ([input]) => String(input) !== "/api/v1/renditions/text",
+  ).length;
+  await fireEvent.click(screen.getByRole("tab", { name: "Text" }));
+  expect(screen.queryByText("Loading text…")).toBeNull();
+  expect(screen.getByRole("textbox", { name: "Find in verified text" })).toBe(find);
+  expect((find as HTMLInputElement).value).toBe("verified");
+  await fireEvent.click(screen.getByRole("tab", { name: "Preview" }));
+  expect(screen.getByText("Already verified document")).toBe(preview);
+  await fireEvent.click(screen.getByRole("tab", { name: "Duplicates" }));
+  expect(screen.getByText("No duplicates")).toBeTruthy();
+  expect(
+    fetcher.mock.calls.filter(([input]) => String(input) !== "/api/v1/renditions/text"),
+  ).toHaveLength(completedRequests);
+});

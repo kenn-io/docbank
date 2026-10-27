@@ -1,6 +1,8 @@
 <script lang="ts">
   import { tick, untrack } from "svelte";
-  import { Chip, Spinner } from "@kenn-io/kit-ui";
+  import { Button, FindBar, SelectDropdown, Spinner } from "@kenn-io/kit-ui";
+  import AppTooltip from "./AppTooltip.svelte";
+  import ShieldCheckIcon from "@lucide/svelte/icons/shield-check";
   import { APIError } from "./api-transport.js";
   import { previewEligibility, readVerifiedPreview } from "./download.js";
   import type { HighlightTerm } from "./query.js";
@@ -18,21 +20,27 @@
     session,
     source,
     authorizationRevision,
+    active = true,
+    processingRevision = 0,
     profileName = "",
     observed,
     queryTerms = [],
     queryHighlightError = "",
     highlightSets = [],
+    onprocess,
     onauthfailure,
   }: {
     session: string;
     source: SelectedSource;
     authorizationRevision: number;
+    active?: boolean;
+    processingRevision?: number;
     profileName?: string;
     observed?: RenditionObservation;
     queryTerms?: string[];
     queryHighlightError?: string;
     highlightSets?: HighlightChoice[];
+    onprocess?: () => void;
     onauthfailure: (cause: unknown) => void;
   } = $props();
 
@@ -62,26 +70,35 @@
   const highlightTerms = $derived(
     highlightSets.find((item) => item.id === highlightSetID)?.terms ?? [],
   );
-  const marked = $derived(markText(text, { find, highlightTerms, queryTerms }));
+  const marked = $derived(markText(text, find ? { find } : { highlightTerms, queryTerms }));
+
+  const findMatches = $derived(find ? marked.matches : []);
+  const refreshKey = $derived(`${loadKey}:${active}:${processingRevision}`);
+  let completedKey = "";
+  let completedResolution = "";
 
   $effect(() => {
     const key = loadKey;
+    void refreshKey;
     const inputs = untrack(() => ({
+      active,
       session,
       source,
       authorizationRevision,
       profileName,
       observed,
     }));
+    if (!inputs.active) return;
     const controller = new AbortController();
     let current = true;
-    void key;
-    resolution = null;
-    text = "";
+    if (key !== completedKey) {
+      resolution = null;
+      text = "";
+      originalFallback = false;
+      loading = true;
+      activeMatch = 0;
+    }
     error = "";
-    originalFallback = false;
-    loading = true;
-    activeMatch = 0;
     void resolveRenditionText(
       inputs.session,
       inputs.source,
@@ -92,6 +109,13 @@
     )
       .then(async (next) => {
         if (!current) return;
+        const fingerprint = JSON.stringify(next);
+        if (key === completedKey && fingerprint === completedResolution) return;
+        completedKey = "";
+        loading = true;
+        text = "";
+        originalFallback = false;
+        activeMatch = 0;
         resolution = next;
         if (next.state === "ready") {
           const received = await readVerifiedRenditionText(
@@ -102,33 +126,32 @@
             controller.signal,
           );
           if (current) text = received;
-          return;
+        } else if (next.state !== "verified_empty") {
+          let eligibility;
+          try {
+            eligibility = previewEligibility(inputs.source.mimeType, inputs.source.size);
+          } catch {
+            eligibility = undefined;
+          }
+          if (eligibility?.kind === "text") {
+            const fallback = await readVerifiedPreview(
+              inputs.session,
+              inputs.source,
+              inputs.authorizationRevision,
+              controller.signal,
+              () => undefined,
+            );
+            if (fallback.kind === "image") URL.revokeObjectURL(fallback.url);
+            else if (current) {
+              originalFallback = true;
+              text = fallback.text;
+            }
+          }
         }
-        if (next.state === "verified_empty") return;
-        let eligibility;
-        try {
-          eligibility = previewEligibility(inputs.source.mimeType, inputs.source.size);
-        } catch {
-          return;
+        if (current) {
+          completedKey = key;
+          completedResolution = fingerprint;
         }
-        if (eligibility.kind !== "text") return;
-        const fallback = await readVerifiedPreview(
-          inputs.session,
-          inputs.source,
-          inputs.authorizationRevision,
-          controller.signal,
-          () => undefined,
-        );
-        if (!current) {
-          if (fallback.kind === "image") URL.revokeObjectURL(fallback.url);
-          return;
-        }
-        if (fallback.kind !== "text") {
-          URL.revokeObjectURL(fallback.url);
-          return;
-        }
-        originalFallback = true;
-        text = fallback.text;
       })
       .catch((cause: unknown) => {
         if (!current || (cause instanceof DOMException && cause.name === "AbortError")) return;
@@ -141,15 +164,12 @@
     return () => {
       current = false;
       controller.abort();
-      text = "";
-      resolution = null;
-      error = "";
     };
   });
 
   function moveMatch(delta: number): void {
-    if (marked.matches.length === 0) return;
-    activeMatch = (activeMatch + delta + marked.matches.length) % marked.matches.length;
+    if (findMatches.length === 0) return;
+    activeMatch = (activeMatch + delta + findMatches.length) % findMatches.length;
     void tick().then(() => {
       textBox
         ?.querySelector<HTMLElement>(`mark[data-match-index="${activeMatch}"]`)
@@ -161,8 +181,7 @@
     if (state === "verified_empty")
       return "Processing verified that this document has no readable text.";
     if (state === "failed") return "Text processing failed for this selected version.";
-    if (state === "unprocessed") return "This selected version has not been processed for text.";
-    if (state === "unconfigured") return "Text processing is not configured for this vault.";
+    if (state === "unprocessed" || state === "unconfigured") return "";
     if (state === "profile_required")
       return "Choose a processing profile before reading rendition text.";
     return "The rendition recorded for this historical selection is no longer available.";
@@ -170,69 +189,69 @@
 </script>
 
 <div class="verified-text">
-  <div class="text-heading">
-    <div>
-      <strong>Verified text</strong><span
-        >{originalFallback ? "Exact original-text fallback" : "Exact selected rendition"}</span
+  {#if text || resolution?.state === "verified_empty"}
+    <div class="text-controls">
+      {#if text}
+        <FindBar
+          query={find}
+          matchCount={findMatches.length}
+          currentIndex={Math.min(activeMatch, Math.max(0, findMatches.length - 1))}
+          autofocus={false}
+          placeholder="Find"
+          inputAriaLabel="Find in verified text"
+          previousLabel="Previous text match"
+          nextLabel="Next text match"
+          closeLabel="Clear text search"
+          oninput={(value) => {
+            find = value.slice(0, 256);
+            activeMatch = 0;
+          }}
+          onnext={() => moveMatch(1)}
+          onprev={() => moveMatch(-1)}
+          onclose={() => {
+            find = "";
+            activeMatch = 0;
+          }}
+        />
+        {#if highlightSets.length}
+          <SelectDropdown
+            value={highlightSetID}
+            title="Saved highlight set"
+            options={[
+              { value: "", label: "Highlights" },
+              ...highlightSets.map((item) => ({ value: item.id, label: item.name })),
+            ]}
+            onchange={(value) => {
+              highlightSetID = value;
+              activeMatch = 0;
+            }}
+          />
+        {/if}
+      {/if}
+      <span class="verified"
+        ><AppTooltip text="Matches the stored SHA-256" focusable
+          ><ShieldCheckIcon size={14} aria-label="Verified" /></AppTooltip
+        ></span
       >
     </div>
-    {#if text || resolution?.state === "verified_empty"}<Chip size="xs" tone="success" dot
-        >SHA-256 verified</Chip
-      >{/if}
-  </div>
-  <div class="text-controls">
-    <label
-      >Find <input
-        aria-label="Find in verified text"
-        maxlength="256"
-        value={find}
-        oninput={(event) => {
-          find = event.currentTarget.value;
-          activeMatch = 0;
-        }}
-      /></label
-    >
-    <button
-      type="button"
-      aria-label="Previous text match"
-      disabled={marked.matches.length === 0}
-      onclick={() => moveMatch(-1)}>↑</button
-    >
-    <button
-      type="button"
-      aria-label="Next text match"
-      disabled={marked.matches.length === 0}
-      onclick={() => moveMatch(1)}>↓</button
-    >
-    <span aria-live="polite"
-      >{marked.matches.length
-        ? `${activeMatch + 1} of ${marked.matches.length}`
-        : "No matches"}</span
-    >
-    {#if highlightSets.length}
-      <label
-        >Highlights <select aria-label="Saved highlight set" bind:value={highlightSetID}>
-          <option value="">None</option>
-          {#each highlightSets as item (item.id)}<option value={item.id}>{item.name}</option>{/each}
-        </select></label
-      >
-    {/if}
-  </div>
+  {/if}
   {#if queryHighlightError}<p class="notice" role="status">
       Query highlights unavailable: {queryHighlightError}
     </p>{/if}
   {#if loading}
-    <div class="loading" role="status"><Spinner size={14} /> Resolving verified text…</div>
+    <div class="loading" role="status"><Spinner size={14} /> Loading text…</div>
   {:else if error}
     <p class="notice" role="alert">{error}</p>
   {:else if text}
-    {#if originalFallback && resolution && resolution.state !== "ready"}
-      <p class="notice" role="status">{stateMessage(resolution.state)}</p>
+    {#if originalFallback && resolution && ["failed", "historical_unavailable"].includes(resolution.state)}
+      <p class="notice" role="status">
+        {stateMessage(resolution.state as Exclude<RenditionTextResolution["state"], "ready">)}
+      </p>
     {/if}
     <pre
       bind:this={textBox}
       aria-label={`Verified text of ${source.name}`}>{#each marked.segments as segment}{#if segment.match}<mark
-            class:active={segment.match.index === activeMatch}
+            class:active={!!find && segment.match.index === activeMatch}
             data-match-index={segment.match.index}
             data-source={segment.match.source}
             style={`--mark-color:${segment.match.color}`}>{segment.text}</mark
@@ -240,6 +259,17 @@
     {#if marked.truncated}<p class="notice" role="status">
         Showing the first 5,000 non-overlapping matches.
       </p>{/if}
+  {:else if resolution?.state === "unconfigured"}
+    <p class="setup">
+      <span>Text extraction isn't set up.</span>
+      <a href="https://docbank.ai/docs/usage/document-processing/" target="_blank" rel="noreferrer"
+        >Set up</a
+      >
+    </p>
+  {:else if resolution?.state === "unprocessed" || resolution?.state === "profile_required"}
+    {#if onprocess}<div>
+        <Button size="sm" surface="soft" onclick={onprocess}>Process…</Button>
+      </div>{:else}<p class="setup">This version hasn't been processed.</p>{/if}
   {:else if resolution && resolution.state !== "ready"}
     <p class="notice" role="status">{stateMessage(resolution.state)}</p>
   {/if}
@@ -248,63 +278,28 @@
 <style>
   .verified-text {
     display: grid;
-    gap: var(--space-3);
-  }
-  .text-heading,
-  .text-heading > div,
-  .text-controls {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-  }
-  .text-heading {
-    justify-content: space-between;
-  }
-  .text-heading > div {
-    align-items: baseline;
-  }
-  .text-heading strong {
-    color: var(--text-primary);
-    font-size: var(--font-size-sm);
-  }
-  .text-heading span,
-  .text-controls,
-  .loading,
-  .notice {
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
+    gap: var(--space-5);
   }
   .text-controls {
-    flex-wrap: wrap;
-  }
-  .text-controls label {
     display: flex;
     align-items: center;
     gap: var(--space-1);
+    flex-wrap: wrap;
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
   }
-  input,
-  select,
-  button {
-    min-height: 28px;
-    border: 1px solid var(--border-default);
-    border-radius: var(--radius-sm);
-    background: var(--bg-surface);
-    color: var(--text-primary);
+  .verified {
+    display: flex;
+    margin-left: auto;
+    color: var(--accent-green);
   }
-  input {
-    width: 150px;
-    padding: 0 var(--space-2);
+  .setup {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
   }
-  select {
-    max-width: 170px;
-  }
-  button {
-    min-width: 30px;
-    cursor: pointer;
-  }
-  button:disabled {
-    cursor: default;
-    opacity: var(--opacity-disabled);
+  .setup a {
+    margin-left: var(--space-1);
   }
   .loading {
     display: flex;
@@ -316,7 +311,7 @@
     max-height: 420px;
     overflow: auto;
     margin: 0;
-    padding: var(--space-3);
+    padding: var(--space-5);
     border: 1px solid var(--border-default);
     border-radius: var(--radius-md);
     background: var(--bg-inset);

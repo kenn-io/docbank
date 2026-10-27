@@ -653,22 +653,24 @@ trust_boundary = "local_process"
       fullPage: false,
       animations: "disabled",
     });
-    await selectionDock.getByRole("button", { name: "Edit tags" }).click();
+    await selectionDock.getByRole("button", { name: "Tag selected…" }).click();
     const batchTags = page.getByRole("dialog", { name: "Tag selected documents" });
-    await batchTags
-      .getByRole("combobox", { name: "Tag for selected documents: Choose a tag…" })
-      .click();
-    await page.getByRole("option", { name: "tax", exact: true }).click();
-    await expect(batchTags.getByText("1 of 2 selected documents have this tag.")).toBeVisible();
+    await batchTags.getByRole("combobox", { name: "Tag", exact: true }).fill("tax");
+    await page.getByRole("option", { name: /^tax \(\d+\)$/ }).click();
+    await expect(batchTags.getByText(/^Adds “tax” to 2 documents/)).toBeVisible();
     await page.screenshot({
       path: screenshotPathFor("web-batch-tags.png"),
       animations: "disabled",
     });
-    await batchTags.getByRole("button", { name: "Done" }).click();
+    await batchTags.getByRole("button", { name: "Cancel" }).click();
     await selectionDock.getByRole("button", { name: "Clear selection" }).click();
     await expect(selectionDock).toBeHidden();
     await report.click();
-    await expect(page.getByTitle(/^tax · /)).toBeVisible();
+    await expect(
+      page
+        .getByRole("group", { name: "Assigned tags" })
+        .locator(".tag-label__name", { hasText: "tax" }),
+    ).toBeVisible();
     await expect(page.getByText("Protected", { exact: true })).toBeVisible();
     await page.screenshot({
       path: vaultBrowserScreenshotPath,
@@ -676,15 +678,13 @@ trust_boundary = "local_process"
       animations: "disabled",
     });
 
-    await page.getByRole("button", { name: "Version history" }).click();
+    await page.getByRole("button", { name: "All versions", exact: true }).click();
     const versions = page.getByRole("dialog", {
-      name: "Immutable version history for /Reports/quarterly-tax-report.txt",
+      name: "Version history for /Reports/quarterly-tax-report.txt",
     });
-    await expect(versions).toContainText("2 retained versions");
-    await versions.getByRole("button", { name: /Created at/ }).click();
-    await expect(
-      versions.getByLabel("Complete version authority").getByText("Revision 1", { exact: true }),
-    ).toBeVisible();
+    await expect(versions).toContainText("2 versions");
+    await versions.getByRole("button", { name: /^Details for Created/ }).click();
+    await expect(versions.getByLabel("Version details").getByText("Version ID")).toBeVisible();
     await page.screenshot({
       path: retainedVersionScreenshotPath,
       fullPage: true,
@@ -692,7 +692,7 @@ trust_boundary = "local_process"
     });
     await versions.getByRole("button", { name: "Close version history" }).click();
 
-    const search = page.getByPlaceholder("Search names and extracted text");
+    const search = page.getByPlaceholder("Search names and text");
     await search.fill("Synthetic");
     await search.press("Enter");
     await expect(page.getByRole("cell", { name: "content", exact: true }).first()).toBeVisible();
@@ -708,42 +708,41 @@ trust_boundary = "local_process"
     await page.getByRole("button", { name: "Back to previous directory" }).click();
     await expect(page.getByRole("cell", { name: "Reports", exact: true })).toBeVisible();
 
-    await page.getByRole("button", { name: "Storage status" }).click();
-    const storage = page.getByRole("dialog", {
-      name: "Physical storage status",
-    });
-    await expect(storage).toContainText("2 physical locations");
-    await expect(storage).toContainText("archive");
-    await expect(storage).toContainText("Sole copies");
+    await page.getByRole("button", { name: "System", exact: true }).click();
+    const storage = page.getByRole("dialog", { name: "System" });
+    const locations = storage.getByRole("table", { name: "Storage locations" });
+    await expect(locations.getByRole("row")).toHaveCount(3);
+    await expect(locations).toContainText("archive");
+    await expect(locations).toContainText("Only copy");
     await page.screenshot({
       path: storageScreenshotPath,
       fullPage: true,
       animations: "disabled",
     });
-    await storage.getByRole("button", { name: "Close storage status" }).click();
+    await storage.getByRole("button", { name: "Close System" }).click();
 
     await runDocbank(["storage", "pack", "--json"]);
-    await page.getByRole("button", { name: "Storage status" }).click();
-    const packedStorage = page.getByRole("dialog", {
-      name: "Physical storage status",
-    });
-    await expect(packedStorage).toContainText("1 immutable pack contains");
-    await packedStorage.getByRole("button", { name: "Close storage status" }).click();
+    await page.getByRole("button", { name: "System", exact: true }).click();
+    const packedStorage = page.getByRole("dialog", { name: "System" });
+    await expect(
+      packedStorage.getByText("Pack files").locator("xpath=following-sibling::*[1]"),
+    ).toContainText(/^1 ·/);
+    await packedStorage.getByRole("button", { name: "Close System" }).click();
 
-    await page.getByRole("button", { name: "Verify permanent audit evidence" }).click();
-    const auditEvidence = page.getByRole("dialog", {
-      name: "Permanent audit verification",
-    });
+    await page.getByRole("button", { name: "System", exact: true }).click();
+    await page.getByRole("tab", { name: "Protected folders", exact: true }).click();
+    const auditEvidence = page.getByRole("dialog", { name: "System" });
     await expect(auditEvidence).toContainText("Protected history and content agree");
-    await expect(auditEvidence).toContainText("1 protected scope");
+    await expect(auditEvidence).toContainText("Verified 5 of 5 files");
     await page.screenshot({
       path: auditEvidenceScreenshotPath,
       fullPage: true,
       animations: "disabled",
     });
-    await auditEvidence.getByRole("button", { name: "Close permanent audit verification" }).click();
+    await auditEvidence.getByRole("button", { name: "Close System" }).click();
 
-    await page.getByRole("button", { name: "Manage tag definitions" }).click();
+    await page.getByRole("combobox", { name: /^Browse or filter by tag:/ }).click();
+    await page.getByRole("button", { name: "Manage tags", exact: true }).click();
     const catalog = page.getByRole("dialog", {
       name: "Manage tag definitions",
     });
@@ -784,39 +783,33 @@ trust_boundary = "local_process"
       name: "Manage tags for quarterly-tax-report.txt",
     });
     await expect(tags).toContainText("tax");
-    await tags.getByRole("combobox", { name: "Tag to assign: Choose a tag…" }).click();
-    await tags.getByRole("option", { name: "matter/acme/reviewed (0)" }).click();
-    await tags.getByRole("button", { name: "Add tag" }).click();
-    await expect(tags).toContainText("Added matter/acme/reviewed.");
+    await tags.getByRole("combobox", { name: "Tag to assign" }).fill("reviewed");
+    await tags.getByRole("option", { name: "matter/acme/reviewed (0)" }).click({ force: true });
+    await expect(tags.getByRole("group", { name: "Assigned tags" })).toContainText("reviewed");
     await expect(tags.getByRole("status", { name: "Loading" })).toHaveCount(0);
     await expect(page.getByRole("status", { name: "Loading" })).toHaveCount(0);
-    await tags.getByRole("button", { name: "Done" }).click();
+    await tags.getByRole("button", { name: "Done" }).dispatchEvent("click");
 
-    await page.getByRole("button", { name: "Process and retrieve" }).click();
-    const processing = page.getByRole("dialog", {
-      name: "Document processing and coverage",
-    });
-    await expect(processing).toContainText("Private network");
-    await expect(processing).toContainText("sanitized_markdown");
+    await page.getByRole("button", { name: "Extract text", exact: true }).click();
+    const processing = page.getByRole("dialog", { name: "Extract text" });
+    await expect(processing).toContainText("on your network");
+    await expect(processing).toContainText("in the vault and its backups");
     await page.screenshot({
       path: processingPlanScreenshotPath,
       fullPage: true,
       animations: "disabled",
     });
-    await processing.getByRole("button", { name: "Consent and run" }).click();
-    await expect(processing.getByRole("button", { name: "Read sanitized Markdown" })).toBeVisible({
+    await processing.getByRole("checkbox").check();
+    await processing.getByRole("button", { name: "Extract text" }).click();
+    await expect(processing.getByRole("button", { name: "Read text" })).toBeVisible({
       timeout: 30_000,
     });
-    await expect(processing).toContainText(/semantic.*complete/i);
-    await processing
-      .getByRole("region", { name: "Document processing coverage" })
-      .scrollIntoViewIfNeeded();
     await page.screenshot({
       path: processingResultScreenshotPath,
       fullPage: true,
       animations: "disabled",
     });
-    await processing.getByRole("button", { name: "Read sanitized Markdown" }).click();
+    await processing.getByRole("button", { name: "Read text" }).click();
     const rendition = page.getByRole("dialog", { name: "Sanitized Markdown rendition" });
     await expect(rendition).toContainText("Synthetic quarterly tax report with reviewed totals");
     await expect(rendition).toContainText("degraded_provenance");
@@ -829,29 +822,15 @@ trust_boundary = "local_process"
 
     await page.getByRole("button", { name: "Move to trash", exact: true }).click();
 
-    const confirmation = page.getByRole("dialog", {
-      name: "Move quarterly-tax-report.txt to trash",
-    });
-    await expect(confirmation).toBeVisible();
-    await expect(confirmation).toContainText("It remains recoverable from trash.");
-    await expect(confirmation).toContainText(
-      "This does not empty trash, reclaim stored bytes, or erase permanent audited history.",
-    );
-
-    await confirmation.getByRole("button", { name: "Move to trash" }).click();
-    await expect(confirmation).not.toBeVisible();
+    // Trash is one click; the notice offers Undo and says the file is recoverable.
+    await expect(page.getByText("Moved “quarterly-tax-report.txt” to trash")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Recoverable trash" }).click();
     const trash = page.getByRole("dialog", { name: "Recoverable trash" });
     await expect(trash).toContainText("quarterly-tax-report.txt");
     await trash.getByRole("button", { name: "Restore" }).click();
-
-    const restore = page.getByRole("dialog", {
-      name: "Restore quarterly-tax-report.txt from trash",
-    });
-    await expect(restore).toBeVisible();
-    await expect(restore).toContainText(
-      "It does not roll back versions or alter permanent audited history.",
-    );
+    await expect(page.getByText("Restored to /Reports")).toBeVisible();
+    await expect(trash).not.toContainText("quarterly-tax-report.txt");
   });
 
   test("selection dock stays visible and leaves the last row reachable", async ({ page }) => {
@@ -932,7 +911,7 @@ trust_boundary = "local_process"
     await page.goto(webURL);
     await page.getByRole("button", { name: "Open navigation", exact: true }).click();
     await expect(page.getByRole("navigation", { name: "Docbank navigation" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Search exports", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Searches", exact: true })).toBeVisible();
     await page.screenshot({
       path: screenshotPathFor("web-navigation-mobile.png"),
       animations: "disabled",

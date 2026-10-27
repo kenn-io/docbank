@@ -3,7 +3,6 @@ import {
   appendRelationPage,
   readRelatedSource,
   readRelationPage,
-  validatePublication,
   validateRelationPage,
   type AttachmentIdentity,
 } from "./attachments.js";
@@ -101,27 +100,6 @@ it("rejects wrong selected identities, nonmonotonic pages and changing totals", 
       parent,
       "outgoing",
     ),
-  ).toThrow();
-});
-
-it("keeps partial inventory independent of live processing and checks receipt agreement", () => {
-  const selected = validateRelationPage(page(), child, "incoming");
-  const receipt = {
-    operation_id: "publication-1",
-    request_digest: "e".repeat(64),
-    created_at: "2026-09-12T00:00:00Z",
-    inventory_state: "partial",
-    relations: [relation()],
-  };
-  expect(validatePublication(receipt, selected.items[0].relation).inventory_state).toBe("partial");
-  expect(() =>
-    validatePublication(
-      { ...receipt, relations: [{ ...relation(), child: { ...child, sha256: "f".repeat(64) } }] },
-      selected.items[0].relation,
-    ),
-  ).toThrow(/agree/i);
-  expect(() =>
-    validatePublication({ ...receipt, inventory_state: "pending" }, selected.items[0].relation),
   ).toThrow();
 });
 

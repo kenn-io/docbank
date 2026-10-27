@@ -199,7 +199,7 @@ test("resumes the complete selection and source after a daemon and browser resta
     const decision = completed.page.waitForResponse((response) =>
       response.url().endsWith("/photos/authored/stack"),
     );
-    await cull.getByRole("button", { name: "Keep current (Return)", exact: true }).click();
+    await cull.getByRole("button", { name: "Keep current", exact: true }).click();
     expect((await decision).ok()).toBe(true);
     await expect(cull.getByRole("button", { name: "Undo", exact: true })).toBeVisible();
     await cull.getByRole("button", { name: "Undo", exact: true }).click();

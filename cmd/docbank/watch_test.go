@@ -32,3 +32,11 @@ func TestWriteWatchedInboxesExplainsEmptyConfig(t *testing.T) {
 	require.NoError(t, writeWatchedInboxes(&out, nil))
 	assert.Equal(t, "no watched inboxes configured\n", out.String())
 }
+
+func TestWriteWatchedInboxesDisplaysActivity(t *testing.T) {
+	var out bytes.Buffer
+	require.NoError(t, writeWatchedInboxes(&out, []api.WatchedInbox{
+		{Name: "waiting", Job: &api.Job{Status: "running"}},
+	}))
+	assert.Regexp(t, `waiting\s+idle\s`, out.String())
+}

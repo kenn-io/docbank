@@ -35,12 +35,13 @@ test("photo import progress and cancellation are visible", async ({ page }) => {
     });
     const webURL = await run("web", "--no-browser");
     await page.goto(webURL, { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "Background jobs", exact: true }).click();
+    await page.getByRole("button", { name: "System", exact: true }).click();
+    await page.getByRole("tab", { name: "Running now", exact: true }).click();
     await run("photos", "import", source, "/Photos/Trip");
     await page.getByRole("button", { name: "Refresh background jobs" }).click();
-    const progress = page.getByRole("progressbar", { name: "Photo import progress" });
+    const progress = page.getByRole("progressbar", { name: "Importing photos progress" });
     await expect(progress).toBeVisible();
-    const cancel = page.getByRole("button", { name: /^Cancel Photo import/ });
+    const cancel = page.getByRole("button", { name: /^Cancel Importing photos/ });
     await expect(cancel).toBeVisible();
     await expect
       .poll(async () => {
@@ -48,7 +49,7 @@ test("photo import progress and cancellation are visible", async ({ page }) => {
         return Number(await progress.getAttribute("aria-valuenow"));
       })
       .toBeGreaterThan(0);
-    const drawer = page.getByLabel("Daemon background jobs");
+    const drawer = page.getByRole("dialog", { name: "System" });
     await cancel.scrollIntoViewIfNeeded();
     await drawer.screenshot({ path: path.join(output, "web-photo-import-dark.png") });
     await page.screenshot({ path: path.join(output, "web-photo-import-body.png") });

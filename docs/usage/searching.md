@@ -535,7 +535,8 @@ text containing NUL bytes remain stored and readable but are not body-indexed.
 Newly ingested or replaced content may take a few seconds to appear while the
 daemon job reaches it. A transient open, read, or verification error leaves the
 item queued and is retried on a bounded delay. It does not become a permanent
-extraction failure. `docbank jobs` shows whether that worker is running.
+extraction failure. `docbank jobs` shows the worker as idle while it waits for
+work and running while it processes an item.
 
 ## Which text is not searched?
 

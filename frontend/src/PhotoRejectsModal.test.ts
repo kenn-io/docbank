@@ -59,7 +59,9 @@ it("shows counts, mixed pairs, batch limits, and the unavailable selected scope"
     (screen.getByRole("button", { name: "Move 1000 to trash" }) as HTMLButtonElement).disabled,
   ).toBe(false);
   expect(
-    screen.getByText("This moves 1,000 now. Choose Move rejects again for the remaining 1."),
+    screen.getByText(
+      "This moves 1,000 now. Choose Trash rejected photos again for the remaining 1.",
+    ),
   ).toBeTruthy();
   await fireEvent.click(screen.getByRole("combobox", { name: "Rejects scope: Current view" }));
   expect(

@@ -1,6 +1,5 @@
 <script lang="ts">
-  import { onDestroy, untrack } from "svelte";
-  import PlusIcon from "@lucide/svelte/icons/plus";
+  import { onDestroy, onMount, tick, untrack } from "svelte";
   import XIcon from "@lucide/svelte/icons/x";
   import { Button, IconButton, Modal, Spinner } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
@@ -39,16 +38,20 @@
   let currentNode = $state(untrack(() => node));
   let assigned = $state(untrack(() => sortTags(assignedTags)));
   let currentAssignedTotal = $state(untrack(() => assignedTotal));
-  let selectedTagID = $state("");
   let pendingTagID = $state("");
   let failure = $state("");
-  let notice = $state("");
   let destroyed = false;
+  let root = $state<HTMLElement>();
+  // The modal's own focus handling runs first; the tag field takes focus after it.
+  onMount(() => {
+    void tick().then(() =>
+      requestAnimationFrame(() => root?.querySelector<HTMLInputElement>(".add-row input")?.focus()),
+    );
+  });
   onDestroy(() => {
     destroyed = true;
   });
 
-  const available = $derived(catalog.filter((tag) => !assigned.some((item) => item.id === tag.id)));
   const assignedGroups = $derived(groupTags(assigned));
 
   function close(): void {
@@ -60,7 +63,6 @@
     const requestSession = session;
     pendingTagID = tag.id;
     failure = "";
-    notice = "";
     try {
       const receipt = await changeNodeTag(
         requestSession,
@@ -74,19 +76,12 @@
       if (assign) {
         assigned = sortTags([...assigned.filter((item) => item.id !== tag.id), receipt.tag]);
         if (receipt.changed) currentAssignedTotal += 1;
-        notice = receipt.changed
-          ? `Added ${receipt.tag.name}.`
-          : `${receipt.tag.name} was already assigned.`;
       } else {
         assigned = assigned.filter((item) => item.id !== tag.id);
         if (receipt.changed) {
           currentAssignedTotal = Math.max(0, currentAssignedTotal - 1);
         }
-        notice = receipt.changed
-          ? `Removed ${receipt.tag.name}.`
-          : `${receipt.tag.name} was already absent.`;
       }
-      selectedTagID = "";
       onchanged(receipt, assign);
     } catch (cause) {
       if (destroyed || session !== requestSession) return;
@@ -99,15 +94,10 @@
       if (!destroyed) pendingTagID = "";
     }
   }
-
-  function addSelected(): void {
-    const tag = available.find((item) => item.id === selectedTagID);
-    if (tag) void change(tag, true);
-  }
 </script>
 
 <Modal
-  title="Manage tags"
+  title={`Tags for ${node.name || "/"}`}
   tone="info"
   width="620px"
   maxWidth="min(620px, calc(100vw - 32px))"
@@ -115,9 +105,7 @@
   onclose={close}
   closeOnOverlayClick={!pendingTagID}
 >
-  <div class="manage-tags">
-    <p class="target">{node.name || "/"}</p>
-
+  <div class="manage-tags" bind:this={root}>
     {#if assigned.length === 0}
       <p class="empty">No tags assigned.</p>
     {:else}
@@ -132,7 +120,7 @@
               <div>
                 <TagLabel {tag} size="sm" />
                 <small
-                  >{tag.assignment_count} total assignment{tag.assignment_count === 1
+                  >{tag.assignment_count.toLocaleString()} file{tag.assignment_count === 1
                     ? ""
                     : "s"}</small
                 >
@@ -163,33 +151,25 @@
 
     <div class="add-row">
       <TagPicker
-        value={selectedTagID}
-        tags={available}
+        {session}
+        value=""
+        tags={[
+          ...catalog,
+          ...assigned.filter((tag) => !catalog.some((item) => item.id === tag.id)),
+        ]}
+        excludedTagIDs={assigned.map((tag) => tag.id)}
         title="Tag to assign"
-        placeholder={available.length ? "Choose a tag…" : "No available tags"}
-        disabled={disabled || pendingTagID !== "" || available.length === 0}
-        onchange={(value) => (selectedTagID = value)}
+        placeholder="Tag name"
+        disabled={disabled || pendingTagID !== ""}
+        onchange={() => undefined}
+        onpick={(tag) => change(tag, true)}
+        {onauthfailure}
       />
-      <Button
-        size="sm"
-        tone="info"
-        surface="solid"
-        disabled={disabled || !selectedTagID || pendingTagID !== ""}
-        onclick={addSelected}
-      >
-        {#if pendingTagID !== "" && pendingTagID === selectedTagID}
-          <Spinner size={13} />
-        {:else}
-          <PlusIcon size="14" aria-hidden="true" />
-        {/if}
-        Add tag
-      </Button>
     </div>
     {#if catalogTotal > catalog.length}
       <p class="bounded">Showing the first {catalog.length} of {catalogTotal} tags.</p>
     {/if}
 
-    {#if notice}<p class="notice" role="status">{notice}</p>{/if}
     {#if failure}<p class="failure" role="alert">{failure}</p>{/if}
   </div>
   {#snippet footer()}
@@ -203,16 +183,9 @@
     gap: var(--space-4);
   }
 
-  .target {
-    margin: 0;
-    overflow-wrap: anywhere;
-    color: var(--text-primary);
-    font-weight: var(--font-weight-semibold, 600);
-  }
-
   small {
     color: var(--text-muted);
-    font-size: var(--font-size-xs);
+    font-size: var(--font-size-md);
   }
 
   .assigned-list {
@@ -255,7 +228,6 @@
 
   .empty,
   .bounded,
-  .notice,
   .failure {
     margin: 0;
     font-size: var(--font-size-sm);
@@ -267,16 +239,9 @@
     color: var(--text-muted);
   }
 
-  .notice,
   .failure {
     padding: var(--space-3);
     border-radius: var(--radius-md);
-  }
-
-  .notice {
-    border: 1px solid color-mix(in srgb, var(--accent-green) 30%, transparent);
-    background: color-mix(in srgb, var(--accent-green) 8%, transparent);
-    color: var(--accent-green);
   }
 
   .failure {

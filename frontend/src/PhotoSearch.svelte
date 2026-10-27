@@ -3,6 +3,7 @@
   import { untrack } from "svelte";
   import { SearchInput, SelectDropdown } from "@kenn-io/kit-ui";
   import type { Photos } from "./photos.svelte.js";
+  import { searchSyntaxOptions } from "./searchSyntax.js";
   import { photoSearchSort } from "./photoSearch.js";
 
   let { photos }: { photos: Photos } = $props();
@@ -53,7 +54,7 @@
     block
     {disabled}
     ariaLabel="Search photos"
-    placeholder="Search photos"
+    placeholder={syntax === "advanced" ? "rating:5 pick label:red" : "Search photos"}
     bind:value={search}
     onclear={() => {
       if (photos.query.text && !submit()) search = photos.query.text;
@@ -64,10 +65,7 @@
   title="Search mode"
   {disabled}
   value={syntax}
-  options={[
-    { value: "simple", label: "Plain words" },
-    { value: "advanced", label: "Query syntax" },
-  ]}
+  options={searchSyntaxOptions}
   onchange={(value) => {
     syntax = value as "simple" | "advanced";
     if (applyDraft && !submit()) syntax = photos.query.syntax;

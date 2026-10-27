@@ -323,6 +323,7 @@ func NewRenditionWorker(config RenditionWorkerConfig) (*RenditionWorker, error) 
 // Run processes durable jobs until cancellation. A quiet queue is expected,
 // so the supervisor entry remains running rather than completing spuriously.
 func (worker *RenditionWorker) Run(ctx context.Context) error {
+	jobs.ReportBusy(ctx, false)
 	if worker == nil {
 		return errors.New("rendition worker is nil")
 	}
@@ -403,7 +404,9 @@ func (worker *RenditionWorker) RunJob(ctx context.Context, jobID string) (
 		})
 	})
 	if err == nil && claim.JobID != "" {
+		reportProcessingRunBusy(ctx, true)
 		processed, err = worker.runClaim(ctx, claim)
+		reportProcessingRunBusy(ctx, false)
 	}
 	if err != nil && ctx.Err() == nil && !errors.Is(err, store.ErrRenditionJobFenced) &&
 		!isRenditionWorkerFatal(err) && !isRenditionWorkerRetryable(err) {
@@ -432,6 +435,8 @@ func (worker *RenditionWorker) runOne(ctx context.Context) (
 	if err != nil || !found {
 		return found, err
 	}
+	jobs.ReportBusy(ctx, true)
+	defer jobs.ReportBusy(ctx, false)
 	return worker.runClaim(ctx, claim)
 }
 

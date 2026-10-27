@@ -95,7 +95,7 @@ test("downloads the exact 1001-member frozen source through the real export work
         new URL(r.url()).pathname === "/api/v1/workspace/queries" &&
         r.request().method() === "POST",
     );
-    await page.getByRole("button", { name: "Run query", exact: true }).click();
+    await page.getByRole("button", { name: "Search", exact: true }).click();
     const accepted = (await (await acceptedPromise).json()) as Snapshot;
     expect(accepted.total).toBe(1001);
     const frozen = [...accepted.rows];
@@ -108,7 +108,6 @@ test("downloads the exact 1001-member frozen source through the real export work
       cursor = next.next_cursor;
     }
     expect(frozen).toHaveLength(1001);
-    await page.getByRole("button", { name: "Close query editor", exact: true }).click();
 
     // Replace a captured head, remove that row from the live query, and add a
     // different matching document. Equal live counts must not hide substitution.
@@ -144,53 +143,38 @@ test("downloads the exact 1001-member frozen source through the real export work
         chunks.push((request.postDataJSON() as { members: unknown[] }).members.length);
     });
     await page.getByRole("button", { name: "Export", exact: true }).click();
+    await page.getByRole("menuitem", { name: /^Download files/ }).click();
     const drawer = page.getByRole("dialog", { name: "Verified export" });
-    await expect(drawer.getByText("Whole frozen query", { exact: true })).toBeVisible();
+    await expect(drawer.getByText("1,001 documents", { exact: true })).toBeVisible();
+    await drawer.getByText("Options", { exact: true }).click();
     for (const role of ["Text", "Pages"]) {
       await drawer.getByRole("combobox", { name: new RegExp(`^${role} export policy`) }).click();
-      await page.getByRole("option", { name: "Optional — allow unavailable", exact: true }).click();
+      await page.getByRole("option", { name: "If available", exact: true }).click();
     }
-    await drawer
-      .getByLabel("Downloaded ZIP filename", { exact: true })
-      .fill("Synthetic frozen review.zip");
-    await drawer.getByRole("button", { name: "Preview export", exact: true }).click();
-    await expect(
-      drawer.getByRole("button", { name: "Start reviewed export", exact: true }),
-    ).toBeEnabled({ timeout: 180_000 });
+    await drawer.getByLabel("ZIP filename", { exact: true }).fill("Renamed frozen review.zip");
+    await drawer.getByRole("button", { name: "Download ZIP", exact: true }).click();
+    // Text and pages are missing for these plain documents, so the export pauses to say so.
+    await expect(drawer.getByText("1–50 of 2002", { exact: true })).toBeVisible({
+      timeout: 180_000,
+    });
     expect(chunks).toEqual([1000, 1]);
-    await expect(drawer.getByTestId("export-member-hash")).toHaveText(accepted.member_hash);
-    const fingerprint = await drawer.getByTestId("export-plan-fingerprint").innerText();
-    await expect(
-      drawer.getByText("No eligible retained text in the frozen plan.", { exact: true }),
-    ).toBeVisible();
-    await expect(
-      drawer.getByText("No complete retained page recipe in the frozen plan.", { exact: true }),
-    ).toBeVisible();
-    await drawer
-      .getByLabel("Downloaded ZIP filename", { exact: true })
-      .fill("Renamed frozen review.zip");
-    await expect(
-      drawer.getByRole("button", { name: "Start reviewed export", exact: true }),
-    ).toBeEnabled();
-    await expect(drawer.getByTestId("export-plan-fingerprint")).toHaveText(fingerprint);
-    expect(chunks).toEqual([1000, 1]);
-    await drawer.getByRole("button", { name: "Start reviewed export", exact: true }).click();
-    await expect(drawer.getByText("Archive verified and ready", { exact: true })).toBeVisible({
+    await drawer.getByRole("button", { name: "Download anyway", exact: true }).click();
+    await expect(drawer.getByText("Archive ready", { exact: true })).toBeVisible({
       timeout: 180_000,
     });
     await mkdir(output!, { recursive: true, mode: 0o700 });
     await drawer
-      .getByRole("button", { name: "Download verified ZIP", exact: true })
-      .scrollIntoViewIfNeeded();
-    await drawer
-      .locator(".job")
+      .getByRole("region", { name: "Export job" })
       .screenshot({ path: path.join(output!, "web-export-ready.png"), animations: "disabled" });
     const shownHash = await drawer.getByTestId("export-archive-hash").innerText();
     const shownSize = Number(
       await drawer.getByTestId("export-archive-size").getAttribute("data-bytes"),
     );
     const downloading = page.waitForEvent("download");
-    await drawer.getByRole("button", { name: "Download verified ZIP", exact: true }).click();
+    await drawer
+      .getByRole("region", { name: "Export job" })
+      .getByRole("button", { name: "Download ZIP", exact: true })
+      .click();
     const download = await downloading;
     expect(download.suggestedFilename()).toBe("Renamed frozen review.zip");
     const archive = path.join(output!, "synthetic-frozen-review.zip");
@@ -263,7 +247,6 @@ with zipfile.ZipFile(archive) as z:
     };
     expect(verified.total).toBe(1001);
     expect(verified.member_hash).toBe(accepted.member_hash);
-    expect(verified.fingerprint).toBe(fingerprint);
     expect(verified.members).toEqual(
       frozen
         .map(
@@ -295,18 +278,16 @@ with zipfile.ZipFile(archive) as z:
       { mode: 0o600 },
     );
     await expect(
-      drawer.getByText("Download handed to your browser. Check its download list for completion.", {
-        exact: true,
-      }),
+      drawer.getByText("Download started in your browser.", { exact: true }),
     ).toBeVisible();
     await drawer.getByRole("button", { name: "Close export", exact: true }).click();
     await page.getByRole("checkbox", { name: `Select ${frozen[0]!.path}`, exact: true }).check();
     await page.getByRole("button", { name: "Export selection", exact: true }).click();
-    await expect(drawer.getByText("Archive verified and ready", { exact: true })).toBeVisible();
-    await expect(
-      drawer.getByText("No eligible retained text in the frozen plan.", { exact: true }),
-    ).toBeVisible();
-    await expect(drawer.getByTestId("export-member-hash")).toHaveText(accepted.member_hash);
+    await expect(drawer.getByRole("button", { name: "Download ZIP", exact: true })).toBeVisible();
+    await drawer.getByRole("button", { name: "Download ZIP", exact: true }).click();
+    await expect(drawer.getByText("Archive ready", { exact: true })).toBeVisible({
+      timeout: 180_000,
+    });
     console.log(
       `Verified ${verified.total} frozen documents, ${verified.entries} ZIP entries, chunks ${chunks.join("+")}; final hash ${shownHash}`,
     );

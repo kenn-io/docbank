@@ -320,6 +320,7 @@ func NewWatcher(
 
 // Run scans immediately, then at the configured interval until cancellation.
 func (w *Watcher) Run(ctx context.Context) error {
+	jobs.ReportBusy(ctx, false)
 	root, err := w.openRoot(ctx)
 	if err != nil {
 		return err
@@ -1081,6 +1082,7 @@ func (w *Watcher) scanDirectory(
 				(minimumAge > 0 && observedAt.Sub(time.Unix(0, fingerprint.modTime)) < minimumAge) {
 				continue
 			}
+			jobs.ReportBusy(ctx, true)
 			if w.process != nil {
 				err = w.process(ctx, rel, &observation, source.open)
 			} else {
@@ -1094,6 +1096,7 @@ func (w *Watcher) scanDirectory(
 					})
 				})
 			}
+			jobs.ReportBusy(ctx, false)
 		}
 		if access, ok := errors.AsType[*SourceAccessError](err); ok && w.reject != nil &&
 			!errors.Is(err, ErrSourceChanged) &&

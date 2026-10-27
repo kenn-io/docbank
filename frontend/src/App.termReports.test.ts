@@ -199,7 +199,7 @@ it.each(["live", "query page", "missing identity"])(
     });
     render(App);
     if (mode === "query page")
-      await fireEvent.click(await screen.findByRole("button", { name: "Run query" }));
+      await fireEvent.click(await screen.findByRole("button", { name: "Search" }));
     const checkbox = await screen.findByRole("checkbox", {
       name:
         mode === "query page"
@@ -212,14 +212,14 @@ it.each(["live", "query page", "missing identity"])(
     await fireEvent.click(checkbox);
     await fireEvent.click(screen.getByRole("button", { name: "Report selected documents" }));
     if (mode === "missing identity") {
-      expect(screen.queryByRole("dialog", { name: "Search exports" })).toBeNull();
+      expect(screen.queryByRole("dialog", { name: "Search term report" })).toBeNull();
       expect(
         await screen.findByText(/Select current documents with complete version identities/),
       ).toBeTruthy();
       expect(submitted).toHaveLength(0);
       return;
     }
-    const drawer = await screen.findByRole("dialog", { name: "Search exports" });
+    const drawer = await screen.findByRole("dialog", { name: "Search term report" });
     expect(within(drawer).getByText("Selected documents (1)")).toBeTruthy();
     if (mode === "live") {
       const before = listings;
@@ -235,7 +235,7 @@ it.each(["live", "query page", "missing identity"])(
     await fireEvent.input(within(drawer).getByRole("textbox", { name: "Expression for term 1" }), {
       target: { value: "alpha" },
     });
-    await fireEvent.click(within(drawer).getByRole("button", { name: "Create export" }));
+    await fireEvent.click(within(drawer).getByRole("button", { name: "Create report" }));
     await waitFor(() => expect(submitted).toHaveLength(1));
     expect(submitted[0].selected_documents?.documents).toEqual([
       { node_id: 1, version_id: "20000000-0000-4000-8000-000000000001", sha256: "a".repeat(64) },

@@ -143,9 +143,9 @@ fragment to reopen the direct photo.
 
 ## Edit metadata
 
-Metadata editing currently works in the web app; CLI and MCP commands aren't available. Press I or choose Metadata to open the viewer's metadata panel. It edits rating, flag, color label, caption, creator, copyright, rotation, and keywords. Whole pair edits every image or RAW member together. Choose a member to edit it alone. Mixed means members have different values. Stage fields and keyword changes, then choose Apply. Reloading or closing the page asks before discarding staged edits. Clear caption, creator, or copyright sets mixed text to empty.
+Metadata editing currently works in the web app; CLI and MCP commands aren't available. The metadata panel starts open in the library and viewer. Press I or choose the **ⓘ** button to hide or show it. Drag the panel's left edge, or focus it and press the arrow keys, to resize it. Double-click the edge to reset. Your browser remembers both choices. File details appear above the viewer's edit controls. Click a path, hash, version, document ID, photo ID, or file ID to copy it. A Protected chip opens Audit history. The panel edits rating, flag, color label, caption, creator, copyright, rotation, and keywords. Whole pair edits every image or RAW member together. Choose a member to edit it alone. Mixed means members have different values. Stage fields and keyword changes, then choose Apply. Reloading or closing the page asks before discarding staged edits. Clear caption, creator, or copyright sets mixed text to empty.
 
-Select photos in the grid and choose Metadata in the bottom action bar to edit the selection. Select all results to edit the current search, including photos beyond the loaded page. Each edit allows at most 1,000 files, including both members of a pair. The editing session keeps the resolved photos through result refreshes until you change the selection, search, or inspected photo. Counts, checkboxes, album actions, drag, shortcuts, and trash use those same photos. After partial trash, failed photos stay selected with their captured revisions, including unloaded photos; retry them or choose Clear selection. A failed edit changes nothing. After a conflict, Reload metadata preserves your draft for review and an explicit retry. Keywords use the existing tag picker.
+Select photos in the grid to edit them in the metadata panel. Select all results to edit the current search, including photos beyond the loaded page. Each edit allows at most 1,000 files, including both members of a pair. The editing session keeps the resolved photos through result refreshes until you change the selection, search, or inspected photo. Counts, checkboxes, album actions, drag, shortcuts, and trash use those same photos. After partial trash, failed photos stay selected with their captured revisions, including unloaded photos; retry them or choose Clear selection. A failed edit changes nothing. After a conflict, Reload metadata preserves your draft for review and an explicit retry. Keywords use the existing tag picker.
 
 In Photos, 0 through 5 set the rating, P picks, X rejects, and U clears the flag. 6 sets red, 7 yellow, 8 green, and 9 blue. R rotates each selected photo 90° clockwise, and V sets purple. Use the inspector for other rotation values or No label. A shortcut applies any staged fields and keywords together with its decision; the Undo feedback names those edits. Apply or Clear edits before switching between pair members. Typing in a text field keeps its normal shortcuts. Edits update open photo lists in place. A list with search text or a rating, flag, label, keyword, or modified-date filter reloads after each edit, so an edited photo can leave it. Map also reloads after a rotation or its Undo. Undo or Ctrl/Cmd+Z restores the last edit, including keyword changes. Undo uses conservative revision checks. It reports a conflict if an edited file has changed; keyword Undo also conflicts after any revision change to an affected document. Reload metadata before making another edit.
 
@@ -155,19 +155,21 @@ Rotation applies to the displayed photo in the grid, viewer, and album cover wit
 
 ## Browse in the web app
 
+**System** in the sidebar opens **Disk use**, **Running now**, **Backups**, **Protected folders**, and **Usage reporting**.
+
 Open `docbank web` and choose **Photos** in the sidebar. Library opens at
 `/photos`, newest captures first. A photo without a readable capture date sits
 in the month its file was last modified, when Docbank recorded that time; the
 viewer then shows File modified and leaves Captured blank. The rest appear under
-Undated. The date rail on the right lists years and months with photo
-counts, including dates beyond the loaded grid. It has no day choices. Scrolling
+Undated. The date rail on the right lists years and months, including
+dates beyond the loaded grid. Hover a year or month for its photo count. It has no day choices. Scrolling
 loads more photos and reveals older years. The rail ends with "N undated", where
 N is the number of undated photos, when that number is above zero. Choose
 **Load more** to continue from the same position when further results remain.
 
-The **⋯** menu holds Move rejects, Export, and Refresh previews, plus Rename album, Duplicate album, and Delete album in an album, and Group, Density, Cull, and Resume cull when available at 640px and below.
+The **⋯** menu holds Trash rejected photos, Export, and Refresh previews, plus Rename album, Duplicate album, and Delete album in an album, and Group, Density, Cull, and Resume cull when available at 640px and below.
 
-The title row holds the photo count, Sort, Group, Density, Cull, Resume cull when saved, the **⋯** menu, and **Add photos** in Library. At 640px and below, the title row wraps as needed, and Group, Density, Cull, and Resume cull move into **⋯**. A floating **Loading photos…** pill appears while a page loads.
+The title row holds the photo count, Sort, Group, Density, Cull, Resume cull when saved, **Add photos** in Library, the **⋯** menu, and the **ⓘ** button for the metadata panel. At 640px and below, the title row wraps as needed, and Group, Density, Cull, and Resume cull move into **⋯**. A floating **Loading photos…** pill appears while a page loads.
 
 Choose a year or month to scroll there. Docbank loads pages until it reaches
 that date, so the search, filters, and album stay as they are. A year jumps to
@@ -247,7 +249,7 @@ failed page again. Refresh and expired-cursor recovery keep the current grid vis
 
 Choose Plain words for ordinary words, or Query syntax for expressions such as `rating:5 pick label:red`. Changing the mode reruns typed text. In Query syntax, `pick` means `flag:pick`; quote `"pick"` to search for that word. Authored-text search matches caption, creator, and copyright on any live RAW, image, or video member, plus every tag name assigned to the photo and any pending [photo suggestion](#suggested-metadata). Photo search also includes camera and location metadata, filenames, and extracted text. Rating, flag, and color label facets use each asset's display file. Select None to find an empty flag or label.
 
-Choose Save search to save the applied search. Albums lists saved queries whose kind filter contains only photos or videos as Smart sets. A `kind:photo` expression alone does not put a Documents query in this list; saving from Photos adds the kind filter. Ordering stays in the current view; reopening uses capture date, or relevance for a text query. The saved definition also runs in Documents: bare `pick` searches for the word, while `rating:` and `flag:` test each document file's authored decisions rather than the asset's display file. Hidden photo files remain accessible there. Use its saved-query editor to change or delete the definition.
+Save search appears while a search or filter is applied. Choose it to save the applied search. Albums lists saved queries whose kind filter contains only photos or videos as Smart sets. A `kind:photo` expression alone does not put a Documents query in this list; saving from Photos adds the kind filter. Ordering stays in the current view; reopening uses capture date, or relevance for a text query. The saved definition also runs in Documents: bare `pick` searches for the word, while `rating:` and `flag:` test each document file's authored decisions rather than the asset's display file. Hidden photo files remain accessible there. Use its saved-query editor to change or delete the definition.
 
 Choose Freeze results after saving a smart set. A freeze uses the smart set's saved sort, with asset ID breaking ties, not the current browsing order. Smart sets saved from Photos store name ascending, so their freezes order photos by name. A smart set saved in Documents keeps its own sort; a `path` sort freezes by name ascending. Frozen runs contain Library photos only. The frozen result includes all matches, including those beyond the first 250 relevance results. Its count and expiry appear beside Save as album and remain available when you return from Albums. Saving the album preserves the frozen asset membership and result order and clears the freeze, even if the live query's matches have changed. Frozen results expire with the daemon's snapshot session; the album persists.
 
@@ -310,6 +312,9 @@ Docbank edits with empty text or numeric zero confirm a clear. Unsupplied
 fields keep their earlier values and confirmation. Receipts, audit history,
 undo, and JSONL backup preserve the mask. Unknown bits and non-default values
 without confirmation are refused.
+
+Type a keyword name to filter existing tags. Choose **Create “name”** to create
+and assign a new tag to the selected photo originals.
 
 ### Sync XMP sidecars
 
@@ -542,7 +547,7 @@ It resumes when settings become readable; cancellation still works.
 Cancelling a waiting import keeps its saved count and receipt. After a daemon
 restart, imports scan again and skip content already imported.
 
-![Photo import progress and its cancellation control in Background jobs](https://docbank.ai/assets/generated/web-photo-import-dark.png)
+![Photo import progress and its cancellation control in System, Running now](https://docbank.ai/assets/generated/web-photo-import-dark.png)
 
 The import reads RAW files (`.ARW`, `.CR2`, `.CR3`, `.DNG`, `.NEF`, `.ORF`,
 `.RAF`, `.RW2`), images (`.JPG`, `.JPEG`, `.PNG`, `.GIF`, `.WEBP`, `.HEIC`),
@@ -798,7 +803,7 @@ Choose **Export all N photos** in the **⋯** menu for the whole current scope, 
 
 Select photos in Library and choose **Move to trash**. Confirming moves every member of each selected photo, including RAW files, images, videos, and sidecars, to recoverable trash together. A changed photo revision refuses the action; failed photos remain selected for retry. Each photo is atomic; a selection runs sequentially and can make partial progress. Changing the selection changes the next action's targets. A failed photo outside the loaded grid keeps its captured revision; load and select it again before accepting a newer revision.
 
-Choose **Move rejects** in Photos' **⋯** menu to preview the complete current scope, including photos beyond the loaded page. The preview counts eligible photos and files, lists up to 20 mixed pairs with their total count, and counts photos that stay in Docbank. Every original member, including individually trashed originals, must have the stored `reject` flag; sidecars follow their photo. The preview returns exact targets in asset ID order, limited to 1,000 live member files. A photo that would exceed the limit waits for the next batch. Confirmation moves those photos atomically. A missing target, changed asset or original node revision, changed reject flag, or changed Library/Hidden scope refuses the whole batch and requires another preview. Sidecar writes from XMP sync don't count as changes, but a sidecar version sync hasn't read yet, such as an outside edit, does. Changes elsewhere in the scope, including album membership, leave the previewed targets valid. Larger scopes still show complete counts and how many photos will move now. Preview and confirm again for the rest. Select up to 64 photos and choose **Selected photos** in the modal to narrow the scope. Hidden scope requires an active unlock at preview and confirmation. An audit refusal names the blocked photo and file and leaves the entire batch in Docbank. Close the dialog, select up to 64 other photos, and choose **Selected photos** to move them.
+Choose **Trash rejected photos** in Photos' **⋯** menu to preview the complete current scope, including photos beyond the loaded page. The preview counts eligible photos and files, lists up to 20 mixed pairs with their total count, and counts photos that stay in Docbank. Every original member, including individually trashed originals, must have the stored `reject` flag; sidecars follow their photo. The preview returns exact targets in asset ID order, limited to 1,000 live member files. A photo that would exceed the limit waits for the next batch. Confirmation moves those photos atomically. A missing target, changed asset or original node revision, changed reject flag, or changed Library/Hidden scope refuses the whole batch and requires another preview. Sidecar writes from XMP sync don't count as changes, but a sidecar version sync hasn't read yet, such as an outside edit, does. Changes elsewhere in the scope, including album membership, leave the previewed targets valid. Larger scopes still show complete counts and how many photos will move now. Preview and confirm again for the rest. Select up to 64 photos and choose **Selected photos** in the modal to narrow the scope. Hidden scope requires an active unlock at preview and confirmation. An audit refusal names the blocked photo and file and leaves the entire batch in Docbank. Close the dialog, select up to 64 other photos, and choose **Selected photos** to move them.
 
 ![Move rejects preview counting the photos that will move to trash](https://docbank.ai/assets/generated/web-photo-rejects.png)
 
@@ -818,7 +823,7 @@ Metadata JSONL v1 includes `trash` and `restore` receipts recording the operatio
 
 Map opened from an album plots that album's GPS photos. Otherwise, it plots GPS photos matching the current Library search and filters. Hidden is never mapped. Results sort by capture date.
 
-Configure [photo map tiles](../configuration.md#photo-map-tiles) in `[web.map_tiles]` and restart Docbank. Choose Map beside Library to browse GPS-positioned photos from the current query. Markers group nearby photos into numbered clusters. Click a marker to open the photo viewer. Escape returns focus to the marker or its cluster and retains the map position. The map also keeps its position when an access check conceals and refreshes it. Switching workspaces resets the map position. A cluster zooms in or spreads overlapping markers so you can open each photo.
+Configure [photo map tiles](../configuration.md#photo-map-tiles) in `[web.map_tiles]` and restart Docbank; Map stays out of the sidebar until then. Choose Map beside Library to browse GPS-positioned photos from the current query. Markers group nearby photos into numbered clusters. Click a marker to open the photo viewer. Escape returns focus to the marker or its cluster and retains the map position. The map also keeps its position when an access check conceals and refreshes it. Switching workspaces resets the map position. A cluster zooms in or spreads overlapping markers so you can open each photo.
 
 ![Map with photo clusters beside the photos in view](https://docbank.ai/assets/generated/photo-map-enabled-1440-dark.png)
 
@@ -826,7 +831,7 @@ Map uses album membership when opened from an album. Otherwise it inherits Libra
 
 ## Cull and compare
 
-Choose **Cull** in Library or an album to review the whole current query full-screen. Docbank captures its order and membership before starting. A cull accepts up to 250,000 photos; narrow larger queries before starting. Flag or rating changes keep photos in the current pass; the next pass refreshes eligibility. Cull decisions are flags. A decision changes both files of a RAW and JPEG pair. When the pair's flags or ratings differ, it changes only the shown file and says so. Star ratings leave a photo unflagged. **S** cycles through unflagged, picks, rejects, and all, with confirmation before resetting an unfinished pass.
+Choose **Cull** in Library or an album to review the whole current query full-screen. Docbank captures its order and membership before starting. A cull accepts up to 250,000 photos; narrow larger queries before starting. Flag or rating changes keep photos in the current pass; the next pass refreshes eligibility. Cull decisions are flags. A decision changes both files of a RAW and JPEG pair. When the pair's flags or ratings differ, it changes only the shown file and says so. Star ratings leave a photo unflagged. **S** or the scope button in the header cycles through unflagged, picks, rejects, and all photos, with confirmation before resetting an unfinished pass.
 
 ![Full-screen Cull with flag, skip, and filmstrip controls](https://docbank.ai/assets/generated/web-photo-cull.png)
 
@@ -836,9 +841,9 @@ Library groups adjacent capture times from the same import folder, camera make, 
 
 ![Library showing collapsed burst stacks, each with a frame count](https://docbank.ai/assets/generated/web-photo-stacks.png)
 
-Set **Burst gap (seconds)** from 1 to 30 to regroup existing photos. Capture-time pages keep each stack together. A photo with missing or outdated camera details groups as one with no serial, so it stacks only with other photos that have no serial. Per-photo flags and ratings remain available. Unreadable originals leave camera details unavailable until they can be read; background extraction retries them. A notice says groups can change after details update, and Cull refreshes them when you choose **Retry grouping** or change the burst gap.
+Choose a **Burst gap** from 1 to 30 seconds in the Cull header to regroup existing photos. Capture-time pages keep each stack together. A photo with missing or outdated camera details groups as one with no serial, so it stacks only with other photos that have no serial. Per-photo flags and ratings remain available. Unreadable originals leave camera details unavailable until they can be read; background extraction retries them. A notice says groups can change after details update, and Cull refreshes them when you choose **Retry grouping** or change the burst gap.
 
-In Cull, use H/L to move between stacks and J/K to move within a stack. Check frames in the filmstrip and choose **Keep selected** to retain those frames. Flags owned by another decision stay unchanged. Navigation preserves the checked frames; starting a new pass or regrouping clears them. A Cull stack holds only frames in the current pass, so a frame the pass excludes keeps its flag. **Keep all** picks every frame in the stack. **Keep current (Return)** picks the viewed frame and rejects the rest. Later Return decisions replace earlier Return assignments only for frames still owned by Return. Stack decisions update every live member file together, including paired originals, with one receipt and one Undo.
+In Cull, use H/L to move between stacks and J/K to move within a stack. Check frames in the filmstrip and choose **Keep selected** to retain those frames. Flags owned by another decision stay unchanged. Navigation preserves the checked frames; starting a new pass or regrouping clears them. A Cull stack holds only frames in the current pass, so a frame the pass excludes keeps its flag. **Keep all** picks every frame in the stack. **Keep current** (Return) picks the viewed frame and rejects the rest. Later Return decisions replace earlier Return assignments only for frames still owned by Return. Stack decisions update every live member file together, including paired originals, with one receipt and one Undo.
 
 ![Cull on a burst stack with Keep current, Keep all, and Keep selected](https://docbank.ai/assets/generated/web-photo-cull-stack.png)
 
@@ -857,7 +862,7 @@ With auto-advance on, P, X, and U move to the next photo; 0-5 change the rating 
 | A | Toggle auto-advance, initially on |
 | S | Start the next scope pass |
 | Z | Toggle 1:1 preview pixels and fit |
-| I | Cycle EXIF information |
+| I | Cycle photo details |
 | ? | Show the key map |
 | Esc | Leave cull mode |
 

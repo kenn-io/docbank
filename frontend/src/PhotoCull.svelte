@@ -1,11 +1,22 @@
 <script lang="ts">
+  import IconAction from "./IconAction.svelte";
   import { onDestroy, onMount, untrack, tick } from "svelte";
   import { settleReads } from "./photoEvents.js";
   import { restorePhotoReviewFocus } from "./photoReview.js";
   import "./photoReview.css";
   import { patchPhotoRows } from "./photoRows.js";
   import { PhotoAuthoredEditor } from "./photoAuthored.svelte.js";
-  import { Button, Checkbox, Modal, Notice } from "@kenn-io/kit-ui";
+  import { Button, Checkbox, Modal, Notice, SelectDropdown, Toggle } from "@kenn-io/kit-ui";
+  import BanIcon from "@lucide/svelte/icons/ban";
+  import ChevronLeftIcon from "@lucide/svelte/icons/chevron-left";
+  import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
+  import FlagIcon from "@lucide/svelte/icons/flag";
+  import FlagOffIcon from "@lucide/svelte/icons/flag-off";
+  import InfoIcon from "@lucide/svelte/icons/info";
+  import KeyboardIcon from "@lucide/svelte/icons/keyboard";
+  import SkipForwardIcon from "@lucide/svelte/icons/skip-forward";
+  import XIcon from "@lucide/svelte/icons/x";
+  import ZoomInIcon from "@lucide/svelte/icons/zoom-in";
   import { APIError } from "./api-transport.js";
   import type { PhotoCull } from "./photoCull.svelte.js";
   import type { Photos } from "./photos.svelte.js";
@@ -22,8 +33,8 @@
   import PhotoCell from "./PhotoCell.svelte";
   import PhotoCullConfirmation from "./PhotoCullConfirmation.svelte";
   import { fittedPhotoView, toggleActualPhotoView, type PhotoView } from "./photoView.js";
-  import { photoFacts } from "./photoFacts.js";
-  import { cullKey } from "./shortcuts.js";
+  import PhotoDetails from "./PhotoDetails.svelte";
+  import { cullKey, isAppShortcutSuppressed } from "./shortcuts.js";
   let {
     cull,
     photos,
@@ -531,10 +542,29 @@
   function close() {
     if (canChangeTarget()) onclose();
   }
+  const scopeLabels = {
+    unflagged: "Unflagged photos",
+    picks: "Picks",
+    rejects: "Rejects",
+    all: "All photos",
+  } as const;
+  const burstGapOptions = Array.from({ length: 30 }, (_, index) => ({
+    value: String(index + 1),
+    label: `${index + 1} s`,
+  }));
+  let gapError = $state("");
+  async function changeBurstGap(gap: number) {
+    if (!canChangeTarget() || gap === photos.burstGapSeconds) return;
+    gapError = "";
+    await photos.setBurstGap(gap);
+    gapError = photos.actionError;
+    if (!gapError) await cull.checkSettings();
+  }
   function keepCurrent() {
     return cull.currentStack ? decideStack("current") : decide({ flag: "pick" }, true);
   }
   function key(event: KeyboardEvent) {
+    if (isAppShortcutSuppressed(event, false, container ?? document, ".photo-cull,body")) return;
     const action = cullKey(event);
     if (action === undefined) return;
     event.preventDefault();
@@ -576,22 +606,41 @@
     <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_static_element_interactions -->
     <div class="photo-review photo-cull" tabindex="-1" bind:this={container} onkeydown={key}>
       <header>
-        <Button size="sm" disabled={busy} onclick={close}>Exit cull</Button>
+        <IconAction ariaLabel="Exit cull" tip="Exit cull (Esc)" disabled={busy} onclick={close}
+          ><XIcon size={18} /></IconAction
+        >
         <strong>{photo?.name ?? (cull.complete ? "Pass complete" : "Cull photos")}</strong>
-        <span
+        <span class="position"
           >{Math.min(checkpoint.position + 1, checkpoint.pass.length)} of {checkpoint.pass
             .length}</span
         >
-        <Button size="sm" disabled={cull.busy || cull.stale || busy} onclick={() => void nextPass()}
-          >Scope: {checkpoint.scope}</Button
-        >
         <Button
           size="sm"
-          disabled={cull.stale || cull.busy || busy}
-          onclick={() => cull.toggleAutoAdvance()}
-          >Auto-advance: {checkpoint.autoAdvance ? "on" : "off"}</Button
+          title={`Showing ${scopeLabels[checkpoint.scope].toLowerCase()}. Next set (S)`}
+          disabled={cull.busy || cull.stale || busy}
+          onclick={() => void nextPass()}>{scopeLabels[checkpoint.scope]}</Button
         >
-        <Button size="sm" onclick={() => (help = !help)}>Keys (?)</Button>
+        <Toggle
+          label="Auto-advance"
+          checked={checkpoint.autoAdvance}
+          disabled={cull.stale || cull.busy || busy}
+          onchange={() => cull.toggleAutoAdvance()}
+        />
+        <span class="burst-gap"
+          >Burst gap<SelectDropdown
+            title="Burst gap"
+            value={String(photos.burstGapSeconds)}
+            options={burstGapOptions}
+            disabled={cull.stale || cull.busy || busy || photos.blocking}
+            onchange={(value) => void changeBurstGap(Number(value))}
+          /></span
+        >
+        <IconAction
+          ariaLabel="Keyboard shortcuts"
+          tip="Keyboard shortcuts (?)"
+          ariaPressed={help}
+          onclick={() => (help = !help)}><KeyboardIcon size={16} /></IconAction
+        >
       </header>
       {#if cull.run?.groupingIncomplete}<p role="status">
           Some camera details are missing or outdated. Stacks can change once they update.
@@ -603,6 +652,7 @@
             }}>Retry grouping</Button
           >
         </p>{/if}
+      {#if gapError}<p role="alert">{gapError}</p>{/if}
       {#if cull.error || cull.stackError || editor.error || editor.notice}<p role="alert">
           {cull.error ||
             cull.stackError ||
@@ -682,15 +732,14 @@
               {#if !loading && error}<Button disabled={busy} onclick={() => lookupAttempt++}
                   >Retry</Button
                 >{/if}
-              <Button disabled={busy} onclick={() => move(1)}>Next photo</Button>
             </div>{/if}
           {#if info && photo}<aside aria-label="Photo facts">
-              <dl>
-                {#each photoFacts(photo).slice(0, info === 1 ? 5 : undefined) as [label, value]}<dt>
-                    {label}
-                  </dt>
-                  <dd>{value}</dd>{/each}
-              </dl>
+              <PhotoDetails
+                {photo}
+                session={photos.session}
+                onauthfailure={photos.onauthfailure}
+                compact={info === 1}
+              />
             </aside>{/if}
         </div>
         <div class="controls">
@@ -705,7 +754,8 @@
                 !!cull.stackError ||
                 editor.stackLoading ||
                 cull.stale}
-              onclick={() => void decideStack("current")}>Keep current (Return)</Button
+              title="Keep current (Return)"
+              onclick={() => void decideStack("current")}>Keep current</Button
             >
             <Button
               size="sm"
@@ -745,35 +795,62 @@
               onclick={() => void decideStack("representative")}>Choose representative</Button
             >
           {/if}
-          <Button size="sm" disabled={checkpoint.position === 0 || busy} onclick={() => move(-1)}
-            >Previous</Button
+          <IconAction
+            ariaLabel="Previous photo"
+            tip="Previous photo (←)"
+            disabled={checkpoint.position === 0 || busy}
+            onclick={() => move(-1)}><ChevronLeftIcon size={18} /></IconAction
           >
-          <Button
-            size="sm"
+          <IconAction
+            ariaLabel="Next photo"
+            tip="Next photo (→)"
+            disabled={cull.stale || busy}
+            onclick={() => move(1)}><ChevronRightIcon size={18} /></IconAction
+          >
+          <span class="divider" aria-hidden="true"></span>
+          <IconAction
+            ariaLabel="Pick"
+            tip="Pick (P)"
+            tone="success"
             disabled={!photo || cull.stale || busy || cull.stackLoading || !!cull.stackError}
-            onclick={() => void decide({ flag: "pick" })}>Pick (P)</Button
+            onclick={() => void decide({ flag: "pick" })}><FlagIcon size={16} /></IconAction
           >
-          <Button
-            size="sm"
+          <IconAction
+            ariaLabel="Reject"
+            tip="Reject (X)"
+            tone="danger"
             disabled={!photo || cull.stale || busy || cull.stackLoading || !!cull.stackError}
-            onclick={() => void decide({ flag: "reject" })}>Reject (X)</Button
+            onclick={() => void decide({ flag: "reject" })}><BanIcon size={16} /></IconAction
           >
-          <Button
-            size="sm"
+          <IconAction
+            ariaLabel="Clear flag"
+            tip="Clear flag (U)"
             disabled={!photo || cull.stale || busy || cull.stackLoading || !!cull.stackError}
-            onclick={() => void decide({ flag: "" })}>Clear flag (U)</Button
+            onclick={() => void decide({ flag: "" })}><FlagOffIcon size={16} /></IconAction
           >
-          <Button
-            size="sm"
+          <IconAction
+            ariaLabel="Skip"
             disabled={cull.stale || busy}
             onclick={() => {
               if (canChangeTarget()) cull.skip();
-            }}>Skip</Button
+            }}><SkipForwardIcon size={16} /></IconAction
           >
-          <span>{photo ? `${photo.flag || "Unflagged"} · ${photo.rating} stars` : ""}</span>
-          <Button size="sm" onclick={() => (view = toggleActualPhotoView(view))}>1:1 (Z)</Button>
-          <Button size="sm" onclick={() => (info = (info + 1) % 3)}>EXIF (I)</Button>
-          <Button size="sm" disabled={cull.stale || busy} onclick={() => move(1)}>Next</Button>
+          <span class="status"
+            >{photo ? `${photo.flag || "Unflagged"} · ${photo.rating} stars` : ""}</span
+          >
+          <IconAction
+            ariaLabel="1:1 preview"
+            tip="1:1 preview (Z)"
+            ariaPressed={view.actual}
+            onclick={() => (view = toggleActualPhotoView(view))}
+            ><ZoomInIcon size={16} /></IconAction
+          >
+          <IconAction
+            ariaLabel="Photo details"
+            tip="Photo details (I)"
+            ariaPressed={info > 0}
+            onclick={() => (info = (info + 1) % 3)}><InfoIcon size={16} /></IconAction
+          >
         </div>
         {#if railError}<p role="alert">{railError}</p>{/if}
         <nav class="filmstrip" aria-label="Cull pass">
@@ -842,12 +919,42 @@
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 12px;
-    padding: 12px;
+    gap: var(--space-4) var(--space-6);
+    padding: var(--space-4) var(--space-5);
     background: var(--bg-surface);
   }
   header strong {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .position {
     flex: 1;
+    color: var(--text-muted);
+  }
+  .burst-gap {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-3);
+    color: var(--text-muted);
+  }
+  .burst-gap :global(.kit-select-dropdown) {
+    width: auto;
+    min-width: 0;
+  }
+  .controls {
+    justify-content: center;
+  }
+  .divider {
+    align-self: stretch;
+    border-left: 1px solid var(--border-default);
+  }
+  .status {
+    min-width: 8rem;
+    margin-inline: var(--space-4);
+    color: var(--text-muted);
+    text-align: center;
   }
   .body {
     display: flex;
@@ -858,13 +965,6 @@
     width: 260px;
     padding: 16px;
     overflow: auto;
-  }
-  dt {
-    color: var(--text-muted);
-    margin-top: 12px;
-  }
-  dd {
-    margin: 4px 0;
   }
   .filmstrip {
     flex-shrink: 0;

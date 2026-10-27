@@ -59,7 +59,7 @@ func writeWatchedInboxes(w io.Writer, items []api.WatchedInbox) error {
 	for _, item := range items {
 		status, problem := "unavailable", "-"
 		if item.Job != nil {
-			status = item.Job.Status
+			status = item.Job.DisplayStatus()
 			if item.Job.Error != "" {
 				problem = strconv.QuoteToASCII(item.Job.Error)
 			}

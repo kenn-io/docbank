@@ -111,18 +111,15 @@ test.describe("mailbox import screenshot", () => {
 
   test("verified Takeout with distinct repeated occurrences", async ({ page }) => {
     await page.goto(webURL, { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "Import mailbox", exact: true }).click();
-    const eyebrow = await page.locator(".drawer-heading span").boundingBox();
-    const title = await page.locator(".drawer-heading strong").boundingBox();
-    if (!eyebrow || !title) throw new Error("missing mailbox heading geometry");
-    expect(title.y).toBeGreaterThanOrEqual(eyebrow.y + eyebrow.height);
+    await page.getByRole("button", { name: "Add", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Import mailbox", exact: true }).click();
     await page.getByLabel("Choose MBOX or Takeout ZIP", { exact: true }).setInputFiles(zipPath);
     await page.getByRole("button", { name: "Upload and preview", exact: true }).click();
-    await expect(page.getByText("1 mailbox entry · mboxrd")).toBeVisible();
+    await expect(page.getByText("1 message · mboxrd")).toBeVisible();
     await page.getByRole("button", { name: "Import messages", exact: true }).click();
     await expect(page.getByText("Import complete", { exact: true })).toBeVisible();
-    await expect(page.getByText("Every message occurrence has been scanned.")).toBeVisible();
-    const idText = await page.locator(".mailbox small").textContent();
+    await expect(page.getByText("Unscanned messages remain.")).toHaveCount(0);
+    const idText = await page.getByText(/^Import [0-9a-f-]{8,}/).textContent();
     if (!idText?.startsWith("Import ")) throw new Error("missing import identity");
     const id = idText.slice(7);
     const job = JSON.parse(await docbank(["mailbox", "status", id])) as {
@@ -176,10 +173,8 @@ test.describe("mailbox import screenshot", () => {
       animations: "disabled",
     });
     await page.getByRole("tab", { name: "Attachments", exact: true }).click();
-    const attachments = page.getByRole("region", { name: "Outgoing attachments" });
-    await expect(
-      attachments.getByRole("button", { name: /Open attachment project.csv/ }),
-    ).toBeVisible();
+    const attachments = page.getByRole("region", { name: "Attachments" });
+    await expect(attachments.getByRole("button", { name: "project.csv" })).toBeVisible();
     await page
       .locator(`[data-source-version="${occurrences[0]!.target.version_id}"]`)
       .screenshot({ path: path.join(output, "web-email-attachments.png"), animations: "disabled" });

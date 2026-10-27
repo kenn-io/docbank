@@ -51,6 +51,7 @@
   let failure = $state("");
   let notice = $state("");
   const currentGroups = $derived(groupTags(current));
+  const confirming = $derived(deleting !== null && deleting.assignment_count > 0);
   let destroyed = false;
   onDestroy(() => {
     destroyed = true;
@@ -129,6 +130,20 @@
     }
   }
 
+  function filesLabel(count: number): string {
+    return `${count.toLocaleString()} file${count === 1 ? "" : "s"}`;
+  }
+
+  // An unused tag deletes at once; a tag in use asks first, naming how many
+  // files lose it.
+  function requestDelete(tag: Tag): void {
+    cancelRename();
+    deleting = tag;
+    failure = "";
+    notice = "";
+    if (tag.assignment_count === 0) void confirmDelete();
+  }
+
   async function confirmDelete(): Promise<void> {
     if (!deleting || disabled || pending) return;
     const target = deleting;
@@ -142,7 +157,9 @@
       current = current.filter((tag) => tag.id !== target.id);
       currentTotal = Math.max(0, currentTotal - 1);
       deleting = null;
-      notice = `Deleted ${receipt.tag.name} and removed ${receipt.removed_assignments} assignment${receipt.removed_assignments === 1 ? "" : "s"}.`;
+      notice = receipt.removed_assignments
+        ? `Deleted ${receipt.tag.name} from ${filesLabel(receipt.removed_assignments)}.`
+        : `Deleted ${receipt.tag.name}.`;
       onchanged({
         kind: "deleted",
         tag: receipt.tag,
@@ -157,36 +174,19 @@
 </script>
 
 <Modal
-  title={deleting ? "Delete tag definition?" : "Tag catalog"}
-  tone={deleting ? "danger" : "info"}
+  title={confirming ? "Delete tag?" : "Tag catalog"}
+  tone={confirming ? "danger" : "info"}
   width="680px"
   maxWidth="min(680px, calc(100vw - 32px))"
-  ariaLabel={deleting ? `Delete tag ${deleting.name}` : "Manage tag definitions"}
+  ariaLabel={confirming && deleting ? `Delete tag ${deleting.name}` : "Manage tag definitions"}
   onclose={close}
   closeOnOverlayClick={!pending}
 >
-  {#if deleting}
+  {#if confirming && deleting}
     <div class="delete-confirmation">
-      <div class="delete-target">
-        <Trash2Icon size="20" aria-hidden="true" />
-        <div>
-          <strong>{deleting.name}</strong>
-          <code>{deleting.id}</code>
-          <span>
-            Revision {deleting.revision} · {deleting.assignment_count} assignment{deleting.assignment_count ===
-            1
-              ? ""
-              : "s"}
-          </span>
-        </div>
-      </div>
       <p>
-        This permanently removes the tag definition and every assignment that currently uses it.
-        Documents and their stored content are not deleted.
-      </p>
-      <p class="boundary">
-        This action cannot be undone. You may create a tag with the same name later, but it will
-        have a different stable identity.
+        <strong>{deleting.name}</strong> is on {filesLabel(deleting.assignment_count)}. Deleting it
+        removes it from them and can't be undone.
       </p>
       {#if failure}<p class="failure" role="alert">{failure}</p>{/if}
     </div>
@@ -265,15 +265,8 @@
                   </div>
                 {:else}
                   <div class="definition-authority">
-                    <div>
-                      <TagLabel {tag} size="sm" />
-                      <span
-                        >{tag.assignment_count} assignment{tag.assignment_count === 1
-                          ? ""
-                          : "s"}</span
-                      >
-                    </div>
-                    <code>{tag.id}</code>
+                    <TagLabel {tag} size="sm" />
+                    <span>{filesLabel(tag.assignment_count)}</span>
                   </div>
                   <div class="definition-actions">
                     <IconButton
@@ -290,12 +283,7 @@
                       ariaLabel={`Delete tag ${tag.name}`}
                       title={`Delete ${tag.name}`}
                       disabled={disabled || pending}
-                      onclick={() => {
-                        cancelRename();
-                        deleting = tag;
-                        failure = "";
-                        notice = "";
-                      }}
+                      onclick={() => requestDelete(tag)}
                     >
                       <Trash2Icon size="14" />
                     </IconButton>
@@ -315,7 +303,7 @@
     </div>
   {/if}
   {#snippet footer()}
-    {#if deleting}
+    {#if confirming}
       <Button surface="soft" disabled={pending} onclick={() => (deleting = null)}>Keep tag</Button>
       <Button
         tone="danger"
@@ -336,34 +324,6 @@
   .delete-confirmation {
     display: grid;
     gap: var(--space-4);
-  }
-
-  .delete-target {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
-    align-items: start;
-    gap: var(--space-3);
-    padding: var(--space-4);
-    border: 1px solid var(--border-default);
-    border-radius: var(--radius-md);
-    background: var(--bg-inset);
-  }
-
-  .delete-target > div {
-    display: grid;
-    min-width: 0;
-    gap: var(--space-1);
-  }
-
-  .delete-target strong {
-    color: var(--text-primary);
-    font-size: var(--font-size-md);
-  }
-
-  .delete-target span {
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
-    line-height: 1.4;
   }
 
   .create-row,
@@ -408,27 +368,14 @@
   }
 
   .definition-authority {
-    display: grid;
-    min-width: 0;
-    gap: var(--space-2);
-  }
-
-  .definition-authority > div {
     display: flex;
     align-items: center;
-    gap: var(--space-2);
+    min-width: 0;
+    gap: var(--space-4);
   }
 
-  .definition-authority span,
-  .definition-authority code,
-  .delete-target code {
+  .definition-authority span {
     color: var(--text-muted);
-    font-size: var(--font-size-xs);
-  }
-
-  .definition-authority code,
-  .delete-target code {
-    overflow-wrap: anywhere;
   }
 
   .definition-actions {
@@ -448,7 +395,6 @@
   .delete-confirmation p {
     margin: 0;
     color: var(--text-secondary);
-    font-size: var(--font-size-sm);
     line-height: 1.5;
   }
 
@@ -465,14 +411,8 @@
   }
 
   .empty,
-  .bounded,
-  .boundary {
+  .bounded {
     color: var(--text-muted);
-  }
-
-  .delete-target > :global(svg) {
-    margin-top: 2px;
-    color: var(--accent-red);
   }
 
   @media (max-width: 640px) {
@@ -480,7 +420,7 @@
       align-items: start;
     }
 
-    .definition-authority > div {
+    .definition-authority {
       align-items: start;
       flex-direction: column;
     }

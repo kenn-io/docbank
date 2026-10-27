@@ -2,20 +2,23 @@
   import type { ActionJournalAccess, PersistedAction } from "./actionJournal.js";
 
   export interface ActionRecoveryJournal extends ActionJournalAccess {
-    verifyCheckpoint(bytes: Uint8Array): Promise<void>;
     confirmResume(actionID: string): Promise<void>;
     pause(): Promise<void>;
     abandon(): Promise<void>;
+    discardUnsent(actionID: string): Promise<void>;
   }
 </script>
 
 <script lang="ts">
   import { onDestroy, untrack } from "svelte";
-  import { Button, Checkbox, Chip, Modal, Spinner, Table } from "@kenn-io/kit-ui";
+  import CheckIcon from "@lucide/svelte/icons/check";
+  import DownloadIcon from "@lucide/svelte/icons/download";
+  import { Button, Modal, Spinner, Table } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
   import type { Tag } from "./generated/docbank.js";
-  import { ACTION_MAX_BYTES, encodeRecovery } from "./actionRecovery.js";
+  import { encodeRecovery } from "./actionRecovery.js";
   import { runAction, type ActionProgress } from "./actionRunner.js";
+  import { documentCount, tagChangeConsequence, tagChangeDone } from "./tagChangeText.js";
 
   interface Props {
     session: string;
@@ -41,9 +44,7 @@
     onauthfailure,
   }: Props = $props();
   let action = $state<PersistedAction>(untrack(() => initialAction));
-  let confirmed = $state(false);
   let running = $state(false);
-  let checking = $state(false);
   let failure = $state("");
   let notice = $state("");
   let abandonWarning = $state(false);
@@ -59,27 +60,26 @@
   const visibleTargets = $derived(batch.members.slice(targetOffset, targetOffset + 50));
 
   const vaultMatches = $derived(sessionVaultID === action.vault_id);
-  const completedBatches = $derived(
-    action.batches.filter((batch) => batch.state === "complete").length,
+  const tagName = $derived(tag?.name ?? "deleted tag");
+  const doneDocuments = $derived(
+    action.batches
+      .filter((item) => item.state === "complete")
+      .reduce((sum, item) => sum + item.members.length, 0),
   );
-  const remainingBatches = $derived(action.batches.length - completedBatches);
-  const stateLabel = $derived(
-    action.state === "prepared"
-      ? "Pending"
-      : action.state === "sending"
-        ? "Running"
-        : action.state[0].toUpperCase() + action.state.slice(1),
+  const changedDocuments = $derived(
+    action.batches.reduce(
+      (sum, item) => sum + (item.receipt?.nodes.filter((node) => node.changed).length ?? 0),
+      0,
+    ),
   );
-  const runnable = $derived(
-    !disabled &&
-      tag !== null &&
-      vaultMatches &&
-      action.checkpoint_verified &&
-      action.state !== "stale" &&
-      action.state !== "complete" &&
-      confirmed &&
-      !running &&
-      !checking,
+  const finished = $derived(action.state === "complete" || action.state === "stale");
+  // The journal rechecks stored progress before discarding on close.
+  const untouched = $derived(
+    action.state === "prepared" && action.batches.every((item) => item.state === "prepared"),
+  );
+  const runnable = $derived(!disabled && tag !== null && vaultMatches && !finished && !running);
+  const applyLabel = $derived(
+    action.state === "uncertain" ? "Retry" : untouched && doneDocuments === 0 ? "Apply" : "Resume",
   );
 
   async function reload(): Promise<void> {
@@ -101,42 +101,20 @@
       link.download = `docbank-tag-action-${action.action_id}.json`;
       link.click();
       URL.revokeObjectURL(url);
-      notice = "Recovery checkpoint saved. Select that saved file below before mutation.";
     } catch (cause) {
       failure = cause instanceof Error ? cause.message : String(cause);
-    }
-  }
-
-  async function verifyCheckpoint(event: Event): Promise<void> {
-    const input = event.currentTarget as HTMLInputElement;
-    const file = input.files?.[0];
-    input.value = "";
-    if (!file || checking || running) return;
-    checking = true;
-    failure = "";
-    notice = "";
-    try {
-      if (file.size > ACTION_MAX_BYTES)
-        throw new Error("The action recovery file exceeds 128 MiB.");
-      await journal.verifyCheckpoint(new Uint8Array(await file.arrayBuffer()));
-      await reload();
-      notice = "Recovery checkpoint verified.";
-    } catch (cause) {
-      failure = cause instanceof Error ? cause.message : String(cause);
-    } finally {
-      checking = false;
     }
   }
 
   async function run(): Promise<void> {
     if (!runnable) return;
     running = true;
-    confirmed = false;
     failure = "";
     notice = "";
     abandonWarning = false;
     controller = new AbortController();
     try {
+      // Pressing Apply is the explicit confirmation the runner requires.
       await journal.confirmResume(action.action_id);
       const result = await runAction(session, journal, controller.signal, (next, receipt) => {
         if (!alive) return;
@@ -168,7 +146,7 @@
     try {
       await journal.pause();
       await reload();
-      notice = "Action paused. An in-flight request may still be recorded before scheduling stops.";
+      notice = "Paused. A request already sent may still finish.";
     } catch (cause) {
       failure = cause instanceof Error ? cause.message : String(cause);
     }
@@ -184,104 +162,118 @@
       failure = cause instanceof Error ? cause.message : String(cause);
     }
   }
+
+  async function close(): Promise<void> {
+    if (running) return;
+    try {
+      if (untouched) await journal.discardUnsent(action.action_id);
+      onclose();
+    } catch (cause) {
+      failure = cause instanceof Error ? cause.message : String(cause);
+    }
+  }
 </script>
 
 <Modal
-  title="Recoverable snapshot action"
+  title="Tag all results"
   tone="info"
-  width="700px"
-  maxWidth="min(700px, calc(100vw - 32px))"
-  ariaLabel="Recoverable snapshot action"
-  onclose={() => {
-    if (!running) onclose();
-  }}
-  closeOnOverlayClick={!running && !checking}
+  width="480px"
+  maxWidth="min(480px, calc(100vw - 32px))"
+  ariaLabel="Tag all results"
+  onclose={close}
+  closeOnOverlayClick={!running}
 >
-  <div class="recovery">
-    <div class="heading">
-      <Chip
-        size="sm"
-        tone={action.state === "complete"
-          ? "success"
-          : action.state === "stale" || action.state === "uncertain"
-            ? "warning"
-            : "info"}
-        uppercase={false}>{stateLabel}</Chip
-      >
-      <span
-        >{completedBatches} completed · {remainingBatches} remaining batch{remainingBatches === 1
-          ? ""
-          : "es"}</span
-      >
-    </div>
+  <div class="run">
+    {#if action.state !== "complete"}
+      <p class="consequence">{tagChangeConsequence(action.assign, tagName, action.total)}</p>
+    {/if}
 
-    <p class="warning">
-      Recovery files contain private document identities, hashes, sizes, and revisions. They never
-      contain the browser session credential.
-    </p>
-
-    <dl>
-      <div>
-        <dt>Vault</dt>
-        <dd><code>{action.vault_id}</code></dd>
-      </div>
-      <div>
-        <dt>Action</dt>
-        <dd><code>{action.action_id}</code></dd>
-      </div>
-      <div>
-        <dt>Tag</dt>
-        <dd>{tag?.name ?? "Unavailable tag"} <code>{action.tag_id}</code></dd>
-      </div>
-      <div>
-        <dt>Operation</dt>
-        <dd>{action.assign ? "Add" : "Remove"} “{tag?.name ?? action.tag_id}”</dd>
-      </div>
-      <div>
-        <dt>Targets</dt>
-        <dd>{action.total} exact document{action.total === 1 ? "" : "s"}</dd>
-      </div>
-    </dl>
-
-    {#if !tag}
-      <p role="alert">
-        This tag is no longer available. You can save the checkpoint or abandon the action.
+    {#if action.state === "complete"}
+      <p class="status done" role="status">
+        <CheckIcon size={14} aria-hidden="true" />
+        {tagChangeDone(action.assign, tagName, changedDocuments, action.total)}
+      </p>
+    {:else if running || action.state === "sending"}
+      <p class="status" role="status">
+        <Spinner size={14} />
+        {doneDocuments.toLocaleString()} of {documentCount(action.total)} done
+      </p>
+    {:else if action.state === "paused" || doneDocuments > 0}
+      <p class="status" role="status">
+        {action.state === "paused" ? "Paused · " : ""}{doneDocuments.toLocaleString()} of {documentCount(
+          action.total,
+        )} done
       </p>
     {/if}
 
-    <details>
-      <summary>Review exact targets</summary>
-      <p>
-        Recovery files contain instructions supplied by their creator. Checksums detect inconsistent
-        files; they do not prove who created the file. Confirm only targets you intend to change.
+    {#if !tag}<p class="alert" role="alert">This tag no longer exists.</p>{/if}
+    {#if !vaultMatches}<p class="alert" role="alert">This run belongs to a different vault.</p>{/if}
+    {#if action.state === "stale"}
+      <p class="alert" role="alert">
+        Some documents changed after this search, so tagging stopped. Changes already made stay.
       </p>
-      <label for="action-target-batch">Target batch</label>
-      <select
-        id="action-target-batch"
-        value={targetBatch}
-        onchange={(event) => {
-          targetBatch = Number(event.currentTarget.value);
-          targetOffset = 0;
-        }}
-      >
-        {#each action.batches as item (item.index)}
-          <option value={item.index}
-            >Batch {item.index + 1} · {item.members.length} documents</option
+    {:else if action.state === "uncertain" && !running}
+      <p class="alert" role="alert">
+        The last request's result is unknown{failure ? ` (${failure})` : ""}.
+      </p>
+    {/if}
+
+    {#if !untouched && !finished && !running && action.state !== "sending"}
+      <p class="privacy">
+        <Button size="sm" surface="soft" onclick={() => void saveCheckpoint()}
+          ><DownloadIcon size={14} aria-hidden="true" /> Save recovery file</Button
+        >
+        Contains private document IDs and hashes.
+      </p>
+    {/if}
+
+    {#if notice}<p class="note" role="status">{notice}</p>{/if}
+    {#if failure && action.state !== "uncertain"}<p class="alert" role="alert">{failure}</p>{/if}
+
+    <details>
+      <summary>Review documents</summary>
+      {#if action.checkpoint_verified}
+        <p class="note">
+          Recovery files can come from anyone. Apply only if these are the documents you expect.
+        </p>
+      {/if}
+      <dl>
+        <dt>Vault</dt>
+        <dd><code>{action.vault_id}</code></dd>
+        <dt>Run</dt>
+        <dd><code>{action.action_id}</code></dd>
+        <dt>Tag</dt>
+        <dd><code>{action.tag_id}</code></dd>
+      </dl>
+      {#if action.batches.length > 1}
+        <label class="batch-select">
+          <span>Batch</span>
+          <select
+            value={targetBatch}
+            onchange={(event) => {
+              targetBatch = Number(event.currentTarget.value);
+              targetOffset = 0;
+            }}
           >
-        {/each}
-      </select>
+            {#each action.batches as item (item.index)}
+              <option value={item.index}
+                >{item.index + 1} · {documentCount(item.members.length)}</option
+              >
+            {/each}
+          </select>
+        </label>
+      {/if}
       <div class="target-list">
         <Table
           unsorted
-          ariaLabel="Exact action targets"
+          ariaLabel="Documents in this run"
           class="target-table"
           zebra={false}
           scroll="page"
         >
           {#snippet header()}
-            <th scope="col">Node ID</th><th scope="col">Content version</th><th scope="col"
-              >SHA-256</th
-            ><th scope="col">Bytes</th><th scope="col">Expected revision</th>
+            <th scope="col">ID</th><th scope="col">Content version</th><th scope="col">SHA-256</th
+            ><th scope="col">Bytes</th><th scope="col">Revision</th>
           {/snippet}
           {#snippet children()}
             {#each visibleTargets as member (member.node_id)}
@@ -294,156 +286,129 @@
           {/snippet}
         </Table>
       </div>
-      <nav class="actions" aria-label="Action target pages">
-        <span
-          >{targetOffset + 1}–{targetOffset + visibleTargets.length} of {batch.members.length} in this
-          batch</span
-        >
-        <Button disabled={targetOffset === 0} onclick={() => (targetOffset -= 50)}
-          >Previous targets</Button
-        >
-        <Button
-          disabled={targetOffset + 50 >= batch.members.length}
-          onclick={() => (targetOffset += 50)}>Next targets</Button
-        >
-      </nav>
+      {#if batch.members.length > 50}
+        <nav class="pager" aria-label="Document pages">
+          <span
+            >{targetOffset + 1}–{targetOffset + visibleTargets.length} of {batch.members
+              .length}</span
+          >
+          <Button size="sm" disabled={targetOffset === 0} onclick={() => (targetOffset -= 50)}
+            >Previous</Button
+          >
+          <Button
+            size="sm"
+            disabled={targetOffset + 50 >= batch.members.length}
+            onclick={() => (targetOffset += 50)}>Next</Button
+          >
+        </nav>
+      {/if}
     </details>
 
-    {#if !vaultMatches}
-      <p role="alert">
-        This fresh browser session is connected to a different vault. This action cannot run here.
-      </p>
-    {/if}
-
-    <section aria-labelledby="checkpoint-heading">
-      <h3 id="checkpoint-heading">Recovery checkpoint</h3>
-      <p>
-        Save the checkpoint, then select that saved file back. A download click alone does not
-        unlock mutation.
-      </p>
-      <div class="actions">
-        <Button disabled={running || checking} onclick={() => void saveCheckpoint()}
-          >Save recovery checkpoint</Button
+    {#if abandonWarning}
+      <div class="confirm" role="alert">
+        <span>Stop this run? Changes already made stay.</span>
+        <Button size="sm" tone="danger" disabled={running} onclick={() => void abandon()}
+          >Discard run</Button
         >
-        <label class:disabled={running || checking}>
-          <span>Select the saved recovery checkpoint</span>
-          <input
-            type="file"
-            accept="application/json,.json"
-            disabled={running || checking}
-            onchange={(event) => void verifyCheckpoint(event)}
-          />
-        </label>
+        <Button size="sm" surface="soft" onclick={() => (abandonWarning = false)}>Keep</Button>
       </div>
-    </section>
-
-    {#if action.state === "stale"}
-      <p class="state-copy">
-        This action is stale. A document changed, or a tag or document is no longer available.
-        Abandon this action and create a new one with a fresh selection. Its original targets and
-        revisions will not be changed.
-      </p>
-    {:else if action.state === "uncertain"}
-      <p class="state-copy">
-        The result is uncertain. Retry same operation uses every original operation identity and
-        expected revision.
-      </p>
-    {:else if action.state === "paused"}
-      <p class="state-copy">The action is paused. Resuming uses the retained original requests.</p>
-    {:else if action.state === "complete"}
-      <p class="state-copy">Action complete. All batches have validated receipts.</p>
-    {:else if action.state === "sending" || running}
-      <p class="state-copy">
-        <Spinner size={16} /> The action is running. Stop after the current request to pause safely.
-      </p>
+    {/if}
+  </div>
+  {#snippet footer()}
+    {#if !untouched && action.state !== "complete" && !abandonWarning}
+      <span class="footer-start">
+        <Button
+          size="sm"
+          surface="soft"
+          tone={action.state === "stale" ? "danger" : "neutral"}
+          disabled={running}
+          onclick={() => (abandonWarning = true)}>Discard run…</Button
+        >
+      </span>
+    {/if}
+    {#if action.state === "complete"}
+      <Button tone="info" surface="solid" onclick={onclose}>Done</Button>
     {:else}
-      <p class="state-copy">
-        The action is pending. No mutation starts before checkpoint readback and explicit
-        confirmation.
-      </p>
-    {/if}
-
-    {#if notice}<p role="status">{notice}</p>{/if}
-    {#if failure}<p role="alert">{failure}</p>{/if}
-
-    {#if vaultMatches && action.state !== "stale" && action.state !== "complete"}
-      <div class="confirmation">
-        <Checkbox
-          checked={confirmed}
-          disabled={disabled || !action.checkpoint_verified || running || checking}
-          ariaLabel="I confirm this vault, action, tag, operation, and exact targets"
-          label="I confirm this vault, action, tag, operation, and exact targets."
-          onchange={(value) => (confirmed = value)}
-        />
-        <Button tone="info" disabled={!runnable} onclick={() => void run()}>
-          {action.state === "uncertain"
-            ? "Retry same operation"
-            : action.state === "paused"
-              ? "Confirm and resume action"
-              : "Confirm and run action"}
-        </Button>
-        {#if running}<Button onclick={() => void pause()}>Pause after current request</Button>{/if}
-      </div>
-    {/if}
-
-    <div class="abandon">
-      {#if abandonWarning}
-        <p role="alert">
-          Abandoning deletes this browser’s journal. Completed or in-flight changes are not rolled
-          back. Save the latest checkpoint first if you may need its receipts.
-        </p>
-        <Button tone="danger" disabled={running} onclick={() => void abandon()}
-          >Abandon action without rollback</Button
-        >
-      {:else}
-        <Button surface="soft" disabled={running} onclick={() => (abandonWarning = true)}
-          >Abandon action…</Button
+      <Button surface="soft" disabled={running} onclick={close}
+        >{untouched ? "Cancel" : "Finish later"}</Button
+      >
+      {#if running}
+        <Button onclick={() => void pause()}>Pause</Button>
+      {:else if action.state !== "stale"}
+        <Button tone="info" surface="solid" disabled={!runnable} onclick={() => void run()}
+          >{applyLabel}</Button
         >
       {/if}
-    </div>
-  </div>
-  {#snippet footer()}<Button surface="soft" disabled={running || checking} onclick={onclose}
-      >Close</Button
-    >{/snippet}
+    {/if}
+  {/snippet}
 </Modal>
 
 <style>
-  .recovery {
+  .run {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
     gap: var(--space-4);
   }
-  .recovery p,
-  .recovery h3 {
+  .run p {
     margin: 0;
   }
-  .heading,
-  .actions,
-  .confirmation {
+  .consequence {
+    color: var(--text-primary);
+    font-weight: var(--font-weight-semibold, 600);
+  }
+  .status,
+  .privacy {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
-    gap: var(--space-3);
+    gap: var(--space-2);
   }
-  .heading span {
-    color: var(--text-muted);
+  .status {
+    color: var(--text-secondary);
     font-size: var(--font-size-sm);
   }
-  .warning {
-    padding: var(--space-3);
-    border: 1px solid color-mix(in srgb, var(--accent-amber) 35%, var(--border-default));
-    border-radius: var(--radius-md);
-    background: color-mix(in srgb, var(--accent-amber) 8%, var(--bg-surface));
+  .status.done {
+    color: var(--accent-green);
+  }
+  .alert {
+    color: var(--accent-red);
+    font-size: var(--font-size-sm);
+  }
+  .note,
+  .privacy {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+  .confirm,
+  .pager {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    font-size: var(--font-size-sm);
+  }
+  .confirm span {
+    margin-inline-end: auto;
+  }
+  .footer-start {
+    margin-inline-end: auto;
+  }
+  details {
+    font-size: var(--font-size-sm);
+  }
+  details > * + * {
+    margin-block-start: var(--space-3);
+  }
+  summary {
+    cursor: pointer;
+    color: var(--text-secondary);
+    font-size: var(--font-size-xs);
   }
   dl {
     display: grid;
-    gap: var(--space-2);
-    margin: 0;
-  }
-  dl div {
-    display: grid;
-    grid-template-columns: 90px minmax(0, 1fr);
-    gap: var(--space-3);
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: var(--space-1) var(--space-3);
+    margin-block-end: 0;
   }
   dt {
     color: var(--text-muted);
@@ -453,42 +418,17 @@
     min-width: 0;
     overflow-wrap: anywhere;
   }
-  section,
-  .abandon {
-    display: grid;
-    gap: var(--space-3);
-    padding-block-start: var(--space-4);
-    border-top: 1px solid var(--border-default);
+  code {
+    font-size: var(--font-size-xs);
   }
-  h3 {
-    font-size: var(--font-size-sm);
-  }
-  label {
-    display: grid;
-    gap: var(--space-2);
-    font-size: var(--font-size-sm);
-    font-weight: 600;
-  }
-  label.disabled {
-    opacity: 0.6;
-  }
-  .state-copy {
+  .batch-select {
     display: flex;
     align-items: center;
     gap: var(--space-2);
   }
-  code {
-    font-size: var(--font-size-xs);
-  }
-  details > * {
-    margin-block-start: var(--space-3);
-  }
-  summary {
-    cursor: pointer;
-  }
   .target-list {
     overflow-x: auto;
-    max-height: 300px;
+    max-height: 240px;
   }
   .target-list :global(.target-table .kit-table) {
     table-layout: fixed;
@@ -500,11 +440,5 @@
     text-align: left;
     overflow-wrap: anywhere;
     border-bottom: 1px solid var(--border-default);
-  }
-  @media (max-width: 640px) {
-    dl div {
-      grid-template-columns: 1fr;
-      gap: var(--space-1);
-    }
   }
 </style>

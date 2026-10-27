@@ -27,6 +27,15 @@ test("complete query validation uses the real compiler without executing", async
         },
       )
     ).stdout.trim();
+  const searches: string[] = [];
+  page.on("request", (request) => {
+    const pathname = new URL(request.url()).pathname;
+    if (
+      pathname === "/api/v1/search" ||
+      (pathname === "/api/v1/workspace/queries" && request.method() === "POST")
+    )
+      searches.push(request.url());
+  });
   try {
     await writeFile(
       path.join(workspace, "manual.txt"),
@@ -35,48 +44,49 @@ test("complete query validation uses the real compiler without executing", async
     );
     await run("add", path.join(workspace, "manual.txt"), "--dest", "/");
     await page.goto(await run("web", "--no-browser"));
-    await page.getByRole("button", { name: "Import collections", exact: true }).click();
-    const collections = page.getByRole("dialog", { name: "Import collections" });
+    await page.getByRole("button", { name: "Imports", exact: true }).click();
+    const collections = page.getByRole("dialog", { name: "Imports" });
     await collections
-      .getByRole("button", { name: /Browse collection/ })
+      .getByRole("button", { name: /Browse import/ })
       .first()
       .click();
-    await collections.getByRole("button", { name: "New query for this collection" }).click();
-    const editor = page.getByRole("region", { name: "Query editor" });
-    await expect(editor.getByText(/Query validated/)).toBeVisible();
+    await collections.getByRole("button", { name: "Search this import" }).click();
+    const editor = page.getByRole("dialog", { name: "Filters and sort" });
+    await expect(editor.getByRole("status", { name: "Query valid" })).toBeVisible();
     const initial = JSON.parse(
       new URLSearchParams(new URL(page.url()).hash.slice(1)).get("query")!,
     );
     expect(initial.filters.collection_ids).toHaveLength(1);
-    const searches: string[] = [];
-    page.on("request", (request) => {
-      if (new URL(request.url()).pathname === "/api/v1/search") searches.push(request.url());
-    });
-    await editor.getByRole("combobox", { name: "Query syntax: Simple" }).click();
-    await page.getByRole("option", { name: "Advanced", exact: true }).click();
-    await editor.getByLabel("Query expression", { exact: true }).fill("name:manual OR archive");
-    await expect(editor.getByText(/Query validated/)).toBeVisible();
+    // Syntax lives in the top bar, so close the editor, switch it, and reopen.
+    await page.keyboard.press("Escape");
+    await expect(editor).toBeHidden();
+    await page.getByRole("combobox", { name: /^Search syntax/ }).click();
+    await page.getByRole("option", { name: "Query syntax", exact: true }).click();
+    await page.getByRole("button", { name: "Advanced", exact: true }).click();
+    await editor.getByLabel("Query syntax", { exact: true }).fill("name:manual OR archive");
+    await expect(editor.getByRole("status", { name: "Query valid" })).toBeVisible();
     await mkdir(screenshots!, { recursive: true, mode: 0o700 });
     await page.screenshot({ path: path.join(screenshots!, "web-query-bar.png"), fullPage: true });
-    await editor.getByLabel("Query expression", { exact: true }).fill("NOT tag:missing-tag");
+    await editor.getByLabel("Query syntax", { exact: true }).fill("NOT tag:missing-tag");
     await expect(editor.getByRole("alert")).toBeVisible();
     await editor.getByRole("button", { name: "Focus query error" }).click();
-    await expect(editor.getByLabel("Query expression", { exact: true })).toBeFocused();
+    await expect(editor.getByLabel("Query syntax", { exact: true })).toBeFocused();
     await page.screenshot({ path: path.join(screenshots!, "web-query-error.png"), fullPage: true });
-    await editor.getByRole("button", { name: "Save query draft" }).click();
-    const saved = page.getByRole("dialog", { name: "Saved queries and highlights" });
+    await editor.getByRole("button", { name: "Save…" }).click();
+    const saved = page.getByRole("dialog", { name: "Searches" });
     await saved.getByLabel("Definition name", { exact: true }).fill("Synthetic review");
     await saved.getByRole("button", { name: "Save as new", exact: true }).click();
     await expect(saved.getByText("Saved Synthetic review.", { exact: true })).toBeVisible();
-    await saved.getByRole("button", { name: "Open query Synthetic review" }).click();
-    await expect(editor.getByLabel("Query expression", { exact: true })).toHaveValue(
-      "NOT tag:missing-tag",
-    );
+    expect(searches).toEqual([]);
+    await saved.getByRole("button", { name: "Run Synthetic review" }).click();
+    await expect(saved).toBeHidden();
     const retained = JSON.parse(
       new URLSearchParams(new URL(page.url()).hash.slice(1)).get("query")!,
     );
+    expect(retained.text).toBe("NOT tag:missing-tag");
     expect(retained.filters).toEqual(initial.filters);
-    expect(searches).toEqual([]);
+    await expect.poll(() => searches.length).toBe(1);
+    expect(new URL(searches[0]).pathname).toBe("/api/v1/workspace/queries");
   } finally {
     await run("daemon", "stop");
     const status = JSON.parse(await run("daemon", "status", "--json"));

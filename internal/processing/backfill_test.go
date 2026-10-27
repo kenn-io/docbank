@@ -3,14 +3,70 @@ package processing
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/docbank/internal/jobs"
+	"go.kenn.io/docbank/internal/store"
 )
+
+func TestBackfillReportsBusyUntilEveryConcurrentItemFinishes(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		supervisor := jobs.New(t.Context(), slog.New(slog.DiscardHandler))
+		defer func() { require.NoError(t, supervisor.Shutdown(context.Background())) }()
+		var paused atomic.Bool
+		paused.Store(true)
+		first, second := make(chan struct{}), make(chan struct{})
+		listed := false
+		worker := &Backfill[string]{
+			Name: "previews", Page: 2, IdleDelay: time.Second,
+			List: func(context.Context, string, int) ([]string, error) {
+				if listed {
+					return nil, nil
+				}
+				listed = true
+				return []string{"a", "b"}, nil
+			},
+			Key: func(key string) string { return key },
+			Control: func(context.Context) (store.LaneControl, error) {
+				return store.LaneControl{Paused: paused.Load(), Concurrency: 2}, nil
+			},
+			Process: func(ctx context.Context, key string) error {
+				release := first
+				if key == "b" {
+					release = second
+				}
+				select {
+				case <-release:
+					return nil
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			},
+		}
+		require.NoError(t, supervisor.Start("derive:visual-previews", worker.Run))
+		synctest.Wait()
+		assert.False(t, supervisor.Snapshot()[0].Busy, "paused before dispatch")
+		paused.Store(false)
+		time.Sleep(jobs.LanePollInterval)
+		synctest.Wait()
+		assert.True(t, supervisor.Snapshot()[0].Busy)
+		close(first)
+		synctest.Wait()
+		assert.True(t, supervisor.Snapshot()[0].Busy, "second item is still processing")
+		close(second)
+		synctest.Wait()
+		assert.False(t, supervisor.Snapshot()[0].Busy, "worker is waiting for more work")
+	})
+}
 
 type fakeBackfillCatalog struct {
 	mu       sync.Mutex

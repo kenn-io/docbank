@@ -186,8 +186,9 @@ An open photo event stream counts as an in-flight request, so a visible Photos t
 Every daemon-owned task runs under one supervisor rooted in the daemon's
 shutdown context. Names are unique and stable for the lifetime of that daemon.
 A task panic is recovered and recorded as a failure, so it does not crash the
-process. `docbank jobs` and authenticated `GET /api/v1/jobs` expose running and
-terminal state in deterministic order. Worker records remain until restart.
+process. `docbank jobs` and authenticated `GET /api/v1/jobs` expose worker
+activity and terminal state in deterministic order. Workers waiting for work
+show idle. Worker records remain until restart.
 The list includes the newest 1,000 durable storage records. Finished storage
 operations clear within an hour after their retention ends unless they still
 own pending cleanup.

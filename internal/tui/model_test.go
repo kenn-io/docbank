@@ -160,13 +160,12 @@ func newFakeBackend() *fakeBackend {
 		},
 		jobs: []api.Job{
 			{
-				Name: "text-extraction", Status: "running",
+				Name: "text-extraction", Status: "running", Busy: true,
 				StartedAt: "2026-07-22T12:00:00Z",
 			},
 			{
-				Name: "watch:inbox", Status: "failed",
-				StartedAt: "2026-07-22T11:00:00Z", FinishedAt: "2026-07-22T11:05:00Z",
-				Error: "source is temporarily unavailable; check the configured inbox path",
+				Name: "watch:inbox", Status: "running", Busy: false,
+				StartedAt: "2026-07-22T11:00:00Z",
 			},
 		},
 		info: api.VaultInfo{
@@ -2504,10 +2503,22 @@ func TestJobsViewShowsLifecycleAndCompleteFailure(t *testing.T) {
 	assert.Contains(t, content, `"watch:inbox"`)
 	assert.Equal(t, 1, backend.jobCalls)
 
+	row := model.renderJobRow(model.jobs[1])
+	assert.True(t, strings.HasSuffix(row, "  -"), row)
 	model, _ = updateModel(t, model, key(tea.KeyDown))
 	model, _ = updateModel(t, model, key(tea.KeyEnter))
-	assert.True(t, model.jobDetail)
 	detail := strings.Join(model.jobDetailLines(model.width), "\n")
+	assert.Contains(t, detail, "Finished: -")
+	model, _ = updateModel(t, model, key(tea.KeyEscape))
+
+	backend.jobs[1].Status = "failed"
+	backend.jobs[1].FinishedAt = "2026-07-22T11:05:00Z"
+	backend.jobs[1].Error = "source is temporarily unavailable; check the configured inbox path"
+	model, cmd = updateModel(t, model, runeKey('r'))
+	model = runModelCommand(t, model, cmd)
+	model, _ = updateModel(t, model, key(tea.KeyEnter))
+	assert.True(t, model.jobDetail)
+	detail = strings.Join(model.jobDetailLines(model.width), "\n")
 	assert.Contains(t, detail, "Status: failed")
 	assert.Contains(t, detail,
 		"source is temporarily unavailable; check the configured inbox path")

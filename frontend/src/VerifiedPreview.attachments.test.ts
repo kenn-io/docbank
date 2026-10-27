@@ -74,6 +74,22 @@ it("keeps nested exact contexts separate and returns to the frozen source and fo
   const original = JSON.stringify(selected);
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const route = String(input);
+    if (route === "/api/v1/renditions/text")
+      return Response.json({
+        state: "unprocessed",
+        source: {
+          node_id: child.node_id,
+          revision: 7,
+          version_id: child.version_id,
+          blob_hash: child.sha256,
+          size: child.size,
+          media_type: "message/rfc822; charset=utf-8",
+        },
+        profile: { name: "", configuration: "configured", fingerprint: "b".repeat(64) },
+        generation_id: "",
+        attachment_id: "",
+        build_id: "",
+      });
     for (const target of [root, child, nested]) {
       if (route === `/api/v1/versions/${target.version_id}`) return Response.json(version(target));
       if (route === `/api/v1/nodes/${target.node_id}`) return Response.json(node(target));
@@ -95,34 +111,65 @@ it("keeps nested exact contexts separate and returns to the frozen source and fo
     throw new Error(`Unexpected ${route}`);
   });
   const onreturnfocus = vi.fn();
+  const ondisplay = vi.fn();
+  const onprocess = vi.fn();
   render(VerifiedPreview, {
     session: "session",
     source: selected,
     authorizationRevision: 1,
     onreturnfocus,
+    ondisplay,
+    onprocess,
     onauthfailure: vi.fn(),
   });
   await fireEvent.click(screen.getByRole("tab", { name: "Attachments" }));
-  await fireEvent.click(
-    await screen.findByRole("button", { name: "Open attachment nested.eml, part 1.2" }),
+  await fireEvent.click(await screen.findByRole("button", { name: "nested.eml" }));
+  await waitFor(() =>
+    expect(
+      screen
+        .getByRole("region", { name: "Verified content of message-2.eml" })
+        .getAttribute("data-source-version"),
+    ).toBe(child.version_id),
   );
-  expect(await screen.findByText(`Exact related version ${child.version_id}`)).toBeTruthy();
+  expect(ondisplay).toHaveBeenLastCalledWith(
+    expect.objectContaining({ versionID: child.version_id, blobHash: child.sha256 }),
+    7,
+  );
+  expect(screen.getByRole("button", { name: "Copy Version" }).textContent).toContain(
+    child.version_id,
+  );
+  expect(screen.queryByRole("button", { name: "Download" })).toBeNull();
   expect(action).toHaveBeenCalledExactlyOnceWith("session", "document_opened");
   action.mockClear();
-  expect(
-    await screen.findByRole("button", { name: "Open parent of nested.eml, part 1.2" }),
-  ).toBeTruthy();
-  await fireEvent.click(
-    screen.getByRole("button", { name: "Open attachment nested.eml, part 1.2" }),
+  await fireEvent.click(screen.getByRole("tab", { name: "Text" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Process…" }));
+  expect(onprocess).toHaveBeenCalledWith(
+    expect.objectContaining({ nodeID: child.node_id, versionID: child.version_id }),
   );
-  expect(await screen.findByText(`Exact related version ${nested.version_id}`)).toBeTruthy();
+  await fireEvent.click(screen.getByRole("tab", { name: "Attachments" }));
+  expect(await screen.findByRole("button", { name: "message-1.eml" })).toBeTruthy();
+  await fireEvent.click(screen.getByRole("button", { name: "nested.eml" }));
+  await waitFor(() =>
+    expect(
+      screen
+        .getByRole("region", { name: "Verified content of message-3.eml" })
+        .getAttribute("data-source-version"),
+    ).toBe(nested.version_id),
+  );
   expect(action).toHaveBeenCalledExactlyOnceWith("session", "document_opened");
   action.mockClear();
   await fireEvent.click(screen.getByRole("button", { name: "Back to previous document" }));
-  expect(await screen.findByText(`Exact related version ${child.version_id}`)).toBeTruthy();
-  await fireEvent.click(screen.getByRole("button", { name: "Return to frozen document" }));
+  await waitFor(() =>
+    expect(
+      screen
+        .getByRole("region", { name: "Verified content of message-2.eml" })
+        .getAttribute("data-source-version"),
+    ).toBe(child.version_id),
+  );
+  await fireEvent.click(screen.getByRole("button", { name: "Return to selected document" }));
   await waitFor(() => expect(onreturnfocus).toHaveBeenCalledOnce());
   expect(screen.getByRole("region", { name: "Verified content of root.eml" })).toBeTruthy();
+  expect(ondisplay).toHaveBeenLastCalledWith(selected, 1);
   expect(JSON.stringify(selected)).toBe(original);
   expect(action).not.toHaveBeenCalled();
 });
@@ -151,9 +198,7 @@ it("cancels related version reads on source change and retains failed targets as
     onauthfailure: vi.fn(),
   });
   await fireEvent.click(screen.getByRole("tab", { name: "Attachments" }));
-  await fireEvent.click(
-    await screen.findByRole("button", { name: "Open attachment nested.eml, part 1.2" }),
-  );
+  await fireEvent.click(await screen.findByRole("button", { name: "nested.eml" }));
   await waitFor(() => expect(release).toBeTypeOf("function"));
   await view.rerender({
     session: "replacement",
@@ -188,14 +233,12 @@ it("cancels related version reads on source change and retains failed targets as
           String(input).includes("parent_version_id") ? page(relation(root, child)) : page(),
         ),
   );
-  await fireEvent.click(
-    await screen.findByRole("button", { name: "Open attachment nested.eml, part 1.2" }),
-  );
+  await fireEvent.click(await screen.findByRole("button", { name: "nested.eml" }));
   expect(
     await screen.findByText(/Related document unavailable: Related target missing/),
   ).toBeTruthy();
   expect(
-    within(screen.getByRole("region", { name: "Outgoing attachments" })).getAllByRole("listitem"),
+    within(screen.getByRole("region", { name: "Attachments" })).getAllByRole("listitem"),
   ).toHaveLength(1);
   expect(action).not.toHaveBeenCalled();
   expect(failure).toHaveBeenCalledExactlyOnceWith(
@@ -228,17 +271,12 @@ it("reports one failed open when alternating documents reaches the navigation li
   });
   await fireEvent.click(screen.getByRole("tab", { name: "Attachments" }));
   for (let index = 0; index < 32; index++) {
-    const name =
-      index % 2 === 0
-        ? "Open attachment nested.eml, part 1.2"
-        : "Open parent of nested.eml, part 1.2";
+    const name = index % 2 === 0 ? "nested.eml" : "message-1.eml";
     await fireEvent.click(await screen.findByRole("button", { name }));
     await waitFor(() => expect(action).toHaveBeenCalledTimes(index + 1));
   }
   expect(failure).not.toHaveBeenCalled();
-  await fireEvent.click(
-    await screen.findByRole("button", { name: "Open attachment nested.eml, part 1.2" }),
-  );
+  await fireEvent.click(await screen.findByRole("button", { name: "nested.eml" }));
   await screen.findByText(/Navigation depth limit reached/);
   expect(failure).toHaveBeenCalledExactlyOnceWith("session", "open", expect.any(Error));
   expect(action).toHaveBeenCalledTimes(32);

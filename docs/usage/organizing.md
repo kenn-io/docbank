@@ -122,19 +122,17 @@ those assignments are removed.
 
 ## Tag a selected set atomically
 
-In the web app, select document checkboxes and choose **Edit tags**. Pick one
-tag to see how many selected documents have it, then choose **Add to all** or
-**Remove from all**. Each operation accepts at most 1,000 selected documents.
+In the web app, select document checkboxes and choose **Tag selected…**. Pick one
+tag, choose **Add** or **Remove**, then press **Apply**. Each operation accepts at most 1,000 selected documents.
 If any target is missing, trashed, or has changed since selection, the whole
 operation fails without changing assignments. Documents whose assignment is
 already correct keep their node revisions. Actual changes record the normal
 audit events.
 
-If the response is lost, keep the dialog open and choose **Retry same
-operation**. The daemon returns the original receipt without applying the
-change twice. After a conflict, close the dialog and refresh the selection.
-Closing the dialog while the outcome is uncertain discards the browser's retry
-request. It does not undo a change the daemon already committed.
+If the result is uncertain, the dialog locks and the view refreshes. Check the
+documents' tags before trying again. Applying the same addition or removal
+again is safe because assignments that already match stay unchanged. After a
+conflict, close the dialog and refresh the selection.
 
 API clients use `POST /api/v1/batch/tags` with one tag ID, an operation UUID,
 an assignment choice, and node/revision pairs. Docbank keeps receipts

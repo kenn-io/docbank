@@ -1,9 +1,11 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import TrashDrawer from "./TrashDrawer.svelte";
+import { clearToasts, getToasts } from "./toast.svelte.js";
 
 afterEach(() => {
   cleanup();
+  clearToasts();
   vi.restoreAllMocks();
 });
 
@@ -55,6 +57,7 @@ it.each([1, 3])(
 
     render(TrashDrawer, {
       session: "short-lived",
+      currentSession: () => "short-lived",
       onclose: vi.fn(),
       onrestored,
       onauthfailure: vi.fn(),
@@ -63,29 +66,9 @@ it.each([1, 3])(
     expect(await screen.findByText("quarterly-report.txt")).toBeTruthy();
     expect(screen.getByText(`Photo · ${count} trashed file${count === 1 ? "" : "s"}`)).toBeTruthy();
     await fireEvent.click(screen.getByRole("button", { name: "Restore" }));
-    const dialog = screen.getByRole("dialog", {
-      name: "Restore quarterly-report.txt from trash",
-    });
-    expect(dialog).toBeTruthy();
-    expect(
-      within(dialog).getByText(
-        new RegExp(`recovers ${count} trashed member file${count === 1 ? "" : "s"} together`),
-      ),
-    ).toBeTruthy();
-    expect(
-      within(dialog).getByText(
-        "Companions inside trashed folders also restore those folders and their other contents, including other photos.",
-      ),
-    ).toBeTruthy();
-    expect(
-      screen.getByText(
-        "Restore keeps the same stable node and retained content. It does not roll back versions or alter permanent audited history.",
-      ),
-    ).toBeTruthy();
-    await fireEvent.click(within(dialog).getByRole("button", { name: "Restore" }));
+    expect(screen.queryByRole("dialog", { name: /^Restore/ })).toBeNull();
 
-    await waitFor(() => expect(onrestored).toHaveBeenCalledWith(restored));
-    expect(await screen.findByText("/Reports/quarterly-report (2).txt")).toBeTruthy();
+    await waitFor(() => expect(onrestored).toHaveBeenCalledWith(restored, expect.any(String)));
     expect(await screen.findByText("Trash is empty")).toBeTruthy();
     const [, request] = fetchMock.mock.calls[1] ?? [];
     expect(new Headers(request?.headers).get("If-Match")).toBe("3");
@@ -128,27 +111,19 @@ it("drops stale trash rows when the refresh after a successful restore fails", a
   const onrestored = vi.fn();
   render(TrashDrawer, {
     session: "short-lived",
+    currentSession: () => "short-lived",
     onclose: vi.fn(),
     onrestored,
     onauthfailure: vi.fn(),
   });
   expect(await screen.findByText("capture.jpg")).toBeTruthy();
   expect(screen.getByText("Companions")).toBeTruthy();
-  expect(screen.getByText("2 restorable items")).toBeTruthy();
   await fireEvent.click(screen.getAllByRole("button", { name: "Restore" })[0]);
-  await fireEvent.click(
-    within(screen.getByRole("dialog", { name: "Restore capture.jpg from trash" })).getByRole(
-      "button",
-      { name: "Restore" },
-    ),
-  );
-  await waitFor(() => expect(onrestored).toHaveBeenCalledWith(receipt));
-  expect(screen.queryByRole("dialog", { name: "Restore capture.jpg from trash" })).toBeNull();
-  expect(screen.queryByText("capture.jpg")).toBeNull();
+  await waitFor(() => expect(onrestored).toHaveBeenCalledWith(receipt, expect.any(String)));
+  expect(screen.queryByRole("dialog", { name: /^Restore/ })).toBeNull();
+  await waitFor(() => expect(screen.queryByText("capture.jpg")).toBeNull());
   expect(screen.queryByText("Companions")).toBeNull();
-  expect(screen.queryByText("2 restorable items")).toBeNull();
   expect(screen.queryByRole("button", { name: "Restore" })).toBeNull();
-  expect(screen.getByText("/Photos/capture.jpg")).toBeTruthy();
   finishRead(
     new Response(JSON.stringify({ detail: "Trash refresh unavailable" }), { status: 503 }),
   );
@@ -157,11 +132,8 @@ it("drops stale trash rows when the refresh after a successful restore fails", a
     "Trash refresh unavailable",
   );
   expect(screen.queryByRole("button", { name: "Restore" })).toBeNull();
-  expect(screen.queryByText("2 restorable items")).toBeNull();
-  expect(screen.getByText("/Photos/capture.jpg")).toBeTruthy();
   await fireEvent.click(screen.getByRole("button", { name: "Try again" }));
   expect(await screen.findByText("Remaining folder")).toBeTruthy();
-  expect(screen.getByText("1 restorable item")).toBeTruthy();
   expect(screen.getAllByRole("button", { name: "Restore" })).toHaveLength(1);
   expect(screen.queryByText("capture.jpg")).toBeNull();
   expect(screen.queryByText("Companions")).toBeNull();
@@ -201,18 +173,92 @@ it("keeps stale restore authority visible for a fresh decision", async () => {
 
   render(TrashDrawer, {
     session: "short-lived",
+    currentSession: () => "short-lived",
     onclose: vi.fn(),
     onrestored: vi.fn(),
     onauthfailure: vi.fn(),
   });
 
   await fireEvent.click(await screen.findByRole("button", { name: "Restore" }));
-  const dialog = screen.getByRole("dialog", {
-    name: "Restore quarterly-report.txt from trash",
+  await waitFor(() =>
+    expect(getToasts().map((toast) => toast.message)).toEqual([
+      "node changed; refresh trash before restoring it",
+    ]),
+  );
+  expect(getToasts()[0]!.tone).toBe("danger");
+  expect(screen.getByText("quarterly-report.txt")).toBeTruthy();
+  expect((screen.getByRole("button", { name: "Restore" }) as HTMLButtonElement).disabled).toBe(
+    false,
+  );
+});
+
+it.each([
+  "failure after rerender",
+  "success after session ends",
+  "success after drawer closes",
+  "failure after drawer closes",
+] as const)("handles a late restore response for the current session: %s", async (scenario) => {
+  const trashed = {
+    id: 42,
+    name: "quarterly-report.txt",
+    kind: "file",
+    size: 74,
+    revision: 3,
+    created_at: "2026-07-28T12:00:00Z",
+    modified_at: "2026-07-28T12:00:00Z",
+    trashed_at: "2026-07-28T12:01:00Z",
+  };
+  let finishRestore!: (response: Response) => void;
+  const fetchMock = vi
+    .spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(
+      new Response(JSON.stringify({ items: [trashed], total: 1, limit: 1000, offset: 0 })),
+    )
+    .mockImplementationOnce(() => new Promise((resolve) => (finishRestore = resolve)));
+  const onauthfailure = vi.fn();
+  const onrestored = vi.fn();
+  let currentSession = "old-session";
+  const restored = {
+    ...trashed,
+    revision: 4,
+    trashed_at: undefined,
+    path: "/quarterly-report.txt",
+  };
+  const view = render(TrashDrawer, {
+    session: "old-session",
+    currentSession: () => currentSession,
+    onclose: vi.fn(),
+    onrestored,
+    onauthfailure,
   });
-  await fireEvent.click(within(dialog).getByRole("button", { name: "Restore" }));
-  expect(await screen.findByText("node changed; refresh trash before restoring it")).toBeTruthy();
-  expect(
-    screen.getByRole("dialog", { name: "Restore quarterly-report.txt from trash" }),
-  ).toBeTruthy();
+
+  await fireEvent.click(await screen.findByRole("button", { name: "Restore" }));
+  if (scenario === "failure after rerender") {
+    currentSession = "new-session";
+    await view.rerender({ session: "new-session" });
+    finishRestore(Response.json({ detail: "Restore failed" }, { status: 500 }));
+    await waitFor(() =>
+      expect((screen.getByRole("button", { name: "Restore" }) as HTMLButtonElement).disabled).toBe(
+        false,
+      ),
+    );
+  } else {
+    if (scenario === "success after session ends") currentSession = "";
+    view.unmount();
+    finishRestore(
+      scenario === "failure after drawer closes"
+        ? Response.json({ detail: "Restore failed" }, { status: 500 })
+        : Response.json(restored),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  if (scenario === "failure after drawer closes") {
+    expect(getToasts().map((toast) => toast.message)).toEqual(["Restore failed"]);
+    expect(getToasts()[0]!.tone).toBe("danger");
+  } else expect(getToasts()).toEqual([]);
+  expect(onauthfailure).not.toHaveBeenCalled();
+  if (scenario === "success after drawer closes") {
+    expect(onrestored).toHaveBeenCalledExactlyOnceWith(restored, "Restored to /");
+  } else expect(onrestored).not.toHaveBeenCalled();
+  expect(fetchMock).toHaveBeenCalledTimes(2);
 });

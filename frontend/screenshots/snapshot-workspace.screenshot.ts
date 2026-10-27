@@ -181,21 +181,31 @@ async function retainedAction(
   }, vaultID);
 }
 
+// A query in the URL opens Advanced to run it; a page that already ran it shows its results.
 async function runSnapshot(page: Page): Promise<void> {
-  const editor = page.getByRole("region", { name: "Query editor" });
-  await expect(editor).toBeVisible();
-  await editor.getByRole("button", { name: "Run query", exact: true }).click();
+  const editor = page.getByRole("dialog", { name: "Filters and sort" });
+  const results = page.getByRole("button", { name: "Tag all…", exact: true });
+  await expect(editor.or(results)).toBeVisible();
+  if (await editor.isVisible()) {
+    await editor.getByRole("button", { name: "Search", exact: true }).click();
+    await expect(editor).toBeHidden();
+  }
+  await expect(results).toBeEnabled();
 }
 
-async function verifyCheckpoint(page: Page, checkpoint: string): Promise<void> {
-  const recovery = page.getByRole("dialog", { name: "Recoverable snapshot action" });
-  const downloadPromise = page.waitForEvent("download");
-  await recovery.getByRole("button", { name: "Save recovery checkpoint", exact: true }).click();
-  await (await downloadPromise).saveAs(checkpoint);
-  await recovery
-    .getByLabel("Select the saved recovery checkpoint", { exact: true })
-    .setInputFiles(checkpoint);
-  await expect(recovery.getByRole("status")).toHaveText("Recovery checkpoint verified.");
+// Opens the Tag all dialog, picks the tag, and continues to the run dialog.
+async function tagAll(page: Page, tagName: string, assign = true): Promise<void> {
+  await page.getByRole("button", { name: "Tag all…", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Tag all results" });
+  await dialog.getByRole("combobox", { name: "Tag", exact: true }).fill(tagName);
+  await page.getByRole("option", { name: new RegExp(`^${tagName}`) }).click();
+  if (!assign) await dialog.getByRole("radio", { name: "Remove", exact: true }).click();
+  await dialog.getByRole("button", { name: "Continue", exact: true }).click();
+}
+
+// A retained run shows its notice in the results header, in any tab.
+async function resumeRetained(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Resume", exact: true }).click();
 }
 
 test("retries an interrupted send from an already-open recovery tab", async ({ page, context }) => {
@@ -219,28 +229,27 @@ test("retries an interrupted send from an already-open recovery tab", async ({ p
     await run("add", source, "--dest", "/");
     await run("tag", "create", "Review");
     const rawURL = await run("web", "--no-browser");
-    await page.goto(queryURL(rawURL, untaggedQuery));
+    const snapshotURL = queryURL(rawURL, untaggedQuery);
+    await page.goto(snapshotURL);
     await runSnapshot(page);
-    await page.getByRole("button", { name: "Tag or recover", exact: true }).click();
-    const actions = page.getByRole("dialog", { name: "Tag frozen snapshot" });
-    await actions.getByRole("combobox", { name: "Tag for snapshot action" }).click();
-    await page.getByRole("option", { name: "Review", exact: true }).click();
-    await actions.getByRole("button", { name: "Add tag to whole query", exact: true }).click();
-    await verifyCheckpoint(page, path.join(workspace, "checkpoint.json"));
 
     // Both journals must be open before sending; opening one later already
-    // recovers an interrupted batch as uncertain.
+    // recovers an interrupted batch as uncertain. Preparing the run keeps it
+    // for the other tab to resume.
+    await tagAll(page, "Review");
+    const recovery = page.getByRole("dialog", { name: "Tag all results" });
+    await expect(recovery.getByRole("button", { name: "Apply", exact: true })).toBeVisible();
     const other = await context.newPage();
     const retries: BatchRequest[] = [];
     other.on("request", (request) => {
       if (new URL(request.url()).pathname === "/api/v1/batch/tags")
         retries.push(request.postDataJSON() as BatchRequest);
     });
-    await other.goto(rawURL);
-    await other.getByRole("button", { name: "Snapshot actions", exact: true }).click();
-    await other.getByRole("button", { name: "Resume retained action", exact: true }).click();
-    const otherRecovery = other.getByRole("dialog", { name: "Recoverable snapshot action" });
-    await expect(otherRecovery).toBeVisible();
+    await other.goto(snapshotURL);
+    await runSnapshot(other);
+    await resumeRetained(other);
+    const otherRecovery = other.getByRole("dialog", { name: "Tag all results" });
+    await expect(otherRecovery.getByRole("button", { name: "Apply", exact: true })).toBeVisible();
 
     let responseReady!: () => void;
     const committed = new Promise<void>((resolve) => {
@@ -256,23 +265,14 @@ test("retries an interrupted send from an already-open recovery tab", async ({ p
       responseReady();
       await delayedResponse;
     });
-    const recovery = page.getByRole("dialog", { name: "Recoverable snapshot action" });
-    await recovery.getByRole("checkbox", { name: /I confirm this vault/ }).check();
-    await recovery.getByRole("button", { name: "Confirm and run action", exact: true }).click();
+    await recovery.getByRole("button", { name: "Apply", exact: true }).click();
     await committed;
     await page.close();
     release();
     expect((await retainedAction(other)).batches[0].state).toBe("sending");
 
-    await otherRecovery.getByRole("checkbox", { name: /I confirm this vault/ }).check();
-    await otherRecovery
-      .getByRole("button", { name: "Confirm and run action", exact: true })
-      .click();
-    await expect(
-      otherRecovery.getByText("Action complete. All batches have validated receipts.", {
-        exact: true,
-      }),
-    ).toBeVisible();
+    await otherRecovery.getByRole("button", { name: "Apply", exact: true }).click();
+    await expect(otherRecovery.getByText("Added “Review” to 1 document.")).toBeVisible();
     expect(retries).toEqual([originalRequest]);
     expect((await retainedAction(other)).batches[0].receipt).toEqual(
       persistedReceipt(originalReceipt),
@@ -402,16 +402,16 @@ for (const outcome of ["success", "response loss"] as const) {
         else
           await route.fulfill({ status: 502, contentType: "application/problem+json", body: "{}" });
       });
-      await page.goto(rawURL);
-      await page.getByRole("button", { name: "Snapshot actions", exact: true }).click();
+      const snapshotURL = queryURL(rawURL, untaggedQuery);
+      await page.goto(snapshotURL);
+      await runSnapshot(page);
+      await page.getByRole("button", { name: "Tag all…", exact: true }).click();
       await page
-        .getByLabel("Import action recovery file", { exact: true })
+        .getByRole("dialog", { name: "Tag all results" })
+        .getByLabel("Resume from a recovery file", { exact: true })
         .setInputFiles(checkpoint);
-      const firstRecovery = page.getByRole("dialog", { name: "Recoverable snapshot action" });
-      await firstRecovery.getByRole("checkbox", { name: /I confirm this vault/ }).check();
-      await firstRecovery
-        .getByRole("button", { name: "Confirm and run action", exact: true })
-        .click();
+      const firstRecovery = page.getByRole("dialog", { name: "Tag all results" });
+      await firstRecovery.getByRole("button", { name: "Apply", exact: true }).click();
       await committed;
 
       // Opening in another tab recovers the in-flight batch as uncertain. Its
@@ -422,19 +422,16 @@ for (const outcome of ["success", "response loss"] as const) {
           sent.push((request.postDataJSON() as BatchRequest).operation_id);
         }
       });
-      await other.goto(rawURL);
-      await other.getByRole("button", { name: "Snapshot actions", exact: true }).click();
-      await other.getByRole("button", { name: "Resume retained action", exact: true }).click();
-      const otherRecovery = other.getByRole("dialog", { name: "Recoverable snapshot action" });
-      await otherRecovery.getByRole("checkbox", { name: /I confirm this vault/ }).check();
-      await otherRecovery
-        .getByRole("button", { name: "Retry same operation", exact: true })
-        .click();
-      await expect(otherRecovery.getByText(/This action is stale/)).toBeVisible();
+      await other.goto(snapshotURL);
+      await runSnapshot(other);
+      await resumeRetained(other);
+      const otherRecovery = other.getByRole("dialog", { name: "Tag all results" });
+      await otherRecovery.getByRole("button", { name: /^(Retry|Resume)$/ }).click();
+      await expect(otherRecovery.getByText(/Some documents changed/)).toBeVisible();
       expect((await retainedAction(other)).header.state).toBe("stale");
 
       release();
-      await expect(firstRecovery.getByText("Close", { exact: true })).toBeEnabled();
+      await expect(firstRecovery.getByRole("button", { name: "Finish later" })).toBeEnabled();
       const retained = await retainedAction(page);
       expect(retained.header.state).toBe("stale");
       expect(retained.batches.map((batch) => batch.state)).toEqual([
@@ -448,9 +445,9 @@ for (const outcome of ["success", "response loss"] as const) {
         batches[0].operation_id,
         batches[1].operation_id,
       ]);
-      await expect(firstRecovery.getByText(/This action is stale/)).toBeVisible();
+      await expect(firstRecovery.getByText(/Some documents changed/)).toBeVisible();
       await expect(
-        firstRecovery.getByRole("button", { name: /run action|same operation|resume action/ }),
+        firstRecovery.getByRole("button", { name: /^(Apply|Retry|Resume)$/ }),
       ).toHaveCount(0);
     } finally {
       release();
@@ -468,25 +465,17 @@ test("snapshot workspace recovers exact real-daemon actions without changing fro
   test.setTimeout(900_000);
   const workspace = await mkdtemp(path.join(tmpdir(), "docbank-snapshot-workspace-"));
   const vault = path.join(workspace, "vault");
-  const wrongVault = path.join(workspace, "wrong-vault");
   const source = path.join(workspace, "synthetic", "Workspace review");
-  const checkpoint = path.join(workspace, "snapshot-action.json");
-  const staleCheckpoint = path.join(workspace, "stale-action.json");
-  let mainRunning = false;
-  let wrongRunning = false;
-  const command =
-    (home: string) =>
-    async (...args: string[]) =>
-      (
-        await execFileAsync(binary, args, {
-          cwd: repository,
-          env: { ...process.env, DOCBANK_HOME: home },
-          maxBuffer: 4 * 1024 * 1024,
-          timeout: 300_000,
-        })
-      ).stdout.trim();
-  const run = command(vault);
-  const runWrong = command(wrongVault);
+  const run = async (...args: string[]) =>
+    (
+      await execFileAsync(binary, args, {
+        cwd: repository,
+        env: { ...process.env, DOCBANK_HOME: vault },
+        maxBuffer: 4 * 1024 * 1024,
+        timeout: 300_000,
+      })
+    ).stdout.trim();
+  const rangeText = (from: string) => page.getByRole("status").filter({ hasText: from });
 
   try {
     page.setDefaultTimeout(30_000);
@@ -505,29 +494,26 @@ test("snapshot workspace recovers exact real-daemon actions without changing fro
     await run("tag", "create", "Fence marker");
     await mkdir(screenshots!, { recursive: true, mode: 0o700 });
 
-    const originalRawURL = await run("web", "--no-browser");
-    mainRunning = true;
-    const originalURL = queryURL(originalRawURL, untaggedQuery);
-    const originalOrigin = new URL(originalURL).origin;
-    const originalAPI = sessionAPI(originalURL);
-    const tags = await originalAPI.json<{ items: Tag[] }>("/api/v1/tags?limit=1000&offset=0");
+    const rawURL = await run("web", "--no-browser");
+    const originalURL = queryURL(rawURL, untaggedQuery);
+    const api = sessionAPI(originalURL);
+    const tags = await api.json<{ items: Tag[] }>("/api/v1/tags?limit=1000&offset=0");
     const reviewTag = tags.items.find((tag) => tag.name === "Review checkpoint");
     const fenceTag = tags.items.find((tag) => tag.name === "Fence marker");
     if (!reviewTag || !fenceTag) throw new Error("Synthetic acceptance tags are missing");
 
     // A revoked capture owner cannot lend its cursor to a new browser session.
-    const expiryRawURL = await run("web", "--no-browser");
-    const expiryAPI = sessionAPI(expiryRawURL);
+    const expiryAPI = sessionAPI(await run("web", "--no-browser"));
     const expiring = await expiryAPI.json<SnapshotPage>("/api/v1/workspace/queries", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ query: untaggedQuery, page_size: 50, facets: [] }),
     });
     if (!expiring.next_cursor) throw new Error("Synthetic expiry snapshot omitted its next cursor");
-    const revoked = await expiryAPI.request("/api/daemon/web-session", { method: "DELETE" });
-    expect(revoked.status).toBe(204);
-    const replacementAPI = sessionAPI(await run("web", "--no-browser"));
-    const expired = await replacementAPI.request(
+    expect((await expiryAPI.request("/api/daemon/web-session", { method: "DELETE" })).status).toBe(
+      204,
+    );
+    const expired = await sessionAPI(await run("web", "--no-browser")).request(
       `/api/v1/workspace/queries/${expiring.snapshot_id}/pages`,
       {
         method: "POST",
@@ -541,108 +527,44 @@ test("snapshot workspace recovers exact real-daemon actions without changing fro
     await page.addInitScript(() => localStorage.setItem("docbank-theme", "dark"));
     await page.goto(originalURL);
     await runSnapshot(page);
-    await expect(page.getByRole("status").filter({ hasText: "1–100 of 1,001" })).toBeVisible();
+    await expect(rangeText("1–100 of 1,001")).toBeVisible();
     await expect(page.getByRole("complementary", { name: "Snapshot facets" })).toBeVisible();
-    const editor = page.getByRole("region", { name: "Query editor" });
-    const runQuery = editor.getByRole("button", { name: "Run query", exact: true });
-    await editor.getByLabel("Structured facets JSON").fill(
-      JSON.stringify({
-        tag_ids: ["77777777-7777-4777-8777-777777777777"],
-      }),
-    );
-    await runQuery.click();
+
+    // A filter the daemon refuses leaves the frozen results in place.
+    await page.getByRole("button", { name: "Advanced", exact: true }).click();
+    const editor = page.getByRole("dialog", { name: "Filters and sort" });
+    await editor.getByText("More", { exact: true }).click();
+    await editor
+      .getByLabel("Filters JSON")
+      .fill(JSON.stringify({ tag_ids: ["77777777-7777-4777-8777-777777777777"] }));
+    await editor.getByRole("button", { name: "Search", exact: true }).click();
     await expect(page.locator(".browser .banner[role=alert]")).toBeVisible();
-    await expect(page.getByRole("status").filter({ hasText: "1–100 of 1,001" })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(rangeText("1–100 of 1,001")).toBeVisible();
     await page.getByRole("button", { name: "Next page", exact: true }).click();
-    await expect(page.getByRole("status").filter({ hasText: "101–200 of 1,001" })).toBeVisible();
+    await expect(rangeText("101–200 of 1,001")).toBeVisible();
     await page.getByRole("button", { name: "Previous page", exact: true }).click();
-    await expect(page.getByRole("status").filter({ hasText: "1–100 of 1,001" })).toBeVisible();
-    await editor.getByLabel("Structured facets JSON").fill(JSON.stringify(untaggedQuery.filters));
-    for (const mode of ["semantic", "hybrid"]) {
-      await editor.getByRole("combobox", { name: /^Query mode:/ }).click();
-      await page.getByRole("option", { name: mode, exact: true }).click();
-      await expect(editor.getByText("Frozen snapshots support lexical mode only.")).toBeVisible();
-      await expect(runQuery).toBeDisabled();
-    }
-    await editor.getByRole("combobox", { name: /^Query mode:/ }).click();
-    await page.getByRole("option", { name: "lexical", exact: true }).click();
-    await editor.getByRole("combobox", { name: /^Query sort:/ }).click();
-    await page.getByRole("option", { name: "relevance", exact: true }).click();
+    await expect(rangeText("1–100 of 1,001")).toBeVisible();
+
+    await page.getByRole("button", { name: "txt, 501 documents", exact: true }).click();
+    await expect(rangeText("1–100 of 501")).toBeVisible();
+    await page.getByRole("button", { name: "txt, 501 documents, selected", exact: true }).click();
+    await expect(rangeText("1–100 of 1,001")).toBeVisible();
+    await page.getByRole("button", { name: "Next page", exact: true }).click();
+    await expect(rangeText("101–200 of 1,001")).toBeVisible();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByRole("navigation", { name: "Result pages" }).scrollIntoViewIfNeeded();
     await expect(
-      editor.getByText(/Frozen snapshots do not support relevance sorting/),
+      page.getByRole("cell", { name: "/Workspace review/workspace-0100.txt", exact: true }),
     ).toBeVisible();
-    await expect(runQuery).toBeDisabled();
-    await editor.getByRole("combobox", { name: /^Query sort:/ }).click();
-    await page.getByRole("option", { name: "path", exact: true }).click();
-    await expect(runQuery).toBeEnabled();
-    await page.getByRole("button", { name: "Close query editor", exact: true }).click();
-    await page.getByText("Frozen query snapshot", { exact: true }).scrollIntoViewIfNeeded();
+    await page.setViewportSize({ width: 1440, height: 960 });
+    await page.getByRole("button", { name: "Previous page", exact: true }).click();
+    await expect(rangeText("1–100 of 1,001")).toBeVisible();
+    await page.getByRole("region", { name: "Frozen query results" }).scrollIntoViewIfNeeded();
     await page.screenshot({
       path: path.join(screenshots!, "web-snapshot-workspace.png"),
       animations: "disabled",
     });
-
-    await page
-      .getByRole("checkbox", { name: "Select /Workspace review/workspace-0000.txt", exact: true })
-      .check();
-    await page.getByRole("button", { name: "Edit query", exact: true }).click();
-    let releaseRerun!: () => void;
-    const rerunGate = new Promise<void>((resolve) => {
-      releaseRerun = resolve;
-    });
-    let rerunReady!: () => void;
-    const rerunWaiting = new Promise<void>((resolve) => {
-      rerunReady = resolve;
-    });
-    await page.route(
-      "**/api/v1/workspace/queries",
-      async (route) => {
-        const response = await route.fetch();
-        rerunReady();
-        await rerunGate;
-        await route.fulfill({ response });
-      },
-      { times: 1 },
-    );
-    await runSnapshot(page);
-    await rerunWaiting;
-    try {
-      for (const name of [
-        "Tag visible selection",
-        "Tag whole query",
-        "Tag or recover",
-        "Snapshot actions",
-      ]) {
-        await expect(page.getByRole("button", { name, exact: true })).toBeDisabled();
-      }
-    } finally {
-      releaseRerun();
-    }
-    await expect(page.getByRole("button", { name: "Tag or recover", exact: true })).toBeEnabled();
-    await expect(page.getByRole("region", { name: "Selected documents", exact: true })).toHaveCount(
-      0,
-    );
-    await page.getByRole("button", { name: "Close query editor", exact: true }).click();
-    console.log("snapshot acceptance: all tagging controls stay disabled during a rerun");
-
-    await page.getByRole("button", { name: "txt, 501 documents", exact: true }).click();
-    await expect(page.getByRole("status").filter({ hasText: "1–100 of 501" })).toBeVisible();
-    await page.getByRole("button", { name: "txt, 501 documents, selected", exact: true }).click();
-    await expect(page.getByRole("status").filter({ hasText: "1–100 of 1,001" })).toBeVisible();
-    await page.getByRole("button", { name: "Next page", exact: true }).click();
-    await expect(page.getByRole("status").filter({ hasText: "101–200 of 1,001" })).toBeVisible();
-    await page.setViewportSize({ width: 390, height: 844 });
-    const pager = page.getByRole("navigation", { name: "Snapshot pages" });
-    await pager.scrollIntoViewIfNeeded();
-    await expect(
-      page.getByRole("cell", {
-        name: "/Workspace review/workspace-0100.txt",
-        exact: true,
-      }),
-    ).toBeVisible();
-    await page.setViewportSize({ width: 1440, height: 960 });
-    await page.getByRole("button", { name: "Previous page", exact: true }).click();
-    await expect(page.getByRole("status").filter({ hasText: "1–100 of 1,001" })).toBeVisible();
 
     // Keep a second live tab on the frozen untagged population.
     const replayPage = await context.newPage();
@@ -651,13 +573,8 @@ test("snapshot workspace recovers exact real-daemon actions without changing fro
     await replayPage.addInitScript(() => localStorage.setItem("docbank-theme", "dark"));
     await replayPage.goto(originalURL);
     await runSnapshot(replayPage);
-    await expect(
-      replayPage.getByRole("status").filter({ hasText: "1–100 of 1,001" }),
-    ).toBeVisible();
-    await replayPage.getByRole("button", { name: "Close query editor", exact: true }).click();
 
-    // Cancel while enumeration is waiting on a real page response, then run
-    // a new snapshot before that old response is delivered.
+    // Cancel while enumeration is waiting on a real page response.
     let releaseCapture!: () => void;
     const captureGate = new Promise<void>((resolve) => {
       releaseCapture = resolve;
@@ -676,114 +593,20 @@ test("snapshot workspace recovers exact real-daemon actions without changing fro
       },
       { times: 1 },
     );
-    await page.getByRole("button", { name: "Tag or recover", exact: true }).click();
-    const actions = page.getByRole("dialog", { name: "Tag frozen snapshot" });
-    await actions.getByRole("combobox", { name: "Tag for snapshot action" }).click();
-    await page.getByRole("option", { name: "Review checkpoint", exact: true }).click();
-    await actions.getByRole("button", { name: "Add tag to whole query", exact: true }).click();
+    await tagAll(page, "Review checkpoint");
     await captureWaiting;
+    const actions = page.getByRole("dialog", { name: "Tag all results" });
     try {
       const aborted = page.waitForEvent("requestfailed", (request) =>
         new URL(request.url()).pathname.endsWith("/pages"),
       );
       await actions.getByRole("button", { name: "Cancel", exact: true }).click();
       await aborted;
-      await page.getByRole("button", { name: "Back to live folder", exact: true }).click();
-      await page.getByRole("button", { name: "Edit query", exact: true }).click();
-      await runSnapshot(page);
-      await expect(page.getByRole("status").filter({ hasText: "1–100 of 1,001" })).toBeVisible();
-      await page.getByRole("button", { name: "Close query editor", exact: true }).click();
     } finally {
       releaseCapture();
     }
-    await expect(page.getByRole("dialog", { name: "Recoverable snapshot action" })).toHaveCount(0);
-    console.log("snapshot acceptance: discarded capture aborted before a new snapshot action");
-
-    await page.getByRole("button", { name: "Tag or recover", exact: true }).click();
-    await actions.getByRole("combobox", { name: "Tag for snapshot action" }).click();
-    await page.getByRole("option", { name: "Review checkpoint", exact: true }).click();
-    await actions.getByRole("button", { name: "Add tag to whole query", exact: true }).click();
-    const recovery = page.getByRole("dialog", { name: "Recoverable snapshot action" });
-    await expect(recovery.getByText("1001 exact documents", { exact: true })).toBeVisible();
-    await expect(
-      recovery.getByText("0 completed · 2 remaining batches", { exact: true }),
-    ).toBeVisible();
-    await verifyCheckpoint(page, checkpoint);
-
-    const checkpointText = await readFile(checkpoint, "utf8");
-    expect(checkpointText).not.toContain("web_session");
-    expect(checkpointText).not.toContain("web_upload_secret");
-    expect(checkpointText).not.toContain("workspace-0000");
-    expect(checkpointText).not.toContain("Workspace review");
-    const saved = JSON.parse(checkpointText) as RecoveryAction;
-    expect(saved.total).toBe(1001);
-    expect(saved.batches).toHaveLength(2);
-
-    // The file creator can claim completion without contacting the daemon.
-    // These structurally valid receipts must not skip either original request.
-    await writeFile(
-      checkpoint,
-      JSON.stringify({
-        ...saved,
-        batches: saved.batches.map((batch) => ({
-          ...batch,
-          receipt: {
-            version: 1,
-            operation_id: batch.request.operation_id,
-            request_digest: batch.request_digest,
-            tag_id: saved.tag_id,
-            assign: true,
-            tag_revision: saved.total + 1,
-            assignment_count: saved.total,
-            completed_at: "2026-09-11T00:00:00.000000000Z",
-            nodes: batch.request.nodes.map((node) => ({
-              node_id: node.node_id,
-              expected_revision: node.revision,
-              revision: node.revision + 1,
-              changed: true,
-            })),
-          },
-        })),
-      }),
-    );
-    await recovery.getByRole("button", { name: "Abandon action…", exact: true }).click();
-    await recovery
-      .getByRole("button", { name: "Abandon action without rollback", exact: true })
-      .click();
-    await page.getByRole("button", { name: "Tag or recover", exact: true }).click();
-    await actions
-      .getByLabel("Import action recovery file", { exact: true })
-      .setInputFiles(checkpoint);
-    await expect(
-      recovery.getByText("0 completed · 2 remaining batches", { exact: true }),
-    ).toBeVisible();
-    const importedClaims = await retainedAction(page);
-    expect(importedClaims.batches.map((batch) => batch.state)).toEqual(["prepared", "prepared"]);
-    expect(importedClaims.batches.every((batch) => batch.receipt === undefined)).toBe(true);
-    expect(importedClaims.batches.map((batch) => batch.request)).toEqual(
-      saved.batches.map((batch) => batch.request),
-    );
-
-    // A different real vault rejects the same checkpoint before staging it.
-    const wrongSource = path.join(workspace, "wrong.txt");
-    await writeFile(wrongSource, "Synthetic wrong-vault document.\n", { mode: 0o600 });
-    await runWrong("add", wrongSource, "--dest", "/");
-    const wrongURL = await runWrong("web", "--no-browser");
-    wrongRunning = true;
-    const wrongPage = await context.newPage();
-    await wrongPage.goto(wrongURL);
-    await wrongPage.getByRole("button", { name: "Snapshot actions", exact: true }).click();
-    const wrongActions = wrongPage.getByRole("dialog", { name: "Tag frozen snapshot" });
-    await wrongActions
-      .getByLabel("Import action recovery file", { exact: true })
-      .setInputFiles(checkpoint);
-    await expect(wrongActions.getByRole("alert")).toHaveText(
-      "The recovery action belongs to a different vault.",
-    );
-    await wrongPage.close();
-    await runWrong("daemon", "stop");
-    wrongRunning = false;
-    expect(JSON.parse(await runWrong("daemon", "status", "--json")).running).toBe(false);
+    await expect(actions).toHaveCount(0);
+    await expect(rangeText("1–100 of 1,001")).toBeVisible();
 
     // Commit batch one on the server, then lose only its browser response.
     let droppedRequest: BatchRequest | undefined;
@@ -799,41 +622,39 @@ test("snapshot workspace recovers exact real-daemon actions without changing fro
       droppedReceipt = (await response.json()) as BatchReceipt;
       await route.fulfill({ status: 502, contentType: "application/problem+json", body: "{}" });
     });
-    await recovery
-      .getByRole("checkbox", {
-        name: "I confirm this vault, action, tag, operation, and exact targets",
-      })
-      .check();
-    await recovery.getByRole("button", { name: "Confirm and run action", exact: true }).click();
-    await expect(recovery.getByText(/The result is uncertain/)).toBeVisible();
+    await tagAll(page, "Review checkpoint");
+    const recovery = page.getByRole("dialog", { name: "Tag all results" });
+    await expect(recovery.getByText("Adds “Review checkpoint” to 1,001 documents.")).toBeVisible();
+    await recovery.getByRole("button", { name: "Apply", exact: true }).click();
+    await expect(recovery.getByText(/The last request's result is unknown/)).toBeVisible();
     await page.screenshot({
       path: path.join(screenshots!, "web-snapshot-action-recovery.png"),
       animations: "disabled",
     });
-    expect(droppedRequest).toEqual(saved.batches[0]?.request);
+    const afterLoss = await retainedAction(page);
+    expect(afterLoss.header.state).toBe("uncertain");
+    expect(afterLoss.header.checkpoint_verified).toBe(false);
+    expect(afterLoss.batches.map((batch) => batch.state)).toEqual(["uncertain", "prepared"]);
+    const savedRequests = afterLoss.batches.map((batch) => batch.request);
+    expect(droppedRequest).toEqual(savedRequests[0]);
     if (!droppedReceipt)
       throw new Error("The injected transport failure did not retain the committed receipt");
-    expect(droppedReceipt.operation_id).toBe(saved.batches[0]?.request.operation_id);
+    expect(droppedReceipt.operation_id).toBe(savedRequests[0]?.operation_id);
     const expectedDroppedReceipt = persistedReceipt(droppedReceipt);
-    console.log("snapshot acceptance: committed response lost and journal uncertain");
 
-    // Reload through the same origin and inspect the retained real IndexedDB
-    // transaction independently from the UI.
+    // Reload through the same origin: the unfinished run is still there to resume.
     const reloadURL = new URL(originalURL);
     reloadURL.searchParams.set("acceptance_reload", "1");
     await page.goto(reloadURL.toString());
-    await page.getByRole("button", { name: "Snapshot actions", exact: true }).click();
-    await page
-      .getByRole("dialog", { name: "Tag frozen snapshot" })
-      .getByRole("button", { name: "Resume retained action", exact: true })
-      .click();
-    const reloadedRecovery = page.getByRole("dialog", { name: "Recoverable snapshot action" });
-    await expect(reloadedRecovery.getByText(/The result is uncertain/)).toBeVisible();
-    const afterReload = await retainedAction(page);
-    expect(afterReload.header.state).toBe("uncertain");
-    expect(afterReload.header.checkpoint_verified).toBe(true);
-    expect(afterReload.batches.map((batch) => batch.state)).toEqual(["uncertain", "prepared"]);
-    console.log("snapshot acceptance: same-origin IndexedDB reload recovered");
+    await runSnapshot(page);
+    await expect(
+      page.getByText(/Adding “Review checkpoint” to 1,001 documents didn't finish/),
+    ).toBeVisible();
+    await resumeRetained(page);
+    await expect(
+      page.getByRole("dialog", { name: "Tag all results" }).getByText(/result is unknown/),
+    ).toBeVisible();
+    await page.keyboard.press("Escape");
 
     // The other live tab retries the exact original operation and sends the
     // untouched second batch. The first receipt prevents a duplicate change.
@@ -843,43 +664,28 @@ test("snapshot workspace recovers exact real-daemon actions without changing fro
         replayRequests.push(request.postDataJSON() as BatchRequest);
       }
     });
-    await replayPage.getByRole("button", { name: "Tag or recover", exact: true }).click();
-    await replayPage
-      .getByRole("dialog", { name: "Tag frozen snapshot" })
-      .getByRole("button", { name: "Resume retained action", exact: true })
-      .click();
-    const replayRecovery = replayPage.getByRole("dialog", { name: "Recoverable snapshot action" });
-    await expect(replayRecovery.getByText(/The result is uncertain/)).toBeVisible();
-    await replayRecovery
-      .getByRole("checkbox", {
-        name: "I confirm this vault, action, tag, operation, and exact targets",
-      })
-      .check();
-    await replayRecovery.getByRole("button", { name: "Retry same operation", exact: true }).click();
+    const replayReload = new URL(originalURL);
+    replayReload.searchParams.set("acceptance_reload", "2");
+    await replayPage.goto(replayReload.toString());
+    await runSnapshot(replayPage);
+    await resumeRetained(replayPage);
+    const replayRecovery = replayPage.getByRole("dialog", { name: "Tag all results" });
+    await expect(replayRecovery.getByText(/result is unknown/)).toBeVisible();
+    await replayRecovery.getByRole("button", { name: "Retry", exact: true }).click();
     await expect(
-      replayRecovery.getByText("Action complete. All batches have validated receipts.", {
-        exact: true,
-      }),
+      replayRecovery.getByText("Added “Review checkpoint” to 1,001 documents."),
     ).toBeVisible();
-    expect(replayRequests).toEqual(saved.batches.map((batch) => batch.request));
+    expect(replayRequests).toEqual(savedRequests);
     const completed = await retainedAction(replayPage);
     expect(completed.header.state).toBe("complete");
     expect(completed.batches[0]?.receipt).toEqual(expectedDroppedReceipt);
-    console.log("snapshot acceptance: second tab replayed original requests");
-    await replayRecovery.getByText("Close", { exact: true }).click();
-    await expect(
-      replayPage.getByRole("status").filter({ hasText: "1–100 of 1,001" }),
-    ).toBeVisible();
-    await expect(replayPage.getByText("Added: Review checkpoint", { exact: true })).toBeVisible();
-    await expect(
-      replayPage.getByText("No tags were recorded in this snapshot.", { exact: true }),
-    ).toBeVisible();
+    await replayRecovery.getByRole("button", { name: "Done", exact: true }).click();
 
     const reviewQuery: Query = { ...untaggedQuery, filters: { tag_ids: [reviewTag.id] } };
     const taggedAfterCommit = await collectRows(originalURL, reviewQuery);
     expect(taggedAfterCommit.total).toBe(1001);
     const originalRevisions = new Map(
-      saved.batches
+      afterLoss.batches
         .flatMap((batch) => batch.members)
         .map((member) => [member.node_id, member.revision]),
     );
@@ -887,102 +693,18 @@ test("snapshot workspace recovers exact real-daemon actions without changing fro
       expect(row.revision).toBe((originalRevisions.get(row.node_id) ?? -1) + 1);
     }
 
-    // Even genuine exported receipts must be confirmed by the current daemon.
-    await writeFile(
-      checkpoint,
-      JSON.stringify({
-        ...saved,
-        batches: saved.batches.map((batch, index) => ({
-          ...batch,
-          receipt: completed.batches[index].receipt,
-        })),
-      }),
-    );
-    // Restarting the same vault rotates origin and session. Importing the
-    // completed checkpoint replays retained server receipts with no new change.
-    await run("daemon", "stop");
-    mainRunning = false;
-    expect(JSON.parse(await run("daemon", "status", "--json")).running).toBe(false);
-    const restartedRawURL = await run("web", "--no-browser");
-    mainRunning = true;
-    expect(new URL(restartedRawURL).origin).not.toBe(originalOrigin);
-    const restartedRequests: BatchRequest[] = [];
-    const restartedPage = await context.newPage();
-    restartedPage.setDefaultTimeout(30_000);
-    restartedPage.setDefaultNavigationTimeout(30_000);
-    restartedPage.on("request", (request) => {
-      if (request.method() === "POST" && new URL(request.url()).pathname === "/api/v1/batch/tags") {
-        restartedRequests.push(request.postDataJSON() as BatchRequest);
-      }
-    });
-    await restartedPage.goto(restartedRawURL);
-    await restartedPage.getByRole("button", { name: "Snapshot actions", exact: true }).click();
-    await restartedPage
-      .getByRole("dialog", { name: "Tag frozen snapshot" })
-      .getByLabel("Import action recovery file", { exact: true })
-      .setInputFiles(checkpoint);
-    const restartedRecovery = restartedPage.getByRole("dialog", {
-      name: "Recoverable snapshot action",
-    });
+    // A later revision fences a new exact run. It is never refreshed to make
+    // the original request apply to changed documents.
+    await page.goto(queryURL(rawURL, reviewQuery));
+    await runSnapshot(page);
+    await expect(rangeText("1–100 of 1,001")).toBeVisible();
+    await tagAll(page, "Review checkpoint", false);
+    const staleRecovery = page.getByRole("dialog", { name: "Tag all results" });
     await expect(
-      restartedRecovery.getByText("0 completed · 2 remaining batches", { exact: true }),
+      staleRecovery.getByText("Removes “Review checkpoint” from 1,001 documents."),
     ).toBeVisible();
-    const restartedRun = restartedRecovery.getByRole("button", {
-      name: "Confirm and run action",
-      exact: true,
-    });
-    await expect(restartedRun).toBeDisabled();
-    await restartedRecovery
-      .getByRole("checkbox", {
-        name: "I confirm this vault, action, tag, operation, and exact targets",
-      })
-      .check();
-    await expect(restartedRun).toBeEnabled();
-    await restartedRun.click();
-    await expect(
-      restartedRecovery.getByText("Action complete. All batches have validated receipts.", {
-        exact: true,
-      }),
-    ).toBeVisible();
-    expect(restartedRequests).toEqual(saved.batches.map((batch) => batch.request));
-    const restartedStored = await retainedAction(restartedPage);
-    expect(restartedStored.batches[0]?.receipt).toEqual(expectedDroppedReceipt);
-    const taggedAfterRestart = await collectRows(restartedRawURL, reviewQuery);
-    expect(taggedAfterRestart.rows.map((row) => [row.node_id, row.revision])).toEqual(
-      taggedAfterCommit.rows.map((row) => [row.node_id, row.revision]),
-    );
-    console.log(
-      "snapshot acceptance: fresh-origin import recovered receipts without revision changes",
-    );
-
-    // A later revision fences a new exact action. It is never refreshed to
-    // make the original request apply to changed authority.
-    await restartedRecovery.getByRole("button", { name: "Abandon action…", exact: true }).click();
-    await restartedRecovery
-      .getByRole("button", { name: "Abandon action without rollback", exact: true })
-      .click();
-    await restartedPage.getByRole("button", { name: "Edit query", exact: true }).click();
-    const staleEditor = restartedPage.getByRole("region", { name: "Query editor" });
-    await staleEditor.getByLabel("Query expression", { exact: true }).fill("workspace-0000");
-    await staleEditor.getByLabel("Structured facets JSON", { exact: true }).fill("{}");
-    await staleEditor.getByRole("button", { name: "Run query", exact: true }).click();
-    await expect(restartedPage.getByRole("status").filter({ hasText: "1–1 of 1" })).toBeVisible();
-    await restartedPage.getByRole("button", { name: "Tag or recover", exact: true }).click();
-    const staleActions = restartedPage.getByRole("dialog", { name: "Tag frozen snapshot" });
-    await staleActions.getByRole("combobox", { name: "Tag for snapshot action" }).click();
-    await restartedPage.getByRole("option", { name: "Review checkpoint", exact: true }).click();
-    await staleActions
-      .getByRole("button", { name: "Remove tag from whole query", exact: true })
-      .click();
-    await verifyCheckpoint(restartedPage, staleCheckpoint);
-    const staleRecovery = restartedPage.getByRole("dialog", {
-      name: "Recoverable snapshot action",
-    });
-    const staleSaved = JSON.parse(await readFile(staleCheckpoint, "utf8")) as RecoveryAction;
-    const staleMember = staleSaved.batches[0]?.members[0];
-    if (!staleMember) throw new Error("Synthetic stale action omitted its member");
-    const restartedAPI = sessionAPI(restartedRawURL);
-    await restartedAPI.json<BatchReceipt>("/api/v1/batch/tags", {
+    const staleMember = taggedAfterCommit.rows[0]!;
+    await api.json<BatchReceipt>("/api/v1/batch/tags", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -992,238 +714,47 @@ test("snapshot workspace recovers exact real-daemon actions without changing fro
         nodes: [{ node_id: staleMember.node_id, revision: staleMember.revision }],
       }),
     });
-    await staleRecovery
-      .getByRole("checkbox", {
-        name: "I confirm this vault, action, tag, operation, and exact targets",
-      })
-      .check();
-    await staleRecovery
-      .getByRole("button", { name: "Confirm and run action", exact: true })
-      .click();
-    await expect(staleRecovery.getByText(/This action is stale/)).toBeVisible();
-    await expect(
-      staleRecovery.getByRole("button", { name: /run action|same operation|resume action/ }),
-    ).toHaveCount(0);
-    await restartedPage.screenshot({
+    await staleRecovery.getByRole("button", { name: "Apply", exact: true }).click();
+    await expect(staleRecovery.getByText(/Some documents changed/)).toBeVisible();
+    await expect(staleRecovery.getByRole("button", { name: /^(Apply|Retry|Resume)$/ })).toHaveCount(
+      0,
+    );
+    await page.screenshot({
       path: path.join(screenshots!, "web-snapshot-action-stale.png"),
       animations: "disabled",
     });
-    const taggedAfterFence = await collectRows(restartedRawURL, reviewQuery);
+    const taggedAfterFence = await collectRows(originalURL, reviewQuery);
     expect(taggedAfterFence.total).toBe(1001);
-    const changed = taggedAfterFence.rows.find((row) => row.node_id === staleMember.node_id);
-    expect(changed?.revision).toBe(staleMember.revision + 1);
-    console.log("snapshot acceptance: stale revision fenced without partial removal");
+    expect(taggedAfterFence.rows.find((row) => row.node_id === staleMember.node_id)?.revision).toBe(
+      staleMember.revision + 1,
+    );
 
-    // A selection receipt advances the next whole-query plan, without
-    // changing frozen rows or requiring a rerun between the two actions.
-    await staleRecovery.getByRole("button", { name: "Abandon action…", exact: true }).click();
-    await staleRecovery
-      .getByRole("button", { name: "Abandon action without rollback", exact: true })
-      .click();
-    await staleEditor.getByLabel("Query expression", { exact: true }).fill("");
-    await staleEditor.getByRole("button", { name: "Run query", exact: true }).click();
+    // The run lists the exact documents it covers, in pages of 50 per batch.
+    await staleRecovery.getByText("Review documents", { exact: true }).click();
     await expect(
-      restartedPage.getByRole("status").filter({ hasText: "1–100 of 1,001" }),
-    ).toBeVisible();
-    await restartedPage.getByRole("button", { name: "Close query editor", exact: true }).click();
-    await restartedPage
-      .getByRole("checkbox", { name: "Select /Workspace review/workspace-0000.txt", exact: true })
-      .check();
-    await restartedPage.getByRole("button", { name: "Tag or recover", exact: true }).click();
-    await staleActions.getByRole("combobox", { name: "Tag for snapshot action" }).click();
-    await restartedPage.getByRole("option", { name: "Review checkpoint", exact: true }).click();
-    await staleActions
-      .getByRole("button", { name: "Remove tag from visible selection", exact: true })
-      .click();
-    const selection = restartedPage.getByRole("dialog", { name: "Tag selected documents" });
-    await expect(
-      selection.getByText("1 of 1 selected documents have this tag.", { exact: true }),
-    ).toBeVisible();
-    await selection.getByRole("button", { name: "Remove from all", exact: true }).click();
-    await expect(
-      selection.getByText("0 of 1 selected documents have this tag.", { exact: true }),
-    ).toBeVisible();
-    await selection.getByRole("button", { name: "Done", exact: true }).click();
-    await restartedPage.getByRole("button", { name: "Tag or recover", exact: true }).click();
-    await staleActions.getByRole("combobox", { name: "Tag for snapshot action" }).click();
-    await restartedPage.getByRole("option", { name: "Review checkpoint", exact: true }).click();
-    await staleActions
-      .getByRole("button", { name: "Remove tag from whole query", exact: true })
-      .click();
-    await verifyCheckpoint(restartedPage, staleCheckpoint);
-    await staleRecovery.getByText("Review exact targets", { exact: true }).click();
-    await expect(
-      staleRecovery.getByRole("table", { name: "Exact action targets" }).getByRole("row"),
+      staleRecovery.getByRole("table", { name: "Documents in this run" }).getByRole("row"),
     ).toHaveCount(51);
-    await staleRecovery.getByRole("button", { name: "Next targets", exact: true }).click();
+    await staleRecovery.getByRole("button", { name: "Next", exact: true }).click();
+    await expect(staleRecovery.getByText("51–100 of 1000", { exact: true })).toBeVisible();
+    await staleRecovery.locator(".batch-select select").selectOption("1");
     await expect(
-      staleRecovery.getByText("51–100 of 1000 in this batch", { exact: true }),
-    ).toBeVisible();
-    await staleRecovery.getByLabel("Target batch", { exact: true }).selectOption("1");
-    await expect(
-      staleRecovery.getByRole("table", { name: "Exact action targets" }).getByRole("row"),
+      staleRecovery.getByRole("table", { name: "Documents in this run" }).getByRole("row"),
     ).toHaveCount(2);
-    await restartedPage.screenshot({
+    await page.screenshot({
       path: path.join(screenshots!, "web-snapshot-exact-targets.png"),
       animations: "disabled",
     });
-    await staleRecovery.getByRole("checkbox", { name: /I confirm this vault/ }).check();
-    await staleRecovery
-      .getByRole("button", { name: "Confirm and run action", exact: true })
-      .click();
-    await expect(
-      staleRecovery.getByText("Action complete. All batches have validated receipts.", {
-        exact: true,
-      }),
-    ).toBeVisible();
-    expect((await collectRows(restartedRawURL, reviewQuery)).total).toBe(0);
-    console.log(
-      "snapshot acceptance: selection revision reused across a two-batch whole-query action",
-    );
-
-    // A deleted tag still permits recovery export and explicit abandonment.
-    await staleRecovery.getByText("Close", { exact: true }).click();
-    const currentTag = await restartedAPI.json<{ revision: number }>(
-      `/api/v1/tags/${reviewTag.id}`,
-    );
-    const deletion = await restartedAPI.request(`/api/v1/tags/${reviewTag.id}`, {
-      method: "DELETE",
-      headers: { "If-Match": String(currentTag.revision) },
-    });
-    expect(deletion.ok).toBe(true);
-    await restartedPage.getByRole("button", { name: "Snapshot actions", exact: true }).click();
-    await staleActions.getByRole("button", { name: "Resume retained action", exact: true }).click();
-    await expect(staleRecovery.getByText(/tag is no longer available/)).toBeVisible();
-    await expect(
-      staleRecovery.getByRole("button", { name: "Save recovery checkpoint", exact: true }),
-    ).toBeEnabled();
-    await staleRecovery.getByRole("button", { name: "Abandon action…", exact: true }).click();
-    await staleRecovery
-      .getByRole("button", { name: "Abandon action without rollback", exact: true })
-      .click();
-
-    // Clear an unreadable journal without parsing it, preserving another vault.
-    await restartedPage.evaluate(async (vaultID) => {
-      const database = await new Promise<IDBDatabase>((resolve, reject) => {
-        const request = indexedDB.open("docbank-action-journal-v1", 1);
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-      });
-      const transaction = database.transaction(["actions", "batches"], "readwrite");
-      transaction.objectStore("actions").put({ vault_id: vaultID, version: 99 });
-      transaction.objectStore("batches").put({ vault_id: vaultID, index: 999 });
-      transaction
-        .objectStore("actions")
-        .put({ vault_id: "99999999-9999-4999-8999-999999999999", version: 99 });
-      await new Promise<void>((resolve, reject) => {
-        transaction.oncomplete = () => resolve();
-        transaction.onabort = () => reject(transaction.error);
-      });
-      database.close();
-    }, saved.vault_id);
-    await restartedPage.getByRole("button", { name: "Snapshot actions", exact: true }).click();
-    await staleActions.getByRole("button", { name: "Resume retained action", exact: true }).click();
-    await expect(staleActions.getByRole("alert")).toContainText("journal is inconsistent");
-    await staleActions
-      .getByRole("button", { name: "Abandon retained action…", exact: true })
-      .click();
-    await staleActions
-      .getByRole("button", { name: "Abandon retained action without rollback", exact: true })
-      .click();
-    await expect(staleActions).toHaveCount(0);
-    const remaining = await retainedAction(restartedPage);
-    expect(remaining.header.vault_id).toBe("99999999-9999-4999-8999-999999999999");
-    expect(remaining.batches).toHaveLength(0);
-    // Dismiss after IndexedDB accepts the header write but before its
-    // transaction commits. The pending preparation must roll back as a unit.
-    await restartedPage.evaluate(() => {
-      const add = IDBObjectStore.prototype.add;
-      IDBObjectStore.prototype.add = function (...args) {
-        const request = add.apply(this, args);
-        if (this.name === "actions") {
-          IDBObjectStore.prototype.add = add;
-          request.addEventListener(
-            "success",
-            () => {
-              const dialog = document.querySelector('[aria-label="Tag frozen snapshot"]');
-              const cancel = Array.from(dialog!.querySelectorAll("button")).find(
-                (button) => button.textContent?.trim() === "Cancel",
-              );
-              if (!cancel) throw new Error("Capture cancellation control is missing");
-              cancel.click();
-            },
-            { once: true },
-          );
-        }
-        return request;
-      };
-    });
-    await restartedPage.getByRole("button", { name: "Tag or recover", exact: true }).click();
-    await staleActions.getByRole("combobox", { name: "Tag for snapshot action" }).click();
-    await restartedPage.getByRole("option", { name: "Fence marker", exact: true }).click();
-    await staleActions.getByRole("button", { name: "Add tag to whole query", exact: true }).click();
-    await expect(staleActions).toHaveCount(0);
-    const afterCancel = await retainedAction(restartedPage);
-    expect(afterCancel.header.vault_id).toBe("99999999-9999-4999-8999-999999999999");
-    expect(afterCancel.batches).toHaveLength(0);
-    console.log("snapshot acceptance: cancellation aborts pending journal writes");
-    await restartedPage.getByRole("button", { name: "Tag or recover", exact: true }).click();
-    await staleActions.getByRole("combobox", { name: "Tag for snapshot action" }).click();
-    await restartedPage.getByRole("option", { name: "Fence marker", exact: true }).click();
-    await staleActions.getByRole("button", { name: "Add tag to whole query", exact: true }).click();
-    await expect(staleRecovery.getByText("1001 exact documents", { exact: true })).toBeVisible();
-    console.log(
-      "snapshot acceptance: deleted tag and corrupt journal can be abandoned; new action prepared",
-    );
-    await verifyCheckpoint(restartedPage, checkpoint);
-    const finalTag = await restartedAPI.json<{ revision: number }>(`/api/v1/tags/${fenceTag.id}`);
-    const finalDeletion = await restartedAPI.request(`/api/v1/tags/${fenceTag.id}`, {
-      method: "DELETE",
-      headers: { "If-Match": String(finalTag.revision) },
-    });
-    expect(finalDeletion.ok).toBe(true);
-    await staleRecovery.getByRole("checkbox", { name: /I confirm this vault/ }).check();
-    await staleRecovery
-      .getByRole("button", { name: "Confirm and run action", exact: true })
-      .click();
-    await expect(
-      staleRecovery.getByText(/Abandon this action and create a new one with a fresh selection/),
-    ).toBeVisible();
-    expect((await retainedAction(restartedPage, saved.vault_id)).header.state).toBe("stale");
-    await expect(
-      staleRecovery.getByRole("button", { name: /run action|same operation|resume action/ }),
-    ).toHaveCount(0);
-    await staleRecovery.getByRole("button", { name: "Abandon action…", exact: true }).click();
-    await staleRecovery
-      .getByRole("button", { name: "Abandon action without rollback", exact: true })
-      .click();
+    await staleRecovery.getByRole("button", { name: "Discard run…", exact: true }).click();
+    await staleRecovery.getByRole("button", { name: "Discard run", exact: true }).click();
     await expect(staleRecovery).toHaveCount(0);
-    console.log(
-      "snapshot acceptance: tag deleted after recovery opened stops the action without retry",
-    );
   } finally {
-    const cleanupFailures: string[] = [];
-    for (const [label, runner] of [
-      ["wrong-vault", runWrong],
-      ["main", run],
-    ] as const) {
-      try {
-        if (JSON.parse(await runner("daemon", "status", "--json")).running === true) {
-          await runner("daemon", "stop");
-        }
-        if (JSON.parse(await runner("daemon", "status", "--json")).running !== false) {
-          cleanupFailures.push(`${label} daemon still running`);
-        }
-      } catch (error) {
-        cleanupFailures.push(`${label} daemon: ${String(error)}`);
-      }
-    }
     try {
-      await rm(workspace, { recursive: true, force: true });
+      if (JSON.parse(await run("daemon", "status", "--json")).running === true) {
+        await run("daemon", "stop");
+      }
     } catch (error) {
-      cleanupFailures.push(`workspace ${workspace}: ${String(error)}`);
+      throw new Error(`Synthetic snapshot daemon cleanup failed: ${String(error)}`);
     }
-    if (cleanupFailures.length)
-      throw new Error(`Synthetic snapshot cleanup failed: ${cleanupFailures.join("; ")}`);
+    await rm(workspace, { recursive: true, force: true });
   }
 });

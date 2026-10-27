@@ -22,10 +22,10 @@ function publish(
   }
 }
 
-export async function readActionVaultID(session: string): Promise<string> {
+export async function readActionVaultID(session: string, signal?: AbortSignal): Promise<string> {
   if (typeof session !== "string" || session.length === 0)
     throw new Error("A fresh authenticated browser session is required.");
-  const value: unknown = await auditStatus(undefined, { session });
+  const value: unknown = await auditStatus(undefined, { session, signal });
   if (typeof value !== "object" || value === null || Array.isArray(value))
     throw new Error("The daemon returned an invalid vault identity.");
   const vaultID = (value as Record<string, unknown>).vault_id;
@@ -42,8 +42,6 @@ export async function runAction(
 ): Promise<PersistedAction> {
   let action = await journal.load();
   if (!action) throw new Error("No recoverable action is available.");
-  if (!action.checkpoint_verified)
-    throw new Error("Select and verify the saved recovery checkpoint before mutation.");
   if (!journal.consumeResumeConfirmation(action.action_id))
     throw new Error("Explicitly confirm this action with the fresh session before mutation.");
   const vaultID = await readActionVaultID(session);

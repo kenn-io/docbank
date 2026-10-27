@@ -18,7 +18,11 @@ import (
 func observableJob(snapshot jobs.Snapshot) Job {
 	job := Job{
 		Name: snapshot.Name, Lane: snapshot.Name, Status: string(snapshot.Status),
+		Busy:      snapshot.Busy,
 		StartedAt: snapshot.StartedAt.Format(time.RFC3339Nano), Error: snapshot.Error,
+	}
+	if strings.HasPrefix(snapshot.Name, "process:browser:") {
+		job.Lane = "process:renditions"
 	}
 	if snapshot.FinishedAt != nil {
 		job.FinishedAt = snapshot.FinishedAt.Format(time.RFC3339Nano)
@@ -89,6 +93,7 @@ func registerJobRoutes(api huma.API, d Deps) {
 					errorDetail = "storage operation failed; inspect with the Docbank CLI for details"
 				}
 				job := Job{
+					Busy: operation.State == store.StorageOperationRunning,
 					Lane: store.StorageOperationLane(operation.Kind),
 					Name: name, Status: string(operation.State),
 					StartedAt:  operation.CreatedAt.Format(time.RFC3339Nano),

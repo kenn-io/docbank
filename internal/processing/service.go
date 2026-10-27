@@ -821,6 +821,7 @@ func (service *Service) StartWithProgress(ctx context.Context, request StartRequ
 		return Job{}, err
 	}
 	defer finish()
+	ctx = context.WithValue(ctx, processingRunActivityKey{}, true)
 
 	node, version, profile, err := service.resolve(ctx, request.Selector)
 	if err != nil {
@@ -881,7 +882,9 @@ func (service *Service) StartWithProgress(ctx context.Context, request StartRequ
 		var renditionRun renditionRun
 		renditionRun, err = service.runRendition(ctx, node, version, request.Selector.Profile, profile, principal, scope, renditionProgress)
 		if announced.ID != "" {
-			ctx = service.lifecycle
+			var cancel context.CancelFunc
+			ctx, cancel = service.continueRun(ctx)
+			defer cancel()
 		}
 		if err != nil {
 			if errors.Is(err, ErrConsentRequired) {
@@ -1181,7 +1184,9 @@ func (service *Service) runRendition(ctx context.Context, node store.Node, versi
 	}
 	if onEnqueued != nil {
 		onEnqueued(renditionRun{jobID: job.ID, waiterID: waiter.ID, attachmentID: waiter.AttachmentID})
-		ctx = service.lifecycle
+		var cancel context.CancelFunc
+		ctx, cancel = service.continueRun(ctx)
+		defer cancel()
 	}
 	return service.runRenditionJob(ctx, job.ID, waiter.ID)
 }
@@ -1686,7 +1691,9 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 		jobIDs = append(jobIDs, job.ID)
 		if len(jobIDs) == 1 && onEnqueued != nil {
 			onEnqueued(slices.Clone(jobIDs))
-			ctx = service.lifecycle
+			var cancel context.CancelFunc
+			ctx, cancel = service.continueRun(ctx)
+			defer cancel()
 		}
 	}
 	for index, jobID := range jobIDs {
@@ -2308,6 +2315,11 @@ func inspectRenditionSource(ctx context.Context, blobs *blob.Store, node store.N
 			return media.CapabilityRecord{}, errors.Join(inspectErr, closeErr)
 		}
 	}
+	if capability.Eligible && !profile.provider.Descriptor().Supports(document.RenditionFormatCapability{
+		MediaFamily: capability.MediaFamily, MediaType: capability.MediaType, InputKind: policy.InputKind,
+	}) {
+		capability.Eligible, capability.Reason = false, media.CapabilityReasonUnsupported
+	}
 	return capability, nil
 }
 
@@ -2675,6 +2687,26 @@ func classifyEmbeddingProviderError(err error) (EmbeddingProviderFailure, time.D
 		return EmbeddingProviderPermanent, 0
 	}
 	return EmbeddingProviderTransient, 0
+}
+
+type processingRunActivityKey struct{}
+
+// reportProcessingRunBusy leaves background activity to the enclosing worker.
+func reportProcessingRunBusy(ctx context.Context, busy bool) {
+	if ctx.Value(processingRunActivityKey{}) == true {
+		jobs.ReportBusy(ctx, busy)
+	}
+}
+
+// continueRun keeps request values, including activity reporting, after durable
+// admission. Only the service lifecycle cancels the remaining work.
+func (service *Service) continueRun(ctx context.Context) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	stop := context.AfterFunc(service.lifecycle, cancel)
+	return ctx, func() {
+		stop()
+		cancel()
+	}
 }
 
 // beginRun registers request work atomically with shutdown.

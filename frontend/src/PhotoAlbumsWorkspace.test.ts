@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import PhotoAlbumsIndex from "./PhotoAlbumsIndex.svelte";
 import PhotosWorkspace from "./PhotosWorkspace.svelte";
 import { Photos } from "./photos.svelte.js";
@@ -16,15 +16,16 @@ import {
 import { parseQuery, queryFingerprint } from "./query.js";
 import { createSavedQuery, refreshDefinitionViews } from "./savedQueries.js";
 
-beforeEach(() =>
+beforeEach(() => {
+  localStorage.setItem("docbank.photoMetadata", "closed");
   vi.stubGlobal(
     "ResizeObserver",
     class {
       observe() {}
       disconnect() {}
     },
-  ),
-);
+  );
+});
 
 afterEach(() => {
   cleanup();
@@ -654,7 +655,7 @@ it("resets the empty index create dialog after cancelled attempts", async () => 
     onnavigate: vi.fn(),
   });
   for (let attempt = 0; attempt < 2; attempt++) {
-    await fireEvent.click(screen.getAllByRole("button", { name: "New album" })[1]);
+    await fireEvent.click(screen.getByRole("button", { name: "New album" }));
     expect((screen.getByRole("textbox", { name: "Album name" }) as HTMLInputElement).value).toBe(
       "",
     );
@@ -762,4 +763,36 @@ it("retains one error and selection when a failed membership completes after rem
   await screen.findByText("Add unavailable");
   expect(screen.getAllByRole("alert")).toHaveLength(1);
   expect(photos.selection.selectedIDs.size).toBe(2);
+});
+
+it("offers one New album button and no album count on an empty index", async () => {
+  const albums = new PhotoAlbums("scoped", vi.fn());
+  albums.initialized = true;
+  render(PhotoAlbumsIndex, {
+    albums,
+    cache: new PhotoPreviewCache("scoped", vi.fn()),
+    onnavigate: vi.fn(),
+  });
+  expect(screen.getAllByRole("button", { name: "New album" })).toHaveLength(1);
+  expect(screen.getByText("No albums yet")).toBeTruthy();
+  expect(screen.queryByText(/0 albums/)).toBeNull();
+});
+
+it("shows Save search only while a search or filter is applied", async () => {
+  const { photos } = setup();
+  expect(screen.queryByRole("button", { name: "Save search" })).toBeNull();
+  await act(() => {
+    photos.query = { ...photos.query, text: "Nikon" };
+  });
+  await screen.findByRole("button", { name: "Save search" });
+});
+
+it("counts photos once in the Library toolbar", async () => {
+  setup();
+  expect(
+    screen
+      .getAllByText(/\bphotos?\b/i)
+      .filter((node) => /^[\d,]+ photos?$/.test(node.textContent ?? "")),
+  ).toHaveLength(1);
+  expect(screen.queryByText(/loaded$/)).toBeNull();
 });

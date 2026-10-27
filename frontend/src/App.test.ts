@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import App from "./App.svelte";
 import * as appOpened from "./app-opened.js";
 import { batchTagRequestDigest } from "./batch-tags.js";
+import { clearToasts } from "./toast.svelte.js";
 
 afterEach(() => {
   cleanup();
@@ -237,7 +238,7 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
   });
   expect(tagSelector.hasAttribute("disabled")).toBe(true);
   resolveRoot(json(root));
-  await screen.findByText("This folder is empty");
+  await screen.findByText("Empty folder");
   expect(tagSelector.hasAttribute("disabled")).toBe(false);
 
   await fireEvent.click(
@@ -254,7 +255,7 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
   await fireEvent.click(screen.getByRole("option", { name: "tax (3)" }));
   await fireEvent.click(screen.getByRole("combobox", { name: "Browse or filter by tag: tax" }));
   await fireEvent.click(screen.getByRole("option", { name: "All tags" }));
-  await screen.findByText("This folder is empty");
+  await screen.findByText("Empty folder");
   resolveInitialTagBrowse(
     json({
       items: [{ node: taxReport, path: "/Reports/quarterly-tax-report.txt" }],
@@ -273,7 +274,7 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
   await fireEvent.click(screen.getByRole("option", { name: "tax (3)" }));
   expect(await screen.findByText("tag catalog temporarily unavailable")).toBeTruthy();
   expect(screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" })).toBeTruthy();
-  expect(screen.getByText("This folder is empty")).toBeTruthy();
+  expect(screen.getByText("Empty folder")).toBeTruthy();
 
   await fireEvent.click(
     screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }),
@@ -283,11 +284,11 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
   expect(screen.getByText("tax", { selector: "strong" })).toBeTruthy();
   expect(screen.getByRole("cell", { name: "/Reports/quarterly-tax-report.txt" })).toBeTruthy();
   expect(screen.queryByText("superseded-tax-report.txt")).toBeNull();
-  expect(screen.getByText(/1 live shown · 2 trashed omitted/)).toBeTruthy();
+  expect(screen.getByText(/1 shown · 2 trashed omitted/)).toBeTruthy();
 
   await fireEvent.click(screen.getByRole("combobox", { name: "Browse or filter by tag: tax" }));
   await fireEvent.click(screen.getByRole("option", { name: "All tags" }));
-  await screen.findByText("This folder is empty");
+  await screen.findByText("Empty folder");
 
   await fireEvent.input(input, { target: { value: "quarterly" } });
   await fireEvent.submit(input.closest("form")!);
@@ -330,15 +331,15 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
     ),
   );
   await waitFor(() =>
-    expect(screen.getByRole("combobox").getAttribute("aria-label")).toBe(
-      "Browse or filter: showing 1 of 1001 tags: tax records",
-    ),
+    expect(
+      screen.getByRole("combobox", { name: /^Browse or filter/ }).getAttribute("aria-label"),
+    ).toBe("Browse or filter: showing 1 of 1001 tags: tax records"),
   );
   expect(renamedTagResolved).toBe(true);
-  expect(screen.getByText("“quarterly” · tax records")).toBeTruthy();
+  expect(screen.getByText("2 results")).toBeTruthy();
 
   await fireEvent.dblClick(screen.getByRole("cell", { name: "/Archive" }));
-  expect(await screen.findByText("This folder is empty")).toBeTruthy();
+  expect(await screen.findByText("Empty folder")).toBeTruthy();
   const searchCalls = fetchMock.mock.calls.filter(([url]) =>
     String(url).startsWith("/api/v1/search?"),
   ).length;
@@ -360,14 +361,16 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
   await fireEvent.click(back);
   await waitFor(() => expect(filteredSearches).toBe(filteredSearchesBeforeBack + 1));
   await waitFor(() => expect(tagCatalogReads).toBe(3));
-  expect(screen.getByRole("combobox").getAttribute("aria-label")).toContain("tax records");
+  expect(
+    screen.getByRole("combobox", { name: /^Browse or filter/ }).getAttribute("aria-label"),
+  ).toContain("tax records");
   await waitFor(() => expect(missingTagResolved).toBe(true));
   await waitFor(() => expect(unfilteredSearches).toBe(2));
   expect(
     await screen.findByRole("cell", { name: "/Reports/quarterly-product-report.txt" }),
   ).toBeTruthy();
-  expect(screen.getByText("“quarterly”")).toBeTruthy();
-  expect(screen.queryByText("“quarterly” · tax records")).toBeNull();
+  expect(screen.getByText("1 result")).toBeTruthy();
+  expect(screen.queryByText("2 results")).toBeNull();
   expect(
     screen.getByRole("combobox", {
       name: "Browse or filter: showing 1 of 1001 tags: All tags",
@@ -612,7 +615,7 @@ it.each(["browse", "search"] as const)(
       await screen.findByText("Search results");
     }
 
-    await screen.findByText("2 assigned");
+    await screen.findByRole("group", { name: "Assigned tags" });
     const reviewedName = screen.getByText("matter/acme/reviewed");
     const reviewedLabel = reviewedName.parentElement as HTMLElement;
     const reviewedVisual = reviewedLabel.querySelector<HTMLElement>("[aria-hidden='true']");
@@ -642,8 +645,11 @@ it.each(["browse", "search"] as const)(
     );
     await waitFor(() => expect(manage.hasAttribute("disabled")).toBe(false));
     await fireEvent.click(screen.getByRole("button", { name: "Manage" }));
+    const dialog = await screen.findByRole("dialog", {
+      name: "Manage tags for quarterly-tax-report.txt",
+    });
     const auditReadsBeforeRemoval = targetAuditReads;
-    await fireEvent.click(screen.getByRole("button", { name: "Remove tag tax" }));
+    await fireEvent.click(within(dialog).getByRole("button", { name: "Remove tag tax" }));
 
     await waitFor(() =>
       expect(screen.queryByRole("cell", { name: "/quarterly-tax-report.txt" })).toBeNull(),
@@ -654,20 +660,21 @@ it.each(["browse", "search"] as const)(
       expect(browseReads).toBe(3);
       expect(targetAuditReads).toBe(auditReadsBeforeRemoval);
       const tagToAssign = screen.getByRole("combobox", {
-        name: "Tag to assign: Choose a tag…",
+        name: "Tag to assign",
       });
-      await fireEvent.click(tagToAssign);
+      await fireEvent.input(tagToAssign, { target: { value: "tax" } });
       await fireEvent.click(screen.getByRole("option", { name: "tax (0)" }));
-      await fireEvent.click(screen.getByRole("button", { name: "Add tag" }));
       expect(await screen.findByRole("cell", { name: "/quarterly-tax-report.txt" })).toBeTruthy();
-      expect(await screen.findByText("1 live shown")).toBeTruthy();
+      expect(await screen.findByText("1 shown")).toBeTruthy();
       expect(await screen.findByText("re-added tag view temporarily unavailable")).toBeTruthy();
       expect(browseReads).toBe(4);
       return;
     }
 
     await waitFor(() => expect(searchReads).toBe(3));
-    await screen.findByText("Removed tax.");
+    await waitFor(() =>
+      expect(within(dialog).queryByRole("button", { name: "Remove tag tax" })).toBeNull(),
+    );
     resolveRemovalSearch(
       json({
         hits: [],
@@ -677,14 +684,13 @@ it.each(["browse", "search"] as const)(
       }),
     );
     const tagToAssign = screen.getByRole("combobox", {
-      name: "Tag to assign: Choose a tag…",
+      name: "Tag to assign",
     });
     await waitFor(() => expect(tagToAssign.hasAttribute("disabled")).toBe(false));
-    await fireEvent.click(tagToAssign);
+    await fireEvent.input(tagToAssign, { target: { value: "tax" } });
     await fireEvent.click(screen.getByRole("option", { name: "tax (0)" }));
-    await fireEvent.click(screen.getByRole("button", { name: "Add tag" }));
     await waitFor(() => expect(searchReads).toBe(4));
-    const removeReviewed = screen.getByRole("button", {
+    const removeReviewed = within(dialog).getByRole("button", {
       name: "Remove tag matter/acme/reviewed",
     });
     expect(removeReviewed.hasAttribute("disabled")).toBe(true);
@@ -703,11 +709,10 @@ it.each(["browse", "search"] as const)(
     await fireEvent.click(removeReviewed);
     await waitFor(() => expect(reviewedDeletes).toBe(1));
     expect(await screen.findByRole("cell", { name: "/quarterly-tax-report.txt" })).toBeTruthy();
-    await waitFor(() => expect(screen.getByText("6", { selector: "dd" })).toBeTruthy());
   },
 );
 
-it("returns to root when a nested child is trashed and refresh fails", async () => {
+it("trashes a nested child in one click and brings it back with Undo", async () => {
   history.replaceState(null, "", "/#web_session=short-lived&web_upload_secret=proof");
   vi.stubGlobal(
     "ResizeObserver",
@@ -763,33 +768,12 @@ it("returns to root when a nested child is trashed and refresh fails", async () 
       headers: { "Content-Type": "application/json" },
     });
   let trashed = false;
-  let failRootRefresh = true;
-  let rootReads = 0;
+  let finishTrash!: () => void;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     if (url === "/api/v1/path?path=%2F") return json(root);
     if (url === "/api/v1/nodes/1/children?limit=1000&offset=0") {
-      rootReads += 1;
-      if (trashed && failRootRefresh) {
-        failRootRefresh = false;
-        return new Response(
-          JSON.stringify({
-            status: 503,
-            detail: "root temporarily unavailable",
-          }),
-          {
-            status: 503,
-            headers: { "Content-Type": "application/problem+json" },
-          },
-        );
-      }
-      return json({
-        directory: root,
-        items: [reports],
-        total: 1,
-        limit: 1000,
-        offset: 0,
-      });
+      return json({ directory: root, items: [reports], total: 1, limit: 1000, offset: 0 });
     }
     if (url === "/api/v1/nodes/2/children?limit=1000&offset=0") {
       return json({
@@ -811,12 +795,19 @@ it("returns to root when a nested child is trashed and refresh fails", async () 
       return json({ items: [], total: 0, limit: 1000, offset: 0 });
     }
     if (url === "/api/v1/nodes/3/trash" && init?.method === "POST") {
+      await new Promise<void>((resolve) => {
+        finishTrash = resolve;
+      });
       trashed = true;
       return json({
         ...quarterlyReport,
         revision: 2,
         trashed_at: "2026-07-28T12:01:00Z",
       });
+    }
+    if (url === "/api/v1/nodes/3/restore" && init?.method === "POST") {
+      trashed = false;
+      return json({ ...quarterlyReport, revision: 3 });
     }
     throw new Error(`unexpected request: ${url}`);
   });
@@ -826,22 +817,195 @@ it("returns to root when a nested child is trashed and refresh fails", async () 
   await screen.findByRole("cell", { name: "quarterly-report.txt" });
 
   await fireEvent.click(screen.getByRole("button", { name: "Move to trash" }));
-  const confirmation = screen.getByRole("dialog", {
-    name: "Move quarterly-report.txt to trash",
+
+  try {
+    expect(
+      (screen.getByRole("button", { name: "Move to trash" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+  } finally {
+    finishTrash();
+  }
+  expect(screen.queryByRole("dialog")).toBeNull();
+  const notice = await screen.findByText("Moved “quarterly-report.txt” to trash");
+  expect(notice).toBeTruthy();
+  await waitFor(() =>
+    expect(screen.queryByRole("cell", { name: "quarterly-report.txt" })).toBeNull(),
+  );
+  expect(screen.getByRole("navigation", { name: "Folder path" }).textContent).toContain("Reports");
+
+  await fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+  expect(await screen.findByRole("cell", { name: "quarterly-report.txt" })).toBeTruthy();
+  expect(screen.queryByText("Moved “quarterly-report.txt” to trash")).toBeNull();
+});
+
+it.each(["/Reports", "/Work/Reports/Quarterly"])(
+  "returns to the live parent after trashing the searched folder from %s",
+  async (viewedPath) => {
+    clearToasts();
+    prepareSelectionApp();
+    const root = selectionNode(1, "", "dir", undefined);
+    const work = selectionNode(4, "Work", "dir", 1);
+    const reports = {
+      ...selectionNode(2, "Reports", "dir", viewedPath === "/Reports" ? 1 : 4),
+      path: viewedPath === "/Reports" ? "/Reports" : "/Work/Reports",
+    };
+    const quarterly = {
+      ...selectionNode(5, "Quarterly", "dir", 2),
+      path: `${reports.path}/Quarterly`,
+    };
+    const parent = viewedPath === "/Reports" ? root : work;
+    let trashed = false;
+    const staleReads = vi.fn();
+    const json = (value: unknown, status = 200) => Response.json(value, { status });
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.startsWith("/api/v1/path?")) {
+        const path = new URL(url, "http://example.com").searchParams.get("path");
+        if (path === "/Work") return json(work);
+        if (path === "/") return json(root);
+        throw new Error(`unexpected path: ${path}`);
+      }
+      const children = url.match(/^\/api\/v1\/nodes\/(\d+)\/children\?/);
+      if (children) {
+        const id = Number(children[1]);
+        if (trashed && (id === 2 || id === 5)) {
+          staleReads(id);
+          return json({ detail: "This directory was moved to trash or removed." }, 404);
+        }
+        const directory = [root, work, reports, quarterly].find((node) => node.id === id)!;
+        const items = trashed
+          ? id === 1 && parent.id === 4
+            ? [work]
+            : []
+          : id === 1
+            ? [parent.id === 1 ? reports : work]
+            : id === 4
+              ? [reports]
+              : id === 2
+                ? [quarterly]
+                : [];
+        return json({ directory, items, total: items.length, limit: 1000, offset: 0 });
+      }
+      if (url.startsWith("/api/v1/search?")) {
+        return json({
+          hits: trashed ? [] : [{ node: reports, path: reports.path, match: "name" }],
+          limit: 1000,
+          truncated: false,
+        });
+      }
+      if (url === "/api/v1/nodes/2/trash" && init?.method === "POST") {
+        trashed = true;
+        return json({ ...reports, revision: 2, trashed_at: "2026-09-09T12:00:00Z" });
+      }
+      if (url === "/api/v1/tags?limit=1000&offset=0") {
+        return json({ items: [], total: 0, limit: 1000, offset: 0 });
+      }
+      if (url === "/api/v1/audit/status?node_id=2") return json({ enabled: false, scopes: [] });
+      if (url === "/api/v1/nodes/2/tags?limit=1000&offset=0") {
+        return json({ items: [], total: 0, limit: 1000, offset: 0 });
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+    render(App);
+    if (parent.id === 4)
+      await fireEvent.dblClick(await screen.findByRole("cell", { name: "Work" }));
+    await fireEvent.dblClick(await screen.findByRole("cell", { name: "Reports" }));
+    await screen.findByRole("cell", { name: "Quarterly" });
+    if (viewedPath.endsWith("/Quarterly")) {
+      await fireEvent.dblClick(screen.getByRole("cell", { name: "Quarterly" }));
+      await waitFor(() =>
+        expect(screen.getByRole("navigation", { name: "Folder path" }).textContent).toContain(
+          "Quarterly",
+        ),
+      );
+    }
+    const search = screen.getByRole("searchbox", { name: "Search documents" });
+    await fireEvent.input(search, { target: { value: "Reports" } });
+    await fireEvent.submit(search.closest("form")!);
+    await fireEvent.click(await screen.findByRole("cell", { name: reports.path }));
+    await fireEvent.click(screen.getByRole("button", { name: "Document actions" }));
+    await fireEvent.click(await screen.findByRole("menuitem", { name: "Move to trash" }));
+    await screen.findByText("Moved “Reports” to trash");
+    const clear = screen.queryByRole("button", { name: "Clear search" });
+    if (clear) await fireEvent.click(clear);
+    await waitFor(() => expect(screen.queryByText("Loading vault…")).toBeNull());
+    expect(staleReads).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(screen.getByRole("navigation", { name: "Folder path" }).textContent).not.toContain(
+        "Reports",
+      ),
+    );
+    expect(screen.queryByText(/This directory was moved to trash or removed/)).toBeNull();
+    await waitFor(() =>
+      expect(screen.getByRole("navigation", { name: "Folder path" }).textContent).toContain(
+        parent.id === 4 ? "Work" : "All files",
+      ),
+    );
+    expect(screen.getByRole("button", { name: "Undo" })).toBeTruthy();
+  },
+);
+
+it("keeps the document listed and shows the reason when trashing fails", async () => {
+  history.replaceState(null, "", "/#web_session=short-lived&web_upload_secret=proof");
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  const root = {
+    id: 1,
+    name: "",
+    kind: "dir",
+    size: 0,
+    revision: 1,
+    created_at: "2026-07-28T12:00:00Z",
+    modified_at: "2026-07-28T12:00:00Z",
+    path: "/",
+  };
+  const report = {
+    id: 3,
+    parent_id: 1,
+    name: "report.txt",
+    kind: "file",
+    current_version_id: "11111111-1111-4111-8111-111111111111",
+    blob_hash: "a".repeat(64),
+    size: 74,
+    mime_type: "text/plain",
+    revision: 1,
+    created_at: "2026-07-28T12:00:00Z",
+    modified_at: "2026-07-28T12:00:00Z",
+    path: "/report.txt",
+  };
+  const json = (value: unknown, status = 200) =>
+    new Response(JSON.stringify(value), {
+      status,
+      headers: { "Content-Type": status === 200 ? "application/json" : "application/problem+json" },
+    });
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url === "/api/v1/path?path=%2F") return json(root);
+    if (url === "/api/v1/nodes/1/children?limit=1000&offset=0") {
+      return json({ directory: root, items: [report], total: 1, limit: 1000, offset: 0 });
+    }
+    if (url === "/api/v1/nodes/3/trash" && init?.method === "POST") {
+      return json({ status: 403, detail: "audit protection forbids trashing" }, 403);
+    }
+    if (url === "/api/v1/nodes/3") return json(report);
+    if (url === "/api/v1/audit/status?node_id=3") return json({ enabled: false, scopes: [] });
+    return json({ items: [], total: 0, limit: 1000, offset: 0 });
   });
-  await fireEvent.click(within(confirmation).getByRole("button", { name: "Move to trash" }));
 
-  await waitFor(() => expect(rootReads).toBe(2));
-  expect(await screen.findByText("root temporarily unavailable")).toBeTruthy();
-  expect(screen.queryByRole("cell", { name: "quarterly-report.txt" })).toBeNull();
-  expect(
-    screen.getByRole("button", { name: "Back to previous directory" }).hasAttribute("disabled"),
-  ).toBe(true);
+  render(App);
+  await fireEvent.click(await screen.findByRole("cell", { name: "report.txt" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Move to trash" }));
 
-  await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
-  await waitFor(() => expect(rootReads).toBe(3));
-  expect(await screen.findByRole("cell", { name: "Reports" })).toBeTruthy();
-  expect(screen.queryByRole("cell", { name: "quarterly-report.txt" })).toBeNull();
+  expect((await screen.findByRole("alert")).textContent).toContain(
+    "audit protection forbids trashing",
+  );
+  expect(screen.getByRole("cell", { name: "report.txt" })).toBeTruthy();
 });
 
 function selectionNode(
@@ -990,7 +1154,7 @@ it("opens an export for the exact page selection without mutation revisions or u
   await fireEvent.click(await screen.findByRole("checkbox", { name: "Select readme.txt" }));
   await fireEvent.click(screen.getByRole("button", { name: "Export selection" }));
   const drawer = await screen.findByRole("dialog", { name: "Verified export" });
-  await fireEvent.click(within(drawer).getByRole("button", { name: "Preview export" }));
+  await fireEvent.click(within(drawer).getByRole("button", { name: "Download ZIP" }));
   await within(drawer).findByText("Synthetic boundary stop");
   expect(exported).toEqual({
     operation_id: expect.any(String),
@@ -1102,17 +1266,18 @@ it("switches panels while retaining the admitted export and its selected source"
   render(App);
   await fireEvent.click(await screen.findByRole("checkbox", { name: "Select readme.txt" }));
   await fireEvent.click(screen.getByRole("button", { name: "Export selection" }));
-  await fireEvent.click(await screen.findByRole("button", { name: "Preview export" }));
-  await fireEvent.click(await screen.findByRole("button", { name: "Start reviewed export" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Download ZIP" }));
   await screen.findByRole("region", { name: "Export job" });
-  await screen.findByText("Disconnected — server work may continue");
-  await fireEvent.click(screen.getByRole("button", { name: "Background jobs" }));
-  const jobs = await screen.findByRole("dialog", { name: "Daemon background jobs" });
+  await screen.findByText("Disconnected");
+  await fireEvent.click(screen.getByRole("button", { name: "System" }));
+  await fireEvent.click(screen.getByRole("tab", { name: "Running now" }));
+  const jobs = await screen.findByRole("dialog", { name: "System" });
   expect(screen.queryByRole("dialog", { name: "Verified export" })).toBeNull();
-  await fireEvent.click(within(jobs).getByRole("button", { name: "Close background jobs" }));
+  await fireEvent.click(within(jobs).getByRole("button", { name: "Close System" }));
   await fireEvent.click(screen.getByRole("checkbox", { name: "Select readme.txt" }));
   job = { ...job!, state: "canceled", sequence: 2 };
   await fireEvent.click(screen.getByRole("button", { name: "Export" }));
+  await fireEvent.click(screen.getByRole("menuitem", { name: "Download files…" }));
   const reopened = await screen.findByRole("dialog", { name: "Verified export" });
   expect(within(reopened).getByText("Selected documents on this page")).toBeTruthy();
   expect(within(reopened).getByRole("region", { name: "Export job" })).toBeTruthy();
@@ -1127,13 +1292,13 @@ it("opens bounded tag assignment for the exact page selection", async () => {
   installSelectionBackend();
   render(App);
   await fireEvent.click(await screen.findByRole("checkbox", { name: "Select readme.txt" }));
-  await fireEvent.click(screen.getByRole("button", { name: "Edit tags" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Tag selected…" }));
   const dialog = await screen.findByRole("dialog", { name: "Tag selected documents" });
-  expect(within(dialog).getByText(/1 selected document\./)).toBeTruthy();
+  expect(within(dialog).getByText("Adds a tag to 1 document.")).toBeTruthy();
   expect(
-    (within(dialog).getByRole("button", { name: "Add to all" }) as HTMLButtonElement).disabled,
+    (within(dialog).getByRole("button", { name: "Apply" }) as HTMLButtonElement).disabled,
   ).toBe(true);
-  await fireEvent.click(within(dialog).getByRole("button", { name: "Done" }));
+  await fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
   expect(screen.queryByRole("dialog", { name: "Tag selected documents" })).toBeNull();
 });
 
@@ -1191,11 +1356,12 @@ it("keeps the inspected source after batch tagging when the folder refresh fails
   await fireEvent.click(await screen.findByRole("cell", { name: "readme.txt" }));
   await screen.findByRole("region", { name: "Verified content of readme.txt" });
   await fireEvent.click(screen.getByRole("checkbox", { name: "Select readme.txt" }));
-  await fireEvent.click(screen.getByRole("button", { name: "Edit tags" }));
-  await fireEvent.click(screen.getByRole("combobox", { name: /Tag for selected documents/ }));
-  await fireEvent.click(screen.getByRole("option", { name: "tax" }));
-  await screen.findByText("0 of 1 selected documents have this tag.");
-  await fireEvent.click(screen.getByRole("button", { name: "Add to all" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Tag selected…" }));
+  await fireEvent.input(screen.getByRole("combobox", { name: "Tag" }), {
+    target: { value: "tax" },
+  });
+  await fireEvent.click(screen.getByRole("option", { name: /^tax \(\d+\)$/ }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Apply" }));
 
   await screen.findByText("Folder refresh unavailable");
   await waitFor(() =>
@@ -1239,8 +1405,9 @@ it("uses refreshed live metadata for the selected row and tag actions", async ()
   await screen.findByRole("cell", { name: "renamed.txt" });
   expect(screen.getByText("/renamed.txt")).toBeTruthy();
   await fireEvent.click(screen.getByRole("button", { name: "Manage" }));
-  await fireEvent.click(await screen.findByRole("button", { name: "Remove tag tax" }));
-  await screen.findByText("Removed tax.");
+  const dialog = await screen.findByRole("dialog", { name: "Manage tags for renamed.txt" });
+  await fireEvent.click(await within(dialog).findByRole("button", { name: "Remove tag tax" }));
+  await screen.findByText("No tags assigned.");
   expect(revisions).toEqual(["2"]);
 });
 
@@ -1330,12 +1497,15 @@ it.each(["before", "during"])(
       );
     }
     await screen.findByText(/Refresh the current view before using document actions\./);
-    const actions = ["Manage", "Version history", "Process and retrieve", "Move to trash"];
-    for (const name of actions) {
-      expect((screen.getByRole("button", { name }) as HTMLButtonElement).disabled).toBe(true);
-    }
+    expect((screen.getByRole("button", { name: "Add tag" }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    expect(
+      (screen.getByRole("button", { name: "Move to trash" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect(screen.queryByRole("button", { name: "All versions" })).toBeNull();
     expect(screen.queryByRole("region", { name: "Verified content of readme.txt" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Download verified original" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Download" })).toBeNull();
     expect(
       requests.some(
         (request) => request.revision === 2 && request.version_id === original.current_version_id,
@@ -1344,12 +1514,11 @@ it.each(["before", "during"])(
 
     await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
     expect(await screen.findByText("synthetic replacement edition")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Download verified original" })).toBeTruthy();
-    await waitFor(() => {
-      for (const name of actions) {
-        expect((screen.getByRole("button", { name }) as HTMLButtonElement).disabled).toBe(false);
-      }
-    });
+    expect(screen.getByRole("button", { name: "Download" })).toBeTruthy();
+    expect(
+      (screen.getByRole("button", { name: "Move to trash" }) as HTMLButtonElement).disabled,
+    ).toBe(false);
+    expect(screen.getByRole("button", { name: "All versions" })).toBeTruthy();
   },
 );
 
@@ -1379,7 +1548,7 @@ it("selects displayed files without requests or changing the inspector, then rec
   await fireEvent.click(beta, { shiftKey: true });
 
   expect(fetchMock.mock.calls).toHaveLength(requestsBeforeSelection);
-  expect(screen.getByLabelText("Document authority for alpha.txt")).toBeTruthy();
+  expect(screen.getByLabelText("Document details for alpha.txt")).toBeTruthy();
   expect(screen.getByText("2 selected on this page")).toBeTruthy();
   expect(document.activeElement).toBe(beta);
 
@@ -1538,6 +1707,26 @@ it("returns to search results after opening All files", async () => {
   expect(search.value).toBe("alpha");
 });
 
+it("shows search results as a count with name and folder, without Add", async () => {
+  prepareSelectionApp();
+  installSelectionBackend();
+  render(App);
+  await screen.findByRole("cell", { name: "Reports" });
+  expect(screen.getByRole("button", { name: "Add" })).toBeTruthy();
+  expect(screen.getByText(/\d+ items?/)).toBeTruthy();
+
+  const search = screen.getByRole("searchbox", { name: "Search documents" });
+  await fireEvent.input(search, { target: { value: "alpha" } });
+  await fireEvent.submit(search.closest("form")!);
+  const cell = await screen.findByRole("cell", { name: "/Reports/alpha.txt" });
+  expect(screen.getByText(/^\d+\+? results?$/)).toBeTruthy();
+  expect(screen.queryByText("“alpha”")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Add" })).toBeNull();
+  expect(screen.queryByText(/\d+ items?/)).toBeNull();
+  await fireEvent.click(cell);
+  expect(await screen.findByText(/^Document 1 of \d+$/)).toBeTruthy();
+});
+
 it("reports tag and query screens", async () => {
   prepareSelectionApp();
   vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
@@ -1551,7 +1740,7 @@ it("reports tag and query screens", async () => {
   );
   await fireEvent.click(await screen.findByRole("option", { name: "tax (3)" }));
   await waitFor(() => expect(reportScreen).toHaveBeenLastCalledWith("tags"));
-  await fireEvent.click(screen.getByRole("button", { name: "Edit query" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
   await waitFor(() => expect(reportScreen).toHaveBeenLastCalledWith("search"));
 });
 
@@ -1592,17 +1781,12 @@ it("ignores a folder lookup that finishes after a newer navigation", async () =>
   expect(screen.getByRole("cell", { name: "/Reports/alpha.txt" })).toBeTruthy();
 });
 
-it("disables select-all in a folder containing only folders", async () => {
+it("offers no select-all in a folder containing only folders", async () => {
   prepareSelectionApp();
   installSelectionBackend(false);
   render(App);
   await screen.findByRole("cell", { name: "Reports" });
-  const checkbox = screen.getByRole("checkbox", {
-    name: "Select visible documents",
-  }) as HTMLInputElement;
-  checkbox.click();
-  expect(checkbox.checked).toBe(false);
-  expect(checkbox.disabled).toBe(true);
+  expect(screen.queryByRole("checkbox", { name: "Select visible documents" })).toBeNull();
 });
 
 it.each(["folder", "query", "tag"])(
@@ -1890,11 +2074,11 @@ it("navigates the displayed page, keeps checkbox selection independent, and acti
   render(App);
 
   await screen.findByRole("cell", { name: "alpha.txt" });
-  await screen.findByLabelText("Document authority for zeta.txt");
+  await screen.findByLabelText("Document details for zeta.txt");
   const requestsAtBoundary = backend.getRootReads();
 
   await fireEvent.keyDown(window, { key: "k" });
-  expect(screen.getByLabelText("Document authority for alpha.txt")).toBeTruthy();
+  expect(screen.getByLabelText("Document details for alpha.txt")).toBeTruthy();
   await fireEvent.keyDown(window, { key: " " });
   expect(
     (
@@ -1903,10 +2087,10 @@ it("navigates the displayed page, keeps checkbox selection independent, and acti
       }) as HTMLInputElement
     ).checked,
   ).toBe(true);
-  expect(screen.getByLabelText("Document authority for alpha.txt")).toBeTruthy();
+  expect(screen.getByLabelText("Document details for alpha.txt")).toBeTruthy();
 
   await fireEvent.keyDown(window, { key: "k" });
-  expect(screen.getByLabelText("Folder for Reports")).toBeTruthy();
+  expect(screen.getByLabelText("Folder details for Reports")).toBeTruthy();
   await fireEvent.keyDown(window, { key: "k" });
   expect(
     (
@@ -1918,7 +2102,7 @@ it("navigates the displayed page, keeps checkbox selection independent, and acti
   expect(backend.getRootReads()).toBe(requestsAtBoundary);
 
   await fireEvent.keyDown(window, { key: "j" });
-  expect(screen.getByLabelText("Document authority for alpha.txt")).toBeTruthy();
+  expect(screen.getByLabelText("Document details for alpha.txt")).toBeTruthy();
   await fireEvent.keyDown(window, { key: "Escape" });
   expect(screen.queryByText(/selected on this page/)).toBeNull();
 
@@ -1933,7 +2117,7 @@ it("navigates the displayed page, keeps checkbox selection independent, and acti
   await fireEvent.keyDown(window, { key: "/" });
   expect(document.activeElement).toBe(screen.getByRole("searchbox", { name: "Search documents" }));
   await fireEvent.keyDown(document.activeElement!, { key: "j" });
-  expect(screen.getByLabelText("Document authority for alpha.txt")).toBeTruthy();
+  expect(screen.getByLabelText("Document details for alpha.txt")).toBeTruthy();
 
   const reportsRow = screen.getByRole("cell", { name: "Reports" }).closest("tr")!;
   reportsRow.focus();
@@ -1984,26 +2168,41 @@ it.each(["Albums", "Map", "People"])(
         return new Response(JSON.stringify({ configured: false }));
       if (url === "/api/v1/photos/albums") return new Response("[]");
       if (url.startsWith("/api/v1/people?")) return Response.json({ items: [] });
-      if (url === "/api/v1/photos/assets/query") return Response.json({ items: [], total: 0 });
+      if (url === "/api/v1/photos/assets/query")
+        return new Response(JSON.stringify({ items: [], total: 0 }));
       return original(input, init);
     });
-    render(App);
+    // Map appears in the sidebar only once tiles are configured.
+    const tiles = document.createElement("meta");
+    tiles.name = "docbank-map-tiles";
+    tiles.content = JSON.stringify({
+      tile_url: "/api/daemon/web-map-tiles/{z}/{x}/{y}",
+      host: "tiles.example.org",
+      attribution: "Example",
+      max_zoom: 19,
+    });
+    document.head.append(tiles);
+    try {
+      render(App);
 
-    await fireEvent.click(await screen.findByRole("cell", { name: "zeta.txt" }));
-    await fireEvent.click(
-      screen.getByRole("button", { name: "Keyboard shortcuts and tag hotkeys" }),
-    );
-    await screen.findByRole("combobox", { name: "Tag shortcut 1: tax" });
-    await fireEvent.click(screen.getByRole("button", { name: "Done" }));
-    await waitFor(() =>
-      expect(screen.queryByRole("dialog", { name: "Keyboard shortcuts" })).toBeNull(),
-    );
-    await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
-    await fireEvent.click(await screen.findByRole("button", { name: view }));
-    await fireEvent.keyDown(window, { key: "1" });
-    await new Promise((resolve) => setTimeout(resolve, 0));
+      await fireEvent.click(await screen.findByRole("cell", { name: "zeta.txt" }));
+      await fireEvent.click(
+        screen.getByRole("button", { name: "Keyboard shortcuts and tag hotkeys" }),
+      );
+      await screen.findByRole("combobox", { name: "Tag shortcut 1: tax" });
+      await fireEvent.click(screen.getByRole("button", { name: "Done" }));
+      await waitFor(() =>
+        expect(screen.queryByRole("dialog", { name: "Keyboard shortcuts" })).toBeNull(),
+      );
+      await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
+      await fireEvent.click(await screen.findByRole("button", { name: view }));
+      await fireEvent.keyDown(window, { key: "1" });
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(backend.writes).toEqual([]);
+      expect(backend.writes).toEqual([]);
+    } finally {
+      tiles.remove();
+    }
   },
 );
 
@@ -2071,9 +2270,9 @@ it("waits for a pending tag shortcut before opening tag editors with updated tag
 
   await screen.findByRole("cell", { name: "zeta.txt" });
   await configureFirstTagHotkey();
-  const manage = screen.getByRole("button", { name: "Manage" });
+  const manage = screen.getByRole("button", { name: "Add tag" });
   await fireEvent.click(screen.getByRole("checkbox", { name: "Select zeta.txt" }));
-  const editTags = screen.getByRole("button", { name: "Edit tags" });
+  const editTags = screen.getByRole("button", { name: "Tag selected…" });
   await fireEvent.keyDown(window, { key: "1" });
   expect(editTags.hasAttribute("disabled")).toBe(true);
   editTags.click();
@@ -2087,7 +2286,8 @@ it("waits for a pending tag shortcut before opening tag editors with updated tag
   expect(editTags.hasAttribute("disabled")).toBe(false);
   expect(manage.hasAttribute("disabled")).toBe(false);
   await fireEvent.click(manage);
-  expect(await screen.findByRole("button", { name: "Remove tag tax" })).toBeTruthy();
+  const dialog = await screen.findByRole("dialog", { name: "Manage tags for zeta.txt" });
+  expect(await within(dialog).findByRole("button", { name: "Remove tag tax" })).toBeTruthy();
 });
 
 it("suppresses repeated pending tag writes and discards completion after selection changes", async () => {
@@ -2103,11 +2303,11 @@ it("suppresses repeated pending tag writes and discards completion after selecti
   expect(backend.writes).toHaveLength(1);
 
   await fireEvent.keyDown(window, { key: "k" });
-  expect(screen.getByLabelText("Document authority for alpha.txt")).toBeTruthy();
+  expect(screen.getByLabelText("Document details for alpha.txt")).toBeTruthy();
   backend.resolveMutation();
   await Promise.resolve();
   expect(screen.queryByText("Added tax to zeta.txt.")).toBeNull();
-  expect(screen.getByLabelText("Document authority for alpha.txt")).toBeTruthy();
+  expect(screen.getByLabelText("Document details for alpha.txt")).toBeTruthy();
 });
 
 it("discards pending tag completion after the session is locked", async () => {
@@ -2276,10 +2476,12 @@ it("refreshes open audit history when a pending tag change completes", async () 
     return originalFetch(input, init);
   });
   render(App);
-  await screen.findByText("No tags are assigned to this node.");
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Add tag" }).hasAttribute("disabled")).toBe(false),
+  );
   await fireEvent.keyDown(window, { key: "1" });
   await waitFor(() => expect(backend.writes).toHaveLength(1));
-  await fireEvent.click(screen.getByRole("button", { name: "Audit history" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Protected, open Audit history" }));
   await screen.findByText("No events on this page");
   committed = true;
   backend.resolveMutation();
@@ -2287,3 +2489,164 @@ it("refreshes open audit history when a pending tag change completes", async () 
   await screen.findByText("1 recorded event");
   expect(screen.queryByText("No events on this page")).toBeNull();
 });
+
+it("shows the search shortcut badge only while the search box is idle", async () => {
+  history.replaceState(null, "", "/#web_session=short-lived&web_upload_secret=proof");
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  const root = {
+    id: 1,
+    name: "",
+    kind: "dir",
+    size: 0,
+    revision: 1,
+    created_at: "2026-07-28T12:00:00Z",
+    modified_at: "2026-07-28T12:00:00Z",
+    path: "/",
+  };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = String(input);
+    const body =
+      url === "/api/v1/path?path=%2F"
+        ? root
+        : url.startsWith("/api/v1/nodes/1/children")
+          ? { directory: root, items: [], total: 0, limit: 1000, offset: 0 }
+          : { items: [], total: 0, limit: 1000, offset: 0 };
+    return new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  });
+
+  render(App);
+  const search = await screen.findByRole("searchbox", { name: "Search documents" });
+  expect(screen.getByLabelText("/")).toBeTruthy();
+
+  await fireEvent.focusIn(search);
+  expect(screen.queryByLabelText("/")).toBeNull();
+  await fireEvent.focusOut(search);
+  expect(screen.getByLabelText("/")).toBeTruthy();
+
+  await fireEvent.input(search, { target: { value: "tax" } });
+  expect(screen.queryByLabelText("/")).toBeNull();
+});
+
+it.each(["before", "after"] as const)(
+  "keeps a refreshed tag listing that lands %s a delayed removal receipt",
+  async (listing) => {
+    prepareKeyboardApp();
+    const root = selectionNode(1, "", "dir", undefined);
+    const zeta = selectionNode(10, "zeta.txt", "file", 1, 3);
+    const tax = {
+      id: keyboardTagID,
+      name: "tax",
+      revision: 1,
+      assignment_count: 1,
+    };
+    const reviewed = {
+      id: keyboardReviewedTagID,
+      name: "reviewed",
+      revision: 1,
+      assignment_count: 1,
+    };
+    const json = (value: unknown) =>
+      new Response(JSON.stringify(value), {
+        headers: { "Content-Type": "application/json" },
+      });
+    let revision = 3;
+    let tagReads = 0;
+    let resolveRemoval: (response: Response) => void = () => {};
+    let resolveReload: (response: Response) => void = () => {};
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === "/api/v1/path?path=%2F") return json(root);
+      if (url === "/api/v1/nodes/1/children?limit=1000&offset=0") {
+        const items = [{ ...zeta, revision }];
+        return json({
+          directory: root,
+          items,
+          total: 1,
+          limit: 1000,
+          offset: 0,
+        });
+      }
+      if (url === "/api/v1/nodes/10") return json({ ...zeta, revision, path: "/zeta.txt" });
+      if (url === "/api/v1/tags?limit=1000&offset=0")
+        return json({
+          items: [tax, reviewed],
+          total: 2,
+          limit: 1000,
+          offset: 0,
+        });
+      if (url.startsWith("/api/v1/audit/status")) {
+        return json({
+          enabled: false,
+          vault_id: keyboardVaultID,
+          operation_sequence_high_water: 0,
+          allocation_entry_count: 0,
+          scopes: [],
+        });
+      }
+      if (url === "/api/v1/nodes/10/tags?limit=1000&offset=0") {
+        tagReads += 1;
+        if (tagReads === 1)
+          return json({
+            items: [reviewed, tax],
+            total: 2,
+            limit: 1000,
+            offset: 0,
+          });
+        return new Promise<Response>((resolve) => (resolveReload = resolve));
+      }
+      if (url === `/api/v1/nodes/10/tags/${keyboardTagID}` && init?.method === "DELETE") {
+        revision = 4;
+        return new Promise<Response>((resolve) => (resolveRemoval = resolve));
+      }
+      if (url === `/api/v1/nodes/10/tags/${keyboardTagID}` && init?.method === "PUT") {
+        return json({
+          tag: { ...tax, revision: 3 },
+          node: { ...zeta, revision: 5, path: "/zeta.txt" },
+          changed: true,
+        });
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+    const finishRemoval = () =>
+      resolveRemoval(
+        json({
+          tag: { ...tax, revision: 2, assignment_count: 0 },
+          node: { ...zeta, revision: 4, path: "/zeta.txt" },
+          changed: true,
+        }),
+      );
+    const finishReload = () =>
+      resolveReload(json({ items: [reviewed], total: 1, limit: 1000, offset: 0 }));
+
+    render(App);
+    await fireEvent.click(await screen.findByRole("cell", { name: "zeta.txt" }));
+    await configureFirstTagHotkey();
+    await fireEvent.click(await screen.findByRole("button", { name: "Remove tag tax" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
+    await waitFor(() => expect(tagReads).toBe(2));
+    if (listing === "before") {
+      finishReload();
+      await screen.findByRole("button", { name: "Remove tag reviewed" });
+      finishRemoval();
+    } else {
+      finishRemoval();
+      await new Promise((resolve) => setTimeout(resolve));
+      finishReload();
+    }
+
+    const removeReviewed = await screen.findByRole("button", { name: "Remove tag reviewed" });
+    await waitFor(() => expect(removeReviewed.hasAttribute("disabled")).toBe(false));
+    await fireEvent.keyDown(window, { key: "1" });
+    expect(await screen.findByText("Added tax to zeta.txt.")).toBeTruthy();
+  },
+);

@@ -44,8 +44,9 @@ test("photo map privacy, clusters, marker return and mobile grid", async ({ page
     browserRequests.push(request.url());
     if (/\/assets\/PhotoMap-[^/]+\.js$/.test(new URL(request.url()).pathname)) mapChunks++;
     if (request.url().endsWith("/photos/assets/query")) {
-      listings++;
       const filters = request.postDataJSON().query.filters;
+      // The details panel reads the selected photo by id; only the map or grid reloading counts.
+      if (!filters.asset_ids) listings++;
       if (!filters.gps_bounds && !filters.asset_ids) libraryReads++;
     }
     if (new URL(request.url()).pathname.startsWith("/api/daemon/web-map-tiles/")) tileRequests++;

@@ -363,10 +363,12 @@ change at the watched source appends another version.
 Watchers run as jobs named `watch:<name>`. `docbank watch list` and
 `GET /api/v1/watches` pair each runner's state with its effective source,
 destination, settle window, minimum source age, scan interval, and exclusion
-policy. `EXCLUDES` counts both literal and glob rules. Use `--json` when an
-agent needs the separate `exclude` and `exclude_patterns` lists. `docbank jobs`
-and `GET /api/v1/jobs` remain the all-task view. A source, destination, or
-read failure leaves the named job in the failed state and records the reason.
+policy. `docbank watch list` shows a waiting watcher as `idle` and an ingesting
+watcher as `running`. `EXCLUDES` counts both literal and glob rules. Use
+`--json` when an agent needs the separate `exclude` and `exclude_patterns`
+lists. `docbank jobs` and `GET /api/v1/jobs` remain the all-task view. A source,
+destination, or read failure leaves the named job in the failed state and
+records the reason.
 Restart the daemon after correcting the problem.
 Per-file successes are written to the daemon log. A configured watch keeps a
 background daemon alive regardless of `idle_timeout`.

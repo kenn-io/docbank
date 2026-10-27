@@ -1,48 +1,26 @@
 import type { DocumentSearchRequestMode, ProcessingProfileSummary } from "./generated/docbank.js";
 
-export type NaturalSearchMode = "names" | "auto" | "lexical" | "semantic" | "hybrid";
-
-export interface NaturalSearchModeOption {
-  value: NaturalSearchMode;
-  label: string;
-}
+export type NaturalSearchMode = "names" | "auto";
 
 export interface NaturalSearchRequestMode {
   mode: DocumentSearchRequestMode;
   binding_id?: string;
 }
 
-export function naturalQueryBindings(profile: ProcessingProfileSummary): string[] {
+function naturalQueryBindings(profile: ProcessingProfileSummary): string[] {
   return profile.query_embedding_bindings ?? profile.embedding_bindings;
 }
-
-const modeLabels: Record<NaturalSearchMode, string> = {
-  names: "Names and text",
-  auto: "Auto",
-  lexical: "Lexical",
-  semantic: "Semantic",
-  hybrid: "Hybrid",
-};
 
 export function selectNaturalSearchProfile(
   profiles: ProcessingProfileSummary[],
 ): ProcessingProfileSummary | undefined {
-  return (
-    [...profiles]
-      .sort((left, right) => left.name.localeCompare(right.name))
-      .find((profile) => naturalQueryBindings(profile).length > 0) ??
-    [...profiles].sort((left, right) => left.name.localeCompare(right.name))[0]
-  );
+  return [...profiles]
+    .sort((left, right) => left.name.localeCompare(right.name))
+    .find((profile) => naturalQueryBindings(profile).length > 0);
 }
 
-export function naturalSearchModes(
-  profile: ProcessingProfileSummary | undefined,
-): NaturalSearchModeOption[] {
-  const modes: NaturalSearchMode[] = ["names"];
-  if (!profile) return modes.map((value) => ({ value, label: modeLabels[value] }));
-  modes.push("auto", "lexical");
-  if (naturalQueryBindings(profile).length > 0) modes.push("semantic", "hybrid");
-  return modes.map((value) => ({ value, label: modeLabels[value] }));
+export function naturalSearchPlaceholder(syntax: "simple" | "advanced"): string {
+  return syntax === "advanced" ? "name:invoice AND tag:urgent" : "Search names and text";
 }
 
 export function naturalSearchRequest(
@@ -50,12 +28,7 @@ export function naturalSearchRequest(
   profile: ProcessingProfileSummary,
 ): NaturalSearchRequestMode | undefined {
   if (mode === "names") return undefined;
-  const bindingID = naturalQueryBindings(profile)[0];
-  if ((mode === "semantic" || mode === "hybrid") && !bindingID) return undefined;
-  if (mode === "auto" && bindingID) return { mode: "hybrid", binding_id: bindingID };
-  if ((mode === "semantic" || mode === "hybrid") && bindingID)
-    return { mode, binding_id: bindingID };
-  return { mode: mode as DocumentSearchRequestMode };
+  return { mode: "hybrid", binding_id: naturalQueryBindings(profile)[0] };
 }
 
 export function naturalSearchRerank(
@@ -66,7 +39,7 @@ export function naturalSearchRerank(
   return enabled && mode !== "names" && profile?.reranking_available ? true : undefined;
 }
 
-export function evidenceKindLabel(kind: string): string {
+function evidenceKindLabel(kind: string): string {
   switch (kind) {
     case "node_name":
       return "Name";
@@ -101,10 +74,6 @@ export function rerankingNote(outcome: string, cause = ""): string {
 export function naturalSearchFallbackNote(cause: string): string {
   const detail = cause.trim().slice(0, 128);
   return detail
-    ? `Natural-language search unavailable: ${detail}. Showing Names and text.`
-    : "Natural-language search unavailable. Showing Names and text.";
-}
-
-export function directFileEvidenceNote(): string {
-  return "Direct-file result; no text excerpt.";
+    ? `Natural-language search unavailable: ${detail}. Showing names and text.`
+    : "Natural-language search unavailable. Showing names and text.";
 }

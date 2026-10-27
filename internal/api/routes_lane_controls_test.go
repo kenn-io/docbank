@@ -114,6 +114,7 @@ func TestStorageJobControlsFollowOperationState(t *testing.T) {
 			require.NoError(t, json.Unmarshal([]byte(body), &listed))
 			require.Len(t, listed.Items, 1)
 			job := listed.Items[0]
+			assert.Equal(t, state == store.StorageOperationRunning, job.Busy)
 			assert.Equal(t, active, job.Controllable)
 			assert.Equal(t, active, job.CanCancel)
 			assert.Equal(t, cancelRequested, job.CancelRequested)

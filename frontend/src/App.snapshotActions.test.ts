@@ -45,6 +45,14 @@ const journal = vi.hoisted(() => ({
   async markUncertain() {},
   async markStale() {},
   async pause() {},
+  async discardUnsent(actionID: string) {
+    if (
+      journalState.action?.action_id === actionID &&
+      journalState.action.state === "prepared" &&
+      journalState.action.batches.every((batch) => batch.state === "prepared")
+    )
+      journalState.action = null;
+  },
   async abandon() {
     journalState.action = null;
   },
@@ -52,7 +60,13 @@ const journal = vi.hoisted(() => ({
 
 vi.mock("./actionJournal.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./actionJournal.js")>();
-  return { ...actual, ActionJournal: { open: vi.fn(async () => journal) } };
+  return {
+    ...actual,
+    ActionJournal: {
+      open: vi.fn(async () => journal),
+      peek: vi.fn(async () => journalState.action),
+    },
+  };
 });
 
 import App from "./App.svelte";
@@ -205,17 +219,19 @@ it.each([false, true])(
     });
 
     render(App);
-    await screen.findByRole("region", { name: "Query editor" });
-    await fireEvent.click(screen.getByRole("button", { name: "Run query" }));
+    await screen.findByRole("dialog", { name: "Filters and sort" });
+    await fireEvent.click(screen.getByRole("button", { name: "Search" }));
     await screen.findByRole("cell", { name: "/records/report-1.pdf" });
     await fireEvent.click(screen.getByRole("checkbox", { name: "Select /records/report-1.pdf" }));
-    expect(screen.getByText("1 selected on this frozen page")).toBeTruthy();
-    await fireEvent.click(screen.getByRole("button", { name: "Tag whole query" }));
-    await fireEvent.click(screen.getByRole("combobox", { name: /Tag for snapshot action/ }));
-    await fireEvent.click(screen.getByRole("option", { name: "Review" }));
-    await fireEvent.click(screen.getByRole("button", { name: "Add tag to whole query" }));
+    expect(screen.getByText("1 selected")).toBeTruthy();
+    await fireEvent.click(screen.getByRole("button", { name: "Tag all…" }));
+    await fireEvent.input(screen.getByRole("combobox", { name: "Tag" }), {
+      target: { value: "Rev" },
+    });
+    await fireEvent.click(screen.getByRole("option", { name: "Review (0)" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Continue" }));
 
-    await screen.findByRole("dialog", { name: "Recoverable snapshot action" }, { timeout: 10_000 });
+    await screen.findByRole("button", { name: "Apply" }, { timeout: 10_000 });
     expect(journalState.pageReadsBeforePrepare).toBe(1);
     expect(journalState.action?.total).toBe(101);
     expect(journalState.action?.source.member_hash).toBe(first.member_hash);
@@ -224,11 +240,8 @@ it.each([false, true])(
     ).toEqual(Array.from({ length: 101 }, (_, index) => index + 1));
     expect(requests.filter((url) => url === "/api/v1/batch/tags")).toHaveLength(0);
     if (deleted) {
-      await screen.findByText(/tag is no longer available/i);
-      await fireEvent.click(screen.getByRole("button", { name: "Abandon action…" }));
-      await fireEvent.click(
-        screen.getByRole("button", { name: "Abandon action without rollback" }),
-      );
+      await screen.findByText("This tag no longer exists.");
+      await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
       await waitFor(() => expect(journalState.action).toBeNull());
     }
   },
@@ -299,8 +312,8 @@ it("shows validated receipt overlays without refreshing frozen membership, count
   });
 
   render(App);
-  await screen.findByRole("region", { name: "Query editor" });
-  await fireEvent.click(screen.getByRole("button", { name: "Run query" }));
+  await screen.findByRole("dialog", { name: "Filters and sort" });
+  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
   await screen.findByRole("cell", { name: "/records/report-1.pdf" });
   const table = screen.getByRole("table", { name: "Snapshot documents" });
   const beforeRows = within(table)
@@ -308,12 +321,12 @@ it("shows validated receipt overlays without refreshing frozen membership, count
     .slice(1)
     .map((tableRow) => tableRow.textContent);
   await fireEvent.click(screen.getByRole("checkbox", { name: "Select /records/report-1.pdf" }));
-  await fireEvent.click(screen.getByRole("button", { name: "Tag or recover" }));
-  await fireEvent.click(screen.getByRole("combobox", { name: /Tag for snapshot action/ }));
-  await fireEvent.click(screen.getByRole("option", { name: "Review" }));
-  await fireEvent.click(screen.getByRole("button", { name: "Add tag to visible selection" }));
-  await screen.findByText("0 of 1 selected documents have this tag.");
-  await fireEvent.click(screen.getByRole("button", { name: "Add to all" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Tag selected…" }));
+  await fireEvent.input(screen.getByRole("combobox", { name: "Tag" }), {
+    target: { value: "Rev" },
+  });
+  await fireEvent.click(screen.getByRole("option", { name: "Review (0)" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Apply" }));
 
   await screen.findByText("Added: Review", {}, { timeout: 10_000 });
   const afterRows = within(table)
@@ -331,20 +344,22 @@ it("shows validated receipt overlays without refreshing frozen membership, count
   expect(afterRows).toEqual(beforeRows);
   expect(requests.filter((url) => url === "/api/v1/workspace/queries")).toHaveLength(1);
   expect(requests.some((url) => url.startsWith("/api/v1/search"))).toBe(false);
-  await screen.findByText("1 of 1 selected documents have this tag.");
+  await screen.findByText("Added “Review” to 1 document.");
   await fireEvent.click(screen.getByRole("button", { name: "Done" }));
-  await fireEvent.click(screen.getByRole("button", { name: "Tag or recover" }));
-  await fireEvent.click(screen.getByRole("combobox", { name: /Tag for snapshot action/ }));
-  await fireEvent.click(screen.getByRole("option", { name: "Review" }));
-  await fireEvent.click(screen.getByRole("button", { name: "Add tag to whole query" }));
-  await screen.findByRole("dialog", { name: "Recoverable snapshot action" }, { timeout: 10_000 });
+  await fireEvent.click(screen.getByRole("button", { name: "Tag all…" }));
+  await fireEvent.input(screen.getByRole("combobox", { name: "Tag" }), {
+    target: { value: "Rev" },
+  });
+  await fireEvent.click(screen.getByRole("option", { name: "Review (0)" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Continue" }));
+  await screen.findByRole("button", { name: "Apply" }, { timeout: 10_000 });
   expect(journalState.action?.batches[0].request.nodes[0]).toEqual({ node_id: 1, revision: 4 });
   expect(first.rows[0].revision).toBe(3);
 });
 
 it.each([
-  { pending: "pages", discard: "Back to live folder" },
-  { pending: "audit", discard: "Run query" },
+  { pending: "pages", discard: "Clear search" },
+  { pending: "audit", discard: "Search again" },
   { pending: "tag", discard: "Lock web session" },
   { pending: "pages", discard: "Cancel" },
 ])("discards a capture waiting for $pending after $discard", async ({ pending, discard }) => {
@@ -371,6 +386,8 @@ it.each([
   });
   let waiting = false;
   let captureSignal: AbortSignal | undefined;
+  // Set once Continue is pressed, so the searches before it are not held.
+  let armed = false;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     if (url === "/api/v1/path?path=%2F") return json(root);
@@ -388,8 +405,9 @@ it.each([
         : url === `/api/v1/tags/${tag.id}`
           ? "tag"
           : undefined;
-    if (stage === "pages") captureSignal = init?.signal ?? undefined;
-    if (stage === pending && (pending !== "audit" || captureSignal)) {
+    if (armed && (stage === "pages" || stage === "audit"))
+      captureSignal = init?.signal ?? undefined;
+    if (armed && stage === pending) {
       waiting = true;
       return delayed;
     }
@@ -398,16 +416,24 @@ it.each([
     return json({});
   });
   render(App);
-  await screen.findByRole("region", { name: "Query editor" });
-  await fireEvent.click(screen.getByRole("button", { name: "Run query" }));
+  await screen.findByRole("dialog", { name: "Filters and sort" });
+  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
   await screen.findByRole("cell", { name: "/records/report-1.pdf" });
-  await fireEvent.click(screen.getByRole("button", { name: "Tag or recover" }));
-  await fireEvent.click(screen.getByRole("combobox", { name: /Tag for snapshot action/ }));
-  await fireEvent.click(screen.getByRole("option", { name: "Review" }));
-  await fireEvent.click(screen.getByRole("button", { name: "Add tag to whole query" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Tag all…" }));
+  await fireEvent.input(screen.getByRole("combobox", { name: "Tag" }), {
+    target: { value: "Rev" },
+  });
+  await fireEvent.click(screen.getByRole("option", { name: "Review (0)" }));
+  const next = await screen.findByRole("button", { name: "Continue" });
+  armed = true;
+  await fireEvent.click(next);
   await waitFor(() => expect(waiting).toBe(true));
   try {
-    await fireEvent.click(screen.getByRole("button", { name: discard, hidden: true }));
+    if (discard === "Search again") {
+      await fireEvent.click(screen.getByRole("button", { name: "Advanced", hidden: true }));
+      discard = "Search";
+    }
+    await fireEvent.click(screen.getAllByRole("button", { name: discard, hidden: true }).at(-1)!);
     expect(captureSignal?.aborted).toBe(true);
   } finally {
     // Deliberately deliver the old response even after abort to exercise the
@@ -416,7 +442,7 @@ it.each([
   }
   await delayed;
   await new Promise((resolve) => setTimeout(resolve, 0));
-  expect(screen.queryByRole("dialog", { name: "Recoverable snapshot action" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Apply" })).toBeNull();
   if (pending !== "tag") expect(journalState.action).toBeNull();
 });
 
@@ -484,25 +510,27 @@ it("disables tagging during reruns and ignores the old selection's late receipt"
     throw new Error(`unexpected request: ${url}`);
   });
   render(App);
-  await screen.findByRole("region", { name: "Query editor" });
-  await fireEvent.click(screen.getByRole("button", { name: "Run query" }));
+  await screen.findByRole("dialog", { name: "Filters and sort" });
+  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
   await screen.findByRole("cell", { name: "/records/report-1.pdf" });
   await fireEvent.click(screen.getByRole("checkbox", { name: "Select /records/report-1.pdf" }));
-  await fireEvent.click(screen.getByRole("button", { name: "Tag visible selection" }));
-  await fireEvent.click(screen.getByRole("combobox", { name: /Tag for selected documents/ }));
-  await fireEvent.click(screen.getByRole("option", { name: "Review" }));
-  await screen.findByText("0 of 1 selected documents have this tag.");
-  await fireEvent.click(screen.getByRole("button", { name: "Add to all" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Tag selected…" }));
+  await fireEvent.input(screen.getByRole("combobox", { name: "Tag" }), {
+    target: { value: "Rev" },
+  });
+  await fireEvent.click(screen.getByRole("option", { name: "Review (0)" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Apply" }));
   await waitFor(() => expect(confirmedReceipt).toBeDefined());
-  await fireEvent.click(screen.getByRole("button", { name: "Run query", hidden: true }));
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced", hidden: true }));
+  await fireEvent.click(screen.getByRole("button", { name: "Search", hidden: true }));
   await waitFor(() => expect(creates).toBe(2));
   try {
     expect(
-      (screen.getByRole("button", { name: "Tag visible selection" }) as HTMLButtonElement).disabled,
+      (screen.getByRole("button", { name: "Tag selected…" }) as HTMLButtonElement).disabled,
     ).toBe(true);
-    expect(
-      (screen.getByRole("button", { name: "Tag whole query" }) as HTMLButtonElement).disabled,
-    ).toBe(true);
+    expect((screen.getByRole("button", { name: "Tag all…" }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
     expect(screen.queryByRole("dialog", { name: "Tag selected documents" })).toBeNull();
   } finally {
     finishRun(json(replacement));
@@ -511,5 +539,88 @@ it("disables tagging during reruns and ignores the old selection's late receipt"
   }
   await mutation;
   await new Promise((resolve) => setTimeout(resolve, 0));
-  expect(screen.queryByText("Added: Review")).toBeNull();
+  expect(screen.queryByText(/^Added “Review” to \d+ documents?\.$/)).toBeNull();
+});
+
+it("preserves the draft after dismissing an uncertain selection tag warning", async () => {
+  history.replaceState(
+    null,
+    "",
+    `/#web_session=fresh-session&web_upload_secret=proof&query=${encodeURIComponent(JSON.stringify(query))}`,
+  );
+  const [first] = await pages();
+  const root = {
+    id: 1000,
+    name: "",
+    kind: "dir",
+    path: "/",
+    revision: 1,
+    size: 0,
+    created_at: "2026-09-11T00:00:00Z",
+    modified_at: "2026-09-11T00:00:00Z",
+  };
+  const json = (value: unknown) => new Response(JSON.stringify(value));
+  const searches: Record<string, unknown>[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url === "/api/v1/path?path=%2F") return json(root);
+    if (url.includes("/children?"))
+      return json({ directory: root, items: [], total: 0, limit: 1000, offset: 0 });
+    if (url === "/api/v1/tags?limit=1000&offset=0")
+      return json({ items: [tag], total: 1, limit: 1000, offset: 0 });
+    if (url === "/api/v1/queries/parse")
+      return json({ query, query_fingerprint: first.query_fingerprint, dependencies: [] });
+    if (url === "/api/v1/workspace/queries") {
+      searches.push(JSON.parse(String(init?.body)));
+      return json(first);
+    }
+    if (url === "/api/v1/batch/tags/preview")
+      return json({
+        tag_id: tag.id,
+        tag_revision: 2,
+        nodes: [{ node_id: 1, revision: 3, assigned: false }],
+      });
+    // A server error leaves the client unable to confirm whether the change committed.
+    if (url === "/api/v1/batch/tags") return new Response("unavailable", { status: 503 });
+    throw new Error(`unexpected request: ${url}`);
+  });
+  render(App);
+  await fireEvent.click(await screen.findByRole("button", { name: "Search" }));
+  await screen.findByRole("cell", { name: "/records/report-1.pdf" });
+  await fireEvent.input(screen.getByRole("searchbox", { name: "Search documents" }), {
+    target: { value: "unfinished draft" },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  await fireEvent.input(screen.getByLabelText("Filters JSON"), {
+    target: { value: '{"size_min":' },
+  });
+  await fireEvent.click(screen.getByRole("combobox", { name: "Documents per page: 100" }));
+  await fireEvent.click(screen.getByRole("option", { name: "250" }));
+  await fireEvent.keyDown(window, { key: "Escape" });
+  await fireEvent.click(screen.getByRole("checkbox", { name: "Select /records/report-1.pdf" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Tag selected…" }));
+  await fireEvent.input(screen.getByRole("combobox", { name: "Tag" }), {
+    target: { value: "Rev" },
+  });
+  await fireEvent.click(screen.getByRole("option", { name: "Review (0)" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Apply" }));
+  await waitFor(() => expect(searches).toHaveLength(2));
+  await screen.findByRole("cell", { name: "/records/report-1.pdf" });
+  expect(searches[1]).toEqual(searches[0]);
+  const warning = await screen.findByText(
+    "The result is unknown. Check these documents' tags before trying again.",
+  );
+  expect(warning.closest('[role="alert"]')).toBeTruthy();
+  await fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+  expect(
+    screen.queryByText("The result is unknown. Check these documents' tags before trying again."),
+  ).toBeNull();
+  expect(
+    (screen.getByRole("searchbox", { name: "Search documents" }) as HTMLInputElement).value,
+  ).toBe("unfinished draft");
+  await fireEvent.focusIn(screen.getByRole("button", { name: "Advanced" }));
+  expect((await screen.findByRole("tooltip")).textContent).toBe("Unapplied changes");
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  expect((screen.getByLabelText("Filters JSON") as HTMLTextAreaElement).value).toBe('{"size_min":');
+  expect(screen.getByRole("combobox", { name: "Documents per page: 250" })).toBeTruthy();
 });

@@ -1,4 +1,5 @@
 import * as generated from "./generated/docbank.js";
+import { APIError } from "./api-transport.js";
 import { sha256Digest } from "./crypto.js";
 import type { SelectionTarget } from "./selection.js";
 
@@ -157,6 +158,32 @@ export async function changeBatchTags(
   await batchTagRequestDigest(normalized);
   const value = await generated.changeBatchTags(normalized, { session });
   return validateBatchTagReceipt(normalized, value);
+}
+
+export type BatchTagOutcome =
+  | { kind: "confirmed"; receipt: BatchTagReceipt }
+  | { kind: "auth"; cause: unknown }
+  // The daemon refused it, so nothing committed. `stale` means a document changed.
+  | { kind: "rejected"; cause: unknown; stale: boolean }
+  // No answer arrived, so the change may have committed; retry the same request.
+  | { kind: "unknown"; cause: unknown };
+
+export async function runBatchTagChange(
+  session: string,
+  request: BatchTagRequest,
+): Promise<BatchTagOutcome> {
+  try {
+    return { kind: "confirmed", receipt: await changeBatchTags(session, request) };
+  } catch (cause) {
+    if (!(cause instanceof APIError) || cause.status < 400 || cause.status >= 500)
+      return { kind: "unknown", cause };
+    if (cause.status === 401) return { kind: "auth", cause };
+    return {
+      kind: "rejected",
+      cause,
+      stale: cause.code === "stale_revision" || cause.code === "not_found",
+    };
+  }
 }
 
 export async function previewBatchTags(

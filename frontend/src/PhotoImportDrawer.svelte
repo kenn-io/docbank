@@ -1,8 +1,8 @@
 <script lang="ts">
   import { reportAction, reportFailure } from "./action-events.js";
   import { onDestroy } from "svelte";
-  import XIcon from "@lucide/svelte/icons/x";
-  import { Button, DetailDrawer, IconButton, TextInput } from "@kenn-io/kit-ui";
+  import { Button, TextInput } from "@kenn-io/kit-ui";
+  import DrawerShell from "./DrawerShell.svelte";
   import { APIError } from "./api-transport.js";
   import {
     UploadChannelError,
@@ -12,6 +12,8 @@
     type TransferProgress,
   } from "./upload.js";
 
+  import LocalFilePicker from "./LocalFilePicker.svelte";
+  import { localFilePath, type PickerKind } from "./localFiles.js";
   import PhotoCullConfirmation from "./PhotoCullConfirmation.svelte";
 
   import { randomUUID } from "./crypto.js";
@@ -98,8 +100,7 @@
     };
   });
 
-  let folderInput: HTMLInputElement;
-  let filesInput: HTMLInputElement;
+  let picker: LocalFilePicker;
   let destination = $state("/");
   let items = $state<Item[]>([]);
   let selectedFiles: File[] = [];
@@ -146,10 +147,7 @@
     controller?.abort();
   });
 
-  async function choose(event: Event): Promise<void> {
-    const input = event.currentTarget as HTMLInputElement;
-    const files = Array.from(input.files ?? []);
-    input.value = "";
+  async function choose(files: File[], kind: PickerKind): Promise<void> {
     if (!files.length || running || planning || !checkpointReady) return;
     try {
       photoImportDeclaration(files, destination);
@@ -168,7 +166,7 @@
       planning = false;
       if (!confirmed || destroyed || checkpoint !== expected) return;
     }
-    pickerKind = input === folderInput ? "folder" : "files";
+    pickerKind = kind;
     selectedFiles = files;
     await plan(true);
   }
@@ -391,31 +389,8 @@
   }
 </script>
 
-<DetailDrawer width="min(720px, 100vw)" ariaLabel="Add photos" {onclose}>
-  {#snippet header()}
-    <div class="drawer-heading">
-      <h2>Add photos</h2>
-      <IconButton ariaLabel="Close add photos" onclick={onclose}><XIcon size="18" /></IconButton>
-    </div>
-  {/snippet}
+<DrawerShell title="Add photos" closeLabel="Close add photos" {onclose}>
   <div class="photo-import">
-    <input
-      bind:this={folderInput}
-      type="file"
-      webkitdirectory
-      multiple
-      hidden
-      aria-label="Choose photo folder"
-      onchange={(event) => void choose(event)}
-    />
-    <input
-      bind:this={filesInput}
-      type="file"
-      multiple
-      hidden
-      aria-label="Choose photo files"
-      onchange={(event) => void choose(event)}
-    />
     {#if disabledReason || error}
       <p role="alert">{disabledReason || error}</p>
     {:else if !checkpointReady}
@@ -441,24 +416,20 @@
           onclick={() => {
             resuming = true;
             destination = checkpoint!.destination;
-            (checkpoint!.pickerKind === "folder" ? folderInput : filesInput).click();
+            picker.choose(checkpoint!.pickerKind === "folder" ? "folder" : "files");
           }}>Resume import</Button
         >
       {/if}
-      <Button
+      <LocalFilePicker
+        bind:this={picker}
         disabled={!checkpointReady || running || planning || !!disabledReason}
-        onclick={() => {
+        filesLabel="Choose photo files"
+        folderLabel="Choose photo folder"
+        onopen={() => {
           resuming = false;
-          folderInput.click();
-        }}>Choose folder</Button
-      >
-      <Button
-        disabled={!checkpointReady || running || planning || !!disabledReason}
-        onclick={() => {
-          resuming = false;
-          filesInput.click();
-        }}>Choose files</Button
-      >
+        }}
+        onchoose={choose}
+      />
     </div>
     {#if !disabledReason && !error}<p>Keep this tab open until the import finishes.</p>{/if}
     {#if planning}
@@ -479,9 +450,9 @@
       <ul>
         {#each items as item}
           <li>
-            <strong
-              >{item.files.map((file) => file.webkitRelativePath || file.name).join(", ")}</strong
-            ><span>{labels[item.state]}</span>
+            <strong>{item.files.map(localFilePath).join(", ")}</strong><span
+              >{labels[item.state]}</span
+            >
             {#if item.state === "hashing" || item.state === "uploading"}<progress
                 max={item.progress.total || 1}
                 value={item.progress.processed}
@@ -491,7 +462,7 @@
           </li>
         {/each}
         {#each unsupported as { file, reason }}<li>
-            <strong>{file.webkitRelativePath || file.name}</strong><span>{reason}</span>
+            <strong>{localFilePath(file)}</strong><span>{reason}</span>
           </li>{/each}
       </ul>
       <div class="controls">
@@ -505,12 +476,11 @@
       </div>
     {/if}
   </div>
-</DetailDrawer>
+</DrawerShell>
 
 <PhotoCullConfirmation bind:this={confirmation} />
 
 <style>
-  .drawer-heading,
   .controls,
   .totals {
     display: flex;
@@ -518,11 +488,6 @@
     gap: var(--space-2);
     flex-wrap: wrap;
   }
-  .drawer-heading {
-    justify-content: space-between;
-    width: 100%;
-  }
-  h2,
   p {
     margin: 0;
   }

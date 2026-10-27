@@ -3479,6 +3479,8 @@ export const JobStatus = {
 } as const;
 
 export interface Job {
+  /** Whether this job is processing work rather than waiting for an item or its next scheduled run. */
+  busy: boolean;
   can_cancel?: boolean;
   can_set_concurrency: boolean;
   cancel_requested?: boolean;

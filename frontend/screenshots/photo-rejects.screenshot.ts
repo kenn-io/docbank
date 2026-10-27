@@ -49,8 +49,8 @@ test("Move rejects recovers position and selection after a failed refresh", asyn
       };
       await scroll.evaluate((element) => (element.scrollTop = 0));
       await page.getByRole("button", { name: "More photo actions", exact: true }).click();
-      await page.getByRole("menuitem", { name: "Move rejects", exact: true }).click();
-      const modal = page.getByRole("dialog", { name: "Move rejects to trash" });
+      await page.getByRole("menuitem", { name: "Trash rejected photos", exact: true }).click();
+      const modal = page.getByRole("dialog", { name: "Trash rejected photos" });
       await modal.getByText("You can restore these photos from Trash.", { exact: true }).waitFor();
       for (const theme of ["light", "dark"]) {
         await page.evaluate((value) => {
@@ -69,7 +69,7 @@ test("Move rejects recovers position and selection after a failed refresh", asyn
         .check();
       await page.getByRole("button", { name: "Select loaded photos", exact: true }).click();
       await page.getByRole("button", { name: "More photo actions", exact: true }).click();
-      await page.getByRole("menuitem", { name: "Move rejects", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Trash rejected photos", exact: true }).click();
       await modal.getByText("You can restore these photos from Trash.", { exact: true }).waitFor();
       for (const theme of ["light", "dark"]) {
         await page.evaluate((value) => {
@@ -85,7 +85,7 @@ test("Move rejects recovers position and selection after a failed refresh", asyn
       await page.getByRole("button", { name: "Clear selection", exact: true }).click();
       await select("Synthetic-photo-00001.jpg");
       await page.getByRole("button", { name: "More photo actions", exact: true }).click();
-      await page.getByRole("menuitem", { name: "Move rejects", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Trash rejected photos", exact: true }).click();
       await modal
         .getByRole("combobox", { name: "Rejects scope: Current view", exact: true })
         .click();
@@ -107,7 +107,7 @@ test("Move rejects recovers position and selection after a failed refresh", asyn
       const beforeMoveTop = await scroll.evaluate((element) => element.scrollTop);
       expect(beforeMoveTop).toBeGreaterThan(0);
       await page.getByRole("button", { name: "More photo actions", exact: true }).click();
-      await page.getByRole("menuitem", { name: "Move rejects", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Trash rejected photos", exact: true }).click();
       await modal
         .getByRole("combobox", { name: "Rejects scope: Current view", exact: true })
         .click();

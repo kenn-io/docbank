@@ -3,12 +3,12 @@ import type { Tag } from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
 import type { BatchTagReceipt } from "./batch-tags.js";
 import { ActionJournal, type PersistedAction } from "./actionJournal.js";
-import { prepareAction, decodeRecovery } from "./actionRecovery.js";
+import { prepareAction, decodeRecovery, type PreparedAction } from "./actionRecovery.js";
 import { readActionVaultID } from "./actionRunner.js";
 import { SnapshotSession, type SnapshotState } from "./snapshotState.js";
 import { captureSnapshotTargets, type SnapshotOptions, type SnapshotRow } from "./snapshots.js";
 import type { SnapshotReceiptOverlays } from "./snapshotOverlays.js";
-import type { SnapshotActionChoice } from "./SnapshotActions.svelte";
+import type { SnapshotActionChoice, SnapshotActionScope } from "./SnapshotActions.svelte";
 import type { Query } from "./query.js";
 
 export class SnapshotWorkspace {
@@ -19,6 +19,10 @@ export class SnapshotWorkspace {
   selection = $state<Set<number>>(new Set());
   overlays = $state<SnapshotReceiptOverlays>({});
   actionsOpen = $state(false);
+  actionsScope = $state<SnapshotActionScope>("query");
+  /** An unfinished whole-result run kept in this browser, or "unreadable" when its record is damaged. */
+  retained = $state<PersistedAction | "unreadable" | null>(null);
+  private retainedGeneration = 0;
   actionBusy = $state(false);
   private actionController: AbortController | undefined;
   private actionGeneration = 0;
@@ -57,7 +61,45 @@ export class SnapshotWorkspace {
     if (epoch !== this.epoch || session !== this.getSession()) return;
     const { error, status, page } = this.state;
     if (error) return { type: "failed", cause: error };
-    if (status === "ready") return { type: "text", empty: page?.rows.length === 0 };
+    if (status === "ready") {
+      void this.refreshRetained();
+      return { type: "text", empty: page?.rows.length === 0 };
+    }
+  }
+
+  openActions(scope: SnapshotActionScope): void {
+    this.actionError = "";
+    this.actionsScope = scope;
+    this.actionsOpen = true;
+  }
+
+  /** Reads, without changing it, whether this browser keeps an unfinished run for the vault. */
+  async refreshRetained(): Promise<void> {
+    const generation = ++this.retainedGeneration;
+    if (typeof indexedDB === "undefined") {
+      this.retained = null;
+      return;
+    }
+    const session = this.getSession();
+    let vaultID: string;
+    try {
+      vaultID = await readActionVaultID(session);
+    } catch {
+      return;
+    }
+    let next: PersistedAction | "unreadable" | null;
+    try {
+      next = await ActionJournal.peek(vaultID);
+    } catch {
+      next = "unreadable";
+    }
+    if (generation !== this.retainedGeneration || session !== this.getSession()) return;
+    this.retained = next && next !== "unreadable" && next.state === "complete" ? null : next;
+  }
+
+  dismissRecovery(): void {
+    this.closeRecovery();
+    void this.refreshRetained();
   }
 
   private invalidateActions(): void {
@@ -189,6 +231,20 @@ export class SnapshotWorkspace {
     this.actionsOpen = false;
   }
 
+  // A finished run stays retained for its receipts until the next run replaces it.
+  private async prepareJournal(
+    vaultID: string,
+    prepared: PreparedAction,
+    operation: ReturnType<SnapshotWorkspace["beginAction"]>,
+  ): Promise<ActionJournal | undefined> {
+    const journal = await ActionJournal.open(vaultID);
+    const observed = await journal.load();
+    if (!operation.current()) return undefined;
+    const completed = observed?.state === "complete" ? observed.action_id : undefined;
+    await journal.prepare(prepared, operation.signal, completed);
+    return journal;
+  }
+
   async startAction(choice: SnapshotActionChoice): Promise<void> {
     if (this.actionBusy || this.state.status !== "ready") return;
     this.actionError = "";
@@ -196,6 +252,17 @@ export class SnapshotWorkspace {
     if (!firstPage || firstPage.total === 0) return;
     const operation = this.beginAction();
     try {
+      const vaultID = await readActionVaultID(operation.session, operation.signal);
+      if (!operation.current()) return;
+      // One run is retained at a time. Show an unfinished one before enumerating
+      // a population that the journal would then refuse.
+      const retained = await ActionJournal.peek(vaultID);
+      if (!operation.current()) return;
+      if (retained && retained.state !== "complete") {
+        this.retained = retained;
+        this.actionsOpen = false;
+        return;
+      }
       // Complete enumeration and hash/byte verification happen before random
       // operation identities are prepared or anything is persisted.
       const targets = await captureSnapshotTargets(
@@ -205,12 +272,10 @@ export class SnapshotWorkspace {
         this.overlays,
       );
       if (!operation.current()) return;
-      const vaultID = await readActionVaultID(operation.session);
-      if (!operation.current()) return;
-      const journal = await ActionJournal.open(vaultID);
       const prepared = await prepareAction(vaultID, targets, choice.tagID, choice.assign);
       if (!operation.current()) return;
-      await journal.prepare(prepared, operation.signal);
+      const journal = await this.prepareJournal(vaultID, prepared, operation);
+      if (!journal) return;
       const action = await journal.load();
       if (!action) throw new Error("The prepared action was not retained in durable storage.");
       await this.showRecovery(journal, action, vaultID, operation);
@@ -236,9 +301,8 @@ export class SnapshotWorkspace {
       if (!operation.current()) return;
       if (prepared.vault_id !== vaultID)
         throw new Error("The recovery action belongs to a different vault.");
-      const journal = await ActionJournal.open(vaultID);
-      if (!operation.current()) return;
-      await journal.prepare(prepared, operation.signal);
+      const journal = await this.prepareJournal(vaultID, prepared, operation);
+      if (!journal) return;
       await journal.verifyCheckpoint(bytes);
       const action = await journal.load();
       if (!action) throw new Error("The imported action was not retained in durable storage.");
@@ -289,6 +353,7 @@ export class SnapshotWorkspace {
       await ActionJournal.abandon(vaultID);
       if (!operation.current()) return;
       this.actionsOpen = false;
+      this.retained = null;
     } catch (cause) {
       if (!operation.current()) return;
       if (cause instanceof APIError && cause.status === 401) this.onfailure(cause);

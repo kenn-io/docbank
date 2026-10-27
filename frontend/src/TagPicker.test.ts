@@ -167,3 +167,139 @@ it("does not open or select while disabled", async () => {
   expect(screen.queryByRole("listbox")).toBeNull();
   expect(onchange).not.toHaveBeenCalled();
 });
+
+it("opens tag management from an empty tag filter with the keyboard", async () => {
+  const onmanage = vi.fn();
+  const onchange = vi.fn();
+  render(TagPicker, {
+    value: "",
+    tags: [],
+    title: "Filter by tag",
+    placeholder: "All tags",
+    includeAll: true,
+    onchange,
+    onmanage,
+  });
+  const trigger = screen.getByRole("combobox");
+  trigger.focus();
+  await fireEvent.keyDown(trigger, { key: "ArrowDown" });
+  await fireEvent.keyDown(trigger, { key: "Tab" });
+  const manage = screen.getByRole("button", { name: "Manage tags" });
+  expect(document.activeElement).toBe(manage);
+  await fireEvent.click(manage);
+  expect(onmanage).toHaveBeenCalledOnce();
+  expect(onchange).not.toHaveBeenCalled();
+  expect(document.activeElement).toBe(trigger);
+});
+
+it("filters existing tags and selects the highlighted match with Enter", async () => {
+  const onpick = vi.fn();
+  render(TagPicker, {
+    value: "",
+    tags,
+    title: "Tag to assign",
+    placeholder: "Tag name",
+    session: "session",
+    onchange: vi.fn(),
+    onpick,
+  });
+  const input = screen.getByRole("combobox", { name: "Tag to assign" });
+  await fireEvent.input(input, { target: { value: "matter" } });
+  expect(screen.queryByRole("option", { name: "important (4)" })).toBeNull();
+  await fireEvent.keyDown(input, { key: "ArrowDown" });
+  await fireEvent.keyDown(input, { key: "Enter" });
+  expect(onpick).toHaveBeenCalledWith(tags[0], false);
+});
+
+it("creates from an empty catalog, then hands the new tag to assignment", async () => {
+  const tag = { ...tags[2], name: "Review", revision: 1, assignment_count: 0 };
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(tag));
+  const onpick = vi.fn();
+  render(TagPicker, {
+    value: "",
+    tags: [],
+    title: "Tag to assign",
+    placeholder: "Tag name",
+    session: "session",
+    onchange: vi.fn(),
+    onpick,
+  });
+  const input = screen.getByRole("combobox", { name: "Tag to assign" });
+  expect(input.hasAttribute("disabled")).toBe(false);
+  await fireEvent.input(input, { target: { value: "Review" } });
+  await fireEvent.keyDown(input, { key: "Enter" });
+  await vi.waitFor(() => expect(onpick).toHaveBeenCalledWith(tag, true));
+  expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/v1/tags");
+  expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ name: "Review" });
+  vi.restoreAllMocks();
+});
+
+it("doesn't offer creation for a normalized existing assigned tag", async () => {
+  render(TagPicker, {
+    value: "",
+    tags: [{ ...tags[2]!, name: "café" }],
+    title: "Tag to assign",
+    placeholder: "Tag name",
+    session: "session",
+    excludedTagIDs: [tags[2]!.id],
+    onchange: vi.fn(),
+    onpick: vi.fn(),
+  });
+  await fireEvent.input(screen.getByRole("combobox"), { target: { value: "  cafe\u0301  " } });
+  expect(screen.queryByRole("option")).toBeNull();
+});
+
+it("keeps creation errors visible and lets the name be corrected", async () => {
+  const fetchMock = vi
+    .spyOn(globalThis, "fetch")
+    .mockResolvedValue(Response.json({ detail: "Tag name is too long" }, { status: 400 }));
+  const onpick = vi.fn();
+  render(TagPicker, {
+    value: "",
+    tags: [],
+    title: "Tag to assign",
+    placeholder: "Tag name",
+    session: "session",
+    onchange: vi.fn(),
+    onpick,
+  });
+  const input = screen.getByRole("combobox");
+  await fireEvent.input(input, { target: { value: "Invalid" } });
+  await fireEvent.keyDown(input, { key: "Enter" });
+  expect((await screen.findByRole("alert")).textContent).toBe("Tag name is too long");
+  expect(onpick).not.toHaveBeenCalled();
+  await fireEvent.input(input, { target: { value: "Review" } });
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.getByRole("option", { name: "Create “Review”" })).toBeTruthy();
+  expect(fetchMock).toHaveBeenCalledOnce();
+  vi.restoreAllMocks();
+});
+
+it("can stay closed after a pick instead of reopening the list", async () => {
+  for (const reopenAfterPick of [true, false]) {
+    const picked: string[] = [];
+    const view = render(TagPicker, {
+      value: "",
+      tags,
+      title: "Tag to assign",
+      placeholder: "Tag name",
+      session: "session",
+      reopenAfterPick,
+      onchange: vi.fn(),
+      onpick: async (tag) => {
+        // A pointer pick moves focus to the option before the picker restores it.
+        (document.activeElement as HTMLElement | null)?.blur();
+        picked.push(tag.id);
+        await view.rerender({ value: tag.id });
+      },
+    });
+    const input = screen.getByRole("combobox", { name: "Tag to assign" }) as HTMLInputElement;
+    input.focus();
+    await fireEvent.input(input, { target: { value: "matter" } });
+    await fireEvent.keyDown(input, { key: "Enter" });
+    await vi.waitFor(() => expect(document.activeElement).toBe(input));
+    expect(picked).toHaveLength(1);
+    expect(screen.queryAllByRole("option").length > 0).toBe(reopenAfterPick);
+    view.unmount();
+  }
+});

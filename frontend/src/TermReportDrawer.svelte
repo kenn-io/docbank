@@ -1,19 +1,24 @@
 <script lang="ts">
-  import XIcon from "@lucide/svelte/icons/x";
+  import DrawerShell from "./DrawerShell.svelte";
   import { untrack } from "svelte";
+  import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
+  import PlusIcon from "@lucide/svelte/icons/plus";
+  import XIcon from "@lucide/svelte/icons/x";
   import {
     Button,
     Card,
     Checkbox,
     DateRangePicker,
-    DetailDrawer,
     IconButton,
+    SegmentedControl,
+    SelectDropdown,
     Spinner,
     TextInput,
     resolveRange,
   } from "@kenn-io/kit-ui";
+  import "./toolForm.css";
   import { APIError } from "./api-transport.js";
-  import { collections, type Collection } from "./collections.js";
+  import { collections, displayName, type Collection } from "./collections.js";
   import * as api from "./generated/docbank.js";
   import type {
     DateCandidate,
@@ -76,6 +81,7 @@
   let busy = $state(false);
   let error = $state("");
   let notice = $state("");
+  let optionsOpen = $state(false);
   let generation = 0;
   let historyGeneration = 0;
 
@@ -151,6 +157,45 @@
     draft.collection_ids = [...selected];
   }
 
+  const syntaxOptions = [
+    { value: "simple", label: "Simple" },
+    { value: "advanced", label: "Advanced" },
+  ];
+  const coverageOptions = [
+    { value: "strict", label: "Stop on incomplete coverage" },
+    { value: "available_only", label: "Count available text" },
+  ];
+  const dateOrderOptions = [
+    { value: "", label: "Review each" },
+    { value: "MDY", label: "Month / day / year" },
+    { value: "DMY", label: "Day / month / year" },
+  ];
+  const roleOptions = [
+    { value: "", label: "Keep source role" },
+    ...[
+      "document_date",
+      "created",
+      "authored",
+      "sent",
+      "captured",
+      "signed",
+      "effective",
+      "expiry",
+    ].map((role) => ({ value: role, label: role })),
+  ];
+  const optionSummary = $derived(
+    [
+      draft.selected_documents
+        ? `Selected documents (${draft.selected_documents.documents?.length ?? 0})`
+        : draft.all_documents
+          ? "All documents"
+          : `${draft.collection_ids?.length ?? 0} import${draft.collection_ids?.length === 1 ? "" : "s"}`,
+      draft.profile || "Default profile",
+      draft.timezone || "UTC",
+      coverageOptions.find((option) => option.value === draft.coverage_mode)?.label ?? "",
+    ].join(" · "),
+  );
+
   function addTerm(): void {
     const next = Math.max(0, ...draft.terms.map((term) => term.number)) + 1;
     draft.terms = [...draft.terms, newTerm(next)];
@@ -174,11 +219,7 @@
     reviewLoaded = false;
     choices = {};
     error = "";
-    notice = `Loaded the ${formatDate(item.summary.observed_at)} request. ${
-      source.selected_documents
-        ? "Its document selection is fixed. A new run checks that these versions are still current."
-        : "Edit its scope or dates, then run it on current data."
-    }`;
+    notice = `Loaded the ${formatDate(item.summary.observed_at)} report.`;
   }
 
   async function run(): Promise<void> {
@@ -190,7 +231,8 @@
       return;
     }
     if (!draft.selected_documents && !draft.all_documents && !draft.collection_ids?.length) {
-      error = "Select at least one collection, or use all documents.";
+      error = "Choose at least one import, or use all documents.";
+      optionsOpen = true;
       return;
     }
     if (
@@ -220,15 +262,11 @@
       if (JSON.stringify(draft) !== submittedFingerprint) {
         active = null;
         submittedDraft = null;
-        notice =
-          "An export finished from an earlier draft. Find it in recent exports to inspect or rerun it.";
+        notice = "A report from an earlier draft finished. It's in Recent reports.";
       } else {
         active = summary;
         submittedDraft = submittedFingerprint;
-        notice =
-          summary.state === "needs_review"
-            ? "The observation is frozen. Review the unresolved dates to produce counts."
-            : "Counts are ready for this frozen observation. Rerunning from history makes a new observation.";
+        notice = "";
       }
       await loadHistory(currentSession, true);
     } catch (cause) {
@@ -349,10 +387,7 @@
       review = [];
       reviewLoaded = false;
       choices = {};
-      notice =
-        active.state === "complete"
-          ? "Reviewed counts are ready in a new frozen revision."
-          : "This revision still has unresolved dates. Continue reviewing its evidence.";
+      notice = "";
       await loadHistory(session, true);
     } catch (cause) {
       fail(cause);
@@ -372,7 +407,6 @@
       document.body.append(link);
       link.click();
       link.remove();
-      notice = "Download handed to the browser. Check its download list for completion.";
     } catch (cause) {
       fail(cause);
     } finally {
@@ -381,224 +415,256 @@
   }
 </script>
 
-<DetailDrawer width="min(900px, 100vw)" ariaLabel="Search exports" {onclose}>
-  {#snippet header()}
-    <div class="heading">
-      <div><span>Search exports</span><strong>Export search counts</strong></div>
-      <IconButton size="sm" ariaLabel="Close search exports" onclick={onclose}
-        ><XIcon size="16" aria-hidden="true" /></IconButton
-      >
-    </div>
-  {/snippet}
-  <div class="body">
-    {#if error}<p class="error" role="alert">{error}</p>{/if}
+<DrawerShell
+  title="Search term report"
+  ariaLabel="Search term report"
+  closeLabel="Close search term report"
+  {onclose}
+>
+  <div class="tool-body">
+    {#if error}<p class="tool-error" role="alert">{error}</p>{/if}
     {#if notice}<p role="status">{notice}</p>{/if}
-    <Card level="default" padding="sm" title="New search export">
-      <div class="form">
-        <div class="field">
-          <label for="report-profile">Processing profile</label><input
-            id="report-profile"
-            bind:value={draft.profile}
-            placeholder="Configured default"
-          />
-        </div>
-        <div class="field">
-          <label for="report-zone">Export timezone</label><input
-            id="report-zone"
-            bind:value={draft.timezone}
-            placeholder="UTC"
-          />
-        </div>
-        <div class="field">
-          <label for="report-source-zone">Source timezone when omitted</label><input
-            id="report-source-zone"
-            bind:value={draft.source_timezone}
-            placeholder="Optional"
-          />
-        </div>
-        <div class="field">
-          <label for="report-date-order">Ambiguous numeric dates</label><select
-            id="report-date-order"
-            bind:value={draft.numeric_date_order}
-          >
-            <option value="">Review each</option><option value="MDY">Month / day / year</option
-            ><option value="DMY">Day / month / year</option></select
-          >
-        </div>
-        <div class="field">
-          <label for="report-coverage">Coverage policy</label><select
-            id="report-coverage"
-            bind:value={draft.coverage_mode}
-          >
-            <option value="strict">Strict — stop on incomplete coverage</option><option
-              value="available_only">Available text only — show gaps</option
-            ></select
-          >
-        </div>
-      </div>
-      <section class="scope" aria-label="Export source scope">
-        <strong>Sources</strong>
-        {#if draft.selected_documents}
-          <strong>Selected documents ({draft.selected_documents.documents?.length ?? 0})</strong>
-          <p>
-            This selection is fixed. Date eligibility can reduce the counted scope. Family
-            relationship evidence may reference unselected documents.
-          </p>
-        {:else}
-          <label
-            ><input
-              type="radio"
-              name="report-scope"
-              checked={draft.all_documents}
-              onchange={() => (draft.all_documents = true)}
-            /> All documents</label
-          >
-          <label
-            ><input
-              type="radio"
-              name="report-scope"
-              checked={!draft.all_documents}
-              onchange={() => (draft.all_documents = false)}
-            /> Selected collections</label
-          >
-          {#if !draft.all_documents}
-            <div class="collection-list">
-              {#each collectionItems as collection (collection.id)}
-                <Checkbox
-                  checked={(draft.collection_ids ?? []).includes(collection.id)}
-                  onchange={() => toggleCollection(collection.id)}
-                  label={`${collection.label || collection.source_description} · ${collection.file_count} files`}
-                />
-              {/each}
-              {#if collectionItems.length < collectionTotal}<Button
-                  size="sm"
-                  disabled={collectionLoading}
-                  onclick={() => void loadCollections()}
-                  >{collectionLoading ? "Loading…" : "More collections"}</Button
-                >{/if}
-              {#if !collectionItems.length && collectionLoading}<span
-                  ><Spinner size={14} /> Loading collections…</span
-                >{/if}
-            </div>
-          {/if}
-        {/if}
-      </section>
-      <section class="terms" aria-label="Export search queries">
-        <div class="section-heading">
-          <strong>Terms and cutoff dates</strong><Button
-            size="sm"
-            disabled={draft.terms.length >= 128}
-            onclick={addTerm}>Add term</Button
-          >
+
+    <section class="tool-section" aria-label="Report terms">
+      <div class="terms" role="table" aria-label="Terms">
+        <div class="term-row term-head" role="row">
+          <span role="columnheader">Expression</span><span role="columnheader">Syntax</span><span
+            role="columnheader">Date range</span
+          ><span role="columnheader"><span class="kit-sr-only">Remove</span></span>
         </div>
         {#each draft.terms as term, index (term.number)}
-          <div class="term">
-            <span>Term {term.number}</span><select
-              aria-label={`Syntax for term ${term.number}`}
-              bind:value={term.syntax}
-            >
-              <option value="simple">Simple</option><option value="advanced">Advanced</option
-              ></select
-            >
-            <input
-              aria-label={`Expression for term ${term.number}`}
-              bind:value={term.expression}
-              placeholder="Search expression"
-            />
-            <div class="date-picker">
-              <span>Inclusive date range</span><DateRangePicker
+          <div class="term-row" role="row">
+            <span role="cell"
+              ><TextInput
+                ariaLabel={`Expression for term ${term.number}`}
+                bind:value={term.expression}
+                placeholder="Search expression"
+                autofocus={index === 0}
                 block
+              /></span
+            >
+            <span role="cell"
+              ><SelectDropdown
+                title={`Syntax for term ${term.number}`}
+                value={term.syntax}
+                options={syntaxOptions}
+                onchange={(value) => (term.syntax = value)}
+              /></span
+            >
+            <span role="cell"
+              ><DateRangePicker
                 selection={{ mode: "custom", from: term.dates.start, to: term.dates.end }}
                 presets={[]}
+                align="right"
                 onSelect={(selection) => {
                   const range = resolveRange(selection);
                   term.dates = { start: range.from, end: range.to };
                 }}
-              />
-            </div>
-            <Button
-              size="sm"
-              disabled={draft.terms.length === 1}
-              onclick={() => (draft.terms = draft.terms.filter((_, at) => at !== index))}
-              >Remove</Button
+              /></span
+            >
+            <span role="cell"
+              >{#if draft.terms.length > 1}<IconButton
+                  size="sm"
+                  ariaLabel={`Remove term ${term.number}`}
+                  title="Remove term"
+                  onclick={() => (draft.terms = draft.terms.filter((_, at) => at !== index))}
+                  ><XIcon size="14" aria-hidden="true" /></IconButton
+                >{/if}</span
             >
           </div>
         {/each}
-      </section>
-      <Button tone="info" disabled={busy} onclick={() => void run()}
-        >{busy ? "Preparing export…" : "Create export"}</Button
+      </div>
+      <div class="tool-actions tool-actions--start">
+        <Button size="sm" disabled={draft.terms.length >= 128} onclick={addTerm}
+          ><PlusIcon size="14" aria-hidden="true" /> Add term</Button
+        >
+      </div>
+    </section>
+
+    <details class="tool-disclosure" bind:open={optionsOpen}>
+      <summary
+        ><ChevronRightIcon size="14" aria-hidden="true" /><span class="tool-label">Options</span
+        ><span class="tool-disclosure-value">{optionSummary}</span></summary
       >
-    </Card>
+      <div class="tool-grid">
+        <div class="tool-field tool-span-all">
+          <span class="tool-label">Sources</span>
+          {#if draft.selected_documents}
+            <span>Selected documents ({draft.selected_documents.documents?.length ?? 0})</span>
+          {:else}
+            <div class="scope">
+              <SegmentedControl
+                ariaLabel="Sources"
+                value={draft.all_documents ? "all" : "imports"}
+                options={[
+                  { value: "all", label: "All documents" },
+                  { value: "imports", label: "Selected imports" },
+                ]}
+                onchange={(value) => (draft.all_documents = value === "all")}
+              />
+            </div>
+            {#if !draft.all_documents}
+              <div class="collection-list">
+                {#each collectionItems as collection (collection.id)}
+                  <Checkbox
+                    checked={(draft.collection_ids ?? []).includes(collection.id)}
+                    onchange={() => toggleCollection(collection.id)}
+                    label={`${displayName(collection)} · ${collection.file_count} files`}
+                  />
+                {/each}
+                {#if !collectionItems.length && collectionLoading}<span
+                    ><Spinner size={14} /> Loading…</span
+                  >{/if}
+                {#if !collectionItems.length && !collectionLoading}<span class="tool-muted"
+                    >No imports yet.</span
+                  >{/if}
+                {#if collectionItems.length < collectionTotal}<div
+                    class="tool-actions tool-actions--start"
+                  >
+                    <Button
+                      size="sm"
+                      disabled={collectionLoading}
+                      onclick={() => void loadCollections()}
+                      >{collectionLoading ? "Loading…" : "Show more"}</Button
+                    >
+                  </div>{/if}
+              </div>
+            {/if}
+          {/if}
+        </div>
+        <div class="tool-field tool-span-3">
+          <label for="report-profile">Processing profile</label>
+          <TextInput
+            id="report-profile"
+            value={draft.profile ?? ""}
+            oninput={(value) => (draft.profile = value)}
+            placeholder="Default"
+            block
+          />
+        </div>
+        <div class="tool-field tool-span-3">
+          <span class="tool-label" id="report-coverage-label">Coverage</span>
+          <SelectDropdown
+            title="Coverage policy"
+            value={draft.coverage_mode}
+            options={coverageOptions}
+            onchange={(value) => (draft.coverage_mode = value)}
+          />
+        </div>
+        <div class="tool-field tool-span-2">
+          <label for="report-zone">Report timezone</label>
+          <TextInput id="report-zone" bind:value={draft.timezone} placeholder="UTC" block />
+        </div>
+        <div class="tool-field tool-span-2">
+          <label for="report-source-zone">Fallback source timezone</label>
+          <TextInput
+            id="report-source-zone"
+            value={draft.source_timezone ?? ""}
+            oninput={(value) => (draft.source_timezone = value)}
+            placeholder="None"
+            block
+          />
+        </div>
+        <div class="tool-field tool-span-2">
+          <span class="tool-label">Ambiguous dates</span>
+          <SelectDropdown
+            title="Ambiguous numeric dates"
+            value={draft.numeric_date_order ?? ""}
+            options={dateOrderOptions}
+            onchange={(value) => (draft.numeric_date_order = value)}
+          />
+        </div>
+      </div>
+    </details>
+
+    <div class="tool-actions">
+      <Button tone="info" surface="solid" disabled={busy} onclick={() => void run()}
+        >{busy ? "Creating report…" : "Create report"}</Button
+      >
+    </div>
 
     {#if active}
-      <Card
-        level="default"
-        padding="sm"
-        title={draftChanged ? "Previous export" : "Current export"}
-      >
+      <Card level="default" padding="sm" title={draftChanged ? "Previous report" : "Report"}>
+        {#snippet actions()}<span class="tool-muted"
+            >{active?.state === "complete" ? "Counts ready" : "Dates need review"} · {formatDate(
+              active?.observed_at ?? "",
+            )}</span
+          >{/snippet}
         <div class="result">
-          <p>
-            <strong>{active.state === "complete" ? "Counts ready" : "Date review needed"}</strong> ·
-            observed {formatDate(active.observed_at)} · handle expires {formatDate(
-              active.expires_at,
-            )}
-          </p>
-          {#if draftChanged}<p role="status">
-              Draft changed; the counts and downloads below belong to the previous frozen run.
-              Create an export to use the edited search.
-            </p>{/if}
+          {#if draftChanged}<p role="status">These counts use your previous search.</p>{/if}
           {#if active.state === "needs_review"}<p>
-              Coverage pending date review; counts are withheld.
+              {active.unresolved_dates} document date{active.unresolved_dates === 1 ? "" : "s"} need review
+              before counts are shown.
             </p>
-          {:else}<p>
+          {:else}<p class="tool-muted">
               {active.coverage.scoped} scoped · {active.coverage.searchable} searchable · {active
                 .coverage.missing_text} missing text · {active.coverage.incomplete_families} incomplete
-              families · {active.coverage.fallback_dates} fallback dates
+              families · {active.coverage.fallback_dates} fallback dates · expires {formatDate(
+                active.expires_at,
+              )}
             </p>{/if}
           {#if active.coverage.warnings?.length}<ul>
               {#each active.coverage.warnings as warning}<li>{warning}</li>{/each}
             </ul>{/if}
           {#if active.state === "complete" && active.counts}
-            <div class="count-table" role="table" aria-label="Search export counts">
+            <div class="count-table" role="table" aria-label="Search report counts">
               <div class="count-row header" role="row">
-                <span>Term #</span><span>Terms</span><span>Date Range</span><span>Hits</span><span
-                  >Hits Plus Family</span
-                ><span>Unique Hits</span><span>Documents in unique families</span><span
-                  >Unique Hits Plus Family</span
-                >
+                <span role="columnheader">#</span><span role="columnheader">Terms</span><span
+                  role="columnheader">Date range</span
+                ><span role="columnheader">Hits</span><span role="columnheader"
+                  >Hits plus family</span
+                ><span role="columnheader">Unique hits</span><span role="columnheader"
+                  >Documents in unique families</span
+                ><span role="columnheader">Unique hits plus family</span>
               </div>
               {#each active.counts as count, index}<div class="count-row" role="row">
-                  <span>{active.terms[index]?.number}</span><span
+                  <span role="cell">{active.terms[index]?.number}</span><span role="cell"
                     >{active.terms[index]?.expression}</span
-                  ><span
+                  ><span role="cell"
                     >{active.terms[index]?.dates.start} to {active.terms[index]?.dates.end}</span
-                  ><span>{count.hits}</span><span>{count.hits_plus_family}</span><span
-                    >{count.unique_hits}</span
-                  ><span>{count.unique_families}</span><span>{count.unique_hits_plus_family}</span>
+                  ><span role="cell">{count.hits}</span><span role="cell"
+                    >{count.hits_plus_family}</span
+                  ><span role="cell">{count.unique_hits}</span><span role="cell"
+                    >{count.unique_families}</span
+                  ><span role="cell">{count.unique_hits_plus_family}</span>
                 </div>{/each}
             </div>
-            <div class="actions">
-              <Button disabled={busy} onclick={() => void download("csv")}
-                >{draftChanged ? "Download previous CSV" : "Download CSV"}</Button
-              ><Button disabled={busy} onclick={() => void download("bundle")}
-                >{draftChanged ? "Download previous evidence ZIP" : "Download evidence ZIP"}</Button
-              >
-            </div>
-          {:else}
-            <p>
-              {active.unresolved_dates} document dates need review. Counts are withheld until they are
-              resolved.
-            </p>
           {/if}
-          <Button disabled={busy} onclick={() => void loadDates(true)}>Review dates</Button>
+          <div class="tool-actions">
+            <Button
+              disabled={busy}
+              tone={active.state === "complete" ? "neutral" : "info"}
+              surface={active.state === "complete" ? "outline" : "solid"}
+              onclick={() => void loadDates(true)}>Review dates</Button
+            >
+            {#if active.state === "complete" && active.counts}
+              <Button disabled={busy} onclick={() => void download("bundle")}
+                >{draftChanged ? "Download previous evidence ZIP" : "Download evidence ZIP"}</Button
+              ><Button
+                tone="info"
+                surface="solid"
+                disabled={busy}
+                onclick={() => void download("csv")}
+                >{draftChanged ? "Download previous CSV" : "Download CSV"}</Button
+              >
+            {/if}
+          </div>
           {#if reviewLoaded}
             <div class="review">
               {#each review as member (documentKey(member))}
-                <div class="review-item">
-                  <strong>Document {member.document.node_id}</strong>
-                  {#if member.selection.date}<span
-                      >Selected {member.selection.date} ({member.selection.reason})</span
-                    >{:else}<span>Date unresolved</span>{/if}
+                <div
+                  class="review-item"
+                  role="group"
+                  aria-label={`Document ${member.document.node_id}`}
+                >
+                  <div class="review-title">
+                    <strong>Document {member.document.node_id}</strong>
+                    <span class="tool-muted"
+                      >{member.selection.date
+                        ? `Selected ${member.selection.date} (${member.selection.reason})`
+                        : "Date unresolved"}</span
+                    >
+                  </div>
                   {#each member.candidates as candidate (candidate.id)}
                     <label class="candidate"
                       ><input
@@ -616,67 +682,78 @@
                     >
                   {/each}
                   {#if choices[documentKey(member)]}
+                    {@const choice = choices[documentKey(member)]}
                     {@const candidate = member.candidates.find(
-                      (item) => item.id === choices[documentKey(member)].candidate_id,
+                      (item) => item.id === choice.candidate_id,
                     )}
-                    <div class="review-form">
-                      <label
-                        >Action <select
-                          value={choices[documentKey(member)].action}
-                          onchange={(event) =>
-                            updateChoice(member, "action", event.currentTarget.value)}
-                        >
-                          {#if candidate && canInterpret(candidate)}<option value="interpret"
-                              >Interpret source date</option
-                            >
-                          {:else}<option value="select">Select source date</option><option
-                              value="reclassify">Reclassify role</option
-                            >{/if}
-                        </select></label
-                      >
-                      <label
-                        >Reason <input
-                          value={choices[documentKey(member)].reason}
-                          oninput={(event) =>
-                            updateChoice(member, "reason", event.currentTarget.value)}
-                        /></label
-                      >
-                      {#if choices[documentKey(member)].action === "interpret"}<label
-                          >Reviewed date (YYYY-MM-DD) <TextInput
-                            value={choices[documentKey(member)].reviewed_date ?? ""}
+                    <div class="tool-grid">
+                      <div class="tool-field tool-span-3">
+                        <span class="tool-label">Action</span>
+                        <SelectDropdown
+                          title="Action"
+                          value={choice.action}
+                          options={candidate && canInterpret(candidate)
+                            ? [{ value: "interpret", label: "Interpret source date" }]
+                            : [
+                                { value: "select", label: "Select source date" },
+                                { value: "reclassify", label: "Reclassify role" },
+                              ]}
+                          onchange={(value) => updateChoice(member, "action", value)}
+                        />
+                      </div>
+                      <div class="tool-field tool-span-3">
+                        <span class="tool-label">Reason</span>
+                        <TextInput
+                          ariaLabel="Reason"
+                          value={choice.reason}
+                          oninput={(value) => updateChoice(member, "reason", value)}
+                          block
+                        />
+                      </div>
+                      {#if choice.action === "interpret"}
+                        <div class="tool-field tool-span-3">
+                          <span class="tool-label">Reviewed date</span>
+                          <TextInput
+                            ariaLabel="Reviewed date"
+                            value={choice.reviewed_date ?? ""}
                             oninput={(value) => updateChoice(member, "reviewed_date", value)}
+                            placeholder="YYYY-MM-DD"
                             block
-                          /></label
-                        >
-                        <label
-                          >Source timezone <input
-                            value={choices[documentKey(member)].reviewed_timezone ?? ""}
-                            oninput={(event) =>
-                              updateChoice(member, "reviewed_timezone", event.currentTarget.value)}
+                          />
+                        </div>
+                        <div class="tool-field tool-span-3">
+                          <span class="tool-label">Source timezone</span>
+                          <TextInput
+                            ariaLabel="Source timezone"
+                            value={choice.reviewed_timezone ?? ""}
+                            oninput={(value) => updateChoice(member, "reviewed_timezone", value)}
                             placeholder="UTC"
-                          /></label
-                        >{/if}
-                      {#if choices[documentKey(member)].action !== "select"}<label
-                          >Reviewed role <select
-                            value={choices[documentKey(member)].reviewed_role ?? ""}
-                            onchange={(event) =>
-                              updateChoice(member, "reviewed_role", event.currentTarget.value)}
-                            ><option value="">Keep source role</option
-                            >{#each ["document_date", "created", "authored", "sent", "captured", "signed", "effective", "expiry"] as role}<option
-                                value={role}>{role}</option
-                              >{/each}</select
-                          ></label
-                        >{/if}
+                            block
+                          />
+                        </div>
+                      {/if}
+                      {#if choice.action !== "select"}
+                        <div class="tool-field tool-span-3">
+                          <span class="tool-label">Reviewed role</span>
+                          <SelectDropdown
+                            title="Reviewed role"
+                            value={choice.reviewed_role ?? ""}
+                            options={roleOptions}
+                            onchange={(value) => updateChoice(member, "reviewed_role", value)}
+                          />
+                        </div>
+                      {/if}
                     </div>
                   {/if}
                 </div>
               {/each}
-              <div class="actions">
+              <div class="tool-actions">
                 {#if reviewCursor}<Button disabled={busy} onclick={() => void loadDates()}
                     >More evidence</Button
                   >{/if}
                 <Button
                   tone="info"
+                  surface="solid"
                   disabled={busy || !Object.keys(choices).length}
                   onclick={() => void revise()}>Create reviewed revision</Button
                 >
@@ -687,155 +764,104 @@
       </Card>
     {/if}
 
-    <Card level="default" padding="sm" title="Recent exports">
-      <div class="history">
-        <p>
-          The latest 100 export requests and outcomes stay in this vault. Download links and
-          reviewed evidence expire; using a request as a draft starts a fresh run.
-        </p>
-        {#if !history.length && historyLoading}<p><Spinner size={14} /> Loading history…</p>{/if}
-        {#if !history.length && !historyLoading}<p>No searches have been exported yet.</p>{/if}
-        {#each history as item (item.summary.id)}
-          <div class="history-item">
-            <div>
-              <strong>{formatDate(item.summary.observed_at)}</strong><span
-                >{item.summary.state === "complete" ? "Counts ready" : "Date review needed"} · {item
-                  .request.terms.length} term{item.request.terms.length === 1 ? "" : "s"} · {item
-                  .request.selected_documents
-                  ? `Selected documents (${item.request.selected_documents.documents?.length ?? 0})`
-                  : item.request.all_documents
-                    ? "All documents"
-                    : `${item.request.collection_ids?.length ?? 0} collection${item.request.collection_ids?.length === 1 ? "" : "s"}`}</span
-              >
-              <small>{item.request.terms.map((term) => term.expression).join(" · ")}</small>
-            </div>
-            <Button size="sm" onclick={() => useHistory(item)}>Use as draft</Button>
-          </div>
-        {/each}
-        {#if history.length < historyTotal}<Button
-            size="sm"
-            disabled={historyLoading}
-            onclick={() => void loadHistory()}>{historyLoading ? "Loading…" : "Older runs"}</Button
-          >{/if}
-      </div>
-    </Card>
+    <section class="tool-section" aria-labelledby="report-history-heading">
+      <h3 id="report-history-heading">Recent reports</h3>
+      {#if !history.length && historyLoading}<p class="tool-muted">
+          <Spinner size={14} /> Loading…
+        </p>{/if}
+      {#if !history.length && !historyLoading}<p class="tool-muted">No reports yet.</p>{/if}
+      {#if history.length}
+        <ul class="tool-list">
+          {#each history as item (item.summary.id)}
+            <li>
+              <div class="tool-row-main">
+                <strong>{item.request.terms.map((term) => term.expression).join(" · ")}</strong>
+                <span
+                  >{formatDate(item.summary.observed_at)} · {item.summary.state === "complete"
+                    ? "Counts ready"
+                    : "Dates need review"} · {item.request.selected_documents
+                    ? `Selected documents (${item.request.selected_documents.documents?.length ?? 0})`
+                    : item.request.all_documents
+                      ? "All documents"
+                      : `${item.request.collection_ids?.length ?? 0} import${item.request.collection_ids?.length === 1 ? "" : "s"}`}</span
+                >
+              </div>
+              <Button size="sm" onclick={() => useHistory(item)}>Use as draft</Button>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+      {#if history.length < historyTotal}<div class="tool-actions tool-actions--start">
+          <Button size="sm" disabled={historyLoading} onclick={() => void loadHistory()}
+            >{historyLoading ? "Loading…" : "Show more"}</Button
+          >
+        </div>{/if}
+    </section>
   </div>
-</DetailDrawer>
+</DrawerShell>
 
 <style>
-  .heading,
-  .section-heading,
-  .history-item,
-  .actions {
-    display: flex;
-    justify-content: space-between;
+  .terms {
+    display: grid;
+    gap: var(--space-3);
+  }
+  .term-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 120px 200px 28px;
     align-items: center;
-    gap: var(--space-3);
+    gap: var(--space-4);
   }
-  .heading > div,
-  .body,
-  .form,
-  .scope,
-  .terms,
-  .result,
-  .review,
-  .history,
-  .review-item,
-  .review-form {
-    display: grid;
-    gap: var(--space-3);
+  .term-row > span {
+    min-width: 0;
   }
-  .heading span {
-    font-size: var(--font-size-xs);
-    color: var(--text-muted);
-    font-weight: var(--font-weight-bold);
-  }
-  .heading strong {
-    font-size: var(--font-size-lg);
-  }
-  .body {
-    padding: var(--space-5);
-    gap: var(--space-5);
-  }
-  .form {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-  .field {
-    display: grid;
-    gap: var(--space-1);
-  }
-  .field label,
-  .review-form label {
+  .term-head {
+    color: var(--text-secondary);
     font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-medium, 500);
   }
-  input:not([type="checkbox"]):not([type="radio"]),
-  select {
+  .term-row :global(.kit-select-dropdown),
+  .term-row :global(.kit-date-range-picker__trigger) {
     width: 100%;
     min-width: 0;
-    padding: var(--space-2);
-    border: 1px solid var(--border-default);
-    border-radius: var(--radius-md);
-    background: var(--bg-surface);
-    color: var(--text-primary);
-    font: inherit;
   }
-  .scope label,
-  .candidate {
+  .scope {
     display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    font-size: var(--font-size-sm);
   }
   .collection-list {
     display: grid;
-    gap: var(--space-2);
+    gap: var(--space-3);
     max-height: 220px;
     overflow: auto;
-    padding: var(--space-2);
+    padding: var(--space-4);
     border: 1px solid var(--border-muted);
     border-radius: var(--radius-md);
   }
-  .term,
-  .review-item,
-  .history-item {
-    padding: var(--space-3);
+  .result,
+  .review {
+    display: grid;
+    gap: var(--space-5);
+  }
+  .result ul {
+    margin: 0;
+    padding-left: var(--space-7);
+  }
+  .review-item {
+    display: grid;
+    gap: var(--space-4);
+    padding: var(--space-5);
     border: 1px solid var(--border-muted);
     border-radius: var(--radius-md);
-    background: var(--bg-inset);
   }
-  .term {
-    display: grid;
-    grid-template-columns: auto 110px minmax(120px, 1fr) 240px auto;
-    gap: var(--space-2);
-    align-items: end;
+  .review-title {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--space-4);
   }
-  .date-picker {
-    display: grid;
-    gap: var(--space-1);
-    font-size: var(--font-size-sm);
-  }
-  .review-form {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-  .review-form label {
-    display: grid;
-    gap: var(--space-1);
-  }
-  .history-item > div {
-    display: grid;
-    gap: var(--space-1);
-    min-width: 0;
-  }
-  .history-item span,
-  .history-item small,
-  p {
-    font-size: var(--font-size-sm);
-    color: var(--text-secondary);
-  }
-  .history-item small {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  .candidate {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
   }
   .count-table {
     overflow: auto;
@@ -844,39 +870,31 @@
   }
   .count-row {
     display: grid;
-    grid-template-columns: 70px minmax(180px, 2fr) minmax(190px, 1.5fr) repeat(
-        5,
-        minmax(100px, 1fr)
-      );
-    min-width: 1080px;
-    gap: var(--space-2);
-    padding: var(--space-2);
-    font-size: var(--font-size-sm);
+    grid-template-columns: 32px minmax(140px, 2fr) 190px repeat(5, minmax(84px, 1fr));
+    min-width: 900px;
+    gap: var(--space-4);
+    padding: var(--space-3) var(--space-4);
     border-bottom: 1px solid var(--border-muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .count-row:last-child {
+    border-bottom: 0;
   }
   .count-row.header {
-    font-weight: var(--font-weight-bold);
+    align-items: end;
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-medium, 500);
     background: var(--bg-inset);
   }
-  .actions {
-    justify-content: flex-start;
-    flex-wrap: wrap;
-  }
-  p {
-    margin: 0;
-  }
-  .error {
-    color: var(--accent-red);
-  }
-  @media (max-width: 760px) {
-    .form,
-    .review-form {
-      grid-template-columns: 1fr;
+  @media (max-width: 640px) {
+    .term-row {
+      grid-template-columns: minmax(0, 1fr) 28px;
     }
-    .term {
-      grid-template-columns: 1fr 1fr;
+    .term-head {
+      display: none;
     }
-    .term input[aria-label^="Expression"] {
+    .term-row > span:first-child {
       grid-column: 1 / -1;
     }
   }

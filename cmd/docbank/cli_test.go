@@ -776,7 +776,6 @@ func TestJobsShowsDaemonStatus(t *testing.T) {
 	out, err := runCLI(t, "jobs")
 	require.NoError(t, err)
 	assert.Contains(t, out, "extract:plain-text")
-	assert.Contains(t, out, "running")
 
 	var got api.JobList
 	require.Eventually(t, func() bool {
@@ -785,6 +784,11 @@ func TestJobsShowsDaemonStatus(t *testing.T) {
 			return false
 		}
 		checksums, found := jobNamed(got, "maintenance:auxiliary-checksums")
+		for _, job := range got.Items {
+			if job.Status == "running" && job.Busy {
+				return false
+			}
+		}
 		return found && checksums.Status == "completed"
 	}, 5*time.Second, 25*time.Millisecond)
 	assert.Equal(t, "running", requireJob(t, got, "process:vector-indexes").Status)

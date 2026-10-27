@@ -154,7 +154,7 @@ func writeJobs(w io.Writer, items []api.Job) error {
 			problem = "-"
 		}
 		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
-			job.Name, job.Status, control, job.StartedAt, finished, problem); err != nil {
+			job.Name, job.DisplayStatus(), control, job.StartedAt, finished, problem); err != nil {
 			return fmt.Errorf("writing job list row: %w", err)
 		}
 	}

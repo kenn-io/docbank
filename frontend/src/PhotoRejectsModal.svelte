@@ -10,9 +10,9 @@
 </script>
 
 <Modal
-  title="Move rejects to trash?"
+  title="Trash rejected photos?"
   tone="danger"
-  ariaLabel="Move rejects to trash"
+  ariaLabel="Trash rejected photos"
   onclose={() => {
     if (!photos.trashing) onclose();
   }}
@@ -63,8 +63,10 @@
     {/if}
     {#if photos.rejects.photos > photos.rejects.targets.length}
       <p>
-        This moves {photos.rejects.targets.length.toLocaleString()} now. Choose Move rejects again for
-        the remaining {(photos.rejects.photos - photos.rejects.targets.length).toLocaleString()}.
+        This moves {photos.rejects.targets.length.toLocaleString()} now. Choose Trash rejected photos
+        again for the remaining {(
+          photos.rejects.photos - photos.rejects.targets.length
+        ).toLocaleString()}.
       </p>
     {/if}
     <p>You can restore these photos from Trash.</p>

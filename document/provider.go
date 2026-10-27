@@ -160,6 +160,11 @@ type RenditionDescriptor struct {
 	Fingerprint       string                      `json:"fingerprint"`
 }
 
+// Supports reports whether the provider declares it can read format.
+func (descriptor RenditionDescriptor) Supports(format RenditionFormatCapability) bool {
+	return slices.Contains(descriptor.SupportedFormats, format)
+}
+
 type renditionDescriptorIdentity struct {
 	ID                string                      `json:"id"`
 	ContractVersion   int                         `json:"contract_version"`
@@ -1151,7 +1156,7 @@ func validateAuthorizationWithoutUpload(descriptor RenditionDescriptor, authoriz
 	format := RenditionFormatCapability{
 		MediaFamily: authorization.MediaFamily, MediaType: authorization.MediaType, InputKind: authorization.InputKind,
 	}
-	if !slices.Contains(descriptor.SupportedFormats, format) {
+	if !descriptor.Supports(format) {
 		return errors.New("authorization requests an unsupported format")
 	}
 	if authorization.SourceBytes <= 0 || authorization.SourceBytes > maxRenditionSourceBytes {
