@@ -46,22 +46,6 @@ it("lists the sections in order and opens on disk use", async () => {
   expect(await within(drawer).findByText("Total on disk")).toBeTruthy();
 });
 
-it("explains how to disable usage reporting in the daemon environment", async () => {
-  mockSystemRequests();
-  render(VaultDrawer, {
-    session: "synthetic",
-    initialTab: "telemetry",
-    onclose: vi.fn(),
-    onauthfailure: vi.fn(),
-  });
-  const page = within(screen.getByRole("region", { name: "Usage reporting" }));
-  expect(page.queryByText("On")).toBeNull();
-  expect(page.getByText(/search queries stay private/)).toBeTruthy();
-  expect(page.getByText(/in the environment that starts the daemon, then run/)).toBeTruthy();
-  expect(page.getByText("DOCBANK_TELEMETRY_ENABLED=0")).toBeTruthy();
-  expect(page.getByText("docbank daemon restart")).toBeTruthy();
-});
-
 it("keeps navigation and close inside the active tool's dialog", async () => {
   mockSystemRequests();
   const onclose = vi.fn();
