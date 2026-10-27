@@ -2221,6 +2221,8 @@ export interface DocumentSearchResult {
   path: string;
   /** @minimum 1 */
   rank: number;
+  /** @nullable */
+  rerank_relevance?: number | null;
   score: number;
   semantic_rank?: number;
   vault_uid: string;

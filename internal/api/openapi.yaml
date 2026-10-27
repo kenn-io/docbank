@@ -4512,6 +4512,11 @@ components:
           format: int64
           minimum: 1
           type: integer
+        rerank_relevance:
+          format: double
+          type:
+            - number
+            - "null"
         score:
           format: double
           type: number
