@@ -432,6 +432,61 @@ it("offers Remove only when more than one term exists", async () => {
   ).toBe("");
 });
 
+it.each(["beta", ""])(
+  "starts a fresh report after canceling a two-term history draft with current search %j",
+  async (expression) => {
+    const request = {
+      ...original,
+      all_documents: false,
+      collection_ids: [collectionID],
+      timezone: "America/New_York",
+      terms: [...original.terms, { ...original.terms[0], number: 2, expression: "omega" }],
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input).startsWith("/api/v1/search-exports?"))
+        return json({
+          items: [{ request, summary: { ...oldSummary, terms: request.terms } }],
+          total: 1,
+        });
+      return json({ items: [collection], total: 1 });
+    });
+    const { rerender } = render(TermReportDrawer, {
+      props: {
+        session: "session",
+        initialExpression: "alpha",
+        onclose: vi.fn(),
+        onauthfailure: vi.fn(),
+      },
+      context: new Map([[drawerPage, true]]),
+    });
+    await fireEvent.click(await screen.findByRole("button", { name: "Use as draft" }));
+    expect(screen.getByRole("textbox", { name: "Expression for term 2" })).toHaveProperty(
+      "value",
+      "omega",
+    );
+    await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await rerender({ initialExpression: expression });
+    await fireEvent.click(screen.getByRole("button", { name: "Run report" }));
+    expect(screen.getByRole("textbox", { name: "Expression for term 1" })).toHaveProperty(
+      "value",
+      expression,
+    );
+    expect(screen.queryByRole("textbox", { name: "Expression for term 2" })).toBeNull();
+    expect(
+      screen.getByRole("button", { name: `2000-01-01 - ${new Date().toISOString().slice(0, 10)}` }),
+    ).toBeTruthy();
+    expect(screen.getByRole("radio", { name: "All documents" }).getAttribute("aria-checked")).toBe(
+      "true",
+    );
+    expect(screen.getByRole("combobox", { name: /^Coverage policy:/ })).toHaveProperty(
+      "textContent",
+      expect.stringContaining("Stop on incomplete coverage"),
+    );
+    expect(screen.getByRole("textbox", { name: "Report timezone" })).toHaveProperty("value", "UTC");
+    expect(screen.queryByRole("checkbox", { name: /New source/ })).toBeNull();
+  },
+);
+
 it.each(["edited", "history-loaded"])(
   "reseeds a canceled %s report draft from the current search",
   async (source) => {

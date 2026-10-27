@@ -50,23 +50,20 @@
   function newTerm(number: number, expression = ""): Term {
     return { number, expression, syntax: "simple", dates: { start: "2000-01-01", end: today } };
   }
-  let draft = $state<Request>({
-    version: 1,
-    all_documents: untrack(() => initialDocuments === undefined),
-    selected_documents: untrack(() =>
-      initialDocuments === undefined
-        ? undefined
-        : { documents: initialDocuments.map((id) => ({ ...id })) },
-    ),
-    timezone: zone,
-    coverage_mode: "strict",
-    terms: [
-      newTerm(
-        1,
-        untrack(() => initialExpression),
-      ),
-    ],
-  });
+  function newDraft(): Request {
+    return {
+      version: 1,
+      all_documents: initialDocuments === undefined,
+      selected_documents:
+        initialDocuments === undefined
+          ? undefined
+          : { documents: initialDocuments.map((id) => ({ ...id })) },
+      timezone: zone,
+      coverage_mode: "strict",
+      terms: [newTerm(1, initialExpression)],
+    };
+  }
+  let draft = $state<Request>(untrack(newDraft));
   let history = $state<TermReportHistory[]>([]);
   let historyTotal = $state(0);
   let historyLoading = $state(false);
@@ -206,7 +203,7 @@
   }
 
   function openDraft(): void {
-    draft.terms[0].expression = initialExpression;
+    draft = newDraft();
     editing = true;
   }
 
