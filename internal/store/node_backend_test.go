@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"sync"
 	"testing"
 	"uuid"
 
@@ -77,6 +78,78 @@ func TestNodeQueriesPostgres(t *testing.T) {
 	require.ErrorAs(t, err, &pgErr)
 	require.Equal(t, "428C9", pgErr.Code) // generated_always
 	checkNodeQueries(t, s)
+	t.Run("directory snapshot", func(t *testing.T) { checkDirectorySnapshotPostgres(t, s) })
+}
+
+func checkDirectorySnapshotPostgres(t *testing.T, s *Store) {
+	t.Helper()
+	ctx := t.Context()
+	const recordedAt = "2026-01-01T00:00:00.000000000Z"
+	tx, err := s.writeDB.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback() }()
+	dirID, err := insertNodeTx(ctx, tx, s.RootID(), "snapshot-before", nodeKindDir, nil, recordedAt)
+	require.NoError(t, err)
+	childID, err := insertNodeTx(ctx, tx, dirID, "original", nodeKindDir, nil, recordedAt)
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit())
+
+	// Reuse this test's database with a pgx tracer to commit after the first
+	// SELECT. Every query still runs against PostgreSQL, including the real
+	// DirectoryChildrenPage transaction and its subsequent path/count/page.
+	conn, err := s.db.Conn(ctx)
+	require.NoError(t, err)
+	var config *pgx.ConnConfig
+	err = conn.Raw(func(driverConn any) error {
+		pgConn, ok := driverConn.(*stdlib.Conn)
+		require.True(t, ok)
+		config = pgConn.Conn().Config().Copy()
+		return nil
+	})
+	require.NoError(t, conn.Close())
+	require.NoError(t, err)
+	var writeErr error
+	config.Tracer = &afterFirstSelect{run: func() {
+		_, writeErr = s.writeDB.ExecContext(ctx, `WITH renamed AS (
+			UPDATE nodes SET name='snapshot-after' WHERE id=$1
+		) INSERT INTO nodes(parent_id, name, kind, created_at, modified_at)
+			VALUES ($1, 'added', 'dir', $2, $2)`, dirID, recordedAt)
+	}}
+	readDB := stdlib.OpenDB(*config)
+	t.Cleanup(func() { require.NoError(t, readDB.Close()) })
+	reader := &Store{db: readDB, rootID: s.RootID()}
+	page, err := reader.DirectoryChildrenPage(ctx, dirID, 10, 0)
+	require.NoError(t, writeErr)
+	require.NoError(t, err)
+	require.Equal(t, "snapshot-before", page.Directory.Node.Name)
+	require.Equal(t, "/snapshot-before", page.Directory.Path)
+	require.Equal(t, 1, page.Total)
+	require.Len(t, page.Children, 1)
+	require.Equal(t, childID, page.Children[0].ID)
+
+	after, err := s.DirectoryChildrenPage(ctx, dirID, 10, 0)
+	require.NoError(t, err)
+	require.Equal(t, "snapshot-after", after.Directory.Node.Name)
+	require.Equal(t, "/snapshot-after", after.Directory.Path)
+	require.Equal(t, 2, after.Total)
+	require.Len(t, after.Children, 2)
+	require.Equal(t, "added", after.Children[0].Name)
+	require.Equal(t, childID, after.Children[1].ID)
+}
+
+type afterFirstSelect struct {
+	once sync.Once
+	run  func()
+}
+
+func (*afterFirstSelect) TraceQueryStart(ctx context.Context, _ *pgx.Conn, _ pgx.TraceQueryStartData) context.Context {
+	return ctx
+}
+
+func (trace *afterFirstSelect) TraceQueryEnd(_ context.Context, _ *pgx.Conn, data pgx.TraceQueryEndData) {
+	if data.Err == nil && data.CommandTag.Select() {
+		trace.once.Do(trace.run)
+	}
 }
 
 func checkNodeQueries(t *testing.T, s *Store) {
@@ -119,6 +192,80 @@ func checkNodeQueries(t *testing.T, s *Store) {
 		CurrentVersionID: versionID, BlobHash: hash, MD5: md5, Size: 17, MimeType: "application/pdf",
 		Revision: 1, CreatedAt: recordedAt, ModifiedAt: recordedAt}, file)
 
+	t.Run("canonical paths and directory pages", func(t *testing.T) {
+		view, err := s.NodeViewByID(ctx, fileID)
+		require.NoError(t, err)
+		require.Equal(t, NodeView{Node: file, Path: "/café/report.pdf"}, view)
+		rootPath, err := s.Path(ctx, s.RootID())
+		require.NoError(t, err)
+		require.Equal(t, "/", rootPath)
+
+		tx, err := s.writeDB.BeginTx(ctx, nil)
+		require.NoError(t, err)
+		defer func() { _ = tx.Rollback() }()
+		folderID, err := insertNodeTx(ctx, tx, dirID, "z-folder", nodeKindDir, nil, recordedAt)
+		require.NoError(t, err)
+		trashID, err := insertNodeTx(ctx, tx, dirID, "discarded-folder", nodeKindDir, nil, recordedAt)
+		require.NoError(t, err)
+		_, err = tx.ExecContext(ctx, `UPDATE nodes SET trashed_at=$1 WHERE id=$2`, recordedAt, trashID)
+		require.NoError(t, err)
+		require.NoError(t, tx.Commit())
+
+		first, err := s.DirectoryChildrenPage(ctx, dirID, 1, 0)
+		require.NoError(t, err)
+		require.Equal(t, NodeView{Node: dir, Path: "/café"}, first.Directory)
+		require.Equal(t, 2, first.Total)
+		require.Len(t, first.Children, 1)
+		require.Equal(t, folderID, first.Children[0].ID)
+		last, total, err := s.ChildrenPage(ctx, dirID, 1, 1)
+		require.NoError(t, err)
+		require.Equal(t, 2, total)
+		require.Equal(t, []Node{file}, last)
+		empty, err := s.DirectoryChildrenPage(ctx, dirID, 1, 2)
+		require.NoError(t, err)
+		require.Equal(t, 2, empty.Total)
+		require.Empty(t, empty.Children)
+
+		_, err = s.DirectoryChildrenPage(ctx, fileID, 1, 0)
+		require.ErrorIs(t, err, ErrNotDir)
+		_, err = s.DirectoryChildrenPage(ctx, trashID, 1, 0)
+		require.ErrorIs(t, err, ErrNotFound)
+		_, err = s.NodeViewByID(ctx, 1<<62)
+		require.ErrorIs(t, err, ErrNotFound)
+		_, err = s.Path(ctx, 1<<62)
+		require.ErrorIs(t, err, ErrNotFound)
+	})
+	t.Run("node and path share a snapshot", func(t *testing.T) {
+		tx, err := s.writeDB.BeginTx(ctx, nil)
+		require.NoError(t, err)
+		defer func() { _ = tx.Rollback() }()
+		parentID, err := insertNodeTx(ctx, tx, s.RootID(), "before", nodeKindDir, nil, recordedAt)
+		require.NoError(t, err)
+		nodeID, err := insertNodeTx(ctx, tx, parentID, "old", nodeKindDir, nil, recordedAt)
+		require.NoError(t, err)
+		require.NoError(t, tx.Commit())
+
+		// Commit on a separate connection after node resolution, before the
+		// production nodeView reads its path. No timing race is required.
+		view, err := s.nodeView(ctx, func(read *sql.Tx) (Node, error) {
+			node, err := nodeByIDTx(read, nodeID)
+			if err != nil {
+				return Node{}, err
+			}
+			_, err = s.writeDB.ExecContext(ctx, `UPDATE nodes
+				SET name=CASE WHEN id=$1 THEN 'after' ELSE 'new' END
+				WHERE id=$1 OR id=$2`, parentID, nodeID)
+			return node, err
+		})
+		require.NoError(t, err)
+		require.Equal(t, "old", view.Node.Name)
+		require.Equal(t, "/before/old", view.Path)
+
+		after, err := s.NodeViewByID(ctx, nodeID)
+		require.NoError(t, err)
+		require.Equal(t, "new", after.Node.Name)
+		require.Equal(t, "/after/new", after.Path)
+	})
 	t.Run("rollback", func(t *testing.T) {
 		tx, err := s.writeDB.BeginTx(ctx, nil)
 		require.NoError(t, err)

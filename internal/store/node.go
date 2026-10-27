@@ -108,7 +108,9 @@ func (s *Store) nodeView(
 	ctx context.Context,
 	resolve func(*sql.Tx) (Node, error),
 ) (NodeView, error) {
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	// PostgreSQL's default READ COMMITTED would take a new snapshot for
+	// the path query. SQLite already holds one snapshot for this transaction.
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 	if err != nil {
 		return NodeView{}, fmt.Errorf("starting node snapshot: %w", err)
 	}
@@ -225,7 +227,7 @@ func (s *Store) Children(ctx context.Context, dirID int64) ([]Node, error) {
 	}
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT `+nodeCols+` FROM `+nodeFrom+`
-		 WHERE n.parent_id = ? AND n.trashed_at IS NULL
+		 WHERE n.parent_id = $1 AND n.trashed_at IS NULL
 		 ORDER BY n.kind = 'file', n.name`, dirID)
 	if err != nil {
 		return nil, fmt.Errorf("listing children of %d: %w", dirID, err)
@@ -248,7 +250,7 @@ func (s *Store) Children(ctx context.Context, dirID int64) ([]Node, error) {
 
 // ChildrenPage lists one bounded page of a directory's live children, dirs
 // first and name-sorted, and returns the complete child count. Target kind,
-// total, and page come from one statement so callers never observe a mixture
+// total, and page come from one snapshot so callers never observe a mixture
 // across concurrent tree mutations.
 func (s *Store) ChildrenPage(
 	ctx context.Context, dirID int64, limit, offset int,
@@ -272,7 +274,7 @@ func (s *Store) DirectoryChildrenPage(
 		return DirectoryPageView{}, errors.New("children offset must not be negative")
 	}
 
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 	if err != nil {
 		return DirectoryPageView{}, fmt.Errorf("starting directory snapshot: %w", err)
 	}
@@ -295,7 +297,7 @@ func (s *Store) DirectoryChildrenPage(
 
 	var total int
 	if err := tx.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM nodes WHERE parent_id = ? AND trashed_at IS NULL`,
+		`SELECT COUNT(*) FROM nodes WHERE parent_id = $1 AND trashed_at IS NULL`,
 		dirID,
 	).Scan(&total); err != nil {
 		return DirectoryPageView{}, fmt.Errorf("counting children of %d: %w", dirID, err)
@@ -305,8 +307,8 @@ func (s *Store) DirectoryChildrenPage(
 	rows, err := tx.QueryContext(ctx,
 		`SELECT `+nodeCols+` FROM `+nodeFrom+`
 		 WHERE n.id IN (
-			 SELECT id FROM nodes WHERE parent_id = ? AND trashed_at IS NULL
-			 ORDER BY kind = 'file', name LIMIT ? OFFSET ?
+			 SELECT id FROM nodes WHERE parent_id = $1 AND trashed_at IS NULL
+			 ORDER BY kind = 'file', name LIMIT $2 OFFSET $3
 		 )
 		 ORDER BY n.kind = 'file', n.name`, dirID, limit, offset)
 	if err != nil {
@@ -348,14 +350,15 @@ func (s *Store) Path(ctx context.Context, id int64) (string, error) {
 func pathOf(ctx context.Context, q rowQuerier, id int64) (string, error) {
 	var path string
 	err := q.QueryRowContext(ctx, `
-		WITH RECURSIVE ancestry(id, parent_id, name, depth) AS (
-			SELECT id, parent_id, name, 0 FROM nodes WHERE id = ?
+		WITH RECURSIVE ancestry(id, parent_id, path) AS (
+			SELECT id, parent_id, CASE WHEN parent_id IS NULL THEN '' ELSE '/' || name END
+			FROM nodes WHERE id = $1
 			UNION ALL
-			SELECT n.id, n.parent_id, n.name, a.depth + 1
+			SELECT n.id, n.parent_id,
+				CASE WHEN n.parent_id IS NULL THEN a.path ELSE '/' || n.name || a.path END
 			FROM nodes n JOIN ancestry a ON n.id = a.parent_id
 		)
-		SELECT COALESCE('/' || GROUP_CONCAT(name, '/'), '/')
-		FROM (SELECT name FROM ancestry WHERE parent_id IS NOT NULL ORDER BY depth DESC)`,
+		SELECT COALESCE(NULLIF((SELECT path FROM ancestry WHERE parent_id IS NULL), ''), '/')`,
 		id).Scan(&path)
 	if err != nil {
 		return "", fmt.Errorf("computing path of node %d: %w", id, err)
