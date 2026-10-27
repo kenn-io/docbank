@@ -212,8 +212,7 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
-		body := fromStorePhotoSettings(settings)
-		return &photoSettingsOutput{ETag: revisionETag(settings.Revision), Body: body}, nil
+		return &photoSettingsOutput{ETag: revisionETag(settings.Revision), Body: fromStorePhotoSettings(settings)}, nil
 	})
 
 	huma.Register(api, huma.Operation{
@@ -246,7 +245,7 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 	}, func(ctx context.Context, in *struct{ Body GroupPhotoStacksRequest }) (*struct{ Body GroupPhotoStacksResponse }, error) {
 		groups, unavailable, gap, incomplete, err := d.Store.PhotoStackGroups(ctx, in.Body.AssetIDs, in.Body.Hidden, processing.SourceMetadataExtractorFingerprint)
 		if err != nil {
-			return nil, workspaceQueryError(err)
+			return nil, FromStoreError(err)
 		}
 		return &struct{ Body GroupPhotoStacksResponse }{GroupPhotoStacksResponse{GroupingIncomplete: incomplete, Groups: groups, UnavailableIDs: unavailable, BurstGapSeconds: gap}}, nil
 	})

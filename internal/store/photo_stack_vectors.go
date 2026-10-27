@@ -2,7 +2,6 @@ package store
 
 import (
 	"bytes"
-	"cmp"
 	"context"
 	"database/sql"
 	"errors"
@@ -11,9 +10,10 @@ import (
 	"go.kenn.io/docbank/internal/vectorindex"
 )
 
-// photoStackVectorReader opens the active image generations within a grouping transaction.
+// photoStackVectorReader holds the immutable image generations selected for one grouping request.
 type photoStackVectorReader struct {
 	indexes []*vectorindex.Generation
+	heads   map[string]string
 }
 
 func (s *Store) hydratePhotoStackVectors(ctx context.Context, q metadataQuerier, frames map[string]photoStackFrame) error {
@@ -27,34 +27,62 @@ func (s *Store) hydratePhotoStackVectors(ctx context.Context, q metadataQuerier,
 	return reader.hydrate(ctx, q, frames)
 }
 
-func (s *Store) newPhotoStackVectorReader(ctx context.Context, q metadataQuerier) (reader *photoStackVectorReader, err error) {
-	rows, err := q.QueryContext(ctx, `SELECT h.generation_id FROM vector_index_heads h WHERE EXISTS(SELECT 1 FROM embedding_heads e WHERE e.vector_space_id=h.vector_space_id AND e.input_kind='image') ORDER BY h.vector_space_id`)
+type photoStackOpenedGeneration struct {
+	id    string
+	index *vectorindex.Generation
+}
+
+func photoStackVectorHeads(ctx context.Context, q metadataQuerier) (heads map[string]string, err error) {
+	rows, err := q.QueryContext(ctx, `SELECT h.vector_space_id,h.generation_id FROM vector_index_heads h JOIN embedding_vector_spaces s ON s.vector_space_id=h.vector_space_id WHERE s.metric IN ('cosine','dot_product') AND EXISTS(SELECT 1 FROM embedding_heads e WHERE e.vector_space_id=h.vector_space_id AND e.input_kind='image')`)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { err = errors.Join(err, rows.Close()) }()
-	var ids []string
+	heads = make(map[string]string)
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var space, id string
+		if err := rows.Scan(&space, &id); err != nil {
 			return nil, err
 		}
-		ids = append(ids, id)
+		heads[space] = id
 	}
-	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+	return heads, rows.Err()
+}
+
+func (s *Store) newPhotoStackVectorReader(ctx context.Context, q metadataQuerier) (*photoStackVectorReader, error) {
+	heads, err := photoStackVectorHeads(ctx, q)
+	if err != nil {
 		return nil, err
 	}
-	reader = &photoStackVectorReader{}
-	for _, id := range ids {
-		stored, err := loadVectorIndexGenerationTx(ctx, q, id)
-		if err != nil {
-			return nil, err
+	reader := &photoStackVectorReader{heads: heads}
+	s.photoStackVectorsMu.Lock()
+	defer s.photoStackVectorsMu.Unlock()
+	if s.photoStackVectors == nil {
+		s.photoStackVectors = make(map[string]photoStackOpenedGeneration)
+	}
+	for space, opened := range s.photoStackVectors {
+		if heads[space] != opened.id {
+			delete(s.photoStackVectors, space)
 		}
-		index, err := vectorindex.OpenGeneration(bytes.NewReader(stored.Bytes), int64(len(stored.Bytes)))
-		if err != nil {
-			return nil, err
+	}
+	for space, id := range heads {
+		opened := s.photoStackVectors[space]
+		if opened.id != id {
+			stored, err := loadVectorIndexGenerationTx(ctx, q, id)
+			if err != nil {
+				return nil, err
+			}
+			index, err := vectorindex.OpenGeneration(bytes.NewReader(stored.Bytes), int64(len(stored.Bytes)))
+			if err != nil {
+				// Indexes are disposable projections. Keep capture-gap grouping available
+				// when an active generation is damaged.
+				reader.indexes = nil
+				return reader, nil
+			}
+			opened = photoStackOpenedGeneration{id: id, index: index}
+			s.photoStackVectors[space] = opened
 		}
-		reader.indexes = append(reader.indexes, index)
+		reader.indexes = append(reader.indexes, opened.index)
 	}
 	return reader, nil
 }
@@ -100,9 +128,7 @@ func hydratePhotoStackVectorSpace(ctx context.Context, q metadataQuerier, index 
 	}
 	// Multiple bindings may publish different vectors for one asset in this
 	// space. Pick the lowest indexed row identity before hydrating its frame.
-	slices.SortFunc(selected, func(a, b vectorindex.RowIdentity) int {
-		return cmp.Or(cmp.Compare(a.SetID, b.SetID), cmp.Compare(a.InputKey, b.InputKey), cmp.Compare(a.InputChecksum, b.InputChecksum))
-	})
+	slices.SortFunc(selected, vectorindex.CompareIdentity)
 	vectors := index.RowVectors(selected)
 	chosen := make(map[string][]float32)
 	for _, identity := range selected {

@@ -24,11 +24,7 @@ const failure = (cause: unknown) => (cause instanceof Error ? cause.message : St
 
 export class PhotoCull {
   run = $state.raw<
-    CullRun & {
-      groups?: string[][];
-      burstGapSeconds?: number;
-      groupingIncomplete?: boolean;
-    }
+    CullRun & { groups?: string[][]; burstGapSeconds?: number; groupingIncomplete?: boolean }
   >();
   private stackIndex = new WeakMap<string[][], ReadonlyMap<string, string[]>>();
   private stackRead?: AbortController;

@@ -113,8 +113,8 @@ func photoStackChained(head, previous, next photoStackFrame, gap int) bool {
 	if !ok || next.SortKey > reach {
 		return false
 	}
-	for _, space := range slices.Sorted(maps.Keys(head.ImageVectors)) {
-		if vector := next.ImageVectors[space]; len(vector) > 0 && vectorindex.Cosine(head.ImageVectors[space], vector)+1e-7 >= photoStackImageSimilarityCutoff {
+	for space, headVector := range head.ImageVectors {
+		if vector := next.ImageVectors[space]; len(vector) > 0 && vectorindex.Cosine(headVector, vector)+1e-7 >= photoStackImageSimilarityCutoff {
 			return true
 		}
 	}
@@ -266,6 +266,14 @@ const photoStackFrameColumns = `a.asset_id,CASE WHEN a.kind='photo' THEN COALESC
 
 // photoStackFrames reads the live, visible members of ids. Missing IDs are unavailable.
 func (s *Store) photoStackFrames(ctx context.Context, q metadataQuerier, ids []string, hidden bool, fingerprint string) (map[string]photoStackFrame, error) {
+	frames, err := readPhotoStackFrames(ctx, q, ids, hidden, fingerprint)
+	if err == nil {
+		err = s.hydratePhotoStackVectors(ctx, q, frames)
+	}
+	return frames, err
+}
+
+func readPhotoStackFrames(ctx context.Context, q metadataQuerier, ids []string, hidden bool, fingerprint string) (map[string]photoStackFrame, error) {
 	frames := make(map[string]photoStackFrame, len(ids))
 	err := queryInChunks(ctx, q, `SELECT `+photoStackFrameColumns+`,COALESCE(mg.extractor_fingerprint,'') FROM `+photoBrowseDisplayFrom+` WHERE `+photoBrowseLiveDisplay+` AND `+photoVisibilityPredicate(hidden)+` AND a.asset_id IN (`, ids, func(rows *sql.Rows) error {
 		var frame photoStackFrame
@@ -277,9 +285,6 @@ func (s *Store) photoStackFrames(ctx context.Context, q metadataQuerier, ids []s
 		frames[frame.AssetID] = frame
 		return nil
 	})
-	if err == nil {
-		err = s.hydratePhotoStackVectors(ctx, q, frames)
-	}
 	return frames, err
 }
 
@@ -387,8 +392,23 @@ func (s *Store) DecidePhotoStack(ctx context.Context, request PhotoStackDecision
 			return PhotoAuthoredReceipt{}, fmt.Errorf("%w: selected_ids must belong to asset_ids", ErrInvalidPhotoAsset)
 		}
 	}
+	vectors, err := s.newPhotoStackVectorReader(ctx, s.db)
+	if err != nil {
+		return PhotoAuthoredReceipt{}, err
+	}
+	return s.decidePhotoStack(ctx, request, vectors)
+}
+
+func (s *Store) decidePhotoStack(ctx context.Context, request PhotoStackDecision, vectors *photoStackVectorReader) (PhotoAuthoredReceipt, error) {
 	var result PhotoAuthoredReceipt
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		heads, err := photoStackVectorHeads(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if !maps.Equal(heads, vectors.heads) {
+			return ErrStalePhotoStack
+		}
 		if request.Hidden {
 			if _, err := s.hiddenSession(ctx, tx); err != nil {
 				return err
@@ -403,7 +423,10 @@ func (s *Store) DecidePhotoStack(ctx context.Context, request PhotoStackDecision
 		}
 		// Only the observed query or frozen run defines membership, so unseen
 		// neighboring imports stay untouched.
-		found, err := s.photoStackFrames(ctx, tx, request.AssetIDs, request.Hidden, request.SourceMetadataFingerprint)
+		found, err := readPhotoStackFrames(ctx, tx, request.AssetIDs, request.Hidden, request.SourceMetadataFingerprint)
+		if err == nil {
+			err = vectors.hydrate(ctx, tx, found)
+		}
 		if err != nil {
 			return err
 		}
@@ -678,7 +701,7 @@ func (p *photoStackPager) walk(ctx context.Context, frame photoStackFrame, forwa
 	// Image grouping needs the earliest head, even when browsing backwards.
 	// Read preceding candidates by time first, then group them in capture order.
 	imageCandidates := !forward && len(p.vectors.indexes) > 0
-	for current := frame; imageCandidates || len(component.frames) <= MaxPhotoStackFrames; {
+	for current := frame; len(component.frames) <= MaxPhotoStackFrames; {
 		window, ok := photoStackReach(current.SortKey, p.reach*photoStackProbeGaps, forward)
 		if !ok {
 			return nil
@@ -687,13 +710,12 @@ func (p *photoStackPager) walk(ctx context.Context, frame photoStackFrame, forwa
 		if err != nil {
 			return err
 		}
-		for _, next := range read {
+		for i, next := range read {
 			var linked bool
 			if forward {
 				linked = photoStackChained(component.frames[0], current, next, p.gap)
 			} else if imageCandidates {
-				reach, ok := photoStackReach(next.SortKey, p.reach, true)
-				linked = ok && current.SortKey <= reach
+				linked = p.imagePredecessorPossible(current, read[i:], window, len(read) > MaxPhotoStackFrames)
 			} else {
 				linked = photoStackChained(next, next, current, p.gap)
 			}
@@ -701,6 +723,9 @@ func (p *photoStackPager) walk(ctx context.Context, frame photoStackFrame, forwa
 				return nil
 			}
 			component.frames = append(component.frames, next)
+			if len(component.frames) > MaxPhotoStackFrames {
+				return nil
+			}
 			current = next
 		}
 		// Continue only while unread frames could still join: the window was
@@ -713,6 +738,29 @@ func (p *photoStackPager) walk(ctx context.Context, frame photoStackFrame, forwa
 	return nil
 }
 
+// imagePredecessorPossible checks every possible head within the image window.
+// A gap beyond the burst limit is a boundary once all those heads fail to link.
+func (p *photoStackPager) imagePredecessorPossible(current photoStackFrame, preceding []photoStackFrame, window string, full bool) bool {
+	reach, ok := photoStackReach(preceding[0].SortKey, p.gap, true)
+	if ok && current.SortKey <= reach {
+		return true
+	}
+	floor, ok := photoStackReach(current.SortKey, photoStackImageWindowSeconds, false)
+	if !ok {
+		return false
+	}
+	for _, head := range preceding {
+		if head.SortKey < floor {
+			return false
+		}
+		if photoStackChained(head, head, current, p.gap) {
+			return true
+		}
+	}
+	// A full probe or its time bound may leave possible heads unread.
+	return full && preceding[len(preceding)-1].SortKey >= floor || window > floor
+}
+
 // component resolves frame's stack from its first frame in capture order.
 func (p *photoStackPager) component(ctx context.Context, frame photoStackFrame) (*photoStackComponent, error) {
 	if found := p.components[frame.AssetID]; found != nil {
@@ -721,6 +769,10 @@ func (p *photoStackPager) component(ctx context.Context, frame photoStackFrame) 
 	component := &photoStackComponent{frames: []photoStackFrame{frame}}
 	if err := p.walk(ctx, frame, false, component); err != nil {
 		return nil, err
+	}
+	if len(component.frames) > MaxPhotoStackFrames {
+		p.remember(component)
+		return component, nil
 	}
 	if len(p.vectors.indexes) > 0 {
 		slices.SortFunc(component.frames, comparePhotoStackFrames)

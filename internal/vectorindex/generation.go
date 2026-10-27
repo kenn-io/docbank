@@ -410,7 +410,7 @@ func (generation *Generation) SearchSimilarRows(ctx context.Context, sources, id
 				better = candidate.Distance < best[i].Distance
 				tied = candidate.Distance == best[i].Distance
 			}
-			if sourcePosition == 0 || better || tied && compareIdentity(candidate.SourceRow, best[i].SourceRow) < 0 {
+			if sourcePosition == 0 || better || tied && CompareIdentity(candidate.SourceRow, best[i].SourceRow) < 0 {
 				best[i] = candidate
 			}
 		}
@@ -431,7 +431,7 @@ func (generation *Generation) SearchSimilarRows(ctx context.Context, sources, id
 				return 1
 			}
 		}
-		return compareIdentity(a.RowIdentity, b.RowIdentity)
+		return CompareIdentity(a.RowIdentity, b.RowIdentity)
 	})
 	return best, ctx.Err()
 }
@@ -483,7 +483,7 @@ func (generation *Generation) searchRows(query []float32, rows []int, k int) ([]
 		} else if neighbors[left].Score != neighbors[right].Score {
 			return neighbors[left].Score > neighbors[right].Score
 		}
-		return compareIdentity(neighbors[left].RowIdentity, neighbors[right].RowIdentity) < 0
+		return CompareIdentity(neighbors[left].RowIdentity, neighbors[right].RowIdentity) < 0
 	})
 	return append([]Neighbor(nil), neighbors[:k]...), nil
 }
@@ -865,7 +865,8 @@ func euclidean(left, right []float32) float64 {
 	return math.Sqrt(squared)
 }
 
-func compareIdentity(left, right RowIdentity) int {
+// CompareIdentity orders rows by vector set, input key, and input checksum.
+func CompareIdentity(left, right RowIdentity) int {
 	if comparison := strings.Compare(left.SetID, right.SetID); comparison != 0 {
 		return comparison
 	}
