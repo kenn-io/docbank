@@ -176,12 +176,23 @@
     enteringReview = true;
     returnFocus = document.activeElement as HTMLElement;
     try {
+      let assetIDs: string[] | undefined;
+      if (!resume && photos.snapshotID) {
+        const scope = await photos.actionScope();
+        if (!scope) {
+          photos.actionError =
+            photos.error || "Could not capture the search results. Refresh and try again.";
+          onactionerror?.(photos.actionError);
+          return;
+        }
+        assetIDs = scope.asset_ids;
+      }
       const captured = resume
         ? await review.restore()
         : await review.start(
             photos.fallbackReason ? { ...photos.query, mode: "lexical" } : photos.query,
             (message) => cullConfirmation!.confirm(message, "Replace"),
-            photos.snapshotID ? (await photos.actionScope())?.asset_ids : undefined,
+            assetIDs,
           );
       if (captured && review === cull && !culling && !comparing && editor.canChangeTarget())
         photos.culling = true;
@@ -206,7 +217,7 @@
     photos.cullEditor?.dispose();
     photos.cullEditor = undefined;
     await cull?.flush();
-    await refresh();
+    await reread();
     await editor.reload();
     await tick();
     if (returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
@@ -238,7 +249,7 @@
       actionError?.(error);
       if (refresh) {
         onfaceschanged?.();
-        if (owner.dependsOnPeople) void owner.refresh(alive ? preserve : undefined);
+        if (owner.dependsOnPeople) void reread(owner);
       }
     };
     return faces;
@@ -779,7 +790,10 @@
   let grid = $state<{ preservePosition: () => () => Promise<void> }>();
   let rejectsOpen = $state(false);
   const preserve = () => grid?.preservePosition();
-  const reread = () => (photos.snapshotID ? refresh(true).catch(() => {}) : refresh());
+  const reread = (owner = photos) =>
+    owner.snapshotID
+      ? owner.refresh(alive ? preserve : undefined, true).catch(() => {})
+      : owner.refresh(alive ? preserve : undefined);
   export function refresh(live = false) {
     return photos.refresh(preserve, live);
   }
@@ -1331,6 +1345,7 @@
                     <MenuItem
                       disabled={actionDisabled ||
                         photos.rejectsLoading ||
+                        !!photos.snapshotID ||
                         (photos.query.mode !== "lexical" && !photos.fallbackReason)}
                       onselect={() => {
                         if (!editor.canChangeTarget()) return;

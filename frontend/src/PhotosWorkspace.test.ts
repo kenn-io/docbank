@@ -4338,3 +4338,109 @@ it.each(["XMP resolution", "background XMP import", "suggestion acceptance"])(
     await cache.dispose();
   },
 );
+
+it("stops Cull when the accepted snapshot cannot be captured", async () => {
+  vi.stubGlobal("indexedDB", new IDBFactory());
+  vi.stubGlobal("IDBKeyRange", IDBKeyRange);
+  vi.spyOn(api, "getPhotoSettings").mockResolvedValue({ revision: 1, burst_gap_seconds: 2 });
+  vi.spyOn(PhotoCull.prototype, "probe").mockResolvedValue();
+  const start = vi.spyOn(PhotoCull.prototype, "start").mockResolvedValue(false);
+  const photos = new Photos("scoped", vi.fn(), false, {
+    ...photoQuery,
+    mode: "semantic",
+    text: "sunset",
+  });
+  photos.items = [photo(1)];
+  photos.total = 2;
+  photos.started = true;
+  photos.snapshotID = "accepted";
+  photos.fallbackReason = "provider_unavailable";
+  photos.cursor = "tail";
+  vi.spyOn(api, "listPhotoAssets").mockRejectedValue(new Error("Snapshot read failed"));
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  const onactionerror = vi.fn();
+  render(PhotosWorkspace, { photos, cache, vaultID: "vault", onactionerror });
+  await fireEvent.click(screen.getByRole("button", { name: "Cull" }));
+  await waitFor(() => expect(onactionerror).toHaveBeenCalledWith("Snapshot read failed"));
+  expect(start).not.toHaveBeenCalled();
+  expect(photos.culling).toBe(false);
+  photos.dispose();
+  await cache.dispose();
+});
+
+it.each([
+  ["", "compare"],
+  ["provider_unavailable", "compare"],
+  ["", "face"],
+  ["provider_unavailable", "face"],
+  ["", "cull"],
+  ["provider_unavailable", "cull"],
+])("preserves snapshot membership with fallback=%s after %s", async (fallback, operation) => {
+  const photos = new Photos("scoped", vi.fn(), false, {
+    ...photoQuery,
+    mode: "semantic",
+    text: "sunset",
+  });
+  const rows = [photo(1), photo(2)];
+  photos.items = rows;
+  photos.total = 2;
+  photos.started = true;
+  photos.snapshotID = "accepted";
+  photos.fallbackReason = fallback;
+  photos.compareIDs = ["photo-1", "photo-2"];
+  photos.comparing = operation === "compare";
+  vi.spyOn(photos, "lookupMany").mockResolvedValue(rows);
+  vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });
+  const read = vi.spyOn(api, "listPhotoAssets").mockImplementation(async (request) => ({
+    items: request.snapshot_id ? [photo(1), photo(2)] : [photo(3)],
+    total: request.snapshot_id ? 2 : 1,
+    facets: [],
+    relevance_available: true,
+    snapshot_id: request.snapshot_id || "replacement",
+    fallback_reason: fallback,
+  }));
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  if (operation === "cull") {
+    vi.stubGlobal("indexedDB", new IDBFactory());
+    vi.stubGlobal("IDBKeyRange", IDBKeyRange);
+    const review = new PhotoCull(photos.session, photoCullStorage("vault"), vi.fn());
+    review.run = {
+      ids: ["photo-1", "photo-2"],
+      checkpoint: {
+        runID: "run",
+        revision: 0,
+        pass: ["photo-1", "photo-2"],
+        position: 0,
+        visited: [],
+        skipped: [],
+        unavailable: [],
+        scope: "all",
+        autoAdvance: true,
+      },
+    };
+    photos.cull = review;
+    photos.cullVaultID = "vault";
+    photos.culling = true;
+    vi.spyOn(review, "flush").mockResolvedValue();
+    vi.spyOn(photos, "lookup").mockResolvedValue(rows[0]);
+  }
+  render(PhotosWorkspace, { photos, cache, vaultID: "vault" });
+  if (operation === "compare")
+    await fireEvent.click(await screen.findByRole("button", { name: "Exit compare" }));
+  else if (operation === "cull")
+    await fireEvent.click(await screen.findByRole("button", { name: "Exit cull" }));
+  else await act(() => photos.faceEditor.ondecision?.());
+  await waitFor(() => expect(read).toHaveBeenCalled());
+  expect(read.mock.calls.at(-1)?.[0].snapshot_id).toBe("accepted");
+  expect(photos.items.map((row) => row.asset_id)).toEqual(["photo-1", "photo-2"]);
+
+  expect(photos.snapshotID).toBe("accepted");
+  if (operation === "face") {
+    await fireEvent.click(screen.getByRole("button", { name: "More photo actions" }));
+    expect(
+      screen.getByRole("menuitem", { name: "Move rejects" }).getAttribute("aria-disabled"),
+    ).toBe("true");
+  }
+  photos.dispose();
+  await cache.dispose();
+});

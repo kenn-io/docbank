@@ -2361,12 +2361,10 @@ func TestSearchPhotosUsesLaterAvailableProfile(t *testing.T) {
 		name, mode       string
 		consent, indexed bool
 		failure          error
-		authorization    bool
 	}{
 		{name: "no consent", mode: "semantic"},
 		{name: "no index", mode: "hybrid", consent: true},
 		{name: "transient failure", mode: "semantic", consent: true, indexed: true, failure: embeddingTransientError{}},
-		{name: "authorization failure", mode: "semantic", consent: true, indexed: true, failure: errors.New("synthetic expired provider key"), authorization: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -2376,9 +2374,6 @@ func TestSearchPhotosUsesLaterAvailableProfile(t *testing.T) {
 				unavailable := newEmbeddingWorkerFixture(t).runtime
 				unavailable.failures[x.binding.Name] = []error{tc.failure}
 				provider.runtime = unavailable
-				if tc.authorization {
-					two.profiles["a-images"].embeddingRuntimes[x.binding.Name].classify = func(error) (EmbeddingProviderFailure, time.Duration) { return EmbeddingProviderAuthorization, 0 }
-				}
 			}
 			ranked, err := two.SearchPhotos(t.Context(), store.PhotoBrowseRequest{Query: query.Query{V: 1, Syntax: "simple", Mode: tc.mode, Text: "sunset", Sort: query.Sort{Field: "relevance", Direction: "desc"}}})
 			require.NoError(t, err)

@@ -542,11 +542,15 @@ func markSuggestionOnlyMatches(
 		if err != nil {
 			return nil, err
 		}
-		args := make([]any, len(items))
+		ids := make([]string, len(items))
 		for i, item := range items {
-			args[i] = item.AssetID
+			ids[i] = item.AssetID
 		}
-		statement, args, err := scope.bind(`SELECT a.asset_id FROM photo_assets a WHERE `+scope.match.sql+` AND a.asset_id IN (`+placeholders(len(items))+`)`, args...)
+		encoded, err := json.Marshal(ids)
+		if err != nil {
+			return nil, err
+		}
+		statement, args, err := scope.bind(`SELECT a.asset_id FROM photo_assets a WHERE `+scope.match.sql+` AND a.asset_id IN (SELECT value FROM json_each(?))`, string(encoded))
 		if err != nil {
 			return nil, err
 		}

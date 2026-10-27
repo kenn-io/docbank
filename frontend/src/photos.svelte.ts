@@ -1225,6 +1225,7 @@ export class Photos {
 
   async previewRejects(selected = false) {
     if (
+      (!selected && !!this.snapshotID) ||
       this.disposed ||
       this.trashing ||
       this.hiding ||

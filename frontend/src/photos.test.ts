@@ -3825,3 +3825,29 @@ it("applies a representative-choice Undo revision and rotation to ranked Map row
   expect(photos.snapshotID).toBe("ranked-map");
   photos.dispose();
 });
+
+it.each(["", "provider_unavailable"])(
+  "limits rejects to selected captured photos, fallback=%s",
+  async (fallback) => {
+    const photos = new Photos("scoped", vi.fn(), false, {
+      ...photoQuery,
+      mode: "semantic",
+      text: "sunset",
+    });
+    photos.snapshotID = "accepted";
+    photos.fallbackReason = fallback;
+    const preflight = vi.spyOn(api, "preflightPhotoRejects").mockResolvedValue(rejectsPreview());
+    await photos.previewRejects();
+    expect(preflight).not.toHaveBeenCalled();
+    photos.rejectsSelectionLimit = 64;
+    photos.selection.selectedIDs = new Set(["photo-1"]);
+    await photos.previewRejects(true);
+    expect(preflight).toHaveBeenCalledWith(
+      expect.objectContaining({
+        query: expect.objectContaining({ filters: { asset_ids: ["photo-1"] } }),
+      }),
+      expect.anything(),
+    );
+    photos.dispose();
+  },
+);

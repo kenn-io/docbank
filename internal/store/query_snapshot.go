@@ -394,7 +394,11 @@ func materializeSnapshotRows(
 	if options.Photos {
 		var suggestions bool
 		if suggestions, err = photoSuggestionsExist(ctx, q); err == nil {
-			population, err = photoSnapshotPopulation(compiled, generationID, coverage, options.MaxRows, suggestions)
+			limit := options.MaxRows
+			if options.PhotoRanking != nil && options.PhotoRanking.ActualMode == query.ModeLexical {
+				limit = min(limit, 1000)
+			}
+			population, err = photoSnapshotPopulation(compiled, generationID, coverage, limit, suggestions)
 			if options.PhotoRanking != nil && (options.PhotoRanking.Members != nil || options.PhotoRanking.ActualMode != query.ModeLexical) {
 				population, err = rankedPhotoSnapshotPopulation(options.PhotoRanking)
 			}
@@ -468,6 +472,12 @@ func materializeSnapshotRows(
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
+		if options.Photos && options.PhotoRanking != nil && options.PhotoRanking.ActualMode == query.ModeLexical && len(projection.Rows) == 1000 {
+			ranking := *projection.PhotoRanking
+			ranking.Truncated = true
+			projection.PhotoRanking = &ranking
+			break
+		}
 		if int64(len(projection.Rows)) >= options.MaxRows {
 			return fmt.Errorf("%w: more than %d rows", ErrQuerySnapshotTooLarge, options.MaxRows)
 		}
