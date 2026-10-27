@@ -210,11 +210,33 @@ func (v *Vault) SearchDocuments(ctx context.Context, request DocumentSearchReque
 		return DocumentSearchReport{}, err
 	}
 	result := fromSearchReport(report, request.Explain)
-	if len(report.Results) == 0 {
-		fingerprint, _ := internalprocessing.SourceFenceFingerprint(internalprocessing.SourceFence{VaultUID: request.Fence.VaultUID, ContentVersionIDs: request.Fence.ContentVersionIDs})
-		result.MissLogID = v.missLog.Record(ctx, misslog.Receipt{Source: "embedded", Query: request.Query, Profile: request.Profile, RequestedMode: string(result.RequestedMode), ActualMode: string(result.ActualMode), Scope: misslog.ReceiptScope(request), Coverage: misslog.ReceiptScope(result.Coverage), FenceFingerprint: fingerprint})
-	}
+	v.recordSearchReceipt(ctx, request, &result)
 	return result, nil
+}
+
+// recordSearchReceipt keeps the native search response and private receipt in sync.
+func (v *Vault) recordSearchReceipt(ctx context.Context, request DocumentSearchRequest, result *DocumentSearchReport) {
+	encoded, _ := json.Marshal(request)
+	var scope map[string]any
+	_ = json.Unmarshal(encoded, &scope)
+	delete(scope, "query")
+	coverageJSON, _ := json.Marshal(result.Coverage)
+	var coverage map[string]any
+	_ = json.Unmarshal(coverageJSON, &coverage)
+	fingerprint, _ := internalprocessing.SourceFenceFingerprint(internalprocessing.SourceFence{VaultUID: request.Fence.VaultUID, ContentVersionIDs: request.Fence.ContentVersionIDs})
+	hits := make([]misslog.Hit, 0, min(10, len(result.Results)))
+	for _, r := range result.Results[:min(10, len(result.Results))] {
+		hit := misslog.Hit{Rank: r.Rank, NodeID: r.NodeID, ContentVersionID: r.ContentVersionID, Score: new(r.Score), Path: r.Path}
+		for _, e := range r.Evidence[:min(64, len(r.Evidence))] {
+			encoded, err := json.Marshal(e, json.Deterministic(true))
+			if err == nil && len(encoded) <= 1024 {
+				hit.EvidenceIDs = append(hit.EvidenceIDs, string(encoded))
+			}
+		}
+		hits = append(hits, hit)
+	}
+	ticket := v.missLog.Observe(ctx, misslog.Receipt{Hits: hits, Source: "embedded", Query: request.Query, Profile: request.Profile, RequestedMode: string(result.RequestedMode), ActualMode: string(result.ActualMode), Scope: scope, Coverage: coverage, FenceFingerprint: fingerprint})
+	result.MissLogID, result.MissLogCapability = ticket.ID, ticket.Capability
 }
 
 func toProcessingSelector(selector ProcessingSelector) internalprocessing.Selector {

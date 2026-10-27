@@ -520,7 +520,7 @@ func (c *Connection) ValidateDocumentSearch(
 }
 
 func validateDocumentSearchReport(request api.DocumentSearchRequest, report api.DocumentSearchReport) error {
-	if !validMissLogID(report.MissLogID) || (report.MissLogID != "" && (request.SkipMissLog || len(report.Results) != 0)) {
+	if !validMissLogTicket(report.MissLogID, report.MissLogCapability) || (report.MissLogID != "" && request.SkipMissLog) {
 		return errors.New("invalid miss log receipt")
 	}
 

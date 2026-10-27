@@ -406,7 +406,8 @@ type sourceFenceOutput struct {
 type searchDocumentsOutput struct {
 	privateCache
 
-	MissLogID string `json:"miss_log_id,omitempty"`
+	MissLogID         string `json:"miss_log_id,omitempty"`
+	MissLogCapability string `json:"miss_log_capability,omitempty"`
 
 	VaultID            string               `json:"vault_id"`
 	Fence              sourceFenceOutput    `json:"fence"`
@@ -466,7 +467,7 @@ func searchDocuments(
 	if err != nil {
 		return searchDocumentsOutput{}, nil, err
 	}
-	output := searchDocumentsOutput{MissLogID: result.report.MissLogID, VaultID: result.resolution.Fence.VaultUID,
+	output := searchDocumentsOutput{MissLogID: result.report.MissLogID, MissLogCapability: result.report.MissLogCapability, VaultID: result.resolution.Fence.VaultUID,
 		Fence: sourceFenceOutput{VaultID: result.resolution.Fence.VaultUID,
 			ContentVersionIDs: slices.Clone(result.resolution.Fence.ContentVersionIDs)},
 		FenceFingerprint:   result.resolution.FenceFingerprint,

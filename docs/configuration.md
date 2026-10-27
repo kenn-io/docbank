@@ -1362,25 +1362,50 @@ max_records = 5000
 run without changing the configuration file. There is no environment switch.
 
 The daemon records successful empty searches from HTTP, CLI, and MCP, including
-an explicitly empty document scope. Errors and searches with hits create no
-records. Receipts preserve the query, time, vault, requested and actual search
-modes, profile, search options and scope. They omit document excerpts. A receipt
-ID appears as `miss_log_id` in structured search output only after storage
-succeeds. A failed automatic write leaves the search available and emits a
-sanitized diagnostic. During maintenance or ordinary write contention, recording
-may be skipped so an empty search stays available. Private receipt endpoints
-sanitize validation errors instead of echoing rejected values. Automatic CLI
-searches combine document and folder results before recording one miss. Their
-receipts identify the source as `client_finalized`; the operator's CLI supplies
-that final outcome. Direct search receipts identify the source as `daemon`.
+an explicitly empty document scope. Errors create no records. Searches with
+hits keep a receipt in memory until feedback is submitted. The cache holds at
+most 50 receipts and 8 MiB for 15 minutes, evicts the oldest first, and clears
+on restart. An oversized receipt is not retained.
+
+Receipts preserve the query, time, vault, requested and actual search modes,
+profile, search options, scope, and up to ten hits with scores and evidence
+identities. They omit document excerpts. Structured search output includes
+`miss_log_id` and a separate `miss_log_capability` only after the receipt has
+been stored or cached. JSON and `--agent` search output include these fields.
+The capability belongs to that vault and daemon run; it never appears in
+history output. A failed automatic write leaves the search available and emits
+a sanitized diagnostic. During maintenance or ordinary write contention,
+recording may be skipped so the search stays available. Private receipt
+endpoints sanitize validation errors instead of echoing rejected values.
+Automatic CLI searches combine document and folder results before recording
+one final receipt. Their receipts identify the source as `client_finalized`; the
+operator's CLI supplies that final outcome. Direct search receipts identify the
+source as `daemon`.
 
 Use `docbank miss-log list`, `show <id>`, `delete <id>`,
 `delete --before <RFC3339 timestamp>`, or `purge` to manage records through the
-daemon. These operations require the master API credential. List and show
-responses use `Cache-Control: no-store`. Browser sessions and MCP have no history
-management tools. Management remains available when
-recording is disabled. Records expire by age and then count on enabled startup
-and writes; idle daemons prune lazily. Disabled startup preserves existing rows.
+daemon. Label a receipt with `docbank miss-log label <id> --verdict wrong`.
+Verdicts are `wrong`, `missing`, `low_confidence`, and `none_in_vault`. Optional
+`--expected node:<id>[@<content-version-id>]` flags name up to 20 expected
+documents. Add a note with `--note` (at most 1000 characters). Expected documents
+are optional for the first three verdicts and forbidden for `none_in_vault`.
+Unknown or contradictory identities are rejected. Labels replace previous
+feedback; receipt triggers preserve `no_match`, `correction`, and
+`low_confidence` observations.
+
+These management operations require the master API credential. List and show
+responses use `Cache-Control: no-store`. Browser sessions have no log access.
+MCP's `record_search_feedback` tool requires the ID and capability from a
+search, accepts the same feedback, and returns only success and the ID. It
+provides no history reads or exports. An expired, evicted, deleted, or unknown
+receipt fails explicitly. Feedback storage failures are returned to the caller.
+On a shared MCP server, possession of a capability authorizes feedback; it does
+not establish a separate user identity.
+
+Management remains available when recording is disabled. Deletion also removes
+pending receipts and serializes with feedback so deleted records cannot
+reappear. Records expire by age and then count on enabled startup and writes;
+idle daemons prune lazily. Disabled startup preserves existing rows.
 
 The log is excluded from anonymous telemetry, logical backups, portable bundle
 metadata, imports, and federation. A restored vault has no miss records.

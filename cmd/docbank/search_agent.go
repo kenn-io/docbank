@@ -42,6 +42,7 @@ func searchAgentExcerpt(value string) string {
 
 type searchAgentHeader struct {
 	query, mode, degraded, degradedError string
+	missLogID, missLogCapability         string
 	count                                int
 	truncated                            bool
 	coverage                             *api.DocumentSearchCoverage
@@ -61,6 +62,12 @@ func writeSearchAgentHeader(cmd *cobra.Command, header searchAgentHeader) error 
 	if coverage := header.coverage; coverage != nil {
 		line += fmt.Sprintf(" coverage=%s complete=%d scoped=%d", searchAgentValue(coverage.State),
 			coverage.CompleteDocuments, coverage.ScopedDocuments)
+	}
+	if header.missLogID != "" {
+		line += " miss_log_id=" + searchAgentValue(header.missLogID)
+		if header.missLogCapability != "" {
+			line += " miss_log_capability=" + searchAgentValue(header.missLogCapability)
+		}
 	}
 	if len(header.details) > 0 {
 		line += " " + strings.Join(header.details, " ")
@@ -109,7 +116,7 @@ func writeLexicalSearchAgent(cmd *cobra.Command, query string, report api.Search
 	automatic automaticSearchOutcome,
 ) error {
 	header := searchAgentHeader{query: query, mode: "lexical", degraded: automatic.reason,
-		count: len(report.Hits), truncated: report.Truncated}
+		count: len(report.Hits), truncated: report.Truncated, missLogID: report.MissLogID, missLogCapability: report.MissLogCapability}
 	if automatic.err != nil {
 		header.degradedError = automatic.err.Error()
 	}
@@ -131,7 +138,7 @@ func writeDocumentSearchAgent(cmd *cobra.Command, query string, report api.Docum
 	folders []api.SearchHit,
 ) error {
 	header := searchAgentHeader{query: query, mode: report.ActualMode, degraded: strings.Join(report.Degradations, ","),
-		count: len(report.Results) + len(folders), truncated: report.Truncated, coverage: &report.Coverage}
+		count: len(report.Results) + len(folders), truncated: report.Truncated, coverage: &report.Coverage, missLogID: report.MissLogID, missLogCapability: report.MissLogCapability}
 	if len(report.Trace) > 0 {
 		stages := make([]string, len(report.Trace))
 		for i, event := range report.Trace {

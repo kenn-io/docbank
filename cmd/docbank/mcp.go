@@ -31,7 +31,9 @@ var mcpCmd = &cobra.Command{
 	Example: `  docbank mcp
   docbank mcp --transport http --listen 127.0.0.1:8765`,
 	Long: `Runs a Model Context Protocol server for the selected vault (DOCBANK_HOME),
-read-only by default; --allow-* flags expose specific write tools.
+document reads by default. Private search feedback requires the daemon miss log
+to be enabled and a feedback capability from a search. --allow-* flags expose
+other write tools.
 stdio (default): one JSON-RPC message per line on stdin/stdout; logs on stderr.
 Client config: {"command":"docbank","args":["mcp"]}
 http: needs --listen 127.0.0.1:<port> and, in config.toml, [mcp.http]

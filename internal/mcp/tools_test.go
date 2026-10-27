@@ -20,7 +20,7 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
+func TestDefaultToolCatalogHasExplicitLocalFeedbackWrite(t *testing.T) {
 	tools := toolCatalog(ServerOptions{})
 	wantNames := []string{
 		"read_document_content",
@@ -36,13 +36,13 @@ func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
 		"list_packages", "get_package", "list_package_members", "get_package_record",
 		"lookup_bates_label",
 		"list_bates_namespaces", "preview_bates_stamp", "get_bates_allocation",
-		"list_bates_exports", "get_bates_export", "find_bates_exports", "get_photo_asset", "get_photo_faces",
+		"list_bates_exports", "get_bates_export", "find_bates_exports", "get_photo_asset", "get_photo_faces", "record_search_feedback",
 	}
 	require.Len(t, tools, len(wantNames))
 	for index, tool := range tools {
 		assert.Equal(t, wantNames[index], tool.Name)
 		require.NotNil(t, tool.Annotations)
-		assert.True(t, tool.Annotations.ReadOnlyHint)
+		assert.Equal(t, tool.Name != "record_search_feedback", tool.Annotations.ReadOnlyHint)
 		assert.True(t, tool.Annotations.IdempotentHint)
 		assert.Equal(t, new(false), tool.Annotations.DestructiveHint)
 		assert.Equal(t, new(false), tool.Annotations.OpenWorldHint)

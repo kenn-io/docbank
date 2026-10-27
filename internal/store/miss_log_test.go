@@ -140,3 +140,27 @@ func checkMissLogConcurrentRetention(t *testing.T, s *Store) {
 	require.Len(t, records, 3)
 	require.Equal(t, []string{"record-19", "record-18", "record-17"}, []string{records[0].ID, records[1].ID, records[2].ID})
 }
+
+func testMissLogFeedbackReplacement(t *testing.T, s *Store) {
+	t.Helper()
+	ctx := t.Context()
+	now := time.Now().UTC()
+	record := MissLogRecord{ID: "receipt", CreatedAt: now, Receipt: `{"query":"synthetic question"}`}
+	require.ErrorIs(t, s.SaveMissLogFeedback(ctx, record, now, 90, 5000, false), ErrNotFound)
+	require.NoError(t, s.AddMissLogRecord(ctx, record, now, 90, 5000))
+	record.Receipt = `{"query":"synthetic question","feedback":{"verdict":"wrong"}}`
+	require.NoError(t, s.SaveMissLogFeedback(ctx, record, now, 90, 5000, false))
+	got, err := s.MissLogRecordByID(ctx, record.ID)
+	require.NoError(t, err)
+	require.Equal(t, record.Receipt, got.Receipt)
+	require.NoError(t, s.DeleteMissLogRecord(ctx, record.ID))
+	require.ErrorIs(t, s.SaveMissLogFeedback(ctx, record, now, 90, 5000, false), ErrNotFound)
+}
+func TestMissLogFeedbackReplacement(t *testing.T) {
+	t.Parallel()
+	testMissLogFeedbackReplacement(t, newTestStore(t))
+}
+func TestMissLogFeedbackReplacementPostgres(t *testing.T) {
+	t.Parallel()
+	testMissLogFeedbackReplacement(t, newPostgresQueryStore(t))
+}

@@ -118,3 +118,41 @@ func (s *Store) MissLogRecordByID(ctx context.Context, id string) (MissLogRecord
 	}
 	return r, nil
 }
+
+// SaveMissLogFeedback saves a label and requires it to survive retention.
+// create is true only for an authorized in-memory receipt. Existing records
+// are updated without recreating a concurrently deleted row.
+// Updating the receipt and applying retention share the storage writer lock.
+func (s *Store) SaveMissLogFeedback(ctx context.Context, record MissLogRecord, now time.Time, days, maxRecords int, create bool) error {
+	if record.ID == "" || record.CreatedAt.IsZero() || len(record.Receipt) > 8<<20 || !jsontext.Value(record.Receipt).IsValid() || days < 1 || days > 365 || maxRecords < 1 || maxRecords > 100000 {
+		return errors.New("invalid miss log record or retention")
+	}
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		var result sql.Result
+		var err error
+		if create {
+			result, err = tx.ExecContext(ctx, `INSERT INTO miss_log_records(id,created_at,receipt) VALUES($1,$2,$3)`, record.ID, record.CreatedAt.UTC().Format(timestampLayout), record.Receipt)
+		} else {
+			result, err = tx.ExecContext(ctx, `UPDATE miss_log_records SET receipt=$1 WHERE id=$2`, record.Receipt, record.ID)
+		}
+		if err != nil {
+			return err
+		}
+		n, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return ErrNotFound
+		}
+		if err := pruneMissLogRecordsTx(ctx, tx, now, days, maxRecords); err != nil {
+			return err
+		}
+		var exists int
+		if err := tx.QueryRowContext(ctx, `SELECT 1 FROM miss_log_records WHERE id=$1`, record.ID).Scan(&exists); errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		} else {
+			return err
+		}
+	})
+}

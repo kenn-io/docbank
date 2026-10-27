@@ -43,7 +43,8 @@ func (r *DocumentReader) ValidateDocumentSearch(ctx context.Context, input Docum
 func (r *DocumentReader) SearchDocuments(ctx context.Context, input DocumentSearchRequest) (DocumentSearchReport, error) {
 	report, err := searchDocuments(ctx, r.processing, r.store, input)
 	if err == nil {
-		report.MissLogID = recordDocumentSearch(ctx, r.missLog, input, report)
+		ticket := recordDocumentSearch(ctx, r.missLog, input, report)
+		report.MissLogID, report.MissLogCapability = ticket.ID, ticket.Capability
 	}
 	return report, err
 }

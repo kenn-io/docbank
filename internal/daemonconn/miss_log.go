@@ -41,7 +41,7 @@ func (c *Connection) CompleteEmptySearch(ctx context.Context, input api.EmptySea
 	if err != nil {
 		return api.EmptySearchCompletion{}, err
 	}
-	if !validMissLogID(out.MissLogID) {
+	if !validMissLogTicket(out.MissLogID, out.MissLogCapability) {
 		return api.EmptySearchCompletion{}, errors.New("search completion returned an invalid miss log ID")
 	}
 	return *out, nil
@@ -56,4 +56,56 @@ func validMissLogID(id string) bool {
 	}
 	decoded, err := hex.DecodeString(id)
 	return err == nil && hex.EncodeToString(decoded) == id
+}
+
+func validMissLogTicket(id, capability string) bool {
+	if !validMissLogID(id) {
+		return false
+	}
+	// Older daemons return an ID without capability; operator labeling still works.
+	if capability == "" {
+		return true
+	}
+	if id == "" || len(capability) != 64 {
+		return false
+	}
+	decoded, err := hex.DecodeString(capability)
+	return err == nil && hex.EncodeToString(decoded) == capability
+}
+
+func (c *Connection) RecordSearchFeedback(ctx context.Context, input api.SearchFeedbackRequest) (api.SearchFeedbackResult, error) {
+	if !validMissLogTicket(input.ID, input.Capability) || input.ID == "" || input.Capability == "" || misslog.ValidateFeedback(input.Feedback) != nil {
+		return api.SearchFeedbackResult{}, errors.New("invalid search feedback")
+	}
+	out, err := c.API().RecordSearchFeedback(ctx, &apiclient.RecordSearchFeedbackRequestOptions{Body: &input})
+	if err != nil {
+		return api.SearchFeedbackResult{}, err
+	}
+	if out.ID != input.ID || !out.Success {
+		return api.SearchFeedbackResult{}, errors.New("invalid search feedback response")
+	}
+	return *out, nil
+}
+func (c *Connection) LabelMissLogRecord(ctx context.Context, id string, feedback misslog.Feedback) error {
+	if !validMissLogID(id) || id == "" || misslog.ValidateFeedback(feedback) != nil {
+		return errors.New("invalid search feedback")
+	}
+	out, err := c.API().LabelMissLogRecord(ctx, &apiclient.LabelMissLogRecordRequestOptions{PathParams: &apiclient.LabelMissLogRecordPath{ID: id}, Body: &feedback})
+	if err != nil {
+		return err
+	}
+	if out.ID != id || !out.Success {
+		return errors.New("invalid search feedback response")
+	}
+	return nil
+}
+func (c *Connection) CompleteSearch(ctx context.Context, input api.SearchCompletionRequest) (api.EmptySearchCompletion, error) {
+	out, err := c.API().CompleteSearch(ctx, &apiclient.CompleteSearchRequestOptions{Body: &input})
+	if err != nil {
+		return api.EmptySearchCompletion{}, err
+	}
+	if !validMissLogTicket(out.MissLogID, out.MissLogCapability) {
+		return api.EmptySearchCompletion{}, errors.New("search completion returned an invalid receipt")
+	}
+	return *out, nil
 }

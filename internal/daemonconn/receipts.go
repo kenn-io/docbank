@@ -1035,7 +1035,7 @@ func (c *Connection) SearchWithOptions(
 		return out, err
 	}
 	out = *apiResponse
-	if !validMissLogID(out.MissLogID) || (out.MissLogID != "" && (opts.SkipMissLog || len(out.Hits) != 0)) {
+	if !validMissLogTicket(out.MissLogID, out.MissLogCapability) || (out.MissLogID != "" && opts.SkipMissLog) {
 		return api.SearchReport{}, errors.New("search response returned an invalid miss log receipt")
 	}
 	if out.TagID != opts.TagID || out.MIMEType != mimeType ||

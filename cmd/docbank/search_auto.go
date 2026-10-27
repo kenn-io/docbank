@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/misslog"
 )
 
 // Processing search requests accept at most this many results and query
@@ -190,19 +191,36 @@ func writeSearchDegradation(cmd *cobra.Command, outcome automaticSearchOutcome) 
 	return nil
 }
 
-// finalizeAutomaticSearchMiss records the one result page that the user sees.
-// Intermediate document and live-folder searches suppress their own records.
-// Best-effort completion must not leave ready results waiting indefinitely.
-func finalizeAutomaticSearchMiss(ctx context.Context, c *daemonconn.Connection, outcome *automaticSearchOutcome, empty bool) {
-	if !empty || outcome.report == nil {
+// finalizeAutomaticSearch records the single combined page shown by the CLI.
+// Intermediate document and live-folder searches suppress their own receipts.
+func finalizeAutomaticSearch(ctx context.Context, c *daemonconn.Connection, outcome *automaticSearchOutcome, lexical api.SearchReport) {
+	if outcome.report == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
-	completion, err := c.CompleteEmptySearch(ctx, api.EmptySearchCompletionRequest{Search: outcome.request, ActualMode: outcome.report.ActualMode, Coverage: outcome.report.Coverage})
+	folders := []api.SearchHit{}
+	for _, hit := range lexical.Hits {
+		if hit.Node.Kind == "dir" && len(folders) < searchLimit {
+			folders = append(folders, hit)
+		}
+	}
+	if keep := max(0, searchLimit-len(folders)); len(outcome.report.Results) > keep {
+		outcome.report.Results = outcome.report.Results[:keep]
+		outcome.report.Truncated = true
+	}
+	outcome.report.Truncated = outcome.report.Truncated || lexical.Truncated
+	hits := api.MissLogDocumentHits(outcome.report.Results)
+	for _, folder := range folders {
+		if len(hits) >= 10 {
+			break
+		}
+		hits = append(hits, misslog.Hit{Rank: len(hits) + 1, NodeID: folder.Node.ID, Path: folder.Path})
+	}
+	completion, err := c.CompleteSearch(ctx, api.SearchCompletionRequest{Search: outcome.request, ActualMode: outcome.report.ActualMode, Coverage: outcome.report.Coverage, Hits: hits, Truncated: outcome.report.Truncated})
 	if err != nil {
 		slog.Warn("miss_log_completion_failed")
 		return
 	}
-	outcome.report.MissLogID = completion.MissLogID
+	outcome.report.MissLogID, outcome.report.MissLogCapability = completion.MissLogID, completion.MissLogCapability
 }

@@ -10,12 +10,12 @@ import (
 
 func newMissLogCmd() *cobra.Command {
 	command := &cobra.Command{Use: "miss-log", Short: "Manage private search misses through the daemon", GroupID: groupSearch,
-		Long: `Record empty searches only after opting in with [miss_log] enabled = true
+		Long: `Record search misses and explicit feedback after opting in with [miss_log] enabled = true
 or "docbank daemon run --miss-log". The log contains private query text.
 List and show print JSON; delete and purge remove current records.
 Management uses the master daemon credential even when recording is off.`}
 	var limit, offset int
-	list := &cobra.Command{Use: photoCheckoutListCommand, Short: "List private miss receipts as JSON", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+	list := &cobra.Command{Use: photoCheckoutListCommand, Short: "List private search receipts as JSON", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		if limit < 1 || limit > 100 || offset < 0 {
 			return usageError(errors.New("limit must be 1–100 and offset nonnegative"))
 		}
@@ -31,7 +31,7 @@ Management uses the master daemon credential even when recording is off.`}
 	}}
 	list.Flags().IntVar(&limit, "limit", 20, "maximum receipts (1–100)")
 	list.Flags().IntVar(&offset, "offset", 0, "number of receipts to skip")
-	show := &cobra.Command{Use: "show <record-id>", Short: "Show one private miss receipt as JSON", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	show := &cobra.Command{Use: "show <record-id>", Short: "Show one private search receipt as JSON", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
@@ -73,7 +73,7 @@ Management uses the master daemon credential even when recording is off.`}
 	show.Example = "  docbank miss-log show <record-id>"
 	remove.Example = "  docbank miss-log delete <record-id>\n  docbank miss-log delete --before 2026-01-01T00:00:00Z"
 	purge.Example = "  docbank miss-log purge"
-	command.AddCommand(list, show, remove, purge)
+	command.AddCommand(list, show, remove, purge, newMissLogLabelCmd())
 	return command
 }
 func init() { rootCmd.AddCommand(newMissLogCmd()) }

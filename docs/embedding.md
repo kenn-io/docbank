@@ -95,6 +95,23 @@ The CLI never opens a vault behind its current owner's lock.
 Automatic miss logging is best effort. If another vault write is busy, the
 search can return without a receipt.
 
+An application that owns the vault can label a returned receipt explicitly:
+
+```go
+err = vault.RecordSearchFeedback(ctx, report.MissLogID, docbank.SearchFeedback{
+    Verdict: "low_confidence",
+    Note: "Synthetic example needs review",
+})
+```
+
+`Expected` can name up to 20 `SearchFeedbackIdentity` values with a `NodeID`
+and optional `ContentVersionID`. `none_in_vault` forbids expected identities.
+Unknown, expired, or deleted receipts return `ErrSearchReceiptUnavailable`;
+invalid labels return `ErrSearchFeedbackInvalid`. Storage failures return
+`ErrSearchFeedbackPersistence`. The owner method remains
+available for stored receipts when recording is disabled. It is a write and
+is excluded from `CallReadTool`.
+
 ### Reuse other read definitions
 
 `ReadTool(name)` returns an independent copy of the selected native read-only

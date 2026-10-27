@@ -416,7 +416,10 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		}
 		return &similarOutput{Body: fromDocumentSimilarReport(report)}, nil
 	})
-	type searchOutput struct{ Body DocumentSearchReport }
+	type searchOutput struct {
+		CacheControl string `header:"Cache-Control"`
+		Body         DocumentSearchReport
+	}
 	type searchValidationInput struct {
 		Body DocumentSearchValidationRequest
 	}
@@ -439,8 +442,13 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		if err != nil {
 			return nil, err
 		}
-		report.MissLogID = recordDocumentSearch(ctx, d.MissLog, input.Body, report)
-		return &searchOutput{Body: report}, nil
+		ticket := recordDocumentSearch(ctx, d.MissLog, input.Body, report)
+		report.MissLogID, report.MissLogCapability = ticket.ID, ticket.Capability
+		cacheControl := ""
+		if ticket.Capability != "" {
+			cacheControl = "no-store"
+		}
+		return &searchOutput{CacheControl: cacheControl, Body: report}, nil
 	})
 }
 

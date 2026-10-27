@@ -665,6 +665,7 @@ func searchDocumentsSchemas() (schema, schema) {
 		"fence_fingerprint":    schema{"type": "string", "pattern": "^sha256:[0-9a-f]{64}$", "maxLength": 71},
 		"observed_scope_count": integerSchema(0, 0),
 		"miss_log_id":          schema{"type": "string", "pattern": "^[0-9a-f]{48}$"},
+		"miss_log_capability":  schema{"type": "string", "pattern": "^[0-9a-f]{64}$"},
 		"requested_mode":       enumSchema("auto", "lexical", "semantic", "hybrid"),
 		"actual_mode":          enumSchema("lexical", "semantic", "hybrid"),
 		"coverage": objectSchema(schema{

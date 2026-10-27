@@ -15,7 +15,7 @@ func sanitizeMissLogErrorResponse(ctx huma.Context, _ string, value any) (any, e
 	if op == nil {
 		return value, nil
 	}
-	if !strings.Contains(op.OperationID, "MissLog") && op.OperationID != "completeEmptySearch" {
+	if !strings.Contains(op.OperationID, "MissLog") && op.OperationID != "completeEmptySearch" && op.OperationID != "completeSearch" && op.OperationID != "recordSearchFeedback" {
 		return value, nil
 	}
 	problem, ok := value.(*Error)

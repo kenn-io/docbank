@@ -14,6 +14,7 @@ import (
 )
 
 func TestMissLogClientValidatesReturnedReceiptIDs(t *testing.T) {
+	t.Parallel()
 	for _, id := range []string{"", strings.Repeat("a", 48), "invalid", strings.Repeat("z", 48)} {
 		for _, documentSearch := range []bool{false, true} {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -38,5 +39,27 @@ func TestMissLogClientValidatesReturnedReceiptIDs(t *testing.T) {
 				require.Error(t, err)
 			}
 		}
+	}
+}
+
+func TestMissLogClientAcceptsHitReceiptAndValidatesCapability(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		id, capability string
+		valid          bool
+	}{
+		{strings.Repeat("a", 48), strings.Repeat("b", 64), true},
+		{strings.Repeat("a", 48), "invalid", false},
+		{"", strings.Repeat("b", 64), false},
+	} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			assert.NoError(t, json.MarshalWrite(w, api.SearchReport{MissLogID: tc.id, MissLogCapability: tc.capability, Hits: []api.SearchHit{{Node: api.Node{ID: 2, Kind: "dir", Name: "synthetic"}, Path: "/synthetic", Match: "name"}}, Limit: 20}))
+		}))
+		c := daemonconn.New(server.URL, "key")
+		_, err := c.Search(t.Context(), "synthetic", 20)
+		server.Close()
+		_ = c.Close()
+		require.Equal(t, tc.valid, err == nil)
 	}
 }

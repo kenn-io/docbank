@@ -360,7 +360,10 @@ func registerReadRoutes(api huma.API, d Deps) {
 		return &verifyNodeOutput{Body: report}, nil
 	})
 
-	type searchOutput struct{ Body SearchReport }
+	type searchOutput struct {
+		CacheControl string `header:"Cache-Control"`
+		Body         SearchReport
+	}
 	huma.Register(api, huma.Operation{
 		OperationID: "search", Method: http.MethodGet, Path: "/api/v1/search",
 		Summary: "Search live document names and extracted text",
@@ -426,7 +429,7 @@ func registerReadRoutes(api huma.API, d Deps) {
 				Node: fromStoreNode(h.Node), Path: h.Path, Match: h.Match,
 			})
 		}
-		if !in.SkipMissLog && len(hits) == 0 {
+		if !in.SkipMissLog {
 			requestedMode, actualMode := "lexical", "lexical"
 			coverage := map[string]any{"truncated": truncated}
 			if in.Fuzzy {
@@ -436,9 +439,13 @@ func registerReadRoutes(api huma.API, d Deps) {
 					actualMode = "fuzzy"
 				}
 			}
-			out.Body.MissLogID = d.MissLog.Record(ctx, misslog.Receipt{Query: in.Q, RequestedMode: requestedMode, ActualMode: actualMode, Coverage: coverage, Scope: map[string]any{
+			ticket := d.MissLog.Observe(ctx, misslog.Receipt{Hits: missLogLiveHits(out.Body.Hits), Query: in.Q, RequestedMode: requestedMode, ActualMode: actualMode, Coverage: coverage, Scope: map[string]any{
 				"live_filters": true, packageLimitParameter: in.Limit, "tag_id": in.TagID, "mime_type": mimeType, "under_node_id": in.UnderNodeID, "modified_since": modifiedSince, "modified_before": modifiedBefore, "fuzzy": in.Fuzzy,
 			}})
+			out.Body.MissLogID, out.Body.MissLogCapability = ticket.ID, ticket.Capability
+			if ticket.Capability != "" {
+				out.CacheControl = "no-store"
+			}
 		}
 		return out, nil
 	})

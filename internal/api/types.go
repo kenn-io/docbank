@@ -404,6 +404,7 @@ type DocumentMediaSelection struct {
 }
 
 type DocumentSearchReport struct {
+	MissLogCapability    string                          `json:"miss_log_capability,omitzero"`
 	MissLogID            string                          `json:"miss_log_id,omitzero"`
 	MediaSelections      []DocumentMediaSelection        `json:"media_selections,omitzero" maxItems:"4096" nullable:"false"`
 	MediaSourceSelection bool                            `json:"media_source_selection,omitzero"`
@@ -923,16 +924,17 @@ type FuzzyReceipt struct {
 
 // SearchReport is one bounded search result page.
 type SearchReport struct {
-	MissLogID      string        `json:"miss_log_id,omitzero"`
-	Fuzzy          *FuzzyReceipt `json:"fuzzy,omitzero"`
-	Hits           []SearchHit   `json:"hits"`
-	Limit          int           `json:"limit"`
-	Truncated      bool          `json:"truncated"`
-	TagID          string        `json:"tag_id,omitzero"`
-	MIMEType       string        `json:"mime_type,omitzero"`
-	UnderNodeID    int64         `json:"under_node_id,omitzero"`
-	ModifiedSince  string        `json:"modified_since,omitzero"`
-	ModifiedBefore string        `json:"modified_before,omitzero"`
+	MissLogCapability string        `json:"miss_log_capability,omitzero"`
+	MissLogID         string        `json:"miss_log_id,omitzero"`
+	Fuzzy             *FuzzyReceipt `json:"fuzzy,omitzero"`
+	Hits              []SearchHit   `json:"hits"`
+	Limit             int           `json:"limit"`
+	Truncated         bool          `json:"truncated"`
+	TagID             string        `json:"tag_id,omitzero"`
+	MIMEType          string        `json:"mime_type,omitzero"`
+	UnderNodeID       int64         `json:"under_node_id,omitzero"`
+	ModifiedSince     string        `json:"modified_since,omitzero"`
+	ModifiedBefore    string        `json:"modified_before,omitzero"`
 }
 
 // IngestFailure records one source path that failed to import.

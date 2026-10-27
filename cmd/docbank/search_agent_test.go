@@ -171,3 +171,18 @@ func searchAgentDocumentReport(results ...api.DocumentSearchResult) api.Document
 	return api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Results: results,
 		Coverage: api.DocumentSearchCoverage{State: "complete", BindingRequired: true, ScopedDocuments: max(1, len(results)), CompleteDocuments: max(1, len(results))}}
 }
+
+func TestSearchAgentReturnsFeedbackTicket(t *testing.T) {
+	for _, document := range []bool{false, true} {
+		cmd, out := processingTestCommand()
+		id := strings.Repeat("a", 48)
+		capability := strings.Repeat("b", 64)
+		if document {
+			require.NoError(t, writeDocumentSearchAgent(cmd, "synthetic", api.DocumentSearchReport{MissLogID: id, MissLogCapability: capability, ActualMode: "lexical"}, nil))
+		} else {
+			require.NoError(t, writeLexicalSearchAgent(cmd, "synthetic", api.SearchReport{MissLogID: id, MissLogCapability: capability}, automaticSearchOutcome{}))
+		}
+		require.Contains(t, out.String(), "miss_log_id="+id)
+		require.Contains(t, out.String(), "miss_log_capability="+capability)
+	}
+}

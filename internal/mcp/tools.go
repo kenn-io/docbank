@@ -23,11 +23,8 @@ import (
 const toolCatalogTTLMs = 60_000
 
 func catalogInstructions(options ServerOptions) string {
-	if !options.AllowProcessing && !options.AllowPackageWrites &&
-		!options.AllowPhotoEdits && !options.AllowExportWrites && !options.AllowReportWrites {
-		return "Docbank exposes bounded read-only document, people, package and photo reads."
-	}
-	instructions := "Docbank exposes bounded document, people, package and photo reads."
+	instructions := "Docbank exposes bounded document, people, package and photo reads. record_search_feedback is an explicit local feedback write requiring an opted-in daemon and a search capability; it exposes no history."
+
 	if options.AllowProcessing {
 		instructions += " start_processing requires a reviewed plan and prior operator consent."
 	}
@@ -164,7 +161,7 @@ var photoWriteToolDefinitions = []toolDefinition{
 }
 
 func toolCatalog(options ServerOptions) []*sdkmcp.Tool {
-	definitions := slices.Clone(readToolDefinitions)
+	definitions := append(slices.Clone(readToolDefinitions), searchFeedbackTool)
 	if options.AllowProcessing {
 		definitions = append(definitions, processingToolDefinition)
 	}
@@ -187,7 +184,7 @@ func toolCatalog(options ServerOptions) []*sdkmcp.Tool {
 	tools := make([]*sdkmcp.Tool, 0, len(definitions))
 	for _, definition := range definitions {
 		input, output := definition.schemas()
-		openWorld := definition.write
+		openWorld := definition.write && definition.name != searchFeedbackTool.name
 		annotation := &sdkmcp.ToolAnnotations{
 			Title: definition.title, ReadOnlyHint: !definition.write,
 			IdempotentHint: !definition.write || definition.idempotent, DestructiveHint: &definition.destructive, OpenWorldHint: &openWorld,
@@ -212,6 +209,8 @@ func registerToolCatalog(
 		output := mustResolveSchema(tool.OutputSchema)
 		var handler sdkmcp.ToolHandler
 		switch tool.Name {
+		case searchFeedbackTool.name:
+			handler = searchFeedbackHandler(lease, output, logger)
 		case reportSummaryTool.name, reportDatesTool.name, reportCreateTool.name, reportReviseTool.name,
 			reportDownloadTool.name, reportReleaseTool.name:
 			handler = reports.handler(tool.Name, output)
