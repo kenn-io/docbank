@@ -159,9 +159,9 @@ func TestPhotoStackDecisionBounds(t *testing.T) {
 	request := api.PhotoStackDecisionRequest{BurstGapSeconds: 30, AssetIDs: ids, Targets: targets, Decision: "representative", CurrentID: ids[0], SelectedIDs: ids}
 	encoded, err := json.Marshal(request)
 	require.NoError(t, err)
-	// A stale observed stack confirms the complete under-limit request reaches
+	// A stale observed stack confirms the complete at-limit request reaches
 	// the store without creating 2,000 live targets.
-	for _, tc := range []struct{ size, status int }{{(576 << 10) - 1, http.StatusConflict}, {576 << 10, http.StatusRequestEntityTooLarge}} {
+	for _, tc := range []struct{ size, status int }{{576 << 10, http.StatusConflict}, {(576 << 10) + 1, http.StatusRequestEntityTooLarge}} {
 		payload := string(encoded) + strings.Repeat(" ", tc.size-len(encoded))
 		req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/photos/authored/stack", strings.NewReader(payload))
 		require.NoError(t, err)

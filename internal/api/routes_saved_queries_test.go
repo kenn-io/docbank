@@ -101,7 +101,7 @@ func TestSavedQueryHTTPRequestBodyBounds(t *testing.T) {
 			`","description":"` + strings.Repeat(`\u0100`, 2048) +
 			`","kind":"query","payload":` + payload + `}`
 		require.Len(t, []byte(payload), 128<<10)
-		require.Less(t, len(body), maxRequestBytes)
+		require.LessOrEqual(t, len(body), maxRequestBytes)
 
 		resp, responseBody := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/saved-queries",
 			map[string]string{"X-Api-Key": testAPIKey}, body)
@@ -120,12 +120,12 @@ func TestSavedQueryHTTPRequestBodyBounds(t *testing.T) {
 		assert.EqualValues(t, 2, patched.Revision)
 	})
 
-	t.Run("rejects create envelope at limit without adding a definition", func(t *testing.T) {
+	t.Run("rejects create envelope above limit without adding a definition", func(t *testing.T) {
 		ts, s := newTestServer(t, nil)
 		created, _ := createSavedQuery(t, ts.URL, "Stable definition", `{}`)
 		body := `{"name":"Rejected definition","kind":"query","payload":{}}`
-		body += strings.Repeat(" ", maxRequestBytes-len(body))
-		require.Len(t, []byte(body), maxRequestBytes)
+		body += strings.Repeat(" ", maxRequestBytes+1-len(body))
+		require.Len(t, []byte(body), maxRequestBytes+1)
 
 		resp, responseBody := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/saved-queries",
 			map[string]string{"X-Api-Key": testAPIKey}, body)
@@ -137,12 +137,12 @@ func TestSavedQueryHTTPRequestBodyBounds(t *testing.T) {
 		assert.Equal(t, created.ID, items[0].ID)
 	})
 
-	t.Run("rejects streamed patch envelope at limit without revision mutation", func(t *testing.T) {
+	t.Run("rejects streamed patch envelope above limit without revision mutation", func(t *testing.T) {
 		ts, s := newTestServer(t, nil)
 		created, _ := createSavedQuery(t, ts.URL, "Stable definition", `{}`)
 		body := `{"name":"Rejected rename"}`
-		body += strings.Repeat(" ", maxRequestBytes-len(body))
-		require.Len(t, []byte(body), maxRequestBytes)
+		body += strings.Repeat(" ", maxRequestBytes+1-len(body))
+		require.Len(t, []byte(body), maxRequestBytes+1)
 
 		resp, responseBody := streamedJSONRequest(t, ts.URL, http.MethodPatch,
 			"/api/v1/saved-queries/"+created.ID,

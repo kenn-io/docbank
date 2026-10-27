@@ -199,7 +199,7 @@ func TestAppendNodeProvenanceEndpointRequestBodyLimit(t *testing.T) {
 			require.NoError(t, err)
 			wantStatus := http.StatusRequestEntityTooLarge
 			wantRevision := node.Revision
-			if size < 1<<20 {
+			if size <= 1<<20 {
 				wantStatus = http.StatusCreated
 				wantRevision++
 			}
