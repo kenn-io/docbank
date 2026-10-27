@@ -268,6 +268,8 @@ func (s *Store) Checkpoint(ctx context.Context) error {
 	return nil
 }
 
+var errBeginTx = errors.New("beginning transaction")
+
 // withStorageTx is the transaction primitive for bootstrap, import, audit
 // recording, and physical storage maintenance. User-visible metadata mutations
 // use withLogicalTx so audited vaults fail closed unless that mutation has an
@@ -308,7 +310,7 @@ func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) (r
 		<-beginCancelled
 	}
 	if err != nil {
-		return fmt.Errorf("beginning transaction: %w", err)
+		return fmt.Errorf("%w: %w", errBeginTx, err)
 	}
 	rollbackDone := make(chan struct{})
 	var rollbackErr error
@@ -366,6 +368,24 @@ func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) (r
 	}
 	if changed || !capture && s.hasPhotoSubscribers() {
 		s.publishPhotoChange()
+	}
+	return nil
+}
+
+func (s *Store) withStorageTxRetryBegin(ctx context.Context, fn func(tx *sql.Tx) error) error {
+	_, err := backoff.Retry(ctx, func() (struct{}, error) {
+		err := s.withStorageTx(ctx, fn)
+		if err != nil && (!errors.Is(err, errBeginTx) || !s.driver.IsBusy(err)) {
+			return struct{}{}, backoff.Permanent(err)
+		}
+		return struct{}{}, err
+	}, backoff.WithBackOff(backoff.NewConstantBackOff(10*time.Millisecond)), backoff.WithMaxTries(0), backoff.WithMaxElapsedTime(0))
+	if err != nil {
+		lastErr := backoff.AsRetryError(err).LastErr
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return errors.Join(ctxErr, lastErr)
+		}
+		return lastErr
 	}
 	return nil
 }

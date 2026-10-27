@@ -7,8 +7,11 @@ import (
 	"errors"
 	"testing"
 	"testing/synctest"
+	"time"
 
 	"github.com/stretchr/testify/require"
+
+	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
 func TestStorageTransactionWaitsForCancelledRollback(t *testing.T) {
@@ -111,6 +114,81 @@ func (c *blockedBeginConnection) BeginTx(ctx context.Context, _ driver.TxOptions
 	case <-c.release:
 		return nil, errors.New("BEGIN was not cancelled")
 	}
+}
+
+func holdTestSQLiteWriter(t *testing.T, s *Store) *sql.Tx {
+	t.Helper()
+	require.NoError(t, s.writeDB.Close())
+	var err error
+	s.writeDB, err = s.driver.Open(s.path, docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate, BusyTimeout: 10 * time.Millisecond})
+	require.NoError(t, err)
+	s.writeDB.SetMaxOpenConns(1)
+	writer, err := s.driver.Open(s.path, docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, writer.Close()) })
+	lock, err := writer.BeginTx(t.Context(), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		if err := lock.Rollback(); err != nil {
+			require.ErrorIs(t, err, sql.ErrTxDone)
+		}
+	})
+	return lock
+}
+
+func TestStorageTransactionRetryBegin(t *testing.T) {
+	t.Parallel()
+	t.Run("blocks until the writer lock clears", func(t *testing.T) {
+		s := newTestStore(t)
+		lock := holdTestSQLiteWriter(t, s)
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		defer cancel()
+		done := make(chan error, 1)
+		go func() {
+			done <- s.withStorageTxRetryBegin(ctx, func(*sql.Tx) error {
+				return nil
+			})
+		}()
+		select {
+		case err := <-done:
+			t.Fatalf("transaction returned while the writer lock was held: %v", err)
+		case <-time.After(100 * time.Millisecond): //nolint:kennlint // Real SQLite contention must outlast the driver's wall-clock busy timeout.
+		}
+		require.NoError(t, lock.Rollback())
+		require.NoError(t, <-done)
+	})
+	t.Run("callback busy error is not retried", func(t *testing.T) {
+		s := newTestStore(t)
+		lock := holdTestSQLiteWriter(t, s)
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		defer cancel()
+		// A callback can return a busy error from a statement inside its transaction.
+		_, busyErr := s.writeDB.BeginTx(ctx, nil)
+		require.True(t, s.driver.IsBusy(busyErr), "expected busy error, got %v", busyErr)
+		require.NoError(t, lock.Rollback())
+		calls := 0
+		err := s.withStorageTxRetryBegin(ctx, func(*sql.Tx) error {
+			calls++
+			return busyErr
+		})
+		require.ErrorIs(t, err, busyErr)
+		require.Equal(t, 1, calls)
+	})
+	t.Run("cancel", func(t *testing.T) {
+		s := newTestStore(t)
+		holdTestSQLiteWriter(t, s)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		timer := time.AfterFunc(50*time.Millisecond, cancel) //nolint:kennlint // Exercise cancellation during a real SQLite busy wait.
+		defer timer.Stop()
+		start := time.Now()
+		err := s.withStorageTxRetryBegin(ctx, func(*sql.Tx) error {
+			t.Error("callback ran while another writer held the lock")
+			return nil
+		})
+		require.ErrorIs(t, err, context.Canceled)
+		require.Less(t, time.Since(start), 500*time.Millisecond, "retry loop kept running after cancellation")
+	})
 }
 
 type rollbackConnector struct{ connection *blockedRollbackConnection }
