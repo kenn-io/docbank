@@ -23,6 +23,7 @@
     deleteSavedQuery,
     listSavedQueries,
     SavedQueryReceiptError,
+    subscribeSavedQueries,
     updateSavedQuery,
     type Definition,
     type SavedQuery,
@@ -68,7 +69,14 @@
 
   onMount(() => {
     void refresh(0);
+    // A change can finish after the user leaves Searches and opens it again.
+    const unsubscribe = subscribeSavedQueries(async (changed) => {
+      if (changed !== session) return;
+      await refresh();
+      if (failure) throw new Error(failure);
+    });
     return () => {
+      unsubscribe();
       alive = false;
       generation++;
     };

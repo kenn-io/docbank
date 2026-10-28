@@ -233,3 +233,37 @@ it("reports a change that finishes after the Searches page is left", async () =>
     expect(onauthfailure).toHaveBeenCalledWith(expect.objectContaining({ status: 401 })),
   );
 });
+
+it("refreshes a reopened Searches page when an earlier change finishes", async () => {
+  const renamed = { ...record, name: "Renamed", revision: 3 };
+  let finish!: () => void;
+  let saved = false;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, request) => {
+    if (request?.method && request.method !== "GET")
+      return new Promise<Response>((resolve) => {
+        finish = () => {
+          saved = true;
+          resolve(json(renamed, 3));
+        };
+      });
+    return json({ items: [saved ? renamed : record], total: 1, limit: 100, offset: 0 });
+  });
+  const first = render(SavedQueriesDrawer, {
+    session: "session",
+    initialQuery: parseQuery("{}"),
+    onload: vi.fn(),
+    onclose: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Rename Review PDFs" }));
+  await fireEvent.input(screen.getByLabelText("Definition name"), { target: { value: "Renamed" } });
+  await fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+  first.unmount();
+  open();
+  expect(await screen.findByRole("button", { name: "Rename Review PDFs" })).toBeTruthy();
+
+  finish();
+  expect(await screen.findByRole("button", { name: "Rename Renamed" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Rename Review PDFs" })).toBeNull();
+});
