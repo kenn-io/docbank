@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-28
+last_edited: 2026-10-14
 title: Automatic and processing search
 description: Choose automatic retrieval or an explicit profile and source-version set.
 ---
