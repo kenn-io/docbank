@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-17
+last_edited: 2026-10-28
 title: Model Context Protocol
 description: Connect a local MCP client to Docbank's read-mostly document tools through the daemon.
 ---
@@ -259,11 +259,42 @@ quota. The size bound accommodates paths up to 16 KiB. Tampered, expired,
 reused-for-another-query, or daemon-restart-invalidated cursors fail instead of
 restarting at page one.
 
-`answer_question` returns evidence without writing an answer. `ANSWERED` means
 `list_documents.source_present` and `search_documents.filters.source_present`
 optionally exclude documents whose watched source is known to be gone.
 Both default to false. Push-owned documents remain included. The filter is
 applied before pagination and source-fence limits.
+
+### Answer questions
+
+`answer_question` returns evidence without writing an answer. Content passages require every word of `question` to appear in one segment; key terms match better than a sentence. `ANSWERED` means
+that a content excerpt matched; it does not verify that the excerpt answers the
+question. Open the source to verify any quotation: excerpts can include omission
+markers and are not necessarily contiguous spans. Results without content text
+are leads, not passages. `NO_MATCH` means a completed search returned no
+candidates, not that the vault contains no answer. A validated empty scope is
+vacuously complete and returns `NO_MATCH` without executing a search. Incomplete
+indexing, leads, truncated retrieval, or omitted evidence can produce
+`INCOMPLETE_COVERAGE`.
+Passages and resource links are returned in order within the response budget;
+`omitted_passages`, `omitted_leads`, and `omitted_links` report what did not fit.
+
+The default scope is all live files. A scope above 4,096 versions reports
+`scope_too_large` and its observed count; narrow it with filters. The receipt's
+fence fingerprint identifies the vault and version ID set, not an immutable
+catalog or index snapshot. `cited_versions` lists the versions of returned passages.
+`vector_space_ids` come from returned passages and leads.
+The receipt supports audit, not exact reproduction. Search may send the question
+to a query embedding provider under the daemon's existing consent policy.
+Reranking is optional and can disclose excerpts under that policy.
+When present, `relevance` preserves the applied reranker's score on its own
+scale; it is not necessarily normalized to 0–1.
+
+Omit `profile` for automatic profile and binding retries, including when a vector
+index is stale. Unclassified processing failures stop the search. With `rerank: true`,
+automatic selection and lexical fallback use only profiles that support reranking.
+An explicit `profile` uses its first query binding in name order unless
+`binding_id` selects another. `binding_id` requires `profile`. Profiles without query bindings use lexical search.
+Its search failures are returned without automatic retries or lexical fallback.
 
 Before searching, `search_documents` resolves its selector to a source fence:
 the exact set of current, live versions it will search. Filters may select a

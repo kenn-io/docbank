@@ -653,6 +653,15 @@ func listDocumentsSchemas() (schema, schema) {
 	return input, output
 }
 
+func searchCoverageSchema() schema {
+	return objectSchema(schema{
+		"binding_required":   booleanSchema(),
+		"scoped_documents":   integerSchema(0, 4096),
+		"complete_documents": integerSchema(0, 4096),
+		schemaStateField:     stringSchema(64),
+	}, "binding_required", "scoped_documents", "complete_documents", schemaStateField)
+}
+
 func searchDocumentsSchemas() (schema, schema) {
 	properties := fenceInputProperties()
 	properties["query"] = schema{"type": "string", "minLength": 1, "maxLength": 8192}
@@ -684,12 +693,7 @@ func searchDocumentsSchemas() (schema, schema) {
 		"observed_scope_count": integerSchema(0, 0),
 		"requested_mode":       enumSchema("auto", "lexical", "semantic", "hybrid"),
 		"actual_mode":          enumSchema("lexical", "semantic", "hybrid"),
-		"coverage": objectSchema(schema{
-			"binding_required":   booleanSchema(),
-			"scoped_documents":   integerSchema(0, 4096),
-			"complete_documents": integerSchema(0, 4096),
-			schemaStateField:     stringSchema(64),
-		}, "binding_required", "scoped_documents", "complete_documents", schemaStateField),
+		"coverage":             searchCoverageSchema(),
 		"reranking": objectSchema(schema{
 			"outcome":         enumSchema("applied", "skipped", "degraded"),
 			"cause":           stringSchema(64),
