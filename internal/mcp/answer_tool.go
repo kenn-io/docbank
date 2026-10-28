@@ -91,12 +91,7 @@ type answerClient interface {
 type answerReadSession func(context.Context, func(context.Context, answerClient) error) error
 
 func daemonAnswerSession(lease *daemonLease) answerReadSession {
-	return func(ctx context.Context, call func(context.Context, answerClient) error) error {
-		_, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (struct{}, error) {
-			return struct{}{}, call(ctx, daemonDocumentClient{c})
-		})
-		return err
-	}
+	return daemonClientSession(lease, func(c *daemonconn.Connection) answerClient { return daemonDocumentClient{c} })
 }
 
 var answerErrorMessages = map[string]string{
@@ -258,7 +253,7 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 		}
 		out.Receipt.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: outcome}
 	}
-	out.CoverageComplete = (result.report.ActualMode == "semantic" || result.report.ActualMode == "hybrid") && coverage.State == "complete" && coverage.CompleteDocuments == coverage.ScopedDocuments
+	out.CoverageComplete = (result.report.ActualMode == "semantic" || result.report.ActualMode == "hybrid") && coverage.State == "complete"
 	if result.binding == "" || (result.report.ActualMode != "semantic" && result.report.ActualMode != "hybrid") {
 		if result.executed {
 			out.CoverageReasons = append(out.CoverageReasons, "semantic_unavailable")
@@ -270,7 +265,7 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 	if !result.executed {
 		out.CoverageComplete = true
 	}
-	if coverage.State != "complete" || coverage.CompleteDocuments != coverage.ScopedDocuments {
+	if coverage.State != "complete" {
 		out.CoverageReasons = append(out.CoverageReasons, "embeddings_incomplete")
 	}
 	if result.report.Truncated {
@@ -338,13 +333,8 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 		}
 		slices.Sort(out.Receipt.VectorSpaceIDs)
 		out.Receipt.CitedVersions = out.Receipt.CitedVersions[:0]
-		seen := map[answerCitation]bool{}
 		for _, p := range out.Passages {
-			c := answerCitation{p.NodeID, p.ContentVersionID}
-			if !seen[c] {
-				seen[c] = true
-				out.Receipt.CitedVersions = append(out.Receipt.CitedVersions, c)
-			}
+			out.Receipt.CitedVersions = append(out.Receipt.CitedVersions, answerCitation{p.NodeID, p.ContentVersionID})
 		}
 		slices.SortFunc(out.Receipt.CitedVersions, func(a, b answerCitation) int {
 			if n := cmp.Compare(a.NodeID, b.NodeID); n != 0 {
