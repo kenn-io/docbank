@@ -81,7 +81,7 @@ func verifyRedactionFile(ctx context.Context, path string,
 	if err != nil {
 		return result, err
 	}
-	if err := pdfproduction.VerifySaved(ctx, contents.PDF, contents.PDF.Size(), review.Resolved, review.Recipe); err != nil {
+	if err := pdfproduction.VerifySaved(ctx, contents.PDF, contents.PDF.Size(), review.Resolved, review.Recipe, contents.Presentation); err != nil {
 		return result, err
 	}
 	return processing.RedactionArchive{Receipt: contents.Receipt, Size: snapshot.size, SHA256: snapshot.sha256}, ctx.Err()
@@ -89,12 +89,16 @@ func verifyRedactionFile(ctx context.Context, path string,
 
 func writeRedactionVerification(output io.Writer, result processing.RedactionArchive) error {
 	receipt := result.Receipt
-	_, err := fmt.Fprintf(output, "PDF masks and text match the supplied review.\n"+
+	claim := "PDF masks and text match the supplied review."
+	if receipt.Numbered != nil {
+		claim = "PDF masks, text and numbers match the supplied review and reservation metadata."
+	}
+	_, err := fmt.Fprintf(output, "%s\n"+
 		"Archive: %d bytes, SHA-256 %s\nReview SHA-256: %s\nPages: %d\n"+
 		"PDF: %d bytes, SHA-256 %s\nText: %d bytes, SHA-256 %s\n"+
 		"Unmasked image content and producer identity were not verified. "+
 		"Compare the archive SHA-256 with the render-time value.\n",
-		result.Size, result.SHA256, receipt.ReviewSHA256, receipt.PageCount,
+		claim, result.Size, result.SHA256, receipt.ReviewSHA256, receipt.PageCount,
 		receipt.PDF.Size, receipt.PDF.SHA256, receipt.Text.Size, receipt.Text.SHA256)
 	if err != nil {
 		return fmt.Errorf("writing redaction verification: %w", err)

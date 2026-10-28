@@ -8,10 +8,12 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"uuid"
 
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/canonical"
+	"go.kenn.io/docbank/internal/pdfproduction"
 	"go.kenn.io/docbank/internal/processing"
 )
 
@@ -55,6 +57,28 @@ func (c *Connection) RenderNativePDFTo(ctx context.Context, request processing.R
 	contents, err := VerifyRedactionArchive(ctx, output, size, review)
 	if err != nil {
 		return result, err
+	}
+	if request.AllocationID != uuid.Nil() {
+		if contents.Receipt.Numbered == nil || contents.Receipt.Numbered.Reservation.AllocationID != request.AllocationID {
+			return result, integrityErrorf("numbered receipt differs from requested allocation")
+		}
+		artifact, err := c.BatesExport(ctx, request.AllocationID.String())
+		if err != nil {
+			return result, err
+		}
+		r, err := checkedBatesRecipe(artifact, &review)
+		if err != nil {
+			return result, err
+		}
+		if r == nil || r.RecipeSHA256 != contents.Receipt.Numbered.Reservation.RecipeSHA256 ||
+			artifact.ManifestSHA256 != contents.Receipt.Numbered.ArtifactManifestSHA256 || artifact.BlobSHA256 != contents.Receipt.PDF.SHA256 || artifact.Size != contents.Receipt.PDF.Size {
+			return result, integrityErrorf("numbered archive differs from retained artifact")
+		}
+		if err := pdfproduction.VerifySaved(ctx, contents.PDF, contents.PDF.Size(), review.Resolved, review.Recipe, contents.Presentation); err != nil {
+			return result, err
+		}
+	} else if contents.Receipt.Numbered != nil {
+		return result, integrityErrorf("unexpected numbering on plain render")
 	}
 	return processing.RedactionArchive{Receipt: contents.Receipt, Size: size, SHA256: digest}, nil
 }

@@ -15,6 +15,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -179,7 +180,7 @@ func newRedactionVerifyFixture(t *testing.T) redactionVerifyFixture {
 
 func (f redactionVerifyFixture) archive(t *testing.T, scenario string) []byte {
 	t.Helper()
-	pdf := redactionVerifyPDF(t, f.review, scenario == "unmasked PDF")
+	pdf := redactionVerifyPDF(t, f.review, nil, scenario)
 	if scenario == "non-PDF" {
 		pdf = []byte("self-consistently hashed non-PDF payload")
 	}
@@ -224,7 +225,7 @@ func redactionFixtureDigest(data []byte) processing.RedactionFileDigest {
 // Generate from the reviewed runs without any original PDF or page runtime.
 // The malicious variant deliberately bypasses WriteFresh's mask binding using
 // the rendition writer, then hashes the resulting well-formed PDF honestly.
-func redactionVerifyPDF(t *testing.T, review processing.RedactionReview, unmask bool) []byte {
+func redactionVerifyPDF(t *testing.T, review processing.RedactionReview, presentation []pdfproduction.PagePresentation, scenario string) []byte {
 	t.Helper()
 	page := review.Resolved.Pages[0]
 	pixels := image.NewNRGBA(image.Rect(0, 0, 2550, 3300))
@@ -234,24 +235,41 @@ func redactionVerifyPDF(t *testing.T, review processing.RedactionReview, unmask 
 	for _, mask := range masks {
 		draw.Draw(pixels, mask, image.NewUniform(color.Black), image.Point{}, draw.Src)
 	}
-	if unmask {
+	layout := redaction.PageLayout{Source: page, Output: page}
+	endorsements := []redaction.Endorsement{}
+	if presentation != nil {
+		p := presentation[0]
+		layout, endorsements = p.Layout, p.Endorsements
+		visible := endorsements
+		if scenario == "wrong visible number" {
+			visible = slices.Clone(endorsements)
+			visible[0].Text = "Q000002"
+		}
+		raster, err := pdfproduction.Burn(pdfproduction.Raster{Pixels: pixels, Page: page, DPI: review.Recipe.DPI}, review.Resolved.RedactBoxes, review.Recipe)
+		require.NoError(t, err)
+		raster, err = pdfproduction.Endorse(raster, layout, visible, review.Recipe)
+		require.NoError(t, err)
+		pixels = raster.Pixels
+	}
+	if scenario == "unmasked PDF" {
 		pixels.SetNRGBA(masks[0].Min.X+1, masks[0].Min.Y+1, color.NRGBA{R: 255, A: 255})
 	}
 	var encoded bytes.Buffer
 	require.NoError(t, png.Encode(&encoded, pixels))
 	data := encoded.Bytes()
-	layout := redaction.PageLayout{Source: page, Output: page}
 	layoutJSON, err := canonical.Marshal(layout)
 	require.NoError(t, err)
-	a := pdfproduction.PageArtifact{Page: page, Layout: layout, LayoutSHA256: redactionFixtureDigest(layoutJSON).SHA256,
-		ResolvedSHA256: review.Resolved.SHA256, Runs: review.Resolved.Runs, Endorsements: []redaction.Endorsement{},
-		EndorsementsSHA256: redactionFixtureDigest([]byte("[]")).SHA256,
+	endorsementsJSON, err := canonical.Marshal(endorsements)
+	require.NoError(t, err)
+	a := pdfproduction.PageArtifact{Page: layout.Output, Layout: layout, LayoutSHA256: redactionFixtureDigest(layoutJSON).SHA256,
+		ResolvedSHA256: review.Resolved.SHA256, Runs: review.Resolved.Runs, Endorsements: endorsements,
+		EndorsementsSHA256: redactionFixtureDigest(endorsementsJSON).SHA256,
 		PNGSHA256:          redactionFixtureDigest(data).SHA256, PNGSize: int64(len(data)),
 		OpenPNG: func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(data)), nil }}
 	var out bytes.Buffer
 	options := pdfproduction.PDFWriteOptions{Recipe: review.Recipe, StagingDirectory: t.TempDir(), MaxBytes: review.Recipe.MaxStagingBytes}
 	sequence := &redactionPageSequence{artifact: a}
-	if unmask {
+	if scenario == "unmasked PDF" || scenario == "wrong visible number" {
 		err = pdfproduction.WriteRendition(t.Context(), &out, sequence, options)
 	} else {
 		err = pdfproduction.WriteFresh(t.Context(), &out, sequence, review.Resolved, options)

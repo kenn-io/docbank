@@ -194,6 +194,7 @@ it("starts, reads, lists, and prepares a verified publication", async () => {
     namespace_id: namespace.namespace_id,
     snapshot_id: "33333333-3333-4333-8333-333333333333",
     recipe_sha256: recipeHash,
+    request_sha256: "d".repeat(64),
     state: "reserved" as const,
     start_sequence: 1,
     end_sequence: 1,

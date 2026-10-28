@@ -373,15 +373,23 @@ func batesPlanOutputSchema() schema {
 	}), cacheRequired("namespace", "start_sequence", "end_sequence", "labels", "stamped_nothing")...)
 }
 
-func batesAllocationOutputSchema() schema {
-	return rootObjectSchema(withPrivateCache(schema{
+func batesAllocationProperties() schema {
+	return schema{
 		"allocation_id": uuidSchema(), "namespace_id": uuidSchema(), "snapshot_id": uuidSchema(),
-		"recipe_sha256": sha256Schema(), schemaStateField: enumSchema("reserved", "committed"),
+		"recipe_sha256": sha256Schema(), "request_sha256": sha256Schema(), schemaStateField: enumSchema("reserved", "committed"),
 		"start_sequence": integerSchema(1, 0), "end_sequence": integerSchema(1, 0),
 		"labels": arraySchema(batesPageLabelSchema(), maxBatesLabels), schemaCreatedAtField: dateTimeSchema(),
 		"committed_at": dateTimeSchema(),
-	}), cacheRequired("allocation_id", "namespace_id", "snapshot_id", "recipe_sha256", schemaStateField,
-		"start_sequence", "end_sequence", "labels", schemaCreatedAtField)...)
+	}
+}
+
+func batesAllocationRequired() []string {
+	return []string{"allocation_id", "namespace_id", "snapshot_id", "recipe_sha256", schemaStateField,
+		"start_sequence", "end_sequence", "labels", schemaCreatedAtField}
+}
+
+func batesAllocationOutputSchema() schema {
+	return rootObjectSchema(withPrivateCache(batesAllocationProperties()), cacheRequired(batesAllocationRequired()...)...)
 }
 
 func listBatesNamespacesSchemas() (schema, schema) {
@@ -425,7 +433,9 @@ func batesExportPageReceiptSchema() schema {
 }
 
 func batesExportProperties() schema {
+	allocation := objectSchema(batesAllocationProperties(), batesAllocationRequired()...)
 	return schema{
+		"recipe": schema{"type": "object"}, "allocation": allocation, "namespace": batesNamespaceSchema(),
 		"artifact_id": uuidSchema(), "allocation_id": uuidSchema(), "blob_sha256": sha256Schema(),
 		"size": integerSchema(1, 0), "media_type": schema{"type": "string", jsonSchemaConst: batesExportMediaType},
 		"page_count": integerSchema(1, maxBatesLabels), "recipe_sha256": sha256Schema(),
@@ -520,9 +530,9 @@ func exportBatesFileSchemas() (schema, schema) {
 			"overwrite": booleanSchema(),
 		}, "allocation_id", "destination_path", "overwrite"), rootObjectSchema(withPrivateCache(schema{
 			"allocation_id": uuidSchema(), "artifact_id": uuidSchema(), "destination_path": stringSchema(maxPathCharacters),
-			"blob_sha256": sha256Schema(), "manifest_sha256": sha256Schema(), "size": integerSchema(1, 512<<20),
+			"blob_sha256": sha256Schema(), "manifest_sha256": sha256Schema(), "size": integerSchema(1, 512<<20), "verification": enumSchema("recorded_bytes_and_numbers", "masks_text_and_numbers", "stamped_labels"),
 			schemaStateField: enumSchema("published", "published_durability_unknown"),
-		}), cacheRequired("allocation_id", "artifact_id", "destination_path", "blob_sha256", "manifest_sha256", "size", schemaStateField)...)
+		}), cacheRequired("allocation_id", "artifact_id", "destination_path", "blob_sha256", "manifest_sha256", "size", "verification", schemaStateField)...)
 }
 
 func exportLoadFilePackageSchemas() (schema, schema) {

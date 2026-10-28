@@ -16,7 +16,7 @@ import (
 
 const maxPackageFileExportBytes int64 = 512 << 20
 
-type packageExportStagingFile interface {
+type downloadStagingFile interface {
 	io.ReadWriteSeeker
 	io.ReaderAt
 }
@@ -58,7 +58,7 @@ func (c *Connection) CreatePackageExport(ctx context.Context, request api.Packag
 // CreatePackageExportTo streams a package into a seekable staging file and
 // independently reopens the ZIP before returning its bound receipt.
 func (c *Connection) CreatePackageExportTo(
-	ctx context.Context, request api.PackageExportRequest, destination packageExportStagingFile,
+	ctx context.Context, request api.PackageExportRequest, destination downloadStagingFile,
 ) (api.PackageExportTicket, error) {
 	if destination == nil {
 		return api.PackageExportTicket{}, errors.New("load-file export destination is required")

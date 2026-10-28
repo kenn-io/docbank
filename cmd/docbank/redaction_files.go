@@ -60,6 +60,9 @@ func readRedactionInputs(preparationPath, masksPath string) (processing.Redactio
 	}
 	result.Preparation = transport.RedactionPreparation
 	if err := processing.ValidateRedactionPreparation(result.Preparation); err != nil {
+		if errors.Is(err, pdfproduction.ErrVerifierVersion) {
+			return result, redactionCLIError(err)
+		}
 		return result, usageError(err)
 	}
 	if err := production.ValidateNativePreparationDerivation(result.Preparation.NativePreparation); err != nil {
@@ -87,13 +90,16 @@ func readRedactionReview(path string, request processing.RedactionResolveRequest
 		return transport.RedactionReview, usageError(err)
 	}
 	err = processing.ValidateRedactionReview(request.Preparation, request.Masks, transport.RedactionReview)
-	if errors.Is(err, processing.ErrRedactionReviewChanged) {
+	if errors.Is(err, processing.ErrRedactionReviewChanged) || errors.Is(err, pdfproduction.ErrVerifierVersion) {
 		return transport.RedactionReview, redactionCLIError(err)
 	}
 	return transport.RedactionReview, usageError(err)
 }
 
 func redactionCLIError(err error) error {
+	if errors.Is(err, pdfproduction.ErrVerifierVersion) {
+		return &exitError{code: exitGeneral, err: err}
+	}
 	if _, ok := errors.AsType[*pdfproduction.RSSLimitError](err); ok {
 		return &exitError{code: exitBusy, err: err}
 	}
@@ -110,7 +116,7 @@ func redactionCLIError(err error) error {
 	switch code {
 	case "invalid_redaction_request", "invalid_redaction_preparation":
 		return usageError(err)
-	case "source_stale", "redaction_preparation_changed", "redaction_review_changed":
+	case "source_stale", "redaction_preparation_changed", "redaction_review_changed", "bates_reservation_conflict":
 		return &exitError{code: exitStale, err: err}
 	case "redaction_busy", "redaction_memory":
 		return &exitError{code: exitBusy, err: err}

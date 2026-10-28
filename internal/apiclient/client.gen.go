@@ -12176,6 +12176,53 @@ func (c *Client) RenderNativePDF(ctx context.Context, options *RenderNativePDFRe
 	return responseParser(ctx, resp)
 }
 
+// ReserveNumberedPDF Retain one reviewed original indefinitely and reserve its Bates numbers
+func (c *Client) ReserveNumberedPDF(ctx context.Context, options *ReserveNumberedPDFRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReserveNumberedPDFResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/redaction/reservations",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ReserveNumberedPDFResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ReserveNumberedPDFResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ReserveNumberedPDFResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ReserveNumberedPDFErrorResponse](resp, "ReserveNumberedPDFErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/redaction/reservations")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ResolveNativePDF Review explicit masks against a freshly inspected retained PDF
 func (c *Client) ResolveNativePDF(ctx context.Context, options *ResolveNativePDFRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResolveNativePDFResponse, error) {
 	var err error
@@ -23271,6 +23318,34 @@ func (o *RenderNativePDFRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// ReserveNumberedPDFRequestOptions is the options needed to make a request to ReserveNumberedPDF.
+type ReserveNumberedPDFRequestOptions struct {
+	Body *ReserveNumberedPDFBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ReserveNumberedPDFRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ReserveNumberedPDFRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ReserveNumberedPDFRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ReserveNumberedPDFRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // ResolveNativePDFRequestOptions is the options needed to make a request to ResolveNativePDF.
 type ResolveNativePDFRequestOptions struct {
 	Body *ResolveNativePDFBody
@@ -26608,6 +26683,8 @@ type PrepareNativePDFBody = RedactionPreparationRequest
 
 type RenderNativePDFBody = RedactionRenderRequest
 
+type ReserveNumberedPDFBody = NumberedReservationRequest
+
 type ResolveNativePDFBody = RedactionResolveRequest
 
 type ReadDocumentRenditionBySelectorBody = RenditionSelectorRequest
@@ -28179,6 +28256,30 @@ type RenderNativePDFResponse = []byte
 
 type RenderNativePDFErrorResponse = Error
 
+type ReserveNumberedPDFResponse = processing.NumberedReservation
+
+type ReserveNumberedPDFErrorResponse api.Error
+
+type ReserveNumberedPDFErrorResponseApplicationProblemPlusJSON api.Error
+
+type ReserveNumberedPDFErrorResponseApplicationProblemPlusJSON403 api.Error
+
+type ReserveNumberedPDFErrorResponseApplicationProblemPlusJSON404 api.Error
+
+type ReserveNumberedPDFErrorResponseApplicationProblemPlusJSON408 api.Error
+
+type ReserveNumberedPDFErrorResponseApplicationProblemPlusJSON409 api.Error
+
+type ReserveNumberedPDFErrorResponseApplicationProblemPlusJSON413 api.Error
+
+type ReserveNumberedPDFErrorResponseApplicationProblemPlusJSON422 api.Error
+
+type ReserveNumberedPDFErrorResponseApplicationProblemPlusJSON500 api.Error
+
+type ReserveNumberedPDFErrorResponseApplicationProblemPlusJSON503 api.Error
+
+type ReserveNumberedPDFErrorResponseApplicationProblemPlusJSON504 api.Error
+
 type ResolveNativePDFResponse = processing.RedactionReview
 
 type ResolveNativePDFErrorResponse api.Error
@@ -28659,7 +28760,7 @@ type BatchTagTarget = api.BatchTagTarget
 
 type BatesAllocation = api.BatesAllocation
 
-type BatesArtifactPage = api.BatesArtifactPage
+type BatesArtifactPage = store.BatesArtifactPage
 
 type BatesCandidate = api.BatesCandidate
 
@@ -29221,6 +29322,16 @@ type NativeTextPage = pdfproduction.NativeTextPage
 type Node = api.Node
 
 type NodePage = api.NodePage
+
+type NumberedFooter = pdfproduction.NumberedFooter
+
+type NumberedNamespace = processing.NumberedNamespace
+
+type NumberedRecipe = processing.NumberedRecipe
+
+type NumberedReservation = processing.NumberedReservation
+
+type NumberedReservationRequest = processing.NumberedReservationRequest
 
 type OutputCounts = bundle.OutputCounts
 

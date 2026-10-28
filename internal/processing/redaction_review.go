@@ -89,6 +89,9 @@ func redactionReviewDigest(review RedactionReview) (string, error) {
 }
 
 func ValidateRedactionReview(prep RedactionPreparation, masks []RedactionMask, review RedactionReview) error {
+	if review.Recipe != pdfproduction.QualifiedRecipe() {
+		return pdfproduction.ErrVerifierVersion
+	}
 	expected, err := BuildRedactionReview(prep, masks, review.ObservedNodeRevision)
 	if err != nil {
 		return err

@@ -99,6 +99,7 @@ func DecodeRedactionResolveRequest(data []byte) (RedactionResolveRequest, error)
 
 func DecodeRedactionRenderRequest(data []byte) (RedactionRenderRequest, error) {
 	var raw struct {
+		AllocationID jsontext.Value                `json:"allocation_id,omitzero"`
 		Preparation  redactionPreparationTransport `json:"preparation"`
 		Masks        jsontext.Value                `json:"masks"`
 		ReviewSHA256 string                        `json:"review_sha256"`
@@ -112,6 +113,37 @@ func DecodeRedactionRenderRequest(data []byte) (RedactionRenderRequest, error) {
 	if !canonical.IsSHA256Hex(raw.ReviewSHA256) {
 		return RedactionRenderRequest{}, ErrRedactionInvalidRequest
 	}
+	var allocation uuid.UUID
+	if len(raw.AllocationID) > 0 {
+		var id string
+		if err := json.Unmarshal(raw.AllocationID, &id); err != nil || canonical.ValidateUUIDv4(id) != nil {
+			return RedactionRenderRequest{}, ErrRedactionInvalidRequest
+		}
+		allocation = uuid.MustParse(id)
+	}
 	masks, err := DecodeRedactionMasks(raw.Masks)
-	return RedactionRenderRequest{Preparation: raw.Preparation.RedactionPreparation, Masks: masks, ReviewSHA256: raw.ReviewSHA256}, err
+	return RedactionRenderRequest{Preparation: raw.Preparation.RedactionPreparation, Masks: masks, ReviewSHA256: raw.ReviewSHA256, AllocationID: allocation}, err
+}
+
+func DecodeNumberedReservationRequest(data []byte) (NumberedReservationRequest, error) {
+	var raw struct {
+		Preparation    redactionPreparationTransport `json:"preparation"`
+		Masks          jsontext.Value                `json:"masks"`
+		ReviewSHA256   string                        `json:"review_sha256"`
+		NamespaceID    string                        `json:"namespace_id"`
+		StartAt        int64                         `json:"start_at"`
+		RetainOriginal bool                          `json:"retain_original"`
+	}
+	if int64(len(data)) > MaxRedactionRequestBytes {
+		return NumberedReservationRequest{}, ErrRedactionInvalidRequest
+	}
+	if err := json.Unmarshal(data, &raw, json.RejectUnknownMembers(true)); err != nil {
+		return NumberedReservationRequest{}, ErrRedactionInvalidRequest
+	}
+	if !raw.RetainOriginal || raw.StartAt < 1 || canonical.ValidateUUIDv4(raw.NamespaceID) != nil || !canonical.IsSHA256Hex(raw.ReviewSHA256) {
+		return NumberedReservationRequest{}, ErrRedactionInvalidRequest
+	}
+	masks, err := DecodeRedactionMasks(raw.Masks)
+	return NumberedReservationRequest{Preparation: raw.Preparation.RedactionPreparation, Masks: masks,
+		ReviewSHA256: raw.ReviewSHA256, NamespaceID: uuid.MustParse(raw.NamespaceID), StartAt: raw.StartAt, RetainOriginal: true}, err
 }

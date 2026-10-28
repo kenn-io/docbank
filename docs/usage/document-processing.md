@@ -198,12 +198,91 @@ inspect the named archive before retrying.
 The daemon verifies the fresh PDF before creating the ZIP. The CLI verifies the
 transferred archive, its inventory, file hashes, receipt and reviewed text
 before publishing one file. Client checks do not independently verify the
-source pixels. The daemon retains no job, attachment or output for later download.
+source pixels. Plain rendering retains no job, attachment or output for later download.
 A killed daemon may leave private files in its spool; see the
 [staging bounds](../architecture/page-images.md#native-pdf-mask-execution).
 Agents can use these commands or the authenticated `POST /api/v1/redaction/resolve`
 and `/api/v1/redaction/render` routes. Browser sessions and MCP tools do not
 expose these operations.
+
+### Deliver one reviewed PDF with Bates numbers
+
+Reserve a range only when you intend to keep the original indefinitely. This
+creates a real collection snapshot that retains the unredacted original through
+trash, garbage collection and backups. There is no release or void command for
+this snapshot or range. `--retain-original` is required on every reservation
+request, including retries.
+
+Prepare and review the PDF as above, then choose a namespace and explicit start:
+
+```sh
+docbank bates namespaces --create --prefix PROD --padding 6 --json
+docbank redaction reserve preparation.json masks.json review.json \
+  --namespace <namespace-uuid> --start 1 --retain-original --json > reservation.json
+docbank redaction render preparation.json masks.json review.json numbered.zip \
+  --allocation <allocation_id-from-reservation.json> --json
+```
+
+Each source page gets a half-inch footer containing its reserved label. A label
+that cannot fit is refused before the original is retained or numbers are
+reserved; labels are never clipped or shrunk. Masks cover the source area only.
+The ZIP still contains `redacted.pdf`, `redacted.txt` and `receipt.json`. Extract
+`redacted.pdf` to view it. The PDF text layer includes the numbers; `redacted.txt`
+contains only the reviewed sanitized text, without footer labels. The receipt
+records the reservation, labels and indefinite original retention.
+
+The vault retains the numbered **PDF**, its recipe and page receipts. It does not
+retain the ZIP, sidecar or the preparation, masks and review files. Keep those
+three review inputs separately for full verification and ZIP reconstruction.
+Each PDF currently embeds about 9.6 MB of font data, even for a small document.
+
+Reservation and snapshot creation are atomic. After an interrupted reservation,
+repeat exactly the same command with the same review, namespace, start and
+retention consent. It returns the existing allocation. Changing those inputs
+requests a different allocation or produces a conflict; it is not a recovery
+step. Failed renders leave the range reserved. Numbers are never silently reused.
+Retry render with the same `--allocation`, even if the source was subsequently
+trashed: the sealed snapshot supplies the exact original. A completed retry
+uses the first retained PDF and rebuilds the same ZIP without the page runtime.
+It still takes the shared native-PDF slot; a running render can hold that slot
+for ten minutes, during which attempts fail as busy. Reservation-receipt replay
+and a retained PDF download need no slot.
+
+Recover the PDF by allocation ID, or find the allocation by its number through
+`find_bates_exports` or `GET /api/v1/bates/exports/candidates?bates_label=PROD000001`:
+
+```sh
+docbank bates export download <allocation-id> recovered.pdf --json
+docbank bates export download <allocation-id> checked.pdf --json \
+  --preparation preparation.json --masks masks.json --review review.json
+```
+
+| Inputs and artifact | `verification` result | What is checked |
+|---|---|---|
+| Numbered PDF without review files | `recorded_bytes_and_numbers` | Size and SHA-256 against the retained artifact, plus recipe, allocation and label metadata. Masks, approved text and rendered numbers are not rechecked. |
+| Numbered PDF with all three review files | `masks_text_and_numbers` | Recorded identity plus PDF structure, reviewed masks and text, footer layout and rendered numbers. |
+| Ordinary stamped Bates PDF with the installed engine identity | `stamped_labels` | Recorded identity and the existing stamp verifier. |
+| Ordinary stamped Bates PDF with a different recorded engine identity | `recorded_bytes_and_numbers` | Recorded identity and numbering metadata. Rendered stamps are not rechecked. |
+
+Supplying any review-file flag requires all three. The verifier is selected from
+the checked recipe before download; a failed full check never retries a narrower
+one. Recovery without review files works after restart and backup/restore,
+without a configured page runtime or the original renderer, writer or font version.
+Its assurance depends on the vault's retained record. Full verification requires
+a matching engine recipe; a mismatch reports "verifier version differs" (exit 1),
+not an integrity failure. Footer text and placement must match exactly. Visible
+numbers are compared with independently rendered expected labels. Each grayscale
+sample inside the label box may differ by at most 16 on the 0–255 scale; positions
+must match, and pixels outside the box must be white. Render-time verification
+still compares the complete raster exactly. Full verification still does not prove unmasked pixels match the source
+or authenticate the producer.
+
+Agents can reserve and render through the CLI or API-key-only
+`POST /api/v1/redaction/reservations` and `/api/v1/redaction/render` routes.
+The existing MCP `export_bates_file` tool supports the reduced recovery check
+and reports its scope. It does not accept review files or reserve numbered
+redactions. No browser control is included. Load-file exports accept ordinary
+stamped allocations only; download a numbered native PDF directly by its allocation.
 
 ### Check and retain a saved archive
 
@@ -220,6 +299,8 @@ It checks the ZIP inventory, entry checksums, receipt bindings and sanitized
 text, then uses embedded PDFium to check the PDF against the review. Every
 reviewed mask must be opaque black, the searchable text and its placement must
 match the reviewed runs, and the file must have the fresh writer's structure.
+For numbered output, the receipt also binds the reservation and expected footer
+labels; the verifier checks their layout, text and pixels.
 It prints the complete archive's SHA-256 and byte
 count, plus the receipt. JSON output is `{ "receipt": ..., "size": ..., "sha256": ... }`.
 The archive must be a regular file of at most 544 MiB. Keep it unchanged while

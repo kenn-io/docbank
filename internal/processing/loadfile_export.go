@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -19,6 +20,7 @@ import (
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/loadfile"
+	"go.kenn.io/docbank/internal/pdfproduction"
 	"go.kenn.io/docbank/internal/pdfstamp"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -687,6 +689,28 @@ func loadBatesPackageMembers(ctx context.Context, catalog *store.Store, blobs *b
 	allocation, err := catalog.BatesAllocation(ctx, request.BatesAllocationID)
 	if err != nil || allocation.SnapshotID != request.SnapshotID || allocation.State != "committed" {
 		return nil, nil, loadFileArchiveEntry{}, store.ErrPackageConflict
+	}
+	artifact, err := catalog.BatesArtifact(ctx, request.BatesAllocationID)
+	if err != nil {
+		return nil, nil, loadFileArchiveEntry{}, err
+	}
+	namespace, err := catalog.BatesNamespace(ctx, allocation.NamespaceID, "", "", 0)
+	if err != nil {
+		return nil, nil, loadFileArchiveEntry{}, err
+	}
+	numbered, err := CheckBatesArtifact(artifact, allocation, namespace)
+	if err != nil {
+		return nil, nil, loadFileArchiveEntry{}, err
+	}
+	if numbered != nil {
+		return nil, nil, loadFileArchiveEntry{}, fmt.Errorf("%w: numbered native PDFs cannot be included in load-file exports; download the retained PDF by its allocation", loadfile.ErrUnrepresentable)
+	}
+	var recipe pdfstamp.Recipe
+	if err := json.Unmarshal(artifact.RecipeJSON, &recipe); err != nil {
+		return nil, nil, loadFileArchiveEntry{}, err
+	}
+	if !recipe.QualifiedEngine() {
+		return nil, nil, loadFileArchiveEntry{}, fmt.Errorf("%w: %w", loadfile.ErrUnrepresentable, pdfproduction.ErrVerifierVersion)
 	}
 	data, artifact, err := ReadBatesExport(ctx, catalog, blobs, request.BatesAllocationID)
 	if err != nil {

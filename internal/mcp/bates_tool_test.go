@@ -18,8 +18,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/pdfstamp"
+	"go.kenn.io/docbank/internal/store"
 )
 
 const (
@@ -35,7 +37,7 @@ func TestBatesReadToolsCallBoundedDaemonContracts(t *testing.T) {
 		CreatedAt: "2026-09-21T12:00:00Z"}
 	label := api.BatesPageLabel{Ordinal: 1, OccurrenceID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		SourcePage: 1, OutputPage: 1, Label: "OUR000041"}
-	allocation := api.BatesAllocation{AllocationID: testBatesAllocationID, NamespaceID: testBatesNamespaceID,
+	allocation := api.BatesAllocation{RequestSHA256: testProfileID, AllocationID: testBatesAllocationID, NamespaceID: testBatesNamespaceID,
 		SnapshotID: testBatesSnapshotID, RecipeSHA256: recipe, State: "reserved", StartSequence: 41,
 		EndSequence: 41, Labels: []api.BatesPageLabel{label}, CreatedAt: "2026-09-21T12:00:00Z"}
 	var calls []string
@@ -98,7 +100,7 @@ func TestBatesWriteToolsAreOptInAndBindResponses(t *testing.T) {
 	require.NoError(t, err)
 	namespace := api.BatesNamespace{NamespaceID: testBatesNamespaceID, Prefix: "OUR", Suffix: "", Padding: 6,
 		CreatedAt: "2026-09-21T12:00:00Z"}
-	allocation := api.BatesAllocation{AllocationID: testBatesAllocationID, NamespaceID: testBatesNamespaceID,
+	allocation := api.BatesAllocation{RequestSHA256: testProfileID, AllocationID: testBatesAllocationID, NamespaceID: testBatesNamespaceID,
 		SnapshotID: testBatesSnapshotID, RecipeSHA256: recipe, State: "reserved", StartSequence: 41,
 		EndSequence: 41, Labels: []api.BatesPageLabel{{Ordinal: 1, OccurrenceID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			SourcePage: 1, OutputPage: 1, Label: "OUR000041"}}, CreatedAt: "2026-09-21T12:00:00Z"}
@@ -318,6 +320,7 @@ func TestExportBatesFilePublishesVerifiedPDF(t *testing.T) {
 	})
 
 	assert.Equal(t, "published", objectField(t, result, "structuredContent")["state"])
+	assert.Equal(t, "stamped_labels", objectField(t, result, "structuredContent")["verification"])
 	written, err := os.ReadFile(destination)
 	require.NoError(t, err)
 	assert.Equal(t, pdf, written)
@@ -385,7 +388,7 @@ func syntheticStampedBatesExport(t *testing.T) ([]byte, api.BatesExport) {
 	labels := []pdfstamp.PageLabel{{SourcePage: 1, Label: "OUR000041"}}
 	result, err := pdfstamp.Stamp(t.Context(), bytes.NewReader(unstamped.Bytes()), labels, syntheticBatesRecipe(), &stamped)
 	require.NoError(t, err)
-	return stamped.Bytes(), api.BatesExport{
+	receipt := api.BatesExport{
 		ArtifactID: testBatesAllocationID, AllocationID: testBatesAllocationID,
 		BlobSHA256: result.SHA256, Size: result.Size, MediaType: "application/pdf", PageCount: 1,
 		RecipeSHA256: testProfileID, ManifestSHA256: testProfileID, State: "verified",
@@ -394,6 +397,22 @@ func syntheticStampedBatesExport(t *testing.T) ([]byte, api.BatesExport) {
 			SourceBlobSHA256: testProfileID, SourcePage: 1, OutputPage: 1, Label: "OUR000041",
 		}},
 	}
+	recipe := syntheticBatesRecipe()
+	encoded, err := canonical.Marshal(recipe)
+	require.NoError(t, err)
+	receipt.Recipe = encoded
+	receipt.RecipeSHA256, err = recipe.SHA256()
+	require.NoError(t, err)
+	receipt.Namespace = &api.BatesNamespace{NamespaceID: recipe.NamespaceID, Prefix: recipe.Prefix, Suffix: recipe.Suffix, Padding: recipe.Padding}
+	receipt.Allocation = &api.BatesAllocation{AllocationID: receipt.AllocationID, NamespaceID: recipe.NamespaceID,
+		SnapshotID: testBatesSnapshotID, RecipeSHA256: receipt.RecipeSHA256, RequestSHA256: testProfileID, State: "committed",
+		StartSequence: int64(recipe.StartAt), EndSequence: int64(recipe.StartAt), Labels: []api.BatesPageLabel{{
+			Ordinal: 1, OccurrenceID: receipt.Pages[0].OccurrenceID, SourcePage: 1, OutputPage: 1, Label: receipt.Pages[0].Label}}}
+	receipt.ManifestSHA256, err = store.BatesArtifactManifestSHA(store.BatesArtifact{ArtifactID: receipt.ArtifactID,
+		AllocationID: receipt.AllocationID, BlobSHA256: receipt.BlobSHA256, Size: receipt.Size, PageCount: receipt.PageCount,
+		MediaType: receipt.MediaType, RecipeSHA256: receipt.RecipeSHA256, Pages: receipt.Pages})
+	require.NoError(t, err)
+	return stamped.Bytes(), receipt
 }
 
 func TestFindBatesExportsHandlesTheLongestPossibleLabel(t *testing.T) {

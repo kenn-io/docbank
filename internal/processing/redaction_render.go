@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"uuid"
 
 	"go.kenn.io/docbank/document/pagerender"
 	"go.kenn.io/docbank/internal/canonical"
@@ -44,7 +45,7 @@ func (service *Service) renderNativePDF(ctx context.Context, request RedactionRe
 	if err := ValidateRedactionMasks(request.Masks); err != nil {
 		return err
 	}
-	if service == nil || runtime == nil || !pagerender.SupportedPlatform() {
+	if service == nil || request.AllocationID == uuid.Nil() && (runtime == nil || !pagerender.SupportedPlatform()) {
 		return ErrRedactionPreparationUnavailable
 	}
 	op, err := service.beginNativePDFOperation(ctx, "render")
@@ -62,18 +63,11 @@ func (service *Service) renderNativePDF(ctx context.Context, request RedactionRe
 		}
 	}
 	defer func() { finish(op.Close()) }()
-	admitted, err := service.freshRedactionReview(op.ctx, op, RedactionResolveRequest{Preparation: request.Preparation, Masks: request.Masks}, runtime)
+	admitted, pdf, err := service.prepareRedactionRender(op.ctx, op, request, runtime, controls)
 	if err != nil {
 		return err
 	}
 	defer clear(admitted.data)
-	if admitted.review.SHA256 != request.ReviewSHA256 {
-		return ErrRedactionReviewChanged
-	}
-	pdf, err := renderRedactionPDF(op.ctx, op.directory, admitted, controls)
-	if err != nil {
-		return err
-	}
 	defer func() { finish(pdf.Close()) }()
 	if controls.hooks.beforePackage != nil {
 		if err := controls.hooks.beforePackage(op.directory); err != nil {

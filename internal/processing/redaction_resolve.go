@@ -12,9 +12,11 @@ import (
 )
 
 type admittedRedaction struct {
-	data     []byte
-	revision int64
-	review   RedactionReview
+	data         []byte
+	revision     int64
+	review       RedactionReview
+	presentation []pdfproduction.PagePresentation
+	numbered     *NumberedDelivery
 }
 
 func (service *Service) ResolveNativePDF(ctx context.Context, request RedactionResolveRequest,
@@ -70,6 +72,15 @@ func (service *Service) freshRedactionReview(ctx context.Context, op *nativePDFO
 	if err != nil {
 		return result, err
 	}
+	result.data = data
+	return service.reviewCapturedPDF(ctx, op, request, runtime, result)
+}
+
+func (service *Service) reviewCapturedPDF(ctx context.Context, op *nativePDFOperation,
+	request RedactionResolveRequest, runtime *pagerender.Runtime, result admittedRedaction,
+) (admittedRedaction, error) {
+	data := result.data
+	selected := NativePDFSelection{NodeID: request.Preparation.Selection.NodeID, Source: request.Preparation.Selection.Source}
 	inspection, err := runtime.Inspect(ctx, data, selected.Source, "application/pdf")
 	if err != nil {
 		return result, preparationFailure(err)

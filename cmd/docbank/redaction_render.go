@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"uuid"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/docbank/internal/daemonconn"
@@ -16,9 +17,13 @@ import (
 
 func newRedactionRenderCommand() *cobra.Command {
 	var overwrite, asJSON bool
+	var allocation string
 	cmd := &cobra.Command{Use: "render <preparation.json> <masks.json> <review.json> <output.zip>", Short: "Verify and save a reviewed redacted PDF, text and receipt", Args: cobra.ExactArgs(4),
 		Example: "  docbank redaction render preparation.json masks.json review.json redacted.zip",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if allocation != "" && !daemonconn.IsCanonicalUUIDv4(allocation) {
+				return usageError(errors.New("--allocation must be a canonical lowercase UUIDv4"))
+			}
 			inputs, err := readRedactionInputs(args[0], args[1])
 			if err != nil {
 				return err
@@ -48,10 +53,19 @@ func newRedactionRenderCommand() *cobra.Command {
 			}
 			defer func() { _ = connection.Close() }()
 			request := processing.RedactionRenderRequest{Preparation: inputs.Preparation, Masks: inputs.Masks, ReviewSHA256: review.SHA256}
-			return redactionCLIError(publishRedaction(cmd, destination, overwrite, asJSON, func(ctx context.Context, file *os.File) (processing.RedactionArchive, error) {
+			if allocation != "" {
+				request.AllocationID = uuid.MustParse(allocation)
+			}
+			err = redactionCLIError(publishRedaction(cmd, destination, overwrite, asJSON, func(ctx context.Context, file *os.File) (processing.RedactionArchive, error) {
 				return connection.RenderNativePDFTo(ctx, request, file)
 			}))
+			code, _ := daemonconn.ProblemCode(err)
+			if err != nil && allocation != "" && code != "redaction_review_changed" && code != "redaction_verifier_version" && code != "not_found" {
+				return fmt.Errorf("numbered render for allocation %s failed; retry with the same allocation and review: %w", allocation, err)
+			}
+			return err
 		}}
+	cmd.Flags().StringVar(&allocation, "allocation", "", "reserved numbered delivery UUID; retries reuse its retained result")
 	cmd.Flags().BoolVar(&overwrite, "overwrite", false, "replace an existing output file")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print JSON receipt and saved archive identity")
 	return cmd

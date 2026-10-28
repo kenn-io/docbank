@@ -471,6 +471,23 @@ initial `processing_outcome_unknown` result contains no job ID, so its outcome
 cannot be reconciled through MCP. Do not retry it blindly, because MCP has no
 job lookup for that case.
 
+## Recover numbered PDFs
+
+Use `find_bates_exports` to find a retained delivery by an exact Bates label.
+With `--allow-package-writes`, `export_bates_file` saves that PDF outside the
+vault. Its `verification` field distinguishes `stamped_labels` for ordinary
+stamped exports with the installed engine from `recorded_bytes_and_numbers` for
+numbered native redactions or stamps made with a different engine version.
+The latter checks the recorded size, SHA-256 and numbering metadata; it does not
+recheck masks, approved text or rendered numbers. It works after restart and
+backup/restore without the original review files or a configured page runtime.
+
+Numbered reservation and rendering use the CLI or authenticated HTTP routes.
+Full download verification requires the three review files through
+`bates export download`; the MCP export tool does not accept them. See
+[Numbered delivery](document-processing.md#deliver-one-reviewed-pdf-with-bates-numbers)
+for retention consent and verification scope.
+
 ## Optional package writes
 
 Allow the agent to preflight local load-file sources, import packages, and

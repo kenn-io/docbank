@@ -95,6 +95,9 @@ func assembleNativePreparation(frames []document.PageFrameV1, evidence NativePDF
 // ValidateNativePreparation checks response consistency, not the source's pixels.
 func ValidateNativePreparation(result NativePreparation) error {
 	evidence := result.Evidence
+	if evidence.RendererSHA256 != pdfproduction.QualifiedRecipe().RendererSHA256 && canonical.IsSHA256Hex(evidence.RendererSHA256) {
+		return pdfproduction.ErrVerifierVersion
+	}
 	if evidence.Contract != "native-pdf-evidence/v1" || evidence.Source.Validate() != nil ||
 		!canonical.IsSHA256Hex(evidence.PageRuntimeFingerprint) ||
 		evidence.RendererSHA256 != pdfproduction.QualifiedRecipe().RendererSHA256 ||

@@ -254,7 +254,15 @@ func sourceIDsContained(snapshotIDs, memberIDs []string) bool {
 
 // SealCollectionSnapshot freezes exact content and origin before an import or
 // export worker starts. Replaying the same ID with different contents fails.
-func (s *Store) SealCollectionSnapshot(ctx context.Context, request SnapshotSealRequest) (CollectionSnapshot, error) {
+func (s *Store) SealCollectionSnapshot(ctx context.Context, request SnapshotSealRequest) (result CollectionSnapshot, err error) {
+	err = s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+		result, err = s.sealCollectionSnapshotTx(ctx, tx, request)
+		return err
+	})
+	return result, err
+}
+
+func (s *Store) sealCollectionSnapshotTx(ctx context.Context, tx *sql.Tx, request SnapshotSealRequest) (CollectionSnapshot, error) {
 	request, err := normalizeSnapshotRequest(request)
 	if err != nil {
 		return CollectionSnapshot{}, err
@@ -299,7 +307,7 @@ func (s *Store) SealCollectionSnapshot(ctx context.Context, request SnapshotSeal
 	if err != nil {
 		return CollectionSnapshot{}, err
 	}
-	err = s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+	err = func() error {
 		existing, loadErr := loadCollectionSnapshotTx(ctx, tx, request.SnapshotID)
 		if loadErr == nil {
 			if existing.ManifestSHA256 != result.ManifestSHA256 || existing.PredecessorID != result.PredecessorID {
@@ -315,7 +323,7 @@ func (s *Store) SealCollectionSnapshot(ctx context.Context, request SnapshotSeal
 			return err
 		}
 		return insertCollectionSnapshotTx(ctx, tx, s.vaultID, result, request.Members)
-	})
+	}()
 	return result, err
 }
 

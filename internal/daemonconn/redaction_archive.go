@@ -12,14 +12,16 @@ import (
 	"os"
 
 	"go.kenn.io/docbank/document/redaction"
+	"go.kenn.io/docbank/internal/pdfproduction"
 	"go.kenn.io/docbank/internal/processing"
 )
 
 // RedactionArchiveContents exposes the checked PDF without extracting another copy.
 // PDF reads the caller-owned archive, which must remain stable until verification ends.
 type RedactionArchiveContents struct {
-	Receipt processing.RedactionReceipt
-	PDF     *io.SectionReader
+	Presentation []pdfproduction.PagePresentation
+	Receipt      processing.RedactionReceipt
+	PDF          *io.SectionReader
 }
 
 // VerifyRedactionArchive checks a saved ZIP against an already validated review.
@@ -72,7 +74,11 @@ func VerifyRedactionArchive(ctx context.Context, reader io.ReaderAt, size int64,
 		return RedactionArchiveContents{}, err
 	}
 	textDigest := processing.RedactionFileDigest{Size: int64(len(expectedText)), SHA256: fmt.Sprintf("%x", sha256.Sum256(expectedText))}
-	if receipt.Contract != "native-pdf-redaction-result/v1" || receipt.Selection != review.Selection || receipt.AdmittedNodeRevision < 1 || receipt.PreparationSHA256 != review.PreparationSHA256 || receipt.DecisionsSHA256 != review.DecisionsSHA256 || receipt.ReviewSHA256 != review.SHA256 || receipt.ResolvedSHA256 != review.Resolved.SHA256 || receipt.Recipe != review.Recipe || receipt.PageCount != review.Resolved.PageCount || receipt.PDF != digests[0] || receipt.PDF.Size == 0 || receipt.Text != digests[1] || receipt.Text != textDigest {
+	presentation, err := processing.RedactionReceiptPresentation(receipt, review)
+	if err != nil {
+		return RedactionArchiveContents{}, redactionArchiveError(err)
+	}
+	if receipt.Selection != review.Selection || receipt.PreparationSHA256 != review.PreparationSHA256 || receipt.DecisionsSHA256 != review.DecisionsSHA256 || receipt.ReviewSHA256 != review.SHA256 || receipt.ResolvedSHA256 != review.Resolved.SHA256 || receipt.Recipe != review.Recipe || receipt.PageCount != review.Resolved.PageCount || receipt.PDF != digests[0] || receipt.PDF.Size == 0 || receipt.Text != digests[1] || receipt.Text != textDigest {
 		return RedactionArchiveContents{}, integrityErrorf("redaction receipt or text disagrees with reviewed plan")
 	}
 	offset, err := archive.File[0].DataOffset()
@@ -82,7 +88,7 @@ func VerifyRedactionArchive(ctx context.Context, reader io.ReaderAt, size int64,
 	if offset < 0 || offset > size || receipt.PDF.Size > size-offset {
 		return RedactionArchiveContents{}, integrityErrorf("redaction PDF range exceeds archive bounds")
 	}
-	return RedactionArchiveContents{Receipt: receipt, PDF: io.NewSectionReader(reader, offset, receipt.PDF.Size)}, nil
+	return RedactionArchiveContents{Receipt: receipt, Presentation: presentation, PDF: io.NewSectionReader(reader, offset, receipt.PDF.Size)}, nil
 }
 
 func redactionArchiveError(err error) error {

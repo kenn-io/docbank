@@ -62,7 +62,7 @@ func TestVerifySavedPDF(t *testing.T) {
 	options := PDFWriteOptions{Recipe: recipe, StagingDirectory: t.TempDir(), MaxBytes: recipe.MaxStagingBytes}
 	require.NoError(t, WriteFresh(t.Context(), &out, pages, plan, options))
 	start := time.Now()
-	require.NoError(t, VerifySaved(t.Context(), bytes.NewReader(out.Bytes()), int64(out.Len()), plan, recipe))
+	require.NoError(t, VerifySaved(t.Context(), bytes.NewReader(out.Bytes()), int64(out.Len()), plan, recipe, nil))
 	t.Logf("three-page verification: %s; PDF size: %d bytes", time.Since(start), out.Len())
 }
 
@@ -79,7 +79,7 @@ func TestVerifySavedStreamBoundary(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			changed := rewriteSavedImage(t, original, test.edit)
-			err := VerifySaved(t.Context(), bytes.NewReader(changed), int64(len(changed)), plan, qualificationRecipe())
+			err := VerifySaved(t.Context(), bytes.NewReader(changed), int64(len(changed)), plan, qualificationRecipe(), nil)
 			require.ErrorIs(t, err, ErrPDFIntegrity)
 		})
 	}
@@ -113,7 +113,7 @@ func TestVerifySavedPixelsAndEncoding(t *testing.T) {
 				return savedStream(t, pixels, test.level)
 			})
 			require.NotEqual(t, original, changed)
-			err := VerifySaved(t.Context(), bytes.NewReader(changed), int64(len(changed)), plan, qualificationRecipe())
+			err := VerifySaved(t.Context(), bytes.NewReader(changed), int64(len(changed)), plan, qualificationRecipe(), nil)
 			if test.bad {
 				require.ErrorIs(t, err, ErrPDFIntegrity)
 			} else {
@@ -133,14 +133,14 @@ func TestVerifySavedStructureAndReadErrors(t *testing.T) {
 		})
 	}, nil)
 	require.NotEqual(t, original, changed)
-	require.ErrorIs(t, VerifySaved(t.Context(), bytes.NewReader(changed), int64(len(changed)), plan, qualificationRecipe()), ErrPDFIntegrity)
+	require.ErrorIs(t, VerifySaved(t.Context(), bytes.NewReader(changed), int64(len(changed)), plan, qualificationRecipe(), nil), ErrPDFIntegrity)
 	changed = rewriteFreshFixture(t, original, 1, func(map[int][]byte) {}, []byte("99 0 obj\n<<>>\nendobj\n"))
-	require.ErrorIs(t, VerifySaved(t.Context(), bytes.NewReader(changed), int64(len(changed)), plan, qualificationRecipe()), ErrPDFIntegrity)
+	require.ErrorIs(t, VerifySaved(t.Context(), bytes.NewReader(changed), int64(len(changed)), plan, qualificationRecipe(), nil), ErrPDFIntegrity)
 	failure := errors.New("synthetic saved PDF read failure")
-	require.ErrorIs(t, VerifySaved(t.Context(), savedFailedReaderAt{failure}, int64(len(original)), plan, qualificationRecipe()), failure)
+	require.ErrorIs(t, VerifySaved(t.Context(), savedFailedReaderAt{failure}, int64(len(original)), plan, qualificationRecipe(), nil), failure)
 	ctx, cancel := context.WithCancel(t.Context())
 	reader := savedCancelReaderAt{ReaderAt: bytes.NewReader(original), cancel: cancel}
-	require.ErrorIs(t, VerifySaved(ctx, reader, int64(len(original)), plan, qualificationRecipe()), context.Canceled)
+	require.ErrorIs(t, VerifySaved(ctx, reader, int64(len(original)), plan, qualificationRecipe(), nil), context.Canceled)
 }
 
 type savedCancelReaderAt struct {

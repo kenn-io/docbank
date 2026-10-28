@@ -38,6 +38,7 @@ func registerRedactionRoutes(mux *http.ServeMux, api huma.API, d Deps) {
 		}
 		return &output{CacheControl: "no-store", Body: result}, nil
 	})
+	registerNumberedReservationRoute(api, d)
 	registerRedactionRenderOpenAPI(api)
 	mux.HandleFunc("POST /api/v1/redaction/render", func(w http.ResponseWriter, r *http.Request) {
 		serveRedactionRender(w, r, func(ctx context.Context, request processing.RedactionRenderRequest, send processing.RedactionSender) error {
@@ -158,4 +159,33 @@ func serveRedactionRender(w http.ResponseWriter, r *http.Request, run redactionR
 		}
 		writeError(w, redactionProblem(ctx, err))
 	}
+}
+
+func registerNumberedReservationRoute(api huma.API, d Deps) {
+	type output struct {
+		CacheControl string `header:"Cache-Control"`
+		Body         processing.NumberedReservation
+	}
+	huma.Register(api, huma.Operation{OperationID: "reserveNumberedPDF", Method: http.MethodPost,
+		Path: "/api/v1/redaction/reservations", Summary: "Retain one reviewed original indefinitely and reserve its Bates numbers",
+		MaxBodyBytes: processing.MaxRedactionRequestBytes, BodyReadTimeout: 60 * time.Second,
+		Errors: []int{400, 401, 403, 404, 408, 409, 413, 422, 500, 503, 504}}, func(ctx context.Context, input *struct {
+		Body    processing.NumberedReservationRequest
+		RawBody []byte
+	}) (*output, error) {
+		request, err := processing.DecodeNumberedReservationRequest(input.RawBody)
+		if err != nil {
+			return nil, (*redactionWireError)(NewError(400, "invalid_redaction_request", "explicit original-retention consent and a valid reservation request are required"))
+		}
+		result, err := d.Processing.ReserveNumberedPDF(ctx, request, d.PageRuntime)
+		if err != nil {
+			problem := redactionProblem(ctx, err)
+			if problem.Status >= 500 || problem.Status == 408 {
+				problem.Detail += "; resend the identical reservation request with original-retention consent"
+			}
+			logRedactionFailure(ctx, d, problem, err)
+			return nil, (*redactionWireError)(problem)
+		}
+		return &output{CacheControl: "no-store", Body: result}, nil
+	})
 }

@@ -128,7 +128,22 @@ func registerBatesRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate, down
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
-		return &struct{ Body BatesExport }{Body: batesExportDTO(artifact)}, nil
+		allocation, err := d.Store.BatesAllocation(ctx, in.ID)
+		if err != nil {
+			return nil, FromStoreError(err)
+		}
+		namespace, err := d.Store.BatesNamespace(ctx, allocation.NamespaceID, "", "", 0)
+		if err != nil {
+			return nil, FromStoreError(err)
+		}
+		if _, err := processing.CheckBatesArtifact(artifact, allocation, namespace); err != nil {
+			return nil, FromStoreError(err)
+		}
+		result := batesExportDTO(artifact)
+		result.Recipe = artifact.RecipeJSON
+		a, n := batesAllocationDTO(allocation), batesNamespaceDTO(namespace)
+		result.Allocation, result.Namespace = &a, &n
+		return &struct{ Body BatesExport }{Body: result}, nil
 	})
 	huma.Register(api, huma.Operation{OperationID: "findBatesExports", Method: http.MethodGet,
 		Path: "/api/v1/bates/exports/candidates", Summary: "Find verified Bates export candidates"}, func(ctx context.Context, in *struct {

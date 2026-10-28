@@ -58,7 +58,7 @@ func newRedactionCommand() *cobra.Command {
 	prepare.Flags().StringVar(&version, "version", "", "retained content version (defaults to current)")
 	prepare.Flags().BoolVar(&jsonOutput, "json", false, "print JSON including original text")
 	command.AddCommand(prepare, newRedactionResolveCommand(), newRedactionRenderCommand(),
-		newRedactionVerifyCommand())
+		newRedactionVerifyCommand(), newRedactionReserveCommand())
 	return command
 }
 

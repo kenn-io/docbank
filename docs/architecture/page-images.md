@@ -195,8 +195,8 @@ The renderer closes before verification takes the shared WASM lease. Sanitized
 text is bounded at 1 MiB per page. The ZIP has three stored entries in order:
 `redacted.pdf`, `redacted.txt`, `receipt.json`, with no source filenames or
 optional contents. The client checks inventory, CRCs, hashes, review bindings
-and reconstructed sanitized text before atomic local publication. It does not
-run PDFium or claim to authenticate source pixels independently.
+and reconstructed sanitized text before atomic local publication. Numbered delivery also runs the saved-PDF verifier before publication. Neither
+path claims to authenticate source pixels independently.
 
 `redaction verify` validates the preparation and masks, rebuilds the review,
 then captures the local ZIP into one private temporary file while hashing it.
@@ -235,7 +235,8 @@ digest. See the
 [saved-archive workflow](../usage/document-processing.md#check-and-retain-a-saved-archive)
 for retention and recovery.
 
-Prepare, resolve and render share one shutdown-accounted operation slot. A busy
+Prepare, resolve, new numbered reservations and render share one shutdown-accounted
+operation slot. A busy
 refusal names its holder. The shared capture gate protects original bytes only
 until capture finishes. The slot remains held through verified ZIP delivery and
 cleanup. Render has a ten-minute context deadline and actual socket deadlines;
@@ -266,12 +267,88 @@ mechanism.
 
 The receipt records the admitted version, informational revision, all review
 bindings, qualified recipe, page count and PDF/text sizes and digests. Local
-paths and publication state belong only to CLI output. The service creates no
-job or retained output. Request cancellation/timeout map from the request's own
+paths and publication state belong only to CLI output. Plain rendering creates no
+job or retained output. Numbered rendering retains the verified PDF as described below. Request cancellation/timeout map from the request's own
 context; memory refusal is `redaction_memory`, inner deadline is
 `redaction_worker_timeout`, and unexplained worker cancellation is a failure.
 Expected 503 refusals are logged at informational level; 500 failures retain
 their diagnostic cause.
+
+### Retained numbered native PDFs
+
+A numbered delivery uses the existing reservation ledger and a real sealed
+collection snapshot. The snapshot's sole member and occurrence name the original
+version, hash, size and source pages; `UnstampedSHA256` remains the original's
+hash. No synthetic authority or schema migration is needed. The metadata-only
+`native-pdf-numbered/v1` recipe binds the vault, immutable source selection,
+preparation, decisions and review digests, qualified renderer, namespace, explicit
+start, pages, footer policy and indefinite original retention. Revisions are
+informational and excluded from this identity.
+
+The API-key-only `POST /api/v1/redaction/reservations` requires literal
+`retain_original: true`. New requests validate the review, namespace range and
+footer fit before taking permanent authority. After fresh inspection, one store
+transaction checks for an existing operation, seals the snapshot, reserves the
+range and advances the namespace cursor. Replay looks up namespace and start,
+then compares the recipe and full request digest, including the original
+snapshot ID. The lookup is repeated inside the transaction. A failed transaction
+retains neither snapshot nor range; a lost reply can be replayed without the
+source being live or the page runtime being configured. Reservation requests
+use the 17 MiB redaction body bound and 60-second deadline; receipts are bounded
+at 64 KiB on the client.
+
+An uncommitted render with `allocation_id` loads the sealed snapshot member under
+`CaptureContext`. It checks the member, native representation and page inventory
+against the recipe, review and ledger, then reads the exact original through a
+verified blob stream. It never uses live-node admission or falls back to current
+content. Plain rendering keeps its live-file rule. Both paths share everything
+after capture: fresh inspection, review comparison, rendering, mask burning,
+optional endorsement, fresh writing and full verification.
+
+Numbering adds a 5,000-unit strip below the source frame. Its black, 10-point
+label sits in a fixed inset box using the qualified font. The output-frame
+digest binds the source frame and strip. Masks stay in source coordinates.
+`VerifyFresh` checks layout and pixels against the staged artifacts. The exact
+verified handle and digest feed both retained blob publication and ZIP packaging;
+publication precedes transmission. The first artifact for an allocation wins.
+Failed renders leave their ranges reserved; completed retries use the retained
+PDF and regenerate the label-free sidecar and receipt without source inspection.
+They still acquire the shared slot. Reading a retained PDF or replaying a
+reservation receipt does not acquire it.
+
+The export detail includes the checked recipe, allocation, namespace and page
+receipts. Both download clients dispatch once on the recipe contract. Ordinary
+Bates output keeps `VerifyStamped` when its recorded engine matches the installed
+engine; otherwise it uses recorded-byte recovery. Numbered output without review inputs checks
+recorded size/hash and numbering metadata and returns
+`recorded_bytes_and_numbers`. It does not parse the PDF or claim to recheck masks
+or rendered labels. With all three review inputs, `VerifySaved` derives source
+masks and runs from the review and output layout and endorsements from the bound
+reservation. It checks exact footer text and placement, and compares visible
+glyphs with independently painted expected labels. Inside each number box,
+grayscale samples may differ by at most 16 on the 0–255 scale, without positional
+tolerance or averaging. Background outside the boxes must be exactly white.
+This allows small antialiasing differences without accepting different numbers.
+Source-area masks still require opaque black. It returns `masks_text_and_numbers`.
+Any failure ends that check, without downgrade.
+Recorded-recipe checks use the closed shape, canonical digest and retained
+bindings, independently of installed dependency versions. Current-engine
+qualification runs before creation, rendering or full verification; an engine
+mismatch is a verifier-version refusal, not an integrity claim. Presentation
+geometry is derived from the recorded footer without loading the installed font.
+The offline ZIP verifier derives the same expectations from its checked receipt.
+The receipt is not cryptographic proof of issuance, and neither scope proves
+unmasked pixels match the original.
+
+The retained object is the PDF, not the ZIP or review inputs. Backup and restore
+retain its artifact records, number lookup and snapshot source. The original
+remains retained indefinitely, including after trash empty and GC; this slice
+has no snapshot release or range-void path. Each fresh PDF embeds the full
+qualified font, about 9.6 MB per document. See the
+[numbered-delivery guide](../usage/document-processing.md#deliver-one-reviewed-pdf-with-bates-numbers)
+for consent, retries and the distinct verification claims.
+
+### Native coverage limits
 
 Resolution requires complete gap coverage across the entire document. Every
 ordered gap must be fully masked, even away from a selected rectangle. An

@@ -283,7 +283,7 @@ func (s *Store) BatesNamespace(ctx context.Context, id, prefix, suffix string, p
 	return value, nil
 }
 
-func batesRequestDigest(r BatesPlanRequest) (string, error) {
+func BatesRequestDigest(r BatesPlanRequest) (string, error) {
 	encoded, err := canonical.Marshal(struct {
 		NamespaceID  string           `json:"namespace_id"`
 		SnapshotID   string           `json:"snapshot_id"`
@@ -395,7 +395,15 @@ func expectedBatesPagesLimited(ctx context.Context, tx metadataQuerier, snapshot
 	return expected, nil
 }
 
-func (s *Store) ReserveBatesRange(ctx context.Context, r BatesPlanRequest) (BatesAllocation, error) {
+func (s *Store) ReserveBatesRange(ctx context.Context, r BatesPlanRequest) (result BatesAllocation, err error) {
+	err = s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+		result, err = s.reserveBatesRangeTx(ctx, tx, r)
+		return err
+	})
+	return result, err
+}
+
+func (s *Store) reserveBatesRangeTx(ctx context.Context, tx *sql.Tx, r BatesPlanRequest) (BatesAllocation, error) {
 	if validateUUIDv4(r.OperationID) != nil || validateUUIDv4(r.NamespaceID) != nil || validateUUIDv4(r.SnapshotID) != nil {
 		return BatesAllocation{}, invalidBatesRequest("operation_id, namespace_id, and snapshot_id must be UUIDs")
 	}
@@ -407,12 +415,12 @@ func (s *Store) ReserveBatesRange(ctx context.Context, r BatesPlanRequest) (Bate
 	if r.StartAt < 1 {
 		return BatesAllocation{}, invalidBatesRequest("start_at must be the recipe's first Bates number")
 	}
-	digest, err := batesRequestDigest(r)
+	digest, err := BatesRequestDigest(r)
 	if err != nil {
 		return BatesAllocation{}, err
 	}
 	var allocation BatesAllocation
-	err = s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+	err = func() error {
 		var priorDigest, priorID string
 		err := tx.QueryRowContext(ctx, `SELECT allocation_id,request_sha256 FROM bates_allocations WHERE operation_id=?`, r.OperationID).Scan(&priorID, &priorDigest)
 		priorID, found, err := replayReceipt(priorID, err, priorDigest == digest, ErrBatesReservationConflict)
@@ -469,7 +477,7 @@ func (s *Store) ReserveBatesRange(ctx context.Context, r BatesPlanRequest) (Bate
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE bates_namespace_cursors SET next_sequence=? WHERE namespace_id=?`, end+1, r.NamespaceID)
 		return err
-	})
+	}()
 	if err != nil {
 		return BatesAllocation{}, err
 	}
