@@ -1238,6 +1238,87 @@ export interface CatalogEntry {
   primary: boolean;
 }
 
+export type TextCitationVersion = typeof TextCitationVersion[keyof typeof TextCitationVersion];
+
+
+export const TextCitationVersion = {
+  NUMBER_1: 1,
+} as const;
+
+export interface TextCitation {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @pattern ^[0-9a-f]{64}$ */
+  build_id: string;
+  /** @pattern ^[0-9a-f]{64}$ */
+  content_sha256: string;
+  /**
+     * @minLength 36
+     * @maxLength 36
+     * @pattern ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$
+     */
+  content_version_id: string;
+  /**
+     * @minimum 1
+     * @maximum 2147483647
+     */
+  end: number;
+  /** @minimum 1 */
+  node_id: number;
+  /** @pattern ^[0-9a-f]{64}$ */
+  rendition_attachment_id: string;
+  /** @pattern ^[0-9a-f]{64}$ */
+  rendition_sha256: string;
+  /**
+     * @minimum 0
+     * @maximum 2147483647
+     */
+  start: number;
+  /**
+     * @minLength 36
+     * @maxLength 36
+     * @pattern ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$
+     */
+  vault_uid: string;
+  version: TextCitationVersion;
+}
+
+export interface Selector {
+  citation?: TextCitation;
+  /**
+     * @minimum 1
+     * @maximum 2147483647
+     */
+  end_rune: number;
+  /** @maxLength 36 */
+  expected_version?: string;
+  /** @minimum 1 */
+  node_id?: number;
+  /** @maxLength 4096 */
+  path?: string;
+  /** @maxLength 1000 */
+  quote?: string;
+  /**
+     * @minimum 0
+     * @maximum 2147483647
+     */
+  start_rune: number;
+}
+
+export interface CiteRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @maxLength 2000 */
+  brief?: string;
+  /** @maxLength 128 */
+  idempotency_key?: string;
+  /** @maxLength 256 */
+  issue?: string;
+  selector: Selector;
+  /** @maxLength 512 */
+  title?: string;
+}
+
 export interface Collection {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -1505,6 +1586,77 @@ export interface ContentVersionPage {
   limit: number;
   offset: number;
   total: number;
+}
+
+export type IssueMetadata = {[key: string]: unknown};
+
+export interface Issue {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  body: string;
+  metadata: IssueMetadata;
+  qualified_ref: string;
+  short_id: string;
+  title: string;
+  uid: string;
+}
+
+export interface DocumentReference {
+  content_sha256: string;
+  content_version_id: string;
+  end_rune: number;
+  node_id: number;
+  start_rune: number;
+  vault_uid: string;
+}
+
+export interface Reference {
+  docbank?: DocumentReference;
+  kind: string;
+  rendition?: TextCitation;
+  version: number;
+}
+
+export interface Evidence {
+  content_trust: string;
+  excerpt: string;
+  id: string;
+  label: string;
+  reference: Reference;
+}
+
+export interface Pending {
+  saved_at: string;
+}
+
+export interface Resolution {
+  evidence: Evidence;
+  pending?: Pending;
+  saved_quote?: string;
+  state: string;
+}
+
+export interface Context {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  issue: Issue;
+  next_offset?: number;
+  passages: Resolution[];
+}
+
+export interface ContextRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * @minLength 1
+     * @maxLength 256
+     */
+  issue: string;
+  /**
+     * @minimum 0
+     * @maximum 64
+     */
+  offset: number;
 }
 
 export interface Counts {
@@ -7472,51 +7624,6 @@ export interface Request {
   version: number;
 }
 
-export type TextCitationVersion = typeof TextCitationVersion[keyof typeof TextCitationVersion];
-
-
-export const TextCitationVersion = {
-  NUMBER_1: 1,
-} as const;
-
-export interface TextCitation {
-  /** A URL to the JSON Schema for this object. */
-  readonly $schema?: string;
-  /** @pattern ^[0-9a-f]{64}$ */
-  build_id: string;
-  /** @pattern ^[0-9a-f]{64}$ */
-  content_sha256: string;
-  /**
-     * @minLength 36
-     * @maxLength 36
-     * @pattern ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$
-     */
-  content_version_id: string;
-  /**
-     * @minimum 1
-     * @maximum 2147483647
-     */
-  end: number;
-  /** @minimum 1 */
-  node_id: number;
-  /** @pattern ^[0-9a-f]{64}$ */
-  rendition_attachment_id: string;
-  /** @pattern ^[0-9a-f]{64}$ */
-  rendition_sha256: string;
-  /**
-     * @minimum 0
-     * @maximum 2147483647
-     */
-  start: number;
-  /**
-     * @minLength 36
-     * @maxLength 36
-     * @pattern ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$
-     */
-  vault_uid: string;
-  version: TextCitationVersion;
-}
-
 export interface ResolvedTextCitation {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -12968,6 +13075,82 @@ export const cancelStorageOperation = async (operationId: string, options?: Para
     method: 'POST'
 
 
+  }
+);}
+
+
+
+export const getCiteKataEvidenceUrl = () => {
+
+
+
+
+  return `/api/v1/kata/cite`
+}
+
+/**
+ * @summary Quote a verified document passage into a new or existing Kata issue
+ */
+export const citeKataEvidence = async (citeRequest: NonReadonly<CiteRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<Issue> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<Issue>(getCiteKataEvidenceUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(citeRequest)
+  }
+);}
+
+
+
+export const getGetKataContextUrl = () => {
+
+
+
+
+  return `/api/v1/kata/context`
+}
+
+/**
+ * @summary Read Docbank evidence and its current state from a Kata issue
+ */
+export const getKataContext = async (contextRequest: NonReadonly<ContextRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<Context> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<Context>(getGetKataContextUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(contextRequest)
   }
 );}
 

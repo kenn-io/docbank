@@ -107,13 +107,14 @@ func TestMCPCommandWriteFlagsSelectTools(t *testing.T) {
 		os.Exit(0)
 	}
 	for _, test := range []struct {
-		args                                   string
-		processing, packages, exports, reports bool
+		args                                         string
+		processing, packages, exports, reports, kata bool
 	}{
 		{args: "mcp"},
 		{args: "mcp --allow-processing", processing: true},
 		{args: "mcp --allow-export-writes", exports: true},
 		{args: "mcp --allow-report-writes", reports: true},
+		{args: "mcp --allow-kata-writes", kata: true},
 		{args: "mcp --allow-package-writes", packages: true},
 		{args: "mcp --allow-processing --allow-package-writes", processing: true, packages: true},
 	} {
@@ -149,6 +150,7 @@ func TestMCPCommandWriteFlagsSelectTools(t *testing.T) {
 			}
 			assert.True(t, names["get_package_record"], "reads remain available with every flag combination")
 			assert.Equal(t, test.processing, names["start_processing"])
+			assert.Equal(t, test.kata, names["cite_kata_evidence"])
 			assert.True(t, names["get_report_summary"])
 			assert.True(t, names["get_report_dates"])
 			for _, name := range []string{"create_report", "revise_report", "download_report"} {

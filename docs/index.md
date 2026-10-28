@@ -24,6 +24,7 @@ If you are new, start with [setup](setup.md) and then the
 | Find documents by name, text, or filters | [Searching](usage/searching.md) |
 | Search by meaning | [Automatic and processing search](usage/search.md) |
 | Extract a document's text and read it | [Document processing](usage/document-processing.md) |
+| Quote a document passage in an issue | [Cite documents in Kata](usage/kata-evidence.md) |
 | Read email and follow attachments | [Web email reader](usage/web.md#read-archived-email) |
 | Browse photos and organize albums | [Photos](usage/photos.md) |
 | Export documents as a verified ZIP | [Export bundles](usage/export-bundles.md) |

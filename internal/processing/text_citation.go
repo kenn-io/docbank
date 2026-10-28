@@ -130,11 +130,17 @@ func citationReadError(err error) error {
 		return err
 	case errors.Is(err, fs.ErrNotExist), errors.Is(err, packstore.ErrPhysicalMissing):
 		return fmt.Errorf("%w: %w", document.ErrCitationUnavailable, err)
-	case errors.Is(err, packstore.ErrContentMismatch), errors.Is(err, packstore.ErrPhysicalCorrupt),
-		errors.Is(err, pack.ErrChecksum), errors.Is(err, pack.ErrCorrupt),
-		errors.Is(err, pack.ErrTruncated), errors.Is(err, pack.ErrBlobMismatch):
-		return fmt.Errorf("%w: %w", document.ErrCitationIntegrity, err)
 	default:
-		return err
+		return CitationIntegrityError(err)
 	}
+}
+
+// CitationIntegrityError wraps err with document.ErrCitationIntegrity when stored bytes failed verification.
+func CitationIntegrityError(err error) error {
+	if errors.Is(err, packstore.ErrContentMismatch) || errors.Is(err, packstore.ErrPhysicalCorrupt) ||
+		errors.Is(err, pack.ErrChecksum) || errors.Is(err, pack.ErrCorrupt) ||
+		errors.Is(err, pack.ErrTruncated) || errors.Is(err, pack.ErrBlobMismatch) {
+		return fmt.Errorf("%w: %w", document.ErrCitationIntegrity, err)
+	}
+	return err
 }
