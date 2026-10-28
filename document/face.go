@@ -36,7 +36,7 @@ func (b *FaceBox) UnmarshalJSONFrom(decoder *jsontext.Decoder) error {
 		return errors.New("face box requires numeric x, y, width, and height")
 	}
 	*b = FaceBox{X: *wire.X, Y: *wire.Y, Width: *wire.Width, Height: *wire.Height}
-	return b.Validate()
+	return nil
 }
 
 func (b FaceBox) Validate() error {
