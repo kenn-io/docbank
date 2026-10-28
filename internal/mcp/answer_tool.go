@@ -207,7 +207,9 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 			if ctx.Err() != nil {
 				return response{}, ctx.Err()
 			}
-			if input.Profile != "" || !daemonconn.BindingSearchFailure(code) {
+			// The CLI retries processing_failed, but it can also describe an
+			// unrelated or fail-closed provider failure. Preserve it here.
+			if input.Profile != "" || code == "processing_failed" || !daemonconn.BindingSearchFailure(code) {
 				return response{}, err
 			}
 			if failure == "" {

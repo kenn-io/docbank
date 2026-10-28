@@ -26,6 +26,7 @@ type automaticSearchCase struct {
 	profiles                              []api.ProcessingProfileSummary
 	profileError, scopeError, searchError string
 	empty, malformed, cold, mixed         bool
+	providerFailure                       bool
 	folderFirst, wantTruncated            bool
 	wantResults, wantFolders              int
 	jsonCLI, humanCLI, agentCLI           bool
@@ -43,6 +44,7 @@ func TestAutomaticSearchSelectionAndFallback(t *testing.T) {
 		{Name: "alpha", EmbeddingBindings: []string{"b", "a"}, QueryEmbeddingBindings: []string{"b", "a"}},
 	}
 	cases := []automaticSearchCase{
+		{name: "provider failure uses healthy second binding", profiles: []api.ProcessingProfileSummary{{Name: "alpha", EmbeddingBindings: []string{"a", "b"}, QueryEmbeddingBindings: []string{"a", "b"}}}, limit: 50, jsonCLI: true, providerFailure: true, wantScope: 1, wantSearch: 2, wantHybrid: true, wantResults: 1, wantFolders: 1},
 		{name: "cold first binding", profiles: profiles, limit: 50, cold: true, wantScope: 1, wantSearch: 2, wantHybrid: true},
 		{name: "JSON hybrid", profiles: profiles, limit: 50, jsonCLI: true, wantScope: 1, wantSearch: 1, wantHybrid: true, wantResults: 1, wantFolders: 1},
 		{name: "JSON folder within limit", profiles: profiles, limit: 1, folderFirst: true, jsonCLI: true, wantScope: 1, wantSearch: 1, wantHybrid: true, wantFolders: 1, wantTruncated: true},
@@ -53,9 +55,8 @@ func TestAutomaticSearchSelectionAndFallback(t *testing.T) {
 		{name: "query length boundary", query: strings.Repeat("界", 8192), profiles: profiles, limit: 50, jsonCLI: true, wantScope: 1, wantSearch: 1, wantHybrid: true, wantResults: 1, wantFolders: 1},
 		{name: "query too long", query: strings.Repeat("界", 8193), profiles: profiles, limit: 50, jsonCLI: true, skipped: true},
 		{name: "blank query", query: " ", profiles: profiles, limit: 50, skipped: true},
-		{name: "JSON fallback", profiles: profiles, limit: 50, jsonCLI: true, searchError: "stale_index", wantScope: 1, wantSearch: 3, wantReason: "stale_index"},
-		{name: "processing failure stops retries with lexical fallback", profiles: profiles, limit: 50, jsonCLI: true, searchError: "processing_failed", wantScope: 1, wantSearch: 1, wantReason: "processing_failed"},
-		{name: "mixed fallback reasons", profiles: profiles, limit: 50, mixed: true, searchError: "stale_index", wantScope: 1, wantSearch: 3, wantReason: "processing_consent_required"},
+		{name: "JSON fallback", profiles: profiles, limit: 50, jsonCLI: true, searchError: "processing_failed", wantScope: 1, wantSearch: 3, wantReason: "processing_failed"},
+		{name: "mixed fallback reasons", profiles: profiles, limit: 50, mixed: true, searchError: "processing_failed", wantScope: 1, wantSearch: 3, wantReason: "processing_consent_required"},
 		{name: "human fallback", profiles: profiles, limit: 50, humanCLI: true, searchError: "processing_consent_required", wantScope: 1, wantSearch: 3, wantReason: "processing_consent_required"},
 		{name: "agent fallback", profiles: profiles, limit: 50, agentCLI: true, searchError: "processing_consent_required", wantScope: 1, wantSearch: 3, wantReason: "processing_consent_required"},
 		{name: "no profiles", limit: 50},
@@ -214,6 +215,8 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 			assert.Equal(t, tc.limit, body.Limit)
 			assert.Equal(t, []string{processingTestVersionID}, body.Fence.ContentVersionIDs)
 			switch {
+			case tc.providerFailure && *searchCalls == 1:
+				problem(w, "processing_failed")
 			case tc.mixed && *searchCalls == 1:
 				problem(w, "processing_consent_required")
 			case tc.cold && *searchCalls == 1:
