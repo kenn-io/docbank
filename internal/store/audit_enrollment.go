@@ -646,12 +646,7 @@ func persistAdditionalAuditEnrollment(
 	if err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE audit_authority SET
-		operation_sequence_high_water=?,allocation_entry_count=?,allocation_head=?
-		WHERE singleton=1`, nextSequence, nextCount, set.allocationHead); err != nil {
-		return fmt.Errorf("advancing audit authority for additional scope: %w", err)
-	}
-	return nil
+	return updateAuditAuthorityHead(ctx, tx, nextSequence, nextCount, set.allocationHead)
 }
 
 func insertAuditRecord(ctx context.Context, tx *sql.Tx, record audit.Record) error {
