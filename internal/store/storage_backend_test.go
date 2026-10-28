@@ -31,6 +31,7 @@ func checkStorageTransactions(t *testing.T, s *Store) {
 	events, unsubscribe := s.SubscribePhotoEvents()
 	defer unsubscribe()
 	callbackErr := errors.New("discard mutation")
+	highWater := s.RootID()
 	for _, outcome := range []string{"commit", "callback error", "cancel", "commit error", "commit after failures"} {
 		t.Run(outcome, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
@@ -42,7 +43,7 @@ func checkStorageTransactions(t *testing.T, s *Store) {
 					kind, version = nodeKindFile, new("11111111-1111-4111-8111-111111111111")
 				}
 				var err error
-				id, err = insertNodeTx(ctx, tx, s.RootID(), outcome, kind, version, "2026-01-01T00:00:00.000000000Z")
+				id, err = s.insertNodeTx(ctx, tx, s.RootID(), outcome, kind, version, "2026-01-01T00:00:00.000000000Z")
 				if err != nil {
 					return err
 				}
@@ -59,6 +60,13 @@ func checkStorageTransactions(t *testing.T, s *Store) {
 				}
 				return nil
 			})
+			require.Equal(t, highWater+1, id, "failed transactions must not consume node IDs")
+			if err == nil {
+				highWater = id
+			}
+			sequence, sequenceErr := s.auditNodeSequence(t.Context(), s.db)
+			require.NoError(t, sequenceErr)
+			require.Equal(t, highWater, sequence)
 			switch outcome {
 			case "callback error":
 				require.ErrorIs(t, err, callbackErr)
@@ -218,11 +226,11 @@ func TestStorageWritersSeparateSchemasPostgres(t *testing.T) {
 	defer cancel()
 	// The second schema must commit while the first still owns its writer.
 	require.NoError(t, first.withStorageTx(ctx, func(tx *sql.Tx) error {
-		if _, err := insertNodeTx(ctx, tx, first.RootID(), "first", nodeKindDir, nil, "2026-01-01T00:00:00.000000000Z"); err != nil {
+		if _, err := first.insertNodeTx(ctx, tx, first.RootID(), "first", nodeKindDir, nil, "2026-01-01T00:00:00.000000000Z"); err != nil {
 			return err
 		}
 		return second.withStorageTx(ctx, func(tx *sql.Tx) error {
-			_, err := insertNodeTx(ctx, tx, second.RootID(), "second", nodeKindDir, nil, "2026-01-01T00:00:00.000000000Z")
+			_, err := second.insertNodeTx(ctx, tx, second.RootID(), "second", nodeKindDir, nil, "2026-01-01T00:00:00.000000000Z")
 			return err
 		})
 	}))

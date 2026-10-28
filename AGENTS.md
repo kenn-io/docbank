@@ -199,6 +199,10 @@ Instructions for autonomous coding agents working in this repository.
   identify the reusable contracts and intentional differences. Preserve one
   implementation of Docbank's operation semantics; isolate concrete SQL and
   driver differences rather than copying an entire backend.
+- Preserve audit allocation semantics across backends: committed node IDs are
+  consecutive, failed transactions consume none, and deletion never permits
+  reuse. PostgreSQL uses a transactional counter, not a native sequence. Keep
+  text sorting in SQLite byte order; the development guide owns the details.
 - Keep PostgreSQL development consistent with msgvault and Kata: use pgx through
   the existing `database/sql` store boundary, explicit schema and schema-owner
   settings, setup-only DDL and validation-only runtime opening. Reuse existing

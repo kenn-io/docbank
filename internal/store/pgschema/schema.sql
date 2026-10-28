@@ -6,20 +6,25 @@ CREATE TABLE {{schema}}.vault_metadata (
     schema_version INTEGER NOT NULL
 );
 
--- Keep timestamps and content identities in the shared store's text form.
--- Identity allocation must not reuse a committed node ID after deletion.
+-- Allocation is transactional: audit replay requires consecutive committed IDs.
+-- Keep the high-water mark even when the highest node is deleted.
+CREATE TABLE {{schema}}.node_allocation (
+    singleton SMALLINT PRIMARY KEY,
+    high_water BIGINT NOT NULL
+);
+-- Text uses SQLite byte order, independent of the database locale.
 CREATE TABLE {{schema}}.nodes (
-    id                 BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    id                 BIGINT PRIMARY KEY,
     parent_id          BIGINT REFERENCES {{schema}}.nodes(id) ON DELETE CASCADE,
-    name               TEXT NOT NULL,
-    kind               TEXT NOT NULL,
-    current_version_id TEXT,
+    name               TEXT COLLATE "C" NOT NULL,
+    kind               TEXT COLLATE "C" NOT NULL,
+    current_version_id TEXT COLLATE "C",
     revision           BIGINT NOT NULL DEFAULT 1,
-    created_at         TEXT NOT NULL,
-    modified_at        TEXT NOT NULL,
-    trashed_at         TEXT,
+    created_at         TEXT COLLATE "C" NOT NULL,
+    modified_at        TEXT COLLATE "C" NOT NULL,
+    trashed_at         TEXT COLLATE "C",
     trash_parent       BIGINT REFERENCES {{schema}}.nodes(id) ON DELETE SET NULL,
-    trash_name         TEXT
+    trash_name         TEXT COLLATE "C"
 );
 CREATE UNIQUE INDEX one_root ON {{schema}}.nodes((1)) WHERE parent_id IS NULL;
 CREATE UNIQUE INDEX live_sibling_names ON {{schema}}.nodes(parent_id, name)
@@ -31,28 +36,28 @@ CREATE INDEX nodes_live_modified ON {{schema}}.nodes(modified_at DESC, name, id)
 CREATE INDEX nodes_trashed ON {{schema}}.nodes(trashed_at) WHERE trashed_at IS NOT NULL;
 
 CREATE TABLE {{schema}}.blobs (
-    hash       TEXT PRIMARY KEY,
+    hash       TEXT COLLATE "C" PRIMARY KEY,
     size       BIGINT NOT NULL,
-    created_at TEXT NOT NULL
+    created_at TEXT COLLATE "C" NOT NULL
 );
 
 -- SHA-256 owns content identity; MD5 is auxiliary interoperability metadata.
 CREATE TABLE {{schema}}.blob_checksums (
-    blob_sha256 TEXT PRIMARY KEY REFERENCES {{schema}}.blobs(hash) ON DELETE CASCADE,
-    md5         TEXT NOT NULL
+    blob_sha256 TEXT COLLATE "C" PRIMARY KEY REFERENCES {{schema}}.blobs(hash) ON DELETE CASCADE,
+    md5         TEXT COLLATE "C" NOT NULL
 );
 
 CREATE TABLE {{schema}}.content_versions (
-    version_id              TEXT PRIMARY KEY,
+    version_id              TEXT COLLATE "C" PRIMARY KEY,
     node_id                 BIGINT NOT NULL REFERENCES {{schema}}.nodes(id) ON DELETE CASCADE,
-    blob_hash               TEXT NOT NULL REFERENCES {{schema}}.blobs(hash),
+    blob_hash               TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.blobs(hash),
     size                    BIGINT NOT NULL,
-    mime_type               TEXT,
-    recorded_at             TEXT NOT NULL,
+    mime_type               TEXT COLLATE "C",
+    recorded_at             TEXT COLLATE "C" NOT NULL,
     node_revision           BIGINT NOT NULL,
-    introduced_operation_id TEXT NOT NULL,
-    transition_kind         TEXT NOT NULL,
-    source_version_id       TEXT REFERENCES {{schema}}.content_versions(version_id)
+    introduced_operation_id TEXT COLLATE "C" NOT NULL,
+    transition_kind         TEXT COLLATE "C" NOT NULL,
+    source_version_id       TEXT COLLATE "C" REFERENCES {{schema}}.content_versions(version_id)
         DEFERRABLE INITIALLY DEFERRED,
     UNIQUE (node_id, node_revision),
     UNIQUE (node_id, introduced_operation_id),
@@ -69,16 +74,16 @@ CREATE INDEX content_versions_source ON {{schema}}.content_versions(source_versi
 -- Canonical audit records and their projections retain the shared store's
 -- content hashes and typed JSON. Validation stays in the Go audit owner.
 CREATE TABLE {{schema}}.audit_records (
-    digest             TEXT PRIMARY KEY,
-    kind               TEXT NOT NULL,
-    operation_id       TEXT,
+    digest             TEXT COLLATE "C" PRIMARY KEY,
+    kind               TEXT COLLATE "C" NOT NULL,
+    operation_id       TEXT COLLATE "C",
     operation_sequence BIGINT,
-    scope_id           TEXT,
+    scope_id           TEXT COLLATE "C",
     entry_count        BIGINT,
-    event_id           TEXT,
+    event_id           TEXT COLLATE "C",
     event_ordinal      BIGINT,
     node_id            BIGINT,
-    record_json        TEXT NOT NULL
+    record_json        TEXT COLLATE "C" NOT NULL
 );
 CREATE UNIQUE INDEX audit_record_event
     ON {{schema}}.audit_records(event_id) WHERE event_id IS NOT NULL;
@@ -103,36 +108,36 @@ CREATE UNIQUE INDEX audit_record_single_genesis
 
 CREATE TABLE {{schema}}.audit_authority (
     singleton                     SMALLINT PRIMARY KEY,
-    lineage_id                    TEXT NOT NULL UNIQUE,
+    lineage_id                    TEXT COLLATE "C" NOT NULL UNIQUE,
     operation_sequence_high_water BIGINT NOT NULL,
-    allocation_genesis_digest     TEXT NOT NULL UNIQUE REFERENCES {{schema}}.audit_records(digest)
+    allocation_genesis_digest     TEXT COLLATE "C" NOT NULL UNIQUE REFERENCES {{schema}}.audit_records(digest)
         DEFERRABLE INITIALLY DEFERRED,
     allocation_entry_count        BIGINT NOT NULL,
-    allocation_head               TEXT NOT NULL REFERENCES {{schema}}.audit_records(digest)
+    allocation_head               TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.audit_records(digest)
         DEFERRABLE INITIALLY DEFERRED
 );
 CREATE TABLE {{schema}}.audit_scopes (
-    scope_id            TEXT PRIMARY KEY,
+    scope_id            TEXT COLLATE "C" PRIMARY KEY,
     target_node_id      BIGINT NOT NULL REFERENCES {{schema}}.nodes(id),
-    enable_operation_id TEXT NOT NULL UNIQUE,
+    enable_operation_id TEXT COLLATE "C" NOT NULL UNIQUE,
     entry_count         BIGINT NOT NULL,
-    chain_head          TEXT NOT NULL REFERENCES {{schema}}.audit_records(digest)
+    chain_head          TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.audit_records(digest)
         DEFERRABLE INITIALLY DEFERRED
 );
 CREATE TABLE {{schema}}.audit_baselines (
-    digest         TEXT PRIMARY KEY REFERENCES {{schema}}.audit_records(digest)
+    digest         TEXT COLLATE "C" PRIMARY KEY REFERENCES {{schema}}.audit_records(digest)
         DEFERRABLE INITIALLY DEFERRED,
-    scope_id       TEXT NOT NULL REFERENCES {{schema}}.audit_scopes(scope_id)
+    scope_id       TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.audit_scopes(scope_id)
         DEFERRABLE INITIALLY DEFERRED,
     target_node_id BIGINT NOT NULL REFERENCES {{schema}}.nodes(id),
-    operation_id   TEXT NOT NULL,
+    operation_id   TEXT COLLATE "C" NOT NULL,
     UNIQUE (scope_id, target_node_id, operation_id)
 );
 CREATE TABLE {{schema}}.audit_memberships (
-    scope_id        TEXT NOT NULL REFERENCES {{schema}}.audit_scopes(scope_id)
+    scope_id        TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.audit_scopes(scope_id)
         DEFERRABLE INITIALLY DEFERRED,
     node_id         BIGINT NOT NULL REFERENCES {{schema}}.nodes(id),
-    baseline_digest TEXT NOT NULL REFERENCES {{schema}}.audit_baselines(digest)
+    baseline_digest TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.audit_baselines(digest)
         DEFERRABLE INITIALLY DEFERRED,
     PRIMARY KEY (scope_id, node_id)
 );

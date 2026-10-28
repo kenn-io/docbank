@@ -12,7 +12,7 @@ import (
 func (s *Store) persistAuditedGlobalMetadataChanges(
 	ctx context.Context, tx *sql.Tx, changes []audit.Record,
 ) error {
-	authority, nodeSequence, err := loadAuditAuthorityTx(ctx, tx)
+	authority, nodeSequence, err := s.loadAuditAuthorityTx(ctx, tx)
 	if err != nil {
 		return err
 	}

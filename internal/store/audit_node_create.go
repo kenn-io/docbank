@@ -22,8 +22,8 @@ type auditedCreationBaseline struct {
 	topology audit.Record
 }
 
-func persistAuditedNodeCreation(
-	ctx context.Context, tx *sql.Tx, vaultID string,
+func (s *Store) persistAuditedNodeCreation(
+	ctx context.Context, tx *sql.Tx,
 	authority auditAuthorityState, scopes []auditScopeState,
 	priorParent, resultingParent, created Node, version ContentVersion,
 	operationID, recordedAt string, metadata *auditedCreationMetadata,
@@ -36,7 +36,7 @@ func persistAuditedNodeCreation(
 		return err
 	}
 	values, err := makeAuditedMutationValues(
-		vaultID, authority.lineageID, operationID, recordedAt,
+		s.vaultID, authority.lineageID, operationID, recordedAt,
 	)
 	if err != nil {
 		return err
@@ -100,7 +100,7 @@ func persistAuditedNodeCreation(
 	); err != nil {
 		return err
 	}
-	nodeSequence, err := auditNodeSequence(ctx, tx)
+	nodeSequence, err := s.auditNodeSequence(ctx, tx)
 	if err != nil {
 		return err
 	}
@@ -128,16 +128,6 @@ func persistAuditedNodeCreation(
 		return fmt.Errorf("advancing audit allocation authority: %w", err)
 	}
 	return nil
-}
-
-func auditNodeSequence(ctx context.Context, tx *sql.Tx) (int64, error) {
-	var sequence int64
-	if err := tx.QueryRowContext(ctx,
-		`SELECT seq FROM sqlite_sequence WHERE name='nodes'`,
-	).Scan(&sequence); err != nil {
-		return 0, fmt.Errorf("reading node ID high-water mark: %w", err)
-	}
-	return sequence, nil
 }
 
 func auditTopologyForLiveNode(node Node) (audit.Record, error) {
