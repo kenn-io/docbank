@@ -271,11 +271,15 @@ of at most 64 characters each.
 
 Set `rerank: true` to request the profile's configured reranker. The query and
 bounded candidate excerpts are sent to the provider only under the existing
-reranking consent grant. The optional `reranking` receipt reports `applied`,
+reranking consent grant. `search_documents` reports `openWorldHint: true`
+because a reranked search can send the query and excerpts to a provider.
+The optional `reranking` receipt reports `applied`,
 `skipped`, or `degraded`, the candidate count, and any failure cause. When the
 receipt is `applied`, the first `candidate_count` hits include `rerank_relevance`
 equal to their `score`, including zero. Later hits omit `rerank_relevance`.
-Applied searches use different `score` scales, provider relevance for the first `candidate_count` hits and search scores for later hits, so clients must not sort the whole list by `score`.
+Applied searches use different `score` scales, provider relevance for the first
+`candidate_count` hits and search scores for later hits, so clients must not
+sort the whole list by `score`.
 A degraded search retains its original order and adds
 `reranking_degraded` to skipped reasons, unless the profile fails closed.
 MCP returns `reranking_unavailable` when no reranker is configured and
