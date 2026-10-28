@@ -143,7 +143,7 @@ func (s *Store) AuditScopeHistory(
 	if err != nil {
 		return AuditScopeEventPage{}, err
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 	if err != nil {
 		return AuditScopeEventPage{}, fmt.Errorf("starting audit-scope-history snapshot: %w", err)
 	}
@@ -170,7 +170,7 @@ func auditScopeHistoryPageTx(
 		Scope: scope, Items: make([]AuditEvent, 0, limit), Limit: limit, Cursor: rawCursor,
 	}
 	if err := tx.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM audit_records WHERE kind='event' AND scope_id=?`, scopeID,
+		`SELECT COUNT(*) FROM audit_records WHERE kind='event' AND scope_id=$1`, scopeID,
 	).Scan(&page.Total); err != nil {
 		return AuditScopeEventPage{}, fmt.Errorf("counting audit scope %s history: %w", scopeID, err)
 	}
@@ -179,16 +179,12 @@ func auditScopeHistoryPageTx(
 		FROM audit_records AS e
 		JOIN audit_records AS m
 		  ON m.kind='canonical_mutation' AND m.operation_id=e.operation_id
-		WHERE e.kind='event' AND e.scope_id=? AND
-		  (?=0 OR m.operation_sequence<? OR
-		   (m.operation_sequence=? AND e.event_ordinal<?) OR
-		   (m.operation_sequence=? AND e.event_ordinal=? AND e.event_id<?))
+		WHERE e.kind='event' AND e.scope_id=$1 AND
+		  (CAST($2 AS BIGINT)=0 OR m.operation_sequence<$2 OR
+		   (m.operation_sequence=$2 AND e.event_ordinal<$3) OR
+		   (m.operation_sequence=$2 AND e.event_ordinal=$3 AND e.event_id<$4))
 		ORDER BY m.operation_sequence DESC,e.event_ordinal DESC,e.event_id DESC
-		LIMIT ?`, scopeID,
-		cursor.sequence, cursor.sequence,
-		cursor.sequence, cursor.ordinal,
-		cursor.sequence, cursor.ordinal, cursor.eventID,
-		limit+1,
+		LIMIT $5`, scopeID, cursor.sequence, cursor.ordinal, cursor.eventID, limit+1,
 	)
 	if err != nil {
 		return AuditScopeEventPage{}, fmt.Errorf("listing audit scope %s history: %w", scopeID, err)
@@ -229,7 +225,7 @@ func auditScopeStatusByIDTx(
 		FROM audit_scopes s
 		JOIN audit_baselines b ON b.scope_id=s.scope_id AND b.operation_id=s.enable_operation_id
 		JOIN audit_memberships m ON m.scope_id=s.scope_id
-		WHERE s.scope_id=?
+		WHERE s.scope_id=$1
 		GROUP BY s.scope_id,s.target_node_id,s.enable_operation_id,b.digest,
 			s.entry_count,s.chain_head`, scopeID).Scan(
 		&scope.ID, &scope.TargetNodeID, &scope.EnableOperationID,
@@ -266,7 +262,7 @@ func (s *Store) auditHistorySnapshot(
 			"audit history limit must be between 1 and %d", maxAuditHistoryPage,
 		)
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 	if err != nil {
 		return AuditEventPage{}, fmt.Errorf("starting audit-history snapshot: %w", err)
 	}
@@ -298,7 +294,7 @@ func auditHistoryPageTx(
 ) (AuditEventPage, error) {
 	var memberships int
 	if err := tx.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM audit_memberships WHERE node_id=?`, node.ID,
+		`SELECT COUNT(*) FROM audit_memberships WHERE node_id=$1`, node.ID,
 	).Scan(&memberships); err != nil {
 		return AuditEventPage{}, fmt.Errorf("checking audit membership for node %d: %w", node.ID, err)
 	}
@@ -314,7 +310,7 @@ func auditHistoryPageTx(
 		FROM audit_records AS e
 		JOIN audit_records AS m
 		  ON m.kind='canonical_mutation' AND m.operation_id=e.operation_id
-		WHERE e.kind='event' AND e.node_id=?
+		WHERE e.kind='event' AND e.node_id=$1
 		ORDER BY m.operation_sequence DESC,e.event_ordinal DESC,e.event_id DESC`, node.ID)
 	if err != nil {
 		return AuditEventPage{}, fmt.Errorf("listing audit history for node %d: %w", node.ID, err)

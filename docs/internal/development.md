@@ -201,9 +201,11 @@ in `releasedSchemaFixtures`. Three checks enforce this:
 `internal/store/pgschema` provides the internal schema installation and
 validation foundation. A PostgreSQL-backed vault is not available yet: ordinary
 daemon and embedded operations still use SQLite. This package owns the native
-vault identity, PostgreSQL schema version, and the core `nodes`, `blobs`,
-`blob_checksums`, and `content_versions` catalogs. Complete mutations, the
-remaining catalogs, search, transfer, and recovery are not available yet.
+vault identity, PostgreSQL schema version, the core `nodes`, `blobs`,
+`blob_checksums` and `content_versions` catalogs, and the five `audit_*`
+catalogs for canonical records, authority, scopes, baselines and memberships.
+Complete mutations, the remaining catalogs, search, transfer, and recovery are
+not available yet.
 
 `Setup` takes a caller-owned `database/sql` pool authenticated as `SchemaOwner`
 and uses the explicit `Schema` setting. It creates a dedicated schema, canonical
@@ -248,6 +250,9 @@ GRANT SELECT, INSERT, UPDATE, DELETE
     ON documents.nodes, documents.blobs, documents.content_versions
     TO docbank_runtime;
 GRANT SELECT, INSERT ON documents.blob_checksums TO docbank_runtime;
+GRANT SELECT ON documents.audit_records, documents.audit_authority,
+    documents.audit_scopes, documents.audit_baselines, documents.audit_memberships
+    TO docbank_runtime;
 GRANT USAGE ON SEQUENCE documents.nodes_id_seq TO docbank_runtime;
 ```
 
@@ -268,9 +273,9 @@ authority to alter objects or grant those privileges again.
 PostgreSQL schema versions are independent of SQLite layout versions and JSONL
 format versions. The first supported PostgreSQL release establishes the upgrade
 floor. Fresh installs use canonical DDL; do not invent historical migrations for
-this unreleased foundation. Internal layout 2 rejects the earlier identity-only
-layout 1 without changing it. Recreate disposable test databases when moving
-between these internal layouts. Later supported layouts require numbered
+this unreleased foundation. Internal layout 3 adds the audit catalogs and rejects
+earlier layouts without changing them. Recreate disposable test databases when
+moving between these internal layouts. Later supported layouts require numbered
 `NNNNNN_description.up.sql` transitions, with the target version in the filename.
 Keep one complete forward chain, and commit each transition and its version
 together under the setup lock. Runtime startup never migrates. Once a migration
@@ -283,6 +288,11 @@ shared by writes, imports, restores and audits. Primary keys, foreign keys,
 nullability and uniqueness describe structural relationships. Existing released
 SQLite constraints are compatibility commitments; this rule does not authorize
 removing them from an immutable schema or migration.
+
+The `audit_record_single_genesis` partial unique index is the intentional
+exception to the closed-list rule: its three-kind predicate preserves one
+record per genesis kind, matching SQLite; it does not reject other kinds.
+Go still owns which record kinds are valid.
 
 #### PostgreSQL reference implementations
 
@@ -407,7 +417,21 @@ mutations, which still depend on catalogs that have not been ported.
     | Delete a version with person assertions | Advance `document_people_state.binding_epoch` and its update timestamp before cascades remove those assertions |
     | Delete a photo's version | Queue its node in `photo_timeline_pending` |
     | Change a photo node's current version | Queue its node when the version changes |
+    | Add or remove an audit membership | Queue eligible photo assets associated with that node in `photo_xmp_unsettled` |
+    | Add or remove audit authority | Queue every eligible photo asset in `photo_xmp_unsettled` |
     | Record a checksum | Keep the existing value immutable; reject a conflicting value in Go and omit runtime `UPDATE` privileges |
+
+    Shared audit mutation helpers must own the membership and authority effects
+    in the same transaction as those changes. PostgreSQL audit writes require
+    the photo catalogs and this maintenance; the audit tables alone are not
+    sufficient.
+
+    Shared Go validation must also enforce the audit invariants currently
+    covered by SQLite checks: one active authority row at `singleton=1`, known
+    record kinds, and positive stored operation sequences and entry counts
+    wherever present. Validate records before insertion and the complete
+    authority within the transaction, including imports and restores. The
+    PostgreSQL write paths must not rely on SQLite constraints for these rules.
 
     This table identifies the immediate dependencies of the core catalogs,
     not the complete trigger inventory. Bulk and cascading deletions must
@@ -480,6 +504,24 @@ The content-history tests reuse the same setup and the real SQLite schema.
 They cover version projection, ownership, pagination and a prune
 committed between the view's reads. This qualifies the read queries only;
 PostgreSQL content mutations and a public vault remain unavailable.
+
+Node and scope audit history also use shared SQL and read-only `REPEATABLE READ`
+transactions. Membership, node revision, path, scope head, event count and page
+come from one snapshot, even when another operation commits between their
+reads. Canonical event projection and cursor ordering remain in the existing
+Go implementation. The runtime role needs only `SELECT` on the audit catalogs
+for these reads; enrollment, audit writes and full metadata validation still
+require SQLite.
+
+Audit-history qualification creates directories, enables audit and renames nodes
+through normal SQLite operations, then validates that history before copying
+its catalogs into a disposable PostgreSQL schema. Setup credentials load the
+fixture; the separate runtime login reads it. The fixture preserves the vault
+identity and node allocation high-water mark. It is limited to directory
+history and is not a production import implementation. Tests cover node and
+scope pagination and commit later canonical history between a reader's
+statements: the current response retains its snapshot and the next request
+sees the new events.
 
 For PostgreSQL tests, start a disposable server, never an operator database:
 

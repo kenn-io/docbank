@@ -209,7 +209,9 @@ Instructions for autonomous coding agents working in this repository.
   owns the concrete contracts and intentional differences.
 - Never encode enums or other closed value lists in either SQL schema, including
   states, phases, kinds, formats, and statuses. Store the value as text and
-  reject unknown values in Go. Apply JSON and text size limits at input
+  reject unknown values in Go. The existing genesis-uniqueness index is a narrow
+  [structural exception](docs/internal/development.md#postgresql-schema-lifecycle).
+  Apply JSON and text size limits at input
   boundaries in Go before parsing or allocation; do not bake evolving contract
   limits into SQLite.
 - Documentation is not the implementation tracker. User- and agent-facing
