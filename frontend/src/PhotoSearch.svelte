@@ -51,7 +51,7 @@
         const actualMode = fallback ? "lexical" : submitted.mode;
         const searchType = fallback || submitted.mode === "lexical" ? "text" : submitted.mode;
         reportSearch(session, searchType, outcome.empty);
-        if (outcome.empty) {
+        if (outcome.empty && !hidden) {
           void recordMiss(
             {
               query: text,

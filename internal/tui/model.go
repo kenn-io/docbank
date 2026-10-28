@@ -362,7 +362,6 @@ func (e *ScreenRetryError) Unwrap() error { return e.Err }
 type deferredSearchReport struct {
 	receipt             misslog.Request
 	requestID, searchID uint64
-	searchType          string
 	empty               bool
 }
 
@@ -2481,9 +2480,10 @@ func (m Model) applyNaturalSearchBase(msg naturalSearchBaseLoadedMsg) (tea.Model
 		m.reportSearchID = 0
 		var earlier tea.Cmd
 		if m.rerankReport.requestID != 0 {
-			earlier = m.reportSearch(m.rerankReport.searchType, m.rerankReport.empty, m.rerankReport.receipt)
+			earlier = m.reportSearch(m.rerankReport.receipt.ActualMode, m.rerankReport.empty, m.rerankReport.receipt)
 		}
-		m.rerankReport = deferredSearchReport{api.DocumentSearchMiss(msg.query, msg.request.Profile, msg.request, msg.report), msg.requestID, msg.searchID, msg.report.ActualMode, len(m.rows) == 0}
+		m.rerankReport = deferredSearchReport{requestID: msg.requestID, searchID: msg.searchID,
+			receipt: api.DocumentSearchMiss(msg.query, msg.request.Profile, msg.request, msg.report), empty: len(m.rows) == 0}
 		return m, tea.Batch(earlier, rerank)
 	}
 	if m.reportSearchID == msg.requestID && msg.report.ActualMode != "" {
@@ -2497,12 +2497,21 @@ func (m Model) applyNaturalSearchRerank(msg naturalSearchRerankLoadedMsg) (tea.M
 	// A settled rerank reports its accepted search even when a later request superseded it.
 	var report tea.Cmd
 	pending := m.rerankReport
-	if msg.report.Reranking != nil {
-		pending.receipt.Reranking = map[string]any{"outcome": msg.report.Reranking.Outcome, "cause": msg.report.Reranking.Cause, "candidate_count": msg.report.Reranking.CandidateCount}
+	if msg.err != nil {
+		pending.receipt.Reranking = map[string]any{"outcome": "failed", "cause": msg.err.Error()}
+	} else if reranking := msg.report.Reranking; reranking != nil {
+		if pending.receipt.Reranking == nil {
+			pending.receipt.Reranking = make(map[string]any)
+		}
+		pending.receipt.Reranking["outcome"] = reranking.Outcome
+		if reranking.Cause != "" {
+			pending.receipt.Reranking["cause"] = reranking.Cause
+		}
+		pending.receipt.Reranking["candidate_count"] = reranking.CandidateCount
 	}
 	if pending.requestID == msg.requestID && pending.searchID == msg.searchID {
 		m.rerankReport = deferredSearchReport{}
-		report = m.reportSearch(pending.searchType, pending.empty, pending.receipt)
+		report = m.reportSearch(pending.receipt.ActualMode, pending.empty, pending.receipt)
 	}
 	if msg.requestID != m.requestID || msg.searchID != m.naturalSearchID {
 		return m, report

@@ -58,6 +58,78 @@ func TestEmptyNaturalSearchSkipsRerank(t *testing.T) {
 	_, cmd = model.applyNaturalSearchBase(base)
 	assert.Nil(t, cmd)
 }
+
+func TestEmptyNaturalSearchReportsAfterRerank(t *testing.T) {
+	for _, replaced := range []bool{false, true} {
+		t.Run(map[bool]string{false: "reply", true: "replaced pending"}[replaced], func(t *testing.T) {
+			fake := newFakeBackend()
+			fake.profiles[0].RerankingAvailable = true
+			fake.naturalSearch = api.DocumentSearchReport{
+				RequestedMode: "hybrid", ActualMode: "hybrid",
+				Coverage: api.DocumentSearchCoverage{ScopedDocuments: 2, CompleteDocuments: 2, State: "complete"},
+			}
+			fake.naturalSearch.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "skipped", Cause: "empty candidates"}
+			fake.naturalRerankSearch = fake.naturalSearch
+			fake.naturalRerankSearch.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "skipped"}
+			model, err := New(t.Context(), fake)
+			require.NoError(t, err)
+			model.naturalProfiles = fake.profiles
+			model.naturalMode = naturalHybrid
+			model.naturalRerank = true
+			model.requestID, model.reportSearchID = 7, 7
+			model.naturalSearchID = 3
+			base := model.loadNaturalSearch("missing", model.requestID)()
+			model, rerank := updateModel(t, model, base)
+			require.NotNil(t, rerank)
+			assert.Empty(t, fake.actions)
+			if replaced {
+				fake.naturalSearch.Reranking.Cause = "changed after acceptance"
+				model.requestID, model.reportSearchID = 8, 8
+				model.naturalSearchID = 4
+				base = model.loadNaturalSearch("another", model.requestID)()
+				model, rerank = updateModel(t, model, base)
+				batch, ok := rerank().(tea.BatchMsg)
+				require.True(t, ok)
+				rerank = batch[0]
+			} else {
+				batch, ok := rerank().(tea.BatchMsg)
+				require.True(t, ok)
+				model, rerank = updateModel(t, model, batch[0]())
+			}
+			runModelCommand(t, model, rerank)
+			want := []actionCall{{event: "search_run", searchType: "hybrid"}, {event: "search_empty", searchType: "hybrid"}}
+			assert.Equal(t, want, fake.actions)
+			require.Len(t, fake.misses, 1)
+			require.Equal(t, "missing", fake.misses[0].Query)
+			require.Equal(t, "semantic", fake.misses[0].BindingID)
+			if replaced {
+				assert.Equal(t, "empty candidates", fake.misses[0].Reranking["cause"])
+			}
+		})
+	}
+}
+
+func TestEmptyNaturalSearchRetainsFailedRerank(t *testing.T) {
+	fake := newFakeBackend()
+	fake.profiles[0].RerankingAvailable = true
+	fake.naturalSearch = api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid"}
+	model, err := New(t.Context(), fake)
+	require.NoError(t, err)
+	model.naturalProfiles = fake.profiles
+	model.naturalMode, model.naturalRerank = naturalHybrid, true
+	model.requestID, model.reportSearchID, model.naturalSearchID = 7, 7, 3
+	model, cmd := updateModel(t, model, model.loadNaturalSearch("missing", 7)())
+	fake.err = errors.New("synthetic rerank failure")
+	batch, ok := cmd().(tea.BatchMsg)
+	require.True(t, ok)
+	model, cmd = updateModel(t, model, batch[0]())
+	runModelCommand(t, model, cmd)
+	require.Len(t, fake.misses, 1)
+	assert.Equal(t, "missing", fake.misses[0].Query)
+	assert.Equal(t, "failed", fake.misses[0].Reranking["outcome"])
+	assert.Contains(t, fake.misses[0].Reranking["cause"], "synthetic rerank failure")
+}
+
 func TestNaturalSearchReportsFinalRerankedEmptiness(t *testing.T) {
 	for _, baseEmpty := range []bool{true, false} {
 		t.Run(map[bool]string{true: "empty base gains rows", false: "nonempty base loses rows"}[baseEmpty], func(t *testing.T) {
