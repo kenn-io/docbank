@@ -46,6 +46,20 @@ func TestCheckAnswerTransports(t *testing.T) {
 	}
 }
 
+func TestCheckAnswerThreeDigitMarker(t *testing.T) {
+	server, citation := newCitationMCPFixture(t)
+	citation.Start -= len([]rune(`$1,205 a`))
+	citation.End = citation.Start + len([]rune(`$1,205`))
+	result := decodeResult(t, exportExchange(t, server, "stdio", "tools/call", map[string]any{
+		"name": "check_answer", "arguments": map[string]any{"answer": "$1,205 [100]", "citations": []any{citation}},
+	}))
+	output := objectField(t, result, "structuredContent")
+	assert.Equal(t, "ungrounded", output["status"])
+	assert.Equal(t, []any{float64(100)}, output["unknown_markers"])
+	assert.Equal(t, []any{map[string]any{"text": "$1,205", "status": "found"}}, output["figures"])
+	assertSchemaAccepts(t, catalogMap(toolCatalog(ServerOptions{}))["check_answer"].OutputSchema, output)
+}
+
 func TestCheckAnswerRejectsInvalidBeforeAcquisition(t *testing.T) {
 	var acquisitions atomic.Int32
 	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
