@@ -3358,11 +3358,19 @@ components:
           items:
             $ref: "#/components/schemas/CoverageClass"
           type: array
+        observed_scope_count:
+          format: int64
+          minimum: 0
+          type:
+            - integer
+            - "null"
         profile_fingerprint:
           pattern: ^[0-9a-f]{64}$
           type: string
         renditions:
           $ref: "#/components/schemas/CoverageClass"
+        scope:
+          $ref: "#/components/schemas/DocumentSearchScope"
         state:
           type: string
         vault_uid:
@@ -4058,6 +4066,33 @@ components:
         - immutable_backup_copies_untouched
       type: object
       x-go-type: api.DerivativePurgeReceipt
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    DocumentCoverageRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/DocumentCoverageRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        fence:
+          $ref: "#/components/schemas/DocumentSearchFence"
+        profile:
+          maxLength: 128
+          minLength: 1
+          pattern: ^[a-z][a-z0-9_-]*$
+          type: string
+        scope:
+          $ref: "#/components/schemas/DocumentSearchScope"
+      required:
+        - profile
+        - fence
+      type: object
+      x-go-type: api.DocumentCoverageRequest
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -23233,6 +23268,28 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Report rendition and embedding coverage for exact document versions
+    post:
+      operationId: getScopedDocumentProcessingCoverage
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DocumentCoverageRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CoverageReport"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Report rendition and embedding coverage for exact versions or live documents
   /api/v1/derivatives/purge-jobs:
     post:
       description: Returns exactly one terminal receipt as newline-delimited JSON after the catalog purge commits. Partial or deferred cleanup includes an error alongside the receipt.

@@ -1729,13 +1729,41 @@ export interface CoverageClass {
   unavailable: number;
 }
 
+export interface DocumentSourceFenceFilters {
+  /** @maxLength 255 */
+  mime_type?: string;
+  modified_before?: string;
+  modified_since?: string;
+  tag_id?: string;
+  /** @minimum 1 */
+  under_node_id?: number;
+}
+
+export type DocumentSearchScopeKind = typeof DocumentSearchScopeKind[keyof typeof DocumentSearchScopeKind];
+
+
+export const DocumentSearchScopeKind = {
+  all_live: 'all_live',
+} as const;
+
+export interface DocumentSearchScope {
+  filters?: DocumentSourceFenceFilters;
+  kind: DocumentSearchScopeKind;
+}
+
 export interface CoverageReport {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   embeddings: CoverageClass[];
+  /**
+     * @minimum 0
+     * @nullable
+     */
+  observed_scope_count?: number | null;
   /** @pattern ^[0-9a-f]{64}$ */
   profile_fingerprint: string;
   renditions: CoverageClass;
+  scope?: DocumentSearchScope;
   state: string;
   vault_uid: string;
 }
@@ -2052,6 +2080,25 @@ export interface DerivativePurgePlanRequest {
   content_version_ids?: string[];
 }
 
+export interface DocumentSearchFence {
+  /** @maxItems 4096 */
+  content_version_ids?: string[];
+  vault_uid: string;
+}
+
+export interface DocumentCoverageRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  fence: DocumentSearchFence;
+  /**
+     * @minLength 1
+     * @maxLength 128
+     * @pattern ^[a-z][a-z0-9_-]*$
+     */
+  profile: string;
+  scope?: DocumentSearchScope;
+}
+
 export interface DocumentEventCoverage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -2228,12 +2275,6 @@ export interface DocumentSearchCoverage {
   state: string;
 }
 
-export interface DocumentSearchFence {
-  /** @maxItems 4096 */
-  content_version_ids?: string[];
-  vault_uid: string;
-}
-
 export interface DocumentSearchRerankingReceipt {
   /**
      * @minimum 0
@@ -2263,28 +2304,6 @@ export interface DocumentSearchResult {
   score: number;
   semantic_rank?: number;
   vault_uid: string;
-}
-
-export interface DocumentSourceFenceFilters {
-  /** @maxLength 255 */
-  mime_type?: string;
-  modified_before?: string;
-  modified_since?: string;
-  tag_id?: string;
-  /** @minimum 1 */
-  under_node_id?: number;
-}
-
-export type DocumentSearchScopeKind = typeof DocumentSearchScopeKind[keyof typeof DocumentSearchScopeKind];
-
-
-export const DocumentSearchScopeKind = {
-  all_live: 'all_live',
-} as const;
-
-export interface DocumentSearchScope {
-  filters?: DocumentSourceFenceFilters;
-  kind: DocumentSearchScopeKind;
 }
 
 export interface DocumentSearchTrace {
@@ -11877,6 +11896,44 @@ export const getDocumentProcessingCoverage = async (params: GetDocumentProcessin
     method: 'GET'
 
 
+  }
+);}
+
+
+
+export const getGetScopedDocumentProcessingCoverageUrl = () => {
+
+
+
+
+  return `/api/v1/coverage`
+}
+
+/**
+ * @summary Report rendition and embedding coverage for exact versions or live documents
+ */
+export const getScopedDocumentProcessingCoverage = async (documentCoverageRequest: NonReadonly<DocumentCoverageRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<CoverageReport> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<CoverageReport>(getGetScopedDocumentProcessingCoverageUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(documentCoverageRequest)
   }
 );}
 

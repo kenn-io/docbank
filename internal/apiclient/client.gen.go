@@ -2681,6 +2681,53 @@ func (c *Client) GetDocumentProcessingCoverage(ctx context.Context, options *Get
 	return responseParser(ctx, resp)
 }
 
+// GetScopedDocumentProcessingCoverage Report rendition and embedding coverage for exact versions or live documents
+func (c *Client) GetScopedDocumentProcessingCoverage(ctx context.Context, options *GetScopedDocumentProcessingCoverageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetScopedDocumentProcessingCoverageResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/coverage",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetScopedDocumentProcessingCoverageResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetScopedDocumentProcessingCoverageResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetScopedDocumentProcessingCoverageResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetScopedDocumentProcessingCoverageErrorResponse](resp, "GetScopedDocumentProcessingCoverageErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/coverage")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // RunDerivativePurge Run one exact reviewed live derivative purge
 func (c *Client) RunDerivativePurge(ctx context.Context, options *RunDerivativePurgeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RunDerivativePurgeResponse, error) {
 	var err error
@@ -17246,6 +17293,34 @@ func (o *GetDocumentProcessingCoverageRequestOptions) GetHeader() (map[string]st
 	return nil, nil
 }
 
+// GetScopedDocumentProcessingCoverageRequestOptions is the options needed to make a request to GetScopedDocumentProcessingCoverage.
+type GetScopedDocumentProcessingCoverageRequestOptions struct {
+	Body *GetScopedDocumentProcessingCoverageBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetScopedDocumentProcessingCoverageRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetScopedDocumentProcessingCoverageRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetScopedDocumentProcessingCoverageRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetScopedDocumentProcessingCoverageRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // RunDerivativePurgeRequestOptions is the options needed to make a request to RunDerivativePurge.
 type RunDerivativePurgeRequestOptions struct {
 	Body *RunDerivativePurgeBody
@@ -26820,6 +26895,8 @@ type PlanBatesStampBody = BatesPlanRequest
 
 type SetCollectionLabelBody = SetCollectionLabelRequest
 
+type GetScopedDocumentProcessingCoverageBody = DocumentCoverageRequest
+
 type RunDerivativePurgeBody = DerivativePurgeJobRequest
 
 type PlanDerivativePurgeBody = DerivativePurgePlanRequest
@@ -27707,6 +27784,10 @@ type LookupContentReferencesErrorResponse = Error
 type GetDocumentProcessingCoverageResponse = api.CoverageReport
 
 type GetDocumentProcessingCoverageErrorResponse = Error
+
+type GetScopedDocumentProcessingCoverageResponse = api.CoverageReport
+
+type GetScopedDocumentProcessingCoverageErrorResponse = Error
 
 type RunDerivativePurgeResponse = []byte
 
@@ -29341,6 +29422,8 @@ type DerivativePurgePlan = api.DerivativePurgePlan
 type DerivativePurgePlanRequest = api.DerivativePurgePlanRequest
 
 type DerivativePurgeReceipt = api.DerivativePurgeReceipt
+
+type DocumentCoverageRequest = api.DocumentCoverageRequest
 
 type DocumentEventCoverage = api.DocumentEventCoverage
 
