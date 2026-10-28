@@ -220,7 +220,9 @@ func TestPhotosCLISettingsRejectsInvalidArguments(t *testing.T) {
 	}{
 		{"raw", []string{"set", "raw", "5"}, []string{`unexpected argument "5" after preference "raw"`}},
 		{"image", []string{"set", "image", "5"}, []string{`unexpected argument "5" after preference "image"`}},
-		{"unknown key", []string{"reset", "foo"}, []string{"accepted keys: backup.interval, backup.keep_last, photos.hidden_unlock_lifetime", "configure paths and credentials in config.toml"}},
+		{"unknown key", []string{"reset", "foo"}, []string{`unknown setting "foo"`, "docbank backup schedule"}},
+		{"backup key", []string{"set", "backup.interval", "1h"}, []string{`unknown setting "backup.interval"`, "docbank backup schedule"}},
+		{"fractional lifetime", []string{"set", "hidden_unlock_lifetime", "1.5s"}, []string{"whole-second duration"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := runCLI(t, append([]string{"photos", "settings"}, tc.args...)...)
@@ -232,54 +234,50 @@ func TestPhotosCLISettingsRejectsInvalidArguments(t *testing.T) {
 	}
 }
 
-func TestPhotosCLISettingsOverrides(t *testing.T) {
-	setupPhotoSettingsHome(t)
+func TestPhotosCLIHiddenUnlockLifetime(t *testing.T) {
+	setupSettingsHome(t)
 	_, err := runCLI(t, "photos", "settings", "set", "image")
 	require.NoError(t, err)
-	out, err := runCLI(t, "photos", "settings", "set", "backup.keep_last", "5")
+	out, err := runCLI(t, "photos", "settings", "set", "hidden_unlock_lifetime", "15m")
 	require.NoError(t, err)
 	var settings api.PhotoSettings
 	require.NoError(t, json.Unmarshal([]byte(out), &settings))
-	require.Equal(t, new(5), settings.BackupKeepLast)
-	require.Equal(t, new("image"), settings.Preference)
-	require.Equal(t, int64(3), settings.Revision)
-	checkPhotoDurationOverrides(t)
-	out, err = runCLI(t, "photos", "settings", "reset", "backup.keep_last")
+	require.Equal(t, new(int64(900)), settings.HiddenUnlockLifetimeSeconds)
+	require.Equal(t, new("image"), settings.Preference, "a lifetime change keeps the display preference")
+	out, err = runCLI(t, "photos", "settings", "reset", "hidden_unlock_lifetime")
 	require.NoError(t, err)
 	settings = api.PhotoSettings{}
 	require.NoError(t, json.Unmarshal([]byte(out), &settings))
-	require.Nil(t, settings.BackupKeepLast)
+	require.Nil(t, settings.HiddenUnlockLifetimeSeconds)
 	require.Equal(t, new("image"), settings.Preference)
 }
 
-func setupPhotoSettingsHome(t *testing.T) {
-	t.Helper()
-	home := t.TempDir()
-	t.Setenv("DOCBANK_HOME", home)
-	config := fmt.Sprintf("[backup]\nrepo = %q\nkeep_last = 5\n", filepath.ToSlash(filepath.Join(t.TempDir(), "repo")))
-	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte(config), 0o600))
-	startTestDaemon(t, home)
-}
-
-func checkPhotoDurationOverrides(t *testing.T) {
-	t.Helper()
+func TestBackupScheduleCLIOverrides(t *testing.T) {
+	setupSettingsHome(t)
+	_, err := runCLI(t, "photos", "settings", "set", "image")
+	require.NoError(t, err)
 	client, err := daemonconn.Ensure(t.Context())
 	require.NoError(t, err)
 	for _, step := range []struct {
-		args     []string
-		interval *int64
-		lifetime *int64
-		wantErr  string
+		args              []string
+		interval          *int64
+		keep              *int
+		effectiveInterval int64
+		effectiveKeep     int
+		wantErr           string
 	}{
-		{[]string{"set", "backup.interval", "1h"}, new(int64(3600)), nil, ""},
-		{[]string{"set", "photos.hidden_unlock_lifetime", "15m"}, new(int64(3600)), new(int64(900)), ""},
-		{[]string{"set", "backup.interval", "1.5s"}, nil, nil, "whole-second duration"},
-		{[]string{"set", "backup.interval", "0"}, new(int64(0)), new(int64(900)), ""},
-		{[]string{"reset", "backup.interval"}, nil, new(int64(900)), ""},
-		{[]string{"reset", "photos.hidden_unlock_lifetime"}, nil, nil, ""},
+		{args: []string{"show"}, effectiveKeep: 5},
+		{args: []string{"set", "keep_last", "2"}, keep: new(2), effectiveKeep: 2},
+		{args: []string{"set", "interval", "1h"}, interval: new(int64(3600)), keep: new(2), effectiveInterval: 3600, effectiveKeep: 2},
+		{args: []string{"set", "interval", "1.5s"}, wantErr: "whole-second duration"},
+		{args: []string{"set", "keep_last", "0"}, wantErr: "positive integer"},
+		{args: []string{"set", "repo", "/tmp"}, wantErr: "set the repository in config.toml"},
+		{args: []string{"set", "interval", "0"}, interval: new(int64(0)), keep: new(2), effectiveKeep: 2},
+		{args: []string{"reset", "interval"}, keep: new(2), effectiveKeep: 2},
+		{args: []string{"reset", "keep_last"}, effectiveKeep: 5},
 	} {
 		t.Run(fmt.Sprint(step.args), func(t *testing.T) {
-			_, err := runCLI(t, append([]string{"photos", "settings"}, step.args...)...)
+			out, err := runCLI(t, append([]string{"backup", "schedule"}, step.args...)...)
 			if step.wantErr != "" {
 				// The CLI rejects the input before any daemon call, so the daemon state cannot change.
 				require.ErrorContains(t, err, step.wantErr)
@@ -287,12 +285,24 @@ func checkPhotoDurationOverrides(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
+			var schedule api.BackupSchedule
+			require.NoError(t, json.Unmarshal([]byte(out), &schedule))
+			require.Equal(t, step.interval, schedule.IntervalSeconds)
+			require.Equal(t, step.keep, schedule.KeepLast)
+			require.Equal(t, step.effectiveInterval, schedule.EffectiveIntervalSeconds)
+			require.Equal(t, step.effectiveKeep, schedule.EffectiveKeepLast)
 			settings, err := client.PhotoSettings(t.Context())
 			require.NoError(t, err)
-			require.Equal(t, step.interval, settings.BackupIntervalSeconds)
-			require.Equal(t, step.lifetime, settings.HiddenUnlockLifetimeSeconds)
-			require.Equal(t, new(5), settings.BackupKeepLast)
-			require.Equal(t, new("image"), settings.Preference)
+			require.Equal(t, new("image"), settings.Preference, "schedule changes keep the display preference")
 		})
 	}
+}
+
+func setupSettingsHome(t *testing.T) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("DOCBANK_HOME", home)
+	config := fmt.Sprintf("[backup]\nrepo = %q\nkeep_last = 5\n", filepath.ToSlash(filepath.Join(t.TempDir(), "repo")))
+	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte(config), 0o600))
+	startTestDaemon(t, home)
 }

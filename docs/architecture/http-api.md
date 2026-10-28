@@ -162,6 +162,7 @@ on a running daemon) and authenticates with `X-Api-Key` /
 | `GET /storage` · `POST /storage/pack` · `POST /storage/repack` | inspect usage / pack loose blobs / compact sparse packs | Implemented |
 | `GET /jobs` | inspect daemon-owned background tasks and terminal failures; a `running` job with `busy: false` is waiting for work or its next run, and clients show it as idle | Implemented |
 | `GET /watches` | inspect effective watched-inbox configuration and runner state | Implemented |
+| `GET\|PUT /backup/schedule` | inspect or override the scheduled interval and retention | Implemented |
 | `POST /backup/init` · `POST /backup/claim` · `POST /backup/snapshots` · `POST /backup/snapshots/stream` · `GET /backup/snapshots` | initialize or claim a repository / create with JSON or streamed progress / list snapshots | Implemented |
 
 ### Format capability coverage
@@ -1290,6 +1291,15 @@ each requested move.
 the repository identity and canonical path. `repo` may be omitted when
 `[backup] repo` is configured.
 
+`GET /backup/schedule` returns the runtime overrides `interval_seconds` and
+`keep_last`, when set, beside `effective_interval_seconds`,
+`effective_keep_last`, and the vault settings `revision`, also sent as `ETag`.
+`PUT /backup/schedule` requires `If-Match` and accepts `interval_seconds`,
+`reset_interval`, `keep_last`, and `reset_keep_last`. It rejects an empty body,
+`null`, and a value that would leave an enabled schedule invalid against
+`config.toml`. Both routes require the master API credential. The repository
+path is not a runtime override.
+
 `POST /backup/claim` accepts `{repo?, fingerprint?}` to assign a repository's
 history to this vault installation. Omit `fingerprint` to preview its `id`,
 `path`, `snapshot_count`, optional `newest_at`, `owned`, `takeover`, and
@@ -1678,6 +1688,7 @@ and maintenance are exceptions:
 | `PUT\|DELETE /nodes/{id}/tags/{tag_id}` | required: target node revision; the tag revision also advances on a real assignment change |
 | `POST /photos/assets/{asset_id}/files`, `DELETE /photos/assets/{asset_id}/files/{file_id}`, `POST /photos/assets/{asset_id}/exclude`, `POST /photos/assets/{asset_id}/trash`, `PUT /photos/assets/{asset_id}/display`, `POST /photos/assets/{asset_id}/hide`, `POST /photos/assets/{asset_id}/unhide` | required: photo asset revision |
 | `PUT /photos/settings` | required: photo library settings revision |
+| `PUT /backup/schedule` | required: vault settings revision, shared with photo settings |
 | `POST /photos/rejects/trash` | body: each previewed target's `revision` and `member_revision`; no `If-Match` header |
 | `PATCH /people/by-id/{person_id}` | required: person revision |
 | `POST /people/by-id/{person_id}/retire` | required: person revision |

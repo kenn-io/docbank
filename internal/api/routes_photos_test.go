@@ -3,9 +3,7 @@ package api_test
 import (
 	"encoding/json/v2"
 	"fmt"
-	"log/slog"
 	"net/http"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -15,7 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
-	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -222,14 +219,7 @@ func TestPhotoStackGroupRouteBoundsExplicitIDs(t *testing.T) {
 
 func TestPhotoSettingsAPIPermissionsAndPreconditions(t *testing.T) {
 	t.Parallel()
-	wake := make(chan struct{}, 1)
-	ts, s := newTestServer(t, func(d *api.Deps) {
-		d.Cfg.Backup.Repo = filepath.Join(t.TempDir(), "repo")
-		d.BackupScheduleWake = wake
-		// A closed supervisor must not fail a settings write.
-		d.Jobs = jobs.New(t.Context(), slog.New(slog.DiscardHandler))
-		require.NoError(t, d.Jobs.Shutdown(t.Context()))
-	})
+	ts, s := newTestServer(t, nil)
 	_, err := s.SetPhotoSettings(t.Context(), 1, store.PhotoSettingsUpdate{Preference: new("image")})
 	require.NoError(t, err)
 	headers := map[string]string{"If-Match": `"2"`}
@@ -244,28 +234,14 @@ func TestPhotoSettingsAPIPermissionsAndPreconditions(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, res.StatusCode, body)
 	res, body = do(t, ts, http.MethodPut, "/api/v1/photos/settings", browser, map[string]any{"hidden_unlock_lifetime_seconds": 900})
 	require.Equal(t, http.StatusForbidden, res.StatusCode, body)
-	res, body = do(t, ts, http.MethodPut, "/api/v1/photos/settings", headers, map[string]any{"backup_repo": "/synthetic"})
-	require.Equal(t, http.StatusUnprocessableEntity, res.StatusCode, body)
+	// Backup schedule overrides belong to /api/v1/backup/schedule.
+	for _, field := range []string{"backup_repo", "backup_interval_seconds"} {
+		res, body = do(t, ts, http.MethodPut, "/api/v1/photos/settings", headers, map[string]any{field: 3600})
+		require.Equal(t, http.StatusUnprocessableEntity, res.StatusCode, body)
+	}
 	settings, err := s.PhotoSettings(t.Context())
 	require.NoError(t, err)
 	require.Equal(t, int64(2), settings.Revision)
-	for _, tc := range []struct {
-		seconds int
-		detail  string
-	}{
-		{seconds: -3600},
-		{seconds: 30, detail: "at least one minute"},
-		{seconds: 3600, detail: "repo and positive keep_last"},
-	} {
-		res, body = do(t, ts, http.MethodPut, "/api/v1/photos/settings", headers, map[string]any{"backup_interval_seconds": tc.seconds})
-		require.Equal(t, http.StatusUnprocessableEntity, res.StatusCode, body)
-		if tc.detail != "" {
-			problem := decodeProblem(t, body)
-			require.Equal(t, "validation", problem.Code)
-			require.Contains(t, problem.Detail, "[backup]")
-			require.Contains(t, problem.Detail, tc.detail)
-		}
-	}
 	res, body = do(t, ts, http.MethodPut, "/api/v1/photos/settings", headers, map[string]any{"hidden_unlock_lifetime_seconds": 900})
 	require.Equal(t, http.StatusOK, res.StatusCode, body)
 	require.Contains(t, body, `"hidden_unlock_lifetime_seconds":900`)
@@ -276,22 +252,12 @@ func TestPhotoSettingsAPIPermissionsAndPreconditions(t *testing.T) {
 	res, body = do(t, ts, http.MethodPut, "/api/v1/photos/settings", headers, map[string]any{"burst_gap_seconds": 5})
 	require.Equal(t, http.StatusOK, res.StatusCode, body)
 	require.Equal(t, `"4"`, res.Header.Get("ETag"))
-	// Schedule changes wake the backup schedule, including when its supervisor is closed.
-	headers["If-Match"] = `"4"`
-	res, body = do(t, ts, http.MethodPut, "/api/v1/photos/settings", headers, map[string]any{"backup_interval_seconds": 3600, "backup_keep_last": 1})
-	require.Equal(t, http.StatusOK, res.StatusCode, body)
-	require.Len(t, wake, 1)
-	<-wake
-	headers["If-Match"] = `"5"`
-	res, body = do(t, ts, http.MethodPut, "/api/v1/photos/settings", headers, map[string]any{"reset_backup_interval": true})
-	require.Equal(t, http.StatusOK, res.StatusCode, body)
-	require.Len(t, wake, 1)
 	// A preference change inside an audited tree reports the audit conflict.
 	plan, err := s.PreviewInitialAudit(t.Context(), s.RootID(), "api", nil)
 	require.NoError(t, err)
 	_, err = s.EnableInitialAudit(t.Context(), plan)
 	require.NoError(t, err)
-	res, body = do(t, ts, http.MethodPut, "/api/v1/photos/settings", map[string]string{"If-Match": `"6"`}, map[string]any{"preference": "raw", "burst_gap_seconds": 5})
+	res, body = do(t, ts, http.MethodPut, "/api/v1/photos/settings", map[string]string{"If-Match": `"4"`}, map[string]any{"preference": "raw", "burst_gap_seconds": 5})
 	require.Equal(t, http.StatusConflict, res.StatusCode, body)
 	require.Equal(t, "audit_mutation_unsupported", decodeProblem(t, body).Code)
 }

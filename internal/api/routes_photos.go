@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"errors"
 	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -11,7 +10,6 @@ import (
 )
 
 func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
-	d.Gate = g
 	huma.Register(api, huma.Operation{
 		OperationID: "trashPhotoAsset", Method: http.MethodPost,
 		Path: "/api/v1/photos/assets/{asset_id}/trash", Summary: "Move every photo asset member to recoverable trash",
@@ -228,31 +226,11 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 		if err != nil {
 			return nil, err
 		}
-		update.ValidateSchedule = func(next store.PhotoSettings) error {
-			if err := effectiveBackupConfig(d.Cfg.Backup, next).ValidateSchedule(); err != nil {
-				return NewError(http.StatusUnprocessableEntity, "validation", err.Error())
-			}
-			return nil
-		}
 		var out *photoSettingsOutput
 		err = g.mutate(func() error {
 			settings, callErr := d.Store.SetPhotoSettings(ctx, revision, update)
 			if callErr != nil {
-				if problem, ok := errors.AsType[*Error](callErr); ok {
-					return problem
-				}
 				return FromStoreError(callErr)
-			}
-			if update.BackupIntervalSeconds != nil || update.ResetBackupInterval || update.BackupKeepLast != nil || update.ResetBackupKeepLast {
-				select {
-				case d.BackupScheduleWake <- struct{}{}:
-				default:
-				}
-			}
-			if effectiveBackupConfig(d.Cfg.Backup, settings).Interval.Std() > 0 {
-				if err := startBackupSchedule(d); err != nil {
-					return err
-				}
 			}
 			out = &photoSettingsOutput{ETag: revisionETag(settings.Revision), Body: fromStorePhotoSettings(settings)}
 			return nil
@@ -275,18 +253,18 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 
 // update validates request intent and preserves the legacy empty-body reset.
 func (in SetPhotoSettingsRequest) update(ctx context.Context, ifMatch string) (int64, store.PhotoSettingsUpdate, error) {
-	update := store.PhotoSettingsUpdate{Preference: in.Preference, ResetPreference: in.ResetPreference, BurstGapSeconds: in.BurstGapSeconds, BackupIntervalSeconds: in.BackupIntervalSeconds, ResetBackupInterval: in.ResetBackupInterval, BackupKeepLast: in.BackupKeepLast, ResetBackupKeepLast: in.ResetBackupKeepLast, HiddenUnlockLifetimeSeconds: in.HiddenUnlockLifetimeSeconds, ResetHiddenUnlockLifetime: in.ResetHiddenUnlockLifetime}
-	if in.preferenceNull || in.Preference == nil && in.BurstGapSeconds == nil && in.BackupIntervalSeconds == nil && in.BackupKeepLast == nil && in.HiddenUnlockLifetimeSeconds == nil && !in.ResetBackupInterval && !in.ResetBackupKeepLast && !in.ResetHiddenUnlockLifetime {
+	update := store.PhotoSettingsUpdate{Preference: in.Preference, ResetPreference: in.ResetPreference, BurstGapSeconds: in.BurstGapSeconds, HiddenUnlockLifetimeSeconds: in.HiddenUnlockLifetimeSeconds, ResetHiddenUnlockLifetime: in.ResetHiddenUnlockLifetime}
+	if in.preferenceNull || in.Preference == nil && in.BurstGapSeconds == nil && in.HiddenUnlockLifetimeSeconds == nil && !in.ResetHiddenUnlockLifetime {
 		update.ResetPreference = true
 	}
-	overrides := in.BackupIntervalSeconds != nil || in.BackupKeepLast != nil || in.HiddenUnlockLifetimeSeconds != nil || in.ResetBackupInterval || in.ResetBackupKeepLast || in.ResetHiddenUnlockLifetime
+	overrides := in.HiddenUnlockLifetimeSeconds != nil || in.ResetHiddenUnlockLifetime
 
 	revision, err := parseIfMatch(ifMatch)
 	if err != nil {
 		return 0, update, err
 	}
 	if in.runtimeNull {
-		return 0, update, huma.Error422UnprocessableEntity("Use reset flags to reset runtime overrides")
+		return 0, update, huma.Error422UnprocessableEntity("Use reset_hidden_unlock_lifetime to reset the Hidden unlock lifetime")
 	}
 	if in.ResetPreference && in.Preference != nil {
 		return 0, update, huma.Error422UnprocessableEntity("Set preference or reset_preference, rather than both")
@@ -295,7 +273,7 @@ func (in SetPhotoSettingsRequest) update(ctx context.Context, ifMatch string) (i
 		return 0, update, huma.Error422UnprocessableEntity("Omit preference to keep it, or use reset_preference to reset it with another setting")
 	}
 	if browserSessionRequest(ctx) && (update.Preference != nil || update.ResetPreference || overrides) {
-		return 0, update, huma.Error403Forbidden("Changing the display preference or runtime overrides requires the API key")
+		return 0, update, huma.Error403Forbidden("Changing the display preference or Hidden unlock lifetime requires the API key")
 	}
 	return revision, update, nil
 }

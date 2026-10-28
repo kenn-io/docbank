@@ -612,7 +612,7 @@ func TestBackupScheduleInvalidEffectiveConfig(t *testing.T) {
 		synctest.Wait()
 		require.Contains(t, d.Jobs.Snapshot()[0].Error, "positive keep_last")
 		time.Sleep(time.Second)
-		require.Zero(t, d.Tracker.IdleFor(), "enabled invalid schedule must hold the daemon")
+		require.NotZero(t, d.Tracker.IdleFor(), "a schedule that cannot run must not hold the daemon")
 		points, err := repo.ListSnapshots()
 		require.NoError(t, err)
 		require.Empty(t, points, "invalid retention must prevent capture")
@@ -624,6 +624,7 @@ func TestBackupScheduleInvalidEffectiveConfig(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, points, 1)
 		require.Empty(t, d.Jobs.Snapshot()[0].Error)
+		require.Zero(t, d.Tracker.IdleFor(), "a usable schedule holds the daemon again")
 		require.NoError(t, d.Jobs.Shutdown(t.Context()))
 		time.Sleep(time.Second)
 		require.Positive(t, d.Tracker.IdleFor(), "shutdown must release the schedule hold")
@@ -737,6 +738,28 @@ func TestBackupScheduleSettingsReadRetry(t *testing.T) {
 			})
 		})
 	}
+}
+
+// A restored vault can carry an interval override to a home whose config.toml
+// has no repository. That schedule cannot run, so it must report the problem
+// without keeping the daemon awake forever.
+func TestBackupScheduleUnusableOverrideLetsDaemonIdle(t *testing.T) {
+	t.Parallel()
+	warmPackEncoders()
+	synctest.Test(t, func(t *testing.T) {
+		d := scheduledDeps(t)
+		d.Cfg.Backup = config.BackupConfig{}
+		d.Tracker = NewActivityTracker()
+		_, err := d.Store.SetPhotoSettings(t.Context(), 1, store.PhotoSettingsUpdate{BackupIntervalSeconds: new(int64(3600)), BackupKeepLast: new(1)})
+		require.NoError(t, err)
+		d.Jobs = jobs.New(t.Context(), d.Logger)
+		defer func() { require.NoError(t, d.Jobs.Shutdown(t.Context())) }()
+		require.NoError(t, StartBackupSchedule(t.Context(), d))
+		synctest.Wait()
+		require.Contains(t, d.Jobs.Snapshot()[0].Error, "repo and positive keep_last")
+		time.Sleep(time.Second)
+		require.NotZero(t, d.Tracker.IdleFor(), "an unusable schedule must not hold the daemon")
+	})
 }
 
 // A settings read that fails and recovers while the schedule waits must not

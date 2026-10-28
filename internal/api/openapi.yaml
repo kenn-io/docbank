@@ -1187,6 +1187,49 @@ components:
       required:
         - target
       type: object
+    BackupSchedule:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/BackupSchedule.json
+          format: uri
+          readOnly: true
+          type: string
+        effective_interval_seconds:
+          description: Interval in force; 0 disables scheduling.
+          format: int64
+          type: integer
+        effective_keep_last:
+          description: Scheduled points retention keeps.
+          format: int64
+          type: integer
+        interval_seconds:
+          description: Runtime override; absent inherits config.toml.
+          format: int64
+          type:
+            - integer
+            - "null"
+        keep_last:
+          description: Runtime override; absent inherits config.toml.
+          format: int64
+          type:
+            - integer
+            - "null"
+        revision:
+          format: int64
+          minimum: 1
+          type: integer
+      required:
+        - effective_interval_seconds
+        - effective_keep_last
+        - revision
+      type: object
+      x-go-type: api.BackupSchedule
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     BackupSnapshot:
       additionalProperties: false
       properties:
@@ -15089,16 +15132,6 @@ components:
           format: uri
           readOnly: true
           type: string
-        backup_interval_seconds:
-          format: int64
-          type:
-            - integer
-            - "null"
-        backup_keep_last:
-          format: int64
-          type:
-            - integer
-            - "null"
         burst_gap_seconds:
           format: int64
           maximum: 30
@@ -18892,6 +18925,38 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/kataevidence
         name: kataevidence
+    SetBackupScheduleRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/SetBackupScheduleRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        interval_seconds:
+          description: Omit to keep the override; 0 disables scheduling.
+          format: int64
+          maximum: 9223372036
+          minimum: 0
+          type: integer
+        keep_last:
+          description: Omit to keep the override.
+          format: int64
+          minimum: 1
+          type: integer
+        reset_interval:
+          description: Inherit the interval from config.toml.
+          type: boolean
+        reset_keep_last:
+          description: Inherit keep_last from config.toml.
+          type: boolean
+      type: object
+      x-go-type: api.SetBackupScheduleRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     SetCollectionLabelRequest:
       additionalProperties: false
       properties:
@@ -18983,17 +19048,6 @@ components:
           format: uri
           readOnly: true
           type: string
-        backup_interval_seconds:
-          description: Omit to keep the override.
-          format: int64
-          maximum: 9223372036
-          minimum: 0
-          type: integer
-        backup_keep_last:
-          description: Omit to keep the override.
-          format: int64
-          minimum: 1
-          type: integer
         burst_gap_seconds:
           description: Omit to keep the burst gap.
           format: int64
@@ -19016,12 +19070,6 @@ components:
           type:
             - string
             - "null"
-        reset_backup_interval:
-          description: Reset the backup interval to config inheritance.
-          type: boolean
-        reset_backup_keep_last:
-          description: Reset retention to config inheritance.
-          type: boolean
         reset_hidden_unlock_lifetime:
           description: Reset Hidden unlock lifetime to five minutes.
           type: boolean
@@ -22318,6 +22366,59 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Restore and prove a snapshot while streaming structured progress
+  /api/v1/backup/schedule:
+    get:
+      operationId: getBackupSchedule
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackupSchedule"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Inspect the backup schedule and its runtime overrides
+    put:
+      operationId: setBackupSchedule
+      parameters:
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetBackupScheduleRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackupSchedule"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Override the backup interval or retention without a restart
   /api/v1/backup/snapshots:
     get:
       operationId: listBackupSnapshots

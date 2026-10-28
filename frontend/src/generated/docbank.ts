@@ -819,6 +819,27 @@ export interface BackupRestoreRequest {
   target: string;
 }
 
+export interface BackupSchedule {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** Interval in force; 0 disables scheduling. */
+  effective_interval_seconds: number;
+  /** Scheduled points retention keeps. */
+  effective_keep_last: number;
+  /**
+     * Runtime override; absent inherits config.toml.
+     * @nullable
+     */
+  interval_seconds?: number | null;
+  /**
+     * Runtime override; absent inherits config.toml.
+     * @nullable
+     */
+  keep_last?: number | null;
+  /** @minimum 1 */
+  revision: number;
+}
+
 export interface BackupSnapshotList {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -6627,10 +6648,6 @@ export const PhotoSettingsPreference = {
 export interface PhotoSettings {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @nullable */
-  backup_interval_seconds?: number | null;
-  /** @nullable */
-  backup_keep_last?: number | null;
   /**
      * @minimum 1
      * @maximum 30
@@ -7976,6 +7993,26 @@ export interface SearchReport {
   under_node_id?: number;
 }
 
+export interface SetBackupScheduleRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * Omit to keep the override; 0 disables scheduling.
+     * @minimum 0
+     * @maximum 9223372036
+     */
+  interval_seconds?: number;
+  /**
+     * Omit to keep the override.
+     * @minimum 1
+     */
+  keep_last?: number;
+  /** Inherit the interval from config.toml. */
+  reset_interval?: boolean;
+  /** Inherit keep_last from config.toml. */
+  reset_keep_last?: boolean;
+}
+
 export interface SetCollectionLabelRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -8023,17 +8060,6 @@ export interface SetPhotoSettingsRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   /**
-     * Omit to keep the override.
-     * @minimum 0
-     * @maximum 9223372036
-     */
-  backup_interval_seconds?: number;
-  /**
-     * Omit to keep the override.
-     * @minimum 1
-     */
-  backup_keep_last?: number;
-  /**
      * Omit to keep the burst gap.
      * @minimum 1
      * @maximum 30
@@ -8051,10 +8077,6 @@ export interface SetPhotoSettingsRequest {
      * @nullable
      */
   preference?: SetPhotoSettingsRequestPreference;
-  /** Reset the backup interval to config inheritance. */
-  reset_backup_interval?: boolean;
-  /** Reset retention to config inheritance. */
-  reset_backup_keep_last?: boolean;
   /** Reset Hidden unlock lifetime to five minutes. */
   reset_hidden_unlock_lifetime?: boolean;
   /** Reset preference to its default. Conflicts with preference. */
@@ -8956,6 +8978,10 @@ path?: string;
  * @minimum 1
  */
 node_id?: number;
+};
+
+export type SetBackupScheduleHeaders = {
+'If-Match': string;
 };
 
 export type ListBackupSnapshotsParams = {
@@ -10849,6 +10875,69 @@ return sessionResponse<Response>(getStreamBackupSnapshotRestoreUrl(),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(backupRestoreRequest)
+  }
+);}
+
+
+
+export const getGetBackupScheduleUrl = () => {
+
+
+
+
+  return `/api/v1/backup/schedule`
+}
+
+/**
+ * @summary Inspect the backup schedule and its runtime overrides
+ */
+export const getBackupSchedule = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<BackupSchedule> => {
+
+  return sessionJSON<BackupSchedule>(getGetBackupScheduleUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getSetBackupScheduleUrl = () => {
+
+
+
+
+  return `/api/v1/backup/schedule`
+}
+
+/**
+ * @summary Override the backup interval or retention without a restart
+ */
+export const setBackupSchedule = async (setBackupScheduleRequest: NonReadonly<SetBackupScheduleRequest>,
+    headers: SetBackupScheduleHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<BackupSchedule> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<BackupSchedule>(getSetBackupScheduleUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
+    body: JSON.stringify(setBackupScheduleRequest)
   }
 );}
 

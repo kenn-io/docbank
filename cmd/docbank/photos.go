@@ -3,7 +3,6 @@ package main
 import (
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -270,10 +269,10 @@ var photoDisplayCmd = &cobra.Command{
 }
 
 var photoSettingsCmd = &cobra.Command{
-	Long: `Keys: backup.interval, backup.keep_last, photos.hidden_unlock_lifetime.
-Set raw or image without a key to change the display preference.
-Reset backup keys to inherit config.toml and Hidden lifetime to five minutes.
-Output: JSON.`,
+	Long: `Set raw or image to change the display preference, or set
+hidden_unlock_lifetime to a duration such as 15m. Reset hidden_unlock_lifetime
+to return to five minutes. Backup schedule overrides live under
+"docbank backup schedule". Output: JSON.`,
 	Use:   "settings",
 	Short: "Inspect or change photo settings",
 	Args:  cobra.NoArgs,
@@ -284,9 +283,8 @@ var photoSettingsShowCmd = &cobra.Command{
 	Example: `  docbank photos settings show`,
 	Use:     "show",
 	Short:   "Show stored photo settings",
-	Long: `Absent backup overrides inherit config.toml.
-An absent Hidden lifetime override uses five minutes.`,
-	Args: cobra.NoArgs,
+	Long:    `An absent Hidden lifetime override uses five minutes.`,
+	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
@@ -321,12 +319,8 @@ var photoSettingsSetCmd = &cobra.Command{
 			}
 			return writePhotoOverride(cmd, args[0], &args[1])
 		}
-		switch args[0] {
-		case "backup.interval", "backup.keep_last", "photos.hidden_unlock_lifetime":
+		if args[0] == hiddenUnlockLifetimeKey {
 			return usageError(fmt.Errorf("%s requires a value", args[0]))
-		}
-		if strings.Contains(args[0], ".") {
-			return usageError(errors.New("unknown setting; configure paths and credentials in config.toml"))
 		}
 		if args[0] != "raw" && args[0] != "image" {
 			return usageError(errors.New("preference must be raw or image"))
@@ -456,38 +450,31 @@ func init() {
 	photoPromoteCmd.Flags().Int64Var(&photoRevision, "revision", 0, "expected existing asset revision (default: current, retried once)")
 }
 
+const hiddenUnlockLifetimeKey = "hidden_unlock_lifetime"
+
 func writePhotoOverride(cmd *cobra.Command, key string, value *string) error {
 	if cmd.Flags().Changed("burst-gap-seconds") {
 		return usageError(errors.New("a setting key cannot be combined with --burst-gap-seconds"))
 	}
-	if key != "backup.interval" && key != "backup.keep_last" && key != "photos.hidden_unlock_lifetime" {
-		return usageError(errors.New("unknown setting; accepted keys: backup.interval, backup.keep_last, photos.hidden_unlock_lifetime; configure paths and credentials in config.toml"))
+	if key != hiddenUnlockLifetimeKey {
+		return usageError(fmt.Errorf("unknown setting %q; the only key is %s, and backup overrides use \"docbank backup schedule\"", key, hiddenUnlockLifetimeKey))
 	}
-	var seconds *int64
-	var keep *int
+	request := api.SetPhotoSettingsRequest{ResetHiddenUnlockLifetime: value == nil}
 	if value != nil {
-		if key == "backup.keep_last" {
-			n, err := strconv.Atoi(*value)
-			if err != nil {
-				return usageError(errors.New("backup.keep_last requires an integer"))
-			}
-			keep = &n
-		} else {
-			d, err := time.ParseDuration(*value)
-			if err != nil || d%time.Second != 0 {
-				return usageError(errors.New("setting requires a whole-second duration"))
-			}
-			seconds = new(int64(d / time.Second))
+		seconds, err := wholeSeconds(*value)
+		if err != nil {
+			return err
 		}
-	}
-	request := api.SetPhotoSettingsRequest{}
-	switch key {
-	case "backup.interval":
-		request.BackupIntervalSeconds, request.ResetBackupInterval = seconds, value == nil
-	case "backup.keep_last":
-		request.BackupKeepLast, request.ResetBackupKeepLast = keep, value == nil
-	case "photos.hidden_unlock_lifetime":
-		request.HiddenUnlockLifetimeSeconds, request.ResetHiddenUnlockLifetime = seconds, value == nil
+		request.HiddenUnlockLifetimeSeconds = &seconds
 	}
 	return writePhotoSettings(cmd, request)
+}
+
+// wholeSeconds parses a Go duration such as 15m or 1h into whole seconds.
+func wholeSeconds(value string) (int64, error) {
+	d, err := time.ParseDuration(value)
+	if err != nil || d%time.Second != 0 {
+		return 0, usageError(errors.New("setting requires a whole-second duration such as 15m or 1h"))
+	}
+	return int64(d / time.Second), nil
 }

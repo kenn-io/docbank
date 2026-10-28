@@ -59,15 +59,18 @@ func runBackupSchedule(ctx context.Context, d Deps, schedule *backupSchedule) er
 	// The worker starts only when scheduling is enabled or the start-time read
 	// failed, so hold the daemon before the first read can block past idle_timeout.
 	holding := false
-	if d.Tracker != nil {
-		d.Tracker.Begin()
-		holding = true
-	}
-	defer func() {
-		if holding && d.Tracker != nil {
-			d.Tracker.End()
+	hold := func(on bool) {
+		if d.Tracker != nil && on != holding {
+			if on {
+				d.Tracker.Begin()
+			} else {
+				d.Tracker.End()
+			}
 		}
-	}()
+		holding = on
+	}
+	hold(true)
+	defer hold(false)
 	captureDue := false
 	lastFailure := ""
 	reportFailure := func(err error, retry time.Duration) {
@@ -82,21 +85,26 @@ func runBackupSchedule(ctx context.Context, d Deps, schedule *backupSchedule) er
 			return err
 		}
 		settings, err := d.Store.PhotoSettings(ctx)
-		cfg := effectiveBackupConfig(d.Cfg.Backup, settings)
-		interval := cfg.Interval.Std()
-		if interval > 0 || err != nil {
-			if !holding && d.Tracker != nil {
-				d.Tracker.Begin()
-			}
-			holding = true
-		}
-		if err == nil {
-			err = cfg.ValidateSchedule()
-		}
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
+			// A failed read can hide an enabled schedule, so keep the daemon up while retrying.
+			hold(true)
+			reportFailure(err, time.Minute)
+			if err := waitBackupSchedule(ctx, time.Minute, d.BackupScheduleWake); err != nil {
+				return err
+			}
+			continue
+		}
+		cfg := effectiveBackupConfig(d.Cfg.Backup, settings)
+		interval := cfg.Interval.Std()
+		if err := cfg.ValidateSchedule(); err != nil {
+			// A schedule that cannot run, such as a restored vault's interval
+			// override without a configured repository, reports in Jobs but does
+			// not keep the daemon awake.
+			hold(false)
+			captureDue = false
 			reportFailure(err, time.Minute)
 			if err := waitBackupSchedule(ctx, time.Minute, d.BackupScheduleWake); err != nil {
 				return err
@@ -104,16 +112,15 @@ func runBackupSchedule(ctx context.Context, d Deps, schedule *backupSchedule) er
 			continue
 		}
 		if interval <= 0 {
-			if holding && d.Tracker != nil {
-				d.Tracker.End()
-			}
-			holding, captureDue, lastFailure = false, false, ""
+			hold(false)
+			captureDue, lastFailure = false, ""
 			jobs.ReportError(ctx, nil)
 			if err := waitBackupSchedule(ctx, time.Minute, d.BackupScheduleWake); err != nil {
 				return err
 			}
 			continue
 		}
+		hold(true)
 		retry := min(interval, 5*time.Minute)
 		// Busy covers the capture and retention only, so Jobs shows the
 		// schedule idle while it waits for the next deadline.
