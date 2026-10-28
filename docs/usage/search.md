@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-14
+last_edited: 2026-10-28
 title: Automatic and processing search
 description: Choose automatic retrieval or an explicit profile and source-version set.
 ---
@@ -8,9 +8,10 @@ description: Choose automatic retrieval or an explicit profile and source-versio
 
 With no processing options, `docbank search renewal terms` tries hybrid
 search when a processing profile has a query embedding binding. The CLI
-resolves the current versions of all live files through the daemon; you do not
-need profile names or version UUIDs for this path. The daemon enforces query
-consent and index authority.
+asks the daemon to search all current live files with an `all_live` scope; it
+does not enumerate version UUIDs. You do not need profile names or version
+UUIDs for this path, and the population is not limited to 4,096 versions. The
+daemon enforces query consent and index authority.
 
 The CLI runs ordinary lexical search after the hybrid attempt. Its results
 are shown when hybrid search falls back. Folders have no content version, so the
@@ -23,16 +24,14 @@ full. The report is `truncated` when either search omitted a match.
 Profiles and query bindings are tried in ascending name order until one
 succeeds. A failure that could differ by binding moves on to the next pair:
 missing consent, `processing_failed`, `processing_profile_unavailable`,
-`stale_index`, or `not_found` from a binding whose vector index is not built. A failure of the whole source scope, such as
-`stale_version` or `scope_too_large`, stops at once. The CLI never silently
-truncates the semantic population; more than 4,096 live versions falls back
-with `scope_too_large`. When every pair fails, the command reports the first
-failure reason.
+`stale_index`, or `not_found` from a binding whose vector index is not built.
+A failure that applies to the whole scope, such as `foreign_vault`, stops at
+once. When every pair fails, the command reports the first failure reason.
 
-Some requests never try hybrid search and report no degradation:
+Some requests use lexical results without reporting a degradation:
 
 - no profile has a query embedding binding, or processing is unavailable
-- the vault has no live files
+- the daemon observes no live files (an empty scope succeeds without degradation)
 - a tag, directory, MIME, or modification filter, or `--fuzzy`
 - `--limit` above 100, the processing search maximum
 - query text longer than 8,192 Unicode characters, the processing maximum
@@ -66,6 +65,16 @@ that generation. The search HTTP endpoint returns HTTP 500 with
 Removed candidates make the report `truncated`, and surviving result ranks and coverage
 reflect the final check. This applies to automatic and explicit semantic/hybrid
 search, including when expansion and reranking are disabled.
+
+Coverage counts describe the final population, not the number of matches.
+When coverage is incomplete, hybrid search keeps documents without current
+embeddings available to lexical search only. Semantic search does not search
+those documents semantically. Neither statement means those documents matched.
+The vector index still has its existing size and readiness limits.
+
+The browser and TUI retain their explicit source-version selection and its
+4,096-version bound. Whole-vault scope selection here applies to automatic CLI
+search; MCP exposes it separately through `all_live: true`.
 
 ## Choose exact versions and a profile
 

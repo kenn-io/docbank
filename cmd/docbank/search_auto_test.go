@@ -10,13 +10,13 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonauth"
 	"go.kenn.io/docbank/internal/daemonconn"
-	"go.kenn.io/docbank/internal/processing"
 	kitdaemon "go.kenn.io/kit/daemon"
 )
 
@@ -25,6 +25,8 @@ type automaticSearchCase struct {
 	query                                 string
 	profiles                              []api.ProcessingProfileSummary
 	profileError, scopeError, searchError string
+	identityResponse                      string
+	population                            int
 	empty, malformed, cold, mixed         bool
 	folderFirst, wantTruncated            bool
 	wantResults, wantFolders              int
@@ -69,13 +71,16 @@ func TestAutomaticSearchSelectionAndFallback(t *testing.T) {
 		{name: "before", profiles: profiles, limit: 50, opts: daemonconn.SearchOptions{ModifiedBefore: "2026-01-01T00:00:00Z"}, skipped: true},
 		{name: "fuzzy", profiles: profiles, limit: 50, opts: daemonconn.SearchOptions{Fuzzy: true}, skipped: true},
 		{name: "large limit", profiles: profiles, limit: 101, skipped: true},
-		{name: "empty scope", profiles: profiles, limit: 50, empty: true, wantScope: 1},
-		{name: "large scope", profiles: profiles, limit: 50, scopeError: "scope_too_large", wantScope: 1, wantReason: "scope_too_large"},
-		{name: "source changed after resolution", profiles: profiles, limit: 50, searchError: "stale_version", wantScope: 1, wantSearch: 1, wantReason: "stale_version"},
+		{name: "empty scope", profiles: profiles, limit: 50, empty: true, wantScope: 1, wantSearch: 1},
+		{name: "5000 live versions", profiles: profiles, limit: 50, population: 5000, wantScope: 1, wantSearch: 1, wantHybrid: true},
+		{name: "empty vault identity", profiles: profiles, limit: 50, identityResponse: "null", wantScope: 1, wantReason: "semantic_search_failed", wantDetail: true},
+		{name: "invalid vault identity", profiles: profiles, limit: 50, identityResponse: `{"vault_id":"00000000-0000-0000-0000-000000000000"}`, wantScope: 1, wantReason: "semantic_search_failed", wantDetail: true},
+		{name: "vault identity failure", profiles: profiles, limit: 50, scopeError: "processing_failed", wantScope: 1, wantReason: "processing_failed"},
 		{name: "foreign vault", profiles: profiles, limit: 50, searchError: "foreign_vault", wantScope: 1, wantSearch: 1, wantReason: "foreign_vault"},
 		{name: "malformed success", profiles: profiles, limit: 50, malformed: true, wantScope: 1, wantSearch: 1, wantReason: "semantic_search_failed", wantDetail: true},
 		{name: "human malformed success", profiles: profiles, limit: 50, humanCLI: true, malformed: true, wantScope: 1, wantSearch: 1, wantReason: "semantic_search_failed", wantDetail: true},
 		{name: "auth discovery", profileError: "unauthorized", limit: 50, wantError: true},
+		{name: "auth vault identity", profiles: profiles, limit: 50, scopeError: "unauthorized", wantScope: 1, wantError: true},
 		{name: "auth search", profiles: profiles, limit: 50, searchError: "unauthorized", wantScope: 1, wantSearch: 1, wantError: true},
 	}
 	for _, tc := range cases {
@@ -129,8 +134,6 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 			status = http.StatusServiceUnavailable
 		case "processing_consent_required":
 			status = http.StatusPreconditionRequired
-		case "stale_version":
-			status = http.StatusConflict
 		case "foreign_vault":
 			status = http.StatusUnprocessableEntity
 		case "not_found":
@@ -174,27 +177,22 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 				listed[i].Fingerprint = strings.Repeat("a", 64)
 			}
 			assert.NoError(t, json.MarshalWrite(w, listed))
-		case "POST /api/v1/processing/source-fences/resolve":
+		case "GET /api/v1/info":
+			t.Error("automatic search must not inventory blobs for vault identity")
+			http.Error(w, "unexpected vault inventory", http.StatusInternalServerError)
+		case "GET /api/v1/audit/status":
+			assert.Empty(t, r.URL.RawQuery, "vault identity lookup must be unfiltered")
 			*scopeCalls++
 			if tc.scopeError != "" {
 				problem(w, tc.scopeError)
 				return
 			}
-			var body api.DocumentSourceFenceResolveRequest
-			assert.NoError(t, json.UnmarshalRead(r.Body, &body))
-			if !assert.NotNil(t, body.Filters) {
+			if tc.identityResponse != "" {
+				_, err := w.Write([]byte(tc.identityResponse))
+				assert.NoError(t, err)
 				return
 			}
-			assert.Equal(t, api.DocumentSourceFenceFilters{}, *body.Filters)
-			assert.Empty(t, body.ContentVersionIDs)
-			ids := []string{processingTestVersionID}
-			if tc.empty {
-				ids = []string{}
-			}
-			fence := processing.SourceFence{VaultUID: vault, ContentVersionIDs: ids}
-			fp, err := processing.SourceFenceFingerprint(fence)
-			assert.NoError(t, err)
-			assert.NoError(t, json.MarshalWrite(w, api.DocumentSourceFenceResolution{Fence: api.ResolvedDocumentSourceFence{VaultUID: vault, ContentVersionIDs: ids}, FenceFingerprint: fp, ObservedScopeCount: len(ids)}))
+			assert.NoError(t, json.MarshalWrite(w, api.AuditStatus{VaultID: vault}))
 		case "POST /api/v1/search":
 			*searchCalls++
 			var body api.DocumentSearchRequest
@@ -211,7 +209,9 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 			assert.Equal(t, expectedProfile, body.Profile)
 			assert.Equal(t, expectedBinding, body.BindingID)
 			assert.Equal(t, tc.limit, body.Limit)
-			assert.Equal(t, []string{processingTestVersionID}, body.Fence.ContentVersionIDs)
+			assert.Equal(t, vault, body.Fence.VaultUID)
+			assert.Empty(t, body.Fence.ContentVersionIDs, "automatic search must not enumerate versions")
+			assert.Equal(t, &api.DocumentSearchScope{Kind: "all_live"}, body.Scope)
 			switch {
 			case tc.mixed && *searchCalls == 1:
 				problem(w, "processing_consent_required")
@@ -223,7 +223,12 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 			case tc.malformed:
 				_, _ = w.Write([]byte(`{"actual_mode":"semantic"}`))
 			default:
-				assert.NoError(t, json.MarshalWrite(w, api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete", BindingRequired: true, ScopedDocuments: 1, CompleteDocuments: 1}, Results: []api.DocumentSearchResult{{VaultUID: vault, NodeID: 42, ContentVersionID: processingTestVersionID, Rank: 1, Score: .75, Path: "/query.txt", Excerpt: "query words", LexicalRank: 1, Evidence: []api.DocumentEvidenceReference{{Kind: "node_name"}}}}}))
+				population := max(1, tc.population)
+				if tc.empty {
+					assert.NoError(t, json.MarshalWrite(w, api.DocumentSearchReport{Scope: body.Scope, ObservedScopeCount: new(0), RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete"}, Results: []api.DocumentSearchResult{}}))
+					return
+				}
+				assert.NoError(t, json.MarshalWrite(w, api.DocumentSearchReport{Scope: body.Scope, ObservedScopeCount: &population, RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete", BindingRequired: true, ScopedDocuments: population, CompleteDocuments: population}, Results: []api.DocumentSearchResult{{VaultUID: vault, NodeID: 42, ContentVersionID: processingTestVersionID, Rank: 1, Score: .75, Path: "/query.txt", Excerpt: "query words", LexicalRank: 1, Evidence: []api.DocumentEvidenceReference{{Kind: "node_name"}}}}}))
 			}
 		default:
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
@@ -344,4 +349,65 @@ func TestSearchCLIAgentAndExplicitLexicalFilters(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, out, "fuzzy=complete")
 	assert.Contains(t, out, "match=fuzzy_name path=/docs/query-words.txt")
+}
+
+func TestDocumentSearchHeaderExplainsCoverageGaps(t *testing.T) {
+	for _, tc := range []struct{ mode, explanation string }{
+		{"hybrid", "4996 documents without current embeddings are available to lexical search only"},
+		{"semantic", "4996 documents without current embeddings were not searched semantically"},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			cmd, output := processingTestCommand()
+			writeDocumentSearchHeader(cmd, api.DocumentSearchReport{RequestedMode: tc.mode, ActualMode: tc.mode,
+				Coverage: api.DocumentSearchCoverage{State: "incomplete", BindingRequired: true, ScopedDocuments: 5000, CompleteDocuments: 4}})
+			assert.Contains(t, output.String(), tc.explanation)
+			assert.NotContains(t, output.String(), "matched")
+		})
+	}
+}
+
+func TestAutomaticSearchIdentityCancellation(t *testing.T) {
+	t.Parallel()
+	started := make(chan struct{})
+	canceled := make(chan struct{})
+	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/processing/profiles" {
+			assert.NoError(t, json.MarshalWrite(w, []api.ProcessingProfileSummary{{Name: "local", QueryEmbeddingBindings: []string{"text"}}}))
+			return
+		}
+		assert.Equal(t, "/api/v1/audit/status", r.URL.Path)
+		close(started)
+		<-r.Context().Done()
+		close(canceled)
+	}))
+	defer daemon.Close()
+	defer daemon.CloseClientConnections()
+	connection := daemonconn.New(daemon.URL, "key")
+	defer func() { assert.NoError(t, connection.Close()) }()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := tryAutomaticSearch(ctx, connection, "query", 50, daemonconn.SearchOptions{})
+		done <- err
+	}()
+	deadline := time.NewTimer(10 * time.Second)
+	defer deadline.Stop()
+	select {
+	case <-started:
+	case <-deadline.C:
+		t.Fatal("identity request did not start")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-deadline.C:
+		t.Fatal("identity request did not return after cancellation")
+	}
+	select {
+	case <-canceled:
+	case <-deadline.C:
+		t.Fatal("identity HTTP handler did not observe cancellation")
+	}
 }

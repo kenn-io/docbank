@@ -101,3 +101,57 @@ func TestEmbeddedDocumentToolsMatchDaemon(t *testing.T) {
 	assert.Equal(t, "scope_too_large", failure.Code)
 	assert.Equal(t, 4097, failure.Observed)
 }
+
+func TestEmbeddedAllLiveSearchUsesCatalogIdentity(t *testing.T) {
+	// This fixture sets DOCBANK_HOME, so it cannot run in parallel.
+	f := newNativeExportFixture(t)
+	file := f.addFile(t, "alpha.txt", "synthetic text")
+	profileName, profile, err := processing.NewSuppliedMediaProfile(f.catalog, f.blobs, "test:operator")
+	require.NoError(t, err)
+	service, err := processing.NewService(processing.ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: api.NewOperationGate(),
+		SpoolDirectory: filepath.Join(t.TempDir(), "spool"), Profiles: map[string]processing.ProfileConfig{profileName: profile}})
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, service.Shutdown(context.Background())) })
+	reader := api.NewDocumentReader(f.catalog, f.blobs, os.Getenv("DOCBANK_HOME"), service)
+
+	// An unavailable loose-object directory must affect inventory, not identity.
+	blobsPath := filepath.Join(os.Getenv("DOCBANK_HOME"), "blobs")
+	require.NoError(t, os.Rename(blobsPath, blobsPath+".saved"))
+	t.Cleanup(func() {
+		assert.NoError(t, os.Remove(blobsPath))
+		assert.NoError(t, os.Rename(blobsPath+".saved", blobsPath))
+	})
+	require.NoError(t, os.WriteFile(blobsPath, []byte("unavailable inventory"), 0o600))
+	_, err = reader.VaultInfo(t.Context())
+	require.Error(t, err, "get_vault_info retains its physical inventory behavior")
+	vaultID, err := reader.CatalogVaultID(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, f.catalog.VaultID(), vaultID)
+	arguments, err := json.Marshal(map[string]any{"query": "alpha", "profile": profileName, "mode": "lexical", "all_live": true})
+	require.NoError(t, err)
+	result, err := CallDocumentReadTool(t.Context(), reader, &sdkmcp.CallToolRequest{Params: &sdkmcp.CallToolParamsRaw{
+		Name: "search_documents", Arguments: arguments,
+	}})
+	require.NoError(t, err)
+	require.False(t, result.IsError)
+	output := structuredMap(t, result.StructuredContent)
+	assert.Equal(t, vaultID, output["vault_id"])
+	assert.Equal(t, map[string]any{"vault_id": vaultID}, output["fence"])
+	assert.EqualValues(t, 1, output["observed_scope_count"])
+	encoded, err := json.Marshal(result.StructuredContent)
+	require.NoError(t, err)
+	assert.Contains(t, string(encoded), file.VersionID)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err = reader.CatalogVaultID(ctx)
+	require.ErrorIs(t, err, context.Canceled)
+	_, _, err = searchDocuments(ctx, func(ctx context.Context, call func(context.Context, documentClient) error) error {
+		return call(ctx, reader)
+	}, arguments)
+	require.ErrorIs(t, err, context.Canceled)
+	for _, invalid := range []*api.DocumentReader{nil, {}, api.NewDocumentReader(nil, nil, "", nil)} {
+		_, err = invalid.CatalogVaultID(t.Context())
+		require.Error(t, err)
+	}
+}

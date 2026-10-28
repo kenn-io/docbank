@@ -554,6 +554,14 @@ func writeDocumentSearchHeader(cmd *cobra.Command, report api.DocumentSearchRepo
 	}
 	_, _ = fmt.Fprintf(out, "\ncoverage: %s (%d/%d source document(s) complete)\n",
 		report.Coverage.State, report.Coverage.CompleteDocuments, report.Coverage.ScopedDocuments)
+	if gap := report.Coverage.ScopedDocuments - report.Coverage.CompleteDocuments; report.Coverage.State == "incomplete" && gap > 0 {
+		switch report.ActualMode {
+		case "hybrid":
+			_, _ = fmt.Fprintf(out, "%d documents without current embeddings are available to lexical search only\n", gap)
+		case "semantic":
+			_, _ = fmt.Fprintf(out, "%d documents without current embeddings were not searched semantically\n", gap)
+		}
+	}
 	for _, degradation := range report.Degradations {
 		_, _ = fmt.Fprintf(out, "degraded: %s\n", degradation)
 	}
