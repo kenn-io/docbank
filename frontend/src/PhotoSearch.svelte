@@ -47,7 +47,7 @@
               query: text,
               requested_mode: submitted.mode,
               actual_mode: "lexical",
-              filters: { ...submitted.filters },
+              filters: { ...submitted.filters, syntax: submitted.syntax },
               truncated: false,
             },
             { session, signal: AbortSignal.timeout(1000) },

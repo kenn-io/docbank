@@ -130,9 +130,6 @@ func NewServer(d Deps) *Server {
 	if d.StartedAt.IsZero() {
 		d.StartedAt = time.Now()
 	}
-	if d.Gate == nil {
-		d.Gate = NewOperationGate()
-	}
 	mux := http.NewServeMux()
 	cfg := huma.DefaultConfig("docbank", version.Version)
 	cfg.Components.Schemas = huma.NewMapRegistry("#/components/schemas/", apiSchemaName)
@@ -175,6 +172,9 @@ func NewServer(d Deps) *Server {
 		s.termReports = reporting.NewCache(time.Now, s.reportBudget)
 	}
 	g := d.Gate
+	if g == nil {
+		g = NewOperationGate()
+	}
 	s.webSessions = newWebSessionRegistry(func(owner string) {
 		if d.Exports != nil {
 			d.Exports.CancelOwner(owner)

@@ -2180,6 +2180,7 @@
             {
               query,
               profile: profile.name,
+              binding_id: mapped.binding_id,
               requested_mode: mapped.mode,
               actual_mode: mapped.mode === "auto" ? "lexical" : mapped.mode,
               fence_fingerprint: resolution.fence_fingerprint,
@@ -2214,6 +2215,7 @@
         receipt: {
           query,
           profile: profile.name,
+          binding_id: baseRequest.binding_id,
           requested_mode: baseReport.requested_mode as generated.MissLogRequestRequestedMode,
           actual_mode: baseReport.actual_mode as generated.MissLogRequestActualMode,
           filters: { tag_id: requestedTagID },

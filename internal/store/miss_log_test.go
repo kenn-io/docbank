@@ -10,14 +10,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestMissLogRetentionAndMetadataExclusion(t *testing.T) {
+func TestMissLogCountRetentionAndPhotoExclusion(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	events := watchPhotoChanges(t, s)
 	now := time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC)
 	for _, entry := range []MissLogRecord{
-		{ID: "old", CreatedAt: now.AddDate(0, 0, -3), Receipt: `{"query":"sentinel old"}`},
+		{ID: "old", CreatedAt: now.Add(-2 * time.Hour), Receipt: `{"query":"sentinel old"}`},
 		{ID: "first", CreatedAt: now.Add(-time.Hour), Receipt: `{"query":"sentinel first"}`},
 		{ID: "second", CreatedAt: now, Receipt: `{"query":"sentinel second"}`},
 	} {

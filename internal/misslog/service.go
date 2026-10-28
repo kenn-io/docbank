@@ -23,10 +23,10 @@ type Request struct {
 	RequestedMode    string         `json:"requested_mode" enum:"auto,lexical,semantic,hybrid,fuzzy"`
 	ActualMode       string         `json:"actual_mode" enum:"auto,lexical,semantic,hybrid,fuzzy"`
 	Filters          map[string]any `json:"filters,omitempty" maxProperties:"32"`
-	Coverage         any            `json:"coverage,omitempty" maxProperties:"32"`
+	Coverage         map[string]any `json:"coverage,omitempty" maxProperties:"32"`
 	Truncated        bool           `json:"truncated"`
 	Degradations     []string       `json:"degradations,omitempty" maxItems:"64"`
-	Reranking        any            `json:"reranking,omitempty" maxProperties:"8"`
+	Reranking        map[string]any `json:"reranking,omitempty" maxProperties:"8"`
 	FenceFingerprint string         `json:"fence_fingerprint,omitempty" maxLength:"128"`
 	DocumentCount    *int           `json:"document_count,omitempty" minimum:"0"`
 }

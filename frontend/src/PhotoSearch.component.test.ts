@@ -205,7 +205,7 @@ it("reports Photos search outcomes for explicit submissions", async () => {
       query: "Nikon",
       requested_mode: "lexical",
       actual_mode: "lexical",
-      filters: expect.objectContaining({ cameras: ["Synthetic camera"] }),
+      filters: expect.objectContaining({ cameras: ["Synthetic camera"], syntax: "advanced" }),
     }),
     expect.objectContaining({ session: "scoped" }),
   );

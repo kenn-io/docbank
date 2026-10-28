@@ -12,7 +12,6 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/misslog"
-	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -225,7 +224,12 @@ See docs/usage/search.md.`,
 				reportSearch(cmd, c, searchType, empty, searchAgent)
 				if empty {
 					receipt := misslog.Request{Query: query, RequestedMode: "lexical", ActualMode: "lexical", Truncated: rep.Truncated,
-						Filters: map[string]any{"fuzzy": opts.Fuzzy, "tag_id": opts.TagID, "mime_type": opts.MIMEType, "under_node_id": opts.UnderNodeID, "modified_since": opts.ModifiedSince, "modified_before": opts.ModifiedBefore}}
+						Filters: map[string]any{}}
+					for key, value := range map[string]any{"fuzzy": opts.Fuzzy, "tag_id": opts.TagID, "mime_type": opts.MIMEType, "under_node_id": opts.UnderNodeID, "modified_since": opts.ModifiedSince, "modified_before": opts.ModifiedBefore} {
+						if value != "" && value != false && value != int64(0) {
+							receipt.Filters[key] = value
+						}
+					}
 					if rep.Fuzzy != nil {
 						receipt.Coverage = map[string]any{"fuzzy": rep.Fuzzy}
 						if rep.Fuzzy.Status != store.FuzzyStatusNotRun {
@@ -234,7 +238,7 @@ See docs/usage/search.md.`,
 						receipt.RequestedMode = "fuzzy"
 					}
 					if automatic.report != nil {
-						receipt = api.DocumentSearchMiss(query, automatic.profile, automatic.scope.FenceFingerprint, len(automatic.scope.Fence.ContentVersionIDs), *automatic.report)
+						receipt = api.DocumentSearchMiss(query, automatic.profile, automatic.binding, automatic.scope.FenceFingerprint, len(automatic.scope.Fence.ContentVersionIDs), *automatic.report)
 					} else if automatic.reason != "" {
 						receipt.RequestedMode, receipt.Degradations = "hybrid", []string{automatic.reason}
 					}
@@ -423,7 +427,7 @@ func runDocumentSearch(cmd *cobra.Command, c *daemonconn.Connection, query strin
 	if err != nil {
 		return usageError(err)
 	}
-	info, err := c.API().VaultInfo(cmd.Context())
+	resolution, err := c.ResolveDocumentSourceFence(cmd.Context(), api.DocumentSourceFenceResolveRequest{ContentVersionIDs: options.ContentVersionIDs})
 
 	if err != nil {
 		return err
@@ -431,7 +435,7 @@ func runDocumentSearch(cmd *cobra.Command, c *daemonconn.Connection, query strin
 	report, err := c.SearchDocuments(cmd.Context(), api.DocumentSearchRequest{
 		Query: query, Mode: options.Mode, Limit: options.Limit, Profile: options.Profile,
 		BindingID: bindingID, Explain: options.Explain, Rerank: options.Rerank,
-		Fence: api.DocumentSourceFence{VaultUID: info.VaultID, ContentVersionIDs: options.ContentVersionIDs},
+		Fence: api.DocumentSourceFence{VaultUID: resolution.Fence.VaultUID, ContentVersionIDs: resolution.Fence.ContentVersionIDs},
 	})
 	if err != nil {
 		return err
@@ -440,9 +444,7 @@ func runDocumentSearch(cmd *cobra.Command, c *daemonconn.Connection, query strin
 		if retErr == nil {
 			reportSearch(cmd, c, report.ActualMode, len(report.Results) == 0, searchAgent)
 			if len(report.Results) == 0 {
-				fingerprint, _ := processing.SourceFenceFingerprint(processing.SourceFence{VaultUID: info.VaultID, ContentVersionIDs: options.ContentVersionIDs})
-				receipt := api.DocumentSearchMiss(query, options.Profile, fingerprint, len(options.ContentVersionIDs), report)
-				receipt.BindingID = bindingID
+				receipt := api.DocumentSearchMiss(query, options.Profile, bindingID, resolution.FenceFingerprint, len(resolution.Fence.ContentVersionIDs), report)
 				c.RecordMiss(cmd.Context(), receipt)
 			}
 		}

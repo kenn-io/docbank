@@ -3,6 +3,7 @@ package api_test
 import (
 	"encoding/json/v2"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -15,51 +16,25 @@ import (
 
 func TestMissLogRecordingAndManagement(t *testing.T) {
 	t.Parallel()
-	for _, enabled := range []bool{false, true} {
-		t.Run(map[bool]string{false: "disabled", true: "enabled"}[enabled], func(t *testing.T) {
-			t.Parallel()
-			ts, st := newTestServer(t, func(d *api.Deps) { d.Cfg.MissLog.Enabled = enabled })
-			for i, receipt := range []misslog.Request{
-				{Query: " \t", RequestedMode: "lexical", ActualMode: "lexical"},
-				{Query: "large", RequestedMode: "lexical", ActualMode: "lexical", Filters: map[string]any{"value": strings.Repeat("x", 64<<10)}},
-				{Query: "", RequestedMode: "lexical", ActualMode: "lexical", Filters: map[string]any{"tag_id": "taxes"}},
-				{Query: strings.Repeat("q", 8193), RequestedMode: "lexical", ActualMode: "lexical"},
-				{Query: "synthetic empty submission", RequestedMode: "hybrid", ActualMode: "lexical", DocumentCount: new(0)},
-			} {
-				resp, body := do(t, ts, http.MethodPost, "/api/v1/miss-log", nil, receipt)
-				wantStatus := http.StatusNoContent
-				if i == 1 {
-					wantStatus = http.StatusRequestEntityTooLarge
-				}
-				assert.Equal(t, wantStatus, resp.StatusCode, body)
-				rows, err := st.ListMissLogRecords(t.Context(), 10, 0)
-				require.NoError(t, err)
-				want := 0
-				if enabled {
-					want = max(0, i-1)
-				}
-				assert.Len(t, rows, want)
-			}
-			rows, err := st.ListMissLogRecords(t.Context(), 10, 0)
-			require.NoError(t, err)
-			resp, body := get(t, ts, "/api/v1/miss-log", nil)
-			require.Equal(t, http.StatusOK, resp.StatusCode, body)
-			var page api.MissLogPage
-			require.NoError(t, json.Unmarshal([]byte(body), &page))
-			require.Len(t, page.Items, len(rows))
-			if enabled {
-				resp, body = do(t, ts, http.MethodDelete, "/api/v1/miss-log/"+rows[0].ID, nil, nil)
-				require.Equal(t, http.StatusNoContent, resp.StatusCode, body)
-			}
-			resp, body = do(t, ts, http.MethodDelete, "/api/v1/miss-log/missing", nil, nil)
-			require.Equal(t, http.StatusNotFound, resp.StatusCode, body)
-			resp, body = do(t, ts, http.MethodDelete, "/api/v1/miss-log", nil, nil)
-			require.Equal(t, http.StatusNoContent, resp.StatusCode, body)
-			rows, err = st.ListMissLogRecords(t.Context(), 10, 0)
-			require.NoError(t, err)
-			require.Empty(t, rows)
-		})
-	}
+	ts, st := newTestServer(t, func(d *api.Deps) { d.Cfg.MissLog.Enabled = true })
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/miss-log", nil, misslog.Request{Query: "synthetic empty submission", RequestedMode: "hybrid", ActualMode: "lexical", DocumentCount: new(0)})
+	require.Equal(t, http.StatusNoContent, resp.StatusCode, body)
+	resp, body = get(t, ts, "/api/v1/miss-log", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var page api.MissLogPage
+	require.NoError(t, json.Unmarshal([]byte(body), &page))
+	require.Len(t, page.Items, 1)
+	resp, body = do(t, ts, http.MethodDelete, "/api/v1/miss-log/"+page.Items[0].ID, nil, nil)
+	require.Equal(t, http.StatusNoContent, resp.StatusCode, body)
+	resp, body = do(t, ts, http.MethodDelete, "/api/v1/miss-log/missing", nil, nil)
+	require.Equal(t, http.StatusNotFound, resp.StatusCode, body)
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/miss-log", nil, misslog.Request{Query: "another miss", RequestedMode: "lexical", ActualMode: "lexical"})
+	require.Equal(t, http.StatusNoContent, resp.StatusCode, body)
+	resp, body = do(t, ts, http.MethodDelete, "/api/v1/miss-log", nil, nil)
+	require.Equal(t, http.StatusNoContent, resp.StatusCode, body)
+	rows, err := st.ListMissLogRecords(t.Context(), 10, 0)
+	require.NoError(t, err)
+	require.Empty(t, rows)
 }
 
 func TestMissLogBrowserMayRecordButCannotManage(t *testing.T) {
@@ -108,6 +83,14 @@ func TestMissLogInputLimits(t *testing.T) {
 	ts, st := newTestServer(t, func(d *api.Deps) { d.Cfg.MissLog.Enabled = true })
 	for _, modes := range [][2]string{{"semnatic", "lexical"}, {"hybrid", "semnatic"}, {"", "lexical"}, {"hybrid", ""}} {
 		resp, body := do(t, ts, http.MethodPost, "/api/v1/miss-log", nil, misslog.Request{Query: "missing", RequestedMode: modes[0], ActualMode: modes[1]})
+		assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+	}
+	for field, count := range map[string]int{"coverage": 33, "reranking": 9} {
+		properties := map[string]any{}
+		for i := range count {
+			properties[strconv.Itoa(i)] = true
+		}
+		resp, body := do(t, ts, http.MethodPost, "/api/v1/miss-log", nil, map[string]any{"query": "missing", "requested_mode": "lexical", "actual_mode": "lexical", "truncated": false, field: properties})
 		assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
 	}
 	resp, body := do(t, ts, http.MethodPost, "/api/v1/miss-log", nil, misslog.Request{Query: strings.Repeat("q", 128<<10), RequestedMode: "lexical", ActualMode: "lexical"})

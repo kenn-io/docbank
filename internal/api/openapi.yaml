@@ -9594,7 +9594,9 @@ components:
           maxLength: 256
           type: string
         coverage:
+          additionalProperties: {}
           maxProperties: 32
+          type: object
         created_at:
           format: date-time
           type: string
@@ -9630,7 +9632,9 @@ components:
             - fuzzy
           type: string
         reranking:
+          additionalProperties: {}
           maxProperties: 8
+          type: object
         truncated:
           type: boolean
         vault_uid:
@@ -9670,7 +9674,9 @@ components:
           maxLength: 256
           type: string
         coverage:
+          additionalProperties: {}
           maxProperties: 32
+          type: object
         degradations:
           items:
             type: string
@@ -9701,7 +9707,9 @@ components:
             - fuzzy
           type: string
         reranking:
+          additionalProperties: {}
           maxProperties: 8
+          type: object
         truncated:
           type: boolean
       required:

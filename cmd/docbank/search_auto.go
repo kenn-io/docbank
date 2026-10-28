@@ -26,6 +26,7 @@ const (
 type automaticSearchOutcome struct {
 	report  *api.DocumentSearchReport
 	profile string
+	binding string
 	scope   api.DocumentSourceFenceResolution
 	reason  string
 	err     error
@@ -75,7 +76,7 @@ func tryAutomaticSearch(ctx context.Context, c *daemonconn.Connection, query str
 		report, searchErr := c.SearchDocuments(ctx, api.DocumentSearchRequest{Query: query, Mode: "hybrid",
 			Profile: candidate.profile, BindingID: candidate.binding, Limit: limit, Fence: fence})
 		if searchErr == nil {
-			return automaticSearchOutcome{report: &report, profile: candidate.profile, scope: scope}, nil
+			return automaticSearchOutcome{report: &report, profile: candidate.profile, binding: candidate.binding, scope: scope}, nil
 		}
 		outcome, err := automaticSearchFallback(ctx, searchErr)
 		if err != nil {

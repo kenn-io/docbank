@@ -2495,7 +2495,7 @@ func (m Model) applyNaturalSearchBase(msg naturalSearchBaseLoadedMsg) (tea.Model
 			searchType = naturalLexical
 		}
 		return m, func() tea.Msg {
-			m.backend.RecordMiss(m.ctx, api.DocumentSearchMiss(msg.query, msg.request.Profile, msg.fenceFingerprint, 0, api.DocumentSearchReport{RequestedMode: msg.request.Mode, ActualMode: searchType, Coverage: api.DocumentSearchCoverage{State: "complete"}}))
+			m.backend.RecordMiss(m.ctx, api.DocumentSearchMiss(msg.query, msg.request.Profile, msg.request.BindingID, msg.fenceFingerprint, 0, api.DocumentSearchReport{RequestedMode: msg.request.Mode, ActualMode: searchType, Coverage: api.DocumentSearchCoverage{State: "complete"}}))
 			return m.reportAction("search_empty", searchType, "")()
 		}
 	}
@@ -3210,7 +3210,7 @@ func (m Model) reportAction(event, searchType, kind string) tea.Cmd {
 }
 
 func (m Model) reportNaturalSearch(msg naturalSearchBaseLoadedMsg, report api.DocumentSearchReport, empty bool) tea.Cmd {
-	return m.reportSearch(report.ActualMode, empty, api.DocumentSearchMiss(msg.query, msg.request.Profile, msg.fenceFingerprint, len(msg.request.Fence.ContentVersionIDs), report))
+	return m.reportSearch(report.ActualMode, empty, api.DocumentSearchMiss(msg.query, msg.request.Profile, msg.request.BindingID, msg.fenceFingerprint, len(msg.request.Fence.ContentVersionIDs), report))
 }
 
 func (m Model) reportSearch(searchType string, empty bool, receipts ...misslog.Request) tea.Cmd {

@@ -76,8 +76,13 @@ func registerMissLogRoutes(api huma.API, d Deps, g *OperationGate, service *miss
 }
 
 // DocumentSearchMiss keeps the compact outcome without source ID lists.
-func DocumentSearchMiss(query, profile, fingerprint string, documentCount int, report DocumentSearchReport) misslog.Request {
-	return misslog.Request{Query: query, Profile: profile, RequestedMode: report.RequestedMode, ActualMode: report.ActualMode,
+func DocumentSearchMiss(query, profile, binding, fingerprint string, documentCount int, report DocumentSearchReport) misslog.Request {
+	receipt := misslog.Request{Query: query, Profile: profile, BindingID: binding, RequestedMode: report.RequestedMode, ActualMode: report.ActualMode,
 		FenceFingerprint: fingerprint, DocumentCount: new(documentCount), Truncated: report.Truncated, Degradations: report.Degradations,
-		Coverage: report.Coverage, Reranking: report.Reranking}
+		Coverage: map[string]any{"binding_required": report.Coverage.BindingRequired, "scoped_documents": report.Coverage.ScopedDocuments,
+			"complete_documents": report.Coverage.CompleteDocuments, "state": report.Coverage.State}}
+	if report.Reranking != nil {
+		receipt.Reranking = map[string]any{"outcome": report.Reranking.Outcome, "cause": report.Reranking.Cause, "candidate_count": report.Reranking.CandidateCount}
+	}
+	return receipt
 }

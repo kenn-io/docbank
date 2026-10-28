@@ -35,7 +35,7 @@ func TestEmptyNaturalSearchReportsAfterRerank(t *testing.T) {
 			fake := newFakeBackend()
 			fake.profiles[0].RerankingAvailable = true
 			fake.naturalSearch = api.DocumentSearchReport{
-				RequestedMode: "lexical", ActualMode: "lexical",
+				RequestedMode: "hybrid", ActualMode: "hybrid",
 				Coverage: api.DocumentSearchCoverage{ScopedDocuments: 2, CompleteDocuments: 2, State: "complete"},
 			}
 			fake.naturalRerankSearch = fake.naturalSearch
@@ -43,7 +43,7 @@ func TestEmptyNaturalSearchReportsAfterRerank(t *testing.T) {
 			model, err := New(t.Context(), fake)
 			require.NoError(t, err)
 			model.naturalProfiles = fake.profiles
-			model.naturalMode = naturalLexical
+			model.naturalMode = naturalHybrid
 			model.naturalRerank = true
 			model.requestID, model.reportSearchID = 7, 7
 			model.naturalSearchID = 3
@@ -65,10 +65,11 @@ func TestEmptyNaturalSearchReportsAfterRerank(t *testing.T) {
 				model, rerank = updateModel(t, model, batch[0]())
 			}
 			runModelCommand(t, model, rerank)
-			want := []actionCall{{event: "search_run", searchType: "lexical"}, {event: "search_empty", searchType: "lexical"}}
+			want := []actionCall{{event: "search_run", searchType: "hybrid"}, {event: "search_empty", searchType: "hybrid"}}
 			assert.Equal(t, want, fake.actions)
 			require.Len(t, fake.misses, 1)
 			require.Equal(t, "missing", fake.misses[0].Query)
+			require.Equal(t, "semantic", fake.misses[0].BindingID)
 		})
 	}
 }
@@ -299,29 +300,39 @@ func TestNaturalSearchWhyLinesScrollWithRows(t *testing.T) {
 
 func TestNaturalSearchFallbackKeepsCause(t *testing.T) {
 	fake := newFakeBackend()
-	model, err := New(t.Context(), fake)
-	require.NoError(t, err)
-	model.naturalMode, model.naturalProfiles = naturalHybrid, fake.profiles
-	model.searching = true
-	model.searchInput.SetValue("missing")
-	model, _ = updateModel(t, model, key(tea.KeyEnter))
-	updated, fallback := model.applyNaturalSearchBase(naturalSearchBaseLoadedMsg{
-		requestID: model.requestID, searchID: model.naturalSearchID, query: "missing", naturalMode: naturalHybrid,
-		request: api.DocumentSearchRequest{Mode: "hybrid", Profile: "local"}, err: errors.New("provider timed out"),
-	})
-	model, ok := updated.(Model)
-	require.True(t, ok)
-	assert.Equal(t, naturalNames, model.naturalMode)
-	require.NotNil(t, fallback)
-	note := model.naturalSearchNote
-	assert.Contains(t, note, "provider timed out")
-	model, cmd := updateModel(t, model, searchLoadedMsg{requestID: model.requestID, query: "missing"})
-	runModelCommand(t, model, cmd)
-	require.Len(t, fake.misses, 1)
-	assert.Equal(t, "hybrid", fake.misses[0].RequestedMode)
-	assert.Equal(t, "lexical", fake.misses[0].ActualMode)
-	assert.Equal(t, "local", fake.misses[0].Profile)
-	assert.Equal(t, []string{note}, fake.misses[0].Degradations)
+	readme := fake.nodes["/README.txt"]
+	for _, hits := range [][]api.SearchHit{nil, {{Node: readme, Path: readme.Path}}} {
+		fake.misses = nil
+		model, err := New(t.Context(), fake)
+		require.NoError(t, err)
+		model.naturalMode, model.naturalProfiles = naturalHybrid, fake.profiles
+		model.searching = true
+		model.searchInput.SetValue("missing")
+		model, _ = updateModel(t, model, key(tea.KeyEnter))
+		updated, fallback := model.applyNaturalSearchBase(naturalSearchBaseLoadedMsg{
+			requestID: model.requestID, searchID: model.naturalSearchID, query: "missing", naturalMode: naturalHybrid,
+			request: api.DocumentSearchRequest{Mode: "hybrid", Profile: "local"}, err: errors.New("provider timed out"),
+		})
+		model, ok := updated.(Model)
+		require.True(t, ok)
+		assert.Equal(t, naturalNames, model.naturalMode)
+		require.NotNil(t, fallback)
+		note := model.naturalSearchNote
+		assert.Contains(t, note, "provider timed out")
+		model, cmd := updateModel(t, model, searchLoadedMsg{requestID: model.requestID, query: "missing", report: api.SearchReport{Hits: hits}})
+		runModelCommand(t, model, cmd)
+		if len(hits) > 0 {
+			require.Len(t, model.rows, 1)
+			assert.Empty(t, model.rows[0].naturalMode)
+			require.Empty(t, fake.misses)
+			continue
+		}
+		require.Len(t, fake.misses, 1)
+		assert.Equal(t, "hybrid", fake.misses[0].RequestedMode)
+		assert.Equal(t, "lexical", fake.misses[0].ActualMode)
+		assert.Equal(t, "local", fake.misses[0].Profile)
+		assert.Equal(t, []string{note}, fake.misses[0].Degradations)
+	}
 }
 
 func TestNaturalSearchModeProvenanceSurvivesModeChange(t *testing.T) {
@@ -926,9 +937,7 @@ func TestNaturalSearchEmptyFenceReportsSubmissionsAsEmptyWithoutRun(t *testing.T
 				require.Len(t, fake.misses, 1)
 				require.Equal(t, new(0), fake.misses[0].DocumentCount)
 				require.Equal(t, "sha256:synthetic-empty", fake.misses[0].FenceFingerprint)
-				coverage, ok := fake.misses[0].Coverage.(api.DocumentSearchCoverage)
-				require.True(t, ok)
-				require.Equal(t, "complete", coverage.State)
+				require.Equal(t, "complete", fake.misses[0].Coverage["state"])
 			} else {
 				require.Empty(t, fake.misses)
 			}
