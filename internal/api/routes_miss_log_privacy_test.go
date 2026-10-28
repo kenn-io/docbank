@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
@@ -17,7 +18,7 @@ func TestMissLogSubmittedQueryValidationIsPrivate(t *testing.T) {
 		map[string]any{"query": sentinel + strings.Repeat("x", 8192)})
 	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
 	require.NotContains(t, body, sentinel)
-	rows, err := st.ListMissLogRecords(t.Context(), 10, 0)
+	rows, err := st.ListMissLogRecords(t.Context(), time.Time{}, 10, 0)
 	require.NoError(t, err)
 	require.Empty(t, rows)
 }

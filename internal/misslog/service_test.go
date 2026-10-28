@@ -25,7 +25,7 @@ func TestRecordingIsOptInBoundedAndSanitizesFailures(t *testing.T) {
 	mutate := func(_ context.Context, fn func() error) error { return fn() }
 	disabled := New(st, cfg, logger, mutate)
 	disabled.Record(t.Context(), Request{Query: "synthetic secret"})
-	rows, err := st.ListMissLogRecords(t.Context(), 10, 0)
+	rows, err := st.ListMissLogRecords(t.Context(), time.Time{}, 10, 0)
 	require.NoError(t, err)
 	require.Empty(t, rows)
 
@@ -35,13 +35,13 @@ func TestRecordingIsOptInBoundedAndSanitizesFailures(t *testing.T) {
 	svc.Record(t.Context(), Request{Query: "oversized", Filters: map[string]any{"filter": strings.Repeat("x", 64<<10)}})
 	svc.Record(t.Context(), Request{Query: "", RequestedMode: "lexical", ActualMode: "lexical", Filters: map[string]any{"tag_id": "taxes"}})
 	svc.Record(t.Context(), Request{Query: strings.Repeat("q", 8193), RequestedMode: "lexical", ActualMode: "lexical"})
-	rows, err = st.ListMissLogRecords(t.Context(), 10, 0)
+	rows, err = st.ListMissLogRecords(t.Context(), time.Time{}, 10, 0)
 	require.NoError(t, err)
 	require.Len(t, rows, 2)
 	svc.Record(t.Context(), Request{Query: "synthetic secret", RequestedMode: "hybrid", ActualMode: "lexical", DocumentCount: new(0),
 		FenceFingerprint: "sha256:synthetic", Coverage: map[string]any{"state": "complete"}, Truncated: true,
 		Degradations: []string{"reranking_degraded"}, Reranking: map[string]any{"outcome": "degraded"}})
-	rows, err = st.ListMissLogRecords(t.Context(), 10, 0)
+	rows, err = st.ListMissLogRecords(t.Context(), time.Time{}, 10, 0)
 	require.NoError(t, err)
 	require.Len(t, rows, 3)
 	var receipt Receipt
@@ -73,12 +73,12 @@ func TestEnabledStartupPrunesButDisabledPreserves(t *testing.T) {
 	require.NoError(t, st.AddMissLogRecord(t.Context(), store.MissLogRecord{ID: "expired", CreatedAt: now.AddDate(0, 0, -91), Receipt: `{}`}, now, 365, 5000))
 	cfg := config.Default().MissLog
 	New(st, cfg, nil, func(_ context.Context, fn func() error) error { return fn() })
-	rows, err := st.ListMissLogRecords(t.Context(), 10, 0)
+	rows, err := st.ListMissLogRecords(t.Context(), time.Time{}, 10, 0)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	cfg.Enabled = true
 	New(st, cfg, nil, func(_ context.Context, fn func() error) error { return fn() })
-	rows, err = st.ListMissLogRecords(t.Context(), 10, 0)
+	rows, err = st.ListMissLogRecords(t.Context(), time.Time{}, 10, 0)
 	require.NoError(t, err)
 	require.Empty(t, rows)
 }

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
@@ -132,7 +133,7 @@ func TestMissLogMCPEmptyScopeUsesDaemonAndEmbeddedReader(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, result.IsError, result)
 	assert.NotContains(t, structuredMap(t, result.StructuredContent), "miss_log_id")
-	records, err := f.catalog.ListMissLogRecords(t.Context(), 10, 0)
+	records, err := f.catalog.ListMissLogRecords(t.Context(), time.Time{}, 10, 0)
 	require.NoError(t, err)
 	require.Len(t, records, 1)
 }

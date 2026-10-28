@@ -9818,7 +9818,6 @@ components:
           type: string
         filters:
           additionalProperties: {}
-          maxProperties: 32
           type: object
         id:
           type: string
@@ -9895,7 +9894,6 @@ components:
           type: string
         filters:
           additionalProperties: {}
-          maxProperties: 32
           type: object
         profile:
           maxLength: 256

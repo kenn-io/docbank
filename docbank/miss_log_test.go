@@ -4,6 +4,7 @@ import (
 	"encoding/json/v2"
 	"strings"
 	"testing"
+	"time"
 	"uuid"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -38,7 +39,7 @@ func TestEmbeddedSearchDoesNotRecordMissLog(t *testing.T) {
 	require.False(t, result.IsError, result)
 	require.NotContains(t, result.StructuredContent, "miss_log_id")
 
-	rows, err := vault.metadata.ListMissLogRecords(t.Context(), 10, 0)
+	rows, err := vault.metadata.ListMissLogRecords(t.Context(), time.Time{}, 10, 0)
 	require.NoError(t, err)
 	require.Empty(t, rows)
 }

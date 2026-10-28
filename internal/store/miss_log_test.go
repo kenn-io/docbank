@@ -11,6 +11,25 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestMissLogListRetentionBeforePagination(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	now := time.Now().UTC()
+	for _, entry := range []MissLogRecord{
+		{ID: "expired", CreatedAt: now.Add(-72 * time.Hour), Receipt: `{}`},
+		{ID: "recent", CreatedAt: now.Add(-time.Hour), Receipt: `{}`},
+	} {
+		require.NoError(t, s.AddMissLogRecord(t.Context(), entry, now, 90, 5000))
+	}
+	rows, err := s.ListMissLogRecords(t.Context(), now.Add(-24*time.Hour), 1, 0)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Equal(t, "recent", rows[0].ID)
+	rows, err = s.ListMissLogRecords(t.Context(), now.Add(-24*time.Hour), 1, 1)
+	require.NoError(t, err)
+	require.Empty(t, rows)
+}
+
 func TestMissLogCountRetentionAndPhotoExclusion(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -24,7 +43,7 @@ func TestMissLogCountRetentionAndPhotoExclusion(t *testing.T) {
 	} {
 		require.NoError(t, s.AddMissLogRecord(ctx, entry, now, 2, 2))
 	}
-	entries, err := s.ListMissLogRecords(ctx, 10, 0)
+	entries, err := s.ListMissLogRecords(ctx, time.Time{}, 10, 0)
 	require.NoError(t, err)
 	require.Len(t, entries, 2)
 	require.Equal(t, "second", entries[0].ID)
@@ -34,12 +53,12 @@ func TestMissLogCountRetentionAndPhotoExclusion(t *testing.T) {
 	require.NotContains(t, metadata.String(), "sentinel")
 	require.NoError(t, s.DeleteMissLogRecord(ctx, "first"))
 	require.ErrorIs(t, s.DeleteMissLogRecord(ctx, "missing"), ErrNotFound)
-	entries, err = s.ListMissLogRecords(ctx, 10, 0)
+	entries, err = s.ListMissLogRecords(ctx, time.Time{}, 10, 0)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	require.NoError(t, s.PurgeMissLogRecords(ctx))
 	require.Empty(t, events, "misses leave Photos unchanged")
-	entries, err = s.ListMissLogRecords(ctx, 10, 0)
+	entries, err = s.ListMissLogRecords(ctx, time.Time{}, 10, 0)
 	require.NoError(t, err)
 	require.Empty(t, entries)
 }
@@ -53,7 +72,7 @@ func TestMissLogPrunesExpiredRecords(t *testing.T) {
 		require.NoError(t, s.AddMissLogRecord(ctx, MissLogRecord{ID: id, CreatedAt: now.AddDate(0, 0, i-3), Receipt: `{}`}, now, 30, 10))
 	}
 	require.NoError(t, s.PruneMissLogRecords(ctx, now, 2, 10))
-	entries, err := s.ListMissLogRecords(ctx, 10, 0)
+	entries, err := s.ListMissLogRecords(ctx, time.Time{}, 10, 0)
 	require.NoError(t, err)
 	require.Len(t, entries, 2)
 	require.Equal(t, []string{"new", "middle"}, []string{entries[0].ID, entries[1].ID})
@@ -67,12 +86,12 @@ func TestMissLogRetentionPostgres(t *testing.T) {
 	for i, id := range []string{"old", "middle", "new"} {
 		require.NoError(t, s.AddMissLogRecord(ctx, MissLogRecord{ID: id, CreatedAt: now.AddDate(0, 0, i-3), Receipt: `{}`}, now, 30, 2))
 	}
-	entries, err := s.ListMissLogRecords(ctx, 10, 0)
+	entries, err := s.ListMissLogRecords(ctx, time.Time{}, 10, 0)
 	require.NoError(t, err)
 	require.Len(t, entries, 2)
 	require.Equal(t, "new", entries[0].ID)
 	require.NoError(t, s.PruneMissLogRecords(ctx, now, 1, 2))
-	entries, err = s.ListMissLogRecords(ctx, 10, 0)
+	entries, err = s.ListMissLogRecords(ctx, time.Time{}, 10, 0)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	require.Equal(t, "new", entries[0].ID)
@@ -91,7 +110,7 @@ func TestMissLogExcludedFromBackup(t *testing.T) {
 	require.NotContains(t, exported.String(), "private sentinel query")
 	restored := newTestStore(t)
 	require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
-	rows, err := restored.ListMissLogRecords(t.Context(), 10, 0)
+	rows, err := restored.ListMissLogRecords(t.Context(), time.Time{}, 10, 0)
 	require.NoError(t, err)
 	require.Empty(t, rows)
 }
@@ -126,7 +145,7 @@ func checkMissLogConcurrentRetention(t *testing.T, s *Store) {
 	for err := range failures {
 		require.NoError(t, err)
 	}
-	records, err := s.ListMissLogRecords(t.Context(), 100, 0)
+	records, err := s.ListMissLogRecords(t.Context(), time.Time{}, 100, 0)
 	require.NoError(t, err)
 	require.Len(t, records, 3)
 	require.Equal(t, []string{"record-19", "record-18", "record-17"}, []string{records[0].ID, records[1].ID, records[2].ID})

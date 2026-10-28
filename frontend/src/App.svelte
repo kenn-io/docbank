@@ -3109,6 +3109,7 @@
     query: Query,
     options: SnapshotOptions,
     preserveDraft = false,
+    recordEmpty = true,
   ): Promise<void> {
     const revision = queryDraftRevision;
     if (!preserveDraft) keepQueryDraft(query);
@@ -3122,7 +3123,7 @@
         queryDraftFromDefinition = false;
       }
       reportSearch(webSession, outcome.type, outcome.empty);
-      if (!preserveDraft && outcome.empty) recordMiss(outcome.receipt);
+      if (recordEmpty && !preserveDraft && outcome.empty) recordMiss(outcome.receipt);
     }
   }
 
