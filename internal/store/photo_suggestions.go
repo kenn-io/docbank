@@ -403,11 +403,6 @@ func (s *Store) PhotoDescriptionTargets(ctx context.Context, profile, producer, 
 	result := []ContentVersion{}
 	settled := photoSuggestionSettledSQL("g.content_version_id", "?5", false)
 	if detection {
-		if err := s.RequireFaceDetectionSupported(ctx); errors.Is(err, ErrAuditMutationUnsupported) {
-			return result, nil
-		} else if err != nil {
-			return nil, err
-		}
 		settled = `EXISTS(SELECT 1 FROM photo_face_scans WHERE content_version_id=g.content_version_id AND detector_fingerprint=?5)`
 	}
 	fingerprints, err := document.CurrentPhotoQualityFingerprints()

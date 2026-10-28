@@ -131,7 +131,7 @@ func TestPhotoFaceDetectionProtectsDecisionsAndUndo(t *testing.T) {
 	}
 }
 
-func TestPhotoFaceDetectionCapacityRollbackAndAudit(t *testing.T) {
+func TestPhotoFaceDetectionCapacityRollback(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -156,8 +156,6 @@ func TestPhotoFaceDetectionCapacityRollbackAndAudit(t *testing.T) {
 	require.Equal(t, 1000, count)
 	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_face_scans`).Scan(&count))
 	require.Zero(t, count)
-	seedInitialAuditAuthority(t, s, s.RootID())
-	require.ErrorIs(t, scan(), ErrAuditMutationUnsupported)
 }
 
 func TestPhotoFaceDetectionMetadata(t *testing.T) {

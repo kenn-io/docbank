@@ -203,7 +203,7 @@ func TestProviderSendsItsBearerCredential(t *testing.T) {
 		_, _ = w.Write(visiontest.Completion(reply))
 	}))
 	defer server.Close()
-	profile := Profile{Origin: server.URL, Model: "synthetic-vision", TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20, SecretBinding: "vision-key"}
+	profile := Profile{DescriptorID: ProviderID, Origin: server.URL, Model: "synthetic-vision", TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20, SecretBinding: "vision-key"}
 
 	t.Run("sent on the probe and the description", func(t *testing.T) {
 		p, err := New(profile, testSecrets{"vision-key": "synthetic-secret"}, server.Client())

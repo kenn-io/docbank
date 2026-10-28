@@ -61,11 +61,8 @@ func faceBoxOverlap(a, b document.FaceBox) float64 {
 	return intersection / (a.Width*a.Height + b.Width*b.Height - intersection)
 }
 
-// publishFaceDetectionTx reconciles a scan and commits its completion together.
+// publishFaceDetectionTx reconciles an authorized scan and commits its completion together.
 func publishFaceDetectionTx(ctx context.Context, tx *sql.Tx, version, detector string, result document.FaceDetection, at time.Time) error {
-	if err := requireFaceDetectionSupported(ctx, tx); err != nil {
-		return err
-	}
 	settled, err := faceScanSettledTx(ctx, tx, version, detector)
 	if err != nil || settled {
 		return err

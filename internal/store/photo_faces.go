@@ -41,7 +41,7 @@ type PhotoFace struct {
 
 func validatePhotoFace(face PhotoFace) error {
 	if validateUUIDv4(face.FaceID) != nil || validateUUIDv4(face.ContentVersionID) != nil || face.Revision < 1 ||
-		(face.AssertionID != "" && validateUUIDv4(face.AssertionID) != nil) || face.Box.Validate() != nil {
+		(face.AssertionID != "" && validateUUIDv4(face.AssertionID) != nil) {
 		return ErrInvalidPhotoFace
 	}
 	if face.DetectorFingerprint != "" && validateCatalogSHA256(face.DetectorFingerprint, "detector fingerprint") != nil {
