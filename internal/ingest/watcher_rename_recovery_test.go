@@ -18,6 +18,7 @@ func promptRenameFixture(t *testing.T, mutate func(func() error) error) (*Watche
 	t.Helper()
 	ing := newTestIngester(t)
 	source := writeTree(t, map[string]string{"draft.md": "first", "unstable/other.md": "other"})
+	requireRenameEvidence(t, filepath.Join(source, "draft.md"))
 	watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{
 		Name: "notes", Source: source, Destination: "/archive", CaptureOnChange: true,
 		ScanInterval: config.Duration(time.Second),
@@ -351,6 +352,7 @@ func TestWatchRenameRecreatedExactOldNameBlocksRebind(t *testing.T) {
 func TestWatchRenameOldParentReplacedBeforeRebindDefers(t *testing.T) {
 	ing := newTestIngester(t)
 	source := writeTree(t, map[string]string{"notes/a.md": "first"})
+	requireRenameEvidence(t, filepath.Join(source, "notes", "a.md"))
 	watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{
 		Name: "notes", Source: source, Destination: "/archive", CaptureOnChange: true,
 		ScanInterval: config.Duration(time.Second),

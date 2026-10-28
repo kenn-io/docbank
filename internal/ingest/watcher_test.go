@@ -1088,6 +1088,7 @@ func TestPromptWatchDirtyUnchangedSourcePreservesManualHeadAcrossRestart(t *test
 func TestWatcherLiveRenameKeepsNodeAndHistory(t *testing.T) {
 	ing := newTestIngester(t)
 	source := writeTree(t, map[string]string{"draft.md": "first"})
+	requireRenameEvidence(t, filepath.Join(source, "draft.md"))
 	watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{Name: "notes", Source: source, Destination: "/archive", SettleTime: config.Duration(10 * time.Second), ScanInterval: config.Duration(time.Second)}, runTestMutation, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	root := openWatcherRoot(t, watcher)
@@ -1144,6 +1145,7 @@ func TestWatcherLiveRenameKeepsNodeAndHistory(t *testing.T) {
 func TestWatcherRenameAndEditBeforeFirstScanKeepsNode(t *testing.T) {
 	ing := newTestIngester(t)
 	source := writeTree(t, map[string]string{"draft.md": "first"})
+	requireRenameEvidence(t, filepath.Join(source, "draft.md"))
 	watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{
 		Name: "notes", Source: source, Destination: "/archive",
 		SettleTime: config.Duration(10 * time.Second), ScanInterval: config.Duration(time.Second),

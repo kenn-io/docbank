@@ -117,6 +117,7 @@ func TestWatchPermanentObservationErrorSurfacesAndKeepsPending(t *testing.T) {
 
 func TestWatchKnownLeafSymlinkAllowsSiblingAndKeepsArchive(t *testing.T) {
 	watcher, root, ing, source, siblingID := watcherFinalPair(t)
+	requireRenameEvidence(t, filepath.Join(source, "a.md"))
 	original := filepath.Join(source, "saved.md")
 	require.NoError(t, os.Rename(filepath.Join(source, "a.md"), original))
 	outside := filepath.Join(t.TempDir(), "outside.md")
@@ -561,4 +562,32 @@ func FuzzWatchLeafOccupancyPreservesArchiveAndSibling(f *testing.F) {
 			}
 		}
 	})
+}
+
+func TestWatchStructuralBlockRestartsHiddenSettling(t *testing.T) {
+	ing := newTestIngester(t)
+	source := writeTree(t, map[string]string{"sub/draft.md": "first"})
+	watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{
+		Name: "notes", Source: source, Destination: "/archive",
+		SettleTime: config.Duration(10 * time.Second), ScanInterval: config.Duration(time.Second),
+	}, runTestMutation, slog.New(slog.DiscardHandler))
+	require.NoError(t, err)
+	root := openWatcherRoot(t, watcher)
+	t0 := time.Unix(1_700_000_000, 0)
+	require.NoError(t, scanWatcherAt(t.Context(), watcher, root, t0))
+
+	sub, hidden := filepath.Join(source, "sub"), filepath.Join(source, "hidden")
+	require.NoError(t, os.Rename(sub, hidden))
+	require.NoError(t, os.Symlink(t.TempDir(), sub))
+	require.ErrorIs(t, scanWatcherAt(t.Context(), watcher, root, t0.Add(5*time.Second)), errWatchBlocked)
+	require.NoError(t, os.Remove(sub))
+	require.NoError(t, os.Rename(hidden, sub))
+
+	// The settle window started before the subtree was hidden has expired.
+	require.NoError(t, scanWatcherAt(t.Context(), watcher, root, t0.Add(11*time.Second)))
+	_, err = ing.Store.NodeByPath(t.Context(), "/archive/sub/draft.md")
+	require.ErrorIs(t, err, store.ErrNotFound, "time hidden behind a symlink must not count toward settling")
+	require.NoError(t, scanWatcherAt(t.Context(), watcher, root, t0.Add(21*time.Second)))
+	_, err = ing.Store.NodeByPath(t.Context(), "/archive/sub/draft.md")
+	require.NoError(t, err)
 }

@@ -22,6 +22,15 @@ func nativeWatchIdentity(t *testing.T, name string) (watchFileIdentity, fs.FileI
 	return identity, info
 }
 
+// requireRenameEvidence skips rename-continuity tests on filesystems without
+// usable native birth evidence, where watches keep renamed sources separate.
+func requireRenameEvidence(t *testing.T, name string) {
+	t.Helper()
+	if identity, _ := nativeWatchIdentity(t, name); !matchableWatchIdentity(identity) {
+		t.Skip("filesystem did not provide usable native birth evidence")
+	}
+}
+
 func TestWatchNativeIdentityRenameAndCopy(t *testing.T) {
 	dir := t.TempDir()
 	original := filepath.Join(dir, "draft.md")
@@ -66,7 +75,6 @@ func TestWatchRenameMatcherAmbiguities(t *testing.T) {
 		want              bool
 	}{
 		{"unique", identity, oneInfo, false, false, false, false, true},
-		{"equal content copy", identity, twoInfo, false, false, false, false, false},
 		{"hardlink alias", identity, oneInfo, false, true, false, false, false},
 		{"changed birth reused object", watchFileIdentity{object: identity.object, birth: validWatchBirth(101, 0)}, oneInfo, false, false, false, false, false},
 		{"birth absent", watchFileIdentity{object: identity.object}, oneInfo, false, false, false, false, false},

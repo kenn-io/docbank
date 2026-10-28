@@ -1048,7 +1048,10 @@ func (w *Watcher) rejectEntry(ctx context.Context, rel string, err error, seen m
 
 var errWatchBlocked = errors.New("watched source blocks reconciliation")
 
-func blockedWatchPath(rel, reason string) error {
+// blockedWatchPath stops reconciliation at a structural change. Time spent
+// hidden behind it must not count toward settling anything below rel.
+func (w *Watcher) blockedWatchPath(rel, reason string) error {
+	w.interruptSettlingTree(rel)
 	return fmt.Errorf("watched source %q %s: %w", rel, reason, errWatchBlocked)
 }
 
@@ -1118,7 +1121,7 @@ func (w *Watcher) scanDirectory(
 		if w.excludes.match(root.path, filePath) {
 			if inventory != nil {
 				if _, known := inventory.known[rel]; known {
-					return blockedWatchPath(rel, "became excluded")
+					return w.blockedWatchPath(rel, "became excluded")
 				}
 			}
 			if w.excluded != nil {
@@ -1152,7 +1155,7 @@ func (w *Watcher) scanDirectory(
 		if info.Mode()&fs.ModeSymlink != 0 {
 			if inventory != nil {
 				if _, known := inventory.knownDirs[rel]; known {
-					return blockedWatchPath(rel, "became a symlink")
+					return w.blockedWatchPath(rel, "became a symlink")
 				}
 			}
 			if w.excluded != nil {
@@ -1216,7 +1219,7 @@ func (w *Watcher) scanDirectory(
 				if inventory != nil {
 					if _, known := inventory.known[rel]; known {
 						_ = child.Close()
-						return blockedWatchPath(rel, "crossed a filesystem boundary")
+						return w.blockedWatchPath(rel, "crossed a filesystem boundary")
 					}
 				}
 				_ = child.Close()
@@ -1257,7 +1260,7 @@ func (w *Watcher) scanDirectory(
 		if !info.Mode().IsRegular() {
 			if inventory != nil {
 				if _, known := inventory.known[rel]; known {
-					return blockedWatchPath(rel, "became nonregular")
+					return w.blockedWatchPath(rel, "became nonregular")
 				}
 			}
 			if w.excluded != nil {
@@ -1269,7 +1272,7 @@ func (w *Watcher) scanDirectory(
 		}
 		if inventory != nil {
 			if _, wasDir := inventory.knownDirs[rel]; wasDir {
-				return blockedWatchPath(rel, "became a file")
+				return w.blockedWatchPath(rel, "became a file")
 			}
 		}
 		if err := validateSourcePath(rel); err != nil {
@@ -1336,7 +1339,7 @@ func (w *Watcher) scanDirectory(
 		if !w.sourceMount.same(state.mount) {
 			if inventory != nil {
 				if _, known := inventory.known[rel]; known {
-					return blockedWatchPath(rel, "crossed a filesystem boundary")
+					return w.blockedWatchPath(rel, "crossed a filesystem boundary")
 				}
 			}
 			if w.excluded != nil {
