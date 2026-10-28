@@ -33,6 +33,7 @@ func registerWatchRoutes(api huma.API, d Deps) {
 		for _, watch := range watches {
 			item := WatchedInbox{
 				Name: watch.Name, Source: watch.Source, Destination: watch.Destination,
+				CaptureOnChange: watch.CaptureOnChange,
 				SettleTime:      watch.SettleTime.Std().String(),
 				MinimumAge:      watch.MinimumAge.Std().String(),
 				ScanInterval:    watch.ScanInterval.Std().String(),
