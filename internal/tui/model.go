@@ -373,6 +373,7 @@ type deferredSearchReport struct {
 //
 //nolint:recvcheck // intentional Bubble Tea value-model pattern
 type Model struct {
+	fallbackMiss  *misslog.Request
 	reportedDay   string
 	screenRetryAt time.Time
 	ctx           context.Context
@@ -2097,6 +2098,7 @@ func (m Model) startSearch(query string) (Model, tea.Cmd) {
 	m.submittedSearchQuery, m.submittedSearchID = query, m.requestID
 	m.naturalRerankPending = false
 	m.naturalSearchNote = ""
+	m.fallbackMiss = nil
 	return m, tea.Batch(m.startSpinner(), m.loadSearch(query, m.requestID))
 }
 
@@ -2431,7 +2433,12 @@ func (m Model) applySearch(msg searchLoadedMsg) (tea.Model, tea.Cmd) {
 	m.clampSelection()
 	if m.reportSearchID == msg.requestID {
 		m.reportSearchID = 0
-		return m, m.reportSearch("text", len(msg.report.Hits) == 0, misslog.Request{Query: msg.query, RequestedMode: "lexical", ActualMode: "lexical", Truncated: msg.report.Truncated})
+		receipt := misslog.Request{Query: msg.query, RequestedMode: "lexical", ActualMode: "lexical"}
+		if m.fallbackMiss != nil {
+			receipt = *m.fallbackMiss
+		}
+		receipt.Truncated = msg.report.Truncated
+		return m, m.reportSearch("text", len(msg.report.Hits) == 0, receipt)
 	}
 	return m, nil
 }
@@ -2443,11 +2450,22 @@ func (m Model) applyNaturalSearchBase(msg naturalSearchBaseLoadedMsg) (tea.Model
 	m.loading = false
 	m.naturalRerankPending = false
 	if msg.err != nil {
+		requestedMode := msg.request.Mode
+		if requestedMode == "" {
+			requestedMode = msg.naturalMode
+		}
 		m.naturalMode = naturalNames
 		m.naturalRerank = false
 		m.naturalResultMode = ""
 		m.naturalSearchNote = "Natural-language search unavailable: " + msg.err.Error() + ". Showing Names and text."
 		m.loading = true
+		report := api.DocumentSearchReport{RequestedMode: requestedMode, ActualMode: naturalLexical, Degradations: []string{m.naturalSearchNote}}
+		receipt := api.DocumentSearchMiss(msg.query, msg.request.Profile, msg.request, report)
+		receipt.Coverage = nil
+		if msg.request.Scope != nil || len(msg.request.Fence.ContentVersionIDs) == 0 {
+			receipt.DocumentCount = nil
+		}
+		m.fallbackMiss = &receipt
 		return m, m.loadSearch(msg.query, msg.requestID)
 	}
 	m.applyNaturalRows(msg.query, msg.rows, msg.report.Truncated)

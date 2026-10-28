@@ -1,3 +1,4 @@
+import * as generated from "./generated/docbank.js";
 import * as actions from "./action-events.js";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
@@ -12,7 +13,13 @@ vi.mock("./action-events.js", () => ({
   reportFailure: vi.fn(),
 }));
 
+vi.mock("./generated/docbank.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof generated>()),
+  recordMiss: vi.fn().mockResolvedValue(undefined),
+}));
+
 beforeEach(() => {
+  vi.mocked(generated.recordMiss).mockClear();
   vi.mocked(actions.reportAction).mockClear();
   vi.mocked(actions.reportSearch).mockClear();
   vi.mocked(actions.reportFailure).mockClear();
@@ -164,7 +171,7 @@ it("reports Photos search outcomes for explicit submissions", async () => {
   vi.stubGlobal("fetch", fetcher);
   const photos = new Photos("scoped", vi.fn());
   photos.started = true;
-  photos.query = { ...photos.query, text: "Nikon" };
+  photos.query = { ...photos.query, text: "Nikon", filters: { cameras: ["Synthetic camera"] } };
   render(PhotoSearch, { photos });
   const outcomes = [
     Response.json({ items: [{ id: "a" }], total: 1, facets: [] }),
@@ -184,6 +191,7 @@ it("reports Photos search outcomes for explicit submissions", async () => {
     fetcher.mockClear();
   }
   expect(actions.reportSearch).not.toHaveBeenCalled();
+  expect(generated.recordMiss).not.toHaveBeenCalled();
   expect(actions.reportFailure).not.toHaveBeenCalled();
   const search = screen.getByRole("searchbox", { name: "Search photos" });
   fetcher.mockResolvedValueOnce(Response.json({ items: [], total: 0, facets: [] }));
@@ -191,6 +199,15 @@ it("reports Photos search outcomes for explicit submissions", async () => {
   await fireEvent.submit(search.closest("form")!);
   await waitFor(() =>
     expect(actions.reportSearch).toHaveBeenCalledExactlyOnceWith("scoped", "text", true),
+  );
+  expect(generated.recordMiss).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({
+      query: "Nikon",
+      requested_mode: "lexical",
+      actual_mode: "lexical",
+      filters: expect.objectContaining({ cameras: ["Synthetic camera"] }),
+    }),
+    expect.objectContaining({ session: "scoped" }),
   );
   vi.mocked(actions.reportSearch).mockClear();
   await fireEvent.input(search, { target: { value: "Canon" } });

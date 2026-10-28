@@ -16,6 +16,7 @@ func TestMissLogRetentionAndMetadataExclusion(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
+	events := watchPhotoChanges(t, s)
 	now := time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC)
 	for _, entry := range []MissLogRecord{
 		{ID: "old", CreatedAt: now.AddDate(0, 0, -3), Receipt: `{"query":"sentinel old"}`},
@@ -38,6 +39,7 @@ func TestMissLogRetentionAndMetadataExclusion(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	require.NoError(t, s.PurgeMissLogRecords(ctx))
+	require.Empty(t, events, "misses leave Photos unchanged")
 	entries, err = s.ListMissLogRecords(ctx, 10, 0)
 	require.NoError(t, err)
 	require.Empty(t, entries)
@@ -141,14 +143,14 @@ func TestMissLogOpensSchema43WithoutLocalTable(t *testing.T) {
 	for _, test := range v090UpgradeDrivers() {
 		t.Run(test.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "vault.db")
-			st, err := Open(path, test.driver)
+			st, err := Open(t.Context(), path, test.driver)
 			require.NoError(t, err)
 			node, err := st.Mkdir(t.Context(), st.RootID(), "synthetic-retained")
 			require.NoError(t, err)
 			_, err = st.db.Exec(`DROP TABLE miss_log_records`)
 			require.NoError(t, err)
 			require.NoError(t, st.Close())
-			reopened, err := Open(path, test.driver)
+			reopened, err := Open(t.Context(), path, test.driver)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, reopened.Close()) })
 			retained, err := reopened.NodeByID(t.Context(), node.ID)

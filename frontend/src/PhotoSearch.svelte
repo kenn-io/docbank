@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { recordMiss } from "./generated/docbank.js";
   import { reportFailure, reportSearch } from "./action-events.js";
   import { untrack } from "svelte";
   import { SearchInput, SelectDropdown } from "@kenn-io/kit-ui";
@@ -26,14 +27,16 @@
   });
   function submit(explicit = false) {
     const text = search.trim();
+    const session = photos.session;
+    const submitted = {
+      ...photos.query,
+      text: search,
+      syntax,
+      mode,
+      sort: photoSearchSort({ text: search, syntax, mode }),
+    };
     const pending = photos.setQuery(
-      {
-        ...photos.query,
-        text: search,
-        syntax,
-        mode,
-        sort: photoSearchSort({ text: search, syntax, mode }),
-      },
+      submitted,
       explicit
         ? (cause) => {
             if (text) reportFailure(photos.session, "search", cause);
@@ -42,12 +45,25 @@
     );
     void pending?.then((outcome) => {
       if (!explicit || !text || !outcome) return;
-      if (outcome.accepted)
-        return reportSearch(
-          photos.session,
-          photos.fallbackReason || mode === "lexical" ? "text" : mode,
-          outcome.empty,
-        );
+      if (outcome.accepted) {
+        const fallback = Boolean(photos.fallbackReason);
+        const actualMode = fallback ? "lexical" : submitted.mode;
+        const searchType = fallback || submitted.mode === "lexical" ? "text" : submitted.mode;
+        reportSearch(session, searchType, outcome.empty);
+        if (outcome.empty) {
+          void recordMiss(
+            {
+              query: text,
+              requested_mode: submitted.mode,
+              actual_mode: actualMode,
+              filters: { ...submitted.filters },
+              truncated: photos.truncated,
+            },
+            { session, signal: AbortSignal.timeout(1000) },
+          ).catch(() => {});
+        }
+        return;
+      }
       reportFailure(photos.session, "search", outcome.cause);
     });
     return pending;

@@ -20,6 +20,7 @@ var photoUnwatchedTables = map[string][]string{
 	},
 	"Face scan completion records do not change displayed faces": {"photo_face_scans"},
 	"Photos never reads these leases":                            {"vector_index_reader_leases"},
+	"Photos never reads private search receipts":                 {"miss_log_records"},
 	"Photos never reads these storage operations": {
 		"storage_operations", "storage_operation_stores", "storage_operation_cleanup",
 	},
