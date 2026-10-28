@@ -85,6 +85,20 @@ again when a Docbank command or the web app next needs it, and an overdue
 capture begins then. To keep captures current across reboots, run
 `docbank daemon start` from a login item or a launchd or systemd user service.
 
+Operators can override the interval and retention without restarting:
+
+```sh
+docbank photos settings set backup.interval 1h
+docbank photos settings set backup.keep_last 5
+docbank photos settings reset backup.interval
+```
+
+Interval changes apply immediately; `keep_last` applies at the next capture's retention. Reset inherits `config.toml`. An in-flight
+capture finishes with the retention count it started with. Overrides use the
+settings revision and travel with backup and restore; a restored vault's
+schedule applies after `docbank backup claim`. Paths and credentials, including
+`backup.repo`, stay in `config.toml`.
+
 After capture, retention keeps the newest `keep_last` scheduled points,
 including the new one, and forgets older points. It prunes unused storage on
 the first capture after the daemon starts and after it forgets a point. Manual snapshots

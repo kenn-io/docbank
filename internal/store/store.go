@@ -51,6 +51,9 @@ const photoSuggestionsStorageSchemaVersion = 43
 
 const photoBurstStorageSchemaVersion = 41
 
+// photoSettingsOverridesStorageSchemaVersion adds the backup schedule and hidden lifetime columns.
+const photoSettingsOverridesStorageSchemaVersion = 43
+
 const peopleStorageSchemaVersion = 15
 const photoFacesStorageSchemaVersion = 35
 const photoFaceDecisionsStorageSchemaVersion = 36

@@ -484,10 +484,10 @@ func photoAuthoredAssetUnchanged(before, after photoReceiptAssetState) bool {
 	if before.ID != after.ID || before.Kind != after.Kind {
 		return false
 	}
-	if !equalPhotoString(before.HiddenAt, after.HiddenAt) || !equalPhotoString(before.ExcludedAt, after.ExcludedAt) {
+	if !equalPhotoOptional(before.HiddenAt, after.HiddenAt) || !equalPhotoOptional(before.ExcludedAt, after.ExcludedAt) {
 		return false
 	}
-	return equalPhotoString(before.DisplayFileID, after.DisplayFileID) && equalPhotoString(before.DisplayOverrideFileID, after.DisplayOverrideFileID)
+	return equalPhotoOptional(before.DisplayFileID, after.DisplayFileID) && equalPhotoOptional(before.DisplayOverrideFileID, after.DisplayOverrideFileID)
 }
 
 // photoKeywordPlan lists keyword changes sorted by tag and node, with each tag's

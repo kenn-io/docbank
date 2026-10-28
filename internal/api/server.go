@@ -67,6 +67,7 @@ type Deps struct {
 	ShutdownToken         string           // "" disables the shutdown route
 	Shutdown              func()           // called (async) by the shutdown route
 	Tracker               *ActivityTracker // nil → no idle tracking
+	BackupScheduleWake    chan struct{}    // shared one-slot signal for committed schedule changes
 	Jobs                  *jobs.Supervisor // nil → no registered background jobs
 	Gate                  *OperationGate   // nil → a server-private gate
 	VerifyPage            VerifyPageFunc   // nil → shared bounded maintenance service

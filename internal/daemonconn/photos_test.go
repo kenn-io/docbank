@@ -111,7 +111,7 @@ func TestPhotoClientAcceptsCreateTimestampsAndNoOpMutations(t *testing.T) {
 	require.NotNil(t, excluded.ExcludedAt)
 	_, err = client.SetPhotoDisplay(t.Context(), assetID, 1, nil)
 	require.NoError(t, err)
-	_, err = client.SetPhotoSettings(t.Context(), 1, nil, nil)
+	_, err = client.SetPhotoSettings(t.Context(), 1, api.SetPhotoSettingsRequest{})
 	require.NoError(t, err)
 }
 
