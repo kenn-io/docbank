@@ -4,14 +4,18 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json/v2"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
 
 	"go.kenn.io/docbank/internal/answer"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/processing"
 )
 
@@ -72,11 +76,24 @@ func (f *answerFakeClient) ValidateDocumentSearch(context.Context, api.DocumentS
 	f.validations++
 	return nil
 }
-func (f *answerFakeClient) SearchDocuments(_ context.Context, req api.DocumentSearchRequest) (api.DocumentSearchReport, error) {
+func (f *answerFakeClient) SearchDocuments(ctx context.Context, req api.DocumentSearchRequest) (api.DocumentSearchReport, error) {
 	f.requests = append(f.requests, req)
 	report := f.report
 	report.Results = f.results
-	return report, nil
+	encoded, err := json.Marshal(report)
+	if err != nil {
+		return api.DocumentSearchReport{}, err
+	}
+	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/search" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(encoded)
+	}))
+	defer daemon.Close()
+	return daemonconn.New(daemon.URL, "key").SearchDocuments(ctx, req)
 }
 func (f *answerFakeClient) ResolveDocumentSummaries(context.Context, api.DocumentSummaryResolveRequest) ([]api.DocumentSummary, error) {
 	return f.documents, nil
@@ -91,21 +108,23 @@ func TestAnswerQuestionEvidenceAndCoverage(t *testing.T) {
 	if len(f.requests) != 1 || !f.requests[0].ContentFirst {
 		t.Fatal("content-first search not requested")
 	}
-	f.results = []api.DocumentSearchResult{{NodeID: 1, ContentVersionID: "00000000-0000-4000-8000-000000000002", Path: "/example", Rank: 1, LexicalRank: 1, Excerpt: "example", Evidence: []api.DocumentEvidenceReference{{Kind: "node_name"}, {Kind: "embedding", VectorSpaceID: "space-a"}}}}
+	embedding := api.DocumentEvidenceReference{Kind: "embedding", VectorSpaceID: strings.Repeat("c", 64), EmbeddingSetID: strings.Repeat("d", 64), InputGenerationID: strings.Repeat("e", 64), InputID: "input-a", InputKind: "rendition_chunk", BuildID: strings.Repeat("a", 64), SourceManifestChecksum: strings.Repeat("f", 64)}
+	f.results = []api.DocumentSearchResult{{VaultUID: "00000000-0000-4000-8000-000000000001", NodeID: 1, ContentVersionID: "00000000-0000-4000-8000-000000000002", Path: "/example", Rank: 1, LexicalRank: 1, Excerpt: "example", Evidence: []api.DocumentEvidenceReference{{Kind: "node_name"}, embedding}}}
 	out, _, err = answerQuestion(context.Background(), session, []byte(`{"question":"example"}`))
 	if err != nil || out.Status != answer.IncompleteCoverage || len(out.Leads) != 1 {
 		t.Fatalf("out=%+v err=%v", out, err)
 	}
 	f.results[0].Evidence = []api.DocumentEvidenceReference{
-		{Kind: "rendition_segment"},
-		{Kind: "embedding", VectorSpaceID: "space-a", EmbeddingSetID: "set-a", InputGenerationID: "generation-a", InputID: "input-a", InputKind: "rendition_chunk", BuildID: "build-a", SegmentID: "segment-a"},
-		{Kind: "embedding", VectorSpaceID: "space-a", EmbeddingSetID: "set-a", InputGenerationID: "generation-a", InputID: "input-b", InputKind: "rendition_chunk", BuildID: "build-a", SegmentID: "segment-b"},
+		{Kind: "rendition_segment", BuildID: strings.Repeat("a", 64), SegmentID: "segment-a"},
+		embedding,
+		embedding,
 	}
+	f.results[0].Evidence[2].InputID = "input-b"
 	out, _, err = answerQuestion(context.Background(), session, []byte(`{"question":"example"}`))
-	if err != nil || out.Status != answer.Answered || len(out.Passages) != 1 || out.Passages[0].Text != "example" || len(out.Passages[0].EvidenceIDs) != 3 || out.Passages[0].EvidenceIDs[0] != `{"kind":"rendition_segment"}` || out.Passages[0].EvidenceIDs[1] == out.Passages[0].EvidenceIDs[2] {
+	if err != nil || out.Status != answer.Answered || len(out.Passages) != 1 || out.Passages[0].Text != "example" || len(out.Passages[0].EvidenceIDs) != 3 || out.Passages[0].EvidenceIDs[0] != `{"kind":"rendition_segment","build_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","segment_id":"segment-a"}` || out.Passages[0].EvidenceIDs[1] == out.Passages[0].EvidenceIDs[2] {
 		t.Fatalf("out=%+v err=%v", out, err)
 	}
-	if !slices.Equal(out.Receipt.VectorSpaceIDs, []string{"space-a"}) {
+	if !slices.Equal(out.Receipt.VectorSpaceIDs, []string{strings.Repeat("c", 64)}) {
 		t.Fatalf("unexpected vector spaces: %v", out.Receipt.VectorSpaceIDs)
 	}
 }
@@ -123,7 +142,10 @@ func TestAnswerQuestionEnvelopeBound(t *testing.T) {
 				AttachmentID: fmt.Sprintf("%064x", i*64+j+1), BuildID: fmt.Sprintf("%064x", 10000+i*64+j+1)}
 		}
 		f.documents = append(f.documents, api.DocumentSummary{NodeID: int64(i), ContentVersionID: version, Path: pathPrefix + name, Name: name, ActiveRenditions: renditions})
-		f.results = append(f.results, api.DocumentSearchResult{NodeID: int64(i), ContentVersionID: version, Path: pathPrefix + name, Rank: i, LexicalRank: i, Score: 1 / float64(60+i), Excerpt: strings.Repeat("x", 512), Evidence: []api.DocumentEvidenceReference{{Kind: "rendition_segment", BuildID: strings.Repeat("a", 64), SegmentID: strings.Repeat("b", 64)}, {Kind: "embedding", VectorSpaceID: fmt.Sprintf("space-%02d", i)}}})
+		f.results = append(f.results, api.DocumentSearchResult{VaultUID: "00000000-0000-4000-8000-000000000001", NodeID: int64(i), ContentVersionID: version, Path: pathPrefix + name, Rank: i, LexicalRank: i, Score: 1 / float64(60+i), Excerpt: strings.Repeat("x", 512), Evidence: []api.DocumentEvidenceReference{
+			{Kind: "rendition_segment", BuildID: strings.Repeat("a", 64), SegmentID: "segment-a"},
+			{Kind: "embedding", VectorSpaceID: fmt.Sprintf("%064x", i), EmbeddingSetID: strings.Repeat("d", 64), InputGenerationID: strings.Repeat("e", 64), InputID: "input-a", InputKind: "rendition_chunk", BuildID: strings.Repeat("a", 64), SourceManifestChecksum: strings.Repeat("f", 64)},
+		}})
 	}
 	session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
 	out, links, err := answerQuestion(context.Background(), session, []byte(`{"question":"example","limit":50,"max_passage_bytes":65536}`))
@@ -139,7 +161,7 @@ func TestAnswerQuestionEnvelopeBound(t *testing.T) {
 	if out.OmittedPassages == 0 {
 		t.Fatal("expected envelope passage omission")
 	}
-	if len(out.Receipt.VectorSpaceIDs) != len(out.Passages) || slices.Contains(out.Receipt.VectorSpaceIDs, "space-50") {
+	if len(out.Receipt.VectorSpaceIDs) != len(out.Passages) || slices.Contains(out.Receipt.VectorSpaceIDs, fmt.Sprintf("%064x", 50)) {
 		t.Fatalf("vector spaces include omitted evidence: %v", out.Receipt.VectorSpaceIDs)
 	}
 	_, schema := answerQuestionSchemas()
@@ -155,7 +177,7 @@ func TestAnswerQuestionRelevanceOnlyForRerankedPrefix(t *testing.T) {
 		i++
 		version := fmt.Sprintf("00000000-0000-4000-8000-%012d", i+1)
 		f.fenceVersions = append(f.fenceVersions, version)
-		f.results = append(f.results, api.DocumentSearchResult{NodeID: int64(i), ContentVersionID: version, Path: fmt.Sprintf("/example-%d", i), Rank: i, LexicalRank: i, Excerpt: "example", Score: score, Evidence: []api.DocumentEvidenceReference{{Kind: "rendition_segment"}}})
+		f.results = append(f.results, api.DocumentSearchResult{VaultUID: "00000000-0000-4000-8000-000000000001", NodeID: int64(i), ContentVersionID: version, Path: fmt.Sprintf("/example-%d", i), Rank: i, LexicalRank: i, Excerpt: "example", Score: score, Evidence: []api.DocumentEvidenceReference{{Kind: "rendition_segment", BuildID: strings.Repeat("a", 64), SegmentID: "segment-a"}}})
 	}
 	session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
 	out, _, err := answerQuestion(context.Background(), session, []byte(`{"question":"example","rerank":true}`))
