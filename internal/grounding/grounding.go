@@ -48,6 +48,9 @@ func extract(text string) []string {
 		start, digits := i, 0
 		for i < len(rs) {
 			r := rs[i]
+			if (r == '-' || r == '/') && i+1 < len(rs) && unicode.IsLower(rs[i+1]) {
+				break
+			}
 			if split(r) {
 				// Only a single grouping space can join a three-digit group.
 				end := i + 1
@@ -87,7 +90,7 @@ func Prepare(answer string) (Answer, error) {
 	answer = markers.ReplaceAllStringFunc(answer, func(m string) string {
 		n, _ := strconv.Atoi(m[1 : len(m)-1])
 		a.markers = append(a.markers, n)
-		return ""
+		return " "
 	})
 	a.figures = extract(answer)
 	if len(a.figures) > 512 || len(a.markers) > 512 {

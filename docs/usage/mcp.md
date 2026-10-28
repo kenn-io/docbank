@@ -397,13 +397,14 @@ stdio and HTTP. Send 1–16,000 Unicode code points, at most 512 figures, and
 512 `[n]` markers. Each citation requires a verified read, including duplicates.
 A figure is a whitespace-delimited token containing a digit, with edge
 punctuation trimmed. Em dashes and horizontal bars also separate tokens.
+A `-` or `/` directly before a lowercase letter also splits a token.
 Figures compare exactly across all resolved citations; markers don't scope them.
 Unknown markers, or missing figures when all citations resolve, give `ungrounded`.
 Otherwise, any unavailable citation gives `incomplete`, an answer without figures
 gives `no_figures`, and all figures found gives `grounded`. Other resolver failures
 return tool errors. Results include figures, unknown marker indexes, citation
 statuses, and text digests, with private cache scope and zero TTL.
-`5-year` differs from `5 years`, `1250` from `1,250`, and `$1,205` from `1,205`.
+`1250` differs from `1,250`, and `$1,205` from `1,205`.
 Case and dash variants differ. Numbered-list numbers count as figures. A cited
 `1 200` reads as one literal number, including its grouping space. Both sides undo
 Markdown punctuation escapes, so a literal backslash before punctuation in an
