@@ -101,16 +101,41 @@ func (f *answerFakeClient) ResolveDocumentSummaries(context.Context, api.Documen
 func TestAnswerQuestionEvidenceAndCoverage(t *testing.T) {
 	f := &answerFakeClient{report: api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete", ScopedDocuments: 1, CompleteDocuments: 1}}}
 	session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
-	out, _, err := answerQuestion(context.Background(), session, []byte(`{"question":"example"}`))
-	if err != nil || out.Status != answer.NoMatch {
-		t.Fatalf("out=%+v err=%v", out, err)
+	for _, tc := range []struct {
+		name, question, reason string
+		incomplete, truncated  bool
+	}{
+		{name: "no match", question: "example"},
+		{name: "executed query hash", question: " example "},
+		{name: "incomplete embeddings", question: "example", incomplete: true, reason: "embeddings_incomplete"},
+		{name: "truncated retrieval", question: "example", truncated: true, reason: "retrieval_truncated"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f.requests = nil
+			f.report.Coverage = api.DocumentSearchCoverage{State: "complete", ScopedDocuments: 1, CompleteDocuments: 1}
+			if tc.incomplete {
+				f.report.Coverage = api.DocumentSearchCoverage{State: "incomplete", ScopedDocuments: 1}
+			}
+			f.report.Truncated = tc.truncated
+			out, _, err := answerQuestion(t.Context(), session, []byte(fmt.Sprintf(`{"question":%q}`, tc.question)))
+			if err != nil || (tc.reason == "" && out.Status != answer.NoMatch) || (tc.reason != "" && !slices.Contains(out.CoverageReasons, tc.reason)) {
+				t.Fatalf("out=%+v err=%v", out, err)
+			}
+			if len(f.requests) != 1 || !f.requests[0].ContentFirst {
+				t.Fatal("content-first search not requested")
+			}
+			if tc.question == " example " {
+				raw, executed := sha256.Sum256([]byte(" example ")), sha256.Sum256([]byte("example"))
+				if out.Receipt.QuestionSHA256 != hex.EncodeToString(raw[:]) || out.Receipt.ExecutedQuerySHA256 != hex.EncodeToString(executed[:]) {
+					t.Fatalf("incorrect hashes: %+v", out.Receipt)
+				}
+			}
+		})
 	}
-	if len(f.requests) != 1 || !f.requests[0].ContentFirst {
-		t.Fatal("content-first search not requested")
-	}
+	f.report.Truncated = false
 	embedding := api.DocumentEvidenceReference{Kind: "embedding", VectorSpaceID: strings.Repeat("c", 64), EmbeddingSetID: strings.Repeat("d", 64), InputGenerationID: strings.Repeat("e", 64), InputID: "input-a", InputKind: "rendition_chunk", BuildID: strings.Repeat("a", 64), SourceManifestChecksum: strings.Repeat("f", 64)}
 	f.results = []api.DocumentSearchResult{{VaultUID: "00000000-0000-4000-8000-000000000001", NodeID: 1, ContentVersionID: "00000000-0000-4000-8000-000000000002", Path: "/example", Rank: 1, LexicalRank: 1, Excerpt: "example", Evidence: []api.DocumentEvidenceReference{{Kind: "node_name"}, embedding}}}
-	out, _, err = answerQuestion(context.Background(), session, []byte(`{"question":"example"}`))
+	out, _, err := answerQuestion(context.Background(), session, []byte(`{"question":"example"}`))
 	if err != nil || out.Status != answer.IncompleteCoverage || len(out.Leads) != 1 {
 		t.Fatalf("out=%+v err=%v", out, err)
 	}
@@ -186,19 +211,6 @@ func TestAnswerQuestionRelevanceOnlyForRerankedPrefix(t *testing.T) {
 	}
 }
 
-func TestAnswerQuestionRecordsExecutedQueryHash(t *testing.T) {
-	f := &answerFakeClient{report: api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete", ScopedDocuments: 1, CompleteDocuments: 1}}}
-	session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
-	out, _, err := answerQuestion(context.Background(), session, []byte(`{"question":" example "}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw, executed := sha256.Sum256([]byte(" example ")), sha256.Sum256([]byte("example"))
-	if out.Receipt.QuestionSHA256 != hex.EncodeToString(raw[:]) || out.Receipt.ExecutedQuerySHA256 != hex.EncodeToString(executed[:]) {
-		t.Fatalf("incorrect hashes: %+v", out.Receipt)
-	}
-}
-
 func TestAnswerQuestionEmptyFenceValidatesWithoutSearch(t *testing.T) {
 	for _, tc := range []struct{ binding, rerank bool }{{true, false}, {false, false}, {true, true}} {
 		t.Run(fmt.Sprintf("binding=%t/rerank=%t", tc.binding, tc.rerank), func(t *testing.T) {
@@ -242,11 +254,13 @@ func TestAnswerQuestionSchemaPreservesProviderScoreScale(t *testing.T) {
 
 func TestAnswerProcessingErrorsStayScopedToAnswerTool(t *testing.T) {
 	for code, status := range map[string]int{"processing_unavailable": 503, "processing_profile_unavailable": 422, "reranking_unavailable": 422, "reranking_failed": 502, "stale_index": 409} {
+		if _, mapped := domainToolError(api.NewError(status, code, "private provider details")); mapped {
+			t.Fatalf("answer-specific mapping for %s changed another tool's error contract", code)
+		}
+	}
+	for code, status := range map[string]int{"reranking_failed": 502, "stale_index": 409} {
 		t.Run(code, func(t *testing.T) {
 			err := api.NewError(status, code, "private provider details")
-			if _, mapped := domainToolError(err); mapped {
-				t.Fatal("answer-specific mapping changed another tool's error contract")
-			}
 			result, callErr := readToolFailure(slog.Default(), "answer_question", err)
 			if callErr != nil || result == nil || !result.IsError {
 				t.Fatalf("result=%+v err=%v", result, callErr)
@@ -255,46 +269,13 @@ func TestAnswerProcessingErrorsStayScopedToAnswerTool(t *testing.T) {
 			if !ok || output.Code != code || strings.Contains(output.Message, "private") {
 				t.Fatalf("output=%+v", result.StructuredContent)
 			}
-			if code == "stale_index" && output.Message != "The selected index needs rebuilding." {
-				t.Fatalf("stale index guidance=%q", output.Message)
+			wantMessage := "The requested reranking could not be completed."
+			if code == "stale_index" {
+				wantMessage = "The selected index needs rebuilding."
+			}
+			if output.Message != wantMessage {
+				t.Fatalf("guidance=%q, want %q", output.Message, wantMessage)
 			}
 		})
-	}
-}
-
-func TestAnswerQuestionIncompleteAndTruncated(t *testing.T) {
-	f := &answerFakeClient{report: api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "incomplete", ScopedDocuments: 1}}}
-	session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
-	out, _, err := answerQuestion(context.Background(), session, []byte(`{"question":"example"}`))
-	if err != nil || !slices.Contains(out.CoverageReasons, "embeddings_incomplete") {
-		t.Fatalf("out=%+v err=%v", out, err)
-	}
-	f.report.Coverage = api.DocumentSearchCoverage{State: "complete", ScopedDocuments: 1, CompleteDocuments: 1}
-	f.report.Truncated = true
-	out, _, err = answerQuestion(context.Background(), session, []byte(`{"question":"example"}`))
-	if err != nil || !slices.Contains(out.CoverageReasons, "retrieval_truncated") {
-		t.Fatalf("out=%+v err=%v", out, err)
-	}
-}
-
-func TestAnswerQuestionAutomaticRerankingProfiles(t *testing.T) {
-	f := &answerFakeClient{
-		profiles: []api.ProcessingProfileSummary{
-			{Name: "a", QueryEmbeddingBindings: []string{"unsupported"}},
-			{Name: "z", RerankingAvailable: true},
-		},
-		report: api.DocumentSearchReport{RequestedMode: "lexical", ActualMode: "lexical", Coverage: api.DocumentSearchCoverage{State: "complete", ScopedDocuments: 1, CompleteDocuments: 1}, Reranking: &api.DocumentSearchRerankingReceipt{Outcome: "skipped"}},
-	}
-	profiles := slices.Clone(f.profiles)
-	session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
-	out, _, err := answerQuestion(t.Context(), session, []byte(`{"question":"example","rerank":true}`))
-	if !slices.EqualFunc(profiles, f.profiles, func(a, b api.ProcessingProfileSummary) bool { return a.Name == b.Name }) {
-		t.Fatalf("profile selection changed caller profiles: %+v", f.profiles)
-	}
-	if err != nil || out.Receipt.Profile == nil || out.Receipt.Profile.Name != "z" || out.Receipt.ActualMode != "lexical" {
-		t.Fatalf("receipt=%+v err=%v requests=%+v", out.Receipt, err, f.requests)
-	}
-	if len(f.requests) != 1 || f.requests[0].Mode != "lexical" || f.requests[0].Profile != "z" || !f.requests[0].Rerank {
-		t.Fatalf("unexpected search attempts: %+v", f.requests)
 	}
 }

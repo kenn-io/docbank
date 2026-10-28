@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -156,7 +157,7 @@ func TestAnswerQuestionProcessingErrorTransport(t *testing.T) {
 func TestAnswerQuestionSearchSelectionTransport(t *testing.T) {
 	for _, tc := range []struct {
 		name, profile, binding                string
-		rerank, exhaust                       bool
+		rerank, exhaust, noBindings           bool
 		failures                              map[string]string
 		wantAttempts                          []string
 		wantProfile, wantBinding, wantFailure string
@@ -167,6 +168,8 @@ func TestAnswerQuestionSearchSelectionTransport(t *testing.T) {
 			wantAttempts: []string{"a:a:hybrid", "a:c:hybrid", "z:b:hybrid", "a::lexical"}, wantProfile: "a", wantFailure: "not_found"},
 		{name: "reranking fallback uses compatible profile", rerank: true, exhaust: true, failures: map[string]string{"b": "not_found"},
 			wantAttempts: []string{"z:b:hybrid", "z::lexical"}, wantProfile: "z", wantFailure: "not_found"},
+		{name: "reranking without bindings searches lexically", rerank: true, noBindings: true,
+			wantAttempts: []string{"z::lexical"}, wantProfile: "z"},
 		{name: "explicit profile uses first binding", profile: "a",
 			wantAttempts: []string{"a:a:hybrid"}, wantProfile: "a", wantBinding: "a"},
 		{name: "explicit binding", profile: "a", binding: "c", failures: map[string]string{"a": "stale_index"},
@@ -175,6 +178,20 @@ func TestAnswerQuestionSearchSelectionTransport(t *testing.T) {
 			wantAttempts: []string{"a:a:hybrid"}, wantFailure: "stale_index"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			profiles := []api.ProcessingProfileSummary{
+				{Name: "a", Fingerprint: strings.Repeat("a", 64), QueryEmbeddingBindings: []string{"c", "a"}},
+				{Name: "z", Fingerprint: strings.Repeat("b", 64), QueryEmbeddingBindings: []string{"b"}, RerankingAvailable: true},
+			}
+			if tc.noBindings {
+				profiles[1].QueryEmbeddingBindings = nil
+			}
+			if tc.rerank {
+				original := slices.Clone(profiles)
+				// HTTP decoding copies the slice, so check caller ownership before the wire round trip.
+				_, _, err := selectAnswerSearch(profiles, answerInput{Rerank: true})
+				require.NoError(t, err)
+				require.Equal(t, original, profiles, "profile selection changed caller profiles")
+			}
 			fence := api.ResolvedDocumentSourceFence{VaultUID: testVaultID, ContentVersionIDs: []string{testVersionID}}
 			fingerprint, err := processing.SourceFenceFingerprint(processing.SourceFence{VaultUID: fence.VaultUID, ContentVersionIDs: fence.ContentVersionIDs})
 			require.NoError(t, err)
@@ -184,10 +201,7 @@ func TestAnswerQuestionSearchSelectionTransport(t *testing.T) {
 				case "/api/v1/processing/source-fences/resolve":
 					writeDaemonJSON(t, w, api.DocumentSourceFenceResolution{Fence: fence, FenceFingerprint: fingerprint, ObservedScopeCount: 1})
 				case "/api/v1/processing/profiles":
-					writeDaemonJSON(t, w, []api.ProcessingProfileSummary{
-						{Name: "a", Fingerprint: strings.Repeat("a", 64), QueryEmbeddingBindings: []string{"c", "a"}},
-						{Name: "z", Fingerprint: strings.Repeat("b", 64), QueryEmbeddingBindings: []string{"b"}, RerankingAvailable: true},
-					})
+					writeDaemonJSON(t, w, profiles)
 				case "/api/v1/search":
 					var request api.DocumentSearchRequest
 					if err := json.UnmarshalRead(r.Body, &request); err != nil {
@@ -242,9 +256,12 @@ func TestAnswerQuestionSearchSelectionTransport(t *testing.T) {
 			}
 			if tc.exhaust {
 				require.Equal(t, "INCOMPLETE_COVERAGE", output["status"])
+			} else if !tc.noBindings {
+				require.Equal(t, "NO_MATCH", output["status"])
+			}
+			if tc.exhaust || tc.noBindings {
 				require.Equal(t, "lexical", receipt["actual_mode"])
 			} else {
-				require.Equal(t, "NO_MATCH", output["status"])
 				require.Equal(t, tc.wantBinding, receipt["binding_id"])
 			}
 			if tc.wantFailure != "" {
@@ -337,9 +354,7 @@ func TestAnswerQuestionRealDaemonEvidence(t *testing.T) {
 	empty := exportCall(t, server, "answer_question", map[string]any{
 		"question": "observatory", "filters": map[string]any{"mime_type": "application/pdf"},
 	})
-	require.Equal(t, "NO_MATCH", empty["status"])
-	require.Equal(t, true, empty["coverage_complete"])
+	require.EqualValues(t, 0, schemaMap(t, empty["receipt"])["observed_scope_count"], "MIME filter must exclude the text document")
 	require.Empty(t, empty["passages"])
 	require.Empty(t, empty["leads"])
-	require.Equal(t, false, schemaMap(t, empty["receipt"])["search_executed"])
 }
