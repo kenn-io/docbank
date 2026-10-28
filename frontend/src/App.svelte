@@ -2293,6 +2293,7 @@
       } catch (cause) {
         outcome.receipt.reranking = {
           outcome: "failed",
+          candidate_count: 0,
           cause: cause instanceof Error ? cause.message : String(cause),
         };
         if (cause instanceof APIError && cause.status === 401) {
