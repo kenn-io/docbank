@@ -1041,9 +1041,14 @@ it("shows the empty-fence note without posting a search and reports it once, not
     files: [file],
     baseReport: report("hybrid", []),
     emptyFence: true,
+    tagSearch: { hits: [], limit: 1000, truncated: false, tag_id: tagID },
   });
   render(App);
   await screen.findAllByText("empty.txt");
+  await fireEvent.click(
+    await screen.findByRole("combobox", { name: "Browse or filter by tag: All tags" }),
+  );
+  await fireEvent.click(screen.getByRole("option", { name: "reviewed (1)" }));
   await submitSearch("nothing");
   await screen.findByText("No documents match the current filter.");
   expect(harness.postBodies).toHaveLength(0);
@@ -1051,6 +1056,7 @@ it("shows the empty-fence note without posting a search and reports it once, not
   expect(harness.misses).toEqual([
     expect.objectContaining({
       query: "nothing",
+      filters: { tag_id: tagID },
       document_count: 0,
       fence_fingerprint: expect.stringMatching(/^sha256:/),
     }),
@@ -1072,7 +1078,7 @@ it("shows the empty-fence note without posting a search and reports it once, not
   expect(harness.postBodies).toHaveLength(0);
 });
 
-it("keeps a non-401 processing failure on the legacy GET path", async () => {
+it("records an empty lexical fallback after a processing failure", async () => {
   const failure = vi.spyOn(actions, "reportFailure").mockImplementation(() => {});
   const file = node(2, "fallback.txt", baseVersion);
   const harness = installHarness({
@@ -1090,7 +1096,7 @@ it("keeps a non-401 processing failure on the legacy GET path", async () => {
     baseSearchStatus: 500,
     legacySearchStatus: undefined,
     tagSearch: {
-      hits: [{ node: file, path: file.path, match: "name" }],
+      hits: [],
       limit: 1000,
       truncated: false,
     },
@@ -1099,10 +1105,15 @@ it("keeps a non-401 processing failure on the legacy GET path", async () => {
   await screen.findAllByText("fallback.txt");
   await fireEvent.click(screen.getByRole("checkbox", { name: "Rerank results" }));
   await submitSearch("fallback");
-  await screen.findByText("/fallback.txt");
   await screen.findByText(/Natural-language search unavailable/);
   expect(screen.getByRole("combobox", { name: "Search syntax: Plain words" })).toBeTruthy();
   expect(screen.queryByRole("checkbox", { name: "Rerank results" })).toBeNull();
+  await waitFor(() => expect(harness.misses).toHaveLength(1));
+  expect(harness.misses[0]).toMatchObject({
+    requested_mode: "hybrid",
+    actual_mode: "lexical",
+    degradations: [screen.getByText(/Natural-language search unavailable/).textContent],
+  });
   expect(harness.postBodies).toHaveLength(1);
   expect(
     harness.fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/search?"))

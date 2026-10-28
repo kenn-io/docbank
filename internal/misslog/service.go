@@ -17,10 +17,10 @@ import (
 
 // Request describes the empty result accepted by a submitting client.
 type Request struct {
-	Query            string         `json:"query" maxLength:"8192"`
+	Query            string         `json:"query"`
 	Profile          string         `json:"profile,omitempty" maxLength:"256"`
-	RequestedMode    string         `json:"requested_mode" maxLength:"32"`
-	ActualMode       string         `json:"actual_mode" maxLength:"32"`
+	RequestedMode    string         `json:"requested_mode" enum:"auto,lexical,semantic,hybrid,fuzzy"`
+	ActualMode       string         `json:"actual_mode" enum:"auto,lexical,semantic,hybrid,fuzzy"`
 	Filters          map[string]any `json:"filters,omitempty" maxProperties:"32"`
 	Coverage         map[string]any `json:"coverage,omitempty" maxProperties:"32"`
 	Truncated        bool           `json:"truncated"`
@@ -61,7 +61,7 @@ func New(st *store.Store, cfg config.MissLogConfig, logger *slog.Logger, mutate 
 
 // Record stores a bounded receipt. Failures leave the search usable.
 func (s *Service) Record(ctx context.Context, request Request) {
-	if s == nil || !s.config.Enabled || s.store == nil || strings.TrimSpace(request.Query) == "" {
+	if s == nil || !s.config.Enabled || s.store == nil || (strings.TrimSpace(request.Query) == "" && len(request.Filters) == 0) {
 		return
 	}
 	var random [24]byte

@@ -11,7 +11,6 @@ import (
 	"github.com/spf13/cobra"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
-	"go.kenn.io/docbank/internal/misslog"
 )
 
 // Processing search requests accept at most this many results and query
@@ -26,7 +25,8 @@ const (
 // not attempted. err keeps a failure that has no stable daemon problem code.
 type automaticSearchOutcome struct {
 	report  *api.DocumentSearchReport
-	receipt misslog.Request
+	profile string
+	scope   api.DocumentSourceFenceResolution
 	reason  string
 	err     error
 }
@@ -75,7 +75,7 @@ func tryAutomaticSearch(ctx context.Context, c *daemonconn.Connection, query str
 		report, searchErr := c.SearchDocuments(ctx, api.DocumentSearchRequest{Query: query, Mode: "hybrid",
 			Profile: candidate.profile, BindingID: candidate.binding, Limit: limit, Fence: fence})
 		if searchErr == nil {
-			return automaticSearchOutcome{report: &report, receipt: api.DocumentSearchMiss(query, candidate.profile, fence, report)}, nil
+			return automaticSearchOutcome{report: &report, profile: candidate.profile, scope: scope}, nil
 		}
 		outcome, err := automaticSearchFallback(ctx, searchErr)
 		if err != nil {

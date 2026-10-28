@@ -4107,6 +4107,28 @@ export interface Message {
   start: number;
 }
 
+export type MissLogReceiptActualMode = typeof MissLogReceiptActualMode[keyof typeof MissLogReceiptActualMode];
+
+
+export const MissLogReceiptActualMode = {
+  auto: 'auto',
+  lexical: 'lexical',
+  semantic: 'semantic',
+  hybrid: 'hybrid',
+  fuzzy: 'fuzzy',
+} as const;
+
+export type MissLogReceiptRequestedMode = typeof MissLogReceiptRequestedMode[keyof typeof MissLogReceiptRequestedMode];
+
+
+export const MissLogReceiptRequestedMode = {
+  auto: 'auto',
+  lexical: 'lexical',
+  semantic: 'semantic',
+  hybrid: 'hybrid',
+  fuzzy: 'fuzzy',
+} as const;
+
 export type MissLogReceiptCoverage = {[key: string]: unknown};
 
 export type MissLogReceiptFilters = {[key: string]: unknown};
@@ -4114,8 +4136,7 @@ export type MissLogReceiptFilters = {[key: string]: unknown};
 export type MissLogReceiptReranking = {[key: string]: unknown};
 
 export interface MissLogReceipt {
-  /** @maxLength 32 */
-  actual_mode: string;
+  actual_mode: MissLogReceiptActualMode;
   coverage?: MissLogReceiptCoverage;
   created_at: string;
   /** @maxItems 64 */
@@ -4128,10 +4149,8 @@ export interface MissLogReceipt {
   id: string;
   /** @maxLength 256 */
   profile?: string;
-  /** @maxLength 8192 */
   query: string;
-  /** @maxLength 32 */
-  requested_mode: string;
+  requested_mode: MissLogReceiptRequestedMode;
   reranking?: MissLogReceiptReranking;
   truncated: boolean;
   vault_uid: string;
@@ -4145,17 +4164,38 @@ export interface MissLogPage {
   offset: number;
 }
 
+export type MissLogRequestActualMode = typeof MissLogRequestActualMode[keyof typeof MissLogRequestActualMode];
+
+
+export const MissLogRequestActualMode = {
+  auto: 'auto',
+  lexical: 'lexical',
+  semantic: 'semantic',
+  hybrid: 'hybrid',
+  fuzzy: 'fuzzy',
+} as const;
+
 export type MissLogRequestCoverage = {[key: string]: unknown};
 
 export type MissLogRequestFilters = {[key: string]: unknown};
+
+export type MissLogRequestRequestedMode = typeof MissLogRequestRequestedMode[keyof typeof MissLogRequestRequestedMode];
+
+
+export const MissLogRequestRequestedMode = {
+  auto: 'auto',
+  lexical: 'lexical',
+  semantic: 'semantic',
+  hybrid: 'hybrid',
+  fuzzy: 'fuzzy',
+} as const;
 
 export type MissLogRequestReranking = {[key: string]: unknown};
 
 export interface MissLogRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @maxLength 32 */
-  actual_mode: string;
+  actual_mode: MissLogRequestActualMode;
   coverage?: MissLogRequestCoverage;
   /** @maxItems 64 */
   degradations?: string[];
@@ -4166,10 +4206,8 @@ export interface MissLogRequest {
   filters?: MissLogRequestFilters;
   /** @maxLength 256 */
   profile?: string;
-  /** @maxLength 8192 */
   query: string;
-  /** @maxLength 32 */
-  requested_mode: string;
+  requested_mode: MissLogRequestRequestedMode;
   reranking?: MissLogRequestReranking;
   truncated: boolean;
 }

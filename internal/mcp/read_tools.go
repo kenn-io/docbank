@@ -435,7 +435,7 @@ func searchDocuments(
 	result, err := documentRead(ctx, session, func(ctx context.Context, c documentClient) (out response, err error) {
 		defer func() {
 			if daemon, ok := c.(daemonDocumentClient); ok && err == nil && len(out.report.Results) == 0 {
-				receipt := api.DocumentSearchMiss(input.Query, input.Profile, api.DocumentSourceFence{VaultUID: out.resolution.Fence.VaultUID, ContentVersionIDs: out.resolution.Fence.ContentVersionIDs}, out.report)
+				receipt := api.DocumentSearchMiss(input.Query, input.Profile, out.resolution.FenceFingerprint, len(out.resolution.Fence.ContentVersionIDs), out.report)
 				receipt.Filters = map[string]any{"scope": input.Filters}
 				daemon.RecordMiss(ctx, receipt)
 			}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json/v2"
 	"io"
@@ -14,7 +15,7 @@ import (
 )
 
 func TestSubmittedSearchMissRecording(t *testing.T) {
-	for _, mode := range []string{"auto", "lexical", "explicit"} {
+	for _, mode := range []string{"auto", "lexical", "explicit", "fallback"} {
 		for _, nameMatch := range []bool{false, true} {
 			if mode == "explicit" && nameMatch {
 				continue
@@ -35,6 +36,11 @@ func TestSubmittedSearchMissRecording(t *testing.T) {
 						require.NoError(t, json.MarshalWrite(w, api.DocumentSourceFenceResolution{Fence: api.ResolvedDocumentSourceFence{VaultUID: vault, ContentVersionIDs: []string{processingTestVersionID}}, FenceFingerprint: fp, ObservedScopeCount: 1}))
 					case "/api/v1/search":
 						if r.Method == http.MethodPost {
+							if mode == "fallback" {
+								w.WriteHeader(http.StatusInternalServerError)
+								_, _ = io.WriteString(w, `{"status":500,"code":"processing_failed","detail":"synthetic failure"}`)
+								return
+							}
 							require.NoError(t, json.MarshalWrite(w, api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete", ScopedDocuments: 1, CompleteDocuments: 1}}))
 						} else {
 							report := api.SearchReport{Limit: 50}
@@ -56,7 +62,8 @@ func TestSubmittedSearchMissRecording(t *testing.T) {
 				defer func() { rootCmd.SetOut(nil); rootCmd.SetErr(nil); rootCmd.SetArgs(nil); resetFlags(rootCmd) }()
 				resetFlags(rootCmd)
 				rootCmd.SetOut(io.Discard)
-				rootCmd.SetErr(io.Discard)
+				var stderr bytes.Buffer
+				rootCmd.SetErr(&stderr)
 				args := []string{"search", "missing", "--json"}
 				if mode == "lexical" {
 					args = append(args, "--mode", "lexical")
@@ -71,6 +78,12 @@ func TestSubmittedSearchMissRecording(t *testing.T) {
 				} else {
 					require.Len(t, misses, 1)
 					require.Equal(t, "missing", misses[0].Query)
+					if mode == "fallback" {
+						require.Equal(t, "hybrid", misses[0].RequestedMode)
+						require.Equal(t, "lexical", misses[0].ActualMode)
+						require.Equal(t, []string{"processing_failed"}, misses[0].Degradations)
+						require.Contains(t, stderr.String(), "degraded: processing_failed")
+					}
 				}
 			})
 		}

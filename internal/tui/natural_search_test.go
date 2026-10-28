@@ -896,6 +896,7 @@ func TestNaturalSearchEmptyFenceReportsSubmissionsAsEmptyWithoutRun(t *testing.T
 		t.Run(tc.name, func(t *testing.T) {
 			fake := newFakeBackend()
 			fake.sourceFence.Fence.ContentVersionIDs = nil
+			fake.sourceFence.FenceFingerprint = "sha256:synthetic-empty"
 			if tc.unbound {
 				fake.profiles[0].QueryEmbeddingBindings = nil
 			}
@@ -926,7 +927,7 @@ func TestNaturalSearchEmptyFenceReportsSubmissionsAsEmptyWithoutRun(t *testing.T
 			if tc.submitted {
 				require.Len(t, fake.misses, 1)
 				require.Equal(t, new(0), fake.misses[0].DocumentCount)
-				require.NotEmpty(t, fake.misses[0].FenceFingerprint)
+				require.Equal(t, "sha256:synthetic-empty", fake.misses[0].FenceFingerprint)
 			} else {
 				require.Empty(t, fake.misses)
 			}

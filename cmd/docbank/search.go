@@ -12,6 +12,7 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/misslog"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -233,7 +234,9 @@ See docs/usage/search.md.`,
 						receipt.RequestedMode = "fuzzy"
 					}
 					if automatic.report != nil {
-						receipt = automatic.receipt
+						receipt = api.DocumentSearchMiss(query, automatic.profile, automatic.scope.FenceFingerprint, len(automatic.scope.Fence.ContentVersionIDs), *automatic.report)
+					} else if automatic.reason != "" {
+						receipt.RequestedMode, receipt.Degradations = "hybrid", []string{automatic.reason}
 					}
 					c.RecordMiss(cmd.Context(), receipt)
 				}
@@ -437,8 +440,8 @@ func runDocumentSearch(cmd *cobra.Command, c *daemonconn.Connection, query strin
 		if retErr == nil {
 			reportSearch(cmd, c, report.ActualMode, len(report.Results) == 0, searchAgent)
 			if len(report.Results) == 0 {
-				c.RecordMiss(cmd.Context(), api.DocumentSearchMiss(query, options.Profile,
-					api.DocumentSourceFence{VaultUID: info.VaultID, ContentVersionIDs: options.ContentVersionIDs}, report))
+				fingerprint, _ := processing.SourceFenceFingerprint(processing.SourceFence{VaultUID: info.VaultID, ContentVersionIDs: options.ContentVersionIDs})
+				c.RecordMiss(cmd.Context(), api.DocumentSearchMiss(query, options.Profile, fingerprint, len(options.ContentVersionIDs), report))
 			}
 		}
 	}()

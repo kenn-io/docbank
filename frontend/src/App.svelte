@@ -2183,6 +2183,7 @@
               requested_mode: mapped.mode,
               actual_mode: mapped.mode === "auto" ? "lexical" : mapped.mode,
               fence_fingerprint: resolution.fence_fingerprint,
+              filters: { tag_id: requestedTagID },
               document_count: 0,
               truncated: false,
             },
@@ -2213,8 +2214,8 @@
         receipt: {
           query,
           profile: profile.name,
-          requested_mode: baseReport.requested_mode,
-          actual_mode: baseReport.actual_mode,
+          requested_mode: baseReport.requested_mode as generated.MissLogRequestRequestedMode,
+          actual_mode: baseReport.actual_mode as generated.MissLogRequestActualMode,
           filters: { tag_id: requestedTagID },
           fence_fingerprint: resolution.fence_fingerprint,
           document_count: resolution.fence.content_version_ids.length,
@@ -2279,7 +2280,7 @@
           type: reranked.actual_mode,
           receipt: {
             ...outcome.receipt,
-            actual_mode: reranked.actual_mode,
+            actual_mode: reranked.actual_mode as generated.MissLogRequestActualMode,
             coverage: { ...reranked.coverage },
             truncated: reranked.truncated,
             degradations: reranked.degradations,
@@ -2326,6 +2327,7 @@
             session,
             controller.signal,
             note,
+            naturalSearchRequest(mode, profile)?.mode ?? "lexical",
           );
           accepted = !!outcome;
           if (accepted && request === generation && requestedSort) applyResultSort(requestedSort);
@@ -2373,6 +2375,7 @@
     session: string,
     signal: AbortSignal,
     note = "",
+    requestedMode: generated.MissLogRequest["requested_mode"] = "lexical",
   ): Promise<{ type: string; empty: boolean; receipt: generated.MissLogRequest } | undefined> {
     const report = await generated.search(
       { q: query, limit: 1000, ...(requestedTagID ? { tag_id: requestedTagID } : {}) },
@@ -2401,8 +2404,9 @@
       empty: nextRows.length === 0,
       receipt: {
         query,
-        requested_mode: "lexical",
+        requested_mode: requestedMode,
         actual_mode: "lexical",
+        ...(note ? { degradations: [note] } : {}),
         filters: { tag_id: requestedTagID },
         truncated: report.truncated,
       },

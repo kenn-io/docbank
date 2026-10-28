@@ -175,6 +175,8 @@ type naturalSearchBaseLoadedMsg struct {
 	report      api.DocumentSearchReport
 	rows        []row
 	err         error
+
+	fenceFingerprint string
 }
 
 type naturalSearchRerankLoadedMsg struct {
@@ -362,10 +364,8 @@ func (e *ScreenRetryError) Unwrap() error { return e.Err }
 // deferredSearchReport holds an accepted base search until its rerank reply
 // arrives, so later requests cannot discard or relabel it.
 type deferredSearchReport struct {
-	receipt             misslog.Request
-	requestID, searchID uint64
-	searchType          string
-	empty               bool
+	naturalSearchBaseLoadedMsg
+	empty bool
 }
 
 // Model is a virtual-tree, search, audited-history, and recoverable-trash
@@ -2171,7 +2171,7 @@ func (m Model) loadNaturalSearch(query string, requestID uint64) tea.Cmd {
 				VaultUID: resolution.Fence.VaultUID, ContentVersionIDs: resolution.Fence.ContentVersionIDs,
 			}, Explain: true}
 		if len(resolution.Fence.ContentVersionIDs) == 0 {
-			return naturalSearchBaseLoadedMsg{requestID: requestID, searchID: searchID, query: query, naturalMode: mode, request: request,
+			return naturalSearchBaseLoadedMsg{requestID: requestID, searchID: searchID, query: query, naturalMode: mode, request: request, fenceFingerprint: resolution.FenceFingerprint,
 				report: api.DocumentSearchReport{}, rows: []row{}}
 		}
 		report, err := backend.SearchDocuments(ctx, request)
@@ -2180,7 +2180,7 @@ func (m Model) loadNaturalSearch(query string, requestID uint64) tea.Cmd {
 		}
 		rows, err := hydrateNaturalRows(ctx, backend, report, mode, make(map[int64]api.Node))
 		return naturalSearchBaseLoadedMsg{requestID: requestID, searchID: searchID, query: query, naturalMode: mode,
-			request: request, report: report, rows: rows, err: err}
+			request: request, fenceFingerprint: resolution.FenceFingerprint, report: report, rows: rows, err: err}
 	}
 }
 
@@ -2445,7 +2445,9 @@ func (m Model) applySearch(msg searchLoadedMsg) (tea.Model, tea.Cmd) {
 	m.clampSelection()
 	if m.reportSearchID == msg.requestID {
 		m.reportSearchID = 0
-		return m, m.reportSearch("text", len(msg.report.Hits) == 0, misslog.Request{Query: msg.query, RequestedMode: "lexical", ActualMode: "lexical", Truncated: msg.report.Truncated})
+		return m, m.reportSearch("text", len(msg.report.Hits) == 0, func() misslog.Request {
+			return misslog.Request{Query: msg.query, RequestedMode: "lexical", ActualMode: "lexical", Truncated: msg.report.Truncated}
+		})
 	}
 	return m, nil
 }
@@ -2482,7 +2484,7 @@ func (m Model) applyNaturalSearchBase(msg naturalSearchBaseLoadedMsg) (tea.Model
 			searchType = naturalLexical
 		}
 		return m, func() tea.Msg {
-			m.backend.RecordMiss(m.ctx, api.DocumentSearchMiss(msg.query, msg.request.Profile, msg.request.Fence, api.DocumentSearchReport{RequestedMode: msg.request.Mode, ActualMode: searchType}))
+			m.backend.RecordMiss(m.ctx, api.DocumentSearchMiss(msg.query, msg.request.Profile, msg.fenceFingerprint, 0, api.DocumentSearchReport{RequestedMode: msg.request.Mode, ActualMode: searchType}))
 			return m.reportAction("search_empty", searchType, "")()
 		}
 	}
@@ -2497,14 +2499,14 @@ func (m Model) applyNaturalSearchBase(msg naturalSearchBaseLoadedMsg) (tea.Model
 		m.reportSearchID = 0
 		var earlier tea.Cmd
 		if m.rerankReport.requestID != 0 {
-			earlier = m.reportSearch(m.rerankReport.searchType, m.rerankReport.empty, m.rerankReport.receipt)
+			earlier = m.reportNaturalSearch(m.rerankReport.naturalSearchBaseLoadedMsg, m.rerankReport.report, m.rerankReport.empty)
 		}
-		m.rerankReport = deferredSearchReport{api.DocumentSearchMiss(msg.query, msg.request.Profile, msg.request.Fence, msg.report), msg.requestID, msg.searchID, msg.report.ActualMode, len(m.rows) == 0}
+		m.rerankReport = deferredSearchReport{msg, len(m.rows) == 0}
 		return m, tea.Batch(earlier, rerank)
 	}
 	if m.reportSearchID == msg.requestID && msg.report.ActualMode != "" {
 		m.reportSearchID = 0
-		return m, m.reportSearch(msg.report.ActualMode, len(m.rows) == 0, api.DocumentSearchMiss(msg.query, msg.request.Profile, msg.request.Fence, msg.report))
+		return m, m.reportNaturalSearch(msg, msg.report, len(m.rows) == 0)
 	}
 	return m, nil
 }
@@ -2514,11 +2516,11 @@ func (m Model) applyNaturalSearchRerank(msg naturalSearchRerankLoadedMsg) (tea.M
 	var report tea.Cmd
 	pending := m.rerankReport
 	if msg.report.Reranking != nil {
-		pending.receipt.Reranking = map[string]any{"outcome": msg.report.Reranking.Outcome, "cause": msg.report.Reranking.Cause, "candidate_count": msg.report.Reranking.CandidateCount}
+		pending.report.Reranking = msg.report.Reranking
 	}
 	if pending.requestID == msg.requestID && pending.searchID == msg.searchID {
 		m.rerankReport = deferredSearchReport{}
-		report = m.reportSearch(pending.searchType, pending.empty, pending.receipt)
+		report = m.reportNaturalSearch(pending.naturalSearchBaseLoadedMsg, pending.report, pending.empty)
 	}
 	if msg.requestID != m.requestID || msg.searchID != m.naturalSearchID {
 		return m, report
@@ -2542,9 +2544,7 @@ func (m Model) applyNaturalSearchRerank(msg naturalSearchRerankLoadedMsg) (tea.M
 		m.applyNaturalRows(m.searchQuery, msg.rows, msg.report.Truncated)
 		m.naturalSearchNote = naturalSearchReportNote(msg.report)
 		if report != nil {
-			receipt := api.DocumentSearchMiss(pending.receipt.Query, pending.receipt.Profile, api.DocumentSourceFence{}, msg.report)
-			receipt.FenceFingerprint, receipt.DocumentCount = pending.receipt.FenceFingerprint, pending.receipt.DocumentCount
-			report = m.reportSearch(msg.report.ActualMode, len(m.rows) == 0, receipt)
+			report = m.reportNaturalSearch(pending.naturalSearchBaseLoadedMsg, msg.report, len(m.rows) == 0)
 		}
 	}
 	return m, report
@@ -3198,13 +3198,19 @@ func (m Model) reportAction(event, searchType, kind string) tea.Cmd {
 	}
 }
 
-func (m Model) reportSearch(searchType string, empty bool, receipts ...misslog.Request) tea.Cmd {
+func (m Model) reportNaturalSearch(msg naturalSearchBaseLoadedMsg, report api.DocumentSearchReport, empty bool) tea.Cmd {
+	return m.reportSearch(report.ActualMode, empty, func() misslog.Request {
+		return api.DocumentSearchMiss(msg.query, msg.request.Profile, msg.fenceFingerprint, len(msg.request.Fence.ContentVersionIDs), report)
+	})
+}
+
+func (m Model) reportSearch(searchType string, empty bool, receipts ...func() misslog.Request) tea.Cmd {
 	return func() tea.Msg {
 		m.reportAction("search_run", searchType, "")()
 		if empty {
 			m.reportAction("search_empty", searchType, "")()
 			if len(receipts) > 0 {
-				m.backend.RecordMiss(m.ctx, receipts[0])
+				m.backend.RecordMiss(m.ctx, receipts[0]())
 			}
 		}
 		return nil

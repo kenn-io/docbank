@@ -9583,7 +9583,12 @@ components:
       additionalProperties: false
       properties:
         actual_mode:
-          maxLength: 32
+          enum:
+            - auto
+            - lexical
+            - semantic
+            - hybrid
+            - fuzzy
           type: string
         coverage:
           additionalProperties: {}
@@ -9614,10 +9619,14 @@ components:
           maxLength: 256
           type: string
         query:
-          maxLength: 8192
           type: string
         requested_mode:
-          maxLength: 32
+          enum:
+            - auto
+            - lexical
+            - semantic
+            - hybrid
+            - fuzzy
           type: string
         reranking:
           additionalProperties: {}
@@ -9651,7 +9660,12 @@ components:
           readOnly: true
           type: string
         actual_mode:
-          maxLength: 32
+          enum:
+            - auto
+            - lexical
+            - semantic
+            - hybrid
+            - fuzzy
           type: string
         coverage:
           additionalProperties: {}
@@ -9677,10 +9691,14 @@ components:
           maxLength: 256
           type: string
         query:
-          maxLength: 8192
           type: string
         requested_mode:
-          maxLength: 32
+          enum:
+            - auto
+            - lexical
+            - semantic
+            - hybrid
+            - fuzzy
           type: string
         reranking:
           additionalProperties: {}
