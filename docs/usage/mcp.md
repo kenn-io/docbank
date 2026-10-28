@@ -398,21 +398,21 @@ stdio and HTTP. Send 1–16,000 Unicode code points, at most 512 figures, and
 outside 1 to the number of citations is unknown. Each citation requires a
 verified read, including duplicates. A figure is a token containing a digit,
 with edge punctuation trimmed. Whitespace, em dashes, horizontal bars, and
-`[ ] ( ) < > | * ~` backtick `=` `;` separate tokens. A `-` or `/` before a
-lowercase letter splits a token only when everything before it is digits, with
-an optional leading sign or currency symbol: `5-year` and `$5/month` split, and
-`INV-5-ab` stays whole. A leading `-` or `−` stays as a sign.
+`[ ] ( ) < > | * ~` backtick `=` `;` separate tokens.
+A leading `-` or `−` stays as a sign, and a leading decimal point stays.
 Figures compare exactly across all resolved citations; markers don't scope them.
 Unknown markers, or missing figures when all citations resolve, give `ungrounded`.
 Otherwise, any unavailable citation gives `incomplete`, an answer without figures
 gives `no_figures`, and all figures found gives `grounded`. Other resolver failures
 return tool errors. Results include figures, unknown marker indexes, citation
 statuses, and text digests, with private cache scope and zero TTL.
-`1250` differs from `1,250`, and `$1,205` from `1,205`.
+`5-year` differs from `5 years`, `1250` from `1,250`, and `$1,250` from `1,250`.
 Case and dash variants differ. Numbered-list numbers count as figures. A cited
-`1 200` reads as one literal number, including its grouping space, when the token
-before the space is digits with an optional sign or currency symbol, so `Q1 500`
-stays two tokens. Both sides undo Markdown punctuation escapes, so a literal
+`1 200` reads as `1200`: single spaces, NBSPs, and narrow NBSPs between
+three-digit groups are removed when the first group has one to three digits
+and follows neither a letter, digit, `-`, `/`, `_`, `.`, nor `,`.
+`Q1 500` and `INV-5 200` stay split. The answer keeps its spaces.
+Both sides undo Markdown punctuation escapes, so a literal
 backslash before punctuation in an unescaped body, such as a plain-text email,
 reads as an escape. Occurrence alone confirms neither the subject nor other
 claims.

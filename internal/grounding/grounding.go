@@ -32,6 +32,7 @@ type Answer struct {
 
 var markers = regexp.MustCompile(`\[[0-9]{1,6}\]`)
 var escapes = regexp.MustCompile(`\\([[:punct:]])`)
+var citedGroups = regexp.MustCompile(`(^|[^\pL\pN\-/_.,])\d{1,3}([ \x{00a0}\x{202f}]\d{3})+`)
 
 func edge(r rune) bool {
 	return !unicode.IsLetter(r) && !unicode.IsDigit(r) && !unicode.IsMark(r) && !unicode.Is(unicode.Sc, r) && r != '%'
@@ -40,63 +41,27 @@ func edge(r rune) bool {
 // delimiters never occur inside a figure; they cover dashes and Markdown and HTML syntax.
 const delimiters = "\u2014\u2015[]()<>|*~`=;"
 
-func split(r rune) bool    { return unicode.IsSpace(r) || strings.ContainsRune(delimiters, r) }
-func grouping(r rune) bool { return r == ' ' || r == '\u00a0' || r == '\u202f' }
+func split(r rune) bool { return unicode.IsSpace(r) || strings.ContainsRune(delimiters, r) }
 
-// amount returns the trailing digit count of a token that so far holds only digits after an
-// optional leading sign or currency symbol, or -1 once it holds anything else.
-func amount(n int, r rune, first bool) int {
-	switch {
-	case n >= 0 && unicode.IsDigit(r):
-		return n + 1
-	case first && (strings.ContainsRune("+-\u2212", r) || unicode.Is(unicode.Sc, r)):
-		return 0
-	}
-	return -1
-}
-
-// group reports exactly three digits starting at i.
-func group(rs []rune, i int) bool {
-	n := 0
-	for i+n < len(rs) && n < 4 && unicode.IsDigit(rs[i+n]) {
-		n++
-	}
-	return n == 3
-}
-
-// leading skips removable punctuation before a token's meaningful prefix.
-func leading(rs []rune, i int) int {
-	for i < len(rs) && !split(rs[i]) && edge(rs[i]) {
+// trim drops edge punctuation, keeping a sign or decimal point before a digit or currency symbol.
+func trim(rs []rune) string {
+	i := 0
+	for i < len(rs) && edge(rs[i]) {
 		if strings.ContainsRune("-.\u2212", rs[i]) && i+1 < len(rs) && (unicode.IsDigit(rs[i+1]) || unicode.Is(unicode.Sc, rs[i+1])) {
 			break
 		}
 		i++
 	}
-	return i
-}
-
-// trim drops edge punctuation, keeping a sign or decimal point before a digit or currency symbol.
-func trim(token []rune) string {
-	return strings.TrimRightFunc(string(token[leading(token, 0):]), edge)
+	return strings.TrimRightFunc(string(rs[i:]), edge)
 }
 
 func extract(text string) []string {
 	rs := []rune(escapes.ReplaceAllString(text, "$1"))
 	figures := []string{}
 	for i := 0; i < len(rs); i++ {
-		start, n := leading(rs, i), 0
-		for i = start; i < len(rs); i++ {
-			r := rs[i]
-			// A single grouping space joins a three-digit group to an amount.
-			if grouping(r) && n >= 1 && n <= 3 && group(rs, i+1) {
-				i, n = i+3, 3
-				continue
-			}
-			// A - or / before a lowercase letter ends an amount, as in 5-year.
-			if split(r) || n > 0 && (r == '-' || r == '/') && i+1 < len(rs) && unicode.IsLower(rs[i+1]) {
-				break
-			}
-			n = amount(n, r, i == start)
+		start := i
+		for i < len(rs) && !split(rs[i]) {
+			i++
 		}
 		if value := trim(rs[start:i]); strings.ContainsFunc(value, unicode.IsDigit) {
 			figures = append(figures, value)
@@ -124,7 +89,11 @@ func (a Answer) Check(citations []Citation) Report {
 		status := c.Err
 		if status == "" {
 			status = "resolved"
-			for _, value := range extract(c.Text) {
+			text := citedGroups.ReplaceAllStringFunc(c.Text, func(m string) string {
+				i := strings.IndexAny(m, "0123456789")
+				return m[:i] + strings.Join(strings.Fields(m[i:]), "")
+			})
+			for _, value := range extract(text) {
 				values[value] = true
 			}
 		} else {
