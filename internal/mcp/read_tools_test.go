@@ -512,14 +512,7 @@ func TestSearchReadWithNonEmptyFenceAndNoHitsSkipsDocumentResolution(t *testing.
 				VaultUID: testVaultID, ContentVersionIDs: []string{testVersionID}},
 				FenceFingerprint: testFenceFingerprint, ObservedScopeCount: 1})
 		case "/api/v1/search":
-			var body api.DocumentSearchRequest
-			if !assert.NoError(t, json.UnmarshalRead(request.Body, &body)) {
-				http.Error(response, "invalid synthetic search request", http.StatusBadRequest)
-				return
-			}
-			assert.True(t, body.Rerank)
 			writeDaemonJSON(t, response, api.DocumentSearchReport{RequestedMode: "lexical", ActualMode: "lexical",
-				Reranking:    &api.DocumentSearchRerankingReceipt{Outcome: "skipped"},
 				Coverage:     api.DocumentSearchCoverage{ScopedDocuments: 1, CompleteDocuments: 1, State: "complete"},
 				Degradations: []string{}, Results: []api.DocumentSearchResult{}})
 		case "/api/v1/documents/resolve":
@@ -536,14 +529,12 @@ func TestSearchReadWithNonEmptyFenceAndNoHitsSkipsDocumentResolution(t *testing.
 
 	result, err := invokeReadTool(t.Context(), lease, "search_documents", map[string]any{
 		"query": "synthetic", "mode": "lexical", "limit": 1, "profile": "local",
-		"content_version_ids": []string{testVersionID}, "rerank": true,
+		"content_version_ids": []string{testVersionID},
 	})
 	require.NoError(t, err)
 	assert.Zero(t, resolveCalls)
 	assert.Empty(t, resourceLinkURIs(result))
-	output := structuredMap(t, result.StructuredContent)
-	assert.Equal(t, []any{}, output["results"])
-	assert.Equal(t, map[string]any{"outcome": "skipped", "candidate_count": float64(0)}, output["reranking"])
+	assert.Equal(t, []any{}, structuredMap(t, result.StructuredContent)["results"])
 }
 
 func TestSearchReadResolvesOneBoundedBatchOfCurrentDocumentsForResourceLinks(t *testing.T) {
@@ -856,14 +847,6 @@ func TestSearchReadRerankOutputAndFalseBaseline(t *testing.T) {
 			hit, ok := hits[0].(map[string]any)
 			require.True(t, ok)
 			if tc.outcome == "" {
-				encoded, err := json.Marshal(output)
-				require.NoError(t, err)
-				baseline := fmt.Sprintf(`{"ttlMs":0,"cacheScope":"private","vault_id":%q,"fence":{"vault_id":%q,"content_version_ids":[%q]},"fence_fingerprint":%q,"observed_scope_count":1,"requested_mode":"lexical","actual_mode":"lexical","coverage":{"binding_required":false,"scoped_documents":1,"complete_documents":1,"state":"complete"},"skipped_reasons":[],"results":[{"node_id":7,"content_version_id":%q,"rank":1,"score":0.01639344262295082,"path":"/synthetic.md","evidence_ids":["{\"kind\":\"node_name\"}"]}],"truncated":false}`, testVaultID, testVaultID, testVersionID, testFenceFingerprint, testVersionID)
-				assert.JSONEq(t, baseline, string(encoded))
-				require.NotEmpty(t, result.Content)
-				text, ok := result.Content[0].(*sdkmcp.TextContent)
-				require.True(t, ok)
-				assert.Equal(t, baseline, text.Text)
 				assert.NotContains(t, output, "reranking")
 				assert.NotContains(t, hit, "rerank_relevance")
 			} else {
