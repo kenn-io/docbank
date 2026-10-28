@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"log/slog"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -44,9 +45,12 @@ func TestRecordingIsOptInBoundedAndSanitizesFailures(t *testing.T) {
 	rows, err = st.ListMissLogRecords(t.Context(), time.Time{}, 10, 0)
 	require.NoError(t, err)
 	require.Len(t, rows, 3)
+	// Records written in the same clock tick have no stable order, so find the row by content.
+	index := slices.IndexFunc(rows, func(row store.MissLogRecord) bool { return strings.Contains(row.Receipt, "synthetic secret") })
+	require.NotEqual(t, -1, index)
 	var receipt Receipt
-	require.NoError(t, json.Unmarshal([]byte(rows[0].Receipt), &receipt))
-	require.Equal(t, rows[0].ID, receipt.ID)
+	require.NoError(t, json.Unmarshal([]byte(rows[index].Receipt), &receipt))
+	require.Equal(t, rows[index].ID, receipt.ID)
 	require.Equal(t, st.VaultID(), receipt.VaultUID)
 	require.WithinDuration(t, time.Now(), receipt.CreatedAt, time.Second)
 	require.Equal(t, "synthetic secret", receipt.Query)
@@ -58,7 +62,7 @@ func TestRecordingIsOptInBoundedAndSanitizesFailures(t *testing.T) {
 	require.Equal(t, "complete", receipt.Coverage["state"])
 	require.Equal(t, []string{"reranking_degraded"}, receipt.Degradations)
 	require.Equal(t, "degraded", receipt.Reranking["outcome"])
-	require.Equal(t, 1, strings.Count(rows[0].Receipt, "synthetic secret"))
+	require.Equal(t, 1, strings.Count(rows[index].Receipt, "synthetic secret"))
 	require.NoError(t, st.Close())
 	svc.Record(context.Background(), Request{Query: "another private secret"})
 	require.NotContains(t, logs.String(), "secret")
