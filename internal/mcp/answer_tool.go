@@ -62,7 +62,6 @@ type answerReceipt struct {
 	SearchExecuted      bool                        `json:"search_executed"`
 	ObservedScopeCount  int                         `json:"observed_scope_count"`
 	VaultID             string                      `json:"vault_id,omitempty"`
-	Fence               *sourceFenceOutput          `json:"fence,omitempty"`
 	FenceFingerprint    string                      `json:"fence_fingerprint,omitempty"`
 	Profile             *answerProfile              `json:"profile,omitempty"`
 	BindingID           string                      `json:"binding_id,omitempty"`
@@ -95,12 +94,11 @@ type answerProfileLister interface {
 }
 
 func selectAnswerSearch(profiles []api.ProcessingProfileSummary, input answerInput) (api.ProcessingProfileSummary, []daemonconn.SearchCandidate, error) {
-	slices.SortFunc(profiles, func(a, b api.ProcessingProfileSummary) int { return cmp.Compare(a.Name, b.Name) })
 	if len(profiles) == 0 {
 		return api.ProcessingProfileSummary{}, nil, api.NewError(http.StatusServiceUnavailable, "processing_unavailable", "no processing profiles available")
 	}
 	if input.Profile == "" && input.Rerank {
-		profiles = slices.DeleteFunc(profiles, func(p api.ProcessingProfileSummary) bool { return !p.RerankingAvailable })
+		profiles = slices.DeleteFunc(slices.Clone(profiles), func(p api.ProcessingProfileSummary) bool { return !p.RerankingAvailable })
 		if len(profiles) == 0 {
 			return api.ProcessingProfileSummary{}, nil, api.NewError(http.StatusServiceUnavailable, "reranking_unavailable", "no reranking profiles available")
 		}
@@ -196,9 +194,6 @@ func answerQuestion(ctx context.Context, session documentReadSession, raw []byte
 				break
 			}
 			code, _ := daemonconn.ProblemCode(err)
-			if native, ok := errors.AsType[*api.Error](err); ok {
-				code = native.Code
-			}
 			if ctx.Err() != nil {
 				return response{}, ctx.Err()
 			}
@@ -234,7 +229,6 @@ func answerQuestion(ctx context.Context, session documentReadSession, raw []byte
 	}
 	out.Receipt.ObservedScopeCount = result.fence.ObservedScopeCount
 	out.Receipt.VaultID = result.fence.Fence.VaultUID
-	out.Receipt.Fence = &sourceFenceOutput{VaultID: result.fence.Fence.VaultUID, ContentVersionIDs: result.fence.Fence.ContentVersionIDs}
 	out.Receipt.FenceFingerprint = result.fence.FenceFingerprint
 	out.Receipt.Profile = &answerProfile{Name: result.profile.Name, Fingerprint: result.profile.Fingerprint}
 	out.Receipt.BindingID = result.binding
