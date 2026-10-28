@@ -40,10 +40,12 @@ type watchInventoryEntry struct {
 	observedAt time.Time
 }
 type watchInventory struct {
-	files     map[string]watchInventoryEntry
-	order     []string
-	present   map[string]struct{}
-	complete  bool
+	files    map[string]watchInventoryEntry
+	order    []string
+	present  map[string]struct{}
+	complete bool
+	// blocked names known paths whose structure changed during this pass.
+	blocked   []error
 	known     map[string]struct{}
 	knownDirs map[string]struct{}
 }
@@ -112,6 +114,31 @@ func matchWatchRenames(accepted map[string]watchObservation, inventory *watchInv
 		candidates = append(candidates, watchRenameCandidate{old.ref, current.ref})
 	}
 	return candidates
+}
+
+// possibleRenameTargets returns new paths that share a native object with an
+// accepted source an incomplete inventory did not observe. Importing one as a
+// new document could split that source's history if the source was renamed.
+func possibleRenameTargets(accepted map[string]watchObservation, inventory *watchInventory) map[string]struct{} {
+	unseen := make(map[watchObjectKey]struct{})
+	for ref, observation := range accepted {
+		if observation.accepted == nil || observation.accepted.identity.object.file == 0 {
+			continue
+		}
+		if _, observed := inventory.files[ref]; !observed {
+			unseen[observation.accepted.identity.object] = struct{}{}
+		}
+	}
+	targets := make(map[string]struct{})
+	for ref, entry := range inventory.files {
+		if observation, exists := accepted[ref]; exists && observation.accepted != nil {
+			continue
+		}
+		if _, ok := unseen[entry.state.identity.object]; ok {
+			targets[ref] = struct{}{}
+		}
+	}
+	return targets
 }
 
 // watchOldRefAbsent proves that the old exact directory-entry spelling is gone.

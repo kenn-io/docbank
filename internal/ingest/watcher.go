@@ -982,14 +982,19 @@ func (w *Watcher) scanWithHints(ctx context.Context, root *watchRoot, hints watc
 	}
 	retained := make(map[string]struct{})
 	if inventory != nil {
-		if !inventory.complete {
-			return false, nil
+		// A complete inventory settles renames before importing. An incomplete
+		// one still imports settled files, but holds back new paths that could
+		// be renames of accepted sources it did not see.
+		var deferred map[string]struct{}
+		if inventory.complete {
+			var err error
+			deferred, retained, err = w.rebindCandidates(ctx, root, inventory)
+			if err != nil {
+				return false, err
+			}
+		} else {
+			deferred = possibleRenameTargets(w.observations, inventory)
 		}
-		deferred, keep, err := w.rebindCandidates(ctx, root, inventory)
-		if err != nil {
-			return false, err
-		}
-		retained = keep
 		for _, rel := range inventory.order {
 			entry := inventory.files[rel]
 			if _, skip := deferred[rel]; skip {
@@ -998,6 +1003,14 @@ func (w *Watcher) scanWithHints(ctx context.Context, root *watchRoot, hints watc
 			if err := w.processObservation(ctx, watchSource{root: root, ref: rel}, entry.state, entry.observedAt, seen, hints); err != nil {
 				return false, err
 			}
+		}
+		if !inventory.complete {
+			// Unseen paths may only be unreadable: keep their evidence and
+			// subscriptions until a complete pass.
+			if len(inventory.blocked) != 0 {
+				return false, fmt.Errorf("scanning watch %q: %w", w.config.Name, errors.Join(inventory.blocked...))
+			}
+			return false, nil
 		}
 	}
 	if w.notifications != nil && w.notificationErr == nil {
@@ -1048,11 +1061,13 @@ func (w *Watcher) rejectEntry(ctx context.Context, rel string, err error, seen m
 
 var errWatchBlocked = errors.New("watched source blocks reconciliation")
 
-// blockedWatchPath stops reconciliation at a structural change. Time spent
-// hidden behind it must not count toward settling anything below rel.
-func (w *Watcher) blockedWatchPath(rel, reason string) error {
+// blockWatchPath skips a known path whose structure changed and defers
+// reconciliation until it is restored. Time spent hidden behind the change
+// must not count toward settling anything below rel.
+func (w *Watcher) blockWatchPath(inventory *watchInventory, rel, reason string) {
 	w.interruptSettlingTree(rel)
-	return fmt.Errorf("watched source %q %s: %w", rel, reason, errWatchBlocked)
+	inventory.complete = false
+	inventory.blocked = append(inventory.blocked, fmt.Errorf("watched source %q %s: %w", rel, reason, errWatchBlocked))
 }
 
 func retryableWatchCollectionError(err error) bool {
@@ -1121,7 +1136,8 @@ func (w *Watcher) scanDirectory(
 		if w.excludes.match(root.path, filePath) {
 			if inventory != nil {
 				if _, known := inventory.known[rel]; known {
-					return w.blockedWatchPath(rel, "became excluded")
+					w.blockWatchPath(inventory, rel, "became excluded")
+					continue
 				}
 			}
 			if w.excluded != nil {
@@ -1155,7 +1171,8 @@ func (w *Watcher) scanDirectory(
 		if info.Mode()&fs.ModeSymlink != 0 {
 			if inventory != nil {
 				if _, known := inventory.knownDirs[rel]; known {
-					return w.blockedWatchPath(rel, "became a symlink")
+					w.blockWatchPath(inventory, rel, "became a symlink")
+					continue
 				}
 			}
 			if w.excluded != nil {
@@ -1219,7 +1236,8 @@ func (w *Watcher) scanDirectory(
 				if inventory != nil {
 					if _, known := inventory.known[rel]; known {
 						_ = child.Close()
-						return w.blockedWatchPath(rel, "crossed a filesystem boundary")
+						w.blockWatchPath(inventory, rel, "crossed a filesystem boundary")
+						continue
 					}
 				}
 				_ = child.Close()
@@ -1260,7 +1278,8 @@ func (w *Watcher) scanDirectory(
 		if !info.Mode().IsRegular() {
 			if inventory != nil {
 				if _, known := inventory.known[rel]; known {
-					return w.blockedWatchPath(rel, "became nonregular")
+					w.blockWatchPath(inventory, rel, "became nonregular")
+					continue
 				}
 			}
 			if w.excluded != nil {
@@ -1272,7 +1291,8 @@ func (w *Watcher) scanDirectory(
 		}
 		if inventory != nil {
 			if _, wasDir := inventory.knownDirs[rel]; wasDir {
-				return w.blockedWatchPath(rel, "became a file")
+				w.blockWatchPath(inventory, rel, "became a file")
+				continue
 			}
 		}
 		if err := validateSourcePath(rel); err != nil {
@@ -1339,7 +1359,8 @@ func (w *Watcher) scanDirectory(
 		if !w.sourceMount.same(state.mount) {
 			if inventory != nil {
 				if _, known := inventory.known[rel]; known {
-					return w.blockedWatchPath(rel, "crossed a filesystem boundary")
+					w.blockWatchPath(inventory, rel, "crossed a filesystem boundary")
+					continue
 				}
 			}
 			if w.excluded != nil {

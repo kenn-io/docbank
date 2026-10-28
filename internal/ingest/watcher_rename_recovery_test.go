@@ -227,7 +227,7 @@ func TestWatchOldPathMissingRequiresPinnedRoot(t *testing.T) {
 	_ = watcher
 }
 
-func TestWatchIncompletePassPreservesConsumedDirtyHintAndSubscription(t *testing.T) {
+func TestWatchIncompletePassHonorsDirtyHintAndKeepsSubscription(t *testing.T) {
 	calls := 0
 	mutate := func(fn func() error) error { calls++; return fn() }
 	watcher, root, ing, source, _ := promptRenameFixture(t, mutate)
@@ -253,18 +253,18 @@ func TestWatchIncompletePassPreservesConsumedDirtyHintAndSubscription(t *testing
 	complete, err := watcher.scanWithHints(t.Context(), root, watchScanHints{Dirty: map[string]struct{}{"retained.md": {}}})
 	require.NoError(t, err)
 	require.False(t, complete)
-	assert.Equal(t, initial, calls)
-	assert.Equal(t, 0, notifier.endScans)
+	assert.Equal(t, initial+1, calls, "the hinted file outside the unreadable subtree is processed")
+	assert.Equal(t, 0, notifier.endScans, "an incomplete pass keeps subscriptions it did not see")
 	require.NotNil(t, watcher.observations["retained.md"].accepted)
 	require.Equal(t, retained.ID, watcher.observations["retained.md"].accepted.nodeID)
-	require.False(t, watcher.observations["retained.md"].processed)
+	require.True(t, watcher.observations["retained.md"].processed)
 	require.NoError(t, os.Remove(filepath.Join(source, "unstable")))
 	require.NoError(t, os.Rename(filepath.Join(source, "detached"), filepath.Join(source, "unstable")))
 	complete, err = watcher.scanWithHints(t.Context(), root, watchScanHints{})
 	require.NoError(t, err)
 	require.True(t, complete)
 	assert.Equal(t, 1, notifier.endScans)
-	assert.True(t, watcher.observations["retained.md"].processed, "the unchanged file's consumed dirty hint must finish after recovery")
+	assert.True(t, watcher.observations["retained.md"].processed)
 }
 
 func TestWatchRenameOldPathReuseKeepsDistinctIdentity(t *testing.T) {
@@ -401,9 +401,9 @@ func TestWatchLeafDirectoryChangesDuringDescentKeepsPassIncomplete(t *testing.T)
 	complete, err := watcher.scanWithHints(t.Context(), root, watchScanHints{Dirty: map[string]struct{}{"b.md": {}}})
 	require.NoError(t, err)
 	require.False(t, complete)
-	requireSiblingVersions(t, ing, siblingID, 1)
+	requireSiblingVersions(t, ing, siblingID, 2)
 	require.NotNil(t, watcher.observations["a.md"].accepted)
-	require.False(t, watcher.observations["b.md"].processed)
+	require.True(t, watcher.observations["b.md"].processed)
 	require.Equal(t, 0, notifier.endScans)
 	requireScanComplete(t, checkedScan(watcher.scanWithHints(t.Context(), root, watchScanHints{Reconcile: true})))
 	requireSiblingVersions(t, ing, siblingID, 2)
@@ -467,4 +467,63 @@ func TestWatchReplacementOwnershipRequiresSuccessfulIngestion(t *testing.T) {
 			requireSiblingVersions(t, ing, original.nodeID, 1)
 		})
 	}
+}
+
+func TestWatchIncompletePassDefersOnlyPossibleRenames(t *testing.T) {
+	watcher, root, ing, source, id := promptRenameFixture(t, runTestMutation)
+	require.NoError(t, os.WriteFile(filepath.Join(source, "fresh.md"), []byte("unrelated"), 0o644))
+	held := true
+	watcher.observeFile = func(file watchSource, withChange bool) (watchFileState, error) {
+		if held && file.ref == "unstable/other.md" {
+			return watchFileState{}, ErrSourceChanged
+		}
+		return file.observe(withChange)
+	}
+	complete, err := watcher.scanWithHints(t.Context(), root, watchScanHints{Reconcile: true})
+	require.NoError(t, err)
+	require.False(t, complete)
+	_, err = ing.Store.NodeByPath(t.Context(), "/archive/fresh.md")
+	require.NoError(t, err, "an unrelated new file imports during an incomplete pass")
+	_, err = ing.Store.NodeByPath(t.Context(), "/archive/notes/final.md")
+	require.ErrorIs(t, err, store.ErrNotFound, "a possible rename waits for a complete pass")
+
+	held = false
+	requireScanComplete(t, checkedScan(watcher.scanWithHints(t.Context(), root, watchScanHints{Reconcile: true})))
+	cursors, err := ing.Store.PushCursors(t.Context(), "notes", "", 10)
+	require.NoError(t, err)
+	refs := make(map[string]int64)
+	for _, cursor := range cursors {
+		refs[cursor.Ref] = cursor.NodeID
+	}
+	assert.Equal(t, id, refs["notes/final.md"], "the complete pass rebinds the renamed source")
+	assert.NotContains(t, refs, "draft.md")
+}
+
+func TestWatchHeldNewFileDoesNotStallSiblings(t *testing.T) {
+	ing := newTestIngester(t)
+	source := writeTree(t, map[string]string{"held.pst": "locked", "report.txt": "ready"})
+	watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{
+		Name: "notes", Source: source, Destination: "/archive",
+		SettleTime: config.Duration(time.Second), ScanInterval: config.Duration(time.Second),
+	}, runTestMutation, slog.New(slog.DiscardHandler))
+	require.NoError(t, err)
+	// ErrSourceChanged stands in for a persistent Windows sharing violation.
+	watcher.observeFile = func(file watchSource, withChange bool) (watchFileState, error) {
+		if file.ref == "held.pst" {
+			return watchFileState{}, ErrSourceChanged
+		}
+		return file.observe(withChange)
+	}
+	root := openWatcherRoot(t, watcher)
+	t0 := time.Unix(1_700_000_000, 0)
+	for i := range 3 {
+		watcher.now = func() time.Time { return t0.Add(time.Duration(i) * time.Second) }
+		complete, err := watcher.scanWithHints(t.Context(), root, watchScanHints{Reconcile: true})
+		require.NoError(t, err)
+		require.False(t, complete)
+	}
+	_, err = ing.Store.NodeByPath(t.Context(), "/archive/report.txt")
+	require.NoError(t, err)
+	_, err = ing.Store.NodeByPath(t.Context(), "/archive/held.pst")
+	require.ErrorIs(t, err, store.ErrNotFound)
 }

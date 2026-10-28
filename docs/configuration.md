@@ -373,20 +373,23 @@ producer offers a close/rename handoff.
 
 A file that disappears during observation, or is still held exclusively by a
 Windows producer, is treated as unsettled and retried from a fresh window.
-If a retryable observation failure prevents a complete source inventory, the
-daemon defers all mutations for that watch, including changes to readable
-siblings. The watch job stays running with a visible error, and the daemon logs
-the incomplete-inventory block once. A complete scan resumes pending work and
-clears that signal; an active notification failure remains visible.
+If a retryable observation failure, such as a file another program holds open,
+prevents a complete source inventory, the daemon still imports readable settled
+files. It defers only work that needs the whole tree: rename continuity, new
+paths that share native identity with an accepted source the scan did not see,
+and forgetting sources it did not see. The watch job stays running with a
+visible error, and the daemon logs the incomplete-inventory block once. A
+complete scan resumes deferred work and clears that signal; an active
+notification failure remains visible.
 A symlink replacing a known source file is skipped without following its target.
 A directory replacing that file uses normal confined traversal and exact-destination
-rules. These conclusive changes do not by themselves defer readable siblings;
-the archived file and durable cursor remain. An occupied old path never authorizes
-a rename join. A symlink hiding previously observed descendants, a known path
-becoming another nonregular file, or a known path crossing a filesystem boundary
-blocks reconciliation and appears in the watch job error until it recovers.
-An incomplete directory inventory still defers all mutations. Other permission or
-native observation failures stop the watch with a job error.
+rules. The archived file and durable cursor remain. An occupied old path never
+authorizes a rename join. A symlink hiding previously observed descendants, a
+known path becoming another nonregular file, or a known path crossing a
+filesystem boundary skips that path and restarts the settle window for files
+below it. Reconciliation is deferred the same way, and the path appears in the
+watch job error until it recovers. Other permission or native observation
+failures stop the watch with a job error.
 
 Docbank identifies each watched source by `(name, relative source path)`.
 Keep the watch name when moving its local `source` root. Later content changes

@@ -216,7 +216,7 @@ func TestWatchKnownBlockReportsJobAndClearsOnRecovery(t *testing.T) {
 		return len(snap) == 1 && snap[0].Status == jobs.StatusRunning &&
 			snap[0].Error != "" && strings.Contains(snap[0].Error, "known")
 	}, 5*time.Second, 20*time.Millisecond)
-	requireSiblingVersions(t, ing, siblingID, 1)
+	requireSiblingVersions(t, ing, siblingID, 2) // the unrelated sibling still imports
 	require.NoError(t, os.Remove(known))
 	require.NoError(t, os.Rename(saved, known))
 	require.Eventually(t, func() bool {
@@ -274,7 +274,8 @@ func TestWatchKnownStructuralVariants(t *testing.T) {
 		}
 		err := watcher.scan(t.Context(), root)
 		require.ErrorIs(t, err, errWatchBlocked)
-		requireSiblingVersions(t, ing, siblingID, 1)
+		requireSiblingVersions(t, ing, siblingID, 2) // only the blocked file waits
+		require.NotNil(t, watcher.observations["a.md"].accepted)
 		watcher.observeFile = nil
 		require.NoError(t, watcher.scan(t.Context(), root))
 		requireSiblingVersions(t, ing, siblingID, 2)
@@ -360,7 +361,7 @@ func stepWatcherFinalRunner(t *testing.T, watcher *Watcher, root *watchRoot) (fu
 	}, &logs
 }
 
-func TestWatchIncompleteRunnerReportsAndRecoversPendingSibling(t *testing.T) {
+func TestWatchIncompleteRunnerReportsAndImportsSibling(t *testing.T) {
 	watcher, root, ing, source, siblingID := watcherFinalPair(t)
 	accepted := *watcher.observations["a.md"].accepted
 	require.NoError(t, os.WriteFile(filepath.Join(source, "b.md"), []byte("changed sibling"), 0o600))
@@ -380,7 +381,7 @@ func TestWatchIncompleteRunnerReportsAndRecoversPendingSibling(t *testing.T) {
 		snap := step()
 		require.Contains(t, snap.Error, "incomplete")
 		require.Contains(t, snap.Error, "notes")
-		requireSiblingVersions(t, ing, siblingID, 1)
+		requireSiblingVersions(t, ing, siblingID, 2) // a held file does not stall its siblings
 		require.Equal(t, accepted, *watcher.observations["a.md"].accepted)
 		require.Equal(t, 0, notifier.endScans)
 	}
