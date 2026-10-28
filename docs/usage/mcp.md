@@ -400,7 +400,7 @@ verified read, including duplicates. `[2024]` counts as a figure.
 A figure is a token containing a digit,
 with edge punctuation trimmed. Whitespace, em dashes, horizontal bars, and
 `[ ] ( ) < > | * ~` backtick `=` `;` separate tokens.
-A leading `-` or `−` stays as a sign, and a leading decimal point stays.
+A leading `-`, `−`, `+`, or `±` stays as a sign, and a leading decimal point stays.
 Figures compare exactly across all resolved citations; markers don't scope them.
 The first matching rule determines the verdict:
 
@@ -414,6 +414,7 @@ Results include figures, unknown marker indexes, citation
 statuses, and text digests, with private cache scope and zero TTL.
 
 - Figures keep their spelling, case, signs, and currency symbols. Example: `-.5` differs from `.5`.
+- Case, currency-prefix, and decimal-padding differences report `ungrounded`. Examples: `12-AB` against `12-ab`, `$5` against `5`, and `5.00` against `5`.
 - Numbered-list numbers count as figures. Example: `1.` contributes `1`.
 - Both sides undo Markdown punctuation escapes, including literal backslashes in plain-text bodies. Example: plain-text `INV\-5` matches `INV-5`.
 - Occurrence alone confirms neither the subject nor other claims. Example: a cited price doesn't establish which item it belongs to.

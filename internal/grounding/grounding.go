@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+
+	"github.com/yuin/goldmark/util"
 )
 
 type Citation struct{ Text, Err, TextSHA256 string }
@@ -31,7 +33,6 @@ type Answer struct {
 }
 
 var markers = regexp.MustCompile(`\[[0-9]{1,3}\]`)
-var escapes = regexp.MustCompile(`\\([[:punct:]])`)
 
 func edge(r rune) bool {
 	return !unicode.IsLetter(r) && !unicode.IsDigit(r) && !unicode.IsMark(r) && !unicode.Is(unicode.Sc, r) && r != '%'
@@ -46,10 +47,10 @@ func split(r rune) bool { return unicode.IsSpace(r) || strings.ContainsRune(deli
 func trim(rs []rune) string {
 	i := 0
 	for i < len(rs) && edge(rs[i]) {
-		if strings.ContainsRune("-.\u2212", rs[i]) && i+1 < len(rs) && (unicode.IsDigit(rs[i+1]) || unicode.Is(unicode.Sc, rs[i+1])) {
+		if strings.ContainsRune("-+±.\u2212", rs[i]) && i+1 < len(rs) && (unicode.IsDigit(rs[i+1]) || unicode.Is(unicode.Sc, rs[i+1])) {
 			break
 		}
-		if strings.ContainsRune("-\u2212", rs[i]) && i+2 < len(rs) && rs[i+1] == '.' && unicode.IsDigit(rs[i+2]) {
+		if strings.ContainsRune("-+±\u2212", rs[i]) && i+2 < len(rs) && rs[i+1] == '.' && unicode.IsDigit(rs[i+2]) {
 			break
 		}
 		i++
@@ -58,7 +59,7 @@ func trim(rs []rune) string {
 }
 
 func extract(text string) []string {
-	text = escapes.ReplaceAllString(text, "$1")
+	text = string(util.UnescapePunctuations([]byte(text)))
 	figures := []string{}
 	for _, token := range strings.FieldsFunc(text, split) {
 		if value := trim([]rune(token)); strings.ContainsFunc(value, unicode.IsDigit) {

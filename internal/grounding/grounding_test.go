@@ -13,6 +13,8 @@ func TestGrounding(t *testing.T) {
 		figures                                    []string
 		unknownMarkers                             []int
 	}{
+		{"cited plus sign", "5", "+5", "ungrounded", "missing", []string{"5"}, []int{}},
+		{"cited plus-minus sign", "5", "±5", "ungrounded", "missing", []string{"5"}, []int{}},
 		{"negative leading decimal", "-.5", ".5", "ungrounded", "missing", []string{"-.5"}, []int{}},
 		{"Unicode minus leading decimal", "−.5", ".5", "ungrounded", "missing", []string{"−.5"}, []int{}},
 		{"separate figures", "5250", "5 250", "ungrounded", "missing", []string{"5250"}, []int{}},
