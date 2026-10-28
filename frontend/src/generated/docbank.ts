@@ -4307,8 +4307,6 @@ export type MissLogReceiptFilters = {[key: string]: unknown};
 export type MissLogReceiptReranking = {[key: string]: unknown};
 
 export interface MissLogReceipt {
-  /** A URL to the JSON Schema for this object. */
-  readonly $schema?: string;
   actual_mode: MissLogReceiptActualMode;
   /** @maxLength 256 */
   binding_id?: string;
@@ -9775,13 +9773,6 @@ export type GetMediaTranscriptParams = {
 content_version_id: string;
 };
 
-export type DeleteMissLogParams = {
-/**
- * @maxLength 64
- */
-before?: string;
-};
-
 export type ListMissLogParams = {
 /**
  * @minimum 1
@@ -14893,27 +14884,20 @@ export const getMediaTranscript = async (sourceId: string,
 
 
 
-export const getDeleteMissLogUrl = (params?: DeleteMissLogParams,) => {
-  const normalizedParams = new URLSearchParams();
+export const getDeleteMissLogUrl = () => {
 
-  Object.entries(params || {}).forEach(([key, value]) => {
 
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? 'null' : String(value))
-    }
-  });
 
-  const stringifiedParams = normalizedParams.toString();
 
-  return stringifiedParams.length > 0 ? `/api/v1/miss-log?${stringifiedParams}` : `/api/v1/miss-log`
+  return `/api/v1/miss-log`
 }
 
 /**
- * @summary Purge private search misses or delete by date (operator only)
+ * @summary Purge private search misses (operator only)
  */
-export const deleteMissLog = async (params?: DeleteMissLogParams, options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
+export const deleteMissLog = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
 
-  return sessionJSON<void>(getDeleteMissLogUrl(params),
+  return sessionJSON<void>(getDeleteMissLogUrl(),
   {
     ...options,
     method: 'DELETE'
@@ -15010,30 +14994,6 @@ export const deleteMissLogRecord = async (id: string, options?: Parameters<typeo
   {
     ...options,
     method: 'DELETE'
-
-
-  }
-);}
-
-
-
-export const getGetMissLogRecordUrl = (id: string,) => {
-
-
-
-
-  return `/api/v1/miss-log/${encodeURIComponent(String(id))}`
-}
-
-/**
- * @summary Read one private search miss (operator only)
- */
-export const getMissLogRecord = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<MissLogReceipt> => {
-
-  return sessionJSON<MissLogReceipt>(getGetMissLogRecordUrl(id),
-  {
-    ...options,
-    method: 'GET'
 
 
   }

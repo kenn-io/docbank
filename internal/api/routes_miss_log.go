@@ -5,7 +5,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"net/http"
-	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/docbank/internal/misslog"
@@ -35,29 +34,6 @@ func registerMissLogRoutes(api huma.API, d Deps, g *OperationGate) {
 	huma.Register(api, huma.Operation{OperationID: "recordMiss", Method: http.MethodPost, Path: "/api/v1/miss-log", Summary: "Record a submitted empty search", DefaultStatus: http.StatusNoContent}, func(ctx context.Context, in *struct{ Body misslog.Request }) (*struct{}, error) {
 		d.MissLog.Record(ctx, in.Body)
 		return nil, nil
-	})
-	type recordOutput struct {
-		CacheControl string `header:"Cache-Control"`
-		Body         misslog.Receipt
-	}
-	huma.Register(api, huma.Operation{OperationID: "getMissLogRecord", Method: http.MethodGet, Path: "/api/v1/miss-log/{id}", Summary: "Read one private search miss (operator only)"}, func(ctx context.Context, in *struct {
-		ID string `path:"id" maxLength:"128"`
-	}) (*recordOutput, error) {
-		if err := requireMissLogOwner(ctx); err != nil {
-			return nil, err
-		}
-		row, err := d.Store.MissLogRecordByID(ctx, in.ID)
-		if errors.Is(err, store.ErrNotFound) {
-			return nil, NewError(http.StatusNotFound, "not_found", "miss log record not found")
-		}
-		if err != nil {
-			return nil, missLogFailure()
-		}
-		var receipt misslog.Receipt
-		if json.Unmarshal([]byte(row.Receipt), &receipt) != nil {
-			return nil, missLogFailure()
-		}
-		return &recordOutput{CacheControl: "no-store", Body: receipt}, nil
 	})
 	type pageOutput struct {
 		CacheControl string `header:"Cache-Control"`
@@ -92,6 +68,9 @@ func registerMissLogRoutes(api huma.API, d Deps, g *OperationGate) {
 		}
 		if err := g.mutate(ctx, func() error {
 			if err := d.Store.DeleteMissLogRecord(ctx, in.ID); err != nil {
+				if errors.Is(err, store.ErrNotFound) {
+					return NewError(http.StatusNotFound, "not_found", "miss log record not found")
+				}
 				return missLogFailure()
 			}
 			return nil
@@ -100,28 +79,12 @@ func registerMissLogRoutes(api huma.API, d Deps, g *OperationGate) {
 		}
 		return &struct{}{}, nil
 	})
-	huma.Register(api, huma.Operation{OperationID: "deleteMissLog", Method: http.MethodDelete, Path: "/api/v1/miss-log", Summary: "Purge private search misses or delete by date (operator only)"}, func(ctx context.Context, in *struct {
-		Before string `query:"before" maxLength:"64"`
-	}) (*struct{}, error) {
+	huma.Register(api, huma.Operation{OperationID: "deleteMissLog", Method: http.MethodDelete, Path: "/api/v1/miss-log", Summary: "Purge private search misses (operator only)"}, func(ctx context.Context, _ *struct{}) (*struct{}, error) {
 		if err := requireMissLogOwner(ctx); err != nil {
 			return nil, err
 		}
-		var cutoff time.Time
-		if in.Before != "" {
-			var err error
-			cutoff, err = time.Parse(time.RFC3339, in.Before)
-			if err != nil {
-				return nil, NewError(http.StatusUnprocessableEntity, "validation", "before must be an RFC 3339 timestamp")
-			}
-		}
 		if err := g.mutate(ctx, func() error {
-			var err error
-			if in.Before != "" {
-				err = d.Store.DeleteMissLogRecordsBefore(ctx, cutoff)
-			} else {
-				err = d.Store.PurgeMissLogRecords(ctx)
-			}
-			if err != nil {
+			if err := d.Store.PurgeMissLogRecords(ctx); err != nil {
 				return missLogFailure()
 			}
 			return nil

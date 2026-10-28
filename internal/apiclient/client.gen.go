@@ -6163,18 +6163,12 @@ func (c *Client) GetMediaTranscript(ctx context.Context, options *GetMediaTransc
 	return responseParser(ctx, resp)
 }
 
-// DeleteMissLog Purge private search misses or delete by date (operator only)
-func (c *Client) DeleteMissLog(ctx context.Context, options *DeleteMissLogRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
+// DeleteMissLog Purge private search misses (operator only)
+func (c *Client) DeleteMissLog(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
 	var err error
-
-	queryEncoding := map[string]runtime.QueryEncoding{
-		"before": {Style: "form", Explode: &[]bool{false}[0]},
-	}
 	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/miss-log",
-		Method:        "DELETE",
-		Options:       options,
-		QueryEncoding: queryEncoding,
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/miss-log",
+		Method:     "DELETE",
 	}
 
 	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
@@ -6337,52 +6331,6 @@ func (c *Client) DeleteMissLogRecord(ctx context.Context, options *DeleteMissLog
 	}
 	if resp.Streaming {
 		return nil, c.acceptStream(resp, 204)
-	}
-	return responseParser(ctx, resp)
-}
-
-// GetMissLogRecord Read one private search miss (operator only)
-func (c *Client) GetMissLogRecord(ctx context.Context, options *GetMissLogRecordRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetMissLogRecordResponse, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/miss-log/{id}",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	responseParser := func(_ context.Context, resp *runtime.Response) (*GetMissLogRecordResponse, error) {
-		switch resp.StatusCode {
-
-		case 200:
-
-			target := new(GetMissLogRecordResponse)
-			if err := json.Unmarshal(resp.Content, target); err != nil {
-				return nil, &runtime.ResponseDecodeError{
-					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
-					ContentLength: len(resp.Content), TargetType: "GetMissLogRecordResponse", Body: resp.Content, Err: err,
-				}
-			}
-
-			return target, nil
-
-		default:
-
-			return nil, decodeAPIError[GetMissLogRecordErrorResponse](resp, "GetMissLogRecordErrorResponse")
-
-		}
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/miss-log/{id}")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-	if resp.Streaming {
-		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -20330,37 +20278,6 @@ func (o *GetMediaTranscriptRequestOptions) GetHeader() (map[string]string, error
 	return nil, nil
 }
 
-// DeleteMissLogRequestOptions is the options needed to make a request to DeleteMissLog.
-type DeleteMissLogRequestOptions struct {
-	Query *DeleteMissLogQuery
-}
-
-// GetPathParams returns the path params as a map.
-func (o *DeleteMissLogRequestOptions) GetPathParams() (map[string]any, error) {
-	return nil, nil
-}
-
-// GetQuery returns the query params as a map.
-func (o *DeleteMissLogRequestOptions) GetQuery() (map[string]any, error) {
-	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
-	if err != nil {
-		return nil, err
-	}
-	var params map[string]any
-	err = json.Unmarshal(encoded, &params)
-	return params, err
-}
-
-// GetBody returns the payload in any type that can be marshalled to JSON by the client.
-func (o *DeleteMissLogRequestOptions) GetBody() any {
-	return nil
-}
-
-// GetHeader returns the headers as a map.
-func (o *DeleteMissLogRequestOptions) GetHeader() (map[string]string, error) {
-	return nil, nil
-}
-
 // ListMissLogRequestOptions is the options needed to make a request to ListMissLog.
 type ListMissLogRequestOptions struct {
 	Query *ListMissLogQuery
@@ -20448,37 +20365,6 @@ func (o *DeleteMissLogRecordRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *DeleteMissLogRecordRequestOptions) GetHeader() (map[string]string, error) {
-	return nil, nil
-}
-
-// GetMissLogRecordRequestOptions is the options needed to make a request to GetMissLogRecord.
-type GetMissLogRecordRequestOptions struct {
-	PathParams *GetMissLogRecordPath
-}
-
-// GetPathParams returns the path params as a map.
-func (o *GetMissLogRecordRequestOptions) GetPathParams() (map[string]any, error) {
-	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
-	if err != nil {
-		return nil, err
-	}
-	var params map[string]any
-	err = json.Unmarshal(encoded, &params)
-	return params, err
-}
-
-// GetQuery returns the query params as a map.
-func (o *GetMissLogRecordRequestOptions) GetQuery() (map[string]any, error) {
-	return nil, nil
-}
-
-// GetBody returns the payload in any type that can be marshalled to JSON by the client.
-func (o *GetMissLogRecordRequestOptions) GetBody() any {
-	return nil
-}
-
-// GetHeader returns the headers as a map.
-func (o *GetMissLogRecordRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
@@ -27662,10 +27548,6 @@ type DeleteMissLogRecordPath struct {
 	ID string `json:"id"`
 }
 
-type GetMissLogRecordPath struct {
-	ID string `json:"id"`
-}
-
 type GetNodePath struct {
 	ID int64 `json:"id"`
 }
@@ -28662,10 +28544,6 @@ type GetMediaTranscriptQuery struct {
 	ContentVersionID string `json:"content_version_id"`
 }
 
-type DeleteMissLogQuery struct {
-	Before *string `json:"before,omitempty"`
-}
-
 type ListMissLogQuery struct {
 	Limit  *int64 `json:"limit,omitempty"`
 	Offset *int64 `json:"offset,omitempty"`
@@ -29465,10 +29343,6 @@ type ListMissLogErrorResponse = Error
 type RecordMissErrorResponse = Error
 
 type DeleteMissLogRecordErrorResponse = Error
-
-type GetMissLogRecordResponse = misslog.Receipt
-
-type GetMissLogRecordErrorResponse = Error
 
 type CreateNodeResponse = api.Node
 

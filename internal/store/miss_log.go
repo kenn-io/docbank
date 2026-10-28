@@ -68,7 +68,14 @@ func (s *Store) ListMissLogRecords(ctx context.Context, limit, offset int) ([]Mi
 
 func (s *Store) DeleteMissLogRecord(ctx context.Context, id string) error {
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `DELETE FROM miss_log_records WHERE id = $1`, id)
+		result, err := tx.ExecContext(ctx, `DELETE FROM miss_log_records WHERE id = $1`, id)
+		if err != nil {
+			return err
+		}
+		count, err := result.RowsAffected()
+		if err == nil && count == 0 {
+			return ErrNotFound
+		}
 		return err
 	})
 }
@@ -88,33 +95,4 @@ func (s *Store) PruneMissLogRecords(ctx context.Context, now time.Time, days, ma
 func pruneMissLogRecordsTx(ctx context.Context, tx *sql.Tx, now time.Time, days, maxRecords int) error {
 	_, err := tx.ExecContext(ctx, `DELETE FROM miss_log_records WHERE created_at < $1 OR id IN (SELECT id FROM miss_log_records ORDER BY created_at DESC, id DESC LIMIT 9223372036854775807 OFFSET $2)`, now.UTC().AddDate(0, 0, -days).Format(timestampLayout), maxRecords)
 	return err
-}
-
-// DeleteMissLogRecordsBefore removes records strictly older than the cutoff.
-func (s *Store) DeleteMissLogRecordsBefore(ctx context.Context, cutoff time.Time) error {
-	if cutoff.IsZero() {
-		return errors.New("invalid miss log cutoff")
-	}
-	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `DELETE FROM miss_log_records WHERE created_at < $1`, cutoff.UTC().Format(timestampLayout))
-		return err
-	})
-}
-
-// MissLogRecordByID reads private local state without exporting it.
-func (s *Store) MissLogRecordByID(ctx context.Context, id string) (MissLogRecord, error) {
-	var r MissLogRecord
-	var created string
-	if err := s.db.QueryRowContext(ctx, `SELECT id,created_at,receipt FROM miss_log_records WHERE id=$1`, id).Scan(&r.ID, &created, &r.Receipt); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return r, ErrNotFound
-		}
-		return r, err
-	}
-	var err error
-	r.CreatedAt, err = time.Parse(timestampLayout, created)
-	if err != nil {
-		return r, fmt.Errorf("parse miss log timestamp: %w", err)
-	}
-	return r, nil
 }

@@ -9786,13 +9786,6 @@ components:
     MissLogReceipt:
       additionalProperties: false
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          examples:
-            - https://example.com/schemas/MissLogReceipt.json
-          format: uri
-          readOnly: true
-          type: string
         actual_mode:
           enum:
             - auto
@@ -26334,13 +26327,6 @@ paths:
   /api/v1/miss-log:
     delete:
       operationId: deleteMissLog
-      parameters:
-        - explode: false
-          in: query
-          name: before
-          schema:
-            maxLength: 64
-            type: string
       responses:
         "204":
           description: No Content
@@ -26350,7 +26336,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
           description: Error
-      summary: Purge private search misses or delete by date (operator only)
+      summary: Purge private search misses (operator only)
     get:
       operationId: listMissLog
       parameters:
@@ -26427,33 +26413,6 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Delete one private search miss (operator only)
-    get:
-      operationId: getMissLogRecord
-      parameters:
-        - in: path
-          name: id
-          required: true
-          schema:
-            maxLength: 128
-            type: string
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/MissLogReceipt"
-          description: OK
-          headers:
-            Cache-Control:
-              schema:
-                type: string
-        default:
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Error
-      summary: Read one private search miss (operator only)
   /api/v1/nodes:
     post:
       description: kind must be "dir"; file creation is POST /api/v1/ingest for server-side paths or digest-checked POST /api/v1/uploads for remote bytes.

@@ -2035,13 +2035,11 @@ contains private query text. The daemon's operator can inspect and delete it:
 
 ```sh
 docbank miss-log list --limit 20 --offset 0
-docbank miss-log show <record-id>
 docbank miss-log delete <record-id>
-docbank miss-log delete --before 2026-01-01T00:00:00Z
 docbank miss-log purge
 ```
 
-List and show print JSON. Management uses the master daemon credential and
+List prints JSON. Management uses the master daemon credential and
 remains available with recording disabled. See the [configuration
 reference](configuration.md#private-search-miss-log) for retention, shared-daemon
 privacy, and backup exclusions.

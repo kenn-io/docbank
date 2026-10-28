@@ -3,9 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	"github.com/spf13/cobra"

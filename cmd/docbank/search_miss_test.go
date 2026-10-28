@@ -16,6 +16,9 @@ import (
 func TestSubmittedSearchMissRecording(t *testing.T) {
 	for _, mode := range []string{"auto", "lexical", "explicit"} {
 		for _, nameMatch := range []bool{false, true} {
+			if mode == "explicit" && nameMatch {
+				continue
+			}
 			t.Run(mode+map[bool]string{true: "/name", false: "/empty"}[nameMatch], func(t *testing.T) {
 				const vault = "11111111-1111-4111-8111-111111111111"
 				var misses []misslog.Request

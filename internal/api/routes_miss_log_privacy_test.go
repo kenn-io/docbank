@@ -26,7 +26,7 @@ func TestMissLogDeletionStoreErrorsArePrivate(t *testing.T) {
 	t.Parallel()
 	ts, st := newTestServer(t, nil)
 	require.NoError(t, st.Close())
-	for _, path := range []string{"/api/v1/miss-log/synthetic-private-id", "/api/v1/miss-log?before=2100-01-01T00:00:00Z", "/api/v1/miss-log"} {
+	for _, path := range []string{"/api/v1/miss-log/synthetic-private-id", "/api/v1/miss-log"} {
 		resp, body := do(t, ts, http.MethodDelete, path, nil, nil)
 		require.Equal(t, http.StatusInternalServerError, resp.StatusCode, body)
 		require.Equal(t, "miss_log_unavailable", decodeProblem(t, body).Code)
