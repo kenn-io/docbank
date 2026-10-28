@@ -44,9 +44,13 @@ func (c daemonDocumentClient) VaultInfo(ctx context.Context) (api.VaultInfo, err
 type documentReadSession func(context.Context, func(context.Context, documentClient) error) error
 
 func daemonDocumentSession(lease *daemonLease) documentReadSession {
-	return func(ctx context.Context, call func(context.Context, documentClient) error) error {
+	return daemonClientSession(lease, func(c *daemonconn.Connection) documentClient { return daemonDocumentClient{c} })
+}
+
+func daemonClientSession[C documentClient](lease *daemonLease, client func(*daemonconn.Connection) C) func(context.Context, func(context.Context, C) error) error {
+	return func(ctx context.Context, call func(context.Context, C) error) error {
 		_, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (struct{}, error) {
-			return struct{}{}, call(ctx, daemonDocumentClient{c})
+			return struct{}{}, call(ctx, client(c))
 		})
 		return err
 	}
