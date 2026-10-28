@@ -1,5 +1,6 @@
 <script lang="ts">
   import { listPackages, readBatesAllocation, type PackageSummary } from "./generated/docbank.js";
+  import BatesRecovery from "./BatesRecovery.svelte";
   import InspectorDetails from "./InspectorDetails.svelte";
   import DrawerShell from "./DrawerShell.svelte";
   import { onDestroy } from "svelte";
@@ -93,6 +94,7 @@
   let task = $state("");
   let error = $state("");
   let historyError = $state("");
+  let recoveryActive = $state(false);
   let controller = new AbortController();
 
   const busy = $derived(task !== "");
@@ -432,9 +434,10 @@
         ><RefreshCwIcon size="14" aria-hidden="true" /> Refresh receipt</Button
       >
       <Button tone="info" surface="solid" disabled={busy} onclick={() => void download(item)}
-        >Download verified PDF</Button
+        >Download PDF</Button
       >
     </div>
+    <p class="tool-muted">File integrity is checked against the retained record.</p>
   </section>
 {/snippet}
 
@@ -444,54 +447,69 @@
   {onclose}
 >
   <div class="tool-body">
-    {#if loading}<p class="tool-muted" role="status"><Spinner size={14} /> Loading…</p>{/if}
+    {#if loading && !recoveryActive}<p class="tool-muted" role="status">
+        <Spinner size={14} /> Loading…
+      </p>{/if}
     {#if task}<p class="tool-muted" role="status"><Spinner size={14} /> {task}</p>{/if}
     {#if error}<p class="tool-error" role="alert">{error}</p>{/if}
 
     {#if mode === "productions"}
-      {#if !loading && !error && !historyError && !packages.length && !history.length}
-        <p class="tool-muted">No productions yet</p>
+      <BatesRecovery
+        {session}
+        bind:active={recoveryActive}
+        onauthfailure={(cause) => {
+          unauthorized(cause);
+        }}
+      >
+        {#snippet children(receipt)}{@render exportCard(receipt, "")}{/snippet}
+      </BatesRecovery>
+      {#if !recoveryActive}
+        {#if !loading && !error && !historyError && !packages.length && !history.length}
+          <p class="tool-muted">No productions yet</p>
+        {/if}
+        {#if productions.length}
+          <ul class="tool-list" aria-label="Productions">
+            {#each productions as item (item.id)}
+              <li class="production-item">
+                <details class="tool-disclosure">
+                  <summary>
+                    <ChevronRightIcon size="14" aria-hidden="true" />
+                    <span class="production-name"
+                      >{item.package?.package_name ?? "Bates export"}<span class="production-range"
+                        >{item.range || "—"}</span
+                      ></span
+                    >
+                    <span class="tool-muted"
+                      >{item.pages} {item.pages === 1 ? "page" : "pages"}</span
+                    >
+                    <span
+                      >{item.receipt || item.package?.direction === "produced"
+                        ? "Exported"
+                        : "Imported"}</span
+                    >
+                  </summary>
+                  <div class="production-details">
+                    {#if item.package}
+                      <InspectorDetails
+                        facts={[
+                          { label: "Documents", value: item.package.member_count },
+                          { label: "Party", value: item.package.party_label },
+                          { label: "Created", value: formatDate(item.package.created_at) },
+                          { label: "Fingerprint", value: item.package.manifest_sha256, copy: true },
+                        ]}
+                      />
+                    {/if}
+                    {#if item.receipt}{@render exportCard(item.receipt, "")}{/if}
+                  </div>
+                </details>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+        {#if historyError}<p class="tool-error" role="alert">
+            Publication history is unavailable: {historyError}
+          </p>{/if}
       {/if}
-      {#if productions.length}
-        <ul class="tool-list" aria-label="Productions">
-          {#each productions as item (item.id)}
-            <li class="production-item">
-              <details class="tool-disclosure">
-                <summary>
-                  <ChevronRightIcon size="14" aria-hidden="true" />
-                  <span class="production-name"
-                    >{item.package?.package_name ?? "Bates export"}<span class="production-range"
-                      >{item.range || "—"}</span
-                    ></span
-                  >
-                  <span class="tool-muted">{item.pages} {item.pages === 1 ? "page" : "pages"}</span>
-                  <span
-                    >{item.receipt || item.package?.direction === "produced"
-                      ? "Exported"
-                      : "Imported"}</span
-                  >
-                </summary>
-                <div class="production-details">
-                  {#if item.package}
-                    <InspectorDetails
-                      facts={[
-                        { label: "Documents", value: item.package.member_count },
-                        { label: "Party", value: item.package.party_label },
-                        { label: "Created", value: formatDate(item.package.created_at) },
-                        { label: "Fingerprint", value: item.package.manifest_sha256, copy: true },
-                      ]}
-                    />
-                  {/if}
-                  {#if item.receipt}{@render exportCard(item.receipt, "")}{/if}
-                </div>
-              </details>
-            </li>
-          {/each}
-        </ul>
-      {/if}
-      {#if historyError}<p class="tool-error" role="alert">
-          Publication history is unavailable: {historyError}
-        </p>{/if}
     {:else}
       {#if !loading && sources.length === 0}
         <p class="tool-muted">

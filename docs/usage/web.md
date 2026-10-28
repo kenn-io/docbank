@@ -318,13 +318,32 @@ records for review.
 1. Create or select a label namespace, including its prefix and number width.
 2. Choose **Preview Bates labels** and inspect the proposed labels and pages.
 3. Reserve the displayed range, then choose **Start Bates export**.
-4. Wait for **Stamped PDF ready**, then choose **Download verified PDF**.
+4. Wait for **Stamped PDF ready**, then choose **Download PDF**.
 
 The output contains the package's selected pages. The stored page map keeps
 their original source-page numbers. A number that was reserved is never issued
 again, even if the export was abandoned.
 
 ![A completed Bates export with its reserved labels and verified PDF](https://docbank.ai/assets/generated/web-bates-export.png)
+
+## Find a retained PDF by number
+
+Open **Productions** in the Documents sidebar, enter the exact **Bates number**,
+and choose **Find**. Matching is case-sensitive and preserves spaces and leading
+zeroes. Each result shows its matching page and publication time. Choose **Load
+more** when another page of results is available; **Clear** returns to the full
+production list.
+
+Expand a result to see its delivery kind, namespace prefix and suffix, allocation,
+size and SHA-256. The same printed number can identify different deliveries, so
+check these details before choosing **Download PDF**.
+
+Recovery works after restart without the review files or a configured page
+renderer. Downloads check file integrity against the retained record; they do not
+repeat the mask and approved-text checks. See the [numbered delivery verification
+scopes](document-processing.md#deliver-one-reviewed-pdf-with-bates-numbers) for a
+full check with your review files. The browser returns the PDF, not the render ZIP,
+text sidecar or review inputs.
 
 ## Assign and remove tags
 
