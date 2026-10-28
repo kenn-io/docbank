@@ -313,8 +313,7 @@ func sanitizedDaemonError(message, cause error) error {
 	// Answer profile selection can fail locally within a daemon read. Retain
 	// only its stable codes, never the native error or its provider details.
 	if native, ok := errors.AsType[*api.Error](cause); ok {
-		switch native.Code {
-		case "processing_unavailable", "processing_profile_unavailable", "reranking_unavailable":
+		if _, ok := answerErrorMessages[native.Code]; ok {
 			facts = daemonconn.ProblemFacts{Code: native.Code}
 		}
 	}
