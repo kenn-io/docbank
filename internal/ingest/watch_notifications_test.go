@@ -372,7 +372,6 @@ func TestWatchNotificationCloseReleasesThroughBackendClose(t *testing.T) {
 				addFailure := errors.New("synthetic partial enrollment failure")
 				backend.addErr = func(string) error { return addFailure }
 				require.ErrorIs(t, n.AddDirectory("partial", 0), addFailure)
-				require.Len(t, backend.added, 2)
 			case "budget":
 				require.ErrorContains(t, n.AddDirectory("oversized", maxWatchEntryUnits), "budget exceeds")
 			case "close_error":
@@ -562,9 +561,30 @@ func FuzzWatchNotificationRegistrationScans(f *testing.F) {
 	})
 }
 
-func TestWatchNotificationBackendErrorStopsCollector(t *testing.T) {
+func TestWatchNotificationBackendFailureClosesPartialSubscriptions(t *testing.T) {
+	root := t.TempDir()
+	backend := newFakeWatchBackend()
+	backend.addErr = func(name string) error {
+		if strings.HasSuffix(name, "nested") {
+			return fs.ErrNotExist
+		}
+		return nil
+	}
+	n := newWatchNotificationsWithBackend(root, backend)
+	n.BeginScan()
+	require.NoError(t, n.AddDirectory("", 2))
+	require.ErrorIs(t, n.AddDirectory("nested", 1), fs.ErrNotExist)
+	select {
+	case <-backend.closed:
+	default:
+		t.Fatal("partial adapter must be closed")
+	}
+	require.NoError(t, n.Close())
+	require.Zero(t, n.units)
+	require.Len(t, backend.added, 2)
+
 	live := newFakeWatchBackend()
-	n := newWatchNotificationsWithBackend(t.TempDir(), live)
+	n = newWatchNotificationsWithBackend(root, live)
 	live.errs <- errors.New("backend stopped")
 	select {
 	case err := <-n.Errors():
@@ -664,8 +684,6 @@ func TestPromptWatchNotificationFailureFallsBack(t *testing.T) {
 				stacktest.Dump(t)
 				t.Fatal("failed backend still open")
 			}
-			// Reconcile still runs after the failure. Version 2 commits in or after
-			// the scan that restores notifications, so cancellation follows its log.
 			require.NoError(t, os.WriteFile(filepath.Join(source, "notes.txt"), []byte("second"), 0600))
 			deadline := time.NewTimer(10 * time.Second)
 			defer deadline.Stop()
