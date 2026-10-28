@@ -214,7 +214,7 @@ type ProcessingJobEvent struct {
 
 type DocumentSourceFence struct {
 	VaultUID          string   `json:"vault_uid" format:"uuid"`
-	ContentVersionIDs []string `json:"content_version_ids" maxItems:"4096" uniqueItems:"true"`
+	ContentVersionIDs []string `json:"content_version_ids" minItems:"1" maxItems:"4096" uniqueItems:"true"`
 }
 
 type CoverageClass struct {
@@ -239,7 +239,6 @@ type CoverageReport struct {
 }
 
 type DocumentSearchRequest struct {
-	SkipMissLog  bool                `json:"skip_miss_log,omitzero"`
 	MediaSources MediaSearchSources  `json:"media_sources,omitzero" minItems:"1" maxItems:"4096" nullable:"false"`
 	Query        string              `json:"query" minLength:"1" maxLength:"8192"`
 	Mode         string              `json:"mode" enum:"auto,lexical,semantic,hybrid"`

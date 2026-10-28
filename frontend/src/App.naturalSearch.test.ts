@@ -158,6 +158,7 @@ function installHarness(options: HarnessOptions) {
   };
   const postBodies: Record<string, unknown>[] = [];
   const fenceBodies: Record<string, unknown>[] = [];
+  const misses: Record<string, unknown>[] = [];
   let rerankResolve: ((response: Response) => void) | undefined;
   let baseResolve: ((response: Response) => void) | undefined;
   let profilesResolve: ((response: Response) => void) | undefined;
@@ -188,6 +189,10 @@ function installHarness(options: HarnessOptions) {
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     const method = init?.method ?? "GET";
+    if (url === "/api/v1/miss-log" && method === "POST") {
+      misses.push(JSON.parse(String(init?.body)));
+      return new Response(null, { status: 204 });
+    }
     if (url === "/api/v1/path?path=%2F") return json(root);
     if (url === "/api/v1/nodes/1/children?limit=1000&offset=0") {
       return json({
@@ -290,19 +295,7 @@ function installHarness(options: HarnessOptions) {
       }
       baseCalls += 1;
       if (options.basePending && baseCalls === 1) return basePending;
-      return json(
-        options.emptyFence
-          ? {
-              ...(options.baseReport as object),
-              coverage: {
-                binding_required: false,
-                scoped_documents: 0,
-                complete_documents: 0,
-                state: "complete",
-              },
-            }
-          : options.baseReport,
-      );
+      return json(options.baseReport);
     }
     if (url.startsWith("/api/v1/search?") && method === "GET") {
       legacyCalls += 1;
@@ -329,6 +322,7 @@ function installHarness(options: HarnessOptions) {
   });
   return {
     fetchMock,
+    misses,
     postBodies,
     fenceBodies,
     resolveRerank: (response: Response) => rerankResolve?.(response),
@@ -421,9 +415,10 @@ it.each([
       expect(harness.postBodies.at(-1)).toMatchObject({ mode: "hybrid", rerank: true });
     } else {
       expect(screen.queryByText("No documents match the current filter.")).toBeNull();
-      expect(harness.postBodies).toHaveLength(embeddings ? 1 : 0);
+      expect(harness.postBodies).toHaveLength(0);
       if (!embeddings) expect(harness.legacyCalls()).toBe(1);
     }
+    expect(harness.misses).toHaveLength(0);
   },
 );
 
@@ -518,9 +513,7 @@ it("shows base rows while reranking and applies the validated order", async () =
   expect(screen.queryByText("base excerpt")).toBeNull();
   expect(harness.postBodies).toHaveLength(2);
   expect(harness.postBodies[0]?.rerank).toBeUndefined();
-  expect(harness.postBodies[0]?.skip_miss_log).toBe(false);
   expect(harness.postBodies[1]?.rerank).toBe(true);
-  expect(harness.postBodies[1]?.skip_miss_log).toBe(true);
 });
 
 it("refreshes live nodes before replacing rows with reranked results", async () => {
@@ -551,7 +544,6 @@ it("refreshes live nodes before replacing rows with reranked results", async () 
   await screen.findByText("reranked excerpt");
   expect(screen.getAllByText("/renamed.txt").length).toBeGreaterThan(0);
   expect(harness.postBodies[1]?.rerank).toBe(true);
-  expect(harness.postBodies[1]?.skip_miss_log).toBe(true);
 });
 
 it("ignores a rerank response after switching to Names and text", async () => {
@@ -1031,7 +1023,7 @@ it("sends the selected tag filter in the resolver body", async () => {
   expect(harness.fenceBodies[0]?.filters).toEqual({ tag_id: tagID });
 });
 
-it("sends empty-scope searches and records only submissions", async () => {
+it("shows the empty-fence note without posting a search and reports it once, not for reruns", async () => {
   const searchRun = vi.spyOn(actions, "reportSearch").mockImplementation(() => {});
   const action = vi.spyOn(actions, "reportAction").mockImplementation(() => {});
   const failure = vi.spyOn(actions, "reportFailure").mockImplementation(() => {});
@@ -1054,22 +1046,22 @@ it("sends empty-scope searches and records only submissions", async () => {
   await screen.findAllByText("empty.txt");
   await submitSearch("nothing");
   await screen.findByText("No documents match the current filter.");
-  expect(harness.postBodies).toHaveLength(1);
-  expect(harness.postBodies[0]).toMatchObject({
-    fence: { content_version_ids: [] },
-    skip_miss_log: false,
-  });
-  expect(
-    harness.fetchMock.mock.calls.some(([url]) => String(url).includes("skip_miss_log=true")),
-  ).toBe(true);
+  expect(harness.postBodies).toHaveLength(0);
   expect(action).toHaveBeenCalledExactlyOnceWith("short-lived", "search_empty", "hybrid");
+  expect(harness.misses).toEqual([
+    expect.objectContaining({
+      query: "nothing",
+      document_count: 0,
+      fence_fingerprint: expect.stringMatching(/^sha256:/),
+    }),
+  ]);
   expect(searchRun).not.toHaveBeenCalled();
   // A refresh reruns the same search without a new submission.
   const fences = harness.fenceBodies.length;
   await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
   await waitFor(() => expect(harness.fenceBodies).toHaveLength(fences + 1));
-  await waitFor(() => expect(harness.postBodies).toHaveLength(2));
   expect(action).toHaveBeenCalledOnce();
+  expect(harness.misses).toHaveLength(1);
   action.mockClear();
   await submitSearch("q".repeat(8193));
   await waitFor(() => expect(harness.fenceBodies).toHaveLength(fences + 2));
@@ -1077,9 +1069,7 @@ it("sends empty-scope searches and records only submissions", async () => {
   expect(action).not.toHaveBeenCalled();
   expect(searchRun).not.toHaveBeenCalled();
   expect(failure).not.toHaveBeenCalled();
-  await waitFor(() => expect(harness.postBodies).toHaveLength(3));
-  expect(harness.postBodies[1]?.skip_miss_log).toBe(true);
-  expect(harness.postBodies[2]?.skip_miss_log).toBe(false);
+  expect(harness.postBodies).toHaveLength(0);
 });
 
 it("keeps a non-401 processing failure on the legacy GET path", async () => {
@@ -1117,7 +1107,7 @@ it("keeps a non-401 processing failure on the legacy GET path", async () => {
   expect(
     harness.fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/search?"))
       .length,
-  ).toBe(2);
+  ).toBe(1);
   expect(failure).not.toHaveBeenCalled();
 });
 
@@ -1137,7 +1127,7 @@ it("reports a failed legacy GET fallback after a processing failure", async () =
     files: [file],
     baseReport: report("hybrid", []),
     baseSearchStatus: 500,
-    legacyFailureAfter: 1,
+    legacySearchStatus: 500,
     tagSearch: {
       hits: [{ node: file, path: file.path, match: "name" }],
       limit: 1000,
@@ -1153,7 +1143,7 @@ it("reports a failed legacy GET fallback after a processing failure", async () =
   expect(
     harness.fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/search?"))
       .length,
-  ).toBe(2);
+  ).toBe(1);
   expect(failure).toHaveBeenCalledExactlyOnceWith("short-lived", "search", expect.any(Error));
 });
 
@@ -1180,7 +1170,7 @@ it("does not fall back to GET after a processing 401", async () => {
   expect(
     harness.fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/search?"))
       .length,
-  ).toBe(1);
+  ).toBe(0);
 });
 
 it("ignores an aborted natural search completion", async () => {
@@ -1211,8 +1201,8 @@ it("ignores an aborted natural search completion", async () => {
   const nameRequests = harness.fetchMock.mock.calls.filter(([input]) =>
     String(input).startsWith("/api/v1/search?"),
   );
-  expect(nameRequests).toHaveLength(2);
-  expect(new URL(String(nameRequests[1][0]), "https://example.com").searchParams.get("q")).toBe(
+  expect(nameRequests).toHaveLength(1);
+  expect(new URL(String(nameRequests[0][0]), "https://example.com").searchParams.get("q")).toBe(
     "new query",
   );
 });
@@ -1260,7 +1250,7 @@ it.each([500, 401])(
       expect(screen.queryByText("unavailable excerpt")).toBeNull();
       expect(screen.getByRole("combobox", { name: "Search syntax: Plain words" })).toBeTruthy();
     }
-    expect(harness.legacyCalls()).toBe(1);
+    expect(harness.legacyCalls()).toBe(status === 401 ? 0 : 1);
     expect(screen.queryByText(/Natural-language search unavailable/)).toBeNull();
   },
 );
@@ -1544,7 +1534,7 @@ it.each(["unrun edit", "failed search"])(
 
 it("filtered search walkthrough reaches accepted results", async () => {
   const file = node(2, "report.txt", baseVersion);
-  const harness = installHarness({
+  const options: HarnessOptions = {
     profiles: [
       {
         name: "private",
@@ -1573,10 +1563,12 @@ it("filtered search walkthrough reaches accepted results", async () => {
       },
     ],
     baseReport: report("hybrid", [result(file, 1, "report excerpt")]),
-  });
+  };
+  const harness = installHarness(options);
   render(App);
   await submitSearch("annual report");
   await screen.findByText("report excerpt");
+  harness.misses.length = 0;
   expect(screen.queryByText("Filters search names and text only.")).toBeNull();
   await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
   await fireEvent.input(screen.getByLabelText("Filters JSON"), {
@@ -1593,6 +1585,18 @@ it("filtered search walkthrough reaches accepted results", async () => {
   expect(
     harness.fetchMock.mock.calls.some(([url]) => String(url) === "/api/v1/workspace/queries"),
   ).toBe(true);
+  options.snapshotRows = [];
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  await fireEvent.input(screen.getByLabelText("Filters JSON"), {
+    target: { value: '{"size_min":20}' },
+  });
+  await screen.findByRole("status", { name: "Query valid" });
+  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  await waitFor(() => expect(harness.misses).toHaveLength(1));
+  expect(harness.misses[0]).toMatchObject({
+    query: "annual report",
+    filters: { filters: { size_min: 20 } },
+  });
   await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
   await fireEvent.input(screen.getByLabelText("Filters JSON"), {
     target: { value: "{}" },
@@ -1900,9 +1904,7 @@ it.each(["names", "meaning", "frozen"])(
   },
 );
 
-it.each(["file", "dir"])("skips a document miss when a %s name matches", async (kind) => {
-  const file = node(2, "matched.txt", baseVersion);
-  const match = kind === "dir" ? { ...file, kind: "dir" } : file;
+it.each([false, true])("records an empty submission once with reranking %s", async (rerank) => {
   const harness = installHarness({
     profiles: [
       {
@@ -1910,26 +1912,25 @@ it.each(["file", "dir"])("skips a document miss when a %s name matches", async (
         fingerprint: "a".repeat(64),
         rendition: true,
         embedding_bindings: ["embed"],
-        reranking_available: false,
+        reranking_available: rerank,
       },
     ],
-    files: [file],
+    files: [node(2, "existing.txt", baseVersion)],
     baseReport: report("hybrid", []),
-    tagSearch: {
-      hits: [{ node: match, path: "/matched.txt", match: "name" }],
-      limit: 1000,
-      truncated: false,
-    },
+    rerankReport: report("hybrid", [], { outcome: "applied", candidate_count: 0 }),
   });
   render(App);
-  await screen.findAllByText("matched.txt");
-  await submitSearch("matched");
-  await waitFor(() => expect(harness.postBodies).toHaveLength(1));
-  expect(harness.postBodies[0]?.skip_miss_log).toBe(true);
-  const searches = harness.fetchMock.mock.calls.filter(([url]) =>
-    String(url).startsWith("/api/v1/search"),
-  );
-  expect(String(searches[0]?.[0])).toContain("skip_miss_log=true");
-  expect(String(searches[1]?.[0])).toBe("/api/v1/search");
-  expect(await screen.findByText("/matched.txt")).toBeTruthy();
+  await screen.findAllByText("existing.txt");
+  if (rerank)
+    await fireEvent.click(await screen.findByRole("checkbox", { name: "Rerank results" }));
+  await submitSearch("missing");
+  await waitFor(() => expect(harness.misses).toHaveLength(1));
+  expect(harness.misses[0]).toMatchObject({
+    query: "missing",
+    actual_mode: "hybrid",
+    document_count: 2,
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
+  await waitFor(() => expect(harness.postBodies.length).toBeGreaterThan(rerank ? 2 : 1));
+  expect(harness.misses).toHaveLength(1);
 });

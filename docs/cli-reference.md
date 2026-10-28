@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-27
+last_edited: 2026-10-28
 title: CLI reference
 description: Every docbank command, with its flags, output formats, and error behavior.
 ---
@@ -1881,8 +1881,7 @@ daemons, and `docbank mcp` diagnostics.
 
 ## Private search misses
 
-Enable recording with `[miss_log] enabled = true`. The log is off by default and contains private
-query text. The daemon's operator can inspect and delete it:
+Enable recording with `[miss_log] enabled = true`. Submitted empty searches from the CLI, web app, TUI, and daemon-backed MCP can be recorded. The log is off by default and contains private query text. The daemon's operator can inspect and delete it:
 
 ```sh
 docbank miss-log list --limit 20 --offset 0

@@ -26,7 +26,6 @@ type automaticSearchCase struct {
 	profiles                              []api.ProcessingProfileSummary
 	profileError, scopeError, searchError string
 	empty, malformed, cold, mixed         bool
-	noDocumentHits, noFolderHits          bool
 	folderFirst, wantTruncated            bool
 	wantResults, wantFolders              int
 	jsonCLI, humanCLI, agentCLI           bool
@@ -45,8 +44,6 @@ func TestAutomaticSearchSelectionAndFallback(t *testing.T) {
 	}
 	cases := []automaticSearchCase{
 		{name: "cold first binding", profiles: profiles, limit: 50, cold: true, wantScope: 1, wantSearch: 2, wantHybrid: true},
-		{name: "empty hybrid", profiles: profiles, limit: 50, jsonCLI: true, wantScope: 1, wantSearch: 1, wantHybrid: true, noDocumentHits: true, noFolderHits: true},
-		{name: "folder accompanies document miss", profiles: profiles, limit: 50, jsonCLI: true, wantScope: 1, wantSearch: 1, wantHybrid: true, noDocumentHits: true, wantFolders: 1},
 		{name: "JSON hybrid", profiles: profiles, limit: 50, jsonCLI: true, wantScope: 1, wantSearch: 1, wantHybrid: true, wantResults: 1, wantFolders: 1},
 		{name: "JSON folder within limit", profiles: profiles, limit: 1, folderFirst: true, jsonCLI: true, wantScope: 1, wantSearch: 1, wantHybrid: true, wantFolders: 1, wantTruncated: true},
 		{name: "JSON lexical truncation", profiles: profiles, limit: 1, jsonCLI: true, wantScope: 1, wantSearch: 1, wantHybrid: true, wantResults: 1, wantTruncated: true},
@@ -145,7 +142,6 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 		w.WriteHeader(status)
 		assert.NoError(t, json.MarshalWrite(w, api.Error{Status: status, Code: code, Detail: "provider details must stay private", ObservedScopeCount: observed}))
 	}
-	lexicalCalls := 0
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.Method + " " + r.URL.Path {
@@ -156,22 +152,11 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 			assert.NoError(t, err)
 			assert.NoError(t, json.MarshalWrite(w, map[string]string{"proof": daemonauth.Proof("synthetic-token", nonce)}))
 		case "GET /api/v1/search":
-			lexicalCalls++
-			preflight := lexicalCalls == 1 && automaticSearchEligible(tc.query, tc.limit, tc.opts)
-			assert.Equal(t, preflight || tc.wantHybrid, r.URL.Query().Get("skip_miss_log") == "true")
 			assert.Equal(t, tc.query, r.URL.Query().Get("q"))
-			if !preflight {
-				assert.Equal(t, tc.wantSearch, *searchCalls, "final folder lookup must run after every hybrid attempt")
-			}
+			assert.Equal(t, tc.wantSearch, *searchCalls, "lexical search must run after every hybrid attempt")
 			matches := []api.SearchHit{
 				{Node: api.Node{ID: 42, Kind: "file", Name: "query.txt"}, Path: "/query.txt", Match: "name"},
 				{Node: api.Node{ID: 7, Kind: "dir", Name: "query folder"}, Path: "/query folder", Match: "name"},
-			}
-			if tc.noFolderHits {
-				matches = matches[:1]
-				if tc.noDocumentHits {
-					matches = nil
-				}
 			}
 			if tc.folderFirst {
 				matches[0], matches[1] = matches[1], matches[0]
@@ -215,7 +200,6 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 			var body api.DocumentSearchRequest
 			assert.NoError(t, json.UnmarshalRead(r.Body, &body))
 			assert.Equal(t, tc.query, body.Query)
-			assert.Equal(t, (tc.jsonCLI || tc.humanCLI || tc.agentCLI) && !(tc.noDocumentHits && tc.noFolderHits), body.SkipMissLog)
 			assert.Equal(t, "hybrid", body.Mode)
 			expectedProfile, expectedBinding := "alpha", "a"
 			if *searchCalls == 2 {
@@ -238,8 +222,6 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 				problem(w, tc.searchError)
 			case tc.malformed:
 				_, _ = w.Write([]byte(`{"actual_mode":"semantic"}`))
-			case tc.noDocumentHits:
-				assert.NoError(t, json.MarshalWrite(w, api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete", BindingRequired: true, ScopedDocuments: 1, CompleteDocuments: 1}, Results: []api.DocumentSearchResult{}}))
 			default:
 				assert.NoError(t, json.MarshalWrite(w, api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete", BindingRequired: true, ScopedDocuments: 1, CompleteDocuments: 1}, Results: []api.DocumentSearchResult{{VaultUID: vault, NodeID: 42, ContentVersionID: processingTestVersionID, Rank: 1, Score: .75, Path: "/query.txt", Excerpt: "query words", LexicalRank: 1, Evidence: []api.DocumentEvidenceReference{{Kind: "node_name"}}}}}))
 			}

@@ -269,6 +269,9 @@ func (r *webSessionRegistry) waitRevocations() {
 }
 
 func webSessionRequestAllowed(r *http.Request) bool {
+	if r.URL.Path == "/api/v1/miss-log" {
+		return r.Method == http.MethodPost && r.URL.RawQuery == ""
+	}
 	if photoFaceBrowserRequestAllowed(r) {
 		return true
 	}

@@ -425,20 +425,40 @@ func searchDocuments(
 	if err := decodeReadArguments(raw, &input); err != nil {
 		return searchDocumentsOutput{}, nil, err
 	}
-	input.Mode = api.EffectiveSearchMode(input.Mode)
+	input.Mode = effectiveSearchMode(input.Mode)
 
 	type response struct {
 		resolution api.DocumentSourceFenceResolution
 		report     api.DocumentSearchReport
 		documents  []api.DocumentSummary
 	}
-	result, err := documentRead(ctx, session, func(ctx context.Context, c documentClient) (response, error) {
+	result, err := documentRead(ctx, session, func(ctx context.Context, c documentClient) (out response, err error) {
+		defer func() {
+			if daemon, ok := c.(daemonDocumentClient); ok && err == nil && len(out.report.Results) == 0 {
+				receipt := api.DocumentSearchMiss(input.Query, input.Profile, api.DocumentSourceFence{VaultUID: out.resolution.Fence.VaultUID, ContentVersionIDs: out.resolution.Fence.ContentVersionIDs}, out.report)
+				receipt.Filters = map[string]any{"scope": input.Filters}
+				daemon.RecordMiss(ctx, receipt)
+			}
+		}()
 		resolution, callErr := c.ResolveDocumentSourceFence(ctx, api.DocumentSourceFenceResolveRequest{
 			ContentVersionIDs: input.ContentVersionIDs, Filters: input.Filters})
 		if callErr != nil {
 			return response{}, callErr
 		}
-
+		if len(resolution.Fence.ContentVersionIDs) == 0 {
+			callErr = c.ValidateDocumentSearch(ctx, api.DocumentSearchValidationRequest{
+				Query: input.Query, Mode: input.Mode, Limit: input.Limit, Profile: input.Profile,
+				BindingID: input.BindingID, Explain: input.Explain,
+			})
+			if callErr != nil {
+				return response{}, callErr
+			}
+			return response{resolution: resolution, report: api.DocumentSearchReport{
+				RequestedMode: effectiveSearchMode(input.Mode), ActualMode: effectiveEmptySearchMode(input.Mode),
+				Coverage:     api.DocumentSearchCoverage{State: "complete"},
+				Degradations: []string{}, Results: []api.DocumentSearchResult{}, Trace: []api.DocumentSearchTrace{},
+			}}, nil
+		}
 		report, callErr := c.SearchDocuments(ctx, api.DocumentSearchRequest{Query: input.Query,
 			Mode: input.Mode, Limit: input.Limit, Profile: input.Profile, BindingID: input.BindingID,
 			Explain: input.Explain, Fence: api.DocumentSourceFence{VaultUID: resolution.Fence.VaultUID,
@@ -490,6 +510,20 @@ func searchDocuments(
 			Path: item.Path, Excerpt: item.Excerpt, EvidenceIDs: evidence}
 	}
 	return output, documentResourceLinks(result.resolution.Fence.VaultUID, result.documents), nil
+}
+
+func effectiveSearchMode(mode string) string {
+	if mode == "" {
+		return "auto"
+	}
+	return mode
+}
+
+func effectiveEmptySearchMode(mode string) string {
+	if mode == "semantic" || mode == "hybrid" {
+		return mode
+	}
+	return "lexical"
 }
 
 type getDocumentInput struct {

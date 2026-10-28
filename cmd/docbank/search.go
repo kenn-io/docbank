@@ -11,6 +11,7 @@ import (
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/misslog"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -198,15 +199,7 @@ See docs/usage/search.md.`,
 		}
 		query := strings.Join(args, " ")
 		var automatic automaticSearchOutcome
-		if !cmd.Flags().Changed("mode") && automaticSearchEligible(query, searchLimit, opts) {
-			// Name matches decide whether the document request can record a miss.
-			nameOpts := opts
-			nameOpts.SkipMissLog = true
-			names, nameErr := c.SearchWithOptions(cmd.Context(), query, searchLimit, nameOpts)
-			if nameErr != nil {
-				return nameErr
-			}
-			opts.SkipMissLog = slices.ContainsFunc(names.Hits, func(hit api.SearchHit) bool { return hit.Match == "name" })
+		if !cmd.Flags().Changed("mode") {
 			automatic, err = tryAutomaticSearch(cmd.Context(), c, query, searchLimit, opts)
 			if err != nil {
 				return err
@@ -214,7 +207,6 @@ See docs/usage/search.md.`,
 		}
 		// Lexical search runs after query embedding, so folder hits added to a
 		// hybrid report are as current as its revalidated results.
-		opts.SkipMissLog = automatic.report != nil
 		rep, err := c.SearchWithOptions(cmd.Context(), query, searchLimit, opts)
 		if err != nil {
 			return err
@@ -230,6 +222,21 @@ See docs/usage/search.md.`,
 		defer func() {
 			if retErr == nil {
 				reportSearch(cmd, c, searchType, empty, searchAgent)
+				if empty {
+					receipt := misslog.Request{Query: query, RequestedMode: "lexical", ActualMode: "lexical", Truncated: rep.Truncated,
+						Filters: map[string]any{"fuzzy": opts.Fuzzy, "tag_id": opts.TagID, "mime_type": opts.MIMEType, "under_node_id": opts.UnderNodeID, "modified_since": opts.ModifiedSince, "modified_before": opts.ModifiedBefore}}
+					if rep.Fuzzy != nil {
+						receipt.Coverage = map[string]any{"fuzzy": rep.Fuzzy}
+						if rep.Fuzzy.Status != store.FuzzyStatusNotRun {
+							receipt.ActualMode = "fuzzy"
+						}
+						receipt.RequestedMode = "fuzzy"
+					}
+					if automatic.report != nil {
+						receipt = automatic.receipt
+					}
+					c.RecordMiss(cmd.Context(), receipt)
+				}
 			}
 		}()
 		if automatic.report != nil {
@@ -420,7 +427,7 @@ func runDocumentSearch(cmd *cobra.Command, c *daemonconn.Connection, query strin
 	}
 	report, err := c.SearchDocuments(cmd.Context(), api.DocumentSearchRequest{
 		Query: query, Mode: options.Mode, Limit: options.Limit, Profile: options.Profile,
-		BindingID: bindingID, Explain: options.Explain, Rerank: options.Rerank, SkipMissLog: true,
+		BindingID: bindingID, Explain: options.Explain, Rerank: options.Rerank,
 		Fence: api.DocumentSourceFence{VaultUID: info.VaultID, ContentVersionIDs: options.ContentVersionIDs},
 	})
 	if err != nil {
@@ -429,6 +436,10 @@ func runDocumentSearch(cmd *cobra.Command, c *daemonconn.Connection, query strin
 	defer func() {
 		if retErr == nil {
 			reportSearch(cmd, c, report.ActualMode, len(report.Results) == 0, searchAgent)
+			if len(report.Results) == 0 {
+				c.RecordMiss(cmd.Context(), api.DocumentSearchMiss(query, options.Profile,
+					api.DocumentSourceFence{VaultUID: info.VaultID, ContentVersionIDs: options.ContentVersionIDs}, report))
+			}
 		}
 	}()
 	if options.JSON {

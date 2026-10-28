@@ -416,7 +416,7 @@ func TestSearchReadRejectsResultsOutsideResolvedFence(t *testing.T) {
 	assert.NotContains(t, err.Error(), otherVersion)
 }
 
-func TestSearchReadValidatesEmptyFenceThroughDaemonSearch(t *testing.T) {
+func TestSearchReadValidatesEmptyFenceWithoutCallingSearch(t *testing.T) {
 	for _, test := range []struct {
 		name, query, profile, wantCode string
 		wantError                      bool
@@ -428,7 +428,8 @@ func TestSearchReadValidatesEmptyFenceThroughDaemonSearch(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			searchCalls := 0
-
+			validationCalls := 0
+			missCalls := 0
 			emptyFingerprint, err := processing.SourceFenceFingerprint(processing.SourceFence{
 				VaultUID: testVaultID, ContentVersionIDs: []string{},
 			})
@@ -440,14 +441,11 @@ func TestSearchReadValidatesEmptyFenceThroughDaemonSearch(t *testing.T) {
 						Fence:            api.ResolvedDocumentSourceFence{VaultUID: testVaultID, ContentVersionIDs: []string{}},
 						FenceFingerprint: emptyFingerprint, ObservedScopeCount: 0,
 					})
-				case "/api/v1/search":
-					searchCalls++
-					var input api.DocumentSearchRequest
-					if !assert.NoError(t, json.UnmarshalRead(request.Body, &input)) {
-						return
-					}
-					assert.Equal(t, testVaultID, input.Fence.VaultUID)
-					assert.Empty(t, input.Fence.ContentVersionIDs)
+				case "/api/v1/miss-log":
+					missCalls++
+					response.WriteHeader(http.StatusNoContent)
+				case "/api/v1/search/validate":
+					validationCalls++
 					if test.wantError {
 						status := http.StatusInternalServerError
 						if test.wantCode == "processing_profile_unavailable" {
@@ -460,7 +458,10 @@ func TestSearchReadValidatesEmptyFenceThroughDaemonSearch(t *testing.T) {
 						})
 						return
 					}
-					writeDaemonJSON(t, response, api.DocumentSearchReport{RequestedMode: "lexical", ActualMode: "lexical", Coverage: api.DocumentSearchCoverage{State: "complete"}, Results: []api.DocumentSearchResult{}})
+					writeDaemonJSON(t, response, api.DocumentSearchValidation{Valid: true})
+				case "/api/v1/search":
+					searchCalls++
+					http.Error(response, "search must not run for an empty fence", http.StatusInternalServerError)
 				default:
 					http.NotFound(response, request)
 				}
@@ -474,7 +475,13 @@ func TestSearchReadValidatesEmptyFenceThroughDaemonSearch(t *testing.T) {
 				"query": test.query, "mode": "lexical", "limit": 1, "profile": test.profile,
 				"filters": map[string]any{},
 			})
-			assert.Equal(t, 1, searchCalls)
+			assert.Equal(t, 1, validationCalls)
+			assert.Zero(t, searchCalls)
+			if test.wantError {
+				assert.Zero(t, missCalls)
+			} else {
+				assert.Equal(t, 1, missCalls)
+			}
 			if test.wantError {
 				require.Error(t, err)
 				facts, ok := daemonProblemFacts(err)
@@ -493,6 +500,7 @@ func TestSearchReadValidatesEmptyFenceThroughDaemonSearch(t *testing.T) {
 
 func TestSearchReadWithNonEmptyFenceAndNoHitsSkipsDocumentResolution(t *testing.T) {
 	resolveCalls := 0
+	missCalls := 0
 	daemon := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/api/v1/processing/source-fences/resolve":
@@ -503,6 +511,9 @@ func TestSearchReadWithNonEmptyFenceAndNoHitsSkipsDocumentResolution(t *testing.
 			writeDaemonJSON(t, response, api.DocumentSearchReport{RequestedMode: "lexical", ActualMode: "lexical",
 				Coverage:     api.DocumentSearchCoverage{ScopedDocuments: 1, CompleteDocuments: 1, State: "complete"},
 				Degradations: []string{}, Results: []api.DocumentSearchResult{}})
+		case "/api/v1/miss-log":
+			missCalls++
+			response.WriteHeader(http.StatusNoContent)
 		case "/api/v1/documents/resolve":
 			resolveCalls++
 			t.Fatal("zero-hit search must not resolve document summaries")
@@ -521,6 +532,7 @@ func TestSearchReadWithNonEmptyFenceAndNoHitsSkipsDocumentResolution(t *testing.
 	})
 	require.NoError(t, err)
 	assert.Zero(t, resolveCalls)
+	assert.Equal(t, 1, missCalls)
 	assert.Empty(t, resourceLinkURIs(result))
 	assert.Equal(t, []any{}, structuredMap(t, result.StructuredContent)["results"])
 }

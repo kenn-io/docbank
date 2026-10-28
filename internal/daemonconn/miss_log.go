@@ -2,6 +2,7 @@ package daemonconn
 
 import (
 	"context"
+	"time"
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
@@ -29,4 +30,11 @@ func (c *Connection) DeleteMissLogRecord(ctx context.Context, id string) error {
 func (c *Connection) DeleteMissLog(ctx context.Context) error {
 	_, err := c.API().DeleteMissLog(ctx)
 	return err
+}
+
+// RecordMiss sends a best-effort receipt within a one-second deadline.
+func (c *Connection) RecordMiss(ctx context.Context, receipt misslog.Request) {
+	ctx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	_, _ = c.API().RecordMiss(ctx, &apiclient.RecordMissRequestOptions{Body: &receipt})
 }

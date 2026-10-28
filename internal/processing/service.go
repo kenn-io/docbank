@@ -1528,33 +1528,11 @@ func (service *Service) ResolveSourceFence(
 }
 
 func (service *Service) Search(ctx context.Context, request SearchRequest) (retrieval.Report, error) {
-	if err := ctx.Err(); err != nil {
-		return retrieval.Report{}, err
-	}
-	profile, err := service.profileForFence(request.Profile, request.Fence)
+	profile, ids, err := service.profileFence(request.Profile, request.Fence)
 	if err != nil {
 		return retrieval.Report{}, err
 	}
 	prepared, err := service.prepareSearch(request, profile)
-	if err != nil {
-		return retrieval.Report{}, err
-	}
-	if len(request.Fence.ContentVersionIDs) == 0 {
-		if request.MediaSources != nil {
-			return retrieval.Report{}, ErrMediaSearchInvalid
-		}
-		actual := prepared.mode
-		if actual == retrieval.ModeAuto {
-			actual = retrieval.ModeLexical
-		}
-		report := retrieval.Report{RequestedMode: prepared.mode, ActualMode: actual,
-			Coverage: retrieval.Coverage{State: retrieval.CoverageComplete}}
-		if request.Rerank {
-			report.Receipts = []retrieval.ProviderReceipt{{Stage: retrieval.ProviderStageReranking, Outcome: retrieval.ProviderOutcomeSkipped}}
-		}
-		return report, nil
-	}
-	ids, err := normalizeFenceIDs(request.Fence.ContentVersionIDs)
 	if err != nil {
 		return retrieval.Report{}, err
 	}
@@ -1977,21 +1955,13 @@ func selectEmbeddingBinding(profile document.ProcessingProfileV1,
 	return document.EmbeddingBindingV1{}, fmt.Errorf("embedding binding %q: %w", name, store.ErrNotFound)
 }
 
-func (service *Service) profileForFence(name string, fence SourceFence) (configuredProfile, error) {
+func (service *Service) profileFence(name string, fence SourceFence) (configuredProfile, []string, error) {
 	profile, ok := service.profiles[name]
 	if !ok {
-		return configuredProfile{}, ErrProfileNotConfigured
+		return configuredProfile{}, nil, ErrProfileNotConfigured
 	}
 	if fence.VaultUID != service.catalog.VaultID() {
-		return configuredProfile{}, ErrForeignVault
-	}
-	return profile, nil
-}
-
-func (service *Service) profileFence(name string, fence SourceFence) (configuredProfile, []string, error) {
-	profile, err := service.profileForFence(name, fence)
-	if err != nil {
-		return configuredProfile{}, nil, err
+		return configuredProfile{}, nil, ErrForeignVault
 	}
 	ids, err := normalizeFenceIDs(fence.ContentVersionIDs)
 	return profile, ids, err

@@ -47,14 +47,14 @@ func TestEmptyNaturalSearchReportsAfterRerank(t *testing.T) {
 			model.naturalRerank = true
 			model.requestID, model.reportSearchID = 7, 7
 			model.naturalSearchID = 3
-			base := model.loadNaturalSearch("missing", model.requestID, model.reportSearchID == model.requestID)()
+			base := model.loadNaturalSearch("missing", model.requestID)()
 			model, rerank := updateModel(t, model, base)
 			require.NotNil(t, rerank)
 			assert.Empty(t, fake.actions)
 			if replaced {
 				model.requestID, model.reportSearchID = 8, 8
 				model.naturalSearchID = 4
-				base = model.loadNaturalSearch("another", model.requestID, model.reportSearchID == model.requestID)()
+				base = model.loadNaturalSearch("another", model.requestID)()
 				model, rerank = updateModel(t, model, base)
 				batch, ok := rerank().(tea.BatchMsg)
 				require.True(t, ok)
@@ -67,6 +67,8 @@ func TestEmptyNaturalSearchReportsAfterRerank(t *testing.T) {
 			runModelCommand(t, model, rerank)
 			want := []actionCall{{event: "search_run", searchType: "lexical"}, {event: "search_empty", searchType: "lexical"}}
 			assert.Equal(t, want, fake.actions)
+			require.Len(t, fake.misses, 1)
+			require.Equal(t, "missing", fake.misses[0].Query)
 		})
 	}
 }
@@ -93,7 +95,7 @@ func TestNaturalSearchReportsFinalRerankedEmptiness(t *testing.T) {
 			model.naturalProfiles = fake.profiles
 			model.naturalMode, model.naturalRerank = naturalLexical, true
 			model.requestID, model.reportSearchID, model.naturalSearchID = 7, 7, 3
-			base := model.loadNaturalSearch("report", model.requestID, model.reportSearchID == model.requestID)()
+			base := model.loadNaturalSearch("report", model.requestID)()
 			model, cmd := updateModel(t, model, base)
 			require.True(t, model.naturalRerankPending)
 			if baseEmpty {
@@ -139,7 +141,7 @@ func TestNaturalSearchReproductionStaleAndRerankState(t *testing.T) {
 	model.naturalMode = naturalLexical
 	model.naturalRerank = true
 
-	message := model.loadNaturalSearch("solar maintenance", model.requestID, model.reportSearchID == model.requestID)()
+	message := model.loadNaturalSearch("solar maintenance", model.requestID)()
 	baseMessage, ok := message.(naturalSearchBaseLoadedMsg)
 	require.True(t, ok)
 	base, rerank := model.applyNaturalSearchBase(baseMessage)
@@ -174,7 +176,7 @@ func TestNaturalSearchReproductionStaleAndRerankState(t *testing.T) {
 
 	readme.CurrentVersionID = report.CurrentVersionID
 	fake.nodes["/README.txt"] = readme
-	refreshed, ok := settledModel.loadNaturalSearch("new query", model.requestID, model.reportSearchID == model.requestID)().(naturalSearchBaseLoadedMsg)
+	refreshed, ok := settledModel.loadNaturalSearch("new query", model.requestID)().(naturalSearchBaseLoadedMsg)
 	require.True(t, ok)
 	require.NoError(t, refreshed.err)
 	assert.Empty(t, refreshed.rows, "a new request fetches current versions instead of reusing earlier nodes")
@@ -425,7 +427,7 @@ func TestNaturalSearchSkipsUnavailableRows(t *testing.T) {
 			require.NoError(t, err)
 			model.naturalProfiles = fake.profiles
 			model.naturalMode = naturalLexical
-			message, ok := model.loadNaturalSearch("maintenance", model.requestID, model.reportSearchID == model.requestID)().(naturalSearchBaseLoadedMsg)
+			message, ok := model.loadNaturalSearch("maintenance", model.requestID)().(naturalSearchBaseLoadedMsg)
 			require.True(t, ok)
 			if status == http.StatusUnauthorized || status == http.StatusForbidden {
 				require.Error(t, message.err)
@@ -908,7 +910,7 @@ func TestNaturalSearchEmptyFenceReportsSubmissionsAsEmptyWithoutRun(t *testing.T
 			model.naturalMode = tc.mode
 			model.naturalRerank = tc.rerank
 
-			base, ok := model.loadNaturalSearch("nothing", model.requestID, model.reportSearchID == model.requestID)().(naturalSearchBaseLoadedMsg)
+			base, ok := model.loadNaturalSearch("nothing", model.requestID)().(naturalSearchBaseLoadedMsg)
 			require.True(t, ok)
 			updated, cmd := model.applyNaturalSearchBase(base)
 			result, ok := updated.(Model)
@@ -921,10 +923,17 @@ func TestNaturalSearchEmptyFenceReportsSubmissionsAsEmptyWithoutRun(t *testing.T
 				cmd()
 			}
 			assert.Equal(t, tc.want, fake.actions)
+			if tc.submitted {
+				require.Len(t, fake.misses, 1)
+				require.Equal(t, new(0), fake.misses[0].DocumentCount)
+				require.NotEmpty(t, fake.misses[0].FenceFingerprint)
+			} else {
+				require.Empty(t, fake.misses)
+			}
 			if tc.rerank {
 				// An empty fence has nothing to rerank, even when reranking is on.
 				assert.False(t, result.naturalRerankPending)
-				assert.Len(t, fake.naturalSearchRequests, 1)
+				assert.Empty(t, fake.naturalSearchRequests)
 				assert.Equal(t, naturalLexical, result.naturalResultMode)
 			}
 		})
@@ -1014,7 +1023,7 @@ func deferRerankedSearch(t *testing.T, model Model, query, actualMode string) (M
 	model.searching = true
 	model.searchInput.SetValue(query)
 	model, _ = updateModel(t, model, key(tea.KeyEnter))
-	base, ok := model.loadNaturalSearch(query, model.requestID, model.reportSearchID == model.requestID)().(naturalSearchBaseLoadedMsg)
+	base, ok := model.loadNaturalSearch(query, model.requestID)().(naturalSearchBaseLoadedMsg)
 	require.True(t, ok)
 	require.NoError(t, base.err)
 	model, cmd := updateModel(t, model, base)

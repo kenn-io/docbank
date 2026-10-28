@@ -15,7 +15,6 @@ import {
 import { snapshotTargetRevision, type SnapshotReceiptOverlay } from "./snapshotOverlays.js";
 
 export type SnapshotOptions = {
-  skip_miss_log?: boolean;
   photos?: boolean;
   profile?: string;
   page_size?: 50 | 100 | 250;
@@ -733,7 +732,6 @@ function normalizedOptions(
   if (facets !== undefined && new Set(facets).size !== facets.length)
     throw new Error("Snapshot facets repeat a dimension.");
   return {
-    ...(options.skip_miss_log === undefined ? {} : { skip_miss_log: options.skip_miss_log }),
     ...(options.photos === undefined ? {} : { photos: options.photos }),
     ...(profile === undefined ? {} : { profile }),
     ...(options.page_size === undefined ? {} : { page_size: options.page_size }),

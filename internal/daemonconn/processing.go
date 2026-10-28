@@ -520,7 +520,7 @@ func (c *Connection) ValidateDocumentSearch(
 }
 
 func validateDocumentSearchReport(request api.DocumentSearchRequest, report api.DocumentSearchReport) error {
-	if !validUUIDv4(request.Fence.VaultUID) ||
+	if !validUUIDv4(request.Fence.VaultUID) || len(request.Fence.ContentVersionIDs) < 1 ||
 		len(request.Fence.ContentVersionIDs) > 4096 {
 		return errors.New("request fence identity is invalid")
 	}

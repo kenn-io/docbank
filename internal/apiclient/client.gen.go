@@ -6072,6 +6072,47 @@ func (c *Client) ListMissLog(ctx context.Context, options *ListMissLogRequestOpt
 	return responseParser(ctx, resp)
 }
 
+// RecordMiss Record a submitted empty search
+func (c *Client) RecordMiss(ctx context.Context, options *RecordMissRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/miss-log",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*struct{}, error) {
+		switch resp.StatusCode {
+
+		case 204:
+
+			target := new(struct{})
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[RecordMissErrorResponse](resp, "RecordMissErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/miss-log")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 204)
+	}
+	return responseParser(ctx, resp)
+}
+
 // DeleteMissLogRecord Delete one private search miss (operator only)
 func (c *Client) DeleteMissLogRecord(ctx context.Context, options *DeleteMissLogRecordRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
 	var err error
@@ -13082,7 +13123,6 @@ func (c *Client) Search(ctx context.Context, options *SearchRequestOptions, reqE
 		"modified_before": {Style: "form", Explode: &[]bool{false}[0]},
 		"modified_since":  {Style: "form", Explode: &[]bool{false}[0]},
 		"q":               {Style: "form", Explode: &[]bool{false}[0]},
-		"skip_miss_log":   {Style: "form", Explode: &[]bool{false}[0]},
 		"tag_id":          {Style: "form", Explode: &[]bool{false}[0]},
 		"under_node_id":   {Style: "form", Explode: &[]bool{false}[0]},
 	}
@@ -19481,6 +19521,34 @@ func (o *ListMissLogRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *ListMissLogRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// RecordMissRequestOptions is the options needed to make a request to RecordMiss.
+type RecordMissRequestOptions struct {
+	Body *RecordMissBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *RecordMissRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *RecordMissRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *RecordMissRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *RecordMissRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
@@ -26967,6 +27035,8 @@ type ImportMediaArtifactBody struct {
 
 type RetryMediaSourceBody = MediaRetryBody
 
+type RecordMissBody = MissLogRequest
+
 type CreateNodeBody = CreateNodeRequest
 
 type MoveNodeBody = MoveNodeRequest
@@ -27529,7 +27599,6 @@ type ListSavedQueriesQuery struct {
 
 type SearchQuery struct {
 	Q              *string `json:"q,omitempty"`
-	SkipMissLog    *bool   `json:"skip_miss_log,omitempty"`
 	Fuzzy          *bool   `json:"fuzzy,omitempty"`
 	Limit          *int64  `json:"limit,omitempty"`
 	TagID          *string `json:"tag_id,omitempty"`
@@ -28117,6 +28186,8 @@ type DeleteMissLogErrorResponse = Error
 type ListMissLogResponse = api.MissLogPage
 
 type ListMissLogErrorResponse = Error
+
+type RecordMissErrorResponse = Error
 
 type DeleteMissLogRecordErrorResponse = Error
 
@@ -29801,6 +29872,8 @@ type Message = mailbox.Message
 type MissLogPage = api.MissLogPage
 
 type MissLogReceipt = misslog.Receipt
+
+type MissLogRequest = misslog.Request
 
 type MkdirPathRequest struct {
 	// Schema A URL to the JSON Schema for this object.

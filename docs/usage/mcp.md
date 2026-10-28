@@ -94,6 +94,8 @@ daemon startup. Restart
 the daemon to rotate its bearer. See the [configuration reference](../configuration.md#mcp-http-credential)
 and [container example](containers.md#run-mcp-in-the-same-container).
 
+Empty `search_documents` results from daemon-backed MCP can enter the opt-in [private search miss log](../configuration.md#private-search-miss-log), including searches with no documents in scope. Embedded library calls create no record. MCP has no miss-log management tools.
+
 Both transports have the fixed read catalog described below.
 `--allow-processing` adds only guarded processing start.
 `--allow-package-writes` permits load-file preflight, import, and custodian

@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/misslog"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/docbank/internal/telemetry"
 )
@@ -27,6 +28,7 @@ type actionCall struct {
 }
 
 type fakeBackend struct {
+	misses                    []misslog.Request
 	actions                   []actionCall
 	screenErr                 error
 	screens                   []string
@@ -35,7 +37,6 @@ type fakeBackend struct {
 	search                    api.SearchReport
 	err                       error
 	childLimit                int
-	searchSubmitted           bool
 	searchMax                 int
 	nodeIDs                   []int64
 	nodeErrors                map[int64]error
@@ -283,9 +284,8 @@ func (f *fakeBackend) ChildrenPage(
 }
 
 func (f *fakeBackend) Search(
-	_ context.Context, _ string, limit int, submitted bool,
+	_ context.Context, _ string, limit int,
 ) (api.SearchReport, error) {
-	f.searchSubmitted = submitted
 	f.searchMax = limit
 	if f.err != nil {
 		return api.SearchReport{}, f.err
@@ -410,7 +410,7 @@ func (f *fakeBackend) SearchDocuments(_ context.Context, request api.DocumentSea
 		}
 		return f.naturalSearch, nil
 	}
-	if request.Limit != maxProcessingSearchItems || request.Mode != "auto" || !request.Explain || !request.SkipMissLog ||
+	if request.Limit != maxProcessingSearchItems || request.Mode != "auto" || !request.Explain ||
 		request.Profile != f.plan.Selector.Profile || request.Fence.VaultUID != f.plan.VaultUID ||
 		!assert.ObjectsAreEqual(request.Fence.ContentVersionIDs, []string{f.plan.Selector.ContentVersionID}) {
 		return api.DocumentSearchReport{}, errors.New("unexpected document search request")
@@ -2907,7 +2907,7 @@ func TestProfileDiscoveryPreservesPendingSearchAction(t *testing.T) {
 			model.searching = true
 			model.searchInput.SetValue("report")
 			model, _ = updateModel(t, model, key(tea.KeyEnter))
-			oldReply := model.loadSearch("report", model.requestID, model.reportSearchID == model.requestID)()
+			oldReply := model.loadSearch("report", model.requestID)()
 			if !pending {
 				var cmd tea.Cmd
 				model, cmd = updateModel(t, model, oldReply)
@@ -2921,7 +2921,7 @@ func TestProfileDiscoveryPreservesPendingSearchAction(t *testing.T) {
 			require.NotNil(t, cmd)
 			model, stale := updateModel(t, model, oldReply)
 			require.Nil(t, stale)
-			model, cmd = updateModel(t, model, model.loadSearch("report", model.requestID, model.reportSearchID == model.requestID)())
+			model, cmd = updateModel(t, model, model.loadSearch("report", model.requestID)())
 			if cmd != nil {
 				model = runModelCommand(t, model, cmd)
 			}
@@ -2977,7 +2977,7 @@ func TestSearchActionReportsSubmissionsAndKeepsRerunsSilent(t *testing.T) {
 					err: errors.New("provider timed out"),
 				})
 			}
-			model, cmd := updateModel(t, model, model.loadSearch("report", model.requestID, model.reportSearchID == model.requestID)())
+			model, cmd := updateModel(t, model, model.loadSearch("report", model.requestID)())
 			if cmd != nil {
 				model = runModelCommand(t, model, cmd)
 			}
@@ -2987,7 +2987,7 @@ func TestSearchActionReportsSubmissionsAndKeepsRerunsSilent(t *testing.T) {
 				model.searchInput.SetValue("failed query")
 				model, _ = updateModel(t, model, key(tea.KeyEnter))
 				backend.err = errors.New("search failed")
-				model, cmd = updateModel(t, model, model.loadSearch("failed query", model.requestID, model.reportSearchID == model.requestID)())
+				model, cmd = updateModel(t, model, model.loadSearch("failed query", model.requestID)())
 				require.NotNil(t, cmd)
 				cmd()
 				// The failure shows an error but runs no search, so only error_shown is new.
@@ -2995,14 +2995,14 @@ func TestSearchActionReportsSubmissionsAndKeepsRerunsSilent(t *testing.T) {
 				require.Equal(t, "report", model.searchQuery)
 				backend.err = nil
 				model, _ = updateModel(t, model, runeKey('r'))
-				model, cmd = updateModel(t, model, model.loadSearch("report", model.requestID, model.reportSearchID == model.requestID)())
+				model, cmd = updateModel(t, model, model.loadSearch("report", model.requestID)())
 				if cmd != nil {
 					model = runModelCommand(t, model, cmd)
 				}
 				assert.Equal(t, tc.want, runs())
 				backend.err = errors.New("refresh failed")
 				model, _ = updateModel(t, model, runeKey('r'))
-				_, cmd = updateModel(t, model, model.loadSearch("report", model.requestID, model.reportSearchID == model.requestID)())
+				_, cmd = updateModel(t, model, model.loadSearch("report", model.requestID)())
 				assert.Nil(t, cmd)
 			}
 			if !tc.checkReruns {
@@ -3010,7 +3010,7 @@ func TestSearchActionReportsSubmissionsAndKeepsRerunsSilent(t *testing.T) {
 			}
 			for _, keypress := range []tea.KeyPressMsg{runeKey('r'), key(tea.KeyTab), {Code: 'r', Mod: tea.ModCtrl}} {
 				model, _ = updateModel(t, model, keypress)
-				model, cmd = updateModel(t, model, model.loadSearch("report", model.requestID, model.reportSearchID == model.requestID)())
+				model, cmd = updateModel(t, model, model.loadSearch("report", model.requestID)())
 				if cmd != nil {
 					model = runModelCommand(t, model, cmd)
 				}
@@ -3019,7 +3019,7 @@ func TestSearchActionReportsSubmissionsAndKeepsRerunsSilent(t *testing.T) {
 			model.searching = true
 			model.searchInput.SetValue("report")
 			model, _ = updateModel(t, model, key(tea.KeyEnter))
-			model, cmd = updateModel(t, model, model.loadSearch("report", model.requestID, model.reportSearchID == model.requestID)())
+			model, cmd = updateModel(t, model, model.loadSearch("report", model.requestID)())
 			if cmd != nil {
 				model = runModelCommand(t, model, cmd)
 			}
@@ -3069,6 +3069,8 @@ func TestEmptyArmedSearchReportsRunAndEmpty(t *testing.T) {
 	_, cmd := updateModel(t, model, msg)
 	runModelCommand(t, model, cmd)
 	assert.Equal(t, []actionCall{{event: "search_run", searchType: "text"}, {event: "search_empty", searchType: "text"}}, backend.actions)
+	require.Len(t, backend.misses, 1)
+	require.Equal(t, "missing", backend.misses[0].Query)
 }
 
 func TestProcessingSearchReportsOutcome(t *testing.T) {
@@ -3096,41 +3098,6 @@ func TestProcessingSearchReportsOutcome(t *testing.T) {
 	}
 }
 
-func TestMissLogSearchSubmissionRequests(t *testing.T) {
-	for _, emptyScope := range []bool{false, true} {
-		fake := newFakeBackend()
-		if emptyScope {
-			fake.sourceFence.Fence.ContentVersionIDs = nil
-		}
-		model, err := New(t.Context(), fake)
-		require.NoError(t, err)
-		model.naturalProfiles = fake.profiles
-		model.naturalMode = naturalLexical
-		model.searching = true
-		model.searchInput.SetValue("missing")
-		model, command := updateModel(t, model, key(tea.KeyEnter))
-		model = runModelCommand(t, model, command)
-		require.Len(t, fake.naturalSearchRequests, 1)
-		assert.Equal(t, !emptyScope, len(fake.naturalSearchRequests[0].Fence.ContentVersionIDs) > 0)
-		assert.False(t, fake.naturalSearchRequests[0].SkipMissLog)
-		model.loadNaturalRerank(model.requestID, model.naturalSearchID, fake.naturalSearchRequests[0], naturalLexical)()
-		assert.True(t, fake.naturalSearchRequests[1].SkipMissLog)
-		model.loadNaturalSearch("missing", model.requestID, false)()
-		assert.True(t, fake.naturalSearchRequests[2].SkipMissLog)
-		model.naturalMode = naturalNames
-		model.loadSearch("missing", model.requestID, true)()
-		assert.True(t, fake.searchSubmitted)
-		model.loadSearch("missing", model.requestID, false)()
-		assert.False(t, fake.searchSubmitted)
-	}
-}
-
-func TestMissLogSkipsInDocumentFind(t *testing.T) {
-	fake := newFakeBackend()
-	model, err := New(t.Context(), fake)
-	require.NoError(t, err)
-	model.processingPlan = &fake.plan
-	msg := model.loadProcessingSearch(1, "missing")().(processingSearchLoadedMsg)
-	require.NoError(t, msg.err)
-	require.Equal(t, 1, fake.processingSearchCalls)
+func (f *fakeBackend) RecordMiss(_ context.Context, receipt misslog.Request) {
+	f.misses = append(f.misses, receipt)
 }

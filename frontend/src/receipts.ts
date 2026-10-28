@@ -445,7 +445,11 @@ export function validateDocumentSearchReport(
   const invalid = (): never => {
     throw new Error("The daemon returned an invalid search response.");
   };
-  if (!canonicalUUID(request.fence.vault_uid) || request.fence.content_version_ids.length > 4096)
+  if (
+    !canonicalUUID(request.fence.vault_uid) ||
+    request.fence.content_version_ids.length < 1 ||
+    request.fence.content_version_ids.length > 4096
+  )
     invalid();
   const versions = new Set<string>();
   for (const versionID of request.fence.content_version_ids) {

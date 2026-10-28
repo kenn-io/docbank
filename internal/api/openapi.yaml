@@ -4453,8 +4453,6 @@ components:
           type: string
         rerank:
           type: boolean
-        skip_miss_log:
-          type: boolean
       required:
         - query
         - mode
@@ -4770,6 +4768,7 @@ components:
           items:
             type: string
           maxItems: 4096
+          minItems: 1
           type: array
           uniqueItems: true
         vault_uid:
@@ -9591,9 +9590,11 @@ components:
           readOnly: true
           type: string
         actual_mode:
+          maxLength: 32
           type: string
         coverage:
           additionalProperties: {}
+          maxProperties: 32
           type: object
         created_at:
           format: date-time
@@ -9601,22 +9602,33 @@ components:
         degradations:
           items:
             type: string
+          maxItems: 64
           type: array
+        document_count:
+          format: int64
+          minimum: 0
+          type: integer
         fence_fingerprint:
+          maxLength: 128
           type: string
+        filters:
+          additionalProperties: {}
+          maxProperties: 32
+          type: object
         id:
           type: string
         profile:
+          maxLength: 256
           type: string
         query:
+          maxLength: 8192
           type: string
         requested_mode:
+          maxLength: 32
           type: string
         reranking:
           additionalProperties: {}
-          type: object
-        scope:
-          additionalProperties: {}
+          maxProperties: 8
           type: object
         truncated:
           type: boolean
@@ -9629,10 +9641,67 @@ components:
         - query
         - requested_mode
         - actual_mode
-        - scope
         - truncated
       type: object
       x-go-type: misslog.Receipt
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/misslog
+        name: misslog
+    MissLogRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/MissLogRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        actual_mode:
+          maxLength: 32
+          type: string
+        coverage:
+          additionalProperties: {}
+          maxProperties: 32
+          type: object
+        degradations:
+          items:
+            type: string
+          maxItems: 64
+          type: array
+        document_count:
+          format: int64
+          minimum: 0
+          type: integer
+        fence_fingerprint:
+          maxLength: 128
+          type: string
+        filters:
+          additionalProperties: {}
+          maxProperties: 32
+          type: object
+        profile:
+          maxLength: 256
+          type: string
+        query:
+          maxLength: 8192
+          type: string
+        requested_mode:
+          maxLength: 32
+          type: string
+        reranking:
+          additionalProperties: {}
+          maxProperties: 8
+          type: object
+        truncated:
+          type: boolean
+      required:
+        - query
+        - requested_mode
+        - actual_mode
+        - truncated
+      type: object
+      x-go-type: misslog.Request
       x-go-type-import:
         path: go.kenn.io/docbank/internal/misslog
         name: misslog
@@ -21292,8 +21361,6 @@ components:
           type: string
         query:
           $ref: "#/components/schemas/SavedQueryV1Schema"
-        skip_miss_log:
-          type: boolean
       required:
         - query
       type: object
@@ -25306,6 +25373,24 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: List private search misses (operator only)
+    post:
+      operationId: recordMiss
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MissLogRequest"
+        required: true
+      responses:
+        "204":
+          description: No Content
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Record a submitted empty search
   /api/v1/miss-log/{id}:
     delete:
       operationId: deleteMissLogRecord
@@ -30515,11 +30600,6 @@ paths:
           name: q
           schema:
             type: string
-        - explode: false
-          in: query
-          name: skip_miss_log
-          schema:
-            type: boolean
         - explode: false
           in: query
           name: fuzzy

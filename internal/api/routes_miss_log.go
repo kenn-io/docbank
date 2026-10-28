@@ -26,6 +26,10 @@ func missLogFailure() error {
 }
 
 func registerMissLogRoutes(api huma.API, d Deps, g *OperationGate) {
+	huma.Register(api, huma.Operation{OperationID: "recordMiss", Method: http.MethodPost, Path: "/api/v1/miss-log", Summary: "Record a submitted empty search", DefaultStatus: http.StatusNoContent}, func(ctx context.Context, in *struct{ Body misslog.Request }) (*struct{}, error) {
+		d.MissLog.Record(ctx, in.Body)
+		return nil, nil
+	})
 	type recordOutput struct {
 		CacheControl string `header:"Cache-Control"`
 		Body         misslog.Receipt
@@ -110,12 +114,15 @@ func registerMissLogRoutes(api huma.API, d Deps, g *OperationGate) {
 	})
 }
 
-func recordDocumentSearch(ctx context.Context, log *misslog.Service, input DocumentSearchRequest, report DocumentSearchReport) {
-	if input.SkipMissLog || len(report.Results) != 0 {
-		return
+// DocumentSearchMiss keeps the compact outcome without source ID lists.
+func DocumentSearchMiss(query, profile string, fence DocumentSourceFence, report DocumentSearchReport) misslog.Request {
+	fingerprint, _ := processing.SourceFenceFingerprint(processing.SourceFence{VaultUID: fence.VaultUID, ContentVersionIDs: fence.ContentVersionIDs})
+	receipt := misslog.Request{Query: query, Profile: profile, RequestedMode: report.RequestedMode, ActualMode: report.ActualMode,
+		FenceFingerprint: fingerprint, DocumentCount: new(len(fence.ContentVersionIDs)), Truncated: report.Truncated, Degradations: report.Degradations,
+		Coverage: map[string]any{"binding_required": report.Coverage.BindingRequired, "scoped_documents": report.Coverage.ScopedDocuments,
+			"complete_documents": report.Coverage.CompleteDocuments, "state": report.Coverage.State}}
+	if report.Reranking != nil {
+		receipt.Reranking = map[string]any{"outcome": report.Reranking.Outcome, "cause": report.Reranking.Cause, "candidate_count": report.Reranking.CandidateCount}
 	}
-	fingerprint, _ := processing.SourceFenceFingerprint(processing.SourceFence{VaultUID: input.Fence.VaultUID, ContentVersionIDs: input.Fence.ContentVersionIDs})
-	log.Record(ctx, misslog.Receipt{Query: input.Query, Profile: input.Profile, RequestedMode: report.RequestedMode, ActualMode: report.ActualMode,
-		Truncated: report.Truncated, Degradations: report.Degradations, Reranking: misslog.ReceiptScope(report.Reranking),
-		Scope: misslog.ReceiptScope(input), Coverage: misslog.ReceiptScope(report.Coverage), FenceFingerprint: fingerprint})
+	return receipt
 }

@@ -2259,7 +2259,10 @@ export const DocumentSearchRequestMode = {
 } as const;
 
 export interface DocumentSourceFence {
-  /** @maxItems 4096 */
+  /**
+     * @minItems 1
+     * @maxItems 4096
+     */
   content_version_ids: string[];
   vault_uid: string;
 }
@@ -2295,7 +2298,6 @@ export interface DocumentSearchRequest {
      */
   query: string;
   rerank?: boolean;
-  skip_miss_log?: boolean;
 }
 
 export interface DocumentSearchValidation {
@@ -4107,24 +4109,32 @@ export interface Message {
 
 export type MissLogReceiptCoverage = {[key: string]: unknown};
 
-export type MissLogReceiptReranking = {[key: string]: unknown};
+export type MissLogReceiptFilters = {[key: string]: unknown};
 
-export type MissLogReceiptScope = {[key: string]: unknown};
+export type MissLogReceiptReranking = {[key: string]: unknown};
 
 export interface MissLogReceipt {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  /** @maxLength 32 */
   actual_mode: string;
   coverage?: MissLogReceiptCoverage;
   created_at: string;
+  /** @maxItems 64 */
   degradations?: string[];
+  /** @minimum 0 */
+  document_count?: number;
+  /** @maxLength 128 */
   fence_fingerprint?: string;
+  filters?: MissLogReceiptFilters;
   id: string;
+  /** @maxLength 256 */
   profile?: string;
+  /** @maxLength 8192 */
   query: string;
+  /** @maxLength 32 */
   requested_mode: string;
   reranking?: MissLogReceiptReranking;
-  scope: MissLogReceiptScope;
   truncated: boolean;
   vault_uid: string;
 }
@@ -4135,6 +4145,35 @@ export interface MissLogPage {
   items: MissLogReceipt[];
   limit: number;
   offset: number;
+}
+
+export type MissLogRequestCoverage = {[key: string]: unknown};
+
+export type MissLogRequestFilters = {[key: string]: unknown};
+
+export type MissLogRequestReranking = {[key: string]: unknown};
+
+export interface MissLogRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @maxLength 32 */
+  actual_mode: string;
+  coverage?: MissLogRequestCoverage;
+  /** @maxItems 64 */
+  degradations?: string[];
+  /** @minimum 0 */
+  document_count?: number;
+  /** @maxLength 128 */
+  fence_fingerprint?: string;
+  filters?: MissLogRequestFilters;
+  /** @maxLength 256 */
+  profile?: string;
+  /** @maxLength 8192 */
+  query: string;
+  /** @maxLength 32 */
+  requested_mode: string;
+  reranking?: MissLogRequestReranking;
+  truncated: boolean;
 }
 
 export interface MkdirPathRequest {
@@ -8756,7 +8795,6 @@ export interface WorkspaceQueryCreateRequest {
   /** @maxLength 128 */
   profile?: string;
   query: SavedQueryV1Schema;
-  skip_miss_log?: boolean;
 }
 
 export interface WorkspaceQueryPageRequest {
@@ -9817,7 +9855,6 @@ export type RunSavedQueryHeaders = {
 
 export type SearchParams = {
 q?: string;
-skip_miss_log?: boolean;
 fuzzy?: boolean;
 /**
  * @minimum 1
@@ -14231,6 +14268,44 @@ export const listMissLog = async (params?: ListMissLogParams, options?: Paramete
     method: 'GET'
 
 
+  }
+);}
+
+
+
+export const getRecordMissUrl = () => {
+
+
+
+
+  return `/api/v1/miss-log`
+}
+
+/**
+ * @summary Record a submitted empty search
+ */
+export const recordMiss = async (missLogRequest: NonReadonly<MissLogRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<void>(getRecordMissUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(missLogRequest)
   }
 );}
 
