@@ -573,6 +573,14 @@ func runServe(ctx context.Context) (retErr error) {
 		}
 	}
 
+	if cfg.Backup.Interval.Std() > 0 {
+		if err := jobSupervisor.Start("backup:scheduled", func(ctx context.Context) error {
+			return api.RunBackupSchedule(ctx, api.Deps{Store: s, Blobs: blobs, VaultRoot: layout.Root, Cfg: cfg, Gate: operationGate, Logger: logger})
+		}); err != nil {
+			return fmt.Errorf("starting scheduled backups: %w", err)
+		}
+	}
+
 	var stopOnce sync.Once
 	stopCh := make(chan struct{})
 	stop := func() { stopOnce.Do(func() { close(stopCh) }) }
@@ -635,7 +643,7 @@ func runServe(ctx context.Context) (retErr error) {
 	}
 
 	if background && cfg.Server.IdleTimeout.Std() > 0 && len(cfg.Watches) == 0 &&
-		cfg.Storage.PackInterval.Std() == 0 && drainMCP == nil {
+		cfg.Storage.PackInterval.Std() == 0 && cfg.Backup.Interval.Std() == 0 && drainMCP == nil {
 		if err := jobSupervisor.Start("daemon.idle-timeout", func(ctx context.Context) error {
 			idleWatch(ctx, tracker, cfg.Server.IdleTimeout.Std(), logger, stop)
 			return nil

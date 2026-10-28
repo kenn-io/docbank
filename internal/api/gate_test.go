@@ -66,7 +66,7 @@ func TestBackupCaptureBlocksPlacementAuthorityCommit(t *testing.T) {
 	releaseCapture := make(chan struct{})
 	captureDone := make(chan error, 1)
 	go func() {
-		captureDone <- g.capture(func() error {
+		captureDone <- g.CaptureContext(context.Background(), func() error {
 			close(captureStarted)
 			<-releaseCapture
 			return nil
@@ -101,19 +101,19 @@ func TestQueuedMaintenanceRejectsRouteMutation(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		g := NewOperationGate()
-		captureEntered := make(chan struct{})
-		releaseCapture := make(chan struct{})
+		mutationEntered := make(chan struct{})
+		releaseMutation := make(chan struct{})
 		var releaseOnce sync.Once
-		t.Cleanup(func() { releaseOnce.Do(func() { close(releaseCapture) }) })
-		captureDone := make(chan error, 1)
+		t.Cleanup(func() { releaseOnce.Do(func() { close(releaseMutation) }) })
+		mutationDone := make(chan error, 1)
 		go func() {
-			captureDone <- g.capture(func() error {
-				close(captureEntered)
-				<-releaseCapture
+			mutationDone <- g.MutateContext(t.Context(), func() error {
+				close(mutationEntered)
+				<-releaseMutation
 				return nil
 			})
 		}()
-		<-captureEntered
+		<-mutationEntered
 
 		maintenanceDone := make(chan error, 1)
 		go func() {
@@ -134,10 +134,50 @@ func TestQueuedMaintenanceRejectsRouteMutation(t *testing.T) {
 		assert.Equal(t, "maintenance_busy", apiErr.Code)
 		assert.Equal(t, http.StatusServiceUnavailable, apiErr.Status)
 
+		releaseOnce.Do(func() { close(releaseMutation) })
+		synctest.Wait()
+		require.NoError(t, <-mutationDone)
+		require.NoError(t, <-maintenanceDone)
+	})
+}
+
+// Scheduled packing often waits behind a scheduled capture. That wait must not
+// turn every upload and edit into maintenance_busy for the whole capture.
+func TestMaintenanceWaitingForBackupCaptureAdmitsRouteMutation(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		g := NewOperationGate()
+		captureEntered := make(chan struct{})
+		releaseCapture := make(chan struct{})
+		var releaseOnce sync.Once
+		t.Cleanup(func() { releaseOnce.Do(func() { close(releaseCapture) }) })
+		captureDone := make(chan error, 1)
+		go func() {
+			captureDone <- g.CaptureContext(t.Context(), func() error {
+				close(captureEntered)
+				<-releaseCapture
+				return nil
+			})
+		}()
+		<-captureEntered
+
+		maintenanceRan := false
+		maintenanceDone := make(chan error, 1)
+		go func() {
+			maintenanceDone <- g.MaintainContext(t.Context(), func() error { maintenanceRan = true; return nil })
+		}()
+		synctest.Wait()
+
+		mutated := false
+		require.NoError(t, g.mutate(func() error { mutated = true; return nil }))
+		assert.True(t, mutated)
+		assert.False(t, maintenanceRan, "maintenance must still wait for the capture")
+
 		releaseOnce.Do(func() { close(releaseCapture) })
 		synctest.Wait()
 		require.NoError(t, <-captureDone)
 		require.NoError(t, <-maintenanceDone)
+		assert.True(t, maintenanceRan)
 	})
 }
 
@@ -163,18 +203,18 @@ func TestCanceledQueuedMaintenanceStopsRejectingRouteMutation(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		g := NewOperationGate()
-		captureEntered := make(chan struct{})
-		releaseCapture := make(chan struct{})
+		mutationEntered := make(chan struct{})
+		releaseMutation := make(chan struct{})
 		var releaseOnce sync.Once
-		t.Cleanup(func() { releaseOnce.Do(func() { close(releaseCapture) }) })
+		t.Cleanup(func() { releaseOnce.Do(func() { close(releaseMutation) }) })
 		go func() {
-			_ = g.capture(func() error {
-				close(captureEntered)
-				<-releaseCapture
+			_ = g.MutateContext(t.Context(), func() error {
+				close(mutationEntered)
+				<-releaseMutation
 				return nil
 			})
 		}()
-		<-captureEntered
+		<-mutationEntered
 
 		ctx, cancel := context.WithCancel(t.Context())
 		maintenanceDone := make(chan error, 1)
@@ -194,8 +234,8 @@ func TestCanceledQueuedMaintenanceStopsRejectingRouteMutation(t *testing.T) {
 		synctest.Wait()
 		require.ErrorIs(t, <-maintenanceDone, context.Canceled)
 		require.NoError(t, g.mutate(func() error { return nil }),
-			"canceled maintenance must stop rejecting mutations before backup completes")
-		releaseOnce.Do(func() { close(releaseCapture) })
+			"canceled maintenance must stop rejecting mutations before the held mutation finishes")
+		releaseOnce.Do(func() { close(releaseMutation) })
 		synctest.Wait()
 	})
 }
@@ -337,15 +377,8 @@ func TestScheduledPackDeadlineClearsAdmissionAfterBackupCapture(t *testing.T) {
 func TestBackupCaptureBlocksGCButAllowsLiveDeletion(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
-	root := t.TempDir()
-	metadata, err := store.Open(filepath.Join(root, "docbank.db"))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = metadata.Close() })
-	blobsDir := filepath.Join(root, "blobs")
-	require.NoError(t, os.MkdirAll(filepath.Join(blobsDir, "tmp"), 0o700))
-	blobs, err := blob.New(store.NewPackCatalog(metadata), blobsDir)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = blobs.Close() })
+	d := backupTestDeps(t)
+	root, metadata, blobs := d.VaultRoot, d.Store, d.Blobs
 
 	source := filepath.Join(root, "source.txt")
 	require.NoError(t, os.WriteFile(source, []byte("capture before collection"), 0o600))
@@ -362,8 +395,7 @@ func TestBackupCaptureBlocksGCButAllowsLiveDeletion(t *testing.T) {
 
 	repo, err := backup.Init(filepath.Join(root, "backup"))
 	require.NoError(t, err)
-	g := NewOperationGate()
-	d := Deps{Store: metadata, Blobs: blobs}
+	g := d.Gate
 	metadataCaptured := make(chan struct{})
 	resumeBackup := make(chan struct{})
 	var resumeOnce sync.Once

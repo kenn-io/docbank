@@ -162,7 +162,7 @@ on a running daemon) and authenticates with `X-Api-Key` /
 | `GET /storage` · `POST /storage/pack` · `POST /storage/repack` | inspect usage / pack loose blobs / compact sparse packs | Implemented |
 | `GET /jobs` | inspect daemon-owned background tasks and terminal failures; a `running` job with `busy: false` is waiting for work or its next run, and clients show it as idle | Implemented |
 | `GET /watches` | inspect effective watched-inbox configuration and runner state | Implemented |
-| `POST /backup/init` · `POST /backup/snapshots` · `POST /backup/snapshots/stream` · `GET /backup/snapshots` | initialize a repository / create with JSON or streamed progress / list snapshots | Implemented |
+| `POST /backup/init` · `POST /backup/claim` · `POST /backup/snapshots` · `POST /backup/snapshots/stream` · `GET /backup/snapshots` | initialize or claim a repository / create with JSON or streamed progress / list snapshots | Implemented |
 
 ### Format capability coverage
 
@@ -1288,7 +1288,19 @@ each requested move.
 
 `POST /backup/init` accepts `{"repo": "/absolute/server/path"}` and returns
 the repository identity and canonical path. `repo` may be omitted when
-`[backup] repo` is configured. `POST /backup/snapshots` accepts the same
+`[backup] repo` is configured.
+
+`POST /backup/claim` accepts `{repo?, fingerprint?}` to assign a repository's
+history to this vault installation. Omit `fingerprint` to preview its `id`,
+`path`, `snapshot_count`, optional `newest_at`, `owned`, `takeover`, and
+`fingerprint`. `takeover` means another installation of this vault, such as the
+original of a restored copy, owns the repository and loses capture access when
+the claim is confirmed. Send the preview's `fingerprint` to confirm; a repository
+that changed since the preview returns `409 backup_claim_changed`. A claim
+cannot take another vault's repository. Claim uses the same repository
+selection and master API authority as initialization.
+
+`POST /backup/snapshots` accepts the same
 optional repository plus `tag`, `jobs`, and `force_unlock`. It returns a
 stable logical summary rather than exposing Kit's physical manifest layout.
 The `/backup/snapshots/stream` variant accepts the same body and returns
@@ -2284,9 +2296,11 @@ held for the daemon's whole lifetime, not per request, so an in-process
 `sync.RWMutex`-shaped gate serializes them against regular mutations.
 Ordinary mutating handlers (`PATCH`, trash, restore, create, ingest) take the
 read side and may run concurrently with each other. Maintenance handlers take
-the write side. Once maintenance is running or queued for that write side, a
-new HTTP mutation fails immediately with `503 maintenance_busy` instead of
-becoming an indistinguishable long wait.
+the write side. Once maintenance is running or waiting for in-flight mutations
+to finish, a new HTTP mutation fails immediately with `503 maintenance_busy`
+instead of becoming an indistinguishable long wait. Maintenance still waiting
+for an active backup capture does not refuse mutations, because it holds
+nothing they need.
 Daemon-owned background jobs keep blocking gate semantics so a transient
 maintenance run does not permanently fail a watcher or extraction worker.
 Maintenance routes are exempt from the per-request timeout since
@@ -2373,6 +2387,9 @@ include a `position` span:
 | `not_found` | 404 | `store.ErrNotFound` |
 | `exists` | 409 | `store.ErrExists` (name collision) |
 | `cycle` | 409 | `store.ErrCycle` (move under own descendant) |
+| `backup_repository_owner_conflict` | 409 | the owner marker names another vault |
+| `backup_repository_claim_required` | 409 | unmarked history, or another installation of this vault, requires an explicit claim before capture |
+| `backup_claim_changed` | 409 | the repository changed after the claim preview |
 | `audit_mutation_unsupported` | 409 | the audited vault does not yet record this logical mutation class |
 | `audit_already_enabled` | 409 | an initial-scope preview cannot execute because audit authority was enabled concurrently |
 | `audit_scope_overlap` | 409 | the proposed scope shares a live or retained-trash member with permanent protection |
@@ -2416,7 +2433,7 @@ include a `position` span:
 | `loopback_only` | 403 | server-path ingest, preflight, backup restore, or explicit backup `repo` called by a non-loopback peer |
 | `digest_mismatch` / `size_mismatch` | 422 | uploaded file bytes disagree with the required declaration; no node/blob authority committed |
 | `too_large` | 413 | upload exceeded its declared size plus bounded multipart overhead |
-| `maintenance_busy` | 503 | exclusive vault maintenance is running or queued; retry the mutation after it finishes |
+| `maintenance_busy` | 503 | exclusive vault maintenance is running or waiting for in-flight mutations; retry the mutation after it finishes |
 | `pack_retirement_deferred` | 503 | repack authority committed but an old source pack remains physically locked; release the lock, then run `storage pack` reconciliation |
 | `unauthorized` | 401 | missing or invalid API key; bad shutdown token |
 | `web_session_read_only` | 403 | a daemon-issued browser session attempted an endpoint outside its attenuated allowlist |

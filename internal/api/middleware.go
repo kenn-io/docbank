@@ -72,7 +72,7 @@ func timeoutExempt(method, path string) bool {
 		"/api/v1/exports/sources", "/api/v1/exports/plans", "/api/v1/bates/allocations", "/api/v1/bates/exports",
 		"/api/v1/storage/pack", "/api/v1/storage/repack", "/api/v1/uploads",
 		"/api/v1/backup/snapshots", "/api/v1/backup/snapshots/stream",
-		"/api/v1/backup/forget", "/api/v1/backup/prune",
+		"/api/v1/backup/forget", "/api/v1/backup/prune", "/api/v1/backup/claim",
 		"/api/v1/backup/verify", "/api/v1/backup/verify/stream",
 		"/api/v1/backup/restore", "/api/v1/backup/restore/stream",
 		webDownloadPreparePath, webDownloadFilePath, webUploadSocketPath:

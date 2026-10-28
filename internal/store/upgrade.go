@@ -71,7 +71,8 @@ type releasedStorageSchema struct {
 	// carry, such as the physical blob catalog, after the import.
 	restoreSourceState func(context.Context, metadataQuerier, *Store) error
 	// keepsProcessingIncarnation makes the target adopt the source's current
-	// processing incarnation, so existing consent stays valid.
+	// processing incarnation, so existing consent and backup repository
+	// ownership stay valid.
 	keepsProcessingIncarnation bool
 }
 
@@ -130,7 +131,7 @@ var releasedStorageSchemas = []releasedStorageSchema{
 		exportMetadata: func(ctx context.Context, source *sql.Tx, dst io.Writer) error {
 			return exportReleasedMetadataSnapshot(ctx, source, dst, 41)
 		},
-		restoreSourceState:         restoreV28SourceState,
+		restoreSourceState:         restoreV41SourceState,
 		keepsProcessingIncarnation: true,
 	},
 }
@@ -788,6 +789,17 @@ func restoreV28SourceState(ctx context.Context, source metadataQuerier, target *
 			return err
 		}
 		return restoreMediaReceipts(ctx, source, tx)
+	})
+}
+
+// restoreV41SourceState also keeps machine-local checkout bindings and file
+// observations, which metadata import clears for a restore.
+func restoreV41SourceState(ctx context.Context, source metadataQuerier, target *Store) error {
+	if err := restoreV28SourceState(ctx, source, target); err != nil {
+		return err
+	}
+	return target.withStorageTx(ctx, func(tx *sql.Tx) error {
+		return replaceImportedTables(ctx, source, tx, []string{"photo_checkouts", "photo_checkout_entries"})
 	})
 }
 

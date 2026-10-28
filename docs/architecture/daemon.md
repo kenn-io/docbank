@@ -232,7 +232,9 @@ this same path. Text extraction, watched inboxes, and configured automatic
 packing use this lifecycle. Scheduled packing appears as the `storage:pack`
 job, waits the configured interval after each completed run, and uses the same
 maintenance gate as a requested pack. It does not create an unmanaged
-goroutine. Garbage collection and repacking run only when an operator requests
+goroutine. A configured backup interval starts the `backup:scheduled` job under
+the same supervisor. It waits the interval counted from the last capture and
+stops when shutdown begins. Garbage collection and repacking run only when an operator requests
 them.
 
 ## Logs

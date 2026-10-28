@@ -998,7 +998,7 @@ physically reclaimed.
 `POST /api/v1/verify` validates logical metadata and audit history before
 re-hashing every stored blob. It is read-only but can be expensive. Maintenance
 requests serialize against mutations and may run without the ordinary request
-timeout. A new mutation submitted after maintenance is running or queued gets
+timeout. A new mutation submitted while maintenance is running or waiting for in-flight mutations gets
 `503 maintenance_busy`. Retry it after the operator-visible maintenance ends.
 This is a transient refusal, not evidence that the requested mutation committed.
 Treat either `metadata_problems` or blob `problems` as a failed verification.

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"go.kenn.io/kit/backup"
 	"go.kenn.io/kit/packstore"
@@ -148,21 +149,61 @@ func Create(
 	blobs BlobStreamer,
 	opts backup.CreateOptions,
 ) (*backup.Manifest, error) {
+	if strings.HasPrefix(opts.Tag, scheduledTagPrefix) {
+		return nil, ErrReservedScheduledTag
+	}
+	return create(ctx, repo, version, metadata, blobs, opts)
+}
+
+// CreateScheduled captures a recovery point managed by scheduled retention.
+func CreateScheduled(
+	ctx context.Context,
+	repo *backup.Repo,
+	version string,
+	metadata *store.Store,
+	blobs BlobStreamer,
+	opts backup.CreateOptions,
+) (*backup.Manifest, error) {
+	opts.Tag = ScheduledTag(metadata.VaultID())
+	return create(ctx, repo, version, metadata, blobs, opts)
+}
+
+func create(
+	ctx context.Context,
+	repo *backup.Repo,
+	version string,
+	metadata *store.Store,
+	blobs BlobStreamer,
+	opts backup.CreateOptions,
+) (*backup.Manifest, error) {
 	if opts.MetadataSource != nil || opts.ContentSource != nil || opts.DBPath != "" {
 		return nil, errors.New("backupapp: create options must not supply metadata or content sources")
 	}
 	if opts.SQLiteOpener != nil {
 		return nil, errors.New("backupapp: create options must not supply a SQLite opener")
 	}
+	self, err := installationOwner(ctx, metadata)
+	if err != nil {
+		return nil, err
+	}
+	if opts.Freezer == nil {
+		opts.Freezer = backup.NoopFreezeCoordinator{}
+	}
+	opts.Freezer = ownerFence{FreezeCoordinator: opts.Freezer, repo: repo, self: self}
 	opts.MetadataSource = NewMetadataSource(metadata)
 	opts.ContentSource = NewContentSource(blobs)
 	opts.SQLiteOpener = SQLiteOpener(metadata.SQLiteDriver())
+	beforeCaptureLock()
 	manifest, err := backup.Create(ctx, repo, New(version), opts)
 	if err != nil {
 		return nil, fmt.Errorf("backupapp: creating snapshot: %w", err)
 	}
 	return manifest, nil
 }
+
+// beforeCaptureLock lets tests move ownership after a capture starts and
+// before Kit locks the repository.
+var beforeCaptureLock = func() {}
 
 func (a *App) FrozenView(session *backup.FrozenSession) backup.FrozenView {
 	return &frozenView{tx: session.Tx()}

@@ -126,8 +126,9 @@ command, because the daemon already holds it. Instead, an in-process
 Ordinary mutating API handlers take the read side (concurrent with each other).
 `gc --run`/`trash empty`/`verify` take the write side, which gives them the same
 "observe a quiescent vault" guarantee as an exclusive per-command lock. Once
-maintenance is running or queued, a new mutation fails immediately with
-`503 maintenance_busy` rather than blocking. See
+maintenance is running or waiting for in-flight mutations, a new mutation fails
+immediately with `503 maintenance_busy` rather than blocking. Maintenance that
+is still waiting for a backup capture does not refuse mutations. See
 [HTTP API: maintenance gate](http-api.md#maintenance-gate) for the
 request-handling detail.
 

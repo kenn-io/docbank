@@ -15,13 +15,13 @@ import (
 	"golang.org/x/term"
 )
 
-func photoPasscodeTerminal(cmd *cobra.Command) (*os.File, bool) {
+func inputTerminal(cmd *cobra.Command) (*os.File, bool) {
 	file, ok := cmd.InOrStdin().(*os.File)
 	return file, ok && term.IsTerminal(int(file.Fd()))
 }
 
 func readPhotoPasscode(cmd *cobra.Command, input *bufio.Reader, prompt string) (string, error) {
-	if file, ok := photoPasscodeTerminal(cmd); ok {
+	if file, ok := inputTerminal(cmd); ok {
 		_, _ = fmt.Fprint(cmd.ErrOrStderr(), prompt+": ")
 		bytes, err := term.ReadPassword(int(file.Fd()))
 		_, _ = fmt.Fprintln(cmd.ErrOrStderr())
@@ -107,7 +107,7 @@ func init() {
 			}
 			var passcode, next string
 			input := bufio.NewReaderSize(cmd.InOrStdin(), 2048)
-			_, terminal := photoPasscodeTerminal(cmd)
+			_, terminal := inputTerminal(cmd)
 			if action == "setup" {
 				passcode, err = readNewPhotoPasscode(cmd, input, "Passcode", terminal)
 			} else if action != "lock" && action != "reset" {

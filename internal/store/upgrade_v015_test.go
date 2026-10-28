@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	_ "embed"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -92,6 +93,51 @@ func dumpReleasedTable(t *testing.T, q metadataQuerier, table string, out *strin
 		fmt.Fprintf(out, "%s %q\n", table, values)
 	}
 	require.NoError(t, rows.Err())
+}
+
+func TestUpgradeReleasedV0160KeepsPhotoCheckoutState(t *testing.T) {
+	t.Parallel()
+	for _, driver := range v090UpgradeDrivers() {
+		t.Run(driver.name, func(t *testing.T) {
+			ctx := t.Context()
+			path := filepath.Join(t.TempDir(), "docbank.db")
+			db, legacy := newReleasedFixtureStore(t, path, driver.driver, schemaV0160SQL, 41)
+			asset := albumAsset(t, legacy, "photo.jpg")
+			checkout, operation, _, err := legacy.CreatePhotoCheckout(ctx,
+				PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", "directory-identity", 100)
+			require.NoError(t, err)
+			entries, err := legacy.PhotoCheckoutEntries(ctx, checkout.ID)
+			require.NoError(t, err)
+			require.Len(t, entries, 1)
+			require.NoError(t, legacy.PublishPhotoCheckoutEntry(ctx, entries[0], func() (bool, error) { return true, nil }))
+			require.NoError(t, legacy.ObservePhotoCheckoutEntries(ctx, checkout.ID, "directory-identity", []PhotoCheckoutObservation{{
+				FileID: entries[0].FileID, Identity: "file-identity", Hash: entries[0].Hash, Size: entries[0].Size,
+				Mtime: "2026-10-05T12:00:00.000000000Z", Since: "2026-10-05T12:01:00.000000000Z", State: "clean",
+			}}))
+			_, err = legacy.ClaimStorageOperation(ctx, operation.ID)
+			require.NoError(t, err)
+			require.NoError(t, legacy.ClaimPhotoCheckout(ctx, checkout.ID, operation.ID))
+			require.NoError(t, legacy.DeferStorageOperation(ctx, operation.ID, errors.New("waiting for checkout destination")))
+			_, err = legacy.RetirePhotoCheckout(ctx, checkout.ID)
+			require.NoError(t, err)
+			var released strings.Builder
+			for _, table := range []string{"photo_checkouts", "photo_checkout_entries", "storage_operations"} {
+				dumpReleasedTable(t, db, table, &released)
+			}
+			require.NoError(t, db.Close())
+
+			s, err := Open(path, driver.driver)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, s.Close()) }()
+
+			var upgraded strings.Builder
+			for _, table := range []string{"photo_checkouts", "photo_checkout_entries", "storage_operations"} {
+				dumpReleasedTable(t, s.db, table, &upgraded)
+			}
+			assert.Equal(t, released.String(), upgraded.String(), "checkout bindings, observations, and pending work survive the upgrade")
+			require.NoError(t, s.ValidateMetadata(ctx))
+		})
+	}
 }
 
 // seedV0150PendingWork records a photo, consent with a retrying rendition
@@ -222,10 +268,24 @@ func TestEveryReleasedSchemaFixtureUpgrades(t *testing.T) {
 				require.NoError(t, err)
 				_, err = db.Exec(`INSERT INTO saved_query_runs(run_id,saved_query_id,saved_query_revision,query_fingerprint,snapshot_id,member_hash,total,total_bytes,ran_at,expires_at,previous_run_id,previous_member_hash,previous_total,previous_query_fingerprint) VALUES(?,?,1,?,?,?,0,0,?,?,?,?,0,?)`, second, definition.ID, definition.Fingerprint, strings.Repeat("c", 32), strings.Repeat("b", 64), at, at, first, strings.Repeat("b", 64), definition.Fingerprint)
 				require.NoError(t, err)
+				// Backup repository ownership and consent name the installation's
+				// processing incarnation, so an upgrade must keep it.
+				var incarnationTables int
+				require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE name='current_processing_incarnation'`).Scan(&incarnationTables))
+				var incarnation ProcessingIncarnation
+				if incarnationTables == 1 {
+					incarnation, err = legacy.CurrentProcessingIncarnation(t.Context())
+					require.NoError(t, err)
+				}
 				require.NoError(t, db.Close())
 				s, err := Open(path, driver.driver)
 				require.NoError(t, err)
 				defer func() { require.NoError(t, s.Close()) }()
+				if incarnationTables == 1 {
+					current, err := s.CurrentProcessingIncarnation(t.Context())
+					require.NoError(t, err)
+					assert.Equal(t, incarnation, current, "an in-place upgrade keeps the installation identity")
+				}
 				firstRun := persistedSavedQueryRun(t, s, first)
 				secondRun := persistedSavedQueryRun(t, s, second)
 				assert.Equal(t, first, secondRun.PreviousRunID)

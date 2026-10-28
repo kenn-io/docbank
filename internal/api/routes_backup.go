@@ -71,7 +71,36 @@ func registerBackupRoutes(api huma.API, d Deps, g *gate) {
 		if err != nil {
 			return nil, NewError(http.StatusConflict, "backup_repository", err.Error())
 		}
+		if err := backupapp.EnsureRepositoryOwner(ctx, repo, d.Store, false); err != nil {
+			return nil, fromBackupError(err)
+		}
 		return &initOutput{Body: BackupRepository{ID: repo.Config().RepoID, Path: repo.Root()}}, nil
+	})
+
+	type claimOutput struct{ Body backupapp.RepositoryClaim }
+	huma.Register(api, huma.Operation{
+		OperationID: "claimBackupRepository", Method: http.MethodPost, Path: "/api/v1/backup/claim",
+		Summary: "Preview a backup repository claim, or confirm one with the preview's fingerprint",
+	}, func(ctx context.Context, in *struct {
+		Body struct {
+			Repo        string `json:"repo,omitzero"`
+			Fingerprint string `json:"fingerprint,omitzero" minLength:"64" maxLength:"64" doc:"Confirms the claim previewed with this fingerprint"`
+		}
+	}) (*claimOutput, error) {
+		repo, err := openBackupRepository(ctx, d, in.Body.Repo)
+		if err != nil {
+			return nil, err
+		}
+		var claim backupapp.RepositoryClaim
+		if in.Body.Fingerprint == "" {
+			claim, err = backupapp.PreviewRepositoryClaim(ctx, repo, d.Store)
+		} else {
+			claim, err = backupapp.ClaimRepository(ctx, repo, d.Store, in.Body.Fingerprint)
+		}
+		if err != nil {
+			return nil, fromBackupError(err)
+		}
+		return &claimOutput{Body: claim}, nil
 	})
 
 	type createOutput struct{ Body BackupSnapshot }
@@ -341,15 +370,21 @@ func createBackupSnapshot(
 	in backupCreateRequest,
 	progress func(backup.ProgressEvent),
 ) (BackupSnapshot, error) {
-	var manifest *backup.Manifest
-	err := g.capture(func() error {
-		var err error
-		manifest, err = backupapp.Create(ctx, repo, version.Version, d.Store, d.Blobs,
+	return captureBackupSnapshot(ctx, g, func() (*backup.Manifest, error) {
+		return backupapp.Create(ctx, repo, version.Version, d.Store, d.Blobs,
 			backup.CreateOptions{
 				Tag: in.Tag, ZstdLevel: d.Cfg.Backup.ZstdLevel,
 				Freezer: &gateFreezer{gate: g}, ForceUnlock: in.ForceUnlock, Jobs: in.Jobs,
 				Progress: progress,
 			})
+	})
+}
+
+func captureBackupSnapshot(ctx context.Context, g *gate, capture func() (*backup.Manifest, error)) (BackupSnapshot, error) {
+	var manifest *backup.Manifest
+	err := g.CaptureContext(ctx, func() error {
+		var err error
+		manifest, err = capture()
 		return err
 	})
 	if err != nil {
@@ -779,6 +814,9 @@ func backupProblem(err error) *Error {
 	if problem, ok := errors.AsType[*Error](err); ok {
 		return problem
 	}
+	if errors.Is(err, backupapp.ErrReservedScheduledTag) {
+		return NewError(http.StatusUnprocessableEntity, "validation", err.Error())
+	}
 	if unsupported, ok := errors.AsType[*backupapp.UnsupportedCoverageVersionError](err); ok {
 		return NewError(http.StatusUnprocessableEntity, "backup_coverage_unsupported",
 			unsupported.Error()+"; upgrade Docbank to restore this snapshot")
@@ -791,6 +829,15 @@ func backupProblem(err error) *Error {
 	}
 	if errors.Is(err, backup.ErrRepoLocked) {
 		return NewError(http.StatusConflict, "backup_locked", err.Error())
+	}
+	if errors.Is(err, backupapp.ErrRepositoryOwnerConflict) {
+		return NewError(http.StatusConflict, "backup_repository_owner_conflict", err.Error())
+	}
+	if errors.Is(err, backupapp.ErrRepositoryClaimRequired) {
+		return NewError(http.StatusConflict, "backup_repository_claim_required", err.Error())
+	}
+	if errors.Is(err, backupapp.ErrRepositoryClaimChanged) {
+		return NewError(http.StatusConflict, "backup_claim_changed", err.Error())
 	}
 	return NewError(http.StatusInternalServerError, "backup_failed", err.Error())
 }
