@@ -22,15 +22,11 @@ full. The report is `truncated` when either search omitted a match.
 
 Profiles and query bindings are tried in ascending name order until one
 succeeds. A failure that could differ by binding moves on to the next pair:
-missing consent, `processing_profile_unavailable`,
+missing consent, `processing_failed`, `processing_profile_unavailable`,
 `stale_index`, or `not_found` from a binding whose vector index is not built.
 A failure that applies to every binding stops at once. Automatic search uses
 the whole live population, subject to the vector generation size limit.
 When every pair fails, the command reports the first failure reason.
-
-For a nonempty scope with no usable embedding index,
-`answer_question` reports `INCOMPLETE_COVERAGE` with `semantic_unavailable` when
-the search finds no match.
 
 Some requests never try hybrid search and report no degradation:
 

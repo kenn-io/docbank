@@ -27,7 +27,7 @@ func AutomaticSearchCandidates(profiles []api.ProcessingProfileSummary) []Search
 // BindingSearchFailure identifies failures that another binding may avoid.
 func BindingSearchFailure(reason string) bool {
 	switch reason {
-	case "processing_profile_unavailable", "stale_index", "not_found", "processing_consent_required", "processing_consent_expired", "processing_consent_revoked":
+	case "processing_profile_unavailable", "processing_failed", "stale_index", "not_found", "processing_consent_required", "processing_consent_expired", "processing_consent_revoked":
 		return true
 	default:
 		return false
