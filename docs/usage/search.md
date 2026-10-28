@@ -29,6 +29,11 @@ truncates the semantic population; more than 4,096 live versions falls back
 with `scope_too_large`. When every pair fails, the command reports the first
 failure reason.
 
+The `answer_question` MCP tool stops on `processing_failed`, while the CLI retries
+it with the next binding. For a nonempty scope with no usable embedding index,
+`answer_question` reports `INCOMPLETE_COVERAGE` with `semantic_unavailable` when
+the search finds no match.
+
 Some requests never try hybrid search and report no degradation:
 
 - no profile has a query embedding binding, or processing is unavailable
