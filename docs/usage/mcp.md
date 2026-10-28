@@ -394,24 +394,31 @@ retain their existing behavior.
 
 `check_answer` compares a plain-text `answer` with 1–8 saved `citations` on
 stdio and HTTP. Send 1–16,000 Unicode code points, at most 512 figures, and
-512 `[n]` markers. A marker is `[` with one to six digits and `]`, and an index
+512 `[n]` markers. A marker is `[` with one to three digits and `]`, and an index
 outside 1 to the number of citations is unknown. Each citation requires a
-verified read, including duplicates. A figure is a token containing a digit,
+verified read, including duplicates. `[2024]` counts as a figure.
+A figure is a token containing a digit,
 with edge punctuation trimmed. Whitespace, em dashes, horizontal bars, and
 `[ ] ( ) < > | * ~` backtick `=` `;` separate tokens.
 A leading `-` or `−` stays as a sign, and a leading decimal point stays.
 Figures compare exactly across all resolved citations; markers don't scope them.
-Unknown markers, or missing figures when all citations resolve, give `ungrounded`.
-Otherwise, any unavailable citation gives `incomplete`, an answer without figures
-gives `no_figures`, and all figures found gives `grounded`. Other resolver failures
-return tool errors. Results include figures, unknown marker indexes, citation
+The first matching rule determines the verdict:
+
+- Unknown markers, or missing figures when all citations resolve, give `ungrounded`.
+- Any unavailable citation gives `incomplete`.
+- An answer without figures gives `no_figures`.
+- All figures found gives `grounded`.
+
+Other resolver failures return tool errors.
+Results include figures, unknown marker indexes, citation
 statuses, and text digests, with private cache scope and zero TTL.
 `5-year` differs from `5 years`, `1250` from `1,250`, and `$1,250` from `1,250`.
-Case and dash variants differ. Numbered-list numbers count as figures. A cited
+Case and dash variants differ. Numbered-list numbers count as figures. On both sides,
 `1 200` reads as `1200`: single spaces, NBSPs, and narrow NBSPs between
 three-digit groups are removed when the first group has one to three digits
 and follows neither a letter, digit, `-`, `/`, `_`, `.`, nor `,`.
-`Q1 500` and `INV-5 200` stay split. The answer keeps its spaces.
+The last three-digit group must be followed by a non-digit or the end of the text.
+`Q1 500`, `INV-5 200`, `5 2024`, and `1 2000` stay split.
 Both sides undo Markdown punctuation escapes, so a literal
 backslash before punctuation in an unescaped body, such as a plain-text email,
 reads as an escape. Occurrence alone confirms neither the subject nor other

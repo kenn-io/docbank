@@ -30,9 +30,9 @@ type Answer struct {
 	markers []int
 }
 
-var markers = regexp.MustCompile(`\[[0-9]{1,6}\]`)
+var markers = regexp.MustCompile(`\[[0-9]{1,3}\]`)
 var escapes = regexp.MustCompile(`\\([[:punct:]])`)
-var citedGroups = regexp.MustCompile(`(^|[^\pL\pN\-/_.,])\d{1,3}([ \x{00a0}\x{202f}]\d{3})+`)
+var groups = regexp.MustCompile(`(^|[^\pL\pN\-/_.,])\d{1,3}([ \x{00a0}\x{202f}]\d{3})+\d*`)
 
 func edge(r rune) bool {
 	return !unicode.IsLetter(r) && !unicode.IsDigit(r) && !unicode.IsMark(r) && !unicode.Is(unicode.Sc, r) && r != '%'
@@ -56,14 +56,17 @@ func trim(rs []rune) string {
 }
 
 func extract(text string) []string {
-	rs := []rune(escapes.ReplaceAllString(text, "$1"))
-	figures := []string{}
-	for i := 0; i < len(rs); i++ {
-		start := i
-		for i < len(rs) && !split(rs[i]) {
-			i++
+	text = groups.ReplaceAllStringFunc(escapes.ReplaceAllString(text, "$1"), func(m string) string {
+		i := strings.IndexAny(m, "0123456789")
+		parts := strings.Fields(m[i:])
+		if len(parts[len(parts)-1]) != 3 {
+			return m
 		}
-		if value := trim(rs[start:i]); strings.ContainsFunc(value, unicode.IsDigit) {
+		return m[:i] + strings.Join(parts, "")
+	})
+	figures := []string{}
+	for _, token := range strings.FieldsFunc(text, split) {
+		if value := trim([]rune(token)); strings.ContainsFunc(value, unicode.IsDigit) {
 			figures = append(figures, value)
 		}
 	}
@@ -89,11 +92,7 @@ func (a Answer) Check(citations []Citation) Report {
 		status := c.Err
 		if status == "" {
 			status = "resolved"
-			text := citedGroups.ReplaceAllStringFunc(c.Text, func(m string) string {
-				i := strings.IndexAny(m, "0123456789")
-				return m[:i] + strings.Join(strings.Fields(m[i:]), "")
-			})
-			for _, value := range extract(text) {
+			for _, value := range extract(c.Text) {
 				values[value] = true
 			}
 		} else {

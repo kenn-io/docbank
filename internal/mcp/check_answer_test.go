@@ -53,6 +53,7 @@ func TestCheckAnswerRejectsInvalidBeforeAcquisition(t *testing.T) {
 		{"answer": "", "citations": []any{citationMCPArguments()}},
 		{"answer": strings.Repeat("x", 16001), "citations": []any{citationMCPArguments()}},
 		{"answer": "7", "citations": []any{}},
+		{"answer": "7", "citations": []any{citationMCPArguments(), citationMCPArguments(), citationMCPArguments(), citationMCPArguments(), citationMCPArguments(), citationMCPArguments(), citationMCPArguments(), citationMCPArguments(), citationMCPArguments()}},
 		{"answer": strings.Repeat("[1] ", 513), "citations": []any{citationMCPArguments()}},
 		{"answer": "7", "citations": []any{invalidCitation}},
 		{"answer": "7", "citations": []any{citationMCPArguments()}, "extra": true},
