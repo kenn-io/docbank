@@ -826,7 +826,7 @@ trust_boundary = "local_process"
     await expect(page.getByText("Moved “quarterly-tax-report.txt” to trash")).toBeVisible();
     await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Recoverable trash" }).click();
-    const trash = page.getByRole("dialog", { name: "Recoverable trash" });
+    const trash = page.getByRole("main", { name: "Trash" });
     await expect(trash).toContainText("quarterly-tax-report.txt");
     await trash.getByRole("button", { name: "Restore" }).click();
     await expect(page.getByText("Restored to /Reports")).toBeVisible();

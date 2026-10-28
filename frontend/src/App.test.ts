@@ -2148,6 +2148,51 @@ it("persists a vault-scoped tag binding and applies it only to the inspected fil
   );
 });
 
+it("blocks hidden document actions on the Imports page", async () => {
+  prepareKeyboardApp();
+  const backend = installKeyboardBackend();
+  const fetchMock = vi.mocked(globalThis.fetch);
+  const original = fetchMock.getMockImplementation()!;
+  fetchMock.mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (/^\/api\/v1\/(saved-queries|search-exports|collections|trash)\?/.test(url))
+      return Response.json({ items: [], total: 0, limit: 100, offset: 0 });
+    return original(input, init);
+  });
+  render(App);
+  await screen.findByLabelText("Document details for zeta.txt");
+  await configureFirstTagHotkey();
+  await fireEvent.click(screen.getByRole("checkbox", { name: "Select zeta.txt" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Imports" }));
+  const page = await screen.findByRole("main", { name: "Imports" });
+  const heading = within(page).getByRole("heading", { name: "Imports", level: 1 });
+  for (const key of "0123456789") await fireEvent.keyDown(heading, { key });
+  expect(backend.writes).toEqual([]);
+
+  for (const key of ["j", "k", " ", "Escape"]) {
+    await fireEvent.keyDown(screen.getByRole("heading", { name: "Imports", level: 1 }), { key });
+    history.back();
+    await waitFor(() => expect(location.pathname).toBe("/"));
+    expect(await screen.findByLabelText("Document details for zeta.txt")).toBeTruthy();
+    expect(
+      (screen.getByRole("checkbox", { name: "Select zeta.txt" }) as HTMLInputElement).checked,
+    ).toBe(true);
+    await fireEvent.click(screen.getByRole("button", { name: "Imports" }));
+    await screen.findByRole("main", { name: "Imports" });
+  }
+
+  history.back();
+  await waitFor(() => expect(location.pathname).toBe("/"));
+  await fireEvent.click(await screen.findByRole("cell", { name: "Reports" }));
+  await screen.findByLabelText("Folder details for Reports");
+  await fireEvent.click(screen.getByRole("button", { name: "Imports" }));
+  const currentPage = await screen.findByRole("main", { name: "Imports" });
+  await fireEvent.keyDown(within(currentPage).getByRole("heading", { name: "Imports", level: 1 }), {
+    key: "Enter",
+  });
+  expect(backend.getReportsReads()).toBe(0);
+});
+
 it.each(["Albums", "Map", "People"])(
   "blocks Documents tag shortcuts on the Photos %s view",
   async (view) => {

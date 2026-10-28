@@ -82,7 +82,7 @@ test("import collections, label conflicts and stable document navigation", async
       throw new Error("Synthetic browser navigation failed");
     });
     await page.getByRole("button", { name: "Imports", exact: true }).click();
-    const drawer = page.getByRole("dialog", { name: "Imports" });
+    const drawer = page.getByRole("main", { name: "Imports" }).first();
     await drawer
       .getByRole("button", { name: "Browse import Discovery batch", exact: true })
       .click();

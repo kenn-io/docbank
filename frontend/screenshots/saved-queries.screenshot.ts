@@ -51,7 +51,7 @@ test("saved queries and literal highlight management", async ({ page }) => {
       .getByRole("dialog", { name: "Filters and sort" })
       .getByRole("button", { name: "Save…" })
       .click();
-    const drawer = page.getByRole("dialog", { name: "Searches" });
+    let drawer = page.getByRole("dialog", { name: "Searches" });
     await expect(drawer).toBeVisible();
     await drawer.getByLabel("Definition name").fill("Unreviewed proposals");
     await drawer
@@ -87,6 +87,11 @@ test("saved queries and literal highlight management", async ({ page }) => {
       updatedQuery,
     );
     expect(page.url()).toBe(savedURL.href);
+    await drawer.getByRole("button", { name: "Close", exact: true }).click();
+    await page.getByRole("button", { name: "Searches", exact: true }).click();
+    drawer = page.getByRole("main", { name: "Searches" });
+    await drawer.getByRole("button", { name: "Rename Proposal review", exact: true }).click();
+    await drawer.getByText("Edit as JSON", { exact: true }).click();
     await drawer.getByLabel("Complete query JSON").scrollIntoViewIfNeeded();
     await drawer.getByLabel("Complete query JSON").evaluate((editor) => {
       editor.scrollTop = 0;
@@ -109,7 +114,7 @@ test("saved queries and literal highlight management", async ({ page }) => {
     await expect(
       drawer.getByRole("button", { name: "Rename Proposal terms", exact: true }),
     ).toHaveCount(0);
-    await drawer.getByRole("button", { name: "Close", exact: true }).click();
+    await page.getByRole("button", { name: "All files", exact: true }).click();
     await page.getByRole("button", { name: "Lock web session" }).click();
     await expect(page.getByText("Open your Docbank", { exact: true })).toBeVisible();
     expect(new URL(page.url()).hash).toBe("");

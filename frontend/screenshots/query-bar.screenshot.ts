@@ -45,7 +45,7 @@ test("complete query validation uses the real compiler without executing", async
     await run("add", path.join(workspace, "manual.txt"), "--dest", "/");
     await page.goto(await run("web", "--no-browser"));
     await page.getByRole("button", { name: "Imports", exact: true }).click();
-    const collections = page.getByRole("dialog", { name: "Imports" });
+    const collections = page.getByRole("main", { name: "Imports" });
     await collections
       .getByRole("button", { name: /Browse import/ })
       .first()
