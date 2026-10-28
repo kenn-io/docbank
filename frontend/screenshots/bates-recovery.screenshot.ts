@@ -16,6 +16,7 @@ const exec = promisify(execFile);
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const captures = process.env.DOCBANK_BATES_RECOVERY_SCREENSHOT_DIR;
 test.skip(!captures, "DOCBANK_BATES_RECOVERY_SCREENSHOT_DIR enables retained PDF recovery");
+test.use({ reducedMotion: "reduce" });
 
 test("recovers a numbered PDF through Productions after a renderer-free restart", async ({
   page,
@@ -172,6 +173,9 @@ test("recovers a numbered PDF through Productions after a renderer-free restart"
     await expect(entry).toBeVisible();
     await entry.click();
     const drawer = page.getByRole("dialog", { name: "Productions", exact: true });
+    await expect(drawer.getByRole("button", { name: "Find", exact: true })).toBeDisabled();
+    await drawer.getByRole("textbox", { name: "Bates number" }).press("Enter");
+    await expect(drawer.getByRole("list", { name: "Productions" })).toBeVisible();
     await drawer.getByRole("textbox", { name: "Bates number" }).fill("QUAL000002");
     const lookup = page.waitForResponse(
       (response) => new URL(response.url()).pathname === "/api/v1/bates/exports/candidates",
@@ -186,23 +190,39 @@ test("recovers a numbered PDF through Productions after a renderer-free restart"
     expect(found.items[0]!.allocation_id).toBe(reservation.allocation_id);
     expect(found.items[0]!.evidence[0]!.output_page).toBe(2);
     const results = drawer.getByRole("list", { name: "Matching productions" });
-    await expect(results.getByText("Page 2 of 2", { exact: true })).toBeVisible();
-    await expect(results.locator("details[open]")).toHaveCount(0);
+    await expect(results.locator("summary")).toContainText("Page 2 of 2");
+    await expect(results.locator("details[open]")).toHaveCount(1);
+    await expect(results.getByText("Numbered redaction", { exact: true })).toBeVisible();
+    await expect(results.getByText("QUAL000001–QUAL000002", { exact: true })).toBeVisible();
+    await expect(results.getByRole("button", { name: "Refresh receipt" })).toHaveCount(0);
     await page.evaluate(() => document.fonts.ready);
+    const columns = await results
+      .locator("dl dd")
+      .evaluateAll((values) => values.map((value) => value.getBoundingClientRect().left));
+    expect(new Set(columns).size).toBe(1);
+    await results.locator("summary").evaluate(async (summary) => {
+      await Promise.all(
+        summary.getAnimations({ subtree: true }).map((animation) => animation.finished),
+      );
+    });
+    await page.screenshot({
+      path: path.join(captures!, "numbered-recovery-details.png"),
+      fullPage: true,
+      animations: "disabled",
+    });
+    await results.locator("summary").click();
+    await expect(results.locator("details[open]")).toHaveCount(0);
+    await results.locator("summary").evaluate(async (summary) => {
+      await Promise.all(
+        summary.getAnimations({ subtree: true }).map((animation) => animation.finished),
+      );
+    });
     await page.screenshot({
       path: path.join(captures!, "numbered-recovery-collapsed.png"),
       fullPage: true,
       animations: "disabled",
     });
     await results.locator("summary").click();
-    await expect(results.getByText("Numbered redaction", { exact: true })).toBeVisible();
-    await expect(results.getByText("QUAL", { exact: true })).toBeVisible();
-    await expect(results.getByText("None", { exact: true })).toBeVisible();
-    await page.screenshot({
-      path: path.join(captures!, "numbered-recovery-details.png"),
-      fullPage: true,
-      animations: "disabled",
-    });
     const downloadEvent = page.waitForEvent("download");
     await results.getByRole("button", { name: "Download PDF", exact: true }).click();
     const download = await downloadEvent;
@@ -215,6 +235,9 @@ test("recovers a numbered PDF through Productions after a renderer-free restart"
     await drawer.getByRole("textbox", { name: "Bates number" }).fill("MISSING000001");
     await drawer.getByRole("button", { name: "Find", exact: true }).click();
     await expect(drawer.getByText("No retained PDF matches “MISSING000001”.")).toBeVisible();
+    await expect(
+      drawer.getByText("Numbers must match exactly, including prefix and leading zeros."),
+    ).toBeVisible();
     await page.screenshot({
       path: path.join(captures!, "numbered-recovery-empty.png"),
       fullPage: true,

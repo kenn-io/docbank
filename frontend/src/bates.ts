@@ -380,16 +380,17 @@ export interface BatesRecoveryDetail {
   namespace: BatesNamespace;
 }
 
+export function validBatesLabel(label: string): boolean {
+  return label.length > 0 && [...label].length <= 266;
+}
+
 export async function findBatesExportsByLabel(
   session: string,
   label: string,
   signal?: AbortSignal,
   cursor?: string,
 ): Promise<BatesCandidatePage> {
-  valid(
-    label.length > 0 && [...label].length <= 266,
-    "Enter an exact Bates number, up to 266 characters.",
-  );
+  valid(validBatesLabel(label), "Enter an exact Bates number, up to 266 characters.");
   const page = record(
     await generated.findBatesExports(
       { bates_label: label, limit: 50, ...(cursor ? { cursor } : {}) },

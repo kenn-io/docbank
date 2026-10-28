@@ -330,13 +330,13 @@ again, even if the export was abandoned.
 
 Open **Productions** in the Documents sidebar, enter the exact **Bates number**,
 and choose **Find**. Matching is case-sensitive and preserves spaces and leading
-zeroes. Each result shows its matching page and publication time. Choose **Load
-more** when another page of results is available; **Clear** returns to the full
-production list.
+zeroes. A warning identifies leading or trailing spaces without removing them.
+Each result shows its matching page, publication time and PDF size. Choose
+**Load more** for another page of results; **Clear** returns to the full list.
 
-Expand a result to see its delivery kind, namespace prefix and suffix, allocation,
-size and SHA-256. The same printed number can identify different deliveries, so
-check these details before choosing **Download PDF**.
+A single match opens automatically. Expand other results to see the delivery
+kind, Bates range, SHA-256 and allocation reference. The same printed number can
+identify different deliveries, so check these details before **Download PDF**.
 
 Recovery works after restart without the review files or a configured page
 renderer. Downloads check file integrity against the retained record; they do not

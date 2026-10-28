@@ -454,14 +454,12 @@
     {#if error}<p class="tool-error" role="alert">{error}</p>{/if}
 
     {#if mode === "productions"}
-      <BatesRecovery
-        {session}
-        bind:active={recoveryActive}
-        onauthfailure={(cause) => {
-          unauthorized(cause);
-        }}
-      >
-        {#snippet children(receipt)}{@render exportCard(receipt, "")}{/snippet}
+      <BatesRecovery {session} bind:active={recoveryActive} {unauthorized}>
+        {#snippet children(receipt)}
+          <Button tone="info" surface="solid" disabled={busy} onclick={() => void download(receipt)}
+            >Download PDF</Button
+          >
+        {/snippet}
       </BatesRecovery>
       {#if !recoveryActive}
         {#if !loading && !error && !historyError && !packages.length && !history.length}

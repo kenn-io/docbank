@@ -3,11 +3,11 @@
   import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
   import { Button, Spinner, TextInput } from "@kenn-io/kit-ui";
   import InspectorDetails from "./InspectorDetails.svelte";
-  import { APIError } from "./api-transport.js";
-  import { formatDate } from "./format.js";
+  import { formatBytes, formatDate } from "./format.js";
   import {
     findBatesExportsByLabel,
     readBatesRecoveryDetail,
+    validBatesLabel,
     type BatesCandidate,
     type BatesExport,
     type BatesRecoveryDetail,
@@ -16,10 +16,10 @@
   interface Props {
     session: string;
     active: boolean;
-    onauthfailure: (cause: unknown) => void;
+    unauthorized: (cause: unknown) => boolean;
     children: Snippet<[BatesExport]>;
   }
-  let { session, active = $bindable(false), onauthfailure, children }: Props = $props();
+  let { session, active = $bindable(false), unauthorized, children }: Props = $props();
   let input = $state("");
   let submitted = $state("");
   let items = $state<BatesCandidate[]>([]);
@@ -31,18 +31,20 @@
   let nextCursor = $state("");
   let restart = $state(false);
   let controller = new AbortController();
-  let seenCursors = new Set<string>();
+  const canSearch = $derived(validBatesLabel(input));
 
   $effect(() => {
     void session;
     clear();
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      active = false;
+    };
   });
 
   function clear() {
     controller.abort();
     controller = new AbortController();
-    seenCursors = new Set();
     input = submitted = error = nextCursor = "";
     items = [];
     details = {};
@@ -51,15 +53,16 @@
     active = loading = restart = false;
   }
 
-  function failure(cause: unknown): string {
-    if (cause instanceof APIError && cause.status === 401) {
-      onauthfailure(cause);
-      return "";
+  function failure(cause: unknown): string | undefined {
+    if (unauthorized(cause)) {
+      controller.abort();
+      return;
     }
     return cause instanceof Error ? cause.message : String(cause);
   }
 
   function search(label: string) {
+    if (!validBatesLabel(label)) return;
     clear();
     input = submitted = label;
     active = true;
@@ -74,10 +77,6 @@
     try {
       const page = await findBatesExportsByLabel(session, submitted, request.signal, cursor);
       if (request.signal.aborted) return;
-      if (page.next_cursor && seenCursors.has(page.next_cursor)) {
-        throw new Error("The result cursor did not advance. Search again.");
-      }
-      if (page.next_cursor) seenCursors.add(page.next_cursor);
       const ids = new Set(items.map((item) => item.artifact_id));
       items = [
         ...items,
@@ -88,9 +87,12 @@
         }),
       ];
       nextCursor = page.next_cursor ?? "";
+      if (!cursor && items.length === 1 && !nextCursor) void expand(items[0]!);
     } catch (cause) {
       if (request.signal.aborted) return;
-      error = failure(cause);
+      const message = failure(cause);
+      if (message === undefined) return;
+      error = message;
       restart = true;
       nextCursor = "";
     } finally {
@@ -108,7 +110,9 @@
       const detail = await readBatesRecoveryDetail(session, item, request.signal);
       if (!request.signal.aborted) details[id] = detail;
     } catch (cause) {
-      if (!request.signal.aborted) detailErrors[id] = failure(cause);
+      if (request.signal.aborted) return;
+      const message = failure(cause);
+      if (message !== undefined) detailErrors[id] = message;
     } finally {
       if (!request.signal.aborted) pending[id] = false;
     }
@@ -126,10 +130,14 @@
       <label for="bates-number">Bates number</label>
       <TextInput id="bates-number" ariaLabel="Bates number" bind:value={input} block />
     </div>
-    <Button type="submit" tone="info" surface="solid">Find</Button>
+    <Button type="submit" tone="info" surface="solid" disabled={!canSearch}>Find</Button>
     {#if active}<Button onclick={clear}>Clear</Button>{/if}
   </form>
-  {#if loading}<p class="tool-muted" role="status">
+  {#if input && !canSearch}<p class="tool-muted">Use at most 266 characters.</p>{/if}
+  {#if input !== input.trim()}<p class="tool-muted">
+      Leading or trailing spaces are included in the search.
+    </p>{/if}
+  {#if loading && !nextCursor}<p class="tool-muted" role="status">
       <Spinner size={14} /> Finding productions…
     </p>{/if}
   {#if error}<p class="tool-error" role="alert">{error}</p>{/if}
@@ -138,6 +146,7 @@
     </div>{/if}
   {#if active && !loading && !error && !items.length}
     <p class="tool-muted" role="status">No retained PDF matches “{submitted}”.</p>
+    <p class="tool-muted">Numbers must match exactly, including prefix and leading zeros.</p>
   {/if}
   {#if items.length}
     <ul class="tool-list" aria-label="Matching productions">
@@ -145,16 +154,17 @@
         <li>
           <details
             class="tool-disclosure"
+            open={items.length === 1 && !nextCursor}
             ontoggle={(event) => {
               if (event.currentTarget.open) void expand(item);
             }}
           >
             <summary>
               <ChevronRightIcon size={14} aria-hidden="true" />
-              <span class="number">{submitted}<small>{formatDate(item.created_at)}</small></span>
-              <span class="tool-muted"
-                >Page {item.evidence.map((e) => e.output_page).join(", ")} of {item.page_count}</span
-              >
+              <span class="result-title">
+                Page {item.evidence.map((e) => e.output_page).join(", ")} of {item.page_count}
+                <small>{formatDate(item.created_at)} · {formatBytes(item.size)}</small>
+              </span>
             </summary>
             <div class="recovery-details">
               {#if item.evidence_truncated}<p class="tool-muted">
@@ -172,23 +182,23 @@
                 <InspectorDetails
                   facts={[
                     { label: "Delivery", value: detail.kind },
+                    {
+                      label: "Bates range",
+                      value: `${detail.receipt.pages[0]!.label}–${detail.receipt.pages.at(-1)!.label}`,
+                    },
+                    { label: "PDF SHA-256", value: detail.receipt.blob_sha256, copy: true },
                     { label: "Allocation", value: item.allocation_id, copy: true },
                   ]}
                 />
-                <dl class="namespace">
-                  <div>
-                    <dt>Prefix</dt>
-                    <dd>{detail.namespace.prefix || "None"}</dd>
-                  </div>
-                  <div>
-                    <dt>Suffix</dt>
-                    <dd>{detail.namespace.suffix || "None"}</dd>
-                  </div>
-                </dl>
-                {@render children(detail.receipt)}
-                {#if detail.kind === "Numbered redaction"}
-                  <p class="tool-muted">Masks and approved text are not rechecked on download.</p>
-                {/if}
+                <div class="recovery-actions">
+                  {@render children(detail.receipt)}
+                  <p class="tool-muted">
+                    Download checked against its retained record{detail.kind ===
+                    "Numbered redaction"
+                      ? "; masks and approved text aren’t rechecked."
+                      : "."}
+                  </p>
+                </div>
               {/if}
             </div>
           </details>
@@ -197,7 +207,10 @@
     </ul>
   {/if}
   {#if nextCursor}<div class="tool-actions">
-      <Button disabled={loading} onclick={() => void loadPage(nextCursor)}>Load more</Button>
+      <Button disabled={loading} onclick={() => void loadPage(nextCursor)}>
+        {#if loading}<span aria-hidden="true"><Spinner size={14} /></span> Loading more…{:else}Load
+          more{/if}
+      </Button>
     </div>{/if}
 </section>
 
@@ -221,13 +234,13 @@
   summary {
     gap: var(--space-4);
   }
-  .number {
+  .result-title {
     flex: 1;
     min-width: 0;
     overflow-wrap: anywhere;
     white-space: pre-wrap;
   }
-  .number small {
+  .result-title small {
     display: block;
     color: var(--text-muted);
   }
@@ -236,19 +249,12 @@
     gap: var(--space-5);
     padding: var(--space-5);
   }
-  .namespace {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
+  .recovery-actions {
+    display: flex;
+    align-items: center;
     gap: var(--space-4);
-    margin: 0;
   }
-  dt {
-    color: var(--text-muted);
-    font-size: var(--font-size-sm);
-  }
-  dd {
+  .recovery-actions p {
     margin: 0;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
   }
 </style>
