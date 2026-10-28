@@ -39,8 +39,8 @@ func checkAnswer(ctx context.Context, lease *daemonLease, raw []byte) (checkAnsw
 	}
 	resolved, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) ([]grounding.Citation, error) {
 		result := make([]grounding.Citation, 0, len(input.Citations))
-		for i, citation := range input.Citations {
-			entry := grounding.Citation{Index: i + 1}
+		for _, citation := range input.Citations {
+			var entry grounding.Citation
 			quote, err := c.ResolveTextCitation(ctx, citation)
 			if err != nil {
 				code, _ := stableDomainError(err)

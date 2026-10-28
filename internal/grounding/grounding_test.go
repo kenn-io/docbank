@@ -44,7 +44,7 @@ func TestGrounding(t *testing.T) {
 		{"marker separates figures", "5[1]6", "5 6", "grounded", "found", []string{"5", "6"}},
 		{"em dash separates", "$1,250—matching", "$1,250", "grounded", "found", []string{"$1,250"}},
 		{"horizontal bar separates", "$1,250―matching", "$1,250", "grounded", "found", []string{"$1,250"}},
-		{"bare URL", "https://example.com/2024", "2024", "ungrounded", "missing", []string{"example.com/2024"}},
+		{"bare URL", "https://example.com/2024", "2024", "ungrounded", "missing", []string{"https://example.com/2024"}},
 		{"URL Unicode boundary", "https://example.com/invoice\u00a0$1,250 [1]", "$1,205", "ungrounded", "missing", []string{"$1,250"}},
 		{"cited brackets", "20", "Reference [20]", "grounded", "found", []string{"20"}},
 		{"unknown marker", "20 [2]", "20", "ungrounded", "found", []string{"20"}},
@@ -66,7 +66,7 @@ func TestGrounding(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			a, err := Prepare(tc.answer)
 			require.NoError(t, err)
-			report := a.Check([]Citation{{Index: 1, Text: tc.source, TextSHA256: "digest"}})
+			report := a.Check([]Citation{{Text: tc.source, TextSHA256: "digest"}})
 			require.Equal(t, tc.status, report.Status)
 			figures := []Figure{}
 			for _, value := range tc.figures {
@@ -102,7 +102,7 @@ func TestGrounding(t *testing.T) {
 		} {
 			a, err := Prepare(tc.answer)
 			require.NoError(t, err)
-			report := a.Check([]Citation{{Index: 1, Text: "20"}, {Index: 2, Err: "citation_unavailable"}})
+			report := a.Check([]Citation{{Text: "20"}, {Err: "citation_unavailable"}})
 			require.Equal(t, tc.status, report.Status)
 			require.Equal(t, CitationResult{Index: 2, Status: "citation_unavailable"}, report.Citations[1])
 		}
@@ -120,7 +120,7 @@ func TestGrounding(t *testing.T) {
 		require.NoError(t, err)
 		citations := make([]Citation, 8)
 		for i := range citations {
-			citations[i] = Citation{Index: i + 1, Text: "1" + strings.Repeat(",200", 3999)}
+			citations[i] = Citation{Text: "1" + strings.Repeat(",200", 3999)}
 		}
 		report := a.Check(citations)
 		require.Equal(t, "ungrounded", report.Status)

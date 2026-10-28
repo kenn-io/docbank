@@ -9,10 +9,7 @@ import (
 	"unicode"
 )
 
-type Citation struct {
-	Index                 int
-	Text, Err, TextSHA256 string
-}
+type Citation struct{ Text, Err, TextSHA256 string }
 type CitationResult struct {
 	Index      int    `json:"index"`
 	Status     string `json:"status"`
@@ -33,55 +30,72 @@ type Answer struct {
 	markers []int
 }
 
-var markers = regexp.MustCompile(`\[[0-9]{1,2}\]`)
+var markers = regexp.MustCompile(`\[[0-9]{1,6}\]`)
 var escapes = regexp.MustCompile(`\\([[:punct:]])`)
 
 func edge(r rune) bool {
 	return !unicode.IsLetter(r) && !unicode.IsDigit(r) && !unicode.IsMark(r) && !unicode.Is(unicode.Sc, r) && r != '%'
 }
-func split(r rune) bool { return unicode.IsSpace(r) || r == '\u2014' || r == '\u2015' }
+
+// delimiters never occur inside a figure; they cover dashes and Markdown and HTML syntax.
+const delimiters = "\u2014\u2015[]()<>|*~`=;"
+
+func split(r rune) bool    { return unicode.IsSpace(r) || strings.ContainsRune(delimiters, r) }
+func grouping(r rune) bool { return r == ' ' || r == '\u00a0' || r == '\u202f' }
+
+// amount returns the trailing digit count of a token that so far holds only digits after an
+// optional leading sign or currency symbol, or -1 once it holds anything else.
+func amount(n int, r rune, first bool) int {
+	switch {
+	case n >= 0 && unicode.IsDigit(r):
+		return n + 1
+	case first && (strings.ContainsRune("+-\u2212", r) || unicode.Is(unicode.Sc, r)):
+		return 0
+	}
+	return -1
+}
+
+// group reports exactly three digits starting at i.
+func group(rs []rune, i int) bool {
+	n := 0
+	for i+n < len(rs) && n < 4 && unicode.IsDigit(rs[i+n]) {
+		n++
+	}
+	return n == 3
+}
+
+// trim drops edge punctuation, keeping a sign or decimal point before a digit or currency symbol.
+func trim(token []rune) string {
+	for len(token) > 0 && edge(token[0]) {
+		if strings.ContainsRune("-.\u2212", token[0]) && len(token) > 1 && (unicode.IsDigit(token[1]) || unicode.Is(unicode.Sc, token[1])) {
+			break
+		}
+		token = token[1:]
+	}
+	return strings.TrimRightFunc(string(token), edge)
+}
 
 func extract(text string) []string {
 	rs := []rune(escapes.ReplaceAllString(text, "$1"))
 	figures := []string{}
-	for i := 0; i < len(rs); {
-		start, digits := i, 0
-		for i < len(rs) {
+	for i := 0; i < len(rs); i++ {
+		start, n := i, 0
+		for ; i < len(rs); i++ {
 			r := rs[i]
-			if (r == '-' || r == '/') && i+1 < len(rs) && unicode.IsLower(rs[i+1]) {
+			// A single grouping space joins a three-digit group to an amount.
+			if grouping(r) && n >= 1 && n <= 3 && group(rs, i+1) {
+				i, n = i+3, 3
+				continue
+			}
+			// A - or / before a lowercase letter ends an amount, as in 5-year.
+			if split(r) || n > 0 && (r == '-' || r == '/') && i+1 < len(rs) && unicode.IsLower(rs[i+1]) {
 				break
 			}
-			if split(r) {
-				// Only a single grouping space can join a three-digit group.
-				end := i + 1
-				for end < len(rs) && end < i+5 && unicode.IsDigit(rs[end]) {
-					end++
-				}
-				if (r == ' ' || r == '\u00a0' || r == '\u202f') && digits >= 1 && digits <= 3 && end == i+4 {
-					i, digits = end, 3
-					continue
-				}
-				break
-			}
-			if unicode.IsDigit(r) {
-				digits++
-			} else {
-				digits = 0
-			}
-			i++
+			n = amount(n, r, i == start)
 		}
-		token := rs[start:i]
-		for len(token) > 0 && edge(token[0]) {
-			if (token[0] == '-' || token[0] == '.') && len(token) > 1 && (unicode.IsDigit(token[1]) || unicode.Is(unicode.Sc, token[1])) {
-				break
-			}
-			token = token[1:]
-		}
-		value := strings.TrimRightFunc(string(token), edge)
-		if strings.ContainsFunc(value, unicode.IsDigit) {
+		if value := trim(rs[start:i]); strings.ContainsFunc(value, unicode.IsDigit) {
 			figures = append(figures, value)
 		}
-		i++
 	}
 	return figures
 }
@@ -101,7 +115,7 @@ func Prepare(answer string) (Answer, error) {
 func (a Answer) Check(citations []Citation) Report {
 	report := Report{Citations: []CitationResult{}, Figures: []Figure{}, UnknownMarkers: []int{}}
 	values, unavailable := map[string]bool{}, false
-	for _, c := range citations {
+	for i, c := range citations {
 		status := c.Err
 		if status == "" {
 			status = "resolved"
@@ -111,7 +125,7 @@ func (a Answer) Check(citations []Citation) Report {
 		} else {
 			unavailable = true
 		}
-		report.Citations = append(report.Citations, CitationResult{Index: c.Index, Status: status, TextSHA256: c.TextSHA256})
+		report.Citations = append(report.Citations, CitationResult{Index: i + 1, Status: status, TextSHA256: c.TextSHA256})
 	}
 	missing := false
 	for _, value := range a.figures {
