@@ -536,6 +536,13 @@ func effectiveSearchMode(mode string) string {
 	return mode
 }
 
+func effectiveEmptySearchMode(mode string) string {
+	if effectiveSearchMode(mode) == "auto" {
+		return "lexical"
+	}
+	return mode
+}
+
 type getDocumentInput struct {
 	NodeID           int64  `json:"node_id"`
 	ContentVersionID string `json:"content_version_id"`

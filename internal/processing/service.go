@@ -1586,6 +1586,9 @@ func (service *Service) ResolveSourceFence(
 }
 
 func (service *Service) Search(ctx context.Context, request SearchRequest) (retrieval.Report, error) {
+	if err := ctx.Err(); err != nil {
+		return retrieval.Report{}, err
+	}
 	explicit := request.Fence.VaultUID != "" || len(request.Fence.ContentVersionIDs) != 0
 	if explicit == (request.AllLive != nil) {
 		return retrieval.Report{}, fmt.Errorf("%w: select exactly one request mode", store.ErrInvalidProcessingSourceFence)
@@ -2081,13 +2084,21 @@ func selectDocumentSearchBinding(profile document.ProcessingProfileV1,
 	return document.EmbeddingBindingV1{}, fmt.Errorf("embedding binding %q: %w", name, store.ErrNotFound)
 }
 
-func (service *Service) profileFence(name string, fence SourceFence) (configuredProfile, []string, error) {
+func (service *Service) profileForFence(name string, fence SourceFence) (configuredProfile, error) {
 	profile, ok := service.profiles[name]
 	if !ok {
-		return configuredProfile{}, nil, ErrProfileNotConfigured
+		return configuredProfile{}, ErrProfileNotConfigured
 	}
 	if fence.VaultUID != service.catalog.VaultID() {
-		return configuredProfile{}, nil, ErrForeignVault
+		return configuredProfile{}, ErrForeignVault
+	}
+	return profile, nil
+}
+
+func (service *Service) profileFence(name string, fence SourceFence) (configuredProfile, []string, error) {
+	profile, err := service.profileForFence(name, fence)
+	if err != nil {
+		return configuredProfile{}, nil, err
 	}
 	ids, err := normalizeFenceIDs(fence.ContentVersionIDs)
 	return profile, ids, err

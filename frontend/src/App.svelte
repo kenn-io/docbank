@@ -2133,6 +2133,7 @@
           request,
           preferredSelectedID,
           refreshing,
+          submitted,
           session,
           controller.signal,
         );
@@ -2142,6 +2143,25 @@
       }
       const mapped = naturalSearchRequest(mode, profile);
       if (!mapped) throw new Error(`${mode} search requires an embedding binding.`);
+      const nameReport = await generated.search(
+        {
+          q: query,
+          limit: 1000,
+          skip_miss_log: true,
+          ...(requestedTagID ? { tag_id: requestedTagID } : {}),
+        },
+        { session, signal: controller.signal },
+      );
+      if (request !== generation || session !== webSession || controller.signal.aborted) return;
+      if ((nameReport.tag_id ?? "") !== requestedTagID)
+        throw new Error("Search results did not honor the selected tag filter.");
+      const nameRows: Row[] = nameReport.hits
+        .filter((hit) => hit.match === "name")
+        .map((hit) => ({
+          node: hit.node,
+          path: hit.path,
+          match: hit.match,
+        }));
       const baseRequest: generated.DocumentSearchRequest = {
         query,
         mode: mapped.mode,
@@ -2153,6 +2173,7 @@
           ...(requestedTagID ? { filters: { tag_id: requestedTagID } } : {}),
         },
         explain: true,
+        skip_miss_log: !submitted || nameRows.length > 0,
       };
       const baseReport = await documentSearch(session, baseRequest, controller.signal);
       if (request !== generation || session !== webSession || controller.signal.aborted) return;
@@ -2166,20 +2187,6 @@
         nodes,
       );
       if (request !== generation || session !== webSession || controller.signal.aborted) return;
-      const nameReport = await generated.search(
-        { q: query, limit: 1000, ...(requestedTagID ? { tag_id: requestedTagID } : {}) },
-        { session, signal: controller.signal },
-      );
-      if (request !== generation || session !== webSession || controller.signal.aborted) return;
-      if ((nameReport.tag_id ?? "") !== requestedTagID)
-        throw new Error("Search results did not honor the selected tag filter.");
-      const nameRows: Row[] = nameReport.hits
-        .filter((hit) => hit.match === "name")
-        .map((hit) => ({
-          node: hit.node,
-          path: hit.path,
-          match: hit.match,
-        }));
       const withNames = (processingRows: Row[]): Row[] => [
         ...processingRows,
         ...nameRows.filter((row) => !processingRows.some((other) => other.node.id === row.node.id)),
@@ -2300,6 +2307,7 @@
             request,
             preferredSelectedID,
             refreshing,
+            submitted,
             session,
             controller.signal,
             note,
@@ -2347,12 +2355,18 @@
     request: number,
     preferredSelectedID: number | undefined,
     refreshing: boolean,
+    submitted: boolean,
     session: string,
     signal: AbortSignal,
     note = "",
   ): Promise<{ type: string; empty: boolean } | undefined> {
     const report = await generated.search(
-      { q: query, limit: 1000, ...(requestedTagID ? { tag_id: requestedTagID } : {}) },
+      {
+        q: query,
+        limit: 1000,
+        skip_miss_log: !submitted,
+        ...(requestedTagID ? { tag_id: requestedTagID } : {}),
+      },
       { session, signal },
     );
     if (request !== generation || session !== webSession || signal.aborted) return;
@@ -3036,6 +3050,7 @@
   async function runSnapshot(
     query: Query,
     options: SnapshotOptions,
+    submitted = false,
   ): Promise<{ type: "text"; empty: boolean } | { type: "failed"; cause: Error } | undefined> {
     invalidateTagHotkeyMutation();
     generation += 1;
@@ -3043,7 +3058,7 @@
     loading = false;
     naturalRerankPending = false;
     naturalProfileDefaultPending = null;
-    return snapshot.run(query, options);
+    return snapshot.run(query, { ...options, skip_miss_log: !submitted });
   }
 
   async function submitSnapshot(
@@ -3053,7 +3068,7 @@
   ): Promise<void> {
     const revision = queryDraftRevision;
     if (!preserveDraft) keepQueryDraft(query);
-    const outcome = await runSnapshot(query, options);
+    const outcome = await runSnapshot(query, options, !preserveDraft);
     if (outcome?.type === "failed") reportFailure(webSession, "search", outcome.cause);
     else if (outcome) {
       if (!preserveDraft && revision === queryDraftRevision) {

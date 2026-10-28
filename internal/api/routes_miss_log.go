@@ -115,7 +115,7 @@ func registerMissLogRoutes(api huma.API, d Deps, g *OperationGate) {
 		if err := requireMissLogOwner(ctx); err != nil {
 			return nil, err
 		}
-		if err := g.mutate(func() error {
+		if err := g.mutate(ctx, func() error {
 			if err := d.Store.DeleteMissLogRecord(ctx, in.ID); err != nil {
 				return missLogFailure()
 			}
@@ -139,7 +139,7 @@ func registerMissLogRoutes(api huma.API, d Deps, g *OperationGate) {
 				return nil, NewError(http.StatusUnprocessableEntity, "validation", "before must be an RFC 3339 timestamp")
 			}
 		}
-		if err := g.mutate(func() error {
+		if err := g.mutate(ctx, func() error {
 			var err error
 			if in.Before != "" {
 				err = d.Store.DeleteMissLogRecordsBefore(ctx, cutoff)
@@ -163,6 +163,7 @@ func recordDocumentSearch(ctx context.Context, log *misslog.Service, input Docum
 	}
 	fingerprint, _ := processing.SourceFenceFingerprint(processing.SourceFence{VaultUID: input.Fence.VaultUID, ContentVersionIDs: input.Fence.ContentVersionIDs})
 	return log.Record(ctx, misslog.Receipt{Query: input.Query, Profile: input.Profile, RequestedMode: report.RequestedMode, ActualMode: report.ActualMode,
+		Truncated: report.Truncated, Degradations: report.Degradations, Reranking: misslog.ReceiptScope(report.Reranking),
 		Scope: misslog.ReceiptScope(input), Coverage: misslog.ReceiptScope(report.Coverage), FenceFingerprint: fingerprint})
 }
 

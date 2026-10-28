@@ -4302,6 +4302,8 @@ export interface Message {
 
 export type MissLogReceiptCoverage = {[key: string]: unknown};
 
+export type MissLogReceiptReranking = {[key: string]: unknown};
+
 export type MissLogReceiptScope = {[key: string]: unknown};
 
 export interface MissLogReceipt {
@@ -4310,14 +4312,17 @@ export interface MissLogReceipt {
   actual_mode: string;
   coverage?: MissLogReceiptCoverage;
   created_at: string;
+  degradations?: string[];
   fence_fingerprint?: string;
   id: string;
   profile?: string;
   query: string;
   requested_mode: string;
+  reranking?: MissLogReceiptReranking;
   scope: MissLogReceiptScope;
   source: string;
   triggers: string[];
+  truncated: boolean;
   vault_uid: string;
 }
 
@@ -9194,6 +9199,7 @@ export interface WorkspaceQueryCreateRequest {
   /** @maxLength 128 */
   profile?: string;
   query: SavedQueryV1Schema;
+  skip_miss_log?: boolean;
 }
 
 export interface WorkspaceQueryPageRequest {
@@ -10277,9 +10283,6 @@ export type RunSavedQueryHeaders = {
 };
 
 export type SearchParams = {
-/**
- * @maxLength 32768
- */
 q?: string;
 skip_miss_log?: boolean;
 fuzzy?: boolean;
