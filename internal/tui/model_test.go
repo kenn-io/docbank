@@ -35,6 +35,7 @@ type fakeBackend struct {
 	search                    api.SearchReport
 	err                       error
 	childLimit                int
+	searchSubmitted           bool
 	searchMax                 int
 	nodeIDs                   []int64
 	nodeErrors                map[int64]error
@@ -282,8 +283,9 @@ func (f *fakeBackend) ChildrenPage(
 }
 
 func (f *fakeBackend) Search(
-	_ context.Context, _ string, limit int,
+	_ context.Context, _ string, limit int, submitted bool,
 ) (api.SearchReport, error) {
+	f.searchSubmitted = submitted
 	f.searchMax = limit
 	if f.err != nil {
 		return api.SearchReport{}, f.err
@@ -2905,7 +2907,7 @@ func TestProfileDiscoveryPreservesPendingSearchAction(t *testing.T) {
 			model.searching = true
 			model.searchInput.SetValue("report")
 			model, _ = updateModel(t, model, key(tea.KeyEnter))
-			oldReply := model.loadSearch("report", model.requestID)()
+			oldReply := model.loadSearch("report", model.requestID, model.reportSearchID == model.requestID)()
 			if !pending {
 				var cmd tea.Cmd
 				model, cmd = updateModel(t, model, oldReply)
@@ -2919,7 +2921,7 @@ func TestProfileDiscoveryPreservesPendingSearchAction(t *testing.T) {
 			require.NotNil(t, cmd)
 			model, stale := updateModel(t, model, oldReply)
 			require.Nil(t, stale)
-			model, cmd = updateModel(t, model, model.loadSearch("report", model.requestID)())
+			model, cmd = updateModel(t, model, model.loadSearch("report", model.requestID, model.reportSearchID == model.requestID)())
 			if cmd != nil {
 				model = runModelCommand(t, model, cmd)
 			}
@@ -2975,7 +2977,7 @@ func TestSearchActionReportsSubmissionsAndKeepsRerunsSilent(t *testing.T) {
 					err: errors.New("provider timed out"),
 				})
 			}
-			model, cmd := updateModel(t, model, model.loadSearch("report", model.requestID)())
+			model, cmd := updateModel(t, model, model.loadSearch("report", model.requestID, model.reportSearchID == model.requestID)())
 			if cmd != nil {
 				model = runModelCommand(t, model, cmd)
 			}
@@ -2985,7 +2987,7 @@ func TestSearchActionReportsSubmissionsAndKeepsRerunsSilent(t *testing.T) {
 				model.searchInput.SetValue("failed query")
 				model, _ = updateModel(t, model, key(tea.KeyEnter))
 				backend.err = errors.New("search failed")
-				model, cmd = updateModel(t, model, model.loadSearch("failed query", model.requestID)())
+				model, cmd = updateModel(t, model, model.loadSearch("failed query", model.requestID, model.reportSearchID == model.requestID)())
 				require.NotNil(t, cmd)
 				cmd()
 				// The failure shows an error but runs no search, so only error_shown is new.
@@ -2993,14 +2995,14 @@ func TestSearchActionReportsSubmissionsAndKeepsRerunsSilent(t *testing.T) {
 				require.Equal(t, "report", model.searchQuery)
 				backend.err = nil
 				model, _ = updateModel(t, model, runeKey('r'))
-				model, cmd = updateModel(t, model, model.loadSearch("report", model.requestID)())
+				model, cmd = updateModel(t, model, model.loadSearch("report", model.requestID, model.reportSearchID == model.requestID)())
 				if cmd != nil {
 					model = runModelCommand(t, model, cmd)
 				}
 				assert.Equal(t, tc.want, runs())
 				backend.err = errors.New("refresh failed")
 				model, _ = updateModel(t, model, runeKey('r'))
-				_, cmd = updateModel(t, model, model.loadSearch("report", model.requestID)())
+				_, cmd = updateModel(t, model, model.loadSearch("report", model.requestID, model.reportSearchID == model.requestID)())
 				assert.Nil(t, cmd)
 			}
 			if !tc.checkReruns {
@@ -3008,7 +3010,7 @@ func TestSearchActionReportsSubmissionsAndKeepsRerunsSilent(t *testing.T) {
 			}
 			for _, keypress := range []tea.KeyPressMsg{runeKey('r'), key(tea.KeyTab), {Code: 'r', Mod: tea.ModCtrl}} {
 				model, _ = updateModel(t, model, keypress)
-				model, cmd = updateModel(t, model, model.loadSearch("report", model.requestID)())
+				model, cmd = updateModel(t, model, model.loadSearch("report", model.requestID, model.reportSearchID == model.requestID)())
 				if cmd != nil {
 					model = runModelCommand(t, model, cmd)
 				}
@@ -3017,7 +3019,7 @@ func TestSearchActionReportsSubmissionsAndKeepsRerunsSilent(t *testing.T) {
 			model.searching = true
 			model.searchInput.SetValue("report")
 			model, _ = updateModel(t, model, key(tea.KeyEnter))
-			model, cmd = updateModel(t, model, model.loadSearch("report", model.requestID)())
+			model, cmd = updateModel(t, model, model.loadSearch("report", model.requestID, model.reportSearchID == model.requestID)())
 			if cmd != nil {
 				model = runModelCommand(t, model, cmd)
 			}
@@ -3091,5 +3093,34 @@ func TestProcessingSearchReportsOutcome(t *testing.T) {
 			runModelCommand(t, model, cmd)
 			assert.Equal(t, tc.want, backend.actions)
 		})
+	}
+}
+
+func TestMissLogSearchSubmissionRequests(t *testing.T) {
+	for _, emptyScope := range []bool{false, true} {
+		fake := newFakeBackend()
+		if emptyScope {
+			fake.sourceFence.Fence.ContentVersionIDs = nil
+		}
+		model, err := New(t.Context(), fake)
+		require.NoError(t, err)
+		model.naturalProfiles = fake.profiles
+		model.naturalMode = naturalLexical
+		model.searching = true
+		model.searchInput.SetValue("missing")
+		model, command := updateModel(t, model, key(tea.KeyEnter))
+		model = runModelCommand(t, model, command)
+		require.Len(t, fake.naturalSearchRequests, 1)
+		assert.Equal(t, !emptyScope, len(fake.naturalSearchRequests[0].Fence.ContentVersionIDs) > 0)
+		assert.False(t, fake.naturalSearchRequests[0].SkipMissLog)
+		model.loadNaturalRerank(model.requestID, model.naturalSearchID, fake.naturalSearchRequests[0], naturalLexical)()
+		assert.True(t, fake.naturalSearchRequests[1].SkipMissLog)
+		model.loadNaturalSearch("missing", model.requestID, false)()
+		assert.True(t, fake.naturalSearchRequests[2].SkipMissLog)
+		model.naturalMode = naturalNames
+		model.loadSearch("missing", model.requestID, true)()
+		assert.True(t, fake.searchSubmitted)
+		model.loadSearch("missing", model.requestID, false)()
+		assert.False(t, fake.searchSubmitted)
 	}
 }

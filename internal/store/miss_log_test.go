@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json/v2"
 	"fmt"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -32,51 +33,11 @@ func TestMissLogRetentionAndMetadataExclusion(t *testing.T) {
 	require.NoError(t, s.ExportMetadata(ctx, &metadata))
 	require.NotContains(t, metadata.String(), "sentinel")
 	require.NoError(t, s.DeleteMissLogRecord(ctx, "first"))
+	require.ErrorIs(t, s.DeleteMissLogRecord(ctx, "missing"), ErrNotFound)
 	entries, err = s.ListMissLogRecords(ctx, 10, 0)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	require.NoError(t, s.PurgeMissLogRecords(ctx))
-	entries, err = s.ListMissLogRecords(ctx, 10, 0)
-	require.NoError(t, err)
-	require.Empty(t, entries)
-}
-
-func TestMissLogPrunesOnStartupAndDeletesBeforeDate(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	now := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
-	for i, id := range []string{"old", "middle", "new"} {
-		require.NoError(t, s.AddMissLogRecord(ctx, MissLogRecord{ID: id, CreatedAt: now.AddDate(0, 0, i-3), Receipt: `{}`}, now, 30, 10))
-	}
-	require.NoError(t, s.PruneMissLogRecords(ctx, now, 2, 10))
-	entries, err := s.ListMissLogRecords(ctx, 10, 0)
-	require.NoError(t, err)
-	require.Len(t, entries, 2)
-	require.NoError(t, s.DeleteMissLogRecordsBefore(ctx, now.AddDate(0, 0, -1)))
-	entries, err = s.ListMissLogRecords(ctx, 10, 0)
-	require.NoError(t, err)
-	require.Len(t, entries, 1)
-	require.Equal(t, "new", entries[0].ID)
-}
-
-func TestMissLogRetentionPostgres(t *testing.T) {
-	t.Parallel()
-	s := newPostgresQueryStore(t)
-	ctx := t.Context()
-	now := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
-	for i, id := range []string{"old", "middle", "new"} {
-		require.NoError(t, s.AddMissLogRecord(ctx, MissLogRecord{ID: id, CreatedAt: now.AddDate(0, 0, i-3), Receipt: `{}`}, now, 30, 2))
-	}
-	entries, err := s.ListMissLogRecords(ctx, 10, 0)
-	require.NoError(t, err)
-	require.Len(t, entries, 2)
-	require.Equal(t, "new", entries[0].ID)
-	require.NoError(t, s.PruneMissLogRecords(ctx, now, 1, 2))
-	entries, err = s.ListMissLogRecords(ctx, 10, 0)
-	require.NoError(t, err)
-	require.Len(t, entries, 1)
-	require.NoError(t, s.DeleteMissLogRecordsBefore(ctx, now))
 	entries, err = s.ListMissLogRecords(ctx, 10, 0)
 	require.NoError(t, err)
 	require.Empty(t, entries)
@@ -110,13 +71,6 @@ func TestMissLogConcurrentRetentionSQLite(t *testing.T) {
 	checkMissLogConcurrentRetention(t, newTestStore(t))
 }
 
-func TestMissLogConcurrentRetentionPostgres(t *testing.T) {
-	t.Parallel()
-	s := newPostgresQueryStore(t)
-	s.writeDB.SetMaxOpenConns(4)
-	checkMissLogConcurrentRetention(t, s)
-}
-
 func checkMissLogConcurrentRetention(t *testing.T, s *Store) {
 	t.Helper()
 	now := time.Now().UTC()
@@ -139,4 +93,27 @@ func checkMissLogConcurrentRetention(t *testing.T, s *Store) {
 	require.NoError(t, err)
 	require.Len(t, records, 3)
 	require.Equal(t, []string{"record-19", "record-18", "record-17"}, []string{records[0].ID, records[1].ID, records[2].ID})
+}
+
+func TestMissLogOpensSchema43WithoutLocalTable(t *testing.T) {
+	t.Parallel()
+	for _, test := range v090UpgradeDrivers() {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "vault.db")
+			st, err := Open(path, test.driver)
+			require.NoError(t, err)
+			node, err := st.Mkdir(t.Context(), st.RootID(), "synthetic-retained")
+			require.NoError(t, err)
+			_, err = st.db.Exec(`DROP TABLE miss_log_records`)
+			require.NoError(t, err)
+			require.NoError(t, st.Close())
+			reopened, err := Open(path, test.driver)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, reopened.Close()) })
+			retained, err := reopened.NodeByID(t.Context(), node.ID)
+			require.NoError(t, err)
+			require.Equal(t, "synthetic-retained", retained.Name)
+			require.NoError(t, reopened.AddMissLogRecord(t.Context(), MissLogRecord{ID: "new", CreatedAt: time.Now(), Receipt: `{}`}, time.Now(), 90, 5000))
+		})
+	}
 }

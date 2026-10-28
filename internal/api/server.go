@@ -135,11 +135,10 @@ func NewServer(d Deps) *Server {
 		d.Gate = NewOperationGate()
 	}
 	if d.MissLog == nil {
-		d.MissLog = misslog.New(d.Store, d.Cfg.MissLog, d.Logger, d.Gate.MutateContext, d.Gate.TryMutateContext)
+		d.MissLog = misslog.New(d.Store, d.Cfg.MissLog, d.Logger, d.Gate.MutateContext)
 	}
 	mux := http.NewServeMux()
 	cfg := huma.DefaultConfig("docbank", version.Version)
-	cfg.Transformers = append(cfg.Transformers, sanitizeMissLogErrorResponse)
 	cfg.Components.Schemas = huma.NewMapRegistry("#/components/schemas/", apiSchemaName)
 	jsonFormat := huma.Format{
 		Marshal: func(w io.Writer, value any) error {

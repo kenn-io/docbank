@@ -219,7 +219,6 @@ See docs/usage/search.md.`,
 		if automatic.report != nil {
 			empty = len(automatic.report.Results) == 0 && !slices.ContainsFunc(rep.Hits, func(hit api.SearchHit) bool { return hit.Node.Kind == "dir" })
 		}
-		finalizeAutomaticSearchMiss(cmd.Context(), c, &automatic, empty)
 		defer func() {
 			if retErr == nil {
 				reportSearch(cmd, c, searchType, empty, searchAgent)

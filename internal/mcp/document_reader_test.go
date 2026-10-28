@@ -14,7 +14,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/config"
-	"go.kenn.io/docbank/internal/misslog"
 	"go.kenn.io/docbank/internal/processing"
 )
 
@@ -101,35 +100,4 @@ func TestEmbeddedDocumentToolsMatchDaemon(t *testing.T) {
 	require.NoError(t, json.Unmarshal(encoded, &failure))
 	assert.Equal(t, "scope_too_large", failure.Code)
 	assert.Equal(t, 4097, failure.Observed)
-}
-
-func TestMissLogMCPEmptyScopeUsesDaemonAndEmbeddedReader(t *testing.T) {
-	f := newNativeExportFixture(t)
-	f.addFile(t, "synthetic.txt", "synthetic content")
-	profileName, profile, err := processing.NewSuppliedMediaProfile(f.catalog, f.blobs, "test:operator")
-	require.NoError(t, err)
-	service, err := processing.NewService(processing.ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: api.NewOperationGate(), SpoolDirectory: filepath.Join(t.TempDir(), "spool"), Profiles: map[string]processing.ProfileConfig{profileName: profile}})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, service.Shutdown(context.Background())) })
-	cfg := config.Default()
-	cfg.Server.APIKey = "synthetic-export-key"
-	cfg.MissLog.Enabled = true
-	apiServer := api.NewServer(api.Deps{Store: f.catalog, Blobs: f.blobs, Processing: service, Cfg: cfg, VaultRoot: os.Getenv("DOCBANK_HOME")})
-	t.Cleanup(apiServer.Close)
-	httpServer := httptest.NewServer(apiServer.Handler())
-	t.Cleanup(httpServer.Close)
-	args := map[string]any{"query": "synthetic private scope miss", "mode": "lexical", "profile": profileName, "filters": map[string]any{"mime_type": "image/png"}}
-	remote, err := invokeReadTool(t.Context(), exportTestLease(t, httpServer.URL), "search_documents", args)
-	require.NoError(t, err)
-	require.NotEmpty(t, structuredMap(t, remote.StructuredContent)["miss_log_id"])
-	reader := api.NewDocumentReader(f.catalog, f.blobs, os.Getenv("DOCBANK_HOME"), service, misslog.New(f.catalog, cfg.MissLog, nil))
-	raw, err := json.Marshal(args)
-	require.NoError(t, err)
-	result, err := CallDocumentReadTool(t.Context(), reader, &sdkmcp.CallToolRequest{Params: &sdkmcp.CallToolParamsRaw{Name: "search_documents", Arguments: raw}})
-	require.NoError(t, err)
-	require.False(t, result.IsError, result)
-	require.NotEmpty(t, structuredMap(t, result.StructuredContent)["miss_log_id"])
-	records, err := f.catalog.ListMissLogRecords(t.Context(), 10, 0)
-	require.NoError(t, err)
-	require.Len(t, records, 2)
 }

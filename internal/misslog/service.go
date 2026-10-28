@@ -9,7 +9,6 @@ import (
 	"encoding/json/v2"
 	"log/slog"
 	"time"
-	"unicode/utf8"
 
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/store"
@@ -18,7 +17,6 @@ import (
 // Receipt preserves the search request and outcome without document excerpts.
 // Scope contains either the exact version fence or the live GET filters.
 type Receipt struct {
-	Source           string         `json:"source"`
 	ID               string         `json:"id"`
 	CreatedAt        time.Time      `json:"created_at"`
 	VaultUID         string         `json:"vault_uid"`
@@ -29,33 +27,22 @@ type Receipt struct {
 	Scope            map[string]any `json:"scope"`
 	Coverage         map[string]any `json:"coverage,omitempty"`
 	FenceFingerprint string         `json:"fence_fingerprint,omitempty"`
-	Triggers         []string       `json:"triggers"`
 }
 
-// Service belongs to one vault owner and one daemon (or embedded vault) lifetime.
+// Service belongs to one vault owner and one daemon lifetime.
 type Service struct {
-	store        *store.Store
-	config       config.MissLogConfig
-	logger       *slog.Logger
-	mutate       func(context.Context, func() error) error
-	recordMutate func(context.Context, func() error) error
+	store  *store.Store
+	config config.MissLogConfig
+	logger *slog.Logger
+	mutate func(context.Context, func() error) error
 }
 
 // New prunes on enabled startup only. Failures never expose sensitive payloads.
-func New(st *store.Store, cfg config.MissLogConfig, logger *slog.Logger, mutators ...func(context.Context, func() error) error) *Service {
+func New(st *store.Store, cfg config.MissLogConfig, logger *slog.Logger, mutate func(context.Context, func() error) error) *Service {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	s := &Service{store: st, config: cfg, logger: logger, mutate: func(_ context.Context, fn func() error) error { return fn() }}
-	if len(mutators) > 0 && mutators[0] != nil {
-		s.mutate = mutators[0]
-	}
-	// Automatic recording may use fail-fast admission; explicit owner writes
-	// retain the first, ordinary mutation admission function.
-	s.recordMutate = s.mutate
-	if len(mutators) > 1 && mutators[1] != nil {
-		s.recordMutate = mutators[1]
-	}
+	s := &Service{store: st, config: cfg, logger: logger, mutate: mutate}
 	if cfg.Enabled && st != nil {
 		if err := s.mutate(context.Background(), func() error {
 			return st.PruneMissLogRecords(context.Background(), time.Now(), cfg.RetentionDays, cfg.MaxRecords)
@@ -72,29 +59,23 @@ func (s *Service) Record(ctx context.Context, receipt Receipt) string {
 	if s == nil || !s.config.Enabled || s.store == nil {
 		return ""
 	}
-	if utf8.RuneCountInString(receipt.Query) > 32768 || len(receipt.Profile) > 128 {
-		s.logger.Warn("miss_log_write_failed")
-		return ""
-	}
 	var random [24]byte
 	if _, err := rand.Read(random[:]); err != nil {
 		s.logger.Warn("miss_log_write_failed")
 		return ""
 	}
-	if receipt.Source == "" {
-		receipt.Source = "daemon"
-	}
 	receipt.ID = hex.EncodeToString(random[:])
 	receipt.CreatedAt = time.Now().UTC()
 	receipt.VaultUID = s.store.VaultID()
-	receipt.Triggers = []string{"no_match"}
 	encoded, err := json.Marshal(receipt)
 	if err != nil || len(encoded) > 8<<20 {
 		s.logger.Warn("miss_log_write_failed")
 		return ""
 	}
-	if err = s.recordMutate(ctx, func() error {
-		return s.store.TryAddMissLogRecord(ctx, store.MissLogRecord{ID: receipt.ID, CreatedAt: receipt.CreatedAt, Receipt: string(encoded)}, receipt.CreatedAt, s.config.RetentionDays, s.config.MaxRecords)
+	ctx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+	defer cancel()
+	if err = s.mutate(ctx, func() error {
+		return s.store.AddMissLogRecord(ctx, store.MissLogRecord{ID: receipt.ID, CreatedAt: receipt.CreatedAt, Receipt: string(encoded)}, receipt.CreatedAt, s.config.RetentionDays, s.config.MaxRecords)
 	}); err != nil {
 		s.logger.Warn("miss_log_write_failed")
 		return ""

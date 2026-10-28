@@ -1383,30 +1383,13 @@ retention_days = 90
 max_records = 5000
 ```
 
-`retention_days` accepts 1–365 days. `max_records` accepts 1–100000 records.
-`docbank daemon run --miss-log` enables recording for that foreground daemon
-run without changing the configuration file. There is no environment switch.
+`retention_days` accepts 1–365 days. `max_records` accepts 1–100000 records. These bounds apply when recording is enabled.
 
-The daemon records successful empty searches from HTTP, CLI, and MCP, including
-an explicitly empty document scope. Errors and searches with hits create no
-records. Receipts preserve the query, time, vault, requested and actual search
-modes, profile, search options and scope. They omit document excerpts. A receipt
-ID appears as `miss_log_id` in structured search output only after storage
-succeeds. A failed automatic write leaves the search available and emits a
-sanitized diagnostic. During maintenance or ordinary write contention, recording
-may be skipped so an empty search stays available. Private receipt endpoints
-sanitize validation errors instead of echoing rejected values. Automatic CLI
-searches combine document and folder results before recording one miss. Their
-receipts identify the source as `client_finalized`; the operator's CLI supplies
-that final outcome. Direct search receipts identify the source as `daemon`.
+The daemon records successful empty searches, including searches with no documents in scope. Errors, searches with hits, refreshes, and refinements such as reranking create no record. Automatic CLI search records an empty document result even when a folder name matches.
 
-Use `docbank miss-log list`, `show <id>`, `delete <id>`,
-`delete --before <RFC3339 timestamp>`, or `purge` to manage records through the
-daemon. These operations require the master API credential. List and show
-responses use `Cache-Control: no-store`. Browser sessions and MCP have no history
-management tools. Management remains available when
-recording is disabled. Records expire by age and then count on enabled startup
-and writes; idle daemons prune lazily. Disabled startup preserves existing rows.
+Receipts preserve the query, time, vault, requested and actual search modes, profile, search options, and scope. They omit document excerpts. Automatic writes wait at most 100 ms for mutation admission and storage. A failed write leaves the search available and logs a fixed diagnostic.
+
+Use `docbank miss-log list`, `show <id>`, `delete <id>`, or `purge` to manage records through the daemon. These operations require the master API credential. List and show responses use `Cache-Control: no-store`. Browser sessions and MCP have no history management tools. Management remains available when recording is disabled. Records expire by age and count on enabled startup and writes; idle daemons prune lazily. Disabled startup preserves existing rows.
 
 The log is excluded from anonymous telemetry, logical backups, portable bundle
 metadata, imports, and federation. A restored vault has no miss records.

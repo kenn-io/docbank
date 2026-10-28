@@ -5,7 +5,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"net/http"
-	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/docbank/internal/misslog"
@@ -13,18 +12,13 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
+const missLogCacheControl = "no-store"
+
 // MissLogPage contains sensitive receipts and is available only to the operator.
 type MissLogPage struct {
 	Items  []misslog.Receipt `json:"items"`
 	Limit  int               `json:"limit"`
 	Offset int               `json:"offset"`
-}
-
-func requireMissLogOwner(ctx context.Context) error {
-	if auth, _ := ctx.Value(authenticationContextKey{}).(string); auth != "master" {
-		return NewError(http.StatusForbidden, "forbidden", "miss log management requires the master API credential")
-	}
-	return nil
 }
 
 func missLogFailure() error {
@@ -39,8 +33,8 @@ func registerMissLogRoutes(api huma.API, d Deps, g *OperationGate) {
 	huma.Register(api, huma.Operation{OperationID: "getMissLogRecord", Method: http.MethodGet, Path: "/api/v1/miss-log/{id}", Summary: "Read one private search miss (operator only)"}, func(ctx context.Context, in *struct {
 		ID string `path:"id" maxLength:"128"`
 	}) (*recordOutput, error) {
-		if err := requireMissLogOwner(ctx); err != nil {
-			return nil, err
+		if browserSessionRequest(ctx) {
+			return nil, NewError(http.StatusForbidden, "forbidden", "miss log management requires the master API credential")
 		}
 		row, err := d.Store.MissLogRecordByID(ctx, in.ID)
 		if errors.Is(err, store.ErrNotFound) {
@@ -53,36 +47,7 @@ func registerMissLogRoutes(api huma.API, d Deps, g *OperationGate) {
 		if json.Unmarshal([]byte(row.Receipt), &receipt) != nil {
 			return nil, missLogFailure()
 		}
-		return &recordOutput{CacheControl: "no-store", Body: receipt}, nil
-	})
-	type completionInput struct{ Body EmptySearchCompletionRequest }
-	type completionOutput struct{ Body EmptySearchCompletion }
-	huma.Register(api, huma.Operation{OperationID: "completeEmptySearch", Method: http.MethodPost, Path: "/api/v1/search/complete-empty", MaxBodyBytes: 1 << 20, Summary: "Record the final empty automatic CLI search (operator only)"}, func(ctx context.Context, in *completionInput) (*completionOutput, error) {
-		if err := requireMissLogOwner(ctx); err != nil {
-			return nil, err
-		}
-		request := in.Body.Search
-		if request.Fence.VaultUID != d.Store.VaultID() {
-			return nil, NewError(http.StatusUnprocessableEntity, "validation", "search scope belongs to another vault")
-		}
-		fingerprint, err := processing.SourceFenceFingerprint(processing.SourceFence{VaultUID: request.Fence.VaultUID, ContentVersionIDs: request.Fence.ContentVersionIDs})
-		if err != nil {
-			return nil, NewError(http.StatusUnprocessableEntity, "validation", "search scope is invalid")
-		}
-		if err := validateDocumentSearch(ctx, d.Processing, DocumentSearchValidationRequest{Query: request.Query, Mode: request.Mode, Limit: request.Limit, Profile: request.Profile, BindingID: request.BindingID}); err != nil {
-			return nil, err
-		}
-		for _, id := range request.Fence.ContentVersionIDs {
-			if _, err := d.Store.ContentVersionByID(ctx, id); err != nil {
-				return nil, NewError(http.StatusUnprocessableEntity, "validation", "search scope contains an unavailable version")
-			}
-		}
-		request.SkipMissLog = false
-		report := DocumentSearchReport{RequestedMode: request.Mode, ActualMode: in.Body.ActualMode, Coverage: in.Body.Coverage}
-		scope := misslog.ReceiptScope(request)
-		scope["folder_search"] = map[string]any{packageLimitParameter: request.Limit}
-		id := d.MissLog.Record(ctx, misslog.Receipt{Source: "client_finalized", Query: request.Query, Profile: request.Profile, RequestedMode: report.RequestedMode, ActualMode: report.ActualMode, Scope: scope, Coverage: misslog.ReceiptScope(report.Coverage), FenceFingerprint: fingerprint})
-		return &completionOutput{Body: EmptySearchCompletion{MissLogID: id}}, nil
+		return &recordOutput{CacheControl: missLogCacheControl, Body: receipt}, nil
 	})
 	type pageOutput struct {
 		CacheControl string `header:"Cache-Control"`
@@ -92,8 +57,8 @@ func registerMissLogRoutes(api huma.API, d Deps, g *OperationGate) {
 		Limit  int `query:"limit" default:"20" minimum:"1" maximum:"100"`
 		Offset int `query:"offset" default:"0" minimum:"0"`
 	}) (*pageOutput, error) {
-		if err := requireMissLogOwner(ctx); err != nil {
-			return nil, err
+		if browserSessionRequest(ctx) {
+			return nil, NewError(http.StatusForbidden, "forbidden", "miss log management requires the master API credential")
 		}
 		rows, err := d.Store.ListMissLogRecords(ctx, in.Limit, in.Offset)
 		if err != nil {
@@ -107,16 +72,19 @@ func registerMissLogRoutes(api huma.API, d Deps, g *OperationGate) {
 			}
 			page.Items = append(page.Items, receipt)
 		}
-		return &pageOutput{CacheControl: "no-store", Body: page}, nil
+		return &pageOutput{CacheControl: missLogCacheControl, Body: page}, nil
 	})
 	huma.Register(api, huma.Operation{OperationID: "deleteMissLogRecord", Method: http.MethodDelete, Path: "/api/v1/miss-log/{id}", Summary: "Delete one private search miss (operator only)"}, func(ctx context.Context, in *struct {
 		ID string `path:"id" maxLength:"128"`
 	}) (*struct{}, error) {
-		if err := requireMissLogOwner(ctx); err != nil {
-			return nil, err
+		if browserSessionRequest(ctx) {
+			return nil, NewError(http.StatusForbidden, "forbidden", "miss log management requires the master API credential")
 		}
 		if err := g.mutate(func() error {
 			if err := d.Store.DeleteMissLogRecord(ctx, in.ID); err != nil {
+				if errors.Is(err, store.ErrNotFound) {
+					return NewError(http.StatusNotFound, "not_found", "miss log record not found")
+				}
 				return missLogFailure()
 			}
 			return nil
@@ -125,27 +93,12 @@ func registerMissLogRoutes(api huma.API, d Deps, g *OperationGate) {
 		}
 		return &struct{}{}, nil
 	})
-	huma.Register(api, huma.Operation{OperationID: "deleteMissLog", Method: http.MethodDelete, Path: "/api/v1/miss-log", Summary: "Purge private search misses or delete by date (operator only)"}, func(ctx context.Context, in *struct {
-		Before string `query:"before" maxLength:"64"`
-	}) (*struct{}, error) {
-		if err := requireMissLogOwner(ctx); err != nil {
-			return nil, err
-		}
-		var cutoff time.Time
-		if in.Before != "" {
-			var err error
-			cutoff, err = time.Parse(time.RFC3339, in.Before)
-			if err != nil {
-				return nil, NewError(http.StatusUnprocessableEntity, "validation", "before must be an RFC 3339 timestamp")
-			}
+	huma.Register(api, huma.Operation{OperationID: "deleteMissLog", Method: http.MethodDelete, Path: "/api/v1/miss-log", Summary: "Purge private search misses (operator only)"}, func(ctx context.Context, _ *struct{}) (*struct{}, error) {
+		if browserSessionRequest(ctx) {
+			return nil, NewError(http.StatusForbidden, "forbidden", "miss log management requires the master API credential")
 		}
 		if err := g.mutate(func() error {
-			var err error
-			if in.Before != "" {
-				err = d.Store.DeleteMissLogRecordsBefore(ctx, cutoff)
-			} else {
-				err = d.Store.PurgeMissLogRecords(ctx)
-			}
+			err := d.Store.PurgeMissLogRecords(ctx)
 			if err != nil {
 				return missLogFailure()
 			}
@@ -157,22 +110,11 @@ func registerMissLogRoutes(api huma.API, d Deps, g *OperationGate) {
 	})
 }
 
-func recordDocumentSearch(ctx context.Context, log *misslog.Service, input DocumentSearchRequest, report DocumentSearchReport) string {
+func recordDocumentSearch(ctx context.Context, log *misslog.Service, input DocumentSearchRequest, report DocumentSearchReport) {
 	if input.SkipMissLog || len(report.Results) != 0 {
-		return ""
+		return
 	}
 	fingerprint, _ := processing.SourceFenceFingerprint(processing.SourceFence{VaultUID: input.Fence.VaultUID, ContentVersionIDs: input.Fence.ContentVersionIDs})
-	return log.Record(ctx, misslog.Receipt{Query: input.Query, Profile: input.Profile, RequestedMode: report.RequestedMode, ActualMode: report.ActualMode,
+	log.Record(ctx, misslog.Receipt{Query: input.Query, Profile: input.Profile, RequestedMode: report.RequestedMode, ActualMode: report.ActualMode,
 		Scope: misslog.ReceiptScope(input), Coverage: misslog.ReceiptScope(report.Coverage), FenceFingerprint: fingerprint})
-}
-
-// EmptySearchCompletionRequest describes the final CLI page after adding folders.
-// It accepts no excerpts, arbitrary metadata, or caller-selected record identity.
-type EmptySearchCompletionRequest struct {
-	Search     DocumentSearchRequest  `json:"search"`
-	ActualMode string                 `json:"actual_mode" enum:"lexical,semantic,hybrid"`
-	Coverage   DocumentSearchCoverage `json:"coverage"`
-}
-type EmptySearchCompletion struct {
-	MissLogID string `json:"miss_log_id,omitzero"`
 }

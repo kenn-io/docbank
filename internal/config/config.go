@@ -179,7 +179,6 @@ type MissLogConfig struct {
 	Enabled       bool `toml:"enabled"`
 	RetentionDays int  `toml:"retention_days"`
 	MaxRecords    int  `toml:"max_records"`
-	present       bool // Distinguishes an explicit all-zero TOML section in Validate's whole-struct comparison.
 }
 
 // StorageConfig controls optional daemon-owned physical storage work. Packing
@@ -486,7 +485,6 @@ func parse(root string) (Config, error) {
 	if undec := md.Undecoded(); len(undec) > 0 {
 		return Config{}, fmt.Errorf("loading %s: unknown key %q (typo?)", path, undec[0].String())
 	}
-	c.MissLog.present = md.IsDefined("miss_log")
 	if key, ok := unsupportedEmbedderKey(md); ok {
 		return Config{}, fmt.Errorf("loading %s: %q is not supported by the pinned embedding adapter", path, key)
 	}
@@ -730,8 +728,7 @@ func resolveBackupRepo(root string, backup *BackupConfig) error {
 // exposes credentials and contents to the selected network; operators must
 // provide a trusted transport or network. Loopback can use an ephemeral key.
 func (c Config) Validate() error {
-	// Zero-value Config literals leave this optional feature absent.
-	if c.MissLog != (MissLogConfig{}) {
+	if c.MissLog.Enabled {
 		if c.MissLog.RetentionDays < 1 || c.MissLog.RetentionDays > 365 {
 			return errors.New("[miss_log] retention_days must be between 1 and 365")
 		}

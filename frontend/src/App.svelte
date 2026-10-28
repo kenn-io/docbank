@@ -2100,6 +2100,7 @@
           refreshing,
           session,
           controller.signal,
+          submitted,
         );
         accepted = !!outcome;
         if (accepted && request === generation && requestedSort) applyResultSort(requestedSort);
@@ -2121,18 +2122,27 @@
         ...(mapped.binding_id ? { binding_id: mapped.binding_id } : {}),
         fence: resolution.fence,
         explain: true,
+        skip_miss_log: !submitted,
       };
-      const baseReport = resolution.fence.content_version_ids.length
-        ? await documentSearch(session, baseRequest, controller.signal)
-        : undefined;
+      const baseReport = await documentSearch(session, baseRequest, controller.signal);
       if (request !== generation || session !== webSession || controller.signal.aborted) return;
       const nodes = new Map<number, Node | undefined>();
-      const baseRows = baseReport
-        ? await hydrateProcessingRows(baseReport, session, request, controller.signal, mode, nodes)
-        : [];
+      const baseRows = await hydrateProcessingRows(
+        baseReport,
+        session,
+        request,
+        controller.signal,
+        mode,
+        nodes,
+      );
       if (request !== generation || session !== webSession || controller.signal.aborted) return;
       const nameReport = await generated.search(
-        { q: query, limit: 1000, ...(requestedTagID ? { tag_id: requestedTagID } : {}) },
+        {
+          q: query,
+          limit: 1000,
+          skip_miss_log: true,
+          ...(requestedTagID ? { tag_id: requestedTagID } : {}),
+        },
         { session, signal: controller.signal },
       );
       if (request !== generation || session !== webSession || controller.signal.aborted) return;
@@ -2149,7 +2159,7 @@
         ...processingRows,
         ...nameRows.filter((row) => !processingRows.some((other) => other.node.id === row.node.id)),
       ];
-      if (!baseReport) {
+      if (resolution.fence.content_version_ids.length === 0) {
         applySearchRows(
           nameRows,
           query,
@@ -2162,7 +2172,7 @@
         if (requestedSort) applyResultSort(requestedSort);
         naturalSearchNote = nameRows.length ? "" : "No documents match the current filter.";
         loading = false;
-        // No document search ran, so there is no search_run to report.
+        // Preserve the empty-scope submission event.
         if (submitted && nameRows.length === 0) {
           try {
             parseQuery(JSON.stringify({ text: query }));
@@ -2199,7 +2209,7 @@
       try {
         const reranked = await documentSearch(
           session,
-          { ...baseRequest, rerank: true },
+          { ...baseRequest, rerank: true, skip_miss_log: true },
           controller.signal,
         );
         if (
@@ -2285,6 +2295,7 @@
             refreshing,
             session,
             controller.signal,
+            submitted,
             note,
           );
           accepted = !!outcome;
@@ -2332,10 +2343,16 @@
     refreshing: boolean,
     session: string,
     signal: AbortSignal,
+    submitted: boolean,
     note = "",
   ): Promise<{ type: string; empty: boolean } | undefined> {
     const report = await generated.search(
-      { q: query, limit: 1000, ...(requestedTagID ? { tag_id: requestedTagID } : {}) },
+      {
+        q: query,
+        limit: 1000,
+        skip_miss_log: !submitted,
+        ...(requestedTagID ? { tag_id: requestedTagID } : {}),
+      },
       { session, signal },
     );
     if (request !== generation || session !== webSession || signal.aborted) return;

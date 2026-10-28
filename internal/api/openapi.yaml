@@ -4378,8 +4378,6 @@ components:
           type: array
         media_source_selection:
           type: boolean
-        miss_log_id:
-          type: string
         requested_mode:
           type: string
         reranking:
@@ -6631,52 +6629,6 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/document
         name: document
-    EmptySearchCompletion:
-      additionalProperties: false
-      properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          examples:
-            - https://example.com/schemas/EmptySearchCompletion.json
-          format: uri
-          readOnly: true
-          type: string
-        miss_log_id:
-          type: string
-      type: object
-      x-go-type: api.EmptySearchCompletion
-      x-go-type-import:
-        path: go.kenn.io/docbank/internal/api
-        name: api
-    EmptySearchCompletionRequest:
-      additionalProperties: false
-      properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          examples:
-            - https://example.com/schemas/EmptySearchCompletionRequest.json
-          format: uri
-          readOnly: true
-          type: string
-        actual_mode:
-          enum:
-            - lexical
-            - semantic
-            - hybrid
-          type: string
-        coverage:
-          $ref: "#/components/schemas/DocumentSearchCoverage"
-        search:
-          $ref: "#/components/schemas/DocumentSearchRequest"
-      required:
-        - search
-        - actual_mode
-        - coverage
-      type: object
-      x-go-type: api.EmptySearchCompletionRequest
-      x-go-type-import:
-        path: go.kenn.io/docbank/internal/api
-        name: api
     EmptyTrashRequest:
       additionalProperties: false
       properties:
@@ -9659,16 +9611,9 @@ components:
         scope:
           additionalProperties: {}
           type: object
-        source:
-          type: string
-        triggers:
-          items:
-            type: string
-          type: array
         vault_uid:
           type: string
       required:
-        - source
         - id
         - created_at
         - vault_uid
@@ -9676,7 +9621,6 @@ components:
         - requested_mode
         - actual_mode
         - scope
-        - triggers
       type: object
       x-go-type: misslog.Receipt
       x-go-type-import:
@@ -18887,8 +18831,6 @@ components:
           type: integer
         mime_type:
           type: string
-        miss_log_id:
-          type: string
         modified_before:
           type: string
         modified_since:
@@ -25304,13 +25246,6 @@ paths:
   /api/v1/miss-log:
     delete:
       operationId: deleteMissLog
-      parameters:
-        - explode: false
-          in: query
-          name: before
-          schema:
-            maxLength: 64
-            type: string
       responses:
         "204":
           description: No Content
@@ -25320,7 +25255,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
           description: Error
-      summary: Purge private search misses or delete by date (operator only)
+      summary: Purge private search misses (operator only)
     get:
       operationId: listMissLog
       parameters:
@@ -30890,29 +30825,6 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Create an export with reviewed dates
-  /api/v1/search/complete-empty:
-    post:
-      operationId: completeEmptySearch
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/EmptySearchCompletionRequest"
-        required: true
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/EmptySearchCompletion"
-          description: OK
-        default:
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Error
-      summary: Record the final empty automatic CLI search (operator only)
   /api/v1/search/similar:
     post:
       operationId: findSimilarDocuments

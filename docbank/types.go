@@ -532,7 +532,6 @@ type DocumentMediaSelection struct {
 }
 
 type DocumentSearchReport struct {
-	MissLogID            string                   `json:"miss_log_id,omitzero"`
 	MediaSelections      []DocumentMediaSelection `json:"media_selections,omitzero"`
 	MediaSourceSelection bool                     `json:"media_source_selection,omitzero"`
 	RequestedMode        DocumentSearchMode       `json:"requested_mode"`

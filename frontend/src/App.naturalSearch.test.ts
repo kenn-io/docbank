@@ -290,7 +290,19 @@ function installHarness(options: HarnessOptions) {
       }
       baseCalls += 1;
       if (options.basePending && baseCalls === 1) return basePending;
-      return json(options.baseReport);
+      return json(
+        options.emptyFence
+          ? {
+              ...(options.baseReport as object),
+              coverage: {
+                binding_required: false,
+                scoped_documents: 0,
+                complete_documents: 0,
+                state: "complete",
+              },
+            }
+          : options.baseReport,
+      );
     }
     if (url.startsWith("/api/v1/search?") && method === "GET") {
       legacyCalls += 1;
@@ -409,7 +421,7 @@ it.each([
       expect(harness.postBodies.at(-1)).toMatchObject({ mode: "hybrid", rerank: true });
     } else {
       expect(screen.queryByText("No documents match the current filter.")).toBeNull();
-      expect(harness.postBodies).toHaveLength(0);
+      expect(harness.postBodies).toHaveLength(embeddings ? 1 : 0);
       if (!embeddings) expect(harness.legacyCalls()).toBe(1);
     }
   },
@@ -506,7 +518,9 @@ it("shows base rows while reranking and applies the validated order", async () =
   expect(screen.queryByText("base excerpt")).toBeNull();
   expect(harness.postBodies).toHaveLength(2);
   expect(harness.postBodies[0]?.rerank).toBeUndefined();
+  expect(harness.postBodies[0]?.skip_miss_log).toBe(false);
   expect(harness.postBodies[1]?.rerank).toBe(true);
+  expect(harness.postBodies[1]?.skip_miss_log).toBe(true);
 });
 
 it("refreshes live nodes before replacing rows with reranked results", async () => {
@@ -537,6 +551,7 @@ it("refreshes live nodes before replacing rows with reranked results", async () 
   await screen.findByText("reranked excerpt");
   expect(screen.getAllByText("/renamed.txt").length).toBeGreaterThan(0);
   expect(harness.postBodies[1]?.rerank).toBe(true);
+  expect(harness.postBodies[1]?.skip_miss_log).toBe(true);
 });
 
 it("ignores a rerank response after switching to Names and text", async () => {
@@ -1016,7 +1031,7 @@ it("sends the selected tag filter in the resolver body", async () => {
   expect(harness.fenceBodies[0]?.filters).toEqual({ tag_id: tagID });
 });
 
-it("shows the empty-fence note without posting a search and reports it once, not for reruns", async () => {
+it("sends empty-scope searches and records only submissions", async () => {
   const searchRun = vi.spyOn(actions, "reportSearch").mockImplementation(() => {});
   const action = vi.spyOn(actions, "reportAction").mockImplementation(() => {});
   const failure = vi.spyOn(actions, "reportFailure").mockImplementation(() => {});
@@ -1039,7 +1054,14 @@ it("shows the empty-fence note without posting a search and reports it once, not
   await screen.findAllByText("empty.txt");
   await submitSearch("nothing");
   await screen.findByText("No documents match the current filter.");
-  expect(harness.postBodies).toHaveLength(0);
+  expect(harness.postBodies).toHaveLength(1);
+  expect(harness.postBodies[0]).toMatchObject({
+    fence: { content_version_ids: [] },
+    skip_miss_log: false,
+  });
+  expect(
+    harness.fetchMock.mock.calls.some(([url]) => String(url).includes("skip_miss_log=true")),
+  ).toBe(true);
   expect(action).toHaveBeenCalledExactlyOnceWith("short-lived", "search_empty", "hybrid");
   expect(searchRun).not.toHaveBeenCalled();
   // A refresh reruns the same search without a new submission.
@@ -1054,7 +1076,9 @@ it("shows the empty-fence note without posting a search and reports it once, not
   expect(action).not.toHaveBeenCalled();
   expect(searchRun).not.toHaveBeenCalled();
   expect(failure).not.toHaveBeenCalled();
-  expect(harness.postBodies).toHaveLength(0);
+  expect(harness.postBodies).toHaveLength(3);
+  expect(harness.postBodies[1]?.skip_miss_log).toBe(true);
+  expect(harness.postBodies[2]?.skip_miss_log).toBe(false);
 });
 
 it("keeps a non-401 processing failure on the legacy GET path", async () => {

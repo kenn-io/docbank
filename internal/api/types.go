@@ -404,7 +404,6 @@ type DocumentMediaSelection struct {
 }
 
 type DocumentSearchReport struct {
-	MissLogID            string                          `json:"miss_log_id,omitzero"`
 	MediaSelections      []DocumentMediaSelection        `json:"media_selections,omitzero" maxItems:"4096" nullable:"false"`
 	MediaSourceSelection bool                            `json:"media_source_selection,omitzero"`
 	RequestedMode        string                          `json:"requested_mode"`
@@ -923,7 +922,6 @@ type FuzzyReceipt struct {
 
 // SearchReport is one bounded search result page.
 type SearchReport struct {
-	MissLogID      string        `json:"miss_log_id,omitzero"`
 	Fuzzy          *FuzzyReceipt `json:"fuzzy,omitzero"`
 	Hits           []SearchHit   `json:"hits"`
 	Limit          int           `json:"limit"`

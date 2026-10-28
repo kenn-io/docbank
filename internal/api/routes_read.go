@@ -436,7 +436,7 @@ func registerReadRoutes(api huma.API, d Deps) {
 					actualMode = "fuzzy"
 				}
 			}
-			out.Body.MissLogID = d.MissLog.Record(ctx, misslog.Receipt{Query: in.Q, RequestedMode: requestedMode, ActualMode: actualMode, Coverage: coverage, Scope: map[string]any{
+			d.MissLog.Record(ctx, misslog.Receipt{Query: in.Q, RequestedMode: requestedMode, ActualMode: actualMode, Coverage: coverage, Scope: map[string]any{
 				"live_filters": true, packageLimitParameter: in.Limit, "tag_id": in.TagID, "mime_type": mimeType, "under_node_id": in.UnderNodeID, "modified_since": modifiedSince, "modified_before": modifiedBefore, "fuzzy": in.Fuzzy,
 			}})
 		}

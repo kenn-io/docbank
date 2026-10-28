@@ -153,7 +153,6 @@ daemon was running.`,
 }
 
 func init() {
-	daemonRunCmd.Flags().BoolVar(&daemonMissLog, "miss-log", false, "record private empty searches for this daemon run")
 	daemonStatusCmd.Flags().BoolVar(&daemonStatusJSON, "json", false, "print JSON to stdout")
 	daemonCmd.AddCommand(daemonRunCmd, daemonStartCmd, daemonStatusCmd, daemonStopCmd, daemonRestartCmd)
 	rootCmd.AddCommand(daemonCmd)

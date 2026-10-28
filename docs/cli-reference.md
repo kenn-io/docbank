@@ -1881,15 +1881,13 @@ daemons, and `docbank mcp` diagnostics.
 
 ## Private search misses
 
-Enable recording with `[miss_log] enabled = true` or
-`docbank daemon run --miss-log`. The log is off by default and contains private
+Enable recording with `[miss_log] enabled = true`. The log is off by default and contains private
 query text. The daemon's operator can inspect and delete it:
 
 ```sh
 docbank miss-log list --limit 20 --offset 0
 docbank miss-log show <record-id>
 docbank miss-log delete <record-id>
-docbank miss-log delete --before 2026-01-01T00:00:00Z
 docbank miss-log purge
 ```
 

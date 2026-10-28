@@ -460,7 +460,7 @@ func TestSearchReadValidatesEmptyFenceThroughDaemonSearch(t *testing.T) {
 						})
 						return
 					}
-					writeDaemonJSON(t, response, api.DocumentSearchReport{MissLogID: strings.Repeat("a", 48), RequestedMode: "lexical", ActualMode: "lexical", Coverage: api.DocumentSearchCoverage{State: "complete"}, Results: []api.DocumentSearchResult{}})
+					writeDaemonJSON(t, response, api.DocumentSearchReport{RequestedMode: "lexical", ActualMode: "lexical", Coverage: api.DocumentSearchCoverage{State: "complete"}, Results: []api.DocumentSearchResult{}})
 				default:
 					http.NotFound(response, request)
 				}
@@ -486,7 +486,6 @@ func TestSearchReadValidatesEmptyFenceThroughDaemonSearch(t *testing.T) {
 			require.NoError(t, err)
 			output := structuredMap(t, result.StructuredContent)
 			assert.Equal(t, []any{}, output["results"])
-			assert.Equal(t, strings.Repeat("a", 48), output["miss_log_id"])
 			assert.EqualValues(t, 0, output["observed_scope_count"])
 		})
 	}

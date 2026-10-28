@@ -406,8 +406,6 @@ type sourceFenceOutput struct {
 type searchDocumentsOutput struct {
 	privateCache
 
-	MissLogID string `json:"miss_log_id,omitempty"`
-
 	VaultID            string               `json:"vault_id"`
 	Fence              sourceFenceOutput    `json:"fence"`
 	FenceFingerprint   string               `json:"fence_fingerprint"`
@@ -427,7 +425,7 @@ func searchDocuments(
 	if err := decodeReadArguments(raw, &input); err != nil {
 		return searchDocumentsOutput{}, nil, err
 	}
-	input.Mode = effectiveSearchMode(input.Mode)
+	input.Mode = api.EffectiveSearchMode(input.Mode)
 
 	type response struct {
 		resolution api.DocumentSourceFenceResolution
@@ -466,7 +464,7 @@ func searchDocuments(
 	if err != nil {
 		return searchDocumentsOutput{}, nil, err
 	}
-	output := searchDocumentsOutput{MissLogID: result.report.MissLogID, VaultID: result.resolution.Fence.VaultUID,
+	output := searchDocumentsOutput{VaultID: result.resolution.Fence.VaultUID,
 		Fence: sourceFenceOutput{VaultID: result.resolution.Fence.VaultUID,
 			ContentVersionIDs: slices.Clone(result.resolution.Fence.ContentVersionIDs)},
 		FenceFingerprint:   result.resolution.FenceFingerprint,
@@ -492,13 +490,6 @@ func searchDocuments(
 			Path: item.Path, Excerpt: item.Excerpt, EvidenceIDs: evidence}
 	}
 	return output, documentResourceLinks(result.resolution.Fence.VaultUID, result.documents), nil
-}
-
-func effectiveSearchMode(mode string) string {
-	if mode == "" {
-		return "auto"
-	}
-	return mode
 }
 
 type getDocumentInput struct {

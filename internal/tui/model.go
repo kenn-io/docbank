@@ -62,7 +62,7 @@ type Backend interface {
 	Stat(ctx context.Context, path string) (api.Node, error)
 	Node(ctx context.Context, nodeID int64) (api.Node, error)
 	ChildrenPage(ctx context.Context, nodeID int64, limit, offset int) (api.NodePage, error)
-	Search(ctx context.Context, query string, limit int) (api.SearchReport, error)
+	Search(ctx context.Context, query string, limit int, submitted bool) (api.SearchReport, error)
 	ResolveDocumentSourceFence(ctx context.Context, request api.DocumentSourceFenceResolveRequest) (api.DocumentSourceFenceResolution, error)
 	NodeTags(ctx context.Context, nodeID int64, limit, offset int) (api.TagPage, error)
 	Jobs(ctx context.Context) ([]api.Job, error)
@@ -165,6 +165,7 @@ type naturalProfilesLoadedMsg struct {
 }
 
 type naturalSearchBaseLoadedMsg struct {
+	submitted   bool
 	requestID   uint64
 	searchID    uint64
 	query       string
@@ -612,7 +613,7 @@ func (m Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.naturalMode = naturalAuto
 			m.naturalRerank = false
 			if query := m.activeSearchQuery(); query != "" && (!m.loading || m.submittedSearchID == m.requestID) {
-				return m.startSearch(query)
+				return m.startSearch(query, false)
 			}
 		}
 		return m, nil
@@ -1016,7 +1017,7 @@ func (m Model) updateSearchInput(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		m.searching = false
 		m.searchInput.Blur()
-		m, cmd := m.startSearch(query)
+		m, cmd := m.startSearch(query, true)
 		m.reportSearchID = m.requestID
 		return m, cmd
 	default:
@@ -1182,7 +1183,7 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		)
 	case "r":
 		if query := m.activeSearchQuery(); query != "" {
-			return m.startSearch(query)
+			return m.startSearch(query, false)
 		}
 		if m.directory.Path != "" {
 			m.loading = true
@@ -2021,7 +2022,7 @@ func (m Model) runMutation(
 func (m Model) reloadCurrent() (tea.Model, tea.Cmd) {
 	m.naturalRerankPending = false
 	if query := m.activeSearchQuery(); query != "" {
-		return m.startSearch(query)
+		return m.startSearch(query, false)
 	}
 	m.loading = true
 	m.requestID++
@@ -2044,7 +2045,7 @@ func (m Model) revisit(state location) (tea.Model, tea.Cmd) {
 	m.truncated = false
 	m.cursor, m.offset = 0, 0
 	if state.mode == modeSearch && state.searchQuery != "" {
-		return m.startSearch(state.searchQuery)
+		return m.startSearch(state.searchQuery, false)
 	}
 	m.requestID++
 	return m, tea.Batch(
@@ -2083,7 +2084,7 @@ func (m Model) loadDirectory(
 	}
 }
 
-func (m Model) startSearch(query string) (Model, tea.Cmd) {
+func (m Model) startSearch(query string, submitted bool) (Model, tea.Cmd) {
 	m.loading = true
 	m.err = nil
 	if m.reportSearchID != 0 && m.reportSearchID == m.requestID && query == m.submittedSearchQuery {
@@ -2096,7 +2097,7 @@ func (m Model) startSearch(query string) (Model, tea.Cmd) {
 	m.submittedSearchQuery, m.submittedSearchID = query, m.requestID
 	m.naturalRerankPending = false
 	m.naturalSearchNote = ""
-	return m, tea.Batch(m.startSpinner(), m.loadSearch(query, m.requestID))
+	return m, tea.Batch(m.startSpinner(), m.loadSearch(query, m.requestID, submitted))
 }
 
 func (m Model) activeSearchQuery() string {
@@ -2118,19 +2119,19 @@ func (m Model) updateNaturalSearchSetting(key string) (tea.Model, tea.Cmd) {
 	}
 	if m.naturalMode != mode || m.naturalRerank != rerank {
 		if query := m.activeSearchQuery(); query != "" {
-			return m.startSearch(query)
+			return m.startSearch(query, false)
 		}
 	}
 	return m, nil
 }
 
-func (m Model) loadSearch(query string, requestID uint64) tea.Cmd {
+func (m Model) loadSearch(query string, requestID uint64, submitted bool) tea.Cmd {
 	if m.naturalMode != naturalNames && m.selectedNaturalProfile() != nil {
-		return m.loadNaturalSearch(query, requestID)
+		return m.loadNaturalSearch(query, requestID, submitted)
 	}
 	ctx, backend := m.ctx, m.backend
 	return func() tea.Msg {
-		report, err := backend.Search(ctx, query, maxSearchItems)
+		report, err := backend.Search(ctx, query, maxSearchItems, submitted)
 		return searchLoadedMsg{requestID: requestID, query: query, report: report, err: err}
 	}
 }
@@ -2143,40 +2144,36 @@ func (m Model) loadNaturalProfiles(requestID uint64) tea.Cmd {
 	}
 }
 
-func (m Model) loadNaturalSearch(query string, requestID uint64) tea.Cmd {
+func (m Model) loadNaturalSearch(query string, requestID uint64, submitted bool) tea.Cmd {
 	ctx, backend, mode := m.ctx, m.backend, m.naturalMode
 	profile := m.selectedNaturalProfile()
 	searchID := m.naturalSearchID
 	return func() tea.Msg {
 		if profile == nil {
-			return naturalSearchBaseLoadedMsg{requestID: requestID, searchID: searchID, query: query, naturalMode: mode,
+			return naturalSearchBaseLoadedMsg{submitted: submitted, requestID: requestID, searchID: searchID, query: query, naturalMode: mode,
 				err: errors.New("natural search profile is unavailable")}
 		}
 		wireMode, binding, ok := naturalRequestMode(mode, profile)
 		if !ok {
-			return naturalSearchBaseLoadedMsg{requestID: requestID, searchID: searchID, query: query, naturalMode: mode,
+			return naturalSearchBaseLoadedMsg{submitted: submitted, requestID: requestID, searchID: searchID, query: query, naturalMode: mode,
 				err: fmt.Errorf("%s search requires an embedding binding", mode)}
 		}
 		resolution, err := backend.ResolveDocumentSourceFence(ctx, api.DocumentSourceFenceResolveRequest{
 			Filters: &api.DocumentSourceFenceFilters{},
 		})
 		if err != nil {
-			return naturalSearchBaseLoadedMsg{requestID: requestID, searchID: searchID, query: query, naturalMode: mode, err: err}
+			return naturalSearchBaseLoadedMsg{submitted: submitted, requestID: requestID, searchID: searchID, query: query, naturalMode: mode, err: err}
 		}
 		request := api.DocumentSearchRequest{Query: query, Mode: wireMode, Limit: maxNaturalSearchItems,
 			Profile: profile.Name, BindingID: binding, Fence: api.DocumentSourceFence{
 				VaultUID: resolution.Fence.VaultUID, ContentVersionIDs: resolution.Fence.ContentVersionIDs,
-			}, Explain: true}
-		if len(resolution.Fence.ContentVersionIDs) == 0 {
-			return naturalSearchBaseLoadedMsg{requestID: requestID, searchID: searchID, query: query, naturalMode: mode, request: request,
-				report: api.DocumentSearchReport{}, rows: []row{}}
-		}
+			}, Explain: true, SkipMissLog: !submitted}
 		report, err := backend.SearchDocuments(ctx, request)
 		if err != nil {
-			return naturalSearchBaseLoadedMsg{requestID: requestID, searchID: searchID, query: query, naturalMode: mode, request: request, err: err}
+			return naturalSearchBaseLoadedMsg{submitted: submitted, requestID: requestID, searchID: searchID, query: query, naturalMode: mode, request: request, err: err}
 		}
 		rows, err := hydrateNaturalRows(ctx, backend, report, mode, make(map[int64]api.Node))
-		return naturalSearchBaseLoadedMsg{requestID: requestID, searchID: searchID, query: query, naturalMode: mode,
+		return naturalSearchBaseLoadedMsg{submitted: submitted, requestID: requestID, searchID: searchID, query: query, naturalMode: mode,
 			request: request, report: report, rows: rows, err: err}
 	}
 }
@@ -2184,6 +2181,7 @@ func (m Model) loadNaturalSearch(query string, requestID uint64) tea.Cmd {
 func (m Model) loadNaturalRerank(requestID, searchID uint64, request api.DocumentSearchRequest, naturalMode string) tea.Cmd {
 	ctx, backend := m.ctx, m.backend
 	request.Rerank = true
+	request.SkipMissLog = true
 	return func() tea.Msg {
 		report, err := backend.SearchDocuments(ctx, request)
 		if err != nil {
@@ -2459,7 +2457,7 @@ func (m Model) applyNaturalSearchBase(msg naturalSearchBaseLoadedMsg) (tea.Model
 		m.naturalResultMode = ""
 		m.naturalSearchNote = "Natural-language search unavailable: " + msg.err.Error() + ". Showing Names and text."
 		m.loading = true
-		return m, m.loadSearch(msg.query, msg.requestID)
+		return m, m.loadSearch(msg.query, msg.requestID, msg.submitted)
 	}
 	m.applyNaturalRows(msg.query, msg.rows, msg.report.Truncated)
 	m.naturalResultMode = msg.naturalMode
@@ -2473,7 +2471,7 @@ func (m Model) applyNaturalSearchBase(msg naturalSearchBaseLoadedMsg) (tea.Model
 		if _, err := query.Canonical(query.Query{V: 1, Text: msg.query, Syntax: "simple", Mode: "lexical", Sort: query.Sort{Field: "name", Direction: "asc"}}); err != nil {
 			return m, nil
 		}
-		// No search ran, so there is no search_run; a submission still counts as an empty search.
+		// Preserve the empty-scope submission event.
 		searchType := msg.request.Mode
 		if searchType == naturalAuto {
 			searchType = naturalLexical

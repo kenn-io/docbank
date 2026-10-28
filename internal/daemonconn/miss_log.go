@@ -2,8 +2,6 @@ package daemonconn
 
 import (
 	"context"
-	"encoding/hex"
-	"errors"
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
@@ -28,32 +26,7 @@ func (c *Connection) DeleteMissLogRecord(ctx context.Context, id string) error {
 	_, err := c.API().DeleteMissLogRecord(ctx, &apiclient.DeleteMissLogRecordRequestOptions{PathParams: &apiclient.DeleteMissLogRecordPath{ID: id}})
 	return err
 }
-func (c *Connection) DeleteMissLog(ctx context.Context, before string) error {
-	query := &apiclient.DeleteMissLogQuery{}
-	if before != "" {
-		query.Before = new(before)
-	}
-	_, err := c.API().DeleteMissLog(ctx, &apiclient.DeleteMissLogRequestOptions{Query: query})
+func (c *Connection) DeleteMissLog(ctx context.Context) error {
+	_, err := c.API().DeleteMissLog(ctx)
 	return err
-}
-func (c *Connection) CompleteEmptySearch(ctx context.Context, input api.EmptySearchCompletionRequest) (api.EmptySearchCompletion, error) {
-	out, err := c.API().CompleteEmptySearch(ctx, &apiclient.CompleteEmptySearchRequestOptions{Body: &input})
-	if err != nil {
-		return api.EmptySearchCompletion{}, err
-	}
-	if !validMissLogID(out.MissLogID) {
-		return api.EmptySearchCompletion{}, errors.New("search completion returned an invalid miss log ID")
-	}
-	return *out, nil
-}
-
-func validMissLogID(id string) bool {
-	if id == "" {
-		return true
-	}
-	if len(id) != 48 {
-		return false
-	}
-	decoded, err := hex.DecodeString(id)
-	return err == nil && hex.EncodeToString(decoded) == id
 }

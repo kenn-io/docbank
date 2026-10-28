@@ -2241,7 +2241,6 @@ export interface DocumentSearchReport {
   /** @maxItems 4096 */
   media_selections?: DocumentMediaSelection[];
   media_source_selection?: boolean;
-  miss_log_id?: string;
   requested_mode: string;
   reranking?: DocumentSearchRerankingReceipt;
   results: DocumentSearchResult[];
@@ -3125,29 +3124,6 @@ export interface EmailPending {
   readonly $schema?: string;
   state: string;
   version: ContentVersion;
-}
-
-export interface EmptySearchCompletion {
-  /** A URL to the JSON Schema for this object. */
-  readonly $schema?: string;
-  miss_log_id?: string;
-}
-
-export type EmptySearchCompletionRequestActualMode = typeof EmptySearchCompletionRequestActualMode[keyof typeof EmptySearchCompletionRequestActualMode];
-
-
-export const EmptySearchCompletionRequestActualMode = {
-  lexical: 'lexical',
-  semantic: 'semantic',
-  hybrid: 'hybrid',
-} as const;
-
-export interface EmptySearchCompletionRequest {
-  /** A URL to the JSON Schema for this object. */
-  readonly $schema?: string;
-  actual_mode: EmptySearchCompletionRequestActualMode;
-  coverage: DocumentSearchCoverage;
-  search: DocumentSearchRequest;
 }
 
 export interface EmptyTrashRequest {
@@ -4145,8 +4121,6 @@ export interface MissLogReceipt {
   query: string;
   requested_mode: string;
   scope: MissLogReceiptScope;
-  source: string;
-  triggers: string[];
   vault_uid: string;
 }
 
@@ -7990,7 +7964,6 @@ export interface SearchReport {
   hits: SearchHit[];
   limit: number;
   mime_type?: string;
-  miss_log_id?: string;
   modified_before?: string;
   modified_since?: string;
   tag_id?: string;
@@ -9279,13 +9252,6 @@ export type GetMediaTranscriptParams = {
  * @maxLength 256
  */
 content_version_id: string;
-};
-
-export type DeleteMissLogParams = {
-/**
- * @maxLength 64
- */
-before?: string;
 };
 
 export type ListMissLogParams = {
@@ -14212,27 +14178,20 @@ export const getMediaTranscript = async (sourceId: string,
 
 
 
-export const getDeleteMissLogUrl = (params?: DeleteMissLogParams,) => {
-  const normalizedParams = new URLSearchParams();
+export const getDeleteMissLogUrl = () => {
 
-  Object.entries(params || {}).forEach(([key, value]) => {
 
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? 'null' : String(value))
-    }
-  });
 
-  const stringifiedParams = normalizedParams.toString();
 
-  return stringifiedParams.length > 0 ? `/api/v1/miss-log?${stringifiedParams}` : `/api/v1/miss-log`
+  return `/api/v1/miss-log`
 }
 
 /**
- * @summary Purge private search misses or delete by date (operator only)
+ * @summary Purge private search misses (operator only)
  */
-export const deleteMissLog = async (params?: DeleteMissLogParams, options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
+export const deleteMissLog = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
 
-  return sessionJSON<void>(getDeleteMissLogUrl(params),
+  return sessionJSON<void>(getDeleteMissLogUrl(),
   {
     ...options,
     method: 'DELETE'
@@ -19848,44 +19807,6 @@ return sessionJSON<Summary>(getReviseTermReportUrl(id),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(reviseTermReportRequest)
-  }
-);}
-
-
-
-export const getCompleteEmptySearchUrl = () => {
-
-
-
-
-  return `/api/v1/search/complete-empty`
-}
-
-/**
- * @summary Record the final empty automatic CLI search (operator only)
- */
-export const completeEmptySearch = async (emptySearchCompletionRequest: NonReadonly<EmptySearchCompletionRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<EmptySearchCompletion> => {
-
-    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Symbol.iterator in h) {
-      return Object.fromEntries(
-        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
-      );
-    }
-    const headers: Record<string, string | readonly string[]> = {};
-    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
-      if (value !== undefined) headers[name] = value;
-    }
-    return headers;
-  };
-return sessionJSON<EmptySearchCompletion>(getCompleteEmptySearchUrl(),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
-    body: JSON.stringify(emptySearchCompletionRequest)
   }
 );}
 

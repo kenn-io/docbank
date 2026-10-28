@@ -520,10 +520,6 @@ func (c *Connection) ValidateDocumentSearch(
 }
 
 func validateDocumentSearchReport(request api.DocumentSearchRequest, report api.DocumentSearchReport) error {
-	if !validMissLogID(report.MissLogID) || (report.MissLogID != "" && (request.SkipMissLog || len(report.Results) != 0)) {
-		return errors.New("invalid miss log receipt")
-	}
-
 	if !validUUIDv4(request.Fence.VaultUID) ||
 		len(request.Fence.ContentVersionIDs) > 4096 {
 		return errors.New("request fence identity is invalid")

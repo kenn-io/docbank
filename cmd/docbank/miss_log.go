@@ -2,7 +2,6 @@ package main
 
 import (
 	"errors"
-	"time"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/docbank/internal/daemonconn"
@@ -10,8 +9,8 @@ import (
 
 func newMissLogCmd() *cobra.Command {
 	command := &cobra.Command{Use: "miss-log", Short: "Manage private search misses through the daemon", GroupID: groupSearch,
-		Long: `Record empty searches only after opting in with [miss_log] enabled = true
-or "docbank daemon run --miss-log". The log contains private query text.
+		Long: `Record empty searches only after opting in with [miss_log] enabled = true.
+The log contains private query text.
 List and show print JSON; delete and purge remove current records.
 Management uses the master daemon credential even when recording is off.`}
 	var limit, offset int
@@ -42,36 +41,23 @@ Management uses the master daemon credential even when recording is off.`}
 		}
 		return writeCLIJSON(cmd.OutOrStdout(), receipt)
 	}}
-	var before string
-	remove := &cobra.Command{Use: "delete [record-id]", Short: "Delete one receipt or receipts older than --before", Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-		if (len(args) == 1) == (before != "") {
-			return usageError(errors.New("supply either a record ID or --before"))
-		}
-		if before != "" {
-			if _, err := time.Parse(time.RFC3339, before); err != nil {
-				return usageError(errors.New("before must be an RFC 3339 timestamp"))
-			}
-		}
+	remove := &cobra.Command{Use: "delete <record-id>", Short: "Delete one private miss receipt", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		if len(args) == 1 {
-			return c.DeleteMissLogRecord(cmd.Context(), args[0])
-		}
-		return c.DeleteMissLog(cmd.Context(), before)
+		return c.DeleteMissLogRecord(cmd.Context(), args[0])
 	}}
-	remove.Flags().StringVar(&before, "before", "", "delete receipts strictly older than this RFC 3339 timestamp")
 	purge := &cobra.Command{Use: "purge", Short: "Delete all private miss receipts", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		return c.DeleteMissLog(cmd.Context(), "")
+		return c.DeleteMissLog(cmd.Context())
 	}}
 	list.Example = "  docbank miss-log list --limit 20"
 	show.Example = "  docbank miss-log show <record-id>"
-	remove.Example = "  docbank miss-log delete <record-id>\n  docbank miss-log delete --before 2026-01-01T00:00:00Z"
+	remove.Example = "  docbank miss-log delete <record-id>"
 	purge.Example = "  docbank miss-log purge"
 	command.AddCommand(list, show, remove, purge)
 	return command

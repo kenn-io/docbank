@@ -430,7 +430,7 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		if err != nil {
 			return nil, err
 		}
-		report.MissLogID = recordDocumentSearch(ctx, d.MissLog, input.Body, report)
+		recordDocumentSearch(ctx, d.MissLog, input.Body, report)
 		return &searchOutput{Body: report}, nil
 	})
 }
@@ -897,14 +897,8 @@ func searchDocuments(ctx context.Context, service *processing.Service, st *store
 		if err := validateDocumentSearch(ctx, service, DocumentSearchValidationRequest{Query: input.Query, Mode: input.Mode, Profile: input.Profile, Limit: input.Limit, BindingID: input.BindingID, Explain: input.Explain, Rerank: input.Rerank, ContentFirst: input.ContentFirst}); err != nil {
 			return DocumentSearchReport{}, err
 		}
-		mode := input.Mode
-		if mode == "" {
-			mode = "auto"
-		}
-		actual := mode
-		if mode == "auto" {
-			actual = "lexical"
-		}
+		mode := EffectiveSearchMode(input.Mode)
+		actual := effectiveEmptySearchMode(mode)
 		if input.MediaSources != nil {
 			return DocumentSearchReport{}, fromProcessingError(processing.ErrMediaSearchInvalid)
 		}
@@ -925,4 +919,19 @@ func searchDocuments(ctx context.Context, service *processing.Service, st *store
 		return DocumentSearchReport{}, fromProcessingError(err)
 	}
 	return fromDocumentSearchReport(report, input.Explain), nil
+}
+
+// EffectiveSearchMode applies the default used by daemon and embedded search callers.
+func EffectiveSearchMode(mode string) string {
+	if mode == "" {
+		return "auto"
+	}
+	return mode
+}
+
+func effectiveEmptySearchMode(mode string) string {
+	if mode == "semantic" || mode == "hybrid" {
+		return mode
+	}
+	return "lexical"
 }

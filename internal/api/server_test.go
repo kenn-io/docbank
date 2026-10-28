@@ -25,7 +25,6 @@ import (
 	"go.kenn.io/docbank/internal/daemonauth"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
-	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
 // testStore bundles the store and blob store the test server was built
@@ -55,11 +54,11 @@ const testWebURL = "http://docbank-0123456789abcdef0123456789abcdef.localhost:43
 // explicit X-Api-Key header, so the ~30 non-auth-focused tests using get/
 // do/try need no per-call header plumbing; tests exercising the missing-
 // or wrong-key path set X-Api-Key explicitly (even to "") to opt out.
-func newTestServer(tb testing.TB, mutate func(*api.Deps), drivers ...docsqlite.Driver) (*httptest.Server, *testStore) {
+func newTestServer(tb testing.TB, mutate func(*api.Deps)) (*httptest.Server, *testStore) {
 	tb.Helper()
 	dir := tb.TempDir()
 	dbPath := filepath.Join(dir, "docbank.db")
-	s, err := store.Open(dbPath, drivers...)
+	s, err := store.Open(dbPath)
 	require.NoError(tb, err)
 	tb.Cleanup(func() { _ = s.Close() })
 	blobsDir := filepath.Join(dir, "blobs")

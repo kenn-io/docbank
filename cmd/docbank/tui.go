@@ -224,10 +224,10 @@ func (b *tuiDaemonBackend) ChildrenPage(
 }
 
 func (b *tuiDaemonBackend) Search(
-	ctx context.Context, query string, limit int,
+	ctx context.Context, query string, limit int, submitted bool,
 ) (api.SearchReport, error) {
 	return withTUIClient(ctx, b, func(c *daemonconn.Connection) (api.SearchReport, error) {
-		return c.Search(ctx, query, limit)
+		return c.SearchWithOptions(ctx, query, limit, daemonconn.SearchOptions{SkipMissLog: !submitted})
 	})
 }
 
