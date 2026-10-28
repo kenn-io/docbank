@@ -20,6 +20,7 @@ import (
 )
 
 const (
+	EmbeddingVectorSpaceContractV2 = "embedding-vector-space/v2"
 	EmbeddingVectorSpaceContractV1 = "embedding-vector-space/v1"
 	EmbeddingVectorSetContractV1   = "vector-set/v1"
 
@@ -228,6 +229,9 @@ func stageEmbeddingSetTx(ctx context.Context, tx *sql.Tx, record EmbeddingSetRec
 		if err != nil {
 			return err
 		}
+		if record.VectorSpace.ContractVersion == EmbeddingVectorSpaceContractV2 && sameEmbeddingVectorSemantics(stored.VectorSpace.Descriptor, record.VectorSpace.Descriptor) {
+			record.VectorSpace = stored.VectorSpace
+		}
 		if !reflect.DeepEqual(stored, record) {
 			return fmt.Errorf("embedding set %s names different immutable authority", record.ID)
 		}
@@ -408,41 +412,46 @@ func validateExactEmbeddingGenerationArtifact(record EmbeddingInputGenerationRec
 	return nil
 }
 
-func validateExactEmbeddingVectorArtifact(
+func validateExactEmbeddingVectorArtifact(vectorSet EmbeddingVectorSetRecord, space EmbeddingVectorSpaceRecord, data []byte) error {
+	_, err := decodeExactEmbeddingVectorArtifact(vectorSet, space, data)
+	return err
+}
+
+func decodeExactEmbeddingVectorArtifact(
 	vectorSet EmbeddingVectorSetRecord, space EmbeddingVectorSpaceRecord,
 	data []byte,
-) error {
+) (document.VectorSetV1, error) {
 	if int64(len(data)) != vectorSet.PayloadSize || hashCatalogBytes(data) != vectorSet.PayloadBlobHash {
-		return errors.New("vector-set artifact bytes do not match catalog authority")
+		return document.VectorSetV1{}, errors.New("vector-set artifact bytes do not match catalog authority")
 	}
 	decoded, _, err := document.DecodeVectorSetV1(data, document.VectorBounds{
 		MaxRows: maxEmbeddingCatalogRows, MaxDimension: maxEmbeddingDimensions, MaxBytes: len(data),
 	})
 	if err != nil {
-		return err
+		return document.VectorSetV1{}, err
 	}
 	canonical, checksum, err := document.EncodeVectorSetV1(decoded)
 	if err != nil || !bytes.Equal(canonical, data) {
-		return errors.New("vector-set artifact is not canonical")
+		return document.VectorSetV1{}, errors.New("vector-set artifact is not canonical")
 	}
 	if vectorSet.ID != checksum || vectorSet.PayloadChecksum != checksum ||
 		decoded.VectorSpaceFingerprint != space.ID || decoded.Dimension != space.Dimensions ||
 		decoded.Metric != space.Metric || decoded.Normalization != space.Normalization ||
 		len(decoded.InputKeys) != len(vectorSet.rows) {
-		return errors.New("vector-set artifact header or count does not match catalog authority")
+		return document.VectorSetV1{}, errors.New("vector-set artifact header or count does not match catalog authority")
 	}
 	for index, row := range vectorSet.rows {
 		if row != (EmbeddingVectorRowRecord{
 			RowID: decoded.InputKeys[index], InputID: decoded.InputKeys[index],
 			Dimensions: decoded.Dimension, Checksum: decoded.InputChecksums[index],
 		}) {
-			return errors.New("vector-set artifact rows do not match catalog authority")
+			return document.VectorSetV1{}, errors.New("vector-set artifact rows do not match catalog authority")
 		}
 	}
 	if vectorSet.ManifestChecksum != embeddingVectorManifestChecksum(vectorSet.rows) {
-		return errors.New("vector-set artifact manifest checksum does not match rows")
+		return document.VectorSetV1{}, errors.New("vector-set artifact manifest checksum does not match rows")
 	}
-	return nil
+	return decoded, nil
 }
 
 func tokenizerCatalogFingerprint(identity document.TokenizerIdentity) string {
@@ -689,7 +698,7 @@ func validateEmbeddingSetRecord(record EmbeddingSetRecord) error {
 }
 
 func validateEmbeddingVectorSpace(record EmbeddingVectorSpaceRecord) error {
-	if record.ContractVersion != EmbeddingVectorSpaceContractV1 {
+	if record.ContractVersion != EmbeddingVectorSpaceContractV1 && record.ContractVersion != EmbeddingVectorSpaceContractV2 {
 		return errors.New("embedding vector-space contract version is unsupported")
 	}
 	for value, subject := range map[string]string{
@@ -1024,20 +1033,19 @@ func validateEmbeddingSetFencesTx(ctx context.Context, tx *sql.Tx, record Embedd
 
 func validateEmbeddingBindingAuthority(record EmbeddingSetRecord, binding document.EmbeddingBindingV1, fingerprints document.FingerprintSet) error {
 	space := record.VectorSpace
-	if record.InputKind != binding.InputKind ||
-		record.EmbeddingInputFingerprint != fingerprints.EmbeddingInput[binding.Name] ||
-		space.ID != fingerprints.VectorSpace[binding.Name] {
-		return errors.New("embedding set does not match exact processing profile binding identity")
+	if record.InputKind != binding.InputKind || record.EmbeddingInputFingerprint != fingerprints.EmbeddingInput[binding.Name] ||
+		(space.ContractVersion == EmbeddingVectorSpaceContractV1 && space.ID != fingerprints.VectorSpace[binding.Name]) {
+		return errors.New("embedding set does not match processing profile binding identity")
 	}
 	descriptor := space.Descriptor
-	if descriptor.ID != binding.Descriptor.ID || descriptor.Fingerprint != binding.Descriptor.Fingerprint ||
-		descriptor.Model != binding.Model || descriptor.Dimension != binding.Dimensions ||
-		descriptor.Metric != binding.Metric || descriptor.Normalization != binding.Normalization ||
-		descriptor.ScalarEncoding != binding.ScalarEncoding || descriptor.DocumentFormatter != binding.DocumentFormatter ||
-		descriptor.QueryFormatter != binding.QueryFormatter || descriptor.CompatibilityID != binding.CompatibilityID ||
-		descriptor.ModelInput != binding.ModelInput || string(descriptor.TrustBoundary) != binding.TrustBoundary ||
-		!slices.Contains(descriptor.InputKinds, binding.InputKind) {
+	if space.ContractVersion == EmbeddingVectorSpaceContractV1 && (descriptor.Fingerprint != binding.Descriptor.Fingerprint || string(descriptor.TrustBoundary) != binding.TrustBoundary) {
 		return errors.New("E1 descriptor does not match exact processing profile embedding binding")
+	}
+	if descriptor.ID != binding.Descriptor.ID || descriptor.Model != binding.Model || descriptor.Dimension != binding.Dimensions ||
+		descriptor.Metric != binding.Metric || descriptor.Normalization != binding.Normalization || descriptor.ScalarEncoding != binding.ScalarEncoding ||
+		descriptor.DocumentFormatter != binding.DocumentFormatter || descriptor.QueryFormatter != binding.QueryFormatter ||
+		descriptor.CompatibilityID != binding.CompatibilityID || descriptor.ModelInput != binding.ModelInput || !slices.Contains(descriptor.InputKinds, binding.InputKind) {
+		return errors.New("embedding descriptor differs from binding")
 	}
 	if record.InputKind == document.EmbeddingInputRenditionChunk {
 		if len(record.InputGeneration.GenerationJSON) == 0 {
@@ -1087,7 +1095,8 @@ func insertVectorSpaceTx(ctx context.Context, tx *sql.Tx, record EmbeddingVector
 	inserted, _ := result.RowsAffected()
 	if inserted == 0 {
 		stored, err := loadVectorSpaceTx(ctx, tx, record.ID)
-		if err != nil || !reflect.DeepEqual(stored, record) {
+		if err != nil || stored.ContractVersion != record.ContractVersion || !sameEmbeddingVectorSemantics(stored.Descriptor, record.Descriptor) ||
+			(record.ContractVersion == EmbeddingVectorSpaceContractV1 && !reflect.DeepEqual(stored, record)) {
 			return fmt.Errorf("embedding vector space %s names different immutable authority", record.ID)
 		}
 	}
@@ -1596,4 +1605,86 @@ func requireEmbeddingWorkerLeaseTx(ctx context.Context, tx *sql.Tx, rootID strin
 		return ErrCurrentRenditionRootFenced
 	}
 	return nil
+}
+
+func sameEmbeddingVectorSemantics(left, right document.EmbeddingDescriptor) bool {
+	return reflect.DeepEqual(document.EmbeddingVectorProjection(left), document.EmbeddingVectorProjection(right))
+}
+
+// SelectEmbeddingVectorSpace validates existing authority before choosing a runtime ID.
+func (s *Store) SelectEmbeddingVectorSpace(ctx context.Context, legacy, semantic string, descriptor document.EmbeddingDescriptor) (string, error) {
+	if err := validateCatalogSHA256(semantic, "runtime vector identity"); err != nil {
+		return "", err
+	}
+	selected := semantic
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		for _, id := range []string{legacy, semantic} {
+			record, err := loadVectorSpaceTx(ctx, tx, id)
+			if errors.Is(err, ErrNotFound) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if err := validateEmbeddingVectorSpace(record); err != nil {
+				return err
+			}
+			if id == semantic {
+				if record.ContractVersion != EmbeddingVectorSpaceContractV2 || !sameEmbeddingVectorSemantics(record.Descriptor, descriptor) {
+					return errors.New("semantic vector space authority differs from runtime")
+				}
+			} else if record.ContractVersion != EmbeddingVectorSpaceContractV1 || record.DescriptorFingerprint != descriptor.Fingerprint {
+				return errors.New("legacy vector space authority differs from runtime")
+			}
+			selected = id
+			return nil
+		}
+		return nil
+	})
+	return selected, err
+}
+
+// FindReusableEmbeddingSet finds retained values with exactly the same ordered
+// rendered inputs. The worker must verify the referenced payload before use.
+func (s *Store) FindReusableEmbeddingSet(ctx context.Context, work EmbeddingJobWork, after, semanticID string) (EmbeddingSetRecord, error) {
+	var found EmbeddingSetRecord
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		selected, err := loadVectorSpaceTx(ctx, tx, work.VectorSpaceID)
+		if err != nil {
+			return err
+		}
+		ids, err := stringColumnTx(ctx, tx, "reusable embedding sets", `SELECT embedding_set_id
+			FROM embedding_sets WHERE content_version_id=? AND binding_id=? AND input_kind=? AND embedding_set_id>?
+			ORDER BY embedding_set_id`, work.ContentVersionID, work.Binding.Name, work.Binding.InputKind, after)
+		if err != nil {
+			return err
+		}
+		for _, id := range ids {
+			candidate, err := loadEmbeddingSetTx(ctx, tx, id)
+			if err != nil {
+				return err
+			}
+			compatible := candidate.VectorSpace.ID == work.VectorSpaceID || selected.ContractVersion == EmbeddingVectorSpaceContractV1 && candidate.VectorSpace.ContractVersion == EmbeddingVectorSpaceContractV2 && candidate.VectorSpace.ID == semanticID
+			if candidate.VectorSpace.ContractVersion == EmbeddingVectorSpaceContractV1 && work.Descriptor.ID == "openai-compatible.embeddings-v1" {
+				compatible = sameEmbeddingVectorSemantics(candidate.VectorSpace.Descriptor, work.Descriptor)
+				if work.Descriptor.ModelInput.Profile == document.ModelInputProfileBGEM3 || work.Descriptor.ModelInput.Profile == document.ModelInputProfileQwen3 {
+					compatible = candidate.VectorSpace.Descriptor.Fingerprint == work.Descriptor.Fingerprint
+				}
+			}
+			if !compatible || candidate.EmbeddingInputFingerprint != work.EmbeddingInputFingerprint || !slices.Equal(candidate.InputGeneration.Inputs, work.InputGeneration.Inputs) ||
+				validateEmbeddingVectorSet(candidate.VectorSet, candidate.VectorSpace, candidate.InputGeneration) != nil {
+				continue
+			}
+			found = candidate
+			return nil
+		}
+		return ErrNotFound
+	})
+	return found, err
+}
+
+// ValidateReusableEmbeddingPayload checks both the catalog checksums and every
+// ordered input against the canonical vector payload.
+func ValidateReusableEmbeddingPayload(record EmbeddingSetRecord, payload []byte) (document.VectorSetV1, error) {
+	return decodeExactEmbeddingVectorArtifact(record.VectorSet, record.VectorSpace, payload)
 }

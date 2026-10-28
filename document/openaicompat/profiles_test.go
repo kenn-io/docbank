@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -161,5 +162,46 @@ func reviewedProfileConfig() ReviewedProfileConfig {
 	return ReviewedProfileConfig{
 		Origin: "http://127.0.0.1:11434", ServedModel: "operator-model", DeploymentEpoch: "deployment-2026-08-28",
 		WeightsRevision: testWeightsRevision, TokenizerRevision: testTokenizerRevision,
+	}
+}
+
+func TestVectorIdentityTracksReviewedDeploymentRevisions(t *testing.T) {
+	build := func(config ReviewedProfileConfig) *Client {
+		profile, err := BGEM3Profile(config)
+		require.NoError(t, err)
+		client, err := New(profile, nil, &http.Client{})
+		require.NoError(t, err)
+		return client
+	}
+	original, err := build(reviewedProfileConfig()).VectorIdentity()
+	require.NoError(t, err)
+	for _, testCase := range []struct {
+		field string
+		same  bool
+	}{
+		{field: "endpoint", same: true},
+		{field: "timeout", same: true},
+		{field: "batch limit", same: true},
+		{field: "weights"},
+		{field: "tokenizer"},
+	} {
+		t.Run(testCase.field, func(t *testing.T) {
+			config := reviewedProfileConfig()
+			switch testCase.field {
+			case "endpoint":
+				config.Origin = "http://127.0.0.1:11435"
+			case "timeout":
+				config.RequestTimeout = 7 * time.Second
+			case "batch limit":
+				config.MaxBatchItems = 3
+			case "weights":
+				config.WeightsRevision = strings.Repeat("a", 40)
+			case "tokenizer":
+				config.TokenizerRevision = strings.Repeat("b", 40)
+			}
+			changed, err := build(config).VectorIdentity()
+			require.NoError(t, err)
+			require.Equal(t, testCase.same, original == changed)
+		})
 	}
 }

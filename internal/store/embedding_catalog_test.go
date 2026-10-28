@@ -902,7 +902,7 @@ func TestEmbeddingCatalogMetadataRejectsCorruptionAndOversizedCounts(t *testing.
 		want   string
 	}{
 		{"unknown contract", func(value string) string {
-			return strings.Replace(value, EmbeddingVectorSpaceContractV1, "embedding-vector-space/v2", 1)
+			return strings.Replace(value, EmbeddingVectorSpaceContractV1, "embedding-vector-space/v999", 1)
 		}, "unsupported"},
 		{"oversized count", func(value string) string {
 			return strings.Replace(value, `"input_count":1`, `"input_count":100001`, 1)

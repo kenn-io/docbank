@@ -25,6 +25,7 @@ type embeddingRuntimeBlobs interface {
 type ProviderEmbeddingRuntime struct {
 	provider       document.EmbeddingProvider
 	blobs          embeddingRuntimeBlobs
+	vectorSpaceID  string
 	spoolDirectory string
 	classify       func(error) (EmbeddingProviderFailure, time.Duration)
 }
@@ -43,13 +44,15 @@ func NewProviderEmbeddingRuntime(provider document.EmbeddingProvider, blobs embe
 	return &ProviderEmbeddingRuntime{provider: provider, blobs: blobs, spoolDirectory: spoolDirectory, classify: classify}, nil
 }
 
+func (runtime *ProviderEmbeddingRuntime) Descriptors() []document.EmbeddingDescriptor {
+	return []document.EmbeddingDescriptor{runtime.provider.Descriptor()}
+}
+
 func (runtime *ProviderEmbeddingRuntime) Ready() bool {
 	return runtime != nil && !embeddingInterfaceNil(runtime.provider) && !embeddingInterfaceNil(runtime.blobs) && runtime.classify != nil
 }
 
-// QueryProvider returns the exact provider only when it reproduces the
-// requested persisted descriptor. A merely compatible model is not authority
-// for an existing vector space.
+// QueryProvider returns the provider for the current pinned runtime descriptor.
 func (runtime *ProviderEmbeddingRuntime) QueryProvider(
 	descriptor document.EmbeddingDescriptor,
 ) (document.EmbeddingProvider, error) {
@@ -68,7 +71,7 @@ func (runtime *ProviderEmbeddingRuntime) Classify(err error) (EmbeddingProviderF
 }
 
 func (runtime *ProviderEmbeddingRuntime) Prepare(ctx context.Context, work EmbeddingWork) (EmbeddingExecution, error) {
-	if !runtime.Ready() || !reflect.DeepEqual(runtime.provider.Descriptor(), work.Descriptor) {
+	if !runtime.Ready() || !reflect.DeepEqual(runtime.provider.Descriptor(), work.Descriptor) || (runtime.vectorSpaceID != "" && runtime.vectorSpaceID != work.VectorSpaceID) {
 		return EmbeddingExecution{}, ErrEmbeddingRuntimeUnavailable
 	}
 	switch work.Binding.InputKind {

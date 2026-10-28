@@ -331,13 +331,15 @@ func boundedExplainedSearchExcerpt(value string) string {
 // descendants of one live directory. ModifiedSince is inclusive and
 // ModifiedBefore is exclusive; both accept absolute RFC3339 timestamps.
 type SearchOptions struct {
-	SelectedBuilds    []SearchSelectedBuild
-	TagID             string
-	MIMEType          string
-	UnderNodeID       int64
-	ModifiedSince     string
-	ModifiedBefore    string
-	ContentVersionIDs []string
+	VectorSpaceID       string
+	EmbeddingDescriptor *document.EmbeddingDescriptor
+	SelectedBuilds      []SearchSelectedBuild
+	TagID               string
+	MIMEType            string
+	UnderNodeID         int64
+	ModifiedSince       string
+	ModifiedBefore      string
+	ContentVersionIDs   []string
 }
 
 type SearchSelectedBuild struct {
@@ -465,6 +467,9 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 				return authorityErr
 			}
 			expectedSpace := fingerprints.VectorSpace[semanticBindingID]
+			if normalized.VectorSpaceID != "" {
+				expectedSpace = normalized.VectorSpaceID
+			}
 			if semanticSpace != "" && semanticSpace != expectedSpace {
 				return errors.New("semantic search evidence does not match coverage authority")
 			}
@@ -667,6 +672,9 @@ func (s *Store) acquireSemanticSearchAuthority(ctx context.Context, profileFinge
 		return SemanticSearchAuthority{}, err
 	}
 	vectorSpaceID := fingerprints.VectorSpace[bindingID]
+	if normalized.VectorSpaceID != "" {
+		vectorSpaceID = normalized.VectorSpaceID
+	}
 	if similar != nil {
 		err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 			return similar.load(ctx, tx, profileFingerprint, bindingID, binding.InputKind, vectorSpaceID, normalized)
@@ -684,7 +692,7 @@ func (s *Store) acquireSemanticSearchAuthority(ctx context.Context, profileFinge
 	if err != nil {
 		return SemanticSearchAuthority{}, err
 	}
-	if space.ID != vectorSpaceID || space.DescriptorFingerprint != binding.Descriptor.Fingerprint ||
+	if space.ID != vectorSpaceID || (space.ContractVersion == EmbeddingVectorSpaceContractV1 && space.DescriptorFingerprint != binding.Descriptor.Fingerprint) ||
 		space.CompatibilityID != binding.CompatibilityID || space.Dimensions != binding.Dimensions ||
 		space.Metric != binding.Metric || space.Normalization != binding.Normalization ||
 		space.ScalarEncoding != binding.ScalarEncoding || space.DocumentFormatter != binding.DocumentFormatter ||
@@ -706,6 +714,14 @@ func (s *Store) acquireSemanticSearchAuthority(ctx context.Context, profileFinge
 			return SemanticSearchAuthority{}, err
 		}
 		return SemanticSearchAuthority{}, ErrVectorIndexSourceStale
+	}
+	if normalized.EmbeddingDescriptor != nil {
+		descriptor := *normalized.EmbeddingDescriptor
+		if descriptor.Fingerprint != binding.Descriptor.Fingerprint || !sameEmbeddingVectorSemantics(space.Descriptor, descriptor) {
+			release()
+			return SemanticSearchAuthority{}, errors.New("query runtime differs from profile")
+		}
+		space.Descriptor = descriptor
 	}
 	return SemanticSearchAuthority{VectorSpace: space, Lease: lease, InputKind: binding.InputKind,
 		BindingRequired: binding.Activation == document.EmbeddingRequired,

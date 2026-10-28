@@ -44,5 +44,5 @@ func (service *Service) FindSimilar(ctx context.Context, request SimilarRequest)
 		return retrieval.SimilarReport{}, err
 	}
 	return searcher.Similar(ctx, retrieval.SimilarQuery{Source: retrieval.DocumentIdentity{VaultID: service.catalog.VaultID(), NodeID: node.ID, ContentVersionID: version.ID},
-		Limit: request.Limit, Scope: store.SearchOptions{ContentVersionIDs: ids}, ProcessingProfileFingerprint: profile.record.Fingerprint, BindingID: binding.Name})
+		Limit: request.Limit, Scope: store.SearchOptions{ContentVersionIDs: ids, VectorSpaceID: profile.vectorSpaces[binding.Name]}, ProcessingProfileFingerprint: profile.record.Fingerprint, BindingID: binding.Name})
 }

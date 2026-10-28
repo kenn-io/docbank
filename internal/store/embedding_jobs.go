@@ -19,6 +19,7 @@ var ErrEmbeddingJobFenced = errors.New("embedding job claim is fenced")
 const embeddingJobMaxClaims = 3
 
 type EmbeddingJobRequest struct {
+	VectorSpaceID    string
 	ContentVersionID string
 	Profile          ProcessingProfileRecord
 	BindingID        string
@@ -106,8 +107,16 @@ func (s *Store) EnqueueEmbeddingJob(ctx context.Context, request EmbeddingJobReq
 	if err != nil || authority.profile != profile.Fingerprint || authority.disclosure != binding.DisclosureFingerprint {
 		return EmbeddingJob{}, errors.New("enqueueing embedding job: consent does not match binding")
 	}
-	space := EmbeddingVectorSpaceRecord{ID: fingerprints.VectorSpace[binding.Name],
-		ContractVersion: EmbeddingVectorSpaceContractV1, Descriptor: descriptor,
+	vectorID := request.VectorSpaceID
+	contract := EmbeddingVectorSpaceContractV1
+	if vectorID == "" {
+		vectorID = fingerprints.VectorSpace[binding.Name]
+	}
+	if vectorID != fingerprints.VectorSpace[binding.Name] {
+		contract = EmbeddingVectorSpaceContractV2
+	}
+	space := EmbeddingVectorSpaceRecord{ID: vectorID,
+		ContractVersion: contract, Descriptor: descriptor,
 		ProviderDescriptor: descriptor.ID, ProviderRevision: descriptor.ModelRevision,
 		DescriptorFingerprint: descriptor.Fingerprint, CompatibilityID: descriptor.CompatibilityID,
 		Dimensions: descriptor.Dimension, Metric: descriptor.Metric, Normalization: descriptor.Normalization,
@@ -349,24 +358,22 @@ func (s *Store) claimEmbeddingWork(ctx context.Context, jobID, owner string, at 
 	if !validRenditionWorkerOwner(owner) || at.IsZero() || lease <= 0 || len(fingerprints) == 0 {
 		return EmbeddingJobClaim{}, EmbeddingJobWork{}, false, errors.New("embedding claim is invalid")
 	}
+	executable, err := json.Marshal(fingerprints)
+	if err != nil {
+		return EmbeddingJobClaim{}, EmbeddingJobWork{}, false, err
+	}
 	var claim EmbeddingJobClaim
 	var work EmbeddingJobWork
 	found := false
-	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var claimedID string
-		args := make([]any, 0, len(fingerprints)+5)
-		for _, fingerprint := range fingerprints {
-			args = append(args, fingerprint)
-		}
-		args = append(args, jobID, jobID, at.UTC().Format(timestampLayout), at.UTC().Format(timestampLayout), at.UTC().Format(timestampLayout))
+		args := []any{jobID, jobID, at.UTC().Format(timestampLayout), at.UTC().Format(timestampLayout), at.UTC().Format(timestampLayout), string(executable)}
 		for {
 			var state string
 			var count int
 			var expiredEpoch int64
 			err := tx.QueryRowContext(ctx, `SELECT j.job_id,j.state,j.claim_count,j.claim_epoch FROM embedding_jobs j
-			JOIN embedding_vector_spaces vs ON vs.vector_space_id=j.vector_space_id
-			WHERE vs.descriptor_fingerprint IN (`+placeholders(len(fingerprints))+`)
-			AND (?='' OR j.job_id=?)
+			WHERE (?='' OR j.job_id=?)
 			AND j.state IN ('queued','retry_wait','running') AND j.available_at<=?
 			AND (j.state<>'running' OR j.lease_expires_at<=?)
 			  AND NOT EXISTS(SELECT 1 FROM embedding_heads h
@@ -376,6 +383,10 @@ func (s *Store) claimEmbeddingWork(ctx context.Context, jobID, owner string, at 
 			      AND s.input_generation_id=j.generation_id AND s.vector_space_id=j.vector_space_id)
 			  AND NOT EXISTS(SELECT 1 FROM current_rendition_roots r WHERE r.root_id=j.job_id
 			    AND r.active=1 AND r.expires_at>?)
+			AND EXISTS(SELECT 1 FROM processing_profiles p, json_each(CAST(p.canonical_profile AS TEXT),'$.embeddings') b
+			  WHERE p.profile_fingerprint=j.profile_fingerprint
+			    AND json_extract(b.value,'$.name')=j.binding_id AND json_extract(b.value,'$.input_kind')=j.input_kind
+			    AND json_extract(b.value,'$.descriptor.fingerprint') IN (SELECT value FROM json_each(?)))
 			ORDER BY j.available_at,j.job_id LIMIT 1`, args...).Scan(&claimedID, &state, &count, &expiredEpoch)
 			if errors.Is(err, sql.ErrNoRows) {
 				return nil
@@ -482,6 +493,11 @@ func validateEmbeddingWorkTx(ctx context.Context, tx *sql.Tx, vaultID string, cl
 	if err != nil {
 		return err
 	}
+	if work.Descriptor.Fingerprint != current.Binding.Descriptor.Fingerprint ||
+		!sameEmbeddingVectorSemantics(current.Descriptor, work.Descriptor) {
+		return ErrEmbeddingJobFenced
+	}
+	current.Descriptor = work.Descriptor
 	if !reflect.DeepEqual(current, work) {
 		return ErrEmbeddingJobFenced
 	}
@@ -770,7 +786,10 @@ func validateEmbeddingJobGenerationTx(ctx context.Context, tx *sql.Tx, binding d
 	return nil
 }
 
-func embeddingJobID(values ...any) string {
+func embeddingJobID(vaultID, versionID, profileID, bindingID string, inputKind document.EmbeddingInputKind,
+	generationID, grantID, incarnationID string, revocationFence int64,
+) string {
+	values := []any{vaultID, versionID, profileID, bindingID, inputKind, generationID, grantID, incarnationID, revocationFence}
 	hash := sha256.New()
 	for _, value := range values {
 		_, _ = fmt.Fprint(hash, value, "\x00")

@@ -66,7 +66,7 @@ func TestEmbeddingCatalogVocabularyIsValidatedOutsideSQLite(t *testing.T) {
 	}{
 		{
 			name: "vector-space contract", dropTrigger: "embedding_vector_spaces_immutable_update",
-			mutation: `UPDATE embedding_vector_spaces SET contract_version='embedding-vector-space/v2'`,
+			mutation: `UPDATE embedding_vector_spaces SET contract_version='embedding-vector-space/v999'`,
 			want:     "vector-space contract version is unsupported",
 		},
 		{

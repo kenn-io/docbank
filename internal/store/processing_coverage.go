@@ -17,8 +17,9 @@ type ProcessingCoverageScope struct {
 }
 
 type ProcessingCoverageBinding struct {
-	BindingID string
-	Required  bool
+	VectorSpaceID string
+	BindingID     string
+	Required      bool
 }
 
 // ProcessingClassCoverage counts mutually exclusive states. A rebuilding cell
@@ -140,6 +141,9 @@ func (s *Store) ProcessingCoverage(ctx context.Context, scope ProcessingCoverage
 				return ProcessingCoverageSnapshot{}, errors.New("coverage binding does not match processing profile authority")
 			}
 			vectorSpace := fingerprints.VectorSpace[binding.Name]
+			if requested.VectorSpaceID != "" {
+				vectorSpace = requested.VectorSpaceID
+			}
 			_, complete, err := semanticSearchCoverageTx(ctx, tx, scope.ProcessingProfileFingerprint,
 				binding.Name, binding.InputKind, vectorSpace, opts)
 			if err != nil {

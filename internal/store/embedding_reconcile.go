@@ -18,6 +18,7 @@ type EmbeddingReconcileRequest struct {
 	Limit                  int
 	At                     time.Time
 	DescriptorFingerprints []string
+	VectorSpaces           map[string]EmbeddingVectorSpaceRecord
 	HydrateGeneration      func(context.Context, EmbeddingInputGenerationRecord) (EmbeddingInputGenerationRecord, error)
 	// Mutate guards only enqueue mutations; discovery and blob reads run outside it.
 	Mutate func(context.Context, func() error) error
@@ -94,15 +95,27 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 				if (binding.InputKind == document.EmbeddingInputRenditionChunk) != (generation.GenerationBlobHash != "") {
 					continue
 				}
-				space, err := loadVectorSpaceTx(ctx, tx, fingerprints.VectorSpace[binding.Name])
+				selected := request.VectorSpaces[profile.Fingerprint+"/"+binding.Name]
+				spaceID := selected.ID
+				if spaceID == "" {
+					spaceID = fingerprints.VectorSpace[binding.Name]
+				}
+				space, err := loadVectorSpaceTx(ctx, tx, spaceID)
 				if errors.Is(err, ErrNotFound) {
 					continue
 				}
 				if err != nil {
 					return err
 				}
-				if _, ok := executable[space.Descriptor.Fingerprint]; !ok ||
-					space.Descriptor.Fingerprint != binding.Descriptor.Fingerprint {
+				descriptor := space.Descriptor
+				if selected.Descriptor.Fingerprint != "" {
+					if !sameEmbeddingVectorSemantics(descriptor, selected.Descriptor) {
+						continue
+					}
+					descriptor = selected.Descriptor
+				}
+				if _, ok := executable[descriptor.Fingerprint]; !ok ||
+					descriptor.Fingerprint != binding.Descriptor.Fingerprint {
 					continue
 				}
 				eligible, err := embeddingGenerationCurrentTx(ctx, tx, generation, profile.Fingerprint)
@@ -157,7 +170,7 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 				}
 				candidates = append(candidates, embeddingReconcileCandidate{request: EmbeddingJobRequest{
 					ContentVersionID: generation.SourceVersionID, Profile: profile, BindingID: binding.Name,
-					Descriptor: space.Descriptor, InputGeneration: generation, Authorization: consent,
+					VectorSpaceID: space.ID, Descriptor: descriptor, InputGeneration: generation, Authorization: consent,
 				}, binding: binding, fingerprints: fingerprints, space: space})
 			}
 			result.Examined++

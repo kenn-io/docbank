@@ -1425,6 +1425,7 @@ func (runtime resumableWorkerRuntime) ResumeProvider(
 }
 
 type workerProvider struct {
+	textForSource  bool
 	descriptor     document.RenditionDescriptor
 	renderErr      error
 	calls          int
@@ -1619,6 +1620,10 @@ func (provider *workerProvider) Render(
 	if err != nil {
 		return document.RenditionResult{}, err
 	}
+	text := "Synthetic worker output"
+	if provider.textForSource {
+		text += " " + authorization.SourceSHA256
+	}
 	now := time.Now().UTC()
 	return document.RenditionResult{
 		Evidence: document.SourceEvidenceV1{
@@ -1630,7 +1635,7 @@ func (provider *workerProvider) Render(
 				Reason: "synthetic provider exposes generic provenance",
 			}},
 			Units: []document.SourceEvidenceUnitV1{{
-				Order: 0, Text: "Synthetic worker output",
+				Order: 0, Text: text,
 				Locator: document.SourceEvidenceLocatorV1{
 					Kind:        document.EvidenceLocatorGeneric,
 					IndexOrigin: document.EvidenceIndexOriginNone,
