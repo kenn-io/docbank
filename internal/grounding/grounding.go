@@ -64,23 +64,28 @@ func group(rs []rune, i int) bool {
 	return n == 3
 }
 
-// trim drops edge punctuation, keeping a sign or decimal point before a digit or currency symbol.
-func trim(token []rune) string {
-	for len(token) > 0 && edge(token[0]) {
-		if strings.ContainsRune("-.\u2212", token[0]) && len(token) > 1 && (unicode.IsDigit(token[1]) || unicode.Is(unicode.Sc, token[1])) {
+// leading skips removable punctuation before a token's meaningful prefix.
+func leading(rs []rune, i int) int {
+	for i < len(rs) && !split(rs[i]) && edge(rs[i]) {
+		if strings.ContainsRune("-.\u2212", rs[i]) && i+1 < len(rs) && (unicode.IsDigit(rs[i+1]) || unicode.Is(unicode.Sc, rs[i+1])) {
 			break
 		}
-		token = token[1:]
+		i++
 	}
-	return strings.TrimRightFunc(string(token), edge)
+	return i
+}
+
+// trim drops edge punctuation, keeping a sign or decimal point before a digit or currency symbol.
+func trim(token []rune) string {
+	return strings.TrimRightFunc(string(token[leading(token, 0):]), edge)
 }
 
 func extract(text string) []string {
 	rs := []rune(escapes.ReplaceAllString(text, "$1"))
 	figures := []string{}
 	for i := 0; i < len(rs); i++ {
-		start, n := i, 0
-		for ; i < len(rs); i++ {
+		start, n := leading(rs, i), 0
+		for i = start; i < len(rs); i++ {
 			r := rs[i]
 			// A single grouping space joins a three-digit group to an amount.
 			if grouping(r) && n >= 1 && n <= 3 && group(rs, i+1) {
@@ -104,7 +109,7 @@ func Prepare(answer string) (Answer, error) {
 	answer = markers.ReplaceAllStringFunc(answer, func(m string) string {
 		n, _ := strconv.Atoi(m[1 : len(m)-1])
 		a.markers = append(a.markers, n)
-		return " "
+		return "\n"
 	})
 	a.figures = extract(answer)
 	if len(a.figures) > 512 || len(a.markers) > 512 {
