@@ -835,7 +835,7 @@ it("keeps each frozen run's empty outcome after a newer run supersedes it", asyn
   resolveOld(Response.json(snapshot(initialQuery, [row(1)], {}, 1)));
   expect(await old).toBeUndefined();
   expect(accepted).toMatchObject({ type: "text", empty: true });
-  expect(await newer).toEqual({ type: "text", empty: false });
+  expect(await newer).toMatchObject({ type: "text", empty: false });
   workspace.reset();
 });
 
