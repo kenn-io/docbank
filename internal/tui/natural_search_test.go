@@ -309,6 +309,7 @@ func TestNaturalSearchFallbackKeepsCause(t *testing.T) {
 	loadedModel, ok := loaded.(Model)
 	require.True(t, ok)
 	assert.Empty(t, loadedModel.rows[0].naturalMode)
+	require.Empty(t, fake.misses, "a visible lexical fallback is not a miss")
 }
 
 func TestNaturalSearchFallbackMissPreservesRequestContext(t *testing.T) {

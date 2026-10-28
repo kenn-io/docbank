@@ -1949,33 +1949,66 @@ it.each(["names", "meaning", "frozen"])(
   },
 );
 
-it.each([false, true])("records an empty submission once with reranking %s", async (rerank) => {
-  const harness = installHarness({
-    profiles: [
-      {
-        name: "private",
-        fingerprint: "a".repeat(64),
-        rendition: true,
-        embedding_bindings: ["embed"],
-        reranking_available: rerank,
-      },
-    ],
-    files: [node(2, "existing.txt", baseVersion)],
-    baseReport: report("hybrid", []),
-    rerankReport: report("hybrid", [], { outcome: "skipped", candidate_count: 0 }),
-  });
-  render(App);
-  await screen.findAllByText("existing.txt");
-  if (rerank)
-    await fireEvent.click(await screen.findByRole("checkbox", { name: "Rerank results" }));
-  await submitSearch("missing");
-  await waitFor(() => expect(harness.misses).toHaveLength(1));
-  expect(harness.misses[0]).toMatchObject({
-    query: "missing",
-    actual_mode: "hybrid",
-    document_count: 2,
-  });
-  await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
-  await waitFor(() => expect(harness.postBodies).toHaveLength(2));
-  expect(harness.misses).toHaveLength(1);
-});
+it.each(["plain", "rerank", "fallback", "filtered"])(
+  "records an empty %s submission once",
+  async (kind) => {
+    const rerank = kind === "rerank";
+    const harness = installHarness({
+      profiles: [
+        {
+          name: "private",
+          fingerprint: "a".repeat(64),
+          rendition: true,
+          embedding_bindings: ["embed"],
+          reranking_available: rerank,
+        },
+      ],
+      files: [node(2, "existing.txt", baseVersion)],
+      baseReport: report("hybrid", []),
+      ...(kind === "fallback"
+        ? { baseSearchStatus: 500, tagSearch: { hits: [], limit: 1000, truncated: false } }
+        : {}),
+      rerankReport: report("hybrid", [], { outcome: "skipped", candidate_count: 0 }),
+    });
+    render(App);
+    await screen.findAllByText("existing.txt");
+    if (rerank)
+      await fireEvent.click(await screen.findByRole("checkbox", { name: "Rerank results" }));
+    if (kind === "filtered") {
+      await fireEvent.input(screen.getByRole("searchbox", { name: "Search documents" }), {
+        target: { value: "missing" },
+      });
+      await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+      await fireEvent.input(screen.getByLabelText("Filters JSON"), {
+        target: { value: '{"size_min":20}' },
+      });
+      await screen.findByRole("status", { name: "Query valid" });
+      await fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    } else {
+      await submitSearch("missing");
+    }
+    await waitFor(() => expect(harness.misses).toHaveLength(1));
+    expect(harness.misses[0]).toMatchObject({
+      query: "missing",
+      ...(kind === "fallback"
+        ? {
+            requested_mode: "hybrid",
+            actual_mode: "lexical",
+            profile: "private",
+            binding_id: "embed",
+            degradations: [screen.getByText(/Natural-language search unavailable/).textContent],
+          }
+        : kind === "filtered"
+          ? {
+              filters: { filters: { size_min: 20 } },
+              actual_mode: "lexical",
+              coverage: { configuration: "unconfigured" },
+            }
+          : { binding_id: "embed", actual_mode: "hybrid", document_count: 2 }),
+    });
+    if (kind === "fallback" || kind === "filtered") return;
+    await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
+    await waitFor(() => expect(harness.postBodies).toHaveLength(2));
+    expect(harness.misses).toHaveLength(1);
+  },
+);

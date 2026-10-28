@@ -28,6 +28,7 @@
   function submit(explicit = false) {
     const text = search.trim();
     const session = photos.session;
+    const hidden = photos.hidden;
     const submitted = {
       ...photos.query,
       text: search,
@@ -56,7 +57,7 @@
               query: text,
               requested_mode: submitted.mode,
               actual_mode: actualMode,
-              filters: { ...submitted.filters, syntax: submitted.syntax },
+              filters: { ...submitted.filters, syntax: submitted.syntax, corpus: "photos", hidden },
               truncated: photos.truncated,
             },
             { session, signal: AbortSignal.timeout(1000) },

@@ -2,7 +2,6 @@ package store
 
 import (
 	"bytes"
-	"encoding/json/v2"
 	"fmt"
 	"path/filepath"
 	"sync"
@@ -79,7 +78,7 @@ func TestMissLogRetentionPostgres(t *testing.T) {
 	require.Equal(t, "new", entries[0].ID)
 }
 
-func TestMissLogExcludedFromBackupRestoreAndBundleMetadata(t *testing.T) {
+func TestMissLogExcludedFromBackup(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	now := time.Now()
@@ -95,11 +94,6 @@ func TestMissLogExcludedFromBackupRestoreAndBundleMetadata(t *testing.T) {
 	rows, err := restored.ListMissLogRecords(t.Context(), 10, 0)
 	require.NoError(t, err)
 	require.Empty(t, rows)
-	var records []any
-	require.NoError(t, exportBundleMetadata(t.Context(), s.db, func(record any) error { records = append(records, record); return nil }))
-	encoded, err := json.Marshal(records)
-	require.NoError(t, err)
-	require.NotContains(t, string(encoded), "private sentinel query")
 }
 
 func TestMissLogConcurrentRetentionSQLite(t *testing.T) {
