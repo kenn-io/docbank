@@ -2168,7 +2168,6 @@
         if (requestedSort) applyResultSort(requestedSort);
         naturalSearchNote = nameRows.length ? "" : "No documents match the current filter.";
         loading = false;
-        // No document search ran, so there is no search_run to report.
         if (submitted && nameRows.length === 0) {
           try {
             parseQuery(JSON.stringify({ text: query }));
@@ -2186,6 +2185,7 @@
               fence_fingerprint: resolution.fence_fingerprint,
               filters: { tag_id: requestedTagID },
               document_count: 0,
+              coverage: { state: "complete" },
               truncated: false,
             },
             session,

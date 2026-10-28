@@ -1064,6 +1064,7 @@ it("shows the empty-fence note without posting a search and reports it once, not
       query: "nothing",
       filters: { tag_id: tagID },
       document_count: 0,
+      coverage: { state: "complete" },
       fence_fingerprint: expect.stringMatching(/^sha256:/),
     }),
   ]);

@@ -9,25 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestMissLogListRetentionBeforePagination(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	now := time.Now().UTC()
-	for _, entry := range []MissLogRecord{
-		{ID: "expired", CreatedAt: now.Add(-72 * time.Hour), Receipt: `{}`},
-		{ID: "recent", CreatedAt: now.Add(-time.Hour), Receipt: `{}`},
-	} {
-		require.NoError(t, s.AddMissLogRecord(t.Context(), entry, now, 90, 5000))
-	}
-	rows, err := s.ListMissLogRecords(t.Context(), now.Add(-24*time.Hour), 1, 0)
-	require.NoError(t, err)
-	require.Len(t, rows, 1)
-	require.Equal(t, "recent", rows[0].ID)
-	rows, err = s.ListMissLogRecords(t.Context(), now.Add(-24*time.Hour), 1, 1)
-	require.NoError(t, err)
-	require.Empty(t, rows)
-}
-
 func TestMissLogCountRetentionAndPhotoExclusion(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

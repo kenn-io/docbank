@@ -54,6 +54,28 @@ func TestMissLogListExcludesExpiredRecords(t *testing.T) {
 	require.Empty(t, page.Items, "an idle daemon hides its three-day-old record")
 }
 
+func TestMissLogDisabledRetentionKeepsHistoryVisible(t *testing.T) {
+	t.Parallel()
+	for _, days := range []int{0, 1} {
+		t.Run(strconv.Itoa(days), func(t *testing.T) {
+			ts, st := newTestServer(t, func(d *api.Deps) {
+				d.Cfg.MissLog.Enabled = false
+				d.Cfg.MissLog.RetentionDays = days
+			})
+			now := time.Now().UTC()
+			require.NoError(t, st.AddMissLogRecord(t.Context(), store.MissLogRecord{
+				ID: "retained", CreatedAt: now.Add(-72 * time.Hour), Receipt: `{"id":"retained"}`,
+			}, now, 90, 5000))
+			resp, body := get(t, ts, "/api/v1/miss-log", nil)
+			require.Equal(t, http.StatusOK, resp.StatusCode, body)
+			var page api.MissLogPage
+			require.NoError(t, json.Unmarshal([]byte(body), &page))
+			require.Len(t, page.Items, 1)
+			require.Equal(t, "retained", page.Items[0].ID)
+		})
+	}
+}
+
 func TestMissLogRecordsThirtyPhotoFilters(t *testing.T) {
 	t.Parallel()
 	ts, _ := newTestServer(t, func(d *api.Deps) { d.Cfg.MissLog.Enabled = true })

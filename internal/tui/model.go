@@ -2164,16 +2164,16 @@ func (m Model) loadNaturalSearch(query string, requestID uint64) tea.Cmd {
 			return naturalSearchBaseLoadedMsg{requestID: requestID, searchID: searchID, query: query, naturalMode: mode,
 				err: fmt.Errorf("%s search requires an embedding binding", mode)}
 		}
+		request := api.DocumentSearchRequest{Query: query, Mode: wireMode, Limit: maxNaturalSearchItems,
+			Profile: profile.Name, BindingID: binding, Explain: true}
 		resolution, err := backend.ResolveDocumentSourceFence(ctx, api.DocumentSourceFenceResolveRequest{
 			Filters: &api.DocumentSourceFenceFilters{},
 		})
 		if err != nil {
-			return naturalSearchBaseLoadedMsg{requestID: requestID, searchID: searchID, query: query, naturalMode: mode, err: err}
+			return naturalSearchBaseLoadedMsg{requestID: requestID, searchID: searchID, query: query, naturalMode: mode, request: request, err: err}
 		}
-		request := api.DocumentSearchRequest{Query: query, Mode: wireMode, Limit: maxNaturalSearchItems,
-			Profile: profile.Name, BindingID: binding, Fence: api.DocumentSourceFence{
-				VaultUID: resolution.Fence.VaultUID, ContentVersionIDs: resolution.Fence.ContentVersionIDs,
-			}, Explain: true}
+		request.Fence = api.DocumentSourceFence{
+			VaultUID: resolution.Fence.VaultUID, ContentVersionIDs: resolution.Fence.ContentVersionIDs}
 		if len(resolution.Fence.ContentVersionIDs) == 0 {
 			return naturalSearchBaseLoadedMsg{requestID: requestID, searchID: searchID, query: query, naturalMode: mode, request: request, fenceFingerprint: resolution.FenceFingerprint,
 				report: api.DocumentSearchReport{}, rows: []row{}}

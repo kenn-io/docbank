@@ -324,6 +324,34 @@ func TestNaturalSearchWhyLinesScrollWithRows(t *testing.T) {
 	assert.Contains(t, rendered, "/three.txt")
 }
 
+func TestNaturalSearchScopeFailureKeepsMissContext(t *testing.T) {
+	fake := newFakeBackend()
+	fake.profiles[0].Name = "private"
+	fake.search = api.SearchReport{}
+	model, err := New(t.Context(), fake)
+	require.NoError(t, err)
+	model.naturalMode, model.naturalProfiles = naturalHybrid, fake.profiles
+	model.searching = true
+	model.searchInput.SetValue("missing")
+	model, _ = updateModel(t, model, key(tea.KeyEnter))
+	fake.err = errors.New("source scope exceeds 4096 current live content versions; narrow the source scope")
+	base := model.loadNaturalSearch("missing", model.requestID)()
+	fake.err = nil
+	model, fallback := updateModel(t, model, base)
+	require.NotNil(t, fallback)
+	model, cmd := updateModel(t, model, fallback())
+	runModelCommand(t, model, cmd)
+	require.Len(t, fake.misses, 1)
+	receipt := fake.misses[0]
+	assert.Equal(t, "missing", receipt.Query)
+	assert.Equal(t, "hybrid", receipt.RequestedMode)
+	assert.Equal(t, "lexical", receipt.ActualMode)
+	assert.Equal(t, "private", receipt.Profile)
+	assert.Equal(t, "semantic", receipt.BindingID)
+	require.Len(t, receipt.Degradations, 1)
+	assert.Contains(t, receipt.Degradations[0], "source scope exceeds 4096")
+}
+
 func TestNaturalSearchFallbackKeepsCause(t *testing.T) {
 	fake := newFakeBackend()
 	readme := fake.nodes["/README.txt"]

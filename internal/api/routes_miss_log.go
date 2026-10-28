@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
+	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/misslog"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -23,6 +24,13 @@ func missLogFailure() error {
 	return NewError(http.StatusInternalServerError, "miss_log_unavailable", "miss log operation failed")
 }
 
+func missLogCutoff(cfg config.MissLogConfig) time.Time {
+	if cfg.Enabled && cfg.RetentionDays > 0 {
+		return time.Now().UTC().AddDate(0, 0, -cfg.RetentionDays)
+	}
+	return time.Time{}
+}
+
 func registerMissLogRoutes(api huma.API, d Deps, g *OperationGate, service *misslog.Service) {
 	huma.Register(api, huma.Operation{OperationID: "recordMiss", Method: http.MethodPost, Path: "/api/v1/miss-log", Summary: "Record a submitted empty search", DefaultStatus: http.StatusNoContent, MaxBodyBytes: 64 << 10}, func(ctx context.Context, in *struct{ Body misslog.Request }) (*struct{}, error) {
 		service.Record(ctx, in.Body)
@@ -32,7 +40,7 @@ func registerMissLogRoutes(api huma.API, d Deps, g *OperationGate, service *miss
 		Limit  int `query:"limit" default:"20" minimum:"1" maximum:"100"`
 		Offset int `query:"offset" default:"0" minimum:"0"`
 	}) (*struct{ Body MissLogPage }, error) {
-		rows, err := d.Store.ListMissLogRecords(ctx, time.Now().UTC().AddDate(0, 0, -d.Cfg.MissLog.RetentionDays), in.Limit, in.Offset)
+		rows, err := d.Store.ListMissLogRecords(ctx, missLogCutoff(d.Cfg.MissLog), in.Limit, in.Offset)
 		if err != nil {
 			return nil, missLogFailure()
 		}
