@@ -791,6 +791,15 @@ func documentResourceLinks(vaultID string, documents []api.DocumentSummary) []*s
 	return links
 }
 
+func toolResult(encoded []byte, normalized any, links []*sdkmcp.ResourceLink) *sdkmcp.CallToolResult {
+	content := make([]sdkmcp.Content, 0, 1+len(links))
+	content = append(content, &sdkmcp.TextContent{Text: string(encoded)})
+	for _, link := range links {
+		content = append(content, link)
+	}
+	return &sdkmcp.CallToolResult{Content: content, StructuredContent: normalized}
+}
+
 func boundedToolSuccess(
 	validator *jsonschema.Resolved, output any, links []*sdkmcp.ResourceLink,
 ) (*sdkmcp.CallToolResult, error) {
@@ -805,12 +814,7 @@ func boundedToolSuccess(
 	if validator == nil || validator.Validate(&normalized) != nil {
 		return nil, errors.New("daemon result does not conform to the published tool schema")
 	}
-	content := make([]sdkmcp.Content, 0, 1+len(links))
-	content = append(content, &sdkmcp.TextContent{Text: string(encoded)})
-	for _, link := range links {
-		content = append(content, link)
-	}
-	result := &sdkmcp.CallToolResult{Content: content, StructuredContent: normalized}
+	result := toolResult(encoded, normalized, links)
 	complete, err := json.Marshal(result)
 	if err != nil {
 		return nil, err

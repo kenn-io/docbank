@@ -154,6 +154,15 @@ func TestEnsureDiscoveryRejectsProtocolMismatch(t *testing.T) {
 		"status/stop discovery must still see incompatible daemons")
 }
 
+func TestEnsureDiscoveryRejectsPreAnswerDaemon(t *testing.T) {
+	rec := NewRecord("127.0.0.1:1", "key", "tok", "")
+	rec.Metadata[metaProtocolVersion] = "96"
+	info := kitdaemon.PingInfo{Version: version.Version}
+
+	assert.False(t, discoverOptions(true).Accept(rec, info), "answer search requires the stale-index error contract")
+	assert.True(t, discoverOptions(false).Accept(rec, info), "status/stop discovery must still see the older daemon")
+}
+
 func TestWebDiscoveryRequiresAdvertisedCapability(t *testing.T) {
 	info := kitdaemon.PingInfo{Version: version.Version}
 	fallback := NewRecord("127.0.0.1:1", "key", "tok", "")

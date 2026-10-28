@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-17
+last_edited: 2026-10-28
 title: Model Context Protocol
 description: Connect a local MCP client to Docbank's read-mostly document tools through the daemon.
 ---
@@ -260,7 +260,7 @@ restarting at page one.
 
 ### Answer questions
 
-`answer_question` returns evidence without writing an answer. `ANSWERED` means
+`answer_question` returns evidence without writing an answer. Content passages require every word of `question` to appear in one segment; key terms match better than a sentence. `ANSWERED` means
 that a content excerpt matched; it does not verify that the excerpt answers the
 question. Open the source to verify any quotation: excerpts can include omission
 markers and are not necessarily contiguous spans. Results without content text
@@ -275,7 +275,8 @@ Passages and resource links are returned in order within the response budget;
 The default scope is all live files. A scope above 4,096 versions reports
 `scope_too_large` and its observed count; narrow it with filters. The receipt's
 fence fingerprint identifies the vault and version ID set, not an immutable
-catalog or index snapshot. Vector spaces are observed from returned evidence.
+catalog or index snapshot. `cited_versions` lists the versions of returned passages.
+`vector_space_ids` come from returned passages and leads.
 The receipt supports audit, not exact reproduction. Search may send the question
 to a query embedding provider under the daemon's existing consent policy.
 Reranking is optional and can disclose excerpts under that policy.
@@ -286,7 +287,7 @@ Omit `profile` for automatic profile and binding retries, including when a vecto
 index is stale. Unclassified processing failures stop the search. With `rerank: true`,
 automatic selection and lexical fallback use only profiles that support reranking.
 An explicit `profile` uses its first query binding in name order unless
-`binding_id` selects another. Profiles without query bindings use lexical search.
+`binding_id` selects another. `binding_id` requires `profile`. Profiles without query bindings use lexical search.
 Its search failures are returned without automatic retries or lexical fallback.
 
 Before searching, `search_documents` resolves its selector to a source fence:

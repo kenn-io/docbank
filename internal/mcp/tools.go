@@ -75,7 +75,7 @@ var readToolDefinitions = []toolDefinition{
 	{name: "get_export_status", title: "Get export status", description: "Read one retained export job without downloading it.", schemas: getExportStatusSchemas},
 	{name: "get_vault_info", title: "Get vault info", description: "Summarize the selected vault without exposing its host path.", schemas: getVaultInfoSchemas},
 	{name: "list_documents", title: "List documents", description: "Page through current, live documents with bounded stable ordering.", schemas: listDocumentsSchemas},
-	{name: "answer_question", title: "Answer question", description: "Return matched evidence and coverage without synthesizing an answer. Open sources to verify excerpts.", schemas: answerQuestionSchemas},
+	{name: "answer_question", openWorld: true, title: "Answer question", description: "Return matched evidence and coverage without synthesizing an answer. Content passages require every word of the question to appear in one segment; key terms match better than a sentence. Open sources to verify excerpts.", schemas: answerQuestionSchemas},
 	{name: "search_documents", title: "Search documents", description: "Search an exact bounded current-version source fence and report coverage.", schemas: searchDocumentsSchemas},
 	{name: "get_document", title: "Get document", description: "Read metadata for one exact current document identity.", schemas: getDocumentSchemas},
 	{name: "list_document_versions", title: "List document versions", description: "Page through immutable content versions for one stable document node.", schemas: listDocumentVersionsSchemas},
@@ -548,6 +548,8 @@ func stableDomainError(err error) (string, int) {
 
 func domainErrorMessage(code string) string {
 	switch code {
+	case "stale_index":
+		return "The selected index needs rebuilding."
 	case "kata_token_invalid":
 		return "Kata token was rejected; configure Kata with that token"
 	case "kata_idempotency_deleted":

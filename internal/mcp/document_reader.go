@@ -122,7 +122,7 @@ func readToolFailure(logger *slog.Logger, name string, err error) (*sdkmcp.CallT
 			code = native.Code
 		}
 		switch code {
-		case "processing_unavailable", "processing_profile_unavailable", "reranking_unavailable", "reranking_failed":
+		case "processing_unavailable", "processing_profile_unavailable", "reranking_unavailable", "reranking_failed", "stale_index":
 			if result, ok := domainToolErrorResult(code, 0); ok {
 				return result, nil
 			}

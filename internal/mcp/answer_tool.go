@@ -94,6 +94,44 @@ type answerProfileLister interface {
 	ListDocumentProcessingProfiles(ctx context.Context) ([]api.ProcessingProfileSummary, error)
 }
 
+func selectAnswerSearch(profiles []api.ProcessingProfileSummary, input answerInput) (api.ProcessingProfileSummary, []daemonconn.SearchCandidate, error) {
+	slices.SortFunc(profiles, func(a, b api.ProcessingProfileSummary) int { return cmp.Compare(a.Name, b.Name) })
+	if len(profiles) == 0 {
+		return api.ProcessingProfileSummary{}, nil, api.NewError(http.StatusServiceUnavailable, "processing_unavailable", "no processing profiles available")
+	}
+	if input.Profile == "" && input.Rerank {
+		profiles = slices.DeleteFunc(profiles, func(p api.ProcessingProfileSummary) bool { return !p.RerankingAvailable })
+		if len(profiles) == 0 {
+			return api.ProcessingProfileSummary{}, nil, api.NewError(http.StatusServiceUnavailable, "reranking_unavailable", "no reranking profiles available")
+		}
+	}
+	selected := profiles[0]
+	candidates := daemonconn.AutomaticSearchCandidates(profiles)
+	if input.Profile != "" {
+		found := false
+		for _, p := range profiles {
+			if p.Name == input.Profile {
+				selected = p
+				found = true
+				break
+			}
+		}
+		if !found {
+			return api.ProcessingProfileSummary{}, nil, api.NewError(http.StatusBadRequest, "processing_profile_unavailable", "processing profile unavailable")
+		}
+		candidates = slices.DeleteFunc(candidates, func(candidate daemonconn.SearchCandidate) bool {
+			return candidate.Profile != selected.Name || (input.BindingID != "" && candidate.Binding != input.BindingID)
+		})
+		if len(candidates) > 1 {
+			candidates = candidates[:1]
+		}
+		if input.BindingID != "" && len(candidates) == 0 {
+			return api.ProcessingProfileSummary{}, nil, api.NewError(http.StatusBadRequest, "processing_profile_unavailable", "query binding unavailable")
+		}
+	}
+	return selected, candidates, nil
+}
+
 func answerQuestion(ctx context.Context, session documentReadSession, raw []byte) (answerOutput, []*sdkmcp.ResourceLink, error) {
 	var input answerInput
 	if err := decodeReadArguments(raw, &input); err != nil {
@@ -133,44 +171,9 @@ func answerQuestion(ctx context.Context, session documentReadSession, raw []byte
 		if err != nil {
 			return response{}, err
 		}
-		slices.SortFunc(profiles, func(a, b api.ProcessingProfileSummary) int { return cmp.Compare(a.Name, b.Name) })
-		if len(profiles) == 0 {
-			return response{}, api.NewError(http.StatusServiceUnavailable, "processing_unavailable", "no processing profiles available")
-		}
-		if input.Profile == "" && input.Rerank {
-			profiles = slices.DeleteFunc(profiles, func(p api.ProcessingProfileSummary) bool { return !p.RerankingAvailable })
-			if len(profiles) == 0 {
-				return response{}, api.NewError(http.StatusServiceUnavailable, "reranking_unavailable", "no reranking profiles available")
-			}
-		}
-		selected := profiles[0]
-		candidates := daemonconn.AutomaticSearchCandidates(profiles)
-		if input.Profile != "" {
-			found := false
-			for _, p := range profiles {
-				if p.Name == input.Profile {
-					selected = p
-					found = true
-					break
-				}
-			}
-			if !found {
-				return response{}, api.NewError(http.StatusBadRequest, "processing_profile_unavailable", "processing profile unavailable")
-			}
-			candidates = nil
-			bindings := slices.Clone(selected.QueryEmbeddingBindings)
-			slices.Sort(bindings)
-			for _, binding := range bindings {
-				if input.BindingID == "" || input.BindingID == binding {
-					candidates = append(candidates, daemonconn.SearchCandidate{Profile: selected.Name, Binding: binding})
-				}
-			}
-			if len(candidates) > 1 {
-				candidates = candidates[:1]
-			}
-			if input.BindingID != "" && len(candidates) == 0 {
-				return response{}, api.NewError(http.StatusBadRequest, "processing_profile_unavailable", "query binding unavailable")
-			}
+		selected, candidates, err := selectAnswerSearch(profiles, input)
+		if err != nil {
+			return response{}, err
 		}
 		findProfile := func(name string) api.ProcessingProfileSummary {
 			for _, p := range profiles {

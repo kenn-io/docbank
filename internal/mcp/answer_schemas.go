@@ -24,10 +24,9 @@ func answerQuestionSchemas() (schema, schema) {
 	passage["text"] = stringSchema(512)
 	passage["text_bytes"] = integerSchema(0, 2048)
 	citation := objectSchema(schema{"node_id": integerSchema(1, 0), versionField: uuidSchema()}, "node_id", versionField)
-	coverage := objectSchema(schema{"binding_required": booleanSchema(), "scoped_documents": integerSchema(0, 4096), "complete_documents": integerSchema(0, 4096), schemaStateField: stringSchema(64)}, "binding_required", "scoped_documents", "complete_documents", schemaStateField)
 	receipt := objectSchema(schema{
 		"question_sha256": sha256Schema(), "executed_query_sha256": sha256Schema(), "search_executed": booleanSchema(), "observed_scope_count": integerSchema(0, 0), answerVaultIDField: uuidSchema(), "fence": fenceAuthoritySchema(), "fence_fingerprint": fenceFingerprintSchema(),
-		"profile": objectSchema(schema{"name": stringSchema(128), "fingerprint": sha256Schema()}, "name", "fingerprint"), "binding_id": stringSchema(128), "vector_space_ids": arraySchema(stringSchema(1024), 3200), "requested_mode": stringSchema(64), "actual_mode": stringSchema(64), "degradations": arraySchema(stringSchema(64), 64), "coverage": coverage,
+		"profile": objectSchema(schema{"name": stringSchema(128), "fingerprint": sha256Schema()}, "name", "fingerprint"), "binding_id": stringSchema(128), "vector_space_ids": arraySchema(stringSchema(1024), 3200), "requested_mode": stringSchema(64), "actual_mode": stringSchema(64), "degradations": arraySchema(stringSchema(64), 64), "coverage": searchCoverageSchema(),
 		"reranking":      objectSchema(schema{"requested": booleanSchema(), "outcome": stringSchema(64), "candidate_count": integerSchema(0, 1000)}, "requested", "outcome", "candidate_count"),
 		"cited_versions": arraySchema(citation, 50),
 	}, "question_sha256", "search_executed", "observed_scope_count", "vector_space_ids", "degradations", "cited_versions")
