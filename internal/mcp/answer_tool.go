@@ -306,17 +306,10 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 	if len(out.Leads) > 0 || out.OmittedLeads > 0 {
 		out.CoverageReasons = append(out.CoverageReasons, "passage_text_unavailable")
 	}
-	linksFor := func() []*sdkmcp.ResourceLink {
-		keep := map[answerCitation]bool{}
-		for _, p := range out.Passages {
-			keep[answerCitation{p.NodeID, p.ContentVersionID}] = true
-		}
-		for _, l := range out.Leads {
-			keep[answerCitation{l.NodeID, l.ContentVersionID}] = true
-		}
-		docs := make([]api.DocumentSummary, 0, len(keep))
+	linksFor := func(retained map[answerCitation]bool) []*sdkmcp.ResourceLink {
+		docs := make([]api.DocumentSummary, 0, len(retained))
 		for _, d := range result.documents {
-			if keep[answerCitation{d.NodeID, d.ContentVersionID}] {
+			if retained[answerCitation{d.NodeID, d.ContentVersionID}] {
 				docs = append(docs, d)
 			}
 		}
@@ -367,7 +360,7 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 		})
 		omitted := out.OmittedPassages > 0 || out.OmittedLeads > 0 || result.report.Truncated
 		out.Status = answer.Classify(answer.Evidence{Passages: out.Passages, Leads: out.Leads}, out.CoverageComplete, omitted)
-		links := linksFor()
+		links := linksFor(retained)
 		if linkLimit < 0 {
 			linkLimit = len(links)
 		}
