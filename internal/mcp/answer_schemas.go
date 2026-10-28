@@ -25,7 +25,7 @@ func answerQuestionSchemas() (schema, schema) {
 	passage["text_bytes"] = integerSchema(0, 2048)
 	citation := objectSchema(schema{"node_id": integerSchema(1, 0), versionField: uuidSchema()}, "node_id", versionField)
 	receipt := objectSchema(schema{
-		"question_sha256": sha256Schema(), "executed_query_sha256": sha256Schema(), "search_executed": booleanSchema(), "observed_scope_count": integerSchema(0, 0), answerVaultIDField: uuidSchema(), "fence": fenceAuthoritySchema(), "fence_fingerprint": fenceFingerprintSchema(),
+		"question_sha256": sha256Schema(), "executed_query_sha256": sha256Schema(), "search_executed": booleanSchema(), "observed_scope_count": integerSchema(0, 0), answerVaultIDField: uuidSchema(), "fence_fingerprint": fenceFingerprintSchema(),
 		"profile": objectSchema(schema{"name": stringSchema(128), "fingerprint": sha256Schema()}, "name", "fingerprint"), "binding_id": stringSchema(128), "vector_space_ids": arraySchema(stringSchema(1024), 3200), "requested_mode": stringSchema(64), "actual_mode": stringSchema(64), "degradations": arraySchema(stringSchema(64), 64), "coverage": searchCoverageSchema(),
 		"reranking":      objectSchema(schema{"requested": booleanSchema(), "outcome": stringSchema(64), "candidate_count": integerSchema(0, 1000)}, "requested", "outcome", "candidate_count"),
 		"cited_versions": arraySchema(citation, 50),

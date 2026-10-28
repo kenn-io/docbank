@@ -17,9 +17,8 @@ import (
 	"go.kenn.io/docbank/internal/processing"
 )
 
-func TestEmbeddedDocumentToolsMatchDaemon(t *testing.T) {
-	f := newNativeExportFixture(t)
-	f.addFile(t, "alpha.txt", "observatory")
+func newProcessingDocumentServer(t *testing.T, f *nativeExportFixture) (*Server, *processing.Service, string) {
+	t.Helper()
 	profileName, profile, err := processing.NewSuppliedMediaProfile(f.catalog, f.blobs, "test:operator")
 	require.NoError(t, err)
 	service, err := processing.NewService(processing.ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: api.NewOperationGate(),
@@ -33,6 +32,13 @@ func TestEmbeddedDocumentToolsMatchDaemon(t *testing.T) {
 	httpServer := httptest.NewServer(apiServer.Handler())
 	t.Cleanup(httpServer.Close)
 	daemon := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, exportTestLease(t, httpServer.URL))
+	return daemon, service, profileName
+}
+
+func TestEmbeddedDocumentToolsMatchDaemon(t *testing.T) {
+	f := newNativeExportFixture(t)
+	f.addFile(t, "alpha.txt", "observatory")
+	daemon, service, profileName := newProcessingDocumentServer(t, f)
 	reader := api.NewDocumentReader(f.catalog, f.blobs, os.Getenv("DOCBANK_HOME"), service)
 	embedded := sdkmcp.NewServer(testImplementation(), nil)
 	for _, name := range []string{"get_vault_info", "list_documents", "search_documents"} {
