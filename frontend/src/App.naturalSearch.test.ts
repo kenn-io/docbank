@@ -1090,6 +1090,7 @@ it("shows the empty-population note and reports a submitted search once", async 
     actual_mode: "hybrid",
     filters: { tag_id: tagID },
     document_count: 0,
+    coverage: { state: "complete" },
   });
   await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
   await waitFor(() => expect(harness.postBodies).toHaveLength(2));
