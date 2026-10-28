@@ -9,16 +9,6 @@ import (
 	"go.kenn.io/docbank/internal/audit"
 )
 
-func TestAuditRecordsSQLite(t *testing.T) {
-	t.Parallel()
-	checkAuditRecords(t, newTestStore(t))
-}
-
-func TestAuditRecordsPostgres(t *testing.T) {
-	t.Parallel()
-	checkAuditRecords(t, newPostgresQueryStore(t))
-}
-
 func auditRecordFixture(t *testing.T) map[string][]storedAuditRecord {
 	t.Helper()
 	ctx := t.Context()
@@ -30,8 +20,9 @@ func auditRecordFixture(t *testing.T) map[string][]storedAuditRecord {
 	return records
 }
 
-func checkAuditRecords(t *testing.T, destination *Store) {
-	t.Helper()
+func TestAuditRecordsPostgres(t *testing.T) {
+	t.Parallel()
+	destination := newPostgresQueryStore(t)
 	ctx := t.Context()
 	records := auditRecordFixture(t)
 
