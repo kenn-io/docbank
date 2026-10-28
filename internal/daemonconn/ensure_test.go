@@ -648,7 +648,6 @@ func startUnresponsiveRuntime(t *testing.T) (string, kitdaemon.RuntimeRecord) {
 		select {
 		case <-done:
 		case <-time.After(5 * time.Second):
-			stacktest.Dump(t)
 			t.Error("helper process did not exit")
 		}
 	})
