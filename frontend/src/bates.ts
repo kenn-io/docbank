@@ -3,6 +3,8 @@ import { sha256Digest } from "./crypto.js";
 import * as generated from "./generated/docbank.js";
 import type {
   BatesAllocation,
+  BatesCandidate,
+  BatesCandidatePage,
   BatesDownloadTicket,
   BatesExport,
   BatesExportPage,
@@ -21,6 +23,8 @@ export interface BatesSource {
 
 export type {
   BatesAllocation,
+  BatesCandidate,
+  BatesCandidatePage,
   BatesDownloadTicket,
   BatesExport,
   BatesExportPage,
@@ -368,6 +372,99 @@ export async function readBatesExport(
   const result = readExport(await generated.readBatesExport(allocationID, { session, signal }));
   valid(result.allocation_id === allocationID);
   return result;
+}
+
+export interface BatesRecoveryDetail {
+  receipt: BatesExport;
+  kind: "Numbered redaction" | "Stamped export";
+  namespace: BatesNamespace;
+}
+
+export async function findBatesExportsByLabel(
+  session: string,
+  label: string,
+  signal?: AbortSignal,
+  cursor?: string,
+): Promise<BatesCandidatePage> {
+  valid(
+    label.length > 0 && [...label].length <= 266,
+    "Enter an exact Bates number, up to 266 characters.",
+  );
+  const page = record(
+    await generated.findBatesExports(
+      { bates_label: label, limit: 50, ...(cursor ? { cursor } : {}) },
+      { session, signal },
+    ),
+  );
+  valid(Array.isArray(page.items) && page.items.length <= 50);
+  valid(
+    page.next_cursor === undefined ||
+      (typeof page.next_cursor === "string" && page.next_cursor.length <= 4096),
+  );
+  const items = page.items.map((raw) => {
+    const item = record(raw);
+    for (const field of ["artifact_id", "allocation_id", "snapshot_id"])
+      valid(typeof item[field] === "string" && uuid.test(item[field]));
+    for (const field of ["blob_sha256", "manifest_sha256"])
+      valid(typeof item[field] === "string" && hash.test(item[field]));
+    valid(item.state === "verified" && item.media_type === "application/pdf");
+    valid(
+      safeInteger(item.size, 1) && safeInteger(item.page_count, 1) && timestamp(item.created_at),
+    );
+    valid(typeof item.evidence_truncated === "boolean");
+    valid(
+      item.evidence_cursor === undefined ||
+        (typeof item.evidence_cursor === "string" && item.evidence_cursor.length <= 4096),
+    );
+    valid(Array.isArray(item.evidence) && item.evidence.length > 0 && item.evidence.length <= 25);
+    for (const rawEvidence of item.evidence) {
+      const evidence = record(rawEvidence);
+      valid(evidence.kind === "label" && evidence.label === label);
+      valid(safeInteger(evidence.output_page, 1) && evidence.output_page <= item.page_count);
+      valid(typeof evidence.occurrence_id === "string" && evidence.occurrence_id.length > 0);
+    }
+    return item as unknown as BatesCandidate;
+  });
+  return { ...page, items } as BatesCandidatePage;
+}
+
+export async function readBatesRecoveryDetail(
+  session: string,
+  candidate: BatesCandidate,
+  signal?: AbortSignal,
+): Promise<BatesRecoveryDetail> {
+  const receipt = await readBatesExport(session, candidate.allocation_id, signal);
+  valid(
+    receipt.artifact_id === candidate.artifact_id &&
+      receipt.size === candidate.size &&
+      receipt.blob_sha256 === candidate.blob_sha256 &&
+      receipt.page_count === candidate.page_count &&
+      receipt.manifest_sha256 === candidate.manifest_sha256,
+  );
+  const allocation = readAllocation(receipt.allocation);
+  const namespace = readNamespace(receipt.namespace);
+  valid(
+    allocation.allocation_id === candidate.allocation_id &&
+      allocation.snapshot_id === candidate.snapshot_id &&
+      allocation.namespace_id === namespace.namespace_id &&
+      allocation.recipe_sha256 === receipt.recipe_sha256,
+  );
+  for (const evidence of candidate.evidence)
+    valid(
+      receipt.pages.some(
+        (page) =>
+          page.label === evidence.label &&
+          page.output_page === evidence.output_page &&
+          page.occurrence_id === evidence.occurrence_id,
+      ),
+    );
+  const contract = record(receipt.recipe).contract;
+  valid(contract === "native-pdf-numbered/v1" || contract === "bates-stamp/v1");
+  return {
+    receipt,
+    namespace,
+    kind: contract === "native-pdf-numbered/v1" ? "Numbered redaction" : "Stamped export",
+  };
 }
 
 export async function listBatesExports(
