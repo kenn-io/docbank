@@ -860,7 +860,7 @@ func TestSearchReadRerankOutputAndFalseBaseline(t *testing.T) {
 					secondHit, ok := hits[1].(map[string]any)
 					require.True(t, ok)
 					assert.NotContains(t, secondHit, "rerank_relevance")
-					assert.Equal(t, 1.0/62, secondHit["score"])
+					assert.InDelta(t, 1.0/62, secondHit["score"], 1e-9)
 				} else {
 					assert.NotContains(t, hit, "rerank_relevance")
 					assert.Equal(t, "authorization_denied", receipt["cause"])

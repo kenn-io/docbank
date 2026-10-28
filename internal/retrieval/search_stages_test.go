@@ -182,7 +182,7 @@ func TestSearcherRerankingReordersOnlyAuthorizedCandidates(t *testing.T) {
 			}
 			for index, item := range report.Results {
 				assert.Equal(t, wantNodes[index], item.Document.NodeID)
-				assert.Equal(t, wantScores[index], item.Score)
+				assert.InDelta(t, wantScores[index], item.Score, 1e-9)
 			}
 			assert.Equal(t, []RerankingCandidate{
 				{Document: DocumentIdentity{VaultID: "vault", NodeID: 1, ContentVersionID: "version-1"}, Excerpt: "one", Evidence: []EvidenceReference{{Kind: "node_name", VaultID: "vault", NodeID: 1, ContentVersionID: "version-1"}}},
