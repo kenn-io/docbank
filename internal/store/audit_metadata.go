@@ -278,7 +278,7 @@ func indexAuditRecord(record audit.Record) (auditRecordIndex, error) {
 		if err != nil {
 			return index, err
 		}
-		nodeID, err := auditInt64UnsignedField(event, metadataNodeIDField)
+		nodeID, err := auditInt64PositiveField(event, metadataNodeIDField)
 		if err != nil {
 			return index, err
 		}
@@ -289,7 +289,7 @@ func indexAuditRecord(record audit.Record) (auditRecordIndex, error) {
 		if err != nil {
 			return index, err
 		}
-		sequence, err := auditInt64UnsignedField(record, "operation_sequence")
+		sequence, err := auditInt64PositiveField(record, "operation_sequence")
 		if err != nil {
 			return index, err
 		}
@@ -299,7 +299,7 @@ func indexAuditRecord(record audit.Record) (auditRecordIndex, error) {
 		if err != nil {
 			return index, err
 		}
-		entryCount, err := auditInt64UnsignedField(record, "entry_count")
+		entryCount, err := auditInt64PositiveField(record, "entry_count")
 		if err != nil {
 			return index, err
 		}
@@ -408,9 +408,20 @@ func auditInt64UnsignedField(record audit.Record, name string) (int64, error) {
 		return 0, err
 	}
 	if value > math.MaxInt64 {
-		return 0, fmt.Errorf("audit field %s.%s exceeds SQLite integer range", record.Kind, name)
+		return 0, fmt.Errorf("audit field %s.%s exceeds storage integer range", record.Kind, name)
 	}
 	return int64(value), nil
+}
+
+func auditInt64PositiveField(record audit.Record, name string) (int64, error) {
+	value, err := auditInt64UnsignedField(record, name)
+	if err != nil {
+		return 0, err
+	}
+	if value == 0 {
+		return 0, fmt.Errorf("audit field %s.%s must be positive", record.Kind, name)
+	}
+	return value, nil
 }
 
 func auditNestedField(record audit.Record, name string) (audit.Record, error) {

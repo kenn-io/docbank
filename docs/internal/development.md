@@ -253,6 +253,7 @@ GRANT SELECT, INSERT ON documents.blob_checksums TO docbank_runtime;
 GRANT SELECT ON documents.audit_records, documents.audit_authority,
     documents.audit_scopes, documents.audit_baselines, documents.audit_memberships
     TO docbank_runtime;
+GRANT INSERT ON documents.audit_records TO docbank_runtime;
 GRANT USAGE ON SEQUENCE documents.nodes_id_seq TO docbank_runtime;
 ```
 
@@ -510,8 +511,8 @@ transactions. Membership, node revision, path, scope head, event count and page
 come from one snapshot, even when another operation commits between their
 reads. Canonical event projection and cursor ordering remain in the existing
 Go implementation. The runtime role needs only `SELECT` on the audit catalogs
-for these reads; enrollment, audit writes and full metadata validation still
-require SQLite.
+for these reads; enrollment, complete audit mutations and full metadata
+validation still require SQLite.
 
 Audit-history qualification creates directories, enables audit and renames nodes
 through normal SQLite operations, then validates that history before copying
@@ -522,6 +523,21 @@ history and is not a production import implementation. Tests cover node and
 scope pagination and commit later canonical history between a reader's
 statements: the current response retains its snapshot and the next request
 sees the new events.
+
+The native canonical-record insertion helper also uses shared SQL. Its index
+builder rejects zero node IDs, operation sequences and entry counts in Go
+before insertion. The same validation is used by metadata import and record
+loading. Indexed integers must fit the storage integer range; event ordinal zero
+and zero-valued genesis counters remain valid. Registered nested record kinds
+cannot be stored as top-level authority records.
+
+Record-insertion qualification uses canonical records produced by normal audit
+enrollment and checks their stored relational indexes on both backends. Tests
+use caller-owned transactions and roll them back: inserting records alone does
+not publish complete authority or membership projections. PostgreSQL grants
+`INSERT` on `audit_records` for this primitive, with no audit-table `UPDATE` or
+`DELETE`. Complete audit mutations, enrollment and metadata import remain
+unavailable until their catalog maintenance and validation are ported.
 
 For PostgreSQL tests, start a disposable server, never an operator database:
 
