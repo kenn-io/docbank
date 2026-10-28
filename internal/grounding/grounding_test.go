@@ -19,10 +19,13 @@ func TestGrounding(t *testing.T) {
 		{"grouped space", "1200 [1]", "grounded", []Citation{{Index: 1, Text: "1 200"}}, 1, "found"},
 		{"grouped boundary", "200 [1]", "ungrounded", []Citation{{Index: 1, Text: "1 200"}}, 1, "missing"},
 		{"grouped comma", "1200 [1]", "grounded", []Citation{{Index: 1, Text: "1,200"}}, 1, "found"},
+		{"single comparison value", "1,250 [1]", "grounded", []Citation{{Index: 1, Text: "1250"}}, 1, "found"},
 		{"compact unit", "Weight is 20kg [1]", "grounded", []Citation{{Index: 1, Text: "20kg"}}, 1, "found"},
 		{"spaced unit", "20kg [1]", "ungrounded", []Citation{{Index: 1, Text: "20 kg"}}, 1, "missing"},
 		{"url and email", "https://example.com/doc/123 user42@example.com 7 [1]", "grounded", []Citation{{Index: 1, Text: "7"}}, 1, "found"},
 		{"cited url", "123 [1]", "ungrounded", []Citation{{Index: 1, Text: "https://example.com/doc/123"}}, 1, "missing"},
+		{"cited url figure", "2024 [1]", "grounded", []Citation{{Index: 1, Text: "https://example.com/?year=2024"}}, 1, "found"},
+		{"cited email figure", "123 [1]", "grounded", []Citation{{Index: 1, Text: "123@example.com"}}, 1, "found"},
 		{"signed", "-20 [1]", "ungrounded", []Citation{{Index: 1, Text: "20"}}, 1, "missing"},
 		{"unicode sign", "−20 [1]", "grounded", []Citation{{Index: 1, Text: "-20"}}, 1, "found"},
 		{"currencies", "$5 [1]", "ungrounded", []Citation{{Index: 1, Text: "€5"}}, 1, "missing"},
@@ -36,7 +39,15 @@ func TestGrounding(t *testing.T) {
 		{"unicode grouping", "1200 [1]", "grounded", []Citation{{Index: 1, Text: "1\u202f200"}}, 1, "found"},
 		{"list ordinal", "1. Fee 20 [1]", "grounded", []Citation{{Index: 1, Text: "20"}}, 1, "found"},
 		{"empty list item", "1.\nFee 20 [1]", "grounded", []Citation{{Index: 1, Text: "20"}}, 1, "found"},
-		{"cited ordinal", "1 [1]", "ungrounded", []Citation{{Index: 1, Text: "1. Fee"}}, 1, "missing"},
+		{"cited ordinal", "1250 [1]", "grounded", []Citation{{Index: 1, Text: "1250. Paid in full"}}, 1, "found"},
+		{"cited year", "2024 [1]", "grounded", []Citation{{Index: 1, Text: `2024\. Revenue`}}, 1, "found"},
+		{"tab boundary", "5250 [1]", "ungrounded", []Citation{{Index: 1, Text: "5\t250"}}, 1, "missing"},
+		{"line boundary", "5250 [1]", "ungrounded", []Citation{{Index: 1, Text: "5\n250"}}, 1, "missing"},
+		{"table columns", "5 and 250 [1]", "grounded", []Citation{{Index: 1, Text: "5\t250"}}, 2, "found"},
+		{"comma list", "5,6,7 [1]", "grounded", []Citation{{Index: 1, Text: "5, 6, 7"}}, 3, "found"},
+		{"stacked markers", "1250 [1][2]", "grounded", []Citation{{Index: 1, Text: "1205"}, {Index: 2, Text: "1250"}}, 1, "found"},
+		{"whitespace markers", "1250 [1] \t\n[2]", "grounded", []Citation{{Index: 1, Text: "1205"}, {Index: 2, Text: "1250"}}, 1, "found"},
+		{"long url", "https://example.com/" + strings.Repeat("x", 15900), "no_figures", []Citation{{Index: 1, Text: "7"}}, 0, ""},
 		{"no figures", "See invoice [1]", "no_figures", []Citation{{Index: 1, Text: "20"}}, 0, ""},
 		{"swapped scope", "Fee 20.[1] Rate 30.[2]", "ungrounded", []Citation{{Index: 1, Text: "30"}, {Index: 2, Text: "20"}}, 2, "missing"},
 		{"unknown marker", "20 [2]", "ungrounded", []Citation{{Index: 1, Text: "20"}}, 1, "unverifiable"},
@@ -49,7 +60,7 @@ func TestGrounding(t *testing.T) {
 		{"no figures unavailable", "See invoice", "incomplete", []Citation{{Index: 1, Err: "citation_unavailable"}}, 0, ""},
 		{"long brackets", "[123]", "grounded", []Citation{{Index: 1, Text: "123"}}, 1, "found"},
 		{"link label literal", "[20](url)", "grounded", []Citation{{Index: 1, Text: "20"}}, 1, "found"},
-		{"cited markers ignored", "20 [1]", "ungrounded", []Citation{{Index: 1, Text: "[20]"}}, 1, "missing"},
+		{"cited marker", "20 [1]", "grounded", []Citation{{Index: 1, Text: "Reference [20]"}}, 1, "found"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a, err := Prepare(tc.answer)
@@ -62,6 +73,9 @@ func TestGrounding(t *testing.T) {
 			}
 			for _, f := range report.Figures {
 				require.Equal(t, f.Text, string([]rune(tc.answer)[f.Start:f.End]))
+			}
+			if tc.name == "single comparison value" {
+				require.Equal(t, "1250", report.Figures[0].Value)
 			}
 			if tc.name == "unknown marker" {
 				require.Equal(t, []Marker{{Index: 2, Start: 3, End: 6}}, report.UnknownMarkers)

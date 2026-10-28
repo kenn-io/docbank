@@ -394,11 +394,11 @@ retain their existing behavior.
 
 `check_answer` checks numbers and identifiers in a plain-text `answer` against an ordered array of saved `citations`. It is a default read-only tool on stdio and HTTP. Supply 1–16,000 Unicode code points, 1–8 citations, at most 512 figures, and at most 512 marker references. Invalid inputs are rejected before reading the vault.
 
-Use `[1]` or `[1, 2]` to select citation positions. Each marker covers every figure since the previous marker. Figures after the last marker have no scope. With no markers, every figure uses all citations. Marker indexes have one or two digits; a closing bracket followed by `(` makes the bracketed text literal.
+Use `[1]` or `[1, 2]` to select citation positions. Each marker covers every figure since the previous marker. Markers separated only by whitespace share that scope, so `[1][2]` checks against both citations. Figures after the last marker have no scope. With no markers, every figure uses all citations. Marker indexes have one or two digits; a closing bracket followed by `(` makes the bracketed text literal.
 
 For example, `Invoice was $1,250 [1]` is `ungrounded` against a citation containing `$1,205`, and `grounded` against `$1,250`.
 
-The result reports each figure's kind, code-point offsets, original text, comparison value, scoped citations, matches, and status. A figure is `found` if any scoped citation contains it. Otherwise it is `unverifiable` if the scope is empty or includes an unavailable citation, and `missing` if all scoped citations resolved. Citation statuses and text digests are included; cited text stays private. Use `resolve_text_citation` to read it.
+The result reports each figure's kind, code-point offsets, original text, single comparison `value`, scoped citations, matches, and status. A figure is `found` if any scoped citation contains it. Otherwise it is `unverifiable` if the scope is empty or includes an unavailable citation, and `missing` if all scoped citations resolved. Citation statuses and text digests are included; cited text stays private. Use `resolve_text_citation` to read it.
 
 The overall status is:
 
@@ -407,9 +407,9 @@ The overall status is:
 - `no_figures` if there are no figures and all citations resolved.
 - `grounded` otherwise. This confirms that figures occur in the text; it does not establish their subject or the truth of other claims.
 
-Numbers preserve signs and leading zeros. Valid three-digit grouping compares by value, so `1,200` and `1 200` match `1200`, and `.5` matches `0.5`. Digit-bearing identifiers compare whole, ignoring case and keeping affixes: `20kg`, `$5`, `€5`, and `K50` stay distinct from `20`, `5`, and `K5`.
+Numbers preserve signs and leading zeros. Valid three-digit grouping compares by value, so `1,200` and `1 200` match `1200`, and `.5` matches `0.5`. Only a literal space, NBSP, or narrow NBSP joins digit groups; tabs and line breaks separate figures. A comma joins digits only in valid three-digit grouping, so `5,6,7` is three figures. Digit-bearing identifiers compare whole, ignoring case and keeping affixes: `20kg`, `$5`, `€5`, and `K50` stay distinct from `20`, `5`, and `K5`.
 
-Bare URLs, emails, line-leading list ordinals, and citation markers are ignored on both sides. The checker undoes punctuation escapes in cited text and normalizes Unicode spaces. It takes the answer literally, including Markdown and entities. Send `Balance -20 [1]` as plain text. It performs no arithmetic, unit conversion, alternative date or currency normalization, or joining of spaced identifiers. Results use private cache scope and zero TTL. Transient citation failures return tool errors so callers can retry.
+Bare URLs, emails, line-leading list ordinals, and citation markers are ignored only in the answer. Cited text keeps their figures, including `Reference [20]` and `1250. Paid in full`. The checker undoes punctuation escapes in cited text and normalizes Unicode spaces. Cited text is read as the producer's Markdown, so a literal backslash before punctuation in a plain-text email body is read as an escape. It takes the answer literally, including Markdown and entities. Send `Balance -20 [1]` as plain text. It performs no arithmetic, unit conversion, alternative date or currency normalization, or joining of spaced identifiers. Results use private cache scope and zero TTL. Transient citation failures return tool errors so callers can retry.
 
 ## Read complete retained sections
 

@@ -21,14 +21,14 @@ type CitationResult struct {
 	TextSHA256 string `json:"text_sha256,omitempty"`
 }
 type Figure struct {
-	Kind      string   `json:"kind"`
-	Start     int      `json:"start"`
-	End       int      `json:"end"`
-	Text      string   `json:"text"`
-	Values    []string `json:"values"`
-	Citations []int    `json:"citations"`
-	FoundIn   []int    `json:"found_in"`
-	Status    string   `json:"status"`
+	Kind      string `json:"kind"`
+	Start     int    `json:"start"`
+	End       int    `json:"end"`
+	Text      string `json:"text"`
+	Value     string `json:"value"`
+	Citations []int  `json:"citations"`
+	FoundIn   []int  `json:"found_in"`
+	Status    string `json:"status"`
 }
 type Marker struct {
 	Index int `json:"index"`
@@ -44,6 +44,7 @@ type Report struct {
 type marker struct {
 	start, end int
 	indexes    []int
+	adjacent   bool
 }
 type Answer struct {
 	figures []Figure
@@ -56,6 +57,7 @@ var (
 	markerPattern = regexp.MustCompile(`\[[0-9]{1,2}(?:, *[0-9]{1,2})*\]`)
 	number        = regexp.MustCompile(`^[-−]?(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+|[0-9]{1,3}(?: [0-9]{3})+)(?:\.[0-9]+)?$|^[-−]?\.[0-9]+$`)
 	groupedPrefix = regexp.MustCompile(`^[0-9]{1,3}(?: [0-9]{3})*$`)
+	commaPrefix   = regexp.MustCompile(`^[0-9]{1,3}(?:,[0-9]{3})*$`)
 )
 
 func extract(text string, cited bool) Answer {
@@ -76,40 +78,41 @@ func extract(text string, cited bool) Answer {
 			rs[i] = ' '
 		}
 	}
-	// Mask without moving the answer's code-point offsets.
-	mask := func(re *regexp.Regexp) {
-		s := string(rs)
-		for _, span := range re.FindAllStringIndex(s, -1) {
-			start := utf8.RuneCountInString(s[:span[0]])
-			for i := start; i < start+utf8.RuneCountInString(s[span[0]:span[1]]); i++ {
-				rs[i] = ' '
-			}
-		}
-	}
-	mask(ignored)
-	mask(ordinal)
-	for i, r := range rs {
-		if unicode.IsSpace(r) {
-			rs[i] = ' '
-		}
-	}
 	original := []rune(text)
 	a := Answer{figures: []Figure{}, markers: []marker{}}
-	s := string(rs)
-	for _, span := range markerPattern.FindAllStringIndex(s, -1) {
-		if span[1] < len(s) && s[span[1]] == '(' {
-			continue
+	if !cited {
+		// Mask without moving the answer's code-point offsets.
+		mask := func(re *regexp.Regexp) {
+			s := string(rs)
+			for _, span := range re.FindAllStringIndex(s, -1) {
+				start := utf8.RuneCountInString(s[:span[0]])
+				end := start + utf8.RuneCountInString(s[span[0]:span[1]])
+				for i := start; i < end; i++ {
+					rs[i] = ' '
+				}
+			}
 		}
-		start := utf8.RuneCountInString(s[:span[0]])
-		end := start + utf8.RuneCountInString(s[span[0]:span[1]])
-		m := marker{start: start, end: end}
-		for v := range strings.SplitSeq(s[span[0]+1:span[1]-1], ",") {
-			n, _ := strconv.Atoi(strings.TrimSpace(v))
-			m.indexes = append(m.indexes, n)
-		}
-		a.markers = append(a.markers, m)
-		for i := start; i < end; i++ {
-			rs[i] = ' '
+		mask(ignored)
+		mask(ordinal)
+		s := string(rs)
+		for _, span := range markerPattern.FindAllStringIndex(s, -1) {
+			if span[1] < len(s) && s[span[1]] == '(' {
+				continue
+			}
+			start := utf8.RuneCountInString(s[:span[0]])
+			end := start + utf8.RuneCountInString(s[span[0]:span[1]])
+			m := marker{start: start, end: end}
+			if len(a.markers) > 0 {
+				m.adjacent = strings.TrimSpace(string(original[a.markers[len(a.markers)-1].end:start])) == ""
+			}
+			for v := range strings.SplitSeq(s[span[0]+1:span[1]-1], ",") {
+				n, _ := strconv.Atoi(strings.TrimSpace(v))
+				m.indexes = append(m.indexes, n)
+			}
+			a.markers = append(a.markers, m)
+			for i := start; i < end; i++ {
+				rs[i] = ' '
+			}
 		}
 	}
 	for i := 0; i < len(rs); {
@@ -133,11 +136,13 @@ func extract(text string, cited bool) Answer {
 				i++
 				continue
 			}
-			if i+1 < len(rs) && word(rs[i-1]) && word(rs[i+1]) && (strings.ContainsRune("-/_.", rs[i]) || rs[i] == ',' && digit(rs[i-1]) && digit(rs[i+1])) {
+			if i+1 < len(rs) && word(rs[i-1]) && word(rs[i+1]) && strings.ContainsRune("-/_.", rs[i]) {
 				i++
 				continue
 			}
-			if rs[i] == ' ' && groupedPrefix.MatchString(string(rs[numberStart:i])) && i+3 < len(rs) && digit(rs[i+1]) && digit(rs[i+2]) && digit(rs[i+3]) && (i+4 == len(rs) || !word(rs[i+4])) {
+			grouped := (original[i] == ' ' || original[i] == '\u00a0' || original[i] == '\u202f') && groupedPrefix.MatchString(string(rs[numberStart:i])) ||
+				rs[i] == ',' && commaPrefix.MatchString(string(rs[numberStart:i]))
+			if grouped && i+3 < len(rs) && digit(rs[i+1]) && digit(rs[i+2]) && digit(rs[i+3]) && (i+4 == len(rs) || !word(rs[i+4])) {
 				i += 4
 				continue
 			}
@@ -171,7 +176,7 @@ func extract(text string, cited bool) Answer {
 			}
 			value = sign + value
 		}
-		a.figures = append(a.figures, Figure{Kind: kind, Start: start, End: i, Text: string(original[start:i]), Values: []string{value}})
+		a.figures = append(a.figures, Figure{Kind: kind, Start: start, End: i, Text: string(original[start:i]), Value: value})
 	}
 	return a
 }
@@ -207,7 +212,7 @@ func (a Answer) Check(citations []Citation) Report {
 		}
 		sources[c.Index] = map[string]bool{}
 		for _, f := range extract(c.Text, true).figures {
-			sources[c.Index][f.Kind+"\x00"+f.Values[0]] = true
+			sources[c.Index][f.Kind+"\x00"+f.Value] = true
 		}
 	}
 	for _, m := range a.markers {
@@ -222,7 +227,7 @@ func (a Answer) Check(citations []Citation) Report {
 		if len(a.markers) == 0 {
 			f.Citations = slices.Clone(all)
 		} else {
-			for _, m := range a.markers {
+			for j, m := range a.markers {
 				if m.start < f.End {
 					continue
 				}
@@ -231,7 +236,9 @@ func (a Answer) Check(citations []Citation) Report {
 						f.Citations = append(f.Citations, idx)
 					}
 				}
-				break
+				if j+1 == len(a.markers) || !a.markers[j+1].adjacent {
+					break
+				}
 			}
 		}
 		unavailable := len(f.Citations) == 0
@@ -239,7 +246,7 @@ func (a Answer) Check(citations []Citation) Report {
 			if sources[idx] == nil {
 				unavailable = true
 			}
-			if sources[idx][f.Kind+"\x00"+f.Values[0]] {
+			if sources[idx][f.Kind+"\x00"+f.Value] {
 				f.FoundIn = append(f.FoundIn, idx)
 			}
 		}
