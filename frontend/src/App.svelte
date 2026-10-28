@@ -2642,7 +2642,9 @@
     naturalProfileDefaultPending = null;
     naturalRerank = checked;
     const query = searchPending ? submittedSearchQuery : activeQuery;
-    if (query) void runSearch(selectedID, query);
+    if (!query) return;
+    leavePage();
+    void runSearch(selectedID, query);
   }
 
   function changeTagFilter(tagID: string): void {
