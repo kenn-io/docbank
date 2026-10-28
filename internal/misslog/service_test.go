@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"log/slog"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -42,12 +43,15 @@ func TestRecordPersistenceAndEnabledOnlyStartupPruning(t *testing.T) {
 	rows, err := st.ListMissLogRecords(t.Context(), time.Time{}, 10, 0)
 	require.NoError(t, err)
 	require.Len(t, rows, 3)
+	// Records written in the same clock tick have no stable order, so find the row by content.
+	index := slices.IndexFunc(rows, func(row store.MissLogRecord) bool { return strings.Contains(row.Receipt, "synthetic secret") })
+	require.NotEqual(t, -1, index)
 	var receipt Receipt
-	require.NoError(t, json.Unmarshal([]byte(rows[0].Receipt), &receipt))
+	require.NoError(t, json.Unmarshal([]byte(rows[index].Receipt), &receipt))
 	require.Equal(t, "synthetic secret", receipt.Query)
 	require.Equal(t, []string{"hybrid", "lexical"}, []string{receipt.RequestedMode, receipt.ActualMode})
 	require.Equal(t, []string{"reranking_degraded"}, receipt.Degradations)
-	require.Equal(t, 1, strings.Count(rows[0].Receipt, "synthetic secret"))
+	require.Equal(t, 1, strings.Count(rows[index].Receipt, "synthetic secret"))
 	now := time.Now()
 	require.NoError(t, st.AddMissLogRecord(t.Context(), store.MissLogRecord{ID: "expired", CreatedAt: now.AddDate(0, 0, -91), Receipt: `{}`}, now, 365, 5000))
 	cfg.Enabled = false
