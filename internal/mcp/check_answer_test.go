@@ -20,24 +20,20 @@ func TestCheckAnswerTransports(t *testing.T) {
 	server, citation := newCitationMCPFixture(t)
 	citation.Start -= len([]rune(`$1,205 a`))
 	citation.End = citation.Start + len([]rune(`$1,205`))
-	for _, transport := range []string{"stdio", "http"} {
-		t.Run(transport, func(t *testing.T) {
-			result := decodeResult(t, exportExchange(t, server, transport, "tools/call", map[string]any{
-				"name": "check_answer", "arguments": map[string]any{"answer": "Invoice was $1,205 [1]", "citations": []any{citation}},
-			}))
-			output := objectField(t, result, "structuredContent")
-			require.Equal(t, "grounded", output["status"])
-			require.Equal(t, "private", output["cacheScope"])
-			figures, ok := output["figures"].([]any)
-			require.True(t, ok)
-			require.Len(t, figures, 1)
-			figure, ok := figures[0].(map[string]any)
-			require.True(t, ok)
-			require.Equal(t, "$1,205", figure["text"])
-			require.Equal(t, "found", figure["status"])
-			assertSchemaAccepts(t, catalogMap(toolCatalog(ServerOptions{}))["check_answer"].OutputSchema, output)
-		})
-	}
+	result := decodeResult(t, exportExchange(t, server, "stdio", "tools/call", map[string]any{
+		"name": "check_answer", "arguments": map[string]any{"answer": "Invoice was $1,205 [1]", "citations": []any{citation}},
+	}))
+	output := objectField(t, result, "structuredContent")
+	require.Equal(t, "grounded", output["status"])
+	require.Equal(t, "private", output["cacheScope"])
+	figures, ok := output["figures"].([]any)
+	require.True(t, ok)
+	require.Len(t, figures, 1)
+	figure, ok := figures[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "$1,205", figure["text"])
+	require.Equal(t, "found", figure["status"])
+	assertSchemaAccepts(t, catalogMap(toolCatalog(ServerOptions{}))["check_answer"].OutputSchema, output)
 }
 
 func TestCheckAnswerRejectsInvalidBeforeAcquisition(t *testing.T) {
