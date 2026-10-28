@@ -440,8 +440,6 @@ func stableDomainError(err error) (string, int) {
 		return "processing_outcome_unknown", 0
 	case errors.Is(err, errKataOutcomeUnknown):
 		return "kata_outcome_unknown", 0
-	case errors.Is(err, errAnswerGateFailed):
-		return "answer_gate_failed", 0
 	case errors.Is(err, errReportIntegrity):
 		return "report_integrity", 0
 	case errors.Is(err, errReportLocalIO):
@@ -588,8 +586,6 @@ func domainErrorMessage(code string) string {
 		return "The processing profile has no configured reranking provider; ask the operator to configure it."
 	case "reranking_failed":
 		return "Document reranking failed; check the daemon log before retrying."
-	case "answer_gate_failed":
-		return "An evidence gate could not complete."
 	case "processing_unavailable", "processing_profile_unavailable":
 		return "The requested processing profile is unavailable."
 	case "invalid_text_navigation":
