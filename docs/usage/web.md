@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-11
+last_edited: 2026-10-28
 title: Web application
 description: Find, read, organize, and export documents in the local, authenticated web app.
 ---

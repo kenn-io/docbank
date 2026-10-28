@@ -22,6 +22,38 @@ env:
   GOFLAGS: -trimpath
 
 jobs:
+  bates-browser-recovery:
+    name: Numbered PDF browser recovery
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24.22.1
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install Poppler and Chromium
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y poppler-utils util-linux
+          npm --prefix frontend ci
+          node frontend/node_modules/@playwright/test/cli.js install --with-deps chromium
+      - name: Embed frontend and qualify both SQLite modes
+        run: |
+          npm --prefix frontend run build
+          find internal/web/dist -mindepth 1 ! -name .keep -exec rm -rf {} +
+          cp -R frontend/dist/. internal/web/dist/
+          node frontend/screenshots/bates-recovery.run.mjs
+
   libreoffice-owner:
     name: LibreOffice owner proof
     runs-on: ubuntu-latest

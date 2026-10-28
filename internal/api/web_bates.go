@@ -49,7 +49,7 @@ func batesBrowserCandidateQuery(raw string) bool {
 		return false
 	}
 	for key, values := range query {
-		if len(values) != 1 || key != "bates_label" && key != "cursor" && key != "limit" {
+		if len(values) != 1 || key != "bates_label" && key != "cursor" && key != packageLimitParameter {
 			return false
 		}
 	}
