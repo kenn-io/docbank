@@ -1385,11 +1385,11 @@ max_records = 5000
 
 `retention_days` accepts 1–365 days. `max_records` accepts 1–100000 records. These bounds apply when recording is enabled.
 
-The CLI, web app, TUI, and daemon-backed MCP report submitted searches that show no results, including searches with no documents in scope and web searches with advanced syntax or filters. The daemon stores these receipts. Name and folder matches count as results. Errors, refreshes, Run again, re-freezes, reranking requests, and in-document finds create no record. Hidden photo searches, photo smart sets without query text, bare search API calls, and embedded library calls create no record.
+The CLI, web app, TUI, and daemon-backed MCP report submitted searches that show no results, including searches with no documents in scope and web searches with advanced syntax or filters. The daemon stores these receipts. Name and folder matches count as results. Errors, refreshes, Run again, re-freezes, reranking requests, and in-document finds create no record. Running a saved search or opening a photo smart set, with or without query text, records nothing. Hidden photo searches, bare search API calls, and embedded library calls create no record.
 
 Receipts preserve the query, time, vault, requested and actual search modes, profile, search options, fence fingerprint or live filters, coverage, truncation, degradations, and reranking outcome. They omit document excerpts and source ID lists. The request body is capped at 64 KiB. Larger requests are refused. Automatic writes wait at most 100 ms for mutation admission and storage. A failed write leaves the search available and logs a fixed diagnostic.
 
-Use `docbank miss-log list`, `delete <id>`, or `purge` to manage records through the daemon. These operations require the master API credential. Browser sessions and MCP have no history management tools. Management remains available when recording is disabled. Records expire by age and count on enabled startup and writes; idle daemons prune lazily. Disabled startup preserves existing rows.
+Use `docbank miss-log list`, `delete <id>`, or `purge` to manage records through the daemon. These operations require the master API credential. Browser sessions and MCP have no history management tools. Management remains available when recording is disabled. Lists exclude records older than `retention_days`, including on idle daemons. Enabled startup and writes prune records by age and count. Disabled startup preserves existing rows.
 
 The log is excluded from anonymous telemetry, logical backups, portable bundle
 metadata, imports, and federation. A restored vault has no miss records.

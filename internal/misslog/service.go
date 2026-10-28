@@ -22,7 +22,7 @@ type Request struct {
 	Profile          string         `json:"profile,omitempty" maxLength:"256"`
 	RequestedMode    string         `json:"requested_mode" enum:"auto,lexical,semantic,hybrid,fuzzy"`
 	ActualMode       string         `json:"actual_mode" enum:"auto,lexical,semantic,hybrid,fuzzy"`
-	Filters          map[string]any `json:"filters,omitempty" maxProperties:"32"`
+	Filters          map[string]any `json:"filters,omitempty"`
 	Coverage         map[string]any `json:"coverage,omitempty" maxProperties:"32"`
 	Truncated        bool           `json:"truncated"`
 	Degradations     []string       `json:"degradations,omitempty" maxItems:"64"`

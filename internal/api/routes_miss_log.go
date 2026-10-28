@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/docbank/internal/misslog"
@@ -31,7 +32,7 @@ func registerMissLogRoutes(api huma.API, d Deps, g *OperationGate, service *miss
 		Limit  int `query:"limit" default:"20" minimum:"1" maximum:"100"`
 		Offset int `query:"offset" default:"0" minimum:"0"`
 	}) (*struct{ Body MissLogPage }, error) {
-		rows, err := d.Store.ListMissLogRecords(ctx, in.Limit, in.Offset)
+		rows, err := d.Store.ListMissLogRecords(ctx, time.Now().UTC().AddDate(0, 0, -d.Cfg.MissLog.RetentionDays), in.Limit, in.Offset)
 		if err != nil {
 			return nil, missLogFailure()
 		}

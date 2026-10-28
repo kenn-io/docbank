@@ -3059,6 +3059,7 @@
     query: Query,
     options: SnapshotOptions,
     preserveDraft = false,
+    recordEmpty = true,
   ): Promise<void> {
     const revision = queryDraftRevision;
     if (!preserveDraft) keepQueryDraft(query);
@@ -3072,7 +3073,7 @@
         queryDraftFromDefinition = false;
       }
       reportSearch(webSession, outcome.type, outcome.empty);
-      if (!preserveDraft && outcome.empty) recordMiss(outcome.receipt);
+      if (recordEmpty && !preserveDraft && outcome.empty) recordMiss(outcome.receipt);
     }
   }
 
@@ -5227,7 +5228,7 @@
             closePanel(panel)();
             // The saved query's filters are settings: a new search text keeps them.
             querySettingsApplied = true;
-            void submitSnapshot(query, snapshot.state.options ?? {});
+            void submitSnapshot(query, snapshot.state.options ?? {}, false, false);
           }}
           onclose={closePanel(panel)}
           onauthfailure={handleFailure}

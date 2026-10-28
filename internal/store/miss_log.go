@@ -25,9 +25,9 @@ func (s *Store) AddMissLogRecord(ctx context.Context, record MissLogRecord, now 
 	})
 }
 
-// ListMissLogRecords returns records newest first with bounded pagination.
-func (s *Store) ListMissLogRecords(ctx context.Context, limit, offset int) ([]MissLogRecord, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, receipt FROM miss_log_records ORDER BY created_at DESC, id DESC LIMIT $1 OFFSET $2`, limit, offset)
+// ListMissLogRecords returns unexpired records newest first with bounded pagination.
+func (s *Store) ListMissLogRecords(ctx context.Context, since time.Time, limit, offset int) ([]MissLogRecord, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, receipt FROM miss_log_records WHERE created_at >= $1 ORDER BY created_at DESC, id DESC LIMIT $2 OFFSET $3`, since.UTC().Format(timestampLayout), limit, offset)
 	if err != nil {
 		return nil, err
 	}
