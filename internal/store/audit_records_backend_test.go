@@ -19,7 +19,7 @@ func TestAuditRecordsPostgres(t *testing.T) {
 	checkAuditRecords(t, newPostgresQueryStore(t))
 }
 
-func checkAuditRecords(t *testing.T, destination *Store) {
+func auditRecordFixture(t *testing.T) map[string][]storedAuditRecord {
 	t.Helper()
 	ctx := t.Context()
 	source := newTestStore(t)
@@ -27,6 +27,13 @@ func checkAuditRecords(t *testing.T, destination *Store) {
 	require.NoError(t, source.ValidateMetadata(ctx))
 	records, err := loadInitialAuditRecords(ctx, source.db)
 	require.NoError(t, err)
+	return records
+}
+
+func checkAuditRecords(t *testing.T, destination *Store) {
+	t.Helper()
+	ctx := t.Context()
+	records := auditRecordFixture(t)
 
 	t.Run("canonical records and indexes", func(t *testing.T) {
 		tx, err := destination.writeDB.BeginTx(ctx, nil)
@@ -50,7 +57,13 @@ func checkAuditRecords(t *testing.T, destination *Store) {
 		// committing an incomplete vault as a fixture.
 		require.NoError(t, tx.Rollback())
 	})
+}
 
+func TestAuditRecordValidationSQLite(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	destination := newTestStore(t)
+	records := auditRecordFixture(t)
 	event := records["event"][0].record
 	nested, err := auditNestedField(event, auditEventField)
 	require.NoError(t, err)
