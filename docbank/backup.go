@@ -15,6 +15,12 @@ import (
 )
 
 var (
+	// ErrBackupRepositoryOwnerConflict means the owner marker does not name this vault.
+	ErrBackupRepositoryOwnerConflict = backupapp.ErrRepositoryOwnerConflict
+	// ErrBackupRepositoryClaimRequired means existing history needs explicit adoption.
+	ErrBackupRepositoryClaimRequired = backupapp.ErrRepositoryClaimRequired
+	// ErrBackupRepositoryClaimChanged means the repository changed after its claim preview.
+	ErrBackupRepositoryClaimChanged = backupapp.ErrRepositoryClaimChanged
 	// ErrBackupRepositoryLocked means another writer owns the snapshot repository.
 	ErrBackupRepositoryLocked = backup.ErrRepoLocked
 	// ErrBackupRestoreTargetActive means another vault or restore owns an overlapping root.
@@ -30,6 +36,42 @@ var (
 // BackupRepository is one initialized immutable snapshot repository.
 type BackupRepository struct {
 	repo *backup.Repo
+}
+
+// BackupRepositoryClaim describes the history an explicit claim assigns.
+type BackupRepositoryClaim = backupapp.RepositoryClaim
+
+// PreviewBackupClaim reports the history a claim would assign to this vault
+// installation. A repository owned by another vault is refused.
+func (v *Vault) PreviewBackupClaim(ctx context.Context, repository *BackupRepository) (BackupRepositoryClaim, error) {
+	return v.claimBackupRepository(repository, func(repo *backup.Repo) (BackupRepositoryClaim, error) {
+		return backupapp.PreviewRepositoryClaim(ctx, repo, v.metadata)
+	})
+}
+
+// ClaimBackupRepository assigns the repository to this vault installation
+// when it still matches the preview that returned fingerprint. Otherwise it
+// returns ErrBackupRepositoryClaimChanged and changes nothing.
+func (v *Vault) ClaimBackupRepository(ctx context.Context, repository *BackupRepository, fingerprint string) (BackupRepositoryClaim, error) {
+	return v.claimBackupRepository(repository, func(repo *backup.Repo) (BackupRepositoryClaim, error) {
+		return backupapp.ClaimRepository(ctx, repo, v.metadata, fingerprint)
+	})
+}
+
+func (v *Vault) claimBackupRepository(repository *BackupRepository,
+	claim func(*backup.Repo) (BackupRepositoryClaim, error),
+) (BackupRepositoryClaim, error) {
+	if err := v.begin(); err != nil {
+		return BackupRepositoryClaim{}, err
+	}
+	defer v.lifecycle.RUnlock()
+	if repository == nil || repository.repo == nil {
+		return BackupRepositoryClaim{}, errors.New("docbank backup repository is required")
+	}
+	if err := backupapp.ValidateDisjointRoots(v.root.Name(), repository.repo.Root()); err != nil {
+		return BackupRepositoryClaim{}, err
+	}
+	return claim(repository.repo)
 }
 
 // BackupExtraFile is one host-owned file captured in the snapshot and

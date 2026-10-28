@@ -1,10 +1,6 @@
 package main
 
 import (
-	"bufio"
-	"fmt"
-	"strings"
-
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/docbank/internal/update"
@@ -28,12 +24,7 @@ var updateCmd = &cobra.Command{
 			Yes:       updateYes,
 			Force:     updateForce,
 			Confirm: func(prompt string) (bool, error) {
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s [y/N] ", prompt)
-				line, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
-				if err != nil {
-					return false, fmt.Errorf("reading confirmation: %w", err)
-				}
-				return strings.EqualFold(strings.TrimSpace(line), "y"), nil
+				return confirmPrompt(cmd, cmd.OutOrStdout(), prompt)
 			},
 		})
 	},

@@ -88,6 +88,12 @@ func (g *OperationGate) mutate(fn func() error) error {
 }
 
 func (g *OperationGate) maintainContext(ctx context.Context, fn func() error) error {
+	if err := g.preservation.Acquire(ctx, operationGateExclusiveWeight); err != nil {
+		return fmt.Errorf("acquiring maintenance preservation gate: %w", err)
+	}
+	defer g.preservation.Release(operationGateExclusiveWeight)
+	// Maintenance waiting behind a backup capture does not hold or request the
+	// mutation side, so route mutations keep running until it can start.
 	g.admission.Lock()
 	g.maintenance++
 	g.admission.Unlock()
@@ -96,19 +102,11 @@ func (g *OperationGate) maintainContext(ctx context.Context, fn func() error) er
 		g.maintenance--
 		g.admission.Unlock()
 	}()
-	if err := g.preservation.Acquire(ctx, operationGateExclusiveWeight); err != nil {
-		return fmt.Errorf("acquiring maintenance preservation gate: %w", err)
-	}
-	defer g.preservation.Release(operationGateExclusiveWeight)
 	if err := g.mu.Acquire(ctx, operationGateExclusiveWeight); err != nil {
 		return fmt.Errorf("acquiring maintenance mutation gate: %w", err)
 	}
 	defer g.mu.Release(operationGateExclusiveWeight)
 	return fn()
-}
-
-func (g *OperationGate) capture(fn func() error) error {
-	return g.CaptureContext(context.Background(), fn)
 }
 
 // CaptureContext pins physical authority while a report resolves its metadata

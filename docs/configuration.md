@@ -155,6 +155,8 @@ allowed_hosts = []      # additional MCP HTTP Host names, optionally with ports
 [backup]
 repo = ""           # no implicit repository; set a path or pass --repo
 zstd_level = 0      # 0 = Kit default; otherwise 1-19
+interval = "0"      # disabled; for example, "24h"
+keep_last = 0       # choose a positive retained count before enabling
 
 [storage]
 pack_interval = "0"        # disabled; for example, "1h"
@@ -224,12 +226,21 @@ exclude_patterns = [".syncthing.*.tmp", "*.sync-conflict-*"]
   Keep the repository outside the live vault in normal deployments.
 - **`[backup] zstd_level`**: repository compression level. `0` uses Kit's
   default. Other values must be between `1` and `19`.
+- **`[backup] interval`**: schedules captures at this interval. `"0"` disables
+  the schedule. An enabled schedule requires a configured `repo` and a positive
+  `keep_last`. Values must be nonnegative; enabled intervals must be at least one minute.
+- **`[backup] keep_last`**: number of scheduled snapshots to retain after each
+  capture. Values must be nonnegative. Manual snapshots remain outside this policy.
 - **`[storage] pack_interval`**: schedules non-destructive packing of
   authorized loose blobs. `"0"` disables the schedule. A configured schedule
   runs once when the daemon starts and then at this interval.
 - **`[storage] pack_max_bytes`**: soft raw-byte budget for each
   scheduled run. It must be positive when `pack_interval` is enabled. Remaining
   loose content waits for a later run.
+
+Restart the daemon after changing backup scheduling configuration.
+See [Schedule backups](usage/backup.md#schedule-backups) for initialization,
+retention, scheduled tag rules, retries, and stale warnings.
 
 Scheduled packing is visible as the `storage:pack` job and keeps an auto-started
 daemon alive so the schedule can run. It uses the same maintenance gate

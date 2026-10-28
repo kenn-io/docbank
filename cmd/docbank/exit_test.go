@@ -5,6 +5,8 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -14,6 +16,7 @@ import (
 	"go.kenn.io/kit/backup"
 	"go.kenn.io/kit/packstore"
 
+	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/store"
@@ -34,6 +37,9 @@ func TestCommandExitCode(t *testing.T) {
 		{name: "not found", err: fmt.Errorf("lookup: %w", store.ErrNotFound), started: true, want: exitNotFound},
 		{name: "stale revision", err: store.ErrStaleRevision, started: true, want: exitStale},
 		{name: "stale preview", err: store.ErrAuditPreviewStale, started: true, want: exitStale},
+		{name: "backup owner conflict", err: fmt.Errorf("capture: %w", backupapp.ErrRepositoryOwnerConflict), started: true, want: exitUsage},
+		{name: "backup claim required", err: fmt.Errorf("capture: %w", backupapp.ErrRepositoryClaimRequired), started: true, want: exitClaim},
+		{name: "backup claim changed", err: fmt.Errorf("claim: %w", backupapp.ErrRepositoryClaimChanged), started: true, want: exitStale},
 		{name: "vault busy", err: home.ErrVaultLocked, started: true, want: exitBusy},
 		{name: "repository busy", err: backup.ErrRepoLocked, started: true, want: exitBusy},
 		{name: "retirement busy", err: packstore.ErrPackRetirementDeferred, started: true, want: exitBusy},
@@ -159,6 +165,43 @@ func TestRunProcessRequiredFlagErrorsAreUsage(t *testing.T) {
 	assert.Contains(t, stderr.String(), `error: required flag(s) "revision" not set`)
 	assert.Contains(t, stderr.String(), "hint: usage: docbank people rename <person-id> <display-name>")
 	assert.Empty(t, stdout.String())
+}
+
+func TestRunProcessBackupClaimConfirmation(t *testing.T) {
+	_ = setupVaultHome(t)
+	path := filepath.Join(t.TempDir(), "repo")
+	_, err := backup.Init(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { rootCmd.SetIn(nil) })
+	for _, tc := range []struct {
+		name string
+		yes  bool
+		code int
+	}{
+		{name: "piped confirmation", code: 2},
+		{name: "explicit confirmation", yes: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resetFlags(rootCmd)
+			rootCmd.SetIn(strings.NewReader("y\n"))
+			var stdout, stderr bytes.Buffer
+			args := []string{"backup", "claim", "--repo", path, "--json"}
+			if tc.yes {
+				args = append(args, "--yes")
+			}
+			require.Equal(t, tc.code, runProcess(args, &stdout, &stderr))
+			if tc.yes {
+				var claim backupapp.RepositoryClaim
+				require.NoError(t, json.Unmarshal(stdout.Bytes(), &claim))
+				require.True(t, claim.Owned)
+			} else {
+				_, err := os.Stat(filepath.Join(path, "docbank-owner"))
+				require.ErrorIs(t, err, os.ErrNotExist)
+				require.Contains(t, stderr.String(), "requires confirmation")
+				require.Empty(t, stdout.String())
+			}
+		})
+	}
 }
 
 func TestRunProcessErrorHints(t *testing.T) {

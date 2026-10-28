@@ -10,6 +10,7 @@ import (
 	"go.kenn.io/kit/backup"
 	"go.kenn.io/kit/packstore"
 
+	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/store"
@@ -23,6 +24,7 @@ const (
 	exitStale     = 4
 	exitBusy      = 5
 	exitIntegrity = 6
+	exitClaim     = 7
 )
 
 type exitError struct {
@@ -61,8 +63,11 @@ func commandExitCode(err error, started bool) int {
 		return exitNotFound
 	}
 	if errors.Is(err, store.ErrStaleRevision) ||
-		errors.Is(err, store.ErrAuditPreviewStale) {
+		errors.Is(err, store.ErrAuditPreviewStale) || errors.Is(err, backupapp.ErrRepositoryClaimChanged) {
 		return exitStale
+	}
+	if errors.Is(err, backupapp.ErrRepositoryClaimRequired) {
+		return exitClaim
 	}
 	if errors.Is(err, home.ErrVaultLocked) || errors.Is(err, backup.ErrRepoLocked) ||
 		errors.Is(err, packstore.ErrPackRetirementDeferred) ||
@@ -75,7 +80,8 @@ func commandExitCode(err error, started bool) int {
 		errors.Is(err, store.ErrInvalidBatchMove) ||
 		errors.Is(err, store.ErrInvalidVersionPrune) ||
 		errors.Is(err, store.ErrInvalidAuditCursor) || errors.Is(err, store.ErrInvalidPhotoAsset) ||
-		errors.Is(err, store.ErrPhotoNodeNotEligible) {
+		errors.Is(err, store.ErrPhotoNodeNotEligible) ||
+		errors.Is(err, backupapp.ErrRepositoryOwnerConflict) {
 		return exitUsage
 	}
 	if code, ok := daemonconn.ProblemCode(err); ok &&
@@ -134,6 +140,8 @@ func commandErrorHint(cmd *cobra.Command, err error, code int, started bool) str
 		default:
 			return ""
 		}
+	case exitClaim:
+		return `hint: review the history with "docbank backup claim", then confirm it`
 	default:
 		return ""
 	}

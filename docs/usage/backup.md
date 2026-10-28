@@ -62,17 +62,107 @@ repo = "~/Backups/docbank"
 Restart the daemon after changing `config.toml`. Configuration is read only at
 daemon startup.
 
+## Schedule backups
+
+Initialize the repository, then configure a schedule in `config.toml`:
+
+```toml
+[backup]
+repo = "~/Backups/docbank"
+interval = "24h"
+keep_last = 14
+```
+
+Restart the daemon to apply it. The daemon captures immediately when no
+scheduled snapshot exists or the newest one is due. Later captures run at the
+configured interval. An overdue capture starts within one minute after the
+computer wakes. An enabled schedule keeps the background daemon running through
+idle periods. The repository must already be initialized. Capture failures
+retry after the shorter of the interval and five minutes.
+
+The schedule runs only while the daemon runs. After a reboot, the daemon starts
+again when a Docbank command or the web app next needs it, and an overdue
+capture begins then. To keep captures current across reboots, run
+`docbank daemon start` from a login item or a launchd or systemd user service.
+
+After capture, retention keeps the newest `keep_last` scheduled points,
+including the new one, and forgets older points. It prunes unused storage on
+the first capture after the daemon starts and after it forgets a point. Manual snapshots
+stay available. Cleanup failures leave the new point available and retry after
+the next scheduled capture.
+
+Scheduled points use `docbank:scheduled:<vault-id>`. Retention selects only this
+vault's tag. Manual captures through the CLI, HTTP API, and embedded API reject
+the reserved `docbank:scheduled:` prefix. The plain tag `docbank:scheduled`
+remains an ordinary manual tag.
+
+`docbank jobs` shows the schedule's latest error. When the newest scheduled
+point is older than twice the interval, Jobs reports it as stale, and the daemon
+logs one warning per stale episode. This check reads snapshot times after
+restart. A future timestamp caps the initial wait at one interval; restarting
+resets that wait. A backward clock correction cannot extend an active wait.
+
+Set `interval = "0"` to disable scheduling. Enabling it requires `repo`, a
+positive `keep_last`, and an interval of at least one minute.
+
+After upgrading, [claim existing history](#adopt-an-existing-repository) before
+resuming manual or scheduled captures.
+
 ## Initialize a repository
 
 ```bash
 docbank backup init [--repo DIR] [--json]
 ```
 
-Initialization creates the repository layout and its random identity. It
-refuses an existing non-empty or already initialized destination instead of
-adopting unrelated files. The repository must be configured or supplied
-explicitly. A relative CLI `--repo` is resolved from the invoking shell's
+Initialization creates the repository layout and its random identity, then
+assigns it to the current vault installation. Each repository belongs to one
+vault; captures from another vault are refused. Moving or upgrading a vault
+keeps its installation. Restoring a vault creates a new installation, so the
+restored copy must [claim the repository](#adopt-an-existing-repository) before
+it captures. The source-independent embedded initializer leaves an empty
+repository unassigned until its first vault capture.
+
+Initialization refuses an existing non-empty or already initialized destination.
+An empty unmarked repository binds to this vault on its first capture. The
+repository must be configured or supplied explicitly. A relative CLI `--repo` is resolved from the invoking shell's
 working directory before it is sent to the daemon.
+
+## Adopt an existing repository
+
+A repository needs an explicit claim before Docbank adds snapshots or uses its
+history for scheduling when it has history but no `docbank-owner` marker, as
+after upgrading from a release without ownership, or when another installation
+of this vault owns it, as after a restore:
+
+```bash
+docbank backup claim --repo ~/Backups/docbank
+```
+
+The command shows the repository identity, snapshot count, and newest snapshot
+time. When another installation of this vault owns the repository, it says so:
+claiming moves capture access to this installation, and the other installation's
+captures then require a claim. Review the history, then answer `y` or `yes` in a
+terminal to assign it to the selected vault. Use `--yes` for automation.
+`--json` prints the final claim object with `owned` true or false; previews and
+prompts go to stderr.
+
+The confirmation applies only to the history you reviewed. If the repository
+changes between the preview and the confirmation, the claim fails with
+`backup_claim_changed` and exits `4`; run the command again to review the new
+history.
+
+A claim preserves existing snapshots and cannot take a repository from another
+vault. Scheduled captures report the claim requirement in Jobs and leave
+repository history untouched. Captures into a repository another vault owns
+return HTTP `409` with `backup_repository_owner_conflict` and exit `2` in the
+CLI. History this installation has not claimed returns `409` with
+`backup_repository_claim_required` and exits `7`. Claims require the operator's
+API credential. Embedded callers use
+[`Vault.PreviewBackupClaim` and `Vault.ClaimBackupRepository`](../embedding.md#back-up-and-restore-an-embedded-vault).
+
+Docbank releases without ownership can still list, verify, and restore owned
+repositories. They do not check the owner marker, so they can also add manual
+snapshots to them. Scheduled retention never removes those snapshots.
 
 ## Create a snapshot
 
@@ -131,6 +221,10 @@ docbank backup prune [--repo DIR] [--dry-run] [--force-unlock] [--json]
 ```
 
 Use exact IDs from `backup list`; unknown or misspelled IDs return 404. Forget refuses the last recovery point unless you pass `--allow-empty`, and refuses a parent required by a retained incremental snapshot. Forget removes manifests; prune separately removes unused packs and rewrites packs with less than half their encoded content still live. Dry runs take the same repository lock and report the planned work. Text output starts with `dry run: nothing removed`.
+
+Ownership checks govern captures and automatic retention. Explicit `forget` and
+`prune` operate on the repository selected by the operator, independently of its
+source vault.
 
 These commands require the master daemon credential. Browser sessions cannot run them. Cleanup errors with selected, planned, or completed work include partial reports in the API problem's `backup_forget` or `backup_prune` field. The CLI prints the report in text or JSON before returning the cleanup error and exiting nonzero. Text lists selected and forgotten snapshot IDs, planned pack removals and rewrites, and removed pack names. Items absent from completed lists remain pending or unconfirmed; bytes written alone do not prove a rewrite completed. Planned bytes are not net savings, and cleanup does not securely erase content.
 

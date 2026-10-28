@@ -51,7 +51,7 @@ real daemon, which requires access to the daemon itself. Use HTTPS when the
 path between the client and the daemon is not trusted.
 
 A long-running `--watch` also needs the target daemon to stay available. A
-background daemon with no configured `[[watch]]` and scheduled packing disabled
+background daemon with no configured `[[watch]]`, scheduled packing, or scheduled backups
 shuts down after `[server] idle_timeout` (30 minutes by default) when no API
 requests arrive. Push sends no requests while the folder is unchanged, so it
 cannot wake a daemon that has already stopped. Before starting push watch, set

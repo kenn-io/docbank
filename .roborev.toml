@@ -197,6 +197,14 @@ Key assumptions reviewers MUST account for:
     receive the opaque locator, but checkpoint reads and writes still require
     the active browser session and exact configured Host/Origin.
 
+23. BACKUP CAPTURES ORDER AFTER THEIR PARENT: Kit's portable capture
+    holds the repository's exclusive lock, takes the latest snapshot of any
+    tag as the parent, and stamps the new snapshot at least one second after
+    it, even after a backward clock correction. Snapshot IDs lead with that
+    stamp and `ListSnapshots` sorts by ID, so a fresh capture always ranks
+    newest and retention by position never forgets it. Do not flag clock
+    correction as a way to make retention delete a just-created capture.
+
 Do NOT flag issues that only apply to public-facing, multi-tenant, or
 internet-exposed services. Focus on bugs, logic errors, data corruption
 risks, and code quality issues.

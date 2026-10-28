@@ -2422,6 +2422,24 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/kataevidence
         name: kataevidence
+    ClaimBackupRepositoryRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ClaimBackupRepositoryRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        fingerprint:
+          description: Confirms the claim previewed with this fingerprint
+          maxLength: 64
+          minLength: 64
+          type: string
+        repo:
+          type: string
+      type: object
     Collection:
       additionalProperties: false
       properties:
@@ -17773,6 +17791,42 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    RepositoryClaim:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/RepositoryClaim.json
+          format: uri
+          readOnly: true
+          type: string
+        fingerprint:
+          type: string
+        id:
+          type: string
+        newest_at:
+          type: string
+        owned:
+          type: boolean
+        path:
+          type: string
+        snapshot_count:
+          format: int64
+          type: integer
+        takeover:
+          type: boolean
+      required:
+        - id
+        - path
+        - snapshot_count
+        - owned
+        - fingerprint
+      type: object
+      x-go-type: backupapp.RepositoryClaim
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/backupapp
+        name: backupapp
     Request:
       additionalProperties: false
       properties:
@@ -22081,6 +22135,29 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Replay audit authority and verify every protected blob
+  /api/v1/backup/claim:
+    post:
+      operationId: claimBackupRepository
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClaimBackupRepositoryRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RepositoryClaim"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Preview a backup repository claim, or confirm one with the preview's fingerprint
   /api/v1/backup/forget:
     post:
       operationId: forgetBackupSnapshots

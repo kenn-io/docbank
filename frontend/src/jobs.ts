@@ -23,6 +23,7 @@ export function laneTitle(lane: string): string {
     "derive:document-events": "Finding document dates",
     "derive:document-people": "Finding people",
     "storage:pack": "Packing storage",
+    "backup:scheduled": "Backing up on schedule",
     "import:packages": "Importing packages",
     "exports:write": "Exporting files",
     "pages:render": "Rendering pages",

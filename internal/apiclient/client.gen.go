@@ -1019,6 +1019,53 @@ func (c *Client) VerifyAudit(ctx context.Context, options *VerifyAuditRequestOpt
 	return responseParser(ctx, resp)
 }
 
+// ClaimBackupRepository Preview a backup repository claim, or confirm one with the preview's fingerprint
+func (c *Client) ClaimBackupRepository(ctx context.Context, options *ClaimBackupRepositoryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ClaimBackupRepositoryResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/backup/claim",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ClaimBackupRepositoryResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ClaimBackupRepositoryResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ClaimBackupRepositoryResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ClaimBackupRepositoryErrorResponse](resp, "ClaimBackupRepositoryErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/backup/claim")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ForgetBackupSnapshots Remove selected backup recovery points
 func (c *Client) ForgetBackupSnapshots(ctx context.Context, options *ForgetBackupSnapshotsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ForgetBackupSnapshotsResponse, error) {
 	var err error
@@ -16071,6 +16118,34 @@ func (o *VerifyAuditRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// ClaimBackupRepositoryRequestOptions is the options needed to make a request to ClaimBackupRepository.
+type ClaimBackupRepositoryRequestOptions struct {
+	Body *ClaimBackupRepositoryBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ClaimBackupRepositoryRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ClaimBackupRepositoryRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ClaimBackupRepositoryRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ClaimBackupRepositoryRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // ForgetBackupSnapshotsRequestOptions is the options needed to make a request to ForgetBackupSnapshots.
 type ForgetBackupSnapshotsRequestOptions struct {
 	Body *ForgetBackupSnapshotsBody
@@ -26574,6 +26649,8 @@ type PreviewAuditEnrollmentBody = PreviewAuditEnrollmentRequest
 
 type VerifyAuditBody = AuditVerifyRequest
 
+type ClaimBackupRepositoryBody = ClaimBackupRepositoryRequest
+
 type ForgetBackupSnapshotsBody = ForgetBackupSnapshotsRequest
 
 type InitBackupRepositoryBody = InitBackupRepositoryRequest
@@ -27361,6 +27438,10 @@ type AuditStatusErrorResponse = Error
 type VerifyAuditResponse = api.AuditVerifyReport
 
 type VerifyAuditErrorResponse = Error
+
+type ClaimBackupRepositoryResponse = backupapp.RepositoryClaim
+
+type ClaimBackupRepositoryErrorResponse = Error
 
 type ForgetBackupSnapshotsResponse = backupapp.BackupForgetReport
 
@@ -29011,6 +29092,15 @@ type CatalogEntry = loadfile.CatalogEntry
 
 type CiteRequest = kataevidence.CiteRequest
 
+type ClaimBackupRepositoryRequest struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+
+	// Fingerprint Confirms the claim previewed with this fingerprint
+	Fingerprint *string `json:"fingerprint,omitempty"`
+	Repo        *string `json:"repo,omitempty"`
+}
+
 type Collection = api.Collection
 
 type CollectionLabel = api.CollectionLabel
@@ -30131,6 +30221,8 @@ type RenditionTextSource struct {
 type RenditionTextWindow = api.RenditionTextWindow
 
 type RenditionWindowRequest = api.RenditionWindowRequest
+
+type RepositoryClaim = backupapp.RepositoryClaim
 
 type Request = report.Request
 
