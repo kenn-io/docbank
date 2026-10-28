@@ -69,20 +69,11 @@ func (c *originalSemanticSnapshot) observe(ctx context.Context, head vectorIndex
 	if !c.usable {
 		return nil
 	}
-	if !live.current || !head.contentVersion.Valid || !head.binding.Valid || !head.inputKind.Valid ||
-		head.setID != set.ID || head.contentVersion.String != set.ContentVersionID || head.binding.String != set.BindingID || head.inputKind.String != string(set.InputKind) || head.profile != set.ProcessingProfileFingerprint || head.vectorSpace != set.VectorSpace.ID ||
-		set.ProcessingProfileFingerprint != c.profile || set.BindingID != c.binding || set.VectorSpace.ID != c.space || set.InputKind != document.EmbeddingInputOriginalFile {
-		return nil
-	}
-	if c.versions != nil {
-		if _, ok := c.versions[set.ContentVersionID]; !ok {
-			return nil
-		}
-	}
-	if live.kind == "file" {
-		c.completeNodes[live.nodeID] = struct{}{}
-	}
-	if c.seenANN == nil {
+	member := originalSemanticMember{version: set.ContentVersionID, profile: set.ProcessingProfileFingerprint,
+		binding: set.BindingID, space: set.VectorSpace.ID, kind: set.InputKind, live: live,
+		headMatches: head.contentVersion.Valid && head.binding.Valid && head.inputKind.Valid &&
+			head.setID == set.ID && head.contentVersion.String == set.ContentVersionID && head.binding.String == set.BindingID && head.inputKind.String == string(set.InputKind) && head.profile == set.ProcessingProfileFingerprint && head.vectorSpace == set.VectorSpace.ID}
+	if !c.includeMember(member) || c.seenANN == nil {
 		return nil
 	}
 	inputs := make(map[string]string, len(set.InputGeneration.Inputs))
@@ -104,12 +95,51 @@ func (c *originalSemanticSnapshot) observe(ctx context.Context, head vectorIndex
 		if !ok || checksum != row.Checksum {
 			continue
 		}
-		key := semanticEligibilityKey{VectorSetID: set.VectorSet.ID, InputID: row.InputID, InputChecksum: row.Checksum}
-		if _, duplicate := c.seenANN[key]; duplicate {
-			continue
+		c.includeANN(set.VectorSet.ID, row.InputID, row.Checksum)
+	}
+	return nil
+}
+
+// Both the full-record observer and validated singleton path use these same
+// coverage/ANN predicates. No partial full-record value crosses the contract.
+type originalSemanticMember struct {
+	version, profile, binding, space string
+	kind                             document.EmbeddingInputKind
+	headMatches                      bool
+	live                             embeddingLiveSnapshot
+}
+
+func (c *originalSemanticSnapshot) includeMember(member originalSemanticMember) bool {
+	if !c.usable || !member.live.current || !member.headMatches ||
+		member.profile != c.profile || member.binding != c.binding || member.space != c.space || member.kind != document.EmbeddingInputOriginalFile {
+		return false
+	}
+	if c.versions != nil {
+		if _, ok := c.versions[member.version]; !ok {
+			return false
 		}
-		c.seenANN[key] = struct{}{}
-		c.annRows = append(c.annRows, vectorindex.RowIdentity{SetID: key.VectorSetID, InputKey: key.InputID, InputChecksum: key.InputChecksum})
+	}
+	if member.live.kind == "file" {
+		c.completeNodes[member.live.nodeID] = struct{}{}
+	}
+	return true
+}
+
+func (c *originalSemanticSnapshot) includeANN(setID, inputID, checksum string) {
+	key := semanticEligibilityKey{VectorSetID: setID, InputID: inputID, InputChecksum: checksum}
+	if _, duplicate := c.seenANN[key]; duplicate {
+		return
+	}
+	c.seenANN[key] = struct{}{}
+	c.annRows = append(c.annRows, vectorindex.RowIdentity{SetID: key.VectorSetID, InputKey: key.InputID, InputChecksum: key.InputChecksum})
+}
+
+func (c *originalSemanticSnapshot) observeSingleton(ctx context.Context, fact canonicalOriginalSingleton) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if c.includeMember(fact.member) && c.seenANN != nil && fact.inputID == fact.row.InputID && fact.inputChecksum == fact.row.Checksum {
+		c.includeANN(fact.source.VectorSetID, fact.row.InputID, fact.row.Checksum)
 	}
 	return nil
 }

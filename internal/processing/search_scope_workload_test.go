@@ -28,17 +28,30 @@ func growSearchScopeWorkload(tb testing.TB, fixture publicationFixture, job stor
 	tx, err := db.BeginTx(tb.Context(), nil)
 	require.NoError(tb, err)
 	defer func() { _ = tx.Rollback() }()
-	// Discover existing columns instead of maintaining a second catalog schema.
-	clone := func(table, where string, whereArgs []any, changes map[string]any) sql.Result {
+	// Discover each table once instead of maintaining a second catalog schema.
+	columnsByTable := make(map[string][]string)
+	discoverColumns := func(table string) []string {
 		rows, err := tx.QueryContext(tb.Context(), "SELECT name FROM pragma_table_info(?) ORDER BY cid", table)
 		require.NoError(tb, err)
 		defer func() { require.NoError(tb, rows.Close()) }()
-		var columns, values []string
-		var args []any
+		var columns []string
 		for rows.Next() {
 			var name string
 			require.NoError(tb, rows.Scan(&name))
 			columns = append(columns, name)
+		}
+		require.NoError(tb, rows.Err())
+		return columns
+	}
+	clone := func(table, where string, whereArgs []any, changes map[string]any) sql.Result {
+		columns, ok := columnsByTable[table]
+		if !ok {
+			columns = discoverColumns(table)
+			columnsByTable[table] = columns
+		}
+		var values []string
+		var args []any
+		for _, name := range columns {
 			if value, ok := changes[name]; ok {
 				values = append(values, "?")
 				args = append(args, value)
@@ -46,13 +59,14 @@ func growSearchScopeWorkload(tb testing.TB, fixture publicationFixture, job stor
 				values = append(values, name)
 			}
 		}
-		require.NoError(tb, rows.Err())
-		require.NoError(tb, rows.Close())
 		args = append(args, whereArgs...)
 		result, err := tx.ExecContext(tb.Context(), "INSERT INTO "+table+"("+strings.Join(columns, ",")+") SELECT "+strings.Join(values, ",")+" FROM "+table+" WHERE "+where, args...)
 		require.NoError(tb, err)
 		return result
 	}
+	// current_version_id has no index. Resolve once, then clone by primary key.
+	var baseNodeID int64
+	require.NoError(tb, tx.QueryRowContext(tb.Context(), "SELECT id FROM nodes WHERE current_version_id=?", job.ContentVersionID).Scan(&baseNodeID))
 	var baseSet, baseVectors, baseAttachment string
 	require.NoError(tb, tx.QueryRowContext(tb.Context(), "SELECT es.embedding_set_id,es.vector_set_id,COALESCE(eig.attachment_id,'') FROM embedding_sets es JOIN embedding_input_generations eig ON eig.generation_id=es.input_generation_id WHERE es.content_version_id=? AND es.binding_id=?", job.ContentVersionID, job.BindingID).Scan(&baseSet, &baseVectors, &baseAttachment))
 	var source store.VectorIndexMember
@@ -69,7 +83,7 @@ func growSearchScopeWorkload(tb testing.TB, fixture publicationFixture, job stor
 	for i := 1; i < documents; i++ {
 		version := uuid.New().String()
 		versions = append(versions, version)
-		result := clone("nodes", "current_version_id=?", []any{job.ContentVersionID}, map[string]any{"id": nil, "name": fmt.Sprintf("synthetic-scope-%06d.bin", i), "current_version_id": version, "revision": 1})
+		result := clone("nodes", "id=?", []any{baseNodeID}, map[string]any{"id": nil, "name": fmt.Sprintf("synthetic-scope-%06d.bin", i), "current_version_id": version, "revision": 1})
 		nodeID, err := result.LastInsertId()
 		require.NoError(tb, err)
 		clone("content_versions", "version_id=?", []any{job.ContentVersionID}, map[string]any{"version_id": version, "node_id": nodeID, "node_revision": 1, "introduced_operation_id": uuid.New().String(), "transition_kind": "content_create", "source_version_id": nil})

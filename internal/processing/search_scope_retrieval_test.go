@@ -43,6 +43,7 @@ func newSearchScopeFixtureDimension(tb testing.TB, kind document.EmbeddingInputK
 	var portable document.ProcessingProfileV1
 	require.NoError(tb, json.Unmarshal(fixture.profile.CanonicalProfile, &portable))
 	service := &Service{catalog: fixture.catalog, blobs: fixture.blobs, gate: newTestOperationGate(), principal: "scope-test", scope: "scope-test", embeddings: registry, profiles: map[string]configuredProfile{"private": {portable: portable, record: fixture.profile, embedders: map[string]document.EmbeddingProvider{job.BindingID: provider}}}}
+	tb.Cleanup(func() { service.generationSource().Close() })
 	_, err = fixture.catalog.GrantConsent(tb.Context(), store.ProcessingConsentGrantRequest{Principal: service.principal, Scope: service.scope, ProfileFingerprint: fixture.profile.Fingerprint, DisclosureFingerprint: portable.Embeddings[0].DisclosureFingerprint, InputClasses: []string{"query_text"}, RetainedArtifactClasses: []string{}})
 	require.NoError(tb, err)
 	return fixture, service, provider, job

@@ -33,6 +33,7 @@ func compareOriginalSnapshotSQL(t *testing.T, s *Store, profile ProcessingProfil
 	var rows []vectorindex.RowIdentity
 	var validated bool
 	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+		compareSingletonCaptureTx(t, s, tx, record, normalized)
 		old, oldErr := captureVectorIndexSourceTx(t.Context(), tx, record.VectorSpace.ID)
 		c := newOriginalSemanticSnapshot(profile.Fingerprint, record.BindingID, record.VectorSpace.ID, record.InputKind, normalized, true)
 		require.NotNil(t, c)
