@@ -10,7 +10,7 @@ import (
 
 var checkAnswerTool = toolDefinition{
 	name: "check_answer", title: "Check answer figures",
-	description: "Resolve citations and check whether answer numbers and identifiers occur in their cited text. This does not prove the figures refer to the right subject or that other claims are true. An answer permits at most 256 claims, 512 figure occurrences, and 512 marker references; marker indexes must fit the server's integer range.",
+	description: "Resolve citations and check whether answer numbers and identifiers occur in their cited text. This does not prove the figures refer to the right subject or that other claims are true. Send plain text with at most 512 figures and 512 marker references.",
 	schemas:     checkAnswerSchemas, idempotent: true,
 }
 
@@ -28,21 +28,19 @@ func checkAnswer(ctx context.Context, lease *daemonLease, raw []byte) (checkAnsw
 	if err := decodeReadArguments(raw, &input); err != nil {
 		return checkAnswerOutput{}, err
 	}
-	if len(input.Citations) < 1 || len(input.Citations) > 8 || grounding.Preflight(input.Answer) != nil {
-		return checkAnswerOutput{}, invalidToolArgumentsError()
-	}
 	for _, citation := range input.Citations {
 		if document.ValidateTextCitation(citation) != nil {
 			return checkAnswerOutput{}, invalidToolArgumentsError()
 		}
 	}
+	answer, err := grounding.Prepare(input.Answer)
+	if err != nil {
+		return checkAnswerOutput{}, invalidToolArgumentsError()
+	}
 	resolved, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) ([]grounding.Citation, error) {
 		cache := make(map[document.TextCitation]grounding.Citation)
 		result := make([]grounding.Citation, 0, len(input.Citations))
 		for i, citation := range input.Citations {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
 			entry, ok := cache[citation]
 			if !ok {
 				quote, err := c.ResolveTextCitation(ctx, citation)
@@ -65,12 +63,12 @@ func checkAnswer(ctx context.Context, lease *daemonLease, raw []byte) (checkAnsw
 	if err != nil {
 		return checkAnswerOutput{}, err
 	}
-	return checkAnswerOutput{privateCache: newPrivateCache(), Report: grounding.Check(input.Answer, resolved)}, nil
+	return checkAnswerOutput{privateCache: newPrivateCache(), Report: answer.Check(resolved)}, nil
 }
 
 func checkAnswerCitationProblem(code string) bool {
 	switch code {
-	case "citation_unavailable", "invalid_citation_range", "citation_limit", "citation_integrity", "citation_timeout", "citation_failed":
+	case "citation_unavailable", "invalid_citation_range", "citation_limit", "citation_integrity":
 		return true
 	default:
 		return false
