@@ -340,7 +340,9 @@ When present, `relevance` preserves the applied reranker's score on its own
 scale; it is not necessarily normalized to 0–1.
 
 Omit `profile` for automatic profile and binding retries, including when a vector
-index is stale. Unclassified processing failures stop the search. With `rerank: true`,
+index is stale or a query provider fails. If every binding fails, lexical search
+returns available passages with `semantic_unavailable` and `semantic_failure`.
+Reranking failures and errors from the lexical retry stop the search. With `rerank: true`,
 automatic selection and lexical fallback use only profiles that support reranking.
 An explicit `profile` uses its first query binding in name order unless
 `binding_id` selects another. `binding_id` requires `profile`. Profiles without query bindings use lexical search.
