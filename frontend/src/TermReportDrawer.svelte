@@ -10,6 +10,7 @@
     Checkbox,
     DateRangePicker,
     IconButton,
+    RadioGroup,
     SegmentedControl,
     SelectDropdown,
     Spinner,
@@ -665,22 +666,22 @@
                         : "Date unresolved"}</span
                     >
                   </div>
-                  {#each member.candidates as candidate (candidate.id)}
-                    <label class="candidate"
-                      ><input
-                        type="radio"
-                        name={`review-${documentKey(member)}`}
-                        disabled={!!candidate.rejection && !canInterpret(candidate)}
-                        checked={choices[documentKey(member)]?.candidate_id === candidate.id}
-                        onchange={() => choose(member, candidate)}
-                      />
-                      <span
-                        >{candidate.role} · {displayDate(candidate)} · {candidate.source_class}{candidate.rejection
-                          ? ` · ${candidate.rejection}`
-                          : ""}</span
-                      ></label
-                    >
-                  {/each}
+                  <RadioGroup
+                    legend="Date source"
+                    name={`review-${documentKey(member)}`}
+                    value={choices[documentKey(member)]?.candidate_id}
+                    options={member.candidates.map((candidate) => ({
+                      value: candidate.id,
+                      label: `${candidate.role} · ${displayDate(candidate)} · ${candidate.source_class}${
+                        candidate.rejection ? ` · ${candidate.rejection}` : ""
+                      }`,
+                      disabled: !!candidate.rejection && !canInterpret(candidate),
+                    }))}
+                    onchange={(value) => {
+                      const candidate = member.candidates.find((item) => item.id === value);
+                      if (candidate) choose(member, candidate);
+                    }}
+                  />
                   {#if choices[documentKey(member)]}
                     {@const choice = choices[documentKey(member)]}
                     {@const candidate = member.candidates.find(
@@ -856,11 +857,6 @@
     display: flex;
     flex-wrap: wrap;
     align-items: baseline;
-    gap: var(--space-4);
-  }
-  .candidate {
-    display: flex;
-    align-items: center;
     gap: var(--space-4);
   }
   .count-table {

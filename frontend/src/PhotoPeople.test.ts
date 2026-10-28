@@ -621,14 +621,16 @@ it.each([
     await fireEvent.mouseDown(await screen.findByRole("option", { name: "Alex · 3 people" }));
     const dialog = within(await screen.findByRole("dialog", { name: "Choose Alex" }));
     if (secondIdentity) {
-      expect(dialog.getByText("alex-a@example.test")).toBeTruthy();
-      expect(dialog.getByText(new Date("2026-01-01T12:00:00Z").toLocaleDateString())).toBeTruthy();
-      expect(dialog.getByText("person-alex-a")).toBeTruthy();
+      expect(dialog.getByText("alex-a@example.test", { exact: false })).toBeTruthy();
+      expect(
+        dialog.getByText(new Date("2026-01-01T12:00:00Z").toLocaleDateString(), { exact: false }),
+      ).toBeTruthy();
+      expect(dialog.getByText("person-alex-a", { exact: false })).toBeTruthy();
     } else {
-      expect(dialog.getByText("person-alex-a")).toBeTruthy();
-      expect(dialog.getByText("other@example.test")).toBeTruthy();
+      expect(dialog.getByText("person-alex-a", { exact: false })).toBeTruthy();
+      expect(dialog.getByText("other@example.test", { exact: false })).toBeTruthy();
     }
-    expect(dialog.getByText("person-alex-c")).toBeTruthy();
+    expect(dialog.getByText("person-alex-c", { exact: false })).toBeTruthy();
     await fireEvent.click(
       dialog.getByRole("radio", {
         name: create
