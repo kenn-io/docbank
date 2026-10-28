@@ -46,11 +46,12 @@ type marker struct {
 	adjacent   bool
 }
 type Answer struct {
-	figures []Figure
-	markers []marker
+	figures   []Figure
+	markers   []marker
+	ambiguous []string
 }
 
-var controls = regexp.MustCompile(`(?i)(?:https?://|www\.)[^\s<>]+|[\pL\pN._%+\-]+@[\pL\pN.\-]+\.[\pL]{2,}|\[[0-9]{1,2}(?:, *[0-9]{1,2})*\]`)
+var controls = regexp.MustCompile(`(?i)\[[0-9]{1,2}(?:, *[0-9]{1,2})*\]|(?:https?://|www\.)[^\s<>\[]+|[\pL\pN._%+\-]+@[\pL\pN.\-]+\.[\pL]{2,}`)
 
 // cursor decodes punctuation escapes while retaining literal code-point offsets.
 // Lookahead copies this small cursor and reads at most four characters.
@@ -95,7 +96,11 @@ func fold(r rune) rune {
 }
 
 // atom consumes a complete digit grouping before the caller considers joiners.
-func (c *cursor) atom(value *strings.Builder, hasDigit *bool) {
+// It returns column values when literal spaces make a cited run ambiguous.
+func (c *cursor) atom(value *strings.Builder, hasDigit *bool, cited bool) []string {
+	start := value.Len()
+	var parts []string
+	ambiguous := false
 	digits := 0
 	for unicode.IsDigit(c.peek()) {
 		value.WriteRune(c.take())
@@ -115,6 +120,13 @@ func (c *cursor) atom(value *strings.Builder, hasDigit *bool) {
 			if count != 3 || unicode.IsDigit(next.peek()) {
 				break
 			}
+			if cited && groupSpace(separator) {
+				if parts == nil {
+					parts = append(parts, value.String()[start:])
+				}
+				parts = append(parts, string(c.rs[groupStart:next.pos]))
+				ambiguous = ambiguous || c.peek() == ' '
+			}
 			value.WriteString(string(c.rs[groupStart:next.pos]))
 			*c = next
 		}
@@ -124,6 +136,10 @@ func (c *cursor) atom(value *strings.Builder, hasDigit *bool) {
 		*hasDigit = *hasDigit || unicode.IsDigit(r)
 		value.WriteRune(fold(r))
 	}
+	if ambiguous {
+		return parts
+	}
+	return nil
 }
 
 func extract(text string, cited bool) Answer {
@@ -174,6 +190,13 @@ func extract(text string, cited bool) Answer {
 		if !signed && c.peek() == '-' && !word(previous) {
 			value.WriteRune(c.take())
 		}
+		next := c
+		if next.peek() == '.' && !word(previous) {
+			next.take()
+			if unicode.IsDigit(next.peek()) {
+				value.WriteRune(c.take())
+			}
+		}
 		if !word(c.peek()) {
 			if c.pos == start {
 				previous = c.take()
@@ -182,16 +205,22 @@ func extract(text string, cited bool) Answer {
 			}
 			continue
 		}
-		c.atom(&value, &hasDigit)
-		for strings.ContainsRune("-_/.", c.peek()) {
+		parts := c.atom(&value, &hasDigit, cited)
+		for strings.ContainsRune("-_/.:,", c.peek()) {
 			next := c
 			joiner := next.take()
 			if !word(next.peek()) {
 				break
 			}
+			left, right := rs[c.pos-1], next.peek()
+			digits := unicode.IsDigit(left) && unicode.IsDigit(right)
+			letters := unicode.IsLetter(left) && unicode.IsLetter(right)
+			if !digits && (joiner == ':' || joiner == ',' || joiner == '.' && !letters) {
+				break
+			}
 			c = next
 			value.WriteRune(joiner)
-			c.atom(&value, &hasDigit)
+			parts = append(parts, c.atom(&value, &hasDigit, cited)...)
 		}
 		previous = rs[c.pos-1]
 		for affix(c.peek()) {
@@ -199,7 +228,12 @@ func extract(text string, cited bool) Answer {
 			value.WriteRune(previous)
 		}
 		if hasDigit {
-			a.figures = append(a.figures, Figure{Start: start, End: c.pos, Text: string(original[start:c.pos]), value: value.String()})
+			if len(parts) > 0 {
+				a.ambiguous = append(a.ambiguous, parts...)
+				a.ambiguous = append(a.ambiguous, value.String())
+			} else {
+				a.figures = append(a.figures, Figure{Start: start, End: c.pos, Text: string(original[start:c.pos]), value: value.String()})
+			}
 		}
 	}
 	return a
@@ -218,15 +252,19 @@ func Prepare(answer string) (Answer, error) {
 
 func (a Answer) Check(citations []Citation) Report {
 	report := Report{Status: "no_figures", Citations: []CitationResult{}, Figures: []Figure{}, UnknownMarkers: []Marker{}}
-	sources, all := map[int]map[string]bool{}, []int{}
+	sources, all := map[int]map[string]string{}, []int{}
 	for _, c := range citations {
 		all = append(all, c.Index)
 		status := c.Err
 		if status == "" {
 			status = "resolved"
-			sources[c.Index] = map[string]bool{}
-			for _, f := range extract(c.Text, true).figures {
-				sources[c.Index][f.value] = true
+			sources[c.Index] = map[string]string{}
+			source := extract(c.Text, true)
+			for _, value := range source.ambiguous {
+				sources[c.Index][value] = "unverifiable"
+			}
+			for _, f := range source.figures {
+				sources[c.Index][f.value] = "found"
 			}
 		}
 		report.Citations = append(report.Citations, CitationResult{Index: c.Index, Status: status, TextSHA256: c.TextSHA256})
@@ -259,17 +297,17 @@ func (a Answer) Check(citations []Citation) Report {
 			}
 		}
 		f.Citations, f.FoundIn = scope, []int{}
-		unavailable := len(f.Citations) == 0
+		unverifiable := len(f.Citations) == 0
 		for _, idx := range f.Citations {
-			unavailable = unavailable || sources[idx] == nil
-			if sources[idx][f.value] {
+			unverifiable = unverifiable || sources[idx] == nil || sources[idx][f.value] == "unverifiable"
+			if sources[idx][f.value] == "found" {
 				f.FoundIn = append(f.FoundIn, idx)
 			}
 		}
 		f.Status = "missing"
 		if len(f.FoundIn) > 0 {
 			f.Status = "found"
-		} else if unavailable {
+		} else if unverifiable {
 			f.Status = "unverifiable"
 		}
 		switch {

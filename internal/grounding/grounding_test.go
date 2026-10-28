@@ -20,7 +20,26 @@ func TestGrounding(t *testing.T) {
 		{"literal email escape limitation", "A12_B34 [1]", "grounded", []Citation{{Index: 1, Text: `A12\_B34`}}, 1, "found"},
 		{"literal email dash limitation", "INV-42 [1]", "grounded", []Citation{{Index: 1, Text: `INV\-42`}}, 1, "found"},
 		{"space grouped answer limitation", "2 100 units [1]", "ungrounded", []Citation{{Index: 1, Text: "2 units and 100 units"}}, 1, "missing"},
-		{"plain space columns limitation", "5250 [1]", "grounded", []Citation{{Index: 1, Text: "Widget 5 250 1,250"}}, 1, "found"},
+		{"plain space columns limitation", "5250 [1]", "incomplete", []Citation{{Index: 1, Text: "Widget 5 250 1,250"}}, 1, "unverifiable"},
+		{"Sol leading_decimal_in_answer", ".5 [1]", "ungrounded", []Citation{{Index: 1, Text: "5"}}, 1, "missing"},
+		{"Sol leading_decimal_in_source", "5 [1]", "ungrounded", []Citation{{Index: 1, Text: ".5"}}, 1, "missing"},
+		{"Sol separate_columns", "5250 [1]", "incomplete", []Citation{{Index: 1, Text: "5 250"}}, 1, "unverifiable"},
+		{"Sol actual_column_values", "5 and 250 [1]", "incomplete", []Citation{{Index: 1, Text: "5 250"}}, 2, "unverifiable"},
+		{"Sonnet space columns", "Fee was 250 [1]", "incomplete", []Citation{{Index: 1, Text: "Widget 5 250"}}, 1, "unverifiable"},
+		{"Sonnet URL-glued marker", "Total $1,250 https://ex.com/inv[1]", "ungrounded", []Citation{{Index: 1, Text: "$1,205"}, {Index: 2, Text: "$1,250"}}, 1, "missing"},
+		{"Sonnet time splitting", "Meeting at 10:30", "ungrounded", []Citation{{Index: 1, Text: "Meeting at 10:00 for 30 minutes"}}, 1, "missing"},
+		{"Sonnet decimal commas", "1,5 [1]", "ungrounded", []Citation{{Index: 1, Text: "1 and 5"}}, 1, "missing"},
+		{"Sonnet digit-letter dot", "5.Next [1]", "grounded", []Citation{{Index: 1, Text: "5"}}, 1, "found"},
+		{"Sonnet letter-digit dot", "No.1250 [1]", "grounded", []Citation{{Index: 1, Text: "1250"}}, 1, "found"},
+		{"leading decimal match", "-.5 [1]", "grounded", []Citation{{Index: 1, Text: "-.5"}}, 1, "found"},
+		{"unambiguous occurrence wins", "250 [1]", "grounded", []Citation{{Index: 1, Text: "250; Widget 5 250"}}, 1, "found"},
+		{"unambiguous citation wins", "250 [1, 2]", "grounded", []Citation{{Index: 1, Text: "5 250"}, {Index: 2, Text: "250"}}, 1, "found"},
+		{"unrelated ambiguous run", "42 [1]", "ungrounded", []Citation{{Index: 1, Text: "5 250"}}, 1, "missing"},
+		{"answer keeps grouped reading", "1 200 [1]", "grounded", []Citation{{Index: 1, Text: "1200"}}, 1, "found"},
+		{"time match", "10:30 [1]", "grounded", []Citation{{Index: 1, Text: "10:30"}}, 1, "found"},
+		{"literal decimal comma", "1,5 [1]", "grounded", []Citation{{Index: 1, Text: `1\,5`}}, 1, "found"},
+		{"letter dot identifier", "INV.A12 [1]", "grounded", []Citation{{Index: 1, Text: "inv.a12"}}, 1, "found"},
+		{"URL-glued unknown marker", "20 https://example.com/inv[2]", "ungrounded", []Citation{{Index: 1, Text: "20"}}, 1, "unverifiable"},
 		{"tab columns", "Unit price 250 for 5 widgets [1]", "grounded", []Citation{{Index: 1, Text: "Widget	5	250	1,250"}}, 2, "found"},
 		{"tab columns invented amount", "5,250 [1]", "ungrounded", []Citation{{Index: 1, Text: "Widget	5	250	1,250"}}, 1, "missing"},
 		{"newline grouping", "1200 [1]", "ungrounded", []Citation{{Index: 1, Text: "1\n200"}}, 1, "missing"},
@@ -46,8 +65,8 @@ func TestGrounding(t *testing.T) {
 		{"code point offsets", "é 20 [1]", "grounded", []Citation{{Index: 1, Text: "20"}}, 1, "found"},
 		{"invoice mismatch", "$1,250 [1]", "ungrounded", []Citation{{Index: 1, Text: `\$1\,205`}}, 1, "missing"},
 		{"invoice match", "$1,250 [1]", "grounded", []Citation{{Index: 1, Text: `\$1\,250`}}, 1, "found"},
-		{"grouped space", "1200 [1]", "grounded", []Citation{{Index: 1, Text: "1 200"}}, 1, "found"},
-		{"grouped boundary", "200 [1]", "ungrounded", []Citation{{Index: 1, Text: "1 200"}}, 1, "missing"},
+		{"grouped space", "1200 [1]", "incomplete", []Citation{{Index: 1, Text: "1 200"}}, 1, "unverifiable"},
+		{"grouped boundary", "200 [1]", "incomplete", []Citation{{Index: 1, Text: "1 200"}}, 1, "unverifiable"},
 		{"grouped comma", "1200 [1]", "grounded", []Citation{{Index: 1, Text: "1,200"}}, 1, "found"},
 		{"single comparison value", "1,250 [1]", "grounded", []Citation{{Index: 1, Text: "1250"}}, 1, "found"},
 		{"compact unit", "Weight is 20kg [1]", "grounded", []Citation{{Index: 1, Text: "20kg"}}, 1, "found"},
@@ -66,7 +85,7 @@ func TestGrounding(t *testing.T) {
 		{"whole identifier", "K5 [1]", "ungrounded", []Citation{{Index: 1, Text: "K50"}}, 1, "missing"},
 		{"identifier case", "INV-2024-0042 [1]", "grounded", []Citation{{Index: 1, Text: "inv-2024-0042"}}, 1, "found"},
 		{"identifier punctuation", "K-5 [1]", "ungrounded", []Citation{{Index: 1, Text: "K5"}}, 1, "missing"},
-		{"mixed space grouping", "1200300 [1]", "grounded", []Citation{{Index: 1, Text: "1 200\u202f300"}}, 1, "found"},
+		{"mixed space grouping", "1200300 [1]", "incomplete", []Citation{{Index: 1, Text: "1 200\u202f300"}}, 1, "unverifiable"},
 		{"unicode grouping", "1200 [1]", "grounded", []Citation{{Index: 1, Text: "1\u202f200"}}, 1, "found"},
 		{"list ordinal", "1. Fee 20 [1]", "ungrounded", []Citation{{Index: 1, Text: "20"}}, 2, "missing"},
 		{"empty list item", "1.\nFee 20 [1]", "ungrounded", []Citation{{Index: 1, Text: "20"}}, 2, "missing"},
@@ -75,7 +94,7 @@ func TestGrounding(t *testing.T) {
 		{"tab boundary", "5250 [1]", "ungrounded", []Citation{{Index: 1, Text: "5\t250"}}, 1, "missing"},
 		{"line boundary", "5250 [1]", "ungrounded", []Citation{{Index: 1, Text: "5\n250"}}, 1, "missing"},
 		{"table columns", "5 and 250 [1]", "grounded", []Citation{{Index: 1, Text: "5\t250"}}, 2, "found"},
-		{"comma list", "5,6,7 [1]", "grounded", []Citation{{Index: 1, Text: "5, 6, 7"}}, 3, "found"},
+		{"comma list", "5,6,7 [1]", "ungrounded", []Citation{{Index: 1, Text: "5, 6, 7"}}, 1, "missing"},
 		{"stacked markers", "1250 [1][2]", "grounded", []Citation{{Index: 1, Text: "1205"}, {Index: 2, Text: "1250"}}, 1, "found"},
 		{"whitespace markers", "1250 [1] \t\n[2]", "grounded", []Citation{{Index: 1, Text: "1205"}, {Index: 2, Text: "1250"}}, 1, "found"},
 		{"long url", "https://example.com/" + strings.Repeat("x", 15900), "no_figures", []Citation{{Index: 1, Text: "7"}}, 0, ""},
@@ -105,6 +124,10 @@ func TestGrounding(t *testing.T) {
 			}
 			for _, f := range report.Figures {
 				require.Equal(t, f.Text, string([]rune(tc.answer)[f.Start:f.End]))
+				if tc.name == "Sol actual_column_values" {
+					require.Equal(t, "unverifiable", f.Status)
+					require.Empty(t, f.FoundIn)
+				}
 			}
 			if tc.name == "stacked markers" {
 				require.Equal(t, []int{1, 2}, report.Figures[0].Citations)
