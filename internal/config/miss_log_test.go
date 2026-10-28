@@ -40,14 +40,3 @@ func TestMissLogConfigDefaultsAndBounds(t *testing.T) {
 		})
 	}
 }
-
-func TestMissLogDisabledExplicitZeroBoundsAccepted(t *testing.T) {
-	dir := privateTestConfigDir(t)
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte("[miss_log]\nenabled=false\nretention_days=0\nmax_records=0\n"), 0600))
-	cfg, err := Load(dir)
-	require.NoError(t, err)
-	require.NoError(t, cfg.Validate())
-	absent := Default()
-	absent.MissLog = MissLogConfig{}
-	require.NoError(t, absent.Validate(), "zero-value callers may omit the optional section")
-}

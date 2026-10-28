@@ -1389,7 +1389,7 @@ The CLI, web app, TUI, and daemon-backed MCP report submitted searches that show
 
 Receipts preserve the query, time, vault, requested and actual search modes, profile, search options, fence fingerprint or live filters, coverage, truncation, degradations, and reranking outcome. They omit document excerpts and source ID lists. Encoded receipts over 64 KiB are skipped. Automatic writes wait at most 100 ms for mutation admission and storage. A failed write leaves the search available and logs a fixed diagnostic.
 
-Use `docbank miss-log list`, `show <id>`, `delete <id>`, or `purge` to manage records through the daemon. These operations require the master API credential. List and show responses use `Cache-Control: no-store`. Browser sessions and MCP have no history management tools. Management remains available when recording is disabled. Records expire by age and count on enabled startup and writes; idle daemons prune lazily. Disabled startup preserves existing rows.
+Use `docbank miss-log list`, `delete <id>`, or `purge` to manage records through the daemon. These operations require the master API credential. Browser sessions and MCP have no history management tools. Management remains available when recording is disabled. Records expire by age and count on enabled startup and writes; idle daemons prune lazily. Disabled startup preserves existing rows.
 
 The log is excluded from anonymous telemetry, logical backups, portable bundle
 metadata, imports, and federation. A restored vault has no miss records.

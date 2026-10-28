@@ -6153,52 +6153,6 @@ func (c *Client) DeleteMissLogRecord(ctx context.Context, options *DeleteMissLog
 	return responseParser(ctx, resp)
 }
 
-// GetMissLogRecord Read one private search miss (operator only)
-func (c *Client) GetMissLogRecord(ctx context.Context, options *GetMissLogRecordRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetMissLogRecordResponse, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/miss-log/{id}",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	responseParser := func(_ context.Context, resp *runtime.Response) (*GetMissLogRecordResponse, error) {
-		switch resp.StatusCode {
-
-		case 200:
-
-			target := new(GetMissLogRecordResponse)
-			if err := json.Unmarshal(resp.Content, target); err != nil {
-				return nil, &runtime.ResponseDecodeError{
-					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
-					ContentLength: len(resp.Content), TargetType: "GetMissLogRecordResponse", Body: resp.Content, Err: err,
-				}
-			}
-
-			return target, nil
-
-		default:
-
-			return nil, decodeAPIError[GetMissLogRecordErrorResponse](resp, "GetMissLogRecordErrorResponse")
-
-		}
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/miss-log/{id}")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-	if resp.Streaming {
-		return nil, c.acceptStream(resp, 200)
-	}
-	return responseParser(ctx, resp)
-}
-
 // CreateNode Create a directory
 func (c *Client) CreateNode(ctx context.Context, options *CreateNodeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateNodeResponse, error) {
 	var err error
@@ -19583,37 +19537,6 @@ func (o *DeleteMissLogRecordRequestOptions) GetHeader() (map[string]string, erro
 	return nil, nil
 }
 
-// GetMissLogRecordRequestOptions is the options needed to make a request to GetMissLogRecord.
-type GetMissLogRecordRequestOptions struct {
-	PathParams *GetMissLogRecordPath
-}
-
-// GetPathParams returns the path params as a map.
-func (o *GetMissLogRecordRequestOptions) GetPathParams() (map[string]any, error) {
-	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
-	if err != nil {
-		return nil, err
-	}
-	var params map[string]any
-	err = json.Unmarshal(encoded, &params)
-	return params, err
-}
-
-// GetQuery returns the query params as a map.
-func (o *GetMissLogRecordRequestOptions) GetQuery() (map[string]any, error) {
-	return nil, nil
-}
-
-// GetBody returns the payload in any type that can be marshalled to JSON by the client.
-func (o *GetMissLogRecordRequestOptions) GetBody() any {
-	return nil
-}
-
-// GetHeader returns the headers as a map.
-func (o *GetMissLogRecordRequestOptions) GetHeader() (map[string]string, error) {
-	return nil, nil
-}
-
 // CreateNodeRequestOptions is the options needed to make a request to CreateNode.
 type CreateNodeRequestOptions struct {
 	Body *CreateNodeBody
@@ -26471,10 +26394,6 @@ type DeleteMissLogRecordPath struct {
 	ID string `json:"id"`
 }
 
-type GetMissLogRecordPath struct {
-	ID string `json:"id"`
-}
-
 type GetNodePath struct {
 	ID int64 `json:"id"`
 }
@@ -28190,10 +28109,6 @@ type ListMissLogErrorResponse = Error
 type RecordMissErrorResponse = Error
 
 type DeleteMissLogRecordErrorResponse = Error
-
-type GetMissLogRecordResponse = misslog.Receipt
-
-type GetMissLogRecordErrorResponse = Error
 
 type CreateNodeResponse = api.Node
 

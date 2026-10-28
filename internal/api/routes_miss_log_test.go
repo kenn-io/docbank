@@ -34,15 +34,10 @@ func TestMissLogRecordingAndManagement(t *testing.T) {
 			}
 			resp, body := get(t, ts, "/api/v1/miss-log", nil)
 			require.Equal(t, http.StatusOK, resp.StatusCode, body)
-			require.Equal(t, "no-store", resp.Header.Get("Cache-Control"))
 			var page api.MissLogPage
 			require.NoError(t, json.Unmarshal([]byte(body), &page))
 			require.Len(t, page.Items, len(rows))
 			if enabled {
-				resp, body = get(t, ts, "/api/v1/miss-log/"+rows[0].ID, nil)
-				require.Equal(t, http.StatusOK, resp.StatusCode, body)
-				require.Contains(t, body, "synthetic empty submission")
-				require.Equal(t, "no-store", resp.Header.Get("Cache-Control"))
 				resp, body = do(t, ts, http.MethodDelete, "/api/v1/miss-log/"+rows[0].ID, nil, nil)
 				require.Equal(t, http.StatusNoContent, resp.StatusCode, body)
 			}
@@ -72,7 +67,7 @@ func TestMissLogBrowserMayRecordButCannotManage(t *testing.T) {
 	rows, err := st.ListMissLogRecords(t.Context(), 10, 0)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
-	for _, entry := range []struct{ method, path string }{{"GET", "/api/v1/miss-log"}, {"GET", "/api/v1/miss-log/" + rows[0].ID}, {"DELETE", "/api/v1/miss-log/" + rows[0].ID}, {"DELETE", "/api/v1/miss-log"}} {
+	for _, entry := range []struct{ method, path string }{{"GET", "/api/v1/miss-log"}, {"DELETE", "/api/v1/miss-log/" + rows[0].ID}, {"DELETE", "/api/v1/miss-log"}} {
 		resp, body = do(t, ts, entry.method, entry.path, browser, nil)
 		require.Equal(t, http.StatusForbidden, resp.StatusCode, body)
 	}

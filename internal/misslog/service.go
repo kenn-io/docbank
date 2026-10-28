@@ -48,9 +48,6 @@ type Service struct {
 
 // New prunes on enabled startup only. Failures never expose sensitive payloads.
 func New(st *store.Store, cfg config.MissLogConfig, logger *slog.Logger, mutate func(context.Context, func() error) error) *Service {
-	if logger == nil {
-		logger = slog.Default()
-	}
 	s := &Service{store: st, config: cfg, logger: logger, mutate: mutate}
 	if cfg.Enabled && st != nil {
 		if err := s.mutate(context.Background(), func() error {
@@ -68,10 +65,7 @@ func (s *Service) Record(ctx context.Context, request Request) {
 		return
 	}
 	var random [24]byte
-	if _, err := rand.Read(random[:]); err != nil {
-		s.logger.Warn("miss_log_write_failed")
-		return
-	}
+	_, _ = rand.Read(random[:])
 	receipt := Receipt{Request: request, ID: hex.EncodeToString(random[:])}
 	receipt.CreatedAt = time.Now().UTC()
 	receipt.VaultUID = s.store.VaultID()

@@ -59,7 +59,6 @@ type PublishEmailDocumentsFunc func(context.Context, *store.Store, *blob.Store, 
 
 // Deps assembles everything a Server needs to build its routes.
 type Deps struct {
-	MissLog               *misslog.Service
 	Store                 *store.Store
 	Blobs                 *blob.Store
 	VaultRoot             string // live vault root; backup restore must remain disjoint
@@ -134,9 +133,6 @@ func NewServer(d Deps) *Server {
 	if d.Gate == nil {
 		d.Gate = NewOperationGate()
 	}
-	if d.MissLog == nil {
-		d.MissLog = misslog.New(d.Store, d.Cfg.MissLog, d.Logger, d.Gate.MutateContext)
-	}
 	mux := http.NewServeMux()
 	cfg := huma.DefaultConfig("docbank", version.Version)
 	cfg.Components.Schemas = huma.NewMapRegistry("#/components/schemas/", apiSchemaName)
@@ -209,7 +205,7 @@ func NewServer(d Deps) *Server {
 
 	s.webSessions.login = newWebLoginPolicy(d)
 
-	registerMissLogRoutes(humaAPI, d, g)
+	registerMissLogRoutes(humaAPI, d, g, misslog.New(d.Store, d.Cfg.MissLog, d.Logger, g.MutateContext))
 	registerReadRoutes(humaAPI, d) // Task 5 (stat-by-id lands in this task)
 	registerCollectionRoutes(humaAPI, d, g)
 	registerPeopleRebuildRoutes(humaAPI, d, g)

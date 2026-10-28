@@ -1885,12 +1885,11 @@ Enable recording with `[miss_log] enabled = true`. Submitted empty searches from
 
 ```sh
 docbank miss-log list --limit 20 --offset 0
-docbank miss-log show <record-id>
 docbank miss-log delete <record-id>
 docbank miss-log purge
 ```
 
-List and show print JSON. Management uses the master daemon credential and
+List prints JSON. Management uses the master daemon credential and
 remains available with recording disabled. See the [configuration
 reference](configuration.md#private-search-miss-log) for retention, shared-daemon
 privacy, and backup exclusions.

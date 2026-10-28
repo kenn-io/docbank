@@ -4114,8 +4114,6 @@ export type MissLogReceiptFilters = {[key: string]: unknown};
 export type MissLogReceiptReranking = {[key: string]: unknown};
 
 export interface MissLogReceipt {
-  /** A URL to the JSON Schema for this object. */
-  readonly $schema?: string;
   /** @maxLength 32 */
   actual_mode: string;
   coverage?: MissLogReceiptCoverage;
@@ -14328,30 +14326,6 @@ export const deleteMissLogRecord = async (id: string, options?: Parameters<typeo
   {
     ...options,
     method: 'DELETE'
-
-
-  }
-);}
-
-
-
-export const getGetMissLogRecordUrl = (id: string,) => {
-
-
-
-
-  return `/api/v1/miss-log/${encodeURIComponent(String(id))}`
-}
-
-/**
- * @summary Read one private search miss (operator only)
- */
-export const getMissLogRecord = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<MissLogReceipt> => {
-
-  return sessionJSON<MissLogReceipt>(getGetMissLogRecordUrl(id),
-  {
-    ...options,
-    method: 'GET'
 
 
   }
