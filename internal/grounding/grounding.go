@@ -32,7 +32,6 @@ type Answer struct {
 
 var markers = regexp.MustCompile(`\[[0-9]{1,3}\]`)
 var escapes = regexp.MustCompile(`\\([[:punct:]])`)
-var groups = regexp.MustCompile(`(^|[^\pL\pN\-/_.,])\d{1,3}([ \x{00a0}\x{202f}]\d{3})+\d*`)
 
 func edge(r rune) bool {
 	return !unicode.IsLetter(r) && !unicode.IsDigit(r) && !unicode.IsMark(r) && !unicode.Is(unicode.Sc, r) && r != '%'
@@ -50,20 +49,16 @@ func trim(rs []rune) string {
 		if strings.ContainsRune("-.\u2212", rs[i]) && i+1 < len(rs) && (unicode.IsDigit(rs[i+1]) || unicode.Is(unicode.Sc, rs[i+1])) {
 			break
 		}
+		if strings.ContainsRune("-\u2212", rs[i]) && i+2 < len(rs) && rs[i+1] == '.' && unicode.IsDigit(rs[i+2]) {
+			break
+		}
 		i++
 	}
 	return strings.TrimRightFunc(string(rs[i:]), edge)
 }
 
 func extract(text string) []string {
-	text = groups.ReplaceAllStringFunc(escapes.ReplaceAllString(text, "$1"), func(m string) string {
-		i := strings.IndexAny(m, "0123456789")
-		parts := strings.Fields(m[i:])
-		if len(parts[len(parts)-1]) != 3 {
-			return m
-		}
-		return m[:i] + strings.Join(parts, "")
-	})
+	text = escapes.ReplaceAllString(text, "$1")
 	figures := []string{}
 	for _, token := range strings.FieldsFunc(text, split) {
 		if value := trim([]rune(token)); strings.ContainsFunc(value, unicode.IsDigit) {

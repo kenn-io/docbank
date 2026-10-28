@@ -404,25 +404,19 @@ A leading `-` or `−` stays as a sign, and a leading decimal point stays.
 Figures compare exactly across all resolved citations; markers don't scope them.
 The first matching rule determines the verdict:
 
-- Unknown markers, or missing figures when all citations resolve, give `ungrounded`.
-- Any unavailable citation gives `incomplete`.
-- An answer without figures gives `no_figures`.
-- All figures found gives `grounded`.
+- `ungrounded`: an unknown marker or a missing figure with all citations resolved. Example: `30` against cited `20`.
+- `incomplete`: any citation is unavailable. Example: one of two saved citations can no longer be read.
+- `no_figures`: the answer has no figures. Example: `The invoice is attached.`
+- `grounded`: every figure occurs in the cited text. Example: `200` against cited `1 200`.
 
 Other resolver failures return tool errors.
 Results include figures, unknown marker indexes, citation
 statuses, and text digests, with private cache scope and zero TTL.
-`5-year` differs from `5 years`, `1250` from `1,250`, and `$1,250` from `1,250`.
-Case and dash variants differ. Numbered-list numbers count as figures. On both sides,
-`1 200` reads as `1200`: single spaces, NBSPs, and narrow NBSPs between
-three-digit groups are removed when the first group has one to three digits
-and follows neither a letter, digit, `-`, `/`, `_`, `.`, nor `,`.
-The last three-digit group must be followed by a non-digit or the end of the text.
-`Q1 500`, `INV-5 200`, `5 2024`, and `1 2000` stay split.
-Both sides undo Markdown punctuation escapes, so a literal
-backslash before punctuation in an unescaped body, such as a plain-text email,
-reads as an escape. Occurrence alone confirms neither the subject nor other
-claims.
+
+- Figures keep their spelling, case, signs, and currency symbols. Example: `-.5` differs from `.5`.
+- Numbered-list numbers count as figures. Example: `1.` contributes `1`.
+- Both sides undo Markdown punctuation escapes, including literal backslashes in plain-text bodies. Example: plain-text `INV\-5` matches `INV-5`.
+- Occurrence alone confirms neither the subject nor other claims. Example: a cited price doesn't establish which item it belongs to.
 
 ## Read complete retained sections
 
