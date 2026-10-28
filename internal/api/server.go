@@ -228,6 +228,7 @@ func NewServer(d Deps) *Server {
 	registerContentRevertRoute(humaAPI, d, g)
 	registerContentPruneRoute(humaAPI, d, g)
 	registerProvenanceRoutes(humaAPI, d, g)
+	registerSupersessionRoutes(humaAPI, d, g)
 	registerTagRoutes(humaAPI, d, g)
 	registerBatchTagRoutes(humaAPI, d, g)
 	registerSavedQueryRoutes(humaAPI, d, g, s.snapshots)
@@ -379,6 +380,10 @@ func markRevisionPreconditionsRequired(api huma.API) {
 		{"/api/v1/nodes/{id}/revert", http.MethodPost},
 		{"/api/v1/nodes/{id}/versions/prune", http.MethodPost},
 		{"/api/v1/nodes/{id}/provenance", http.MethodPost},
+		{"/api/v1/nodes/{id}/supersedes/{predecessor_id}", http.MethodPut},
+		{"/api/v1/nodes/{id}/supersedes/{predecessor_id}", http.MethodDelete},
+		{"/api/v1/nodes/{id}/effective-window", http.MethodPut},
+		{"/api/v1/nodes/{id}/effective-window", http.MethodDelete},
 		{"/api/v1/nodes/{id}/tags/{tag_id}", http.MethodPut},
 		{"/api/v1/nodes/{id}/tags/{tag_id}", http.MethodDelete},
 		{"/api/v1/tags/{tag_id}", http.MethodPatch},

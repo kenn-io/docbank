@@ -550,7 +550,7 @@ and append no receipt.
 
 Hidden photos store nullable `photo_assets.hidden_at`. Revisioned hide/unhide writes use the existing asset receipts. Disable reads only hidden asset graphs and atomically clears their flags and authentication state. Reset preserves flags. Public Photos asset and preview reads require an active unlock for hidden assets; ordinary Documents reads retain access.
 
-Vault-wide hidden credentials use fixed Argon2id parameters. Failure timestamps and five-minute lockout persist through restart and restore. JSONL versions 1 and 2 back up hidden flags, credentials, failed attempts, lockout expiry and decision receipts. Sessions store SHA-256 token digests, expire after five minutes, clear on restart, and stay outside backup. Schema 43 uses the existing deterministic JSONL rebuild for supported released schemas, including schema 41 from v0.16.0, and retains the source database. Schemas 30 through 33, 35 through 40, and 42 remain unsupported, unreleased sources. Recreate development vaults from those schemas with this binary; opening them fails the schema check. Released JSONL v1 backups through v0.16.0 restore through the logical metadata contract. Copy media through the supported backup and restore flow.
+Vault-wide hidden credentials use fixed Argon2id parameters. Failure timestamps and five-minute lockout persist through restart and restore. JSONL versions 1 and 2 back up hidden flags, credentials, failed attempts, lockout expiry and decision receipts. Sessions store SHA-256 token digests, expire after five minutes, clear on restart, and stay outside backup. Schema 44 uses the existing deterministic JSONL rebuild for supported released schemas, including schema 41 from v0.16.0, and retains the source database. Schemas 30 through 33, 35 through 40, and 42 through 43 remain unsupported, unreleased sources. Recreate development vaults from those schemas with this binary; opening them fails the schema check. Released JSONL v1 backups through v0.16.0 restore through the logical metadata contract. Copy media through the supported backup and restore flow.
 
 The `confirmed_fields` bit mask records supplied rating (1), flag (2), label (4), caption (8), creator (16), copyright (32) and rotation (64), including empty clears. On a first encounter, XMP sync confirms only non-default sidecar values. Once a retained packet exists, removing a previously present property imports a confirmed clear. Undo, audit and backup retain the mask. A revision-1 file has no decisions, so restore refuses one with authored values or confirmation bits.
 
@@ -656,6 +656,12 @@ Schema 43 adds `photo_suggestions`, one row per content version and producer fin
 `photo_description_explicit_waiters` marks the waiters an explicit start created. Publication reads it to decide whether a shared description job may replace another producer's dismissal. It records in-flight intent only. Description jobs and waiters stay out of backups and rebuild after restore.
 
 `visual_preview_generations_ready` is a partial index on ready previews by recipe and content version. Photo description backfill walks it in version order, so an idle pass over settled photos stays an index scan.
+
+### Document validity declarations
+
+Schema 44 adds `node_supersessions` and `node_effective_windows` for owner-declared replacements and inclusive effective dates. Metadata JSONL format 2 carries both tables. See [Declared document validity](../architecture/storage.md#declared-document-validity) for revision guards, graph limits, and [audit restrictions](../architecture/storage.md#audit-restrictions).
+
+### Logical metadata boundary
 
 SQLite is Docbank's runtime query and transaction engine, but its historical
 page layout is not the intended long-lived backup contract. The logical

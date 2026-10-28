@@ -309,7 +309,7 @@ var (
 // extracted text keep their backup-scoped exporters.
 var coreMetadataTables = []metadataRecordCodec{
 	nodeMetadata, contentVersionMetadata, ingestMetadata, provenanceMetadata, watchSourceMetadata, pushSourceMetadata,
-	tagMetadata, nodeTagMetadata, visualPreviewHeadMetadata, collectionLabelMetadata,
+	tagMetadata, nodeTagMetadata, supersessionMetadata, effectiveWindowMetadata, visualPreviewHeadMetadata, collectionLabelMetadata,
 	provenanceVersionBindingMetadata, savedQueryMetadata, savedQueryRunImportMetadata,
 	termReportHistoryImportMetadata, batchTagReceiptMetadata,
 	newMetadataTable(metadataTable[metadataBlob]{record: metadataBlob{Type: "blob"}, table: "blobs",
@@ -455,6 +455,10 @@ func (layout metadataSourceLayout) hasPersons() bool {
 
 func (layout metadataSourceLayout) hasPushSources() bool {
 	return layout.schemaVersion >= pushSourcesStorageSchemaVersion
+}
+
+func (layout metadataSourceLayout) hasSupersessions() bool {
+	return layout.schemaVersion >= supersessionStorageSchemaVersion
 }
 
 func exportMetadataSnapshot(ctx context.Context, tx metadataQuerier, w io.Writer) error {
@@ -603,6 +607,11 @@ func exportMetadataSnapshotWithVaultIdentity(
 	}
 	if err := nodeTagMetadata.export(ctx, tx, write); err != nil {
 		return err
+	}
+	if layout.hasSupersessions() {
+		if err := exportMetadataTables(ctx, tx, write, []metadataRecordCodec{supersessionMetadata, effectiveWindowMetadata}); err != nil {
+			return err
+		}
 	}
 	if layout.hasPostV3Metadata() {
 		if err := batchTagReceiptMetadata.export(ctx, tx, write); err != nil {
@@ -1563,6 +1572,20 @@ func validateMetadataStateWithVaultIdentity(
 	}
 	if err := validateUUIDv4(vaultID); err != nil {
 		return fmt.Errorf("invalid vault identity: %w", err)
+	}
+	if layout.hasSupersessions() {
+		if err := validateSupersessionMetadata(ctx, tx); err != nil {
+			return err
+		}
+		active, err := auditAuthorityActiveTx(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if active {
+			if err := requireNoValidityDeclarations(ctx, tx); err != nil {
+				return err
+			}
+		}
 	}
 	if err := validateMetadataRelations(ctx, tx); err != nil {
 		return err

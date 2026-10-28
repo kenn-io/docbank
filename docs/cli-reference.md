@@ -462,6 +462,24 @@ See [Push a folder to another daemon](usage/pushing.md) for connection setup,
 source identity, version retention, import collections, traversal limits, and
 switching from a daemon-owned watch without re-uploading unchanged files.
 
+## docbank supersede, effective, validity
+
+```text
+docbank supersede <path-or-id> --replaces <path-or-id> [--note <text>] [--remove]
+docbank effective <path-or-id> [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--clear]
+docbank validity <path-or-id> [--as-of YYYY-MM-DD] [--json]
+```
+
+Declare or remove a replacement, set or clear an inclusive effective window,
+and inspect a document's standing on a date. Select nodes by absolute virtual
+path or `id:<positive-decimal>`. `--remove` cannot be combined with `--note`;
+`--clear` cannot be combined with `--from` or `--to`. Without `--clear`, provide
+at least one date. To remove a link to a trashed successor, select that
+successor by ID; paths resolve only live nodes. The predecessor must still be
+live. Declaring a link requires both files to be live. `validity --json` prints
+the full validity response.
+See [Document validity](usage/organizing.md#document-validity).
+
 ## docbank provenance
 
 ```
