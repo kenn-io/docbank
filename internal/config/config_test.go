@@ -1242,7 +1242,7 @@ func TestVisionRuntimeConfig(t *testing.T) {
 	profile.Runtime.MaxPollAttempts = 0
 	profile.Runtime.RequestTimeout = Duration(10 * time.Minute)
 	cfg := validRenditionRuntimeConfig(t)
-	descriptor, err := vision.Descriptor(profile.Model, document.RenditionTrustOperatorNetwork)
+	descriptor, err := vision.Descriptor(vision.ProviderID, profile.Model, document.RenditionTrustOperatorNetwork)
 	require.NoError(t, err)
 	profile.DescriptorID, profile.DescriptorFingerprint = descriptor.ID, descriptor.Fingerprint
 	cfg.RenditionProfiles["primary"] = profile
@@ -1254,7 +1254,7 @@ func TestVisionRuntimeConfig(t *testing.T) {
 
 	t.Run("detection task", func(t *testing.T) {
 		detection := profile
-		descriptor, err := vision.TaskDescriptor(vision.DetectionProviderID, profile.Model, document.RenditionTrustOperatorNetwork)
+		descriptor, err := vision.Descriptor(document.FaceDetectionProviderID, profile.Model, document.RenditionTrustOperatorNetwork)
 		require.NoError(t, err)
 		detection.DescriptorID, detection.DescriptorFingerprint = descriptor.ID, descriptor.Fingerprint
 		require.NoError(t, validateRenditionRuntimeConfig(detection, "vision"))

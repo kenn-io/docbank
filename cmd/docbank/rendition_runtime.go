@@ -342,7 +342,7 @@ func configureVision(cfg config.Config, name string, registered map[string]regis
 	if !ok {
 		return nil, disclosure, errors.New("vision credential binding is not configured")
 	}
-	descriptor, err := vision.TaskDescriptor(profile.DescriptorID, profile.Model, profile.TrustBoundary)
+	descriptor, err := vision.Descriptor(profile.DescriptorID, profile.Model, profile.TrustBoundary)
 	if err != nil {
 		return nil, disclosure, err
 	}

@@ -23,12 +23,12 @@ func TestProcessingVisionFingerprints(t *testing.T) {
 	}
 	_, err = toml.Decode(output, &fingerprints)
 	require.NoError(t, err)
-	descriptor, err := vision.Descriptor("synthetic-vision", document.RenditionTrustHostedProvider)
+	descriptor, err := vision.Descriptor(vision.ProviderID, "synthetic-vision", document.RenditionTrustHostedProvider)
 	require.NoError(t, err)
 	require.Equal(t, descriptor.Fingerprint, fingerprints.Descriptor)
 	require.Equal(t, vision.DisclosureFingerprint(descriptor, "https://vision.example.com", deployment), fingerprints.Disclosure)
 	require.NoDirExists(t, home)
-	detectionOutput, err := runCLI(t, "processing", "vision-fingerprints", "--task", vision.DetectionProviderID, "--model", "synthetic-vision", "--trust-boundary", "hosted_provider", "--endpoint", "https://vision.example.com", "--deployment-fingerprint", deployment)
+	detectionOutput, err := runCLI(t, "processing", "vision-fingerprints", "--task", document.FaceDetectionProviderID, "--model", "synthetic-vision", "--trust-boundary", "hosted_provider", "--endpoint", "https://vision.example.com", "--deployment-fingerprint", deployment)
 	require.NoError(t, err)
 	var detection struct {
 		Descriptor string `toml:"descriptor_fingerprint"`

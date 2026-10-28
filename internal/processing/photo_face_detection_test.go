@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
@@ -22,14 +23,18 @@ func TestPhotoFaceDetectionFlow(t *testing.T) {
 	f := newPhotoDescriptionFixture(t)
 	ctx := t.Context()
 	require.False(t, f.service.HasPhotoFaceDetectionProfiles())
-	service := f.newVisionServiceWith(t, map[string]string{"faces": "detector-1"}, vision.DetectionProviderID)
+	service := f.newVisionServiceWith(t, map[string]string{"faces": "detector-1"}, document.FaceDetectionProviderID)
 	require.True(t, service.HasPhotoFaceDetectionProfiles())
 	require.False(t, service.HasPhotoDescriptionProfiles())
-	targets, err := service.photoVisionTargets(ctx, nil, "", 50, 4, vision.DetectionProviderID)
+	targets, err := service.photoVisionTargets(ctx, nil, "", 50, 4, document.FaceDetectionProviderID)
 	require.NoError(t, err)
 	require.Empty(t, targets)
 	plan, err := service.Plan(ctx, f.selector("faces"))
 	require.NoError(t, err)
+	require.Contains(t, plan.Estimate.Scope, "finds faces")
+	require.Contains(t, plan.BackupConsequence, "Face boxes, measurements, and your decisions")
+	require.Contains(t, plan.BackupConsequence, "another scan and provider call")
+	require.NotContains(t, plan.BackupConsequence, "suggestions")
 	_, err = service.Start(ctx, StartRequest{Selector: f.selector("faces"), PlanFingerprint: plan.Fingerprint})
 	require.ErrorIs(t, err, ErrConsentRequired)
 	probes, calls := f.counts()
@@ -43,7 +48,7 @@ func TestPhotoFaceDetectionFlow(t *testing.T) {
 	f.reply = detectedFaceReply
 	f.mu.Unlock()
 	f.grant(t, service, "faces")
-	targets, err = service.photoVisionTargets(ctx, nil, "", 50, 4, vision.DetectionProviderID)
+	targets, err = service.photoVisionTargets(ctx, nil, "", 50, 4, document.FaceDetectionProviderID)
 	require.NoError(t, err)
 	require.Len(t, targets, 1)
 	var wg sync.WaitGroup
@@ -92,7 +97,7 @@ func TestPhotoFaceDetectionFlow(t *testing.T) {
 	stripped, err := stripPhotoPreview(ctx, data)
 	require.NoError(t, err)
 	require.Equal(t, stripped, data)
-	targets, err = service.photoVisionTargets(ctx, nil, "", 50, 4, vision.DetectionProviderID)
+	targets, err = service.photoVisionTargets(ctx, nil, "", 50, 4, document.FaceDetectionProviderID)
 	require.NoError(t, err)
 	require.Empty(t, targets)
 	plan, err = service.Plan(ctx, f.selector("faces"))
@@ -103,12 +108,12 @@ func TestPhotoFaceDetectionFlow(t *testing.T) {
 	_, calls = f.counts()
 	require.Equal(t, 2, calls, "a repeated explicit start uses the completed scan")
 	// A changed detector runs once and refreshes the same face ID.
-	service = f.newVisionServiceWith(t, map[string]string{"faces": "detector-2"}, vision.DetectionProviderID)
+	service = f.newVisionServiceWith(t, map[string]string{"faces": "detector-2"}, document.FaceDetectionProviderID)
 	f.grant(t, service, "faces")
 	f.mu.Lock()
 	f.reply = strings.Replace(detectedFaceReply, `"facing":0.9`, `"facing":0.4`, 1)
 	f.mu.Unlock()
-	targets, err = service.photoVisionTargets(ctx, nil, "", 50, 4, vision.DetectionProviderID)
+	targets, err = service.photoVisionTargets(ctx, nil, "", 50, 4, document.FaceDetectionProviderID)
 	require.NoError(t, err)
 	require.Len(t, targets, 1)
 	require.NoError(t, service.admitPhotoDescription(ctx, targets[0]))
@@ -137,7 +142,7 @@ func TestPhotoFaceDetectionEmptyAndMalformed(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newPhotoDescriptionFixture(t)
 			ctx := t.Context()
-			service := f.newVisionServiceWith(t, map[string]string{"faces": "detector"}, vision.DetectionProviderID)
+			service := f.newVisionServiceWith(t, map[string]string{"faces": "detector"}, document.FaceDetectionProviderID)
 			for _, runtime := range service.renditions.runtimes {
 				provider, ok := runtime.(*providerRenditionRuntime)
 				require.True(t, ok)
@@ -147,7 +152,7 @@ func TestPhotoFaceDetectionEmptyAndMalformed(t *testing.T) {
 			f.reply = tc.reply
 			f.mu.Unlock()
 			f.grant(t, service, "faces")
-			targets, err := service.photoVisionTargets(ctx, nil, "", 50, 4, vision.DetectionProviderID)
+			targets, err := service.photoVisionTargets(ctx, nil, "", 50, 4, document.FaceDetectionProviderID)
 			require.NoError(t, err)
 			require.Len(t, targets, 1)
 			require.NoError(t, service.admitPhotoDescription(ctx, targets[0]))
@@ -173,7 +178,7 @@ func TestPhotoFaceDetectionEmptyAndMalformed(t *testing.T) {
 			}
 			// Explicit starts of completed scans perform no call. Terminally failed
 			// arrays remain without faces, even when the automatic pass runs again.
-			targets, err = service.photoVisionTargets(ctx, nil, "", 50, 4, vision.DetectionProviderID)
+			targets, err = service.photoVisionTargets(ctx, nil, "", 50, 4, document.FaceDetectionProviderID)
 			require.NoError(t, err)
 			require.Empty(t, targets)
 			require.Empty(t, f.suggestions(t))
@@ -187,7 +192,7 @@ func TestPhotoFaceDetectionPublicationAuthority(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			f := newPhotoDescriptionFixture(t)
 			ctx := t.Context()
-			service := f.newVisionServiceWith(t, map[string]string{"faces": "detector"}, vision.DetectionProviderID)
+			service := f.newVisionServiceWith(t, map[string]string{"faces": "detector"}, document.FaceDetectionProviderID)
 			f.grant(t, service, "faces")
 			f.mu.Lock()
 			f.reply = detectedFaceReply
@@ -199,7 +204,7 @@ func TestPhotoFaceDetectionPublicationAuthority(t *testing.T) {
 				}
 			}
 			f.mu.Unlock()
-			targets, err := service.photoVisionTargets(ctx, nil, "", 50, 4, vision.DetectionProviderID)
+			targets, err := service.photoVisionTargets(ctx, nil, "", 50, 4, document.FaceDetectionProviderID)
 			require.NoError(t, err)
 			require.Len(t, targets, 1)
 			require.NoError(t, service.admitPhotoDescription(ctx, targets[0]))
@@ -225,7 +230,7 @@ func TestPhotoFaceDetectionPublicationAuthority(t *testing.T) {
 			if mode == "revoked" {
 				f.grant(t, service, "faces")
 			}
-			targets, err = service.photoVisionTargets(ctx, nil, "", 50, 4, vision.DetectionProviderID)
+			targets, err = service.photoVisionTargets(ctx, nil, "", 50, 4, document.FaceDetectionProviderID)
 			require.NoError(t, err)
 			require.Len(t, targets, 1, "discarded publication leaves no completion marker")
 		})
@@ -241,4 +246,128 @@ func (catalog revokingFaceDetectionCatalog) PublishPhotoDescription(ctx context.
 		return store.RenditionJobPublication{}, err
 	}
 	return catalog.Store.PublishPhotoDescription(ctx, claim, result, at)
+}
+
+func TestPhotoFaceDetectionPublicationFailureKeepsWorkerRunning(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{"capacity", "audit", "noncanonical", "missing-coordinate"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newPhotoDescriptionFixture(t)
+			ctx := t.Context()
+			service := f.newVisionServiceWith(t, map[string]string{"faces": "detector"}, document.FaceDetectionProviderID)
+			f.grant(t, service, "faces")
+			if mode == "capacity" {
+				for range document.MaxPhotoRecordsPerVersion {
+					_, _, err := f.catalog.CreatePhotoFace(ctx, f.node.CurrentVersionID, uuid.New().String(), document.FaceBox{Width: .05, Height: .05}, "")
+					require.NoError(t, err)
+				}
+			}
+			f.mu.Lock()
+			f.reply = detectedFaceReply
+			f.mu.Unlock()
+			targets, err := service.photoVisionTargets(ctx, nil, "", 50, 4, document.FaceDetectionProviderID)
+			require.NoError(t, err)
+			require.Len(t, targets, 1)
+			require.NoError(t, service.admitPhotoDescription(ctx, targets[0]))
+			catalog := &auditingFaceDetectionCatalog{Store: f.catalog, enable: mode == "audit"}
+			switch mode {
+			case "noncanonical":
+				catalog.payload = strings.Replace(detectedFaceReply, `"box":`, `"unknown":true,"box":`, 1)
+			case "missing-coordinate":
+				catalog.payload = strings.Replace(detectedFaceReply, `"x":0.1,`, "", 1)
+			}
+			for fingerprint, runtime := range f.service.renditions.runtimes {
+				require.NoError(t, service.renditions.Register(fingerprint, runtime))
+			}
+			worker, err := NewRenditionWorker(RenditionWorkerConfig{Catalog: catalog, Blobs: f.blobs, Runtime: service.renditions, Gate: newTestOperationGate(), Owner: "synthetic-worker", LeaseDuration: time.Minute, IdleDelay: time.Millisecond, Clock: service.clock})
+			require.NoError(t, err)
+			processed, err := worker.RunOne(ctx)
+			require.NoError(t, err, "one photo must not stop shared processing")
+			require.True(t, processed)
+			if mode != "capacity" {
+				faces, _, _, err := f.catalog.PhotoFacePersonNames(ctx, f.node.CurrentVersionID)
+				require.NoError(t, err)
+				require.Empty(t, faces, "rejected canonical publication creates no face")
+			}
+			f.mu.Lock()
+			f.reply = `{"caption":"A harbor.","tags":[],"visible_text":""}`
+			f.mu.Unlock()
+			f.grant(t, f.service, "vision")
+			descriptions, err := f.service.photoVisionTargets(ctx, nil, "", 50, 4, vision.ProviderID)
+			require.NoError(t, err)
+			require.Len(t, descriptions, 1)
+			require.NoError(t, f.service.admitPhotoDescription(ctx, descriptions[0]))
+			processed, err = worker.RunOne(ctx)
+			require.NoError(t, err)
+			require.True(t, processed)
+			require.Len(t, f.suggestions(t), 1, "the same worker processes unrelated descriptions after the rejected detection")
+		})
+	}
+}
+
+type auditingFaceDetectionCatalog struct {
+	*store.Store
+
+	enable  bool
+	payload string
+}
+
+func (c *auditingFaceDetectionCatalog) PublishPhotoDescription(ctx context.Context, claim store.RenditionJobClaim, result *document.RenditionResult, at time.Time) (store.RenditionJobPublication, error) {
+	if c.payload != "" {
+		result.Artifacts[0].Payload = []byte(c.payload)
+		c.payload = ""
+	}
+	if c.enable {
+		plan, err := c.PreviewInitialAudit(ctx, c.RootID(), "cli", nil)
+		if err != nil {
+			return store.RenditionJobPublication{}, err
+		}
+		if _, err = c.EnableInitialAudit(ctx, plan); err != nil {
+			return store.RenditionJobPublication{}, err
+		}
+		c.enable = false
+	}
+	return c.Store.PublishPhotoDescription(ctx, claim, result, at)
+}
+
+func TestPhotoFaceDetectionAuditRefusesEgress(t *testing.T) {
+	t.Parallel()
+	f := newPhotoDescriptionFixture(t)
+	ctx := t.Context()
+	service := f.newVisionServiceWith(t, map[string]string{"faces": "detector"}, document.FaceDetectionProviderID)
+	f.grant(t, service, "faces")
+	plan, err := service.Plan(ctx, f.selector("faces"))
+	require.NoError(t, err)
+	audit, err := f.catalog.PreviewInitialAudit(ctx, f.catalog.RootID(), "cli", nil)
+	require.NoError(t, err)
+	_, err = f.catalog.EnableInitialAudit(ctx, audit)
+	require.NoError(t, err)
+	_, err = service.Start(ctx, StartRequest{Selector: f.selector("faces"), PlanFingerprint: plan.Fingerprint})
+	require.ErrorIs(t, err, store.ErrAuditMutationUnsupported)
+	targets, err := service.photoVisionTargets(ctx, nil, "", 50, 4, document.FaceDetectionProviderID)
+	require.NoError(t, err)
+	require.Empty(t, targets)
+	probes, calls := f.counts()
+	require.Zero(t, probes+calls)
+}
+
+func TestPhotoFaceDetectionQueuedBeforeAuditRefusesEgress(t *testing.T) {
+	t.Parallel()
+	f := newPhotoDescriptionFixture(t)
+	ctx := t.Context()
+	service := f.newVisionServiceWith(t, map[string]string{"faces": "detector"}, document.FaceDetectionProviderID)
+	f.grant(t, service, "faces")
+	targets, err := service.photoVisionTargets(ctx, nil, "", 50, 4, document.FaceDetectionProviderID)
+	require.NoError(t, err)
+	require.Len(t, targets, 1)
+	require.NoError(t, service.admitPhotoDescription(ctx, targets[0]))
+	probesBefore, callsBefore := f.counts()
+	audit, err := f.catalog.PreviewInitialAudit(ctx, f.catalog.RootID(), "cli", nil)
+	require.NoError(t, err)
+	_, err = f.catalog.EnableInitialAudit(ctx, audit)
+	require.NoError(t, err)
+	f.runWorker(t, service)
+	probes, calls := f.counts()
+	require.Equal(t, probesBefore, probes)
+	require.Equal(t, callsBefore, calls)
 }

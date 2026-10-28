@@ -431,7 +431,7 @@ func seedSuggestion(ctx context.Context, s *store.Store, blobs *blob.Store, spoo
 }
 
 func seedDetectedFaces(ctx context.Context, s *store.Store, blobs *blob.Store, spool string, node store.Node) {
-	seedVisionResult(ctx, s, blobs, spool, node, document.FaceDetection{Faces: []document.FaceObservation{{Box: document.FaceBox{X: .25, Y: .2, Width: .2, Height: .3}, Roll: new(0.0), Facing: new(.9), EyesOpen: new(true), Smile: new(false)}}}, vision.DetectionProviderID)
+	seedVisionResult(ctx, s, blobs, spool, node, document.FaceDetection{Faces: []document.FaceObservation{{Box: document.FaceBox{X: .25, Y: .2, Width: .2, Height: .3}, Roll: new(0.0), Facing: new(.9), EyesOpen: new(true), Smile: new(false)}}}, document.FaceDetectionProviderID)
 }
 
 func seedVisionResult(ctx context.Context, s *store.Store, blobs *blob.Store, spool string, node store.Node, value any, task string) {
@@ -480,7 +480,7 @@ func seedVisionResult(ctx context.Context, s *store.Store, blobs *blob.Store, sp
 	check(err)
 	prepared, err := s.PreparePhotoAuthored(ctx, store.PhotoSetSelection{AssetIDs: []string{asset.ID}})
 	check(err)
-	if task == vision.DetectionProviderID {
+	if task == document.FaceDetectionProviderID {
 		faces, _, _, err := s.PhotoFacePersonNames(ctx, node.CurrentVersionID)
 		check(err)
 		if len(faces) != 1 || faces[0].DetectorFingerprint == "" {

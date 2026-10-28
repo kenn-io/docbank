@@ -135,7 +135,7 @@ func TestRenderSendsImageBytesOnce(t *testing.T) {
 				_, _ = w.Write(completion)
 			}))
 			defer server.Close()
-			p, err := New(Profile{Origin: server.URL, Model: "synthetic-vision", TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, server.Client())
+			p, err := New(Profile{DescriptorID: ProviderID, Origin: server.URL, Model: "synthetic-vision", TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, server.Client())
 			require.NoError(t, err)
 			result, err := renderJPEG(t, p, data)
 			require.Equal(t, int32(1), calls.Load())
@@ -255,7 +255,7 @@ func TestProbeSendsSyntheticImageWithoutNamingColors(t *testing.T) {
 		_, _ = w.Write(visiontest.Completion("red,blue"))
 	}))
 	defer server.Close()
-	p, err := New(Profile{Origin: server.URL, Model: "synthetic-vision", TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, server.Client())
+	p, err := New(Profile{DescriptorID: ProviderID, Origin: server.URL, Model: "synthetic-vision", TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, server.Client())
 	require.NoError(t, err)
 	require.NoError(t, p.Probe(t.Context()))
 }
@@ -282,7 +282,7 @@ func TestProbeRequiresRecognitionOfSyntheticImage(t *testing.T) {
 				_, _ = w.Write(visiontest.Completion(tc.answer))
 			}))
 			defer server.Close()
-			p, err := New(Profile{Origin: server.URL, Model: "synthetic-vision", TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, server.Client())
+			p, err := New(Profile{DescriptorID: ProviderID, Origin: server.URL, Model: "synthetic-vision", TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, server.Client())
 			require.NoError(t, err)
 			err = p.Probe(t.Context())
 			if tc.ok {

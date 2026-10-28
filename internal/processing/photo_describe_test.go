@@ -210,7 +210,7 @@ func (f *photoDescriptionFixture) grant(t *testing.T, service *Service, name str
 func (f *photoDescriptionFixture) backfill(t *testing.T, service *Service) int {
 	t.Helper()
 	ctx := t.Context()
-	targets, err := service.photoDescriptionTargets(ctx, nil, "", 50, 4)
+	targets, err := service.photoVisionTargets(ctx, nil, "", 50, 4, vision.ProviderID)
 	require.NoError(t, err)
 	for _, target := range targets {
 		require.NoError(t, service.admitPhotoDescription(ctx, target))
@@ -323,7 +323,7 @@ func TestPhotoDescriptionJobFailureIsLogged(t *testing.T) {
 	worker, err := NewRenditionWorker(RenditionWorkerConfig{Catalog: f.catalog, Blobs: f.blobs, Runtime: f.service.renditions, Gate: newTestOperationGate(), Owner: "synthetic-worker", LeaseDuration: time.Minute, IdleDelay: time.Millisecond, Clock: f.service.clock,
 		Logger: slog.New(slog.NewTextHandler(&logs, nil))})
 	require.NoError(t, err)
-	targets, err := f.service.photoDescriptionTargets(t.Context(), nil, "", 50, 4)
+	targets, err := f.service.photoVisionTargets(t.Context(), nil, "", 50, 4, vision.ProviderID)
 	require.NoError(t, err)
 	require.Len(t, targets, 1)
 	require.NoError(t, f.service.admitPhotoDescription(t.Context(), targets[0]))
@@ -436,7 +436,7 @@ func TestPhotoDescriptionRenewedConsentWithBlockedProbeSendsNothing(t *testing.T
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logs, nil))
 	for range 3 {
-		targets, err := f.service.photoDescriptionTargets(ctx, logger, "", 50, 4)
+		targets, err := f.service.photoVisionTargets(ctx, logger, "", 50, 4, vision.ProviderID)
 		require.NoError(t, err)
 		require.Empty(t, targets)
 	}
@@ -459,7 +459,7 @@ func TestPhotoDescriptionRenewedConsentWithBlockedProbeSendsNothing(t *testing.T
 	// A minute later the retry is due. Only the readiness check sees the later
 	// clock, because the queue compares job times with real time.
 	f.skew.Add(int64(61 * time.Second))
-	targets, err := f.service.photoDescriptionTargets(ctx, nil, "", 50, 4)
+	targets, err := f.service.photoVisionTargets(ctx, nil, "", 50, 4, vision.ProviderID)
 	f.skew.Store(0)
 	require.NoError(t, err)
 	require.Len(t, targets, 1, "the provider recovers without a restart")
@@ -495,13 +495,13 @@ func TestPhotoDescriptionRetryWaitHoldsNoAdmissionSlotAndRetriesAfterAHeal(t *te
 	// One worker: the first photo fails into its retry backoff.
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	first, err := f.service.photoDescriptionTargets(ctx, nil, "", 50, 1)
+	first, err := f.service.photoVisionTargets(ctx, nil, "", 50, 1, vision.ProviderID)
 	require.NoError(t, err)
 	require.Len(t, first, 1)
 	require.NoError(t, f.service.admitPhotoDescription(ctx, first[0]))
 	f.runWorker(t, f.service)
 
-	next, err := f.service.photoDescriptionTargets(ctx, nil, "", 50, 1)
+	next, err := f.service.photoVisionTargets(ctx, nil, "", 50, 1, vision.ProviderID)
 	require.NoError(t, err, "a sleeping retry does not hold the only admission slot")
 	require.Len(t, next, 1)
 	require.NotEqual(t, first[0].version.ID, next[0].version.ID, "the other photo is admitted meanwhile")
@@ -542,7 +542,7 @@ func TestPhotoDescriptionProviderFailureReprobesBeforeFreshPhotoAdmission(t *tes
 	require.Equal(t, 1, f.backfill(t, service))
 	require.Empty(t, f.suggestions(t), "the first provider's authentication failure adds no suggestion")
 	fresh := f.addPhoto(t, "fresh.jpg", 700)
-	targets, err := service.photoDescriptionTargets(ctx, nil, "", 50, 4)
+	targets, err := service.photoVisionTargets(ctx, nil, "", 50, 4, vision.ProviderID)
 	require.NoError(t, err)
 	require.NotEmpty(t, targets)
 	var versions []string
@@ -622,7 +622,7 @@ func TestPhotoDescriptionAutomaticAndExplicitRequestsShareOneProviderCall(t *tes
 	f := newPhotoDescriptionFixture(t)
 	ctx := t.Context()
 	f.grant(t, f.service, "vision")
-	targets, err := f.service.photoDescriptionTargets(ctx, nil, "", 50, 4)
+	targets, err := f.service.photoVisionTargets(ctx, nil, "", 50, 4, vision.ProviderID)
 	require.NoError(t, err)
 	require.Len(t, targets, 1)
 	require.NoError(t, f.service.admitPhotoDescription(ctx, targets[0]), "an automatic request is waiting")

@@ -1,6 +1,8 @@
 package document
 
 import (
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"math"
 )
@@ -8,12 +10,33 @@ import (
 // MaxPhotoRecordsPerVersion bounds both faces and depicted assertions on one version.
 const MaxPhotoRecordsPerVersion = 1000
 
+const FaceDetectionProviderID = "compatible-vision.detect-faces-v1"
+
 // FaceBox uses normalized coordinates in the EXIF-oriented preview before authored rotation.
-type FaceBox struct {
+type FaceBox struct { //nolint:recvcheck // JSON decoding needs a pointer; validation preserves value semantics.
 	X      float64 `json:"x"`
 	Y      float64 `json:"y"`
 	Width  float64 `json:"width"`
 	Height float64 `json:"height"`
+}
+
+// UnmarshalJSONFrom requires all coordinates, preserving an explicit zero while
+// refusing missing and null coordinates at every JSON input boundary.
+func (b *FaceBox) UnmarshalJSONFrom(decoder *jsontext.Decoder) error {
+	var wire struct {
+		X      *float64 `json:"x"`
+		Y      *float64 `json:"y"`
+		Width  *float64 `json:"width"`
+		Height *float64 `json:"height"`
+	}
+	if err := json.UnmarshalDecode(decoder, &wire); err != nil {
+		return err
+	}
+	if wire.X == nil || wire.Y == nil || wire.Width == nil || wire.Height == nil {
+		return errors.New("face box requires numeric x, y, width, and height")
+	}
+	*b = FaceBox{X: *wire.X, Y: *wire.Y, Width: *wire.Width, Height: *wire.Height}
+	return b.Validate()
 }
 
 func (b FaceBox) Validate() error {

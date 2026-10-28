@@ -85,6 +85,11 @@ func (service *Service) photoDescriptionBinding(ctx context.Context, version sto
 // photoDescriptionInput returns the copy of the verified grid preview that a
 // provider receives, with the capability record that binds it.
 func photoDescriptionInput(ctx context.Context, catalog *store.Store, blobs *blob.Store, version store.ContentVersion, profile configuredProfile) ([]byte, media.CapabilityRecord, error) {
+	if profile.portable.Rendition.Descriptor.ID == document.FaceDetectionProviderID {
+		if err := catalog.RequireFaceDetectionSupported(ctx); err != nil {
+			return nil, media.CapabilityRecord{}, err
+		}
+	}
 	eligible, err := catalog.PhotoDescriptionEligible(ctx, version.ID)
 	if err != nil {
 		return nil, media.CapabilityRecord{}, err
@@ -188,11 +193,11 @@ func (service *Service) hasVisionTask(id string) bool {
 }
 
 func (service *Service) HasPhotoFaceDetectionProfiles() bool {
-	return service.hasVisionTask(vision.DetectionProviderID)
+	return service.hasVisionTask(document.FaceDetectionProviderID)
 }
 
 func (service *Service) PhotoFaceDetectionBackfill(ctx context.Context, logger *slog.Logger, workers int) error {
-	return service.photoVisionBackfill(ctx, logger, workers, vision.DetectionProviderID)
+	return service.photoVisionBackfill(ctx, logger, workers, document.FaceDetectionProviderID)
 }
 
 func (service *Service) visionProfileNames() []string {
@@ -218,9 +223,6 @@ func (service *Service) photoVisionBackfill(ctx context.Context, logger *slog.Lo
 	backfill := Backfill[photoDescriptionTarget]{Name: task, Page: 50, IdleDelay: time.Second, Logger: logger,
 		Key: func(value photoDescriptionTarget) string { return value.version.ID },
 		List: func(ctx context.Context, after string, limit int) ([]photoDescriptionTarget, error) {
-			if task == vision.ProviderID {
-				return service.photoDescriptionTargets(ctx, logger, after, limit, workers)
-			}
 			return service.photoVisionTargets(ctx, logger, after, limit, workers, task)
 		},
 		Process: service.admitPhotoDescription,
@@ -253,16 +255,12 @@ type photoDescriptionTarget struct {
 // so a large library cannot flood the queue. Fresh photos go to the first ready
 // profile only. Photos with restored unresolved fields also go to the other
 // ready profiles, each at most once, so no photo is described by two providers.
-func (service *Service) photoDescriptionTargets(ctx context.Context, logger *slog.Logger, after string, limit, workers int) ([]photoDescriptionTarget, error) {
-	return service.photoVisionTargets(ctx, logger, after, limit, workers, vision.ProviderID)
-}
-
 func (service *Service) photoVisionTargets(ctx context.Context, logger *slog.Logger, after string, limit, workers int, task string) ([]photoDescriptionTarget, error) {
 	names, err := service.photoDescriptionProfiles(ctx, logger, task)
 	if err != nil {
 		return nil, err
 	}
-	if task == vision.DetectionProviderID && len(names) > 1 {
+	if task == document.FaceDetectionProviderID && len(names) > 1 {
 		names = names[:1]
 	}
 	sources := make([]photoDescriptionSource, len(names))
@@ -335,11 +333,7 @@ func (service *Service) photoDescriptionProfileTargets(ctx context.Context, name
 	started := service.clock()
 	var versions []store.ContentVersion
 	var err error
-	if profile.portable.Rendition.Descriptor.ID == vision.DetectionProviderID {
-		versions, err = service.catalog.PhotoFaceDetectionTargets(ctx, profile.record.Fingerprint, profile.record.RenditionRequestFingerprint, after, room)
-	} else {
-		versions, err = service.catalog.PhotoDescriptionTargets(ctx, profile.record.Fingerprint, profile.record.RenditionRequestFingerprint, after, room, restoredOnly)
-	}
+	versions, err = service.catalog.PhotoDescriptionTargets(ctx, profile.record.Fingerprint, profile.record.RenditionRequestFingerprint, after, room, restoredOnly, profile.portable.Rendition.Descriptor.ID == document.FaceDetectionProviderID)
 	duration := service.clock().Sub(started)
 	if err != nil {
 		return photoDescriptionSource{}, err
@@ -375,7 +369,7 @@ func (service *Service) photoDescriptionProfiles(ctx context.Context, logger *sl
 				logger.Warn("photo descriptions are paused: the vision provider did not pass its probe", "profile", name, "error", err)
 			}
 		case errors.Is(err, store.ErrProcessingConsentRequired), errors.Is(err, store.ErrProcessingConsentExpired),
-			errors.Is(err, store.ErrProcessingConsentRevoked):
+			errors.Is(err, store.ErrProcessingConsentRevoked), errors.Is(err, store.ErrAuditMutationUnsupported):
 		default:
 			return nil, err
 		}

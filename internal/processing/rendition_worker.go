@@ -896,7 +896,7 @@ func (worker *RenditionWorker) classifyProviderError(
 		return worker.endProvider(ctx, claim, work, err, true)
 	}
 	if document.IsRenditionProviderErrorRetryable(err) {
-		if (work.ExecutionIdentity.Authorization.ProviderID == vision.ProviderID || work.ExecutionIdentity.Authorization.ProviderID == vision.DetectionProviderID) &&
+		if (work.ExecutionIdentity.Authorization.ProviderID == vision.ProviderID || work.ExecutionIdentity.Authorization.ProviderID == document.FaceDetectionProviderID) &&
 			providerError.Code() == document.RenditionErrorTransient && providerAttempt >= 3 {
 			return worker.endProvider(ctx, claim, work, err, false)
 		}
@@ -952,7 +952,7 @@ func (worker *RenditionWorker) classifyPublicationError(
 	if errors.Is(err, store.ErrLexicalGenerationStale) {
 		return worker.markSafeTransient(ctx, claim)
 	}
-	if errors.Is(err, store.ErrInvalidPhotoDescriptionResult) {
+	if errors.Is(err, store.ErrInvalidPhotoDescriptionResult) || errors.Is(err, store.ErrPhotoFaceLimit) || errors.Is(err, store.ErrInvalidPhotoFace) || errors.Is(err, store.ErrAuditMutationUnsupported) {
 		return worker.markFailed(ctx, claim, store.RenditionFailureTerminal, worker.clock().UTC())
 	}
 	if errors.Is(err, store.ErrProcessingConsentRequired) ||
@@ -971,6 +971,9 @@ func (worker *RenditionWorker) classifyPublicationError(
 func (worker *RenditionWorker) classifyAuthorityError(
 	ctx context.Context, claim store.RenditionJobClaim, err error,
 ) error {
+	if errors.Is(err, store.ErrAuditMutationUnsupported) {
+		return worker.markFailed(ctx, claim, store.RenditionFailureTerminal, worker.clock().UTC())
+	}
 	if errors.Is(err, store.ErrRenditionJobWaiterReselected) {
 		return nil
 	}
@@ -990,6 +993,9 @@ func (worker *RenditionWorker) classifyAuthorityError(
 func (worker *RenditionWorker) classifyRuntimeError(ctx context.Context, claim store.RenditionJobClaim, err error) error {
 	// Stale authority and a missing PDF password stop retries, yet a new plan
 	// re-admits the same job once the limits or password file allow the source again.
+	if errors.Is(err, store.ErrAuditMutationUnsupported) {
+		return worker.classifyAuthorityError(ctx, claim, err)
+	}
 	if errors.Is(err, ErrPDFPasswordRequired) {
 		return worker.markFailed(ctx, claim, store.RenditionFailurePDFPasswordRequired, worker.clock().UTC())
 	}

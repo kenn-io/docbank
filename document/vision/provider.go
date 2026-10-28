@@ -28,9 +28,8 @@ import (
 
 const AdapterContract = document.VisionAdapterContract
 const ProviderID = "compatible-vision.describe-v1"
-const DetectionProviderID = "compatible-vision.detect-faces-v1"
 
-const detectionPrompt = `Find every visible face in this photograph. Return strictly valid JSON: {"faces":[{"box":{"x":0.1,"y":0.2,"width":0.2,"height":0.3},"roll":0,"facing":1,"eyes_open":true,"smile":false}]}. Boxes use normalized coordinates in this oriented preview. Roll is radians in [-pi,pi]. Facing is a score in [0,1], with 1 facing the camera. Include every attribute key; use null when a measurement is unavailable. Do not identify people. Return {"faces":[]} when no faces are visible.`
+const detectionPrompt = `Find every visible face in this photograph. Return strictly valid JSON: {"faces":[{"box":{"x":0.1,"y":0.2,"width":0.2,"height":0.3},"roll":0,"facing":1,"eyes_open":true,"smile":false}]}. Boxes use normalized coordinates in this oriented preview. Roll is radians in [-pi,pi]. Facing is a score in [0,1], with 1 facing the camera. Use null when a measurement is unavailable. Do not identify people. Return {"faces":[]} when no faces are visible.`
 const MaxRequestTimeout = 10 * time.Minute
 
 // MaxResponseBytes bounds a provider reply, so a configured limit cannot exceed it.
@@ -69,23 +68,26 @@ type Provider struct {
 	profile    Profile
 	descriptor document.RenditionDescriptor
 	http       *http.Client
+	prompt     string
 	credential providerutil.Credential
 }
 
-// Descriptor binds model, prompt, and input policy to the provider identity.
-func Descriptor(model string, trust document.RenditionTrustBoundary) (document.RenditionDescriptor, error) {
-	return TaskDescriptor(ProviderID, model, trust)
-}
-
-// TaskDescriptor pins the selected task as well as its model and input policy.
-func TaskDescriptor(id, model string, trust document.RenditionTrustBoundary) (document.RenditionDescriptor, error) {
-	text := prompt
+func taskPrompt(id string) (string, error) {
 	switch id {
 	case ProviderID:
-	case DetectionProviderID:
-		text = detectionPrompt
+		return prompt, nil
+	case document.FaceDetectionProviderID:
+		return detectionPrompt, nil
 	default:
-		return document.RenditionDescriptor{}, errors.New("unknown vision descriptor")
+		return "", errors.New("unknown vision descriptor")
+	}
+}
+
+// Descriptor pins the selected task as well as its model and input policy.
+func Descriptor(id, model string, trust document.RenditionTrustBoundary) (document.RenditionDescriptor, error) {
+	text, err := taskPrompt(id)
+	if err != nil {
+		return document.RenditionDescriptor{}, err
 	}
 	if trust != document.RenditionTrustOperatorNetwork && trust != document.RenditionTrustHostedProvider {
 		return document.RenditionDescriptor{}, ErrInvalidTrustBoundary
@@ -108,10 +110,7 @@ func ValidateOrigin(origin string, trust document.RenditionTrustBoundary) (strin
 }
 
 func New(profile Profile, secrets providerutil.SecretResolver, client *http.Client) (*Provider, error) {
-	if profile.DescriptorID == "" {
-		profile.DescriptorID = ProviderID
-	}
-	descriptor, err := TaskDescriptor(profile.DescriptorID, profile.Model, profile.TrustBoundary)
+	descriptor, err := Descriptor(profile.DescriptorID, profile.Model, profile.TrustBoundary)
 	if err != nil {
 		return nil, err
 	}
@@ -132,7 +131,8 @@ func New(profile Profile, secrets providerutil.SecretResolver, client *http.Clie
 	}
 	copyClient := *client
 	copyClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	return &Provider{profile: profile, descriptor: descriptor, http: &copyClient, credential: credential}, nil
+	text, _ := taskPrompt(profile.DescriptorID)
+	return &Provider{prompt: text, profile: profile, descriptor: descriptor, http: &copyClient, credential: credential}, nil
 }
 func (p *Provider) Descriptor() document.RenditionDescriptor {
 	return providerutil.CloneDescriptor(p.descriptor)
@@ -286,16 +286,12 @@ func (p *Provider) Render(ctx context.Context, upload document.AuthorizedUpload,
 	if err != nil {
 		return document.RenditionResult{}, err
 	}
-	text := prompt
-	if p.descriptor.ID == DetectionProviderID {
-		text = detectionPrompt
-	}
-	raw, err := p.describe(ctx, data, text, 2048, authorization.ExpiresAt)
+	raw, err := p.describe(ctx, data, p.prompt, 2048, authorization.ExpiresAt)
 	if err != nil {
 		return document.RenditionResult{}, err
 	}
 	var value any
-	if p.descriptor.ID == DetectionProviderID {
+	if p.descriptor.ID == document.FaceDetectionProviderID {
 		value, err = ParseFaces(raw)
 	} else {
 		value, err = Parse(raw)
@@ -374,18 +370,8 @@ func ParseFaces(raw []byte) (document.FaceDetection, error) {
 	}
 	out.Faces = []document.FaceObservation{}
 	for _, entry := range entries {
-		var keys map[string]jsontext.Value
-		if json.Unmarshal(entry, &keys) != nil {
-			continue
-		}
-		complete := true
-		for _, key := range []string{"box", "roll", "facing", "eyes_open", "smile"} {
-			if _, ok := keys[key]; !ok {
-				complete = false
-			}
-		}
 		var observation document.FaceObservation
-		if !complete || json.Unmarshal(entry, &observation) != nil || observation.Validate() != nil {
+		if json.Unmarshal(entry, &observation) != nil || observation.Validate() != nil {
 			continue
 		}
 		out.Faces = append(out.Faces, observation)

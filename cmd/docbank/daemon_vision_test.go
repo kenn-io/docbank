@@ -25,7 +25,7 @@ import (
 
 func visionProcessingConfig(t *testing.T, endpoint string) config.Config {
 	t.Helper()
-	descriptor, err := vision.Descriptor("synthetic-vision", document.RenditionTrustOperatorNetwork)
+	descriptor, err := vision.Descriptor(vision.ProviderID, "synthetic-vision", document.RenditionTrustOperatorNetwork)
 	require.NoError(t, err)
 	cfg := config.Default()
 	cfg.CredentialBindings["vision"] = config.CredentialBindingConfig{EnvironmentVariable: "DOCBANK_TEST_VISION_KEY"}

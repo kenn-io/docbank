@@ -17,7 +17,6 @@ import (
 	"unicode/utf8"
 
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/document/vision"
 )
 
 // RenditionJobState is the bounded durable execution state exposed to
@@ -355,7 +354,7 @@ func (s *Store) EnqueueRenditionJob(
 		if err != nil {
 			return fmt.Errorf("joining rendition job: %w", err)
 		}
-		if request.ExplicitStart {
+		if request.ExplicitStart && request.ExecutionIdentity.Authorization.ProviderID != document.FaceDetectionProviderID {
 			if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO photo_description_explicit_waiters(waiter_id) VALUES(?)`, waiterID); err != nil {
 				return fmt.Errorf("recording explicit start: %w", err)
 			}
@@ -366,13 +365,13 @@ func (s *Store) EnqueueRenditionJob(
 		if derived {
 			// A waiter that an explicit start created stays explicit when an automatic request joins it.
 			explicit := request.ExplicitStart
-			if !explicit {
+			if !explicit && request.ExecutionIdentity.Authorization.ProviderID != document.FaceDetectionProviderID {
 				if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_description_explicit_waiters WHERE waiter_id=?)`, waiterID).Scan(&explicit); err != nil {
 					return fmt.Errorf("reading explicit start: %w", err)
 				}
 			}
 			var joinErr error
-			job, waiter, joinErr = joinPhotoDescriptionTx(ctx, tx, jobID, waiterID, request.ContentVersionID, profile.RenditionRequestFingerprint, explicit, now, request.ExecutionIdentity.Authorization.ProviderID == vision.DetectionProviderID)
+			job, waiter, joinErr = joinPhotoDescriptionTx(ctx, tx, jobID, waiterID, request.ContentVersionID, profile.RenditionRequestFingerprint, explicit, now, request.ExecutionIdentity.Authorization.ProviderID == document.FaceDetectionProviderID)
 			return joinErr
 		}
 		var alreadyActive bool
@@ -1529,22 +1528,22 @@ func (s *Store) publishRenditionJob(
 			return nil
 		}
 		if derived {
-			// One answer serves every waiter; an explicit one may replace a dismissal.
-			var explicit bool
-			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_description_explicit_waiters e JOIN rendition_job_waiters w ON w.waiter_id=e.waiter_id
- WHERE w.job_id=? AND w.state='waiting')`, claim.JobID).Scan(&explicit); err != nil {
-				return err
-			}
 			version := authorized[0].waiter.ContentVersionID
-			if executionIdentity.Authorization.ProviderID == vision.DetectionProviderID {
-				detection, err := vision.ParseFaces(result.Artifacts[0].Payload)
-				if err != nil {
-					return fmt.Errorf("%w: %w", ErrInvalidPhotoDescriptionResult, err)
+			if executionIdentity.Authorization.ProviderID == document.FaceDetectionProviderID {
+				var detection document.FaceDetection
+				if err := json.Unmarshal(result.Artifacts[0].Payload, &detection, json.RejectUnknownMembers(true)); err != nil || detection.Faces == nil {
+					return ErrInvalidPhotoDescriptionResult
 				}
 				if err := publishFaceDetectionTx(ctx, tx, version, job.RenditionRequestFingerprint, detection, at); err != nil {
 					return err
 				}
 			} else {
+				// One answer serves every waiter; an explicit one may replace a dismissal.
+				var explicit bool
+				if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_description_explicit_waiters e JOIN rendition_job_waiters w ON w.waiter_id=e.waiter_id
+ WHERE w.job_id=? AND w.state='waiting')`, claim.JobID).Scan(&explicit); err != nil {
+					return err
+				}
 				var description document.PhotoDescription
 				if err := json.Unmarshal(result.Artifacts[0].Payload, &description, json.RejectUnknownMembers(true)); err != nil {
 					return fmt.Errorf("%w: %w", ErrInvalidPhotoDescriptionResult, err)

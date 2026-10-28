@@ -27,7 +27,7 @@ func newProcessingVisionFingerprintsCommand() *cobra.Command {
 		if !canonicalSHA256(deployment) {
 			return usageError(errors.New("--deployment-fingerprint must be lowercase SHA-256"))
 		}
-		descriptor, err := vision.TaskDescriptor(task, model, document.RenditionTrustBoundary(trust))
+		descriptor, err := vision.Descriptor(task, model, document.RenditionTrustBoundary(trust))
 		if err != nil {
 			flag := "--model"
 			if errors.Is(err, vision.ErrInvalidTrustBoundary) {

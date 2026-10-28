@@ -11,33 +11,19 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
-// PhotoFaceDetectionTargets lists visible display versions missing this scan.
-// Queue state keeps concurrent starts and terminal failures out of the pass.
-func (s *Store) PhotoFaceDetectionTargets(ctx context.Context, profile, detector, after string, limit int) ([]ContentVersion, error) {
-	fingerprints, err := document.CurrentPhotoQualityFingerprints()
+// RequireFaceDetectionSupported refuses face mutations while audit authority exists.
+func (s *Store) RequireFaceDetectionSupported(ctx context.Context) error {
+	return requireFaceDetectionSupported(ctx, s.db)
+}
+func requireFaceDetectionSupported(ctx context.Context, q metadataQuerier) error {
+	active, err := auditAuthorityActiveTx(ctx, q)
 	if err != nil {
-		return nil, err
-	}
-	result := []ContentVersion{}
-	query := `SELECT ` + contentVersionCols + ` FROM content_versions WHERE version_id IN (
- SELECT v.version_id FROM visual_preview_generations g
- CROSS JOIN content_versions v ON v.version_id=g.content_version_id AND v.blob_hash=g.source_sha256
- CROSS JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id
- CROSS JOIN photo_files f ON f.node_id=n.id
- CROSS JOIN photo_assets a ON a.asset_id=f.asset_id AND a.display_file_id=f.file_id
- WHERE g.content_version_id>?2 AND g.recipe_fingerprint=?1 AND ` + photoDescriptionEligibility + ` AND g.state='ready'
- AND NOT EXISTS(SELECT 1 FROM photo_face_scans s WHERE s.content_version_id=v.version_id AND s.detector_fingerprint=?5)
- AND NOT EXISTS(SELECT 1 FROM rendition_job_waiters w JOIN rendition_jobs j ON j.job_id=w.job_id WHERE w.content_version_id=v.version_id AND w.profile_fingerprint=?3
- AND (w.state='waiting' AND NOT (j.state='failed' AND j.failure_code IN ('consent','stale_authority')) OR w.state='rejected' AND w.failure_code IN ('terminal','ambiguous')))
- ORDER BY g.content_version_id LIMIT ?4) ORDER BY version_id`
-	err = queryRows(ctx, s.db, query, []any{fingerprints.GridRecipe, after, profile, limit, detector}, func(rows *sql.Rows) error {
-		version, err := scanContentVersion(rows)
-		if err == nil {
-			result = append(result, version)
-		}
 		return err
-	})
-	return result, err
+	}
+	if active {
+		return ErrAuditMutationUnsupported
+	}
+	return nil
 }
 
 func faceScanSettledTx(ctx context.Context, tx *sql.Tx, version, detector string) (bool, error) {
@@ -51,11 +37,9 @@ func faceScanSettledTx(ctx context.Context, tx *sql.Tx, version, detector string
 func protectedDetectionFacesTx(ctx context.Context, tx *sql.Tx, version string) (map[string]bool, error) {
 	protected := map[string]bool{}
 	rows, err := tx.QueryContext(ctx, `SELECT face_id FROM person_candidate_faces WHERE content_version_id=?
- UNION SELECT key_face_id FROM persons WHERE key_face_id IS NOT NULL
- UNION SELECT j.atom FROM photo_change_receipts r,json_tree(r.before_json) j WHERE r.operation='face_decision' AND json_extract(r.before_json,'$.content_version_id')=? AND j.type='text'
- UNION SELECT j.atom FROM photo_change_receipts r,json_tree(r.after_json) j WHERE r.operation='face_decision' AND json_extract(r.before_json,'$.content_version_id')=? AND j.type='text'
- UNION SELECT j.atom FROM person_merges r,json_tree(CAST(r.moved_json AS TEXT)) j WHERE j.type='text'
- UNION SELECT j.atom FROM person_splits r,json_tree(CAST(r.receipt_json AS TEXT)) j WHERE j.type='text'`, version, version, version)
+ UNION SELECT f.face_id FROM photo_faces f JOIN persons p ON p.key_face_id=f.face_id WHERE f.content_version_id=?
+ UNION SELECT json_extract(j.value,'$.face_id') FROM photo_change_receipts r INDEXED BY photo_change_receipts_face_version,json_each(r.before_json,'$.faces') j WHERE r.operation='face_decision' AND json_extract(r.before_json,'$.content_version_id')=?
+ UNION SELECT json_extract(j.value,'$.face_id') FROM photo_change_receipts r INDEXED BY photo_change_receipts_face_version,json_each(r.after_json,'$.after.faces') j WHERE r.operation='face_decision' AND json_extract(r.before_json,'$.content_version_id')=?`, version, version, version, version)
 	if err != nil {
 		return nil, err
 	}
@@ -79,12 +63,8 @@ func faceBoxOverlap(a, b document.FaceBox) float64 {
 
 // publishFaceDetectionTx reconciles a scan and commits its completion together.
 func publishFaceDetectionTx(ctx context.Context, tx *sql.Tx, version, detector string, result document.FaceDetection, at time.Time) error {
-	active, err := auditAuthorityActiveTx(ctx, tx)
-	if err != nil {
+	if err := requireFaceDetectionSupported(ctx, tx); err != nil {
 		return err
-	}
-	if active {
-		return ErrAuditMutationUnsupported
 	}
 	settled, err := faceScanSettledTx(ctx, tx, version, detector)
 	if err != nil || settled {

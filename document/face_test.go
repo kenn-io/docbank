@@ -1,11 +1,32 @@
 package document
 
 import (
+	"encoding/json/v2"
 	"math"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestFaceBoxJSONCoordinates(t *testing.T) {
+	t.Parallel()
+	var box FaceBox
+	require.NoError(t, json.Unmarshal([]byte(`{"x":0,"y":0,"width":0.2,"height":0.3}`), &box))
+	require.Equal(t, FaceBox{Width: .2, Height: .3}, box)
+	for _, raw := range []string{
+		`{"y":0,"width":0.2,"height":0.3}`,
+		`{"x":0,"width":0.2,"height":0.3}`,
+		`{"x":0,"y":0,"height":0.3}`,
+		`{"x":0,"y":0,"width":0.2}`,
+		`{"x":null,"y":0,"width":0.2,"height":0.3}`,
+		`{"x":0,"y":null,"width":0.2,"height":0.3}`,
+		`{"x":0,"y":0,"width":null,"height":0.3}`,
+		`{"x":0,"y":0,"width":0.2,"height":null}`,
+		`{"x":"0","y":0,"width":0.2,"height":0.3}`,
+	} {
+		require.Error(t, json.Unmarshal([]byte(raw), &box), raw)
+	}
+}
 
 func TestFaceBoxValidation(t *testing.T) {
 	t.Parallel()
