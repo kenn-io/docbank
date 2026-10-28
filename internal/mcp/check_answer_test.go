@@ -23,9 +23,9 @@ func TestCheckAnswerTransports(t *testing.T) {
 		t.Run(transport, func(t *testing.T) {
 			resolved := decodeResult(t, exportExchange(t, server, transport, "tools/call", map[string]any{"name": "resolve_text_citation", "arguments": citation}))
 			require.Equal(t, `$1,205`, objectField(t, resolved, "structuredContent")["text"])
-			for _, tc := range []struct{ answer, status string }{
-				{"Invoice was $1,250 [1]", "ungrounded"},
-				{"Invoice was $1,205 [1]", "grounded"},
+			for _, tc := range []struct{ answer, status, figureStatus string }{
+				{"Invoice was $1,250 [1]", "ungrounded", "missing"},
+				{"Invoice was $1,205 [1]", "grounded", "found"},
 			} {
 				result := decodeResult(t, exportExchange(t, server, transport, "tools/call", map[string]any{
 					"name": "check_answer", "arguments": map[string]any{"answer": tc.answer, "citations": []any{citation}},
@@ -39,6 +39,7 @@ func TestCheckAnswerTransports(t *testing.T) {
 				figure, ok := figures[0].(map[string]any)
 				require.True(t, ok)
 				require.Equal(t, tc.answer[12:18], figure["text"])
+				require.Equal(t, tc.figureStatus, figure["status"])
 			}
 		})
 	}

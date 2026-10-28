@@ -392,24 +392,22 @@ retain their existing behavior.
 
 ## Check figures in an answer
 
-`check_answer` checks numbers and identifiers in a plain-text `answer` against an ordered array of saved `citations`. It is a default read-only tool on stdio and HTTP. Supply 1–16,000 Unicode code points, 1–8 citations, at most 512 figures, and at most 512 marker references. Invalid inputs are rejected before reading the vault.
+`check_answer` compares numbers and identifiers in a plain-text `answer` with 1–8 saved `citations`, on stdio and HTTP. Supply 1–16,000 Unicode code points, at most 512 figures, and at most 512 marker references. Invalid input is rejected before reading the vault.
 
-Use `[1]` or `[1, 2]` to select citation positions. Each marker covers every figure since the previous marker. Markers separated only by whitespace share that scope, so `[1][2]` checks against both citations. Figures after the last marker have no scope. With no markers, every figure uses all citations. Marker indexes have one or two digits; a closing bracket followed by `(` makes the bracketed text literal.
+Use `[1]` or `[1, 2]` for citation positions. A marker covers every figure since the previous marker; whitespace-adjacent markers share that scope. Figures after the last marker have no scope. With no markers, all citations apply. Markers use one or two digits; `[20](url)` stays literal.
 
-For example, `Invoice was $1,250 [1]` is `ungrounded` against a citation containing `$1,205`, and `grounded` against `$1,250`.
+A figure is a word containing a digit. Letters, digits, and marks form atoms, joined by `-`, `_`, `/`, or `.` between atom characters. Three-digit comma or space groups stay whole. Only a literal space, NBSP, or narrow NBSP joins groups; tabs and line breaks separate them. `5,6,7` is three figures. Comparison ignores case, punctuation escapes, Unicode dash variants, and grouping separators, so `1,200`, `1 200`, and `1200` match. Attached currency symbols, `%`, and leading minus signs stay part of the figure.
 
-The result reports each figure's kind, code-point offsets, original text, single comparison `value`, scoped citations, matches, and status. A figure is `found` if any scoped citation contains it. Otherwise it is `unverifiable` if the scope is empty or includes an unavailable citation, and `missing` if all scoped citations resolved. Citation statuses and text digests are included; cited text stays private. Use `resolve_text_citation` to read it.
+For example, `Invoice was $1,250 [1]` is `ungrounded` against `$1,205`, and `grounded` against `$1,250`. Results include literal code-point offsets, original text, scoped citations, matches, unknown markers, and citation statuses and text digests. A figure is `found` if any scoped citation contains it; otherwise it is `unverifiable` if its scope is empty or includes unavailable evidence, and `missing` otherwise.
 
-The overall status is:
+- `ungrounded`: a figure is missing or a marker selects an unknown citation.
+- `incomplete`: a figure is unverifiable.
+- `no_figures`: the answer has no figures.
+- `grounded`: every figure was found. This confirms occurrence, not subject or other claims.
 
-- `ungrounded` if a figure is missing or a marker selects an unknown citation.
-- `incomplete` if a figure is unverifiable or any citation is unavailable.
-- `no_figures` if there are no figures and all citations resolved.
-- `grounded` otherwise. This confirms that figures occur in the text; it does not establish their subject or the truth of other claims.
+Bare URLs, emails, and citation markers are ignored only in the answer. Numbered lists count their ordinals as figures; send unnumbered prose. Ranges and dates compare whole: `3–5` matches `3-5`, but `5` is missing against `3-5`. Currency and units stay distinct: `1250` is missing against `$1,250`, `20` against `20kg`, and `$5` against `€5`. Decimal spelling stays significant. Plain-space columns such as `5 250` read as one grouped number, as does `2 100` in an answer. Both sides undo punctuation escapes, including literal backslashes before punctuation in plain-text email bodies. Arithmetic, unit conversion, and date and currency equivalence are outside this check.
 
-Numbers preserve signs and leading zeros. Valid three-digit grouping compares by value, so `1,200` and `1 200` match `1200`, and `.5` matches `0.5`. Only a literal space, NBSP, or narrow NBSP joins digit groups; tabs and line breaks separate figures. A comma joins digits only in valid three-digit grouping, so `5,6,7` is three figures. Digit-bearing identifiers compare whole, ignoring case and keeping affixes: `20kg`, `$5`, `€5`, and `K50` stay distinct from `20`, `5`, and `K5`.
-
-Bare URLs, emails, line-leading list ordinals, and citation markers are ignored only in the answer. Cited text keeps their figures, including `Reference [20]` and `1250. Paid in full`. The checker undoes punctuation escapes in cited text and normalizes Unicode spaces. Cited text is read as the producer's Markdown, so a literal backslash before punctuation in a plain-text email body is read as an escape. It takes the answer literally, including Markdown and entities. Send `Balance -20 [1]` as plain text. It performs no arithmetic, unit conversion, alternative date or currency normalization, or joining of spaced identifiers. Results use private cache scope and zero TTL. Transient citation failures return tool errors so callers can retry.
+Permanent resolver failures (`citation_unavailable`, `invalid_citation_range`, `citation_limit`, and `citation_integrity`) appear per citation; unmatched figures scoped to them are unverifiable. Other resolver failures return tool errors. Cited text stays private; use `resolve_text_citation` to read it. Results use private cache scope and zero TTL.
 
 ## Read complete retained sections
 

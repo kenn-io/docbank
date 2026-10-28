@@ -46,10 +46,15 @@ func checkAnswer(ctx context.Context, lease *daemonLease, raw []byte) (checkAnsw
 				quote, err := c.ResolveTextCitation(ctx, citation)
 				if err != nil {
 					facts, ok := daemonconn.ExtractProblemFacts(err)
-					if !ok || !checkAnswerCitationProblem(facts.Code) {
+					if !ok {
 						return nil, err
 					}
-					entry.Err = facts.Code
+					switch facts.Code {
+					case "citation_unavailable", "invalid_citation_range", "citation_limit", "citation_integrity":
+						entry.Err = facts.Code
+					default:
+						return nil, err
+					}
 				} else {
 					entry.Text, entry.TextSHA256 = quote.Text, quote.TextSHA256
 				}
@@ -64,13 +69,4 @@ func checkAnswer(ctx context.Context, lease *daemonLease, raw []byte) (checkAnsw
 		return checkAnswerOutput{}, err
 	}
 	return checkAnswerOutput{privateCache: newPrivateCache(), Report: answer.Check(resolved)}, nil
-}
-
-func checkAnswerCitationProblem(code string) bool {
-	switch code {
-	case "citation_unavailable", "invalid_citation_range", "citation_limit", "citation_integrity":
-		return true
-	default:
-		return false
-	}
 }
