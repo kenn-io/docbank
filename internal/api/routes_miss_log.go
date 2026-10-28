@@ -31,7 +31,7 @@ func missLogFailure() error {
 }
 
 func registerMissLogRoutes(api huma.API, d Deps, g *OperationGate) {
-	huma.Register(api, huma.Operation{OperationID: "recordMiss", Method: http.MethodPost, Path: "/api/v1/miss-log", Summary: "Record a submitted empty search", DefaultStatus: http.StatusNoContent}, func(ctx context.Context, in *struct{ Body misslog.Request }) (*struct{}, error) {
+	huma.Register(api, huma.Operation{OperationID: "recordMiss", Method: http.MethodPost, Path: "/api/v1/miss-log", Summary: "Record a submitted empty search", DefaultStatus: http.StatusNoContent, MaxBodyBytes: 128 << 10}, func(ctx context.Context, in *struct{ Body misslog.Request }) (*struct{}, error) {
 		d.MissLog.Record(ctx, in.Body)
 		return nil, nil
 	})

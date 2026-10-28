@@ -21,7 +21,7 @@ func (c *Connection) DeleteMissLogRecord(ctx context.Context, id string) error {
 	return err
 }
 func (c *Connection) DeleteMissLog(ctx context.Context) error {
-	_, err := c.API().DeleteMissLog(ctx, &apiclient.DeleteMissLogRequestOptions{})
+	_, err := c.API().DeleteMissLog(ctx)
 	return err
 }
 

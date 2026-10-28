@@ -9826,7 +9826,6 @@ components:
           maxLength: 256
           type: string
         query:
-          maxLength: 8192
           type: string
         requested_mode:
           enum:
@@ -9902,7 +9901,6 @@ components:
           maxLength: 256
           type: string
         query:
-          maxLength: 8192
           type: string
         requested_mode:
           enum:

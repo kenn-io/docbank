@@ -111,7 +111,7 @@ func TestMissLogMCPEmptyScopeUsesDaemonAndEmbeddedReader(t *testing.T) {
 	f.addFile(t, "synthetic.txt", "synthetic content")
 	profileName, profile, err := processing.NewSuppliedMediaProfile(f.catalog, f.blobs, "test:operator")
 	require.NoError(t, err)
-	service, err := processing.NewService(processing.ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: api.NewOperationGate(), SpoolDirectory: filepath.Join(t.TempDir(), "spool"), Profiles: map[string]processing.ProfileConfig{profileName: profile}})
+	service, err := processing.NewService(t.Context(), processing.ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: api.NewOperationGate(), SpoolDirectory: filepath.Join(t.TempDir(), "spool"), Profiles: map[string]processing.ProfileConfig{profileName: profile}})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, service.Shutdown(context.Background())) })
 	cfg := config.Default()

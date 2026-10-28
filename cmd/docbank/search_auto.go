@@ -26,8 +26,6 @@ type automaticSearchOutcome struct {
 	report  *api.DocumentSearchReport
 	request api.DocumentSearchRequest
 	receipt misslog.Request
-	profile string
-	binding string
 	reason  string
 	err     error
 }
@@ -71,14 +69,12 @@ func tryAutomaticSearch(ctx context.Context, c *daemonconn.Connection, query str
 			BindingID: candidate.Binding, Limit: limit, Scope: &api.DocumentSearchScope{Kind: "all_live"}}
 		report, searchErr := c.SearchDocuments(ctx, request)
 		if searchErr == nil {
-			receipt := api.DocumentSearchMiss(query, candidate.Profile, request, report)
-			return automaticSearchOutcome{report: &report, request: request, receipt: receipt}, nil
+			return automaticSearchOutcome{report: &report, request: request}, nil
 		}
 		outcome, err := automaticSearchFallback(ctx, searchErr)
 		if err != nil {
 			return automaticSearchOutcome{}, err
 		}
-		outcome.profile, outcome.binding = candidate.Profile, candidate.Binding
 		outcome.receipt = misslog.Request{Query: query, RequestedMode: "hybrid", ActualMode: "lexical",
 			Profile: candidate.Profile, BindingID: candidate.Binding, Degradations: []string{outcome.reason}}
 		if first.reason == "" {

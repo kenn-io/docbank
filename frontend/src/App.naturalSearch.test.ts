@@ -1053,6 +1053,7 @@ it("shows the empty-population note and reports a submitted search once", async 
       },
     ],
     files: [file],
+    tagSearch: { hits: [], limit: 1000, truncated: false, tag_id: tagID },
     rerankReport: report("hybrid", [], { outcome: "skipped", candidate_count: 0 }),
     baseReport: {
       ...report("hybrid", []),
@@ -1066,16 +1067,22 @@ it("shows the empty-population note and reports a submitted search once", async 
   });
   render(App);
   await screen.findAllByText("empty.txt");
+  await fireEvent.click(
+    await screen.findByRole("combobox", { name: "Browse or filter by tag: All tags" }),
+  );
+  await fireEvent.click(screen.getByRole("option", { name: "reviewed (1)" }));
   await fireEvent.click(screen.getByRole("checkbox", { name: "Rerank results" }));
   await submitSearch("nothing");
   await screen.findByText("No documents match the current filter.");
   expect(harness.postBodies).toHaveLength(1);
   expect(searchRun).toHaveBeenCalledExactlyOnceWith("short-lived", "hybrid", true);
   await waitFor(() => expect(harness.misses).toHaveLength(1));
+  expect(harness.postBodies[0]?.scope).toEqual({ kind: "all_live", filters: { tag_id: tagID } });
   expect(harness.misses[0]).toMatchObject({
     query: "nothing",
     requested_mode: "hybrid",
     actual_mode: "hybrid",
+    filters: { tag_id: tagID },
     document_count: 0,
   });
   await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
@@ -1085,7 +1092,7 @@ it("shows the empty-population note and reports a submitted search once", async 
   expect(failure).not.toHaveBeenCalled();
 });
 
-it("keeps a non-401 processing failure on the legacy GET path", async () => {
+it("records an empty lexical fallback after a processing failure", async () => {
   const failure = vi.spyOn(actions, "reportFailure").mockImplementation(() => {});
   const file = node(2, "fallback.txt", baseVersion);
   const harness = installHarness({
@@ -1103,7 +1110,7 @@ it("keeps a non-401 processing failure on the legacy GET path", async () => {
     baseSearchStatus: 500,
     legacySearchStatus: undefined,
     tagSearch: {
-      hits: [{ node: file, path: file.path, match: "name" }],
+      hits: [],
       limit: 1000,
       truncated: false,
     },
@@ -1112,11 +1119,19 @@ it("keeps a non-401 processing failure on the legacy GET path", async () => {
   await screen.findAllByText("fallback.txt");
   await fireEvent.click(screen.getByRole("checkbox", { name: "Rerank results" }));
   await submitSearch("fallback");
-  await screen.findByText("/fallback.txt");
   await screen.findByText(/Natural-language search unavailable/);
   expect(screen.getByRole("combobox", { name: "Search syntax: Plain words" })).toBeTruthy();
   expect(screen.queryByRole("checkbox", { name: "Rerank results" })).toBeNull();
   expect(harness.postBodies).toHaveLength(1);
+  await waitFor(() => expect(harness.misses).toHaveLength(1));
+  expect(harness.misses[0]).toMatchObject({
+    query: "fallback",
+    requested_mode: "hybrid",
+    actual_mode: "lexical",
+  });
+  expect(harness.misses[0]?.degradations).toEqual([
+    screen.getByText(/Natural-language search unavailable/).textContent,
+  ]);
   expect(
     harness.fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/search?"))
       .length,
