@@ -1744,6 +1744,47 @@ origin as an additional fact instead.
 The encoded request body may be at most 1 MiB (1,048,576 bytes). A larger body
 receives `413` before the append runs.
 
+### Document validity declarations
+
+Owners can record that one live file replaces another, independently of content
+versions and provenance facts. These routes do not change search order.
+
+| Route | Behavior | Revision guarded by `If-Match` |
+| --- | --- | --- |
+| `PUT /nodes/{id}/supersedes/{predecessor_id}` | Declare that `{id}` replaces `{predecessor_id}`; body `{"note": "optional explanation"}` | Predecessor |
+| `DELETE /nodes/{id}/supersedes/{predecessor_id}` | Remove the link; no request body | Predecessor |
+| `PUT /nodes/{id}/effective-window` | Set `effective_from`, `effective_to`, or both | Node |
+| `DELETE /nodes/{id}/effective-window` | Clear the window; no request body | Node |
+| `GET /nodes/{id}/validity?as_of=YYYY-MM-DD` | Inspect the node, direct live links, window and evaluated standing | None |
+
+Mutation responses contain `node` and `changed`, with an ETag matching the
+returned node revision. The receipt describes the guarded node: the predecessor
+for a link, or the node whose effective window changed.
+A changed declaration advances the guarded revision
+once. Repeating the same declaration, removing an absent link, or clearing an
+absent window leaves it unchanged, but still requires the current revision.
+Missing `If-Match` returns `428`; a malformed value returns `400`; a stale
+revision returns `412`.
+
+Dates are inclusive calendar dates in `YYYY-MM-DD` form. Omit a boundary to
+leave that end open; use DELETE to clear both. The inspection date defaults to
+the daemon host's local date and is echoed in `as_of`. The response `state` is
+`not_yet_effective` when the node's start is later than that date, then
+`superseded` when a live successor has started, then `expired` when the node's
+end has passed, otherwise `current`. An undated successor applies at every
+inspection date and sets `undated` to true. A successor whose effective window
+has ended still marks its predecessor superseded once its start applies, unless
+the predecessor is itself not yet effective.
+
+Links require distinct live file endpoints. Notes may contain at most 1024
+UTF-8 bytes. Each node may have at most 16 direct predecessors and successors;
+cycles are rejected. Graph validation visits
+at most 4096 nodes and fails explicitly on overflow. Invalid
+declarations return `422` with code `invalid_supersession`. Links remain stored
+when an endpoint is trashed, but trashed successors do not change standing.
+Purging an endpoint removes its links. Audited vaults reject declaration
+mutations with `409` and code `audit_mutation_unsupported`.
+
 ### Email metadata and exact parts
 
 Email files keep their original bytes as the immutable content version. The

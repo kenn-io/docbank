@@ -6265,6 +6265,99 @@ func (c *Client) ReplaceNodeContent(ctx context.Context, options *ReplaceNodeCon
 	return responseParser(ctx, resp)
 }
 
+// DeleteEffectiveWindow Clear a document effective window
+func (c *Client) DeleteEffectiveWindow(ctx context.Context, options *DeleteEffectiveWindowRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DeleteEffectiveWindowResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/nodes/{id}/effective-window",
+		Method:     "DELETE",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*DeleteEffectiveWindowResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(DeleteEffectiveWindowResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "DeleteEffectiveWindowResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[DeleteEffectiveWindowErrorResponse](resp, "DeleteEffectiveWindowErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes/{id}/effective-window")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// PutEffectiveWindow Set a document effective window
+func (c *Client) PutEffectiveWindow(ctx context.Context, options *PutEffectiveWindowRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PutEffectiveWindowResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/nodes/{id}/effective-window",
+		Method:      "PUT",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*PutEffectiveWindowResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(PutEffectiveWindowResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "PutEffectiveWindowResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[PutEffectiveWindowErrorResponse](resp, "PutEffectiveWindowErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes/{id}/effective-window")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ListNodeProvenance List immutable origin facts for one file node
 func (c *Client) ListNodeProvenance(ctx context.Context, options *ListNodeProvenanceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListNodeProvenanceResponse, error) {
 	var err error
@@ -6457,6 +6550,99 @@ func (c *Client) RevertNodeContent(ctx context.Context, options *RevertNodeConte
 	return responseParser(ctx, resp)
 }
 
+// DeleteSupersession Remove a document replacement
+func (c *Client) DeleteSupersession(ctx context.Context, options *DeleteSupersessionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DeleteSupersessionResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/nodes/{id}/supersedes/{predecessor_id}",
+		Method:     "DELETE",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*DeleteSupersessionResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(DeleteSupersessionResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "DeleteSupersessionResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[DeleteSupersessionErrorResponse](resp, "DeleteSupersessionErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes/{id}/supersedes/{predecessor_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// PutSupersession Declare a document replacement
+func (c *Client) PutSupersession(ctx context.Context, options *PutSupersessionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PutSupersessionResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/nodes/{id}/supersedes/{predecessor_id}",
+		Method:      "PUT",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*PutSupersessionResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(PutSupersessionResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "PutSupersessionResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[PutSupersessionErrorResponse](resp, "PutSupersessionErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes/{id}/supersedes/{predecessor_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ListNodeTags List tags assigned to a node
 func (c *Client) ListNodeTags(ctx context.Context, options *ListNodeTagsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListNodeTagsResponse, error) {
 	var err error
@@ -6638,6 +6824,57 @@ func (c *Client) TrashNode(ctx context.Context, options *TrashNodeRequestOptions
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes/{id}/trash")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetNodeValidity Inspect declared document validity
+func (c *Client) GetNodeValidity(ctx context.Context, options *GetNodeValidityRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetNodeValidityResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"as_of": {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/nodes/{id}/validity",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetNodeValidityResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetNodeValidityResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetNodeValidityResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetNodeValidityErrorResponse](resp, "GetNodeValidityErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes/{id}/validity")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -19486,6 +19723,86 @@ func (o *ReplaceNodeContentRequestOptions) GetHeader() (map[string]string, error
 	return headers, err
 }
 
+// DeleteEffectiveWindowRequestOptions is the options needed to make a request to DeleteEffectiveWindow.
+type DeleteEffectiveWindowRequestOptions struct {
+	PathParams *DeleteEffectiveWindowPath
+	Header     *DeleteEffectiveWindowHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *DeleteEffectiveWindowRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *DeleteEffectiveWindowRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *DeleteEffectiveWindowRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *DeleteEffectiveWindowRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// PutEffectiveWindowRequestOptions is the options needed to make a request to PutEffectiveWindow.
+type PutEffectiveWindowRequestOptions struct {
+	PathParams *PutEffectiveWindowPath
+	Body       *PutEffectiveWindowBody
+	Header     *PutEffectiveWindowHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *PutEffectiveWindowRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *PutEffectiveWindowRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *PutEffectiveWindowRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *PutEffectiveWindowRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
 // ListNodeProvenanceRequestOptions is the options needed to make a request to ListNodeProvenance.
 type ListNodeProvenanceRequestOptions struct {
 	PathParams *ListNodeProvenancePath
@@ -19646,6 +19963,86 @@ func (o *RevertNodeContentRequestOptions) GetHeader() (map[string]string, error)
 	return headers, err
 }
 
+// DeleteSupersessionRequestOptions is the options needed to make a request to DeleteSupersession.
+type DeleteSupersessionRequestOptions struct {
+	PathParams *DeleteSupersessionPath
+	Header     *DeleteSupersessionHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *DeleteSupersessionRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *DeleteSupersessionRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *DeleteSupersessionRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *DeleteSupersessionRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// PutSupersessionRequestOptions is the options needed to make a request to PutSupersession.
+type PutSupersessionRequestOptions struct {
+	PathParams *PutSupersessionPath
+	Body       *PutSupersessionBody
+	Header     *PutSupersessionHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *PutSupersessionRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *PutSupersessionRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *PutSupersessionRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *PutSupersessionRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
 // ListNodeTagsRequestOptions is the options needed to make a request to ListNodeTags.
 type ListNodeTagsRequestOptions struct {
 	PathParams *ListNodeTagsPath
@@ -19796,6 +20193,44 @@ func (o *TrashNodeRequestOptions) GetHeader() (map[string]string, error) {
 	var headers map[string]string
 	err = json.Unmarshal(encoded, &headers)
 	return headers, err
+}
+
+// GetNodeValidityRequestOptions is the options needed to make a request to GetNodeValidity.
+type GetNodeValidityRequestOptions struct {
+	PathParams *GetNodeValidityPath
+	Query      *GetNodeValidityQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetNodeValidityRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetNodeValidityRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetNodeValidityRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetNodeValidityRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
 }
 
 // VerifyNodeContentRequestOptions is the options needed to make a request to VerifyNodeContent.
@@ -25769,6 +26204,14 @@ type ReplaceNodeContentHeaders struct {
 	XDocbankBlobSize int64 `json:"X-Docbank-Blob-Size"`
 }
 
+type DeleteEffectiveWindowHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
+type PutEffectiveWindowHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
 type AppendNodeProvenanceHeaders struct {
 	IfMatch string `json:"If-Match"`
 }
@@ -25778,6 +26221,14 @@ type RestoreNodeHeaders struct {
 }
 
 type RevertNodeContentHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
+type DeleteSupersessionHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
+type PutSupersessionHeaders struct {
 	IfMatch string `json:"If-Match"`
 }
 
@@ -26148,6 +26599,14 @@ type ReplaceNodeContentPath struct {
 	ID int64 `json:"id"`
 }
 
+type DeleteEffectiveWindowPath struct {
+	ID int64 `json:"id"`
+}
+
+type PutEffectiveWindowPath struct {
+	ID int64 `json:"id"`
+}
+
 type ListNodeProvenancePath struct {
 	ID int64 `json:"id"`
 }
@@ -26162,6 +26621,16 @@ type RestoreNodePath struct {
 
 type RevertNodeContentPath struct {
 	ID int64 `json:"id"`
+}
+
+type DeleteSupersessionPath struct {
+	ID            int64 `json:"id"`
+	PredecessorID int64 `json:"predecessor_id"`
+}
+
+type PutSupersessionPath struct {
+	ID            int64 `json:"id"`
+	PredecessorID int64 `json:"predecessor_id"`
 }
 
 type ListNodeTagsPath struct {
@@ -26179,6 +26648,10 @@ type AssignTagPath struct {
 }
 
 type TrashNodePath struct {
+	ID int64 `json:"id"`
+}
+
+type GetNodeValidityPath struct {
 	ID int64 `json:"id"`
 }
 
@@ -26693,9 +27166,13 @@ type MoveNodeBody = MoveNodeRequest
 
 type ReplaceNodeContentBody = runtime.File
 
+type PutEffectiveWindowBody = EffectiveWindowRequest
+
 type AppendNodeProvenanceBody = ProvenanceAppendRequest
 
 type RevertNodeContentBody = RevertNodeContentRequest
+
+type PutSupersessionBody = SupersessionRequest
 
 type PruneNodeContentVersionsBody = VersionPruneRequest
 
@@ -27088,6 +27565,11 @@ type ListNodeProvenanceQuery struct {
 type ListNodeTagsQuery struct {
 	Limit  *int64 `json:"limit,omitempty"`
 	Offset *int64 `json:"offset,omitempty"`
+}
+
+type GetNodeValidityQuery struct {
+	// AsOf Evaluation date (YYYY-MM-DD); defaults to the daemon's local calendar date.
+	AsOf *string `json:"as_of,omitempty"`
 }
 
 type ListContentVersionsQuery struct {
@@ -27850,6 +28332,14 @@ type ReplaceNodeContentResponse = api.ContentReplacementReceipt
 
 type ReplaceNodeContentErrorResponse = Error
 
+type DeleteEffectiveWindowResponse = api.ValidityReceipt
+
+type DeleteEffectiveWindowErrorResponse = Error
+
+type PutEffectiveWindowResponse = api.ValidityReceipt
+
+type PutEffectiveWindowErrorResponse = Error
+
 type ListNodeProvenanceResponse = api.ProvenancePage
 
 type ListNodeProvenanceErrorResponse = Error
@@ -27866,6 +28356,14 @@ type RevertNodeContentResponse = api.ContentReversionReceipt
 
 type RevertNodeContentErrorResponse = Error
 
+type DeleteSupersessionResponse = api.ValidityReceipt
+
+type DeleteSupersessionErrorResponse = Error
+
+type PutSupersessionResponse = api.ValidityReceipt
+
+type PutSupersessionErrorResponse = Error
+
 type ListNodeTagsResponse = api.TagPage
 
 type ListNodeTagsErrorResponse = Error
@@ -27881,6 +28379,10 @@ type AssignTagErrorResponse = Error
 type TrashNodeResponse = api.Node
 
 type TrashNodeErrorResponse = Error
+
+type GetNodeValidityResponse = api.NodeValidity
+
+type GetNodeValidityErrorResponse = Error
 
 type VerifyNodeContentResponse = api.ContentVerification
 
@@ -29186,6 +29688,8 @@ type DuplicatePage = api.DuplicatePage
 
 type DuplicateReference = api.DuplicateReference
 
+type EffectiveWindowRequest = api.EffectiveWindowRequest
+
 type EmailAddressV1 = document.EmailAddressV1
 
 type EmailAlternativeV1 = document.EmailAlternativeV1
@@ -29538,6 +30042,8 @@ type NativeTextPage = pdfproduction.NativeTextPage
 type Node = api.Node
 
 type NodePage = api.NodePage
+
+type NodeValidity = api.NodeValidity
 
 type NumberedFooter = pdfproduction.NumberedFooter
 
@@ -30353,6 +30859,10 @@ type StorageStoreStatus = api.StorageStoreStatus
 
 type Summary = report.Summary
 
+type SupersessionLink = api.SupersessionLink
+
+type SupersessionRequest = api.SupersessionRequest
+
 type Tag = api.Tag
 
 type TagAssignmentReceipt = api.TagAssignmentReceipt
@@ -30419,6 +30929,8 @@ type UpdatePhotoAlbumRequest = api.UpdatePhotoAlbumRequest
 type UpdateSavedQueryRequest = api.SavedQueryPatch
 
 type UploadReceipt = api.UploadReceipt
+
+type ValidityReceipt = api.ValidityReceipt
 
 type VaultInfo = api.VaultInfo
 

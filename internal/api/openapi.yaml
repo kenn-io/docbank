@@ -5179,6 +5179,25 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    EffectiveWindowRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/EffectiveWindowRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        effective_from:
+          type: string
+        effective_to:
+          type: string
+      type: object
+      x-go-type: api.EffectiveWindowRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     EmailAddressV1:
       additionalProperties: false
       properties:
@@ -9874,6 +9893,53 @@ components:
         - offset
       type: object
       x-go-type: api.NodePage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    NodeValidity:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/NodeValidity.json
+          format: uri
+          readOnly: true
+          type: string
+        as_of:
+          type: string
+        effective_from:
+          type: string
+        effective_to:
+          type: string
+        node:
+          $ref: "#/components/schemas/Node"
+        predecessors:
+          items:
+            $ref: "#/components/schemas/SupersessionLink"
+          type: array
+        state:
+          enum:
+            - current
+            - superseded
+            - expired
+            - not_yet_effective
+          type: string
+        successors:
+          items:
+            $ref: "#/components/schemas/SupersessionLink"
+          type: array
+        undated:
+          type: boolean
+      required:
+        - node
+        - as_of
+        - state
+        - undated
+        - predecessors
+        - successors
+      type: object
+      x-go-type: api.NodeValidity
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -19901,6 +19967,46 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/report
         name: report
+    SupersessionLink:
+      additionalProperties: false
+      properties:
+        note:
+          type: string
+        predecessor_id:
+          format: int64
+          type: integer
+        recorded_at:
+          type: string
+        successor_id:
+          format: int64
+          type: integer
+      required:
+        - successor_id
+        - predecessor_id
+        - note
+        - recorded_at
+      type: object
+      x-go-type: api.SupersessionLink
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    SupersessionRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/SupersessionRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        note:
+          type: string
+      type: object
+      x-go-type: api.SupersessionRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     Tag:
       additionalProperties: false
       properties:
@@ -20776,6 +20882,28 @@ components:
         - computed_size
       type: object
       x-go-type: api.UploadReceipt
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    ValidityReceipt:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ValidityReceipt.json
+          format: uri
+          readOnly: true
+          type: string
+        changed:
+          type: boolean
+        node:
+          $ref: "#/components/schemas/Node"
+      required:
+        - node
+        - changed
+      type: object
+      x-go-type: api.ValidityReceipt
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -25408,6 +25536,81 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Replace a file's content with a new immutable head
+  /api/v1/nodes/{id}/effective-window:
+    delete:
+      description: If-Match guards the node revision.
+      operationId: deleteEffectiveWindow
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidityReceipt"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Clear a document effective window
+    put:
+      description: Dates are inclusive calendar dates; If-Match guards the node revision.
+      operationId: putEffectiveWindow
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EffectiveWindowRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidityReceipt"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Set a document effective window
   /api/v1/nodes/{id}/provenance:
     get:
       description: Returns newest-ingest-first provenance, including superseded facts. The node and its live path come from the same read snapshot; trashed nodes have no path.
@@ -25565,6 +25768,95 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Create a new head from one of the file's prior immutable versions
+  /api/v1/nodes/{id}/supersedes/{predecessor_id}:
+    delete:
+      description: If-Match guards the predecessor's revision.
+      operationId: deleteSupersession
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+        - in: path
+          name: predecessor_id
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidityReceipt"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Remove a document replacement
+    put:
+      description: If-Match guards the predecessor's revision.
+      operationId: putSupersession
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+        - in: path
+          name: predecessor_id
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SupersessionRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidityReceipt"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Declare a document replacement
   /api/v1/nodes/{id}/tags:
     get:
       operationId: listNodeTags
@@ -25715,6 +26007,38 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Move a node and its subtree to the trash
+  /api/v1/nodes/{id}/validity:
+    get:
+      operationId: getNodeValidity
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+        - description: Evaluation date (YYYY-MM-DD); defaults to the daemon's local calendar date.
+          explode: false
+          in: query
+          name: as_of
+          schema:
+            description: Evaluation date (YYYY-MM-DD); defaults to the daemon's local calendar date.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NodeValidity"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Inspect declared document validity
   /api/v1/nodes/{id}/verify:
     post:
       description: Requires If-Match from a prior node response. Returns catalog identity and a fresh read through the mixed loose/packed store; a concurrent node change returns 412.
