@@ -22,16 +22,12 @@ full. The report is `truncated` when either search omitted a match.
 
 Profiles and query bindings are tried in ascending name order until one
 succeeds. A failure that could differ by binding moves on to the next pair:
-missing consent, `processing_profile_unavailable`,
+missing consent, `processing_failed`, `processing_profile_unavailable`,
 `stale_index`, or `not_found` from a binding whose vector index is not built. A failure of the whole source scope, such as
 `stale_version` or `scope_too_large`, stops at once. The CLI never silently
 truncates the semantic population; more than 4,096 live versions falls back
 with `scope_too_large`. When every pair fails, the command reports the first
 failure reason.
-
-For a nonempty scope with no usable embedding index,
-`answer_question` reports `INCOMPLETE_COVERAGE` with `semantic_unavailable` when
-the search finds no match.
 
 Some requests never try hybrid search and report no degradation:
 
