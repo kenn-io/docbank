@@ -10,7 +10,6 @@ import (
 	"uuid"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/require"
 
@@ -47,7 +46,7 @@ func newPostgresSchemaStore(t *testing.T, setup *sql.DB, cfg pgschema.Config) *S
 		"; GRANT SELECT,INSERT ON "+schema+".blob_checksums TO "+quotedRole+
 		"; GRANT SELECT ON "+schema+".audit_records,"+schema+".audit_authority,"+schema+".audit_scopes,"+schema+".audit_baselines,"+schema+".audit_memberships TO "+quotedRole+
 		"; GRANT INSERT ON "+schema+".audit_records TO "+quotedRole+
-		"; GRANT USAGE ON SEQUENCE "+schema+".nodes_id_seq TO "+quotedRole)
+		"; GRANT SELECT,UPDATE(high_water) ON "+schema+".node_allocation TO "+quotedRole)
 	require.NoError(t, err)
 	config, err := pgx.ParseConfig(os.Getenv("DOCBANK_TEST_POSTGRES_DSN"))
 	require.NoError(t, err)
@@ -72,13 +71,6 @@ func TestNodeQueriesSQLite(t *testing.T) {
 func TestNodeQueriesPostgres(t *testing.T) {
 	t.Parallel()
 	s := newPostgresQueryStore(t)
-	// Ordinary writes must not bypass allocation; restoring IDs needs an
-	// explicit import path that also restores the sequence high-water mark.
-	_, err := s.writeDB.ExecContext(t.Context(), `INSERT INTO nodes(id,parent_id,name,kind,created_at,modified_at)
-		VALUES(1000,$1,'imported','dir',$2,$2)`, s.RootID(), "2026-01-01T00:00:00.000000000Z")
-	var pgErr *pgconn.PgError
-	require.ErrorAs(t, err, &pgErr)
-	require.Equal(t, "428C9", pgErr.Code) // generated_always
 	checkNodeQueries(t, s)
 	t.Run("directory snapshot", func(t *testing.T) { checkDirectorySnapshotPostgres(t, s) })
 }
@@ -90,9 +82,9 @@ func checkDirectorySnapshotPostgres(t *testing.T, s *Store) {
 	tx, err := s.writeDB.BeginTx(ctx, nil)
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
-	dirID, err := insertNodeTx(ctx, tx, s.RootID(), "snapshot-before", nodeKindDir, nil, recordedAt)
+	dirID, err := s.insertNodeTx(ctx, tx, s.RootID(), "snapshot-before", nodeKindDir, nil, recordedAt)
 	require.NoError(t, err)
-	childID, err := insertNodeTx(ctx, tx, dirID, "original", nodeKindDir, nil, recordedAt)
+	childID, err := s.insertNodeTx(ctx, tx, dirID, "original", nodeKindDir, nil, recordedAt)
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 
@@ -112,10 +104,13 @@ func checkDirectorySnapshotPostgres(t *testing.T, s *Store) {
 	require.NoError(t, err)
 	var writeErr error
 	config.Tracer = &afterFirstSelect{run: func() {
-		_, writeErr = s.writeDB.ExecContext(ctx, `WITH renamed AS (
-			UPDATE nodes SET name='snapshot-after' WHERE id=$1
-		) INSERT INTO nodes(parent_id, name, kind, created_at, modified_at)
-			VALUES ($1, 'added', 'dir', $2, $2)`, dirID, recordedAt)
+		writeErr = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+			if _, err := tx.ExecContext(ctx, `UPDATE nodes SET name='snapshot-after' WHERE id=$1`, dirID); err != nil {
+				return err
+			}
+			_, err := s.insertNodeTx(ctx, tx, dirID, "added", nodeKindDir, nil, recordedAt)
+			return err
+		})
 	}}
 	readDB := stdlib.OpenDB(*config)
 	t.Cleanup(func() { require.NoError(t, readDB.Close()) })
@@ -165,9 +160,9 @@ func checkNodeQueries(t *testing.T, s *Store) {
 	tx, err := s.writeDB.BeginTx(ctx, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
-	dirID, err := insertNodeTx(ctx, tx, s.RootID(), "café", nodeKindDir, nil, recordedAt)
+	dirID, err := s.insertNodeTx(ctx, tx, s.RootID(), "café", nodeKindDir, nil, recordedAt)
 	require.NoError(t, err)
-	fileID, err := insertNodeTx(ctx, tx, dirID, "report.pdf", nodeKindFile, new(versionID), recordedAt)
+	fileID, err := s.insertNodeTx(ctx, tx, dirID, "report.pdf", nodeKindFile, new(versionID), recordedAt)
 	require.NoError(t, err)
 	require.NotEqual(t, dirID, fileID)
 	_, err = tx.ExecContext(ctx, `INSERT INTO blobs(hash, size, created_at) VALUES ($1, 17, $2)`, hash, recordedAt)
@@ -206,9 +201,9 @@ func checkNodeQueries(t *testing.T, s *Store) {
 		tx, err := s.writeDB.BeginTx(ctx, nil)
 		require.NoError(t, err)
 		defer func() { _ = tx.Rollback() }()
-		folderID, err := insertNodeTx(ctx, tx, dirID, "z-folder", nodeKindDir, nil, recordedAt)
+		folderID, err := s.insertNodeTx(ctx, tx, dirID, "z-folder", nodeKindDir, nil, recordedAt)
 		require.NoError(t, err)
-		trashID, err := insertNodeTx(ctx, tx, dirID, "discarded-folder", nodeKindDir, nil, recordedAt)
+		trashID, err := s.insertNodeTx(ctx, tx, dirID, "discarded-folder", nodeKindDir, nil, recordedAt)
 		require.NoError(t, err)
 		_, err = tx.ExecContext(ctx, `UPDATE nodes SET trashed_at=$1 WHERE id=$2`, recordedAt, trashID)
 		require.NoError(t, err)
@@ -238,13 +233,40 @@ func checkNodeQueries(t *testing.T, s *Store) {
 		_, err = s.Path(ctx, 1<<62)
 		require.ErrorIs(t, err, ErrNotFound)
 	})
+	t.Run("byte-ordered directory pages", func(t *testing.T) {
+		var orderedDir int64
+		err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+			var err error
+			orderedDir, err = s.insertNodeTx(ctx, tx, s.RootID(), "ordered", nodeKindDir, nil, recordedAt)
+			if err != nil {
+				return err
+			}
+			for _, name := range []string{"b", "_x", "é", "Z", "a", "B"} {
+				if _, err := s.insertNodeTx(ctx, tx, orderedDir, name, nodeKindDir, nil, recordedAt); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+		require.NoError(t, err)
+		var names []string
+		for offset := 0; offset < 6; offset += 2 {
+			page, err := s.DirectoryChildrenPage(ctx, orderedDir, 2, offset)
+			require.NoError(t, err)
+			require.Equal(t, 6, page.Total)
+			for _, child := range page.Children {
+				names = append(names, child.Name)
+			}
+		}
+		require.Equal(t, []string{"B", "Z", "_x", "a", "b", "é"}, names)
+	})
 	t.Run("node and path share a snapshot", func(t *testing.T) {
 		tx, err := s.writeDB.BeginTx(ctx, nil)
 		require.NoError(t, err)
 		defer func() { _ = tx.Rollback() }()
-		parentID, err := insertNodeTx(ctx, tx, s.RootID(), "before", nodeKindDir, nil, recordedAt)
+		parentID, err := s.insertNodeTx(ctx, tx, s.RootID(), "before", nodeKindDir, nil, recordedAt)
 		require.NoError(t, err)
-		nodeID, err := insertNodeTx(ctx, tx, parentID, "old", nodeKindDir, nil, recordedAt)
+		nodeID, err := s.insertNodeTx(ctx, tx, parentID, "old", nodeKindDir, nil, recordedAt)
 		require.NoError(t, err)
 		require.NoError(t, tx.Commit())
 
@@ -273,7 +295,7 @@ func checkNodeQueries(t *testing.T, s *Store) {
 		tx, err := s.writeDB.BeginTx(ctx, nil)
 		require.NoError(t, err)
 		defer func() { _ = tx.Rollback() }()
-		id, err := insertNodeTx(ctx, tx, dirID, "discarded", nodeKindDir, nil, recordedAt)
+		id, err := s.insertNodeTx(ctx, tx, dirID, "discarded", nodeKindDir, nil, recordedAt)
 		require.NoError(t, err)
 		require.NoError(t, tx.Rollback())
 		_, err = s.NodeByID(ctx, id)
@@ -292,7 +314,7 @@ func checkNodeQueries(t *testing.T, s *Store) {
 		tx, err := s.writeDB.BeginTx(ctx, nil)
 		require.NoError(t, err)
 		defer func() { _ = tx.Rollback() }()
-		id, err := insertNodeTx(ctx, tx, dirID, "report.pdf", nodeKindDir, nil, recordedAt)
+		id, err := s.insertNodeTx(ctx, tx, dirID, "report.pdf", nodeKindDir, nil, recordedAt)
 		require.NoError(t, err)
 		require.NoError(t, tx.Commit())
 		live, err := s.ChildByName(ctx, dirID, "report.pdf")

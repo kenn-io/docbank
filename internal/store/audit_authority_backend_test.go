@@ -1,6 +1,8 @@
 package store
 
 import (
+	"database/sql"
+	"errors"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -87,52 +89,46 @@ func TestAuditStatusSnapshotPostgres(t *testing.T) {
 	require.Equal(t, want, after)
 }
 
-func TestAuditNodeSequencePostgres(t *testing.T) {
+func TestNodeAllocationAfterDeletePostgres(t *testing.T) {
 	t.Parallel()
 	s := newPostgresQueryStore(t)
 	ctx := t.Context()
-	tx, err := s.writeDB.BeginTx(ctx, nil)
-	require.NoError(t, err)
-	defer func() { _ = tx.Rollback() }()
 	const recordedAt = "2026-01-01T00:00:00.000000000Z"
-	reserved, err := insertNodeTx(ctx, tx, s.RootID(), "rolled-back", nodeKindDir, nil, recordedAt)
+	var deleted int64
+	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		deleted, err = s.insertNodeTx(ctx, tx, s.RootID(), "deleted", nodeKindDir, nil, recordedAt)
+		return err
+	}))
+	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `DELETE FROM nodes WHERE id=$1`, deleted)
+		return err
+	}))
+	sequence, err := s.auditNodeSequence(ctx, s.db)
 	require.NoError(t, err)
-	require.NoError(t, tx.Rollback())
-
-	tx, err = s.writeDB.BeginTx(ctx, nil)
-	require.NoError(t, err)
-	defer func() { _ = tx.Rollback() }()
-	sequence, err := s.auditNodeSequence(ctx, tx)
-	require.NoError(t, err)
-	// PostgreSQL retains sequence allocation even when the row rolls back.
-	require.Equal(t, reserved, sequence)
-	retained, err := insertNodeTx(ctx, tx, s.RootID(), "deleted", nodeKindDir, nil, recordedAt)
-	require.NoError(t, err)
-	require.Greater(t, retained, reserved)
-	require.NoError(t, tx.Commit())
-
-	tx, err = s.writeDB.BeginTx(ctx, nil)
-	require.NoError(t, err)
-	defer func() { _ = tx.Rollback() }()
-	_, err = tx.ExecContext(ctx, `DELETE FROM nodes WHERE id=$1`, retained)
-	require.NoError(t, err)
-	require.NoError(t, tx.Commit())
-	tx, err = s.db.BeginTx(ctx, nil)
-	require.NoError(t, err)
-	defer func() { _ = tx.Rollback() }()
-	sequence, err = s.auditNodeSequence(ctx, tx)
-	require.NoError(t, err)
-	require.Equal(t, retained, sequence)
-	var maximum int64
-	require.NoError(t, tx.QueryRowContext(ctx, `SELECT MAX(id) FROM nodes`).Scan(&maximum))
-	require.Equal(t, s.RootID(), maximum)
+	require.Equal(t, deleted, sequence)
+	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		next, err := s.insertNodeTx(ctx, tx, s.RootID(), "retained", nodeKindDir, nil, recordedAt)
+		require.NoError(t, err)
+		require.Equal(t, deleted+1, next)
+		return nil
+	}))
 }
 
-func TestAuditAuthorityStatePostgres(t *testing.T) {
+func TestAuditAuthorityAfterRollbackPostgres(t *testing.T) {
 	t.Parallel()
 	source, reader, publish, _, child, _ := newAuditHistoryPostgresFixture(t)
 	publish()
 	ctx := t.Context()
+	discard := errors.New("discard new node")
+	err := reader.withStorageTx(ctx, func(tx *sql.Tx) error {
+		_, err := reader.insertNodeTx(ctx, tx, child.ID, "rolled-back", nodeKindDir, nil, child.ModifiedAt)
+		if err != nil {
+			return err
+		}
+		return discard
+	})
+	require.ErrorIs(t, err, discard)
 	from, err := source.db.BeginTx(ctx, nil)
 	require.NoError(t, err)
 	defer func() { _ = from.Rollback() }()
@@ -146,4 +142,7 @@ func TestAuditAuthorityStatePostgres(t *testing.T) {
 	require.Equal(t, wantAuthority, authority)
 	require.Equal(t, wantScopes, scopes)
 	require.Equal(t, wantSequence, sequence)
+	// Replay the validated source history with PostgreSQL's allocation value.
+	// Full PostgreSQL metadata validation awaits the remaining catalogs.
+	require.NoError(t, validateAuditAuthority(ctx, from, source.vaultID, sequence))
 }

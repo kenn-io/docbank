@@ -31,8 +31,9 @@ func TestSetupPreservesIdentity(t *testing.T) {
 	var rootCreated string
 	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT id,created_at FROM documents.nodes WHERE parent_id IS NULL`).Scan(&rootID, &rootCreated))
 	const childTime = "2026-01-01T00:00:00.000000000Z"
-	require.NoError(t, db.QueryRowContext(t.Context(), `INSERT INTO documents.nodes(parent_id,name,kind,created_at,modified_at)
-		VALUES($1,'kept','dir',$2,$2) RETURNING id`, rootID, childTime).Scan(&childID))
+	require.NoError(t, db.QueryRowContext(t.Context(), `WITH allocated AS (UPDATE documents.node_allocation SET high_water=high_water+1 WHERE singleton=1 RETURNING high_water)
+		INSERT INTO documents.nodes(id,parent_id,name,kind,created_at,modified_at)
+		SELECT high_water,$1,'kept','dir',$2,$2 FROM allocated RETURNING id`, rootID, childTime).Scan(&childID))
 	again, err := Setup(t.Context(), db, cfg)
 	require.NoError(t, err)
 	assert.Equal(t, id, again)
@@ -45,6 +46,9 @@ func TestSetupPreservesIdentity(t *testing.T) {
 	assert.Equal(t, rootID, keptParent)
 	assert.Equal(t, "kept", keptName)
 	assert.Equal(t, childTime, keptCreated)
+	var highWater int64
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT high_water FROM documents.node_allocation WHERE singleton=1`).Scan(&highWater))
+	assert.Equal(t, childID, highWater)
 	var stored uuid.UUID
 	var version int
 	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT vault_uid, schema_version FROM documents.vault_metadata WHERE singleton=1`).Scan(&stored, &version))
@@ -197,7 +201,7 @@ func TestSetupRefusesUnownedOrInvalidState(t *testing.T) {
 
 func TestSetupPreservesUnsupportedVersion(t *testing.T) {
 	t.Parallel()
-	for _, version := range []int{0, 1, 2, Version + 1} {
+	for _, version := range []int{0, 1, 2, 3, Version + 1} {
 		t.Run(strconv.Itoa(version), func(t *testing.T) {
 			t.Parallel()
 			db, owner := pgtest.NewDatabase(t)
