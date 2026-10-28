@@ -88,14 +88,18 @@
 
   $effect(() => {
     const currentSession = session;
-    untrack(() => {
-      void loadHistory(currentSession, true);
-      void loadCollections(currentSession, true);
-    });
+    untrack(() => void loadHistory(currentSession, true));
     return () => {
       generation += 1;
       historyGeneration += 1;
     };
+  });
+
+  // Only the report form lists imports, so the Searches page loads them when it opens.
+  $effect(() => {
+    if (!editing) return;
+    const currentSession = session;
+    untrack(() => void loadCollections(currentSession, true));
   });
 
   function fail(cause: unknown): void {
@@ -205,6 +209,14 @@
   function openDraft(): void {
     draft = newDraft();
     editing = true;
+    error = "";
+    notice = "";
+  }
+
+  function cancelDraft(): void {
+    editing = false;
+    error = "";
+    notice = "";
   }
 
   function useHistory(item: TermReportHistory): void {
@@ -577,7 +589,7 @@
     </details>
 
     <div class="tool-actions">
-      {#if page}<Button disabled={busy} onclick={() => (editing = false)}>Cancel</Button>{/if}
+      {#if page}<Button disabled={busy} onclick={cancelDraft}>Cancel</Button>{/if}
       <Button tone="info" surface="solid" disabled={busy} onclick={() => void run()}
         >{busy ? "Creating report…" : "Create report"}</Button
       >

@@ -465,7 +465,9 @@ it.each(["beta", ""])(
       "value",
       "omega",
     );
+    expect(screen.getByText(/^Loaded the /)).toBeTruthy();
     await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByText(/^Loaded the /)).toBeNull();
     await rerender({ initialExpression: expression });
     await fireEvent.click(screen.getByRole("button", { name: "Run report" }));
     expect(screen.getByRole("textbox", { name: "Expression for term 1" })).toHaveProperty(
@@ -513,4 +515,33 @@ it("defaults a new report to the UTC date when Run report is chosen", async () =
   vi.setSystemTime(new Date("2026-09-21T00:00:01Z"));
   await fireEvent.click(screen.getByRole("button", { name: "Run report" }));
   expect(screen.getByRole("button", { name: "2000-01-01 - 2026-09-21" })).toBeTruthy();
+});
+
+it("loads imports for the Searches page only once a report is started", async () => {
+  const fetchMock = vi
+    .spyOn(globalThis, "fetch")
+    .mockImplementation(async (input) =>
+      String(input).startsWith("/api/v1/collections?")
+        ? json({ items: [collection], total: 1, limit: 100, offset: 0 })
+        : json({ items: [], total: 0 }),
+    );
+  const collectionReads = () =>
+    fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/collections?"))
+      .length;
+  render(TermReportDrawer, {
+    props: {
+      session: "session",
+      initialExpression: "alpha",
+      onclose: vi.fn(),
+      onauthfailure: vi.fn(),
+    },
+    context: new Map([[drawerPage, true]]),
+  });
+  expect(await screen.findByText("No reports yet.")).toBeTruthy();
+  expect(collectionReads()).toBe(0);
+
+  await fireEvent.click(screen.getByRole("button", { name: "Run report" }));
+  await fireEvent.click(screen.getByRole("radio", { name: "Selected imports" }));
+  expect(await screen.findByRole("checkbox", { name: /New source/ })).toBeTruthy();
+  expect(collectionReads()).toBe(1);
 });

@@ -3674,10 +3674,7 @@
     activePanel = panel;
   }
 
-  let createSavedSearch = $state(false);
-
-  function openSavedQueries(create = true): void {
-    createSavedSearch = create;
+  function openSavedQueries(): void {
     queryEditorInitial = currentQueryDraft();
     activePanel = { kind: "savedQueries" };
   }
@@ -5233,7 +5230,7 @@
         />
       {/if}
       {#if panel.kind === "savedQueries"}
-        {@render savedQueries(createSavedSearch, closePanel(panel))}
+        {@render savedQueries(true, closePanel(panel))}
       {/if}
 
       {#if panel.kind === "bates"}

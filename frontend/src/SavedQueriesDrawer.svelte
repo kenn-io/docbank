@@ -10,6 +10,7 @@
   import { Button, IconButton, Spinner, TextInput } from "@kenn-io/kit-ui";
   import "./toolForm.css";
   import { APIError } from "./api-transport.js";
+  import { showToast } from "./toast.svelte.js";
   import {
     canonicalQuery,
     parseHighlightSet,
@@ -74,9 +75,14 @@
   });
 
   function fail(cause: unknown): void {
-    if (!alive) return;
-    if (cause instanceof APIError && cause.status === 401) onauthfailure(cause);
-    else failure = cause instanceof Error ? cause.message : String(cause);
+    if (cause instanceof APIError && cause.status === 401) {
+      if (alive) onauthfailure(cause);
+      return;
+    }
+    const message = cause instanceof Error ? cause.message : String(cause);
+    // The Searches page can be left while a change is pending; its outcome still needs reporting.
+    if (alive) failure = message;
+    else showToast(message, { tone: "danger" });
   }
 
   async function refresh(nextOffset = offset): Promise<void> {
@@ -153,7 +159,10 @@
       const saved = asNew
         ? await createSavedQuery(session, { ...value, name, description })
         : await updateSavedQuery(session, selected!, { name, description, payload: value.payload });
-      if (!alive) return;
+      if (!alive) {
+        showToast(`Saved ${saved.name}.`);
+        return;
+      }
       edit(saved);
       notice = `Saved ${saved.name}.`;
       await refresh(0);
@@ -171,7 +180,10 @@
     notice = "";
     try {
       const removed = await deleteSavedQuery(session, deleting);
-      if (!alive) return;
+      if (!alive) {
+        showToast(`Deleted ${removed.name}.`);
+        return;
+      }
       if (selected?.id === removed.id) {
         selected = null;
         editorOpen = false;
@@ -187,8 +199,7 @@
   }
 
   async function mutationFailed(cause: unknown): Promise<void> {
-    if (!alive) return;
-    if (cause instanceof SavedQueryReceiptError) {
+    if (alive && cause instanceof SavedQueryReceiptError) {
       receiptFailed = true;
       deleting = null;
       items = [];

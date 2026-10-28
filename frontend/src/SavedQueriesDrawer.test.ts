@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import SavedQueriesDrawer from "./SavedQueriesDrawer.svelte";
 import { parseQuery } from "./query.js";
+import { clearToasts, getToasts } from "./toast.svelte.js";
 
 const canonical =
   '{"filters":{"extensions":["pdf"],"no_tags":true},"mode":"hybrid","sort":{"direction":"desc","field":"size"},"syntax":"advanced","text":"alpha OR beta","v":1}';
@@ -32,6 +33,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  clearToasts();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -188,4 +190,41 @@ it("opens the exact saved payload through the explicit query-editor action", asy
   });
   await fireEvent.click(await screen.findByRole("button", { name: "Run Review PDFs" }));
   expect(onopenquery).toHaveBeenCalledWith(JSON.parse(canonical));
+});
+
+it("reports a change that finishes after the Searches page is left", async () => {
+  const settle: Array<(response: Response) => void> = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, request) =>
+    request?.method && request.method !== "GET"
+      ? new Promise<Response>((resolve) => settle.push(resolve))
+      : json({ items: [record], total: 1, limit: 100, offset: 0 }),
+  );
+  for (const response of [
+    new Response(JSON.stringify({ detail: "Changed elsewhere", code: "stale_revision" }), {
+      status: 412,
+    }),
+    json({ ...record, name: "Renamed", revision: 3 }, 3),
+  ]) {
+    const view = render(SavedQueriesDrawer, {
+      session: "session",
+      initialQuery: parseQuery("{}"),
+      onload: vi.fn(),
+      onclose: vi.fn(),
+      onauthfailure: vi.fn(),
+    });
+    await fireEvent.click(await screen.findByRole("button", { name: "Rename Review PDFs" }));
+    await fireEvent.input(screen.getByLabelText("Definition name"), {
+      target: { value: "Renamed" },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await vi.waitFor(() => expect(settle).toHaveLength(1));
+    view.unmount();
+    settle.shift()!(response);
+  }
+  await vi.waitFor(() =>
+    expect(getToasts().map(({ message, tone }) => ({ message, tone }))).toEqual([
+      { message: expect.stringContaining("Changed elsewhere"), tone: "danger" },
+      { message: "Saved Renamed.", tone: "neutral" },
+    ]),
+  );
 });
