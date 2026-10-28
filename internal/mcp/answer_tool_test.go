@@ -107,10 +107,13 @@ func TestAnswerQuestionEvidenceAndCoverage(t *testing.T) {
 		t.Fatalf("out=%+v err=%v", out, err)
 	}
 	for _, kind := range []string{"rendition_segment", "content_blob"} {
-		f.results[0].Evidence = []api.DocumentEvidenceReference{{Kind: kind}}
+		f.results[0].Evidence = []api.DocumentEvidenceReference{{Kind: kind}, {Kind: "embedding", VectorSpaceID: "space-a"}, {Kind: "embedding", VectorSpaceID: "space-a"}}
 		out, _, err = answerQuestion(context.Background(), session, []byte(`{"question":"example"}`))
-		if err != nil || out.Status != answer.Answered || len(out.Passages) != 1 || out.Passages[0].Text != "example" || len(out.Passages[0].EvidenceIDs) != 1 || out.Passages[0].EvidenceIDs[0] != fmt.Sprintf(`{"kind":%q}`, kind) {
+		if err != nil || out.Status != answer.Answered || len(out.Passages) != 1 || out.Passages[0].Text != "example" || len(out.Passages[0].EvidenceIDs) != 3 || out.Passages[0].EvidenceIDs[0] != fmt.Sprintf(`{"kind":%q}`, kind) {
 			t.Fatalf("kind=%s out=%+v err=%v", kind, out, err)
+		}
+		if !slices.Equal(out.Receipt.VectorSpaceIDs, []string{"space-a"}) {
+			t.Fatalf("unexpected vector spaces: %v", out.Receipt.VectorSpaceIDs)
 		}
 	}
 }
@@ -128,7 +131,7 @@ func TestAnswerQuestionEnvelopeBound(t *testing.T) {
 				AttachmentID: fmt.Sprintf("%064x", i*64+j+1), BuildID: fmt.Sprintf("%064x", 10000+i*64+j+1)}
 		}
 		f.documents = append(f.documents, api.DocumentSummary{NodeID: int64(i), ContentVersionID: version, Path: pathPrefix + name, Name: name, ActiveRenditions: renditions})
-		f.results = append(f.results, api.DocumentSearchResult{NodeID: int64(i), ContentVersionID: version, Path: pathPrefix + name, Rank: i, LexicalRank: i, Score: 1 / float64(60+i), Excerpt: strings.Repeat("x", 512), Evidence: []api.DocumentEvidenceReference{{Kind: "rendition_segment", BuildID: strings.Repeat("a", 64), SegmentID: strings.Repeat("b", 64)}}})
+		f.results = append(f.results, api.DocumentSearchResult{NodeID: int64(i), ContentVersionID: version, Path: pathPrefix + name, Rank: i, LexicalRank: i, Score: 1 / float64(60+i), Excerpt: strings.Repeat("x", 512), Evidence: []api.DocumentEvidenceReference{{Kind: "rendition_segment", BuildID: strings.Repeat("a", 64), SegmentID: strings.Repeat("b", 64)}, {Kind: "embedding", VectorSpaceID: fmt.Sprintf("space-%02d", i)}}})
 	}
 	session := func(ctx context.Context, fn func(context.Context, documentClient) error) error { return fn(ctx, f) }
 	out, links, err := answerQuestion(context.Background(), session, []byte(`{"question":"example","limit":50,"max_passage_bytes":65536}`))
@@ -143,6 +146,9 @@ func TestAnswerQuestionEnvelopeBound(t *testing.T) {
 	}
 	if out.OmittedPassages == 0 {
 		t.Fatal("expected envelope passage omission")
+	}
+	if len(out.Receipt.VectorSpaceIDs) != len(out.Passages) || slices.Contains(out.Receipt.VectorSpaceIDs, "space-50") {
+		t.Fatalf("vector spaces include omitted evidence: %v", out.Receipt.VectorSpaceIDs)
 	}
 	_, schema := answerQuestionSchemas()
 	if _, err := boundedToolSuccess(mustResolveSchema(schema), out, links); err != nil {
