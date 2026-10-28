@@ -3256,3 +3256,17 @@ BEGIN
     SELECT DISTINCT vector_space_id,1 FROM embedding_heads WHERE content_version_id IN (OLD.current_version_id,NEW.current_version_id)
     ON CONFLICT(vector_space_id) DO UPDATE SET revision=revision+1;
 END;
+CREATE TABLE IF NOT EXISTS node_supersessions (
+    successor_node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+    predecessor_node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+    note TEXT NOT NULL DEFAULT '',
+    recorded_at TEXT NOT NULL,
+    PRIMARY KEY (successor_node_id, predecessor_node_id)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS node_supersessions_predecessor
+    ON node_supersessions(predecessor_node_id, successor_node_id);
+CREATE TABLE IF NOT EXISTS node_effective_windows (
+    node_id INTEGER PRIMARY KEY REFERENCES nodes(id) ON DELETE CASCADE,
+    effective_from TEXT,
+    effective_to TEXT
+);
