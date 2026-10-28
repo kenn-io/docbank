@@ -93,7 +93,7 @@ func tryAutomaticSearch(ctx context.Context, c *daemonconn.Connection, query str
 // Filters, fuzzy discovery, large pages, and long queries are explicit
 // lexical requests, so they skip hybrid search without a degradation.
 func automaticSearchEligible(query string, limit int, opts daemonconn.SearchOptions) bool {
-	filtered := opts.Fuzzy || opts.TagID != "" || opts.MIMEType != "" || opts.UnderNodeID != 0 ||
+	filtered := opts.SourcePresent || opts.Fuzzy || opts.TagID != "" || opts.MIMEType != "" || opts.UnderNodeID != 0 ||
 		opts.ModifiedSince != "" || opts.ModifiedBefore != ""
 	return !filtered && limit <= maxAutomaticSearchLimit && strings.TrimSpace(query) != "" &&
 		utf8.RuneCountInString(query) <= maxAutomaticSearchQueryRunes

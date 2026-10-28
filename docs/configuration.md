@@ -403,6 +403,21 @@ complete scan; see [watched inboxes](usage/importing.md#continuously-ingest-a-lo
 for the limits. Each current cursor owns one Docbank node. Deleting a source
 file does not delete its Docbank node.
 
+After each complete scan, Docbank records when a cursor's source was first
+observed gone. The deepest directory listed on its path must lack it, so a
+deleted or renamed folder marks every file below it, and a directory or symlink
+at the old filename counts as gone. A folder that still exists but was not
+listed, such as a symlink, skipped subtree, excluded path, or filesystem
+boundary, leaves the files below it unchanged, as do uncertain rename
+candidates and incomplete scans. A regular file's
+return or a successful live rename clears the mark. Trashed documents are
+observed too, without restoring them.
+
+These observations stay local to storage and are not exported in metadata.
+Startup clears marks for watches no longer configured. Search and the document
+catalog can omit marked documents with `source_present`; defaults include
+them, and documents owned by push are always included by this filter.
+
 Docbank separately remembers the last bytes accepted from each source. If a
 person edits or reverts the Docbank node while the source stays unchanged, a
 daemon restart does not overwrite that working version. Only a later byte

@@ -3,11 +3,12 @@ package api
 // DocumentQuery is the typed daemon catalog request. Empty values select the
 // store-owned defaults; Cursor is always opaque to clients.
 type DocumentQuery struct {
-	PathPrefix string `json:"path_prefix,omitzero"`
-	Sort       string `json:"sort,omitzero" enum:"path,name,modified_at,size,media_type"`
-	Direction  string `json:"direction,omitzero" enum:"asc,desc"`
-	PageSize   int    `json:"page_size,omitzero" minimum:"1" maximum:"250"`
-	Cursor     string `json:"cursor,omitzero"`
+	SourcePresent bool   `json:"source_present,omitzero"`
+	PathPrefix    string `json:"path_prefix,omitzero"`
+	Sort          string `json:"sort,omitzero" enum:"path,name,modified_at,size,media_type"`
+	Direction     string `json:"direction,omitzero" enum:"asc,desc"`
+	PageSize      int    `json:"page_size,omitzero" minimum:"1" maximum:"250"`
+	Cursor        string `json:"cursor,omitzero"`
 }
 
 type DocumentRenditionIdentity struct {
@@ -47,6 +48,7 @@ type DocumentSummaryResolveResponse struct {
 }
 
 type DocumentPage struct {
+	SourcePresent  bool              `json:"source_present,omitzero"`
 	PathPrefix     string            `json:"path_prefix"`
 	Sort           string            `json:"sort" enum:"path,name,modified_at,size,media_type"`
 	Direction      string            `json:"direction" enum:"asc,desc"`

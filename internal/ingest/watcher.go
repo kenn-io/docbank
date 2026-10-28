@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -964,6 +965,7 @@ func (w *Watcher) scanWithHints(ctx context.Context, root *watchRoot, hints watc
 	var inventory *watchInventory
 	if w.process == nil {
 		inventory = &watchInventory{files: make(map[string]watchInventoryEntry), present: make(map[string]struct{}), complete: true,
+			listed: make(map[string]struct{}), skipped: make(map[string]struct{}),
 			known: make(map[string]struct{}), knownDirs: make(map[string]struct{})}
 		for rel, observation := range w.observations {
 			inventory.known[rel] = struct{}{}
@@ -990,6 +992,12 @@ func (w *Watcher) scanWithHints(ctx context.Context, root *watchRoot, hints watc
 			var err error
 			deferred, retained, err = w.rebindCandidates(ctx, root, inventory)
 			if err != nil {
+				return false, err
+			}
+			if err := w.reconcileSourcePresence(ctx, inventory, deferred, retained); err != nil {
+				if errors.Is(err, ErrRetryLater) {
+					return false, nil
+				}
 				return false, err
 			}
 		} else {
@@ -1035,6 +1043,30 @@ func (w *Watcher) scanWithHints(ctx context.Context, root *watchRoot, hints watc
 		}
 	}
 	return true, nil
+}
+
+// reconcileSourcePresence records which watched sources a complete inventory
+// proves gone or present. Unsettled rename candidates and skipped paths keep
+// their prior marks. An unchanged inventory takes no mutation gate or write lock.
+func (w *Watcher) reconcileSourcePresence(ctx context.Context, inventory *watchInventory, deferred, retained map[string]struct{}) error {
+	unsettled := slices.Collect(maps.Keys(deferred))
+	unsettled = append(unsettled, slices.Collect(maps.Keys(retained))...)
+	unsettled = append(unsettled, slices.Collect(maps.Keys(inventory.skipped))...)
+	presence := store.WatchPresenceScan{
+		RegularFiles:  slices.Collect(maps.Keys(inventory.files)),
+		ListedDirs:    slices.Collect(maps.Keys(inventory.listed)),
+		ListedEntries: slices.Collect(maps.Keys(inventory.present)),
+		Unsettled:     unsettled, Excluded: w.excludes.matchRelative,
+	}
+	changed, err := w.ing.Store.WatchSourcePresenceChanged(ctx, w.config.Name, presence)
+	if err != nil || !changed {
+		return err
+	}
+	jobs.ReportBusy(ctx, true)
+	defer jobs.ReportBusy(ctx, false)
+	return w.mutate(func() error {
+		return w.ing.Store.ReconcileWatchSourcePresence(ctx, w.config.Name, presence, w.now())
+	})
 }
 
 // unreadableDirectoryError marks a directory whose own entries could not be
@@ -1124,6 +1156,9 @@ func (w *Watcher) scanDirectory(
 		}
 		return failure
 	}
+	if inventory != nil {
+		inventory.listed[relDir] = struct{}{}
+	}
 	if w.notifications != nil && w.notificationErr == nil {
 		w.notificationErr = w.notifications.AddDirectory(relDir, len(entries))
 	}
@@ -1141,6 +1176,7 @@ func (w *Watcher) scanDirectory(
 		filePath := filepath.Join(root.path, filepath.FromSlash(rel))
 		if w.excludes.match(root.path, filePath) {
 			if inventory != nil {
+				inventory.skipped[rel] = struct{}{}
 				if _, known := inventory.known[rel]; known {
 					w.blockWatchPath(inventory, rel, "became excluded")
 					continue
@@ -1240,6 +1276,7 @@ func (w *Watcher) scanDirectory(
 			}
 			if !w.sourceMount.same(childMount) {
 				if inventory != nil {
+					inventory.skipped[rel] = struct{}{}
 					if _, known := inventory.known[rel]; known {
 						_ = child.Close()
 						w.blockWatchPath(inventory, rel, "crossed a filesystem boundary")
@@ -1364,6 +1401,7 @@ func (w *Watcher) scanDirectory(
 		}
 		if !w.sourceMount.same(state.mount) {
 			if inventory != nil {
+				inventory.skipped[rel] = struct{}{}
 				if _, known := inventory.known[rel]; known {
 					w.blockWatchPath(inventory, rel, "crossed a filesystem boundary")
 					continue
