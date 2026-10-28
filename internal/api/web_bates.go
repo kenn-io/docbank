@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/google/uuid"
@@ -32,11 +33,27 @@ func batesBrowserRequestAllowed(r *http.Request) bool {
 			return r.Method == http.MethodGet || r.Method == http.MethodPost
 		}
 		if len(parts) == 2 {
+			if parts[1] == "candidates" {
+				return r.Method == http.MethodGet && batesBrowserCandidateQuery(r.URL.RawQuery)
+			}
 			return r.Method == http.MethodGet && validBatesBrowserID(parts[1])
 		}
 		return len(parts) == 3 && r.Method == http.MethodPost && validBatesBrowserID(parts[1]) && parts[2] == "download"
 	}
 	return false
+}
+
+func batesBrowserCandidateQuery(raw string) bool {
+	query, err := url.ParseQuery(raw)
+	if err != nil || query.Get("bates_label") == "" {
+		return false
+	}
+	for key, values := range query {
+		if len(values) != 1 || key != "bates_label" && key != "cursor" && key != "limit" {
+			return false
+		}
+	}
+	return true
 }
 
 func validBatesBrowserID(value string) bool {
