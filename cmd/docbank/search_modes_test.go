@@ -12,6 +12,7 @@ import (
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/processing"
 )
 
 func TestSearchModesRequireExplicitBindingWhenProfileIsAmbiguous(t *testing.T) {
@@ -26,8 +27,10 @@ func TestSearchModesRequireExplicitBindingWhenProfileIsAmbiguous(t *testing.T) {
 				Name: "private", Fingerprint: profileFingerprint,
 				EmbeddingBindings: []string{"general", "multilingual"},
 			}}))
-		case "GET /api/v1/vault":
-			assert.NoError(t, json.MarshalWrite(w, api.VaultIdentity{VaultID: vaultID}))
+		case "POST /api/v1/processing/source-fences/resolve":
+			fp, err := processing.SourceFenceFingerprint(processing.SourceFence{VaultUID: vaultID, ContentVersionIDs: []string{processingTestVersionID}})
+			assert.NoError(t, err)
+			assert.NoError(t, json.MarshalWrite(w, api.DocumentSourceFenceResolution{Fence: api.ResolvedDocumentSourceFence{VaultUID: vaultID, ContentVersionIDs: []string{processingTestVersionID}}, FenceFingerprint: fp, ObservedScopeCount: 1}))
 		case "POST /api/v1/search":
 			searchRequests++
 			var body api.DocumentSearchRequest

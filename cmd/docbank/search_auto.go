@@ -69,7 +69,8 @@ func tryAutomaticSearch(ctx context.Context, c *daemonconn.Connection, query str
 			BindingID: candidate.Binding, Limit: limit, Scope: &api.DocumentSearchScope{Kind: "all_live"}}
 		report, searchErr := c.SearchDocuments(ctx, request)
 		if searchErr == nil {
-			return automaticSearchOutcome{report: &report, request: request}, nil
+			receipt := api.DocumentSearchMiss(query, candidate.Profile, request, report)
+			return automaticSearchOutcome{report: &report, request: request, receipt: receipt}, nil
 		}
 		outcome, err := automaticSearchFallback(ctx, searchErr)
 		if err != nil {

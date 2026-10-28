@@ -184,6 +184,9 @@ func NewServer(d Deps) *Server {
 		s.termReports = reporting.NewCache(time.Now, s.reportBudget)
 	}
 	g := d.Gate
+	if g == nil {
+		g = NewOperationGate()
+	}
 	s.webSessions = newWebSessionRegistry(func(owner string) {
 		if d.Exports != nil {
 			d.Exports.CancelOwner(owner)

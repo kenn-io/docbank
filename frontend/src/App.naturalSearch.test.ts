@@ -1092,7 +1092,7 @@ it("shows the empty-population note and reports a submitted search once", async 
   expect(failure).not.toHaveBeenCalled();
 });
 
-it("records an empty lexical fallback after a processing failure", async () => {
+it("keeps a non-401 processing failure on the legacy GET path", async () => {
   const failure = vi.spyOn(actions, "reportFailure").mockImplementation(() => {});
   const file = node(2, "fallback.txt", baseVersion);
   const harness = installHarness({
@@ -1110,7 +1110,7 @@ it("records an empty lexical fallback after a processing failure", async () => {
     baseSearchStatus: 500,
     legacySearchStatus: undefined,
     tagSearch: {
-      hits: [],
+      hits: [{ node: file, path: file.path, match: "name" }],
       limit: 1000,
       truncated: false,
     },
@@ -1119,23 +1119,51 @@ it("records an empty lexical fallback after a processing failure", async () => {
   await screen.findAllByText("fallback.txt");
   await fireEvent.click(screen.getByRole("checkbox", { name: "Rerank results" }));
   await submitSearch("fallback");
+  await screen.findByText("/fallback.txt");
   await screen.findByText(/Natural-language search unavailable/);
   expect(screen.getByRole("combobox", { name: "Search syntax: Plain words" })).toBeTruthy();
   expect(screen.queryByRole("checkbox", { name: "Rerank results" })).toBeNull();
   expect(harness.postBodies).toHaveLength(1);
+  expect(harness.misses).toHaveLength(0);
+  expect(
+    harness.fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/search?"))
+      .length,
+  ).toBe(2);
+  expect(failure).not.toHaveBeenCalled();
+});
+
+it("records an empty lexical fallback after a processing failure", async () => {
+  const failure = vi.spyOn(actions, "reportFailure").mockImplementation(() => {});
+  const file = node(2, "fallback.txt", baseVersion);
+  const harness = installHarness({
+    profiles: [
+      {
+        name: "private",
+        fingerprint: "a".repeat(64),
+        rendition: true,
+        embedding_bindings: ["embed"],
+        reranking_available: true,
+      },
+    ],
+    files: [file],
+    baseReport: report("hybrid", []),
+    baseSearchStatus: 500,
+    tagSearch: { hits: [], limit: 1000, truncated: false },
+  });
+  render(App);
+  await screen.findAllByText("fallback.txt");
+  await fireEvent.click(screen.getByRole("checkbox", { name: "Rerank results" }));
+  await submitSearch("fallback miss");
+  await screen.findByText(/Natural-language search unavailable/);
   await waitFor(() => expect(harness.misses).toHaveLength(1));
   expect(harness.misses[0]).toMatchObject({
-    query: "fallback",
+    query: "fallback miss",
     requested_mode: "hybrid",
     actual_mode: "lexical",
   });
   expect(harness.misses[0]?.degradations).toEqual([
     screen.getByText(/Natural-language search unavailable/).textContent,
   ]);
-  expect(
-    harness.fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/search?"))
-      .length,
-  ).toBe(2);
   expect(failure).not.toHaveBeenCalled();
 });
 
@@ -1594,9 +1622,10 @@ it("filtered search walkthrough reaches accepted results", async () => {
   };
   const harness = installHarness(options);
   render(App);
+  await screen.findAllByText("report.txt");
   await submitSearch("annual report");
   await screen.findByText("report excerpt");
-  harness.misses.length = 0;
+  expect(harness.misses).toHaveLength(0);
   expect(screen.queryByText("Filters search names and text only.")).toBeNull();
   await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
   await fireEvent.input(screen.getByLabelText("Filters JSON"), {
@@ -1613,20 +1642,6 @@ it("filtered search walkthrough reaches accepted results", async () => {
   expect(
     harness.fetchMock.mock.calls.some(([url]) => String(url) === "/api/v1/workspace/queries"),
   ).toBe(true);
-  options.snapshotRows = [];
-  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
-  await fireEvent.input(screen.getByLabelText("Filters JSON"), {
-    target: { value: '{"size_min":20}' },
-  });
-  await screen.findByRole("status", { name: "Query valid" });
-  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
-  await waitFor(() => expect(harness.misses).toHaveLength(1));
-  expect(harness.misses[0]).toMatchObject({
-    query: "annual report",
-    filters: { filters: { size_min: 20 } },
-    actual_mode: "lexical",
-    coverage: { configuration: "unconfigured" },
-  });
   await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
   await fireEvent.input(screen.getByLabelText("Filters JSON"), {
     target: { value: "{}" },

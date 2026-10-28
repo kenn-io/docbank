@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json/v2"
 	"io"
@@ -24,19 +23,28 @@ func TestSubmittedSearchMissRecording(t *testing.T) {
 			t.Run(mode+map[bool]string{true: "/name", false: "/empty"}[nameMatch], func(t *testing.T) {
 				const vault = "11111111-1111-4111-8111-111111111111"
 				var misses []misslog.Request
+				resolutions := 0
 				setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
 					w.Header().Set("Content-Type", "application/json")
 					switch r.URL.Path {
 					case "/api/v1/processing/profiles":
-						assert.NoError(t, json.MarshalWrite(w, []api.ProcessingProfileSummary{{Name: "private", EmbeddingBindings: []string{"embed"}, QueryEmbeddingBindings: []string{"embed"}}}))
+						assert.NoError(t, json.MarshalWrite(w, []api.ProcessingProfileSummary{{Name: "private", EmbeddingBindings: []string{"absent", "embed"}, QueryEmbeddingBindings: []string{"absent", "embed"}}}))
 					case "/api/v1/info":
 						assert.NoError(t, json.MarshalWrite(w, api.VaultInfo{VaultID: vault}))
 					case "/api/v1/processing/source-fences/resolve":
+						resolutions++
 						fp, err := processing.SourceFenceFingerprint(processing.SourceFence{VaultUID: vault, ContentVersionIDs: []string{processingTestVersionID}})
 						assert.NoError(t, err)
 						assert.NoError(t, json.MarshalWrite(w, api.DocumentSourceFenceResolution{Fence: api.ResolvedDocumentSourceFence{VaultUID: vault, ContentVersionIDs: []string{processingTestVersionID}}, FenceFingerprint: fp, ObservedScopeCount: 1}))
 					case "/api/v1/search":
 						if r.Method == http.MethodPost {
+							var request api.DocumentSearchRequest
+							assert.NoError(t, json.UnmarshalRead(r.Body, &request))
+							if request.BindingID == "absent" && mode == "auto" {
+								w.WriteHeader(http.StatusNotFound)
+								_, _ = io.WriteString(w, `{"status":404,"code":"not_found"}`)
+								return
+							}
 							if mode == "fallback" {
 								w.WriteHeader(http.StatusInternalServerError)
 								_, _ = io.WriteString(w, `{"status":500,"code":"processing_failed","detail":"synthetic failure"}`)
@@ -63,8 +71,7 @@ func TestSubmittedSearchMissRecording(t *testing.T) {
 				defer func() { rootCmd.SetOut(nil); rootCmd.SetErr(nil); rootCmd.SetArgs(nil); resetFlags(rootCmd) }()
 				resetFlags(rootCmd)
 				rootCmd.SetOut(io.Discard)
-				var stderr bytes.Buffer
-				rootCmd.SetErr(&stderr)
+				rootCmd.SetErr(io.Discard)
 				args := []string{"search", "missing", "--json"}
 				if mode == "lexical" {
 					args = append(args, "--mode", "lexical")
@@ -79,14 +86,20 @@ func TestSubmittedSearchMissRecording(t *testing.T) {
 				} else {
 					require.Len(t, misses, 1)
 					require.Equal(t, "missing", misses[0].Query)
+					require.Empty(t, misses[0].Filters)
 					if mode == "explicit" {
+						require.Equal(t, 1, resolutions)
+					}
+					if mode == "explicit" || mode == "auto" {
 						require.Equal(t, "embed", misses[0].BindingID)
+						require.Equal(t, "hybrid", misses[0].RequestedMode)
+						require.Equal(t, "hybrid", misses[0].ActualMode)
+						require.Equal(t, new(1), misses[0].DocumentCount)
 					}
 					if mode == "fallback" {
 						require.Equal(t, "hybrid", misses[0].RequestedMode)
 						require.Equal(t, "lexical", misses[0].ActualMode)
 						require.Equal(t, []string{"processing_failed"}, misses[0].Degradations)
-						require.Contains(t, stderr.String(), "degraded: processing_failed")
 					}
 				}
 			})

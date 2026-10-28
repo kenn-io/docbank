@@ -25,19 +25,25 @@ func TestRecordingIsOptInBoundedAndSanitizesFailures(t *testing.T) {
 	mutate := func(_ context.Context, fn func() error) error { return fn() }
 	disabled := New(st, cfg, logger, mutate)
 	disabled.Record(t.Context(), Request{Query: "synthetic secret"})
+	rows, err := st.ListMissLogRecords(t.Context(), 10, 0)
+	require.NoError(t, err)
+	require.Empty(t, rows)
+
 	cfg.Enabled = true
 	svc := New(st, cfg, logger, mutate)
 	svc.Record(t.Context(), Request{Query: " \n\t"})
 	svc.Record(t.Context(), Request{Query: "oversized", Filters: map[string]any{"filter": strings.Repeat("x", 64<<10)}})
-	rows, err := st.ListMissLogRecords(t.Context(), 10, 0)
+	svc.Record(t.Context(), Request{Query: "", RequestedMode: "lexical", ActualMode: "lexical", Filters: map[string]any{"tag_id": "taxes"}})
+	svc.Record(t.Context(), Request{Query: strings.Repeat("q", 8193), RequestedMode: "lexical", ActualMode: "lexical"})
+	rows, err = st.ListMissLogRecords(t.Context(), 10, 0)
 	require.NoError(t, err)
-	require.Empty(t, rows)
+	require.Len(t, rows, 2)
 	svc.Record(t.Context(), Request{Query: "synthetic secret", RequestedMode: "hybrid", ActualMode: "lexical", DocumentCount: new(0),
 		FenceFingerprint: "sha256:synthetic", Coverage: map[string]any{"state": "complete"}, Truncated: true,
 		Degradations: []string{"reranking_degraded"}, Reranking: map[string]any{"outcome": "degraded"}})
 	rows, err = st.ListMissLogRecords(t.Context(), 10, 0)
 	require.NoError(t, err)
-	require.Len(t, rows, 1)
+	require.Len(t, rows, 3)
 	var receipt Receipt
 	require.NoError(t, json.Unmarshal([]byte(rows[0].Receipt), &receipt))
 	require.Equal(t, rows[0].ID, receipt.ID)

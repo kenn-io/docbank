@@ -56,7 +56,7 @@
               query: text,
               requested_mode: submitted.mode,
               actual_mode: actualMode,
-              filters: { ...submitted.filters },
+              filters: { ...submitted.filters, syntax: submitted.syntax },
               truncated: photos.truncated,
             },
             { session, signal: AbortSignal.timeout(1000) },

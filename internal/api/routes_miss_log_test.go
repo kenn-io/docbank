@@ -3,6 +3,7 @@ package api_test
 import (
 	"encoding/json/v2"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -109,6 +110,14 @@ func TestMissLogInputLimits(t *testing.T) {
 	ts, st := newTestServer(t, func(d *api.Deps) { d.Cfg.MissLog.Enabled = true })
 	for _, modes := range [][2]string{{"semnatic", "lexical"}, {"hybrid", "semnatic"}, {"", "lexical"}, {"hybrid", ""}} {
 		resp, body := do(t, ts, http.MethodPost, "/api/v1/miss-log", nil, misslog.Request{Query: "missing", RequestedMode: modes[0], ActualMode: modes[1]})
+		assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+	}
+	for field, count := range map[string]int{"coverage": 33, "reranking": 9} {
+		properties := map[string]any{}
+		for i := range count {
+			properties[strconv.Itoa(i)] = true
+		}
+		resp, body := do(t, ts, http.MethodPost, "/api/v1/miss-log", nil, map[string]any{"query": "missing", "requested_mode": "lexical", "actual_mode": "lexical", "truncated": false, field: properties})
 		assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
 	}
 	resp, body := do(t, ts, http.MethodPost, "/api/v1/miss-log", nil, misslog.Request{Query: strings.Repeat("q", 128<<10), RequestedMode: "lexical", ActualMode: "lexical"})

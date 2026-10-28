@@ -521,7 +521,7 @@ func TestSearchReadScopedEmptySearchSkipsVaultInfo(t *testing.T) {
 	}
 }
 
-func TestSearchReadWithNonEmptyFenceAndNoHitsSkipsDocumentResolution(t *testing.T) {
+func TestSearchReadEmptyResultRecordsMissWithoutDocumentResolution(t *testing.T) {
 	resolveCalls := 0
 	missCalls := 0
 	var receipt map[string]any
