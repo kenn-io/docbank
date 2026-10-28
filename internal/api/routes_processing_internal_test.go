@@ -56,16 +56,3 @@ func TestProcessingTerminalEventSeparatesStatusReadFailure(t *testing.T) {
 	assert.Equal(t, "status", event.Type)
 	assert.True(t, event.Terminal)
 }
-
-func TestDocumentSearchResponsePreservesZeroRerankRelevance(t *testing.T) {
-	t.Parallel()
-
-	zero := 0.0
-	response := fromDocumentSearchReport(processing.SearchReport{Results: []retrieval.Result{{RerankRelevance: &zero}, {}}}, false)
-	body, err := json.Marshal(response.Results)
-	require.NoError(t, err)
-	var items []map[string]any
-	require.NoError(t, json.Unmarshal(body, &items))
-	assert.EqualValues(t, 0, items[0]["rerank_relevance"])
-	assert.NotContains(t, items[1], "rerank_relevance")
-}

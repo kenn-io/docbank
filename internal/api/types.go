@@ -373,7 +373,6 @@ type DocumentSearchResult struct {
 	ContentVersionID string                      `json:"content_version_id" format:"uuid"`
 	Rank             int                         `json:"rank" minimum:"1"`
 	Score            float64                     `json:"score"`
-	RerankRelevance  *float64                    `json:"rerank_relevance,omitzero"`
 	Path             string                      `json:"path" minLength:"2" maxLength:"16384" pattern:"^/"`
 	Excerpt          string                      `json:"excerpt,omitzero" maxLength:"512"`
 	LexicalRank      int                         `json:"lexical_rank,omitzero"`

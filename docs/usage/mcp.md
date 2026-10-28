@@ -198,7 +198,7 @@ resource links, is capped at 1 MiB.
 | `get_export_status` | Reads one retained native export job, including progress, failure code, and any completed receipt. It never downloads or releases the job. |
 | `get_vault_info` | Returns the stable vault ID and aggregate live, trash, version, and blob counts. It never returns the host vault path. |
 | `list_documents` | Lists current, live files. `path_prefix` defaults to `/` and is capped at 16,384 Unicode characters and 16 KiB of UTF-8. Sorts are `path`, `name`, `modified_at`, `size`, and `media_type`, in `asc` or `desc` order. Page size defaults to 50 and is capped at 250. |
-| `search_documents` | Requires a 1–8,192-character query, a 1–128-character processing profile name, and exactly one source selector: 1–4,096 unique content-version IDs or metadata filters. Mode defaults to `auto` and may be `auto`, `lexical`, `semantic`, or `hybrid`; result limit defaults to 20 and is capped at 100. Optional binding IDs are capped at 128 characters. |
+| `search_documents` | Requires a 1–8,192-character query, a 1–128-character processing profile name, and exactly one source selector: 1–4,096 unique content-version IDs or metadata filters. Mode defaults to `auto` and may be `auto`, `lexical`, `semantic`, or `hybrid`; result limit defaults to 20 and is capped at 100. Optional binding IDs are capped at 128 characters. Optional `rerank` is a boolean that requests the profile's configured reranker. |
 | `get_document` | Requires an exact positive node ID and current content-version UUID. A stale, trashed, moved-to-another-version, or mismatched identity is rejected. |
 | `read_document_content` | Reads original bytes from a selected immutable version as base64. Requires the exact vault, node, version, SHA-256 and size from `list_document_versions`. Originals are limited to 32 MiB; byte windows default to 64 KiB and are capped at 256 KiB. Returns offset, next offset and EOF. Verify the assembled size and SHA-256 before using the bytes. No export job or local file is created. |
 | `list_document_versions` | Lists immutable versions, including each original's `blob_hash` and size, for one live file. Limit defaults to 100 and is capped at 250; offset is capped at 1,000,000. |
@@ -272,9 +272,10 @@ of at most 64 characters each.
 Set `rerank: true` to request the profile's configured reranker. The query and
 bounded candidate excerpts are sent to the provider only under the existing
 reranking consent grant. The optional `reranking` receipt reports `applied`,
-`skipped`, or `degraded`, the candidate count, and any failure cause. Scored
-hits include `rerank_relevance`, including zero; hits outside the candidate
-limit do not. A degraded search retains its original order and adds
+`skipped`, or `degraded`, the candidate count, and any failure cause. When the
+receipt is `applied`, the first `candidate_count` hits include `rerank_relevance`
+equal to their `score`, including zero. Later hits omit `rerank_relevance`.
+A degraded search retains its original order and adds
 `reranking_degraded` to skipped reasons, unless the profile fails closed.
 MCP returns `reranking_unavailable` when no reranker is configured and
 `reranking_failed` when reranking fails under a fail-closed policy; these

@@ -335,9 +335,7 @@ func (searcher *Searcher) rerank(ctx context.Context, query Query, report Report
 		byDocument[score.Document] = score.Score
 	}
 	for index := range report.Results[:len(candidates)] {
-		score := byDocument[report.Results[index].Document]
-		report.Results[index].Score = score
-		report.Results[index].RerankRelevance = &score
+		report.Results[index].Score = byDocument[report.Results[index].Document]
 	}
 	slices.SortFunc(report.Results[:len(candidates)], compareResults)
 	for index := range report.Results {

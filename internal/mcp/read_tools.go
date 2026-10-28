@@ -507,7 +507,12 @@ func searchDocuments(
 		}
 		output.Results[index] = searchResultOutput{NodeID: item.NodeID,
 			ContentVersionID: item.ContentVersionID, Rank: item.Rank, Score: item.Score,
-			RerankRelevance: item.RerankRelevance, Path: item.Path, Excerpt: item.Excerpt, EvidenceIDs: evidence}
+			Path: item.Path, Excerpt: item.Excerpt, EvidenceIDs: evidence}
+		// retrieval.(*Searcher).rerank scores and sorts only the candidate prefix.
+		if output.Reranking != nil && output.Reranking.Outcome == "applied" && index < output.Reranking.CandidateCount {
+			score := item.Score
+			output.Results[index].RerankRelevance = &score
+		}
 	}
 	return output, documentResourceLinks(result.resolution.Fence.VaultUID, result.documents), nil
 }
