@@ -246,6 +246,16 @@ func TestFolderWatchEventRunnerUsesSharedScanner(t *testing.T) {
 	require.NoError(t, os.WriteFile(pathname, []byte("second"), 0600))
 	notifier.Emit(pathname)
 	await("second")
+	replacement := filepath.Join(source, "replacement.tmp")
+	require.NoError(t, os.WriteFile(replacement, []byte("third"), 0600))
+	require.NoError(t, os.Rename(replacement, pathname))
+	notifier.Emit(pathname)
+	await("third")
+	select {
+	case got := <-contents:
+		t.Fatalf("unexpected duplicate: %q", got)
+	default:
+	}
 }
 
 type fakeWatchBackend struct {
