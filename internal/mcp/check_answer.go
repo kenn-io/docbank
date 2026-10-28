@@ -10,7 +10,7 @@ import (
 
 var checkAnswerTool = toolDefinition{
 	name: "check_answer", title: "Check answer figures",
-	description: "Resolve citations and check whether answer numbers and identifiers occur in their cited text. This does not prove the figures refer to the right subject or that other claims are true. Send plain text with at most 512 figures and 512 marker references.",
+	description: "Resolve citations and compare whole answer figures by exact spelling with any cited text. A match confirms occurrence only. Send plain text with at most 512 figures and 512 [n] markers.",
 	schemas:     checkAnswerSchemas, idempotent: true,
 }
 
@@ -38,29 +38,19 @@ func checkAnswer(ctx context.Context, lease *daemonLease, raw []byte) (checkAnsw
 		return checkAnswerOutput{}, invalidToolArgumentsError()
 	}
 	resolved, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) ([]grounding.Citation, error) {
-		cache := make(map[document.TextCitation]grounding.Citation)
 		result := make([]grounding.Citation, 0, len(input.Citations))
 		for i, citation := range input.Citations {
-			entry, ok := cache[citation]
-			if !ok {
-				quote, err := c.ResolveTextCitation(ctx, citation)
-				if err != nil {
-					facts, ok := daemonconn.ExtractProblemFacts(err)
-					if !ok {
-						return nil, err
-					}
-					switch facts.Code {
-					case "citation_unavailable", "invalid_citation_range", "citation_limit", "citation_integrity":
-						entry.Err = facts.Code
-					default:
-						return nil, err
-					}
-				} else {
-					entry.Text, entry.TextSHA256 = quote.Text, quote.TextSHA256
+			entry := grounding.Citation{Index: i + 1}
+			quote, err := c.ResolveTextCitation(ctx, citation)
+			if err != nil {
+				code, _ := stableDomainError(err)
+				if code != "citation_unavailable" {
+					return nil, err
 				}
-				cache[citation] = entry
+				entry.Err = code
+			} else {
+				entry.Text, entry.TextSHA256 = quote.Text, quote.TextSHA256
 			}
-			entry.Index = i + 1
 			result = append(result, entry)
 		}
 		return result, nil

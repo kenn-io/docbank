@@ -392,61 +392,23 @@ retain their existing behavior.
 
 ## Check figures in an answer
 
-`check_answer` compares numbers and identifiers in a plain-text `answer`
-with 1–8 saved `citations`, on stdio and HTTP. Supply 1–16,000 Unicode code
-points, at most 512 figures, and at most 512 marker references. Invalid input
-is rejected before reading the vault.
-
-- Use `[1]` or `[1, 2]` for citation positions. Each marker covers figures
-  since the previous marker; whitespace-adjacent markers share that scope.
-  Figures after the last marker have no scope. With no markers, all citations
-  apply. Markers use one or two digits; `[20](url)` stays literal. Markers
-  attached to URLs still apply.
-- A figure is a word containing a digit. Letters, digits, and marks form
-  atoms, joined by `-`, `_`, or `/`. A `.` joins two digits or two letters;
-  `5.Next` and `No.1250` split. A `:` or `,` between digits binds the word,
-  so `10:30`, `1,5`, and `5,6,7` each stay whole.
-- Three-digit comma or space groups stay whole. Only a literal space, NBSP,
-  or narrow NBSP joins groups; tabs and line breaks separate them. Comparison
-  ignores case, punctuation escapes, Unicode dash variants, and grouping
-  separators. Attached currency symbols, `%`, leading minus signs, and
-  leading decimal points stay part of the figure. `.5` differs from `5`.
-- A plain-space digit run in cited text, such as `5 250` or `1 200`, can be
-  one grouped number or separate columns. A figure found only in such a run
-  is `unverifiable`, whether it matches the whole number or a column value.
-  Thus `5250`, `5`, and `250` are unverifiable against `5 250`. An unambiguous
-  match in any scoped citation still counts as `found`. The answer keeps its
-  single grouped reading, so `1 200` matches an unambiguous cited `1200`.
-
-For example, `Invoice was $1,250 [1]` is `ungrounded` against `$1,205`, and
-`grounded` against `$1,250`. Results include literal code-point offsets,
-original text, scoped citations, matches, unknown markers, and citation
-statuses and text digests. A figure is `found` if any scoped citation contains
-an unambiguous match; otherwise it is `unverifiable` if its scope is empty,
-includes unavailable evidence, or contains an ambiguous match, and `missing`
-otherwise. The overall verdict follows this order:
-
-- `ungrounded`: a figure is missing or a marker selects an unknown citation.
-- `incomplete`: a figure is unverifiable.
-- `no_figures`: the answer has no figures.
-- `grounded`: every figure was found. This confirms occurrence, not subject
-  or other claims.
-
-Bare URLs, emails, and citation markers are ignored only in the answer.
-Numbered lists count their ordinals as figures; send unnumbered prose. Ranges
-and dates compare whole: `3–5` matches `3-5`, but `5` is missing against
-`3-5`. Currency and units stay distinct: `1250` is missing against `$1,250`,
-`20` against `20kg`, and `$5` against `€5`. Decimal spelling stays significant.
-Both sides undo punctuation escapes, including literal backslashes before
-punctuation in plain-text email bodies. Digit scripts and zero-width
-characters stay literal. Arithmetic, unit conversion, and date and currency
-equivalence are outside this check.
-
-Permanent resolver failures (`citation_unavailable`, `invalid_citation_range`,
-`citation_limit`, and `citation_integrity`) appear per citation; unmatched
-figures scoped to them are unverifiable. Other resolver failures return tool
-errors. Cited text stays private; use `resolve_text_citation` to read it.
-Results use private cache scope and zero TTL.
+`check_answer` compares a plain-text `answer` with 1–8 saved `citations` on
+stdio and HTTP. Send 1–16,000 Unicode code points, at most 512 figures, and
+512 `[n]` markers. Each citation requires a verified read, including duplicates.
+A figure is a whitespace-delimited token containing a digit, with edge
+punctuation trimmed. Em dashes and horizontal bars also separate tokens.
+Figures compare exactly across all resolved citations; markers don't scope them.
+Unknown markers, or missing figures when all citations resolve, give `ungrounded`.
+Otherwise, any unavailable citation gives `incomplete`, an answer without figures
+gives `no_figures`, and all figures found gives `grounded`. Other resolver failures
+return tool errors. Results include figures, unknown marker indexes, citation
+statuses, and text digests, with private cache scope and zero TTL.
+`5-year` differs from `5 years`, `1250` from `1,250`, and `$1,205` from `1,205`.
+Case and dash variants differ. Numbered-list numbers count as figures. A cited
+`1 200` reads as one literal number, including its grouping space. Both sides undo
+Markdown punctuation escapes, so a literal backslash before punctuation in an
+unescaped body, such as a plain-text email, reads as an escape. Occurrence alone
+confirms neither the subject nor other claims.
 
 ## Read complete retained sections
 

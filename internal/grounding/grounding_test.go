@@ -10,141 +10,78 @@ import (
 
 func TestGrounding(t *testing.T) {
 	for _, tc := range []struct {
-		name, answer, status string
-		citations            []Citation
-		figures              int
-		figureStatus         string
+		name, answer, source, status, figureStatus string
+		figures                                    []string
 	}{
-		{"answer escapes", `\$1\,205 [1]`, "grounded", []Citation{{Index: 1, Text: "$1,205"}}, 1, "found"},
-		{"literal email identifier itself", `A12\_B34 [1]`, "grounded", []Citation{{Index: 1, Text: `A12\_B34`}}, 1, "found"},
-		{"literal email escape limitation", "A12_B34 [1]", "grounded", []Citation{{Index: 1, Text: `A12\_B34`}}, 1, "found"},
-		{"literal email dash limitation", "INV-42 [1]", "grounded", []Citation{{Index: 1, Text: `INV\-42`}}, 1, "found"},
-		{"space grouped answer limitation", "2 100 units [1]", "ungrounded", []Citation{{Index: 1, Text: "2 units and 100 units"}}, 1, "missing"},
-		{"plain space columns limitation", "5250 [1]", "incomplete", []Citation{{Index: 1, Text: "Widget 5 250 1,250"}}, 1, "unverifiable"},
-		{"Sol leading_decimal_in_answer", ".5 [1]", "ungrounded", []Citation{{Index: 1, Text: "5"}}, 1, "missing"},
-		{"Sol leading_decimal_in_source", "5 [1]", "ungrounded", []Citation{{Index: 1, Text: ".5"}}, 1, "missing"},
-		{"Sol separate_columns", "5250 [1]", "incomplete", []Citation{{Index: 1, Text: "5 250"}}, 1, "unverifiable"},
-		{"Sol actual_column_values", "5 and 250 [1]", "incomplete", []Citation{{Index: 1, Text: "5 250"}}, 2, "unverifiable"},
-		{"Sonnet space columns", "Fee was 250 [1]", "incomplete", []Citation{{Index: 1, Text: "Widget 5 250"}}, 1, "unverifiable"},
-		{"Sonnet URL-glued marker", "Total $1,250 https://ex.com/inv[1]", "ungrounded", []Citation{{Index: 1, Text: "$1,205"}, {Index: 2, Text: "$1,250"}}, 1, "missing"},
-		{"Sonnet time splitting", "Meeting at 10:30", "ungrounded", []Citation{{Index: 1, Text: "Meeting at 10:00 for 30 minutes"}}, 1, "missing"},
-		{"Sonnet decimal commas", "1,5 [1]", "ungrounded", []Citation{{Index: 1, Text: "1 and 5"}}, 1, "missing"},
-		{"Sonnet digit-letter dot", "5.Next [1]", "grounded", []Citation{{Index: 1, Text: "5"}}, 1, "found"},
-		{"Sonnet letter-digit dot", "No.1250 [1]", "grounded", []Citation{{Index: 1, Text: "1250"}}, 1, "found"},
-		{"leading decimal match", "-.5 [1]", "grounded", []Citation{{Index: 1, Text: "-.5"}}, 1, "found"},
-		{"unambiguous occurrence wins", "250 [1]", "grounded", []Citation{{Index: 1, Text: "250; Widget 5 250"}}, 1, "found"},
-		{"unambiguous citation wins", "250 [1, 2]", "grounded", []Citation{{Index: 1, Text: "5 250"}, {Index: 2, Text: "250"}}, 1, "found"},
-		{"unrelated ambiguous run", "42 [1]", "ungrounded", []Citation{{Index: 1, Text: "5 250"}}, 1, "missing"},
-		{"answer keeps grouped reading", "1 200 [1]", "grounded", []Citation{{Index: 1, Text: "1200"}}, 1, "found"},
-		{"time match", "10:30 [1]", "grounded", []Citation{{Index: 1, Text: "10:30"}}, 1, "found"},
-		{"literal decimal comma", "1,5 [1]", "grounded", []Citation{{Index: 1, Text: `1\,5`}}, 1, "found"},
-		{"letter dot identifier", "INV.A12 [1]", "grounded", []Citation{{Index: 1, Text: "inv.a12"}}, 1, "found"},
-		{"URL-glued unknown marker", "20 https://example.com/inv[2]", "ungrounded", []Citation{{Index: 1, Text: "20"}}, 1, "unverifiable"},
-		{"tab columns", "Unit price 250 for 5 widgets [1]", "grounded", []Citation{{Index: 1, Text: "Widget	5	250	1,250"}}, 2, "found"},
-		{"tab columns invented amount", "5,250 [1]", "ungrounded", []Citation{{Index: 1, Text: "Widget	5	250	1,250"}}, 1, "missing"},
-		{"newline grouping", "1200 [1]", "ungrounded", []Citation{{Index: 1, Text: "1\n200"}}, 1, "missing"},
-		{"range stays whole", "1,200-1,500 [1]", "ungrounded", []Citation{{Index: 1, Text: "1,500"}}, 1, "missing"},
-		{"range tail stays whole", "500 [1]", "ungrounded", []Citation{{Index: 1, Text: "1,200-1,500"}}, 1, "missing"},
-		{"range endpoint limitation", "1,500 [1]", "ungrounded", []Citation{{Index: 1, Text: "1,200-1,500"}}, 1, "missing"},
-		{"range grouping", "1200-1500 [1]", "grounded", []Citation{{Index: 1, Text: "1,200-1,500"}}, 1, "found"},
-		{"unicode dash", "3–5 [1]", "grounded", []Citation{{Index: 1, Text: "3-5"}}, 1, "found"},
-		{"range separate endpoints limitation", "2020 to 2024 [1]", "ungrounded", []Citation{{Index: 1, Text: "2020-2024"}}, 2, "missing"},
-		{"leading answer amount", "1250. That's the total for 2024 [1]", "ungrounded", []Citation{{Index: 1, Text: "1205 for 2024"}}, 2, "missing"},
-		{"standalone leading amount", "1250.\nPaid in full [1]", "ungrounded", []Citation{{Index: 1, Text: "1205"}}, 1, "missing"},
-		{"leading year", "2024) revenue was up [1]", "ungrounded", []Citation{{Index: 1, Text: "2025"}}, 1, "missing"},
-		{"suffix currency", "20€ [1]", "ungrounded", []Citation{{Index: 1, Text: "20$"}}, 1, "missing"},
-		{"suffix versus bare", "20€ [1]", "ungrounded", []Citation{{Index: 1, Text: "20"}}, 1, "missing"},
-		{"currency before sign", "$-5 [1]", "ungrounded", []Citation{{Index: 1, Text: "€-5"}}, 1, "missing"},
-		{"currency grouping", "$1,250 [1]", "grounded", []Citation{{Index: 1, Text: "$1250"}}, 1, "found"},
-		{"currency decimals deferred", "$1,250 [1]", "ungrounded", []Citation{{Index: 1, Text: "$1,250.00"}}, 1, "missing"},
-		{"currency bare limitation", "1250 [1]", "ungrounded", []Citation{{Index: 1, Text: "$1,250"}}, 1, "missing"},
-		{"swapped dates", "2024-01-05 [1]", "ungrounded", []Citation{{Index: 1, Text: "2024-05-01"}}, 1, "missing"},
-		{"leading marker limitation", "Per [1], total was $1,250.", "incomplete", []Citation{{Index: 1, Text: "$1205"}}, 1, "unverifiable"},
-		{"unsigned versus signed", "5 [1]", "ungrounded", []Citation{{Index: 1, Text: "-5"}}, 1, "missing"},
-		{"percent suffix", "20% [1]", "ungrounded", []Citation{{Index: 1, Text: "20"}}, 1, "missing"},
-		{"code point offsets", "é 20 [1]", "grounded", []Citation{{Index: 1, Text: "20"}}, 1, "found"},
-		{"invoice mismatch", "$1,250 [1]", "ungrounded", []Citation{{Index: 1, Text: `\$1\,205`}}, 1, "missing"},
-		{"invoice match", "$1,250 [1]", "grounded", []Citation{{Index: 1, Text: `\$1\,250`}}, 1, "found"},
-		{"grouped space", "1200 [1]", "incomplete", []Citation{{Index: 1, Text: "1 200"}}, 1, "unverifiable"},
-		{"grouped boundary", "200 [1]", "incomplete", []Citation{{Index: 1, Text: "1 200"}}, 1, "unverifiable"},
-		{"grouped comma", "1200 [1]", "grounded", []Citation{{Index: 1, Text: "1,200"}}, 1, "found"},
-		{"single comparison value", "1,250 [1]", "grounded", []Citation{{Index: 1, Text: "1250"}}, 1, "found"},
-		{"compact unit", "Weight is 20kg [1]", "grounded", []Citation{{Index: 1, Text: "20kg"}}, 1, "found"},
-		{"spaced unit", "20kg [1]", "ungrounded", []Citation{{Index: 1, Text: "20 kg"}}, 1, "missing"},
-		{"url and email", "https://example.com/doc/123 user42@example.com 7 [1]", "grounded", []Citation{{Index: 1, Text: "7"}}, 1, "found"},
-		{"cited url", "123 [1]", "ungrounded", []Citation{{Index: 1, Text: "https://example.com/doc/123"}}, 1, "missing"},
-		{"cited url figure", "2024 [1]", "grounded", []Citation{{Index: 1, Text: "https://example.com/?year=2024"}}, 1, "found"},
-		{"cited email figure", "123 [1]", "grounded", []Citation{{Index: 1, Text: "123@example.com"}}, 1, "found"},
-		{"signed", "-20 [1]", "ungrounded", []Citation{{Index: 1, Text: "20"}}, 1, "missing"},
-		{"unicode sign", "−20 [1]", "grounded", []Citation{{Index: 1, Text: "-20"}}, 1, "found"},
-		{"currencies", "$5 [1]", "ungrounded", []Citation{{Index: 1, Text: "€5"}}, 1, "missing"},
-		{"currency retained", "$5 [1]", "ungrounded", []Citation{{Index: 1, Text: "5"}}, 1, "missing"},
-		{"leading decimal stays literal", ".5 [1]", "ungrounded", []Citation{{Index: 1, Text: "0.5"}}, 1, "missing"},
-		{"decimal zeros stay literal", "1.200 [1]", "ungrounded", []Citation{{Index: 1, Text: "1.2"}}, 1, "missing"},
-		{"leading zeros", "0042 [1]", "ungrounded", []Citation{{Index: 1, Text: "42"}}, 1, "missing"},
-		{"whole identifier", "K5 [1]", "ungrounded", []Citation{{Index: 1, Text: "K50"}}, 1, "missing"},
-		{"identifier case", "INV-2024-0042 [1]", "grounded", []Citation{{Index: 1, Text: "inv-2024-0042"}}, 1, "found"},
-		{"identifier punctuation", "K-5 [1]", "ungrounded", []Citation{{Index: 1, Text: "K5"}}, 1, "missing"},
-		{"mixed space grouping", "1200300 [1]", "incomplete", []Citation{{Index: 1, Text: "1 200\u202f300"}}, 1, "unverifiable"},
-		{"unicode grouping", "1200 [1]", "grounded", []Citation{{Index: 1, Text: "1\u202f200"}}, 1, "found"},
-		{"list ordinal", "1. Fee 20 [1]", "ungrounded", []Citation{{Index: 1, Text: "20"}}, 2, "missing"},
-		{"empty list item", "1.\nFee 20 [1]", "ungrounded", []Citation{{Index: 1, Text: "20"}}, 2, "missing"},
-		{"cited ordinal", "1250 [1]", "grounded", []Citation{{Index: 1, Text: "1250. Paid in full"}}, 1, "found"},
-		{"cited year", "2024 [1]", "grounded", []Citation{{Index: 1, Text: `2024\. Revenue`}}, 1, "found"},
-		{"tab boundary", "5250 [1]", "ungrounded", []Citation{{Index: 1, Text: "5\t250"}}, 1, "missing"},
-		{"line boundary", "5250 [1]", "ungrounded", []Citation{{Index: 1, Text: "5\n250"}}, 1, "missing"},
-		{"table columns", "5 and 250 [1]", "grounded", []Citation{{Index: 1, Text: "5\t250"}}, 2, "found"},
-		{"comma list", "5,6,7 [1]", "ungrounded", []Citation{{Index: 1, Text: "5, 6, 7"}}, 1, "missing"},
-		{"stacked markers", "1250 [1][2]", "grounded", []Citation{{Index: 1, Text: "1205"}, {Index: 2, Text: "1250"}}, 1, "found"},
-		{"whitespace markers", "1250 [1] \t\n[2]", "grounded", []Citation{{Index: 1, Text: "1205"}, {Index: 2, Text: "1250"}}, 1, "found"},
-		{"long url", "https://example.com/" + strings.Repeat("x", 15900), "no_figures", []Citation{{Index: 1, Text: "7"}}, 0, ""},
-		{"no figures", "See invoice [1]", "no_figures", []Citation{{Index: 1, Text: "20"}}, 0, ""},
-		{"swapped scope", "Fee 20.[1] Rate 30.[2]", "ungrounded", []Citation{{Index: 1, Text: "30"}, {Index: 2, Text: "20"}}, 2, "missing"},
-		{"unknown marker without figures", "See invoice [2]", "ungrounded", []Citation{{Index: 1, Text: "20"}}, 0, ""},
-		{"unknown marker", "20 [2]", "ungrounded", []Citation{{Index: 1, Text: "20"}}, 1, "unverifiable"},
-		{"unmarked tail", "20 [1] then 30", "incomplete", []Citation{{Index: 1, Text: "20 30"}}, 2, "found"},
-		{"marker spans sentences", "Fee 20. Rate 30 [1]", "grounded", []Citation{{Index: 1, Text: "20 30"}}, 2, "found"},
-		{"no markers", "20", "grounded", []Citation{{Index: 1, Text: "20"}}, 1, "found"},
-		{"unavailable", "20 [1]", "incomplete", []Citation{{Index: 1, Err: "citation_unavailable"}}, 1, "unverifiable"},
-		{"found with unavailable", "20 [1, 2]", "grounded", []Citation{{Index: 1, Text: "20"}, {Index: 2, Err: "citation_unavailable"}}, 1, "found"},
-		{"missing precedes unavailable", "20 [1]", "ungrounded", []Citation{{Index: 1, Text: "30"}, {Index: 2, Err: "citation_unavailable"}}, 1, "missing"},
-		{"no figures unavailable", "See invoice", "no_figures", []Citation{{Index: 1, Err: "citation_unavailable"}}, 0, ""},
-		{"long brackets", "[123]", "grounded", []Citation{{Index: 1, Text: "123"}}, 1, "found"},
-		{"link label literal", "[20](url)", "grounded", []Citation{{Index: 1, Text: "20"}}, 1, "found"},
-		{"cited marker", "20 [1]", "grounded", []Citation{{Index: 1, Text: "Reference [20]"}}, 1, "found"},
+		{"escapes", `\$1\,205 [1]`, `$1,205`, "grounded", "found", []string{"$1,205"}},
+		{"cited escapes", "$1,205", `\$1\,205`, "grounded", "found", []string{"$1,205"}},
+		{"space group is whole", "200", "1 200", "ungrounded", "missing", []string{"200"}},
+		{"space group is literal", "1200", "1 200", "ungrounded", "missing", []string{"1200"}},
+		{"space group match", "1 200", "1 200", "grounded", "found", []string{"1 200"}},
+		{"long space group", "1 200 300", "1 200 300", "grounded", "found", []string{"1 200 300"}},
+		{"NBSP group", "200", "1\u00a0200", "ungrounded", "missing", []string{"200"}},
+		{"narrow NBSP group", "200", "1\u202f200", "ungrounded", "missing", []string{"200"}},
+		{"multiple spaces separate", "200", "1  200", "grounded", "found", []string{"200"}},
+		{"long digits separate", "200", "1234 200", "grounded", "found", []string{"200"}},
+		{"tab columns", "250 and 5", "Widget\t5\t250\t1,250", "grounded", "found", []string{"250", "5"}},
+		{"newline separates", "1\n200", "1\n200", "grounded", "found", []string{"1", "200"}},
+		{"newline cannot join", "1200", "1\n200", "ungrounded", "missing", []string{"1200"}},
+		{"range stays whole", "1,500", "1,200-1,500", "ungrounded", "missing", []string{"1,500"}},
+		{"range matches", "1,200-1,500", "1,200-1,500", "grounded", "found", []string{"1,200-1,500"}},
+		{"comma sequence", "5,6,7", "5, 6, 7", "ungrounded", "missing", []string{"5,6,7"}},
+		{"leading decimal", ".5", "5", "ungrounded", "missing", []string{".5"}},
+		{"negative sign", "-5", "5", "ungrounded", "missing", []string{"-5"}},
+		{"suffix currency", "20€", "20$", "ungrounded", "missing", []string{"20€"}},
+		{"swapped dates", "2024-01-05", "2024-05-01", "ungrounded", "missing", []string{"2024-01-05"}},
+		{"em dash separates", "$1,250—matching", "$1,250", "grounded", "found", []string{"$1,250"}},
+		{"horizontal bar separates", "$1,250―matching", "$1,250", "grounded", "found", []string{"$1,250"}},
+		{"bare URL", "https://example.com/2024", "2024", "ungrounded", "missing", []string{"https://example.com/2024"}},
+		{"URL Unicode boundary", "https://example.com/invoice\u00a0$1,250 [1]", "$1,205", "ungrounded", "missing", []string{"$1,250"}},
+		{"cited brackets", "20", "Reference [20]", "grounded", "found", []string{"20"}},
+		{"unknown marker", "20 [2]", "20", "ungrounded", "found", []string{"20"}},
+		{"zero marker", "20 [0]", "20", "ungrounded", "found", []string{"20"}},
+		{"no figures", "An answer [1]", "20", "no_figures", "", []string{}},
+		{"trim punctuation", "(**$1,205**) 20%", "$1,205 20%", "grounded", "found", []string{"$1,205", "20%"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a, err := Prepare(tc.answer)
 			require.NoError(t, err)
-			report := a.Check(tc.citations)
+			report := a.Check([]Citation{{Index: 1, Text: tc.source, TextSHA256: "digest"}})
 			require.Equal(t, tc.status, report.Status)
-			require.Len(t, report.Figures, tc.figures)
-			if tc.figures > 0 {
-				require.Equal(t, tc.figureStatus, report.Figures[0].Status)
+			figures := []Figure{}
+			for _, value := range tc.figures {
+				figures = append(figures, Figure{Text: value, Status: tc.figureStatus})
 			}
-			for _, f := range report.Figures {
-				require.Equal(t, f.Text, string([]rune(tc.answer)[f.Start:f.End]))
-				if tc.name == "Sol actual_column_values" {
-					require.Equal(t, "unverifiable", f.Status)
-					require.Empty(t, f.FoundIn)
-				}
+			require.Equal(t, figures, report.Figures)
+			require.Equal(t, []CitationResult{{Index: 1, Status: "resolved", TextSHA256: "digest"}}, report.Citations)
+			unknown := []int{}
+			switch tc.name {
+			case "unknown marker":
+				unknown = []int{2}
+			case "zero marker":
+				unknown = []int{0}
 			}
-			if tc.name == "stacked markers" {
-				require.Equal(t, []int{1, 2}, report.Figures[0].Citations)
-				require.Equal(t, []int{2}, report.Figures[0].FoundIn)
-			}
-			if tc.name == "code point offsets" {
-				require.Equal(t, 2, report.Figures[0].Start)
-			}
-			if tc.name == "unknown marker" {
-				require.Equal(t, []Marker{{Index: 2, Start: 3, End: 6}}, report.UnknownMarkers)
-			}
-			if tc.name == "unmarked tail" {
-				require.Empty(t, report.Figures[1].Citations)
-				require.Equal(t, "unverifiable", report.Figures[1].Status)
-			}
+			require.Equal(t, unknown, report.UnknownMarkers)
 		})
 	}
+	t.Run("all resolved citations contribute", func(t *testing.T) {
+		a, err := Prepare("Fee 20 [1] rate 30 [2]")
+		require.NoError(t, err)
+		report := a.Check([]Citation{{Index: 1, Text: "30"}, {Index: 2, Text: "20"}})
+		require.Equal(t, "grounded", report.Status)
+		require.Equal(t, []Figure{{Text: "20", Status: "found"}, {Text: "30", Status: "found"}}, report.Figures)
+	})
+	t.Run("unavailable evidence", func(t *testing.T) {
+		for _, tc := range []struct{ answer, status string }{
+			{"20 [1]", "incomplete"}, {"30 [1]", "incomplete"}, {"words", "incomplete"}, {"20 [3]", "ungrounded"},
+		} {
+			a, err := Prepare(tc.answer)
+			require.NoError(t, err)
+			report := a.Check([]Citation{{Index: 1, Text: "20"}, {Index: 2, Err: "citation_unavailable"}})
+			require.Equal(t, tc.status, report.Status)
+			require.Equal(t, CitationResult{Index: 2, Status: "citation_unavailable"}, report.Citations[1])
+		}
+	})
 	t.Run("limits", func(t *testing.T) {
 		for _, token := range []string{"K5 ", "[1] "} {
 			_, err := Prepare(strings.Repeat(token, 512))
@@ -154,7 +91,7 @@ func TestGrounding(t *testing.T) {
 		}
 	})
 	t.Run("maximum quotations stay bounded", func(t *testing.T) {
-		a, err := Prepare("1 [1, 2, 3, 4, 5, 6, 7, 8]")
+		a, err := Prepare("1 [1][2][3][4][5][6][7][8]")
 		require.NoError(t, err)
 		citations := make([]Citation, 8)
 		for i := range citations {
@@ -163,7 +100,7 @@ func TestGrounding(t *testing.T) {
 		start := time.Now()
 		report := a.Check(citations)
 		require.Equal(t, "ungrounded", report.Status)
-		require.Empty(t, report.Figures[0].FoundIn)
+		require.Equal(t, []Figure{{Text: "1", Status: "missing"}}, report.Figures)
 		require.Less(t, time.Since(start), 2*time.Second)
 	})
 }

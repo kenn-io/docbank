@@ -1,14 +1,12 @@
-// Package grounding compares plain-text answer figures with saved citations.
+// Package grounding compares answer figures with saved citations.
 package grounding
 
 import (
 	"errors"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 	"unicode"
-	"unicode/utf8"
 )
 
 type Citation struct {
@@ -21,307 +19,119 @@ type CitationResult struct {
 	TextSHA256 string `json:"text_sha256,omitempty"`
 }
 type Figure struct {
-	Start     int    `json:"start"`
-	End       int    `json:"end"`
-	Text      string `json:"text"`
-	value     string
-	Citations []int  `json:"citations"`
-	FoundIn   []int  `json:"found_in"`
-	Status    string `json:"status"`
-}
-type Marker struct {
-	Index int `json:"index"`
-	Start int `json:"start"`
-	End   int `json:"end"`
+	Text   string `json:"text"`
+	Status string `json:"status"`
 }
 type Report struct {
 	Status         string           `json:"status"`
 	Citations      []CitationResult `json:"citations"`
 	Figures        []Figure         `json:"figures"`
-	UnknownMarkers []Marker         `json:"unknown_markers"`
-}
-type marker struct {
-	start, end int
-	indexes    []int
-	adjacent   bool
+	UnknownMarkers []int            `json:"unknown_markers"`
 }
 type Answer struct {
-	figures   []Figure
-	markers   []marker
-	ambiguous []string
+	figures []string
+	markers []int
 }
 
-var controls = regexp.MustCompile(`(?i)\[[0-9]{1,2}(?:, *[0-9]{1,2})*\]|(?:https?://|www\.)[^\s<>\[]+|[\pL\pN._%+\-]+@[\pL\pN.\-]+\.[\pL]{2,}`)
+var markers = regexp.MustCompile(`\[[0-9]{1,2}\]`)
+var escapes = regexp.MustCompile(`\\([[:punct:]])`)
 
-// cursor decodes punctuation escapes while retaining literal code-point offsets.
-// Lookahead copies this small cursor and reads at most four characters.
-type cursor struct {
-	rs  []rune
-	pos int
+func edge(r rune) bool {
+	return !unicode.IsLetter(r) && !unicode.IsDigit(r) && !unicode.IsMark(r) && !unicode.Is(unicode.Sc, r) && r != '%'
 }
+func split(r rune) bool { return unicode.IsSpace(r) || r == '\u2014' || r == '\u2015' }
 
-func (c *cursor) peek() rune {
-	if c.pos >= len(c.rs) {
-		return 0
-	}
-	r := c.rs[c.pos]
-	if r == '\\' && c.pos+1 < len(c.rs) && asciiPunctuation(c.rs[c.pos+1]) {
-		r = c.rs[c.pos+1]
-	}
-	if unicode.Is(unicode.Pd, r) || r == '−' {
-		return '-'
-	}
-	return r
-}
-func (c *cursor) take() rune {
-	r := c.peek()
-	if c.rs[c.pos] == '\\' && c.pos+1 < len(c.rs) && asciiPunctuation(c.rs[c.pos+1]) {
-		c.pos++
-	}
-	c.pos++
-	return r
-}
-func asciiPunctuation(r rune) bool {
-	return r >= '!' && r <= '/' || r >= ':' && r <= '@' || r >= '[' && r <= '`' || r >= '{' && r <= '~'
-}
-func word(r rune) bool       { return unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsMark(r) }
-func affix(r rune) bool      { return unicode.Is(unicode.Sc, r) || r == '%' }
-func groupSpace(r rune) bool { return r == ' ' || r == '\u00a0' || r == '\u202f' }
-func fold(r rune) rune {
-	smallest := r
-	for next := unicode.SimpleFold(r); next != r; next = unicode.SimpleFold(next) {
-		smallest = min(smallest, next)
-	}
-	return smallest
-}
-
-// atom consumes a complete digit grouping before the caller considers joiners.
-// It returns column values when literal spaces make a cited run ambiguous.
-func (c *cursor) atom(value *strings.Builder, hasDigit *bool, cited bool) []string {
-	start := value.Len()
-	var parts []string
-	ambiguous := false
-	digits := 0
-	for unicode.IsDigit(c.peek()) {
-		value.WriteRune(c.take())
-		digits++
-		*hasDigit = true
-	}
-	if digits > 0 && digits <= 3 {
-		separator := c.peek()
-		for c.peek() == ',' && separator == ',' || groupSpace(c.peek()) && groupSpace(separator) {
-			next := *c
-			next.take()
-			groupStart, count := next.pos, 0
-			for count < 3 && unicode.IsDigit(next.peek()) {
-				next.take()
-				count++
-			}
-			if count != 3 || unicode.IsDigit(next.peek()) {
-				break
-			}
-			if cited && groupSpace(separator) {
-				if parts == nil {
-					parts = append(parts, value.String()[start:])
+func extract(text string) []string {
+	rs := []rune(escapes.ReplaceAllString(text, "$1"))
+	figures := []string{}
+	for i := 0; i < len(rs); {
+		start, digits := i, 0
+		for i < len(rs) {
+			r := rs[i]
+			if split(r) {
+				// Only a single grouping space can join a three-digit group.
+				end := i + 1
+				for end < len(rs) && end < i+5 && unicode.IsDigit(rs[end]) {
+					end++
 				}
-				parts = append(parts, string(c.rs[groupStart:next.pos]))
-				ambiguous = ambiguous || c.peek() == ' '
-			}
-			value.WriteString(string(c.rs[groupStart:next.pos]))
-			*c = next
-		}
-	}
-	for word(c.peek()) {
-		r := c.take()
-		*hasDigit = *hasDigit || unicode.IsDigit(r)
-		value.WriteRune(fold(r))
-	}
-	if ambiguous {
-		return parts
-	}
-	return nil
-}
-
-func extract(text string, cited bool) Answer {
-	original := []rune(text)
-	rs := slices.Clone(original)
-	a := Answer{figures: []Figure{}, markers: []marker{}}
-	if !cited {
-		// Count disjoint UTF-8 spans once, rather than recounting prefixes.
-		s := string(rs)
-		byteEnd, runeEnd := 0, 0
-		for _, span := range controls.FindAllStringIndex(s, -1) {
-			start := runeEnd + utf8.RuneCountInString(s[byteEnd:span[0]])
-			end := start + utf8.RuneCountInString(s[span[0]:span[1]])
-			byteEnd, runeEnd = span[1], end
-			if s[span[0]] == '[' {
-				if span[1] < len(s) && s[span[1]] == '(' {
+				if (r == ' ' || r == '\u00a0' || r == '\u202f') && digits >= 1 && digits <= 3 && end == i+4 {
+					i, digits = end, 3
 					continue
 				}
-				m := marker{start: start, end: end}
-				if len(a.markers) > 0 {
-					m.adjacent = strings.TrimSpace(string(original[a.markers[len(a.markers)-1].end:start])) == ""
-				}
-				for v := range strings.SplitSeq(s[span[0]+1:span[1]-1], ",") {
-					n, _ := strconv.Atoi(strings.TrimSpace(v))
-					m.indexes = append(m.indexes, n)
-				}
-				a.markers = append(a.markers, m)
-			}
-			for i := start; i < end; i++ {
-				rs[i] = ' '
-			}
-		}
-	}
-	c := cursor{rs: rs}
-	previous := rune(0)
-	for c.pos < len(rs) {
-		start := c.pos
-		var value strings.Builder
-		hasDigit := false
-		// Affixes can surround the sign, as in $-5 and -$5.
-		signed := c.peek() == '-' && !word(previous)
-		if signed {
-			value.WriteRune(c.take())
-		}
-		for affix(c.peek()) {
-			value.WriteRune(c.take())
-		}
-		if !signed && c.peek() == '-' && !word(previous) {
-			value.WriteRune(c.take())
-		}
-		next := c
-		if next.peek() == '.' && !word(previous) {
-			next.take()
-			if unicode.IsDigit(next.peek()) {
-				value.WriteRune(c.take())
-			}
-		}
-		if !word(c.peek()) {
-			if c.pos == start {
-				previous = c.take()
-			} else {
-				previous = rs[c.pos-1]
-			}
-			continue
-		}
-		parts := c.atom(&value, &hasDigit, cited)
-		for strings.ContainsRune("-_/.:,", c.peek()) {
-			next := c
-			joiner := next.take()
-			if !word(next.peek()) {
 				break
 			}
-			left, right := rs[c.pos-1], next.peek()
-			digits := unicode.IsDigit(left) && unicode.IsDigit(right)
-			letters := unicode.IsLetter(left) && unicode.IsLetter(right)
-			if !digits && (joiner == ':' || joiner == ',' || joiner == '.' && !letters) {
+			if unicode.IsDigit(r) {
+				digits++
+			} else {
+				digits = 0
+			}
+			i++
+		}
+		token := rs[start:i]
+		for len(token) > 0 && edge(token[0]) {
+			if (token[0] == '-' || token[0] == '.') && len(token) > 1 && (unicode.IsDigit(token[1]) || unicode.Is(unicode.Sc, token[1])) {
 				break
 			}
-			c = next
-			value.WriteRune(joiner)
-			parts = append(parts, c.atom(&value, &hasDigit, cited)...)
+			token = token[1:]
 		}
-		previous = rs[c.pos-1]
-		for affix(c.peek()) {
-			previous = c.take()
-			value.WriteRune(previous)
+		value := strings.TrimRightFunc(string(token), edge)
+		if strings.ContainsFunc(value, unicode.IsDigit) {
+			figures = append(figures, value)
 		}
-		if hasDigit {
-			if len(parts) > 0 {
-				a.ambiguous = append(a.ambiguous, parts...)
-				a.ambiguous = append(a.ambiguous, value.String())
-			} else {
-				a.figures = append(a.figures, Figure{Start: start, End: c.pos, Text: string(original[start:c.pos]), value: value.String()})
-			}
-		}
+		i++
 	}
-	return a
+	return figures
 }
 func Prepare(answer string) (Answer, error) {
-	a := extract(answer, false)
-	count := 0
-	for _, m := range a.markers {
-		count += len(m.indexes)
-	}
-	if len(a.figures) > 512 || count > 512 {
+	a := Answer{markers: []int{}}
+	answer = markers.ReplaceAllStringFunc(answer, func(m string) string {
+		n, _ := strconv.Atoi(m[1 : len(m)-1])
+		a.markers = append(a.markers, n)
+		return ""
+	})
+	a.figures = extract(answer)
+	if len(a.figures) > 512 || len(a.markers) > 512 {
 		return Answer{}, errors.New("answer exceeds figure or marker limit")
 	}
 	return a, nil
 }
-
 func (a Answer) Check(citations []Citation) Report {
-	report := Report{Status: "no_figures", Citations: []CitationResult{}, Figures: []Figure{}, UnknownMarkers: []Marker{}}
-	sources, all := map[int]map[string]string{}, []int{}
+	report := Report{Citations: []CitationResult{}, Figures: []Figure{}, UnknownMarkers: []int{}}
+	values, unavailable := map[string]bool{}, false
 	for _, c := range citations {
-		all = append(all, c.Index)
 		status := c.Err
 		if status == "" {
 			status = "resolved"
-			sources[c.Index] = map[string]string{}
-			source := extract(c.Text, true)
-			for _, value := range source.ambiguous {
-				sources[c.Index][value] = "unverifiable"
+			for _, value := range extract(c.Text) {
+				values[value] = true
 			}
-			for _, f := range source.figures {
-				sources[c.Index][f.value] = "found"
-			}
+		} else {
+			unavailable = true
 		}
 		report.Citations = append(report.Citations, CitationResult{Index: c.Index, Status: status, TextSHA256: c.TextSHA256})
 	}
-	// Merge whitespace-adjacent markers once; figures advance through the groups.
-	groups := []marker{}
-	for _, m := range a.markers {
-		if !m.adjacent {
-			groups = append(groups, marker{start: m.start, indexes: []int{}})
+	missing := false
+	for _, value := range a.figures {
+		status := "found"
+		if !values[value] {
+			status, missing = "missing", true
 		}
-		last := &groups[len(groups)-1]
-		for _, idx := range m.indexes {
-			if idx < 1 || idx > len(citations) {
-				report.UnknownMarkers = append(report.UnknownMarkers, Marker{Index: idx, Start: m.start, End: m.end})
-			} else if !slices.Contains(last.indexes, idx) {
-				last.indexes = append(last.indexes, idx)
-			}
+		report.Figures = append(report.Figures, Figure{Text: value, Status: status})
+	}
+	for _, n := range a.markers {
+		if n < 1 || n > len(citations) {
+			report.UnknownMarkers = append(report.UnknownMarkers, n)
 		}
 	}
-	group := 0
-	for _, f := range a.figures {
-		scope := all
-		if len(groups) > 0 {
-			for group < len(groups) && groups[group].start < f.End {
-				group++
-			}
-			scope = []int{}
-			if group < len(groups) {
-				scope = groups[group].indexes
-			}
-		}
-		f.Citations, f.FoundIn = scope, []int{}
-		unverifiable := len(f.Citations) == 0
-		for _, idx := range f.Citations {
-			unverifiable = unverifiable || sources[idx] == nil || sources[idx][f.value] == "unverifiable"
-			if sources[idx][f.value] == "found" {
-				f.FoundIn = append(f.FoundIn, idx)
-			}
-		}
-		f.Status = "missing"
-		if len(f.FoundIn) > 0 {
-			f.Status = "found"
-		} else if unverifiable {
-			f.Status = "unverifiable"
-		}
-		switch {
-		case f.Status == "missing":
-			report.Status = "ungrounded"
-		case f.Status == "unverifiable" && report.Status != "ungrounded":
-			report.Status = "incomplete"
-		case report.Status == "no_figures":
-			report.Status = "grounded"
-		}
-		report.Figures = append(report.Figures, f)
-	}
-	if len(report.UnknownMarkers) > 0 {
+	switch {
+	case len(report.UnknownMarkers) > 0 || missing && !unavailable:
 		report.Status = "ungrounded"
+	case unavailable:
+		report.Status = "incomplete"
+	case len(a.figures) == 0:
+		report.Status = "no_figures"
+	default:
+		report.Status = "grounded"
 	}
 	return report
 }
