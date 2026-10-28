@@ -93,7 +93,7 @@ events. In audited vaults, this rebuild does not create people or candidates.
 Actors without a retained match remain unresolved.
 
 Private [search miss records](../configuration.md#private-search-miss-log) are
-local state excluded from snapshot metadata. A restore target keeps its own miss records.
+local state excluded from snapshot metadata. An overwrite restore replaces the database, so the target's own miss records are discarded.
 
 It omits rebuildable full-text and vector indexes, `photo_quality_signals`, `photo_timeline`, `photo_technical_metadata`, pending photo suggestion text, and physical pack mappings.
 Restore rebuilds full-text search and vector indexes from retained records.

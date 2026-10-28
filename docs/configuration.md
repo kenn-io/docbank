@@ -1392,7 +1392,7 @@ Receipts preserve the query, time, vault, requested and actual search modes, pro
 Use `docbank miss-log list`, `delete <id>`, or `purge` to manage records through the daemon. These operations require the master API credential. Browser sessions and MCP have no history management tools. Management remains available when recording is disabled. When recording is enabled, lists exclude records older than `retention_days`, including on idle daemons. Enabled startup and writes prune records by age and count. Disabling recording preserves existing rows and keeps them visible.
 
 The log is excluded from anonymous telemetry, logical backups, portable bundle
-metadata, imports, and federation. Backups carry no miss records; a restore target keeps its own.
+metadata, imports, and federation. Backups carry no miss records, and an overwrite restore discards the target's own.
 Filesystem snapshots, raw database copies, and retained SQLite upgrade recovery
 databases can contain them. Deleting records is not secure erasure: database
 free pages, WAL files, snapshots, and external backups can retain old bytes.
