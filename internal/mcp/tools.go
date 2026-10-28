@@ -552,9 +552,10 @@ func stableDomainError(err error) (string, int) {
 }
 
 func domainErrorMessage(code string) string {
+	if message, ok := answerErrorMessages[code]; ok {
+		return message
+	}
 	switch code {
-	case "stale_index":
-		return "The selected index needs rebuilding."
 	case "kata_token_invalid":
 		return "Kata token was rejected; configure Kata with that token"
 	case "kata_idempotency_deleted":
@@ -587,10 +588,6 @@ func domainErrorMessage(code string) string {
 		return "The Kata operation failed; inspect the issue before deliberately retrying the same request."
 	case "kata_outcome_unknown":
 		return "The Kata write may have succeeded without a usable reply. Do not retry automatically; inspect the issue and deliberately retry the same create key or exact append selection."
-	case "processing_unavailable", "processing_profile_unavailable":
-		return "The requested processing profile is unavailable."
-	case "reranking_unavailable", "reranking_failed":
-		return "The requested reranking could not be completed."
 	case "invalid_text_navigation":
 		return "Fetch the outline for this rendition and correct the section bounds or offset."
 	case "text_navigation_limit":

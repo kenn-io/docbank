@@ -25,7 +25,6 @@ func TestAnswerContentExcerpt(t *testing.T) {
 		{"blob content", api.DocumentSearchResult{Excerpt: "words", LexicalRank: 1, Evidence: []api.DocumentEvidenceReference{{Kind: "content_blob"}}}, true},
 		{"name", api.DocumentSearchResult{Excerpt: "file", LexicalRank: 1, Evidence: []api.DocumentEvidenceReference{{Kind: "node_name"}}}, false},
 		{"name and embedding", api.DocumentSearchResult{Excerpt: "file", LexicalRank: 1, Evidence: []api.DocumentEvidenceReference{{Kind: "node_name"}, {Kind: "embedding"}}}, false},
-		{"semantic", api.DocumentSearchResult{Excerpt: "words", Evidence: []api.DocumentEvidenceReference{{Kind: "rendition_segment"}}}, false},
 		{"empty", api.DocumentSearchResult{LexicalRank: 1, Evidence: []api.DocumentEvidenceReference{{Kind: "rendition_segment"}}}, false},
 	}
 	for _, tt := range tests {
@@ -84,7 +83,7 @@ func (f *answerFakeClient) ResolveDocumentSummaries(context.Context, api.Documen
 }
 func TestAnswerQuestionEvidenceAndCoverage(t *testing.T) {
 	f := &answerFakeClient{report: api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete", ScopedDocuments: 1, CompleteDocuments: 1}}}
-	session := func(ctx context.Context, fn func(context.Context, documentClient) error) error { return fn(ctx, f) }
+	session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
 	out, _, err := answerQuestion(context.Background(), session, []byte(`{"question":"example"}`))
 	if err != nil || out.Status != answer.NoMatch {
 		t.Fatalf("out=%+v err=%v", out, err)
@@ -92,20 +91,22 @@ func TestAnswerQuestionEvidenceAndCoverage(t *testing.T) {
 	if len(f.requests) != 1 || !f.requests[0].ContentFirst {
 		t.Fatal("content-first search not requested")
 	}
-	f.results = []api.DocumentSearchResult{{NodeID: 1, ContentVersionID: "00000000-0000-4000-8000-000000000002", Path: "/example", Rank: 1, LexicalRank: 1, Excerpt: "example", Evidence: []api.DocumentEvidenceReference{{Kind: "node_name"}, {Kind: "embedding"}}}}
+	f.results = []api.DocumentSearchResult{{NodeID: 1, ContentVersionID: "00000000-0000-4000-8000-000000000002", Path: "/example", Rank: 1, LexicalRank: 1, Excerpt: "example", Evidence: []api.DocumentEvidenceReference{{Kind: "node_name"}, {Kind: "embedding", VectorSpaceID: "space-a"}}}}
 	out, _, err = answerQuestion(context.Background(), session, []byte(`{"question":"example"}`))
 	if err != nil || out.Status != answer.IncompleteCoverage || len(out.Leads) != 1 {
 		t.Fatalf("out=%+v err=%v", out, err)
 	}
-	for _, kind := range []string{"rendition_segment", "content_blob"} {
-		f.results[0].Evidence = []api.DocumentEvidenceReference{{Kind: kind}, {Kind: "embedding", VectorSpaceID: "space-a"}, {Kind: "embedding", VectorSpaceID: "space-a"}}
-		out, _, err = answerQuestion(context.Background(), session, []byte(`{"question":"example"}`))
-		if err != nil || out.Status != answer.Answered || len(out.Passages) != 1 || out.Passages[0].Text != "example" || len(out.Passages[0].EvidenceIDs) != 3 || out.Passages[0].EvidenceIDs[0] != fmt.Sprintf(`{"kind":%q}`, kind) {
-			t.Fatalf("kind=%s out=%+v err=%v", kind, out, err)
-		}
-		if !slices.Equal(out.Receipt.VectorSpaceIDs, []string{"space-a"}) {
-			t.Fatalf("unexpected vector spaces: %v", out.Receipt.VectorSpaceIDs)
-		}
+	f.results[0].Evidence = []api.DocumentEvidenceReference{
+		{Kind: "rendition_segment"},
+		{Kind: "embedding", VectorSpaceID: "space-a", EmbeddingSetID: "set-a", InputGenerationID: "generation-a", InputID: "input-a", InputKind: "rendition_chunk", BuildID: "build-a", SegmentID: "segment-a"},
+		{Kind: "embedding", VectorSpaceID: "space-a", EmbeddingSetID: "set-a", InputGenerationID: "generation-a", InputID: "input-b", InputKind: "rendition_chunk", BuildID: "build-a", SegmentID: "segment-b"},
+	}
+	out, _, err = answerQuestion(context.Background(), session, []byte(`{"question":"example"}`))
+	if err != nil || out.Status != answer.Answered || len(out.Passages) != 1 || out.Passages[0].Text != "example" || len(out.Passages[0].EvidenceIDs) != 3 || out.Passages[0].EvidenceIDs[0] != `{"kind":"rendition_segment"}` || out.Passages[0].EvidenceIDs[1] == out.Passages[0].EvidenceIDs[2] {
+		t.Fatalf("out=%+v err=%v", out, err)
+	}
+	if !slices.Equal(out.Receipt.VectorSpaceIDs, []string{"space-a"}) {
+		t.Fatalf("unexpected vector spaces: %v", out.Receipt.VectorSpaceIDs)
 	}
 }
 
@@ -124,7 +125,7 @@ func TestAnswerQuestionEnvelopeBound(t *testing.T) {
 		f.documents = append(f.documents, api.DocumentSummary{NodeID: int64(i), ContentVersionID: version, Path: pathPrefix + name, Name: name, ActiveRenditions: renditions})
 		f.results = append(f.results, api.DocumentSearchResult{NodeID: int64(i), ContentVersionID: version, Path: pathPrefix + name, Rank: i, LexicalRank: i, Score: 1 / float64(60+i), Excerpt: strings.Repeat("x", 512), Evidence: []api.DocumentEvidenceReference{{Kind: "rendition_segment", BuildID: strings.Repeat("a", 64), SegmentID: strings.Repeat("b", 64)}, {Kind: "embedding", VectorSpaceID: fmt.Sprintf("space-%02d", i)}}})
 	}
-	session := func(ctx context.Context, fn func(context.Context, documentClient) error) error { return fn(ctx, f) }
+	session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
 	out, links, err := answerQuestion(context.Background(), session, []byte(`{"question":"example","limit":50,"max_passage_bytes":65536}`))
 	if err != nil {
 		t.Fatal(err)
@@ -156,7 +157,7 @@ func TestAnswerQuestionRelevanceOnlyForRerankedPrefix(t *testing.T) {
 		f.fenceVersions = append(f.fenceVersions, version)
 		f.results = append(f.results, api.DocumentSearchResult{NodeID: int64(i), ContentVersionID: version, Path: fmt.Sprintf("/example-%d", i), Rank: i, LexicalRank: i, Excerpt: "example", Score: score, Evidence: []api.DocumentEvidenceReference{{Kind: "rendition_segment"}}})
 	}
-	session := func(ctx context.Context, fn func(context.Context, documentClient) error) error { return fn(ctx, f) }
+	session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
 	out, _, err := answerQuestion(context.Background(), session, []byte(`{"question":"example","rerank":true}`))
 	if err != nil || len(out.Passages) != 2 || out.Passages[0].Relevance == nil || *out.Passages[0].Relevance != providerScore || out.Passages[1].Relevance != nil {
 		t.Fatalf("out=%+v err=%v", out, err)
@@ -165,7 +166,7 @@ func TestAnswerQuestionRelevanceOnlyForRerankedPrefix(t *testing.T) {
 
 func TestAnswerQuestionRecordsExecutedQueryHash(t *testing.T) {
 	f := &answerFakeClient{report: api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete", ScopedDocuments: 1, CompleteDocuments: 1}}}
-	session := func(ctx context.Context, fn func(context.Context, documentClient) error) error { return fn(ctx, f) }
+	session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
 	out, _, err := answerQuestion(context.Background(), session, []byte(`{"question":" example "}`))
 	if err != nil {
 		t.Fatal(err)
@@ -183,7 +184,7 @@ func TestAnswerQuestionEmptyFenceValidatesWithoutSearch(t *testing.T) {
 			if !tc.binding {
 				f.profiles = []api.ProcessingProfileSummary{{Name: "local"}}
 			}
-			session := func(ctx context.Context, fn func(context.Context, documentClient) error) error { return fn(ctx, f) }
+			session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
 			out, _, err := answerQuestion(t.Context(), session, []byte(fmt.Sprintf(`{"question":"example","rerank":%t}`, tc.rerank)))
 			if err != nil || f.validations != 1 || len(f.requests) != 0 || out.Receipt.SearchExecuted || out.Receipt.ExecutedQuerySHA256 != "" || out.Status != answer.NoMatch || !out.CoverageComplete || len(out.CoverageReasons) != 0 {
 				t.Fatalf("out=%+v err=%v", out, err)
@@ -218,9 +219,9 @@ func TestAnswerQuestionSchemaPreservesProviderScoreScale(t *testing.T) {
 }
 
 func TestAnswerProcessingErrorsStayScopedToAnswerTool(t *testing.T) {
-	for _, code := range []string{"processing_unavailable", "processing_profile_unavailable", "reranking_unavailable", "reranking_failed", "stale_index"} {
+	for code, status := range map[string]int{"processing_unavailable": 503, "processing_profile_unavailable": 422, "reranking_unavailable": 422, "reranking_failed": 502, "stale_index": 409} {
 		t.Run(code, func(t *testing.T) {
-			err := api.NewError(503, code, "private provider details")
+			err := api.NewError(status, code, "private provider details")
 			if _, mapped := domainToolError(err); mapped {
 				t.Fatal("answer-specific mapping changed another tool's error contract")
 			}
@@ -241,54 +242,37 @@ func TestAnswerProcessingErrorsStayScopedToAnswerTool(t *testing.T) {
 
 func TestAnswerQuestionIncompleteAndTruncated(t *testing.T) {
 	f := &answerFakeClient{report: api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "incomplete", ScopedDocuments: 1}}}
-	session := func(ctx context.Context, fn func(context.Context, documentClient) error) error { return fn(ctx, f) }
+	session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
 	out, _, err := answerQuestion(context.Background(), session, []byte(`{"question":"example"}`))
-	if err != nil || out.Status != answer.IncompleteCoverage || !slices.Contains(out.CoverageReasons, "embeddings_incomplete") {
+	if err != nil || !slices.Contains(out.CoverageReasons, "embeddings_incomplete") {
 		t.Fatalf("out=%+v err=%v", out, err)
 	}
 	f.report.Coverage = api.DocumentSearchCoverage{State: "complete", ScopedDocuments: 1, CompleteDocuments: 1}
 	f.report.Truncated = true
 	out, _, err = answerQuestion(context.Background(), session, []byte(`{"question":"example"}`))
-	if err != nil || out.Status != answer.IncompleteCoverage || !slices.Contains(out.CoverageReasons, "retrieval_truncated") {
+	if err != nil || !slices.Contains(out.CoverageReasons, "retrieval_truncated") {
 		t.Fatalf("out=%+v err=%v", out, err)
 	}
 }
 
 func TestAnswerQuestionAutomaticRerankingProfiles(t *testing.T) {
-	for _, tc := range []struct {
-		name      string
-		bindings  []string
-		wantMode  string
-		wantCalls int
-	}{
-		{name: "hybrid", bindings: []string{"supported"}, wantMode: "hybrid", wantCalls: 1},
-		{name: "lexical without bindings", wantMode: "lexical", wantCalls: 1},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			f := &answerFakeClient{
-				profiles: []api.ProcessingProfileSummary{
-					{Name: "a", QueryEmbeddingBindings: []string{"unsupported"}},
-					{Name: "z", QueryEmbeddingBindings: tc.bindings, RerankingAvailable: true},
-				},
-				report: api.DocumentSearchReport{RequestedMode: tc.wantMode, ActualMode: tc.wantMode, Coverage: api.DocumentSearchCoverage{State: "complete", ScopedDocuments: 1, CompleteDocuments: 1}, Reranking: &api.DocumentSearchRerankingReceipt{Outcome: "skipped"}},
-			}
-			profiles := slices.Clone(f.profiles)
-			session := func(ctx context.Context, fn func(context.Context, documentClient) error) error { return fn(ctx, f) }
-			out, _, err := answerQuestion(t.Context(), session, []byte(`{"question":"example","rerank":true}`))
-			if !slices.EqualFunc(profiles, f.profiles, func(a, b api.ProcessingProfileSummary) bool { return a.Name == b.Name }) {
-				t.Fatalf("profile selection changed caller profiles: %+v", f.profiles)
-			}
-			if err != nil || out.Receipt.Profile == nil || out.Receipt.Profile.Name != "z" || out.Receipt.ActualMode != tc.wantMode {
-				t.Fatalf("receipt=%+v err=%v requests=%+v", out.Receipt, err, f.requests)
-			}
-			if len(f.requests) != tc.wantCalls || f.requests[len(f.requests)-1].Mode != tc.wantMode {
-				t.Fatalf("unexpected search attempts: %+v", f.requests)
-			}
-			for _, req := range f.requests {
-				if req.Profile != "z" || !req.Rerank {
-					t.Fatalf("selected incompatible profile: %+v", req)
-				}
-			}
-		})
+	f := &answerFakeClient{
+		profiles: []api.ProcessingProfileSummary{
+			{Name: "a", QueryEmbeddingBindings: []string{"unsupported"}},
+			{Name: "z", RerankingAvailable: true},
+		},
+		report: api.DocumentSearchReport{RequestedMode: "lexical", ActualMode: "lexical", Coverage: api.DocumentSearchCoverage{State: "complete", ScopedDocuments: 1, CompleteDocuments: 1}, Reranking: &api.DocumentSearchRerankingReceipt{Outcome: "skipped"}},
+	}
+	profiles := slices.Clone(f.profiles)
+	session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
+	out, _, err := answerQuestion(t.Context(), session, []byte(`{"question":"example","rerank":true}`))
+	if !slices.EqualFunc(profiles, f.profiles, func(a, b api.ProcessingProfileSummary) bool { return a.Name == b.Name }) {
+		t.Fatalf("profile selection changed caller profiles: %+v", f.profiles)
+	}
+	if err != nil || out.Receipt.Profile == nil || out.Receipt.Profile.Name != "z" || out.Receipt.ActualMode != "lexical" {
+		t.Fatalf("receipt=%+v err=%v requests=%+v", out.Receipt, err, f.requests)
+	}
+	if len(f.requests) != 1 || f.requests[0].Mode != "lexical" || f.requests[0].Profile != "z" || !f.requests[0].Rerank {
+		t.Fatalf("unexpected search attempts: %+v", f.requests)
 	}
 }

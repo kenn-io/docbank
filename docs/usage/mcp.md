@@ -322,6 +322,10 @@ vacuously complete and returns `NO_MATCH` without executing a search. Incomplete
 indexing, leads, truncated retrieval, or omitted evidence can produce
 `INCOMPLETE_COVERAGE`. `coverage_complete` reports embedding coverage only. It can be
 `true` alongside `INCOMPLETE_COVERAGE` when passage text is unavailable or evidence is omitted.
+For a nonempty scope with no usable embedding index, a search with no match returns
+`INCOMPLETE_COVERAGE` with `semantic_unavailable`.
+`limit` accepts 1–50 results and defaults to 20. `max_passage_bytes` accepts
+2,048–65,536 bytes and defaults to 12,288. At most 20 leads are returned.
 Passages and resource links are returned in order within the response budget;
 `omitted_passages`, `omitted_leads`, and `omitted_links` report what did not fit.
 
@@ -345,7 +349,7 @@ Its search failures are returned without automatic retries or lexical fallback.
 ## Resources and rendition windows
 
 `resources/list` is intentionally empty. `list_documents`,
-`search_documents`, and `get_document` attach resource links for each active
+`search_documents`, `answer_question`, and `get_document` attach resource links for each active
 rendition, and `resources/templates/list` publishes one RFC 6570 template.
 
 The canonical rendition URI is:

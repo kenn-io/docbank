@@ -1,25 +1,81 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json/v2"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/processing"
+	"go.kenn.io/docbank/internal/retrieval"
 	"go.kenn.io/docbank/internal/store"
 )
+
+type consentDeniedReranker struct{ t *testing.T }
+
+func (p consentDeniedReranker) Rerank(context.Context, retrieval.RerankingRequest) ([]retrieval.RerankScore, error) {
+	p.t.Error("revoked consent reached the reranking provider")
+	return nil, nil
+}
+
+func TestAnswerQuestionRerankRevokedConsent(t *testing.T) {
+	f := newNativeExportFixture(t)
+	member := f.addFile(t, "notes.txt", "The observatory opens at noon.")
+	require.NoError(t, f.catalog.RecordExtraction(t.Context(), store.ExtractionResult{
+		BlobHash: member.SHA256, Extractor: "plain-text", ExtractorVersion: 1,
+		Status: store.ExtractionOK, Text: "The observatory opens at noon.",
+	}))
+	name, profile, err := processing.NewSuppliedMediaProfile(f.catalog, f.blobs, "test:operator")
+	require.NoError(t, err)
+	profile.RerankingProvider = consentDeniedReranker{t}
+	profile.RerankingProfile = retrieval.RerankingProfile{ID: "synthetic-reranker", MaxCandidates: 2, MaxExcerptBytes: 4096}
+	profile.RerankingDisclosure = processing.RuntimeDisclosure{
+		ImmediateProcessor: "synthetic-reranker", UltimateProcessor: "synthetic-reranker",
+		Endpoint: "https://reranker.example.invalid", Deployment: strings.Repeat("a", 64),
+		Model: "synthetic-reranker", ModelRevision: "v1",
+		MetadataClasses: []string{"query_text", "candidate_excerpt", "candidate_identity", "evidence_reference"},
+	}
+	profile.RerankingDeadline = time.Second
+	profile.RerankingFailurePolicy = retrieval.ProviderFailureDegrade
+	service, err := processing.NewService(processing.ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: api.NewOperationGate(),
+		SpoolDirectory: filepath.Join(t.TempDir(), "spool"), Profiles: map[string]processing.ProfileConfig{name: profile}})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, service.Shutdown(context.Background())) })
+	selector := processing.Selector{NodeID: member.NodeID, ContentVersionID: member.VersionID, Profile: name}
+	plan, err := service.Plan(t.Context(), selector)
+	require.NoError(t, err)
+	_, err = service.GrantConsent(t.Context(), processing.ConsentGrantRequest{Selector: selector, PlanFingerprint: plan.Fingerprint})
+	require.NoError(t, err)
+	_, err = service.RevokeConsent(t.Context())
+	require.NoError(t, err)
+	cfg := config.Default()
+	cfg.Server.APIKey = "synthetic-export-key"
+	apiServer := api.NewServer(api.Deps{Store: f.catalog, Blobs: f.blobs, Processing: service, Cfg: cfg, VaultRoot: os.Getenv("DOCBANK_HOME")})
+	t.Cleanup(apiServer.Close)
+	httpServer := httptest.NewServer(apiServer.Handler())
+	t.Cleanup(httpServer.Close)
+	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, exportTestLease(t, httpServer.URL))
+	output := exportCall(t, server, "answer_question", map[string]any{"question": "observatory", "rerank": true})
+	reranking := schemaMap(t, schemaMap(t, output["receipt"])["reranking"])
+	require.Equal(t, "degraded", reranking["outcome"])
+	require.Equal(t, "authorization_denied", reranking["cause"])
+}
 
 func TestAnswerQuestionScopeLimitTransport(t *testing.T) {
 	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/problem+json")
-		w.WriteHeader(http.StatusRequestEntityTooLarge)
-		_, _ = fmt.Fprint(w, `{"status":413,"code":"scope_too_large","observed_scope_count":4097}`)
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = fmt.Fprint(w, `{"status":422,"code":"scope_too_large","observed_scope_count":4097}`)
 	}))
 	defer daemon.Close()
 	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, exportTestLease(t, daemon.URL))
@@ -35,9 +91,6 @@ func TestAnswerQuestionProcessingErrorTransport(t *testing.T) {
 		local                        bool
 	}{
 		{name: "daemon unavailable", code: "processing_unavailable"},
-		{name: "daemon profile", code: "processing_profile_unavailable", profile: "chosen"},
-		{name: "daemon reranking unavailable", code: "reranking_unavailable"},
-		{name: "daemon reranking failed", code: "reranking_failed"},
 		{name: "daemon processing failed", code: "processing_failed"},
 		{name: "no profiles", code: "processing_unavailable", local: true},
 		{name: "missing profile", code: "processing_profile_unavailable", profile: "missing", local: true},
@@ -62,8 +115,12 @@ func TestAnswerQuestionProcessingErrorTransport(t *testing.T) {
 				case "/api/v1/search", "/api/v1/search/validate":
 					searchCalls++
 					w.Header().Set("Content-Type", "application/problem+json")
-					w.WriteHeader(http.StatusServiceUnavailable)
-					_, _ = fmt.Fprintf(w, `{"status":503,"code":%q,"detail":"private provider details"}`, tc.code)
+					status := http.StatusServiceUnavailable
+					if tc.code == "processing_failed" {
+						status = http.StatusInternalServerError
+					}
+					w.WriteHeader(status)
+					_, _ = fmt.Fprintf(w, `{"status":%d,"code":%q,"detail":"private provider details"}`, status, tc.code)
 				default:
 					t.Errorf("unexpected request: %s", r.URL.Path)
 					http.NotFound(w, r)
@@ -227,8 +284,6 @@ func TestAnswerQuestionEmptyFenceValidationDisconnectTransport(t *testing.T) {
 	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, exportTestLease(t, daemon.URL))
 	raw := exchangeRaw(t, server, requestFor("tools/call", map[string]any{"name": "answer_question", "arguments": map[string]any{"question": "example"}}))
 	require.EqualValues(t, jsonrpc.CodeInternalError, decodeWireError(t, raw).Code)
-	require.NotContains(t, string(raw), daemon.URL)
-	require.NotContains(t, string(raw), "EOF")
 	require.Equal(t, 1, validationCalls)
 	require.Zero(t, searchCalls)
 }

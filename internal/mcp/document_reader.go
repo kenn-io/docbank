@@ -51,9 +51,9 @@ func daemonDocumentSession(lease *daemonLease) documentReadSession {
 		return err
 	}
 }
-func documentRead[T any](ctx context.Context, session documentReadSession, call func(context.Context, documentClient) (T, error)) (T, error) {
+func documentRead[T any, C documentClient](ctx context.Context, session func(context.Context, func(context.Context, C) error) error, call func(context.Context, C) (T, error)) (T, error) {
 	var out T
-	err := session(ctx, func(ctx context.Context, c documentClient) error {
+	err := session(ctx, func(ctx context.Context, c C) error {
 		var err error
 		out, err = call(ctx, c)
 		return err
@@ -116,8 +116,7 @@ func readToolFailure(logger *slog.Logger, name string, err error) (*sdkmcp.CallT
 	if name == "answer_question" {
 		facts, _ := toolProblemFacts(err)
 		code := facts.Code
-		switch code {
-		case "processing_unavailable", "processing_profile_unavailable", "reranking_unavailable", "reranking_failed", "stale_index":
+		if _, ok := answerErrorMessages[code]; ok {
 			if result, ok := domainToolErrorResult(code, 0); ok {
 				return result, nil
 			}

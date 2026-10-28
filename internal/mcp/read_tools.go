@@ -61,7 +61,7 @@ func executeReadTool(
 	case "list_documents":
 		output, links, err = listDocuments(ctx, daemonDocumentSession(lease), raw)
 	case "answer_question":
-		output, links, err = answerQuestion(ctx, daemonDocumentSession(lease), raw)
+		output, links, err = answerQuestion(ctx, daemonAnswerSession(lease), raw)
 	case "search_documents":
 		output, links, err = searchDocuments(ctx, daemonDocumentSession(lease), raw)
 	case "get_document":

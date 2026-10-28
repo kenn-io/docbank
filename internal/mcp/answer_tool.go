@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"net/http"
 	"slices"
@@ -21,7 +20,7 @@ import (
 // A name hit can be fused with embedding evidence, so an excerpt alone is not
 // sufficient evidence that its text came from document content.
 func answerContentExcerpt(result api.DocumentSearchResult) bool {
-	if result.Excerpt == "" || result.LexicalRank == 0 {
+	if result.Excerpt == "" {
 		return false
 	}
 	for _, evidence := range result.Evidence {
@@ -47,31 +46,26 @@ type answerProfile struct {
 	Name        string `json:"name"`
 	Fingerprint string `json:"fingerprint"`
 }
-type answerReranking struct {
-	Requested      bool   `json:"requested"`
-	Outcome        string `json:"outcome"`
-	CandidateCount int    `json:"candidate_count"`
-}
 type answerCitation struct {
 	NodeID           int64  `json:"node_id"`
 	ContentVersionID string `json:"content_version_id"`
 }
 type answerReceipt struct {
-	QuestionSHA256      string                      `json:"question_sha256"`
-	ExecutedQuerySHA256 string                      `json:"executed_query_sha256,omitempty"`
-	SearchExecuted      bool                        `json:"search_executed"`
-	ObservedScopeCount  int                         `json:"observed_scope_count"`
-	VaultID             string                      `json:"vault_id,omitempty"`
-	FenceFingerprint    string                      `json:"fence_fingerprint,omitempty"`
-	Profile             *answerProfile              `json:"profile,omitempty"`
-	BindingID           string                      `json:"binding_id,omitempty"`
-	VectorSpaceIDs      []string                    `json:"vector_space_ids"`
-	RequestedMode       string                      `json:"requested_mode,omitempty"`
-	ActualMode          string                      `json:"actual_mode,omitempty"`
-	Degradations        []string                    `json:"degradations"`
-	Coverage            *api.DocumentSearchCoverage `json:"coverage,omitempty"`
-	Reranking           *answerReranking            `json:"reranking,omitempty"`
-	CitedVersions       []answerCitation            `json:"cited_versions"`
+	QuestionSHA256      string                              `json:"question_sha256"`
+	ExecutedQuerySHA256 string                              `json:"executed_query_sha256,omitempty"`
+	SearchExecuted      bool                                `json:"search_executed"`
+	ObservedScopeCount  int                                 `json:"observed_scope_count"`
+	VaultID             string                              `json:"vault_id,omitempty"`
+	FenceFingerprint    string                              `json:"fence_fingerprint,omitempty"`
+	Profile             *answerProfile                      `json:"profile,omitempty"`
+	BindingID           string                              `json:"binding_id,omitempty"`
+	VectorSpaceIDs      []string                            `json:"vector_space_ids"`
+	RequestedMode       string                              `json:"requested_mode,omitempty"`
+	ActualMode          string                              `json:"actual_mode,omitempty"`
+	Degradations        []string                            `json:"degradations"`
+	Coverage            *api.DocumentSearchCoverage         `json:"coverage,omitempty"`
+	Reranking           *api.DocumentSearchRerankingReceipt `json:"reranking,omitempty"`
+	CitedVersions       []answerCitation                    `json:"cited_versions"`
 }
 type answerOutput struct {
 	privateCache
@@ -89,8 +83,28 @@ type answerOutput struct {
 	Receipt          answerReceipt    `json:"receipt"`
 }
 
-type answerProfileLister interface {
+type answerClient interface {
+	documentClient
 	ListDocumentProcessingProfiles(ctx context.Context) ([]api.ProcessingProfileSummary, error)
+}
+
+type answerReadSession func(context.Context, func(context.Context, answerClient) error) error
+
+func daemonAnswerSession(lease *daemonLease) answerReadSession {
+	return func(ctx context.Context, call func(context.Context, answerClient) error) error {
+		_, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (struct{}, error) {
+			return struct{}{}, call(ctx, daemonDocumentClient{c})
+		})
+		return err
+	}
+}
+
+var answerErrorMessages = map[string]string{
+	"processing_unavailable":         "The requested processing profile is unavailable.",
+	"processing_profile_unavailable": "The requested processing profile is unavailable.",
+	"reranking_unavailable":          "The requested reranking could not be completed.",
+	"reranking_failed":               "The requested reranking could not be completed.",
+	"stale_index":                    "The selected index needs rebuilding.",
 }
 
 func selectAnswerSearch(profiles []api.ProcessingProfileSummary, input answerInput) (api.ProcessingProfileSummary, []daemonconn.SearchCandidate, error) {
@@ -130,7 +144,7 @@ func selectAnswerSearch(profiles []api.ProcessingProfileSummary, input answerInp
 	return selected, candidates, nil
 }
 
-func answerQuestion(ctx context.Context, session documentReadSession, raw []byte) (answerOutput, []*sdkmcp.ResourceLink, error) {
+func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) (answerOutput, []*sdkmcp.ResourceLink, error) {
 	var input answerInput
 	if err := decodeReadArguments(raw, &input); err != nil {
 		return answerOutput{}, nil, err
@@ -152,7 +166,7 @@ func answerQuestion(ctx context.Context, session documentReadSession, raw []byte
 		executed  bool
 		documents []api.DocumentSummary
 	}
-	result, err := documentRead(ctx, session, func(ctx context.Context, c documentClient) (response, error) {
+	result, err := documentRead(ctx, session, func(ctx context.Context, c answerClient) (response, error) {
 		filters := input.Filters
 		if filters == nil && len(input.ContentVersionIDs) == 0 {
 			filters = &api.DocumentSourceFenceFilters{}
@@ -161,11 +175,7 @@ func answerQuestion(ctx context.Context, session documentReadSession, raw []byte
 		if err != nil {
 			return response{}, err
 		}
-		lister, ok := c.(answerProfileLister)
-		if !ok {
-			return response{}, errors.New("profile listing unavailable")
-		}
-		profiles, err := lister.ListDocumentProcessingProfiles(ctx)
+		profiles, err := c.ListDocumentProcessingProfiles(ctx)
 		if err != nil {
 			return response{}, err
 		}
@@ -246,13 +256,13 @@ func answerQuestion(ctx context.Context, session documentReadSession, raw []byte
 	coverage := result.report.Coverage
 	out.Receipt.Coverage = &coverage
 	if result.report.Reranking != nil {
-		out.Receipt.Reranking = &answerReranking{Requested: input.Rerank, Outcome: result.report.Reranking.Outcome, CandidateCount: result.report.Reranking.CandidateCount}
+		out.Receipt.Reranking = result.report.Reranking
 	} else {
 		outcome := "not_requested"
 		if input.Rerank {
 			outcome = "not_reported"
 		}
-		out.Receipt.Reranking = &answerReranking{Requested: input.Rerank, Outcome: outcome}
+		out.Receipt.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: outcome}
 	}
 	out.CoverageComplete = (result.report.ActualMode == "semantic" || result.report.ActualMode == "hybrid") && coverage.State == "complete" && coverage.CompleteDocuments == coverage.ScopedDocuments
 	if result.binding == "" || (result.report.ActualMode != "semantic" && result.report.ActualMode != "hybrid") {
