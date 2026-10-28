@@ -277,10 +277,7 @@ func TestAnswerQuestionSchemaPreservesProviderScoreScale(t *testing.T) {
 }
 
 func TestAnswerProcessingErrorsStayScopedToAnswerTool(t *testing.T) {
-	if _, mapped := domainToolError(api.NewError(409, "stale_index", "stale")); mapped {
-		t.Fatal("stale index became a domain tool error")
-	}
-	for _, code := range []string{"processing_unavailable", "processing_profile_unavailable", "reranking_unavailable", "reranking_failed"} {
+	for _, code := range []string{"processing_unavailable", "processing_profile_unavailable", "reranking_unavailable", "reranking_failed", "stale_index"} {
 		t.Run(code, func(t *testing.T) {
 			err := api.NewError(503, code, "private provider details")
 			if _, mapped := domainToolError(err); mapped {
@@ -293,6 +290,9 @@ func TestAnswerProcessingErrorsStayScopedToAnswerTool(t *testing.T) {
 			output, ok := result.StructuredContent.(toolErrorOutput)
 			if !ok || output.Code != code || strings.Contains(output.Message, "private") {
 				t.Fatalf("output=%+v", result.StructuredContent)
+			}
+			if code == "stale_index" && output.Message != "The selected index needs rebuilding." {
+				t.Fatalf("stale index guidance=%q", output.Message)
 			}
 		})
 	}
@@ -352,6 +352,8 @@ func TestAnswerQuestionExplicitProfileSelection(t *testing.T) {
 				}
 			} else if err != nil || out.Receipt.BindingID != tc.binding {
 				t.Fatalf("receipt=%+v err=%v", out.Receipt, err)
+			} else if out.Receipt.Profile == nil || out.Receipt.Profile.Name != "chosen" || out.Receipt.Profile.Fingerprint != strings.Repeat("b", 64) {
+				t.Fatalf("selected profile authority lost: %+v", out.Receipt.Profile)
 			}
 			if len(f.requests) != 1 || f.requests[0].Profile != "chosen" || f.requests[0].BindingID != tc.binding {
 				t.Fatalf("explicit selection retried or escaped: %+v", f.requests)

@@ -69,15 +69,7 @@ func toolEnvelopeBytes(output any, links []*sdkmcp.ResourceLink) (int, error) {
 	if err := json.Unmarshal(encoded, &normalized); err != nil {
 		return 0, err
 	}
-	content := make([]sdkmcp.Content, 0, 1+len(links))
-	content = append(content, &sdkmcp.TextContent{Text: string(encoded)})
-	for _, link := range links {
-		content = append(content, link)
-	}
-	result := &sdkmcp.CallToolResult{
-		Content:           content,
-		StructuredContent: normalized,
-	}
+	result := toolResult(encoded, normalized, links)
 	complete, err := json.Marshal(result)
 	if err != nil {
 		return 0, err

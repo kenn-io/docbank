@@ -654,6 +654,15 @@ func listDocumentsSchemas() (schema, schema) {
 	return input, output
 }
 
+func searchCoverageSchema() schema {
+	return objectSchema(schema{
+		"binding_required":   booleanSchema(),
+		"scoped_documents":   integerSchema(0, 4096),
+		"complete_documents": integerSchema(0, 4096),
+		schemaStateField:     stringSchema(64),
+	}, "binding_required", "scoped_documents", "complete_documents", schemaStateField)
+}
+
 func searchDocumentsSchemas() (schema, schema) {
 	properties := fenceInputProperties()
 	properties["query"] = schema{"type": "string", "minLength": 1, "maxLength": 8192}
