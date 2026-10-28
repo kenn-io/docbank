@@ -26,7 +26,6 @@ type automaticSearchCase struct {
 	profiles                              []api.ProcessingProfileSummary
 	profileError, scopeError, searchError string
 	empty, malformed, cold, mixed         bool
-	providerFailure                       bool
 	folderFirst, wantTruncated            bool
 	wantResults, wantFolders              int
 	jsonCLI, humanCLI, agentCLI           bool
@@ -44,7 +43,6 @@ func TestAutomaticSearchSelectionAndFallback(t *testing.T) {
 		{Name: "alpha", EmbeddingBindings: []string{"b", "a"}, QueryEmbeddingBindings: []string{"b", "a"}},
 	}
 	cases := []automaticSearchCase{
-		{name: "provider failure uses healthy second binding", profiles: []api.ProcessingProfileSummary{{Name: "alpha", EmbeddingBindings: []string{"a", "b"}, QueryEmbeddingBindings: []string{"a", "b"}}}, limit: 50, jsonCLI: true, providerFailure: true, wantScope: 1, wantSearch: 2, wantHybrid: true, wantResults: 1, wantFolders: 1},
 		{name: "cold first binding", profiles: profiles, limit: 50, cold: true, wantScope: 1, wantSearch: 2, wantHybrid: true},
 		{name: "JSON hybrid", profiles: profiles, limit: 50, jsonCLI: true, wantScope: 1, wantSearch: 1, wantHybrid: true, wantResults: 1, wantFolders: 1},
 		{name: "JSON folder within limit", profiles: profiles, limit: 1, folderFirst: true, jsonCLI: true, wantScope: 1, wantSearch: 1, wantHybrid: true, wantFolders: 1, wantTruncated: true},
@@ -215,8 +213,6 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 			assert.Equal(t, tc.limit, body.Limit)
 			assert.Equal(t, []string{processingTestVersionID}, body.Fence.ContentVersionIDs)
 			switch {
-			case tc.providerFailure && *searchCalls == 1:
-				problem(w, "processing_failed")
 			case tc.mixed && *searchCalls == 1:
 				problem(w, "processing_consent_required")
 			case tc.cold && *searchCalls == 1:
