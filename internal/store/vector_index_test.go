@@ -92,6 +92,52 @@ func TestVectorIndexPublicationFencesMembershipDriftAndKeepsPriorHead(t *testing
 	assert.Equal(t, prior.ID, active.ID)
 }
 
+func TestVectorIndexReaderLeasePublicationIDTracksRepublishedHead(t *testing.T) {
+	t.Parallel()
+	s, _, source := newPublishedVectorIndexFixture(t)
+	at := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
+	publish := func(label string, publishedAt time.Time) VectorIndexGenerationRecord {
+		t.Helper()
+		claim, claimed, err := s.ClaimVectorIndexBuild(t.Context(), source.VectorSpaceID,
+			source.ManifestChecksum, "publication-test", publishedAt, time.Minute)
+		require.NoError(t, err)
+		require.True(t, claimed)
+		generation := vectorIndexGenerationFixture(label, source, []byte(label), publishedAt)
+		require.NoError(t, s.StageVectorIndexGeneration(t.Context(), claim, generation, publishedAt))
+		require.NoError(t, s.PublishVectorIndexGeneration(t.Context(), claim, generation.ID, publishedAt))
+		return generation
+	}
+
+	first := publish("publication-a", at)
+	firstLease, err := s.AcquireVectorIndexGenerationHead(t.Context(), source.VectorSpaceID,
+		"publication-test", at.Add(time.Second), time.Minute)
+	require.NoError(t, err)
+	require.Equal(t, first.ID, firstLease.Generation.ID)
+	require.EqualValues(t, 1, firstLease.PublicationID)
+
+	second := publish("publication-b", at.Add(2*time.Second))
+	secondLease, err := s.AcquireVectorIndexGenerationHead(t.Context(), source.VectorSpaceID,
+		"publication-test", at.Add(3*time.Second), time.Minute)
+	require.NoError(t, err)
+	require.Equal(t, second.ID, secondLease.Generation.ID)
+	require.EqualValues(t, 2, secondLease.PublicationID)
+
+	republishedFirst := publish("publication-a", at.Add(4*time.Second))
+	require.Equal(t, first.ID, republishedFirst.ID)
+	require.NotEqual(t, first.BuiltAt, republishedFirst.BuiltAt)
+	latestLease, err := s.AcquireVectorIndexGenerationHead(t.Context(), source.VectorSpaceID,
+		"publication-test", at.Add(5*time.Second), time.Minute)
+	require.NoError(t, err)
+	require.Equal(t, first.ID, latestLease.Generation.ID)
+	require.Equal(t, first.BuiltAt, latestLease.Generation.BuiltAt,
+		"republishing the reclaimed immutable generation preserves its older built_at")
+	require.EqualValues(t, 3, latestLease.PublicationID)
+
+	var activeLeases int
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM vector_index_reader_leases`).Scan(&activeLeases))
+	require.Equal(t, 3, activeLeases, "the original A lease remains active across B and A republication")
+}
+
 func TestVectorIndexReaderLeasePinsPriorGenerationAndExpiresWithFence(t *testing.T) {
 	t.Parallel()
 	s, _, source := newPublishedVectorIndexFixture(t)

@@ -212,6 +212,35 @@ and membership. The vector-index worker builds disposable generations from
 those retained sets and publishes only against the source membership it read.
 Reader leases keep a selected generation available during a query.
 
+Each processing service also reuses one decoded generation per active vector
+space. A search first leases and validates the current head's metadata without
+reading its serialized bytes. A cache miss opens that exact leased generation;
+concurrent misses for the same generation share the load. The service retains
+decoded vectors, never the serialized blob. Observing a replacement head evicts
+the prior entry, while searches already using it finish with their own immutable
+pointer and reader lease.
+
+An idle timer releases each retained generation after five minutes without a
+lookup, even if no later search arrives. Service stop and embedded vault close
+stop timers and clear retained references. While admitted reads drain, a stopped
+service can finish them against their exact lease without retaining the result.
+This bounds retention to one generation per space, not a fixed memory cap across
+arbitrarily many spaces.
+
+Generation reuse does not reuse query authority. Every search gets a fresh
+reader lease, checks current source membership and vector compatibility, and
+reads current filters, coverage and candidate authority. Final report
+revalidation and ranking remain unchanged. Similar search and retrieval callers
+without a generation source keep opening their leased bytes for each query.
+
+For canonical original-file members, SQLite reads source metadata in one batch.
+Unsupported source shapes replay the generic capture only after a successful
+savepoint rollback. Cancellation and failed recovery return errors. PostgreSQL,
+similar search, and full-byte reader leases keep the generic source path.
+Initial metadata-only authority, candidate resolution and final report
+revalidation use separate fresh captures; no source facts or eligibility maps
+cross snapshots.
+
 Coverage reads source visibility, serving heads, and replacement jobs in one
 catalog snapshot. A replacement counts as `rebuilding`. The separate
 `previous_generation_serving` count records whether a complete prior result

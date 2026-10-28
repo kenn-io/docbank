@@ -121,6 +121,8 @@ type configuredProfile struct {
 }
 
 type Service struct {
+	generationCacheOnce sync.Once
+	generations         *generationCache
 	navigationSlots     *semaphore.Weighted
 	textParser          func() parser.Parser
 	catalog             *store.Store
@@ -425,6 +427,7 @@ func NewService(ctx context.Context, config ServiceConfig) (*Service, error) {
 		visionLocks:         make(map[string]chan struct{}),
 		visionProbeTimeout:  visionProbeTimeout,
 		mediaTokenKey:       config.MediaTokenKey}
+	service.generationSource()
 	for id, probe := range service.mediaOriginProbes {
 		if _, ok := service.mediaOrigins[id]; !ok {
 			return nil, errors.New("processing service media origin probe has no registered origin")
@@ -653,6 +656,7 @@ func (service *Service) Stop() {
 		return
 	}
 	service.stopping = true
+	service.generationSource().Close()
 	service.stop()
 	if service.runs == 0 {
 		close(service.drained)
@@ -1713,7 +1717,7 @@ func (service *Service) prepareSearch(
 	if request.Rerank && profile.rerankingProvider == nil {
 		return preparedSearch{}, ErrRerankingUnavailable
 	}
-	searcherConfig := retrieval.SearcherConfig{Backend: service.catalog,
+	searcherConfig := retrieval.SearcherConfig{Backend: service.catalog, GenerationSource: service.generationSource(),
 		Owner: "embedded-document-search", LeaseDuration: 5 * time.Minute,
 		MediaEvidence: service.mediaEvidence}
 	var authorization document.EmbeddingAuthorization

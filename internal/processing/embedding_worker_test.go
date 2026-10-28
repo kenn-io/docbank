@@ -1338,7 +1338,7 @@ func newRealEmbeddingWorkerWithDescriptor(tb testing.TB, kind document.Embedding
 	config := EmbeddingWorkerConfig{Catalog: fixture.catalog, Authority: fixture.catalog,
 		Blobs: fixture.blobs, GenerationBlobs: fixture.blobs, Runtime: runtime, Gate: newTestOperationGate(), Owner: "integration-worker",
 		LeaseDuration: 3 * time.Second, IdleDelay: time.Millisecond, RetryLimit: 3, MaxRetryDelay: time.Second,
-		AttemptLifetime: time.Minute, MaxRows: 100, MaxDimensions: 8, MaxVectorBlobBytes: 1 << 20,
+		AttemptLifetime: time.Minute, MaxRows: 100, MaxDimensions: max(8, fake.descriptor.Dimension), MaxVectorBlobBytes: 1 << 20,
 		DescriptorFingerprints: []string{fake.descriptor.Fingerprint},
 	}
 	worker, err := NewEmbeddingWorker(config)

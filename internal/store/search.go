@@ -542,7 +542,7 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 			}
 		}
 		if semanticSource != "" {
-			current, captureErr := captureVectorIndexSourceTx(ctx, tx, semanticSpace)
+			current, captureErr := s.captureSemanticSearchSourceTx(ctx, tx, semanticSpace, nil)
 			if captureErr != nil {
 				if errors.Is(captureErr, ErrNotFound) {
 					return ErrVectorIndexSourceStale
@@ -709,8 +709,26 @@ func (s *Store) AcquireSemanticSearchAuthority(ctx context.Context, profileFinge
 	return s.acquireSemanticSearchAuthority(ctx, profileFingerprint, bindingID, owner, at, duration, opts, nil)
 }
 
+// AcquireSemanticSearchAuthorityHead validates fresh search authority and leases
+// the current generation without reading its serialized bytes. A configured
+// generation source opens the exact leased generation after this transaction.
+func (s *Store) AcquireSemanticSearchAuthorityHead(ctx context.Context, profileFingerprint,
+	bindingID, owner string, at time.Time, duration time.Duration, opts SearchOptions,
+) (SemanticSearchAuthority, error) {
+	return s.acquireSemanticSearchAuthorityWithGeneration(ctx, profileFingerprint, bindingID,
+		owner, at, duration, opts, nil, true)
+}
+
 func (s *Store) acquireSemanticSearchAuthority(ctx context.Context, profileFingerprint,
 	bindingID, owner string, at time.Time, duration time.Duration, opts SearchOptions, similar *similarSourceCapture,
+) (SemanticSearchAuthority, error) {
+	return s.acquireSemanticSearchAuthorityWithGeneration(ctx, profileFingerprint, bindingID,
+		owner, at, duration, opts, similar, false)
+}
+
+func (s *Store) acquireSemanticSearchAuthorityWithGeneration(ctx context.Context, profileFingerprint,
+	bindingID, owner string, at time.Time, duration time.Duration, opts SearchOptions,
+	similar *similarSourceCapture, metadataOnly bool,
 ) (SemanticSearchAuthority, error) {
 	normalized, err := s.NormalizeSearchOptions(ctx, opts)
 	if err != nil {
@@ -733,36 +751,75 @@ func (s *Store) acquireSemanticSearchAuthority(ctx context.Context, profileFinge
 		}
 	}
 	var space EmbeddingVectorSpaceRecord
-	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+	loadSpace := func(tx *sql.Tx) error {
 		var loadErr error
 		space, loadErr = loadVectorSpaceTx(ctx, tx, vectorSpaceID)
+		if loadErr != nil {
+			return loadErr
+		}
+		if space.ID != vectorSpaceID || (space.ContractVersion == EmbeddingVectorSpaceContractV1 && space.DescriptorFingerprint != binding.Descriptor.Fingerprint) ||
+			space.CompatibilityID != binding.CompatibilityID || space.Dimensions != binding.Dimensions ||
+			space.Metric != binding.Metric || space.Normalization != binding.Normalization ||
+			space.ScalarEncoding != binding.ScalarEncoding || space.DocumentFormatter != binding.DocumentFormatter ||
+			space.QueryFormatter != binding.QueryFormatter || space.ModelInputFingerprint != binding.ModelInput.Fingerprint {
+			return errors.New("semantic search vector space does not match profile binding authority")
+		}
 		return loadErr
-	})
-	if err != nil {
-		return SemanticSearchAuthority{}, err
 	}
-	if space.ID != vectorSpaceID || (space.ContractVersion == EmbeddingVectorSpaceContractV1 && space.DescriptorFingerprint != binding.Descriptor.Fingerprint) ||
-		space.CompatibilityID != binding.CompatibilityID || space.Dimensions != binding.Dimensions ||
-		space.Metric != binding.Metric || space.Normalization != binding.Normalization ||
-		space.ScalarEncoding != binding.ScalarEncoding || space.DocumentFormatter != binding.DocumentFormatter ||
-		space.QueryFormatter != binding.QueryFormatter || space.ModelInputFingerprint != binding.ModelInput.Fingerprint {
-		return SemanticSearchAuthority{}, errors.New("semantic search vector space does not match profile binding authority")
-	}
-	lease, err := s.AcquireVectorIndexGeneration(ctx, vectorSpaceID, owner, at, duration)
-	if err != nil {
-		return SemanticSearchAuthority{}, err
-	}
-	release := func() {
-		_ = s.ReleaseVectorIndexGeneration(context.WithoutCancel(ctx), lease.ID, lease.FencingToken, at)
-	}
-	current, annRows, err := s.semanticSearchAuthorityFence(ctx,
-		profileFingerprint, bindingID, binding.InputKind, vectorSpaceID, normalized, similar)
-	if err != nil || current.ManifestChecksum != lease.Generation.SourceManifestChecksum {
-		release()
+	var lease VectorIndexReaderLease
+	var annRows []vectorindex.RowIdentity
+	if metadataOnly {
+		// Keep the descriptor, complete source, metadata lease and scoring
+		// identities together in this fresh writer snapshot. The collector never
+		// crosses its commit; publication order must match the head it read.
+		s.vectorIndexPublicationMu.RLock()
+		err = s.withBookkeepingTx(ctx, func(tx *sql.Tx) error {
+			if err := loadSpace(tx); err != nil {
+				return err
+			}
+			var err error
+			lease, err = newVectorIndexReaderLease(vectorSpaceID, owner, at, duration)
+			if err != nil {
+				return err
+			}
+			collector := newOriginalSemanticSnapshot(profileFingerprint, bindingID, vectorSpaceID,
+				binding.InputKind, normalized)
+			if err := s.acquireVectorIndexGenerationTx(ctx, tx, vectorSpaceID, owner,
+				&lease, true, collector); err != nil {
+				return err
+			}
+			annRows, err = semanticSearchAuthorityANNRowsTx(ctx, tx, profileFingerprint,
+				bindingID, binding.InputKind, vectorSpaceID, normalized, collector)
+			return err
+		})
+		if err == nil {
+			lease.PublicationID = s.vectorIndexPublicationSeq[vectorSpaceID]
+		}
+		s.vectorIndexPublicationMu.RUnlock()
 		if err != nil {
 			return SemanticSearchAuthority{}, err
 		}
-		return SemanticSearchAuthority{}, ErrVectorIndexSourceStale
+	} else {
+		if err := s.withStorageTx(ctx, loadSpace); err != nil {
+			return SemanticSearchAuthority{}, err
+		}
+		lease, err = s.AcquireVectorIndexGeneration(ctx, vectorSpaceID, owner, at, duration)
+		if err != nil {
+			return SemanticSearchAuthority{}, err
+		}
+		current, rows, fenceErr := s.semanticSearchAuthorityFence(ctx,
+			profileFingerprint, bindingID, binding.InputKind, vectorSpaceID, normalized, similar)
+		if fenceErr != nil || current.ManifestChecksum != lease.Generation.SourceManifestChecksum {
+			_ = s.ReleaseVectorIndexGeneration(context.WithoutCancel(ctx), lease.ID, lease.FencingToken, at)
+			if fenceErr != nil {
+				return SemanticSearchAuthority{}, fenceErr
+			}
+			return SemanticSearchAuthority{}, ErrVectorIndexSourceStale
+		}
+		annRows = rows
+	}
+	release := func() {
+		_ = s.ReleaseVectorIndexGeneration(context.WithoutCancel(ctx), lease.ID, lease.FencingToken, at)
 	}
 	if normalized.EmbeddingDescriptor != nil {
 		descriptor := *normalized.EmbeddingDescriptor
@@ -777,6 +834,39 @@ func (s *Store) acquireSemanticSearchAuthority(ctx context.Context, profileFinge
 		ANNRows:         annRows}, nil
 }
 
+// A canonical original-file snapshot can provide the same ANN identities as
+// the general eligibility query. Every other input kind or unsupported source
+// shape keeps the current main query, including image/rendition authority.
+func semanticSearchAuthorityANNRowsTx(ctx context.Context, tx *sql.Tx, profileFingerprint,
+	bindingID string, inputKind document.EmbeddingInputKind, vectorSpaceID string,
+	opts SearchOptions, collector *originalSemanticSnapshot,
+) ([]vectorindex.RowIdentity, error) {
+	if collector != nil && collector.usable && collector.seenANN != nil {
+		return collector.annRows, nil
+	}
+	filterSQL, filterArgs := searchFilterSQL(opts)
+	eligible, err := loadSemanticEligibility(ctx, tx, profileFingerprint, bindingID,
+		inputKind, vectorSpaceID, filterSQL, filterArgs, opts.CollapsesPhotoDuplicates())
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]vectorindex.RowIdentity, 0, len(eligible))
+	for key := range eligible {
+		rows = append(rows, vectorindex.RowIdentity{SetID: key.VectorSetID,
+			InputKey: key.InputID, InputChecksum: key.InputChecksum})
+	}
+	sort.Slice(rows, func(left, right int) bool {
+		if rows[left].SetID != rows[right].SetID {
+			return rows[left].SetID < rows[right].SetID
+		}
+		if rows[left].InputKey != rows[right].InputKey {
+			return rows[left].InputKey < rows[right].InputKey
+		}
+		return rows[left].InputChecksum < rows[right].InputChecksum
+	})
+	return rows, nil
+}
+
 func (s *Store) semanticSearchAuthorityFence(ctx context.Context, profileFingerprint, bindingID string,
 	inputKind document.EmbeddingInputKind, vectorSpaceID string, opts SearchOptions, similar *similarSourceCapture,
 ) (source VectorIndexSource, annRows []vectorindex.RowIdentity, retErr error) {
@@ -787,32 +877,13 @@ func (s *Store) semanticSearchAuthorityFence(ctx context.Context, profileFingerp
 				return err
 			}
 		}
-		source, err = captureVectorIndexSourceTx(ctx, tx, vectorSpaceID)
+		source, err = s.captureSemanticSearchSourceTx(ctx, tx, vectorSpaceID, nil)
 		if err != nil {
 			return err
 		}
-		filterSQL, filterArgs := searchFilterSQL(opts)
-		eligible, err := loadSemanticEligibility(ctx, tx, profileFingerprint, bindingID,
-			inputKind, vectorSpaceID, filterSQL, filterArgs,
-			opts.CollapsesPhotoDuplicates())
-		if err != nil {
-			return err
-		}
-		annRows = make([]vectorindex.RowIdentity, 0, len(eligible))
-		for key := range eligible {
-			annRows = append(annRows, vectorindex.RowIdentity{SetID: key.VectorSetID,
-				InputKey: key.InputID, InputChecksum: key.InputChecksum})
-		}
-		sort.Slice(annRows, func(left, right int) bool {
-			if annRows[left].SetID != annRows[right].SetID {
-				return annRows[left].SetID < annRows[right].SetID
-			}
-			if annRows[left].InputKey != annRows[right].InputKey {
-				return annRows[left].InputKey < annRows[right].InputKey
-			}
-			return annRows[left].InputChecksum < annRows[right].InputChecksum
-		})
-		return nil
+		annRows, err = semanticSearchAuthorityANNRowsTx(ctx, tx, profileFingerprint,
+			bindingID, inputKind, vectorSpaceID, opts, nil)
+		return err
 	})
 	return source, annRows, err
 }
@@ -890,7 +961,7 @@ func (s *Store) ResolveSemanticCandidates(ctx context.Context, profileFingerprin
 	var result SemanticSearchResolution
 	err = s.withSearchOptionsTx(ctx, normalized, func(tx *sql.Tx, normalized SearchOptions) error {
 		filterSQL, filterArgs := searchFilterSQL(normalized)
-		current, captureErr := captureVectorIndexSourceTx(ctx, tx, vectorSpaceID)
+		current, captureErr := s.captureSemanticSearchSourceTx(ctx, tx, vectorSpaceID, nil)
 		if captureErr != nil {
 			if errors.Is(captureErr, ErrNotFound) {
 				return ErrVectorIndexSourceStale
