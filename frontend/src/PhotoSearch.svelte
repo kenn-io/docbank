@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { recordMiss } from "./generated/docbank.js";
   import { reportFailure, reportSearch } from "./action-events.js";
   import { untrack } from "svelte";
   import { SearchInput, SelectDropdown } from "@kenn-io/kit-ui";
@@ -21,13 +22,15 @@
   });
   function submit(explicit = false) {
     const text = search.trim();
+    const session = photos.session;
+    const submitted = {
+      ...photos.query,
+      text: search,
+      syntax,
+      sort: photoSearchSort({ text: search, syntax }),
+    };
     const pending = photos.setQuery(
-      {
-        ...photos.query,
-        text: search,
-        syntax,
-        sort: photoSearchSort({ text: search, syntax }),
-      },
+      submitted,
       explicit
         ? (cause) => {
             if (text) reportFailure(photos.session, "search", cause);
@@ -36,7 +39,21 @@
     );
     void pending?.then((outcome) => {
       if (!explicit || !text || !outcome) return;
-      if (outcome.accepted) return reportSearch(photos.session, "text", outcome.empty);
+      if (outcome.accepted) {
+        reportSearch(session, "text", outcome.empty);
+        if (outcome.empty)
+          void recordMiss(
+            {
+              query: text,
+              requested_mode: submitted.mode,
+              actual_mode: "lexical",
+              filters: { ...submitted.filters },
+              truncated: false,
+            },
+            { session, signal: AbortSignal.timeout(1000) },
+          ).catch(() => {});
+        return;
+      }
       reportFailure(photos.session, "search", outcome.cause);
     });
     return pending;

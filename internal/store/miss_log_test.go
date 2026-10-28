@@ -14,6 +14,7 @@ func TestMissLogRetentionAndMetadataExclusion(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
+	events := watchPhotoChanges(t, s)
 	now := time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC)
 	for _, entry := range []MissLogRecord{
 		{ID: "old", CreatedAt: now.AddDate(0, 0, -3), Receipt: `{"query":"sentinel old"}`},
@@ -33,6 +34,7 @@ func TestMissLogRetentionAndMetadataExclusion(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	require.NoError(t, s.PurgeMissLogRecords(ctx))
+	require.Empty(t, events, "misses leave Photos unchanged")
 	entries, err = s.ListMissLogRecords(ctx, 10, 0)
 	require.NoError(t, err)
 	require.Empty(t, entries)

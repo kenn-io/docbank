@@ -1607,6 +1607,8 @@ it("filtered search walkthrough reaches accepted results", async () => {
   expect(harness.misses[0]).toMatchObject({
     query: "annual report",
     filters: { filters: { size_min: 20 } },
+    actual_mode: "lexical",
+    coverage: { configuration: "unconfigured" },
   });
   await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
   await fireEvent.input(screen.getByLabelText("Filters JSON"), {
@@ -1928,7 +1930,7 @@ it.each([false, true])("records an empty submission once with reranking %s", asy
     ],
     files: [node(2, "existing.txt", baseVersion)],
     baseReport: report("hybrid", []),
-    rerankReport: report("hybrid", [], { outcome: "applied", candidate_count: 0 }),
+    rerankReport: report("hybrid", [], { outcome: "skipped", candidate_count: 0 }),
   });
   render(App);
   await screen.findAllByText("existing.txt");

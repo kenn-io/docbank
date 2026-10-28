@@ -3034,7 +3034,7 @@
   async function runSnapshot(
     query: Query,
     options: SnapshotOptions,
-  ): Promise<{ type: "text"; empty: boolean } | { type: "failed"; cause: Error } | undefined> {
+  ): ReturnType<SnapshotWorkspace["run"]> {
     invalidateTagHotkeyMutation();
     generation += 1;
     searchPending = false;
@@ -3061,18 +3061,7 @@
         queryDraftFromDefinition = false;
       }
       reportSearch(webSession, outcome.type, outcome.empty);
-      if (!preserveDraft && outcome.empty) {
-        const { text, ...filters } = query;
-        recordMiss({
-          query: text,
-          requested_mode: query.mode,
-          actual_mode: query.mode,
-          profile: options.profile,
-          filters,
-          coverage: { ...snapshot.state.page?.coverage },
-          truncated: !!snapshot.state.page?.next_cursor,
-        });
-      }
+      if (!preserveDraft && outcome.empty) recordMiss(outcome.receipt);
     }
   }
 

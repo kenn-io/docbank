@@ -436,6 +436,7 @@ func searchDocuments(
 		defer func() {
 			if daemon, ok := c.(daemonDocumentClient); ok && err == nil && len(out.report.Results) == 0 {
 				receipt := api.DocumentSearchMiss(input.Query, input.Profile, out.resolution.FenceFingerprint, len(out.resolution.Fence.ContentVersionIDs), out.report)
+				receipt.BindingID = input.BindingID
 				receipt.Filters = map[string]any{"scope": input.Filters}
 				daemon.RecordMiss(ctx, receipt)
 			}

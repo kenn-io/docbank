@@ -441,7 +441,9 @@ func runDocumentSearch(cmd *cobra.Command, c *daemonconn.Connection, query strin
 			reportSearch(cmd, c, report.ActualMode, len(report.Results) == 0, searchAgent)
 			if len(report.Results) == 0 {
 				fingerprint, _ := processing.SourceFenceFingerprint(processing.SourceFence{VaultUID: info.VaultID, ContentVersionIDs: options.ContentVersionIDs})
-				c.RecordMiss(cmd.Context(), api.DocumentSearchMiss(query, options.Profile, fingerprint, len(options.ContentVersionIDs), report))
+				receipt := api.DocumentSearchMiss(query, options.Profile, fingerprint, len(options.ContentVersionIDs), report)
+				receipt.BindingID = bindingID
+				c.RecordMiss(cmd.Context(), receipt)
 			}
 		}
 	}()

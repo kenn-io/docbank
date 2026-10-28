@@ -4129,15 +4129,13 @@ export const MissLogReceiptRequestedMode = {
   fuzzy: 'fuzzy',
 } as const;
 
-export type MissLogReceiptCoverage = {[key: string]: unknown};
-
 export type MissLogReceiptFilters = {[key: string]: unknown};
-
-export type MissLogReceiptReranking = {[key: string]: unknown};
 
 export interface MissLogReceipt {
   actual_mode: MissLogReceiptActualMode;
-  coverage?: MissLogReceiptCoverage;
+  /** @maxLength 256 */
+  binding_id?: string;
+  coverage?: unknown;
   created_at: string;
   /** @maxItems 64 */
   degradations?: string[];
@@ -4151,7 +4149,7 @@ export interface MissLogReceipt {
   profile?: string;
   query: string;
   requested_mode: MissLogReceiptRequestedMode;
-  reranking?: MissLogReceiptReranking;
+  reranking?: unknown;
   truncated: boolean;
   vault_uid: string;
 }
@@ -4175,8 +4173,6 @@ export const MissLogRequestActualMode = {
   fuzzy: 'fuzzy',
 } as const;
 
-export type MissLogRequestCoverage = {[key: string]: unknown};
-
 export type MissLogRequestFilters = {[key: string]: unknown};
 
 export type MissLogRequestRequestedMode = typeof MissLogRequestRequestedMode[keyof typeof MissLogRequestRequestedMode];
@@ -4190,13 +4186,13 @@ export const MissLogRequestRequestedMode = {
   fuzzy: 'fuzzy',
 } as const;
 
-export type MissLogRequestReranking = {[key: string]: unknown};
-
 export interface MissLogRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   actual_mode: MissLogRequestActualMode;
-  coverage?: MissLogRequestCoverage;
+  /** @maxLength 256 */
+  binding_id?: string;
+  coverage?: unknown;
   /** @maxItems 64 */
   degradations?: string[];
   /** @minimum 0 */
@@ -4208,7 +4204,7 @@ export interface MissLogRequest {
   profile?: string;
   query: string;
   requested_mode: MissLogRequestRequestedMode;
-  reranking?: MissLogRequestReranking;
+  reranking?: unknown;
   truncated: boolean;
 }
 

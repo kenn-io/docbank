@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/misslog"
@@ -15,8 +16,8 @@ import (
 func TestRecordMissBoundsFailedCall(t *testing.T) {
 	deadline := make(chan time.Duration, 1)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/api/v1/miss-log", r.URL.Path)
-		require.Equal(t, http.MethodPost, r.Method)
+		assert.Equal(t, "/api/v1/miss-log", r.URL.Path)
+		assert.Equal(t, http.MethodPost, r.Method)
 		_, _ = io.Copy(io.Discard, r.Body)
 		start := time.Now()
 		<-r.Context().Done()

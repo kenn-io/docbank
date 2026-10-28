@@ -14,7 +14,7 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-func TestRecordingPreservesReceipt(t *testing.T) {
+func TestRecordingAndEnabledStartupPruning(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = st.Close() })
@@ -34,22 +34,16 @@ func TestRecordingPreservesReceipt(t *testing.T) {
 	require.Equal(t, []string{"hybrid", "lexical"}, []string{receipt.RequestedMode, receipt.ActualMode})
 	require.Equal(t, []string{"reranking_degraded"}, receipt.Degradations)
 	require.Equal(t, 1, strings.Count(rows[0].Receipt, "synthetic secret"))
-}
-
-func TestEnabledStartupPrunesButDisabledPreserves(t *testing.T) {
-	st, err := store.Open(filepath.Join(t.TempDir(), "vault.db"))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = st.Close() })
 	now := time.Now()
 	require.NoError(t, st.AddMissLogRecord(t.Context(), store.MissLogRecord{ID: "expired", CreatedAt: now.AddDate(0, 0, -91), Receipt: `{}`}, now, 365, 5000))
-	cfg := config.Default().MissLog
+	cfg.Enabled = false
 	New(st, cfg, slog.Default(), func(_ context.Context, fn func() error) error { return fn() })
-	rows, err := st.ListMissLogRecords(t.Context(), 10, 0)
+	rows, err = st.ListMissLogRecords(t.Context(), 10, 0)
 	require.NoError(t, err)
-	require.Len(t, rows, 1)
+	require.Len(t, rows, 2)
 	cfg.Enabled = true
 	New(st, cfg, slog.Default(), func(_ context.Context, fn func() error) error { return fn() })
 	rows, err = st.ListMissLogRecords(t.Context(), 10, 0)
 	require.NoError(t, err)
-	require.Empty(t, rows)
+	require.Len(t, rows, 1)
 }

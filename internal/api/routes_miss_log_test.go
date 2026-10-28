@@ -17,6 +17,7 @@ func TestMissLogRecordingAndManagement(t *testing.T) {
 	t.Parallel()
 	for _, enabled := range []bool{false, true} {
 		t.Run(map[bool]string{false: "disabled", true: "enabled"}[enabled], func(t *testing.T) {
+			t.Parallel()
 			ts, st := newTestServer(t, func(d *api.Deps) { d.Cfg.MissLog.Enabled = enabled })
 			for i, receipt := range []misslog.Request{
 				{Query: " \t", RequestedMode: "lexical", ActualMode: "lexical"},
@@ -26,7 +27,11 @@ func TestMissLogRecordingAndManagement(t *testing.T) {
 				{Query: "synthetic empty submission", RequestedMode: "hybrid", ActualMode: "lexical", DocumentCount: new(0)},
 			} {
 				resp, body := do(t, ts, http.MethodPost, "/api/v1/miss-log", nil, receipt)
-				assert.Equal(t, http.StatusNoContent, resp.StatusCode, body)
+				wantStatus := http.StatusNoContent
+				if i == 1 {
+					wantStatus = http.StatusRequestEntityTooLarge
+				}
+				assert.Equal(t, wantStatus, resp.StatusCode, body)
 				rows, err := st.ListMissLogRecords(t.Context(), 10, 0)
 				require.NoError(t, err)
 				want := 0
@@ -99,6 +104,7 @@ func TestMissLogDoesNotWaitForMaintenance(t *testing.T) {
 }
 
 func TestMissLogInputLimits(t *testing.T) {
+	t.Parallel()
 	ts, st := newTestServer(t, func(d *api.Deps) { d.Cfg.MissLog.Enabled = true })
 	for _, modes := range [][2]string{{"semnatic", "lexical"}, {"hybrid", "semnatic"}, {"", "lexical"}, {"hybrid", ""}} {
 		resp, body := do(t, ts, http.MethodPost, "/api/v1/miss-log", nil, misslog.Request{Query: "missing", RequestedMode: modes[0], ActualMode: modes[1]})

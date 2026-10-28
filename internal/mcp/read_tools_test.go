@@ -501,6 +501,7 @@ func TestSearchReadValidatesEmptyFenceWithoutCallingSearch(t *testing.T) {
 func TestSearchReadWithNonEmptyFenceAndNoHitsSkipsDocumentResolution(t *testing.T) {
 	resolveCalls := 0
 	missCalls := 0
+	var receipt map[string]any
 	daemon := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/api/v1/processing/source-fences/resolve":
@@ -513,6 +514,7 @@ func TestSearchReadWithNonEmptyFenceAndNoHitsSkipsDocumentResolution(t *testing.
 				Degradations: []string{}, Results: []api.DocumentSearchResult{}})
 		case "/api/v1/miss-log":
 			missCalls++
+			assert.NoError(t, json.UnmarshalRead(request.Body, &receipt))
 			response.WriteHeader(http.StatusNoContent)
 		case "/api/v1/documents/resolve":
 			resolveCalls++
@@ -528,11 +530,12 @@ func TestSearchReadWithNonEmptyFenceAndNoHitsSkipsDocumentResolution(t *testing.
 
 	result, err := invokeReadTool(t.Context(), lease, "search_documents", map[string]any{
 		"query": "synthetic", "mode": "lexical", "limit": 1, "profile": "local",
-		"content_version_ids": []string{testVersionID},
+		"content_version_ids": []string{testVersionID}, "binding_id": "synthetic-binding",
 	})
 	require.NoError(t, err)
 	assert.Zero(t, resolveCalls)
 	assert.Equal(t, 1, missCalls)
+	assert.Equal(t, "synthetic-binding", receipt["binding_id"])
 	assert.Empty(t, resourceLinkURIs(result))
 	assert.Equal(t, []any{}, structuredMap(t, result.StructuredContent)["results"])
 }

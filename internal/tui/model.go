@@ -58,7 +58,7 @@ const (
 // Backend is the bounded daemon surface needed by the TUI.
 // The CLI adapter uses generated API operations and receipt validation.
 type Backend interface {
-	RecordMiss(context.Context, misslog.Request)
+	RecordMiss(ctx context.Context, receipt misslog.Request)
 	ReportScreen(ctx context.Context, screen string) error
 	ReportAction(ctx context.Context, event, searchType, kind string) error
 	Stat(ctx context.Context, path string) (api.Node, error)
@@ -365,6 +365,7 @@ func (e *ScreenRetryError) Unwrap() error { return e.Err }
 // arrives, so later requests cannot discard or relabel it.
 type deferredSearchReport struct {
 	naturalSearchBaseLoadedMsg
+
 	empty bool
 }
 
@@ -375,6 +376,7 @@ type deferredSearchReport struct {
 //
 //nolint:recvcheck // intentional Bubble Tea value-model pattern
 type Model struct {
+	fallbackMiss  *misslog.Request
 	reportedDay   string
 	screenRetryAt time.Time
 	ctx           context.Context
@@ -2099,6 +2101,7 @@ func (m Model) startSearch(query string) (Model, tea.Cmd) {
 	m.submittedSearchQuery, m.submittedSearchID = query, m.requestID
 	m.naturalRerankPending = false
 	m.naturalSearchNote = ""
+	m.fallbackMiss = nil
 	return m, tea.Batch(m.startSpinner(), m.loadSearch(query, m.requestID))
 }
 
@@ -2445,9 +2448,12 @@ func (m Model) applySearch(msg searchLoadedMsg) (tea.Model, tea.Cmd) {
 	m.clampSelection()
 	if m.reportSearchID == msg.requestID {
 		m.reportSearchID = 0
-		return m, m.reportSearch("text", len(msg.report.Hits) == 0, func() misslog.Request {
-			return misslog.Request{Query: msg.query, RequestedMode: "lexical", ActualMode: "lexical", Truncated: msg.report.Truncated}
-		})
+		receipt := misslog.Request{Query: msg.query, RequestedMode: "lexical", ActualMode: "lexical"}
+		if m.fallbackMiss != nil {
+			receipt = *m.fallbackMiss
+		}
+		receipt.Truncated = msg.report.Truncated
+		return m, m.reportSearch("text", len(msg.report.Hits) == 0, receipt)
 	}
 	return m, nil
 }
@@ -2459,11 +2465,16 @@ func (m Model) applyNaturalSearchBase(msg naturalSearchBaseLoadedMsg) (tea.Model
 	m.loading = false
 	m.naturalRerankPending = false
 	if msg.err != nil {
+		requestedMode := msg.request.Mode
+		if requestedMode == "" {
+			requestedMode = msg.naturalMode
+		}
 		m.naturalMode = naturalNames
 		m.naturalRerank = false
 		m.naturalResultMode = ""
 		m.naturalSearchNote = "Natural-language search unavailable: " + msg.err.Error() + ". Showing Names and text."
 		m.loading = true
+		m.fallbackMiss = &misslog.Request{Query: msg.query, RequestedMode: requestedMode, ActualMode: naturalLexical, Profile: msg.request.Profile, Degradations: []string{m.naturalSearchNote}}
 		return m, m.loadSearch(msg.query, msg.requestID)
 	}
 	m.applyNaturalRows(msg.query, msg.rows, msg.report.Truncated)
@@ -2484,7 +2495,7 @@ func (m Model) applyNaturalSearchBase(msg naturalSearchBaseLoadedMsg) (tea.Model
 			searchType = naturalLexical
 		}
 		return m, func() tea.Msg {
-			m.backend.RecordMiss(m.ctx, api.DocumentSearchMiss(msg.query, msg.request.Profile, msg.fenceFingerprint, 0, api.DocumentSearchReport{RequestedMode: msg.request.Mode, ActualMode: searchType}))
+			m.backend.RecordMiss(m.ctx, api.DocumentSearchMiss(msg.query, msg.request.Profile, msg.fenceFingerprint, 0, api.DocumentSearchReport{RequestedMode: msg.request.Mode, ActualMode: searchType, Coverage: api.DocumentSearchCoverage{State: "complete"}}))
 			return m.reportAction("search_empty", searchType, "")()
 		}
 	}
@@ -3199,18 +3210,16 @@ func (m Model) reportAction(event, searchType, kind string) tea.Cmd {
 }
 
 func (m Model) reportNaturalSearch(msg naturalSearchBaseLoadedMsg, report api.DocumentSearchReport, empty bool) tea.Cmd {
-	return m.reportSearch(report.ActualMode, empty, func() misslog.Request {
-		return api.DocumentSearchMiss(msg.query, msg.request.Profile, msg.fenceFingerprint, len(msg.request.Fence.ContentVersionIDs), report)
-	})
+	return m.reportSearch(report.ActualMode, empty, api.DocumentSearchMiss(msg.query, msg.request.Profile, msg.fenceFingerprint, len(msg.request.Fence.ContentVersionIDs), report))
 }
 
-func (m Model) reportSearch(searchType string, empty bool, receipts ...func() misslog.Request) tea.Cmd {
+func (m Model) reportSearch(searchType string, empty bool, receipts ...misslog.Request) tea.Cmd {
 	return func() tea.Msg {
 		m.reportAction("search_run", searchType, "")()
 		if empty {
 			m.reportAction("search_empty", searchType, "")()
 			if len(receipts) > 0 {
-				m.backend.RecordMiss(m.ctx, receipts[0]())
+				m.backend.RecordMiss(m.ctx, receipts[0])
 			}
 		}
 		return nil

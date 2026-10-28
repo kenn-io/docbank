@@ -18,14 +18,15 @@ import (
 // Request describes the empty result accepted by a submitting client.
 type Request struct {
 	Query            string         `json:"query"`
+	BindingID        string         `json:"binding_id,omitempty" maxLength:"256"`
 	Profile          string         `json:"profile,omitempty" maxLength:"256"`
 	RequestedMode    string         `json:"requested_mode" enum:"auto,lexical,semantic,hybrid,fuzzy"`
 	ActualMode       string         `json:"actual_mode" enum:"auto,lexical,semantic,hybrid,fuzzy"`
 	Filters          map[string]any `json:"filters,omitempty" maxProperties:"32"`
-	Coverage         map[string]any `json:"coverage,omitempty" maxProperties:"32"`
+	Coverage         any            `json:"coverage,omitempty" maxProperties:"32"`
 	Truncated        bool           `json:"truncated"`
 	Degradations     []string       `json:"degradations,omitempty" maxItems:"64"`
-	Reranking        map[string]any `json:"reranking,omitempty" maxProperties:"8"`
+	Reranking        any            `json:"reranking,omitempty" maxProperties:"8"`
 	FenceFingerprint string         `json:"fence_fingerprint,omitempty" maxLength:"128"`
 	DocumentCount    *int           `json:"document_count,omitempty" minimum:"0"`
 }
@@ -33,6 +34,7 @@ type Request struct {
 // Receipt adds daemon-owned identity and time to the submitted outcome.
 type Receipt struct {
 	Request
+
 	ID        string    `json:"id"`
 	CreatedAt time.Time `json:"created_at"`
 	VaultUID  string    `json:"vault_uid"`
@@ -49,7 +51,7 @@ type Service struct {
 // New prunes on enabled startup only. Failures never expose sensitive payloads.
 func New(st *store.Store, cfg config.MissLogConfig, logger *slog.Logger, mutate func(context.Context, func() error) error) *Service {
 	s := &Service{store: st, config: cfg, logger: logger, mutate: mutate}
-	if cfg.Enabled && st != nil {
+	if cfg.Enabled {
 		if err := s.mutate(context.Background(), func() error {
 			return st.PruneMissLogRecords(context.Background(), time.Now(), cfg.RetentionDays, cfg.MaxRecords)
 		}); err != nil {
@@ -61,7 +63,7 @@ func New(st *store.Store, cfg config.MissLogConfig, logger *slog.Logger, mutate 
 
 // Record stores a bounded receipt. Failures leave the search usable.
 func (s *Service) Record(ctx context.Context, request Request) {
-	if s == nil || !s.config.Enabled || s.store == nil || (strings.TrimSpace(request.Query) == "" && len(request.Filters) == 0) {
+	if !s.config.Enabled || (strings.TrimSpace(request.Query) == "" && len(request.Filters) == 0) {
 		return
 	}
 	var random [24]byte
@@ -70,7 +72,7 @@ func (s *Service) Record(ctx context.Context, request Request) {
 	receipt.CreatedAt = time.Now().UTC()
 	receipt.VaultUID = s.store.VaultID()
 	encoded, err := json.Marshal(receipt)
-	if err != nil || len(encoded) > 64<<10 {
+	if err != nil {
 		s.logger.Warn("miss_log_write_failed")
 		return
 	}
