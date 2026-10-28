@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-13
+last_edited: 2026-10-28
 title: Roadmap
 description: What Docbank does today, what it does not do yet, and what is planned.
 ---
@@ -15,6 +15,10 @@ For detail on current features, see the [capability guide](capabilities.md).
 Instructions and limits live in the guides linked below. The
 [changelog](changelog.md) records published releases.
 
+The [review-to-delivery roadmap](https://github.com/kenn-io/docbank/issues/719)
+connects the original document-workflow proposals to merged outcomes, work under
+review, and the next scope decisions.
+
 ## What can I use now?
 
 | Task | What works today | Guide |
@@ -23,6 +27,7 @@ Instructions and limits live in the guides linked below. The
 | Organize documents | Stable IDs, folders, tags, and atomic batch moves. The web app groups and colors tags | [Organizing](usage/organizing.md) |
 | Find documents | Ranked name and text search, filtering without a query, and saved queries and highlight sets in the web app and API | [Searching](usage/searching.md) |
 | Review and export | Frozen queries, verified ZIP bundles, dated search reports, load-file packages, and Bates-stamped selected pages | [Web application](usage/web.md) and [export bundles](usage/export-bundles.md) |
+| Redact and number one PDF | Review explicit masks, render and verify a redacted PDF, and retain a numbered delivery for recovery through the CLI and HTTP API | [Native PDF review and delivery](usage/document-processing.md#review-and-render-a-native-pdf) |
 | Read email and recordings | Mailbox import, navigation between messages and their attachments, stored email PDFs, imported recordings, and timed transcripts | [Web application](usage/web.md#read-archived-email) and [processing](usage/document-processing.md) |
 | Organize photos | RAW/JPEG/XMP grouping, a web grid grouped by month or capture session, albums in the web app, CLI, or HTTP API, and metadata and album filters | [Photo assets](usage/photos.md) |
 | Keep earlier content | Immutable versions, revision checks, reversion, and history pruning on request | [Editing and versions](architecture/editing-and-versions.md) |
@@ -34,6 +39,11 @@ Instructions and limits live in the guides linked below. The
 
 Release archives cover Linux, macOS, and Windows on amd64 and arm64.
 `docbank update` installs a published release and coordinates daemon restart.
+
+Native PDF preparation and rendering require the configured Linux amd64 page
+runtime and supported source text. Reserving numbers explicitly retains the
+unredacted original indefinitely. See the linked guide for limits and the
+difference between recovering recorded bytes and verifying them against a review.
 
 ## What document processing is available?
 
