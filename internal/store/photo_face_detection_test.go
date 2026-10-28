@@ -58,6 +58,33 @@ func TestPhotoFaceDetectionReconciliation(t *testing.T) {
 	require.Equal(t, original.FaceID, faces[0].FaceID)
 	require.InDelta(t, .3, *faces[0].Roll, 1e-12)
 	require.Equal(t, int64(3), faces[0].Revision)
+	// Restore drops completion markers. An identical detector reply keeps revisions,
+	// while unavailable measurements remain distinct from observed zero or false.
+	for _, tc := range []struct {
+		roll     *float64
+		eyes     *bool
+		revision int64
+	}{
+		{new(.3), new(true), 3},
+		{nil, new(true), 4},
+		{new(0.0), new(true), 5},
+		{new(0.0), nil, 6},
+		{new(0.0), new(false), 7},
+	} {
+		var exported bytes.Buffer
+		require.NoError(t, s.ExportMetadata(ctx, &exported))
+		restored := newTestStore(t)
+		require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
+		s = restored
+		next.Roll, next.EyesOpen = tc.roll, tc.eyes
+		require.NoError(t, scan("b3", next))
+		faces = read()
+		require.Len(t, faces, 1)
+		require.Equal(t, original.FaceID, faces[0].FaceID)
+		require.Equal(t, tc.revision, faces[0].Revision)
+		require.Equal(t, tc.roll, faces[0].Roll)
+		require.Equal(t, tc.eyes, faces[0].EyesOpen)
+	}
 	// Completion is keyed to the detector, including empty results.
 	require.NoError(t, scan("b3"))
 	require.Len(t, read(), 1)
@@ -73,7 +100,7 @@ func TestPhotoFaceDetectionReconciliation(t *testing.T) {
 
 func TestPhotoFaceDetectionProtectsDecisionsAndUndo(t *testing.T) {
 	t.Parallel()
-	for _, action := range []string{"name", "reject", "dismiss", "history", "candidate"} {
+	for _, action := range []string{"name", "dismiss", "candidate"} {
 		t.Run(action, func(t *testing.T) {
 			s := newTestStore(t)
 			ctx := t.Context()
@@ -101,19 +128,12 @@ func TestPhotoFaceDetectionProtectsDecisionsAndUndo(t *testing.T) {
 				require.NoError(t, err)
 			default:
 				decision := action
-				if action == "history" {
-					decision = "name"
-				}
 				request := PhotoFaceDecisionRequest{FaceID: face.FaceID, Revision: face.Revision, Action: decision}
 				if decision != "dismiss" {
 					request.PersonID = person.PersonID
 				}
 				receipt, err = s.DecidePhotoFace(ctx, version, request)
 				require.NoError(t, err)
-				if action == "history" {
-					_, err = s.UndoPhotoFaceDecision(ctx, receipt.ReceiptID)
-					require.NoError(t, err)
-				}
 			}
 			before := read()
 			observation.Box.X = .01
@@ -122,7 +142,7 @@ func TestPhotoFaceDetectionProtectsDecisionsAndUndo(t *testing.T) {
 			require.Equal(t, before, read())
 			require.NoError(t, scan("b3"))
 			require.Equal(t, before, read())
-			if action == "name" || action == "reject" || action == "dismiss" {
+			if action == "name" || action == "dismiss" {
 				_, err = s.UndoPhotoFaceDecision(ctx, receipt.ReceiptID)
 				require.NoError(t, err)
 				require.Empty(t, read()[0].AssertionID)

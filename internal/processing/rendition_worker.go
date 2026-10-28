@@ -922,7 +922,7 @@ func (worker *RenditionWorker) endProvider(
 		class = string(store.RenditionJobOperatorRequired)
 	}
 	if worker.logger != nil && work.ExecutionIdentity.Upload.InputKind == document.RenditionInputDerivedUpload {
-		worker.logger.Warn("photo description ended without a result",
+		worker.logger.Warn("photo vision task ended without a result", "task", photoVisionTaskName(work.ExecutionIdentity.Authorization.ProviderID),
 			"job", claim.JobID, "version", work.Waiter.ContentVersionID, "class", class, "error", cause)
 	}
 	if operatorRequired {

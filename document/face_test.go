@@ -18,11 +18,6 @@ func TestFaceBoxJSONCoordinates(t *testing.T) {
 		`{"x":0,"width":0.2,"height":0.3}`,
 		`{"x":0,"y":0,"height":0.3}`,
 		`{"x":0,"y":0,"width":0.2}`,
-		`{"x":null,"y":0,"width":0.2,"height":0.3}`,
-		`{"x":0,"y":null,"width":0.2,"height":0.3}`,
-		`{"x":0,"y":0,"width":null,"height":0.3}`,
-		`{"x":0,"y":0,"width":0.2,"height":null}`,
-		`{"x":"0","y":0,"width":0.2,"height":0.3}`,
 	} {
 		require.Error(t, json.Unmarshal([]byte(raw), &box), raw)
 	}

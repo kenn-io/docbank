@@ -85,11 +85,6 @@ func (service *Service) photoDescriptionBinding(ctx context.Context, version sto
 // photoDescriptionInput returns the copy of the verified grid preview that a
 // provider receives, with the capability record that binds it.
 func photoDescriptionInput(ctx context.Context, catalog *store.Store, blobs *blob.Store, version store.ContentVersion, profile configuredProfile) ([]byte, media.CapabilityRecord, error) {
-	if profile.portable.Rendition.Descriptor.ID == document.FaceDetectionProviderID {
-		if err := catalog.RequireFaceDetectionSupported(ctx); err != nil {
-			return nil, media.CapabilityRecord{}, err
-		}
-	}
 	eligible, err := catalog.PhotoDescriptionEligible(ctx, version.ID)
 	if err != nil {
 		return nil, media.CapabilityRecord{}, err
@@ -218,9 +213,16 @@ func (service *Service) PhotoDescriptionBackfill(ctx context.Context, logger *sl
 	return service.photoVisionBackfill(ctx, logger, workers, vision.ProviderID)
 }
 
+func photoVisionTaskName(task string) string {
+	if task == document.FaceDetectionProviderID {
+		return "photo-face-detection"
+	}
+	return "photo-descriptions"
+}
+
 func (service *Service) photoVisionBackfill(ctx context.Context, logger *slog.Logger, workers int, task string) error {
 	workers = max(workers, 1)
-	backfill := Backfill[photoDescriptionTarget]{Name: task, Page: 50, IdleDelay: time.Second, Logger: logger,
+	backfill := Backfill[photoDescriptionTarget]{Name: photoVisionTaskName(task), Page: 50, IdleDelay: time.Second, Logger: logger,
 		Key: func(value photoDescriptionTarget) string { return value.version.ID },
 		List: func(ctx context.Context, after string, limit int) ([]photoDescriptionTarget, error) {
 			return service.photoVisionTargets(ctx, logger, after, limit, workers, task)
@@ -366,7 +368,7 @@ func (service *Service) photoDescriptionProfiles(ctx context.Context, logger *sl
 			ready = append(ready, name)
 		case errors.Is(err, ErrRenditionRuntimeUnavailable):
 			if _, logged := service.visionNotReady.LoadOrStore(name, true); !logged && logger != nil {
-				logger.Warn("photo descriptions are paused: the vision provider did not pass its probe", "profile", name, "error", err)
+				logger.Warn("photo vision task is paused: the provider did not pass its probe", "task", photoVisionTaskName(task), "profile", name, "error", err)
 			}
 		case errors.Is(err, store.ErrProcessingConsentRequired), errors.Is(err, store.ErrProcessingConsentExpired),
 			errors.Is(err, store.ErrProcessingConsentRevoked), errors.Is(err, store.ErrAuditMutationUnsupported):

@@ -246,7 +246,11 @@
     if (filter && person && filter.name !== person.display_name)
       photos.personFilter = { id: filter.id, name: person.display_name };
   });
+  let faceRefresh = $state(0);
+  let consumedFaceRefresh = 0;
   $effect(() => {
+    const refresh = faceRefresh !== consumedFaceRefresh;
+    consumedFaceRefresh = faceRefresh;
     const cullID = culling ? cull?.currentID : undefined;
     const id = culling
       ? cullID
@@ -271,7 +275,7 @@
     untrack(() => {
       const target = (row: PhotoBrowseRow | undefined) => {
         const version = row?.kind === "photo" ? row.content_version_id : "";
-        if (version !== inspectorFaces.version || (version && concealed))
+        if (refresh || version !== inspectorFaces.version || (version && concealed))
           void inspectorFaces.load(version);
       };
       if (validating) {
@@ -280,10 +284,16 @@
       }
       if (!id && inspectorFaces.busy) return;
       if (id !== photos.faceAssetID) target(undefined);
-      if (row && row.asset_id === id && "content_version_id" in row) target(row);
+      if (
+        (!refresh || photoID || culling) &&
+        row &&
+        row.asset_id === id &&
+        "content_version_id" in row
+      )
+        target(row);
       else {
         inspectorFaces.conceal();
-        if (id && !photoID && !culling && !comparing)
+        if (id && (refresh || (!photoID && !culling && !comparing)))
           void photos
             .lookup(id, controller.signal)
             .then((row) => {
@@ -672,12 +682,14 @@
     }
   }
   $effect(() =>
-    photos.watch((change: PhotoChange) => {
-      return settleReads([
+    photos.watch(async (change: PhotoChange) => {
+      inspectorFaces.conceal();
+      await settleReads([
         photoID ? revalidateDetail(photoID, change.listRefreshed) : undefined,
         // The editor retains changes until the user clears a draft.
         editor.invalidate(),
       ]);
+      faceRefresh++;
     }),
   );
   async function restoreGrid() {

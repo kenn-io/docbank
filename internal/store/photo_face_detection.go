@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"database/sql"
+	"reflect"
 	"slices"
 	"time"
 	"uuid"
@@ -130,6 +131,10 @@ func publishFaceDetectionTx(ctx context.Context, tx *sql.Tx, version, detector s
 			continue
 		}
 		o := result.Faces[j]
+		stored := document.FaceObservation{Box: face.Box, Roll: face.Roll, Facing: face.Facing, EyesOpen: face.EyesOpen, Smile: face.Smile}
+		if face.DetectorFingerprint == detector && reflect.DeepEqual(stored, o) {
+			continue
+		}
 		if _, err := tx.ExecContext(ctx, `UPDATE photo_faces SET x=?,y=?,width=?,height=?,roll=?,facing=?,eyes_open=?,smile=?,detector_fingerprint=?,revision=revision+1 WHERE face_id=?`, o.Box.X, o.Box.Y, o.Box.Width, o.Box.Height, o.Roll, o.Facing, o.EyesOpen, o.Smile, detector, face.FaceID); err != nil {
 			return err
 		}

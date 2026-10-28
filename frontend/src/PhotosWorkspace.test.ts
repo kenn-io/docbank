@@ -3957,6 +3957,38 @@ it.each([false, true])("revalidates People after refresh, readable=%s", async (r
   }
 });
 
+it.each([false, true])("reloads detected faces after a live change, loupe=%s", async (loupe) => {
+  const { component, props, photos, read } = await facesWorkspaceSetup();
+  if (loupe) {
+    await fireEvent.click(screen.getByRole("button", { name: "Open Photo 1.jpg" }));
+    await component.rerender({ ...props, photoID: "photo-1" });
+    await screen.findByRole("dialog", { name: /^Photo viewer,/ });
+  }
+  const pending = {
+    version: "version-1",
+    box: { x: 0, y: 0, width: 0.2, height: 0.2 },
+    face_id: "pending-face",
+  };
+  photos.faceEditor.pending = pending;
+  read.mockResolvedValue(
+    photoFacePageFor(photo(1), {
+      faces: [
+        photoFace({ content_version_id: "version-1" }),
+        photoFace({
+          face_id: "face-b",
+          content_version_id: "version-1",
+          assertion_id: undefined,
+          detector_fingerprint: "a".repeat(64),
+        }),
+      ],
+    }),
+  );
+  vi.spyOn(photos, "lookup").mockResolvedValue(photo(1));
+  await act(() => photos.changed({}));
+  await screen.findByRole("button", { name: "Find or create a person: Face 2" });
+  expect(photos.faceEditor.pending).toEqual(pending);
+});
+
 it("reports an uncertain clear after remount", async () => {
   vi.stubGlobal(
     "ResizeObserver",
@@ -4108,6 +4140,23 @@ it.each([false, true])(
     expect(review.currentID).toBe("photo-1");
     expect(read).toHaveBeenCalledTimes(readsBefore + 1);
     expect(read).toHaveBeenLastCalledWith("version-1", expect.anything());
+    read.mockResolvedValue(
+      photoFacePageFor(photo(1), {
+        faces: [
+          photoFace({ content_version_id: "version-1" }),
+          photoFace({
+            face_id: "face-b",
+            content_version_id: "version-1",
+            assertion_id: undefined,
+            detector_fingerprint: "a".repeat(64),
+          }),
+        ],
+      }),
+    );
+    await act(() => photos.changed({}));
+    await within(await within(dialog).findByRole("region", { name: "Face closeups" })).findByText(
+      "Face 2",
+    );
   },
 );
 

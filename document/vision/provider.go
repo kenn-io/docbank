@@ -354,14 +354,15 @@ func (p *Provider) Probe(ctx context.Context) error {
 // represents a successful scan with no faces.
 func ParseFaces(raw []byte) (document.FaceDetection, error) {
 	var out document.FaceDetection
-	start := bytes.IndexByte(raw, '{')
-	if start < 0 {
-		return out, errors.New("vision response has no JSON object")
+	raw = bytes.Trim(raw, " \t\r\n")
+	if bytes.HasPrefix(raw, []byte("```")) && bytes.HasSuffix(raw, []byte("```")) && len(raw) >= 6 {
+		raw = bytes.TrimPrefix(raw[3:len(raw)-3], []byte("json"))
+		raw = bytes.Trim(raw, " \t\r\n")
 	}
 	var fields struct {
 		Faces jsontext.Value `json:"faces"`
 	}
-	if err := json.UnmarshalDecode(jsontext.NewDecoder(bytes.NewReader(raw[start:])), &fields); err != nil {
+	if err := json.Unmarshal(raw, &fields); err != nil {
 		return out, err
 	}
 	if len(fields.Faces) == 0 || fields.Faces[0] != '[' {

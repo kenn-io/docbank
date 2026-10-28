@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
 )
 
 func TestParseFaces(t *testing.T) {
@@ -13,19 +14,25 @@ func TestParseFaces(t *testing.T) {
 	valid := `{"box":{"x":0.1,"y":0.2,"width":0.2,"height":0.3},"roll":0,"facing":0,"eyes_open":false,"smile":null}`
 	for _, tc := range []struct {
 		name, raw string
-		count     int
+		want      *document.FaceObservation
 		fails     bool
 	}{
-		{"valid", `{"faces":[` + valid + `]}`, 1, false},
-		{"empty", `{"faces":[]}`, 0, false},
-		{"missing", `{"caption":"portrait"}`, 0, true},
-		{"null", `{"faces":null}`, 0, true},
-		{"object", `{"faces":{}}`, 0, true},
-		{"malformed", `{"faces":[`, 0, true},
-		{"mixed", `{"faces":[{},null,{"box":{"width":2,"height":1},"roll":0,"facing":1,"eyes_open":true,"smile":false},` + valid + `]}`, 0, true},
-		{"invalid", `{"faces":[{}]}`, 0, true},
-		{"missing measurement", `{"faces":[{"box":{"x":0,"y":0,"width":0.2,"height":0.3},"roll":0,"facing":1,"eyes_open":true}]}`, 1, false},
-		{"too many", `{"faces":[` + strings.Repeat(valid+",", 1000) + valid + `]}`, 0, true},
+		{name: "valid", raw: `{"faces":[` + valid + `]}`, want: &document.FaceObservation{Box: document.FaceBox{X: .1, Y: .2, Width: .2, Height: .3}, Roll: new(0.0), Facing: new(0.0), EyesOpen: new(false)}},
+		{name: "empty", raw: `{"faces":[]}`},
+		{name: "whitespace", raw: " \t\r\n" + `{"faces":[]}` + " \n"},
+		{name: "fenced", raw: "```json\n" + `{"faces":[]}` + "\n```"},
+		{name: "trailing object", raw: `{"faces":[]} {"faces":[`, fails: true},
+		{name: "trailing text", raw: `{"faces":[]} done`, fails: true},
+		{name: "leading text", raw: `Here are faces: {"faces":[]}`, fails: true},
+		{name: "unclosed fence", raw: "```json\n" + `{"faces":[]}`, fails: true},
+		{name: "fenced suffix", raw: "```json\n" + `{"faces":[]}` + "\n``` done", fails: true},
+		{name: "missing", raw: `{"caption":"portrait"}`, fails: true},
+		{name: "null", raw: `{"faces":null}`, fails: true},
+		{name: "object", raw: `{"faces":{}}`, fails: true},
+		{name: "malformed", raw: `{"faces":[`, fails: true},
+		{name: "invalid", raw: `{"faces":[{}]}`, fails: true},
+		{name: "missing measurement", raw: `{"faces":[{"box":{"x":0,"y":0,"width":0.2,"height":0.3},"roll":0,"facing":1,"eyes_open":true}]}`, want: &document.FaceObservation{Box: document.FaceBox{Width: .2, Height: .3}, Roll: new(0.0), Facing: new(1.0), EyesOpen: new(true)}},
+		{name: "too many", raw: `{"faces":[` + strings.Repeat(valid+",", 1000) + valid + `]}`, fails: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			result, err := ParseFaces([]byte(tc.raw))
@@ -34,32 +41,29 @@ func TestParseFaces(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			require.Len(t, result.Faces, tc.count)
-			if tc.name == "missing measurement" {
-				require.Nil(t, result.Faces[0].Smile)
-			}
-			if tc.count > 0 && tc.name != "missing measurement" {
-				require.Zero(t, *result.Faces[0].Roll)
-				require.Zero(t, *result.Faces[0].Facing)
-				require.False(t, *result.Faces[0].EyesOpen)
-				require.Nil(t, result.Faces[0].Smile)
+			if tc.want != nil {
+				require.Equal(t, []document.FaceObservation{*tc.want}, result.Faces)
+			} else {
+				require.Empty(t, result.Faces)
 			}
 		})
 	}
-	for _, box := range []string{`{"width":0.2,"height":0.3}`, `{"x":null,"y":0,"width":0.2,"height":0.3}`, `{"x":0,"y":null,"width":0.2,"height":0.3}`} {
-		_, err := ParseFaces([]byte(`{"faces":[{"box":` + box + `,"roll":null,"facing":null,"eyes_open":null,"smile":null}]}`))
-		require.Error(t, err)
-	}
-
-	for _, fields := range []string{`"roll":4,"facing":1`, `"roll":0,"facing":-1`, `"roll":"zero","facing":1`, `"roll":null,"facing":null`} {
-		raw := fmt.Sprintf(`{"faces":[{"box":{"x":0,"y":0,"width":0.2,"height":0.2},%s,"eyes_open":null,"smile":null}]}`, fields)
+	for _, tc := range []struct {
+		fields string
+		fails  bool
+	}{
+		{`"roll":4,"facing":1`, true},
+		{`"roll":0,"facing":-1`, true},
+		{`"roll":"zero","facing":1`, true},
+		{`"roll":null,"facing":null`, false},
+	} {
+		raw := fmt.Sprintf(`{"faces":[{"box":{"x":0,"y":0,"width":0.2,"height":0.2},%s,"eyes_open":null,"smile":null}]}`, tc.fields)
 		result, err := ParseFaces([]byte(raw))
-		if fields == `"roll":null,"facing":null` {
-			require.NoError(t, err)
-			require.Len(t, result.Faces, 1)
-			require.Nil(t, result.Faces[0].Roll)
-		} else {
+		if tc.fails {
 			require.Error(t, err)
+		} else {
+			require.NoError(t, err)
+			require.Equal(t, []document.FaceObservation{{Box: document.FaceBox{Width: .2, Height: .2}}}, result.Faces)
 		}
 	}
 }
