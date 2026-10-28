@@ -1,19 +1,16 @@
 package mcp
 
 import (
-	"context"
+	"encoding/json/v2"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -99,6 +96,107 @@ func TestAnswerQuestionProcessingErrorTransport(t *testing.T) {
 	}
 }
 
+func TestAnswerQuestionSearchSelectionTransport(t *testing.T) {
+	for _, tc := range []struct {
+		name, profile, binding                string
+		rerank, exhaust                       bool
+		failures                              map[string]string
+		wantAttempts                          []string
+		wantProfile, wantBinding, wantFailure string
+	}{
+		{name: "retry bindings in name order", failures: map[string]string{"a": "not_found", "c": "stale_index"},
+			wantAttempts: []string{"a:a:hybrid", "a:c:hybrid", "z:b:hybrid"}, wantProfile: "z", wantBinding: "b"},
+		{name: "exhaustion falls back lexically", exhaust: true, failures: map[string]string{"a": "not_found", "c": "stale_index", "b": "stale_index"},
+			wantAttempts: []string{"a:a:hybrid", "a:c:hybrid", "z:b:hybrid", "a::lexical"}, wantProfile: "a", wantFailure: "not_found"},
+		{name: "reranking fallback uses compatible profile", rerank: true, exhaust: true, failures: map[string]string{"b": "not_found"},
+			wantAttempts: []string{"z:b:hybrid", "z::lexical"}, wantProfile: "z", wantFailure: "not_found"},
+		{name: "explicit profile uses first binding", profile: "a",
+			wantAttempts: []string{"a:a:hybrid"}, wantProfile: "a", wantBinding: "a"},
+		{name: "explicit binding", profile: "a", binding: "c", failures: map[string]string{"a": "stale_index"},
+			wantAttempts: []string{"a:c:hybrid"}, wantProfile: "a", wantBinding: "c"},
+		{name: "explicit profile failure stops", profile: "a", failures: map[string]string{"a": "stale_index"},
+			wantAttempts: []string{"a:a:hybrid"}, wantFailure: "stale_index"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fence := api.ResolvedDocumentSourceFence{VaultUID: testVaultID, ContentVersionIDs: []string{testVersionID}}
+			fingerprint, err := processing.SourceFenceFingerprint(processing.SourceFence{VaultUID: fence.VaultUID, ContentVersionIDs: fence.ContentVersionIDs})
+			require.NoError(t, err)
+			var attempts []string
+			daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v1/processing/source-fences/resolve":
+					writeDaemonJSON(t, w, api.DocumentSourceFenceResolution{Fence: fence, FenceFingerprint: fingerprint, ObservedScopeCount: 1})
+				case "/api/v1/processing/profiles":
+					writeDaemonJSON(t, w, []api.ProcessingProfileSummary{
+						{Name: "a", Fingerprint: strings.Repeat("a", 64), QueryEmbeddingBindings: []string{"c", "a"}},
+						{Name: "z", Fingerprint: strings.Repeat("b", 64), QueryEmbeddingBindings: []string{"b"}, RerankingAvailable: true},
+					})
+				case "/api/v1/search":
+					var request api.DocumentSearchRequest
+					if err := json.UnmarshalRead(r.Body, &request); err != nil {
+						t.Error(err)
+						return
+					}
+					attempts = append(attempts, request.Profile+":"+request.BindingID+":"+request.Mode)
+					if request.Rerank != tc.rerank {
+						t.Errorf("rerank = %t, want %t", request.Rerank, tc.rerank)
+					}
+					if code := tc.failures[request.BindingID]; code != "" {
+						status := http.StatusConflict
+						if code == "not_found" {
+							status = http.StatusNotFound
+						}
+						w.Header().Set("Content-Type", "application/problem+json")
+						w.WriteHeader(status)
+						_, _ = fmt.Fprintf(w, `{"status":%d,"code":%q}`, status, code)
+						return
+					}
+					report := api.DocumentSearchReport{RequestedMode: request.Mode, ActualMode: request.Mode,
+						Coverage: api.DocumentSearchCoverage{State: "complete", ScopedDocuments: 1, CompleteDocuments: 1}}
+					if request.Rerank {
+						report.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "skipped"}
+					}
+					writeDaemonJSON(t, w, report)
+				default:
+					t.Errorf("unexpected request: %s", r.URL.Path)
+					http.NotFound(w, r)
+				}
+			}))
+			defer daemon.Close()
+			server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, exportTestLease(t, daemon.URL))
+			args := map[string]any{"question": "example", "rerank": tc.rerank}
+			if tc.profile != "" {
+				args["profile"] = tc.profile
+			}
+			if tc.binding != "" {
+				args["binding_id"] = tc.binding
+			}
+			output := exportCall(t, server, "answer_question", args)
+			require.Equal(t, tc.wantAttempts, attempts)
+			if tc.wantProfile == "" {
+				require.Equal(t, tc.wantFailure, output["code"])
+				return
+			}
+			receipt := schemaMap(t, output["receipt"])
+			profile := schemaMap(t, receipt["profile"])
+			require.Equal(t, tc.wantProfile, profile["name"])
+			if tc.profile != "" {
+				require.Equal(t, strings.Repeat("a", 64), profile["fingerprint"])
+			}
+			if tc.exhaust {
+				require.Equal(t, "INCOMPLETE_COVERAGE", output["status"])
+				require.Equal(t, "lexical", receipt["actual_mode"])
+			} else {
+				require.Equal(t, "NO_MATCH", output["status"])
+				require.Equal(t, tc.wantBinding, receipt["binding_id"])
+			}
+			if tc.wantFailure != "" {
+				require.Equal(t, tc.wantFailure, output["semantic_failure"])
+			}
+		})
+	}
+}
+
 func TestAnswerQuestionEmptyFenceValidationDisconnectTransport(t *testing.T) {
 	fence := api.ResolvedDocumentSourceFence{VaultUID: testVaultID, ContentVersionIDs: []string{}}
 	fingerprint, err := processing.SourceFenceFingerprint(processing.SourceFence{VaultUID: fence.VaultUID, ContentVersionIDs: fence.ContentVersionIDs})
@@ -169,19 +267,7 @@ func TestAnswerQuestionRealDaemonEvidence(t *testing.T) {
 		BlobHash: member.SHA256, Extractor: "plain-text", ExtractorVersion: 1,
 		Status: store.ExtractionOK, Text: "The observatory opens at noon.",
 	}))
-	profileName, profile, err := processing.NewSuppliedMediaProfile(f.catalog, f.blobs, "test:operator")
-	require.NoError(t, err)
-	service, err := processing.NewService(processing.ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: api.NewOperationGate(),
-		SpoolDirectory: filepath.Join(t.TempDir(), "spool"), Profiles: map[string]processing.ProfileConfig{profileName: profile}})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, service.Shutdown(context.Background())) })
-	cfg := config.Default()
-	cfg.Server.APIKey = "synthetic-export-key"
-	daemon := api.NewServer(api.Deps{Store: f.catalog, Blobs: f.blobs, Processing: service, Cfg: cfg, VaultRoot: os.Getenv("DOCBANK_HOME")})
-	t.Cleanup(daemon.Close)
-	httpServer := httptest.NewServer(daemon.Handler())
-	t.Cleanup(httpServer.Close)
-	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, exportTestLease(t, httpServer.URL))
+	server, _, _ := newProcessingDocumentServer(t, f)
 	output := exportCall(t, server, "answer_question", map[string]any{"question": "observatory"})
 	require.Equal(t, "ANSWERED", output["status"])
 	passages, ok := output["passages"].([]any)

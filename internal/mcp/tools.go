@@ -75,7 +75,7 @@ var readToolDefinitions = []toolDefinition{
 	{name: "get_export_status", title: "Get export status", description: "Read one retained export job without downloading it.", schemas: getExportStatusSchemas},
 	{name: "get_vault_info", title: "Get vault info", description: "Summarize the selected vault without exposing its host path.", schemas: getVaultInfoSchemas},
 	{name: "list_documents", title: "List documents", description: "Page through current, live documents with bounded stable ordering.", schemas: listDocumentsSchemas},
-	{name: "answer_question", openWorld: true, title: "Answer question", description: "Return matched evidence and coverage without synthesizing an answer. Content passages require every word of the question to appear in one segment; key terms match better than a sentence. Open sources to verify excerpts.", schemas: answerQuestionSchemas},
+	{name: "answer_question", openWorld: true, title: "Answer question", description: "Return matched evidence and coverage without synthesizing an answer. Content passages require every word of the question to appear in one segment; key terms match better than a sentence. Open sources to verify excerpts. coverage_complete reports embedding coverage only; INCOMPLETE_COVERAGE can also reflect missing passage text or omitted evidence.", schemas: answerQuestionSchemas},
 	{name: "search_documents", title: "Search documents", description: "Search an exact bounded current-version source fence and report coverage.", schemas: searchDocumentsSchemas},
 	{name: "get_document", title: "Get document", description: "Read metadata for one exact current document identity.", schemas: getDocumentSchemas},
 	{name: "list_document_versions", title: "List document versions", description: "Page through immutable content versions for one stable document node.", schemas: listDocumentVersionsSchemas},
@@ -420,6 +420,17 @@ func domainToolErrorResult(code string, observed int) (*sdkmcp.CallToolResult, b
 	}, true
 }
 
+func toolProblemFacts(err error) (daemonconn.ProblemFacts, bool) {
+	facts, ok := daemonProblemFacts(err)
+	if native, isNative := errors.AsType[*api.Error](err); isNative {
+		facts, ok = daemonconn.ProblemFacts{Code: native.Code, ObservedScopeCount: native.ObservedScopeCount}, true
+	}
+	if !ok {
+		facts, ok = daemonconn.ExtractProblemFacts(err)
+	}
+	return facts, ok
+}
+
 func stableDomainError(err error) (string, int) {
 	if err == nil {
 		return "", 0
@@ -487,13 +498,7 @@ func stableDomainError(err error) (string, int) {
 	case errors.Is(err, store.ErrInvalidBatesSelector):
 		return "invalid_bates_selector", 0
 	}
-	facts, ok := daemonProblemFacts(err)
-	if native, isNative := errors.AsType[*api.Error](err); isNative {
-		facts, ok = daemonconn.ProblemFacts{Code: native.Code, ObservedScopeCount: native.ObservedScopeCount}, true
-	}
-	if !ok {
-		facts, ok = daemonconn.ExtractProblemFacts(err)
-	}
+	facts, ok := toolProblemFacts(err)
 	if !ok {
 		return "", 0
 	}

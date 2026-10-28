@@ -114,13 +114,8 @@ func CallDocumentReadTool(ctx context.Context, reader *api.DocumentReader, req *
 func readToolFailure(logger *slog.Logger, name string, err error) (*sdkmcp.CallToolResult, error) {
 	logOperationError(logger, name, err)
 	if name == "answer_question" {
-		code, _ := daemonconn.ProblemCode(err)
-		if facts, ok := daemonProblemFacts(err); ok {
-			code = facts.Code
-		}
-		if native, ok := errors.AsType[*api.Error](err); ok {
-			code = native.Code
-		}
+		facts, _ := toolProblemFacts(err)
+		code := facts.Code
 		switch code {
 		case "processing_unavailable", "processing_profile_unavailable", "reranking_unavailable", "reranking_failed", "stale_index":
 			if result, ok := domainToolErrorResult(code, 0); ok {
