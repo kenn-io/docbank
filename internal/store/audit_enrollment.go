@@ -671,7 +671,7 @@ func insertAuditRecord(ctx context.Context, tx *sql.Tx, record audit.Record) err
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO audit_records(
 		digest,kind,operation_id,operation_sequence,scope_id,entry_count,
-		event_id,event_ordinal,node_id,record_json) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+		event_id,event_ordinal,node_id,record_json) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
 		digest.text, record.Kind, index.operationID, index.operationSequence,
 		index.scopeID, index.entryCount, index.eventID, index.eventOrdinal,
 		index.nodeID, string(recordJSON))

@@ -46,6 +46,7 @@ func newPostgresSchemaStore(t *testing.T, setup *sql.DB, cfg pgschema.Config) *S
 		"; GRANT SELECT,INSERT,UPDATE,DELETE ON "+schema+".nodes,"+schema+".blobs,"+schema+".content_versions TO "+quotedRole+
 		"; GRANT SELECT,INSERT ON "+schema+".blob_checksums TO "+quotedRole+
 		"; GRANT SELECT ON "+schema+".audit_records,"+schema+".audit_authority,"+schema+".audit_scopes,"+schema+".audit_baselines,"+schema+".audit_memberships TO "+quotedRole+
+		"; GRANT INSERT ON "+schema+".audit_records TO "+quotedRole+
 		"; GRANT USAGE ON SEQUENCE "+schema+".nodes_id_seq TO "+quotedRole)
 	require.NoError(t, err)
 	config, err := pgx.ParseConfig(os.Getenv("DOCBANK_TEST_POSTGRES_DSN"))
