@@ -42,6 +42,7 @@ func TestProcessingVisionFingerprints(t *testing.T) {
 		flag string
 		args []string
 	}{
+		{"--task", []string{"--task", "unknown-task", "--model", "synthetic-vision", "--trust-boundary", "hosted_provider", "--endpoint", "https://vision.example.com", "--deployment-fingerprint", deployment}},
 		{"--trust-boundary", []string{"--model", "synthetic-vision", "--trust-boundary", "private", "--endpoint", "https://vision.example.com", "--deployment-fingerprint", deployment}},
 		{"--trust-boundary", []string{"--model", "synthetic-vision", "--trust-boundary", "local_process", "--endpoint", "https://vision.example.com", "--deployment-fingerprint", deployment}},
 		{"--endpoint", []string{"--model", "synthetic-vision", "--trust-boundary", "hosted_provider", "--deployment-fingerprint", deployment}},

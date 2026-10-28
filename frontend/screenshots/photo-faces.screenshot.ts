@@ -9,6 +9,47 @@ const output = process.env.DOCBANK_FACES_SCREENSHOT_DIR;
 test.use({ actionTimeout: 15_000 });
 test.skip(!output, "DOCBANK_FACES_SCREENSHOT_DIR enables synthetic face review proof");
 
+test("shows detected faces in the inspector and loupe", async ({ page }) => {
+  const fixture = photoFixture(
+    await mkdtemp(path.join(repository, ".superpowers", "detected-faces-proof-")),
+  );
+  try {
+    await fixture.seed(3, "--detected-faces");
+    await mkdir(output!, { recursive: true });
+    const url = new URL(await fixture.run("web", "--no-browser"));
+    const session = new URLSearchParams(url.hash.slice(1)).get("web_session")!;
+    url.pathname = "/photos";
+    await page.goto(url.href);
+    await page
+      .getByRole("button", { name: "Select Synthetic-photo-00003.jpg", exact: true })
+      .dblclick();
+    const loupe = page.getByRole("dialog", { name: /^Photo viewer,/ });
+    await expect(loupe.locator(".face-box")).toHaveText("Face 1");
+    const people = loupe.getByRole("region", { name: "People", exact: true });
+    await people.scrollIntoViewIfNeeded();
+    await expect(
+      people.getByRole("button", { name: "Find or create a person: Face 1" }),
+    ).toBeVisible();
+    const face = await withPhotoAPI(url, async () => {
+      const assets = await api.listPhotoAssets(
+        {
+          query: { text: "", syntax: "simple", sort: { field: "capture_time", direction: "desc" } },
+          page_size: 10,
+        },
+        { session },
+      );
+      const portrait = assets.items.find((asset) => asset.name === "Synthetic-photo-00003.jpg")!;
+      return (await api.listPhotoFaces(portrait.content_version_id, { session })).faces[0]!;
+    });
+    expect(face.detector_fingerprint).toMatch(/^[a-f0-9]{64}$/);
+    expect(face.roll).toBe(0);
+    expect(face.assertion_id).toBeFalsy();
+    await captureThemes(page, output!, "after-detection-inspector-loupe");
+  } finally {
+    await fixture.dispose();
+  }
+});
+
 async function captureDialogThemes(
   page: Page,
   dialog: Locator,

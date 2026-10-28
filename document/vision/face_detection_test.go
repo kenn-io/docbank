@@ -22,7 +22,8 @@ func TestParseFaces(t *testing.T) {
 		{"null", `{"faces":null}`, 0, true},
 		{"object", `{"faces":{}}`, 0, true},
 		{"malformed", `{"faces":[`, 0, true},
-		{"mixed", `{"faces":[{},null,{"box":{"width":2,"height":1},"roll":0,"facing":1,"eyes_open":true,"smile":false},` + valid + `]}`, 1, false},
+		{"mixed", `{"faces":[{},null,{"box":{"width":2,"height":1},"roll":0,"facing":1,"eyes_open":true,"smile":false},` + valid + `]}`, 0, true},
+		{"invalid", `{"faces":[{}]}`, 0, true},
 		{"missing measurement", `{"faces":[{"box":{"x":0,"y":0,"width":0.2,"height":0.3},"roll":0,"facing":1,"eyes_open":true}]}`, 1, false},
 		{"too many", `{"faces":[` + strings.Repeat(valid+",", 1000) + valid + `]}`, 0, true},
 	} {
@@ -46,20 +47,19 @@ func TestParseFaces(t *testing.T) {
 		})
 	}
 	for _, box := range []string{`{"width":0.2,"height":0.3}`, `{"x":null,"y":0,"width":0.2,"height":0.3}`, `{"x":0,"y":null,"width":0.2,"height":0.3}`} {
-		result, err := ParseFaces([]byte(`{"faces":[{"box":` + box + `,"roll":null,"facing":null,"eyes_open":null,"smile":null}]}`))
-		require.NoError(t, err)
-		require.Empty(t, result.Faces)
+		_, err := ParseFaces([]byte(`{"faces":[{"box":` + box + `,"roll":null,"facing":null,"eyes_open":null,"smile":null}]}`))
+		require.Error(t, err)
 	}
 
 	for _, fields := range []string{`"roll":4,"facing":1`, `"roll":0,"facing":-1`, `"roll":"zero","facing":1`, `"roll":null,"facing":null`} {
 		raw := fmt.Sprintf(`{"faces":[{"box":{"x":0,"y":0,"width":0.2,"height":0.2},%s,"eyes_open":null,"smile":null}]}`, fields)
 		result, err := ParseFaces([]byte(raw))
-		require.NoError(t, err)
 		if fields == `"roll":null,"facing":null` {
+			require.NoError(t, err)
 			require.Len(t, result.Faces, 1)
 			require.Nil(t, result.Faces[0].Roll)
 		} else {
-			require.Empty(t, result.Faces)
+			require.Error(t, err)
 		}
 	}
 }

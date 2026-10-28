@@ -18,7 +18,7 @@ func newProcessingVisionFingerprintsCommand() *cobra.Command {
 		Args:    cobra.NoArgs,
 	}
 	var model, trust, endpoint, deployment, task string
-	cmd.Flags().StringVar(&task, "task", vision.ProviderID, "vision descriptor ID")
+	cmd.Flags().StringVar(&task, "task", vision.ProviderID, vision.ProviderID+" or "+document.FaceDetectionProviderID)
 	cmd.Flags().StringVar(&model, "model", "", "provider model (required)")
 	cmd.Flags().StringVar(&trust, "trust-boundary", "", "operator_network or hosted_provider (required)")
 	cmd.Flags().StringVar(&endpoint, "endpoint", "", "provider root origin (required)")
@@ -32,6 +32,8 @@ func newProcessingVisionFingerprintsCommand() *cobra.Command {
 			flag := "--model"
 			if errors.Is(err, vision.ErrInvalidTrustBoundary) {
 				flag = "--trust-boundary"
+			} else if errors.Is(err, vision.ErrUnknownTask) {
+				flag = "--task"
 			}
 			return usageError(fmt.Errorf("%s: %w", flag, err))
 		}

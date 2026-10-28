@@ -137,12 +137,27 @@ func TestPhotoFaceDetectionEmptyAndMalformed(t *testing.T) {
 		{"missing", `{"caption":"portrait"}`, false},
 		{"null", `{"faces":null}`, false},
 		{"malformed", `{"faces":[`, false},
-		{"mixed", strings.Replace(detectedFaceReply, `"faces":[`, `"faces":[{},`, 1), true},
+		{"mixed", strings.Replace(detectedFaceReply, `"faces":[`, `"faces":[{},`, 1), false},
+		{"invalid", `{"faces":[{}]}`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newPhotoDescriptionFixture(t)
 			ctx := t.Context()
-			service := f.newVisionServiceWith(t, map[string]string{"faces": "detector"}, document.FaceDetectionProviderID)
+			first := f.newVisionServiceWith(t, map[string]string{"faces": "detector-1"}, document.FaceDetectionProviderID)
+			f.mu.Lock()
+			observation := strings.TrimSuffix(strings.TrimPrefix(detectedFaceReply, `{"faces":[`), `]}`)
+			f.reply = `{"faces":[` + observation + `,` + strings.Replace(observation, `"x":0.1`, `"x":0.7`, 1) + `]}`
+			f.mu.Unlock()
+			f.grant(t, first, "faces")
+			initial, err := first.photoVisionTargets(ctx, nil, "", 50, 4, document.FaceDetectionProviderID)
+			require.NoError(t, err)
+			require.Len(t, initial, 1)
+			require.NoError(t, first.admitPhotoDescription(ctx, initial[0]))
+			f.runWorker(t, first)
+			original, _, _, err := f.catalog.PhotoFacePersonNames(ctx, f.node.CurrentVersionID)
+			require.NoError(t, err)
+			require.Len(t, original, 2)
+			service := f.newVisionServiceWith(t, map[string]string{"faces": "detector-2"}, document.FaceDetectionProviderID)
 			for _, runtime := range service.renditions.runtimes {
 				provider, ok := runtime.(*providerRenditionRuntime)
 				require.True(t, ok)
@@ -155,7 +170,11 @@ func TestPhotoFaceDetectionEmptyAndMalformed(t *testing.T) {
 			targets, err := service.photoVisionTargets(ctx, nil, "", 50, 4, document.FaceDetectionProviderID)
 			require.NoError(t, err)
 			require.Len(t, targets, 1)
-			require.NoError(t, service.admitPhotoDescription(ctx, targets[0]))
+			binding, err := service.photoDescriptionBinding(ctx, targets[0].version)
+			require.NoError(t, err)
+			profile := service.profiles["faces"]
+			job, _, err := service.enqueueRendition(ctx, f.node, targets[0].version, profile, service.renditionConsentRequest(profile), binding, false)
+			require.NoError(t, err)
 			f.runWorker(t, service)
 			if !tc.settled {
 				for range 3 {
@@ -165,19 +184,24 @@ func TestPhotoFaceDetectionEmptyAndMalformed(t *testing.T) {
 			}
 			_, calls := f.counts()
 			if tc.settled {
-				require.Equal(t, 1, calls)
+				require.Equal(t, 2, calls)
 			} else {
-				require.Equal(t, 3, calls)
+				require.Equal(t, 4, calls)
 			}
 			faces, _, _, err := f.catalog.PhotoFacePersonNames(ctx, f.node.CurrentVersionID)
 			require.NoError(t, err)
-			if tc.name == "mixed" {
-				require.Len(t, faces, 1)
+			savedJob, err := f.catalog.RenditionJobByID(ctx, job.ID)
+			require.NoError(t, err)
+			if tc.settled {
+				require.Empty(t, faces, "only a valid empty scan removes earlier automatic faces")
+				require.Equal(t, store.RenditionJobCompleted, savedJob.State)
 			} else {
-				require.Empty(t, faces)
+				require.Equal(t, original, faces, "a failed reply preserves every earlier face")
+				require.Equal(t, store.RenditionJobFailed, savedJob.State)
+				require.Equal(t, 3, savedJob.ProviderAttempts)
 			}
 			// Explicit starts of completed scans perform no call. Terminally failed
-			// arrays remain without faces, even when the automatic pass runs again.
+			// arrays preserve existing faces, even when the automatic pass runs again.
 			targets, err = service.photoVisionTargets(ctx, nil, "", 50, 4, document.FaceDetectionProviderID)
 			require.NoError(t, err)
 			require.Empty(t, targets)

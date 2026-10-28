@@ -39,6 +39,9 @@ const InputProfile = "grid-jpeg-512-metadata-stripped-v1"
 // ErrInvalidTrustBoundary rejects a trust boundary without a network provider.
 var ErrInvalidTrustBoundary = errors.New("vision trust boundary must be operator_network or hosted_provider")
 
+// ErrUnknownTask rejects a descriptor ID without a vision task.
+var ErrUnknownTask = errors.New("unknown vision descriptor")
+
 var captionListMarker = regexp.MustCompile(`^\s*(?:[-*+]|\d+[.)])\s+`)
 var captionStrong = regexp.MustCompile(`\*\*([^*]+)\*\*`)
 var captionEmphasis = regexp.MustCompile(`\*([^*\s](?:[^*]*[^*\s])?)\*`)
@@ -79,7 +82,7 @@ func taskPrompt(id string) (string, error) {
 	case document.FaceDetectionProviderID:
 		return detectionPrompt, nil
 	default:
-		return "", errors.New("unknown vision descriptor")
+		return "", ErrUnknownTask
 	}
 }
 
@@ -347,8 +350,8 @@ func (p *Provider) Probe(ctx context.Context) error {
 	return nil
 }
 
-// ParseFaces drops invalid observations independently. A missing or malformed
-// faces array fails the scan; a valid empty array completes it.
+// ParseFaces requires a complete valid reply. Only an explicit empty array
+// represents a successful scan with no faces.
 func ParseFaces(raw []byte) (document.FaceDetection, error) {
 	var out document.FaceDetection
 	start := bytes.IndexByte(raw, '{')
@@ -372,7 +375,7 @@ func ParseFaces(raw []byte) (document.FaceDetection, error) {
 	for _, entry := range entries {
 		var observation document.FaceObservation
 		if json.Unmarshal(entry, &observation) != nil || observation.Validate() != nil {
-			continue
+			return document.FaceDetection{}, errors.New("invalid detected face")
 		}
 		out.Faces = append(out.Faces, observation)
 		if len(out.Faces) > document.MaxPhotoRecordsPerVersion {
