@@ -364,9 +364,10 @@ func (e *ScreenRetryError) Unwrap() error { return e.Err }
 // deferredSearchReport holds an accepted base search until its rerank reply
 // arrives, so later requests cannot discard or relabel it.
 type deferredSearchReport struct {
-	naturalSearchBaseLoadedMsg
-
-	empty bool
+	requestID uint64
+	searchID  uint64
+	receipt   misslog.Request
+	empty     bool
 }
 
 // Model is a virtual-tree, search, audited-history, and recoverable-trash
@@ -2510,9 +2511,10 @@ func (m Model) applyNaturalSearchBase(msg naturalSearchBaseLoadedMsg) (tea.Model
 		m.reportSearchID = 0
 		var earlier tea.Cmd
 		if m.rerankReport.requestID != 0 {
-			earlier = m.reportNaturalSearch(m.rerankReport.naturalSearchBaseLoadedMsg, m.rerankReport.report, m.rerankReport.empty)
+			earlier = m.reportSearch(m.rerankReport.receipt.ActualMode, m.rerankReport.empty, m.rerankReport.receipt)
 		}
-		m.rerankReport = deferredSearchReport{msg, len(m.rows) == 0}
+		m.rerankReport = deferredSearchReport{requestID: msg.requestID, searchID: msg.searchID,
+			receipt: api.DocumentSearchMiss(msg.query, msg.request.Profile, msg.request.BindingID, msg.fenceFingerprint, len(msg.request.Fence.ContentVersionIDs), msg.report), empty: len(m.rows) == 0}
 		return m, tea.Batch(earlier, rerank)
 	}
 	if m.reportSearchID == msg.requestID && msg.report.ActualMode != "" {
@@ -2526,12 +2528,14 @@ func (m Model) applyNaturalSearchRerank(msg naturalSearchRerankLoadedMsg) (tea.M
 	// A settled rerank reports its accepted search even when a later request superseded it.
 	var report tea.Cmd
 	pending := m.rerankReport
-	if msg.report.Reranking != nil {
-		pending.report.Reranking = msg.report.Reranking
+	if msg.err != nil {
+		pending.receipt.Reranking = map[string]any{"outcome": "failed", "cause": msg.err.Error()}
+	} else if r := msg.report.Reranking; r != nil {
+		pending.receipt.Reranking = map[string]any{"outcome": r.Outcome, "cause": r.Cause, "candidate_count": r.CandidateCount}
 	}
 	if pending.requestID == msg.requestID && pending.searchID == msg.searchID {
 		m.rerankReport = deferredSearchReport{}
-		report = m.reportNaturalSearch(pending.naturalSearchBaseLoadedMsg, pending.report, pending.empty)
+		report = m.reportSearch(pending.receipt.ActualMode, pending.empty, pending.receipt)
 	}
 	if msg.requestID != m.requestID || msg.searchID != m.naturalSearchID {
 		return m, report
@@ -2555,7 +2559,8 @@ func (m Model) applyNaturalSearchRerank(msg naturalSearchRerankLoadedMsg) (tea.M
 		m.applyNaturalRows(m.searchQuery, msg.rows, msg.report.Truncated)
 		m.naturalSearchNote = naturalSearchReportNote(msg.report)
 		if report != nil {
-			report = m.reportNaturalSearch(pending.naturalSearchBaseLoadedMsg, msg.report, len(m.rows) == 0)
+			receipt := api.DocumentSearchMiss(pending.receipt.Query, pending.receipt.Profile, pending.receipt.BindingID, pending.receipt.FenceFingerprint, *pending.receipt.DocumentCount, msg.report)
+			report = m.reportSearch(msg.report.ActualMode, len(m.rows) == 0, receipt)
 		}
 	}
 	return m, report

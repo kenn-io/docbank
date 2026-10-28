@@ -200,20 +200,22 @@ it.each([false, true])("reports explicit Photos searches, hidden=%s", async (hid
   await waitFor(() =>
     expect(actions.reportSearch).toHaveBeenCalledExactlyOnceWith("scoped", "text", true),
   );
-  expect(generated.recordMiss).toHaveBeenCalledExactlyOnceWith(
-    expect.objectContaining({
-      query: "Nikon",
-      requested_mode: "lexical",
-      actual_mode: "lexical",
-      filters: expect.objectContaining({
-        cameras: ["Synthetic camera"],
-        syntax: "advanced",
-        corpus: "photos",
-        hidden,
+  if (hidden) expect(generated.recordMiss).not.toHaveBeenCalled();
+  else
+    expect(generated.recordMiss).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        query: "Nikon",
+        requested_mode: "lexical",
+        actual_mode: "lexical",
+        filters: expect.objectContaining({
+          cameras: ["Synthetic camera"],
+          syntax: "advanced",
+          corpus: "photos",
+          hidden,
+        }),
       }),
-    }),
-    expect.objectContaining({ session: "scoped" }),
-  );
+      expect.objectContaining({ session: "scoped" }),
+    );
   vi.mocked(actions.reportSearch).mockClear();
   await fireEvent.input(search, { target: { value: "Canon" } });
   await fireEvent.submit(search.closest("form")!);

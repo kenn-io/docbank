@@ -122,6 +122,7 @@ interface HarnessOptions {
   legacyPending?: boolean;
   childrenPending?: boolean;
   rerankReport?: unknown;
+  rerankStatus?: number;
   rerankPending?: boolean;
   // A pending rerank rejects on abort, as fetch does, instead of resolving later.
   rerankAbortable?: boolean;
@@ -284,6 +285,11 @@ function installHarness(options: HarnessOptions) {
       if (options.baseSearchStatus)
         return new Response("search failure", { status: options.baseSearchStatus });
       if (body.rerank) {
+        if (options.rerankStatus)
+          return Response.json(
+            { detail: "synthetic rerank failure" },
+            { status: options.rerankStatus },
+          );
         if (options.rerankPending && options.rerankAbortable)
           return new Promise<Response>((_, reject) =>
             init?.signal?.addEventListener("abort", () =>
@@ -1961,3 +1967,29 @@ it.each(["plain", "rerank", "fallback", "filtered"])(
     expect(harness.misses).toHaveLength(1);
   },
 );
+
+it("records failed reranking after an empty base search", async () => {
+  const harness = installHarness({
+    profiles: [
+      {
+        name: "private",
+        fingerprint: "a".repeat(64),
+        rendition: true,
+        embedding_bindings: ["embed"],
+        reranking_available: true,
+      },
+    ],
+    files: [node(2, "existing.txt", baseVersion)],
+    baseReport: report("hybrid", []),
+    rerankStatus: 500,
+  });
+  render(App);
+  await screen.findAllByText("existing.txt");
+  await fireEvent.click(await screen.findByRole("checkbox", { name: "Rerank results" }));
+  await submitSearch("missing");
+  await waitFor(() => expect(harness.misses).toHaveLength(1));
+  expect(harness.misses[0]).toMatchObject({
+    query: "missing",
+    reranking: { outcome: "failed", cause: expect.stringContaining("synthetic rerank failure") },
+  });
+});

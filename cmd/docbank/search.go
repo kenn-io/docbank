@@ -12,6 +12,7 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/misslog"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -428,7 +429,7 @@ func runDocumentSearch(cmd *cobra.Command, c *daemonconn.Connection, query strin
 	if err != nil {
 		return usageError(err)
 	}
-	resolution, err := c.ResolveDocumentSourceFence(cmd.Context(), api.DocumentSourceFenceResolveRequest{ContentVersionIDs: options.ContentVersionIDs})
+	info, err := c.API().VaultInfo(cmd.Context())
 
 	if err != nil {
 		return err
@@ -436,7 +437,7 @@ func runDocumentSearch(cmd *cobra.Command, c *daemonconn.Connection, query strin
 	report, err := c.SearchDocuments(cmd.Context(), api.DocumentSearchRequest{
 		Query: query, Mode: options.Mode, Limit: options.Limit, Profile: options.Profile,
 		BindingID: bindingID, Explain: options.Explain, Rerank: options.Rerank,
-		Fence: api.DocumentSourceFence{VaultUID: resolution.Fence.VaultUID, ContentVersionIDs: resolution.Fence.ContentVersionIDs},
+		Fence: api.DocumentSourceFence{VaultUID: info.VaultID, ContentVersionIDs: options.ContentVersionIDs},
 	})
 	if err != nil {
 		return err
@@ -445,7 +446,11 @@ func runDocumentSearch(cmd *cobra.Command, c *daemonconn.Connection, query strin
 		if retErr == nil {
 			reportSearch(cmd, c, report.ActualMode, len(report.Results) == 0, searchAgent)
 			if len(report.Results) == 0 {
-				receipt := api.DocumentSearchMiss(query, options.Profile, bindingID, resolution.FenceFingerprint, len(resolution.Fence.ContentVersionIDs), report)
+				fingerprint, err := processing.SourceFenceFingerprint(processing.SourceFence{VaultUID: info.VaultID, ContentVersionIDs: options.ContentVersionIDs})
+				if err != nil {
+					return
+				}
+				receipt := api.DocumentSearchMiss(query, options.Profile, bindingID, fingerprint, len(options.ContentVersionIDs), report)
 				c.RecordMiss(cmd.Context(), receipt)
 			}
 		}

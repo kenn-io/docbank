@@ -42,7 +42,7 @@
       if (!explicit || !text || !outcome) return;
       if (outcome.accepted) {
         reportSearch(session, "text", outcome.empty);
-        if (outcome.empty)
+        if (outcome.empty && !hidden)
           void recordMiss(
             {
               query: text,
