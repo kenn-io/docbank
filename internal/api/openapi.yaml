@@ -9598,6 +9598,10 @@ components:
         created_at:
           format: date-time
           type: string
+        degradations:
+          items:
+            type: string
+          type: array
         fence_fingerprint:
           type: string
         id:
@@ -9608,9 +9612,14 @@ components:
           type: string
         requested_mode:
           type: string
+        reranking:
+          additionalProperties: {}
+          type: object
         scope:
           additionalProperties: {}
           type: object
+        truncated:
+          type: boolean
         vault_uid:
           type: string
       required:
@@ -9621,6 +9630,7 @@ components:
         - requested_mode
         - actual_mode
         - scope
+        - truncated
       type: object
       x-go-type: misslog.Receipt
       x-go-type-import:
@@ -21282,6 +21292,8 @@ components:
           type: string
         query:
           $ref: "#/components/schemas/SavedQueryV1Schema"
+        skip_miss_log:
+          type: boolean
       required:
         - query
       type: object
@@ -30502,7 +30514,6 @@ paths:
           in: query
           name: q
           schema:
-            maxLength: 32768
             type: string
         - explode: false
           in: query

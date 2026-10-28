@@ -410,7 +410,7 @@ func (f *fakeBackend) SearchDocuments(_ context.Context, request api.DocumentSea
 		}
 		return f.naturalSearch, nil
 	}
-	if request.Limit != maxProcessingSearchItems || request.Mode != "auto" || !request.Explain ||
+	if request.Limit != maxProcessingSearchItems || request.Mode != "auto" || !request.Explain || !request.SkipMissLog ||
 		request.Profile != f.plan.Selector.Profile || request.Fence.VaultUID != f.plan.VaultUID ||
 		!assert.ObjectsAreEqual(request.Fence.ContentVersionIDs, []string{f.plan.Selector.ContentVersionID}) {
 		return api.DocumentSearchReport{}, errors.New("unexpected document search request")
@@ -3123,4 +3123,14 @@ func TestMissLogSearchSubmissionRequests(t *testing.T) {
 		model.loadSearch("missing", model.requestID, false)()
 		assert.False(t, fake.searchSubmitted)
 	}
+}
+
+func TestMissLogSkipsInDocumentFind(t *testing.T) {
+	fake := newFakeBackend()
+	model, err := New(t.Context(), fake)
+	require.NoError(t, err)
+	model.processingPlan = &fake.plan
+	msg := model.loadProcessingSearch(1, "missing")().(processingSearchLoadedMsg)
+	require.NoError(t, msg.err)
+	require.Equal(t, 1, fake.processingSearchCalls)
 }

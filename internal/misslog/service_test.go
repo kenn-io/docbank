@@ -3,8 +3,11 @@ package misslog
 import (
 	"bytes"
 	"context"
+	"encoding/json/v2"
+	"fmt"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -51,4 +54,37 @@ func TestEnabledStartupPrunesButDisabledPreserves(t *testing.T) {
 	rows, err = st.ListMissLogRecords(t.Context(), 10, 0)
 	require.NoError(t, err)
 	require.Empty(t, rows)
+}
+
+func TestReceiptSizeAndOutcomes(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "vault.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+	cfg := config.Default().MissLog
+	cfg.Enabled = true
+	svc := New(st, cfg, nil, func(_ context.Context, fn func() error) error { return fn() })
+	ids := make([]string, 4096)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("00000000-0000-4000-8000-%012d", i)
+	}
+	scope := ReceiptScope(map[string]any{"query": "missing", "profile": "private", "fence": map[string]any{"content_version_ids": ids}, "media_sources": ids})
+	id := svc.Record(t.Context(), Receipt{Query: "missing", Scope: scope, FenceFingerprint: "sha256:" + strings.Repeat("a", 64),
+		Truncated: true, Degradations: []string{"reranking_degraded"}, Reranking: map[string]any{"outcome": "degraded", "cause": "timeout", "candidate_count": 0}})
+	require.NotEmpty(t, id)
+	row, err := st.MissLogRecordByID(t.Context(), id)
+	require.NoError(t, err)
+	require.Less(t, len(row.Receipt), 3<<10)
+	var receipt Receipt
+	require.NoError(t, json.Unmarshal([]byte(row.Receipt), &receipt))
+	require.Equal(t, "sha256:"+strings.Repeat("a", 64), receipt.FenceFingerprint)
+	require.NotContains(t, receipt.Scope, "fence")
+	require.NotContains(t, receipt.Scope, "media_sources")
+	require.True(t, receipt.Truncated)
+	require.Equal(t, []string{"reranking_degraded"}, receipt.Degradations)
+	require.Equal(t, "degraded", receipt.Reranking["outcome"])
+	require.Equal(t, "timeout", receipt.Reranking["cause"])
+	require.Empty(t, svc.Record(t.Context(), Receipt{Query: strings.Repeat("x", 8<<20)}))
+	rows, err := st.ListMissLogRecords(t.Context(), 10, 0)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
 }

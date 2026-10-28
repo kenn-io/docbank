@@ -145,6 +145,7 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 		w.WriteHeader(status)
 		assert.NoError(t, json.MarshalWrite(w, api.Error{Status: status, Code: code, Detail: "provider details must stay private", ObservedScopeCount: observed}))
 	}
+	lexicalCalls := 0
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.Method + " " + r.URL.Path {
@@ -155,15 +156,22 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 			assert.NoError(t, err)
 			assert.NoError(t, json.MarshalWrite(w, map[string]string{"proof": daemonauth.Proof("synthetic-token", nonce)}))
 		case "GET /api/v1/search":
-			assert.Equal(t, tc.wantHybrid, r.URL.Query().Get("skip_miss_log") == "true")
+			lexicalCalls++
+			preflight := lexicalCalls == 1 && automaticSearchEligible(tc.query, tc.limit, tc.opts)
+			assert.Equal(t, preflight || tc.wantHybrid, r.URL.Query().Get("skip_miss_log") == "true")
 			assert.Equal(t, tc.query, r.URL.Query().Get("q"))
-			assert.Equal(t, tc.wantSearch, *searchCalls, "lexical search must run after every hybrid attempt")
+			if !preflight {
+				assert.Equal(t, tc.wantSearch, *searchCalls, "final folder lookup must run after every hybrid attempt")
+			}
 			matches := []api.SearchHit{
 				{Node: api.Node{ID: 42, Kind: "file", Name: "query.txt"}, Path: "/query.txt", Match: "name"},
 				{Node: api.Node{ID: 7, Kind: "dir", Name: "query folder"}, Path: "/query folder", Match: "name"},
 			}
 			if tc.noFolderHits {
 				matches = matches[:1]
+				if tc.noDocumentHits {
+					matches = nil
+				}
 			}
 			if tc.folderFirst {
 				matches[0], matches[1] = matches[1], matches[0]
@@ -207,7 +215,7 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 			var body api.DocumentSearchRequest
 			assert.NoError(t, json.UnmarshalRead(r.Body, &body))
 			assert.Equal(t, tc.query, body.Query)
-			assert.False(t, body.SkipMissLog)
+			assert.Equal(t, (tc.jsonCLI || tc.humanCLI || tc.agentCLI) && !(tc.noDocumentHits && tc.noFolderHits), body.SkipMissLog)
 			assert.Equal(t, "hybrid", body.Mode)
 			expectedProfile, expectedBinding := "alpha", "a"
 			if *searchCalls == 2 {

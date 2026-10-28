@@ -395,6 +395,9 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		if d.Processing == nil {
 			return nil, processingUnavailable()
 		}
+		if len(input.Body.Fence.ContentVersionIDs) == 0 {
+			return nil, NewError(http.StatusUnprocessableEntity, "validation", "fence.content_version_ids must contain at least one content version")
+		}
 		report, err := d.Processing.FindSimilar(ctx, processing.SimilarRequest{
 			Selector:  processing.Selector{NodeID: input.Body.Selector.NodeID, ContentVersionID: input.Body.Selector.ContentVersionID, Profile: input.Body.Selector.Profile},
 			BindingID: input.Body.BindingID, Limit: input.Body.Limit,
@@ -426,7 +429,7 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		Path: "/api/v1/search", Summary: "Search exact source-fenced document versions",
 		MaxBodyBytes: 16 << 20,
 	}, func(ctx context.Context, input *searchInput) (*searchOutput, error) {
-		report, err := searchDocuments(ctx, d.Processing, d.Store, input.Body)
+		report, err := searchDocuments(ctx, d.Processing, input.Body)
 		if err != nil {
 			return nil, err
 		}
@@ -886,27 +889,9 @@ func validateDocumentSearch(ctx context.Context, service *processing.Service, in
 	return nil
 }
 
-func searchDocuments(ctx context.Context, service *processing.Service, st *store.Store, input DocumentSearchRequest) (DocumentSearchReport, error) {
+func searchDocuments(ctx context.Context, service *processing.Service, input DocumentSearchRequest) (DocumentSearchReport, error) {
 	if service == nil {
 		return DocumentSearchReport{}, processingUnavailable()
-	}
-	if len(input.Fence.ContentVersionIDs) == 0 {
-		if st == nil || input.Fence.VaultUID != st.VaultID() {
-			return DocumentSearchReport{}, fromProcessingError(processing.ErrForeignVault)
-		}
-		if err := validateDocumentSearch(ctx, service, DocumentSearchValidationRequest{Query: input.Query, Mode: input.Mode, Profile: input.Profile, Limit: input.Limit, BindingID: input.BindingID, Explain: input.Explain, Rerank: input.Rerank, ContentFirst: input.ContentFirst}); err != nil {
-			return DocumentSearchReport{}, err
-		}
-		mode := EffectiveSearchMode(input.Mode)
-		actual := effectiveEmptySearchMode(mode)
-		if input.MediaSources != nil {
-			return DocumentSearchReport{}, fromProcessingError(processing.ErrMediaSearchInvalid)
-		}
-		report := DocumentSearchReport{RequestedMode: mode, ActualMode: actual, Coverage: DocumentSearchCoverage{State: "complete"}, Degradations: []string{}, Results: []DocumentSearchResult{}, Trace: []DocumentSearchTrace{}}
-		if input.Rerank {
-			report.Reranking = &DocumentSearchRerankingReceipt{Outcome: "skipped"}
-		}
-		return report, nil
 	}
 	report, err := service.Search(ctx, processing.SearchRequest{Query: input.Query,
 		ContentFirst: input.ContentFirst,
@@ -927,11 +912,4 @@ func EffectiveSearchMode(mode string) string {
 		return "auto"
 	}
 	return mode
-}
-
-func effectiveEmptySearchMode(mode string) string {
-	if mode == "semantic" || mode == "hybrid" {
-		return mode
-	}
-	return "lexical"
 }

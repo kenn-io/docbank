@@ -1068,6 +1068,7 @@ it("sends empty-scope searches and records only submissions", async () => {
   const fences = harness.fenceBodies.length;
   await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
   await waitFor(() => expect(harness.fenceBodies).toHaveLength(fences + 1));
+  await waitFor(() => expect(harness.postBodies).toHaveLength(2));
   expect(action).toHaveBeenCalledOnce();
   action.mockClear();
   await submitSearch("q".repeat(8193));
@@ -1076,7 +1077,7 @@ it("sends empty-scope searches and records only submissions", async () => {
   expect(action).not.toHaveBeenCalled();
   expect(searchRun).not.toHaveBeenCalled();
   expect(failure).not.toHaveBeenCalled();
-  expect(harness.postBodies).toHaveLength(3);
+  await waitFor(() => expect(harness.postBodies).toHaveLength(3));
   expect(harness.postBodies[1]?.skip_miss_log).toBe(true);
   expect(harness.postBodies[2]?.skip_miss_log).toBe(false);
 });
@@ -1116,7 +1117,7 @@ it("keeps a non-401 processing failure on the legacy GET path", async () => {
   expect(
     harness.fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/search?"))
       .length,
-  ).toBe(1);
+  ).toBe(2);
   expect(failure).not.toHaveBeenCalled();
 });
 
@@ -1136,7 +1137,7 @@ it("reports a failed legacy GET fallback after a processing failure", async () =
     files: [file],
     baseReport: report("hybrid", []),
     baseSearchStatus: 500,
-    legacySearchStatus: 500,
+    legacyFailureAfter: 1,
     tagSearch: {
       hits: [{ node: file, path: file.path, match: "name" }],
       limit: 1000,
@@ -1152,7 +1153,7 @@ it("reports a failed legacy GET fallback after a processing failure", async () =
   expect(
     harness.fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/search?"))
       .length,
-  ).toBe(1);
+  ).toBe(2);
   expect(failure).toHaveBeenCalledExactlyOnceWith("short-lived", "search", expect.any(Error));
 });
 
@@ -1179,7 +1180,7 @@ it("does not fall back to GET after a processing 401", async () => {
   expect(
     harness.fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/search?"))
       .length,
-  ).toBe(0);
+  ).toBe(1);
 });
 
 it("ignores an aborted natural search completion", async () => {
@@ -1210,8 +1211,8 @@ it("ignores an aborted natural search completion", async () => {
   const nameRequests = harness.fetchMock.mock.calls.filter(([input]) =>
     String(input).startsWith("/api/v1/search?"),
   );
-  expect(nameRequests).toHaveLength(1);
-  expect(new URL(String(nameRequests[0][0]), "https://example.com").searchParams.get("q")).toBe(
+  expect(nameRequests).toHaveLength(2);
+  expect(new URL(String(nameRequests[1][0]), "https://example.com").searchParams.get("q")).toBe(
     "new query",
   );
 });
@@ -1259,7 +1260,7 @@ it.each([500, 401])(
       expect(screen.queryByText("unavailable excerpt")).toBeNull();
       expect(screen.getByRole("combobox", { name: "Search syntax: Plain words" })).toBeTruthy();
     }
-    expect(harness.legacyCalls()).toBe(status === 401 ? 0 : 1);
+    expect(harness.legacyCalls()).toBe(1);
     expect(screen.queryByText(/Natural-language search unavailable/)).toBeNull();
   },
 );
@@ -1898,3 +1899,37 @@ it.each(["names", "meaning", "frozen"])(
     }
   },
 );
+
+it.each(["file", "dir"])("skips a document miss when a %s name matches", async (kind) => {
+  const file = node(2, "matched.txt", baseVersion);
+  const match = kind === "dir" ? { ...file, kind: "dir" } : file;
+  const harness = installHarness({
+    profiles: [
+      {
+        name: "private",
+        fingerprint: "a".repeat(64),
+        rendition: true,
+        embedding_bindings: ["embed"],
+        reranking_available: false,
+      },
+    ],
+    files: [file],
+    baseReport: report("hybrid", []),
+    tagSearch: {
+      hits: [{ node: match, path: "/matched.txt", match: "name" }],
+      limit: 1000,
+      truncated: false,
+    },
+  });
+  render(App);
+  await screen.findAllByText("matched.txt");
+  await submitSearch("matched");
+  await waitFor(() => expect(harness.postBodies).toHaveLength(1));
+  expect(harness.postBodies[0]?.skip_miss_log).toBe(true);
+  const searches = harness.fetchMock.mock.calls.filter(([url]) =>
+    String(url).startsWith("/api/v1/search"),
+  );
+  expect(String(searches[0]?.[0])).toContain("skip_miss_log=true");
+  expect(String(searches[1]?.[0])).toBe("/api/v1/search");
+  expect(await screen.findByText("/matched.txt")).toBeTruthy();
+});

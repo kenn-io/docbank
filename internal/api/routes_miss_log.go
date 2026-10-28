@@ -116,5 +116,6 @@ func recordDocumentSearch(ctx context.Context, log *misslog.Service, input Docum
 	}
 	fingerprint, _ := processing.SourceFenceFingerprint(processing.SourceFence{VaultUID: input.Fence.VaultUID, ContentVersionIDs: input.Fence.ContentVersionIDs})
 	log.Record(ctx, misslog.Receipt{Query: input.Query, Profile: input.Profile, RequestedMode: report.RequestedMode, ActualMode: report.ActualMode,
+		Truncated: report.Truncated, Degradations: report.Degradations, Reranking: misslog.ReceiptScope(report.Reranking),
 		Scope: misslog.ReceiptScope(input), Coverage: misslog.ReceiptScope(report.Coverage), FenceFingerprint: fingerprint})
 }

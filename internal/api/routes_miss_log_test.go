@@ -5,12 +5,14 @@ import (
 	"encoding/json/v2"
 	"net/http"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/misslog"
+	"go.kenn.io/docbank/internal/retrieval"
 )
 
 func TestMissLogDoesNotWaitForMaintenance(t *testing.T) {
@@ -165,7 +167,8 @@ func TestMissLogDirectDocumentSearchAndManagement(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	require.Equal(t, "no-store", resp.Header.Get("Cache-Control"))
 	require.Contains(t, body, "unfindablequestionzz")
-	require.Contains(t, body, node.CurrentVersionID)
+	require.NotContains(t, body, node.CurrentVersionID)
+	require.Contains(t, body, `"fence_fingerprint":"sha256:`)
 	require.Contains(t, body, `"content_first":true`)
 	for _, request := range []api.DocumentSearchRequest{
 		{Query: "another-miss", SkipMissLog: true},
@@ -198,4 +201,83 @@ func TestMissLogDirectDocumentSearchAndManagement(t *testing.T) {
 	records, err = s.ListMissLogRecords(t.Context(), 10, 0)
 	require.NoError(t, err)
 	require.Empty(t, records)
+}
+
+func TestMissLogLongGETQuery(t *testing.T) {
+	t.Parallel()
+	for _, enabled := range []bool{false, true} {
+		ts, st := newTestServer(t, func(d *api.Deps) { d.Cfg.MissLog.Enabled = enabled })
+		query := strings.Repeat("x", 32769)
+		resp, body := get(t, ts, "/api/v1/search?q="+query, nil)
+		require.Equal(t, http.StatusOK, resp.StatusCode, body)
+		rows, err := st.ListMissLogRecords(t.Context(), 10, 0)
+		require.NoError(t, err)
+		if enabled {
+			require.Len(t, rows, 1)
+		} else {
+			require.Empty(t, rows)
+		}
+	}
+}
+
+func TestMissLogSimilarRejectsEmptyFence(t *testing.T) {
+	t.Parallel()
+	ts, st := newTestServer(t, configureProcessingTestService(t))
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/search/similar", nil, api.DocumentSimilarRequest{
+		Selector: api.ProcessingSelector{NodeID: 1, ContentVersionID: "00000000-0000-4000-8000-000000000001", Profile: "private"},
+		Fence:    api.DocumentSourceFence{VaultUID: st.VaultID(), ContentVersionIDs: []string{}},
+	})
+	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+	require.Contains(t, body, "fence.content_version_ids")
+}
+
+func TestMissLogWorkspaceSubmissions(t *testing.T) {
+	t.Parallel()
+	ts, st := newTestServer(t, func(d *api.Deps) { d.Cfg.MissLog.Enabled = true })
+	for _, body := range []string{
+		`{"query":{"text":"synthetic missing","syntax":"advanced"}}`,
+		`{"query":{"text":"synthetic missing"},"skip_miss_log":true}`,
+		`{"photos":true,"query":{}}`,
+	} {
+		resp, result := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", map[string]string{"X-Api-Key": testAPIKey}, body)
+		require.Equal(t, http.StatusOK, resp.StatusCode, result)
+	}
+	rows, err := st.ListMissLogRecords(t.Context(), 10, 0)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Contains(t, rows[0].Receipt, `"query":"synthetic missing"`)
+}
+
+func TestMissLogPreservesSearchOutcome(t *testing.T) {
+	t.Parallel()
+	provider := &routeRerankingProvider{}
+	ts, st := newTestServer(t, func(d *api.Deps) {
+		configureProcessingTestServiceWithReranker(t, provider, retrieval.ProviderFailureDegrade)(d)
+		d.Cfg.MissLog.Enabled = true
+	})
+	for _, empty := range []bool{false, true} {
+		ids := []string{}
+		if !empty {
+			node := createFileWithContent(t, ts, st, "/synthetic-outcome.txt", "ordinary fixture text")
+			ids = append(ids, node.CurrentVersionID)
+		}
+		resp, body := do(t, ts, http.MethodPost, "/api/v1/search", nil, api.DocumentSearchRequest{
+			Query: "missingquestionzz", Mode: "lexical", Profile: "private", Rerank: true,
+			Fence: api.DocumentSourceFence{VaultUID: st.VaultID(), ContentVersionIDs: ids},
+		})
+		require.Equal(t, http.StatusOK, resp.StatusCode, body)
+		var report api.DocumentSearchReport
+		require.NoError(t, json.Unmarshal([]byte(body), &report))
+		require.Empty(t, report.Results)
+		require.NotNil(t, report.Reranking)
+		rows, err := st.ListMissLogRecords(t.Context(), 10, 0)
+		require.NoError(t, err)
+		var receipt misslog.Receipt
+		require.NoError(t, json.Unmarshal([]byte(rows[0].Receipt), &receipt))
+		require.Equal(t, report.Truncated, receipt.Truncated)
+		require.ElementsMatch(t, report.Degradations, receipt.Degradations)
+		require.Equal(t, report.Reranking.Outcome, receipt.Reranking["outcome"])
+		require.Less(t, len(rows[0].Receipt), 3<<10)
+	}
+	require.Zero(t, provider.calls)
 }

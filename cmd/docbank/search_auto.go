@@ -70,8 +70,7 @@ func tryAutomaticSearch(ctx context.Context, c *daemonconn.Connection, query str
 	fence := api.DocumentSourceFence{VaultUID: scope.Fence.VaultUID, ContentVersionIDs: scope.Fence.ContentVersionIDs}
 	var first automaticSearchOutcome
 	for _, candidate := range candidates {
-		request := api.DocumentSearchRequest{Query: query, Mode: "hybrid", Profile: candidate.profile, BindingID: candidate.binding, Limit: limit, Fence: fence}
-		report, searchErr := c.SearchDocuments(ctx, request)
+		report, searchErr := c.SearchDocuments(ctx, api.DocumentSearchRequest{Query: query, Mode: "hybrid", Profile: candidate.profile, BindingID: candidate.binding, Limit: limit, Fence: fence, SkipMissLog: opts.SkipMissLog})
 		if searchErr == nil {
 			return automaticSearchOutcome{report: &report}, nil
 		}

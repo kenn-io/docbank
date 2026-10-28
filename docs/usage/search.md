@@ -62,6 +62,8 @@ Removed candidates make the report `truncated`, and surviving result ranks and c
 reflect the final check. This applies to automatic and explicit semantic/hybrid
 search, including when expansion and reranking are disabled.
 
+Empty submitted searches can be kept in the opt-in [private search miss log](../configuration.md#private-search-miss-log). Receipts stay out of backups and portable bundles. In-document finds and explicit `--source-version` searches create no record.
+
 ## Choose exact versions and a profile
 
 Explicit processing search uses rendition text (text derived from a document

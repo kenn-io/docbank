@@ -15,7 +15,7 @@ import (
 )
 
 // Receipt preserves the search request and outcome without document excerpts.
-// Scope contains either the exact version fence or the live GET filters.
+// Scope contains search options or live GET filters; fences use fingerprints.
 type Receipt struct {
 	ID               string         `json:"id"`
 	CreatedAt        time.Time      `json:"created_at"`
@@ -26,6 +26,9 @@ type Receipt struct {
 	ActualMode       string         `json:"actual_mode"`
 	Scope            map[string]any `json:"scope"`
 	Coverage         map[string]any `json:"coverage,omitempty"`
+	Truncated        bool           `json:"truncated"`
+	Degradations     []string       `json:"degradations,omitempty"`
+	Reranking        map[string]any `json:"reranking,omitempty"`
 	FenceFingerprint string         `json:"fence_fingerprint,omitempty"`
 }
 
@@ -83,8 +86,7 @@ func (s *Service) Record(ctx context.Context, receipt Receipt) string {
 	return receipt.ID
 }
 
-// ReceiptScope projects a request or coverage object without query text or
-// internal recording flags.
+// ReceiptScope projects search options or outcomes without large source lists.
 func ReceiptScope(input any) map[string]any {
 	encoded, err := json.Marshal(input)
 	if err != nil {
@@ -95,6 +97,7 @@ func ReceiptScope(input any) map[string]any {
 		return nil
 	}
 	delete(scope, "query")
-	delete(scope, "skip_miss_log")
+	delete(scope, "fence")
+	delete(scope, "media_sources")
 	return scope
 }

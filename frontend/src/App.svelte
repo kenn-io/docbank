@@ -2114,28 +2114,6 @@
         controller.signal,
       );
       if (request !== generation || session !== webSession || controller.signal.aborted) return;
-      const baseRequest: generated.DocumentSearchRequest = {
-        query,
-        mode: mapped.mode,
-        limit: 100,
-        profile: profile.name,
-        ...(mapped.binding_id ? { binding_id: mapped.binding_id } : {}),
-        fence: resolution.fence,
-        explain: true,
-        skip_miss_log: !submitted,
-      };
-      const baseReport = await documentSearch(session, baseRequest, controller.signal);
-      if (request !== generation || session !== webSession || controller.signal.aborted) return;
-      const nodes = new Map<number, Node | undefined>();
-      const baseRows = await hydrateProcessingRows(
-        baseReport,
-        session,
-        request,
-        controller.signal,
-        mode,
-        nodes,
-      );
-      if (request !== generation || session !== webSession || controller.signal.aborted) return;
       const nameReport = await generated.search(
         {
           q: query,
@@ -2155,6 +2133,28 @@
           path: hit.path,
           match: hit.match,
         }));
+      const baseRequest: generated.DocumentSearchRequest = {
+        query,
+        mode: mapped.mode,
+        limit: 100,
+        profile: profile.name,
+        ...(mapped.binding_id ? { binding_id: mapped.binding_id } : {}),
+        fence: resolution.fence,
+        explain: true,
+        skip_miss_log: !submitted || nameRows.length > 0,
+      };
+      const baseReport = await documentSearch(session, baseRequest, controller.signal);
+      if (request !== generation || session !== webSession || controller.signal.aborted) return;
+      const nodes = new Map<number, Node | undefined>();
+      const baseRows = await hydrateProcessingRows(
+        baseReport,
+        session,
+        request,
+        controller.signal,
+        mode,
+        nodes,
+      );
+      if (request !== generation || session !== webSession || controller.signal.aborted) return;
       const withNames = (processingRows: Row[]): Row[] => [
         ...processingRows,
         ...nameRows.filter((row) => !processingRows.some((other) => other.node.id === row.node.id)),
@@ -2991,6 +2991,7 @@
   async function runSnapshot(
     query: Query,
     options: SnapshotOptions,
+    submitted = false,
   ): Promise<{ type: "text"; empty: boolean } | { type: "failed"; cause: Error } | undefined> {
     invalidateTagHotkeyMutation();
     generation += 1;
@@ -2998,7 +2999,7 @@
     loading = false;
     naturalRerankPending = false;
     naturalProfileDefaultPending = null;
-    return snapshot.run(query, options);
+    return snapshot.run(query, { ...options, skip_miss_log: !submitted });
   }
 
   async function submitSnapshot(
@@ -3008,7 +3009,7 @@
   ): Promise<void> {
     const revision = queryDraftRevision;
     if (!preserveDraft) keepQueryDraft(query);
-    const outcome = await runSnapshot(query, options);
+    const outcome = await runSnapshot(query, options, !preserveDraft);
     if (outcome?.type === "failed") reportFailure(webSession, "search", outcome.cause);
     else if (outcome) {
       if (!preserveDraft && revision === queryDraftRevision) {

@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 
 	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/misslog"
 	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -42,6 +44,11 @@ func registerWorkspaceQueryRoutes(api huma.API, d Deps, service *store.QuerySnap
 		response, err := fromStoreWorkspacePage(page)
 		if err != nil {
 			return nil, NewError(http.StatusInternalServerError, "internal", "could not encode workspace query")
+		}
+		if !in.Body.SkipMissLog && strings.TrimSpace(value.Text) != "" && page.Total == 0 {
+			d.MissLog.Record(ctx, misslog.Receipt{Query: value.Text, Profile: in.Body.Profile,
+				RequestedMode: "lexical", ActualMode: "lexical",
+				Scope: misslog.ReceiptScope(value), Coverage: misslog.ReceiptScope(response.Coverage)})
 		}
 		return &struct{ Body WorkspaceQueryResponse }{Body: response}, nil
 	})

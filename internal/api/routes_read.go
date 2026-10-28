@@ -376,7 +376,7 @@ func registerReadRoutes(api huma.API, d Deps) {
 			"hits and includes a coverage receipt; it requires a nonblank query, and text " +
 			"outside the supplemental syntax reports not_run.",
 	}, func(ctx context.Context, in *struct {
-		Q              string `query:"q" maxLength:"32768"`
+		Q              string `query:"q"`
 		SkipMissLog    bool   `query:"skip_miss_log"`
 		Fuzzy          bool   `query:"fuzzy"`
 		Limit          int    `query:"limit" default:"50" minimum:"1" maximum:"1000"`
@@ -436,7 +436,7 @@ func registerReadRoutes(api huma.API, d Deps) {
 					actualMode = "fuzzy"
 				}
 			}
-			d.MissLog.Record(ctx, misslog.Receipt{Query: in.Q, RequestedMode: requestedMode, ActualMode: actualMode, Coverage: coverage, Scope: map[string]any{
+			d.MissLog.Record(ctx, misslog.Receipt{Query: in.Q, RequestedMode: requestedMode, ActualMode: actualMode, Truncated: truncated, Coverage: coverage, Scope: map[string]any{
 				"live_filters": true, packageLimitParameter: in.Limit, "tag_id": in.TagID, "mime_type": mimeType, "under_node_id": in.UnderNodeID, "modified_since": modifiedSince, "modified_before": modifiedBefore, "fuzzy": in.Fuzzy,
 			}})
 		}

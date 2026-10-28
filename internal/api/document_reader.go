@@ -35,5 +35,5 @@ func (r *DocumentReader) ValidateDocumentSearch(ctx context.Context, input Docum
 }
 
 func (r *DocumentReader) SearchDocuments(ctx context.Context, input DocumentSearchRequest) (DocumentSearchReport, error) {
-	return searchDocuments(ctx, r.processing, r.store, input)
+	return searchDocuments(ctx, r.processing, input)
 }

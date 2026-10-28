@@ -198,7 +198,15 @@ See docs/usage/search.md.`,
 		}
 		query := strings.Join(args, " ")
 		var automatic automaticSearchOutcome
-		if !cmd.Flags().Changed("mode") {
+		if !cmd.Flags().Changed("mode") && automaticSearchEligible(query, searchLimit, opts) {
+			// Name matches decide whether the document request can record a miss.
+			nameOpts := opts
+			nameOpts.SkipMissLog = true
+			names, nameErr := c.SearchWithOptions(cmd.Context(), query, searchLimit, nameOpts)
+			if nameErr != nil {
+				return nameErr
+			}
+			opts.SkipMissLog = slices.ContainsFunc(names.Hits, func(hit api.SearchHit) bool { return hit.Match == "name" })
 			automatic, err = tryAutomaticSearch(cmd.Context(), c, query, searchLimit, opts)
 			if err != nil {
 				return err
@@ -412,7 +420,7 @@ func runDocumentSearch(cmd *cobra.Command, c *daemonconn.Connection, query strin
 	}
 	report, err := c.SearchDocuments(cmd.Context(), api.DocumentSearchRequest{
 		Query: query, Mode: options.Mode, Limit: options.Limit, Profile: options.Profile,
-		BindingID: bindingID, Explain: options.Explain, Rerank: options.Rerank,
+		BindingID: bindingID, Explain: options.Explain, Rerank: options.Rerank, SkipMissLog: true,
 		Fence: api.DocumentSourceFence{VaultUID: info.VaultID, ContentVersionIDs: options.ContentVersionIDs},
 	})
 	if err != nil {

@@ -1898,7 +1898,7 @@ func (m Model) loadProcessingSearch(requestID uint64, query string) tea.Cmd {
 			Query: query, Mode: "auto", Limit: maxProcessingSearchItems, Profile: plan.Selector.Profile,
 			Fence: api.DocumentSourceFence{
 				VaultUID: plan.VaultUID, ContentVersionIDs: []string{plan.Selector.ContentVersionID},
-			}, Explain: true,
+			}, Explain: true, SkipMissLog: true,
 		})
 		return processingSearchLoadedMsg{requestID: requestID, searchID: searchID, report: report, err: err}
 	}

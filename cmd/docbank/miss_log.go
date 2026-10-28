@@ -14,7 +14,7 @@ The log contains private query text.
 List and show print JSON; delete and purge remove current records.
 Management uses the master daemon credential even when recording is off.`}
 	var limit, offset int
-	list := &cobra.Command{Use: photoCheckoutListCommand, Short: "List private miss receipts as JSON", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+	list := &cobra.Command{Use: "list", Short: "List private miss receipts as JSON", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		if limit < 1 || limit > 100 || offset < 0 {
 			return usageError(errors.New("limit must be 1–100 and offset nonnegative"))
 		}
