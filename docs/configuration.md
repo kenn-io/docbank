@@ -328,8 +328,8 @@ own input.
 
 The daemon checks each file in this order:
 
-1. Observe the same filesystem object, size, and modification time for the
-   complete `settle_time`.
+1. Observe the same filesystem identity, size, modification time, and change time
+   for the complete `settle_time`.
 2. Require the source modification time to satisfy `minimum_age`, if enabled.
 3. Read the file, then check that the source path still names the same object.
    If it changed, do not accept the read as a Docbank node.

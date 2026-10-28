@@ -83,6 +83,131 @@ func TestWatcherReportsBusyOnlyWhenIngesting(t *testing.T) {
 	})
 }
 
+func FuzzWatcherSameSizeAndMtimeContentVersions(f *testing.F) {
+	f.Add([]byte("first\n"), byte(1))
+	f.Add([]byte("first\n"), byte(0))
+	f.Fuzz(func(t *testing.T, initial []byte, mask byte) {
+		if len(initial) == 0 || len(initial) > 256 {
+			t.Skip()
+		}
+		updated := bytes.Clone(initial)
+		updated[len(updated)-1] ^= mask
+		assertWatcherSameSizeAndMtimeVersions(t, initial, updated)
+	})
+}
+
+// A size-and-mtime fingerprint alone leaves this ordinary edit invisible.
+func assertWatcherSameSizeAndMtimeVersions(t *testing.T, initial, changed []byte) {
+	t.Helper()
+	wantVersions := 1
+	if !bytes.Equal(initial, changed) {
+		wantVersions = 2
+	}
+	ing := newTestIngester(t)
+	mutationCalls := 0
+	mutate := func(fn func() error) error {
+		mutationCalls++
+		return fn()
+	}
+	source := writeTree(t, map[string]string{"notes.txt": string(initial)})
+	watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{
+		Name: "notes", Source: source, Destination: "/archive",
+		SettleTime: config.Duration(10 * time.Second), ScanInterval: config.Duration(time.Second),
+	}, mutate, slog.New(slog.DiscardHandler))
+	require.NoError(t, err)
+	root := openWatcherRoot(t, watcher)
+	t0 := time.Unix(1_700_000_000, 0)
+	require.NoError(t, scanWatcherAt(t.Context(), watcher, root, t0))
+	require.NoError(t, scanWatcherAt(t.Context(), watcher, root, t0.Add(10*time.Second)))
+	accepted, err := ing.Store.NodeByPath(t.Context(), "/archive/notes.txt")
+	require.NoError(t, err)
+	assert.Equal(t, 1, mutationCalls)
+
+	for _, seconds := range []int{11, 12, 13} {
+		require.NoError(t, scanWatcherAt(t.Context(), watcher, root, t0.Add(time.Duration(seconds)*time.Second)))
+	}
+	assert.Equal(t, 1, mutationCalls)
+
+	sourcePath := filepath.Join(source, "notes.txt")
+	rewriteSourceWithRestoredMtime(t, sourcePath, changed)
+
+	for _, seconds := range []int{20, 29} {
+		require.NoError(t, scanWatcherAt(t.Context(), watcher, root, t0.Add(time.Duration(seconds)*time.Second)))
+		node, err := ing.Store.NodeByID(t.Context(), accepted.ID)
+		require.NoError(t, err)
+		assert.Equal(t, accepted, node)
+		_, total, err := ing.Store.ContentVersions(t.Context(), accepted.ID, 10, 0)
+		require.NoError(t, err)
+		assert.Equal(t, 1, total)
+		assert.Equal(t, 1, mutationCalls)
+	}
+	require.NoError(t, scanWatcherAt(t.Context(), watcher, root, t0.Add(30*time.Second)))
+	updated, err := ing.Store.NodeByPath(t.Context(), "/archive/notes.txt")
+	require.NoError(t, err)
+	assert.Equal(t, accepted.ID, updated.ID)
+	if wantVersions == 2 {
+		assert.NotEqual(t, accepted.CurrentVersionID, updated.CurrentVersionID)
+	} else {
+		assert.Equal(t, accepted.CurrentVersionID, updated.CurrentVersionID)
+	}
+	content, err := ing.Blobs.Open(updated.BlobHash)
+	require.NoError(t, err)
+	currentBytes, err := io.ReadAll(content)
+	require.NoError(t, err)
+	require.NoError(t, content.Close())
+	assert.Equal(t, changed, currentBytes)
+	for _, seconds := range []int{40, 50} {
+		require.NoError(t, scanWatcherAt(t.Context(), watcher, root, t0.Add(time.Duration(seconds)*time.Second)))
+		node, err := ing.Store.NodeByID(t.Context(), accepted.ID)
+		require.NoError(t, err)
+		assert.Equal(t, updated, node)
+	}
+	versions, total, err := ing.Store.ContentVersions(t.Context(), accepted.ID, 10, 0)
+	require.NoError(t, err)
+	assert.Equal(t, wantVersions, total)
+	assert.Equal(t, 2, mutationCalls)
+	require.Len(t, versions, wantVersions)
+	for _, version := range versions {
+		content, err := ing.Blobs.Open(version.BlobHash)
+		require.NoError(t, err)
+		got, err := io.ReadAll(content)
+		require.NoError(t, err)
+		require.NoError(t, content.Close())
+		if version.ID == accepted.CurrentVersionID {
+			assert.Equal(t, initial, got)
+		} else {
+			assert.Equal(t, changed, got)
+		}
+	}
+}
+
+// Rewrite the file with the same size and restored mtime, retrying until native change time moves.
+func rewriteSourceWithRestoredMtime(t *testing.T, path string, content []byte) {
+	t.Helper()
+	file, err := os.Open(path)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, file.Close()) }()
+	before, err := file.Stat()
+	require.NoError(t, err)
+	require.Equal(t, before.Size(), int64(len(content)))
+	stamp := fileChangeTime(file, before)
+	if stamp == 0 {
+		t.Skip("test filesystem does not report native change time")
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		require.NoError(t, os.WriteFile(path, content, 0o600))
+		require.NoError(t, os.Chtimes(path, before.ModTime(), before.ModTime()))
+		after, err := file.Stat()
+		require.NoError(t, err)
+		if fileChangeTime(file, after) != stamp {
+			return
+		}
+		require.True(t, time.Now().Before(deadline), "filesystem change time did not advance")
+		time.Sleep(10 * time.Millisecond) //nolint:kennlint // wait for the native filesystem clock
+	}
+}
+
 func TestWatcherWaitsForStabilityAndUpdatesTheSameMovedNode(t *testing.T) {
 	ing := newTestIngester(t)
 	expectedUpdatedContent := []byte("{\"message\":\"second\"}\n")
@@ -495,6 +620,25 @@ func TestWatchedFileMustMatchItsSettledFingerprint(t *testing.T) {
 	sourcePath := filepath.Join(source, "document.txt")
 	settled, err := observeLocalFileFingerprint(sourcePath)
 	require.NoError(t, err)
+	t.Run("change time only", func(t *testing.T) {
+		source := writeTree(t, map[string]string{"document.txt": "first"})
+		sourcePath := filepath.Join(source, "document.txt")
+		local, err := observeLocalFileFingerprint(sourcePath)
+		require.NoError(t, err)
+		file, err := os.Open(sourcePath)
+		require.NoError(t, err)
+		local.change = fileChangeTime(file, local.info)
+		require.NoError(t, file.Close())
+		require.NotZero(t, local.change)
+		rewriteSourceWithRestoredMtime(t, sourcePath, []byte("other"))
+		_, err = ing.ingestWatchedFile(
+			t.Context(), "documents", "/inbox", "document.txt", local,
+			func() (*os.File, error) { return blob.OpenNoFollow(sourcePath) },
+		)
+		require.ErrorIs(t, err, ErrSourceChanged)
+		_, err = ing.Store.NodeByPath(t.Context(), "/inbox/document.txt")
+		require.ErrorIs(t, err, store.ErrNotFound)
+	})
 	replacementPath := filepath.Join(source, "replacement.tmp")
 	require.NoError(t, os.WriteFile(replacementPath, []byte("other"), 0o600))
 	observedAt := time.Unix(0, settled.modTime)
@@ -506,6 +650,14 @@ func TestWatchedFileMustMatchItsSettledFingerprint(t *testing.T) {
 	require.Equal(t, settled.size, replacement.size)
 	require.Equal(t, settled.modTime, replacement.modTime)
 	require.False(t, settled.matches(replacement))
+	for _, tc := range []struct {
+		left, right int64
+		matches     bool
+	}{{0, 1, false}, {1, 0, false}} {
+		left, right := settled, settled
+		left.change, right.change = tc.left, tc.right
+		require.Equal(t, tc.matches, left.matches(right), "change times %d, %d", tc.left, tc.right)
+	}
 
 	_, err = ing.ingestWatchedFile(
 		t.Context(), "documents", "/inbox", "document.txt", settled,
