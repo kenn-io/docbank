@@ -524,6 +524,23 @@ scope pagination and commit later canonical history between a reader's
 statements: the current response retains its snapshot and the next request
 sees the new events.
 
+Audit status and optional node membership use shared queries and the same
+read-only `REPEATABLE READ` boundary. Path resolution, allocation authority,
+scope counts, heads and sticky membership describe one snapshot. An audited
+node retains its membership after trashing; its live path is no longer reported.
+The PostgreSQL tests read native SQLite-generated history, including a rename
+committed between status reads, through the existing canonical fixture.
+
+Audit mutation preparation also shares authority and scope loading. The store
+owns node allocation queries: SQLite reads `sqlite_sequence`; PostgreSQL resolves
+the node identity sequence through `pg_get_serial_sequence` and `pg_sequences`,
+following Kata. The runtime sequence `USAGE` grant is sufficient. Read the
+sequence high-water mark, never `MAX(nodes.id)`: deleted IDs and PostgreSQL
+allocations from rolled-back transactions remain reserved. PostgreSQL sequence
+state is not an MVCC snapshot and cached reservations may exceed retained IDs.
+Callers preparing mutations must hold the storage writer lock; this read
+qualification does not enable complete PostgreSQL audit writes or import.
+
 The native canonical-record insertion helper also uses shared SQL. Its index
 builder rejects zero node IDs, operation sequences and entry counts in Go
 before insertion. The same validation is used by metadata import and record
@@ -532,9 +549,10 @@ and zero-valued genesis counters remain valid. Registered nested record kinds
 cannot be stored as top-level authority records.
 
 Record-insertion qualification uses canonical records produced by normal audit
-enrollment and checks their stored relational indexes on both backends. Tests
-use caller-owned transactions and roll them back: inserting records alone does
-not publish complete authority or membership projections. PostgreSQL grants
+enrollment. Existing SQLite enrollment tests validate stored relational indexes;
+the PostgreSQL insertion test checks the same projections. It uses a caller-owned
+transaction and rolls it back: inserting records alone does not publish complete
+authority or membership projections. PostgreSQL grants
 `INSERT` on `audit_records` for this primitive, with no audit-table `UPDATE` or
 `DELETE`. Complete audit mutations, enrollment and metadata import remain
 unavailable until their catalog maintenance and validation are ported.

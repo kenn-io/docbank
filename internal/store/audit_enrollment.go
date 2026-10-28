@@ -81,7 +81,7 @@ func (s *Store) initializeAuditAuthorityWithInput(
 				return errors.New("audit authority is already initialized or incomplete")
 			}
 		}
-		set, err := buildInitialAuditEnrollment(ctx, tx, s.vaultID, input)
+		set, err := s.buildInitialAuditEnrollment(ctx, tx, input)
 		if err != nil {
 			return err
 		}
@@ -102,10 +102,10 @@ func (s *Store) initializeAuditAuthorityWithInput(
 	return result, err
 }
 
-func buildInitialAuditEnrollment(
-	ctx context.Context, tx metadataQuerier, vaultID string, input initialAuditEnrollmentInput,
+func (s *Store) buildInitialAuditEnrollment(
+	ctx context.Context, tx metadataQuerier, input initialAuditEnrollmentInput,
 ) (initialAuditEnrollmentSet, error) {
-	values, err := makeInitialAuditValues(vaultID, input)
+	values, err := makeInitialAuditValues(s.vaultID, input)
 	if err != nil {
 		return initialAuditEnrollmentSet{}, err
 	}
@@ -114,11 +114,9 @@ func buildInitialAuditEnrollment(
 			"audit enrollment target %d must be positive", input.targetNodeID,
 		)
 	}
-	var nodeSequence int64
-	if err := tx.QueryRowContext(ctx,
-		`SELECT seq FROM sqlite_sequence WHERE name='nodes'`,
-	).Scan(&nodeSequence); err != nil {
-		return initialAuditEnrollmentSet{}, fmt.Errorf("reading node ID high-water mark: %w", err)
+	nodeSequence, err := s.auditNodeSequence(ctx, tx)
+	if err != nil {
+		return initialAuditEnrollmentSet{}, err
 	}
 	if nodeSequence <= 0 {
 		return initialAuditEnrollmentSet{}, fmt.Errorf("invalid node ID high-water mark %d", nodeSequence)
@@ -231,17 +229,17 @@ func buildInitialAuditEnrollment(
 	}, nil
 }
 
-func buildAdditionalAuditEnrollment(
-	ctx context.Context, tx *sql.Tx, vaultID string, input initialAuditEnrollmentInput,
+func (s *Store) buildAdditionalAuditEnrollment(
+	ctx context.Context, tx *sql.Tx, input initialAuditEnrollmentInput,
 ) (additionalAuditEnrollmentSet, error) {
-	authority, nodeSequence, err := loadAuditAuthorityTx(ctx, tx)
+	authority, nodeSequence, err := s.loadAuditAuthorityTx(ctx, tx)
 	if err != nil {
 		return additionalAuditEnrollmentSet{}, err
 	}
 	if input.lineageID != authority.lineageID {
 		return additionalAuditEnrollmentSet{}, errors.New("audit enrollment lineage changed")
 	}
-	values, err := makeInitialAuditValues(vaultID, input)
+	values, err := makeInitialAuditValues(s.vaultID, input)
 	if err != nil {
 		return additionalAuditEnrollmentSet{}, err
 	}

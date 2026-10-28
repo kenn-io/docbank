@@ -60,7 +60,7 @@ func newPostgresSchemaStore(t *testing.T, setup *sql.DB, cfg pgschema.Config) *S
 	require.NoError(t, err)
 	require.Equal(t, id, actual)
 	s := &Store{db: db, writeDB: db, postgresSchema: cfg.Schema}
-	require.NoError(t, db.QueryRowContext(ctx, `SELECT id FROM nodes WHERE parent_id IS NULL`).Scan(&s.rootID))
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT id,(SELECT vault_uid FROM vault_metadata) FROM nodes WHERE parent_id IS NULL`).Scan(&s.rootID, &s.vaultID))
 	return s
 }
 

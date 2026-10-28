@@ -49,7 +49,7 @@ func installAuditedContentVersionTx(
 			"audited %s has inconsistent source-version authority", transitionKind,
 		)
 	}
-	authority, scopes, nodeSequence, err := loadAuditedNodeAuthority(ctx, tx, node.ID)
+	authority, scopes, nodeSequence, err := store.loadAuditedNodeAuthority(ctx, tx, node.ID)
 	if err != nil {
 		return Node{}, ContentVersion{}, err
 	}
@@ -84,16 +84,16 @@ func installAuditedContentVersionTx(
 	return updated, version, nil
 }
 
-func loadAuditedNodeAuthority(
+func (s *Store) loadAuditedNodeAuthority(
 	ctx context.Context, tx *sql.Tx, nodeID int64,
 ) (auditAuthorityState, []auditScopeState, int64, error) {
-	authority, nodeSequence, err := loadAuditAuthorityTx(ctx, tx)
+	authority, nodeSequence, err := s.loadAuditAuthorityTx(ctx, tx)
 	if err != nil {
 		return authority, nil, 0, err
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT scope.scope_id,scope.entry_count,scope.chain_head
 		FROM audit_scopes scope JOIN audit_memberships membership USING(scope_id)
-		WHERE membership.node_id=? ORDER BY scope.scope_id`, nodeID)
+		WHERE membership.node_id=$1 ORDER BY scope.scope_id`, nodeID)
 	if err != nil {
 		return authority, nil, 0, fmt.Errorf("reading audit memberships for node %d: %w", nodeID, err)
 	}
@@ -115,7 +115,7 @@ func loadAuditedNodeAuthority(
 	return authority, scopes, nodeSequence, nil
 }
 
-func loadAuditAuthorityTx(
+func (s *Store) loadAuditAuthorityTx(
 	ctx context.Context, tx *sql.Tx,
 ) (auditAuthorityState, int64, error) {
 	var authority auditAuthorityState
@@ -131,11 +131,9 @@ func loadAuditAuthorityTx(
 	if authority.sequence != authority.allocationCount {
 		return authority, 0, errors.New("audit allocation count disagrees with operation sequence")
 	}
-	var nodeSequence int64
-	if err := tx.QueryRowContext(ctx,
-		`SELECT seq FROM sqlite_sequence WHERE name='nodes'`,
-	).Scan(&nodeSequence); err != nil {
-		return authority, 0, fmt.Errorf("reading node ID high-water mark: %w", err)
+	nodeSequence, err := s.auditNodeSequence(ctx, tx)
+	if err != nil {
+		return authority, 0, err
 	}
 	return authority, nodeSequence, nil
 }

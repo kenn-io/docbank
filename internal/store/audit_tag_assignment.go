@@ -23,7 +23,7 @@ func (s *Store) changeAuditedTagAssignmentTx(
 	if err != nil || !result.Changed {
 		return result, err
 	}
-	authority, scopes, nodeSequence, err := loadAuditedNodeAuthority(ctx, tx, prior.ID)
+	authority, scopes, nodeSequence, err := s.loadAuditedNodeAuthority(ctx, tx, prior.ID)
 	if err != nil {
 		return TagAssignmentChange{}, err
 	}

@@ -127,7 +127,7 @@ func (s *Store) mkdirNodeTx(
 	if err != nil {
 		return Node{}, err
 	}
-	authority, scopes, _, err := loadAuditedNodeAuthority(ctx, tx, parentID)
+	authority, scopes, _, err := s.loadAuditedNodeAuthority(ctx, tx, parentID)
 	if err != nil {
 		return Node{}, err
 	}
@@ -144,7 +144,7 @@ func (s *Store) mkdirNodeTx(
 	if err != nil {
 		return Node{}, err
 	}
-	if err := persistAuditedNodeCreation(ctx, tx, s.vaultID, authority, scopes,
+	if err := s.persistAuditedNodeCreation(ctx, tx, authority, scopes,
 		priorParent, resultingParent, created, ContentVersion{}, operationID, recordedAt, nil); err != nil {
 		return Node{}, err
 	}
@@ -450,7 +450,7 @@ func (s *Store) createFileWithReceiptTx(
 		if err != nil {
 			return ContentWriteReceipt{}, err
 		}
-		authority, scopes, _, err := loadAuditedNodeAuthority(ctx, tx, parentID)
+		authority, scopes, _, err := s.loadAuditedNodeAuthority(ctx, tx, parentID)
 		if err != nil {
 			return ContentWriteReceipt{}, err
 		}
@@ -468,7 +468,7 @@ func (s *Store) createFileWithReceiptTx(
 		if err != nil {
 			return ContentWriteReceipt{}, err
 		}
-		if err := persistAuditedNodeCreation(ctx, tx, s.vaultID, authority, scopes,
+		if err := s.persistAuditedNodeCreation(ctx, tx, authority, scopes,
 			priorParent, resultingParent, receipt.Node, receipt.Version, operation.operationID,
 			operation.recordedAt, nil); err != nil {
 			return ContentWriteReceipt{}, err

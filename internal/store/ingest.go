@@ -490,7 +490,7 @@ func (s *Store) ingestFileTx(
 		if err != nil {
 			return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
 		}
-		authority, scopes, _, err = loadAuditedNodeAuthority(ctx, tx, parentID)
+		authority, scopes, _, err = s.loadAuditedNodeAuthority(ctx, tx, parentID)
 		if err != nil {
 			return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
 		}
@@ -566,8 +566,8 @@ func (s *Store) ingestFileTx(
 		if err != nil {
 			return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
 		}
-		if err := persistAuditedNodeCreation(
-			ctx, tx, s.vaultID, authority, scopes, prior, resultingParent,
+		if err := s.persistAuditedNodeCreation(
+			ctx, tx, authority, scopes, prior, resultingParent,
 			receipt.Node, version, operation.operationID, operation.recordedAt, &metadata,
 		); err != nil {
 			return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err

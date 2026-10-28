@@ -115,7 +115,7 @@ func appendAuditPhotoAuthored(ctx context.Context, q metadataQuerier, records *[
 }
 
 func (s *Store) persistPhotoAuthoredAuditTx(ctx context.Context, tx *sql.Tx, prior Node, before, after PhotoAuthoredSnapshot, now string) error {
-	authority, scopes, sequence, err := loadAuditedNodeAuthority(ctx, tx, prior.ID)
+	authority, scopes, sequence, err := s.loadAuditedNodeAuthority(ctx, tx, prior.ID)
 	if err != nil {
 		return err
 	}
