@@ -17,6 +17,9 @@ func TestAutomaticSearchCandidates(t *testing.T) {
 	if profiles[0].QueryEmbeddingBindings[0] != "b" {
 		t.Fatal("mutated input")
 	}
+}
+
+func TestBindingSearchFailure(t *testing.T) {
 	for _, code := range []string{"not_found", "processing_failed", "processing_consent_expired"} {
 		if !BindingSearchFailure(code) {
 			t.Fatalf("%s must retry", code)

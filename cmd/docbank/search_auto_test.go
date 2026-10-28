@@ -21,21 +21,21 @@ import (
 )
 
 type automaticSearchCase struct {
-	name                                    string
-	query                                   string
-	profiles                                []api.ProcessingProfileSummary
-	profileError, searchError               string
-	malformed, cold, mixed, providerFailure bool
-	empty                                   bool
-	folderFirst, wantTruncated              bool
-	wantResults, wantFolders                int
-	jsonCLI, humanCLI, agentCLI             bool
-	limit                                   int
-	opts                                    daemonconn.SearchOptions
-	skipped, wantHybrid, wantDetail         bool
-	wantReason                              string
-	wantError                               bool
-	wantSearch                              int
+	name                            string
+	query                           string
+	profiles                        []api.ProcessingProfileSummary
+	profileError, searchError       string
+	malformed, cold, mixed          bool
+	empty                           bool
+	folderFirst, wantTruncated      bool
+	wantResults, wantFolders        int
+	jsonCLI, humanCLI, agentCLI     bool
+	limit                           int
+	opts                            daemonconn.SearchOptions
+	skipped, wantHybrid, wantDetail bool
+	wantReason                      string
+	wantError                       bool
+	wantSearch                      int
 }
 
 func TestAutomaticSearchSelectionAndFallback(t *testing.T) {
@@ -46,7 +46,6 @@ func TestAutomaticSearchSelectionAndFallback(t *testing.T) {
 	cases := []automaticSearchCase{
 		{name: "PDF evidence stays lexical", profiles: profiles, limit: 50, opts: daemonconn.SearchOptions{PDFFilter: "pdf_encrypted:true"}, skipped: true},
 		{name: "source presence stays lexical", profiles: profiles, limit: 50, opts: daemonconn.SearchOptions{SourcePresent: true}, skipped: true},
-		{name: "provider failure uses healthy second binding", profiles: profiles, limit: 50, jsonCLI: true, providerFailure: true, wantSearch: 2, wantHybrid: true, wantResults: 1, wantFolders: 1},
 		{name: "cold first binding", profiles: profiles, limit: 50, cold: true, wantSearch: 2, wantHybrid: true},
 		{name: "JSON hybrid", profiles: profiles, limit: 50, jsonCLI: true, wantSearch: 1, wantHybrid: true, wantResults: 1, wantFolders: 1},
 		{name: "JSON folder within limit", profiles: profiles, limit: 1, folderFirst: true, jsonCLI: true, wantSearch: 1, wantHybrid: true, wantFolders: 1, wantTruncated: true},
@@ -192,8 +191,6 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 			assert.Equal(t, tc.limit, body.Limit)
 			assert.Equal(t, &api.DocumentSearchScope{Kind: "all_live"}, body.Scope)
 			switch {
-			case tc.providerFailure && *searchCalls == 1:
-				problem(w, "processing_failed")
 			case tc.mixed && *searchCalls == 1:
 				problem(w, "processing_consent_required")
 			case tc.cold && *searchCalls == 1:
