@@ -75,27 +75,12 @@ it("opens the only match without waiting for history and keeps recovery separate
   expect(screen.getByRole("button", { name: "Download PDF" })).toBeTruthy();
 });
 
-it("keeps matching deliveries distinct and downloads the chosen allocation", async () => {
-  const other = {
-    ...candidate,
-    artifact_id: "55555555-5555-4555-8555-555555555555",
-    allocation_id: "66666666-6666-4666-8666-666666666666",
-  };
+it("downloads the stamped candidate's allocation and reports a refused ticket", async () => {
   const receipt = recoveryReceipt("bates-stamp/v1");
-  receipt.artifact_id = other.artifact_id;
-  receipt.allocation_id = other.allocation_id;
-  receipt.allocation!.allocation_id = other.allocation_id;
-  receipt.namespace = {
-    ...receipt.namespace!,
-    namespace_id: "77777777-7777-4777-8777-777777777777",
-    prefix: "QUAL0",
-    padding: 5,
-  };
-  receipt.allocation!.namespace_id = receipt.namespace.namespace_id;
   const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
-    if (url.includes("/candidates?")) return json({ items: [candidate, other] });
-    if (url.endsWith(other.allocation_id)) return json(receipt);
+    if (url.includes("/candidates?")) return json({ items: [candidate] });
+    if (url.endsWith(candidate.allocation_id)) return json(receipt);
     if (url.endsWith("/download"))
       return new Response(
         JSON.stringify({ detail: "Synthetic ticket refused", code: "not_found" }),
@@ -105,18 +90,12 @@ it("keeps matching deliveries distinct and downloads the chosen allocation", asy
   });
   mount();
   await search();
-  const rows = within(
-    await screen.findByRole("list", { name: "Matching productions" }),
-  ).getAllByRole("listitem");
-  expect(rows).toHaveLength(2);
-  expect(screen.queryByRole("button", { name: "Download PDF" })).toBeNull();
-  await fireEvent.click(rows[1]!.querySelector("summary")!);
   expect(await screen.findByText("Stamped export")).toBeTruthy();
   await fireEvent.click(screen.getByRole("button", { name: "Download PDF" }));
   await waitFor(() =>
     expect(
       fetcher.mock.calls.some(
-        ([url]) => String(url) === `/api/v1/bates/exports/${other.allocation_id}/download`,
+        ([url]) => String(url) === `/api/v1/bates/exports/${candidate.allocation_id}/download`,
       ),
     ).toBe(true),
   );
@@ -162,33 +141,20 @@ it("reports failed search and closes on session expiry", async () => {
   expect(screen.queryByRole("button", { name: "Search again" })).toBeNull();
 });
 
-it("keeps lookup usable after a history failure and restarts an expired cursor", async () => {
-  let reads = 0;
+it("keeps lookup usable after a history failure", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
-    if (url.includes("/candidates?")) {
-      reads++;
-      if (url.includes("cursor="))
-        return new Response(
-          JSON.stringify({ detail: "Cursor expired", code: "document_cursor_expired" }),
-          { status: 410 },
-        );
-      return json({
-        items: [{ ...candidate, evidence_truncated: true, evidence_cursor: "evidence" }],
-        next_cursor: "next",
-      });
-    }
-    return new Response(JSON.stringify({ detail: "History unavailable" }), { status: 503 });
+    if (url.includes("/candidates?")) return json({ items: [candidate] });
+    if (url.endsWith(candidate.allocation_id)) return json(recoveryReceipt());
+    if (url.startsWith("/api/v1/bates/exports?"))
+      return new Response(JSON.stringify({ detail: "History unavailable" }), { status: 503 });
+    return json({ items: [], total: 0 });
   });
   mount();
+  await screen.findByText("Publication history is unavailable: History unavailable");
   await search();
-  await fireEvent.click(await screen.findByText("Page 2 of 2"));
-  expect(await screen.findByText("Showing some matching pages.")).toBeTruthy();
-  await fireEvent.click(screen.getByRole("button", { name: "Load more" }));
-  expect(await screen.findByText("Cursor expired")).toBeTruthy();
-  await fireEvent.click(screen.getByRole("button", { name: "Search again" }));
-  await waitFor(() => expect(reads).toBe(3));
-  expect(await screen.findByRole("list", { name: "Matching productions" })).toBeTruthy();
+  expect(await screen.findByText("Numbered redaction")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Download PDF" })).toBeTruthy();
 });
 
 it("cannot restore a cleared result through a late receipt", async () => {
@@ -210,41 +176,6 @@ it("cannot restore a cleared result through a late receipt", async () => {
   detail.resolve(json(recoveryReceipt()));
   await screen.findByText("No productions yet");
   expect(screen.queryByRole("button", { name: "Download PDF" })).toBeNull();
-});
-
-it("pages on request, keeps progress by the button and deduplicates artifacts across renewed cursors", async () => {
-  const next = deferredResponse();
-  const second = { ...candidate, artifact_id: "55555555-5555-4555-8555-555555555555" };
-  const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-    const url = String(input);
-    if (url.includes("/candidates?"))
-      return url.includes("cursor=")
-        ? next.promise
-        : json({ items: [candidate], next_cursor: "position-with-old-time" });
-    return json({ items: [], total: 0 });
-  });
-  mount();
-  await search();
-  const more = await screen.findByRole("button", { name: "Load more" });
-  expect(fetcher.mock.calls.filter(([url]) => String(url).includes("/candidates?"))).toHaveLength(
-    1,
-  );
-  await fireEvent.click(more);
-  expect(await screen.findByRole("button", { name: "Loading more…" })).toBe(more);
-  expect((more as HTMLButtonElement).disabled).toBe(true);
-  expect(screen.queryByText("Finding productions…")).toBeNull();
-  next.resolve(json({ items: [candidate, second], next_cursor: "position-with-new-time" }));
-  await waitFor(() =>
-    expect(
-      within(screen.getByRole("list", { name: "Matching productions" })).getAllByRole("listitem"),
-    ).toHaveLength(2),
-  );
-  expect((screen.getByRole("button", { name: "Load more" }) as HTMLButtonElement).disabled).toBe(
-    false,
-  );
-  expect(fetcher.mock.calls.filter(([url]) => String(url).includes("/candidates?"))).toHaveLength(
-    2,
-  );
 });
 
 it("keeps the production list available when an empty or oversized search is submitted", async () => {

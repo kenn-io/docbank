@@ -331,12 +331,11 @@ again, even if the export was abandoned.
 Open **Productions** in the Documents sidebar, enter the exact **Bates number**,
 and choose **Find**. Matching is case-sensitive and preserves spaces and leading
 zeroes. A warning identifies leading or trailing spaces without removing them.
-Each result shows its matching page, publication time and PDF size. Choose
-**Load more** for another page of results; **Clear** returns to the full list.
-
-A single match opens automatically. Expand other results to see the delivery
-kind, Bates range, SHA-256 and allocation reference. The same printed number can
-identify different deliveries, so check these details before **Download PDF**.
+Bates numbers are unique across the vault, so an exact number identifies at most
+one retained PDF and matching page. A match opens automatically, showing the
+page, publication time, PDF size, delivery kind, Bates range, SHA-256 and
+allocation reference. Choose **Download PDF** to recover it, or **Clear** to
+return to the full production list.
 
 Recovery works after restart without the review files or a configured page
 renderer. Downloads check file integrity against the retained record; they do not

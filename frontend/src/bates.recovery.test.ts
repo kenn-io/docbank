@@ -15,10 +15,10 @@ it("preserves the exact label and binds the requested evidence", async () => {
       items: [{ ...candidate, evidence: [{ ...candidate.evidence[0], label }] }],
     }),
   );
-  const result = await findBatesExportsByLabel("session", label, undefined, "next-page");
+  const result = await findBatesExportsByLabel("session", label);
   const [url, init] = fetcher.mock.calls[0]!;
   expect(new URL(String(url), "http://localhost").searchParams).toEqual(
-    new URLSearchParams({ bates_label: label, limit: "50", cursor: "next-page" }),
+    new URLSearchParams({ bates_label: label, limit: "50" }),
   );
   expect(new Headers(init?.headers).get("X-Docbank-Web-Session")).toBe("session");
   expect(result.items[0]?.artifact_id).toBe(candidate.artifact_id);
