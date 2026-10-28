@@ -311,7 +311,7 @@ func TestNaturalSearchFallbackKeepsCause(t *testing.T) {
 		model, _ = updateModel(t, model, key(tea.KeyEnter))
 		updated, fallback := model.applyNaturalSearchBase(naturalSearchBaseLoadedMsg{
 			requestID: model.requestID, searchID: model.naturalSearchID, query: "missing", naturalMode: naturalHybrid,
-			request: api.DocumentSearchRequest{Mode: "hybrid", Profile: "local"}, err: errors.New("provider timed out"),
+			request: api.DocumentSearchRequest{Mode: "hybrid", Profile: "local", BindingID: "embed"}, err: errors.New("provider timed out"),
 		})
 		model, ok := updated.(Model)
 		require.True(t, ok)
@@ -331,6 +331,7 @@ func TestNaturalSearchFallbackKeepsCause(t *testing.T) {
 		assert.Equal(t, "hybrid", fake.misses[0].RequestedMode)
 		assert.Equal(t, "lexical", fake.misses[0].ActualMode)
 		assert.Equal(t, "local", fake.misses[0].Profile)
+		assert.Equal(t, "embed", fake.misses[0].BindingID)
 		assert.Equal(t, []string{note}, fake.misses[0].Degradations)
 	}
 }

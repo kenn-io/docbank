@@ -97,6 +97,8 @@ func TestSubmittedSearchMissRecording(t *testing.T) {
 						require.Equal(t, new(1), misses[0].DocumentCount)
 					}
 					if mode == "fallback" {
+						require.Equal(t, "private", misses[0].Profile)
+						require.Equal(t, "absent", misses[0].BindingID)
 						require.Equal(t, "hybrid", misses[0].RequestedMode)
 						require.Equal(t, "lexical", misses[0].ActualMode)
 						require.Equal(t, []string{"processing_failed"}, misses[0].Degradations)

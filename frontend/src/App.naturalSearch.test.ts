@@ -1943,6 +1943,8 @@ it.each(["plain", "rerank", "fallback", "filtered"])(
         ? {
             requested_mode: "hybrid",
             actual_mode: "lexical",
+            profile: "private",
+            binding_id: "embed",
             degradations: [screen.getByText(/Natural-language search unavailable/).textContent],
           }
         : kind === "filtered"

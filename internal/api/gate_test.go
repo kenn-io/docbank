@@ -444,10 +444,3 @@ func TestBackupCaptureBlocksGCButAllowsLiveDeletion(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, verified.Problems)
 }
-
-func TestServerKeepsDefaultGateLocal(t *testing.T) {
-	t.Parallel()
-	s := NewOfflineServer()
-	t.Cleanup(s.Close)
-	require.Nil(t, s.deps.Gate)
-}

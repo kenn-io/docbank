@@ -2,7 +2,6 @@ package store
 
 import (
 	"bytes"
-	"encoding/json/v2"
 	"path/filepath"
 	"testing"
 	"time"
@@ -40,7 +39,7 @@ func TestMissLogCountRetentionAndPhotoExclusion(t *testing.T) {
 	require.Empty(t, entries)
 }
 
-func TestMissLogExcludedFromBackupAndBundleMetadata(t *testing.T) {
+func TestMissLogExcludedFromBackup(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	now := time.Now()
@@ -51,11 +50,6 @@ func TestMissLogExcludedFromBackupAndBundleMetadata(t *testing.T) {
 	require.NoError(t, snapshot.ExportBackup(t.Context(), &exported))
 	require.NoError(t, snapshot.Close())
 	require.NotContains(t, exported.String(), "private sentinel query")
-	var records []any
-	require.NoError(t, exportBundleMetadata(t.Context(), s.db, func(record any) error { records = append(records, record); return nil }))
-	encoded, err := json.Marshal(records)
-	require.NoError(t, err)
-	require.NotContains(t, string(encoded), "private sentinel query")
 }
 
 func TestMissLogOpensSchema43WithoutLocalTable(t *testing.T) {

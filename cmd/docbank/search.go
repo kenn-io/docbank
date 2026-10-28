@@ -241,6 +241,7 @@ See docs/usage/search.md.`,
 						receipt = api.DocumentSearchMiss(query, automatic.profile, automatic.binding, automatic.scope.FenceFingerprint, len(automatic.scope.Fence.ContentVersionIDs), *automatic.report)
 					} else if automatic.reason != "" {
 						receipt.RequestedMode, receipt.Degradations = "hybrid", []string{automatic.reason}
+						receipt.Profile, receipt.BindingID = automatic.profile, automatic.binding
 					}
 					c.RecordMiss(cmd.Context(), receipt)
 				}

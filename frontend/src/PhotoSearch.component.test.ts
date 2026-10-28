@@ -165,11 +165,11 @@ it("applies the draft when the search mode changes", async () => {
   photos.dispose();
 });
 
-it("reports Photos search outcomes for explicit submissions", async () => {
+it.each([false, true])("reports explicit Photos searches, hidden=%s", async (hidden) => {
   stubPhotoTimeline();
   const fetcher = vi.fn().mockResolvedValue(new Response("unavailable", { status: 500 }));
   vi.stubGlobal("fetch", fetcher);
-  const photos = new Photos("scoped", vi.fn());
+  const photos = new Photos("scoped", vi.fn(), hidden);
   photos.started = true;
   photos.query = { ...photos.query, text: "Nikon", filters: { cameras: ["Synthetic camera"] } };
   render(PhotoSearch, { photos });
@@ -205,7 +205,12 @@ it("reports Photos search outcomes for explicit submissions", async () => {
       query: "Nikon",
       requested_mode: "lexical",
       actual_mode: "lexical",
-      filters: expect.objectContaining({ cameras: ["Synthetic camera"], syntax: "advanced" }),
+      filters: expect.objectContaining({
+        cameras: ["Synthetic camera"],
+        syntax: "advanced",
+        corpus: "photos",
+        hidden,
+      }),
     }),
     expect.objectContaining({ session: "scoped" }),
   );

@@ -2474,7 +2474,7 @@ func (m Model) applyNaturalSearchBase(msg naturalSearchBaseLoadedMsg) (tea.Model
 		m.naturalResultMode = ""
 		m.naturalSearchNote = "Natural-language search unavailable: " + msg.err.Error() + ". Showing Names and text."
 		m.loading = true
-		m.fallbackMiss = &misslog.Request{Query: msg.query, RequestedMode: requestedMode, ActualMode: naturalLexical, Profile: msg.request.Profile, Degradations: []string{m.naturalSearchNote}}
+		m.fallbackMiss = &misslog.Request{Query: msg.query, RequestedMode: requestedMode, ActualMode: naturalLexical, Profile: msg.request.Profile, BindingID: msg.request.BindingID, Degradations: []string{m.naturalSearchNote}}
 		return m, m.loadSearch(msg.query, msg.requestID)
 	}
 	m.applyNaturalRows(msg.query, msg.rows, msg.report.Truncated)

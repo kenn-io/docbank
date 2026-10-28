@@ -84,6 +84,7 @@ func tryAutomaticSearch(ctx context.Context, c *daemonconn.Connection, query str
 		}
 		if first.reason == "" {
 			first = outcome
+			first.profile, first.binding = candidate.profile, candidate.binding
 		}
 		if !bindingSearchFailure(outcome.reason) {
 			break

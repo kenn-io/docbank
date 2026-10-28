@@ -2320,6 +2320,7 @@
         naturalRerank = false;
         naturalRerankPending = false;
         try {
+          const mapped = naturalSearchRequest(mode, profile);
           const outcome = await runLegacySearch(
             query,
             requestedTagID,
@@ -2329,8 +2330,12 @@
             session,
             controller.signal,
             note,
-            naturalSearchRequest(mode, profile)?.mode ?? "lexical",
+            mapped?.mode ?? "lexical",
           );
+          if (outcome) {
+            outcome.receipt.profile = profile.name;
+            outcome.receipt.binding_id = mapped?.binding_id;
+          }
           accepted = !!outcome;
           if (accepted && request === generation && requestedSort) applyResultSort(requestedSort);
           return outcome;
