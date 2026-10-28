@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, Modal, TextInput, Spinner, Checkbox } from "@kenn-io/kit-ui";
+  import { Button, Checkbox, Modal, RadioGroup, Spinner, TextInput } from "@kenn-io/kit-ui";
   import UserIcon from "@lucide/svelte/icons/user";
   import { untrack } from "svelte";
   import type { PersonSummary } from "./generated/docbank.js";
@@ -233,25 +233,28 @@
 {#if merge}
   {@const label = (person: PersonSummary) => distinctLabel(person, merge.pair)}
   <Modal title="Merge people" onclose={close}>
-    <div class="merge-pair" role="radiogroup" aria-label="Person to keep">
+    <div class="merge-pair">
       {#each merge.pair as person (person.person_id)}
-        <label class="person-card merge-card">
+        <div class="person-card merge-card">
           {@render portrait(person)}
           <strong>{label(person)}</strong>
           {@render counts(person)}
-          <span class="keep"
-            ><input
-              type="radio"
-              name="keep"
-              aria-label={`Keep ${label(person)}`}
-              checked={merge.keep === person.person_id}
-              disabled={people.busy}
-              onchange={() => people.keep(person.person_id)}
-            />Keep this one</span
-          >
-        </label>
+        </div>
       {/each}
     </div>
+    <RadioGroup
+      legend="Person to keep"
+      name="keep"
+      value={merge.keep}
+      disabled={people.busy}
+      options={merge.pair.map((person) => ({
+        value: person.person_id,
+        label: `Keep ${label(person)}`,
+      }))}
+      onchange={(value) => {
+        if (value) people.keep(value);
+      }}
+    />
     {#if roles}<p>
         Keep {label(roles.survivor)}. Move {label(roles.source)}'s records into this person.
       </p>
@@ -390,11 +393,6 @@
     flex-direction: column;
     gap: 8px;
     padding: 12px;
-  }
-  .keep {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
   }
   .people-workspace > p {
     padding: var(--space-4);
