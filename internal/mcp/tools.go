@@ -440,8 +440,6 @@ func stableDomainError(err error) (string, int) {
 		return "processing_outcome_unknown", 0
 	case errors.Is(err, errKataOutcomeUnknown):
 		return "kata_outcome_unknown", 0
-	case errors.Is(err, errAnswerGateFailed):
-		return "answer_gate_failed", 0
 	case errors.Is(err, errReportIntegrity):
 		return "report_integrity", 0
 	case errors.Is(err, errReportLocalIO):
@@ -582,8 +580,6 @@ func domainErrorMessage(code string) string {
 		return "The Kata operation failed; inspect the issue before deliberately retrying the same request."
 	case "kata_outcome_unknown":
 		return "The Kata write may have succeeded without a usable reply. Do not retry automatically; inspect the issue and deliberately retry the same create key or exact append selection."
-	case "answer_gate_failed":
-		return "An evidence gate could not complete."
 	case "processing_unavailable", "processing_profile_unavailable":
 		return "The requested processing profile is unavailable."
 	case "reranking_unavailable", "reranking_failed":

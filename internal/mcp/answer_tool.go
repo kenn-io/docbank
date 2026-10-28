@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/http"
@@ -32,8 +31,6 @@ func answerContentExcerpt(result api.DocumentSearchResult) bool {
 	}
 	return false
 }
-
-var errAnswerGateFailed = errors.New("answer gate failed")
 
 type answerInput struct {
 	Question          string                          `json:"question"`
@@ -75,7 +72,6 @@ type answerReceipt struct {
 	Degradations        []string                    `json:"degradations"`
 	Coverage            *api.DocumentSearchCoverage `json:"coverage,omitempty"`
 	Reranking           *answerReranking            `json:"reranking,omitempty"`
-	Gates               []answer.GateReceipt        `json:"gates"`
 	CitedVersions       []answerCitation            `json:"cited_versions"`
 }
 type answerOutput struct {
@@ -110,7 +106,7 @@ func answerQuestion(ctx context.Context, session documentReadSession, raw []byte
 		input.MaxPassageBytes = 12288
 	}
 	hash := sha256.Sum256([]byte(input.Question))
-	out := answerOutput{privateCache: newPrivateCache(), CoverageReasons: []string{}, Passages: []answer.Passage{}, Leads: []answer.Lead{}, Receipt: answerReceipt{QuestionSHA256: hex.EncodeToString(hash[:]), VectorSpaceIDs: []string{}, Degradations: []string{}, Gates: []answer.GateReceipt{}, CitedVersions: []answerCitation{}}}
+	out := answerOutput{privateCache: newPrivateCache(), CoverageReasons: []string{}, Passages: []answer.Passage{}, Leads: []answer.Lead{}, Receipt: answerReceipt{QuestionSHA256: hex.EncodeToString(hash[:]), VectorSpaceIDs: []string{}, Degradations: []string{}, CitedVersions: []answerCitation{}}}
 	type response struct {
 		fence     api.DocumentSourceFenceResolution
 		profile   api.ProcessingProfileSummary
@@ -185,11 +181,7 @@ func answerQuestion(ctx context.Context, session documentReadSession, raw []byte
 			return selected
 		}
 		run := func(profile, binding, mode string) (api.DocumentSearchReport, error) {
-			if len(fence.Fence.ContentVersionIDs) == 0 {
-				err := c.ValidateDocumentSearch(ctx, api.DocumentSearchValidationRequest{Query: input.Question, Mode: mode, Profile: profile, BindingID: binding, Limit: input.Limit, Rerank: input.Rerank, ContentFirst: true})
-				return api.DocumentSearchReport{RequestedMode: mode, ActualMode: mode, Coverage: api.DocumentSearchCoverage{State: "complete"}, Degradations: []string{}, Results: []api.DocumentSearchResult{}}, err
-			}
-			return c.SearchDocuments(ctx, api.DocumentSearchRequest{Query: input.Question, Mode: mode, Profile: profile, BindingID: binding, Limit: input.Limit, Rerank: input.Rerank, ContentFirst: true, Fence: api.DocumentSourceFence{VaultUID: fence.Fence.VaultUID, ContentVersionIDs: fence.Fence.ContentVersionIDs}})
+			return searchResolvedDocuments(ctx, c, api.DocumentSearchRequest{Query: input.Question, Mode: mode, Profile: profile, BindingID: binding, Limit: input.Limit, Rerank: input.Rerank, ContentFirst: true, Fence: api.DocumentSourceFence{VaultUID: fence.Fence.VaultUID, ContentVersionIDs: fence.Fence.ContentVersionIDs}})
 		}
 		var report api.DocumentSearchReport
 		var binding, failure string
@@ -222,16 +214,9 @@ func answerQuestion(ctx context.Context, session documentReadSession, raw []byte
 				return response{}, err
 			}
 		}
-		identities := make([]api.DocumentIdentity, len(report.Results))
-		for i, r := range report.Results {
-			identities[i] = api.DocumentIdentity{NodeID: r.NodeID, ContentVersionID: r.ContentVersionID, Path: r.Path}
-		}
-		var docs []api.DocumentSummary
-		if len(identities) > 0 {
-			docs, err = c.ResolveDocumentSummaries(ctx, api.DocumentSummaryResolveRequest{Identities: identities})
-			if err != nil {
-				return response{}, err
-			}
+		docs, err := resolveSearchSummaries(ctx, c, report.Results)
+		if err != nil {
+			return response{}, err
 		}
 		return response{fence: fence, profile: selected, binding: binding, report: report, failure: failure, executed: len(fence.Fence.ContentVersionIDs) > 0, documents: docs}, nil
 	})
@@ -306,11 +291,6 @@ func answerQuestion(ctx context.Context, session documentReadSession, raw []byte
 			out.Leads = append(out.Leads, answer.Lead{NodeID: item.NodeID, ContentVersionID: item.ContentVersionID, Path: item.Path, Rank: item.Rank, EvidenceIDs: ids, Relevance: relevance})
 		}
 	}
-	evidence, gates, err := answer.ApplyGates(ctx, answer.Question{Text: input.Question}, answer.Evidence{Passages: out.Passages, Leads: out.Leads}, nil)
-	if err != nil {
-		return answerOutput{}, nil, fmt.Errorf("%w: %w", errAnswerGateFailed, err)
-	}
-	out.Passages, out.Leads, out.Receipt.Gates = evidence.Passages, evidence.Leads, gates
 	out.Passages, out.PassageBytes, out.OmittedPassages = answer.Budget(out.Passages, input.MaxPassageBytes)
 	if len(out.Leads) > 20 {
 		out.OmittedLeads = len(out.Leads) - 20
@@ -342,26 +322,21 @@ func answerQuestion(ctx context.Context, session documentReadSession, raw []byte
 		}
 		out.Receipt.VectorSpaceIDs = out.Receipt.VectorSpaceIDs[:0]
 		spaces := map[string]bool{}
-		addSpaces := func(ids []string) error {
-			for _, id := range ids {
-				var e api.DocumentEvidenceReference
-				if err := json.Unmarshal([]byte(id), &e); err != nil {
-					return err
-				}
-				if e.VectorSpaceID != "" {
-					spaces[e.VectorSpaceID] = true
-				}
-			}
-			return nil
-		}
+		retained := map[answerCitation]bool{}
 		for _, p := range out.Passages {
-			if err := addSpaces(p.EvidenceIDs); err != nil {
-				return answerOutput{}, nil, err
-			}
+			retained[answerCitation{p.NodeID, p.ContentVersionID}] = true
 		}
 		for _, l := range out.Leads {
-			if err := addSpaces(l.EvidenceIDs); err != nil {
-				return answerOutput{}, nil, err
+			retained[answerCitation{l.NodeID, l.ContentVersionID}] = true
+		}
+		for _, item := range result.report.Results {
+			if !retained[answerCitation{item.NodeID, item.ContentVersionID}] {
+				continue
+			}
+			for _, evidence := range item.Evidence {
+				if evidence.VectorSpaceID != "" {
+					spaces[evidence.VectorSpaceID] = true
+				}
 			}
 		}
 		for space := range spaces {

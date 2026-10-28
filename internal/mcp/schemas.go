@@ -673,7 +673,7 @@ func searchDocumentsSchemas() (schema, schema) {
 	output := rootObjectSchema(withPrivateCache(schema{
 		"vault_id":             uuidSchema(),
 		"fence":                fenceAuthoritySchema(),
-		"fence_fingerprint":    schema{"type": "string", "pattern": "^sha256:[0-9a-f]{64}$", "maxLength": 71},
+		"fence_fingerprint":    fenceFingerprintSchema(),
 		"observed_scope_count": integerSchema(0, 0),
 		"requested_mode":       enumSchema("auto", "lexical", "semantic", "hybrid"),
 		"actual_mode":          enumSchema("lexical", "semantic", "hybrid"),
@@ -993,4 +993,8 @@ func promotePhotoNodeSchemas() (schema, schema) {
 		"kind":              enumSchema("photo", "video"),
 		"role":              enumSchema("raw", "image", "video", "sidecar"),
 	}, "node_id")
+}
+
+func fenceFingerprintSchema() schema {
+	return schema{"type": "string", "pattern": "^sha256:[0-9a-f]{64}$", "maxLength": 71}
 }

@@ -440,37 +440,15 @@ func searchDocuments(
 		if callErr != nil {
 			return response{}, callErr
 		}
-		if len(resolution.Fence.ContentVersionIDs) == 0 {
-			callErr = c.ValidateDocumentSearch(ctx, api.DocumentSearchValidationRequest{
-				Query: input.Query, Mode: input.Mode, Limit: input.Limit, Profile: input.Profile,
-				BindingID: input.BindingID, Explain: input.Explain,
-			})
-			if callErr != nil {
-				return response{}, callErr
-			}
-			return response{resolution: resolution, report: api.DocumentSearchReport{
-				RequestedMode: effectiveSearchMode(input.Mode), ActualMode: effectiveEmptySearchMode(input.Mode),
-				Coverage:     api.DocumentSearchCoverage{State: "complete"},
-				Degradations: []string{}, Results: []api.DocumentSearchResult{}, Trace: []api.DocumentSearchTrace{},
-			}}, nil
-		}
-		report, callErr := c.SearchDocuments(ctx, api.DocumentSearchRequest{Query: input.Query,
+
+		report, callErr := searchResolvedDocuments(ctx, c, api.DocumentSearchRequest{Query: input.Query,
 			Mode: input.Mode, Limit: input.Limit, Profile: input.Profile, BindingID: input.BindingID,
 			Explain: input.Explain, Fence: api.DocumentSourceFence{VaultUID: resolution.Fence.VaultUID,
 				ContentVersionIDs: slices.Clone(resolution.Fence.ContentVersionIDs)}})
 		if callErr != nil {
 			return response{}, callErr
 		}
-		if len(report.Results) == 0 {
-			return response{resolution: resolution, report: report, documents: []api.DocumentSummary{}}, nil
-		}
-		identities := make([]api.DocumentIdentity, len(report.Results))
-		for index, item := range report.Results {
-			identities[index] = api.DocumentIdentity{NodeID: item.NodeID,
-				ContentVersionID: item.ContentVersionID, Path: item.Path}
-		}
-		documents, callErr := c.ResolveDocumentSummaries(ctx,
-			api.DocumentSummaryResolveRequest{Identities: identities})
+		documents, callErr := resolveSearchSummaries(ctx, c, report.Results)
 		if callErr != nil {
 			return response{}, callErr
 		}
@@ -841,4 +819,31 @@ func boundedToolSuccess(
 		return nil, fmt.Errorf("%w: %d bytes", errToolResultTooLarge, len(complete))
 	}
 	return result, nil
+}
+
+// searchResolvedDocuments validates empty scopes without issuing an unscoped search.
+func searchResolvedDocuments(ctx context.Context, c documentClient, req api.DocumentSearchRequest) (api.DocumentSearchReport, error) {
+	if len(req.Fence.ContentVersionIDs) > 0 {
+		return c.SearchDocuments(ctx, req)
+	}
+	err := c.ValidateDocumentSearch(ctx, api.DocumentSearchValidationRequest{
+		Query: req.Query, Mode: req.Mode, Limit: req.Limit, Profile: req.Profile,
+		BindingID: req.BindingID, Explain: req.Explain, Rerank: req.Rerank, ContentFirst: req.ContentFirst,
+	})
+	return api.DocumentSearchReport{
+		RequestedMode: effectiveSearchMode(req.Mode), ActualMode: effectiveEmptySearchMode(req.Mode),
+		Coverage:     api.DocumentSearchCoverage{State: "complete"},
+		Degradations: []string{}, Results: []api.DocumentSearchResult{}, Trace: []api.DocumentSearchTrace{},
+	}, err
+}
+
+func resolveSearchSummaries(ctx context.Context, c documentClient, results []api.DocumentSearchResult) ([]api.DocumentSummary, error) {
+	if len(results) == 0 {
+		return []api.DocumentSummary{}, nil
+	}
+	identities := make([]api.DocumentIdentity, len(results))
+	for i, item := range results {
+		identities[i] = api.DocumentIdentity{NodeID: item.NodeID, ContentVersionID: item.ContentVersionID, Path: item.Path}
+	}
+	return c.ResolveDocumentSummaries(ctx, api.DocumentSummaryResolveRequest{Identities: identities})
 }

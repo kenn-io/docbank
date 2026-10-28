@@ -1,16 +1,21 @@
 package mcp
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/processing"
+	"go.kenn.io/docbank/internal/store"
 )
 
 func TestAnswerQuestionScopeLimitTransport(t *testing.T) {
@@ -155,4 +160,45 @@ func TestAnswerQuestionRejectsBlankQuestionTransport(t *testing.T) {
 	raw := exchangeRaw(t, server, requestFor("tools/call", map[string]any{"name": "answer_question", "arguments": map[string]any{"question": " \t\n "}}))
 	require.EqualValues(t, jsonrpc.CodeInvalidParams, decodeWireError(t, raw).Code)
 	require.Zero(t, calls)
+}
+
+func TestAnswerQuestionRealDaemonEvidence(t *testing.T) {
+	f := newNativeExportFixture(t)
+	member := f.addFile(t, "notes.txt", "The observatory opens at noon.")
+	require.NoError(t, f.catalog.RecordExtraction(t.Context(), store.ExtractionResult{
+		BlobHash: member.SHA256, Extractor: "plain-text", ExtractorVersion: 1,
+		Status: store.ExtractionOK, Text: "The observatory opens at noon.",
+	}))
+	profileName, profile, err := processing.NewSuppliedMediaProfile(f.catalog, f.blobs, "test:operator")
+	require.NoError(t, err)
+	service, err := processing.NewService(processing.ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: api.NewOperationGate(),
+		SpoolDirectory: filepath.Join(t.TempDir(), "spool"), Profiles: map[string]processing.ProfileConfig{profileName: profile}})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, service.Shutdown(context.Background())) })
+	cfg := config.Default()
+	cfg.Server.APIKey = "synthetic-export-key"
+	daemon := api.NewServer(api.Deps{Store: f.catalog, Blobs: f.blobs, Processing: service, Cfg: cfg, VaultRoot: os.Getenv("DOCBANK_HOME")})
+	t.Cleanup(daemon.Close)
+	httpServer := httptest.NewServer(daemon.Handler())
+	t.Cleanup(httpServer.Close)
+	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, exportTestLease(t, httpServer.URL))
+	output := exportCall(t, server, "answer_question", map[string]any{"question": "observatory"})
+	require.Equal(t, "ANSWERED", output["status"])
+	passages, ok := output["passages"].([]any)
+	require.True(t, ok)
+	require.Len(t, passages, 1)
+	passage := schemaMap(t, passages[0])
+	require.EqualValues(t, member.NodeID, passage["node_id"])
+	require.Equal(t, member.VersionID, passage["content_version_id"])
+	require.Contains(t, passage["text"], "observatory")
+	require.Equal(t, true, schemaMap(t, output["receipt"])["search_executed"])
+
+	empty := exportCall(t, server, "answer_question", map[string]any{
+		"question": "observatory", "filters": map[string]any{"mime_type": "application/pdf"},
+	})
+	require.Equal(t, "NO_MATCH", empty["status"])
+	require.Equal(t, true, empty["coverage_complete"])
+	require.Empty(t, empty["passages"])
+	require.Empty(t, empty["leads"])
+	require.Equal(t, false, schemaMap(t, empty["receipt"])["search_executed"])
 }
