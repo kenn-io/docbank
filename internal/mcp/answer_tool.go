@@ -120,16 +120,12 @@ func selectAnswerSearch(profiles []api.ProcessingProfileSummary, input answerInp
 	selected := profiles[0]
 	candidates := daemonconn.AutomaticSearchCandidates(profiles)
 	if input.Profile != "" {
-		found := false
+		selected = api.ProcessingProfileSummary{Name: input.Profile}
 		for _, p := range profiles {
 			if p.Name == input.Profile {
 				selected = p
-				found = true
 				break
 			}
-		}
-		if !found {
-			return api.ProcessingProfileSummary{}, nil, api.NewError(http.StatusBadRequest, "processing_profile_unavailable", "processing profile unavailable")
 		}
 		candidates = slices.DeleteFunc(candidates, func(candidate daemonconn.SearchCandidate) bool {
 			return candidate.Profile != selected.Name || (input.BindingID != "" && candidate.Binding != input.BindingID)
@@ -137,8 +133,8 @@ func selectAnswerSearch(profiles []api.ProcessingProfileSummary, input answerInp
 		if len(candidates) > 1 {
 			candidates = candidates[:1]
 		}
-		if input.BindingID != "" && len(candidates) == 0 {
-			return api.ProcessingProfileSummary{}, nil, api.NewError(http.StatusBadRequest, "processing_profile_unavailable", "query binding unavailable")
+		if input.BindingID != "" {
+			candidates = []daemonconn.SearchCandidate{{Profile: input.Profile, Binding: input.BindingID}}
 		}
 	}
 	return selected, candidates, nil
@@ -207,9 +203,7 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 			if ctx.Err() != nil {
 				return response{}, ctx.Err()
 			}
-			// The CLI retries processing_failed, but it can also describe an
-			// unrelated or fail-closed provider failure. Preserve it here.
-			if input.Profile != "" || code == "processing_failed" || !daemonconn.BindingSearchFailure(code) {
+			if input.Profile != "" || !daemonconn.BindingSearchFailure(code) {
 				return response{}, err
 			}
 			if failure == "" {
