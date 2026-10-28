@@ -23,6 +23,12 @@ func (photoFaceExistsError) Error() string {
 func (photoFaceExistsError) Is(target error) bool { return target == ErrExists }
 
 type PhotoFace struct {
+	Roll                *float64 `json:"roll,omitzero"`
+	Facing              *float64 `json:"facing,omitzero"`
+	EyesOpen            *bool    `json:"eyes_open,omitzero"`
+	Smile               *bool    `json:"smile,omitzero"`
+	DetectorFingerprint string   `json:"detector_fingerprint,omitzero"`
+
 	FaceID            string           `json:"face_id"`
 	ContentVersionID  string           `json:"content_version_id"`
 	Box               document.FaceBox `json:"box"`
@@ -38,14 +44,23 @@ func validatePhotoFace(face PhotoFace) error {
 		(face.AssertionID != "" && validateUUIDv4(face.AssertionID) != nil) || face.Box.Validate() != nil {
 		return ErrInvalidPhotoFace
 	}
+	if face.DetectorFingerprint != "" && validateCatalogSHA256(face.DetectorFingerprint, "detector fingerprint") != nil {
+		return ErrInvalidPhotoFace
+	}
+	if face.DetectorFingerprint == "" && (face.Roll != nil || face.Facing != nil || face.EyesOpen != nil || face.Smile != nil) {
+		return ErrInvalidPhotoFace
+	}
+	if (document.FaceObservation{Box: face.Box, Roll: face.Roll, Facing: face.Facing, EyesOpen: face.EyesOpen, Smile: face.Smile}).Validate() != nil {
+		return ErrInvalidPhotoFace
+	}
 	return validateMetadataTime("face created_at", face.CreatedAt)
 }
 
-const photoFaceColumns = `face_id,content_version_id,x,y,width,height,revision,COALESCE(assertion_id,''),created_at`
+const photoFaceColumns = `face_id,content_version_id,x,y,width,height,revision,COALESCE(assertion_id,''),created_at,roll,facing,eyes_open,smile,COALESCE(detector_fingerprint,'')`
 
 func scanPhotoFace(row scanner) (PhotoFace, error) {
 	var face PhotoFace
-	err := row.Scan(&face.FaceID, &face.ContentVersionID, &face.Box.X, &face.Box.Y, &face.Box.Width, &face.Box.Height, &face.Revision, &face.AssertionID, &face.CreatedAt)
+	err := row.Scan(&face.FaceID, &face.ContentVersionID, &face.Box.X, &face.Box.Y, &face.Box.Width, &face.Box.Height, &face.Revision, &face.AssertionID, &face.CreatedAt, &face.Roll, &face.Facing, &face.EyesOpen, &face.Smile, &face.DetectorFingerprint)
 	return face, err
 }
 
@@ -231,7 +246,7 @@ func (s *Store) PhotoFacePersonNames(ctx context.Context, versionID string) ([]P
 }
 
 func insertPhotoFaceTx(ctx context.Context, tx *sql.Tx, face PhotoFace) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO photo_faces(face_id,content_version_id,x,y,width,height,revision,assertion_id,created_at) VALUES(?,?,?,?,?,?,?,?,?)`, face.FaceID, face.ContentVersionID, face.Box.X, face.Box.Y, face.Box.Width, face.Box.Height, face.Revision, nullableString(face.AssertionID), face.CreatedAt)
+	_, err := tx.ExecContext(ctx, `INSERT INTO photo_faces(face_id,content_version_id,x,y,width,height,revision,assertion_id,created_at,roll,facing,eyes_open,smile,detector_fingerprint) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, face.FaceID, face.ContentVersionID, face.Box.X, face.Box.Y, face.Box.Width, face.Box.Height, face.Revision, nullableString(face.AssertionID), face.CreatedAt, face.Roll, face.Facing, face.EyesOpen, face.Smile, nullableString(face.DetectorFingerprint))
 	return err
 }
 

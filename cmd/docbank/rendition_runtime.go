@@ -337,12 +337,12 @@ func configureVision(cfg config.Config, name string, registered map[string]regis
 		return nil, disclosure, nil
 	}
 	runtime := configured.Runtime
-	profile := vision.Profile{Origin: runtime.Endpoint, Model: configured.Model, TrustBoundary: document.RenditionTrustBoundary(configured.TrustBoundary), SecretBinding: strings.TrimPrefix(configured.CredentialBinding, "credential:"), RequestTimeout: runtime.RequestTimeout.Std(), MaxResponseBytes: configured.MaxResponseBytes}
+	profile := vision.Profile{DescriptorID: configured.DescriptorID, Origin: runtime.Endpoint, Model: configured.Model, TrustBoundary: document.RenditionTrustBoundary(configured.TrustBoundary), SecretBinding: strings.TrimPrefix(configured.CredentialBinding, "credential:"), RequestTimeout: runtime.RequestTimeout.Std(), MaxResponseBytes: configured.MaxResponseBytes}
 	credential, ok := cfg.CredentialBindings[profile.SecretBinding]
 	if !ok {
 		return nil, disclosure, errors.New("vision credential binding is not configured")
 	}
-	descriptor, err := vision.Descriptor(profile.Model, profile.TrustBoundary)
+	descriptor, err := vision.TaskDescriptor(profile.DescriptorID, profile.Model, profile.TrustBoundary)
 	if err != nil {
 		return nil, disclosure, err
 	}

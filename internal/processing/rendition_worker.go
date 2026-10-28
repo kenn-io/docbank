@@ -896,7 +896,7 @@ func (worker *RenditionWorker) classifyProviderError(
 		return worker.endProvider(ctx, claim, work, err, true)
 	}
 	if document.IsRenditionProviderErrorRetryable(err) {
-		if work.ExecutionIdentity.Authorization.ProviderID == vision.ProviderID &&
+		if (work.ExecutionIdentity.Authorization.ProviderID == vision.ProviderID || work.ExecutionIdentity.Authorization.ProviderID == vision.DetectionProviderID) &&
 			providerError.Code() == document.RenditionErrorTransient && providerAttempt >= 3 {
 			return worker.endProvider(ctx, claim, work, err, false)
 		}

@@ -494,6 +494,18 @@ retain_typed_artifacts = false
 
 Automatic description picks the profile with the lexicographically smallest name among those with active [consent](usage/document-processing.md#describe-photos) whose provider passes its probe. If the probe for the smallest name fails, the next consented name receives the photos. Docbank checks readiness on demand when a description starts. Status output does not list it. An explicit build can name another profile, but it describes a photo only when the photo has no pending suggestion. A build for a photo that already has a pending suggestion from any profile completes without a provider call; dismiss that suggestion first to ask another profile.
 
+### Automatic face detection
+
+Detection is off until you add a separate vision rendition profile with `descriptor_id = "compatible-vision.detect-faces-v1"` and a processing profile that selects it. Reuse the photo-description example above, with separate profile names, and compute its fingerprints with the detection task:
+
+```sh
+docbank processing vision-fingerprints --task compatible-vision.detect-faces-v1 --model vision-model --trust-boundary operator_network --endpoint http://127.0.0.1:8080 --deployment-fingerprint aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+```
+
+Pin the printed fingerprints in that rendition profile and grant consent for its processing profile through `docbank processing build <photo-path> --profile <detection-profile> --consent`. Consent for descriptions alone does not enable detection. Both tasks send the same stripped grid preview through the vision adapter, with one request per task. Each task selects the first ready, consented processing profile by name.
+
+Detection scans visible, included display photos with ready previews. A completed scan, including one with zero faces, prevents automatic and explicit requests from rescanning that version under the same request fingerprint. Changing the model, prompt, endpoint, deployment, or another fingerprinted request policy requires fresh consent and permits a new scan. Backups preserve faces and their measurements, while leaving scan completion behind; restored photos can reconcile after fresh consent.
+
 ### Document conversion with Docling
 
 The daemon can send an original PDF, PPTX, XLSX, plain text, Markdown, PNG,

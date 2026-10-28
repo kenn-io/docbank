@@ -14103,10 +14103,21 @@ components:
           type: string
         created_at:
           type: string
+        detector_fingerprint:
+          type: string
         dismissed:
           type: boolean
+        eyes_open:
+          type:
+            - boolean
+            - "null"
         face_id:
           type: string
+        facing:
+          format: double
+          type:
+            - number
+            - "null"
         rejected_person_ids:
           items:
             type: string
@@ -14115,6 +14126,15 @@ components:
         revision:
           format: int64
           type: integer
+        roll:
+          format: double
+          type:
+            - number
+            - "null"
+        smile:
+          type:
+            - boolean
+            - "null"
       required:
         - face_id
         - content_version_id

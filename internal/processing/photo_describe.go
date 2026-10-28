@@ -17,6 +17,7 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/upload"
+	"go.kenn.io/docbank/document/vision"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
@@ -174,7 +175,24 @@ func preparePhotoDescription(ctx context.Context, catalog *store.Store, blobs *b
 
 // HasPhotoDescriptionProfiles reports whether automatic photo work is configured.
 func (service *Service) HasPhotoDescriptionProfiles() bool {
-	return len(service.visionProfileNames()) > 0
+	return service.hasVisionTask(vision.ProviderID)
+}
+
+func (service *Service) hasVisionTask(id string) bool {
+	for _, name := range service.visionProfileNames() {
+		if service.profiles[name].portable.Rendition.Descriptor.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func (service *Service) HasPhotoFaceDetectionProfiles() bool {
+	return service.hasVisionTask(vision.DetectionProviderID)
+}
+
+func (service *Service) PhotoFaceDetectionBackfill(ctx context.Context, logger *slog.Logger, workers int) error {
+	return service.photoVisionBackfill(ctx, logger, workers, vision.DetectionProviderID)
 }
 
 func (service *Service) visionProfileNames() []string {
@@ -192,11 +210,18 @@ func (service *Service) visionProfileNames() []string {
 // ready profile has consent. Callers start it only when HasPhotoDescriptionProfiles.
 // The ordinary rendition worker runs the jobs.
 func (service *Service) PhotoDescriptionBackfill(ctx context.Context, logger *slog.Logger, workers int) error {
+	return service.photoVisionBackfill(ctx, logger, workers, vision.ProviderID)
+}
+
+func (service *Service) photoVisionBackfill(ctx context.Context, logger *slog.Logger, workers int, task string) error {
 	workers = max(workers, 1)
-	backfill := Backfill[photoDescriptionTarget]{Name: "photo-descriptions", Page: 50, IdleDelay: time.Second, Logger: logger,
+	backfill := Backfill[photoDescriptionTarget]{Name: task, Page: 50, IdleDelay: time.Second, Logger: logger,
 		Key: func(value photoDescriptionTarget) string { return value.version.ID },
 		List: func(ctx context.Context, after string, limit int) ([]photoDescriptionTarget, error) {
-			return service.photoDescriptionTargets(ctx, logger, after, limit, workers)
+			if task == vision.ProviderID {
+				return service.photoDescriptionTargets(ctx, logger, after, limit, workers)
+			}
+			return service.photoVisionTargets(ctx, logger, after, limit, workers, task)
 		},
 		Process: service.admitPhotoDescription,
 	}
@@ -229,9 +254,16 @@ type photoDescriptionTarget struct {
 // profile only. Photos with restored unresolved fields also go to the other
 // ready profiles, each at most once, so no photo is described by two providers.
 func (service *Service) photoDescriptionTargets(ctx context.Context, logger *slog.Logger, after string, limit, workers int) ([]photoDescriptionTarget, error) {
-	names, err := service.photoDescriptionProfiles(ctx, logger)
+	return service.photoVisionTargets(ctx, logger, after, limit, workers, vision.ProviderID)
+}
+
+func (service *Service) photoVisionTargets(ctx context.Context, logger *slog.Logger, after string, limit, workers int, task string) ([]photoDescriptionTarget, error) {
+	names, err := service.photoDescriptionProfiles(ctx, logger, task)
 	if err != nil {
 		return nil, err
+	}
+	if task == vision.DetectionProviderID && len(names) > 1 {
+		names = names[:1]
 	}
 	sources := make([]photoDescriptionSource, len(names))
 	for i, name := range names {
@@ -301,7 +333,13 @@ func (service *Service) photoDescriptionProfileTargets(ctx context.Context, name
 	}
 	room := min(limit, workers-waiting)
 	started := service.clock()
-	versions, err := service.catalog.PhotoDescriptionTargets(ctx, profile.record.Fingerprint, profile.record.RenditionRequestFingerprint, after, room, restoredOnly)
+	var versions []store.ContentVersion
+	var err error
+	if profile.portable.Rendition.Descriptor.ID == vision.DetectionProviderID {
+		versions, err = service.catalog.PhotoFaceDetectionTargets(ctx, profile.record.Fingerprint, profile.record.RenditionRequestFingerprint, after, room)
+	} else {
+		versions, err = service.catalog.PhotoDescriptionTargets(ctx, profile.record.Fingerprint, profile.record.RenditionRequestFingerprint, after, room, restoredOnly)
+	}
 	duration := service.clock().Sub(started)
 	if err != nil {
 		return photoDescriptionSource{}, err
@@ -321,9 +359,12 @@ func (service *Service) photoDescriptionProfileTargets(ctx context.Context, name
 // photoDescriptionProfiles lists, by name, the description profiles that have
 // consent and a provider that answers its probe. A consented profile whose
 // provider does not answer is logged once, until it answers again.
-func (service *Service) photoDescriptionProfiles(ctx context.Context, logger *slog.Logger) ([]string, error) {
+func (service *Service) photoDescriptionProfiles(ctx context.Context, logger *slog.Logger, task string) ([]string, error) {
 	var ready []string
 	for _, name := range service.visionProfileNames() {
+		if service.profiles[name].portable.Rendition.Descriptor.ID != task {
+			continue
+		}
 		err := service.requireVisionReadiness(ctx, service.profiles[name])
 		switch {
 		case err == nil:

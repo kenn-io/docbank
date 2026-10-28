@@ -1125,7 +1125,7 @@ func validateRenditionRuntimeConfig(profile RenditionProfileConfig, prefix strin
 		if runtime.RequestTimeout.Std() <= 0 || runtime.RequestTimeout.Std() > vision.MaxRequestTimeout {
 			return fmt.Errorf("%s runtime request_timeout must be positive and at most 10m", prefix)
 		}
-		if _, err := vision.Descriptor(profile.Model, document.RenditionTrustBoundary(profile.TrustBoundary)); err != nil {
+		if _, err := vision.TaskDescriptor(profile.DescriptorID, profile.Model, document.RenditionTrustBoundary(profile.TrustBoundary)); err != nil {
 			return fmt.Errorf("%s: %w", prefix, err)
 		}
 		if profile.DiscloseFilename || len(profile.RequestedArtifacts) != 1 || profile.RequestedArtifacts[0] != string(document.EvidenceArtifactStructured) || profile.MaxResponseBytes > vision.MaxResponseBytes {

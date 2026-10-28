@@ -161,9 +161,14 @@ func (f *photoDescriptionFixture) newService(t *testing.T, name, model string) *
 // newServiceWith builds a service with a description profile for each name and model.
 func (f *photoDescriptionFixture) newServiceWith(t *testing.T, models map[string]string) *Service {
 	t.Helper()
+	return f.newVisionServiceWith(t, models, vision.ProviderID)
+}
+
+func (f *photoDescriptionFixture) newVisionServiceWith(t *testing.T, models map[string]string, task string) *Service {
+	t.Helper()
 	profiles := map[string]ProfileConfig{}
 	for name, model := range models {
-		provider, err := vision.New(vision.Profile{Origin: f.server.URL, Model: model, TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, f.server.Client())
+		provider, err := vision.New(vision.Profile{DescriptorID: task, Origin: f.server.URL, Model: model, TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, f.server.Client())
 		require.NoError(t, err)
 		var profile document.ProcessingProfileV1
 		require.NoError(t, json.Unmarshal(workerProcessingProfile(t, provider.Descriptor()).CanonicalProfile, &profile))
@@ -178,6 +183,7 @@ func (f *photoDescriptionFixture) newServiceWith(t *testing.T, models map[string
 		Clock:    func() time.Time { return time.Now().UTC().Add(time.Duration(f.skew.Load())) },
 		Profiles: profiles})
 	require.NoError(t, err)
+	t.Cleanup(service.Stop)
 	return service
 }
 
@@ -524,7 +530,7 @@ func TestPhotoDescriptionProviderFailureReprobesBeforeFreshPhotoAdmission(t *tes
 	f.grant(t, service, "alpha")
 	f.grant(t, service, "beta")
 
-	ready, err := service.photoDescriptionProfiles(ctx, nil)
+	ready, err := service.photoDescriptionProfiles(ctx, nil, vision.ProviderID)
 	require.NoError(t, err)
 	require.Equal(t, []string{"alpha", "beta"}, ready)
 	probes, _ := f.counts()

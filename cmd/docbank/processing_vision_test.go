@@ -28,6 +28,16 @@ func TestProcessingVisionFingerprints(t *testing.T) {
 	require.Equal(t, descriptor.Fingerprint, fingerprints.Descriptor)
 	require.Equal(t, vision.DisclosureFingerprint(descriptor, "https://vision.example.com", deployment), fingerprints.Disclosure)
 	require.NoDirExists(t, home)
+	detectionOutput, err := runCLI(t, "processing", "vision-fingerprints", "--task", vision.DetectionProviderID, "--model", "synthetic-vision", "--trust-boundary", "hosted_provider", "--endpoint", "https://vision.example.com", "--deployment-fingerprint", deployment)
+	require.NoError(t, err)
+	var detection struct {
+		Descriptor string `toml:"descriptor_fingerprint"`
+		Disclosure string `toml:"disclosure_fingerprint"`
+	}
+	_, err = toml.Decode(detectionOutput, &detection)
+	require.NoError(t, err)
+	require.NotEqual(t, fingerprints.Descriptor, detection.Descriptor)
+	require.NotEqual(t, fingerprints.Disclosure, detection.Disclosure)
 	for _, tc := range []struct {
 		flag string
 		args []string

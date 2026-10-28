@@ -48,6 +48,7 @@ type Store struct {
 // format without changing that portable contract.
 const currentStorageSchemaVersion = 43
 const photoSuggestionsStorageSchemaVersion = 43
+const photoFaceDetectionStorageSchemaVersion = 43
 
 const photoBurstStorageSchemaVersion = 41
 

@@ -531,7 +531,11 @@ func exportMetadataSnapshotWithVaultIdentity(
 		}
 	}
 	if layout.schemaVersion >= photoFacesStorageSchemaVersion {
-		if err := photoFaceMetadata.export(ctx, tx, write); err != nil {
+		var codec metadataRecordCodec = photoFaceMetadata
+		if layout.schemaVersion < photoFaceDetectionStorageSchemaVersion {
+			codec = photoFaceMetadataBeforeDetection
+		}
+		if err := codec.export(ctx, tx, write); err != nil {
 			return err
 		}
 	}
@@ -1616,7 +1620,7 @@ func validateMetadataStateWithVaultIdentity(
 			}
 		}
 		if layout.schemaVersion >= photoFacesStorageSchemaVersion {
-			if err := validatePhotoFaceMetadataState(ctx, tx); err != nil {
+			if err := validatePhotoFaceMetadataState(ctx, tx, layout.schemaVersion); err != nil {
 				return err
 			}
 		}

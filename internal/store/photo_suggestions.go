@@ -460,8 +460,14 @@ func photoDescriptionInputTx(ctx context.Context, tx *sql.Tx, execution document
 // joinPhotoDescriptionTx finishes a description request's admission. A settled
 // version publishes its waiter with no job and no provider call; otherwise the
 // job runs, reopening if an earlier run completed without a stored result.
-func joinPhotoDescriptionTx(ctx context.Context, tx *sql.Tx, jobID, waiterID, version, producer string, explicit bool, now string) (RenditionJob, RenditionJobWaiter, error) {
-	settled, err := photoDescriptionSettledTx(ctx, tx, version, producer, explicit)
+func joinPhotoDescriptionTx(ctx context.Context, tx *sql.Tx, jobID, waiterID, version, producer string, explicit bool, now string, detection bool) (RenditionJob, RenditionJobWaiter, error) {
+	var settled bool
+	var err error
+	if detection {
+		settled, err = faceScanSettledTx(ctx, tx, version, producer)
+	} else {
+		settled, err = photoDescriptionSettledTx(ctx, tx, version, producer, explicit)
+	}
 	if err != nil {
 		return RenditionJob{}, RenditionJobWaiter{}, err
 	}

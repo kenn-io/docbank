@@ -6435,11 +6435,20 @@ export interface PhotoFace {
   box: FaceBox;
   content_version_id: string;
   created_at: string;
+  detector_fingerprint?: string;
   dismissed: boolean;
+  /** @nullable */
+  eyes_open?: boolean | null;
   face_id: string;
+  /** @nullable */
+  facing?: number | null;
   /** @maxItems 1000 */
   rejected_person_ids?: string[];
   revision: number;
+  /** @nullable */
+  roll?: number | null;
+  /** @nullable */
+  smile?: boolean | null;
 }
 
 export type PhotoFaceDecisionRequestAction = typeof PhotoFaceDecisionRequestAction[keyof typeof PhotoFaceDecisionRequestAction];

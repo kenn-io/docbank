@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/vision"
 )
 
 // RenditionJobState is the bounded durable execution state exposed to
@@ -371,7 +372,7 @@ func (s *Store) EnqueueRenditionJob(
 				}
 			}
 			var joinErr error
-			job, waiter, joinErr = joinPhotoDescriptionTx(ctx, tx, jobID, waiterID, request.ContentVersionID, profile.RenditionRequestFingerprint, explicit, now)
+			job, waiter, joinErr = joinPhotoDescriptionTx(ctx, tx, jobID, waiterID, request.ContentVersionID, profile.RenditionRequestFingerprint, explicit, now, request.ExecutionIdentity.Authorization.ProviderID == vision.DetectionProviderID)
 			return joinErr
 		}
 		var alreadyActive bool
@@ -1398,18 +1399,8 @@ func (s *Store) PublishPhotoDescription(
 func (s *Store) publishRenditionJob(
 	ctx context.Context, claim RenditionJobClaim, result *document.RenditionResult, at time.Time,
 ) (RenditionJobPublication, error) {
-	var description document.PhotoDescription
-	if result != nil {
-		if len(result.Artifacts) != 1 || result.Artifacts[0].Role != document.EvidenceArtifactStructured {
-			return RenditionJobPublication{}, ErrInvalidPhotoDescriptionResult
-		}
-		if err := json.Unmarshal(result.Artifacts[0].Payload, &description, json.RejectUnknownMembers(true)); err != nil {
-			return RenditionJobPublication{}, fmt.Errorf("%w: %w", ErrInvalidPhotoDescriptionResult, err)
-		}
-		var err error
-		if description, err = normalizePhotoDescription(description); err != nil {
-			return RenditionJobPublication{}, fmt.Errorf("%w: %w", ErrInvalidPhotoDescriptionResult, err)
-		}
+	if result != nil && (len(result.Artifacts) != 1 || result.Artifacts[0].Role != document.EvidenceArtifactStructured) {
+		return RenditionJobPublication{}, ErrInvalidPhotoDescriptionResult
 	}
 	publication := RenditionJobPublication{JobID: claim.JobID}
 	var publicationErr error
@@ -1544,8 +1535,27 @@ func (s *Store) publishRenditionJob(
  WHERE w.job_id=? AND w.state='waiting')`, claim.JobID).Scan(&explicit); err != nil {
 				return err
 			}
-			if err := publishPhotoSuggestionTx(ctx, tx, authorized[0].waiter.ContentVersionID, job.RenditionRequestFingerprint, explicit, description, at); err != nil {
-				return err
+			version := authorized[0].waiter.ContentVersionID
+			if executionIdentity.Authorization.ProviderID == vision.DetectionProviderID {
+				detection, err := vision.ParseFaces(result.Artifacts[0].Payload)
+				if err != nil {
+					return fmt.Errorf("%w: %w", ErrInvalidPhotoDescriptionResult, err)
+				}
+				if err := publishFaceDetectionTx(ctx, tx, version, job.RenditionRequestFingerprint, detection, at); err != nil {
+					return err
+				}
+			} else {
+				var description document.PhotoDescription
+				if err := json.Unmarshal(result.Artifacts[0].Payload, &description, json.RejectUnknownMembers(true)); err != nil {
+					return fmt.Errorf("%w: %w", ErrInvalidPhotoDescriptionResult, err)
+				}
+				description, err = normalizePhotoDescription(description)
+				if err != nil {
+					return fmt.Errorf("%w: %w", ErrInvalidPhotoDescriptionResult, err)
+				}
+				if err := publishPhotoSuggestionTx(ctx, tx, version, job.RenditionRequestFingerprint, explicit, description, at); err != nil {
+					return err
+				}
 			}
 		} else {
 			pairs := make([]renditionPublicationPair, 0, len(authorized))
