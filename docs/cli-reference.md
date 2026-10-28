@@ -2029,8 +2029,9 @@ daemons, and `docbank mcp` diagnostics.
 ## Private search misses
 
 Enable recording with `[miss_log] enabled = true` or
-`docbank daemon run --miss-log`. The log is off by default and contains private
-query text. The daemon's operator can inspect and delete it:
+`docbank daemon run --miss-log`. Submitted empty searches from the CLI, web app,
+TUI, and daemon-backed MCP can be recorded. The log is off by default and
+contains private query text. The daemon's operator can inspect and delete it:
 
 ```sh
 docbank miss-log list --limit 20 --offset 0

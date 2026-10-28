@@ -32,6 +32,10 @@ func missLogFailure() error {
 }
 
 func registerMissLogRoutes(api huma.API, d Deps, g *OperationGate) {
+	huma.Register(api, huma.Operation{OperationID: "recordMiss", Method: http.MethodPost, Path: "/api/v1/miss-log", Summary: "Record a submitted empty search", DefaultStatus: http.StatusNoContent}, func(ctx context.Context, in *struct{ Body misslog.Request }) (*struct{}, error) {
+		d.MissLog.Record(ctx, in.Body)
+		return nil, nil
+	})
 	type recordOutput struct {
 		CacheControl string `header:"Cache-Control"`
 		Body         misslog.Receipt
@@ -54,35 +58,6 @@ func registerMissLogRoutes(api huma.API, d Deps, g *OperationGate) {
 			return nil, missLogFailure()
 		}
 		return &recordOutput{CacheControl: "no-store", Body: receipt}, nil
-	})
-	type completionInput struct{ Body EmptySearchCompletionRequest }
-	type completionOutput struct{ Body EmptySearchCompletion }
-	huma.Register(api, huma.Operation{OperationID: "completeEmptySearch", Method: http.MethodPost, Path: "/api/v1/search/complete-empty", MaxBodyBytes: 1 << 20, Summary: "Record the final empty automatic CLI search (operator only)"}, func(ctx context.Context, in *completionInput) (*completionOutput, error) {
-		if err := requireMissLogOwner(ctx); err != nil {
-			return nil, err
-		}
-		request := in.Body.Search
-		if request.Fence.VaultUID != d.Store.VaultID() {
-			return nil, NewError(http.StatusUnprocessableEntity, "validation", "search scope belongs to another vault")
-		}
-		fingerprint, err := processing.SourceFenceFingerprint(processing.SourceFence{VaultUID: request.Fence.VaultUID, ContentVersionIDs: request.Fence.ContentVersionIDs})
-		if err != nil {
-			return nil, NewError(http.StatusUnprocessableEntity, "validation", "search scope is invalid")
-		}
-		if err := validateDocumentSearch(ctx, d.Processing, DocumentSearchValidationRequest{Query: request.Query, Mode: request.Mode, Limit: request.Limit, Profile: request.Profile, BindingID: request.BindingID}); err != nil {
-			return nil, err
-		}
-		for _, id := range request.Fence.ContentVersionIDs {
-			if _, err := d.Store.ContentVersionByID(ctx, id); err != nil {
-				return nil, NewError(http.StatusUnprocessableEntity, "validation", "search scope contains an unavailable version")
-			}
-		}
-		request.SkipMissLog = false
-		report := DocumentSearchReport{RequestedMode: request.Mode, ActualMode: in.Body.ActualMode, Coverage: in.Body.Coverage}
-		scope := misslog.ReceiptScope(request)
-		scope["folder_search"] = map[string]any{packageLimitParameter: request.Limit}
-		id := d.MissLog.Record(ctx, misslog.Receipt{Source: "client_finalized", Query: request.Query, Profile: request.Profile, RequestedMode: report.RequestedMode, ActualMode: report.ActualMode, Scope: scope, Coverage: misslog.ReceiptScope(report.Coverage), FenceFingerprint: fingerprint})
-		return &completionOutput{Body: EmptySearchCompletion{MissLogID: id}}, nil
 	})
 	type pageOutput struct {
 		CacheControl string `header:"Cache-Control"`
@@ -157,23 +132,22 @@ func registerMissLogRoutes(api huma.API, d Deps, g *OperationGate) {
 	})
 }
 
-func recordDocumentSearch(ctx context.Context, log *misslog.Service, input DocumentSearchRequest, report DocumentSearchReport) string {
-	if input.SkipMissLog || len(report.Results) != 0 {
-		return ""
+// DocumentSearchMiss keeps the compact outcome without source ID lists.
+func DocumentSearchMiss(query, profile string, request DocumentSearchRequest, report DocumentSearchReport) misslog.Request {
+	receipt := misslog.Request{Query: query, Profile: profile, BindingID: request.BindingID,
+		RequestedMode: report.RequestedMode, ActualMode: report.ActualMode,
+		DocumentCount: new(report.Coverage.ScopedDocuments), Truncated: report.Truncated, Degradations: report.Degradations,
+		Coverage: map[string]any{"binding_required": report.Coverage.BindingRequired, "scoped_documents": report.Coverage.ScopedDocuments,
+			"complete_documents": report.Coverage.CompleteDocuments, "state": report.Coverage.State}}
+	if request.Scope != nil {
+		receipt.Filters = misslog.ReceiptScope(request.Scope.Filters)
+	} else if len(request.Fence.ContentVersionIDs) > 0 {
+		fingerprint, _ := processing.SourceFenceFingerprint(processing.SourceFence{VaultUID: request.Fence.VaultUID, ContentVersionIDs: request.Fence.ContentVersionIDs})
+		receipt.FenceFingerprint = fingerprint
+		receipt.DocumentCount = new(len(request.Fence.ContentVersionIDs))
 	}
-	fingerprint, _ := processing.SourceFenceFingerprint(processing.SourceFence{VaultUID: input.Fence.VaultUID, ContentVersionIDs: input.Fence.ContentVersionIDs})
-	return log.Record(ctx, misslog.Receipt{Query: input.Query, Profile: input.Profile, RequestedMode: report.RequestedMode, ActualMode: report.ActualMode,
-		Truncated: report.Truncated, Degradations: report.Degradations, Reranking: misslog.ReceiptScope(report.Reranking),
-		Scope: misslog.ReceiptScope(input), Coverage: misslog.ReceiptScope(report.Coverage), FenceFingerprint: fingerprint})
-}
-
-// EmptySearchCompletionRequest describes the final CLI page after adding folders.
-// It accepts no excerpts, arbitrary metadata, or caller-selected record identity.
-type EmptySearchCompletionRequest struct {
-	Search     DocumentSearchRequest  `json:"search"`
-	ActualMode string                 `json:"actual_mode" enum:"lexical,semantic,hybrid"`
-	Coverage   DocumentSearchCoverage `json:"coverage"`
-}
-type EmptySearchCompletion struct {
-	MissLogID string `json:"miss_log_id,omitzero"`
+	if report.Reranking != nil {
+		receipt.Reranking = map[string]any{"outcome": report.Reranking.Outcome, "cause": report.Reranking.Cause, "candidate_count": report.Reranking.CandidateCount}
+	}
+	return receipt
 }

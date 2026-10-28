@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/misslog"
 )
 
 // Processing search requests accept at most this many results and query
@@ -26,6 +27,9 @@ const (
 type automaticSearchOutcome struct {
 	report  *api.DocumentSearchReport
 	request api.DocumentSearchRequest
+	receipt misslog.Request
+	profile string
+	binding string
 	reason  string
 	err     error
 }
@@ -52,7 +56,12 @@ func tryAutomaticSearch(ctx context.Context, c *daemonconn.Connection, query str
 		if code, _ := daemonconn.ProblemCode(err); code == "processing_unavailable" {
 			return automaticSearchOutcome{}, nil
 		}
-		return automaticSearchFallback(ctx, err)
+		outcome, fallbackErr := automaticSearchFallback(ctx, err)
+		if fallbackErr == nil && outcome.reason != "" {
+			outcome.receipt = misslog.Request{Query: query, RequestedMode: "hybrid", ActualMode: "lexical",
+				Degradations: []string{outcome.reason}}
+		}
+		return outcome, fallbackErr
 	}
 	candidates := daemonconn.AutomaticSearchCandidates(*profiles)
 	if len(candidates) == 0 {
@@ -61,15 +70,19 @@ func tryAutomaticSearch(ctx context.Context, c *daemonconn.Connection, query str
 	var first automaticSearchOutcome
 	for _, candidate := range candidates {
 		request := api.DocumentSearchRequest{Query: query, Mode: "hybrid", Profile: candidate.Profile,
-			BindingID: candidate.Binding, Limit: limit, Scope: &api.DocumentSearchScope{Kind: "all_live"}, SkipMissLog: true}
+			BindingID: candidate.Binding, Limit: limit, Scope: &api.DocumentSearchScope{Kind: "all_live"}}
 		report, searchErr := c.SearchDocuments(ctx, request)
 		if searchErr == nil {
-			return automaticSearchOutcome{report: &report, request: request}, nil
+			receipt := api.DocumentSearchMiss(query, candidate.Profile, request, report)
+			return automaticSearchOutcome{report: &report, request: request, receipt: receipt}, nil
 		}
 		outcome, err := automaticSearchFallback(ctx, searchErr)
 		if err != nil {
 			return automaticSearchOutcome{}, err
 		}
+		outcome.profile, outcome.binding = candidate.Profile, candidate.Binding
+		outcome.receipt = misslog.Request{Query: query, RequestedMode: "hybrid", ActualMode: "lexical",
+			Profile: candidate.Profile, BindingID: candidate.Binding, Degradations: []string{outcome.reason}}
 		if first.reason == "" {
 			first = outcome
 		}
@@ -151,19 +164,11 @@ func writeSearchDegradation(cmd *cobra.Command, outcome automaticSearchOutcome) 
 	return nil
 }
 
-// finalizeAutomaticSearchMiss records the one result page that the user sees.
-// Intermediate document and live-folder searches suppress their own records.
-// Best-effort completion must not leave ready results waiting indefinitely.
-func finalizeAutomaticSearchMiss(ctx context.Context, c *daemonconn.Connection, outcome *automaticSearchOutcome, empty bool) {
+// finalizeAutomaticSearchMiss builds the receipt for the accepted result page.
+// The caller records it only after a submitted search completes successfully.
+func finalizeAutomaticSearchMiss(outcome *automaticSearchOutcome, empty bool) {
 	if !empty || outcome.report == nil {
 		return
 	}
-	ctx, cancel := context.WithTimeout(ctx, time.Second)
-	defer cancel()
-	completion, err := c.CompleteEmptySearch(ctx, api.EmptySearchCompletionRequest{Search: outcome.request, ActualMode: outcome.report.ActualMode, Coverage: outcome.report.Coverage})
-	if err != nil {
-		slog.Warn("miss_log_completion_failed")
-		return
-	}
-	outcome.report.MissLogID = completion.MissLogID
+	outcome.receipt = api.DocumentSearchMiss(outcome.request.Query, outcome.request.Profile, outcome.request, *outcome.report)
 }

@@ -18,7 +18,6 @@ import (
 	"go.kenn.io/kit/pack"
 	"go.kenn.io/kit/packstore"
 
-	"go.kenn.io/docbank/internal/misslog"
 	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -464,7 +463,6 @@ func registerReadRoutes(api huma.API, d Deps) {
 			"outside the supplemental syntax reports not_run.",
 	}, func(ctx context.Context, in *struct {
 		Q              string `query:"q"`
-		SkipMissLog    bool   `query:"skip_miss_log"`
 		Fuzzy          bool   `query:"fuzzy"`
 		SourcePresent  bool   `query:"source_present"`
 		PDFFilter      string `query:"pdf_filter" maxLength:"16384"`
@@ -517,20 +515,6 @@ func registerReadRoutes(api huma.API, d Deps) {
 			out.Body.Hits = append(out.Body.Hits, SearchHit{
 				Node: fromStoreNode(h.Node), Path: h.Path, Match: h.Match,
 			})
-		}
-		if !in.SkipMissLog && len(hits) == 0 {
-			requestedMode, actualMode := "lexical", "lexical"
-			coverage := map[string]any{"truncated": truncated}
-			if in.Fuzzy {
-				requestedMode = "fuzzy"
-				coverage["fuzzy"] = fuzzy
-				if fuzzy.Status != store.FuzzyStatusNotRun {
-					actualMode = "fuzzy"
-				}
-			}
-			out.Body.MissLogID = d.MissLog.Record(ctx, misslog.Receipt{Query: in.Q, RequestedMode: requestedMode, ActualMode: actualMode, Truncated: truncated, Coverage: coverage, Scope: map[string]any{
-				"live_filters": true, packageLimitParameter: in.Limit, "tag_id": in.TagID, "mime_type": mimeType, "under_node_id": in.UnderNodeID, "modified_since": modifiedSince, "modified_before": modifiedBefore, "fuzzy": in.Fuzzy,
-			}})
 		}
 		return out, nil
 	})

@@ -5,7 +5,6 @@ import (
 	"errors"
 
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/internal/misslog"
 	internalprocessing "go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/retrieval"
 )
@@ -209,12 +208,7 @@ func (v *Vault) SearchDocuments(ctx context.Context, request DocumentSearchReque
 	if err != nil {
 		return DocumentSearchReport{}, err
 	}
-	result := fromSearchReport(report, request.Explain)
-	if len(report.Results) == 0 {
-		fingerprint, _ := internalprocessing.SourceFenceFingerprint(internalprocessing.SourceFence{VaultUID: request.Fence.VaultUID, ContentVersionIDs: request.Fence.ContentVersionIDs})
-		result.MissLogID = v.missLog.Record(ctx, misslog.Receipt{Source: "embedded", Query: request.Query, Profile: request.Profile, RequestedMode: string(result.RequestedMode), ActualMode: string(result.ActualMode), Scope: misslog.ReceiptScope(request), Coverage: misslog.ReceiptScope(result.Coverage), FenceFingerprint: fingerprint})
-	}
-	return result, nil
+	return fromSearchReport(report, request.Explain), nil
 }
 
 func toProcessingSelector(selector ProcessingSelector) internalprocessing.Selector {

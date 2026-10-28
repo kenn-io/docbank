@@ -31,7 +31,6 @@ function copyQuery(query: Query): Query {
 
 function copyOptions(options: SnapshotOptions): SnapshotOptions {
   return {
-    ...(options.skip_miss_log === undefined ? {} : { skip_miss_log: options.skip_miss_log }),
     ...(options.profile === undefined ? {} : { profile: options.profile }),
     ...(options.page_size === undefined ? {} : { page_size: options.page_size }),
     ...(options.facets === undefined ? {} : { facets: [...options.facets] }),

@@ -1540,19 +1540,19 @@ max_records = 5000
 `docbank daemon run --miss-log` enables recording for that foreground daemon
 run without changing the configuration file. There is no environment switch.
 
-The daemon records successful submitted searches that return no results,
-including searches with no documents in scope and web searches with advanced
-syntax or filters. Name and folder matches count as results. Errors, refreshes,
-Run again, re-freezes, reranking requests, and in-document finds create no
-record. Photo smart sets without query text create no record. Automatic CLI
-search combines document and folder results, then records one final miss.
+The CLI, web app, TUI, and daemon-backed MCP report submitted searches that show
+no results, including searches with no documents in scope and web searches with
+advanced syntax or filters. The daemon stores these receipts. Name and folder
+matches count as results. Errors, refreshes, Run again, re-freezes, reranking
+requests, and in-document finds create no record. Photo smart sets without query
+text, bare search API calls, and embedded library calls create no record.
 
 Receipts preserve the query, time, vault, requested and actual search modes,
 profile, search options, fence fingerprint or live filters, coverage,
-truncation, degradations, and reranking outcome. They omit document excerpts.
-The daemon waits at most 100 ms for mutation admission and storage. A failed
-write leaves the search available and logs a fixed diagnostic. Private receipt
-endpoints sanitize validation errors instead of echoing rejected values.
+truncation, degradations, and reranking outcome. They omit document excerpts
+and source ID lists. Encoded receipts over 64 KiB are skipped. Automatic writes
+wait at most 100 ms for mutation admission and storage. A failed write leaves
+the search available and logs a fixed diagnostic.
 
 Use `docbank miss-log list`, `show <id>`, `delete <id>`,
 `delete --before <RFC3339 timestamp>`, or `purge` to manage records through the

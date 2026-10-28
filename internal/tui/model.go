@@ -17,6 +17,7 @@ import (
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/misslog"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -56,6 +57,7 @@ const (
 // Backend is the bounded daemon surface needed by the TUI.
 // The CLI adapter uses generated API operations and receipt validation.
 type Backend interface {
+	RecordMiss(context.Context, misslog.Request)
 	ReportScreen(ctx context.Context, screen string) error
 	ReportAction(ctx context.Context, event, searchType, kind string) error
 	Stat(ctx context.Context, path string) (api.Node, error)
@@ -358,6 +360,7 @@ func (e *ScreenRetryError) Unwrap() error { return e.Err }
 // deferredSearchReport holds an accepted base search until its rerank reply
 // arrives, so later requests cannot discard or relabel it.
 type deferredSearchReport struct {
+	receipt             misslog.Request
 	requestID, searchID uint64
 	searchType          string
 	empty               bool
@@ -1895,7 +1898,7 @@ func (m Model) loadProcessingSearch(requestID uint64, query string) tea.Cmd {
 			Query: query, Mode: "auto", Limit: maxProcessingSearchItems, Profile: plan.Selector.Profile,
 			Fence: api.DocumentSourceFence{
 				VaultUID: plan.VaultUID, ContentVersionIDs: []string{plan.Selector.ContentVersionID},
-			}, Explain: true, SkipMissLog: true,
+			}, Explain: true,
 		})
 		return processingSearchLoadedMsg{requestID: requestID, searchID: searchID, report: report, err: err}
 	}
@@ -2428,7 +2431,7 @@ func (m Model) applySearch(msg searchLoadedMsg) (tea.Model, tea.Cmd) {
 	m.clampSelection()
 	if m.reportSearchID == msg.requestID {
 		m.reportSearchID = 0
-		return m, m.reportSearch("text", len(msg.report.Hits) == 0)
+		return m, m.reportSearch("text", len(msg.report.Hits) == 0, misslog.Request{Query: msg.query, RequestedMode: "lexical", ActualMode: "lexical", Truncated: msg.report.Truncated})
 	}
 	return m, nil
 }
@@ -2460,14 +2463,14 @@ func (m Model) applyNaturalSearchBase(msg naturalSearchBaseLoadedMsg) (tea.Model
 		m.reportSearchID = 0
 		var earlier tea.Cmd
 		if m.rerankReport.requestID != 0 {
-			earlier = m.reportSearch(m.rerankReport.searchType, m.rerankReport.empty)
+			earlier = m.reportSearch(m.rerankReport.searchType, m.rerankReport.empty, m.rerankReport.receipt)
 		}
-		m.rerankReport = deferredSearchReport{msg.requestID, msg.searchID, msg.report.ActualMode, len(m.rows) == 0}
+		m.rerankReport = deferredSearchReport{api.DocumentSearchMiss(msg.query, msg.request.Profile, msg.request, msg.report), msg.requestID, msg.searchID, msg.report.ActualMode, len(m.rows) == 0}
 		return m, tea.Batch(earlier, rerank)
 	}
 	if m.reportSearchID == msg.requestID && msg.report.ActualMode != "" {
 		m.reportSearchID = 0
-		return m, m.reportSearch(msg.report.ActualMode, len(m.rows) == 0)
+		return m, m.reportSearch(msg.report.ActualMode, len(m.rows) == 0, api.DocumentSearchMiss(msg.query, msg.request.Profile, msg.request, msg.report))
 	}
 	return m, nil
 }
@@ -2476,9 +2479,12 @@ func (m Model) applyNaturalSearchRerank(msg naturalSearchRerankLoadedMsg) (tea.M
 	// A settled rerank reports its accepted search even when a later request superseded it.
 	var report tea.Cmd
 	pending := m.rerankReport
+	if msg.report.Reranking != nil {
+		pending.receipt.Reranking = map[string]any{"outcome": msg.report.Reranking.Outcome, "cause": msg.report.Reranking.Cause, "candidate_count": msg.report.Reranking.CandidateCount}
+	}
 	if pending.requestID == msg.requestID && pending.searchID == msg.searchID {
 		m.rerankReport = deferredSearchReport{}
-		report = m.reportSearch(pending.searchType, pending.empty)
+		report = m.reportSearch(pending.searchType, pending.empty, pending.receipt)
 	}
 	if msg.requestID != m.requestID || msg.searchID != m.naturalSearchID {
 		return m, report
@@ -2502,7 +2508,16 @@ func (m Model) applyNaturalSearchRerank(msg naturalSearchRerankLoadedMsg) (tea.M
 		m.applyNaturalRows(m.searchQuery, msg.rows, msg.report.Truncated)
 		m.naturalSearchNote = naturalSearchReportNote(msg.report)
 		if report != nil {
-			report = m.reportSearch(msg.report.ActualMode, len(m.rows) == 0)
+			receipt := pending.receipt
+			receipt.RequestedMode = msg.report.RequestedMode
+			receipt.ActualMode = msg.report.ActualMode
+			receipt.DocumentCount = new(msg.report.Coverage.ScopedDocuments)
+			receipt.Truncated = msg.report.Truncated
+			receipt.Degradations = msg.report.Degradations
+			receipt.Coverage = map[string]any{"binding_required": msg.report.Coverage.BindingRequired,
+				"scoped_documents":   msg.report.Coverage.ScopedDocuments,
+				"complete_documents": msg.report.Coverage.CompleteDocuments, "state": msg.report.Coverage.State}
+			report = m.reportSearch(msg.report.ActualMode, len(m.rows) == 0, receipt)
 		}
 	}
 	return m, report
@@ -3156,11 +3171,14 @@ func (m Model) reportAction(event, searchType, kind string) tea.Cmd {
 	}
 }
 
-func (m Model) reportSearch(searchType string, empty bool) tea.Cmd {
+func (m Model) reportSearch(searchType string, empty bool, receipts ...misslog.Request) tea.Cmd {
 	return func() tea.Msg {
 		m.reportAction("search_run", searchType, "")()
 		if empty {
 			m.reportAction("search_empty", searchType, "")()
+			if len(receipts) > 0 {
+				m.backend.RecordMiss(m.ctx, receipts[0])
+			}
 		}
 		return nil
 	}

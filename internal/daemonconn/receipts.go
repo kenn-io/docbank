@@ -1024,7 +1024,6 @@ func IsCanonicalUUIDv4(value string) bool {
 type SearchOptions struct {
 	PDFFilter      string
 	SourcePresent  bool
-	SkipMissLog    bool
 	Fuzzy          bool
 	TagID          string
 	MIMEType       string
@@ -1079,9 +1078,6 @@ func (c *Connection) SearchWithOptions(
 	if opts.SourcePresent {
 		params.SourcePresent = new(true)
 	}
-	if opts.SkipMissLog {
-		params.SkipMissLog = new(true)
-	}
 	params.Q = new(query)
 	params.Limit = new(int64(limit))
 	if opts.Fuzzy {
@@ -1107,9 +1103,6 @@ func (c *Connection) SearchWithOptions(
 		return out, err
 	}
 	out = *apiResponse
-	if !validMissLogID(out.MissLogID) || (out.MissLogID != "" && (opts.SkipMissLog || len(out.Hits) != 0)) {
-		return api.SearchReport{}, errors.New("search response returned an invalid miss log receipt")
-	}
 	if out.PDFFilter != opts.PDFFilter || out.SourcePresent != opts.SourcePresent || out.TagID != opts.TagID || out.MIMEType != mimeType ||
 		out.UnderNodeID != opts.UnderNodeID || out.ModifiedSince != modifiedSince ||
 		out.ModifiedBefore != modifiedBefore {

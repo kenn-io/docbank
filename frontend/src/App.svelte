@@ -2090,12 +2090,18 @@
     }
   }
 
+  function recordMiss(receipt: generated.MissLogRequest, session = webSession): void {
+    void generated
+      .recordMiss(receipt, { session, signal: AbortSignal.timeout(1000) })
+      .catch(() => {});
+  }
+
   async function runSearch(
     preferredSelectedID = selectedID,
     queryOverride?: string,
     submitted = false,
     requestedSort?: Query["sort"],
-  ): Promise<{ type: string; empty: boolean } | undefined> {
+  ): Promise<{ type: string; empty: boolean; receipt: generated.MissLogRequest } | undefined> {
     invalidateTagHotkeyMutation();
     leaveSnapshotMode();
     const query = (queryOverride ?? searchQuery).trim();
@@ -2144,12 +2150,7 @@
       const mapped = naturalSearchRequest(mode, profile);
       if (!mapped) throw new Error(`${mode} search requires an embedding binding.`);
       const nameReport = await generated.search(
-        {
-          q: query,
-          limit: 1000,
-          skip_miss_log: true,
-          ...(requestedTagID ? { tag_id: requestedTagID } : {}),
-        },
+        { q: query, limit: 1000, ...(requestedTagID ? { tag_id: requestedTagID } : {}) },
         { session, signal: controller.signal },
       );
       if (request !== generation || session !== webSession || controller.signal.aborted) return;
@@ -2173,7 +2174,6 @@
           ...(requestedTagID ? { filters: { tag_id: requestedTagID } } : {}),
         },
         explain: true,
-        skip_miss_log: !submitted || nameRows.length > 0,
       };
       const baseReport = await documentSearch(session, baseRequest, controller.signal);
       if (request !== generation || session !== webSession || controller.signal.aborted) return;
@@ -2215,6 +2215,19 @@
       // The base results are accepted, so the search counts however reranking ends.
       let outcome = {
         type: baseReport.actual_mode,
+        receipt: {
+          query,
+          profile: profile.name,
+          ...(baseRequest.binding_id ? { binding_id: baseRequest.binding_id } : {}),
+          requested_mode: baseReport.requested_mode,
+          actual_mode: baseReport.actual_mode,
+          ...(requestedTagID ? { filters: { tag_id: requestedTagID } } : {}),
+          document_count: baseReport.coverage.scoped_documents,
+          coverage: { ...baseReport.coverage },
+          truncated: baseReport.truncated,
+          degradations: baseReport.degradations,
+          ...(baseReport.reranking ? { reranking: { ...baseReport.reranking } } : {}),
+        },
         empty: baseRows.length === 0 && nameRows.length === 0,
       };
       if (baseReport.results.length === 0 || !naturalSearchRerank(profile, mode, naturalRerank))
@@ -2234,6 +2247,7 @@
           !naturalRerank
         )
           return outcome;
+        if (reranked.reranking) outcome.receipt.reranking = { ...reranked.reranking };
         if (reranked.reranking?.outcome !== "applied") {
           naturalSearchNote = rerankingNote(
             reranked.reranking?.outcome ?? "failed",
@@ -2269,6 +2283,14 @@
         naturalSearchNote = rerankingNote("applied");
         outcome = {
           type: reranked.actual_mode,
+          receipt: {
+            ...outcome.receipt,
+            actual_mode: reranked.actual_mode,
+            coverage: { ...reranked.coverage },
+            truncated: reranked.truncated,
+            degradations: reranked.degradations,
+            ...(reranked.reranking ? { reranking: { ...reranked.reranking } } : {}),
+          },
           empty: rerankedRows.length === 0 && nameRows.length === 0,
         };
       } catch (cause) {
@@ -2359,14 +2381,9 @@
     session: string,
     signal: AbortSignal,
     note = "",
-  ): Promise<{ type: string; empty: boolean } | undefined> {
+  ): Promise<{ type: string; empty: boolean; receipt: generated.MissLogRequest } | undefined> {
     const report = await generated.search(
-      {
-        q: query,
-        limit: 1000,
-        skip_miss_log: !submitted,
-        ...(requestedTagID ? { tag_id: requestedTagID } : {}),
-      },
+      { q: query, limit: 1000, ...(requestedTagID ? { tag_id: requestedTagID } : {}) },
       { session, signal },
     );
     if (request !== generation || session !== webSession || signal.aborted) return;
@@ -2387,7 +2404,17 @@
     );
     naturalSearchNote = note;
     loading = false;
-    return { type: "text", empty: nextRows.length === 0 };
+    return {
+      type: "text",
+      empty: nextRows.length === 0,
+      receipt: {
+        query,
+        requested_mode: "lexical",
+        actual_mode: "lexical",
+        filters: { tag_id: requestedTagID },
+        truncated: report.truncated,
+      },
+    };
   }
 
   function applySearchRows(
@@ -2587,7 +2614,10 @@
     queryBarOpen = false;
     naturalSearchMode = naturalProfile ? "auto" : "names";
     const outcome = await runSearch(undefined, undefined, true, sortOnly);
-    if (outcome) reportSearch(webSession, outcome.type, outcome.empty);
+    if (outcome) {
+      reportSearch(webSession, outcome.type, outcome.empty);
+      if (outcome.empty) recordMiss(outcome.receipt);
+    }
   }
 
   // Whether the draft is the plain-words search plus an order, which the ranked search can run.
@@ -2614,7 +2644,10 @@
     searchQuery = query.text;
     naturalSearchMode = "auto";
     const outcome = await runSearch(undefined, undefined, true, query.sort);
-    if (outcome) reportSearch(webSession, outcome.type, outcome.empty);
+    if (outcome) {
+      reportSearch(webSession, outcome.type, outcome.empty);
+      if (outcome.empty) recordMiss(outcome.receipt);
+    }
   }
 
   function applyResultSort(sort: Query["sort"]): void {
@@ -3050,7 +3083,6 @@
   async function runSnapshot(
     query: Query,
     options: SnapshotOptions,
-    submitted = false,
   ): Promise<{ type: "text"; empty: boolean } | { type: "failed"; cause: Error } | undefined> {
     invalidateTagHotkeyMutation();
     generation += 1;
@@ -3058,7 +3090,7 @@
     loading = false;
     naturalRerankPending = false;
     naturalProfileDefaultPending = null;
-    return snapshot.run(query, { ...options, skip_miss_log: !submitted });
+    return snapshot.run(query, options);
   }
 
   async function submitSnapshot(
@@ -3068,7 +3100,7 @@
   ): Promise<void> {
     const revision = queryDraftRevision;
     if (!preserveDraft) keepQueryDraft(query);
-    const outcome = await runSnapshot(query, options, !preserveDraft);
+    const outcome = await runSnapshot(query, options);
     if (outcome?.type === "failed") reportFailure(webSession, "search", outcome.cause);
     else if (outcome) {
       if (!preserveDraft && revision === queryDraftRevision) {
@@ -3078,6 +3110,18 @@
         queryDraftFromDefinition = false;
       }
       reportSearch(webSession, outcome.type, outcome.empty);
+      if (!preserveDraft && outcome.empty) {
+        const { text, ...filters } = query;
+        recordMiss({
+          query: text,
+          requested_mode: query.mode,
+          actual_mode: query.mode,
+          profile: options.profile,
+          filters,
+          coverage: { ...snapshot.state.page?.coverage },
+          truncated: !!snapshot.state.page?.next_cursor,
+        });
+      }
     }
   }
 

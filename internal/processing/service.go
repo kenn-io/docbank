@@ -2084,21 +2084,13 @@ func selectDocumentSearchBinding(profile document.ProcessingProfileV1,
 	return document.EmbeddingBindingV1{}, fmt.Errorf("embedding binding %q: %w", name, store.ErrNotFound)
 }
 
-func (service *Service) profileForFence(name string, fence SourceFence) (configuredProfile, error) {
+func (service *Service) profileFence(name string, fence SourceFence) (configuredProfile, []string, error) {
 	profile, ok := service.profiles[name]
 	if !ok {
-		return configuredProfile{}, ErrProfileNotConfigured
+		return configuredProfile{}, nil, ErrProfileNotConfigured
 	}
 	if fence.VaultUID != service.catalog.VaultID() {
-		return configuredProfile{}, ErrForeignVault
-	}
-	return profile, nil
-}
-
-func (service *Service) profileFence(name string, fence SourceFence) (configuredProfile, []string, error) {
-	profile, err := service.profileForFence(name, fence)
-	if err != nil {
-		return configuredProfile{}, nil, err
+		return configuredProfile{}, nil, ErrForeignVault
 	}
 	ids, err := normalizeFenceIDs(fence.ContentVersionIDs)
 	return profile, ids, err

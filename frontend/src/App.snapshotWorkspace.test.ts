@@ -103,7 +103,6 @@ function snapshot(
 }
 
 it("navigates frozen documents across pages and stops at the boundary or expiry", async () => {
-  let workspaceCreates = 0;
   const action = vi.spyOn(actions, "reportAction").mockImplementation(() => {});
   const searchAction = vi.spyOn(actions, "reportSearch").mockImplementation(() => {});
   const failure = vi.spyOn(actions, "reportFailure").mockImplementation(() => {});
@@ -183,8 +182,7 @@ it("navigates frozen documents across pages and stops at the boundary or expiry"
       });
     }
     if (url === "/api/v1/workspace/queries") {
-      const { query, skip_miss_log } = JSON.parse(String(init?.body));
-      expect(skip_miss_log).toBe([false, true, false, true][workspaceCreates++]);
+      const { query } = JSON.parse(String(init?.body));
       return json({
         ...snapshot(query, first.rows, { next_cursor: "next" }),
         snapshot_id: first.snapshot_id,
@@ -242,9 +240,7 @@ it("navigates frozen documents across pages and stops at the boundary or expiry"
   render(App);
   await fireEvent.click(await screen.findByRole("button", { name: "Search" }));
   await screen.findByText("Document 1 of 101");
-  await waitFor(() =>
-    expect(searchAction).toHaveBeenCalledExactlyOnceWith("synthetic", "text", false),
-  );
+  expect(searchAction).toHaveBeenCalledExactlyOnceWith("synthetic", "text", false);
   searchAction.mockClear();
   await waitFor(() => expect(highlightRequests).toBe(1));
   const opened = screen.getByRole("cell", { name: "/records/report-100.pdf" }).closest("tr")!;
@@ -278,11 +274,6 @@ it("navigates frozen documents across pages and stops at the boundary or expiry"
     );
   }
   expect(cursors).toEqual(["next", "previous"]);
-  await fireEvent.click(screen.getByRole("button", { name: "Run again" }));
-  await waitFor(() => expect(workspaceCreates).toBe(2));
-  await screen.findByText("Document 1 of 101");
-  searchAction.mockClear();
-
   expect(action).not.toHaveBeenCalled();
   expect(highlightRequests).toBe(1);
   await fireEvent.click(screen.getByRole("tab", { name: "Text" }));
@@ -295,13 +286,10 @@ it("navigates frozen documents across pages and stops at the boundary or expiry"
   await fireEvent.click(screen.getByRole("button", { name: "Search" }));
   await screen.findByText("Document 1 of 101");
   await waitFor(() => expect(highlightRequests).toBe(2));
-  await waitFor(() =>
-    expect(searchAction).toHaveBeenCalledExactlyOnceWith("synthetic", "text", false),
-  );
+  expect(searchAction).toHaveBeenCalledExactlyOnceWith("synthetic", "text", false);
   searchAction.mockClear();
   const results = screen.getByRole("region", { name: "Frozen query results" });
   await fireEvent.click(within(results).getByRole("button", { name: "Document" }));
-  await waitFor(() => expect(workspaceCreates).toBe(4));
   await screen.findByText("Document 1 of 101");
   expect(action).not.toHaveBeenCalled();
 });

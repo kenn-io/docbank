@@ -130,6 +130,7 @@ function installHarness(options: HarnessOptions) {
     path: "/",
   };
   const postBodies: Record<string, unknown>[] = [];
+  const misses: Record<string, unknown>[] = [];
   let rerankResolve: ((response: Response) => void) | undefined;
   let baseResolve: ((response: Response) => void) | undefined;
   let profilesResolve: ((response: Response) => void) | undefined;
@@ -160,6 +161,10 @@ function installHarness(options: HarnessOptions) {
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     const method = init?.method ?? "GET";
+    if (url === "/api/v1/miss-log" && method === "POST") {
+      misses.push(JSON.parse(String(init?.body)));
+      return new Response(null, { status: 204 });
+    }
     if (url === "/api/v1/path?path=%2F") return json(root);
     if (url === "/api/v1/nodes/1/children?limit=1000&offset=0") {
       return json({
@@ -280,6 +285,7 @@ function installHarness(options: HarnessOptions) {
   });
   return {
     fetchMock,
+    misses,
     postBodies,
     resolveRerank: (response: Response) => rerankResolve?.(response),
     resolveBase: (response: Response) => baseResolve?.(response),
@@ -358,6 +364,9 @@ it.each([
     render(App);
     await screen.findByRole("button", { name: "Open" });
     await submitSearch("invoices");
+    if (embeddings)
+      await waitFor(() => expect(harness.postBodies).toHaveLength(1));
+    else await waitFor(() => expect(harness.legacyCalls()).toBe(1));
     expect(await screen.findByRole("cell", { name: "/invoices" })).toBeTruthy();
     if (embeddings && liveFiles) {
       await screen.findByText("invoice excerpt");
@@ -373,17 +382,19 @@ it.each([
       expect(harness.postBodies).toHaveLength(embeddings ? 1 : 0);
       if (!embeddings) expect(harness.legacyCalls()).toBe(1);
     }
+    expect(harness.misses).toHaveLength(0);
   },
 );
 
 it("keeps names and text on GET without a processing profile", async () => {
   const file = node(2, "existing.txt", baseVersion);
-  const { fetchMock } = installHarness({
+  const filtered = node(3, "filtered.txt", rerankedVersion);
+  const harness = installHarness({
     profiles: [],
     files: [file],
     baseReport: report("lexical", [result(file, 1, "unused")]),
     tagSearch: {
-      hits: [{ node: file, path: file.path, match: "content" }],
+      hits: [{ node: filtered, path: filtered.path, match: "content" }],
       limit: 1000,
       truncated: false,
       tag_id: tagID,
@@ -397,36 +408,33 @@ it("keeps names and text on GET without a processing profile", async () => {
   );
   await fireEvent.click(screen.getByRole("option", { name: "reviewed (1)" }));
   await submitSearch("existing");
-  await screen.findByText("/existing.txt");
+  await screen.findByText("/filtered.txt");
   expect(
-    fetchMock.mock.calls.some(
+    harness.fetchMock.mock.calls.some(
       ([input, init]) =>
         String(input).startsWith("/api/v1/search?") && (init?.method ?? "GET") === "GET",
     ),
   ).toBe(true);
-  const searchURL = fetchMock.mock.calls
+  const searchURL = harness.fetchMock.mock.calls
     .map(([input]) => String(input))
     .find((input) => input.startsWith("/api/v1/search?"));
   expect(searchURL).toContain("limit=1000");
   expect(searchURL).toContain(`tag_id=${tagID}`);
-  expect(new URL(searchURL!, "https://example.com").searchParams.get("skip_miss_log")).toBe(
-    "false",
-  );
+  expect(new URL(searchURL!, "https://example.com").searchParams.get("skip_miss_log")).toBeNull();
   await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
   await waitFor(() => {
-    const searchURLs = fetchMock.mock.calls
+    const searchURLs = harness.fetchMock.mock.calls
       .map(([input]) => String(input))
       .filter((input) => input.startsWith("/api/v1/search?"));
     expect(searchURLs).toHaveLength(2);
-    expect(new URL(searchURLs[1]!, "https://example.com").searchParams.get("skip_miss_log")).toBe(
-      "true",
-    );
+    expect(new URL(searchURLs[1]!, "https://example.com").searchParams.get("skip_miss_log")).toBeNull();
   });
   expect(
-    fetchMock.mock.calls.some(
+    harness.fetchMock.mock.calls.some(
       ([input, init]) => String(input) === "/api/v1/search" && init?.method === "POST",
     ),
   ).toBe(false);
+  expect(harness.misses).toHaveLength(0);
   expect(screen.queryByText("Reranking results… Base results are shown.")).toBeNull();
 });
 
@@ -1063,9 +1071,17 @@ it("shows the empty-population note and reports a submitted search once", async 
   await screen.findByText("No documents match the current filter.");
   expect(harness.postBodies).toHaveLength(1);
   expect(searchRun).toHaveBeenCalledExactlyOnceWith("short-lived", "hybrid", true);
+  await waitFor(() => expect(harness.misses).toHaveLength(1));
+  expect(harness.misses[0]).toMatchObject({
+    query: "nothing",
+    requested_mode: "hybrid",
+    actual_mode: "hybrid",
+    document_count: 0,
+  });
   await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
   await waitFor(() => expect(harness.postBodies).toHaveLength(2));
   expect(searchRun).toHaveBeenCalledOnce();
+  expect(harness.misses).toHaveLength(1);
   expect(failure).not.toHaveBeenCalled();
 });
 
@@ -1199,9 +1215,9 @@ it("ignores an aborted natural search completion", async () => {
     String(input).startsWith("/api/v1/search?"),
   );
   expect(nameRequests).toHaveLength(2);
-  expect(new URL(String(nameRequests[1][0]), "https://example.com").searchParams.get("q")).toBe(
-    "new query",
-  );
+  expect(
+    nameRequests.map(([url]) => new URL(String(url), "https://example.com").searchParams.get("q")),
+  ).toEqual(["old query", "new query"]);
 });
 
 it("shows why natural search controls could not load", async () => {
@@ -1531,7 +1547,7 @@ it.each(["unrun edit", "failed search"])(
 
 it("filtered search walkthrough reaches accepted results", async () => {
   const file = node(2, "report.txt", baseVersion);
-  const harness = installHarness({
+  const options: HarnessOptions = {
     profiles: [
       {
         name: "private",
@@ -1560,10 +1576,12 @@ it("filtered search walkthrough reaches accepted results", async () => {
       },
     ],
     baseReport: report("hybrid", [result(file, 1, "report excerpt")]),
-  });
+  };
+  const harness = installHarness(options);
   render(App);
   await submitSearch("annual report");
   await screen.findByText("report excerpt");
+  harness.misses.length = 0;
   expect(screen.queryByText("Filters search names and text only.")).toBeNull();
   await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
   await fireEvent.input(screen.getByLabelText("Filters JSON"), {
@@ -1580,6 +1598,18 @@ it("filtered search walkthrough reaches accepted results", async () => {
   expect(
     harness.fetchMock.mock.calls.some(([url]) => String(url) === "/api/v1/workspace/queries"),
   ).toBe(true);
+  options.snapshotRows = [];
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  await fireEvent.input(screen.getByLabelText("Filters JSON"), {
+    target: { value: '{"size_min":20}' },
+  });
+  await screen.findByRole("status", { name: "Query valid" });
+  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  await waitFor(() => expect(harness.misses).toHaveLength(1));
+  expect(harness.misses[0]).toMatchObject({
+    query: "annual report",
+    filters: { filters: { size_min: 20 } },
+  });
   await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
   await fireEvent.input(screen.getByLabelText("Filters JSON"), {
     target: { value: "{}" },
@@ -1887,9 +1917,7 @@ it.each(["names", "meaning", "frozen"])(
   },
 );
 
-it.each(["file", "dir"])("skips a document miss when a %s name matches", async (kind) => {
-  const file = node(2, "matched.txt", baseVersion);
-  const match = kind === "dir" ? { ...file, kind: "dir" } : file;
+it.each([false, true])("records an empty submission once with reranking %s", async (rerank) => {
   const harness = installHarness({
     profiles: [
       {
@@ -1897,26 +1925,25 @@ it.each(["file", "dir"])("skips a document miss when a %s name matches", async (
         fingerprint: "a".repeat(64),
         rendition: true,
         embedding_bindings: ["embed"],
-        reranking_available: false,
+        reranking_available: rerank,
       },
     ],
-    files: [file],
+    files: [node(2, "existing.txt", baseVersion)],
     baseReport: report("hybrid", []),
-    tagSearch: {
-      hits: [{ node: match, path: "/matched.txt", match: "name" }],
-      limit: 1000,
-      truncated: false,
-    },
+    rerankReport: report("hybrid", [], { outcome: "applied", candidate_count: 0 }),
   });
   render(App);
-  await screen.findAllByText("matched.txt");
-  await submitSearch("matched");
-  await waitFor(() => expect(harness.postBodies).toHaveLength(1));
-  expect(harness.postBodies[0]?.skip_miss_log).toBe(true);
-  const searches = harness.fetchMock.mock.calls.filter(([url]) =>
-    String(url).startsWith("/api/v1/search"),
-  );
-  expect(String(searches[0]?.[0])).toContain("skip_miss_log=true");
-  expect(String(searches[1]?.[0])).toBe("/api/v1/search");
-  expect(await screen.findByText("/matched.txt")).toBeTruthy();
+  await screen.findAllByText("existing.txt");
+  if (rerank)
+    await fireEvent.click(await screen.findByRole("checkbox", { name: "Rerank results" }));
+  await submitSearch("missing");
+  await waitFor(() => expect(harness.misses).toHaveLength(1));
+  expect(harness.misses[0]).toMatchObject({
+    query: "missing",
+    actual_mode: "hybrid",
+    document_count: 2,
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
+  await waitFor(() => expect(harness.postBodies).toHaveLength(2));
+  expect(harness.misses).toHaveLength(1);
 });

@@ -110,7 +110,7 @@ func CallDocumentReadTool(ctx context.Context, reader *api.DocumentReader, req *
 	case "list_documents":
 		out, links, err = listDocuments(ctx, session, req.Params.Arguments)
 	case "search_documents":
-		out, links, err = searchDocuments(ctx, session, req.Params.Arguments)
+		out, links, err = searchDocuments(ctx, session, req.Params.Arguments, false)
 	case "get_vault_info":
 		out, err = getVaultInfo(ctx, session, req.Params.Arguments)
 	}

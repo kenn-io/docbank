@@ -14,7 +14,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/config"
-	"go.kenn.io/docbank/internal/misslog"
 	"go.kenn.io/docbank/internal/processing"
 )
 
@@ -125,15 +124,15 @@ func TestMissLogMCPEmptyScopeUsesDaemonAndEmbeddedReader(t *testing.T) {
 	args := map[string]any{"query": "synthetic private scope miss", "mode": "lexical", "profile": profileName, "filters": map[string]any{"mime_type": "image/png"}}
 	remote, err := invokeReadTool(t.Context(), exportTestLease(t, httpServer.URL), "search_documents", args)
 	require.NoError(t, err)
-	require.NotEmpty(t, structuredMap(t, remote.StructuredContent)["miss_log_id"])
-	reader := api.NewDocumentReader(f.catalog, f.blobs, os.Getenv("DOCBANK_HOME"), service, misslog.New(f.catalog, cfg.MissLog, nil))
+	assert.NotContains(t, structuredMap(t, remote.StructuredContent), "miss_log_id")
+	reader := api.NewDocumentReader(f.catalog, f.blobs, os.Getenv("DOCBANK_HOME"), service)
 	raw, err := json.Marshal(args)
 	require.NoError(t, err)
 	result, err := CallDocumentReadTool(t.Context(), reader, &sdkmcp.CallToolRequest{Params: &sdkmcp.CallToolParamsRaw{Name: "search_documents", Arguments: raw}})
 	require.NoError(t, err)
 	require.False(t, result.IsError, result)
-	require.NotEmpty(t, structuredMap(t, result.StructuredContent)["miss_log_id"])
+	assert.NotContains(t, structuredMap(t, result.StructuredContent), "miss_log_id")
 	records, err := f.catalog.ListMissLogRecords(t.Context(), 10, 0)
 	require.NoError(t, err)
-	require.Len(t, records, 2)
+	require.Len(t, records, 1)
 }

@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json/v2"
 	"log/slog"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -15,27 +16,31 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-// Receipt preserves the search request and outcome without document excerpts.
-// Scope contains search options or live GET filters; fences use fingerprints.
-type Receipt struct {
-	Source           string         `json:"source"`
-	ID               string         `json:"id"`
-	CreatedAt        time.Time      `json:"created_at"`
-	VaultUID         string         `json:"vault_uid"`
-	Query            string         `json:"query"`
-	Profile          string         `json:"profile,omitempty"`
-	RequestedMode    string         `json:"requested_mode"`
-	ActualMode       string         `json:"actual_mode"`
-	Scope            map[string]any `json:"scope"`
-	Coverage         map[string]any `json:"coverage,omitempty"`
+// Request describes the empty result accepted by a submitting client.
+type Request struct {
+	Query            string         `json:"query" maxLength:"8192"`
+	BindingID        string         `json:"binding_id,omitempty" maxLength:"256"`
+	Profile          string         `json:"profile,omitempty" maxLength:"256"`
+	RequestedMode    string         `json:"requested_mode" enum:"auto,lexical,semantic,hybrid,fuzzy"`
+	ActualMode       string         `json:"actual_mode" enum:"auto,lexical,semantic,hybrid,fuzzy"`
+	Filters          map[string]any `json:"filters,omitempty" maxProperties:"32"`
+	Coverage         map[string]any `json:"coverage,omitempty" maxProperties:"32"`
 	Truncated        bool           `json:"truncated"`
-	Degradations     []string       `json:"degradations,omitempty"`
-	Reranking        map[string]any `json:"reranking,omitempty"`
-	FenceFingerprint string         `json:"fence_fingerprint,omitempty"`
-	Triggers         []string       `json:"triggers"`
+	Degradations     []string       `json:"degradations,omitempty" maxItems:"64"`
+	Reranking        map[string]any `json:"reranking,omitempty" maxProperties:"8"`
+	FenceFingerprint string         `json:"fence_fingerprint,omitempty" maxLength:"128"`
+	DocumentCount    *int           `json:"document_count,omitempty" minimum:"0"`
 }
 
-// Service belongs to one vault owner and one daemon (or embedded vault) lifetime.
+// Receipt adds daemon-owned identity and time to the submitted outcome.
+type Receipt struct {
+	Request
+	ID        string    `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	VaultUID  string    `json:"vault_uid"`
+}
+
+// Service belongs to one vault owner and one daemon lifetime.
 type Service struct {
 	store        *store.Store
 	config       config.MissLogConfig
@@ -53,8 +58,6 @@ func New(st *store.Store, cfg config.MissLogConfig, logger *slog.Logger, mutator
 	if len(mutators) > 0 && mutators[0] != nil {
 		s.mutate = mutators[0]
 	}
-	// Automatic recording may use fail-fast admission; explicit owner writes
-	// retain the first, ordinary mutation admission function.
 	s.recordMutate = s.mutate
 	if len(mutators) > 1 && mutators[1] != nil {
 		s.recordMutate = mutators[1]
@@ -69,40 +72,33 @@ func New(st *store.Store, cfg config.MissLogConfig, logger *slog.Logger, mutator
 	return s
 }
 
-// Record persists one successful empty search. An empty ID means logging was
-// disabled or failed; the caller's search remains usable in either case.
-func (s *Service) Record(ctx context.Context, receipt Receipt) string {
-	if s == nil || !s.config.Enabled || s.store == nil {
-		return ""
+// Record stores a bounded receipt. Failures leave the search usable.
+func (s *Service) Record(ctx context.Context, request Request) {
+	if s == nil || !s.config.Enabled || s.store == nil || (strings.TrimSpace(request.Query) == "" && len(request.Filters) == 0) {
+		return
 	}
-	if utf8.RuneCountInString(receipt.Query) > 32768 || len(receipt.Profile) > 128 {
+	if utf8.RuneCountInString(request.Query) > 32768 || len(request.Profile) > 128 || len(request.BindingID) > 128 {
 		s.logger.Warn("miss_log_write_failed")
-		return ""
+		return
 	}
 	var random [24]byte
 	if _, err := rand.Read(random[:]); err != nil {
 		s.logger.Warn("miss_log_write_failed")
-		return ""
+		return
 	}
-	if receipt.Source == "" {
-		receipt.Source = "daemon"
-	}
-	receipt.ID = hex.EncodeToString(random[:])
-	receipt.CreatedAt = time.Now().UTC()
-	receipt.VaultUID = s.store.VaultID()
-	receipt.Triggers = []string{"no_match"}
+	receipt := Receipt{Request: request, ID: hex.EncodeToString(random[:]), CreatedAt: time.Now().UTC(), VaultUID: s.store.VaultID()}
 	encoded, err := json.Marshal(receipt)
-	if err != nil || len(encoded) > 8<<20 {
+	if err != nil || len(encoded) > 64<<10 {
 		s.logger.Warn("miss_log_write_failed")
-		return ""
+		return
 	}
+	ctx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+	defer cancel()
 	if err = s.recordMutate(ctx, func() error {
 		return s.store.TryAddMissLogRecord(ctx, store.MissLogRecord{ID: receipt.ID, CreatedAt: receipt.CreatedAt, Receipt: string(encoded)}, receipt.CreatedAt, s.config.RetentionDays, s.config.MaxRecords)
 	}); err != nil {
 		s.logger.Warn("miss_log_write_failed")
-		return ""
 	}
-	return receipt.ID
 }
 
 // ReceiptScope projects search options or outcomes without large source lists.

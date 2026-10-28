@@ -67,7 +67,7 @@ func executeReadTool(
 	case "answer_question":
 		output, links, err = answerQuestion(ctx, daemonAnswerSession(lease), raw)
 	case "search_documents":
-		output, links, err = searchDocuments(ctx, daemonDocumentSession(lease), raw)
+		output, links, err = searchDocuments(ctx, daemonDocumentSession(lease), raw, true)
 	case "find_conflicts":
 		output, links, err = findConflicts(ctx, lease, raw)
 	case "get_document":
@@ -416,7 +416,6 @@ type sourceFenceOutput struct {
 
 type searchDocumentsOutput struct {
 	privateCache
-	MissLogID          string                              `json:"miss_log_id,omitzero"`
 	VaultID            string                              `json:"vault_id,omitzero"`
 	Fence              *sourceFenceOutput                  `json:"fence,omitzero"`
 	FenceFingerprint   string                              `json:"fence_fingerprint,omitzero"`
@@ -431,7 +430,7 @@ type searchDocumentsOutput struct {
 }
 
 func searchDocuments(
-	ctx context.Context, session documentReadSession, raw []byte,
+	ctx context.Context, session documentReadSession, raw []byte, recordMiss bool,
 ) (searchDocumentsOutput, []*sdkmcp.ResourceLink, error) {
 	var input searchDocumentsInput
 	if err := decodeReadArguments(raw, &input); err != nil {
@@ -440,12 +439,17 @@ func searchDocuments(
 	input.Mode = effectiveSearchMode(input.Mode)
 
 	result, err := documentRead(ctx, session, func(ctx context.Context, c documentClient) (documentSearchResponse, error) {
-		return runDocumentSearch(ctx, c, input, false)
+		out, err := runDocumentSearch(ctx, c, input, false)
+		if daemon, ok := c.(daemonDocumentClient); recordMiss && ok && err == nil && len(out.report.Results) == 0 {
+			receipt := api.DocumentSearchMiss(input.Query, input.Profile, out.request, out.report)
+			daemon.RecordMiss(ctx, receipt)
+		}
+		return out, err
 	})
 	if err != nil {
 		return searchDocumentsOutput{}, nil, err
 	}
-	output := searchDocumentsOutput{MissLogID: result.report.MissLogID, VaultID: result.vaultID,
+	output := searchDocumentsOutput{VaultID: result.vaultID,
 		RequestedMode: result.report.RequestedMode, ActualMode: result.report.ActualMode,
 		Coverage: searchCoverageOutput{BindingRequired: result.report.Coverage.BindingRequired,
 			ScopedDocuments:   result.report.Coverage.ScopedDocuments,
@@ -473,6 +477,7 @@ func searchDocuments(
 }
 
 type documentSearchResponse struct {
+	request    api.DocumentSearchRequest
 	resolution api.DocumentSourceFenceResolution
 	vaultID    string
 	report     api.DocumentSearchReport
@@ -500,13 +505,13 @@ func runDocumentSearch(ctx context.Context, c documentClient, input searchDocume
 		return documentSearchResponse{}, callErr
 	}
 	if len(report.Results) == 0 {
-		return documentSearchResponse{resolution: resolution, vaultID: resolution.Fence.VaultUID, report: report, documents: []api.DocumentSummary{}}, nil
+		return documentSearchResponse{request: request, resolution: resolution, vaultID: resolution.Fence.VaultUID, report: report, documents: []api.DocumentSummary{}}, nil
 	}
 	documents, callErr := resolveSearchSummaries(ctx, c, report.Results)
 	if callErr != nil {
 		return documentSearchResponse{}, callErr
 	}
-	return documentSearchResponse{resolution: resolution, vaultID: report.Results[0].VaultUID, report: report, documents: documents}, nil
+	return documentSearchResponse{request: request, resolution: resolution, vaultID: report.Results[0].VaultUID, report: report, documents: documents}, nil
 }
 
 // retrieval.(*Searcher).rerank scores and sorts only the candidate prefix.

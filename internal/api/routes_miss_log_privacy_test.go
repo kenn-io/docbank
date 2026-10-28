@@ -9,25 +9,17 @@ import (
 	"go.kenn.io/docbank/internal/api"
 )
 
-func TestMissLogEmptyCompletionValidationIsPrivate(t *testing.T) {
+func TestMissLogSubmittedQueryValidationIsPrivate(t *testing.T) {
 	t.Parallel()
-	ts, st := newTestServer(t, func(d *api.Deps) { configureProcessingTestService(t)(d); d.Cfg.MissLog.Enabled = true })
-	for _, field := range []string{"query", "unknown"} {
-		t.Run(field, func(t *testing.T) {
-			sentinel := "private-completion-sentinel"
-			input := map[string]any{"search": map[string]any{"query": "synthetic", "mode": "lexical", "profile": "private", "fence": map[string]any{"vault_uid": st.VaultID(), "content_version_ids": []string{}}}, "actual_mode": "lexical", "coverage": map[string]any{"state": "complete", "binding_required": false, "scoped_documents": 0, "complete_documents": 0}}
-			if field == "query" {
-				search, ok := input["search"].(map[string]any)
-				require.True(t, ok)
-				search["query"] = sentinel + strings.Repeat("x", 8193)
-			} else {
-				input["unknown"] = sentinel
-			}
-			resp, body := do(t, ts, http.MethodPost, "/api/v1/search/complete-empty", nil, input)
-			require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
-			require.NotContains(t, body, sentinel)
-		})
-	}
+	ts, st := newTestServer(t, func(d *api.Deps) { d.Cfg.MissLog.Enabled = true })
+	sentinel := "private-miss-sentinel"
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/miss-log", nil,
+		map[string]any{"query": sentinel + strings.Repeat("x", 8192)})
+	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+	require.NotContains(t, body, sentinel)
+	rows, err := st.ListMissLogRecords(t.Context(), 10, 0)
+	require.NoError(t, err)
+	require.Empty(t, rows)
 }
 
 func TestMissLogDeletionStoreErrorsArePrivate(t *testing.T) {

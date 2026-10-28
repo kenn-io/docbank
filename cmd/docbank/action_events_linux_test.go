@@ -68,6 +68,8 @@ func TestCLICompletedSearchAndContentActions(t *testing.T) {
 	var hits []api.SearchHit
 	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.URL.Path == "/api/v1/miss-log":
+			w.WriteHeader(http.StatusNoContent)
 		case r.URL.Path == "/api/daemon/telemetry/events":
 			body, err := io.ReadAll(r.Body)
 			assert.NoError(t, err)

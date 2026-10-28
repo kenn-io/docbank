@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/misslog"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/docbank/internal/telemetry"
 )
@@ -27,6 +28,7 @@ type actionCall struct {
 }
 
 type fakeBackend struct {
+	misses                    []misslog.Request
 	actions                   []actionCall
 	screenErr                 error
 	screens                   []string
@@ -388,7 +390,7 @@ func (f *fakeBackend) SearchDocuments(_ context.Context, request api.DocumentSea
 		}
 		return f.naturalSearch, nil
 	}
-	if request.Limit != maxProcessingSearchItems || request.Mode != "auto" || !request.Explain || !request.SkipMissLog ||
+	if request.Limit != maxProcessingSearchItems || request.Mode != "auto" || !request.Explain ||
 		request.Profile != f.plan.Selector.Profile || request.Fence.VaultUID != f.plan.VaultUID ||
 		!assert.ObjectsAreEqual(request.Fence.ContentVersionIDs, []string{f.plan.Selector.ContentVersionID}) {
 		return api.DocumentSearchReport{}, errors.New("unexpected document search request")
@@ -3047,6 +3049,8 @@ func TestEmptyArmedSearchReportsRunAndEmpty(t *testing.T) {
 	_, cmd := updateModel(t, model, msg)
 	runModelCommand(t, model, cmd)
 	assert.Equal(t, []actionCall{{event: "search_run", searchType: "text"}, {event: "search_empty", searchType: "text"}}, backend.actions)
+	require.Len(t, backend.misses, 1)
+	require.Equal(t, "missing", backend.misses[0].Query)
 }
 
 func TestProcessingSearchReportsOutcome(t *testing.T) {
@@ -3074,41 +3078,6 @@ func TestProcessingSearchReportsOutcome(t *testing.T) {
 	}
 }
 
-func TestMissLogSearchSubmissionRequests(t *testing.T) {
-	for _, emptyScope := range []bool{false, true} {
-		fake := newFakeBackend()
-		if emptyScope {
-			fake.sourceFence.Fence.ContentVersionIDs = nil
-		}
-		model, err := New(t.Context(), fake)
-		require.NoError(t, err)
-		model.naturalProfiles = fake.profiles
-		model.naturalMode = naturalLexical
-		model.searching = true
-		model.searchInput.SetValue("missing")
-		model, command := updateModel(t, model, key(tea.KeyEnter))
-		model = runModelCommand(t, model, command)
-		require.Len(t, fake.naturalSearchRequests, 1)
-		assert.Equal(t, !emptyScope, len(fake.naturalSearchRequests[0].Fence.ContentVersionIDs) > 0)
-		assert.False(t, fake.naturalSearchRequests[0].SkipMissLog)
-		model.loadNaturalRerank(model.requestID, model.naturalSearchID, fake.naturalSearchRequests[0], naturalLexical)()
-		assert.True(t, fake.naturalSearchRequests[1].SkipMissLog)
-		model.loadNaturalSearch("missing", model.requestID, false)()
-		assert.True(t, fake.naturalSearchRequests[2].SkipMissLog)
-		model.naturalMode = naturalNames
-		model.loadSearch("missing", model.requestID, true)()
-		assert.True(t, fake.searchSubmitted)
-		model.loadSearch("missing", model.requestID, false)()
-		assert.False(t, fake.searchSubmitted)
-	}
-}
-
-func TestMissLogSkipsInDocumentFind(t *testing.T) {
-	fake := newFakeBackend()
-	model, err := New(t.Context(), fake)
-	require.NoError(t, err)
-	model.processingPlan = &fake.plan
-	msg := model.loadProcessingSearch(1, "missing")().(processingSearchLoadedMsg)
-	require.NoError(t, msg.err)
-	require.Equal(t, 1, fake.processingSearchCalls)
+func (f *fakeBackend) RecordMiss(_ context.Context, receipt misslog.Request) {
+	f.misses = append(f.misses, receipt)
 }

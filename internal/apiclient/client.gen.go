@@ -6260,6 +6260,47 @@ func (c *Client) ListMissLog(ctx context.Context, options *ListMissLogRequestOpt
 	return responseParser(ctx, resp)
 }
 
+// RecordMiss Record a submitted empty search
+func (c *Client) RecordMiss(ctx context.Context, options *RecordMissRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/miss-log",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*struct{}, error) {
+		switch resp.StatusCode {
+
+		case 204:
+
+			target := new(struct{})
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[RecordMissErrorResponse](resp, "RecordMissErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/miss-log")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 204)
+	}
+	return responseParser(ctx, resp)
+}
+
 // DeleteMissLogRecord Delete one private search miss (operator only)
 func (c *Client) DeleteMissLogRecord(ctx context.Context, options *DeleteMissLogRecordRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
 	var err error
@@ -13704,7 +13745,6 @@ func (c *Client) Search(ctx context.Context, options *SearchRequestOptions, reqE
 		"modified_since":  {Style: "form", Explode: &[]bool{false}[0]},
 		"pdf_filter":      {Style: "form", Explode: &[]bool{false}[0]},
 		"q":               {Style: "form", Explode: &[]bool{false}[0]},
-		"skip_miss_log":   {Style: "form", Explode: &[]bool{false}[0]},
 		"source_present":  {Style: "form", Explode: &[]bool{false}[0]},
 		"tag_id":          {Style: "form", Explode: &[]bool{false}[0]},
 		"under_node_id":   {Style: "form", Explode: &[]bool{false}[0]},
@@ -14197,53 +14237,6 @@ func (c *Client) ReviseTermReport(ctx context.Context, options *ReviseTermReport
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/search-exports/{id}/revisions")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-	if resp.Streaming {
-		return nil, c.acceptStream(resp, 200)
-	}
-	return responseParser(ctx, resp)
-}
-
-// CompleteEmptySearch Record the final empty automatic CLI search (operator only)
-func (c *Client) CompleteEmptySearch(ctx context.Context, options *CompleteEmptySearchRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CompleteEmptySearchResponse, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/search/complete-empty",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	responseParser := func(_ context.Context, resp *runtime.Response) (*CompleteEmptySearchResponse, error) {
-		switch resp.StatusCode {
-
-		case 200:
-
-			target := new(CompleteEmptySearchResponse)
-			if err := json.Unmarshal(resp.Content, target); err != nil {
-				return nil, &runtime.ResponseDecodeError{
-					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
-					ContentLength: len(resp.Content), TargetType: "CompleteEmptySearchResponse", Body: resp.Content, Err: err,
-				}
-			}
-
-			return target, nil
-
-		default:
-
-			return nil, decodeAPIError[CompleteEmptySearchErrorResponse](resp, "CompleteEmptySearchErrorResponse")
-
-		}
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/search/complete-empty")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -20399,6 +20392,34 @@ func (o *ListMissLogRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// RecordMissRequestOptions is the options needed to make a request to RecordMiss.
+type RecordMissRequestOptions struct {
+	Body *RecordMissBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *RecordMissRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *RecordMissRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *RecordMissRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *RecordMissRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // DeleteMissLogRecordRequestOptions is the options needed to make a request to DeleteMissLogRecord.
 type DeleteMissLogRecordRequestOptions struct {
 	PathParams *DeleteMissLogRecordPath
@@ -25706,34 +25727,6 @@ func (o *ReviseTermReportRequestOptions) GetHeader() (map[string]string, error) 
 	return nil, nil
 }
 
-// CompleteEmptySearchRequestOptions is the options needed to make a request to CompleteEmptySearch.
-type CompleteEmptySearchRequestOptions struct {
-	Body *CompleteEmptySearchBody
-}
-
-// GetPathParams returns the path params as a map.
-func (o *CompleteEmptySearchRequestOptions) GetPathParams() (map[string]any, error) {
-	return nil, nil
-}
-
-// GetQuery returns the query params as a map.
-func (o *CompleteEmptySearchRequestOptions) GetQuery() (map[string]any, error) {
-	return nil, nil
-}
-
-// GetBody returns the payload in any type that can be marshalled to JSON by the client.
-func (o *CompleteEmptySearchRequestOptions) GetBody() any {
-	if o.Body == nil {
-		return nil
-	}
-	return o.Body
-}
-
-// GetHeader returns the headers as a map.
-func (o *CompleteEmptySearchRequestOptions) GetHeader() (map[string]string, error) {
-	return nil, nil
-}
-
 // FindSimilarDocumentsRequestOptions is the options needed to make a request to FindSimilarDocuments.
 type FindSimilarDocumentsRequestOptions struct {
 	Body *FindSimilarDocumentsBody
@@ -28262,6 +28255,8 @@ type ImportMediaArtifactBody struct {
 
 type RetryMediaSourceBody = MediaRetryBody
 
+type RecordMissBody = MissLogRequest
+
 type CreateNodeBody = CreateNodeRequest
 
 type MoveNodeBody = MoveNodeRequest
@@ -28447,8 +28442,6 @@ type GetTermReportDatesBody = DatePageRequest
 type IssueTermReportDownloadBody = IssueTermReportDownloadRequest
 
 type ReviseTermReportBody = ReviseTermReportRequest
-
-type CompleteEmptySearchBody = EmptySearchCompletionRequest
 
 type FindSimilarDocumentsBody = DocumentSimilarRequest
 
@@ -28847,7 +28840,6 @@ type ListSavedQueriesQuery struct {
 
 type SearchQuery struct {
 	Q              *string `json:"q,omitempty"`
-	SkipMissLog    *bool   `json:"skip_miss_log,omitempty"`
 	Fuzzy          *bool   `json:"fuzzy,omitempty"`
 	SourcePresent  *bool   `json:"source_present,omitempty"`
 	PdfFilter      *string `json:"pdf_filter,omitempty"`
@@ -29469,6 +29461,8 @@ type DeleteMissLogErrorResponse = Error
 type ListMissLogResponse = api.MissLogPage
 
 type ListMissLogErrorResponse = Error
+
+type RecordMissErrorResponse = Error
 
 type DeleteMissLogRecordErrorResponse = Error
 
@@ -30278,10 +30272,6 @@ type ReviseTermReportResponse = report.Summary
 
 type ReviseTermReportErrorResponse = Error
 
-type CompleteEmptySearchResponse = api.EmptySearchCompletion
-
-type CompleteEmptySearchErrorResponse = Error
-
 type FindSimilarDocumentsResponse = api.DocumentSimilarReport
 
 type FindSimilarDocumentsErrorResponse = Error
@@ -30993,10 +30983,6 @@ type EmbeddingBindingV1 = document.EmbeddingBindingV1
 
 type EmbeddingChunkPolicyV1 = document.EmbeddingChunkPolicyV1
 
-type EmptySearchCompletion = api.EmptySearchCompletion
-
-type EmptySearchCompletionRequest = api.EmptySearchCompletionRequest
-
 type EmptyTrashRequest struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema    *string `json:"$schema,omitempty"`
@@ -31226,6 +31212,8 @@ type Message = mailbox.Message
 type MissLogPage = api.MissLogPage
 
 type MissLogReceipt = misslog.Receipt
+
+type MissLogRequest = misslog.Request
 
 type MkdirPathRequest struct {
 	// Schema A URL to the JSON Schema for this object.

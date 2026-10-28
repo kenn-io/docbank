@@ -443,8 +443,7 @@ func TestSearchReadScopedEmptySearchSkipsVaultInfo(t *testing.T) {
 			wantCode: "processing_profile_unavailable", wantError: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			searchCalls := 0
-			infoCalls := 0
+			searchCalls, infoCalls, missCalls := 0, 0, 0
 			daemon := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 				switch request.URL.Path {
 				case "/api/v1/info":
@@ -472,13 +471,16 @@ func TestSearchReadScopedEmptySearchSkipsVaultInfo(t *testing.T) {
 						})
 						return
 					}
-					report := api.DocumentSearchReport{MissLogID: strings.Repeat("a", 48), RequestedMode: "lexical", ActualMode: "lexical",
-						Coverage:     api.DocumentSearchCoverage{State: "unknown"},
+					report := api.DocumentSearchReport{RequestedMode: "lexical", ActualMode: "lexical",
+						Coverage:     api.DocumentSearchCoverage{State: "complete"},
 						Degradations: []string{}, Results: []api.DocumentSearchResult{}}
 					if test.rerank {
 						report.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "skipped"}
 					}
 					writeDaemonJSON(t, response, report)
+				case "/api/v1/miss-log":
+					missCalls++
+					response.WriteHeader(http.StatusNoContent)
 				default:
 					http.NotFound(response, request)
 				}
@@ -495,6 +497,7 @@ func TestSearchReadScopedEmptySearchSkipsVaultInfo(t *testing.T) {
 			assert.Equal(t, 1, searchCalls)
 			assert.Zero(t, infoCalls)
 			if test.wantError {
+				assert.Zero(t, missCalls)
 				require.Error(t, err)
 				facts, ok := daemonProblemFacts(err)
 				require.True(t, ok)
@@ -502,10 +505,11 @@ func TestSearchReadScopedEmptySearchSkipsVaultInfo(t *testing.T) {
 				assert.Nil(t, result)
 				return
 			}
+			assert.Equal(t, 1, missCalls)
 			require.NoError(t, err)
 			output := structuredMap(t, result.StructuredContent)
 			assert.Equal(t, []any{}, output["results"])
-			assert.Equal(t, strings.Repeat("a", 48), output["miss_log_id"])
+			assert.NotContains(t, output, "miss_log_id")
 			assert.NotContains(t, output, "vault_id")
 			assert.NotContains(t, output, "fence")
 			assert.NotContains(t, output, "fence_fingerprint")
@@ -519,6 +523,7 @@ func TestSearchReadScopedEmptySearchSkipsVaultInfo(t *testing.T) {
 
 func TestSearchReadWithNonEmptyFenceAndNoHitsSkipsDocumentResolution(t *testing.T) {
 	resolveCalls := 0
+	missCalls := 0
 	daemon := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/api/v1/processing/source-fences/resolve":
@@ -529,6 +534,9 @@ func TestSearchReadWithNonEmptyFenceAndNoHitsSkipsDocumentResolution(t *testing.
 			writeDaemonJSON(t, response, api.DocumentSearchReport{RequestedMode: "lexical", ActualMode: "lexical",
 				Coverage:     api.DocumentSearchCoverage{ScopedDocuments: 1, CompleteDocuments: 1, State: "complete"},
 				Degradations: []string{}, Results: []api.DocumentSearchResult{}})
+		case "/api/v1/miss-log":
+			missCalls++
+			response.WriteHeader(http.StatusNoContent)
 		case "/api/v1/documents/resolve":
 			resolveCalls++
 			t.Fatal("zero-hit search must not resolve document summaries")
@@ -547,6 +555,7 @@ func TestSearchReadWithNonEmptyFenceAndNoHitsSkipsDocumentResolution(t *testing.
 	})
 	require.NoError(t, err)
 	assert.Zero(t, resolveCalls)
+	assert.Equal(t, 1, missCalls)
 	assert.Empty(t, resourceLinkURIs(result))
 	assert.Equal(t, []any{}, structuredMap(t, result.StructuredContent)["results"])
 	assert.Equal(t, testVaultID, structuredMap(t, result.StructuredContent)["vault_id"])

@@ -53,10 +53,11 @@ func TestEmptyNaturalSearchSkipsRerank(t *testing.T) {
 	assert.Empty(t, model.rows)
 	assert.Equal(t, []actionCall{{event: "search_run", searchType: "lexical"}, {event: "search_empty", searchType: "lexical"}}, fake.actions)
 	assert.Zero(t, model.reportSearchID)
+	require.Len(t, fake.misses, 1)
+	require.Equal(t, "missing", fake.misses[0].Query)
 	_, cmd = model.applyNaturalSearchBase(base)
 	assert.Nil(t, cmd)
 }
-
 func TestNaturalSearchReportsFinalRerankedEmptiness(t *testing.T) {
 	for _, baseEmpty := range []bool{true, false} {
 		t.Run(map[bool]string{true: "empty base gains rows", false: "nonempty base loses rows"}[baseEmpty], func(t *testing.T) {

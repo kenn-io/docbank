@@ -35,7 +35,6 @@ func TestSearchModesRequireExplicitBindingWhenProfileIsAmbiguous(t *testing.T) {
 			assert.Equal(t, "hybrid", body.Mode)
 			assert.Equal(t, "multilingual", body.BindingID)
 			assert.True(t, body.Rerank)
-			assert.True(t, body.SkipMissLog)
 			assert.Equal(t, vaultID, body.Fence.VaultUID)
 			assert.Equal(t, []string{processingTestVersionID}, body.Fence.ContentVersionIDs)
 			assert.NoError(t, json.MarshalWrite(w, api.DocumentSearchReport{

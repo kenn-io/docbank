@@ -2,8 +2,7 @@ package daemonconn
 
 import (
 	"context"
-	"encoding/hex"
-	"errors"
+	"time"
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
@@ -36,24 +35,10 @@ func (c *Connection) DeleteMissLog(ctx context.Context, before string) error {
 	_, err := c.API().DeleteMissLog(ctx, &apiclient.DeleteMissLogRequestOptions{Query: query})
 	return err
 }
-func (c *Connection) CompleteEmptySearch(ctx context.Context, input api.EmptySearchCompletionRequest) (api.EmptySearchCompletion, error) {
-	out, err := c.API().CompleteEmptySearch(ctx, &apiclient.CompleteEmptySearchRequestOptions{Body: &input})
-	if err != nil {
-		return api.EmptySearchCompletion{}, err
-	}
-	if !validMissLogID(out.MissLogID) {
-		return api.EmptySearchCompletion{}, errors.New("search completion returned an invalid miss log ID")
-	}
-	return *out, nil
-}
 
-func validMissLogID(id string) bool {
-	if id == "" {
-		return true
-	}
-	if len(id) != 48 {
-		return false
-	}
-	decoded, err := hex.DecodeString(id)
-	return err == nil && hex.EncodeToString(decoded) == id
+// RecordMiss sends a best-effort receipt within a one-second deadline.
+func (c *Connection) RecordMiss(ctx context.Context, receipt misslog.Request) {
+	ctx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	_, _ = c.API().RecordMiss(ctx, &apiclient.RecordMissRequestOptions{Body: &receipt})
 }

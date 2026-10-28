@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"go.kenn.io/docbank/internal/blob"
-	"go.kenn.io/docbank/internal/misslog"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -14,18 +13,13 @@ import (
 type DocumentReader struct {
 	*documentQueryService
 
-	missLog    *misslog.Service
 	processing *processing.Service
 	blobs      *blob.Store
 	vaultRoot  string
 }
 
-func NewDocumentReader(st *store.Store, blobs *blob.Store, vaultRoot string, service *processing.Service, logs ...*misslog.Service) *DocumentReader {
-	var log *misslog.Service
-	if len(logs) > 0 {
-		log = logs[0]
-	}
-	return &DocumentReader{missLog: log, documentQueryService: newDocumentQueryService(Deps{Store: st}), processing: service, blobs: blobs, vaultRoot: vaultRoot}
+func NewDocumentReader(st *store.Store, blobs *blob.Store, vaultRoot string, service *processing.Service) *DocumentReader {
+	return &DocumentReader{documentQueryService: newDocumentQueryService(Deps{Store: st}), processing: service, blobs: blobs, vaultRoot: vaultRoot}
 }
 
 func (r *DocumentReader) VaultInfo(ctx context.Context) (VaultInfo, error) {

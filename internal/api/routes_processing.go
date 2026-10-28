@@ -396,9 +396,6 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		if d.Processing == nil {
 			return nil, processingUnavailable()
 		}
-		if len(input.Body.Fence.ContentVersionIDs) == 0 {
-			return nil, NewError(http.StatusUnprocessableEntity, "validation", "fence.content_version_ids must contain at least one content version")
-		}
 		report, err := d.Processing.FindSimilar(ctx, processing.SimilarRequest{
 			Selector:  processing.Selector{NodeID: input.Body.Selector.NodeID, ContentVersionID: input.Body.Selector.ContentVersionID, Profile: input.Body.Selector.Profile},
 			BindingID: input.Body.BindingID, Limit: input.Body.Limit,
@@ -431,7 +428,6 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		if err != nil {
 			return nil, err
 		}
-		report.MissLogID = recordDocumentSearch(ctx, d.MissLog, input.Body, report)
 		return &searchOutput{Body: report}, nil
 	})
 }

@@ -2287,7 +2287,6 @@ export interface DocumentSearchReport {
   /** @maxItems 4096 */
   media_selections?: DocumentMediaSelection[];
   media_source_selection?: boolean;
-  miss_log_id?: string;
   requested_mode: string;
   reranking?: DocumentSearchRerankingReceipt;
   results: DocumentSearchResult[];
@@ -2306,7 +2305,10 @@ export const DocumentSearchRequestMode = {
 } as const;
 
 export interface DocumentSourceFence {
-  /** @maxItems 4096 */
+  /**
+     * @minItems 1
+     * @maxItems 4096
+     */
   content_version_ids: string[];
   vault_uid: string;
 }
@@ -2366,7 +2368,6 @@ export interface DocumentSearchRequest {
   query: string;
   rerank?: boolean;
   scope?: DocumentSearchScope;
-  skip_miss_log?: boolean;
 }
 
 export interface DocumentSearchValidation {
@@ -3185,29 +3186,6 @@ export interface EmailPending {
   readonly $schema?: string;
   state: string;
   version: ContentVersion;
-}
-
-export interface EmptySearchCompletion {
-  /** A URL to the JSON Schema for this object. */
-  readonly $schema?: string;
-  miss_log_id?: string;
-}
-
-export type EmptySearchCompletionRequestActualMode = typeof EmptySearchCompletionRequestActualMode[keyof typeof EmptySearchCompletionRequestActualMode];
-
-
-export const EmptySearchCompletionRequestActualMode = {
-  lexical: 'lexical',
-  semantic: 'semantic',
-  hybrid: 'hybrid',
-} as const;
-
-export interface EmptySearchCompletionRequest {
-  /** A URL to the JSON Schema for this object. */
-  readonly $schema?: string;
-  actual_mode: EmptySearchCompletionRequestActualMode;
-  coverage: DocumentSearchCoverage;
-  search: DocumentSearchRequest;
 }
 
 export interface EmptyTrashRequest {
@@ -4300,28 +4278,56 @@ export interface Message {
   start: number;
 }
 
+export type MissLogReceiptActualMode = typeof MissLogReceiptActualMode[keyof typeof MissLogReceiptActualMode];
+
+
+export const MissLogReceiptActualMode = {
+  auto: 'auto',
+  lexical: 'lexical',
+  semantic: 'semantic',
+  hybrid: 'hybrid',
+  fuzzy: 'fuzzy',
+} as const;
+
+export type MissLogReceiptRequestedMode = typeof MissLogReceiptRequestedMode[keyof typeof MissLogReceiptRequestedMode];
+
+
+export const MissLogReceiptRequestedMode = {
+  auto: 'auto',
+  lexical: 'lexical',
+  semantic: 'semantic',
+  hybrid: 'hybrid',
+  fuzzy: 'fuzzy',
+} as const;
+
 export type MissLogReceiptCoverage = {[key: string]: unknown};
 
-export type MissLogReceiptReranking = {[key: string]: unknown};
+export type MissLogReceiptFilters = {[key: string]: unknown};
 
-export type MissLogReceiptScope = {[key: string]: unknown};
+export type MissLogReceiptReranking = {[key: string]: unknown};
 
 export interface MissLogReceipt {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  actual_mode: string;
+  actual_mode: MissLogReceiptActualMode;
+  /** @maxLength 256 */
+  binding_id?: string;
   coverage?: MissLogReceiptCoverage;
   created_at: string;
+  /** @maxItems 64 */
   degradations?: string[];
+  /** @minimum 0 */
+  document_count?: number;
+  /** @maxLength 128 */
   fence_fingerprint?: string;
+  filters?: MissLogReceiptFilters;
   id: string;
+  /** @maxLength 256 */
   profile?: string;
+  /** @maxLength 8192 */
   query: string;
-  requested_mode: string;
+  requested_mode: MissLogReceiptRequestedMode;
   reranking?: MissLogReceiptReranking;
-  scope: MissLogReceiptScope;
-  source: string;
-  triggers: string[];
   truncated: boolean;
   vault_uid: string;
 }
@@ -4332,6 +4338,57 @@ export interface MissLogPage {
   items: MissLogReceipt[];
   limit: number;
   offset: number;
+}
+
+export type MissLogRequestActualMode = typeof MissLogRequestActualMode[keyof typeof MissLogRequestActualMode];
+
+
+export const MissLogRequestActualMode = {
+  auto: 'auto',
+  lexical: 'lexical',
+  semantic: 'semantic',
+  hybrid: 'hybrid',
+  fuzzy: 'fuzzy',
+} as const;
+
+export type MissLogRequestCoverage = {[key: string]: unknown};
+
+export type MissLogRequestFilters = {[key: string]: unknown};
+
+export type MissLogRequestRequestedMode = typeof MissLogRequestRequestedMode[keyof typeof MissLogRequestRequestedMode];
+
+
+export const MissLogRequestRequestedMode = {
+  auto: 'auto',
+  lexical: 'lexical',
+  semantic: 'semantic',
+  hybrid: 'hybrid',
+  fuzzy: 'fuzzy',
+} as const;
+
+export type MissLogRequestReranking = {[key: string]: unknown};
+
+export interface MissLogRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  actual_mode: MissLogRequestActualMode;
+  /** @maxLength 256 */
+  binding_id?: string;
+  coverage?: MissLogRequestCoverage;
+  /** @maxItems 64 */
+  degradations?: string[];
+  /** @minimum 0 */
+  document_count?: number;
+  /** @maxLength 128 */
+  fence_fingerprint?: string;
+  filters?: MissLogRequestFilters;
+  /** @maxLength 256 */
+  profile?: string;
+  /** @maxLength 8192 */
+  query: string;
+  requested_mode: MissLogRequestRequestedMode;
+  reranking?: MissLogRequestReranking;
+  truncated: boolean;
 }
 
 export interface MkdirPathRequest {
@@ -8349,7 +8406,6 @@ export interface SearchReport {
   hits: SearchHit[];
   limit: number;
   mime_type?: string;
-  miss_log_id?: string;
   modified_before?: string;
   modified_since?: string;
   pdf_filter?: string;
@@ -9199,7 +9255,6 @@ export interface WorkspaceQueryCreateRequest {
   /** @maxLength 128 */
   profile?: string;
   query: SavedQueryV1Schema;
-  skip_miss_log?: boolean;
 }
 
 export interface WorkspaceQueryPageRequest {
@@ -10284,7 +10339,6 @@ export type RunSavedQueryHeaders = {
 
 export type SearchParams = {
 q?: string;
-skip_miss_log?: boolean;
 fuzzy?: boolean;
 source_present?: boolean;
 /**
@@ -14896,6 +14950,44 @@ export const listMissLog = async (params?: ListMissLogParams, options?: Paramete
     method: 'GET'
 
 
+  }
+);}
+
+
+
+export const getRecordMissUrl = () => {
+
+
+
+
+  return `/api/v1/miss-log`
+}
+
+/**
+ * @summary Record a submitted empty search
+ */
+export const recordMiss = async (missLogRequest: NonReadonly<MissLogRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<void>(getRecordMissUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(missLogRequest)
   }
 );}
 
@@ -20774,44 +20866,6 @@ return sessionJSON<Summary>(getReviseTermReportUrl(id),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(reviseTermReportRequest)
-  }
-);}
-
-
-
-export const getCompleteEmptySearchUrl = () => {
-
-
-
-
-  return `/api/v1/search/complete-empty`
-}
-
-/**
- * @summary Record the final empty automatic CLI search (operator only)
- */
-export const completeEmptySearch = async (emptySearchCompletionRequest: NonReadonly<EmptySearchCompletionRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<EmptySearchCompletion> => {
-
-    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Symbol.iterator in h) {
-      return Object.fromEntries(
-        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
-      );
-    }
-    const headers: Record<string, string | readonly string[]> = {};
-    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
-      if (value !== undefined) headers[name] = value;
-    }
-    return headers;
-  };
-return sessionJSON<EmptySearchCompletion>(getCompleteEmptySearchUrl(),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
-    body: JSON.stringify(emptySearchCompletionRequest)
   }
 );}
 

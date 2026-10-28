@@ -15,7 +15,7 @@ func sanitizeMissLogErrorResponse(ctx huma.Context, _ string, value any) (any, e
 	if op == nil {
 		return value, nil
 	}
-	if !strings.Contains(op.OperationID, "MissLog") && op.OperationID != "completeEmptySearch" {
+	if !strings.HasPrefix(op.Path, "/api/v1/miss-log") {
 		return value, nil
 	}
 	problem, ok := value.(*Error)
