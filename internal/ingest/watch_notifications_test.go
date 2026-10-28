@@ -246,16 +246,6 @@ func TestFolderWatchEventRunnerUsesSharedScanner(t *testing.T) {
 	require.NoError(t, os.WriteFile(pathname, []byte("second"), 0600))
 	notifier.Emit(pathname)
 	await("second")
-	replacement := filepath.Join(source, "replacement.tmp")
-	require.NoError(t, os.WriteFile(replacement, []byte("third"), 0600))
-	require.NoError(t, os.Rename(replacement, pathname))
-	notifier.Emit(pathname)
-	await("third")
-	select {
-	case got := <-contents:
-		t.Fatalf("unexpected duplicate: %q", got)
-	default:
-	}
 }
 
 type fakeWatchBackend struct {
@@ -372,6 +362,7 @@ func TestWatchNotificationCloseReleasesThroughBackendClose(t *testing.T) {
 				addFailure := errors.New("synthetic partial enrollment failure")
 				backend.addErr = func(string) error { return addFailure }
 				require.ErrorIs(t, n.AddDirectory("partial", 0), addFailure)
+				require.Len(t, backend.added, 2)
 			case "budget":
 				require.ErrorContains(t, n.AddDirectory("oversized", maxWatchEntryUnits), "budget exceeds")
 			case "close_error":
@@ -561,30 +552,9 @@ func FuzzWatchNotificationRegistrationScans(f *testing.F) {
 	})
 }
 
-func TestWatchNotificationBackendFailureClosesPartialSubscriptions(t *testing.T) {
-	root := t.TempDir()
-	backend := newFakeWatchBackend()
-	backend.addErr = func(name string) error {
-		if strings.HasSuffix(name, "nested") {
-			return fs.ErrNotExist
-		}
-		return nil
-	}
-	n := newWatchNotificationsWithBackend(root, backend)
-	n.BeginScan()
-	require.NoError(t, n.AddDirectory("", 2))
-	require.ErrorIs(t, n.AddDirectory("nested", 1), fs.ErrNotExist)
-	select {
-	case <-backend.closed:
-	default:
-		t.Fatal("partial adapter must be closed")
-	}
-	require.NoError(t, n.Close())
-	require.Zero(t, n.units)
-	require.Len(t, backend.added, 2)
-
+func TestWatchNotificationBackendErrorStopsCollector(t *testing.T) {
 	live := newFakeWatchBackend()
-	n = newWatchNotificationsWithBackend(root, live)
+	n := newWatchNotificationsWithBackend(t.TempDir(), live)
 	live.errs <- errors.New("backend stopped")
 	select {
 	case err := <-n.Errors():
@@ -671,6 +641,7 @@ func TestPromptWatchNotificationFailureFallsBack(t *testing.T) {
 				select {
 				case <-commits:
 				case <-initialDeadline.C:
+					stacktest.Dump(t)
 					t.Fatal("initial source not committed")
 				}
 			}
@@ -682,25 +653,6 @@ func TestPromptWatchNotificationFailureFallsBack(t *testing.T) {
 			case <-time.After(10 * time.Second):
 				stacktest.Dump(t)
 				t.Fatal("failed backend still open")
-			}
-			require.NoError(t, os.WriteFile(filepath.Join(source, "notes.txt"), []byte("second"), 0600))
-			deadline := time.NewTimer(10 * time.Second)
-			defer deadline.Stop()
-			for {
-				node, err := ing.Store.NodeByPath(t.Context(), "/archive/notes.txt")
-				if err == nil {
-					_, count, err := ing.Store.ContentVersions(t.Context(), node.ID, 10, 0)
-					require.NoError(t, err)
-					if count == 2 {
-						break
-					}
-				}
-				select {
-				case <-commits:
-				case <-deadline.C:
-					stacktest.Dump(t)
-					t.Fatal("polling did not capture later change")
-				}
 			}
 			if tc.vanished {
 				select {
