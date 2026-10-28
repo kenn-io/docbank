@@ -95,7 +95,6 @@ type watchNotificationSource interface {
 type watchBackend interface {
 	Add(name string) error
 	Remove(name string) error
-	RemoveBeforeClose(name string) error
 	Close() error
 	Events() <-chan fsnotify.Event
 	Errors() <-chan error
@@ -115,15 +114,6 @@ func (b fsnotifyBackend) Remove(name string) error {
 		return fmt.Errorf("remove filesystem watch %q: %w", name, err)
 	}
 	return nil
-}
-
-func (b fsnotifyBackend) RemoveBeforeClose(name string) error {
-	// Closing inotify releases every watch. Removing both old and new aliases
-	// individually is unsafe because fsnotify can retain a stale inode mapping.
-	if runtime.GOOS == "linux" {
-		return nil
-	}
-	return b.Remove(name)
 }
 
 func (b fsnotifyBackend) Close() error {
@@ -279,8 +269,6 @@ func (n *watchNotifications) AddDirectory(ref string, entryCount int) error {
 	// Add is idempotent for a live watch and re-enrolls a directory whose
 	// prior inode was deleted and replaced at the same relative path.
 	name := filepath.Join(n.root, filepath.FromSlash(ref))
-	// kqueue can partially enroll a directory before Add fails on a child.
-	// Keep the attempted path so Close can remove those registrations too.
 	n.registrations[ref] = cost
 	n.units += cost - previous
 	if err := n.backend.Add(name); err != nil {
@@ -364,15 +352,10 @@ func (n *watchNotifications) Errors() <-chan error  { return n.errors }
 func (n *watchNotifications) Close() error {
 	n.closeOnce.Do(func() {
 		close(n.stop)
-		// fsnotify's kqueue backend marks itself closed before its own Remove
-		// calls, so release enrolled paths while Remove can still close them.
-		for ref := range n.registrations {
-			name := filepath.Join(n.root, filepath.FromSlash(ref))
-			if err := n.backend.RemoveBeforeClose(name); err != nil && !errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsnotify.ErrNonExistentWatch) {
-				n.closeErr = errors.Join(n.closeErr, fmt.Errorf("removing subscription %q: %w", name, err))
-			}
-		}
-		n.closeErr = errors.Join(n.closeErr, n.backend.Close())
+		// Every fsnotify backend releases all of its watches in Close. Removing
+		// them first can deadlock: Windows Remove waits on a reader that may be
+		// blocked delivering an event the stopped collector will never take.
+		n.closeErr = n.backend.Close()
 	})
 	<-n.done
 	n.registrations = make(map[string]int)

@@ -66,7 +66,7 @@ func TestWatchRenameMatcherAmbiguities(t *testing.T) {
 		want              bool
 	}{
 		{"unique", identity, oneInfo, false, false, false, false, true},
-		{"hardlink alias", identity, oneInfo, true, true, false, false, false},
+		{"hardlink alias", identity, oneInfo, false, true, false, false, false},
 		{"changed birth reused object", watchFileIdentity{object: identity.object, birth: validWatchBirth(101, 0)}, oneInfo, false, false, false, false, false},
 		{"birth absent", watchFileIdentity{object: identity.object}, oneInfo, false, false, false, false, false},
 		{"missing inode response", watchFileIdentity{object: watchObjectKey{mount: 1}, birth: birth}, oneInfo, false, false, false, false, false},
@@ -92,9 +92,11 @@ func TestWatchRenameMatcherAmbiguities(t *testing.T) {
 			}, present: map[string]struct{}{"final.md": {}}, complete: true}
 			if tc.oldPresent {
 				inv.present["draft.md"] = struct{}{}
-				if tc.alias {
-					inv.files["draft.md"] = watchInventoryEntry{state: watchFileState{identity: identity, info: oneInfo}}
-				}
+			}
+			if tc.alias {
+				// Two new names for the accepted object leave no unique rename.
+				inv.files["alias.md"] = watchInventoryEntry{state: watchFileState{identity: identity, info: oneInfo}}
+				inv.present["alias.md"] = struct{}{}
 			}
 			matches := matchWatchRenames(old, inv)
 			assert.Equal(t, tc.want, len(matches) == 1)

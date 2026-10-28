@@ -292,7 +292,6 @@ func (b *fakeWatchBackend) Remove(name string) error {
 	}
 	return b.removeErr
 }
-func (b *fakeWatchBackend) RemoveBeforeClose(name string) error { return b.Remove(name) }
 func (b *fakeWatchBackend) Close() error {
 	if b.onClose != nil {
 		b.onClose()
@@ -351,57 +350,53 @@ func TestWatchNotificationLowCostRenameRefreshesDescendantSubscription(t *testin
 	require.Equal(t, 6, n.units)
 }
 
-func TestWatchNotificationCloseRemovesSubscriptionsBeforeBackendClose(t *testing.T) {
-	for _, mode := range []string{"partial_add", "budget", "incomplete", "cleanup_errors", "already_removed"} {
+func TestWatchNotificationCloseReleasesThroughBackendClose(t *testing.T) {
+	for _, mode := range []string{"pending_events", "partial_add", "budget", "close_error"} {
 		t.Run(mode, func(t *testing.T) {
 			root := t.TempDir()
 			backend := newFakeWatchBackend()
-			live := make(map[string]bool)
-			backend.addErr = func(name string) error { live[name] = true; return nil }
-			backend.onRemove = func(name string) { delete(live, name) }
+			// Windows Remove waits for a reader blocked on undelivered events.
+			blocked := make(chan struct{})
+			t.Cleanup(func() { close(blocked) })
+			backend.onRemove = func(string) { <-blocked }
 			closeCalls := 0
-			backend.onClose = func() {
-				closeCalls++
-				require.Empty(t, live, "kqueue cannot release enrolled paths after backend Close marks it closed")
-			}
+			backend.onClose = func() { closeCalls++ }
 			n := newWatchNotificationsWithBackend(root, backend)
-			t.Cleanup(func() { _ = n.Close() })
 			n.BeginScan()
 			require.NoError(t, n.AddDirectory("", 1))
-			wantRemoved := []string{root}
-			addFailure := errors.New("synthetic partial enrollment failure")
-			removeFailure := errors.New("synthetic removal failure")
 			closeFailure := errors.New("synthetic close failure")
 			switch mode {
-			case "partial_add":
-				backend.addErr = func(name string) error {
-					// kqueue Add can enroll a directory before failing on its children.
-					live[name] = true
-					return addFailure
+			case "pending_events":
+				require.NoError(t, n.AddDirectory("nested", 0))
+				for range cap(backend.events) {
+					backend.events <- fsnotify.Event{Name: filepath.Join(root, "nested", "busy.txt"), Op: fsnotify.Write}
 				}
-				wantRemoved = append(wantRemoved, filepath.Join(root, "partial"))
+			case "partial_add":
+				addFailure := errors.New("synthetic partial enrollment failure")
+				backend.addErr = func(string) error { return addFailure }
 				require.ErrorIs(t, n.AddDirectory("partial", 0), addFailure)
 			case "budget":
 				require.ErrorContains(t, n.AddDirectory("oversized", maxWatchEntryUnits), "budget exceeds")
-			case "cleanup_errors":
-				require.NoError(t, n.AddDirectory("nested", 0))
-				wantRemoved = append(wantRemoved, filepath.Join(root, "nested"))
-				backend.removeErr, backend.closeErr = removeFailure, closeFailure
-			case "already_removed":
-				backend.removeErr = fsnotify.ErrNonExistentWatch
+			case "close_error":
+				backend.closeErr = closeFailure
 			}
-			for range 2 {
-				err := n.Close()
-				if mode == "cleanup_errors" {
-					require.ErrorIs(t, err, removeFailure)
+			closed := make(chan error, 1)
+			go func() {
+				first := n.Close()
+				closed <- errors.Join(first, n.Close())
+			}()
+			select {
+			case err := <-closed:
+				if mode == "close_error" {
 					require.ErrorIs(t, err, closeFailure)
-					require.ErrorContains(t, err, fmt.Sprintf("%q", filepath.Join(root, "nested")))
 				} else {
 					require.NoError(t, err)
 				}
+			case <-time.After(10 * time.Second):
+				t.Fatal("Close blocked before releasing the backend")
 			}
 			require.Equal(t, 1, closeCalls)
-			require.ElementsMatch(t, wantRemoved, backend.removed)
+			require.Empty(t, backend.removed, "backend Close releases every watch")
 			require.Empty(t, n.registrations)
 			require.Empty(t, n.seen)
 			require.Zero(t, n.units)
@@ -477,13 +472,7 @@ func TestWatchNotificationDeferredEnrollmentFailureCloses(t *testing.T) {
 		t.Run(operation, func(t *testing.T) {
 			backend := newFakeWatchBackend()
 			n := newWatchNotificationsWithBackend(t.TempDir(), backend)
-			t.Cleanup(func() {
-				if backend.removeErr != nil {
-					require.ErrorIs(t, n.Close(), backend.removeErr)
-				} else {
-					require.NoError(t, n.Close())
-				}
-			})
+			t.Cleanup(func() { require.NoError(t, n.Close()) })
 			n.BeginScan()
 			require.NoError(t, n.AddDirectory("", 1))
 			require.NoError(t, n.AddDirectory("before", 20000))
