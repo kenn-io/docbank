@@ -9550,6 +9550,176 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/mailbox
         name: mailbox
+    MissLogPage:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/MissLogPage.json
+          format: uri
+          readOnly: true
+          type: string
+        items:
+          items:
+            $ref: "#/components/schemas/MissLogReceipt"
+          type: array
+        limit:
+          format: int64
+          type: integer
+        offset:
+          format: int64
+          type: integer
+      required:
+        - items
+        - limit
+        - offset
+      type: object
+      x-go-type: api.MissLogPage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    MissLogReceipt:
+      additionalProperties: false
+      properties:
+        actual_mode:
+          enum:
+            - auto
+            - lexical
+            - semantic
+            - hybrid
+            - fuzzy
+          type: string
+        binding_id:
+          maxLength: 256
+          type: string
+        coverage:
+          additionalProperties: {}
+          maxProperties: 32
+          type: object
+        created_at:
+          format: date-time
+          type: string
+        degradations:
+          items:
+            type: string
+          maxItems: 64
+          type: array
+        document_count:
+          format: int64
+          minimum: 0
+          type: integer
+        fence_fingerprint:
+          maxLength: 128
+          type: string
+        filters:
+          additionalProperties: {}
+          type: object
+        id:
+          type: string
+        profile:
+          maxLength: 256
+          type: string
+        query:
+          type: string
+        requested_mode:
+          enum:
+            - auto
+            - lexical
+            - semantic
+            - hybrid
+            - fuzzy
+          type: string
+        reranking:
+          additionalProperties: {}
+          maxProperties: 8
+          type: object
+        truncated:
+          type: boolean
+        vault_uid:
+          type: string
+      required:
+        - id
+        - created_at
+        - vault_uid
+        - query
+        - requested_mode
+        - actual_mode
+        - truncated
+      type: object
+      x-go-type: misslog.Receipt
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/misslog
+        name: misslog
+    MissLogRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/MissLogRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        actual_mode:
+          enum:
+            - auto
+            - lexical
+            - semantic
+            - hybrid
+            - fuzzy
+          type: string
+        binding_id:
+          maxLength: 256
+          type: string
+        coverage:
+          additionalProperties: {}
+          maxProperties: 32
+          type: object
+        degradations:
+          items:
+            type: string
+          maxItems: 64
+          type: array
+        document_count:
+          format: int64
+          minimum: 0
+          type: integer
+        fence_fingerprint:
+          maxLength: 128
+          type: string
+        filters:
+          additionalProperties: {}
+          type: object
+        profile:
+          maxLength: 256
+          type: string
+        query:
+          type: string
+        requested_mode:
+          enum:
+            - auto
+            - lexical
+            - semantic
+            - hybrid
+            - fuzzy
+          type: string
+        reranking:
+          additionalProperties: {}
+          maxProperties: 8
+          type: object
+        truncated:
+          type: boolean
+      required:
+        - query
+        - requested_mode
+        - actual_mode
+        - truncated
+      type: object
+      x-go-type: misslog.Request
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/misslog
+        name: misslog
     MkdirPathRequest:
       additionalProperties: false
       properties:
@@ -25167,6 +25337,91 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Read one exact retained media transcript
+  /api/v1/miss-log:
+    delete:
+      operationId: deleteMissLog
+      responses:
+        "204":
+          description: No Content
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Purge private search misses (operator only)
+    get:
+      operationId: listMissLog
+      parameters:
+        - explode: false
+          in: query
+          name: limit
+          schema:
+            default: 20
+            format: int64
+            maximum: 100
+            minimum: 1
+            type: integer
+        - explode: false
+          in: query
+          name: offset
+          schema:
+            default: 0
+            format: int64
+            minimum: 0
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MissLogPage"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: List private search misses (operator only)
+    post:
+      operationId: recordMiss
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MissLogRequest"
+        required: true
+      responses:
+        "204":
+          description: No Content
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Record a submitted empty search
+  /api/v1/miss-log/{id}:
+    delete:
+      operationId: deleteMissLogRecord
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            maxLength: 128
+            type: string
+      responses:
+        "204":
+          description: No Content
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Delete one private search miss (operator only)
   /api/v1/nodes:
     post:
       description: kind must be "dir"; file creation is POST /api/v1/ingest for server-side paths or digest-checked POST /api/v1/uploads for remote bytes.

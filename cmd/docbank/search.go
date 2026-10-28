@@ -11,6 +11,8 @@ import (
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/misslog"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -221,6 +223,29 @@ See docs/usage/search.md.`,
 		defer func() {
 			if retErr == nil {
 				reportSearch(cmd, c, searchType, empty, searchAgent)
+				if empty {
+					receipt := misslog.Request{Query: query, RequestedMode: "lexical", ActualMode: "lexical", Truncated: rep.Truncated,
+						Filters: map[string]any{}}
+					for key, value := range map[string]any{"fuzzy": opts.Fuzzy, "tag_id": opts.TagID, "mime_type": opts.MIMEType, "under_node_id": opts.UnderNodeID, "modified_since": opts.ModifiedSince, "modified_before": opts.ModifiedBefore} {
+						if value != "" && value != false && value != int64(0) {
+							receipt.Filters[key] = value
+						}
+					}
+					if rep.Fuzzy != nil {
+						receipt.Coverage = map[string]any{"fuzzy": rep.Fuzzy}
+						if rep.Fuzzy.Status != store.FuzzyStatusNotRun {
+							receipt.ActualMode = "fuzzy"
+						}
+						receipt.RequestedMode = "fuzzy"
+					}
+					if automatic.report != nil {
+						receipt = api.DocumentSearchMiss(query, automatic.profile, automatic.binding, automatic.scope.FenceFingerprint, len(automatic.scope.Fence.ContentVersionIDs), *automatic.report)
+					} else if automatic.reason != "" {
+						receipt.RequestedMode, receipt.Degradations = "hybrid", []string{automatic.reason}
+						receipt.Profile, receipt.BindingID = automatic.profile, automatic.binding
+					}
+					c.RecordMiss(cmd.Context(), receipt)
+				}
 			}
 		}()
 		if automatic.report != nil {
@@ -420,6 +445,14 @@ func runDocumentSearch(cmd *cobra.Command, c *daemonconn.Connection, query strin
 	defer func() {
 		if retErr == nil {
 			reportSearch(cmd, c, report.ActualMode, len(report.Results) == 0, searchAgent)
+			if len(report.Results) == 0 {
+				fingerprint, err := processing.SourceFenceFingerprint(processing.SourceFence{VaultUID: info.VaultID, ContentVersionIDs: options.ContentVersionIDs})
+				if err != nil {
+					return
+				}
+				receipt := api.DocumentSearchMiss(query, options.Profile, bindingID, fingerprint, len(options.ContentVersionIDs), report)
+				c.RecordMiss(cmd.Context(), receipt)
+			}
 		}
 	}()
 	if options.JSON {

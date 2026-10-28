@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/misslog"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/docbank/internal/telemetry"
 )
@@ -27,6 +28,7 @@ type actionCall struct {
 }
 
 type fakeBackend struct {
+	misses                    []misslog.Request
 	actions                   []actionCall
 	screenErr                 error
 	screens                   []string
@@ -3067,6 +3069,8 @@ func TestEmptyArmedSearchReportsRunAndEmpty(t *testing.T) {
 	_, cmd := updateModel(t, model, msg)
 	runModelCommand(t, model, cmd)
 	assert.Equal(t, []actionCall{{event: "search_run", searchType: "text"}, {event: "search_empty", searchType: "text"}}, backend.actions)
+	require.Len(t, backend.misses, 1)
+	require.Equal(t, "missing", backend.misses[0].Query)
 }
 
 func TestProcessingSearchReportsOutcome(t *testing.T) {
@@ -3092,4 +3096,8 @@ func TestProcessingSearchReportsOutcome(t *testing.T) {
 			assert.Equal(t, tc.want, backend.actions)
 		})
 	}
+}
+
+func (f *fakeBackend) RecordMiss(_ context.Context, receipt misslog.Request) {
+	f.misses = append(f.misses, receipt)
 }

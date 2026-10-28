@@ -35,15 +35,16 @@ func TestEmptyNaturalSearchReportsAfterRerank(t *testing.T) {
 			fake := newFakeBackend()
 			fake.profiles[0].RerankingAvailable = true
 			fake.naturalSearch = api.DocumentSearchReport{
-				RequestedMode: "lexical", ActualMode: "lexical",
+				RequestedMode: "hybrid", ActualMode: "hybrid",
 				Coverage: api.DocumentSearchCoverage{ScopedDocuments: 2, CompleteDocuments: 2, State: "complete"},
 			}
+			fake.naturalSearch.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "skipped", Cause: "empty candidates"}
 			fake.naturalRerankSearch = fake.naturalSearch
 			fake.naturalRerankSearch.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "skipped"}
 			model, err := New(t.Context(), fake)
 			require.NoError(t, err)
 			model.naturalProfiles = fake.profiles
-			model.naturalMode = naturalLexical
+			model.naturalMode = naturalHybrid
 			model.naturalRerank = true
 			model.requestID, model.reportSearchID = 7, 7
 			model.naturalSearchID = 3
@@ -52,6 +53,7 @@ func TestEmptyNaturalSearchReportsAfterRerank(t *testing.T) {
 			require.NotNil(t, rerank)
 			assert.Empty(t, fake.actions)
 			if replaced {
+				fake.naturalSearch.Reranking.Cause = "changed after acceptance"
 				model.requestID, model.reportSearchID = 8, 8
 				model.naturalSearchID = 4
 				base = model.loadNaturalSearch("another", model.requestID)()
@@ -65,10 +67,37 @@ func TestEmptyNaturalSearchReportsAfterRerank(t *testing.T) {
 				model, rerank = updateModel(t, model, batch[0]())
 			}
 			runModelCommand(t, model, rerank)
-			want := []actionCall{{event: "search_run", searchType: "lexical"}, {event: "search_empty", searchType: "lexical"}}
+			want := []actionCall{{event: "search_run", searchType: "hybrid"}, {event: "search_empty", searchType: "hybrid"}}
 			assert.Equal(t, want, fake.actions)
+			require.Len(t, fake.misses, 1)
+			require.Equal(t, "missing", fake.misses[0].Query)
+			require.Equal(t, "semantic", fake.misses[0].BindingID)
+			if replaced {
+				assert.Equal(t, "empty candidates", fake.misses[0].Reranking["cause"])
+			}
 		})
 	}
+}
+
+func TestEmptyNaturalSearchRetainsFailedRerank(t *testing.T) {
+	fake := newFakeBackend()
+	fake.profiles[0].RerankingAvailable = true
+	fake.naturalSearch = api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid"}
+	model, err := New(t.Context(), fake)
+	require.NoError(t, err)
+	model.naturalProfiles = fake.profiles
+	model.naturalMode, model.naturalRerank = naturalHybrid, true
+	model.requestID, model.reportSearchID, model.naturalSearchID = 7, 7, 3
+	model, cmd := updateModel(t, model, model.loadNaturalSearch("missing", 7)())
+	fake.err = errors.New("synthetic rerank failure")
+	batch, ok := cmd().(tea.BatchMsg)
+	require.True(t, ok)
+	model, cmd = updateModel(t, model, batch[0]())
+	runModelCommand(t, model, cmd)
+	require.Len(t, fake.misses, 1)
+	assert.Equal(t, "missing", fake.misses[0].Query)
+	assert.Equal(t, "failed", fake.misses[0].Reranking["outcome"])
+	assert.Contains(t, fake.misses[0].Reranking["cause"], "synthetic rerank failure")
 }
 
 func TestNaturalSearchReportsFinalRerankedEmptiness(t *testing.T) {
@@ -295,33 +324,70 @@ func TestNaturalSearchWhyLinesScrollWithRows(t *testing.T) {
 	assert.Contains(t, rendered, "/three.txt")
 }
 
+func TestNaturalSearchScopeFailureKeepsMissContext(t *testing.T) {
+	fake := newFakeBackend()
+	fake.profiles[0].Name = "private"
+	fake.search = api.SearchReport{}
+	model, err := New(t.Context(), fake)
+	require.NoError(t, err)
+	model.naturalMode, model.naturalProfiles = naturalHybrid, fake.profiles
+	model.searching = true
+	model.searchInput.SetValue("missing")
+	model, _ = updateModel(t, model, key(tea.KeyEnter))
+	fake.err = errors.New("source scope exceeds 4096 current live content versions; narrow the source scope")
+	base := model.loadNaturalSearch("missing", model.requestID)()
+	fake.err = nil
+	model, fallback := updateModel(t, model, base)
+	require.NotNil(t, fallback)
+	model, cmd := updateModel(t, model, fallback())
+	runModelCommand(t, model, cmd)
+	require.Len(t, fake.misses, 1)
+	receipt := fake.misses[0]
+	assert.Equal(t, "missing", receipt.Query)
+	assert.Equal(t, "hybrid", receipt.RequestedMode)
+	assert.Equal(t, "lexical", receipt.ActualMode)
+	assert.Equal(t, "private", receipt.Profile)
+	assert.Equal(t, "semantic", receipt.BindingID)
+	require.Len(t, receipt.Degradations, 1)
+	assert.Contains(t, receipt.Degradations[0], "source scope exceeds 4096")
+}
+
 func TestNaturalSearchFallbackKeepsCause(t *testing.T) {
 	fake := newFakeBackend()
 	readme := fake.nodes["/README.txt"]
-	model, err := New(t.Context(), fake)
-	require.NoError(t, err)
-	model.naturalMode = naturalHybrid
-	model.naturalProfiles = fake.profiles
-	model.searching = true
-	model.searchInput.SetValue("old")
-	model, _ = updateModel(t, model, key(tea.KeyEnter))
-
-	updated, fallback := model.applyNaturalSearchBase(naturalSearchBaseLoadedMsg{
-		requestID: model.requestID, searchID: model.naturalSearchID, query: "old",
-		err: errors.New("provider timed out"),
-	})
-	result, ok := updated.(Model)
-	require.True(t, ok)
-	assert.Contains(t, result.naturalSearchNote, "provider timed out")
-	assert.Equal(t, naturalNames, result.naturalMode)
-	require.NotNil(t, fallback)
-
-	loaded, _ := result.applySearch(searchLoadedMsg{
-		requestID: result.requestID, query: "old", report: api.SearchReport{Hits: []api.SearchHit{{Node: readme, Path: readme.Path}}},
-	})
-	loadedModel, ok := loaded.(Model)
-	require.True(t, ok)
-	assert.Empty(t, loadedModel.rows[0].naturalMode)
+	for _, hits := range [][]api.SearchHit{nil, {{Node: readme, Path: readme.Path}}} {
+		fake.misses = nil
+		model, err := New(t.Context(), fake)
+		require.NoError(t, err)
+		model.naturalMode, model.naturalProfiles = naturalHybrid, fake.profiles
+		model.searching = true
+		model.searchInput.SetValue("missing")
+		model, _ = updateModel(t, model, key(tea.KeyEnter))
+		updated, fallback := model.applyNaturalSearchBase(naturalSearchBaseLoadedMsg{
+			requestID: model.requestID, searchID: model.naturalSearchID, query: "missing", naturalMode: naturalHybrid,
+			request: api.DocumentSearchRequest{Mode: "hybrid", Profile: "local", BindingID: "embed"}, err: errors.New("provider timed out"),
+		})
+		model, ok := updated.(Model)
+		require.True(t, ok)
+		assert.Equal(t, naturalNames, model.naturalMode)
+		require.NotNil(t, fallback)
+		note := model.naturalSearchNote
+		assert.Contains(t, note, "provider timed out")
+		model, cmd := updateModel(t, model, searchLoadedMsg{requestID: model.requestID, query: "missing", report: api.SearchReport{Hits: hits}})
+		runModelCommand(t, model, cmd)
+		if len(hits) > 0 {
+			require.Len(t, model.rows, 1)
+			assert.Empty(t, model.rows[0].naturalMode)
+			require.Empty(t, fake.misses)
+			continue
+		}
+		require.Len(t, fake.misses, 1)
+		assert.Equal(t, "hybrid", fake.misses[0].RequestedMode)
+		assert.Equal(t, "lexical", fake.misses[0].ActualMode)
+		assert.Equal(t, "local", fake.misses[0].Profile)
+		assert.Equal(t, "embed", fake.misses[0].BindingID)
+		assert.Equal(t, []string{note}, fake.misses[0].Degradations)
+	}
 }
 
 func TestNaturalSearchModeProvenanceSurvivesModeChange(t *testing.T) {
@@ -894,6 +960,7 @@ func TestNaturalSearchEmptyFenceReportsSubmissionsAsEmptyWithoutRun(t *testing.T
 		t.Run(tc.name, func(t *testing.T) {
 			fake := newFakeBackend()
 			fake.sourceFence.Fence.ContentVersionIDs = nil
+			fake.sourceFence.FenceFingerprint = "sha256:synthetic-empty"
 			if tc.unbound {
 				fake.profiles[0].QueryEmbeddingBindings = nil
 			}
@@ -921,6 +988,14 @@ func TestNaturalSearchEmptyFenceReportsSubmissionsAsEmptyWithoutRun(t *testing.T
 				cmd()
 			}
 			assert.Equal(t, tc.want, fake.actions)
+			if tc.submitted {
+				require.Len(t, fake.misses, 1)
+				require.Equal(t, new(0), fake.misses[0].DocumentCount)
+				require.Equal(t, "sha256:synthetic-empty", fake.misses[0].FenceFingerprint)
+				require.Equal(t, "complete", fake.misses[0].Coverage["state"])
+			} else {
+				require.Empty(t, fake.misses)
+			}
 			if tc.rerank {
 				// An empty fence has nothing to rerank, even when reranking is on.
 				assert.False(t, result.naturalRerankPending)

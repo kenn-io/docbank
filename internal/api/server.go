@@ -25,6 +25,7 @@ import (
 	"go.kenn.io/docbank/internal/exporter"
 	"go.kenn.io/docbank/internal/jobs"
 	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
+	"go.kenn.io/docbank/internal/misslog"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/reporting"
 	"go.kenn.io/docbank/internal/store"
@@ -204,6 +205,7 @@ func NewServer(d Deps) *Server {
 
 	s.webSessions.login = newWebLoginPolicy(d)
 
+	registerMissLogRoutes(humaAPI, d, g, misslog.New(d.Store, d.Cfg.MissLog, d.Logger, g.MutateContext))
 	registerReadRoutes(humaAPI, d) // Task 5 (stat-by-id lands in this task)
 	registerCollectionRoutes(humaAPI, d, g)
 	registerPeopleRebuildRoutes(humaAPI, d, g)

@@ -174,6 +174,13 @@ type BackupConfig struct {
 	ZstdLevel int    `toml:"zstd_level"`
 }
 
+// MissLogConfig controls the optional private search miss log.
+type MissLogConfig struct {
+	Enabled       bool `toml:"enabled"`
+	RetentionDays int  `toml:"retention_days"`
+	MaxRecords    int  `toml:"max_records"`
+}
+
 // StorageConfig controls optional daemon-owned physical storage work. Packing
 // is non-destructive to logical document authority; GC and repack remain
 // explicit operator actions.
@@ -425,6 +432,7 @@ type Config struct {
 	Web                WebConfig                          `toml:"web"`
 	MCP                MCPConfig                          `toml:"mcp"`
 	Backup             BackupConfig                       `toml:"backup"`
+	MissLog            MissLogConfig                      `toml:"miss_log"`
 	Storage            StorageConfig                      `toml:"storage"`
 	StoreBindings      map[string]StoreBindingConfig      `toml:"store_bindings"`
 	RenditionProfiles  map[string]RenditionProfileConfig  `toml:"rendition_profiles"`
@@ -446,6 +454,7 @@ func Default() Config {
 		},
 		Web:                WebConfig{Enabled: true, MapTiles: MapTilesConfig{MaxZoom: 19}},
 		Storage:            StorageConfig{PackMaxBytes: 256 << 20},
+		MissLog:            MissLogConfig{RetentionDays: 90, MaxRecords: 5000},
 		RenditionProfiles:  make(map[string]RenditionProfileConfig),
 		EmbeddingProfiles:  make(map[string]EmbeddingProfileConfig),
 		CredentialBindings: make(map[string]CredentialBindingConfig),
@@ -719,6 +728,14 @@ func resolveBackupRepo(root string, backup *BackupConfig) error {
 // exposes credentials and contents to the selected network; operators must
 // provide a trusted transport or network. Loopback can use an ephemeral key.
 func (c Config) Validate() error {
+	if c.MissLog.Enabled {
+		if c.MissLog.RetentionDays < 1 || c.MissLog.RetentionDays > 365 {
+			return errors.New("[miss_log] retention_days must be between 1 and 365")
+		}
+		if c.MissLog.MaxRecords < 1 || c.MissLog.MaxRecords > 100000 {
+			return errors.New("[miss_log] max_records must be between 1 and 100000")
+		}
+	}
 	if c.Media.MaxSourceBytes < 0 || c.Media.MaxSourceBytes > media.MaxMediaSourceBytes {
 		return fmt.Errorf("[media] max_source_bytes must be between 1 and %d (or 0 for default)", media.MaxMediaSourceBytes)
 	}

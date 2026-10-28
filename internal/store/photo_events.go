@@ -18,7 +18,8 @@ var photoUnwatchedTables = map[string][]string{
 		"text_extraction_queue", "document_event_dirty", "document_event_attempts", "embedding_jobs",
 		"vector_index_build_jobs", "mailbox_jobs", "export_jobs", "package_import_jobs", "page_render_jobs",
 	},
-	"Photos never reads these leases": {"vector_index_reader_leases"},
+	"Photos never reads private search receipts": {"miss_log_records"},
+	"Photos never reads these leases":            {"vector_index_reader_leases"},
 	"Photos never reads these storage operations": {
 		"storage_operations", "storage_operation_stores", "storage_operation_cleanup",
 	},

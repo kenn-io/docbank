@@ -19,6 +19,7 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/misslog"
 	"go.kenn.io/docbank/internal/telemetry"
 	doctui "go.kenn.io/docbank/internal/tui"
 )
@@ -496,4 +497,11 @@ func (b *tuiDaemonBackend) ReportAction(ctx context.Context, event, searchType, 
 
 func init() {
 	rootCmd.AddCommand(tuiCmd)
+}
+
+func (b *tuiDaemonBackend) RecordMiss(ctx context.Context, receipt misslog.Request) {
+	_, _ = withTUIMutationClient(ctx, b, func(c *daemonconn.Connection) (struct{}, error) {
+		c.RecordMiss(ctx, receipt)
+		return struct{}{}, nil
+	})
 }

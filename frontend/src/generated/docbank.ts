@@ -4107,6 +4107,115 @@ export interface Message {
   start: number;
 }
 
+export type MissLogReceiptActualMode = typeof MissLogReceiptActualMode[keyof typeof MissLogReceiptActualMode];
+
+
+export const MissLogReceiptActualMode = {
+  auto: 'auto',
+  lexical: 'lexical',
+  semantic: 'semantic',
+  hybrid: 'hybrid',
+  fuzzy: 'fuzzy',
+} as const;
+
+export type MissLogReceiptRequestedMode = typeof MissLogReceiptRequestedMode[keyof typeof MissLogReceiptRequestedMode];
+
+
+export const MissLogReceiptRequestedMode = {
+  auto: 'auto',
+  lexical: 'lexical',
+  semantic: 'semantic',
+  hybrid: 'hybrid',
+  fuzzy: 'fuzzy',
+} as const;
+
+export type MissLogReceiptCoverage = {[key: string]: unknown};
+
+export type MissLogReceiptFilters = {[key: string]: unknown};
+
+export type MissLogReceiptReranking = {[key: string]: unknown};
+
+export interface MissLogReceipt {
+  actual_mode: MissLogReceiptActualMode;
+  /** @maxLength 256 */
+  binding_id?: string;
+  coverage?: MissLogReceiptCoverage;
+  created_at: string;
+  /** @maxItems 64 */
+  degradations?: string[];
+  /** @minimum 0 */
+  document_count?: number;
+  /** @maxLength 128 */
+  fence_fingerprint?: string;
+  filters?: MissLogReceiptFilters;
+  id: string;
+  /** @maxLength 256 */
+  profile?: string;
+  query: string;
+  requested_mode: MissLogReceiptRequestedMode;
+  reranking?: MissLogReceiptReranking;
+  truncated: boolean;
+  vault_uid: string;
+}
+
+export interface MissLogPage {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  items: MissLogReceipt[];
+  limit: number;
+  offset: number;
+}
+
+export type MissLogRequestActualMode = typeof MissLogRequestActualMode[keyof typeof MissLogRequestActualMode];
+
+
+export const MissLogRequestActualMode = {
+  auto: 'auto',
+  lexical: 'lexical',
+  semantic: 'semantic',
+  hybrid: 'hybrid',
+  fuzzy: 'fuzzy',
+} as const;
+
+export type MissLogRequestCoverage = {[key: string]: unknown};
+
+export type MissLogRequestFilters = {[key: string]: unknown};
+
+export type MissLogRequestRequestedMode = typeof MissLogRequestRequestedMode[keyof typeof MissLogRequestRequestedMode];
+
+
+export const MissLogRequestRequestedMode = {
+  auto: 'auto',
+  lexical: 'lexical',
+  semantic: 'semantic',
+  hybrid: 'hybrid',
+  fuzzy: 'fuzzy',
+} as const;
+
+export type MissLogRequestReranking = {[key: string]: unknown};
+
+export interface MissLogRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  actual_mode: MissLogRequestActualMode;
+  /** @maxLength 256 */
+  binding_id?: string;
+  coverage?: MissLogRequestCoverage;
+  /** @maxItems 64 */
+  degradations?: string[];
+  /** @minimum 0 */
+  document_count?: number;
+  /** @maxLength 128 */
+  fence_fingerprint?: string;
+  filters?: MissLogRequestFilters;
+  /** @maxLength 256 */
+  profile?: string;
+  query: string;
+  requested_mode: MissLogRequestRequestedMode;
+  reranking?: MissLogRequestReranking;
+  truncated: boolean;
+}
+
 export interface MkdirPathRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -9229,6 +9338,18 @@ export type GetMediaTranscriptParams = {
 content_version_id: string;
 };
 
+export type ListMissLogParams = {
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+/**
+ * @minimum 0
+ */
+offset?: number;
+};
+
 export type MoveNodeHeaders = {
 'If-Match': string;
 };
@@ -14130,6 +14251,123 @@ export const getMediaTranscript = async (sourceId: string,
   {
     ...options,
     method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getDeleteMissLogUrl = () => {
+
+
+
+
+  return `/api/v1/miss-log`
+}
+
+/**
+ * @summary Purge private search misses (operator only)
+ */
+export const deleteMissLog = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
+
+  return sessionJSON<void>(getDeleteMissLogUrl(),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+export const getListMissLogUrl = (params?: ListMissLogParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/miss-log?${stringifiedParams}` : `/api/v1/miss-log`
+}
+
+/**
+ * @summary List private search misses (operator only)
+ */
+export const listMissLog = async (params?: ListMissLogParams, options?: Parameters<typeof sessionJSON>[1]): Promise<MissLogPage> => {
+
+  return sessionJSON<MissLogPage>(getListMissLogUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getRecordMissUrl = () => {
+
+
+
+
+  return `/api/v1/miss-log`
+}
+
+/**
+ * @summary Record a submitted empty search
+ */
+export const recordMiss = async (missLogRequest: NonReadonly<MissLogRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<void>(getRecordMissUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(missLogRequest)
+  }
+);}
+
+
+
+export const getDeleteMissLogRecordUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/miss-log/${encodeURIComponent(String(id))}`
+}
+
+/**
+ * @summary Delete one private search miss (operator only)
+ */
+export const deleteMissLogRecord = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
+
+  return sessionJSON<void>(getDeleteMissLogRecordUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
 
 
   }

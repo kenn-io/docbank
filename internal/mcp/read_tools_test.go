@@ -429,6 +429,7 @@ func TestSearchReadValidatesEmptyFenceWithoutCallingSearch(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			searchCalls := 0
 			validationCalls := 0
+			missCalls := 0
 			emptyFingerprint, err := processing.SourceFenceFingerprint(processing.SourceFence{
 				VaultUID: testVaultID, ContentVersionIDs: []string{},
 			})
@@ -440,6 +441,9 @@ func TestSearchReadValidatesEmptyFenceWithoutCallingSearch(t *testing.T) {
 						Fence:            api.ResolvedDocumentSourceFence{VaultUID: testVaultID, ContentVersionIDs: []string{}},
 						FenceFingerprint: emptyFingerprint, ObservedScopeCount: 0,
 					})
+				case "/api/v1/miss-log":
+					missCalls++
+					response.WriteHeader(http.StatusNoContent)
 				case "/api/v1/search/validate":
 					validationCalls++
 					if test.wantError {
@@ -474,6 +478,11 @@ func TestSearchReadValidatesEmptyFenceWithoutCallingSearch(t *testing.T) {
 			assert.Equal(t, 1, validationCalls)
 			assert.Zero(t, searchCalls)
 			if test.wantError {
+				assert.Zero(t, missCalls)
+			} else {
+				assert.Equal(t, 1, missCalls)
+			}
+			if test.wantError {
 				require.Error(t, err)
 				facts, ok := daemonProblemFacts(err)
 				require.True(t, ok)
@@ -489,8 +498,10 @@ func TestSearchReadValidatesEmptyFenceWithoutCallingSearch(t *testing.T) {
 	}
 }
 
-func TestSearchReadWithNonEmptyFenceAndNoHitsSkipsDocumentResolution(t *testing.T) {
+func TestSearchReadEmptyResultRecordsMissWithoutDocumentResolution(t *testing.T) {
 	resolveCalls := 0
+	missCalls := 0
+	var receipt map[string]any
 	daemon := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/api/v1/processing/source-fences/resolve":
@@ -501,6 +512,10 @@ func TestSearchReadWithNonEmptyFenceAndNoHitsSkipsDocumentResolution(t *testing.
 			writeDaemonJSON(t, response, api.DocumentSearchReport{RequestedMode: "lexical", ActualMode: "lexical",
 				Coverage:     api.DocumentSearchCoverage{ScopedDocuments: 1, CompleteDocuments: 1, State: "complete"},
 				Degradations: []string{}, Results: []api.DocumentSearchResult{}})
+		case "/api/v1/miss-log":
+			missCalls++
+			assert.NoError(t, json.UnmarshalRead(request.Body, &receipt))
+			response.WriteHeader(http.StatusNoContent)
 		case "/api/v1/documents/resolve":
 			resolveCalls++
 			t.Fatal("zero-hit search must not resolve document summaries")
@@ -515,10 +530,12 @@ func TestSearchReadWithNonEmptyFenceAndNoHitsSkipsDocumentResolution(t *testing.
 
 	result, err := invokeReadTool(t.Context(), lease, "search_documents", map[string]any{
 		"query": "synthetic", "mode": "lexical", "limit": 1, "profile": "local",
-		"content_version_ids": []string{testVersionID},
+		"content_version_ids": []string{testVersionID}, "binding_id": "synthetic-binding",
 	})
 	require.NoError(t, err)
 	assert.Zero(t, resolveCalls)
+	assert.Equal(t, 1, missCalls)
+	assert.Equal(t, "synthetic-binding", receipt["binding_id"])
 	assert.Empty(t, resourceLinkURIs(result))
 	assert.Equal(t, []any{}, structuredMap(t, result.StructuredContent)["results"])
 }

@@ -2055,12 +2055,18 @@
     }
   }
 
+  function recordMiss(receipt: generated.MissLogRequest, session = webSession): void {
+    void generated
+      .recordMiss(receipt, { session, signal: AbortSignal.timeout(1000) })
+      .catch(() => {});
+  }
+
   async function runSearch(
     preferredSelectedID = selectedID,
     queryOverride?: string,
     submitted = false,
     requestedSort?: Query["sort"],
-  ): Promise<{ type: string; empty: boolean } | undefined> {
+  ): Promise<{ type: string; empty: boolean; receipt: generated.MissLogRequest } | undefined> {
     invalidateTagHotkeyMutation();
     leaveSnapshotMode();
     const query = (queryOverride ?? searchQuery).trim();
@@ -2162,7 +2168,6 @@
         if (requestedSort) applyResultSort(requestedSort);
         naturalSearchNote = nameRows.length ? "" : "No documents match the current filter.";
         loading = false;
-        // No document search ran, so there is no search_run to report.
         if (submitted && nameRows.length === 0) {
           try {
             parseQuery(JSON.stringify({ text: query }));
@@ -2170,6 +2175,21 @@
             return;
           }
           reportAction(session, "search_empty", mapped.mode === "auto" ? "lexical" : mapped.mode);
+          recordMiss(
+            {
+              query,
+              profile: profile.name,
+              binding_id: mapped.binding_id,
+              requested_mode: mapped.mode,
+              actual_mode: mapped.mode === "auto" ? "lexical" : mapped.mode,
+              fence_fingerprint: resolution.fence_fingerprint,
+              filters: { tag_id: requestedTagID },
+              document_count: 0,
+              coverage: { state: "complete" },
+              truncated: false,
+            },
+            session,
+          );
         }
         return;
       }
@@ -2192,6 +2212,20 @@
       // The base results are accepted, so the search counts however reranking ends.
       let outcome = {
         type: baseReport.actual_mode,
+        receipt: {
+          query,
+          profile: profile.name,
+          binding_id: baseRequest.binding_id,
+          requested_mode: baseReport.requested_mode as generated.MissLogRequestRequestedMode,
+          actual_mode: baseReport.actual_mode as generated.MissLogRequestActualMode,
+          filters: { tag_id: requestedTagID },
+          fence_fingerprint: resolution.fence_fingerprint,
+          document_count: resolution.fence.content_version_ids.length,
+          coverage: { ...baseReport.coverage },
+          truncated: baseReport.truncated,
+          degradations: baseReport.degradations,
+          ...(baseReport.reranking ? { reranking: { ...baseReport.reranking } } : {}),
+        },
         empty: baseRows.length === 0 && nameRows.length === 0,
       };
       if (!naturalSearchRerank(profile, mode, naturalRerank)) return outcome;
@@ -2210,6 +2244,7 @@
           !naturalRerank
         )
           return outcome;
+        if (reranked.reranking) outcome.receipt.reranking = { ...reranked.reranking };
         if (reranked.reranking?.outcome !== "applied") {
           naturalSearchNote = rerankingNote(
             reranked.reranking?.outcome ?? "failed",
@@ -2245,9 +2280,22 @@
         naturalSearchNote = rerankingNote("applied");
         outcome = {
           type: reranked.actual_mode,
+          receipt: {
+            ...outcome.receipt,
+            actual_mode: reranked.actual_mode as generated.MissLogRequestActualMode,
+            coverage: { ...reranked.coverage },
+            truncated: reranked.truncated,
+            degradations: reranked.degradations,
+            ...(reranked.reranking ? { reranking: { ...reranked.reranking } } : {}),
+          },
           empty: rerankedRows.length === 0 && nameRows.length === 0,
         };
       } catch (cause) {
+        outcome.receipt.reranking = {
+          outcome: "failed",
+          candidate_count: 0,
+          cause: cause instanceof Error ? cause.message : String(cause),
+        };
         if (cause instanceof APIError && cause.status === 401) {
           handleFailure(cause);
           return;
@@ -2277,6 +2325,7 @@
         naturalRerank = false;
         naturalRerankPending = false;
         try {
+          const mapped = naturalSearchRequest(mode, profile);
           const outcome = await runLegacySearch(
             query,
             requestedTagID,
@@ -2286,7 +2335,12 @@
             session,
             controller.signal,
             note,
+            mapped?.mode ?? "lexical",
           );
+          if (outcome) {
+            outcome.receipt.profile = profile.name;
+            outcome.receipt.binding_id = mapped?.binding_id;
+          }
           accepted = !!outcome;
           if (accepted && request === generation && requestedSort) applyResultSort(requestedSort);
           return outcome;
@@ -2333,7 +2387,8 @@
     session: string,
     signal: AbortSignal,
     note = "",
-  ): Promise<{ type: string; empty: boolean } | undefined> {
+    requestedMode: generated.MissLogRequest["requested_mode"] = "lexical",
+  ): Promise<{ type: string; empty: boolean; receipt: generated.MissLogRequest } | undefined> {
     const report = await generated.search(
       { q: query, limit: 1000, ...(requestedTagID ? { tag_id: requestedTagID } : {}) },
       { session, signal },
@@ -2356,7 +2411,18 @@
     );
     naturalSearchNote = note;
     loading = false;
-    return { type: "text", empty: nextRows.length === 0 };
+    return {
+      type: "text",
+      empty: nextRows.length === 0,
+      receipt: {
+        query,
+        requested_mode: requestedMode,
+        actual_mode: "lexical",
+        ...(note ? { degradations: [note] } : {}),
+        filters: { tag_id: requestedTagID },
+        truncated: report.truncated,
+      },
+    };
   }
 
   function applySearchRows(
@@ -2553,7 +2619,10 @@
     queryBarOpen = false;
     naturalSearchMode = naturalProfile ? "auto" : "names";
     const outcome = await runSearch(undefined, undefined, true, sortOnly);
-    if (outcome) reportSearch(webSession, outcome.type, outcome.empty);
+    if (outcome) {
+      reportSearch(webSession, outcome.type, outcome.empty);
+      if (outcome.empty) recordMiss(outcome.receipt);
+    }
   }
 
   // Whether the draft is the plain-words search plus an order, which the ranked search can run.
@@ -2580,7 +2649,10 @@
     searchQuery = query.text;
     naturalSearchMode = "auto";
     const outcome = await runSearch(undefined, undefined, true, query.sort);
-    if (outcome) reportSearch(webSession, outcome.type, outcome.empty);
+    if (outcome) {
+      reportSearch(webSession, outcome.type, outcome.empty);
+      if (outcome.empty) recordMiss(outcome.receipt);
+    }
   }
 
   function applyResultSort(sort: Query["sort"]): void {
@@ -2974,7 +3046,7 @@
   async function runSnapshot(
     query: Query,
     options: SnapshotOptions,
-  ): Promise<{ type: "text"; empty: boolean } | { type: "failed"; cause: Error } | undefined> {
+  ): ReturnType<SnapshotWorkspace["run"]> {
     invalidateTagHotkeyMutation();
     generation += 1;
     searchPending = false;
@@ -2988,6 +3060,7 @@
     query: Query,
     options: SnapshotOptions,
     preserveDraft = false,
+    recordEmpty = true,
   ): Promise<void> {
     const revision = queryDraftRevision;
     if (!preserveDraft) keepQueryDraft(query);
@@ -3001,6 +3074,7 @@
         queryDraftFromDefinition = false;
       }
       reportSearch(webSession, outcome.type, outcome.empty);
+      if (recordEmpty && !preserveDraft && outcome.empty) recordMiss(outcome.receipt);
     }
   }
 
@@ -5155,7 +5229,7 @@
             closePanel(panel)();
             // The saved query's filters are settings: a new search text keeps them.
             querySettingsApplied = true;
-            void submitSnapshot(query, snapshot.state.options ?? {});
+            void submitSnapshot(query, snapshot.state.options ?? {}, false, false);
           }}
           onclose={closePanel(panel)}
           onauthfailure={handleFailure}

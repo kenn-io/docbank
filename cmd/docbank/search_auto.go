@@ -24,9 +24,12 @@ const (
 // attempt fell back to lexical search. An empty reason means hybrid search was
 // not attempted. err keeps a failure that has no stable daemon problem code.
 type automaticSearchOutcome struct {
-	report *api.DocumentSearchReport
-	reason string
-	err    error
+	report  *api.DocumentSearchReport
+	profile string
+	binding string
+	scope   api.DocumentSourceFenceResolution
+	reason  string
+	err     error
 }
 
 // automaticSearchJSON adds folder name matches to the hybrid report, because
@@ -73,7 +76,7 @@ func tryAutomaticSearch(ctx context.Context, c *daemonconn.Connection, query str
 		report, searchErr := c.SearchDocuments(ctx, api.DocumentSearchRequest{Query: query, Mode: "hybrid",
 			Profile: candidate.profile, BindingID: candidate.binding, Limit: limit, Fence: fence})
 		if searchErr == nil {
-			return automaticSearchOutcome{report: &report}, nil
+			return automaticSearchOutcome{report: &report, profile: candidate.profile, binding: candidate.binding, scope: scope}, nil
 		}
 		outcome, err := automaticSearchFallback(ctx, searchErr)
 		if err != nil {
@@ -81,6 +84,7 @@ func tryAutomaticSearch(ctx context.Context, c *daemonconn.Connection, query str
 		}
 		if first.reason == "" {
 			first = outcome
+			first.profile, first.binding = candidate.profile, candidate.binding
 		}
 		if !bindingSearchFailure(outcome.reason) {
 			break

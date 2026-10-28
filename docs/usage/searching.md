@@ -276,6 +276,8 @@ saved-definition HTTP API stores the intent with the vault's metadata. A
 separate run endpoint executes a saved query. Saved definitions and run
 receipts survive backup and restore, but snapshot rows do not.
 
+Empty submitted searches can be kept in the opt-in [private search miss log](../configuration.md#private-search-miss-log). The log keeps query receipts without document excerpts and stays out of backups and portable bundles.
+
 The [web management screen](web.md#saved-queries-and-highlights) also manages
 saved definitions.
 
