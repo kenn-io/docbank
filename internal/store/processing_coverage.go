@@ -9,9 +9,10 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
-// ProcessingCoverageScope names one bounded exact-version coverage snapshot.
+// ProcessingCoverageScope selects either bounded exact versions or filtered live files.
 type ProcessingCoverageScope struct {
 	ContentVersionIDs            []string
+	Filters                      *SearchOptions
 	ProcessingProfileFingerprint string
 	Bindings                     []ProcessingCoverageBinding
 }
@@ -38,6 +39,7 @@ type ProcessingClassCoverage struct {
 }
 
 type ProcessingCoverageSnapshot struct {
+	Filters    *SearchOptions
 	Renditions ProcessingClassCoverage
 	Embeddings []ProcessingClassCoverage
 }
@@ -45,14 +47,16 @@ type ProcessingCoverageSnapshot struct {
 // ProcessingCoverage evaluates source visibility, retained heads and replacement
 // jobs in one snapshot, using the same embedding authority as document search.
 func (s *Store) ProcessingCoverage(ctx context.Context, scope ProcessingCoverageScope) (ProcessingCoverageSnapshot, error) {
-	if len(scope.ContentVersionIDs) == 0 || len(scope.Bindings) > 64 {
+	if (len(scope.ContentVersionIDs) != 0) == (scope.Filters != nil) {
+		return ProcessingCoverageSnapshot{}, fmt.Errorf("%w: select exactly one coverage scope", ErrInvalidProcessingSourceFence)
+	}
+	if scope.Filters != nil && len(scope.Filters.ContentVersionIDs) != 0 {
+		return ProcessingCoverageSnapshot{}, fmt.Errorf("%w: metadata filters cannot contain a source fence", ErrInvalidProcessingSourceFence)
+	}
+	if len(scope.Bindings) > 64 {
 		return ProcessingCoverageSnapshot{}, errors.New("processing coverage scope is outside bounded counts")
 	}
 	if err := validateCatalogSHA256(scope.ProcessingProfileFingerprint, "coverage profile fingerprint"); err != nil {
-		return ProcessingCoverageSnapshot{}, err
-	}
-	opts, err := s.NormalizeSearchOptions(ctx, SearchOptions{ContentVersionIDs: scope.ContentVersionIDs})
-	if err != nil {
 		return ProcessingCoverageSnapshot{}, err
 	}
 	seen := make(map[string]struct{}, len(scope.Bindings))
@@ -70,11 +74,26 @@ func (s *Store) ProcessingCoverage(ctx context.Context, scope ProcessingCoverage
 		return ProcessingCoverageSnapshot{}, fmt.Errorf("starting processing coverage snapshot: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	var opts SearchOptions
+	var total int
+	if scope.Filters != nil {
+		opts, total, err = s.countProcessingSearchScopeSnapshot(ctx, tx, *scope.Filters)
+	} else {
+		opts, err = s.normalizeSearchOptionsWithQuerier(ctx, tx, SearchOptions{ContentVersionIDs: scope.ContentVersionIDs})
+		// Exact fences retain missing, superseded and trashed versions in totals.
+		total = len(opts.ContentVersionIDs)
+	}
+	if err != nil {
+		return ProcessingCoverageSnapshot{}, err
+	}
 	_, profileErr := loadProcessingProfile(ctx, tx, scope.ProcessingProfileFingerprint)
 	if profileErr != nil && !errors.Is(profileErr, ErrNotFound) {
 		return ProcessingCoverageSnapshot{}, profileErr
 	}
-	result := ProcessingCoverageSnapshot{Renditions: ProcessingClassCoverage{Name: "rendition", Total: len(opts.ContentVersionIDs)}}
+	result := ProcessingCoverageSnapshot{Renditions: ProcessingClassCoverage{Name: "rendition", Total: total}}
+	if scope.Filters != nil {
+		result.Filters = &opts
+	}
 	filterSQL, filterArgs := searchFilterSQL(opts)
 	rows, err := tx.QueryContext(ctx, `SELECT COALESCE(h.attachment_id,''),
 		COALESCE(a.build_id,''), COALESCE(a.profile_fingerprint,''),
@@ -99,7 +118,7 @@ func (s *Store) ProcessingCoverage(ctx context.Context, scope ProcessingCoverage
 		rebuilding   bool
 		key          renditionValidationKey
 	}
-	heads := make([]renditionHead, 0, len(opts.ContentVersionIDs))
+	heads := make([]renditionHead, 0, total)
 	for rows.Next() {
 		var head renditionHead
 		if err := rows.Scan(&head.attachmentID, &head.key.buildID, &head.key.profileFingerprint, &head.rebuilding); err != nil {
@@ -110,7 +129,7 @@ func (s *Store) ProcessingCoverage(ctx context.Context, scope ProcessingCoverage
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 		return ProcessingCoverageSnapshot{}, err
 	}
-	result.Renditions.Stale = len(opts.ContentVersionIDs) - len(heads)
+	result.Renditions.Stale = total - len(heads)
 	// Shared builds need full validation only once per attachment profile in
 	// this read snapshot. Keep counting each version's state independently.
 	validated := make(map[renditionValidationKey]bool)
@@ -130,7 +149,7 @@ func (s *Store) ProcessingCoverage(ctx context.Context, scope ProcessingCoverage
 	result.Renditions.State = processingCoverageClassState(result.Renditions)
 	for _, requested := range scope.Bindings {
 		item := ProcessingClassCoverage{Name: requested.BindingID, Required: requested.Required,
-			Total: len(opts.ContentVersionIDs), Stale: result.Renditions.Stale, Unavailable: len(heads)}
+			Total: total, Stale: result.Renditions.Stale, Unavailable: len(heads)}
 		if profileErr == nil {
 			binding, fingerprints, err := embeddingProfileBindingAuthority(ctx, tx,
 				scope.ProcessingProfileFingerprint, requested.BindingID)
@@ -175,6 +194,8 @@ func (s *Store) ProcessingCoverage(ctx context.Context, scope ProcessingCoverage
 			}
 			item.Rebuilding = len(rebuildingIDs)
 			if item.Rebuilding > 0 {
+				// These are internal, distinct live IDs from this snapshot. The
+				// counting helper does not normalize or cap explicit source fences.
 				_, item.PreviousGenerationServing, err = semanticSearchCoverageTx(ctx, tx, scope.ProcessingProfileFingerprint,
 					binding.Name, binding.InputKind, vectorSpace, SearchOptions{ContentVersionIDs: rebuildingIDs})
 				if err != nil {
@@ -226,13 +247,16 @@ func countProcessingCoverage(item *ProcessingClassCoverage, complete, rebuilding
 }
 
 func processingCoverageClassState(item ProcessingClassCoverage) string {
+	const complete = "complete"
 	switch {
+	case item.Total == 0:
+		return complete
 	case item.Stale == item.Total:
 		return "stale"
 	case item.Rebuilding > 0:
 		return "rebuilding"
 	case item.Complete == item.Total:
-		return "complete"
+		return complete
 	case item.Complete > 0:
 		return "partial"
 	default:

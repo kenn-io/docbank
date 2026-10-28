@@ -150,14 +150,18 @@ func (v *Vault) DocumentCoverage(ctx context.Context, request CoverageRequest) (
 		return CoverageReport{}, err
 	}
 	defer v.lifecycle.RUnlock()
-	report, err := v.processing.Coverage(ctx, request.Profile, internalprocessing.SourceFence{
-		VaultUID: request.Fence.VaultUID, ContentVersionIDs: request.Fence.ContentVersionIDs})
+	report, err := v.processing.CoverageWithScope(ctx, request.Profile, internalprocessing.SourceFence{
+		VaultUID: request.Fence.VaultUID, ContentVersionIDs: request.Fence.ContentVersionIDs}, toSearchScope(request.Scope))
 	if err != nil {
 		return CoverageReport{}, err
 	}
 	result := CoverageReport{VaultUID: report.VaultUID, ProfileFingerprint: report.ProfileFingerprint,
 		State: report.State, Renditions: fromCoverageClass(report.Renditions),
 		Embeddings: make([]CoverageClass, len(report.Embeddings))}
+	if report.Scope != nil {
+		result.Scope = fromSearchScope(report.Scope)
+		result.ObservedScopeCount = new(report.ObservedScopeCount)
+	}
 	for index, item := range report.Embeddings {
 		result.Embeddings[index] = fromCoverageClass(item)
 	}

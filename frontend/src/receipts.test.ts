@@ -355,11 +355,14 @@ describe("browser explicit search authority", () => {
 
   it("rejects omitted versions with the ordinary receipt error", () => {
     expect(() =>
-      validateDocumentSearchReport(report, {
-        ...request,
-        fence: { vault_uid: vault },
-        scope: { kind: "all_live" },
-      }),
+      validateDocumentSearchReport(
+        {
+          ...report,
+          coverage: { ...report.coverage, scoped_documents: 0, complete_documents: 0 },
+          results: [],
+        },
+        { ...request, fence: { vault_uid: vault } },
+      ),
     ).toThrow("The daemon returned an invalid search response.");
   });
 

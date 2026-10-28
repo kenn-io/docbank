@@ -223,7 +223,12 @@ catalog snapshot. A replacement counts as `rebuilding`. The separate
 remains available. Those documents are not also counted as `complete`. Embedding
 coverage uses the same current attachment and evidence checks as search. A
 missing required result keeps aggregate coverage `partial` even if other work
-is rebuilding. See the [HTTP coverage contract](http-api.md#coverage-and-source-fenced-search).
+is rebuilding. Exact fences retain stale requested versions in their totals.
+An `all_live` scope instead counts current live file versions under its metadata
+filters in that snapshot, with no explicit-ID cap. It echoes normalized scope
+and observed count, including zero for an empty complete scope. See the
+[HTTP coverage contract](http-api.md#coverage-and-source-fenced-search) for
+counter definitions and the limits of classification.
 
 Within that snapshot, rendition coverage fully validates each distinct build
 and attachment-profile pair once. Documents sharing a build retain their own

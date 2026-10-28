@@ -142,7 +142,7 @@ on a running daemon) and authenticates with `X-Api-Key` /
 | `POST /text-citations/section` | read an exact page of a retained text section | Implemented |
 | `POST /kata/cite` | quote a verified document passage into a new or existing Kata issue | Implemented |
 | `POST /kata/context` | read saved Docbank evidence from a Kata issue with its current source status | Implemented |
-| `GET /coverage?profile=&vault_uid=&content_version_id=` · `POST /search` | inspect separate rendition/embedding coverage / search an authorized source-version set | Implemented |
+| `GET /coverage?profile=&vault_uid=&content_version_id=` · `POST /coverage` · `POST /search` | inspect separate rendition/embedding coverage or search exact versions or a live document scope | Implemented |
 | `POST /search/similar` | stored-vector neighbors | Implemented |
 | `POST /derivatives/purge-plans` · `POST /derivatives/purge-jobs` | preview / run a live derivative purge without changing immutable backups | Implemented |
 | `POST /nodes` · `POST /path/mkdir` | create a directory beneath a stable parent ID or at one exact virtual coordinate | Implemented |
@@ -769,6 +769,30 @@ current source visibility and serving evidence. Missing required coverage keeps
 the aggregate state `partial` even if another class is rebuilding. This read
 does not grant consent or start provider work.
 
+Read-only `POST /coverage` accepts `{profile, fence, scope}`. Use an explicit
+`fence` of 1–4,096 distinct canonical UUIDv4 content versions, or an `all_live`
+scope with no version IDs:
+
+```json
+{
+  "profile": "private",
+  "fence": {"vault_uid": "22222222-2222-4222-8222-222222222222"},
+  "scope": {"kind": "all_live", "filters": {"mime_type": "text/plain"}}
+}
+```
+
+Scope filters use the same tag, MIME, directory and modification-time fields
+as processing search below. The server counts current live file versions in
+the coverage snapshot. Scoped responses add normalized `scope` and
+`observed_scope_count`, including zero, without listing version IDs. Exact
+responses keep their existing shape. Counts have no 4,096-document scope cap.
+An empty scope is complete with totals of zero.
+
+`ineligible` is currently zero. `unavailable` includes unprocessed, failed and
+unsupported documents. Coverage does not inspect source bytes or call
+providers to distinguish them. `all_live` excludes stale versions; an explicit
+fence can still count unknown, replaced or trashed versions as stale.
+
 `POST /search` uses JSON, separately from ordinary lexical `GET /search`:
 
 ```json
@@ -787,9 +811,9 @@ does not grant consent or start provider work.
 }
 ```
 
-The `fence.vault_uid` must be the actual vault UUID. Coverage and similar search
-require an explicit fence of 1–4,096 distinct canonical UUIDv4 content versions.
-Processing search accepts that same fence or a server-resolved scope:
+The `fence.vault_uid` must be the actual vault UUID. `GET /coverage` and similar
+search require an explicit fence of 1–4,096 distinct canonical UUIDv4 content
+versions. Processing search accepts that same fence or a server-resolved scope:
 
 ```json
 {

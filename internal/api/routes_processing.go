@@ -385,6 +385,22 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		return &coverageOutput{Body: fromProcessingCoverage(report)}, nil
 	})
 
+	type scopedCoverageInput struct{ Body DocumentCoverageRequest }
+	huma.Register(api, huma.Operation{
+		OperationID: "getScopedDocumentProcessingCoverage", Method: http.MethodPost,
+		Path: "/api/v1/coverage", Summary: "Report rendition and embedding coverage for exact versions or live documents",
+	}, func(ctx context.Context, input *scopedCoverageInput) (*coverageOutput, error) {
+		if d.Processing == nil {
+			return nil, processingUnavailable()
+		}
+		report, err := d.Processing.CoverageWithScope(ctx, input.Body.Profile, processing.SourceFence{
+			VaultUID: input.Body.Fence.VaultUID, ContentVersionIDs: input.Body.Fence.ContentVersionIDs}, toDocumentSearchScope(input.Body.Scope))
+		if err != nil {
+			return nil, fromProcessingError(err)
+		}
+		return &coverageOutput{Body: fromProcessingCoverage(report)}, nil
+	})
+
 	type searchInput struct{ Body DocumentSearchRequest }
 	type similarInput struct{ Body DocumentSimilarRequest }
 	type similarOutput struct{ Body DocumentSimilarReport }
@@ -636,6 +652,10 @@ func fromProcessingCoverage(report processing.Coverage) CoverageReport {
 	result := CoverageReport{VaultUID: report.VaultUID, ProfileFingerprint: report.ProfileFingerprint,
 		State: report.State, Renditions: fromProcessingCoverageClass(report.Renditions),
 		Embeddings: make([]CoverageClass, len(report.Embeddings))}
+	if report.Scope != nil {
+		result.Scope = fromDocumentSearchScope(report.Scope)
+		result.ObservedScopeCount = new(report.ObservedScopeCount)
+	}
 	for index, item := range report.Embeddings {
 		result.Embeddings[index] = fromProcessingCoverageClass(item)
 	}

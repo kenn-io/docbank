@@ -500,6 +500,7 @@ version without starting processing:
 ```bash
 docbank stat /inbox/notes.txt --json
 docbank processing coverage <version-uuid> --profile <name> --json
+docbank processing coverage --all-live --profile <name> --json
 docbank rendition window /inbox/notes.txt --version <version-uuid> --profile <name>
 ```
 
@@ -508,13 +509,20 @@ A configured profile whose runtime is unavailable is not enough, even if its
 renditions are retained. Reports can still use retained evidence under such a
 configured profile. A profile error here does not mean that evidence is missing.
 
-Coverage reports rendition and embedding counters for the one requested
-version. JSON contains `content_version_id` and the complete `coverage` object.
-Human output names the profile, fingerprint, state, and each class's counters.
+Coverage reports rendition and embedding counters for one requested version
+or all current live file versions. Supply a version UUID or `--all-live`, never
+both. Exact-version JSON contains `content_version_id` and the complete
+`coverage` object. With `--all-live`, JSON omits `content_version_id`; `coverage`
+contains `scope` and `observed_scope_count`. Human output names the profile,
+fingerprint, state, and each class's counters, plus the scope count for
+`--all-live`. An empty live scope is complete with totals of zero.
 Unavailable, partial, rebuilding, and stale observations exit successfully.
 Unknown, replaced, or trashed versions count as stale for a required rendition.
 An unneeded class marked `not_required` does not establish source availability.
 `previous_generation_serving` overlaps rebuilding. Do not add it to the total.
+`--all-live` excludes stale versions. See the
+[coverage contract](../architecture/http-api.md#coverage-and-source-fenced-search)
+for counter definitions and the limits of classification.
 
 These processing counters do not inspect term matches, dates, or attachment
 families. They do not promise that a [strict report](search-exports.md) will

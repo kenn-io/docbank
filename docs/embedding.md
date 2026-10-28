@@ -321,6 +321,17 @@ for provider construction and [Document processing](usage/document-processing.md
 for planning, consent, retained results, and the private-deployment acceptance
 runner.
 
+Use `Vault.DocumentCoverage` with a `CoverageRequest` to inspect retained
+processing coverage. Keep `Fence.ContentVersionIDs` for an exact version set,
+or set `Scope` to `&docbank.DocumentSearchScope{Kind: "all_live"}` and leave
+those IDs empty. Both forms require `Profile` and the actual vault UUID in
+`Fence.VaultUID`. Optional `DocumentSearchFilters` on the scope use the same
+conversion and validation as processing search. Scoped reports echo normalized
+`Scope` and `ObservedScopeCount`, including a pointer to zero for an empty
+complete scope. They do not enumerate versions. Exact reports omit both scope
+fields. See the [HTTP coverage contract](architecture/http-api.md#coverage-and-source-fenced-search)
+for counters, stale versions and unavailable documents.
+
 Set `DocumentSearchRequest.ContentFirst` to prefer content matches, following the
 [HTTP search ordering contract](architecture/http-api.md#coverage-and-source-fenced-search).
 

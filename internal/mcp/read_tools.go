@@ -743,20 +743,24 @@ type coverageClassOutput struct {
 type processingCoverageOutput struct {
 	privateCache
 
-	VaultID            string                `json:"vault_id"`
-	ContentVersionIDs  []string              `json:"content_version_ids"`
-	ProfileFingerprint string                `json:"profile_fingerprint"`
-	State              string                `json:"state"`
-	Coverage           []coverageClassOutput `json:"coverage"`
+	VaultID            string                   `json:"vault_id"`
+	ContentVersionIDs  []string                 `json:"content_version_ids,omitzero"`
+	Scope              *api.DocumentSearchScope `json:"scope,omitzero"`
+	ObservedScopeCount *int                     `json:"observed_scope_count,omitzero"`
+	ProfileFingerprint string                   `json:"profile_fingerprint"`
+	State              string                   `json:"state"`
+	Coverage           []coverageClassOutput    `json:"coverage"`
 }
 
 func getProcessingCoverage(
 	ctx context.Context, lease *daemonLease, raw []byte,
 ) (processingCoverageOutput, error) {
 	var input struct {
-		Profile           string   `json:"profile"`
-		VaultID           string   `json:"vault_id"`
-		ContentVersionIDs []string `json:"content_version_ids"`
+		Profile           string                          `json:"profile"`
+		VaultID           string                          `json:"vault_id"`
+		ContentVersionIDs []string                        `json:"content_version_ids"`
+		AllLive           bool                            `json:"all_live"`
+		Filters           *api.DocumentSourceFenceFilters `json:"filters"`
 	}
 	if err := decodeReadArguments(raw, &input); err != nil {
 		return processingCoverageOutput{}, err
@@ -766,20 +770,32 @@ func getProcessingCoverage(
 		return processingCoverageOutput{}, fmt.Errorf("parsing coverage vault ID: %w", err)
 	}
 	report, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (*api.CoverageReport, error) {
+		if input.AllLive {
+			return c.API().GetScopedDocumentProcessingCoverage(ctx, &apiclient.GetScopedDocumentProcessingCoverageRequestOptions{Body: &api.DocumentCoverageRequest{
+				Profile: input.Profile, Fence: api.DocumentSearchFence{VaultUID: input.VaultID}, Scope: &api.DocumentSearchScope{Kind: "all_live", Filters: input.Filters},
+			}})
+		}
 		return c.API().GetDocumentProcessingCoverage(ctx, &apiclient.GetDocumentProcessingCoverageRequestOptions{Query: &apiclient.GetDocumentProcessingCoverageQuery{
 			Profile: input.Profile, VaultUID: vaultID, ContentVersionID: input.ContentVersionIDs}})
 	})
 	if err != nil {
 		return processingCoverageOutput{}, err
 	}
-	if report.VaultUID != input.VaultID {
+	if report == nil || report.VaultUID != input.VaultID {
 		return processingCoverageOutput{}, errors.New("processing coverage escaped its vault fence")
+	}
+	if input.AllLive && (report.Scope == nil || report.Scope.Kind != "all_live" || report.ObservedScopeCount == nil) {
+		return processingCoverageOutput{}, errors.New("processing coverage does not identify the live scope")
 	}
 	classes := append([]api.CoverageClass{report.Renditions}, report.Embeddings...)
 	output := processingCoverageOutput{VaultID: report.VaultUID,
 		ContentVersionIDs:  slices.Clone(input.ContentVersionIDs),
 		ProfileFingerprint: report.ProfileFingerprint, State: report.State,
 		Coverage: make([]coverageClassOutput, len(classes)), privateCache: newPrivateCache()}
+	if input.AllLive {
+		output.Scope = report.Scope
+		output.ObservedScopeCount = report.ObservedScopeCount
+	}
 	for index, item := range classes {
 		output.Coverage[index] = coverageClassOutput{Name: item.Name, Required: item.Required,
 			State: item.State, Complete: item.Complete, Unavailable: item.Unavailable,

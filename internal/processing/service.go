@@ -362,6 +362,8 @@ type CoverageClass struct {
 }
 
 type Coverage struct {
+	Scope                               *SearchScope
+	ObservedScopeCount                  int
 	VaultUID, ProfileFingerprint, State string
 	Renditions                          CoverageClass
 	Embeddings                          []CoverageClass
@@ -1458,7 +1460,38 @@ func (service *Service) renditionFromView(ctx context.Context, node store.Node, 
 }
 
 func (service *Service) Coverage(ctx context.Context, profileName string, fence SourceFence) (Coverage, error) {
-	profile, ids, err := service.profileFence(profileName, fence)
+	return service.CoverageWithScope(ctx, profileName, fence, nil)
+}
+
+// CoverageWithScope reports exact-version or filtered live-file coverage from
+// one catalog snapshot, without inspecting sources or invoking providers.
+func (service *Service) CoverageWithScope(ctx context.Context, profileName string, fence SourceFence, scope *SearchScope) (Coverage, error) {
+	if (len(fence.ContentVersionIDs) != 0) == (scope != nil) {
+		return Coverage{}, fmt.Errorf("%w: select exactly one coverage scope", store.ErrInvalidProcessingSourceFence)
+	}
+	var profile configuredProfile
+	var ids []string
+	var filters *store.SearchOptions
+	var err error
+	if scope == nil {
+		profile, ids, err = service.profileFence(profileName, fence)
+	} else {
+		var ok bool
+		profile, ok = service.profiles[profileName]
+		if !ok {
+			return Coverage{}, ErrProfileNotConfigured
+		}
+		if fence.VaultUID != service.catalog.VaultID() {
+			return Coverage{}, ErrForeignVault
+		}
+		if scope.Kind != "all_live" {
+			return Coverage{}, fmt.Errorf("%w: unknown coverage scope", store.ErrInvalidProcessingSourceFence)
+		}
+		filters = &store.SearchOptions{}
+		if scope.Filters != nil {
+			*filters = *scope.Filters
+		}
+	}
 	if err != nil {
 		return Coverage{}, err
 	}
@@ -1468,7 +1501,7 @@ func (service *Service) Coverage(ctx context.Context, profileName string, fence 
 			Required: binding.Activation == document.EmbeddingRequired}
 	}
 	snapshot, err := service.catalog.ProcessingCoverage(ctx, store.ProcessingCoverageScope{
-		ContentVersionIDs: ids, ProcessingProfileFingerprint: profile.record.Fingerprint, Bindings: bindings,
+		ContentVersionIDs: ids, Filters: filters, ProcessingProfileFingerprint: profile.record.Fingerprint, Bindings: bindings,
 	})
 	if err != nil {
 		return Coverage{}, err
@@ -1480,7 +1513,14 @@ func (service *Service) Coverage(ctx context.Context, profileName string, fence 
 			PreviousServing: item.PreviousGenerationServing, Total: item.Total}
 	}
 	report := Coverage{VaultUID: service.catalog.VaultID(), ProfileFingerprint: profile.record.Fingerprint,
-		State: "complete", Renditions: CoverageClass{Name: "rendition", State: "not_required", Total: len(ids)}}
+		State: "complete", Renditions: CoverageClass{Name: "rendition", State: "not_required", Total: snapshot.Renditions.Total}}
+	if scope != nil {
+		report.Scope = &SearchScope{Kind: "all_live"}
+		if scope.Filters != nil {
+			report.Scope.Filters = snapshot.Filters
+		}
+		report.ObservedScopeCount = snapshot.Renditions.Total
+	}
 	// A description profile attaches no rendition, so there is none to cover.
 	if profile.portable.Rendition != nil && profileRenditionInput(profile) == document.RenditionInputOriginalFile {
 		report.Renditions = toClass(snapshot.Renditions)

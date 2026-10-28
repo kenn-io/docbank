@@ -867,3 +867,23 @@ func TestDocumentSearchScopeWireContract(t *testing.T) {
 	require.NotNil(t, report.Properties["scope"])
 	require.NotNil(t, report.Properties["observed_scope_count"])
 }
+
+func TestDocumentCoverageScopeWireContract(t *testing.T) {
+	t.Parallel()
+	doc := api.NewOfflineServer().API().OpenAPI()
+	path := doc.Paths["/api/v1/coverage"]
+	require.NotNil(t, path.Post)
+	assert.Equal(t, "getScopedDocumentProcessingCoverage", path.Post.OperationID)
+	assert.Equal(t, "getDocumentProcessingCoverage", path.Get.OperationID)
+	schemas := doc.Components.Schemas.Map()
+	request := schemas["DocumentCoverageRequest"]
+	require.NotNil(t, request)
+	assert.ElementsMatch(t, []string{"profile", "fence"}, request.Required)
+	require.Equal(t, "#/components/schemas/DocumentSearchScope", request.Properties["scope"].Ref)
+	require.Equal(t, "#/components/schemas/DocumentSearchFence", request.Properties["fence"].Ref)
+	report := schemas["CoverageReport"]
+	require.NotNil(t, report.Properties["scope"])
+	require.NotNil(t, report.Properties["observed_scope_count"])
+	assert.NotContains(t, report.Required, "scope")
+	assert.NotContains(t, report.Required, "observed_scope_count")
+}

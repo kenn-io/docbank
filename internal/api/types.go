@@ -231,16 +231,24 @@ type CoverageClass struct {
 }
 
 type CoverageReport struct {
-	VaultUID           string          `json:"vault_uid" format:"uuid"`
-	ProfileFingerprint string          `json:"profile_fingerprint" pattern:"^[0-9a-f]{64}$"`
-	State              string          `json:"state"`
-	Renditions         CoverageClass   `json:"renditions"`
-	Embeddings         []CoverageClass `json:"embeddings"`
+	Scope              *DocumentSearchScope `json:"scope,omitzero"`
+	ObservedScopeCount *int                 `json:"observed_scope_count,omitzero" minimum:"0"`
+	VaultUID           string               `json:"vault_uid" format:"uuid"`
+	ProfileFingerprint string               `json:"profile_fingerprint" pattern:"^[0-9a-f]{64}$"`
+	State              string               `json:"state"`
+	Renditions         CoverageClass        `json:"renditions"`
+	Embeddings         []CoverageClass      `json:"embeddings"`
 }
 
 type DocumentSearchScope struct {
 	Kind    string                      `json:"kind" enum:"all_live"`
 	Filters *DocumentSourceFenceFilters `json:"filters,omitzero"`
+}
+
+type DocumentCoverageRequest struct {
+	Profile string               `json:"profile" minLength:"1" maxLength:"128" pattern:"^[a-z][a-z0-9_-]*$"`
+	Fence   DocumentSearchFence  `json:"fence"`
+	Scope   *DocumentSearchScope `json:"scope,omitzero"`
 }
 
 type DocumentSearchRequest struct {

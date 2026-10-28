@@ -417,8 +417,9 @@ type DocumentSourceFence struct {
 }
 
 type CoverageRequest struct {
-	Profile string              `json:"profile"`
-	Fence   DocumentSourceFence `json:"fence"`
+	Scope   *DocumentSearchScope `json:"scope,omitzero"`
+	Profile string               `json:"profile"`
+	Fence   DocumentSourceFence  `json:"fence"`
 }
 
 type CoverageClass struct {
@@ -435,11 +436,13 @@ type CoverageClass struct {
 }
 
 type CoverageReport struct {
-	VaultUID           string          `json:"vault_uid"`
-	ProfileFingerprint string          `json:"profile_fingerprint"`
-	State              string          `json:"state"`
-	Renditions         CoverageClass   `json:"renditions"`
-	Embeddings         []CoverageClass `json:"embeddings"`
+	Scope              *DocumentSearchScope `json:"scope,omitzero"`
+	ObservedScopeCount *int                 `json:"observed_scope_count,omitzero"`
+	VaultUID           string               `json:"vault_uid"`
+	ProfileFingerprint string               `json:"profile_fingerprint"`
+	State              string               `json:"state"`
+	Renditions         CoverageClass        `json:"renditions"`
+	Embeddings         []CoverageClass      `json:"embeddings"`
 }
 
 type DocumentSearchMode string

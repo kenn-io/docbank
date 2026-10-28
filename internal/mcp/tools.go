@@ -80,7 +80,7 @@ var readToolDefinitions = []toolDefinition{
 	{name: "read_rendition_text", title: "Read rendition text", description: "Read a bounded Unicode window from an active sanitized Markdown rendition.", schemas: readRenditionTextSchemas},
 	{name: "get_processing_plan", title: "Get processing plan", description: "Preview the exact provider disclosure and consent state for one document version.", schemas: getProcessingPlanSchemas},
 	{name: "get_processing_status", title: "Get processing status", description: "Read the current state of one stable processing job.", schemas: getProcessingStatusSchemas},
-	{name: "get_processing_coverage", title: "Get processing coverage", description: "Read rendition and embedding coverage for an exact source fence.", schemas: getProcessingCoverageSchemas},
+	{name: "get_processing_coverage", title: "Get processing coverage", description: "Read rendition and embedding coverage for an exact source fence or all live documents.", schemas: getProcessingCoverageSchemas},
 	{name: "get_package_import", title: "Get package import", description: "Read durable progress for one load-file import operation.", schemas: getPackageImportSchemas},
 	{name: "get_package_preflight", title: "Get package preflight", description: "Read one exact retained load-file package preflight.", schemas: getPackagePreflightSchemas},
 	{name: "list_package_preflight_diagnostics", title: "List package preflight diagnostics", description: "Page through bounded diagnostics for one retained package preflight.", schemas: listPackagePreflightDiagnosticsSchemas},
@@ -310,7 +310,7 @@ func validToolSemantics(name string, arguments map[string]any) bool {
 	case "list_documents":
 		return stringBytesWithin(arguments, "path_prefix", maxPathBytes) &&
 			stringBytesWithin(arguments, "cursor", maxCursorBytes)
-	case "search_documents":
+	case "search_documents", "get_processing_coverage":
 		filters, ok := arguments["filters"].(map[string]any)
 		if !ok {
 			return arguments["filters"] == nil

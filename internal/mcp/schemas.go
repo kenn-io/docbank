@@ -22,6 +22,8 @@ const (
 	schemaJobIDField          = "job_id"
 	schemaCreatedAtField      = "created_at"
 	jsonSchemaConst           = "const"
+	jsonSchemaNot             = "not"
+	jsonSchemaRequired        = "required"
 	maxToolResponseBytes      = 1 << 20
 	maxToolErrorBytes         = 1024
 	maxPathBytes              = 16 << 10
@@ -817,22 +819,32 @@ func getProcessingStatusSchemas() (schema, schema) {
 }
 
 func getProcessingCoverageSchemas() (schema, schema) {
-	input := rootObjectSchema(schema{
-		"profile":             schema{"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-z][a-z0-9_-]*$"},
-		"vault_id":            uuidSchema(),
-		"content_version_ids": schema{"type": "array", "items": uuidSchema(), "minItems": 1, "maxItems": 4096, "uniqueItems": true},
-	}, "profile", "vault_id", "content_version_ids")
+	properties := fenceInputProperties()
+	properties["profile"] = schema{"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-z][a-z0-9_-]*$"}
+	properties["vault_id"] = uuidSchema()
+	properties["all_live"] = schema{"type": "boolean", jsonSchemaConst: true}
+	input := rootObjectSchema(properties, "profile", "vault_id")
+	// Preserve conditional selection without root oneOf for tool-client compatibility.
+	input["if"] = schema{jsonSchemaRequired: []string{"all_live"}}
+	input["then"] = schema{jsonSchemaNot: schema{jsonSchemaRequired: []string{"content_version_ids"}}}
+	input["else"] = schema{jsonSchemaRequired: []string{"content_version_ids"}, jsonSchemaNot: schema{jsonSchemaRequired: []string{"filters"}}}
+
 	class := objectSchema(schema{
 		"name": stringSchema(128), "required": booleanSchema(), schemaStateField: stringSchema(64),
-		"complete": integerSchema(0, 4096), "unavailable": integerSchema(0, 4096), "stale": integerSchema(0, 4096),
-		"ineligible": integerSchema(0, 4096), "rebuilding": integerSchema(0, 4096), "total": integerSchema(0, 4096),
-		"previous_generation_serving": integerSchema(0, 4096),
+		"complete": integerSchema(0, 0), "unavailable": integerSchema(0, 0), "stale": integerSchema(0, 0),
+		"ineligible": integerSchema(0, 0), "rebuilding": integerSchema(0, 0), "total": integerSchema(0, 0),
+		"previous_generation_serving": integerSchema(0, 0),
 	}, "name", "required", schemaStateField, "complete", "unavailable", "stale", "ineligible", "rebuilding",
 		"previous_generation_serving", "total")
 	output := rootObjectSchema(withPrivateCache(schema{
 		"vault_id": uuidSchema(), "content_version_ids": arraySchema(uuidSchema(), 4096),
-		"profile_fingerprint": sha256Schema(), schemaStateField: stringSchema(64), "coverage": arraySchema(class, 65),
-	}), cacheRequired("vault_id", "content_version_ids", "profile_fingerprint", schemaStateField, "coverage")...)
+		"scope":                objectSchema(schema{"kind": enumSchema("all_live"), "filters": fenceInputProperties()["filters"]}, "kind"),
+		"observed_scope_count": integerSchema(0, 0),
+		"profile_fingerprint":  sha256Schema(), schemaStateField: stringSchema(64), "coverage": arraySchema(class, 65),
+	}), cacheRequired("vault_id", "profile_fingerprint", schemaStateField, "coverage")...)
+	output["if"] = schema{jsonSchemaRequired: []string{"scope"}}
+	output["then"] = schema{jsonSchemaRequired: []string{"observed_scope_count"}, jsonSchemaNot: schema{jsonSchemaRequired: []string{"content_version_ids"}}}
+	output["else"] = schema{jsonSchemaRequired: []string{"content_version_ids"}, jsonSchemaNot: schema{jsonSchemaRequired: []string{"observed_scope_count"}}}
 	return input, output
 }
 

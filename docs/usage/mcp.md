@@ -209,7 +209,7 @@ resource links, is capped at 1 MiB.
 | `read_rendition_text` | Reads the exact vault/node/version/attachment tuple described under [Resources](#resources-and-rendition-windows). |
 | `get_processing_plan` | Requires an exact node ID, content-version UUID, and 1–128-character processing profile name. Returns the complete provider, trust-boundary, retention, estimate, consent, and backup disclosure plus its fingerprint. |
 | `get_processing_status` | Reads one stable 64-hex-character job identity. A response contains at most 64 embedding job IDs. |
-| `get_processing_coverage` | Reports rendition and embedding coverage for 1–4,096 unique version IDs in one exact vault fence and one 1–128-character processing profile. The response has at most 65 coverage classes. |
+| `get_processing_coverage` | Reports rendition and embedding coverage for one vault and one 1–128-character processing profile. Supply 1–4,096 unique `content_version_ids` or `all_live: true`. Optional metadata `filters` require `all_live: true`. The response has at most 65 coverage classes. |
 | `get_package_import` | Reads durable progress for one import operation UUID. |
 | `get_package_preflight` | Reads one retained preflight by its exact identity. |
 | `list_package_preflight_diagnostics` | Pages through bounded diagnostics for a retained preflight. |
@@ -279,10 +279,21 @@ vector-space strings are capped at 1,024 characters, and provider and class
 names at 128. The backup-consequence text is capped at 4,096 characters.
 Processing status contains at most 64 embedding job IDs and caps state, phase,
 and failure codes at 64 characters. `completed_bindings` is capped at 64.
-Processing coverage contains at most 65 classes, with class names capped at 128
-characters, states at 64, and each class count at 4,096. These schema limits
+Processing coverage contains at most 65 classes, with class names capped at
+128 characters and states at 64. Class counts are nonnegative integers without
+a 4,096 maximum; that limit applies to explicit input IDs. These schema limits
 are admission bounds, not promises that a configured provider or vault will
 fill them.
+
+For `get_processing_coverage`, `all_live: true` counts current live file versions
+in one catalog snapshot. It accepts the same metadata filter fields as
+`search_documents`: `tag_id`, `mime_type`, `under_node_id`, `modified_since` and
+`modified_before`. Scoped output contains normalized `scope` and
+`observed_scope_count` without `content_version_ids`. Exact output retains its
+ID list and omits scope fields. An empty live scope is complete with zero
+totals. `all_live` excludes stale versions; exact fences can still report them.
+See the [coverage contract](../architecture/http-api.md#coverage-and-source-fenced-search)
+for counter definitions, rebuilding and the limits of classification.
 
 Expected domain failures return `isError: true` with a structured payload
 capped at 1 KiB and a stable code:
