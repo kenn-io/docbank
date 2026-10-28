@@ -8689,6 +8689,7 @@ export interface VersionPruneRequest {
 }
 
 export interface WatchedInbox {
+  capture_on_change: boolean;
   destination: string;
   exclude: string[];
   exclude_patterns: string[];

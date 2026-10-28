@@ -1,7 +1,7 @@
 ---
 title: Importing documents
 description: Import folders, preview large sources, retry partial imports, and keep changing files up to date.
-last_edited: 2026-10-05
+last_edited: 2026-10-25
 ---
 
 # Importing documents
@@ -441,21 +441,56 @@ pack_interval = "1h"
 pack_max_bytes = 268435456
 ```
 
-The daemon observes a file's filesystem identity, size, modification time, and
-change time for a full settle window before reading it. `minimum_age = "168h"`
-additionally requires seven days since the source's last modification, which is
-useful when an append-heavy session may pause for minutes or hours without being
-closed.
-The minimum-age gate survives restart. The settle observation does not, so
-after a restart every file must again stay unchanged for a full settle window.
-Set `minimum_age = "0s"` or omit it for ordinary inboxes that need only the
-settle window.
+By default, the daemon observes a file's filesystem identity, size, and
+modification time for a full settle window before reading it. When the
+filesystem supplies a native change timestamp, Docbank also observes that
+timestamp; it catches edits that preserve size and restore modification time.
+If no change timestamp is available, the watcher falls back to size and
+modification time. Any observed metadata change restarts settling and costs one
+more read, but adds no version when the bytes match.
 
-Change time catches edits that keep the same size and restore modification time.
-Any change to file metadata (permissions, ownership, extended attributes, hard
-links, or timestamps) restarts the settle window and costs one more read, but adds
-no version when the bytes match. A drive that reports no change time falls back
-to size and modification time.
+`minimum_age = "168h"` additionally requires seven days since the source's last
+modification, which is useful when an append-heavy session may pause for minutes
+or hours without being closed. The minimum-age gate survives restart. The
+settle observation does not, so in settled mode each file again waits for a
+full window after restart. Set `minimum_age = "0s"` or omit it for ordinary
+inboxes that need only the settle window.
+
+For working notes that you want to archive promptly, opt in on a separate
+watch:
+
+```toml
+[[watch]]
+name = "working-notes"
+source = "~/notes"
+destination = "/archives/notes"
+capture_on_change = true
+settle_time = "30s"
+minimum_age = "0s"
+scan_interval = "1h"
+```
+
+Prompt capture reads the initial readable file immediately and uses filesystem
+notifications to wake the same confined scanner after changes. The settle
+window does not delay prompt reads, including after restart; `minimum_age`
+still applies. Each content Docbank reads and commits becomes a version.
+Notifications can merge writes, and a source can be overwritten before Docbank
+reads it. Slow reading or ingest can miss intermediate saves. Prompt capture
+may also archive readable intermediate content or temporary files unless an
+`exclude` rule skips them; it cannot know an application's logical save
+boundary. It does not guarantee one version per save.
+
+The watcher keeps periodic scans at `scan_interval` even in prompt mode.
+Notification hints never authorize a direct path read. Each pass uses the
+existing root, symlink, mount, exclusion, stable-read, and mutation checks.
+A native notification failure or the 32,768-entry-unit subscription budget
+closes subscriptions, reports degraded polling in the watch job and daemon
+log, and leaves periodic scans running. Each watched directory costs one unit
+plus its immediate entry count, to account conservatively for macOS handles.
+Pending hints hold at most 1,024 paths; overflow asks for a full scan. A
+directory that vanishes during subscription is retried at the next periodic
+scan. Without a usable native change timestamp or notification event, a
+same-size, restored-mtime edit may remain unseen.
 
 Docbank then verifies that the confined source path still names the same
 unchanged object. It never follows entries that are symlinks and never changes
