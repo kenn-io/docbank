@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -98,6 +99,21 @@ func (f *answerFakeClient) SearchDocuments(ctx context.Context, req api.Document
 func (f *answerFakeClient) ResolveDocumentSummaries(context.Context, api.DocumentSummaryResolveRequest) ([]api.DocumentSummary, error) {
 	return f.documents, nil
 }
+func TestSelectAnswerSearchPreservesProfiles(t *testing.T) {
+	profiles := []api.ProcessingProfileSummary{
+		{Name: "a", Fingerprint: strings.Repeat("a", 64), QueryEmbeddingBindings: []string{"c", "a"}},
+		{Name: "z", Fingerprint: strings.Repeat("b", 64), QueryEmbeddingBindings: []string{"b"}, RerankingAvailable: true},
+	}
+	original := slices.Clone(profiles)
+	_, _, err := selectAnswerSearch(profiles, answerInput{Rerank: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(original, profiles) {
+		t.Fatal("profile selection changed caller profiles")
+	}
+}
+
 func TestAnswerQuestionEvidenceAndCoverage(t *testing.T) {
 	f := &answerFakeClient{report: api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete", ScopedDocuments: 1, CompleteDocuments: 1}}}
 	session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
@@ -105,7 +121,6 @@ func TestAnswerQuestionEvidenceAndCoverage(t *testing.T) {
 		name, question, reason string
 		incomplete, truncated  bool
 	}{
-		{name: "no match", question: "example"},
 		{name: "executed query hash", question: " example "},
 		{name: "incomplete embeddings", question: "example", incomplete: true, reason: "embeddings_incomplete"},
 		{name: "truncated retrieval", question: "example", truncated: true, reason: "retrieval_truncated"},

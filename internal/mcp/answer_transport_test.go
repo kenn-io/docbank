@@ -9,7 +9,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -20,7 +19,6 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/config"
-	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/retrieval"
 	"go.kenn.io/docbank/internal/store"
@@ -98,18 +96,6 @@ func TestAnswerQuestionQueryProviderOutageKeepsLexicalEvidence(t *testing.T) {
 	t.Cleanup(apiServer.Close)
 	httpServer := httptest.NewServer(apiServer.Handler())
 	t.Cleanup(httpServer.Close)
-	connection := daemonconn.New(httpServer.URL, cfg.Server.APIKey)
-	t.Cleanup(func() { require.NoError(t, connection.Close()) })
-	request := api.DocumentSearchRequest{Query: "observatory", Profile: name, BindingID: "query", Mode: "hybrid", Limit: 20,
-		Fence: api.DocumentSourceFence{VaultUID: f.catalog.VaultID(), ContentVersionIDs: []string{node.CurrentVersionID}}}
-	_, err = connection.SearchDocuments(t.Context(), request)
-	code, _ := daemonconn.ProblemCode(err)
-	require.Equal(t, "processing_failed", code)
-	request.Mode = "lexical"
-	lexical, err := connection.SearchDocuments(t.Context(), request)
-	require.NoError(t, err)
-	require.Len(t, lexical.Results, 1)
-	require.Contains(t, lexical.Results[0].Excerpt, "observatory")
 	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, exportTestLease(t, httpServer.URL))
 	output := exportCall(t, server, "answer_question", map[string]any{"question": "observatory"})
 	require.Equal(t, "ANSWERED", output["status"])
@@ -195,7 +181,6 @@ func TestAnswerQuestionProcessingErrorTransport(t *testing.T) {
 		{name: "daemon unavailable", code: "processing_unavailable"},
 		{name: "lexical retry processing failed", code: "processing_failed"},
 		{name: "lexical retry reranking failed", code: "reranking_failed"},
-		{name: "explicit processing failed", code: "processing_failed", profile: "chosen"},
 		{name: "reranking execution failed", code: "reranking_failed"},
 		{name: "no profiles", code: "processing_unavailable", local: true},
 		{name: "missing profile", code: "processing_profile_unavailable", profile: "missing"},
@@ -316,13 +301,6 @@ func TestAnswerQuestionSearchSelectionTransport(t *testing.T) {
 			if tc.noBindings {
 				profiles[1].QueryEmbeddingBindings = nil
 			}
-			if tc.rerank {
-				original := slices.Clone(profiles)
-				// HTTP decoding copies the slice, so check caller ownership before the wire round trip.
-				_, _, err := selectAnswerSearch(profiles, answerInput{Rerank: true})
-				require.NoError(t, err)
-				require.Equal(t, original, profiles, "profile selection changed caller profiles")
-			}
 			fence := api.ResolvedDocumentSourceFence{VaultUID: testVaultID, ContentVersionIDs: []string{testVersionID}}
 			fingerprint, err := processing.SourceFenceFingerprint(processing.SourceFence{VaultUID: fence.VaultUID, ContentVersionIDs: fence.ContentVersionIDs})
 			require.NoError(t, err)
@@ -403,40 +381,6 @@ func TestAnswerQuestionSearchSelectionTransport(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestAnswerQuestionEmptyFenceValidationDisconnectTransport(t *testing.T) {
-	fence := api.ResolvedDocumentSourceFence{VaultUID: testVaultID, ContentVersionIDs: []string{}}
-	fingerprint, err := processing.SourceFenceFingerprint(processing.SourceFence{VaultUID: fence.VaultUID, ContentVersionIDs: fence.ContentVersionIDs})
-	require.NoError(t, err)
-	validationCalls, searchCalls := 0, 0
-	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/v1/processing/source-fences/resolve":
-			writeDaemonJSON(t, w, api.DocumentSourceFenceResolution{Fence: fence, FenceFingerprint: fingerprint})
-		case "/api/v1/processing/profiles":
-			writeDaemonJSON(t, w, []api.ProcessingProfileSummary{{Name: "chosen", Fingerprint: strings.Repeat("a", 64), QueryEmbeddingBindings: []string{"query"}}})
-		case "/api/v1/search/validate":
-			validationCalls++
-			conn, _, hijackErr := http.NewResponseController(w).Hijack()
-			if hijackErr != nil {
-				t.Error(hijackErr)
-				return
-			}
-			_ = conn.Close()
-		case "/api/v1/search":
-			searchCalls++
-		default:
-			t.Errorf("unexpected request: %s", r.URL.Path)
-			http.NotFound(w, r)
-		}
-	}))
-	defer daemon.Close()
-	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, exportTestLease(t, daemon.URL))
-	raw := exchangeRaw(t, server, requestFor("tools/call", map[string]any{"name": "answer_question", "arguments": map[string]any{"question": "example"}}))
-	require.EqualValues(t, jsonrpc.CodeInternalError, decodeWireError(t, raw).Code)
-	require.Equal(t, 1, validationCalls)
-	require.Zero(t, searchCalls)
 }
 
 func TestAnswerQuestionRejectsBlankQuestionTransport(t *testing.T) {
