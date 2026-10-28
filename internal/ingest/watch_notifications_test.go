@@ -654,6 +654,27 @@ func TestPromptWatchNotificationFailureFallsBack(t *testing.T) {
 				stacktest.Dump(t)
 				t.Fatal("failed backend still open")
 			}
+			// Reconcile still runs after the failure. Version 2 commits in or after
+			// the scan that restores notifications, so cancellation follows its log.
+			require.NoError(t, os.WriteFile(filepath.Join(source, "notes.txt"), []byte("second"), 0600))
+			deadline := time.NewTimer(10 * time.Second)
+			defer deadline.Stop()
+			for {
+				node, err := ing.Store.NodeByPath(t.Context(), "/archive/notes.txt")
+				if err == nil {
+					_, count, err := ing.Store.ContentVersions(t.Context(), node.ID, 10, 0)
+					require.NoError(t, err)
+					if count == 2 {
+						break
+					}
+				}
+				select {
+				case <-commits:
+				case <-deadline.C:
+					stacktest.Dump(t)
+					t.Fatal("polling did not capture later change")
+				}
+			}
 			if tc.vanished {
 				select {
 				case count := <-factories:
