@@ -31,6 +31,7 @@ Documents:
   add  Import files or directory trees into the vault
   cat  Print a file's original bytes to stdout
   edit  Edit a file through a new immutable content version
+  effective  Set or clear the dates a document is in force
   get  Download one file with end-to-end verification
   ls  List one virtual directory (default /)
   mkdir  Create a directory in the virtual tree
@@ -42,9 +43,11 @@ Documents:
   revert  Create a new current version from an immutable prior version
   rm  Move a node (and its subtree) to the trash
   stat  Inspect one document or directory
+  supersede  Declare or remove a document replacement
   tag  Define tags and organize nodes with them
   trash  Inspect and empty the trash
   tree  Print the virtual folder tree with id:N selectors
+  validity  Show whether a document is in force on a date
   versions  Inspect and maintain immutable content versions
 
 Search and text:
