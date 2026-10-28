@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-17
+last_edited: 2026-10-28
 title: Model Context Protocol
 description: Connect a local MCP client to Docbank's read-mostly document tools through the daemon.
 ---
@@ -198,6 +198,7 @@ resource links, is capped at 1 MiB.
 | `get_export_status` | Reads one retained native export job, including progress, failure code, and any completed receipt. It never downloads or releases the job. |
 | `get_vault_info` | Returns the stable vault ID and aggregate live, trash, version, and blob counts. It never returns the host vault path. |
 | `list_documents` | Lists current, live files. `path_prefix` defaults to `/` and is capped at 16,384 Unicode characters and 16 KiB of UTF-8. Sorts are `path`, `name`, `modified_at`, `size`, and `media_type`, in `asc` or `desc` order. Page size defaults to 50 and is capped at 250. |
+| `answer_question` | Searches for evidence with a question and returns passages, leads, coverage, and a receipt. Optional filters narrow the scope; profile, binding, reranking, and output limits can be selected explicitly. |
 | `search_documents` | Requires a 1–8,192-character query, a 1–128-character processing profile name, and exactly one source selector: 1–4,096 unique content-version IDs or metadata filters. Mode defaults to `auto` and may be `auto`, `lexical`, `semantic`, or `hybrid`; result limit defaults to 20 and is capped at 100. Optional binding IDs are capped at 128 characters. |
 | `get_document` | Requires an exact positive node ID and current content-version UUID. A stale, trashed, moved-to-another-version, or mismatched identity is rejected. |
 | `read_document_content` | Reads original bytes from a selected immutable version as base64. Requires the exact vault, node, version, SHA-256 and size from `list_document_versions`. Originals are limited to 32 MiB; byte windows default to 64 KiB and are capped at 256 KiB. Returns offset, next offset and EOF. Verify the assembled size and SHA-256 before using the bytes. No export job or local file is created. |
@@ -309,10 +310,48 @@ sanitized JSON-RPC internal error. Stderr records the operation and a fixed
 error category for diagnosis. Neither path includes host paths, SQL, provider
 secrets, daemon keys, or unrequested document text.
 
+### Answer questions
+
+`answer_question` returns evidence without writing an answer. Content passages require every word of `question` to appear in one segment; key terms match better than a sentence. `ANSWERED` means
+that a content excerpt matched; it does not verify that the excerpt answers the
+question. Open the source to verify any quotation: excerpts can include omission
+markers and are not necessarily contiguous spans. Results without content text
+are leads, not passages. `NO_MATCH` means a completed search returned no
+candidates, not that the vault contains no answer. A validated empty scope is
+vacuously complete and returns `NO_MATCH` without executing a search. Incomplete
+indexing, leads, truncated retrieval, or omitted evidence can produce
+`INCOMPLETE_COVERAGE`. `coverage_complete` reports embedding coverage only. It can be
+`true` alongside `INCOMPLETE_COVERAGE` when passage text is unavailable or evidence is omitted.
+For a nonempty scope with no usable embedding index, a search with no match returns
+`INCOMPLETE_COVERAGE` with `semantic_unavailable`.
+`limit` accepts 1–50 results and defaults to 20. `max_passage_bytes` accepts
+2,048–65,536 bytes and defaults to 12,288. At most 20 leads are returned.
+Passages and resource links are returned in order within the response budget;
+`omitted_passages`, `omitted_leads`, and `omitted_links` report what did not fit.
+
+The default scope is all live files. A scope above 4,096 versions reports
+`scope_too_large` and its observed count; narrow it with filters. The receipt records the vault ID, scope fingerprint, and observed version count.
+The fingerprint identifies the version ID set, not an immutable catalog or index snapshot. `cited_versions` lists the versions of returned passages.
+`vector_space_ids` come from returned passages and leads.
+The receipt supports audit, not exact reproduction. Search may send the question
+to a query embedding provider under the daemon's existing consent policy.
+Reranking is optional and can disclose excerpts under that policy.
+When present, `relevance` preserves the applied reranker's score on its own
+scale; it is not necessarily normalized to 0–1.
+
+Omit `profile` for automatic profile and binding retries, including when a vector
+index is stale or a query provider fails. If every binding fails, lexical search
+returns available passages with `semantic_unavailable` and `semantic_failure`.
+Reranking failures and errors from the lexical retry stop the search. With `rerank: true`,
+automatic selection and lexical fallback use only profiles that support reranking.
+An explicit `profile` uses its first query binding in name order unless
+`binding_id` selects another. `binding_id` requires `profile`. Profiles without query bindings use lexical search.
+Its search failures are returned without automatic retries or lexical fallback.
+
 ## Resources and rendition windows
 
 `resources/list` is intentionally empty. `list_documents`,
-`search_documents`, and `get_document` attach resource links for each active
+`search_documents`, `answer_question`, and `get_document` attach resource links for each active
 rendition, and `resources/templates/list` publishes one RFC 6570 template.
 
 The canonical rendition URI is:

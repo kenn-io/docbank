@@ -93,7 +93,7 @@ func findPeople(ctx context.Context, lease *daemonLease, raw []byte) (personPage
 			return personPageOutput{}, err
 		}
 		output := personPageOutput{PersonPage: page, privateCache: newPrivateCache()}
-		envelope, err := toolEnvelopeBytes(output)
+		envelope, err := toolEnvelopeBytes(output, nil)
 		if err != nil {
 			return personPageOutput{}, err
 		}

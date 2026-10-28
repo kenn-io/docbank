@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-14
+last_edited: 2026-10-28
 title: HTTP API
 description: The agent-first HTTP API: filesystem-shaped endpoints, revision preconditions, and the daemon's error contract.
 ---
@@ -872,6 +872,7 @@ envelope. Common processing codes are:
 | 428 | `processing_consent_required` | No matching grant; review and grant consent |
 | 412 | `processing_consent_expired`, `processing_consent_revoked` | Existing consent cannot authorize this operation |
 | 409 | `processing_plan_changed` | Preview the changed source or profile again |
+| 409 | `stale_index` | The vector index source changed and the index is stale |
 | 409 | `rendition_operator_required` | Processing needs operator intervention; an unreadable PDF passwords file returns the fixed detail `PDF passwords file can't be read; check media.pdf_passwords_file` without its path |
 | 422 | `processing_profile_unavailable`, `foreign_vault`, `version_node_mismatch` | Profile or source identity does not match |
 | 422 | `invalid_processing_consent_expiry`, `search_query_required`, `validation` | Invalid expiry, blank query, or request schema violation |

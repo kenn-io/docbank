@@ -38,7 +38,7 @@ func getPerson(ctx context.Context, lease *daemonLease, raw []byte) (personDetai
 	// that cannot be paginated even when the actual response still fits.
 	const envelopeBudget = maxToolResponseBytes - 8<<10
 	for {
-		envelope, err := toolEnvelopeBytes(output)
+		envelope, err := toolEnvelopeBytes(output, nil)
 		if err != nil {
 			return personDetailToolOutput{}, err
 		}
@@ -57,10 +57,10 @@ func getPerson(ctx context.Context, lease *daemonLease, raw []byte) (personDetai
 
 // toolEnvelopeBytes measures the complete MCP result a read response
 // produces once wrapped, matching the shape boundedToolSuccess builds: the
-// structured content plus its duplicate escaped-text copy. Paged tools check
-// this before giving up on pagination, instead of a heuristic fraction of
-// the raw struct.
-func toolEnvelopeBytes(output any) (int, error) {
+// structured content plus its duplicate escaped-text copy and resource links.
+// Paged tools check this before giving up on pagination, instead of a heuristic
+// fraction of the raw struct.
+func toolEnvelopeBytes(output any, links []*sdkmcp.ResourceLink) (int, error) {
 	encoded, err := json.Marshal(output)
 	if err != nil {
 		return 0, err
@@ -69,10 +69,7 @@ func toolEnvelopeBytes(output any) (int, error) {
 	if err := json.Unmarshal(encoded, &normalized); err != nil {
 		return 0, err
 	}
-	result := &sdkmcp.CallToolResult{
-		Content:           []sdkmcp.Content{&sdkmcp.TextContent{Text: string(encoded)}},
-		StructuredContent: normalized,
-	}
+	result := toolResult(encoded, normalized, links)
 	complete, err := json.Marshal(result)
 	if err != nil {
 		return 0, err

@@ -1,10 +1,8 @@
 package main
 
 import (
-	"cmp"
 	"context"
 	"fmt"
-	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -37,8 +35,6 @@ type automaticSearchJSON struct {
 	Folders []api.SearchHit `json:"folders"`
 }
 
-type automaticSearchCandidate struct{ profile, binding string }
-
 // tryAutomaticSearch runs hybrid search when a profile has a query embedding
 // binding. Scope and semantic readiness decisions stay with the daemon.
 func tryAutomaticSearch(ctx context.Context, c *daemonconn.Connection, query string, limit int,
@@ -54,7 +50,7 @@ func tryAutomaticSearch(ctx context.Context, c *daemonconn.Connection, query str
 		}
 		return automaticSearchFallback(ctx, err)
 	}
-	candidates := automaticSearchCandidates(*profiles)
+	candidates := daemonconn.AutomaticSearchCandidates(*profiles)
 	if len(candidates) == 0 {
 		return automaticSearchOutcome{}, nil
 	}
@@ -71,7 +67,7 @@ func tryAutomaticSearch(ctx context.Context, c *daemonconn.Connection, query str
 	var first automaticSearchOutcome
 	for _, candidate := range candidates {
 		report, searchErr := c.SearchDocuments(ctx, api.DocumentSearchRequest{Query: query, Mode: "hybrid",
-			Profile: candidate.profile, BindingID: candidate.binding, Limit: limit, Fence: fence})
+			Profile: candidate.Profile, BindingID: candidate.Binding, Limit: limit, Fence: fence})
 		if searchErr == nil {
 			return automaticSearchOutcome{report: &report}, nil
 		}
@@ -82,7 +78,7 @@ func tryAutomaticSearch(ctx context.Context, c *daemonconn.Connection, query str
 		if first.reason == "" {
 			first = outcome
 		}
-		if !bindingSearchFailure(outcome.reason) {
+		if !daemonconn.BindingSearchFailure(outcome.reason) {
 			break
 		}
 	}
@@ -99,20 +95,6 @@ func automaticSearchEligible(query string, limit int, opts daemonconn.SearchOpti
 		utf8.RuneCountInString(query) <= maxAutomaticSearchQueryRunes
 }
 
-func automaticSearchCandidates(profiles []api.ProcessingProfileSummary) []automaticSearchCandidate {
-	ordered := slices.Clone(profiles)
-	slices.SortFunc(ordered, func(a, b api.ProcessingProfileSummary) int { return cmp.Compare(a.Name, b.Name) })
-	var candidates []automaticSearchCandidate
-	for _, profile := range ordered {
-		bindings := slices.Clone(profile.QueryEmbeddingBindings)
-		slices.Sort(bindings)
-		for _, binding := range bindings {
-			candidates = append(candidates, automaticSearchCandidate{profile.Name, binding})
-		}
-	}
-	return candidates
-}
-
 // automaticSearchFallback keeps lexical search available when the optional
 // hybrid path fails. Only cancellation and authentication stop the command.
 func automaticSearchFallback(ctx context.Context, err error) (automaticSearchOutcome, error) {
@@ -127,19 +109,6 @@ func automaticSearchFallback(ctx context.Context, err error) (automaticSearchOut
 		return automaticSearchOutcome{reason: "semantic_search_failed", err: err}, nil
 	default:
 		return automaticSearchOutcome{reason: code}, nil
-	}
-}
-
-// bindingSearchFailure reports whether another profile or binding could still
-// succeed. A binding without a built vector index reports not_found. Scope
-// failures such as stale_version repeat for every binding.
-func bindingSearchFailure(reason string) bool {
-	switch reason {
-	case "processing_profile_unavailable", "processing_failed", "stale_index", "not_found",
-		"processing_consent_required", "processing_consent_expired", "processing_consent_revoked":
-		return true
-	default:
-		return false
 	}
 }
 

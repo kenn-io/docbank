@@ -29,7 +29,7 @@ func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
 		"get_export_plan", "get_export_problems",
 		"get_report_summary", "get_report_dates",
 		"get_export_status",
-		"get_vault_info", "list_documents", "search_documents", "get_document",
+		"get_vault_info", "list_documents", "answer_question", "search_documents", "get_document",
 		"list_document_versions", "read_rendition_text", "get_processing_plan",
 		"get_processing_status", "get_processing_coverage", "get_package_import",
 		"get_package_preflight", "list_package_preflight_diagnostics",
@@ -46,7 +46,7 @@ func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
 		assert.True(t, tool.Annotations.ReadOnlyHint)
 		assert.True(t, tool.Annotations.IdempotentHint)
 		assert.Equal(t, new(false), tool.Annotations.DestructiveHint)
-		assert.Equal(t, new(tool.Name == "get_kata_context"), tool.Annotations.OpenWorldHint)
+		assert.Equal(t, new(tool.Name == "get_kata_context" || tool.Name == "answer_question"), tool.Annotations.OpenWorldHint)
 		assertSchemaContract(t, tool.InputSchema)
 		assertSchemaContract(t, tool.OutputSchema)
 		assert.Equal(t, map[string]any{"maxResponseBytes": maxToolResponseBytes}, tool.Meta["io.docbank/bounds"])

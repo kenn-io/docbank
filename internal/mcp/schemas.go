@@ -14,6 +14,7 @@ import (
 const (
 	jsonSchemaDraft           = "https://json-schema.org/draft/2020-12/schema"
 	packageIDField            = "package_id"
+	versionField              = "content_version_id"
 	personIDField             = "person_id"
 	schemaStateField          = "state"
 	schemaRevisionField       = "revision"
@@ -647,6 +648,15 @@ func listDocumentsSchemas() (schema, schema) {
 	return input, output
 }
 
+func searchCoverageSchema() schema {
+	return objectSchema(schema{
+		"binding_required":   booleanSchema(),
+		"scoped_documents":   integerSchema(0, 4096),
+		"complete_documents": integerSchema(0, 4096),
+		schemaStateField:     stringSchema(64),
+	}, "binding_required", "scoped_documents", "complete_documents", schemaStateField)
+}
+
 func searchDocumentsSchemas() (schema, schema) {
 	properties := fenceInputProperties()
 	properties["query"] = schema{"type": "string", "minLength": 1, "maxLength": 8192}
@@ -672,19 +682,14 @@ func searchDocumentsSchemas() (schema, schema) {
 	output := rootObjectSchema(withPrivateCache(schema{
 		"vault_id":             uuidSchema(),
 		"fence":                fenceAuthoritySchema(),
-		"fence_fingerprint":    schema{"type": "string", "pattern": "^sha256:[0-9a-f]{64}$", "maxLength": 71},
+		"fence_fingerprint":    fenceFingerprintSchema(),
 		"observed_scope_count": integerSchema(0, 0),
 		"requested_mode":       enumSchema("auto", "lexical", "semantic", "hybrid"),
 		"actual_mode":          enumSchema("lexical", "semantic", "hybrid"),
-		"coverage": objectSchema(schema{
-			"binding_required":   booleanSchema(),
-			"scoped_documents":   integerSchema(0, 4096),
-			"complete_documents": integerSchema(0, 4096),
-			schemaStateField:     stringSchema(64),
-		}, "binding_required", "scoped_documents", "complete_documents", schemaStateField),
-		"skipped_reasons": arraySchema(stringSchema(64), 64),
-		"results":         arraySchema(result, 100),
-		"truncated":       booleanSchema(),
+		"coverage":             searchCoverageSchema(),
+		"skipped_reasons":      arraySchema(stringSchema(64), 64),
+		"results":              arraySchema(result, 100),
+		"truncated":            booleanSchema(),
 	}), cacheRequired("vault_id", "fence", "fence_fingerprint", "observed_scope_count", "requested_mode",
 		"actual_mode", "coverage", "skipped_reasons", "results", "truncated")...)
 	return input, output
@@ -992,4 +997,8 @@ func promotePhotoNodeSchemas() (schema, schema) {
 		"kind":              enumSchema("photo", "video"),
 		"role":              enumSchema("raw", "image", "video", "sidecar"),
 	}, "node_id")
+}
+
+func fenceFingerprintSchema() schema {
+	return schema{"type": "string", "pattern": "^sha256:[0-9a-f]{64}$", "maxLength": 71}
 }
