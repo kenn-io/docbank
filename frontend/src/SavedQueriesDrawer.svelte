@@ -75,8 +75,9 @@
   });
 
   function fail(cause: unknown): void {
+    // The app ignores a rejection from a session it no longer uses.
     if (cause instanceof APIError && cause.status === 401) {
-      if (alive) onauthfailure(cause);
+      onauthfailure(cause);
       return;
     }
     const message = cause instanceof Error ? cause.message : String(cause);

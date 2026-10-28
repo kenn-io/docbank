@@ -193,6 +193,7 @@ it("opens the exact saved payload through the explicit query-editor action", asy
 });
 
 it("reports a change that finishes after the Searches page is left", async () => {
+  const onauthfailure = vi.fn();
   const settle: Array<(response: Response) => void> = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, request) =>
     request?.method && request.method !== "GET"
@@ -204,13 +205,14 @@ it("reports a change that finishes after the Searches page is left", async () =>
       status: 412,
     }),
     json({ ...record, name: "Renamed", revision: 3 }, 3),
+    new Response(JSON.stringify({ detail: "Session expired" }), { status: 401 }),
   ]) {
     const view = render(SavedQueriesDrawer, {
       session: "session",
       initialQuery: parseQuery("{}"),
       onload: vi.fn(),
       onclose: vi.fn(),
-      onauthfailure: vi.fn(),
+      onauthfailure,
     });
     await fireEvent.click(await screen.findByRole("button", { name: "Rename Review PDFs" }));
     await fireEvent.input(screen.getByLabelText("Definition name"), {
@@ -226,5 +228,8 @@ it("reports a change that finishes after the Searches page is left", async () =>
       { message: expect.stringContaining("Changed elsewhere"), tone: "danger" },
       { message: "Saved Renamed.", tone: "neutral" },
     ]),
+  );
+  await vi.waitFor(() =>
+    expect(onauthfailure).toHaveBeenCalledWith(expect.objectContaining({ status: 401 })),
   );
 });
