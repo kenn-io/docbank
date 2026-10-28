@@ -19,7 +19,7 @@ import (
 	"time"
 	"uuid"
 
-	"go.kenn.io/docbank/document/media"
+	"go.kenn.io/docbank/document/internal/formatdetect"
 )
 
 const MaxPDFBytes = 256 << 20
@@ -359,7 +359,7 @@ func VerifyPDF(b []byte) (int64, error) {
 	if len(b) == 0 || len(b) > MaxPDFBytes || !bytes.HasPrefix(b, []byte("%PDF-")) || !bytes.HasSuffix(bytes.TrimSpace(b), []byte("%%EOF")) {
 		return 0, errors.New("email PDF output is empty, truncated or oversized")
 	}
-	pages, err := media.CountPDFPages(b)
+	pages, err := formatdetect.CountPDFPages(b)
 	if err != nil {
 		return 0, fmt.Errorf("email PDF independent structural verification: %w", err)
 	}

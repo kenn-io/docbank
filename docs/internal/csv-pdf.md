@@ -63,7 +63,7 @@ fixed timestamps, sorted catalogs, and disabled automatic page breaks.
 
 1. Layout checks the page limit before creating the PDF.
 2. The output writer enforces the PDF byte limit.
-3. `media.CountPDFPages` independently checks the generated object graph and
+3. `formatdetect.CountPDFPages` independently checks the generated object graph and
    compares its page count with the planned count.
 
 The PDF library builds an internal buffer before writing. Source and page hard

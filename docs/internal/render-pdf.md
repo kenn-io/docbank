@@ -35,7 +35,7 @@ ranges, charts, OLE, plugins, embedded documents, and other active objects.
 Only admitted flat ODF reaches the second private-root LibreOffice process.
 That process writes the PDF. The converter verifies each stage attestation, binds
 source, normalized, and PDF identities in the receipt, bounds the bytes, counts
-pages with `media.CountPDFPages`, and publishes no result after a
+pages with `formatdetect.CountPDFPages`, and publishes no result after a
 failure.
 
 ## Isolation

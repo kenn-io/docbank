@@ -357,11 +357,16 @@ type zeroReader struct{}
 
 func (zeroReader) Read(p []byte) (int, error) { clear(p); return len(p), nil }
 
-// EncryptedPDF returns a synthetic encrypted one-page PDF.
+// EncryptedPDF encrypts a synthetic one-page PDF.
 func EncryptedPDF(userPW, ownerPW string, keyBits int) ([]byte, error) {
+	return EncryptPDF(PDF(), userPW, ownerPW, keyBits)
+}
+
+// EncryptPDF encrypts the supplied synthetic PDF.
+func EncryptPDF(data []byte, userPW, ownerPW string, keyBits int) ([]byte, error) {
 	configuration := model.NewAESConfiguration(userPW, ownerPW, keyBits)
 	var output bytes.Buffer
-	if err := api.Encrypt(bytes.NewReader(PDF()), &output, configuration); err != nil {
+	if err := api.Encrypt(bytes.NewReader(data), &output, configuration); err != nil {
 		return nil, fmt.Errorf("encrypt synthetic PDF: %w", err)
 	}
 	return output.Bytes(), nil

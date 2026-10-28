@@ -8,7 +8,7 @@ import (
 	"io"
 	"unicode/utf8"
 
-	"go.kenn.io/docbank/document/media"
+	"go.kenn.io/docbank/document/internal/formatdetect"
 	"go.kenn.io/docbank/document/ocr"
 )
 
@@ -59,7 +59,7 @@ func Convert(ctx context.Context, source ocr.Source, policy Policy) (result *Res
 	if err != nil {
 		return nil, err
 	}
-	count, err := media.CountPDFPages(pdf)
+	count, err := formatdetect.CountPDFPages(pdf)
 	if err != nil {
 		return nil, ocr.NewPreparationError("generated CSV PDF could not be validated", err)
 	}

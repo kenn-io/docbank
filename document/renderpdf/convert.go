@@ -15,7 +15,6 @@ import (
 
 	"go.kenn.io/docbank/document/internal/formatdetect"
 	"go.kenn.io/docbank/document/internal/providerutil"
-	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/ocr"
 )
 
@@ -150,7 +149,7 @@ func Convert(ctx context.Context, source ocr.Source, extension string, policy Po
 	if int64(len(pdf)) > policy.limits.MaxPDFBytes {
 		return nil, fmt.Errorf("%w: render PDF output exceeds byte limit", ErrOutputTooLarge)
 	}
-	pages, err := media.CountPDFPages(pdf)
+	pages, err := formatdetect.CountPDFPages(pdf)
 	if err != nil {
 		return nil, errors.New("render PDF output is not a valid PDF")
 	}

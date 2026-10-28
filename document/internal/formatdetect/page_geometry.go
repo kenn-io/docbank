@@ -33,7 +33,7 @@ func ReadPDFPageGeometry(data []byte, maxPages int) ([]PDFPageGeometry, error) {
 	if err := api.ValidateContext(ctx); err != nil {
 		return nil, fmt.Errorf("validate PDF geometry: %w", err)
 	}
-	if _, err := checkPDFReferences(ctx); err != nil {
+	if _, err := checkPDFReferences(ctx, false); err != nil {
 		return nil, err
 	}
 	if ctx.PageCount < 1 || ctx.PageCount > maxPages {
