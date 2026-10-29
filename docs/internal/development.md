@@ -799,6 +799,12 @@ cache), and each Windows architecture. Only `main` pushes save, once per group
 per day, from the job that builds the most of that group; pull requests restore
 without saving so they cannot evict `main`'s caches from the repository quota.
 
+Windows jobs put `GOCACHE` and `GOMODCACHE` under `D:\a\_temp`. If D: is
+missing on ARM64, setup initializes only a raw `Microsoft NVMe Direct Disk v2`
+disk and mounts it as D:. A setup failure logs a warning and keeps both Go cache
+paths unchanged. Changing cache paths creates a new cache version, so the first
+restore at the new location misses until a `main` push saves it.
+
 Repository commands are defined in `AGENTS.md` and the Makefile. The important
 design-specific checks are:
 
