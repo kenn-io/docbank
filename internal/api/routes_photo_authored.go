@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/query"
@@ -31,10 +32,10 @@ type PhotoAuthoredEditRequest struct {
 }
 
 type PhotoAuthoredPreparation struct {
-	Proposals   []store.PhotoBestShot       `json:"proposals,omitempty"`
-	Suggestions []store.PhotoSuggestion     `json:"suggestions,omitempty"`
-	Assets      []PhotoAsset                `json:"assets"`
-	Targets     []store.PhotoPreparedTarget `json:"targets"`
+	Proposals   []document.PhotoBestShotProposal `json:"proposals,omitempty"`
+	Suggestions []store.PhotoSuggestion          `json:"suggestions,omitempty"`
+	Assets      []PhotoAsset                     `json:"assets"`
+	Targets     []store.PhotoPreparedTarget      `json:"targets"`
 }
 
 type PhotoXMPResolveRequest struct {
