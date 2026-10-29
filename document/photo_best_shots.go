@@ -9,7 +9,6 @@ const PhotoFaceProminenceFloor = 0.021
 
 // PhotoFaceReport keeps unknown observations absent. Smile is descriptive.
 type PhotoFaceReport struct {
-	Box        FaceBox  `json:"-"`
 	Grade      string   `json:"grade,omitempty" enum:",red,yellow,green"`
 	FaceID     string   `json:"face_id"`
 	Sharpness  *float64 `json:"sharpness"`

@@ -269,7 +269,7 @@ func TestPhotoBestShotBrowserBatch(t *testing.T) {
 		require.NoError(t, err)
 		_, err = s.PublishSourceMetadata(ctx, node.BlobHash, processing.SourceMetadataExtractorFingerprint, canonical)
 		require.NoError(t, err)
-		require.NoError(t, s.PublishPhotoQualitySignals(ctx, store.PhotoVisualPreviewTarget{VersionID: node.CurrentVersionID, SourceSHA256: node.BlobHash, Size: 20, MediaType: "image/jpeg"}, document.PhotoQualitySignals{Focus: 0.9 - float64(i)*0.5}))
+		require.NoError(t, s.PublishPhotoQualitySignals(ctx, store.PhotoVisualPreviewTarget{VersionID: node.CurrentVersionID, SourceSHA256: node.BlobHash, Size: 20, MediaType: "image/jpeg"}, document.PhotoQualitySignals{Focus: 0.9 - float64(i)*0.5}, ""))
 		asset, err := s.PhotoAssetForNode(ctx, node.ID)
 		require.NoError(t, err)
 		ids = append(ids, asset.ID)

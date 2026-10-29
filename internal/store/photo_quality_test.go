@@ -20,7 +20,7 @@ func TestPhotoQualityRetention(t *testing.T) {
 	ctx := t.Context()
 	ready := browsePhotoNode(t, s, "ready.jpg", browseHash("ready-quality"), "image/jpeg")
 	browsePhotoNode(t, s, "pending.jpg", browseHash("pending-quality"), "image/jpeg")
-	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(ready), document.PhotoQualitySignals{Blur: 1, Framing: 0.5}))
+	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(ready), document.PhotoQualitySignals{Blur: 1, Framing: 0.5}, ""))
 	var backup bytes.Buffer
 	require.NoError(t, exportBackupMetadataSnapshot(ctx, s.db, &backup))
 	require.NotContains(t, backup.String(), "photo_quality_signals")
@@ -33,7 +33,7 @@ func TestPhotoQualityRetention(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, browsePhotoPage(t, s, `{"filters":{"unevaluated":true}}`).Items, 2)
 	require.Empty(t, browsePhotoPage(t, s, `{"filters":{"focus_max":"0"}}`).Items)
-	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(ready), document.PhotoQualitySignals{Blur: 1, Framing: 0.5}))
+	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(ready), document.PhotoQualitySignals{Blur: 1, Framing: 0.5}, ""))
 	fingerprints, err := document.CurrentPhotoQualityFingerprints()
 	require.NoError(t, err)
 	var fingerprint string
@@ -46,7 +46,7 @@ func TestPhotoQualityRetention(t *testing.T) {
 	var count int
 	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM photo_quality_signals WHERE content_version_id=?`, old.VersionID).Scan(&count))
 	require.Equal(t, 1, count)
-	require.Error(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(ready), document.PhotoQualitySignals{Focus: math.NaN()}))
+	require.Error(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(ready), document.PhotoQualitySignals{Focus: math.NaN()}, ""))
 	_, _, err = s.Trash(ctx, ready.ID, ready.Revision)
 	require.NoError(t, err)
 	_, err = s.TrashEmpty(ctx, 0, true)
@@ -98,7 +98,7 @@ func TestPhotoQualityDisplayAndPublicationFence(t *testing.T) {
 				}
 			}
 			require.NoError(t, err)
-			require.NoError(t, s.PublishPhotoQualitySignals(ctx, target, document.PhotoQualitySignals{Focus: 0.7}))
+			require.NoError(t, s.PublishPhotoQualitySignals(ctx, target, document.PhotoQualitySignals{Focus: 0.7}, ""))
 			var count int
 			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM photo_quality_signals`).Scan(&count))
 			require.Zero(t, count)
@@ -115,7 +115,7 @@ func TestPhotoQualityFaceInputsFence(t *testing.T) {
 	canonical := readyVisualPreviewWithRecipe(t, node.BlobHash, browseHash("faces-preview"), 20, recipe)
 	_, err := s.PublishVisualPreview(ctx, node.CurrentVersionID, canonical, &BlobPhysical{Encoding: "raw", StoredBytes: 20})
 	require.NoError(t, err)
-	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(node), document.PhotoQualitySignals{Focus: 0.7}))
+	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(node), document.PhotoQualitySignals{Focus: 0.7}, ""))
 	id, err := newUUIDv4()
 	require.NoError(t, err)
 	face, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, id, document.FaceBox{Width: 0.5, Height: 0.5}, "")
@@ -123,9 +123,11 @@ func TestPhotoQualityFaceInputsFence(t *testing.T) {
 	targets, err := s.MissingPhotoQualityTargetsAfter(ctx, "", 10)
 	require.NoError(t, err)
 	require.Len(t, targets, 1)
-	report := document.PhotoFaceReport{FaceID: face.FaceID, Box: face.Box, Sharpness: new(0.8), Prominence: 0.25}
+	report := document.PhotoFaceReport{FaceID: face.FaceID, Sharpness: new(0.8), Prominence: 0.25}
+	_, inputs, err := s.PhotoQualityFaces(ctx, node.CurrentVersionID)
+	require.NoError(t, err)
 	scores := document.PhotoQualitySignals{Focus: 0.7, FaceReports: []document.PhotoFaceReport{report}}
-	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(node), scores))
+	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(node), scores, inputs))
 	read, err := photoQualityForVersions(ctx, s.db, []string{node.CurrentVersionID})
 	require.NoError(t, err)
 	require.Len(t, read.signals[node.CurrentVersionID].FaceReports, 1)
@@ -139,7 +141,7 @@ func TestPhotoQualityFaceInputsFence(t *testing.T) {
 	// A queued publication for the previous face set cannot create a cache row.
 	_, err = s.db.Exec(`DELETE FROM photo_quality_signals WHERE content_version_id=?`, node.CurrentVersionID)
 	require.NoError(t, err)
-	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(node), scores))
+	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(node), scores, inputs))
 	read, err = photoQualityForVersions(ctx, s.db, []string{node.CurrentVersionID})
 	require.NoError(t, err)
 	require.NotContains(t, read.signals, node.CurrentVersionID)
@@ -151,7 +153,7 @@ func TestPhotoQualityDismissedFaceExcluded(t *testing.T) {
 	ctx := t.Context()
 	node, face := faceForDecisionTest(t, s, "")
 	decideFaceForTest(t, s, node, face.FaceID, "", "dismiss")
-	faces, err := s.PhotoQualityFaces(ctx, node.CurrentVersionID)
+	faces, _, err := s.PhotoQualityFaces(ctx, node.CurrentVersionID)
 	require.NoError(t, err)
 	require.Empty(t, faces)
 }

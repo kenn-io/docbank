@@ -165,6 +165,12 @@ test("best shots stay separate from authored flags and settle across refresh", a
       await expect(page.getByRole("button", { name: "Dismiss all", exact: true })).toBeEnabled();
       await page.getByRole("button", { name: "Dismiss all", exact: true }).click();
       await expect(page.getByRole("button", { name: "Dismiss all", exact: true })).toHaveCount(0);
+      await expect(page.locator(".photo-cell .proposal")).toHaveCount(0);
+      await page.getByRole("button", { name: "Undo last photo edit", exact: true }).click();
+      await expect(page.locator(".photo-cell .proposal").first()).toBeVisible();
+      await page.waitForTimeout(600);
+      await page.getByRole("button", { name: "Dismiss all", exact: true }).click();
+      await expect(page.locator(".photo-cell .proposal")).toHaveCount(0);
       await expect(page.locator(".photo-cell img").first()).toBeVisible();
       await page.waitForTimeout(600);
     }

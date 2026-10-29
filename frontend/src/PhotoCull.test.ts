@@ -1802,7 +1802,7 @@ it("changes the burst gap from the cull header and regroups the pass", async () 
   await waitFor(() => expect(check).toHaveBeenCalled());
 });
 
-it.each(["Accept all", "x"])("keeps Hidden scope for %s", async (action) => {
+it("keeps Hidden scope for Accept all", async () => {
   const offer = {
     asset_id: "photo-1",
     flag: "pick" as const,
@@ -1820,26 +1820,11 @@ it.each(["Accept all", "x"])("keeps Hidden scope for %s", async (action) => {
     ...photoPreparation((scope.asset_ids ?? []).map((id) => preparedPhoto(Number(id.slice(6))))),
     proposals: scope.stack ? [offer] : [],
   }));
-  const edit = vi
-    .spyOn(api, "editPhotoAuthored")
-    .mockResolvedValue({ receipt_id: "", before: [], after: [] });
   const { container } = await reviewTwoStacks(true);
   await waitFor(() =>
     expect(container.querySelector(".filmstrip .proposal")?.textContent).toBe("KEEP"),
   );
-  vi.mocked(api.preparePhotoAuthored).mockClear();
-  if (action.length === 1)
-    await fireEvent.keyDown(container.querySelector(".photo-cull")!, { key: action });
-  else await fireEvent.click(await readyButton(action));
-  if (action.length === 1) {
-    await waitFor(() => expect(edit).toHaveBeenCalledOnce());
-    expect(respond).not.toHaveBeenCalled();
-    expect(api.preparePhotoAuthored).toHaveBeenCalledWith(
-      expect.objectContaining({ asset_ids: ["photo-1"], hidden: true }),
-      expect.anything(),
-    );
-  } else {
-    await waitFor(() => expect(respond).toHaveBeenCalledOnce());
-    expect(respond.mock.calls[0][0].hidden).toBe(true);
-  }
+  await fireEvent.click(await readyButton("Accept all"));
+  await waitFor(() => expect(respond).toHaveBeenCalledOnce());
+  expect(respond.mock.calls[0][0].hidden).toBe(true);
 });

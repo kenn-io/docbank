@@ -47,7 +47,7 @@ func (s *Store) bestShotsTx(ctx context.Context, tx *sql.Tx, ids []string, prep 
 		if confirmed {
 			continue
 		}
-		if q, ok := quality.signals[versions[id]]; ok && !quality.staleFaces[versions[id]] {
+		if q, ok := quality.signals[versions[id]]; ok && !quality.unavailable[versions[id]] && !quality.staleFaces[versions[id]] {
 			frame.Signals = document.PhotoBestShotSignals(q)
 		}
 		frames = append(frames, frame)
