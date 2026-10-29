@@ -2228,6 +2228,12 @@ export interface DocumentSearchCoverage {
   state: string;
 }
 
+export interface DocumentSearchFence {
+  /** @maxItems 4096 */
+  content_version_ids?: string[];
+  vault_uid: string;
+}
+
 export interface DocumentSearchRerankingReceipt {
   /**
      * @minimum 0
@@ -2259,6 +2265,28 @@ export interface DocumentSearchResult {
   vault_uid: string;
 }
 
+export interface DocumentSourceFenceFilters {
+  /** @maxLength 255 */
+  mime_type?: string;
+  modified_before?: string;
+  modified_since?: string;
+  tag_id?: string;
+  /** @minimum 1 */
+  under_node_id?: number;
+}
+
+export type DocumentSearchScopeKind = typeof DocumentSearchScopeKind[keyof typeof DocumentSearchScopeKind];
+
+
+export const DocumentSearchScopeKind = {
+  all_live: 'all_live',
+} as const;
+
+export interface DocumentSearchScope {
+  filters?: DocumentSourceFenceFilters;
+  kind: DocumentSearchScopeKind;
+}
+
 export interface DocumentSearchTrace {
   code: string;
   /** @minimum 0 */
@@ -2274,9 +2302,15 @@ export interface DocumentSearchReport {
   /** @maxItems 4096 */
   media_selections?: DocumentMediaSelection[];
   media_source_selection?: boolean;
+  /**
+     * @minimum 0
+     * @nullable
+     */
+  observed_scope_count?: number | null;
   requested_mode: string;
   reranking?: DocumentSearchRerankingReceipt;
   results: DocumentSearchResult[];
+  scope?: DocumentSearchScope;
   trace: DocumentSearchTrace[];
   truncated: boolean;
 }
@@ -2291,15 +2325,6 @@ export const DocumentSearchRequestMode = {
   hybrid: 'hybrid',
 } as const;
 
-export interface DocumentSourceFence {
-  /**
-     * @minItems 1
-     * @maxItems 4096
-     */
-  content_version_ids: string[];
-  vault_uid: string;
-}
-
 export interface DocumentSearchRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -2307,7 +2332,7 @@ export interface DocumentSearchRequest {
   binding_id?: string;
   content_first?: boolean;
   explain?: boolean;
-  fence: DocumentSourceFence;
+  fence: DocumentSearchFence;
   /**
      * @minimum 1
      * @maximum 100
@@ -2331,6 +2356,7 @@ export interface DocumentSearchRequest {
      */
   query: string;
   rerank?: boolean;
+  scope?: DocumentSearchScope;
 }
 
 export interface DocumentSearchValidation {
@@ -2427,6 +2453,15 @@ export interface DocumentSimilarReport {
   truncated: boolean;
 }
 
+export interface DocumentSourceFence {
+  /**
+     * @minItems 1
+     * @maxItems 4096
+     */
+  content_version_ids: string[];
+  vault_uid: string;
+}
+
 export interface ProcessingSelector {
   content_version_id: string;
   /** @minimum 1 */
@@ -2451,16 +2486,6 @@ export interface DocumentSimilarRequest {
      */
   limit?: number;
   selector: ProcessingSelector;
-}
-
-export interface DocumentSourceFenceFilters {
-  /** @maxLength 255 */
-  mime_type?: string;
-  modified_before?: string;
-  modified_since?: string;
-  tag_id?: string;
-  /** @minimum 1 */
-  under_node_id?: number;
 }
 
 export interface ResolvedDocumentSourceFence {
