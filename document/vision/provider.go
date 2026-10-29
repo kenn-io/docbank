@@ -72,23 +72,25 @@ type Provider struct {
 	descriptor document.RenditionDescriptor
 	http       *http.Client
 	prompt     string
+	tokens     int
 	credential providerutil.Credential
 }
 
-func taskPrompt(id string) (string, error) {
+// taskPrompt selects a task's prompt and completion budget. Detection output grows with each face.
+func taskPrompt(id string) (string, int, error) {
 	switch id {
 	case ProviderID:
-		return prompt, nil
+		return prompt, 2048, nil
 	case document.FaceDetectionProviderID:
-		return detectionPrompt, nil
+		return detectionPrompt, 4096, nil
 	default:
-		return "", ErrUnknownTask
+		return "", 0, ErrUnknownTask
 	}
 }
 
 // Descriptor pins the selected task as well as its model and input policy.
 func Descriptor(id, model string, trust document.RenditionTrustBoundary) (document.RenditionDescriptor, error) {
-	text, err := taskPrompt(id)
+	text, _, err := taskPrompt(id)
 	if err != nil {
 		return document.RenditionDescriptor{}, err
 	}
@@ -134,8 +136,8 @@ func New(profile Profile, secrets providerutil.SecretResolver, client *http.Clie
 	}
 	copyClient := *client
 	copyClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	text, _ := taskPrompt(profile.DescriptorID)
-	return &Provider{prompt: text, profile: profile, descriptor: descriptor, http: &copyClient, credential: credential}, nil
+	text, tokens, _ := taskPrompt(profile.DescriptorID)
+	return &Provider{prompt: text, tokens: tokens, profile: profile, descriptor: descriptor, http: &copyClient, credential: credential}, nil
 }
 func (p *Provider) Descriptor() document.RenditionDescriptor {
 	return providerutil.CloneDescriptor(p.descriptor)
@@ -289,7 +291,7 @@ func (p *Provider) Render(ctx context.Context, upload document.AuthorizedUpload,
 	if err != nil {
 		return document.RenditionResult{}, err
 	}
-	raw, err := p.describe(ctx, data, p.prompt, 2048, authorization.ExpiresAt)
+	raw, err := p.describe(ctx, data, p.prompt, p.tokens, authorization.ExpiresAt)
 	if err != nil {
 		return document.RenditionResult{}, err
 	}

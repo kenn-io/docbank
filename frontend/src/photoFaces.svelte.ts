@@ -103,7 +103,7 @@ export class PhotoFaces {
     try {
       const page = await listPhotoFaces(version, {
         session: this.session,
-        signal: controller.signal,
+        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]),
       });
       if (!controller.signal.aborted) {
         this.faces = page.faces;

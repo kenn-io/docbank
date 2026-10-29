@@ -687,13 +687,12 @@
         editor.invalidate(),
       ]);
       if (!id || id !== photos.faceAssetID || controller.signal.aborted) return;
-      if (photos.blocking || photos.error || (photoID && (detailLoading || detailError))) {
-        inspectorFaces.conceal();
-        return;
-      }
+      if (photos.blocking || photos.error || (photoID && (detailLoading || detailError)))
+        return inspectorFaces.conceal();
+      const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]);
       let row: PhotoBrowseRow | undefined;
       try {
-        row = photoID === id ? current : await photos.lookup(id, controller.signal);
+        row = photoID === id ? current : await photos.lookup(id, signal);
       } catch (cause) {
         if (controller.signal.aborted) return;
         inspectorFaces.conceal();
