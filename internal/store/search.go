@@ -361,6 +361,7 @@ type SearchOptions struct {
 	PhotoLexicalQuery *querypkg.Query
 	photoFilter       compiledQueryFragment
 	photoLexical      compiledQueryFragment
+	photoSemantic     compiledQueryFragment
 	SelectedBuilds    []SearchSelectedBuild
 	TagID             string
 	MIMEType          string
@@ -774,7 +775,7 @@ func (s *Store) semanticSearchAuthorityFence(ctx context.Context, profileFingerp
 		if err != nil {
 			return err
 		}
-		filterSQL, filterArgs := searchFilterSQL(opts)
+		filterSQL, filterArgs := semanticEligibilityFilterSQL(opts)
 		eligible, err := loadSemanticEligibility(ctx, tx, profileFingerprint, bindingID,
 			inputKind, vectorSpaceID, filterSQL, filterArgs)
 		if err != nil {
@@ -846,7 +847,7 @@ func (s *Store) ResolveSemanticCandidates(ctx context.Context, profileFingerprin
 	}
 	var result SemanticSearchResolution
 	err = s.withSearchOptionsTx(ctx, normalized, func(tx *sql.Tx, normalized SearchOptions) error {
-		filterSQL, filterArgs := searchFilterSQL(normalized)
+		filterSQL, filterArgs := semanticEligibilityFilterSQL(normalized)
 		current, captureErr := captureVectorIndexSourceTx(ctx, tx, vectorSpaceID)
 		if captureErr != nil {
 			if errors.Is(captureErr, ErrNotFound) {
@@ -2257,6 +2258,14 @@ func (s *Store) withSearchOptionsTx(ctx context.Context, opts SearchOptions, fn 
 				if opts.photoLexical, err = photoSearchFragment(ctx, tx, request); err != nil {
 					return err
 				}
+				if opts.PhotoLexicalQuery.Filters.CollapseDuplicates {
+					// Collapse the semantic lane before ANN limits without narrowing lexical revalidation.
+					request.Query = opts.PhotoScope.Query
+					request.Query.Filters.CollapseDuplicates = true
+					if opts.photoSemantic, err = photoSearchFragment(ctx, tx, request); err != nil {
+						return err
+					}
+				}
 			}
 		}
 
@@ -2496,6 +2505,15 @@ func searchFilterSQL(opts SearchOptions) (string, []any) {
 		args = append(args, opts.ModifiedBefore)
 	}
 	return strings.Join(clauses, "\n"), args
+}
+
+func semanticEligibilityFilterSQL(opts SearchOptions) (string, []any) {
+	filterSQL, args := searchFilterSQL(opts)
+	if opts.photoSemantic.sql != "" {
+		filterSQL += ` AND n.id IN (` + opts.photoSemantic.sql + `)`
+		args = append(args, opts.photoSemantic.args...)
+	}
+	return filterSQL, args
 }
 
 // NormalizeSearchTimeBounds accepts optional absolute RFC3339 timestamps and

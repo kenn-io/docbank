@@ -990,6 +990,10 @@ func embeddingSetFixture(
 	if err := json.Unmarshal([]byte(canonicalProfile), &profile); err != nil {
 		panic(err)
 	}
+	var sourceChecksum string
+	if err := s.db.QueryRow(`SELECT blob_hash FROM content_versions WHERE version_id=?`, versionID).Scan(&sourceChecksum); err != nil {
+		panic(err)
+	}
 	_, fingerprints, err := document.CanonicalProfile(profile)
 	if err != nil {
 		panic(err)
@@ -1011,7 +1015,7 @@ func embeddingSetFixture(
 		SourceVersionID: versionID, ProcessingProfileFingerprint: profileFingerprint,
 		EvidenceFingerprint: testSHA256([]byte(seed + "evidence")), TokenizerFingerprint: testSHA256([]byte(seed + "tokenizer")),
 		ChunkPolicyFingerprint: testSHA256([]byte(seed + "chunk-policy")), FormatterFingerprint: testSHA256([]byte(seed + "formatter")),
-		AttachmentID: attachmentID, GenerationChecksum: catalogSourceHash,
+		AttachmentID: attachmentID, GenerationChecksum: sourceChecksum,
 		CreatedAt: embeddingCatalogTime,
 	}
 	if kind == document.EmbeddingInputRenditionChunk {
@@ -1041,7 +1045,7 @@ func embeddingSetFixture(
 			generation.Inputs[index] = EmbeddingInputReference{ID: input.Key, RenderedChecksum: input.Checksum}
 		}
 	} else {
-		generation.Inputs = []EmbeddingInputReference{{ID: versionID, RenderedChecksum: catalogSourceHash}}
+		generation.Inputs = []EmbeddingInputReference{{ID: versionID, RenderedChecksum: sourceChecksum}}
 	}
 	expectedKeys := make([]string, len(generation.Inputs))
 	expectedChecksums := make([]string, len(generation.Inputs))
@@ -1056,7 +1060,7 @@ func embeddingSetFixture(
 			expectedKeys[index], expectedChecksums[index] = input.Key, input.Checksum
 		}
 	} else {
-		expectedKeys[0], expectedChecksums[0] = versionID, catalogSourceHash
+		expectedKeys[0], expectedChecksums[0] = versionID, sourceChecksum
 	}
 	values := make([][]float64, len(expectedKeys))
 	for index := range values {

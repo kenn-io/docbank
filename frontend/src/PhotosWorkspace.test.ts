@@ -3190,6 +3190,61 @@ it("toggles the Filters panel", async () => {
   await cache.dispose();
 });
 
+it("keeps the camera filter editable after switching to Meaning", async () => {
+  const facets: snapshots.SnapshotPage["facets"] = [
+    {
+      dimension: "camera",
+      available: true,
+      total: 1,
+      missing: 0,
+      other: 0,
+      values: [{ key: "Canon", label: "Canon", count: 1, selected: true }],
+    },
+  ];
+  vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+    const metadata = photoMetadataResponse(url, init);
+    if (metadata) return metadata;
+    const request = JSON.parse(String(init?.body ?? "{}"));
+    const semantic = request.query?.mode === "semantic";
+    return Response.json({
+      items: [photo(1)],
+      total: 1,
+      facets: semantic ? [] : facets,
+      ...(semantic
+        ? {
+            snapshot_id: "captured-meaning",
+            requested_mode: "semantic",
+            actual_mode: "semantic",
+          }
+        : {}),
+    });
+  });
+  const photos = new Photos("scoped", vi.fn(), false, {
+    ...photoQuery,
+    filters: { cameras: ["Canon"] },
+  });
+  photos.started = true;
+  photos.facets = facets;
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+
+  try {
+    render(PhotosWorkspace, { photos, cache });
+    await fireEvent.click(screen.getByRole("button", { name: "Filters, 1 active filter" }));
+    expect(screen.getByRole("group", { name: "Camera facet" })).toBeTruthy();
+
+    await photos.setQuery({ ...photos.query, text: "sunset", mode: "semantic" });
+    await tick();
+
+    expect(photos.query.filters.cameras).toEqual(["Canon"]);
+    expect(screen.getByRole("group", { name: "Camera facet" })).toBeTruthy();
+    await fireEvent.click(screen.getByRole("button", { name: "Canon, selected" }));
+    await waitFor(() => expect(photos.query.filters.cameras).toBeUndefined());
+  } finally {
+    photos.dispose();
+    await cache.dispose();
+  }
+});
+
 it("edits and clears a saved capture range in the Library Filters panel", async () => {
   vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
     const metadata = photoMetadataResponse(url, init);

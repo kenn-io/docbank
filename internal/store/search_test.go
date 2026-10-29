@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/vectorindex"
 )
 
@@ -165,6 +166,73 @@ func TestSimilarOrdinarySemanticSearchPreservesIdenticalDocuments(t *testing.T) 
 	t.Log("duplicate rows remain separate in ordinary semantic search")
 	assert.Equal(t, result.Candidates[0].BlobHash, result.Candidates[1].BlobHash)
 	assert.NotEqual(t, result.Candidates[0].NodeID, result.Candidates[1].NodeID)
+}
+
+func TestResolveSemanticCandidatesCollapsesPhotoDuplicatesBeforeLimit(t *testing.T) {
+	t.Parallel()
+	s, _, profile, _ := newEmbeddingCatalogFixture(t)
+	nodes := make([]Node, 0, 3)
+	for _, test := range []struct {
+		name string
+		hash string
+	}{
+		{name: "duplicate-a.jpg", hash: catalogSourceHash},
+		{name: "duplicate-b.jpg", hash: catalogSourceHash},
+		{name: "distinct.jpg", hash: catalogEvidenceBlobHash},
+	} {
+		node, err := s.CreateFile(t.Context(), s.RootID(), test.name, test.hash,
+			int64(len(catalogBlobContents[test.hash])), "image/jpeg")
+		require.NoError(t, err)
+		nodes = append(nodes, node)
+	}
+
+	var records []EmbeddingSetRecord
+	var neighbors []vectorindex.Neighbor
+	for _, node := range nodes {
+		record := embeddingSetFixture(s, node.CurrentVersionID, profile.Fingerprint,
+			document.EmbeddingInputOriginalFile, "optional", "")
+		require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
+		require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
+			FencingToken: 1,
+			Key: EmbeddingHeadKey{ContentVersionID: node.CurrentVersionID,
+				BindingID: record.BindingID, InputKind: record.InputKind},
+			SetID: record.ID, VectorSpaceID: record.VectorSpace.ID,
+			ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
+		}))
+		records = append(records, record)
+	}
+	for index, record := range records {
+		neighbors = append(neighbors, vectorindex.Neighbor{
+			SetID: record.VectorSet.ID, InputKey: record.InputGeneration.Inputs[0].ID,
+			InputChecksum: record.InputGeneration.Inputs[0].RenderedChecksum,
+			Score:         []float64{1, 0.99, 0.8}[index],
+		})
+	}
+	source, err := s.CaptureVectorIndexSource(t.Context(), records[0].VectorSpace.ID)
+	require.NoError(t, err)
+	scope := PhotoBrowseRequest{Query: query.Query{V: 1, Syntax: "simple", Mode: "lexical",
+		Sort: query.Sort{Field: "name", Direction: "asc"}}}
+	lexicalQuery := scope.Query
+	lexicalQuery.Filters.CollapseDuplicates = true
+	options := SearchOptions{PhotoScope: &scope, PhotoLexicalQuery: &lexicalQuery}
+	_, _, _, annRows, err := s.semanticSearchAuthorityFence(t.Context(), profile.Fingerprint,
+		records[0].BindingID, records[0].InputKind, records[0].VectorSpace.ID,
+		options, nil)
+	require.NoError(t, err)
+	require.Len(t, annRows, 2)
+	assert.ElementsMatch(t, []string{nodes[0].CurrentVersionID, nodes[2].CurrentVersionID},
+		[]string{annRows[0].InputKey, annRows[1].InputKey},
+		"the vector index sees one representative and the distinct photo before applying its limit")
+
+	resolution, err := s.ResolveSemanticCandidates(t.Context(), profile.Fingerprint,
+		records[0].BindingID, records[0].InputKind, records[0].VectorSpace.ID,
+		source.ManifestChecksum, neighbors, 2, options, nil)
+	require.NoError(t, err)
+	require.Len(t, resolution.Candidates, 2)
+	assert.ElementsMatch(t, []int64{nodes[0].ID, nodes[2].ID}, []int64{
+		resolution.Candidates[0].NodeID, resolution.Candidates[1].NodeID,
+	})
+	assert.False(t, resolution.Truncated)
 }
 
 func TestResolveSemanticCandidatesReturnsOnlyCurrentScopedHeads(t *testing.T) {
