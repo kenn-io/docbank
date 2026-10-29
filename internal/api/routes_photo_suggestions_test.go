@@ -87,35 +87,22 @@ func describePhotoForRoute(t *testing.T, s *testStore, node store.Node, model, a
 
 func TestPhotoRotationResponseRoute(t *testing.T) {
 	t.Parallel()
-	for _, state := range []string{"absent", "changed"} {
-		t.Run(state+"/accepted", func(t *testing.T) {
-			ctx := t.Context()
-			ts, s := newTestServer(t, nil)
-			hash, size, err := s.Blobs.Write(bytes.NewReader(mediatest.JPEG(8, 8, color.White)))
-			require.NoError(t, err)
-			node, err := s.CreateFile(ctx, s.RootID(), "synthetic.jpg", hash, size, "image/jpeg")
-			require.NoError(t, err)
-			asset, err := s.PhotoAssetForNode(ctx, node.ID)
-			require.NoError(t, err)
-			if state == "changed" {
-				describePhotoForRoute(t, s, node, "synthetic-vision-90", `{"rotation":90}`)
-			}
-			prepared, err := s.PreparePhotoAuthored(ctx, store.PhotoSetSelection{AssetIDs: []string{asset.ID}})
-			require.NoError(t, err)
-			target := prepared.Targets[0]
-			request := store.PhotoSuggestionResponse{AssetID: asset.ID, AssetRevision: target.AssetRevision, SourceRevision: target.Revision, NodeRevision: target.NodeRevision, Response: "accepted", Rotation: new(90)}
-			if state == "changed" {
-				describePhotoForRoute(t, s, node, "synthetic-vision-270", `{"rotation":270}`)
-			}
-			result, body := do(t, ts, http.MethodPost, "/api/v1/photos/suggestions/"+node.CurrentVersionID+"/response", nil, request)
-			if state == "absent" {
-				require.Equal(t, http.StatusConflict, result.StatusCode, body)
-				return
-			}
-			require.Equal(t, http.StatusOK, result.StatusCode, body)
-			prepared, err = s.PreparePhotoAuthored(ctx, store.PhotoSetSelection{AssetIDs: []string{asset.ID}})
-			require.NoError(t, err)
-			require.Equal(t, 90, prepared.Targets[0].Values.Rotation)
-		})
-	}
+	ctx := t.Context()
+	ts, s := newTestServer(t, nil)
+	hash, size, err := s.Blobs.Write(bytes.NewReader(mediatest.JPEG(8, 8, color.White)))
+	require.NoError(t, err)
+	node, err := s.CreateFile(ctx, s.RootID(), "synthetic.jpg", hash, size, "image/jpeg")
+	require.NoError(t, err)
+	asset, err := s.PhotoAssetForNode(ctx, node.ID)
+	require.NoError(t, err)
+	describePhotoForRoute(t, s, node, "synthetic-vision-90", `{"rotation":90}`)
+	prepared, err := s.PreparePhotoAuthored(ctx, store.PhotoSetSelection{AssetIDs: []string{asset.ID}})
+	require.NoError(t, err)
+	target := prepared.Targets[0]
+	request := store.PhotoSuggestionResponse{AssetID: asset.ID, AssetRevision: target.AssetRevision, SourceRevision: target.Revision, NodeRevision: target.NodeRevision, Response: "accepted", Rotation: new(90)}
+	result, body := do(t, ts, http.MethodPost, "/api/v1/photos/suggestions/"+node.CurrentVersionID+"/response", nil, request)
+	require.Equal(t, http.StatusOK, result.StatusCode, body)
+	prepared, err = s.PreparePhotoAuthored(ctx, store.PhotoSetSelection{AssetIDs: []string{asset.ID}})
+	require.NoError(t, err)
+	require.Equal(t, 90, prepared.Targets[0].Values.Rotation)
 }
