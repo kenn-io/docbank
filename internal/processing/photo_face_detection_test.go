@@ -13,6 +13,21 @@ import (
 
 const detectedFaceReply = `{"faces":[{"box":{"x":0.1,"y":0.2,"width":0.2,"height":0.3},"roll":0,"facing":0.9,"eyes_open":true,"smile":false}]}`
 
+func TestPhotoFaceDetectionTargetsProbeOnlyFirstReadyProfile(t *testing.T) {
+	t.Parallel()
+	f := newPhotoDescriptionFixture(t)
+	service := f.newVisionServiceWith(t, map[string]string{"first": "detector-1", "second": "detector-2"}, document.FaceDetectionProviderID)
+	f.grant(t, service, "first")
+	f.grant(t, service, "second")
+	before, _ := f.counts()
+	targets, err := service.photoVisionTargets(t.Context(), nil, "", 50, 4, document.FaceDetectionProviderID)
+	require.NoError(t, err)
+	require.Len(t, targets, 1)
+	require.Equal(t, "first", targets[0].profile)
+	probes, _ := f.counts()
+	require.Equal(t, 1, probes-before, "unused detection providers must not delay the selected provider")
+}
+
 func TestPhotoFaceDetectionFlow(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct{ name, reply string }{

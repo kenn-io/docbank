@@ -76,14 +76,6 @@ func publishFaceDetectionTx(ctx context.Context, tx *sql.Tx, version, detector s
 	if err != nil || settled {
 		return err
 	}
-	if len(result.Faces) > document.MaxPhotoRecordsPerVersion {
-		return ErrPhotoFaceLimit
-	}
-	for _, observation := range result.Faces {
-		if observation.Validate() != nil {
-			return ErrInvalidPhotoFace
-		}
-	}
 	faces, err := photoFacesQuery(ctx, tx, version)
 	if err != nil {
 		return err

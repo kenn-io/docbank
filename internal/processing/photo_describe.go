@@ -262,9 +262,6 @@ func (service *Service) photoVisionTargets(ctx context.Context, logger *slog.Log
 	if err != nil {
 		return nil, err
 	}
-	if task == document.FaceDetectionProviderID && len(names) > 1 {
-		names = names[:1]
-	}
 	sources := make([]photoDescriptionSource, len(names))
 	for i, name := range names {
 		if sources[i], err = service.photoDescriptionProfileTargets(ctx, name, i > 0, after, limit, workers); err != nil {
@@ -353,6 +350,7 @@ func (service *Service) photoDescriptionProfileTargets(ctx context.Context, name
 // photoDescriptionProfiles lists, by name, the description profiles that have
 // consent and a provider that answers its probe. A consented profile whose
 // provider does not answer is logged once, until it answers again.
+// Detection needs only the first ready profile.
 func (service *Service) photoDescriptionProfiles(ctx context.Context, logger *slog.Logger, task string) ([]string, error) {
 	var ready []string
 	for _, name := range service.visionProfileNames() {
@@ -364,6 +362,9 @@ func (service *Service) photoDescriptionProfiles(ctx context.Context, logger *sl
 		case err == nil:
 			service.visionNotReady.Delete(name)
 			ready = append(ready, name)
+			if task == document.FaceDetectionProviderID {
+				return ready, nil
+			}
 		case errors.Is(err, ErrRenditionRuntimeUnavailable):
 			if _, logged := service.visionNotReady.LoadOrStore(name, true); !logged && logger != nil {
 				logger.Warn("photo vision task is paused: the provider did not pass its probe", "task", photoVisionTaskName(task), "profile", name, "error", err)

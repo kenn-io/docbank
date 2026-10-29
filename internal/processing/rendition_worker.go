@@ -952,7 +952,7 @@ func (worker *RenditionWorker) classifyPublicationError(
 	if errors.Is(err, store.ErrLexicalGenerationStale) {
 		return worker.markSafeTransient(ctx, claim)
 	}
-	if errors.Is(err, store.ErrInvalidPhotoDescriptionResult) || errors.Is(err, store.ErrPhotoFaceLimit) || errors.Is(err, store.ErrInvalidPhotoFace) || errors.Is(err, store.ErrAuditMutationUnsupported) {
+	if errors.Is(err, store.ErrInvalidPhotoDescriptionResult) || errors.Is(err, store.ErrPhotoFaceLimit) || errors.Is(err, store.ErrAuditMutationUnsupported) {
 		return worker.markFailed(ctx, claim, store.RenditionFailureTerminal, worker.clock().UTC())
 	}
 	if errors.Is(err, store.ErrProcessingConsentRequired) ||

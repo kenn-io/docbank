@@ -352,9 +352,9 @@ func (p *Provider) Probe(ctx context.Context) error {
 	return nil
 }
 
-// ParseFaces requires a complete reply with a faces array and drops invalid faces
-// individually. A nonempty array must contain at least one valid face. Only an
-// explicit empty array represents a successful scan with no faces.
+// ParseFaces requires a complete reply with a faces array, clips boxes to the
+// frame, and drops faces that remain invalid. A nonempty array must contain at
+// least one valid face. Only an explicit empty array completes a scan with no faces.
 func ParseFaces(raw []byte) (document.FaceDetection, error) {
 	var fields struct {
 		Faces []jsontext.Value `json:"faces"`
@@ -376,7 +376,14 @@ func ParseFaces(raw []byte) (document.FaceDetection, error) {
 	out := document.FaceDetection{Faces: []document.FaceObservation{}}
 	for _, rawFace := range fields.Faces {
 		var observation document.FaceObservation
-		if json.Unmarshal(rawFace, &observation) != nil || observation.Validate() != nil {
+		if json.Unmarshal(rawFace, &observation) != nil {
+			continue
+		}
+		box := &observation.Box
+		box.Width = min(box.Width+min(box.X, 0), 1-max(box.X, 0))
+		box.Height = min(box.Height+min(box.Y, 0), 1-max(box.Y, 0))
+		box.X, box.Y = max(box.X, 0), max(box.Y, 0)
+		if observation.Validate() != nil {
 			continue
 		}
 		out.Faces = append(out.Faces, observation)
