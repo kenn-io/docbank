@@ -224,6 +224,13 @@ func TestFolderWatchEventRunnerUsesSharedScanner(t *testing.T) {
 		return nil
 	}, failOnReject(t))
 	require.NoError(t, err)
+	processed := make(chan error, 8)
+	process := scanner.watcher.process
+	scanner.watcher.process = func(ctx context.Context, ref string, observation *watchObservation, open localFileOpener) error {
+		err := process(ctx, ref, observation, open)
+		processed <- err
+		return err
+	}
 	scanner.watcher.newNotifications = func(string, exclusions) (watchNotificationSource, error) { return notifier, nil }
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
@@ -236,6 +243,13 @@ func TestFolderWatchEventRunnerUsesSharedScanner(t *testing.T) {
 			require.Equal(t, want, got)
 		case <-time.After(10 * time.Second):
 			t.Fatalf("timed out waiting for %q", want)
+		}
+		// The scanner rechecks and closes the source after the callback returns.
+		select {
+		case err := <-processed:
+			require.NoError(t, err)
+		case <-time.After(10 * time.Second):
+			t.Fatalf("timed out finishing processing %q", want)
 		}
 	}
 	await("first")
