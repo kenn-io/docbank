@@ -180,7 +180,6 @@
     border-radius: var(--radius-sm);
   }
   .crop span {
-    font-size: var(--font-size-2xs);
     color: var(--text-muted);
   }
   img {
