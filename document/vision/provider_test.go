@@ -306,3 +306,28 @@ func TestProbeRequiresRecognitionOfSyntheticImage(t *testing.T) {
 		})
 	}
 }
+
+func TestParseOptionalRotation(t *testing.T) {
+	t.Parallel()
+	for _, angle := range []string{"0", "90", "180", "270", "45", "null", `"90"`, "90.5", "{}"} {
+		t.Run(angle, func(t *testing.T) {
+			got, err := Parse([]byte(`{"caption":"A harbor.","tags":["coast"],"visible_text":"QUAY","rotation":` + angle + `}`))
+			require.NoError(t, err)
+			require.Equal(t, "A harbor.", got.Caption)
+			require.Equal(t, []string{"coast"}, got.Tags)
+			require.Equal(t, "QUAY", got.VisibleText)
+			switch angle {
+			case "0":
+				require.Equal(t, new(0), got.Rotation)
+			case "90":
+				require.Equal(t, new(90), got.Rotation)
+			case "180":
+				require.Equal(t, new(180), got.Rotation)
+			case "270":
+				require.Equal(t, new(270), got.Rotation)
+			default:
+				require.Nil(t, got.Rotation)
+			}
+		})
+	}
+}

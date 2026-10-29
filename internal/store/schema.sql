@@ -3037,6 +3037,9 @@ CREATE TABLE IF NOT EXISTS photo_suggestions (
     suggestion_id        TEXT NOT NULL UNIQUE,
     content_version_id   TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,
     producer_fingerprint TEXT NOT NULL,
+    kind                 TEXT NOT NULL DEFAULT 'description',
+    rotation             INTEGER,
+    rotation_source      TEXT NOT NULL DEFAULT '',
     caption              TEXT NOT NULL DEFAULT '',
     tags_json            TEXT NOT NULL DEFAULT '[]',
     visible_text         TEXT NOT NULL DEFAULT '',
@@ -3045,7 +3048,7 @@ CREATE TABLE IF NOT EXISTS photo_suggestions (
     resolved_tags_json   TEXT NOT NULL DEFAULT '[]',
     awaiting             INTEGER NOT NULL DEFAULT 0 CHECK (awaiting IN (0,1)),
     created_at           TEXT NOT NULL,
-    UNIQUE (content_version_id, producer_fingerprint)
+    UNIQUE (content_version_id, producer_fingerprint, kind)
 );
 
 -- Pending text only. Tags join with a private-use token (char(57344)) so a

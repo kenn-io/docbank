@@ -8,6 +8,7 @@ import (
 
 // PhotoDescription is one indivisible proposal from a vision provider.
 type PhotoDescription struct {
+	Rotation    *int     `json:"rotation,omitempty" enum:"0,90,180,270"`
 	Caption     string   `json:"caption"`
 	Tags        []string `json:"tags"`
 	VisibleText string   `json:"visible_text"`

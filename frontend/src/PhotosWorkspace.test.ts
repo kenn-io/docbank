@@ -1062,6 +1062,7 @@ it("shows a suggestion published after the inspector opened once previews refres
       ...photoPreparation([preparedPhoto(1)]),
       suggestions: [
         {
+          kind: "description",
           suggestion_id: "suggestion",
           content_version_id: "version",
           target: "file-1",
