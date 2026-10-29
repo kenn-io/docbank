@@ -27,23 +27,24 @@ test("best shots stay separate from authored flags and settle across refresh", a
       ? {}
       : { recordVideo: { dir: path.join(output, "video"), size: { width: 1280, height: 800 } } }),
   });
-  await context.addInitScript(() => {
-    document.addEventListener("DOMContentLoaded", () => {
-      const pointer = document.createElement("div");
-      pointer.id = "capture-pointer";
-      pointer.style.cssText =
-        "position:fixed;width:14px;height:14px;border:2px solid #202124;border-radius:50%;background:white;pointer-events:none;z-index:2147483647;transform:translate(-50%,-50%);left:30px;top:100px";
-      const caption = document.createElement("div");
-      caption.id = "capture-step";
-      caption.style.cssText =
-        "position:fixed;top:52px;left:50%;transform:translateX(-50%);padding:8px 16px;border-radius:6px;background:#111e;color:white;font:16px system-ui;pointer-events:none;z-index:2147483646;white-space:nowrap";
-      document.body.append(pointer, caption);
-      document.addEventListener("mousemove", (event) => {
-        pointer.style.left = `${event.clientX}px`;
-        pointer.style.top = `${event.clientY}px`;
+  if (!before)
+    await context.addInitScript(() => {
+      document.addEventListener("DOMContentLoaded", () => {
+        const pointer = document.createElement("div");
+        pointer.id = "capture-pointer";
+        pointer.style.cssText =
+          "position:fixed;width:14px;height:14px;border:2px solid #202124;border-radius:50%;background:white;pointer-events:none;z-index:2147483647;transform:translate(-50%,-50%);left:30px;top:100px";
+        const caption = document.createElement("div");
+        caption.id = "capture-step";
+        caption.style.cssText =
+          "position:fixed;top:52px;left:50%;transform:translateX(-50%);padding:8px 16px;border-radius:6px;background:#111e;color:white;font:16px system-ui;pointer-events:none;z-index:2147483646;white-space:nowrap";
+        document.body.append(pointer, caption);
+        document.addEventListener("mousemove", (event) => {
+          pointer.style.left = `${event.clientX}px`;
+          pointer.style.top = `${event.clientY}px`;
+        });
       });
     });
-  });
   const page = await context.newPage();
   const resultPause = 2500;
   let number = 0;
