@@ -89,7 +89,7 @@ openapi:
 	go run -tags "$(BUILD_TAGS)" ./cmd/docbank openapi > internal/api/openapi.yaml
 
 generate-api: openapi generate-photo-policy
-	go run github.com/doordash-oss/oapi-codegen-dd/v3/cmd/oapi-codegen@v3.75.15 --config scripts/oapi-codegen/config.yaml internal/api/openapi.yaml
+	go run github.com/doordash-oss/oapi-codegen-dd/v3/cmd/oapi-codegen@v3.76.5 --config scripts/oapi-codegen/config.yaml internal/api/openapi.yaml
 	cd frontend && npm run generate:api
 
 generate-photo-policy:

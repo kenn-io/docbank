@@ -15,7 +15,7 @@ require (
 	github.com/charmbracelet/x/ansi v0.11.9
 	github.com/coder/websocket v1.8.15
 	github.com/danielgtaylor/huma/v2 v2.40.0
-	github.com/doordash-oss/oapi-codegen-dd/v3 v3.75.15
+	github.com/doordash-oss/oapi-codegen-dd/v3 v3.76.5
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/gabriel-vasile/mimetype v1.4.16
 	github.com/go-pdf/fpdf v0.9.0
