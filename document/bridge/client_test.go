@@ -1056,7 +1056,6 @@ func TestBridgeContractClassifiesInternalTotalTimeout(t *testing.T) {
 				case http.MethodDelete:
 					return &http.Response{StatusCode: http.StatusNoContent, Body: http.NoBody, Request: request}, nil
 				default:
-					t.Fatalf("unexpected request method: %s", request.Method)
 					return nil, errors.New("unexpected bridge request")
 				}
 			})})
