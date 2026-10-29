@@ -681,6 +681,10 @@ func fromDocumentSearchReport(report processing.SearchReport, explain bool) Docu
 			ScopedDocuments: report.Coverage.ScopedDocuments, CompleteDocuments: report.Coverage.CompleteDocuments,
 			State: string(report.Coverage.State)}, Truncated: report.Truncated,
 		Results: make([]DocumentSearchResult, len(report.Results)), Degradations: make([]string, len(report.Degradations))}
+	if report.Scope != nil {
+		result.Scope = fromDocumentSearchScope(report.Scope)
+		result.ObservedScopeCount = new(report.ObservedScopeCount)
+	}
 	if report.MediaSelections != nil {
 		result.MediaSelections = make([]DocumentMediaSelection, len(report.MediaSelections))
 		for i, selection := range report.MediaSelections {
@@ -842,7 +846,7 @@ func fromProcessingError(err error) error {
 		result.ObservedScopeCount = scopeError.ObservedScopeCount
 		return result
 	}
-	if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrVersionNodeMismatch) || errors.Is(err, store.ErrSearchQueryRequired) {
+	if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrNotDir) || errors.Is(err, store.ErrVersionNodeMismatch) || errors.Is(err, store.ErrSearchQueryRequired) {
 		return FromStoreError(err)
 	}
 	return NewError(http.StatusInternalServerError, "processing_failed", detailPrefix+"document processing failed")
@@ -885,6 +889,30 @@ func validateDocumentSearch(ctx context.Context, service *processing.Service, in
 	return nil
 }
 
+func toDocumentSearchScope(scope *DocumentSearchScope) *processing.SearchScope {
+	if scope == nil {
+		return nil
+	}
+	result := &processing.SearchScope{Kind: scope.Kind}
+	if scope.Filters != nil {
+		f := scope.Filters
+		result.Filters = &store.SearchOptions{TagID: f.TagID, MIMEType: f.MIMEType, UnderNodeID: f.UnderNodeID, ModifiedSince: f.ModifiedSince, ModifiedBefore: f.ModifiedBefore}
+	}
+	return result
+}
+
+func fromDocumentSearchScope(scope *processing.SearchScope) *DocumentSearchScope {
+	if scope == nil {
+		return nil
+	}
+	result := &DocumentSearchScope{Kind: scope.Kind}
+	if scope.Filters != nil {
+		f := scope.Filters
+		result.Filters = &DocumentSourceFenceFilters{TagID: f.TagID, MIMEType: f.MIMEType, UnderNodeID: f.UnderNodeID, ModifiedSince: f.ModifiedSince, ModifiedBefore: f.ModifiedBefore}
+	}
+	return result
+}
+
 func searchDocuments(ctx context.Context, service *processing.Service, input DocumentSearchRequest) (DocumentSearchReport, error) {
 	if service == nil {
 		return DocumentSearchReport{}, processingUnavailable()
@@ -893,7 +921,7 @@ func searchDocuments(ctx context.Context, service *processing.Service, input Doc
 		ContentFirst: input.ContentFirst,
 		Mode:         input.Mode, Limit: input.Limit, Profile: input.Profile,
 		BindingID: input.BindingID, Explain: input.Explain,
-		Rerank: input.Rerank, MediaSources: toMediaSearchSources(input.MediaSources),
+		Rerank: input.Rerank, MediaSources: toMediaSearchSources(input.MediaSources), Scope: toDocumentSearchScope(input.Scope),
 		Fence: processing.SourceFence{VaultUID: input.Fence.VaultUID,
 			ContentVersionIDs: input.Fence.ContentVersionIDs}})
 	if err != nil {

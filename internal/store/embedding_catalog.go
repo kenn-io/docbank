@@ -1167,26 +1167,69 @@ func insertVectorSetTx(ctx context.Context, tx *sql.Tx, record EmbeddingVectorSe
 }
 
 func loadEmbeddingSetTx(ctx context.Context, tx metadataQuerier, id string) (EmbeddingSetRecord, error) {
+	return loadEmbeddingSetWithVectorSpacesTx(ctx, tx, id, nil)
+}
+
+// loadEmbeddingSetWithVectorSpacesTx may reuse immutable vector-space records
+// loaded in this same snapshot. A nil map preserves independent ordinary reads.
+// All per-set input and vector manifest validation remains unchanged.
+func loadEmbeddingSetWithVectorSpacesTx(ctx context.Context, tx metadataQuerier, id string, spaces map[string]EmbeddingVectorSpaceRecord) (EmbeddingSetRecord, error) {
+	return loadEmbeddingSetWithVectorSpacesObservedTx(ctx, tx, id, spaces, nil)
+}
+
+func loadEmbeddingSetWithVectorSpacesObservedTx(ctx context.Context, tx metadataQuerier, id string, spaces map[string]EmbeddingVectorSpaceRecord, values *semanticSnapshotValueGuard) (EmbeddingSetRecord, error) {
 	var result EmbeddingSetRecord
-	err := tx.QueryRowContext(ctx, `SELECT embedding_set_id,vault_uid,binding_id,input_kind,
+	query := `SELECT embedding_set_id,vault_uid,binding_id,input_kind,
 		content_version_id,profile_fingerprint,embedding_input_fingerprint,vector_space_id,input_generation_id,
-		vector_set_id,created_at FROM embedding_sets WHERE embedding_set_id=?`, id).Scan(
-		&result.ID, &result.VaultID, &result.BindingID, &result.InputKind,
-		&result.ContentVersionID, &result.ProcessingProfileFingerprint, &result.EmbeddingInputFingerprint, &result.VectorSpace.ID,
-		&result.InputGeneration.ID, &result.VectorSet.ID, &result.CreatedAt)
+		vector_set_id,created_at FROM embedding_sets WHERE embedding_set_id=?`
+	const observedQuery = `SELECT embedding_set_id,vault_uid,binding_id,input_kind,
+		content_version_id,profile_fingerprint,embedding_input_fingerprint,vector_space_id,input_generation_id,
+		vector_set_id,created_at,
+ CASE WHEN embedding_set_id=CAST(embedding_set_id AS TEXT)
+ AND content_version_id=CAST(content_version_id AS TEXT)
+ AND profile_fingerprint=CAST(profile_fingerprint AS TEXT)
+ AND binding_id=CAST(binding_id AS TEXT)
+ AND input_kind=CAST(input_kind AS TEXT)
+ AND vector_space_id=CAST(vector_space_id AS TEXT)
+ AND input_generation_id=CAST(input_generation_id AS TEXT)
+ AND vector_set_id=CAST(vector_set_id AS TEXT) THEN 1 ELSE 0 END FROM embedding_sets WHERE embedding_set_id=?`
+	if values != nil {
+		query = observedQuery
+	}
+	row := tx.QueryRowContext(ctx, query, id)
+	var err error
+	if values == nil {
+		err = row.Scan(&result.ID, &result.VaultID, &result.BindingID, &result.InputKind,
+			&result.ContentVersionID, &result.ProcessingProfileFingerprint, &result.EmbeddingInputFingerprint, &result.VectorSpace.ID,
+			&result.InputGeneration.ID, &result.VectorSet.ID, &result.CreatedAt)
+	} else {
+		var compatible bool
+		err = row.Scan(&result.ID, &result.VaultID, &result.BindingID, &result.InputKind,
+			&result.ContentVersionID, &result.ProcessingProfileFingerprint, &result.EmbeddingInputFingerprint, &result.VectorSpace.ID,
+			&result.InputGeneration.ID, &result.VectorSet.ID, &result.CreatedAt, &compatible)
+		values.include(compatible)
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return EmbeddingSetRecord{}, ErrNotFound
 	}
 	if err != nil {
 		return EmbeddingSetRecord{}, fmt.Errorf("loading embedding set: %w", err)
 	}
-	if result.VectorSpace, err = loadVectorSpaceTx(ctx, tx, result.VectorSpace.ID); err != nil {
+	spaceID := result.VectorSpace.ID
+	if space, ok := spaces[spaceID]; ok {
+		result.VectorSpace = space
+	} else {
+		if result.VectorSpace, err = loadVectorSpaceTx(ctx, tx, spaceID); err != nil {
+			return EmbeddingSetRecord{}, err
+		}
+		if spaces != nil {
+			spaces[spaceID] = result.VectorSpace
+		}
+	}
+	if result.InputGeneration, err = loadInputGenerationObservedTx(ctx, tx, result.InputGeneration.ID, values); err != nil {
 		return EmbeddingSetRecord{}, err
 	}
-	if result.InputGeneration, err = loadInputGenerationTx(ctx, tx, result.InputGeneration.ID); err != nil {
-		return EmbeddingSetRecord{}, err
-	}
-	if result.VectorSet, err = loadVectorSetTx(ctx, tx, result.VectorSet.ID); err != nil {
+	if result.VectorSet, err = loadVectorSetObservedTx(ctx, tx, result.VectorSet.ID, values); err != nil {
 		return EmbeddingSetRecord{}, err
 	}
 	return result, nil
@@ -1249,6 +1292,9 @@ func decodeCanonicalEmbeddingDescriptor(data []byte) (document.EmbeddingDescript
 }
 
 func loadInputGenerationTx(ctx context.Context, tx metadataQuerier, id string) (EmbeddingInputGenerationRecord, error) {
+	return loadInputGenerationObservedTx(ctx, tx, id, nil)
+}
+func loadInputGenerationObservedTx(ctx context.Context, tx metadataQuerier, id string, values *semanticSnapshotValueGuard) (EmbeddingInputGenerationRecord, error) {
 	var record EmbeddingInputGenerationRecord
 	var attachment sql.NullString
 	var count int
@@ -1274,16 +1320,32 @@ func loadInputGenerationTx(ctx context.Context, tx metadataQuerier, id string) (
 	if generationBlob.Valid {
 		record.GenerationBlobHash = generationBlob.String
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT input_id,rendered_checksum
-		FROM embedding_generation_inputs WHERE generation_id=? ORDER BY input_order`, id)
+	query := `SELECT input_id,rendered_checksum
+		FROM embedding_generation_inputs WHERE generation_id=? ORDER BY input_order`
+	const observedQuery = `SELECT input_id,rendered_checksum,
+ CASE WHEN input_id=CAST(input_id AS TEXT)
+ AND rendered_checksum=CAST(rendered_checksum AS TEXT) THEN 1 ELSE 0 END
+		FROM embedding_generation_inputs WHERE generation_id=? ORDER BY input_order`
+	if values != nil {
+		query = observedQuery
+	}
+	rows, err := tx.QueryContext(ctx, query, id)
 	if err != nil {
 		return record, err
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var input EmbeddingInputReference
-		if err := rows.Scan(&input.ID, &input.RenderedChecksum); err != nil {
-			return record, err
+		var scanErr error
+		if values == nil {
+			scanErr = rows.Scan(&input.ID, &input.RenderedChecksum)
+		} else {
+			var compatible bool
+			scanErr = rows.Scan(&input.ID, &input.RenderedChecksum, &compatible)
+			values.include(compatible)
+		}
+		if scanErr != nil {
+			return record, scanErr
 		}
 		record.Inputs = append(record.Inputs, input)
 		if len(record.Inputs) > maxEmbeddingCatalogRows {
@@ -1300,6 +1362,9 @@ func loadInputGenerationTx(ctx context.Context, tx metadataQuerier, id string) (
 }
 
 func loadVectorSetTx(ctx context.Context, tx metadataQuerier, id string) (EmbeddingVectorSetRecord, error) {
+	return loadVectorSetObservedTx(ctx, tx, id, nil)
+}
+func loadVectorSetObservedTx(ctx context.Context, tx metadataQuerier, id string, values *semanticSnapshotValueGuard) (EmbeddingVectorSetRecord, error) {
 	var record EmbeddingVectorSetRecord
 	err := tx.QueryRowContext(ctx, `SELECT vector_set_id,contract_version,vector_space_id,payload_blob_hash,
 		payload_size,payload_checksum,manifest_checksum,row_count,dimensions
@@ -1315,16 +1380,32 @@ func loadVectorSetTx(ctx context.Context, tx metadataQuerier, id string) (Embedd
 	if record.RowCount < 1 || record.RowCount > maxEmbeddingCatalogRows {
 		return record, errors.New("embedding vector-set count is corrupt")
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT row_id,input_id,dimensions,checksum
-		FROM embedding_vector_rows WHERE vector_set_id=? ORDER BY row_order`, id)
+	query := `SELECT row_id,input_id,dimensions,checksum
+		FROM embedding_vector_rows WHERE vector_set_id=? ORDER BY row_order`
+	const observedQuery = `SELECT row_id,input_id,dimensions,checksum,
+ CASE WHEN input_id=CAST(input_id AS TEXT)
+ AND checksum=CAST(checksum AS TEXT) THEN 1 ELSE 0 END
+		FROM embedding_vector_rows WHERE vector_set_id=? ORDER BY row_order`
+	if values != nil {
+		query = observedQuery
+	}
+	rows, err := tx.QueryContext(ctx, query, id)
 	if err != nil {
 		return record, err
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var row EmbeddingVectorRowRecord
-		if err := rows.Scan(&row.RowID, &row.InputID, &row.Dimensions, &row.Checksum); err != nil {
-			return record, err
+		var scanErr error
+		if values == nil {
+			scanErr = rows.Scan(&row.RowID, &row.InputID, &row.Dimensions, &row.Checksum)
+		} else {
+			var compatible bool
+			scanErr = rows.Scan(&row.RowID, &row.InputID, &row.Dimensions, &row.Checksum, &compatible)
+			values.include(compatible)
+		}
+		if scanErr != nil {
+			return record, scanErr
 		}
 		record.rows = append(record.rows, row)
 		if len(record.rows) > record.RowCount {
@@ -1341,17 +1422,32 @@ func loadVectorSetTx(ctx context.Context, tx metadataQuerier, id string) (Embedd
 }
 
 func embeddingSetEligibleTx(ctx context.Context, tx *sql.Tx, set EmbeddingSetRecord) (bool, error) {
+	eligible, _, err := embeddingSetEligibilityTx(ctx, tx, set, false)
+	return eligible, err
+}
+func embeddingSetEligibilityTx(ctx context.Context, tx *sql.Tx, set EmbeddingSetRecord, collectLive bool) (bool, embeddingLiveSnapshot, error) {
 	var live int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM content_versions v
+	var observation embeddingLiveSnapshot
+	var err error
+	if collectLive {
+		err = tx.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(MAX(n.id),0),COALESCE(MAX(n.kind),''),
+ COALESCE(MIN(CASE WHEN n.kind=CAST(n.kind AS TEXT) THEN 1 ELSE 0 END),1) FROM content_versions v
 		JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id AND n.trashed_at IS NULL
-		WHERE v.version_id=?`, set.ContentVersionID).Scan(&live); err != nil {
-		return false, err
+		WHERE v.version_id=?`, set.ContentVersionID).Scan(&live, &observation.nodeID, &observation.kind, &observation.textCompatible)
+	} else {
+		err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM content_versions v
+		JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id AND n.trashed_at IS NULL
+		WHERE v.version_id=?`, set.ContentVersionID).Scan(&live)
+	}
+	if err != nil {
+		return false, observation, err
 	}
 	if live != 1 {
-		return false, nil
+		return false, observation, nil
 	}
-	return embeddingAttachmentEligible(ctx, tx, set.ContentVersionID,
-		set.ProcessingProfileFingerprint, set.InputGeneration.AttachmentID)
+	observation.current = true
+	eligible, err := embeddingAttachmentEligible(ctx, tx, set.ContentVersionID, set.ProcessingProfileFingerprint, set.InputGeneration.AttachmentID)
+	return eligible, observation, err
 }
 
 // Heads and failures share the attachment fence, including during restore.

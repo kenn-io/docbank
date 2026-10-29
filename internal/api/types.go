@@ -238,14 +238,20 @@ type CoverageReport struct {
 	Embeddings         []CoverageClass `json:"embeddings"`
 }
 
+type DocumentSearchScope struct {
+	Kind    string                      `json:"kind" enum:"all_live"`
+	Filters *DocumentSourceFenceFilters `json:"filters,omitzero"`
+}
+
 type DocumentSearchRequest struct {
-	MediaSources MediaSearchSources  `json:"media_sources,omitzero" minItems:"1" maxItems:"4096" nullable:"false"`
-	Query        string              `json:"query" minLength:"1" maxLength:"8192"`
-	Mode         string              `json:"mode" enum:"auto,lexical,semantic,hybrid"`
-	Limit        int                 `json:"limit,omitzero" minimum:"1" maximum:"100"`
-	Profile      string              `json:"profile" minLength:"1" maxLength:"128" pattern:"^[a-z][a-z0-9_-]*$"`
-	BindingID    string              `json:"binding_id,omitzero" maxLength:"128"`
-	Fence        DocumentSourceFence `json:"fence"`
+	Scope        *DocumentSearchScope `json:"scope,omitzero"`
+	MediaSources MediaSearchSources   `json:"media_sources,omitzero" minItems:"1" maxItems:"4096" nullable:"false"`
+	Query        string               `json:"query" minLength:"1" maxLength:"8192"`
+	Mode         string               `json:"mode" enum:"auto,lexical,semantic,hybrid"`
+	Limit        int                  `json:"limit,omitzero" minimum:"1" maximum:"100"`
+	Profile      string               `json:"profile" minLength:"1" maxLength:"128" pattern:"^[a-z][a-z0-9_-]*$"`
+	BindingID    string               `json:"binding_id,omitzero" maxLength:"128"`
+	Fence        DocumentSearchFence  `json:"fence"`
 
 	Explain      bool `json:"explain,omitzero"`
 	Rerank       bool `json:"rerank,omitzero"`
@@ -403,6 +409,8 @@ type DocumentMediaSelection struct {
 }
 
 type DocumentSearchReport struct {
+	Scope                *DocumentSearchScope            `json:"scope,omitzero"`
+	ObservedScopeCount   *int                            `json:"observed_scope_count,omitzero" minimum:"0"`
 	MediaSelections      []DocumentMediaSelection        `json:"media_selections,omitzero" maxItems:"4096" nullable:"false"`
 	MediaSourceSelection bool                            `json:"media_source_selection,omitzero"`
 	RequestedMode        string                          `json:"requested_mode"`

@@ -254,7 +254,7 @@ func BenchmarkDocumentContentSearchHTTP(b *testing.B) {
 				require.NoError(b, err)
 				const limit = 50
 				body, err := json.Marshal(api.DocumentSearchRequest{
-					Query: "mercury", Mode: "lexical", Profile: "private", Limit: limit, Fence: fence,
+					Query: "mercury", Mode: "lexical", Profile: "private", Limit: limit, Fence: api.DocumentSearchFence(fence),
 				})
 				require.NoError(b, err)
 				b.ReportAllocs()

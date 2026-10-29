@@ -84,7 +84,7 @@ func TestLoomManualExportHTTP(t *testing.T) {
 		Profile: processing.SuppliedCaptionProfileName}
 	before, err := client.SearchDocuments(t.Context(), api.DocumentSearchRequest{
 		Query: "http second cue", Mode: "lexical", Profile: processing.SuppliedCaptionProfileName, Limit: 10,
-		Fence: api.DocumentSourceFence{VaultUID: catalog.VaultID(), ContentVersionIDs: []string{original.ContentVersionID}},
+		Fence: api.DocumentSearchFence{VaultUID: catalog.VaultID(), ContentVersionIDs: []string{original.ContentVersionID}},
 	})
 	require.NoError(t, err)
 	assert.Empty(t, before.Results)
@@ -114,7 +114,7 @@ func TestLoomManualExportHTTP(t *testing.T) {
 	require.Equal(t, original.ContentVersionID, status.ContentVersionID)
 	results, err := client.SearchDocuments(t.Context(), api.DocumentSearchRequest{
 		Query: "http second cue", Mode: "lexical", Profile: processing.SuppliedCaptionProfileName, Limit: 10,
-		Fence: api.DocumentSourceFence{VaultUID: catalog.VaultID(), ContentVersionIDs: []string{original.ContentVersionID}},
+		Fence: api.DocumentSearchFence{VaultUID: catalog.VaultID(), ContentVersionIDs: []string{original.ContentVersionID}},
 	})
 	require.NoError(t, err)
 	require.NotEmpty(t, results.Results)

@@ -670,7 +670,7 @@ func newReadToolDaemon(t *testing.T) *httptest.Server {
 			if !assert.NoError(t, json.UnmarshalRead(request.Body, &input)) {
 				return
 			}
-			assert.Equal(t, api.DocumentSourceFence{VaultUID: testVaultID,
+			assert.Equal(t, api.DocumentSearchFence{VaultUID: testVaultID,
 				ContentVersionIDs: []string{testVersionID}}, input.Fence)
 			writeDaemonJSON(t, response, api.DocumentSearchReport{RequestedMode: "lexical", ActualMode: "lexical",
 				Coverage:     api.DocumentSearchCoverage{ScopedDocuments: 1, CompleteDocuments: 1, State: "complete"},

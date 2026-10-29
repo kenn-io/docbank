@@ -4414,6 +4414,25 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    DocumentSearchFence:
+      additionalProperties: false
+      properties:
+        content_version_ids:
+          items:
+            type: string
+          maxItems: 4096
+          type: array
+          uniqueItems: true
+        vault_uid:
+          format: uuid
+          type: string
+      required:
+        - vault_uid
+      type: object
+      x-go-type: api.DocumentSearchFence
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     DocumentSearchReport:
       additionalProperties: false
       properties:
@@ -4439,6 +4458,12 @@ components:
           type: array
         media_source_selection:
           type: boolean
+        observed_scope_count:
+          format: int64
+          minimum: 0
+          type:
+            - integer
+            - "null"
         requested_mode:
           type: string
         reranking:
@@ -4447,6 +4472,8 @@ components:
           items:
             $ref: "#/components/schemas/DocumentSearchResult"
           type: array
+        scope:
+          $ref: "#/components/schemas/DocumentSearchScope"
         trace:
           items:
             $ref: "#/components/schemas/DocumentSearchTrace"
@@ -4484,7 +4511,7 @@ components:
         explain:
           type: boolean
         fence:
-          $ref: "#/components/schemas/DocumentSourceFence"
+          $ref: "#/components/schemas/DocumentSearchFence"
         limit:
           format: int64
           maximum: 100
@@ -4514,6 +4541,8 @@ components:
           type: string
         rerank:
           type: boolean
+        scope:
+          $ref: "#/components/schemas/DocumentSearchScope"
       required:
         - query
         - mode
@@ -4592,6 +4621,22 @@ components:
         - evidence
       type: object
       x-go-type: api.DocumentSearchResult
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    DocumentSearchScope:
+      additionalProperties: false
+      properties:
+        filters:
+          $ref: "#/components/schemas/DocumentSourceFenceFilters"
+        kind:
+          enum:
+            - all_live
+          type: string
+      required:
+        - kind
+      type: object
+      x-go-type: api.DocumentSearchScope
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
