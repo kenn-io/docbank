@@ -257,3 +257,34 @@ func TestPhotoFaceDetectionStableOverlap(t *testing.T) {
 	require.Equal(t, ids[1], faces[1].FaceID)
 	require.InDelta(t, .7, *faces[1].Facing, 1e-12)
 }
+
+func TestPhotoFaceDetectionLooseManualBox(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		boxes []document.FaceBox
+		want  int
+	}{
+		{"one face inside", []document.FaceBox{{X: .475, Y: .475, Width: .05, Height: .05}}, 1},
+		{"two faces inside", []document.FaceBox{{X: .43, Y: .43, Width: .05, Height: .05}, {X: .52, Y: .52, Width: .05, Height: .05}}, 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			node := browsePhotoNode(t, s, "portrait.jpg", fakeHash("a1"), "image/jpeg")
+			manual, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.New().String(), document.FaceBox{X: .425, Y: .425, Width: .15, Height: .15}, "")
+			require.NoError(t, err)
+			observations := make([]document.FaceObservation, len(tc.boxes))
+			for i, box := range tc.boxes {
+				observations[i].Box = box
+			}
+			require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+				return publishFaceDetectionTx(ctx, tx, node.CurrentVersionID, fakeHash("b1"), document.FaceDetection{Faces: observations}, time.Now())
+			}))
+			faces, _, _, err := s.PhotoFacePersonNames(ctx, node.CurrentVersionID)
+			require.NoError(t, err)
+			require.Len(t, faces, tc.want)
+			require.Contains(t, faces, manual, "the manual face remains unchanged")
+		})
+	}
+}

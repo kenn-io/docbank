@@ -51,6 +51,27 @@ func faceBoxOverlap(a, b document.FaceBox) float64 {
 	return intersection / (a.Width*a.Height + b.Width*b.Height - intersection)
 }
 
+// faceMatchScores scores each observation against a saved box by IoU, except
+// that the sole observation fully inside the box scores 1, so a loose box
+// claims its one face; multiple contained observations keep their IoU scores.
+func faceMatchScores(box document.FaceBox, observations []document.FaceObservation) []float64 {
+	inside := func(o document.FaceObservation) bool {
+		return o.Box.X >= box.X && o.Box.Y >= box.Y && o.Box.X+o.Box.Width <= box.X+box.Width && o.Box.Y+o.Box.Height <= box.Y+box.Height
+	}
+	sole := slices.IndexFunc(observations, inside)
+	if sole >= 0 && slices.ContainsFunc(observations[sole+1:], inside) {
+		sole = -1
+	}
+	scores := make([]float64, len(observations))
+	for j, o := range observations {
+		scores[j] = faceBoxOverlap(box, o.Box)
+	}
+	if sole >= 0 {
+		scores[sole] = 1
+	}
+	return scores
+}
+
 // publishFaceDetectionTx reconciles an authorized scan and commits its completion together.
 func publishFaceDetectionTx(ctx context.Context, tx *sql.Tx, version, detector string, result document.FaceDetection, at time.Time) error {
 	settled, err := faceScanSettledTx(ctx, tx, version, detector)
@@ -84,8 +105,8 @@ func publishFaceDetectionTx(ctx context.Context, tx *sql.Tx, version, detector s
 	}
 	var pairs []pair
 	for i, face := range faces {
-		for j, observation := range result.Faces {
-			if overlap := faceBoxOverlap(face.Box, observation.Box); overlap >= 0.14 {
+		for j, overlap := range faceMatchScores(face.Box, result.Faces) {
+			if overlap >= 0.14 {
 				pairs = append(pairs, pair{i, j, overlap})
 			}
 		}
