@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-11
+last_edited: 2026-10-28
 title: Web application
 description: Find, read, organize, and export documents in the local, authenticated web app.
 ---
@@ -318,13 +318,31 @@ records for review.
 1. Create or select a label namespace, including its prefix and number width.
 2. Choose **Preview Bates labels** and inspect the proposed labels and pages.
 3. Reserve the displayed range, then choose **Start Bates export**.
-4. Wait for **Stamped PDF ready**, then choose **Download verified PDF**.
+4. Wait for **Stamped PDF ready**, then choose **Download PDF**.
 
 The output contains the package's selected pages. The stored page map keeps
 their original source-page numbers. A number that was reserved is never issued
 again, even if the export was abandoned.
 
 ![A completed Bates export with its reserved labels and verified PDF](https://docbank.ai/assets/generated/web-bates-export.png)
+
+## Find a retained PDF by number
+
+Open **Productions** in the Documents sidebar, enter the exact **Bates number**,
+and choose **Find**. Matching is case-sensitive and preserves spaces and leading
+zeroes. A warning identifies leading or trailing spaces without removing them.
+Bates numbers are unique across the vault, so an exact number identifies at most
+one retained PDF and matching page. A match opens automatically, showing the
+page, publication time, PDF size, delivery kind, Bates range, SHA-256 and
+allocation reference. Choose **Download PDF** to recover it, or **Clear** to
+return to the full production list.
+
+Recovery works after restart without the review files or a configured page
+renderer. Downloads check file integrity against the retained record; they do not
+repeat the mask and approved-text checks. See the [numbered delivery verification
+scopes](document-processing.md#deliver-one-reviewed-pdf-with-bates-numbers) for a
+full check with your review files. The browser returns the PDF, not the render ZIP,
+text sidecar or review inputs.
 
 ## Assign and remove tags
 

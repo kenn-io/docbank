@@ -61,9 +61,7 @@ test("publishes selected pages from a sealed synthetic package through the real 
     await expect(drawer.getByText("Stamped PDF ready", { exact: true })).toBeVisible({
       timeout: 60_000,
     });
-    await expect(
-      drawer.getByRole("button", { name: "Download verified PDF", exact: true }),
-    ).toBeVisible();
+    await expect(drawer.getByRole("button", { name: "Download PDF", exact: true })).toBeVisible();
     await expect(drawer.getByRole("button", { name: /Open Bates export/ })).toBeVisible();
     await page.screenshot({
       path: path.join(output!, "web-bates-export.png"),
@@ -80,14 +78,14 @@ test("publishes selected pages from a sealed synthetic package through the real 
     await expect(rows.locator("summary")).toContainText("2 pages");
     await expect(rows.locator("summary")).toContainText("Exported");
     await expect(productions.locator("details[open]")).toHaveCount(0);
-    await expect(productions.getByRole("button", { name: "Download verified PDF" })).toBeHidden();
+    await expect(productions.getByRole("button", { name: "Download PDF" })).toBeHidden();
     await page.screenshot({
       path: path.join(output!, "productions-collapsed.png"),
       fullPage: true,
       animations: "disabled",
     });
     await rows.locator("summary").click();
-    await expect(productions.getByRole("button", { name: "Download verified PDF" })).toBeVisible();
+    await expect(productions.getByRole("button", { name: "Download PDF" })).toBeVisible();
     await page.screenshot({ path: path.join(output!, "productions-exported.png"), fullPage: true });
   } finally {
     try {
