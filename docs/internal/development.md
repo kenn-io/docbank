@@ -820,7 +820,7 @@ Go test workflows set `GOTRACEBACK=all` for crashes. When diagnosing a hang, cal
 CLI redaction verification tests run in separate test processes because the PDF worker's 1 GiB RSS ceiling counts all memory in its process. Each child keeps the real PDF checks and the qualified memory limit.
 
 Documentation browser checks use Microsoft's public Playwright image matching the installed `@playwright/test` version.
-Render PDF runs in a GHCR image built from `.github/docker/render-pdf/Dockerfile` and tagged by that file's hash.
+The LibreOffice PDF proof runs in a GHCR image built from `.github/docker/render-pdf/Dockerfile` and tagged by that file's hash.
 A trusted branch that changes the Dockerfile builds and pushes the image. The GHCR package must be public so fork pull requests can reuse it.
 
 Go jobs restore build and module caches through `.github/actions/go-cache-restore`
