@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -294,7 +295,7 @@ func TestPhotoRankedSnapshotFreezesModeAndAssetOrder(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, int64(51), first.Total)
 		require.Equal(t, members[0].AssetID, first.Rows[0].AssetID)
-		current, err := service.CurrentPhotoPage(t.Context(), first, nil)
+		current, err := service.CurrentPhotoPage(t.Context(), first, PhotoBrowseRequest{})
 		require.NoError(t, err)
 		require.Equal(t, "image-50.jpg", current.Items[0].Name)
 		hidden := SnapshotRequest{Photos: true, PhotoHidden: true, Query: first.Query, PageSize: 50}
@@ -325,6 +326,60 @@ func TestPhotoRankedSnapshotFreezesModeAndAssetOrder(t *testing.T) {
 			require.NotEqual(t, ids[0], row.AssetID)
 		}
 	})
+}
+
+func TestRankedPhotoSnapshotKeepsStacksAcrossPages(t *testing.T) {
+	t.Parallel()
+	f := newImageEmbeddingCatalogFixture(t)
+	run, err := f.s.BeginIngest(t.Context(), "cli", "synthetic ranked photo stack")
+	require.NoError(t, err)
+	ids := make([]string, 51)
+	members := make([]SnapshotMember, len(ids))
+	index := newCursorIndexFixture(f)
+	for i := range ids {
+		stamp := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC).Add(time.Duration(i*120) * time.Second)
+		if i == 50 {
+			stamp = stamp.Add(-90 * time.Second)
+		}
+		ids[i] = stackPhoto(t, f.s, run, fmt.Sprintf("/ranked/frame-%02d.jpg", i), stamp.Format(time.RFC3339), document.SourceMetadataPrecisionSecond)
+		asset, err := f.s.PhotoAssetByID(t.Context(), ids[i])
+		require.NoError(t, err)
+		node, err := f.s.NodeByID(t.Context(), asset.Files[0].NodeID)
+		require.NoError(t, err)
+		members[i] = SnapshotMember{AssetID: ids[i], NodeID: node.ID, ContentVersionID: node.CurrentVersionID}
+		if i >= 49 {
+			index.publish(t, ids[i], []float64{1, 0, 0, 0, 0, 0, 0, 0})
+		}
+	}
+	index.generation(t, "ranked-photo-stack")
+	groups, unavailable, _, _, err := f.s.PhotoStackGroups(t.Context(), ids[49:], false, "")
+	require.NoError(t, err)
+	require.Empty(t, unavailable)
+	require.Equal(t, [][]string{ids[49:]}, groups)
+
+	service := NewQuerySnapshotService(f.s)
+	t.Cleanup(func() { require.NoError(t, service.Close()) })
+	request := SnapshotRequest{
+		Photos: true, PageSize: 50,
+		Query:        snapshotTestQuery(t, `{"mode":"semantic","text":"sunset","sort":{"field":"relevance","direction":"desc"}}`),
+		PhotoRanking: &PhotoRanking{RequestedMode: "semantic", ActualMode: "semantic", Members: members},
+	}
+	first, err := service.Create(t.Context(), "owner", request)
+	require.NoError(t, err)
+	require.NotEmpty(t, first.NextCursor)
+	page, err := service.CurrentPhotoPage(t.Context(), first, PhotoBrowseRequest{Stacks: true})
+	require.NoError(t, err)
+	require.Len(t, page.Items, 50)
+	require.Equal(t, ids[49], page.Items[49].AssetID)
+	require.Equal(t, []PhotoStack{{AssetIDs: ids[49:], RepresentativeID: ids[49]}}, page.Stacks)
+
+	next, err := service.PhotoPage(t.Context(), "owner", first.SnapshotID, first.NextCursor, request)
+	require.NoError(t, err)
+	page, err = service.CurrentPhotoPage(t.Context(), next, PhotoBrowseRequest{Stacks: true})
+	require.NoError(t, err)
+	require.Len(t, page.Items, 1)
+	require.Equal(t, ids[50], page.Items[0].AssetID)
+	require.Equal(t, []PhotoStack{{AssetIDs: ids[49:], RepresentativeID: ids[49]}}, page.Stacks)
 }
 
 // createAllPhotosSnapshot snapshots every photo in capture order so a ranked

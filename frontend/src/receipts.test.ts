@@ -340,48 +340,19 @@ describe("search result authority", () => {
       results: [{ evidence: [mediaIdentity] }],
     });
   });
-});
 
-it("returns lexical matches for a hybrid request with an image-only profile", async () => {
-  const request: DocumentSearchRequest = {
-    query: "synthetic description",
-    mode: "hybrid",
-    limit: 20,
-    profile: "images",
-    fence: { vault_uid: vault, content_version_ids: [versions[0]] },
-  };
-  const report = {
-    requested_mode: "hybrid",
-    actual_mode: "lexical",
-    coverage: {
-      binding_required: false,
-      scoped_documents: 1,
-      complete_documents: 1,
-      state: "complete",
-    },
-    degradations: [],
-    results: [
-      {
-        vault_uid: vault,
-        node_id: 7,
-        content_version_id: versions[0],
-        rank: 1,
-        score: 1,
-        path: "/synthetic.pdf",
-        lexical_rank: 1,
-        evidence: [{ kind: "node_name" }],
-      },
-    ],
-    truncated: false,
-    trace: [],
-  };
-  vi.spyOn(globalThis, "fetch").mockResolvedValue(
-    new Response(JSON.stringify(report), { headers: { "Content-Type": "application/json" } }),
-  );
-
-  await expect(documentSearch("session", request)).resolves.toMatchObject({
-    requested_mode: "hybrid",
-    actual_mode: "lexical",
-    results: [{ path: "/synthetic.pdf", lexical_rank: 1 }],
+  it("accepts lexical fallback for a hybrid request with an image-only profile", () => {
+    const hybridRequest = { ...request, mode: "hybrid" as const, profile: "images" };
+    const report = valid();
+    report.requested_mode = "hybrid";
+    report.actual_mode = "lexical";
+    report.results[0]!.semantic_rank = 0;
+    report.results[0]!.lexical_rank = 1;
+    report.results[0]!.evidence = [{ kind: "node_name" }];
+    expect(validateDocumentSearchReport(report, hybridRequest)).toMatchObject({
+      requested_mode: "hybrid",
+      actual_mode: "lexical",
+      results: [{ lexical_rank: 1, path: "/visible.pdf" }],
+    });
   });
 });

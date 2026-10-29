@@ -39,6 +39,30 @@ it("selects unrated photos and empty flags and labels", async () => {
   expect(onchange.mock.lastCall?.[0].filters.labels).toEqual([""]);
 });
 
+it.each([
+  ["camera", "cameras", "Canon"],
+  ["lens", "lenses", "RF 50mm"],
+] as const)("keeps a selected-only %s facet editable", async (dimension, field, value) => {
+  const onchange = vi.fn();
+  render(FacetSidebar, {
+    unit: "photos",
+    query: {
+      ...originalQuery,
+      mode: "semantic",
+      filters: { ...originalQuery.filters, [field]: [value] },
+    },
+    facets: [],
+    disabled: false,
+    onchange,
+  });
+  const facetName = dimension === "camera" ? "Camera facet" : "Lens facet";
+  const facetGroup = screen.getByRole("group", { name: facetName });
+  const selected = within(facetGroup).getByRole("button", { name: `${value}, selected` });
+  expect(selected.getAttribute("aria-pressed")).toBe("true");
+  await fireEvent.click(selected);
+  expect(onchange.mock.lastCall?.[0].filters[field]).toBeUndefined();
+});
+
 const tagID = "11111111-1111-4111-8111-111111111111";
 const excludedTagID = "22222222-2222-4222-8222-222222222222";
 const originalQuery: Query = {

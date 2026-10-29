@@ -1454,37 +1454,6 @@ it.each(["success", "failure", "interrupted", "late"] as const)(
   },
 );
 
-it("a paged fallback does not claim results stop at 250", async () => {
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
-  const photos = new Photos("scoped", vi.fn());
-  photos.started = true;
-  photos.items = Array.from({ length: 250 }, (_, i) => photo(i + 1));
-  photos.total = 500;
-  photos.query = {
-    ...photos.query,
-    mode: "semantic",
-    text: "sunset",
-    sort: { field: "relevance", direction: "desc" },
-  };
-  photos.snapshotID = "fallback-snapshot";
-  photos.fallbackReason = "provider_unavailable";
-  photos.cursor = "next-page";
-  photos.truncated = false;
-  const cache = new PhotoPreviewCache("scoped", vi.fn());
-  render(PhotosWorkspace, { photos, cache });
-  await tick();
-  expect(screen.queryByText(/Showing the best 250/)).toBeNull();
-  expect(screen.queryByText(/Choose Metadata and sort by capture date to see all/)).toBeNull();
-  photos.dispose();
-  await cache.dispose();
-});
-
 it("explains the live metadata relevance limit, hiding it for complete results, capture dates, or Meaning", async () => {
   vi.stubGlobal(
     "ResizeObserver",
@@ -1509,7 +1478,13 @@ it("explains the live metadata relevance limit, hiding it for complete results, 
   await screen.findByText(note);
   photos.query = { ...photos.query, mode: "semantic" };
   photos.snapshotID = "accepted";
+  photos.items = Array.from({ length: 250 }, (_, i) => photo(i + 1));
+  photos.total = 500;
+  photos.fallbackReason = "provider_unavailable";
+  photos.cursor = "next-page";
+  photos.truncated = false;
   await waitFor(() => expect(screen.queryByText(note)).toBeNull());
+  expect(screen.queryByText(/Choose Metadata and sort by capture date to see all/)).toBeNull();
   await waitFor(() =>
     expect(screen.getByRole("combobox", { name: "Sort photos: Relevance" })).toHaveProperty(
       "disabled",
@@ -3190,61 +3165,6 @@ it("toggles the Filters panel", async () => {
   await cache.dispose();
 });
 
-it("keeps the camera filter editable after switching to Meaning", async () => {
-  const facets: snapshots.SnapshotPage["facets"] = [
-    {
-      dimension: "camera",
-      available: true,
-      total: 1,
-      missing: 0,
-      other: 0,
-      values: [{ key: "Canon", label: "Canon", count: 1, selected: true }],
-    },
-  ];
-  vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
-    const metadata = photoMetadataResponse(url, init);
-    if (metadata) return metadata;
-    const request = JSON.parse(String(init?.body ?? "{}"));
-    const semantic = request.query?.mode === "semantic";
-    return Response.json({
-      items: [photo(1)],
-      total: 1,
-      facets: semantic ? [] : facets,
-      ...(semantic
-        ? {
-            snapshot_id: "captured-meaning",
-            requested_mode: "semantic",
-            actual_mode: "semantic",
-          }
-        : {}),
-    });
-  });
-  const photos = new Photos("scoped", vi.fn(), false, {
-    ...photoQuery,
-    filters: { cameras: ["Canon"] },
-  });
-  photos.started = true;
-  photos.facets = facets;
-  const cache = new PhotoPreviewCache("scoped", vi.fn());
-
-  try {
-    render(PhotosWorkspace, { photos, cache });
-    await fireEvent.click(screen.getByRole("button", { name: "Filters, 1 active filter" }));
-    expect(screen.getByRole("group", { name: "Camera facet" })).toBeTruthy();
-
-    await photos.setQuery({ ...photos.query, text: "sunset", mode: "semantic" });
-    await tick();
-
-    expect(photos.query.filters.cameras).toEqual(["Canon"]);
-    expect(screen.getByRole("group", { name: "Camera facet" })).toBeTruthy();
-    await fireEvent.click(screen.getByRole("button", { name: "Canon, selected" }));
-    await waitFor(() => expect(photos.query.filters.cameras).toBeUndefined());
-  } finally {
-    photos.dispose();
-    await cache.dispose();
-  }
-});
-
 it("edits and clears a saved capture range in the Library Filters panel", async () => {
   vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
     const metadata = photoMetadataResponse(url, init);
@@ -3297,7 +3217,7 @@ it("edits and clears a saved capture range in the Library Filters panel", async 
   );
   // Year selection and clearing also cover FacetSidebar, which has no separate Year test.
   const year = await screen.findByRole("group", { name: "Year facet" });
-  await fireEvent.click(within(year).getByRole("button", { name: "2023, 1 photos" }));
+  await fireEvent.click(await within(year).findByRole("button", { name: "2023, 1 photos" }));
   expect(photos.query.filters.capture_after).toBe("2023-01-01");
   expect(photos.query.filters.capture_before).toBe("2024-01-01");
   await waitFor(() => expect(photos.loading).toBe(false));
@@ -4329,64 +4249,6 @@ it("renders Map search status for a fallback", async () => {
   photos.dispose();
 });
 
-it.each(["XMP resolution", "background XMP import", "suggestion acceptance"])(
-  "refreshes the accepted Meaning snapshot after %s",
-  async (change) => {
-    const before = preparedPhoto(1);
-    const photos = workspaceWithPreparedPhoto(before);
-    photos.query = {
-      ...photoQuery,
-      mode: "semantic",
-      text: "sunset",
-      sort: { field: "relevance", direction: "desc" },
-    };
-    photos.started = false;
-    vi.spyOn(api, "listPhotoAssets").mockResolvedValue({
-      items: [photo(1)],
-      total: 1,
-      facets: [],
-      relevance_available: true,
-      snapshot_id: "accepted-meaning",
-    });
-    await photos.loadMore();
-    const refresh = vi.spyOn(photos, "refresh").mockResolvedValue(true);
-    const suggestion = {
-      suggestion_id: "suggestion",
-      content_version_id: "version",
-      target: "file-1",
-      asset_id: "photo-1",
-      asset_revision: 1,
-      source_revision: 1,
-      node_revision: 1,
-      value: { caption: "A sunset.", tags: [], visible_text: "" },
-    };
-    vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue({
-      ...photoPreparation([before]),
-      suggestions: [suggestion],
-    });
-    const receipt = { receipt_id: "accepted-caption", before: [], after: [] };
-    vi.spyOn(api, "respondPhotoSuggestion").mockResolvedValue({
-      ...suggestion,
-      authored_receipt: receipt,
-    });
-    const cache = new PhotoPreviewCache("scoped", vi.fn());
-    render(PhotosWorkspace, { photos, cache });
-    await tick();
-    if (change === "suggestion acceptance") {
-      await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
-      await photos.authored.reload();
-      await fireEvent.click(await screen.findByRole("checkbox", { name: "A sunset." }));
-      await fireEvent.click(screen.getByRole("button", { name: "Accept selected" }));
-    } else {
-      await photos.authored.onXMPChanged!(change === "XMP resolution" ? receipt : undefined);
-    }
-    await waitFor(() => expect(refresh).toHaveBeenCalledWith(expect.any(Function), true));
-    expect(photos.snapshotID).toBe("accepted-meaning");
-    photos.dispose();
-    await cache.dispose();
-  },
-);
-
 it("stops Cull when the accepted snapshot cannot be captured", async () => {
   vi.stubGlobal("indexedDB", new IDBFactory());
   vi.stubGlobal("IDBKeyRange", IDBKeyRange);
@@ -4416,26 +4278,73 @@ it("stops Cull when the accepted snapshot cannot be captured", async () => {
   await cache.dispose();
 });
 
-it.each(["compare", "face", "cull"])(
-  "refreshes the accepted Meaning snapshot after %s",
-  async (operation) => {
-    const photos = new Photos("scoped", vi.fn(), false, {
-      ...photoQuery,
-      mode: "semantic",
-      text: "sunset",
+it.each([
+  "XMP resolution",
+  "background XMP import",
+  "suggestion acceptance",
+  "compare",
+  "face",
+  "cull",
+] as const)("refreshes the accepted Meaning snapshot after %s", async (change) => {
+  const authoredChange = [
+    "XMP resolution",
+    "background XMP import",
+    "suggestion acceptance",
+  ].includes(change);
+  const before = preparedPhoto(1);
+  const photos = authoredChange
+    ? workspaceWithPreparedPhoto(before)
+    : new Photos("scoped", vi.fn(), false, {
+        ...photoQuery,
+        mode: "semantic",
+        text: "sunset",
+      });
+  photos.query = {
+    ...photoQuery,
+    mode: "semantic",
+    text: "sunset",
+    sort: { field: "relevance", direction: "desc" },
+  };
+  const rows = [photo(1), photo(2)];
+  if (authoredChange) {
+    photos.started = false;
+    vi.spyOn(api, "listPhotoAssets").mockResolvedValue({
+      items: [photo(1)],
+      total: 1,
+      facets: [],
+      relevance_available: true,
+      snapshot_id: "accepted-meaning",
     });
-    const rows = [photo(1), photo(2)];
+    await photos.loadMore();
+    const suggestion = {
+      suggestion_id: "suggestion",
+      content_version_id: "version",
+      target: "file-1",
+      asset_id: "photo-1",
+      asset_revision: 1,
+      source_revision: 1,
+      node_revision: 1,
+      value: { caption: "A sunset.", tags: [], visible_text: "" },
+    };
+    vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue({
+      ...photoPreparation([before]),
+      suggestions: [suggestion],
+    });
+    const receipt = { receipt_id: "accepted-caption", before: [], after: [] };
+    vi.spyOn(api, "respondPhotoSuggestion").mockResolvedValue({
+      ...suggestion,
+      authored_receipt: receipt,
+    });
+  } else {
     photos.items = rows;
     photos.total = 2;
     photos.started = true;
-    photos.snapshotID = "accepted";
+    photos.snapshotID = "accepted-meaning";
     photos.compareIDs = ["photo-1", "photo-2"];
-    photos.comparing = operation === "compare";
+    photos.comparing = change === "compare";
     vi.spyOn(photos, "lookupMany").mockResolvedValue(rows);
     vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });
-    const refresh = vi.spyOn(photos, "refresh").mockResolvedValue(true);
-    const cache = new PhotoPreviewCache("scoped", vi.fn());
-    if (operation === "cull") {
+    if (change === "cull") {
       vi.stubGlobal("indexedDB", new IDBFactory());
       vi.stubGlobal("IDBKeyRange", IDBKeyRange);
       const review = new PhotoCull(photos.session, photoCullStorage("vault"), vi.fn());
@@ -4459,22 +4368,34 @@ it.each(["compare", "face", "cull"])(
       vi.spyOn(review, "flush").mockResolvedValue();
       vi.spyOn(photos, "lookup").mockResolvedValue(rows[0]);
     }
-    render(PhotosWorkspace, { photos, cache, vaultID: "vault" });
-    if (operation === "compare")
-      await fireEvent.click(await screen.findByRole("button", { name: "Exit compare" }));
-    else if (operation === "cull")
-      await fireEvent.click(await screen.findByRole("button", { name: "Exit cull" }));
-    else await act(() => photos.faceEditor.ondecision?.());
-    await waitFor(() => expect(refresh).toHaveBeenCalledWith(expect.any(Function), true));
-    if (operation === "face") {
-      await fireEvent.click(screen.getByRole("button", { name: "More photo actions" }));
-      expect(
-        screen
-          .getByRole("menuitem", { name: "Trash rejected photos" })
-          .getAttribute("aria-disabled"),
-      ).toBe("true");
-    }
-    photos.dispose();
-    await cache.dispose();
-  },
-);
+  }
+  const refresh = vi.spyOn(photos, "refresh").mockResolvedValue(true);
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  render(PhotosWorkspace, { photos, cache, vaultID: "vault" });
+  await tick();
+  if (change === "suggestion acceptance") {
+    await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
+    await photos.authored.reload();
+    await fireEvent.click(await screen.findByRole("checkbox", { name: "A sunset." }));
+    await fireEvent.click(screen.getByRole("button", { name: "Accept selected" }));
+  } else if (change === "XMP resolution" || change === "background XMP import") {
+    const receipt = { receipt_id: "accepted-caption", before: [], after: [] };
+    await photos.authored.onXMPChanged!(change === "XMP resolution" ? receipt : undefined);
+  } else if (change === "compare") {
+    await fireEvent.click(await screen.findByRole("button", { name: "Exit compare" }));
+  } else if (change === "cull") {
+    await fireEvent.click(await screen.findByRole("button", { name: "Exit cull" }));
+  } else {
+    await act(() => photos.faceEditor.ondecision?.());
+  }
+  await waitFor(() => expect(refresh).toHaveBeenCalledWith(expect.any(Function), true));
+  expect(photos.snapshotID).toBe("accepted-meaning");
+  if (change === "face") {
+    await fireEvent.click(screen.getByRole("button", { name: "More photo actions" }));
+    expect(
+      screen.getByRole("menuitem", { name: "Trash rejected photos" }).getAttribute("aria-disabled"),
+    ).toBe("true");
+  }
+  photos.dispose();
+  await cache.dispose();
+});

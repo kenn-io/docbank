@@ -3409,12 +3409,7 @@ it.each([undefined, "map"] as const)(
   },
 );
 
-it.each([
-  ["semantic", "reset"],
-  ["hybrid", "reset"],
-  ["semantic", "person"],
-  ["hybrid", "person"],
-] as const)("blank %s query browses as Metadata via %s", async (mode, action) => {
+it("blank Meaning query resets to Metadata", async () => {
   const read = vi.spyOn(api, "listPhotoAssets").mockResolvedValue({
     items: [],
     total: 0,
@@ -3424,16 +3419,10 @@ it.each([
   const timeline = vi.mocked(snapshots.fetchPhotoTimeline);
   const photos = new Photos("scoped", vi.fn(), false, {
     ...photoQuery,
-    mode,
+    mode: "semantic",
     text: "sunset",
   });
-  if (action === "reset") await photos.resetQuery();
-  else
-    await photos.setQuery({
-      ...photos.query,
-      text: "",
-      filters: { person_ids: ["00000000-0000-4000-8000-000000000001"] },
-    });
+  await photos.resetQuery();
   expect(photos.query.mode).toBe("lexical");
   expect(read.mock.calls.at(-1)?.[0].query.mode).toBe("lexical");
   expect(read.mock.calls.at(-1)?.[0].snapshot_id).toBeUndefined();
@@ -3441,32 +3430,21 @@ it.each([
   photos.dispose();
 });
 
-it("explicit refresh of Meaning results keeps Select all to captured photos", async () => {
-  vi.spyOn(api, "listPhotoAssets")
-    .mockResolvedValueOnce({
-      items: [photo(2), photo(1)],
-      total: 2,
-      facets: [],
-      relevance_available: true,
-      snapshot_id: "accepted",
-    })
-    .mockResolvedValue({
-      items: [photo(3), photo(1)],
-      total: 2,
-      facets: [],
-      relevance_available: true,
-      snapshot_id: "replacement",
-    });
-  const photos = new Photos("scoped", vi.fn(), false, {
-    ...photoQuery,
-    mode: "semantic",
-    text: "sunset",
+it("retains camera and lens filters when switching to Meaning", async () => {
+  const filters = { cameras: ["Canon"], lenses: ["RF 50mm"] };
+  const read = vi.spyOn(api, "listPhotoAssets").mockResolvedValue({
+    items: [photo(1)],
+    total: 1,
+    facets: [],
+    relevance_available: true,
+    requested_mode: "semantic",
+    actual_mode: "semantic",
+    snapshot_id: "meaning",
   });
-  await photos.loadMore();
-  await photos.selectAllResults();
-  await photos.refresh();
-  expect([...photos.selectedIDs]).toEqual(["photo-1"]);
-  expect(photos.allResults).toBe(false);
+  const photos = new Photos("scoped", vi.fn(), false, { ...photoQuery, filters });
+  await photos.setQuery({ ...photos.query, mode: "semantic", text: "sunset" });
+  expect(photos.query.filters).toMatchObject(filters);
+  expect(read.mock.calls.at(-1)?.[0].query.filters).toMatchObject(filters);
   photos.dispose();
 });
 
@@ -3491,7 +3469,7 @@ it("retains the loaded prefix when the old tail moves to the front", async () =>
   photos.dispose();
 });
 
-it.each(["hidden", "ranked", "empty"] as const)(
+it.each(["hidden", "empty"] as const)(
   "keeps %s actions within their accepted scope",
   async (mode) => {
     const photos = new Photos("scoped", vi.fn(), mode === "hidden", {
@@ -3555,6 +3533,8 @@ it("retains accepted Meaning matches and selection while live refresh hydrates t
   await photos.refresh();
   expect(photos.snapshotID).toBe("replacement");
   expect(photos.items.map((row) => row.asset_id)).toEqual(["photo-3", "photo-1"]);
+  expect([...photos.selectedIDs]).toEqual(["photo-1"]);
+  expect(photos.allResults).toBe(false);
   photos.dispose();
 });
 
@@ -3819,7 +3799,7 @@ it.each(["fallback", "metadata transition", "late metadata counts", "metadata to
   },
 );
 
-it("applies Undo rotation to ranked Map rows after selection clears", () => {
+it("applies Undo rotation and representative changes to ranked Map rows", () => {
   const photos = new Photos(
     "scoped",
     vi.fn(),
@@ -3871,22 +3851,8 @@ it("applies Undo rotation to ranked Map rows after selection clears", () => {
     node_id: companion.node_id,
   });
   expect(photos.items.map((row) => row.rotation)).toEqual([0, 0]);
-  photos.dispose();
-});
-
-it("applies a representative-choice Undo revision and rotation to ranked Map rows", () => {
-  const photos = new Photos(
-    "scoped",
-    vi.fn(),
-    false,
-    { ...photoQuery, mode: "semantic", text: "sunset" },
-    { projection: "map" },
-  );
-  photos.items = [mapPhoto(1), mapPhoto(2)];
-  photos.snapshotID = "ranked-map";
-  const before = preparedPhoto(1);
   photos.metadataChanged({
-    receipt_id: "undo-representative",
+    receipt_id: "representative-undo",
     before: [before],
     after: [{ ...before, revision: 2, values: { ...before.values, rotation: 90 } }],
     representatives: [

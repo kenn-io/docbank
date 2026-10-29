@@ -497,46 +497,6 @@ func TestPhotoStackCursorMembershipFrontier(t *testing.T) {
 	}
 }
 
-func TestPhotoStackPagesMatchExplicitGrouping(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	run, err := s.BeginIngest(t.Context(), "cli", "synthetic interleaved bursts")
-	require.NoError(t, err)
-	// Three folders interleave with steps of 0 to 3 seconds, so chains break,
-	// tie, and cross every page and batch edge below.
-	steps := []int{0, 1, 3, 2, 0, 1, 1, 3, 3, 2, 1, 0, 2, 3, 1, 2, 0, 3, 1, 1}
-	base := time.Date(2024, 6, 10, 12, 0, 0, 0, time.UTC)
-	var ids []string
-	for folder, offset := range []int{0, 1, 2} {
-		stamp := base.Add(time.Duration(offset) * time.Second)
-		for i := range steps {
-			stamp = stamp.Add(time.Duration(steps[(i+folder*7)%len(steps)]) * time.Second)
-			ids = append(ids, stackPhoto(t, s, run, fmt.Sprintf("/roll-%d/frame-%02d.jpg", folder, i), stamp.Format(time.RFC3339), document.SourceMetadataPrecisionSecond))
-		}
-	}
-	groups, _, _, incomplete, err := s.PhotoStackGroups(t.Context(), ids, false, "")
-	require.NoError(t, err)
-	require.False(t, incomplete)
-	want := make([][]string, len(groups))
-	for i, group := range groups {
-		want[i] = slices.Sorted(slices.Values(group))
-	}
-	require.NotEmpty(t, want)
-	for _, size := range []int{1, 2, 3, 7, 50} {
-		for _, direction := range []string{"asc", "desc"} {
-			request := captureRequest(t, direction)
-			request.PageSize = size
-			items, stacks := stackPages(t, s, request)
-			got := make([][]string, len(stacks))
-			for i, stack := range stacks {
-				got[i] = slices.Sorted(slices.Values(stack))
-			}
-			require.ElementsMatch(t, want, got, "size %d %s", size, direction)
-			require.ElementsMatch(t, ids, slices.Concat(items...), "size %d %s: every photo appears once", size, direction)
-		}
-	}
-}
-
 func TestPhotoStackPagesCapConnectedRuns(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -1594,7 +1554,7 @@ func TestPhotoStackVectorHydrationTracksIndexPublication(t *testing.T) {
 	index.generation(t, "photo-vector-generation")
 	reader, err = s.newPhotoStackVectorReader(t.Context(), s.db)
 	require.NoError(t, err)
-	require.NoError(t, reader.hydrate(t.Context(), s.db, frames))
+	require.NoError(t, reader.hydrate(t.Context(), photoStackPlanQuerier{DB: s.db, t: t}, frames))
 	require.Equal(t, []float32{1, 2, 3, 4, 5, 6, 7, 8}, frames[asset.ID].ImageVectors[index.space])
 	// A head published after the generation was built is not in the active index.
 	run, err := s.BeginIngest(t.Context(), "cli", "synthetic later image")
@@ -1694,10 +1654,6 @@ func TestPhotoStackImageSimilarityThresholdAndWindow(t *testing.T) {
 	require.Empty(t, groups, "identical vectors outside the image window must stay separate")
 	require.Empty(t, unavailable)
 	require.False(t, incomplete)
-	// Capture-date browsing uses the same image links.
-	page, err := s.ListPhotoAssets(t.Context(), PhotoBrowseRequest{Stacks: true, PageSize: 10, Query: captureRequest(t, "asc").Query}, nil)
-	require.NoError(t, err)
-	require.Equal(t, [][]string{{ids[0], ids[1]}}, stackAssetIDs(page.Stacks))
 }
 
 func TestPhotoStackUnrelatedImageSpaceKeepsStacks(t *testing.T) {

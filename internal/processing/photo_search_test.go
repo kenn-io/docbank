@@ -85,6 +85,8 @@ func TestDocumentSearchSelectsTextBindingInMixedProfile(t *testing.T) {
 		x := newPhotoSearchFixture(t)
 		report, err := x.service.Search(t.Context(), SearchRequest{Profile: "images", Query: "unmatchednebula", Mode: "hybrid", Fence: SourceFence{VaultUID: x.f.catalog.VaultID(), ContentVersionIDs: []string{x.f.node.CurrentVersionID}}})
 		require.NoError(t, err)
+		require.Equal(t, "hybrid", string(report.RequestedMode))
+		require.Equal(t, "lexical", string(report.ActualMode))
 		require.Empty(t, report.Results)
 		require.Empty(t, x.service.Profiles()[0].QueryEmbeddingBindings)
 	})

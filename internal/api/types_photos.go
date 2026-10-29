@@ -44,7 +44,6 @@ type PhotoAsset struct {
 }
 
 type PhotoSettings struct {
-	VectorGenerationID          string  `json:"vector_generation_id,omitempty"`
 	BurstGapSeconds             int     `json:"burst_gap_seconds" minimum:"1" maximum:"30"`
 	HiddenUnlockLifetimeSeconds *int64  `json:"hidden_unlock_lifetime_seconds,omitzero"`
 	Preference                  *string `json:"preference,omitzero" enum:"raw,image"`

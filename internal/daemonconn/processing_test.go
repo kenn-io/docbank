@@ -533,6 +533,23 @@ func TestProcessingClientValidatesSearchResponseAgainstExactFence(t *testing.T) 
 	report, err = daemonconn.New(imageServer.URL, serverKey).SearchDocuments(t.Context(), request)
 	require.NoError(t, err)
 	assert.Equal(t, "image", report.Results[0].Evidence[0].InputKind)
+
+	hybridRequest := request
+	hybridRequest.Mode = "hybrid"
+	fallback := validReport()
+	fallback.RequestedMode, fallback.ActualMode = "hybrid", "lexical"
+	fallback.Results[0].SemanticRank, fallback.Results[0].LexicalRank = 0, 1
+	fallback.Results[0].Evidence = []api.DocumentEvidenceReference{{Kind: "node_name"}}
+	fallbackServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		assert.NoError(t, json.MarshalWrite(w, fallback))
+	}))
+	t.Cleanup(fallbackServer.Close)
+	report, err = daemonconn.New(fallbackServer.URL, serverKey).SearchDocuments(t.Context(), hybridRequest)
+	require.NoError(t, err)
+	assert.Equal(t, "hybrid", report.RequestedMode)
+	assert.Equal(t, "lexical", report.ActualMode)
+	assert.Equal(t, 1, report.Results[0].LexicalRank)
 }
 
 func TestProcessingClientAcceptsOneSelectedResultPerBuild(t *testing.T) {

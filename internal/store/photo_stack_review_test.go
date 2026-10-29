@@ -80,16 +80,6 @@ func (q photoStackPlanQuerier) QueryContext(ctx context.Context, query string, a
 	return q.DB.QueryContext(ctx, query, args...) //nolint:sqlclosecheck // The hydrate reader owns and closes the returned rows.
 }
 
-func TestPhotoStackHydrateUsesExistingIndexes(t *testing.T) {
-	t.Parallel()
-	f, ids := indexedPhotoRun(t, 2, 20)
-	reader, err := f.s.newPhotoStackVectorReader(t.Context(), f.s.db)
-	require.NoError(t, err)
-	frames := map[string]photoStackFrame{ids[0]: {AssetID: ids[0]}, ids[1]: {AssetID: ids[1]}}
-	require.NoError(t, reader.hydrate(t.Context(), photoStackPlanQuerier{f.s.db, t}, frames))
-	require.Len(t, frames[ids[0]].ImageVectors, 1)
-}
-
 // Fail the generation read after the real head query has succeeded.
 type photoStackLoadFailureQuerier struct {
 	*sql.DB

@@ -234,31 +234,9 @@ func (s *Store) groupRankedPhotoPage(ctx context.Context, q metadataQuerier, pag
 	for i, row := range page.Items {
 		ids[i], rows[row.AssetID] = row.AssetID, row
 	}
-	frames, err := s.photoStackFrames(ctx, q, ids, hidden, fingerprint)
+	byID, err := s.photoStacksByMember(ctx, q, page, ids, hidden, gap, fingerprint)
 	if err != nil {
 		return err
-	}
-	err = queryInChunks(ctx, q, `SELECT a.asset_id,`+photoStackChoiceColumns+` FROM photo_assets a WHERE a.asset_id IN (`, ids, func(rows *sql.Rows) error {
-		var id string
-		var choice photoStackFrame
-		if err := rows.Scan(&id, &choice.Rank, &choice.Picked, &choice.Rejected); err != nil {
-			return err
-		}
-		frame := frames[id]
-		frame.Rank, frame.Picked, frame.Rejected = choice.Rank, choice.Picked, choice.Rejected
-		frames[id] = frame
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-	page.GroupingIncomplete = photoStackAnyStale(frames)
-	byID := make(map[string]PhotoStack)
-	for _, group := range groupPhotoStackFrames(slices.Collect(maps.Values(frames)), gap) {
-		stack := newPhotoStack(group)
-		for _, id := range stack.AssetIDs {
-			byID[id] = stack
-		}
 	}
 	page.Items = make([]PhotoBrowseRow, 0, len(ids))
 	emitted := make(map[string]bool)
@@ -280,6 +258,61 @@ func (s *Store) groupRankedPhotoPage(ctx context.Context, q metadataQuerier, pag
 		}
 	}
 	return nil
+}
+
+// groupFrozenPhotoPage reports every stack among the frozen members that the
+// page intersects, with its full membership, and keeps the frozen item order.
+func (s *Store) groupFrozenPhotoPage(ctx context.Context, q metadataQuerier, page *PhotoBrowsePage, members []string, request PhotoBrowseRequest) error {
+	settings, err := photoSettingsTx(ctx, q)
+	if err != nil {
+		return err
+	}
+	page.BurstGapSeconds = settings.BurstGapSeconds
+	byID, err := s.photoStacksByMember(ctx, q, page, members, request.Hidden, settings.BurstGapSeconds, request.SourceMetadataFingerprint)
+	if err != nil {
+		return err
+	}
+	page.Stacks = []PhotoStack{}
+	emitted := make(map[string]bool)
+	for _, row := range page.Items {
+		if stack, ok := byID[row.AssetID]; ok && !emitted[stack.RepresentativeID] {
+			emitted[stack.RepresentativeID] = true
+			page.Stacks = append(page.Stacks, stack)
+		}
+	}
+	return nil
+}
+
+// photoStacksByMember groups the live, visible members of ids under their
+// current representative choices, keyed by member.
+func (s *Store) photoStacksByMember(ctx context.Context, q metadataQuerier, page *PhotoBrowsePage, ids []string, hidden bool, gap int, fingerprint string) (map[string]PhotoStack, error) {
+	frames, err := s.photoStackFrames(ctx, q, ids, hidden, fingerprint)
+	if err != nil {
+		return nil, err
+	}
+	err = queryInChunks(ctx, q, `SELECT a.asset_id,`+photoStackChoiceColumns+` FROM photo_assets a WHERE a.asset_id IN (`, ids, func(rows *sql.Rows) error {
+		var id string
+		var choice photoStackFrame
+		if err := rows.Scan(&id, &choice.Rank, &choice.Picked, &choice.Rejected); err != nil {
+			return err
+		}
+		frame := frames[id]
+		frame.Rank, frame.Picked, frame.Rejected = choice.Rank, choice.Picked, choice.Rejected
+		frames[id] = frame
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	page.GroupingIncomplete = photoStackAnyStale(frames)
+	byID := make(map[string]PhotoStack)
+	for _, group := range groupPhotoStackFrames(slices.Collect(maps.Values(frames)), gap) {
+		stack := newPhotoStack(group)
+		for _, id := range stack.AssetIDs {
+			byID[id] = stack
+		}
+	}
+	return byID, nil
 }
 
 // photoStackChoiceColumns are the representative inputs: the explicit rank and

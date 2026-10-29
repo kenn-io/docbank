@@ -75,6 +75,41 @@ func TestNormativeEmbeddingContractIsFixedStrictAndVersioned(t *testing.T) {
 	}
 	assert.Equal(t, "docbank-embedding/v1", embeddingbridge.ContractVersion)
 	assert.Equal(t, "docbank-embedding/v2", embeddingbridge.ImageContractVersion)
+	legacyValidator := compileContractSchema(t, "https://docbank.invalid/contracts/docbank-embedding/v1/request.schema.json", requestSchema)
+	legacyManifest := map[string]any{
+		"contract_version":       "docbank-embedding/v1",
+		"descriptor_fingerprint": strings.Repeat("0", 64),
+		"policy_fingerprint":     strings.Repeat("1", 64),
+		"authorization": map[string]any{
+			"provider_id": "synthetic.embedding-bridge", "descriptor_fingerprint": strings.Repeat("0", 64),
+			"policy_fingerprint": strings.Repeat("1", 64), "max_batch_items": 1, "max_input_bytes": 32,
+			"max_response_bytes": 32, "disclose_filename": false,
+		},
+		"inputs": []any{map[string]any{
+			"index": 0, "key": "image-a", "role": "document", "kind": "original_file", "byte_length": 1,
+			"sha256": strings.Repeat("a", 64), "upload": map[string]any{
+				"filename": "", "media_family": "image", "media_type": "image/jpeg",
+				"byte_length": 1, "sha256": strings.Repeat("a", 64),
+				"capability_record_checksum": strings.Repeat("b", 64),
+				"provider_metadata_checksum": strings.Repeat("c", 64), "input_kind": "original_file",
+			}, "file_part": "file", "file_index": 0,
+		}},
+		"request_checksum": strings.Repeat("d", 64),
+	}
+	validateLegacyManifest := func() error {
+		legacyJSON, err := stdjson.Marshal(legacyManifest)
+		if err != nil {
+			return err
+		}
+		var legacyWire any
+		if err := stdjson.Unmarshal(legacyJSON, &legacyWire); err != nil {
+			return err
+		}
+		return legacyValidator.Validate(legacyWire)
+	}
+	require.NoError(t, validateLegacyManifest())
+	legacyManifest["inputs"].([]any)[0].(map[string]any)["kind"] = "image"
+	require.Error(t, validateLegacyManifest(), "v1 must reject the new image input kind")
 	for _, field := range []string{`"heading_path"`, `"source_spans"`, `"unit_index"`, `"char_start"`, `"char_end"`} {
 		assert.Contains(t, string(requestSchema), field)
 	}
@@ -563,32 +598,6 @@ func TestImageUploadAndTextQueryReturnBothVectors(t *testing.T) {
 			http.Error(w, "synthetic contract failure", http.StatusInternalServerError)
 		}
 	}), document.EmbeddingInputKind("image"))
-	legacyValidator := compileContractSchema(t, "https://docbank.invalid/contracts/docbank-embedding/v1/request.schema.json", requestSchema)
-	legacyManifest := map[string]any{
-		"contract_version":       "docbank-embedding/v1",
-		"descriptor_fingerprint": strings.Repeat("0", 64),
-		"policy_fingerprint":     strings.Repeat("1", 64),
-		"authorization": map[string]any{
-			"provider_id": "synthetic.embedding-bridge", "descriptor_fingerprint": strings.Repeat("0", 64),
-			"policy_fingerprint": strings.Repeat("1", 64), "max_batch_items": 1, "max_input_bytes": 32,
-			"max_response_bytes": 32, "disclose_filename": false,
-		},
-		"inputs": []any{map[string]any{
-			"index": 0, "key": "image-a", "role": "document", "kind": "image", "byte_length": len(source),
-			"sha256": strings.Repeat("a", 64), "upload": map[string]any{
-				"filename": "", "media_family": "image", "media_type": "image/jpeg",
-				"byte_length": len(source), "sha256": strings.Repeat("a", 64),
-				"capability_record_checksum": strings.Repeat("b", 64),
-				"provider_metadata_checksum": strings.Repeat("c", 64), "input_kind": "original_file",
-			}, "file_part": "file", "file_index": 0,
-		}},
-		"request_checksum": strings.Repeat("d", 64),
-	}
-	legacyJSON, err := stdjson.Marshal(legacyManifest)
-	require.NoError(t, err)
-	var legacyWire any
-	require.NoError(t, stdjson.Unmarshal(legacyJSON, &legacyWire))
-	require.Error(t, legacyValidator.Validate(legacyWire), "v1 must reject the new image input kind")
 	metadata := uploadMetadata(source)
 	metadata.MediaFamily, metadata.MediaType = "image", "image/jpeg"
 	metadata.InputKind = document.RenditionInputDerivedUpload

@@ -125,7 +125,7 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 				}})
 			}
 			if err == nil {
-				page, err = snapshots.CurrentPhotoPage(ctx, snapshot, request.Recipes)
+				page, err = snapshots.CurrentPhotoPage(ctx, snapshot, request)
 			}
 		} else {
 			page, err = d.Store.ListPhotoAssets(ctx, request, boundary)

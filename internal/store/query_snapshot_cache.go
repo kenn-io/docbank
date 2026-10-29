@@ -1055,18 +1055,45 @@ func (s *Store) currentPhotoRowsTx(ctx context.Context, tx metadataQuerier, memb
 }
 
 // CurrentPhotoPage reads current display values while retaining the accepted order.
-func (s *QuerySnapshotService) CurrentPhotoPage(ctx context.Context, snapshot SnapshotPage, recipes map[string]string) (PhotoBrowsePage, error) {
+func (s *QuerySnapshotService) CurrentPhotoPage(ctx context.Context, snapshot SnapshotPage, request PhotoBrowseRequest) (PhotoBrowsePage, error) {
 	page := PhotoBrowsePage{Total: snapshot.Total, RelevanceAvailable: true}
 	err := s.store.photoReadTx(ctx, func(tx *sql.Tx) error {
 		var err error
-		page.Items, err = s.store.currentPhotoRowsTx(ctx, tx, snapshotMembers(snapshot.Rows), recipes)
+		page.Items, err = s.store.currentPhotoRowsTx(ctx, tx, snapshotMembers(snapshot.Rows), request.Recipes)
 		if err != nil {
 			return err
 		}
 		for i, row := range snapshot.Rows {
 			page.Items[i].MatchedAISuggestion = row.SuggestionMatch
 		}
-		return nil
+		return s.groupCurrentPhotoPage(ctx, tx, snapshot.SnapshotID, request, &page)
 	})
 	return page, err
+}
+
+// groupCurrentPhotoPage groups across every frozen member, so a stack that
+// straddles ranked pages keeps its full membership on each page it intersects.
+func (s *QuerySnapshotService) groupCurrentPhotoPage(ctx context.Context, q metadataQuerier, snapshotID string, request PhotoBrowseRequest, page *PhotoBrowsePage) error {
+	if !request.Stacks {
+		return nil
+	}
+	s.mu.Lock()
+	cached, ok := s.snapshots[snapshotID]
+	var rows [][]byte
+	if ok {
+		rows = cached.rows
+	}
+	s.mu.Unlock()
+	if !ok {
+		return ErrSnapshotGone
+	}
+	members := make([]string, len(rows))
+	for i, raw := range rows {
+		var member SnapshotMember
+		if err := json.Unmarshal(raw, &member); err != nil {
+			return fmt.Errorf("decoding cached query snapshot row: %w", err)
+		}
+		members[i] = member.AssetID
+	}
+	return s.store.groupFrozenPhotoPage(ctx, q, page, members, request)
 }

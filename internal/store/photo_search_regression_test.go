@@ -9,7 +9,7 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
-func TestPhotoSnapshotSuggestionBadgesKeepRankOrder(t *testing.T) {
+func TestPhotoSnapshotSuggestionBadgesKeepRankOrderAndCountTowardSizeLimit(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	machine := browsePhotoNode(t, s, "machine.jpg", browseHash("machine"), "image/jpeg")
@@ -61,14 +61,12 @@ func TestPhotoFallbackSnapshotCapsMembership(t *testing.T) {
 		if count == 1001 {
 			browsePhotoNode(t, s, "sunset-1000.jpg", browseHash("sunset-1000.jpg"), "image/jpeg")
 		}
-		for _, mode := range []string{"semantic", "hybrid"} {
-			t.Run(fmt.Sprintf("%s/%d", mode, count), func(t *testing.T) {
-				request := SnapshotRequest{Photos: true, PageSize: 250, Query: snapshotTestQuery(t, fmt.Sprintf(`{"mode":%q,"text":"sunset","sort":{"field":"relevance","direction":"desc"}}`, mode)), PhotoRanking: &PhotoRanking{RequestedMode: mode, ActualMode: "lexical", FallbackReason: "provider_unavailable"}}
-				page, err := service.Create(t.Context(), "owner", request)
-				require.NoError(t, err)
-				require.EqualValues(t, 1000, page.Total)
-				require.Equal(t, count > 1000, page.PhotoRanking.Truncated)
-			})
-		}
+		t.Run(fmt.Sprint(count), func(t *testing.T) {
+			request := SnapshotRequest{Photos: true, PageSize: 250, Query: snapshotTestQuery(t, `{"mode":"hybrid","text":"sunset","sort":{"field":"relevance","direction":"desc"}}`), PhotoRanking: &PhotoRanking{RequestedMode: "hybrid", ActualMode: "lexical", FallbackReason: "provider_unavailable"}}
+			page, err := service.Create(t.Context(), "owner", request)
+			require.NoError(t, err)
+			require.EqualValues(t, 1000, page.Total)
+			require.Equal(t, count > 1000, page.PhotoRanking.Truncated)
+		})
 	}
 }

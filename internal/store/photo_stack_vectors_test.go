@@ -46,6 +46,33 @@ func TestPhotoStackPagesReuseOpenedGeneration(t *testing.T) {
 	require.NotSame(t, first.indexes[0], replacement.indexes[0])
 	require.Equal(t, 2, q.generationReads)
 	require.Len(t, f.s.photoStackVectors, 1, "retain only the current generation per space")
+	type result struct {
+		reader *photoStackVectorReader
+		err    error
+	}
+	results := make(chan result, 8)
+	start := make(chan struct{})
+	for range 8 {
+		go func() {
+			<-start
+			reader, err := f.s.newPhotoStackVectorReader(t.Context(), f.s.db)
+			results <- result{reader, err}
+		}()
+	}
+	close(start)
+	var readers []*photoStackVectorReader
+	for range 8 {
+		got := <-results
+		require.NoError(t, got.err)
+		readers = append(readers, got.reader)
+	}
+	for _, reader := range readers {
+		require.Len(t, reader.indexes, 1)
+		require.Equal(t, map[string]string{index.space: browseHash("replacement-image-generation")}, reader.heads)
+		require.Same(t, readers[0].indexes[0], reader.indexes[0])
+	}
+	require.NoError(t, f.s.Close())
+	require.Empty(t, f.s.photoStackVectors)
 }
 
 func TestPhotoStackDecisionRejectsGenerationPublishedBeforeTransaction(t *testing.T) {
@@ -119,41 +146,4 @@ func TestPhotoStackVectorsUseOnlyCosineCompatibleSpaces(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestPhotoStackVectorReadersShareOneGeneration(t *testing.T) {
-	t.Parallel()
-	f := newImageEmbeddingCatalogFixture(t)
-	record, vector := f.publish(t)
-	index := newCursorIndexFixture(f)
-	index.add(record, vector)
-	index.generation(t, "concurrent-readers")
-	type result struct {
-		reader *photoStackVectorReader
-		err    error
-	}
-	results := make(chan result, 8)
-	start := make(chan struct{})
-	for range 8 {
-		go func() {
-			<-start
-			reader, err := f.s.newPhotoStackVectorReader(t.Context(), f.s.db)
-			results <- result{reader, err}
-		}()
-	}
-	close(start)
-	var readers []*photoStackVectorReader
-	for range 8 {
-		got := <-results
-		require.NoError(t, got.err)
-		readers = append(readers, got.reader)
-	}
-	for _, reader := range readers {
-		require.Len(t, reader.indexes, 1)
-		require.Equal(t, map[string]string{index.space: browseHash("concurrent-readers")}, reader.heads)
-		require.Same(t, readers[0].indexes[0], reader.indexes[0])
-	}
-	require.Len(t, f.s.photoStackVectors, 1)
-	require.NoError(t, f.s.Close())
-	require.Empty(t, f.s.photoStackVectors)
 }

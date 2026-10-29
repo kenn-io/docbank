@@ -123,28 +123,6 @@ func TestProcessingProfilesReportQueryEmbeddingBindings(t *testing.T) {
 	})
 }
 
-func TestImageOnlyDocumentSearchPreservesRequestedModeForDaemonClient(t *testing.T) {
-	t.Parallel()
-	provider := newProcessingTestEmbeddingProvider(t)
-	descriptor := provider.Descriptor()
-	descriptor.InputKinds = []document.EmbeddingInputKind{document.EmbeddingInputImage}
-	descriptor, err := document.NewEmbeddingDescriptor(descriptor)
-	require.NoError(t, err)
-	provider.descriptor = descriptor
-	ts, catalog := newTestServer(t, configureProcessingTestServiceWithEmbeddingProvider(t, provider, false))
-	node := createFileWithContent(t, ts, catalog, "/synthetic-search-target.txt", "synthetic searchable text")
-	client := daemonconn.New(ts.URL, testAPIKey)
-	for _, mode := range []string{"auto", "hybrid"} {
-		report, err := client.SearchDocuments(t.Context(), api.DocumentSearchRequest{
-			Query: "synthetic", Mode: mode, Profile: "private", Limit: 10,
-			Fence: api.DocumentSourceFence{VaultUID: catalog.VaultID(), ContentVersionIDs: []string{node.CurrentVersionID}},
-		})
-		require.NoError(t, err)
-		require.Equal(t, mode, report.RequestedMode)
-		require.Equal(t, "lexical", report.ActualMode)
-	}
-}
-
 func TestProcessingProfilesReportReranking(t *testing.T) {
 	t.Parallel()
 	t.Run("absent without provider", func(t *testing.T) {
