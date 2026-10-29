@@ -6,6 +6,8 @@ import type {
 
 import type { PhotoAuthoredEditor } from "./photoAuthored.svelte.js";
 
+const confirmedFlag = 2;
+
 export type { PhotoStack };
 export type PhotoBrowseRow = WirePhotoBrowseRow & { stack?: PhotoStack };
 
@@ -56,8 +58,8 @@ export function photoStacksChanged(
       .filter(
         (file) =>
           before.get(file.file_id)?.flag !== file.values.flag ||
-          ((before.get(file.file_id)?.confirmed_fields ?? 0) & 2) !==
-            ((file.values.confirmed_fields ?? 0) & 2),
+          ((before.get(file.file_id)?.confirmed_fields ?? 0) & confirmedFlag) !==
+            ((file.values.confirmed_fields ?? 0) & confirmedFlag),
       )
       .map((file) => assets.get(file.file_id)),
   ]);
