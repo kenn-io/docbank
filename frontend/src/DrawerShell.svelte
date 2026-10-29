@@ -1,6 +1,6 @@
 <script lang="ts">
   import { getContext, type Snippet } from "svelte";
-  import { DetailDrawer } from "@kenn-io/kit-ui";
+  import { DetailDrawer, PageHeader } from "@kenn-io/kit-ui";
   import XIcon from "@lucide/svelte/icons/x";
   import IconAction from "./IconAction.svelte";
   import { drawerPage, drawerNavigation, type DrawerNavigation } from "./drawerNavigation.js";
@@ -32,11 +32,11 @@
 </script>
 
 {#if page}
+  {#snippet pageActions()}<div class="actions">{@render actions?.()}</div>{/snippet}
   <div>
-    <header class="browser-toolbar">
-      <svelte:element this={level === 1 ? "h1" : "h2"} class="page-title">{title}</svelte:element>
-      <div class="actions">{@render actions?.()}</div>
-    </header>
+    <div class="title-area">
+      <PageHeader {title} {level} actions={actions ? pageActions : undefined} />
+    </div>
     {@render children?.()}
     {@render footer?.()}
   </div>
@@ -74,15 +74,8 @@
 {/if}
 
 <style>
-  .page-title {
-    margin: 0;
-    color: var(--text-primary);
-    font-size: var(--font-size-xl);
-    font-weight: 600;
-  }
-  .browser-toolbar {
-    padding-inline: var(--space-6);
-    border-bottom: 1px solid var(--border-default);
+  .title-area {
+    padding: var(--space-6) var(--space-6) var(--space-5);
   }
   .shell {
     display: contents;
