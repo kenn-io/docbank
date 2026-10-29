@@ -121,6 +121,25 @@ func TestBridgeContractCancelsAcceptedResponseAfterUploadFailure(t *testing.T) {
 	assert.Equal(t, int64(1), deletes.Load())
 }
 
+func TestBridgeContractClassifiesStableSubmissionRateLimit(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		fixture := newBridgeFixture(t)
+		client := newTestBridgeClientWithHTTP(t, "https://bridge.invalid", fixture.descriptor, nil,
+			&http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				value := pendingEnvelope(fixture, "job-rejected-upload", JobFailed)
+				value["error"] = map[string]any{
+					"code": document.RenditionErrorRateLimited, "message": "synthetic rate limit",
+				}
+				return bridgeHTTPResponse(t, request, http.StatusTooManyRequests, value), nil
+			})})
+
+		_, err := client.Render(t.Context(), fixture.upload(), fixture.authorization)
+		var providerError *document.RenditionProviderError
+		require.ErrorAs(t, err, &providerError)
+		assert.Equal(t, document.RenditionErrorRateLimited, providerError.Code())
+	})
+}
+
 func TestBridgeContractWithholdsFilenameWhenDisclosureIsDisabled(t *testing.T) {
 	fixture := newBridgeFixture(t)
 	fixture.authorization.DiscloseFilename = false

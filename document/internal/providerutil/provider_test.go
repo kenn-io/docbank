@@ -123,6 +123,17 @@ func TestOperationCheckOrdersCallerExpiryAndTotalTimeout(t *testing.T) {
 		defer operation.Cancel()
 		assertCode(t, operation.Check(), document.RenditionErrorPolicyRejected)
 	})
+
+	t.Run("resumed operation uses only a new total timeout", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			operation := NewResumedOperation(t.Context(), testProvider, time.Millisecond)
+			defer operation.Cancel()
+			<-operation.Context().Done()
+			err := operation.Check()
+			assertCode(t, err, document.RenditionErrorCapacity)
+			assert.ErrorIs(t, err, context.DeadlineExceeded)
+		})
+	})
 }
 
 func TestExecutorStreamsUploadAndStopsOnEarlyRejection(t *testing.T) {
