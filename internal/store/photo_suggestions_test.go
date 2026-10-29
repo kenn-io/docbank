@@ -37,7 +37,7 @@ func publishPhotoDescription(t *testing.T, s *Store, asset PhotoAsset, producer 
 	description, err = normalizePhotoDescription(description)
 	require.NoError(t, err)
 	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		return publishPhotoSuggestionTx(ctx, tx, node.CurrentVersionID, producer, description, time.Now().UTC())
+		return publishPhotoSuggestionTx(ctx, tx, node.CurrentVersionID, producer, false, description, time.Now().UTC())
 	}))
 }
 
@@ -885,6 +885,7 @@ func TestPhotoDescriptionAnswerForPhotoHiddenAtPublishIsRefused(t *testing.T) {
 
 func TestPhotoDescriptionWaitersKeepExplicitAdmission(t *testing.T) {
 	t.Parallel()
+	result := &document.RenditionResult{Artifacts: []document.RenditionArtifact{{Role: document.EvidenceArtifactStructured, Payload: []byte(`{"caption":"From B.","tags":["coast"],"visible_text":""}`)}}}
 	for _, joined := range []bool{false, true} {
 		t.Run(fmt.Sprintf("explicit_waiter_%t", joined), func(t *testing.T) {
 			t.Parallel()
@@ -908,8 +909,16 @@ func TestPhotoDescriptionWaitersKeepExplicitAdmission(t *testing.T) {
 				require.Equal(t, job.ID, sharedJob.ID, "an explicit request joins the automatic job")
 			}
 
-			_, err = s.PublishPhotoDescription(ctx, claim, photoDescriptionResult("From B."), at)
+			_, err = s.PublishPhotoDescription(ctx, claim, result, at)
 			require.NoError(t, err)
+			values := photoSuggestionValues(t, s, asset.ID)
+			if joined {
+				require.Len(t, values, 1)
+				require.Equal(t, "From B.", values[0].Value.Caption)
+				require.Equal(t, []string{"coast"}, values[0].Value.Tags)
+			} else {
+				require.Empty(t, values, "automatic publication preserves the dismissal")
+			}
 		})
 	}
 	t.Run("enqueue", func(t *testing.T) {
@@ -930,8 +939,14 @@ func TestPhotoDescriptionWaitersKeepExplicitAdmission(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "published", waiter.State, "automatic work leaves a dismissal alone")
 
-		_, waiter, _ = startPhotoDescription(t, s, explicit, at)
+		_, waiter, claim := startPhotoDescription(t, s, explicit, at)
 		require.Equal(t, "waiting", waiter.State, "an explicit start by another profile asks again")
+		_, err = s.PublishPhotoDescription(ctx, claim, result, at)
+		require.NoError(t, err)
+		values := photoSuggestionValues(t, s, asset.ID)
+		require.Len(t, values, 1)
+		require.Equal(t, "From B.", values[0].Value.Caption)
+		require.Equal(t, []string{"coast"}, values[0].Value.Tags)
 	})
 	t.Run("explicit then automatic", func(t *testing.T) {
 		t.Parallel()
@@ -959,8 +974,12 @@ func TestPhotoDescriptionWaitersKeepExplicitAdmission(t *testing.T) {
 		require.NoError(t, err, "the explicit request is still waiting for its description")
 		_, err = s.BeginRenditionProvider(ctx, claim, waiter.ID, at, renditionJobTestSnapshot(explicit))
 		require.NoError(t, err)
-		_, err = s.PublishPhotoDescription(ctx, claim, photoDescriptionResult("From B."), at)
+		_, err = s.PublishPhotoDescription(ctx, claim, result, at)
 		require.NoError(t, err)
+		values := photoSuggestionValues(t, s, asset.ID)
+		require.Len(t, values, 1)
+		require.Equal(t, "From B.", values[0].Value.Caption)
+		require.Equal(t, []string{"coast"}, values[0].Value.Tags)
 	})
 }
 
@@ -1218,6 +1237,10 @@ func TestPhotoDescriptionExplicitRefreshKeepsTextDecisions(t *testing.T) {
 			case "accepted":
 				require.Equal(t, "A harbor.", prepared.Targets[0].Values.Caption)
 				require.Equal(t, before.Targets[0].Tags, prepared.Targets[0].Tags)
+			case "dismissed":
+				require.Len(t, prepared.Suggestions, 2)
+				require.Equal(t, "Replacement.", prepared.Suggestions[0].Value.Caption)
+				require.Equal(t, []string{"new"}, prepared.Suggestions[0].Value.Tags)
 			}
 		})
 	}

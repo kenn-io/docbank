@@ -112,13 +112,20 @@ func dropOwnedPhotoFieldsTx(ctx context.Context, q metadataQuerier, version stri
 // publishPhotoSuggestionTx records the latest provider rotation and fills
 // unsettled description fields. Authored values and restored decisions stay
 // resolved. The description is already normalized.
-func publishPhotoSuggestionTx(ctx context.Context, tx *sql.Tx, version, producer string, description document.PhotoDescription, at time.Time) error {
+func publishPhotoSuggestionTx(ctx context.Context, tx *sql.Tx, version, producer string, explicit bool, description document.PhotoDescription, at time.Time) error {
 	// A new provider result replaces its previous orientation answer, including
 	// uncertainty or an upright answer, without reopening settled caption work.
 	if _, err := tx.ExecContext(ctx, `UPDATE photo_suggestions SET rotation=NULL WHERE content_version_id=?`, version); err != nil {
 		return err
 	}
-	if settled, err := photoDescriptionSettledTx(ctx, tx, version, producer, false); err != nil || settled {
+	// Explicit work can replace another producer's dismissal. Pending or
+	// accepted text stays settled even when admission allowed a rotation refresh.
+	textSettled := photoSuggestionSettledSQL("?1", "?2", false)
+	if explicit {
+		textSettled += ` AND EXISTS(SELECT 1 FROM photo_suggestions s WHERE s.content_version_id=?1 AND (NOT s.dismissed OR s.producer_fingerprint=?2))`
+	}
+	var settled bool
+	if err := tx.QueryRowContext(ctx, `SELECT `+textSettled, version, producer).Scan(&settled); err != nil || settled {
 		if err != nil {
 			return err
 		}
