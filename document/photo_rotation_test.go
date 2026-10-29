@@ -29,4 +29,8 @@ func TestPhotoRotationFromRolls(t *testing.T) {
 			require.Equal(t, tc.want, PhotoRotationFromRolls(rolls))
 		})
 	}
+	description := PhotoDescription{Rotation: new(90)}
+	require.NoError(t, ValidatePhotoDescription(description))
+	description.Rotation = new(45)
+	require.Error(t, ValidatePhotoDescription(description))
 }

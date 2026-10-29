@@ -339,7 +339,4 @@ func TestParseRotationOnly(t *testing.T) {
 	require.Equal(t, new(90), got.Rotation)
 	require.Empty(t, got.Caption)
 	require.Empty(t, got.Tags)
-	require.NoError(t, document.ValidatePhotoDescription(got))
-	got.Rotation = new(45)
-	require.Error(t, document.ValidatePhotoDescription(got))
 }
