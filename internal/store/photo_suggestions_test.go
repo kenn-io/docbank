@@ -1244,6 +1244,40 @@ func TestPhotoRotationResponseRequiresCurrentProposal(t *testing.T) {
 	require.Zero(t, got.Targets[0].Values.Confirmed&PhotoConfirmedRotation)
 }
 
+func TestPhotoDescriptionConfirmedRotationSkipsUnusedRefresh(t *testing.T) {
+	t.Parallel()
+	for _, decision := range []string{"accepted", "dismissed"} {
+		t.Run(decision, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			asset := albumAsset(t, s, "settled.jpg")
+			publishPhotoDescription(t, s, asset, producerA, document.PhotoDescription{Caption: "A harbor.", Rotation: new(90)})
+			proposals := photoSuggestionValues(t, s, asset.ID)
+			require.Len(t, proposals, 2)
+			if decision == "accepted" {
+				acceptPhotoSuggestion(t, s, proposals[0], true)
+			} else {
+				_, err := s.RespondPhotoSuggestion(ctx, proposals[0].ID, dismissalOf(ctx, t, s, proposals[0]))
+				require.NoError(t, err)
+			}
+			proposals = photoSuggestionValues(t, s, asset.ID)
+			require.Len(t, proposals, 1)
+			rotation := proposals[0]
+			_, err := s.RespondPhotoSuggestion(ctx, rotation.ID, PhotoSuggestionResponse{AssetID: rotation.AssetID, AssetRevision: rotation.AssetRevision, SourceRevision: rotation.SourceRevision, NodeRevision: rotation.NodeRevision, Response: "accepted", Rotation: rotation.Rotation})
+			require.NoError(t, err)
+			request := photoDescriptionJobRequest(t, s, rotation.ContentVersionID, producerB, true)
+			grantRenditionJobConsent(t, s, request)
+			_, waiter, err := s.EnqueueRenditionJob(ctx, request)
+			require.NoError(t, err)
+			if decision == "accepted" {
+				require.Equal(t, "published", waiter.State, "settled text and rotation need no provider call")
+			} else {
+				require.Equal(t, "waiting", waiter.State, "another producer can still replace dismissed text")
+			}
+		})
+	}
+}
+
 func TestPhotoDescriptionExplicitRefreshKeepsTextDecisions(t *testing.T) {
 	t.Parallel()
 	for _, decision := range []string{"pending", "accepted", "dismissed"} {

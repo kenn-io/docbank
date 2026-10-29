@@ -42,12 +42,12 @@ type PhotoSuggestion struct {
 }
 
 // photoSuggestionSettledSQL keeps automatic work settled once a row exists.
-// Explicit work asks again under a new producer fingerprint. Restored pending
+// Explicit work refreshes unresolved rotation or dismissed text. Restored pending
 // fields still regenerate unless this producer was dismissed on that version.
 func photoSuggestionSettledSQL(version, producer string, explicit bool) string {
 	filter := ""
 	if explicit {
-		filter = ` AND s.producer_fingerprint=` + producer
+		filter = ` AND (s.producer_fingerprint=` + producer + ` OR (NOT s.dismissed AND EXISTS(SELECT 1 FROM content_versions v JOIN photo_files f ON f.node_id=v.node_id WHERE v.version_id=s.content_version_id AND (f.confirmed_fields & ` + fmt.Sprint(PhotoConfirmedRotation) + `)<>0)))`
 	}
 	return `(EXISTS(SELECT 1 FROM photo_suggestions s WHERE s.content_version_id=` + version + filter + `)
  AND (NOT EXISTS(SELECT 1 FROM photo_suggestions s WHERE s.content_version_id=` + version + ` AND s.awaiting)
