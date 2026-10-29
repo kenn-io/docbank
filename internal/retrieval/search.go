@@ -132,7 +132,7 @@ func (searcher *Searcher) Search(ctx context.Context, query Query) (Report, erro
 	}
 	// Query encoding leaves lexical candidates in flight while the catalog can
 	// change. Fence the complete report, including its unembedded lexical hits.
-	if searcher.expansion.Enabled || searcher.reranking.Enabled || report.ActualMode == ModeSemantic || report.ActualMode == ModeHybrid {
+	if query.ObserveScope || searcher.expansion.Enabled || searcher.reranking.Enabled || report.ActualMode == ModeSemantic || report.ActualMode == ModeHybrid {
 		revalidated, err := searcher.revalidateReport(ctx, query, report)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -187,6 +187,9 @@ func (searcher *Searcher) revalidateReport(ctx context.Context, query Query, rep
 		semanticProfile, semanticBinding)
 	if err != nil {
 		return Report{}, err
+	}
+	if query.ObserveScope {
+		report.ObservedScopeCount = revalidation.ObservedScopeCount
 	}
 	if revalidation.Coverage != nil {
 		report.Coverage.ScopedDocuments = revalidation.Coverage.ScopedDocuments
@@ -366,9 +369,10 @@ func (searcher *Searcher) semantic(ctx context.Context, query Query) (_ []Candid
 	if err != nil {
 		return nil, Coverage{State: CoverageUnknown}, false, err
 	}
+	leaseID, leaseToken := authority.Lease.ID, authority.Lease.FencingToken
 	defer func() {
-		if releaseErr := backend.ReleaseVectorIndexGeneration(context.WithoutCancel(ctx), authority.Lease.ID,
-			authority.Lease.FencingToken, searcher.clock().UTC()); releaseErr != nil {
+		if releaseErr := backend.ReleaseVectorIndexGeneration(context.WithoutCancel(ctx), leaseID,
+			leaseToken, searcher.clock().UTC()); releaseErr != nil {
 			if retErr == nil {
 				retErr = releaseErr
 			} else {
@@ -409,7 +413,11 @@ func (searcher *Searcher) semantic(ctx context.Context, query Query) (_ []Candid
 		return nil, coverage, false, err
 	}
 	stored := authority.Lease.Generation
-	generation, err := vectorindex.OpenGeneration(bytes.NewReader(stored.Bytes), int64(len(stored.Bytes)))
+	reader, size := bytes.NewReader(stored.Bytes), int64(len(stored.Bytes))
+	// Only Open's reader needs the serialized payload; later fences use metadata.
+	authority.Lease.Generation.Bytes = nil
+	stored.Bytes = nil
+	generation, err := vectorindex.OpenGeneration(reader, size)
 	if err != nil {
 		return nil, coverage, false, err
 	}

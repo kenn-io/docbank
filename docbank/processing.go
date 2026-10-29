@@ -7,6 +7,7 @@ import (
 	"go.kenn.io/docbank/document"
 	internalprocessing "go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/retrieval"
+	"go.kenn.io/docbank/internal/store"
 )
 
 var (
@@ -183,7 +184,7 @@ func (v *Vault) LookupFormat(_ context.Context, query string) (document.FormatLo
 	return v.processing.LookupFormat(query), nil
 }
 
-// SearchDocuments searches the request's source fence. Invalid MediaSources
+// SearchDocuments searches an explicit source fence or a live-document scope. Invalid MediaSources
 // selectors, or a mode or reranking choice they do not support, match
 // ErrMediaSearchInvalid.
 func (v *Vault) SearchDocuments(ctx context.Context, request DocumentSearchRequest) (DocumentSearchReport, error) {
@@ -199,7 +200,7 @@ func (v *Vault) SearchDocuments(ctx context.Context, request DocumentSearchReque
 		}
 	}
 	report, err := v.processing.Search(ctx, internalprocessing.SearchRequest{Query: request.Query,
-		MediaSources: sources,
+		MediaSources: sources, Scope: toSearchScope(request.Scope),
 		ContentFirst: request.ContentFirst,
 		Mode:         string(request.Mode), Limit: request.Limit, Profile: request.Profile,
 		BindingID: request.BindingID, Explain: request.Explain,
@@ -209,6 +210,30 @@ func (v *Vault) SearchDocuments(ctx context.Context, request DocumentSearchReque
 		return DocumentSearchReport{}, err
 	}
 	return fromSearchReport(report, request.Explain), nil
+}
+
+func toSearchScope(scope *DocumentSearchScope) *internalprocessing.SearchScope {
+	if scope == nil {
+		return nil
+	}
+	result := &internalprocessing.SearchScope{Kind: scope.Kind}
+	if scope.Filters != nil {
+		f := scope.Filters
+		result.Filters = &store.SearchOptions{TagID: f.TagID, MIMEType: f.MIMEType, UnderNodeID: f.UnderNodeID, ModifiedSince: f.ModifiedSince, ModifiedBefore: f.ModifiedBefore}
+	}
+	return result
+}
+
+func fromSearchScope(scope *internalprocessing.SearchScope) *DocumentSearchScope {
+	if scope == nil {
+		return nil
+	}
+	result := &DocumentSearchScope{Kind: scope.Kind}
+	if scope.Filters != nil {
+		f := scope.Filters
+		result.Filters = &DocumentSearchFilters{TagID: f.TagID, MIMEType: f.MIMEType, UnderNodeID: f.UnderNodeID, ModifiedSince: f.ModifiedSince, ModifiedBefore: f.ModifiedBefore}
+	}
+	return result
 }
 
 func toProcessingSelector(selector ProcessingSelector) internalprocessing.Selector {
@@ -267,7 +292,7 @@ func fromCoverageClass(item internalprocessing.CoverageClass) CoverageClass {
 }
 
 func fromSearchReport(report internalprocessing.SearchReport, explain bool) DocumentSearchReport {
-	result := DocumentSearchReport{RequestedMode: DocumentSearchMode(report.RequestedMode),
+	result := DocumentSearchReport{Scope: fromSearchScope(report.Scope), RequestedMode: DocumentSearchMode(report.RequestedMode),
 		ActualMode:           DocumentSearchMode(report.ActualMode),
 		MediaSourceSelection: report.MediaSourceSelection,
 		Coverage: DocumentSearchCoverage{BindingRequired: report.Coverage.BindingRequired,
@@ -275,6 +300,9 @@ func fromSearchReport(report internalprocessing.SearchReport, explain bool) Docu
 			CompleteDocuments: report.Coverage.CompleteDocuments, State: string(report.Coverage.State)},
 		Truncated: report.Truncated, Results: make([]DocumentSearchResult, len(report.Results)),
 		Degradations: make([]string, len(report.Degradations))}
+	if report.Scope != nil {
+		result.ObservedScopeCount = new(report.ObservedScopeCount)
+	}
 	if report.MediaSelections != nil {
 		result.MediaSelections = make([]DocumentMediaSelection, len(report.MediaSelections))
 		for i, selection := range report.MediaSelections {

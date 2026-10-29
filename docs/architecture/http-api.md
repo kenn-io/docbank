@@ -787,11 +787,36 @@ does not grant consent or start provider work.
 }
 ```
 
-The `fence` object is the source fence: the vault UUID and the content
-versions the request is authorized to read. Use the actual vault UUID and
-1–4,096 distinct canonical UUIDv4 versions for both coverage and search. A
-foreign vault or invalid source fence is rejected. `/api/v1/search` request
-bodies are bounded to 16 MiB.
+The `fence.vault_uid` must be the actual vault UUID. Coverage and similar search
+require an explicit fence of 1–4,096 distinct canonical UUIDv4 content versions.
+Processing search accepts that same fence or a server-resolved scope:
+
+```json
+{
+  "query": "renewal terms",
+  "mode": "hybrid",
+  "profile": "private",
+  "fence": {"vault_uid": "22222222-2222-4222-8222-222222222222"},
+  "scope": {"kind": "all_live", "filters": {"mime_type": "application/pdf"}}
+}
+```
+
+Select exactly one of a nonempty `fence.content_version_ids` or `scope`.
+`all_live` selects current versions of live files without materializing a version
+list or imposing the explicit fence's 4,096-version bound. Optional `filters`
+accept the same exact metadata constraints as source-fence resolution:
+`tag_id`, `mime_type`, `under_node_id`, `modified_since` (inclusive), and
+`modified_before` (exclusive). Filters apply before lexical ranking and vector
+scoring and are rechecked before returning candidates. A foreign vault or invalid
+selection is rejected. Oversized explicit lists retain HTTP `validation` errors.
+`/api/v1/search` request bodies are bounded to 16 MiB.
+
+Scope reports echo `scope` with normalized filters and `observed_scope_count`;
+they do not echo a content-version list. Semantic counts come from the final
+coverage snapshot. Lexical counts come from the final live-candidate snapshot.
+Empty scopes return an empty report after request validation without requiring
+an index or calling providers. The scope uses the caller's existing whole-vault
+authority; future partial-library grants must intersect it with caller authority.
 Search requires nonblank `query` text of at most 8,192 characters, `profile`,
 and `mode` (`lexical`, `semantic`, `hybrid`, or `auto`). `limit` defaults to 50
 and accepts 1–100. `binding_id` selects the embedding binding. Omitting it uses
@@ -800,8 +825,10 @@ several are configured. The explicit CLI processing form requires that choice. `
 retrieval. See [processing consent](#processing-consent) before choosing a mode
 that embeds query text.
 
-For exact recording attribution, add `media_sources`, up to 4,096 distinct
-objects. Omission keeps ordinary search; empty arrays and `null` are rejected.
+For exact recording attribution, use an explicit fence and add `media_sources`,
+up to 4,096 distinct
+objects. `scope` with `media_sources` is rejected as `invalid_media_search`.
+Omission keeps ordinary search; empty arrays and `null` are rejected.
 Each object names `source_id`, `source_version_id`, and `content_version_id`. Every
 content version must belong to the fence. Optional `supplied_input_ids`, up to 64 IDs,
 permits the selected supplied transcript only when its exact input ID is in the set.
@@ -844,14 +871,18 @@ degradation. Each result retains its vault, node, and content-version identity
 with bounded evidence references. The source fence applies before retrieval.
 Vector scoring uses only eligible rows from current, live attachments.
 Semantic and hybrid search revalidate the complete result set after query
-embedding, including lexical matches without embeddings. Trashed or replaced
-candidates are removed, current paths are refreshed, result ranks are renumbered, and
-coverage is captured at that final check. Removal sets `truncated: true`.
+embedding, including lexical matches without embeddings. Replacing or trashing
+an indexed version during query encoding changes the generation source manifest.
+Search refuses that generation. `POST /api/v1/search` returns HTTP 500 with
+`processing_failed`; `POST /api/v1/search/similar` returns HTTP 409 with
+`stale_index`. Stale unembedded lexical candidates are removed,
+current paths are refreshed, result ranks are renumbered, and coverage is captured
+at that final check. Removal sets `truncated: true`.
 Each candidate must keep its current content version and still cite current
 evidence. A file-name match also requires the node's name to be unchanged, so a
-rename removes it. A tag edit or other metadata change keeps the candidate. A
-move between the lexical and semantic lane reads keeps the candidate under its
-current path.
+rename removes it. A tag edit or other metadata change keeps the candidate
+while it still satisfies the selected filters. A move between the lexical and
+semantic lane reads refreshes its path and reapplies the ancestry filter.
 Consumers still check visibility immediately before displaying a result.
 See [Automatic and processing search](../usage/search.md) for the consumer contract.
 

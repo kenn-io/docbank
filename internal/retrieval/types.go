@@ -152,7 +152,15 @@ type MediaSelection struct {
 	Origin, SuppliedInputID, Completeness       string
 }
 
+// SearchScope describes server-resolved live-document search authority.
+type SearchScope struct {
+	Kind    string
+	Filters *store.SearchOptions
+}
+
 type Report struct {
+	Scope                *SearchScope
+	ObservedScopeCount   int
 	MediaSelections      []MediaSelection
 	MediaSourceSelection bool
 	RequestedMode        Mode
@@ -166,9 +174,11 @@ type Report struct {
 }
 
 type Query struct {
-	Text  string
-	Mode  Mode
-	Limit int
+	// ObserveScope requests a population count and final live-candidate check.
+	ObserveScope bool
+	Text         string
+	Mode         Mode
+	Limit        int
 	// Lane limits bound candidates before fusion. Zero uses Limit.
 	LexicalLimit                 int
 	VectorLimit                  int
