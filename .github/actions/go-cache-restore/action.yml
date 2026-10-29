@@ -17,7 +17,6 @@ runs:
       if: runner.os == 'Windows'
       shell: pwsh
       run: |
-        $ErrorActionPreference = 'Stop'
         try {
           if (!(Test-Path 'D:\') -and $env:RUNNER_ARCH -eq 'ARM64') {
             Get-Disk | Where-Object {
@@ -27,14 +26,9 @@ runs:
               Format-Volume -FileSystem NTFS -Confirm:$false | Out-Null
           }
           if (!(Test-Path 'D:\')) { return }
-          $temp = 'D:\a\_temp'
-          if ($env:RUNNER_TEMP -like 'D:\*') { $temp = $env:RUNNER_TEMP }
           $cacheEnv = foreach ($name in @('GOCACHE', 'GOMODCACHE')) {
-            $path = Join-Path $temp $name
+            $path = Join-Path 'D:\a\_temp' $name
             New-Item -ItemType Directory -Force -Path $path | Out-Null
-            $probe = Join-Path $path ([IO.Path]::GetRandomFileName())
-            Set-Content -LiteralPath $probe -Value ''
-            Remove-Item -LiteralPath $probe
             "$name=$path"
           }
           $cacheEnv >> $env:GITHUB_ENV
