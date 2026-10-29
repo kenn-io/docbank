@@ -352,15 +352,14 @@ func photoQualityWire(row store.PhotoBrowseRow) *PhotoQuality {
 	if row.Kind != "photo" {
 		return nil
 	}
-	state := "pending"
-	if row.QualityUnavailable {
-		state = "unavailable"
-	} else if row.Quality != nil {
-		state = "ready"
-	} else if preview := row.Previews["grid"]; preview.State == "unsupported" || preview.State == "failed" {
-		state = "unavailable"
+	q, preview := &PhotoQuality{State: "pending", Signals: row.Quality}, row.Previews["grid"]
+	if row.Quality != nil {
+		q.State, q.FaceReports = "ready", row.Quality.FaceReports
 	}
-	return &PhotoQuality{State: state, Signals: row.Quality}
+	if row.QualityUnavailable || row.Quality == nil && (preview.State == "unsupported" || preview.State == "failed") {
+		q.State, q.Signals = "unavailable", nil
+	}
+	return q
 }
 
 func photoPreviewSlot(assetID, state string, generation *store.VisualPreviewGeneration) PhotoPreviewSlot {

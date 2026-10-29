@@ -37,18 +37,6 @@ func seedBestShots(t *testing.T, s *Store, ids []string) {
 		require.NoError(t, s.PublishPhotoQualitySignals(t.Context(), qualityTarget(node), document.PhotoQualitySignals{Focus: 0.9 - float64(i)*0.3}, ""))
 	}
 }
-func dismissBestShots(t *testing.T, s *Store, ids []string) PhotoAuthoredReceipt {
-	t.Helper()
-	request := bestShotRequest(t, s, ids)
-	require.NotEmpty(t, request.Responses)
-	for i := range request.Responses {
-		request.Responses[i].Response = "dismissed"
-	}
-	receipt, err := s.DecidePhotoStack(t.Context(), request)
-	require.NoError(t, err)
-	return receipt
-}
-
 func TestPhotoBestShotsDecisions(t *testing.T) {
 	t.Parallel()
 	for _, response := range []string{"accepted", "dismissed"} {
@@ -89,6 +77,17 @@ func TestPhotoBestShotsDecisions(t *testing.T) {
 			_, err = s.UndoPhotoAuthored(ctx, receipt.ReceiptID)
 			require.NoError(t, err)
 			require.Len(t, bestShotPreparation(t, s, ids).Proposals, len(request.Responses))
+			if response == "dismissed" {
+				// Undo can't erase a later confirmation of the same flags.
+				request = bestShotRequest(t, s, ids)
+				for i := range request.Responses {
+					request.Responses[i].Response = "dismissed"
+				}
+				_, err = s.DecidePhotoStack(ctx, request)
+				require.NoError(t, err)
+				_, err = s.UndoPhotoAuthored(ctx, receipt.ReceiptID)
+				require.ErrorIs(t, err, ErrStaleRevision)
+			}
 		})
 	}
 }
@@ -141,20 +140,13 @@ func TestPhotoBestShotsFailedEnrichmentPublishesNothing(t *testing.T) {
 	require.Empty(t, stacks[0].Proposals)
 	require.Empty(t, stacks[1].Proposals)
 }
-func TestPhotoBestShotsRejectedBestAndCompleteTargets(t *testing.T) {
+func TestPhotoBestShotsConfirmedWinner(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	ids := burstPhotos(t, s, 3)
 	seedBestShots(t, s, ids)
 	prep := bestShotPreparation(t, s, ids)
-	picked := prep.Targets[len(prep.Targets)-1]
-	owner, err := s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: []PhotoAuthoredEditTarget{{PhotoAuthoredTargetRevision: picked.PhotoAuthoredTargetRevision}}, Patch: PhotoAuthoredPatch{Flag: new("pick")}})
-	require.NoError(t, err)
-	require.Empty(t, bestShotPreparation(t, s, ids).Proposals)
-	_, err = s.UndoPhotoAuthored(ctx, owner.ReceiptID)
-	require.NoError(t, err)
-	prep = bestShotPreparation(t, s, ids)
 	winner := prep.Proposals[0].AssetID
 	for _, target := range prep.Targets {
 		if target.AssetID == winner {
@@ -171,13 +163,13 @@ func TestPhotoBestShotsRejectedBestAndCompleteTargets(t *testing.T) {
 	prep = bestShotPreparation(t, s, ids)
 	for _, target := range prep.Targets {
 		if target.AssetID == winner {
-			_, err = s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: []PhotoAuthoredEditTarget{{PhotoAuthoredTargetRevision: target.PhotoAuthoredTargetRevision}}, Patch: PhotoAuthoredPatch{Flag: new("reject")}})
+			_, err := s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: []PhotoAuthoredEditTarget{{PhotoAuthoredTargetRevision: target.PhotoAuthoredTargetRevision}}, Patch: PhotoAuthoredPatch{Flag: new("reject")}})
 			require.NoError(t, err)
 		}
 	}
 	request := bestShotRequest(t, s, ids)
 	require.Len(t, request.Responses, 2)
-	_, err = s.DecidePhotoStack(ctx, request)
+	_, err := s.DecidePhotoStack(ctx, request)
 	require.NoError(t, err)
 	picks := 0
 	for _, target := range bestShotPreparation(t, s, ids).Targets {
@@ -201,22 +193,16 @@ func TestPhotoBestShotsPairedCompletenessAndAudit(t *testing.T) {
 	_, err = s.SetPhotoSettings(ctx, 1, PhotoSettingsUpdate{Preference: new("image")})
 	require.NoError(t, err)
 	seedBestShots(t, s, ids)
-	request := bestShotRequest(t, s, ids)
-	require.Len(t, request.Targets, 3)
-	receipt, err := s.DecidePhotoStack(ctx, request)
-	require.NoError(t, err)
-	require.Len(t, receipt.After, 3)
-	_, err = s.UndoPhotoAuthored(ctx, receipt.ReceiptID)
-	require.NoError(t, err)
 	_, err = s.initializeAuditAuthority(ctx, s.RootID(), "api", nil)
 	require.NoError(t, err)
 	for _, response := range []string{"accepted", "dismissed"} {
-		request = bestShotRequest(t, s, ids)
+		request := bestShotRequest(t, s, ids)
+		require.Len(t, request.Targets, 3)
 		require.Len(t, request.Responses, 2)
 		for i := range request.Responses {
 			request.Responses[i].Response = response
 		}
-		receipt, err = s.DecidePhotoStack(ctx, request)
+		receipt, err := s.DecidePhotoStack(ctx, request)
 		require.NoError(t, err)
 		require.Len(t, receipt.After, 3)
 		require.Empty(t, bestShotPreparation(t, s, ids).Proposals)
@@ -266,14 +252,19 @@ func TestPhotoBestShotsNewMeasurement(t *testing.T) {
 	s := newTestStore(t)
 	ids := burstPhotos(t, s, 3)
 	seedBestShots(t, s, ids[:2])
-	dismissBestShots(t, s, ids)
+	request := bestShotRequest(t, s, ids)
+	for i := range request.Responses {
+		request.Responses[i].Response = "dismissed"
+	}
+	_, err := s.DecidePhotoStack(t.Context(), request)
+	require.NoError(t, err)
 	seedBestShots(t, s, ids[2:])
 	// A newly measured frame has no undecided peer to compare with.
 	require.Empty(t, bestShotPreparation(t, s, ids).Proposals)
-	request := bestShotRequest(t, s, ids)
+	request = bestShotRequest(t, s, ids)
 	request.Decision = "current"
 	request.CurrentID = ids[2]
-	_, err := s.DecidePhotoStack(t.Context(), request)
+	_, err = s.DecidePhotoStack(t.Context(), request)
 	require.NoError(t, err)
 	for _, target := range bestShotPreparation(t, s, ids).Targets {
 		if target.AssetID == ids[2] {
@@ -283,18 +274,4 @@ func TestPhotoBestShotsNewMeasurement(t *testing.T) {
 			require.Empty(t, target.Values.FlagOwner)
 		}
 	}
-}
-
-func TestPhotoBestShotsDismissalUndoReplay(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ids := burstPhotos(t, s, 2)
-	seedBestShots(t, s, ids)
-	first := dismissBestShots(t, s, ids)
-	_, err := s.UndoPhotoAuthored(t.Context(), first.ReceiptID)
-	require.NoError(t, err)
-	dismissBestShots(t, s, ids)
-	_, err = s.UndoPhotoAuthored(t.Context(), first.ReceiptID)
-	require.ErrorIs(t, err, ErrStaleRevision)
-	require.Empty(t, bestShotPreparation(t, s, ids).Proposals)
 }

@@ -83,6 +83,18 @@ it("renders the server grade with the six measurements", () => {
     content_version_id: face.content_version_id,
     quality: {
       state: "ready" as const,
+      face_reports: [
+        {
+          grade,
+          face_id: face.face_id,
+          sharpness: 0.8,
+          light,
+          facing: null,
+          prominence,
+          eyes_open: null,
+          smile: true,
+        },
+      ],
       signals: {
         focus: 0.5,
         blur: 0.5,
@@ -92,18 +104,6 @@ it("renders the server grade with the six measurements", () => {
         color_blue: 0,
         framing: 0,
         aesthetics: 0,
-        face_reports: [
-          {
-            grade,
-            face_id: face.face_id,
-            sharpness: 0.8,
-            light,
-            facing: null,
-            prominence,
-            eyes_open: null,
-            smile: true,
-          },
-        ],
       },
     },
   };

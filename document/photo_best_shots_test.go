@@ -18,7 +18,9 @@ func TestPlanPhotoBestShots(t *testing.T) {
 	require.Empty(t, PlanPhotoBestShots([]PhotoBestShotFrame{a, unknown}))
 	b.Signals = a.Signals
 	b.Raw = true
-	require.Equal(t, "b", PlanPhotoBestShots([]PhotoBestShotFrame{a, b})[0].AssetID)
+	ties := PlanPhotoBestShots([]PhotoBestShotFrame{a, b})
+	require.Equal(t, "b", ties[0].AssetID)
+	require.Equal(t, "Equal measurements; tie broken by RAW preference and photo ID", ties[1].Rationale)
 	b.Raw = false
 	require.Equal(t, "a", PlanPhotoBestShots([]PhotoBestShotFrame{b, a})[0].AssetID)
 }

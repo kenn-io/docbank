@@ -32,7 +32,7 @@
     })),
   ]);
   function report(id: string) {
-    return photo.quality?.signals?.face_reports?.find((r) => r.face_id === id);
+    return photo.quality?.face_reports?.find((r) => r.face_id === id);
   }
   function measurements(r: NonNullable<ReturnType<typeof report>>) {
     return [
