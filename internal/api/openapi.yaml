@@ -15462,11 +15462,6 @@ components:
           $ref: "#/components/schemas/PhotoAuthoredReceipt"
         content_version_id:
           type: string
-        kind:
-          enum:
-            - description
-            - rotation
-          type: string
         node_revision:
           format: int64
           type: integer
@@ -15489,7 +15484,6 @@ components:
         value:
           $ref: "#/components/schemas/PhotoDescription"
       required:
-        - kind
         - asset_id
         - asset_revision
         - source_revision
@@ -15529,7 +15523,13 @@ components:
             - dismissed
           type: string
         rotation:
-          type: boolean
+          description: The clockwise angle shown in the rotation proposal, also supplied on dismissal.
+          enum:
+            - 90
+            - 180
+            - 270
+          format: int64
+          type: integer
         source_revision:
           format: int64
           type: integer
@@ -15544,7 +15544,6 @@ components:
         - source_revision
         - node_revision
         - response
-        - rotation
         - caption
         - tags
       type: object

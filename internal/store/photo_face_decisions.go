@@ -1036,7 +1036,7 @@ func optionalFaceString(v string) *string {
 	return &v
 }
 
-func readFaceDecisionsTx(ctx context.Context, tx *sql.Tx, faces []PhotoFace) error {
+func (s *Store) readFaceDecisionsTx(ctx context.Context, tx *sql.Tx, faces []PhotoFace) error {
 	if len(faces) == 0 {
 		return nil
 	}

@@ -229,7 +229,7 @@ func Parse(raw []byte) (document.PhotoDescription, error) {
 	if err := json.UnmarshalDecode(jsontext.NewDecoder(bytes.NewReader(raw[start:])), &fields); err != nil {
 		return document.PhotoDescription{}, err
 	}
-	if len(fields.Caption)+len(fields.Tags)+len(fields.VisibleText) == 0 {
+	if len(fields.Caption)+len(fields.Tags)+len(fields.VisibleText)+len(fields.Rotation) == 0 {
 		return document.PhotoDescription{}, errors.New("vision response has no description field")
 	}
 	out := document.PhotoDescription{Tags: []string{}}
