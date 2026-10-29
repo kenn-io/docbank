@@ -124,6 +124,14 @@
   list-style: none;
 }
 
+/* A list that opens the tool body sits right under the page or drawer
+   header, whose rule already marks its top. Its own top border would run
+   one padding lower as a second, inset line. */
+.tool-body > .tool-list:first-child,
+.tool-body > .tool-section:first-child > .tool-list:first-child {
+  border-top: 0;
+}
+
 .tool-list > li,
 .tool-list > .tool-row {
   display: flex;
