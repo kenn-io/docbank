@@ -13,6 +13,24 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Set Windows cache paths
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        if (!(Test-Path 'D:\') -and $env:RUNNER_ARCH -eq 'ARM64') {
+          Get-Disk | Where-Object {
+            $_.Model -ceq 'Microsoft NVMe Direct Disk v2' -and $_.PartitionStyle -eq 'RAW'
+          } | Initialize-Disk -PartitionStyle GPT -PassThru |
+            New-Partition -DriveLetter D -UseMaximumSize |
+            Format-Volume -FileSystem NTFS -Confirm:$false | Out-Null
+        }
+        foreach ($name in @('GOCACHE', 'GOMODCACHE')) {
+          $path = Join-Path 'D:\a\_temp' $name
+          New-Item -ItemType Directory -Force -Path $path | Out-Null
+          "$name=$path" >> $env:GITHUB_ENV
+        }
+
     - name: Select cache key and paths
       shell: bash
       env:
