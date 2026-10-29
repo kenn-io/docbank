@@ -112,7 +112,7 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 		}
 		hits := make([]ExplainedLexicalCandidate, 0, min(limit, len(page.Items)))
 		for _, row := range page.Items[:min(limit, len(page.Items))] {
-			hits = append(hits, ExplainedLexicalCandidate{Node: Node{ID: row.NodeID, CurrentVersionID: row.ContentVersionID, Name: row.Name}, EvidenceKind: "node_name"})
+			hits = append(hits, ExplainedLexicalCandidate{Node: Node{ID: row.NodeID, CurrentVersionID: row.ContentVersionID, Name: row.Name, BlobHash: row.sourceHash}, EvidenceKind: "node_name"})
 		}
 		return hits, page.Total > int64(limit), nil
 	}
@@ -415,8 +415,11 @@ type RevalidatedSearchCandidate struct {
 
 // SearchEvidenceIdentity is the stable authority needed to prove that one
 // result still cites current serving evidence. NodeName is the name a
-// node_name match was read with; a rename invalidates that evidence.
+// node_name match was read with; a rename invalidates that evidence. Each item
+// names its own file version when duplicate photos contribute different signals.
 type SearchEvidenceIdentity struct {
+	NodeID                 int64                       `json:"node_id"`
+	ContentVersionID       string                      `json:"version_id"`
 	Kind                   string                      `json:"kind"`
 	NodeName               string                      `json:"node_name,omitempty"`
 	VectorSpaceID          string                      `json:"vector_space_id,omitempty"`
@@ -460,6 +463,9 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 		}
 		payload[i] = searchCandidateRevalidationJSON(candidate)
 		for _, evidence := range candidate.Evidence {
+			if evidence.NodeID <= 0 || evidence.ContentVersionID == "" {
+				return SearchCandidateRevalidation{}, errors.New("search evidence document identity is incomplete")
+			}
 			if evidence.Kind == "rendition_segment" {
 				hasRenditionEvidence = true
 			}
@@ -527,7 +533,7 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 					JOIN rendition_attachments ra ON ra.build_id=ls.build_id
 					JOIN rendition_heads rh ON rh.content_version_id=ra.content_version_id
 					 AND rh.profile_fingerprint=ra.profile_fingerprint AND rh.attachment_id=ra.attachment_id
-					WHERE lh.singleton=1 AND ra.content_version_id=scoped.version_id
+					WHERE lh.singleton=1 AND ra.content_version_id=source.version_id
 					 AND ls.build_id=json_extract(evidence.value,'$.build_id')
 					 AND ls.segment_id=json_extract(evidence.value,'$.segment_id'))`
 			}
@@ -545,49 +551,7 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 			}
 		}
 		args := slices.Concat([]any{string(encoded)}, filterArgs, normalized.photoLexical.args, []any{semanticProfileFingerprint, semanticBindingID})
-		rows, queryErr := tx.QueryContext(ctx, `WITH requested AS (
-			SELECT CAST(key AS INTEGER) AS position,
-			       CAST(json_extract(value,'$.node_id') AS INTEGER) AS node_id,
-			       json_extract(value,'$.version_id') AS version_id,
-			       json_extract(value,'$.evidence') AS evidence
-			FROM json_each(?)
-		), scoped AS (
-			SELECT requested.position,requested.node_id,requested.version_id,requested.evidence,cv.blob_hash,
-			       n.name AS current_name
-			FROM requested JOIN nodes n ON n.id=requested.node_id
-			JOIN content_versions cv ON cv.node_id=n.id AND cv.version_id=n.current_version_id
-			 AND cv.version_id=requested.version_id
-			WHERE n.kind='file' AND n.trashed_at IS NULL `+filterSQL+`
-		)
-		SELECT scoped.position FROM scoped
-		WHERE NOT EXISTS (
-			SELECT 1 FROM json_each(scoped.evidence) evidence
-			WHERE CASE json_extract(evidence.value,'$.kind')
-			`+nameEvidenceSQL(normalized.photoLexical)+`
-			WHEN 'content_blob' THEN NOT (
-				COALESCE(json_extract(evidence.value,'$.blob_hash'),'')<>'' AND
-				json_extract(evidence.value,'$.blob_hash')=scoped.blob_hash)
-			`+renditionEvidenceSQL+`
-			WHEN 'embedding' THEN NOT EXISTS (
-				SELECT 1 FROM embedding_heads eh
-				JOIN embedding_sets es ON es.embedding_set_id=eh.embedding_set_id
-				 AND es.content_version_id=eh.content_version_id AND es.binding_id=eh.binding_id
-				 AND es.input_kind=eh.input_kind AND es.vector_space_id=eh.vector_space_id
-				 AND es.profile_fingerprint=eh.profile_fingerprint
-				JOIN embedding_vector_rows evr ON evr.vector_set_id=es.vector_set_id
-				JOIN embedding_generation_inputs egi ON egi.generation_id=es.input_generation_id
-				 AND egi.input_id=evr.input_id AND egi.rendered_checksum=evr.checksum
-				JOIN embedding_input_generations eig ON eig.generation_id=es.input_generation_id
-				WHERE eh.content_version_id=scoped.version_id
-				 AND eh.vector_space_id=json_extract(evidence.value,'$.vector_space_id')
-				 AND eh.embedding_set_id=json_extract(evidence.value,'$.embedding_set_id')
-				 AND eh.input_kind=json_extract(evidence.value,'$.input_kind')
-				 AND es.profile_fingerprint=? AND es.binding_id=?
-				 AND es.input_generation_id=json_extract(evidence.value,'$.input_generation_id')
-				 AND evr.input_id=json_extract(evidence.value,'$.input_id')
-				 AND (es.input_kind='original_file' OR (es.input_kind='image' AND `+currentImageEmbeddingSQL("es.content_version_id", "eig.evidence_fingerprint")+`) OR (es.input_kind='rendition_chunk' AND `+currentRenditionChunkAuthoritySQL+`)))
-			ELSE 1 END
-		) ORDER BY scoped.position`, args...)
+		rows, queryErr := tx.QueryContext(ctx, searchCandidateRevalidationSQL(filterSQL, renditionEvidenceSQL, normalized), args...)
 		if queryErr != nil {
 			return queryErr
 		}
@@ -630,6 +594,66 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 		return SearchCandidateRevalidation{}, err
 	}
 	return result, nil
+}
+
+func searchCandidateRevalidationSQL(filterSQL, renditionEvidenceSQL string, opts SearchOptions) string {
+	differentSourceSQL := "source.node_id<>scoped.node_id"
+	if opts.CollapsesPhotoDuplicates() {
+		differentSourceSQL += " AND source.blob_hash<>scoped.blob_hash"
+	}
+	return `WITH requested AS (
+			SELECT CAST(key AS INTEGER) AS position,
+			       CAST(json_extract(value,'$.node_id') AS INTEGER) AS node_id,
+			       json_extract(value,'$.version_id') AS version_id,
+			       json_extract(value,'$.evidence') AS evidence
+			FROM json_each(?)
+		), identities AS (
+			SELECT node_id,version_id FROM requested
+			UNION
+			SELECT CAST(json_extract(evidence.value,'$.node_id') AS INTEGER),
+			       json_extract(evidence.value,'$.version_id')
+			FROM requested,json_each(requested.evidence) evidence
+		), live AS (
+			SELECT n.id AS node_id,cv.version_id,cv.blob_hash,n.name AS current_name
+			FROM identities JOIN nodes n ON n.id=identities.node_id
+			JOIN content_versions cv ON cv.node_id=n.id AND cv.version_id=n.current_version_id
+			 AND cv.version_id=identities.version_id
+			WHERE n.kind='file' AND n.trashed_at IS NULL ` + filterSQL + `
+		), scoped AS (
+			SELECT requested.*,live.blob_hash FROM requested JOIN live
+			 ON live.node_id=requested.node_id AND live.version_id=requested.version_id
+		)
+		SELECT scoped.position FROM scoped
+		WHERE NOT EXISTS (
+			SELECT 1 FROM json_each(scoped.evidence) evidence
+			LEFT JOIN live source ON source.node_id=CAST(json_extract(evidence.value,'$.node_id') AS INTEGER)
+			 AND source.version_id=json_extract(evidence.value,'$.version_id')
+			WHERE source.node_id IS NULL OR (` + differentSourceSQL + `) OR CASE json_extract(evidence.value,'$.kind')
+			` + nameEvidenceSQL(opts.photoLexical) + `
+			WHEN 'content_blob' THEN NOT (
+				COALESCE(json_extract(evidence.value,'$.blob_hash'),'')<>'' AND
+				json_extract(evidence.value,'$.blob_hash')=source.blob_hash)
+			` + renditionEvidenceSQL + `
+			WHEN 'embedding' THEN NOT EXISTS (
+				SELECT 1 FROM embedding_heads eh
+				JOIN embedding_sets es ON es.embedding_set_id=eh.embedding_set_id
+				 AND es.content_version_id=eh.content_version_id AND es.binding_id=eh.binding_id
+				 AND es.input_kind=eh.input_kind AND es.vector_space_id=eh.vector_space_id
+				 AND es.profile_fingerprint=eh.profile_fingerprint
+				JOIN embedding_vector_rows evr ON evr.vector_set_id=es.vector_set_id
+				JOIN embedding_generation_inputs egi ON egi.generation_id=es.input_generation_id
+				 AND egi.input_id=evr.input_id AND egi.rendered_checksum=evr.checksum
+				JOIN embedding_input_generations eig ON eig.generation_id=es.input_generation_id
+				WHERE eh.content_version_id=source.version_id
+				 AND eh.vector_space_id=json_extract(evidence.value,'$.vector_space_id')
+				 AND eh.embedding_set_id=json_extract(evidence.value,'$.embedding_set_id')
+				 AND eh.input_kind=json_extract(evidence.value,'$.input_kind')
+				 AND es.profile_fingerprint=? AND es.binding_id=?
+				 AND es.input_generation_id=json_extract(evidence.value,'$.input_generation_id')
+				 AND evr.input_id=json_extract(evidence.value,'$.input_id')
+				 AND (es.input_kind='original_file' OR (es.input_kind='image' AND ` + currentImageEmbeddingSQL("es.content_version_id", "eig.evidence_fingerprint") + `) OR (es.input_kind='rendition_chunk' AND ` + currentRenditionChunkAuthoritySQL + `)))
+			ELSE 1 END
+		) ORDER BY scoped.position`
 }
 
 // SemanticSearchCandidate is one vector neighbor reduced to a current,
@@ -778,7 +802,7 @@ func (s *Store) semanticSearchAuthorityFence(ctx context.Context, profileFingerp
 		filterSQL, filterArgs := searchFilterSQL(opts)
 		eligible, err := loadSemanticEligibility(ctx, tx, profileFingerprint, bindingID,
 			inputKind, vectorSpaceID, filterSQL, filterArgs,
-			photoSearchCollapsesDuplicates(opts))
+			opts.CollapsesPhotoDuplicates())
 		if err != nil {
 			return err
 		}
@@ -867,7 +891,7 @@ func (s *Store) ResolveSemanticCandidates(ctx context.Context, profileFingerprin
 		}
 		eligible, loadErr := loadSemanticEligibility(ctx, tx, profileFingerprint, bindingID,
 			inputKind, vectorSpaceID, filterSQL, filterArgs,
-			photoSearchCollapsesDuplicates(normalized))
+			normalized.CollapsesPhotoDuplicates())
 		if loadErr != nil {
 			return loadErr
 		}
@@ -2316,9 +2340,9 @@ func photoSearchFragment(ctx context.Context, queryer rowQuerier, request PhotoB
 // nameEvidenceSQL marks a filename match stale once the name changes or, for
 // a photo search, the node no longer matches the authored query.
 func nameEvidenceSQL(photoLexical compiledQueryFragment) string {
-	stale := `WHEN 'node_name' THEN scoped.current_name IS NOT json_extract(evidence.value,'$.node_name')`
+	stale := `WHEN 'node_name' THEN source.current_name IS NOT json_extract(evidence.value,'$.node_name')`
 	if photoLexical.sql != "" {
-		stale += ` OR scoped.node_id NOT IN (` + photoLexical.sql + `)`
+		stale += ` OR source.node_id NOT IN (` + photoLexical.sql + `)`
 	}
 	return stale
 }
@@ -2524,7 +2548,8 @@ func searchFilterSQL(opts SearchOptions) (string, []any) {
 	return strings.Join(clauses, "\n"), args
 }
 
-func photoSearchCollapsesDuplicates(opts SearchOptions) bool {
+// CollapsesPhotoDuplicates reports whether photo retrieval groups copies by content.
+func (opts SearchOptions) CollapsesPhotoDuplicates() bool {
 	return opts.PhotoScope != nil && opts.PhotoLexicalQuery != nil &&
 		opts.PhotoLexicalQuery.Filters.CollapseDuplicates
 }

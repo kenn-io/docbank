@@ -14,24 +14,25 @@ func FuseReciprocalRank(lexical, semantic []Candidate, limit int) ([]Result, boo
 	if err := validateOneSemanticVectorSpace(semantic); err != nil {
 		return nil, false, err
 	}
-	byDocument := make(map[DocumentIdentity]*Result, len(lexical)+len(semantic))
+	byDocument := make(map[fusionIdentity]*Result, len(lexical)+len(semantic))
 	if err := addLane(byDocument, lexical, LaneLexical); err != nil {
 		return nil, false, fmt.Errorf("lexical lane: %w", err)
 	}
 	if err := addLane(byDocument, semantic, LaneSemantic); err != nil {
 		return nil, false, fmt.Errorf("semantic lane: %w", err)
 	}
-	identities := make([]DocumentIdentity, 0, len(byDocument))
+	identities := make([]fusionIdentity, 0, len(byDocument))
 	for identity := range byDocument {
 		identities = append(identities, identity)
 	}
-	slices.SortFunc(identities, func(left, right DocumentIdentity) int {
+	slices.SortFunc(identities, func(leftKey, rightKey fusionIdentity) int {
+		left, right := byDocument[leftKey].Document, byDocument[rightKey].Document
 		return cmp.Or(cmp.Compare(left.VaultID, right.VaultID),
 			cmp.Compare(left.NodeID, right.NodeID), cmp.Compare(left.ContentVersionID, right.ContentVersionID))
 	})
 	// Shared fusion orders string keys before truncation. Ordinals preserve
 	// the document order, including numeric node IDs, without encoding evidence.
-	keys := make(map[DocumentIdentity]string, len(identities))
+	keys := make(map[fusionIdentity]string, len(identities))
 	metadata := make(map[string]*Result, len(identities))
 	for index, identity := range identities {
 		key := fmt.Sprintf("%020d", index)
@@ -41,7 +42,7 @@ func FuseReciprocalRank(lexical, semantic []Candidate, limit int) ([]Result, boo
 		lane := embedding.ScopedCandidates{Candidates: make([]embedding.RankedCandidate, len(candidates))}
 		for index, candidate := range candidates {
 			lane.Candidates[index] = embedding.RankedCandidate{
-				Key: keys[candidate.Document], Rank: candidate.Rank, Score: candidate.Score,
+				Key: keys[candidateFusionIdentity(candidate)], Rank: candidate.Rank, Score: candidate.Score,
 			}
 		}
 		return lane
@@ -56,17 +57,7 @@ func FuseReciprocalRank(lexical, semantic []Candidate, limit int) ([]Result, boo
 	for index, candidate := range fused.Candidates {
 		result := *metadata[candidate.Key]
 		result.Rank, result.Score = candidate.Rank, candidate.Score
-		for _, signal := range []struct {
-			lane   Lane
-			signal *embedding.CandidateSignal
-		}{{LaneLexical, candidate.Lexical}, {LaneSemantic, candidate.Semantic}} {
-			if signal.signal != nil {
-				result.Explanation = append(result.Explanation, Contribution{
-					Lane: signal.lane, Rank: signal.signal.Rank,
-					Contribution: 1 / float64(ReciprocalRankK+signal.signal.Rank),
-				})
-			}
-		}
+		result.Explanation = fusionContributions(candidate)
 		results[index] = result
 	}
 	return results, fused.Truncated, nil
@@ -92,7 +83,7 @@ func validateOneSemanticVectorSpace(candidates []Candidate) error {
 	return nil
 }
 
-func addLane(results map[DocumentIdentity]*Result, candidates []Candidate, lane Lane) error {
+func addLane(results map[fusionIdentity]*Result, candidates []Candidate, lane Lane) error {
 	for _, candidate := range candidates {
 		if candidate.Lane != lane {
 			return errors.New("candidate belongs to the wrong lane")
@@ -100,27 +91,58 @@ func addLane(results map[DocumentIdentity]*Result, candidates []Candidate, lane 
 		if candidate.Document.VaultID == "" || candidate.Document.NodeID <= 0 || candidate.Document.ContentVersionID == "" {
 			return errors.New("candidate document identity is incomplete")
 		}
-		result := results[candidate.Document]
+		key := candidateFusionIdentity(candidate)
+		result := results[key]
 		if result == nil {
 			result = &Result{Document: candidate.Document, Path: candidate.Path}
-			results[candidate.Document] = result
+			results[key] = result
 		} else if result.Path == "" {
 			// Lanes read on either side of query encoding can see a concurrent
 			// move. Keep the first lane's path; hybrid revalidation refreshes it.
 			result.Path = candidate.Path
 		}
-		if lane == LaneLexical {
-			result.LexicalRank = candidate.Rank
-			result.Excerpt = candidate.Excerpt
-			result.rerankExcerpt = candidate.Excerpt
-		} else {
-			result.SemanticRank = candidate.Rank
-			nameOnly := len(result.Evidence) == 1 && result.Evidence[0].Kind == "node_name"
-			if result.rerankExcerpt == "" || nameOnly && strings.TrimSpace(candidate.Excerpt) != "" {
-				result.rerankExcerpt = candidate.Excerpt
-			}
-		}
+		addCandidateContribution(result, candidate, lane)
 		result.Evidence = append(result.Evidence, candidate.Evidence...)
 	}
 	return nil
+}
+
+type fusionIdentity struct {
+	DocumentIdentity
+	photoBlobHash string
+}
+
+func candidateFusionIdentity(candidate Candidate) fusionIdentity {
+	if candidate.photoBlobHash != "" {
+		return fusionIdentity{DocumentIdentity: DocumentIdentity{VaultID: candidate.Document.VaultID}, photoBlobHash: candidate.photoBlobHash}
+	}
+	return fusionIdentity{DocumentIdentity: candidate.Document}
+}
+
+func fusionContributions(candidate embedding.FusedCandidate) []Contribution {
+	var result []Contribution
+	for _, signal := range []struct {
+		lane   Lane
+		signal *embedding.CandidateSignal
+	}{{LaneLexical, candidate.Lexical}, {LaneSemantic, candidate.Semantic}} {
+		if signal.signal != nil {
+			result = append(result, Contribution{Lane: signal.lane, Rank: signal.signal.Rank,
+				Contribution: 1 / float64(ReciprocalRankK+signal.signal.Rank)})
+		}
+	}
+	return result
+}
+
+func addCandidateContribution(result *Result, candidate Candidate, lane Lane) {
+	if lane == LaneLexical {
+		result.LexicalRank = candidate.Rank
+		result.Excerpt = candidate.Excerpt
+		result.rerankExcerpt = candidate.Excerpt
+	} else {
+		result.SemanticRank = candidate.Rank
+		nameOnly := len(result.Evidence) == 1 && result.Evidence[0].Kind == "node_name"
+		if result.rerankExcerpt == "" || nameOnly && strings.TrimSpace(candidate.Excerpt) != "" {
+			result.rerankExcerpt = candidate.Excerpt
+		}
+	}
 }

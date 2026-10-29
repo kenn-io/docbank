@@ -35,7 +35,7 @@ func TestPhotoSearchRevalidationCompilesAfterPublication(t *testing.T) {
 	waits := s.writeDB.Stats().WaitCount
 	scope := PhotoBrowseRequest{Query: snapshotTestQuery(t, `{}`)}
 	lexical := snapshotTestQuery(t, `{"text":"mercury"}`)
-	candidates := []SearchCandidateIdentity{{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Evidence: []SearchEvidenceIdentity{{Kind: "node_name", NodeName: node.Name}}}}
+	candidates := []SearchCandidateIdentity{{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Evidence: []SearchEvidenceIdentity{{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Kind: "node_name", NodeName: node.Name}}}}
 	done := make(chan struct {
 		result SearchCandidateRevalidation
 		err    error

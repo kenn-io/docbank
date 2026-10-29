@@ -32,7 +32,7 @@ func BenchmarkSearchRevalidation(b *testing.B) {
 						return err
 					}
 					candidates[i] = SearchCandidateIdentity{NodeID: node.ID, ContentVersionID: node.CurrentVersionID,
-						Evidence: []SearchEvidenceIdentity{{Kind: "node_name", NodeName: node.Name}}}
+						Evidence: []SearchEvidenceIdentity{{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Kind: "node_name", NodeName: node.Name}}}
 					paths[i] = prefix + "/" + name
 				}
 				return nil
