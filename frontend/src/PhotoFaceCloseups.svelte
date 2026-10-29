@@ -46,7 +46,7 @@
   }
   function style(box?: FaceBox) {
     if (!source) return "";
-    return photoFaceCropStyle(box, source.width, source.height, photo.rotation, 128);
+    return photoFaceCropStyle(box, source.width, source.height, photo.rotation, 80);
   }
 </script>
 
@@ -60,9 +60,11 @@
             >{/if}
         </div>
         <figcaption>
-          {tile.label}
+          <div class="head">
+            <span class="name">{tile.label}</span>
+            {#if r?.grade}<span class="grade" data-grade={r.grade}>{r.grade}</span>{/if}
+          </div>
           {#if r}
-            {#if r.grade}<span class="grade" data-grade={r.grade}>{r.grade}</span>{/if}
             <dl>
               {#each measurements(r) as [label, value]}<div>
                   <dt>{label}</dt>
@@ -94,46 +96,92 @@
 
 <style>
   dl {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-2);
-    margin: var(--space-3) 0 0;
+    display: grid;
+    grid-template-columns: repeat(4, max-content);
+    column-gap: var(--space-3);
+    row-gap: var(--space-1);
+    margin: var(--space-2) 0 0;
   }
   dl div {
-    display: flex;
-    gap: var(--space-2);
+    display: contents;
+  }
+  dl div:nth-child(even) dt {
+    padding-left: var(--space-5);
+  }
+  dt,
+  dd[title] {
+    color: var(--text-muted);
   }
   dd {
     margin: 0;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-primary);
+  }
+  .head {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-4);
+  }
+  .name {
+    max-width: 12rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: var(--font-weight-medium);
+    color: var(--text-primary);
   }
   .grade {
-    margin-left: var(--space-2);
+    margin-left: auto;
+  }
+  .grade::before {
+    content: "";
+    display: inline-block;
+    width: var(--space-3);
+    height: var(--space-3);
+    margin-right: var(--space-2);
+    border-radius: 50%;
+    background: currentColor;
   }
   .grade[data-grade="green"] {
     color: var(--accent-green);
   }
   .grade[data-grade="yellow"] {
-    color: var(--accent-yellow);
+    color: var(--accent-amber);
   }
   .grade[data-grade="red"] {
     color: var(--accent-red);
   }
   .closeups {
     display: flex;
-    gap: var(--space-3);
+    gap: var(--space-4);
     padding: var(--space-3);
     overflow-x: auto;
   }
   figure {
     margin: 0;
-    flex: 0 0 128px;
+    display: grid;
+    grid-template-columns: 80px auto;
+    column-gap: var(--space-4);
+    align-items: center;
+    flex: 0 0 auto;
+    padding: var(--space-3);
+    border: 1px solid var(--border-muted);
+    border-radius: var(--radius-md);
   }
   .crop {
     position: relative;
-    width: 128px;
-    height: 128px;
+    width: 80px;
+    height: 80px;
+    display: grid;
+    place-items: center;
     overflow: hidden;
     background: var(--bg-inset);
+    border-radius: var(--radius-sm);
+  }
+  .crop span {
+    font-size: var(--font-size-2xs);
+    color: var(--text-muted);
   }
   img {
     position: absolute;
