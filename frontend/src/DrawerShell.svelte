@@ -43,7 +43,7 @@
     {@render footer?.()}
   </div>
 {:else}
-  <div class="shell" class:still>
+  <div class="shell" class:still class:tabbed={navigation}>
     <DetailDrawer
       {width}
       ariaLabel={navigation ? "System" : ariaLabel}
@@ -91,6 +91,15 @@
   }
   .still :global(.kit-detail-drawer) {
     animation: none;
+  }
+  /* Section tabs sit on the drawer header's rule. The strip's own underline,
+     one header padding above that rule, would be a second line under the
+     title. */
+  .tabbed :global(.kit-detail-drawer__header) {
+    padding-bottom: 0;
+  }
+  .header :global(.tab-strip) {
+    border-bottom: 0;
   }
   .header {
     display: grid;
