@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	kitdaemon "go.kenn.io/kit/daemon"
+	"go.kenn.io/kit/stacktest"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
@@ -98,6 +99,7 @@ func TestStartCancellationStopsUnreadyChild(t *testing.T) {
 	case err := <-done:
 		require.ErrorIs(t, err, context.Canceled)
 	case <-time.After(daemon.GracefulExitTimeout + daemon.ForcedExitTimeout + 5*time.Second):
+		stacktest.Dump(t)
 		t.Fatal("launcher did not return after cancellation")
 	}
 	assert.False(t, kitdaemon.ProcessAlive(pid), "failed startup must release its child process")
@@ -476,6 +478,7 @@ func TestProvenClientCloseBeforeFirstRequest(t *testing.T) {
 	select {
 	case <-closed:
 	case <-time.After(time.Second):
+		stacktest.Dump(t)
 		t.Fatal("Close did not release the pending proven socket")
 	}
 	require.NoError(t, c.Close())
