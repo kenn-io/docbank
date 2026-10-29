@@ -51,8 +51,8 @@ func faceBoxOverlap(a, b document.FaceBox) float64 {
 }
 
 // faceMatchScores scores each observation against a saved box by IoU, except
-// that the sole observation fully inside or around the box scores 1, so a box
-// claims its one nested face; multiple nested observations keep IoU scores.
+// that when no IoU reaches the match floor, the sole observation fully inside or
+// around the box scores 1; multiple nested observations keep IoU scores.
 func faceMatchScores(box document.FaceBox, observations []document.FaceObservation) []float64 {
 	inside := func(o document.FaceObservation) bool {
 		return o.Box.X >= box.X && o.Box.Y >= box.Y && o.Box.X+o.Box.Width <= box.X+box.Width && o.Box.Y+o.Box.Height <= box.Y+box.Height ||
@@ -62,7 +62,7 @@ func faceMatchScores(box document.FaceBox, observations []document.FaceObservati
 	for j, o := range observations {
 		scores[j] = faceBoxOverlap(box, o.Box)
 	}
-	if sole := slices.IndexFunc(observations, inside); sole >= 0 && !slices.ContainsFunc(observations[sole+1:], inside) {
+	if sole := slices.IndexFunc(observations, inside); sole >= 0 && !slices.ContainsFunc(observations[sole+1:], inside) && slices.Max(scores) < 0.14 {
 		scores[sole] = 1
 	}
 	return scores
