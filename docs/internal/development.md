@@ -206,7 +206,8 @@ vault identity, the core `nodes`, `blobs`,
 `audit_*` catalogs for canonical records, authority, scopes, baselines and memberships.
 It also owns the photo input catalogs and `photo_xmp_inputs` view used for audit
 re-export decisions: photo assets/files/sets/receipts, source metadata generations,
-heads and technical projections, tags, ingests and provenance.
+heads and technical projections, tags, ingests, provenance version bindings,
+derivative-purge suppressions and photo library settings.
 Complete mutations, the remaining catalogs, search, transfer, and recovery are
 not available yet.
 
@@ -280,10 +281,12 @@ GRANT UPDATE(operation_sequence_high_water, allocation_entry_count, allocation_h
 GRANT UPDATE(entry_count, chain_head) ON documents.audit_scopes TO docbank_runtime;
 GRANT SELECT, UPDATE(high_water) ON documents.node_allocation TO docbank_runtime;
 GRANT SELECT ON documents.ingests, documents.provenance,
+    documents.provenance_version_bindings, documents.derivative_purge_suppressions,
     documents.source_metadata_generations, documents.source_metadata_heads,
     documents.photo_technical_metadata, documents.tags, documents.node_tags,
     documents.photo_assets, documents.photo_files, documents.photo_sets,
-    documents.photo_change_receipts, documents.photo_xmp_inputs TO docbank_runtime;
+    documents.photo_change_receipts, documents.photo_library_settings,
+    documents.photo_xmp_inputs TO docbank_runtime;
 GRANT SELECT, INSERT ON documents.photo_xmp_unsettled TO docbank_runtime;
 ```
 
@@ -543,7 +546,7 @@ transactions. Membership, node revision, path, scope head, event count and page
 come from one snapshot, even when another operation commits between their
 reads. Canonical event projection and cursor ordering remain in the existing
 Go implementation. The runtime role needs only `SELECT` on the audit catalogs
-for these reads; enrollment, complete audit mutations and full metadata
+for these reads; complete enrollment, audit mutations and full metadata
 validation still require SQLite.
 
 Audit-history qualification creates directories, enables audit and renames nodes
@@ -600,9 +603,16 @@ native rename's resulting node projections and records, and compares committed
 status and every canonical record with SQLite. It also verifies that discarding
 the transaction preserves the earlier status and records.
 
-Initial and additional audit enrollment persistence also use the shared native
-writers. Records, authority, scopes, baselines, memberships and photo re-export
-queue entries commit or roll back together. On PostgreSQL, initial enrollment
+Initial and additional enrollment previews run against PostgreSQL by node ID or
+path. The existing writer transaction keeps their target, retained versions,
+trash origins and attached metadata consistent. Additional preview validates
+the existing audit history and rejects overlapping scopes. The same builders
+produce baseline records on both backends, including provenance bindings,
+derivative-purge suppressions and photo settings.
+
+Enrollment persistence uses the shared native writers. Records, authority,
+scopes, baselines, memberships and photo re-export queue entries commit or roll
+back together. On PostgreSQL, initial enrollment
 queues every eligible photo asset once, after inserting all memberships. Later
 membership inserts queue eligible originals in the member's asset, including
 when the member is a sidecar. Released SQLite layouts retain their triggers as
@@ -613,16 +623,19 @@ transaction. Neither backend performs filesystem publication during enrollment.
 The PostgreSQL view uses JSON extraction and ordered string aggregation, with
 explicit numeric boolean encoding in tokens. `PhotoXMPTargetsAfter` shares its
 filtering, bounds and cursor order; only the candidate join spelling differs.
-The parity test builds valid photo data through SQLite APIs, including settled
-receipts, tags, missing extraction, trash and video, then compares tokens,
-queues, target pages and audit records after native enrollment persistence.
+The parity test creates source data through SQLite APIs, including an ingested
+and trashed document, a derivative purge, photo settings, settled receipts,
+tags, missing extraction and video. PostgreSQL then previews enrollment and
+builds and validates its own audit records. The test compares records, tokens,
+queues and target pages with SQLite after commit and rollback, and rejects a
+baseline projection that disagrees with canonical history.
 
-This qualifies internal persistence, not a complete PostgreSQL enrollment or
-photo publication API. The fixture supplies native records from SQLite;
-PostgreSQL preview, full metadata validation, import/restore, removal and other
-photo mutations remain unavailable. Added input catalogs grant runtime read
-access only. Do not enable those writes until their validation and related
-catalog maintenance are ported.
+This qualifies internal preview, audit-history validation and persistence, not
+the complete enrollment or photo publication API. Full metadata validation,
+import/restore, removal and other photo mutations remain unavailable on
+PostgreSQL. `EnableInitialAudit` still requires complete metadata validation;
+do not bypass it. Added input catalogs grant runtime read access only. Their
+write paths still require validation and related catalog maintenance.
 
 For PostgreSQL tests, start a disposable server, never an operator database:
 

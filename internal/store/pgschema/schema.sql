@@ -142,8 +142,8 @@ CREATE TABLE {{schema}}.audit_memberships (
 );
 CREATE INDEX audit_membership_node ON {{schema}}.audit_memberships(node_id);
 
--- Catalogs consumed by photo re-export decisions. Mutation and publication
--- semantics remain in Go; these tables do not enable a complete photo store.
+-- Audit baselines and photo re-export decisions share these catalogs. Mutation
+-- and publication remain in Go; these tables do not enable a complete photo store.
 
 CREATE TABLE {{schema}}.ingests (
     id          TEXT COLLATE "C" PRIMARY KEY NOT NULL,
@@ -160,6 +160,27 @@ CREATE TABLE {{schema}}.provenance (
     original_mtime TEXT COLLATE "C",
     supersedes     TEXT COLLATE "C" REFERENCES {{schema}}.provenance(identity)
         DEFERRABLE INITIALLY DEFERRED
+);
+
+CREATE TABLE {{schema}}.provenance_version_bindings (
+    provenance_identity TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.provenance(identity) ON DELETE CASCADE,
+    content_version_id  TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE,
+    observed_at         TEXT COLLATE "C" NOT NULL,
+    basis_ref           TEXT COLLATE "C" NOT NULL,
+    PRIMARY KEY (provenance_identity, content_version_id)
+);
+CREATE INDEX provenance_version_bindings_version
+    ON {{schema}}.provenance_version_bindings(content_version_id);
+
+CREATE TABLE {{schema}}.derivative_purge_suppressions (
+    source_sha256        TEXT COLLATE "C" NOT NULL,
+    profile_fingerprint  TEXT COLLATE "C" NOT NULL,
+    build_id             TEXT COLLATE "C" NOT NULL,
+    purged_at            TEXT COLLATE "C" NOT NULL,
+    active               BIGINT NOT NULL,
+    superseded_at        TEXT COLLATE "C",
+    superseding_build_id TEXT COLLATE "C",
+    PRIMARY KEY (source_sha256, profile_fingerprint, build_id)
 );
 
 CREATE TABLE {{schema}}.source_metadata_generations (
@@ -293,6 +314,18 @@ CREATE TABLE {{schema}}.photo_change_receipts (
     before_json    TEXT COLLATE "C" NOT NULL,
     after_json     TEXT COLLATE "C" NOT NULL,
     created_at     TEXT COLLATE "C" NOT NULL
+);
+
+CREATE TABLE {{schema}}.photo_library_settings (
+    singleton       BIGINT PRIMARY KEY,
+    preference      TEXT COLLATE "C",
+    revision        BIGINT NOT NULL DEFAULT 1,
+    updated_at      TEXT COLLATE "C" NOT NULL,
+    burst_gap_seconds BIGINT,
+    backup_interval_seconds BIGINT,
+    backup_keep_last BIGINT,
+    hidden_unlock_lifetime_seconds BIGINT,
+    representative_sequence BIGINT
 );
 
 CREATE TABLE {{schema}}.photo_xmp_unsettled (asset_id TEXT COLLATE "C" PRIMARY KEY);

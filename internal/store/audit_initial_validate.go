@@ -525,7 +525,7 @@ func validateInitialMembershipRows(
 	var relationScope, relationOperation string
 	var targetID uint64
 	err := tx.QueryRowContext(ctx, `SELECT scope_id,target_node_id,operation_id
-		FROM audit_baselines WHERE digest=?`, baselineDigest).Scan(
+		FROM audit_baselines WHERE digest=$1`, baselineDigest).Scan(
 		&relationScope, &targetID, &relationOperation)
 	if err != nil {
 		return fmt.Errorf("reading audit baseline relation: %w", err)
@@ -535,7 +535,7 @@ func validateInitialMembershipRows(
 		return errors.New("audit baseline relation does not match its scope and operation")
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT node_id,baseline_digest FROM audit_memberships
-		WHERE scope_id=? AND baseline_digest=? ORDER BY node_id`, scope.scopeID, baselineDigest)
+		WHERE scope_id=$1 AND baseline_digest=$2 ORDER BY node_id`, scope.scopeID, baselineDigest)
 	if err != nil {
 		return fmt.Errorf("reading audit membership projection: %w", err)
 	}
