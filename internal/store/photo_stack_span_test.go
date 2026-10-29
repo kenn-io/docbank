@@ -15,10 +15,11 @@ import (
 func TestPhotoStackPagingMatchesGroups(t *testing.T) {
 	t.Parallel()
 	type testCase struct {
-		name    string
-		seconds []int
-		vectors [][]float64
-		groups  [][]int
+		name      string
+		seconds   []int
+		vectors   [][]float64
+		groups    [][]int
+		unindexed bool
 	}
 	var cases []testCase
 	for _, count := range []int{3, 4, 5, 180} {
@@ -37,6 +38,22 @@ func TestPhotoStackPagingMatchesGroups(t *testing.T) {
 		cases = append(cases, testCase{name: fmt.Sprintf("minute boundary/%d", count), seconds: seconds, groups: groups})
 	}
 	cases = append(cases,
+		testCase{
+			name:      "unindexed images",
+			seconds:   []int{0, 60, 80, 141},
+			unindexed: true,
+		},
+		testCase{
+			name:    "above cutoff with a dissimilar middle frame",
+			seconds: []int{0, 60, 80, 141},
+			vectors: [][]float64{{1, 0, 0, 0, 0, 0, 0, 0}, {.99, .14106736, 0, 0, 0, 0, 0, 0}, {0, 1, 0, 0, 0, 0, 0, 0}, {1, 0, 0, 0, 0, 0, 0, 0}},
+			groups:  [][]int{{0, 1}},
+		},
+		testCase{
+			name:    "identical images outside window",
+			seconds: []int{0, 141},
+			vectors: [][]float64{{1, 0, 0, 0, 0, 0, 0, 0}, {1, 0, 0, 0, 0, 0, 0, 0}},
+		},
 		testCase{
 			name:    "nontransitive similarity",
 			seconds: []int{0, 20, 40},
@@ -72,9 +89,13 @@ func TestPhotoStackPagingMatchesGroups(t *testing.T) {
 				if len(tc.vectors) > 0 {
 					vector = tc.vectors[i]
 				}
-				index.publish(t, ids[i], vector)
+				if !tc.unindexed {
+					index.publish(t, ids[i], vector)
+				}
 			}
-			index.generation(t, "indexed-photo-run")
+			if !tc.unindexed {
+				index.generation(t, "indexed-photo-run")
+			}
 			var want [][]string
 			if len(tc.groups) > 0 {
 				want = make([][]string, len(tc.groups))

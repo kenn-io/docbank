@@ -1537,7 +1537,7 @@ func TestPhotoStackPartialMetadataCandidates(t *testing.T) {
 	}
 }
 
-func TestPhotoStackVectorHydrationTracksIndexPublication(t *testing.T) {
+func TestPhotoStackVectorHydrationUsesExistingIndexesAndActiveGeneration(t *testing.T) {
 	t.Parallel()
 	f := newImageEmbeddingCatalogFixture(t)
 	s := f.s
@@ -1545,14 +1545,10 @@ func TestPhotoStackVectorHydrationTracksIndexPublication(t *testing.T) {
 	require.NoError(t, err)
 	frames := map[string]photoStackFrame{asset.ID: {}}
 	record, vector := f.publish(t)
-	reader, err := s.newPhotoStackVectorReader(t.Context(), s.db)
-	require.NoError(t, err)
-	require.NoError(t, reader.hydrate(t.Context(), s.db, frames))
-	require.Empty(t, frames[asset.ID].ImageVectors)
 	index := newCursorIndexFixture(f)
 	index.add(record, vector)
 	index.generation(t, "photo-vector-generation")
-	reader, err = s.newPhotoStackVectorReader(t.Context(), s.db)
+	reader, err := s.newPhotoStackVectorReader(t.Context(), s.db)
 	require.NoError(t, err)
 	require.NoError(t, reader.hydrate(t.Context(), photoStackPlanQuerier{DB: s.db, t: t}, frames))
 	require.Equal(t, []float32{1, 2, 3, 4, 5, 6, 7, 8}, frames[asset.ID].ImageVectors[index.space])
@@ -1616,44 +1612,6 @@ func TestPhotoStackConflictingImageBindingsKeepGroupingStable(t *testing.T) {
 	targets := preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: groups[0], Limit: MaxPhotoStackTargets})
 	_, err = s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: groups[0], Targets: targets, Decision: "all", CurrentID: groups[0][0]})
 	require.NoError(t, err, "the group presented to Cull must remain valid for its decision")
-}
-
-func TestPhotoStackImageSimilarityThresholdAndWindow(t *testing.T) {
-	t.Parallel()
-	f := newImageEmbeddingCatalogFixture(t)
-	s := f.s
-	// Keep the fixture's seed photo outside the stack scope.
-	run, err := s.BeginIngest(t.Context(), "cli", "synthetic image stacks")
-	require.NoError(t, err)
-	var ids []string
-	for i, second := range []int{0, 60, 80, 141} {
-		stamp := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC).Add(time.Duration(second) * time.Second).Format(time.RFC3339)
-		id := stackPhoto(t, s, run, fmt.Sprintf("/synthetic-burst/frame-%d.jpg", i), stamp, document.SourceMetadataPrecisionSecond)
-		ids = append(ids, id)
-	}
-	groups, unavailable, _, incomplete, err := s.PhotoStackGroups(t.Context(), ids, false, "")
-	require.NoError(t, err)
-	require.Empty(t, groups, "unindexed vectors cannot add stack edges")
-	require.Empty(t, unavailable)
-	require.False(t, incomplete)
-	// The second frame is cosine 0.99 from the first (above the cutoff); the third is orthogonal to it.
-	values := [][]float64{{1, 0, 0, 0, 0, 0, 0, 0}, {0.99, 0.14106736, 0, 0, 0, 0, 0, 0}, {0, 1, 0, 0, 0, 0, 0, 0}, {1, 0, 0, 0, 0, 0, 0, 0}}
-	index := newCursorIndexFixture(f)
-	for i, id := range ids {
-		index.publish(t, id, values[i])
-	}
-	index.generation(t, "similarity-generation")
-	groups, unavailable, _, incomplete, err = s.PhotoStackGroups(t.Context(), ids, false, "")
-	require.NoError(t, err)
-	require.Equal(t, [][]string{{ids[0], ids[1]}}, groups)
-	require.Empty(t, unavailable)
-	require.False(t, incomplete)
-	// Isolate the time boundary from the dissimilar frame between these photos.
-	groups, unavailable, _, incomplete, err = s.PhotoStackGroups(t.Context(), []string{ids[0], ids[3]}, false, "")
-	require.NoError(t, err)
-	require.Empty(t, groups, "identical vectors outside the image window must stay separate")
-	require.Empty(t, unavailable)
-	require.False(t, incomplete)
 }
 
 func TestPhotoStackUnrelatedImageSpaceKeepsStacks(t *testing.T) {

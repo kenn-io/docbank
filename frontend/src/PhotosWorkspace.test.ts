@@ -1454,7 +1454,7 @@ it.each(["success", "failure", "interrupted", "late"] as const)(
   },
 );
 
-it("explains the live metadata relevance limit, hiding it for complete results, capture dates, or Meaning", async () => {
+it("explains the live metadata relevance limit and locks Meaning to Relevance sort", async () => {
   vi.stubGlobal(
     "ResizeObserver",
     class {

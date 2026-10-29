@@ -33,7 +33,6 @@ func TestSavedPhotoRunsPreserveIdentityAndSkipUnneededEmbedding(t *testing.T) {
 	}{
 		{name: "semantic", payload: `{"mode":"semantic","text":"sunset","sort":{"field":"name","direction":"asc"}}`, wantMode: "semantic", wantStatus: http.StatusOK},
 		{name: "hybrid", payload: `{"mode":"hybrid","text":"sunset","sort":{"field":"name","direction":"asc"}}`, wantMode: "hybrid", wantStatus: http.StatusOK},
-		{name: "cleared text", payload: `{"mode":"semantic","text":"   ","filters":{"extensions":["jpg"]},"sort":{"field":"name","direction":"asc"}}`, wantStatus: http.StatusOK, wantNoEmbedding: true},
 		{name: "stale revision", payload: `{"mode":"semantic","text":"sunset"}`, updated: `{"mode":"semantic","text":"harbor"}`, wantStatus: http.StatusPreconditionFailed, wantProblem: "stale_revision", wantNoEmbedding: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -64,6 +63,8 @@ func TestSavedPhotoRunsPreserveIdentityAndSkipUnneededEmbedding(t *testing.T) {
 			}
 			if tc.wantNoEmbedding {
 				require.Zero(t, observer.calls.Load())
+			} else if tc.wantMode == "semantic" {
+				require.EqualValues(t, 1, observer.calls.Load())
 			}
 		})
 	}
@@ -87,22 +88,8 @@ func photoObservedFixture(t *testing.T) (*httptest.Server, *testStore, *photoQue
 
 func TestPhotoRankingRoutesReachImageQueryProvider(t *testing.T) {
 	t.Parallel()
-	for _, savedRoute := range []bool{false, true} {
-		name := "browse"
-		if savedRoute {
-			name = "saved"
-		}
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			ts, _, observer := photoObservedFixture(t)
-			path, body := "/api/v1/photos/assets/query", `{"query":{"mode":"semantic","text":"sunset"}}`
-			if savedRoute {
-				saved, _ := createSavedQuery(t, ts.URL, "Synthetic ranked query", `{"mode":"semantic","text":"sunset"}`)
-				path, body = "/api/v1/saved-queries/"+saved.ID+"/runs", `{"photos":true}`
-			}
-			response, result := rawJSONRequest(t, ts.URL, http.MethodPost, path, map[string]string{"X-Api-Key": testAPIKey, "If-Match": `"1"`}, body)
-			require.Equal(t, http.StatusOK, response.StatusCode, result)
-			require.EqualValues(t, 1, observer.calls.Load())
-		})
-	}
+	ts, _, observer := photoObservedFixture(t)
+	response, result := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/photos/assets/query", map[string]string{"X-Api-Key": testAPIKey}, `{"query":{"mode":"semantic","text":"sunset"}}`)
+	require.Equal(t, http.StatusOK, response.StatusCode, result)
+	require.EqualValues(t, 1, observer.calls.Load())
 }

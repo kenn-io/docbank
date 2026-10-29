@@ -40,7 +40,7 @@ func TestSearchPhotosHybridCapsDistinctPhotosAfterFusion(t *testing.T) {
 	for _, member := range ranked.Members {
 		assets[member.AssetID] = true
 	}
-	require.Equal(t, 1000, len(assets), "two copies of one image must leave room for the next distinct photo")
+	require.Len(t, assets, 1000, "two copies of one image must leave room for the next distinct photo")
 	require.True(t, assets[lastAssetID], "the final lexical candidate must survive asset collapse")
 	require.Len(t, ranked.Members, 1000)
 }

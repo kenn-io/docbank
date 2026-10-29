@@ -109,12 +109,13 @@ func addLane(results map[fusionIdentity]*Result, candidates []Candidate, lane La
 
 type fusionIdentity struct {
 	DocumentIdentity
+
 	photoBlobHash string
 }
 
 func candidateFusionIdentity(candidate Candidate) fusionIdentity {
 	if candidate.photoBlobHash != "" {
-		return fusionIdentity{DocumentIdentity: DocumentIdentity{VaultID: candidate.Document.VaultID}, photoBlobHash: candidate.photoBlobHash}
+		return fusionIdentity{VaultID: candidate.Document.VaultID, photoBlobHash: candidate.photoBlobHash}
 	}
 	return fusionIdentity{DocumentIdentity: candidate.Document}
 }

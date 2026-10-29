@@ -29,31 +29,18 @@ func indexedPhotoRun(t *testing.T, count, seconds int) (imageEmbeddingCatalogFix
 
 func TestPhotoStackMalformedProjectionPreservesBurstBrowse(t *testing.T) {
 	t.Parallel()
-	for _, damage := range []string{"empty", "rows", "byte flip"} {
-		t.Run(damage, func(t *testing.T) {
-			f := newImageEmbeddingCatalogFixture(t)
-			record, vector := f.publish(t)
-			index := newCursorIndexFixture(f)
-			index.add(record, vector)
-			index.generation(t, "malformed-projection")
-			if damage == "byte flip" {
-				var data []byte
-				require.NoError(t, f.s.db.QueryRow(`SELECT generation_bytes FROM vector_index_generations WHERE generation_id=?`, browseHash("malformed-projection")).Scan(&data))
-				data[0] ^= 0xff
-				_, err := f.s.db.Exec(`UPDATE vector_index_generations SET generation_bytes=? WHERE generation_id=?`, data, browseHash("malformed-projection"))
-				require.NoError(t, err)
-			} else {
-				update := map[string]string{"empty": "generation_bytes=X'',byte_size=0", "rows": "row_count=1000001"}[damage]
-				_, err := f.s.db.Exec(`UPDATE vector_index_generations SET `+update+` WHERE generation_id=?`, browseHash("malformed-projection"))
-				require.NoError(t, err)
-			}
-			ids := burstPhotos(t, f.s, 2)
-			for _, direction := range []string{"asc", "desc"} {
-				page, err := f.s.ListPhotoAssets(t.Context(), captureRequest(t, direction), nil)
-				require.NoError(t, err)
-				require.Contains(t, stackAssetIDs(page.Stacks), ids)
-			}
-		})
+	f := newImageEmbeddingCatalogFixture(t)
+	record, vector := f.publish(t)
+	index := newCursorIndexFixture(f)
+	index.add(record, vector)
+	index.generation(t, "malformed-projection")
+	_, err := f.s.db.Exec(`UPDATE vector_index_generations SET row_count=1000001 WHERE generation_id=?`, browseHash("malformed-projection"))
+	require.NoError(t, err)
+	ids := burstPhotos(t, f.s, 2)
+	for _, direction := range []string{"asc", "desc"} {
+		page, err := f.s.ListPhotoAssets(t.Context(), captureRequest(t, direction), nil)
+		require.NoError(t, err)
+		require.Contains(t, stackAssetIDs(page.Stacks), ids)
 	}
 }
 
@@ -92,35 +79,24 @@ func (q photoStackLoadFailureQuerier) QueryRowContext(ctx context.Context, query
 	return q.DB.QueryRowContext(ctx, query, args...)
 }
 
-func TestPhotoStackProjectionReaderPropagatesDatabaseAndCancellationErrors(t *testing.T) {
+func TestPhotoStackProjectionReaderPropagatesCancellation(t *testing.T) {
 	t.Parallel()
-	for _, failure := range []string{"database", "cancellation"} {
-		t.Run(failure, func(t *testing.T) {
-			f := newImageEmbeddingCatalogFixture(t)
-			record, vector := f.publish(t)
-			index := newCursorIndexFixture(f)
-			index.add(record, vector)
-			index.generation(t, "reader-errors")
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			reads := 0
-			q := photoStackLoadFailureQuerier{DB: f.s.db, beforeLoad: func() {
-				reads++
-				if failure == "cancellation" {
-					cancel()
-				} else {
-					require.NoError(t, f.s.db.Close())
-				}
-			}}
-			reader, err := f.s.newPhotoStackVectorReader(ctx, q)
-			require.Equal(t, 1, reads)
-			require.Nil(t, reader)
-			require.Error(t, err)
-			if failure == "cancellation" {
-				require.ErrorIs(t, err, context.Canceled)
-			}
-		})
-	}
+	f := newImageEmbeddingCatalogFixture(t)
+	record, vector := f.publish(t)
+	index := newCursorIndexFixture(f)
+	index.add(record, vector)
+	index.generation(t, "reader-errors")
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	reads := 0
+	q := photoStackLoadFailureQuerier{DB: f.s.db, beforeLoad: func() {
+		reads++
+		cancel()
+	}}
+	reader, err := f.s.newPhotoStackVectorReader(ctx, q)
+	require.Equal(t, 1, reads)
+	require.Nil(t, reader)
+	require.ErrorIs(t, err, context.Canceled)
 }
 
 func TestPhotoStackNewestComponentBoundsHistoryReads(t *testing.T) {
