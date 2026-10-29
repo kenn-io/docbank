@@ -25,7 +25,10 @@ runs:
               New-Partition -DriveLetter D -UseMaximumSize |
               Format-Volume -FileSystem NTFS -Confirm:$false | Out-Null
           }
-          if (!(Test-Path 'D:\')) { return }
+          if (!(Test-Path 'D:\')) {
+            Write-Warning 'Keeping current Go cache paths: D: is unavailable'
+            return
+          }
           $cacheEnv = foreach ($name in @('GOCACHE', 'GOMODCACHE')) {
             $path = Join-Path 'D:\a\_temp' $name
             New-Item -ItemType Directory -Force -Path $path | Out-Null
