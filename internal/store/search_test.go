@@ -235,6 +235,54 @@ func TestResolveSemanticCandidatesCollapsesPhotoDuplicatesBeforeLimit(t *testing
 	assert.False(t, resolution.Truncated)
 }
 
+func TestResolveSemanticCandidatesKeepsIndexedPhotoDuplicate(t *testing.T) {
+	t.Parallel()
+	s, _, profile, _ := newEmbeddingCatalogFixture(t)
+	older, err := s.CreateFile(t.Context(), s.RootID(), "older-unindexed.jpg",
+		catalogSourceHash, int64(len(catalogBlobContents[catalogSourceHash])), "image/jpeg")
+	require.NoError(t, err)
+	indexed, err := s.CreateFile(t.Context(), s.RootID(), "newer-indexed.jpg",
+		catalogSourceHash, int64(len(catalogBlobContents[catalogSourceHash])), "image/jpeg")
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE nodes SET modified_at=? WHERE id=?`,
+		"2026-01-01T00:00:00.000000000Z", older.ID)
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE nodes SET modified_at=? WHERE id=?`,
+		"2026-01-02T00:00:00.000000000Z", indexed.ID)
+	require.NoError(t, err)
+
+	record := embeddingSetFixture(s, indexed.CurrentVersionID, profile.Fingerprint,
+		document.EmbeddingInputOriginalFile, "optional", "")
+	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
+	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
+		FencingToken: 1,
+		Key: EmbeddingHeadKey{ContentVersionID: indexed.CurrentVersionID,
+			BindingID: record.BindingID, InputKind: record.InputKind},
+		SetID: record.ID, VectorSpaceID: record.VectorSpace.ID,
+		ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
+	}))
+
+	scope := PhotoBrowseRequest{Query: query.Query{V: 1, Syntax: "simple", Mode: "lexical",
+		Sort: query.Sort{Field: "name", Direction: "asc"}}}
+	lexicalQuery := scope.Query
+	lexicalQuery.Filters.CollapseDuplicates = true
+	options := SearchOptions{PhotoScope: &scope, PhotoLexicalQuery: &lexicalQuery}
+	source, _, _, annRows, err := s.semanticSearchAuthorityFence(t.Context(), profile.Fingerprint,
+		record.BindingID, record.InputKind, record.VectorSpace.ID, options, nil)
+	require.NoError(t, err)
+	require.Len(t, annRows, 1, "the index must retain an eligible duplicate when the first representative has no vector")
+	assert.Equal(t, indexed.CurrentVersionID, annRows[0].InputKey)
+
+	resolution, err := s.ResolveSemanticCandidates(t.Context(), profile.Fingerprint, record.BindingID,
+		record.InputKind, record.VectorSpace.ID, source.ManifestChecksum,
+		[]vectorindex.Neighbor{{SetID: record.VectorSet.ID, InputKey: indexed.CurrentVersionID,
+			InputChecksum: record.InputGeneration.Inputs[0].RenderedChecksum, Score: 0.9}},
+		1, options, nil)
+	require.NoError(t, err)
+	require.Len(t, resolution.Candidates, 1)
+	assert.Equal(t, indexed.ID, resolution.Candidates[0].NodeID)
+}
+
 func TestResolveSemanticCandidatesReturnsOnlyCurrentScopedHeads(t *testing.T) {
 	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)

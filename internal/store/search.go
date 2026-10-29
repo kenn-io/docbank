@@ -361,7 +361,6 @@ type SearchOptions struct {
 	PhotoLexicalQuery *querypkg.Query
 	photoFilter       compiledQueryFragment
 	photoLexical      compiledQueryFragment
-	photoSemantic     compiledQueryFragment
 	SelectedBuilds    []SearchSelectedBuild
 	TagID             string
 	MIMEType          string
@@ -638,6 +637,7 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 // Retrieval resolves rendition-chunk text from the exact retained input.
 type SemanticSearchCandidate struct {
 	BlobHash          string
+	modifiedAt        string
 	VaultID           string
 	NodeID            int64
 	NodeRevision      int64
@@ -775,9 +775,10 @@ func (s *Store) semanticSearchAuthorityFence(ctx context.Context, profileFingerp
 		if err != nil {
 			return err
 		}
-		filterSQL, filterArgs := semanticEligibilityFilterSQL(opts)
+		filterSQL, filterArgs := searchFilterSQL(opts)
 		eligible, err := loadSemanticEligibility(ctx, tx, profileFingerprint, bindingID,
-			inputKind, vectorSpaceID, filterSQL, filterArgs)
+			inputKind, vectorSpaceID, filterSQL, filterArgs,
+			photoSearchCollapsesDuplicates(opts))
 		if err != nil {
 			return err
 		}
@@ -847,7 +848,7 @@ func (s *Store) ResolveSemanticCandidates(ctx context.Context, profileFingerprin
 	}
 	var result SemanticSearchResolution
 	err = s.withSearchOptionsTx(ctx, normalized, func(tx *sql.Tx, normalized SearchOptions) error {
-		filterSQL, filterArgs := semanticEligibilityFilterSQL(normalized)
+		filterSQL, filterArgs := searchFilterSQL(normalized)
 		current, captureErr := captureVectorIndexSourceTx(ctx, tx, vectorSpaceID)
 		if captureErr != nil {
 			if errors.Is(captureErr, ErrNotFound) {
@@ -865,7 +866,8 @@ func (s *Store) ResolveSemanticCandidates(ctx context.Context, profileFingerprin
 			return err
 		}
 		eligible, loadErr := loadSemanticEligibility(ctx, tx, profileFingerprint, bindingID,
-			inputKind, vectorSpaceID, filterSQL, filterArgs)
+			inputKind, vectorSpaceID, filterSQL, filterArgs,
+			photoSearchCollapsesDuplicates(normalized))
 		if loadErr != nil {
 			return loadErr
 		}
@@ -919,12 +921,35 @@ type semanticEligibilityKey struct {
 // active vector-space catalog (at most one million rows), not by neighbor rank.
 func loadSemanticEligibility(ctx context.Context, tx metadataQuerier, profileFingerprint, bindingID string,
 	inputKind document.EmbeddingInputKind, vectorSpaceID, filterSQL string, filterArgs []any,
+	collapseDuplicates bool,
 ) (_ map[semanticEligibilityKey]SemanticSearchCandidate, retErr error) {
-	members, err := loadSemanticMemberships(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID, filterSQL, filterArgs)
+	members, err := loadSemanticMemberships(ctx, tx, profileFingerprint, bindingID,
+		inputKind, vectorSpaceID, filterSQL, filterArgs)
 	if err != nil {
 		return nil, err
 	}
 	eligible := make(map[semanticEligibilityKey]SemanticSearchCandidate, len(members))
+	if collapseDuplicates {
+		// Choose among current embedding candidates so an unindexed copy cannot hide an indexed one.
+		representatives := make(map[string]SemanticSearchCandidate)
+		for _, entries := range members {
+			for _, entry := range entries {
+				current, exists := representatives[entry.BlobHash]
+				if !exists || entry.modifiedAt < current.modifiedAt ||
+					(entry.modifiedAt == current.modifiedAt && entry.NodeID < current.NodeID) {
+					representatives[entry.BlobHash] = entry
+				}
+			}
+		}
+		for key, entries := range members {
+			for _, entry := range entries {
+				if entry.NodeID == representatives[entry.BlobHash].NodeID {
+					eligible[key] = entry
+				}
+			}
+		}
+		return eligible, nil
+	}
 	for key, entries := range members {
 		eligible[key] = entries[len(entries)-1]
 	}
@@ -940,7 +965,7 @@ func loadSemanticMemberships(ctx context.Context, tx metadataQuerier, profileFin
 			evr.vector_set_id,evr.input_id,evr.checksum,
 			COALESCE(ra.build_id,''),COALESCE(eig.generation_blob_hash,''),
 			eig.generation_encoded_size,eig.generation_checksum,eig.evidence_fingerprint,
-			COALESCE(evidence_blob.size,0),eig.input_count,cv.blob_hash
+			COALESCE(evidence_blob.size,0),eig.input_count,cv.blob_hash,n.modified_at
 		FROM `+nodeFrom+`
 		JOIN embedding_sets es ON es.content_version_id=cv.version_id
 		JOIN embedding_heads eh ON eh.content_version_id=es.content_version_id
@@ -974,7 +999,7 @@ func loadSemanticMemberships(ctx context.Context, tx metadataQuerier, profileFin
 			&entry.MediaEvidence.BuildID, &entry.MediaEvidence.GenerationBlobHash,
 			&entry.MediaEvidence.GenerationEncodedSize, &entry.MediaEvidence.GenerationChecksum,
 			&entry.MediaEvidence.EvidenceFingerprint, &entry.MediaEvidence.EvidenceEncodedSize,
-			&entry.MediaEvidence.InputCount, &entry.BlobHash); err != nil {
+			&entry.MediaEvidence.InputCount, &entry.BlobHash, &entry.modifiedAt); err != nil {
 			return nil, err
 		}
 		eligible[key] = append(eligible[key], entry)
@@ -2258,14 +2283,6 @@ func (s *Store) withSearchOptionsTx(ctx context.Context, opts SearchOptions, fn 
 				if opts.photoLexical, err = photoSearchFragment(ctx, tx, request); err != nil {
 					return err
 				}
-				if opts.PhotoLexicalQuery.Filters.CollapseDuplicates {
-					// Collapse the semantic lane before ANN limits without narrowing lexical revalidation.
-					request.Query = opts.PhotoScope.Query
-					request.Query.Filters.CollapseDuplicates = true
-					if opts.photoSemantic, err = photoSearchFragment(ctx, tx, request); err != nil {
-						return err
-					}
-				}
 			}
 		}
 
@@ -2507,13 +2524,9 @@ func searchFilterSQL(opts SearchOptions) (string, []any) {
 	return strings.Join(clauses, "\n"), args
 }
 
-func semanticEligibilityFilterSQL(opts SearchOptions) (string, []any) {
-	filterSQL, args := searchFilterSQL(opts)
-	if opts.photoSemantic.sql != "" {
-		filterSQL += ` AND n.id IN (` + opts.photoSemantic.sql + `)`
-		args = append(args, opts.photoSemantic.args...)
-	}
-	return filterSQL, args
+func photoSearchCollapsesDuplicates(opts SearchOptions) bool {
+	return opts.PhotoScope != nil && opts.PhotoLexicalQuery != nil &&
+		opts.PhotoLexicalQuery.Filters.CollapseDuplicates
 }
 
 // NormalizeSearchTimeBounds accepts optional absolute RFC3339 timestamps and
