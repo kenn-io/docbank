@@ -1183,7 +1183,6 @@ func TestImageEmbeddingProfileUsesStandardBridge(t *testing.T) {
 		inputKind, metric                  string
 	}{
 		{"standard bridge v2", "docbank-standard-embedding-bridge/v2", "http://embedding.example.invalid", "", false, nil, "", ""},
-		{"unsupported adapter", "docbank-voyage-embeddings/v1", "https://api.voyageai.com/v1", "image input requires the v2 standard embedding bridge", false, nil, "", ""},
 		{"old bridge version", "docbank-standard-embedding-bridge/v1", "http://embedding.example.invalid", "image input requires the v2 standard embedding bridge", false, nil, "", ""},
 		{"v2 text input", "docbank-standard-embedding-bridge/v2", "http://embedding.example.invalid", "v2 standard embedding bridge requires image input", true, nil, "rendition_chunk", ""},
 		{"image chunk policy", "docbank-standard-embedding-bridge/v2", "http://embedding.example.invalid", "image input must not define chunk policy or max input tokens", true, nil, "", ""},

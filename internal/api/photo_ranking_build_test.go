@@ -143,6 +143,8 @@ func TestPhotoRankingUsesSnapshotAdmissionAndDeadline(t *testing.T) {
 					deadlines = append(deadlines, deadline)
 				case response := <-done:
 					t.Fatalf("request returned before provider execution: %d %s", response.Code, response.Body.String())
+				case <-time.After(5 * time.Second):
+					t.Fatal("concurrent photo request did not reach provider execution")
 				}
 			}
 			close(release)

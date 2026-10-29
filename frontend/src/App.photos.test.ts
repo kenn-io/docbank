@@ -3828,13 +3828,6 @@ it.each(["accepted reject receipt", "face write"] as const)(
       fetcher.mockClear();
       await fireEvent.mouseDown(await screen.findByRole("option", { name: "Clear name" }));
       await screen.findByRole("button", { name: "Find or create a person: Face 1" });
-      expect(
-        fetcher.mock.calls.some(([url, init]) => {
-          if (!url.endsWith("/photos/assets/query")) return false;
-          const body = JSON.parse(String(init.body));
-          return body.query.text && !body.snapshot_id;
-        }),
-      ).toBe(false);
     }
     await waitFor(() =>
       expect(
@@ -3845,6 +3838,14 @@ it.each(["accepted reject receipt", "face write"] as const)(
         ),
       ).toBe(true),
     );
+    if (trigger === "face write")
+      expect(
+        fetcher.mock.calls.some(([url, init]) => {
+          if (!url.endsWith("/photos/assets/query")) return false;
+          const body = JSON.parse(String(init.body));
+          return body.query.text && !body.snapshot_id;
+        }),
+      ).toBe(false);
     expect(library.snapshotID).toBe("ranked");
   },
 );

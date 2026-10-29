@@ -3409,7 +3409,7 @@ it.each([undefined, "map"] as const)(
   },
 );
 
-it("blank Meaning query resets to Metadata", async () => {
+it("clearing a Meaning search returns to Metadata", async () => {
   const read = vi.spyOn(api, "listPhotoAssets").mockResolvedValue({
     items: [],
     total: 0,

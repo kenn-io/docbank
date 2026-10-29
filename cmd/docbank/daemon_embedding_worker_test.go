@@ -155,7 +155,7 @@ func TestStartEmbeddingWorkerIfReadyUsesSupervisorCancellation(t *testing.T) {
 	require.ErrorIs(t, err, want)
 }
 
-func TestConfigureEmbeddingRuntimesDefersMissingCredentialUntilSelectedOperation(t *testing.T) {
+func TestConfigureEmbeddingRuntimesSharesDescriptorAndDefersMissingCredential(t *testing.T) {
 	serverRequests := &atomic.Int64{}
 	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		serverRequests.Add(1)

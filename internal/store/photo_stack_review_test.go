@@ -123,7 +123,7 @@ func TestPhotoStackProjectionReaderPropagatesDatabaseAndCancellationErrors(t *te
 	}
 }
 
-func TestReviewNewestStackBoundsHistoryReads(t *testing.T) {
+func TestPhotoStackNewestComponentBoundsHistoryReads(t *testing.T) {
 	t.Parallel()
 	for _, indexed := range []bool{true, false} {
 		t.Run(fmt.Sprintf("indexed=%t", indexed), func(t *testing.T) {
