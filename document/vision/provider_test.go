@@ -132,6 +132,7 @@ func TestRenderSendsImageBytesOnce(t *testing.T) {
 				assert.Equal(t, "synthetic-vision", body.Model)
 				if tc.task == document.FaceDetectionProviderID {
 					assert.Contains(t, body.Messages[0].Content[0].Text, "Find every visible face")
+					assert.Contains(t, body.Messages[0].Content[0].Text, "strictly valid JSON, no markdown or commentary:")
 				}
 				encoded := strings.TrimPrefix(body.Messages[0].Content[1].ImageURL.URL, "data:image/jpeg;base64,")
 				actual, err := base64.StdEncoding.DecodeString(encoded)

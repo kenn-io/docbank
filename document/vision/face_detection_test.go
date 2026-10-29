@@ -26,6 +26,7 @@ func TestParseFaces(t *testing.T) {
 		{name: "wrong item types among valid faces", raw: `{"faces":[null,42,"bad",` + valid + `]}`, want: validFace},
 		{name: "empty", raw: `{"faces":[]}`},
 		{name: "fenced", raw: "```json\n" + `{"faces":[]}` + "\n```"},
+		{name: "leading commentary", raw: "Here are the faces:\n" + `{"faces":[]}`, fails: true},
 		{name: "trailing object", raw: `{"faces":[]} {"faces":[`, fails: true},
 		{name: "missing", raw: `{"caption":"portrait"}`, fails: true},
 		{name: "null array", raw: `{"faces":null}`, fails: true},
