@@ -243,17 +243,26 @@ func TestPhotoFaceDetectionLooseManualBox(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name  string
+		saved document.FaceBox
 		boxes []document.FaceBox
 		want  int
+		named bool
 	}{
-		{"one face inside", []document.FaceBox{{X: .475, Y: .475, Width: .05, Height: .05}}, 1},
-		{"two faces inside", []document.FaceBox{{X: .43, Y: .43, Width: .05, Height: .05}, {X: .52, Y: .52, Width: .05, Height: .05}}, 3},
+		{"one face inside", document.FaceBox{X: .425, Y: .425, Width: .15, Height: .15}, []document.FaceBox{{X: .475, Y: .475, Width: .05, Height: .05}}, 1, false},
+		{"two faces inside", document.FaceBox{X: .425, Y: .425, Width: .15, Height: .15}, []document.FaceBox{{X: .43, Y: .43, Width: .05, Height: .05}, {X: .52, Y: .52, Width: .05, Height: .05}}, 3, false},
+		{"tight named box inside observation", document.FaceBox{X: .4, Y: .4, Width: .1, Height: .1}, []document.FaceBox{{X: .35, Y: .35, Width: .3, Height: .3}}, 1, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := newTestStore(t)
 			ctx := t.Context()
 			node := browsePhotoNode(t, s, "portrait.jpg", fakeHash("a1"), "image/jpeg")
-			manual, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.New().String(), document.FaceBox{X: .425, Y: .425, Width: .15, Height: .15}, "")
+			personID := ""
+			if tc.named {
+				person, err := s.CreatePerson(ctx, "Ada", "operator")
+				require.NoError(t, err)
+				personID = person.PersonID
+			}
+			manual, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.New().String(), tc.saved, personID)
 			require.NoError(t, err)
 			observations := make([]document.FaceObservation, len(tc.boxes))
 			for i, box := range tc.boxes {

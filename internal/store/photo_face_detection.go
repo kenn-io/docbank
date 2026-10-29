@@ -28,8 +28,7 @@ func faceScanSettledTx(ctx context.Context, tx *sql.Tx, version, detector string
 func protectedDetectionFacesTx(ctx context.Context, tx *sql.Tx, version string) (map[string]bool, error) {
 	protected := map[string]bool{}
 	rows, err := tx.QueryContext(ctx, `SELECT face_id FROM person_candidate_faces WHERE content_version_id=?
- UNION SELECT json_extract(j.value,'$.face_id') FROM photo_change_receipts r INDEXED BY photo_change_receipts_face_version,json_each(r.before_json,'$.faces') j WHERE r.operation='face_decision' AND json_extract(r.before_json,'$.content_version_id')=?
- UNION SELECT json_extract(j.value,'$.face_id') FROM photo_change_receipts r INDEXED BY photo_change_receipts_face_version,json_each(r.after_json,'$.after.faces') j WHERE r.operation='face_decision' AND json_extract(r.before_json,'$.content_version_id')=?`, version, version, version)
+ UNION SELECT json_extract(j.value,'$.face_id') FROM photo_change_receipts r INDEXED BY photo_change_receipts_face_version,json_each(r.before_json,'$.faces') j WHERE r.operation='face_decision' AND json_extract(r.before_json,'$.content_version_id')=?`, version, version)
 	if err != nil {
 		return nil, err
 	}
@@ -52,21 +51,18 @@ func faceBoxOverlap(a, b document.FaceBox) float64 {
 }
 
 // faceMatchScores scores each observation against a saved box by IoU, except
-// that the sole observation fully inside the box scores 1, so a loose box
-// claims its one face; multiple contained observations keep their IoU scores.
+// that the sole observation fully inside or around the box scores 1, so a box
+// claims its one nested face; multiple nested observations keep IoU scores.
 func faceMatchScores(box document.FaceBox, observations []document.FaceObservation) []float64 {
 	inside := func(o document.FaceObservation) bool {
-		return o.Box.X >= box.X && o.Box.Y >= box.Y && o.Box.X+o.Box.Width <= box.X+box.Width && o.Box.Y+o.Box.Height <= box.Y+box.Height
-	}
-	sole := slices.IndexFunc(observations, inside)
-	if sole >= 0 && slices.ContainsFunc(observations[sole+1:], inside) {
-		sole = -1
+		return o.Box.X >= box.X && o.Box.Y >= box.Y && o.Box.X+o.Box.Width <= box.X+box.Width && o.Box.Y+o.Box.Height <= box.Y+box.Height ||
+			box.X >= o.Box.X && box.Y >= o.Box.Y && box.X+box.Width <= o.Box.X+o.Box.Width && box.Y+box.Height <= o.Box.Y+o.Box.Height
 	}
 	scores := make([]float64, len(observations))
 	for j, o := range observations {
 		scores[j] = faceBoxOverlap(box, o.Box)
 	}
-	if sole >= 0 {
+	if sole := slices.IndexFunc(observations, inside); sole >= 0 && !slices.ContainsFunc(observations[sole+1:], inside) {
 		scores[sole] = 1
 	}
 	return scores
