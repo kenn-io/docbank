@@ -300,6 +300,42 @@ func TestPhotoDescriptionFlow(t *testing.T) {
 	require.Equal(t, document.PhotoDescription{Caption: "A white panorama.", Tags: []string{"panorama", "harbor"}, VisibleText: "HELLO"}, suggestions[0].Value)
 }
 
+func TestPhotoDescriptionPlanDuringPreviewPublication(t *testing.T) {
+	t.Parallel()
+	f := newPhotoDescriptionFixture(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+	defer cancel()
+	preview, reason, err := photoDescriptionPreview(ctx, f.catalog, f.node.CurrentVersionID)
+	require.NoError(t, err)
+	require.Empty(t, reason)
+	output := preview.Generation.Preview.Output
+
+	for i := range 64 {
+		node, err := f.catalog.CreateFile(ctx, f.catalog.RootID(), fmt.Sprintf("photo-%d.jpg", i), f.written.Hash, f.written.Size, "image/jpeg", processingBlobPhysical(t, f.written))
+		require.NoError(t, err)
+		selector := Selector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "vision"}
+		done := make(chan error, 1)
+		go func() {
+			_, err := EnsureVisualPreview(ctx, f.catalog, f.blobs, node.CurrentVersionID, f.recipe)
+			done <- err
+		}()
+		var plan Plan
+		var planErr error
+		for {
+			plan, planErr = f.service.Plan(ctx, selector)
+			if planErr != nil || plan.RenditionIneligibleReason == "" {
+				break
+			}
+		}
+		require.NoError(t, <-done)
+		require.NoError(t, planErr)
+		require.Equal(t, output.Size, plan.Estimate.SourceBytes, "an eligible plan includes the published preview")
+		ready, err := f.service.Plan(ctx, selector)
+		require.NoError(t, err)
+		require.Equal(t, ready.Fingerprint, plan.Fingerprint, "publication cannot invalidate a plan that already reports the photo eligible")
+	}
+}
+
 func TestPhotoDescriptionJobFailureIsLogged(t *testing.T) {
 	t.Parallel()
 	f := newPhotoDescriptionFixture(t)
