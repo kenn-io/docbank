@@ -7,6 +7,7 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"time"
+
 	"uuid"
 
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
@@ -30503,7 +30504,7 @@ type SetBackupScheduleRequest = api.SetBackupScheduleRequest
 type SetCollectionLabelRequest struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema *string `json:"$schema,omitempty"`
-	Label  *string `json:"label,omitempty"`
+	Label  *string `json:"label"`
 }
 
 type SetLaneControlRequest = api.SetLaneControlRequest

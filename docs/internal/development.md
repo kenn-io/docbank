@@ -40,7 +40,9 @@ Review and commit the schema and clients together; do not edit generated files.
 
 The Go generator config and templates live in `scripts/oapi-codegen/`; frontend
 generation uses `frontend/orval.config.ts`. Paths in the Go generator config
-are relative to the repository root. `make openapi` regenerates only the schema
+are relative to the repository root. The overlay
+`scripts/oapi-codegen/uuid.overlay.yaml` generates `format: uuid` values as the
+standard library `uuid.UUID`. `make openapi` regenerates only the schema
 and needs no running vault. The rendition and embedding bridge schemas remain
 with their independent contracts in `document/bridge/` and
 `document/embeddingbridge/`.
