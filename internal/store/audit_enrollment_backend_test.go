@@ -60,6 +60,16 @@ func TestAuditEnrollmentPhotosPostgres(t *testing.T) {
 	require.NoError(t, err)
 	originals, err := source.Mkdir(ctx, source.RootID(), "Originals")
 	require.NoError(t, err)
+	run, err := source.BeginIngest(ctx, "filesystem", "Synthetic audit fixture")
+	require.NoError(t, err)
+	report, _, err := source.IngestFileWithMembership(ctx, run, scope.ID, "report.txt", fakeHash("b8"), 4, "text/plain", "/synthetic/report.txt", "")
+	require.NoError(t, err)
+	_, err = source.PurgeDerivatives(ctx, PurgeRequest{ContentVersionIDs: []string{report.CurrentVersionID}})
+	require.NoError(t, err)
+	_, _, err = source.Trash(ctx, report.ID, UnconditionalRev)
+	require.NoError(t, err)
+	_, err = source.SetPhotoSettings(ctx, 1, PhotoSettingsUpdate{BurstGapSeconds: new(3)})
+	require.NoError(t, err)
 	for _, file := range asset.Files {
 		parent := originals.ID
 		if file.Role == PhotoRoleSidecar {
@@ -107,6 +117,7 @@ func TestAuditEnrollmentPhotosPostgres(t *testing.T) {
 		}
 		copyStoreCatalogFixture(t, source, setup, []string{
 			"nodes", "blobs", "blob_checksums", "content_versions", "ingests", "provenance",
+			"provenance_version_bindings", "derivative_purge_suppressions", "photo_library_settings",
 			"source_metadata_generations", "source_metadata_heads", "photo_technical_metadata",
 			"tags", "node_tags", "photo_assets", "photo_files", "photo_sets", "photo_change_receipts",
 			"audit_records", "audit_authority", "audit_scopes", "audit_baselines", "audit_memberships", "photo_xmp_unsettled",
@@ -121,7 +132,9 @@ func TestAuditEnrollmentPhotosPostgres(t *testing.T) {
 		if target != scope.ID {
 			require.NotContains(t, beforeQueue, asset.ID, "the previous receipt has settled before membership changes")
 		}
-		plan, err := source.PreviewInitialAudit(ctx, target, "cli", nil)
+		path, err := source.Path(ctx, target)
+		require.NoError(t, err)
+		plan, err := destination.PreviewInitialAuditPath(ctx, path, "cli", nil)
 		require.NoError(t, err)
 		var initial initialAuditEnrollmentSet
 		var additional additionalAuditEnrollmentSet
@@ -146,11 +159,24 @@ func TestAuditEnrollmentPhotosPostgres(t *testing.T) {
 			err := destination.withStorageTx(ctx, func(tx *sql.Tx) error {
 				var err error
 				if plan.initial {
-					err = destination.persistInitialAuditEnrollment(ctx, tx, initial)
+					set, buildErr := destination.buildInitialAuditEnrollment(ctx, tx, plan.input)
+					require.NoError(t, buildErr)
+					require.Equal(t, initial, set)
+					err = destination.persistInitialAuditEnrollment(ctx, tx, set)
 				} else {
-					err = destination.persistAdditionalAuditEnrollment(ctx, tx, additional)
+					set, buildErr := destination.buildAdditionalAuditEnrollment(ctx, tx, plan.input)
+					require.NoError(t, buildErr)
+					require.Equal(t, additional, set)
+					err = destination.persistAdditionalAuditEnrollment(ctx, tx, set)
 				}
 				if err != nil {
+					return err
+				}
+				sequence, err := destination.auditNodeSequence(ctx, tx)
+				if err != nil {
+					return err
+				}
+				if err := validateAuditAuthority(ctx, tx, destination.vaultID, sequence); err != nil {
 					return err
 				}
 				if !commit {
@@ -193,5 +219,13 @@ func TestAuditEnrollmentPhotosPostgres(t *testing.T) {
 			}
 			after = want[0].Cursor()
 		}
+		_, err = destination.PreviewInitialAudit(ctx, target, "cli", nil)
+		require.ErrorIs(t, err, ErrAuditScopeOverlap)
 	}
+	// A well-formed projection can still disagree with canonical history.
+	// Additional preview must validate that history before proposing a scope.
+	_, err = setup.ExecContext(ctx, `UPDATE documents.audit_baselines SET target_node_id=$1 WHERE target_node_id=$2`, source.RootID(), scope.ID)
+	require.NoError(t, err)
+	_, err = destination.PreviewInitialAudit(ctx, source.RootID(), "cli", nil)
+	require.ErrorContains(t, err, "audit baseline relation does not match its scope and operation")
 }
