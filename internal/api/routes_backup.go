@@ -54,6 +54,7 @@ type backupRestoreRequest struct {
 
 func registerBackupRoutes(api huma.API, d Deps, g *gate) {
 	registerBackupCleanupRoutes(api, d)
+	registerBackupScheduleRoutes(api, d, g)
 	type initOutput struct{ Body BackupRepository }
 	huma.Register(api, huma.Operation{
 		OperationID: "initBackupRepository", Method: http.MethodPost, Path: "/api/v1/backup/init",

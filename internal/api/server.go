@@ -67,6 +67,7 @@ type Deps struct {
 	ShutdownToken         string           // "" disables the shutdown route
 	Shutdown              func()           // called (async) by the shutdown route
 	Tracker               *ActivityTracker // nil → no idle tracking
+	BackupScheduleWake    chan struct{}    // shared one-slot signal for committed schedule changes
 	Jobs                  *jobs.Supervisor // nil → no registered background jobs
 	Gate                  *OperationGate   // nil → a server-private gate
 	VerifyPage            VerifyPageFunc   // nil → shared bounded maintenance service
@@ -400,6 +401,7 @@ func markRevisionPreconditionsRequired(api huma.API) {
 		{"/api/v1/photos/albums/{set_id}/members/add", http.MethodPost},
 		{"/api/v1/photos/albums/{set_id}/members/remove", http.MethodPost},
 		{"/api/v1/photos/settings", http.MethodPut},
+		{"/api/v1/backup/schedule", http.MethodPut},
 		{"/api/v1/people/by-id/{person_id}", http.MethodPatch},
 		{"/api/v1/people/by-id/{person_id}/retire", http.MethodPost},
 		{"/api/v1/people/by-id/{person_id}/merge", http.MethodPost},

@@ -2,7 +2,9 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/docbank/internal/api"
@@ -267,10 +269,12 @@ var photoDisplayCmd = &cobra.Command{
 }
 
 var photoSettingsCmd = &cobra.Command{
-	Long: `show reads the inherited RAW/image display preference; set overrides it;
-reset removes the override. Output: JSON.`,
+	Long: `Set raw or image to change the display preference, or set
+hidden_unlock_lifetime to a duration such as 15m. Reset hidden_unlock_lifetime
+to return to five minutes. Backup schedule overrides live under
+"docbank backup schedule". Output: JSON.`,
 	Use:   "settings",
-	Short: "Inspect or change the inherited display preference",
+	Short: "Inspect or change photo settings",
 	Args:  cobra.NoArgs,
 	RunE:  func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 }
@@ -278,7 +282,8 @@ reset removes the override. Output: JSON.`,
 var photoSettingsShowCmd = &cobra.Command{
 	Example: `  docbank photos settings show`,
 	Use:     "show",
-	Short:   "Show photo settings",
+	Short:   "Show stored photo settings",
+	Long:    `An absent Hidden lifetime override uses five minutes.`,
 	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		c, err := daemonconn.Ensure(cmd.Context())
@@ -295,9 +300,9 @@ var photoSettingsShowCmd = &cobra.Command{
 
 var photoSettingsSetCmd = &cobra.Command{
 	Example: `  docbank photos settings set image`,
-	Use:     "set [raw|image]",
-	Short:   "Set the display preference or burst gap",
-	Args:    cobra.MaximumNArgs(1),
+	Use:     "set [raw|image|key] [value]",
+	Short:   "Set a photo setting",
+	Args:    cobra.MaximumNArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := checkPhotoRevisionFlag(cmd); err != nil {
 			return err
@@ -306,37 +311,47 @@ var photoSettingsSetCmd = &cobra.Command{
 			if !cmd.Flags().Changed("burst-gap-seconds") {
 				return usageError(errors.New("provide a preference or --burst-gap-seconds"))
 			}
-			return writePhotoSettings(cmd, nil)
+			return writePhotoSettings(cmd, api.SetPhotoSettingsRequest{})
+		}
+		if len(args) == 2 {
+			if args[0] == "raw" || args[0] == "image" {
+				return usageError(fmt.Errorf("unexpected argument %q after preference %q", args[1], args[0]))
+			}
+			return writePhotoOverride(cmd, args[0], &args[1])
+		}
+		if args[0] == hiddenUnlockLifetimeKey {
+			return usageError(fmt.Errorf("%s requires a value", args[0]))
 		}
 		if args[0] != "raw" && args[0] != "image" {
 			return usageError(errors.New("preference must be raw or image"))
 		}
-		return writePhotoSettings(cmd, &args[0])
+		return writePhotoSettings(cmd, api.SetPhotoSettingsRequest{Preference: &args[0]})
 	},
 }
 
 var photoSettingsResetCmd = &cobra.Command{
 	Example: `  docbank photos settings reset`,
-	Use:     "reset",
-	Short:   "Reset the display preference",
-	Args:    cobra.NoArgs,
-	RunE: func(cmd *cobra.Command, _ []string) error {
+	Use:     "reset [key]",
+	Short:   "Reset a photo setting",
+	Args:    cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := checkPhotoRevisionFlag(cmd); err != nil {
 			return err
 		}
-		return writePhotoSettings(cmd, nil)
+		if len(args) == 1 {
+			return writePhotoOverride(cmd, args[0], nil)
+		}
+		return writePhotoSettings(cmd, api.SetPhotoSettingsRequest{ResetPreference: true})
 	},
 }
 
-// writePhotoSettings uses the shared settings revision for gap and preference writes.
-func writePhotoSettings(cmd *cobra.Command, preference *string) error {
-	var gap *int
+func writePhotoSettings(cmd *cobra.Command, request api.SetPhotoSettingsRequest) error {
 	if cmd.Flags().Changed("burst-gap-seconds") {
 		value, _ := cmd.Flags().GetInt("burst-gap-seconds")
 		if value < 1 || value > 30 {
 			return usageError(errors.New("burst gap must be 1 to 30 seconds"))
 		}
-		gap = &value
+		request.BurstGapSeconds = &value
 	}
 	c, err := daemonconn.Ensure(cmd.Context())
 	if err != nil {
@@ -350,7 +365,7 @@ func writePhotoSettings(cmd *cobra.Command, preference *string) error {
 		return &settings.Revision, nil
 	}
 	settings, err := withPhotoRevision(cmd, current, func(revision *int64) (api.PhotoSettings, error) {
-		return c.SetPhotoSettings(cmd.Context(), *revision, preference, gap)
+		return c.SetPhotoSettings(cmd.Context(), *revision, request)
 	})
 	if err != nil {
 		return err
@@ -433,4 +448,33 @@ func init() {
 		command.Flags().Int64Var(&photoRevision, "revision", 0, "expected asset or settings revision (default: current, retried once)")
 	}
 	photoPromoteCmd.Flags().Int64Var(&photoRevision, "revision", 0, "expected existing asset revision (default: current, retried once)")
+}
+
+const hiddenUnlockLifetimeKey = "hidden_unlock_lifetime"
+
+func writePhotoOverride(cmd *cobra.Command, key string, value *string) error {
+	if cmd.Flags().Changed("burst-gap-seconds") {
+		return usageError(errors.New("a setting key cannot be combined with --burst-gap-seconds"))
+	}
+	if key != hiddenUnlockLifetimeKey {
+		return usageError(fmt.Errorf("unknown setting %q; the only key is %s, and backup overrides use \"docbank backup schedule\"", key, hiddenUnlockLifetimeKey))
+	}
+	request := api.SetPhotoSettingsRequest{ResetHiddenUnlockLifetime: value == nil}
+	if value != nil {
+		seconds, err := wholeSeconds(*value)
+		if err != nil {
+			return err
+		}
+		request.HiddenUnlockLifetimeSeconds = &seconds
+	}
+	return writePhotoSettings(cmd, request)
+}
+
+// wholeSeconds parses a Go duration such as 15m or 1h into whole seconds.
+func wholeSeconds(value string) (int64, error) {
+	d, err := time.ParseDuration(value)
+	if err != nil || d%time.Second != 0 {
+		return 0, usageError(errors.New("setting requires a whole-second duration such as 15m or 1h"))
+	}
+	return int64(d / time.Second), nil
 }

@@ -230,8 +230,11 @@ exclude_patterns = [".syncthing.*.tmp", "*.sync-conflict-*"]
 - **`[backup] interval`**: schedules captures at this interval. `"0"` disables
   the schedule. An enabled schedule requires a configured `repo` and a positive
   `keep_last`. Values must be nonnegative; enabled intervals must be at least one minute.
+  A `docbank backup schedule set interval` override takes precedence over this
+  value, and `docbank backup schedule reset interval` returns control to `config.toml`.
 - **`[backup] keep_last`**: number of scheduled snapshots to retain after each
   capture. Values must be nonnegative. Manual snapshots remain outside this policy.
+  `docbank backup schedule set keep_last` overrides it at runtime.
 - **`[storage] pack_interval`**: schedules non-destructive packing of
   authorized loose blobs. `"0"` disables the schedule. A configured schedule
   runs once when the daemon starts and then at this interval.

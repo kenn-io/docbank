@@ -102,7 +102,7 @@ on a running daemon) and authenticates with `X-Api-Key` /
 | `POST /photos/assets/{asset_id}/trash` | atomically move every live photo member to recoverable trash | Implemented |
 | `PUT /photos/assets/{asset_id}/display` · `GET\|PUT /photos/settings` | set an asset display override or vault preference | Implemented |
 | `POST /photos/assets/{asset_id}/hide` · `POST /photos/assets/{asset_id}/unhide` | change Photos visibility under `If-Match` | Implemented |
-| `GET /photos/hidden` · `POST /photos/hidden/{setup,change,disable,unlock,lock,reset}` | manage the vault passcode and five-minute unlock | Implemented |
+| `GET /photos/hidden` · `POST /photos/hidden/{setup,change,disable,unlock,lock,reset}` | manage the vault passcode and configurable unlock lifetime | Implemented |
 | `POST /photos/checkouts/estimate` · `POST /photos/checkouts` | estimate or create writable photo copies; creation is loopback-only | Implemented |
 | `POST /photos/checkouts/{id}/scan` · `POST /photos/checkouts/{id}/commit` | inspect working edits or commit stable bytes as new versions under the recorded bases | Implemented |
 | `POST /photos/checkouts/{id}/rebind` | verify and bind a restored checkout folder; loopback-only | Implemented |
@@ -162,6 +162,7 @@ on a running daemon) and authenticates with `X-Api-Key` /
 | `GET /storage` · `POST /storage/pack` · `POST /storage/repack` | inspect usage / pack loose blobs / compact sparse packs | Implemented |
 | `GET /jobs` | inspect daemon-owned background tasks and terminal failures; a `running` job with `busy: false` is waiting for work or its next run, and clients show it as idle | Implemented |
 | `GET /watches` | inspect effective watched-inbox configuration and runner state | Implemented |
+| `GET\|PUT /backup/schedule` | inspect or override the scheduled interval and retention | Implemented |
 | `POST /backup/init` · `POST /backup/claim` · `POST /backup/snapshots` · `POST /backup/snapshots/stream` · `GET /backup/snapshots` | initialize or claim a repository / create with JSON or streamed progress / list snapshots | Implemented |
 
 ### Format capability coverage
@@ -1290,6 +1291,15 @@ each requested move.
 the repository identity and canonical path. `repo` may be omitted when
 `[backup] repo` is configured.
 
+`GET /backup/schedule` returns the runtime overrides `interval_seconds` and
+`keep_last`, when set, beside `effective_interval_seconds`,
+`effective_keep_last`, and the vault settings `revision`, also sent as `ETag`.
+`PUT /backup/schedule` requires `If-Match` and accepts `interval_seconds`,
+`reset_interval`, `keep_last`, and `reset_keep_last`. It rejects an empty body,
+`null`, and a value that would leave an enabled schedule invalid against
+`config.toml`. Both routes require the master API credential. The repository
+path is not a runtime override.
+
 `POST /backup/claim` accepts `{repo?, fingerprint?}` to assign a repository's
 history to this vault installation. Omit `fingerprint` to preview its `id`,
 `path`, `snapshot_count`, optional `newest_at`, `owned`, `takeover`, and
@@ -1598,7 +1608,7 @@ The endpoint returns an empty `receipt_id` and empty `before` and `after` arrays
 
 `POST /photos/assets/{asset_id}/hide` and `/unhide` require `If-Match` and return the asset and ETag. Interactive Photos reads and mutations of already-hidden assets require an unlock. Background imports continue updating hidden files and return ordinary import receipts. Hide requires configured credentials. Unhide of an already-hidden asset requires an unlock; a visible no-op still requires the current revision. Ordinary Documents reads retain file access.
 
-`GET /photos/hidden` returns `configured`, opaque equality token `change_id`, and optional `expires_at` and `locked_until`, each paired with whole seconds remaining in `expires_in` and `locked_for`. POST `setup`, `unlock` and `disable` accept `passcode`; `change` also accepts `new_passcode`. Lock and reset require the JSON body `{}`. Unlock sets the HttpOnly, SameSite=Strict `docbank-hidden-<SHA-256 of request host and port>` cookie for five minutes; loopback HTTP omits Secure. Lock revokes every session, as does revoking or ending any browser session. Disable verifies the passcode and atomically unhides assets; reset preserves hidden flags while clearing auth. Unlock and lock remain available under audit. Five failures in sixty seconds persist a five-minute lockout with `Retry-After`. The active Library or Hidden view checks access every two seconds, conceals its view and deletes cached previews on a changed `change_id`, on 401 or 403, after any Hidden read failure, or after three consecutive Library read failures, and refreshes before redisplay; HTTP 401 uses the browser session-expired flow. A browser window that has opened Photos queues a keepalive lock on tab hide after pending Hidden writes, including an in-flight unlock, and offers Retry lock after failure in any workspace. Hidden stays concealed until a lock succeeds. Page close sends an immediate keepalive lock and, when Hidden writes are pending, queues another after them; closing during an unlock remains best effort. On return, Library and the open album's photo list reload before redisplay. The Albums index keeps its album list. Documents snapshots remain valid.
+`GET /photos/hidden` returns `configured`, opaque equality token `change_id`, and optional `expires_at` and `locked_until`, each paired with whole seconds remaining in `expires_in` and `locked_for`. POST `setup`, `unlock` and `disable` accept `passcode`; `change` also accepts `new_passcode`. Lock and reset require the JSON body `{}`. Unlock sets the HttpOnly, SameSite=Strict `docbank-hidden-<SHA-256 of request host and port>` cookie for the configured lifetime, five minutes by default; loopback HTTP omits Secure. Lock revokes every session, as does revoking or ending any browser session. Disable verifies the passcode and atomically unhides assets; reset preserves hidden flags while clearing auth. Unlock and lock remain available under audit. Five failures in sixty seconds persist a five-minute lockout with `Retry-After`. The active Library or Hidden view checks access every two seconds, conceals its view and deletes cached previews on a changed `change_id`, on 401 or 403, after any Hidden read failure, or after three consecutive Library read failures, and refreshes before redisplay; HTTP 401 uses the browser session-expired flow. A browser window that has opened Photos queues a keepalive lock on tab hide after pending Hidden writes, including an in-flight unlock, and offers Retry lock after failure in any workspace. Hidden stays concealed until a lock succeeds. Page close sends an immediate keepalive lock and, when Hidden writes are pending, queues another after them; closing during an unlock remains best effort. On return, Library and the open album's photo list reload before redisplay. The Albums index keeps its album list. Documents snapshots remain valid.
 
 `GET /photos/assets/{asset_id}/previews/{generation_id}` returns complete verified JPEG bytes for an included asset's current display version, or an assigned source grid version when `person_id` is supplied. An unavailable or stale generation returns 404. Missing retained bytes return `photo_preview_unavailable`; failed byte verification returns `photo_preview_corrupt`. Success includes Content-Length, Content-Digest, the quoted generation ETag and `X-Content-Type-Options: nosniff`. Visible previews use `Cache-Control: private, no-cache`; hidden previews require an unlock and use `no-store`, including `304`. A matching `If-None-Match` returns bodyless `304` after checking current display eligibility, without reopening the blob. Excluded or replaced displays return `404` even with a matching validator. Responses also vary by Cookie. Browser sessions permit the exact list POST, timeline POST, `POST /photos/assets/flags`, `POST /photos/authored/prepare`, `POST /photos/authored/edit`, `POST /photos/authored/{receipt_id}/undo`, `POST /photos/authored/{file_id}/xmp`, preview GET with an optional `person_id`, `GET /photos/events`, hidden-state GET, interactive hidden POSTs and asset hide/unhide POSTs and `POST /photos/assets/{asset_id}/trash`, `POST /photos/rejects/preflight`, and `POST /photos/rejects/trash` with empty query strings. Reset requires the API key. Preview slot states are `missing`, `ready`, `unsupported` and `failed`; only ready results carry URLs. This read never generates a derivative.
 
@@ -1678,6 +1688,7 @@ and maintenance are exceptions:
 | `PUT\|DELETE /nodes/{id}/tags/{tag_id}` | required: target node revision; the tag revision also advances on a real assignment change |
 | `POST /photos/assets/{asset_id}/files`, `DELETE /photos/assets/{asset_id}/files/{file_id}`, `POST /photos/assets/{asset_id}/exclude`, `POST /photos/assets/{asset_id}/trash`, `PUT /photos/assets/{asset_id}/display`, `POST /photos/assets/{asset_id}/hide`, `POST /photos/assets/{asset_id}/unhide` | required: photo asset revision |
 | `PUT /photos/settings` | required: photo library settings revision |
+| `PUT /backup/schedule` | required: vault settings revision, shared with photo settings |
 | `POST /photos/rejects/trash` | body: each previewed target's `revision` and `member_revision`; no `If-Match` header |
 | `PATCH /people/by-id/{person_id}` | required: person revision |
 | `POST /people/by-id/{person_id}/retire` | required: person revision |

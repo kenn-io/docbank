@@ -102,9 +102,10 @@ func TestUpgradeReleasedV0160KeepsPhotoCheckoutState(t *testing.T) {
 			ctx := t.Context()
 			path := filepath.Join(t.TempDir(), "docbank.db")
 			db, legacy := newReleasedFixtureStore(t, path, driver.driver, schemaV0160SQL, 41)
-			asset := albumAsset(t, legacy, "photo.jpg")
+			node := createReleasedFixtureFile(t, legacy, "photo.jpg", fakeHash("a1"), 8, "image/jpeg")
+			seedReleasedPhotoAsset(t, db, node.ID)
 			checkout, operation, _, err := legacy.CreatePhotoCheckout(ctx,
-				PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", "directory-identity", 100)
+				PhotoCheckoutSelection{AssetIDs: []string{"40000000-0000-4000-8000-000000000001"}}, "checkout", "directory-identity", 100)
 			require.NoError(t, err)
 			entries, err := legacy.PhotoCheckoutEntries(ctx, checkout.ID)
 			require.NoError(t, err)
