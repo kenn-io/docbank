@@ -2,6 +2,8 @@ import { expect, test } from "@playwright/test";
 import path from "node:path";
 import { withPhotoFixture, output } from "./photo-workspace-fixture.js";
 
+test.skip(!output, "DOCBANK_PHOTOS_SCREENSHOT_DIR enables synthetic rotation proof");
+
 test("rotation suggestion in dark and light themes", async ({ page }) => {
   test.setTimeout(120_000);
   page.setDefaultTimeout(15000);
