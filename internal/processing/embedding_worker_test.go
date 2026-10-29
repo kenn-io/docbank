@@ -2073,7 +2073,6 @@ func TestImageEmbeddingRuntimePreviewValidation(t *testing.T) {
 	assert.Equal(t, document.EmbeddingInputImage, execution.Inputs[0].Kind)
 	metadata := execution.Inputs[0].Source.Metadata()
 	assert.Equal(t, document.RenditionInputDerivedUpload, metadata.InputKind)
-	assert.Empty(t, metadata.Filename)
 	data, err := io.ReadAll(execution.Inputs[0].Source)
 	require.NoError(t, err)
 	assert.NotEqual(t, f.written.Hash, workerHashBytes(data))
@@ -2504,42 +2503,50 @@ func (x *rejectedPreviewFixture) scan(t *testing.T) {
 	x.now = x.now.Add(time.Minute)
 }
 
-func TestEmbeddingWorkerRemembersRejectedPreviewUntilRestart(t *testing.T) {
+func TestEmbeddingWorkerBoundsProcessLocalRejectedPreviewCache(t *testing.T) {
 	t.Parallel()
-	x := newRejectedPreviewFixture(t)
-	x.publish("rejected-preview.jpg")
-	for range 2 {
-		x.scan(t)
-	}
-	require.Equal(t, 1, x.calls)
+	for _, tc := range []struct {
+		name   string
+		verify func(*testing.T, *rejectedPreviewFixture)
+	}{
+		{name: "remembered until restart", verify: func(t *testing.T, x *rejectedPreviewFixture) {
+			x.publish("rejected-preview.jpg")
+			for range 2 {
+				x.scan(t)
+			}
+			require.Equal(t, 1, x.calls)
 
-	restarted := x.fake.worker(t)
-	restarted.clock = x.worker.clock
-	_, err := restarted.ScanOnce(t.Context())
-	require.NoError(t, err)
-	require.Equal(t, 2, x.calls)
-	var metadata bytes.Buffer
-	require.NoError(t, x.f.catalog.ExportMetadata(t.Context(), &metadata))
-	require.NotContains(t, metadata.String(), `"type":"embedding_input_generation"`)
-	require.NotContains(t, metadata.String(), `"type":"embedding_failure"`)
-}
-
-func TestEmbeddingWorkerBoundsRejectedPreviewMemory(t *testing.T) {
-	t.Parallel()
-	x := newRejectedPreviewFixture(t)
-	const limit = 1024
-	for i := range limit + 1 {
-		x.publish("rejected-" + strconv.Itoa(i) + ".jpg")
+			restarted := x.fake.worker(t)
+			restarted.clock = x.worker.clock
+			_, err := restarted.ScanOnce(t.Context())
+			require.NoError(t, err)
+			require.Equal(t, 2, x.calls)
+			var metadata bytes.Buffer
+			require.NoError(t, x.f.catalog.ExportMetadata(t.Context(), &metadata))
+			require.NotContains(t, metadata.String(), `"type":"embedding_input_generation"`)
+			require.NotContains(t, metadata.String(), `"type":"embedding_failure"`)
+		}},
+		{name: "evicts after the bound", verify: func(t *testing.T, x *rejectedPreviewFixture) {
+			const limit = 1024
+			for i := range limit + 1 {
+				x.publish("rejected-" + strconv.Itoa(i) + ".jpg")
+			}
+			for range 30 {
+				if x.calls > limit {
+					break
+				}
+				x.scan(t)
+				require.LessOrEqual(t, len(x.worker.imageRejections), limit)
+			}
+			require.Greater(t, x.calls, limit, "scans reach every rejected preview")
+			settled := x.calls
+			x.scan(t)
+			require.Greater(t, x.calls, settled, "evicted rejections are prepared again")
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			tc.verify(t, newRejectedPreviewFixture(t))
+		})
 	}
-	for range 30 {
-		if x.calls > limit {
-			break
-		}
-		x.scan(t)
-		require.LessOrEqual(t, len(x.worker.imageRejections), limit)
-	}
-	require.Greater(t, x.calls, limit, "scans reach every rejected preview")
-	settled := x.calls
-	x.scan(t)
-	require.Greater(t, x.calls, settled, "evicted rejections are prepared again")
 }

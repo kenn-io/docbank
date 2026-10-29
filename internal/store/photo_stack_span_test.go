@@ -132,6 +132,44 @@ func TestPhotoStackPagingMatchesGroups(t *testing.T) {
 			}
 		})
 	}
+	t.Run("interleaved folders with equal timestamps across page boundaries", func(t *testing.T) {
+		t.Parallel()
+		s := newTestStore(t)
+		run, err := s.BeginIngest(t.Context(), "cli", "synthetic interleaved bursts")
+		require.NoError(t, err)
+		steps := []int{0, 1, 3, 2, 0, 1, 1, 3, 3, 2, 1, 0, 2, 3, 1, 2, 0, 3, 1, 1}
+		base := time.Date(2024, 6, 10, 12, 0, 0, 0, time.UTC)
+		var ids []string
+		for folder, offset := range []int{0, 1, 2} {
+			stamp := base.Add(time.Duration(offset) * time.Second)
+			for index := range steps {
+				stamp = stamp.Add(time.Duration(steps[(index+folder*7)%len(steps)]) * time.Second)
+				ids = append(ids, stackPhoto(t, s, run, fmt.Sprintf("/roll-%d/frame-%02d.jpg", folder, index),
+					stamp.Format(time.RFC3339), document.SourceMetadataPrecisionSecond))
+			}
+		}
+		groups, _, _, incomplete, err := s.PhotoStackGroups(t.Context(), ids, false, "")
+		require.NoError(t, err)
+		require.False(t, incomplete)
+		want := make([][]string, len(groups))
+		for index, group := range groups {
+			want[index] = slices.Sorted(slices.Values(group))
+		}
+		require.NotEmpty(t, want)
+		for _, size := range []int{1, 2, 3, 7, 50} {
+			for _, direction := range []string{"asc", "desc"} {
+				request := captureRequest(t, direction)
+				request.PageSize = size
+				items, stacks := stackPages(t, s, request)
+				got := make([][]string, len(stacks))
+				for index, stack := range stacks {
+					got[index] = slices.Sorted(slices.Values(stack))
+				}
+				require.ElementsMatch(t, want, got, "size %d %s", size, direction)
+				require.ElementsMatch(t, ids, slices.Concat(items...), "size %d %s: every photo appears once", size, direction)
+			}
+		}
+	})
 }
 
 func assertPhotoStackSpanPages(t *testing.T, s *Store, ids []string, want [][]string) {

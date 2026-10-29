@@ -170,119 +170,116 @@ func TestSimilarOrdinarySemanticSearchPreservesIdenticalDocuments(t *testing.T) 
 
 func TestResolveSemanticCandidatesCollapsesPhotoDuplicatesBeforeLimit(t *testing.T) {
 	t.Parallel()
-	s, _, profile, _ := newEmbeddingCatalogFixture(t)
-	nodes := make([]Node, 0, 3)
-	for _, test := range []struct {
-		name string
-		hash string
+	for _, tc := range []struct {
+		name          string
+		indexed       string
+		wantNodeNames []string
+		limit         int
 	}{
-		{name: "duplicate-a.jpg", hash: catalogSourceHash},
-		{name: "duplicate-b.jpg", hash: catalogSourceHash},
-		{name: "distinct.jpg", hash: catalogEvidenceBlobHash},
+		{name: "one representative before the limit", indexed: "all", wantNodeNames: []string{"duplicate-a.jpg", "distinct.jpg"}, limit: 2},
+		{name: "keep the indexed later duplicate", indexed: "later", wantNodeNames: []string{"newer-indexed.jpg"}, limit: 1},
 	} {
-		node, err := s.CreateFile(t.Context(), s.RootID(), test.name, test.hash,
-			int64(len(catalogBlobContents[test.hash])), "image/jpeg")
-		require.NoError(t, err)
-		nodes = append(nodes, node)
-	}
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s, _, profile, _ := newEmbeddingCatalogFixture(t)
+			var nodes []Node
+			if tc.indexed == "all" {
+				for _, file := range []struct{ name, hash string }{
+					{"duplicate-a.jpg", catalogSourceHash},
+					{"duplicate-b.jpg", catalogSourceHash},
+					{"distinct.jpg", catalogEvidenceBlobHash},
+				} {
+					node, err := s.CreateFile(t.Context(), s.RootID(), file.name, file.hash,
+						int64(len(catalogBlobContents[file.hash])), "image/jpeg")
+					require.NoError(t, err)
+					nodes = append(nodes, node)
+				}
+			} else {
+				older, err := s.CreateFile(t.Context(), s.RootID(), "older-unindexed.jpg",
+					catalogSourceHash, int64(len(catalogBlobContents[catalogSourceHash])), "image/jpeg")
+				require.NoError(t, err)
+				indexed, err := s.CreateFile(t.Context(), s.RootID(), "newer-indexed.jpg",
+					catalogSourceHash, int64(len(catalogBlobContents[catalogSourceHash])), "image/jpeg")
+				require.NoError(t, err)
+				_, err = s.db.ExecContext(t.Context(), `UPDATE nodes SET modified_at=? WHERE id=?`,
+					"2026-01-01T00:00:00.000000000Z", older.ID)
+				require.NoError(t, err)
+				_, err = s.db.ExecContext(t.Context(), `UPDATE nodes SET modified_at=? WHERE id=?`,
+					"2026-01-02T00:00:00.000000000Z", indexed.ID)
+				require.NoError(t, err)
+				nodes = []Node{older, indexed}
+			}
 
-	var records []EmbeddingSetRecord
-	var neighbors []vectorindex.Neighbor
-	for _, node := range nodes {
-		record := embeddingSetFixture(s, node.CurrentVersionID, profile.Fingerprint,
-			document.EmbeddingInputOriginalFile, "optional", "")
-		require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
-		require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
-			FencingToken: 1,
-			Key: EmbeddingHeadKey{ContentVersionID: node.CurrentVersionID,
-				BindingID: record.BindingID, InputKind: record.InputKind},
-			SetID: record.ID, VectorSpaceID: record.VectorSpace.ID,
-			ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
-		}))
-		records = append(records, record)
-	}
-	for index, record := range records {
-		neighbors = append(neighbors, vectorindex.Neighbor{
-			SetID: record.VectorSet.ID, InputKey: record.InputGeneration.Inputs[0].ID,
-			InputChecksum: record.InputGeneration.Inputs[0].RenderedChecksum,
-			Score:         []float64{1, 0.99, 0.8}[index],
+			indexedNodes := nodes
+			if tc.indexed == "later" {
+				indexedNodes = nodes[1:]
+			}
+			var records []EmbeddingSetRecord
+			var neighbors []vectorindex.Neighbor
+			for index, node := range indexedNodes {
+				record := embeddingSetFixture(s, node.CurrentVersionID, profile.Fingerprint,
+					document.EmbeddingInputOriginalFile, "optional", "")
+				require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
+				require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
+					FencingToken: 1,
+					Key: EmbeddingHeadKey{ContentVersionID: node.CurrentVersionID,
+						BindingID: record.BindingID, InputKind: record.InputKind},
+					SetID: record.ID, VectorSpaceID: record.VectorSpace.ID,
+					ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
+				}))
+				records = append(records, record)
+				score := []float64{1, 0.99, 0.8}[index]
+				neighbors = append(neighbors, vectorindex.Neighbor{
+					SetID: record.VectorSet.ID, InputKey: record.InputGeneration.Inputs[0].ID,
+					InputChecksum: record.InputGeneration.Inputs[0].RenderedChecksum, Score: score,
+				})
+			}
+			source, err := s.CaptureVectorIndexSource(t.Context(), records[0].VectorSpace.ID)
+			require.NoError(t, err)
+			scope := PhotoBrowseRequest{Query: query.Query{V: 1, Syntax: "simple", Mode: "lexical",
+				Sort: query.Sort{Field: "name", Direction: "asc"}}}
+			lexicalQuery := scope.Query
+			lexicalQuery.Filters.CollapseDuplicates = true
+			options := SearchOptions{PhotoScope: &scope, PhotoLexicalQuery: &lexicalQuery}
+			_, _, _, annRows, err := s.semanticSearchAuthorityFence(t.Context(), profile.Fingerprint,
+				records[0].BindingID, records[0].InputKind, records[0].VectorSpace.ID, options, nil)
+			require.NoError(t, err)
+			wantInputKeys := make([]string, 0, len(tc.wantNodeNames))
+			for _, name := range tc.wantNodeNames {
+				for _, node := range indexedNodes {
+					if node.Name == name {
+						wantInputKeys = append(wantInputKeys, node.CurrentVersionID)
+					}
+				}
+			}
+			require.Len(t, annRows, len(wantInputKeys))
+			gotInputKeys := make([]string, len(annRows))
+			for index, row := range annRows {
+				gotInputKeys[index] = row.InputKey
+			}
+			assert.ElementsMatch(t, wantInputKeys, gotInputKeys)
+
+			resolution, err := s.ResolveSemanticCandidates(t.Context(), profile.Fingerprint,
+				records[0].BindingID, records[0].InputKind, records[0].VectorSpace.ID,
+				source.ManifestChecksum, neighbors, tc.limit, options, nil)
+			require.NoError(t, err)
+			wantIDs := make([]int64, 0, len(tc.wantNodeNames))
+			for _, name := range tc.wantNodeNames {
+				for _, node := range nodes {
+					if node.Name == name {
+						wantIDs = append(wantIDs, node.ID)
+					}
+				}
+			}
+			require.Len(t, resolution.Candidates, len(wantIDs))
+			gotIDs := make([]int64, len(resolution.Candidates))
+			for index, candidate := range resolution.Candidates {
+				gotIDs[index] = candidate.NodeID
+			}
+			assert.ElementsMatch(t, wantIDs, gotIDs)
+			assert.False(t, resolution.Truncated)
 		})
 	}
-	source, err := s.CaptureVectorIndexSource(t.Context(), records[0].VectorSpace.ID)
-	require.NoError(t, err)
-	scope := PhotoBrowseRequest{Query: query.Query{V: 1, Syntax: "simple", Mode: "lexical",
-		Sort: query.Sort{Field: "name", Direction: "asc"}}}
-	lexicalQuery := scope.Query
-	lexicalQuery.Filters.CollapseDuplicates = true
-	options := SearchOptions{PhotoScope: &scope, PhotoLexicalQuery: &lexicalQuery}
-	authoritySource, scopedDocuments, completeDocuments, annRows, err := s.semanticSearchAuthorityFence(t.Context(), profile.Fingerprint,
-		records[0].BindingID, records[0].InputKind, records[0].VectorSpace.ID,
-		options, nil)
-	require.NoError(t, err)
-	assert.Equal(t, source.ManifestChecksum, authoritySource.ManifestChecksum)
-	assert.LessOrEqual(t, completeDocuments, scopedDocuments)
-	require.Len(t, annRows, 2)
-	assert.ElementsMatch(t, []string{nodes[0].CurrentVersionID, nodes[2].CurrentVersionID},
-		[]string{annRows[0].InputKey, annRows[1].InputKey},
-		"the vector index sees one representative and the distinct photo before applying its limit")
-
-	resolution, err := s.ResolveSemanticCandidates(t.Context(), profile.Fingerprint,
-		records[0].BindingID, records[0].InputKind, records[0].VectorSpace.ID,
-		source.ManifestChecksum, neighbors, 2, options, nil)
-	require.NoError(t, err)
-	require.Len(t, resolution.Candidates, 2)
-	assert.ElementsMatch(t, []int64{nodes[0].ID, nodes[2].ID}, []int64{
-		resolution.Candidates[0].NodeID, resolution.Candidates[1].NodeID,
-	})
-	assert.False(t, resolution.Truncated)
-}
-
-func TestResolveSemanticCandidatesKeepsIndexedPhotoDuplicate(t *testing.T) {
-	t.Parallel()
-	s, _, profile, _ := newEmbeddingCatalogFixture(t)
-	older, err := s.CreateFile(t.Context(), s.RootID(), "older-unindexed.jpg",
-		catalogSourceHash, int64(len(catalogBlobContents[catalogSourceHash])), "image/jpeg")
-	require.NoError(t, err)
-	indexed, err := s.CreateFile(t.Context(), s.RootID(), "newer-indexed.jpg",
-		catalogSourceHash, int64(len(catalogBlobContents[catalogSourceHash])), "image/jpeg")
-	require.NoError(t, err)
-	_, err = s.db.ExecContext(t.Context(), `UPDATE nodes SET modified_at=? WHERE id=?`,
-		"2026-01-01T00:00:00.000000000Z", older.ID)
-	require.NoError(t, err)
-	_, err = s.db.ExecContext(t.Context(), `UPDATE nodes SET modified_at=? WHERE id=?`,
-		"2026-01-02T00:00:00.000000000Z", indexed.ID)
-	require.NoError(t, err)
-
-	record := embeddingSetFixture(s, indexed.CurrentVersionID, profile.Fingerprint,
-		document.EmbeddingInputOriginalFile, "optional", "")
-	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
-	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
-		FencingToken: 1,
-		Key: EmbeddingHeadKey{ContentVersionID: indexed.CurrentVersionID,
-			BindingID: record.BindingID, InputKind: record.InputKind},
-		SetID: record.ID, VectorSpaceID: record.VectorSpace.ID,
-		ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
-	}))
-
-	scope := PhotoBrowseRequest{Query: query.Query{V: 1, Syntax: "simple", Mode: "lexical",
-		Sort: query.Sort{Field: "name", Direction: "asc"}}}
-	lexicalQuery := scope.Query
-	lexicalQuery.Filters.CollapseDuplicates = true
-	options := SearchOptions{PhotoScope: &scope, PhotoLexicalQuery: &lexicalQuery}
-	source, _, _, annRows, err := s.semanticSearchAuthorityFence(t.Context(), profile.Fingerprint,
-		record.BindingID, record.InputKind, record.VectorSpace.ID, options, nil)
-	require.NoError(t, err)
-	require.Len(t, annRows, 1, "the index must retain an eligible duplicate when the first representative has no vector")
-	assert.Equal(t, indexed.CurrentVersionID, annRows[0].InputKey)
-
-	resolution, err := s.ResolveSemanticCandidates(t.Context(), profile.Fingerprint, record.BindingID,
-		record.InputKind, record.VectorSpace.ID, source.ManifestChecksum,
-		[]vectorindex.Neighbor{{SetID: record.VectorSet.ID, InputKey: indexed.CurrentVersionID,
-			InputChecksum: record.InputGeneration.Inputs[0].RenderedChecksum, Score: 0.9}},
-		1, options, nil)
-	require.NoError(t, err)
-	require.Len(t, resolution.Candidates, 1)
-	assert.Equal(t, indexed.ID, resolution.Candidates[0].NodeID)
 }
 
 func TestResolveSemanticCandidatesReturnsOnlyCurrentScopedHeads(t *testing.T) {

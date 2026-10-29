@@ -1087,13 +1087,12 @@ func (s *QuerySnapshotService) groupCurrentPhotoPage(ctx context.Context, q meta
 	if !ok {
 		return ErrSnapshotGone
 	}
-	members := make([]string, len(rows))
+	members, ids := make([]SnapshotRow, len(rows)), make([]string, len(rows))
 	for i, raw := range rows {
-		var member SnapshotMember
-		if err := json.Unmarshal(raw, &member); err != nil {
+		if err := json.Unmarshal(raw, &members[i]); err != nil {
 			return fmt.Errorf("decoding cached query snapshot row: %w", err)
 		}
-		members[i] = member.AssetID
+		ids[i] = members[i].AssetID
 	}
-	return s.store.groupFrozenPhotoPage(ctx, q, page, members, request)
+	return s.store.groupFrozenPhotoPage(ctx, q, page, members, ids, request)
 }

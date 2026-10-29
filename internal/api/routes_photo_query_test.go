@@ -937,6 +937,7 @@ func TestPhotoSnapshotHTTPForwardsHiddenScope(t *testing.T) {
 	request.SnapshotID, request.Hidden = first.SnapshotID, true
 	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, request)
 	require.Equal(t, http.StatusBadRequest, response.StatusCode, body)
+	require.Equal(t, "invalid_cursor", decodeProblem(t, body).Code)
 }
 
 func TestPhotoStackGenerationStaysLocalAfterConsentRevoked(t *testing.T) {

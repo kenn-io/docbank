@@ -261,8 +261,8 @@ func (s *Store) groupRankedPhotoPage(ctx context.Context, q metadataQuerier, pag
 }
 
 // groupFrozenPhotoPage reports every stack among the frozen members that the
-// page intersects, with its full membership, and keeps the frozen item order.
-func (s *Store) groupFrozenPhotoPage(ctx context.Context, q metadataQuerier, page *PhotoBrowsePage, members []string, request PhotoBrowseRequest) error {
+// page intersects, with its full membership, and places its rows together.
+func (s *Store) groupFrozenPhotoPage(ctx context.Context, q metadataQuerier, page *PhotoBrowsePage, frozen []SnapshotRow, members []string, request PhotoBrowseRequest) error {
 	settings, err := photoSettingsTx(ctx, q)
 	if err != nil {
 		return err
@@ -280,7 +280,77 @@ func (s *Store) groupFrozenPhotoPage(ctx context.Context, q metadataQuerier, pag
 			page.Stacks = append(page.Stacks, stack)
 		}
 	}
+	return s.placeStackRows(ctx, q, page, frozen, request.Recipes)
+}
+
+// placeStackRows shows each intersecting stack's complete display rows
+// together at its first ranked member's position on the page, representative
+// first, and keeps every other row in frozen order.
+func (s *Store) placeStackRows(ctx context.Context, q metadataQuerier, page *PhotoBrowsePage, frozen []SnapshotRow, recipes map[string]string) error {
+	if len(page.Stacks) == 0 {
+		return nil
+	}
+	repOf := make(map[string]string)
+	for _, stack := range page.Stacks {
+		for _, id := range stack.AssetIDs {
+			repOf[id] = stack.RepresentativeID
+		}
+	}
+	stackRows, err := s.stackDisplayRows(ctx, q, page.Items, repOf, frozen, recipes)
+	if err != nil {
+		return err
+	}
+	items := make([]PhotoBrowseRow, 0, len(page.Items))
+	for _, row := range page.Items {
+		rep, ok := repOf[row.AssetID]
+		if !ok {
+			items = append(items, row)
+			continue
+		}
+		items = append(items, stackRows[rep]...)
+		delete(stackRows, rep)
+	}
+	page.Items = items
 	return nil
+}
+
+// stackDisplayRows returns each stack's live display rows keyed by
+// representative, representative first and then in frozen order. Members frozen
+// on other pages are read with their frozen suggestion match.
+func (s *Store) stackDisplayRows(ctx context.Context, q metadataQuerier, items []PhotoBrowseRow, repOf map[string]string, frozen []SnapshotRow, recipes map[string]string) (map[string][]PhotoBrowseRow, error) {
+	rows := make(map[string]PhotoBrowseRow, len(items))
+	for _, row := range items {
+		rows[row.AssetID] = row
+	}
+	missing := slices.DeleteFunc(slices.Clone(frozen), func(row SnapshotRow) bool {
+		_, shown := rows[row.AssetID]
+		return shown || repOf[row.AssetID] == ""
+	})
+	read, err := s.currentPhotoRowsTx(ctx, q, snapshotMembers(missing), recipes)
+	if err != nil {
+		return nil, err
+	}
+	match := make(map[string]bool, len(missing))
+	for _, row := range missing {
+		match[row.AssetID] = row.SuggestionMatch
+	}
+	for _, row := range read {
+		row.MatchedAISuggestion = match[row.AssetID]
+		rows[row.AssetID] = row
+	}
+	byRep := make(map[string][]PhotoBrowseRow)
+	for _, member := range frozen {
+		rep := repOf[member.AssetID]
+		row, live := rows[member.AssetID]
+		switch {
+		case rep == "" || !live:
+		case member.AssetID == rep:
+			byRep[rep] = slices.Insert(byRep[rep], 0, row)
+		default:
+			byRep[rep] = append(byRep[rep], row)
+		}
+	}
+	return byRep, nil
 }
 
 // photoStacksByMember groups the live, visible members of ids under their

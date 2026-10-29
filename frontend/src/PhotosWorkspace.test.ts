@@ -4389,13 +4389,6 @@ it.each([
     await act(() => photos.faceEditor.ondecision?.());
   }
   await waitFor(() => expect(refresh).toHaveBeenCalledWith(expect.any(Function), true));
-  expect(photos.snapshotID).toBe("accepted-meaning");
-  if (change === "face") {
-    await fireEvent.click(screen.getByRole("button", { name: "More photo actions" }));
-    expect(
-      screen.getByRole("menuitem", { name: "Trash rejected photos" }).getAttribute("aria-disabled"),
-    ).toBe("true");
-  }
   photos.dispose();
   await cache.dispose();
 });

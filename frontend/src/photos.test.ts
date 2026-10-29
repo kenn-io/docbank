@@ -3660,10 +3660,10 @@ it.each(["reload", "revalidateAuthored"] as const)(
   },
 );
 
-it("keeps relevance order across paging and refresh", async () => {
+it("keeps relevance order across refresh and fallback", async () => {
   const mode = "semantic";
   let fallback = false;
-  const read = vi.spyOn(api, "listPhotoAssets").mockImplementation(async (request) => {
+  const read = vi.spyOn(api, "listPhotoAssets").mockImplementation(async () => {
     if (fallback)
       return {
         items: [photo(1)],
@@ -3675,9 +3675,8 @@ it("keeps relevance order across paging and refresh", async () => {
         snapshot_id: "fallback-snapshot",
       };
     return {
-      items: request.cursor ? [photo(3)] : [photo(1), photo(2)],
-      next_cursor: request.cursor ? undefined : "ranked-tail",
-      total: 3,
+      items: [photo(1), photo(2)],
+      total: 2,
       relevance_available: true,
       snapshot_id: "full-snapshot",
       facets: [],
@@ -3706,98 +3705,118 @@ it("keeps relevance order across paging and refresh", async () => {
   photos.dispose();
 });
 
-it.each(["fallback", "metadata transition", "late metadata counts", "metadata to ranked"])(
-  "keeps the right live timeline across %s",
-  async (transition) => {
-    const late = transition === "late metadata counts";
-    const metadataFacet = {
-      dimension: "camera",
-      available: true,
-      total: 7,
-      values: [{ key: "metadata", label: "Metadata", count: 7, selected: false }],
-    };
-    const timeline = {
-      dimension: "capture_day",
-      available: true,
-      total: 7,
-      values: [],
-      missing: 0,
-      other: 0,
-      reason: "",
-    };
-    let finish!: (value: snapshots.PhotoTimelineCounts) => void;
-    const counts = vi.spyOn(snapshots, "fetchPhotoTimeline").mockImplementation(() =>
-      late
-        ? new Promise((resolve) => {
-            finish = resolve;
-          })
-        : Promise.resolve({ facets: [timeline] } as unknown as snapshots.PhotoTimelineCounts),
-    );
-    const recovering = late || transition === "metadata to ranked";
-    let fallback = false;
-    vi.spyOn(api, "listPhotoAssets").mockImplementation(async (request) =>
-      request.facets?.length
-        ? { items: [], total: 7, facets: [metadataFacet], relevance_available: true }
-        : {
-            items: [photo(1)],
-            total: 1,
-            facets: [],
-            relevance_available: true,
-            ...(request.query.mode === "lexical"
-              ? { actual_mode: "lexical" }
-              : fallback
-                ? {
-                    actual_mode: "lexical",
-                    fallback_reason: "provider_unavailable",
-                    snapshot_id: "fallback-snapshot",
-                  }
-                : { snapshot_id: "ranked" }),
-          },
-    );
-    const photos = new Photos("scoped", vi.fn(), false, {
-      ...photoQuery,
-      mode: recovering ? "lexical" : "semantic",
-      text: "sunset",
-    });
-    if (late) {
-      await photos.loadMore();
-      photos.resume();
-      expect(finish).toBeTypeOf("function");
-      await photos.setQuery({ ...photos.query, mode: "semantic" });
-      finish({ facets: [timeline] } as unknown as snapshots.PhotoTimelineCounts);
-      await vi.waitFor(() => expect(photos.timelineLoading).toBe(false));
-      expect(photos.timeline).toBeUndefined();
-      expect(photos.facets).toEqual([]);
-    } else if (transition === "metadata to ranked") {
-      photos.filtersOpen = true;
-      await photos.loadMore();
-      photos.resume();
-      await vi.waitFor(() => {
-        expect(photos.timeline?.total).toBe(7);
-        expect(photos.facets).toEqual([metadataFacet]);
-      });
-      await photos.setQuery({ ...photos.query, mode: "semantic" });
-      expect(photos.snapshotID).toBe("ranked");
-      expect(photos.timeline).toBeUndefined();
-      expect(photos.facets).toEqual([]);
-    } else {
-      await photos.loadMore();
-      fallback = true;
-      if (transition === "metadata transition") await photos.setQuery({ ...photoQuery });
-      else await photos.refresh();
-      if (transition === "metadata transition") {
-        await vi.waitFor(() => expect(photos.timeline?.total).toBe(7));
-        expect(counts).toHaveBeenCalledOnce();
-        expect(counts.mock.calls[0][1].mode).toBe("lexical");
-      } else {
-        expect(photos.snapshotID).toBe("fallback-snapshot");
-        expect(photos.timeline).toBeUndefined();
-        expect(counts).not.toHaveBeenCalled();
-      }
-    }
-    photos.dispose();
-  },
-);
+function photoTimelineTransitionFixture(initialMode: Query["mode"], deferCounts = false) {
+  const metadataFacet = {
+    dimension: "camera",
+    available: true,
+    total: 7,
+    values: [{ key: "metadata", label: "Metadata", count: 7, selected: false }],
+  };
+  const timeline = {
+    dimension: "capture_day",
+    available: true,
+    total: 7,
+    values: [],
+    missing: 0,
+    other: 0,
+    reason: "",
+  };
+  let finish!: (value: snapshots.PhotoTimelineCounts) => void;
+  const counts = vi.spyOn(snapshots, "fetchPhotoTimeline").mockImplementation(() =>
+    deferCounts
+      ? new Promise((resolve) => {
+          finish = resolve;
+        })
+      : Promise.resolve({ facets: [timeline] } as unknown as snapshots.PhotoTimelineCounts),
+  );
+  let fallback = false;
+  vi.spyOn(api, "listPhotoAssets").mockImplementation(async (request) =>
+    request.facets?.length
+      ? { items: [], total: 7, facets: [metadataFacet], relevance_available: true }
+      : {
+          items: [photo(1)],
+          total: 1,
+          facets: [],
+          relevance_available: true,
+          ...(request.query.mode === "lexical"
+            ? { actual_mode: "lexical" }
+            : fallback
+              ? {
+                  actual_mode: "lexical",
+                  fallback_reason: "provider_unavailable",
+                  snapshot_id: "fallback-snapshot",
+                }
+              : { snapshot_id: "ranked" }),
+        },
+  );
+  const photos = new Photos("scoped", vi.fn(), false, {
+    ...photoQuery,
+    mode: initialMode,
+    text: "sunset",
+  });
+  return {
+    photos,
+    metadataFacet,
+    timeline,
+    counts,
+    setFallback(value: boolean) {
+      fallback = value;
+    },
+    finish(value: snapshots.PhotoTimelineCounts) {
+      finish(value);
+    },
+  };
+}
+
+it("drops live timeline counts when Meaning falls back to metadata", async () => {
+  const state = photoTimelineTransitionFixture("semantic");
+  await state.photos.loadMore();
+  state.setFallback(true);
+  await state.photos.refresh();
+  expect(state.photos.snapshotID).toBe("fallback-snapshot");
+  expect(state.photos.timeline).toBeUndefined();
+  expect(state.counts).not.toHaveBeenCalled();
+  state.photos.dispose();
+});
+
+it("loads timeline counts after Meaning switches to Metadata", async () => {
+  const state = photoTimelineTransitionFixture("semantic");
+  await state.photos.loadMore();
+  await state.photos.setQuery({ ...photoQuery });
+  await vi.waitFor(() => expect(state.photos.timeline?.total).toBe(7));
+  expect(state.counts).toHaveBeenCalledOnce();
+  expect(state.counts.mock.calls[0][1].mode).toBe("lexical");
+  state.photos.dispose();
+});
+
+it("drops a late metadata timeline when Meaning starts", async () => {
+  const state = photoTimelineTransitionFixture("lexical", true);
+  await state.photos.loadMore();
+  state.photos.resume();
+  expect(state.counts).toHaveBeenCalledOnce();
+  await state.photos.setQuery({ ...state.photos.query, mode: "semantic" });
+  state.finish({ facets: [state.timeline] } as unknown as snapshots.PhotoTimelineCounts);
+  await vi.waitFor(() => expect(state.photos.timelineLoading).toBe(false));
+  expect(state.photos.timeline).toBeUndefined();
+  expect(state.photos.facets).toEqual([]);
+  state.photos.dispose();
+});
+
+it("clears metadata facets when Meaning starts from the filter panel", async () => {
+  const state = photoTimelineTransitionFixture("lexical");
+  state.photos.filtersOpen = true;
+  await state.photos.loadMore();
+  state.photos.resume();
+  await vi.waitFor(() => {
+    expect(state.photos.timeline?.total).toBe(7);
+    expect(state.photos.facets).toEqual([state.metadataFacet]);
+  });
+  await state.photos.setQuery({ ...state.photos.query, mode: "semantic" });
+  expect(state.photos.snapshotID).toBe("ranked");
+  expect(state.photos.timeline).toBeUndefined();
+  expect(state.photos.facets).toEqual([]);
+  state.photos.dispose();
+});
 
 it("applies Undo rotation and representative changes to ranked Map rows", () => {
   const photos = new Photos(

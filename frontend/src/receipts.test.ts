@@ -1,12 +1,8 @@
-import { describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import type { DocumentSearchRequest } from "./generated/docbank.js";
-import {
-  documentSearch,
-  validateDocumentSearchReport,
-  validateDocumentSourceFenceResolution,
-} from "./receipts.js";
+import { validateDocumentSearchReport, validateDocumentSourceFenceResolution } from "./receipts.js";
 
 const vault = "11111111-1111-4111-8111-111111111111";
 const versions = ["22222222-2222-4222-8222-222222222222", "33333333-3333-4333-8333-333333333333"];

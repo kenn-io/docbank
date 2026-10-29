@@ -3286,7 +3286,7 @@ it("refuses draft navigation until Clear edits releases it", async () => {
   expect(unloadBlocked()).toBe(false);
 });
 
-async function openSyntheticCull() {
+it("guards reload for a failed cull decision after vault identity arrives", async () => {
   vi.stubGlobal("indexedDB", new IDBFactory());
   vi.stubGlobal("IDBKeyRange", IDBKeyRange);
   history.replaceState(null, "", "/#web_session=synthetic&web_upload_secret=proof");
@@ -3349,11 +3349,6 @@ async function openSyntheticCull() {
   await fireEvent.click(screen.getByRole("button", { name: "Cull" }));
   const dialog = await screen.findByRole("dialog", { name: "Cull photos" });
   await within(dialog).findByText("Photo 1.jpg");
-  return dialog;
-}
-
-it("guards reload for a failed cull decision after vault identity arrives", async () => {
-  const dialog = await openSyntheticCull();
   await fireEvent.keyDown(dialog.querySelector(".photo-cull")!, { key: "x" });
   await within(dialog).findByRole("button", { name: "Discard edit" });
   const event = new Event("beforeunload", { cancelable: true });
@@ -3801,53 +3796,58 @@ it("refreshes a person-filtered Library behind an album after a face write", asy
   await waitFor(() => expect(library.items).toEqual([]));
 });
 
-it("keeps a ranked Library snapshot after a face write in an album", async () => {
-  const { changed, fetcher } = await applyAlbumKeyword(true);
-  const library = changed.mock.contexts[0] as Photos;
-  const item = photo(1);
-  let cleared = false;
-  vi.spyOn(api, "listPhotoFaces").mockImplementation(async () => ({
-    faces: [
-      photoFace({
-        content_version_id: item.content_version_id,
-        assertion_id: cleared ? undefined : "assertion-a",
-      }),
-    ],
-    assertions: cleared
-      ? []
-      : [photoPersonAssertion({ content_version_id: item.content_version_id })],
-    people: [{ person_id: "person-a", display_name: "Ada", state: "curated" }],
-  }));
-  vi.spyOn(api, "listPeople").mockResolvedValue({ items: [] });
-  vi.spyOn(api, "decidePhotoFace").mockImplementation(async () => {
-    cleared = true;
-    return { receipt_id: "cleared-face" };
-  });
-  await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
-  await fireEvent.click(
-    await screen.findByRole("button", { name: "Find or create a person: Ada" }),
-  );
-  fetcher.mockClear();
-  await fireEvent.mouseDown(await screen.findByRole("option", { name: "Clear name" }));
-  await screen.findByRole("button", { name: "Find or create a person: Face 1" });
-  await waitFor(() =>
-    expect(
-      fetcher.mock.calls.some(
-        ([url, init]) =>
-          url.endsWith("/photos/assets/query") &&
-          JSON.parse(String(init.body)).snapshot_id === "ranked",
-      ),
-    ).toBe(true),
-  );
-  expect(
-    fetcher.mock.calls.some(([url, init]) => {
-      if (!url.endsWith("/photos/assets/query")) return false;
-      const body = JSON.parse(String(init.body));
-      return body.query.text && !body.snapshot_id;
-    }),
-  ).toBe(false);
-  expect(library.snapshotID).toBe("ranked");
-});
+it.each(["accepted reject receipt", "face write"] as const)(
+  "refreshes a ranked sibling Library after an album %s",
+  async (trigger) => {
+    const { changed, fetcher } = await applyAlbumKeyword(true);
+    const library = changed.mock.contexts[0] as Photos;
+    if (trigger === "face write") {
+      const item = photo(1);
+      let cleared = false;
+      vi.spyOn(api, "listPhotoFaces").mockImplementation(async () => ({
+        faces: [
+          photoFace({
+            content_version_id: item.content_version_id,
+            assertion_id: cleared ? undefined : "assertion-a",
+          }),
+        ],
+        assertions: cleared
+          ? []
+          : [photoPersonAssertion({ content_version_id: item.content_version_id })],
+        people: [{ person_id: "person-a", display_name: "Ada", state: "curated" }],
+      }));
+      vi.spyOn(api, "listPeople").mockResolvedValue({ items: [] });
+      vi.spyOn(api, "decidePhotoFace").mockImplementation(async () => {
+        cleared = true;
+        return { receipt_id: "cleared-face" };
+      });
+      await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
+      await fireEvent.click(
+        await screen.findByRole("button", { name: "Find or create a person: Ada" }),
+      );
+      fetcher.mockClear();
+      await fireEvent.mouseDown(await screen.findByRole("option", { name: "Clear name" }));
+      await screen.findByRole("button", { name: "Find or create a person: Face 1" });
+      expect(
+        fetcher.mock.calls.some(([url, init]) => {
+          if (!url.endsWith("/photos/assets/query")) return false;
+          const body = JSON.parse(String(init.body));
+          return body.query.text && !body.snapshot_id;
+        }),
+      ).toBe(false);
+    }
+    await waitFor(() =>
+      expect(
+        fetcher.mock.calls.some(
+          ([url, init]) =>
+            url.endsWith("/photos/assets/query") &&
+            JSON.parse(String(init.body)).snapshot_id === "ranked",
+        ),
+      ).toBe(true),
+    );
+    expect(library.snapshotID).toBe("ranked");
+  },
+);
 
 it("updates unfiltered Library and album rows after edits without reloading them", async () => {
   const refresh = vi.spyOn(Photos.prototype, "refresh");
@@ -5496,18 +5496,3 @@ it.each(["Hidden lock", "Hidden navigate", "Library lock"])(
     expect(screen.queryByText("Person: Ada")).toBeNull();
   },
 );
-it("refreshes a ranked sibling Library after an accepted reject receipt", async () => {
-  const { changed, fetcher } = await applyAlbumKeyword(true);
-  const library = changed.mock.contexts[0] as Photos;
-  await waitFor(() =>
-    expect(
-      fetcher.mock.calls.some(
-        ([url, init]) =>
-          url.endsWith("/photos/assets/query") &&
-          JSON.parse(String(init.body)).snapshot_id === "ranked",
-      ),
-    ).toBe(true),
-  );
-  expect(library.snapshotID).toBe("ranked");
-  expect(changed.mock.calls[0][0]).toEqual(expect.objectContaining({ receipt_id: "rotated" }));
-});

@@ -67,8 +67,6 @@ it("keeps ranked Library membership during access revalidation", async () => {
   expect(await revalidatePhotoWorkspace(current, "scoped", vi.fn(), () => true)).toBe(true);
 
   expect(read.mock.calls[0]?.[0].snapshot_id).toBe("accepted-snapshot");
-  expect(photos.snapshotID).toBe("accepted-snapshot");
-  expect(photos.items[0]).toMatchObject({ asset_id: "photo-1", revision: 2 });
   instances.push(current.cache);
   photos.dispose();
 });

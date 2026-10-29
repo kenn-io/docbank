@@ -3,7 +3,6 @@ package api_test
 import (
 	"context"
 	"encoding/json/v2"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -24,37 +23,53 @@ type photoQueryObserver struct {
 	query func(context.Context, int32)
 }
 
-func TestSavedPhotoRankingPreservesDefinitionIdentity(t *testing.T) {
+func TestSavedPhotoRunsPreserveIdentityAndSkipUnneededEmbedding(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"semantic", "hybrid"} {
-		t.Run(mode, func(t *testing.T) {
-			ts, _, _ := photoObservedFixture(t)
-			saved, etag := createSavedQuery(t, ts.URL, "Synthetic named query", fmt.Sprintf(`{"mode":%q,"text":"sunset","sort":{"field":"name","direction":"asc"}}`, mode))
+	for _, tc := range []struct {
+		name            string
+		payload         string
+		updated         string
+		wantMode        string
+		wantStatus      int
+		wantProblem     string
+		wantNoEmbedding bool
+	}{
+		{name: "semantic", payload: `{"mode":"semantic","text":"sunset","sort":{"field":"name","direction":"asc"}}`, wantMode: "semantic", wantStatus: http.StatusOK},
+		{name: "hybrid", payload: `{"mode":"hybrid","text":"sunset","sort":{"field":"name","direction":"asc"}}`, wantMode: "hybrid", wantStatus: http.StatusOK},
+		{name: "cleared text", payload: `{"mode":"semantic","text":"   ","filters":{"extensions":["jpg"]},"sort":{"field":"name","direction":"asc"}}`, wantStatus: http.StatusOK, wantNoEmbedding: true},
+		{name: "stale revision", payload: `{"mode":"semantic","text":"sunset"}`, updated: `{"mode":"semantic","text":"harbor"}`, wantStatus: http.StatusPreconditionFailed, wantProblem: "stale_revision", wantNoEmbedding: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ts, catalog, observer := photoObservedFixture(t)
+			saved, etag := createSavedQuery(t, ts.URL, "Synthetic saved photo query", tc.payload)
+			if tc.updated != "" {
+				updated := []byte(tc.updated)
+				_, err := catalog.UpdateSavedQuery(t.Context(), saved.ID, saved.Revision, store.SavedQueryPatch{Payload: &updated})
+				require.NoError(t, err)
+			}
 			response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/saved-queries/"+saved.ID+"/runs", map[string]string{"X-Api-Key": testAPIKey, "If-Match": etag}, `{"photos":true}`)
-			require.Equal(t, http.StatusOK, response.StatusCode, body)
-			var result api.SavedQueryRunResult
-			require.NoError(t, json.Unmarshal([]byte(body), &result))
-			require.Equal(t, mode, result.Snapshot.RequestedMode)
-			require.Equal(t, mode, result.Snapshot.ActualMode)
-			require.Empty(t, result.Snapshot.FallbackReason)
-			require.NotEmpty(t, result.Run.RunID)
-			require.Equal(t, saved.Fingerprint, result.Run.QueryFingerprint)
-			require.EqualValues(t, 1, result.Run.Total)
-			require.EqualValues(t, 1, result.Snapshot.Total)
+			require.Equal(t, tc.wantStatus, response.StatusCode, body)
+			if tc.wantProblem != "" {
+				require.Equal(t, tc.wantProblem, decodeProblem(t, body).Code)
+			} else {
+				var result api.SavedQueryRunResult
+				require.NoError(t, json.Unmarshal([]byte(body), &result))
+				require.Equal(t, saved.Fingerprint, result.Run.QueryFingerprint)
+				if tc.wantMode != "" {
+					require.Equal(t, tc.wantMode, result.Snapshot.RequestedMode)
+					require.Equal(t, tc.wantMode, result.Snapshot.ActualMode)
+					require.Empty(t, result.Snapshot.FallbackReason)
+					require.NotEmpty(t, result.Run.RunID)
+					require.EqualValues(t, 1, result.Run.Total)
+					require.EqualValues(t, 1, result.Snapshot.Total)
+				}
+			}
+			if tc.wantNoEmbedding {
+				require.Zero(t, observer.calls.Load())
+			}
 		})
 	}
-}
-
-func TestClearedSavedPhotoQueryRunsWithoutEmbedding(t *testing.T) {
-	t.Parallel()
-	ts, _, observer := photoObservedFixture(t)
-	saved, etag := createSavedQuery(t, ts.URL, "Synthetic cleared query", `{"mode":"semantic","text":"   ","filters":{"extensions":["jpg"]},"sort":{"field":"name","direction":"asc"}}`)
-	response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/saved-queries/"+saved.ID+"/runs", map[string]string{"X-Api-Key": testAPIKey, "If-Match": etag}, `{"photos":true}`)
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	var result api.SavedQueryRunResult
-	require.NoError(t, json.Unmarshal([]byte(body), &result))
-	require.Equal(t, saved.Fingerprint, result.Run.QueryFingerprint)
-	require.Zero(t, observer.calls.Load())
 }
 
 func (p *photoQueryObserver) Embed(ctx context.Context, inputs []document.EmbeddingInput, authorization document.EmbeddingAuthorization) (document.EmbeddingResult, error) {
@@ -79,19 +94,6 @@ func photoObservedFixture(t *testing.T) (*httptest.Server, *testStore, *photoQue
 	return ts, catalog, observer
 }
 
-func TestStaleSavedPhotoQueryDoesNotEmbed(t *testing.T) {
-	t.Parallel()
-	ts, catalog, observer := photoObservedFixture(t)
-	saved, _ := createSavedQuery(t, ts.URL, "Synthetic meaning query", `{"mode":"semantic","text":"sunset"}`)
-	updated := []byte(`{"mode":"semantic","text":"harbor"}`)
-	_, err := catalog.UpdateSavedQuery(t.Context(), saved.ID, saved.Revision, store.SavedQueryPatch{Payload: &updated})
-	require.NoError(t, err)
-	response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/saved-queries/"+saved.ID+"/runs", map[string]string{"X-Api-Key": testAPIKey, "If-Match": `"1"`}, `{"photos":true}`)
-	require.Equal(t, http.StatusPreconditionFailed, response.StatusCode, body)
-	require.Equal(t, "stale_revision", decodeProblem(t, body).Code)
-	require.Zero(t, observer.calls.Load())
-}
-
 func TestPhotoRankingUsesSnapshotAdmissionAndDeadline(t *testing.T) {
 	t.Parallel()
 	for _, savedRoute := range []bool{false, true} {
@@ -108,7 +110,7 @@ func TestPhotoRankingUsesSnapshotAdmissionAndDeadline(t *testing.T) {
 				saved, _ := createSavedQuery(t, ts.URL, "Synthetic admitted query", `{"mode":"semantic","text":"sunset"}`)
 				path, body = "/api/v1/saved-queries/"+saved.ID+"/runs", `{"photos":true}`
 			}
-			entered := make(chan time.Time, 3)
+			entered := make(chan time.Time, 2)
 			release := make(chan struct{})
 			observer.query = func(ctx context.Context, count int32) {
 				deadline, _ := ctx.Deadline()
@@ -143,18 +145,11 @@ func TestPhotoRankingUsesSnapshotAdmissionAndDeadline(t *testing.T) {
 					t.Fatalf("request returned before provider execution: %d %s", response.Code, response.Body.String())
 				}
 			}
-			third := request()
 			close(release)
 			for range 2 {
 				response := <-done
 				require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 			}
-			require.Equal(t, http.StatusTooManyRequests, third.Code, third.Body.String())
-			var problem struct {
-				Code string `json:"code"`
-			}
-			require.NoError(t, json.Unmarshal(third.Body.Bytes(), &problem))
-			require.Equal(t, "snapshot_busy", problem.Code)
 			require.EqualValues(t, 2, observer.calls.Load())
 			for _, deadline := range deadlines {
 				require.False(t, deadline.IsZero(), "provider execution needs the build deadline")

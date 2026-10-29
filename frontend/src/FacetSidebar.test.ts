@@ -40,27 +40,78 @@ it("selects unrated photos and empty flags and labels", async () => {
 });
 
 it.each([
-  ["camera", "cameras", "Canon"],
-  ["lens", "lenses", "RF 50mm"],
-] as const)("keeps a selected-only %s facet editable", async (dimension, field, value) => {
+  [
+    "camera",
+    {
+      mode: "semantic",
+      filters: { cameras: ["Canon"] },
+      facets: [],
+      group: "Camera facet",
+      button: "Canon, selected",
+      clears: ["cameras"],
+    },
+  ],
+  [
+    "lens",
+    {
+      mode: "semantic",
+      filters: { lenses: ["RF 50mm"] },
+      facets: [],
+      group: "Lens facet",
+      button: "RF 50mm, selected",
+      clears: ["lenses"],
+    },
+  ],
+  [
+    "capture year",
+    {
+      mode: "lexical",
+      filters: { capture_after: "2024-01-01", capture_before: "2025-01-01" },
+      facets: [],
+      group: "Year facet",
+      button: "2024, selected",
+      clears: ["capture_after", "capture_before"],
+    },
+  ],
+  [
+    "modified month",
+    {
+      mode: "lexical",
+      filters: { modified_after: "2025-07-01T00:00:00Z", modified_before: "2025-08-01T00:00:00Z" },
+      facets: [
+        facet("modified", {
+          total: 0,
+          missing: 0,
+          other: 0,
+          values: [{ key: "2025-07", label: "2025-07", count: 0, selected: true }],
+        }),
+      ],
+      group: "Modified facet",
+      button: /July 2025/,
+      clears: ["modified_after", "modified_before"],
+    },
+  ],
+] as const)("keeps the selected %s facet editable", async (_name, selectedFacet) => {
   const onchange = vi.fn();
   render(FacetSidebar, {
     unit: "photos",
     query: {
       ...originalQuery,
-      mode: "semantic",
-      filters: { ...originalQuery.filters, [field]: [value] },
+      mode: selectedFacet.mode,
+      filters: { ...originalQuery.filters, ...selectedFacet.filters },
     },
-    facets: [],
+    facets: selectedFacet.facets,
     disabled: false,
     onchange,
   });
-  const facetName = dimension === "camera" ? "Camera facet" : "Lens facet";
-  const facetGroup = screen.getByRole("group", { name: facetName });
-  const selected = within(facetGroup).getByRole("button", { name: `${value}, selected` });
+  const selected = within(screen.getByRole("group", { name: selectedFacet.group })).getByRole(
+    "button",
+    { name: selectedFacet.button },
+  );
   expect(selected.getAttribute("aria-pressed")).toBe("true");
   await fireEvent.click(selected);
-  expect(onchange.mock.lastCall?.[0].filters[field]).toBeUndefined();
+  for (const field of selectedFacet.clears)
+    expect(onchange.mock.lastCall?.[0].filters[field]).toBeUndefined();
 });
 
 const tagID = "11111111-1111-4111-8111-111111111111";
@@ -264,50 +315,6 @@ it("hides a group with no values or an empty scope, and keeps one with some miss
   expect(screen.getByRole("group", { name: "Tags facet" })).toBeTruthy();
   await view.rerender({ facets: [facet("tags", { total: 0, missing: 0, other: 0 })] });
   expect(screen.queryByRole("group", { name: "Tags facet" })).toBeNull();
-});
-
-it("keeps an active modified month in an empty scope so it can be cleared", async () => {
-  const onchange = vi.fn();
-  const month = { key: "2025-07", label: "2025-07", count: 0, selected: true };
-  const filters = {
-    ...originalQuery.filters,
-    modified_after: "2025-07-01T00:00:00Z",
-    modified_before: "2025-08-01T00:00:00Z",
-  };
-  render(FacetSidebar, {
-    facets: [facet("modified", { total: 0, missing: 0, other: 0, values: [month] })],
-    query: { ...originalQuery, filters },
-    onchange,
-  });
-  await fireEvent.click(
-    within(screen.getByRole("group", { name: "Modified facet" })).getByRole("button", {
-      name: /July 2025/,
-    }),
-  );
-  expect(onchange.mock.calls.at(-1)?.[0].filters.modified_after).toBeUndefined();
-});
-
-it("keeps an active capture year editable when ranked pages omit facets", async () => {
-  const onchange = vi.fn();
-  render(FacetSidebar, {
-    facets: [],
-    unit: "photos",
-    query: {
-      ...originalQuery,
-      filters: {
-        ...originalQuery.filters,
-        capture_after: "2024-01-01",
-        capture_before: "2025-01-01",
-      },
-    },
-    onchange,
-  });
-
-  const group = screen.getByRole("group", { name: "Year facet" });
-  const value = within(group).getByRole("button", { name: "2024, selected" });
-  await fireEvent.click(value);
-  expect(onchange.mock.lastCall?.[0].filters.capture_after).toBeUndefined();
-  expect(onchange.mock.lastCall?.[0].filters.capture_before).toBeUndefined();
 });
 
 it("keeps the No tags button reachable to clear while active and to apply after a tag is selected", async () => {

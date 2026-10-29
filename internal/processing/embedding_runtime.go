@@ -112,9 +112,7 @@ func (runtime *ProviderEmbeddingRuntime) Prepare(ctx context.Context, work Embed
 		if err != nil {
 			return EmbeddingExecution{}, err
 		}
-		metadata := source.Metadata()
-		metadata.Filename = ""
-		return EmbeddingExecution{Provider: runtime.provider, Inputs: []document.EmbeddingInput{{Key: work.ContentVersionID, Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputImage, Source: &boundAuthorizedUpload{AuthorizedUpload: source, metadata: metadata}}}, Classify: runtime.classify}, nil
+		return EmbeddingExecution{Provider: runtime.provider, Inputs: []document.EmbeddingInput{{Key: work.ContentVersionID, Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputImage, Source: source}}, Classify: runtime.classify}, nil
 
 	case document.EmbeddingInputRenditionChunk:
 		hydrated, err := hydrateEmbeddingGeneration(ctx, runtime.blobs, work.InputGeneration)
