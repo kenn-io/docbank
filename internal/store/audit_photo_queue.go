@@ -7,10 +7,17 @@ import (
 )
 
 func (s *Store) insertAuditMembershipTx(ctx context.Context, tx *sql.Tx, scopeID string, nodeID uint64, baseline string) error {
-	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_memberships(scope_id,node_id,baseline_digest) VALUES($1,$2,$3)`, scopeID, nodeID, baseline); err != nil {
+	if err := insertAuditMembershipRow(ctx, tx, scopeID, nodeID, baseline); err != nil {
 		return err
 	}
 	return s.queueAuditPhotosTx(ctx, tx, &nodeID)
+}
+
+// Initial enrollment queues all eligible photos after inserting its members;
+// later inserts use insertAuditMembershipTx to queue only the affected asset.
+func insertAuditMembershipRow(ctx context.Context, tx *sql.Tx, scopeID string, nodeID uint64, baseline string) error {
+	_, err := tx.ExecContext(ctx, `INSERT INTO audit_memberships(scope_id,node_id,baseline_digest) VALUES($1,$2,$3)`, scopeID, nodeID, baseline)
+	return err
 }
 
 // A nil node queues all eligible assets when authority first becomes active.

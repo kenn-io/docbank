@@ -602,12 +602,12 @@ the transaction preserves the earlier status and records.
 
 Initial and additional audit enrollment persistence also use the shared native
 writers. Records, authority, scopes, baselines, memberships and photo re-export
-queue entries commit or roll back together. Creating authority queues every
-eligible photo asset; a membership insert queues eligible originals in the
-member's asset, including when the member is a sidecar. Released SQLite layouts
-retain their triggers as the sole queue owner; PostgreSQL performs these writes
-in Go in the same storage transaction. Neither backend performs filesystem
-publication during enrollment.
+queue entries commit or roll back together. On PostgreSQL, initial enrollment
+queues every eligible photo asset once, after inserting all memberships. Later
+membership inserts queue eligible originals in the member's asset, including
+when the member is a sidecar. Released SQLite layouts retain their triggers as
+the sole queue owner; PostgreSQL performs these writes in Go in the same storage
+transaction. Neither backend performs filesystem publication during enrollment.
 
 `photo_xmp_inputs` preserves SQLite eligibility and exact change-detection tokens.
 The PostgreSQL view uses JSON extraction and ordered string aggregation, with

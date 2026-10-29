@@ -602,7 +602,7 @@ func (s *Store) persistInitialAuditEnrollment(
 		return fmt.Errorf("creating audit baseline projection: %w", err)
 	}
 	for _, member := range set.members {
-		if err := s.insertAuditMembershipTx(ctx, tx, input.scopeID, member, set.baselineDigest); err != nil {
+		if err := insertAuditMembershipRow(ctx, tx, input.scopeID, member, set.baselineDigest); err != nil {
 			return fmt.Errorf("creating audit membership for node %d: %w", member, err)
 		}
 	}
