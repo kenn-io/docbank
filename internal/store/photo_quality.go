@@ -155,9 +155,6 @@ func photoQualityForVersions(
 				return result, err
 			}
 		}
-		if err := document.ValidatePhotoFaceReports(signals.FaceReports); err != nil {
-			return result, err
-		}
 		for i := range signals.FaceReports {
 			signals.FaceReports[i].Grade = signals.FaceReports[i].ReportGrade()
 		}
