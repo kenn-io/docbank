@@ -121,11 +121,8 @@ func persistAuditedTopologyMutation(
 	if err := insertAuditRecord(ctx, tx, entry); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE audit_scopes SET entry_count=?,chain_head=? WHERE scope_id=?`,
-		entryCount, scopeHead.text, scope.scopeID,
-	); err != nil {
-		return fmt.Errorf("advancing audit scope %s: %w", scope.scopeID, err)
+	if err := updateAuditScopeHead(ctx, tx, scope.scopeID, entryCount, scopeHead.text); err != nil {
+		return err
 	}
 	allocation, err := makeAuditedTopologyAllocationEntry(
 		values, authority.sequence+1, nodeSequence,
@@ -147,10 +144,5 @@ func persistAuditedTopologyMutation(
 	if err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE audit_authority
-		SET operation_sequence_high_water=?,allocation_entry_count=?,allocation_head=?
-		WHERE singleton=1`, authority.sequence+1, allocationCount, allocationHead.text); err != nil {
-		return fmt.Errorf("advancing audit allocation authority: %w", err)
-	}
-	return nil
+	return updateAuditAuthorityHead(ctx, tx, authority.sequence+1, allocationCount, allocationHead.text)
 }

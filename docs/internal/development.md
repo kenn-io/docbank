@@ -270,6 +270,9 @@ GRANT SELECT ON documents.audit_records, documents.audit_authority,
     documents.audit_scopes, documents.audit_baselines, documents.audit_memberships
     TO docbank_runtime;
 GRANT INSERT ON documents.audit_records TO docbank_runtime;
+GRANT UPDATE(operation_sequence_high_water, allocation_entry_count, allocation_head)
+    ON documents.audit_authority TO docbank_runtime;
+GRANT UPDATE(entry_count, chain_head) ON documents.audit_scopes TO docbank_runtime;
 GRANT SELECT, UPDATE(high_water) ON documents.node_allocation TO docbank_runtime;
 ```
 
@@ -568,10 +571,26 @@ Record-insertion qualification uses canonical records produced by normal audit
 enrollment. Existing SQLite enrollment tests validate stored relational indexes;
 the PostgreSQL insertion test checks the same projections. It uses a caller-owned
 transaction and rolls it back: inserting records alone does not publish complete
-authority or membership projections. PostgreSQL grants
-`INSERT` on `audit_records` for this primitive, with no audit-table `UPDATE` or
-`DELETE`. Complete audit mutations, enrollment and metadata import remain
-unavailable until their catalog maintenance and validation are ported.
+authority or membership projections. Canonical records remain append-only:
+PostgreSQL runtime has `SELECT` and `INSERT` on `audit_records`, with no `UPDATE`
+or `DELETE` on that table.
+
+Existing audit authority and scope heads also advance through shared Go writers.
+They reject nonpositive counters and require the allocation entry count to equal
+the operation sequence before updating authority. Canonical records and their
+head updates stay in the caller's storage transaction; a failed operation
+publishes neither. Runtime needs only the column-specific `UPDATE` grants above
+for these projections, alongside record `INSERT` and catalog `SELECT`.
+
+The PostgreSQL advancement test starts from validated SQLite history, applies a
+native rename's resulting node projections and records, and compares committed
+status and every canonical record with SQLite. It also verifies that discarding
+the transaction preserves the earlier status and records. Shared Go rejection
+cases run once on SQLite and assert Go errors, not constraint failures.
+This qualifies existing-chain advancement, not a complete PostgreSQL move or
+enrollment operation. Creating authority and memberships still requires the
+photo catalogs and their transactional queue maintenance; import and restore
+still require complete metadata validation.
 
 For PostgreSQL tests, start a disposable server, never an operator database:
 

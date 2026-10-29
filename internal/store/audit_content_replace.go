@@ -246,10 +246,8 @@ func advanceAuditedMutationScopes(
 		if err := insertAuditRecord(ctx, tx, entry); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE audit_scopes
-			SET entry_count=?,chain_head=? WHERE scope_id=?`,
-			entryCount, head.text, scope.scopeID); err != nil {
-			return fmt.Errorf("advancing audit scope %s: %w", scope.scopeID, err)
+		if err := updateAuditScopeHead(ctx, tx, scope.scopeID, entryCount, head.text); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -270,12 +268,7 @@ func advanceAuditAuthority(
 	if err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE audit_authority
-		SET operation_sequence_high_water=?,allocation_entry_count=?,allocation_head=?
-		WHERE singleton=1`, operationSequence, allocationCount, allocationHead.text); err != nil {
-		return fmt.Errorf("advancing audit allocation authority: %w", err)
-	}
-	return nil
+	return updateAuditAuthorityHead(ctx, tx, operationSequence, allocationCount, allocationHead.text)
 }
 
 type auditedMutationValues struct {
