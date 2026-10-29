@@ -102,8 +102,9 @@ type PhotoMapRow struct {
 
 // PhotoStack is one burst among a page's items.
 type PhotoStack struct {
-	AssetIDs         []string `json:"asset_ids" minItems:"2" maxItems:"500" doc:"Members in ascending capture order."`
-	RepresentativeID string   `json:"representative_id" format:"uuid"`
+	Proposals        []store.PhotoBestShot `json:"proposals,omitempty"`
+	AssetIDs         []string              `json:"asset_ids" minItems:"2" maxItems:"500" doc:"Members in ascending capture order."`
+	RepresentativeID string                `json:"representative_id" format:"uuid"`
 }
 
 type PhotoBrowsePage struct {

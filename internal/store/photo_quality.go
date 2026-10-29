@@ -3,8 +3,10 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"slices"
 
 	"go.kenn.io/docbank/document"
 )
@@ -31,7 +33,7 @@ func (s *Store) MissingPhotoQualityTargetsAfter(
  AND EXISTS (SELECT 1 FROM visual_preview_generations g WHERE g.content_version_id=v.version_id
   AND g.recipe_fingerprint=? AND g.state='ready')
  AND NOT EXISTS (SELECT 1 FROM photo_quality_signals q WHERE q.content_version_id=v.version_id
-  AND q.evaluator_fingerprint=?)
+  AND q.evaluator_fingerprint=? AND (q.face_reports_json IS NOT NULL OR NOT EXISTS(SELECT 1 FROM photo_faces WHERE content_version_id=v.version_id)) AND q.face_inputs=`+photoFaceInputsSQL("v.version_id")+`)
  ORDER BY v.version_id LIMIT ?`, after, fingerprints.GridRecipe, fingerprints.Evaluator, limit)
 	if err != nil {
 		return nil, err
@@ -59,41 +61,54 @@ func (s *Store) PublishPhotoQualitySignals(
 	return s.publishPhotoQuality(ctx, target, photoQualityStateReady, []any{
 		signals.Focus, signals.Blur, signals.Brightness, signals.ColorRed,
 		signals.ColorGreen, signals.ColorBlue, signals.Framing, signals.Aesthetics,
-	})
+	}, signals.FaceReports)
 }
 
 // PublishPhotoQualityUnavailable records a terminal result for verified
 // preview bytes that the evaluator cannot measure.
-func (s *Store) PublishPhotoQualityUnavailable(ctx context.Context, target PhotoVisualPreviewTarget) error {
-	return s.publishPhotoQuality(ctx, target, photoQualityStateUnavailable, make([]any, 8))
+func (s *Store) PublishPhotoQualityUnavailable(ctx context.Context, target PhotoVisualPreviewTarget, reports ...document.PhotoFaceReport) error {
+	return s.publishPhotoQuality(ctx, target, photoQualityStateUnavailable, make([]any, 8), reports)
 }
 
 func (s *Store) publishPhotoQuality(
-	ctx context.Context, target PhotoVisualPreviewTarget, state string, scores []any,
+	ctx context.Context, target PhotoVisualPreviewTarget, state string, scores []any, reports []document.PhotoFaceReport,
 ) error {
 	fingerprints, err := document.CurrentPhotoQualityFingerprints()
 	if err != nil {
 		return err
 	}
-	args := append([]any{fingerprints.Evaluator, state}, scores...)
-	args = append(args, target.VersionID, target.SourceSHA256, target.Size, target.MediaType)
+	encoded, err := json.Marshal(reports)
+	if err != nil {
+		return err
+	}
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		inputs, err := photoReportInputs(ctx, tx, reports)
+		if err != nil {
+			return err
+		}
+		args := append([]any{fingerprints.Evaluator, state}, scores...)
+		args = append(args, string(encoded), inputs, target.VersionID, target.SourceSHA256, target.Size, target.MediaType, inputs)
 		if _, err := tx.ExecContext(ctx, `DELETE FROM photo_quality_signals
  WHERE content_version_id=? AND evaluator_fingerprint!=?`, target.VersionID, fingerprints.Evaluator); err != nil {
 			return fmt.Errorf("replacing stale photo quality signals: %w", err)
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO photo_quality_signals(
- content_version_id,evaluator_fingerprint,state,`+photoQualityColumns+`)
- SELECT v.version_id,?,?,?,?,?,?,?,?,?,? FROM content_versions v
+		_, err = tx.ExecContext(ctx, `INSERT INTO photo_quality_signals(
+ content_version_id,evaluator_fingerprint,state,`+photoQualityColumns+`,face_reports_json,face_inputs)
+ SELECT v.version_id,?,?,?,?,?,?,?,?,?,?,?,? FROM content_versions v
  WHERE v.version_id=? AND v.blob_hash=? AND v.size=? AND COALESCE(v.mime_type,'')=?
- AND `+liveIncludedPhotoDisplayPredicate("v")+`
- ON CONFLICT(content_version_id,evaluator_fingerprint) DO NOTHING`, args...)
+ AND `+liveIncludedPhotoDisplayPredicate("v")+` AND `+photoFaceInputsSQL("v.version_id")+`=?
+ ON CONFLICT(content_version_id,evaluator_fingerprint) DO UPDATE SET
+ state=excluded.state,focus=excluded.focus,blur=excluded.blur,brightness=excluded.brightness,
+ color_red=excluded.color_red,color_green=excluded.color_green,color_blue=excluded.color_blue,
+ framing=excluded.framing,aesthetics=excluded.aesthetics,face_reports_json=excluded.face_reports_json,face_inputs=excluded.face_inputs
+ WHERE photo_quality_signals.face_inputs<>excluded.face_inputs OR (photo_quality_signals.face_reports_json IS NULL AND excluded.face_inputs<>'')`, args...)
 		return err
 	})
 }
 
 // photoQualityResults holds measured signals and terminal unavailable versions.
 type photoQualityResults struct {
+	staleFaces  map[string]bool
 	signals     map[string]document.PhotoQualitySignals
 	unavailable map[string]bool
 }
@@ -102,6 +117,7 @@ func photoQualityForVersions(
 	ctx context.Context, q metadataQuerier, versions []string,
 ) (photoQualityResults, error) {
 	result := photoQualityResults{
+		staleFaces:  make(map[string]bool),
 		signals:     make(map[string]document.PhotoQualitySignals),
 		unavailable: make(map[string]bool),
 	}
@@ -116,7 +132,7 @@ func photoQualityForVersions(
 	for _, v := range versions {
 		args = append(args, v)
 	}
-	rows, err := q.QueryContext(ctx, `SELECT content_version_id,state,`+photoQualityColumns+`
+	rows, err := q.QueryContext(ctx, `SELECT content_version_id,state,`+photoQualityColumns+`,face_reports_json,face_inputs,`+photoFaceInputsSQL("photo_quality_signals.content_version_id")+`
  FROM photo_quality_signals
  WHERE evaluator_fingerprint=? AND content_version_id IN (`+placeholders(len(versions))+`)`, args...)
 	if err != nil {
@@ -124,9 +140,10 @@ func photoQualityForVersions(
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
-		var id, state string
+		var id, state, inputs, current string
+		var reports sql.NullString
 		var v [8]sql.NullFloat64
-		if err := rows.Scan(&id, &state, &v[0], &v[1], &v[2], &v[3], &v[4], &v[5], &v[6], &v[7]); err != nil {
+		if err := rows.Scan(&id, &state, &v[0], &v[1], &v[2], &v[3], &v[4], &v[5], &v[6], &v[7], &reports, &inputs, &current); err != nil {
 			return photoQualityResults{}, err
 		}
 		signals, unavailable, err := decodePhotoQualityRow(state, v)
@@ -136,6 +153,18 @@ func photoQualityForVersions(
 		if unavailable {
 			result.unavailable[id] = true
 			continue
+		}
+		result.staleFaces[id] = inputs != current
+		if reports.Valid && inputs == current {
+			if err := json.Unmarshal([]byte(reports.String), &signals.FaceReports); err != nil {
+				return result, err
+			}
+		}
+		if err := document.ValidatePhotoFaceReports(signals.FaceReports); err != nil {
+			return result, err
+		}
+		for i := range signals.FaceReports {
+			signals.FaceReports[i].Grade = signals.FaceReports[i].ReportGrade()
 		}
 		result.signals[id] = signals
 	}
@@ -166,4 +195,39 @@ func decodePhotoQualityRow(
 		return document.PhotoQualitySignals{}, false, fmt.Errorf(
 			"invalid photo quality state %q with %d of %d scores", state, present, len(v))
 	}
+}
+
+// The source signature is ordered by face ID in both SQL and measured reports.
+func photoFaceInputsSQL(version string) string {
+	return `(SELECT COALESCE(group_concat(input,','),'') FROM (SELECT json_array(face_id,x,y,width,height,facing,eyes_open,smile) input FROM photo_faces WHERE content_version_id=` + version + ` AND NOT EXISTS(SELECT 1 FROM person_match_candidates c JOIN person_candidate_faces e ON e.candidate_id=c.candidate_id WHERE e.face_id=photo_faces.face_id AND ` + rejectedFaceMatchPredicate + ` AND COALESCE(c.suggested_person_id,'')='') ORDER BY face_id))`
+}
+func photoReportInputs(ctx context.Context, q metadataQuerier, reports []document.PhotoFaceReport) (string, error) {
+	source := make([][]any, len(reports))
+	for i, r := range reports {
+		source[i] = []any{r.FaceID, r.Box.X, r.Box.Y, r.Box.Width, r.Box.Height, r.Facing, r.EyesOpen, r.Smile}
+	}
+	encoded, err := json.Marshal(source)
+	if err != nil {
+		return "", err
+	}
+	var inputs string
+	err = q.QueryRowContext(ctx, `SELECT COALESCE(group_concat(json_array(value->>'$[0]',CAST(value->>'$[1]' AS REAL),CAST(value->>'$[2]' AS REAL),CAST(value->>'$[3]' AS REAL),CAST(value->>'$[4]' AS REAL),CAST(value->>'$[5]' AS REAL),value->>'$[6]',value->>'$[7]'),','),'') FROM (SELECT value FROM json_each(?) ORDER BY value->>'$[0]')`, string(encoded)).Scan(&inputs)
+	return inputs, err
+}
+func (s *Store) PhotoQualityFaces(ctx context.Context, version string) ([]PhotoFace, error) {
+	var faces []PhotoFace
+	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		faces, err = s.photoQualityFacesTx(ctx, tx, version)
+		return err
+	})
+	return faces, err
+}
+
+func (s *Store) photoQualityFacesTx(ctx context.Context, tx *sql.Tx, version string) ([]PhotoFace, error) {
+	faces, err := photoFacesQuery(ctx, tx, version)
+	if err == nil {
+		err = s.readFaceDecisionsTx(ctx, tx, faces)
+	}
+	return slices.DeleteFunc(faces, func(f PhotoFace) bool { return f.Dismissed }), err
 }

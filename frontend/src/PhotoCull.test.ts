@@ -278,6 +278,7 @@ async function reviewPhoto(
   options: {
     lookupError?: Error;
     onmetadatachanged?: () => void;
+    hidden?: boolean;
   } = {},
 ) {
   vi.stubGlobal(
@@ -310,7 +311,7 @@ async function reviewPhoto(
       autoAdvance,
     },
   };
-  const photos = new Photos("session", vi.fn());
+  const photos = new Photos("session", vi.fn(), options.hidden ?? false);
   const lookup = vi.spyOn(photos, "lookup").mockResolvedValue(row);
   if (options.lookupError) lookup.mockRejectedValueOnce(options.lookupError);
   vi.spyOn(photos, "lookupMany").mockResolvedValue([row]);
@@ -1376,9 +1377,9 @@ it.each([
   ],
 ])("%s", (_name, run) => run());
 
-async function reviewTwoStacks() {
+async function reviewTwoStacks(hidden = false) {
   const rows = [photo(1), photo(2), photo(3), photo(4)];
-  const review = await reviewPhoto(rows[0]);
+  const review = await reviewPhoto(rows[0], false, undefined, { hidden });
   const { cull, photos } = review;
   vi.mocked(photos.lookup).mockImplementation(async (id) =>
     rows.find((row) => row.asset_id === id)!,
@@ -1799,4 +1800,46 @@ it("changes the burst gap from the cull header and regroups the pass", async () 
   );
   expect(refresh).toHaveBeenCalled();
   await waitFor(() => expect(check).toHaveBeenCalled());
+});
+
+it.each(["Accept all", "x"])("keeps Hidden scope for %s", async (action) => {
+  const offer = {
+    asset_id: "photo-1",
+    flag: "pick" as const,
+    rationale: "Best frame",
+    confidence: 0.5,
+  };
+  const respond = vi.spyOn(api, "decidePhotoStack").mockResolvedValue({
+    receipt_id: "receipt",
+    before: [preparedPhoto(1)],
+    after: [
+      { ...preparedPhoto(1), revision: 2, values: { ...preparedPhoto(1).values, flag: "pick" } },
+    ],
+  });
+  vi.mocked(api.preparePhotoAuthored).mockImplementation(async (scope) => ({
+    ...photoPreparation((scope.asset_ids ?? []).map((id) => preparedPhoto(Number(id.slice(6))))),
+    proposals: scope.stack ? [offer] : [],
+  }));
+  const edit = vi
+    .spyOn(api, "editPhotoAuthored")
+    .mockResolvedValue({ receipt_id: "", before: [], after: [] });
+  const { container } = await reviewTwoStacks(true);
+  await waitFor(() =>
+    expect(container.querySelector(".filmstrip .proposal")?.textContent).toBe("KEEP"),
+  );
+  vi.mocked(api.preparePhotoAuthored).mockClear();
+  if (action.length === 1)
+    await fireEvent.keyDown(container.querySelector(".photo-cull")!, { key: action });
+  else await fireEvent.click(await readyButton(action));
+  if (action.length === 1) {
+    await waitFor(() => expect(edit).toHaveBeenCalledOnce());
+    expect(respond).not.toHaveBeenCalled();
+    expect(api.preparePhotoAuthored).toHaveBeenCalledWith(
+      expect.objectContaining({ asset_ids: ["photo-1"], hidden: true }),
+      expect.anything(),
+    );
+  } else {
+    await waitFor(() => expect(respond).toHaveBeenCalledOnce());
+    expect(respond.mock.calls[0][0].hidden).toBe(true);
+  }
 });

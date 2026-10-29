@@ -1,4 +1,5 @@
 <script lang="ts">
+  import PhotoBestShotBadge from "./PhotoBestShotBadge.svelte";
   import { Checkbox, Menu, MenuTrigger, MenuContent, MenuItem } from "@kenn-io/kit-ui";
   import RotateCcw from "@lucide/svelte/icons/rotate-ccw";
   import ImageIcon from "@lucide/svelte/icons/image";
@@ -211,6 +212,10 @@
         ariaLabel={`Select photo ${photo.name}`}
         onchange={(checked) => oncheck?.(checked, false)}
       />
+      <PhotoBestShotBadge
+        proposal={photo.stack?.proposals?.find((p) => p.asset_id === photo.asset_id)}
+        {compact}
+      />
     </div>
     {#if onhidden}
       <div class="photo-menu">
@@ -321,6 +326,8 @@
     right: 8px;
   }
   .photo-check {
+    align-items: center;
+    gap: var(--space-2);
     position: absolute;
     top: 8px;
     left: 8px;

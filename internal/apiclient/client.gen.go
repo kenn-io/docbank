@@ -29969,6 +29969,10 @@ type PhotoAuthoredReceipt = store.PhotoAuthoredReceipt
 
 type PhotoAuthoredSnapshot = store.PhotoAuthoredSnapshot
 
+type PhotoBestShotProposal = document.PhotoBestShotProposal
+
+type PhotoBestShotResponse = store.PhotoBestShotResponse
+
 type PhotoBrowsePage = api.PhotoBrowsePage
 
 type PhotoBrowseRequest = api.PhotoBrowseRequest
@@ -30021,6 +30025,8 @@ type PhotoFaceDecisionResult = api.PhotoFaceDecisionResult
 type PhotoFacePage = api.PhotoFacePage
 
 type PhotoFacePerson = store.PhotoFacePerson
+
+type PhotoFaceReport = document.PhotoFaceReport
 
 type PhotoFaceResult = api.PhotoFaceResult
 

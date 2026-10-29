@@ -155,3 +155,39 @@ func TestPhotoQualityUndecodablePreviewIsUnavailable(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, targets)
 }
+
+func TestPhotoFaceCropReports(t *testing.T) {
+	t.Parallel()
+	source := image.NewRGBA(image.Rect(0, 0, 32, 16))
+	for y := range 16 {
+		for x := range 32 {
+			v := uint8(0)
+			if x < 16 && (x+y)%2 == 0 {
+				v = 255
+			}
+			source.SetRGBA(x, y, color.RGBA{v, v, v, 255})
+		}
+	}
+	face := store.PhotoFace{FaceID: "face", Revision: 2, Box: document.FaceBox{X: 0, Y: 0, Width: 0.5, Height: 1}, EyesOpen: new(false), Facing: new(0.8), Smile: new(true)}
+	report := measurePhotoFace(source, face)
+	require.NotNil(t, report.Sharpness)
+	require.Greater(t, *report.Sharpness, 0.9)
+	require.Greater(t, *report.Light, 0.9)
+	require.Equal(t, face.Facing, report.Facing)
+	require.Equal(t, face.EyesOpen, report.EyesOpen)
+	require.Equal(t, face.Smile, report.Smile)
+	face.Box.X = 0.5
+	dark := measurePhotoFace(source, face)
+	require.Zero(t, *dark.Light)
+	require.Zero(t, *dark.Sharpness)
+	face.Box.Width = 0.2
+	face.Facing = nil
+	face.EyesOpen = nil
+	face.Smile = nil
+	tiny := measurePhotoFace(source, face)
+	require.Nil(t, tiny.Light)
+	require.Nil(t, tiny.Sharpness)
+	require.Nil(t, tiny.Facing)
+	require.Nil(t, tiny.EyesOpen)
+	require.Nil(t, tiny.Smile)
+}

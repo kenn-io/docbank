@@ -88,13 +88,16 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 		if err != nil {
 			return nil, workspaceQueryError(err)
 		}
+		if err := d.Store.PhotoStackBestShots(ctx, page.Stacks, in.Body.Hidden); err != nil {
+			d.Logger.Warn("compute photo best shots", "error", err)
+		}
 		wire := PhotoBrowsePage{
 			GroupingIncomplete: page.GroupingIncomplete,
 			Items:              make([]PhotoBrowseRow, len(page.Items)), Total: page.Total, BurstGapSeconds: page.BurstGapSeconds,
 			Facets: fromStoreFacets(page.Facets), RelevanceAvailable: page.RelevanceAvailable,
 		}
 		for _, stack := range page.Stacks {
-			wire.Stacks = append(wire.Stacks, PhotoStack{AssetIDs: stack.AssetIDs, RepresentativeID: stack.RepresentativeID})
+			wire.Stacks = append(wire.Stacks, PhotoStack{AssetIDs: stack.AssetIDs, RepresentativeID: stack.RepresentativeID, Proposals: stack.Proposals})
 		}
 		if in.Body.Projection == "map" {
 			wire.Items = []PhotoBrowseRow{}

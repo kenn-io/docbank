@@ -33,14 +33,26 @@ func EvaluatePhotoQuality(
 	if err != nil {
 		return fmt.Errorf("reading photo quality preview: %w", err)
 	}
+	faces, err := s.PhotoQualityFaces(ctx, target.VersionID)
+	if err != nil {
+		return err
+	}
 	decoded, ok := decodePhotoQualityPreview(body, output)
 	if !ok {
-		return s.PublishPhotoQualityUnavailable(ctx, target)
+		reports := make([]document.PhotoFaceReport, len(faces))
+		for i, f := range faces {
+			reports[i] = document.PhotoFaceReport{FaceID: f.FaceID, Box: f.Box, Facing: f.Facing, EyesOpen: f.EyesOpen, Smile: f.Smile}
+		}
+		return s.PublishPhotoQualityUnavailable(ctx, target, reports...)
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return s.PublishPhotoQualitySignals(ctx, target, measurePhotoQuality(decoded))
+	signals := measurePhotoQuality(decoded)
+	for _, face := range faces {
+		signals.FaceReports = append(signals.FaceReports, measurePhotoFace(decoded, face))
+	}
+	return s.PublishPhotoQualitySignals(ctx, target, signals)
 }
 
 func decodePhotoQualityPreview(body []byte, output *document.VisualPreviewOutputV1) (image.Image, bool) {
@@ -107,4 +119,19 @@ func measurePhotoQuality(source image.Image) document.PhotoQualitySignals {
 	contrast := max(s.ColorRed, s.ColorGreen, s.ColorBlue) - min(s.ColorRed, s.ColorGreen, s.ColorBlue)
 	s.Aesthetics = min(max(s.Focus*0.35+balanced*0.25+contrast*0.20+s.Framing*0.20, 0), 1)
 	return s
+}
+
+func measurePhotoFace(source image.Image, face store.PhotoFace) document.PhotoFaceReport {
+	r := document.PhotoFaceReport{FaceID: face.FaceID, Box: face.Box, Facing: face.Facing, EyesOpen: face.EyesOpen, Smile: face.Smile, Prominence: face.Box.Width * face.Box.Height}
+	b := source.Bounds()
+	box := image.Rect(b.Min.X+int(face.Box.X*float64(b.Dx())), b.Min.Y+int(face.Box.Y*float64(b.Dy())), b.Min.X+int((face.Box.X+face.Box.Width)*float64(b.Dx())), b.Min.Y+int((face.Box.Y+face.Box.Height)*float64(b.Dy()))).Intersect(b)
+	if box.Dx() < 8 || box.Dy() < 8 {
+		return r
+	}
+	crop := image.NewRGBA(image.Rect(0, 0, box.Dx(), box.Dy()))
+	draw.Draw(crop, crop.Bounds(), source, box.Min, draw.Src)
+	measured := measurePhotoQuality(crop)
+	r.Sharpness = new(measured.Focus)
+	r.Light = new(1 - min(math.Abs(measured.Brightness-0.5)*2, 1))
+	return r
 }
