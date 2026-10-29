@@ -201,7 +201,7 @@ in `releasedSchemaFixtures`. Three checks enforce this:
 `internal/store/pgschema` provides the internal schema installation and
 validation foundation. A PostgreSQL-backed vault is not available yet: ordinary
 daemon and embedded operations still use SQLite. This package owns the native
-vault identity, PostgreSQL schema version, the core `nodes`, `blobs`,
+vault identity, the core `nodes`, `blobs`,
 `blob_checksums`, `content_versions` and `node_allocation` catalogs, and the five
 `audit_*` catalogs for canonical records, authority, scopes, baselines and memberships.
 It also owns the photo input catalogs and `photo_xmp_inputs` view used for audit
@@ -215,7 +215,7 @@ and uses the explicit `Schema` setting. It creates a dedicated schema, canonical
 DDL, a UUIDv4 vault identity, and the root directory in one transaction, under a
 schema-specific PostgreSQL advisory lock. Repeated setup preserves the identity,
 root, and existing data. Existing empty or unrelated schemas, malformed
-identities, wrong owners, and unsupported versions are refused rather than repaired.
+identities and wrong owners are refused rather than repaired.
 
 The catalogs keep content-version and operation IDs as text, numeric node IDs,
 sizes and revisions as `BIGINT`, and timestamps as fixed-width UTC text. This
@@ -253,7 +253,7 @@ can assume, including indirect memberships. `NOINHERIT` alone does not prevent
 `SET ROLE`; PostgreSQL's [role privilege checks](https://www.postgresql.org/docs/16/functions-info.html#FUNCTIONS-INFO-ACCESS-TABLE)
 resolve those grants. The operator provisions roles and grants schema `USAGE`
 and identity `SELECT` explicitly. Neither function creates roles or changes
-grants. `Validate` checks identity/version and role separation; it does not
+grants. `Validate` checks identity and role separation; it does not
 qualify the remaining store operations. Callers own connection lifetimes and
 deadlines. Schema setup does not grant ownership of blob roots or permit
 multiple vault writers.
@@ -301,13 +301,13 @@ role, directly or indirectly. This ownership check is separate from object
 privileges: an owner can revoke its own write privileges and still retain the
 authority to alter objects or grant those privileges again.
 
-PostgreSQL schema versions are independent of SQLite layout versions and JSONL
-format versions. The first supported PostgreSQL release establishes the upgrade
-floor. Fresh installs use canonical DDL; do not invent historical migrations for
-this unreleased foundation. Internal layout 5 includes the photo input catalogs
-and audit re-export queue, and rejects earlier layouts without changing them.
-Recreate disposable test databases when moving between these internal layouts.
-Later supported layouts require numbered
+PostgreSQL support is unreleased. Edit the canonical DDL directly; do not assign
+layout versions, add compatibility gates, or write migrations for development
+schemas. Recreate disposable test databases when the schema changes.
+
+The first release with PostgreSQL support establishes its schema version and
+upgrade floor, independently of SQLite layout versions and JSONL format versions.
+Subsequent changes require numbered
 `NNNNNN_description.up.sql` transitions, with the target version in the filename.
 Keep one complete forward chain, and commit each transition and its version
 together under the setup lock. Runtime startup never migrates. Once a migration
@@ -340,7 +340,7 @@ their `internal` packages are not importable shared libraries.
 | AgentsView [catalog adapter][av-pg-catalog] and [query dialect][av-dialect] | Shared filtering, pagination and result assembly; explicit backend SQL and typed scanning | Docbank is an authoritative vault, not a disposable mirror. Keep its existing `Store` and mutation helpers; no replica registry or second implementation of audit and publication |
 | AgentsView [pool opening][av-connect] and [hosted validation][av-hosted] | Configure every pooled connection, validate effective schema at opening, and account for connection reuse | Its tenant/RLS schema is a separate design, not Docbank's permission model. Do not copy its CHECK constraints, tenant tables or triggers |
 | [msgvault embedded archive][mv-archive] | pgx through `database/sql`; separate setup and validation-only opening; `current_schema()` check | Docbank serializes setup itself and requires a dedicated schema; it does not copy ambient-schema defaults or msgvault's migration ledger |
-| [Kata PostgreSQL operations][kata-operations] | `Schema`/`SchemaOwner` naming, owner/runtime role separation, transaction advisory lock, exact version validation | This internal API accepts a pool and has separate setup/validate calls; connection configuration and a public vault are not exposed yet |
+| [Kata PostgreSQL operations][kata-operations] | `Schema`/`SchemaOwner` naming, owner/runtime role separation, transaction advisory lock | This internal API accepts a pool and has separate setup/validate calls; versioning starts with the first PostgreSQL release, and a public vault is not exposed yet |
 | [Kata numbered migrations][kata-migrations] and [sequence export][kata-sequences] | Canonical fresh DDL, immutable forward SQL, atomic version stamps, and preservation of allocated IDs through transfer | Version history belongs to Docbank; its audit format requires a transactional node counter rather than a native identity sequence |
 | AgentsView [behavior parity][av-parity] and [pool tests][av-pool-tests]; msgvault and Kata PostgreSQL lanes | Exercise real backends and their public operations, including errors, filtering and reused connections | Keep Docbank's canonical setup fixture, separate runtime role, PostgreSQL 16/18 lanes and both SQLite builds; no new fixture schema or per-test container |
 
