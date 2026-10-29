@@ -204,6 +204,9 @@ daemon and embedded operations still use SQLite. This package owns the native
 vault identity, PostgreSQL schema version, the core `nodes`, `blobs`,
 `blob_checksums`, `content_versions` and `node_allocation` catalogs, and the five
 `audit_*` catalogs for canonical records, authority, scopes, baselines and memberships.
+It also owns the photo input catalogs and `photo_xmp_inputs` view used for audit
+re-export decisions: photo assets/files/sets/receipts, source metadata generations,
+heads and technical projections, tags, ingests and provenance.
 Complete mutations, the remaining catalogs, search, transfer, and recovery are
 not available yet.
 
@@ -269,11 +272,19 @@ GRANT SELECT, INSERT ON documents.blob_checksums TO docbank_runtime;
 GRANT SELECT ON documents.audit_records, documents.audit_authority,
     documents.audit_scopes, documents.audit_baselines, documents.audit_memberships
     TO docbank_runtime;
-GRANT INSERT ON documents.audit_records TO docbank_runtime;
+GRANT INSERT ON documents.audit_records, documents.audit_authority,
+    documents.audit_scopes, documents.audit_baselines, documents.audit_memberships
+    TO docbank_runtime;
 GRANT UPDATE(operation_sequence_high_water, allocation_entry_count, allocation_head)
     ON documents.audit_authority TO docbank_runtime;
 GRANT UPDATE(entry_count, chain_head) ON documents.audit_scopes TO docbank_runtime;
 GRANT SELECT, UPDATE(high_water) ON documents.node_allocation TO docbank_runtime;
+GRANT SELECT ON documents.ingests, documents.provenance,
+    documents.source_metadata_generations, documents.source_metadata_heads,
+    documents.photo_technical_metadata, documents.tags, documents.node_tags,
+    documents.photo_assets, documents.photo_files, documents.photo_sets,
+    documents.photo_change_receipts, documents.photo_xmp_inputs TO docbank_runtime;
+GRANT SELECT, INSERT ON documents.photo_xmp_unsettled TO docbank_runtime;
 ```
 
 Checksum rows are inserted or compared with the existing value, never updated;
@@ -293,9 +304,10 @@ authority to alter objects or grant those privileges again.
 PostgreSQL schema versions are independent of SQLite layout versions and JSONL
 format versions. The first supported PostgreSQL release establishes the upgrade
 floor. Fresh installs use canonical DDL; do not invent historical migrations for
-this unreleased foundation. Internal layout 4 adds transactional node allocation
-and byte-ordered text, and rejects earlier layouts without changing them. Recreate
-disposable test databases when moving between these internal layouts. Later supported layouts require numbered
+this unreleased foundation. Internal layout 5 includes the photo input catalogs
+and audit re-export queue, and rejects earlier layouts without changing them.
+Recreate disposable test databases when moving between these internal layouts.
+Later supported layouts require numbered
 `NNNNNN_description.up.sql` transitions, with the target version in the filename.
 Keep one complete forward chain, and commit each transition and its version
 together under the setup lock. Runtime startup never migrates. Once a migration
@@ -441,10 +453,11 @@ mutations, which still depend on catalogs that have not been ported.
     | Add or remove audit authority | Queue every eligible photo asset in `photo_xmp_unsettled` |
     | Record a checksum | Keep the existing value immutable; reject a conflicting value in Go and omit runtime `UPDATE` privileges |
 
-    Shared audit mutation helpers must own the membership and authority effects
-    in the same transaction as those changes. PostgreSQL audit writes require
-    the photo catalogs and this maintenance; the audit tables alone are not
-    sufficient.
+    Initial and additional enrollment persistence already queue affected assets
+    on PostgreSQL through the shared audit writers, as described under
+    [shared query qualification](#shared-query-qualification). The remaining
+    mutation, cascading deletion and restore paths must preserve these effects
+    too; the presence of photo tables does not qualify those operations.
 
     Shared Go validation must also enforce the audit invariants currently
     covered by SQLite checks: one active authority row at `singleton=1`, known
@@ -585,12 +598,31 @@ for these projections, alongside record `INSERT` and catalog `SELECT`.
 The PostgreSQL advancement test starts from validated SQLite history, applies a
 native rename's resulting node projections and records, and compares committed
 status and every canonical record with SQLite. It also verifies that discarding
-the transaction preserves the earlier status and records. Shared Go rejection
-cases run once on SQLite and assert Go errors, not constraint failures.
-This qualifies existing-chain advancement, not a complete PostgreSQL move or
-enrollment operation. Creating authority and memberships still requires the
-photo catalogs and their transactional queue maintenance; import and restore
-still require complete metadata validation.
+the transaction preserves the earlier status and records.
+
+Initial and additional audit enrollment persistence also use the shared native
+writers. Records, authority, scopes, baselines, memberships and photo re-export
+queue entries commit or roll back together. Creating authority queues every
+eligible photo asset; a membership insert queues eligible originals in the
+member's asset, including when the member is a sidecar. Released SQLite layouts
+retain their triggers as the sole queue owner; PostgreSQL performs these writes
+in Go in the same storage transaction. Neither backend performs filesystem
+publication during enrollment.
+
+`photo_xmp_inputs` preserves SQLite eligibility and exact change-detection tokens.
+The PostgreSQL view uses JSON extraction and ordered string aggregation, with
+explicit numeric boolean encoding in tokens. `PhotoXMPTargetsAfter` shares its
+filtering, bounds and cursor order; only the candidate join spelling differs.
+The parity test builds valid photo data through SQLite APIs, including settled
+receipts, tags, missing extraction, trash and video, then compares tokens,
+queues, target pages and audit records after native enrollment persistence.
+
+This qualifies internal persistence, not a complete PostgreSQL enrollment or
+photo publication API. The fixture supplies native records from SQLite;
+PostgreSQL preview, full metadata validation, import/restore, removal and other
+photo mutations remain unavailable. Added input catalogs grant runtime read
+access only. Do not enable those writes until their validation and related
+catalog maintenance are ported.
 
 For PostgreSQL tests, start a disposable server, never an operator database:
 

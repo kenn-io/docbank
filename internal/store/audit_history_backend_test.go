@@ -150,6 +150,11 @@ func newAuditHistoryPostgresFixture(t *testing.T) (*Store, *Store, func(), strin
 
 func copyAuditHistoryFixture(t *testing.T, source *Store, setup *sql.DB) {
 	t.Helper()
+	copyStoreCatalogFixture(t, source, setup, []string{"nodes", "audit_records", "audit_authority", "audit_scopes", "audit_baselines", "audit_memberships"})
+}
+
+func copyStoreCatalogFixture(t *testing.T, source *Store, setup *sql.DB, tables []string) {
+	t.Helper()
 	ctx := t.Context()
 	require.NoError(t, source.ValidateMetadata(ctx))
 	from, err := source.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
@@ -160,7 +165,6 @@ func copyAuditHistoryFixture(t *testing.T, source *Store, setup *sql.DB) {
 	defer func() { _ = to.Rollback() }()
 	_, err = to.ExecContext(ctx, `SET LOCAL search_path=documents,pg_catalog`)
 	require.NoError(t, err)
-	tables := []string{"nodes", "audit_records", "audit_authority", "audit_scopes", "audit_baselines", "audit_memberships"}
 	for _, table := range slices.Backward(tables) {
 		_, err := to.ExecContext(ctx, "DELETE FROM "+table)
 		require.NoError(t, err)
@@ -168,7 +172,12 @@ func copyAuditHistoryFixture(t *testing.T, source *Store, setup *sql.DB) {
 	for _, table := range tables {
 		query := "SELECT * FROM " + table
 		if table == "nodes" {
-			query += " ORDER BY id"
+			// A moved node may have a newer parent. Copy parents first to
+			// satisfy the immediate parent foreign key on the destination.
+			query = `WITH RECURSIVE tree(id,depth) AS (
+    SELECT id,0 FROM nodes WHERE parent_id IS NULL
+    UNION ALL SELECT n.id,t.depth+1 FROM nodes n JOIN tree t ON n.parent_id=t.id
+   ) SELECT n.* FROM tree t JOIN nodes n ON n.id=t.id ORDER BY t.depth,t.id`
 		}
 		rows, err := from.QueryContext(ctx, query)
 		require.NoError(t, err)

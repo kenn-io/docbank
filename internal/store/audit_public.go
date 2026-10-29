@@ -224,7 +224,7 @@ func (s *Store) EnableInitialAudit(
 				set.allocationGenesisDigest != plan.allocationGenesisDigest {
 				return ErrAuditPreviewStale
 			}
-			if err := persistInitialAuditEnrollment(ctx, tx, set); err != nil {
+			if err := s.persistInitialAuditEnrollment(ctx, tx, set); err != nil {
 				return err
 			}
 			if err := validateMetadataState(ctx, tx, set.nodeSequence); err != nil {
@@ -242,7 +242,7 @@ func (s *Store) EnableInitialAudit(
 				set.allocationHead != plan.allocationHead {
 				return ErrAuditPreviewStale
 			}
-			if err := persistAdditionalAuditEnrollment(ctx, tx, set); err != nil {
+			if err := s.persistAdditionalAuditEnrollment(ctx, tx, set); err != nil {
 				return err
 			}
 			if err := validateMetadataState(ctx, tx, set.nodeSequence); err != nil {

@@ -201,7 +201,7 @@ func TestSetupRefusesUnownedOrInvalidState(t *testing.T) {
 
 func TestSetupPreservesUnsupportedVersion(t *testing.T) {
 	t.Parallel()
-	for _, version := range []int{0, 1, 2, 3, Version + 1} {
+	for _, version := range []int{0, 1, 2, 3, 4, Version + 1} {
 		t.Run(strconv.Itoa(version), func(t *testing.T) {
 			t.Parallel()
 			db, owner := pgtest.NewDatabase(t)

@@ -50,6 +50,13 @@ func newPostgresSchemaStore(t *testing.T, setup *sql.DB, cfg pgschema.Config) *S
 		"; GRANT UPDATE(entry_count,chain_head) ON "+schema+".audit_scopes TO "+quotedRole+
 		"; GRANT SELECT,UPDATE(high_water) ON "+schema+".node_allocation TO "+quotedRole)
 	require.NoError(t, err)
+	for _, table := range []string{"ingests", "provenance", "source_metadata_generations", "source_metadata_heads", "photo_technical_metadata", "tags", "node_tags", "photo_assets", "photo_files", "photo_sets", "photo_change_receipts", "photo_xmp_inputs"} {
+		_, err = setup.ExecContext(ctx, "GRANT SELECT ON "+schema+"."+table+" TO "+quotedRole)
+		require.NoError(t, err)
+	}
+	_, err = setup.ExecContext(ctx, "GRANT SELECT,INSERT ON "+schema+".photo_xmp_unsettled TO "+quotedRole+
+		"; GRANT INSERT ON "+schema+".audit_authority,"+schema+".audit_scopes,"+schema+".audit_baselines,"+schema+".audit_memberships TO "+quotedRole)
+	require.NoError(t, err)
 	config, err := pgx.ParseConfig(os.Getenv("DOCBANK_TEST_POSTGRES_DSN"))
 	require.NoError(t, err)
 	require.NoError(t, setup.QueryRowContext(ctx, `SELECT current_database()`).Scan(&config.Database))

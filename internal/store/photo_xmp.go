@@ -736,8 +736,8 @@ func (w PhotoXMPWork) conflict(id string) error {
 
 // The queue is keyed by asset, so a cursor seeks it and a page reads only the assets it returns.
 const photoXMPTargetsQuery = `SELECT f.file_id,f.node_id,f.asset_id FROM ` + photoXMPCandidatesSQL + `
- WHERE u.asset_id>=?1 AND f.eligible AND f.pending AND f.extracted AND (f.asset_id>?1 OR f.file_id>?2)
- ORDER BY u.asset_id,f.file_id LIMIT ?3`
+ WHERE u.asset_id>=$1 AND f.eligible AND f.pending AND f.extracted AND (f.asset_id>$1 OR f.file_id>$2)
+ ORDER BY u.asset_id,f.file_id LIMIT $3`
 
 // PhotoXMPTargetsAfter pages unsettled originals in the daemon's existing pages;
 // after is a PhotoSidecarTarget's Cursor, or empty for the first page.
@@ -747,7 +747,13 @@ func (s *Store) PhotoXMPTargetsAfter(ctx context.Context, after string, limit in
 	}
 	assetID, fileID, _ := strings.Cut(after, "|")
 	result := []PhotoSidecarTarget{}
-	err := queryRows(ctx, s.db, photoXMPTargetsQuery, []any{assetID, fileID, limit}, func(rows *sql.Rows) error {
+	query := photoXMPTargetsQuery
+	if s.postgresSchema != "" {
+		// SQLite's CROSS JOIN fixes the candidate queue as the outer loop.
+		// PostgreSQL uses its ordinary JOIN spelling and planner.
+		query = strings.Replace(query, "CROSS JOIN", "JOIN", 1)
+	}
+	err := queryRows(ctx, s.db, query, []any{assetID, fileID, limit}, func(rows *sql.Rows) error {
 		var t PhotoSidecarTarget
 		if err := rows.Scan(&t.FileID, &t.NodeID, &t.AssetID); err != nil {
 			return err

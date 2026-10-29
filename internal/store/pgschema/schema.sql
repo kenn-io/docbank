@@ -142,3 +142,236 @@ CREATE TABLE {{schema}}.audit_memberships (
     PRIMARY KEY (scope_id, node_id)
 );
 CREATE INDEX audit_membership_node ON {{schema}}.audit_memberships(node_id);
+
+-- Catalogs consumed by photo re-export decisions. Mutation and publication
+-- semantics remain in Go; these tables do not enable a complete photo store.
+
+CREATE TABLE {{schema}}.ingests (
+    id          TEXT COLLATE "C" PRIMARY KEY NOT NULL,
+    started_at  TEXT COLLATE "C" NOT NULL,
+    source_kind TEXT COLLATE "C" NOT NULL,
+    source_desc TEXT COLLATE "C" NOT NULL
+);
+
+CREATE TABLE {{schema}}.provenance (
+    identity       TEXT COLLATE "C" PRIMARY KEY NOT NULL,
+    node_id        BIGINT NOT NULL REFERENCES {{schema}}.nodes(id) ON DELETE CASCADE,
+    ingest_id      TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.ingests(id),
+    original_path  TEXT COLLATE "C" NOT NULL,
+    original_mtime TEXT COLLATE "C",
+    supersedes     TEXT COLLATE "C" REFERENCES {{schema}}.provenance(identity)
+        DEFERRABLE INITIALLY DEFERRED
+);
+
+CREATE TABLE {{schema}}.source_metadata_generations (
+    generation_id        TEXT COLLATE "C" PRIMARY KEY,
+    source_sha256        TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.blobs(hash) ON DELETE CASCADE,
+    contract_version     TEXT COLLATE "C" NOT NULL,
+    extractor_fingerprint TEXT COLLATE "C" NOT NULL,
+    canonical_json       BYTEA NOT NULL,
+    checksum             TEXT COLLATE "C" NOT NULL,
+    created_at           TEXT COLLATE "C" NOT NULL,
+    UNIQUE (source_sha256, contract_version, extractor_fingerprint),
+    UNIQUE (source_sha256, generation_id)
+);
+
+CREATE TABLE {{schema}}.source_metadata_heads (
+    source_sha256 TEXT COLLATE "C" PRIMARY KEY REFERENCES {{schema}}.blobs(hash) ON DELETE CASCADE,
+    generation_id TEXT COLLATE "C" NOT NULL UNIQUE
+        REFERENCES {{schema}}.source_metadata_generations(generation_id) ON DELETE CASCADE,
+    published_at TEXT COLLATE "C" NOT NULL,
+    FOREIGN KEY (source_sha256, generation_id)
+        REFERENCES {{schema}}.source_metadata_generations(source_sha256, generation_id) ON DELETE CASCADE
+);
+
+CREATE TABLE {{schema}}.photo_technical_metadata (
+    generation_id          TEXT COLLATE "C" PRIMARY KEY
+        REFERENCES {{schema}}.source_metadata_generations(generation_id) ON DELETE CASCADE,
+    camera_make            TEXT COLLATE "C",
+    camera_model           TEXT COLLATE "C",
+    body_serial_number     TEXT COLLATE "C",
+    lens_make              TEXT COLLATE "C",
+    lens_model             TEXT COLLATE "C",
+    camera_make_folded     TEXT COLLATE "C" NOT NULL DEFAULT '',
+    camera_model_folded    TEXT COLLATE "C" NOT NULL DEFAULT '',
+    lens_make_folded       TEXT COLLATE "C" NOT NULL DEFAULT '',
+    lens_model_folded      TEXT COLLATE "C" NOT NULL DEFAULT '',
+    iso                    BIGINT,
+    exposure_time_seconds  DOUBLE PRECISION,
+    f_number               DOUBLE PRECISION,
+    exposure_bias_ev       DOUBLE PRECISION,
+    focal_length_mm        DOUBLE PRECISION,
+    width_px               BIGINT,
+    height_px              BIGINT,
+    capture_time           TEXT COLLATE "C",
+    capture_time_raw       TEXT COLLATE "C",
+    capture_time_precision TEXT COLLATE "C",
+    capture_time_timezone  TEXT COLLATE "C",
+    capture_time_offset    TEXT COLLATE "C",
+    capture_sort_key       TEXT COLLATE "C" NOT NULL DEFAULT '',
+    capture_date           TEXT COLLATE "C" NOT NULL DEFAULT '',
+    orientation            BIGINT,
+    latitude               DOUBLE PRECISION,
+    longitude              DOUBLE PRECISION,
+    location_label         TEXT COLLATE "C"
+);
+
+CREATE TABLE {{schema}}.tags (
+    id       TEXT COLLATE "C" PRIMARY KEY NOT NULL,
+    name     TEXT COLLATE "C" NOT NULL UNIQUE,
+    revision BIGINT NOT NULL DEFAULT 1
+);
+
+CREATE TABLE {{schema}}.node_tags (
+    node_id BIGINT NOT NULL REFERENCES {{schema}}.nodes(id) ON DELETE CASCADE,
+    tag_id  TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.tags(id) ON DELETE CASCADE,
+    PRIMARY KEY (node_id, tag_id)
+);
+
+CREATE TABLE {{schema}}.photo_assets (
+    asset_id                  TEXT COLLATE "C" PRIMARY KEY,
+    kind                      TEXT COLLATE "C" NOT NULL,
+    revision                  BIGINT NOT NULL DEFAULT 1,
+    hidden_at                 TEXT COLLATE "C",
+    excluded_at               TEXT COLLATE "C",
+    display_file_id           TEXT COLLATE "C",
+    display_override_file_id  TEXT COLLATE "C",
+    created_at                TEXT COLLATE "C" NOT NULL,
+    updated_at                TEXT COLLATE "C" NOT NULL,
+    -- The most recent explicit burst representative choice has the highest rank.
+    representative_rank       BIGINT
+);
+
+CREATE TABLE {{schema}}.photo_files (
+    source_provenance_identity TEXT COLLATE "C" REFERENCES {{schema}}.provenance(identity) DEFERRABLE INITIALLY DEFERRED,
+    file_id              TEXT COLLATE "C" PRIMARY KEY,
+    asset_id             TEXT COLLATE "C" REFERENCES {{schema}}.photo_assets(asset_id)
+        ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
+    node_id              BIGINT NOT NULL UNIQUE REFERENCES {{schema}}.nodes(id)
+        ON DELETE CASCADE,
+    role                 TEXT COLLATE "C" NOT NULL,
+    sidecar_of_file_id   TEXT COLLATE "C",
+    revision             BIGINT NOT NULL DEFAULT 1,
+    rating               BIGINT NOT NULL DEFAULT 0,
+    flag                 TEXT COLLATE "C" NOT NULL DEFAULT '',
+    label                TEXT COLLATE "C" NOT NULL DEFAULT '',
+    caption              TEXT COLLATE "C" NOT NULL DEFAULT '',
+    creator              TEXT COLLATE "C" NOT NULL DEFAULT '',
+    copyright            TEXT COLLATE "C" NOT NULL DEFAULT '',
+    rotation             BIGINT NOT NULL DEFAULT 0,
+    confirmed_fields     BIGINT NOT NULL DEFAULT 0,
+    flag_owner           TEXT COLLATE "C" NOT NULL DEFAULT '',
+    created_at           TEXT COLLATE "C" NOT NULL,
+    FOREIGN KEY (sidecar_of_file_id) REFERENCES {{schema}}.photo_files(file_id)
+        ON DELETE SET NULL DEFERRABLE INITIALLY DEFERRED
+);
+
+ALTER TABLE {{schema}}.photo_assets ADD FOREIGN KEY (display_file_id) REFERENCES {{schema}}.photo_files(file_id)
+        ON DELETE SET NULL DEFERRABLE INITIALLY DEFERRED;
+
+ALTER TABLE {{schema}}.photo_assets ADD FOREIGN KEY (display_override_file_id) REFERENCES {{schema}}.photo_files(file_id)
+        ON DELETE SET NULL DEFERRABLE INITIALLY DEFERRED;
+
+CREATE TABLE {{schema}}.photo_sets (
+    set_id TEXT COLLATE "C" PRIMARY KEY,
+    name TEXT COLLATE "C" NOT NULL,
+    starred BIGINT NOT NULL DEFAULT 0,
+    revision BIGINT NOT NULL DEFAULT 1,
+    cover_asset_id TEXT COLLATE "C" REFERENCES {{schema}}.photo_assets(asset_id),
+    created_at TEXT COLLATE "C" NOT NULL,
+    updated_at TEXT COLLATE "C" NOT NULL,
+    deleted_at TEXT COLLATE "C"
+);
+
+CREATE TABLE {{schema}}.photo_change_receipts (
+    receipt_id     TEXT COLLATE "C" PRIMARY KEY,
+    operation      TEXT COLLATE "C" NOT NULL,
+    asset_id       TEXT COLLATE "C",
+    settings_key   TEXT COLLATE "C",
+    set_id         TEXT COLLATE "C" REFERENCES {{schema}}.photo_sets(set_id),
+    before_revision BIGINT NOT NULL,
+    after_revision BIGINT NOT NULL,
+    before_json    TEXT COLLATE "C" NOT NULL,
+    after_json     TEXT COLLATE "C" NOT NULL,
+    created_at     TEXT COLLATE "C" NOT NULL
+);
+
+CREATE TABLE {{schema}}.photo_xmp_unsettled (asset_id TEXT COLLATE "C" PRIMARY KEY);
+
+CREATE INDEX provenance_node ON {{schema}}.provenance(node_id);
+
+CREATE INDEX provenance_source_path ON {{schema}}.provenance(original_path);
+
+CREATE UNIQUE INDEX provenance_direct_successor
+    ON {{schema}}.provenance(supersedes) WHERE supersedes IS NOT NULL;
+
+CREATE INDEX photo_technical_metadata_camera
+    ON {{schema}}.photo_technical_metadata(camera_make_folded, camera_model_folded);
+
+CREATE INDEX photo_technical_metadata_lens
+    ON {{schema}}.photo_technical_metadata(lens_make_folded, lens_model_folded);
+
+CREATE INDEX photo_technical_metadata_iso
+    ON {{schema}}.photo_technical_metadata(iso);
+
+CREATE INDEX photo_technical_metadata_location
+    ON {{schema}}.photo_technical_metadata(latitude, longitude);
+
+CREATE INDEX node_tags_tag ON {{schema}}.node_tags(tag_id);
+
+CREATE INDEX photo_files_asset ON {{schema}}.photo_files(asset_id, role, file_id);
+
+CREATE INDEX photo_assets_representative ON {{schema}}.photo_assets(representative_rank) WHERE representative_rank IS NOT NULL;
+
+CREATE INDEX photo_files_sidecar ON {{schema}}.photo_files(sidecar_of_file_id);
+
+CREATE INDEX photo_files_sidecar_nodes ON {{schema}}.photo_files(node_id) WHERE role='sidecar';
+
+CREATE INDEX photo_change_receipts_asset
+    ON {{schema}}.photo_change_receipts(asset_id, receipt_id);
+
+CREATE INDEX photo_change_receipts_set ON {{schema}}.photo_change_receipts(set_id,receipt_id);
+
+CREATE INDEX photo_change_receipts_operation ON {{schema}}.photo_change_receipts(operation);
+
+CREATE INDEX photo_change_receipts_xmp_file
+    ON {{schema}}.photo_change_receipts(((after_json::jsonb ->> 'file_id') COLLATE "C"))
+    WHERE operation='xmp_sync';
+CREATE INDEX photo_change_receipts_xmp_sidecar
+    ON {{schema}}.photo_change_receipts(((after_json::jsonb #>> '{sync,sidecar,file_id}') COLLATE "C"))
+    WHERE operation='xmp_sync';
+CREATE INDEX photo_change_receipts_face_version
+    ON {{schema}}.photo_change_receipts(((before_json::jsonb ->> 'content_version_id') COLLATE "C"),receipt_id)
+    WHERE operation='face_decision';
+
+-- Keep the token byte-for-byte equal to SQLite, including 0/1 booleans and
+-- member revisions ordered by numeric node ID. JSON extraction and ordered
+-- aggregation are the only engine-specific expressions.
+CREATE VIEW {{schema}}.photo_xmp_inputs AS
+SELECT inputs.*, token<>COALESCE(saved_token,'') AS pending FROM (
+ SELECT facts.*, token_base || occupied::integer || '|' || audit_active::integer AS token FROM (
+ SELECT f.file_id,f.node_id,f.asset_id,xr.receipt_id,
+ COALESCE((xr.after_json::jsonb ->> 'conflicts')::bigint,0) AS conflicts,
+ (xr.after_json::jsonb ->> 'token') COLLATE "C" AS saved_token,
+ (f.role IN ('raw','image') AND n.trashed_at IS NULL AND (xr.receipt_id IS NOT NULL OR f.confirmed_fields<>0 OR EXISTS(SELECT 1 FROM {{schema}}.node_tags WHERE node_id=f.node_id) OR EXISTS(SELECT 1 FROM {{schema}}.photo_files sf WHERE sf.sidecar_of_file_id=f.file_id))) AS eligible,
+ h.generation_id IS NOT NULL AS extracted,
+ COALESCE(t.orientation,1) AS orientation,
+ (SELECT count(*) FROM {{schema}}.photo_files WHERE asset_id=f.asset_id) AS members,
+ EXISTS(SELECT 1 FROM {{schema}}.nodes o WHERE o.parent_id=n.parent_id AND o.name=n.name || '.xmp' AND o.trashed_at IS NULL) AS occupied,
+ EXISTS(SELECT 1 FROM {{schema}}.audit_authority) AS audit_active,
+ EXISTS(SELECT 1 FROM {{schema}}.audit_memberships WHERE node_id=f.node_id) AS audited,
+ f.revision || '|' || f.role || '|' || a.asset_id || '|' || a.revision || '|' || n.revision || '|' || n.current_version_id || '|' ||
+ (h.generation_id IS NOT NULL)::integer || ':' ||
+ COALESCE(t.orientation,1) || '|' || (SELECT string_agg(
+ n.id || ':' || n.revision || ':' || f.revision || ':' || COALESCE(f.sidecar_of_file_id,'') ||
+ CASE WHEN EXISTS (SELECT 1 FROM {{schema}}.audit_memberships m WHERE m.node_id=n.id) THEN ':audited' ELSE '' END,
+ ',' ORDER BY n.id)
+ FROM {{schema}}.photo_files f JOIN {{schema}}.nodes n ON n.id=f.node_id
+ WHERE f.asset_id=a.asset_id) || '|' AS token_base
+ FROM {{schema}}.photo_files f JOIN {{schema}}.photo_assets a ON a.asset_id=f.asset_id JOIN {{schema}}.nodes n ON n.id=f.node_id
+ LEFT JOIN {{schema}}.content_versions xv ON xv.version_id=n.current_version_id
+ LEFT JOIN {{schema}}.source_metadata_heads h ON h.source_sha256=xv.blob_hash
+ LEFT JOIN {{schema}}.photo_technical_metadata t ON t.generation_id=h.generation_id
+ LEFT JOIN {{schema}}.photo_change_receipts xr ON xr.operation='xmp_sync' AND (xr.after_json::jsonb ->> 'file_id') COLLATE "C"=f.file_id
+) facts
+) inputs;

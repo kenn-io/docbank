@@ -21,7 +21,7 @@ import (
 // Version identifies the current PostgreSQL layout, independently of SQLite.
 // The first supported backend release establishes the migration floor. Until
 // then, there is no released PostgreSQL layout to upgrade.
-const Version = 4
+const Version = 5
 
 //go:embed schema.sql
 var schemaSQL string
