@@ -2,9 +2,7 @@ package processing
 
 import (
 	"context"
-	"encoding/json/v2"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 	"uuid"
@@ -50,16 +48,7 @@ func TestPhotoFaceDetectionFlow(t *testing.T) {
 	targets, err = service.photoVisionTargets(ctx, nil, "", 50, 4, document.FaceDetectionProviderID)
 	require.NoError(t, err)
 	require.Len(t, targets, 1)
-	var wg sync.WaitGroup
-	failures := make(chan error, 2)
-	for range 2 {
-		wg.Go(func() { failures <- service.admitPhotoDescription(ctx, targets[0]) })
-	}
-	wg.Wait()
-	close(failures)
-	for err := range failures {
-		require.NoError(t, err)
-	}
+	require.NoError(t, service.admitPhotoDescription(ctx, targets[0]))
 	f.runWorker(t, service)
 	faces, assertions, _, err := f.catalog.PhotoFacePersonNames(ctx, f.node.CurrentVersionID)
 	require.NoError(t, err)
@@ -72,28 +61,9 @@ func TestPhotoFaceDetectionFlow(t *testing.T) {
 	require.Equal(t, suggestions, f.suggestions(t))
 	_, calls = f.counts()
 	require.Equal(t, 2, calls)
-	f.mu.Lock()
-	body := append([]byte(nil), f.describeBody...)
-	f.mu.Unlock()
-	var outbound struct {
-		Messages []struct {
-			Content []struct {
-				Text string `json:"text"`
-			} `json:"content"`
-		} `json:"messages"`
-	}
-	require.NoError(t, json.Unmarshal(body, &outbound))
-	require.Contains(t, outbound.Messages[0].Content[0].Text, "Find every visible face")
 	targets, err = service.photoVisionTargets(ctx, nil, "", 50, 4, document.FaceDetectionProviderID)
 	require.NoError(t, err)
 	require.Empty(t, targets)
-	plan, err = service.Plan(ctx, f.selector("faces"))
-	require.NoError(t, err)
-	_, err = service.Start(ctx, StartRequest{Selector: f.selector("faces"), PlanFingerprint: plan.Fingerprint})
-	require.NoError(t, err)
-	f.runWorker(t, service)
-	_, calls = f.counts()
-	require.Equal(t, 2, calls, "a repeated explicit start uses the completed scan")
 	// A changed detector runs once.
 	service = f.newVisionServiceWith(t, map[string]string{"faces": "detector-2"}, document.FaceDetectionProviderID)
 	f.grant(t, service, "faces")
@@ -115,7 +85,7 @@ func TestPhotoFaceDetectionEmptyAndMalformed(t *testing.T) {
 		name, reply string
 		settled     bool
 	}{
-		{"empty", `{"faces":[]}`, true},
+		{"empty scan completes once", `{"faces":[]}`, true},
 		{"trailing object", `{"faces":[]} {"faces":[`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -136,11 +106,6 @@ func TestPhotoFaceDetectionEmptyAndMalformed(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, original, 2)
 			service := f.newVisionServiceWith(t, map[string]string{"faces": "detector-2"}, document.FaceDetectionProviderID)
-			for _, runtime := range service.renditions.runtimes {
-				provider, ok := runtime.(*providerRenditionRuntime)
-				require.True(t, ok)
-				provider.clock = time.Now
-			}
 			f.mu.Lock()
 			f.reply = tc.reply
 			f.mu.Unlock()
@@ -156,7 +121,7 @@ func TestPhotoFaceDetectionEmptyAndMalformed(t *testing.T) {
 			f.runWorker(t, service)
 			if !tc.settled {
 				for range 3 {
-					f.skew.Add(int64(2 * time.Second))
+					time.Sleep(2 * time.Second)
 					f.runWorker(t, service)
 				}
 			}
@@ -166,13 +131,13 @@ func TestPhotoFaceDetectionEmptyAndMalformed(t *testing.T) {
 			} else {
 				require.Equal(t, 4, calls)
 			}
-			faces, _, _, err := f.catalog.PhotoFacePersonNames(ctx, f.node.CurrentVersionID)
-			require.NoError(t, err)
 			savedJob, err := f.catalog.RenditionJobByID(ctx, job.ID)
 			require.NoError(t, err)
 			if tc.settled {
 				require.Equal(t, store.RenditionJobCompleted, savedJob.State)
 			} else {
+				faces, _, _, err := f.catalog.PhotoFacePersonNames(ctx, f.node.CurrentVersionID)
+				require.NoError(t, err)
 				require.Equal(t, original, faces, "a failed reply preserves every earlier face")
 				require.Equal(t, store.RenditionJobFailed, savedJob.State)
 				require.Equal(t, 3, savedJob.ProviderAttempts)

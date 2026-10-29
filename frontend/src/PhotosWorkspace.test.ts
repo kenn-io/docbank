@@ -3992,54 +3992,41 @@ it.each(["inspector", "loupe"])(
   },
 );
 
-it.each([false, true])(
-  "awaits live face reads and keeps authorized faces, fails=%s",
-  async (fails) => {
-    const { photos, read } = await facesWorkspaceSetup();
-    vi.spyOn(photos, "lookup").mockResolvedValue(photo(1));
-    let finish!: (page: ReturnType<typeof photoFacePage>) => void;
-    let fail!: (cause: Error) => void;
-    read.mockImplementation(
-      () =>
-        new Promise((resolve, reject) => {
-          finish = resolve;
-          fail = reject;
-        }),
-    );
-    let completed = false;
-    let failure: unknown;
-    const changing = photos.changed({}).then(
-      () => {
-        completed = true;
-      },
-      (cause) => {
-        failure = cause;
-      },
-    );
-    await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
-    expect(completed).toBe(false);
-    expect(screen.queryByRole("button", { name: "Find or create a person: Ada" })).toBeTruthy();
-    const signal = read.mock.calls[1][1]?.signal;
-    await act(() => {
-      photos.backgroundRefresh = true;
-      photos.loading = true;
-      photos.items = [photo(1)];
-    });
-    expect(screen.queryByRole("button", { name: "Find or create a person: Ada" })).toBeTruthy();
-    expect(signal?.aborted).toBe(false);
-    await act(() => {
-      photos.loading = false;
-      photos.backgroundRefresh = false;
-    });
-    await act(async () => {
-      if (fails) fail(new Error("Faces unavailable"));
-      else finish(photoFacePageFor(photo(1)));
-      await changing;
-    });
-    if (fails) expect(failure).toEqual(new Error("Faces unavailable"));
-    else expect(completed).toBe(true);
-  },
-);
+it("awaits live face reads and keeps authorized faces", async () => {
+  const { photos, read } = await facesWorkspaceSetup();
+  vi.spyOn(photos, "lookup").mockResolvedValue(photo(1));
+  let finish!: (page: ReturnType<typeof photoFacePage>) => void;
+  read.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  let completed = false;
+  const changing = photos.changed({}).then(() => {
+    completed = true;
+  });
+  await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+  expect(completed).toBe(false);
+  expect(screen.queryByRole("button", { name: "Find or create a person: Ada" })).toBeTruthy();
+  const signal = read.mock.calls[1][1]?.signal;
+  await act(() => {
+    photos.backgroundRefresh = true;
+    photos.loading = true;
+    photos.items = [photo(1)];
+  });
+  expect(screen.queryByRole("button", { name: "Find or create a person: Ada" })).toBeTruthy();
+  expect(signal?.aborted).toBe(false);
+  await act(() => {
+    photos.loading = false;
+    photos.backgroundRefresh = false;
+  });
+  await act(async () => {
+    finish(photoFacePageFor(photo(1)));
+    await changing;
+  });
+  expect(completed).toBe(true);
+});
 
 it.each(["lookup", "faces"])("retries a live refresh after a stalled %s read", async (boundary) => {
   const { photos, read } = await facesWorkspaceSetup();

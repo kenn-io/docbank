@@ -38,9 +38,8 @@ func faceScanSettledTx(ctx context.Context, tx *sql.Tx, version, detector string
 func protectedDetectionFacesTx(ctx context.Context, tx *sql.Tx, version string) (map[string]bool, error) {
 	protected := map[string]bool{}
 	rows, err := tx.QueryContext(ctx, `SELECT face_id FROM person_candidate_faces WHERE content_version_id=?
- UNION SELECT f.face_id FROM photo_faces f JOIN persons p ON p.key_face_id=f.face_id WHERE f.content_version_id=?
  UNION SELECT json_extract(j.value,'$.face_id') FROM photo_change_receipts r INDEXED BY photo_change_receipts_face_version,json_each(r.before_json,'$.faces') j WHERE r.operation='face_decision' AND json_extract(r.before_json,'$.content_version_id')=?
- UNION SELECT json_extract(j.value,'$.face_id') FROM photo_change_receipts r INDEXED BY photo_change_receipts_face_version,json_each(r.after_json,'$.after.faces') j WHERE r.operation='face_decision' AND json_extract(r.before_json,'$.content_version_id')=?`, version, version, version, version)
+ UNION SELECT json_extract(j.value,'$.face_id') FROM photo_change_receipts r INDEXED BY photo_change_receipts_face_version,json_each(r.after_json,'$.after.faces') j WHERE r.operation='face_decision' AND json_extract(r.before_json,'$.content_version_id')=?`, version, version, version)
 	if err != nil {
 		return nil, err
 	}

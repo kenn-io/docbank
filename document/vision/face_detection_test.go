@@ -26,7 +26,7 @@ func TestParseFaces(t *testing.T) {
 		{name: "null", raw: `{"faces":null}`, fails: true},
 		{name: "malformed", raw: `{"faces":[`, fails: true},
 		{name: "invalid", raw: `{"faces":[{}]}`, fails: true},
-		{name: "missing measurement", raw: `{"faces":[{"box":{"x":0,"y":0,"width":0.2,"height":0.3},"roll":0,"facing":1,"eyes_open":true}]}`, want: &document.FaceObservation{Box: document.FaceBox{Width: .2, Height: .3}, Roll: new(0.0), Facing: new(1.0), EyesOpen: new(true)}},
+		{name: "absent smile key", raw: `{"faces":[{"box":{"x":0,"y":0,"width":0.2,"height":0.3},"roll":0,"facing":1,"eyes_open":true}]}`, want: &document.FaceObservation{Box: document.FaceBox{Width: .2, Height: .3}, Roll: new(0.0), Facing: new(1.0), EyesOpen: new(true)}},
 		{name: "too many", raw: `{"faces":[` + strings.Repeat(valid+",", 1000) + valid + `]}`, fails: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

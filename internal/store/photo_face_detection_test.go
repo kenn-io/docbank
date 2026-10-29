@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 	"uuid"
@@ -142,6 +143,17 @@ func TestPhotoFaceDetectionProtectsDecisionsAndUndo(t *testing.T) {
 			require.NoError(t, scan("b3"))
 			require.Equal(t, before, read())
 			require.NoError(t, s.ValidateMetadata(ctx))
+			if action == "dismiss" {
+				var exported bytes.Buffer
+				require.NoError(t, s.ExportMetadata(ctx, &exported))
+				restored := newTestStore(t)
+				require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
+				s = restored
+				require.True(t, read()[0].Dismissed)
+				_, err = s.UndoPhotoFaceDecision(ctx, receipt.ReceiptID)
+				require.NoError(t, err)
+				require.False(t, read()[0].Dismissed)
+			}
 			if action == "name" {
 				_, err = s.UndoPhotoFaceDecision(ctx, receipt.ReceiptID)
 				require.NoError(t, err)
@@ -174,42 +186,14 @@ func TestPhotoFaceDetectionCapacityRollback(t *testing.T) {
 	require.ErrorIs(t, scan(), ErrPhotoFaceLimit)
 	saved, err := photoFacesQuery(ctx, s.db, version)
 	require.NoError(t, err)
-	for _, face := range saved {
-		if face.FaceID == automatic.FaceID {
-			require.Equal(t, automatic, face, "the matched update rolls back before the capacity error")
-		}
-	}
+	index := slices.IndexFunc(saved, func(face PhotoFace) bool { return face.FaceID == automatic.FaceID })
+	require.NotEqual(t, -1, index, "the matched face remains after rollback")
+	require.Equal(t, automatic, saved[index], "the matched update rolls back before the capacity error")
 	var count int
 	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_faces`).Scan(&count))
 	require.Equal(t, 1000, count)
 	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_face_scans`).Scan(&count))
 	require.Zero(t, count)
-}
-
-func TestPhotoFaceDetectionMetadata(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	node := browsePhotoNode(t, s, "portrait.jpg", fakeHash("a1"), "image/jpeg")
-	version := node.CurrentVersionID
-	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		return publishFaceDetectionTx(ctx, tx, version, fakeHash("b1"), document.FaceDetection{Faces: []document.FaceObservation{{Box: document.FaceBox{Width: .2, Height: .3}, Roll: new(0.0), Facing: new(.7), EyesOpen: new(false), Smile: new(true)}}}, time.Now())
-	}))
-	faces, _, _, err := s.PhotoFacePersonNames(ctx, version)
-	require.NoError(t, err)
-	receipt, err := s.DecidePhotoFace(ctx, version, PhotoFaceDecisionRequest{FaceID: faces[0].FaceID, Revision: 1, Action: "dismiss"})
-	require.NoError(t, err)
-	var exported bytes.Buffer
-	require.NoError(t, s.ExportMetadata(ctx, &exported))
-	target := newTestStore(t)
-	require.NoError(t, target.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
-	restored, _, _, err := target.PhotoFacePersonNames(ctx, version)
-	require.NoError(t, err)
-	require.Len(t, restored, 1)
-	require.True(t, restored[0].Dismissed)
-	_, err = target.UndoPhotoFaceDecision(ctx, receipt.ReceiptID)
-	require.NoError(t, err)
-	require.NoError(t, target.ValidateMetadata(ctx))
 }
 
 func TestPhotoFaceDetectionReleasedFaces(t *testing.T) {
