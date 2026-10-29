@@ -50,6 +50,7 @@ test("best shots stay separate from authored flags and settle across refresh", a
   let position = { x: 30, y: 100 };
   const step = async (text: string) => {
     if (before) return;
+    await page.mouse.move(position.x, position.y);
     number++;
     await page.locator("#capture-step").evaluate((el, text) => {
       el.textContent = text;
@@ -57,6 +58,7 @@ test("best shots stay separate from authored flags and settle across refresh", a
     await page.waitForTimeout(1200);
   };
   const point = async (locator: Locator, text: string, click = true) => {
+    if (before) return locator.click();
     await step(text);
     const box = await locator.boundingBox();
     if (!box) throw new Error(`Missing recording target: ${text}`);
