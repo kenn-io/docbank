@@ -51,6 +51,19 @@ describe("processing summary", () => {
     expect(purposeLabels[processingPurpose(plan("photos", { flow: [photo] }))].title).toBe(
       "Describe photo",
     );
+    const detection = plan("faces", {
+      flow: [
+        hop({
+          provider_id: "compatible-vision.detect-faces-v1",
+          input_classes: ["derived_upload"],
+        }),
+      ],
+    });
+    expect(purposeLabels[processingPurpose(detection)].title).toBe("Find faces");
+    expect(keptSentence(detection, processingPurpose(detection))).toBe(
+      "Saves face boxes and measurements in the vault and its backups.",
+    );
+
     expect(purposeLabels[processingPurpose(plan("vectors", { flow: embeddingHops }))].title).toBe(
       "Index for search",
     );
