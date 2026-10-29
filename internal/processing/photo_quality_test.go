@@ -183,7 +183,7 @@ func TestPhotoFaceCropReports(t *testing.T) {
 			source.SetRGBA(x, y, color.RGBA{v, v, v, 255})
 		}
 	}
-	face := store.PhotoFace{FaceID: "face", Revision: 2, Box: document.FaceBox{X: 0, Y: 0, Width: 0.5, Height: 1}, EyesOpen: new(false), Facing: new(0.8), Smile: new(true)}
+	face := store.PhotoFace{Box: document.FaceBox{X: 0, Y: 0, Width: 0.5, Height: 1}}
 	var report, dark, tiny document.PhotoFaceReport
 	measurePhotoFace(source, face, &report)
 	require.NotNil(t, report.Sharpness)

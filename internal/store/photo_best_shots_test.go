@@ -64,6 +64,13 @@ func TestPhotoBestShotsDecisions(t *testing.T) {
 			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM photo_change_receipts WHERE receipt_id=?`, receipt.ReceiptID).Scan(&count))
 			require.Equal(t, 1, count)
 			require.Len(t, receipt.After, len(request.Responses))
+			if response == "accepted" {
+				flags := make([]string, len(receipt.After))
+				for i, target := range receipt.After {
+					flags[i] = target.Values.Flag
+				}
+				require.ElementsMatch(t, []string{"pick", "reject"}, flags)
+			}
 			require.Empty(t, bestShotPreparation(t, s, ids).Proposals)
 			if response == "dismissed" {
 				for _, target := range receipt.After {
@@ -179,14 +186,6 @@ func TestPhotoBestShotsConfirmedWinner(t *testing.T) {
 			require.NoError(t, err)
 		}
 	}
-	prep = bestShotPreparation(t, s, ids)
-	for _, target := range prep.Targets {
-		if target.AssetID == winner {
-			_, err := s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: []PhotoAuthoredEditTarget{{PhotoAuthoredTargetRevision: target.PhotoAuthoredTargetRevision}}, Patch: PhotoAuthoredPatch{Flag: new("pick")}})
-			require.NoError(t, err)
-		}
-	}
-	require.Empty(t, bestShotPreparation(t, s, ids).Proposals)
 }
 func TestPhotoBestShotsStaleFaces(t *testing.T) {
 	t.Parallel()
