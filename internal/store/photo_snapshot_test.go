@@ -369,7 +369,9 @@ func TestRankedPhotoSnapshotKeepsStacksAcrossPages(t *testing.T) {
 	require.NotEmpty(t, first.NextCursor)
 	page, err := service.CurrentPhotoPage(t.Context(), first, PhotoBrowseRequest{Stacks: true})
 	require.NoError(t, err)
-	require.Len(t, page.Items, 50)
+	for _, id := range ids[49:] {
+		require.True(t, slices.ContainsFunc(page.Items, func(row PhotoBrowseRow) bool { return row.AssetID == id }), "a selectable stack must include every member's display row")
+	}
 	require.Equal(t, ids[49], page.Items[49].AssetID)
 	require.Equal(t, []PhotoStack{{AssetIDs: ids[49:], RepresentativeID: ids[49]}}, page.Stacks)
 
@@ -377,7 +379,9 @@ func TestRankedPhotoSnapshotKeepsStacksAcrossPages(t *testing.T) {
 	require.NoError(t, err)
 	page, err = service.CurrentPhotoPage(t.Context(), next, PhotoBrowseRequest{Stacks: true})
 	require.NoError(t, err)
-	require.Len(t, page.Items, 1)
+	for _, id := range ids[49:] {
+		require.True(t, slices.ContainsFunc(page.Items, func(row PhotoBrowseRow) bool { return row.AssetID == id }), "a continuation must include its stack representative and member rows")
+	}
 	require.Equal(t, ids[50], page.Items[0].AssetID)
 	require.Equal(t, []PhotoStack{{AssetIDs: ids[49:], RepresentativeID: ids[49]}}, page.Stacks)
 }
