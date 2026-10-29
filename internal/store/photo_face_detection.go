@@ -12,6 +12,8 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
+const faceMatchThreshold = 0.14
+
 // RequireFaceDetectionSupported refuses face mutations while audit authority exists.
 func (s *Store) RequireFaceDetectionSupported(ctx context.Context) error {
 	return requireLogicalMutationSupported(ctx, s.db)
@@ -62,7 +64,7 @@ func faceMatchScores(box document.FaceBox, observations []document.FaceObservati
 	for j, o := range observations {
 		scores[j] = faceBoxOverlap(box, o.Box)
 	}
-	if sole := slices.IndexFunc(observations, inside); sole >= 0 && !slices.ContainsFunc(observations[sole+1:], inside) && slices.Max(scores) < 0.14 {
+	if sole := slices.IndexFunc(observations, inside); sole >= 0 && !slices.ContainsFunc(observations[sole+1:], inside) && slices.Max(scores) < faceMatchThreshold {
 		scores[sole] = 1
 	}
 	return scores
@@ -102,7 +104,7 @@ func publishFaceDetectionTx(ctx context.Context, tx *sql.Tx, version, detector s
 	var pairs []pair
 	for i, face := range faces {
 		for j, overlap := range faceMatchScores(face.Box, result.Faces) {
-			if overlap >= 0.14 {
+			if overlap >= faceMatchThreshold {
 				pairs = append(pairs, pair{i, j, overlap})
 			}
 		}

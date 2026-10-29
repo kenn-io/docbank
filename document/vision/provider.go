@@ -352,28 +352,37 @@ func (p *Provider) Probe(ctx context.Context) error {
 	return nil
 }
 
-// ParseFaces requires a complete valid reply. Only an explicit empty array
-// represents a successful scan with no faces.
+// ParseFaces requires a complete reply with a faces array and drops invalid faces
+// individually. A nonempty array must contain at least one valid face. Only an
+// explicit empty array represents a successful scan with no faces.
 func ParseFaces(raw []byte) (document.FaceDetection, error) {
-	var out document.FaceDetection
+	var fields struct {
+		Faces []jsontext.Value `json:"faces"`
+	}
 	raw = bytes.Trim(raw, " \t\r\n")
 	if bytes.HasPrefix(raw, []byte("```")) && bytes.HasSuffix(raw, []byte("```")) && len(raw) >= 6 {
 		raw = bytes.TrimPrefix(raw[3:len(raw)-3], []byte("json"))
 		raw = bytes.Trim(raw, " \t\r\n")
 	}
-	if err := json.Unmarshal(raw, &out); err != nil {
+	if err := json.Unmarshal(raw, &fields); err != nil {
 		return document.FaceDetection{}, err
 	}
-	if out.Faces == nil {
-		return out, errors.New("vision response requires a faces array")
+	if fields.Faces == nil {
+		return document.FaceDetection{}, errors.New("vision response requires a faces array")
 	}
-	if len(out.Faces) > document.MaxPhotoRecordsPerVersion {
+	if len(fields.Faces) > document.MaxPhotoRecordsPerVersion {
 		return document.FaceDetection{}, errors.New("too many detected faces")
 	}
-	for _, observation := range out.Faces {
-		if observation.Validate() != nil {
-			return document.FaceDetection{}, errors.New("invalid detected face")
+	out := document.FaceDetection{Faces: []document.FaceObservation{}}
+	for _, rawFace := range fields.Faces {
+		var observation document.FaceObservation
+		if json.Unmarshal(rawFace, &observation) != nil || observation.Validate() != nil {
+			continue
 		}
+		out.Faces = append(out.Faces, observation)
+	}
+	if len(fields.Faces) > 0 && len(out.Faces) == 0 {
+		return document.FaceDetection{}, errors.New("invalid detected faces")
 	}
 	return out, nil
 }
