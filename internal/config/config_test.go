@@ -1255,7 +1255,7 @@ func TestVisionRuntimeConfig(t *testing.T) {
 	t.Run("unrecognized task", func(t *testing.T) {
 		unknown := profile
 		unknown.DescriptorID = "unrecognized-task"
-		require.Error(t, validateRenditionRuntimeConfig(unknown, "vision"))
+		require.ErrorIs(t, validateRenditionRuntimeConfig(unknown, "vision"), vision.ErrUnknownTask)
 	})
 
 	t.Run("model on another adapter", func(t *testing.T) {

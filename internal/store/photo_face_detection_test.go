@@ -84,10 +84,10 @@ func TestPhotoFaceDetectionReconciliation(t *testing.T) {
 	require.Empty(t, read())
 }
 
-func TestPhotoFaceDetectionProtectsDecisionsAndUndo(t *testing.T) {
+func TestPhotoFaceDetectionProtectsCandidatesAndUndoReceipts(t *testing.T) {
 	t.Parallel()
 	for _, action := range []string{"name", "candidate"} {
-		t.Run(action, func(t *testing.T) {
+		t.Run(map[string]string{"name": "undone name receipt", "candidate": "candidate"}[action], func(t *testing.T) {
 			fixture := newFaceDetectionTestFixture(t)
 			s, version := fixture.s, fixture.version
 			scan, read := fixture.scan, fixture.read

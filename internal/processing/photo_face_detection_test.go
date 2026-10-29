@@ -13,10 +13,20 @@ import (
 
 const detectedFaceReply = `{"faces":[{"box":{"x":0.1,"y":0.2,"width":0.2,"height":0.3},"roll":0,"facing":0.9,"eyes_open":true,"smile":false}]}`
 
-func TestPhotoFaceDetectionTargetsProbeOnlyFirstReadyProfile(t *testing.T) {
+func TestPhotoFaceDetectionProfilesPlanAndFirstReadyTarget(t *testing.T) {
 	t.Parallel()
 	f := newPhotoDescriptionFixture(t)
+	ctx := t.Context()
 	service := f.newVisionServiceWith(t, map[string]string{"first": "detector-1", "second": "detector-2"}, document.FaceDetectionProviderID)
+	require.False(t, f.service.HasPhotoFaceDetectionProfiles())
+	require.True(t, service.HasPhotoFaceDetectionProfiles())
+	require.False(t, service.HasPhotoDescriptionProfiles())
+	plan, err := service.Plan(ctx, f.selector("first"))
+	require.NoError(t, err)
+	require.Contains(t, plan.Estimate.Scope, "finds faces")
+	require.Contains(t, plan.BackupConsequence, "Face boxes, measurements, and your decisions")
+	require.Contains(t, plan.BackupConsequence, "another scan and provider call")
+	require.NotContains(t, plan.BackupConsequence, "suggestions")
 	f.grant(t, service, "first")
 	f.grant(t, service, "second")
 	before, _ := f.counts()
@@ -30,9 +40,12 @@ func TestPhotoFaceDetectionTargetsProbeOnlyFirstReadyProfile(t *testing.T) {
 
 func TestPhotoFaceDetectionFlow(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct{ name, reply string }{
-		{"faces", detectedFaceReply},
-		{"empty", `{"faces":[]}`},
+	for _, tc := range []struct {
+		name, reply string
+		faceCount   int
+	}{
+		{"faces", detectedFaceReply, 1},
+		{"empty", `{"faces":[]}`, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newPhotoDescriptionFixture(t)
@@ -41,17 +54,6 @@ func TestPhotoFaceDetectionFlow(t *testing.T) {
 			targets, err := service.photoVisionTargets(ctx, nil, "", 50, 4, document.FaceDetectionProviderID)
 			require.NoError(t, err)
 			require.Empty(t, targets)
-			if tc.name == "faces" {
-				require.False(t, f.service.HasPhotoFaceDetectionProfiles())
-				require.True(t, service.HasPhotoFaceDetectionProfiles())
-				require.False(t, service.HasPhotoDescriptionProfiles())
-				plan, err := service.Plan(ctx, f.selector("faces"))
-				require.NoError(t, err)
-				require.Contains(t, plan.Estimate.Scope, "finds faces")
-				require.Contains(t, plan.BackupConsequence, "Face boxes, measurements, and your decisions")
-				require.Contains(t, plan.BackupConsequence, "another scan and provider call")
-				require.NotContains(t, plan.BackupConsequence, "suggestions")
-			}
 			// Settle a caption first. It must neither block detection nor be changed by it.
 			f.grant(t, f.service, "vision")
 			require.Equal(t, 1, f.backfill(t, f.service))
@@ -68,19 +70,20 @@ func TestPhotoFaceDetectionFlow(t *testing.T) {
 			faces, assertions, _, err := f.catalog.PhotoFacePersonNames(ctx, f.node.CurrentVersionID)
 			require.NoError(t, err)
 			require.Empty(t, assertions)
-			if tc.name == "faces" {
-				require.Len(t, faces, 1)
-				face := faces[0]
-				require.Equal(t, document.FaceBox{X: .1, Y: .2, Width: .2, Height: .3}, face.Box)
-				require.NotEmpty(t, face.DetectorFingerprint)
-				require.Empty(t, face.AssertionID)
-			}
+			require.Len(t, faces, tc.faceCount)
 			require.Equal(t, suggestions, f.suggestions(t))
 			_, calls := f.counts()
 			require.Equal(t, 2, calls)
 			targets, err = service.photoVisionTargets(ctx, nil, "", 50, 4, document.FaceDetectionProviderID)
 			require.NoError(t, err)
 			require.Empty(t, targets)
+			if tc.faceCount == 0 {
+				return
+			}
+			face := faces[0]
+			require.Equal(t, document.FaceBox{X: .1, Y: .2, Width: .2, Height: .3}, face.Box)
+			require.NotEmpty(t, face.DetectorFingerprint)
+			require.Empty(t, face.AssertionID)
 			// A changed detector runs once.
 			service = f.newVisionServiceWith(t, map[string]string{"faces": "detector-2"}, document.FaceDetectionProviderID)
 			f.grant(t, service, "faces")
