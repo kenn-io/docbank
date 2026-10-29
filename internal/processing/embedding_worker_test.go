@@ -2066,7 +2066,8 @@ func TestImageEmbeddingRuntimePreviewValidation(t *testing.T) {
 	profile := x.service.profiles["images"].record
 	generation, _, err := registry.ImageGeneration(t.Context(), profile, x.binding, f.node.CurrentVersionID)
 	require.NoError(t, err)
-	work := EmbeddingWork{ContentVersionID: f.node.CurrentVersionID, ProcessingProfile: profile, Binding: x.binding, Descriptor: x.descriptor, InputGeneration: generation}
+	work := EmbeddingWork{ContentVersionID: f.node.CurrentVersionID, ProcessingProfile: profile, Binding: x.binding, Descriptor: x.descriptor,
+		VectorSpaceID: x.service.profiles["images"].vectorSpaces[x.binding.Name], InputGeneration: generation}
 	execution, err := registry.Prepare(t.Context(), work)
 	require.NoError(t, err)
 	defer closeEmbeddingInputs(execution.Inputs)

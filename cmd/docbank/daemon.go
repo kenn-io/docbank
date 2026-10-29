@@ -368,7 +368,6 @@ func runServe(ctx context.Context) (retErr error) {
 			return fmt.Errorf("starting photo descriptions: %w", err)
 		}
 	}
-	embeddingRuntimeRegistry := processingService.EmbeddingRuntimes()
 	if err := startEmbeddingWorkerIfReady(jobSupervisor, embeddingRuntimeRegistry,
 		func() (embeddingJobRunner, error) {
 			worker, workerErr := processing.NewEmbeddingWorker(processing.EmbeddingWorkerConfig{

@@ -76,7 +76,7 @@ func TestDaemonRecoversSemanticSpaceEmbeddingJob(t *testing.T) {
 		blobs, err := blob.New(store.NewPackCatalog(catalog), layout.BlobsDir())
 		require.NoError(t, err)
 		defer func() { require.NoError(t, blobs.Close()) }()
-		bundle, err := configureEmbeddingRuntimeBundle(cfg, blobs, layout.BlobTmpDir())
+		bundle, err := configureEmbeddingRuntimeBundle(cfg)
 		require.NoError(t, err)
 		profiles, err := executableProcessingProfiles(cfg, bundle)
 		require.NoError(t, err)
