@@ -2353,6 +2353,7 @@ it("refreshes and clears best-shot offers with their prepared stack", async () =
 
 it.each([false, true])("responds to a rotation suggestion, dismiss=%s", async (dismiss) => {
   const editor = editorWithTargets();
+  editor.member("jpeg");
   const suggestion = photoSuggestion({ rotation: 270, rotation_source: "faces" });
   editor.suggestions = [suggestion];
   const respond = vi.spyOn(api, "respondPhotoSuggestion").mockResolvedValue(
@@ -2389,6 +2390,7 @@ it.each(["busy", "loading", "dirty", "conflict"])(
   "disables rotation suggestions while %s",
   async (state) => {
     const editor = editorWithTargets();
+    editor.member("jpeg");
     editor.suggestions = [photoSuggestion({ rotation: 270 })];
     if (state === "dirty") editor.stage({ rating: 5 });
     else if (state === "busy") editor.busy = true;
@@ -2407,6 +2409,7 @@ it.each(["busy", "loading", "dirty", "conflict"])(
 
 it("hides rotation suggestions for several photos", async () => {
   const editor = editorWithTargets();
+  editor.member("jpeg");
   editor.suggestions = [photoSuggestion({ rotation: 270 })];
   const view = ui(editor);
   await view.rerender({ actionDisabled: false, count: 2 });
@@ -2416,6 +2419,7 @@ it("hides rotation suggestions for several photos", async () => {
 
 it("reloads a rotation proposal after a stale authored revision", async () => {
   const editor = editorWithTargets();
+  editor.member("jpeg");
   const suggestion = photoSuggestion({ rotation: 90 });
   editor.suggestions = [suggestion];
   vi.spyOn(api, "respondPhotoSuggestion").mockRejectedValue(
@@ -2431,5 +2435,22 @@ it("reloads a rotation proposal after a stale authored revision", async () => {
   expect(reload).toHaveBeenCalledOnce();
   expect(editor.rotationSuggestion?.rotation).toBe(270);
   expect(editor.suggestionsError).toBeTruthy();
+  editor.dispose();
+});
+
+it("offers pair rotation only while editing its displayed member", async () => {
+  const editor = editorWithTargets();
+  editor.suggestions = [photoSuggestion({ rotation: 270 })];
+  ui(editor);
+  expect(screen.queryByRole("button", { name: "Rotate 270°" })).toBeNull();
+  await fireEvent.click(screen.getByRole("combobox", { name: /Edit members/ }));
+  await fireEvent.click(screen.getByRole("option", { name: "RAW · capture.raw" }));
+  expect(screen.queryByRole("button", { name: "Rotate 270°" })).toBeNull();
+  await fireEvent.click(screen.getByRole("combobox", { name: /Edit members/ }));
+  await fireEvent.click(screen.getByRole("option", { name: "IMAGE · capture.jpg" }));
+  expect(screen.getByRole("button", { name: "Rotate 270°" })).toBeTruthy();
+  await fireEvent.click(screen.getByRole("combobox", { name: /Edit members/ }));
+  await fireEvent.click(screen.getByRole("option", { name: "Whole pair" }));
+  expect(screen.queryByRole("button", { name: "Rotate 270°" })).toBeNull();
   editor.dispose();
 });

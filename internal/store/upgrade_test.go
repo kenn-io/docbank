@@ -597,6 +597,7 @@ func TestOpenRejectsCurrentDatabaseWithMissingExtendedTableColumn(t *testing.T) 
 		{name: "rendition_job_waiters", column: "failure_code"},
 		{name: "embedding_jobs", column: "receipt_json"},
 		{name: "document_people_builds", column: "target_epoch"},
+		{name: "photo_suggestions", column: "rotation"},
 	} {
 		for _, test := range v090UpgradeDrivers() {
 			t.Run(table.name+"/"+test.name, func(t *testing.T) {
@@ -1541,25 +1542,6 @@ func TestVectorIndexSchemaHasDistinctVersion(t *testing.T) {
 				require.NoError(t, reopened.Close())
 			}
 			require.ErrorContains(t, err, "no supported JSONL cutover")
-		})
-	}
-}
-
-func TestOpenRejectsCurrentDatabaseWithoutSuggestionRotation(t *testing.T) {
-	t.Parallel()
-	for _, driver := range v090UpgradeDrivers() {
-		t.Run(driver.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "docbank.db")
-			s, err := Open(path, driver.driver)
-			require.NoError(t, err)
-			_, err = s.db.Exec(`ALTER TABLE photo_suggestions DROP COLUMN rotation`)
-			require.NoError(t, err)
-			require.NoError(t, s.Close())
-			reopened, err := Open(path, driver.driver)
-			if reopened != nil {
-				require.NoError(t, reopened.Close())
-			}
-			require.ErrorContains(t, err, "unexpected photo_suggestions layout")
 		})
 	}
 }

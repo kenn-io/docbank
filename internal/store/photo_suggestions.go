@@ -41,15 +41,13 @@ type PhotoSuggestion struct {
 	Value            document.PhotoDescription `json:"value"`
 }
 
-// photoSuggestionSettledSQL is true when no description is wanted for version
-// from producer. Automatic work wants one only for a version without rows. An
-// explicit start also wants one when every row is another producer's
-// dismissal. A row awaiting regeneration after restore wants one from a
-// producer not dismissed on it.
+// photoSuggestionSettledSQL keeps automatic work settled once a row exists.
+// Explicit work asks again under a new producer fingerprint. Restored pending
+// fields still regenerate unless this producer was dismissed on that version.
 func photoSuggestionSettledSQL(version, producer string, explicit bool) string {
 	filter := ""
 	if explicit {
-		filter = ` AND (NOT s.dismissed OR s.producer_fingerprint=` + producer + `)`
+		filter = ` AND s.producer_fingerprint=` + producer
 	}
 	return `(EXISTS(SELECT 1 FROM photo_suggestions s WHERE s.content_version_id=` + version + filter + `)
  AND (NOT EXISTS(SELECT 1 FROM photo_suggestions s WHERE s.content_version_id=` + version + ` AND s.awaiting)
@@ -114,16 +112,13 @@ func dropOwnedPhotoFieldsTx(ctx context.Context, q metadataQuerier, version stri
 // publishPhotoSuggestionTx records the latest provider rotation and fills
 // unsettled description fields. Authored values and restored decisions stay
 // resolved. The description is already normalized.
-func publishPhotoSuggestionTx(ctx context.Context, tx *sql.Tx, version, producer string, explicit bool, description document.PhotoDescription, at time.Time) error {
-	if err := document.ValidatePhotoDescription(description); err != nil {
-		return err
-	}
+func publishPhotoSuggestionTx(ctx context.Context, tx *sql.Tx, version, producer string, description document.PhotoDescription, at time.Time) error {
 	// A new provider result replaces its previous orientation answer, including
 	// uncertainty or an upright answer, without reopening settled caption work.
 	if _, err := tx.ExecContext(ctx, `UPDATE photo_suggestions SET rotation=NULL WHERE content_version_id=?`, version); err != nil {
 		return err
 	}
-	if settled, err := photoDescriptionSettledTx(ctx, tx, version, producer, explicit); err != nil || settled {
+	if settled, err := photoDescriptionSettledTx(ctx, tx, version, producer, false); err != nil || settled {
 		if err != nil {
 			return err
 		}

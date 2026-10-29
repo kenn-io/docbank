@@ -56,7 +56,8 @@ func (s *Store) photoRotationSuggestionTx(ctx context.Context, tx *sql.Tx, asset
 }
 
 // respondPhotoRotationTx authors the angle the owner saw, even if new face or
-// provider measurements have arrived since the inspector loaded it.
+// provider measurements have arrived since the inspector loaded it. A current
+// nonzero proposal must still exist.
 func (s *Store) respondPhotoRotationTx(ctx context.Context, tx *sql.Tx, version string, request PhotoSuggestionResponse) (PhotoSuggestion, error) {
 	if request.Caption || len(request.Tags) > 0 || request.Rotation == nil || (*request.Rotation != 90 && *request.Rotation != 180 && *request.Rotation != 270) {
 		return PhotoSuggestion{}, ErrInvalidPhotoSuggestionResponse
@@ -69,6 +70,13 @@ func (s *Store) respondPhotoRotationTx(ctx context.Context, tx *sql.Tx, version 
 		return PhotoSuggestion{}, err
 	}
 	if confirmed {
+		return PhotoSuggestion{}, ErrPhotoSuggestionConflict
+	}
+	live, err := s.photoRotationSuggestionTx(ctx, tx, row.AssetID)
+	if err != nil {
+		return PhotoSuggestion{}, err
+	}
+	if live.Rotation == nil {
 		return PhotoSuggestion{}, ErrPhotoSuggestionConflict
 	}
 	if row.hidden {
