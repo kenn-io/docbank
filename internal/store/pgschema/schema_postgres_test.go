@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -50,10 +49,8 @@ func TestSetupPreservesIdentity(t *testing.T) {
 	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT high_water FROM documents.node_allocation WHERE singleton=1`).Scan(&highWater))
 	assert.Equal(t, childID, highWater)
 	var stored uuid.UUID
-	var version int
-	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT vault_uid, schema_version FROM documents.vault_metadata WHERE singleton=1`).Scan(&stored, &version))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT vault_uid FROM documents.vault_metadata WHERE singleton=1`).Scan(&stored))
 	assert.Equal(t, id, stored)
-	assert.Equal(t, Version, version)
 
 	// A separate schema is a separate vault, even within the same database.
 	other, err := Setup(t.Context(), db, Config{Schema: "other_documents", SchemaOwner: owner})
@@ -109,7 +106,7 @@ func TestRuntimeCannotChangeSchema(t *testing.T) {
 	for _, tc := range []struct{ name, grant, revoke string }{
 		{"schema create", "GRANT CREATE ON SCHEMA documents TO ", "REVOKE CREATE ON SCHEMA documents FROM "},
 		{"identity write", "GRANT UPDATE ON documents.vault_metadata TO ", "REVOKE UPDATE ON documents.vault_metadata FROM "},
-		{"identity column write", "GRANT UPDATE(schema_version) ON documents.vault_metadata TO ", "REVOKE UPDATE(schema_version) ON documents.vault_metadata FROM "},
+		{"identity column write", "GRANT UPDATE(vault_uid) ON documents.vault_metadata TO ", "REVOKE UPDATE(vault_uid) ON documents.vault_metadata FROM "},
 		{"owner membership", "GRANT " + quotedOwner + " TO ", "REVOKE " + quotedOwner + " FROM "},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -156,13 +153,6 @@ func TestRuntimeCannotChangeSchema(t *testing.T) {
 		_, err = Validate(t.Context(), selected, cfg)
 		require.ErrorContains(t, err, "requires a separate runtime role", "selecting a lesser role must not hide the login's privileges")
 	})
-	_, err = setup.ExecContext(t.Context(), "UPDATE documents.vault_metadata SET schema_version=$1", Version+1)
-	require.NoError(t, err)
-	_, err = Validate(t.Context(), runtime, cfg)
-	require.Error(t, err)
-	var version int
-	require.NoError(t, runtime.QueryRowContext(t.Context(), `SELECT schema_version FROM documents.vault_metadata`).Scan(&version))
-	assert.Equal(t, Version+1, version, "runtime validation must not repair an unsupported version")
 }
 
 func TestSetupRefusesUnownedOrInvalidState(t *testing.T) {
@@ -171,7 +161,7 @@ func TestSetupRefusesUnownedOrInvalidState(t *testing.T) {
 		{"empty schema", `CREATE SCHEMA documents`},
 		{"unrelated schema", `CREATE SCHEMA documents; CREATE TABLE documents.kept(value text); INSERT INTO documents.kept VALUES('keep me')`},
 		{"wrong singleton", `UPDATE documents.vault_metadata SET singleton=2`},
-		{"multiple identities", `INSERT INTO documents.vault_metadata VALUES (2,'11111111-1111-4111-8111-111111111111',2)`},
+		{"multiple identities", `INSERT INTO documents.vault_metadata VALUES (2,'11111111-1111-4111-8111-111111111111')`},
 		{"missing identity", `DELETE FROM documents.vault_metadata`},
 		{"nil identity", `UPDATE documents.vault_metadata SET vault_uid='00000000-0000-0000-0000-000000000000'`},
 		{"wrong table shape", `ALTER TABLE documents.vault_metadata DROP CONSTRAINT vault_metadata_pkey`},
@@ -195,28 +185,6 @@ func TestSetupRefusesUnownedOrInvalidState(t *testing.T) {
 				require.NoError(t, db.QueryRowContext(t.Context(), `SELECT value FROM documents.kept`).Scan(&kept))
 				assert.Equal(t, "keep me", kept)
 			}
-		})
-	}
-}
-
-func TestSetupPreservesUnsupportedVersion(t *testing.T) {
-	t.Parallel()
-	for _, version := range []int{0, 1, 2, 3, Version + 1} {
-		t.Run(strconv.Itoa(version), func(t *testing.T) {
-			t.Parallel()
-			db, owner := pgtest.NewDatabase(t)
-			cfg := Config{Schema: "documents", SchemaOwner: owner}
-			original, err := Setup(t.Context(), db, cfg)
-			require.NoError(t, err)
-			_, err = db.ExecContext(t.Context(), `UPDATE documents.vault_metadata SET schema_version=$1`, version)
-			require.NoError(t, err)
-			_, err = Setup(t.Context(), db, cfg)
-			require.Error(t, err)
-			var kept uuid.UUID
-			var keptVersion int
-			require.NoError(t, db.QueryRowContext(t.Context(), `SELECT vault_uid, schema_version FROM documents.vault_metadata`).Scan(&kept, &keptVersion))
-			assert.Equal(t, original, kept)
-			assert.Equal(t, version, keptVersion)
 		})
 	}
 }

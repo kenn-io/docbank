@@ -90,7 +90,7 @@ func (s *Store) persistAuditedNodeCreation(
 	if err != nil {
 		return err
 	}
-	if err := persistAuditedCreationRecords(
+	if err := s.persistAuditedCreationRecords(
 		ctx, tx, baseline, topologyDelta, events, mutation, metadata,
 	); err != nil {
 		return err
@@ -463,7 +463,7 @@ func makeAuditedCreationMutation(
 	}}
 }
 
-func persistAuditedCreationRecords(
+func (s *Store) persistAuditedCreationRecords(
 	ctx context.Context, tx *sql.Tx, baseline auditedCreationBaseline,
 	topologyDelta audit.Record, events []audit.Record, mutation audit.Record,
 	metadata *auditedCreationMetadata,
@@ -481,9 +481,7 @@ func persistAuditedCreationRecords(
 		operationID); err != nil {
 		return fmt.Errorf("creating inherited audit baseline: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_memberships(
-		scope_id,node_id,baseline_digest) VALUES(?,?,?)`,
-		baseline.scope.scopeID, baseline.nodeID, baseline.digest.text); err != nil {
+	if err := s.insertAuditMembershipTx(ctx, tx, baseline.scope.scopeID, baseline.nodeID, baseline.digest.text); err != nil {
 		return fmt.Errorf("creating inherited audit membership for node %d: %w", baseline.nodeID, err)
 	}
 	if err := insertAuditRecord(ctx, tx, topologyDelta); err != nil {

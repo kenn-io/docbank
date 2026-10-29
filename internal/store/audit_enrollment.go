@@ -85,7 +85,7 @@ func (s *Store) initializeAuditAuthorityWithInput(
 		if err != nil {
 			return err
 		}
-		if err := persistInitialAuditEnrollment(ctx, tx, set); err != nil {
+		if err := s.persistInitialAuditEnrollment(ctx, tx, set); err != nil {
 			return err
 		}
 		if err := validateMetadataState(ctx, tx, set.nodeSequence); err != nil {
@@ -575,7 +575,7 @@ func makeInitialAllocationEntry(
 	}}
 }
 
-func persistInitialAuditEnrollment(
+func (s *Store) persistInitialAuditEnrollment(
 	ctx context.Context, tx *sql.Tx, set initialAuditEnrollmentSet,
 ) error {
 	for _, record := range set.records {
@@ -586,32 +586,30 @@ func persistInitialAuditEnrollment(
 	input := set.input
 	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_authority(
 		singleton,lineage_id,operation_sequence_high_water,allocation_genesis_digest,
-		allocation_entry_count,allocation_head) VALUES(1,?,1,?,1,?)`,
+		allocation_entry_count,allocation_head) VALUES(1,$1,1,$2,1,$3)`,
 		input.lineageID, set.allocationGenesisDigest, set.allocationHead); err != nil {
 		return fmt.Errorf("creating audit authority: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_scopes(
 		scope_id,target_node_id,enable_operation_id,entry_count,chain_head)
-		VALUES(?,?,?,1,?)`, input.scopeID, input.targetNodeID,
+		VALUES($1,$2,$3,1,$4)`, input.scopeID, input.targetNodeID,
 		input.operationID, set.scopeHead); err != nil {
 		return fmt.Errorf("creating audit scope: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_baselines(
-		digest,scope_id,target_node_id,operation_id) VALUES(?,?,?,?)`,
+		digest,scope_id,target_node_id,operation_id) VALUES($1,$2,$3,$4)`,
 		set.baselineDigest, input.scopeID, input.targetNodeID, input.operationID); err != nil {
 		return fmt.Errorf("creating audit baseline projection: %w", err)
 	}
 	for _, member := range set.members {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO audit_memberships(
-			scope_id,node_id,baseline_digest) VALUES(?,?,?)`,
-			input.scopeID, member, set.baselineDigest); err != nil {
+		if err := insertAuditMembershipRow(ctx, tx, input.scopeID, member, set.baselineDigest); err != nil {
 			return fmt.Errorf("creating audit membership for node %d: %w", member, err)
 		}
 	}
-	return nil
+	return s.queueAuditPhotosTx(ctx, tx, nil)
 }
 
-func persistAdditionalAuditEnrollment(
+func (s *Store) persistAdditionalAuditEnrollment(
 	ctx context.Context, tx *sql.Tx, set additionalAuditEnrollmentSet,
 ) error {
 	for _, record := range set.records {
@@ -622,19 +620,17 @@ func persistAdditionalAuditEnrollment(
 	input := set.input
 	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_scopes(
 		scope_id,target_node_id,enable_operation_id,entry_count,chain_head)
-		VALUES(?,?,?,1,?)`, input.scopeID, input.targetNodeID,
+		VALUES($1,$2,$3,1,$4)`, input.scopeID, input.targetNodeID,
 		input.operationID, set.scopeHead); err != nil {
 		return fmt.Errorf("creating additional audit scope: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_baselines(
-		digest,scope_id,target_node_id,operation_id) VALUES(?,?,?,?)`,
+		digest,scope_id,target_node_id,operation_id) VALUES($1,$2,$3,$4)`,
 		set.baselineDigest, input.scopeID, input.targetNodeID, input.operationID); err != nil {
 		return fmt.Errorf("creating additional audit baseline projection: %w", err)
 	}
 	for _, member := range set.members {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO audit_memberships(
-			scope_id,node_id,baseline_digest) VALUES(?,?,?)`,
-			input.scopeID, member, set.baselineDigest); err != nil {
+		if err := s.insertAuditMembershipTx(ctx, tx, input.scopeID, member, set.baselineDigest); err != nil {
 			return fmt.Errorf("creating additional audit membership for node %d: %w", member, err)
 		}
 	}

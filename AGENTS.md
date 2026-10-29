@@ -217,9 +217,11 @@ Instructions for autonomous coding agents working in this repository.
   the existing `database/sql` store boundary, explicit schema and schema-owner
   settings, setup-only DDL and validation-only runtime opening. Reuse existing
   query, search and fixture facilities before adding another abstraction.
-  Follow Kata's canonical fresh DDL and numbered forward-migration discipline
-  for new PostgreSQL history, without converting msgvault's or SQLite's existing
-  history. The [PostgreSQL guide](docs/internal/development.md#postgresql-schema-lifecycle)
+  Until the first release with PostgreSQL support, edit canonical DDL directly:
+  no layout version bumps, compatibility gates or migrations for development
+  schemas. That release establishes the baseline for Kata-style numbered
+  forward migrations, without changing msgvault's or SQLite's existing history.
+  The [PostgreSQL guide](docs/internal/development.md#postgresql-schema-lifecycle)
   owns the concrete contracts and intentional differences.
 - Never encode enums or other closed value lists in either SQL schema, including
   states, phases, kinds, formats, and statuses. Store the value as text and
