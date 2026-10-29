@@ -1818,7 +1818,9 @@ it("keeps Hidden scope for Accept all", async () => {
   });
   vi.mocked(api.preparePhotoAuthored).mockImplementation(async (scope) => ({
     ...photoPreparation((scope.asset_ids ?? []).map((id) => preparedPhoto(Number(id.slice(6))))),
-    proposals: scope.stack ? [offer] : [],
+    proposals: scope.stack
+      ? [offer, { ...offer, asset_id: "photo-2", flag: "reject", rationale: "Weaker frame" }]
+      : [],
   }));
   const { container } = await reviewTwoStacks(true);
   await waitFor(() =>

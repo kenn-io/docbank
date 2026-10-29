@@ -2297,6 +2297,7 @@ it("refreshes and clears best-shot offers with their prepared stack", async () =
   const ids = prepared.map((p) => p.asset_id);
   const offers = [
     { asset_id: ids[0]!, flag: "pick" as const, rationale: "Best frame", confidence: 0.5 },
+    { asset_id: ids[1]!, flag: "reject" as const, rationale: "Weaker frame", confidence: 0.5 },
   ];
   vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue({
     ...photoPreparation(prepared),
@@ -2304,7 +2305,10 @@ it("refreshes and clears best-shot offers with their prepared stack", async () =
   });
   await editor.prepareStack(ids, false);
   expect(editor.bestShots).toEqual(offers);
-  const restored = [{ ...offers[0]!, asset_id: ids[1]! }];
+  const restored = [
+    { ...offers[0]!, asset_id: ids[1]! },
+    { ...offers[1]!, asset_id: ids[0]! },
+  ];
   const restoredTargets = prepared.map((target, i) =>
     i === 0 ? { ...target, revision: 3 } : target,
   );
