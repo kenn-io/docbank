@@ -29,7 +29,7 @@ import (
 const AdapterContract = document.VisionAdapterContract
 const ProviderID = "compatible-vision.describe-v1"
 
-const detectionPrompt = `Find every visible face in this photograph. Return strictly valid JSON, no markdown or commentary: {"faces":[{"box":{"x":0.1,"y":0.2,"width":0.2,"height":0.3},"roll":0,"facing":1,"eyes_open":true,"smile":false}]}. Boxes use normalized coordinates in this oriented preview. Roll is radians in [-pi,pi]. Facing is a score in [0,1], with 1 facing the camera. Use null when a measurement is unavailable. Do not identify people. Return {"faces":[]} when no faces are visible.`
+const detectionPrompt = `Find every visible face in this photograph. Return strictly valid JSON, no markdown or commentary: {"faces":[{"box":{"x":0.1,"y":0.2,"width":0.2,"height":0.3},"roll":0,"facing":1,"eyes_open":true,"smile":false}]}. Boxes use normalized coordinates in this oriented preview. Roll is clockwise radians in [-pi,pi], measured from upright in this preview. Facing is a score in [0,1], with 1 facing the camera. Use null when a measurement is unavailable. Do not identify people. Return {"faces":[]} when no faces are visible.`
 const MaxRequestTimeout = 10 * time.Minute
 
 // MaxResponseBytes bounds a provider reply, so a configured limit cannot exceed it.
