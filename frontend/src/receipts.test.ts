@@ -1,8 +1,12 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import type { DocumentSearchRequest } from "./generated/docbank.js";
-import { validateDocumentSearchReport, validateDocumentSourceFenceResolution } from "./receipts.js";
+import {
+  documentSearch,
+  validateDocumentSearchReport,
+  validateDocumentSourceFenceResolution,
+} from "./receipts.js";
 
 const vault = "11111111-1111-4111-8111-111111111111";
 const versions = ["22222222-2222-4222-8222-222222222222", "33333333-3333-4333-8333-333333333333"];
@@ -335,5 +339,49 @@ describe("search result authority", () => {
     expect(validateDocumentSearchReport(report, request)).toMatchObject({
       results: [{ evidence: [mediaIdentity] }],
     });
+  });
+});
+
+it("returns lexical matches for a hybrid request with an image-only profile", async () => {
+  const request: DocumentSearchRequest = {
+    query: "synthetic description",
+    mode: "hybrid",
+    limit: 20,
+    profile: "images",
+    fence: { vault_uid: vault, content_version_ids: [versions[0]] },
+  };
+  const report = {
+    requested_mode: "hybrid",
+    actual_mode: "lexical",
+    coverage: {
+      binding_required: false,
+      scoped_documents: 1,
+      complete_documents: 1,
+      state: "complete",
+    },
+    degradations: [],
+    results: [
+      {
+        vault_uid: vault,
+        node_id: 7,
+        content_version_id: versions[0],
+        rank: 1,
+        score: 1,
+        path: "/synthetic.pdf",
+        lexical_rank: 1,
+        evidence: [{ kind: "node_name" }],
+      },
+    ],
+    truncated: false,
+    trace: [],
+  };
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(JSON.stringify(report), { headers: { "Content-Type": "application/json" } }),
+  );
+
+  await expect(documentSearch("session", request)).resolves.toMatchObject({
+    requested_mode: "hybrid",
+    actual_mode: "lexical",
+    results: [{ path: "/synthetic.pdf", lexical_rank: 1 }],
   });
 });

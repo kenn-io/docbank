@@ -464,7 +464,9 @@ export function validateDocumentSearchReport(
     report.requested_mode !== requestedMode ||
     typeof actualMode !== "string" ||
     !["lexical", "semantic", "hybrid"].includes(actualMode) ||
-    (requestedMode !== "auto" && requestedMode !== actualMode)
+    (requestedMode !== "auto" &&
+      requestedMode !== actualMode &&
+      !(requestedMode === "hybrid" && actualMode === "lexical"))
   )
     invalid();
   const limit = request.limit || 20;
