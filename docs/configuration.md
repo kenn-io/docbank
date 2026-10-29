@@ -555,7 +555,7 @@ retain_typed_artifacts = false
 
 Automatic description picks the profile with the lexicographically smallest name among those with active [consent](usage/document-processing.md#describe-photos) whose provider passes its probe. If the probe for the smallest name fails, the next consented name receives the photos. Docbank checks readiness on demand when a description starts. Status output does not list it. Automatic work leaves settled descriptions alone.
 
-A consented explicit build under another provider fingerprint can refresh rotation even when the photo already has a description. Pending and accepted caption and tag decisions stay settled. After a dismissal, an explicit build with a different profile can offer replacement text along with the new rotation answer.
+A consented explicit build under another provider fingerprint can refresh rotation even when the photo already has a description. Pending and accepted caption and tag decisions stay settled. After a dismissal, an explicit build with a different provider fingerprint can offer replacement text along with the new rotation answer.
 
 ### Automatic face detection
 
