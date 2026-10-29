@@ -1029,7 +1029,7 @@
   }
   .frame-select {
     display: flex;
-    gap: 3px;
+    gap: var(--space-2);
     position: absolute;
     top: 4px;
     left: 4px;
