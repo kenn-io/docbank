@@ -103,6 +103,11 @@ func TestPhotoBestShotsReadsAndStaleOffers(t *testing.T) {
 	_, err := s.DecidePhotoStack(ctx, request)
 	require.ErrorIs(t, err, ErrInvalidPhotoAsset)
 	request.Responses[0].Response = "accepted"
+	request.Decision = "representative"
+	request.SourceMetadataFingerprint = browseHash("upgraded-extractor")
+	_, err = s.DecidePhotoStack(ctx, request)
+	require.ErrorIs(t, err, ErrInvalidPhotoAsset)
+	request.Decision, request.SourceMetadataFingerprint = "all", ""
 	subset := bestShotPreparation(t, s, ids[:2])
 	require.Len(t, subset.Proposals, 2)
 	require.Len(t, bestShotPreparation(t, s, ids).Proposals, 3)

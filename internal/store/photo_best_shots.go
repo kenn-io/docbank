@@ -98,7 +98,7 @@ func (s *Store) respondPhotoBestShotsTx(ctx context.Context, tx *sql.Tx, request
 	seen := map[string]bool{}
 	targets := []PhotoAuthoredTarget{}
 	for _, response := range request.Responses {
-		if response.Response != request.Responses[0].Response || seen[response.AssetID] || !slices.Contains([]string{"accepted", "dismissed"}, response.Response) {
+		if request.Decision != "all" || response.Response != request.Responses[0].Response || seen[response.AssetID] || !slices.Contains([]string{"accepted", "dismissed"}, response.Response) {
 			return result, ErrInvalidPhotoAsset
 		}
 		seen[response.AssetID] = true
