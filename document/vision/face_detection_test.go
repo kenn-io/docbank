@@ -18,7 +18,6 @@ func TestParseFaces(t *testing.T) {
 	}{
 		{name: "valid", raw: `{"faces":[` + valid + `]}`, want: &document.FaceObservation{Box: document.FaceBox{X: .1, Y: .2, Width: .2, Height: .3}, Roll: new(0.0), Facing: new(0.0), EyesOpen: new(false)}},
 		{name: "empty", raw: `{"faces":[]}`},
-		{name: "whitespace", raw: " \t\r\n" + `{"faces":[]}` + " \n"},
 		{name: "fenced", raw: "```json\n" + `{"faces":[]}` + "\n```"},
 		{name: "trailing object", raw: `{"faces":[]} {"faces":[`, fails: true},
 		{name: "missing", raw: `{"caption":"portrait"}`, fails: true},

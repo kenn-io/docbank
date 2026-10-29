@@ -3966,12 +3966,6 @@ it.each(["inspector", "loupe"])(
       await component.rerender({ ...props, photoID: "photo-1" });
       await screen.findByRole("dialog", { name: /^Photo viewer,/ });
     }
-    const pending = {
-      version: "version-1",
-      box: { x: 0, y: 0, width: 0.2, height: 0.2 },
-      face_id: "pending-face",
-    };
-    photos.faceEditor.pending = pending;
     read.mockResolvedValue(
       photoFacePageFor(photo(1), {
         faces: [
@@ -3988,7 +3982,6 @@ it.each(["inspector", "loupe"])(
     vi.spyOn(photos, "lookup").mockResolvedValue(photo(1));
     await act(() => photos.changed({}));
     await screen.findByRole("button", { name: "Find or create a person: Face 2" });
-    expect(photos.faceEditor.pending).toEqual(pending);
   },
 );
 

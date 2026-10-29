@@ -16,20 +16,10 @@ import (
 
 func TestPhotoFaceDetectionReconciliation(t *testing.T) {
 	t.Parallel()
-	s := newTestStore(t)
+	fixture := newFaceDetectionTestFixture(t)
+	s, version := fixture.s, fixture.version
+	scan, read := fixture.scan, fixture.read
 	ctx := t.Context()
-	node := browsePhotoNode(t, s, "portrait.jpg", fakeHash("a1"), "image/jpeg")
-	version := node.CurrentVersionID
-	scan := func(detector string, observations ...document.FaceObservation) error {
-		return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-			return publishFaceDetectionTx(ctx, tx, version, fakeHash(detector), document.FaceDetection{Faces: observations}, time.Now())
-		})
-	}
-	read := func() []PhotoFace {
-		faces, _, _, err := s.PhotoFacePersonNames(ctx, version)
-		require.NoError(t, err)
-		return faces
-	}
 	first := document.FaceObservation{Box: document.FaceBox{X: .1, Y: .1, Width: .2, Height: .2}, Roll: new(0.0), Facing: new(.9), EyesOpen: new(true), Smile: new(false)}
 	other := document.FaceObservation{Box: document.FaceBox{X: .7, Y: .7, Width: .2, Height: .2}}
 	require.NoError(t, scan("b1", first, other))
@@ -77,6 +67,7 @@ func TestPhotoFaceDetectionReconciliation(t *testing.T) {
 		restored := newTestStore(t)
 		require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
 		s = restored
+		fixture.s = restored
 		next.Roll, next.EyesOpen = tc.roll, tc.eyes
 		require.NoError(t, scan("b3", next))
 		faces = read()
@@ -103,21 +94,11 @@ func TestPhotoFaceDetectionProtectsDecisionsAndUndo(t *testing.T) {
 	t.Parallel()
 	for _, action := range []string{"name", "candidate"} {
 		t.Run(action, func(t *testing.T) {
-			s := newTestStore(t)
+			fixture := newFaceDetectionTestFixture(t)
+			s, version := fixture.s, fixture.version
+			scan, read := fixture.scan, fixture.read
 			ctx := t.Context()
-			node := browsePhotoNode(t, s, "portrait.jpg", fakeHash("a1"), "image/jpeg")
-			version := node.CurrentVersionID
 			observation := document.FaceObservation{Box: document.FaceBox{Width: .2, Height: .2}, Facing: new(.9)}
-			scan := func(detector string, observations ...document.FaceObservation) error {
-				return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-					return publishFaceDetectionTx(ctx, tx, version, fakeHash(detector), document.FaceDetection{Faces: observations}, time.Now())
-				})
-			}
-			read := func() []PhotoFace {
-				faces, _, _, err := s.PhotoFacePersonNames(ctx, version)
-				require.NoError(t, err)
-				return faces
-			}
 			require.NoError(t, scan("b1", observation))
 			face := read()[0]
 			person, err := s.CreatePerson(ctx, "Ada", "operator")
@@ -287,4 +268,30 @@ func TestPhotoFaceDetectionLooseManualBox(t *testing.T) {
 			require.Contains(t, faces, manual, "the manual face remains unchanged")
 		})
 	}
+}
+
+type faceDetectionTestFixture struct {
+	t       *testing.T
+	s       *Store
+	version string
+}
+
+func newFaceDetectionTestFixture(t *testing.T) *faceDetectionTestFixture {
+	t.Helper()
+	s := newTestStore(t)
+	node := browsePhotoNode(t, s, "portrait.jpg", fakeHash("a1"), "image/jpeg")
+	return &faceDetectionTestFixture{t: t, s: s, version: node.CurrentVersionID}
+}
+
+func (f *faceDetectionTestFixture) scan(detector string, observations ...document.FaceObservation) error {
+	return f.s.withStorageTx(f.t.Context(), func(tx *sql.Tx) error {
+		return publishFaceDetectionTx(f.t.Context(), tx, f.version, fakeHash(detector), document.FaceDetection{Faces: observations}, time.Now())
+	})
+}
+
+func (f *faceDetectionTestFixture) read() []PhotoFace {
+	f.t.Helper()
+	faces, _, _, err := f.s.PhotoFacePersonNames(f.t.Context(), f.version)
+	require.NoError(f.t, err)
+	return faces
 }

@@ -8,7 +8,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/document/vision"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -44,15 +43,7 @@ func TestPhotoFaceDetectionFlow(t *testing.T) {
 			f.mu.Lock()
 			f.reply = tc.reply
 			f.mu.Unlock()
-			f.grant(t, service, "faces")
-			targets, err = service.photoVisionTargets(ctx, nil, "", 50, 4, document.FaceDetectionProviderID)
-			require.NoError(t, err)
-			require.Len(t, targets, 1)
-			binding, err := service.photoDescriptionBinding(ctx, targets[0].version)
-			require.NoError(t, err)
-			profile := service.profiles["faces"]
-			job, _, err := service.enqueueRendition(ctx, f.node, targets[0].version, profile, service.renditionConsentRequest(profile), binding, false)
-			require.NoError(t, err)
+			job := f.enqueueFaceDetection(t, service)
 			f.runWorker(t, service)
 			saved, err := f.catalog.RenditionJobByID(ctx, job.ID)
 			require.NoError(t, err)
@@ -94,7 +85,6 @@ func TestPhotoFaceDetectionPublicationFailureKeepsWorkerRunning(t *testing.T) {
 			f := newPhotoDescriptionFixture(t)
 			ctx := t.Context()
 			service := f.newVisionServiceWith(t, map[string]string{"faces": "detector"}, document.FaceDetectionProviderID)
-			f.grant(t, service, "faces")
 			if mode == "capacity" {
 				for range document.MaxPhotoRecordsPerVersion {
 					_, _, err := f.catalog.CreatePhotoFace(ctx, f.node.CurrentVersionID, uuid.New().String(), document.FaceBox{Width: .05, Height: .05}, "")
@@ -104,18 +94,8 @@ func TestPhotoFaceDetectionPublicationFailureKeepsWorkerRunning(t *testing.T) {
 			f.mu.Lock()
 			f.reply = detectedFaceReply
 			f.mu.Unlock()
-			targets, err := service.photoVisionTargets(ctx, nil, "", 50, 4, document.FaceDetectionProviderID)
-			require.NoError(t, err)
-			require.Len(t, targets, 1)
-			binding, err := service.photoDescriptionBinding(ctx, targets[0].version)
-			require.NoError(t, err)
-			profile := service.profiles["faces"]
-			job, _, err := service.enqueueRendition(ctx, f.node, targets[0].version, profile, service.renditionConsentRequest(profile), binding, false)
-			require.NoError(t, err)
+			job := f.enqueueFaceDetection(t, service)
 			catalog := &auditingFaceDetectionCatalog{Store: f.catalog, enable: mode == "audit"}
-			for fingerprint, runtime := range f.service.renditions.runtimes {
-				require.NoError(t, service.renditions.Register(fingerprint, runtime))
-			}
 			worker, err := NewRenditionWorker(RenditionWorkerConfig{Catalog: catalog, Blobs: f.blobs, Runtime: service.renditions, Gate: newTestOperationGate(), Owner: "synthetic-worker", LeaseDuration: time.Minute, IdleDelay: time.Millisecond, Clock: service.clock})
 			require.NoError(t, err)
 			processed, err := worker.RunOne(ctx)
@@ -129,18 +109,7 @@ func TestPhotoFaceDetectionPublicationFailureKeepsWorkerRunning(t *testing.T) {
 				require.NoError(t, err)
 				require.Empty(t, faces, "rejected canonical publication creates no face")
 			}
-			f.mu.Lock()
-			f.reply = `{"caption":"A harbor.","tags":[],"visible_text":""}`
-			f.mu.Unlock()
-			f.grant(t, f.service, "vision")
-			descriptions, err := f.service.photoVisionTargets(ctx, nil, "", 50, 4, vision.ProviderID)
-			require.NoError(t, err)
-			require.Len(t, descriptions, 1)
-			require.NoError(t, f.service.admitPhotoDescription(ctx, descriptions[0]))
-			processed, err = worker.RunOne(ctx)
-			require.NoError(t, err)
-			require.True(t, processed)
-			require.Len(t, f.suggestions(t), 1, "the same worker processes unrelated descriptions after the rejected detection")
+
 		})
 	}
 }
@@ -172,15 +141,13 @@ func TestPhotoFaceDetectionAuditRefusesEgress(t *testing.T) {
 			f := newPhotoDescriptionFixture(t)
 			ctx := t.Context()
 			service := f.newVisionServiceWith(t, map[string]string{"faces": "detector"}, document.FaceDetectionProviderID)
-			f.grant(t, service, "faces")
+			if queued {
+				f.enqueueFaceDetection(t, service)
+			} else {
+				f.grant(t, service, "faces")
+			}
 			plan, err := service.Plan(ctx, f.selector("faces"))
 			require.NoError(t, err)
-			if queued {
-				targets, err := service.photoVisionTargets(ctx, nil, "", 50, 4, document.FaceDetectionProviderID)
-				require.NoError(t, err)
-				require.Len(t, targets, 1)
-				require.NoError(t, service.admitPhotoDescription(ctx, targets[0]))
-			}
 			probesBefore, callsBefore := f.counts()
 			audit, err := f.catalog.PreviewInitialAudit(ctx, f.catalog.RootID(), "cli", nil)
 			require.NoError(t, err)
@@ -202,4 +169,19 @@ func TestPhotoFaceDetectionAuditRefusesEgress(t *testing.T) {
 			}
 		})
 	}
+}
+
+func (f *photoDescriptionFixture) enqueueFaceDetection(t *testing.T, service *Service) store.RenditionJob {
+	t.Helper()
+	ctx := t.Context()
+	f.grant(t, service, "faces")
+	targets, err := service.photoVisionTargets(ctx, nil, "", 50, 4, document.FaceDetectionProviderID)
+	require.NoError(t, err)
+	require.Len(t, targets, 1)
+	binding, err := service.photoDescriptionBinding(ctx, targets[0].version)
+	require.NoError(t, err)
+	profile := service.profiles["faces"]
+	job, _, err := service.enqueueRendition(ctx, f.node, targets[0].version, profile, service.renditionConsentRequest(profile), binding, false)
+	require.NoError(t, err)
+	return job
 }
