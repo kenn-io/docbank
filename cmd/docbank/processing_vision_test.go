@@ -36,8 +36,10 @@ func TestProcessingVisionFingerprints(t *testing.T) {
 	}
 	_, err = toml.Decode(detectionOutput, &detection)
 	require.NoError(t, err)
-	require.NotEqual(t, fingerprints.Descriptor, detection.Descriptor)
-	require.NotEqual(t, fingerprints.Disclosure, detection.Disclosure)
+	descriptor, err = vision.Descriptor(document.FaceDetectionProviderID, "synthetic-vision", document.RenditionTrustHostedProvider)
+	require.NoError(t, err)
+	require.Equal(t, descriptor.Fingerprint, detection.Descriptor)
+	require.Equal(t, vision.DisclosureFingerprint(descriptor, "https://vision.example.com", deployment), detection.Disclosure)
 	for _, tc := range []struct {
 		flag string
 		args []string

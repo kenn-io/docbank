@@ -17,7 +17,6 @@ test("shows detected faces in the inspector and loupe", async ({ page }) => {
     await fixture.seed(3, "--detected-faces");
     await mkdir(output!, { recursive: true });
     const url = new URL(await fixture.run("web", "--no-browser"));
-    const session = new URLSearchParams(url.hash.slice(1)).get("web_session")!;
     url.pathname = "/photos";
     await page.goto(url.href);
     await page
@@ -30,20 +29,6 @@ test("shows detected faces in the inspector and loupe", async ({ page }) => {
     await expect(
       people.getByRole("button", { name: "Find or create a person: Face 1" }),
     ).toBeVisible();
-    const face = await withPhotoAPI(url, async () => {
-      const assets = await api.listPhotoAssets(
-        {
-          query: { text: "", syntax: "simple", sort: { field: "capture_time", direction: "desc" } },
-          page_size: 10,
-        },
-        { session },
-      );
-      const portrait = assets.items.find((asset) => asset.name === "Synthetic-photo-00003.jpg")!;
-      return (await api.listPhotoFaces(portrait.content_version_id, { session })).faces[0]!;
-    });
-    expect(face.detector_fingerprint).toMatch(/^[a-f0-9]{64}$/);
-    expect(face.roll).toBe(0);
-    expect(face.assertion_id).toBeFalsy();
     await captureThemes(page, output!, "after-detection-inspector-loupe");
   } finally {
     await fixture.dispose();

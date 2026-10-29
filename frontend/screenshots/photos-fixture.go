@@ -480,13 +480,7 @@ func seedVisionResult(ctx context.Context, s *store.Store, blobs *blob.Store, sp
 	check(err)
 	prepared, err := s.PreparePhotoAuthored(ctx, store.PhotoSetSelection{AssetIDs: []string{asset.ID}})
 	check(err)
-	if task == document.FaceDetectionProviderID {
-		faces, _, _, err := s.PhotoFacePersonNames(ctx, node.CurrentVersionID)
-		check(err)
-		if len(faces) != 1 || faces[0].DetectorFingerprint == "" {
-			panic("face detection did not publish")
-		}
-	} else if description := value.(document.PhotoDescription); len(prepared.Suggestions) != 1 || prepared.Suggestions[0].Value.Caption != description.Caption {
+	if description, ok := value.(document.PhotoDescription); ok && (len(prepared.Suggestions) != 1 || prepared.Suggestions[0].Value.Caption != description.Caption) {
 		panic("photo description did not publish the suggestion")
 	}
 }

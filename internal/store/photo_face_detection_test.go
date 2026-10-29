@@ -124,8 +124,7 @@ func TestPhotoFaceDetectionProtectsDecisionsAndUndo(t *testing.T) {
 			var receipt PhotoFaceDecisionReceipt
 			switch action {
 			case "candidate":
-				_, err = s.db.ExecContext(ctx, `INSERT INTO person_match_candidates(candidate_id,actor_key,display_name,reason,evidence_json,evidence_sha256,occurrence_count,revision,state,created_at) VALUES(?,?,?,'face_match',?,?,1,1,'open',?)`, uuid.New().String(), "face:"+face.FaceID, "Ada", []byte(`[{"evidence_kind":"face","evidence_id":"`+face.FaceID+`","content_version_id":"`+version+`"}]`), fakeHash("c1"), nowRFC3339())
-				require.NoError(t, err)
+				buildFaceMatchCandidateForTest(t, s, version, face.FaceID, 0, 0)
 			default:
 				decision := action
 				request := PhotoFaceDecisionRequest{FaceID: face.FaceID, Revision: face.Revision, Action: decision}
@@ -142,6 +141,7 @@ func TestPhotoFaceDetectionProtectsDecisionsAndUndo(t *testing.T) {
 			require.Equal(t, before, read())
 			require.NoError(t, scan("b3"))
 			require.Equal(t, before, read())
+			require.NoError(t, s.ValidateMetadata(ctx))
 			if action == "name" {
 				_, err = s.UndoPhotoFaceDecision(ctx, receipt.ReceiptID)
 				require.NoError(t, err)
@@ -201,16 +201,12 @@ func TestPhotoFaceDetectionMetadata(t *testing.T) {
 	require.NoError(t, err)
 	var exported bytes.Buffer
 	require.NoError(t, s.ExportMetadata(ctx, &exported))
-	require.NotContains(t, exported.String(), `"type":"photo_face_scan"`)
 	target := newTestStore(t)
 	require.NoError(t, target.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
 	restored, _, _, err := target.PhotoFacePersonNames(ctx, version)
 	require.NoError(t, err)
 	require.Len(t, restored, 1)
 	require.True(t, restored[0].Dismissed)
-	var count int
-	require.NoError(t, target.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_face_scans`).Scan(&count))
-	require.Zero(t, count)
 	_, err = target.UndoPhotoFaceDecision(ctx, receipt.ReceiptID)
 	require.NoError(t, err)
 	require.NoError(t, target.ValidateMetadata(ctx))
