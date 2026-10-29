@@ -1005,8 +1005,14 @@ func (w *Watcher) scanWithHints(ctx context.Context, root *watchRoot, hints watc
 			}
 		}
 		if !inventory.complete {
-			// Unseen paths may only be unreadable: keep their evidence and
-			// subscriptions until a complete pass.
+			// Unseen paths may only be unreadable: keep their accepted evidence
+			// and subscriptions until a complete pass, but time unseen must not
+			// count toward settling.
+			for rel := range w.observations {
+				if _, observed := inventory.files[rel]; !observed {
+					w.interruptSettling(rel)
+				}
+			}
 			if len(inventory.blocked) != 0 {
 				return false, fmt.Errorf("scanning watch %q: %w", w.config.Name, errors.Join(inventory.blocked...))
 			}

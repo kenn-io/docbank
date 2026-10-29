@@ -527,3 +527,42 @@ func TestWatchHeldNewFileDoesNotStallSiblings(t *testing.T) {
 	_, err = ing.Store.NodeByPath(t.Context(), "/archive/held.pst")
 	require.ErrorIs(t, err, store.ErrNotFound)
 }
+
+func TestWatchIncompletePassRestartsSettlingForUnseenFiles(t *testing.T) {
+	ing := newTestIngester(t)
+	source := writeTree(t, map[string]string{"pending/draft.md": "first", "held.pst": "locked"})
+	watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{
+		Name: "notes", Source: source, Destination: "/archive",
+		SettleTime: config.Duration(10 * time.Second), ScanInterval: config.Duration(time.Second),
+	}, runTestMutation, slog.New(slog.DiscardHandler))
+	require.NoError(t, err)
+	// An unrelated held file keeps every pass incomplete.
+	watcher.observeFile = func(file watchSource, withChange bool) (watchFileState, error) {
+		if file.ref == "held.pst" {
+			return watchFileState{}, ErrSourceChanged
+		}
+		return file.observe(withChange)
+	}
+	root := openWatcherRoot(t, watcher)
+	t0 := time.Unix(1_700_000_000, 0)
+	scan := func(at time.Duration) {
+		t.Helper()
+		watcher.now = func() time.Time { return t0.Add(at) }
+		complete, err := watcher.scanWithHints(t.Context(), root, watchScanHints{Reconcile: true})
+		require.NoError(t, err)
+		require.False(t, complete)
+	}
+	scan(0)
+	pending, away := filepath.Join(source, "pending"), filepath.Join(t.TempDir(), "pending")
+	require.NoError(t, os.Rename(pending, away))
+	scan(5 * time.Second)
+	require.NoError(t, os.Rename(away, pending))
+
+	// The settle window started before the folder left has expired.
+	scan(11 * time.Second)
+	_, err = ing.Store.NodeByPath(t.Context(), "/archive/pending/draft.md")
+	require.ErrorIs(t, err, store.ErrNotFound, "time unseen must not count toward settling")
+	scan(21 * time.Second)
+	_, err = ing.Store.NodeByPath(t.Context(), "/archive/pending/draft.md")
+	require.NoError(t, err)
+}
