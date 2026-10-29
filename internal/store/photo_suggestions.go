@@ -375,8 +375,8 @@ func (s *Store) photoSuggestionsQuery(ctx context.Context, q metadataQuerier, as
 // order and checks each one, settled or not, until the page fills. A page with
 // many targets costs about its own length; an empty page examines every ready
 // preview after the cursor, which is the library for an idle pass. The CROSS
-// JOINs keep that order. Arguments: recipe, cursor, profile, limit, producer, restored only.
-// Active description work for any profile excludes a photo, so two providers never describe it at once.
+// JOINs keep that order. Arguments: recipe, cursor, profile, limit, producer, restored only, face provider ID, detection.
+// Active work for the same task excludes a photo across profiles, so providers run one task on it at a time.
 func photoDescriptionTargetsSQL(settled string) string {
 	return `SELECT ` + contentVersionCols + ` FROM content_versions WHERE version_id IN (
  SELECT v.version_id FROM visual_preview_generations g

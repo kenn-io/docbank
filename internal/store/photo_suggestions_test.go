@@ -852,7 +852,7 @@ func TestPhotoDescriptionTargetsReadsOnePageInOrder(t *testing.T) {
 	require.Equal(t, versions[2:], ids(rest), "the cursor resumes after the last version read")
 }
 
-func TestPhotoDescriptionTargetsSkipPhotosWithActiveWorkForAnotherProfile(t *testing.T) {
+func TestPhotoDescriptionTargetsRespectActiveTaskScope(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
