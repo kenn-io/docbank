@@ -25,10 +25,9 @@ var (
 	ErrPhotoSuggestionConflict        = errors.New("photo suggestion field is no longer pending")
 )
 
-// PhotoSuggestion holds a pending description or rotation proposal. Fields the
-// owner accepted or dismissed are no longer pending.
+// PhotoSuggestion holds pending description fields or a rotation correction.
+// Rotation proposals use the content version as their transient ID.
 type PhotoSuggestion struct {
-	Kind             string                    `json:"kind" enum:"description,rotation"`
 	Rotation         *int                      `json:"rotation,omitempty" enum:"90,180,270"`
 	RotationSource   string                    `json:"rotation_source,omitempty"`
 	AssetID          string                    `json:"asset_id"`
@@ -52,9 +51,9 @@ func photoSuggestionSettledSQL(version, producer string, explicit bool) string {
 	if explicit {
 		filter = ` AND (NOT s.dismissed OR s.producer_fingerprint=` + producer + `)`
 	}
-	return `(NOT EXISTS(SELECT 1 FROM photo_suggestions r WHERE r.content_version_id=` + version + ` AND r.kind='rotation' AND r.awaiting) AND EXISTS(SELECT 1 FROM photo_suggestions s WHERE s.kind='description' AND s.content_version_id=` + version + filter + `)
- AND (NOT EXISTS(SELECT 1 FROM photo_suggestions s WHERE s.kind='description' AND s.content_version_id=` + version + ` AND s.awaiting)
-  OR EXISTS(SELECT 1 FROM photo_suggestions s WHERE s.kind='description' AND s.content_version_id=` + version + ` AND s.dismissed AND s.producer_fingerprint=` + producer + `)))`
+	return `(EXISTS(SELECT 1 FROM photo_suggestions s WHERE s.content_version_id=` + version + filter + `)
+ AND (NOT EXISTS(SELECT 1 FROM photo_suggestions s WHERE s.content_version_id=` + version + ` AND s.awaiting)
+  OR EXISTS(SELECT 1 FROM photo_suggestions s WHERE s.content_version_id=` + version + ` AND s.dismissed AND NOT s.awaiting AND s.producer_fingerprint=` + producer + `)))`
 }
 
 // photoDescriptionEligibility is the rule for a query that has joined the
@@ -112,24 +111,32 @@ func dropOwnedPhotoFieldsTx(ctx context.Context, q metadataQuerier, version stri
 	return true, nil
 }
 
-// publishPhotoSuggestionTx stores a provider's description for a version
-// unless the version is settled. The description is already normalized. Fields
-// the owner already has or resolved before a restore are left out.
+// publishPhotoSuggestionTx records the latest provider rotation and fills
+// unsettled description fields. Authored values and restored decisions stay
+// resolved. The description is already normalized.
 func publishPhotoSuggestionTx(ctx context.Context, tx *sql.Tx, version, producer string, explicit bool, description document.PhotoDescription, at time.Time) error {
-	if err := publishPhotoRotationTx(ctx, tx, version, description.Rotation, producer, at); err != nil {
+	if err := document.ValidatePhotoDescription(description); err != nil {
 		return err
 	}
-	description.Rotation = nil
+	// A new provider result replaces its previous orientation answer, including
+	// uncertainty or an upright answer, without reopening settled caption work.
+	if _, err := tx.ExecContext(ctx, `UPDATE photo_suggestions SET rotation=NULL WHERE content_version_id=?`, version); err != nil {
+		return err
+	}
 	if settled, err := photoDescriptionSettledTx(ctx, tx, version, producer, explicit); err != nil || settled {
+		if err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE photo_suggestions SET rotation=? WHERE id=(SELECT id FROM photo_suggestions WHERE content_version_id=? ORDER BY created_at DESC,id DESC LIMIT 1)`, description.Rotation, version)
 		return err
 	}
 	if ok, err := dropOwnedPhotoFieldsTx(ctx, tx, version, &description); err != nil || !ok {
 		return err
 	}
 	var awaiting int64
-	var captionResolved bool
+	var captionResolved, dismissed bool
 	var resolvedJSON string
-	err := tx.QueryRowContext(ctx, `SELECT id,caption_resolved,resolved_tags_json FROM photo_suggestions WHERE content_version_id=? AND kind='description' AND awaiting ORDER BY producer_fingerprint=? DESC,id LIMIT 1`, version, producer).Scan(&awaiting, &captionResolved, &resolvedJSON)
+	err := tx.QueryRowContext(ctx, `SELECT id,caption_resolved,dismissed,resolved_tags_json FROM photo_suggestions WHERE content_version_id=? AND awaiting ORDER BY producer_fingerprint=? DESC,id LIMIT 1`, version, producer).Scan(&awaiting, &captionResolved, &dismissed, &resolvedJSON)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
@@ -138,6 +145,9 @@ func publishPhotoSuggestionTx(ctx context.Context, tx *sql.Tx, version, producer
 		if err := json.Unmarshal([]byte(resolvedJSON), &resolved); err != nil {
 			return err
 		}
+	}
+	if dismissed {
+		description.Caption, description.Tags, description.VisibleText = "", []string{}, ""
 	}
 	if captionResolved {
 		description.Caption = ""
@@ -150,17 +160,17 @@ func publishPhotoSuggestionTx(ctx context.Context, tx *sql.Tx, version, producer
 	if awaiting != 0 {
 		// The restored row now belongs to the producer that regenerated it. An
 		// older row of that producer is superseded by the owner's decisions it holds.
-		if _, err := tx.ExecContext(ctx, `DELETE FROM photo_suggestions WHERE content_version_id=? AND kind='description' AND producer_fingerprint=? AND id<>?`, version, producer, awaiting); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM photo_suggestions WHERE content_version_id=? AND producer_fingerprint=? AND id<>?`, version, producer, awaiting); err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE photo_suggestions SET producer_fingerprint=?,caption=?,tags_json=?,visible_text=?,awaiting=0 WHERE id=?`, producer, description.Caption, string(tags), description.VisibleText, awaiting)
+		_, err = tx.ExecContext(ctx, `UPDATE photo_suggestions SET producer_fingerprint=?,caption=?,tags_json=?,visible_text=?,rotation=?,awaiting=0 WHERE id=?`, producer, description.Caption, string(tags), description.VisibleText, description.Rotation, awaiting)
 		return err
 	}
 	id, err := newUUIDv4()
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO photo_suggestions(suggestion_id,content_version_id,producer_fingerprint,caption,tags_json,visible_text,created_at) VALUES(?,?,?,?,?,?,?)`, id, version, producer, description.Caption, string(tags), description.VisibleText, at.UTC().Format(timestampLayout))
+	_, err = tx.ExecContext(ctx, `INSERT INTO photo_suggestions(suggestion_id,content_version_id,producer_fingerprint,caption,tags_json,visible_text,rotation,created_at) VALUES(?,?,?,?,?,?,?,?)`, id, version, producer, description.Caption, string(tags), description.VisibleText, description.Rotation, at.UTC().Format(timestampLayout))
 	return err
 }
 
@@ -187,7 +197,7 @@ type PhotoSuggestionResponse struct {
 	SourceRevision int64    `json:"source_revision"`
 	NodeRevision   int64    `json:"node_revision"`
 	Response       string   `json:"response" enum:"accepted,dismissed"`
-	Rotation       bool     `json:"rotation"`
+	Rotation       *int     `json:"rotation,omitempty" enum:"90,180,270" doc:"The clockwise angle shown in the rotation proposal, also supplied on dismissal."`
 	Caption        bool     `json:"caption"`
 	Tags           []string `json:"tags" maxItems:"64"`
 }
@@ -204,7 +214,7 @@ type photoSuggestionRow struct {
 	hidden          bool
 }
 
-const photoSuggestionRowSQL = `SELECT s.id,s.suggestion_id,s.content_version_id,s.producer_fingerprint,s.caption,s.tags_json,s.visible_text,s.dismissed,s.awaiting,s.caption_resolved,s.resolved_tags_json,s.kind,s.rotation,s.rotation_source,
+const photoSuggestionRowSQL = `SELECT s.id,s.suggestion_id,s.content_version_id,s.producer_fingerprint,s.caption,s.tags_json,s.visible_text,s.dismissed,s.awaiting,s.caption_resolved,s.resolved_tags_json,
  f.file_id,f.revision,n.revision,a.asset_id,a.revision,a.hidden_at IS NOT NULL
  FROM photo_suggestions s JOIN content_versions v ON v.version_id=s.content_version_id
  JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id AND n.trashed_at IS NULL
@@ -214,7 +224,7 @@ func scanPhotoSuggestion(row interface{ Scan(dest ...any) error }) (photoSuggest
 	var value photoSuggestionRow
 	var tags, resolved string
 	err := row.Scan(&value.id, &value.ID, &value.ContentVersionID, &value.producer, &value.Value.Caption, &tags, &value.Value.VisibleText,
-		&value.dismissed, &value.awaiting, &value.captionResolved, &resolved, &value.Kind, &value.Rotation, &value.RotationSource,
+		&value.dismissed, &value.awaiting, &value.captionResolved, &resolved,
 		&value.Target, &value.SourceRevision, &value.NodeRevision, &value.AssetID, &value.AssetRevision, &value.hidden)
 	if err != nil {
 		return value, err
@@ -229,11 +239,16 @@ func scanPhotoSuggestion(row interface{ Scan(dest ...any) error }) (photoSuggest
 // values in the same transaction that clears them, or dismisses what remains.
 func (s *Store) RespondPhotoSuggestion(ctx context.Context, id string, request PhotoSuggestionResponse) (PhotoSuggestion, error) {
 	accepted := request.Response == photoSuggestionAccepted
-	if !accepted && request.Response != photoSuggestionDismissed || accepted == (!request.Caption && len(request.Tags) == 0 && !request.Rotation) {
+	if !accepted && request.Response != photoSuggestionDismissed || request.Rotation == nil && accepted == (!request.Caption && len(request.Tags) == 0) {
 		return PhotoSuggestion{}, ErrInvalidPhotoSuggestionResponse
 	}
 	var result PhotoSuggestion
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		if request.Rotation != nil {
+			var err error
+			result, err = s.respondPhotoRotationTx(ctx, tx, id, request)
+			return err
+		}
 		row, err := scanPhotoSuggestion(tx.QueryRowContext(ctx, photoSuggestionRowSQL+` WHERE s.suggestion_id=?`, id))
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
@@ -246,28 +261,10 @@ func (s *Store) RespondPhotoSuggestion(ctx context.Context, id string, request P
 				return err
 			}
 		}
-		if row.dismissed || row.awaiting && accepted || row.Kind == "rotation" && row.captionResolved {
+		if row.dismissed || row.awaiting && accepted {
 			return ErrPhotoSuggestionConflict
 		}
-		if row.Kind == "rotation" {
-			if request.Caption || len(request.Tags) > 0 || accepted && !request.Rotation || row.Rotation == nil {
-				return ErrPhotoSuggestionConflict
-			}
-			if !accepted {
-				var angle int
-				if err := tx.QueryRowContext(ctx, `SELECT rotation FROM photo_files WHERE file_id=?`, row.Target).Scan(&angle); err != nil {
-					return err
-				}
-				row.Rotation = new(angle)
-			}
-			receipt, err := s.acceptPhotoSuggestionTx(ctx, tx, &row, PhotoSuggestionResponse{AssetID: request.AssetID, AssetRevision: request.AssetRevision, SourceRevision: request.SourceRevision, NodeRevision: request.NodeRevision, Rotation: true})
-			if err != nil {
-				return err
-			}
-			row.AuthoredReceipt, row.captionResolved, row.dismissed, row.awaiting = receipt, true, !accepted, false
-		} else if request.Rotation {
-			return ErrPhotoSuggestionConflict
-		} else if accepted {
+		if accepted {
 			receipt, err := s.acceptPhotoSuggestionTx(ctx, tx, &row, request)
 			if err != nil {
 				return err
@@ -313,9 +310,7 @@ func (s *Store) acceptPhotoSuggestionTx(ctx context.Context, tx *sql.Tx, row *ph
 		}
 	}
 	edit := PhotoAuthoredBatch{Targets: []PhotoAuthoredEditTarget{{AssetID: request.AssetID, AssetRevision: request.AssetRevision, FileID: row.Target, Revision: request.SourceRevision, NodeRevision: request.NodeRevision}}}
-	if request.Rotation {
-		edit.Patch.Rotation = row.Rotation
-	}
+	edit.Patch.Rotation = request.Rotation
 	if request.Caption {
 		edit.Patch.Caption = &row.Value.Caption
 	}
@@ -373,10 +368,10 @@ func (s *Store) suggestedTagTx(ctx context.Context, tx *sql.Tx, name string) (st
 }
 
 // photoSuggestionsQuery lists the pending description of an asset's displayed photo.
-func (s *Store) photoSuggestionsQuery(ctx context.Context, q metadataQuerier, assetID string) ([]PhotoSuggestion, error) {
+func (s *Store) photoSuggestionsQuery(ctx context.Context, q *sql.Tx, assetID string) ([]PhotoSuggestion, error) {
 	out := []PhotoSuggestion{}
 	err := queryRows(ctx, q, photoSuggestionRowSQL+` WHERE a.asset_id=? AND a.display_file_id=f.file_id AND NOT s.dismissed AND NOT s.awaiting
- AND (s.caption<>'' OR s.tags_json<>'[]' OR s.visible_text<>'' OR s.kind='rotation' AND s.rotation IS NOT NULL AND NOT s.caption_resolved AND (f.confirmed_fields & 64)=0) ORDER BY s.created_at,s.suggestion_id`, []any{assetID}, func(rows *sql.Rows) error {
+ AND (s.caption<>'' OR s.tags_json<>'[]' OR s.visible_text<>'') ORDER BY s.created_at,s.suggestion_id`, []any{assetID}, func(rows *sql.Rows) error {
 		row, err := scanPhotoSuggestion(rows)
 		if err != nil {
 			return err
@@ -393,10 +388,18 @@ func (s *Store) photoSuggestionsQuery(ctx context.Context, q metadataQuerier, as
 			return nil, err
 		}
 	}
-	return slices.DeleteFunc(out, func(suggestion PhotoSuggestion) bool {
+	out = slices.DeleteFunc(out, func(suggestion PhotoSuggestion) bool {
 		value := suggestion.Value
-		return suggestion.Kind != "rotation" && value.Caption == "" && len(value.Tags) == 0 && value.VisibleText == ""
-	}), nil
+		return value.Caption == "" && len(value.Tags) == 0 && value.VisibleText == ""
+	})
+	rotation, err := s.photoRotationSuggestionTx(ctx, q, assetID)
+	if err != nil {
+		return nil, err
+	}
+	if rotation.Rotation != nil {
+		out = append(out, rotation)
+	}
+	return out, nil
 }
 
 // photoDescriptionTargetsSQL lists one page of versions wanting a description,

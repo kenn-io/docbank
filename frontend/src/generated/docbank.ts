@@ -5891,14 +5891,6 @@ export interface PhotoAuthoredReceipt {
   undo_of?: string;
 }
 
-export type PhotoSuggestionKind = typeof PhotoSuggestionKind[keyof typeof PhotoSuggestionKind];
-
-
-export const PhotoSuggestionKind = {
-  description: 'description',
-  rotation: 'rotation',
-} as const;
-
 export type PhotoSuggestionRotation = typeof PhotoSuggestionRotation[keyof typeof PhotoSuggestionRotation];
 
 
@@ -5932,7 +5924,6 @@ export interface PhotoSuggestion {
   asset_revision: number;
   authored_receipt?: PhotoAuthoredReceipt;
   content_version_id: string;
-  kind: PhotoSuggestionKind;
   node_revision: number;
   rotation?: PhotoSuggestionRotation;
   rotation_source?: string;
@@ -6820,6 +6811,18 @@ export const PhotoSuggestionResponseResponse = {
   dismissed: 'dismissed',
 } as const;
 
+/**
+ * The clockwise angle shown in the rotation proposal, also supplied on dismissal.
+ */
+export type PhotoSuggestionResponseRotation = typeof PhotoSuggestionResponseRotation[keyof typeof PhotoSuggestionResponseRotation];
+
+
+export const PhotoSuggestionResponseRotation = {
+  NUMBER_90: 90,
+  NUMBER_180: 180,
+  NUMBER_270: 270,
+} as const;
+
 export interface PhotoSuggestionResponse {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -6828,7 +6831,8 @@ export interface PhotoSuggestionResponse {
   caption: boolean;
   node_revision: number;
   response: PhotoSuggestionResponseResponse;
-  rotation: boolean;
+  /** The clockwise angle shown in the rotation proposal, also supplied on dismissal. */
+  rotation?: PhotoSuggestionResponseRotation;
   source_revision: number;
   /** @maxItems 64 */
   tags: string[];

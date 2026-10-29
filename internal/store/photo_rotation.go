@@ -3,59 +3,87 @@ package store
 import (
 	"context"
 	"database/sql"
-	"time"
-	"uuid"
+	"errors"
 
 	"go.kenn.io/docbank/document"
 )
 
-// publishPhotoRotationTx keeps one rebuildable rotation proposal per version.
-// Face measurements take precedence, including abstention when they disagree.
-func publishPhotoRotationTx(ctx context.Context, tx *sql.Tx, version string, fallback *int, producer string, at time.Time) error {
-	if eligible, err := photoDescriptionEligibleTx(ctx, tx, version); err != nil || !eligible {
-		return err
-	}
-	faces, err := photoQualityFacesTx(ctx, tx, version)
-	if err != nil {
-		return err
-	}
-	var rolls []*float64
-	for _, face := range faces {
-		if face.Roll != nil {
-			rolls = append(rolls, face.Roll)
-		}
-	}
-	angle, source := fallback, "description"
-	if len(rolls) > 0 {
-		angle, source = document.PhotoRotationFromRolls(rolls), "faces"
-	}
+// photoRotationTargetTx uses the content version as the transient proposal ID.
+// Authored revision checks still bind a response to the displayed file.
+func photoRotationTargetTx(ctx context.Context, tx *sql.Tx, version string) (photoSuggestionRow, int, bool, error) {
+	var row photoSuggestionRow
+	var angle int
 	var confirmed bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM content_versions v JOIN photo_files f ON f.node_id=v.node_id WHERE v.version_id=? AND (f.confirmed_fields & ?)<>0)`, version, PhotoConfirmedRotation).Scan(&confirmed); err != nil {
-		return err
-	}
-	if confirmed {
-		_, err = tx.ExecContext(ctx, `UPDATE photo_suggestions SET rotation=NULL,awaiting=0 WHERE content_version_id=? AND kind='rotation' AND NOT dismissed AND NOT caption_resolved`, version)
-		return err
-	}
-	if angle == nil || *angle == 0 {
-		_, err = tx.ExecContext(ctx, `DELETE FROM photo_suggestions WHERE content_version_id=? AND kind='rotation' AND NOT dismissed AND NOT caption_resolved AND (? OR rotation_source='faces' OR awaiting AND ?)`, version, len(rolls) > 0, producer != "")
-		return err
-	}
-	if *angle != 90 && *angle != 180 && *angle != 270 {
-		return nil
-	}
-	// A constant producer identity gives face-only proposals the same ownership
-	// and backup validation as descriptions, without claiming provider work.
-	if producer == "" {
-		producer = photoRotationProducer
-	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO photo_suggestions(suggestion_id,content_version_id,producer_fingerprint,kind,rotation,rotation_source,created_at)
- SELECT ?,?,?,'rotation',?,?,? WHERE NOT EXISTS(SELECT 1 FROM photo_suggestions WHERE content_version_id=? AND kind='rotation')`, uuid.New().String(), version, producer, *angle, source, at.UTC().Format(timestampLayout), version)
-	if err != nil {
-		return err
-	}
-	_, err = tx.ExecContext(ctx, `UPDATE photo_suggestions SET rotation=?,rotation_source=?,awaiting=0 WHERE content_version_id=? AND kind='rotation' AND NOT dismissed AND NOT caption_resolved`, *angle, source, version)
-	return err
+	err := tx.QueryRowContext(ctx, `SELECT v.version_id,f.file_id,f.revision,n.revision,a.asset_id,a.revision,a.hidden_at IS NOT NULL,f.rotation,(f.confirmed_fields & ?)<>0
+ FROM content_versions v JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id AND n.trashed_at IS NULL
+ JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.asset_id=f.asset_id AND a.display_file_id=f.file_id
+ WHERE v.version_id=?`, PhotoConfirmedRotation, version).Scan(&row.ContentVersionID, &row.Target, &row.SourceRevision, &row.NodeRevision, &row.AssetID, &row.AssetRevision, &row.hidden, &angle, &confirmed)
+	row.ID = row.ContentVersionID
+	row.Value.Tags = []string{}
+	return row, angle, confirmed, err
 }
 
-const photoRotationProducer = "2d4971f7284c30b9ed5c650b7a7d995d30ec038c5e274ebc2e5ac4c2edabb3a1"
+// photoRotationSuggestionTx derives the correction from current face decisions.
+// Any active face blocks provider fallback; missing rolls do not vote.
+func (s *Store) photoRotationSuggestionTx(ctx context.Context, tx *sql.Tx, assetID string) (PhotoSuggestion, error) {
+	var version string
+	if err := tx.QueryRowContext(ctx, `SELECT n.current_version_id FROM photo_assets a JOIN photo_files f ON f.file_id=a.display_file_id JOIN nodes n ON n.id=f.node_id WHERE a.asset_id=?`, assetID).Scan(&version); err != nil {
+		return PhotoSuggestion{}, err
+	}
+	row, _, confirmed, err := photoRotationTargetTx(ctx, tx, version)
+	if err != nil || confirmed {
+		return PhotoSuggestion{}, err
+	}
+	faces, err := s.photoQualityFacesTx(ctx, tx, version)
+	if err != nil {
+		return PhotoSuggestion{}, err
+	}
+	if len(faces) > 0 {
+		rolls := make([]*float64, 0, len(faces))
+		for _, face := range faces {
+			rolls = append(rolls, face.Roll)
+		}
+		row.Rotation = document.PhotoRotationFromRolls(rolls)
+		row.RotationSource = "faces"
+	} else {
+		err = tx.QueryRowContext(ctx, `SELECT rotation FROM photo_suggestions WHERE content_version_id=? AND NOT awaiting AND rotation IN (90,180,270) ORDER BY created_at DESC,id DESC LIMIT 1`, version).Scan(&row.Rotation)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return PhotoSuggestion{}, err
+		}
+		row.RotationSource = "description"
+	}
+	return row.PhotoSuggestion, nil
+}
+
+// respondPhotoRotationTx authors the angle the owner saw, even if new face or
+// provider measurements have arrived since the inspector loaded it.
+func (s *Store) respondPhotoRotationTx(ctx context.Context, tx *sql.Tx, version string, request PhotoSuggestionResponse) (PhotoSuggestion, error) {
+	if request.Caption || len(request.Tags) > 0 || request.Rotation == nil || (*request.Rotation != 90 && *request.Rotation != 180 && *request.Rotation != 270) {
+		return PhotoSuggestion{}, ErrInvalidPhotoSuggestionResponse
+	}
+	row, current, confirmed, err := photoRotationTargetTx(ctx, tx, version)
+	if errors.Is(err, sql.ErrNoRows) {
+		return PhotoSuggestion{}, ErrPhotoSuggestionConflict
+	}
+	if err != nil {
+		return PhotoSuggestion{}, err
+	}
+	if confirmed {
+		return PhotoSuggestion{}, ErrPhotoSuggestionConflict
+	}
+	if row.hidden {
+		if _, err := s.hiddenSession(ctx, tx); err != nil {
+			return PhotoSuggestion{}, err
+		}
+	}
+	if request.Response == photoSuggestionDismissed {
+		request.Rotation = new(current)
+	}
+	receipt, err := s.acceptPhotoSuggestionTx(ctx, tx, &row, request)
+	if err != nil {
+		return PhotoSuggestion{}, err
+	}
+	row, _, _, err = photoRotationTargetTx(ctx, tx, version)
+	row.AuthoredReceipt = receipt
+	return row.PhotoSuggestion, err
+}

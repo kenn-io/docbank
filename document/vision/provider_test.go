@@ -331,3 +331,15 @@ func TestParseOptionalRotation(t *testing.T) {
 		})
 	}
 }
+
+func TestParseRotationOnly(t *testing.T) {
+	t.Parallel()
+	got, err := Parse([]byte(`{"rotation":90}`))
+	require.NoError(t, err)
+	require.Equal(t, new(90), got.Rotation)
+	require.Empty(t, got.Caption)
+	require.Empty(t, got.Tags)
+	require.NoError(t, document.ValidatePhotoDescription(got))
+	got.Rotation = new(45)
+	require.Error(t, document.ValidatePhotoDescription(got))
+}

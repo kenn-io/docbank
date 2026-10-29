@@ -1544,3 +1544,22 @@ func TestVectorIndexSchemaHasDistinctVersion(t *testing.T) {
 		})
 	}
 }
+
+func TestOpenRejectsCurrentDatabaseWithoutSuggestionRotation(t *testing.T) {
+	t.Parallel()
+	for _, driver := range v090UpgradeDrivers() {
+		t.Run(driver.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "docbank.db")
+			s, err := Open(path, driver.driver)
+			require.NoError(t, err)
+			_, err = s.db.Exec(`ALTER TABLE photo_suggestions DROP COLUMN rotation`)
+			require.NoError(t, err)
+			require.NoError(t, s.Close())
+			reopened, err := Open(path, driver.driver)
+			if reopened != nil {
+				require.NoError(t, reopened.Close())
+			}
+			require.ErrorContains(t, err, "unexpected photo_suggestions layout")
+		})
+	}
+}

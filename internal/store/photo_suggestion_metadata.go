@@ -7,11 +7,15 @@ import (
 	"slices"
 )
 
-// metadataPhotoSuggestion keeps owner decisions and regeneration markers.
-// Pending generated values stay out of backup. Awaiting survives repeated
-// restores until consented provider work regenerates the open fields.
+// metadataPhotoSuggestion records what the owner decided about a description,
+// never the generated text. A pending description with nothing decided is
+// recorded too, so restore asks for it again. Awaiting is true while any text
+// is still pending or already awaiting regeneration, and it carries through
+// repeated restores. An awaiting row regenerates after restore and fills only
+// the fields this record leaves open. A description with nothing pending is
+// restored settled. A dismissed row may still await a rotation answer; its
+// regenerated caption and tags stay dismissed.
 type metadataPhotoSuggestion struct {
-	Kind                string   `json:"kind" db:"kind"`
 	Type                string   `json:"type"`
 	ID                  string   `json:"suggestion_id" db:"suggestion_id"`
 	ContentVersionID    string   `json:"content_version_id" db:"content_version_id"`
@@ -19,7 +23,7 @@ type metadataPhotoSuggestion struct {
 	Dismissed           bool     `json:"dismissed" db:"dismissed"`
 	CaptionResolved     bool     `json:"caption_resolved" db:"caption_resolved"`
 	ResolvedTags        []string `json:"resolved_tags" db:"resolved_tags_json,json"`
-	Awaiting            bool     `json:"awaiting" db:"awaiting=1 OR (kind='rotation' AND rotation IS NOT NULL AND caption_resolved=0 AND dismissed=0) OR caption<>'' OR tags_json<>'[]' OR visible_text<>''"`
+	Awaiting            bool     `json:"awaiting" db:"awaiting=1 OR (rotation IS NOT NULL AND rotation>0 AND NOT EXISTS(SELECT 1 FROM content_versions v JOIN photo_files f ON f.node_id=v.node_id WHERE v.version_id=photo_suggestions.content_version_id AND (f.confirmed_fields & 64)<>0)) OR caption<>'' OR tags_json<>'[]' OR visible_text<>''"`
 	CreatedAt           string   `json:"created_at" db:"created_at"`
 }
 
@@ -30,9 +34,6 @@ var photoSuggestionMetadata = newMetadataTable(metadataTable[metadataPhotoSugges
 })
 
 func validatePhotoSuggestionMetadata(value metadataPhotoSuggestion) error {
-	if value.Kind != "description" && value.Kind != "rotation" {
-		return errors.New("invalid photo suggestion kind")
-	}
 	if value.Type != "photo_suggestion" || validateUUIDv4(value.ID) != nil || validateUUIDv4(value.ContentVersionID) != nil {
 		return errors.New("invalid photo suggestion record")
 	}
@@ -41,9 +42,6 @@ func validatePhotoSuggestionMetadata(value metadataPhotoSuggestion) error {
 			return errors.Join(ErrInvalidTag, err)
 		}
 	}
-	if value.Dismissed && value.Awaiting {
-		return errors.New("dismissed photo suggestion awaits regeneration")
-	}
 	if err := validateCatalogSHA256(value.ProducerFingerprint, "suggestion producer"); err != nil {
 		return err
 	}
@@ -51,7 +49,7 @@ func validatePhotoSuggestionMetadata(value metadataPhotoSuggestion) error {
 }
 
 func insertPhotoSuggestionMetadata(ctx context.Context, tx *sql.Tx, value metadataPhotoSuggestion) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO photo_suggestions(suggestion_id,content_version_id,producer_fingerprint,kind,dismissed,caption_resolved,resolved_tags_json,awaiting,created_at) VALUES(?,?,?,?,?,?,?,?,?)`,
-		value.ID, value.ContentVersionID, value.ProducerFingerprint, value.Kind, value.Dismissed, value.CaptionResolved, mustCatalogJSON(value.ResolvedTags), value.Awaiting, value.CreatedAt)
+	_, err := tx.ExecContext(ctx, `INSERT INTO photo_suggestions(suggestion_id,content_version_id,producer_fingerprint,dismissed,caption_resolved,resolved_tags_json,awaiting,created_at) VALUES(?,?,?,?,?,?,?,?)`,
+		value.ID, value.ContentVersionID, value.ProducerFingerprint, value.Dismissed, value.CaptionResolved, mustCatalogJSON(value.ResolvedTags), value.Awaiting, value.CreatedAt)
 	return err
 }
