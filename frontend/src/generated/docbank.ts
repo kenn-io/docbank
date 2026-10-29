@@ -6134,8 +6134,6 @@ export interface PhotoQualitySignals {
      * @maximum 1
      */
   color_red: number;
-  /** @maxItems 1000 */
-  face_reports?: PhotoFaceReport[];
   /**
      * @minimum 0
      * @maximum 1
@@ -6168,6 +6166,8 @@ export const PhotoBrowseRowRotation = {
 } as const;
 
 export type PhotoBrowseRowQuality = {
+  /** @maxItems 1000 */
+  face_reports?: PhotoFaceReport[];
   signals: PhotoQualitySignals | null;
   state: PhotoBrowseRowQualityState;
 };

@@ -13692,6 +13692,11 @@ components:
         quality:
           additionalProperties: false
           properties:
+            face_reports:
+              items:
+                $ref: "#/components/schemas/PhotoFaceReport"
+              maxItems: 1000
+              type: array
             signals:
               anyOf:
                 - $ref: "#/components/schemas/PhotoQualitySignals"
@@ -15018,11 +15023,6 @@ components:
           maximum: 1
           minimum: 0
           type: number
-        face_reports:
-          items:
-            $ref: "#/components/schemas/PhotoFaceReport"
-          maxItems: 1000
-          type: array
         focus:
           format: double
           maximum: 1

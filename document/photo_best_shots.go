@@ -111,16 +111,13 @@ func PlanPhotoBestShots(frames []PhotoBestShotFrame) []PhotoBestShotProposal {
 		return total
 	}
 	slices.SortFunc(measured, func(a, b PhotoBestShotFrame) int {
-		if c := cmp.Compare(score(b), score(a)); c != 0 {
-			return c
+		if c := cmp.Compare(score(b), score(a)); c != 0 || a.Raw == b.Raw {
+			return cmp.Or(c, cmp.Compare(a.AssetID, b.AssetID))
 		}
-		if a.Raw != b.Raw {
-			if a.Raw {
-				return -1
-			}
-			return 1
+		if a.Raw {
+			return -1
 		}
-		return cmp.Compare(a.AssetID, b.AssetID)
+		return 1
 	})
 	confidence := 0.0
 	if best := score(measured[0]); best > 0 {
@@ -131,6 +128,9 @@ func PlanPhotoBestShots(frames []PhotoBestShotFrame) []PhotoBestShotProposal {
 		flag, reason := "reject", "Weaker measured frame in this stack"
 		if i == 0 {
 			flag, reason = "pick", "Best measured frame in this stack"
+		}
+		if confidence == 0 && score(f) == score(measured[0]) {
+			reason = "Equal measurements; tie broken by RAW preference and photo ID"
 		}
 		out = append(out, PhotoBestShotProposal{f.AssetID, flag, reason, confidence})
 	}

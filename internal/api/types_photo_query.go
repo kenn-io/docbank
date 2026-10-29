@@ -45,8 +45,9 @@ type PhotoPreviewSlots struct {
 }
 
 type PhotoQuality struct {
-	State   string                        `json:"state" enum:"pending,unavailable,ready"`
-	Signals *document.PhotoQualitySignals `json:"signals"`
+	State       string                        `json:"state" enum:"pending,unavailable,ready"`
+	Signals     *document.PhotoQualitySignals `json:"signals"`
+	FaceReports []document.PhotoFaceReport    `json:"face_reports,omitempty" maxItems:"1000"`
 }
 
 type PhotoBrowseRow struct {

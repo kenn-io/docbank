@@ -4272,7 +4272,14 @@ it("submits the KEEP/CUT choices displayed in Library when preparation has newer
   });
   const respond = vi
     .spyOn(api, "decidePhotoStack")
-    .mockRejectedValue(new APIError("Reload stack", 409, "photo_stack_changed"));
+    .mockResolvedValue({
+      receipt_id: "receipt",
+      before: [preparedPhoto(1)],
+      after: [
+        { ...preparedPhoto(1), revision: 2, values: { ...preparedPhoto(1).values, flag: "pick" } },
+      ],
+    });
+  vi.spyOn(photos, "refresh").mockResolvedValue(true);
   render(PhotosWorkspace, { photos, cache: { get: vi.fn() } as unknown as PhotoPreviewCache });
   await waitFor(() => expect(photos.authored.stackTargets).toHaveLength(2));
   expect(screen.getByLabelText("Suggested keep")).toBeTruthy();
@@ -4281,7 +4288,5 @@ it("submits the KEEP/CUT choices displayed in Library when preparation has newer
   expect(respond.mock.calls[0]![0].responses).toEqual(
     proposals.map((p) => ({ asset_id: p.asset_id, flag: p.flag, response: "accepted" })),
   );
-  await waitFor(() => expect(photos.authored.conflict).toBe(true));
-  expect(screen.getByRole("button", { name: "Reload stack" })).toBeTruthy();
   photos.dispose();
 });

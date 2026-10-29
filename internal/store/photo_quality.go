@@ -33,7 +33,7 @@ func (s *Store) MissingPhotoQualityTargetsAfter(
  AND EXISTS (SELECT 1 FROM visual_preview_generations g WHERE g.content_version_id=v.version_id
   AND g.recipe_fingerprint=? AND g.state='ready')
  AND NOT EXISTS (SELECT 1 FROM photo_quality_signals q WHERE q.content_version_id=v.version_id
-  AND q.evaluator_fingerprint=? AND (q.face_reports_json IS NOT NULL OR NOT EXISTS(SELECT 1 FROM photo_faces WHERE content_version_id=v.version_id)) AND q.face_inputs=`+photoFaceInputsSQL("v.version_id")+`)
+  AND q.evaluator_fingerprint=? AND q.face_inputs=`+photoFaceInputsSQL("v.version_id")+`)
  ORDER BY v.version_id LIMIT ?`, after, fingerprints.GridRecipe, fingerprints.Evaluator, limit)
 	if err != nil {
 		return nil, err
@@ -97,7 +97,7 @@ func (s *Store) publishPhotoQuality(
  state=excluded.state,focus=excluded.focus,blur=excluded.blur,brightness=excluded.brightness,
  color_red=excluded.color_red,color_green=excluded.color_green,color_blue=excluded.color_blue,
  framing=excluded.framing,aesthetics=excluded.aesthetics,face_reports_json=excluded.face_reports_json,face_inputs=excluded.face_inputs
- WHERE photo_quality_signals.face_inputs<>excluded.face_inputs OR (photo_quality_signals.face_reports_json IS NULL AND excluded.face_inputs<>'')`, args...)
+ WHERE photo_quality_signals.face_inputs<>excluded.face_inputs`, args...)
 		return err
 	})
 }
@@ -137,7 +137,7 @@ func photoQualityForVersions(
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var id, state, inputs, current string
-		var reports sql.NullString
+		var reports []byte
 		var v [8]sql.NullFloat64
 		if err := rows.Scan(&id, &state, &v[0], &v[1], &v[2], &v[3], &v[4], &v[5], &v[6], &v[7], &reports, &inputs, &current); err != nil {
 			return photoQualityResults{}, err
@@ -150,8 +150,8 @@ func photoQualityForVersions(
 			result.unavailable[id] = true
 		}
 		result.staleFaces[id] = inputs != current
-		if reports.Valid && inputs == current {
-			if err := json.Unmarshal([]byte(reports.String), &signals.FaceReports); err != nil {
+		if inputs == current {
+			if err := json.Unmarshal(reports, &signals.FaceReports); err != nil {
 				return result, err
 			}
 		}

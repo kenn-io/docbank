@@ -15,7 +15,7 @@ const (
 
 // PhotoQualitySignals measures preview pixels on a calibrated 0..1 scale.
 type PhotoQualitySignals struct {
-	FaceReports []PhotoFaceReport `json:"face_reports,omitempty" maxItems:"1000"`
+	FaceReports []PhotoFaceReport `json:"-"` // Exposed by API PhotoQuality.face_reports.
 	Focus       float64           `json:"focus" minimum:"0" maximum:"1"`
 	Blur        float64           `json:"blur" minimum:"0" maximum:"1"`
 	Brightness  float64           `json:"brightness" minimum:"0" maximum:"1"`

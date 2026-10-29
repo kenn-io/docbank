@@ -12,6 +12,7 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/internal/blob"
+	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -149,7 +150,21 @@ func TestPhotoQualityUndecodablePreviewIsUnavailable(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, targets, 1)
 
+	face, _, err := catalog.CreatePhotoFace(t.Context(), node.CurrentVersionID, "11111111-1111-4111-8111-111111111111", document.FaceBox{Width: .5, Height: .5}, "")
+	require.NoError(t, err)
 	require.NoError(t, EvaluatePhotoQuality(t.Context(), catalog, blobs, targets[0]))
+
+	page, err := catalog.ListPhotoAssets(t.Context(), store.PhotoBrowseRequest{Query: query.Query{V: 1, Syntax: "advanced", Mode: "lexical", Sort: query.Sort{Field: "name", Direction: "asc"}}}, nil)
+	require.NoError(t, err)
+	require.Len(t, page.Items, 1)
+	require.True(t, page.Items[0].QualityUnavailable)
+	require.NotNil(t, page.Items[0].Quality)
+	require.Len(t, page.Items[0].Quality.FaceReports, 1)
+	report := page.Items[0].Quality.FaceReports[0]
+	require.Equal(t, face.FaceID, report.FaceID)
+	require.InDelta(t, .25, report.Prominence, 1e-12)
+	require.Nil(t, report.Sharpness)
+	require.Nil(t, report.Light)
 
 	targets, err = catalog.MissingPhotoQualityTargetsAfter(t.Context(), "", 10)
 	require.NoError(t, err)
