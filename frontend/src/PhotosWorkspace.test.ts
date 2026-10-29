@@ -4131,6 +4131,66 @@ it("reports an uncertain clear after remount", async () => {
   await cache.dispose();
 });
 
+it("refreshes detected Cull crops through its existing batched photo read", async () => {
+  vi.stubGlobal("indexedDB", new IDBFactory());
+  vi.stubGlobal("IDBKeyRange", IDBKeyRange);
+  vi.spyOn(api, "getPhotoSettings").mockResolvedValue({
+    revision: 1,
+    preference: null,
+    burst_gap_seconds: 2,
+  });
+  vi.spyOn(api, "groupPhotoStacks").mockResolvedValue({
+    groups: [],
+    unavailable_ids: [],
+    burst_gap_seconds: 2,
+  });
+  const { component, props, photos, read } = await facesWorkspaceSetup();
+  const review = new PhotoCull(photos.session, photoCullStorage("vault"), vi.fn());
+  review.run = {
+    ids: ["photo-1"],
+    checkpoint: {
+      runID: "run",
+      revision: 0,
+      pass: ["photo-1"],
+      position: 0,
+      visited: ["photo-1"],
+      skipped: [],
+      unavailable: [],
+      scope: "all",
+      autoAdvance: false,
+    },
+  };
+  photos.cull = review;
+  photos.cullVaultID = "vault";
+  photos.culling = true;
+  await component.rerender({ ...props, vaultID: "vault" });
+  const dialog = await screen.findByRole("dialog", { name: "Cull photos" });
+  await within(await within(dialog).findByRole("region", { name: "Face closeups" })).findByText(
+    "Face 1 · Ada",
+  );
+  const lookup = vi.spyOn(photos, "lookup").mockResolvedValue(photo(1));
+  const batched = vi.spyOn(photos, "lookupMany").mockResolvedValue([photo(1)]);
+  read.mockResolvedValue(
+    photoFacePageFor(photo(1), {
+      faces: [
+        photoFace({ content_version_id: "version-1" }),
+        photoFace({
+          face_id: "face-b",
+          content_version_id: "version-1",
+          assertion_id: undefined,
+          detector_fingerprint: "a".repeat(64),
+        }),
+      ],
+    }),
+  );
+  await act(() => photos.changed({}));
+  await within(await within(dialog).findByRole("region", { name: "Face closeups" })).findByText(
+    "Face 2",
+  );
+  expect(batched).toHaveBeenCalledExactlyOnceWith(["photo-1"], expect.any(AbortSignal));
+  expect(lookup).not.toHaveBeenCalled();
+});
+
 it.each([false, true])(
   "restores Cull faces after a filtered rating refresh, leaves filter=%s",
   async (leavesFilter) => {

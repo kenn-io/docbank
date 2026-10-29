@@ -686,7 +686,7 @@
         // The editor retains changes until the user clears a draft.
         editor.invalidate(),
       ]);
-      if (!id || id !== photos.faceAssetID || controller.signal.aborted) return;
+      if (!id || culling || id !== photos.faceAssetID || controller.signal.aborted) return;
       if (photos.blocking || photos.error || (photoID && (detailLoading || detailError)))
         return inspectorFaces.conceal();
       const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]);
