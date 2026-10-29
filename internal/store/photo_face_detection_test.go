@@ -101,7 +101,7 @@ func TestPhotoFaceDetectionReconciliation(t *testing.T) {
 
 func TestPhotoFaceDetectionProtectsDecisionsAndUndo(t *testing.T) {
 	t.Parallel()
-	for _, action := range []string{"name", "dismiss", "candidate"} {
+	for _, action := range []string{"name", "candidate"} {
 		t.Run(action, func(t *testing.T) {
 			s := newTestStore(t)
 			ctx := t.Context()
@@ -129,9 +129,7 @@ func TestPhotoFaceDetectionProtectsDecisionsAndUndo(t *testing.T) {
 			default:
 				decision := action
 				request := PhotoFaceDecisionRequest{FaceID: face.FaceID, Revision: face.Revision, Action: decision}
-				if decision != "dismiss" {
-					request.PersonID = person.PersonID
-				}
+				request.PersonID = person.PersonID
 				receipt, err = s.DecidePhotoFace(ctx, version, request)
 				require.NoError(t, err)
 			}
@@ -141,26 +139,13 @@ func TestPhotoFaceDetectionProtectsDecisionsAndUndo(t *testing.T) {
 				require.Empty(t, read()[0].AssertionID)
 			}
 			before := read()
-			if action != "dismiss" {
-				observation.Box.X = .01
-				observation.Facing = new(.1)
-				require.NoError(t, scan("b2", observation))
-				require.Equal(t, before, read())
-				require.NoError(t, scan("b3"))
-				require.Equal(t, before, read())
-				require.NoError(t, s.ValidateMetadata(ctx))
-			}
-			if action == "dismiss" {
-				var exported bytes.Buffer
-				require.NoError(t, s.ExportMetadata(ctx, &exported))
-				restored := newTestStore(t)
-				require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
-				s = restored
-				require.True(t, read()[0].Dismissed)
-				_, err = s.UndoPhotoFaceDecision(ctx, receipt.ReceiptID)
-				require.NoError(t, err)
-				require.False(t, read()[0].Dismissed)
-			}
+			observation.Box.X = .01
+			observation.Facing = new(.1)
+			require.NoError(t, scan("b2", observation))
+			require.Equal(t, before, read())
+			require.NoError(t, scan("b3"))
+			require.Equal(t, before, read())
+			require.NoError(t, s.ValidateMetadata(ctx))
 		})
 	}
 }

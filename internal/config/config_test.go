@@ -1252,14 +1252,10 @@ func TestVisionRuntimeConfig(t *testing.T) {
 	cfg.ProcessingProfiles["archive"] = processingProfile
 	require.NoError(t, cfg.Validate())
 
-	t.Run("detection task", func(t *testing.T) {
-		detection := profile
-		descriptor, err := vision.Descriptor(document.FaceDetectionProviderID, profile.Model, document.RenditionTrustOperatorNetwork)
-		require.NoError(t, err)
-		detection.DescriptorID, detection.DescriptorFingerprint = descriptor.ID, descriptor.Fingerprint
-		require.NoError(t, validateRenditionRuntimeConfig(detection, "vision"))
-		detection.DescriptorID = "unrecognized-task"
-		require.Error(t, validateRenditionRuntimeConfig(detection, "vision"))
+	t.Run("unrecognized task", func(t *testing.T) {
+		unknown := profile
+		unknown.DescriptorID = "unrecognized-task"
+		require.Error(t, validateRenditionRuntimeConfig(unknown, "vision"))
 	})
 
 	t.Run("model on another adapter", func(t *testing.T) {

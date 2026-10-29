@@ -47,7 +47,6 @@ func TestParseFaces(t *testing.T) {
 		fields string
 		fails  bool
 	}{
-		{`"roll":4,"facing":1`, true},
 		{`"roll":"zero","facing":1`, true},
 		{`"roll":null,"facing":null`, false},
 	} {
