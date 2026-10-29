@@ -16,6 +16,7 @@ import (
 func (s *Store) RequireFaceDetectionSupported(ctx context.Context) error {
 	return requireFaceDetectionSupported(ctx, s.db)
 }
+
 func requireFaceDetectionSupported(ctx context.Context, q metadataQuerier) error {
 	active, err := auditAuthorityActiveTx(ctx, q)
 	if err != nil {

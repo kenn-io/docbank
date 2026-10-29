@@ -333,9 +333,7 @@ func (service *Service) photoDescriptionProfileTargets(ctx context.Context, name
 	}
 	room := min(limit, workers-waiting)
 	started := service.clock()
-	var versions []store.ContentVersion
-	var err error
-	versions, err = service.catalog.PhotoDescriptionTargets(ctx, profile.record.Fingerprint, profile.record.RenditionRequestFingerprint, after, room, restoredOnly, profile.portable.Rendition.Descriptor.ID == document.FaceDetectionProviderID)
+	versions, err := service.catalog.PhotoDescriptionTargets(ctx, profile.record.Fingerprint, profile.record.RenditionRequestFingerprint, after, room, restoredOnly, profile.portable.Rendition.Descriptor.ID == document.FaceDetectionProviderID)
 	duration := service.clock().Sub(started)
 	if err != nil {
 		return photoDescriptionSource{}, err
