@@ -4270,15 +4270,13 @@ it("submits the KEEP/CUT choices displayed in Library when preparation has newer
     ...photoPreparation([preparedPhoto(1), preparedPhoto(2)]),
     proposals: proposals.map((p) => ({ ...p, flag: p.flag === "pick" ? "reject" : "pick" })),
   });
-  const respond = vi
-    .spyOn(api, "decidePhotoStack")
-    .mockResolvedValue({
-      receipt_id: "receipt",
-      before: [preparedPhoto(1)],
-      after: [
-        { ...preparedPhoto(1), revision: 2, values: { ...preparedPhoto(1).values, flag: "pick" } },
-      ],
-    });
+  const respond = vi.spyOn(api, "decidePhotoStack").mockResolvedValue({
+    receipt_id: "receipt",
+    before: [preparedPhoto(1)],
+    after: [
+      { ...preparedPhoto(1), revision: 2, values: { ...preparedPhoto(1).values, flag: "pick" } },
+    ],
+  });
   vi.spyOn(photos, "refresh").mockResolvedValue(true);
   render(PhotosWorkspace, { photos, cache: { get: vi.fn() } as unknown as PhotoPreviewCache });
   await waitFor(() => expect(photos.authored.stackTargets).toHaveLength(2));
