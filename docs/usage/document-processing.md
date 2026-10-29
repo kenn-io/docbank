@@ -234,7 +234,7 @@ records the reservation, labels and indefinite original retention.
 The vault retains the numbered **PDF**, its recipe and page receipts. It does not
 retain the ZIP, sidecar or the preparation, masks and review files. Keep those
 three review inputs separately for full verification and ZIP reconstruction.
-Each PDF currently embeds about 9.6 MB of font data, even for a small document.
+Each new PDF embeds about 6 MB of compressed font data, even for a small document.
 
 Reservation and snapshot creation are atomic. After an interrupted reservation,
 repeat exactly the same command with the same review, namespace, start and
