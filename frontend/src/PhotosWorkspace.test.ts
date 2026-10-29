@@ -4028,7 +4028,7 @@ it("awaits live face reads and keeps authorized faces", async () => {
   expect(completed).toBe(true);
 });
 
-it.each(["lookup", "faces"])("retries a live refresh after a stalled %s read", async (boundary) => {
+it("retries a live refresh after a stalled lookup read", async () => {
   const { photos, read } = await facesWorkspaceSetup();
   const timer = new AbortController();
   const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(timer.signal);
@@ -4040,8 +4040,7 @@ it.each(["lookup", "faces"])("retries a live refresh after a stalled %s read", a
     );
   };
   const lookup = vi.spyOn(photos, "lookup").mockResolvedValue(photo(1));
-  if (boundary === "lookup") lookup.mockImplementationOnce((_id, signal) => stalled(signal));
-  else read.mockImplementationOnce((_version, options) => stalled(options!.signal!));
+  lookup.mockImplementationOnce((_id, signal) => stalled(signal));
   const reason = new DOMException("Timed out", "TimeoutError");
   let failure: unknown;
   const changing = photos.changed({}).catch((cause) => {
@@ -4052,10 +4051,6 @@ it.each(["lookup", "faces"])("retries a live refresh after a stalled %s read", a
   await waitFor(() => expect(failure).toBe(reason));
   await changing;
   expect(timeout).toHaveBeenCalledWith(30_000);
-  if (boundary === "faces") {
-    expect(photos.faceEditor.loading).toBe(false);
-    expect(screen.queryByRole("button", { name: "Find or create a person: Ada" })).toBeTruthy();
-  }
   timeout.mockRestore();
   read.mockResolvedValue(
     photoFacePageFor(photo(1), {

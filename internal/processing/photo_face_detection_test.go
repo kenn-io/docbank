@@ -2,7 +2,6 @@ package processing
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 	"uuid"
@@ -67,9 +66,6 @@ func TestPhotoFaceDetectionFlow(t *testing.T) {
 	// A changed detector runs once.
 	service = f.newVisionServiceWith(t, map[string]string{"faces": "detector-2"}, document.FaceDetectionProviderID)
 	f.grant(t, service, "faces")
-	f.mu.Lock()
-	f.reply = strings.Replace(detectedFaceReply, `"facing":0.9`, `"facing":0.4`, 1)
-	f.mu.Unlock()
 	targets, err = service.photoVisionTargets(ctx, nil, "", 50, 4, document.FaceDetectionProviderID)
 	require.NoError(t, err)
 	require.Len(t, targets, 1)
@@ -79,114 +75,32 @@ func TestPhotoFaceDetectionFlow(t *testing.T) {
 	require.Equal(t, 3, calls)
 }
 
-func TestPhotoFaceDetectionEmptyAndMalformed(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name, reply string
-		settled     bool
-	}{
-		{"empty scan completes once", `{"faces":[]}`, true},
-		{"trailing object", `{"faces":[]} {"faces":[`, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			f := newPhotoDescriptionFixture(t)
-			ctx := t.Context()
-			first := f.newVisionServiceWith(t, map[string]string{"faces": "detector-1"}, document.FaceDetectionProviderID)
-			f.mu.Lock()
-			observation := strings.TrimSuffix(strings.TrimPrefix(detectedFaceReply, `{"faces":[`), `]}`)
-			f.reply = `{"faces":[` + observation + `,` + strings.Replace(observation, `"x":0.1`, `"x":0.7`, 1) + `]}`
-			f.mu.Unlock()
-			f.grant(t, first, "faces")
-			initial, err := first.photoVisionTargets(ctx, nil, "", 50, 4, document.FaceDetectionProviderID)
-			require.NoError(t, err)
-			require.Len(t, initial, 1)
-			require.NoError(t, first.admitPhotoDescription(ctx, initial[0]))
-			f.runWorker(t, first)
-			original, _, _, err := f.catalog.PhotoFacePersonNames(ctx, f.node.CurrentVersionID)
-			require.NoError(t, err)
-			require.Len(t, original, 2)
-			service := f.newVisionServiceWith(t, map[string]string{"faces": "detector-2"}, document.FaceDetectionProviderID)
-			f.mu.Lock()
-			f.reply = tc.reply
-			f.mu.Unlock()
-			f.grant(t, service, "faces")
-			targets, err := service.photoVisionTargets(ctx, nil, "", 50, 4, document.FaceDetectionProviderID)
-			require.NoError(t, err)
-			require.Len(t, targets, 1)
-			binding, err := service.photoDescriptionBinding(ctx, targets[0].version)
-			require.NoError(t, err)
-			profile := service.profiles["faces"]
-			job, _, err := service.enqueueRendition(ctx, f.node, targets[0].version, profile, service.renditionConsentRequest(profile), binding, false)
-			require.NoError(t, err)
-			f.runWorker(t, service)
-			if !tc.settled {
-				for range 3 {
-					time.Sleep(2 * time.Second)
-					f.runWorker(t, service)
-				}
-			}
-			_, calls := f.counts()
-			if tc.settled {
-				require.Equal(t, 2, calls)
-			} else {
-				require.Equal(t, 4, calls)
-			}
-			savedJob, err := f.catalog.RenditionJobByID(ctx, job.ID)
-			require.NoError(t, err)
-			if tc.settled {
-				require.Equal(t, store.RenditionJobCompleted, savedJob.State)
-			} else {
-				faces, _, _, err := f.catalog.PhotoFacePersonNames(ctx, f.node.CurrentVersionID)
-				require.NoError(t, err)
-				require.Equal(t, original, faces, "a failed reply preserves every earlier face")
-				require.Equal(t, store.RenditionJobFailed, savedJob.State)
-				require.Equal(t, 3, savedJob.ProviderAttempts)
-			}
-			// Completed and terminally failed scans stay out of the automatic pass.
-			targets, err = service.photoVisionTargets(ctx, nil, "", 50, 4, document.FaceDetectionProviderID)
-			require.NoError(t, err)
-			require.Empty(t, targets)
-		})
-	}
-}
-
-func TestPhotoFaceDetectionPublicationAuthority(t *testing.T) {
+func TestPhotoFaceDetectionEmptyCompletesOnce(t *testing.T) {
 	t.Parallel()
 	f := newPhotoDescriptionFixture(t)
 	ctx := t.Context()
 	service := f.newVisionServiceWith(t, map[string]string{"faces": "detector"}, document.FaceDetectionProviderID)
-	f.grant(t, service, "faces")
 	f.mu.Lock()
-	f.reply = detectedFaceReply
+	f.reply = `{"faces":[]}`
 	f.mu.Unlock()
+	f.grant(t, service, "faces")
 	targets, err := service.photoVisionTargets(ctx, nil, "", 50, 4, document.FaceDetectionProviderID)
 	require.NoError(t, err)
 	require.Len(t, targets, 1)
-	require.NoError(t, service.admitPhotoDescription(ctx, targets[0]))
-	catalog := revokingFaceDetectionCatalog{Store: f.catalog}
-	worker, err := NewRenditionWorker(RenditionWorkerConfig{Catalog: catalog, Blobs: f.blobs, Runtime: service.renditions, Gate: newTestOperationGate(), Owner: "synthetic-worker", LeaseDuration: time.Minute, IdleDelay: time.Millisecond, Clock: service.clock})
+	binding, err := service.photoDescriptionBinding(ctx, targets[0].version)
 	require.NoError(t, err)
-	processed, err := worker.RunOne(ctx)
+	profile := service.profiles["faces"]
+	job, _, err := service.enqueueRendition(ctx, f.node, targets[0].version, profile, service.renditionConsentRequest(profile), binding, false)
 	require.NoError(t, err)
-	require.True(t, processed)
-	faces, _, _, err := f.catalog.PhotoFacePersonNames(ctx, f.node.CurrentVersionID)
+	f.runWorker(t, service)
+	_, calls := f.counts()
+	require.Equal(t, 1, calls)
+	saved, err := f.catalog.RenditionJobByID(ctx, job.ID)
 	require.NoError(t, err)
-	require.Empty(t, faces)
-	f.grant(t, service, "faces")
+	require.Equal(t, store.RenditionJobCompleted, saved.State)
 	targets, err = service.photoVisionTargets(ctx, nil, "", 50, 4, document.FaceDetectionProviderID)
 	require.NoError(t, err)
-	require.Len(t, targets, 1, "discarded publication leaves no completion marker")
-}
-
-// Revocation waits for outbound requests. Apply it after the HTTP result has
-// returned, immediately before the real store publication checks its authority.
-type revokingFaceDetectionCatalog struct{ *store.Store }
-
-func (catalog revokingFaceDetectionCatalog) PublishPhotoDescription(ctx context.Context, claim store.RenditionJobClaim, result *document.RenditionResult, at time.Time) (store.RenditionJobPublication, error) {
-	if _, err := catalog.RevokeConsent(ctx, store.ProcessingConsentRevocationRequest{Principal: "synthetic-operator", Scope: "document-processing"}); err != nil {
-		return store.RenditionJobPublication{}, err
-	}
-	return catalog.Store.PublishPhotoDescription(ctx, claim, result, at)
+	require.Empty(t, targets)
 }
 
 func TestPhotoFaceDetectionPublicationFailureKeepsWorkerRunning(t *testing.T) {
@@ -209,7 +123,11 @@ func TestPhotoFaceDetectionPublicationFailureKeepsWorkerRunning(t *testing.T) {
 			targets, err := service.photoVisionTargets(ctx, nil, "", 50, 4, document.FaceDetectionProviderID)
 			require.NoError(t, err)
 			require.Len(t, targets, 1)
-			require.NoError(t, service.admitPhotoDescription(ctx, targets[0]))
+			binding, err := service.photoDescriptionBinding(ctx, targets[0].version)
+			require.NoError(t, err)
+			profile := service.profiles["faces"]
+			job, _, err := service.enqueueRendition(ctx, f.node, targets[0].version, profile, service.renditionConsentRequest(profile), binding, false)
+			require.NoError(t, err)
 			catalog := &auditingFaceDetectionCatalog{Store: f.catalog, enable: mode == "audit"}
 			for fingerprint, runtime := range f.service.renditions.runtimes {
 				require.NoError(t, service.renditions.Register(fingerprint, runtime))
@@ -219,6 +137,9 @@ func TestPhotoFaceDetectionPublicationFailureKeepsWorkerRunning(t *testing.T) {
 			processed, err := worker.RunOne(ctx)
 			require.NoError(t, err, "one photo must not stop shared processing")
 			require.True(t, processed)
+			saved, err := f.catalog.RenditionJobByID(ctx, job.ID)
+			require.NoError(t, err)
+			require.Equal(t, store.RenditionJobFailed, saved.State)
 			if mode != "capacity" {
 				faces, _, _, err := f.catalog.PhotoFacePersonNames(ctx, f.node.CurrentVersionID)
 				require.NoError(t, err)

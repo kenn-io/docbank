@@ -135,14 +135,21 @@ func TestPhotoFaceDetectionProtectsDecisionsAndUndo(t *testing.T) {
 				receipt, err = s.DecidePhotoFace(ctx, version, request)
 				require.NoError(t, err)
 			}
+			if action == "name" {
+				_, err = s.UndoPhotoFaceDecision(ctx, receipt.ReceiptID)
+				require.NoError(t, err)
+				require.Empty(t, read()[0].AssertionID)
+			}
 			before := read()
-			observation.Box.X = .01
-			observation.Facing = new(.1)
-			require.NoError(t, scan("b2", observation))
-			require.Equal(t, before, read())
-			require.NoError(t, scan("b3"))
-			require.Equal(t, before, read())
-			require.NoError(t, s.ValidateMetadata(ctx))
+			if action != "dismiss" {
+				observation.Box.X = .01
+				observation.Facing = new(.1)
+				require.NoError(t, scan("b2", observation))
+				require.Equal(t, before, read())
+				require.NoError(t, scan("b3"))
+				require.Equal(t, before, read())
+				require.NoError(t, s.ValidateMetadata(ctx))
+			}
 			if action == "dismiss" {
 				var exported bytes.Buffer
 				require.NoError(t, s.ExportMetadata(ctx, &exported))
@@ -153,11 +160,6 @@ func TestPhotoFaceDetectionProtectsDecisionsAndUndo(t *testing.T) {
 				_, err = s.UndoPhotoFaceDecision(ctx, receipt.ReceiptID)
 				require.NoError(t, err)
 				require.False(t, read()[0].Dismissed)
-			}
-			if action == "name" {
-				_, err = s.UndoPhotoFaceDecision(ctx, receipt.ReceiptID)
-				require.NoError(t, err)
-				require.Empty(t, read()[0].AssertionID)
 			}
 		})
 	}

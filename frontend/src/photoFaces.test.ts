@@ -271,3 +271,31 @@ it("reports a held mutation across concealment and reconciles on an authorized r
   expect(faces.faces).toEqual(photoFacePage().faces);
   faces.dispose();
 });
+
+it("retries a stalled live face read while retaining authorized faces", async () => {
+  const saved = photoFacePage();
+  const read = vi.spyOn(api, "listPhotoFaces").mockResolvedValue(saved);
+  const faces = new PhotoFaces("session", vi.fn());
+  await faces.load("version-a");
+  const timer = new AbortController();
+  const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(timer.signal);
+  read.mockImplementationOnce(
+    (_version, options) =>
+      new Promise((_resolve, reject) => {
+        options!.signal!.addEventListener("abort", () => reject(options!.signal!.reason));
+      }),
+  );
+  const reason = new DOMException("Timed out", "TimeoutError");
+  const reading = faces.load("version-a", true);
+  const rejected = expect(reading).rejects.toBe(reason);
+  timer.abort(reason);
+  await rejected;
+  expect(faces.faces).toEqual(saved.faces);
+  expect(timeout).toHaveBeenCalledWith(30_000);
+  timeout.mockRestore();
+  const fresh = { ...saved, faces: [photoFace({ face_id: "fresh-face" })] };
+  read.mockResolvedValue(fresh);
+  await faces.load("version-a", true);
+  expect(faces.faces).toEqual(fresh.faces);
+  faces.dispose();
+});

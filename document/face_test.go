@@ -32,3 +32,13 @@ func TestFaceBoxValidation(t *testing.T) {
 		require.Error(t, box.Validate())
 	}
 }
+
+func TestFaceObservationValidation(t *testing.T) {
+	t.Parallel()
+	for _, observation := range []FaceObservation{
+		{Box: FaceBox{Width: .2, Height: .2}, Roll: new(4.0), Facing: new(1.0)},
+		{Box: FaceBox{Width: .2, Height: .2}, Roll: new(0.0), Facing: new(-1.0)},
+	} {
+		require.Error(t, observation.Validate())
+	}
+}
