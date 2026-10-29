@@ -17,7 +17,7 @@ for Go integration.
 
 ## Which entry point owns the operation?
 
-Standalone `docbank backup init`, `backup create`, `backup list`, `backup
+Standalone `docbank backup init`, `backup claim`, `backup create`, `backup list`, `backup
 verify`, `backup restore`, `backup forget`, and `backup prune` use the authenticated daemon API. See the
 [Backup user guide](../usage/backup.md). Applications that own an embedded
 vault use `BackupRepository`, `Vault.CreateBackup`, and `Vault.RestoreBackup`
@@ -73,6 +73,43 @@ authority changes take the preservation side exclusively for their short
 catalog commit, so the logical membership and placement artifact cannot
 describe different authority handoffs.
 
+## Who schedules captures and retention?
+
+The shared capture path checks the repository's `docbank-owner` marker. The
+marker is a JSON object naming the owning vault ID and the processing
+incarnation of the installation that owns it. A new store and a restore each
+start a new incarnation, and in-place upgrades keep it, so a restored copy shares
+the vault ID but not the installation. Initialization marks daemon repositories,
+and the first capture binds an empty unmarked repository. Unmarked history, and
+a marker naming another installation of the same vault, require an explicit
+claim. A marker naming another vault cannot be claimed.
+
+A claim preview returns a fingerprint of the repository ID, the marker, and every
+snapshot ID. Confirmation recomputes it under Kit's exclusive repository lock and
+refuses a mismatch, so an operator assigns exactly the history they reviewed.
+Binding publishes the marker without replacing an existing file; a confirmed
+claim from another installation of the vault replaces it atomically, which moves
+capture access and fences the previous installation. Each capture checks
+ownership again when Kit starts its metadata freeze. Kit holds the exclusive
+repository lock by then, so a claim cannot slip between that check and
+publication. Scheduled retention checks ownership in Kit's forget precondition,
+which runs under the same exclusive lock before any point is removed, so an
+installation that lost the repository cannot apply its retention policy to the
+claimed history. The marker changes no
+Kit format, so Docbank releases without ownership still open owned repositories
+and can add unmanaged snapshots to them.
+
+The supervisor owns one serial `backup:scheduled` job and keeps the background
+daemon alive while scheduling is enabled. It reuses the HTTP capture helper and
+operation gate. Each cycle checks ownership before it reads history, so only
+claimed history drives due and stale checks. Waits poll wall time once a minute
+and retain a monotonic bound. A failed due capture stays due across retries.
+Retention uses Kit's forget, preserves the new point, and leaves manual history
+untouched. It prunes on a daemon run's first capture and after a forget, rather
+than after every capture. Errors appear in Jobs and logs; identical failures are
+logged once until recovery. See the
+[backup guide](../usage/backup.md#schedule-backups) for configuration and timing.
+
 ## What metadata does a snapshot retain?
 
 Docbank exports logical metadata as deterministic JSONL: one JSON record per
@@ -116,6 +153,9 @@ Manifest `Stats.coverage` records a versioned, bounded inventory of photo assets
 Restore resolves one exact manifest before starting. Kit's existing stats proof recomputes coverage from the staged database and compares it before publication. It preserves the manifest's recorded exclusions when recounting, so later exclusion-list changes preserve version-1 restore compatibility. Coverage version 1 is supported; restore rejects other recorded versions with upgrade guidance before creating the target database. Quick and full verification check manifest consistency and report unsupported coverage versions; full verification also checks physical content. Verification does not recount photo coverage. Snapshot listing preserves base statistics and IDs for unsupported coverage versions, omits the uninterpreted payload, and adds a per-snapshot warning. Historical manifests without coverage retain their original stats representation. Metadata import validates photo relationships and receipts; checkout import restores definitions and entries with inactive, unbound defaults. Hidden passcode and lockout records survive, while process-memory unlock sessions clear.
 
 Forget and prune reuse Kit's exclusive repository lock without opening the source vault. Operator routes and CLI output retain partial reports on error, including exact selected, planned, and completed item identities. Unknown selected snapshot IDs return 404; filesystem I/O failures remain server errors. The [user guide](../usage/backup.md#recover-on-a-fresh-installation) describes recovery with a fresh daemon home and a disjoint target.
+
+Explicit forget and prune address the operator-selected repository independently
+of its source owner. Ownership gates captures and automatic retention.
 
 ## When does copied content become trusted?
 

@@ -18,7 +18,7 @@ func (s *Store) renameAuditedTagTx(
 	if err != nil {
 		return Tag{}, err
 	}
-	authority, nodeSequence, err := loadAuditAuthorityTx(ctx, tx)
+	authority, nodeSequence, err := s.loadAuditAuthorityTx(ctx, tx)
 	if err != nil {
 		return Tag{}, err
 	}

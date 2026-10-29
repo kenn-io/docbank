@@ -127,7 +127,7 @@ func (s *Store) mkdirNodeTx(
 	if err != nil {
 		return Node{}, err
 	}
-	authority, scopes, _, err := loadAuditedNodeAuthority(ctx, tx, parentID)
+	authority, scopes, _, err := s.loadAuditedNodeAuthority(ctx, tx, parentID)
 	if err != nil {
 		return Node{}, err
 	}
@@ -144,7 +144,7 @@ func (s *Store) mkdirNodeTx(
 	if err != nil {
 		return Node{}, err
 	}
-	if err := persistAuditedNodeCreation(ctx, tx, s.vaultID, authority, scopes,
+	if err := s.persistAuditedNodeCreation(ctx, tx, authority, scopes,
 		priorParent, resultingParent, created, ContentVersion{}, operationID, recordedAt, nil); err != nil {
 		return Node{}, err
 	}
@@ -157,7 +157,7 @@ func (s *Store) mkdirTx(
 	if _, err := liveDirTx(tx, parentID); err != nil {
 		return Node{}, err
 	}
-	id, err := insertNodeTx(ctx, tx, parentID, name, nodeKindDir, nil, recordedAt)
+	id, err := s.insertNodeTx(ctx, tx, parentID, name, nodeKindDir, nil, recordedAt)
 	if s.driver.IsUniqueViolation(err) {
 		return Node{}, fmt.Errorf("mkdir %q under node %d: %w", name, parentID, ErrExists)
 	}
@@ -170,14 +170,23 @@ func (s *Store) mkdirTx(
 	return nodeByIDTx(tx, id)
 }
 
-// insertNodeTx returns the identity from the inserted row on both metadata
-// backends. A file's deferred version reference is completed by its caller.
-func insertNodeTx(ctx context.Context, tx *sql.Tx, parentID int64, name, kind string, versionID *string, recordedAt string) (int64, error) {
-	var id int64
-	err := tx.QueryRowContext(ctx, `INSERT INTO nodes
+// insertNodeTx allocates and inserts under the caller's storage transaction.
+// The PostgreSQL counter rolls back with the row, matching SQLite AUTOINCREMENT
+// and the audit format's consecutive committed node IDs.
+func (s *Store) insertNodeTx(ctx context.Context, tx *sql.Tx, parentID int64, name, kind string, versionID *string, recordedAt string) (int64, error) {
+	query := `INSERT INTO nodes
 		(parent_id, name, kind, current_version_id, created_at, modified_at)
-		VALUES ($1, $2, $3, $4, $5, $5) RETURNING id`,
-		parentID, name, kind, versionID, recordedAt).Scan(&id)
+		VALUES ($1, $2, $3, $4, $5, $5) RETURNING id`
+	if s.postgresSchema != "" {
+		query = `WITH allocated AS (
+			UPDATE node_allocation SET high_water=high_water+1
+			WHERE singleton=1 RETURNING high_water
+		) INSERT INTO nodes
+			(id, parent_id, name, kind, current_version_id, created_at, modified_at)
+			SELECT high_water, $1, $2, $3, $4, $5, $5 FROM allocated RETURNING id`
+	}
+	var id int64
+	err := tx.QueryRowContext(ctx, query, parentID, name, kind, versionID, recordedAt).Scan(&id)
 	return id, err
 }
 
@@ -356,7 +365,7 @@ func (s *Store) createFileWithOperationTx(
 	if err := s.EnsureBlobTx(tx, blobHash, size, physical...); err != nil {
 		return Node{}, ContentVersion{}, err
 	}
-	id, err := insertNodeTx(ctx, tx, parentID, name, nodeKindFile, &operation.versionID, operation.recordedAt)
+	id, err := s.insertNodeTx(ctx, tx, parentID, name, nodeKindFile, &operation.versionID, operation.recordedAt)
 	if s.driver.IsUniqueViolation(err) {
 		return Node{}, ContentVersion{}, fmt.Errorf(
 			"creating file %q under node %d: %w", name, parentID, ErrExists)
@@ -450,7 +459,7 @@ func (s *Store) createFileWithReceiptTx(
 		if err != nil {
 			return ContentWriteReceipt{}, err
 		}
-		authority, scopes, _, err := loadAuditedNodeAuthority(ctx, tx, parentID)
+		authority, scopes, _, err := s.loadAuditedNodeAuthority(ctx, tx, parentID)
 		if err != nil {
 			return ContentWriteReceipt{}, err
 		}
@@ -468,7 +477,7 @@ func (s *Store) createFileWithReceiptTx(
 		if err != nil {
 			return ContentWriteReceipt{}, err
 		}
-		if err := persistAuditedNodeCreation(ctx, tx, s.vaultID, authority, scopes,
+		if err := s.persistAuditedNodeCreation(ctx, tx, authority, scopes,
 			priorParent, resultingParent, receipt.Node, receipt.Version, operation.operationID,
 			operation.recordedAt, nil); err != nil {
 			return ContentWriteReceipt{}, err

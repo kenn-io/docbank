@@ -38,6 +38,8 @@ type webMapTiles struct {
 	MaxZoom     int    `json:"max_zoom"`
 }
 
+var documentPages = []string{"/searches", "/productions", "/imports", "/trash"}
+
 // registerWeb serves the embedded SPA without granting it a privileged data
 // path. JavaScript and styles are public static bytes; every vault read still
 // crosses the authenticated /api/v1 surface.
@@ -62,6 +64,9 @@ func registerWeb(mux *http.ServeMux, enabled bool, webURL, loginOrigin string, t
 		_, _ = w.Write(indexHTML)
 	}
 	mux.HandleFunc("GET /{$}", index)
+	for _, path := range documentPages {
+		mux.HandleFunc("GET "+path, index)
+	}
 	mux.HandleFunc("GET /photos", index)
 	mux.HandleFunc("GET /photos/hidden", index)
 	mux.HandleFunc("GET /photos/map", index)

@@ -170,8 +170,10 @@ func (c Config) MCPHTTPListenAddr() string {
 // compression policy. An empty Repo keeps backup commands available through
 // an explicit request path without silently choosing storage under the vault.
 type BackupConfig struct {
-	Repo      string `toml:"repo"`
-	ZstdLevel int    `toml:"zstd_level"`
+	Repo      string   `toml:"repo"`
+	ZstdLevel int      `toml:"zstd_level"`
+	Interval  Duration `toml:"interval"`
+	KeepLast  int      `toml:"keep_last"`
 }
 
 // StorageConfig controls optional daemon-owned physical storage work. Packing
@@ -201,13 +203,14 @@ type StoreBindingConfig struct {
 // source path form the stable, portable source identity; Source itself is a
 // machine-local location and is intentionally not archive metadata.
 type WatchConfig struct {
-	Name         string   `toml:"name"`
-	Source       string   `toml:"source"`
-	Destination  string   `toml:"destination"`
-	SettleTime   Duration `toml:"settle_time"`
-	MinimumAge   Duration `toml:"minimum_age"`
-	ScanInterval Duration `toml:"scan_interval"`
-	Exclude      []string `toml:"exclude"`
+	CaptureOnChange bool     `toml:"capture_on_change"`
+	Name            string   `toml:"name"`
+	Source          string   `toml:"source"`
+	Destination     string   `toml:"destination"`
+	SettleTime      Duration `toml:"settle_time"`
+	MinimumAge      Duration `toml:"minimum_age"`
+	ScanInterval    Duration `toml:"scan_interval"`
+	Exclude         []string `toml:"exclude"`
 	// ExcludePatterns uses docbank add glob semantics; Exclude stays literal.
 	ExcludePatterns []string `toml:"exclude_patterns"`
 }
@@ -735,6 +738,15 @@ func (c Config) Validate() error {
 	}
 	if c.Backup.ZstdLevel != 0 && (c.Backup.ZstdLevel < 1 || c.Backup.ZstdLevel > 19) {
 		return fmt.Errorf("[backup] zstd_level %d: want 0 or 1-19", c.Backup.ZstdLevel)
+	}
+	if c.Backup.Interval.Std() < 0 || c.Backup.KeepLast < 0 {
+		return errors.New("[backup] interval and keep_last must not be negative")
+	}
+	if c.Backup.Interval.Std() > 0 && c.Backup.Interval.Std() < time.Minute {
+		return errors.New("[backup] interval must be at least one minute when enabled")
+	}
+	if c.Backup.Interval.Std() > 0 && (c.Backup.Repo == "" || c.Backup.KeepLast == 0) {
+		return errors.New("[backup] repo and positive keep_last are required when interval is enabled")
 	}
 	if c.Storage.PackMaxBytes < 0 {
 		return errors.New("[storage] pack_max_bytes must not be negative")

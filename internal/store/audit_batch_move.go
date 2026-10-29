@@ -22,7 +22,7 @@ type auditedBatchMoveSnapshot struct {
 func (s *Store) prepareAuditedBatchMove(
 	ctx context.Context, tx *sql.Tx, plan *batchMovePlan,
 ) (*auditedBatchMoveSnapshot, error) {
-	authority, scopes, nodeSequence, err := loadAuditedNodeAuthority(ctx, tx, plan.movedIDs[0])
+	authority, scopes, nodeSequence, err := s.loadAuditedNodeAuthority(ctx, tx, plan.movedIDs[0])
 	if err != nil {
 		return nil, err
 	}

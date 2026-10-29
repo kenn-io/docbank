@@ -172,15 +172,16 @@ test("recovers a numbered PDF through Productions after a renderer-free restart"
     const entry = page.getByRole("button", { name: "Productions", exact: true });
     await expect(entry).toBeVisible();
     await entry.click();
-    const drawer = page.getByRole("dialog", { name: "Productions", exact: true });
-    await expect(drawer.getByRole("button", { name: "Find", exact: true })).toBeDisabled();
-    await drawer.getByRole("textbox", { name: "Bates number" }).press("Enter");
-    await expect(drawer.getByRole("list", { name: "Productions" })).toBeVisible();
-    await drawer.getByRole("textbox", { name: "Bates number" }).fill("QUAL000002");
+    const productions = page.getByRole("main", { name: "Productions", exact: true });
+    await expect.poll(() => new URL(page.url()).pathname).toBe("/productions");
+    await expect(productions.getByRole("button", { name: "Find", exact: true })).toBeDisabled();
+    await productions.getByRole("textbox", { name: "Bates number" }).press("Enter");
+    await expect(productions.getByRole("list", { name: "Productions" })).toBeVisible();
+    await productions.getByRole("textbox", { name: "Bates number" }).fill("QUAL000002");
     const lookup = page.waitForResponse(
       (response) => new URL(response.url()).pathname === "/api/v1/bates/exports/candidates",
     );
-    await drawer.getByRole("textbox", { name: "Bates number" }).press("Enter");
+    await productions.getByRole("textbox", { name: "Bates number" }).press("Enter");
     const response = await lookup;
     expect(new URL(response.url()).searchParams.get("bates_label")).toBe("QUAL000002");
     expect(response.status()).toBe(200);
@@ -189,7 +190,7 @@ test("recovers a numbered PDF through Productions after a renderer-free restart"
     expect(found.items[0]!.artifact_id).toBe(retained[0].artifact_id);
     expect(found.items[0]!.allocation_id).toBe(reservation.allocation_id);
     expect(found.items[0]!.evidence[0]!.output_page).toBe(2);
-    const results = drawer.getByRole("list", { name: "Matching productions" });
+    const results = productions.getByRole("list", { name: "Matching productions" });
     await expect(results.locator("summary")).toContainText("Page 2 of 2");
     await expect(results.locator("details[open]")).toHaveCount(1);
     await expect(results.getByText("Numbered redaction", { exact: true })).toBeVisible();
@@ -232,24 +233,26 @@ test("recovers a numbered PDF through Productions after a renderer-free restart"
     expect(received.length).toBe(expected.length);
     expect(createHash("sha256").update(received).digest("hex")).toBe(expectedHash);
     expect(received.equals(expected)).toBe(true);
-    await drawer.getByRole("textbox", { name: "Bates number" }).fill("MISSING000001");
-    await drawer.getByRole("button", { name: "Find", exact: true }).click();
-    await expect(drawer.getByText("No retained PDF matches “MISSING000001”.")).toBeVisible();
+    await productions.getByRole("textbox", { name: "Bates number" }).fill("MISSING000001");
+    await productions.getByRole("button", { name: "Find", exact: true }).click();
+    await expect(productions.getByText("No retained PDF matches “MISSING000001”.")).toBeVisible();
     await expect(
-      drawer.getByText("Numbers must match exactly, including prefix and leading zeros."),
+      productions.getByText("Numbers must match exactly, including prefix and leading zeros."),
     ).toBeVisible();
     await page.screenshot({
       path: path.join(captures!, "numbered-recovery-empty.png"),
       fullPage: true,
       animations: "disabled",
     });
-    await drawer.getByRole("button", { name: "Clear", exact: true }).click();
+    await productions.getByRole("button", { name: "Clear", exact: true }).click();
     await expect(
-      drawer.getByRole("list", { name: "Productions" }).getByRole("listitem"),
+      productions.getByRole("list", { name: "Productions" }).getByRole("listitem"),
     ).toHaveCount(1);
-    await drawer.getByRole("button", { name: "Close Productions" }).click();
-    await expect(drawer).toBeHidden();
-    await expect(entry).toBeFocused();
+    const allFiles = page.getByRole("button", { name: "All files", exact: true });
+    await allFiles.click();
+    await expect.poll(() => new URL(page.url()).pathname).toBe("/");
+    await expect(productions).toBeHidden();
+    await expect(allFiles).toHaveAttribute("aria-current", "page");
     expect(pageErrors).toEqual([]);
   } catch (cause) {
     failure = cause;

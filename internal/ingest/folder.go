@@ -122,9 +122,9 @@ type FolderScanner struct {
 }
 
 // NewFolderScanner creates a read-only client-side scanner. ScanOnce admits
-// files immediately; Run requires a full settle window, including on restart.
-// Run rechecks digests recorded by FolderFile.Digest and starts a fresh settle
-// window when the bytes change without a metadata change.
+// files immediately; Run uses a full settle window by default, including on
+// restart. Prompt mode skips that delay. Periodic scans recheck digests
+// recorded by FolderFile.Digest; changed bytes start a new observation.
 // reject receives each file or subdirectory that cannot be read, once until it
 // becomes readable or disappears, and the scan continues with the rest.
 func NewFolderScanner(
@@ -353,21 +353,5 @@ func (s *FolderScanner) Run(ctx context.Context) error {
 	s.watcher.immediate = false
 	s.watcher.observations = make(map[string]watchObservation)
 	s.watcher.rejected = make(map[string]struct{})
-	s.scans++
-	if err := s.watcher.scan(ctx, root); err != nil {
-		return err
-	}
-	ticker := time.NewTicker(s.watcher.config.ScanInterval.Std())
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-			s.scans++
-			if err := s.watcher.scan(ctx, root); err != nil {
-				return err
-			}
-		}
-	}
+	return s.watcher.run(ctx, root, func() { s.scans++ })
 }

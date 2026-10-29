@@ -202,8 +202,8 @@ in `releasedSchemaFixtures`. Three checks enforce this:
 validation foundation. A PostgreSQL-backed vault is not available yet: ordinary
 daemon and embedded operations still use SQLite. This package owns the native
 vault identity, PostgreSQL schema version, the core `nodes`, `blobs`,
-`blob_checksums` and `content_versions` catalogs, and the five `audit_*`
-catalogs for canonical records, authority, scopes, baselines and memberships.
+`blob_checksums`, `content_versions` and `node_allocation` catalogs, and the five
+`audit_*` catalogs for canonical records, authority, scopes, baselines and memberships.
 Complete mutations, the remaining catalogs, search, transfer, and recovery are
 not available yet.
 
@@ -217,13 +217,29 @@ identities, wrong owners, and unsupported versions are refused rather than repai
 The catalogs keep content-version and operation IDs as text, numeric node IDs,
 sizes and revisions as `BIGINT`, and timestamps as fixed-width UTC text. This
 matches the shared store queries and their lexical timestamp ordering. Both
-backends use `schemaformat.TimestampLayout`. Node IDs use `GENERATED ALWAYS AS
-IDENTITY`, matching Kata: ordinary inserts cannot supply their own ID. A future
-import must deliberately use `OVERRIDING SYSTEM VALUE` and restore the sequence
-above both the retained IDs and the exported allocation high-water mark before
-accepting writes. Taking only `MAX(id)` loses IDs deleted before export. The
-override itself does not advance the sequence. Foreign keys retain node
-ownership of the current version, version provenance, and blob references.
+backends use `schemaformat.TimestampLayout`. PostgreSQL text columns use
+`COLLATE "C"` to match SQLite's byte order, including name ordering in directory
+pages and comparisons used by cursors. Keep that order on future text sort keys
+unless the owning feature explicitly defines a different comparison.
+Foreign keys retain node ownership of the current version, version provenance,
+and blob references.
+
+Node IDs use a transactional `node_allocation` counter. Setup creates its single
+row with high-water mark 1 alongside root node 1. Ordinary inserts increment
+that row and insert the node in the caller's storage transaction, under the
+existing writer lock. A rollback restores both the node and the counter; deleting
+a committed node never lowers the counter. Runtime needs `SELECT` and
+`UPDATE(high_water)` on this table, with no insert or delete grant.
+
+This deliberately differs from Kata's native identity sequences. Audit replay
+requires each creation to use the previous high-water mark plus one, and its
+final check compares that mark with current allocation authority. Native
+[PostgreSQL sequences](https://www.postgresql.org/docs/16/functions-sequence.html)
+advance across rollback and can skip values during crash recovery, so they cannot satisfy the existing audit format. Keep the format
+unchanged. Future import must validate that the exported high-water mark covers
+all retained IDs and restore that exact counter in the import transaction;
+`MAX(nodes.id)` loses committed IDs deleted before export.
+
 Value validation and immutable-record rules belong to the Go mutation paths;
 these tables alone do not provide a complete writable store.
 
@@ -254,7 +270,7 @@ GRANT SELECT ON documents.audit_records, documents.audit_authority,
     documents.audit_scopes, documents.audit_baselines, documents.audit_memberships
     TO docbank_runtime;
 GRANT INSERT ON documents.audit_records TO docbank_runtime;
-GRANT USAGE ON SEQUENCE documents.nodes_id_seq TO docbank_runtime;
+GRANT SELECT, UPDATE(high_water) ON documents.node_allocation TO docbank_runtime;
 ```
 
 Checksum rows are inserted or compared with the existing value, never updated;
@@ -274,9 +290,9 @@ authority to alter objects or grant those privileges again.
 PostgreSQL schema versions are independent of SQLite layout versions and JSONL
 format versions. The first supported PostgreSQL release establishes the upgrade
 floor. Fresh installs use canonical DDL; do not invent historical migrations for
-this unreleased foundation. Internal layout 3 adds the audit catalogs and rejects
-earlier layouts without changing them. Recreate disposable test databases when
-moving between these internal layouts. Later supported layouts require numbered
+this unreleased foundation. Internal layout 4 adds transactional node allocation
+and byte-ordered text, and rejects earlier layouts without changing them. Recreate
+disposable test databases when moving between these internal layouts. Later supported layouts require numbered
 `NNNNNN_description.up.sql` transitions, with the target version in the filename.
 Keep one complete forward chain, and commit each transition and its version
 together under the setup lock. Runtime startup never migrates. Once a migration
@@ -310,7 +326,7 @@ their `internal` packages are not importable shared libraries.
 | AgentsView [pool opening][av-connect] and [hosted validation][av-hosted] | Configure every pooled connection, validate effective schema at opening, and account for connection reuse | Its tenant/RLS schema is a separate design, not Docbank's permission model. Do not copy its CHECK constraints, tenant tables or triggers |
 | [msgvault embedded archive][mv-archive] | pgx through `database/sql`; separate setup and validation-only opening; `current_schema()` check | Docbank serializes setup itself and requires a dedicated schema; it does not copy ambient-schema defaults or msgvault's migration ledger |
 | [Kata PostgreSQL operations][kata-operations] | `Schema`/`SchemaOwner` naming, owner/runtime role separation, transaction advisory lock, exact version validation | This internal API accepts a pool and has separate setup/validate calls; connection configuration and a public vault are not exposed yet |
-| [Kata numbered migrations][kata-migrations] and [sequence export][kata-sequences] | Canonical fresh DDL, immutable forward SQL, atomic version stamps, and preservation of allocated IDs through transfer | Version history belongs to Docbank; sequence state must also preserve Docbank's audit allocation authority |
+| [Kata numbered migrations][kata-migrations] and [sequence export][kata-sequences] | Canonical fresh DDL, immutable forward SQL, atomic version stamps, and preservation of allocated IDs through transfer | Version history belongs to Docbank; its audit format requires a transactional node counter rather than a native identity sequence |
 | AgentsView [behavior parity][av-parity] and [pool tests][av-pool-tests]; msgvault and Kata PostgreSQL lanes | Exercise real backends and their public operations, including errors, filtering and reused connections | Keep Docbank's canonical setup fixture, separate runtime role, PostgreSQL 16/18 lanes and both SQLite builds; no new fixture schema or per-test container |
 
 Keep validation, result bounds, ordering and domain error meanings in the
@@ -486,8 +502,8 @@ reads and verify that a response stays on its original snapshot while a later
 request sees the change. They use the real SQLite schema and PostgreSQL
 catalogs installed by `pgschema.Setup`. PostgreSQL
 queries run through a separate runtime login with explicit schema, table and
-sequence grants. Reuse this setup for new query tests instead of copying DDL
-into fixtures. These tests do not qualify the full directory or file mutation
+allocation-counter grants. Reuse this setup for new query tests instead of
+copying DDL into fixtures. These tests do not qualify the full directory or file mutation
 on PostgreSQL.
 
 Retained content-version lookups and history pages also use shared SQL. They
@@ -524,6 +540,23 @@ scope pagination and commit later canonical history between a reader's
 statements: the current response retains its snapshot and the next request
 sees the new events.
 
+Audit status and optional node membership use shared queries and the same
+read-only `REPEATABLE READ` boundary. Path resolution, allocation authority,
+scope counts, heads and sticky membership describe one snapshot. An audited
+node retains its membership after trashing; its live path is no longer reported.
+The PostgreSQL tests read native SQLite-generated history, including a rename
+committed between status reads, through the existing canonical fixture.
+
+Audit mutation preparation also shares authority and scope loading. The store
+owns node allocation queries: SQLite reads `sqlite_sequence`; PostgreSQL reads
+`node_allocation` in the same transaction as the protected rows. Both retain
+committed allocations after deletion and discard allocations on rollback.
+The transaction tests cover callback failure, cancellation and commit-time
+constraint failure. Audit qualification also replays native SQLite-generated
+history against PostgreSQL's high-water mark after a failed insert. It does not
+yet run complete metadata validation on PostgreSQL or enable complete audit
+writes or import.
+
 The native canonical-record insertion helper also uses shared SQL. Its index
 builder rejects zero node IDs, operation sequences and entry counts in Go
 before insertion. The same validation is used by metadata import and record
@@ -532,9 +565,10 @@ and zero-valued genesis counters remain valid. Registered nested record kinds
 cannot be stored as top-level authority records.
 
 Record-insertion qualification uses canonical records produced by normal audit
-enrollment and checks their stored relational indexes on both backends. Tests
-use caller-owned transactions and roll them back: inserting records alone does
-not publish complete authority or membership projections. PostgreSQL grants
+enrollment. Existing SQLite enrollment tests validate stored relational indexes;
+the PostgreSQL insertion test checks the same projections. It uses a caller-owned
+transaction and rolls it back: inserting records alone does not publish complete
+authority or membership projections. PostgreSQL grants
 `INSERT` on `audit_records` for this primitive, with no audit-table `UPDATE` or
 `DELETE`. Complete audit mutations, enrollment and metadata import remain
 unavailable until their catalog maintenance and validation are ported.

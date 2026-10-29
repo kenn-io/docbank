@@ -167,10 +167,8 @@ func copyAuditHistoryFixture(t *testing.T, source *Store, setup *sql.DB) {
 	}
 	for _, table := range tables {
 		query := "SELECT * FROM " + table
-		override := ""
 		if table == "nodes" {
 			query += " ORDER BY id"
-			override = " OVERRIDING SYSTEM VALUE"
 		}
 		rows, err := from.QueryContext(ctx, query)
 		require.NoError(t, err)
@@ -183,7 +181,7 @@ func copyAuditHistoryFixture(t *testing.T, source *Store, setup *sql.DB) {
 			destinations[i] = &values[i]
 			parameters[i] = fmt.Sprintf("$%d", i+1)
 		}
-		insert := "INSERT INTO " + table + "(" + strings.Join(columns, ",") + ")" + override + " VALUES(" + strings.Join(parameters, ",") + ")"
+		insert := "INSERT INTO " + table + "(" + strings.Join(columns, ",") + ") VALUES(" + strings.Join(parameters, ",") + ")"
 		for rows.Next() {
 			require.NoError(t, rows.Scan(destinations...))
 			_, err := to.ExecContext(ctx, insert, values...)
@@ -194,7 +192,7 @@ func copyAuditHistoryFixture(t *testing.T, source *Store, setup *sql.DB) {
 	}
 	var highWater int64
 	require.NoError(t, from.QueryRowContext(ctx, `SELECT seq FROM sqlite_sequence WHERE name='nodes'`).Scan(&highWater))
-	_, err = to.ExecContext(ctx, `SELECT setval(pg_get_serial_sequence('nodes','id'),$1)`, highWater)
+	_, err = to.ExecContext(ctx, `UPDATE node_allocation SET high_water=$1 WHERE singleton=1`, highWater)
 	require.NoError(t, err)
 	require.NoError(t, to.Commit())
 }

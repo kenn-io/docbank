@@ -38,9 +38,9 @@ func seedContentHistory(t *testing.T, s *Store) (int64, int64) {
 	tx, err := s.writeDB.BeginTx(ctx, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
-	nodeID, err := insertNodeTx(ctx, tx, s.RootID(), "history.txt", nodeKindFile, new(historyCurrent), historyTime)
+	nodeID, err := s.insertNodeTx(ctx, tx, s.RootID(), "history.txt", nodeKindFile, new(historyCurrent), historyTime)
 	require.NoError(t, err)
-	otherID, err := insertNodeTx(ctx, tx, s.RootID(), "other.txt", nodeKindFile, new(historyOther), historyTime)
+	otherID, err := s.insertNodeTx(ctx, tx, s.RootID(), "other.txt", nodeKindFile, new(historyOther), historyTime)
 	require.NoError(t, err)
 	_, err = tx.ExecContext(ctx, `INSERT INTO blobs(hash,size,created_at) VALUES
 		($1,17,$2), ($3,23,$2)`, historyHash, historyTime,

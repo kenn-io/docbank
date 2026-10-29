@@ -101,7 +101,7 @@ func (s *Store) prepareAuditedMove(
 	if inCycle {
 		return snapshot, "", false, fmt.Errorf("moving node %d under %d: %w", id, newParentID, ErrCycle)
 	}
-	authority, scopes, nodeSequence, err := loadAuditedNodeAuthority(ctx, tx, id)
+	authority, scopes, nodeSequence, err := s.loadAuditedNodeAuthority(ctx, tx, id)
 	if err != nil {
 		return snapshot, "", false, err
 	}

@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-17
+last_edited: 2026-10-25
 title: Configuration
 description: Vault location, data layout, config.toml, and environment variables.
 ---
@@ -155,6 +155,8 @@ allowed_hosts = []      # additional MCP HTTP Host names, optionally with ports
 [backup]
 repo = ""           # no implicit repository; set a path or pass --repo
 zstd_level = 0      # 0 = Kit default; otherwise 1-19
+interval = "0"      # disabled; for example, "24h"
+keep_last = 0       # choose a positive retained count before enabling
 
 [storage]
 pack_interval = "0"        # disabled; for example, "1h"
@@ -167,6 +169,7 @@ destination = "/archives/agents"
 settle_time = "30s"
 minimum_age = "168h" # optional; 7 days since source modification
 scan_interval = "5s"
+capture_on_change = false # opt in to prompt reads for working files
 exclude = [".DS_Store", "cache/"]
 exclude_patterns = [".syncthing.*.tmp", "*.sync-conflict-*"]
 ```
@@ -200,7 +203,7 @@ exclude_patterns = [".syncthing.*.tmp", "*.sync-conflict-*"]
 - **`[web] enabled`**: serves the embedded web application at `/`.
   `docbank web` starts or reconnects to the compatible daemon and opens an
   authenticated browser session on a fresh per-daemon loopback origin,
-  independent of a configured `api_port`. Disabling it 404s `/`, `/photos`, `/photos/people`, `/photos/map`, `/photos/map/{set_id}`, `/photos/albums`, canonical `/photos/albums/{id}`, and `/assets/`.
+  independent of a configured `api_port`. Disabling it 404s `/`, `/searches`, `/productions`, `/imports`, `/trash`, `/photos`, `/photos/people`, `/photos/map`, `/photos/map/{set_id}`, `/photos/albums`, canonical `/photos/albums/{id}`, and `/assets/`.
   The API and `/docs` are unaffected. See [Web application](usage/web.md).
 - **`[mcp.http] enabled`**: hosts read-only MCP HTTP in the daemon. When unset,
   the daemon hosts it if the API binds loopback, `port` is unset, and the MCP
@@ -224,12 +227,21 @@ exclude_patterns = [".syncthing.*.tmp", "*.sync-conflict-*"]
   Keep the repository outside the live vault in normal deployments.
 - **`[backup] zstd_level`**: repository compression level. `0` uses Kit's
   default. Other values must be between `1` and `19`.
+- **`[backup] interval`**: schedules captures at this interval. `"0"` disables
+  the schedule. An enabled schedule requires a configured `repo` and a positive
+  `keep_last`. Values must be nonnegative; enabled intervals must be at least one minute.
+- **`[backup] keep_last`**: number of scheduled snapshots to retain after each
+  capture. Values must be nonnegative. Manual snapshots remain outside this policy.
 - **`[storage] pack_interval`**: schedules non-destructive packing of
   authorized loose blobs. `"0"` disables the schedule. A configured schedule
   runs once when the daemon starts and then at this interval.
 - **`[storage] pack_max_bytes`**: soft raw-byte budget for each
   scheduled run. It must be positive when `pack_interval` is enabled. Remaining
   loose content waits for a later run.
+
+Restart the daemon after changing backup scheduling configuration.
+See [Schedule backups](usage/backup.md#schedule-backups) for initialization,
+retention, scheduled tag rules, retries, and stale warnings.
 
 Scheduled packing is visible as the `storage:pack` job and keeps an auto-started
 daemon alive so the schedule can run. It uses the same maintenance gate
@@ -293,7 +305,10 @@ the complete transport boundary.
 
 ### Watched inboxes
 
-Each `[[watch]]` entry makes the daemon poll one local directory recursively.
+Each `[[watch]]` entry makes the daemon scan one local directory recursively.
+The default settled mode polls at `scan_interval`. Set
+`capture_on_change = true` for prompt reads after filesystem notifications,
+with periodic reconciliation at the same interval.
 `source` must be absolute or begin with `~/`. `destination` is an absolute path
 in Docbank's virtual tree. Symlinks and other non-regular entries inside the
 source are ignored. `exclude` stays a literal name-or-relative-path rule,
@@ -328,20 +343,24 @@ own input.
 
 The daemon checks each file in this order:
 
-1. Observe the same filesystem object, size, and modification time for the
-   complete `settle_time`.
+1. In settled mode, observe the same filesystem identity, size, modification
+   time, and native change timestamp when available for the complete
+   `settle_time`; fall back to size and modification time when it is absent.
+   Prompt mode skips only this delay.
 2. Require the source modification time to satisfy `minimum_age`, if enabled.
 3. Read the file, then check that the source path still names the same object.
    If it changed, do not accept the read as a Docbank node.
 
 For example, `minimum_age = "168h"` requires a file to be at least seven days
-old and unchanged for the complete settle window. The default `"0s"` disables
-this age check. The source timestamp still applies after a daemon restart,
-but the in-memory settle observation starts again. This helps with sessions or
+old and, in settled mode, unchanged for the complete settle window. The default
+`"0s"` disables this age check. The source timestamp still applies after a
+daemon restart, but only settled mode starts a new in-memory settle window. This helps with sessions or
 recordings that pause before they finish.
 
-`scan_interval` controls observation frequency. Zero settle and scan values
-select the defaults shown above. Any other value must be positive.
+`scan_interval` controls periodic observation frequency. Zero settle and scan
+values select the defaults shown above. `capture_on_change` defaults to
+`false`; prompt mode still uses the configured positive `settle_time` value
+for configuration compatibility, but it does not delay admission. Any other value must be positive.
 `minimum_age` must not be negative.
 
 Minimum age is a conservative time policy, not proof that the producing
@@ -369,15 +388,29 @@ change at the watched source appends another version.
 
 Watchers run as jobs named `watch:<name>`. `docbank watch list` and
 `GET /api/v1/watches` pair each runner's state with its effective source,
-destination, settle window, minimum source age, scan interval, and exclusion
-policy. `docbank watch list` shows a waiting watcher as `idle` and an ingesting
-watcher as `running`. `EXCLUDES` counts both literal and glob rules. Use
-`--json` when an agent needs the separate `exclude` and `exclude_patterns`
-lists. `docbank jobs` and `GET /api/v1/jobs` remain the all-task view. A source,
-destination, or read failure leaves the named job in the failed state and
-records the reason.
+destination, capture mode (`settled` or `prompt`), settle window,
+minimum source age, scan interval, and exclusion policy. JSON reports
+`capture_on_change` as a boolean. `docbank watch list` shows a waiting watcher
+as `idle` and an ingesting watcher as `running`. `EXCLUDES` counts both literal
+and glob rules. Use `--json` when an agent needs the separate `exclude` and
+`exclude_patterns` lists. `docbank jobs` and `GET /api/v1/jobs` remain the
+all-task view. A source, destination, or read failure leaves the named job in
+the failed state and records the reason.
 Restart the daemon after correcting the problem.
-Per-file successes are written to the daemon log. A configured watch keeps a
+Per-file successes are written to the daemon log. Prompt notifications are
+best effort: coalesced events and slow ingestion can miss intervening writes,
+and readable intermediate content may be captured. The scanner still enforces
+the same root, exclusion, symlink, mount, stable-read, and mutation boundaries.
+Notification hints use at most 1,024 pending paths; overflow requests full
+reconciliation. Native subscriptions use at most 32,768 entry units, one plus
+the current immediate entry count for each admitted directory. That count
+covers handles a macOS backend may open for children, though the OS can fail
+earlier. A backend or budget failure closes all subscriptions and visibly
+degrades to periodic scans until restart; a directory vanished during
+subscription is retried once at the next periodic scan. The watch job and log
+report the failure and any restoration.
+
+A configured watch keeps a
 background daemon alive regardless of `idle_timeout`.
 
 Inspect the source facts recorded for an imported file with

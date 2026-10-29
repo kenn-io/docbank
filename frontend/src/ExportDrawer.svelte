@@ -5,10 +5,12 @@
     Checkbox,
     Chip,
     CopyButton,
+    RadioGroup,
     SelectDropdown,
     Spinner,
     TextInput,
   } from "@kenn-io/kit-ui";
+  import type { RadioGroupOption } from "@kenn-io/kit-ui";
   import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
   import DrawerShell from "./DrawerShell.svelte";
   import "./toolForm.css";
@@ -21,6 +23,7 @@
     type ExportOptions,
   } from "./exports.js";
   import { formatBytes, formatDate } from "./format.js";
+  import type { AttachmentPublicationChoice } from "./generated/docbank.js";
 
   interface Props {
     session: string;
@@ -95,6 +98,25 @@
       label: `${choice.paper} · Chromium ${choice.renderer_version} · ${choice.messages}/${count} messages${choice.ambiguous ? ` · ${choice.ambiguous} ambiguous` : ""}`,
     })),
   ]);
+  // One group per message version. Radios that share a version stay exclusive.
+  function publicationGroups(items: readonly AttachmentPublicationChoice[]) {
+    const groups: { versionID: string; legend: string; options: RadioGroupOption[] }[] = [];
+    for (const choice of items) {
+      const option: RadioGroupOption = {
+        value: choice.operation_id,
+        label: `${choice.name} · ${choice.attachments} attachments · ${choice.state}. ${formatDate(choice.created_at)} · message ${choice.node_id} · version ${choice.version_id.slice(0, 8)} · ${choice.operation_id}`,
+      };
+      const existing = groups.find((group) => group.versionID === choice.version_id);
+      if (existing) existing.options.push(option);
+      else
+        groups.push({
+          versionID: choice.version_id,
+          legend: `Attachment set for message ${choice.node_id}`,
+          options: [option],
+        });
+    }
+    return groups;
+  }
   const busy = $derived(["preparing", "starting", "running"].includes(view.status));
   const admitted = $derived(view.active);
   const plan = $derived(admitted?.plan ?? view.reviewed?.plan);
@@ -454,27 +476,16 @@
                   <span class="tool-label">Attachment sets</span>
                   {#if view.publications?.total}
                     <p class="tool-muted">Choose one set for each message.</p>
-                    {#each view.publications.items as choice (`${choice.version_id}:${choice.operation_id}`)}
-                      <label class="publication-choice">
-                        <input
-                          type="radio"
-                          name={`publication-${choice.version_id}`}
-                          checked={view.publicationSelections?.[choice.version_id] ===
-                            choice.operation_id}
-                          onchange={() =>
-                            controller.selectPublication(choice.version_id, choice.operation_id)}
-                        />
-                        <span
-                          ><strong>{choice.name}</strong> · {choice.attachments} attachments · {choice.state}<br
-                          />
-                          <span class="tool-muted"
-                            >{formatDate(choice.created_at)} · message {choice.node_id} · version {choice.version_id.slice(
-                              0,
-                              8,
-                            )} · <code>{choice.operation_id}</code></span
-                          >
-                        </span>
-                      </label>
+                    {#each publicationGroups(view.publications.items) as group (group.versionID)}
+                      <RadioGroup
+                        legend={group.legend}
+                        name={`publication-${group.versionID}`}
+                        value={view.publicationSelections?.[group.versionID]}
+                        options={group.options}
+                        onchange={(value) => {
+                          if (value) controller.selectPublication(group.versionID, value);
+                        }}
+                      />
                     {/each}
                     <div class="tool-actions tool-actions--start">
                       {#if view.publications.after > 0}<Button
@@ -841,12 +852,6 @@
   .inline-control :global(.kit-select-dropdown) {
     flex: 1;
     min-width: 0;
-  }
-  .publication-choice {
-    display: flex;
-    align-items: start;
-    gap: var(--space-4);
-    overflow-wrap: anywhere;
   }
   .hashes {
     display: grid;

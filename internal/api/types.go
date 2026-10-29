@@ -1295,6 +1295,7 @@ type JobList struct {
 // state for one local watched source. Source is intentionally machine-local;
 // Destination is a path in the Docbank virtual tree.
 type WatchedInbox struct {
+	CaptureOnChange bool     `json:"capture_on_change"`
 	Name            string   `json:"name"`
 	Source          string   `json:"source"`
 	Destination     string   `json:"destination"`

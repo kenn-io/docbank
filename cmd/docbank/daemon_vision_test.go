@@ -90,17 +90,16 @@ func TestDaemonDescribesAPhotoWithAConfiguredVisionProfile(t *testing.T) {
 	asset, err := daemon.API().GetPhotoAssetByNode(t.Context(), &apiclient.GetPhotoAssetByNodeRequestOptions{PathParams: &apiclient.GetPhotoAssetByNodePath{NodeID: node.ID}})
 	require.NoError(t, err)
 	selector := api.ProcessingSelector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "vision"}
-	// The photo is describable once its grid preview exists.
-	var plan *api.ProcessingPlan
+	// The photo is describable once its grid preview exists. The preview can
+	// land between planning and enqueueing, which changes the plan, so plan
+	// again after processing_plan_changed as a client would.
 	require.EventuallyWithT(t, func(c *assert.CollectT) {
-		var err error
-		plan, err = daemon.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
+		plan, err := daemon.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
 		require.NoError(c, err)
 		require.Empty(c, plan.RenditionIneligibleReason)
+		_, err = daemon.EnqueueProcessing(t.Context(), api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true}, plan.ProfileFingerprint)
+		require.NoError(c, err)
 	}, 20*time.Second, 50*time.Millisecond)
-
-	_, err = daemon.EnqueueProcessing(t.Context(), api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true}, plan.ProfileFingerprint)
-	require.NoError(t, err)
 	require.EventuallyWithT(t, func(c *assert.CollectT) {
 		prepared, err := daemon.API().PreparePhotoAuthored(t.Context(), &apiclient.PreparePhotoAuthoredRequestOptions{Body: &api.PhotoAuthoredPrepareRequest{AssetIDs: []string{asset.ID}}})
 		require.NoError(c, err)

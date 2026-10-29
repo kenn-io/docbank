@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, Typeahead, Notice, Modal } from "@kenn-io/kit-ui";
+  import { Button, Modal, Notice, RadioGroup, Typeahead } from "@kenn-io/kit-ui";
   import {
     listPeople,
     listPersonFacePreviews,
@@ -502,17 +502,28 @@
 <PhotoCullConfirmation bind:this={confirmation} />
 {#if duplicate}
   <Modal title={`Choose ${duplicate.name}`} onclose={closeChooser}>
+    <RadioGroup
+      legend="Matching people"
+      name="person"
+      value={selection || undefined}
+      options={[
+        ...duplicate.people.map((person) => ({
+          value: person.person_id,
+          label: `${person.display_name} ${detail(person)} ${person.person_id}`,
+        })),
+        ...(duplicate.face
+          ? [{ value: "new", label: `New person named ${duplicate.newName}` }]
+          : []),
+      ]}
+      onchange={(value) => {
+        selection = value ?? "";
+      }}
+    />
     <div class="duplicate-list">
       {#each duplicate.people as person (person.person_id)}
         {@const preview = previews[person.person_id]}
-        <div class="duplicate-person">
-          <label>
-            <input type="radio" name="person" value={person.person_id} bind:group={selection} />
-            <span
-              >{person.display_name}<small>{detail(person)}</small>
-              <small>{person.person_id}</small></span
-            >
-          </label>
+        <div class="duplicate-person" data-person={person.person_id}>
+          <span>{person.display_name}</span>
           <Button
             size="sm"
             ariaExpanded={expanded === person.person_id}
@@ -535,9 +546,6 @@
         </div>
       {/each}
     </div>
-    {#if duplicate.face}<label
-        ><input type="radio" name="person" value="new" bind:group={selection} />New person named {duplicate.newName}</label
-      >{/if}
     {#snippet footer()}
       <Button onclick={closeChooser}>Cancel</Button>
       <Button disabled={!selection} onclick={assignSelection}
@@ -563,17 +571,6 @@
     align-items: center;
     gap: var(--space-2);
     margin-bottom: var(--space-3);
-  }
-  /* Keep the action outside the radio label so it stays out of the radio's name. */
-  .duplicate-person label {
-    display: contents;
-  }
-  .duplicate-person small {
-    display: block;
-    overflow-wrap: anywhere;
-  }
-  .duplicate-person label > span:first-of-type {
-    min-width: 0;
   }
   .person-preview {
     position: relative;

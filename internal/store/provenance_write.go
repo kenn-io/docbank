@@ -129,7 +129,7 @@ func (s *Store) AppendNodeProvenance(
 		if !activeAudit {
 			return nil
 		}
-		authority, scopes, nodeSequence, err := loadAuditedNodeAuthority(ctx, tx, input.NodeID)
+		authority, scopes, nodeSequence, err := s.loadAuditedNodeAuthority(ctx, tx, input.NodeID)
 		if err != nil {
 			return err
 		}

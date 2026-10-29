@@ -131,7 +131,7 @@ func (s *Store) observeOperationalIngestTx(
 		return Node{}, err
 	}
 	if active {
-		authority, scopes, nodeSequence, err := loadAuditedNodeAuthority(ctx, tx, prior.ID)
+		authority, scopes, nodeSequence, err := s.loadAuditedNodeAuthority(ctx, tx, prior.ID)
 		if err != nil {
 			return Node{}, err
 		}

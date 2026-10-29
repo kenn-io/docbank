@@ -42,9 +42,9 @@ func checkPathQueries(t *testing.T, s *Store, directory, file Node) {
 	defer func() { _ = tx.Rollback() }()
 	const recordedAt = "2026-01-01T00:00:00.000000000Z"
 	const name = `資料 "notes"`
-	nestedID, err := insertNodeTx(ctx, tx, directory.ID, name, nodeKindDir, nil, recordedAt)
+	nestedID, err := s.insertNodeTx(ctx, tx, directory.ID, name, nodeKindDir, nil, recordedAt)
 	require.NoError(t, err)
-	leafID, err := insertNodeTx(ctx, tx, nestedID, "leaf", nodeKindDir, nil, recordedAt)
+	leafID, err := s.insertNodeTx(ctx, tx, nestedID, "leaf", nodeKindDir, nil, recordedAt)
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 	view, err := s.NodeViewByPath(ctx, `/café/資料 "notes"/leaf`)

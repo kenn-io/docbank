@@ -320,7 +320,7 @@ func TestAuditedProvenanceImportRequiresCallerSuppliedIngest(t *testing.T) {
 				if err != nil {
 					return err
 				}
-				authority, scopes, sequence, err := loadAuditedNodeAuthority(ctx, tx, node.ID)
+				authority, scopes, sequence, err := s.loadAuditedNodeAuthority(ctx, tx, node.ID)
 				if err != nil {
 					return err
 				}
@@ -445,7 +445,7 @@ func TestAuditedProvenanceReplayRejectsDirectoryTarget(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		authority, scopes, sequence, err := loadAuditedNodeAuthority(ctx, tx, dir.ID)
+		authority, scopes, sequence, err := s.loadAuditedNodeAuthority(ctx, tx, dir.ID)
 		if err != nil {
 			return err
 		}
@@ -526,7 +526,7 @@ func TestAuditedProvenanceCanonicalRecords(t *testing.T) {
 				if err != nil {
 					return err
 				}
-				authority, scopes, sequence, err := loadAuditedNodeAuthority(ctx, tx, node.ID)
+				authority, scopes, sequence, err := s.loadAuditedNodeAuthority(ctx, tx, node.ID)
 				if err != nil {
 					return err
 				}

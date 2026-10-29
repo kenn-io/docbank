@@ -137,7 +137,7 @@ func (s *Store) previewInitialAudit(
 			if err != nil {
 				return err
 			}
-			set, err := buildInitialAuditEnrollment(ctx, tx, s.vaultID, input)
+			set, err := s.buildInitialAuditEnrollment(ctx, tx, input)
 			if err != nil {
 				return err
 			}
@@ -157,7 +157,7 @@ func (s *Store) previewInitialAudit(
 		if err := requireAdditionalAuditScopeCapacity(counts[1]); err != nil {
 			return err
 		}
-		authority, nodeSequence, err := loadAuditAuthorityTx(ctx, tx)
+		authority, nodeSequence, err := s.loadAuditAuthorityTx(ctx, tx)
 		if err != nil {
 			return err
 		}
@@ -170,7 +170,7 @@ func (s *Store) previewInitialAudit(
 		if err != nil {
 			return err
 		}
-		set, err := buildAdditionalAuditEnrollment(ctx, tx, s.vaultID, input)
+		set, err := s.buildAdditionalAuditEnrollment(ctx, tx, input)
 		if err != nil {
 			return err
 		}
@@ -216,7 +216,7 @@ func (s *Store) EnableInitialAudit(
 			if err := requireDormantAuditAuthority(ctx, tx); err != nil {
 				return err
 			}
-			set, err := buildInitialAuditEnrollment(ctx, tx, s.vaultID, plan.input)
+			set, err := s.buildInitialAuditEnrollment(ctx, tx, plan.input)
 			if err != nil {
 				return err
 			}
@@ -231,7 +231,7 @@ func (s *Store) EnableInitialAudit(
 				return fmt.Errorf("validating created audit authority: %w", err)
 			}
 		} else {
-			set, err := buildAdditionalAuditEnrollment(ctx, tx, s.vaultID, plan.input)
+			set, err := s.buildAdditionalAuditEnrollment(ctx, tx, plan.input)
 			if err != nil {
 				if errors.Is(err, ErrAuditScopeOverlap) {
 					return ErrAuditPreviewStale
@@ -300,7 +300,7 @@ func (s *Store) AuditStatusPath(ctx context.Context, path string) (AuditStatus, 
 func (s *Store) auditStatusSnapshot(
 	ctx context.Context, resolveNode func(*sql.Tx) (*int64, error),
 ) (AuditStatus, error) {
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return AuditStatus{}, fmt.Errorf("starting audit-status snapshot: %w", err)
 	}
@@ -737,7 +737,7 @@ func auditMembershipStatusTx(
 		}
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT scope_id,baseline_digest
-		FROM audit_memberships WHERE node_id=? ORDER BY scope_id`, nodeID)
+		FROM audit_memberships WHERE node_id=$1 ORDER BY scope_id`, nodeID)
 	if err != nil {
 		return AuditMembershipStatus{}, fmt.Errorf("reading node audit membership: %w", err)
 	}

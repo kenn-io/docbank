@@ -129,7 +129,7 @@ test("names and corrects faces in Loupe, inspector, and Cull", async ({ page }) 
     await expect(chooser.getByRole("img")).toHaveCount(0);
     await chooser.getByRole("button", { name: "Photos", exact: true }).first().click();
     await expect(chooser.getByRole("img")).toHaveCount(1);
-    await expect(chooser.getByText(personID, { exact: true })).toBeVisible();
+    await expect(chooser.getByRole("radio", { name: personID })).toBeVisible();
     await captureDialogThemes(page, chooser, output!, "after-photo-people-chooser", 760, async () =>
       chooser
         .getByRole("img")
@@ -155,11 +155,13 @@ test("names and corrects faces in Loupe, inspector, and Cull", async ({ page }) 
     await people.getByRole("combobox").fill("Alex Smith");
     await people.getByRole("option", { name: "Alex Smith · 2 people", exact: true }).click();
     const identityChooser = page.getByRole("dialog", { name: "Choose Alex Smith" });
-    await expect(identityChooser.getByText("alex-a@example.test")).toBeVisible();
-    await expect(identityChooser.getByText("alex-b@example.test")).toBeVisible();
+    await expect(identityChooser.getByRole("radio", { name: "alex-a@example.test" })).toBeVisible();
+    await expect(identityChooser.getByRole("radio", { name: "alex-b@example.test" })).toBeVisible();
+    const alexA = await identityChooser
+      .getByRole("radio", { name: "alex-a@example.test" })
+      .getAttribute("value");
     await identityChooser
-      .locator(".duplicate-person")
-      .filter({ hasText: "alex-a@example.test" })
+      .locator(`[data-person="${alexA}"]`)
       .getByRole("button", { name: "Photos", exact: true })
       .click();
     await expect(identityChooser.getByRole("img")).toHaveCount(1);
@@ -422,7 +424,7 @@ test("continues an incomplete group of 300 namesakes", async ({ page }) => {
     );
     await people.getByRole("option", { name: "Alex · 300 people", exact: true }).click();
     const chooser = page.getByRole("dialog", { name: "Choose Alex", exact: true });
-    const later = chooser.locator(".duplicate-person").filter({ hasText: laterPerson });
+    const later = chooser.locator(`[data-person="${laterPerson}"]`);
     await later.getByRole("button", { name: "Photos", exact: true }).click();
     await chooser.locator(`input[value="${laterPerson}"]`).check();
     await later.locator(".person-preview").scrollIntoViewIfNeeded();
