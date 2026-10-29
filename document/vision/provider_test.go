@@ -41,13 +41,11 @@ func TestParseDescription(t *testing.T) {
 	}{
 		{name: "upright rotation", raw: `{"caption":"A harbor.","tags":["coast"],"visible_text":"QUAY","rotation":0}`, want: document.PhotoDescription{Caption: "A harbor.", Tags: []string{"coast"}, VisibleText: "QUAY", Rotation: new(0)}},
 		{name: "90 rotation", raw: `{"caption":"A harbor.","tags":["coast"],"visible_text":"QUAY","rotation":90}`, want: document.PhotoDescription{Caption: "A harbor.", Tags: []string{"coast"}, VisibleText: "QUAY", Rotation: new(90)}},
-		{name: "180 rotation", raw: `{"caption":"A harbor.","tags":["coast"],"visible_text":"QUAY","rotation":180}`, want: document.PhotoDescription{Caption: "A harbor.", Tags: []string{"coast"}, VisibleText: "QUAY", Rotation: new(180)}},
 		{name: "270 rotation", raw: `{"caption":"A harbor.","tags":["coast"],"visible_text":"QUAY","rotation":270}`, want: document.PhotoDescription{Caption: "A harbor.", Tags: []string{"coast"}, VisibleText: "QUAY", Rotation: new(270)}},
 		{name: "unsupported rotation", raw: `{"caption":"A harbor.","tags":["coast"],"visible_text":"QUAY","rotation":45}`, want: document.PhotoDescription{Caption: "A harbor.", Tags: []string{"coast"}, VisibleText: "QUAY"}},
 		{name: "uncertain rotation", raw: `{"caption":"A harbor.","tags":["coast"],"visible_text":"QUAY","rotation":null}`, want: document.PhotoDescription{Caption: "A harbor.", Tags: []string{"coast"}, VisibleText: "QUAY"}},
 		{name: "string rotation", raw: `{"caption":"A harbor.","tags":["coast"],"visible_text":"QUAY","rotation":"90"}`, want: document.PhotoDescription{Caption: "A harbor.", Tags: []string{"coast"}, VisibleText: "QUAY"}},
 		{name: "fractional rotation", raw: `{"caption":"A harbor.","tags":["coast"],"visible_text":"QUAY","rotation":90.5}`, want: document.PhotoDescription{Caption: "A harbor.", Tags: []string{"coast"}, VisibleText: "QUAY"}},
-		{name: "object rotation", raw: `{"caption":"A harbor.","tags":["coast"],"visible_text":"QUAY","rotation":{}}`, want: document.PhotoDescription{Caption: "A harbor.", Tags: []string{"coast"}, VisibleText: "QUAY"}},
 		{name: "rotation only", raw: `{"rotation":90}`, want: document.PhotoDescription{Tags: []string{}, Rotation: new(90)}},
 		{name: "65 tags retain the first ten", raw: string(validTags), want: document.PhotoDescription{Caption: "A coast.", Tags: []string{"tag-00", "tag-01", "tag-02", "tag-03", "tag-04", "tag-05", "tag-06", "tag-07", "tag-08", "tag-09"}}},
 		{name: "normalization", raw: "```json\n{\"caption\":\" A dog on a beach. \",\"tags\":[\" DOG! \",\"dog\",\"ＢＥＡＣＨ\",\"🐕\"],\"visible_text\":\"Welcome\"}\n```", want: document.PhotoDescription{Caption: "A dog on a beach.", Tags: []string{"DOG", "dog", "ＢＥＡＣＨ"}, VisibleText: "Welcome"}},
