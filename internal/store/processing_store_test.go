@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -239,4 +240,39 @@ func TestProcessingSourceFencePreservesCanceledQuery(t *testing.T) {
 	cancel()
 	_, err = s.resolveFilteredProcessingSourceFenceSnapshot(ctx, tx, SearchOptions{TagID: tag.ID})
 	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestCountProcessingSearchScope(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	insertProcessingFenceFiles(t, s, 4097)
+	normalized, count, err := s.CountProcessingSearchScope(t.Context(), SearchOptions{MIMEType: "TEXT/PLAIN"})
+	require.NoError(t, err)
+	assert.Equal(t, "text/plain", normalized.MIMEType)
+	assert.Equal(t, 4097, count)
+	_, _, err = s.CountProcessingSearchScope(t.Context(), SearchOptions{MIMEType: "not a mime"})
+	require.ErrorIs(t, err, ErrInvalidProcessingSourceFence)
+	_, _, err = s.CountProcessingSearchScope(t.Context(), SearchOptions{ContentVersionIDs: []string{"11111111-1111-4111-8111-111111111111"}})
+	require.ErrorIs(t, err, ErrInvalidProcessingSourceFence)
+	_, count, err = s.CountProcessingSearchScope(t.Context(), SearchOptions{MIMEType: "application/pdf"})
+	require.NoError(t, err)
+	assert.Zero(t, count)
+	_, _, err = s.CountProcessingSearchScope(t.Context(), SearchOptions{TagID: "11111111-1111-4111-8111-111111111111"})
+	require.ErrorIs(t, err, ErrNotFound)
+}
+
+func TestRevalidateSearchScopeCountSnapshot(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	first, err := s.CreateFile(t.Context(), s.RootID(), "synthetic-first.txt", strings.Repeat("a", 64), 1, "text/plain")
+	require.NoError(t, err)
+	_, err = s.CreateFile(t.Context(), s.RootID(), "synthetic-second.txt", strings.Repeat("b", 64), 1, "text/plain")
+	require.NoError(t, err)
+	result, err := s.RevalidateSearchCandidates(t.Context(), []SearchCandidateIdentity{{NodeID: first.ID, ContentVersionID: first.CurrentVersionID, Evidence: []SearchEvidenceIdentity{{Kind: "node_name", NodeName: first.Name}}}}, SearchOptions{MIMEType: "text/plain"}, "", "")
+	require.NoError(t, err)
+	require.Equal(t, 2, result.ObservedScopeCount)
+	require.Len(t, result.Candidates, 1)
+	empty, err := s.RevalidateSearchCandidates(t.Context(), nil, SearchOptions{MIMEType: "text/plain"}, "", "")
+	require.NoError(t, err)
+	require.Equal(t, 2, empty.ObservedScopeCount)
 }

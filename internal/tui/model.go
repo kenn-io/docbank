@@ -1895,7 +1895,7 @@ func (m Model) loadProcessingSearch(requestID uint64, query string) tea.Cmd {
 		}
 		report, err := backend.SearchDocuments(ctx, api.DocumentSearchRequest{
 			Query: query, Mode: "auto", Limit: maxProcessingSearchItems, Profile: plan.Selector.Profile,
-			Fence: api.DocumentSourceFence{
+			Fence: api.DocumentSearchFence{
 				VaultUID: plan.VaultUID, ContentVersionIDs: []string{plan.Selector.ContentVersionID},
 			}, Explain: true,
 		})
@@ -2164,7 +2164,7 @@ func (m Model) loadNaturalSearch(query string, requestID uint64) tea.Cmd {
 			return naturalSearchBaseLoadedMsg{requestID: requestID, searchID: searchID, query: query, naturalMode: mode, err: err}
 		}
 		request := api.DocumentSearchRequest{Query: query, Mode: wireMode, Limit: maxNaturalSearchItems,
-			Profile: profile.Name, BindingID: binding, Fence: api.DocumentSourceFence{
+			Profile: profile.Name, BindingID: binding, Fence: api.DocumentSearchFence{
 				VaultUID: resolution.Fence.VaultUID, ContentVersionIDs: resolution.Fence.ContentVersionIDs,
 			}, Explain: true}
 		if len(resolution.Fence.ContentVersionIDs) == 0 {

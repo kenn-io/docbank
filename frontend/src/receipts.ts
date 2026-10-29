@@ -438,6 +438,8 @@ export function validateDocumentSimilarReport(
   return value as unknown as DocumentSimilarReport;
 }
 
+// The browser resolves explicit source fences before searching. Keep this
+// validator restricted to that authority even as the wire adds server scopes.
 export function validateDocumentSearchReport(
   value: unknown,
   request: DocumentSearchRequest,
@@ -445,19 +447,23 @@ export function validateDocumentSearchReport(
   const invalid = (): never => {
     throw new Error("The daemon returned an invalid search response.");
   };
+  const sourceVersions = request.fence.content_version_ids ?? [];
   if (
     !canonicalUUID(request.fence.vault_uid) ||
-    request.fence.content_version_ids.length < 1 ||
-    request.fence.content_version_ids.length > 4096
+    request.scope !== undefined ||
+    !Array.isArray(sourceVersions) ||
+    sourceVersions.length < 1 ||
+    sourceVersions.length > 4096
   )
     invalid();
   const versions = new Set<string>();
-  for (const versionID of request.fence.content_version_ids) {
+  for (const versionID of sourceVersions) {
     if (!canonicalUUID(versionID) || versions.has(versionID)) invalid();
     versions.add(versionID);
   }
   if (!isRecord(value)) invalid();
   const report = value as UnknownRecord;
+  if (report.scope !== undefined || report.observed_scope_count !== undefined) invalid();
   const requestedMode = request.mode || "auto";
   const actualMode = report.actual_mode;
   if (

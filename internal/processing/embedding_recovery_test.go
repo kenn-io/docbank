@@ -393,6 +393,21 @@ func TestEmbeddingSemanticSearchAfterSecondEndpointMove(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, search.Results, 1)
 	require.Equal(t, version.ID, search.Results[0].Document.ContentVersionID)
+	wholeVault, err := service.Search(t.Context(), SearchRequest{
+		Profile: "current", Fence: SourceFence{VaultUID: f.catalog.VaultID()},
+		Scope: &SearchScope{Kind: "all_live", Filters: &store.SearchOptions{MIMEType: "application/pdf"}},
+		Query: "synthetic", Mode: "semantic", Limit: 1,
+	})
+	require.NoError(t, err)
+	require.Len(t, wholeVault.Results, 1)
+	require.Equal(t, version.ID, wholeVault.Results[0].Document.ContentVersionID)
+	require.Equal(t, 1, wholeVault.Coverage.CompleteDocuments, "only the rebuilt document has a head for the current profile")
+	require.Equal(t, wholeVault.Coverage.ScopedDocuments, wholeVault.ObservedScopeCount)
+	require.NotNil(t, wholeVault.Scope)
+	require.NotNil(t, wholeVault.Scope.Filters)
+	require.Equal(t, "application/pdf", wholeVault.Scope.Filters.MIMEType)
+	require.Empty(t, wholeVault.Scope.Filters.VectorSpaceID)
+	require.Nil(t, wholeVault.Scope.Filters.EmbeddingDescriptor)
 	require.Zero(t, second.documents.Load(), "building and searching a retained space must not re-embed its documents")
 }
 

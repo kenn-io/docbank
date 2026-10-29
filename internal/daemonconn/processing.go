@@ -499,7 +499,7 @@ func validateDocumentSimilarReport(request api.DocumentSimilarRequest, report ap
 		converted.Results = append(converted.Results, api.DocumentSearchResult{VaultUID: result.VaultUID, NodeID: result.NodeID,
 			ContentVersionID: result.ContentVersionID, Rank: result.Rank, SemanticRank: result.Rank, Score: result.Score, Path: result.Path, Evidence: result.Evidence})
 	}
-	return validateDocumentSearchReport(api.DocumentSearchRequest{Mode: "semantic", Limit: request.Limit, Fence: request.Fence}, converted)
+	return validateDocumentSearchReport(api.DocumentSearchRequest{Mode: "semantic", Limit: request.Limit, Fence: api.DocumentSearchFence(request.Fence)}, converted)
 }
 
 // ValidateDocumentSearch asks the daemon to apply ordinary search semantics
@@ -520,9 +520,31 @@ func (c *Connection) ValidateDocumentSearch(
 }
 
 func validateDocumentSearchReport(request api.DocumentSearchRequest, report api.DocumentSearchReport) error {
-	if !validUUIDv4(request.Fence.VaultUID) || len(request.Fence.ContentVersionIDs) < 1 ||
-		len(request.Fence.ContentVersionIDs) > 4096 {
+	if !validUUIDv4(request.Fence.VaultUID) || len(request.Fence.ContentVersionIDs) > 4096 ||
+		(request.Scope == nil) == (len(request.Fence.ContentVersionIDs) == 0) {
 		return errors.New("request fence identity is invalid")
+	}
+	if request.Scope != nil {
+		if request.Scope.Kind != "all_live" || request.MediaSources != nil || report.Scope == nil ||
+			report.Scope.Kind != request.Scope.Kind || report.ObservedScopeCount == nil || *report.ObservedScopeCount < 0 {
+			return errors.New("search scope authority is inconsistent")
+		}
+		if (request.Scope.Filters == nil) != (report.Scope.Filters == nil) {
+			return errors.New("search scope filters changed")
+		}
+		if request.Scope.Filters != nil {
+			normalized, err := validateDocumentSourceFenceRequest(api.DocumentSourceFenceResolveRequest{Filters: request.Scope.Filters})
+			if err != nil || *normalized.Filters != *report.Scope.Filters {
+				return errors.New("search scope filters changed")
+			}
+		}
+		if len(report.Results) > *report.ObservedScopeCount ||
+			report.Coverage.ScopedDocuments > *report.ObservedScopeCount ||
+			(report.Coverage.State != "unknown" && report.Coverage.ScopedDocuments != *report.ObservedScopeCount) {
+			return errors.New("search scope count is inconsistent")
+		}
+	} else if report.Scope != nil || report.ObservedScopeCount != nil {
+		return errors.New("unrequested search scope was returned")
 	}
 	versions := make(map[string]struct{}, len(request.Fence.ContentVersionIDs))
 	for _, versionID := range request.Fence.ContentVersionIDs {
@@ -577,7 +599,7 @@ func validateDocumentSearchReport(request api.DocumentSearchRequest, report api.
 	} else if report.Reranking != nil {
 		return errors.New("unrequested reranking receipt was returned")
 	}
-	if report.Coverage.ScopedDocuments < 0 || report.Coverage.ScopedDocuments > len(versions) ||
+	if report.Coverage.ScopedDocuments < 0 || (request.Scope == nil && report.Coverage.ScopedDocuments > len(versions)) ||
 		report.Coverage.CompleteDocuments < 0 ||
 		report.Coverage.CompleteDocuments > report.Coverage.ScopedDocuments ||
 		(report.Coverage.State != "unknown" && report.Coverage.State != "complete" &&
@@ -607,7 +629,7 @@ func validateDocumentSearchReport(request api.DocumentSearchRequest, report api.
 		if result.VaultUID != request.Fence.VaultUID || !validUUIDv4(result.VaultUID) {
 			return fmt.Errorf("result %d escaped the vault fence", index)
 		}
-		if _, allowed := versions[result.ContentVersionID]; !allowed || !validUUIDv4(result.ContentVersionID) {
+		if _, allowed := versions[result.ContentVersionID]; (request.Scope == nil && !allowed) || !validUUIDv4(result.ContentVersionID) {
 			return fmt.Errorf("result %d escaped the content-version fence", index)
 		}
 		if result.NodeID < 1 || result.Rank != index+1 || math.IsNaN(result.Score) || math.IsInf(result.Score, 0) {
