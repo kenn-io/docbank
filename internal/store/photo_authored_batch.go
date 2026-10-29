@@ -126,10 +126,7 @@ func (s *Store) PreparePhotoAuthored(ctx context.Context, selection PhotoSetSele
 		}
 		return nil
 	})
-	if err != nil {
-		return PhotoAuthoredPreparation{}, err
-	}
-	return result, nil
+	return result, err
 }
 
 // photoAuthoredSelectionIDs resolves a metadata-edit selection and maps album

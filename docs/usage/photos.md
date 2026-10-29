@@ -898,7 +898,7 @@ Cull shows whole-photo marks first, then one closeup per face in creation order,
 
 ## Best shots
 
-Burst stacks show KEEP and CUT suggestions automatically when at least two frames have comparable measurements. The planner ranks shared focus, open eyes, aesthetics, and framing, with weights of 100, 90, 50, and 45. Blur duplicates inverse focus, so it adds no second vote. Ties favor RAW originals, then stable photo IDs. An unmeasured frame stays undecided. Frames with confirmed flags leave planning before ranking. A stack with an owner-confirmed pick receives no further keeper proposals.
+Burst stacks show KEEP and CUT suggestions automatically when at least two frames have comparable measurements. The planner ranks shared focus, open eyes, aesthetics, and framing, with weights of 100, 90, 50, and 45. The eyes score uses the least-open prominent face. Blur duplicates inverse focus, so it adds no second vote. Ties favor RAW originals, then stable photo IDs. An unmeasured frame stays undecided. Frames with confirmed flags leave planning before ranking. A stack with an owner-confirmed pick receives no further keeper proposals.
 
 Face closeups show Sharpness, Light, Facing, Prominence, Eyes, and Smile. Missing observations show Unavailable. A face's worst measured sharpness, light, facing, or eyes score sets its grade. Below 0.33 is red for a subject occupying at least 2.1% of the frame, otherwise yellow. Scores from 0.33 to below 0.42 are yellow; 0.42 and above are green. Smile describes the face and doesn't affect its grade. Tiny crops leave sharpness and light unavailable.
 
