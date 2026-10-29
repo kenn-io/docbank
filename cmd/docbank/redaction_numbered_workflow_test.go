@@ -83,13 +83,15 @@ func TestNumberedNativePDFCLI(t *testing.T) {
 			Kind: "text", MapSHA256: f.prep.Map.SHA256, Span: &redaction.Span{Start: page.Span.Start, End: page.Span.Start + 6}}}
 	}
 	f.resolve(t, masks)
+	var historical processing.RedactionReview
 	if os.Getenv(child) == "v2" {
 		// Retain the reviewed recipe across the upgrade; no writer-selection flag.
 		recipe := pdfproduction.QualifiedRecipe()
 		recipe.WriterVersion = "docbank-fresh-objects/v2"
-		review, err := processing.BuildRedactionReview(f.prep, masks, f.prep.Selection.Revision, recipe)
+		historical, err = processing.BuildRedactionReview(
+			f.prep, masks, f.prep.Selection.Revision, recipe)
 		require.NoError(t, err)
-		data, err := json.Marshal(review)
+		data, err := json.Marshal(historical)
 		require.NoError(t, err)
 		require.NoError(t, os.WriteFile(f.review, data, 0600))
 	}
@@ -99,6 +101,52 @@ func TestNumberedNativePDFCLI(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &namespace))
 	reserve := []string{"redaction", "reserve", f.preparation, f.masks, f.review,
 		"--namespace", namespace.NamespaceID, "--start", "1", "--retain-original", "--json"}
+	if os.Getenv(child) == "v2" {
+		_, err = runCLI(t, reserve...)
+		require.Equal(t, exitStale, commandExitCode(err, true))
+		require.ErrorContains(t, err, "resolve again")
+		plain := filepath.Join(f.dir, "obsolete.zip")
+		_, err = runCLI(t, "redaction", "render", f.preparation, f.masks, f.review, plain)
+		require.Equal(t, exitStale, commandExitCode(err, true))
+		require.ErrorContains(t, err, "resolve again")
+		_, err = os.Stat(plain)
+		require.ErrorIs(t, err, os.ErrNotExist)
+
+		// Seed a pending pre-upgrade reservation through the real storage contract.
+		// The daemon is stopped; no admission bypass is exposed to callers.
+		stop()
+		catalog, err := store.Open(filepath.Join(root, "docbank.db"))
+		require.NoError(t, err)
+		ns := store.BatesNamespace{NamespaceID: namespace.NamespaceID, Prefix: "QUAL", Padding: 6}
+		recipe, err := processing.BuildNumberedRecipe(
+			uuid.MustParse(catalog.VaultID()), ns, 1, historical)
+		require.NoError(t, err)
+		request, err := recipe.PlanRequest(uuid.New())
+		require.NoError(t, err)
+		request.OperationID = uuid.New().String()
+		_, err = catalog.ReplaySnapshotBatesRange(t.Context(), request)
+		require.ErrorIs(t, err, store.ErrNotFound, "refused reservation must not retain numbers")
+		source := f.prep.Selection.Source
+		occurrence := request.Pages[0].OccurrenceID
+		snapshot := store.SnapshotSealRequest{SnapshotID: request.SnapshotID,
+			Members: []store.CollectionSnapshotMember{{
+				Ordinal: 1, OccurrenceID: occurrence, NodeID: f.prep.Selection.NodeID,
+				ContentVersionID: source.VersionID, BlobSHA256: source.SHA256, Size: source.Size,
+				FamilyID: occurrence, FamilyOrder: 1, DisplayName: "original.pdf",
+				FrozenFieldsJSON: "{}", DocumentKind: "other", SelectedSourcePages: []int{1, 2},
+				SelectedPDFSHA256: source.SHA256, SourcePageCount: 2,
+				Representations: []store.CollectionSnapshotRepresentation{{
+					OccurrenceID: occurrence, Role: "native", Status: "available", TextAuthority: "none",
+					ContentVersionID: source.VersionID, BlobSHA256: source.SHA256,
+					MediaType: "application/pdf", Size: source.Size, VerifiedPageCount: 2,
+				}},
+			}}}
+		_, err = catalog.ReserveSnapshotBatesRange(t.Context(), snapshot, request)
+		require.NoError(t, err)
+		require.NoError(t, catalog.Close())
+		stop = startServe(t)
+		waitForDaemon(t, root)
+	}
 	out, err = runCLI(t, reserve...)
 	require.NoError(t, err, out)
 	var reservation processing.NumberedReservation

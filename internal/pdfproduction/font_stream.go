@@ -68,7 +68,10 @@ func (f *freshIndex) verifyFont(ctx context.Context, version string) error {
 	for range 20 {
 		b, err := r.ReadByte()
 		if err != nil {
-			return flateStreamError(err)
+			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+				return fmt.Errorf("%w: incomplete font stream length: %w", ErrPDFIntegrity, err)
+			}
+			return fmt.Errorf("read font stream length: %w", err)
 		}
 		if b == ' ' {
 			break

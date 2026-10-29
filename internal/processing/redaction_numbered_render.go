@@ -11,6 +11,7 @@ import (
 
 	"go.kenn.io/docbank/document/pagerender"
 	"go.kenn.io/docbank/internal/canonical"
+	"go.kenn.io/docbank/internal/pdfproduction"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -24,9 +25,13 @@ func (s *Service) prepareRedactionRender(ctx context.Context, op *nativePDFOpera
 	}()
 	resolve := RedactionResolveRequest{Preparation: request.Preparation, Masks: request.Masks}
 	var reservation *NumberedReservation
-	review, err := MatchRedactionReview(request.Preparation, request.Masks, request.Preparation.Selection.Revision, request.ReviewSHA256)
+	review, err := MatchRedactionReview(request.Preparation, request.Masks,
+		request.Preparation.Selection.Revision, request.ReviewSHA256)
 	if err != nil {
 		return admitted, pdf, err
+	}
+	if request.AllocationID == uuid.Nil() && review.Recipe != pdfproduction.QualifiedRecipe() {
+		return admitted, pdf, ErrRedactionReviewOutdated
 	}
 	if request.AllocationID != uuid.Nil() {
 		a, err := s.catalog.BatesAllocation(ctx, request.AllocationID.String())

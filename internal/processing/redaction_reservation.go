@@ -9,6 +9,7 @@ import (
 
 	"go.kenn.io/docbank/document/pagerender"
 	"go.kenn.io/docbank/internal/canonical"
+	"go.kenn.io/docbank/internal/pdfproduction"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -21,7 +22,8 @@ func (s *Service) ReserveNumberedPDF(ctx context.Context, r NumberedReservationR
 	if s == nil {
 		return result, ErrRedactionPreparationUnavailable
 	}
-	review, err := MatchRedactionReview(r.Preparation, r.Masks, r.Preparation.Selection.Revision, r.ReviewSHA256)
+	review, err := MatchRedactionReview(
+		r.Preparation, r.Masks, r.Preparation.Selection.Revision, r.ReviewSHA256)
 	if err != nil {
 		return result, err
 	}
@@ -47,6 +49,9 @@ func (s *Service) ReserveNumberedPDF(ctx context.Context, r NumberedReservationR
 	if !errors.Is(err, store.ErrNotFound) {
 		return result, err
 	}
+	if review.Recipe != pdfproduction.QualifiedRecipe() {
+		return result, ErrRedactionReviewOutdated
+	}
 	if runtime == nil || !pagerender.SupportedPlatform() {
 		return result, ErrRedactionPreparationUnavailable
 	}
@@ -55,7 +60,8 @@ func (s *Service) ReserveNumberedPDF(ctx context.Context, r NumberedReservationR
 		return result, err
 	}
 	defer func() { resultErr = errors.Join(resultErr, op.Close()) }()
-	admitted, err := s.freshRedactionReview(op.ctx, op, RedactionResolveRequest{Preparation: r.Preparation, Masks: r.Masks}, runtime, review.Recipe)
+	resolve := RedactionResolveRequest{Preparation: r.Preparation, Masks: r.Masks}
+	admitted, err := s.freshRedactionReview(op.ctx, op, resolve, runtime, review.Recipe)
 	if err != nil {
 		return result, err
 	}

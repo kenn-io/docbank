@@ -98,14 +98,9 @@ func TestRedactionReviewHistoricalWriter(t *testing.T) {
 	require.NoError(t, err)
 	masks := []RedactionMask{{ID: uuid.New(), Selector: redaction.Selector{
 		Kind: "text", MapSHA256: prep.Map.SHA256, Span: &redaction.Span{Start: 0, End: 6}}}}
-	review, err := BuildRedactionReview(prep, masks, 1, pdfproduction.QualifiedRecipe())
-	require.NoError(t, err)
-	review.Recipe.WriterVersion = "docbank-fresh-objects/v2"
-	decisions := []redaction.Decision{{ID: masks[0].ID.String(), MemberID: prep.Selection.Source.VersionID,
-		Action: "redact", Selector: masks[0].Selector}}
-	review.Resolved, err = redaction.Resolve(prep.Map, "redact_selected", decisions, review.Recipe)
-	require.NoError(t, err)
-	review.SHA256, err = redactionReviewDigest(review)
+	recipe := pdfproduction.QualifiedRecipe()
+	recipe.WriterVersion = "docbank-fresh-objects/v2"
+	review, err := BuildRedactionReview(prep, masks, 1, recipe)
 	require.NoError(t, err)
 	require.NoError(t, ValidateRedactionReview(prep, masks, review))
 	matched, err := MatchRedactionReview(prep, masks, 1, review.SHA256)

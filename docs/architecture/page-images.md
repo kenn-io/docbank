@@ -236,8 +236,11 @@ verification does not depend on a particular Go encoder. A raw v3 font or a
 compressed v2 font is an integrity failure. Supported historical writers are
 listed in `internal/pdfproduction/dependencies.json`.
 
-New resolve calls use v3. Existing v2 reviews remain fully verifiable and render
-with v2; pending numbered reservations keep their review digest and labels.
+New resolve calls use v3. Existing v2 deliveries remain fully verifiable; v2
+rendering is reserved for allocations already created with that recipe. A new
+reservation or plain render from a v2 review returns `redaction_review_changed`
+(exit 4), with advice to resolve again. Reservation replay precedes this check,
+so pending v2 allocations keep their review digest and labels.
 Client and service admission reconstruct the request's review digest against the
 two qualified native recipes. Allocation admission also checks the rebuilt
 numbered recipe against the ledger before capture. No failed PDF check is retried

@@ -270,9 +270,11 @@ one. Recovery without review files works after restart and backup/restore,
 without a configured page runtime or the original renderer, writer or font version.
 Its assurance depends on the vault's retained record. Full verification requires
 a supported engine recipe. Both the original v2 writer and the compressed-font
-v3 writer are supported; existing v2 reviews and unfinished v2 reservations still
-work. New reviews use v3, saving about 3.62 MB per PDF without changing its font
-or character coverage. Other unqualified engine identities report "verifier
+v3 writer are supported for verification. Unfinished v2 reservations still render
+with their original review and numbers. To start a new reservation or plain
+render from an old v2 review, resolve again; otherwise the command exits 4.
+New reviews use v3, saving about 3.62 MB per PDF without changing its font or
+character coverage. Other unqualified engine identities report "verifier
 version differs" (exit 1), not an integrity failure. Footer text and placement
 must match exactly. Visible numbers are compared with independently rendered
 expected labels. Each grayscale
