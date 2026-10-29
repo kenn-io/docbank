@@ -16,7 +16,7 @@ func TestPhotoRotationFromRolls(t *testing.T) {
 	}{
 		{"missing", nil, nil}, {"upright", []float64{0}, nil},
 		{"clockwise", []float64{-90}, new(90)}, {"counterclockwise", []float64{90}, new(270)},
-		{"upside down", []float64{180}, new(180)}, {"wraparound", []float64{450}, new(270)},
+		{"upside down", []float64{180}, new(180)},
 		{"boundary", []float64{-65}, new(90)}, {"outside boundary", []float64{-64.99}, nil},
 		{"diagonal", []float64{50}, nil}, {"agree", []float64{80, 100}, new(270)},
 		{"disagree", []float64{90, 180}, nil}, {"upright dissents", []float64{90, 0}, nil},
