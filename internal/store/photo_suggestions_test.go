@@ -709,11 +709,11 @@ func TestPhotoDescriptionPredicates(t *testing.T) {
 	proposal := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Caption: "From A."})
 	require.True(t, settled(""), "a live suggestion settles automatic work")
 	require.True(t, settled(producerA), "the current producer needs no refresh")
+	require.False(t, settled(producerB), "another producer can refresh rotation while a suggestion is pending")
 
 	_, err := s.RespondPhotoSuggestion(ctx, proposal.ID, dismissalOf(ctx, t, s, proposal))
 	require.NoError(t, err)
 	require.True(t, settled(""), "a changed default profile never re-describes a dismissal")
-	require.True(t, settled(producerA), "the producer of a dismissal is not asked again")
 	require.False(t, settled(producerB), "an explicit start with another fingerprint can refresh rotation")
 }
 
@@ -1156,7 +1156,7 @@ func TestPhotoRotationCurrentFaces(t *testing.T) {
 	require.Equal(t, "description", proposals[0].RotationSource, "dismissing the last face immediately reveals the retained fallback")
 }
 
-func TestPhotoRotationLatestProviderAnswer(t *testing.T) {
+func TestPhotoRotationResetsOnRepublish(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name   string
@@ -1180,7 +1180,7 @@ func TestPhotoRotationLatestProviderAnswer(t *testing.T) {
 
 func TestPhotoRotationBackup(t *testing.T) {
 	t.Parallel()
-	for _, decision := range []string{"pending", "caption accepted", "caption dismissed", "rotation confirmed"} {
+	for _, decision := range []string{"caption accepted", "caption dismissed", "rotation confirmed"} {
 		t.Run(decision, func(t *testing.T) {
 			s := newTestStore(t)
 			asset := albumAsset(t, s, "landscape.jpg")
@@ -1222,11 +1222,7 @@ func TestPhotoRotationBackup(t *testing.T) {
 			}
 			publishPhotoDescription(t, restored, asset, producerA, document.PhotoDescription{Caption: "A landscape.", Rotation: new(270)})
 			suggestions := photoSuggestionValues(t, restored, asset.ID)
-			if decision == "pending" {
-				require.Len(t, suggestions, 2)
-			} else {
-				require.Len(t, suggestions, 1)
-			}
+			require.Len(t, suggestions, 1)
 			require.Equal(t, new(270), suggestions[len(suggestions)-1].Rotation)
 		})
 	}
