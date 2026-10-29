@@ -184,25 +184,17 @@ func TestPhotoFaceCropReports(t *testing.T) {
 		}
 	}
 	face := store.PhotoFace{FaceID: "face", Revision: 2, Box: document.FaceBox{X: 0, Y: 0, Width: 0.5, Height: 1}, EyesOpen: new(false), Facing: new(0.8), Smile: new(true)}
-	report := measurePhotoFace(source, face)
+	var report, dark, tiny document.PhotoFaceReport
+	measurePhotoFace(source, face, &report)
 	require.NotNil(t, report.Sharpness)
 	require.Greater(t, *report.Sharpness, 0.9)
 	require.Greater(t, *report.Light, 0.9)
-	require.Equal(t, face.Facing, report.Facing)
-	require.Equal(t, face.EyesOpen, report.EyesOpen)
-	require.Equal(t, face.Smile, report.Smile)
 	face.Box.X = 0.5
-	dark := measurePhotoFace(source, face)
+	measurePhotoFace(source, face, &dark)
 	require.Zero(t, *dark.Light)
 	require.Zero(t, *dark.Sharpness)
 	face.Box.Width = 0.2
-	face.Facing = nil
-	face.EyesOpen = nil
-	face.Smile = nil
-	tiny := measurePhotoFace(source, face)
+	measurePhotoFace(source, face, &tiny)
 	require.Nil(t, tiny.Light)
 	require.Nil(t, tiny.Sharpness)
-	require.Nil(t, tiny.Facing)
-	require.Nil(t, tiny.EyesOpen)
-	require.Nil(t, tiny.Smile)
 }

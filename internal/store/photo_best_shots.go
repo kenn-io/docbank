@@ -8,9 +8,6 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
-// PhotoBestShot is a computed offer until the owner confirms a flag.
-type PhotoBestShot = document.PhotoBestShotProposal
-
 type PhotoBestShotResponse struct {
 	AssetID  string `json:"asset_id" format:"uuid"`
 	Flag     string `json:"flag" enum:"pick,reject"`
@@ -18,7 +15,7 @@ type PhotoBestShotResponse struct {
 }
 
 // bestShotsTx reuses the prepared files for a bounded observed stack.
-func (s *Store) bestShotsTx(ctx context.Context, tx *sql.Tx, ids []string, prep PhotoAuthoredPreparation, loaded map[string]photoAuthoredLoaded) ([]PhotoBestShot, error) {
+func (s *Store) bestShotsTx(ctx context.Context, tx *sql.Tx, ids []string, prep PhotoAuthoredPreparation, loaded map[string]photoAuthoredLoaded) ([]document.PhotoBestShotProposal, error) {
 	versions := map[string]string{}
 	var versionIDs []string
 	for _, t := range prep.Targets {
@@ -57,7 +54,7 @@ func (s *Store) bestShotsTx(ctx context.Context, tx *sql.Tx, ids []string, prep 
 
 // PhotoStackBestShots enriches a complete read, publishing nothing on failure.
 func (s *Store) PhotoStackBestShots(ctx context.Context, stacks []PhotoStack, hidden bool) error {
-	offers := make([][]PhotoBestShot, len(stacks))
+	offers := make([][]document.PhotoBestShotProposal, len(stacks))
 	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
 		settings, err := photoSettingsTx(ctx, tx)
 		if err != nil {
@@ -102,7 +99,9 @@ func (s *Store) respondPhotoBestShotsTx(ctx context.Context, tx *sql.Tx, request
 			return result, ErrInvalidPhotoAsset
 		}
 		seen[response.AssetID] = true
-		if !slices.ContainsFunc(offers, func(p PhotoBestShot) bool { return p.AssetID == response.AssetID && p.Flag == response.Flag }) {
+		if !slices.ContainsFunc(offers, func(p document.PhotoBestShotProposal) bool {
+			return p.AssetID == response.AssetID && p.Flag == response.Flag
+		}) {
 			return result, ErrStalePhotoStack
 		}
 		for _, t := range prep.Targets {

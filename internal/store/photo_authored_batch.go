@@ -11,6 +11,8 @@ import (
 	"log/slog"
 	"math"
 	"slices"
+
+	"go.kenn.io/docbank/document"
 )
 
 type PhotoKeywordEdit struct {
@@ -74,10 +76,10 @@ type PhotoPreparedTarget struct {
 }
 
 type PhotoAuthoredPreparation struct {
-	Proposals   []PhotoBestShot       `json:"proposals,omitempty"`
-	Suggestions []PhotoSuggestion     `json:"suggestions,omitempty"`
-	Assets      []PhotoAsset          `json:"assets"`
-	Targets     []PhotoPreparedTarget `json:"targets"`
+	Proposals   []document.PhotoBestShotProposal `json:"proposals,omitempty"`
+	Suggestions []PhotoSuggestion                `json:"suggestions,omitempty"`
+	Assets      []PhotoAsset                     `json:"assets"`
+	Targets     []PhotoPreparedTarget            `json:"targets"`
 }
 
 type PhotoAuthoredBatch struct {

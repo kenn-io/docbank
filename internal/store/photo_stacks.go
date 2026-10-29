@@ -12,6 +12,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"go.kenn.io/docbank/document"
 )
 
 // MaxPhotoStackFrames bounds a stack to one decision request. A longer
@@ -30,7 +32,7 @@ var ErrStalePhotoStack = errors.New("photo stack changed; refresh photos before 
 
 // PhotoStack is one burst of at least two frames in ascending capture order.
 type PhotoStack struct {
-	Proposals []PhotoBestShot
+	Proposals []document.PhotoBestShotProposal
 
 	AssetIDs         []string
 	RepresentativeID string

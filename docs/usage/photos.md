@@ -405,7 +405,7 @@ or `pending` with `signals: null` while work can finish. A measured zero stays z
 Replacing content or changing the display file selects that version's signals.
 Videos have no quality object. `unavailable` with `signals: null` means work
 has finished without scores: the grid preview is unsupported or failed, or its
-verified bytes do not decode. Temporary read failures stay `pending` and retry.
+verified bytes do not decode; detected faces still appear in `face_reports` without Sharpness or Light. Temporary read failures stay `pending` and retry.
 
 All scores use the 0..1 scale. Focus measures adjacent luminance differences
 on a 16-by-16 sample, stretched by a 0.15 calibration ceiling. At that size it
