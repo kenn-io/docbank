@@ -20,6 +20,7 @@ import (
 	"go.kenn.io/docbank/document/redaction"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/pdfproduction"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/redactiontest"
 	"go.kenn.io/docbank/internal/store"
@@ -78,7 +79,7 @@ func TestRedactionHTTP(t *testing.T) {
 	require.Equal(t, committed, reservation, "a lost reply must reuse the committed reservation")
 
 	wrongMasks := []processing.RedactionMask{{ID: uuid.New(), Selector: redaction.Selector{Kind: "text", MapSHA256: prep.Map.SHA256, Span: &redaction.Span{End: 11}}}}
-	wrongReview, err := processing.BuildRedactionReview(prep, wrongMasks, 1)
+	wrongReview, err := processing.BuildRedactionReview(prep, wrongMasks, 1, pdfproduction.QualifiedRecipe())
 	require.NoError(t, err)
 	response, body = do(t, ts, http.MethodPost, "/api/v1/redaction/render", nil, processing.RedactionRenderRequest{
 		Preparation: prep, Masks: wrongMasks, ReviewSHA256: wrongReview.SHA256, AllocationID: reservation.AllocationID})

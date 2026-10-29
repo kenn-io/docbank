@@ -17,13 +17,14 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document/redaction"
+	"go.kenn.io/docbank/internal/pdfproduction"
 	"go.kenn.io/docbank/internal/processing"
 )
 
 func TestRedactionClientArchive(t *testing.T) {
 	prep := redactionClientPreparation(t)
 	masks := redactionClientMasks(prep)
-	review, err := processing.BuildRedactionReview(prep, masks, prep.Selection.Revision)
+	review, err := processing.BuildRedactionReview(prep, masks, prep.Selection.Revision, pdfproduction.QualifiedRecipe())
 	require.NoError(t, err)
 	t.Run("oversized local archive", func(t *testing.T) {
 		reader := &redactionCountingReader{}

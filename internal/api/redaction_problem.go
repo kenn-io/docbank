@@ -72,6 +72,8 @@ func classifyRedactionProblem(ctx context.Context, err error) *Error {
 		return NewError(409, "redaction_preparation_changed", "native PDF evidence changed; prepare and review again")
 	case errors.Is(err, processing.ErrRedactionReviewChanged):
 		return NewError(409, "redaction_review_changed", "native PDF masks or review changed; resolve and review again")
+	case errors.Is(err, processing.ErrRedactionReviewOutdated):
+		return NewError(409, "redaction_review_changed", err.Error())
 	case errors.Is(err, processing.ErrRedactionPreparationLimit):
 		return NewError(422, "redaction_limit", "native PDF operation exceeds its size or work limits")
 	case errors.Is(err, processing.ErrRedactionPreparationUnsupported):

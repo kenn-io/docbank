@@ -234,7 +234,7 @@ records the reservation, labels and indefinite original retention.
 The vault retains the numbered **PDF**, its recipe and page receipts. It does not
 retain the ZIP, sidecar or the preparation, masks and review files. Keep those
 three review inputs separately for full verification and ZIP reconstruction.
-Each PDF currently embeds about 9.6 MB of font data, even for a small document.
+Each new PDF embeds about 6 MB of compressed font data, even for a small document.
 
 Reservation and snapshot creation are atomic. After an interrupted reservation,
 repeat exactly the same command with the same review, namespace, start and
@@ -269,9 +269,15 @@ the checked recipe before download; a failed full check never retries a narrower
 one. Recovery without review files works after restart and backup/restore,
 without a configured page runtime or the original renderer, writer or font version.
 Its assurance depends on the vault's retained record. Full verification requires
-a matching engine recipe; a mismatch reports "verifier version differs" (exit 1),
-not an integrity failure. Footer text and placement must match exactly. Visible
-numbers are compared with independently rendered expected labels. Each grayscale
+a supported engine recipe. Both the original v2 writer and the compressed-font
+v3 writer are supported for verification. Unfinished v2 reservations still render
+with their original review and numbers. To start a new reservation or plain
+render from an old v2 review, resolve again; otherwise the command exits 4.
+New reviews use v3, saving about 3.62 MB per PDF without changing its font or
+character coverage. Other unqualified engine identities report "verifier
+version differs" (exit 1), not an integrity failure. Footer text and placement
+must match exactly. Visible numbers are compared with independently rendered
+expected labels. Each grayscale
 sample inside the label box may differ by at most 16 on the 0–255 scale; positions
 must match, and pixels outside the box must be white. Render-time verification
 still compares the complete raster exactly. Full verification still does not prove unmasked pixels match the source

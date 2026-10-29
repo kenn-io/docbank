@@ -57,7 +57,7 @@ func TestRedactionClientExpansion(t *testing.T) {
 func TestRedactionClientReview(t *testing.T) {
 	prep := redactionClientPreparation(t)
 	masks := redactionClientMasks(prep)
-	review, err := processing.BuildRedactionReview(prep, masks, prep.Selection.Revision)
+	review, err := processing.BuildRedactionReview(prep, masks, prep.Selection.Revision, pdfproduction.QualifiedRecipe())
 	require.NoError(t, err)
 	for _, changed := range []bool{false, true} {
 		t.Run(map[bool]string{false: "valid", true: "changed plan"}[changed], func(t *testing.T) {

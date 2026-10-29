@@ -21,6 +21,8 @@ var (
 	ErrRedactionInvalidPreparation = errors.New("native PDF preparation is inconsistent")
 	ErrRedactionPreparationChanged = errors.New("native PDF evidence changed; prepare and review again")
 	ErrRedactionReviewChanged      = errors.New("native PDF masks or review changed; resolve and review again")
+	ErrRedactionReviewOutdated     = errors.New(
+		"review uses an older writer; resolve again before starting a new delivery")
 )
 
 type NativePDFSelection struct {

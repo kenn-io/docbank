@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/canonical"
+	"go.kenn.io/docbank/internal/pdfproduction"
 	"go.kenn.io/docbank/internal/pdfstamp"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
@@ -24,7 +25,7 @@ import (
 
 func TestNumberedDownloadVerificationScope(t *testing.T) {
 	prep := redactionClientPreparation(t)
-	review, err := processing.BuildRedactionReview(prep, redactionClientMasks(prep), 1)
+	review, err := processing.BuildRedactionReview(prep, redactionClientMasks(prep), 1, pdfproduction.QualifiedRecipe())
 	require.NoError(t, err)
 	ns := store.BatesNamespace{NamespaceID: uuid.New().String(), Prefix: "Q", Padding: 6}
 	recipe, err := processing.BuildNumberedRecipe(uuid.New(), ns, 1, review)
@@ -89,7 +90,7 @@ func TestNumberedDownloadVerificationScope(t *testing.T) {
 // shipped. The record is self-consistent; only the local engine differs.
 func TestBatesRecordedRecipeAfterUpgrade(t *testing.T) {
 	prep := redactionClientPreparation(t)
-	review, err := processing.BuildRedactionReview(prep, redactionClientMasks(prep), 1)
+	review, err := processing.BuildRedactionReview(prep, redactionClientMasks(prep), 1, pdfproduction.QualifiedRecipe())
 	require.NoError(t, err)
 	ns := store.BatesNamespace{NamespaceID: uuid.New().String(), Prefix: "Q", Padding: 6}
 	numbered, err := processing.BuildNumberedRecipe(uuid.New(), ns, 1, review)

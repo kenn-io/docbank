@@ -4,9 +4,7 @@ import (
 	"bytes"
 	"compress/zlib"
 	"context"
-	"crypto/sha256"
 	"encoding/binary"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -45,7 +43,7 @@ type freshIndex struct {
 	offsets, ends []int64
 }
 
-func parseFreshIndex(ctx context.Context, reader io.ReaderAt, size int64, pages int) (*freshIndex, error) {
+func parseFreshIndex(ctx context.Context, reader io.ReaderAt, size int64, pages int, recipe redaction.Recipe) (*freshIndex, error) {
 	if pages < 1 || pages > maxPageCount || size < 128 || size > maxPDFFileBytes {
 		return nil, pdfIntegrity("invalid fresh PDF envelope bounds")
 	}
@@ -127,24 +125,10 @@ func parseFreshIndex(ctx context.Context, reader io.ReaderAt, size int64, pages 
 	if err := index.expectObject(ctx, 2, fmt.Sprintf("<< /Type /Pages /Count %d /Kids [%s] >>", pages, kids.String())); err != nil {
 		return nil, err
 	}
-	fontHead := fmt.Sprintf("3 0 obj\n<< /Length1 %d /Length %d >>\nstream\n", len(fontBytes), len(fontBytes))
-	if index.ends[3]-index.offsets[3] != int64(len(fontHead)+len(fontBytes)+len(freshStreamEnd)) {
-		return nil, pdfIntegrity("invalid embedded font envelope")
-	}
-	fontReader := contextReader{ctx, index.section(3)}
-	if err := expectFreshBytes(fontReader, fontHead); err != nil {
+	if err := index.verifyFont(ctx, recipe.WriterVersion); err != nil {
 		return nil, err
 	}
-	hash := sha256.New()
-	if _, err := io.CopyN(hash, fontReader, int64(len(fontBytes))); err != nil {
-		return nil, err
-	}
-	if hex.EncodeToString(hash.Sum(nil)) != fontSHA256 {
-		return nil, pdfIntegrity("fresh embedded font identity mismatch")
-	}
-	if err := expectFreshBytes(fontReader, freshStreamEnd); err != nil {
-		return nil, err
-	}
+
 	return index, nil
 }
 
