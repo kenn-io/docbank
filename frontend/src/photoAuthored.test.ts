@@ -1858,12 +1858,15 @@ it("enables Accept selected only while a field is checked", async () => {
 
 it("hides the suggestions while several photos are selected", async () => {
   const editor = editorWithTargets();
+  editor.member("jpeg");
   editor.suggestions = [
     photoSuggestion({ value: { caption: "A harbor.", tags: ["coast"], visible_text: "QUAYSIDE" } }),
+    photoSuggestion({ rotation: 270 }),
   ];
   const view = ui(editor);
   await view.rerender({ actionDisabled: false, count: 2 });
   expect(screen.queryByRole("region", { name: "Suggested photo metadata" })).toBeNull();
+  expect(screen.queryByText("Suggested 270°")).toBeNull();
   editor.dispose();
 });
 
@@ -1871,10 +1874,12 @@ it.each(["busy", "loading", "conflict", "dirty", "action disabled"])(
   "disables suggestion choices while %s",
   async (state) => {
     const editor = editorWithTargets();
+    editor.member("jpeg");
     editor.suggestions = [
       photoSuggestion({
         value: { caption: "A harbor.", tags: ["coast"], visible_text: "QUAYSIDE" },
       }),
+      photoSuggestion({ rotation: 270 }),
     ];
     const view = ui(editor);
     const accept = screen.getByRole("button", { name: "Accept selected" }) as HTMLButtonElement;
@@ -1886,9 +1891,11 @@ it.each(["busy", "loading", "conflict", "dirty", "action disabled"])(
     await view.rerender({ actionDisabled: state === "action disabled", count: 1 });
     const section = within(screen.getByRole("region", { name: "Suggested photo metadata" }));
     expect(accept.disabled).toBe(true);
-    expect((section.getByRole("button", { name: "Dismiss" }) as HTMLButtonElement).disabled).toBe(
-      true,
-    );
+    expect(
+      (screen.getByRole("button", { name: "Rotate 270°" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    for (const dismiss of screen.getAllByRole("button", { name: /^Dismiss$/ }))
+      expect((dismiss as HTMLButtonElement).disabled).toBe(true);
     for (const checkbox of section.getAllByRole("checkbox"))
       expect((checkbox as HTMLInputElement).disabled).toBe(true);
     editor.dispose();
@@ -2209,6 +2216,12 @@ function photoSuggestion(overrides: Partial<api.PhotoSuggestion>): api.PhotoSugg
     source_revision: 1,
     node_revision: 1,
     value: { caption: "", tags: [], visible_text: "" },
+    ...(overrides.rotation === undefined
+      ? {}
+      : {
+          suggestion_id: overrides.content_version_id ?? "version",
+          rotation_source: "description",
+        }),
     ...overrides,
   };
 }
@@ -2358,6 +2371,7 @@ it.each([false, true])("responds to a rotation suggestion, dismiss=%s", async (d
   editor.suggestions = [suggestion];
   const respond = vi.spyOn(api, "respondPhotoSuggestion").mockResolvedValue(
     photoSuggestion({
+      suggestion_id: "version",
       authored_receipt: { receipt_id: "rotation-receipt", before: [], after: [] },
     }),
   );
@@ -2371,7 +2385,7 @@ it.each([false, true])("responds to a rotation suggestion, dismiss=%s", async (d
   );
   await vi.waitFor(() => expect(refresh).toHaveBeenCalledOnce());
   expect(respond).toHaveBeenCalledWith(
-    "suggestion",
+    "version",
     expect.objectContaining({
       response: dismiss ? "dismissed" : "accepted",
       rotation: 270,
@@ -2381,39 +2395,7 @@ it.each([false, true])("responds to a rotation suggestion, dismiss=%s", async (d
     expect.anything(),
   );
   expect(reload).toHaveBeenCalledOnce();
-  expect(refresh).toHaveBeenCalledOnce();
   expect(editor.receiptID).toBe("rotation-receipt");
-  editor.dispose();
-});
-
-it.each(["busy", "loading", "dirty", "conflict"])(
-  "disables rotation suggestions while %s",
-  async (state) => {
-    const editor = editorWithTargets();
-    editor.member("jpeg");
-    editor.suggestions = [photoSuggestion({ rotation: 270 })];
-    if (state === "dirty") editor.stage({ rating: 5 });
-    else if (state === "busy") editor.busy = true;
-    else if (state === "loading") editor.loading = true;
-    else editor.conflict = true;
-    ui(editor);
-    expect(
-      (screen.getByRole("button", { name: "Rotate 270°" }) as HTMLButtonElement).disabled,
-    ).toBe(true);
-    expect((screen.getByRole("button", { name: /^Dismiss$/ }) as HTMLButtonElement).disabled).toBe(
-      true,
-    );
-    editor.dispose();
-  },
-);
-
-it("hides rotation suggestions for several photos", async () => {
-  const editor = editorWithTargets();
-  editor.member("jpeg");
-  editor.suggestions = [photoSuggestion({ rotation: 270 })];
-  const view = ui(editor);
-  await view.rerender({ actionDisabled: false, count: 2 });
-  expect(screen.queryByText("Suggested 270°")).toBeNull();
   editor.dispose();
 });
 

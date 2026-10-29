@@ -39,6 +39,16 @@ func TestParseDescription(t *testing.T) {
 		want      document.PhotoDescription
 		invalid   bool
 	}{
+		{name: "upright rotation", raw: `{"caption":"A harbor.","tags":["coast"],"visible_text":"QUAY","rotation":0}`, want: document.PhotoDescription{Caption: "A harbor.", Tags: []string{"coast"}, VisibleText: "QUAY", Rotation: new(0)}},
+		{name: "90 rotation", raw: `{"caption":"A harbor.","tags":["coast"],"visible_text":"QUAY","rotation":90}`, want: document.PhotoDescription{Caption: "A harbor.", Tags: []string{"coast"}, VisibleText: "QUAY", Rotation: new(90)}},
+		{name: "180 rotation", raw: `{"caption":"A harbor.","tags":["coast"],"visible_text":"QUAY","rotation":180}`, want: document.PhotoDescription{Caption: "A harbor.", Tags: []string{"coast"}, VisibleText: "QUAY", Rotation: new(180)}},
+		{name: "270 rotation", raw: `{"caption":"A harbor.","tags":["coast"],"visible_text":"QUAY","rotation":270}`, want: document.PhotoDescription{Caption: "A harbor.", Tags: []string{"coast"}, VisibleText: "QUAY", Rotation: new(270)}},
+		{name: "unsupported rotation", raw: `{"caption":"A harbor.","tags":["coast"],"visible_text":"QUAY","rotation":45}`, want: document.PhotoDescription{Caption: "A harbor.", Tags: []string{"coast"}, VisibleText: "QUAY"}},
+		{name: "uncertain rotation", raw: `{"caption":"A harbor.","tags":["coast"],"visible_text":"QUAY","rotation":null}`, want: document.PhotoDescription{Caption: "A harbor.", Tags: []string{"coast"}, VisibleText: "QUAY"}},
+		{name: "string rotation", raw: `{"caption":"A harbor.","tags":["coast"],"visible_text":"QUAY","rotation":"90"}`, want: document.PhotoDescription{Caption: "A harbor.", Tags: []string{"coast"}, VisibleText: "QUAY"}},
+		{name: "fractional rotation", raw: `{"caption":"A harbor.","tags":["coast"],"visible_text":"QUAY","rotation":90.5}`, want: document.PhotoDescription{Caption: "A harbor.", Tags: []string{"coast"}, VisibleText: "QUAY"}},
+		{name: "object rotation", raw: `{"caption":"A harbor.","tags":["coast"],"visible_text":"QUAY","rotation":{}}`, want: document.PhotoDescription{Caption: "A harbor.", Tags: []string{"coast"}, VisibleText: "QUAY"}},
+		{name: "rotation only", raw: `{"rotation":90}`, want: document.PhotoDescription{Tags: []string{}, Rotation: new(90)}},
 		{name: "65 tags retain the first ten", raw: string(validTags), want: document.PhotoDescription{Caption: "A coast.", Tags: []string{"tag-00", "tag-01", "tag-02", "tag-03", "tag-04", "tag-05", "tag-06", "tag-07", "tag-08", "tag-09"}}},
 		{name: "normalization", raw: "```json\n{\"caption\":\" A dog on a beach. \",\"tags\":[\" DOG! \",\"dog\",\"ＢＥＡＣＨ\",\"🐕\"],\"visible_text\":\"Welcome\"}\n```", want: document.PhotoDescription{Caption: "A dog on a beach.", Tags: []string{"DOG", "dog", "ＢＥＡＣＨ"}, VisibleText: "Welcome"}},
 		{name: "caption line break", raw: `{"caption":"A coast.\n A harbor.","tags":[],"visible_text":""}`, want: document.PhotoDescription{Caption: "A coast. A harbor.", Tags: []string{}}},
@@ -305,38 +315,4 @@ func TestProbeRequiresRecognitionOfSyntheticImage(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestParseOptionalRotation(t *testing.T) {
-	t.Parallel()
-	for _, angle := range []string{"0", "90", "180", "270", "45", "null", `"90"`, "90.5", "{}"} {
-		t.Run(angle, func(t *testing.T) {
-			got, err := Parse([]byte(`{"caption":"A harbor.","tags":["coast"],"visible_text":"QUAY","rotation":` + angle + `}`))
-			require.NoError(t, err)
-			require.Equal(t, "A harbor.", got.Caption)
-			require.Equal(t, []string{"coast"}, got.Tags)
-			require.Equal(t, "QUAY", got.VisibleText)
-			switch angle {
-			case "0":
-				require.Equal(t, new(0), got.Rotation)
-			case "90":
-				require.Equal(t, new(90), got.Rotation)
-			case "180":
-				require.Equal(t, new(180), got.Rotation)
-			case "270":
-				require.Equal(t, new(270), got.Rotation)
-			default:
-				require.Nil(t, got.Rotation)
-			}
-		})
-	}
-}
-
-func TestParseRotationOnly(t *testing.T) {
-	t.Parallel()
-	got, err := Parse([]byte(`{"rotation":90}`))
-	require.NoError(t, err)
-	require.Equal(t, new(90), got.Rotation)
-	require.Empty(t, got.Caption)
-	require.Empty(t, got.Tags)
 }
