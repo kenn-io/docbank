@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
-import type { DocumentSearchRequest } from "./generated/docbank.js";
+import type { DocumentSearchReport, DocumentSearchRequest } from "./generated/docbank.js";
 import { validateDocumentSearchReport, validateDocumentSourceFenceResolution } from "./receipts.js";
 
 const vault = "11111111-1111-4111-8111-111111111111";
@@ -197,7 +197,7 @@ describe("search result authority", () => {
     profile: "private",
     fence: { vault_uid: vaultID, content_version_ids: [versionID, otherVersionID] },
   };
-  const valid = () => ({
+  const valid = (): DocumentSearchReport => ({
     requested_mode: "semantic",
     actual_mode: "semantic",
     coverage: {

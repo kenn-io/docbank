@@ -39,7 +39,17 @@ it("selects unrated photos and empty flags and labels", async () => {
   expect(onchange.mock.lastCall?.[0].filters.labels).toEqual([""]);
 });
 
-it.each([
+const selectedFacetCases: [
+  string,
+  {
+    mode: Query["mode"];
+    filters: Query["filters"];
+    facets: SnapshotPage["facets"];
+    group: string;
+    button: string | RegExp;
+    clears: (keyof Query["filters"])[];
+  },
+][] = [
   [
     "camera",
     {
@@ -91,28 +101,33 @@ it.each([
       clears: ["modified_after", "modified_before"],
     },
   ],
-] as const)("keeps the selected %s facet editable", async (_name, selectedFacet) => {
-  const onchange = vi.fn();
-  render(FacetSidebar, {
-    unit: "photos",
-    query: {
-      ...originalQuery,
-      mode: selectedFacet.mode,
-      filters: { ...originalQuery.filters, ...selectedFacet.filters },
-    },
-    facets: selectedFacet.facets,
-    disabled: false,
-    onchange,
-  });
-  const selected = within(screen.getByRole("group", { name: selectedFacet.group })).getByRole(
-    "button",
-    { name: selectedFacet.button },
-  );
-  expect(selected.getAttribute("aria-pressed")).toBe("true");
-  await fireEvent.click(selected);
-  for (const field of selectedFacet.clears)
-    expect(onchange.mock.lastCall?.[0].filters[field]).toBeUndefined();
-});
+];
+
+it.each(selectedFacetCases)(
+  "keeps the selected %s facet editable",
+  async (_name, selectedFacet) => {
+    const onchange = vi.fn();
+    render(FacetSidebar, {
+      unit: "photos",
+      query: {
+        ...originalQuery,
+        mode: selectedFacet.mode,
+        filters: { ...originalQuery.filters, ...selectedFacet.filters },
+      },
+      facets: selectedFacet.facets,
+      disabled: false,
+      onchange,
+    });
+    const selected = within(screen.getByRole("group", { name: selectedFacet.group })).getByRole(
+      "button",
+      { name: selectedFacet.button },
+    );
+    expect(selected.getAttribute("aria-pressed")).toBe("true");
+    await fireEvent.click(selected);
+    for (const field of selectedFacet.clears)
+      expect(onchange.mock.lastCall?.[0].filters[field]).toBeUndefined();
+  },
+);
 
 const tagID = "11111111-1111-4111-8111-111111111111";
 const excludedTagID = "22222222-2222-4222-8222-222222222222";
