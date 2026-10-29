@@ -14,6 +14,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/shirou/gopsutil/v4/process"
@@ -71,7 +72,8 @@ const maxPDFFileBytes int64 = math.MaxUint32
 const maxPageCount = 100000
 const wasmSHA256 = "f651270c675cac90702b762f4b95d2b34e365cdb374065e40af016f4f0f304ea"
 const fontSHA256 = "c2f3b4d463500a2ddcd3849cded1fceeb9fd6d1c32e6cbecd568453ba50fc68f"
-const writerVersion = "docbank-fresh-objects/v2"
+const writerVersion = "docbank-fresh-objects/v3"
+const historicalWriterVersion = "docbank-fresh-objects/v2"
 
 func defaultRecipe() redaction.Recipe {
 	return redaction.Recipe{Contract: "raster-redaction/v1", RendererSHA256: wasmSHA256,
@@ -94,6 +96,30 @@ func QualifiedRecipeForDPI(dpi int) (redaction.Recipe, error) {
 	return recipe, nil
 }
 
+// QualifiedRecipesForDPI lists current and supported historical recipes. Returned
+// values are independent copies; the current recipe is first.
+func QualifiedRecipesForDPI(dpi int) ([]redaction.Recipe, error) {
+	current, err := QualifiedRecipeForDPI(dpi)
+	if err != nil {
+		return nil, err
+	}
+	historical := current
+	historical.WriterVersion = historicalWriterVersion
+	return []redaction.Recipe{current, historical}, nil
+}
+
+// QualifyRecipe requires an exact catalog entry, unlike the engine's resource
+// validator, which also permits tighter caller-owned limits.
+func QualifyRecipe(recipe redaction.Recipe) error {
+	recipes, err := QualifiedRecipesForDPI(recipe.DPI)
+	if err == nil {
+		if slices.Contains(recipes, recipe) {
+			return nil
+		}
+	}
+	return ErrVerifierVersion
+}
+
 // QualifiedImageWrapperRecipeSHA256 identifies every output-affecting
 // dependency of the deterministic image-only PDF wrapper. Bump
 // writerVersion whenever its byte serialization changes.
@@ -106,7 +132,7 @@ func QualifiedImageWrapperRecipeSHA256() string {
 var ErrVerifierVersion = errors.New("verifier version differs from the recorded recipe; use recorded-byte recovery or a matching Docbank version")
 
 func validateRecipe(r redaction.Recipe) error {
-	if r.WriterVersion != writerVersion || r.RendererSHA256 != wasmSHA256 || r.FontSHA256 != fontSHA256 || r.PaddingPixels != 2 {
+	if (r.WriterVersion != writerVersion && r.WriterVersion != historicalWriterVersion) || r.RendererSHA256 != wasmSHA256 || r.FontSHA256 != fontSHA256 || r.PaddingPixels != 2 {
 		return ErrVerifierVersion
 	}
 	if r.Contract != "raster-redaction/v1" || r.DPI != 300 && r.DPI != 600 || r.PaddingPixels < 0 || r.PaddingPixels > 16384 ||

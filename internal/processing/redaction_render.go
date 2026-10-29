@@ -134,7 +134,7 @@ func renderRedactionPDF(ctx context.Context, dir string, admitted admittedRedact
 	}
 	verification := redactionVerification(dir, pages)
 	verification.PDFSHA256 = digest.SHA256
-	if err := pdfproduction.VerifyFresh(ctx, file, digest.Size, verification); err != nil {
+	if err := pdfproduction.VerifyFreshWithRecipe(ctx, file, digest.Size, verification, admitted.review.Recipe); err != nil {
 		return result, fmt.Errorf("%w: %w", ErrRedactionPreparationIntegrity, err)
 	}
 	if controls.hooks.afterVerify != nil {

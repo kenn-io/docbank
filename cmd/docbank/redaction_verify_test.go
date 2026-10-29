@@ -58,6 +58,25 @@ func TestRedactionVerifyCLI(t *testing.T) {
 	require.Empty(t, entries)
 }
 
+func TestRedactionVerifyV2(t *testing.T) {
+	f := newRedactionVerifyFixture(t)
+	recipe := f.review.Recipe
+	recipe.WriterVersion = "docbank-fresh-objects/v2"
+	var err error
+	f.review, err = processing.BuildRedactionReview(f.request.Preparation, f.request.Masks,
+		f.request.Preparation.Selection.Revision, recipe)
+	require.NoError(t, err)
+	data, err := json.Marshal(f.review)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(f.args[4], data, 0600))
+	f.archive(t, "valid")
+	output, err := runCLI(t, append(f.args, "--json")...)
+	require.NoError(t, err)
+	var result processing.RedactionArchive
+	require.NoError(t, json.Unmarshal([]byte(output), &result))
+	require.Equal(t, f.review.SHA256, result.Receipt.ReviewSHA256)
+}
+
 func TestRedactionVerifyRejectsSelfConsistentPDF(t *testing.T) {
 	for _, scenario := range []string{"non-PDF", "unmasked PDF"} {
 		t.Run(scenario, func(t *testing.T) {
@@ -168,7 +187,7 @@ func newRedactionVerifyFixture(t *testing.T) redactionVerifyFixture {
 		Kind: "text", MapSHA256: f.request.Preparation.Map.SHA256, Span: &redaction.Span{End: 6},
 	}}}
 	f.review, err = processing.BuildRedactionReview(f.request.Preparation, f.request.Masks,
-		f.request.Preparation.Selection.Revision)
+		f.request.Preparation.Selection.Revision, pdfproduction.QualifiedRecipe())
 	require.NoError(t, err)
 	for i, value := range []any{f.request.Masks, f.review} {
 		data, err := json.Marshal(value)

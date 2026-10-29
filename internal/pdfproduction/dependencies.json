@@ -1,6 +1,7 @@
 {
   "contract": "pdf-production-dependencies/v1",
-  "writer": "docbank-fresh-objects/v2",
+  "writer": "docbank-fresh-objects/v3",
+  "supported_historical_writers": ["docbank-fresh-objects/v2"],
   "go_pdfium": {
     "module": "github.com/klippa-app/go-pdfium",
     "version": "v1.20.0",

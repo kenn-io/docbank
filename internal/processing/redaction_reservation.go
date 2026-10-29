@@ -21,12 +21,9 @@ func (s *Service) ReserveNumberedPDF(ctx context.Context, r NumberedReservationR
 	if s == nil {
 		return result, ErrRedactionPreparationUnavailable
 	}
-	review, err := BuildRedactionReview(r.Preparation, r.Masks, r.Preparation.Selection.Revision)
+	review, err := MatchRedactionReview(r.Preparation, r.Masks, r.Preparation.Selection.Revision, r.ReviewSHA256)
 	if err != nil {
 		return result, err
-	}
-	if review.SHA256 != r.ReviewSHA256 {
-		return result, ErrRedactionReviewChanged
 	}
 	ns, err := s.catalog.BatesNamespace(ctx, r.NamespaceID.String(), "", "", 0)
 	if errors.Is(err, store.ErrNotFound) {
@@ -58,7 +55,7 @@ func (s *Service) ReserveNumberedPDF(ctx context.Context, r NumberedReservationR
 		return result, err
 	}
 	defer func() { resultErr = errors.Join(resultErr, op.Close()) }()
-	admitted, err := s.freshRedactionReview(op.ctx, op, RedactionResolveRequest{Preparation: r.Preparation, Masks: r.Masks}, runtime)
+	admitted, err := s.freshRedactionReview(op.ctx, op, RedactionResolveRequest{Preparation: r.Preparation, Masks: r.Masks}, runtime, review.Recipe)
 	if err != nil {
 		return result, err
 	}

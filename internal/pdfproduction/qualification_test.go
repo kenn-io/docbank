@@ -386,13 +386,15 @@ func TestPNGRowStreamMatchesIndependentPixels(t *testing.T) {
 
 func TestFreshRejectsAlteredEmbeddedFont(t *testing.T) {
 	a := unicodeArtifact(t)
+	recipe := qualificationRecipe()
+	recipe.WriterVersion = "docbank-fresh-objects/v2"
 	var output bytes.Buffer
-	require.NoError(t, writeFresh(t.Context(), &output, &artifactSequence{pages: []PageArtifact{a}}, PDFWriteOptions{Recipe: qualificationRecipe(), StagingDirectory: t.TempDir(), MaxBytes: qualificationRecipe().MaxStagingBytes}))
+	require.NoError(t, writeFresh(t.Context(), &output, &artifactSequence{pages: []PageArtifact{a}}, PDFWriteOptions{Recipe: recipe, StagingDirectory: t.TempDir(), MaxBytes: qualificationRecipe().MaxStagingBytes}))
 	data := output.Bytes()
 	start := bytes.Index(data, fontBytes[:64])
 	require.Positive(t, start)
 	data[start+len(fontBytes)-1] ^= 1
-	require.Error(t, VerifyFresh(t.Context(), bytes.NewReader(data), int64(len(data)), verificationFor(t, []PageArtifact{a})))
+	require.Error(t, VerifyFreshWithRecipe(t.Context(), bytes.NewReader(data), int64(len(data)), verificationFor(t, []PageArtifact{a}), recipe))
 }
 
 func TestFreshComparesActualPixelsWithStagedEvidence(t *testing.T) {

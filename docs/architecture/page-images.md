@@ -227,6 +227,23 @@ files do not depend on the verifying Go toolchain's encoder. This does not
 eliminate hidden variation in compression choices. Render-time `VerifyFresh`
 keeps its separate byte-exact comparison against independently staged PNG rows.
 
+Font storage is selected by the qualified review recipe before parsing the PDF.
+Writer v2 requires the original raw font object; v3 requires `FlateDecode`, with
+an exact decoded length and the same pinned font SHA-256. A v3 font stream is
+limited to 10 MiB, contains exactly one zlib stream, and must have no preset
+dictionary or trailing bytes. Valid alternate compression settings are accepted;
+verification does not depend on a particular Go encoder. A raw v3 font or a
+compressed v2 font is an integrity failure. Supported historical writers are
+listed in `internal/pdfproduction/dependencies.json`.
+
+New resolve calls use v3. Existing v2 reviews remain fully verifiable and render
+with v2; pending numbered reservations keep their review digest and labels.
+Client and service admission reconstruct the request's review digest against the
+two qualified native recipes. Allocation admission also checks the rebuilt
+numbered recipe against the ledger before capture. No failed PDF check is retried
+under another format. The writer retains one immutable compressed-font buffer
+per process; request cancellation and memory refusals are not cached.
+
 The offline result remains the checked receipt plus the whole-ZIP size and SHA-256.
 It establishes reviewed mask and text agreement, but cannot establish that
 unmasked image content matches the source or authenticate the producer. Detecting
@@ -344,7 +361,10 @@ The retained object is the PDF, not the ZIP or review inputs. Backup and restore
 retain its artifact records, number lookup and snapshot source. The original
 remains retained indefinitely, including after trash empty and GC; this slice
 has no snapshot release or range-void path. Each fresh PDF embeds the full
-qualified font, about 9.6 MB per document. See the
+qualified font. New reviews use writer v3, which stores that font with PDF's
+`FlateDecode` filter: about 6 MB per sparse document instead of 9.6 MB. Image-heavy
+files save the same approximately 3.62 MB of font storage, not a fixed percentage.
+The decoded font identity and glyph coverage are unchanged. See the
 [numbered-delivery guide](../usage/document-processing.md#deliver-one-reviewed-pdf-with-bates-numbers)
 for consent, retries and the distinct verification claims.
 

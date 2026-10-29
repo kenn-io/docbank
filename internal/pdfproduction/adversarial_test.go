@@ -564,7 +564,7 @@ func FuzzFreshEnvelopeAndStreams(f *testing.F) {
 			t.Skip()
 		}
 		reader := bytes.NewReader(data)
-		_, _ = parseFreshIndex(t.Context(), reader, int64(len(data)), 1)
+		_, _ = parseFreshIndex(t.Context(), reader, int64(len(data)), 1, QualifiedRecipe())
 		index := &freshIndex{reader: reader, offsets: []int64{0, 0}, ends: []int64{0, int64(len(data))}}
 		_, _ = index.stream(t.Context(), 1, "")
 	})

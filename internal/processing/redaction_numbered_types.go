@@ -168,7 +168,10 @@ func (r NumberedRecipe) Qualify() error {
 	if err := ValidateNumberedRecipe(r); err != nil {
 		return err
 	}
-	if r.Renderer != pdfproduction.QualifiedRecipe() || r.Footer != pdfproduction.QualifiedNumberedFooter(r.Renderer) {
+	if err := qualifyNativeRecipe(r.Renderer); err != nil {
+		return err
+	}
+	if r.Footer != pdfproduction.QualifiedNumberedFooter(r.Renderer) {
 		return pdfproduction.ErrVerifierVersion
 	}
 	presentation, err := r.Presentation()

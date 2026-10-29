@@ -20,16 +20,16 @@ var ErrPDFIntegrity = errors.New("PDF integrity check failed")
 func pdfIntegrity(message string) error { return fmt.Errorf("%w: %s", ErrPDFIntegrity, message) }
 
 // Only format errors from the standard decoder become integrity failures.
-func savedStreamError(err error) error {
+func flateStreamError(err error) error {
 	if err == nil {
 		return nil
 	}
 	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
 		errors.Is(err, zlib.ErrHeader) || errors.Is(err, zlib.ErrDictionary) || errors.Is(err, zlib.ErrChecksum) {
-		return fmt.Errorf("%w: image stream: %w", ErrPDFIntegrity, err)
+		return fmt.Errorf("%w: compressed stream: %w", ErrPDFIntegrity, err)
 	}
 	if _, ok := errors.AsType[flate.CorruptInputError](err); ok {
-		return fmt.Errorf("%w: image stream: %w", ErrPDFIntegrity, err)
+		return fmt.Errorf("%w: compressed stream: %w", ErrPDFIntegrity, err)
 	}
 	return err
 }
@@ -51,14 +51,14 @@ func openSavedRGBRows(ctx context.Context, input io.Reader, width, height int,
 	r := bufio.NewReader(contextReader{ctx, input})
 	header, err := r.Peek(2)
 	if err != nil {
-		return nil, savedStreamError(err)
+		return nil, flateStreamError(err)
 	}
 	if header[1]&0x20 != 0 {
 		return nil, pdfIntegrity("image stream uses a preset dictionary")
 	}
 	decoder, err := zlib.NewReader(r)
 	if err != nil {
-		return nil, savedStreamError(err)
+		return nil, flateStreamError(err)
 	}
 	slices.SortFunc(masks, func(a, b image.Rectangle) int { return cmp.Compare(a.Min.X, b.Min.X) })
 	return &savedRGBRows{ctx: ctx, input: r, decoder: decoder, rgb: make([]byte, width*3),
@@ -70,7 +70,7 @@ func (r *savedRGBRows) Next() ([]byte, error) {
 		return nil, err
 	}
 	if _, err := io.ReadFull(r.decoder, r.rgb); err != nil {
-		return nil, savedStreamError(err)
+		return nil, flateStreamError(err)
 	}
 	// Masks are sorted by x; overlapping rectangles never cause repeated pixel work.
 	checked := 0
@@ -106,7 +106,7 @@ func (r *savedRGBRows) Finish() error {
 		return pdfIntegrity("image has extra decoded pixels")
 	}
 	if !errors.Is(err, io.EOF) {
-		return savedStreamError(err)
+		return flateStreamError(err)
 	}
 	_, err = r.input.ReadByte()
 	if err == nil {

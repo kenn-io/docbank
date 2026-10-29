@@ -122,7 +122,15 @@ func writeFresh(ctx context.Context, out io.Writer, pages PageSequence, options 
 	w := &objectWriter{out: file, limit: min(maxPayloadBytes, maxPDFFileBytes, recipe.MaxStagingBytes, options.MaxBytes), offsets: []int64{0, 0, 0, 0, 0}}
 	w.printf("%%PDF-1.7\n%%\xe2\xe3\xcf\xd3\n")
 	w.object(1, "<< /Type /Catalog /Pages 2 0 R >>")
-	w.stream(3, fmt.Sprintf("/Length1 %d", len(fontBytes)), fontBytes)
+	program, err := storedFont(ctx, recipe.WriterVersion)
+	if err != nil {
+		return err
+	}
+	dict := fmt.Sprintf("/Length1 %d", len(fontBytes))
+	if recipe.WriterVersion == writerVersion {
+		dict += " /Filter /FlateDecode"
+	}
+	w.stream(3, dict, program)
 	w.object(4, "<< /Type /FontDescriptor /FontName /NotoSansJP /Flags 4 /FontBBox [-1000 -1000 3000 3000] /ItalicAngle 0 /Ascent 1000 /Descent -250 /CapHeight 700 /StemV 80 /FontFile2 3 0 R >>")
 	var refs []int
 	for {

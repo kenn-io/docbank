@@ -46,7 +46,7 @@ func VerifySaved(ctx context.Context, reader io.ReaderAt, size int64,
 		}
 	}()
 	setup, cancel := context.WithTimeout(ctx, time.Duration(recipe.PageTimeoutSeconds)*time.Second)
-	index, err := parseFreshIndex(setup, reader, size, plan.PageCount)
+	index, err := parseFreshIndex(setup, reader, size, plan.PageCount, recipe)
 	cancel()
 	if err != nil {
 		return err

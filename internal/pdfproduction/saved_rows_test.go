@@ -55,7 +55,7 @@ func TestSavedRGBStreamRefusals(t *testing.T) {
 				if err == nil {
 					err = rows.Finish()
 				}
-				err = errors.Join(err, savedStreamError(rows.Close()))
+				err = errors.Join(err, flateStreamError(rows.Close()))
 			}
 			require.ErrorIs(t, err, ErrPDFIntegrity)
 		})

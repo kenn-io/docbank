@@ -23,12 +23,9 @@ func (c *Connection) ReserveNumberedPDF(ctx context.Context, request processing.
 	if !request.RetainOriginal || request.StartAt < 1 || canonical.ValidateUUIDv4(request.NamespaceID.String()) != nil {
 		return result, processing.ErrRedactionInvalidRequest
 	}
-	review, err := processing.BuildRedactionReview(request.Preparation, request.Masks, request.Preparation.Selection.Revision)
+	review, err := processing.MatchRedactionReview(request.Preparation, request.Masks, request.Preparation.Selection.Revision, request.ReviewSHA256)
 	if err != nil {
 		return result, err
-	}
-	if review.SHA256 != request.ReviewSHA256 {
-		return result, processing.ErrRedactionReviewChanged
 	}
 	var response *http.Response
 	_, err = c.apiWithResponseLimit(&response, processing.MaxRedactionResponseBytes).ReserveNumberedPDF(runtime.WithStreamingResponse(ctx), &apiclient.ReserveNumberedPDFRequestOptions{Body: &request})

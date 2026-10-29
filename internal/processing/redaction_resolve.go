@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"go.kenn.io/docbank/document/pagerender"
+	"go.kenn.io/docbank/document/redaction"
 	"go.kenn.io/docbank/internal/pdfproduction"
 	"go.kenn.io/docbank/internal/production"
 )
@@ -33,7 +34,7 @@ func (service *Service) ResolveNativePDF(ctx context.Context, request RedactionR
 		return result, err
 	}
 	defer func() { resultErr = errors.Join(resultErr, op.Close()) }()
-	admitted, err := service.freshRedactionReview(op.ctx, op, request, runtime)
+	admitted, err := service.freshRedactionReview(op.ctx, op, request, runtime, pdfproduction.QualifiedRecipe())
 	if err != nil {
 		return result, err
 	}
@@ -42,7 +43,7 @@ func (service *Service) ResolveNativePDF(ctx context.Context, request RedactionR
 }
 
 func (service *Service) freshRedactionReview(ctx context.Context, op *nativePDFOperation,
-	request RedactionResolveRequest, runtime *pagerender.Runtime,
+	request RedactionResolveRequest, runtime *pagerender.Runtime, recipe redaction.Recipe,
 ) (result admittedRedaction, resultErr error) {
 	if err := ValidateRedactionPreparation(request.Preparation); err != nil {
 		return result, fmt.Errorf("%w: %w", ErrRedactionInvalidPreparation, err)
@@ -73,11 +74,11 @@ func (service *Service) freshRedactionReview(ctx context.Context, op *nativePDFO
 		return result, err
 	}
 	result.data = data
-	return service.reviewCapturedPDF(ctx, op, request, runtime, result)
+	return service.reviewCapturedPDF(ctx, op, request, runtime, result, recipe)
 }
 
 func (service *Service) reviewCapturedPDF(ctx context.Context, op *nativePDFOperation,
-	request RedactionResolveRequest, runtime *pagerender.Runtime, result admittedRedaction,
+	request RedactionResolveRequest, runtime *pagerender.Runtime, result admittedRedaction, recipe redaction.Recipe,
 ) (admittedRedaction, error) {
 	data := result.data
 	selected := NativePDFSelection{NodeID: request.Preparation.Selection.NodeID, Source: request.Preparation.Selection.Source}
@@ -106,7 +107,7 @@ func (service *Service) reviewCapturedPDF(ctx context.Context, op *nativePDFOper
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}
-	result.review, err = BuildRedactionReview(freshEnvelope, request.Masks, result.revision)
+	result.review, err = BuildRedactionReview(freshEnvelope, request.Masks, result.revision, recipe)
 	if err != nil {
 		return result, err
 	}

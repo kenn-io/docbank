@@ -24,14 +24,11 @@ func (s *Service) prepareRedactionRender(ctx context.Context, op *nativePDFOpera
 	}()
 	resolve := RedactionResolveRequest{Preparation: request.Preparation, Masks: request.Masks}
 	var reservation *NumberedReservation
+	review, err := MatchRedactionReview(request.Preparation, request.Masks, request.Preparation.Selection.Revision, request.ReviewSHA256)
+	if err != nil {
+		return admitted, pdf, err
+	}
 	if request.AllocationID != uuid.Nil() {
-		review, err := BuildRedactionReview(request.Preparation, request.Masks, request.Preparation.Selection.Revision)
-		if err != nil {
-			return admitted, pdf, err
-		}
-		if review.SHA256 != request.ReviewSHA256 {
-			return admitted, pdf, ErrRedactionReviewChanged
-		}
 		a, err := s.catalog.BatesAllocation(ctx, request.AllocationID.String())
 		if errors.Is(err, store.ErrNotFound) {
 			return admitted, pdf, ErrNumberedAllocationNotFound
@@ -86,13 +83,12 @@ func (s *Service) prepareRedactionRender(ctx context.Context, op *nativePDFOpera
 	if runtime == nil || !pagerender.SupportedPlatform() {
 		return admitted, pdf, ErrRedactionPreparationUnavailable
 	}
-	var err error
 	if reservation == nil {
-		admitted, err = s.freshRedactionReview(ctx, op, resolve, runtime)
+		admitted, err = s.freshRedactionReview(ctx, op, resolve, runtime, review.Recipe)
 	} else {
 		admitted.data, err = s.captureNumberedSource(ctx, *reservation)
 		if err == nil {
-			admitted, err = s.reviewCapturedPDF(ctx, op, resolve, runtime, admitted)
+			admitted, err = s.reviewCapturedPDF(ctx, op, resolve, runtime, admitted, review.Recipe)
 		}
 	}
 	if err != nil {

@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document/redaction"
+	"go.kenn.io/docbank/internal/pdfproduction"
 	"go.kenn.io/docbank/internal/redactiontest"
 )
 
@@ -19,13 +20,13 @@ func TestRedactionReviewIdentity(t *testing.T) {
 	require.NoError(t, err)
 	masks := []RedactionMask{{ID: uuid.New(), Selector: redaction.Selector{
 		Kind: "text", MapSHA256: prep.Map.SHA256, Span: &redaction.Span{Start: 0, End: 6}}}}
-	first, err := BuildRedactionReview(prep, masks, 1)
+	first, err := BuildRedactionReview(prep, masks, 1, pdfproduction.QualifiedRecipe())
 	require.NoError(t, err)
 	text, err := redaction.Text(first.Resolved)
 	require.NoError(t, err)
 	require.Equal(t, "[REDACTED] KEEP SECRET\f", string(text))
 	prep.Selection.Revision += 7
-	second, err := BuildRedactionReview(prep, masks, 8)
+	second, err := BuildRedactionReview(prep, masks, 8, pdfproduction.QualifiedRecipe())
 	require.NoError(t, err)
 	require.Equal(t, first.SHA256, second.SHA256)
 	require.Equal(t, first.PreparationSHA256, second.PreparationSHA256)
@@ -77,14 +78,50 @@ func TestRedactionMaskSpans(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "é KEEP", prep.Map.Text)
 	mask := RedactionMask{ID: uuid.New(), Selector: redaction.Selector{Kind: "text", MapSHA256: prep.Map.SHA256, Span: &redaction.Span{Start: 0, End: 2}}}
-	review, err := BuildRedactionReview(prep, []RedactionMask{mask}, 1)
+	review, err := BuildRedactionReview(prep, []RedactionMask{mask}, 1, pdfproduction.QualifiedRecipe())
 	require.NoError(t, err)
 	text, err := redaction.Text(review.Resolved)
 	require.NoError(t, err)
 	require.Equal(t, "[REDACTED] KEEP\f", string(text))
 	for _, span := range []redaction.Span{{Start: 0, End: 1}, {Start: 1, End: 2}, {Start: 2, End: 2}, {Start: 2, End: 0}} {
 		mask.Selector.Span = &span
-		_, err := BuildRedactionReview(prep, []RedactionMask{mask}, 1)
+		_, err := BuildRedactionReview(prep, []RedactionMask{mask}, 1, pdfproduction.QualifiedRecipe())
 		require.Error(t, err, "span %v must not select partial UTF-8 or an empty/reversed range", span)
 	}
+}
+
+//nolint:paralleltest // Qualified PDFium accounts for process-wide RSS.
+func TestRedactionReviewHistoricalWriter(t *testing.T) {
+	runtime := redactiontest.PageRuntime(t)
+	f := newPreparationFixture(t, "SECRET KEEP SECRET")
+	prep, err := f.service.PrepareNativePDF(t.Context(), f.request, runtime)
+	require.NoError(t, err)
+	masks := []RedactionMask{{ID: uuid.New(), Selector: redaction.Selector{
+		Kind: "text", MapSHA256: prep.Map.SHA256, Span: &redaction.Span{Start: 0, End: 6}}}}
+	review, err := BuildRedactionReview(prep, masks, 1, pdfproduction.QualifiedRecipe())
+	require.NoError(t, err)
+	review.Recipe.WriterVersion = "docbank-fresh-objects/v2"
+	decisions := []redaction.Decision{{ID: masks[0].ID.String(), MemberID: prep.Selection.Source.VersionID,
+		Action: "redact", Selector: masks[0].Selector}}
+	review.Resolved, err = redaction.Resolve(prep.Map, "redact_selected", decisions, review.Recipe)
+	require.NoError(t, err)
+	review.SHA256, err = redactionReviewDigest(review)
+	require.NoError(t, err)
+	require.NoError(t, ValidateRedactionReview(prep, masks, review))
+	matched, err := MatchRedactionReview(prep, masks, 1, review.SHA256)
+	require.NoError(t, err)
+	require.Equal(t, review, matched)
+	current, err := BuildRedactionReview(prep, masks, 1, pdfproduction.QualifiedRecipe())
+	require.NoError(t, err)
+	require.NotEqual(t, review.SHA256, current.SHA256)
+	matched, err = MatchRedactionReview(prep, masks, 1, current.SHA256)
+	require.NoError(t, err)
+	require.Equal(t, current, matched)
+	_, err = MatchRedactionReview(prep, masks, 1, strings.Repeat("0", 64))
+	require.ErrorIs(t, err, ErrRedactionReviewChanged)
+	masks[0].ID = uuid.New()
+	_, err = MatchRedactionReview(prep, masks, 1, review.SHA256)
+	require.ErrorIs(t, err, ErrRedactionReviewChanged)
+	review.Recipe.WriterVersion = "unqualified-writer"
+	require.ErrorIs(t, ValidateRedactionReview(prep, masks, review), pdfproduction.ErrVerifierVersion)
 }
