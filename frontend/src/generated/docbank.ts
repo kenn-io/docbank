@@ -5891,8 +5891,36 @@ export interface PhotoAuthoredReceipt {
   undo_of?: string;
 }
 
+export type PhotoSuggestionKind = typeof PhotoSuggestionKind[keyof typeof PhotoSuggestionKind];
+
+
+export const PhotoSuggestionKind = {
+  description: 'description',
+  rotation: 'rotation',
+} as const;
+
+export type PhotoSuggestionRotation = typeof PhotoSuggestionRotation[keyof typeof PhotoSuggestionRotation];
+
+
+export const PhotoSuggestionRotation = {
+  NUMBER_90: 90,
+  NUMBER_180: 180,
+  NUMBER_270: 270,
+} as const;
+
+export type PhotoDescriptionRotation = typeof PhotoDescriptionRotation[keyof typeof PhotoDescriptionRotation];
+
+
+export const PhotoDescriptionRotation = {
+  NUMBER_0: 0,
+  NUMBER_90: 90,
+  NUMBER_180: 180,
+  NUMBER_270: 270,
+} as const;
+
 export interface PhotoDescription {
   caption: string;
+  rotation?: PhotoDescriptionRotation;
   tags: string[];
   visible_text: string;
 }
@@ -5904,7 +5932,10 @@ export interface PhotoSuggestion {
   asset_revision: number;
   authored_receipt?: PhotoAuthoredReceipt;
   content_version_id: string;
+  kind: PhotoSuggestionKind;
   node_revision: number;
+  rotation?: PhotoSuggestionRotation;
+  rotation_source?: string;
   source_revision: number;
   suggestion_id: string;
   target: string;
@@ -6797,6 +6828,7 @@ export interface PhotoSuggestionResponse {
   caption: boolean;
   node_revision: number;
   response: PhotoSuggestionResponseResponse;
+  rotation: boolean;
   source_revision: number;
   /** @maxItems 64 */
   tags: string[];

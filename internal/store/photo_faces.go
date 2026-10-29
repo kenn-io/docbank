@@ -213,7 +213,7 @@ func (s *Store) PhotoFacePersonNames(ctx context.Context, versionID string) ([]P
 		var err error
 		faces, err = photoFacesQuery(ctx, tx, versionID)
 		if err == nil {
-			err = s.readFaceDecisionsTx(ctx, tx, faces)
+			err = readFaceDecisionsTx(ctx, tx, faces)
 		}
 		if err != nil {
 			return err
@@ -295,7 +295,7 @@ func (s *Store) CreatePhotoFace(ctx context.Context, versionID, faceID string, b
 			face, assertion, err = replayPhotoFaceTx(ctx, tx, existing, personID)
 			if err == nil {
 				items := []PhotoFace{face}
-				err = s.readFaceDecisionsTx(ctx, tx, items)
+				err = readFaceDecisionsTx(ctx, tx, items)
 				face = items[0]
 			}
 			return err

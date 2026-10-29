@@ -157,5 +157,8 @@ func publishFaceDetectionTx(ctx context.Context, tx *sql.Tx, version, detector s
 		}
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO photo_face_scans(content_version_id,detector_fingerprint) VALUES(?,?)`, version, detector)
-	return err
+	if err != nil {
+		return err
+	}
+	return publishPhotoRotationTx(ctx, tx, version, nil, "", at)
 }

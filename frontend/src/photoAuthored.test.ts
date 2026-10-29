@@ -2201,6 +2201,7 @@ it("conceals suggestion text when refresh removes a hidden target", async () => 
 });
 function photoSuggestion(overrides: Partial<api.PhotoSuggestion>): api.PhotoSuggestion {
   return {
+    kind: "description",
     suggestion_id: "suggestion",
     content_version_id: "version",
     target: "jpeg",
@@ -2326,5 +2327,69 @@ it("refreshes and clears best-shot offers with their prepared stack", async () =
   vi.mocked(api.preparePhotoAuthored).mockResolvedValue(photoPreparation(prepared));
   await editor.prepareStack(ids, false, true);
   expect(editor.bestShots).toEqual([]);
+  editor.dispose();
+});
+
+it.each([false, true])("responds to a rotation suggestion, dismiss=%s", async (dismiss) => {
+  const editor = editorWithTargets();
+  const suggestion = photoSuggestion({ kind: "rotation", rotation: 270, rotation_source: "faces" });
+  editor.suggestions = [suggestion];
+  const respond = vi.spyOn(api, "respondPhotoSuggestion").mockResolvedValue(
+    photoSuggestion({
+      kind: "rotation",
+      authored_receipt: { receipt_id: "rotation-receipt", before: [], after: [] },
+    }),
+  );
+  const reload = vi.spyOn(editor, "reload").mockResolvedValue(undefined);
+  const refresh = vi.fn();
+  ui(editor);
+  expect(screen.getByText("Suggested 270°")).toBeTruthy();
+  expect(screen.queryByRole("region", { name: "Suggested photo metadata" })).toBeNull();
+  await editor.respondSuggestion(suggestion, false, [], dismiss, refresh);
+  expect(respond).toHaveBeenCalledWith(
+    "suggestion",
+    expect.objectContaining({
+      response: dismiss ? "dismissed" : "accepted",
+      rotation: !dismiss,
+      caption: false,
+      tags: [],
+    }),
+    expect.anything(),
+  );
+  expect(reload).toHaveBeenCalledOnce();
+  expect(refresh).toHaveBeenCalledOnce();
+  expect(editor.receiptID).toBe("rotation-receipt");
+  editor.dispose();
+});
+
+it.each(["busy", "loading", "dirty", "conflict"])(
+  "disables rotation suggestions while %s",
+  async (state) => {
+    const editor = editorWithTargets();
+    editor.suggestions = [photoSuggestion({ kind: "rotation", rotation: 270 })];
+    if (state === "dirty") editor.stage({ rating: 5 });
+    else if (state === "busy") editor.busy = true;
+    else if (state === "loading") editor.loading = true;
+    else editor.conflict = true;
+    ui(editor);
+    expect(
+      (screen.getByRole("button", { name: "Rotate 270°" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect((screen.getByRole("button", { name: /^Dismiss$/ }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    editor.dispose();
+  },
+);
+
+it("hides rotation suggestions for several photos or a concealed photo", async () => {
+  const editor = editorWithTargets();
+  editor.suggestions = [photoSuggestion({ kind: "rotation", rotation: 270 })];
+  const view = ui(editor);
+  await view.rerender({ actionDisabled: false, count: 2 });
+  expect(screen.queryByText("Suggested 270°")).toBeNull();
+  editor.conceal();
+  await view.rerender({ actionDisabled: false, count: 1 });
+  expect(screen.queryByText("Suggested 270°")).toBeNull();
   editor.dispose();
 });

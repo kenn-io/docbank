@@ -1068,3 +1068,172 @@ func TestDerivativePurgeLeavesPhotoSuggestionsButVersionPurgeRemovesThem(t *test
 	require.NoError(t, s.ExportMetadata(ctx, &exported))
 	require.NotContains(t, exported.String(), proposal.ID, "purging the photo removes its decision record")
 }
+
+func TestPhotoRotationResponses(t *testing.T) {
+	t.Parallel()
+	for _, response := range []string{"accepted", "dismissed"} {
+		t.Run(response, func(t *testing.T) {
+			s := newTestStore(t)
+			asset := albumAsset(t, s, "sideways.jpg")
+			publishPhotoDescription(t, s, asset, producerA, false, document.PhotoDescription{Caption: "A harbor.", Rotation: new(270)})
+			proposals := photoSuggestionValues(t, s, asset.ID)
+			require.Len(t, proposals, 2)
+			var rotation PhotoSuggestion
+			for _, proposal := range proposals {
+				if proposal.Kind == "rotation" {
+					rotation = proposal
+				}
+			}
+			require.Equal(t, new(270), rotation.Rotation)
+			require.Equal(t, "description", rotation.RotationSource)
+			prepared, err := s.PreparePhotoAuthored(t.Context(), PhotoSetSelection{AssetIDs: []string{asset.ID}})
+			require.NoError(t, err)
+			require.Equal(t, 0, prepared.Targets[0].Values.Rotation)
+			request := PhotoSuggestionResponse{AssetID: rotation.AssetID, AssetRevision: rotation.AssetRevision, SourceRevision: rotation.SourceRevision, NodeRevision: rotation.NodeRevision, Response: response, Rotation: response == "accepted"}
+			stale := request
+			stale.SourceRevision++
+			_, err = s.RespondPhotoSuggestion(t.Context(), rotation.ID, stale)
+			require.ErrorIs(t, err, ErrPhotoSuggestionConflict)
+			got, err := s.RespondPhotoSuggestion(t.Context(), rotation.ID, request)
+			require.NoError(t, err)
+			require.NotNil(t, got.AuthoredReceipt)
+			prepared, err = s.PreparePhotoAuthored(t.Context(), PhotoSetSelection{AssetIDs: []string{asset.ID}})
+			require.NoError(t, err)
+			want := 0
+			if response == "accepted" {
+				want = 270
+			}
+			require.Equal(t, want, prepared.Targets[0].Values.Rotation)
+			require.NotZero(t, prepared.Targets[0].Values.Confirmed&PhotoConfirmedRotation)
+			require.Len(t, prepared.Suggestions, 1)
+			require.Equal(t, "A harbor.", prepared.Suggestions[0].Value.Caption)
+			publishPhotoDescription(t, s, asset, producerB, true, document.PhotoDescription{Rotation: new(90)})
+			require.Len(t, photoSuggestionValues(t, s, asset.ID), 1)
+			_, err = s.UndoPhotoAuthored(t.Context(), got.AuthoredReceipt.ReceiptID)
+			require.NoError(t, err)
+			prepared, err = s.PreparePhotoAuthored(t.Context(), PhotoSetSelection{AssetIDs: []string{asset.ID}})
+			require.NoError(t, err)
+			require.Zero(t, prepared.Targets[0].Values.Rotation)
+			require.Zero(t, prepared.Targets[0].Values.Confirmed&PhotoConfirmedRotation)
+		})
+	}
+}
+
+func TestPhotoRotationFacePrecedenceAndRestore(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	asset := albumAsset(t, s, "group.jpg")
+	node, err := s.NodeByID(t.Context(), fileByID(asset.Files, *asset.DisplayFileID).NodeID)
+	require.NoError(t, err)
+	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+		return publishFaceDetectionTx(t.Context(), tx, node.CurrentVersionID, producerA, document.FaceDetection{Faces: []document.FaceObservation{{Box: document.FaceBox{X: .1, Y: .1, Width: .3, Height: .3}, Roll: new(1.5707963267948966)}}}, time.Now())
+	}))
+	proposals := photoSuggestionValues(t, s, asset.ID)
+	require.Len(t, proposals, 1)
+	require.Equal(t, new(270), proposals[0].Rotation)
+	require.Equal(t, "faces", proposals[0].RotationSource)
+	settled, err := s.photoDescriptionSettled(t.Context(), node.CurrentVersionID, producerA, false)
+	require.NoError(t, err)
+	require.False(t, settled, "face-only rotation must leave caption work available")
+	publishPhotoDescription(t, s, asset, producerA, false, document.PhotoDescription{Caption: "A group.", Rotation: new(90)})
+	proposals = photoSuggestionValues(t, s, asset.ID)
+	require.Len(t, proposals, 2)
+	for _, proposal := range proposals {
+		if proposal.Kind == "rotation" {
+			require.Equal(t, new(270), proposal.Rotation)
+		}
+	}
+	var metadata bytes.Buffer
+	require.NoError(t, s.ExportMetadata(t.Context(), &metadata))
+	require.NotContains(t, metadata.String(), `"rotation_source"`)
+	restored := newTestStore(t)
+	require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(metadata.Bytes())))
+	require.Empty(t, photoSuggestionValues(t, restored, asset.ID))
+	settled, err = restored.photoDescriptionSettled(t.Context(), node.CurrentVersionID, producerA, false)
+	require.NoError(t, err)
+	require.False(t, settled)
+	publishPhotoDescription(t, restored, asset, producerA, false, document.PhotoDescription{Caption: "A group.", Rotation: new(90)})
+	proposals = photoSuggestionValues(t, restored, asset.ID)
+	require.Len(t, proposals, 2)
+	for _, proposal := range proposals {
+		if proposal.Kind == "rotation" {
+			require.Equal(t, new(270), proposal.Rotation)
+		}
+	}
+	faces, _, err := restored.PhotoQualityFaces(t.Context(), node.CurrentVersionID)
+	require.NoError(t, err)
+	for _, face := range faces {
+		decideFaceForTest(t, restored, node, face.FaceID, "", "dismiss")
+	}
+	publishPhotoDescription(t, restored, asset, producerB, true, document.PhotoDescription{Rotation: new(90)})
+	for _, proposal := range photoSuggestionValues(t, restored, asset.ID) {
+		if proposal.Kind == "rotation" {
+			require.Equal(t, new(90), proposal.Rotation)
+			require.Equal(t, "description", proposal.RotationSource)
+		}
+	}
+}
+
+func TestPhotoRotationBackfillFaces(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	asset := albumAsset(t, s, "group-tilts.jpg")
+	node, err := s.NodeByID(t.Context(), fileByID(asset.Files, *asset.DisplayFileID).NodeID)
+	require.NoError(t, err)
+	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+		return publishFaceDetectionTx(t.Context(), tx, node.CurrentVersionID, producerA, document.FaceDetection{Faces: []document.FaceObservation{
+			{Box: document.FaceBox{X: .1, Y: .1, Width: .2, Height: .2}, Roll: new(1.5707963267948966)},
+			{Box: document.FaceBox{X: .6, Y: .6, Width: .2, Height: .2}, Roll: new(3.141592653589793)},
+		}}, time.Now())
+	}))
+	require.Empty(t, photoSuggestionValues(t, s, asset.ID), "conflicting faces abstain")
+	faces, before, err := s.PhotoQualityFaces(t.Context(), node.CurrentVersionID)
+	require.NoError(t, err)
+	for _, face := range faces {
+		if face.Box.X == .6 {
+			decideFaceForTest(t, s, node, face.FaceID, "", "dismiss")
+		}
+	}
+	faces, inputs, err := s.PhotoQualityFaces(t.Context(), node.CurrentVersionID)
+	require.NoError(t, err)
+	require.NotEqual(t, before, inputs)
+	require.Len(t, faces, 1)
+	require.NoError(t, s.PublishPhotoQualityUnavailable(t.Context(), qualityTarget(node), inputs))
+	proposals := photoSuggestionValues(t, s, asset.ID)
+	require.Len(t, proposals, 1)
+	require.Equal(t, new(270), proposals[0].Rotation)
+	require.Equal(t, "faces", proposals[0].RotationSource)
+	_, err = s.db.Exec(`UPDATE photo_faces SET roll=0 WHERE face_id=?`, faces[0].FaceID)
+	require.NoError(t, err)
+	_, updated, err := s.PhotoQualityFaces(t.Context(), node.CurrentVersionID)
+	require.NoError(t, err)
+	require.NotEqual(t, inputs, updated, "roll changes invalidate quality backfill")
+	require.NoError(t, s.PublishPhotoQualityUnavailable(t.Context(), qualityTarget(node), updated))
+	require.Empty(t, photoSuggestionValues(t, s, asset.ID), "upright faces withdraw a pending proposal")
+}
+
+func TestPhotoRotationRestoreIndependentOfSettledCaption(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	asset := albumAsset(t, s, "landscape.jpg")
+	publishPhotoDescription(t, s, asset, producerA, false, document.PhotoDescription{Caption: "A landscape.", Rotation: new(90)})
+	for _, suggestion := range photoSuggestionValues(t, s, asset.ID) {
+		if suggestion.Kind == "description" {
+			acceptPhotoSuggestion(t, s, suggestion, true)
+		}
+	}
+	restored := restorePhotoSuggestionStore(t, s)
+	node, err := restored.NodeByID(t.Context(), fileByID(asset.Files, *asset.DisplayFileID).NodeID)
+	require.NoError(t, err)
+	settled, err := restored.photoDescriptionSettled(t.Context(), node.CurrentVersionID, producerA, false)
+	require.NoError(t, err)
+	require.False(t, settled, "the pending rotation still needs freshly consented provider work")
+	publishPhotoDescription(t, restored, asset, producerA, false, document.PhotoDescription{Caption: "A landscape.", Rotation: new(270)})
+	suggestions := photoSuggestionValues(t, restored, asset.ID)
+	require.Len(t, suggestions, 1)
+	require.Equal(t, "rotation", suggestions[0].Kind)
+	require.Equal(t, new(270), suggestions[0].Rotation)
+	settled, err = restored.photoDescriptionSettled(t.Context(), node.CurrentVersionID, producerA, false)
+	require.NoError(t, err)
+	require.True(t, settled)
+}

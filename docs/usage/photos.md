@@ -153,6 +153,8 @@ In Photos, 0 through 5 set the rating, P picks, X rejects, and U clears the flag
 
 The viewer refuses edits until its photo has loaded, and refuses them if the photo was replaced after the viewer loaded it. After a replacement, the viewer shows the new photo and drops the refused shortcut. Edits staged in the Metadata panel stay until you choose Reload metadata.
 
+A pending rotation suggestion appears under Rotation for one photo. Face tilt supplies the angle when measured faces agree; otherwise the photo description can suggest an angle when no measured faces are available. **Rotate** saves the suggested angle, and **Dismiss** confirms the current angle. Both support Undo. Suggestions leave the displayed image unchanged until you respond. Apply or clear staged edits before responding.
+
 Rotation applies to the displayed photo in the grid, viewer, and album cover without rebuilding previews. Hidden photos require an active unlock for editing and Undo. Undo after hiding a photo asks you to unlock Hidden and keeps Library signed in.
 
 ## Browse in the web app

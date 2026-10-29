@@ -48,7 +48,16 @@ export class PhotoAuthoredEditor {
   }
   suggestions = $state<api.PhotoSuggestion[]>([]);
   get activeSuggestion() {
-    return this.suggestions.find((suggestion) => suggestion.target === this.asset?.display_file_id);
+    return this.suggestions.find(
+      (suggestion) =>
+        suggestion.target === this.asset?.display_file_id && suggestion.kind !== "rotation",
+    );
+  }
+  get rotationSuggestion() {
+    return this.suggestions.find(
+      (suggestion) =>
+        suggestion.target === this.asset?.display_file_id && suggestion.kind === "rotation",
+    );
   }
   suggestionsError = $state("");
   asset = $state<api.PhotoAsset>();
@@ -571,6 +580,7 @@ export class PhotoAuthoredEditor {
             response: dismiss ? "dismissed" : "accepted",
             caption,
             tags,
+            rotation: suggestion.kind === "rotation" && !dismiss,
             asset_id: suggestion.asset_id,
             asset_revision: suggestion.asset_revision,
             source_revision: suggestion.source_revision,
@@ -581,7 +591,12 @@ export class PhotoAuthoredEditor {
       );
       if (result.authored_receipt?.receipt_id) {
         this.receiptID = result.authored_receipt.receipt_id;
-        this.undoState.summary = `Accepted ${[...(caption ? ["caption"] : []), ...(tags.length ? ["tags"] : [])].join(" and ")}`;
+        this.undoState.summary =
+          suggestion.kind === "rotation"
+            ? dismiss
+              ? "Confirmed rotation"
+              : "Rotated photo"
+            : `Accepted ${[...(caption ? ["caption"] : []), ...(tags.length ? ["tags"] : [])].join(" and ")}`;
       }
       await holdMutations(async () => {
         this.endWrite(write);
