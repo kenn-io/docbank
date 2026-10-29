@@ -53,7 +53,7 @@ func (s *Store) MissingPhotoQualityTargetsAfter(
 // PublishPhotoQualitySignals rechecks current display ownership in the write
 // transaction and replaces the version's measurements from other evaluators.
 func (s *Store) PublishPhotoQualitySignals(
-	ctx context.Context, target PhotoVisualPreviewTarget, signals document.PhotoQualitySignals,
+	ctx context.Context, target PhotoVisualPreviewTarget, signals document.PhotoQualitySignals, inputs string,
 ) error {
 	if err := document.ValidatePhotoQualitySignals(signals); err != nil {
 		return err
@@ -61,17 +61,17 @@ func (s *Store) PublishPhotoQualitySignals(
 	return s.publishPhotoQuality(ctx, target, photoQualityStateReady, []any{
 		signals.Focus, signals.Blur, signals.Brightness, signals.ColorRed,
 		signals.ColorGreen, signals.ColorBlue, signals.Framing, signals.Aesthetics,
-	}, signals.FaceReports)
+	}, signals.FaceReports, inputs)
 }
 
 // PublishPhotoQualityUnavailable records a terminal result for verified
 // preview bytes that the evaluator cannot measure.
-func (s *Store) PublishPhotoQualityUnavailable(ctx context.Context, target PhotoVisualPreviewTarget, reports ...document.PhotoFaceReport) error {
-	return s.publishPhotoQuality(ctx, target, photoQualityStateUnavailable, make([]any, 8), reports)
+func (s *Store) PublishPhotoQualityUnavailable(ctx context.Context, target PhotoVisualPreviewTarget, inputs string, reports ...document.PhotoFaceReport) error {
+	return s.publishPhotoQuality(ctx, target, photoQualityStateUnavailable, make([]any, 8), reports, inputs)
 }
 
 func (s *Store) publishPhotoQuality(
-	ctx context.Context, target PhotoVisualPreviewTarget, state string, scores []any, reports []document.PhotoFaceReport,
+	ctx context.Context, target PhotoVisualPreviewTarget, state string, scores []any, reports []document.PhotoFaceReport, inputs string,
 ) error {
 	fingerprints, err := document.CurrentPhotoQualityFingerprints()
 	if err != nil {
@@ -82,10 +82,6 @@ func (s *Store) publishPhotoQuality(
 		return err
 	}
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		inputs, err := photoReportInputs(ctx, tx, reports)
-		if err != nil {
-			return err
-		}
 		args := append([]any{fingerprints.Evaluator, state}, scores...)
 		args = append(args, string(encoded), inputs, target.VersionID, target.SourceSHA256, target.Size, target.MediaType, inputs)
 		if _, err := tx.ExecContext(ctx, `DELETE FROM photo_quality_signals
@@ -152,7 +148,6 @@ func photoQualityForVersions(
 		}
 		if unavailable {
 			result.unavailable[id] = true
-			continue
 		}
 		result.staleFaces[id] = inputs != current
 		if reports.Valid && inputs == current {
@@ -166,7 +161,9 @@ func photoQualityForVersions(
 		for i := range signals.FaceReports {
 			signals.FaceReports[i].Grade = signals.FaceReports[i].ReportGrade()
 		}
-		result.signals[id] = signals
+		if !unavailable || len(signals.FaceReports) > 0 {
+			result.signals[id] = signals
+		}
 	}
 	return result, rows.Err()
 }
@@ -197,31 +194,22 @@ func decodePhotoQualityRow(
 	}
 }
 
-// The source signature is ordered by face ID in both SQL and measured reports.
+// The source signature is captured with faces and rechecked at publication.
 func photoFaceInputsSQL(version string) string {
 	return `(SELECT COALESCE(group_concat(input,','),'') FROM (SELECT json_array(face_id,x,y,width,height,facing,eyes_open,smile) input FROM photo_faces WHERE content_version_id=` + version + ` AND NOT EXISTS(SELECT 1 FROM person_match_candidates c JOIN person_candidate_faces e ON e.candidate_id=c.candidate_id WHERE e.face_id=photo_faces.face_id AND ` + rejectedFaceMatchPredicate + ` AND COALESCE(c.suggested_person_id,'')='') ORDER BY face_id))`
 }
-func photoReportInputs(ctx context.Context, q metadataQuerier, reports []document.PhotoFaceReport) (string, error) {
-	source := make([][]any, len(reports))
-	for i, r := range reports {
-		source[i] = []any{r.FaceID, r.Box.X, r.Box.Y, r.Box.Width, r.Box.Height, r.Facing, r.EyesOpen, r.Smile}
-	}
-	encoded, err := json.Marshal(source)
-	if err != nil {
-		return "", err
-	}
-	var inputs string
-	err = q.QueryRowContext(ctx, `SELECT COALESCE(group_concat(json_array(value->>'$[0]',CAST(value->>'$[1]' AS REAL),CAST(value->>'$[2]' AS REAL),CAST(value->>'$[3]' AS REAL),CAST(value->>'$[4]' AS REAL),CAST(value->>'$[5]' AS REAL),value->>'$[6]',value->>'$[7]'),','),'') FROM (SELECT value FROM json_each(?) ORDER BY value->>'$[0]')`, string(encoded)).Scan(&inputs)
-	return inputs, err
-}
-func (s *Store) PhotoQualityFaces(ctx context.Context, version string) ([]PhotoFace, error) {
+func (s *Store) PhotoQualityFaces(ctx context.Context, version string) ([]PhotoFace, string, error) {
 	var faces []PhotoFace
+	var inputs string
 	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
 		var err error
 		faces, err = s.photoQualityFacesTx(ctx, tx, version)
-		return err
+		if err != nil {
+			return err
+		}
+		return tx.QueryRowContext(ctx, `SELECT `+photoFaceInputsSQL("?"), version).Scan(&inputs)
 	})
-	return faces, err
+	return faces, inputs, err
 }
 
 func (s *Store) photoQualityFacesTx(ctx context.Context, tx *sql.Tx, version string) ([]PhotoFace, error) {

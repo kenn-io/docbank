@@ -353,10 +353,11 @@ func photoQualityWire(row store.PhotoBrowseRow) *PhotoQuality {
 		return nil
 	}
 	state := "pending"
-	if row.Quality != nil {
+	if row.QualityUnavailable {
+		state = "unavailable"
+	} else if row.Quality != nil {
 		state = "ready"
-	} else if preview := row.Previews["grid"]; row.QualityUnavailable ||
-		preview.State == "unsupported" || preview.State == "failed" {
+	} else if preview := row.Previews["grid"]; preview.State == "unsupported" || preview.State == "failed" {
 		state = "unavailable"
 	}
 	return &PhotoQuality{State: state, Signals: row.Quality}

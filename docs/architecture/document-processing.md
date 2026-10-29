@@ -472,7 +472,7 @@ Publication writes one `photo_suggestions` row per content version instead of a 
 
 ### Photo best-shot reports and responses
 
-The existing quality backfill measures faces from the verified, oriented grid JPEG. It samples each crop at 16 by 16 pixels and leaves crops smaller than eight pixels unmeasured. Reports retain the detector's nullable facing, eyes, and smile observations. `photo_quality_signals` caches reports with ordered source face IDs, crop geometry, and detector observations. Publication rechecks display ownership and that measurement signature. Naming and candidate decisions keep it valid. Reads suppress stale reports while retaining whole-photo measurements; the existing evaluator fingerprint stays valid.
+The existing quality backfill measures faces from the verified, oriented grid JPEG. It samples each crop at 16 by 16 pixels and leaves crops smaller than eight pixels unmeasured. Reports retain the detector's nullable facing, eyes, and smile observations. `photo_quality_signals` caches reports with ordered source face IDs, crop geometry, and detector observations. The source query captures its canonical SQL signature with the faces; publication rechecks display ownership and that signature. Naming and candidate decisions keep it valid. Reads suppress stale reports while retaining whole-photo measurements; the evaluator fingerprint includes face-crop measurement choices and source encoding.
 
 Library page reads and bounded active-stack preparation compute KEEP/CUT offers without writing. Cull grouping leaves offer evaluation to active-stack preparation. Confirmed frames leave planning before ranking; an owner-confirmed pick settles the stack. Pending offers and face reports regenerate locally.
 

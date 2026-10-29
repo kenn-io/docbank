@@ -239,7 +239,7 @@ func TestPhotoBrowseRouteContract(t *testing.T) {
 	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
 	require.Equal(t, "invalid_photo_cursor", decodeProblem(t, body).Code)
 	request := api.PhotoBrowseRequest{Query: api.QueryPayload(`{"filters":{"kinds":["photo"]},"sort":{"field":"name","direction":"asc"}}`)}
-	require.NoError(t, s.PublishPhotoQualitySignals(t.Context(), store.PhotoVisualPreviewTarget{VersionID: qualityNode.CurrentVersionID, SourceSHA256: qualityNode.BlobHash, Size: 10, MediaType: "image/jpeg"}, document.PhotoQualitySignals{Blur: 1}))
+	require.NoError(t, s.PublishPhotoQualitySignals(t.Context(), store.PhotoVisualPreviewTarget{VersionID: qualityNode.CurrentVersionID, SourceSHA256: qualityNode.BlobHash, Size: 10, MediaType: "image/jpeg"}, document.PhotoQualitySignals{Blur: 1}, ""))
 	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, request)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	require.NoError(t, json.Unmarshal([]byte(body), &page))
@@ -274,15 +274,32 @@ func TestPhotoBrowseRouteContract(t *testing.T) {
 	}
 	unmeasurable, err := s.CreateFile(t.Context(), s.RootID(), "unmeasurable.jpg", testHash("unmeasurable"), 10, "image/jpeg")
 	require.NoError(t, err)
-	require.NoError(t, s.PublishPhotoQualityUnavailable(t.Context(), store.PhotoVisualPreviewTarget{
-		VersionID: unmeasurable.CurrentVersionID, SourceSHA256: unmeasurable.BlobHash, Size: 10, MediaType: "image/jpeg",
-	}))
+	face, _, err := s.CreatePhotoFace(t.Context(), unmeasurable.CurrentVersionID, uuid.NewString(), document.FaceBox{Width: .5, Height: .5}, "")
+	require.NoError(t, err)
+	garbage, err := s.Blobs.WriteDetailedContext(t.Context(), bytes.NewReader([]byte("verified bytes that are not a JPEG")))
+	require.NoError(t, err)
+	grid, err := processing.VisualPreviewRecipeForSize("grid")
+	require.NoError(t, err)
+	canonical, _, err := document.MarshalVisualPreviewV1(document.VisualPreviewV1{ContractVersion: document.VisualPreviewContractV1, Recipe: grid, SourceSHA256: unmeasurable.BlobHash, State: document.VisualPreviewReady, Output: &document.VisualPreviewOutputV1{BlobSHA256: garbage.Hash, Size: garbage.Size, MediaType: "image/jpeg", Width: 32, Height: 24}})
+	require.NoError(t, err)
+	_, err = s.PublishVisualPreview(t.Context(), unmeasurable.CurrentVersionID, canonical, &store.BlobPhysical{Encoding: "raw", StoredBytes: garbage.StoredSize, Created: garbage.Created, PackEligible: garbage.PackEligible})
+	require.NoError(t, err)
+	require.NoError(t, processing.EvaluatePhotoQuality(t.Context(), s.Store, s.Blobs, store.PhotoVisualPreviewTarget{VersionID: unmeasurable.CurrentVersionID, SourceSHA256: unmeasurable.BlobHash, Size: 10, MediaType: "image/jpeg"}))
 	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, request)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	require.NoError(t, json.Unmarshal([]byte(body), &page))
 	states := map[string]string{}
 	for _, row := range page.Items {
 		states[row.ContentVersionID] = row.Quality.State
+		if row.ContentVersionID == unmeasurable.CurrentVersionID {
+			require.NotNil(t, row.Quality.Signals)
+			require.Len(t, row.Quality.Signals.FaceReports, 1)
+			report := row.Quality.Signals.FaceReports[0]
+			require.Equal(t, face.FaceID, report.FaceID)
+			require.InDelta(t, .25, report.Prominence, 1e-12)
+			require.Nil(t, report.Sharpness)
+			require.Nil(t, report.Light)
+		}
 	}
 	require.Equal(t, "unavailable", states[unmeasurable.CurrentVersionID])
 	request.Query = api.QueryPayload(`{"filters":{"kinds":["video"]}}`)

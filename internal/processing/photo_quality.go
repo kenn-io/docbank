@@ -33,7 +33,7 @@ func EvaluatePhotoQuality(
 	if err != nil {
 		return fmt.Errorf("reading photo quality preview: %w", err)
 	}
-	faces, err := s.PhotoQualityFaces(ctx, target.VersionID)
+	faces, inputs, err := s.PhotoQualityFaces(ctx, target.VersionID)
 	if err != nil {
 		return err
 	}
@@ -41,9 +41,9 @@ func EvaluatePhotoQuality(
 	if !ok {
 		reports := make([]document.PhotoFaceReport, len(faces))
 		for i, f := range faces {
-			reports[i] = document.PhotoFaceReport{FaceID: f.FaceID, Box: f.Box, Facing: f.Facing, EyesOpen: f.EyesOpen, Smile: f.Smile}
+			reports[i] = document.PhotoFaceReport{FaceID: f.FaceID, Prominence: f.Box.Width * f.Box.Height, Facing: f.Facing, EyesOpen: f.EyesOpen, Smile: f.Smile}
 		}
-		return s.PublishPhotoQualityUnavailable(ctx, target, reports...)
+		return s.PublishPhotoQualityUnavailable(ctx, target, inputs, reports...)
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -52,7 +52,7 @@ func EvaluatePhotoQuality(
 	for _, face := range faces {
 		signals.FaceReports = append(signals.FaceReports, measurePhotoFace(decoded, face))
 	}
-	return s.PublishPhotoQualitySignals(ctx, target, signals)
+	return s.PublishPhotoQualitySignals(ctx, target, signals, inputs)
 }
 
 func decodePhotoQualityPreview(body []byte, output *document.VisualPreviewOutputV1) (image.Image, bool) {
@@ -122,10 +122,10 @@ func measurePhotoQuality(source image.Image) document.PhotoQualitySignals {
 }
 
 func measurePhotoFace(source image.Image, face store.PhotoFace) document.PhotoFaceReport {
-	r := document.PhotoFaceReport{FaceID: face.FaceID, Box: face.Box, Facing: face.Facing, EyesOpen: face.EyesOpen, Smile: face.Smile, Prominence: face.Box.Width * face.Box.Height}
+	r := document.PhotoFaceReport{FaceID: face.FaceID, Facing: face.Facing, EyesOpen: face.EyesOpen, Smile: face.Smile, Prominence: face.Box.Width * face.Box.Height}
 	b := source.Bounds()
 	box := image.Rect(b.Min.X+int(face.Box.X*float64(b.Dx())), b.Min.Y+int(face.Box.Y*float64(b.Dy())), b.Min.X+int((face.Box.X+face.Box.Width)*float64(b.Dx())), b.Min.Y+int((face.Box.Y+face.Box.Height)*float64(b.Dy()))).Intersect(b)
-	if box.Dx() < 8 || box.Dy() < 8 {
+	if box.Dx() < document.PhotoQualityFaceMinPixels || box.Dy() < document.PhotoQualityFaceMinPixels {
 		return r
 	}
 	crop := image.NewRGBA(image.Rect(0, 0, box.Dx(), box.Dy()))

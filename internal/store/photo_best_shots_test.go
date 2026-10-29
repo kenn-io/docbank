@@ -34,7 +34,7 @@ func seedBestShots(t *testing.T, s *Store, ids []string) {
 	for i, target := range prep.Targets {
 		node, err := s.NodeByID(t.Context(), target.NodeID)
 		require.NoError(t, err)
-		require.NoError(t, s.PublishPhotoQualitySignals(t.Context(), qualityTarget(node), document.PhotoQualitySignals{Focus: 0.9 - float64(i)*0.3}))
+		require.NoError(t, s.PublishPhotoQualitySignals(t.Context(), qualityTarget(node), document.PhotoQualitySignals{Focus: 0.9 - float64(i)*0.3}, ""))
 	}
 }
 func dismissBestShots(t *testing.T, s *Store, ids []string) PhotoAuthoredReceipt {
@@ -244,19 +244,21 @@ func TestPhotoBestShotsStaleFaces(t *testing.T) {
 	}
 	node, err := s.NodeByID(ctx, target.NodeID)
 	require.NoError(t, err)
-	signals := document.PhotoQualitySignals{Focus: 0.9, FaceReports: []document.PhotoFaceReport{{FaceID: face.FaceID, Box: face.Box, Sharpness: new(0.7), Prominence: 0.25}}}
-	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(node), signals))
+	_, inputs, err := s.PhotoQualityFaces(ctx, node.CurrentVersionID)
+	require.NoError(t, err)
+	signals := document.PhotoQualitySignals{Focus: 0.9, FaceReports: []document.PhotoFaceReport{{FaceID: face.FaceID, Sharpness: new(0.7), Prominence: 0.25}}}
+	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(node), signals, inputs))
 	require.Len(t, bestShotPreparation(t, s, ids).Proposals, 3)
 	_, err = s.db.Exec(`UPDATE photo_faces SET revision=revision+1 WHERE face_id=?`, face.FaceID)
 	require.NoError(t, err)
-	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(node), signals))
+	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(node), signals, inputs))
 	require.Len(t, bestShotPreparation(t, s, ids).Proposals, 3)
 	_, err = s.db.Exec(`UPDATE photo_faces SET x=0.1,width=0.4,revision=revision+1 WHERE face_id=?`, face.FaceID)
 	require.NoError(t, err)
 	require.Len(t, bestShotPreparation(t, s, ids).Proposals, 2)
-	signals.FaceReports[0].Box.X = 0.1
-	signals.FaceReports[0].Box.Width = 0.4
-	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(node), signals))
+	_, inputs, err = s.PhotoQualityFaces(ctx, node.CurrentVersionID)
+	require.NoError(t, err)
+	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(node), signals, inputs))
 	require.Len(t, bestShotPreparation(t, s, ids).Proposals, 3)
 }
 func TestPhotoBestShotsNewMeasurement(t *testing.T) {

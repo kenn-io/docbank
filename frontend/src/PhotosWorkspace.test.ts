@@ -4253,3 +4253,35 @@ it("names the photo being edited in the metadata panel header", async () => {
   expect(within(panel).queryByRole("heading", { name: "Metadata" })).toBeNull();
   photos.dispose();
 });
+
+it("submits the KEEP/CUT choices displayed in Library when preparation has newer measurements", async () => {
+  const photos = workspaceWithPreparedPhoto();
+  const proposals = [
+    { asset_id: "photo-1", flag: "pick" as const, rationale: "Best frame", confidence: 0.5 },
+    { asset_id: "photo-2", flag: "reject" as const, rationale: "Weaker frame", confidence: 0.5 },
+  ];
+  const stack = { asset_ids: ["photo-1", "photo-2"], representative_id: "photo-1", proposals };
+  photos.items = [
+    { ...photo(1), stack },
+    { ...photo(2), stack },
+  ];
+  photos.selectLoaded();
+  vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue({
+    ...photoPreparation([preparedPhoto(1), preparedPhoto(2)]),
+    proposals: proposals.map((p) => ({ ...p, flag: p.flag === "pick" ? "reject" : "pick" })),
+  });
+  const respond = vi
+    .spyOn(api, "decidePhotoStack")
+    .mockRejectedValue(new APIError("Reload stack", 409, "photo_stack_changed"));
+  render(PhotosWorkspace, { photos, cache: { get: vi.fn() } as unknown as PhotoPreviewCache });
+  await waitFor(() => expect(photos.authored.stackTargets).toHaveLength(2));
+  expect(screen.getByLabelText("Suggested keep")).toBeTruthy();
+  await fireEvent.click(screen.getByRole("button", { name: "Accept all" }));
+  await waitFor(() => expect(respond).toHaveBeenCalledOnce());
+  expect(respond.mock.calls[0]![0].responses).toEqual(
+    proposals.map((p) => ({ asset_id: p.asset_id, flag: p.flag, response: "accepted" })),
+  );
+  await waitFor(() => expect(photos.authored.conflict).toBe(true));
+  expect(screen.getByRole("button", { name: "Reload stack" })).toBeTruthy();
+  photos.dispose();
+});

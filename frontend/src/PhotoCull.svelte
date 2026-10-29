@@ -424,7 +424,7 @@
       checkingDecision = false;
     }
     const id = selected.asset_id;
-    await editor.edit({ asset_ids: [id] }, retry ? {} : patch, photos.hidden, refresh, {
+    await editor.edit({ asset_ids: [id] }, retry ? {} : patch, false, refresh, {
       beforeWrite: () => cull.verifyDecision(),
       beforeStage: retry ? undefined : (targets) => stageDecision(selected, patch, targets),
       viewed: retry
@@ -835,9 +835,7 @@
                   cull.stale}
                 onclick={() => void respondBestShots("dismissed")}>Dismiss all</Button
               >
-            {:else if !editor.stackLoading && [photo, ...neighbors].filter((r) => r && cull.currentStack!.includes(r.asset_id) && r.quality?.state === "ready").length < 2}<span
-                >No comparable frames</span
-              >{/if}
+            {/if}
           {/if}
           <IconAction
             ariaLabel="Previous photo"

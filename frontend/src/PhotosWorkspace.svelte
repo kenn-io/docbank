@@ -816,7 +816,7 @@
     ),
   );
   const selectedStack = $derived.by(() => {
-    if (photos.allResults || photoID) return;
+    if (photos.allResults) return;
     const selected = shown.filter((row) => photos.selectedIDs.has(row.asset_id));
     const row = selected[0];
     if (
@@ -851,7 +851,7 @@
   }
 
   async function respondBestShots(response: "accepted" | "dismissed") {
-    if (!selectedStack) return;
+    if (!selectedStack?.proposals?.length) return;
     const members = new Set(selectedStack.asset_ids);
     await editor.decideStack(
       {
@@ -860,7 +860,11 @@
         burst_gap_seconds: photos.burstGapSeconds,
         decision: "all",
         current_id: selectedStack.asset_ids[0]!,
-        responses: editor.bestShots.map((p) => ({ asset_id: p.asset_id, flag: p.flag, response })),
+        responses: (selectedStack.proposals ?? []).map((p) => ({
+          asset_id: p.asset_id,
+          flag: p.flag,
+          response,
+        })),
       },
       metadataRefresh,
       {
@@ -1469,27 +1473,23 @@
               {:else}
                 {#if shown.length || !mapMode}
                   {#key photos.query}
-                    {#if selectedStack}<div class="best-shots-review">
-                        {#if editor.bestShots.length}
-                          <Button
-                            size="sm"
-                            disabled={editor.busy ||
-                              editor.loading ||
-                              editor.stackLoading ||
-                              editor.conflict}
-                            onclick={() => void respondBestShots("accepted")}>Accept all</Button
-                          >
-                          <Button
-                            size="sm"
-                            disabled={editor.busy ||
-                              editor.loading ||
-                              editor.stackLoading ||
-                              editor.conflict}
-                            onclick={() => void respondBestShots("dismissed")}>Dismiss all</Button
-                          >
-                        {:else if !editor.stackLoading && shown.filter((r) => selectedStack!.asset_ids.includes(r.asset_id) && "quality" in r && r.quality?.state === "ready").length < 2}<span
-                            >No comparable frames</span
-                          >{/if}
+                    {#if selectedStack?.proposals?.length}<div class="best-shots-review">
+                        <Button
+                          size="sm"
+                          disabled={editor.busy ||
+                            editor.loading ||
+                            editor.stackLoading ||
+                            editor.conflict}
+                          onclick={() => void respondBestShots("accepted")}>Accept all</Button
+                        >
+                        <Button
+                          size="sm"
+                          disabled={editor.busy ||
+                            editor.loading ||
+                            editor.stackLoading ||
+                            editor.conflict}
+                          onclick={() => void respondBestShots("dismissed")}>Dismiss all</Button
+                        >
                       </div>{/if}
                     <PhotoGrid
                       bind:this={grid}

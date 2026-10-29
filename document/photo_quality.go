@@ -8,8 +8,9 @@ import (
 )
 
 const (
-	photoQualityRevision     = "v2"
-	PhotoQualityFocusCeiling = 0.15
+	photoQualityRevision      = "v3"
+	PhotoQualityFaceMinPixels = 8
+	PhotoQualityFocusCeiling  = 0.15
 )
 
 // PhotoQualitySignals measures preview pixels on a calibrated 0..1 scale.
@@ -71,7 +72,7 @@ var photoQualityFingerprints = sync.OnceValues(func() (PhotoQualityFingerprints,
 	if err != nil {
 		return PhotoQualityFingerprints{}, fmt.Errorf("fingerprinting photo quality grid recipe: %w", err)
 	}
-	evaluator := sha256Hex(fmt.Appendf(nil, "photo-quality:%s:16x16:catmull-rom:%s:focus-ceiling=%g:%s", photoQualityRevision, xImageDrawVersion, PhotoQualityFocusCeiling, grid))
+	evaluator := sha256Hex(fmt.Appendf(nil, "photo-quality:%s:16x16:catmull-rom:%s:focus-ceiling=%g:face-min-edge=%d:face-light=balanced:prominence=box-area:face-inputs=json-array-v1:%s", photoQualityRevision, xImageDrawVersion, PhotoQualityFocusCeiling, PhotoQualityFaceMinPixels, grid))
 	return PhotoQualityFingerprints{GridRecipe: grid, Evaluator: evaluator}, nil
 })
 
