@@ -1571,11 +1571,16 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 		searchScope.EmbeddingDescriptor = &descriptor
 		searchScope.VectorSpaceID = profile.vectorSpaces[prepared.bindingID]
 	}
-	return prepared.searcher.Search(ctx, retrieval.Query{Text: request.Query, Mode: prepared.mode,
+	report, err := prepared.searcher.Search(ctx, retrieval.Query{Text: request.Query, Mode: prepared.mode,
 		LexicalLimit: profile.portable.Retrieval.LexicalLimit, VectorLimit: profile.portable.Retrieval.VectorLimit,
 		Limit: prepared.limit, Scope: searchScope, ContentFirst: request.ContentFirst,
 		ProcessingProfileFingerprint: profile.record.Fingerprint, BindingID: prepared.bindingID,
 		Authorization: prepared.authorization})
+	if err != nil {
+		return retrieval.Report{}, err
+	}
+	report.RequestedMode = prepared.requestedMode
+	return report, nil
 }
 
 // ValidateSearch applies the same profile, query, mode, limit, and binding
@@ -1595,6 +1600,7 @@ func (service *Service) ValidateSearch(ctx context.Context, request SearchReques
 type preparedSearch struct {
 	searcher            *retrieval.Searcher
 	mode                retrieval.Mode
+	requestedMode       retrieval.Mode
 	limit               int
 	bindingID           string
 	authorization       document.EmbeddingAuthorization
@@ -1611,6 +1617,7 @@ func (service *Service) prepareSearch(
 	if mode == "" {
 		mode = retrieval.ModeAuto
 	}
+	requestedMode := mode
 	if request.MediaSources != nil && (request.Rerank ||
 		(mode != retrieval.ModeLexical && mode != retrieval.ModeAuto)) {
 		return preparedSearch{}, ErrMediaSearchInvalid
@@ -1659,7 +1666,7 @@ func (service *Service) prepareSearch(
 	if err != nil {
 		return preparedSearch{}, err
 	}
-	return preparedSearch{searcher: searcher, mode: mode, limit: limit,
+	return preparedSearch{searcher: searcher, mode: mode, requestedMode: requestedMode, limit: limit,
 		bindingID: request.BindingID, authorization: authorization,
 		rerankingAuthorizer: rerankingAuth}, nil
 }

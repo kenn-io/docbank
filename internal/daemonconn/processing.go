@@ -667,7 +667,7 @@ func validDocumentSearchActualMode(requested, actual string) bool {
 	if actual != "lexical" && actual != "semantic" && actual != "hybrid" {
 		return false
 	}
-	return requested == "auto" || requested == actual
+	return requested == "auto" || requested == actual || requested == "hybrid" && actual == "lexical"
 }
 
 func validateDocumentLaneRanks(actualMode string, result api.DocumentSearchResult,
