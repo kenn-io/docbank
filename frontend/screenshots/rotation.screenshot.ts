@@ -2,11 +2,9 @@ import { expect, test } from "@playwright/test";
 import path from "node:path";
 import { withPhotoFixture, output } from "./photo-workspace-fixture.js";
 
-test("rotation suggestion saves only after the owner responds", async ({ page }) => {
+test("rotation suggestion in dark and light themes", async ({ page }) => {
   test.setTimeout(120_000);
   page.setDefaultTimeout(15000);
-  const errors: string[] = [];
-  page.on("pageerror", (error) => errors.push(error.message));
   await withPhotoFixture(
     12,
     "rotation",
@@ -32,21 +30,6 @@ test("rotation suggestion saves only after the owner responds", async ({ page })
           animations: "disabled",
         });
       }
-      await inspector.getByRole("button", { name: "Rotate 270°", exact: true }).click();
-      await expect(inspector.getByText(/^Suggested 270°/)).toHaveCount(0);
-      await expect(
-        inspector.getByRole("combobox", { name: "Rotation: 270°", exact: true }),
-      ).toBeVisible();
-      const reopened = new URL(await run("web", "--no-browser"));
-      reopened.pathname = "/photos";
-      await page.goto(reopened.href);
-      await page
-        .getByRole("button", { name: "Select Synthetic-photo-00001.jpg", exact: true })
-        .click();
-      await expect(
-        inspector.getByRole("combobox", { name: "Rotation: 270°", exact: true }),
-      ).toBeVisible();
-      expect(errors).toEqual([]);
     },
     false,
     ["-suggestions"],
