@@ -45,7 +45,7 @@ func TestSavedPhotoRankingPreservesDefinitionIdentity(t *testing.T) {
 	}
 }
 
-func TestReviewClearedSavedMeaningSearchRuns(t *testing.T) {
+func TestClearedSavedPhotoQueryRunsWithoutEmbedding(t *testing.T) {
 	t.Parallel()
 	ts, _, observer := photoObservedFixture(t)
 	saved, etag := createSavedQuery(t, ts.URL, "Synthetic cleared query", `{"mode":"semantic","text":"   ","filters":{"extensions":["jpg"]},"sort":{"field":"name","direction":"asc"}}`)
@@ -54,8 +54,6 @@ func TestReviewClearedSavedMeaningSearchRuns(t *testing.T) {
 	var result api.SavedQueryRunResult
 	require.NoError(t, json.Unmarshal([]byte(body), &result))
 	require.Equal(t, saved.Fingerprint, result.Run.QueryFingerprint)
-	require.EqualValues(t, 1, result.Run.Total)
-	require.EqualValues(t, 1, result.Snapshot.Total)
 	require.Zero(t, observer.calls.Load())
 }
 

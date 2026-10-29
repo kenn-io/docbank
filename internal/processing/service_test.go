@@ -821,22 +821,12 @@ func TestRunEmbeddingsSkipsIneligibleImageBinding(t *testing.T) {
 		t.Run(mime, func(t *testing.T) {
 			f := newPhotoDescriptionFixture(t)
 			x := newImageEmbeddingService(t, f)
-			fake, descriptor := x.fake, x.descriptor
-			var base document.ProcessingProfileV1
-			require.NoError(t, json.Unmarshal(fake.profile.CanonicalProfile, &base))
-			original := base.Embeddings[1]
-			image := x.binding
-			image.Name = "image"
-			portable := x.portable
-			portable.Embeddings = []document.EmbeddingBindingV1{image, original}
-			service, err := NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(), Principal: "synthetic-operator", Scope: "document-processing", Profiles: map[string]ProfileConfig{"mixed": {Profile: portable, EmbeddingProviders: map[string]document.EmbeddingProvider{
-				image.Name:    &embeddingWorkerProvider{runtime: fake.runtime, binding: image.Name, descriptor: descriptor},
-				original.Name: &embeddingWorkerProvider{runtime: fake.runtime, binding: original.Name, descriptor: fake.descriptor},
-			}}}})
-			require.NoError(t, err)
+			service, original, image := newMixedImageTextProfileService(t, f, x)
+			fake := x.fake
 			f.grant(t, service, "mixed")
 			written := f.written
 			if mime == "application/pdf" {
+				var err error
 				written, err = f.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(mediatest.PDF()))
 				require.NoError(t, err)
 			}
@@ -850,8 +840,8 @@ func TestRunEmbeddingsSkipsIneligibleImageBinding(t *testing.T) {
 			job, err := f.catalog.EmbeddingJobByID(t.Context(), ids[0])
 			require.NoError(t, err)
 			require.Equal(t, "completed", job.State)
-			require.Equal(t, 0, fake.runtime.callCount(image.Name))
-			require.Positive(t, fake.runtime.callCount(original.Name))
+			require.Equal(t, 0, fake.runtime.callCount(image))
+			require.Positive(t, fake.runtime.callCount(original))
 		})
 	}
 }

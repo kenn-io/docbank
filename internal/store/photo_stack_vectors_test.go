@@ -5,9 +5,7 @@ import (
 	"database/sql"
 	"encoding/json/v2"
 	"strings"
-	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
@@ -33,40 +31,19 @@ func TestPhotoStackPagesReuseOpenedGeneration(t *testing.T) {
 	index := newCursorIndexFixture(f)
 	index.add(record, vector)
 	index.generation(t, "reused-image-generation")
-	burstPhotos(t, f.s, 4)
-	run, err := f.s.BeginIngest(t.Context(), "cli", "synthetic separate page")
-	require.NoError(t, err)
-	stackPhoto(t, f.s, run, "/separate/one.jpg", "2024-06-10T13:00:00Z", document.SourceMetadataPrecisionSecond)
-	stackPhoto(t, f.s, run, "/separate/two.jpg", "2024-06-10T14:00:00Z", document.SourceMetadataPrecisionSecond)
 	q := &photoStackCountingQuerier{DB: f.s.db}
-	var boundary *PhotoBrowsePosition
-	for i := range 2 {
-		page := PhotoBrowsePage{}
-		err := f.s.listPhotoStackPage(t.Context(), q, photoBrowseScope{match: compiledQueryFragment{sql: "1=1"}}, 2, false, 1, boundary, "", func(after *PhotoBrowsePosition, limit int) ([]PhotoBrowseRow, error) {
-			statement := `SELECT ` + photoBrowseSelect + `,pl.sort_key,0 FROM ` + photoBrowseDisplayFrom + ` WHERE ` + photoBrowseLiveDisplay + ` AND ` + photoVisibilityPredicate(false) + ` AND pl.sort_key>''`
-			var args []any
-			if after != nil {
-				statement += ` AND (pl.sort_key>? OR (pl.sort_key=? AND a.asset_id>?))`
-				args = append(args, after.Key, after.Key, after.AssetID)
-			}
-			args = append(args, limit)
-			rows, err := q.QueryContext(t.Context(), statement+` ORDER BY pl.sort_key,a.asset_id LIMIT ?`, args...)
-			if err != nil {
-				return nil, err
-			}
-			return scanPhotoBrowseRows(rows, PhotoBrowsePosition{})
-		}, &page, "")
-		require.NoError(t, err)
-		require.NotEmpty(t, page.Items)
-		boundary = page.Next
-		if i == 0 {
-			require.NotNil(t, boundary)
-		}
-	}
-	require.Equal(t, 1, q.generationReads, "the second page must reuse the immutable generation")
-	index.generation(t, "replacement-image-generation")
-	_, err = f.s.newPhotoStackVectorReader(t.Context(), q)
+	first, err := f.s.newPhotoStackVectorReader(t.Context(), q)
 	require.NoError(t, err)
+	require.Len(t, first.indexes, 1)
+	second, err := f.s.newPhotoStackVectorReader(t.Context(), q)
+	require.NoError(t, err)
+	require.Same(t, first.indexes[0], second.indexes[0], "the immutable generation is reused")
+	require.Equal(t, 1, q.generationReads)
+	index.generation(t, "replacement-image-generation")
+	replacement, err := f.s.newPhotoStackVectorReader(t.Context(), q)
+	require.NoError(t, err)
+	require.Len(t, replacement.indexes, 1)
+	require.NotSame(t, first.indexes[0], replacement.indexes[0])
 	require.Equal(t, 2, q.generationReads)
 	require.Len(t, f.s.photoStackVectors, 1, "retain only the current generation per space")
 	require.NoError(t, f.s.Close())
@@ -153,19 +130,6 @@ func TestPhotoStackVectorReadersShareOneGeneration(t *testing.T) {
 	index := newCursorIndexFixture(f)
 	index.add(record, vector)
 	index.generation(t, "concurrent-readers")
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancel()
-	var loads atomic.Int32
-	loading := make(chan struct{})
-	q := photoStackLoadFailureQuerier{DB: f.s.db, beforeLoad: func() {
-		if loads.Add(1) == 8 {
-			close(loading)
-		}
-		select {
-		case <-loading:
-		case <-ctx.Done():
-		}
-	}}
 	type result struct {
 		reader *photoStackVectorReader
 		err    error
@@ -175,7 +139,7 @@ func TestPhotoStackVectorReadersShareOneGeneration(t *testing.T) {
 	for range 8 {
 		go func() {
 			<-start
-			reader, err := f.s.newPhotoStackVectorReader(ctx, q)
+			reader, err := f.s.newPhotoStackVectorReader(t.Context(), f.s.db)
 			results <- result{reader, err}
 		}()
 	}

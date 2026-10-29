@@ -9,7 +9,7 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-func TestSavedPhotoRankingMatchesLiveRequest(t *testing.T) {
+func TestPhotoRankingRequestUsesNormalizedQueryOptions(t *testing.T) {
 	t.Parallel()
 	value, err := query.Parse([]byte(`{"mode":"semantic","text":"dog","sort":{"field":"capture_time"}}`))
 	require.NoError(t, err)

@@ -10,6 +10,23 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
+func newMixedImageTextProfileService(t *testing.T, f *photoDescriptionFixture, x photoSearchFixture) (*Service, string, string) {
+	t.Helper()
+	var base document.ProcessingProfileV1
+	require.NoError(t, json.Unmarshal(x.fake.profile.CanonicalProfile, &base))
+	original := base.Embeddings[1]
+	image := x.binding
+	image.Name = "image"
+	portable := x.portable
+	portable.Embeddings = []document.EmbeddingBindingV1{image, original}
+	service, err := NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(), Principal: "synthetic-operator", Scope: "document-processing", Profiles: map[string]ProfileConfig{"mixed": {Profile: portable, EmbeddingProviders: map[string]document.EmbeddingProvider{
+		image.Name:    &embeddingWorkerProvider{runtime: x.fake.runtime, binding: image.Name, descriptor: x.descriptor},
+		original.Name: &embeddingWorkerProvider{runtime: x.fake.runtime, binding: original.Name, descriptor: x.fake.descriptor},
+	}}}})
+	require.NoError(t, err)
+	return service, original.Name, image.Name
+}
+
 func TestSearchPhotosHybridCollapsesOnlyAcceptedDuplicates(t *testing.T) {
 	t.Parallel()
 	x := newPhotoSearchFixture(t)
@@ -74,23 +91,12 @@ func TestDocumentSearchSelectsTextBindingInMixedProfile(t *testing.T) {
 	t.Run("mixed profile", func(t *testing.T) {
 		f := newPhotoDescriptionFixture(t)
 		x := newImageEmbeddingService(t, f)
-		var base document.ProcessingProfileV1
-		require.NoError(t, json.Unmarshal(x.fake.profile.CanonicalProfile, &base))
-		original := base.Embeddings[1]
-		image := x.binding
-		image.Name = "image"
-		portable := x.portable
-		portable.Embeddings = []document.EmbeddingBindingV1{image, original}
-		service, err := NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(), Profiles: map[string]ProfileConfig{"mixed": {Profile: portable, EmbeddingProviders: map[string]document.EmbeddingProvider{
-			image.Name:    &embeddingWorkerProvider{runtime: x.fake.runtime, binding: image.Name, descriptor: x.descriptor},
-			original.Name: &embeddingWorkerProvider{runtime: x.fake.runtime, binding: original.Name, descriptor: x.fake.descriptor},
-		}}}})
-		require.NoError(t, err)
-		require.Equal(t, []string{original.Name}, service.Profiles()[0].QueryEmbeddingBindings)
+		service, original, image := newMixedImageTextProfileService(t, f, x)
+		require.Equal(t, []string{original}, service.Profiles()[0].QueryEmbeddingBindings)
 		prepared, err := service.prepareSearch(SearchRequest{Query: "synthetic", Mode: "hybrid"}, service.profiles["mixed"])
 		require.NoError(t, err)
-		require.Equal(t, original.Name, prepared.bindingID)
-		err = service.ValidateSearch(t.Context(), SearchRequest{Profile: "mixed", Query: "synthetic", Mode: "hybrid", BindingID: image.Name})
+		require.Equal(t, original, prepared.bindingID)
+		err = service.ValidateSearch(t.Context(), SearchRequest{Profile: "mixed", Query: "synthetic", Mode: "hybrid", BindingID: image})
 		require.ErrorIs(t, err, store.ErrNotFound)
 	})
 }

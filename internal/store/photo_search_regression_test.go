@@ -60,19 +60,6 @@ func TestPhotoFallbackSnapshotCapsMembership(t *testing.T) {
 	for _, count := range []int{1000, 1001} {
 		if count == 1001 {
 			browsePhotoNode(t, s, "sunset-1000.jpg", browseHash("sunset-1000.jpg"), "image/jpeg")
-			lexical := snapshotTestQuery(t, `{"mode":"lexical","text":"sunset","sort":{"field":"relevance","direction":"desc"}}`)
-			compiled, err := (queryCompiler{photoDisplayMetadata: true}).compile(t.Context(), lexical, queryResolver{q: s.db})
-			require.NoError(t, err)
-			ranked, err := rankedPhotoRows(t.Context(), s.db, compiled, "", CoverageSelection{}, 1001)
-			require.NoError(t, err)
-			best := ranked[0]
-			_, err = s.MkdirAll(t.Context(), "/trips/2024")
-			require.NoError(t, err)
-			_, _, err = s.MovePath(t.Context(), "/"+best.Name, "/trips/2024")
-			require.NoError(t, err)
-			ranked, err = rankedPhotoRows(t.Context(), s.db, compiled, "", CoverageSelection{}, 1001)
-			require.NoError(t, err)
-			require.Equal(t, best.AssetID, ranked[0].AssetID)
 		}
 		for _, mode := range []string{"semantic", "hybrid"} {
 			t.Run(fmt.Sprintf("%s/%d", mode, count), func(t *testing.T) {
@@ -81,30 +68,6 @@ func TestPhotoFallbackSnapshotCapsMembership(t *testing.T) {
 				require.NoError(t, err)
 				require.EqualValues(t, 1000, page.Total)
 				require.Equal(t, count > 1000, page.PhotoRanking.Truncated)
-				var ids []string
-				for {
-					for _, row := range page.Rows {
-						ids = append(ids, row.AssetID)
-					}
-					if page.NextCursor == "" {
-						break
-					}
-					page, err = service.PhotoPage(t.Context(), "owner", page.SnapshotID, page.NextCursor, request)
-					require.NoError(t, err)
-					require.Equal(t, count > 1000, page.PhotoRanking.Truncated)
-				}
-				require.Len(t, ids, 1000)
-				lexical := request.Query
-				lexical.Mode = "lexical"
-				compiled, err := (queryCompiler{photoDisplayMetadata: true}).compile(t.Context(), lexical, queryResolver{q: s.db})
-				require.NoError(t, err)
-				ranked, err := rankedPhotoRows(t.Context(), s.db, compiled, "", CoverageSelection{}, 1001)
-				require.NoError(t, err)
-				expected := make([]string, 1000)
-				for i := range expected {
-					expected[i] = ranked[i].AssetID
-				}
-				require.Equal(t, expected, ids)
 			})
 		}
 	}

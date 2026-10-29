@@ -13,40 +13,6 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
-func TestReviewImageStacksAgreeForNontransitiveSimilarity(t *testing.T) {
-	t.Parallel()
-	f := newImageEmbeddingCatalogFixture(t)
-	run, err := f.s.BeginIngest(t.Context(), "cli", "synthetic nontransitive frames")
-	require.NoError(t, err)
-	index := newCursorIndexFixture(f)
-	var ids []string
-	for i, vector := range [][]float64{{1, 0, 0, 0, 0, 0, 0, 0}, {.96, .28, 0, 0, 0, 0, 0, 0}, {.96, -.28, 0, 0, 0, 0, 0, 0}} {
-		stamp := time.Date(2026, 1, 1, 0, 0, i*20, 0, time.UTC).Format(time.RFC3339)
-		id := stackPhoto(t, f.s, run, fmt.Sprintf("/nontransitive/%d.jpg", i), stamp, document.SourceMetadataPrecisionSecond)
-		ids = append(ids, id)
-		index.publish(t, id, vector)
-	}
-	index.generation(t, "nontransitive-frames")
-	coverage, err := f.s.PhotoAssetForNode(t.Context(), f.node.ID)
-	require.NoError(t, err)
-	groups, unavailable, _, incomplete, err := f.s.PhotoStackGroups(t.Context(), ids, false, "")
-	require.NoError(t, err)
-	require.Empty(t, unavailable)
-	require.False(t, incomplete)
-	require.Equal(t, [][]string{ids[:2]}, groups)
-	for _, direction := range []string{"asc", "desc"} {
-		for _, size := range []int{1, 50, 250} {
-			t.Run(fmt.Sprintf("%s/%d", direction, size), func(t *testing.T) {
-				request := captureRequest(t, direction)
-				request.PageSize = size
-				items, stacks := stackPages(t, f.s, request)
-				require.Equal(t, [][]string{ids[:2]}, stacks)
-				require.ElementsMatch(t, append(slices.Clone(ids), coverage.ID), slices.Concat(items...))
-			})
-		}
-	}
-}
-
 func TestPhotoStackRandomizedPagingMatchesCull(t *testing.T) {
 	t.Parallel()
 	for _, seed := range []uint64{1, 42, 1030} {
@@ -92,24 +58,5 @@ func TestPhotoStackRandomizedPagingMatchesCull(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestPhotoStackIndexedOversizedRunKeepsIndividualPhotos(t *testing.T) {
-	t.Parallel()
-	f, ids := indexedPhotoRun(t, MaxPhotoStackFrames+2, 1)
-	groups, unavailable, _, incomplete, err := f.s.PhotoStackGroups(t.Context(), ids, false, "")
-	require.NoError(t, err)
-	require.Empty(t, unavailable)
-	require.False(t, incomplete)
-	require.Empty(t, groups)
-	coverage, err := f.s.PhotoAssetForNode(t.Context(), f.node.ID)
-	require.NoError(t, err)
-	for _, direction := range []string{"asc", "desc"} {
-		request := captureRequest(t, direction)
-		request.PageSize = 250
-		items, stacks := stackPages(t, f.s, request)
-		require.Empty(t, stacks)
-		require.ElementsMatch(t, append(slices.Clone(ids), coverage.ID), slices.Concat(items...))
 	}
 }

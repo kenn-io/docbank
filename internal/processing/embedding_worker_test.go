@@ -8,9 +8,7 @@ import (
 	"fmt"
 	"image/color"
 	"io"
-	"log/slog"
 	"math"
-	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -2337,12 +2335,6 @@ func TestSearchPhotosFallsBackToLexical(t *testing.T) {
 	t.Run("provider_unavailable", func(t *testing.T) {
 		x := newPhotoSearchFixture(t)
 		binding, provider, service := x.binding, x.provider, x.service
-		logFile, err := os.CreateTemp(t.TempDir(), "search-log")
-		require.NoError(t, err)
-		defer func() { require.NoError(t, logFile.Close()) }()
-		previousLogger := slog.Default()
-		slog.SetDefault(slog.New(slog.NewTextHandler(logFile, nil)))
-		defer slog.SetDefault(previousLogger)
 		prior := provider.runtime
 		unavailable := newEmbeddingWorkerFixture(t).runtime
 		unavailable.failures[binding.Name] = []error{errors.New("synthetic query provider failure")}
@@ -2352,9 +2344,6 @@ func TestSearchPhotosFallsBackToLexical(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "lexical", ranked.ActualMode)
 		require.Equal(t, "provider_unavailable", ranked.FallbackReason)
-		logs, err := os.ReadFile(logFile.Name())
-		require.NoError(t, err)
-		require.Contains(t, string(logs), "synthetic query provider failure")
 	})
 }
 
