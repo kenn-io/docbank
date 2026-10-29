@@ -1,5 +1,12 @@
 package api
 
+// DocumentSearchFence requires the vault identity and permits an omitted version
+// list when a server-resolved scope is supplied. Other operations use DocumentSourceFence.
+type DocumentSearchFence struct {
+	VaultUID          string   `json:"vault_uid" format:"uuid"`
+	ContentVersionIDs []string `json:"content_version_ids,omitzero" maxItems:"4096" uniqueItems:"true"`
+}
+
 type DocumentSourceFenceFilters struct {
 	TagID          string `json:"tag_id,omitzero" format:"uuid"`
 	MIMEType       string `json:"mime_type,omitzero" maxLength:"255"`
@@ -14,7 +21,7 @@ type DocumentSourceFenceResolveRequest struct {
 }
 
 // ResolvedDocumentSourceFence allows an exact empty population. Search
-// requests continue to use DocumentSourceFence, whose ID array is non-empty.
+// requests select an explicit fence or a server-resolved scope.
 type ResolvedDocumentSourceFence struct {
 	VaultUID          string   `json:"vault_uid" format:"uuid"`
 	ContentVersionIDs []string `json:"content_version_ids" maxItems:"4096" uniqueItems:"true"`

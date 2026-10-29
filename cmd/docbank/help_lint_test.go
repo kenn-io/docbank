@@ -263,8 +263,8 @@ func checkHelpExample(root *cobra.Command, line string) (*cobra.Command, error) 
 	if err = flags.Parse(args); err != nil {
 		return nil, fmt.Errorf("parsing help example flags: %w", err)
 	}
-	// This validator also closes over a production flag variable. Validate its
-	// arity and required target against the isolated copy instead.
+	// These validators also close over production flag variables. Validate
+	// their flag-dependent arguments against the isolated copy instead.
 	if cmd == backupRestoreCmd {
 		if err = cobra.MaximumNArgs(1)(cmd, flags.Args()); err != nil {
 			return nil, fmt.Errorf("validating backup restore example: %w", err)
@@ -272,6 +272,14 @@ func checkHelpExample(root *cobra.Command, line string) (*cobra.Command, error) 
 		target, _ := flags.GetString("target")
 		if target == "" {
 			return nil, errors.New("backup restore example needs --target")
+		}
+	} else if cmd.CommandPath() == "docbank processing coverage" {
+		coverage := newProcessingCoverageCommand()
+		if err = coverage.Flags().Set("all-live", flags.Lookup("all-live").Value.String()); err != nil {
+			return nil, fmt.Errorf("setting help example flags: %w", err)
+		}
+		if err = coverage.ValidateArgs(flags.Args()); err != nil {
+			return nil, fmt.Errorf("validating help example arguments: %w", err)
 		}
 	} else if cmd.Args != nil {
 		if err = cmd.Args(cmd, flags.Args()); err != nil {
@@ -363,7 +371,7 @@ func TestHelpExampleParsing(t *testing.T) {
 			assert.Equal(t, tt.path, cmd.CommandPath())
 		})
 	}
-	for _, line := range []string{`docbank not-real`, `docbank cat id:12 --not-real`, `docbank get id:12`, `docbank backup restore --repo ./bk`, `docbank cat id:12 > out extra`} {
+	for _, line := range []string{`docbank not-real`, `docbank cat id:12 --not-real`, `docbank get id:12`, `docbank backup restore --repo ./bk`, `docbank processing coverage <version-uuid> --all-live --profile <profile>`, `docbank cat id:12 > out extra`} {
 		t.Run(line, func(t *testing.T) { _, err := checkHelpExample(rootCmd, line); require.Error(t, err) })
 	}
 }

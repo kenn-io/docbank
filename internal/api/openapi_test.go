@@ -850,3 +850,40 @@ func TestOpenAPIPhotoPreparedTargetOmitsContentVersion(t *testing.T) {
 	require.Equal(t, "uuid", edit.Properties["content_version_id"].Format)
 	require.NotContains(t, edit.Required, "content_version_id")
 }
+
+func TestDocumentSearchScopeWireContract(t *testing.T) {
+	t.Parallel()
+	doc := api.NewOfflineServer().API().OpenAPI()
+	schemas := doc.Components.Schemas.Map()
+	request := schemas["DocumentSearchRequest"]
+	require.NotNil(t, request.Properties["scope"])
+	fence := schemas["DocumentSearchFence"]
+	require.NotNil(t, fence)
+	assert.NotContains(t, fence.Required, "content_version_ids")
+	explicit := schemas["DocumentSourceFence"]
+	require.NotNil(t, explicit.Properties["content_version_ids"].MinItems)
+	assert.Equal(t, 1, *explicit.Properties["content_version_ids"].MinItems)
+	report := schemas["DocumentSearchReport"]
+	require.NotNil(t, report.Properties["scope"])
+	require.NotNil(t, report.Properties["observed_scope_count"])
+}
+
+func TestDocumentCoverageScopeWireContract(t *testing.T) {
+	t.Parallel()
+	doc := api.NewOfflineServer().API().OpenAPI()
+	path := doc.Paths["/api/v1/coverage"]
+	require.NotNil(t, path.Post)
+	assert.Equal(t, "getScopedDocumentProcessingCoverage", path.Post.OperationID)
+	assert.Equal(t, "getDocumentProcessingCoverage", path.Get.OperationID)
+	schemas := doc.Components.Schemas.Map()
+	request := schemas["DocumentCoverageRequest"]
+	require.NotNil(t, request)
+	assert.ElementsMatch(t, []string{"profile", "fence"}, request.Required)
+	require.Equal(t, "#/components/schemas/DocumentSearchScope", request.Properties["scope"].Ref)
+	require.Equal(t, "#/components/schemas/DocumentSearchFence", request.Properties["fence"].Ref)
+	report := schemas["CoverageReport"]
+	require.NotNil(t, report.Properties["scope"])
+	require.NotNil(t, report.Properties["observed_scope_count"])
+	assert.NotContains(t, report.Required, "scope")
+	assert.NotContains(t, report.Required, "observed_scope_count")
+}

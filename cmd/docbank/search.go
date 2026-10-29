@@ -412,7 +412,7 @@ func runDocumentSearch(cmd *cobra.Command, c *daemonconn.Connection, query strin
 	report, err := c.SearchDocuments(cmd.Context(), api.DocumentSearchRequest{
 		Query: query, Mode: options.Mode, Limit: options.Limit, Profile: options.Profile,
 		BindingID: bindingID, Explain: options.Explain, Rerank: options.Rerank,
-		Fence: api.DocumentSourceFence{VaultUID: info.VaultID, ContentVersionIDs: options.ContentVersionIDs},
+		Fence: api.DocumentSearchFence{VaultUID: info.VaultID, ContentVersionIDs: options.ContentVersionIDs},
 	})
 	if err != nil {
 		return err

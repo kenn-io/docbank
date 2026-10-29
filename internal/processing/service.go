@@ -362,12 +362,17 @@ type CoverageClass struct {
 }
 
 type Coverage struct {
+	Scope                               *SearchScope
+	ObservedScopeCount                  int
 	VaultUID, ProfileFingerprint, State string
 	Renditions                          CoverageClass
 	Embeddings                          []CoverageClass
 }
 
+type SearchScope = retrieval.SearchScope
+
 type SearchRequest struct {
+	Scope                           *SearchScope
 	MediaSources                    []retrieval.MediaSourceSelector
 	Query, Mode, Profile, BindingID string
 	Limit                           int
@@ -1455,7 +1460,38 @@ func (service *Service) renditionFromView(ctx context.Context, node store.Node, 
 }
 
 func (service *Service) Coverage(ctx context.Context, profileName string, fence SourceFence) (Coverage, error) {
-	profile, ids, err := service.profileFence(profileName, fence)
+	return service.CoverageWithScope(ctx, profileName, fence, nil)
+}
+
+// CoverageWithScope reports exact-version or filtered live-file coverage from
+// one catalog snapshot, without inspecting sources or invoking providers.
+func (service *Service) CoverageWithScope(ctx context.Context, profileName string, fence SourceFence, scope *SearchScope) (Coverage, error) {
+	if (len(fence.ContentVersionIDs) != 0) == (scope != nil) {
+		return Coverage{}, fmt.Errorf("%w: select exactly one coverage scope", store.ErrInvalidProcessingSourceFence)
+	}
+	var profile configuredProfile
+	var ids []string
+	var filters *store.SearchOptions
+	var err error
+	if scope == nil {
+		profile, ids, err = service.profileFence(profileName, fence)
+	} else {
+		var ok bool
+		profile, ok = service.profiles[profileName]
+		if !ok {
+			return Coverage{}, ErrProfileNotConfigured
+		}
+		if fence.VaultUID != service.catalog.VaultID() {
+			return Coverage{}, ErrForeignVault
+		}
+		if scope.Kind != "all_live" {
+			return Coverage{}, fmt.Errorf("%w: unknown coverage scope", store.ErrInvalidProcessingSourceFence)
+		}
+		filters = &store.SearchOptions{}
+		if scope.Filters != nil {
+			*filters = *scope.Filters
+		}
+	}
 	if err != nil {
 		return Coverage{}, err
 	}
@@ -1465,7 +1501,7 @@ func (service *Service) Coverage(ctx context.Context, profileName string, fence 
 			Required: binding.Activation == document.EmbeddingRequired}
 	}
 	snapshot, err := service.catalog.ProcessingCoverage(ctx, store.ProcessingCoverageScope{
-		ContentVersionIDs: ids, ProcessingProfileFingerprint: profile.record.Fingerprint, Bindings: bindings,
+		ContentVersionIDs: ids, Filters: filters, ProcessingProfileFingerprint: profile.record.Fingerprint, Bindings: bindings,
 	})
 	if err != nil {
 		return Coverage{}, err
@@ -1477,7 +1513,14 @@ func (service *Service) Coverage(ctx context.Context, profileName string, fence 
 			PreviousServing: item.PreviousGenerationServing, Total: item.Total}
 	}
 	report := Coverage{VaultUID: service.catalog.VaultID(), ProfileFingerprint: profile.record.Fingerprint,
-		State: "complete", Renditions: CoverageClass{Name: "rendition", State: "not_required", Total: len(ids)}}
+		State: "complete", Renditions: CoverageClass{Name: "rendition", State: "not_required", Total: snapshot.Renditions.Total}}
+	if scope != nil {
+		report.Scope = &SearchScope{Kind: "all_live"}
+		if scope.Filters != nil {
+			report.Scope.Filters = snapshot.Filters
+		}
+		report.ObservedScopeCount = snapshot.Renditions.Total
+	}
 	// A description profile attaches no rendition, so there is none to cover.
 	if profile.portable.Rendition != nil && profileRenditionInput(profile) == document.RenditionInputOriginalFile {
 		report.Renditions = toClass(snapshot.Renditions)
@@ -1532,7 +1575,36 @@ func (service *Service) ResolveSourceFence(
 }
 
 func (service *Service) Search(ctx context.Context, request SearchRequest) (retrieval.Report, error) {
-	profile, ids, err := service.profileFence(request.Profile, request.Fence)
+	if (len(request.Fence.ContentVersionIDs) != 0) == (request.Scope != nil) {
+		return retrieval.Report{}, fmt.Errorf("%w: select exactly one search scope", store.ErrInvalidProcessingSourceFence)
+	}
+	var profile configuredProfile
+	var ids []string
+	var scope store.SearchOptions
+	var observed int
+	var err error
+	if request.Scope == nil {
+		profile, ids, err = service.profileFence(request.Profile, request.Fence)
+		scope.ContentVersionIDs = ids
+	} else {
+		var ok bool
+		profile, ok = service.profiles[request.Profile]
+		if !ok {
+			return retrieval.Report{}, ErrProfileNotConfigured
+		}
+		if request.Fence.VaultUID != service.catalog.VaultID() {
+			return retrieval.Report{}, ErrForeignVault
+		}
+		if request.Scope.Kind != "all_live" {
+			return retrieval.Report{}, fmt.Errorf("%w: select exactly one search scope", store.ErrInvalidProcessingSourceFence)
+		}
+		if request.MediaSources != nil {
+			return retrieval.Report{}, ErrMediaSearchInvalid
+		}
+		if request.Scope.Filters != nil {
+			scope = *request.Scope.Filters
+		}
+	}
 	if err != nil {
 		return retrieval.Report{}, err
 	}
@@ -1542,6 +1614,35 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 	}
 	if request.MediaSources != nil {
 		return service.searchMediaSources(ctx, request, ids, prepared)
+	}
+	if request.Scope != nil {
+		mode := prepared.mode
+		if mode != retrieval.ModeAuto && mode != retrieval.ModeLexical && mode != retrieval.ModeSemantic && mode != retrieval.ModeHybrid {
+			return retrieval.Report{}, fmt.Errorf("%w: invalid search mode", store.ErrInvalidProcessingSourceFence)
+		}
+		// Future partial-library grants must intersect this scope with caller authority.
+		scope, observed, err = service.catalog.CountProcessingSearchScope(ctx, scope)
+		if err != nil {
+			return retrieval.Report{}, err
+		}
+	}
+	if request.Scope != nil && observed == 0 {
+		mode := prepared.mode
+		actual := mode
+		if mode == retrieval.ModeAuto {
+			actual = retrieval.ModeLexical
+		}
+		result := retrieval.Report{RequestedMode: mode, ActualMode: actual,
+			Coverage: retrieval.Coverage{State: retrieval.CoverageComplete,
+				BindingRequired: prepared.bindingRequired && (mode == retrieval.ModeSemantic || mode == retrieval.ModeHybrid)},
+			Scope: &retrieval.SearchScope{Kind: "all_live"}, Results: []retrieval.Result{}}
+		if request.Scope.Filters != nil {
+			result.Scope.Filters = &scope
+		}
+		if request.Rerank {
+			result.Receipts = append(result.Receipts, retrieval.ProviderReceipt{Stage: retrieval.ProviderStageReranking, Outcome: retrieval.ProviderOutcomeSkipped})
+		}
+		return result, nil
 	}
 	if len(profile.portable.Embeddings) != 0 && (prepared.mode == retrieval.ModeSemantic || prepared.mode == retrieval.ModeHybrid) {
 		binding, err := selectEmbeddingBinding(profile.portable, prepared.bindingID)
@@ -1561,17 +1662,30 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 			prepared.rerankingAuthorizer.queryFenceHeld = true
 		}
 	}
-	searchScope := store.SearchOptions{ContentVersionIDs: ids}
+	searchScope := scope
 	if provider := profile.embedders[prepared.bindingID]; provider != nil {
 		descriptor := provider.Descriptor()
 		searchScope.EmbeddingDescriptor = &descriptor
 		searchScope.VectorSpaceID = profile.vectorSpaces[prepared.bindingID]
 	}
-	return prepared.searcher.Search(ctx, retrieval.Query{Text: request.Query, Mode: prepared.mode,
+	report, err := prepared.searcher.Search(ctx, retrieval.Query{Text: request.Query, Mode: prepared.mode,
 		LexicalLimit: profile.portable.Retrieval.LexicalLimit, VectorLimit: profile.portable.Retrieval.VectorLimit,
-		Limit: prepared.limit, Scope: searchScope, ContentFirst: request.ContentFirst,
+		Limit: prepared.limit, Scope: searchScope, ObserveScope: request.Scope != nil, ContentFirst: request.ContentFirst,
 		ProcessingProfileFingerprint: profile.record.Fingerprint, BindingID: prepared.bindingID,
 		Authorization: prepared.authorization})
+	if err != nil {
+		return retrieval.Report{}, err
+	}
+	if request.Scope != nil {
+		report.Scope = &retrieval.SearchScope{Kind: "all_live"}
+		if request.Scope.Filters != nil {
+			report.Scope.Filters = &scope
+		}
+		if report.Coverage.State != retrieval.CoverageUnknown {
+			report.ObservedScopeCount = report.Coverage.ScopedDocuments
+		}
+	}
+	return report, nil
 }
 
 // ValidateSearch applies the same profile, query, mode, limit, and binding
@@ -1593,6 +1707,7 @@ type preparedSearch struct {
 	mode                retrieval.Mode
 	limit               int
 	bindingID           string
+	bindingRequired     bool
 	authorization       document.EmbeddingAuthorization
 	rerankingAuthorizer *rerankingAuthorizer
 }
@@ -1625,12 +1740,14 @@ func (service *Service) prepareSearch(
 		Owner: "embedded-document-search", LeaseDuration: 5 * time.Minute,
 		MediaEvidence: service.mediaEvidence}
 	var authorization document.EmbeddingAuthorization
-	if len(profile.portable.Embeddings) != 0 {
+	var bindingRequired bool
+	if len(profile.portable.Embeddings) != 0 || (request.Scope != nil && request.BindingID != "") {
 		binding, bindingErr := selectEmbeddingBinding(profile.portable, request.BindingID)
 		if bindingErr != nil {
 			return preparedSearch{}, bindingErr
 		}
 		request.BindingID = binding.Name
+		bindingRequired = binding.Activation == document.EmbeddingRequired
 		searcherConfig.Encoders = service.embeddings
 		authorization = document.EmbeddingAuthorization{ProviderID: binding.Descriptor.ID,
 			DescriptorFingerprint: binding.Descriptor.Fingerprint,
@@ -1652,7 +1769,7 @@ func (service *Service) prepareSearch(
 		return preparedSearch{}, err
 	}
 	return preparedSearch{searcher: searcher, mode: mode, limit: limit,
-		bindingID: request.BindingID, authorization: authorization,
+		bindingID: request.BindingID, bindingRequired: bindingRequired, authorization: authorization,
 		rerankingAuthorizer: rerankingAuth}, nil
 }
 

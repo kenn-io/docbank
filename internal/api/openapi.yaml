@@ -3358,11 +3358,19 @@ components:
           items:
             $ref: "#/components/schemas/CoverageClass"
           type: array
+        observed_scope_count:
+          format: int64
+          minimum: 0
+          type:
+            - integer
+            - "null"
         profile_fingerprint:
           pattern: ^[0-9a-f]{64}$
           type: string
         renditions:
           $ref: "#/components/schemas/CoverageClass"
+        scope:
+          $ref: "#/components/schemas/DocumentSearchScope"
         state:
           type: string
         vault_uid:
@@ -4061,6 +4069,33 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    DocumentCoverageRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/DocumentCoverageRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        fence:
+          $ref: "#/components/schemas/DocumentSearchFence"
+        profile:
+          maxLength: 128
+          minLength: 1
+          pattern: ^[a-z][a-z0-9_-]*$
+          type: string
+        scope:
+          $ref: "#/components/schemas/DocumentSearchScope"
+      required:
+        - profile
+        - fence
+      type: object
+      x-go-type: api.DocumentCoverageRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     DocumentEventCoverage:
       additionalProperties: false
       properties:
@@ -4414,6 +4449,25 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    DocumentSearchFence:
+      additionalProperties: false
+      properties:
+        content_version_ids:
+          items:
+            type: string
+          maxItems: 4096
+          type: array
+          uniqueItems: true
+        vault_uid:
+          format: uuid
+          type: string
+      required:
+        - vault_uid
+      type: object
+      x-go-type: api.DocumentSearchFence
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     DocumentSearchReport:
       additionalProperties: false
       properties:
@@ -4439,6 +4493,12 @@ components:
           type: array
         media_source_selection:
           type: boolean
+        observed_scope_count:
+          format: int64
+          minimum: 0
+          type:
+            - integer
+            - "null"
         requested_mode:
           type: string
         reranking:
@@ -4447,6 +4507,8 @@ components:
           items:
             $ref: "#/components/schemas/DocumentSearchResult"
           type: array
+        scope:
+          $ref: "#/components/schemas/DocumentSearchScope"
         trace:
           items:
             $ref: "#/components/schemas/DocumentSearchTrace"
@@ -4484,7 +4546,7 @@ components:
         explain:
           type: boolean
         fence:
-          $ref: "#/components/schemas/DocumentSourceFence"
+          $ref: "#/components/schemas/DocumentSearchFence"
         limit:
           format: int64
           maximum: 100
@@ -4514,6 +4576,8 @@ components:
           type: string
         rerank:
           type: boolean
+        scope:
+          $ref: "#/components/schemas/DocumentSearchScope"
       required:
         - query
         - mode
@@ -4592,6 +4656,22 @@ components:
         - evidence
       type: object
       x-go-type: api.DocumentSearchResult
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    DocumentSearchScope:
+      additionalProperties: false
+      properties:
+        filters:
+          $ref: "#/components/schemas/DocumentSourceFenceFilters"
+        kind:
+          enum:
+            - all_live
+          type: string
+      required:
+        - kind
+      type: object
+      x-go-type: api.DocumentSearchScope
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -23188,6 +23268,28 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Report rendition and embedding coverage for exact document versions
+    post:
+      operationId: getScopedDocumentProcessingCoverage
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DocumentCoverageRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CoverageReport"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Report rendition and embedding coverage for exact versions or live documents
   /api/v1/derivatives/purge-jobs:
     post:
       description: Returns exactly one terminal receipt as newline-delimited JSON after the catalog purge commits. Partial or deferred cleanup includes an error alongside the receipt.

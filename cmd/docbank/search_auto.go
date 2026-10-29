@@ -71,7 +71,7 @@ func tryAutomaticSearch(ctx context.Context, c *daemonconn.Connection, query str
 	var first automaticSearchOutcome
 	for _, candidate := range candidates {
 		report, searchErr := c.SearchDocuments(ctx, api.DocumentSearchRequest{Query: query, Mode: "hybrid",
-			Profile: candidate.profile, BindingID: candidate.binding, Limit: limit, Fence: fence})
+			Profile: candidate.profile, BindingID: candidate.binding, Limit: limit, Fence: api.DocumentSearchFence(fence)})
 		if searchErr == nil {
 			return automaticSearchOutcome{report: &report}, nil
 		}

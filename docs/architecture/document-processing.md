@@ -212,13 +212,23 @@ and membership. The vector-index worker builds disposable generations from
 those retained sets and publishes only against the source membership it read.
 Reader leases keep a selected generation available during a query.
 
+Every source manifest check reloads the current members, input generations,
+vector manifests, and live attachment authority. Within that transaction, the
+store decodes each immutable vector space descriptor once. The reuse ends with
+the transaction; later snapshots read and validate the stored descriptor again.
+
 Coverage reads source visibility, serving heads, and replacement jobs in one
 catalog snapshot. A replacement counts as `rebuilding`. The separate
 `previous_generation_serving` count records whether a complete prior result
 remains available. Those documents are not also counted as `complete`. Embedding
 coverage uses the same current attachment and evidence checks as search. A
 missing required result keeps aggregate coverage `partial` even if other work
-is rebuilding. See the [HTTP coverage contract](http-api.md#coverage-and-source-fenced-search).
+is rebuilding. Exact fences retain stale requested versions in their totals.
+An `all_live` scope instead counts current live file versions under its metadata
+filters in that snapshot, with no explicit-ID cap. It echoes normalized scope
+and observed count, including zero for an empty complete scope. See the
+[HTTP coverage contract](http-api.md#coverage-and-source-fenced-search) for
+counter definitions and the limits of classification.
 
 Within that snapshot, rendition coverage fully validates each distinct build
 and attachment-profile pair once. Documents sharing a build retain their own
@@ -241,6 +251,42 @@ live attachments before scoring. Missing vector-row authority stops the search.
 Results retain source references, lexical and semantic rank contributions,
 coverage, truncation, and degradation information. Candidates are checked
 against current vault authority before they are passed to optional reranking.
+
+The initial scoring fence selects row identities with the exact head, input
+checksum, and metadata filters. Ordinary semantic search reloads full metadata
+for the ranked identities it needs, in batches of at most 128. Lookups use the
+indexes on vector rows and vector sets. Each ranked identity is looked up in both
+its TEXT and BLOB storage forms; the head, input and checksum joins retain native
+SQL equality. The complete source manifest and coverage
+are checked once in that resolution transaction. Eligibility is not reused
+across snapshots.
+
+For ordinary original-file searches without metadata filters, source validation
+also collects complete-document counts and the initial scoring identities in
+the same transaction. This applies to both all-live and explicit version fences.
+The live population count remains independent. Exact head keys, current owners
+and input checksums still determine membership; shared identities are scored
+once. Metadata-filtered, selected-build and rendition-chunk searches retain their
+SQL membership checks. Collection preserves complete source validation wherever
+that validation already runs.
+
+The collector checks native text compatibility in head, set, input, vector-row
+and current-node authority while reading them. If a participating value has
+another SQLite storage class, it finishes source validation and uses the
+existing SQL membership reads in that transaction. SQLite then decides equality
+for mixed storage classes and matching BLOB pairs. This keeps the optimization
+from changing catalog eligibility when string scanning would erase those classes.
+
+Final revalidation collects those facts only when results carry semantic
+evidence. A saved source-validation failure falls back to the original coverage
+queries: coverage errors retain priority over lexical-schema errors, and both
+retain priority over source errors. Searches without semantic evidence introduce
+no source validation at this final check.
+
+A vector row can belong to several live documents. Such shared identities use
+the full membership read to preserve the existing document representative
+across query plans. Similar-document search continues to expand every shared
+member before grouping duplicate content.
 
 For a timed rendition segment, lexical evidence resolves the exact lexical
 segment to its build unit. Rendition-chunk semantic evidence resolves the exact

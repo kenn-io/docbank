@@ -161,12 +161,12 @@ func TestMediaRoutesAreAuthenticatedAndCoverTheTwelveContracts(t *testing.T) {
 	require.Contains(t, renditionBytes.String(), "synthetic exact phrase")
 	search, err := c.SearchDocuments(t.Context(), api.DocumentSearchRequest{Query: "synthetic exact phrase",
 		Mode: "lexical", Profile: processing.SuppliedMediaProfileName, Limit: 10,
-		Fence: api.DocumentSourceFence{VaultUID: catalog.VaultID(), ContentVersionIDs: []string{version.ID}}})
+		Fence: api.DocumentSearchFence{VaultUID: catalog.VaultID(), ContentVersionIDs: []string{version.ID}}})
 	require.NoError(t, err)
 	require.NotEmpty(t, search.Results)
 	selectedRequest := api.DocumentSearchRequest{Query: "synthetic exact phrase",
 		Mode: "auto", Profile: processing.SuppliedMediaProfileName, Limit: 10,
-		Fence: api.DocumentSourceFence{VaultUID: catalog.VaultID(), ContentVersionIDs: []string{version.ID}},
+		Fence: api.DocumentSearchFence{VaultUID: catalog.VaultID(), ContentVersionIDs: []string{version.ID}},
 		MediaSources: []api.DocumentMediaSourceSelector{{SourceID: receipt.SourceID,
 			SourceVersionID: receipt.SourceVersionID, ContentVersionID: version.ID}}}
 	selectedSearch, err := c.SearchDocuments(t.Context(), selectedRequest)
@@ -284,7 +284,7 @@ func TestDocumentSearchContentFirstTranscript(t *testing.T) {
 	}
 	request := api.DocumentSearchRequest{
 		Query: "mercury", Mode: "lexical", Profile: processing.SuppliedMediaProfileName, Limit: 1,
-		Fence: api.DocumentSourceFence{VaultUID: catalog.VaultID(), ContentVersionIDs: fence},
+		Fence: api.DocumentSearchFence{VaultUID: catalog.VaultID(), ContentVersionIDs: fence},
 	}
 	control, controlBody := do(t, ts, http.MethodPost, "/api/v1/search", nil, request)
 	require.Equal(t, http.StatusOK, control.StatusCode, controlBody)
@@ -322,7 +322,7 @@ func TestDocumentSearchContentFirstTranscript(t *testing.T) {
 func TestMediaSearchAdmitsCompleteSelectorBody(t *testing.T) {
 	t.Parallel()
 	ts, catalog := newTestServer(t, configureMediaTestService(t, 0))
-	request := api.DocumentSearchRequest{Query: "cue", Mode: "lexical", Profile: processing.SuppliedMediaProfileName, Fence: api.DocumentSourceFence{VaultUID: catalog.VaultID()}}
+	request := api.DocumentSearchRequest{Query: "cue", Mode: "lexical", Profile: processing.SuppliedMediaProfileName, Fence: api.DocumentSearchFence{VaultUID: catalog.VaultID()}}
 	for i := range 4096 {
 		id := fmt.Sprintf("00000000-0000-4000-8000-%012d", i)
 		request.Fence.ContentVersionIDs = append(request.Fence.ContentVersionIDs, id)
@@ -337,7 +337,7 @@ func TestMediaSearchAdmitsCompleteSelectorBody(t *testing.T) {
 	emptySelection := request
 	emptySelection.MediaSources = api.MediaSearchSources{}
 	id := request.Fence.ContentVersionIDs[0]
-	invalid := api.DocumentSearchRequest{Query: "cue", Mode: "lexical", Profile: processing.SuppliedMediaProfileName, Fence: api.DocumentSourceFence{VaultUID: catalog.VaultID(), ContentVersionIDs: []string{id}}, MediaSources: []api.DocumentMediaSourceSelector{{SourceID: strings.Repeat("é", 129), SourceVersionID: "version", ContentVersionID: id}}}
+	invalid := api.DocumentSearchRequest{Query: "cue", Mode: "lexical", Profile: processing.SuppliedMediaProfileName, Fence: api.DocumentSearchFence{VaultUID: catalog.VaultID(), ContentVersionIDs: []string{id}}, MediaSources: []api.DocumentMediaSourceSelector{{SourceID: strings.Repeat("é", 129), SourceVersionID: "version", ContentVersionID: id}}}
 	unsupported := invalid
 	unsupported.MediaSources = api.MediaSearchSources{{SourceID: "source", SourceVersionID: "version", ContentVersionID: id}}
 	reranked := unsupported

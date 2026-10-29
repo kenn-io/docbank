@@ -21,6 +21,7 @@ func TestWebSessionProcessingSurfaceIsNarrowlyAllowed(t *testing.T) {
 		{http.MethodGet, "/api/v1/processing/jobs/" + strings.Repeat("a", 64)},
 		{http.MethodGet, "/api/v1/renditions/" + strings.Repeat("b", 64)},
 		{http.MethodGet, "/api/v1/coverage?profile=private&vault_uid=v&content_version_id=x"},
+		{http.MethodPost, "/api/v1/coverage"},
 		{http.MethodPost, "/api/v1/search"},
 		{http.MethodPost, "/api/v1/search/similar"},
 	}
@@ -36,6 +37,8 @@ func TestWebSessionProcessingSurfaceIsNarrowlyAllowed(t *testing.T) {
 		{http.MethodDelete, "/api/v1/processing/source-fences/resolve"},
 		{http.MethodPost, "/api/v1/derivatives/purge-plans"},
 		{http.MethodPost, "/api/v1/derivatives/purge-jobs"},
+		{http.MethodPost, "/api/v1/coverage?profile=private"},
+		{http.MethodDelete, "/api/v1/coverage"},
 		{http.MethodGet, "/api/v1/search/similar"},
 		{http.MethodPost, "/api/v1/search/similar?x=1"},
 	} {
