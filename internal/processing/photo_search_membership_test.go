@@ -2,38 +2,12 @@ package processing
 
 import (
 	"context"
-	"runtime"
-	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
 )
-
-// Interleave a real catalog removal at the first context check in the asset
-// lookup, after retrieval has finished revalidating its candidates.
-type photoLookupContext struct {
-	context.Context
-
-	once   sync.Once
-	remove func()
-}
-
-func (ctx *photoLookupContext) Done() <-chan struct{} {
-	pcs := make([]uintptr, 32)
-	frames := runtime.CallersFrames(pcs[:runtime.Callers(2, pcs)])
-	for frame, more := frames.Next(); frame.Function != ""; frame, more = frames.Next() {
-		if frame.Function == "go.kenn.io/docbank/internal/store.(*Store).PhotoAssetIDsForNodes" {
-			ctx.once.Do(ctx.remove)
-			break
-		}
-		if !more {
-			break
-		}
-	}
-	return ctx.Context.Done()
-}
 
 func TestSearchPhotosDropsHitRemovedBeforeAssetLookup(t *testing.T) {
 	t.Parallel()
@@ -44,17 +18,19 @@ func TestSearchPhotosDropsHitRemovedBeforeAssetLookup(t *testing.T) {
 	asset, err := f.catalog.PhotoAssetForNode(t.Context(), other.ID)
 	require.NoError(t, err)
 	removed := false
-	var removalErr error
-	ctx := &photoLookupContext{Context: t.Context(), remove: func() {
-		_, removalErr = f.catalog.TrashPhotoAsset(t.Context(), f.asset.ID, f.asset.Revision)
-		if removalErr == nil {
-			_, removalErr = f.catalog.TrashEmpty(t.Context(), 0, true)
+	lookup := func(ctx context.Context, nodeIDs []int64, collapseDuplicates bool) (map[int64]string, error) {
+		require.Contains(t, nodeIDs, f.node.ID)
+		if _, err := f.catalog.TrashPhotoAsset(ctx, f.asset.ID, f.asset.Revision); err != nil {
+			return nil, err
+		}
+		if _, err := f.catalog.TrashEmpty(ctx, 0, true); err != nil {
+			return nil, err
 		}
 		removed = true
-	}}
-	ranked, err := x.service.SearchPhotos(ctx, store.PhotoBrowseRequest{Query: query.Query{V: 1, Syntax: "simple", Mode: "hybrid", Text: "sunset", Sort: query.Sort{Field: "relevance", Direction: "desc"}}})
+		return f.catalog.PhotoAssetIDsForNodes(ctx, nodeIDs, collapseDuplicates)
+	}
+	ranked, err := x.service.searchPhotosWithAssetLookup(t.Context(), store.PhotoBrowseRequest{Query: query.Query{V: 1, Syntax: "simple", Mode: "hybrid", Text: "sunset", Sort: query.Sort{Field: "relevance", Direction: "desc"}}}, lookup)
 	require.True(t, removed)
-	require.NoError(t, removalErr)
 	require.NoError(t, err)
 	require.Empty(t, ranked.FallbackReason)
 	require.Equal(t, "hybrid", ranked.ActualMode)

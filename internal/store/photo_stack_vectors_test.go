@@ -46,8 +46,6 @@ func TestPhotoStackPagesReuseOpenedGeneration(t *testing.T) {
 	require.NotSame(t, first.indexes[0], replacement.indexes[0])
 	require.Equal(t, 2, q.generationReads)
 	require.Len(t, f.s.photoStackVectors, 1, "retain only the current generation per space")
-	require.NoError(t, f.s.Close())
-	require.Empty(t, f.s.photoStackVectors)
 }
 
 func TestPhotoStackDecisionRejectsGenerationPublishedBeforeTransaction(t *testing.T) {
@@ -156,4 +154,6 @@ func TestPhotoStackVectorReadersShareOneGeneration(t *testing.T) {
 		require.Same(t, readers[0].indexes[0], reader.indexes[0])
 	}
 	require.Len(t, f.s.photoStackVectors, 1)
+	require.NoError(t, f.s.Close())
+	require.Empty(t, f.s.photoStackVectors)
 }

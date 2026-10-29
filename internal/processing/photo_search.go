@@ -15,8 +15,14 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
+type photoAssetLookup func(context.Context, []int64, bool) (map[int64]string, error)
+
 // SearchPhotos selects asset ranks for the existing owner-bound snapshot path.
 func (service *Service) SearchPhotos(ctx context.Context, request store.PhotoBrowseRequest) (store.PhotoRanking, error) {
+	return service.searchPhotosWithAssetLookup(ctx, request, service.catalog.PhotoAssetIDsForNodes)
+}
+
+func (service *Service) searchPhotosWithAssetLookup(ctx context.Context, request store.PhotoBrowseRequest, lookup photoAssetLookup) (store.PhotoRanking, error) {
 	result := store.PhotoRanking{RequestedMode: request.Query.Mode, ActualMode: query.ModeLexical}
 	fallback := func(reason string) (store.PhotoRanking, error) { result.FallbackReason = reason; return result, nil }
 	if request.Query.Mode == query.ModeLexical {
@@ -42,7 +48,7 @@ func (service *Service) SearchPhotos(ctx context.Context, request store.PhotoBro
 				}
 				continue
 			}
-			selected, err := service.searchPhotoBinding(ctx, request, semanticText, scope, profile, binding, provider)
+			selected, err := service.searchPhotoBinding(ctx, request, semanticText, scope, profile, binding, provider, lookup)
 			if err != nil || selected.FallbackReason == "" || selected.FallbackReason == "unsupported_query" {
 				return selected, err
 			}
@@ -54,7 +60,7 @@ func (service *Service) SearchPhotos(ctx context.Context, request store.PhotoBro
 	return fallback(reason)
 }
 
-func (service *Service) searchPhotoBinding(ctx context.Context, request store.PhotoBrowseRequest, semanticText string, scope query.Query, profile configuredProfile, binding document.EmbeddingBindingV1, provider document.EmbeddingProvider) (store.PhotoRanking, error) {
+func (service *Service) searchPhotoBinding(ctx context.Context, request store.PhotoBrowseRequest, semanticText string, scope query.Query, profile configuredProfile, binding document.EmbeddingBindingV1, provider document.EmbeddingProvider, lookup photoAssetLookup) (store.PhotoRanking, error) {
 	result := store.PhotoRanking{RequestedMode: request.Query.Mode, ActualMode: query.ModeLexical}
 	fallback := func(reason string) (store.PhotoRanking, error) { result.FallbackReason = reason; return result, nil }
 	_, fence, err := service.catalog.BeginProviderEgress(ctx, store.ProviderOperationAuthorizationRequest{Principal: service.principal, Scope: service.scope, ProfileFingerprint: profile.record.Fingerprint, DisclosureFingerprint: binding.DisclosureFingerprint, InputClasses: []string{"query_text"}, RetainedArtifactClasses: []string{}})
@@ -95,22 +101,31 @@ func (service *Service) searchPhotoBinding(ctx context.Context, request store.Ph
 	}
 	result.ActualMode, result.Truncated = string(report.ActualMode), report.Truncated
 	result.CoverageIncomplete = report.Coverage.State == retrieval.CoverageIncomplete
+	result.Members, err = photoRankingMembers(ctx, report, request.Query.Filters.CollapseDuplicates, lookup)
+	if err != nil {
+		return result, err
+	}
+	return result, nil
+}
+
+func photoRankingMembers(ctx context.Context, report retrieval.Report, collapseDuplicates bool, lookup photoAssetLookup) ([]store.SnapshotMember, error) {
 	nodeIDs := make([]int64, len(report.Results))
 	for i, hit := range report.Results {
 		nodeIDs[i] = hit.Document.NodeID
 	}
-	assetIDs, err := service.catalog.PhotoAssetIDsForNodes(ctx, nodeIDs, request.Query.Filters.CollapseDuplicates)
+	assetIDs, err := lookup(ctx, nodeIDs, collapseDuplicates)
 	if err != nil {
-		return result, err
+		return nil, err
 	}
+	members := make([]store.SnapshotMember, 0, len(report.Results))
 	for _, hit := range report.Results {
 		assetID, found := assetIDs[hit.Document.NodeID]
 		if !found {
 			continue
 		}
-		result.Members = append(result.Members, store.SnapshotMember{AssetID: assetID, NodeID: hit.Document.NodeID, ContentVersionID: hit.Document.ContentVersionID})
+		members = append(members, store.SnapshotMember{AssetID: assetID, NodeID: hit.Document.NodeID, ContentVersionID: hit.Document.ContentVersionID})
 	}
-	return result, nil
+	return members, nil
 }
 
 func photoSemanticScope(value query.Query) (string, query.Query, bool) {
