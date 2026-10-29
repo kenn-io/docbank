@@ -652,11 +652,11 @@ Schema 30 adds `photo_quality_signals`, a derived row per content version and ev
 
 ### Photo suggestions
 
-Schema 43 adds `photo_suggestions`, one row per content version and producer fingerprint. A row holds the pending caption, tags, and visible text, the dismissed flag, the accepted-caption flag and accepted tags, and an `awaiting` flag for a restored row that regenerates. Pending text lives only in the database. Metadata JSONL carries the `photo_suggestion` record with the decisions and `awaiting`, never the text.
+Schema 43 adds `photo_suggestions`, one row per content version and producer fingerprint. A row holds the pending caption, tags, visible text, and nullable provider `rotation` (0/90/180/270 clockwise from the oriented preview), the dismissed flag, the accepted-caption flag and accepted tags, and an `awaiting` flag for a restored row that regenerates. Pending text lives only in the database. Metadata JSONL carries the `photo_suggestion` record with the decisions and `awaiting`, never generated text or rotation angles. An unconfirmed nonzero rotation sets `awaiting` on export; a dismissed caption can carry this marker while staying dismissed after regeneration. Confirmed rotations need no regeneration.
 
 `photo_suggestion_fts` indexes pending text by the row's `id`, with tags joined by a private-use token so a phrase cannot span two tags. `tag_fts` indexes tag names by the tag's rowid, so a photo matches text search through any tag assigned to it. Triggers keep both current, including during restore, and both stay out of metadata backup.
 
-`photo_description_explicit_waiters` marks the waiters an explicit start created. Publication reads it to decide whether a shared description job may replace another producer's dismissal. It records in-flight intent only. Description jobs and waiters stay out of backups and rebuild after restore.
+`photo_description_explicit_waiters` marks the waiters an explicit start created. Admission reads it to let explicit work request a new producer fingerprint while automatic work leaves settled descriptions alone. Publication refreshes only rotation for settled rows and preserves text decisions. A rotation refresh keeps the text producer fingerprint, so repeated explicit requests under a different fingerprint can ask again. The waiter marker records in-flight intent only. Description jobs and waiters stay out of backups and rebuild after restore.
 
 `visual_preview_generations_ready` is a partial index on ready previews by recipe and content version. Photo description backfill walks it in version order, so an idle pass over settled photos stays an index scan.
 

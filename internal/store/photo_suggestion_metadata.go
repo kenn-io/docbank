@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"slices"
 )
 
@@ -23,13 +24,13 @@ type metadataPhotoSuggestion struct {
 	Dismissed           bool     `json:"dismissed" db:"dismissed"`
 	CaptionResolved     bool     `json:"caption_resolved" db:"caption_resolved"`
 	ResolvedTags        []string `json:"resolved_tags" db:"resolved_tags_json,json"`
-	Awaiting            bool     `json:"awaiting" db:"awaiting=1 OR (rotation IS NOT NULL AND rotation>0 AND NOT EXISTS(SELECT 1 FROM content_versions v JOIN photo_files f ON f.node_id=v.node_id WHERE v.version_id=photo_suggestions.content_version_id AND (f.confirmed_fields & 64)<>0)) OR caption<>'' OR tags_json<>'[]' OR visible_text<>''"`
+	Awaiting            bool     `json:"awaiting" db:"awaiting=1 OR (rotation IS NOT NULL AND rotation>0 AND NOT EXISTS(SELECT 1 FROM content_versions v JOIN photo_files f ON f.node_id=v.node_id WHERE v.version_id=photo_suggestions.content_version_id AND (f.confirmed_fields & confirmed_rotation)<>0)) OR caption<>'' OR tags_json<>'[]' OR visible_text<>''"`
 	CreatedAt           string   `json:"created_at" db:"created_at"`
 }
 
 var photoSuggestionMetadata = newMetadataTable(metadataTable[metadataPhotoSuggestion]{
 	record: metadataPhotoSuggestion{Type: "photo_suggestion"}, table: "photo_suggestions",
-	suffix:   "ORDER BY suggestion_id",
+	suffix:   fmt.Sprintf("CROSS JOIN (SELECT %d AS confirmed_rotation) ORDER BY suggestion_id", PhotoConfirmedRotation),
 	validate: validatePhotoSuggestionMetadata, checkExport: true, insert: insertPhotoSuggestionMetadata,
 })
 

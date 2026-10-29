@@ -54,6 +54,8 @@ export class PhotoAuthoredEditor {
     );
   }
   get rotationSuggestion() {
+    if (this.files.length !== 1 || this.files[0]!.file_id !== this.asset?.display_file_id)
+      return undefined;
     return this.suggestions.find(
       (suggestion) =>
         suggestion.target === this.asset?.display_file_id && suggestion.rotation !== undefined,
