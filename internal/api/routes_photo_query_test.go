@@ -778,12 +778,17 @@ func TestLookupPhotoFlags(t *testing.T) {
 	}
 }
 
+func photoImageDescriptor(t *testing.T, descriptor document.EmbeddingDescriptor) document.EmbeddingDescriptor {
+	t.Helper()
+	descriptor.InputKinds = []document.EmbeddingInputKind{document.EmbeddingInputImage}
+	descriptor, err := document.NewEmbeddingDescriptor(descriptor)
+	require.NoError(t, err)
+	return descriptor
+}
+
 func photoImageHTTPFixture(t *testing.T, provider processingTestEmbeddingProvider, names []string, unavailable ...*atomic.Bool) (*httptest.Server, *testStore, []string) {
 	t.Helper()
-	provider.descriptor.InputKinds = []document.EmbeddingInputKind{document.EmbeddingInputImage}
-	var err error
-	provider.descriptor, err = document.NewEmbeddingDescriptor(provider.descriptor)
-	require.NoError(t, err)
+	provider.descriptor = photoImageDescriptor(t, provider.descriptor)
 	var embedding document.EmbeddingProvider = provider
 	if len(unavailable) > 0 {
 		embedding = togglePhotoImageProvider{EmbeddingProvider: provider, unavailable: unavailable[0]}
@@ -943,10 +948,7 @@ func TestPhotoSnapshotHTTPForwardsHiddenScope(t *testing.T) {
 func TestPhotoStackGenerationStaysLocalAfterConsentRevoked(t *testing.T) {
 	t.Parallel()
 	provider := newProcessingTestEmbeddingProvider(t)
-	provider.descriptor.InputKinds = []document.EmbeddingInputKind{document.EmbeddingInputImage}
-	var err error
-	provider.descriptor, err = document.NewEmbeddingDescriptor(provider.descriptor)
-	require.NoError(t, err)
+	provider.descriptor = photoImageDescriptor(t, provider.descriptor)
 	ts, _, _ := photoImageHTTPProfilesFixture(t, map[string]document.EmbeddingProvider{"private": &provider, "same-space": &provider}, []string{"one.jpg", "two.jpg"}, true)
 	response, body := do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, api.PhotoBrowseRequest{Query: api.QueryPayload(`{"mode":"lexical","text":"jpg","sort":{"field":"relevance","direction":"desc"}}`), Stacks: true})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)

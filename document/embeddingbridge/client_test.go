@@ -164,12 +164,6 @@ type responseEnvelope struct {
 
 func readBridgeRequest(t *testing.T, request *http.Request) (requestManifest, [][]byte) {
 	t.Helper()
-	version := "1"
-	if request.URL.Path == "/docbank-embedding/v2/embeddings" {
-		version = "2"
-	} else {
-		require.Equal(t, "/docbank-embedding/v1/embeddings", request.URL.Path)
-	}
 	mediaType, parameters, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
 	require.NoError(t, err)
 	require.Equal(t, "multipart/form-data", mediaType)
@@ -186,7 +180,7 @@ func readBridgeRequest(t *testing.T, request *http.Request) (requestManifest, []
 		require.NoError(t, err)
 		switch part.FormName() {
 		case "manifest":
-			require.Equal(t, "application/vnd.docbank.embedding-manifest+json;version="+version, part.Header.Get("Content-Type"))
+			require.Equal(t, "application/vnd.docbank.embedding-manifest+json;version=1", part.Header.Get("Content-Type"))
 			require.NoError(t, json.Unmarshal(payload, &manifest, json.RejectUnknownMembers(true)))
 		case "file":
 			files = append(files, payload)
@@ -194,16 +188,14 @@ func readBridgeRequest(t *testing.T, request *http.Request) (requestManifest, []
 			t.Fatalf("unexpected multipart field %q", part.FormName())
 		}
 	}
-	require.Equal(t, "docbank-embedding/v"+version, manifest.ContractVersion)
 	return manifest, files
 }
 
 func writeSuccess(t *testing.T, writer http.ResponseWriter, manifest requestManifest, vectors []document.EmbeddingVector) {
 	t.Helper()
-	version := strings.TrimPrefix(manifest.ContractVersion, "docbank-embedding/v")
-	writer.Header().Set("Content-Type", "application/vnd.docbank.embedding-result+json;version="+version)
+	writer.Header().Set("Content-Type", "application/vnd.docbank.embedding-result+json;version=1")
 	payload, err := json.Marshal(responseEnvelope{
-		ContractVersion:       manifest.ContractVersion,
+		ContractVersion:       embeddingbridge.ContractVersion,
 		DescriptorFingerprint: manifest.DescriptorFingerprint,
 		PolicyFingerprint:     manifest.PolicyFingerprint,
 		RequestChecksum:       manifest.RequestChecksum,

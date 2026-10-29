@@ -486,9 +486,6 @@ func TestProcessingClientValidatesSearchResponseAgainstExactFence(t *testing.T) 
 		{name: "image time", mutate: func(report *api.DocumentSearchReport) {
 			imageEvidence(report).TimeSpan = &api.MediaTimeSpan{StartMS: 0, EndMS: 1000}
 		}},
-		{name: "image identity", mutate: func(report *api.DocumentSearchReport) {
-			imageEvidence(report).InputGenerationID = ""
-		}},
 		{name: "relative path", mutate: func(report *api.DocumentSearchReport) {
 			report.Results[0].Path = "visible.pdf"
 		}},

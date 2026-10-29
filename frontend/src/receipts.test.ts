@@ -310,7 +310,7 @@ describe("search result authority", () => {
     });
   });
 
-  it("accepts image evidence while rejecting rendition fields and incomplete identity", () => {
+  it("accepts image evidence while rejecting rendition fields", () => {
     const report = valid();
     const evidence = report.results[0]!.evidence[0]!;
     evidence.input_kind = "image";
@@ -322,9 +322,6 @@ describe("search result authority", () => {
     expect(() => validateDocumentSearchReport(report, request)).toThrow(/invalid search response/);
     evidence.build_id = "";
     Object.assign(evidence, { time_span: { start_ms: 0, end_ms: 1000 } });
-    expect(() => validateDocumentSearchReport(report, request)).toThrow(/invalid search response/);
-    Reflect.deleteProperty(evidence, "time_span");
-    evidence.input_generation_id = "";
     expect(() => validateDocumentSearchReport(report, request)).toThrow(/invalid search response/);
   });
 

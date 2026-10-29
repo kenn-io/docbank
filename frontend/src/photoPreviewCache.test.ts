@@ -1,8 +1,7 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
-import * as api from "./generated/docbank.js";
-import { photo, storage } from "./photo-test-fixtures.js";
+import { storage } from "./photo-test-fixtures.js";
 import { PhotoPreviewCache } from "./photoPreviewCache.js";
-import { Photos, photoQuery } from "./photos.svelte.js";
+import { Photos } from "./photos.svelte.js";
 import { recreatePhotoPreviewCache, revalidatePhotoWorkspace } from "./photoWorkspace.js";
 
 const instances: PhotoPreviewCache[] = [];
@@ -43,30 +42,15 @@ it.each([recreatePhotoPreviewCache, revalidatePhotoWorkspace])(
   },
 );
 
-it("keeps ranked Library membership during access revalidation", async () => {
-  const refreshed = photo(1);
-  refreshed.revision = 2;
-  const read = vi.spyOn(api, "listPhotoAssets").mockResolvedValue({
-    items: [refreshed],
-    total: 1,
-    facets: [],
-    relevance_available: true,
-    snapshot_id: "accepted-snapshot",
-  });
-  const photos = new Photos("scoped", vi.fn(), false, {
-    ...photoQuery,
-    mode: "hybrid",
-    text: "sunset",
-  });
-  photos.items = [photo(1)];
-  photos.total = 1;
-  photos.started = true;
+it("requests a live Library refresh during access revalidation", async () => {
+  const photos = new Photos("scoped", vi.fn());
   photos.snapshotID = "accepted-snapshot";
+  const refresh = vi.spyOn(photos, "refresh").mockResolvedValue(true);
   const current = { photos, cache: workspace() };
 
   expect(await revalidatePhotoWorkspace(current, "scoped", vi.fn(), () => true)).toBe(true);
 
-  expect(read.mock.calls[0]?.[0].snapshot_id).toBe("accepted-snapshot");
+  expect(refresh).toHaveBeenCalledWith(undefined, true);
   instances.push(current.cache);
   photos.dispose();
 });

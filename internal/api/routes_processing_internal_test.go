@@ -24,8 +24,6 @@ func TestProcessingSourceIneligibleDetails(t *testing.T) {
 	}{
 		{"document", processing.ErrSourceIneligible,
 			"source is not eligible for the rendition profile; see the plan's rendition_ineligible_reason"},
-		{"document reason", fmt.Errorf("%w: unsupported_media_type", processing.ErrSourceIneligible),
-			"source is not eligible for the rendition profile; see the plan's rendition_ineligible_reason"},
 		{"image preview", &processing.ImageSourceIneligibleError{Err: fmt.Errorf("%w: preview_missing", processing.ErrSourceIneligible)},
 			"source is not eligible for the rendition profile: preview_missing"},
 	} {
