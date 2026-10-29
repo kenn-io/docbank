@@ -45,6 +45,7 @@ test("best shots stay separate from authored flags and settle across refresh", a
     });
   });
   const page = await context.newPage();
+  const resultPause = 2500;
   let number = 0;
   let position = { x: 30, y: 100 };
   const step = async (text: string) => {
@@ -81,7 +82,7 @@ test("best shots stay separate from authored flags and settle across refresh", a
       animations: "disabled",
       style: "#capture-pointer, #capture-step { visibility: hidden }",
     });
-    if (!before) await page.waitForTimeout(2500);
+    if (!before) await page.waitForTimeout(resultPause);
   };
   try {
     if (before)
@@ -145,8 +146,9 @@ test("best shots stay separate from authored flags and settle across refresh", a
       const auto = cull.getByRole("switch", { name: "Auto-advance" });
       if (await auto.isChecked()) {
         await point(auto, "Turn off Auto-advance");
-        await page.waitForTimeout(2500);
+        await page.waitForTimeout(resultPause);
       }
+      await cull.locator(".photo-cull").focus();
       const badge = cull.locator(".photo-stage .proposal");
       await expect(badge).toHaveAttribute("aria-label", "Suggested keep");
       const key = "x";
@@ -159,10 +161,10 @@ test("best shots stay separate from authored flags and settle across refresh", a
       expect(acceptedBody.after).toHaveLength(1);
       expect(acceptedBody.after[0].values.flag).toBe("reject");
       await expect(cull.getByLabel("Suggested keep").first()).toBeVisible();
-      await page.waitForTimeout(2500);
+      await page.waitForTimeout(resultPause);
       await point(cull.getByRole("button", { name: "Undo", exact: true }), "Undo");
       await expect(badge).toHaveAttribute("aria-label", "Suggested keep");
-      await page.waitForTimeout(2500);
+      await page.waitForTimeout(resultPause);
       const dismissed = page.waitForResponse(
         (r) => r.url().endsWith("/photos/authored/stack") && r.request().method() === "POST",
       );
@@ -178,10 +180,10 @@ test("best shots stay separate from authored flags and settle across refresh", a
       await expect(cull.getByRole("button", { name: "Dismiss all", exact: true })).toHaveCount(0);
       await point(cull.getByRole("button", { name: "Undo", exact: true }), "Undo");
       await expect(cull.locator(".filmstrip .proposal")).toHaveCount(3);
-      await page.waitForTimeout(2500);
+      await page.waitForTimeout(resultPause);
       await point(cull.getByRole("button", { name: "Dismiss all", exact: true }), "Dismiss all");
       await expect(cull.getByRole("button", { name: "Dismiss all", exact: true })).toHaveCount(0);
-      await page.waitForTimeout(2500);
+      await page.waitForTimeout(resultPause);
       const kept = page.waitForResponse(
         (r) => r.url().endsWith("/photos/authored/stack") && r.request().method() === "POST",
       );
@@ -190,17 +192,17 @@ test("best shots stay separate from authored flags and settle across refresh", a
       const keptBody = await (await kept).json();
       expect(keptBody.after).toHaveLength(1);
       expect(keptBody.after[0].values.flag).toBe("pick");
-      await page.waitForTimeout(2500);
+      await page.waitForTimeout(resultPause);
       await point(cull.getByRole("button", { name: "Undo", exact: true }), "Undo");
       await expect(cull.locator(".filmstrip .proposal")).toHaveCount(0);
-      await page.waitForTimeout(2500);
+      await page.waitForTimeout(resultPause);
       await point(cull.getByRole("button", { name: "Exit cull", exact: true }), "Exit cull");
       await expect(cull).toHaveCount(0);
       const reopened = new URL(await fixture.run("web", "--no-browser"));
       reopened.pathname = "/photos";
       await page.goto(reopened.href);
       await step("Reload to confirm the saved choices");
-      await page.waitForTimeout(2500);
+      await page.waitForTimeout(resultPause);
       await expect(page.locator(".photo-cell").first()).toBeVisible();
       // The other stack remains pending and can be accepted in one response.
       await point(page.locator(".photo-image").first(), "Select the remaining burst");
@@ -209,7 +211,7 @@ test("best shots stay separate from authored flags and settle across refresh", a
       await expect(
         page.getByRole("button", { name: "Undo last photo edit", exact: true }),
       ).toBeVisible();
-      await page.waitForTimeout(2500);
+      await page.waitForTimeout(resultPause);
       await point(
         page.getByRole("button", { name: "Undo last photo edit", exact: true }),
         "Undo last photo edit",
@@ -218,7 +220,7 @@ test("best shots stay separate from authored flags and settle across refresh", a
       finalURL.pathname = "/photos";
       await page.goto(finalURL.href);
       await step("Reload to review restored suggestions");
-      await page.waitForTimeout(2500);
+      await page.waitForTimeout(resultPause);
       await expect(page.getByLabel(/Suggested (keep|cut)/).first()).toBeVisible();
       await point(page.locator(".photo-image").first(), "Select the remaining burst");
       await expect(page.getByRole("button", { name: "Dismiss all", exact: true })).toBeEnabled();
@@ -230,11 +232,11 @@ test("best shots stay separate from authored flags and settle across refresh", a
         "Undo last photo edit",
       );
       await expect(page.locator(".photo-cell .proposal").first()).toBeVisible();
-      await page.waitForTimeout(2500);
+      await page.waitForTimeout(resultPause);
       await point(page.getByRole("button", { name: "Dismiss all", exact: true }), "Dismiss all");
       await expect(page.locator(".photo-cell .proposal")).toHaveCount(0);
       await expect(page.locator(".photo-cell img").first()).toBeVisible();
-      await page.waitForTimeout(2500);
+      await page.waitForTimeout(resultPause);
     }
     expect(errors).toEqual([]);
     await writeFile(
