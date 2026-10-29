@@ -1538,6 +1538,12 @@ func (s *Store) publishRenditionJob(
 					return err
 				}
 			} else {
+				// One answer serves every waiter; an explicit one may replace a dismissal.
+				var explicit bool
+				if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_description_explicit_waiters e JOIN rendition_job_waiters w ON w.waiter_id=e.waiter_id
+ WHERE w.job_id=? AND w.state='waiting')`, claim.JobID).Scan(&explicit); err != nil {
+					return err
+				}
 				var description document.PhotoDescription
 				if err := json.Unmarshal(result.Artifacts[0].Payload, &description, json.RejectUnknownMembers(true)); err != nil {
 					return fmt.Errorf("%w: %w", ErrInvalidPhotoDescriptionResult, err)
@@ -1546,7 +1552,7 @@ func (s *Store) publishRenditionJob(
 				if err != nil {
 					return fmt.Errorf("%w: %w", ErrInvalidPhotoDescriptionResult, err)
 				}
-				if err := publishPhotoSuggestionTx(ctx, tx, version, job.RenditionRequestFingerprint, description, at); err != nil {
+				if err := publishPhotoSuggestionTx(ctx, tx, version, job.RenditionRequestFingerprint, explicit, description, at); err != nil {
 					return err
 				}
 			}
