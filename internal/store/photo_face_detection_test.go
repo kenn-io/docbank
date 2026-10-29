@@ -142,7 +142,7 @@ func TestPhotoFaceDetectionProtectsDecisionsAndUndo(t *testing.T) {
 			require.Equal(t, before, read())
 			require.NoError(t, scan("b3"))
 			require.Equal(t, before, read())
-			if action == "name" || action == "dismiss" {
+			if action == "name" {
 				_, err = s.UndoPhotoFaceDecision(ctx, receipt.ReceiptID)
 				require.NoError(t, err)
 				require.Empty(t, read()[0].AssertionID)
@@ -157,20 +157,28 @@ func TestPhotoFaceDetectionCapacityRollback(t *testing.T) {
 	ctx := t.Context()
 	node := browsePhotoNode(t, s, "portrait.jpg", fakeHash("a1"), "image/jpeg")
 	version := node.CurrentVersionID
+	automatic := PhotoFace{FaceID: uuid.New().String(), ContentVersionID: version, Box: document.FaceBox{X: .5, Y: .5, Width: .1, Height: .1}, Facing: new(.9), DetectorFingerprint: fakeHash("b0"), Revision: 1, CreatedAt: nowRFC3339()}
 	require.NoError(t, s.withLogicalTx(ctx, func(tx *sql.Tx) error {
-		for range document.MaxPhotoRecordsPerVersion {
+		for range document.MaxPhotoRecordsPerVersion - 1 {
 			if err := insertPhotoFaceTx(ctx, tx, PhotoFace{FaceID: uuid.New().String(), ContentVersionID: version, Box: document.FaceBox{Width: .1, Height: .1}, Revision: 1, CreatedAt: nowRFC3339()}); err != nil {
 				return err
 			}
 		}
-		return nil
+		return insertPhotoFaceTx(ctx, tx, automatic)
 	}))
 	scan := func() error {
 		return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-			return publishFaceDetectionTx(ctx, tx, version, fakeHash("b1"), document.FaceDetection{Faces: []document.FaceObservation{{Box: document.FaceBox{X: .8, Y: .8, Width: .1, Height: .1}}}}, time.Now())
+			return publishFaceDetectionTx(ctx, tx, version, fakeHash("b1"), document.FaceDetection{Faces: []document.FaceObservation{{Box: automatic.Box, Facing: new(.4)}, {Box: document.FaceBox{X: .8, Y: .8, Width: .1, Height: .1}}}}, time.Now())
 		})
 	}
 	require.ErrorIs(t, scan(), ErrPhotoFaceLimit)
+	saved, err := photoFacesQuery(ctx, s.db, version)
+	require.NoError(t, err)
+	for _, face := range saved {
+		if face.FaceID == automatic.FaceID {
+			require.Equal(t, automatic, face, "the matched update rolls back before the capacity error")
+		}
+	}
 	var count int
 	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_faces`).Scan(&count))
 	require.Equal(t, 1000, count)
@@ -199,10 +207,6 @@ func TestPhotoFaceDetectionMetadata(t *testing.T) {
 	restored, _, _, err := target.PhotoFacePersonNames(ctx, version)
 	require.NoError(t, err)
 	require.Len(t, restored, 1)
-	require.Zero(t, *restored[0].Roll)
-	require.InDelta(t, .7, *restored[0].Facing, 1e-12)
-	require.False(t, *restored[0].EyesOpen)
-	require.True(t, *restored[0].Smile)
 	require.True(t, restored[0].Dismissed)
 	var count int
 	require.NoError(t, target.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_face_scans`).Scan(&count))

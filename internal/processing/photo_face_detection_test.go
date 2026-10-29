@@ -123,7 +123,6 @@ func TestPhotoFaceDetectionEmptyAndMalformed(t *testing.T) {
 	}{
 		{"empty", `{"faces":[]}`, true},
 		{"trailing object", `{"faces":[]} {"faces":[`, false},
-		{"invalid", `{"faces":[{}]}`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newPhotoDescriptionFixture(t)

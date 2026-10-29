@@ -246,11 +246,8 @@
     if (filter && person && filter.name !== person.display_name)
       photos.personFilter = { id: filter.id, name: person.display_name };
   });
-  let faceRefresh = $state(0);
-  let consumedFaceRefresh = 0;
+  let faceRefreshController: AbortController | undefined;
   $effect(() => {
-    const refresh = faceRefresh !== consumedFaceRefresh;
-    consumedFaceRefresh = faceRefresh;
     const cullID = culling ? cull?.currentID : undefined;
     const id = culling
       ? cullID
@@ -261,7 +258,7 @@
             ? [...photos.selectedIDs][0]
             : undefined);
     const validating =
-      photos.loading || photos.error || (!culling && photoID && (detailLoading || detailError));
+      photos.blocking || photos.error || (!culling && photoID && (detailLoading || detailError));
     const row = culling
       ? cullPhoto?.asset_id === cullID
         ? cullPhoto
@@ -275,7 +272,7 @@
     untrack(() => {
       const target = (row: PhotoBrowseRow | undefined) => {
         const version = row?.kind === "photo" ? row.content_version_id : "";
-        if (refresh || version !== inspectorFaces.version || (version && concealed))
+        if (version !== inspectorFaces.version || (version && concealed))
           void inspectorFaces.load(version);
       };
       if (validating) {
@@ -283,17 +280,14 @@
         return;
       }
       if (!id && inspectorFaces.busy) return;
-      if (id !== photos.faceAssetID) target(undefined);
-      if (
-        (!refresh || photoID || culling) &&
-        row &&
-        row.asset_id === id &&
-        "content_version_id" in row
-      )
-        target(row);
+      if (id !== photos.faceAssetID) {
+        faceRefreshController?.abort();
+        target(undefined);
+      }
+      if (row && row.asset_id === id && "content_version_id" in row) target(row);
       else {
         inspectorFaces.conceal();
-        if (id && (refresh || (!photoID && !culling && !comparing)))
+        if (id && !photoID && !culling && !comparing)
           void photos
             .lookup(id, controller.signal)
             .then((row) => {
@@ -511,6 +505,7 @@
   onDestroy(() => {
     alive = false;
     detailController?.abort();
+    faceRefreshController?.abort();
   });
   let picker = $state<{ focus: () => void; addToTarget: () => Promise<boolean> }>();
   let renaming = $state(false);
@@ -683,13 +678,29 @@
   }
   $effect(() =>
     photos.watch(async (change: PhotoChange) => {
-      inspectorFaces.conceal();
+      const id = photos.faceAssetID;
+      faceRefreshController?.abort();
+      const controller = (faceRefreshController = new AbortController());
       await settleReads([
         photoID ? revalidateDetail(photoID, change.listRefreshed) : undefined,
         // The editor retains changes until the user clears a draft.
         editor.invalidate(),
       ]);
-      faceRefresh++;
+      if (!id || id !== photos.faceAssetID || controller.signal.aborted) return;
+      if (photos.blocking || photos.error || (photoID && (detailLoading || detailError))) {
+        inspectorFaces.conceal();
+        return;
+      }
+      let row: PhotoBrowseRow | undefined;
+      try {
+        row = photoID === id ? current : await photos.lookup(id, controller.signal);
+      } catch (cause) {
+        if (controller.signal.aborted) return;
+        inspectorFaces.conceal();
+        throw cause;
+      }
+      if (!controller.signal.aborted && id === photos.faceAssetID)
+        await inspectorFaces.load(row?.kind === "photo" ? row.content_version_id : "", true);
     }),
   );
   async function restoreGrid() {

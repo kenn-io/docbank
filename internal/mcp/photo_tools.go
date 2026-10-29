@@ -35,16 +35,21 @@ type photoAssetToolOutput struct {
 
 // photoFaceToolItem carries its person so a face page needs no assertion lookup.
 type photoFaceToolItem struct {
-	RejectedPersonIDs []string         `json:"rejected_person_ids,omitzero"`
-	Dismissed         bool             `json:"dismissed"`
-	FaceID            string           `json:"face_id"`
-	ContentVersionID  string           `json:"content_version_id"`
-	Box               document.FaceBox `json:"box"`
-	Revision          int64            `json:"revision"`
-	AssertionID       string           `json:"assertion_id,omitzero"`
-	PersonID          string           `json:"person_id,omitzero"`
-	Action            string           `json:"action,omitzero"`
-	CreatedAt         string           `json:"created_at"`
+	Roll                *float64         `json:"roll,omitzero"`
+	Facing              *float64         `json:"facing,omitzero"`
+	EyesOpen            *bool            `json:"eyes_open,omitzero"`
+	Smile               *bool            `json:"smile,omitzero"`
+	DetectorFingerprint string           `json:"detector_fingerprint,omitzero"`
+	RejectedPersonIDs   []string         `json:"rejected_person_ids,omitzero"`
+	Dismissed           bool             `json:"dismissed"`
+	FaceID              string           `json:"face_id"`
+	ContentVersionID    string           `json:"content_version_id"`
+	Box                 document.FaceBox `json:"box"`
+	Revision            int64            `json:"revision"`
+	AssertionID         string           `json:"assertion_id,omitzero"`
+	PersonID            string           `json:"person_id,omitzero"`
+	Action              string           `json:"action,omitzero"`
+	CreatedAt           string           `json:"created_at"`
 }
 
 type photoFacesToolOutput struct {
@@ -173,6 +178,7 @@ func photoFaceToolItems(faces []api.PhotoFace, assertions []api.PhotoPersonAsser
 	for _, face := range faces {
 		assertion := byID[face.AssertionID]
 		items = append(items, photoFaceToolItem{
+			Roll: face.Roll, Facing: face.Facing, EyesOpen: face.EyesOpen, Smile: face.Smile, DetectorFingerprint: face.DetectorFingerprint,
 			RejectedPersonIDs: face.RejectedPersonIDs, Dismissed: face.Dismissed, FaceID: face.FaceID, ContentVersionID: face.ContentVersionID, Box: face.Box, Revision: face.Revision,
 			AssertionID: face.AssertionID, PersonID: assertion.PersonID, Action: assertion.Action, CreatedAt: face.CreatedAt,
 		})

@@ -78,10 +78,11 @@ export class PhotoFaces {
     this.error = "People are reloading; try again.";
     return true;
   }
-  async load(version: string) {
+  async load(version: string, live = false) {
     if (this.disposed) return;
     this.controller?.abort();
     const changed = version !== this.version;
+    const concealed = this.concealed;
     if (changed) {
       this.writer?.abort();
       this.busy = false;
@@ -97,7 +98,7 @@ export class PhotoFaces {
       this.people = [];
     }
     this.error = "";
-    this.loading = !!version;
+    this.loading = !!version && (!live || changed || concealed);
     if (!version) return;
     try {
       const page = await listPhotoFaces(version, {
@@ -112,7 +113,12 @@ export class PhotoFaces {
           this.pending = undefined;
       }
     } catch (cause) {
-      if (!controller.signal.aborted) this.failed(cause);
+      if (!controller.signal.aborted) {
+        if (live && cause instanceof APIError && [401, 403, 404].includes(cause.status))
+          this.conceal();
+        this.failed(cause);
+        if (live) throw cause;
+      }
     } finally {
       if (!controller.signal.aborted) this.loading = false;
     }

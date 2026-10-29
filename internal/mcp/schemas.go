@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"maps"
+	"math"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
@@ -900,8 +901,12 @@ func getPhotoAssetSchemas() (schema, schema) {
 
 func photoFaceSchema() schema {
 	return objectSchema(schema{
-		"face_id":            uuidSchema(),
-		"content_version_id": uuidSchema(),
+		"roll":      schema{"type": "number", "minimum": -math.Pi, "maximum": math.Pi},
+		"facing":    schema{"type": "number", "minimum": 0, "maximum": 1},
+		"eyes_open": booleanSchema(), "smile": booleanSchema(),
+		"detector_fingerprint": sha256Schema(),
+		"face_id":              uuidSchema(),
+		"content_version_id":   uuidSchema(),
 		"box": objectSchema(schema{
 			"x": schema{"type": "number", "minimum": 0, "maximum": 1}, "y": schema{"type": "number", "minimum": 0, "maximum": 1},
 			"width": schema{"type": "number", "minimum": 0, "maximum": 1}, "height": schema{"type": "number", "minimum": 0, "maximum": 1},

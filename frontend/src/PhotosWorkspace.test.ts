@@ -3957,37 +3957,129 @@ it.each([false, true])("revalidates People after refresh, readable=%s", async (r
   }
 });
 
-it.each([false, true])("reloads detected faces after a live change, loupe=%s", async (loupe) => {
-  const { component, props, photos, read } = await facesWorkspaceSetup();
-  if (loupe) {
-    await fireEvent.click(screen.getByRole("button", { name: "Open Photo 1.jpg" }));
-    await component.rerender({ ...props, photoID: "photo-1" });
-    await screen.findByRole("dialog", { name: /^Photo viewer,/ });
-  }
-  const pending = {
-    version: "version-1",
-    box: { x: 0, y: 0, width: 0.2, height: 0.2 },
-    face_id: "pending-face",
-  };
-  photos.faceEditor.pending = pending;
-  read.mockResolvedValue(
-    photoFacePageFor(photo(1), {
-      faces: [
-        photoFace({ content_version_id: "version-1" }),
-        photoFace({
-          face_id: "face-b",
-          content_version_id: "version-1",
-          assertion_id: undefined,
-          detector_fingerprint: "a".repeat(64),
+it.each(["inspector", "loupe", "cull"])(
+  "reloads detected faces after a live change in %s",
+  async (mode) => {
+    const { component, props, photos, read } = await facesWorkspaceSetup();
+    if (mode === "cull") {
+      vi.stubGlobal("indexedDB", new IDBFactory());
+      vi.stubGlobal("IDBKeyRange", IDBKeyRange);
+      vi.spyOn(api, "getPhotoSettings").mockResolvedValue({
+        revision: 1,
+        preference: null,
+        burst_gap_seconds: 2,
+      });
+      vi.spyOn(api, "groupPhotoStacks").mockResolvedValue({
+        groups: [],
+        unavailable_ids: [],
+        burst_gap_seconds: 2,
+      });
+      const review = new PhotoCull(photos.session, photoCullStorage("vault"), vi.fn());
+      review.run = {
+        ids: ["photo-1"],
+        checkpoint: {
+          runID: "run",
+          revision: 0,
+          pass: ["photo-1"],
+          position: 0,
+          visited: ["photo-1"],
+          skipped: [],
+          unavailable: [],
+          scope: "all",
+          autoAdvance: false,
+        },
+      };
+      photos.cull = review;
+      photos.cullVaultID = "vault";
+      photos.culling = true;
+      await component.rerender({ ...props, vaultID: "vault" });
+      await within(await screen.findByRole("dialog", { name: "Cull photos" })).findByText(
+        "Face 1 · Ada",
+      );
+    }
+    if (mode === "loupe") {
+      await fireEvent.click(screen.getByRole("button", { name: "Open Photo 1.jpg" }));
+      await component.rerender({ ...props, photoID: "photo-1" });
+      await screen.findByRole("dialog", { name: /^Photo viewer,/ });
+    }
+    const pending = {
+      version: "version-1",
+      box: { x: 0, y: 0, width: 0.2, height: 0.2 },
+      face_id: "pending-face",
+    };
+    photos.faceEditor.pending = pending;
+    read.mockResolvedValue(
+      photoFacePageFor(photo(1), {
+        faces: [
+          photoFace({ content_version_id: "version-1" }),
+          photoFace({
+            face_id: "face-b",
+            content_version_id: "version-1",
+            assertion_id: undefined,
+            detector_fingerprint: "a".repeat(64),
+          }),
+        ],
+      }),
+    );
+    vi.spyOn(photos, "lookup").mockResolvedValue(photo(1));
+    await act(() => photos.changed({}));
+    if (mode === "cull")
+      await within(await screen.findByRole("region", { name: "Face closeups" })).findByText(
+        "Face 2",
+      );
+    else await screen.findByRole("button", { name: "Find or create a person: Face 2" });
+    expect(photos.faceEditor.pending).toEqual(pending);
+  },
+);
+
+it.each([false, true])(
+  "awaits live face reads and keeps authorized faces, fails=%s",
+  async (fails) => {
+    const { photos, read } = await facesWorkspaceSetup();
+    vi.spyOn(photos, "lookup").mockResolvedValue(photo(1));
+    let finish!: (page: ReturnType<typeof photoFacePage>) => void;
+    let fail!: (cause: Error) => void;
+    read.mockImplementation(
+      () =>
+        new Promise((resolve, reject) => {
+          finish = resolve;
+          fail = reject;
         }),
-      ],
-    }),
-  );
-  vi.spyOn(photos, "lookup").mockResolvedValue(photo(1));
-  await act(() => photos.changed({}));
-  await screen.findByRole("button", { name: "Find or create a person: Face 2" });
-  expect(photos.faceEditor.pending).toEqual(pending);
-});
+    );
+    let completed = false;
+    let failure: unknown;
+    const changing = photos.changed({}).then(
+      () => {
+        completed = true;
+      },
+      (cause) => {
+        failure = cause;
+      },
+    );
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+    expect(completed).toBe(false);
+    expect(screen.queryByRole("button", { name: "Find or create a person: Ada" })).toBeTruthy();
+    const signal = read.mock.calls[1][1]?.signal;
+    await act(() => {
+      photos.backgroundRefresh = true;
+      photos.loading = true;
+      photos.items = [photo(1)];
+    });
+    expect(screen.queryByRole("button", { name: "Find or create a person: Ada" })).toBeTruthy();
+    expect(signal?.aborted).toBe(false);
+    await act(() => {
+      photos.loading = false;
+      photos.backgroundRefresh = false;
+    });
+    await act(async () => {
+      if (fails) fail(new Error("Faces unavailable"));
+      else finish(photoFacePageFor(photo(1)));
+      await changing;
+    });
+    if (fails) expect(failure).toEqual(new Error("Faces unavailable"));
+    else expect(completed).toBe(true);
+  },
+);
 
 it("reports an uncertain clear after remount", async () => {
   vi.stubGlobal(
@@ -4140,23 +4232,6 @@ it.each([false, true])(
     expect(review.currentID).toBe("photo-1");
     expect(read).toHaveBeenCalledTimes(readsBefore + 1);
     expect(read).toHaveBeenLastCalledWith("version-1", expect.anything());
-    read.mockResolvedValue(
-      photoFacePageFor(photo(1), {
-        faces: [
-          photoFace({ content_version_id: "version-1" }),
-          photoFace({
-            face_id: "face-b",
-            content_version_id: "version-1",
-            assertion_id: undefined,
-            detector_fingerprint: "a".repeat(64),
-          }),
-        ],
-      }),
-    );
-    await act(() => photos.changed({}));
-    await within(await within(dialog).findByRole("region", { name: "Face closeups" })).findByText(
-      "Face 2",
-    );
   },
 );
 
