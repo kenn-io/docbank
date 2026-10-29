@@ -61,7 +61,7 @@
         </div>
         <figcaption>
           <div class="head">
-            <span class="name">{tile.label}</span>
+            <span class="name" title={tile.label}>{tile.label}</span>
             {#if r?.grade}<span class="grade" data-grade={r.grade}>{r.grade}</span>{/if}
           </div>
           {#if r}
