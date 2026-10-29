@@ -16,7 +16,11 @@ func TestShutdownClosesReportsAfterContextExpires(t *testing.T) {
 		budget := report.NewBudget(1 << 20)
 		t.Cleanup(func() { require.NoError(t, budget.Close()) })
 		cache := reporting.NewCache(nil, budget)
-		server := &Server{webSessions: newWebSessionRegistry(), termReports: cache, reportBudget: budget}
+		sessions := newWebSessionRegistry()
+		// Keep an upload draining so shutdown must take the canceled-context path.
+		sessions.uploadGroup.Add(1)
+		defer sessions.uploadGroup.Done()
+		server := &Server{webSessions: sessions, termReports: cache, reportBudget: budget}
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 		require.ErrorIs(t, server.Shutdown(ctx), context.Canceled)
