@@ -356,6 +356,8 @@ func TestRankedPhotoSnapshotKeepsStacksAcrossPages(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, unavailable)
 	require.Equal(t, [][]string{ids[49:]}, groups)
+	_, err = f.s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids[49:], Targets: preparedPhotoTargets(t.Context(), t, f.s, PhotoSetSelection{AssetIDs: ids[49:], Limit: MaxPhotoStackTargets}), Decision: "representative", CurrentID: ids[50]})
+	require.NoError(t, err)
 
 	service := NewQuerySnapshotService(f.s)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
@@ -372,8 +374,8 @@ func TestRankedPhotoSnapshotKeepsStacksAcrossPages(t *testing.T) {
 	for _, id := range ids[49:] {
 		require.True(t, slices.ContainsFunc(page.Items, func(row PhotoBrowseRow) bool { return row.AssetID == id }), "a selectable stack must include every member's display row")
 	}
-	require.Equal(t, ids[49], page.Items[49].AssetID)
-	require.Equal(t, []PhotoStack{{AssetIDs: ids[49:], RepresentativeID: ids[49]}}, page.Stacks)
+	require.Equal(t, ids[50], page.Items[49].AssetID, "the chosen representative must occupy the stack's highest-ranked position")
+	require.Equal(t, []PhotoStack{{AssetIDs: ids[49:], RepresentativeID: ids[50]}}, page.Stacks)
 
 	next, err := service.PhotoPage(t.Context(), "owner", first.SnapshotID, first.NextCursor, request)
 	require.NoError(t, err)
@@ -383,7 +385,7 @@ func TestRankedPhotoSnapshotKeepsStacksAcrossPages(t *testing.T) {
 		require.True(t, slices.ContainsFunc(page.Items, func(row PhotoBrowseRow) bool { return row.AssetID == id }), "a continuation must include its stack representative and member rows")
 	}
 	require.Equal(t, ids[50], page.Items[0].AssetID)
-	require.Equal(t, []PhotoStack{{AssetIDs: ids[49:], RepresentativeID: ids[49]}}, page.Stacks)
+	require.Equal(t, []PhotoStack{{AssetIDs: ids[49:], RepresentativeID: ids[50]}}, page.Stacks)
 }
 
 // createAllPhotosSnapshot snapshots every photo in capture order so a ranked
