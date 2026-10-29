@@ -105,6 +105,9 @@ linters:
   #   pending dedicated passes: contextcheck, noctx (see follow-up PRs)
 
   settings:
+    nolintlint:
+      require-specific: true
+
     custom:
       kennnolint:
         type: module
