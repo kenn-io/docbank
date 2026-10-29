@@ -821,7 +821,9 @@ CLI redaction verification tests run in separate test processes because the PDF 
 
 Documentation browser checks use Microsoft's public Playwright image matching the installed `@playwright/test` version.
 The LibreOffice PDF proof runs in a GHCR image built from `.github/docker/render-pdf/Dockerfile` and tagged by that file's hash.
-A trusted branch that changes the Dockerfile builds and pushes the image. The GHCR package must be public so fork pull requests can reuse it.
+A trusted branch that changes the Dockerfile builds and pushes a new image. Update the Ubuntu digest to refresh its installed packages.
+The numbered-PDF browser proof still installs Poppler, util-linux, and Chromium on its runner.
+The GHCR package must be public so fork pull requests can reuse the image.
 
 Go jobs restore build and module caches through `.github/actions/go-cache-restore`
 by group: Linux CGO, Linux pure-Go, lint (with the golangci-lint analysis

@@ -2,7 +2,7 @@ name: Render PDF
 
 # Keep native renderer proof on disposable GitHub-hosted runners. PR changes
 # must exercise this job without changing the main-pinned CI workflow.
-# The prebuilt image from .github/docker/render-pdf lets ordinary runs download no packages.
+# The LibreOffice proof uses the prebuilt image from .github/docker/render-pdf.
 on:
   workflow_call:
   workflow_dispatch:
