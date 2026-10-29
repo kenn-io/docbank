@@ -3,7 +3,7 @@ name: Render PDF
 # Keep native renderer proof on disposable GitHub-hosted runners. PR changes
 # must exercise this job without changing the main-pinned CI workflow.
 on:
-  pull_request:
+  workflow_call:
   workflow_dispatch:
   push:
     branches: [main]

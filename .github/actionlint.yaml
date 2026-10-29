@@ -1,3 +1,10 @@
 self-hosted-runner:
   labels:
     - windows-11-vs2026-arm
+
+# actionlint 1.7.12 predates cache-mode.
+paths:
+  .github/workflows/*.yml:
+    ignore:
+      - 'unexpected key "cache-mode" for "workflow" section'
+      - 'unexpected key "cache-mode" for "job" section'
