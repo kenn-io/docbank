@@ -588,7 +588,7 @@ func TestImageUploadAndTextQueryReturnBothVectors(t *testing.T) {
 	require.NoError(t, err)
 	var legacyWire any
 	require.NoError(t, stdjson.Unmarshal(legacyJSON, &legacyWire))
-	assert.Error(t, legacyValidator.Validate(legacyWire), "v1 must reject the new image input kind")
+	require.Error(t, legacyValidator.Validate(legacyWire), "v1 must reject the new image input kind")
 	metadata := uploadMetadata(source)
 	metadata.MediaFamily, metadata.MediaType = "image", "image/jpeg"
 	metadata.InputKind = document.RenditionInputDerivedUpload

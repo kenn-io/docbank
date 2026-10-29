@@ -215,10 +215,12 @@ func TestResolveSemanticCandidatesCollapsesPhotoDuplicatesBeforeLimit(t *testing
 	lexicalQuery := scope.Query
 	lexicalQuery.Filters.CollapseDuplicates = true
 	options := SearchOptions{PhotoScope: &scope, PhotoLexicalQuery: &lexicalQuery}
-	_, _, _, annRows, err := s.semanticSearchAuthorityFence(t.Context(), profile.Fingerprint,
+	authoritySource, scopedDocuments, completeDocuments, annRows, err := s.semanticSearchAuthorityFence(t.Context(), profile.Fingerprint,
 		records[0].BindingID, records[0].InputKind, records[0].VectorSpace.ID,
 		options, nil)
 	require.NoError(t, err)
+	assert.Equal(t, source.ManifestChecksum, authoritySource.ManifestChecksum)
+	assert.LessOrEqual(t, completeDocuments, scopedDocuments)
 	require.Len(t, annRows, 2)
 	assert.ElementsMatch(t, []string{nodes[0].CurrentVersionID, nodes[2].CurrentVersionID},
 		[]string{annRows[0].InputKey, annRows[1].InputKey},

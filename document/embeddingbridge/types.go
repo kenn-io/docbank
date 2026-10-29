@@ -5,6 +5,7 @@ package embeddingbridge
 import (
 	"context"
 	"net/http"
+	"slices"
 	"time"
 
 	"go.kenn.io/docbank/document"
@@ -45,10 +46,8 @@ var (
 )
 
 func protocolForDescriptor(descriptor document.EmbeddingDescriptor) wireProtocol {
-	for _, kind := range descriptor.InputKinds {
-		if kind == document.EmbeddingInputImage {
-			return imageProtocol
-		}
+	if slices.Contains(descriptor.InputKinds, document.EmbeddingInputImage) {
+		return imageProtocol
 	}
 	return textProtocol
 }
