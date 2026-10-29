@@ -1,5 +1,5 @@
-// Package embeddingbridge implements the fixed synchronous docbank-embedding/v1
-// provider-neutral embedding protocol.
+// Package embeddingbridge implements fixed synchronous provider-neutral
+// embedding protocols.
 package embeddingbridge
 
 import (
@@ -12,16 +12,46 @@ import (
 )
 
 const (
-	// ContractVersion is the only protocol version this package accepts.
+	// ContractVersion is the text and original-file protocol version.
 	ContractVersion = "docbank-embedding/v1"
+	// ImageContractVersion is the protocol version for image embeddings.
+	ImageContractVersion = "docbank-embedding/v2"
 
-	embeddingsPath    = "/docbank-embedding/v1/embeddings"
-	manifestPartName  = "manifest"
-	filePartName      = "file"
-	manifestMediaType = "application/vnd.docbank.embedding-manifest+json;version=1"
-	responseMediaType = "application/vnd.docbank.embedding-result+json;version=1"
-	adapterContract   = "docbank-standard-embedding-bridge/v1"
+	embeddingsPathV1    = "/docbank-embedding/v1/embeddings"
+	embeddingsPathV2    = "/docbank-embedding/v2/embeddings"
+	manifestPartName    = "manifest"
+	filePartName        = "file"
+	manifestMediaTypeV1 = "application/vnd.docbank.embedding-manifest+json;version=1"
+	manifestMediaTypeV2 = "application/vnd.docbank.embedding-manifest+json;version=2"
+	responseMediaTypeV1 = "application/vnd.docbank.embedding-result+json;version=1"
+	responseMediaTypeV2 = "application/vnd.docbank.embedding-result+json;version=2"
+	adapterContractV1   = "docbank-standard-embedding-bridge/v1"
+	adapterContractV2   = "docbank-standard-embedding-bridge/v2"
 )
+
+type wireProtocol struct {
+	contractVersion string
+	path            string
+	manifestType    string
+	responseType    string
+	adapterContract string
+}
+
+var (
+	textProtocol = wireProtocol{ContractVersion, embeddingsPathV1, manifestMediaTypeV1,
+		responseMediaTypeV1, adapterContractV1}
+	imageProtocol = wireProtocol{ImageContractVersion, embeddingsPathV2, manifestMediaTypeV2,
+		responseMediaTypeV2, adapterContractV2}
+)
+
+func protocolForDescriptor(descriptor document.EmbeddingDescriptor) wireProtocol {
+	for _, kind := range descriptor.InputKinds {
+		if kind == document.EmbeddingInputImage {
+			return imageProtocol
+		}
+	}
+	return textProtocol
+}
 
 // SecretResolver resolves only the configured named credential binding.
 // Values are runtime-only and never enter protocol manifests or fingerprints.
@@ -46,8 +76,9 @@ type Profile struct {
 	MaxResponseBytes int64
 }
 
-// Client implements document.EmbeddingProvider through docbank-embedding/v1.
+// Client implements the matching versioned document.EmbeddingProvider bridge.
 type Client struct {
+	protocol         wireProtocol
 	origin           string
 	descriptor       document.EmbeddingDescriptor
 	secretBinding    string

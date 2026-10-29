@@ -1027,7 +1027,7 @@ and must be supplied separately after restoring a vault.
 
 | Fields | Meaning |
 | --- | --- |
-| `adapter_contract` | `docbank-openai-compatible-embeddings/v1` for rendition chunks, or `docbank-voyage-embeddings/v1` for rendition chunks and original files, or `docbank-standard-embedding-bridge/v1` for image/text retrieval. |
+| `adapter_contract` | `docbank-openai-compatible-embeddings/v1` for rendition chunks, `docbank-voyage-embeddings/v1` for rendition chunks and original files, `docbank-standard-embedding-bridge/v1` for text and original-file inputs, or `docbank-standard-embedding-bridge/v2` for image inputs. |
 | `endpoint`, `model_revision` | Exact provider endpoint and pinned revision. OpenAI-compatible endpoints are origins without a path; Voyage uses `https://api.voyageai.com/v1`. |
 | `deployment_epoch`, `provider_revision_header` | OpenAI-compatible runtimes require exactly one. Voyage text runtimes require an epoch and forbid a revision header. The epoch must equal `model_revision`; an OpenAI-compatible revision header must echo the pinned revision in every response. |
 | `capability_manifest` | Voyage original-file runtimes require an absolute path to a capability manifest matching their model, media policy, and descriptor. Voyage text runtimes forbid this field. |
@@ -1042,7 +1042,7 @@ It records malformed responses separately from rejected document input.
 
 #### Image/text retrieval
 
-Use `docbank-standard-embedding-bridge/v1` with `input_kind = "image"` for Photos Meaning and Hybrid search. The bridge receives verified, stripped JPEG grid previews and text queries in the same vector space. Originals and filenames stay local. Use the bridge endpoint origin, pinned `model_revision`, provider disclosure, and explicit transport policy described above. Grant image and query-text consent before searching; missing consent, provider access, or an active index returns metadata matches with a visible reason.
+Use `docbank-standard-embedding-bridge/v2` with `input_kind = "image"` for Photos Meaning and Hybrid search. The bridge receives verified, stripped JPEG grid previews and text queries in the same vector space. Originals and filenames stay local. Use the bridge endpoint origin, pinned `model_revision`, provider disclosure, and explicit transport policy described above. Grant image and query-text consent before searching; missing consent, provider access, or an active index returns metadata matches with a visible reason.
 
 Set `min_query_similarity` in the image binding's runtime config to a threshold calibrated for the pinned model revision. There is no default. It accepts a finite score for cosine or dot product; cosine values must be in `[-1, 1]`. Other input kinds and L2 bindings reject this setting. An image binding without a threshold uses the `similarity_floor_unset` metadata fallback for Meaning and Hybrid search.
 
@@ -1057,7 +1057,7 @@ input_kind = "image"
 # Supply the remaining pinned profile fields from the provisioned bridge.
 
 [embedding_profiles.images.runtime]
-adapter_contract = "docbank-standard-embedding-bridge/v1"
+adapter_contract = "docbank-standard-embedding-bridge/v2"
 endpoint = "https://embedding.example.invalid"
 model_revision = "provisioned-image-model-v1"
 # Example only: calibrate this value for the pinned model revision.

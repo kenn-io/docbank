@@ -68,7 +68,7 @@ func (client *Client) Embed(ctx context.Context, inputs []document.EmbeddingInpu
 		return document.EmbeddingResult{}, err
 	}
 	boundary := "docbank-embedding-" + manifest.RequestChecksum[:32]
-	contentLength, err := multipartLength(ctx, boundary, encoded, frozenInputs)
+	contentLength, err := multipartLength(ctx, boundary, encoded, frozenInputs, client.protocol.manifestType)
 	if err != nil || contentLength > client.maxRequestBytes {
 		return document.EmbeddingResult{}, classified(ErrorCapacity, 0)
 	}
@@ -107,14 +107,15 @@ func (client *Client) Embed(ctx context.Context, inputs []document.EmbeddingInpu
 			writerDone <- err
 			return
 		}
-		writeErr := writeMultipart(requestCtx, multipartWriter, encoded, frozenInputs, true, sourceGate)
+		writeErr := writeMultipart(requestCtx, multipartWriter, encoded, frozenInputs, true,
+			client.protocol.manifestType, sourceGate)
 		if closeErr := multipartWriter.Close(); writeErr == nil {
 			writeErr = closeErr
 		}
 		_ = bodyWriter.CloseWithError(writeErr)
 		writerDone <- writeErr
 	}()
-	request, err := http.NewRequestWithContext(requestCtx, http.MethodPost, client.origin+embeddingsPath, bodyReader)
+	request, err := http.NewRequestWithContext(requestCtx, http.MethodPost, client.origin+client.protocol.path, bodyReader)
 	if err != nil {
 		_ = bodyReader.Close()
 		<-writerDone
@@ -122,7 +123,7 @@ func (client *Client) Embed(ctx context.Context, inputs []document.EmbeddingInpu
 	}
 	request.ContentLength = contentLength
 	request.Header.Set("Content-Type", "multipart/form-data; boundary="+boundary)
-	request.Header.Set("Accept", responseMediaType)
+	request.Header.Set("Accept", client.protocol.responseType)
 	if secret != "" {
 		request.Header.Set("Authorization", "Bearer "+secret)
 	}
@@ -167,7 +168,7 @@ func (client *Client) Embed(ctx context.Context, inputs []document.EmbeddingInpu
 	if writeErr != nil {
 		return document.EmbeddingResult{}, classified(ErrorAmbiguousSubmission, 0)
 	}
-	if err := requireResponseMediaType(response.Header.Get("Content-Type")); err != nil {
+	if err := requireResponseMediaType(response.Header.Get("Content-Type"), client.protocol.responseType); err != nil {
 		return document.EmbeddingResult{}, classified(ErrorMalformedResponse, response.StatusCode)
 	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, client.maxResponseBytes+1))
@@ -223,7 +224,7 @@ func freezeInputMetadata(inputs []document.EmbeddingInput, discloseFilename bool
 
 func (client *Client) buildManifest(inputs []document.EmbeddingInput, authorization document.EmbeddingAuthorization) (RequestManifest, []byte, error) {
 	manifest := RequestManifest{
-		ContractVersion: ContractVersion, DescriptorFingerprint: client.descriptor.Fingerprint,
+		ContractVersion: client.protocol.contractVersion, DescriptorFingerprint: client.descriptor.Fingerprint,
 		PolicyFingerprint: client.descriptor.PolicyFingerprint, Authorization: authorization,
 		Inputs: make([]ManifestInput, len(inputs)),
 	}
@@ -281,13 +282,15 @@ func hasOriginalInput(inputs []document.EmbeddingInput) bool {
 	})
 }
 
-func multipartLength(ctx context.Context, boundary string, manifest []byte, inputs []document.EmbeddingInput) (int64, error) {
+func multipartLength(ctx context.Context, boundary string, manifest []byte, inputs []document.EmbeddingInput,
+	manifestType string,
+) (int64, error) {
 	counter := new(countingWriter)
 	writer := multipart.NewWriter(counter)
 	if err := writer.SetBoundary(boundary); err != nil {
 		return 0, errors.New("embedding bridge: deterministic multipart boundary is invalid")
 	}
-	if err := writeMultipart(ctx, writer, manifest, inputs, false, nil); err != nil {
+	if err := writeMultipart(ctx, writer, manifest, inputs, false, manifestType, nil); err != nil {
 		return 0, err
 	}
 	if err := writer.Close(); err != nil {
@@ -305,10 +308,12 @@ func multipartLength(ctx context.Context, boundary string, manifest []byte, inpu
 	return total, nil
 }
 
-func writeMultipart(ctx context.Context, writer *multipart.Writer, manifest []byte, inputs []document.EmbeddingInput, writeFiles bool, sourceGate *activeSourceGate) error {
+func writeMultipart(ctx context.Context, writer *multipart.Writer, manifest []byte,
+	inputs []document.EmbeddingInput, writeFiles bool, manifestType string, sourceGate *activeSourceGate,
+) error {
 	manifestHeader := make(textproto.MIMEHeader)
 	manifestHeader.Set("Content-Disposition", `form-data; name="`+manifestPartName+`"`)
-	manifestHeader.Set("Content-Type", manifestMediaType)
+	manifestHeader.Set("Content-Type", manifestType)
 	part, err := writer.CreatePart(manifestHeader)
 	if err != nil {
 		return errors.New("embedding bridge: manifest multipart part failed")
@@ -384,7 +389,7 @@ func (reader progressReader) Read(value []byte) (int, error) {
 }
 
 func (client *Client) validateResponse(envelope Response, manifest RequestManifest, inputs []document.EmbeddingInput, authorization document.EmbeddingAuthorization) (document.EmbeddingResult, error) {
-	if envelope.ContractVersion != ContractVersion || envelope.DescriptorFingerprint != client.descriptor.Fingerprint ||
+	if envelope.ContractVersion != client.protocol.contractVersion || envelope.DescriptorFingerprint != client.descriptor.Fingerprint ||
 		envelope.PolicyFingerprint != client.descriptor.PolicyFingerprint || envelope.RequestChecksum != manifest.RequestChecksum ||
 		len(envelope.Vectors) != len(inputs) {
 		return document.EmbeddingResult{}, errors.New("response identity mismatch")
@@ -438,10 +443,16 @@ func statusError(status int) error {
 	}
 }
 
-func requireResponseMediaType(value string) error {
+func requireResponseMediaType(value, expected string) error {
 	mediaType, parameters, err := mime.ParseMediaType(value)
-	if err != nil || mediaType != "application/vnd.docbank.embedding-result+json" || len(parameters) != 1 || parameters["version"] != "1" {
+	expectedType, expectedParameters, expectedErr := mime.ParseMediaType(expected)
+	if err != nil || expectedErr != nil || mediaType != expectedType || len(parameters) != len(expectedParameters) {
 		return errors.New("response media type mismatch")
+	}
+	for key, expectedValue := range expectedParameters {
+		if parameters[key] != expectedValue {
+			return errors.New("response media type mismatch")
+		}
 	}
 	return nil
 }

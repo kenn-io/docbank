@@ -1355,11 +1355,16 @@ func validateEmbeddingProfileConfig(profile EmbeddingProfileConfig, prefix strin
 				return fmt.Errorf("%s runtime min_query_similarity must be finite and within [-1, 1] for cosine", prefix)
 			}
 		}
-		if profile.InputKind == string(document.EmbeddingInputImage) && runtime.AdapterContract != "docbank-standard-embedding-bridge/v1" {
-			return fmt.Errorf("%s image input requires the standard embedding bridge", prefix)
+		if profile.InputKind == string(document.EmbeddingInputImage) && runtime.AdapterContract != "docbank-standard-embedding-bridge/v2" {
+			return fmt.Errorf("%s image input requires the v2 standard embedding bridge", prefix)
+		}
+		if profile.InputKind != string(document.EmbeddingInputImage) && runtime.AdapterContract == "docbank-standard-embedding-bridge/v2" {
+			return fmt.Errorf("%s v2 standard embedding bridge requires image input", prefix)
 		}
 		if runtime.AdapterContract != "docbank-openai-compatible-embeddings/v1" &&
-			runtime.AdapterContract != "docbank-voyage-embeddings/v1" && runtime.AdapterContract != "docbank-standard-embedding-bridge/v1" {
+			runtime.AdapterContract != "docbank-voyage-embeddings/v1" &&
+			runtime.AdapterContract != "docbank-standard-embedding-bridge/v1" &&
+			runtime.AdapterContract != "docbank-standard-embedding-bridge/v2" {
 			return fmt.Errorf("%s runtime adapter_contract is unsupported", prefix)
 		}
 		parsed, err := validateProviderEgressConfig(runtime.ProviderEgressConfig, prefix)
@@ -1378,7 +1383,7 @@ func validateEmbeddingProfileConfig(profile EmbeddingProfileConfig, prefix strin
 			return fmt.Errorf("%s model_input is invalid or incompatible", prefix)
 		}
 		switch runtime.AdapterContract {
-		case "docbank-standard-embedding-bridge/v1":
+		case "docbank-standard-embedding-bridge/v1", "docbank-standard-embedding-bridge/v2":
 			if runtime.CapabilityManifest != "" || runtime.ProviderRevisionHeader != "" || (parsed.Path != "" && parsed.Path != "/") {
 				return fmt.Errorf("%s bridge runtime authority is invalid", prefix)
 			}

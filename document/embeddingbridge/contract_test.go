@@ -38,27 +38,43 @@ var requestSchema []byte
 //go:embed embedding-response-v1.schema.json
 var responseSchema []byte
 
+//go:embed embedding-request-v2.schema.json
+var imageRequestSchema []byte
+
+//go:embed embedding-response-v2.schema.json
+var imageResponseSchema []byte
+
 func TestNormativeEmbeddingContractIsFixedStrictAndVersioned(t *testing.T) {
 	var openAPI map[string]any
 	require.NoError(t, yaml.Unmarshal(openAPIContract, &openAPI))
 	assert.Equal(t, "3.1.0", openAPI["openapi"])
 	paths, ok := openAPI["paths"].(map[string]any)
 	require.True(t, ok)
-	assert.Len(t, paths, 1)
+	assert.Len(t, paths, 2)
 	assert.Contains(t, paths, "/docbank-embedding/v1/embeddings")
+	assert.Contains(t, paths, "/docbank-embedding/v2/embeddings")
 	for _, forbidden := range []string{"{{", "result_url", "callback", "status_url", "cancel_url"} {
 		assert.NotContains(t, string(openAPIContract), forbidden)
 	}
-	for name, schema := range map[string][]byte{"request": requestSchema, "response": responseSchema} {
+	for name, schema := range map[string]struct {
+		data    []byte
+		version string
+	}{
+		"request v1":  {requestSchema, "docbank-embedding/v1"},
+		"response v1": {responseSchema, "docbank-embedding/v1"},
+		"request v2":  {imageRequestSchema, "docbank-embedding/v2"},
+		"response v2": {imageResponseSchema, "docbank-embedding/v2"},
+	} {
 		t.Run(name, func(t *testing.T) {
 			var decoded map[string]any
-			require.NoError(t, json.Unmarshal(schema, &decoded))
+			require.NoError(t, json.Unmarshal(schema.data, &decoded))
 			assert.Equal(t, "https://json-schema.org/draft/2020-12/schema", decoded["$schema"])
 			assert.Equal(t, false, decoded["additionalProperties"])
-			assert.True(t, bytes.Contains(schema, []byte(`"docbank-embedding/v1"`)))
+			assert.True(t, bytes.Contains(schema.data, []byte(`"`+schema.version+`"`)))
 		})
 	}
 	assert.Equal(t, "docbank-embedding/v1", embeddingbridge.ContractVersion)
+	assert.Equal(t, "docbank-embedding/v2", embeddingbridge.ImageContractVersion)
 	for _, field := range []string{`"heading_path"`, `"source_spans"`, `"unit_index"`, `"char_start"`, `"char_end"`} {
 		assert.Contains(t, string(requestSchema), field)
 	}
@@ -219,6 +235,12 @@ func serveIndependentContractRequest(
 	canonicalization canonicalizationContract,
 	wantFilename string,
 ) error {
+	version := "1"
+	if request.URL.Path == "/docbank-embedding/v2/embeddings" {
+		version = "2"
+	} else if request.URL.Path != "/docbank-embedding/v1/embeddings" {
+		return errors.New("independent server: route version")
+	}
 	mediaType, parameters, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
 	if err != nil || mediaType != "multipart/form-data" || parameters["boundary"] == "" {
 		return errors.New("independent server: multipart content type")
@@ -240,7 +262,7 @@ func serveIndependentContractRequest(
 		}
 		switch part.FormName() {
 		case "manifest":
-			if part.Header.Get("Content-Type") != "application/vnd.docbank.embedding-manifest+json;version=1" || manifestBytes != nil {
+			if part.Header.Get("Content-Type") != "application/vnd.docbank.embedding-manifest+json;version="+version || manifestBytes != nil {
 				return errors.New("independent server: manifest part contract")
 			}
 			manifestBytes = payload
@@ -277,8 +299,9 @@ func serveIndependentContractRequest(
 	}
 	descriptorFingerprint, descriptorOK := manifest["descriptor_fingerprint"].(string)
 	policyFingerprint, policyOK := manifest["policy_fingerprint"].(string)
+	contractVersion, contractVersionOK := manifest["contract_version"].(string)
 	inputs, inputsOK := manifest["inputs"].([]any)
-	if !descriptorOK || !policyOK || !inputsOK || len(inputs) == 0 {
+	if !descriptorOK || !policyOK || !contractVersionOK || contractVersion != "docbank-embedding/v"+version || !inputsOK || len(inputs) == 0 {
 		return errors.New("independent server: manifest identity")
 	}
 	keys := make([]string, len(inputs))
@@ -323,7 +346,7 @@ func serveIndependentContractRequest(
 		}
 	}
 	response := map[string]any{
-		"contract_version":       "docbank-embedding/v1",
+		"contract_version":       contractVersion,
 		"descriptor_fingerprint": descriptorFingerprint,
 		"policy_fingerprint":     policyFingerprint,
 		"request_checksum":       checksum,
@@ -340,7 +363,7 @@ func serveIndependentContractRequest(
 	if err := responseValidator.Validate(responseWire); err != nil {
 		return fmt.Errorf("independent server: response schema: %w", err)
 	}
-	writer.Header().Set("Content-Type", "application/vnd.docbank.embedding-result+json;version=1")
+	writer.Header().Set("Content-Type", "application/vnd.docbank.embedding-result+json;version="+version)
 	if _, err := writer.Write(responseBytes); err != nil {
 		return fmt.Errorf("independent server: write response: %w", err)
 	}
@@ -525,19 +548,47 @@ func TestHeadingLengthMatchesPublishedSchemaBeforeTransmission(t *testing.T) {
 
 func TestImageUploadAndTextQueryReturnBothVectors(t *testing.T) {
 	source := []byte("synthetic stripped JPEG")
-	requestValidator := compileContractSchema(t, "https://docbank.invalid/contracts/docbank-embedding/v1/request.schema.json", requestSchema)
-	responseValidator := compileContractSchema(t, "https://docbank.invalid/contracts/docbank-embedding/v1/response.schema.json", responseSchema)
+	requestValidator := compileContractSchema(t, "https://docbank.invalid/contracts/docbank-embedding/v2/request.schema.json", imageRequestSchema)
+	responseValidator := compileContractSchema(t, "https://docbank.invalid/contracts/docbank-embedding/v2/response.schema.json", imageResponseSchema)
 	var contract struct {
 		Canonicalization canonicalizationContract `json:"x-docbank-canonicalization"`
 	}
-	require.NoError(t, json.Unmarshal(requestSchema, &contract))
+	require.NoError(t, json.Unmarshal(imageRequestSchema, &contract))
 	serverErrors := make(chan error, 1)
 	fixture := newBridgeFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/docbank-embedding/v2/embeddings", r.URL.Path)
+		assert.Equal(t, "application/vnd.docbank.embedding-result+json;version=2", r.Header.Get("Accept"))
 		if err := serveIndependentContractRequest(w, r, requestValidator, responseValidator, contract.Canonicalization, ""); err != nil {
 			serverErrors <- err
 			http.Error(w, "synthetic contract failure", http.StatusInternalServerError)
 		}
 	}), document.EmbeddingInputKind("image"))
+	legacyValidator := compileContractSchema(t, "https://docbank.invalid/contracts/docbank-embedding/v1/request.schema.json", requestSchema)
+	legacyManifest := map[string]any{
+		"contract_version":       "docbank-embedding/v1",
+		"descriptor_fingerprint": strings.Repeat("0", 64),
+		"policy_fingerprint":     strings.Repeat("1", 64),
+		"authorization": map[string]any{
+			"provider_id": "synthetic.embedding-bridge", "descriptor_fingerprint": strings.Repeat("0", 64),
+			"policy_fingerprint": strings.Repeat("1", 64), "max_batch_items": 1, "max_input_bytes": 32,
+			"max_response_bytes": 32, "disclose_filename": false,
+		},
+		"inputs": []any{map[string]any{
+			"index": 0, "key": "image-a", "role": "document", "kind": "image", "byte_length": len(source),
+			"sha256": strings.Repeat("a", 64), "upload": map[string]any{
+				"filename": "", "media_family": "image", "media_type": "image/jpeg",
+				"byte_length": len(source), "sha256": strings.Repeat("a", 64),
+				"capability_record_checksum": strings.Repeat("b", 64),
+				"provider_metadata_checksum": strings.Repeat("c", 64), "input_kind": "original_file",
+			}, "file_part": "file", "file_index": 0,
+		}},
+		"request_checksum": strings.Repeat("d", 64),
+	}
+	legacyJSON, err := stdjson.Marshal(legacyManifest)
+	require.NoError(t, err)
+	var legacyWire any
+	require.NoError(t, stdjson.Unmarshal(legacyJSON, &legacyWire))
+	assert.Error(t, legacyValidator.Validate(legacyWire), "v1 must reject the new image input kind")
 	metadata := uploadMetadata(source)
 	metadata.MediaFamily, metadata.MediaType = "image", "image/jpeg"
 	metadata.InputKind = document.RenditionInputDerivedUpload

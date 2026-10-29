@@ -505,7 +505,7 @@ must supply matching profiles, authorization, and named credential resolution.
 | [`document/cohere`](https://github.com/kenn-io/docbank/tree/main/document/cohere) | Hosted `embed-v4.0` text and inspected-image inputs; distinct document and query roles |
 | [`document/gemini`](https://github.com/kenn-io/docbank/tree/main/document/gemini) | Hosted `gemini-embedding-2` text and authorized image, audio, video, and PDF files |
 | [`document/zeroentropy`](https://github.com/kenn-io/docbank/tree/main/document/zeroentropy) | Hosted `zembed-1` text with explicit output encoding, latency policy, and dimensions |
-| [`document/embeddingbridge`](https://github.com/kenn-io/docbank/tree/main/document/embeddingbridge) | Synchronous `docbank-embedding/v1` transport for text or authorized original files |
+| [`document/embeddingbridge`](https://github.com/kenn-io/docbank/tree/main/document/embeddingbridge) | Synchronous `docbank-embedding/v1` transport for text and authorized original files, plus `v2` for image inputs |
 
 `openaicompat.BGEM3Profile` and `openaicompat.Qwen3Profile` build reviewed
 self-hosted profiles. BGE-M3 uses one dense 1,024-dimensional vector. Qwen3
@@ -547,7 +547,8 @@ separates that provider retention from Docbank's local derivative retention.
 
 The standard embedding bridge sends a canonical manifest before any file
 parts and validates the synchronous response against the input identities.
-Its [OpenAPI contract](https://github.com/kenn-io/docbank/blob/main/document/embeddingbridge/openapi.yaml)
+Version 1 handles text and authorized original files. Version 2 handles image
+previews. Its [OpenAPI contract](https://github.com/kenn-io/docbank/blob/main/document/embeddingbridge/openapi.yaml)
 and JSON schemas own the wire limits.
 
 ## Detect and bound visual attachments

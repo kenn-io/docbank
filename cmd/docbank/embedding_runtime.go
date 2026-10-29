@@ -27,9 +27,10 @@ import (
 )
 
 const (
-	openAIEmbeddingAdapter = "docbank-openai-compatible-embeddings/v1"
-	voyageEmbeddingAdapter = "docbank-voyage-embeddings/v1"
-	bridgeEmbeddingAdapter = "docbank-standard-embedding-bridge/v1"
+	openAIEmbeddingAdapter   = "docbank-openai-compatible-embeddings/v1"
+	voyageEmbeddingAdapter   = "docbank-voyage-embeddings/v1"
+	bridgeEmbeddingAdapterV1 = "docbank-standard-embedding-bridge/v1"
+	bridgeEmbeddingAdapterV2 = "docbank-standard-embedding-bridge/v2"
 )
 
 func recoverEmbeddingRuntimeSpool(ctx context.Context, spoolDirectory string) error {
@@ -109,7 +110,7 @@ func configureEmbeddingRuntimeBundle(cfg config.Config) (embeddingRuntimeBundle,
 		var provider document.EmbeddingProvider
 		var classify func(error) (processing.EmbeddingProviderFailure, time.Duration)
 		switch configured.Runtime.AdapterContract {
-		case bridgeEmbeddingAdapter:
+		case bridgeEmbeddingAdapterV1, bridgeEmbeddingAdapterV2:
 			profile := embeddingbridge.Profile{Origin: configured.Runtime.Endpoint, Descriptor: descriptor, SecretBinding: configured.CredentialBinding,
 				EgressPolicy: providerEgressPolicy(configured.Runtime.ProviderEgressConfig), RequestTimeout: configured.Runtime.RequestTimeout.Std(),
 				MaxBatchItems: configured.MaxBatchItems, MaxInputBytes: configured.MaxInputBytes, MaxRequestBytes: configured.Runtime.MaxRequestBytes, MaxResponseBytes: configured.MaxResponseBytes}
@@ -265,7 +266,8 @@ func executableProcessingProfiles(cfg config.Config,
 func configuredEmbeddingDescriptor(profile config.EmbeddingProfileConfig, modelInput document.ModelInputContract) document.EmbeddingDescriptor {
 	runtime := profile.Runtime
 	modes := []document.ModelInputMode{modelInput.Document.Mode}
-	supportsQuery := runtime.AdapterContract == bridgeEmbeddingAdapter || runtime.AdapterContract == openAIEmbeddingAdapter ||
+	supportsQuery := runtime.AdapterContract == bridgeEmbeddingAdapterV1 ||
+		runtime.AdapterContract == bridgeEmbeddingAdapterV2 || runtime.AdapterContract == openAIEmbeddingAdapter ||
 		(runtime.AdapterContract == voyageEmbeddingAdapter && profile.InputKind == string(document.EmbeddingInputRenditionChunk))
 	if supportsQuery && modelInput.Query.Mode != modelInput.Document.Mode {
 		modes = append(modes, modelInput.Query.Mode)

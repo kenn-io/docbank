@@ -164,6 +164,12 @@ type responseEnvelope struct {
 
 func readBridgeRequest(t *testing.T, request *http.Request) (requestManifest, [][]byte) {
 	t.Helper()
+	version := "1"
+	if request.URL.Path == "/docbank-embedding/v2/embeddings" {
+		version = "2"
+	} else {
+		require.Equal(t, "/docbank-embedding/v1/embeddings", request.URL.Path)
+	}
 	mediaType, parameters, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
 	require.NoError(t, err)
 	require.Equal(t, "multipart/form-data", mediaType)
@@ -180,7 +186,7 @@ func readBridgeRequest(t *testing.T, request *http.Request) (requestManifest, []
 		require.NoError(t, err)
 		switch part.FormName() {
 		case "manifest":
-			require.Equal(t, "application/vnd.docbank.embedding-manifest+json;version=1", part.Header.Get("Content-Type"))
+			require.Equal(t, "application/vnd.docbank.embedding-manifest+json;version="+version, part.Header.Get("Content-Type"))
 			require.NoError(t, json.Unmarshal(payload, &manifest, json.RejectUnknownMembers(true)))
 		case "file":
 			files = append(files, payload)
@@ -188,14 +194,16 @@ func readBridgeRequest(t *testing.T, request *http.Request) (requestManifest, []
 			t.Fatalf("unexpected multipart field %q", part.FormName())
 		}
 	}
+	require.Equal(t, "docbank-embedding/v"+version, manifest.ContractVersion)
 	return manifest, files
 }
 
 func writeSuccess(t *testing.T, writer http.ResponseWriter, manifest requestManifest, vectors []document.EmbeddingVector) {
 	t.Helper()
-	writer.Header().Set("Content-Type", "application/vnd.docbank.embedding-result+json;version=1")
+	version := strings.TrimPrefix(manifest.ContractVersion, "docbank-embedding/v")
+	writer.Header().Set("Content-Type", "application/vnd.docbank.embedding-result+json;version="+version)
 	payload, err := json.Marshal(responseEnvelope{
-		ContractVersion:       embeddingbridge.ContractVersion,
+		ContractVersion:       manifest.ContractVersion,
 		DescriptorFingerprint: manifest.DescriptorFingerprint,
 		PolicyFingerprint:     manifest.PolicyFingerprint,
 		RequestChecksum:       manifest.RequestChecksum,
@@ -1287,7 +1295,7 @@ func validResponseBody(manifest requestManifest) string {
 
 func responseBody(manifest requestManifest, vectors string) string {
 	return fmt.Sprintf(`{"contract_version":%q,"descriptor_fingerprint":%q,"policy_fingerprint":%q,"request_checksum":%q,"vectors":%s}`,
-		embeddingbridge.ContractVersion, manifest.DescriptorFingerprint, manifest.PolicyFingerprint, manifest.RequestChecksum, vectors)
+		manifest.ContractVersion, manifest.DescriptorFingerprint, manifest.PolicyFingerprint, manifest.RequestChecksum, vectors)
 }
 
 func responseMediaType() string { return "application/vnd.docbank.embedding-result+json;version=1" }
