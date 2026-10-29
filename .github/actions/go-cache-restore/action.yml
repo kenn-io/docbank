@@ -18,17 +18,28 @@ runs:
       shell: pwsh
       run: |
         $ErrorActionPreference = 'Stop'
-        if (!(Test-Path 'D:\') -and $env:RUNNER_ARCH -eq 'ARM64') {
-          Get-Disk | Where-Object {
-            $_.Model -ceq 'Microsoft NVMe Direct Disk v2' -and $_.PartitionStyle -eq 'RAW'
-          } | Initialize-Disk -PartitionStyle GPT -PassThru |
-            New-Partition -DriveLetter D -UseMaximumSize |
-            Format-Volume -FileSystem NTFS -Confirm:$false | Out-Null
-        }
-        foreach ($name in @('GOCACHE', 'GOMODCACHE')) {
-          $path = Join-Path 'D:\a\_temp' $name
-          New-Item -ItemType Directory -Force -Path $path | Out-Null
-          "$name=$path" >> $env:GITHUB_ENV
+        try {
+          if (!(Test-Path 'D:\') -and $env:RUNNER_ARCH -eq 'ARM64') {
+            Get-Disk | Where-Object {
+              $_.Model -ceq 'Microsoft NVMe Direct Disk v2' -and $_.PartitionStyle -eq 'RAW'
+            } | Initialize-Disk -PartitionStyle GPT -PassThru |
+              New-Partition -DriveLetter D -UseMaximumSize |
+              Format-Volume -FileSystem NTFS -Confirm:$false | Out-Null
+          }
+          if (!(Test-Path 'D:\')) { return }
+          $temp = 'D:\a\_temp'
+          if ($env:RUNNER_TEMP -like 'D:\*') { $temp = $env:RUNNER_TEMP }
+          $cacheEnv = foreach ($name in @('GOCACHE', 'GOMODCACHE')) {
+            $path = Join-Path $temp $name
+            New-Item -ItemType Directory -Force -Path $path | Out-Null
+            $probe = Join-Path $path ([IO.Path]::GetRandomFileName())
+            Set-Content -LiteralPath $probe -Value ''
+            Remove-Item -LiteralPath $probe
+            "$name=$path"
+          }
+          $cacheEnv >> $env:GITHUB_ENV
+        } catch {
+          Write-Warning "Keeping current Go cache paths: $_"
         }
 
     - name: Select cache key and paths
