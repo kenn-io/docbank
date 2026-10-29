@@ -98,6 +98,22 @@
   } as const;
   const displayFacets = $derived.by(() => {
     const result: DisplayFacet[] = [...facets];
+    const year = /^([0-9]{4})-01-01$/.exec(query.filters.capture_after ?? "")?.[1];
+    if (
+      year &&
+      query.filters.capture_before === yearBefore(year) &&
+      !facets.some((facet) => facet.dimension === "year")
+    ) {
+      result.push({
+        dimension: "year",
+        available: true,
+        total: 0,
+        missing: 0,
+        other: 0,
+        selectedOnly: true,
+        values: [{ key: year, label: year, count: 0, selected: true }],
+      });
+    }
     for (const dimension of ["camera", "lens"] as const) {
       const field = arrayFields[dimension];
       const values = (query.filters[field] as string[] | undefined) ?? [];

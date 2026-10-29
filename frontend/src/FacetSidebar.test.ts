@@ -263,6 +263,29 @@ it("keeps an active modified month in an empty scope so it can be cleared", asyn
   expect(onchange.mock.calls.at(-1)?.[0].filters.modified_after).toBeUndefined();
 });
 
+it("keeps an active capture year editable when ranked pages omit facets", async () => {
+  const onchange = vi.fn();
+  render(FacetSidebar, {
+    facets: [],
+    unit: "photos",
+    query: {
+      ...originalQuery,
+      filters: {
+        ...originalQuery.filters,
+        capture_after: "2024-01-01",
+        capture_before: "2025-01-01",
+      },
+    },
+    onchange,
+  });
+
+  const group = screen.getByRole("group", { name: "Year facet" });
+  const value = within(group).getByRole("button", { name: "2024, selected" });
+  await fireEvent.click(value);
+  expect(onchange.mock.lastCall?.[0].filters.capture_after).toBeUndefined();
+  expect(onchange.mock.lastCall?.[0].filters.capture_before).toBeUndefined();
+});
+
 it("keeps the No tags button reachable to clear while active and to apply after a tag is selected", async () => {
   const onchange = vi.fn();
   const view = render(FacetSidebar, {
