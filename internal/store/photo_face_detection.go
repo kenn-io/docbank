@@ -14,18 +14,7 @@ import (
 
 // RequireFaceDetectionSupported refuses face mutations while audit authority exists.
 func (s *Store) RequireFaceDetectionSupported(ctx context.Context) error {
-	return requireFaceDetectionSupported(ctx, s.db)
-}
-
-func requireFaceDetectionSupported(ctx context.Context, q metadataQuerier) error {
-	active, err := auditAuthorityActiveTx(ctx, q)
-	if err != nil {
-		return err
-	}
-	if active {
-		return ErrAuditMutationUnsupported
-	}
-	return nil
+	return requireLogicalMutationSupported(ctx, s.db)
 }
 
 func faceScanSettledTx(ctx context.Context, tx *sql.Tx, version, detector string) (bool, error) {
@@ -156,6 +145,6 @@ func publishFaceDetectionTx(ctx context.Context, tx *sql.Tx, version, detector s
 			return err
 		}
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO photo_face_scans(content_version_id,detector_fingerprint,completed_at) VALUES(?,?,?)`, version, detector, at.UTC().Format(timestampLayout))
+	_, err = tx.ExecContext(ctx, `INSERT INTO photo_face_scans(content_version_id,detector_fingerprint) VALUES(?,?)`, version, detector)
 	return err
 }

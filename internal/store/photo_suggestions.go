@@ -442,7 +442,7 @@ func PhotoDescriptionInputBinding(versionID, previewChecksum string) string {
 // grid preview is the one the job's binding names.
 func photoDescriptionInputTx(ctx context.Context, tx *sql.Tx, execution document.RenditionExecutionIdentityV1, versionID, sourceSHA256 string) error {
 	if execution.Authorization.ProviderID == document.FaceDetectionProviderID {
-		if err := requireFaceDetectionSupported(ctx, tx); err != nil {
+		if err := requireLogicalMutationSupported(ctx, tx); err != nil {
 			return err
 		}
 	}

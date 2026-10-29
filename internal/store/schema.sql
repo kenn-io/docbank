@@ -2760,7 +2760,6 @@ CREATE TABLE IF NOT EXISTS person_document_assertions (
 CREATE TABLE IF NOT EXISTS photo_face_scans (
  content_version_id TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,
  detector_fingerprint TEXT NOT NULL,
- completed_at TEXT NOT NULL,
  PRIMARY KEY(content_version_id,detector_fingerprint)
 );
 

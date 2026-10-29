@@ -361,28 +361,18 @@ func ParseFaces(raw []byte) (document.FaceDetection, error) {
 		raw = bytes.TrimPrefix(raw[3:len(raw)-3], []byte("json"))
 		raw = bytes.Trim(raw, " \t\r\n")
 	}
-	var fields struct {
-		Faces jsontext.Value `json:"faces"`
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return document.FaceDetection{}, err
 	}
-	if err := json.Unmarshal(raw, &fields); err != nil {
-		return out, err
-	}
-	if len(fields.Faces) == 0 || fields.Faces[0] != '[' {
+	if out.Faces == nil {
 		return out, errors.New("vision response requires a faces array")
 	}
-	var entries []jsontext.Value
-	if err := json.Unmarshal(fields.Faces, &entries); err != nil {
-		return out, err
+	if len(out.Faces) > document.MaxPhotoRecordsPerVersion {
+		return document.FaceDetection{}, errors.New("too many detected faces")
 	}
-	out.Faces = []document.FaceObservation{}
-	for _, entry := range entries {
-		var observation document.FaceObservation
-		if json.Unmarshal(entry, &observation) != nil || observation.Validate() != nil {
+	for _, observation := range out.Faces {
+		if observation.Validate() != nil {
 			return document.FaceDetection{}, errors.New("invalid detected face")
-		}
-		out.Faces = append(out.Faces, observation)
-		if len(out.Faces) > document.MaxPhotoRecordsPerVersion {
-			return document.FaceDetection{}, errors.New("too many detected faces")
 		}
 	}
 	return out, nil
