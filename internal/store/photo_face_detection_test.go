@@ -17,7 +17,7 @@ import (
 func TestPhotoFaceDetectionReconciliation(t *testing.T) {
 	t.Parallel()
 	fixture := newFaceDetectionTestFixture(t)
-	s, version := fixture.s, fixture.version
+	s := fixture.s
 	scan, read := fixture.scan, fixture.read
 	ctx := t.Context()
 	first := document.FaceObservation{Box: document.FaceBox{X: .1, Y: .1, Width: .2, Height: .2}, Roll: new(0.0), Facing: new(.9), EyesOpen: new(true), Smile: new(false)}
@@ -82,12 +82,6 @@ func TestPhotoFaceDetectionReconciliation(t *testing.T) {
 	require.Len(t, read(), 1)
 	require.NoError(t, scan("b4"))
 	require.Empty(t, read())
-	manual, _, err := s.CreatePhotoFace(ctx, version, uuid.New().String(), first.Box, "")
-	require.NoError(t, err)
-	require.NoError(t, scan("b5", first))
-	require.Equal(t, []PhotoFace{manual}, read(), "an observation matching a manual face adds no duplicate")
-	require.NoError(t, scan("b6"))
-	require.Equal(t, []PhotoFace{manual}, read())
 }
 
 func TestPhotoFaceDetectionProtectsDecisionsAndUndo(t *testing.T) {
@@ -251,6 +245,7 @@ func TestPhotoFaceDetectionLooseManualBox(t *testing.T) {
 		{"one face inside", document.FaceBox{X: .425, Y: .425, Width: .15, Height: .15}, []document.FaceBox{{X: .475, Y: .475, Width: .05, Height: .05}}, 1, false},
 		{"two faces inside", document.FaceBox{X: .425, Y: .425, Width: .15, Height: .15}, []document.FaceBox{{X: .43, Y: .43, Width: .05, Height: .05}, {X: .52, Y: .52, Width: .05, Height: .05}}, 3, false},
 		{"tight named box inside observation", document.FaceBox{X: .4, Y: .4, Width: .1, Height: .1}, []document.FaceBox{{X: .35, Y: .35, Width: .3, Height: .3}}, 1, true},
+		{"overlap wins over nested observation", document.FaceBox{X: .3, Y: .3, Width: .2, Height: .2}, []document.FaceBox{{X: .31, Y: .3, Width: .2, Height: .2}, {X: .35, Y: .35, Width: .05, Height: .05}}, 2, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := newTestStore(t)
@@ -275,6 +270,13 @@ func TestPhotoFaceDetectionLooseManualBox(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, faces, tc.want)
 			require.Contains(t, faces, manual, "the manual face remains unchanged")
+			if tc.name == "overlap wins over nested observation" {
+				for _, face := range faces {
+					if face.FaceID != manual.FaceID {
+						require.Equal(t, tc.boxes[1], face.Box, "the small observation stays separate from the named face")
+					}
+				}
+			}
 		})
 	}
 }

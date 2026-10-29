@@ -22,19 +22,21 @@ func TestPhotoFaceDetectionFlow(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newPhotoDescriptionFixture(t)
 			ctx := t.Context()
-			require.False(t, f.service.HasPhotoFaceDetectionProfiles())
 			service := f.newVisionServiceWith(t, map[string]string{"faces": "detector-1"}, document.FaceDetectionProviderID)
-			require.True(t, service.HasPhotoFaceDetectionProfiles())
-			require.False(t, service.HasPhotoDescriptionProfiles())
 			targets, err := service.photoVisionTargets(ctx, nil, "", 50, 4, document.FaceDetectionProviderID)
 			require.NoError(t, err)
 			require.Empty(t, targets)
-			plan, err := service.Plan(ctx, f.selector("faces"))
-			require.NoError(t, err)
-			require.Contains(t, plan.Estimate.Scope, "finds faces")
-			require.Contains(t, plan.BackupConsequence, "Face boxes, measurements, and your decisions")
-			require.Contains(t, plan.BackupConsequence, "another scan and provider call")
-			require.NotContains(t, plan.BackupConsequence, "suggestions")
+			if tc.name == "faces" {
+				require.False(t, f.service.HasPhotoFaceDetectionProfiles())
+				require.True(t, service.HasPhotoFaceDetectionProfiles())
+				require.False(t, service.HasPhotoDescriptionProfiles())
+				plan, err := service.Plan(ctx, f.selector("faces"))
+				require.NoError(t, err)
+				require.Contains(t, plan.Estimate.Scope, "finds faces")
+				require.Contains(t, plan.BackupConsequence, "Face boxes, measurements, and your decisions")
+				require.Contains(t, plan.BackupConsequence, "another scan and provider call")
+				require.NotContains(t, plan.BackupConsequence, "suggestions")
+			}
 			// Settle a caption first. It must neither block detection nor be changed by it.
 			f.grant(t, f.service, "vision")
 			require.Equal(t, 1, f.backfill(t, f.service))
@@ -109,7 +111,6 @@ func TestPhotoFaceDetectionPublicationFailureKeepsWorkerRunning(t *testing.T) {
 				require.NoError(t, err)
 				require.Empty(t, faces, "rejected canonical publication creates no face")
 			}
-
 		})
 	}
 }

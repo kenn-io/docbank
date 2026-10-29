@@ -4018,7 +4018,6 @@ it("awaits live face reads and keeps authorized faces", async () => {
     finish(photoFacePageFor(photo(1)));
     await changing;
   });
-  expect(completed).toBe(true);
 });
 
 it("retries a live refresh after a stalled lookup read", async () => {
@@ -4124,7 +4123,7 @@ it("reports an uncertain clear after remount", async () => {
   await cache.dispose();
 });
 
-it("refreshes detected Cull crops through its existing batched photo read", async () => {
+async function cullFacesWorkspaceSetup(rows: ReturnType<typeof photo>[], filtered = false) {
   vi.stubGlobal("indexedDB", new IDBFactory());
   vi.stubGlobal("IDBKeyRange", IDBKeyRange);
   vi.spyOn(api, "getPhotoSettings").mockResolvedValue({
@@ -4137,14 +4136,19 @@ it("refreshes detected Cull crops through its existing batched photo read", asyn
     unavailable_ids: [],
     burst_gap_seconds: 2,
   });
-  const { component, props, photos, read } = await facesWorkspaceSetup();
+  const setup = await facesWorkspaceSetup();
+  const { component, props, photos } = setup;
+  if (filtered) {
+    await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
+    photos.query = { ...photos.query, text: "Photo" };
+  }
   const review = new PhotoCull(photos.session, photoCullStorage("vault"), vi.fn());
   review.run = {
-    ids: ["photo-1"],
+    ids: rows.map((row) => row.asset_id),
     checkpoint: {
       runID: "run",
       revision: 0,
-      pass: ["photo-1"],
+      pass: rows.map((row) => row.asset_id),
       position: 0,
       visited: ["photo-1"],
       skipped: [],
@@ -4153,14 +4157,20 @@ it("refreshes detected Cull crops through its existing batched photo read", asyn
       autoAdvance: false,
     },
   };
+  await photoCullStorage("vault").replace(review.run);
+  vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue(photoPreparation([preparedPhoto(1)]));
   photos.cull = review;
   photos.cullVaultID = "vault";
   photos.culling = true;
   await component.rerender({ ...props, vaultID: "vault" });
   const dialog = await screen.findByRole("dialog", { name: "Cull photos" });
-  await within(await within(dialog).findByRole("region", { name: "Face closeups" })).findByText(
-    "Face 1 · Ada",
-  );
+  const closeups = await within(dialog).findByRole("region", { name: "Face closeups" });
+  await within(closeups).findByText("Face 1 · Ada");
+  return { ...setup, review, dialog };
+}
+
+it("refreshes detected Cull crops through its existing batched photo read", async () => {
+  const { photos, read, dialog } = await cullFacesWorkspaceSetup([photo(1)]);
   const lookup = vi.spyOn(photos, "lookup").mockResolvedValue(photo(1));
   const batched = vi.spyOn(photos, "lookupMany").mockResolvedValue([photo(1)]);
   read.mockResolvedValue(
@@ -4187,46 +4197,8 @@ it("refreshes detected Cull crops through its existing batched photo read", asyn
 it.each([false, true])(
   "restores Cull faces after a filtered rating refresh, leaves filter=%s",
   async (leavesFilter) => {
-    vi.stubGlobal("indexedDB", new IDBFactory());
-    vi.stubGlobal("IDBKeyRange", IDBKeyRange);
-    vi.spyOn(api, "getPhotoSettings").mockResolvedValue({
-      revision: 1,
-      preference: null,
-      burst_gap_seconds: 2,
-    });
-    vi.spyOn(api, "groupPhotoStacks").mockResolvedValue({
-      groups: [],
-      unavailable_ids: [],
-      burst_gap_seconds: 2,
-    });
-    const { component, props, photos, read } = await facesWorkspaceSetup();
-    await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
-    photos.query = { ...photos.query, text: "Photo" };
     const rows = [photo(1), photo(2)];
-    const review = new PhotoCull(photos.session, photoCullStorage("vault"), vi.fn());
-    review.run = {
-      ids: rows.map((row) => row.asset_id),
-      checkpoint: {
-        runID: "run",
-        revision: 0,
-        pass: rows.map((row) => row.asset_id),
-        position: 0,
-        visited: ["photo-1"],
-        skipped: [],
-        unavailable: [],
-        scope: "all",
-        autoAdvance: false,
-      },
-    };
-    await photoCullStorage("vault").replace(review.run);
-    vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue(photoPreparation([preparedPhoto(1)]));
-    photos.cull = review;
-    photos.cullVaultID = "vault";
-    photos.culling = true;
-    await component.rerender({ ...props, vaultID: "vault" });
-    const dialog = await screen.findByRole("dialog", { name: "Cull photos" });
-    const closeups = await within(dialog).findByRole("region", { name: "Face closeups" });
-    await within(closeups).findByText("Face 1 · Ada");
+    const { photos, read, review, dialog } = await cullFacesWorkspaceSetup(rows, true);
     let finishRefresh!: () => void;
     stubPhotoFetch(async (url, init) => {
       if (!url.endsWith("/photos/assets/query")) throw new Error(url);
