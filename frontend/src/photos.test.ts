@@ -2243,6 +2243,42 @@ it.each(["complete", "partial", "rejected", "uncertain"])(
   },
 );
 
+it("replaces a ranked Map snapshot after trashing one of its photos", async () => {
+  const fetcher = vi.fn(async (url: string, init: RequestInit) => {
+    if (url.endsWith("/photos/assets/query")) {
+      const request = JSON.parse(init.body as string);
+      expect(request.snapshot_id).toBeUndefined();
+      return Response.json({
+        items: [],
+        map_items: [mapPhoto(2)],
+        total: 1,
+        snapshot_id: "replacement-snapshot",
+      });
+    }
+    return Response.json({ id: "photo-1", revision: 2 });
+  });
+  stubPhotoFetch(fetcher);
+  const photos = new Photos(
+    "scoped",
+    vi.fn(),
+    false,
+    { ...photoQuery, mode: "hybrid", text: "sunset" },
+    { projection: "map" },
+  );
+  photos.items = [mapPhoto(1), mapPhoto(2)];
+  photos.started = true;
+  photos.total = 2;
+  photos.snapshotID = "accepted-snapshot";
+  photos.selectLoaded(["photo-1"]);
+
+  await expect(photos.trashSelected()).resolves.toBe(true);
+
+  expect(photos.snapshotID).toBe("replacement-snapshot");
+  expect(photos.items.map((row) => row.asset_id)).toEqual(["photo-2"]);
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  photos.dispose();
+});
+
 it("resumes an interrupted Map page after Reload", async () => {
   let finish!: (value: Response) => void;
   const query = {

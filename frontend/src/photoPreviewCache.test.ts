@@ -1,7 +1,8 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
-import { storage } from "./photo-test-fixtures.js";
+import * as api from "./generated/docbank.js";
+import { photo, storage } from "./photo-test-fixtures.js";
 import { PhotoPreviewCache } from "./photoPreviewCache.js";
-import { Photos } from "./photos.svelte.js";
+import { Photos, photoQuery } from "./photos.svelte.js";
 import { recreatePhotoPreviewCache, revalidatePhotoWorkspace } from "./photoWorkspace.js";
 
 const instances: PhotoPreviewCache[] = [];
@@ -41,6 +42,36 @@ it.each([recreatePhotoPreviewCache, revalidatePhotoWorkspace])(
     photos.dispose();
   },
 );
+
+it("keeps ranked Library membership during access revalidation", async () => {
+  const refreshed = photo(1);
+  refreshed.revision = 2;
+  const read = vi.spyOn(api, "listPhotoAssets").mockResolvedValue({
+    items: [refreshed],
+    total: 1,
+    facets: [],
+    relevance_available: true,
+    snapshot_id: "accepted-snapshot",
+  });
+  const photos = new Photos("scoped", vi.fn(), false, {
+    ...photoQuery,
+    mode: "hybrid",
+    text: "sunset",
+  });
+  photos.items = [photo(1)];
+  photos.total = 1;
+  photos.started = true;
+  photos.snapshotID = "accepted-snapshot";
+  const current = { photos, cache: workspace() };
+
+  expect(await revalidatePhotoWorkspace(current, "scoped", vi.fn(), () => true)).toBe(true);
+
+  expect(read.mock.calls[0]?.[0].snapshot_id).toBe("accepted-snapshot");
+  expect(photos.snapshotID).toBe("accepted-snapshot");
+  expect(photos.items[0]).toMatchObject({ asset_id: "photo-1", revision: 2 });
+  instances.push(current.cache);
+  photos.dispose();
+});
 
 it.each([recreatePhotoPreviewCache, revalidatePhotoWorkspace])(
   "leaves the disposed cache in place when validity is lost with %s",

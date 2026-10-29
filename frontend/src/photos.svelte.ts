@@ -1559,7 +1559,12 @@ export class Photos {
           }
         }
         await oncomplete(successes > 0 || uncertain);
-        if (!this.projection || successes !== targets.length) await this.refresh(preserve);
+        if (
+          !this.projection ||
+          successes !== targets.length ||
+          (this.snapshotID !== "" && successes > 0)
+        )
+          await this.refresh(preserve);
         else if (this.countStale) await this.recount(preserve);
         return successes;
       } finally {
