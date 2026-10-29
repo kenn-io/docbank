@@ -223,7 +223,7 @@ func rewriteSourceWithRestoredMtime(t *testing.T, path string, content []byte) {
 			return
 		}
 		require.True(t, time.Now().Before(deadline), "filesystem change time did not advance")
-		time.Sleep(10 * time.Millisecond) //nolint:kennlint // wait for the native filesystem clock
+		time.Sleep(10 * time.Millisecond) //nolint:kennlint // sleeptest: wait for the native filesystem clock
 	}
 }
 
