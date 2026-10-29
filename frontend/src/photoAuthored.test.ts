@@ -2290,3 +2290,85 @@ it("doesn't assign a newly created keyword to a replacement photo selection", as
   expect(editor.tags).toEqual([]);
   expect(editor.patch).toEqual({ caption: "Replacement draft" });
 });
+
+it.each(["accepted", "dismissed"] as const)(
+  "keeps best-shot responses with their prepared stack: %s",
+  async (responseKind) => {
+    const editor = new PhotoAuthoredEditor("session", vi.fn());
+    const prepared = [preparedPhoto(1), preparedPhoto(2)];
+    const ids = prepared.map((p) => p.asset_id);
+    const offers = [
+      { asset_id: ids[0]!, flag: "pick" as const, rationale: "Best frame", confidence: 0.5 },
+    ];
+    vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue({
+      ...photoPreparation(prepared),
+      proposals: offers,
+    });
+    await editor.prepareStack(ids, false);
+    expect(editor.bestShots).toEqual(offers);
+    const respond = vi.spyOn(api, "decidePhotoStack");
+    respond.mockResolvedValue({
+      receipt_id: "receipt",
+      before: [prepared[0]!],
+      after: [
+        {
+          ...prepared[0]!,
+          revision: 2,
+          values: {
+            ...prepared[0]!.values,
+            confirmed_fields: 2,
+            flag: responseKind === "accepted" ? "pick" : "",
+          },
+        },
+      ],
+    });
+    const refresh = vi.fn();
+    const request = {
+      asset_ids: ids,
+      burst_gap_seconds: 2,
+      decision: "all" as const,
+      current_id: ids[0]!,
+      responses: [
+        {
+          asset_id: ids[0]!,
+          flag: "pick" as const,
+          response: responseKind,
+        },
+      ],
+    };
+    const result = await editor.decideStack(request, refresh, {
+      observed: [],
+    });
+    expect(result).toBe(true);
+    if (responseKind === "dismissed") {
+      expect(editor.receiptID).toBe("receipt");
+      expect(editor.undoState.summary).toBe("Stack updated");
+    }
+    if (responseKind === "accepted") {
+      const restored = [{ ...offers[0]!, asset_id: ids[1]! }];
+      const restoredTargets = prepared.map((target, i) =>
+        i === 0 ? { ...target, revision: 3 } : target,
+      );
+      vi.spyOn(api, "undoPhotoAuthored").mockResolvedValue({
+        receipt_id: "undo",
+        before: [
+          { ...prepared[0]!, revision: 2, values: { ...prepared[0]!.values, flag: "pick" } },
+        ],
+        after: [restoredTargets[0]!],
+      });
+      vi.mocked(api.preparePhotoAuthored).mockResolvedValue({
+        ...photoPreparation(restoredTargets),
+        proposals: restored,
+      });
+      await editor.undo(refresh, "receipt");
+      expect(editor.bestShots).toEqual(restored);
+      expect(editor.needsStack(ids, false)).toBe(false);
+    }
+    if (responseKind === "accepted") {
+      vi.mocked(api.preparePhotoAuthored).mockResolvedValue(photoPreparation(prepared));
+      await editor.prepareStack(ids, false, true);
+      expect(editor.bestShots).toEqual([]);
+    }
+    editor.dispose();
+  },
+);

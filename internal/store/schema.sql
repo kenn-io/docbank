@@ -2952,6 +2952,8 @@ CREATE TABLE IF NOT EXISTS photo_quality_signals (
  focus REAL, blur REAL, brightness REAL,
  color_red REAL, color_green REAL, color_blue REAL,
  framing REAL, aesthetics REAL,
+ face_reports_json TEXT,
+ face_inputs TEXT NOT NULL DEFAULT '',
  PRIMARY KEY(content_version_id,evaluator_fingerprint)
 );
 CREATE TABLE IF NOT EXISTS photo_hidden_credentials (

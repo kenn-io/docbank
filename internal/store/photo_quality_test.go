@@ -105,3 +105,53 @@ func TestPhotoQualityDisplayAndPublicationFence(t *testing.T) {
 		})
 	}
 }
+
+func TestPhotoQualityFaceInputsFence(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	node := browsePhotoNode(t, s, "faces.jpg", browseHash("face-quality"), "image/jpeg")
+	recipe, _ := document.BuiltInVisualPreviewRecipe("grid")
+	canonical := readyVisualPreviewWithRecipe(t, node.BlobHash, browseHash("faces-preview"), 20, recipe)
+	_, err := s.PublishVisualPreview(ctx, node.CurrentVersionID, canonical, &BlobPhysical{Encoding: "raw", StoredBytes: 20})
+	require.NoError(t, err)
+	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(node), document.PhotoQualitySignals{Focus: 0.7}))
+	id, err := newUUIDv4()
+	require.NoError(t, err)
+	face, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, id, document.FaceBox{Width: 0.5, Height: 0.5}, "")
+	require.NoError(t, err)
+	targets, err := s.MissingPhotoQualityTargetsAfter(ctx, "", 10)
+	require.NoError(t, err)
+	require.Len(t, targets, 1)
+	report := document.PhotoFaceReport{FaceID: face.FaceID, Box: face.Box, Sharpness: new(0.8), Prominence: 0.25}
+	scores := document.PhotoQualitySignals{Focus: 0.7, FaceReports: []document.PhotoFaceReport{report}}
+	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(node), scores))
+	read, err := photoQualityForVersions(ctx, s.db, []string{node.CurrentVersionID})
+	require.NoError(t, err)
+	require.Len(t, read.signals[node.CurrentVersionID].FaceReports, 1)
+	targets, err = s.MissingPhotoQualityTargetsAfter(ctx, "", 10)
+	require.NoError(t, err)
+	require.Empty(t, targets)
+	otherID, err := newUUIDv4()
+	require.NoError(t, err)
+	_, _, err = s.CreatePhotoFace(ctx, node.CurrentVersionID, otherID, document.FaceBox{X: 0.5, Width: 0.5, Height: 0.5}, "")
+	require.NoError(t, err)
+	// A queued publication for the previous face set cannot create a cache row.
+	_, err = s.db.Exec(`DELETE FROM photo_quality_signals WHERE content_version_id=?`, node.CurrentVersionID)
+	require.NoError(t, err)
+	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(node), scores))
+	read, err = photoQualityForVersions(ctx, s.db, []string{node.CurrentVersionID})
+	require.NoError(t, err)
+	require.NotContains(t, read.signals, node.CurrentVersionID)
+}
+
+func TestPhotoQualityDismissedFaceExcluded(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	node, face := faceForDecisionTest(t, s, "")
+	decideFaceForTest(t, s, node, face.FaceID, "", "dismiss")
+	faces, err := s.PhotoQualityFaces(ctx, node.CurrentVersionID)
+	require.NoError(t, err)
+	require.Empty(t, faces)
+}

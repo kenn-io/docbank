@@ -31,6 +31,7 @@ type PhotoAuthoredEditRequest struct {
 }
 
 type PhotoAuthoredPreparation struct {
+	Proposals   []store.PhotoBestShot       `json:"proposals,omitempty"`
 	Suggestions []store.PhotoSuggestion     `json:"suggestions,omitempty"`
 	Assets      []PhotoAsset                `json:"assets"`
 	Targets     []store.PhotoPreparedTarget `json:"targets"`
@@ -72,6 +73,7 @@ func resolvePhotoXMP(ctx context.Context, d Deps, g *gate, fileID string, reques
 }
 
 type PhotoStackDecisionRequest struct {
+	Responses       []store.PhotoBestShotResponse   `json:"responses,omitempty" maxItems:"500"`
 	BurstGapSeconds int                             `json:"burst_gap_seconds" minimum:"1" maximum:"30"`
 	Hidden          bool                            `json:"hidden,omitempty"`
 	AssetIDs        []string                        `json:"asset_ids" minItems:"2" maxItems:"500" uniqueItems:"true" format:"uuid"`
@@ -91,7 +93,7 @@ func registerPhotoAuthoredRoutes(api huma.API, d Deps, g *gate) {
 	// Bound 500 observed frames and 2,000 file revisions.
 	huma.Register(api, huma.Operation{OperationID: "decidePhotoStack", Method: http.MethodPost, Path: "/api/v1/photos/authored/stack", Summary: "Decide one observed stack atomically", MaxBodyBytes: 576 << 10}, func(ctx context.Context, in *struct{ Body PhotoStackDecisionRequest }) (*struct{ Body store.PhotoAuthoredReceipt }, error) {
 		body := in.Body
-		request := store.PhotoStackDecision{BurstGapSeconds: body.BurstGapSeconds, Hidden: body.Hidden, AssetIDs: body.AssetIDs, Targets: body.Targets, Decision: body.Decision, CurrentID: body.CurrentID, SelectedIDs: body.SelectedIDs, SourceMetadataFingerprint: processing.SourceMetadataExtractorFingerprint}
+		request := store.PhotoStackDecision{Responses: body.Responses, BurstGapSeconds: body.BurstGapSeconds, Hidden: body.Hidden, AssetIDs: body.AssetIDs, Targets: body.Targets, Decision: body.Decision, CurrentID: body.CurrentID, SelectedIDs: body.SelectedIDs, SourceMetadataFingerprint: processing.SourceMetadataExtractorFingerprint}
 		var result store.PhotoAuthoredReceipt
 		err := g.mutate(func() error {
 			var callErr error
@@ -118,7 +120,7 @@ func registerPhotoAuthoredRoutes(api huma.API, d Deps, g *gate) {
 			selection.Query = &value
 		}
 		result, err := d.Store.PreparePhotoAuthored(ctx, selection)
-		body := PhotoAuthoredPreparation{Assets: []PhotoAsset{}, Targets: result.Targets, Suggestions: result.Suggestions}
+		body := PhotoAuthoredPreparation{Proposals: result.Proposals, Assets: []PhotoAsset{}, Targets: result.Targets, Suggestions: result.Suggestions}
 		for _, asset := range result.Assets {
 			body.Assets = append(body.Assets, fromStorePhotoAsset(asset))
 		}

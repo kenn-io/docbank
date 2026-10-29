@@ -30,6 +30,8 @@ var ErrStalePhotoStack = errors.New("photo stack changed; refresh photos before 
 
 // PhotoStack is one burst of at least two frames in ascending capture order.
 type PhotoStack struct {
+	Proposals []PhotoBestShot
+
 	AssetIDs         []string
 	RepresentativeID string
 }
@@ -315,6 +317,8 @@ func photoStackRequestGroups(frames []photoStackFrame, gap int, position map[str
 }
 
 type PhotoStackDecision struct {
+	Responses []PhotoBestShotResponse
+
 	BurstGapSeconds int
 	Hidden          bool
 	AssetIDs        []string
@@ -416,6 +420,10 @@ func (s *Store) DecidePhotoStack(ctx context.Context, request PhotoStackDecision
 			if err := checkPhotoStackTargetTx(ctx, tx, wanted, target); err != nil {
 				return err
 			}
+		}
+		if len(request.Responses) > 0 {
+			result, err = s.respondPhotoBestShotsTx(ctx, tx, request, preparation, loaded)
+			return err
 		}
 		kept := map[string]bool{}
 		for _, target := range preparation.Targets {

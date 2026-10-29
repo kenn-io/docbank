@@ -31,6 +31,19 @@
       box: face.box,
     })),
   ]);
+  function report(id: string) {
+    return photo.quality?.signals?.face_reports?.find((r) => r.face_id === id);
+  }
+  function measurements(r: NonNullable<ReturnType<typeof report>>) {
+    return [
+      ["Sharpness", r.sharpness],
+      ["Light", r.light],
+      ["Facing", r.facing],
+      ["Prominence", r.prominence],
+      ["Eyes", r.eyes_open === null ? null : r.eyes_open ? 1 : 0],
+      ["Smile", r.smile === null ? null : r.smile ? 1 : 0],
+    ] as const;
+  }
   function style(box?: FaceBox) {
     if (!source) return "";
     return photoFaceCropStyle(box, source.width, source.height, photo.rotation, 128);
@@ -38,13 +51,38 @@
 </script>
 
 {#if tiles.length || faces.error}<section aria-label="Face closeups" class="closeups">
-    {#each tiles as tile (tile.id)}<figure>
+    {#each tiles as tile (tile.id)}
+      {@const r = report(tile.id)}
+      <figure>
         <div class="crop">
           {#if source}<img src={source.url} alt="" style={style(tile.box)} />{:else}<span
               >No preview</span
             >{/if}
         </div>
-        <figcaption>{tile.label}</figcaption>
+        <figcaption>
+          {tile.label}
+          {#if r}
+            {#if r.grade}<span class="grade" data-grade={r.grade}>{r.grade}</span>{/if}
+            <dl>
+              {#each measurements(r) as [label, value]}<div>
+                  <dt>{label}</dt>
+                  <dd title={value === null ? "Unavailable" : undefined}>
+                    {value === null
+                      ? "—"
+                      : label === "Eyes"
+                        ? value
+                          ? "Open"
+                          : "Closed"
+                        : label === "Smile"
+                          ? value
+                            ? "Yes"
+                            : "No"
+                          : `${Math.round(value * 100)}%`}
+                  </dd>
+                </div>{/each}
+            </dl>
+          {/if}
+        </figcaption>
       </figure>{/each}
     {#if faces.error}<span role="alert">{faces.error}</span>
       <Button
@@ -55,6 +93,31 @@
   </section>{/if}
 
 <style>
+  dl {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin: var(--space-3) 0 0;
+  }
+  dl div {
+    display: flex;
+    gap: var(--space-2);
+  }
+  dd {
+    margin: 0;
+  }
+  .grade {
+    margin-left: var(--space-2);
+  }
+  .grade[data-grade="green"] {
+    color: var(--accent-green);
+  }
+  .grade[data-grade="yellow"] {
+    color: var(--accent-yellow);
+  }
+  .grade[data-grade="red"] {
+    color: var(--accent-red);
+  }
   .closeups {
     display: flex;
     gap: var(--space-3);
