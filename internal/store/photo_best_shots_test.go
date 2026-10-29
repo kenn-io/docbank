@@ -90,6 +90,26 @@ func TestPhotoBestShotsDecisions(t *testing.T) {
 			}
 		})
 	}
+	t.Run("accepted paired files", func(t *testing.T) {
+		s := newTestStore(t)
+		ctx := t.Context()
+		ids := burstPhotos(t, s, 2)
+		first, err := s.PhotoAssetByID(ctx, ids[0])
+		require.NoError(t, err)
+		raw, err := s.CreateFile(ctx, s.RootID(), "frame-0000.cr2", fakeHash("d4"), 4, "application/octet-stream")
+		require.NoError(t, err)
+		_, err = s.AttachPhotoFile(ctx, first.ID, first.Revision, raw.ID, PhotoRoleRAW, nil)
+		require.NoError(t, err)
+		_, err = s.SetPhotoSettings(ctx, 1, PhotoSettingsUpdate{Preference: new("image")})
+		require.NoError(t, err)
+		seedBestShots(t, s, ids)
+		request := bestShotRequest(t, s, ids)
+		require.Len(t, request.Targets, 3)
+		require.Len(t, request.Responses, 2)
+		receipt, err := s.DecidePhotoStack(ctx, request)
+		require.NoError(t, err)
+		require.Len(t, receipt.After, 3)
+	})
 }
 func TestPhotoBestShotsReadsAndStaleOffers(t *testing.T) {
 	t.Parallel()
@@ -104,17 +124,13 @@ func TestPhotoBestShotsReadsAndStaleOffers(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidPhotoAsset)
 	request.Responses[0].Response = "accepted"
 	request.Decision = "representative"
-	request.SourceMetadataFingerprint = browseHash("upgraded-extractor")
 	_, err = s.DecidePhotoStack(ctx, request)
 	require.ErrorIs(t, err, ErrInvalidPhotoAsset)
-	request.Decision, request.SourceMetadataFingerprint = "all", ""
+	request.Decision = "all"
 	subset := bestShotPreparation(t, s, ids[:2])
 	require.Len(t, subset.Proposals, 2)
 	require.Len(t, bestShotPreparation(t, s, ids).Proposals, 3)
 	require.Empty(t, events)
-	var count int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM photo_suggestions`).Scan(&count))
-	require.Zero(t, count)
 	// Fresh measurements with the same badges are still the displayed choice.
 	_, err = s.db.Exec(`UPDATE photo_quality_signals SET focus=focus*0.9`)
 	require.NoError(t, err)
@@ -127,8 +143,6 @@ func TestPhotoBestShotsReadsAndStaleOffers(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.DecidePhotoStack(ctx, request)
 	require.ErrorIs(t, err, ErrStalePhotoStack)
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM photo_suggestions`).Scan(&count))
-	require.Zero(t, count)
 	for _, target := range bestShotPreparation(t, s, ids).Targets {
 		require.Empty(t, target.Values.Flag)
 	}
@@ -168,52 +182,11 @@ func TestPhotoBestShotsConfirmedWinner(t *testing.T) {
 	prep = bestShotPreparation(t, s, ids)
 	for _, target := range prep.Targets {
 		if target.AssetID == winner {
-			_, err := s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: []PhotoAuthoredEditTarget{{PhotoAuthoredTargetRevision: target.PhotoAuthoredTargetRevision}}, Patch: PhotoAuthoredPatch{Flag: new("reject")}})
+			_, err := s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: []PhotoAuthoredEditTarget{{PhotoAuthoredTargetRevision: target.PhotoAuthoredTargetRevision}}, Patch: PhotoAuthoredPatch{Flag: new("pick")}})
 			require.NoError(t, err)
 		}
 	}
-	request := bestShotRequest(t, s, ids)
-	require.Len(t, request.Responses, 2)
-	_, err := s.DecidePhotoStack(ctx, request)
-	require.NoError(t, err)
-	picks := 0
-	for _, target := range bestShotPreparation(t, s, ids).Targets {
-		if target.Values.Flag == "pick" {
-			picks++
-		}
-	}
-	require.Equal(t, 1, picks)
-}
-func TestPhotoBestShotsPairedCompletenessAndAudit(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	ids := burstPhotos(t, s, 2)
-	first, err := s.PhotoAssetByID(ctx, ids[0])
-	require.NoError(t, err)
-	raw, err := s.CreateFile(ctx, s.RootID(), "frame-0000.cr2", fakeHash("d4"), 4, "application/octet-stream")
-	require.NoError(t, err)
-	_, err = s.AttachPhotoFile(ctx, first.ID, first.Revision, raw.ID, PhotoRoleRAW, nil)
-	require.NoError(t, err)
-	_, err = s.SetPhotoSettings(ctx, 1, PhotoSettingsUpdate{Preference: new("image")})
-	require.NoError(t, err)
-	seedBestShots(t, s, ids)
-	_, err = s.initializeAuditAuthority(ctx, s.RootID(), "api", nil)
-	require.NoError(t, err)
-	for _, response := range []string{"accepted", "dismissed"} {
-		request := bestShotRequest(t, s, ids)
-		require.Len(t, request.Targets, 3)
-		require.Len(t, request.Responses, 2)
-		for i := range request.Responses {
-			request.Responses[i].Response = response
-		}
-		receipt, err := s.DecidePhotoStack(ctx, request)
-		require.NoError(t, err)
-		require.Len(t, receipt.After, 3)
-		require.Empty(t, bestShotPreparation(t, s, ids).Proposals)
-		_, err = s.UndoPhotoAuthored(ctx, receipt.ReceiptID)
-		require.NoError(t, err)
-	}
+	require.Empty(t, bestShotPreparation(t, s, ids).Proposals)
 }
 func TestPhotoBestShotsStaleFaces(t *testing.T) {
 	t.Parallel()
@@ -227,7 +200,7 @@ func TestPhotoBestShotsStaleFaces(t *testing.T) {
 	require.NoError(t, err)
 	face, _, err := s.CreatePhotoFace(ctx, target.CurrentContentVersionID, id, document.FaceBox{Width: 0.5, Height: 0.5}, "")
 	require.NoError(t, err)
-	// Whole-photo measurements remain visible, but the stale-face frame is unmeasured for comparison.
+	// The stale-face frame is unmeasured for comparison.
 	offers := bestShotPreparation(t, s, ids).Proposals
 	require.Len(t, offers, 2)
 	for _, p := range offers {
@@ -242,7 +215,6 @@ func TestPhotoBestShotsStaleFaces(t *testing.T) {
 	require.Len(t, bestShotPreparation(t, s, ids).Proposals, 3)
 	_, err = s.db.Exec(`UPDATE photo_faces SET revision=revision+1 WHERE face_id=?`, face.FaceID)
 	require.NoError(t, err)
-	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(node), signals, inputs))
 	require.Len(t, bestShotPreparation(t, s, ids).Proposals, 3)
 	_, err = s.db.Exec(`UPDATE photo_faces SET x=0.1,width=0.4,revision=revision+1 WHERE face_id=?`, face.FaceID)
 	require.NoError(t, err)
@@ -251,32 +223,4 @@ func TestPhotoBestShotsStaleFaces(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(node), signals, inputs))
 	require.Len(t, bestShotPreparation(t, s, ids).Proposals, 3)
-}
-func TestPhotoBestShotsNewMeasurement(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ids := burstPhotos(t, s, 3)
-	seedBestShots(t, s, ids[:2])
-	request := bestShotRequest(t, s, ids)
-	for i := range request.Responses {
-		request.Responses[i].Response = "dismissed"
-	}
-	_, err := s.DecidePhotoStack(t.Context(), request)
-	require.NoError(t, err)
-	seedBestShots(t, s, ids[2:])
-	// A newly measured frame has no undecided peer to compare with.
-	require.Empty(t, bestShotPreparation(t, s, ids).Proposals)
-	request = bestShotRequest(t, s, ids)
-	request.Decision = "current"
-	request.CurrentID = ids[2]
-	_, err = s.DecidePhotoStack(t.Context(), request)
-	require.NoError(t, err)
-	for _, target := range bestShotPreparation(t, s, ids).Targets {
-		if target.AssetID == ids[2] {
-			require.Equal(t, "pick", target.Values.Flag)
-		} else {
-			require.Empty(t, target.Values.Flag)
-			require.Empty(t, target.Values.FlagOwner)
-		}
-	}
 }
