@@ -91,7 +91,7 @@ func TestSimilarDocumentsRouteGroupsCopiesAndNeverEmbeds(t *testing.T) {
 		code   string
 	}{
 		{"/api/v1/search/similar", request, http.StatusConflict, "stale_index"},
-		{"/api/v1/search", api.DocumentSearchRequest{Query: "synthetic", Mode: "semantic", Profile: "private", BindingID: "semantic", Limit: 20, Fence: request.Fence}, http.StatusInternalServerError, "processing_failed"},
+		{"/api/v1/search", api.DocumentSearchRequest{Query: "synthetic", Mode: "semantic", Profile: "private", BindingID: "semantic", Limit: 20, Fence: api.DocumentSearchFence(request.Fence)}, http.StatusInternalServerError, "processing_failed"},
 	} {
 		t.Run(test.path+"/stale_index", func(t *testing.T) {
 			response, body := do(t, ts, http.MethodPost, test.path, nil, test.body)

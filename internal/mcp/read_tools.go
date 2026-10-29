@@ -371,6 +371,7 @@ func listDocuments(
 }
 
 type searchDocumentsInput struct {
+	AllLive           bool                            `json:"all_live"`
 	Query             string                          `json:"query"`
 	Mode              string                          `json:"mode"`
 	Limit             int                             `json:"limit"`
@@ -398,24 +399,27 @@ type searchCoverageOutput struct {
 	State             string `json:"state"`
 }
 
-type sourceFenceOutput struct {
-	VaultID           string   `json:"vault_id"`
-	ContentVersionIDs []string `json:"content_version_ids"`
+// Only all-live search omits the version list. A nonnil pointer preserves an
+// empty legacy fence array under encoding/json/v2's omitzero semantics.
+type searchFenceOutput struct {
+	VaultID           string    `json:"vault_id"`
+	ContentVersionIDs *[]string `json:"content_version_ids,omitzero"`
 }
 
 type searchDocumentsOutput struct {
 	privateCache
 
-	VaultID            string               `json:"vault_id"`
-	Fence              sourceFenceOutput    `json:"fence"`
-	FenceFingerprint   string               `json:"fence_fingerprint"`
-	ObservedScopeCount int                  `json:"observed_scope_count"`
-	RequestedMode      string               `json:"requested_mode"`
-	ActualMode         string               `json:"actual_mode"`
-	Coverage           searchCoverageOutput `json:"coverage"`
-	SkippedReasons     []string             `json:"skipped_reasons"`
-	Results            []searchResultOutput `json:"results"`
-	Truncated          bool                 `json:"truncated"`
+	VaultID            string                   `json:"vault_id"`
+	Fence              searchFenceOutput        `json:"fence"`
+	FenceFingerprint   string                   `json:"fence_fingerprint,omitempty"`
+	Scope              *api.DocumentSearchScope `json:"scope,omitzero"`
+	ObservedScopeCount int                      `json:"observed_scope_count"`
+	RequestedMode      string                   `json:"requested_mode"`
+	ActualMode         string                   `json:"actual_mode"`
+	Coverage           searchCoverageOutput     `json:"coverage"`
+	SkippedReasons     []string                 `json:"skipped_reasons"`
+	Results            []searchResultOutput     `json:"results"`
+	Truncated          bool                     `json:"truncated"`
 }
 
 func searchDocuments(
@@ -433,13 +437,28 @@ func searchDocuments(
 		documents  []api.DocumentSummary
 	}
 	result, err := documentRead(ctx, session, func(ctx context.Context, c documentClient) (response, error) {
-		resolution, callErr := c.ResolveDocumentSourceFence(ctx, api.DocumentSourceFenceResolveRequest{
-			ContentVersionIDs: input.ContentVersionIDs, Filters: input.Filters})
-		if callErr != nil {
-			return response{}, callErr
+		var resolution api.DocumentSourceFenceResolution
+		var scope *api.DocumentSearchScope
+		if input.AllLive {
+			vaultID, callErr := c.CatalogVaultID(ctx)
+			if callErr != nil {
+				return response{}, callErr
+			}
+			if !daemonconn.IsCanonicalUUIDv4(vaultID) {
+				return response{}, errors.New("audit status returned an invalid vault identity")
+			}
+			resolution.Fence.VaultUID = vaultID
+			scope = &api.DocumentSearchScope{Kind: "all_live", Filters: input.Filters}
+		} else {
+			var callErr error
+			resolution, callErr = c.ResolveDocumentSourceFence(ctx, api.DocumentSourceFenceResolveRequest{
+				ContentVersionIDs: input.ContentVersionIDs, Filters: input.Filters})
+			if callErr != nil {
+				return response{}, callErr
+			}
 		}
-		if len(resolution.Fence.ContentVersionIDs) == 0 {
-			callErr = c.ValidateDocumentSearch(ctx, api.DocumentSearchValidationRequest{
+		if !input.AllLive && len(resolution.Fence.ContentVersionIDs) == 0 {
+			callErr := c.ValidateDocumentSearch(ctx, api.DocumentSearchValidationRequest{
 				Query: input.Query, Mode: input.Mode, Limit: input.Limit, Profile: input.Profile,
 				BindingID: input.BindingID, Explain: input.Explain,
 			})
@@ -454,7 +473,7 @@ func searchDocuments(
 		}
 		report, callErr := c.SearchDocuments(ctx, api.DocumentSearchRequest{Query: input.Query,
 			Mode: input.Mode, Limit: input.Limit, Profile: input.Profile, BindingID: input.BindingID,
-			Explain: input.Explain, Fence: api.DocumentSourceFence{VaultUID: resolution.Fence.VaultUID,
+			Explain: input.Explain, Scope: scope, Fence: api.DocumentSearchFence{VaultUID: resolution.Fence.VaultUID,
 				ContentVersionIDs: slices.Clone(resolution.Fence.ContentVersionIDs)}})
 		if callErr != nil {
 			return response{}, callErr
@@ -477,9 +496,10 @@ func searchDocuments(
 	if err != nil {
 		return searchDocumentsOutput{}, nil, err
 	}
+	ids := slices.Clone(result.resolution.Fence.ContentVersionIDs)
 	output := searchDocumentsOutput{VaultID: result.resolution.Fence.VaultUID,
-		Fence: sourceFenceOutput{VaultID: result.resolution.Fence.VaultUID,
-			ContentVersionIDs: slices.Clone(result.resolution.Fence.ContentVersionIDs)},
+		Fence: searchFenceOutput{VaultID: result.resolution.Fence.VaultUID,
+			ContentVersionIDs: &ids},
 		FenceFingerprint:   result.resolution.FenceFingerprint,
 		ObservedScopeCount: result.resolution.ObservedScopeCount,
 		RequestedMode:      result.report.RequestedMode, ActualMode: result.report.ActualMode,
@@ -489,6 +509,12 @@ func searchDocuments(
 		SkippedReasons: slices.Clone(result.report.Degradations),
 		Results:        make([]searchResultOutput, len(result.report.Results)), Truncated: result.report.Truncated,
 		privateCache: newPrivateCache()}
+	if input.AllLive {
+		output.Fence.ContentVersionIDs = nil
+		output.FenceFingerprint = ""
+		output.Scope = result.report.Scope
+		output.ObservedScopeCount = *result.report.ObservedScopeCount
+	}
 	for index, item := range result.report.Results {
 		evidence := make([]string, len(item.Evidence))
 		for evidenceIndex, identity := range item.Evidence {

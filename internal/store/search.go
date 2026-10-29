@@ -26,7 +26,7 @@ import (
 	"go.kenn.io/kit/search/sqlquery"
 )
 
-// MaxSearchSourceFenceIDs is the shared hard bound for exact search authority.
+// MaxSearchSourceFenceIDs is the shared hard bound for explicit source-fence IDs.
 const MaxSearchSourceFenceIDs = 4096
 
 // SearchHit is a search result with its display path.
@@ -374,8 +374,10 @@ type SearchCoverageSnapshot struct {
 // SearchCandidateRevalidation returns allowed candidates and, when semantic
 // authority was supplied, coverage from the same storage snapshot.
 type SearchCandidateRevalidation struct {
-	Candidates []RevalidatedSearchCandidate
-	Coverage   *SearchCoverageSnapshot
+	// ObservedScopeCount counts the live population in the candidate snapshot.
+	ObservedScopeCount int
+	Candidates         []RevalidatedSearchCandidate
+	Coverage           *SearchCoverageSnapshot
 }
 
 // RevalidatedSearchCandidate includes the current path captured with its evidence.
@@ -420,7 +422,7 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 	if err != nil {
 		return SearchCandidateRevalidation{}, err
 	}
-	if len(candidates) == 0 && semanticProfileFingerprint == "" && semanticBindingID == "" {
+	if len(candidates) == 0 && len(opts.ContentVersionIDs) != 0 && semanticProfileFingerprint == "" && semanticBindingID == "" {
 		return SearchCandidateRevalidation{}, nil
 	}
 	payload := make([]searchCandidateRevalidationJSON, len(candidates))
@@ -457,6 +459,9 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 	var result SearchCandidateRevalidation
 	var allowedPositions []int
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		var savedSource VectorIndexSource
+		var savedCaptureErr error
+		var captured bool
 		if semanticProfileFingerprint != "" || semanticBindingID != "" {
 			if semanticProfileFingerprint == "" || semanticBindingID == "" {
 				return errors.New("semantic search coverage authority is incomplete")
@@ -474,14 +479,40 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 				return errors.New("semantic search evidence does not match coverage authority")
 			}
 			semanticSpace = expectedSpace
-			scoped, complete, coverageErr := semanticSearchCoverageTx(ctx, tx,
-				semanticProfileFingerprint, semanticBindingID, binding.InputKind, semanticSpace, normalized)
+			var scoped, complete int
+			var coverageErr error
+			var collector *originalSemanticSnapshot
+			if semanticSource != "" {
+				collector = newOriginalSemanticSnapshot(semanticProfileFingerprint, semanticBindingID, semanticSpace, binding.InputKind, normalized, false)
+			}
+			if collector != nil {
+				captured = true
+				savedSource, savedCaptureErr = captureVectorIndexSourceObservedTx(ctx, tx, semanticSpace, collector.observe)
+				if savedCaptureErr == nil && collector.usable {
+					scoped, coverageErr = countSemanticSearchPopulationTx(ctx, tx, filterSQL, filterArgs)
+					if coverageErr == nil {
+						complete = len(collector.completeNodes)
+					}
+				} else {
+					scoped, complete, coverageErr = semanticSearchCoverageTx(ctx, tx, semanticProfileFingerprint, semanticBindingID, binding.InputKind, semanticSpace, normalized)
+				}
+			} else {
+				scoped, complete, coverageErr = semanticSearchCoverageTx(ctx, tx, semanticProfileFingerprint, semanticBindingID, binding.InputKind, semanticSpace, normalized)
+			}
 			if coverageErr != nil {
 				return coverageErr
 			}
 			result.Coverage = &SearchCoverageSnapshot{ScopedDocuments: scoped, CompleteDocuments: complete}
 		} else if semanticSpace != "" {
 			return errors.New("semantic search evidence lacks coverage authority")
+		}
+		if result.Coverage != nil {
+			result.ObservedScopeCount = result.Coverage.ScopedDocuments
+		} else if len(normalized.ContentVersionIDs) == 0 {
+			_, result.ObservedScopeCount, err = s.countProcessingSearchScopeSnapshot(ctx, tx, normalized)
+			if err != nil {
+				return err
+			}
 		}
 		renditionEvidenceSQL := `WHEN 'rendition_segment' THEN 1`
 		if hasRenditionEvidence {
@@ -505,7 +536,10 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 			}
 		}
 		if semanticSource != "" {
-			current, captureErr := captureVectorIndexSourceTx(ctx, tx, semanticSpace)
+			current, captureErr := savedSource, savedCaptureErr
+			if !captured {
+				current, captureErr = captureVectorIndexSourceTx(ctx, tx, semanticSpace)
+			}
 			if captureErr != nil {
 				if errors.Is(captureErr, ErrNotFound) {
 					return ErrVectorIndexSourceStale
@@ -738,25 +772,35 @@ func (s *Store) semanticSearchAuthorityFence(ctx context.Context, profileFingerp
 				return err
 			}
 		}
-		source, err = captureVectorIndexSourceTx(ctx, tx, vectorSpaceID)
-		if err != nil {
-			return err
+		collector := newOriginalSemanticSnapshot(profileFingerprint, bindingID, vectorSpaceID, inputKind, opts, true)
+		if similar != nil {
+			collector = nil
 		}
-		required, complete, err = semanticSearchCoverageTx(ctx, tx, profileFingerprint,
-			bindingID, inputKind, vectorSpaceID, opts)
+		if collector != nil {
+			source, err = captureVectorIndexSourceObservedTx(ctx, tx, vectorSpaceID, collector.observe)
+		} else {
+			source, err = captureVectorIndexSourceTx(ctx, tx, vectorSpaceID)
+		}
 		if err != nil {
 			return err
 		}
 		filterSQL, filterArgs := searchFilterSQL(opts)
-		eligible, err := loadSemanticEligibility(ctx, tx, profileFingerprint, bindingID,
-			inputKind, vectorSpaceID, filterSQL, filterArgs)
+		if collector != nil && collector.usable {
+			required, err = countSemanticSearchPopulationTx(ctx, tx, filterSQL, filterArgs)
+			if err != nil {
+				return err
+			}
+			complete = len(collector.completeNodes)
+			annRows = collector.annRows
+		} else {
+			required, complete, err = semanticSearchCoverageTx(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID, opts)
+			if err != nil {
+				return err
+			}
+			annRows, err = loadSemanticANNRows(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID, filterSQL, filterArgs)
+		}
 		if err != nil {
 			return err
-		}
-		annRows = make([]vectorindex.RowIdentity, 0, len(eligible))
-		for key := range eligible {
-			annRows = append(annRows, vectorindex.RowIdentity{SetID: key.VectorSetID,
-				InputKey: key.InputID, InputChecksum: key.InputChecksum})
 		}
 		sort.Slice(annRows, func(left, right int) bool {
 			if annRows[left].SetID != annRows[right].SetID {
@@ -776,14 +820,14 @@ func semanticSearchCoverageTx(ctx context.Context, tx metadataQuerier, profileFi
 	inputKind document.EmbeddingInputKind, vectorSpaceID string, opts SearchOptions,
 ) (required, complete int, retErr error) {
 	filterSQL, filterArgs := searchFilterSQL(opts)
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+nodeFrom+`
-		WHERE n.kind='file' AND n.trashed_at IS NULL AND cv.version_id IS NOT NULL `+filterSQL,
-		filterArgs...).Scan(&required); err != nil {
-		return 0, 0, err
+	var populationErr error
+	required, populationErr = countSemanticSearchPopulationTx(ctx, tx, filterSQL, filterArgs)
+	if populationErr != nil {
+		return 0, 0, populationErr
 	}
 	args := []any{profileFingerprint, bindingID, inputKind, vectorSpaceID}
 	args = append(args, filterArgs...)
-	err := tx.QueryRowContext(ctx, `SELECT COUNT(DISTINCT n.id) FROM `+nodeFrom+`
+	err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+nodeFrom+`
 		JOIN embedding_heads eh ON eh.content_version_id=cv.version_id
 		JOIN embedding_sets es ON es.embedding_set_id=eh.embedding_set_id
 		 AND es.content_version_id=eh.content_version_id AND es.binding_id=eh.binding_id
@@ -820,7 +864,14 @@ func (s *Store) ResolveSemanticCandidates(ctx context.Context, profileFingerprin
 	filterSQL, filterArgs := searchFilterSQL(normalized)
 	var result SemanticSearchResolution
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		current, captureErr := captureVectorIndexSourceTx(ctx, tx, vectorSpaceID)
+		collector := newOriginalSemanticSnapshot(profileFingerprint, bindingID, vectorSpaceID, inputKind, normalized, false)
+		var current VectorIndexSource
+		var captureErr error
+		if collector != nil {
+			current, captureErr = captureVectorIndexSourceObservedTx(ctx, tx, vectorSpaceID, collector.observe)
+		} else {
+			current, captureErr = captureVectorIndexSourceTx(ctx, tx, vectorSpaceID)
+		}
 		if captureErr != nil {
 			if errors.Is(captureErr, ErrNotFound) {
 				return ErrVectorIndexSourceStale
@@ -831,18 +882,23 @@ func (s *Store) ResolveSemanticCandidates(ctx context.Context, profileFingerprin
 			return ErrVectorIndexSourceStale
 		}
 		result.SourceManifestChecksum = current.ManifestChecksum
-		result.ScopedDocuments, result.CompleteDocuments, err = semanticSearchCoverageTx(ctx, tx,
-			profileFingerprint, bindingID, inputKind, vectorSpaceID, normalized)
+		if collector != nil && collector.usable {
+			result.ScopedDocuments, err = countSemanticSearchPopulationTx(ctx, tx, filterSQL, filterArgs)
+			if err != nil {
+				return err
+			}
+			result.CompleteDocuments = len(collector.completeNodes)
+		} else {
+			result.ScopedDocuments, result.CompleteDocuments, err = semanticSearchCoverageTx(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID, normalized)
+		}
 		if err != nil {
 			return err
 		}
-		eligible, loadErr := loadSemanticEligibility(ctx, tx, profileFingerprint, bindingID,
-			inputKind, vectorSpaceID, filterSQL, filterArgs)
-		if loadErr != nil {
-			return loadErr
+		result.Candidates, result.Truncated, result.NextNeighbor, err = s.resolveSemanticCandidatePrefix(ctx, tx,
+			profileFingerprint, bindingID, inputKind, vectorSpaceID, neighbors, limit, filterSQL, filterArgs, excludedNodes)
+		if err != nil {
+			return err
 		}
-		result.Candidates, result.Truncated, result.NextNeighbor = reduceSemanticCandidates(s.vaultID, vectorSpaceID,
-			neighbors, limit, eligible, excludedNodes)
 		for index := range result.Candidates {
 			candidate := &result.Candidates[index]
 			candidate.Path, err = pathOf(ctx, tx, candidate.NodeID)
@@ -862,6 +918,56 @@ func (s *Store) ResolveSemanticCandidates(ctx context.Context, profileFingerprin
 		return SemanticSearchResolution{}, err
 	}
 	return result, nil
+}
+
+// resolveSemanticCandidatePrefix reloads full metadata for bounded rank-prefix
+// identities in this snapshot. Shared identities retain the full legacy query:
+// its unordered last-member choice must not change with a restricted query plan.
+func (s *Store) resolveSemanticCandidatePrefix(ctx context.Context, tx metadataQuerier,
+	profileFingerprint, bindingID string, inputKind document.EmbeddingInputKind, vectorSpaceID string,
+	neighbors []vectorindex.Neighbor, limit int, filterSQL string, filterArgs []any, excludedNodes map[int64]struct{},
+) ([]SemanticSearchCandidate, bool, int, error) {
+	const batchSize = 128
+	localExcluded := make(map[int64]struct{}, len(excludedNodes)+limit+1)
+	for nodeID := range excludedNodes {
+		localExcluded[nodeID] = struct{}{}
+	}
+	candidates := make([]SemanticSearchCandidate, 0, min(limit+1, len(neighbors)))
+	for start := 0; start < len(neighbors); start += batchSize {
+		batch := neighbors[start:min(start+batchSize, len(neighbors))]
+		members, err := loadSemanticPrefixMemberships(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID,
+			filterSQL, filterArgs, batch)
+		if err != nil {
+			return nil, false, 0, err
+		}
+		for _, entries := range members {
+			if len(entries) > 1 {
+				eligible, err := loadSemanticEligibility(ctx, tx, profileFingerprint, bindingID, inputKind,
+					vectorSpaceID, filterSQL, filterArgs)
+				if err != nil {
+					return nil, false, 0, err
+				}
+				result, truncated, next := reduceSemanticCandidates(s.vaultID, vectorSpaceID, neighbors, limit, eligible, excludedNodes)
+				return result, truncated, next, nil
+			}
+		}
+		eligible := make(map[semanticEligibilityKey]SemanticSearchCandidate, len(members))
+		for key, entries := range members {
+			eligible[key] = entries[0]
+		}
+		// A page may fill exactly at a batch boundary. Remaining zero asks
+		// the existing reducer only for the next nonexcluded lookahead.
+		page, truncated, next := reduceSemanticCandidates(s.vaultID, vectorSpaceID, batch,
+			limit-len(candidates), eligible, localExcluded)
+		candidates = append(candidates, page...)
+		for _, candidate := range page {
+			localExcluded[candidate.NodeID] = struct{}{}
+		}
+		if truncated {
+			return candidates, true, start + next, nil
+		}
+	}
+	return candidates, false, len(neighbors), nil
 }
 
 func searchExcerptByVersionTx(ctx context.Context, queryer interface {
@@ -903,17 +1009,17 @@ func loadSemanticEligibility(ctx context.Context, tx metadataQuerier, profileFin
 	return eligible, nil
 }
 
-func loadSemanticMemberships(ctx context.Context, tx metadataQuerier, profileFingerprint, bindingID string,
-	inputKind document.EmbeddingInputKind, vectorSpaceID, filterSQL string, filterArgs []any,
-) (_ map[semanticEligibilityKey][]SemanticSearchCandidate, retErr error) {
-	args := append([]any{vectorSpaceID, profileFingerprint, bindingID, inputKind}, filterArgs...)
-	rows, err := tx.QueryContext(ctx, `SELECT n.id,n.revision,n.current_version_id,
+const semanticMembershipSelect = `SELECT n.id,n.revision,n.current_version_id,
 			es.embedding_set_id,es.input_generation_id,es.input_kind,
 			evr.vector_set_id,evr.input_id,evr.checksum,
 			COALESCE(ra.build_id,''),COALESCE(eig.generation_blob_hash,''),
 			eig.generation_encoded_size,eig.generation_checksum,eig.evidence_fingerprint,
 			COALESCE(evidence_blob.size,0),eig.input_count,cv.blob_hash
-		FROM `+nodeFrom+`
+		`
+
+// semanticMembershipFromWhere is shared by initial scoring eligibility and the
+// fresh full candidate reload. Both apply the same head and metadata authority.
+const semanticMembershipFromWhere = `FROM ` + nodeFrom + `
 		JOIN embedding_sets es ON es.content_version_id=cv.version_id
 		JOIN embedding_heads eh ON eh.content_version_id=es.content_version_id
 		 AND eh.binding_id=es.binding_id AND eh.input_kind=es.input_kind
@@ -929,8 +1035,87 @@ func loadSemanticMemberships(ctx context.Context, tx metadataQuerier, profileFin
 		WHERE es.vector_space_id=?
 		  AND es.profile_fingerprint=? AND es.binding_id=? AND es.input_kind=?
 		  AND n.current_version_id=es.content_version_id AND n.trashed_at IS NULL
-		  AND (es.input_kind='original_file' OR `+currentRenditionChunkAuthoritySQL+`)
-		  `+filterSQL, args...)
+		  AND (es.input_kind='original_file' OR ` + currentRenditionChunkAuthoritySQL + `)
+		  `
+
+// loadSemanticANNRows reads only scoring identities in the initial authority
+// snapshot. Candidate resolution still reloads full metadata in its own snapshot.
+func loadSemanticANNRows(ctx context.Context, tx metadataQuerier, profileFingerprint, bindingID string,
+	inputKind document.EmbeddingInputKind, vectorSpaceID, filterSQL string, filterArgs []any,
+) (_ []vectorindex.RowIdentity, retErr error) {
+	args := append([]any{vectorSpaceID, profileFingerprint, bindingID, inputKind}, filterArgs...)
+	rows, err := tx.QueryContext(ctx, `SELECT evr.vector_set_id,evr.input_id,evr.checksum `+
+		semanticMembershipFromWhere+filterSQL, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { retErr = errors.Join(retErr, rows.Close()) }()
+	identities := make([]vectorindex.RowIdentity, 0)
+	seen := make(map[semanticEligibilityKey]struct{})
+	for rows.Next() {
+		var key semanticEligibilityKey
+		if err := rows.Scan(&key.VectorSetID, &key.InputID, &key.InputChecksum); err != nil {
+			return nil, err
+		}
+		if _, duplicate := seen[key]; duplicate {
+			continue
+		}
+		seen[key] = struct{}{}
+		identities = append(identities, vectorindex.RowIdentity{SetID: key.VectorSetID,
+			InputKey: key.InputID, InputChecksum: key.InputChecksum})
+	}
+	return identities, rows.Err()
+}
+
+func loadSemanticMemberships(ctx context.Context, tx metadataQuerier, profileFingerprint, bindingID string,
+	inputKind document.EmbeddingInputKind, vectorSpaceID, filterSQL string, filterArgs []any,
+) (map[semanticEligibilityKey][]SemanticSearchCandidate, error) {
+	args := append([]any{vectorSpaceID, profileFingerprint, bindingID, inputKind}, filterArgs...)
+	return querySemanticMemberships(ctx, tx, semanticMembershipSelect+semanticMembershipFromWhere+filterSQL, args)
+}
+
+// loadSemanticPrefixMemberships drives lookups from exact wanted identities,
+// rather than ranging through every embedding set in the vector space.
+func loadSemanticPrefixMemberships(ctx context.Context, tx metadataQuerier, profileFingerprint, bindingID string,
+	inputKind document.EmbeddingInputKind, vectorSpaceID, filterSQL string, filterArgs []any, neighbors []vectorindex.Neighbor,
+) (map[semanticEligibilityKey][]SemanticSearchCandidate, error) {
+	if len(neighbors) == 0 {
+		return map[semanticEligibilityKey][]SemanticSearchCandidate{}, nil
+	}
+	seen := make(map[semanticEligibilityKey]struct{}, len(neighbors))
+	values := make([]string, 0, len(neighbors)*8)
+	args := make([]any, 0, len(neighbors)*24+4+len(filterArgs))
+	for _, neighbor := range neighbors {
+		key := semanticEligibilityKey{VectorSetID: neighbor.SetID, InputID: neighbor.InputKey, InputChecksum: neighbor.InputChecksum}
+		if _, duplicate := seen[key]; duplicate {
+			continue
+		}
+		seen[key] = struct{}{}
+		// Keep native equality indexable while matching either storage class
+		// exposed as the same string identity by the legacy reducer.
+		setIDs := [2]any{neighbor.SetID, []byte(neighbor.SetID)}
+		inputIDs := [2]any{neighbor.InputKey, []byte(neighbor.InputKey)}
+		checksums := [2]any{neighbor.InputChecksum, []byte(neighbor.InputChecksum)}
+		for _, setID := range setIDs {
+			for _, inputID := range inputIDs {
+				for _, checksum := range checksums {
+					values = append(values, "(?,?,?)")
+					args = append(args, setID, inputID, checksum)
+				}
+			}
+		}
+	}
+	args = append(args, vectorSpaceID, profileFingerprint, bindingID, inputKind)
+	args = append(args, filterArgs...)
+	query := "WITH wanted(vector_set_id,input_id,checksum) AS MATERIALIZED (VALUES " + strings.Join(values, ",") + ") " +
+		semanticMembershipSelect + "FROM wanted CROSS JOIN " + strings.TrimPrefix(semanticMembershipFromWhere, "FROM ") +
+		filterSQL + " AND evr.vector_set_id=wanted.vector_set_id AND evr.input_id=wanted.input_id AND evr.checksum=wanted.checksum"
+	return querySemanticMemberships(ctx, tx, query, args)
+}
+
+func querySemanticMemberships(ctx context.Context, tx metadataQuerier, query string, args []any,
+) (_ map[semanticEligibilityKey][]SemanticSearchCandidate, retErr error) {
+	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -2562,4 +2747,11 @@ func photoSearchCandidates(namesMatch, textMatch, generation string, profile *st
 	result.SQL += ` UNION ALL SELECT node_id,1 tier,score FROM (WITH ` + cte + ` SELECT n.id node_id,-` + rank + ` score FROM ` + from + `)`
 	result.Args = append(result.Args, args...)
 	return result, nil
+}
+
+func countSemanticSearchPopulationTx(ctx context.Context, tx metadataQuerier, filterSQL string, filterArgs []any) (int, error) {
+	var required int
+	err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+nodeFrom+`
+		WHERE n.kind='file' AND n.trashed_at IS NULL AND cv.version_id IS NOT NULL `+filterSQL, filterArgs...).Scan(&required)
+	return required, err
 }

@@ -29221,6 +29221,8 @@ type DocumentRenditionIdentity = api.DocumentRenditionIdentity
 
 type DocumentSearchCoverage = api.DocumentSearchCoverage
 
+type DocumentSearchFence = api.DocumentSearchFence
+
 type DocumentSearchReport = api.DocumentSearchReport
 
 type DocumentSearchRequest = api.DocumentSearchRequest
@@ -29228,6 +29230,8 @@ type DocumentSearchRequest = api.DocumentSearchRequest
 type DocumentSearchRerankingReceipt = api.DocumentSearchRerankingReceipt
 
 type DocumentSearchResult = api.DocumentSearchResult
+
+type DocumentSearchScope = api.DocumentSearchScope
 
 type DocumentSearchTrace = api.DocumentSearchTrace
 

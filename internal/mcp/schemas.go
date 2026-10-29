@@ -46,7 +46,7 @@ func objectSchema(properties schema, required ...string) schema {
 		"additionalProperties": false,
 	}
 	if len(required) != 0 {
-		result["required"] = required
+		result[kataRequiredField] = required
 	}
 	return result
 }
@@ -519,7 +519,7 @@ func findBatesExportsSchemas() (schema, schema) {
 func selectorExcludes(fields ...string) schema {
 	constraints := make([]schema, len(fields))
 	for index, field := range fields {
-		constraints[index] = schema{"not": schema{"required": []string{field}}}
+		constraints[index] = schema{"not": schema{kataRequiredField: []string{field}}}
 	}
 	return schema{"allOf": constraints}
 }
@@ -604,13 +604,6 @@ func fenceInputProperties() schema {
 	}
 }
 
-func fenceAuthoritySchema() schema {
-	return objectSchema(schema{
-		"vault_id":            uuidSchema(),
-		"content_version_ids": schema{"type": "array", "items": uuidSchema(), "maxItems": 4096, "uniqueItems": true},
-	}, "vault_id", "content_version_ids")
-}
-
 func getVaultInfoSchemas() (schema, schema) {
 	input := rootObjectSchema(schema{})
 	output := rootObjectSchema(withPrivateCache(schema{
@@ -649,6 +642,7 @@ func listDocumentsSchemas() (schema, schema) {
 
 func searchDocumentsSchemas() (schema, schema) {
 	properties := fenceInputProperties()
+	properties["all_live"] = schema{"type": "boolean", jsonSchemaConst: true}
 	properties["query"] = schema{"type": "string", "minLength": 1, "maxLength": 8192}
 	properties["mode"] = enumSchema("auto", "lexical", "semantic", "hybrid")
 	properties[schemaLimitField] = integerSchema(1, 100)
@@ -657,9 +651,16 @@ func searchDocumentsSchemas() (schema, schema) {
 	properties["explain"] = booleanSchema()
 	input := rootObjectSchema(properties, "query", "profile")
 	// Keep the exactly-one-scope rule without a root oneOf, which Anthropic rejects.
-	input["if"] = schema{"required": []string{"content_version_ids"}}
-	input["then"] = schema{"not": schema{"required": []string{"filters"}}}
-	input["else"] = schema{"required": []string{"filters"}}
+	input["if"] = schema{kataRequiredField: []string{"content_version_ids"}}
+	input["then"] = schema{"not": schema{"anyOf": []schema{
+		{kataRequiredField: []string{"filters"}}, {kataRequiredField: []string{"all_live"}},
+	}}}
+	input["else"] = schema{"if": schema{kataRequiredField: []string{"all_live"}},
+		"else": schema{kataRequiredField: []string{"filters"}}}
+	searchFence := objectSchema(schema{
+		"vault_id":            uuidSchema(),
+		"content_version_ids": schema{"type": "array", "items": uuidSchema(), "maxItems": 4096, "uniqueItems": true},
+	}, "vault_id")
 	result := objectSchema(schema{
 		"node_id":            integerSchema(1, 0),
 		"content_version_id": uuidSchema(),
@@ -671,22 +672,32 @@ func searchDocumentsSchemas() (schema, schema) {
 	}, "node_id", "content_version_id", "rank", "score", "path", "evidence_ids")
 	output := rootObjectSchema(withPrivateCache(schema{
 		"vault_id":             uuidSchema(),
-		"fence":                fenceAuthoritySchema(),
+		"fence":                searchFence,
+		"scope":                objectSchema(schema{"kind": schema{"type": "string", jsonSchemaConst: "all_live"}, "filters": properties["filters"]}, "kind"),
 		"fence_fingerprint":    schema{"type": "string", "pattern": "^sha256:[0-9a-f]{64}$", "maxLength": 71},
 		"observed_scope_count": integerSchema(0, 0),
 		"requested_mode":       enumSchema("auto", "lexical", "semantic", "hybrid"),
 		"actual_mode":          enumSchema("lexical", "semantic", "hybrid"),
 		"coverage": objectSchema(schema{
 			"binding_required":   booleanSchema(),
-			"scoped_documents":   integerSchema(0, 4096),
-			"complete_documents": integerSchema(0, 4096),
+			"scoped_documents":   integerSchema(0, 0),
+			"complete_documents": integerSchema(0, 0),
 			schemaStateField:     stringSchema(64),
 		}, "binding_required", "scoped_documents", "complete_documents", schemaStateField),
 		"skipped_reasons": arraySchema(stringSchema(64), 64),
 		"results":         arraySchema(result, 100),
 		"truncated":       booleanSchema(),
-	}), cacheRequired("vault_id", "fence", "fence_fingerprint", "observed_scope_count", "requested_mode",
+	}), cacheRequired("vault_id", "fence", "observed_scope_count", "requested_mode",
 		"actual_mode", "coverage", "skipped_reasons", "results", "truncated")...)
+	output["if"] = schema{kataRequiredField: []string{"scope"}}
+	output["then"] = schema{
+		"not":        schema{kataRequiredField: []string{"fence_fingerprint"}},
+		"properties": schema{"fence": schema{"not": schema{kataRequiredField: []string{"content_version_ids"}}}},
+	}
+	output["else"] = schema{
+		kataRequiredField: []string{"fence_fingerprint"},
+		"properties":      schema{"fence": schema{kataRequiredField: []string{"content_version_ids"}}},
+	}
 	return input, output
 }
 

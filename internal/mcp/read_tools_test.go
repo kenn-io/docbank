@@ -485,6 +485,10 @@ func TestSearchReadValidatesEmptyFenceWithoutCallingSearch(t *testing.T) {
 			output := structuredMap(t, result.StructuredContent)
 			assert.Equal(t, []any{}, output["results"])
 			assert.EqualValues(t, 0, output["observed_scope_count"])
+			content, ok := result.Content[0].(*sdkmcp.TextContent)
+			require.True(t, ok)
+			encoded := content.Text
+			assert.Equal(t, `{"ttlMs":0,"cacheScope":"private","vault_id":"`+testVaultID+`","fence":{"vault_id":"`+testVaultID+`","content_version_ids":[]},"fence_fingerprint":"`+emptyFingerprint+`","observed_scope_count":0,"requested_mode":"lexical","actual_mode":"lexical","coverage":{"binding_required":false,"scoped_documents":0,"complete_documents":0,"state":"complete"},"skipped_reasons":[],"results":[],"truncated":false}`, encoded)
 		})
 	}
 }
@@ -521,6 +525,18 @@ func TestSearchReadWithNonEmptyFenceAndNoHitsSkipsDocumentResolution(t *testing.
 	assert.Zero(t, resolveCalls)
 	assert.Empty(t, resourceLinkURIs(result))
 	assert.Equal(t, []any{}, structuredMap(t, result.StructuredContent)["results"])
+	content, ok := result.Content[0].(*sdkmcp.TextContent)
+	require.True(t, ok)
+	encoded := content.Text
+	assert.Equal(t, `{"ttlMs":0,"cacheScope":"private","vault_id":"`+testVaultID+`","fence":{"vault_id":"`+testVaultID+`","content_version_ids":["`+testVersionID+`"]},"fence_fingerprint":"`+testFenceFingerprint+`","observed_scope_count":1,"requested_mode":"lexical","actual_mode":"lexical","coverage":{"binding_required":false,"scoped_documents":1,"complete_documents":1,"state":"complete"},"skipped_reasons":[],"results":[],"truncated":false}`, encoded)
+	filtered, err := invokeReadTool(t.Context(), lease, "search_documents", map[string]any{
+		"query": "synthetic", "mode": "lexical", "limit": 1, "profile": "local", "filters": map[string]any{},
+	})
+	require.NoError(t, err)
+	filteredContent, ok := filtered.Content[0].(*sdkmcp.TextContent)
+	require.True(t, ok)
+	assert.Equal(t, encoded, filteredContent.Text,
+		"nonempty filters-only and explicit selections retain identical legacy bytes")
 }
 
 func TestSearchReadResolvesOneBoundedBatchOfCurrentDocumentsForResourceLinks(t *testing.T) {
@@ -670,7 +686,7 @@ func newReadToolDaemon(t *testing.T) *httptest.Server {
 			if !assert.NoError(t, json.UnmarshalRead(request.Body, &input)) {
 				return
 			}
-			assert.Equal(t, api.DocumentSourceFence{VaultUID: testVaultID,
+			assert.Equal(t, api.DocumentSearchFence{VaultUID: testVaultID,
 				ContentVersionIDs: []string{testVersionID}}, input.Fence)
 			writeDaemonJSON(t, response, api.DocumentSearchReport{RequestedMode: "lexical", ActualMode: "lexical",
 				Coverage:     api.DocumentSearchCoverage{ScopedDocuments: 1, CompleteDocuments: 1, State: "complete"},

@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-17
+last_edited: 2026-10-28
 title: Model Context Protocol
 description: Connect a local MCP client to Docbank's read-mostly document tools through the daemon.
 ---
@@ -198,7 +198,7 @@ resource links, is capped at 1 MiB.
 | `get_export_status` | Reads one retained native export job, including progress, failure code, and any completed receipt. It never downloads or releases the job. |
 | `get_vault_info` | Returns the stable vault ID and aggregate live, trash, version, and blob counts. It never returns the host vault path. |
 | `list_documents` | Lists current, live files. `path_prefix` defaults to `/` and is capped at 16,384 Unicode characters and 16 KiB of UTF-8. Sorts are `path`, `name`, `modified_at`, `size`, and `media_type`, in `asc` or `desc` order. Page size defaults to 50 and is capped at 250. |
-| `search_documents` | Requires a 1–8,192-character query, a 1–128-character processing profile name, and exactly one source selector: 1–4,096 unique content-version IDs or metadata filters. Mode defaults to `auto` and may be `auto`, `lexical`, `semantic`, or `hybrid`; result limit defaults to 20 and is capped at 100. Optional binding IDs are capped at 128 characters. |
+| `search_documents` | Requires a 1–8,192-character query, a 1–128-character processing profile name, and one source selector: 1–4,096 unique content-version IDs, metadata filters, or `all_live: true` with optional metadata filters. Mode defaults to `auto` and may be `auto`, `lexical`, `semantic`, or `hybrid`; result limit defaults to 20 and is capped at 100. Optional binding IDs are capped at 128 characters. |
 | `get_document` | Requires an exact positive node ID and current content-version UUID. A stale, trashed, moved-to-another-version, or mismatched identity is rejected. |
 | `read_document_content` | Reads original bytes from a selected immutable version as base64. Requires the exact vault, node, version, SHA-256 and size from `list_document_versions`. Originals are limited to 32 MiB; byte windows default to 64 KiB and are capped at 256 KiB. Returns offset, next offset and EOF. Verify the assembled size and SHA-256 before using the bytes. No export job or local file is created. |
 | `list_document_versions` | Lists immutable versions, including each original's `blob_hash` and size, for one live file. Limit defaults to 100 and is capped at 250; offset is capped at 1,000,000. |
@@ -257,17 +257,38 @@ quota. The size bound accommodates paths up to 16 KiB. Tampered, expired,
 reused-for-another-query, or daemon-restart-invalidated cursors fail instead of
 restarting at page one.
 
-Before searching, `search_documents` resolves its selector to a source fence:
-the exact set of current, live versions it will search. Filters may select a
-tag UUID, a MIME type of at most 255 characters, a positive ancestor node ID,
-and RFC 3339 `modified_since` or `modified_before` bounds of at most 64
-characters each. A scope above 4,096 versions returns `scope_too_large` with
-the observed count and is never truncated or broadened. The result reports the
-fence and its fingerprint, requested and actual mode, coverage, skipped
-reasons, and truncation state. It returns at most 100 hits. Each excerpt is
-capped at 512 characters and each hit has at most 64 evidence identities of at
-most 1,024 characters each. A result contains at most 64 skipped-reason codes
-of at most 64 characters each.
+`search_documents` accepts `all_live: true` to search current live files without
+listing their version IDs. Add `filters` to constrain that population before
+retrieval. Filters may select a tag UUID, a MIME type of at most 255 characters,
+a positive ancestor node ID, and RFC 3339 `modified_since` or `modified_before`
+bounds of at most 64 characters each. For example:
+
+```json
+{"query":"renewal terms","profile":"private","mode":"hybrid","all_live":true,"filters":{"mime_type":"text/plain"}}
+```
+
+`all_live` must be `true` when present; `false` and `null` are invalid. Explicit
+`content_version_ids` cannot be combined with `filters` or `all_live`.
+With `all_live`, the result keeps the fence's `vault_id`, omits its version list
+and `fence_fingerprint`, and returns the normalized `scope` and final
+`observed_scope_count`. Population and search-coverage counts may exceed 4,096.
+Coverage describes documents with current embeddings, not how many matched.
+Documents without current embeddings remain available to lexical retrieval in
+hybrid mode and are not searched semantically in semantic mode.
+
+Explicit IDs and filters without `all_live` retain their existing bounded source
+fence and response format, including its fingerprint and version list. A
+filters-only population above 4,096 returns `scope_too_large` with the observed
+count; it is never truncated or broadened. Mode `auto` (including an omitted
+mode) remains lexical; request `hybrid` explicitly to combine semantic and
+lexical retrieval. Semantic and hybrid modes retain query consent and index
+readiness requirements.
+
+Every result reports requested and actual mode, coverage, skipped reasons, and
+truncation state. It returns at most 100 hits. Each excerpt is capped at 512
+characters and each hit has at most 64 evidence identities of at most 1,024
+characters each. A result contains at most 64 skipped-reason codes of at most
+64 characters each.
 
 Document summaries use paths of at most 16,384 characters, names and MIME types
 of at most 255 characters, and at most 64 active rendition identities.

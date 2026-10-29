@@ -143,6 +143,11 @@ func TestEnsureDiscoveryRejectsProtocolMismatch(t *testing.T) {
 	info := kitdaemon.PingInfo{Version: version.Version}
 
 	require.True(t, discoverOptions(true).Accept(rec, info))
+	for _, protocol := range []string{"94", "95", "96"} {
+		rec.Metadata[metaProtocolVersion] = protocol
+		assert.False(t, discoverOptions(true).Accept(rec, info), "protocol %s predates automatic all_live search and must be replaced", protocol)
+		assert.True(t, discoverOptions(false).Accept(rec, info), "old daemon must remain stoppable")
+	}
 	rec.Metadata[metaProtocolVersion] = daemonProtocolVersion + "-other"
 	assert.False(t, discoverOptions(true).Accept(rec, info), "an incompatible protocol must be replaced")
 	assert.True(t, discoverOptions(false).Accept(rec, info), "status/stop discovery must still see incompatible daemons")

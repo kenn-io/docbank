@@ -80,7 +80,7 @@ func TestCapCloudRecordingManualHTTP(t *testing.T) {
 	require.Equal(t, original.ContentVersionID, processed.ContentVersionID)
 	search, err := c.SearchDocuments(t.Context(), api.DocumentSearchRequest{
 		Query: phrase, Mode: "lexical", Profile: processing.SuppliedMediaProfileName, Limit: 10,
-		Fence: api.DocumentSourceFence{VaultUID: catalog.VaultID(), ContentVersionIDs: []string{original.ContentVersionID}},
+		Fence: api.DocumentSearchFence{VaultUID: catalog.VaultID(), ContentVersionIDs: []string{original.ContentVersionID}},
 	})
 	require.NoError(t, err)
 	require.NotEmpty(t, search.Results)

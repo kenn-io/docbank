@@ -30,7 +30,7 @@ type automaticSearchOutcome struct {
 }
 
 // automaticSearchJSON adds folder name matches to the hybrid report, because
-// the hybrid source fence holds file content versions only.
+// the hybrid scope selects file content versions only.
 type automaticSearchJSON struct {
 	api.DocumentSearchReport `json:",inline"`
 
@@ -58,21 +58,20 @@ func tryAutomaticSearch(ctx context.Context, c *daemonconn.Connection, query str
 	if len(candidates) == 0 {
 		return automaticSearchOutcome{}, nil
 	}
-	scope, err := c.ResolveDocumentSourceFence(ctx, api.DocumentSourceFenceResolveRequest{
-		Filters: &api.DocumentSourceFenceFilters{},
-	})
+	vaultID, err := inspectionVaultID(ctx, c)
 	if err != nil {
 		return automaticSearchFallback(ctx, err)
 	}
-	if len(scope.Fence.ContentVersionIDs) == 0 {
-		return automaticSearchOutcome{}, nil
-	}
-	fence := api.DocumentSourceFence{VaultUID: scope.Fence.VaultUID, ContentVersionIDs: scope.Fence.ContentVersionIDs}
+	fence := api.DocumentSearchFence{VaultUID: vaultID.String()}
 	var first automaticSearchOutcome
 	for _, candidate := range candidates {
 		report, searchErr := c.SearchDocuments(ctx, api.DocumentSearchRequest{Query: query, Mode: "hybrid",
-			Profile: candidate.profile, BindingID: candidate.binding, Limit: limit, Fence: fence})
+			Profile: candidate.profile, BindingID: candidate.binding, Limit: limit, Fence: fence,
+			Scope: &api.DocumentSearchScope{Kind: "all_live"}})
 		if searchErr == nil {
+			if report.ObservedScopeCount != nil && *report.ObservedScopeCount == 0 {
+				return automaticSearchOutcome{}, nil
+			}
 			return automaticSearchOutcome{report: &report}, nil
 		}
 		outcome, err := automaticSearchFallback(ctx, searchErr)

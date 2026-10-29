@@ -152,20 +152,11 @@ func (s *Store) resolveFilteredProcessingSourceFence(
 func (s *Store) resolveFilteredProcessingSourceFenceSnapshot(
 	ctx context.Context, snapshot *sql.Tx, filters SearchOptions,
 ) (ProcessingSourceFenceResolution, error) {
-	normalized, err := s.normalizeSearchOptionsWithQuerier(ctx, snapshot, filters)
+	normalized, observed, err := s.countProcessingSearchScopeSnapshot(ctx, snapshot, filters)
 	if err != nil {
-		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrNotDir) {
-			return ProcessingSourceFenceResolution{}, err
-		}
-		return ProcessingSourceFenceResolution{}, fmt.Errorf("%w: %w",
-			ErrInvalidProcessingSourceFence, err)
+		return ProcessingSourceFenceResolution{}, err
 	}
 	filterSQL, args := searchFilterSQL(normalized)
-	var observed int
-	if err := snapshot.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+nodeFrom+`
-		WHERE n.kind='file' AND n.trashed_at IS NULL `+filterSQL, args...).Scan(&observed); err != nil {
-		return ProcessingSourceFenceResolution{}, fmt.Errorf("counting source-fence scope: %w", err)
-	}
 	if observed > MaxSearchSourceFenceIDs {
 		return ProcessingSourceFenceResolution{}, &ProcessingSourceFenceScopeError{
 			ObservedScopeCount: observed,
@@ -193,4 +184,42 @@ func (s *Store) resolveFilteredProcessingSourceFenceSnapshot(
 		return ProcessingSourceFenceResolution{}, errors.New("source-fence scope count disagrees")
 	}
 	return ProcessingSourceFenceResolution{ContentVersionIDs: ids, ObservedScopeCount: observed}, nil
+}
+
+// CountProcessingSearchScope validates and counts current live files without
+// materializing their version IDs or applying the explicit-fence limit.
+func (s *Store) CountProcessingSearchScope(ctx context.Context, filters SearchOptions) (SearchOptions, int, error) {
+	if len(filters.ContentVersionIDs) != 0 {
+		return SearchOptions{}, 0, fmt.Errorf("%w: metadata filters cannot contain a source fence", ErrInvalidProcessingSourceFence)
+	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return SearchOptions{}, 0, fmt.Errorf("starting source-fence snapshot: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	normalized, count, err := s.countProcessingSearchScopeSnapshot(ctx, tx, filters)
+	if err != nil {
+		return SearchOptions{}, 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return SearchOptions{}, 0, fmt.Errorf("closing source-fence snapshot: %w", err)
+	}
+	return normalized, count, nil
+}
+
+func (s *Store) countProcessingSearchScopeSnapshot(ctx context.Context, snapshot *sql.Tx, filters SearchOptions) (SearchOptions, int, error) {
+	normalized, err := s.normalizeSearchOptionsWithQuerier(ctx, snapshot, filters)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrNotDir) {
+			return SearchOptions{}, 0, err
+		}
+		return SearchOptions{}, 0, fmt.Errorf("%w: %w", ErrInvalidProcessingSourceFence, err)
+	}
+	filterSQL, args := searchFilterSQL(normalized)
+	var observed int
+	if err := snapshot.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+nodeFrom+`
+		WHERE n.kind='file' AND n.trashed_at IS NULL `+filterSQL, args...).Scan(&observed); err != nil {
+		return SearchOptions{}, 0, fmt.Errorf("counting source-fence scope: %w", err)
+	}
+	return normalized, observed, nil
 }

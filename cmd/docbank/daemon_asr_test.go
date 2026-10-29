@@ -120,7 +120,7 @@ func TestDaemonDoclingASRMedia(t *testing.T) {
 
 			search, err := daemon.SearchDocuments(t.Context(), api.DocumentSearchRequest{
 				Query: "Telescope delivery", Mode: "lexical", Profile: "asr", Limit: 10,
-				Fence: api.DocumentSourceFence{VaultUID: plan.VaultUID, ContentVersionIDs: []string{receipt.ContentVersionID}},
+				Fence: api.DocumentSearchFence{VaultUID: plan.VaultUID, ContentVersionIDs: []string{receipt.ContentVersionID}},
 			})
 			require.NoError(t, err)
 			require.Len(t, search.Results, 1)

@@ -88,24 +88,46 @@ func (s *Store) CaptureVectorIndexSource(ctx context.Context, vectorSpaceID stri
 }
 
 type vectorIndexHeadCandidate struct {
-	setID, profile, vectorSpace string
+	setID, profile, vectorSpace        string
+	contentVersion, binding, inputKind sql.NullString
 }
 
-func captureVectorIndexSourceTx(ctx context.Context, tx *sql.Tx, vectorSpaceID string) (_ VectorIndexSource, retErr error) {
-	candidates, err := loadVectorIndexHeadCandidates(ctx, tx, vectorSpaceID)
+func captureVectorIndexSourceTx(ctx context.Context, tx *sql.Tx, vectorSpaceID string) (VectorIndexSource, error) {
+	return captureVectorIndexSourceObservedTx(ctx, tx, vectorSpaceID, nil)
+}
+
+func captureVectorIndexSourceObservedTx(ctx context.Context, tx *sql.Tx, vectorSpaceID string, observe vectorIndexSourceObserver) (_ VectorIndexSource, retErr error) {
+	var candidates []vectorIndexHeadCandidate
+	var values *semanticSnapshotValueGuard
+	var err error
+	if observe != nil {
+		values = &semanticSnapshotValueGuard{compatible: true}
+		candidates, err = loadVectorIndexHeadCandidatesObservedTx(ctx, tx, vectorSpaceID, true, values)
+	} else {
+		candidates, err = loadVectorIndexHeadCandidates(ctx, tx, vectorSpaceID)
+	}
 	if err != nil {
 		return VectorIndexSource{}, err
 	}
 
 	source := VectorIndexSource{VectorSpaceID: vectorSpaceID}
+	// Only immutable descriptor decoding is reused within this transaction.
+	// Each member's inputs, vector manifest and live eligibility are reloaded.
+	spaces := make(map[string]EmbeddingVectorSpaceRecord)
 	for _, candidate := range candidates {
-		set, err := loadEmbeddingSetTx(ctx, tx, candidate.setID)
+		set, err := loadEmbeddingSetWithVectorSpacesObservedTx(ctx, tx, candidate.setID, spaces, values)
 		if err != nil {
 			return VectorIndexSource{}, fmt.Errorf("loading vector index member %s: %w", candidate.setID, err)
 		}
-		eligible, err := embeddingSetEligibleTx(ctx, tx, set)
+		eligible, live, err := embeddingSetEligibilityTx(ctx, tx, set, observe != nil)
 		if err != nil {
 			return VectorIndexSource{}, err
+		}
+		if observe != nil {
+			values.include(live.textCompatible)
+			if err := observe(ctx, candidate, set, live, values.compatible); err != nil {
+				return VectorIndexSource{}, err
+			}
 		}
 		if !eligible || set.ProcessingProfileFingerprint != candidate.profile ||
 			set.VectorSpace.ID != candidate.vectorSpace || candidate.vectorSpace != vectorSpaceID {
@@ -123,9 +145,34 @@ func captureVectorIndexSourceTx(ctx context.Context, tx *sql.Tx, vectorSpaceID s
 	return source, nil
 }
 
-func loadVectorIndexHeadCandidates(ctx context.Context, tx *sql.Tx, vectorSpaceID string) (_ []vectorIndexHeadCandidate, retErr error) {
-	rows, err := tx.QueryContext(ctx, `SELECT embedding_set_id,profile_fingerprint,vector_space_id
-		FROM embedding_heads WHERE vector_space_id=? ORDER BY embedding_set_id`, vectorSpaceID)
+func loadVectorIndexHeadCandidates(ctx context.Context, tx *sql.Tx, vectorSpaceID string) ([]vectorIndexHeadCandidate, error) {
+	return loadVectorIndexHeadCandidatesWithKey(ctx, tx, vectorSpaceID, false)
+}
+
+func loadVectorIndexHeadCandidatesWithKey(ctx context.Context, tx *sql.Tx, vectorSpaceID string, withHeadKey bool) ([]vectorIndexHeadCandidate, error) {
+	return loadVectorIndexHeadCandidatesObservedTx(ctx, tx, vectorSpaceID, withHeadKey, nil)
+}
+
+func loadVectorIndexHeadCandidatesObservedTx(ctx context.Context, tx *sql.Tx, vectorSpaceID string, withHeadKey bool, values *semanticSnapshotValueGuard) (_ []vectorIndexHeadCandidate, retErr error) {
+	query := `SELECT embedding_set_id,profile_fingerprint,vector_space_id
+		FROM embedding_heads WHERE vector_space_id=? ORDER BY embedding_set_id`
+	if withHeadKey {
+		query = `SELECT embedding_set_id,profile_fingerprint,vector_space_id,
+ content_version_id,binding_id,input_kind FROM embedding_heads WHERE vector_space_id=? ORDER BY embedding_set_id`
+	}
+	const observedQuery = `SELECT embedding_set_id,profile_fingerprint,vector_space_id,
+ content_version_id,binding_id,input_kind,
+ CASE WHEN embedding_set_id=CAST(embedding_set_id AS TEXT)
+ AND content_version_id=CAST(content_version_id AS TEXT)
+ AND profile_fingerprint=CAST(profile_fingerprint AS TEXT)
+ AND binding_id=CAST(binding_id AS TEXT)
+ AND input_kind=CAST(input_kind AS TEXT)
+ AND vector_space_id=CAST(vector_space_id AS TEXT) THEN 1 ELSE 0 END
+ FROM embedding_heads WHERE vector_space_id=? ORDER BY embedding_set_id`
+	if values != nil {
+		query = observedQuery
+	}
+	rows, err := tx.QueryContext(ctx, query, vectorSpaceID)
 	if err != nil {
 		return nil, fmt.Errorf("listing vector index logical membership: %w", err)
 	}
@@ -133,8 +180,18 @@ func loadVectorIndexHeadCandidates(ctx context.Context, tx *sql.Tx, vectorSpaceI
 	var candidates []vectorIndexHeadCandidate
 	for rows.Next() {
 		var candidate vectorIndexHeadCandidate
-		if err := rows.Scan(&candidate.setID, &candidate.profile, &candidate.vectorSpace); err != nil {
-			return nil, err
+		var scanErr error
+		if values != nil {
+			var compatible bool
+			scanErr = rows.Scan(&candidate.setID, &candidate.profile, &candidate.vectorSpace, &candidate.contentVersion, &candidate.binding, &candidate.inputKind, &compatible)
+			values.include(compatible)
+		} else if withHeadKey {
+			scanErr = rows.Scan(&candidate.setID, &candidate.profile, &candidate.vectorSpace, &candidate.contentVersion, &candidate.binding, &candidate.inputKind)
+		} else {
+			scanErr = rows.Scan(&candidate.setID, &candidate.profile, &candidate.vectorSpace)
+		}
+		if scanErr != nil {
+			return nil, scanErr
 		}
 		candidates = append(candidates, candidate)
 	}

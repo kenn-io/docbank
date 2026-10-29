@@ -431,6 +431,10 @@ branch on the code, not human detail. Adding a store error normally requires:
 Document search forwards `content_first` through `retrieval.Query` to the store's
 lexical search, following the [HTTP search ordering contract](../architecture/http-api.md#coverage-and-source-fenced-search).
 
+Automatic CLI and MCP all-live search read the vault UUID from catalog authority
+before retrieval. Identity lookup must not inventory physical blob storage; full
+vault-info reads retain storage statistics.
+
 Document search accepts `rerank: true` as an explicit opt-in. The daemon checks
 the separate provider grant for `query_text_and_excerpt` before it sends the
 query and bounded excerpts to ZeroEntropy or Cohere. The searcher revalidates

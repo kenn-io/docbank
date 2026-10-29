@@ -9,10 +9,12 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 type documentClient interface {
+	CatalogVaultID(ctx context.Context) (string, error)
 	VaultInfo(ctx context.Context) (api.VaultInfo, error)
 	ListDocuments(ctx context.Context, request api.DocumentQuery) (api.DocumentPage, error)
 	ResolveDocumentSummaries(ctx context.Context, request api.DocumentSummaryResolveRequest) ([]api.DocumentSummary, error)
@@ -22,6 +24,17 @@ type documentClient interface {
 }
 
 type daemonDocumentClient struct{ *daemonconn.Connection }
+
+func (c daemonDocumentClient) CatalogVaultID(ctx context.Context) (string, error) {
+	status, err := c.API().AuditStatus(ctx, &apiclient.AuditStatusRequestOptions{})
+	if err != nil {
+		return "", err
+	}
+	if status == nil {
+		return "", errors.New("audit status returned no vault identity")
+	}
+	return status.VaultID, nil
+}
 
 func (c daemonDocumentClient) VaultInfo(ctx context.Context) (api.VaultInfo, error) {
 	info, err := c.API().VaultInfo(ctx)

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/processing"
@@ -20,6 +21,18 @@ type DocumentReader struct {
 
 func NewDocumentReader(st *store.Store, blobs *blob.Store, vaultRoot string, service *processing.Service) *DocumentReader {
 	return &DocumentReader{documentQueryService: newDocumentQueryService(Deps{Store: st}), processing: service, blobs: blobs, vaultRoot: vaultRoot}
+}
+
+// CatalogVaultID reads vault identity without inventorying physical storage.
+func (r *DocumentReader) CatalogVaultID(ctx context.Context) (string, error) {
+	if r == nil || r.documentQueryService == nil || r.store == nil {
+		return "", errors.New("document reader has no catalog")
+	}
+	status, err := r.store.AuditStatus(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	return status.VaultID, nil
 }
 
 func (r *DocumentReader) VaultInfo(ctx context.Context) (VaultInfo, error) {
