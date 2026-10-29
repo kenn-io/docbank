@@ -3,6 +3,7 @@ package store
 import (
 	"encoding/json/v2"
 	"fmt"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -61,7 +62,7 @@ func TestPhotoFallbackSnapshotCapsMembership(t *testing.T) {
 		if count == 1001 {
 			browsePhotoNode(t, s, "sunset-1000.jpg", browseHash("sunset-1000.jpg"), "image/jpeg")
 		}
-		t.Run(fmt.Sprint(count), func(t *testing.T) {
+		t.Run(strconv.Itoa(count), func(t *testing.T) {
 			request := SnapshotRequest{Photos: true, PageSize: 250, Query: snapshotTestQuery(t, `{"mode":"hybrid","text":"sunset","sort":{"field":"relevance","direction":"desc"}}`), PhotoRanking: &PhotoRanking{RequestedMode: "hybrid", ActualMode: "lexical", FallbackReason: "provider_unavailable"}}
 			page, err := service.Create(t.Context(), "owner", request)
 			require.NoError(t, err)

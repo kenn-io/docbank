@@ -2510,6 +2510,7 @@ func TestEmbeddingWorkerBoundsProcessLocalRejectedPreviewCache(t *testing.T) {
 		verify func(*testing.T, *rejectedPreviewFixture)
 	}{
 		{name: "remembered until restart", verify: func(t *testing.T, x *rejectedPreviewFixture) {
+			t.Helper()
 			x.publish("rejected-preview.jpg")
 			for range 2 {
 				x.scan(t)
@@ -2527,6 +2528,7 @@ func TestEmbeddingWorkerBoundsProcessLocalRejectedPreviewCache(t *testing.T) {
 			require.NotContains(t, metadata.String(), `"type":"embedding_failure"`)
 		}},
 		{name: "evicts after the bound", verify: func(t *testing.T, x *rejectedPreviewFixture) {
+			t.Helper()
 			const limit = 1024
 			for i := range limit + 1 {
 				x.publish("rejected-" + strconv.Itoa(i) + ".jpg")

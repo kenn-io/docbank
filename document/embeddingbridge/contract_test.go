@@ -108,7 +108,11 @@ func TestNormativeEmbeddingContractIsFixedStrictAndVersioned(t *testing.T) {
 		return legacyValidator.Validate(legacyWire)
 	}
 	require.NoError(t, validateLegacyManifest())
-	legacyManifest["inputs"].([]any)[0].(map[string]any)["kind"] = "image"
+	legacyInputs, ok := legacyManifest["inputs"].([]any)
+	require.True(t, ok)
+	legacyInput, ok := legacyInputs[0].(map[string]any)
+	require.True(t, ok)
+	legacyInput["kind"] = "image"
 	require.Error(t, validateLegacyManifest(), "v1 must reject the new image input kind")
 	for _, field := range []string{`"heading_path"`, `"source_spans"`, `"unit_index"`, `"char_start"`, `"char_end"`} {
 		assert.Contains(t, string(requestSchema), field)
