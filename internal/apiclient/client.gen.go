@@ -1295,6 +1295,98 @@ func (c *Client) StreamBackupSnapshotRestore(ctx context.Context, options *Strea
 	return responseParser(ctx, resp)
 }
 
+// GetBackupSchedule Inspect the backup schedule and its runtime overrides
+func (c *Client) GetBackupSchedule(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetBackupScheduleResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/backup/schedule",
+		Method:     "GET",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetBackupScheduleResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetBackupScheduleResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetBackupScheduleResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetBackupScheduleErrorResponse](resp, "GetBackupScheduleErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/backup/schedule")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// SetBackupSchedule Override the backup interval or retention without a restart
+func (c *Client) SetBackupSchedule(ctx context.Context, options *SetBackupScheduleRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SetBackupScheduleResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/backup/schedule",
+		Method:      "PUT",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*SetBackupScheduleResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(SetBackupScheduleResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "SetBackupScheduleResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[SetBackupScheduleErrorResponse](resp, "SetBackupScheduleErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/backup/schedule")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ListBackupSnapshots List snapshots in a backup repository
 func (c *Client) ListBackupSnapshots(ctx context.Context, options *ListBackupSnapshotsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListBackupSnapshotsResponse, error) {
 	var err error
@@ -16286,6 +16378,41 @@ func (o *StreamBackupSnapshotRestoreRequestOptions) GetHeader() (map[string]stri
 	return nil, nil
 }
 
+// SetBackupScheduleRequestOptions is the options needed to make a request to SetBackupSchedule.
+type SetBackupScheduleRequestOptions struct {
+	Body   *SetBackupScheduleBody
+	Header *SetBackupScheduleHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *SetBackupScheduleRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *SetBackupScheduleRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *SetBackupScheduleRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *SetBackupScheduleRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
 // ListBackupSnapshotsRequestOptions is the options needed to make a request to ListBackupSnapshots.
 type ListBackupSnapshotsRequestOptions struct {
 	Query *ListBackupSnapshotsQuery
@@ -25811,6 +25938,10 @@ type ShutdownDaemonHeaders struct {
 	XDocbankDaemonToken string `json:"X-Docbank-Daemon-Token"`
 }
 
+type SetBackupScheduleHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
 type SetCollectionLabelHeaders struct {
 	IfMatch string `json:"If-Match"`
 }
@@ -26661,6 +26792,8 @@ type RestoreBackupSnapshotBody = BackupRestoreRequest
 
 type StreamBackupSnapshotRestoreBody = BackupRestoreRequest
 
+type SetBackupScheduleBody = SetBackupScheduleRequest
+
 type CreateBackupSnapshotBody = BackupCreateRequest
 
 type StreamBackupSnapshotCreationBody = BackupCreateRequest
@@ -27462,6 +27595,14 @@ type RestoreBackupSnapshotErrorResponse = Error
 type StreamBackupSnapshotRestoreResponse = []byte
 
 type StreamBackupSnapshotRestoreErrorResponse = Error
+
+type GetBackupScheduleResponse = api.BackupSchedule
+
+type GetBackupScheduleErrorResponse = Error
+
+type SetBackupScheduleResponse = api.BackupSchedule
+
+type SetBackupScheduleErrorResponse = Error
 
 type ListBackupSnapshotsResponse = api.BackupSnapshotList
 
@@ -29002,6 +29143,8 @@ type BackupRestoreRequest struct {
 	Target   string  `json:"target"`
 }
 
+type BackupSchedule = api.BackupSchedule
+
 type BackupSnapshot = api.BackupSnapshot
 
 type BackupSnapshotList = api.BackupSnapshotList
@@ -30354,6 +30497,8 @@ type SearchReport = api.SearchReport
 type SelectedDocuments = report.SelectedDocuments
 
 type Selector = kataevidence.Selector
+
+type SetBackupScheduleRequest = api.SetBackupScheduleRequest
 
 type SetCollectionLabelRequest struct {
 	// Schema A URL to the JSON Schema for this object.

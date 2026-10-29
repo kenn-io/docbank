@@ -6,3 +6,5 @@ export interface DrawerNavigation {
   /** True once the user has switched tabs, so a remounted shell skips the slide-in. */
   readonly switched: boolean;
 }
+
+export const drawerPage = Symbol("drawer-page");

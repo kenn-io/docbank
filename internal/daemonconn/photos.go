@@ -260,15 +260,14 @@ func (c *Connection) PhotoSettings(ctx context.Context) (api.PhotoSettings, erro
 	return *settings, nil
 }
 
-// SetPhotoSettings replaces the display preference; a nil gap keeps the burst gap.
-func (c *Connection) SetPhotoSettings(ctx context.Context, revision int64, preference *string, burstGapSeconds *int) (api.PhotoSettings, error) {
-	if revision < 1 || preference != nil && *preference != "raw" && *preference != "image" || burstGapSeconds != nil && (*burstGapSeconds < 1 || *burstGapSeconds > 30) {
-		return api.PhotoSettings{}, errors.New("invalid photo settings revision, preference, or burst gap")
+func (c *Connection) SetPhotoSettings(ctx context.Context, revision int64, request api.SetPhotoSettingsRequest) (api.PhotoSettings, error) {
+	if revision < 1 {
+		return api.PhotoSettings{}, errors.New("invalid photo settings revision")
 	}
 	var response *http.Response
 	settings, err := c.apiWithResponse(&response).SetPhotoSettings(ctx, &apiclient.SetPhotoSettingsRequestOptions{
 		Header: &apiclient.SetPhotoSettingsHeaders{IfMatch: revisionIfMatch(revision)},
-		Body:   &apiclient.SetPhotoSettingsBody{Preference: preference, BurstGapSeconds: burstGapSeconds},
+		Body:   &request,
 	})
 	if err != nil {
 		return api.PhotoSettings{}, mutationRequestError(response, err)

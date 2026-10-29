@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math"
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/query"
@@ -141,10 +143,14 @@ type PhotoAsset struct {
 // PhotoSettings is the vault preference fence. A missing row is the virtual
 // RAW preference at revision one; a stored nil preference is a reset value.
 type PhotoSettings struct {
-	BurstGapSeconds int     `json:"burst_gap_seconds"`
-	Preference      *string `json:"preference,omitzero"`
-	Revision        int64   `json:"revision"`
-	UpdatedAt       string  `json:"updated_at"`
+	BurstGapSeconds             int    `json:"burst_gap_seconds"`
+	BackupIntervalSeconds       *int64 `json:"backup_interval_seconds,omitzero"`
+	BackupKeepLast              *int   `json:"backup_keep_last,omitzero"`
+	HiddenUnlockLifetimeSeconds *int64 `json:"hidden_unlock_lifetime_seconds,omitzero"`
+
+	Preference *string `json:"preference,omitzero"`
+	Revision   int64   `json:"revision"`
+	UpdatedAt  string  `json:"updated_at"`
 }
 
 // PhotoDetachOptions controls the only destructive dependent-member action.
@@ -415,7 +421,7 @@ func validatePhotoGraphWhere(ctx context.Context, q metadataQuerier, where strin
 			return fmt.Errorf("%w: asset %s", ErrInvalidPhotoAsset, assetID)
 		}
 		choice := selectPhotoDisplay(entry.files, preference, entry.asset.DisplayOverrideFileID)
-		if !equalPhotoString(entry.asset.DisplayFileID, choice.FileID) {
+		if !equalPhotoOptional(entry.asset.DisplayFileID, choice.FileID) {
 			return fmt.Errorf("%w: asset %s has a stale display pointer", ErrInvalidPhotoAsset, assetID)
 		}
 		if err := validatePhotoAssetPointers(entry.asset, entry.files); err != nil {
@@ -464,4 +470,21 @@ func validatePhotoAssetPointers(asset PhotoAsset, files []PhotoFile) error {
 
 func photoPreferenceValid(preference *string) bool {
 	return preference == nil || *preference == "raw" || *preference == "image"
+}
+
+// ValidatePhotoSettings checks the writable overrides independently of config defaults.
+func ValidatePhotoSettings(settings PhotoSettings) error {
+	if !photoPreferenceValid(settings.Preference) {
+		return fmt.Errorf("%w: invalid preference", ErrInvalidPhotoAsset)
+	}
+	if v := settings.BackupIntervalSeconds; v != nil && (*v < 0 || *v > math.MaxInt64/int64(time.Second)) {
+		return fmt.Errorf("%w: backup interval must be between 0 and %d seconds", ErrInvalidPhotoAsset, math.MaxInt64/int64(time.Second))
+	}
+	if v := settings.BackupKeepLast; v != nil && *v < 1 {
+		return fmt.Errorf("%w: backup keep_last must be positive", ErrInvalidPhotoAsset)
+	}
+	if v := settings.HiddenUnlockLifetimeSeconds; v != nil && (*v < 1 || *v > 86400) {
+		return fmt.Errorf("%w: hidden unlock lifetime must be whole seconds from 1s through 24h", ErrInvalidPhotoAsset)
+	}
+	return nil
 }

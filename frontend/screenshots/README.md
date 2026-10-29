@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-23
+last_edited: 2026-10-28
 ---
 
 # Documentation screenshots
@@ -135,3 +135,31 @@ command prints the source commit, tree state, and executed-case result for each
 mode. These results qualify Linux Chromium, not native macOS or Windows browsers.
 The dedicated CI job takes effect after merge because PRs use `ci.yml` on main;
 local runs provide the evidence for the PR introducing that job.
+
+## Numbered PDF browser recovery
+
+```sh
+make bates-recovery-browser-test
+```
+
+This Linux amd64 qualification also needs Poppler (`pdftoppm`) and `prlimit`.
+`DOCBANK_TEST_PDFTOPPM` can name a private Poppler executable. The runner builds
+the branch's CLI and page inspector in both SQLite modes and requires one
+passing, unskipped Chromium case per mode.
+
+The case renders one synthetic two-page numbered PDF through the CLI, stops
+the daemon, removes the external review files and page-runtime configuration,
+and opens a fresh browser session. It finds the second page's number in
+Productions and compares the browser download with the original delivered PDF.
+It also checks that this delivery alone makes Productions visible.
+
+The runner sets `DOCBANK_SCREENSHOT_BINARY`, `DOCBANK_BATES_RECOVERY_INSPECTOR`,
+and `DOCBANK_BATES_RECOVERY_SCREENSHOT_DIR`; the case requires explicit binary
+paths. Each mode clears its capture folder before running. Captures remain in
+`.superpowers/bates-recovery-browser/{cgo,purego}/` for visual review, separate
+from the documentation image set. Tracing is disabled. Successful runs remove
+their synthetic vaults; failures stop the daemons and retain scratch for diagnosis.
+The runner also attempts shutdown if Playwright times out.
+
+The Numbered PDF browser recovery job in `render-pdf.yml` runs the branch's
+workflow on pull requests, so its evidence is available before merge.

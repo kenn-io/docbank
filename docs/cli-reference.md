@@ -208,7 +208,8 @@ docbank photos faces withdraw-rejection <content-version-id> --face ID --person 
 docbank photos faces undo <receipt-id>
 docbank photos settings show
 docbank photos settings set [raw|image] [--burst-gap-seconds SECONDS] [--revision REV]
-docbank photos settings reset [--revision REV]
+docbank photos settings set <key> <value> [--revision REV]
+docbank photos settings reset [key] [--revision REV]
 docbank photos hidden setup|change|disable|lock|state|reset
 docbank photos assets hide <asset-id> [--revision REV]
 docbank photos assets unhide <asset-id|node-selector> [--revision REV]
@@ -233,6 +234,8 @@ instead. `inspect` also accepts an `id:N` or path selector for a member file.
 image member and never become the display member. `timeline` counts the photos
 a QueryV1 scope selects by recorded capture day; see
 [Count photos by capture day](usage/photos.md#count-photos-by-capture-day).
+
+`photos settings set hidden_unlock_lifetime <duration>` changes how long future Hidden unlocks last, using Go duration syntax such as `15m`, and `photos settings reset hidden_unlock_lifetime` restores five minutes. Backup schedule overrides use [`backup schedule`](#docbank-backup). Browser sessions cannot write either.
 
 Photo assets, albums, memberships, settings, receipts, and checkout definitions are included in JSONL backup and restore. Sidecars require a selected eligible original; name errors skip the whole affected photo. The estimate and the checkout in create, status, and list JSON report up to 20 `skipped_photos` details and the total `skipped_photo_count`; status and list also print a short skip summary to stderr. A selection with no remaining files fails. Failed and cancelled checkouts release unpublished source holds and destination reservations. Published or uncertain copies retain their bases until `photos checkout retire <checkout-id>` releases all holds. Retirement preserves copies and history. Queued or running work keeps retirement pending until it finishes or is cancelled; if the lane is paused, resume or cancel the job through Jobs first.
 
@@ -1588,6 +1591,9 @@ docbank backup restore [<snapshot>] --target <dir> [--repo <dir>] [--overwrite]
 docbank backup forget <snapshot> [<snapshot>...] [--repo <dir>] [--dry-run]
                       [--allow-empty] [--force-unlock] [--json]
 docbank backup prune [--repo <dir>] [--dry-run] [--force-unlock] [--json]
+docbank backup schedule show
+docbank backup schedule set <interval|keep_last> <value> [--revision REV]
+docbank backup schedule reset <interval|keep_last> [--revision REV]
 ```
 
 Creates, lists, verifies, restores, and removes recovery points in a Kit backup
@@ -1604,6 +1610,12 @@ repository and reclaims unused backup storage. Supply `--repo` or configure
 | `restore` | Restore the latest or a named snapshot to a separate `--target` |
 | `forget` | Remove exact snapshot IDs; `--allow-empty` permits removing the last recovery point |
 | `prune` | Remove unused packs and rewrite eligible partly live packs; `--dry-run` reports the plan |
+| `schedule` | Show, override, or reset the scheduled interval and `keep_last` without a restart; output is JSON |
+
+`schedule set interval` takes a Go duration such as `24h`, where `0` disables
+scheduling. `schedule reset` returns a key to `config.toml`. Writes read the
+current settings revision and retry once if another write changes it first;
+`--revision` fails with exit code 4 instead.
 
 `claim --json` writes the final claim object with `owned` true or false to
 stdout. Previews and prompts go to stderr. Confirmation applies only to the

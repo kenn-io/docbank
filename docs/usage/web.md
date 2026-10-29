@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-11
+last_edited: 2026-10-28
 title: Web application
 description: Find, read, organize, and export documents in the local, authenticated web app.
 ---
@@ -49,8 +49,8 @@ Photos shows **Library**, **Map**, **Albums**, **People**, and your album list i
 Documents/Photos switches keep your place until the session locks. Leaving an album resets its view. Open Library at `/photos`, the
 album index at `/photos/albums`, People at `/photos/people`, or an album at `/photos/albums/{id}`. Map requires [tile configuration](../configuration.md#photo-map-tiles) and a restart. See [Browse photos](photos.md#browse-in-the-web-app).
 
-Use the sidebar for **All files**, **Searches**, **Imports**, and
-**Trash**. **Export** offers **Download files…**, **Search term report…**, and
+Use the sidebar for **All files**, **Searches**, **Productions** when sets exist, **Imports**, and
+**Trash**. Searches, Productions, Imports, and Trash open full pages at `/searches`, `/productions`, `/imports`, and `/trash`. Back and Forward keep the page. Reload keeps the page with API-key sign-in; `docbank web` starts at the root. **Export** offers **Download files…** and
 **Bates-numbered PDFs…**. **System** groups **Disk use**, **Running now**, **Backups**,
 **Protected folders**, and **Usage reporting**. On a narrow screen, **Open navigation** reveals the
 same menu.
@@ -318,13 +318,31 @@ records for review.
 1. Create or select a label namespace, including its prefix and number width.
 2. Choose **Preview Bates labels** and inspect the proposed labels and pages.
 3. Reserve the displayed range, then choose **Start Bates export**.
-4. Wait for **Stamped PDF ready**, then choose **Download verified PDF**.
+4. Wait for **Stamped PDF ready**, then choose **Download PDF**.
 
 The output contains the package's selected pages. The stored page map keeps
 their original source-page numbers. A number that was reserved is never issued
 again, even if the export was abandoned.
 
 ![A completed Bates export with its reserved labels and verified PDF](https://docbank.ai/assets/generated/web-bates-export.png)
+
+## Find a retained PDF by number
+
+Open **Productions** in the Documents sidebar, enter the exact **Bates number**,
+and choose **Find**. Matching is case-sensitive and preserves spaces and leading
+zeroes. A warning identifies leading or trailing spaces without removing them.
+Bates numbers are unique across the vault, so an exact number identifies at most
+one retained PDF and matching page. A match opens automatically, showing the
+page, publication time, PDF size, delivery kind, Bates range, SHA-256 and
+allocation reference. Choose **Download PDF** to recover it, or **Clear** to
+return to the full production list.
+
+Recovery works after restart without the review files or a configured page
+renderer. Downloads check file integrity against the retained record; they do not
+repeat the mask and approved-text checks. See the [numbered delivery verification
+scopes](document-processing.md#deliver-one-reviewed-pdf-with-bates-numbers) for a
+full check with your review files. The browser returns the PDF, not the render ZIP,
+text sidecar or review inputs.
 
 ## Assign and remove tags
 
@@ -460,7 +478,7 @@ displayed selection.
 
 ## Export dated search counts
 
-Open **Export → Search term report…** to create a CSV of search counts for
+Open **Searches → Run report** to create a CSV of search counts for
 selected sources and date ranges. Review unresolved dates before downloading
 the CSV or evidence ZIP. **Recent reports** keeps the latest 100 requests and
 outcomes. **Use as draft** runs a request against current data without its old
@@ -471,7 +489,8 @@ count definitions, and expiry limits.
 
 ## Saved queries and highlights
 
-Open **Searches** in the sidebar to run, rename, or delete a saved search.
+Open the **Searches** page at `/searches` to run, rename, or delete a saved search.
+The page also holds **Run report** and **Recent reports**.
 Create searches from **Advanced → Save…**. **Rename** opens the name and
 description fields; **Edit as JSON** reveals the complete definition. Choose
 **Save changes** to update it or **Save as new** to keep a copy. The list is
@@ -525,7 +544,7 @@ collect content, reclaim packed space, or erase permanent audited history.
 
 ## Restore from recoverable trash
 
-Choose **Trash** in the sidebar to inspect the newest 1,000 independently
+Choose the **Trash** page at `/trash` in the Documents sidebar to inspect the newest 1,000 independently
 restorable roots. Each entry shows its name, kind, node ID, revision,
 trash time, and logical size for files. A folder entry represents the complete
 subtree that left the live tree in that trash operation.
@@ -537,9 +556,9 @@ the chosen name is already occupied, Docbank adds its normal collision suffix.
 A notice shows the actual canonical folder, names a missing original folder
 when this browser trashed the item, and counts the files of a photo group. Choose **Show** to open the folder.
 
-If the revision changed, the notice shows the error and the item stays in the
-drawer. After a successful restore, the browser removes the item from the trash
-drawer and reloads the current view.
+If the revision changed, the notice shows the error and the item stays on the
+page. After a successful restore, the browser removes the item from the trash
+page and reloads the current view.
 
 The browser cannot empty trash. Permanent tree-metadata deletion, subsequent
 garbage collection, and packed-space reclamation remain CLI or
@@ -992,14 +1011,14 @@ path.
 
 ## Browse import history
 
-Choose **Imports** in the sidebar.
+Choose **Imports** in the sidebar to open the page at `/imports`.
 Each row shows its label or source folder name, import time, document count,
 and size. Select an import to see its source paths, each with a copy button,
 browse its current live members, and open a document by its node identity. Counts are
 current membership, rather than a historical import total.
 
 Labels belong to the import group, not its documents. Rename or clear a label
-under its inspected revision. If another client changes it first, the drawer
+under its inspected revision. If another client changes it first, the page
 keeps your draft and reports the conflict. Reload the label before deciding
 whether to save again. Label changes are unavailable once permanent audit
 authority has been enabled.

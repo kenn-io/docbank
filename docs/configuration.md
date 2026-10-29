@@ -203,7 +203,7 @@ exclude_patterns = [".syncthing.*.tmp", "*.sync-conflict-*"]
 - **`[web] enabled`**: serves the embedded web application at `/`.
   `docbank web` starts or reconnects to the compatible daemon and opens an
   authenticated browser session on a fresh per-daemon loopback origin,
-  independent of a configured `api_port`. Disabling it 404s `/`, `/photos`, `/photos/people`, `/photos/map`, `/photos/map/{set_id}`, `/photos/albums`, canonical `/photos/albums/{id}`, and `/assets/`.
+  independent of a configured `api_port`. Disabling it 404s `/`, `/searches`, `/productions`, `/imports`, `/trash`, `/photos`, `/photos/people`, `/photos/map`, `/photos/map/{set_id}`, `/photos/albums`, canonical `/photos/albums/{id}`, and `/assets/`.
   The API and `/docs` are unaffected. See [Web application](usage/web.md).
 - **`[mcp.http] enabled`**: hosts read-only MCP HTTP in the daemon. When unset,
   the daemon hosts it if the API binds loopback, `port` is unset, and the MCP
@@ -230,8 +230,11 @@ exclude_patterns = [".syncthing.*.tmp", "*.sync-conflict-*"]
 - **`[backup] interval`**: schedules captures at this interval. `"0"` disables
   the schedule. An enabled schedule requires a configured `repo` and a positive
   `keep_last`. Values must be nonnegative; enabled intervals must be at least one minute.
+  A `docbank backup schedule set interval` override takes precedence over this
+  value, and `docbank backup schedule reset interval` returns control to `config.toml`.
 - **`[backup] keep_last`**: number of scheduled snapshots to retain after each
   capture. Values must be nonnegative. Manual snapshots remain outside this policy.
+  `docbank backup schedule set keep_last` overrides it at runtime.
 - **`[storage] pack_interval`**: schedules non-destructive packing of
   authorized loose blobs. `"0"` disables the schedule. A configured schedule
   runs once when the daemon starts and then at this interval.

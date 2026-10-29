@@ -251,21 +251,29 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 	})
 }
 
-// update validates the settings intent before either field can change.
+// update validates request intent and preserves the legacy empty-body reset.
 func (in SetPhotoSettingsRequest) update(ctx context.Context, ifMatch string) (int64, store.PhotoSettingsUpdate, error) {
-	update := store.PhotoSettingsUpdate{Preference: in.Preference, ResetPreference: in.ResetPreference || in.Preference == nil && in.BurstGapSeconds == nil, BurstGapSeconds: in.BurstGapSeconds}
+	update := store.PhotoSettingsUpdate{Preference: in.Preference, ResetPreference: in.ResetPreference, BurstGapSeconds: in.BurstGapSeconds, HiddenUnlockLifetimeSeconds: in.HiddenUnlockLifetimeSeconds, ResetHiddenUnlockLifetime: in.ResetHiddenUnlockLifetime}
+	if in.preferenceNull || in.Preference == nil && in.BurstGapSeconds == nil && in.HiddenUnlockLifetimeSeconds == nil && !in.ResetHiddenUnlockLifetime {
+		update.ResetPreference = true
+	}
+	overrides := in.HiddenUnlockLifetimeSeconds != nil || in.ResetHiddenUnlockLifetime
+
 	revision, err := parseIfMatch(ifMatch)
 	if err != nil {
 		return 0, update, err
 	}
+	if in.runtimeNull {
+		return 0, update, huma.Error422UnprocessableEntity("Use reset_hidden_unlock_lifetime to reset the Hidden unlock lifetime")
+	}
 	if in.ResetPreference && in.Preference != nil {
 		return 0, update, huma.Error422UnprocessableEntity("Set preference or reset_preference, rather than both")
 	}
-	if in.preferenceNull && in.BurstGapSeconds != nil {
-		return 0, update, huma.Error422UnprocessableEntity("Omit preference to keep it, or use reset_preference to reset it with a burst gap")
+	if in.preferenceNull && (in.BurstGapSeconds != nil || overrides) {
+		return 0, update, huma.Error422UnprocessableEntity("Omit preference to keep it, or use reset_preference to reset it with another setting")
 	}
-	if browserSessionRequest(ctx) && (update.Preference != nil || update.ResetPreference) {
-		return 0, update, huma.Error403Forbidden("Changing the display preference requires the API key")
+	if browserSessionRequest(ctx) && (update.Preference != nil || update.ResetPreference || overrides) {
+		return 0, update, huma.Error403Forbidden("Changing the display preference or Hidden unlock lifetime requires the API key")
 	}
 	return revision, update, nil
 }

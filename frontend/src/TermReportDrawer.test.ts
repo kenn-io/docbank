@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import TermReportDrawer from "./TermReportDrawer.svelte";
+import { drawerPage } from "./drawerNavigation.js";
 
 beforeEach(() => {
   Object.defineProperty(Element.prototype, "scrollIntoView", {
@@ -65,6 +66,7 @@ const json = (value: unknown) =>
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -429,4 +431,117 @@ it("offers Remove only when more than one term exists", async () => {
   expect(
     (screen.getByRole("textbox", { name: "Expression for term 2" }) as HTMLInputElement).value,
   ).toBe("");
+});
+
+it.each(["beta", ""])(
+  "starts a fresh report after canceling a two-term history draft with current search %j",
+  async (expression) => {
+    const request = {
+      ...original,
+      all_documents: false,
+      collection_ids: [collectionID],
+      timezone: "America/New_York",
+      terms: [...original.terms, { ...original.terms[0], number: 2, expression: "omega" }],
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input).startsWith("/api/v1/search-exports?"))
+        return json({
+          items: [{ request, summary: { ...oldSummary, terms: request.terms } }],
+          total: 1,
+        });
+      return json({ items: [collection], total: 1 });
+    });
+    const { rerender } = render(TermReportDrawer, {
+      props: {
+        session: "session",
+        initialExpression: "alpha",
+        onclose: vi.fn(),
+        onauthfailure: vi.fn(),
+      },
+      context: new Map([[drawerPage, true]]),
+    });
+    await fireEvent.click(await screen.findByRole("button", { name: "Use as draft" }));
+    expect(screen.getByRole("textbox", { name: "Expression for term 2" })).toHaveProperty(
+      "value",
+      "omega",
+    );
+    expect(screen.getByText(/^Loaded the /)).toBeTruthy();
+    await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByText(/^Loaded the /)).toBeNull();
+    await rerender({ initialExpression: expression });
+    await fireEvent.click(screen.getByRole("button", { name: "Run report" }));
+    expect(screen.getByRole("textbox", { name: "Expression for term 1" })).toHaveProperty(
+      "value",
+      expression,
+    );
+    expect(screen.queryByRole("textbox", { name: "Expression for term 2" })).toBeNull();
+    expect(screen.getByRole("radio", { name: "All documents" }).getAttribute("aria-checked")).toBe(
+      "true",
+    );
+    expect(screen.getByRole("combobox", { name: /^Coverage policy:/ })).toHaveProperty(
+      "textContent",
+      expect.stringContaining("Stop on incomplete coverage"),
+    );
+    expect(screen.getByRole("textbox", { name: "Report timezone" })).toHaveProperty("value", "UTC");
+    expect(screen.queryByRole("checkbox", { name: /New source/ })).toBeNull();
+
+    await fireEvent.input(screen.getByRole("textbox", { name: "Expression for term 1" }), {
+      target: { value: "edited draft" },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await rerender({ initialExpression: "gamma" });
+    await fireEvent.click(screen.getByRole("button", { name: "Run report" }));
+    expect(screen.getByRole("textbox", { name: "Expression for term 1" })).toHaveProperty(
+      "value",
+      "gamma",
+    );
+  },
+);
+
+it("defaults a new report to the UTC date when Run report is chosen", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-20T23:59:59Z"));
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ items: [], total: 0 }));
+  render(TermReportDrawer, {
+    props: {
+      session: "session",
+      initialExpression: "alpha",
+      onclose: vi.fn(),
+      onauthfailure: vi.fn(),
+    },
+    context: new Map([[drawerPage, true]]),
+  });
+
+  vi.setSystemTime(new Date("2026-09-21T00:00:01Z"));
+  await fireEvent.click(screen.getByRole("button", { name: "Run report" }));
+  expect(screen.getByRole("button", { name: "2000-01-01 - 2026-09-21" })).toBeTruthy();
+});
+
+it("loads imports for the Searches page only once a report is started", async () => {
+  const fetchMock = vi
+    .spyOn(globalThis, "fetch")
+    .mockImplementation(async (input) =>
+      String(input).startsWith("/api/v1/collections?")
+        ? json({ items: [collection], total: 1, limit: 100, offset: 0 })
+        : json({ items: [], total: 0 }),
+    );
+  const collectionReads = () =>
+    fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/collections?"))
+      .length;
+  render(TermReportDrawer, {
+    props: {
+      session: "session",
+      initialExpression: "alpha",
+      onclose: vi.fn(),
+      onauthfailure: vi.fn(),
+    },
+    context: new Map([[drawerPage, true]]),
+  });
+  expect(await screen.findByText("No reports yet.")).toBeTruthy();
+  expect(collectionReads()).toBe(0);
+
+  await fireEvent.click(screen.getByRole("button", { name: "Run report" }));
+  await fireEvent.click(screen.getByRole("radio", { name: "Selected imports" }));
+  expect(await screen.findByRole("checkbox", { name: /New source/ })).toBeTruthy();
+  expect(collectionReads()).toBe(1);
 });

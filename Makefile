@@ -115,6 +115,10 @@ frontend-dev:
 report-export-browser-test: frontend
 	node frontend/screenshots/report-export.run.mjs
 
+.PHONY: bates-recovery-browser-test
+bates-recovery-browser-test: frontend
+	node frontend/screenshots/bates-recovery.run.mjs
+
 photo-map-browser-test: frontend
 	go build -tags "$(BUILD_TAGS) screenshot_tiles" -o bin/docbank-map$(if $(filter Windows_NT,$(OS)),.exe) ./cmd/docbank
 	DOCBANK_SCREENSHOT_BINARY="$(CURDIR)/bin/docbank-map$(if $(filter Windows_NT,$(OS)),.exe)" DOCBANK_MAP_PROOF_DIR="$(CURDIR)/bin/photo-map-proof" node frontend/node_modules/@playwright/test/cli.js test photo-map.screenshot.ts --config frontend/screenshots/playwright.config.ts --project chromium

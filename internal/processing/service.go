@@ -703,19 +703,23 @@ func (service *Service) Plan(ctx context.Context, selector Selector) (Plan, erro
 	if err != nil {
 		return Plan{}, err
 	}
-	plan, err := service.planForSource(ctx, selector, node, version, profile)
-	if err != nil {
-		return Plan{}, err
-	}
+	var ineligibleReason string
 	if profile.portable.Rendition != nil {
 		capability, err := service.inspectPlannedRendition(ctx, node, version, profile)
 		if err != nil {
 			return Plan{}, err
 		}
 		if !capability.Eligible {
-			plan.RenditionIneligibleReason = string(capability.Reason)
+			ineligibleReason = string(capability.Reason)
 		}
 	}
+	// A ready photo preview is immutable. Inspect it before estimating its
+	// bytes so publication cannot leave an eligible plan with a stale estimate.
+	plan, err := service.planForSource(ctx, selector, node, version, profile)
+	if err != nil {
+		return Plan{}, err
+	}
+	plan.RenditionIneligibleReason = ineligibleReason
 	// Current grants are advisory; execution checks them again. Grant changes
 	// do not change the reviewed source, disclosure, or plan fingerprint.
 	plan.ConsentState = "active"
