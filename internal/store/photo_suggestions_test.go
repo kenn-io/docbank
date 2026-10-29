@@ -875,6 +875,9 @@ func TestPhotoDescriptionTargetsSkipPhotosWithActiveWorkForAnotherProfile(t *tes
 	targets, err = restored.PhotoDescriptionTargets(ctx, requestA.Profile.Fingerprint, producerA, "", 10, false, false)
 	require.NoError(t, err)
 	require.Empty(t, targets, "the running profile does not list it again either")
+	targets, err = restored.PhotoDescriptionTargets(ctx, "face-profile", "face-detector", "", 10, false, true)
+	require.NoError(t, err)
+	require.Len(t, targets, 1, "description work leaves face detection eligible")
 }
 
 func TestPhotoDescriptionExpiredGrantOverlappedByRenewalPublishesNothing(t *testing.T) {

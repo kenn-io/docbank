@@ -389,7 +389,7 @@ func photoDescriptionTargetsSQL(settled string) string {
  AND NOT EXISTS(SELECT 1 FROM rendition_job_waiters w JOIN rendition_jobs j ON j.job_id=w.job_id WHERE w.content_version_id=v.version_id
   AND (w.profile_fingerprint=?3 AND (w.state='waiting' AND NOT (j.state='failed' AND j.failure_code IN ('consent','stale_authority'))
     OR w.state='rejected' AND w.failure_code IN ('terminal','ambiguous'))
-   OR w.state='waiting' AND j.state IN ('queued','retry_wait','running') AND NOT ` + originalFileWaiterSQL + `))
+   OR w.state='waiting' AND j.state IN ('queued','retry_wait','running') AND NOT ` + originalFileWaiterSQL + ` AND (json_extract(j.execution_identity_json,'$.authorization.provider_id')=?7)=?8))
  ORDER BY g.content_version_id LIMIT ?4) ORDER BY version_id`
 }
 
@@ -409,7 +409,7 @@ func (s *Store) PhotoDescriptionTargets(ctx context.Context, profile, producer, 
 	if err != nil {
 		return nil, err
 	}
-	err = queryRows(ctx, s.db, photoDescriptionTargetsSQL(settled), []any{fingerprints.GridRecipe, after, profile, limit, producer, restoredOnly}, func(rows *sql.Rows) error {
+	err = queryRows(ctx, s.db, photoDescriptionTargetsSQL(settled), []any{fingerprints.GridRecipe, after, profile, limit, producer, restoredOnly, document.FaceDetectionProviderID, detection}, func(rows *sql.Rows) error {
 		version, err := scanContentVersion(rows)
 		if err != nil {
 			return err
