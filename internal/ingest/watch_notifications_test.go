@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/stacktest"
 )
 
 func TestWatchNotificationsBoundAndCoalesce(t *testing.T) {
@@ -180,6 +181,7 @@ func TestWatchEventRunnerCapturesObservableSaves(t *testing.T) {
 			select {
 			case <-commits:
 			case <-deadline.C:
+				stacktest.Dump(t)
 				t.Fatalf("timed out waiting for %d versions", want)
 			}
 		}
@@ -244,6 +246,7 @@ func TestFolderWatchEventRunnerUsesSharedScanner(t *testing.T) {
 		case got := <-contents:
 			require.Equal(t, want, got)
 		case <-time.After(10 * time.Second):
+			stacktest.Dump(t)
 			t.Fatalf("timed out waiting for %q", want)
 		}
 		// The scanner rechecks and closes the source after the callback returns.
@@ -402,6 +405,7 @@ func TestWatchNotificationCloseReleasesThroughBackendClose(t *testing.T) {
 					require.NoError(t, err)
 				}
 			case <-time.After(10 * time.Second):
+				stacktest.Dump(t)
 				t.Fatal("Close blocked before releasing the backend")
 			}
 			require.Equal(t, 1, closeCalls)
@@ -601,6 +605,7 @@ func TestWatchNotificationBackendFailureClosesPartialSubscriptions(t *testing.T)
 	case err := <-n.Errors():
 		require.ErrorContains(t, err, "backend stopped")
 	case <-time.After(10 * time.Second):
+		stacktest.Dump(t)
 		t.Fatal("runtime backend failure not reported")
 	}
 	require.NoError(t, n.Close())
@@ -681,6 +686,7 @@ func TestPromptWatchNotificationFailureFallsBack(t *testing.T) {
 				select {
 				case <-commits:
 				case <-initialDeadline.C:
+					stacktest.Dump(t)
 					t.Fatal("initial source not committed")
 				}
 			}
@@ -690,6 +696,7 @@ func TestPromptWatchNotificationFailureFallsBack(t *testing.T) {
 			select {
 			case <-firstBackend.closed:
 			case <-time.After(10 * time.Second):
+				stacktest.Dump(t)
 				t.Fatal("failed backend still open")
 			}
 			require.NoError(t, os.WriteFile(filepath.Join(source, "notes.txt"), []byte("second"), 0600))
@@ -707,6 +714,7 @@ func TestPromptWatchNotificationFailureFallsBack(t *testing.T) {
 				select {
 				case <-commits:
 				case <-deadline.C:
+					stacktest.Dump(t)
 					t.Fatal("polling did not capture later change")
 				}
 			}
@@ -721,6 +729,7 @@ func TestPromptWatchNotificationFailureFallsBack(t *testing.T) {
 				case count := <-factories:
 					require.Equal(t, 2, count)
 				case <-time.After(10 * time.Second):
+					stacktest.Dump(t)
 					t.Fatal("no periodic re-enrollment")
 				}
 			} else {
@@ -783,6 +792,7 @@ func TestWatchNotificationRecreatedDirectoryIsSubscribed(t *testing.T) {
 	select {
 	case <-n.Wake():
 	case <-time.After(3 * time.Second):
+		stacktest.Dump(t)
 		t.Fatal("no deletion hint")
 	}
 	_ = n.Drain()
@@ -808,12 +818,14 @@ func TestWatchNotificationOverflowWakesReconciliationAndContinues(t *testing.T) 
 	select {
 	case <-n.Wake():
 	case <-time.After(3 * time.Second):
+		stacktest.Dump(t)
 		t.Fatal("no initial hint")
 	}
 	backend.errs <- fsnotify.ErrEventOverflow
 	select {
 	case <-n.Wake():
 	case <-time.After(3 * time.Second):
+		stacktest.Dump(t)
 		t.Fatal("overflow did not wake")
 	}
 	hints := n.Drain()
@@ -828,6 +840,7 @@ func TestWatchNotificationOverflowWakesReconciliationAndContinues(t *testing.T) 
 	select {
 	case <-n.Wake():
 	case <-time.After(3 * time.Second):
+		stacktest.Dump(t)
 		t.Fatal("collector did not continue")
 	}
 	hints = n.Drain()
@@ -864,6 +877,7 @@ func TestWatchNotificationDroppedDirectoryRecyclesKqueueBackend(t *testing.T) {
 	select {
 	case <-n.Wake():
 	case <-time.After(3 * time.Second):
+		stacktest.Dump(t)
 		t.Fatal("events between backends need a reconciliation")
 	}
 	require.True(t, n.Drain().Reconcile)
@@ -872,6 +886,7 @@ func TestWatchNotificationDroppedDirectoryRecyclesKqueueBackend(t *testing.T) {
 	select {
 	case <-n.Wake():
 	case <-time.After(3 * time.Second):
+		stacktest.Dump(t)
 		t.Fatal("the replacement backend is not collected")
 	}
 	require.True(t, n.Drain().matches("after/new.txt"))

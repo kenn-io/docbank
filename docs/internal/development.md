@@ -751,6 +751,8 @@ shards. Pull requests call `ci.yml` from `main`, so changes to that workflow tak
 effect for pull requests after merge. Workflow validation runs against the
 proposed workflow changes.
 
+Go test workflows set `GOTRACEBACK=all` for crashes. When diagnosing a hang, call Kit's `stacktest.Dump(t)` before failing an expired wait to log every goroutine's stack.
+
 Documentation browser checks use Microsoft's public Playwright image matching the installed `@playwright/test` version.
 Render PDF caches LibreOffice and Poppler installers by runner image, architecture, and workflow recipe.
 A cache miss downloads the packages and their missing dependencies.
