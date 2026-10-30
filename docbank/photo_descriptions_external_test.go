@@ -24,5 +24,5 @@ func TestEmbeddedVaultRejectsAVisionProfile(t *testing.T) {
 	_, err = docbank.New(t.Context(), docbank.Config{Root: t.TempDir(), Processing: docbank.ProcessingOptions{Profiles: map[string]docbank.ProcessingProfileConfig{
 		"vision": {Profile: profile, RenditionProvider: provider, RenditionDisclosure: docbank.ProcessingRuntimeDisclosure{Endpoint: server.URL}},
 	}}})
-	require.ErrorContains(t, err, "photo description needs the daemon")
+	require.ErrorContains(t, err, "photo vision work needs the daemon")
 }
