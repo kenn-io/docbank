@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/json/v2"
 	"io"
@@ -10,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/stretchr/testify/assert"
@@ -39,7 +37,11 @@ func TestMCPConfigStdio(t *testing.T) {
 			entry := decodeMCPConfig(t, client, out)
 			assert.Equal(t, executable, entry["command"])
 			assert.Equal(t, []any{"mcp", "--transport", "stdio", "--allow-processing", "--allow-package-writes", "--allow-photo-edits", "--allow-export-writes", "--allow-report-writes", "--allow-kata-writes"}, entry["args"])
-			assert.Equal(t, map[string]any{"DOCBANK_HOME": root}, entry["env"])
+			env := map[string]any{"DOCBANK_HOME": root}
+			if client == "codex" {
+				env["CODEX_MCP_PROTOCOL_VERSION"] = "2026-07-28"
+			}
+			assert.Equal(t, env, entry["env"])
 			assert.True(t, strings.HasSuffix(out, "\n"))
 		})
 	}
@@ -50,6 +52,20 @@ func TestMCPConfigStdio(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "existing client configuration\n", string(data))
 	}
+}
+
+func TestMCPConfigPreservesSymlinkLaunchPath(t *testing.T) {
+	executable, err := os.Executable()
+	require.NoError(t, err)
+	launch := filepath.Join(t.TempDir(), "docbank.exe")
+	if err := os.Symlink(executable, launch); err != nil {
+		t.Skipf("symlink creation unavailable: %v", err)
+	}
+	command := exec.CommandContext(t.Context(), launch, "-test.run=^TestMCPCommandWriteFlagsSelectTools$")
+	command.Env = append(os.Environ(), "DOCBANK_HOME="+t.TempDir(), "DOCBANK_TEST_MCP_TOOL_CATALOG=mcp config --client claude-code")
+	out, err := command.CombinedOutput()
+	require.NoError(t, err, string(out))
+	assert.Equal(t, launch, decodeMCPConfig(t, "claude-code", string(out))["command"])
 }
 
 func decodeMCPConfig(t *testing.T, client, out string) map[string]any {
@@ -142,30 +158,8 @@ func TestMCPConfigStartsSelectedCatalog(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal([]byte(out), &document))
 	entry := document.Servers["docbank"]
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancel()
-	command := exec.CommandContext(ctx, entry.Command, "-test.run=^TestMCPCommandWriteFlagsSelectTools$")
-	command.Env = append(os.Environ(), "DOCBANK_TEST_MCP_TOOL_CATALOG="+strings.Join(entry.Args, " "), "DOCBANK_HOME="+entry.Env["DOCBANK_HOME"])
-	input, err := command.StdinPipe()
-	require.NoError(t, err)
-	defer func() { _ = input.Close() }()
-	output, err := command.StdoutPipe()
-	require.NoError(t, err)
-	require.NoError(t, command.Start())
-	t.Cleanup(func() { _ = command.Process.Kill() })
-	reader := bufio.NewReader(output)
-	_, err = io.WriteString(input, `{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}`+"\n")
-	require.NoError(t, err)
-	discovery, err := reader.ReadString('\n')
-	require.NoError(t, err)
-	assert.Contains(t, discovery, `"result"`)
-	_, err = io.WriteString(input, `{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}`+"\n")
-	require.NoError(t, err)
-	catalog, err := reader.ReadString('\n')
-	require.NoError(t, err)
-	assert.Contains(t, catalog, `"name":"start_processing"`)
-	assert.Contains(t, catalog, `"name":"get_vault_info"`)
-	assert.NotContains(t, catalog, `"name":"create_report"`)
-	require.NoError(t, input.Close())
-	require.NoError(t, command.Wait())
+	names := mcpCatalog(t, entry.Command, entry.Args, []string{"DOCBANK_HOME=" + entry.Env["DOCBANK_HOME"], "CODEX_MCP_PROTOCOL_VERSION=" + entry.Env["CODEX_MCP_PROTOCOL_VERSION"]})
+	assert.True(t, names["start_processing"])
+	assert.True(t, names["get_vault_info"])
+	assert.False(t, names["create_report"])
 }

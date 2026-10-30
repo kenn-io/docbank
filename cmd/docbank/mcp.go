@@ -34,7 +34,7 @@ var mcpCmd = &cobra.Command{
 	Long: `Runs a Model Context Protocol server for the selected vault (DOCBANK_HOME),
 read-only by default; --allow-* flags expose specific write tools.
 stdio (default): one JSON-RPC message per line on stdin/stdout; logs on stderr.
-Client config: {"command":"docbank","args":["mcp"]}
+Client config: docbank mcp config --client claude-code|codex
 http: needs --listen 127.0.0.1:<port> and, in config.toml, [mcp.http]
 credential_binding = "credential:NAME" naming a [credential_bindings.NAME]
 whose environment_variable holds the bearer token.`,
@@ -153,16 +153,11 @@ func loadMCPHTTPConfig(root string) (config.Config, string, error) {
 
 // resolveMCPHTTPBearer reads the bearer named by an already validated config.
 func resolveMCPHTTPBearer(cfg config.Config) (string, error) {
-	reference := cfg.MCP.HTTP.CredentialBinding
-	if reference == "" {
-		return "", errMCPHTTPCredentialUnset
+	variable, err := mcpHTTPCredentialVariable(cfg)
+	if err != nil {
+		return "", err
 	}
-	name := strings.TrimPrefix(reference, "credential:")
-	binding, ok := cfg.CredentialBindings[name]
-	if !ok {
-		return "", errors.New("MCP HTTP credential binding is not configured")
-	}
-	token, selected, err := config.EnvironmentSecret(binding.EnvironmentVariable)
+	token, selected, err := config.EnvironmentSecret(variable)
 	if err != nil {
 		return "", err
 	}
@@ -173,6 +168,19 @@ func resolveMCPHTTPBearer(cfg config.Config) (string, error) {
 		return "", errors.New("MCP HTTP credential is invalid")
 	}
 	return token, nil
+}
+
+func mcpHTTPCredentialVariable(cfg config.Config) (string, error) {
+	reference := cfg.MCP.HTTP.CredentialBinding
+	if reference == "" {
+		return "", errMCPHTTPCredentialUnset
+	}
+	name := strings.TrimPrefix(reference, "credential:")
+	binding, ok := cfg.CredentialBindings[name]
+	if !ok {
+		return "", errors.New("MCP HTTP credential binding is not configured")
+	}
+	return binding.EnvironmentVariable, nil
 }
 
 func init() {

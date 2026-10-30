@@ -40,11 +40,17 @@ Paste Claude Code's JSON into your project's `.mcp.json`, or merge the
 See the [Claude Code MCP guide](https://code.claude.com/docs/en/mcp) and
 [Codex configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference).
 
-The snippet uses the running Docbank binary's absolute path and the selected
-vault's canonical `DOCBANK_HOME`. All six `--allow-*` flags carry through to
+The snippet uses Docbank's absolute launch path, preserving package-manager
+symlinks, and the selected vault's canonical `DOCBANK_HOME`.
+All six `--allow-*` flags carry through to
 stdio arguments. Printing creates no vault, starts no daemon, and leaves
 client files untouched. Your client must support MCP `2026-07-28` and
 `server/discover`; configuration alone cannot add protocol support.
+
+Tested clients are Claude Code 2.1.301 and Codex 0.164.0.
+Start Codex with `codex --enable mcp_2026_07_28`
+for either transport. The generated stdio configuration also sets
+`CODEX_MCP_PROTOCOL_VERSION=2026-07-28` in the server's environment.
 
 Stdio carries one complete JSON-RPC message per line. Docbank accepts LF or
 CRLF terminators, rejects embedded newlines, and limits the JSON payload before

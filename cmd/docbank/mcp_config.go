@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -18,6 +20,7 @@ func newMCPConfigCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "config",
 		Short: "Print MCP client configuration",
+		Long:  "Print client configuration without editing client files.\nCodex 0.164.0 requires: codex --enable mcp_2026_07_28",
 		Example: `  docbank mcp config --client claude-code
   docbank mcp config --client codex --allow-processing`,
 		Args: cobra.NoArgs,
@@ -34,7 +37,7 @@ func newMCPConfigCommand() *cobra.Command {
 		default:
 			return errors.New("--client must be claude-code or codex")
 		}
-		server, err := mcpConfigServer(cmd)
+		server, err := mcpConfigServer(agent)
 		if err != nil {
 			return err
 		}
@@ -50,7 +53,7 @@ func newMCPConfigCommand() *cobra.Command {
 	return cmd
 }
 
-func mcpConfigServer(cmd *cobra.Command) (agentmcp.Server, error) {
+func mcpConfigServer(agent agentmcp.Agent) (agentmcp.Server, error) {
 	if err := validateMCPCommandOptions(mcpTransport, mcpListen); err != nil {
 		return agentmcp.Server{}, err
 	}
@@ -59,23 +62,23 @@ func mcpConfigServer(cmd *cobra.Command) (agentmcp.Server, error) {
 		return agentmcp.Server{}, err
 	}
 	args := []string{"mcp", "--transport", "stdio"}
-	for _, name := range []string{"allow-processing", "allow-package-writes", "allow-photo-edits", "allow-export-writes", "allow-report-writes", "allow-kata-writes"} {
-		enabled, err := cmd.Flags().GetBool(name)
-		if err != nil {
-			return agentmcp.Server{}, fmt.Errorf("reading --%s: %w", name, err)
-		}
-		if enabled {
+	for _, flag := range []struct {
+		name    string
+		enabled bool
+	}{
+		{"allow-processing", mcpAllowProcessing}, {"allow-package-writes", mcpAllowPackageWrites},
+		{"allow-photo-edits", mcpAllowPhotoEdits}, {"allow-export-writes", mcpAllowExportWrites},
+		{"allow-report-writes", mcpAllowReportWrites}, {"allow-kata-writes", mcpAllowKataWrites},
+	} {
+		if flag.enabled {
 			if mcpTransport == "http" {
 				return agentmcp.Server{}, errors.New("--allow-* flags belong on the HTTP listener's startup command")
 			}
-			args = append(args, "--"+name)
+			args = append(args, "--"+flag.name)
 		}
 	}
 	if mcpTransport == "http" {
-		host, port, err := net.SplitHostPort(mcpListen)
-		if err != nil {
-			return agentmcp.Server{}, fmt.Errorf("parsing --listen: %w", err)
-		}
+		host, port, _ := net.SplitHostPort(mcpListen)
 		if strings.TrimLeft(port, "0") == "" {
 			return agentmcp.Server{}, errors.New("--listen requires a nonzero port for client configuration")
 		}
@@ -89,17 +92,25 @@ func mcpConfigServer(cmd *cobra.Command) (agentmcp.Server, error) {
 		if err != nil {
 			return agentmcp.Server{}, err
 		}
-		if cfg.MCP.HTTP.CredentialBinding == "" {
-			return agentmcp.Server{}, errMCPHTTPCredentialUnset
+		variable, err := mcpHTTPCredentialVariable(cfg)
+		if err != nil {
+			return agentmcp.Server{}, err
 		}
-		binding := cfg.CredentialBindings[strings.TrimPrefix(cfg.MCP.HTTP.CredentialBinding, "credential:")]
-		return agentmcp.Server{Transport: agentmcp.TransportHTTP, URL: "http://" + net.JoinHostPort(host, port) + "/mcp", BearerTokenEnvVar: binding.EnvironmentVariable}, nil
+		return agentmcp.Server{Transport: agentmcp.TransportHTTP, URL: "http://" + net.JoinHostPort(host, port) + "/mcp", BearerTokenEnvVar: variable}, nil
 	}
-	command, err := os.Executable()
+	command, err := exec.LookPath(os.Args[0])
 	if err != nil {
 		return agentmcp.Server{}, fmt.Errorf("resolving Docbank executable: %w", err)
 	}
-	return agentmcp.Server{Command: command, Args: args, Env: map[string]string{"DOCBANK_HOME": layout.Root}}, nil
+	command, err = filepath.Abs(command)
+	if err != nil {
+		return agentmcp.Server{}, fmt.Errorf("resolving Docbank launch path: %w", err)
+	}
+	env := map[string]string{"DOCBANK_HOME": layout.Root}
+	if agent == agentmcp.AgentCodex {
+		env["CODEX_MCP_PROTOCOL_VERSION"] = "2026-07-28"
+	}
+	return agentmcp.Server{Command: command, Args: args, Env: env}, nil
 }
 
 func init() {
