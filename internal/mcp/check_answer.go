@@ -10,7 +10,7 @@ import (
 
 var checkAnswerTool = toolDefinition{
 	name: "check_answer", title: "Check answer figures",
-	description: "Resolve citations and compare whole answer figures by exact spelling with any cited text. A match confirms occurrence only. Send plain text with at most 512 figures and 512 [n] markers.",
+	description: "Resolve citations and compare answer figures with any cited text, normalizing recognized dates and currency amounts. A match confirms occurrence only. Send plain text with at most 512 figures and 512 [n] markers.",
 	schemas:     checkAnswerSchemas, idempotent: true,
 }
 
@@ -49,7 +49,7 @@ func checkAnswer(ctx context.Context, lease *daemonLease, raw []byte) (checkAnsw
 				}
 				entry.Err = code
 			} else {
-				entry.Text, entry.TextSHA256 = quote.Text, quote.TextSHA256
+				entry = grounding.Citation{Text: quote.Text, TextSHA256: quote.TextSHA256, AtDocumentStart: citation.Start == 0}
 			}
 			result = append(result, entry)
 		}
