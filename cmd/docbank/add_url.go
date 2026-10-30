@@ -13,7 +13,6 @@ import (
 	"os"
 	"os/signal"
 	"path"
-	"path/filepath"
 	"syscall"
 	"time"
 
@@ -137,5 +136,5 @@ func addURL(cmd *cobra.Command, raw string) (rep api.IngestReport, retErr error)
 
 func isURLSource(raw string) bool {
 	u, err := url.Parse(raw)
-	return err == nil && u.Host != "" && (u.Scheme == "http" || u.Scheme == "https") && filepath.VolumeName(raw) == ""
+	return err == nil && u.Host != "" && (u.Scheme == "http" || u.Scheme == "https")
 }

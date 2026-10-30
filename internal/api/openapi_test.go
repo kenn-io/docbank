@@ -554,8 +554,12 @@ func TestOpenAPIDeclaresDigestCheckedUpload(t *testing.T) {
 	for _, param := range op.Parameters {
 		required[param.Name] = param.Required
 	}
-	for _, name := range []string{"parent_id", "name", api.BlobHashHeader, api.BlobSizeHeader} {
+	for _, name := range []string{"name", api.BlobHashHeader, api.BlobSizeHeader} {
 		assert.True(t, required[name], "%s must be required", name)
+	}
+	for _, name := range []string{"parent_id", "parent_path"} {
+		assert.Contains(t, required, name)
+		assert.False(t, required[name], "%s must be optional", name)
 	}
 	assert.NotNil(t, op.Responses["200"])
 	assert.NotNil(t, op.Responses["201"])
