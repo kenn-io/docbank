@@ -67,18 +67,19 @@ var (
 )
 
 type ProfileConfig struct {
-	Profile                document.ProcessingProfileV1
-	RenditionProvider      document.RenditionProvider
-	RenditionDisclosure    RuntimeDisclosure
-	RerankingProvider      retrieval.RerankingProvider
-	RerankingProfile       retrieval.RerankingProfile
-	RerankingDisclosure    RuntimeDisclosure
-	RerankingDeadline      time.Duration
-	RerankingFailurePolicy retrieval.ProviderFailurePolicy
-	EmbeddingProviders     map[string]document.EmbeddingProvider
-	EmbeddingDisclosures   map[string]RuntimeDisclosure
-	EmbeddingClassifiers   map[string]func(error) (EmbeddingProviderFailure, time.Duration)
-	Tokenizers             map[string]document.Tokenizer
+	Profile                   document.ProcessingProfileV1
+	RenditionProvider         document.RenditionProvider
+	RenditionDisclosure       RuntimeDisclosure
+	RerankingProvider         retrieval.RerankingProvider
+	RerankingProfile          retrieval.RerankingProfile
+	RerankingDisclosure       RuntimeDisclosure
+	RerankingDeadline         time.Duration
+	RerankingFailurePolicy    retrieval.ProviderFailurePolicy
+	EmbeddingProviders        map[string]document.EmbeddingProvider
+	EmbeddingSimilarityFloors map[string]float64
+	EmbeddingDisclosures      map[string]RuntimeDisclosure
+	EmbeddingClassifiers      map[string]func(error) (EmbeddingProviderFailure, time.Duration)
+	Tokenizers                map[string]document.Tokenizer
 }
 
 type ServiceConfig struct {
@@ -101,21 +102,22 @@ type ServiceConfig struct {
 }
 
 type configuredProfile struct {
-	vectorSpaces           map[string]string
-	mediaMaxBytes          int64
-	portable               document.ProcessingProfileV1
-	record                 store.ProcessingProfileRecord
-	provider               document.RenditionProvider
-	rerankingProvider      retrieval.RerankingProvider
-	rerankingProfile       retrieval.RerankingProfile
-	rerankingDisclosure    RuntimeDisclosure
-	rerankingDeadline      time.Duration
-	rerankingFailurePolicy retrieval.ProviderFailurePolicy
-	embedders              map[string]document.EmbeddingProvider
-	embeddingRuntimes      map[string]*ProviderEmbeddingRuntime
-	tokenizers             map[string]document.Tokenizer
-	renderDisclosure       RuntimeDisclosure
-	embedDisclosures       map[string]RuntimeDisclosure
+	vectorSpaces              map[string]string
+	mediaMaxBytes             int64
+	portable                  document.ProcessingProfileV1
+	record                    store.ProcessingProfileRecord
+	provider                  document.RenditionProvider
+	rerankingProvider         retrieval.RerankingProvider
+	rerankingProfile          retrieval.RerankingProfile
+	rerankingDisclosure       RuntimeDisclosure
+	rerankingDeadline         time.Duration
+	rerankingFailurePolicy    retrieval.ProviderFailurePolicy
+	embedders                 map[string]document.EmbeddingProvider
+	embeddingSimilarityFloors map[string]float64
+	embeddingRuntimes         map[string]*ProviderEmbeddingRuntime
+	tokenizers                map[string]document.Tokenizer
+	renderDisclosure          RuntimeDisclosure
+	embedDisclosures          map[string]RuntimeDisclosure
 }
 
 type Service struct {
@@ -471,8 +473,9 @@ func NewService(config ServiceConfig) (*Service, error) {
 			return nil, fmt.Errorf("processing profile %q canonical decode: %w", name, err)
 		}
 		configured := configuredProfile{vectorSpaces: make(map[string]string), portable: profile, provider: supplied.RenditionProvider,
-			mediaMaxBytes:     service.mediaMaxBytes,
-			rerankingProvider: supplied.RerankingProvider, rerankingProfile: supplied.RerankingProfile,
+			embeddingSimilarityFloors: maps.Clone(supplied.EmbeddingSimilarityFloors),
+			mediaMaxBytes:             service.mediaMaxBytes,
+			rerankingProvider:         supplied.RerankingProvider, rerankingProfile: supplied.RerankingProfile,
 			rerankingDeadline: supplied.RerankingDeadline, rerankingFailurePolicy: supplied.RerankingFailurePolicy,
 			embedders:         make(map[string]document.EmbeddingProvider, len(supplied.EmbeddingProviders)),
 			embeddingRuntimes: make(map[string]*ProviderEmbeddingRuntime, len(profile.Embeddings)),
@@ -575,6 +578,8 @@ func NewService(config ServiceConfig) (*Service, error) {
 			if err != nil {
 				return nil, err
 			}
+			runtime.catalog = config.Catalog
+			service.embeddings.profiles[configured.record.Fingerprint] = configured.record
 			if existing, exists := registeredEmbeddings[descriptor.Fingerprint]; !exists {
 				if err := service.embeddings.Register(descriptor.Fingerprint, runtime); err != nil {
 					return nil, fmt.Errorf("processing profile %q embedding %q: %w", name, binding.Name, err)
@@ -670,7 +675,7 @@ func (service *Service) Profiles() []ProfileSummary {
 		queryBindings := make([]string, 0, len(profile.portable.Embeddings))
 		for _, binding := range profile.portable.Embeddings {
 			bindings = append(bindings, binding.Name)
-			if provider, ok := profile.embedders[binding.Name]; ok && provider.Descriptor().SupportsTextQuery {
+			if provider, ok := profile.embedders[binding.Name]; ok && binding.InputKind != document.EmbeddingInputImage && provider.Descriptor().SupportsTextQuery {
 				queryBindings = append(queryBindings, binding.Name)
 			}
 		}
@@ -750,7 +755,7 @@ func (service *Service) planForSource(ctx context.Context, selector Selector, no
 ) (Plan, error) {
 	plan := Plan{VaultUID: service.catalog.VaultID(), Selector: selector,
 		ProfileFingerprint: profile.record.Fingerprint, ConsentRequired: true,
-		Estimate:          Estimate{SourceBytes: version.Size, VectorSpaces: len(profile.portable.Embeddings)},
+		Estimate:          Estimate{SourceBytes: version.Size, VectorSpaces: len(profile.portable.Embeddings), Scope: photoDiscoveryScope(profile)},
 		BackupConsequence: "retained derivatives are included in catalog-authorized backups"}
 	if profile.portable.Rendition != nil {
 		hop := FlowHop{Capability: "rendition",
@@ -765,7 +770,6 @@ func (service *Service) planForSource(ctx context.Context, selector Selector, no
 			plan.DisclosedClasses = append(plan.DisclosedClasses, "filename")
 		}
 		if profileRenditionInput(profile) == document.RenditionInputDerivedUpload {
-			plan.Estimate.Scope = "Granting consent automatically queues eligible photos throughout this vault."
 			plan.BackupConsequence = "Pending photo suggestions rebuild after restore; accepted and dismissed decisions are included in backups."
 			// Only the grid preview leaves the vault, not the original file.
 			view, reason, err := photoDescriptionPreview(ctx, service.catalog, version.ID)
@@ -1543,8 +1547,8 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 	if request.MediaSources != nil {
 		return service.searchMediaSources(ctx, request, ids, prepared)
 	}
-	if len(profile.portable.Embeddings) != 0 && (prepared.mode == retrieval.ModeSemantic || prepared.mode == retrieval.ModeHybrid) {
-		binding, err := selectEmbeddingBinding(profile.portable, prepared.bindingID)
+	if prepared.authorization.ProviderID != "" && (prepared.mode == retrieval.ModeSemantic || prepared.mode == retrieval.ModeHybrid) {
+		binding, err := selectDocumentSearchBinding(profile.portable, prepared.bindingID)
 		if err != nil {
 			return retrieval.Report{}, err
 		}
@@ -1567,11 +1571,16 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 		searchScope.EmbeddingDescriptor = &descriptor
 		searchScope.VectorSpaceID = profile.vectorSpaces[prepared.bindingID]
 	}
-	return prepared.searcher.Search(ctx, retrieval.Query{Text: request.Query, Mode: prepared.mode,
+	report, err := prepared.searcher.Search(ctx, retrieval.Query{Text: request.Query, Mode: prepared.mode,
 		LexicalLimit: profile.portable.Retrieval.LexicalLimit, VectorLimit: profile.portable.Retrieval.VectorLimit,
 		Limit: prepared.limit, Scope: searchScope, ContentFirst: request.ContentFirst,
 		ProcessingProfileFingerprint: profile.record.Fingerprint, BindingID: prepared.bindingID,
 		Authorization: prepared.authorization})
+	if err != nil {
+		return retrieval.Report{}, err
+	}
+	report.RequestedMode = prepared.requestedMode
+	return report, nil
 }
 
 // ValidateSearch applies the same profile, query, mode, limit, and binding
@@ -1591,6 +1600,7 @@ func (service *Service) ValidateSearch(ctx context.Context, request SearchReques
 type preparedSearch struct {
 	searcher            *retrieval.Searcher
 	mode                retrieval.Mode
+	requestedMode       retrieval.Mode
 	limit               int
 	bindingID           string
 	authorization       document.EmbeddingAuthorization
@@ -1607,6 +1617,7 @@ func (service *Service) prepareSearch(
 	if mode == "" {
 		mode = retrieval.ModeAuto
 	}
+	requestedMode := mode
 	if request.MediaSources != nil && (request.Rerank ||
 		(mode != retrieval.ModeLexical && mode != retrieval.ModeAuto)) {
 		return preparedSearch{}, ErrMediaSearchInvalid
@@ -1626,16 +1637,20 @@ func (service *Service) prepareSearch(
 		MediaEvidence: service.mediaEvidence}
 	var authorization document.EmbeddingAuthorization
 	if len(profile.portable.Embeddings) != 0 {
-		binding, bindingErr := selectEmbeddingBinding(profile.portable, request.BindingID)
-		if bindingErr != nil {
+		binding, bindingErr := selectDocumentSearchBinding(profile.portable, request.BindingID)
+		if errors.Is(bindingErr, store.ErrNotFound) && request.BindingID == "" && mode != retrieval.ModeSemantic {
+			mode = retrieval.ModeLexical
+		} else if bindingErr != nil {
 			return preparedSearch{}, bindingErr
 		}
-		request.BindingID = binding.Name
-		searcherConfig.Encoders = service.embeddings
-		authorization = document.EmbeddingAuthorization{ProviderID: binding.Descriptor.ID,
-			DescriptorFingerprint: binding.Descriptor.Fingerprint,
-			PolicyFingerprint:     profile.embedders[binding.Name].Descriptor().PolicyFingerprint,
-			MaxBatchItems:         1, MaxInputBytes: binding.MaxInputBytes, MaxResponseBytes: binding.MaxResponseBytes}
+		if bindingErr == nil {
+			request.BindingID = binding.Name
+			searcherConfig.Encoders = service.embeddings
+			authorization = document.EmbeddingAuthorization{ProviderID: binding.Descriptor.ID,
+				DescriptorFingerprint: binding.Descriptor.Fingerprint,
+				PolicyFingerprint:     profile.embedders[binding.Name].Descriptor().PolicyFingerprint,
+				MaxBatchItems:         1, MaxInputBytes: binding.MaxInputBytes, MaxResponseBytes: binding.MaxResponseBytes}
+		}
 	}
 	var rerankingAuth *rerankingAuthorizer
 	if request.Rerank {
@@ -1651,7 +1666,7 @@ func (service *Service) prepareSearch(
 	if err != nil {
 		return preparedSearch{}, err
 	}
-	return preparedSearch{searcher: searcher, mode: mode, limit: limit,
+	return preparedSearch{searcher: searcher, mode: mode, requestedMode: requestedMode, limit: limit,
 		bindingID: request.BindingID, authorization: authorization,
 		rerankingAuthorizer: rerankingAuth}, nil
 }
@@ -1667,10 +1682,21 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 		return nil, err
 	}
 	jobIDs := make([]string, 0, len(profile.portable.Embeddings))
+	bindings := make([]document.EmbeddingBindingV1, 0, len(profile.portable.Embeddings))
 	vectorSpaces := make([]string, 0, len(profile.portable.Embeddings))
+	var ineligibleErr error
 	for _, binding := range profile.portable.Embeddings {
 		var generation store.EmbeddingInputGenerationRecord
 		switch binding.InputKind {
+		case document.EmbeddingInputImage:
+			generation, _, err = profile.embeddingRuntimes[binding.Name].ImageGeneration(ctx, profile.record, binding, version.ID)
+			if errors.Is(err, ErrSourceIneligible) {
+				ineligibleErr = err
+				continue
+			}
+			if err != nil {
+				return jobIDs, err
+			}
 		case document.EmbeddingInputOriginalFile:
 			generation = directEmbeddingGeneration(version, profile.record.Fingerprint,
 				fingerprints.EmbeddingInput[binding.Name], binding)
@@ -1716,6 +1742,7 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 			return jobIDs, enqueueErr
 		}
 		jobIDs = append(jobIDs, job.ID)
+		bindings = append(bindings, binding)
 		if len(jobIDs) == 1 && onEnqueued != nil {
 			onEnqueued(slices.Clone(jobIDs))
 			var cancel context.CancelFunc
@@ -1723,8 +1750,11 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 			defer cancel()
 		}
 	}
+	if len(jobIDs) == 0 && profile.portable.Rendition == nil && ineligibleErr != nil {
+		return jobIDs, &ImageSourceIneligibleError{Err: ineligibleErr}
+	}
 	for index, jobID := range jobIDs {
-		binding := profile.portable.Embeddings[index]
+		binding := bindings[index]
 		worker, err := NewEmbeddingWorker(EmbeddingWorkerConfig{
 			Catalog: service.catalog, Authority: service.catalog, Blobs: service.blobs,
 			GenerationBlobs: service.blobs, Runtime: profile.embeddingRuntimes[binding.Name], Gate: service.gate,
@@ -1929,12 +1959,7 @@ func directEmbeddingGeneration(version store.ContentVersion, profileFingerprint,
 }
 
 func stableHash(values ...string) string {
-	hasher := sha256.New()
-	for _, value := range values {
-		_, _ = fmt.Fprintf(hasher, "%d:", len(value))
-		_, _ = hasher.Write([]byte(value))
-	}
-	return hex.EncodeToString(hasher.Sum(nil))
+	return store.LengthPrefixedSHA256(values...)
 }
 
 func sha256Text(value string) string {
@@ -1953,6 +1978,17 @@ func selectEmbeddingBinding(profile document.ProcessingProfileV1,
 	}
 	for _, binding := range profile.Embeddings {
 		if binding.Name == name {
+			return binding, nil
+		}
+	}
+	return document.EmbeddingBindingV1{}, fmt.Errorf("embedding binding %q: %w", name, store.ErrNotFound)
+}
+
+func selectDocumentSearchBinding(profile document.ProcessingProfileV1,
+	name string,
+) (document.EmbeddingBindingV1, error) {
+	for _, binding := range profile.Embeddings {
+		if binding.InputKind != document.EmbeddingInputImage && (name == "" || binding.Name == name) {
 			return binding, nil
 		}
 	}
@@ -2580,9 +2616,12 @@ func embeddingRuntimeDisclosure(supplied RuntimeDisclosure, binding document.Emb
 	value.ModelRevision = descriptor.ModelRevision
 	value.VectorSpace = vectorSpace
 	value.RetainedArtifactRoles = []string{"embedding_input_generation", "embedding_vector_set"}
-	if binding.InputKind == document.EmbeddingInputOriginalFile {
+	switch binding.InputKind {
+	case document.EmbeddingInputOriginalFile:
 		value.MetadataClasses = []string{"byte_length", "content_hash", "detected_media_type", "synthetic_filename"}
-	} else {
+	case document.EmbeddingInputImage:
+		value.MetadataClasses = []string{"byte_length", "content_hash", "detected_media_type"}
+	default:
 		value.MetadataClasses = []string{"chunk_key", "content_derived_heading_path"}
 	}
 	return canonicalRuntimeDisclosure(value, string(descriptor.TrustBoundary))

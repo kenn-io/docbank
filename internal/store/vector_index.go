@@ -386,6 +386,8 @@ func (s *Store) PublishVectorIndexGeneration(ctx context.Context, claim VectorIn
 	})
 }
 
+var errUnusableVectorIndexGeneration = errors.New("unusable vector index generation")
+
 func loadVectorIndexGenerationTx(ctx context.Context, query metadataQuerier, generationID string) (VectorIndexGenerationRecord, error) {
 	var record VectorIndexGenerationRecord
 	var size int
@@ -401,9 +403,12 @@ func loadVectorIndexGenerationTx(ctx context.Context, query metadataQuerier, gen
 		return record, err
 	}
 	if size != len(record.Bytes) {
-		return VectorIndexGenerationRecord{}, errors.New("vector index generation byte size is corrupt")
+		return VectorIndexGenerationRecord{}, fmt.Errorf("%w: vector index generation byte size is corrupt", errUnusableVectorIndexGeneration)
 	}
-	return record, validateVectorIndexGenerationRecord(record)
+	if err := validateVectorIndexGenerationRecord(record); err != nil {
+		return record, fmt.Errorf("%w: %w", errUnusableVectorIndexGeneration, err)
+	}
+	return record, nil
 }
 
 // VectorIndexHead is the publication metadata needed by an idle worker scan.

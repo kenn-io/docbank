@@ -42,6 +42,19 @@ it.each([recreatePhotoPreviewCache, revalidatePhotoWorkspace])(
   },
 );
 
+it("requests a live Library refresh during access revalidation", async () => {
+  const photos = new Photos("scoped", vi.fn());
+  photos.snapshotID = "accepted-snapshot";
+  const refresh = vi.spyOn(photos, "refresh").mockResolvedValue(true);
+  const current = { photos, cache: workspace() };
+
+  expect(await revalidatePhotoWorkspace(current, "scoped", vi.fn(), () => true)).toBe(true);
+
+  expect(refresh).toHaveBeenCalledWith(undefined, true);
+  instances.push(current.cache);
+  photos.dispose();
+});
+
 it.each([recreatePhotoPreviewCache, revalidatePhotoWorkspace])(
   "leaves the disposed cache in place when validity is lost with %s",
   async (replace) => {

@@ -132,6 +132,33 @@ func (s *Store) PhotoAssetForNode(ctx context.Context, nodeID int64) (PhotoAsset
 	return asset, nil
 }
 
+// PhotoAssetIDsForNodes resolves photo membership in one read transaction.
+func (s *Store) PhotoAssetIDsForNodes(ctx context.Context, nodeIDs []int64, collapseDuplicates bool) (map[int64]string, error) {
+	ids := make(map[int64]string, len(nodeIDs))
+	encoded, err := json.Marshal(nodeIDs)
+	if err != nil {
+		return nil, err
+	}
+	population := selectCompiledPopulation(compiledQueryFragment{sql: `n.id IN (SELECT value FROM json_each(?))`, args: []any{string(encoded)}}, collapseDuplicates)
+	err = s.photoReadTx(ctx, func(tx *sql.Tx) (retErr error) {
+		rows, err := tx.QueryContext(ctx, `SELECT pf.node_id,pf.asset_id FROM photo_files pf JOIN (`+population.sql+`) accepted ON accepted.node_id=pf.node_id WHERE pf.asset_id IS NOT NULL`, population.args...)
+		if err != nil {
+			return err
+		}
+		defer func() { retErr = errors.Join(retErr, rows.Close()) }()
+		for rows.Next() {
+			var nodeID int64
+			var assetID string
+			if err := rows.Scan(&nodeID, &assetID); err != nil {
+				return err
+			}
+			ids[nodeID] = assetID
+		}
+		return rows.Err()
+	})
+	return ids, err
+}
+
 // PhotoSettings returns the virtual or stored vault preference.
 func (s *Store) PhotoSettings(ctx context.Context) (PhotoSettings, error) {
 	var settings PhotoSettings

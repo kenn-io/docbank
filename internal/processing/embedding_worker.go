@@ -100,6 +100,7 @@ type EmbeddingRuntimeRegistry struct {
 	mu       sync.RWMutex
 	runtimes map[string]EmbeddingRuntime
 	bindings map[embeddingRuntimeBinding]EmbeddingRuntime
+	profiles map[string]store.ProcessingProfileRecord
 }
 
 type embeddingRuntimeBinding struct {
@@ -148,7 +149,7 @@ func (registry *EmbeddingRuntimeRegistry) Fingerprints() []string {
 
 func NewEmbeddingRuntimeRegistry() *EmbeddingRuntimeRegistry {
 	return &EmbeddingRuntimeRegistry{
-		runtimes: make(map[string]EmbeddingRuntime), bindings: make(map[embeddingRuntimeBinding]EmbeddingRuntime),
+		profiles: make(map[string]store.ProcessingProfileRecord), runtimes: make(map[string]EmbeddingRuntime), bindings: make(map[embeddingRuntimeBinding]EmbeddingRuntime),
 	}
 }
 
@@ -290,7 +291,10 @@ type EmbeddingWorker struct {
 	wait                                           func(context.Context, time.Duration) error
 	descriptorFingerprints                         []string
 	reconcileAfter                                 string
+	reconcileTextDone, reconcileImageDone          bool
+	imageAfter                                     store.ImageReconcilePosition
 	reconcileAt                                    time.Time
+	imageRejections                                map[store.ImagePreparationRejectionKey]struct{}
 }
 
 func NewEmbeddingWorker(config EmbeddingWorkerConfig) (*EmbeddingWorker, error) {
@@ -326,7 +330,8 @@ func NewEmbeddingWorker(config EmbeddingWorkerConfig) (*EmbeddingWorker, error) 
 		config.Wait = jobs.Wait
 	}
 	return &EmbeddingWorker{
-		catalog: config.Catalog, authority: config.Authority, blobs: config.Blobs,
+		imageRejections: make(map[store.ImagePreparationRejectionKey]struct{}),
+		catalog:         config.Catalog, authority: config.Authority, blobs: config.Blobs,
 		generationBlobs: config.GenerationBlobs, runtime: config.Runtime, gate: config.Gate,
 		owner: config.Owner, leaseDuration: config.LeaseDuration, idleDelay: config.IdleDelay,
 		retryLimit: config.RetryLimit, retryBaseDelay: config.RetryBaseDelay,
@@ -393,9 +398,25 @@ func (worker *EmbeddingWorker) ScanOnce(ctx context.Context) (int, error) {
 			}); ok {
 				spaces = runtime.VectorSpaces()
 			}
+			var imageProfiles []store.ProcessingProfileRecord
+			if registry, ok := worker.runtime.(*EmbeddingRuntimeRegistry); ok {
+				registry.mu.RLock()
+				for _, profile := range registry.profiles {
+					imageProfiles = append(imageProfiles, profile)
+				}
+				registry.mu.RUnlock()
+			}
+			var prepareImage func(context.Context, store.ProcessingProfileRecord, document.EmbeddingBindingV1, string) (store.EmbeddingInputGenerationRecord, document.EmbeddingDescriptor, error)
+			if runtime, ok := worker.runtime.(interface {
+				ImageGeneration(ctx context.Context, profile store.ProcessingProfileRecord, binding document.EmbeddingBindingV1, versionID string) (store.EmbeddingInputGenerationRecord, document.EmbeddingDescriptor, error)
+			}); ok {
+				prepareImage = runtime.ImageGeneration
+			}
 			result, err := worker.catalog.ReconcileEmbeddingJobs(ctx, store.EmbeddingReconcileRequest{
-				Mutate: worker.gate.MutateContext,
-				After:  worker.reconcileAfter, Limit: 100, At: worker.clock().UTC(),
+				Mutate: worker.gate.MutateContext, ImageProfiles: imageProfiles, ImageAfter: worker.imageAfter, PrepareImageGeneration: prepareImage,
+				After: worker.reconcileAfter, Limit: 100, At: worker.clock().UTC(),
+				SkipGenerations: worker.reconcileTextDone, SkipImages: worker.reconcileImageDone,
+				ImageRejections:        worker.imageRejections,
 				DescriptorFingerprints: worker.descriptorFingerprints, VectorSpaces: spaces,
 				HydrateGeneration: func(ctx context.Context, generation store.EmbeddingInputGenerationRecord) (store.EmbeddingInputGenerationRecord, error) {
 					return hydrateEmbeddingGeneration(ctx, worker.generationBlobs, generation)
@@ -408,7 +429,11 @@ func (worker *EmbeddingWorker) ScanOnce(ctx context.Context) (int, error) {
 				return processed, ErrEmbeddingPersistence
 			}
 			worker.reconcileAfter = result.Next
-			if result.Next == "" {
+			worker.imageAfter = result.ImageNext
+			worker.reconcileTextDone = result.Next == ""
+			worker.reconcileImageDone = result.ImageNext == (store.ImageReconcilePosition{})
+			if worker.reconcileTextDone && worker.reconcileImageDone {
+				worker.reconcileTextDone, worker.reconcileImageDone = false, false
 				worker.reconcileAt = worker.clock().Add(time.Minute)
 			}
 			reconciled = true
@@ -639,7 +664,7 @@ func (worker *EmbeddingWorker) executeBatches(ctx context.Context, claim Embeddi
 				return document.EmbeddingResult{}, prior, "", err
 			}
 			var err error
-			if execution.Provider == nil || work.Binding.InputKind == document.EmbeddingInputOriginalFile {
+			if execution.Provider == nil || (work.Binding.InputKind == document.EmbeddingInputOriginalFile || work.Binding.InputKind == document.EmbeddingInputImage) {
 				execution, err = worker.runtime.Prepare(ctx, work)
 				if err != nil {
 					closeEmbeddingInputs(execution.Inputs)

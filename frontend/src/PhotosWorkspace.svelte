@@ -5,6 +5,7 @@
 
 <script lang="ts">
   import IconAction from "./IconAction.svelte";
+  import PhotoSearchStatus from "./PhotoSearchStatus.svelte";
   import { reportAction, reportFailure } from "./action-events.js";
   import { type PhotoBrowseRow } from "./photoRows.js";
   import { fittedPhotoView } from "./photoView.js";
@@ -175,10 +176,23 @@
     enteringReview = true;
     returnFocus = document.activeElement as HTMLElement;
     try {
+      let assetIDs: string[] | undefined;
+      if (!resume && photos.snapshotID) {
+        const scope = await photos.actionScope();
+        if (!scope) {
+          photos.actionError =
+            photos.error || "Could not capture the search results. Refresh and try again.";
+          onactionerror?.(photos.actionError);
+          return;
+        }
+        assetIDs = scope.asset_ids;
+      }
       const captured = resume
         ? await review.restore()
-        : await review.start(photos.query, (message) =>
-            cullConfirmation!.confirm(message, "Replace"),
+        : await review.start(
+            photos.fallbackReason ? { ...photos.query, mode: "lexical" } : photos.query,
+            (message) => cullConfirmation!.confirm(message, "Replace"),
+            assetIDs,
           );
       if (captured && review === cull && !culling && !comparing && editor.canChangeTarget())
         photos.culling = true;
@@ -203,7 +217,7 @@
     photos.cullEditor?.dispose();
     photos.cullEditor = undefined;
     await cull?.flush();
-    await refresh();
+    await reread();
     await editor.reload();
     await tick();
     if (returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
@@ -235,7 +249,7 @@
       actionError?.(error);
       if (refresh) {
         onfaceschanged?.();
-        if (owner.dependsOnPeople) void owner.refresh(alive ? preserve : undefined);
+        if (owner.dependsOnPeople) void reread(owner);
       }
     };
     return faces;
@@ -352,7 +366,7 @@
       else {
         // A background import or status change has no receipt; sibling views still hold the old values.
         onmetadatachanged?.(undefined, tags);
-        await refresh();
+        await reread();
       }
     };
   });
@@ -386,7 +400,7 @@
       forceRefresh ||
       (refreshList && (refreshing || (photos.started && photos.reloadsAfter(rotations))))
     )
-      await refresh();
+      await reread();
   }
   async function suggestionRefresh(
     receipt?: PhotoAuthoredReceipt,
@@ -394,7 +408,7 @@
   ) {
     if (receipt) await metadataRefresh(receipt, tags, false, false);
     await onloadtags?.();
-    await refresh();
+    await reread();
   }
   function unavailable() {
     editor.unavailable(
@@ -776,6 +790,10 @@
   let grid = $state<{ preservePosition: () => () => Promise<void> }>();
   let rejectsOpen = $state(false);
   const preserve = () => grid?.preservePosition();
+  const reread = (owner = photos) =>
+    owner.snapshotID
+      ? owner.refresh(alive ? preserve : undefined, true).catch(() => {})
+      : owner.refresh(alive ? preserve : undefined);
   export function refresh(live = false) {
     return photos.refresh(preserve, live);
   }
@@ -896,11 +914,12 @@
   });
   const exportSelection = $derived(photos.scope());
   const exportSelectionCount = $derived(exportSelection.asset_ids?.length ?? photos.total);
-  function exportPhotos(selected = false): void {
-    const ids = selected ? (exportSelection.asset_ids ?? []) : [];
+  async function exportPhotos(selected = false): Promise<void> {
+    const scope = await photos.actionScope(selected);
+    if (!scope) return;
     onexport?.({
       label: selected ? "Selected photos" : title,
-      photos: { query: photos.query, asset_ids: ids, hidden: photos.hidden },
+      photos: { ...scope, hidden: photos.hidden },
       total: selected ? exportSelectionCount : photos.total,
     });
   }
@@ -1090,6 +1109,17 @@
     {cache}
     onclose={() => void closeReview()}
   />{/if}
+{#snippet searchStatus()}
+  <PhotoSearchStatus
+    status={{
+      fallback_reason: photos.fallbackReason,
+      truncated: photos.truncated,
+      coverage_incomplete: photos.coverageIncomplete,
+    }}
+    total={photos.total}
+    located={mapMode}
+  />
+{/snippet}
 {#snippet vaultReason()}Vault identity unavailable. Reload to retry.{/snippet}
 <main class="photos-workspace" aria-label={albumID ? "Photo album" : "Photo library"}>
   {#if mapMode && !tiles.tile_url}
@@ -1105,8 +1135,10 @@
       {#if photos.started}<div class="map-controls">
           <span>{photos.total.toLocaleString()} located photo{photos.total === 1 ? "" : "s"}</span>
         </div>{/if}
+      {@render searchStatus()}
       {#if photos.mapCapped}<p class="photo-search-limit" role="status">
-          Showing the newest {photos.items.length.toLocaleString()} of {photos.total.toLocaleString()}
+          Showing the {photos.query.sort?.field === "relevance" ? "best" : "newest"}
+          {photos.items.length.toLocaleString()} of {photos.total.toLocaleString()}
           located photos. Narrow your search to see the rest.
         </p>{/if}
       <div class="map-tabs">
@@ -1217,7 +1249,7 @@
                 />
               {:else if searchable}<SelectDropdown
                   title="Sort photos"
-                  disabled={actionDisabled}
+                  disabled={actionDisabled || photos.query.mode !== "lexical"}
                   value={photos.query.sort?.field}
                   options={sortOptions}
                   onchange={(value) =>
@@ -1311,7 +1343,10 @@
                   {/if}
                   {#if !mapMode}
                     <MenuItem
-                      disabled={actionDisabled || photos.rejectsLoading}
+                      disabled={actionDisabled ||
+                        photos.rejectsLoading ||
+                        !!photos.snapshotID ||
+                        (photos.query.mode !== "lexical" && !photos.fallbackReason)}
                       onselect={() => {
                         if (!editor.canChangeTarget()) return;
                         rejectsOpen = true;
@@ -1359,6 +1394,7 @@
             </div>
           </div>
           {#if photos.actionError && !onactionerror}<p role="alert">{photos.actionError}</p>{/if}
+          {#if searchable}{@render searchStatus()}{/if}
           {#if albums && modal !== "duplicate"}<PhotoAlbumPending {albums} {onnavigate} />{/if}
           {#if albums?.error}<div class="photo-error" role="alert">{albums.error}</div>{/if}
           {#if albums?.notice}<div class="photo-notice" role="status">
@@ -1370,17 +1406,19 @@
                   }}>Open album</a
                 >{/if}
             </div>{/if}
-          {#if photos.query.sort?.field === "relevance" && photos.total > photos.items.length}
+          {#if !photos.snapshotID && (photos.query.mode === "lexical" || photos.fallbackReason) && photos.query.sort?.field === "relevance" && photos.total > photos.items.length}
             <p class="photo-search-limit">
-              Showing the best 250 of {photos.total.toLocaleString()} matches. Refine the search or sort
-              by capture date to see all.
+              Showing the best 250 of {photos.total.toLocaleString()} matches. {photos.fallbackReason
+                ? "Choose Metadata and sort by capture date to see all."
+                : "Refine the search or sort by capture date to see all."}
             </p>
           {/if}
           {#if !mapMode && photos.error}
             <div class="photo-error" role="alert">
               <span>{photos.error}</span><Button
                 size="sm"
-                onclick={() => void photos.retry(preserve)}>Retry</Button
+                onclick={() => void photos.retry(preserve)}
+                >{photos.refreshRequired ? "Refresh" : "Retry"}</Button
               >
             </div>
           {/if}

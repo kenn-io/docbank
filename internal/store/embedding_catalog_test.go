@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -989,6 +990,10 @@ func embeddingSetFixture(
 	if err := json.Unmarshal([]byte(canonicalProfile), &profile); err != nil {
 		panic(err)
 	}
+	var sourceChecksum string
+	if err := s.db.QueryRow(`SELECT blob_hash FROM content_versions WHERE version_id=?`, versionID).Scan(&sourceChecksum); err != nil {
+		panic(err)
+	}
 	_, fingerprints, err := document.CanonicalProfile(profile)
 	if err != nil {
 		panic(err)
@@ -1010,7 +1015,7 @@ func embeddingSetFixture(
 		SourceVersionID: versionID, ProcessingProfileFingerprint: profileFingerprint,
 		EvidenceFingerprint: testSHA256([]byte(seed + "evidence")), TokenizerFingerprint: testSHA256([]byte(seed + "tokenizer")),
 		ChunkPolicyFingerprint: testSHA256([]byte(seed + "chunk-policy")), FormatterFingerprint: testSHA256([]byte(seed + "formatter")),
-		AttachmentID: attachmentID, GenerationChecksum: catalogSourceHash,
+		AttachmentID: attachmentID, GenerationChecksum: sourceChecksum,
 		CreatedAt: embeddingCatalogTime,
 	}
 	if kind == document.EmbeddingInputRenditionChunk {
@@ -1040,7 +1045,7 @@ func embeddingSetFixture(
 			generation.Inputs[index] = EmbeddingInputReference{ID: input.Key, RenderedChecksum: input.Checksum}
 		}
 	} else {
-		generation.Inputs = []EmbeddingInputReference{{ID: versionID, RenderedChecksum: catalogSourceHash}}
+		generation.Inputs = []EmbeddingInputReference{{ID: versionID, RenderedChecksum: sourceChecksum}}
 	}
 	expectedKeys := make([]string, len(generation.Inputs))
 	expectedChecksums := make([]string, len(generation.Inputs))
@@ -1055,7 +1060,7 @@ func embeddingSetFixture(
 			expectedKeys[index], expectedChecksums[index] = input.Key, input.Checksum
 		}
 	} else {
-		expectedKeys[0], expectedChecksums[0] = versionID, catalogSourceHash
+		expectedKeys[0], expectedChecksums[0] = versionID, sourceChecksum
 	}
 	values := make([][]float64, len(expectedKeys))
 	for index := range values {
@@ -1896,4 +1901,260 @@ func TestEmbeddingJobExpiredClaimsExhaustBudget(t *testing.T) {
 	_, _, found, err = s.ClaimNextEmbeddingWork(t.Context(), "reconciled-worker", at, time.Minute, []string{request.Descriptor.Fingerprint})
 	require.NoError(t, err)
 	require.False(t, found, "enqueue must not reopen exhausted work")
+}
+
+type imageEmbeddingCatalogFixture struct {
+	s       *Store
+	node    Node
+	request EmbeddingJobRequest
+	binding document.EmbeddingBindingV1
+}
+
+func newImageEmbeddingCatalogFixture(t *testing.T) imageEmbeddingCatalogFixture {
+	t.Helper()
+	s, _, profile, _ := newEmbeddingCatalogFixture(t)
+	bindingID := "optional"
+	node, err := s.CreateFile(t.Context(), s.RootID(), "coverage.jpg", testSHA256([]byte("image-coverage")), 20, "image/jpeg")
+	require.NoError(t, err)
+	version := node.CurrentVersionID
+	recipe, err := document.BuiltInVisualPreviewRecipe("grid")
+	require.NoError(t, err)
+	preview, err := s.PublishVisualPreview(t.Context(), version, readyVisualPreviewWithRecipe(t, node.BlobHash, testSHA256([]byte("grid-coverage")), 9, recipe), &BlobPhysical{Encoding: looseEncodingRaw, StoredBytes: 9})
+	require.NoError(t, err)
+	record := embeddingSetFixture(s, version, profile.Fingerprint, document.EmbeddingInputOriginalFile, bindingID, "")
+	descriptor := record.VectorSpace.Descriptor
+	descriptor.InputKinds = []document.EmbeddingInputKind{document.EmbeddingInputImage}
+	descriptor, err = document.NewEmbeddingDescriptor(descriptor)
+	require.NoError(t, err)
+	var portable document.ProcessingProfileV1
+	require.NoError(t, json.Unmarshal(profile.CanonicalProfile, &portable))
+	for i := range portable.Embeddings {
+		if portable.Embeddings[i].Name == bindingID {
+			portable.Embeddings[i].InputKind = document.EmbeddingInputImage
+			portable.Embeddings[i].Descriptor.Fingerprint = descriptor.Fingerprint
+		}
+	}
+	// Two image bindings must retain separate generation authority.
+	for _, candidate := range portable.Embeddings {
+		if candidate.Name == bindingID {
+			other := candidate
+			other.Name = "other-image"
+			portable.Embeddings = append(portable.Embeddings, other)
+			break
+		}
+	}
+	canonical, fingerprints, err := document.CanonicalProfile(portable)
+	require.NoError(t, err)
+	profile.CanonicalProfile, profile.Fingerprint = canonical, fingerprints.Profile
+	profile.RenditionRequestFingerprint = fingerprints.RenditionRequest
+	profile.EvidenceLexicalFingerprint = fingerprints.EvidenceLexical
+	profile.RetentionDisclosureFingerprint = fingerprints.RetentionDisclosure
+	record.VectorSpace.Descriptor = descriptor
+	record.InputGeneration.ProcessingProfileFingerprint = profile.Fingerprint
+	record.InputGeneration.EvidenceFingerprint = preview.Checksum
+	record.InputGeneration.ID = ImageEmbeddingGenerationID(record.InputGeneration.SourceVersionID, record.InputGeneration.ProcessingProfileFingerprint, bindingID, record.InputGeneration.EvidenceFingerprint)
+	record.InputGeneration.ChunkPolicyFingerprint = ImageEmbeddingPolicyFingerprint()
+	var binding document.EmbeddingBindingV1
+	for _, candidate := range portable.Embeddings {
+		if candidate.Name == bindingID {
+			binding = candidate
+		}
+	}
+	consent := ProviderOperationAuthorizationRequest{Principal: "operator:coverage", Scope: "embedding:coverage", ProfileFingerprint: profile.Fingerprint, DisclosureFingerprint: binding.DisclosureFingerprint, InputClasses: []string{string(document.EmbeddingInputImage)}, RetainedArtifactClasses: []string{"embedding_vector_set"}}
+	_, err = s.GrantConsent(t.Context(), ProcessingConsentGrantRequest{Principal: consent.Principal, Scope: consent.Scope, ProfileFingerprint: consent.ProfileFingerprint, DisclosureFingerprint: consent.DisclosureFingerprint, InputClasses: consent.InputClasses, RetainedArtifactClasses: consent.RetainedArtifactClasses})
+	require.NoError(t, err)
+	request := EmbeddingJobRequest{ContentVersionID: version, Profile: profile, BindingID: bindingID, Descriptor: record.VectorSpace.Descriptor, InputGeneration: record.InputGeneration, Authorization: consent}
+
+	return imageEmbeddingCatalogFixture{s, node, request, binding}
+}
+
+func (f imageEmbeddingCatalogFixture) publish(t *testing.T, values ...[]float64) (EmbeddingSetRecord, document.VectorSetV1) {
+	t.Helper()
+	s, version, profile, bindingID, descriptor, consent, binding := f.s, f.node.CurrentVersionID, f.request.Profile, f.request.BindingID, f.request.Descriptor, f.request.Authorization, f.binding
+	job, err := s.EnqueueEmbeddingJob(t.Context(), f.request)
+	require.NoError(t, err)
+	claim, work, found, err := s.ClaimEmbeddingWork(t.Context(), job.ID, "photo-vectors", time.Now(), time.Minute, []string{descriptor.Fingerprint})
+	require.NoError(t, err)
+	require.True(t, found)
+	if len(values) == 0 {
+		values = [][]float64{{1, 2, 3, 4, 5, 6, 7, 8}}
+	}
+	vector, err := document.NewVectorSetV1(document.VectorSetV1Input{VectorSpaceFingerprint: work.VectorSpaceID, Metric: binding.Metric, Normalization: binding.Normalization, Dimension: binding.Dimensions, InputKeys: []string{work.InputGeneration.Inputs[0].ID}, InputChecksums: []string{work.InputGeneration.Inputs[0].RenderedChecksum}, Values: values})
+	require.NoError(t, err)
+	payload, checksum, err := document.EncodeVectorSetV1(vector)
+	require.NoError(t, err)
+	payloadHash := testSHA256(payload)
+	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error { return s.EnsureBlobTx(tx, payloadHash, int64(len(payload))) }))
+	record := EmbeddingSetRecord{ID: testSHA256([]byte("image-vector-set" + version + bindingID)), VaultID: s.VaultID(), BindingID: bindingID, InputKind: document.EmbeddingInputImage, ContentVersionID: version, ProcessingProfileFingerprint: profile.Fingerprint, EmbeddingInputFingerprint: work.EmbeddingInputFingerprint, VectorSpace: EmbeddingVectorSpaceRecord{ID: work.VectorSpaceID, ContractVersion: EmbeddingVectorSpaceContractV1, Descriptor: descriptor}, InputGeneration: work.InputGeneration, VectorSet: EmbeddingVectorSetRecord{ID: checksum, ContractVersion: EmbeddingVectorSetContractV1, VectorSpaceID: work.VectorSpaceID, PayloadBlobHash: payloadHash, PayloadChecksum: checksum, Payload: payload}, CreatedAt: embeddingCatalogTime}
+	require.NoError(t, s.StageEmbeddingSetWithLease(t.Context(), record, claim.AttemptID, claim.Epoch, time.Now()))
+	prior, err := s.AuthorizeProviderOperation(t.Context(), consent)
+	require.NoError(t, err)
+	head := EmbeddingHeadRecord{Key: EmbeddingHeadKey{ContentVersionID: version, BindingID: bindingID, InputKind: document.EmbeddingInputImage}, SetID: record.ID, VectorSpaceID: work.VectorSpaceID, ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime, FencingToken: claim.Epoch}
+	err = s.PublishEmbeddingWork(t.Context(), claim, work, head, prior, EmbeddingAttemptReceipt{}, time.Now())
+	require.NoError(t, err)
+
+	return record, vector
+}
+
+func TestEnqueueEmbeddingJobRejectsInvalidImageGeneration(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, message string
+		mutate        func(*EmbeddingJobRequest)
+	}{
+		{"unknown policy", "unknown image embedding producer policy", func(r *EmbeddingJobRequest) {
+			r.InputGeneration.ChunkPolicyFingerprint = testSHA256([]byte("15:image/grid/v999"))
+		}},
+		{"another binding", "image generation does not match exact processing profile binding identity", func(r *EmbeddingJobRequest) { r.BindingID = "other-image" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newImageEmbeddingCatalogFixture(t)
+			invalid := f.request
+			tc.mutate(&invalid)
+			_, err := f.s.EnqueueEmbeddingJob(t.Context(), invalid)
+			require.ErrorContains(t, err, tc.message)
+		})
+	}
+}
+
+func TestEmbeddingReconciliationRestoresPendingImageGenerationInMixedProfile(t *testing.T) {
+	t.Parallel()
+	f := newImageEmbeddingCatalogFixture(t)
+	require.NoError(t, f.s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+		return ensureProcessingProfileTx(t.Context(), tx, f.request.Profile)
+	}))
+	var secondVersion string
+	require.NoError(t, f.s.db.QueryRow(`SELECT version_id FROM content_versions WHERE blob_hash=? ORDER BY version_id LIMIT 1`, catalogSourceHash).Scan(&secondVersion))
+	record := embeddingSetFixture(f.s, secondVersion, f.request.Profile.Fingerprint, document.EmbeddingInputOriginalFile, "required", "")
+	require.NoError(t, f.s.StageEmbeddingSet(t.Context(), record))
+	require.NoError(t, f.s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
+		FencingToken: 1,
+		Key:          EmbeddingHeadKey{ContentVersionID: secondVersion, BindingID: "required", InputKind: document.EmbeddingInputOriginalFile},
+		SetID:        record.ID, VectorSpaceID: record.VectorSpace.ID,
+		ProcessingProfileFingerprint: f.request.Profile.Fingerprint, PublishedAt: embeddingCatalogTime,
+	}))
+	binding := workerProfileEmbeddingBinding(t, f.request.Profile, "required")
+	_, err := f.s.GrantConsent(t.Context(), ProcessingConsentGrantRequest{
+		Principal: "operator:original-reconcile", Scope: "embedding:required",
+		ProfileFingerprint: f.request.Profile.Fingerprint, DisclosureFingerprint: binding.DisclosureFingerprint,
+		InputClasses: []string{string(document.EmbeddingInputOriginalFile)}, RetainedArtifactClasses: []string{"embedding_vector_set"},
+	})
+	require.NoError(t, err)
+	_, err = f.s.EnqueueEmbeddingJob(t.Context(), f.request)
+	require.NoError(t, err)
+	// Restore retains pending generations but omits job rows.
+	_, err = f.s.db.Exec(`DELETE FROM embedding_jobs`)
+	require.NoError(t, err)
+	_, err = f.s.ReconcileEmbeddingJobs(t.Context(), EmbeddingReconcileRequest{
+		ImageProfiles: []ProcessingProfileRecord{f.request.Profile},
+		ImageAfter:    ImageReconcilePosition{ProfileFingerprint: f.request.Profile.Fingerprint, ContentVersionID: f.node.CurrentVersionID},
+		Limit:         100, At: time.Now(), Mutate: embeddingTestMutation,
+		DescriptorFingerprints: []string{f.request.Descriptor.Fingerprint, record.VectorSpace.Descriptor.Fingerprint},
+		PrepareImageGeneration: func(_ context.Context, _ ProcessingProfileRecord, _ document.EmbeddingBindingV1, _ string) (EmbeddingInputGenerationRecord, document.EmbeddingDescriptor, error) {
+			t.Fatal("discovery must start past the restored photo")
+			return EmbeddingInputGenerationRecord{}, document.EmbeddingDescriptor{}, nil
+		},
+	})
+	require.NoError(t, err)
+	var imageJobs, originalJobs int
+	require.NoError(t, f.s.db.QueryRow(`SELECT
+		(SELECT COUNT(*) FROM embedding_jobs WHERE content_version_id=? AND binding_id='optional' AND input_kind='image'),
+		(SELECT COUNT(*) FROM embedding_jobs WHERE content_version_id=? AND binding_id='required')`,
+		f.node.CurrentVersionID, f.node.CurrentVersionID).Scan(&imageJobs, &originalJobs))
+	require.Equal(t, 1, imageJobs)
+	require.Zero(t, originalJobs)
+}
+
+func TestEmbeddingReconciliationSkipsPurgeSuppressedImages(t *testing.T) {
+	t.Parallel()
+	f := newImageEmbeddingCatalogFixture(t)
+	for _, name := range []string{"optional", "other-image"} {
+		bound := f
+		bound.binding.Name, bound.request.BindingID = name, name
+		bound.request.InputGeneration.ID = ImageEmbeddingGenerationID(f.node.CurrentVersionID, f.request.Profile.Fingerprint, name, f.request.InputGeneration.EvidenceFingerprint)
+		bound.publish(t)
+	}
+	_, err := f.s.PurgeDerivatives(t.Context(), PurgeRequest{ContentVersionIDs: []string{f.node.CurrentVersionID}})
+	require.NoError(t, err)
+	calls := 0
+	request := EmbeddingReconcileRequest{ImageProfiles: []ProcessingProfileRecord{f.request.Profile}, Limit: 100, At: time.Now(), DescriptorFingerprints: []string{f.request.Descriptor.Fingerprint}, Mutate: embeddingTestMutation, PrepareImageGeneration: func(_ context.Context, _ ProcessingProfileRecord, binding document.EmbeddingBindingV1, version string) (EmbeddingInputGenerationRecord, document.EmbeddingDescriptor, error) {
+		calls++
+		generation := f.request.InputGeneration
+		generation.ID = ImageEmbeddingGenerationID(version, f.request.Profile.Fingerprint, binding.Name, generation.EvidenceFingerprint)
+		return generation, f.request.Descriptor, nil
+	}}
+	for range 2 {
+		_, err := f.s.ReconcileEmbeddingJobs(t.Context(), request)
+		require.NoError(t, err)
+	}
+	require.Zero(t, calls, "purge-suppressed photos must not have their previews prepared")
+}
+
+func TestEmbeddingReconciliationDiscoversImagesAcrossPagesOnce(t *testing.T) {
+	t.Parallel()
+	f := newImageEmbeddingCatalogFixture(t)
+	// Only this photo has a preview; unrelated eligible photos still consume pages.
+	for i := range 4097 {
+		_, err := f.s.CreateFile(t.Context(), f.s.RootID(), fmt.Sprintf("scope-%04d.jpg", i), testSHA256([]byte(fmt.Sprintf("scope-%04d", i))), 20, "image/jpeg")
+		require.NoError(t, err)
+	}
+	calls := 0
+	request := EmbeddingReconcileRequest{ImageProfiles: []ProcessingProfileRecord{f.request.Profile}, Limit: 100, At: time.Now(), DescriptorFingerprints: []string{f.request.Descriptor.Fingerprint}, Mutate: embeddingTestMutation, PrepareImageGeneration: func(_ context.Context, _ ProcessingProfileRecord, binding document.EmbeddingBindingV1, version string) (EmbeddingInputGenerationRecord, document.EmbeddingDescriptor, error) {
+		require.Equal(t, f.node.CurrentVersionID, version)
+		calls++
+		generation := f.request.InputGeneration
+		generation.ID = ImageEmbeddingGenerationID(version, f.request.Profile.Fingerprint, binding.Name, generation.EvidenceFingerprint)
+		return generation, f.request.Descriptor, nil
+	}}
+	for range 2 {
+		pages := 0
+		for {
+			result, err := f.s.ReconcileEmbeddingJobs(t.Context(), request)
+			require.NoError(t, err)
+			pages++
+			request.After, request.ImageAfter = result.Next, result.ImageNext
+			if request.ImageAfter == (ImageReconcilePosition{}) {
+				break
+			}
+			require.Less(t, pages, 50)
+		}
+		require.Greater(t, pages, 40)
+	}
+	require.Equal(t, 2, calls, "each binding prepares its own generation once")
+	// The profile has two image bindings. Publish each without invoking a provider.
+	for _, name := range []string{"optional", "other-image"} {
+		bound := f
+		bound.binding.Name, bound.request.BindingID = name, name
+		bound.request.InputGeneration.ID = ImageEmbeddingGenerationID(f.node.CurrentVersionID, f.request.Profile.Fingerprint, name, f.request.InputGeneration.EvidenceFingerprint)
+		bound.publish(t)
+	}
+	// Job rows would also suppress reopening; only the published heads may.
+	_, err := f.s.db.Exec(`DELETE FROM embedding_jobs`)
+	require.NoError(t, err)
+	request.After, request.ImageAfter = "", ImageReconcilePosition{}
+	for {
+		result, err := f.s.ReconcileEmbeddingJobs(t.Context(), request)
+		require.NoError(t, err)
+		request.After, request.ImageAfter = result.Next, result.ImageNext
+		if request.ImageAfter == (ImageReconcilePosition{}) {
+			break
+		}
+	}
+	require.Equal(t, 2, calls, "published images must not reopen their previews")
+}
+
+func (f imageEmbeddingCatalogFixture) forNode(t *testing.T, node Node) imageEmbeddingCatalogFixture {
+	t.Helper()
+	recipe, err := document.BuiltInVisualPreviewRecipe("grid")
+	require.NoError(t, err)
+	preview, err := f.s.PublishVisualPreview(t.Context(), node.CurrentVersionID, readyVisualPreviewWithRecipe(t, node.BlobHash, testSHA256([]byte("grid-"+node.CurrentVersionID)), 9, recipe), &BlobPhysical{Encoding: looseEncodingRaw, StoredBytes: 9})
+	require.NoError(t, err)
+	f.node = node
+	f.request.ContentVersionID = node.CurrentVersionID
+	f.request.InputGeneration.SourceVersionID = node.CurrentVersionID
+	f.request.InputGeneration.Inputs = []EmbeddingInputReference{{ID: node.CurrentVersionID, RenderedChecksum: f.request.InputGeneration.GenerationChecksum}}
+	f.request.InputGeneration.EvidenceFingerprint = preview.Checksum
+	f.request.InputGeneration.ID = ImageEmbeddingGenerationID(node.CurrentVersionID, f.request.Profile.Fingerprint, f.binding.Name, preview.Checksum)
+	return f
 }

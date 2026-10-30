@@ -179,7 +179,7 @@ func TestSearcherRevalidatesTheNameItMatched(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, backend.revalidated, 1)
 	require.NotEmpty(t, backend.revalidated[0].Evidence)
-	assert.Equal(t, store.SearchEvidenceIdentity{Kind: "node_name", NodeName: "semantic.pdf"},
+	assert.Equal(t, store.SearchEvidenceIdentity{NodeID: 8, ContentVersionID: "version-semantic", Kind: "node_name", NodeName: "semantic.pdf"},
 		backend.revalidated[0].Evidence[0])
 }
 

@@ -1038,7 +1038,7 @@
             ],
           },
         });
-      } else if (affected.has(photos) && photos.dependsOnPeople) void photos.refresh();
+      } else if (affected.has(photos) && photos.dependsOnPeople) void refreshForPeople(photos);
     }
     queuePhotoDocumentsRefresh();
   }
@@ -2915,15 +2915,17 @@
     )
       void photoAlbums?.load();
     for (const photos of siblingPhotoLists()) {
-      const rotations = receipt ? photos.metadataChanged(receipt) : new Map<string, number>();
+      const rotations = receipt ? photos.metadataChanged(receipt) : undefined;
       const preparedChanged = receipt
         ? photos.authored.targets.some((target) =>
             receipt.after.some((file) => file.file_id === target.file_id),
           )
         : photos.authored.targets.length > 0;
       const refresh =
-        !receipt || photos.loading || photos.reloadsAfter(rotations)
-          ? photos.refresh()
+        photos.snapshotID || !rotations || photos.loading || photos.reloadsAfter(rotations)
+          ? photos.snapshotID
+            ? photos.refresh(undefined, true).catch(() => {})
+            : photos.refresh()
           : Promise.resolve();
       if (preparedChanged) void refresh.then(() => photos.authored.reload());
     }
@@ -2945,8 +2947,13 @@
     }
   }
 
+  function refreshForPeople(photos: Photos) {
+    return photos.snapshotID ? photos.refresh(undefined, true).catch(() => {}) : photos.refresh();
+  }
+
   function handlePhotoFacesChanged(): void {
-    for (const photos of siblingPhotoLists()) if (photos.dependsOnPeople) void photos.refresh();
+    for (const photos of siblingPhotoLists())
+      if (photos.dependsOnPeople) void refreshForPeople(photos);
     queuePhotoDocumentsRefresh();
   }
 

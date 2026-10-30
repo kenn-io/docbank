@@ -288,6 +288,7 @@ export class PhotoCull {
   async start(
     query: Query,
     confirm: (message: string) => boolean | Promise<boolean> = () => false,
+    ids?: string[],
   ) {
     if (this.capturing) return false;
     const controller = (this.capture = new AbortController());
@@ -304,26 +305,31 @@ export class PhotoCull {
       });
       if (previous && !(await confirm("Replace saved cull progress?"))) return false;
       this.progress = "Capturing photos…";
-      const page = await createSnapshot(
-        this.session,
-        query,
-        { photos: true, page_size: 250 },
-        controller.signal,
-      );
-      const captured = await captureSnapshotTargets(
-        this.session,
-        page,
-        controller.signal,
-        {},
-        (loaded, total) => {
-          this.progress = `Capturing ${loaded} of ${total} photos…`;
-        },
-      );
-      const ids = captured.members.map((member) => {
-        if (!member.asset_id) throw new Error("Photo snapshot membership was incomplete.");
-        return member.asset_id;
-      });
-      const flags = new Map(captured.members.map((member) => [member.asset_id!, member.flag!]));
+      let flags: Map<string, PhotoBrowseRowFlag>;
+      if (ids) {
+        flags = await this.flagsFor(ids, controller.signal);
+      } else {
+        const page = await createSnapshot(
+          this.session,
+          query,
+          { photos: true, page_size: 250 },
+          controller.signal,
+        );
+        const captured = await captureSnapshotTargets(
+          this.session,
+          page,
+          controller.signal,
+          {},
+          (loaded, total) => {
+            this.progress = `Capturing ${loaded} of ${total} photos…`;
+          },
+        );
+        ids = captured.members.map((member) => {
+          if (!member.asset_id) throw new Error("Photo snapshot membership was incomplete.");
+          return member.asset_id;
+        });
+        flags = new Map(captured.members.map((member) => [member.asset_id!, member.flag!]));
+      }
       const run: CullRun = {
         ids,
         checkpoint: {
@@ -359,8 +365,7 @@ export class PhotoCull {
       this.progress = "";
     }
   }
-  private async refreshFlags(signal: AbortSignal) {
-    const ids = this.run!.ids;
+  private async flagsFor(ids: string[], signal: AbortSignal) {
     const flags = new Map<string, PhotoBrowseRowFlag>();
     for (let offset = 0; offset < ids.length; offset += flagLookupLimit) {
       signal.throwIfAborted();
@@ -484,7 +489,7 @@ export class PhotoCull {
     this.remainder = false;
     this.remainderPass = undefined;
     try {
-      const flags = await this.refreshFlags(controller.signal);
+      const flags = await this.flagsFor(this.run!.ids, controller.signal);
       controller.signal.throwIfAborted();
       this.mark(
         "unavailable",
@@ -520,7 +525,7 @@ export class PhotoCull {
       if (this.stale) return;
       const previous = this.run.checkpoint;
       const ids = this.run.ids;
-      const flags = await this.refreshFlags(controller.signal);
+      const flags = await this.flagsFor(ids, controller.signal);
       controller.signal.throwIfAborted();
       const scope = followUp
         ? "unflagged"

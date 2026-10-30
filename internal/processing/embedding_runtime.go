@@ -1,6 +1,7 @@
 package processing
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/upload"
+	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -20,9 +22,19 @@ type embeddingRuntimeBlobs interface {
 	OpenContext(ctx context.Context, hash string) (io.ReadSeekCloser, error)
 }
 
+// ImageSourceIneligibleError preserves the preview reason when an image-only
+// start cannot enqueue any work.
+type ImageSourceIneligibleError struct {
+	Err error
+}
+
+func (err *ImageSourceIneligibleError) Error() string { return err.Err.Error() }
+func (err *ImageSourceIneligibleError) Unwrap() error { return err.Err }
+
 // ProviderEmbeddingRuntime reconstructs exact transient inputs from cataloged
 // blob authority for one already-validated provider descriptor.
 type ProviderEmbeddingRuntime struct {
+	catalog        *store.Store
 	provider       document.EmbeddingProvider
 	blobs          embeddingRuntimeBlobs
 	vectorSpaceID  string
@@ -75,6 +87,33 @@ func (runtime *ProviderEmbeddingRuntime) Prepare(ctx context.Context, work Embed
 		return EmbeddingExecution{}, ErrEmbeddingRuntimeUnavailable
 	}
 	switch work.Binding.InputKind {
+	case document.EmbeddingInputImage:
+		blobs, ok := runtime.blobs.(*blob.Store)
+		if runtime.catalog == nil || !ok {
+			return EmbeddingExecution{}, ErrEmbeddingRuntimeUnavailable
+		}
+		data, _, _, err := strippedPhotoPreview(ctx, runtime.catalog, blobs, work.ContentVersionID)
+		if err != nil {
+			if errors.Is(err, errPhotoPreviewRejected) || errors.Is(err, ErrSourceIneligible) {
+				return EmbeddingExecution{}, errors.Join(ErrEmbeddingInputRejected, err)
+			}
+			return EmbeddingExecution{}, err
+		}
+		policy := directEmbeddingInspectionPolicy(work)
+		policy.Filename, policy.DeclaredMediaType = "preview.jpg", "image/jpeg"
+		policy.InputKind = document.RenditionInputDerivedUpload
+		policy.ExpectedBytes, policy.ExpectedSHA256 = int64(len(data)), workerHashBytes(data)
+		policy.MaxPixels = 1024 * 1024
+		capability, err := media.InspectCapability(bytes.NewReader(data), policy)
+		if err != nil || !capability.Eligible {
+			return EmbeddingExecution{}, errors.Join(ErrEmbeddingInputRejected, err)
+		}
+		source, err := upload.Authorize(ctx, upload.Source{Reader: io.NopCloser(bytes.NewReader(data)), Directory: runtime.spoolDirectory}, capability, upload.UploadMetadata{Filename: "preview.jpg"})
+		if err != nil {
+			return EmbeddingExecution{}, err
+		}
+		return EmbeddingExecution{Provider: runtime.provider, Inputs: []document.EmbeddingInput{{Key: work.ContentVersionID, Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputImage, Source: source}}, Classify: runtime.classify}, nil
+
 	case document.EmbeddingInputRenditionChunk:
 		hydrated, err := hydrateEmbeddingGeneration(ctx, runtime.blobs, work.InputGeneration)
 		if err != nil {
@@ -193,4 +232,34 @@ func directEmbeddingInspectionPolicy(work EmbeddingWork) media.InspectionPolicy 
 		MaxSpineItems: 1_000_000, MaxResources: 1_000_000, MaxPixels: 1_000_000_000,
 		MaxFrames: 1_000_000, MaxDurationMS: 24 * 60 * 60 * 1000,
 	}
+}
+
+func (runtime *ProviderEmbeddingRuntime) ImageGeneration(ctx context.Context, profile store.ProcessingProfileRecord, binding document.EmbeddingBindingV1, versionID string) (store.EmbeddingInputGenerationRecord, document.EmbeddingDescriptor, error) {
+	blobs, ok := runtime.blobs.(*blob.Store)
+	if !ok || runtime.catalog == nil || !runtime.provider.Descriptor().SupportsTextQuery {
+		return store.EmbeddingInputGenerationRecord{}, document.EmbeddingDescriptor{}, &store.ImagePreparationError{Err: ErrEmbeddingRuntimeUnavailable}
+	}
+	data, preview, _, err := strippedPhotoPreview(ctx, runtime.catalog, blobs, versionID)
+	if err != nil {
+		if errors.Is(err, errPhotoPreviewRejected) || errors.Is(err, ErrSourceIneligible) || errors.Is(err, errPhotoDescriptionInput) || errors.Is(err, store.ErrPackageConflict) {
+			err = &store.ImagePreparationError{EvidenceFingerprint: preview, Rejected: errors.Is(err, errPhotoPreviewRejected), Err: err}
+		}
+		return store.EmbeddingInputGenerationRecord{}, document.EmbeddingDescriptor{}, err
+	}
+	version, err := runtime.catalog.ContentVersionByID(ctx, versionID)
+	if err != nil {
+		return store.EmbeddingInputGenerationRecord{}, document.EmbeddingDescriptor{}, err
+	}
+	generation := store.EmbeddingInputGenerationRecord{ID: store.ImageEmbeddingGenerationID(versionID, profile.Fingerprint, binding.Name, preview), SourceVersionID: versionID, ProcessingProfileFingerprint: profile.Fingerprint, EvidenceFingerprint: preview, TokenizerFingerprint: stableHash("image/no-tokenizer"), ChunkPolicyFingerprint: store.ImageEmbeddingPolicyFingerprint(), FormatterFingerprint: stableHash(binding.DocumentFormatter, binding.ModelInput.Fingerprint), GenerationChecksum: workerHashBytes(data), Inputs: []store.EmbeddingInputReference{{ID: versionID, RenderedChecksum: workerHashBytes(data)}}, CreatedAt: version.RecordedAt}
+	return generation, runtime.provider.Descriptor(), nil
+}
+
+func (registry *EmbeddingRuntimeRegistry) ImageGeneration(ctx context.Context, profile store.ProcessingProfileRecord, binding document.EmbeddingBindingV1, versionID string) (store.EmbeddingInputGenerationRecord, document.EmbeddingDescriptor, error) {
+	registry.mu.RLock()
+	runtime := registry.bindings[embeddingRuntimeBinding{profile.Fingerprint, binding.Name, binding.Descriptor.Fingerprint}]
+	registry.mu.RUnlock()
+	if runtime, ok := runtime.(*ProviderEmbeddingRuntime); ok {
+		return runtime.ImageGeneration(ctx, profile, binding, versionID)
+	}
+	return store.EmbeddingInputGenerationRecord{}, document.EmbeddingDescriptor{}, &store.ImagePreparationError{Err: ErrEmbeddingRuntimeUnavailable}
 }

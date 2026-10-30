@@ -69,8 +69,9 @@ func PolicyFingerprint(profile Profile) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	protocol := protocolForDescriptor(descriptorIdentity)
 	encoded, err := json.Marshal(policyIdentity{
-		AdapterContract: adapterContract, Origin: normalized.Origin, Route: embeddingsPath,
+		AdapterContract: protocol.adapterContract, Origin: normalized.Origin, Route: protocol.path,
 		Descriptor: descriptorIdentity, ModelInput: descriptorIdentity.ModelInput,
 		CredentialBinding: normalized.SecretBinding, Egress: profileEgressIdentity(normalized.EgressPolicy),
 		RequestTimeout: int64(normalized.RequestTimeout), MaxBatchItems: normalized.MaxBatchItems,
@@ -122,7 +123,8 @@ func New(profile Profile, secrets SecretResolver, resolver providerhttp.Resolver
 	isolated.Jar = nil
 	isolated.Timeout = 0
 	return &Client{
-		origin: normalized.Origin, descriptor: cloneDescriptor(descriptor),
+		protocol: protocolForDescriptor(descriptor), origin: normalized.Origin,
+		descriptor:    cloneDescriptor(descriptor),
 		secretBinding: normalized.SecretBinding, secrets: secrets, http: &isolated,
 		requestTimeout: normalized.RequestTimeout, maxBatchItems: normalized.MaxBatchItems,
 		maxInputBytes: normalized.MaxInputBytes, maxRequestBytes: normalized.MaxRequestBytes,

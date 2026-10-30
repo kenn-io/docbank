@@ -59,7 +59,7 @@ type bridgeFixture struct {
 	client     *embeddingbridge.Client
 }
 
-func newBridgeFixture(t *testing.T, handler http.Handler) bridgeFixture {
+func newBridgeFixture(t *testing.T, handler http.Handler, kinds ...document.EmbeddingInputKind) bridgeFixture {
 	t.Helper()
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -88,6 +88,9 @@ func newBridgeFixture(t *testing.T, handler http.Handler) bridgeFixture {
 		InputKinds:      []document.EmbeddingInputKind{document.EmbeddingInputOriginalFile, document.EmbeddingInputRenditionChunk},
 		CompatibilityID: modelInput.CompatibilityID, SupportsTextQuery: true, ModelInput: modelInput,
 		SupportedRequestModes: []document.ModelInputMode{document.ModelInputModeText},
+	}
+	if len(kinds) > 0 {
+		descriptor.InputKinds = kinds
 	}
 	descriptor, err = document.NewEmbeddingDescriptor(descriptor)
 	require.NoError(t, err)
@@ -1284,7 +1287,7 @@ func validResponseBody(manifest requestManifest) string {
 
 func responseBody(manifest requestManifest, vectors string) string {
 	return fmt.Sprintf(`{"contract_version":%q,"descriptor_fingerprint":%q,"policy_fingerprint":%q,"request_checksum":%q,"vectors":%s}`,
-		embeddingbridge.ContractVersion, manifest.DescriptorFingerprint, manifest.PolicyFingerprint, manifest.RequestChecksum, vectors)
+		manifest.ContractVersion, manifest.DescriptorFingerprint, manifest.PolicyFingerprint, manifest.RequestChecksum, vectors)
 }
 
 func responseMediaType() string { return "application/vnd.docbank.embedding-result+json;version=1" }

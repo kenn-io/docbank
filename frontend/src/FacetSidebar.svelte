@@ -5,6 +5,7 @@
 
   type Facet = SnapshotPage["facets"][number];
   type FacetValue = Facet["values"][number];
+  type DisplayFacet = Facet & { selectedOnly?: boolean };
 
   interface Props {
     facets: SnapshotPage["facets"];
@@ -95,6 +96,40 @@
     extension: facetFilterFields.extension[0],
     text_coverage: facetFilterFields.text_coverage[0],
   } as const;
+  const displayFacets = $derived.by(() => {
+    const result: DisplayFacet[] = [...facets];
+    const year = /^([0-9]{4})-01-01$/.exec(query.filters.capture_after ?? "")?.[1];
+    if (
+      year &&
+      query.filters.capture_before === yearBefore(year) &&
+      !facets.some((facet) => facet.dimension === "year")
+    ) {
+      result.push({
+        dimension: "year",
+        available: true,
+        total: 0,
+        missing: 0,
+        other: 0,
+        selectedOnly: true,
+        values: [{ key: year, label: year, count: 0, selected: true }],
+      });
+    }
+    for (const dimension of ["camera", "lens"] as const) {
+      const field = arrayFields[dimension];
+      const values = (query.filters[field] as string[] | undefined) ?? [];
+      if (!values.length || facets.some((facet) => facet.dimension === dimension)) continue;
+      result.push({
+        dimension,
+        available: true,
+        total: 0,
+        missing: 0,
+        other: 0,
+        selectedOnly: true,
+        values: values.map((key) => ({ key, label: key, count: 0, selected: true })),
+      });
+    }
+    return result;
+  });
   const [modifiedAfter, modifiedBefore] = facetFilterFields.modified;
   const [sizeMin, sizeMax] = facetFilterFields.size;
   const [hasDuplicates] = facetFilterFields.duplicates;
@@ -114,12 +149,12 @@
 
   function arrayQuery(dimension: keyof typeof arrayFields, key: string): Query {
     const field = arrayFields[dimension];
+    const facet = facets.find((candidate) => candidate.dimension === dimension);
     const current =
       dimension === "camera" || dimension === "lens"
-        ? (facets
-            .find((facet) => facet.dimension === dimension)
-            ?.values.filter((value) => value.selected)
-            .map((value) => value.key) ?? [])
+        ? (facet?.values.filter((value) => value.selected).map((value) => value.key) ??
+          (query.filters[field] as string[] | undefined) ??
+          [])
         : ((query.filters[field] as string[] | undefined) ?? []);
     const values = current.includes(key)
       ? current.filter((value) => value !== key)
@@ -318,7 +353,7 @@
 {#if unit === "photos" || facets.some((facet) => !empty(facet))}
   <aside class="facets" aria-label={unit === "photos" ? "Photo facets" : "Snapshot facets"}>
     <h2>{unit === "photos" ? "Refine photos" : "Filters"}</h2>
-    {#each facets as facet (facet.dimension)}
+    {#each displayFacets as facet (facet.dimension)}
       {#if !empty(facet)}
         <section role="group" aria-label={`${names[facet.dimension]} facet`}>
           <h3>{names[facet.dimension]}</h3>
@@ -334,10 +369,13 @@
                     class:selected={selected(facet.dimension, value)}
                     aria-pressed={selected(facet.dimension, value)}
                     {disabled}
-                    aria-label={`${valueLabel}, ${value.count} ${unit}${selected(facet.dimension, value) ? ", selected" : ""}`}
+                    aria-label={facet.selectedOnly
+                      ? `${valueLabel}, selected`
+                      : `${valueLabel}, ${value.count} ${unit}${selected(facet.dimension, value) ? ", selected" : ""}`}
                     onclick={() => apply(facet.dimension, value)}
                   >
-                    <span>{valueLabel}</span><strong>{value.count}</strong>
+                    <span>{valueLabel}</span>{#if !facet.selectedOnly}<strong>{value.count}</strong
+                      >{/if}
                   </button>
                 {:else}
                   <span class="informational">{valueLabel} · {value.count} · informational</span>

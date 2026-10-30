@@ -1454,7 +1454,14 @@ it.each(["success", "failure", "interrupted", "late"] as const)(
   },
 );
 
-it("explains the relevance limit and hides it for complete results or capture dates", async () => {
+it("explains the live metadata relevance limit and locks Meaning to Relevance sort", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
   const photos = new Photos("scoped", vi.fn());
   photos.started = true;
   photos.items = [photo(1)];
@@ -1469,6 +1476,23 @@ it("explains the relevance limit and hides it for complete results or capture da
   const note =
     "Showing the best 250 of 5,000 matches. Refine the search or sort by capture date to see all.";
   await screen.findByText(note);
+  photos.query = { ...photos.query, mode: "semantic" };
+  photos.snapshotID = "accepted";
+  photos.items = Array.from({ length: 250 }, (_, i) => photo(i + 1));
+  photos.total = 500;
+  photos.fallbackReason = "provider_unavailable";
+  photos.cursor = "next-page";
+  photos.truncated = false;
+  await waitFor(() => expect(screen.queryByText(note)).toBeNull());
+  expect(screen.queryByText(/Choose Metadata and sort by capture date to see all/)).toBeNull();
+  await waitFor(() =>
+    expect(screen.getByRole("combobox", { name: "Sort photos: Relevance" })).toHaveProperty(
+      "disabled",
+      true,
+    ),
+  );
+  photos.query = { ...photos.query, mode: "lexical" };
+  photos.snapshotID = "";
   photos.total = 1;
   await waitFor(() => expect(screen.queryByText(note)).toBeNull());
   photos.total = 5000;
@@ -1999,7 +2023,7 @@ it("shows the Map limit notice only for capped results and bounds loading progre
   await waitFor(() => expect(screen.queryByText(/^Showing the newest /)).toBeNull());
   photos.cursor = undefined;
   await tick();
-  expect(screen.queryByText(/^Showing the newest /)).toBeNull();
+  expect(screen.getByText(/^Showing the newest 19,999 of 21,000 located photos/)).toBeTruthy();
   photos.dispose();
 });
 
@@ -3193,7 +3217,7 @@ it("edits and clears a saved capture range in the Library Filters panel", async 
   );
   // Year selection and clearing also cover FacetSidebar, which has no separate Year test.
   const year = await screen.findByRole("group", { name: "Year facet" });
-  await fireEvent.click(within(year).getByRole("button", { name: "2023, 1 photos" }));
+  await fireEvent.click(await within(year).findByRole("button", { name: "2023, 1 photos" }));
   expect(photos.query.filters.capture_after).toBe("2023-01-01");
   expect(photos.query.filters.capture_before).toBe("2024-01-01");
   await waitFor(() => expect(photos.loading).toBe(false));
@@ -4123,4 +4147,248 @@ it("names the photo being edited in the metadata panel header", async () => {
   expect(within(panel).getByRole("heading", { level: 2, name: photo(1).name })).toBeTruthy();
   expect(within(panel).queryByRole("heading", { name: "Metadata" })).toBeNull();
   photos.dispose();
+});
+it("forwards the accepted photo action scope to Cull", async () => {
+  vi.stubGlobal("indexedDB", new IDBFactory());
+  vi.stubGlobal("IDBKeyRange", IDBKeyRange);
+  vi.spyOn(api, "getPhotoSettings").mockResolvedValue({ revision: 1, burst_gap_seconds: 2 });
+  vi.spyOn(PhotoCull.prototype, "probe").mockResolvedValue();
+  const start = vi.spyOn(PhotoCull.prototype, "start").mockResolvedValue(false);
+  const photos = new Photos("scoped", vi.fn(), false, {
+    ...photoQuery,
+    mode: "semantic",
+    text: "sunset",
+  });
+  photos.items = [photo(1)];
+  photos.total = 1;
+  photos.started = true;
+  photos.snapshotID = "fallback-snapshot";
+  photos.fallbackReason = "provider_unavailable";
+  const scope = { query: photoQuery, asset_ids: ["photo-2"] };
+  vi.spyOn(photos, "actionScope").mockResolvedValue(scope);
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  render(PhotosWorkspace, { photos, cache, vaultID: "vault" });
+  await fireEvent.click(screen.getByRole("button", { name: "Cull" }));
+  await waitFor(() =>
+    expect(start).toHaveBeenCalledWith(
+      expect.objectContaining({ mode: "lexical", text: "sunset" }),
+      expect.any(Function),
+      scope.asset_ids,
+    ),
+  );
+  photos.dispose();
+  await cache.dispose();
+});
+
+it("forwards the accepted photo action scope to export", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = [photo(1)];
+  photos.total = 1;
+  photos.started = true;
+  const scope = { query: photoQuery, asset_ids: ["photo-1"] };
+  vi.spyOn(photos, "actionScope").mockResolvedValue(scope);
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  const onexport = vi.fn();
+  render(PhotosWorkspace, { photos, cache, onexport });
+  await fireEvent.click(screen.getByRole("button", { name: "More photo actions" }));
+  await fireEvent.click(screen.getByRole("menuitem", { name: "Export 1 photo" }));
+  await vi.waitFor(() =>
+    expect(onexport).toHaveBeenCalledWith(
+      expect.objectContaining({ photos: expect.objectContaining(scope) }),
+    ),
+  );
+  photos.dispose();
+  await cache.dispose();
+});
+
+it("renders Map search status for a fallback", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const photos = new Photos(
+    "scoped",
+    vi.fn(),
+    false,
+    {
+      ...photoQuery,
+      mode: "semantic",
+      text: "sunset",
+      sort: { field: "relevance", direction: "desc" },
+    },
+    { projection: "map" },
+  );
+  photos.items = [mapPhoto(1), mapPhoto(2)];
+  photos.total = 2;
+  photos.started = true;
+  photos.truncated = false;
+  photos.fallbackReason = "provider_unavailable";
+  vi.spyOn(photos, "resume").mockResolvedValue();
+  render(PhotosWorkspace, {
+    photos,
+    mapMode: true,
+    tiles: {
+      tile_url: "/api/daemon/web-map-tiles/{z}/{x}/{y}",
+      host: "tiles.example.org",
+      attribution: "Example",
+      max_zoom: 19,
+    },
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+  });
+  expect(screen.getByRole("status").classList.contains("photo-search-limit")).toBe(true);
+  photos.dispose();
+});
+
+it("stops Cull when the accepted snapshot cannot be captured", async () => {
+  vi.stubGlobal("indexedDB", new IDBFactory());
+  vi.stubGlobal("IDBKeyRange", IDBKeyRange);
+  vi.spyOn(api, "getPhotoSettings").mockResolvedValue({ revision: 1, burst_gap_seconds: 2 });
+  vi.spyOn(PhotoCull.prototype, "probe").mockResolvedValue();
+  const start = vi.spyOn(PhotoCull.prototype, "start").mockResolvedValue(false);
+  const photos = new Photos("scoped", vi.fn(), false, {
+    ...photoQuery,
+    mode: "semantic",
+    text: "sunset",
+  });
+  photos.items = [photo(1)];
+  photos.total = 2;
+  photos.started = true;
+  photos.snapshotID = "accepted";
+  photos.fallbackReason = "provider_unavailable";
+  photos.cursor = "tail";
+  vi.spyOn(api, "listPhotoAssets").mockRejectedValue(new Error("Snapshot read failed"));
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  const onactionerror = vi.fn();
+  render(PhotosWorkspace, { photos, cache, vaultID: "vault", onactionerror });
+  await fireEvent.click(screen.getByRole("button", { name: "Cull" }));
+  await waitFor(() => expect(onactionerror).toHaveBeenCalledWith("Snapshot read failed"));
+  expect(start).not.toHaveBeenCalled();
+  expect(photos.culling).toBe(false);
+  photos.dispose();
+  await cache.dispose();
+});
+
+it.each([
+  "XMP resolution",
+  "background XMP import",
+  "suggestion acceptance",
+  "compare",
+  "face",
+  "cull",
+] as const)("refreshes the accepted Meaning snapshot after %s", async (change) => {
+  const authoredChange = [
+    "XMP resolution",
+    "background XMP import",
+    "suggestion acceptance",
+  ].includes(change);
+  const before = preparedPhoto(1);
+  const photos = authoredChange
+    ? workspaceWithPreparedPhoto(before)
+    : new Photos("scoped", vi.fn(), false, {
+        ...photoQuery,
+        mode: "semantic",
+        text: "sunset",
+      });
+  photos.query = {
+    ...photoQuery,
+    mode: "semantic",
+    text: "sunset",
+    sort: { field: "relevance", direction: "desc" },
+  };
+  const rows = [photo(1), photo(2)];
+  if (authoredChange) {
+    photos.started = false;
+    vi.spyOn(api, "listPhotoAssets").mockResolvedValue({
+      items: [photo(1)],
+      total: 1,
+      facets: [],
+      relevance_available: true,
+      snapshot_id: "accepted-meaning",
+    });
+    await photos.loadMore();
+    const suggestion = {
+      suggestion_id: "suggestion",
+      content_version_id: "version",
+      target: "file-1",
+      asset_id: "photo-1",
+      asset_revision: 1,
+      source_revision: 1,
+      node_revision: 1,
+      value: { caption: "A sunset.", tags: [], visible_text: "" },
+    };
+    vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue({
+      ...photoPreparation([before]),
+      suggestions: [suggestion],
+    });
+    const receipt = { receipt_id: "accepted-caption", before: [], after: [] };
+    vi.spyOn(api, "respondPhotoSuggestion").mockResolvedValue({
+      ...suggestion,
+      authored_receipt: receipt,
+    });
+  } else {
+    photos.items = rows;
+    photos.total = 2;
+    photos.started = true;
+    photos.snapshotID = "accepted-meaning";
+    photos.compareIDs = ["photo-1", "photo-2"];
+    photos.comparing = change === "compare";
+    vi.spyOn(photos, "lookupMany").mockResolvedValue(rows);
+    vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });
+    if (change === "cull") {
+      vi.stubGlobal("indexedDB", new IDBFactory());
+      vi.stubGlobal("IDBKeyRange", IDBKeyRange);
+      const review = new PhotoCull(photos.session, photoCullStorage("vault"), vi.fn());
+      review.run = {
+        ids: ["photo-1", "photo-2"],
+        checkpoint: {
+          runID: "run",
+          revision: 0,
+          pass: ["photo-1", "photo-2"],
+          position: 0,
+          visited: [],
+          skipped: [],
+          unavailable: [],
+          scope: "all",
+          autoAdvance: true,
+        },
+      };
+      photos.cull = review;
+      photos.cullVaultID = "vault";
+      photos.culling = true;
+      vi.spyOn(review, "flush").mockResolvedValue();
+      vi.spyOn(photos, "lookup").mockResolvedValue(rows[0]);
+    }
+  }
+  const refresh = vi.spyOn(photos, "refresh").mockResolvedValue(true);
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  render(PhotosWorkspace, { photos, cache, vaultID: "vault" });
+  await tick();
+  if (change === "suggestion acceptance") {
+    await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
+    await photos.authored.reload();
+    await fireEvent.click(await screen.findByRole("checkbox", { name: "A sunset." }));
+    await fireEvent.click(screen.getByRole("button", { name: "Accept selected" }));
+  } else if (change === "XMP resolution" || change === "background XMP import") {
+    const receipt = { receipt_id: "accepted-caption", before: [], after: [] };
+    await photos.authored.onXMPChanged!(change === "XMP resolution" ? receipt : undefined);
+  } else if (change === "compare") {
+    await fireEvent.click(await screen.findByRole("button", { name: "Exit compare" }));
+  } else if (change === "cull") {
+    await fireEvent.click(await screen.findByRole("button", { name: "Exit cull" }));
+  } else {
+    await act(() => photos.faceEditor.ondecision?.());
+  }
+  await waitFor(() => expect(refresh).toHaveBeenCalledWith(expect.any(Function), true));
+  photos.dispose();
+  await cache.dispose();
 });

@@ -3443,7 +3443,15 @@ async function applyAlbumKeyword() {
     assignment_count: 1,
   };
   const before = preparedPhoto(1);
-  const rotated = { ...before, revision: 2, values: { ...before.values, rotation: 90 as const } };
+  const rotated = {
+    ...before,
+    revision: 2,
+    values: {
+      ...before.values,
+      rotation: 90 as const,
+      flag: "" as const,
+    },
+  };
   const edited = { ...rotated, revision: 3 };
   let documentRevision = 1;
   let keywordApplied = false;
@@ -3453,7 +3461,9 @@ async function applyAlbumKeyword() {
       albumRotations.push(coverRotation);
       return albumResponse([{ ...album, cover_rotation: coverRotation }]);
     }
-    if (url.endsWith("/photos/assets/query")) return albumResponse({ items: [photo(1)], total: 1 });
+    if (url.endsWith("/photos/assets/query")) {
+      return albumResponse({ items: [photo(1)], total: 1 });
+    }
     if (url === "/api/v1/path?path=%2F") return albumResponse(root);
     if (url === "/api/v1/nodes/1000/children?limit=1000&offset=0")
       return albumResponse({
@@ -3749,6 +3759,23 @@ it("refreshes a person-filtered Library behind an album after a face write", asy
   await waitFor(() => expect(libraryReads).toBeGreaterThan(before));
   await waitFor(() => expect(library.items).toEqual([]));
 });
+
+it.each(["accepted receipt", "face write"] as const)(
+  "refreshes a ranked sibling Library after an album %s",
+  async (trigger) => {
+    const { changed } = await applyAlbumKeyword();
+    const library = changed.mock.contexts[0] as Photos;
+    const album = changed.mock.contexts[1] as Photos;
+    await act(() => {
+      library.query = { ...library.query, mode: "semantic", text: "sunset" };
+      library.snapshotID = "ranked";
+    });
+    const refresh = vi.spyOn(library, "refresh").mockResolvedValue(true);
+    if (trigger === "face write") await act(() => album.faceEditor.ondecision());
+    else await act(() => album.authored.onXMPChanged!(changed.mock.calls.at(-1)![0]));
+    await waitFor(() => expect(refresh).toHaveBeenCalledWith(undefined, true));
+  },
+);
 
 it("updates unfiltered Library and album rows after edits without reloading them", async () => {
   const refresh = vi.spyOn(Photos.prototype, "refresh");

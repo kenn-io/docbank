@@ -3,6 +3,8 @@ package api
 import (
 	"encoding/json/v2"
 	"errors"
+	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -12,6 +14,35 @@ import (
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/retrieval"
 )
+
+func TestProcessingSourceIneligibleDetails(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		err    error
+		detail string
+	}{
+		{"document", processing.ErrSourceIneligible,
+			"source is not eligible for the rendition profile; see the plan's rendition_ineligible_reason"},
+		{"image preview", &processing.ImageSourceIneligibleError{Err: fmt.Errorf("%w: preview_missing", processing.ErrSourceIneligible)},
+			"source is not eligible for the rendition profile: preview_missing"},
+	} {
+		for _, consent := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/consent_saved=%t", tc.name, consent), func(t *testing.T) {
+				err, detail := tc.err, tc.detail
+				if consent {
+					err = fmt.Errorf("%w: %w", processing.ErrConsentSaved, err)
+					detail = "processing consent was saved: " + detail
+				}
+				problem, ok := errors.AsType[*Error](fromProcessingError(err))
+				require.True(t, ok)
+				assert.Equal(t, http.StatusUnprocessableEntity, problem.Status)
+				assert.Equal(t, "rendition_source_ineligible", problem.Code)
+				assert.Equal(t, detail, problem.Detail)
+			})
+		}
+	}
+}
 
 func TestDocumentSearchResponsePreservesTimedEvidence(t *testing.T) {
 	t.Parallel()

@@ -20,6 +20,7 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media"
+	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/document/plaintext"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -812,4 +813,52 @@ func TestProcessingServiceCoverageReportsRebuildWhilePreviousGenerationServes(t 
 	assert.Zero(t, coverage.Renditions.Rebuilding)
 	assert.Zero(t, coverage.Renditions.PreviousServing)
 	assert.Equal(t, "complete", coverage.State)
+}
+
+func TestRunEmbeddingsSkipsIneligibleImageBinding(t *testing.T) {
+	t.Parallel()
+	for _, mime := range []string{"application/pdf", "image/jpeg"} {
+		t.Run(mime, func(t *testing.T) {
+			f := newPhotoDescriptionFixture(t)
+			x := newImageEmbeddingService(t, f)
+			service, original, image := newMixedImageTextProfileService(t, f, x)
+			fake := x.fake
+			f.grant(t, service, "mixed")
+			written := f.written
+			if mime == "application/pdf" {
+				var err error
+				written, err = f.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(mediatest.PDF()))
+				require.NoError(t, err)
+			}
+			node, err := f.catalog.CreateFile(t.Context(), f.catalog.RootID(), "without-preview", written.Hash, written.Size, mime, processingBlobPhysical(t, written))
+			require.NoError(t, err)
+			version, err := f.catalog.ContentVersionByID(t.Context(), node.CurrentVersionID)
+			require.NoError(t, err)
+			ids, err := service.runEmbeddings(t.Context(), version, service.profiles["mixed"], service.principal, service.scope, "", nil)
+			require.NoError(t, err)
+			require.Len(t, ids, 1)
+			job, err := f.catalog.EmbeddingJobByID(t.Context(), ids[0])
+			require.NoError(t, err)
+			require.Equal(t, "completed", job.State)
+			require.Equal(t, 0, fake.runtime.callCount(image))
+			require.Positive(t, fake.runtime.callCount(original))
+		})
+	}
+}
+
+func TestImageOnlyStartReportsMissingPreview(t *testing.T) {
+	t.Parallel()
+	f := newPhotoDescriptionFixture(t)
+	x := newImageEmbeddingService(t, f)
+	node, err := f.catalog.CreateFile(t.Context(), f.catalog.RootID(), "without-preview.jpg", f.written.Hash, f.written.Size, "image/jpeg", processingBlobPhysical(t, f.written))
+	require.NoError(t, err)
+	selector := Selector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "images"}
+	plan, err := x.service.Plan(t.Context(), selector)
+	require.NoError(t, err)
+	_, err = x.service.Start(t.Context(), StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true})
+	require.ErrorIs(t, err, ErrSourceIneligible)
+	require.ErrorContains(t, err, "preview_missing")
+	_, imageSource := errors.AsType[*ImageSourceIneligibleError](err)
+	require.True(t, imageSource)
+	require.Zero(t, x.fake.runtime.callCount(x.binding.Name))
 }
