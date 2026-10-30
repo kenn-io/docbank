@@ -435,8 +435,9 @@ configured rendition stays unprocessed. [Grant consent with `docbank processing 
 for the configured profile to process subsequent imports. `docbank watch list` and
 the web app's All workers table show the profile and whether consent is required,
 expired, or revoked. Scanner errors remain separate. Unsupported files are skipped.
-Admission failures are logged and retried on later scans while the daemon runs.
-Retries use the accepted vault copy after source touches or removal; newer imports supersede pending versions.
+An unexpected admission failure is logged once. The document stays imported
+and available for manual processing with `docbank processing build`.
+A newer save can supersede older queued work.
 Consent skips and missing or stale document authority end admission quietly.
 Imports stay accepted. A daemon stop between import and queue admission can leave
 a version unprocessed; use explicit processing for that version.

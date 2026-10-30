@@ -299,9 +299,6 @@ type Watcher struct {
 	newNotifications func(string, exclusions) (watchNotificationSource, error)
 	notifications    watchNotificationSource
 	notificationErr  error
-
-	// Accepted versions survive source observation changes until admission ends.
-	pendingAdmissions map[int64]store.Node
 }
 
 // NewWatcher validates the non-filesystem portion of one watched inbox.
@@ -328,7 +325,6 @@ func NewWatcher(
 	return &Watcher{
 		ing: ing, vaultRoot: vaultRoot, config: cfg, excludes: excludes, mutate: mutate,
 		logger: logger, now: time.Now, observations: make(map[string]watchObservation),
-		pendingAdmissions: make(map[int64]store.Node),
 	}, nil
 }
 
@@ -965,16 +961,6 @@ func (w *Watcher) scanWithHints(ctx context.Context, root *watchRoot, hints watc
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
-	// Retry prior failures even when their source disappears or scanning fails.
-	// Imports in this scan get their own attempt and supersede older versions.
-	pending := maps.Clone(w.pendingAdmissions)
-	defer func() {
-		for id, node := range pending {
-			if current, ok := w.pendingAdmissions[id]; ok && current.CurrentVersionID == node.CurrentVersionID {
-				w.retryAdmission(ctx, node)
-			}
-		}
-	}()
 	if w.notifications != nil {
 		w.notifications.BeginScan()
 	}
@@ -1528,7 +1514,9 @@ func (w *Watcher) processObservation(ctx context.Context, source watchSource, st
 		return fmt.Errorf("ingesting %q: %w", rel, err)
 	}
 	if w.process == nil && result.Outcome != WatchSkipped && w.AfterImport != nil {
-		w.retryAdmission(ctx, result.Node)
+		if err := w.AfterImport(ctx, result.Node); err != nil {
+			w.logger.Warn("watched inbox processing admission failed; use docbank processing build to process the imported document", "watch", w.config.Name, "node_id", result.Node.ID, "error", err)
+		}
 	}
 	delete(w.rejected, rel)
 	observation.processed = true
@@ -1541,17 +1529,6 @@ func (w *Watcher) processObservation(ctx context.Context, source watchSource, st
 			"source", rel, "node_id", result.Node.ID, "outcome", result.Outcome)
 	}
 	return nil
-}
-
-func (w *Watcher) retryAdmission(ctx context.Context, node store.Node) {
-	jobs.ReportBusy(ctx, true)
-	defer jobs.ReportBusy(ctx, false)
-	if err := w.AfterImport(ctx, node); err != nil {
-		w.pendingAdmissions[node.ID] = node
-		w.logger.Warn("watched inbox processing admission failed; retrying on next scan", "watch", w.config.Name, "node_id", node.ID, "error", err)
-		return
-	}
-	delete(w.pendingAdmissions, node.ID)
 }
 
 func (w *Watcher) interruptSettling(rel string) {
