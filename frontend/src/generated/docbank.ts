@@ -3690,6 +3690,7 @@ export interface Job {
   processed_bytes?: number;
   started_at: string;
   status: JobStatus;
+  tags?: string[];
   total_bytes?: number;
   total_objects?: number;
 }
@@ -8762,6 +8763,7 @@ export interface WatchedInbox {
   scan_interval: string;
   settle_time: string;
   source: string;
+  tags: string[];
 }
 
 export interface WatchedInboxList {

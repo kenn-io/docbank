@@ -324,6 +324,13 @@ func (s *Store) IngestFileExact(ctx context.Context, run IngestRun, parentID int
 	return receipt.Node, err
 }
 
+// IngestFileExactTagged imports a new document and assigns existing tags atomically.
+func (s *Store) IngestFileExactTagged(ctx context.Context, run IngestRun, parentID int64, name, blobHash string, size int64, mimeType, originalPath, originalMtime string, tags []string, physical ...BlobPhysical) (Node, error) {
+	receipt, _, _, err := s.ingestFile(ctx, run, parentID, name, blobHash, size, mimeType,
+		originalPath, originalMtime, ingestFileOptions{exact: true, tags: tags}, physical...)
+	return receipt.Node, err
+}
+
 // IngestFileExactWithReceipt is the receipt-bearing form used by embedded
 // immutable creation. File, version, provenance, ingest, and physical catalog
 // authority commit in one metadata transaction.
@@ -337,6 +344,7 @@ func (s *Store) IngestFileExactWithReceipt(
 }
 
 type ingestFileOptions struct {
+	tags              []string
 	exact             bool
 	completeReceipt   bool
 	observeMembership bool
@@ -573,6 +581,26 @@ func (s *Store) ingestFileTx(
 			return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
 		}
 	}
+	seenTags := make(map[string]bool, len(options.tags))
+	for _, name := range options.tags {
+		tag, err := resolveWatchTagQuery(ctx, tx, name)
+		if err != nil {
+			return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
+		}
+		if seenTags[tag.Name] {
+			continue
+		}
+		seenTags[tag.Name] = true
+		recordedAt := nowRFC3339()
+		results, err := s.applyBatchTagsTx(ctx, tx, BatchTagRequest{TagID: tag.ID, Assign: true}, tag,
+			[]batchTagTargetState{{node: receipt.Node}}, recordedAt)
+		if err != nil {
+			return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
+		}
+		receipt.Node.Revision = results[0].Revision
+		receipt.Node.ModifiedAt = recordedAt
+	}
+
 	if !options.deferPhotoEnrollment {
 		if err := s.enrollNewPhotoFileTx(ctx, tx, receipt.Node); err != nil {
 			return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err

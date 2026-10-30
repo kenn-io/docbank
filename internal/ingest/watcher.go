@@ -39,7 +39,7 @@ type WatchResult struct {
 
 func (ing *Ingester) ingestWatchedFile(
 	ctx context.Context, watchName, destination, sourceRef string,
-	expected localFileFingerprint, open localFileOpener,
+	expected localFileFingerprint, open localFileOpener, tags []string,
 ) (result WatchResult, retErr error) {
 	sourceRef = filepath.ToSlash(sourceRef)
 	if sourceRef == "." || sourceRef == "" || path.IsAbs(sourceRef) ||
@@ -87,9 +87,9 @@ func (ing *Ingester) ingestWatchedFile(
 	if err != nil {
 		return result, err
 	}
-	result.Node, err = ing.Store.IngestFileExact(
+	result.Node, err = ing.Store.IngestFileExactTagged(
 		ctx, run, parent.ID, path.Base(sourceRef), content.hash, content.size,
-		content.mimeType, sourceRef, content.mtime, content.physical,
+		content.mimeType, sourceRef, content.mtime, tags, content.physical,
 	)
 	if err != nil {
 		return result, fmt.Errorf("recording watched source %q: %w", sourceRef, err)
@@ -340,12 +340,17 @@ func (w *Watcher) Run(ctx context.Context) error {
 // collector only records bounded hints; it never starts ingestion work.
 func (w *Watcher) run(ctx context.Context, root *watchRoot, beforeScan func()) error {
 	var source watchNotificationSource
+	var notificationFailure error
+	tagBlocked := false
 	degraded := false
 	blocked := false
 	retryEnrollment := w.config.CaptureOnChange
 	reportFailure := func(err error) {
 		if !degraded {
-			jobs.ReportError(ctx, err)
+			notificationFailure = err
+			if !tagBlocked {
+				jobs.ReportError(ctx, err)
+			}
 			w.logger.Warn("watch notifications unavailable; polling continues", "watch", w.config.Name, "error", err)
 		}
 		degraded = true
@@ -381,19 +386,33 @@ func (w *Watcher) run(ctx context.Context, root *watchRoot, beforeScan func()) e
 			beforeScan()
 		}
 		complete, err := w.scanWithHints(ctx, root, hints)
+		wasTagBlocked := tagBlocked
+		_, tagBlocked = errors.AsType[*store.TagResolutionError](err)
 		if w.notificationErr != nil {
 			failure := w.notificationErr
 			w.notificationErr = nil
 			disable(failure)
 		}
+		if tagBlocked {
+			jobs.ReportError(ctx, err)
+			if !wasTagBlocked {
+				w.logger.Warn("watch tags unavailable; polling continues", "watch", w.config.Name, "error", err)
+			}
+			return nil
+		}
+		if wasTagBlocked {
+			jobs.ReportError(ctx, notificationFailure)
+		}
 		if errors.Is(err, errWatchBlocked) || (err == nil && !complete) {
 			if err == nil {
 				err = fmt.Errorf("watch %q source inventory incomplete; reconciliation deferred", w.config.Name)
 			}
-			if !blocked {
+			if !blocked || wasTagBlocked {
 				if !degraded {
 					jobs.ReportError(ctx, err)
 				}
+			}
+			if !blocked {
 				w.logger.Warn("watch source blocks reconciliation; polling continues", "watch", w.config.Name, "error", err)
 			}
 			blocked = true
@@ -413,6 +432,7 @@ func (w *Watcher) run(ctx context.Context, root *watchRoot, beforeScan func()) e
 			jobs.ReportError(ctx, nil)
 			w.logger.Info("watch notifications restored", "watch", w.config.Name)
 			degraded = false
+			notificationFailure = nil
 		}
 		return nil
 	}
@@ -955,6 +975,11 @@ func (w *Watcher) scan(ctx context.Context, root *watchRoot) error {
 }
 
 func (w *Watcher) scanWithHints(ctx context.Context, root *watchRoot, hints watchScanHints) (bool, error) {
+	for _, name := range w.config.Tags {
+		if _, err := w.ing.Store.ResolveWatchTag(ctx, name); err != nil {
+			return false, err
+		}
+	}
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
@@ -1469,7 +1494,7 @@ func (w *Watcher) processObservation(ctx context.Context, source watchSource, st
 				return w.ing.Blobs.WithMutation(ctx, func() error {
 					var writeErr error
 					result, writeErr = w.ing.ingestWatchedFile(
-						ctx, w.config.Name, w.config.Destination, rel, fingerprint, source.open,
+						ctx, w.config.Name, w.config.Destination, rel, fingerprint, source.open, w.config.Tags,
 					)
 					return writeErr
 				})

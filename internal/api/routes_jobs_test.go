@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"slices"
 	"testing"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -134,4 +136,49 @@ func TestBrowserJobListRedactsPrivateBackendErrors(t *testing.T) {
 	assert.NotEmpty(t, got.Items[0].Error)
 	assert.NotContains(t, got.Items[0].Error, "/Users/example")
 	assert.NotContains(t, got.Items[0].Error, "private.example.invalid")
+}
+
+func TestBrowserJobListWatchTags(t *testing.T) {
+	t.Parallel()
+	supervisor := jobs.New(t.Context(), slog.New(slog.DiscardHandler))
+	t.Cleanup(func() { require.NoError(t, supervisor.Shutdown(context.Background())) })
+	reported := make(chan struct{})
+	require.NoError(t, supervisor.Start("watch:receipts", func(ctx context.Context) error {
+		jobs.ReportError(ctx, errors.New("private backend detail"))
+		close(reported)
+		<-ctx.Done()
+		return ctx.Err()
+	}))
+	<-reported
+	require.NoError(t, supervisor.Start("watch:zmissing", func(context.Context) error {
+		return errors.New("synthetic terminal watch failure")
+	}))
+	require.Eventually(t, func() bool {
+		return slices.ContainsFunc(supervisor.Snapshot(), func(item jobs.Snapshot) bool {
+			return item.Name == "watch:zmissing" && item.Status == jobs.StatusFailed
+		})
+	}, time.Second, time.Millisecond)
+	ts, live := newTestServer(t, func(d *api.Deps) {
+		d.Jobs = supervisor
+		d.Cfg.Watches = []config.WatchConfig{
+			{Name: "receipts", Source: t.TempDir(), Destination: "/receipts", Tags: []string{"receipts"}},
+			{Name: "zmissing", Source: t.TempDir(), Destination: "/missing", Tags: []string{"receipts"}},
+		}
+	})
+	headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)}
+	resp, body := get(t, ts, "/api/v1/jobs", headers)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var got api.JobList
+	require.NoError(t, json.Unmarshal([]byte(body), &got))
+	require.Len(t, got.Items, 2)
+	assert.Equal(t, "failed", got.Items[1].Status)
+	assert.Equal(t, "background job failed; inspect with the Docbank CLI for details", got.Items[1].Error)
+	assert.Equal(t, []string{"receipts"}, got.Items[0].Tags)
+	assert.Equal(t, `tag "receipts" is unavailable`, got.Items[0].Error)
+	_, err := live.CreateTag(t.Context(), "receipts")
+	require.NoError(t, err)
+	resp, body = get(t, ts, "/api/v1/jobs", headers)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &got))
+	assert.Equal(t, "background job failed; inspect with the Docbank CLI for details", got.Items[0].Error)
 }

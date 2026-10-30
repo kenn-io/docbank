@@ -626,3 +626,17 @@ it("shows current running work ahead of a retained failure in the same lane", as
   expect(within(lane).getByText("Earlier operation failed")).toBeTruthy();
   expect(screen.getByRole("row", { name: "Moving stored files Running" })).toBeTruthy();
 });
+it("renders watch tags", async () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    jobsResponse([
+      {
+        name: "watch:receipts",
+        lane: "watch:receipts",
+        status: "running",
+        tags: ["receipts", "2026"],
+      },
+    ]),
+  );
+  render(JobsDrawer, { session: "session", onclose: vi.fn(), onauthfailure: vi.fn() });
+  expect(await screen.findByText("Tags: receipts, 2026")).toBeTruthy();
+});

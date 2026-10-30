@@ -8187,6 +8187,10 @@ components:
             - failed
             - cancelled
           type: string
+        tags:
+          items:
+            type: string
+          type: array
         total_bytes:
           format: int64
           type: integer
@@ -21229,7 +21233,12 @@ components:
           type: string
         source:
           type: string
+        tags:
+          items:
+            type: string
+          type: array
       required:
+        - tags
         - capture_on_change
         - name
         - source

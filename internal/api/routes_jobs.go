@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -132,8 +133,22 @@ func registerJobRoutes(api huma.API, d Deps) {
 				}
 				job := observableJob(snapshot)
 				applyControl(&job, controls, snapshot.Name, snapshot.Status == jobs.StatusRunning)
+				for _, watch := range d.Cfg.Watches {
+					if job.Name == "watch:"+watch.Name {
+						job.Tags = slices.Clone(watch.Tags)
+					}
+				}
 				if redactErrors && job.Error != "" {
 					job.Error = "background job failed; inspect with the Docbank CLI for details"
+					if d.Store != nil && snapshot.Status == jobs.StatusRunning {
+						for _, name := range job.Tags {
+							_, err := d.Store.ResolveWatchTag(ctx, name)
+							if _, unavailable := errors.AsType[*store.TagResolutionError](err); unavailable {
+								job.Error = fmt.Sprintf("tag %q is unavailable", name)
+								break
+							}
+						}
+					}
 				}
 				out.Body.Items = append(out.Body.Items, job)
 			}

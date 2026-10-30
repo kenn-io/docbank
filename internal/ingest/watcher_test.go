@@ -513,7 +513,7 @@ func TestWatcherRejectsVaultOverlapAndDestinationConflicts(t *testing.T) {
 	require.NoError(t, err)
 	_, err = ing.ingestWatchedFile(
 		ctx, "conflict", "/inbox", "conflict.txt", fingerprint,
-		func() (*os.File, error) { return blob.OpenNoFollow(conflictPath) },
+		func() (*os.File, error) { return blob.OpenNoFollow(conflictPath) }, nil,
 	)
 	require.ErrorIs(t, err, store.ErrExists)
 }
@@ -675,7 +675,7 @@ func TestWatchedFileMustMatchItsSettledFingerprint(t *testing.T) {
 		rewriteSourceWithRestoredMtime(t, sourcePath, []byte("other"))
 		_, err = ing.ingestWatchedFile(
 			t.Context(), "documents", "/inbox", "document.txt", local,
-			func() (*os.File, error) { return blob.OpenNoFollow(sourcePath) },
+			func() (*os.File, error) { return blob.OpenNoFollow(sourcePath) }, nil,
 		)
 		require.ErrorIs(t, err, ErrSourceChanged)
 		_, err = ing.Store.NodeByPath(t.Context(), "/inbox/document.txt")
@@ -703,7 +703,7 @@ func TestWatchedFileMustMatchItsSettledFingerprint(t *testing.T) {
 
 	_, err = ing.ingestWatchedFile(
 		t.Context(), "documents", "/inbox", "document.txt", settled,
-		func() (*os.File, error) { return blob.OpenNoFollow(sourcePath) },
+		func() (*os.File, error) { return blob.OpenNoFollow(sourcePath) }, nil,
 	)
 	require.ErrorIs(t, err, ErrSourceChanged)
 	_, err = ing.Store.NodeByPath(t.Context(), "/inbox/document.txt")
@@ -1169,4 +1169,59 @@ func TestWatcherRenameAndEditBeforeFirstScanKeepsNode(t *testing.T) {
 	_, total, err := ing.Store.ContentVersions(t.Context(), original.ID, 10, 0)
 	require.NoError(t, err)
 	assert.Equal(t, 2, total)
+}
+
+func TestWatcherTagsImportedFiles(t *testing.T) {
+	watcher, root, ing, source, _ := watcherFinalPair(t)
+	ctx := t.Context()
+	receipts, err := ing.Store.CreateTag(ctx, "receipts")
+	require.NoError(t, err)
+	watcher.config.Tags = []string{"receipts"}
+	require.NoError(t, os.WriteFile(filepath.Join(source, "receipt.txt"), []byte("first"), 0o600))
+	require.NoError(t, watcher.scan(ctx, root))
+	node, err := ing.Store.NodeByPath(ctx, "/archive/receipt.txt")
+	require.NoError(t, err)
+	tags, total, err := ing.Store.NodeTags(ctx, node.ID, 10, 0)
+	require.NoError(t, err)
+	require.Equal(t, 1, total)
+	assert.Equal(t, "receipts", tags[0].Name)
+	_, err = ing.Store.UnassignTag(ctx, receipts.ID, node.ID, node.Revision)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(source, "receipt.txt"), []byte("second version"), 0o600))
+	require.NoError(t, watcher.scan(ctx, root))
+	_, versions, err := ing.Store.ContentVersions(ctx, node.ID, 10, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 2, versions)
+	_, total, err = ing.Store.NodeTags(ctx, node.ID, 10, 0)
+	require.NoError(t, err)
+	require.Zero(t, total)
+}
+
+func TestWatcherTagChangedDuringScanBlocksImmediately(t *testing.T) {
+	watcher, root, ing, source, _ := watcherFinalPair(t)
+	tag, err := ing.Store.CreateTag(t.Context(), "receipts")
+	require.NoError(t, err)
+	watcher.config.Tags = []string{"receipts"}
+	require.NoError(t, os.WriteFile(filepath.Join(source, "new.txt"), []byte("receipt"), 0o600))
+	watcher.beforeFile = func(ctx context.Context, rel string) error {
+		if rel != "new.txt" {
+			return nil
+		}
+		_, err := ing.Store.DeleteTag(ctx, tag.ID, tag.Revision)
+		return err
+	}
+	step, _ := stepWatcherFinalRunner(t, watcher, root)
+	require.Contains(t, step().Error, `tag "receipts"`)
+	_, err = ing.Store.NodeByPath(t.Context(), "/archive/new.txt")
+	require.ErrorIs(t, err, store.ErrNotFound)
+	watcher.beforeFile = nil
+	_, err = ing.Store.CreateTag(t.Context(), "receipts")
+	require.NoError(t, err)
+	require.Empty(t, step().Error)
+	node, err := ing.Store.NodeByPath(t.Context(), "/archive/new.txt")
+	require.NoError(t, err)
+	tags, _, err := ing.Store.NodeTags(t.Context(), node.ID, 10, 0)
+	require.NoError(t, err)
+	require.Len(t, tags, 1)
+	require.Equal(t, "receipts", tags[0].Name)
 }

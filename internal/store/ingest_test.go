@@ -623,3 +623,42 @@ func TestIngestMatchesOnlyLiveCurrentContentInDestination(t *testing.T) {
 		})
 	}
 }
+
+func TestIngestFileExactTaggedRollsBackOnMissingTag(t *testing.T) {
+	t.Parallel()
+	for _, audited := range []bool{false, true} {
+		t.Run(map[bool]string{false: "plain", true: "audited"}[audited], func(t *testing.T) {
+			s := newTestStore(t)
+			parent := s.RootID()
+			if audited {
+				dir, err := s.MkdirAll(t.Context(), "/Receipts")
+				require.NoError(t, err)
+				parent = dir.ID
+				seedInitialAuditAuthority(t, s, parent)
+			}
+			tag, err := s.CreateTag(t.Context(), "café")
+			require.NoError(t, err)
+			_, err = s.CreateTag(t.Context(), "2026")
+			require.NoError(t, err)
+			run, err := s.BeginIngest(t.Context(), "watch", "receipts")
+			require.NoError(t, err)
+			_, err = s.IngestFileExactTagged(t.Context(), run, parent, "receipt.txt", fakeHash("a1"), 10, "text/plain", "receipt.txt", "", []string{"café", "missing"})
+			require.ErrorIs(t, err, ErrNotFound)
+			var retained int
+			require.NoError(t, s.db.QueryRow(`SELECT (SELECT COUNT(*) FROM nodes WHERE name = 'receipt.txt') + (SELECT COUNT(*) FROM provenance WHERE original_path = 'receipt.txt')`).Scan(&retained))
+			assert.Zero(t, retained)
+			node, err := s.IngestFileExactTagged(t.Context(), run, parent, "receipt.txt", fakeHash("a1"), 10, "text/plain", "receipt.txt", "", []string{"café", "cafe\u0301", "café", "2026"})
+			require.NoError(t, err)
+			tags, total, err := s.NodeTags(t.Context(), node.ID, 10, 0)
+			require.NoError(t, err)
+			require.Equal(t, 2, total)
+			assert.Equal(t, "café", tags[1].Name)
+			tag, err = s.TagByID(t.Context(), tag.ID)
+			require.NoError(t, err)
+			assert.Equal(t, int64(2), tag.Revision)
+			assert.Equal(t, 1, tag.AssignmentCount)
+			assert.Equal(t, int64(3), node.Revision)
+			require.NoError(t, s.ValidateMetadata(t.Context()))
+		})
+	}
+}

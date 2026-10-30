@@ -937,7 +937,8 @@ The list below shows every worker and its status, and offers pause controls for
 idle workers. Queued operations stay in that list until they start.
 
 A worker waiting for work shows Idle, and the header counts only work in
-progress.
+progress. Watched inboxes show their [configured tags](../configuration.md#watched-inboxes).
+A missing tag shows Waiting until the tag exists.
 
 Pause or resume photo imports, visual previews, and the storage lanes `place`,
 `evacuate`, `repair`, and `salvage`. Pause takes effect at the next safe item

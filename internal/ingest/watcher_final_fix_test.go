@@ -439,6 +439,52 @@ func TestWatchIncompleteRunnerRecoveryPreservesNotificationError(t *testing.T) {
 	}
 }
 
+func TestWatchTagBlockRestoresRemainingFailure(t *testing.T) {
+	for _, order := range []string{"source only", "notification first", "notification during block"} {
+		t.Run(order, func(t *testing.T) {
+			watcher, root, ing, _, _ := watcherFinalPair(t)
+			held := true
+			watcher.observeFile = func(file watchSource, withChange bool) (watchFileState, error) {
+				if file.ref == "a.md" && held {
+					return watchFileState{}, ErrSourceChanged
+				}
+				return file.observe(withChange)
+			}
+			step, logs := stepWatcherFinalRunner(t, watcher, root)
+			expected := step().Error
+			require.Contains(t, expected, "incomplete")
+			if order == "notification first" {
+				watcher.notificationErr = errors.New("first backend failure")
+				expected = step().Error
+			}
+			watcher.config.Tags = []string{""}
+			require.Contains(t, step().Error, `tag ""`)
+			watcher.config.Tags = []string{"receipts"}
+			require.Contains(t, step().Error, `tag "receipts"`)
+			if order != "source only" {
+				watcher.notificationErr = errors.New("second backend failure")
+			}
+			require.Contains(t, step().Error, `tag "receipts"`)
+			_, err := ing.Store.CreateTag(t.Context(), "receipts")
+			require.NoError(t, err)
+			if order == "notification during block" {
+				expected = `watch "notes" notifications: second backend failure`
+			}
+			require.Equal(t, expected, step().Error)
+			held = false
+			if order == "source only" {
+				expected = ""
+			}
+			require.Equal(t, expected, step().Error)
+			if order != "source only" {
+				require.Equal(t, 1, strings.Count(logs.String(), "watch notifications unavailable"))
+			}
+			require.Equal(t, 1, strings.Count(logs.String(), "watch source blocks reconciliation"))
+			require.Equal(t, 1, strings.Count(logs.String(), "watch source reconciliation restored"))
+		})
+	}
+}
+
 // Consecutive incomplete inventories form one reported incident. A complete
 // inventory ends it, so arbitrary alternation must neither hide a new incident
 // nor multiply warnings for repetitions within one incident.
