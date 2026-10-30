@@ -1,5 +1,13 @@
 <script lang="ts">
-  import { Button, Checkbox, Modal, RadioGroup, Spinner, TextInput } from "@kenn-io/kit-ui";
+  import {
+    Button,
+    Checkbox,
+    Modal,
+    PageHeader,
+    RadioGroup,
+    Spinner,
+    TextInput,
+  } from "@kenn-io/kit-ui";
   import UserIcon from "@lucide/svelte/icons/user";
   import { untrack } from "svelte";
   import type { PersonSummary } from "./generated/docbank.js";
@@ -123,19 +131,20 @@
 {/snippet}
 
 <main class="people-workspace" aria-label="People">
-  <div class="browser-toolbar people-toolbar">
-    <div>
-      <h1>People</h1>
-    </div>
-    <form
-      onsubmit={(event) => {
-        event.preventDefault();
-        void people.load(people.draft.trim());
-      }}
-    >
-      <TextInput ariaLabel="Find people" placeholder="Find people" bind:value={people.draft} />
-      <Button type="submit" disabled={people.loading}>Search</Button>
-    </form>
+  <div class="people-header">
+    <PageHeader title="People" size="medium">
+      {#snippet actions()}
+        <form
+          onsubmit={(event) => {
+            event.preventDefault();
+            void people.load(people.draft.trim());
+          }}
+        >
+          <TextInput ariaLabel="Find people" placeholder="Find people" bind:value={people.draft} />
+          <Button type="submit" disabled={people.loading}>Search</Button>
+        </form>
+      {/snippet}
+    </PageHeader>
   </div>
   {#if people.error}<p role="alert">
       {people.error}<Button onclick={() => void people.retry()}>Retry</Button>
@@ -284,14 +293,11 @@
     overflow: auto;
     background: var(--bg-surface);
   }
-  .people-toolbar {
-    border-bottom: 1px solid var(--border-default);
+  /* The header draws no rule: the person cards below supply their own top
+     edges, and a rule a few pixels above them would read as a second line. */
+  .people-header {
+    padding: var(--space-6) var(--space-7) var(--space-5);
   }
-  h1 {
-    margin: 0 0 4px;
-    font-size: var(--font-size-lg);
-  }
-  .people-toolbar span,
   .count {
     font-size: var(--font-size-xs);
     color: var(--text-muted);
@@ -402,8 +408,8 @@
       padding: var(--space-3);
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
-    .people-toolbar {
-      flex-wrap: wrap;
+    .people-header {
+      padding-inline: var(--space-6);
     }
   }
 </style>
