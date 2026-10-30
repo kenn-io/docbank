@@ -774,7 +774,7 @@ func TestPhotoStackReturnOwnership(t *testing.T) {
 					}
 				}
 			}
-			require.NoError(t, validatePhotoMetadataState(t.Context(), s.db, currentStorageSchemaVersion))
+			require.NoError(t, validatePhotoMetadataState(t.Context(), s.db, currentStorageSchemaVersion, false))
 		})
 	}
 	t.Run("receipt order across clock ticks", func(t *testing.T) {
@@ -920,7 +920,7 @@ func TestPhotoStackDecisionsAndUndo(t *testing.T) {
 			_, err = s.UndoPhotoAuthored(t.Context(), receipt.ReceiptID)
 			require.NoError(t, err)
 			require.Equal(t, []string{tc.seed, "", ""}, flags())
-			require.NoError(t, validatePhotoMetadataState(t.Context(), s.db, currentStorageSchemaVersion))
+			require.NoError(t, validatePhotoMetadataState(t.Context(), s.db, currentStorageSchemaVersion, false))
 		})
 	}
 }

@@ -383,7 +383,7 @@ func validatePushSourceRelations(ctx context.Context, tx metadataQuerier) (retEr
   LEFT JOIN provenance_version_bindings b ON b.provenance_identity=p.identity
   LEFT JOIN content_versions cv ON cv.version_id=b.content_version_id
   WHERE i.source_kind='push'
-  GROUP BY i.source_desc,p.original_path,p.node_id,p.identity,i.started_at
+  GROUP BY i.source_desc,p.original_path,p.node_id,p.identity,i.started_at,i.id
   ORDER BY i.source_desc,p.original_path,i.started_at,i.id`)
 	if err != nil {
 		return fmt.Errorf("reading push provenance: %w", err)

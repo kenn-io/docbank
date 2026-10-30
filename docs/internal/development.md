@@ -200,27 +200,23 @@ in `releasedSchemaFixtures`. Three checks enforce this:
 
 ### PostgreSQL schema lifecycle
 
-`internal/store/pgschema` provides the internal schema installation and
-validation foundation. A PostgreSQL-backed vault is not available yet: ordinary
-daemon and embedded operations still use SQLite. This package owns the native
-vault identity, the core `nodes`, `blobs`,
-`blob_checksums`, `content_versions` and `node_allocation` catalogs, and the five
-`audit_*` catalogs for canonical records, authority, scopes, baselines and memberships.
-It also owns the photo input catalogs and `photo_xmp_inputs` view used for audit
-re-export decisions: photo assets/files/sets/receipts, source metadata generations,
-heads and technical projections, tags, ingests, provenance version bindings,
-derivative-purge suppressions and photo library settings.
-Complete mutations, the remaining catalogs, search, transfer, and recovery are
-not available yet.
+`internal/store/pgschema` owns canonical PostgreSQL catalogs for internal
+store qualification. Initial and additional audit enrollment work through the
+native preview and commit methods, including complete retained-metadata
+validation. A public PostgreSQL-backed vault is not available yet: ordinary
+daemon and embedded operations still use SQLite. Document mutations, search,
+transfer, backup and restore remain unqualified.
 
 `Setup` takes a caller-owned `database/sql` pool authenticated as `SchemaOwner`
 and uses the explicit `Schema` setting. It creates a dedicated schema, canonical
-DDL, a UUIDv4 vault identity, and the root directory in one transaction, under a
+DDL, a UUIDv4 vault identity, a fresh processing-consent incarnation, and the root
+directory in one transaction, under a
 schema-specific PostgreSQL advisory lock. Repeated setup preserves the identity,
 root, and existing data. Existing empty or unrelated schemas, malformed
 identities and wrong owners are refused rather than repaired.
 
-The catalogs keep content-version and operation IDs as text, numeric node IDs,
+The catalogs keep vault references as native UUIDs and content-version and
+operation IDs as text, numeric node IDs,
 sizes and revisions as `BIGINT`, and timestamps as fixed-width UTC text. This
 matches the shared store queries and their lexical timestamp ordering. Both
 backends use `schemaformat.TimestampLayout`. PostgreSQL text columns use
@@ -267,7 +263,7 @@ grant the following privileges after setup. This example uses schema
 
 ```sql
 GRANT USAGE ON SCHEMA documents TO docbank_runtime;
-GRANT SELECT ON documents.vault_metadata TO docbank_runtime;
+GRANT SELECT ON ALL TABLES IN SCHEMA documents TO docbank_runtime;
 GRANT SELECT, INSERT, UPDATE, DELETE
     ON documents.nodes, documents.blobs, documents.content_versions
     TO docbank_runtime;
@@ -282,13 +278,6 @@ GRANT UPDATE(operation_sequence_high_water, allocation_entry_count, allocation_h
     ON documents.audit_authority TO docbank_runtime;
 GRANT UPDATE(entry_count, chain_head) ON documents.audit_scopes TO docbank_runtime;
 GRANT SELECT, UPDATE(high_water) ON documents.node_allocation TO docbank_runtime;
-GRANT SELECT ON documents.ingests, documents.provenance,
-    documents.provenance_version_bindings, documents.derivative_purge_suppressions,
-    documents.source_metadata_generations, documents.source_metadata_heads,
-    documents.photo_technical_metadata, documents.tags, documents.node_tags,
-    documents.photo_assets, documents.photo_files, documents.photo_sets,
-    documents.photo_change_receipts, documents.photo_library_settings,
-    documents.photo_xmp_inputs TO docbank_runtime;
 GRANT SELECT, INSERT ON documents.photo_xmp_unsettled TO docbank_runtime;
 ```
 
@@ -329,7 +318,12 @@ removing them from an immutable schema or migration.
 The `audit_record_single_genesis` partial unique index is the intentional
 exception to the closed-list rule: its three-kind predicate preserves one
 record per genesis kind, matching SQLite; it does not reject other kinds.
-Go still owns which record kinds are valid.
+Go still owns which record kinds are valid. Conditional unique indexes also
+preserve alias, current external identity and active custodian relationships.
+These predicates enforce uniqueness; they do not reject unknown kind or state
+values. Go validators own those values. Physical storage operations are read-only
+inputs to validation here; their active-evacuation uniqueness rule remains part
+of the future write port rather than a closed state list in the new schema.
 
 #### PostgreSQL reference implementations
 
@@ -548,8 +542,7 @@ transactions. Membership, node revision, path, scope head, event count and page
 come from one snapshot, even when another operation commits between their
 reads. Canonical event projection and cursor ordering remain in the existing
 Go implementation. The runtime role needs only `SELECT` on the audit catalogs
-for these reads; complete enrollment, audit mutations and full metadata
-validation still require SQLite.
+for these reads. Enrollment additionally needs the narrow write grants above.
 
 Audit-history qualification creates directories, enables audit and renames nodes
 through normal SQLite operations, then validates that history before copying
@@ -574,9 +567,9 @@ owns node allocation queries: SQLite reads `sqlite_sequence`; PostgreSQL reads
 committed allocations after deletion and discard allocations on rollback.
 The transaction tests cover callback failure, cancellation and commit-time
 constraint failure. Audit qualification also replays native SQLite-generated
-history against PostgreSQL's high-water mark after a failed insert. It does not
-yet run complete metadata validation on PostgreSQL or enable complete audit
-writes or import.
+history against PostgreSQL's high-water mark after a failed insert. Complete
+enrollment also runs the full metadata validator described below.
+Other audited mutations and import remain unqualified.
 
 The native canonical-record insertion helper also uses shared SQL. Its index
 builder rejects zero node IDs, operation sequences and entry counts in Go
@@ -605,45 +598,56 @@ native rename's resulting node projections and records, and compares committed
 status and every canonical record with SQLite. It also verifies that discarding
 the transaction preserves the earlier status and records.
 
-Initial and additional enrollment previews run against PostgreSQL by node ID or
-path. The existing writer transaction keeps their target, retained versions,
-trash origins and attached metadata consistent. Additional preview validates
-the existing audit history and rejects overlapping scopes. The same builders
-produce baseline records on both backends, including provenance bindings,
-derivative-purge suppressions and photo settings.
+Initial and additional enrollment use `PreviewInitialAudit` or
+`PreviewInitialAuditPath`, followed by `EnableInitialAudit`. The existing writer
+transaction protects the target, retained versions, trash origins and attached
+metadata. Commit rebuilds the reviewed baseline and checks allocation authority;
+a changed preview is rejected. Additional preview validates existing audit
+history and rejects overlapping scopes.
 
-Enrollment persistence uses the shared native writers. Records, authority,
-scopes, baselines, memberships and photo re-export queue entries commit or roll
-back together. On PostgreSQL, initial enrollment
-queues every eligible photo asset once, after inserting all memberships. Later
-membership inserts queue eligible originals in the member's asset, including
-when the member is a sidecar. Released SQLite layouts retain their triggers as
-the sole queue owner; PostgreSQL performs these writes in Go in the same storage
-transaction. Neither backend performs filesystem publication during enrollment.
+Enrollment validates all retained metadata before committing, including catalogs
+outside the selected scope. The same Go validators cover processing and consent,
+embeddings, email and media, people, collections, packages, page numbering and
+photo state on both backends. Shared SQL uses numbered parameters and explicit
+boolean comparisons. JSON receipt queries share their validation logic and select
+SQLite or PostgreSQL expressions at construction. Readers close result sets
+before issuing another query on the same transaction.
 
-`photo_xmp_inputs` preserves SQLite eligibility and exact change-detection tokens.
-The PostgreSQL view uses JSON extraction and ordered string aggregation, with
-explicit numeric boolean encoding in tokens. `PhotoXMPTargetsAfter` shares its
-filtering, bounds and cursor order; only the candidate join spelling differs.
-The parity test creates source data through SQLite APIs, including an ingested
-and trashed document, a derivative purge, photo settings, settled receipts,
-tags, missing extraction and video. PostgreSQL then previews enrollment and
-builds and validates its own audit records. The test compares records, tokens,
-queues and target pages with SQLite after commit and rollback, and rejects a
-baseline projection that disagrees with canonical history.
+SQLite inspects foreign keys with `PRAGMA foreign_key_check`. PostgreSQL checks
+pending deferred references with `SET CONSTRAINTS ALL IMMEDIATE` after logical
+validation and keeps them immediate through commit. The PostgreSQL dialect flag
+in the metadata source description selects SQL only; its logical record version
+is not a PostgreSQL schema version or migration gate.
 
-This qualifies internal preview, audit-history validation and persistence, not
-the complete enrollment or photo publication API. Full metadata validation,
-import/restore, removal and other photo mutations remain unavailable on
-PostgreSQL. `EnableInitialAudit` still requires complete metadata validation;
-do not bypass it. Added input catalogs grant runtime read access only. Their
-write paths still require validation and related catalog maintenance.
+Records, authority, scopes, baselines, memberships and photo re-export queue
+entries commit or roll back together. PostgreSQL initial enrollment queues every
+eligible photo asset once after inserting memberships. Later membership inserts
+queue eligible originals in the member's asset, including sidecar enrollment.
+Released SQLite layouts retain their triggers as the sole queue owner; PostgreSQL
+performs these writes in Go. Neither backend publishes files during enrollment.
+The `photo_xmp_inputs` view preserves eligibility and exact change-detection
+tokens, and target paging preserves filtering and cursor order.
+
+Qualification uses populated catalogs created through SQLite operations, then
+calls PostgreSQL's native preview and commit methods with a separate runtime
+login. It compares status, canonical records, photo tokens, queues and pages.
+Invalid metadata outside the scope and invalid photo receipt references reject
+enrollment without leaving audit authority or queue changes. Changed previews
+are rejected for both initial and additional enrollment. A fresh PostgreSQL
+schema can enroll its root without a copied fixture.
+
+The supporting catalogs grant runtime read access only. Their presence does not
+qualify their write paths: validation, immutability and same-transaction catalog
+maintenance still belong to each operation's port. Public PostgreSQL opening,
+`ValidateMetadata` snapshot export, backup/restore, document and photo mutations,
+and search remain unavailable.
 
 For PostgreSQL tests, start a disposable server, never an operator database:
 
 ```sh
 docker run --detach --rm --name docbank-pg-test \
   --publish 127.0.0.1:15432:5432 \
+  --tmpfs /pgdata --env PGDATA=/pgdata/data \
   --env POSTGRES_USER=docbank_test \
   --env POSTGRES_PASSWORD=docbank_test \
   --env POSTGRES_DB=docbank_test postgres:16
@@ -657,15 +661,19 @@ DOCBANK_TEST_POSTGRES_DSN='postgres://docbank_test:docbank_test@127.0.0.1:15432/
 docker rm --force docbank-pg-test
 ```
 
-Always remove the disposable server after the run, including after a failure.
+The temporary-memory data directory matches CI and avoids filesystem-sync
+delays when tests repeatedly create and drop databases. Always remove the
+disposable server after the run, including after a failure.
 Use `postgres:18` in the first command to check the other CI version. The tests
 create and drop a database per test and use separate real owner/runtime logins;
 the test administrator needs database, role and event-trigger creation for the
 rollback fixtures. These are test privileges, not runtime requirements.
 `internal/pgtest` owns database creation and cleanup for both the schema and
 node and content-history query tests. `make test-pg` requires the DSN, bypasses
-cached test results, and runs these groups under the race detector. Without
-that variable, ordinary `make test` skips PostgreSQL tests.
+cached test results, and runs these groups under the race detector. It limits
+parallel tests to four: each schema installation locks hundreds of catalog
+objects, so CPU-count concurrency can exhaust the default server lock table.
+Without that variable, ordinary `make test` skips PostgreSQL tests.
 A supplied but invalid connection fails rather than skipping.
 
 Name PostgreSQL tests in `internal/store` with the `Postgres` suffix. The target

@@ -86,7 +86,7 @@ func (s *Store) PublishPageFrames(ctx context.Context, claim PageJobClaim, frame
 func loadPageDocument(ctx context.Context, q metadataQuerier, versionID string) (document.PageDocumentV1, error) {
 	var encoded []byte
 	var hash string
-	err := q.QueryRowContext(ctx, `SELECT canonical_json,checksum FROM page_documents WHERE version_id=?`, versionID).Scan(&encoded, &hash)
+	err := q.QueryRowContext(ctx, `SELECT canonical_json,checksum FROM page_documents WHERE version_id=$1`, versionID).Scan(&encoded, &hash)
 	if errors.Is(err, sql.ErrNoRows) {
 		return document.PageDocumentV1{}, ErrNotFound
 	}
@@ -100,7 +100,7 @@ func loadPageDocument(ctx context.Context, q metadataQuerier, versionID string) 
 	if actual != hash || d.Source.VersionID != versionID {
 		return d, ErrPageConflict
 	}
-	rows, err := q.QueryContext(ctx, `SELECT page,canonical_json,checksum FROM page_frames WHERE version_id=? ORDER BY page`, versionID)
+	rows, err := q.QueryContext(ctx, `SELECT page,canonical_json,checksum FROM page_frames WHERE version_id=$1 ORDER BY page`, versionID)
 	if err != nil {
 		return d, err
 	}
@@ -155,7 +155,7 @@ func putPageRecipe(ctx context.Context, tx *sql.Tx, r document.PageRecipeV1) (st
 
 func loadPageRecipe(ctx context.Context, q metadataQuerier, hash string) (document.PageRecipeV1, error) {
 	var encoded []byte
-	err := q.QueryRowContext(ctx, `SELECT canonical_json FROM page_recipes WHERE checksum=?`, hash).Scan(&encoded)
+	err := q.QueryRowContext(ctx, `SELECT canonical_json FROM page_recipes WHERE checksum=$1`, hash).Scan(&encoded)
 	if err != nil {
 		return document.PageRecipeV1{}, err
 	}
@@ -173,7 +173,7 @@ func loadPageImage(ctx context.Context, q metadataQuerier, versionID, recipeHash
 	var raw, frameRaw []byte
 	var hash, blobHash, frameHash string
 	var blobSize int64
-	err := q.QueryRowContext(ctx, `SELECT i.canonical_json,i.checksum,i.blob_hash,f.canonical_json,f.checksum,b.size FROM page_images i JOIN page_frames f ON f.version_id=i.version_id AND f.page=i.page JOIN blobs b ON b.hash=i.blob_hash WHERE i.version_id=? AND i.recipe_sha256=? AND i.page=?`, versionID, recipeHash, page).Scan(&raw, &hash, &blobHash, &frameRaw, &frameHash, &blobSize)
+	err := q.QueryRowContext(ctx, `SELECT i.canonical_json,i.checksum,i.blob_hash,f.canonical_json,f.checksum,b.size FROM page_images i JOIN page_frames f ON f.version_id=i.version_id AND f.page=i.page JOIN blobs b ON b.hash=i.blob_hash WHERE i.version_id=$1 AND i.recipe_sha256=$2 AND i.page=$3`, versionID, recipeHash, page).Scan(&raw, &hash, &blobHash, &frameRaw, &frameHash, &blobSize)
 	if errors.Is(err, sql.ErrNoRows) {
 		return PageImageView{}, ErrNotFound
 	}

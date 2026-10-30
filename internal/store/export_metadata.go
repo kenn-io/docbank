@@ -46,7 +46,7 @@ func exportBundleMetadata(ctx context.Context, q metadataQuerier, write metadata
 	for _, id := range ids {
 		var raw []byte
 		var until string
-		if err = q.QueryRowContext(ctx, `SELECT canonical_json,expires_at FROM export_sources WHERE id=?`, id).Scan(&raw, &until); err != nil {
+		if err = q.QueryRowContext(ctx, `SELECT canonical_json,expires_at FROM export_sources WHERE id=$1`, id).Scan(&raw, &until); err != nil {
 			return err
 		}
 		var source bundle.Source
@@ -66,7 +66,7 @@ func exportBundleMetadata(ctx context.Context, q metadataQuerier, write metadata
 		err = walkExportMembers(ctx, q, id, func(m bundle.Member) error {
 			var nodeID, size int64
 			var hash string
-			if err := q.QueryRowContext(ctx, `SELECT node_id,blob_hash,size FROM content_versions WHERE version_id=?`, m.VersionID).Scan(&nodeID, &hash, &size); err != nil {
+			if err := q.QueryRowContext(ctx, `SELECT node_id,blob_hash,size FROM content_versions WHERE version_id=$1`, m.VersionID).Scan(&nodeID, &hash, &size); err != nil {
 				return err
 			}
 			if nodeID != m.NodeID || hash != m.SHA256 || size != m.Size {
@@ -119,14 +119,14 @@ func exportBundleMetadata(ctx context.Context, q metadataQuerier, write metadata
 		}
 		var raw []byte
 		var until, sourceID string
-		if err = q.QueryRowContext(ctx, `SELECT canonical_json,expires_at,source_id FROM export_plans WHERE id=?`, id).Scan(&raw, &until, &sourceID); err != nil {
+		if err = q.QueryRowContext(ctx, `SELECT canonical_json,expires_at,source_id FROM export_plans WHERE id=$1`, id).Scan(&raw, &until, &sourceID); err != nil {
 			return err
 		}
 		if sourceID != plan.Source.ID {
 			return bundle.ErrConflict
 		}
 		var sourceRaw []byte
-		if err = q.QueryRowContext(ctx, `SELECT canonical_json FROM export_sources WHERE id=?`, sourceID).Scan(&sourceRaw); err != nil {
+		if err = q.QueryRowContext(ctx, `SELECT canonical_json FROM export_sources WHERE id=$1`, sourceID).Scan(&sourceRaw); err != nil {
 			return err
 		}
 		var source bundle.Source
@@ -140,7 +140,7 @@ func exportBundleMetadata(ctx context.Context, q metadataQuerier, write metadata
 			return err
 		}
 		var rowCount, firstOrdinal, lastOrdinal int
-		if err = q.QueryRowContext(ctx, `SELECT count(*),COALESCE(min(ordinal),-1),COALESCE(max(ordinal),-1) FROM export_documents WHERE plan_id=?`, id).Scan(&rowCount, &firstOrdinal, &lastOrdinal); err != nil {
+		if err = q.QueryRowContext(ctx, `SELECT count(*),COALESCE(min(ordinal),-1),COALESCE(max(ordinal),-1) FROM export_documents WHERE plan_id=$1`, id).Scan(&rowCount, &firstOrdinal, &lastOrdinal); err != nil {
 			return err
 		}
 		if rowCount != plan.Rows() || firstOrdinal != 0 || lastOrdinal != plan.Rows()-1 {
@@ -156,7 +156,7 @@ func exportBundleMetadata(ctx context.Context, q metadataQuerier, write metadata
 				return err
 			}
 			var member []byte
-			if err := q.QueryRowContext(ctx, `SELECT canonical_json FROM export_members WHERE source_id=? AND node_id=? AND version_id=?`, sourceID, d.NodeID, d.VersionID).Scan(&member); err != nil {
+			if err := q.QueryRowContext(ctx, `SELECT canonical_json FROM export_members WHERE source_id=$1 AND node_id=$2 AND version_id=$3`, sourceID, d.NodeID, d.VersionID).Scan(&member); err != nil {
 				return err
 			}
 			var m bundle.Member
@@ -186,7 +186,7 @@ func exportBundleMetadata(ctx context.Context, q metadataQuerier, write metadata
 					return bundle.ErrConflict
 				}
 				var size int64
-				if err := q.QueryRowContext(ctx, `SELECT b.size FROM blobs b JOIN export_role_roots r ON r.blob_hash=b.hash WHERE r.plan_id=? AND r.blob_hash=?`, id, r.SHA256).Scan(&size); err != nil {
+				if err := q.QueryRowContext(ctx, `SELECT b.size FROM blobs b JOIN export_role_roots r ON r.blob_hash=b.hash WHERE r.plan_id=$1 AND r.blob_hash=$2`, id, r.SHA256).Scan(&size); err != nil {
 					return err
 				}
 				if size != r.Size {
@@ -209,7 +209,7 @@ func exportBundleMetadata(ctx context.Context, q metadataQuerier, write metadata
 			return bundle.ErrConflict
 		}
 		var rootCount int
-		if err = q.QueryRowContext(ctx, `SELECT count(*) FROM export_role_roots WHERE plan_id=?`, id).Scan(&rootCount); err != nil {
+		if err = q.QueryRowContext(ctx, `SELECT count(*) FROM export_role_roots WHERE plan_id=$1`, id).Scan(&rootCount); err != nil {
 			return err
 		}
 		if rootCount != len(roots) {

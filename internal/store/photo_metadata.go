@@ -388,7 +388,8 @@ func validatePhotoReceiptMetadataRecord(v metadataPhotoReceipt) error {
 	return validateMetadataTime("photo receipt created_at", v.CreatedAt)
 }
 
-func validatePhotoMetadataState(ctx context.Context, tx metadataQuerier, version int) error {
+func validatePhotoMetadataState(ctx context.Context, tx metadataQuerier, version int, postgres bool) error {
+	j := metadataJSONDialect{postgres: postgres}
 	if err := validatePhotoGraph(ctx, tx); err != nil {
 		return err
 	}
@@ -428,8 +429,8 @@ func validatePhotoMetadataState(ctx context.Context, tx metadataQuerier, version
 			return err
 		}
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_change_receipts r
- LEFT JOIN photo_checkouts c ON c.checkout_id=json_extract(r.after_json,'$.checkout_id')
- LEFT JOIN photo_checkout_entries e ON e.checkout_id=c.checkout_id AND e.file_id=json_extract(r.after_json,'$.file_id') AND e.asset_id=r.asset_id
+ LEFT JOIN photo_checkouts c ON c.checkout_id=`+j.text("r.after_json", "checkout_id")+`
+ LEFT JOIN photo_checkout_entries e ON e.checkout_id=c.checkout_id AND e.file_id=`+j.text("r.after_json", "file_id")+` AND e.asset_id=r.asset_id
  WHERE r.operation='checkout_commit' AND (c.checkout_id IS NULL OR e.file_id IS NULL)`).Scan(&orphans); err != nil {
 			return fmt.Errorf("checking checkout commit receipt references: %w", err)
 		}
@@ -438,7 +439,7 @@ func validatePhotoMetadataState(ctx context.Context, tx metadataQuerier, version
 		}
 	}
 	if version >= photoAuthoredStorageSchemaVersion {
-		if err := validatePhotoAuthoredReferences(ctx, tx); err != nil {
+		if err := validatePhotoAuthoredReferences(ctx, tx, postgres); err != nil {
 			return err
 		}
 	}
@@ -449,8 +450,8 @@ func validatePhotoMetadataState(ctx context.Context, tx metadataQuerier, version
  FROM (
  SELECT representative_rank AS rank FROM photo_assets
  UNION ALL
- SELECT MAX(COALESCE(json_extract(entry.value,'$.before'),0),COALESCE(json_extract(entry.value,'$.after'),0))
- FROM photo_change_receipts r, json_each(r.after_json,'$.representatives') entry
+ SELECT `+j.maximum()+`(COALESCE(`+j.number("entry.value", "before")+`,0),COALESCE(`+j.number("entry.value", "after")+`,0))
+ FROM photo_change_receipts r, `+j.receiptArray("representatives")+` entry
  WHERE r.operation IN ('authored','authored_undo')
  )`).Scan(&behind); err != nil {
 			return fmt.Errorf("checking photo representative sequence: %w", err)
@@ -462,13 +463,14 @@ func validatePhotoMetadataState(ctx context.Context, tx metadataQuerier, version
 	return nil
 }
 
-func validatePhotoAuthoredReferences(ctx context.Context, q metadataQuerier) error {
+func validatePhotoAuthoredReferences(ctx context.Context, q metadataQuerier, postgres bool) error {
+	j := metadataJSONDialect{postgres: postgres}
 	var invalid int
 	err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_change_receipts r,
- json_each(r.after_json,'$.after') entry
- LEFT JOIN photo_files f ON f.file_id=json_extract(entry.value,'$.file_id')
+ `+j.receiptArray("after")+` entry
+ LEFT JOIN photo_files f ON f.file_id=`+j.text("entry.value", "file_id")+`
  WHERE r.operation IN ('authored','authored_undo','authored_sidecar')
- AND (f.file_id IS NULL OR f.node_id<>json_extract(entry.value,'$.node_id'))`).Scan(&invalid)
+ AND (f.file_id IS NULL OR f.node_id<>`+j.number("entry.value", "node_id")+`)`).Scan(&invalid)
 	if err != nil {
 		return fmt.Errorf("checking authored receipt references: %w", err)
 	}
@@ -476,8 +478,8 @@ func validatePhotoAuthoredReferences(ctx context.Context, q metadataQuerier) err
 		return errors.New("authored receipts reference missing or different file nodes")
 	}
 	err = q.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_change_receipts r,
- json_each(r.after_json,'$.representatives') entry
- LEFT JOIN photo_assets a ON a.asset_id=json_extract(entry.value,'$.asset_id')
+ `+j.receiptArray("representatives")+` entry
+ LEFT JOIN photo_assets a ON a.asset_id=`+j.text("entry.value", "asset_id")+`
  WHERE r.operation IN ('authored','authored_undo') AND a.asset_id IS NULL`).Scan(&invalid)
 	if err != nil {
 		return err
@@ -487,11 +489,11 @@ func validatePhotoAuthoredReferences(ctx context.Context, q metadataQuerier) err
 	}
 
 	err = q.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_change_receipts r
- LEFT JOIN photo_files sidecar ON sidecar.file_id=json_extract(r.after_json,'$.sidecar.file_id')
- LEFT JOIN content_versions version ON version.version_id=json_extract(r.after_json,'$.sidecar.version_id')
+ LEFT JOIN photo_files sidecar ON sidecar.file_id=`+j.text("r.after_json", "sidecar.file_id")+`
+ LEFT JOIN content_versions version ON version.version_id=`+j.text("r.after_json", "sidecar.version_id")+`
  WHERE r.operation='authored_sidecar' AND
- (sidecar.file_id IS NULL OR sidecar.node_id<>json_extract(r.after_json,'$.sidecar.node_id')
- OR (version.version_id IS NOT NULL AND version.node_id<>json_extract(r.after_json,'$.sidecar.node_id')))`).Scan(&invalid)
+ (sidecar.file_id IS NULL OR sidecar.node_id<>`+j.number("r.after_json", "sidecar.node_id")+`
+ OR (version.version_id IS NOT NULL AND version.node_id<>`+j.number("r.after_json", "sidecar.node_id")+`))`).Scan(&invalid)
 	if err != nil {
 		return err
 	}
@@ -499,7 +501,7 @@ func validatePhotoAuthoredReferences(ctx context.Context, q metadataQuerier) err
 		return errors.New("authored receipt sidecar provenance references missing or different nodes")
 	}
 	err = q.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_change_receipts r
- LEFT JOIN photo_change_receipts original ON original.receipt_id=json_extract(r.after_json,'$.undo_of')
+ LEFT JOIN photo_change_receipts original ON original.receipt_id=`+j.text("r.after_json", "undo_of")+`
  WHERE r.operation='authored_undo' AND (original.receipt_id IS NULL OR original.receipt_id=r.receipt_id OR original.operation NOT IN ('authored','authored_undo','authored_sidecar'))`).Scan(&invalid)
 	if err != nil {
 		return err
@@ -511,22 +513,22 @@ func validatePhotoAuthoredReferences(ctx context.Context, q metadataQuerier) err
 	// original's outcomes once. A live settled boundary must exist; Outside
 	// snapshots retain their semantics after their bytes have been pruned.
 	if err := q.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM photo_change_receipts r
- LEFT JOIN photo_files f ON f.file_id=json_extract(r.after_json,'$.file_id')
- LEFT JOIN photo_files sf ON sf.file_id=json_extract(r.after_json,'$.sync.sidecar.file_id')
- LEFT JOIN content_versions settled ON settled.version_id=json_extract(r.after_json,'$.sync.settled.version_id')
- WHERE r.operation='xmp_sync' AND (f.file_id IS NULL OR f.node_id<>json_extract(r.after_json,'$.node_id')
- OR json_type(r.after_json,'$.sync') IS NOT NULL AND sf.file_id IS NOT NULL AND sf.node_id<>json_extract(r.after_json,'$.sync.sidecar.node_id')
+ LEFT JOIN photo_files f ON f.file_id=`+j.text("r.after_json", "file_id")+`
+ LEFT JOIN photo_files sf ON sf.file_id=`+j.text("r.after_json", "sync.sidecar.file_id")+`
+ LEFT JOIN content_versions settled ON settled.version_id=`+j.text("r.after_json", "sync.settled.version_id")+`
+ WHERE r.operation='xmp_sync' AND (f.file_id IS NULL OR f.node_id<>`+j.number("r.after_json", "node_id")+`
+ OR `+j.kind("r.after_json", "sync")+` IS NOT NULL AND sf.file_id IS NOT NULL AND sf.node_id<>`+j.number("r.after_json", "sync.sidecar.node_id")+`
  OR sf.sidecar_of_file_id=f.file_id AND settled.version_id IS NULL
- OR settled.node_id<>json_extract(r.after_json,'$.sync.sidecar.node_id')
- OR EXISTS(SELECT 1 FROM json_each(r.after_json,'$.sync.outside') o JOIN content_versions outside ON outside.version_id=json_extract(o.value,'$.version_id')
- WHERE outside.node_id<>json_extract(r.after_json,'$.sync.sidecar.node_id'))))`).Scan(&invalid); err != nil {
+ OR settled.node_id<>`+j.number("r.after_json", "sync.sidecar.node_id")+`
+ OR EXISTS(SELECT 1 FROM `+j.receiptArray("sync.outside")+` o JOIN content_versions outside ON outside.version_id=`+j.text("o.value", "version_id")+`
+ WHERE outside.node_id<>`+j.number("r.after_json", "sync.sidecar.node_id")+`)))`).Scan(&invalid); err != nil {
 		return fmt.Errorf("checking XMP receipt references: %w", err)
 	}
 	if invalid != 0 {
 		return errors.New("XMP receipts reference missing or different nodes")
 	}
 	if err := q.QueryRowContext(ctx, `SELECT count(*) FROM (SELECT 1 FROM photo_change_receipts WHERE operation='xmp_sync'
- GROUP BY json_extract(after_json,'$.file_id') HAVING count(*)>1)`).Scan(&invalid); err != nil {
+ GROUP BY `+j.text("after_json", "file_id")+` HAVING count(*)>1)`).Scan(&invalid); err != nil {
 		return fmt.Errorf("checking XMP receipt sequence: %w", err)
 	}
 	if invalid != 0 {

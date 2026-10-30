@@ -331,7 +331,7 @@ func validateSnapshotMembersTx(ctx context.Context, tx metadataQuerier, request 
 	for _, member := range request.Members {
 		var hash string
 		var size int64
-		err := tx.QueryRowContext(ctx, `SELECT blob_hash,size FROM content_versions WHERE version_id=? AND node_id=?`, member.ContentVersionID, member.NodeID).Scan(&hash, &size)
+		err := tx.QueryRowContext(ctx, `SELECT blob_hash,size FROM content_versions WHERE version_id=$1 AND node_id=$2`, member.ContentVersionID, member.NodeID).Scan(&hash, &size)
 		if errors.Is(err, sql.ErrNoRows) || err == nil && (hash != member.BlobSHA256 || size != member.Size) {
 			return ErrPackageConflict
 		}
@@ -357,7 +357,7 @@ func validateSnapshotMembersTx(ctx context.Context, tx metadataQuerier, request 
 				continue
 			}
 			var size int64
-			err := tx.QueryRowContext(ctx, `SELECT size FROM blobs WHERE hash=?`, rep.BlobSHA256).Scan(&size)
+			err := tx.QueryRowContext(ctx, `SELECT size FROM blobs WHERE hash=$1`, rep.BlobSHA256).Scan(&size)
 			if errors.Is(err, sql.ErrNoRows) || err == nil && size != rep.Size {
 				return ErrPackageConflict
 			}
@@ -366,7 +366,7 @@ func validateSnapshotMembersTx(ctx context.Context, tx metadataQuerier, request 
 			}
 			if rep.ContentVersionID != "" {
 				var count int
-				if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM content_versions WHERE version_id=?`, rep.ContentVersionID).Scan(&count); err != nil {
+				if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM content_versions WHERE version_id=$1`, rep.ContentVersionID).Scan(&count); err != nil {
 					return err
 				}
 				if count != 1 {
@@ -487,7 +487,7 @@ func insertCollectionSnapshotMembersTx(ctx context.Context, tx *sql.Tx, snapshot
 func loadCollectionSnapshotTx(ctx context.Context, tx metadataQuerier, id string) (CollectionSnapshot, error) {
 	var encoded []byte
 	var checksum string
-	err := tx.QueryRowContext(ctx, `SELECT canonical_json,checksum FROM collection_snapshots WHERE snapshot_id=?`, id).Scan(&encoded, &checksum)
+	err := tx.QueryRowContext(ctx, `SELECT canonical_json,checksum FROM collection_snapshots WHERE snapshot_id=$1`, id).Scan(&encoded, &checksum)
 	if errors.Is(err, sql.ErrNoRows) {
 		return CollectionSnapshot{}, ErrNotFound
 	}
@@ -546,7 +546,7 @@ func (s *Store) SnapshotMembers(ctx context.Context, id string, afterOrdinal, li
 
 func loadSnapshotMemberRows(ctx context.Context, tx metadataQuerier, id string, afterOrdinal, limit int) ([]CollectionSnapshotMember, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT canonical_json,checksum,selected_source_pages_json FROM collection_snapshot_members
-		WHERE snapshot_id=? AND ordinal>? ORDER BY ordinal LIMIT ?`, id, afterOrdinal, limit)
+		WHERE snapshot_id=$1 AND ordinal>$2 ORDER BY ordinal LIMIT $3`, id, afterOrdinal, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -583,7 +583,7 @@ func loadSnapshotMemberRows(ctx context.Context, tx metadataQuerier, id string, 
 
 func loadSnapshotRepresentationRows(ctx context.Context, tx metadataQuerier, snapshotID, occurrenceID string) ([]CollectionSnapshotRepresentation, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT canonical_json,checksum FROM collection_snapshot_representations
-		WHERE snapshot_id=? AND occurrence_id=? ORDER BY role,ordinal`, snapshotID, occurrenceID)
+		WHERE snapshot_id=$1 AND occurrence_id=$2 ORDER BY role,ordinal`, snapshotID, occurrenceID)
 	if err != nil {
 		return nil, err
 	}

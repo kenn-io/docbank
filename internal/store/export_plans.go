@@ -54,7 +54,7 @@ func validateExportPolicies(roles []bundle.RolePolicy) error {
 
 func loadExportPlan(ctx context.Context, q metadataQuerier, id string) (bundle.Plan, error) {
 	var raw []byte
-	err := q.QueryRowContext(ctx, `SELECT canonical_json FROM export_plans WHERE id=?`, id).Scan(&raw)
+	err := q.QueryRowContext(ctx, `SELECT canonical_json FROM export_plans WHERE id=$1`, id).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
 		return bundle.Plan{}, ErrNotFound
 	}
@@ -311,7 +311,7 @@ func walkExportMembers(ctx context.Context, q metadataQuerier, id string, visit 
 	var lastNode int64
 	lastVersion := ""
 	for {
-		rows, err := q.QueryContext(ctx, `SELECT canonical_json FROM export_members WHERE source_id=? AND (node_id>? OR (node_id=? AND version_id>?)) ORDER BY node_id,version_id LIMIT 250`, id, lastNode, lastNode, lastVersion)
+		rows, err := q.QueryContext(ctx, `SELECT canonical_json FROM export_members WHERE source_id=$1 AND (node_id>$2 OR (node_id=$3 AND version_id>$4)) ORDER BY node_id,version_id LIMIT 250`, id, lastNode, lastNode, lastVersion)
 		if err != nil {
 			return err
 		}
@@ -351,7 +351,7 @@ func walkExportMembers(ctx context.Context, q metadataQuerier, id string, visit 
 
 func walkExportDocumentBytes(ctx context.Context, q metadataQuerier, id string, visit func([]byte) error) error {
 	for offset := 0; ; offset += 100 {
-		rows, err := q.QueryContext(ctx, `SELECT canonical_json FROM export_documents WHERE plan_id=? AND ordinal>=? ORDER BY ordinal LIMIT 100`, id, offset)
+		rows, err := q.QueryContext(ctx, `SELECT canonical_json FROM export_documents WHERE plan_id=$1 AND ordinal>=$2 ORDER BY ordinal LIMIT 100`, id, offset)
 		if err != nil {
 			return err
 		}

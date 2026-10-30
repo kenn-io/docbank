@@ -227,7 +227,7 @@ func (s *Store) EnableInitialAudit(
 			if err := s.persistInitialAuditEnrollment(ctx, tx, set); err != nil {
 				return err
 			}
-			if err := validateMetadataState(ctx, tx, set.nodeSequence); err != nil {
+			if err := s.validateMetadataState(ctx, tx, set.nodeSequence); err != nil {
 				return fmt.Errorf("validating created audit authority: %w", err)
 			}
 		} else {
@@ -245,7 +245,7 @@ func (s *Store) EnableInitialAudit(
 			if err := s.persistAdditionalAuditEnrollment(ctx, tx, set); err != nil {
 				return err
 			}
-			if err := validateMetadataState(ctx, tx, set.nodeSequence); err != nil {
+			if err := s.validateMetadataState(ctx, tx, set.nodeSequence); err != nil {
 				return fmt.Errorf("validating additional audit scope: %w", err)
 			}
 		}

@@ -24,7 +24,7 @@ func validateRetainedMailboxContainer(ctx context.Context, q metadataQuerier, c 
 	}
 	for _, ch := range c.Chunks {
 		var size int64
-		if err = q.QueryRowContext(ctx, `SELECT size FROM blobs WHERE hash=?`, ch.SHA256).Scan(&size); err != nil {
+		if err = q.QueryRowContext(ctx, `SELECT size FROM blobs WHERE hash=$1`, ch.SHA256).Scan(&size); err != nil {
 			return err
 		}
 		if size != ch.Size {
@@ -37,7 +37,7 @@ func exportMailboxMetadata(ctx context.Context, q metadataQuerier, write metadat
 	after := ""
 	for {
 		var id, owner string
-		err := q.QueryRowContext(ctx, `SELECT id,owner FROM mailbox_containers WHERE id>? ORDER BY id LIMIT 1`, after).Scan(&id, &owner)
+		err := q.QueryRowContext(ctx, `SELECT id,owner FROM mailbox_containers WHERE id>$1 ORDER BY id LIMIT 1`, after).Scan(&id, &owner)
 		if errors.Is(err, sql.ErrNoRows) {
 			return exportMailboxTransfers(ctx, q, write)
 		}
@@ -122,7 +122,7 @@ func exportMailboxTransfers(ctx context.Context, q metadataQuerier, write metada
 	after := ""
 	for {
 		var a MailboxArchive
-		err := q.QueryRowContext(ctx, `SELECT id,owner,description FROM mailbox_archives WHERE id>? ORDER BY id LIMIT 1`, after).Scan(&a.ID, &a.Owner, &a.Description)
+		err := q.QueryRowContext(ctx, `SELECT id,owner,description FROM mailbox_archives WHERE id>$1 ORDER BY id LIMIT 1`, after).Scan(&a.ID, &a.Owner, &a.Description)
 		if errors.Is(err, sql.ErrNoRows) {
 			break
 		}
@@ -140,7 +140,7 @@ func exportMailboxTransfers(ctx context.Context, q metadataQuerier, write metada
 	after = ""
 	for {
 		var id string
-		err := q.QueryRowContext(ctx, `SELECT id FROM mailbox_transfer_receipts WHERE id>? ORDER BY id LIMIT 1`, after).Scan(&id)
+		err := q.QueryRowContext(ctx, `SELECT id FROM mailbox_transfer_receipts WHERE id>$1 ORDER BY id LIMIT 1`, after).Scan(&id)
 		if errors.Is(err, sql.ErrNoRows) {
 			return exportMailboxJobs(ctx, q, write)
 		}

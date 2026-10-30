@@ -247,14 +247,14 @@ func loadBatesArtifact(ctx context.Context, q metadataQuerier, id string) (Bates
 	var artifact BatesArtifact
 	err := q.QueryRowContext(ctx, `SELECT a.artifact_id,a.allocation_id,a.blob_hash,a.size,a.media_type,a.page_count,a.recipe_json,
 		a.manifest_sha256,a.state,a.created_at,l.recipe_sha256 FROM bates_artifacts a JOIN bates_allocations l USING(allocation_id)
-		WHERE a.artifact_id=?`, id).Scan(&artifact.ArtifactID, &artifact.AllocationID, &artifact.BlobSHA256, &artifact.Size,
+		WHERE a.artifact_id=$1`, id).Scan(&artifact.ArtifactID, &artifact.AllocationID, &artifact.BlobSHA256, &artifact.Size,
 		&artifact.MediaType, &artifact.PageCount, &artifact.RecipeJSON, &artifact.ManifestSHA256, &artifact.State,
 		&artifact.CreatedAt, &artifact.RecipeSHA256)
 	if err != nil {
 		return BatesArtifact{}, err
 	}
 	rows, err := q.QueryContext(ctx, `SELECT ordinal,occurrence_id,source_blob_sha256,source_page,output_page,label
-		FROM bates_artifact_pages WHERE artifact_id=? ORDER BY ordinal`, id)
+		FROM bates_artifact_pages WHERE artifact_id=$1 ORDER BY ordinal`, id)
 	if err != nil {
 		return BatesArtifact{}, err
 	}
