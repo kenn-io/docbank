@@ -349,7 +349,7 @@ func serveHTTP2GoAway(t *testing.T, listener net.Listener) *atomic.Int32 {
 		defer func() {
 			// Closing with client frames unread makes Windows reset the connection,
 			// which discards the GOAWAY or response the client has not read yet.
-			_ = conn.SetReadDeadline(time.Now().Add(time.Second))
+			_ = conn.SetReadDeadline(time.Now().Add(250 * time.Millisecond)) //nolint:kennlint // deadlinetest: bounds the real peer drain before closing the connection
 			_, _ = io.Copy(io.Discard, conn)
 			_ = conn.Close()
 		}()
