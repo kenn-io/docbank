@@ -399,7 +399,7 @@ func TestVaultEnsureSourceMetadataWaitsForActiveMutation(t *testing.T) {
 		_, ensureErr := vault.EnsureSourceMetadata(t.Context(), receipt.Version.ID)
 		ensureDone <- ensureErr
 	}()
-	timer := time.NewTimer(100 * time.Millisecond) //nolint:kennlint // the timer shows the event does not happen; the paused write commit keeps source metadata blocked
+	timer := time.NewTimer(100 * time.Millisecond) //nolint:kennlint // deadlinetest: the timer shows the event does not happen; the paused write commit keeps source metadata blocked
 	var earlyErr error
 	returnedEarly := false
 	select {
@@ -453,7 +453,7 @@ func TestVaultEnsureSourceMetadataHoldsMutationThroughFinalRead(t *testing.T) {
 		})
 		putDone <- putErr
 	}()
-	timer := time.NewTimer(100 * time.Millisecond) //nolint:kennlint // the timer shows the event does not happen; the paused metadata publication keeps the put blocked
+	timer := time.NewTimer(100 * time.Millisecond) //nolint:kennlint // deadlinetest: the timer shows the event does not happen; the paused metadata publication keeps the put blocked
 	var earlyErr error
 	returnedEarly := false
 	select {

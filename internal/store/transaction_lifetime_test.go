@@ -120,7 +120,7 @@ func holdTestSQLiteWriter(t *testing.T, s *Store) *sql.Tx {
 	t.Helper()
 	require.NoError(t, s.writeDB.Close())
 	var err error
-	s.writeDB, err = s.driver.Open(s.path, docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate, BusyTimeout: 10 * time.Millisecond})
+	s.writeDB, err = s.driver.Open(s.path, docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate, BusyTimeout: 10 * time.Millisecond}) //nolint:kennlint // deadlinetest: the held writer lock must outlast busy attempts to exercise transaction retry and cancellation
 	require.NoError(t, err)
 	s.writeDB.SetMaxOpenConns(1)
 	writer, err := s.driver.Open(s.path, docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate})
@@ -152,7 +152,7 @@ func TestStorageTransactionRetryBegin(t *testing.T) {
 		select {
 		case err := <-done:
 			t.Fatalf("transaction returned while the writer lock was held: %v", err)
-		case <-time.After(100 * time.Millisecond): //nolint:kennlint // Real SQLite contention must outlast the driver's wall-clock busy timeout.
+		case <-time.After(100 * time.Millisecond): //nolint:kennlint // deadlinetest: Real SQLite contention must outlast the driver's wall-clock busy timeout.
 		}
 		require.NoError(t, lock.Rollback())
 		require.NoError(t, <-done)
@@ -179,7 +179,7 @@ func TestStorageTransactionRetryBegin(t *testing.T) {
 		holdTestSQLiteWriter(t, s)
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
-		timer := time.AfterFunc(50*time.Millisecond, cancel) //nolint:kennlint // Exercise cancellation during a real SQLite busy wait.
+		timer := time.AfterFunc(50*time.Millisecond, cancel) //nolint:kennlint // deadlinetest: Exercise cancellation during a real SQLite busy wait.
 		defer timer.Stop()
 		start := time.Now()
 		err := s.withStorageTxRetryBegin(ctx, func(*sql.Tx) error {

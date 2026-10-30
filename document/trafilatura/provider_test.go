@@ -237,7 +237,7 @@ func TestProviderBoundsOutputAndSanitizesProcessFailure(t *testing.T) {
 
 func TestProviderEnforcesTimeoutCancellationAndExpiry(t *testing.T) {
 	t.Run("timeout", func(t *testing.T) {
-		provider := newTestProvider(t, helperExecutable(t, "wait"), 20*time.Millisecond, 1<<20)
+		provider := newTestProvider(t, helperExecutable(t, "wait"), 20*time.Millisecond, 1<<20) //nolint:kennlint // deadlinetest: the waiting child must reach its deadline and return a capacity error
 		upload := newTestUpload(testHTML, "article.html", "text/html")
 		_, err := provider.Render(t.Context(), upload,
 			testAuthorization(provider.Descriptor(), upload.Metadata()))
