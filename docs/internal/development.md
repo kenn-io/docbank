@@ -777,7 +777,7 @@ rationale.
 tests outside a synctest bubble. A short positive `Never` window is allowed,
 since it can only check less.
 
-A deadline finding may carry `//nolint:kennlint // reason` in three cases: the
+A deadline finding may carry `//nolint:kennlint // deadlinetest: reason` in three cases: the
 asserted result is the deadline expiring; a `select` on a timer shows that an
 event does not happen; or the call sits in a helper that runs only inside a
 bubble the analyzer can't see across the call. The reason names the case and

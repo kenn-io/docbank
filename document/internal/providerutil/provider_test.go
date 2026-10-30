@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -104,13 +105,16 @@ func TestOperationCheckOrdersCallerExpiryAndTotalTimeout(t *testing.T) {
 	})
 
 	t.Run("total timeout", func(t *testing.T) {
-		operation, err := NewOperation(t.Context(), testProvider, expiry, time.Millisecond)
-		require.NoError(t, err)
-		defer operation.Cancel()
-		<-operation.Context().Done()
-		err = operation.Check()
-		assertCode(t, err, document.RenditionErrorCapacity)
-		assert.ErrorIs(t, err, context.DeadlineExceeded)
+		synctest.Test(t, func(t *testing.T) {
+			expiry := time.Now().UTC().Add(time.Minute).Format(TimestampForm)
+			operation, err := NewOperation(t.Context(), testProvider, expiry, time.Millisecond)
+			require.NoError(t, err)
+			defer operation.Cancel()
+			<-operation.Context().Done()
+			err = operation.Check()
+			assertCode(t, err, document.RenditionErrorCapacity)
+			assert.ErrorIs(t, err, context.DeadlineExceeded)
+		})
 	})
 
 	t.Run("expiry", func(t *testing.T) {
@@ -122,12 +126,14 @@ func TestOperationCheckOrdersCallerExpiryAndTotalTimeout(t *testing.T) {
 	})
 
 	t.Run("resumed operation uses only a new total timeout", func(t *testing.T) {
-		operation := NewResumedOperation(t.Context(), testProvider, time.Millisecond)
-		defer operation.Cancel()
-		<-operation.Context().Done()
-		err := operation.Check()
-		assertCode(t, err, document.RenditionErrorCapacity)
-		assert.ErrorIs(t, err, context.DeadlineExceeded)
+		synctest.Test(t, func(t *testing.T) {
+			operation := NewResumedOperation(t.Context(), testProvider, time.Millisecond)
+			defer operation.Cancel()
+			<-operation.Context().Done()
+			err := operation.Check()
+			assertCode(t, err, document.RenditionErrorCapacity)
+			assert.ErrorIs(t, err, context.DeadlineExceeded)
+		})
 	})
 }
 
@@ -343,7 +349,7 @@ func serveHTTP2GoAway(t *testing.T, listener net.Listener) *atomic.Int32 {
 		defer func() {
 			// Closing with client frames unread makes Windows reset the connection,
 			// which discards the GOAWAY or response the client has not read yet.
-			_ = conn.SetReadDeadline(time.Now().Add(250 * time.Millisecond))
+			_ = conn.SetReadDeadline(time.Now().Add(250 * time.Millisecond)) //nolint:kennlint // deadlinetest: bounds the real peer drain before closing the connection
 			_, _ = io.Copy(io.Discard, conn)
 			_ = conn.Close()
 		}()

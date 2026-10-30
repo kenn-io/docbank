@@ -206,9 +206,19 @@ JSONL preserves the identity and optional `supersedes` edge and rejects a
 dangling, cross-node, branching, or cyclic graph during import.
 
 `watch_sources` is a small operational cursor, not a second provenance graph.
-Its primary key is `(watch_name, source_ref)`, and it records both the stable
-node and the last source bytes accepted. Watch decisions live in Go: unchanged
-source bytes never replace an independently edited or reverted node head.
+Its primary key is `(watch_name, source_ref)`, and `source_ref` is the
+current source location. The cursor records the stable node and last accepted
+source bytes. A confirmed live daemon-watch rename rebinds only that current
+location in a storage transaction. The original source path stays in immutable
+provenance, and the archived node keeps its independently chosen virtual
+placement and selected version. Watch decisions live in Go: unchanged source
+bytes never replace an independently edited or reverted node head. A node
+already owned by push, or a destination key occupied by push, cannot be
+rebound. Native identity and birth evidence are process-local; no file IDs
+enter the schema or metadata export. The in-memory tuple associates the node,
+native object identity and birth evidence, and handle-derived file information
+only after successful watched ingestion. Unaccepted observations cannot transfer
+that ownership.
 
 `push_sources` keeps the same source digest authority for client-owned folders.
 Its `(push_name, source_ref)` key survives pruning the content version that was

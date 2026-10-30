@@ -156,7 +156,7 @@ func TestLibreOfficeRejectsOrStripsExternalDOCXTargets(t *testing.T) {
 	select {
 	case <-hit:
 		t.Fatal("LibreOffice reached the host listener")
-	case <-time.After(100 * time.Millisecond): //nolint:kennlint // the timer shows the event does not happen; the sandbox keeps LibreOffice off the host listener
+	case <-time.After(100 * time.Millisecond): //nolint:kennlint // deadlinetest: the timer shows the event does not happen; the sandbox keeps LibreOffice off the host listener
 	}
 	contentAfter, readErr := os.ReadFile(sentinelPath)
 	require.NoError(t, readErr)
@@ -214,7 +214,7 @@ func waitForLibreOfficeStart(t *testing.T, executable string) map[int]struct{} {
 		if len(pids) != 0 {
 			return pids
 		}
-		time.Sleep(20 * time.Millisecond) //nolint:kennlint // polls /proc for a real LibreOffice process
+		time.Sleep(20 * time.Millisecond) //nolint:kennlint // sleeptest: polls /proc for a real LibreOffice process
 	}
 	t.Fatalf("LibreOffice did not start: executable=%s", executable)
 	return nil
@@ -227,7 +227,7 @@ func waitForLibreOfficeExit(t *testing.T, executable string) {
 		if len(matchingLibreOfficePIDs(executable)) == 0 {
 			return
 		}
-		time.Sleep(20 * time.Millisecond) //nolint:kennlint // polls /proc for a real LibreOffice process to exit
+		time.Sleep(20 * time.Millisecond) //nolint:kennlint // sleeptest: polls /proc for a real LibreOffice process to exit
 	}
 	t.Fatalf("LibreOffice descendant survived cancellation: executable=%s pids=%v", executable, matchingLibreOfficePIDs(executable))
 }

@@ -38,7 +38,7 @@ func TestPhotoXMPPlacementCleanupRetryExcludesPublication(t *testing.T) {
 	// Cleanup retries hold maintenance while retiring old blob paths.
 	// Publishing a sidecar must wait until that maintenance finishes.
 	require.NoError(t, fixture.Blobs.WithMaintenance(t.Context(), func() error {
-		ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond) //nolint:kennlint // the deadline proves publication waits for active cleanup
+		ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline proves publication waits for active cleanup
 		defer cancel()
 		_, publishErr := ing.PublishPhotoXMP(ctx, plan, data)
 		require.ErrorIs(t, publishErr, context.DeadlineExceeded)

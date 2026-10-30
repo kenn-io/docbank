@@ -24,6 +24,23 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
+type scanResult struct {
+	complete bool
+	err      error
+}
+
+func checkedScan(complete bool, err error) scanResult { return scanResult{complete, err} }
+func requireScanComplete(t *testing.T, result scanResult) {
+	t.Helper()
+	require.NoError(t, result.err)
+	require.True(t, result.complete)
+}
+func requireScanErrorIs(t *testing.T, result scanResult, target error) {
+	t.Helper()
+	require.False(t, result.complete)
+	require.ErrorIs(t, result.err, target)
+}
+
 func openWatcherRoot(t *testing.T, watcher *Watcher) *watchRoot {
 	t.Helper()
 	root, err := watcher.openRoot(t.Context())
@@ -92,6 +109,12 @@ func TestWatcherReportsBusyOnlyWhenIngesting(t *testing.T) {
 		require.NoError(t, supervisor.Start("watch:activity", watcher.Run))
 		synctest.Wait()
 		require.NoError(t, os.WriteFile(filepath.Join(source, "z-unsettled.txt"), []byte("still writing"), 0o600))
+		time.Sleep(time.Second)
+		synctest.Wait()
+		assert.Equal(t, 1, processed)
+		// A scan collects its inventory before importing, so the next scan
+		// observes after the import. Keep the second file unsettled for it.
+		require.NoError(t, os.WriteFile(filepath.Join(source, "z-unsettled.txt"), []byte("still writing more"), 0o600))
 		time.Sleep(time.Second)
 		synctest.Wait()
 		assert.Equal(t, 1, processed)
@@ -223,7 +246,7 @@ func rewriteSourceWithRestoredMtime(t *testing.T, path string, content []byte) {
 			return
 		}
 		require.True(t, time.Now().Before(deadline), "filesystem change time did not advance")
-		time.Sleep(10 * time.Millisecond) //nolint:kennlint // wait for the native filesystem clock
+		time.Sleep(10 * time.Millisecond) //nolint:kennlint // sleeptest: wait for the native filesystem clock
 	}
 }
 
@@ -1015,19 +1038,19 @@ func TestPromptWatchDirtyHintsStayConfined(t *testing.T) {
 	}, runTestMutation, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	root := openWatcherRoot(t, watcher)
-	require.NoError(t, watcher.scanWithHints(t.Context(), root, watchScanHints{Reconcile: true}))
-	require.NoError(t, watcher.scanWithHints(t.Context(), root, watchScanHints{
+	requireScanComplete(t, checkedScan(watcher.scanWithHints(t.Context(), root, watchScanHints{Reconcile: true})))
+	requireScanComplete(t, checkedScan(watcher.scanWithHints(t.Context(), root, watchScanHints{
 		Dirty: map[string]struct{}{"blocked.txt": {}, "link.txt": {}},
-	}))
+	})))
 	for _, ref := range []string{"blocked.txt", "link.txt", "secret.txt"} {
 		_, err := ing.Store.NodeByPath(t.Context(), "/archive/"+ref)
 		require.ErrorIs(t, err, store.ErrNotFound)
 	}
 	renameWatcherRoot(t, root, source+"-moved")
 	require.NoError(t, os.Symlink(outside, source))
-	require.ErrorIs(t, watcher.scanWithHints(t.Context(), root, watchScanHints{
+	requireScanErrorIs(t, checkedScan(watcher.scanWithHints(t.Context(), root, watchScanHints{
 		Dirty: map[string]struct{}{"safe.txt": {}},
-	}), ErrSourceChanged)
+	})), ErrSourceChanged)
 	_, err = ing.Store.NodeByPath(t.Context(), "/archive/secret.txt")
 	require.ErrorIs(t, err, store.ErrNotFound)
 }
@@ -1047,9 +1070,9 @@ func TestPromptWatchDirtyUnchangedSourcePreservesManualHeadAcrossRestart(t *test
 	require.NoError(t, err)
 	manual, _, err := ing.Store.ReplaceContent(t.Context(), node.ID, node.Revision, hash, size, "text/plain")
 	require.NoError(t, err)
-	require.NoError(t, watcher.scanWithHints(t.Context(), root, watchScanHints{
+	requireScanComplete(t, checkedScan(watcher.scanWithHints(t.Context(), root, watchScanHints{
 		Dirty: map[string]struct{}{"notes.txt": {}},
-	}))
+	})))
 	after, err := ing.Store.NodeByID(t.Context(), node.ID)
 	require.NoError(t, err)
 	require.Equal(t, manual, after)
@@ -1060,4 +1083,90 @@ func TestPromptWatchDirtyUnchangedSourcePreservesManualHeadAcrossRestart(t *test
 	after, err = ing.Store.NodeByID(t.Context(), node.ID)
 	require.NoError(t, err)
 	require.Equal(t, manual, after)
+}
+
+func TestWatcherLiveRenameKeepsNodeAndHistory(t *testing.T) {
+	ing := newTestIngester(t)
+	source := writeTree(t, map[string]string{"draft.md": "first"})
+	requireRenameEvidence(t, filepath.Join(source, "draft.md"))
+	watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{Name: "notes", Source: source, Destination: "/archive", SettleTime: config.Duration(10 * time.Second), ScanInterval: config.Duration(time.Second)}, runTestMutation, slog.New(slog.DiscardHandler))
+	require.NoError(t, err)
+	root := openWatcherRoot(t, watcher)
+	at := time.Unix(1700000000, 0)
+	require.NoError(t, scanWatcherAt(t.Context(), watcher, root, at))
+	require.NoError(t, scanWatcherAt(t.Context(), watcher, root, at.Add(10*time.Second)))
+	original, err := ing.Store.NodeByPath(t.Context(), "/archive/draft.md")
+	require.NoError(t, err)
+	require.NoError(t, os.Mkdir(filepath.Join(source, "notes"), 0o755))
+	require.NoError(t, os.Rename(filepath.Join(source, "draft.md"), filepath.Join(source, "notes", "final.md")))
+	require.NoError(t, scanWatcherAt(t.Context(), watcher, root, at.Add(11*time.Second)))
+	require.NoError(t, scanWatcherAt(t.Context(), watcher, root, at.Add(21*time.Second)))
+	cursors, err := ing.Store.PushCursors(t.Context(), "notes", "", 10)
+	require.NoError(t, err)
+	require.Len(t, cursors, 1)
+	assert.Equal(t, "notes/final.md", cursors[0].Ref)
+	assert.Equal(t, original.ID, cursors[0].NodeID)
+	_, total, err := ing.Store.ContentVersions(t.Context(), original.ID, 10, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 1, total)
+	require.NoError(t, os.WriteFile(filepath.Join(source, "notes", "final.md"), []byte("second"), 0o644))
+	require.NoError(t, scanWatcherAt(t.Context(), watcher, root, at.Add(22*time.Second)))
+	require.NoError(t, scanWatcherAt(t.Context(), watcher, root, at.Add(32*time.Second)))
+	_, total, err = ing.Store.ContentVersions(t.Context(), original.ID, 10, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 2, total)
+	versions, _, err := ing.Store.ContentVersions(t.Context(), original.ID, 10, 0)
+	require.NoError(t, err)
+	bytesByVersion := make(map[string]string)
+	for _, version := range versions {
+		reader, openErr := ing.Blobs.Open(version.BlobHash)
+		require.NoError(t, openErr)
+		data, readErr := io.ReadAll(reader)
+		require.NoError(t, readErr)
+		require.NoError(t, reader.Close())
+		bytesByVersion[version.ID] = string(data)
+	}
+	assert.Equal(t, "first", bytesByVersion[original.CurrentVersionID])
+	cfg := watcher.config
+	restarted, err := NewWatcher(ing, t.TempDir(), cfg, runTestMutation, slog.New(slog.DiscardHandler))
+	require.NoError(t, err)
+	nextRoot := openWatcherRoot(t, restarted)
+	require.NoError(t, scanWatcherAt(t.Context(), restarted, nextRoot, at.Add(40*time.Second)))
+	require.NoError(t, scanWatcherAt(t.Context(), restarted, nextRoot, at.Add(50*time.Second)))
+	cursors, err = ing.Store.PushCursors(t.Context(), "notes", "", 10)
+	require.NoError(t, err)
+	require.Len(t, cursors, 1)
+	assert.Equal(t, original.ID, cursors[0].NodeID)
+	_, total, err = ing.Store.ContentVersions(t.Context(), original.ID, 10, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 2, total)
+}
+
+func TestWatcherRenameAndEditBeforeFirstScanKeepsNode(t *testing.T) {
+	ing := newTestIngester(t)
+	source := writeTree(t, map[string]string{"draft.md": "first"})
+	requireRenameEvidence(t, filepath.Join(source, "draft.md"))
+	watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{
+		Name: "notes", Source: source, Destination: "/archive",
+		SettleTime: config.Duration(10 * time.Second), ScanInterval: config.Duration(time.Second),
+	}, runTestMutation, slog.New(slog.DiscardHandler))
+	require.NoError(t, err)
+	root := openWatcherRoot(t, watcher)
+	at := time.Unix(1700000000, 0)
+	require.NoError(t, scanWatcherAt(t.Context(), watcher, root, at))
+	require.NoError(t, scanWatcherAt(t.Context(), watcher, root, at.Add(10*time.Second)))
+	original, err := ing.Store.NodeByPath(t.Context(), "/archive/draft.md")
+	require.NoError(t, err)
+	require.NoError(t, os.Rename(filepath.Join(source, "draft.md"), filepath.Join(source, "final.md")))
+	require.NoError(t, os.WriteFile(filepath.Join(source, "final.md"), []byte("second longer"), 0o644))
+	require.NoError(t, scanWatcherAt(t.Context(), watcher, root, at.Add(11*time.Second)))
+	require.NoError(t, scanWatcherAt(t.Context(), watcher, root, at.Add(21*time.Second)))
+	cursors, err := ing.Store.PushCursors(t.Context(), "notes", "", 10)
+	require.NoError(t, err)
+	require.Len(t, cursors, 1)
+	assert.Equal(t, original.ID, cursors[0].NodeID)
+	assert.Equal(t, "final.md", cursors[0].Ref)
+	_, total, err := ing.Store.ContentVersions(t.Context(), original.ID, 10, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 2, total)
 }

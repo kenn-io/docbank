@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -91,36 +92,40 @@ func TestSearcherExpansionUsesVariantsWithoutBroadeningScope(t *testing.T) {
 func TestSearcherRerankingTimesOutAndReportsNamedDegradation(t *testing.T) {
 	t.Parallel()
 
-	reranker := &stageReranker{wait: true}
-	searcher, _ := stageSearcher(t, func(config *SearcherConfig) {
-		config.Reranking = RerankingConfig{Enabled: true,
-			Profile: RerankingProfile{ID: "reranking", MaxCandidates: 1}, Provider: reranker,
-			Authorizer: &stageAuthorizer{}, Deadline: time.Millisecond, FailurePolicy: ProviderFailureDegrade}
-	})
+	synctest.Test(t, func(t *testing.T) {
+		reranker := &stageReranker{wait: true}
+		searcher, _ := stageSearcher(t, func(config *SearcherConfig) {
+			config.Reranking = RerankingConfig{Enabled: true,
+				Profile: RerankingProfile{ID: "reranking", MaxCandidates: 1}, Provider: reranker,
+				Authorizer: &stageAuthorizer{}, Deadline: time.Millisecond, FailurePolicy: ProviderFailureDegrade}
+		})
 
-	report, err := searcher.Search(t.Context(), Query{Text: "private query", Mode: ModeLexical, Limit: 1})
-	require.NoError(t, err)
-	assert.Equal(t, []Degradation{DegradationRerankingDegraded}, report.Degradations)
-	assert.Equal(t, []ProviderReceipt{{Stage: ProviderStageReranking,
-		Outcome: ProviderOutcomeTimedOut, CandidateCount: 1}}, report.Receipts)
-	assert.NotContains(t, fmt.Sprintf("%#v", report), "private query")
+		report, err := searcher.Search(t.Context(), Query{Text: "private query", Mode: ModeLexical, Limit: 1})
+		require.NoError(t, err)
+		assert.Equal(t, []Degradation{DegradationRerankingDegraded}, report.Degradations)
+		assert.Equal(t, []ProviderReceipt{{Stage: ProviderStageReranking,
+			Outcome: ProviderOutcomeTimedOut, CandidateCount: 1}}, report.Receipts)
+		assert.NotContains(t, fmt.Sprintf("%#v", report), "private query")
+	})
 }
 
 func TestSearcherRejectsExpansionResponseReturnedAfterDeadline(t *testing.T) {
 	t.Parallel()
 
-	expander := &stageExpander{variants: []string{"replacement"}, waitThenSucceed: true}
-	searcher, _ := stageSearcher(t, func(config *SearcherConfig) {
-		config.Expansion = ExpansionConfig{Enabled: true,
-			Profile: ExpansionProfile{ID: "expansion", MaxVariants: 1}, Provider: expander,
-			Authorizer: &stageAuthorizer{}, Deadline: time.Millisecond, FailurePolicy: ProviderFailureDegrade}
-	})
+	synctest.Test(t, func(t *testing.T) {
+		expander := &stageExpander{variants: []string{"replacement"}, waitThenSucceed: true}
+		searcher, _ := stageSearcher(t, func(config *SearcherConfig) {
+			config.Expansion = ExpansionConfig{Enabled: true,
+				Profile: ExpansionProfile{ID: "expansion", MaxVariants: 1}, Provider: expander,
+				Authorizer: &stageAuthorizer{}, Deadline: time.Millisecond, FailurePolicy: ProviderFailureDegrade}
+		})
 
-	report, err := searcher.Search(t.Context(), Query{Text: "private query", Mode: ModeLexical, Limit: 1})
-	require.NoError(t, err)
-	assert.Equal(t, []Degradation{DegradationExpansionDegraded}, report.Degradations)
-	assert.Equal(t, []ProviderReceipt{{Stage: ProviderStageExpansion,
-		Outcome: ProviderOutcomeTimedOut}}, report.Receipts)
+		report, err := searcher.Search(t.Context(), Query{Text: "private query", Mode: ModeLexical, Limit: 1})
+		require.NoError(t, err)
+		assert.Equal(t, []Degradation{DegradationExpansionDegraded}, report.Degradations)
+		assert.Equal(t, []ProviderReceipt{{Stage: ProviderStageExpansion,
+			Outcome: ProviderOutcomeTimedOut}}, report.Receipts)
+	})
 }
 
 func TestSearcherFailClosedProviderFailureIsSanitized(t *testing.T) {

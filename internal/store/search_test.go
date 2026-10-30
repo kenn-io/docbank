@@ -2080,7 +2080,7 @@ func TestPublicationDoesNotDeadlockAgainstDerivativePurge(t *testing.T) { //noli
 		_, err := s.PurgeDerivatives(ctx, PurgeRequest{})
 		purged <- err
 	}()
-	time.Sleep(50 * time.Millisecond) //nolint:kennlint // lets the purge reach SQLite's busy wait on the write lock, which no Go signal reports
+	time.Sleep(50 * time.Millisecond) //nolint:kennlint // sleeptest: lets the purge reach SQLite's busy wait on the write lock, which no Go signal reports
 	close(release)
 
 	for name, done := range map[string]chan error{"publication": published, "purge": purged} {
@@ -2144,7 +2144,7 @@ func TestAcquireLexicalGenerationSerializesWithPublication(t *testing.T) { //nol
 	select {
 	case got := <-leases:
 		t.Fatalf("lease acquired %v while a publication was in flight", got)
-	case <-time.After(100 * time.Millisecond): //nolint:kennlint // the timer shows the event does not happen; the in-flight publication transaction keeps the lease blocked
+	case <-time.After(100 * time.Millisecond): //nolint:kennlint // deadlinetest: the timer shows the event does not happen; the in-flight publication transaction keeps the lease blocked
 	}
 	close(release)
 	require.NoError(t, <-published)

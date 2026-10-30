@@ -50,7 +50,7 @@ func TestMailboxWorkerLogsJobFailureAndProcessesNextJob(t *testing.T) {
 }
 
 func (d *contentionDriver) Open(path string, options docsqlite.OpenOptions) (*sql.DB, error) {
-	options.BusyTimeout = time.Millisecond
+	options.BusyTimeout = time.Millisecond //nolint:kennlint // deadlinetest: the held SQLite lock must outlast a busy attempt to exercise worker retries
 	db, err := d.Driver.Open(path, options)
 	if err == nil {
 		d.dbs = append(d.dbs, db)
@@ -124,7 +124,7 @@ func TestMailboxWorkerSurvivesCatalogContention(t *testing.T) {
 			select {
 			case <-done:
 				t.Fatalf("worker exited under temporary contention: %v", workerErr)
-			case <-time.After(350 * time.Millisecond): //nolint:kennlint // the timer shows the event does not happen; the exclusive SQLite lock keeps the worker in contention past several 100ms ticks
+			case <-time.After(350 * time.Millisecond): //nolint:kennlint // deadlinetest: the timer shows the event does not happen; the exclusive SQLite lock keeps the worker in contention past several 100ms ticks
 			}
 			require.NoError(t, tx.Rollback())
 			require.NoError(t, locker.Close())
