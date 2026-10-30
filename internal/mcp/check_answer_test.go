@@ -2,6 +2,8 @@ package mcp
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/http"
@@ -13,6 +15,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/daemonconn"
 )
 
@@ -20,20 +23,56 @@ func TestCheckAnswerTransports(t *testing.T) {
 	server, citation := newCitationMCPFixture(t)
 	citation.Start -= len([]rune(`$1,205 a`))
 	citation.End = citation.Start + len([]rune(`$1,205`))
-	result := decodeResult(t, exportExchange(t, server, "stdio", "tools/call", map[string]any{
-		"name": "check_answer", "arguments": map[string]any{"answer": "Invoice was $1,205 [1]", "citations": []any{citation}},
+	for _, tc := range []struct{ answer, status, figureStatus, figureText string }{
+		{"Invoice was $1,205 [1]", "grounded", "found", "$1,205"},
+		{"€1,205 [1]", "ungrounded", "value_only", ""},
+	} {
+		result := decodeResult(t, exportExchange(t, server, "stdio", "tools/call", map[string]any{
+			"name": "check_answer", "arguments": map[string]any{"answer": tc.answer, "citations": []any{citation}},
+		}))
+		output := objectField(t, result, "structuredContent")
+		require.Equal(t, tc.status, output["status"])
+		figures, ok := output["figures"].([]any)
+		require.True(t, ok)
+		require.Len(t, figures, 1)
+		figure, ok := figures[0].(map[string]any)
+		require.True(t, ok)
+		require.Equal(t, tc.figureStatus, figure["status"])
+		if tc.figureText != "" {
+			require.Equal(t, "private", output["cacheScope"])
+			require.Equal(t, tc.figureText, figure["text"])
+		}
+		assertSchemaAccepts(t, catalogMap(toolCatalog(ServerOptions{}))["check_answer"].OutputSchema, output)
+	}
+}
+
+func TestCheckAnswerCitationStartControlsListEvidence(t *testing.T) {
+	const quote = "- $40"
+	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var citation document.TextCitation
+		if err := json.UnmarshalRead(r.Body, &citation); err != nil {
+			http.Error(w, "invalid", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		response := document.ResolvedTextCitation{Citation: citation, Text: quote, TextBytes: len(quote), TextSHA256: fmt.Sprintf("%x", sha256.Sum256([]byte(quote)))}
+		if err := json.MarshalWrite(w, response); err != nil {
+			t.Errorf("write citation: %v", err)
+		}
 	}))
-	output := objectField(t, result, "structuredContent")
-	require.Equal(t, "grounded", output["status"])
-	require.Equal(t, "private", output["cacheScope"])
-	figures, ok := output["figures"].([]any)
-	require.True(t, ok)
-	require.Len(t, figures, 1)
-	figure, ok := figures[0].(map[string]any)
-	require.True(t, ok)
-	require.Equal(t, "$1,205", figure["text"])
-	require.Equal(t, "found", figure["status"])
-	assertSchemaAccepts(t, catalogMap(toolCatalog(ServerOptions{}))["check_answer"].OutputSchema, output)
+	t.Cleanup(daemon.Close)
+	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, exportTestLease(t, daemon.URL))
+	for _, tc := range []struct {
+		start          int
+		answer, status string
+	}{{0, "$40", "grounded"}, {0, "-$40", "ungrounded"}, {1, "$40", "ungrounded"}, {1, "-$40", "ungrounded"}} {
+		citation := citationMCPArguments()
+		citation["start"], citation["end"] = tc.start, tc.start+len(quote)
+		result := decodeResult(t, exportExchange(t, server, "stdio", "tools/call", map[string]any{
+			"name": "check_answer", "arguments": map[string]any{"answer": tc.answer, "citations": []any{citation}},
+		}))
+		require.Equal(t, tc.status, objectField(t, result, "structuredContent")["status"])
+	}
 }
 
 func TestCheckAnswerRejectsInvalidBeforeAcquisition(t *testing.T) {
