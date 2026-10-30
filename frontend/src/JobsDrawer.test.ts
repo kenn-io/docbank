@@ -482,6 +482,7 @@ describe("background jobs drawer", () => {
           lane: "watch:inbox",
           status: "running",
           busy: true,
+          tags: ["receipts", "2026"],
           started_at: "2026-07-23T11:00:00Z",
         },
       ]),
@@ -494,6 +495,7 @@ describe("background jobs drawer", () => {
     });
 
     const progress = await screen.findByRole("progressbar", { name: "Importing photos progress" });
+    expect(screen.getAllByText("Tags: receipts, 2026")).toHaveLength(2);
     expect(progress.getAttribute("aria-valuenow")).toBe("75");
     expect(progress.getAttribute("aria-valuemax")).toBe("301");
     expect(screen.getByRole("region", { name: "Importing photos" })).toBeTruthy();
@@ -625,19 +627,4 @@ it("shows current running work ahead of a retained failure in the same lane", as
   expect(screen.getByText("1 running")).toBeTruthy();
   expect(within(lane).getByText("Earlier operation failed")).toBeTruthy();
   expect(screen.getByRole("row", { name: "Moving stored files Running" })).toBeTruthy();
-});
-it("renders watch tags", async () => {
-  vi.spyOn(globalThis, "fetch").mockResolvedValue(
-    jobsResponse([
-      {
-        name: "watch:receipts",
-        lane: "watch:receipts",
-        status: "running",
-        busy: true,
-        tags: ["receipts", "2026"],
-      },
-    ]),
-  );
-  render(JobsDrawer, { session: "session", onclose: vi.fn(), onauthfailure: vi.fn() });
-  expect(await screen.findAllByText("Tags: receipts, 2026")).toHaveLength(2);
 });

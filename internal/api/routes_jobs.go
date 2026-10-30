@@ -140,14 +140,8 @@ func registerJobRoutes(api huma.API, d Deps) {
 				}
 				if redactErrors && job.Error != "" {
 					job.Error = "background job failed; inspect with the Docbank CLI for details"
-					if d.Store != nil && snapshot.Status == jobs.StatusRunning {
-						for _, name := range job.Tags {
-							_, err := d.Store.ResolveWatchTag(ctx, name)
-							if _, unavailable := errors.AsType[*store.TagResolutionError](err); unavailable {
-								job.Error = fmt.Sprintf("tag %q is unavailable", name)
-								break
-							}
-						}
+					if tagErr, unavailable := errors.AsType[*store.TagResolutionError](snapshot.Cause); unavailable {
+						job.Error = fmt.Sprintf("tag %q is unavailable", tagErr.Name)
 					}
 				}
 				out.Body.Items = append(out.Body.Items, job)

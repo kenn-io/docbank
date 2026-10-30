@@ -38,12 +38,21 @@ type Snapshot struct {
 	StartedAt  time.Time
 	FinishedAt *time.Time
 	Error      string
+	Cause      error
 }
 
 type state struct {
 	Snapshot
 
 	transient bool
+}
+
+func (s *state) setError(err error) {
+	s.Cause = err
+	s.Error = ""
+	if err != nil {
+		s.Error = boundedError(err)
+	}
 }
 
 type reportErrorKey struct{}
@@ -140,10 +149,7 @@ func (s *Supervisor) run(job *state, run func(context.Context) error) {
 	ctx := context.WithValue(s.ctx, reportErrorKey{}, func(err error) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		job.Error = ""
-		if err != nil {
-			job.Error = boundedError(err)
-		}
+		job.setError(err)
 	})
 	ctx = context.WithValue(ctx, reportBusyKey{}, func(busy bool) {
 		s.mu.Lock()
@@ -166,7 +172,7 @@ func (s *Supervisor) finish(job *state, runErr error) {
 		job.Status = StatusCancelled
 	default:
 		job.Status = StatusFailed
-		job.Error = boundedError(runErr)
+		job.setError(runErr)
 		s.logger.Error("background job failed", "job", job.Name, "error", runErr)
 	}
 	if job.transient {

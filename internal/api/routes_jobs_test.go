@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
-	"slices"
 	"testing"
 	"time"
 
@@ -143,18 +143,27 @@ func TestBrowserJobListWatchTags(t *testing.T) {
 	supervisor := jobs.New(t.Context(), slog.New(slog.DiscardHandler))
 	t.Cleanup(func() { require.NoError(t, supervisor.Shutdown(context.Background())) })
 	reported := make(chan struct{})
+	recoverWatch := make(chan struct{})
+	recovered := make(chan struct{})
 	require.NoError(t, supervisor.Start("watch:receipts", func(ctx context.Context) error {
-		jobs.ReportError(ctx, errors.New("private backend detail"))
+		jobs.ReportError(ctx, fmt.Errorf("recording watched source %q: %w", "synthetic-receipt.txt", &store.TagResolutionError{Name: "receipts", Err: store.ErrNotFound}))
 		close(reported)
+		select {
+		case <-recoverWatch:
+			jobs.ReportError(ctx, nil)
+			close(recovered)
+		case <-ctx.Done():
+		}
 		<-ctx.Done()
 		return ctx.Err()
 	}))
 	<-reported
-	require.NoError(t, supervisor.Start("watch:zmissing", func(context.Context) error { return errors.New("synthetic terminal watch failure") }))
+	require.NoError(t, supervisor.Start("watch:zmissing", func(ctx context.Context) error {
+		jobs.ReportError(ctx, &store.TagResolutionError{Name: "receipts", Err: store.ErrNotFound})
+		return errors.New("synthetic terminal watch failure")
+	}))
 	require.Eventually(t, func() bool {
-		return slices.ContainsFunc(supervisor.Snapshot(), func(item jobs.Snapshot) bool {
-			return item.Name == "watch:zmissing" && item.Status == jobs.StatusFailed
-		})
+		return supervisor.Snapshot()[1].Status == jobs.StatusFailed
 	}, time.Second, time.Millisecond)
 	ts, live := newTestServer(t, func(d *api.Deps) {
 		d.Jobs = supervisor
@@ -164,19 +173,22 @@ func TestBrowserJobListWatchTags(t *testing.T) {
 		}
 	})
 	headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)}
-	resp, body := get(t, ts, "/api/v1/jobs", headers)
-	require.Equal(t, http.StatusOK, resp.StatusCode, body)
-	var got api.JobList
-	require.NoError(t, json.Unmarshal([]byte(body), &got))
-	require.Len(t, got.Items, 2)
-	assert.Equal(t, "failed", got.Items[1].Status)
-	assert.Equal(t, "background job failed; inspect with the Docbank CLI for details", got.Items[1].Error)
-	assert.Equal(t, []string{"receipts"}, got.Items[0].Tags)
-	assert.Equal(t, `tag "receipts" is unavailable`, got.Items[0].Error)
-	_, err := live.CreateTag(t.Context(), "receipts")
-	require.NoError(t, err)
-	resp, body = get(t, ts, "/api/v1/jobs", headers)
-	require.Equal(t, http.StatusOK, resp.StatusCode, body)
-	require.NoError(t, json.Unmarshal([]byte(body), &got))
-	assert.Equal(t, "background job failed; inspect with the Docbank CLI for details", got.Items[0].Error)
+	for stage, want := range []string{`tag "receipts" is unavailable`, `tag "receipts" is unavailable`, ""} {
+		switch stage {
+		case 1:
+			_, err := live.CreateTag(t.Context(), "receipts")
+			require.NoError(t, err)
+		case 2:
+			close(recoverWatch)
+			<-recovered
+		}
+		resp, body := get(t, ts, "/api/v1/jobs", headers)
+		require.Equal(t, http.StatusOK, resp.StatusCode, body)
+		var got api.JobList
+		require.NoError(t, json.Unmarshal([]byte(body), &got))
+		require.Len(t, got.Items, 2)
+		assert.Equal(t, "background job failed; inspect with the Docbank CLI for details", got.Items[1].Error)
+		assert.Equal(t, []string{"receipts"}, got.Items[0].Tags)
+		assert.Equal(t, want, got.Items[0].Error, "recovery stage %d", stage)
+	}
 }
