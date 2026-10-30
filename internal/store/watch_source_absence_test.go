@@ -117,13 +117,17 @@ func TestWatchSourceAbsenceFromDeletedSubtree(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
 	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
-	for _, listed := range [][]string{{""}, {"", "a"}} {
+	for _, scan := range []WatchPresenceScan{
+		{ListedDirs: []string{""}}, // a/ is gone
+		// a/ remains, so only its own listing proves b/ gone; the shallowest
+		// listed folder still holds an entry on the path.
+		{ListedDirs: []string{"", "a"}, ListedEntries: []string{"a"}},
+	} {
 		s := newTestStore(t)
 		seedWatchRebind(t, s, "a/b/draft.md", "draft.md")
-		scan := WatchPresenceScan{ListedDirs: listed}
 		changed, err := s.WatchSourcePresenceChanged(ctx, "notes", scan)
 		require.NoError(t, err)
-		require.True(t, changed, "listed %q", listed)
+		require.True(t, changed, "listed %q", scan.ListedDirs)
 		require.NoError(t, s.ReconcileWatchSourcePresence(ctx, "notes", scan, now))
 		requireAbsence(t, s, "a/b/draft.md", "2026-01-02T03:04:05Z")
 		changed, err = s.WatchSourcePresenceChanged(ctx, "notes", scan)
