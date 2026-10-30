@@ -51,6 +51,8 @@ Tested clients are Claude Code 2.1.301 and Codex 0.164.0.
 Start Codex with `codex --enable mcp_2026_07_28`
 for either transport. The generated stdio configuration also sets
 `CODEX_MCP_PROTOCOL_VERSION=2026-07-28` in the server's environment.
+After upgrading Docbank, rerun `docbank mcp config` and replace the saved
+configuration so its protocol selection matches the installed server.
 
 Stdio carries one complete JSON-RPC message per line. Docbank accepts LF or
 CRLF terminators, rejects embedded newlines, and limits the JSON payload before
