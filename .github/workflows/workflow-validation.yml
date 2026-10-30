@@ -3,6 +3,7 @@ name: Workflow validation
 on:
   pull_request:
     paths:
+      - ".github/actions/**"
       - ".github/workflows/**"
 
 permissions:
