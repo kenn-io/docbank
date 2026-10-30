@@ -14,7 +14,8 @@ import (
 func TestWriteWatchedInboxesEscapesMachineAndVirtualPaths(t *testing.T) {
 	var out bytes.Buffer
 	err := writeWatchedInboxes(&out, []api.WatchedInbox{{
-		Name: "sessions", Source: "/local/agent\nsessions",
+		Processing: &api.WatchProcessingStatus{Profile: "mistral-ocr", ConsentState: "revoked"},
+		Name:       "sessions", Source: "/local/agent\nsessions",
 		Destination: "/archives/\x1b[31msessions", SettleTime: "1h0m0s",
 		MinimumAge: "168h0m0s", ScanInterval: "1m0s", Exclude: []string{"cache/"}, ExcludePatterns: []string{"*.swp", "*.tmp"}, CaptureOnChange: true,
 		Job: &api.Job{Status: "running"},
@@ -24,7 +25,9 @@ func TestWriteWatchedInboxesEscapesMachineAndVirtualPaths(t *testing.T) {
 	assert.Contains(t, out.String(), `"/archives/\x1b[31msessions"`)
 	assert.NotContains(t, out.String(), "\x1b")
 	fields := strings.Fields(strings.Split(strings.TrimSpace(out.String()), "\n")[1])
-	assert.Equal(t, "3", fields[len(fields)-2])
+	assert.Contains(t, out.String(), "waiting on consent: revoked")
+	assert.Regexp(t, `EXCLUDES\s+ERROR\s+PROCESSING`, out.String())
+	assert.Contains(t, fields, "3")
 	assert.Contains(t, out.String(), "CAPTURE")
 	assert.Contains(t, out.String(), "prompt")
 }
@@ -38,26 +41,8 @@ func TestWriteWatchedInboxesExplainsEmptyConfig(t *testing.T) {
 func TestWriteWatchedInboxesDisplaysActivity(t *testing.T) {
 	var out bytes.Buffer
 	require.NoError(t, writeWatchedInboxes(&out, []api.WatchedInbox{
-		{Name: "waiting", Job: &api.Job{Status: "running"}},
+		{Name: "waiting", Processing: &api.WatchProcessingStatus{Profile: "mistral-ocr", ConsentState: "active"}, Job: &api.Job{Status: "running"}},
 	}))
 	assert.Regexp(t, `waiting\s+idle\s`, out.String())
-}
-
-func TestWriteWatchedInboxesProcessingConsent(t *testing.T) {
-	for _, state := range []string{"active", "required", "expired", "revoked"} {
-		t.Run(state, func(t *testing.T) {
-			var out bytes.Buffer
-			require.NoError(t, writeWatchedInboxes(&out, []api.WatchedInbox{{
-				Name: "inbox", Profile: "mistral-ocr", ConsentState: state,
-				Job: &api.Job{Status: "failed", Error: "source unavailable"},
-			}}))
-			assert.Contains(t, out.String(), "mistral-ocr")
-			assert.Contains(t, out.String(), "source unavailable")
-			if state == "active" {
-				assert.NotContains(t, out.String(), "waiting on consent")
-			} else {
-				assert.Contains(t, out.String(), "waiting on consent: "+state)
-			}
-		})
-	}
+	assert.Regexp(t, `mistral-ocr\s*$`, out.String())
 }

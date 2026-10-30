@@ -16,30 +16,25 @@ func (service *Service) RenditionConsentState(ctx context.Context, name string) 
 		return "", err
 	}
 	_, err = service.catalog.AuthorizeProviderOperation(ctx, service.renditionConsentRequest(profile))
-	switch {
-	case err == nil:
-		return "active", nil
-	case errors.Is(err, store.ErrProcessingConsentRequired):
-		return "required", nil
-	case errors.Is(err, store.ErrProcessingConsentExpired):
-		return "expired", nil
-	case errors.Is(err, store.ErrProcessingConsentRevoked):
-		return "revoked", nil
-	default:
-		return "", err
-	}
+	return processingConsentState(err)
 }
 
 // AdmitImportedRendition queues the exact imported version as automatic work.
 // Missing consent and unsupported sources leave the committed import alone.
 // It never executes the provider or schedules the profile's embedding stages.
-func (service *Service) AdmitImportedRendition(ctx context.Context, node store.Node, name string) error {
+func (service *Service) AdmitImportedRendition(ctx context.Context, node store.Node, name string) (err error) {
+	defer func() {
+		state, consentErr := processingConsentState(err)
+		if consentErr == nil && state != "active" || errors.Is(err, ErrMediaProcessingUnsupported) || errors.Is(err, ErrSourceIneligible) {
+			err = nil
+		}
+	}()
 	profile, err := service.mediaProcessingProfile(name)
 	if err != nil {
 		return err
 	}
 	if profileRenditionInput(profile) != document.RenditionInputOriginalFile {
-		return ErrMediaProcessingUnsupported
+		return nil
 	}
 	if _, err := service.catalog.AuthorizeProviderOperation(ctx, service.renditionConsentRequest(profile)); err != nil {
 		return err

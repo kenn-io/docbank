@@ -8177,6 +8177,8 @@ components:
         processed_bytes:
           format: int64
           type: integer
+        processing:
+          $ref: "#/components/schemas/WatchProcessingStatus"
         started_at:
           type: string
         status:
@@ -21202,11 +21204,9 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/document/bundle
         name: bundle
-    WatchedInbox:
+    WatchProcessingStatus:
       additionalProperties: false
       properties:
-        capture_on_change:
-          type: boolean
         consent_state:
           enum:
             - active
@@ -21214,6 +21214,22 @@ components:
             - expired
             - revoked
           type: string
+        error:
+          type: string
+        profile:
+          type: string
+      required:
+        - profile
+      type: object
+      x-go-type: api.WatchProcessingStatus
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    WatchedInbox:
+      additionalProperties: false
+      properties:
+        capture_on_change:
+          type: boolean
         destination:
           type: string
         exclude:
@@ -21230,8 +21246,8 @@ components:
           type: string
         name:
           type: string
-        profile:
-          type: string
+        processing:
+          $ref: "#/components/schemas/WatchProcessingStatus"
         scan_interval:
           type: string
         settle_time:

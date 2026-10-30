@@ -18,7 +18,6 @@
   let { session, onclose, onauthfailure }: Props = $props();
 
   let items = $state<Job[]>([]);
-  let watches = $state<generated.WatchedInbox[]>([]);
   let loading = $state(true);
   let loadError = $state("");
   let actionError = $state("");
@@ -50,13 +49,9 @@
       loadError = "";
     }
     try {
-      const [next, inboxes] = await Promise.all([
-        generated.listJobs({ session }),
-        generated.listWatchedInboxes({ session }),
-      ]);
+      const next = await generated.listJobs({ session });
       if (request !== generation) return;
       items = next.items;
-      watches = inboxes.items;
       controls = next.lanes ?? [];
       loadError = next.lane_controls_error ?? "";
     } catch (cause) {
@@ -313,16 +308,18 @@
           >
           <tbody>
             {#each lanes as lane (lane.key)}
-              {@const watch = watches.find((item) => `watch:${item.name}` === lane.key)}
+              {@const processing = lane.members.find((item) => item.processing)?.processing}
               <tr>
                 <th scope="row"
                   >{lane.title}
-                  {#if watch?.profile}
+                  {#if processing}
                     <p class="operation">
-                      {#if watch.consent_state === "active"}
-                        Processing profile: {watch.profile}
+                      {#if processing.error}
+                        Processing profile: {processing.profile}. {processing.error}
+                      {:else if processing.consent_state === "active"}
+                        Processing profile: {processing.profile}
                       {:else}
-                        Waiting on consent for {watch.profile} ({watch.consent_state})
+                        Waiting on consent for {processing.profile} ({processing.consent_state})
                       {/if}
                     </p>
                   {/if}

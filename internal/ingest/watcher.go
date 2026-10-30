@@ -118,6 +118,7 @@ type watchFingerprint = localFileFingerprint
 type watchObservation struct {
 	fingerprint         watchFingerprint
 	stableSince         time.Time
+	pendingAdmission    *store.Node
 	processed           bool
 	digest              string
 	accepted            *watchAcceptedSource
@@ -1437,9 +1438,13 @@ func (w *Watcher) processObservation(ctx context.Context, source watchSource, st
 	seen[rel] = struct{}{}
 	observation, exists := w.observations[rel]
 	fingerprintChanged := !exists || !observation.fingerprint.matches(fingerprint)
+	if fingerprintChanged {
+		observation.pendingAdmission = nil
+	}
 	if fingerprintChanged || observation.settlingInterrupted {
 		observation = watchObservation{
 			fingerprint: fingerprint, stableSince: observedAt, digest: observation.digest, accepted: observation.accepted,
+			pendingAdmission: observation.pendingAdmission,
 		}
 		w.observations[rel] = observation
 	}
@@ -1459,8 +1464,12 @@ func (w *Watcher) processObservation(ctx context.Context, source watchSource, st
 	var result WatchResult
 	if err == nil {
 		minimumAge := w.config.MinimumAge.Std()
-		if observation.processed ||
-			(!w.immediate && !w.config.CaptureOnChange && observedAt.Sub(observation.stableSince) < w.config.SettleTime.Std()) ||
+		if observation.processed {
+			w.retryAdmission(ctx, &observation)
+			w.observations[rel] = observation
+			return nil
+		}
+		if (!w.immediate && !w.config.CaptureOnChange && observedAt.Sub(observation.stableSince) < w.config.SettleTime.Std()) ||
 			(minimumAge > 0 && observedAt.Sub(time.Unix(0, fingerprint.modTime)) < minimumAge) {
 			return nil
 		}
@@ -1512,10 +1521,9 @@ func (w *Watcher) processObservation(ctx context.Context, source watchSource, st
 		return fmt.Errorf("ingesting %q: %w", rel, err)
 	}
 	if w.process == nil && result.Outcome != WatchSkipped && w.AfterImport != nil {
-		if err := w.AfterImport(ctx, result.Node); err != nil {
-			w.logger.Warn("watched inbox processing skipped", "watch", w.config.Name, "node_id", result.Node.ID, "error", err)
-		}
+		observation.pendingAdmission = &result.Node
 	}
+	w.retryAdmission(ctx, &observation)
 	delete(w.rejected, rel)
 	observation.processed = true
 	if w.process == nil {
@@ -1527,6 +1535,17 @@ func (w *Watcher) processObservation(ctx context.Context, source watchSource, st
 			"source", rel, "node_id", result.Node.ID, "outcome", result.Outcome)
 	}
 	return nil
+}
+
+func (w *Watcher) retryAdmission(ctx context.Context, observation *watchObservation) {
+	if observation.pendingAdmission == nil {
+		return
+	}
+	if err := w.AfterImport(ctx, *observation.pendingAdmission); err != nil {
+		w.logger.Warn("watched inbox processing admission failed; retrying on next scan", "watch", w.config.Name, "node_id", observation.pendingAdmission.ID, "error", err)
+		return
+	}
+	observation.pendingAdmission = nil
 }
 
 func (w *Watcher) interruptSettling(rel string) {

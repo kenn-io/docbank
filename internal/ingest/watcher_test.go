@@ -1191,16 +1191,31 @@ func TestWatcherAfterImportKeepsCommittedVersionAndScannerStatus(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, node.ID, version.NodeID)
 		imported = append(imported, node)
-		return errors.New("synthetic queue unavailable")
+		if len(imported) != 2 {
+			return errors.New("synthetic queue unavailable")
+		}
+		return nil
 	}
 	root := openWatcherRoot(t, watcher)
 	require.NoError(t, watcher.scan(t.Context(), root))
 	require.Len(t, imported, 1)
 	require.NoError(t, watcher.scan(t.Context(), root))
-	require.Len(t, imported, 1)
-	require.NoError(t, os.WriteFile(filepath.Join(source, "report.txt"), []byte("second version"), 0600))
+	require.Len(t, imported, 2)
+	require.Equal(t, imported[0], imported[1])
 	require.NoError(t, watcher.scan(t.Context(), root))
 	require.Len(t, imported, 2)
-	require.Equal(t, imported[0].ID, imported[1].ID)
-	require.NotEqual(t, imported[0].CurrentVersionID, imported[1].CurrentVersionID)
+	require.NoError(t, os.WriteFile(filepath.Join(source, "report.txt"), []byte("second version"), 0600))
+	require.NoError(t, watcher.scan(t.Context(), root))
+	require.Len(t, imported, 3)
+	require.Equal(t, imported[0].ID, imported[2].ID)
+	require.NotEqual(t, imported[0].CurrentVersionID, imported[2].CurrentVersionID)
+	require.NoError(t, os.WriteFile(filepath.Join(source, "report.txt"), []byte("third"), 0600))
+	require.NoError(t, watcher.scan(t.Context(), root))
+	require.Len(t, imported, 4)
+	require.NotEqual(t, imported[2].CurrentVersionID, imported[3].CurrentVersionID)
+	restarted, err := NewWatcher(ing, t.TempDir(), watcher.config, runTestMutation, slog.New(slog.DiscardHandler))
+	require.NoError(t, err)
+	restarted.AfterImport = watcher.AfterImport
+	require.NoError(t, restarted.scan(t.Context(), openWatcherRoot(t, restarted)))
+	require.Len(t, imported, 4, "historical imports are not admitted after restart")
 }

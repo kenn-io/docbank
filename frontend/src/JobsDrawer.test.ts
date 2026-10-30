@@ -1,11 +1,7 @@
-import { beforeEach, afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import JobsDrawer from "./JobsDrawer.svelte";
 import * as generated from "./generated/docbank.js";
-
-beforeEach(() => {
-  vi.spyOn(generated, "listWatchedInboxes").mockResolvedValue({ items: [] });
-});
 
 afterEach(() => {
   cleanup();
@@ -633,6 +629,7 @@ it("shows current running work ahead of a retained failure in the same lane", as
 });
 
 it("keeps live watch consent visible while idle and preserves scanner errors", async () => {
+  let processing: { profile: string; consent_state?: string; error?: string };
   vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
     jobsResponse([
       {
@@ -642,28 +639,22 @@ it("keeps live watch consent visible while idle and preserves scanner errors", a
         busy: false,
         started_at: "2026-10-30T12:00:00Z",
         error: "source unavailable",
+        processing,
+      },
+      {
+        name: "derive:visual-previews",
+        lane: "derive:visual-previews",
+        status: "running",
+        busy: false,
+        started_at: "2026-10-30T12:00:00Z",
+        controllable: true,
+        concurrency: 1,
+        control_revision: 1,
       },
     ]),
   );
-  const watches = vi.mocked(generated.listWatchedInboxes);
   for (const consent_state of ["required", "active", "expired", "revoked"] as const) {
-    watches.mockResolvedValue({
-      items: [
-        {
-          name: "inbox",
-          profile: "mistral-ocr",
-          consent_state,
-          capture_on_change: false,
-          source: "/synthetic/inbox",
-          destination: "/inbox",
-          settle_time: "30s",
-          minimum_age: "0s",
-          scan_interval: "5s",
-          exclude: [],
-          exclude_patterns: [],
-        },
-      ],
-    });
+    processing = { profile: "mistral-ocr", consent_state };
     if (consent_state === "required") {
       render(JobsDrawer, { session: "session", onclose: vi.fn(), onauthfailure: vi.fn() });
     } else {
@@ -678,4 +669,11 @@ it("keeps live watch consent visible while idle and preserves scanner errors", a
     expect(within(row).getByText("source unavailable")).toBeTruthy();
     expect(within(row).getByText("Failed")).toBeTruthy();
   }
+  processing = { profile: "mistral-ocr", error: "Consent status unavailable" };
+  await fireEvent.click(screen.getByRole("button", { name: "Refresh background jobs" }));
+  expect(
+    await screen.findByText("Processing profile: mistral-ocr. Consent status unavailable"),
+  ).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Pause Making previews" })).toBeTruthy();
+  expect(screen.getByText("source unavailable")).toBeTruthy();
 });

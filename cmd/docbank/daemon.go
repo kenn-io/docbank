@@ -307,6 +307,13 @@ func runServe(ctx context.Context) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("configuring executable processing profiles: %w", err)
 	}
+	for _, watch := range cfg.Watches {
+		if watch.Profile != "" {
+			if _, ok := processingProfiles[watch.Profile]; !ok {
+				return fmt.Errorf("watch %q profile %q has no executable runtime", watch.Name, watch.Profile)
+			}
+		}
+	}
 	suppliedName, suppliedProfile, err := processing.NewSuppliedMediaProfile(s, blobs, "daemon:operator")
 	if err != nil {
 		return fmt.Errorf("configuring supplied media profile: %w", err)

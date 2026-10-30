@@ -40,17 +40,7 @@ func registerWatchRoutes(api huma.API, d Deps) {
 				Exclude:         append([]string{}, watch.Exclude...),
 				ExcludePatterns: append([]string{}, watch.ExcludePatterns...),
 			}
-			if watch.Profile != "" {
-				item.Profile = watch.Profile
-				item.ConsentState = "required"
-				if d.Processing != nil {
-					state, err := d.Processing.RenditionConsentState(ctx, watch.Profile)
-					if err != nil {
-						return nil, huma.Error500InternalServerError("reading watched-inbox consent", err)
-					}
-					item.ConsentState = state
-				}
-			}
+			item.Processing = watchProcessingStatus(ctx, d, watch.Profile)
 			if job, ok := jobsByName["watch:"+watch.Name]; ok {
 				item.Job = &job
 			}
@@ -58,4 +48,22 @@ func registerWatchRoutes(api huma.API, d Deps) {
 		}
 		return out, nil
 	})
+}
+
+func watchProcessingStatus(ctx context.Context, d Deps, profile string) *WatchProcessingStatus {
+	if profile == "" {
+		return nil
+	}
+	status := &WatchProcessingStatus{Profile: profile}
+	if d.Processing == nil {
+		status.Error = "Processing status unavailable"
+		return status
+	}
+	state, err := d.Processing.RenditionConsentState(ctx, profile)
+	if err != nil {
+		status.Error = "Consent status unavailable; inspect with the Docbank CLI for details"
+	} else {
+		status.ConsentState = state
+	}
+	return status
 }

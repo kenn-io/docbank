@@ -29,6 +29,7 @@ import (
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/sqlite"
 	"go.kenn.io/kit/safefileio"
 )
 
@@ -102,7 +103,8 @@ func TestDaemonMistralOCRProcessing(t *testing.T) {
 	cfg.Server.APIKey = "synthetic-mistral-daemon-key"
 	t.Setenv("DOCBANK_TEST_MISTRAL_OCR_KEY", "synthetic-mistral-key")
 	source := mistraltest.MinimalPDF("synthetic daemon OCR")
-	root := t.TempDir()
+	root, inbox := t.TempDir(), t.TempDir()
+	cfg.Watches = []config.WatchConfig{{Name: "inbox", Source: inbox, Destination: "/inbox", Profile: "documents", CaptureOnChange: true, ScanInterval: config.Duration(10 * time.Millisecond)}}
 	require.NoError(t, writeDaemonASRConfig(root, cfg))
 	t.Setenv("DOCBANK_HOME", root)
 	startServe(t)
@@ -137,6 +139,17 @@ func TestDaemonMistralOCRProcessing(t *testing.T) {
 		require.Equal(c, "retry_wait", status.State, "%+v", status)
 		require.Equal(c, "transient", status.FailureCode)
 	}, 20*time.Second, 20*time.Millisecond)
+	require.NoError(t, os.WriteFile(filepath.Join(inbox, "watched.pdf"), mistraltest.MinimalPDF("watched after consent"), 0600))
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		node, err := daemon.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/inbox/watched.pdf"}})
+		require.NoError(c, err)
+		db, err := store.DefaultSQLiteDriver().Open(filepath.Join(root, "docbank.db"), sqlite.OpenOptions{Access: sqlite.ReadWriteExisting})
+		require.NoError(c, err)
+		defer func() { require.NoError(c, db.Close()) }()
+		var count int
+		require.NoError(c, db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM rendition_job_waiters WHERE content_version_id = ?", node.CurrentVersionID).Scan(&count))
+		require.Equal(c, 1, count, "daemon watch callback queues the exact imported version")
+	}, 10*time.Second, 20*time.Millisecond)
 }
 
 func TestMistralPasswordFileProcessing(t *testing.T) {

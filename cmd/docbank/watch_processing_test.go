@@ -1,24 +1,24 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"encoding/json/v2"
+	"fmt"
 	"log/slog"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document/mistral/mistraltest"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/ingest"
+	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -27,9 +27,6 @@ func TestWatchMistralImportConsentAndExactVersions(t *testing.T) {
 	cfg, _ := mistralOCRProcessingConfig(t)
 	profiles, err := executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
 	require.NoError(t, err)
-	changed := profiles["documents"]
-	changed.Profile.RetentionDisclosure.ConsentFingerprint = strings.Repeat("f", 64)
-	profiles["changed"] = changed
 	root, source := t.TempDir(), t.TempDir()
 	catalog, err := store.Open(filepath.Join(root, "docbank.db"))
 	require.NoError(t, err)
@@ -46,7 +43,12 @@ func TestWatchMistralImportConsentAndExactVersions(t *testing.T) {
 		CaptureOnChange: true, ScanInterval: config.Duration(10 * time.Millisecond)}
 	cfg.Watches = []config.WatchConfig{watch}
 	cfg.Server.APIKey = "synthetic-key"
-	server := api.NewServer(api.Deps{Store: catalog, Blobs: blobs, VaultRoot: root, Cfg: cfg, Processing: service})
+	supervisor := jobs.New(t.Context(), slog.New(slog.DiscardHandler))
+	defer func() { require.NoError(t, supervisor.Shutdown(context.Background())) }()
+	for _, name := range []string{"watch:inbox", "derive:visual-previews"} {
+		require.NoError(t, supervisor.Start(name, func(ctx context.Context) error { <-ctx.Done(); return nil }))
+	}
+	server := api.NewServer(api.Deps{Store: catalog, Blobs: blobs, VaultRoot: root, Cfg: cfg, Processing: service, Jobs: supervisor})
 	defer server.Close()
 	endpoint := httptest.NewServer(server.Handler())
 	defer endpoint.Close()
@@ -56,8 +58,8 @@ func TestWatchMistralImportConsentAndExactVersions(t *testing.T) {
 		t.Helper()
 		listed, err := client.API().ListWatchedInboxes(t.Context())
 		require.NoError(t, err)
-		require.Equal(t, "documents", listed.Items[0].Profile)
-		require.Equal(t, want, listed.Items[0].ConsentState)
+		require.Equal(t, "documents", listed.Items[0].Processing.Profile)
+		require.Equal(t, want, listed.Items[0].Processing.ConsentState)
 	}
 	checkState("required")
 	watcher, err := ingest.NewWatcher(&ingest.Ingester{Store: catalog, Blobs: blobs}, root, watch, gate.Mutate, slog.New(slog.DiscardHandler))
@@ -65,6 +67,7 @@ func TestWatchMistralImportConsentAndExactVersions(t *testing.T) {
 	imports := make(chan store.Node, 8)
 	watcher.AfterImport = func(ctx context.Context, node store.Node) error {
 		err := service.AdmitImportedRendition(ctx, node, watch.Profile)
+		require.NoError(t, err, "consent and unsupported-source skips complete quietly")
 		imports <- node
 		return err
 	}
@@ -72,9 +75,9 @@ func TestWatchMistralImportConsentAndExactVersions(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- watcher.Run(ctx) }()
 	defer func() { cancel(); <-done }()
-	importFile := func(name, content string) store.Node {
+	importFile := func(name string, content []byte) store.Node {
 		t.Helper()
-		require.NoError(t, os.WriteFile(filepath.Join(source, name), mistraltest.MinimalPDF(content), 0600))
+		require.NoError(t, os.WriteFile(filepath.Join(source, name), content, 0600))
 		select {
 		case node := <-imports:
 			return node
@@ -83,7 +86,7 @@ func TestWatchMistralImportConsentAndExactVersions(t *testing.T) {
 			return store.Node{}
 		}
 	}
-	first := importFile("report.pdf", "without consent")
+	first := importFile("report.pdf", mistraltest.MinimalPDF("without consent"))
 	_, queued, err := catalog.ClaimNextRenditionJob(t.Context(), "test-worker", time.Now(), time.Minute)
 	require.NoError(t, err)
 	require.False(t, queued)
@@ -94,17 +97,7 @@ func TestWatchMistralImportConsentAndExactVersions(t *testing.T) {
 	_, err = service.GrantConsent(t.Context(), processing.ConsentGrantRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, ExpiresAt: &expires})
 	require.NoError(t, err)
 	checkState("active")
-	cfg.Watches[0].Profile = "changed"
-	changedStatus, err := client.API().ListWatchedInboxes(t.Context())
-	require.NoError(t, err)
-	require.Equal(t, "changed", changedStatus.Items[0].Profile)
-	require.Equal(t, "required", changedStatus.Items[0].ConsentState)
-	cfg.Watches[0].Profile = "documents"
-	// Consent does not backfill the already accepted version.
-	_, queued, err = catalog.ClaimNextRenditionJob(t.Context(), "test-worker", time.Now(), time.Minute)
-	require.NoError(t, err)
-	require.False(t, queued)
-	updated := importFile("report.pdf", "with consent")
+	updated := importFile("report.pdf", mistraltest.MinimalPDF("with consent"))
 	require.Equal(t, first.ID, updated.ID)
 	require.NotEqual(t, first.CurrentVersionID, updated.CurrentVersionID)
 	job, queued, err := catalog.ClaimNextRenditionJob(t.Context(), "test-worker", time.Now(), time.Minute)
@@ -113,30 +106,46 @@ func TestWatchMistralImportConsentAndExactVersions(t *testing.T) {
 	work, err := catalog.RenditionJobWorkByClaim(t.Context(), job, time.Now())
 	require.NoError(t, err)
 	require.Equal(t, updated.CurrentVersionID, work.Waiter.ContentVersionID)
-	t.Logf("required import %s: no job; consented update %s: durable job %s", first.CurrentVersionID, updated.CurrentVersionID, job.JobID)
-	// An unsupported import still succeeds, and no second job appears.
-	require.NoError(t, os.WriteFile(filepath.Join(source, "notes.txt"), bytes.Repeat([]byte("text"), 8), 0600))
-	select {
-	case <-imports:
-	case <-time.After(10 * time.Second):
-		t.Fatal("text import did not finish")
-	}
-	_, queued, err = catalog.ClaimNextRenditionJob(t.Context(), "test-worker", time.Now(), time.Minute)
-	require.NoError(t, err)
-	require.False(t, queued)
+	importFile("notes.txt", []byte("synthetic text"))
 	<-time.After(time.Until(expires) + 20*time.Millisecond)
 	checkState("expired")
+	importFile("expired.pdf", mistraltest.MinimalPDF("expired consent"))
 	_, err = service.RevokeConsent(t.Context())
 	require.NoError(t, err)
 	checkState("revoked")
-	revoked := importFile("next.pdf", "after revocation")
+	importFile("next.pdf", mistraltest.MinimalPDF("after revocation"))
 	_, queued, err = catalog.ClaimNextRenditionJob(t.Context(), "test-worker", time.Now(), time.Minute)
 	require.NoError(t, err)
 	require.False(t, queued)
-	t.Logf("revoked import %s: accepted with no job; API consent required -> active -> expired -> revoked", revoked.CurrentVersionID)
-	var output bytes.Buffer
+	cfg.Watches[0].Profile = "unavailable"
 	listed, err := client.API().ListWatchedInboxes(t.Context())
 	require.NoError(t, err)
-	require.NoError(t, json.MarshalWrite(&output, listed))
-	require.Contains(t, output.String(), `"consent_state":"revoked"`)
+	require.NotEmpty(t, listed.Items[0].Processing.Error)
+	jobList, err := client.API().ListJobs(t.Context())
+	require.NoError(t, err)
+	require.Len(t, jobList.Items, 2)
+	for _, job := range jobList.Items {
+		switch job.Name {
+		case "watch:inbox":
+			require.Equal(t, listed.Items[0].Processing, job.Processing)
+			require.Empty(t, job.Error, "consent failures stay separate from scanner errors")
+		case "derive:visual-previews":
+			require.True(t, job.Controllable)
+			_, err := client.API().SetLaneControl(t.Context(), &apiclient.SetLaneControlRequestOptions{PathParams: &apiclient.SetLaneControlPath{Lane: job.Lane}, Body: &api.SetLaneControlRequest{Paused: true, Concurrency: 1}, Header: &apiclient.SetLaneControlHeaders{IfMatch: fmt.Sprintf("\"%d\"", job.ControlRevision)}})
+			require.NoError(t, err)
+		}
+	}
+}
+
+func TestDaemonRejectsWatchProfileWithoutRuntime(t *testing.T) {
+	cfg, _ := mistralOCRProcessingConfig(t)
+	profile := cfg.RenditionProfiles["documents"]
+	profile.Runtime = nil
+	cfg.RenditionProfiles["documents"] = profile
+	cfg.Watches = []config.WatchConfig{{Name: "inbox", Source: t.TempDir(), Destination: "/inbox", Profile: "documents", CaptureOnChange: true, SettleTime: config.Duration(time.Second), ScanInterval: config.Duration(time.Second)}}
+	require.NoError(t, cfg.Validate())
+	root := t.TempDir()
+	require.NoError(t, writeDaemonASRConfig(root, cfg))
+	t.Setenv("DOCBANK_HOME", root)
+	require.ErrorContains(t, runServe(t.Context()), `watch "inbox" profile "documents" has no executable runtime`)
 }

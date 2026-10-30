@@ -427,13 +427,17 @@ Set `profile = "mistral-ocr"` in a `[[watch]]` entry to queue its configured
 processing profile's OCR or text-extraction stage after each added or updated
 version. The profile must include a rendition that accepts original documents;
 photo vision and embedding-only profiles aren't supported here. Omit `profile`
-to keep imports unprocessed.
+to use only baseline plain-text extraction.
 
 The rendition stage needs current consent for that profile configuration.
-Without it, files still import and stay unprocessed. `docbank watch list` and
+Without it, files still import with baseline plain-text extraction, but the
+configured rendition stays unprocessed. [Grant consent with `docbank processing build --consent`](usage/document-processing.md)
+for the configured profile to process subsequent imports. `docbank watch list` and
 the web app's All workers table show the profile and whether consent is required,
 expired, or revoked. Scanner errors remain separate. Unsupported files are skipped.
-Queue failures are logged and leave the import accepted.
+Admission failures are logged and retried on later scans while the daemon runs.
+Imports stay accepted. A daemon stop between import and queue admission can leave
+a version unprocessed; use explicit processing for that version.
 
 Scheduling happens only at import. Granting consent later or adding a profile
 doesn't process older imports; use explicit processing for those documents.
