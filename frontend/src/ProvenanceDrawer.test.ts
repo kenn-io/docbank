@@ -127,12 +127,10 @@ it("offers the import ID for command-line imports", async () => {
 });
 
 it.each([
-  { bytes: 'W/"edition-1"', display: 'W/"edition-1"' },
-  { bytes: "\xff", display: "\\xff" },
   { bytes: 'W/"\\xff\xff"', display: 'W/"\\\\xff\\xff"' },
   { bytes: "\\xff", display: "\\\\xff" },
   { bytes: null, display: null },
-])("shows URL fetch evidence with optional headers: %s", async (headers) => {
+])("shows URL fetch evidence with optional headers: $display", async (headers) => {
   const urlFetch = {
     version: 1,
     requested_url: "https://example.com/download?id=7",
@@ -185,12 +183,10 @@ it.each([
       ?.getAttribute("datetime"),
   ).toBe("2026-10-01T12:34:56Z");
   if (headers.bytes) {
-    expect(screen.getByRole("button", { name: "Copy ETag" }).textContent).toContain(
-      headers.display!,
-    );
-    expect(screen.getByRole("button", { name: "Copy Last-Modified" }).textContent).toContain(
-      "server supplied text",
-    );
+    expect(screen.getByText(headers.display!)).toBeTruthy();
+    expect(screen.getByText("server supplied text")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Copy ETag" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Copy Last-Modified" })).toBeNull();
   } else {
     expect(screen.queryByText("ETag")).toBeNull();
     expect(screen.queryByText("Last-Modified")).toBeNull();

@@ -100,18 +100,11 @@
                   </div>
                   {#if fact.url_fetch.etag}<div>
                       <dt>ETag</dt>
-                      <dd>
-                        <CopyValue value={urlFetchHeader(fact.url_fetch.etag)} label="ETag" />
-                      </dd>
+                      <dd>{urlFetchHeader(fact.url_fetch.etag)}</dd>
                     </div>{/if}
                   {#if fact.url_fetch.last_modified}<div>
                       <dt>Last-Modified</dt>
-                      <dd>
-                        <CopyValue
-                          value={urlFetchHeader(fact.url_fetch.last_modified)}
-                          label="Last-Modified"
-                        />
-                      </dd>
+                      <dd>{urlFetchHeader(fact.url_fetch.last_modified)}</dd>
                     </div>{/if}
                 {/if}
                 <div>

@@ -46,10 +46,10 @@ func TestAddURLImportsEvidence(t *testing.T) {
 	assert.Equal(t, 1, report.Added)
 	require.NotEmpty(t, report.IngestID)
 	ingestID := report.IngestID
-	evidence, err := runCLI(t, "provenance", "/cases/filings/filing.txt", "--json")
+	evidence, err := exec.Command(binary, "provenance", "/cases/filings/filing.txt", "--json").CombinedOutput()
 	require.NoError(t, err)
 	var page api.ProvenancePage
-	require.NoError(t, json.Unmarshal([]byte(evidence), &page))
+	require.NoError(t, json.Unmarshal(evidence, &page))
 	require.Len(t, page.Items, 1)
 	assert.Equal(t, ingestID, page.Items[0].IngestID)
 	require.NotNil(t, page.Items[0].URLFetch)
