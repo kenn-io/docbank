@@ -235,7 +235,8 @@ func (s *backupSchedule) capture(ctx context.Context, d Deps, logger *slog.Logge
 	delay, stale := backupapp.ScheduleDelay(manifests, tag, time.Now(), interval)
 	s.reportStaleBackup(ctx, logger, stale)
 	if delay > 0 && !captureDue {
-		jobs.ReportError(ctx, nil)
+		// Nothing retries a failed cleanup before the next capture, so keep it visible.
+		jobs.ReportError(ctx, s.cleanupErr)
 		return time.Now().Add(delay), false, nil
 	}
 	snapshot, err := createScheduledBackupSnapshot(ctx, repo, d)
