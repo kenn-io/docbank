@@ -309,8 +309,18 @@ func (s *Store) publishEmailGenerationTx(ctx context.Context, tx *sql.Tx, p Emai
    WHERE a.content_version_id=? AND a.attachment_id<>?) AND NOT EXISTS (SELECT 1 FROM email_heads WHERE content_version_id=? AND attachment_id=?)`, version.ID, attachment.ID, version.ID, attachment.ID); err != nil {
 			return err
 		}
-		if _, err = tx.ExecContext(ctx, `INSERT INTO email_heads(content_version_id,attachment_id,published_at) VALUES(?,?,?) ON CONFLICT(content_version_id) DO UPDATE SET attachment_id=excluded.attachment_id,published_at=excluded.published_at WHERE email_heads.attachment_id<>excluded.attachment_id`, version.ID, attachment.ID, attachment.AttachedAt); err != nil {
+		headResult, err := tx.ExecContext(ctx, `INSERT INTO email_heads(content_version_id,attachment_id,published_at) VALUES(?,?,?) ON CONFLICT(content_version_id) DO UPDATE SET attachment_id=excluded.attachment_id,published_at=excluded.published_at WHERE email_heads.attachment_id<>excluded.attachment_id`, version.ID, attachment.ID, attachment.AttachedAt)
+		if err != nil {
 			return err
+		}
+		changed, err := headResult.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if changed != 0 {
+			if err := recordProcessedVersionTx(ctx, tx, version.ID); err != nil {
+				return err
+			}
 		}
 		for _, a := range g.Artifacts {
 			if _, err = tx.ExecContext(ctx, `DELETE FROM rendition_blob_staging WHERE blob_hash=?`, a.BlobSHA256); err != nil {

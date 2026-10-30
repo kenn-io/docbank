@@ -644,17 +644,13 @@ func checkTagRevision(tag Tag, expected int64) error {
 }
 
 func touchTaggedNodesTx(tx *sql.Tx, tagID, timestamp string) error {
-	var ids []int64
-	if err := queryRows(context.Background(), tx, `
+	ids, err := tagAssignmentNodeIDsTx(context.Background(), tx, tagID)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`
 		UPDATE nodes SET revision = revision + 1, modified_at = ?
-		WHERE id IN (SELECT node_id FROM node_tags WHERE tag_id = ?) RETURNING id`, []any{timestamp, tagID}, func(rows *sql.Rows) error {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return err
-		}
-		ids = append(ids, id)
-		return nil
-	}); err != nil {
+		WHERE id IN (SELECT node_id FROM node_tags WHERE tag_id = ?)`, timestamp, tagID); err != nil {
 		return fmt.Errorf("advancing nodes assigned tag %s: %w", tagID, err)
 	}
 	return recordVaultChangesTx(context.Background(), tx, "tagged", ids...)

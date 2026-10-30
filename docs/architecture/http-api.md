@@ -29,6 +29,8 @@ starting point.
 
 The daemon validates query encoding and the cursor before sending response headers. A malformed query or cursor returns 400 `validation`. An expired cursor, another database's cursor, or a sequence beyond the current head returns 410 `changes_cursor_expired`; the problem body's `cursor` is the current head. Save it before rescanning, then resume after it. After streaming starts, a read failure sends `{"type":"error","error":{...}}` and closes the stream. The nested error uses the same problem fields, including `changes_cursor_expired` and its recovery `cursor` when retention overtakes the reader. See [React to vault changes](../agents/integration.md#react-to-vault-changes) for event kinds, retention, and recovery.
 
+A `processed` event means readable derived output changed. Email inventory head changes and new terminal body results each emit an event. A body changing from pending to unavailable counts. Source-metadata publication compares evidence checksums; an extractor fingerprint change with identical facts stays silent.
+
 ## Mailbox imports and explicit EML transfers
 
 Mailbox routes live under `/api/v1/mailbox`. Owner identity comes from the

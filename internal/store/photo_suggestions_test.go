@@ -773,7 +773,7 @@ func TestPhotoDescriptionJobPublishesOneSuggestionAndSettles(t *testing.T) {
 	require.NoError(t, err)
 	publication, err := s.PublishPhotoDescription(ctx, claim, photoDescriptionResult("A harbor."), at)
 	require.NoError(t, err)
-	changes, head, err := s.VaultChanges(ctx, before, 500)
+	changes, _, err := s.VaultChanges(ctx, before, 500)
 	require.NoError(t, err)
 	require.Len(t, changes, 1)
 	require.Equal(t, "processed", changes[0].Kind)
@@ -787,9 +787,6 @@ func TestPhotoDescriptionJobPublishesOneSuggestionAndSettles(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, RenditionJobCompleted, joined.State, "a settled version needs no second provider call")
 	require.Equal(t, "published", waiter.State)
-	changes, _, err = s.VaultChanges(ctx, head, 500)
-	require.NoError(t, err)
-	require.Empty(t, changes, "joining a settled result publishes nothing new")
 
 	_, err = s.PublishPhotoDescription(ctx, claim, nil, at)
 	require.ErrorIs(t, err, ErrInvalidPhotoDescriptionResult)

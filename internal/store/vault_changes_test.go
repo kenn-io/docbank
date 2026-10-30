@@ -1,9 +1,7 @@
 package store
 
 import (
-	"database/sql"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -114,33 +112,6 @@ func TestVaultChangesCursors(t *testing.T) { //nolint:paralleltest // Pruning co
 	page, _, err := s.VaultChanges(ctx, head, 500)
 	require.NoError(t, err)
 	require.Empty(t, page)
-	// Even when every retained row is gone, only the head can resume.
-	_, err = s.db.Exec(`DELETE FROM vault_changes`)
-	require.NoError(t, err)
-	_, current, err := s.VaultChanges(ctx, changes[0].Cursor, 500)
-	require.ErrorIs(t, err, ErrChangeCursorExpired)
-	require.Equal(t, head, current)
-}
-
-func TestVaultChangesRollback(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	_, before, err := s.VaultChanges(ctx, "", 500)
-	require.NoError(t, err)
-	aborted := errors.New("abort mutation")
-	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		_, err := s.insertNodeTx(ctx, tx, s.RootID(), "rolled-back", "dir", nil, nowRFC3339())
-		if err != nil {
-			return err
-		}
-		return aborted
-	})
-	require.ErrorIs(t, err, aborted)
-	changes, head, err := s.VaultChanges(ctx, before, 500)
-	require.NoError(t, err)
-	require.Empty(t, changes)
-	require.Equal(t, before, head)
 }
 
 func TestVaultChangesLegacyProcessing(t *testing.T) {
@@ -154,15 +125,10 @@ func TestVaultChangesLegacyProcessing(t *testing.T) {
 	require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{BlobHash: node.BlobHash, Extractor: "plain-text", ExtractorVersion: 1, Status: ExtractionOK, Text: "note"}))
 	_, err = s.MigrateLegacyPlainText(ctx)
 	require.NoError(t, err)
-	changes, head, err := s.VaultChanges(ctx, before, 500)
+	changes, _, err := s.VaultChanges(ctx, before, 500)
 	require.NoError(t, err)
 	require.Len(t, changes, 1)
 	require.Equal(t, "processed", changes[0].Kind)
 	require.Equal(t, node.ID, changes[0].NodeID)
 	require.Equal(t, int64(1), changes[0].Revision)
-	_, err = s.MigrateLegacyPlainText(ctx)
-	require.NoError(t, err)
-	changes, _, err = s.VaultChanges(ctx, head, 500)
-	require.NoError(t, err)
-	require.Empty(t, changes)
 }

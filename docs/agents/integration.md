@@ -533,10 +533,12 @@ Each line carries `cursor`, `kind`, `node_id`, and `revision`. Save the cursor a
 | `tagged` | The node's tags changed, including a tag rename or deletion. |
 | `trashed` | A node was trashed, including each affected descendant. |
 | `restored` | A node was restored, including each affected descendant. |
-| `processed` | A readable processing result was published, such as text, source metadata, an email PDF, a photo description, or face detection. |
+| `processed` | Readable derived output changed, such as text, source metadata, an email inventory, a terminal email body result, an email PDF, a photo description, or face detection. |
 | `removed` | A node was permanently deleted by package cancellation, failed import cleanup, or trash purge, including each deleted descendant. |
 
-The feed retains the latest 100,000 events. Repeated no-op assignments, deduplicated imports, parent-directory revision bumps, processing failures, and embedding-index updates emit nothing. Use job status for processing failures. Photo hide and unhide also emit nothing. Events carry node identity and revision, and an API key can observe file nodes belonging to hidden photos. Browser sessions cannot read this feed.
+The feed retains the latest 100,000 events. Repeated no-op assignments, deduplicated imports, parent-directory revision bumps, processing failures, and embedding-index updates emit nothing. Use job status for processing failures. Extractor fingerprint changes with identical source-metadata facts also emit nothing. Photo authored metadata, including ratings, flags, captions, and color labels, stays silent. Keywords, manual face/person edits, album and asset organization, display choices, and hide/unhide operations also stay silent. Events carry node identity and revision, and an API key can observe file nodes belonging to hidden photos. Browser sessions cannot read this feed.
+
+Email inventory selection and a new terminal body result each emit an event, including when a body changes from pending to unavailable. Republishing the selected inventory or an existing body result stays silent.
 
 Cursors belong to one database incarnation. Restoring a vault creates a new incarnation, and backups omit the feed. An expired, foreign, or future cursor returns HTTP 410 with code `changes_cursor_expired` and a current `cursor`:
 

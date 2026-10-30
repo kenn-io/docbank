@@ -97,6 +97,18 @@ func TestSourceMetadataRepublicationSelectsRecordedGeneration(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, generationB.GenerationID, currentRetry.GenerationID)
 
+	// New extractor identity still selects a head, but identical facts stay silent.
+	_, unchangedCursor, err := s.VaultChanges(ctx, before, 500)
+	require.NoError(t, err)
+	fingerprintOnly, err := s.PublishSourceMetadata(ctx, sourceSHA256, fakeHash("f3"), canonicalB)
+	require.NoError(t, err)
+	active, _, err = s.ActiveSourceMetadata(ctx, sourceSHA256)
+	require.NoError(t, err)
+	require.Equal(t, fingerprintOnly.GenerationID, active.GenerationID)
+	unchanged, _, err := s.VaultChanges(ctx, unchangedCursor, 500)
+	require.NoError(t, err)
+	require.Empty(t, unchanged)
+
 	replayed, err := s.PublishSourceMetadata(ctx, sourceSHA256, fakeHash("f1"), canonicalA)
 	require.NoError(t, err)
 	assert.Equal(t, generationA.GenerationID, replayed.GenerationID)
@@ -108,10 +120,10 @@ func TestSourceMetadataRepublicationSelectsRecordedGeneration(t *testing.T) {
 	var generationCount int
 	require.NoError(t, s.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM source_metadata_generations WHERE source_sha256=?`, sourceSHA256).Scan(&generationCount))
-	assert.Equal(t, 2, generationCount)
+	assert.Equal(t, 3, generationCount)
 	changes, _, err := s.VaultChanges(ctx, before, 500)
 	require.NoError(t, err)
-	require.Len(t, changes, 6) // A, B, unchanged B, then A again, once per node.
+	require.Len(t, changes, 6) // A, B, then A again, once per node.
 	for i, change := range changes {
 		require.Equal(t, "processed", change.Kind)
 		require.Equal(t, []int64{node.ID, other.ID}[i%2], change.NodeID)

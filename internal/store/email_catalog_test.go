@@ -144,6 +144,8 @@ func TestEmailSupersededBeforeBodyPublication(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	f := newEmailFixture(t, s, "message.eml")
+	_, cursor, err := s.VaultChanges(t.Context(), "", 500)
+	require.NoError(t, err)
 	first, err := s.PublishEmailGeneration(t.Context(), f.publication)
 	require.NoError(t, err)
 	require.Equal(t, "pending", first.BodySearch.State)
@@ -161,6 +163,16 @@ func TestEmailSupersededBeforeBodyPublication(t *testing.T) {
 	reselected, err := s.PublishEmailGeneration(t.Context(), f.publication)
 	require.NoError(t, err)
 	require.Equal(t, "pending", reselected.BodySearch.State)
+	_, err = s.PublishEmailGeneration(t.Context(), f.publication)
+	require.NoError(t, err)
+	changes, _, err := s.VaultChanges(t.Context(), cursor, 500)
+	require.NoError(t, err)
+	require.Len(t, changes, 3, "initial selection, changed head, and reselection; retry is silent")
+	for _, change := range changes {
+		require.Equal(t, "processed", change.Kind)
+		require.Equal(t, first.Version.NodeID, change.NodeID)
+		require.Equal(t, int64(1), change.Revision)
+	}
 }
 
 func TestEmailPublicationRejectsInvalidAuthorityAtomically(t *testing.T) {

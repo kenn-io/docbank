@@ -1,10 +1,15 @@
 package main
 
 import (
+	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"io"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/docbank/internal/daemonconn"
@@ -18,13 +23,19 @@ var changesCmd = &cobra.Command{
 	Example: `  docbank changes --follow --json`,
 	Use:     "changes", Short: "Read resumable vault changes", Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		c, err := daemonconn.Ensure(cmd.Context())
+		ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		c, err := daemonconn.Ensure(ctx)
 		if err != nil {
 			return err
 		}
-		return printChanges(cmd.OutOrStdout(), changesJSON, func(receive func(store.VaultChange) error) error {
-			return c.WatchChanges(cmd.Context(), changesAfter, changesFollow, receive)
+		err = printChanges(cmd.OutOrStdout(), changesJSON, func(receive func(store.VaultChange) error) error {
+			return c.WatchChanges(ctx, changesAfter, changesFollow, receive)
 		})
+		if changesFollow && ctx.Err() != nil && cmd.Context().Err() == nil && errors.Is(err, context.Canceled) {
+			return nil
+		}
+		return err
 	},
 }
 

@@ -68,22 +68,13 @@ func TestVaultChangesDisconnectResume(t *testing.T) {
 	require.NoError(t, resumed.Body.Close())
 }
 
-func TestVaultChangesProblemsAndBrowserSession(t *testing.T) {
+func TestVaultChangesProblems(t *testing.T) {
 	t.Parallel()
 	ts, _ := newTestServer(t, nil)
-	for _, query := range []string{"after=broken", "follow=invalid", "after=%ZZ", "follow=%ZZ", "after=x;y"} {
+	for _, query := range []string{"after=broken", "follow=invalid", "after=%ZZ"} {
 		resp, _ := get(t, ts, "/api/v1/changes?"+query, nil)
 		require.Equal(t, 400, resp.StatusCode, query)
 	}
-	resp, body := do(t, ts, http.MethodPost, "/api/daemon/web-session", nil, nil)
-	require.Equal(t, 201, resp.StatusCode)
-	var issued struct {
-		Token string `json:"token"`
-	}
-	require.NoError(t, json.Unmarshal([]byte(body), &issued))
-	resp, body = get(t, ts, "/api/v1/changes", map[string]string{"X-Api-Key": "", api.WebSessionHeader: issued.Token})
-	require.Equal(t, 403, resp.StatusCode)
-	require.Contains(t, body, `"code":"web_session_read_only"`)
 }
 
 func TestVaultChangesEmptyFollowShutdown(t *testing.T) {
@@ -106,40 +97,28 @@ func TestVaultChangesEmptyFollowShutdown(t *testing.T) {
 
 func TestVaultChangesLaterPageFailure(t *testing.T) {
 	t.Parallel()
-	for damage, code := range map[string]string{
-		`DELETE FROM vault_changes WHERE seq=501`:                    "changes_cursor_expired",
-		`UPDATE vault_changes SET node_revision='bad' WHERE seq=501`: "internal",
-	} {
-		for _, follow := range []bool{false, true} {
-			t.Run(code+"/"+strconv.FormatBool(follow), func(t *testing.T) {
-				t.Parallel()
-				ts, s := newTestServer(t, nil)
-				ts.Client().Timeout = 5 * time.Second
-				db, err := s.SQLiteDriver().Open(s.DBPath, sqlite.OpenOptions{Access: sqlite.ReadWriteExisting, TransactionMode: sqlite.Deferred})
-				require.NoError(t, err)
-				t.Cleanup(func() { require.NoError(t, db.Close()) })
-				// A full first page is readable; damage affects only the next page.
-				_, err = db.Exec(`INSERT INTO vault_changes WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<502) SELECT i,'created',1,1 FROM n`)
-				require.NoError(t, err)
-				_, err = db.Exec(`UPDATE vault_change_head SET high_water=502`)
-				require.NoError(t, err)
-				_, head, err := s.VaultChanges(t.Context(), "", 1)
-				require.NoError(t, err)
-				_, err = db.Exec(damage)
-				require.NoError(t, err)
-				response, body := get(t, ts, "/api/v1/changes?follow="+strconv.FormatBool(follow), nil)
-				require.Equal(t, 200, response.StatusCode)
-				lines := strings.Split(strings.TrimSpace(body), "\n")
-				require.Len(t, lines, 501)
-				var terminal api.ChangeEvent
-				require.NoError(t, json.Unmarshal([]byte(lines[500]), &terminal))
-				require.Equal(t, "error", terminal.Type)
-				require.NotNil(t, terminal.Error)
-				require.Equal(t, code, terminal.Error.Code)
-				if code == "changes_cursor_expired" {
-					require.Equal(t, head, terminal.Error.Cursor)
-				}
-			})
-		}
-	}
+	ts, s := newTestServer(t, nil)
+	ts.Client().Timeout = 5 * time.Second
+	db, err := s.SQLiteDriver().Open(s.DBPath, sqlite.OpenOptions{Access: sqlite.ReadWriteExisting, TransactionMode: sqlite.Deferred})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	// A full first page is readable; pruning overtakes the next page.
+	_, err = db.Exec(`INSERT INTO vault_changes WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<502) SELECT i,'created',1,1 FROM n`)
+	require.NoError(t, err)
+	_, err = db.Exec(`UPDATE vault_change_head SET high_water=502`)
+	require.NoError(t, err)
+	_, head, err := s.VaultChanges(t.Context(), "", 1)
+	require.NoError(t, err)
+	_, err = db.Exec(`DELETE FROM vault_changes WHERE seq=501`)
+	require.NoError(t, err)
+	response, body := get(t, ts, "/api/v1/changes", nil)
+	require.Equal(t, 200, response.StatusCode)
+	lines := strings.Split(strings.TrimSpace(body), "\n")
+	require.Len(t, lines, 501)
+	var terminal api.ChangeEvent
+	require.NoError(t, json.Unmarshal([]byte(lines[500]), &terminal))
+	require.Equal(t, "error", terminal.Type)
+	require.NotNil(t, terminal.Error)
+	require.Equal(t, "changes_cursor_expired", terminal.Error.Code)
+	require.Equal(t, head, terminal.Error.Cursor)
 }

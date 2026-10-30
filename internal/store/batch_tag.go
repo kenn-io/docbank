@@ -285,6 +285,7 @@ func (s *Store) applyBatchTagsTx(
 ) ([]BatchTagNodeResultV1, error) {
 	results := make([]BatchTagNodeResultV1, len(states))
 	changedIDs := make([]any, 0, len(states))
+	ids := make([]int64, 0, len(states))
 	for i, state := range states {
 		node := state.node
 		changed := state.assigned != request.Assign
@@ -297,6 +298,7 @@ func (s *Store) applyBatchTagsTx(
 			}
 			results[i].Revision++
 			changedIDs = append(changedIDs, node.ID)
+			ids = append(ids, node.ID)
 		}
 	}
 	if len(changedIDs) == 0 {
@@ -332,12 +334,6 @@ func (s *Store) applyBatchTagsTx(
 			if err := s.persistBatchTagAuditTx(ctx, tx, tag.ID, state.node, request.Assign, recordedAt); err != nil {
 				return nil, err
 			}
-		}
-	}
-	ids := make([]int64, 0, len(changedIDs))
-	for _, result := range results {
-		if result.Changed {
-			ids = append(ids, result.NodeID)
 		}
 	}
 	if err := recordVaultChangesTx(ctx, tx, "tagged", ids...); err != nil {
