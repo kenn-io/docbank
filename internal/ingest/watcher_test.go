@@ -3,6 +3,7 @@ package ingest
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"io/fs"
@@ -1188,8 +1189,13 @@ func TestWatcherTagsImportedFiles(t *testing.T) {
 	require.NoError(t, err)
 	_, err = ing.Store.DeleteTag(t.Context(), receipts.ID, store.UnconditionalRev)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(source, "new.txt"), []byte("new receipt"), 0o600))
+	// A fresh watcher must recognize existing imports from stored membership.
+	watcher, err = NewWatcher(ing, t.TempDir(), watcher.config, runTestMutation, slog.New(slog.DiscardHandler))
+	require.NoError(t, err)
+	root = openWatcherRoot(t, watcher)
+	pendingContents := []string{"new receipt", "rewritten pending receipt"}
 	for i, content := range []string{"second version", "third distinct version"} {
+		require.NoError(t, os.WriteFile(filepath.Join(source, "new.txt"), []byte(pendingContents[i]), 0o600))
 		require.NoError(t, os.WriteFile(filepath.Join(source, "receipt.txt"), []byte(content), 0o600))
 		require.ErrorAs(t, watcher.scan(t.Context(), root), new(*store.TagResolutionError))
 		_, versions, err := ing.Store.ContentVersions(t.Context(), node.ID, 10, 0)
@@ -1197,12 +1203,26 @@ func TestWatcherTagsImportedFiles(t *testing.T) {
 		assert.Equal(t, i+2, versions, "each edit must be recorded while new imports are blocked")
 		_, err = ing.Store.NodeByPath(t.Context(), "/archive/new.txt")
 		require.ErrorIs(t, err, store.ErrNotFound)
+		loose, err := ing.Blobs.ListDetailed()
+		require.NoError(t, err)
+		for _, pending := range pendingContents[:i+1] {
+			assert.NotContains(t, loose, fmt.Sprintf("%x", sha256.Sum256([]byte(pending))), "blocked new.txt must not publish a loose blob for %q", pending)
+		}
 	}
 	_, err = ing.Store.CreateTag(t.Context(), "receipts")
 	require.NoError(t, err)
 	require.NoError(t, watcher.scan(t.Context(), root))
 	imported, err := ing.Store.NodeByPath(t.Context(), "/archive/new.txt")
 	require.NoError(t, err)
+	content, err := ing.Blobs.Open(imported.BlobHash)
+	require.NoError(t, err)
+	data, readErr := io.ReadAll(content)
+	require.NoError(t, content.Close())
+	require.NoError(t, readErr)
+	assert.Equal(t, "rewritten pending receipt", string(data))
+	loose, err := ing.Blobs.ListDetailed()
+	require.NoError(t, err)
+	assert.NotContains(t, loose, fmt.Sprintf("%x", sha256.Sum256([]byte("new receipt"))), "recovery must not leave the superseded pending bytes in loose storage")
 	tags, total, err = ing.Store.NodeTags(t.Context(), imported.ID, 10, 0)
 	require.NoError(t, err)
 	require.Equal(t, 1, total)
