@@ -15,7 +15,9 @@ import (
 )
 
 func TestMCPConfigStdio(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "vault with spaces")
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	root = filepath.Join(root, "vault with spaces")
 	t.Setenv("DOCBANK_HOME", root)
 	executable, err := exec.LookPath(os.Args[0])
 	require.NoError(t, err)
