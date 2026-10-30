@@ -23,6 +23,7 @@ jobs:
   postgres:
     name: PostgreSQL ${{ matrix.version }} metadata
     runs-on: ubuntu-24.04
+    timeout-minutes: 11
     strategy:
       fail-fast: false
       matrix:
@@ -65,6 +66,7 @@ jobs:
   docs:
     name: Public documentation
     runs-on: ubuntu-24.04
+    timeout-minutes: 16
     steps:
       - name: Check out full repository history
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -144,6 +146,7 @@ jobs:
   frontend:
     name: Web application
     runs-on: ubuntu-24.04
+    timeout-minutes: 12
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -163,6 +166,7 @@ jobs:
   released-schemas:
     name: Released storage schemas
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - name: Check out full repository history
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -222,6 +226,7 @@ jobs:
   test:
     name: Linux tests
     runs-on: ubuntu-24.04
+    timeout-minutes: 38
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -309,6 +314,7 @@ jobs:
   purego:
     name: Pure-Go SQLite
     runs-on: ubuntu-24.04
+    timeout-minutes: 36
     env:
       CGO_ENABLED: "0"
     steps:
@@ -340,6 +346,7 @@ jobs:
   lint:
     name: golangci-lint
     runs-on: ubuntu-24.04
+    timeout-minutes: 23
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -390,6 +397,7 @@ jobs:
           - { runner: windows-11-vs2026-arm, goarch: arm64, shard: 3 }
           - { runner: windows-11-vs2026-arm, goarch: arm64, shard: 4 }
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: ${{ matrix.goarch == 'amd64' && (matrix.shard == 3 && 69 || 48) || (matrix.shard == 3 && 78 || 51) }}
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
