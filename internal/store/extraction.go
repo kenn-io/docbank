@@ -53,7 +53,7 @@ func markTextSearchableVersionTx(tx *sql.Tx, versionID, mimeType string) error {
 		return nil
 	}
 	if _, err := tx.Exec(`
-		INSERT INTO text_searchable_versions(version_id) VALUES(?)
+		INSERT INTO text_searchable_versions(version_id) VALUES($1)
 		ON CONFLICT(version_id) DO NOTHING`, versionID); err != nil {
 		return fmt.Errorf("recording text-search eligibility for %s: %w", versionID, err)
 	}
@@ -62,7 +62,7 @@ func markTextSearchableVersionTx(tx *sql.Tx, versionID, mimeType string) error {
 
 func enqueueTextBlobTx(tx *sql.Tx, blobHash string) error {
 	if _, err := tx.Exec(`
-		INSERT INTO text_extraction_queue(blob_hash,next_attempt_at) VALUES(?,?)
+		INSERT INTO text_extraction_queue(blob_hash,next_attempt_at) VALUES($1,$2)
 		ON CONFLICT(blob_hash) DO UPDATE SET next_attempt_at=excluded.next_attempt_at`,
 		blobHash, nowRFC3339()); err != nil {
 		return fmt.Errorf("queueing text extraction for %s: %w", blobHash, err)

@@ -399,7 +399,7 @@ func (s *Store) confirmContentWithReceiptTx(
 	receipt := ContentWriteReceipt{Node: n}
 	var err error
 	receipt.Version, err = scanContentVersion(tx.QueryRow(
-		`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id = ?`,
+		`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id = $1`,
 		n.CurrentVersionID,
 	))
 	if err != nil {
@@ -554,7 +554,7 @@ func (s *Store) replaceContentTx(
 	if err := s.EnsureBlobTx(tx, blobHash, size, physical...); err != nil {
 		return Node{}, ContentVersion{}, err
 	}
-	return installContentVersionTx(
+	return s.installContentVersionTx(
 		ctx, tx, n, blobHash, size, mimeType, "content_replace", nil,
 	)
 }
@@ -583,7 +583,7 @@ func (s *Store) RevertContent(
 			return err
 		}
 		source, err = scanContentVersion(tx.QueryRow(
-			`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id = ?`, sourceVersionID))
+			`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id = $1`, sourceVersionID))
 		if err != nil {
 			return fmt.Errorf("content version %q: %w", sourceVersionID, err)
 		}
@@ -618,7 +618,7 @@ func (s *Store) RevertContent(
 			)
 			return err
 		}
-		updated, version, err = installContentVersionTx(
+		updated, version, err = s.installContentVersionTx(
 			ctx, tx, n, source.BlobHash, source.Size, source.MimeType, "content_revert", &source.ID,
 		)
 		return err
@@ -629,7 +629,7 @@ func (s *Store) RevertContent(
 	return updated, version, source, nil
 }
 
-func installContentVersionTx(
+func (s *Store) installContentVersionTx(
 	ctx context.Context, tx *sql.Tx, n Node, blobHash string, size int64, mimeType, transitionKind string,
 	sourceVersionID *string,
 ) (Node, ContentVersion, error) {
@@ -637,7 +637,7 @@ func installContentVersionTx(
 	if err != nil {
 		return Node{}, ContentVersion{}, err
 	}
-	return installContentVersionWithOperationTx(
+	return s.installContentVersionWithOperationTx(
 		ctx, tx, n, blobHash, size, mimeType, transitionKind, sourceVersionID, operation,
 	)
 }
@@ -662,7 +662,7 @@ func newContentVersionOperation() (contentVersionOperation, error) {
 	}, nil
 }
 
-func installContentVersionWithOperationTx(
+func (s *Store) installContentVersionWithOperationTx(
 	ctx context.Context, tx *sql.Tx, n Node, blobHash string, size int64, mimeType, transitionKind string,
 	sourceVersionID *string, operation contentVersionOperation,
 ) (Node, ContentVersion, error) {
@@ -675,18 +675,21 @@ func installContentVersionWithOperationTx(
 		`INSERT INTO content_versions (
 			version_id, node_id, blob_hash, size, mime_type, recorded_at,
 			node_revision, introduced_operation_id, transition_kind, source_version_id
-		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
 		operation.versionID, n.ID, blobHash, size, storedMime, operation.recordedAt,
 		newRevision, operation.operationID,
 		transitionKind, sourceVersionID); err != nil {
 		return Node{}, ContentVersion{}, fmt.Errorf(
 			"recording %s content version for node %d: %w", transitionKind, n.ID, err)
 	}
+	if err := s.promoteContentBlobTx(ctx, tx, blobHash); err != nil {
+		return Node{}, ContentVersion{}, err
+	}
 	if err := queueTextExtractionTx(ctx, tx, operation.versionID, blobHash, mimeType); err != nil {
 		return Node{}, ContentVersion{}, err
 	}
 	if _, err := tx.Exec(
-		`UPDATE nodes SET current_version_id = ?, revision = ?, modified_at = ? WHERE id = ?`,
+		`UPDATE nodes SET current_version_id = $1, revision = $2, modified_at = $3 WHERE id = $4`,
 		operation.versionID, newRevision, operation.recordedAt, n.ID); err != nil {
 		return Node{}, ContentVersion{}, fmt.Errorf(
 			"installing %s content version for node %d: %w", transitionKind, n.ID, err)
@@ -695,8 +698,14 @@ func installContentVersionWithOperationTx(
 	if err != nil {
 		return Node{}, ContentVersion{}, err
 	}
+	if err := s.refreshPhotoTimelineTx(ctx, tx, n.ID); err != nil {
+		return Node{}, ContentVersion{}, err
+	}
+	if err := s.refreshNodePhotoWorkTx(ctx, tx, updated, &n); err != nil {
+		return Node{}, ContentVersion{}, err
+	}
 	version, err := scanContentVersion(tx.QueryRow(
-		`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id = ?`, operation.versionID))
+		`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id = $1`, operation.versionID))
 	if err != nil {
 		return Node{}, ContentVersion{}, err
 	}
@@ -721,7 +730,7 @@ func (s *Store) CheckContentReplacementTarget(ctx context.Context, nodeID, ifRev
 		}
 		var member bool
 		if err := tx.QueryRowContext(ctx,
-			`SELECT EXISTS(SELECT 1 FROM audit_memberships WHERE node_id=?)`, nodeID,
+			`SELECT EXISTS(SELECT 1 FROM audit_memberships WHERE node_id=$1)`, nodeID,
 		).Scan(&member); err != nil {
 			return fmt.Errorf("checking audit membership for node %d: %w", nodeID, err)
 		}
