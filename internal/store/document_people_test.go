@@ -435,6 +435,8 @@ func TestPublishDocumentPeopleReplayInputIdentity(t *testing.T) {
 	require.NoError(t, err)
 	publication := documentPeoplePublicationForInput(t, input)
 
+	_, cursor, err := s.VaultChanges(t.Context(), "", 500)
+	require.NoError(t, err)
 	first, err := s.PublishDocumentPeople(t.Context(), publication)
 	require.NoError(t, err)
 	require.Equal(t, documentPeopleStatePublished, first.State)
@@ -461,6 +463,35 @@ func TestPublishDocumentPeopleReplayInputIdentity(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, third.GenerationID, head.GenerationID)
 	require.Equal(t, publication.People.Edges, edges)
+	changes, cursor, err := s.VaultChanges(t.Context(), cursor, 500)
+	require.NoError(t, err)
+	require.Len(t, changes, 1, "first publication emits; identical and input-only replays stay silent")
+	require.Equal(t, "processed", changes[0].Kind)
+	require.Equal(t, version.NodeID, changes[0].NodeID)
+	moved, _, err := s.Move(t.Context(), version.NodeID, s.RootID(), "renamed.txt", publication.NodeRevision)
+	require.NoError(t, err)
+	_, _, err = s.DocumentPeopleForVersion(t.Context(), version.ID)
+	require.ErrorIs(t, err, ErrNotFound, "the revision fence withholds stale attribution")
+	publication.NodeRevision = moved.Revision
+	_, err = s.PublishDocumentPeople(t.Context(), publication)
+	require.NoError(t, err)
+	changes, cursor, err = s.VaultChanges(t.Context(), cursor, 500)
+	require.NoError(t, err)
+	require.Len(t, changes, 1)
+	require.Equal(t, "moved", changes[0].Kind, "same-checksum freshness repair stays silent")
+	for _, overLimit := range []bool{false, true, true} {
+		publication.People.Edges[0].RawLabel = "Ada revised"
+		publication.Resolution.OverLimit = overLimit
+		_, err = s.PublishDocumentPeople(t.Context(), publication)
+		require.NoError(t, err)
+	}
+	changes, _, err = s.VaultChanges(t.Context(), cursor, 500)
+	require.NoError(t, err)
+	require.Len(t, changes, 2, "changed checksum and changed state each emit; identical replay stays silent")
+	for _, change := range changes {
+		require.Equal(t, "processed", change.Kind)
+		require.Equal(t, moved.Revision, change.Revision)
+	}
 }
 
 func TestPublishDocumentPeopleDetectsCollisionAndRollsBackForeignKeyFailure(t *testing.T) {

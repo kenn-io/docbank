@@ -153,12 +153,41 @@ func TestPublishDocumentEventsAcceptsCanonicalEmptyProjection(t *testing.T) {
 	}
 	canonical := mustMarshalDocumentEvents(t, record)
 
-	_, err := s.PublishDocumentEvents(t.Context(), target, fakeHash("f1"),
+	_, cursor, err := s.VaultChanges(t.Context(), "", 500)
+	require.NoError(t, err)
+	_, err = s.PublishDocumentEvents(t.Context(), target, fakeHash("f1"),
 		requireDocumentEventInputsSHA256(t, s, target), canonical)
 	require.NoError(t, err)
 	view, err := s.DocumentEventsForVersion(t.Context(), version.ID)
 	require.NoError(t, err)
 	assert.Equal(t, record, view.Events)
+	changes, cursor, err := s.VaultChanges(t.Context(), cursor, 500)
+	require.NoError(t, err)
+	require.Len(t, changes, 1)
+	require.Equal(t, "processed", changes[0].Kind)
+	require.Equal(t, version.NodeID, changes[0].NodeID)
+	for _, epoch := range []int64{1, 2, 3} {
+		target.InputEpoch = epoch
+		fingerprint := fakeHash("f1")
+		if epoch == 3 {
+			fingerprint = fakeHash("f2")
+			record = documentEventRecord(t, s.VaultID(), version.ID, "d5")
+			canonical = mustMarshalDocumentEvents(t, record)
+		}
+		_, err = s.db.Exec(`UPDATE document_event_state SET input_epoch=?,deriver_fingerprint=?`, epoch, fingerprint)
+		require.NoError(t, err)
+		_, err = s.PublishDocumentEvents(t.Context(), target, fingerprint,
+			requireDocumentEventInputsSHA256(t, s, target), canonical)
+		require.NoError(t, err)
+		changes, cursor, err = s.VaultChanges(t.Context(), cursor, 500)
+		require.NoError(t, err)
+		if epoch < 3 {
+			require.Empty(t, changes, "identical and epoch-only publications stay silent")
+		} else {
+			require.Len(t, changes, 1)
+			require.Equal(t, "processed", changes[0].Kind)
+		}
+	}
 }
 
 func TestPublishDocumentEventsRetainsActorEvidenceInProjections(t *testing.T) {

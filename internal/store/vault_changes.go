@@ -117,9 +117,32 @@ func publishRenditionHeadTx(ctx context.Context, tx *sql.Tx, head RenditionHeadR
 }
 
 func recordProcessedVersionTx(ctx context.Context, tx *sql.Tx, version string) error {
-	var nodeID int64
-	if err := tx.QueryRowContext(ctx, `SELECT node_id FROM content_versions WHERE version_id=$1`, version).Scan(&nodeID); err != nil {
+	return recordProcessedTx(ctx, tx, version, "")
+}
+
+func recordProcessedBlobTx(ctx context.Context, tx *sql.Tx, blob string) error {
+	return recordProcessedTx(ctx, tx, "", blob)
+}
+
+// Processing data may also belong to history. Notify only its current live users.
+func recordProcessedTx(ctx context.Context, tx *sql.Tx, version, blob string) error {
+	rows, err := tx.QueryContext(ctx, `SELECT n.id FROM nodes n
+		JOIN content_versions cv ON cv.version_id=n.current_version_id AND cv.node_id=n.id
+		WHERE n.trashed_at IS NULL AND (cv.version_id=$1 OR cv.blob_hash=$2) ORDER BY n.id`, version, blob)
+	if err != nil {
 		return err
 	}
-	return recordVaultChangesTx(ctx, tx, "processed", nodeID)
+	defer func() { _ = rows.Close() }()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return err
+		}
+		ids = append(ids, id)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return err
+	}
+	return recordVaultChangesTx(ctx, tx, "processed", ids...)
 }

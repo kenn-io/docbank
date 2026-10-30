@@ -55,6 +55,12 @@ func TestRenditionCatalogSharesOneBuildAcrossVersionProfilesWithinVault(t *testi
 		ContentVersionID: versions[1], BuildID: build.ID, Profile: embeddingProfile,
 		AttachedAt: "2026-08-22T10:01:00.000000000Z",
 	}
+	version, err := s.ContentVersionByID(t.Context(), versions[0])
+	require.NoError(t, err)
+	_, _, err = s.ReplaceContent(t.Context(), version.NodeID, UnconditionalRev, catalogSourceHash, 20, "application/pdf")
+	require.NoError(t, err)
+	_, before, err := s.VaultChanges(t.Context(), "", 500)
+	require.NoError(t, err)
 	require.NoError(t, publishRenditionForTest(
 		t, s, first, "2026-08-22T10:02:00.000000000Z", fakeHash("c1"),
 	))
@@ -72,6 +78,13 @@ func TestRenditionCatalogSharesOneBuildAcrossVersionProfilesWithinVault(t *testi
 	assert.Equal(t, second, secondView.Attachment)
 	assert.Equal(t, catalogBuildID, firstView.Build.ID)
 	assert.Equal(t, catalogBuildID, secondView.Build.ID)
+	publicationChanges, _, err := s.VaultChanges(t.Context(), before, 500)
+	require.NoError(t, err)
+	require.Len(t, publicationChanges, 1, "historical rendition stays readable without notifying the current node")
+	version, err = s.ContentVersionByID(t.Context(), versions[1])
+	require.NoError(t, err)
+	require.Equal(t, version.NodeID, publicationChanges[0].NodeID)
+	require.Equal(t, "processed", publicationChanges[0].Kind)
 
 	var buildCount, attachmentCount int
 	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_builds`).Scan(&buildCount))

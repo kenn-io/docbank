@@ -70,6 +70,14 @@ func TestSourceMetadataRepublicationSelectsRecordedGeneration(t *testing.T) {
 	require.NoError(t, err)
 	other, err := s.CreateFile(ctx, s.RootID(), "source-b.pdf", sourceSHA256, 1, "application/pdf")
 	require.NoError(t, err)
+	historical, err := s.CreateFile(ctx, s.RootID(), "historical.pdf", sourceSHA256, 1, "application/pdf")
+	require.NoError(t, err)
+	_, _, err = s.ReplaceContent(ctx, historical.ID, historical.Revision, fakeHash("b1"), 1, "application/pdf")
+	require.NoError(t, err)
+	trashed, err := s.CreateFile(ctx, s.RootID(), "trashed.pdf", sourceSHA256, 1, "application/pdf")
+	require.NoError(t, err)
+	_, _, err = s.Trash(ctx, trashed.ID, trashed.Revision)
+	require.NoError(t, err)
 	_, before, err := s.VaultChanges(ctx, "", 500)
 	require.NoError(t, err)
 	metadataA := document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1,
@@ -128,6 +136,20 @@ func TestSourceMetadataRepublicationSelectsRecordedGeneration(t *testing.T) {
 		require.Equal(t, "processed", change.Kind)
 		require.Equal(t, []int64{node.ID, other.ID}[i%2], change.NodeID)
 	}
+	for _, id := range []int64{node.ID, other.ID} {
+		_, _, err = s.ReplaceContent(ctx, id, UnconditionalRev, fakeHash("b1"), 1, "application/pdf")
+		require.NoError(t, err)
+	}
+	_, cursor, err := s.VaultChanges(ctx, "", 500)
+	require.NoError(t, err)
+	_, err = s.PublishSourceMetadata(ctx, sourceSHA256, fakeHash("f2"), canonicalB)
+	require.NoError(t, err)
+	changes, _, err = s.VaultChanges(ctx, cursor, 500)
+	require.NoError(t, err)
+	require.Empty(t, changes, "superseded-only evidence is retained without notifying current nodes")
+	_, activeMetadata, err = s.ActiveSourceMetadata(ctx, sourceSHA256)
+	require.NoError(t, err)
+	require.Equal(t, "B", *activeMetadata.Fields[0].Value.String)
 }
 
 func TestSourceMetadataHeadAppearsWhenMissingForRecordedEvidence(t *testing.T) {

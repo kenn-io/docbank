@@ -522,23 +522,7 @@ func (s *Store) RecordExtraction(ctx context.Context, result ExtractionResult) e
 			publishRendition = published
 		}
 		if !publishRendition && storedText != (sql.NullString{String: result.Text, Valid: result.Status == ExtractionOK}) {
-			rows, err := tx.QueryContext(ctx, `SELECT DISTINCT node_id FROM content_versions WHERE blob_hash=? ORDER BY node_id`, result.BlobHash)
-			if err != nil {
-				return err
-			}
-			defer func() { _ = rows.Close() }()
-			var ids []int64
-			for rows.Next() {
-				var id int64
-				if err := rows.Scan(&id); err != nil {
-					return errors.Join(err, rows.Close())
-				}
-				ids = append(ids, id)
-			}
-			if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-				return err
-			}
-			if err := recordVaultChangesTx(ctx, tx, "processed", ids...); err != nil {
+			if err := recordProcessedBlobTx(ctx, tx, result.BlobHash); err != nil {
 				return err
 			}
 		}
