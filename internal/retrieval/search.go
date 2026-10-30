@@ -41,30 +41,44 @@ type SemanticBackend interface {
 	ReleaseVectorIndexGeneration(ctx context.Context, leaseID string, fencingToken int64, at time.Time) error
 }
 
+// GenerationSource returns the immutable generation named by a fresh query
+// lease. Implementations must load by that exact ID and retain no query scope.
+type GenerationSource interface {
+	Get(ctx context.Context, record store.VectorIndexGenerationRecord) (*vectorindex.Generation, error)
+}
+
+// SemanticHeadBackend provides metadata-only authority for a generation source.
+type SemanticHeadBackend interface {
+	AcquireSemanticSearchAuthorityHead(ctx context.Context, profile, binding, owner string, at time.Time,
+		duration time.Duration, options store.SearchOptions) (store.SemanticSearchAuthority, error)
+}
+
 type QueryEncoderResolver interface {
 	ResolveQueryEncoder(ctx context.Context, descriptor document.EmbeddingDescriptor) (document.EmbeddingProvider, error)
 }
 
 type SearcherConfig struct {
-	Backend       Backend
-	Encoders      QueryEncoderResolver
-	Owner         string
-	LeaseDuration time.Duration
-	Clock         func() time.Time
-	Expansion     ExpansionConfig
-	Reranking     RerankingConfig
-	MediaEvidence *MediaEvidenceResolver
+	Backend          Backend
+	GenerationSource GenerationSource
+	Encoders         QueryEncoderResolver
+	Owner            string
+	LeaseDuration    time.Duration
+	Clock            func() time.Time
+	Expansion        ExpansionConfig
+	Reranking        RerankingConfig
+	MediaEvidence    *MediaEvidenceResolver
 }
 
 type Searcher struct {
-	backend       Backend
-	encoders      QueryEncoderResolver
-	owner         string
-	leaseDuration time.Duration
-	clock         func() time.Time
-	expansion     ExpansionConfig
-	reranking     RerankingConfig
-	mediaEvidence *MediaEvidenceResolver
+	backend          Backend
+	generationSource GenerationSource
+	encoders         QueryEncoderResolver
+	owner            string
+	leaseDuration    time.Duration
+	clock            func() time.Time
+	expansion        ExpansionConfig
+	reranking        RerankingConfig
+	mediaEvidence    *MediaEvidenceResolver
 }
 
 func NewSearcher(config SearcherConfig) (*Searcher, error) {
@@ -86,7 +100,7 @@ func NewSearcher(config SearcherConfig) (*Searcher, error) {
 	if config.Clock == nil {
 		config.Clock = time.Now
 	}
-	return &Searcher{backend: config.Backend, encoders: config.Encoders, owner: config.Owner,
+	return &Searcher{backend: config.Backend, generationSource: config.GenerationSource, encoders: config.Encoders, owner: config.Owner,
 		leaseDuration: config.LeaseDuration, clock: config.Clock, expansion: config.Expansion,
 		reranking: config.Reranking, mediaEvidence: config.MediaEvidence}, nil
 }
@@ -132,7 +146,7 @@ func (searcher *Searcher) Search(ctx context.Context, query Query) (Report, erro
 	}
 	// Query encoding leaves lexical candidates in flight while the catalog can
 	// change. Fence the complete report, including its unembedded lexical hits.
-	if searcher.expansion.Enabled || searcher.reranking.Enabled || report.ActualMode == ModeSemantic || report.ActualMode == ModeHybrid {
+	if query.ObserveScope || searcher.expansion.Enabled || searcher.reranking.Enabled || report.ActualMode == ModeSemantic || report.ActualMode == ModeHybrid {
 		revalidated, err := searcher.revalidateReport(ctx, query, report)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -187,6 +201,9 @@ func (searcher *Searcher) revalidateReport(ctx context.Context, query Query, rep
 		semanticProfile, semanticBinding)
 	if err != nil {
 		return Report{}, err
+	}
+	if query.ObserveScope {
+		report.ObservedScopeCount = revalidation.ObservedScopeCount
 	}
 	if revalidation.Coverage != nil {
 		report.Coverage.ScopedDocuments = revalidation.Coverage.ScopedDocuments
@@ -360,15 +377,24 @@ func (searcher *Searcher) semantic(ctx context.Context, query Query) (_ []Candid
 	if !ok || searcher.encoders == nil {
 		return nil, Coverage{State: CoverageUnknown}, false, errors.New("semantic retrieval is not configured")
 	}
-	authority, err := backend.AcquireSemanticSearchAuthority(ctx,
+	acquire := backend.AcquireSemanticSearchAuthority
+	if searcher.generationSource != nil {
+		headBackend, ok := searcher.backend.(SemanticHeadBackend)
+		if !ok {
+			return nil, Coverage{State: CoverageUnknown}, false, errors.New("metadata-only semantic authority is unavailable")
+		}
+		acquire = headBackend.AcquireSemanticSearchAuthorityHead
+	}
+	authority, err := acquire(ctx,
 		query.ProcessingProfileFingerprint, query.BindingID, searcher.owner,
 		searcher.clock().UTC(), searcher.leaseDuration, query.Scope)
 	if err != nil {
 		return nil, Coverage{State: CoverageUnknown}, false, err
 	}
+	leaseID, leaseToken := authority.Lease.ID, authority.Lease.FencingToken
 	defer func() {
-		if releaseErr := backend.ReleaseVectorIndexGeneration(context.WithoutCancel(ctx), authority.Lease.ID,
-			authority.Lease.FencingToken, searcher.clock().UTC()); releaseErr != nil {
+		if releaseErr := backend.ReleaseVectorIndexGeneration(context.WithoutCancel(ctx), leaseID,
+			leaseToken, searcher.clock().UTC()); releaseErr != nil {
 			if retErr == nil {
 				retErr = releaseErr
 			} else {
@@ -384,6 +410,14 @@ func (searcher *Searcher) semantic(ctx context.Context, query Query) (_ []Candid
 	}
 	if authority.ANNRows == nil {
 		return nil, coverage, false, errors.New("semantic search authority lacks source-fenced ANN rows")
+	}
+	stored := authority.Lease.Generation
+	var generation *vectorindex.Generation
+	if searcher.generationSource != nil {
+		generation, err = searcher.generationSource.Get(ctx, stored)
+		if err != nil {
+			return nil, coverage, false, err
+		}
 	}
 	provider, err := searcher.encoders.ResolveQueryEncoder(ctx, authority.VectorSpace.Descriptor)
 	if err != nil {
@@ -408,10 +442,18 @@ func (searcher *Searcher) semantic(ctx context.Context, query Query) (_ []Candid
 	if err != nil {
 		return nil, coverage, false, err
 	}
-	stored := authority.Lease.Generation
-	generation, err := vectorindex.OpenGeneration(bytes.NewReader(stored.Bytes), int64(len(stored.Bytes)))
+	if searcher.generationSource == nil {
+		reader, size := bytes.NewReader(stored.Bytes), int64(len(stored.Bytes))
+		// Only Open's reader needs the serialized payload; later fences use metadata.
+		authority.Lease.Generation.Bytes = nil
+		stored.Bytes = nil
+		generation, err = vectorindex.OpenGeneration(reader, size)
+	}
 	if err != nil {
 		return nil, coverage, false, err
+	}
+	if generation == nil {
+		return nil, coverage, false, errors.New("leased vector generation is unavailable")
 	}
 	metadata := generation.Metadata()
 	descriptor := authority.VectorSpace.Descriptor

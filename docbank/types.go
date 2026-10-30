@@ -451,7 +451,21 @@ const (
 	DocumentSearchHybrid   DocumentSearchMode = "hybrid"
 )
 
+type DocumentSearchFilters struct {
+	TagID          string `json:"tag_id,omitzero"`
+	MIMEType       string `json:"mime_type,omitzero"`
+	UnderNodeID    int64  `json:"under_node_id,omitzero"`
+	ModifiedSince  string `json:"modified_since,omitzero"`
+	ModifiedBefore string `json:"modified_before,omitzero"`
+}
+
+type DocumentSearchScope struct {
+	Kind    string                 `json:"kind"`
+	Filters *DocumentSearchFilters `json:"filters,omitzero"`
+}
+
 type DocumentSearchRequest struct {
+	Scope        *DocumentSearchScope          `json:"scope,omitzero"`
 	MediaSources []DocumentMediaSourceSelector `json:"media_sources,omitzero"`
 	Query        string                        `json:"query"`
 	Mode         DocumentSearchMode            `json:"mode"`
@@ -532,6 +546,8 @@ type DocumentMediaSelection struct {
 }
 
 type DocumentSearchReport struct {
+	Scope                *DocumentSearchScope     `json:"scope,omitzero"`
+	ObservedScopeCount   *int                     `json:"observed_scope_count,omitzero"`
 	MediaSelections      []DocumentMediaSelection `json:"media_selections,omitzero"`
 	MediaSourceSelection bool                     `json:"media_source_selection,omitzero"`
 	RequestedMode        DocumentSearchMode       `json:"requested_mode"`

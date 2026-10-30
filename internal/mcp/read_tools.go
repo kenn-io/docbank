@@ -454,7 +454,7 @@ func searchDocuments(
 		}
 		report, callErr := c.SearchDocuments(ctx, api.DocumentSearchRequest{Query: input.Query,
 			Mode: input.Mode, Limit: input.Limit, Profile: input.Profile, BindingID: input.BindingID,
-			Explain: input.Explain, Fence: api.DocumentSourceFence{VaultUID: resolution.Fence.VaultUID,
+			Explain: input.Explain, Fence: api.DocumentSearchFence{VaultUID: resolution.Fence.VaultUID,
 				ContentVersionIDs: slices.Clone(resolution.Fence.ContentVersionIDs)}})
 		if callErr != nil {
 			return response{}, callErr

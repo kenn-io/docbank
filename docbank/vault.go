@@ -488,6 +488,9 @@ func (v *Vault) Close() error {
 		v.mutation.Unlock()
 	}
 	v.processingWG.Wait()
+	if v.processing != nil {
+		v.processing.Stop()
+	}
 	v.processingErrMu.Lock()
 	workerErr := v.processingErr
 	v.processingErrMu.Unlock()

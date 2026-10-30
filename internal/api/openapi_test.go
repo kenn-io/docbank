@@ -850,3 +850,20 @@ func TestOpenAPIPhotoPreparedTargetOmitsContentVersion(t *testing.T) {
 	require.Equal(t, "uuid", edit.Properties["content_version_id"].Format)
 	require.NotContains(t, edit.Required, "content_version_id")
 }
+
+func TestDocumentSearchScopeWireContract(t *testing.T) {
+	t.Parallel()
+	doc := api.NewOfflineServer().API().OpenAPI()
+	schemas := doc.Components.Schemas.Map()
+	request := schemas["DocumentSearchRequest"]
+	require.NotNil(t, request.Properties["scope"])
+	fence := schemas["DocumentSearchFence"]
+	require.NotNil(t, fence)
+	assert.NotContains(t, fence.Required, "content_version_ids")
+	explicit := schemas["DocumentSourceFence"]
+	require.NotNil(t, explicit.Properties["content_version_ids"].MinItems)
+	assert.Equal(t, 1, *explicit.Properties["content_version_ids"].MinItems)
+	report := schemas["DocumentSearchReport"]
+	require.NotNil(t, report.Properties["scope"])
+	require.NotNil(t, report.Properties["observed_scope_count"])
+}

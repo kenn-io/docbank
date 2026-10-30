@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -8,7 +9,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"strconv"
 	"time"
 )
@@ -50,6 +50,7 @@ type VectorIndexGenerationRecord struct {
 	SourceManifestChecksum string
 	IndexManifestChecksum  string
 	Bytes                  []byte
+	ByteSize               int // Declared serialized size, populated on reads; writes derive it from Bytes.
 	RowCount               int
 	BuiltAt                string
 }
@@ -88,24 +89,46 @@ func (s *Store) CaptureVectorIndexSource(ctx context.Context, vectorSpaceID stri
 }
 
 type vectorIndexHeadCandidate struct {
-	setID, profile, vectorSpace string
+	setID, profile, vectorSpace        string
+	contentVersion, binding, inputKind sql.NullString
 }
 
-func captureVectorIndexSourceTx(ctx context.Context, tx *sql.Tx, vectorSpaceID string) (_ VectorIndexSource, retErr error) {
-	candidates, err := loadVectorIndexHeadCandidates(ctx, tx, vectorSpaceID)
+func captureVectorIndexSourceTx(ctx context.Context, tx *sql.Tx, vectorSpaceID string) (VectorIndexSource, error) {
+	return captureVectorIndexSourceObservedTx(ctx, tx, vectorSpaceID, nil)
+}
+
+func captureVectorIndexSourceObservedTx(ctx context.Context, tx *sql.Tx, vectorSpaceID string, observe vectorIndexSourceObserver) (_ VectorIndexSource, retErr error) {
+	var candidates []vectorIndexHeadCandidate
+	var values *semanticSnapshotValueGuard
+	var err error
+	if observe != nil {
+		values = &semanticSnapshotValueGuard{compatible: true}
+		candidates, err = loadVectorIndexHeadCandidatesObservedTx(ctx, tx, vectorSpaceID, true, values)
+	} else {
+		candidates, err = loadVectorIndexHeadCandidates(ctx, tx, vectorSpaceID)
+	}
 	if err != nil {
 		return VectorIndexSource{}, err
 	}
 
 	source := VectorIndexSource{VectorSpaceID: vectorSpaceID}
+	// Only immutable descriptor decoding is reused within this transaction.
+	// Each member's inputs, vector manifest and live eligibility are reloaded.
+	spaces := make(map[string]EmbeddingVectorSpaceRecord)
 	for _, candidate := range candidates {
-		set, err := loadEmbeddingSetTx(ctx, tx, candidate.setID)
+		set, err := loadEmbeddingSetWithVectorSpacesObservedTx(ctx, tx, candidate.setID, spaces, values)
 		if err != nil {
 			return VectorIndexSource{}, fmt.Errorf("loading vector index member %s: %w", candidate.setID, err)
 		}
-		eligible, err := embeddingSetEligibleTx(ctx, tx, set)
+		eligible, live, err := embeddingSetEligibilityTx(ctx, tx, set, observe != nil)
 		if err != nil {
 			return VectorIndexSource{}, err
+		}
+		if observe != nil {
+			values.include(live.textCompatible)
+			if err := observe(ctx, candidate, set, live, values.compatible); err != nil {
+				return VectorIndexSource{}, err
+			}
 		}
 		if !eligible || set.ProcessingProfileFingerprint != candidate.profile ||
 			set.VectorSpace.ID != candidate.vectorSpace || candidate.vectorSpace != vectorSpaceID {
@@ -123,9 +146,34 @@ func captureVectorIndexSourceTx(ctx context.Context, tx *sql.Tx, vectorSpaceID s
 	return source, nil
 }
 
-func loadVectorIndexHeadCandidates(ctx context.Context, tx *sql.Tx, vectorSpaceID string) (_ []vectorIndexHeadCandidate, retErr error) {
-	rows, err := tx.QueryContext(ctx, `SELECT embedding_set_id,profile_fingerprint,vector_space_id
-		FROM embedding_heads WHERE vector_space_id=? ORDER BY embedding_set_id`, vectorSpaceID)
+func loadVectorIndexHeadCandidates(ctx context.Context, tx *sql.Tx, vectorSpaceID string) ([]vectorIndexHeadCandidate, error) {
+	return loadVectorIndexHeadCandidatesWithKey(ctx, tx, vectorSpaceID, false)
+}
+
+func loadVectorIndexHeadCandidatesWithKey(ctx context.Context, tx *sql.Tx, vectorSpaceID string, withHeadKey bool) ([]vectorIndexHeadCandidate, error) {
+	return loadVectorIndexHeadCandidatesObservedTx(ctx, tx, vectorSpaceID, withHeadKey, nil)
+}
+
+func loadVectorIndexHeadCandidatesObservedTx(ctx context.Context, tx *sql.Tx, vectorSpaceID string, withHeadKey bool, values *semanticSnapshotValueGuard) (_ []vectorIndexHeadCandidate, retErr error) {
+	query := `SELECT embedding_set_id,profile_fingerprint,vector_space_id
+		FROM embedding_heads WHERE vector_space_id=? ORDER BY embedding_set_id`
+	if withHeadKey {
+		query = `SELECT embedding_set_id,profile_fingerprint,vector_space_id,
+ content_version_id,binding_id,input_kind FROM embedding_heads WHERE vector_space_id=? ORDER BY embedding_set_id`
+	}
+	const observedQuery = `SELECT embedding_set_id,profile_fingerprint,vector_space_id,
+ content_version_id,binding_id,input_kind,
+ CASE WHEN embedding_set_id=CAST(embedding_set_id AS TEXT)
+ AND content_version_id=CAST(content_version_id AS TEXT)
+ AND profile_fingerprint=CAST(profile_fingerprint AS TEXT)
+ AND binding_id=CAST(binding_id AS TEXT)
+ AND input_kind=CAST(input_kind AS TEXT)
+ AND vector_space_id=CAST(vector_space_id AS TEXT) THEN 1 ELSE 0 END
+ FROM embedding_heads WHERE vector_space_id=? ORDER BY embedding_set_id`
+	if values != nil {
+		query = observedQuery
+	}
+	rows, err := tx.QueryContext(ctx, query, vectorSpaceID)
 	if err != nil {
 		return nil, fmt.Errorf("listing vector index logical membership: %w", err)
 	}
@@ -133,8 +181,18 @@ func loadVectorIndexHeadCandidates(ctx context.Context, tx *sql.Tx, vectorSpaceI
 	var candidates []vectorIndexHeadCandidate
 	for rows.Next() {
 		var candidate vectorIndexHeadCandidate
-		if err := rows.Scan(&candidate.setID, &candidate.profile, &candidate.vectorSpace); err != nil {
-			return nil, err
+		var scanErr error
+		if values != nil {
+			var compatible bool
+			scanErr = rows.Scan(&candidate.setID, &candidate.profile, &candidate.vectorSpace, &candidate.contentVersion, &candidate.binding, &candidate.inputKind, &compatible)
+			values.include(compatible)
+		} else if withHeadKey {
+			scanErr = rows.Scan(&candidate.setID, &candidate.profile, &candidate.vectorSpace, &candidate.contentVersion, &candidate.binding, &candidate.inputKind)
+		} else {
+			scanErr = rows.Scan(&candidate.setID, &candidate.profile, &candidate.vectorSpace)
+		}
+		if scanErr != nil {
+			return nil, scanErr
 		}
 		candidates = append(candidates, candidate)
 	}
@@ -146,15 +204,25 @@ func loadVectorIndexHeadCandidates(ctx context.Context, tx *sql.Tx, vectorSpaceI
 
 func vectorIndexSourceChecksum(members []VectorIndexMember) string {
 	hash := sha256.New()
-	_, _ = io.WriteString(hash, vectorIndexSourceDomain)
-	for _, member := range members {
-		for _, value := range []string{member.EmbeddingSetID, member.VectorSetID,
-			member.PayloadBlobHash, strconv.FormatInt(member.PayloadSize, 10)} {
-			_, _ = io.WriteString(hash, strconv.Itoa(len(value)))
-			_, _ = io.WriteString(hash, ":")
-			_, _ = io.WriteString(hash, value)
-		}
+	buffer := bufio.NewWriterSize(hash, 32<<10)
+	var lengthScratch [20]byte
+	var payloadScratch [20]byte
+	writeLength := func(length int) {
+		prefix := strconv.AppendInt(lengthScratch[:0], int64(length), 10)
+		_, _ = buffer.Write(prefix)
+		_ = buffer.WriteByte(':')
 	}
+	_, _ = buffer.WriteString(vectorIndexSourceDomain)
+	for _, member := range members {
+		for _, value := range [...]string{member.EmbeddingSetID, member.VectorSetID, member.PayloadBlobHash} {
+			writeLength(len(value))
+			_, _ = buffer.WriteString(value)
+		}
+		payloadSize := strconv.AppendInt(payloadScratch[:0], member.PayloadSize, 10)
+		writeLength(len(payloadSize))
+		_, _ = buffer.Write(payloadSize)
+	}
+	_ = buffer.Flush()
 	return hex.EncodeToString(hash.Sum(nil))
 }
 
@@ -292,6 +360,10 @@ func requireVectorIndexBuildClaimTx(ctx context.Context, tx *sql.Tx, claim Vecto
 }
 
 func validateVectorIndexGenerationRecord(record VectorIndexGenerationRecord) error {
+	return validateVectorIndexGenerationMetadata(record, len(record.Bytes))
+}
+
+func validateVectorIndexGenerationMetadata(record VectorIndexGenerationRecord, byteSize int) error {
 	for value, subject := range map[string]string{record.ID: "vector index generation ID",
 		record.VectorSpaceID:          "vector index generation vector-space ID",
 		record.SourceManifestChecksum: "vector index source manifest",
@@ -300,7 +372,7 @@ func validateVectorIndexGenerationRecord(record VectorIndexGenerationRecord) err
 			return err
 		}
 	}
-	if len(record.Bytes) < 1 || len(record.Bytes) > 512<<20 || record.RowCount < 1 || record.RowCount > 1_000_000 {
+	if byteSize < 1 || byteSize > 512<<20 || record.RowCount < 1 || record.RowCount > 1_000_000 {
 		return errors.New("vector index generation shape exceeds bounds")
 	}
 	return validateMetadataTime("vector index built_at", record.BuiltAt)
@@ -387,23 +459,35 @@ func (s *Store) PublishVectorIndexGeneration(ctx context.Context, claim VectorIn
 }
 
 func loadVectorIndexGenerationTx(ctx context.Context, query metadataQuerier, generationID string) (VectorIndexGenerationRecord, error) {
+	return loadVectorIndexGenerationRecordTx(ctx, query, generationID, false)
+}
+
+// The metadata path deliberately does not select generation_bytes. Both paths
+// share shape, identity and publication validation.
+func loadVectorIndexGenerationRecordTx(ctx context.Context, query metadataQuerier, generationID string, metadataOnly bool) (VectorIndexGenerationRecord, error) {
 	var record VectorIndexGenerationRecord
-	var size int
-	err := query.QueryRowContext(ctx, `SELECT generation_id,vector_space_id,source_manifest_checksum,
-		index_manifest_checksum,generation_bytes,byte_size,row_count,built_at
-		FROM vector_index_generations WHERE generation_id=?`, generationID).Scan(&record.ID,
-		&record.VectorSpaceID, &record.SourceManifestChecksum, &record.IndexManifestChecksum,
-		&record.Bytes, &size, &record.RowCount, &record.BuiltAt)
+	columns := "generation_id,vector_space_id,source_manifest_checksum,index_manifest_checksum,"
+	destinations := []any{&record.ID, &record.VectorSpaceID, &record.SourceManifestChecksum, &record.IndexManifestChecksum}
+	if !metadataOnly {
+		columns += "generation_bytes,"
+		destinations = append(destinations, &record.Bytes)
+	}
+	columns += "byte_size,row_count,built_at"
+	destinations = append(destinations, &record.ByteSize, &record.RowCount, &record.BuiltAt)
+	err := query.QueryRowContext(ctx, "SELECT "+columns+" FROM vector_index_generations WHERE generation_id=?", generationID).Scan(destinations...)
 	if errors.Is(err, sql.ErrNoRows) {
 		return record, ErrNotFound
 	}
 	if err != nil {
 		return record, err
 	}
-	if size != len(record.Bytes) {
+	if record.ID != generationID {
+		return VectorIndexGenerationRecord{}, errors.New("vector index generation identity is corrupt")
+	}
+	if !metadataOnly && record.ByteSize != len(record.Bytes) {
 		return VectorIndexGenerationRecord{}, errors.New("vector index generation byte size is corrupt")
 	}
-	return record, validateVectorIndexGenerationRecord(record)
+	return record, validateVectorIndexGenerationMetadata(record, record.ByteSize)
 }
 
 // VectorIndexHead is the publication metadata needed by an idle worker scan.
@@ -469,6 +553,34 @@ func (s *Store) ReadVectorIndexVectorSet(ctx context.Context, reader RenditionBl
 func (s *Store) AcquireVectorIndexGeneration(ctx context.Context, vectorSpaceID, owner string,
 	at time.Time, duration time.Duration,
 ) (VectorIndexReaderLease, error) {
+	return s.acquireVectorIndexGeneration(ctx, vectorSpaceID, owner, at, duration, false)
+}
+
+// AcquireVectorIndexGenerationHead leases the current generation and validates
+// its metadata and live source membership without reading its serialized bytes.
+func (s *Store) AcquireVectorIndexGenerationHead(ctx context.Context, vectorSpaceID, owner string,
+	at time.Time, duration time.Duration,
+) (VectorIndexReaderLease, error) {
+	return s.acquireVectorIndexGeneration(ctx, vectorSpaceID, owner, at, duration, true)
+}
+
+func (s *Store) acquireVectorIndexGeneration(ctx context.Context, vectorSpaceID, owner string,
+	at time.Time, duration time.Duration, metadataOnly bool,
+) (VectorIndexReaderLease, error) {
+	lease, err := newVectorIndexReaderLease(vectorSpaceID, owner, at, duration)
+	if err != nil {
+		return VectorIndexReaderLease{}, err
+	}
+	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		return s.acquireVectorIndexGenerationTx(ctx, tx, vectorSpaceID, owner, &lease, metadataOnly, nil)
+	})
+	return lease, err
+}
+
+func newVectorIndexReaderLease(vectorSpaceID, owner string, at time.Time, duration time.Duration) (VectorIndexReaderLease, error) {
+	if err := validateCatalogSHA256(vectorSpaceID, "vector index vector-space ID"); err != nil {
+		return VectorIndexReaderLease{}, err
+	}
 	if err := validateEmbeddingCatalogText(owner, "vector index reader owner"); err != nil {
 		return VectorIndexReaderLease{}, err
 	}
@@ -479,33 +591,49 @@ func (s *Store) AcquireVectorIndexGeneration(ctx context.Context, vectorSpaceID,
 	if err != nil {
 		return VectorIndexReaderLease{}, err
 	}
-	lease := VectorIndexReaderLease{ID: leaseID, FencingToken: 1, ExpiresAt: at.UTC().Add(duration)}
-	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		var generationID string
-		if err := tx.QueryRowContext(ctx, `SELECT generation_id FROM vector_index_heads
-			WHERE vector_space_id=?`, vectorSpaceID).Scan(&generationID); errors.Is(err, sql.ErrNoRows) {
-			return ErrNotFound
-		} else if err != nil {
-			return err
-		}
-		var err error
-		lease.Generation, err = loadVectorIndexGenerationTx(ctx, tx, generationID)
-		if err != nil {
-			return err
-		}
-		current, err := captureVectorIndexSourceTx(ctx, tx, vectorSpaceID)
-		if err != nil {
-			return err
-		}
-		if current.ManifestChecksum != lease.Generation.SourceManifestChecksum {
-			return ErrVectorIndexSourceStale
-		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO vector_index_reader_leases(
-			lease_id,generation_id,owner,fencing_token,lease_expires_at) VALUES(?,?,?,?,?)`,
-			lease.ID, generationID, owner, lease.FencingToken, lease.ExpiresAt.Format(timestampLayout))
+	return VectorIndexReaderLease{ID: leaseID, FencingToken: 1, ExpiresAt: at.UTC().Add(duration)}, nil
+}
+
+// acquireVectorIndexGenerationTx always validates the active generation against
+// a complete fresh source before inserting its lease. An optional collector is
+// local to this transaction and may supply semantic counts and ANN identities.
+func (s *Store) acquireVectorIndexGenerationTx(ctx context.Context, tx *sql.Tx, vectorSpaceID, owner string,
+	lease *VectorIndexReaderLease, metadataOnly bool, collector *originalSemanticSnapshot,
+) error {
+	var generationID, headSource string
+	if err := tx.QueryRowContext(ctx, `SELECT generation_id,source_manifest_checksum FROM vector_index_heads
+		WHERE vector_space_id=?`, vectorSpaceID).Scan(&generationID, &headSource); errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	} else if err != nil {
 		return err
-	})
-	return lease, err
+	}
+	var err error
+	lease.Generation, err = loadVectorIndexGenerationRecordTx(ctx, tx, generationID, metadataOnly)
+	if err != nil {
+		return err
+	}
+	if lease.Generation.VectorSpaceID != vectorSpaceID {
+		return errors.New("vector index head does not match generation")
+	}
+	if lease.Generation.SourceManifestChecksum != headSource {
+		return ErrVectorIndexSourceStale
+	}
+	var current VectorIndexSource
+	if metadataOnly {
+		current, err = s.captureSemanticSearchSourceTx(ctx, tx, vectorSpaceID, collector)
+	} else {
+		current, err = captureVectorIndexSourceTx(ctx, tx, vectorSpaceID)
+	}
+	if err != nil {
+		return err
+	}
+	if current.ManifestChecksum != lease.Generation.SourceManifestChecksum {
+		return ErrVectorIndexSourceStale
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO vector_index_reader_leases(
+		lease_id,generation_id,owner,fencing_token,lease_expires_at) VALUES(?,?,?,?,?)`,
+		lease.ID, generationID, owner, lease.FencingToken, lease.ExpiresAt.Format(timestampLayout))
+	return err
 }
 
 func (s *Store) ReleaseVectorIndexGeneration(ctx context.Context, leaseID string, fencingToken int64, at time.Time) error {

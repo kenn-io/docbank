@@ -437,7 +437,7 @@ func TestDaemonDoclingDocumentProcessing(t *testing.T) {
 			require.Contains(t, body.String(), "Synthetic needle report")
 			require.EqualValues(t, 1, submissions.Load())
 			search, err := daemon.SearchDocuments(t.Context(), api.DocumentSearchRequest{Query: "needle", Mode: "lexical", Profile: "documents", Limit: 10,
-				Fence: api.DocumentSourceFence{VaultUID: plan.VaultUID, ContentVersionIDs: []string{selector.ContentVersionID}}})
+				Fence: api.DocumentSearchFence{VaultUID: plan.VaultUID, ContentVersionIDs: []string{selector.ContentVersionID}}})
 			require.NoError(t, err)
 			require.Len(t, search.Results, 1)
 			require.Equal(t, selector.ContentVersionID, search.Results[0].ContentVersionID)

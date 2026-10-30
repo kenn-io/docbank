@@ -416,7 +416,7 @@ func TestProcessingClientValidatesSearchResponseAgainstExactFence(t *testing.T) 
 		otherVersionID = "55555555-5555-4555-8555-555555555555"
 	)
 	request := api.DocumentSearchRequest{Query: "visible", Mode: "semantic", Limit: 20,
-		Profile: "private", Fence: api.DocumentSourceFence{VaultUID: vaultID,
+		Profile: "private", Fence: api.DocumentSearchFence{VaultUID: vaultID,
 			ContentVersionIDs: []string{versionID, otherVersionID}}}
 	validReport := func() api.DocumentSearchReport {
 		return api.DocumentSearchReport{RequestedMode: "semantic", ActualMode: "semantic",
@@ -515,7 +515,7 @@ func TestProcessingClientAcceptsOneSelectedResultPerBuild(t *testing.T) {
 		versionID = "22222222-2222-4222-8222-222222222222"
 	)
 	request := api.DocumentSearchRequest{Query: "visible", Mode: "lexical", Limit: 20,
-		Profile: "private", Fence: api.DocumentSourceFence{VaultUID: vaultID,
+		Profile: "private", Fence: api.DocumentSearchFence{VaultUID: vaultID,
 			ContentVersionIDs: []string{versionID}},
 		MediaSources: api.MediaSearchSources{{SourceID: "source", SourceVersionID: "version",
 			ContentVersionID: versionID}}}
@@ -567,7 +567,7 @@ func TestProcessingClientValidatesRerankingReceiptAgainstRequest(t *testing.T) {
 	const vaultID = "11111111-1111-4111-8111-111111111111"
 	const versionID = "22222222-2222-4222-8222-222222222222"
 	request := api.DocumentSearchRequest{Query: "needle", Mode: "lexical", Limit: 20, Profile: "private",
-		Rerank: true, Fence: api.DocumentSourceFence{VaultUID: vaultID, ContentVersionIDs: []string{versionID}}}
+		Rerank: true, Fence: api.DocumentSearchFence{VaultUID: vaultID, ContentVersionIDs: []string{versionID}}}
 	base := api.DocumentSearchReport{RequestedMode: "lexical", ActualMode: "lexical",
 		Coverage:     api.DocumentSearchCoverage{ScopedDocuments: 1, CompleteDocuments: 1, State: "complete"},
 		Degradations: []string{}, Results: []api.DocumentSearchResult{{VaultUID: vaultID, NodeID: 1,
@@ -898,7 +898,7 @@ func TestProcessingClientRejectsResultRevokedFromConsumerFence(t *testing.T) {
 	t.Cleanup(server.Close)
 	report, err := daemonconn.New(server.URL, serverKey).SearchDocuments(t.Context(), api.DocumentSearchRequest{
 		Query: "revoked", Mode: "lexical", Limit: 20, Profile: "private",
-		Fence: api.DocumentSourceFence{VaultUID: vaultID,
+		Fence: api.DocumentSearchFence{VaultUID: vaultID,
 			ContentVersionIDs: []string{"22222222-2222-4222-8222-222222222222"}},
 	})
 	require.ErrorContains(t, err, "search response")

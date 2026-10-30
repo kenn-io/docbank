@@ -212,6 +212,65 @@ and membership. The vector-index worker builds disposable generations from
 those retained sets and publishes only against the source membership it read.
 Reader leases keep a selected generation available during a query.
 
+Each processing service reuses one decoded vector generation per active vector
+space across searches. A query first leases and validates the current head's
+metadata without reading its serialized bytes. A cache miss loads and opens
+that exact leased generation; concurrent misses share the load. The service
+retains decoded vectors, never the serialized blob. Observing a replacement
+head evicts the prior retained generation. Searches already using it may finish
+with their own immutable pointer and reader lease. Generation identity follows
+its content, so reclaiming and rebuilding identical data can reuse the same ID
+with a new build timestamp. Each lease still validates the stored timestamp.
+
+An idle timer releases each retained generation after five minutes without a
+lookup, even if no later search arrives. Service stop and embedded vault close
+stop those timers and clear retained references immediately. While admitted
+reads drain, a stopped service loads and decodes their exact leased generation
+without retaining it or starting timers. The owner keeps storage open until
+those reads finish. Loaders run within their searches, and timer callbacks
+never access storage. This bounds retention to one generation per space,
+rather than imposing a fixed memory cap across arbitrary spaces.
+
+Every search still acquires and releases its own reader lease, checks current
+source membership and vector compatibility, and reads fresh filters, coverage,
+and candidate authority. A warm cache cannot serve a stale or incompatible
+head. Final report revalidation, ranking, source-fence limits, and similar
+search behavior remain unchanged. Retrieval callers without a generation
+source continue to open their leased bytes for each query.
+
+Every source manifest check reloads the current members, input generations,
+vector manifests, and live attachment authority. Within that transaction, the
+store decodes each immutable vector space descriptor once. The reuse ends with
+the transaction; later snapshots read and validate the stored descriptor again.
+
+For canonical original-file members, SQLite search reads this metadata in one
+batch. The batch starts from every head in the requested space, including
+historical and trashed members. Each member must have one declared and actual
+input and vector row, both at ordinal zero (the first position), with complete
+matching head/set identity, native metadata storage classes, and no rendition
+attachment. The store checks the real vector-row manifest and strictly decodes
+the stored space descriptor before using live eligibility. Input/vector checksum mismatch
+removes a scoring identity without removing its source member.
+
+Unsupported shapes replay the generic capture in the same snapshot. This
+includes mixed storage classes, extra or missing rows, nonzero singleton
+ordinals, mismatched identities, and attachments. A failed speculative SQLite
+read permits fallback only after successful savepoint rollback and release.
+Cancellation and failed transaction recovery return errors. Collection starts
+only after the whole batch is accepted, so fallback never observes a partial
+batch. PostgreSQL uses the generic capture before any SQLite-specific query.
+Full-byte reader leases, index builds, and similar search retain their generic
+source reads.
+
+A search that reuses a decoded generation keeps three separate fresh captures:
+initial authority and metadata-only lease acquisition, candidate resolution, and
+final report revalidation. Initial acquisition validates the stored descriptor,
+complete source, generation, coverage, and scoring identities in one writer
+transaction before committing its fenced lease. Any acquisition failure rolls
+back that lease and returns no partial authority. Full-byte and similar search
+keep separate lease and initial authority captures. No source facts or
+eligibility maps cross these snapshots.
+
 Coverage reads source visibility, serving heads, and replacement jobs in one
 catalog snapshot. A replacement counts as `rebuilding`. The separate
 `previous_generation_serving` count records whether a complete prior result
@@ -241,6 +300,42 @@ live attachments before scoring. Missing vector-row authority stops the search.
 Results retain source references, lexical and semantic rank contributions,
 coverage, truncation, and degradation information. Candidates are checked
 against current vault authority before they are passed to optional reranking.
+
+The initial scoring fence selects row identities with the exact head, input
+checksum, and metadata filters. Ordinary semantic search reloads full metadata
+for the ranked identities it needs, in batches of at most 128. Lookups use the
+indexes on vector rows and vector sets. Each ranked identity is looked up in both
+its TEXT and BLOB storage forms; the head, input and checksum joins retain native
+SQL equality. The complete source manifest and coverage
+are checked once in that resolution transaction. Eligibility is not reused
+across snapshots.
+
+For ordinary original-file searches without metadata filters, source validation
+also collects complete-document counts and the initial scoring identities in
+the same transaction. This applies to both all-live and explicit version fences.
+The live population count remains independent. Exact head keys, current owners
+and input checksums still determine membership; shared identities are scored
+once. Metadata-filtered, selected-build and rendition-chunk searches retain their
+SQL membership checks. Collection preserves complete source validation wherever
+that validation already runs.
+
+The collector checks native text compatibility in head, set, input, vector-row
+and current-node authority while reading them. If a participating value has
+another SQLite storage class, it finishes source validation and uses the
+existing SQL membership reads in that transaction. SQLite then decides equality
+for mixed storage classes and matching BLOB pairs. This keeps the optimization
+from changing catalog eligibility when string scanning would erase those classes.
+
+Final revalidation collects those facts only when results carry semantic
+evidence. A saved source-validation failure falls back to the original coverage
+queries: coverage errors retain priority over lexical-schema errors, and both
+retain priority over source errors. Searches without semantic evidence introduce
+no source validation at this final check.
+
+A vector row can belong to several live documents. Such shared identities use
+the full membership read to preserve the existing document representative
+across query plans. Similar-document search continues to expand every shared
+member before grouping duplicate content.
 
 For a timed rendition segment, lexical evidence resolves the exact lexical
 segment to its build unit. Rendition-chunk semantic evidence resolves the exact

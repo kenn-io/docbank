@@ -319,3 +319,61 @@ describe("search result authority", () => {
     });
   });
 });
+
+describe("browser explicit search authority", () => {
+  const request: DocumentSearchRequest = {
+    query: "synthetic",
+    mode: "lexical",
+    profile: "private",
+    fence: { vault_uid: vault, content_version_ids: [versions[0]!] },
+  };
+  const report = {
+    requested_mode: "lexical",
+    actual_mode: "lexical",
+    coverage: {
+      binding_required: false,
+      scoped_documents: 1,
+      complete_documents: 1,
+      state: "complete",
+    },
+    results: [
+      {
+        vault_uid: vault,
+        node_id: 7,
+        content_version_id: versions[0],
+        rank: 1,
+        lexical_rank: 1,
+        score: 1,
+        path: "/synthetic.txt",
+        evidence: [{ kind: "node_name" }],
+      },
+    ],
+    truncated: false,
+    degradations: [],
+    trace: [],
+  };
+
+  it("rejects omitted versions with the ordinary receipt error", () => {
+    expect(() =>
+      validateDocumentSearchReport(report, {
+        ...request,
+        fence: { vault_uid: vault },
+        scope: { kind: "all_live" },
+      }),
+    ).toThrow("The daemon returned an invalid search response.");
+  });
+
+  it("rejects scope requests and unrequested scope authority", () => {
+    expect(() =>
+      validateDocumentSearchReport(report, {
+        ...request,
+        scope: { kind: "all_live" },
+      }),
+    ).toThrow("The daemon returned an invalid search response.");
+    for (const extra of [{ scope: { kind: "all_live" } }, { observed_scope_count: 1 }]) {
+      expect(() => validateDocumentSearchReport({ ...report, ...extra }, request)).toThrow(
+        "The daemon returned an invalid search response.",
+      );
+    }
+  });
+});

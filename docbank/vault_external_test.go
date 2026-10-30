@@ -2876,6 +2876,10 @@ func TestEmbeddedSearchContentFirst(t *testing.T) {
 	require.Len(t, control.Results, 1)
 	require.Equal(t, "node_name", control.Results[0].Evidence[0].Kind)
 	require.Nil(t, control.MediaSelections)
+	encodedControl, err := json.Marshal(control)
+	require.NoError(t, err)
+	require.NotContains(t, string(encodedControl), `"observed_scope_count"`)
+	require.NotContains(t, string(encodedControl), `"scope"`)
 	for _, tc := range []struct {
 		name    string
 		sources []docbank.DocumentMediaSourceSelector
@@ -2917,4 +2921,25 @@ func TestEmbeddedSearchContentFirst(t *testing.T) {
 	require.Equal(t, receipt.Version.ID, report.Results[0].ContentVersionID)
 	require.Equal(t, "rendition_segment", report.Results[0].Evidence[0].Kind)
 	require.Contains(t, report.Results[0].Excerpt, "mercury retained embedded evidence")
+	request.Fence.ContentVersionIDs = nil
+	request.Scope = &docbank.DocumentSearchScope{Kind: "all_live", Filters: &docbank.DocumentSearchFilters{MIMEType: "TEXT/PLAIN"}}
+	scoped, err := vault.SearchDocuments(t.Context(), request)
+	require.NoError(t, err)
+	require.Equal(t, report.Results, scoped.Results)
+	require.Equal(t, 3, *scoped.ObservedScopeCount)
+	require.Equal(t, "text/plain", scoped.Scope.Filters.MIMEType)
+}
+
+func TestEmbeddedSearchEmptyAllLiveScope(t *testing.T) {
+	t.Parallel()
+	provider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
+	require.NoError(t, err)
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir(), Processing: docbank.ProcessingOptions{Profiles: map[string]docbank.ProcessingProfileConfig{"private": {Profile: embeddedProcessingProfile(t, provider.Descriptor()), RenditionProvider: provider}}}})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	report, err := vault.SearchDocuments(t.Context(), docbank.DocumentSearchRequest{Query: "synthetic", Mode: docbank.DocumentSearchSemantic, Profile: "private", Fence: docbank.DocumentSourceFence{VaultUID: vault.ID()}, Scope: &docbank.DocumentSearchScope{Kind: "all_live", Filters: &docbank.DocumentSearchFilters{MIMEType: "TEXT/PLAIN"}}})
+	require.NoError(t, err)
+	require.Empty(t, report.Results)
+	require.Equal(t, 0, *report.ObservedScopeCount)
+	require.Equal(t, "text/plain", report.Scope.Filters.MIMEType)
 }

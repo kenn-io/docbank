@@ -219,3 +219,22 @@ func (backend *contentFirstSearchBackend) SearchExplainedLexicalCandidates(ctx c
 func (backend *contentFirstSearchBackend) NormalizeSearchOptions(ctx context.Context, options store.SearchOptions) (store.SearchOptions, error) {
 	return backend.catalog.NormalizeSearchOptions(ctx, options)
 }
+
+func TestObservedScopeCountUsesFinalCandidateSnapshot(t *testing.T) {
+	catalog, err := store.Open(filepath.Join(t.TempDir(), "search.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
+	first, err := catalog.CreateFile(t.Context(), catalog.RootID(), "synthetic-first.txt", strings.Repeat("a", 64), 1, "text/plain")
+	require.NoError(t, err)
+	backend := &changingSearchBackend{Store: catalog, afterSearch: func() {
+		_, err := catalog.CreateFile(t.Context(), catalog.RootID(), "synthetic-second.txt", strings.Repeat("b", 64), 1, "text/plain")
+		require.NoError(t, err)
+	}}
+	searcher, err := NewSearcher(SearcherConfig{Backend: backend, Owner: "scope-count", LeaseDuration: time.Minute})
+	require.NoError(t, err)
+	report, err := searcher.Search(t.Context(), Query{Text: "synthetic", Mode: ModeLexical, ObserveScope: true, Scope: store.SearchOptions{MIMEType: "text/plain"}})
+	require.NoError(t, err)
+	require.Len(t, report.Results, 1)
+	require.Equal(t, first.ID, report.Results[0].Document.NodeID)
+	require.Equal(t, 2, report.ObservedScopeCount)
+}
