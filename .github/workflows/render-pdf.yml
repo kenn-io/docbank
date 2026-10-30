@@ -44,7 +44,7 @@ jobs:
 
   bates-browser-recovery:
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups || '[]'), 'go') || contains(fromJSON(needs.changes.outputs.groups || '[]'), 'frontend')) }}
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups), 'go') || contains(fromJSON(needs.changes.outputs.groups), 'frontend')) }}
     name: Numbered PDF browser recovery
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -79,7 +79,7 @@ jobs:
 
   libreoffice-owner:
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups || '[]'), 'go')) }}
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups), 'go')) }}
     name: LibreOffice owner proof
     runs-on: ubuntu-latest
     steps:
