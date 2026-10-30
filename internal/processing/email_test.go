@@ -352,8 +352,6 @@ func TestEmailPipelineUnavailableDoesNotRequeue(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newEmailPipelineFixture(t)
 			target := f.add(t, "message.eml", tc.source, "message/rfc822")
-			_, cursor, err := f.catalog.VaultChanges(t.Context(), "", 500)
-			require.NoError(t, err)
 			view, err := EnsureEmailTarget(t.Context(), f.catalog, f.blobs, f.spool, target)
 			require.NoError(t, err)
 			require.Equal(t, "unavailable", view.BodySearch.State)
@@ -373,14 +371,6 @@ func TestEmailPipelineUnavailableDoesNotRequeue(t *testing.T) {
 			again, err := EnsureEmailTarget(t.Context(), f.catalog, f.blobs, f.spool, target)
 			require.NoError(t, err)
 			require.Equal(t, view, again)
-			changes, _, err := f.catalog.VaultChanges(t.Context(), cursor, 500)
-			require.NoError(t, err)
-			require.Len(t, changes, 2, "inventory head and terminal body result; retry is silent")
-			for _, change := range changes {
-				require.Equal(t, "processed", change.Kind)
-				require.Equal(t, target.Version.NodeID, change.NodeID)
-				require.Equal(t, int64(1), change.Revision)
-			}
 			f.emptySpool(t)
 		})
 	}

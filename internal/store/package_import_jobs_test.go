@@ -500,9 +500,6 @@ func TestPackageImportDiscardRepairsOrRetainsPhotoAssets(t *testing.T) {
 			require.NoError(t, err)
 			changes, _, err := s.VaultChanges(t.Context(), before, 500)
 			require.NoError(t, err)
-			require.NotEmpty(t, changes)
-			require.Equal(t, "removed", changes[0].Kind)
-			require.Equal(t, original.ID, changes[0].NodeID)
 			if outcome == "checkout-pinned" {
 				require.Len(t, changes, 1)
 			} else {
@@ -511,6 +508,8 @@ func TestPackageImportDiscardRepairsOrRetainsPhotoAssets(t *testing.T) {
 				require.Equal(t, image.ID, changes[1].NodeID)
 				require.Equal(t, int64(2), changes[1].Revision)
 			}
+			require.Equal(t, "removed", changes[0].Kind)
+			require.Equal(t, original.ID, changes[0].NodeID)
 			var purges int
 			require.NoError(t, s.db.QueryRowContext(t.Context(),
 				`SELECT COUNT(*) FROM photo_change_receipts WHERE asset_id=? AND operation='purge'`, asset.ID).Scan(&purges))

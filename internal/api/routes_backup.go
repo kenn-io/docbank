@@ -719,7 +719,6 @@ type eventStreamWriter[T any] struct {
 	mu       sync.Mutex
 	encoder  *jsontext.Encoder
 	flusher  http.Flusher
-	flush    func() error
 	cancel   context.CancelFunc
 	writeErr error
 }
@@ -741,12 +740,7 @@ func (w *eventStreamWriter[T]) send(event T) {
 		w.cancel()
 		return
 	}
-	if w.flush != nil {
-		if err := w.flush(); err != nil {
-			w.writeErr = err
-			w.cancel()
-		}
-	} else if w.flusher != nil {
+	if w.flusher != nil {
 		w.flusher.Flush()
 	}
 }

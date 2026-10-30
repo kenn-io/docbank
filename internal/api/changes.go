@@ -85,7 +85,6 @@ func registerChanges(shutdown context.Context, mux *http.ServeMux, api huma.API,
 			_ = controller.SetWriteDeadline(time.Time{})
 		}()
 		stream := newEventStreamWriter[ChangeEvent](w, cancel)
-		stream.flush = controller.Flush
 		// Flush even an empty follow response so the client can start reading.
 		if err := controller.Flush(); err != nil {
 			return

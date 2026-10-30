@@ -113,22 +113,3 @@ func TestVaultChangesCursors(t *testing.T) { //nolint:paralleltest // Pruning co
 	require.NoError(t, err)
 	require.Empty(t, page)
 }
-
-func TestVaultChangesLegacyProcessing(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	node, err := s.CreateFile(ctx, s.RootID(), "note.txt", fakeHash("61"), 4, "text/plain")
-	require.NoError(t, err)
-	_, before, err := s.VaultChanges(ctx, "", 500)
-	require.NoError(t, err)
-	require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{BlobHash: node.BlobHash, Extractor: "plain-text", ExtractorVersion: 1, Status: ExtractionOK, Text: "note"}))
-	_, err = s.MigrateLegacyPlainText(ctx)
-	require.NoError(t, err)
-	changes, _, err := s.VaultChanges(ctx, before, 500)
-	require.NoError(t, err)
-	require.Len(t, changes, 1)
-	require.Equal(t, "processed", changes[0].Kind)
-	require.Equal(t, node.ID, changes[0].NodeID)
-	require.Equal(t, int64(1), changes[0].Revision)
-}

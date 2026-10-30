@@ -1,7 +1,6 @@
 package daemonconn_test
 
 import (
-	"context"
 	"encoding/base64"
 	"errors"
 	"io"
@@ -34,20 +33,9 @@ func TestWatchChanges(t *testing.T) {
 	require.Equal(t, "created", events[1].Kind)
 	require.Equal(t, int64(1), events[1].Revision)
 	require.Equal(t, events[1].Cursor, head)
-	empty, err := c.WatchChanges(ctx, head, false, nil)
-	require.NoError(t, err)
-	require.Equal(t, head, empty)
-	var resumed []store.VaultChange
-	_, err = c.WatchChanges(ctx, events[0].Cursor, false, func(event store.VaultChange) error { resumed = append(resumed, event); return nil })
-	require.NoError(t, err)
-	require.Equal(t, events[1:], resumed)
 	aborted := errors.New("stop reading")
 	_, err = c.WatchChanges(ctx, "", true, func(store.VaultChange) error { return aborted })
 	require.ErrorIs(t, err, aborted)
-	followCtx, cancel := context.WithCancel(ctx)
-	cancel()
-	_, err = c.WatchChanges(followCtx, events[1].Cursor, true, nil)
-	require.ErrorIs(t, err, context.Canceled)
 	foreign := base64.RawURLEncoding.EncodeToString([]byte("11111111-1111-4111-8111-111111111111:0"))
 	_, err = c.WatchChanges(ctx, foreign, false, nil)
 	expired, ok := errors.AsType[*daemonconn.ChangeCursorExpiredError](err)

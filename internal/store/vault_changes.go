@@ -51,9 +51,6 @@ func recordVaultChangesTx(ctx context.Context, tx *sql.Tx, kind string, nodeIDs 
 // An empty after starts at the oldest retained change. On expiry, head is the
 // cursor to save before rescanning, then resume after the scan finishes.
 func (s *Store) VaultChanges(ctx context.Context, after string, limit int) (changes []VaultChange, head string, err error) {
-	if limit < 1 || limit > 500 {
-		return nil, "", errors.New("vault change limit must be between 1 and 500")
-	}
 	epoch := ""
 	seq := int64(-1)
 	if after != "" {

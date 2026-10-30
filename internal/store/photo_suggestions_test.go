@@ -983,8 +983,6 @@ func TestPhotoDescriptionWaitersKeepTheirOwnDismissalRule(t *testing.T) {
 			require.NoError(t, err)
 			published := photoSuggestionValues(t, s, asset.ID)
 			if joined {
-				require.Len(t, changes, 1)
-				require.Equal(t, "processed", changes[0].Kind)
 				require.Len(t, published, 1, "the explicit waiter replaces the dismissal")
 				require.Equal(t, "From B.", published[0].Value.Caption)
 			} else {

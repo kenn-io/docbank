@@ -71,7 +71,6 @@ func TestDocumentWritesPostgres(t *testing.T) {
 			require.Equal(t, original.ID, changes[4].NodeID)
 			require.Equal(t, int64(2), changes[4].Revision)
 			require.Equal(t, int64(3), changes[5].Revision)
-
 			require.Equal(t, original.BlobHash, reverted.BlobHash)
 			require.Equal(t, "content_revert", version.TransitionKind)
 			require.Equal(t, new(original.CurrentVersionID), version.SourceVersionID)
