@@ -461,8 +461,8 @@ func TestWatchTagBlockRestoresRemainingFailure(t *testing.T) {
 				if action == "scan recovery" {
 					for range 2 {
 						err := watcher.scan(t.Context(), root)
-						assert.ErrorAs(t, err, new(*store.TagResolutionError), "missing tags must survive later source failures")
-						assert.ErrorContains(t, err, wantSourceError)
+						require.ErrorAs(t, err, new(*store.TagResolutionError), "missing tags must survive later source failures")
+						require.ErrorContains(t, err, wantSourceError)
 					}
 					_, err := ing.Store.CreateTag(t.Context(), "receipts")
 					require.NoError(t, err)
@@ -514,7 +514,7 @@ func TestWatchTagBlockRestoresRemainingFailure(t *testing.T) {
 						snapshots := supervisor.Snapshot()
 						require.Len(t, snapshots, 1)
 						assert.Equal(t, jobs.StatusRunning, snapshots[0].Status)
-						assert.ErrorAs(t, snapshots[0].Cause, new(*store.TagResolutionError))
+						require.ErrorAs(t, snapshots[0].Cause, new(*store.TagResolutionError))
 						assert.Contains(t, snapshots[0].Error, `tag "receipts"`)
 						assert.Contains(t, snapshots[0].Error, wantSourceError)
 					}

@@ -19,7 +19,8 @@ func registerWatchRoutes(api huma.API, d Deps) {
 		OperationID: "listWatchedInboxes", Method: http.MethodGet, Path: "/api/v1/watches",
 		Summary: "List effective watched-inbox configuration and runner status",
 	}, func(_ context.Context, _ *struct{}) (*output, error) {
-		watches := slices.SortedFunc(slices.Values(d.Cfg.Watches), func(a, b config.WatchConfig) int {
+		watches := slices.Clone(d.Cfg.Watches)
+		slices.SortFunc(watches, func(a, b config.WatchConfig) int {
 			return cmp.Compare(a.Name, b.Name)
 		})
 		jobsByName := make(map[string]Job)
@@ -41,7 +42,6 @@ func registerWatchRoutes(api huma.API, d Deps) {
 				ExcludePatterns: append([]string{}, watch.ExcludePatterns...),
 			}
 			if job, ok := jobsByName["watch:"+watch.Name]; ok {
-				job.Tags = slices.Clone(watch.Tags)
 				item.Job = &job
 			}
 			out.Body.Items = append(out.Body.Items, item)

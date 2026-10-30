@@ -1028,7 +1028,7 @@ func (w *Watcher) scanWithHints(ctx context.Context, root *watchRoot, hints watc
 		}
 	}
 	if err := w.scanDirectory(ctx, root, root.root, "", seen, hints, inventory); err != nil {
-		return false, fmt.Errorf("scanning watch %q: %w", w.config.Name, err)
+		return false, withTagError(ctx, tagErr, fmt.Errorf("scanning watch %q: %w", w.config.Name, err))
 	}
 	retained := make(map[string]struct{})
 	if inventory != nil {
@@ -1039,13 +1039,13 @@ func (w *Watcher) scanWithHints(ctx context.Context, root *watchRoot, hints watc
 		if inventory.complete {
 			deferred, retained, err = w.rebindCandidates(ctx, root, inventory)
 			if err != nil {
-				return false, err
+				return false, withTagError(ctx, tagErr, err)
 			}
 			if err := w.reconcileSourcePresence(ctx, inventory, deferred, retained); err != nil {
 				if errors.Is(err, ErrRetryLater) {
 					return false, tagErr
 				}
-				return false, err
+				return false, withTagError(ctx, tagErr, err)
 			}
 		} else {
 			deferred = possibleRenameTargets(w.observations, inventory)
@@ -1058,7 +1058,7 @@ func (w *Watcher) scanWithHints(ctx context.Context, root *watchRoot, hints watc
 			if err = w.processObservation(ctx, watchSource{root: root, ref: rel}, entry.state, entry.observedAt, seen, hints); errors.As(err, new(*store.TagResolutionError)) {
 				tagErr = err
 			} else if err != nil {
-				return false, err
+				return false, withTagError(ctx, tagErr, err)
 			}
 		}
 		if !inventory.complete {
@@ -1070,8 +1070,8 @@ func (w *Watcher) scanWithHints(ctx context.Context, root *watchRoot, hints watc
 					w.interruptSettling(rel)
 				}
 			}
-			if len(inventory.blocked) != 0 && tagErr == nil {
-				return false, fmt.Errorf("scanning watch %q: %w", w.config.Name, errors.Join(inventory.blocked...))
+			if len(inventory.blocked) != 0 {
+				return false, withTagError(ctx, tagErr, fmt.Errorf("scanning watch %q: %w", w.config.Name, errors.Join(inventory.blocked...)))
 			}
 			return false, tagErr
 		}
@@ -1092,6 +1092,15 @@ func (w *Watcher) scanWithHints(ctx context.Context, root *watchRoot, hints watc
 		}
 	}
 	return true, tagErr
+}
+
+// withTagError keeps a missing-tag error beside a later scan failure, so the
+// tag status stays until the tag exists. Cancellation is reported alone.
+func withTagError(ctx context.Context, tagErr, err error) error {
+	if ctx.Err() != nil {
+		return err
+	}
+	return errors.Join(tagErr, err)
 }
 
 // reconcileSourcePresence records which watched sources a complete inventory
