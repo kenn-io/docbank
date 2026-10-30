@@ -24,7 +24,7 @@ func (service *Service) RenditionConsentState(ctx context.Context, name string) 
 func (service *Service) AdmitImportedRendition(ctx context.Context, node store.Node, name string) (err error) {
 	defer func() {
 		state, consentErr := processingConsentState(err)
-		if consentErr == nil && state != "active" || errors.Is(err, ErrMediaProcessingUnsupported) || errors.Is(err, ErrSourceIneligible) ||
+		if consentErr == nil && state != "active" || errors.Is(err, ErrSourceIneligible) ||
 			errors.Is(err, store.ErrRenditionJobStaleAuthority) || errors.Is(err, store.ErrNotFound) {
 			err = nil
 		}

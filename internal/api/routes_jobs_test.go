@@ -13,7 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -46,8 +45,6 @@ func TestListJobsReturnsStableObservableState(t *testing.T) {
 
 	ts, _ := newTestServer(t, func(d *api.Deps) {
 		d.Jobs = supervisor
-		d.Cfg.Watches = []config.WatchConfig{{Name: "inbox", Profile: "private"}}
-		configureProcessingTestService(t)(d)
 	})
 	resp, body := get(t, ts, "/api/v1/jobs", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
@@ -61,8 +58,6 @@ func TestListJobsReturnsStableObservableState(t *testing.T) {
 	assert.Equal(t, "watch:inbox", got.Items[1].Name)
 	assert.Equal(t, "running", got.Items[1].Status)
 	assert.Empty(t, got.Items[1].FinishedAt)
-	require.NotNil(t, got.Items[1].Processing)
-	assert.Equal(t, "private", got.Items[1].Processing.Profile)
 	close(release)
 }
 

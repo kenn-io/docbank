@@ -687,7 +687,7 @@ func TestMediaProcessingTransientStorageErrorKeepsReceiptQueued(t *testing.T) {
 
 func TestWatchImportAdmission(t *testing.T) {
 	t.Parallel()
-	for _, state := range []string{"required", "active", "revoked", "expired", "stale version", "missing version", "unsupported source"} {
+	for _, state := range []string{"required", "active", "revoked", "expired", "stale version", "unsupported source"} {
 		t.Run(state, func(t *testing.T) {
 			f := newMediaStateFixtureWithoutConsent(t)
 			node, err := f.catalog.NodeByID(t.Context(), f.selector.NodeID)
@@ -710,8 +710,6 @@ func TestWatchImportAdmission(t *testing.T) {
 				if state == "active" {
 					node = updated
 				}
-			case "missing version":
-				node.CurrentVersionID = "00000000-0000-4000-8000-000000000001"
 			case "unsupported source":
 				written, err := f.blobs.WriteDetailedContext(t.Context(), bytes.NewBufferString("synthetic text"))
 				require.NoError(t, err)

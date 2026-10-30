@@ -15,7 +15,7 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/jobs"
-	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/sqlite"
 )
 
 func TestListWatchedInboxesReturnsEffectiveConfigAndRunnerState(t *testing.T) {
@@ -103,18 +103,18 @@ func TestWatchProcessingStatusLookupFailure(t *testing.T) {
 		<-ctx.Done()
 		return ctx.Err()
 	}))
-	ts, _ := newTestServer(t, func(d *api.Deps) {
+	ts, catalog := newTestServer(t, func(d *api.Deps) {
 		d.Jobs = supervisor
 		d.Cfg.Watches = []config.WatchConfig{{Name: "inbox", Profile: "private"}}
-		catalog, err := store.Open(filepath.Join(t.TempDir(), "processing.db"))
-		require.NoError(t, err)
-		processingDeps := *d
-		processingDeps.Store = catalog
-		configureProcessingTestService(t)(&processingDeps)
-		d.Processing = processingDeps.Processing
+		configureProcessingTestService(t)(d)
 		t.Cleanup(func() { require.NoError(t, d.Processing.Shutdown(context.Background())) })
-		require.NoError(t, catalog.Close())
 	})
+	db, err := catalog.SQLiteDriver().Open(catalog.DBPath, sqlite.OpenOptions{Access: sqlite.ReadWriteExisting, TransactionMode: sqlite.Deferred})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	// Break only consent lookup so the shared catalog can still list jobs.
+	_, err = db.ExecContext(t.Context(), `DROP TABLE processing_consent_grants`)
+	require.NoError(t, err)
 	resp, body := get(t, ts, "/api/v1/watches", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	var watches api.WatchedInboxList
