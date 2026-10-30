@@ -28,7 +28,6 @@ jobs:
           filters: |
             go:
               - '!{README.md,AGENTS.md,CLAUDE.md,docs/**,website/**}'
-              - docs/configuration.md
 
   smoke:
     needs: changes

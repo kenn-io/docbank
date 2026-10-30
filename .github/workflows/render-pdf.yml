@@ -38,7 +38,6 @@ jobs:
           filters: |
             go:
               - '!{README.md,AGENTS.md,CLAUDE.md,docs/**,website/**,frontend/**}'
-              - docs/configuration.md
             frontend:
               - frontend/**
 
