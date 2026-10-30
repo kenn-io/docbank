@@ -279,6 +279,10 @@ func (s *Store) restoreTargetTx(ctx context.Context, tx *sql.Tx, node Node) (res
 func (s *Store) restoreNodeTx(
 	tx *sql.Tx, node Node, target restoreTarget, now string,
 ) (Node, error) {
+	ids, err := trashedSubtreeIDsTx(context.Background(), tx, node.ID, *node.TrashedAt)
+	if err != nil {
+		return Node{}, err
+	}
 	// Reattach the top node FIRST — parent, final (possibly re-suffixed)
 	// name, and liveness in one statement. Un-trashing before renaming
 	// would trip the live-sibling unique index whenever the original
@@ -293,8 +297,7 @@ func (s *Store) restoreNodeTx(
 	// Then un-trash the descendants that share this operation's stamp.
 	// Their (parent, name) pairs cannot conflict: nothing could be
 	// created under a trashed directory in the interim.
-	ids := []int64{node.ID}
-	if err := queryRows(context.Background(), tx, `
+	if _, err := tx.Exec(`
 		WITH RECURSIVE subtree(id) AS (
 			SELECT id FROM nodes WHERE id = ?
 			UNION ALL
@@ -303,15 +306,8 @@ func (s *Store) restoreNodeTx(
 			WHERE n.trashed_at = ?
 		)
 		UPDATE nodes SET trashed_at = NULL, revision = revision + 1, modified_at = ?
-		WHERE id IN (SELECT id FROM subtree) AND trashed_at = ? RETURNING id`,
-		[]any{node.ID, *node.TrashedAt, now, *node.TrashedAt}, func(rows *sql.Rows) error {
-			var id int64
-			if err := rows.Scan(&id); err != nil {
-				return err
-			}
-			ids = append(ids, id)
-			return nil
-		}); err != nil {
+		WHERE id IN (SELECT id FROM subtree) AND trashed_at = ?`,
+		node.ID, *node.TrashedAt, now, *node.TrashedAt); err != nil {
 		return Node{}, fmt.Errorf("restoring subtree of node %d: %w", node.ID, err)
 	}
 	if err := bumpRevisionTx(tx, target.destID, now); err != nil {

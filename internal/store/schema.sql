@@ -3081,8 +3081,7 @@ END;
 
 CREATE TABLE IF NOT EXISTS vault_change_head (
     singleton INTEGER PRIMARY KEY,
-    epoch TEXT NOT NULL,
-    high_water INTEGER NOT NULL
+    epoch TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS vault_changes (
     seq INTEGER PRIMARY KEY,

@@ -173,7 +173,7 @@ func (s *Store) bootstrapTx(incarnation *metadataProcessingIncarnation) error {
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(`INSERT INTO vault_change_head(singleton,epoch,high_water) VALUES(1,$1,0) ON CONFLICT(singleton) DO NOTHING`, epoch); err != nil {
+		if _, err := tx.Exec(`INSERT INTO vault_change_head(singleton,epoch) VALUES(1,$1) ON CONFLICT(singleton) DO NOTHING`, epoch); err != nil {
 			return err
 		}
 		if err := initializeDocumentPeopleState(context.Background(), tx); err != nil {

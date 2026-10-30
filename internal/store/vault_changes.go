@@ -35,15 +35,15 @@ func recordVaultChangesTx(ctx context.Context, tx *sql.Tx, kind string, nodeIDs 
 		return nil
 	}
 	var high int64
-	if err := tx.QueryRowContext(ctx, `UPDATE vault_change_head SET high_water=high_water+$1 WHERE singleton=1 RETURNING high_water`, len(nodeIDs)).Scan(&high); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(seq),0) FROM vault_changes`).Scan(&high); err != nil {
 		return fmt.Errorf("allocating vault changes: %w", err)
 	}
 	for i, id := range nodeIDs {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO vault_changes(seq,kind,node_id,node_revision) SELECT $1,$2,id,revision FROM nodes WHERE id=$3`, high-int64(len(nodeIDs))+int64(i)+1, kind, id); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO vault_changes(seq,kind,node_id,node_revision) SELECT $1,$2,id,revision FROM nodes WHERE id=$3`, high+int64(i)+1, kind, id); err != nil {
 			return fmt.Errorf("recording vault change: %w", err)
 		}
 	}
-	_, err := tx.ExecContext(ctx, `DELETE FROM vault_changes WHERE seq <= $1`, high-vaultChangeRetention)
+	_, err := tx.ExecContext(ctx, `DELETE FROM vault_changes WHERE seq <= $1`, high+int64(len(nodeIDs))-vaultChangeRetention)
 	return err
 }
 
@@ -69,14 +69,17 @@ func (s *Store) VaultChanges(ctx context.Context, after string, limit int) (chan
 			return nil, "", ErrInvalidChangeCursor
 		}
 	}
-	rows, err := s.db.QueryContext(ctx, `WITH position AS (
-        SELECT epoch, high_water,
-            CASE WHEN CAST($1 AS BIGINT) < 0 THEN COALESCE((SELECT MIN(seq)-1 FROM vault_changes), high_water) ELSE $1 END AS after_seq
-        FROM vault_change_head WHERE singleton=1
-    ) SELECT p.epoch,p.high_water,p.after_seq,c.seq,c.kind,c.node_id,c.node_revision
+	rows, err := s.db.QueryContext(ctx, `WITH bounds AS (
+        SELECT COALESCE((SELECT MAX(seq) FROM vault_changes),0) AS high,
+            COALESCE((SELECT MIN(seq)-1 FROM vault_changes),0) AS oldest
+    ), position AS (
+        SELECT epoch, high,
+            CASE WHEN CAST($1 AS BIGINT) < 0 THEN oldest ELSE $1 END AS after_seq
+        FROM vault_change_head CROSS JOIN bounds WHERE singleton=1
+    ) SELECT p.epoch,p.high,p.after_seq,c.seq,c.kind,c.node_id,c.node_revision
     FROM position p LEFT JOIN vault_changes c
         ON c.seq>p.after_seq
-        AND c.seq <= CASE WHEN p.high_water-p.after_seq < $2 THEN p.high_water ELSE p.after_seq+$2 END
+        AND c.seq <= CASE WHEN p.high-p.after_seq < $2 THEN p.high ELSE p.after_seq+$2 END
     ORDER BY c.seq`, seq, limit)
 	if err != nil {
 		return nil, "", err

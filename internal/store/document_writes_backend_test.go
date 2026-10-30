@@ -27,7 +27,7 @@ func TestDocumentWritesPostgres(t *testing.T) {
 				require.NoError(t, err)
 			}
 			// Exercise cursors beyond PostgreSQL's int4 range.
-			_, err := s.db.ExecContext(ctx, `UPDATE vault_change_head SET high_water=2147483648`)
+			_, err := s.db.ExecContext(ctx, `INSERT INTO vault_changes(seq,kind,node_id,node_revision) VALUES(2147483648,'created',1,1)`)
 			require.NoError(t, err)
 			_, before, err := s.VaultChanges(ctx, "", 500)
 			require.NoError(t, err)

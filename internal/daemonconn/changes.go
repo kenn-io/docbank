@@ -24,11 +24,11 @@ func (e *ChangeCursorExpiredError) Unwrap() error { return store.ErrChangeCursor
 
 // WatchChanges reads committed changes until drained, or until cancellation
 // when following. A callback error closes the stream immediately.
-func (c *Connection) WatchChanges(ctx context.Context, after string, follow bool, receive func(store.VaultChange) error) error {
+func (c *Connection) WatchChanges(ctx context.Context, after string, follow bool, receive func(store.VaultChange) error) (string, error) {
 	var response *http.Response
 	_, err := c.apiWithResponse(&response).VaultChanges(runtime.WithStreamingResponse(ctx), &apiclient.VaultChangesRequestOptions{Query: &apiclient.VaultChangesQuery{After: &after, Follow: &follow}})
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer func() { _ = response.Body.Close() }()
 	scanner := bufio.NewScanner(response.Body)
@@ -36,22 +36,22 @@ func (c *Connection) WatchChanges(ctx context.Context, after string, follow bool
 	for scanner.Scan() {
 		var event api.ChangeEvent
 		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
-			return err
+			return "", err
 		}
 		if event.Type == "error" && event.Error != nil {
-			return apiProblemError(*event.Error)
+			return "", apiProblemError(*event.Error)
 		}
 		if event.Type == "result" {
-			return nil
+			return event.Cursor, nil
 		}
 		if event.Type != "change" || event.Change == nil {
-			return integrityErrorf("invalid vault change record")
+			return "", integrityErrorf("invalid vault change record")
 		}
 		if receive != nil {
 			if err := receive(*event.Change); err != nil {
-				return err
+				return "", err
 			}
 		}
 	}
-	return errors.Join(io.ErrUnexpectedEOF, scanner.Err())
+	return "", errors.Join(io.ErrUnexpectedEOF, scanner.Err())
 }

@@ -18,6 +18,7 @@ type ChangeEvent struct {
 	Type   string             `json:"type"`
 	Change *store.VaultChange `json:"change,omitempty"`
 	Error  *Error             `json:"error,omitempty"`
+	Cursor string             `json:"cursor,omitempty"`
 }
 
 func changeProblem(err error, head string) *Error {
@@ -71,10 +72,23 @@ func registerChanges(shutdown context.Context, mux *http.ServeMux, api huma.API,
 		}
 		w.Header().Set("Content-Type", mailboxNDJSONMediaType)
 		w.Header().Set("Cache-Control", "no-store")
+		controller := http.NewResponseController(w)
+		interrupted := make(chan struct{})
+		stopWrite := context.AfterFunc(ctx, func() {
+			_ = controller.SetWriteDeadline(time.Now())
+			close(interrupted)
+		})
+		defer func() {
+			if !stopWrite() {
+				<-interrupted
+			}
+			_ = controller.SetWriteDeadline(time.Time{})
+		}()
 		stream := newEventStreamWriter[ChangeEvent](w, cancel)
+		stream.flush = controller.Flush
 		// Flush even an empty follow response so the client can start reading.
-		if f := responseFlusher(w); f != nil {
-			f.Flush()
+		if err := controller.Flush(); err != nil {
+			return
 		}
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
@@ -88,7 +102,7 @@ func registerChanges(shutdown context.Context, mux *http.ServeMux, api huma.API,
 			}
 			if len(changes) < 500 {
 				if !follow {
-					stream.send(ChangeEvent{Type: "result"})
+					stream.send(ChangeEvent{Type: "result", Cursor: head})
 					return
 				}
 				if after == "" {

@@ -2164,8 +2164,7 @@ CREATE INDEX derivative_purge_suppressions_active_source
 
 CREATE TABLE IF NOT EXISTS {{schema}}.vault_change_head (
     singleton BIGINT PRIMARY KEY,
-    epoch TEXT NOT NULL,
-    high_water BIGINT NOT NULL
+    epoch TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS {{schema}}.vault_changes (
     seq BIGINT PRIMARY KEY,

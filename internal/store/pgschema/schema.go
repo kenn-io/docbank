@@ -90,7 +90,7 @@ func Setup(ctx context.Context, db *sql.DB, c Config) (uuid.UUID, error) {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO `+pgx.Identifier{c.Schema}.Sanitize()+`.node_allocation(singleton, high_water) VALUES (1,1)`); err != nil {
 			return uuid.Nil(), fmt.Errorf("initialize postgres node allocation: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO `+pgx.Identifier{c.Schema}.Sanitize()+`.vault_change_head(singleton,epoch,high_water) VALUES(1,$1,0)`, uuid.New().String()); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO `+pgx.Identifier{c.Schema}.Sanitize()+`.vault_change_head(singleton,epoch) VALUES(1,$1)`, uuid.New().String()); err != nil {
 			return uuid.Nil(), fmt.Errorf("initialize postgres change feed: %w", err)
 		}
 		// Shared queries compare timestamps as text, using fixed-width UTC values.

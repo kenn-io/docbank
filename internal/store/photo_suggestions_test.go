@@ -791,19 +791,28 @@ func TestPhotoDescriptionJobPublishesOneSuggestionAndSettles(t *testing.T) {
 	_, err = s.PublishPhotoDescription(ctx, claim, nil, at)
 	require.ErrorIs(t, err, ErrInvalidPhotoDescriptionResult)
 
-	// An empty answer publishes no text but still settles the version.
-	empty := albumAsset(t, s, "empty.jpg")
-	emptyNode, err := s.NodeByID(ctx, empty.Files[0].NodeID)
-	require.NoError(t, err)
-	emptyRequest := photoDescriptionJobRequest(t, s, emptyNode.CurrentVersionID, producerB, false)
-	grantRenditionJobConsent(t, s, emptyRequest)
-	_, _, claim = startPhotoDescription(t, s, emptyRequest, at)
-	_, err = s.PublishPhotoDescription(ctx, claim, photoDescriptionResult(""), at)
-	require.NoError(t, err)
-	require.Empty(t, photoSuggestionValues(t, s, empty.ID))
-	settled, err := s.photoDescriptionSettled(ctx, emptyNode.CurrentVersionID, producerB, false)
-	require.NoError(t, err)
-	require.True(t, settled, "an empty answer still settles the version")
+	for _, caption := range []string{"", "Owned"} {
+		// Empty and fully owned answers settle the version without announcing text.
+		empty := albumAsset(t, s, "empty-"+caption+".jpg")
+		emptyNode, err := s.NodeByID(ctx, empty.Files[0].NodeID)
+		require.NoError(t, err)
+		emptyRequest := photoDescriptionJobRequest(t, s, emptyNode.CurrentVersionID, producerB, false)
+		grantRenditionJobConsent(t, s, emptyRequest)
+		_, _, claim = startPhotoDescription(t, s, emptyRequest, at)
+		_, err = s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: preparedPhotoTargets(ctx, t, s, PhotoSetSelection{AssetIDs: []string{empty.ID}}), Patch: PhotoAuthoredPatch{Caption: new(caption)}})
+		require.NoError(t, err)
+		_, before, err = s.VaultChanges(ctx, "", 500)
+		require.NoError(t, err)
+		_, err = s.PublishPhotoDescription(ctx, claim, photoDescriptionResult(caption), at)
+		require.NoError(t, err)
+		require.Empty(t, photoSuggestionValues(t, s, empty.ID))
+		changes, _, err = s.VaultChanges(ctx, before, 500)
+		require.NoError(t, err)
+		require.Empty(t, changes)
+		settled, err := s.photoDescriptionSettled(ctx, emptyNode.CurrentVersionID, producerB, false)
+		require.NoError(t, err)
+		require.True(t, settled, "an empty answer still settles the version")
+	}
 }
 
 func TestPhotoDescriptionJobIsNeitherDocumentProcessingNorRebuildingCoverage(t *testing.T) {
@@ -966,13 +975,20 @@ func TestPhotoDescriptionWaitersKeepTheirOwnDismissalRule(t *testing.T) {
 				require.Equal(t, job.ID, sharedJob.ID, "an explicit request joins the automatic job")
 			}
 
+			_, before, err := s.VaultChanges(ctx, "", 500)
+			require.NoError(t, err)
 			_, err = s.PublishPhotoDescription(ctx, claim, photoDescriptionResult("From B."), at)
+			require.NoError(t, err)
+			changes, _, err := s.VaultChanges(ctx, before, 500)
 			require.NoError(t, err)
 			published := photoSuggestionValues(t, s, asset.ID)
 			if joined {
+				require.Len(t, changes, 1)
+				require.Equal(t, "processed", changes[0].Kind)
 				require.Len(t, published, 1, "the explicit waiter replaces the dismissal")
 				require.Equal(t, "From B.", published[0].Value.Caption)
 			} else {
+				require.Empty(t, changes)
 				require.Empty(t, published, "an automatic waiter leaves the dismissal alone")
 			}
 		})

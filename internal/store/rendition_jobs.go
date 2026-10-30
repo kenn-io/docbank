@@ -1556,9 +1556,6 @@ func (s *Store) publishRenditionJob(
 					return err
 				}
 			}
-			if err := recordProcessedVersionTx(ctx, tx, version); err != nil {
-				return err
-			}
 		} else {
 			pairs := make([]renditionPublicationPair, 0, len(authorized))
 			for _, authority := range authorized {

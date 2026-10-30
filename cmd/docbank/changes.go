@@ -29,7 +29,7 @@ var changesCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		err = printChanges(cmd.OutOrStdout(), changesJSON, func(receive func(store.VaultChange) error) error {
+		err = printChanges(cmd.OutOrStdout(), cmd.ErrOrStderr(), changesJSON, func(receive func(store.VaultChange) error) (string, error) {
 			return c.WatchChanges(ctx, changesAfter, changesFollow, receive)
 		})
 		if changesFollow && ctx.Err() != nil && cmd.Context().Err() == nil && errors.Is(err, context.Canceled) {
@@ -39,9 +39,9 @@ var changesCmd = &cobra.Command{
 	},
 }
 
-func printChanges(w io.Writer, asJSON bool, watch func(func(store.VaultChange) error) error) error {
+func printChanges(w, stderr io.Writer, asJSON bool, watch func(func(store.VaultChange) error) (string, error)) error {
 	encoder := jsontext.NewEncoder(w)
-	return watch(func(change store.VaultChange) error {
+	cursor, err := watch(func(change store.VaultChange) error {
 		if asJSON {
 			return json.MarshalEncode(encoder, change)
 		}
@@ -51,6 +51,12 @@ func printChanges(w io.Writer, asJSON bool, watch func(func(store.VaultChange) e
 		}
 		return nil
 	})
+	if err == nil && cursor != "" {
+		if _, err := fmt.Fprintln(stderr, "cursor:", cursor); err != nil {
+			return fmt.Errorf("writing vault change cursor: %w", err)
+		}
+	}
+	return err
 }
 
 func init() {

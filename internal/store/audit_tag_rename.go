@@ -61,16 +61,12 @@ func touchAuditedTagDefinitionNodesTx(
 	// Revisions cover every assigned node. modified_at is changed only where the
 	// scoped mutation commits the operation timestamp; the allocation-only form
 	// deliberately has no timestamp from which replay could derive that field.
-	var ids []int64
-	if err := queryRows(context.Background(), tx, `UPDATE nodes SET revision=revision+1
-		WHERE id IN (SELECT node_id FROM node_tags WHERE tag_id=?) RETURNING id`, []any{tagID}, func(rows *sql.Rows) error {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return err
-		}
-		ids = append(ids, id)
-		return nil
-	}); err != nil {
+	ids, err := tagAssignmentNodeIDsTx(context.Background(), tx, tagID)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE nodes SET revision=revision+1
+		WHERE id IN (SELECT node_id FROM node_tags WHERE tag_id=?)`, tagID); err != nil {
 		return fmt.Errorf("advancing nodes assigned tag %s: %w", tagID, err)
 	}
 	for _, node := range audited {

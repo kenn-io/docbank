@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json/v2"
 	"fmt"
+	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strconv"
 	"strings"
@@ -105,8 +107,6 @@ func TestVaultChangesLaterPageFailure(t *testing.T) {
 	// A full first page is readable; pruning overtakes the next page.
 	_, err = db.Exec(`INSERT INTO vault_changes WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<502) SELECT i,'created',1,1 FROM n`)
 	require.NoError(t, err)
-	_, err = db.Exec(`UPDATE vault_change_head SET high_water=502`)
-	require.NoError(t, err)
 	_, head, err := s.VaultChanges(t.Context(), "", 1)
 	require.NoError(t, err)
 	_, err = db.Exec(`DELETE FROM vault_changes WHERE seq=501`)
@@ -121,4 +121,43 @@ func TestVaultChangesLaterPageFailure(t *testing.T) {
 	require.NotNil(t, terminal.Error)
 	require.Equal(t, "changes_cursor_expired", terminal.Error.Code)
 	require.Equal(t, head, terminal.Error.Cursor)
+}
+
+func TestVaultChangesUnreadClientShutdown(t *testing.T) {
+	t.Parallel()
+	_, s := newTestServer(t, nil)
+	db, err := s.SQLiteDriver().Open(s.DBPath, sqlite.OpenOptions{Access: sqlite.ReadWriteExisting, TransactionMode: sqlite.Deferred})
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO vault_changes WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<100000) SELECT i,'created',1,1 FROM n`)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+	done := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer close(done)
+		s.Server.Handler().ServeHTTP(w, r)
+	}))
+	defer server.Close()
+	addr, err := net.ResolveTCPAddr("tcp", server.Listener.Addr().String())
+	require.NoError(t, err)
+	conn, err := net.DialTCP("tcp", nil, addr)
+	require.NoError(t, err)
+	defer func() { _ = conn.Close() }()
+	require.NoError(t, conn.SetReadBuffer(1024))
+	_, err = fmt.Fprintf(conn, "GET /api/v1/changes HTTP/1.1\r\nHost: %s\r\nX-Api-Key: %s\r\n\r\n", server.Listener.Addr(), testAPIKey)
+	require.NoError(t, err)
+	response, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, response.StatusCode)
+	// Leave the backlog unread. Shutdown must release the socket writer.
+	select {
+	case <-done:
+		t.Fatal("backlog ended before shutdown")
+	case <-time.After(250 * time.Millisecond): //nolint:kennlint // deadlinetest: Let the real TCP peer's unread receive window fill before shutdown.
+	}
+	s.Server.Close()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("change stream remains blocked after daemon shutdown")
+	}
 }
