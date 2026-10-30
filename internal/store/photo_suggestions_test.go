@@ -1228,6 +1228,36 @@ func TestPhotoRotationBackup(t *testing.T) {
 	}
 }
 
+// Another provider can refresh only the rotation of a restored dismissed row.
+// The dismissal stays with the provider whose text the owner dismissed.
+func TestPhotoRotationRestoreKeepsDismissedProducer(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	asset := albumAsset(t, s, "landscape.jpg")
+	publishPhotoDescription(t, s, asset, producerA, document.PhotoDescription{Caption: "A landscape.", Rotation: new(90)})
+	proposal := photoSuggestionValues(t, s, asset.ID)[0]
+	_, err := s.RespondPhotoSuggestion(ctx, proposal.ID, dismissalOf(ctx, t, s, proposal))
+	require.NoError(t, err)
+	var metadata bytes.Buffer
+	require.NoError(t, s.ExportMetadata(ctx, &metadata))
+	restored := newTestStore(t)
+	require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(metadata.Bytes())))
+	publishPhotoDescription(t, restored, asset, producerB, document.PhotoDescription{Caption: "A field.", Rotation: new(270)})
+	settled, err := restored.photoDescriptionSettled(ctx, proposal.ContentVersionID, producerB, false)
+	require.NoError(t, err)
+	require.True(t, settled, "automatic work stops after the rotation refresh")
+	settled, err = restored.photoDescriptionSettled(ctx, proposal.ContentVersionID, producerB, true)
+	require.NoError(t, err)
+	require.False(t, settled, "an explicit request may replace another provider's dismissed text")
+	require.NoError(t, restored.withStorageTx(ctx, func(tx *sql.Tx) error {
+		return publishPhotoSuggestionTx(ctx, tx, proposal.ContentVersionID, producerB, true, document.PhotoDescription{Caption: "Replacement."}, time.Now().UTC())
+	}))
+	suggestions := photoSuggestionValues(t, restored, asset.ID)
+	require.Len(t, suggestions, 1)
+	require.Equal(t, "Replacement.", suggestions[0].Value.Caption)
+}
+
 func TestPhotoRotationResponseRequiresCurrentProposal(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
