@@ -8188,6 +8188,7 @@ components:
             - cancelled
           type: string
         tags:
+          description: Existing tag names applied to files imported by this watch.
           items:
             type: string
           type: array

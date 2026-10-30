@@ -153,7 +153,10 @@ type TagResolutionError struct {
 }
 
 func (e *TagResolutionError) Error() string {
-	return fmt.Sprintf("tag %q is unavailable: %v", e.Name, e.Err)
+	if errors.Is(e.Err, ErrInvalidTag) {
+		return fmt.Sprintf("tag %q is unavailable: %v", e.Name, e.Err)
+	}
+	return fmt.Sprintf("tag %q is unavailable", e.Name)
 }
 func (e *TagResolutionError) Unwrap() error { return e.Err }
 

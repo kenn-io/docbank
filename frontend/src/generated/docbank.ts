@@ -3690,6 +3690,7 @@ export interface Job {
   processed_bytes?: number;
   started_at: string;
   status: JobStatus;
+  /** Existing tag names applied to files imported by this watch. */
   tags?: string[];
   total_bytes?: number;
   total_objects?: number;
