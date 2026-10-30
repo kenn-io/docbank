@@ -1552,6 +1552,7 @@ func validateProvenanceTime(value string) error {
 }
 
 // validateMetadataState checks a storage mutation before its transaction commits.
+// Call it after the final mutation: PostgreSQL leaves deferred references immediate.
 func (s *Store) validateMetadataState(ctx context.Context, tx *sql.Tx, nodeSequence int64) error {
 	layout := currentMetadataLayout()
 	layout.postgres = s.postgresSchema != ""

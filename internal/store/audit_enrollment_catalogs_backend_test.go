@@ -18,7 +18,12 @@ func TestAuditEnrollmentCatalogsPostgres(t *testing.T) {
 		"processing": func(t *testing.T) *Store {
 			t.Helper()
 			s := newTestStore(t)
-			seedProcessingMetadataCatalog(t, s)
+			_, _, build := seedProcessingMetadataCatalog(t, s)
+			require.NoError(t, s.PutCurrentRenditionRoot(t.Context(), CurrentRenditionRoot{
+				ID: "retained-build", Kind: RenditionRootRetention,
+				TargetKind: RenditionRootBuild, TargetID: build.ID,
+				FencingToken: 1, RecordedAt: build.CompletedAt,
+			}))
 			return s
 		},
 		"embeddings": func(t *testing.T) *Store {
@@ -91,7 +96,15 @@ func TestAuditEnrollmentCatalogsPostgres(t *testing.T) {
 			s := newTestStore(t)
 			file, err := s.CreateFile(t.Context(), s.RootID(), "report.txt", fakeHash("a1"), 9, "text/plain")
 			require.NoError(t, err)
-			_, err = s.CreatePerson(t.Context(), "Example Person", "operator")
+			person, err := s.CreatePerson(t.Context(), "Example Person", "operator")
+			require.NoError(t, err)
+			person, identity := addTestPersonIdentity(t, s, person, "email", "person@example.test", "enrollment")
+			operationID, err := newUUIDv4()
+			require.NoError(t, err)
+			_, err = s.SplitPerson(t.Context(), PersonSplitRequest{
+				PersonID: person.PersonID, OperationID: operationID, DisplayName: "Other Person",
+				Revision: person.Revision, IdentityIDs: []string{identity.IdentityID},
+			})
 			require.NoError(t, err)
 			_, err = s.SetCustodian(t.Context(), CustodianRequest{
 				Scope:    CustodianScope{Kind: "document", NodeID: file.ID, ContentVersionID: file.CurrentVersionID},

@@ -325,6 +325,13 @@ values. Go validators own those values. Physical storage operations are read-onl
 inputs to validation here; their active-evacuation uniqueness rule remains part
 of the future write port rather than a closed state list in the new schema.
 
+Secondary access indexes on the added read-only catalogs are intentionally
+deferred. Port them with the operations that need them, including indexes on
+foreign-key columns used by cascading deletes; PostgreSQL does not add those
+automatically. Keep structural uniqueness in the canonical schema. Enrollment
+qualification establishes correctness, not validation or cascade performance
+on large vaults; those paths need representative query-plan and workload checks.
+
 #### PostgreSQL reference implementations
 
 Start with AgentsView's [backend parity rules][av-storage], shared
@@ -615,7 +622,9 @@ before issuing another query on the same transaction.
 
 SQLite inspects foreign keys with `PRAGMA foreign_key_check`. PostgreSQL checks
 pending deferred references with `SET CONSTRAINTS ALL IMMEDIATE` after logical
-validation and keeps them immediate through commit. The PostgreSQL dialect flag
+validation and keeps them immediate through commit. Call the complete validator
+after the final mutation, not before writes that rely on deferred references.
+The PostgreSQL dialect flag
 in the metadata source description selects SQL only; its logical record version
 is not a PostgreSQL schema version or migration gate.
 

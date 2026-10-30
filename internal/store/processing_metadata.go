@@ -2052,6 +2052,7 @@ func validateCurrentRenditionRootState(ctx context.Context, tx metadataQuerier) 
 		return fmt.Errorf("reading current rendition root state: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
+	var activeRoots []CurrentRenditionRoot
 	for rows.Next() {
 		var root CurrentRenditionRoot
 		var active bool
@@ -2071,9 +2072,17 @@ func validateCurrentRenditionRootState(ctx context.Context, tx metadataQuerier) 
 				return err
 			}
 		}
-		if !active {
-			continue
+		if active {
+			activeRoots = append(activeRoots, root)
 		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, root := range activeRoots {
 		var present bool
 		switch root.TargetKind {
 		case RenditionRootBuild:
@@ -2123,7 +2132,7 @@ func validateCurrentRenditionRootState(ctx context.Context, tx metadataQuerier) 
 			).Scan(&epoch, &generationID); err != nil {
 				return fmt.Errorf("current rendition job root %s has no job authority: %w", root.ID, err)
 			}
-			if root.FencingToken > epoch || active && root.FencingToken != epoch {
+			if root.FencingToken != epoch {
 				return fmt.Errorf("current rendition job root %s fencing token is invalid", root.ID)
 			}
 			switch root.TargetKind {
@@ -2142,12 +2151,6 @@ func validateCurrentRenditionRootState(ctx context.Context, tx metadataQuerier) 
 				return fmt.Errorf("current rendition job root %s has invalid target kind %s", root.ID, root.TargetKind)
 			}
 		}
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	if err := rows.Close(); err != nil {
-		return err
 	}
 	jobs, err := tx.QueryContext(ctx, `
 		SELECT job_id,phase FROM rendition_jobs
