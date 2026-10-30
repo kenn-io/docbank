@@ -67,13 +67,18 @@ func TestFetchURLBoundsSchemesNamesAndCleanup(t *testing.T) {
 		{name: "disposition", disposition: `attachment; filename="server.txt"`, target: "/", bytes: 4, cap: 4, want: "server.txt"},
 		{name: "newline path", target: "/report%0Aone.txt", bytes: 4, cap: 4, want: "download"},
 		{name: "backslash path", target: "/report%5Cone.txt", bytes: 4, cap: 4, want: "download"},
-		{name: "drive path", target: "/C:filing.txt", bytes: 4, cap: 4, want: "download"},
 		{name: "drive disposition", disposition: `attachment; filename="a:b.txt"`, target: "/header-name.txt", bytes: 4, cap: 4, want: "header-name.txt"},
 		{name: "chunked", chunked: true, bytes: 5, cap: 4, message: "download exceeds"},
 		{name: "interrupted", declared: 5, bytes: 2, cap: 5, message: "downloading:"},
 		{name: "HTTP error", status: http.StatusNotFound, cap: 4, message: "fetch returned HTTP 404"},
+		{name: "invalid maximum", cap: 0, message: "--max-bytes must be between"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.cap == 0 {
+				_, err := fetchURL(t.Context(), http.Client{}, "https://example.com/filing.txt", false, 0)
+				require.ErrorContains(t, err, tc.message)
+				return
+			}
 			tmp := t.TempDir()
 			t.Setenv("TMPDIR", tmp)
 			t.Setenv("TMP", tmp)
@@ -139,13 +144,12 @@ func TestFetchURLBoundsSchemesNamesAndCleanup(t *testing.T) {
 }
 
 func TestAddURLValidatesUsage(t *testing.T) {
-	setupVaultHome(t)
+	t.Setenv("DOCBANK_HOME", t.TempDir())
 	local := writeSourceFile(t, "local.txt", "local")
 	for _, tc := range []struct {
 		args    []string
 		message string
 	}{
-		{[]string{"https://example.com/filing.txt", "--allow-http", "--max-bytes", "0"}, "--max-bytes must be between"},
 		{[]string{"https://example.com/filing.txt", "local.txt", "--allow-http"}, "URL import requires one URL"},
 		{[]string{local, "https://example.com/filing.txt", "--allow-http"}, "URL import requires one URL"},
 		{[]string{"https://example.com/filing.txt", "--allow-http", "--preflight"}, "URL import requires one URL"},

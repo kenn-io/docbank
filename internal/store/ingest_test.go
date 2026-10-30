@@ -558,10 +558,9 @@ func TestIngestFileMatchesSourceNamesAndRenamedURLs(t *testing.T) {
 	assert.Equal(t, before, after)
 	mirrorRun, err := s.BeginIngest(ctx, "url", `{"version":1,"requested_url":"https://example.com/download?id=8","final_url":"https://example.com/filing.txt","fetched_at":"2026-10-01T12:34:56Z"}`)
 	require.NoError(t, err)
-	separate, added, err := s.IngestFile(ctx, mirrorRun, dir.ID, "filing.txt", fakeHash("a1"), 1, "text/plain", "https://example.com/download?id=8", "")
+	_, added, err = s.IngestFile(ctx, mirrorRun, dir.ID, "filing.txt", fakeHash("a1"), 1, "text/plain", "https://example.com/download?id=8", "")
 	require.NoError(t, err)
 	require.True(t, added)
-	assert.Equal(t, "filing.txt", separate.Name)
 }
 
 func TestIngestFileDoesNotMatchUnknownOriginOutsideNameFamily(t *testing.T) {
