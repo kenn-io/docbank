@@ -288,7 +288,109 @@ Agents can reserve and render through the CLI or API-key-only
 The existing MCP `export_bates_file` tool supports the reduced recovery check
 and reports its scope. It does not accept review files or reserve numbered
 redactions. No browser control is included. Load-file exports accept ordinary
-stamped allocations only; download a numbered native PDF directly by its allocation.
+stamped allocations only. Use `redaction package` for a recipient delivery of numbered redactions.
+
+### Package completed numbered PDFs for a recipient
+
+`redaction package` puts completed numbered redactions into one ZIP for import
+by a recipient. It preserves each retained PDF and its numbers, verifies masks,
+text and visible labels against your saved reviews, and includes label-free
+text plus DAT, OPT and mapping files. It creates no new reservation or rendering.
+
+Create `selection.json` in the order the documents should appear:
+
+```json
+{
+  "contract": "native-pdf-recipient-selection/v1",
+  "documents": [
+    {
+      "allocation_id": "11111111-1111-4111-8111-111111111111",
+      "preparation": "first/preparation.json",
+      "masks": "first/masks.json",
+      "review": "first/review.json"
+    },
+    {
+      "allocation_id": "22222222-2222-4222-8222-222222222222",
+      "preparation": "second/preparation.json",
+      "masks": "second/masks.json",
+      "review": "second/review.json"
+    }
+  ]
+}
+```
+
+Paths are relative to the selection file; absolute paths are also accepted.
+Every allocation must be a completed numbered native redaction. Ordinary stamped
+exports are refused. Allocations and labels must be distinct. Labels must fit the
+recipient importer's 256-byte limit; commas and line breaks cannot be represented
+in OPT.
+
+```sh
+docbank redaction package selection.json recipient.zip --json
+```
+
+The command checks all local inputs and pins each reviewed text file's size and
+SHA-256 before downloading any PDF. It then reads each document's inputs again
+and requires the same review digest. A changed file
+is refused, never silently adopted. This reads each input twice while keeping
+only one full review and one downloaded PDF in memory or staging at a time.
+Supported v2 and v3 deliveries may be mixed. The daemon must hold the completed
+artifacts; a live source or configured page runtime is not needed. Embedded
+PDFium still performs full verification, with no reduced-check fallback.
+
+The ZIP contains one `VOL001` directory. Each document has `PDF/000001.pdf` and
+`TEXT/000001.txt` paths assigned by selection order. `DATA.DAT` has one row per
+document, and `DATA.OPT` has one row per page pointing into that whole PDF. The
+first label is the document ID; existing ranges and gaps remain unchanged.
+`mapping.json` and `receipt.json` sit at the ZIP root. The receipt records file
+hashes, allocation and namespace IDs, labels and review digests. It contains no
+original text, source identities, masks or review payloads. Keep the input files
+privately; they are not sent to the recipient.
+
+JSON reports `state`, `destination`, `size`, `sha256`, `receipt_sha256`,
+`verification: "masks_text_and_numbers"` and the receipt. Save the whole-ZIP hash
+separately. Verification does not prove unmasked pixels match the original or
+authenticate the producer.
+
+Limits are 16 documents, 16 pages per document, 64 pages total and 512 MiB for the
+complete ZIP. The selection and each metadata entry are limited to 256 KiB;
+each text file is limited to 16 MiB. The command has a 30-minute deadline, with
+10 minutes per PDF and the existing renderer memory and page limits. A private
+directory beside the destination holds the growing ZIP and at most one PDF,
+up to 1 GiB combined plus metadata and filesystem overhead. Files on a memory-backed
+filesystem consume RAM beyond the renderer's RSS accounting.
+
+Choose a destination outside the Docbank data directory. Publication never
+overwrites a destination. A failure removes staging and leaves no partial
+destination. If reporting fails after publication, the error names the
+saved file. A hard kill may leave a `docbank-recipient-*` directory beside the
+destination; after confirming the process has stopped, remove that exact directory
+and retry. Packaging does not retain its ZIP automatically; use `add` if wanted.
+Existing allocations continue to retain their unredacted originals indefinitely.
+
+Malformed or oversized inputs exit 2, changed reviews exit 4, resource refusals
+exit 5, and PDF or package mismatches exit 6. Missing retained artifacts exit 3;
+unsupported verifier versions, I/O failures and cancellation exit 1.
+
+To import the delivered ZIP, extract it first, then run:
+
+```sh
+docbank package preflight ./recipient --profile dat-concordance-v1 \
+  --page-map-profile opt-standard-v1 --encoding utf-8 \
+  --map ./recipient/mapping.json --json
+docbank mkdir /received
+docbank package import <preflight-id> --name "Received delivery" \
+  --into /received --index-supplied-text --json
+docbank package import status <operation-id> --json
+```
+
+Use the returned preflight ID; do not add `--accept-partial` to bypass an error.
+`package preflight` accepts a directory. Direct ZIP import is available through
+the existing sealed mailbox-container API path. Recipient import preserves the
+sender's PDFs, text and labels; it does not check the sender's private review or
+establish provenance. Range endpoints are recorded under the sender's namespace
+UUID; every OPT page label is recorded under `received`, with received provenance.
+Import creates no recipient Bates namespace or allocation.
 
 ### Check and retain a saved archive
 

@@ -88,7 +88,7 @@ func (s *Store) initializeAuditAuthorityWithInput(
 		if err := s.persistInitialAuditEnrollment(ctx, tx, set); err != nil {
 			return err
 		}
-		if err := validateMetadataState(ctx, tx, set.nodeSequence); err != nil {
+		if err := s.validateMetadataState(ctx, tx, set.nodeSequence); err != nil {
 			return fmt.Errorf("validating created audit authority: %w", err)
 		}
 		result = initialAuditEnrollmentResult{

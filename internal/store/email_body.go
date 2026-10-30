@@ -63,7 +63,7 @@ func emailSelectedBody(v document.EmailV1) (*string, *document.EmailArtifactRefV
 func loadEmailBodyResult(ctx context.Context, q metadataQuerier, id string) (metadataEmailBodyResult, error) {
 	var r metadataEmailBodyResult
 	r.Type = "email_body_result"
-	err := q.QueryRowContext(ctx, `SELECT email_attachment_id,body_recipe_fingerprint,state,part_path,rendition_attachment_id,reason FROM email_body_results WHERE email_attachment_id=?`, id).Scan(&r.EmailAttachmentID, &r.BodyRecipeFingerprint, &r.State, &r.PartPath, &r.RenditionAttachmentID, &r.Reason)
+	err := q.QueryRowContext(ctx, `SELECT email_attachment_id,body_recipe_fingerprint,state,part_path,rendition_attachment_id,reason FROM email_body_results WHERE email_attachment_id=$1`, id).Scan(&r.EmailAttachmentID, &r.BodyRecipeFingerprint, &r.State, &r.PartPath, &r.RenditionAttachmentID, &r.Reason)
 	if errors.Is(err, sql.ErrNoRows) {
 		return r, ErrNotFound
 	}
@@ -82,7 +82,7 @@ func emailBodyProfileSuppressed(
 ) (bool, error) {
 	var yes bool
 	// The version/profile fence survives deleting the body association and build.
-	err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM derivative_purge_suppressions WHERE source_sha256=? AND profile_fingerprint=? AND active=1)`, version.BlobHash, derivativeAttachmentSuppressionScope(version.ID, profileFingerprint)).Scan(&yes)
+	err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM derivative_purge_suppressions WHERE source_sha256=$1 AND profile_fingerprint=$2 AND active=1)`, version.BlobHash, derivativeAttachmentSuppressionScope(version.ID, profileFingerprint)).Scan(&yes)
 	return yes, err
 }
 func validateEmailBodyShape(v EmailMetadataView, r metadataEmailBodyResult) error {
@@ -171,7 +171,7 @@ func emailBodySearch(ctx context.Context, q metadataQuerier, v EmailMetadataView
 	}
 	pending := func() (EmailBodySearch, error) {
 		var selected bool
-		if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM email_heads WHERE content_version_id=? AND attachment_id=?)`, v.Version.ID, v.Attachment.ID).Scan(&selected); err != nil {
+		if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM email_heads WHERE content_version_id=$1 AND attachment_id=$2)`, v.Version.ID, v.Attachment.ID).Scan(&selected); err != nil {
 			return EmailBodySearch{}, err
 		}
 		if selected {
@@ -194,7 +194,7 @@ func emailBodySearch(ctx context.Context, q metadataQuerier, v EmailMetadataView
 	}
 	var buildID string
 	var serving bool
-	err = q.QueryRowContext(ctx, `SELECT a.build_id,EXISTS(SELECT 1 FROM rendition_heads h JOIN email_heads eh ON eh.content_version_id=h.content_version_id JOIN rendition_lexical_generation_builds gb ON gb.build_id=a.build_id JOIN rendition_lexical_heads lh ON lh.generation_id=gb.generation_id WHERE h.attachment_id=a.attachment_id AND eh.attachment_id=?) FROM rendition_attachments a WHERE a.attachment_id=?`, v.Attachment.ID, *r.RenditionAttachmentID).Scan(&buildID, &serving)
+	err = q.QueryRowContext(ctx, `SELECT a.build_id,EXISTS(SELECT 1 FROM rendition_heads h JOIN email_heads eh ON eh.content_version_id=h.content_version_id JOIN rendition_lexical_generation_builds gb ON gb.build_id=a.build_id JOIN rendition_lexical_heads lh ON lh.generation_id=gb.generation_id WHERE h.attachment_id=a.attachment_id AND eh.attachment_id=$1) FROM rendition_attachments a WHERE a.attachment_id=$2`, v.Attachment.ID, *r.RenditionAttachmentID).Scan(&buildID, &serving)
 	if err != nil {
 		return EmailBodySearch{}, err
 	}

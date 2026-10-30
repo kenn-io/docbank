@@ -1004,7 +1004,7 @@ func validateRenditionBuildStateTx(ctx context.Context, tx metadataQuerier, buil
 		        WHERE a.build_id=b.build_id AND a.checksum=a.blob_hash),
 		       (SELECT COUNT(*) FROM rendition_units u WHERE u.build_id=b.build_id),
 		       (SELECT COUNT(*) FROM rendition_lexical_segments l WHERE l.build_id=b.build_id)
-		FROM rendition_builds b WHERE b.build_id=?`, buildID,
+		FROM rendition_builds b WHERE b.build_id=$1`, buildID,
 	).Scan(&declaredArtifacts, &declaredUnits, &declaredSegments,
 		&artifacts, &validArtifacts, &units, &segments)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -1032,7 +1032,7 @@ func loadProcessingProfile(ctx context.Context, tx metadataQuerier, fingerprint 
 		SELECT canonical_profile,rendition_request_fingerprint,evidence_lexical_fingerprint,
 		       retention_disclosure_fingerprint,attachment_policy_fingerprint,
 		       consent_fingerprint,rendition_disclosure_fingerprint,trust_boundary
-		FROM processing_profiles WHERE profile_fingerprint=?`, fingerprint,
+		FROM processing_profiles WHERE profile_fingerprint=$1`, fingerprint,
 	).Scan(&canonical, &record.RenditionRequestFingerprint, &record.EvidenceLexicalFingerprint,
 		&record.RetentionDisclosureFingerprint, &record.AttachmentPolicyFingerprint,
 		&record.ConsentFingerprint, &record.RenditionDisclosureFingerprint, &record.TrustBoundary)
@@ -1056,7 +1056,7 @@ func loadRenditionAttachment(ctx context.Context, tx metadataQuerier, attachment
 	var profileFingerprint string
 	err := tx.QueryRowContext(ctx, `
 		SELECT vault_uid,content_version_id,build_id,profile_fingerprint,attached_at
-		FROM rendition_attachments WHERE attachment_id=?`, attachmentID,
+		FROM rendition_attachments WHERE attachment_id=$1`, attachmentID,
 	).Scan(&record.VaultID, &record.ContentVersionID, &record.BuildID, &profileFingerprint, &record.AttachedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return RenditionAttachmentRecord{}, ErrNotFound
@@ -1086,7 +1086,7 @@ func loadRenditionBuildView(
 		       provider_receipt_json,evidence_checksum,rendition_checksum,markdown_checksum,
 		       completeness,partial_success,truncated,warnings_json,completed_at,
 		       declared_artifact_count,unit_count,lexical_segment_count
-		FROM rendition_builds WHERE build_id=?`, buildID,
+		FROM rendition_builds WHERE build_id=$1`, buildID,
 	).Scan(&record.VaultID, &record.SourceSHA256, &record.RenditionRequestFingerprint,
 		&record.EvidenceLexicalFingerprint, &record.CapturedArtifactPolicyFingerprint,
 		&policy, &record.AuthorizationChecksum, &record.ProviderOperationID, &receipt,
@@ -1116,7 +1116,7 @@ func loadRenditionBuildView(
 		SELECT a.artifact_id,a.role,a.blob_hash,COALESCE(c.md5,''),a.size,a.checksum
 		FROM rendition_artifacts a
 		LEFT JOIN blob_checksums c ON c.blob_sha256=a.blob_hash
-		WHERE a.build_id=? ORDER BY a.artifact_id`, buildID)
+		WHERE a.build_id=$1 ORDER BY a.artifact_id`, buildID)
 	if err != nil {
 		return RenditionBuildRecord{}, err
 	}
@@ -1147,7 +1147,7 @@ func loadRenditionBuildView(
 	record.Units = make([]RenditionUnitRecord, 0, unitCount)
 	rows, err = tx.QueryContext(ctx, `
 		SELECT unit_id,evidence_unit_id,unit_order,checksum,heading_path_json,locator_json
-		FROM rendition_units WHERE build_id=? ORDER BY unit_order,unit_id`, buildID)
+		FROM rendition_units WHERE build_id=$1 ORDER BY unit_order,unit_id`, buildID)
 	if err != nil {
 		return RenditionBuildRecord{}, err
 	}
@@ -1183,7 +1183,7 @@ func loadRenditionBuildView(
 	record.LexicalSegments = make([]RenditionLexicalSegmentRecord, 0, segmentCount)
 	rows, err = tx.QueryContext(ctx, `
 		SELECT segment_id,unit_id,segment_order,char_start,char_end,checksum,text
-		FROM rendition_lexical_segments WHERE build_id=? ORDER BY segment_order,segment_id`, buildID)
+		FROM rendition_lexical_segments WHERE build_id=$1 ORDER BY segment_order,segment_id`, buildID)
 	if err != nil {
 		return RenditionBuildRecord{}, err
 	}

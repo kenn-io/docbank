@@ -47,7 +47,7 @@ func TestEmbeddedPackageImportAndReadAPI(t *testing.T) {
 		if status.State == "complete" || status.State == "partial" || status.State == "failed" {
 			break
 		}
-		time.Sleep(20 * time.Millisecond) //nolint:kennlint // polls a background package import that runs SQLite and file I/O on the real clock
+		time.Sleep(20 * time.Millisecond) //nolint:kennlint // sleeptest: polls a background package import that runs SQLite and file I/O on the real clock
 	}
 	require.Equal(t, "complete", status.State)
 

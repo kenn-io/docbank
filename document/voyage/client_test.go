@@ -628,7 +628,7 @@ func TestTimeoutAndCancellation(t *testing.T) {
 	png := mediaInput(t, mediatest.PNG(2, 2, nil))
 
 	t.Run("per attempt timeout is transient", func(t *testing.T) {
-		client := newServerClient(t, newServer(nil), policy, voyage.ClientConfig{Timeout: 50 * time.Millisecond, MaxRetries: 1})
+		client := newServerClient(t, newServer(nil), policy, voyage.ClientConfig{Timeout: 50 * time.Millisecond, MaxRetries: 1}) //nolint:kennlint // deadlinetest: the held real HTTP response must expire and be classified as transient
 		_, err := client.EmbedDocuments(t.Context(), []voyage.Input{{Parts: []voyage.Part{{Media: png}}}}, fullAuthorizations(t, policy))
 		require.ErrorIs(t, err, voyage.ErrTransientResponse)
 		assert.True(t, voyage.IsRetryable(err))

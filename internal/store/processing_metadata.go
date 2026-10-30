@@ -1161,7 +1161,7 @@ func (s *Store) verifyRenditionBlobAuthority(ctx context.Context, allowMissingVe
 		return fmt.Errorf("starting processing blob verification: %w", err)
 	}
 	defer func() { retErr = errors.Join(retErr, tx.Rollback()) }()
-	if err := validateProcessingMetadataState(ctx, tx); err != nil {
+	if err := validateProcessingMetadataState(ctx, tx, false); err != nil {
 		return fmt.Errorf("validating processing blob authority: %w", err)
 	}
 	if err := validateEmbeddingMetadataState(ctx, tx); err != nil {
@@ -1683,7 +1683,12 @@ func validateProcessingBlobReferences(ctx context.Context, tx metadataQuerier) e
 	return nil
 }
 
-func validateProcessingMetadataState(ctx context.Context, tx metadataQuerier) error {
+func validateProcessingMetadataState(ctx context.Context, tx metadataQuerier, postgres bool) error {
+	backedUpJobs := backedUpRenditionJobs
+	if postgres {
+		j := metadataJSONDialect{postgres: true}
+		backedUpJobs = "job_id IN (SELECT job_id FROM rendition_jobs WHERE " + j.text("execution_identity_json", "upload.input_kind") + "<>'derived_upload')"
+	}
 	if err := validateProcessingConsentState(ctx, tx); err != nil {
 		return err
 	}
@@ -1799,7 +1804,7 @@ func validateProcessingMetadataState(ctx context.Context, tx metadataQuerier) er
 			  SELECT 1 FROM rendition_jobs j
 			  LEFT JOIN rendition_builds b ON b.build_id=j.job_id
 			  WHERE j.phase IN ('build_staged','generation_staged','published')
-			    AND b.build_id IS NULL AND ` + "j." + backedUpRenditionJobs + `
+			    AND b.build_id IS NULL AND ` + "j." + backedUpJobs + `
 			)`},
 	}
 	for _, check := range checks {
@@ -2047,6 +2052,7 @@ func validateCurrentRenditionRootState(ctx context.Context, tx metadataQuerier) 
 		return fmt.Errorf("reading current rendition root state: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
+	var activeRoots []CurrentRenditionRoot
 	for rows.Next() {
 		var root CurrentRenditionRoot
 		var active bool
@@ -2066,34 +2072,42 @@ func validateCurrentRenditionRootState(ctx context.Context, tx metadataQuerier) 
 				return err
 			}
 		}
-		if !active {
-			continue
+		if active {
+			activeRoots = append(activeRoots, root)
 		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, root := range activeRoots {
 		var present bool
 		switch root.TargetKind {
 		case RenditionRootBuild:
 			err = tx.QueryRowContext(ctx,
-				`SELECT EXISTS(SELECT 1 FROM rendition_builds WHERE build_id=?)`, root.TargetID,
+				`SELECT EXISTS(SELECT 1 FROM rendition_builds WHERE build_id=$1)`, root.TargetID,
 			).Scan(&present)
 		case RenditionRootLexicalGeneration:
 			err = tx.QueryRowContext(ctx, `SELECT EXISTS(
-				SELECT 1 FROM rendition_lexical_generations WHERE generation_id=?
+				SELECT 1 FROM rendition_lexical_generations WHERE generation_id=$1
 			)`, root.TargetID).Scan(&present)
 		case RenditionRootEmbeddingSet:
 			err = tx.QueryRowContext(ctx, `SELECT EXISTS(
-				SELECT 1 FROM embedding_sets WHERE embedding_set_id=?
+				SELECT 1 FROM embedding_sets WHERE embedding_set_id=$1
 			)`, root.TargetID).Scan(&present)
 		case RenditionRootEmbeddingGeneration:
 			err = tx.QueryRowContext(ctx, `SELECT EXISTS(
-				SELECT 1 FROM embedding_input_generations WHERE generation_id=?
+				SELECT 1 FROM embedding_input_generations WHERE generation_id=$1
 			)`, root.TargetID).Scan(&present)
 		case RenditionRootEmbeddingVectorSet:
 			err = tx.QueryRowContext(ctx, `SELECT EXISTS(
-				SELECT 1 FROM embedding_vector_sets WHERE vector_set_id=?
+				SELECT 1 FROM embedding_vector_sets WHERE vector_set_id=$1
 			)`, root.TargetID).Scan(&present)
 		case RenditionRootEmbeddingPayload:
 			err = tx.QueryRowContext(ctx, `SELECT EXISTS(
-				SELECT 1 FROM embedding_vector_sets WHERE payload_blob_hash=?
+				SELECT 1 FROM embedding_vector_sets WHERE payload_blob_hash=$1
 			)`, root.TargetID).Scan(&present)
 		}
 		if err != nil {
@@ -2114,11 +2128,11 @@ func validateCurrentRenditionRootState(ctx context.Context, tx metadataQuerier) 
 			var epoch int64
 			var generationID sql.NullString
 			if err := tx.QueryRowContext(ctx,
-				`SELECT claim_epoch,lexical_generation_id FROM rendition_jobs WHERE job_id=?`, jobID,
+				`SELECT claim_epoch,lexical_generation_id FROM rendition_jobs WHERE job_id=$1`, jobID,
 			).Scan(&epoch, &generationID); err != nil {
 				return fmt.Errorf("current rendition job root %s has no job authority: %w", root.ID, err)
 			}
-			if root.FencingToken > epoch || active && root.FencingToken != epoch {
+			if root.FencingToken != epoch {
 				return fmt.Errorf("current rendition job root %s fencing token is invalid", root.ID)
 			}
 			switch root.TargetKind {
@@ -2137,12 +2151,6 @@ func validateCurrentRenditionRootState(ctx context.Context, tx metadataQuerier) 
 				return fmt.Errorf("current rendition job root %s has invalid target kind %s", root.ID, root.TargetKind)
 			}
 		}
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	if err := rows.Close(); err != nil {
-		return err
 	}
 	jobs, err := tx.QueryContext(ctx, `
 		SELECT job_id,phase FROM rendition_jobs

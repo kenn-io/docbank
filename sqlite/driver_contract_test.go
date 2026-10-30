@@ -287,10 +287,10 @@ func observeTransactionLocks(t *testing.T, driver docsqlite.Driver, baseDir stri
 	deferredPath := filepath.Join(baseDir, "deferred.db")
 	createContractDatabase(t, driver, deferredPath)
 	deferredOne := openAndPing(t, driver, deferredPath, docsqlite.OpenOptions{
-		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred, BusyTimeout: 50 * time.Millisecond,
+		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred,
 	})
 	deferredTwo := openAndPing(t, driver, deferredPath, docsqlite.OpenOptions{
-		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred, BusyTimeout: 50 * time.Millisecond,
+		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred,
 	})
 	deferredTx, err := deferredOne.BeginTx(t.Context(), nil)
 	require.NoError(t, err)
@@ -304,10 +304,10 @@ func observeTransactionLocks(t *testing.T, driver docsqlite.Driver, baseDir stri
 	immediatePath := filepath.Join(baseDir, "immediate.db")
 	createContractDatabase(t, driver, immediatePath)
 	immediateOne := openAndPing(t, driver, immediatePath, docsqlite.OpenOptions{
-		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate, BusyTimeout: 50 * time.Millisecond,
+		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
 	})
 	immediateTwo := openAndPing(t, driver, immediatePath, docsqlite.OpenOptions{
-		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred, BusyTimeout: 50 * time.Millisecond,
+		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred, BusyTimeout: 50 * time.Millisecond, //nolint:kennlint // deadlinetest: the held immediate transaction must make this write reach SQLite's busy timeout
 	})
 	immediateTx, err := immediateOne.BeginTx(t.Context(), nil)
 	require.NoError(t, err)
@@ -351,10 +351,10 @@ func observeRelativePath(t *testing.T, driver docsqlite.Driver, baseDir string) 
 func observeIndependentPools(t *testing.T, driver docsqlite.Driver, path string) bool {
 	t.Helper()
 	first := openAndPing(t, driver, path, docsqlite.OpenOptions{
-		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred, BusyTimeout: 17 * time.Millisecond,
+		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred, BusyTimeout: time.Second,
 	})
 	second := openAndPing(t, driver, path, docsqlite.OpenOptions{
-		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred, BusyTimeout: 29 * time.Millisecond,
+		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred, BusyTimeout: 2 * time.Second,
 	})
 	firstTimeout := pragmaInt(t, first, "busy_timeout")
 	secondTimeout := pragmaInt(t, second, "busy_timeout")
@@ -365,7 +365,7 @@ func observeIndependentPools(t *testing.T, driver docsqlite.Driver, path string)
 		return false
 	}
 	require.NoError(t, second.Close())
-	return firstTimeout == 17 && secondTimeout == 29
+	return firstTimeout == 1000 && secondTimeout == 2000
 }
 
 func observeUniqueClassification(t *testing.T, driver docsqlite.Driver, path string) (classified, wrapped bool) {

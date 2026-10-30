@@ -324,7 +324,7 @@ func validateBatesPages(ctx context.Context, tx *sql.Tx, r BatesPlanRequest) err
 // before its numbers are reserved.
 func checkBatesSourceSize(ctx context.Context, q metadataQuerier, sha256 string) error {
 	var size int64
-	err := q.QueryRowContext(ctx, `SELECT size FROM blobs WHERE hash=?`, sha256).Scan(&size)
+	err := q.QueryRowContext(ctx, `SELECT size FROM blobs WHERE hash=$1`, sha256).Scan(&size)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrBatesPageCountMismatch
 	}
@@ -488,7 +488,7 @@ func loadBatesAllocation(ctx context.Context, q metadataQuerier, id string) (Bat
 	var a BatesAllocation
 	var committed sql.NullString
 	err := q.QueryRowContext(ctx, `SELECT allocation_id,namespace_id,snapshot_id,request_sha256,recipe_sha256,
-		start_sequence,end_sequence,state,created_at,committed_at FROM bates_allocations WHERE allocation_id=?`, id).
+		start_sequence,end_sequence,state,created_at,committed_at FROM bates_allocations WHERE allocation_id=$1`, id).
 		Scan(&a.AllocationID, &a.NamespaceID, &a.SnapshotID, &a.RequestSHA256, &a.RecipeSHA256,
 			&a.StartSequence, &a.EndSequence, &a.State, &a.CreatedAt, &committed)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -499,7 +499,7 @@ func loadBatesAllocation(ctx context.Context, q metadataQuerier, id string) (Bat
 	}
 	a.CommittedAt = committed.String
 	rows, err := q.QueryContext(ctx, `SELECT ordinal,occurrence_id,source_page,output_page,label FROM bates_page_labels
-		WHERE allocation_id=? ORDER BY ordinal`, id)
+		WHERE allocation_id=$1 ORDER BY ordinal`, id)
 	if err != nil {
 		return a, err
 	}

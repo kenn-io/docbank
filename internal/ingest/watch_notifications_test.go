@@ -108,12 +108,13 @@ func FuzzWatchNotificationBatch(f *testing.F) {
 }
 
 type fakeWatchNotificationSource struct {
-	mu      sync.Mutex
-	pending watchHintAccumulator
-	wake    chan struct{}
-	errs    chan error
-	closed  chan struct{}
-	once    sync.Once
+	mu       sync.Mutex
+	pending  watchHintAccumulator
+	wake     chan struct{}
+	errs     chan error
+	closed   chan struct{}
+	once     sync.Once
+	endScans int
 }
 
 func newFakeWatchNotificationSource(root string) *fakeWatchNotificationSource {
@@ -121,7 +122,12 @@ func newFakeWatchNotificationSource(root string) *fakeWatchNotificationSource {
 }
 func (f *fakeWatchNotificationSource) BeginScan()                     {}
 func (f *fakeWatchNotificationSource) AddDirectory(string, int) error { return nil }
-func (f *fakeWatchNotificationSource) EndScan() error                 { return nil }
+func (f *fakeWatchNotificationSource) EndScan() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.endScans++
+	return nil
+}
 func (f *fakeWatchNotificationSource) Drain() watchScanHints {
 	f.mu.Lock()
 	defer f.mu.Unlock()

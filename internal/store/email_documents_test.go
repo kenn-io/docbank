@@ -26,7 +26,7 @@ func TestEmailDocumentsReleaseUsesRetryingBegin(t *testing.T) {
 	go func() {
 		done <- s.RemoveEmailDocumentPublication(ctx, receipt.OperationID, receipt.RequestDigest)
 	}()
-	time.Sleep(100 * time.Millisecond) //nolint:kennlint // Keep the writer held beyond the driver's busy timeout so release needs a retry.
+	time.Sleep(100 * time.Millisecond) //nolint:kennlint // sleeptest: Keep the writer held beyond the driver's busy timeout so release needs a retry.
 	require.NoError(t, lock.Rollback())
 	require.NoError(t, <-done)
 }

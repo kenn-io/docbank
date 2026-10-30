@@ -575,7 +575,7 @@ func TestClientClassifiesTotalTimeoutBySubmissionState(t *testing.T) {
 		}))
 		t.Cleanup(server.Close)
 		client := newClient(t, server.URL, fixture.descriptor, nil, http.DefaultClient)
-		client.totalTimeout = 25 * time.Millisecond
+		client.totalTimeout = 25 * time.Millisecond //nolint:kennlint // deadlinetest: the total deadline must expire before the first poll of the accepted job
 		client.pollInterval = 50 * time.Millisecond
 
 		_, err := client.Render(t.Context(), fixture.upload(), fixture.authorization)

@@ -194,7 +194,7 @@ func (s *Store) PackageTimelineInputs(ctx context.Context, packageID, afterRowID
 // PackageLabelCandidates returns a bounded stable page without collapsing
 // reused sender labels. The opaque cursor is safe to pass directly to an API.
 func (s *Store) PackageLabelCandidates(ctx context.Context, label, packageID, labelSet, provenance, after string, limit int) ([]PackageLabelRow, string, error) {
-	if label == "" || len(label) > 256 || packageID != "" && validateUUIDv4(packageID) != nil ||
+	if label == "" || len(label) > MaxPackageLabelBytes || packageID != "" && validateUUIDv4(packageID) != nil ||
 		labelSet != "" && len(labelSet) > 256 ||
 		provenance != "" && !slices.Contains([]string{packageDirectionReceived, "assigned"}, provenance) ||
 		limit < 1 || limit > 250 {

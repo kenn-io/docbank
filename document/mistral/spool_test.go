@@ -84,7 +84,7 @@ func TestReleaseDoesNotBlockSnapshotWhileWaitingForSpoolReservation(t *testing.T
 		releaseLock()
 		locked = false
 		t.Fatalf("Release completed while the spool reservation was held: %v", err)
-	case <-time.After(2 * spoolLockRetryInterval): //nolint:kennlint // the timer shows the event does not happen; the held spool reservation lock keeps Release blocked
+	case <-time.After(2 * spoolLockRetryInterval): //nolint:kennlint // deadlinetest: the timer shows the event does not happen; the held spool reservation lock keeps Release blocked
 	}
 
 	releaseLock()
@@ -282,7 +282,7 @@ func TestPrepareSerializesQuotaReservations(t *testing.T) {
 	case result := <-secondResult:
 		close(release)
 		t.Fatalf("second preparation returned before the first reservation completed: %v", result.err)
-	case <-time.After(100 * time.Millisecond): //nolint:kennlint // the timer shows the event does not happen; the gated first reservation keeps the second Prepare blocked
+	case <-time.After(100 * time.Millisecond): //nolint:kennlint // deadlinetest: the timer shows the event does not happen; the gated first reservation keeps the second Prepare blocked
 	}
 	close(release)
 	first := <-firstResult

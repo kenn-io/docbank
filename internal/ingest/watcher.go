@@ -115,10 +115,12 @@ func validateVirtualDestination(destination string) error {
 type watchFingerprint = localFileFingerprint
 
 type watchObservation struct {
-	fingerprint watchFingerprint
-	stableSince time.Time
-	processed   bool
-	digest      string
+	fingerprint         watchFingerprint
+	stableSince         time.Time
+	processed           bool
+	digest              string
+	accepted            *watchAcceptedSource
+	settlingInterrupted bool
 }
 
 type watchRoot struct {
@@ -238,23 +240,22 @@ func openWatchFile(root *os.Root, ref string) (*os.File, error) {
 	return f, nil
 }
 
-func (source watchSource) observe(withChange bool) (watchFingerprint, watchMount, error) {
-	var noMount watchMount
+func (source watchSource) observe(withChange bool) (watchFileState, error) {
 	f, err := source.open()
 	if err != nil {
-		return watchFingerprint{}, noMount, err
+		return watchFileState{}, err
 	}
 	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
 	if err != nil {
-		return watchFingerprint{}, noMount, err
+		return watchFileState{}, err
 	}
-	mount, err := watchMountForFile(f)
+	mount, identity, err := watchMetadataForFile(f, info)
 	if err != nil {
-		return watchFingerprint{}, noMount, err
+		return watchFileState{}, err
 	}
 	fingerprint := fingerprintOpenFile(f, info, withChange)
-	return fingerprint, mount, nil
+	return watchFileState{fingerprint: fingerprint, mount: mount, identity: identity, info: info}, nil
 }
 
 func watchMountForRoot(root *os.Root) (watchMount, error) {
@@ -287,6 +288,8 @@ type Watcher struct {
 	now              func() time.Time
 	beforeDescend    func(string)
 	beforeObserve    func(string)
+	observeFile      func(watchSource, bool) (watchFileState, error)
+	beforeRebind     func(string)
 	sourceMount      watchMount
 	observations     map[string]watchObservation
 	newNotifications func(string, exclusions) (watchNotificationSource, error)
@@ -337,6 +340,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 func (w *Watcher) run(ctx context.Context, root *watchRoot, beforeScan func()) error {
 	var source watchNotificationSource
 	degraded := false
+	blocked := false
 	retryEnrollment := w.config.CaptureOnChange
 	reportFailure := func(err error) {
 		if !degraded {
@@ -375,17 +379,41 @@ func (w *Watcher) run(ctx context.Context, root *watchRoot, beforeScan func()) e
 		if beforeScan != nil {
 			beforeScan()
 		}
-		err := w.scanWithHints(ctx, root, hints)
+		complete, err := w.scanWithHints(ctx, root, hints)
 		if w.notificationErr != nil {
 			failure := w.notificationErr
 			w.notificationErr = nil
 			disable(failure)
-		} else if err == nil && source != nil && degraded {
+		}
+		if errors.Is(err, errWatchBlocked) || (err == nil && !complete) {
+			if err == nil {
+				err = fmt.Errorf("watch %q source inventory incomplete; reconciliation deferred", w.config.Name)
+			}
+			if !blocked {
+				if !degraded {
+					jobs.ReportError(ctx, err)
+				}
+				w.logger.Warn("watch source blocks reconciliation; polling continues", "watch", w.config.Name, "error", err)
+			}
+			blocked = true
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if complete && blocked {
+			if !degraded {
+				jobs.ReportError(ctx, nil)
+			}
+			w.logger.Info("watch source reconciliation restored", "watch", w.config.Name)
+			blocked = false
+		}
+		if complete && source != nil && degraded {
 			jobs.ReportError(ctx, nil)
 			w.logger.Info("watch notifications restored", "watch", w.config.Name)
 			degraded = false
 		}
-		return err
+		return nil
 	}
 	enroll()
 	if err := scan(watchScanHints{Reconcile: true}); err != nil {
@@ -921,26 +949,84 @@ func pathContains(parent, child string) bool {
 }
 
 func (w *Watcher) scan(ctx context.Context, root *watchRoot) error {
-	return w.scanWithHints(ctx, root, watchScanHints{Reconcile: true})
+	_, err := w.scanWithHints(ctx, root, watchScanHints{Reconcile: true})
+	return err
 }
 
-func (w *Watcher) scanWithHints(ctx context.Context, root *watchRoot, hints watchScanHints) error {
+func (w *Watcher) scanWithHints(ctx context.Context, root *watchRoot, hints watchScanHints) (bool, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return false, err
 	}
 	if w.notifications != nil {
 		w.notifications.BeginScan()
 	}
 	seen := make(map[string]struct{}, len(w.observations))
-	if err := w.scanDirectory(ctx, root, root.root, "", seen, hints); err != nil {
-		return fmt.Errorf("scanning watch %q: %w", w.config.Name, err)
+	var inventory *watchInventory
+	if w.process == nil {
+		inventory = &watchInventory{files: make(map[string]watchInventoryEntry), present: make(map[string]struct{}), complete: true,
+			known: make(map[string]struct{}), knownDirs: make(map[string]struct{})}
+		for rel, observation := range w.observations {
+			inventory.known[rel] = struct{}{}
+			for dir := path.Dir(rel); dir != "."; dir = path.Dir(dir) {
+				inventory.known[dir] = struct{}{}
+				inventory.knownDirs[dir] = struct{}{}
+			}
+			if hints.matches(rel) {
+				observation.processed = false
+				w.observations[rel] = observation
+			}
+		}
+	}
+	if err := w.scanDirectory(ctx, root, root.root, "", seen, hints, inventory); err != nil {
+		return false, fmt.Errorf("scanning watch %q: %w", w.config.Name, err)
+	}
+	retained := make(map[string]struct{})
+	if inventory != nil {
+		// A complete inventory settles renames before importing. An incomplete
+		// one still imports settled files, but holds back new paths that could
+		// be renames of accepted sources it did not see.
+		var deferred map[string]struct{}
+		if inventory.complete {
+			var err error
+			deferred, retained, err = w.rebindCandidates(ctx, root, inventory)
+			if err != nil {
+				return false, err
+			}
+		} else {
+			deferred = possibleRenameTargets(w.observations, inventory)
+		}
+		for _, rel := range inventory.order {
+			entry := inventory.files[rel]
+			if _, skip := deferred[rel]; skip {
+				continue
+			}
+			if err := w.processObservation(ctx, watchSource{root: root, ref: rel}, entry.state, entry.observedAt, seen, hints); err != nil {
+				return false, err
+			}
+		}
+		if !inventory.complete {
+			// Unseen paths may only be unreadable: keep their accepted evidence
+			// and subscriptions until a complete pass, but time unseen must not
+			// count toward settling.
+			for rel := range w.observations {
+				if _, observed := inventory.files[rel]; !observed {
+					w.interruptSettling(rel)
+				}
+			}
+			if len(inventory.blocked) != 0 {
+				return false, fmt.Errorf("scanning watch %q: %w", w.config.Name, errors.Join(inventory.blocked...))
+			}
+			return false, nil
+		}
 	}
 	if w.notifications != nil && w.notificationErr == nil {
 		w.notificationErr = w.notifications.EndScan()
 	}
 	for rel := range w.observations {
 		if _, exists := seen[rel]; !exists {
-			delete(w.observations, rel)
+			if _, keep := retained[rel]; !keep {
+				delete(w.observations, rel)
+			}
 		}
 	}
 	for rel := range w.rejected {
@@ -948,7 +1034,7 @@ func (w *Watcher) scanWithHints(ctx context.Context, root *watchRoot, hints watc
 			delete(w.rejected, rel)
 		}
 	}
-	return nil
+	return true, nil
 }
 
 // unreadableDirectoryError marks a directory whose own entries could not be
@@ -979,21 +1065,64 @@ func (w *Watcher) rejectEntry(ctx context.Context, rel string, err error, seen m
 	return w.reject(ctx, rel, err)
 }
 
+var errWatchBlocked = errors.New("watched source blocks reconciliation")
+
+// blockWatchPath skips a known path whose structure changed and defers
+// reconciliation until it is restored. Time spent hidden behind the change
+// must not count toward settling anything below rel.
+func (w *Watcher) blockWatchPath(inventory *watchInventory, rel, reason string) {
+	w.interruptSettlingTree(rel)
+	inventory.complete = false
+	inventory.blocked = append(inventory.blocked, fmt.Errorf("watched source %q %s: %w", rel, reason, errWatchBlocked))
+}
+
+func retryableWatchCollectionError(err error) bool {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	// A confirmed replacement remains retryable when Windows also reports
+	// access denied while opening the new directory. Permission failures without
+	// this source-change evidence remain permanent collection failures.
+	if errors.Is(err, ErrSourceChanged) {
+		return true
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		for _, cause := range joined.Unwrap() {
+			if cause != nil && !retryableWatchCollectionError(cause) {
+				return false
+			}
+		}
+		return true
+	}
+	if cause := errors.Unwrap(err); cause != nil {
+		return retryableWatchCollectionError(cause)
+	}
+	return errors.Is(err, ErrSourceChanged) || transientWatchObservationError(err)
+}
+
 func (w *Watcher) scanDirectory(
 	ctx context.Context, root *watchRoot, dir *os.Root, relDir string,
-	seen map[string]struct{}, hints watchScanHints,
+	seen map[string]struct{}, hints watchScanHints, inventory *watchInventory,
 ) error {
 	if err := root.verify(); err != nil {
 		return err
 	}
 	f, err := dir.Open(".")
 	if err != nil {
-		return &unreadableDirectoryError{err: err}
+		failure := &unreadableDirectoryError{err: err}
+		if inventory != nil && retryableWatchCollectionError(failure) {
+			w.interruptSettlingTree(relDir)
+		}
+		return failure
 	}
 	entries, readErr := f.ReadDir(-1)
 	closeErr := f.Close()
 	if readErr != nil || closeErr != nil {
-		return &unreadableDirectoryError{err: errors.Join(readErr, closeErr)}
+		failure := &unreadableDirectoryError{err: errors.Join(readErr, closeErr)}
+		if inventory != nil && retryableWatchCollectionError(failure) {
+			w.interruptSettlingTree(relDir)
+		}
+		return failure
 	}
 	if w.notifications != nil && w.notificationErr == nil {
 		w.notificationErr = w.notifications.AddDirectory(relDir, len(entries))
@@ -1006,8 +1135,17 @@ func (w *Watcher) scanDirectory(
 			return err
 		}
 		rel := path.Join(relDir, entry.Name())
+		if inventory != nil {
+			inventory.present[rel] = struct{}{}
+		}
 		filePath := filepath.Join(root.path, filepath.FromSlash(rel))
 		if w.excludes.match(root.path, filePath) {
+			if inventory != nil {
+				if _, known := inventory.known[rel]; known {
+					w.blockWatchPath(inventory, rel, "became excluded")
+					continue
+				}
+			}
 			if w.excluded != nil {
 				if err := w.excluded(ctx, rel); err != nil {
 					return err
@@ -1017,6 +1155,14 @@ func (w *Watcher) scanDirectory(
 		}
 		info, err := dir.Lstat(entry.Name())
 		if err != nil {
+			if inventory != nil {
+				if retryableWatchCollectionError(err) {
+					w.interruptSettlingTree(rel)
+					inventory.complete = false
+					continue
+				}
+				return fmt.Errorf("checking entry %q: %w", rel, err)
+			}
 			if transientWatchObservationError(err) && !w.reportsHeldEntry(err) {
 				continue
 			}
@@ -1029,6 +1175,12 @@ func (w *Watcher) scanDirectory(
 			return fmt.Errorf("checking entry %q: %w", rel, err)
 		}
 		if info.Mode()&fs.ModeSymlink != 0 {
+			if inventory != nil {
+				if _, known := inventory.knownDirs[rel]; known {
+					w.blockWatchPath(inventory, rel, "became a symlink")
+					continue
+				}
+			}
 			if w.excluded != nil {
 				if err := w.excluded(ctx, rel); err != nil {
 					return err
@@ -1042,6 +1194,14 @@ func (w *Watcher) scanDirectory(
 			}
 			child, err := openWatchDirectory(dir, entry.Name())
 			if err != nil {
+				if inventory != nil {
+					if retryableWatchCollectionError(err) {
+						w.interruptSettlingTree(rel)
+						inventory.complete = false
+						continue
+					}
+					return fmt.Errorf("opening directory %q: %w", rel, err)
+				}
 				if errors.Is(err, ErrSourceChanged) ||
 					(transientWatchObservationError(err) && !w.reportsHeldEntry(err)) {
 					continue
@@ -1057,6 +1217,11 @@ func (w *Watcher) scanDirectory(
 			childInfo, infoErr := child.Stat(".")
 			if infoErr != nil {
 				_ = child.Close()
+				if inventory != nil && retryableWatchCollectionError(infoErr) {
+					w.interruptSettlingTree(rel)
+					inventory.complete = false
+					continue
+				}
 				return fmt.Errorf("checking directory %q identity: %w", rel, infoErr)
 			}
 			if matchesWatchDirectory(childInfo, w.vaultDirs) {
@@ -1066,9 +1231,21 @@ func (w *Watcher) scanDirectory(
 			childMount, mountErr := watchMountForRoot(child)
 			if mountErr != nil {
 				_ = child.Close()
+				if inventory != nil && retryableWatchCollectionError(mountErr) {
+					w.interruptSettlingTree(rel)
+					inventory.complete = false
+					continue
+				}
 				return fmt.Errorf("checking directory %q filesystem boundary: %w", rel, mountErr)
 			}
 			if !w.sourceMount.same(childMount) {
+				if inventory != nil {
+					if _, known := inventory.known[rel]; known {
+						_ = child.Close()
+						w.blockWatchPath(inventory, rel, "crossed a filesystem boundary")
+						continue
+					}
+				}
 				_ = child.Close()
 				if w.excluded != nil {
 					if err := w.excluded(ctx, rel); err != nil {
@@ -1077,9 +1254,17 @@ func (w *Watcher) scanDirectory(
 				}
 				continue
 			}
-			scanErr := w.scanDirectory(ctx, root, child, rel, seen, hints)
+			scanErr := w.scanDirectory(ctx, root, child, rel, seen, hints, inventory)
 			_ = child.Close()
 			if scanErr != nil {
+				if inventory != nil {
+					if retryableWatchCollectionError(scanErr) {
+						w.interruptSettlingTree(rel)
+						inventory.complete = false
+						continue
+					}
+					return fmt.Errorf("scanning directory %q: %w", rel, scanErr)
+				}
 				if errors.Is(scanErr, ErrSourceChanged) && !w.immediate {
 					continue
 				}
@@ -1091,16 +1276,30 @@ func (w *Watcher) scanDirectory(
 				}
 				return scanErr
 			}
-			delete(w.rejected, rel)
+			if inventory == nil {
+				delete(w.rejected, rel)
+			}
 			continue
 		}
 		if !info.Mode().IsRegular() {
+			if inventory != nil {
+				if _, known := inventory.known[rel]; known {
+					w.blockWatchPath(inventory, rel, "became nonregular")
+					continue
+				}
+			}
 			if w.excluded != nil {
 				if err := w.excluded(ctx, rel); err != nil {
 					return err
 				}
 			}
 			continue
+		}
+		if inventory != nil {
+			if _, wasDir := inventory.knownDirs[rel]; wasDir {
+				w.blockWatchPath(inventory, rel, "became a file")
+				continue
+			}
 		}
 		if err := validateSourcePath(rel); err != nil {
 			if w.reject != nil {
@@ -1123,9 +1322,20 @@ func (w *Watcher) scanDirectory(
 		if w.beforeObserve != nil {
 			w.beforeObserve(rel)
 		}
-		// The folder scanner compares content digests; only daemon watches need change time.
-		fingerprint, sourceMount, err := source.observe(w.process == nil)
+		observe := source.observe
+		if w.observeFile != nil {
+			observe = func(withChange bool) (watchFileState, error) { return w.observeFile(source, withChange) }
+		}
+		state, err := observe(w.process == nil)
 		if err != nil {
+			if inventory != nil {
+				if retryableWatchCollectionError(err) {
+					w.interruptSettling(rel)
+					inventory.complete = false
+					continue
+				}
+				return fmt.Errorf("observing entry %q: %w", rel, err)
+			}
 			if errors.Is(err, ErrSourceChanged) {
 				if w.immediate && w.sourceChanged != nil {
 					if changeErr := w.sourceChanged(ctx, rel, err); changeErr != nil {
@@ -1134,14 +1344,14 @@ func (w *Watcher) scanDirectory(
 					seen[rel] = struct{}{}
 					continue
 				}
-				delete(w.observations, rel)
+				w.interruptSettling(rel)
 				if w.immediate {
 					return err
 				}
 				continue
 			}
 			if transientWatchObservationError(err) && !w.reportsHeldEntry(err) {
-				delete(w.observations, rel)
+				w.interruptSettling(rel)
 				continue
 			}
 			if w.reject != nil {
@@ -1152,7 +1362,13 @@ func (w *Watcher) scanDirectory(
 			}
 			return fmt.Errorf("checking entry %q: %w", rel, err)
 		}
-		if !w.sourceMount.same(sourceMount) {
+		if !w.sourceMount.same(state.mount) {
+			if inventory != nil {
+				if _, known := inventory.known[rel]; known {
+					w.blockWatchPath(inventory, rel, "crossed a filesystem boundary")
+					continue
+				}
+			}
 			if w.excluded != nil {
 				if err := w.excluded(ctx, rel); err != nil {
 					return err
@@ -1161,90 +1377,131 @@ func (w *Watcher) scanDirectory(
 			continue
 		}
 		observedAt := w.now()
-		seen[rel] = struct{}{}
-		observation, exists := w.observations[rel]
-		fingerprintChanged := !exists || !observation.fingerprint.matches(fingerprint)
-		if fingerprintChanged {
-			observation = watchObservation{
-				fingerprint: fingerprint, stableSince: observedAt, digest: observation.digest,
-			}
-			w.observations[rel] = observation
-		}
-		if hints.matches(rel) && exists {
-			observation.processed = false
-		}
-		if observation.digest != "" && (hints.Reconcile || hints.matches(rel) || fingerprintChanged) {
-			var digest string
-			digest, err = source.digest(ctx, fingerprint)
-			if err == nil && digest != observation.digest {
-				observation = watchObservation{
-					fingerprint: fingerprint, stableSince: observedAt, digest: digest,
-				}
-				w.observations[rel] = observation
-			}
-		}
-		var result WatchResult
-		if err == nil {
-			minimumAge := w.config.MinimumAge.Std()
-			if observation.processed ||
-				(!w.immediate && !w.config.CaptureOnChange && observedAt.Sub(observation.stableSince) < w.config.SettleTime.Std()) ||
-				(minimumAge > 0 && observedAt.Sub(time.Unix(0, fingerprint.modTime)) < minimumAge) {
-				continue
-			}
-			jobs.ReportBusy(ctx, true)
-			if w.process != nil {
-				err = w.process(ctx, rel, &observation, source.open)
-			} else {
-				err = w.mutate(func() error {
-					return w.ing.Blobs.WithMutation(ctx, func() error {
-						var writeErr error
-						result, writeErr = w.ing.ingestWatchedFile(
-							ctx, w.config.Name, w.config.Destination, rel, fingerprint, source.open,
-						)
-						return writeErr
-					})
-				})
-			}
-			jobs.ReportBusy(ctx, false)
-		}
-		if access, ok := errors.AsType[*SourceAccessError](err); ok && w.reject != nil &&
-			!errors.Is(err, ErrSourceChanged) &&
-			(!transientWatchObservationError(err) || w.reportsHeldEntry(err)) {
-			if err := w.rejectEntry(ctx, rel, access.Err, seen); err != nil {
-				return err
-			}
+		if inventory != nil {
+			inventory.files[rel] = watchInventoryEntry{state: state, observedAt: observedAt}
+			inventory.order = append(inventory.order, rel)
 			continue
 		}
-		if errors.Is(err, ErrSourceChanged) && w.immediate && w.sourceChanged != nil {
-			if changeErr := w.sourceChanged(ctx, rel, err); changeErr != nil {
-				return changeErr
-			}
-			continue
-		}
-		if errors.Is(err, ErrSourceChanged) || errors.Is(err, ErrRetryLater) ||
-			transientWatchObservationError(err) {
-			if w.immediate {
-				return err
-			}
-			if observation.digest == "" {
-				delete(w.observations, rel)
-			} else {
-				observation.processed = false
-				observation.stableSince = w.now()
-				w.observations[rel] = observation
-			}
-			continue
-		}
-		if err != nil {
-			return fmt.Errorf("ingesting %q: %w", rel, err)
-		}
-		delete(w.rejected, rel)
-		observation.processed = true
-		w.observations[rel] = observation
-		if w.process == nil {
-			w.logger.Info("watched inbox file processed", "watch", w.config.Name,
-				"source", rel, "node_id", result.Node.ID, "outcome", result.Outcome)
+		if err := w.processObservation(ctx, source, state, observedAt, seen, hints); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+func (w *Watcher) processObservation(ctx context.Context, source watchSource, state watchFileState, observedAt time.Time, seen map[string]struct{}, hints watchScanHints) error {
+	rel := source.ref
+	fingerprint := state.fingerprint
+	var err error
+	seen[rel] = struct{}{}
+	observation, exists := w.observations[rel]
+	fingerprintChanged := !exists || !observation.fingerprint.matches(fingerprint)
+	if fingerprintChanged || observation.settlingInterrupted {
+		observation = watchObservation{
+			fingerprint: fingerprint, stableSince: observedAt, digest: observation.digest, accepted: observation.accepted,
+		}
+		w.observations[rel] = observation
+	}
+	if hints.matches(rel) && exists {
+		observation.processed = false
+	}
+	if observation.digest != "" && (hints.Reconcile || hints.matches(rel) || fingerprintChanged) {
+		var digest string
+		digest, err = source.digest(ctx, fingerprint)
+		if err == nil && digest != observation.digest {
+			observation = watchObservation{
+				fingerprint: fingerprint, stableSince: observedAt, digest: digest, accepted: observation.accepted,
+			}
+			w.observations[rel] = observation
+		}
+	}
+	var result WatchResult
+	if err == nil {
+		minimumAge := w.config.MinimumAge.Std()
+		if observation.processed ||
+			(!w.immediate && !w.config.CaptureOnChange && observedAt.Sub(observation.stableSince) < w.config.SettleTime.Std()) ||
+			(minimumAge > 0 && observedAt.Sub(time.Unix(0, fingerprint.modTime)) < minimumAge) {
+			return nil
+		}
+		jobs.ReportBusy(ctx, true)
+		if w.process != nil {
+			err = w.process(ctx, rel, &observation, source.open)
+		} else {
+			err = w.mutate(func() error {
+				return w.ing.Blobs.WithMutation(ctx, func() error {
+					var writeErr error
+					result, writeErr = w.ing.ingestWatchedFile(
+						ctx, w.config.Name, w.config.Destination, rel, fingerprint, source.open,
+					)
+					return writeErr
+				})
+			})
+		}
+		jobs.ReportBusy(ctx, false)
+	}
+	if access, ok := errors.AsType[*SourceAccessError](err); ok && w.reject != nil &&
+		!errors.Is(err, ErrSourceChanged) &&
+		(!transientWatchObservationError(err) || w.reportsHeldEntry(err)) {
+		if err := w.rejectEntry(ctx, rel, access.Err, seen); err != nil {
+			return err
+		}
+		return nil
+	}
+	if errors.Is(err, ErrSourceChanged) && w.immediate && w.sourceChanged != nil {
+		if changeErr := w.sourceChanged(ctx, rel, err); changeErr != nil {
+			return changeErr
+		}
+		return nil
+	}
+	if errors.Is(err, ErrSourceChanged) || errors.Is(err, ErrRetryLater) ||
+		transientWatchObservationError(err) {
+		if w.immediate {
+			return err
+		}
+		if observation.digest == "" && observation.accepted == nil {
+			delete(w.observations, rel)
+		} else {
+			observation.processed = false
+			observation.stableSince = w.now()
+			w.observations[rel] = observation
+		}
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("ingesting %q: %w", rel, err)
+	}
+	delete(w.rejected, rel)
+	observation.processed = true
+	if w.process == nil {
+		observation.accepted = &watchAcceptedSource{nodeID: result.Node.ID, identity: state.identity, info: state.info}
+	}
+	w.observations[rel] = observation
+	if w.process == nil {
+		w.logger.Info("watched inbox file processed", "watch", w.config.Name,
+			"source", rel, "node_id", result.Node.ID, "outcome", result.Outcome)
+	}
+	return nil
+}
+
+func (w *Watcher) interruptSettling(rel string) {
+	observation, exists := w.observations[rel]
+	if !exists {
+		return
+	}
+	if observation.digest == "" && observation.accepted == nil {
+		delete(w.observations, rel)
+		return
+	}
+	observation.processed = false
+	observation.settlingInterrupted = true
+	w.observations[rel] = observation
+}
+
+func (w *Watcher) interruptSettlingTree(rel string) {
+	prefix := rel + "/"
+	for ref := range w.observations {
+		if rel == "" || ref == rel || strings.HasPrefix(ref, prefix) {
+			w.interruptSettling(ref)
+		}
+	}
 }

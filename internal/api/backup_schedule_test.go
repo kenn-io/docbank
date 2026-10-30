@@ -832,7 +832,7 @@ type backupReadContentionDriver struct {
 }
 
 func (d *backupReadContentionDriver) Open(path string, opts sqlite.OpenOptions) (*sql.DB, error) {
-	opts.BusyTimeout = time.Millisecond
+	opts.BusyTimeout = time.Millisecond //nolint:kennlint // deadlinetest: this driver runs only inside the backup schedule synctest bubble
 	db, err := d.Driver.Open(path, opts)
 	if err == nil {
 		d.dbs = append(d.dbs, db)

@@ -41,7 +41,7 @@ func newPostgresSchemaStore(t *testing.T, setup *sql.DB, cfg pgschema.Config) *S
 	})
 	schema := pgx.Identifier{cfg.Schema}.Sanitize()
 	_, err = setup.ExecContext(ctx, "GRANT USAGE ON SCHEMA "+schema+" TO "+quotedRole+
-		"; GRANT SELECT ON "+schema+".vault_metadata TO "+quotedRole+
+		"; GRANT SELECT ON ALL TABLES IN SCHEMA "+schema+" TO "+quotedRole+
 		"; GRANT SELECT,INSERT,UPDATE,DELETE ON "+schema+".nodes,"+schema+".blobs,"+schema+".content_versions TO "+quotedRole+
 		"; GRANT SELECT,INSERT ON "+schema+".blob_checksums TO "+quotedRole+
 		"; GRANT SELECT ON "+schema+".audit_records,"+schema+".audit_authority,"+schema+".audit_scopes,"+schema+".audit_baselines,"+schema+".audit_memberships TO "+quotedRole+
@@ -50,10 +50,7 @@ func newPostgresSchemaStore(t *testing.T, setup *sql.DB, cfg pgschema.Config) *S
 		"; GRANT UPDATE(entry_count,chain_head) ON "+schema+".audit_scopes TO "+quotedRole+
 		"; GRANT SELECT,UPDATE(high_water) ON "+schema+".node_allocation TO "+quotedRole)
 	require.NoError(t, err)
-	for _, table := range []string{"ingests", "provenance", "provenance_version_bindings", "derivative_purge_suppressions", "source_metadata_generations", "source_metadata_heads", "photo_technical_metadata", "tags", "node_tags", "photo_assets", "photo_files", "photo_sets", "photo_change_receipts", "photo_library_settings", "photo_xmp_inputs"} {
-		_, err = setup.ExecContext(ctx, "GRANT SELECT ON "+schema+"."+table+" TO "+quotedRole)
-		require.NoError(t, err)
-	}
+
 	_, err = setup.ExecContext(ctx, "GRANT SELECT,INSERT ON "+schema+".photo_xmp_unsettled TO "+quotedRole+
 		"; GRANT INSERT ON "+schema+".audit_authority,"+schema+".audit_scopes,"+schema+".audit_baselines,"+schema+".audit_memberships TO "+quotedRole)
 	require.NoError(t, err)
