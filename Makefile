@@ -140,10 +140,10 @@ $(CUSTOM_GCL): .custom-gcl.yml
 	fi
 	golangci-lint custom --destination "$(CURDIR)/.cache/golangci-lint" --name custom-gcl
 
-lint: $(CUSTOM_GCL)
+lint: $(CUSTOM_GCL) lint-workflow-retries
 	"$(CUSTOM_GCL)" run --allow-serial-runners --fix ./...
 
-lint-ci: $(CUSTOM_GCL)
+lint-ci: $(CUSTOM_GCL) lint-workflow-retries
 	"$(CUSTOM_GCL)" run --allow-serial-runners ./...
 
 tidy:
@@ -195,3 +195,7 @@ docs-deploy:
 
 help:
 	@echo "Targets: build homebrew install clean test test-pg test-v openapi generate-api generate-photo-policy frontend frontend-test frontend-dev report-export-browser-test photo-map-browser-test photo-tabs-browser-test docs-screenshots fmt lint lint-ci tidy install-hooks docs-install docs-subpath-test docs-assets-test docs-assets-sync docs-build docs-serve docs-link docs-deploy"
+
+.PHONY: lint-workflow-retries
+lint-workflow-retries:
+	GOOS= GOARCH= go run go.kenn.io/kit/cmd/kennlint@v0.47.3 workflow-retries

@@ -43,11 +43,13 @@ jobs:
           node-version: 24.22.1
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+      - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
+
       - name: Install Poppler and Chromium
         run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y poppler-utils util-linux
-          npm --prefix frontend ci
+          kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update
+          kit-retry 3 5 sudo apt-get install --no-install-recommends -y poppler-utils util-linux
+          kit-retry 3 5 npm --prefix frontend ci
           node frontend/node_modules/@playwright/test/cli.js install --with-deps chromium
       - name: Embed frontend and qualify both SQLite modes
         run: |
@@ -83,15 +85,19 @@ jobs:
           path: ${{ runner.temp }}/pdf-apt-archives/*.deb
           key: ${{ steps.apt_key.outputs.key }}
 
+      - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
+
       - name: Download package archives on a cache miss
         if: steps.apt_cache.outputs.cache-hit != 'true'
         run: |
           mkdir -p "$RUNNER_TEMP/pdf-apt-archives/partial"
-          sudo apt-get update
-          sudo apt-get -o Dir::Cache::archives="$RUNNER_TEMP/pdf-apt-archives" install --download-only --no-install-recommends -y libreoffice-writer libreoffice-impress libreoffice-calc poppler-utils
+          kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update
+          kit-retry 3 5 sudo apt-get -o Dir::Cache::archives="$RUNNER_TEMP/pdf-apt-archives" install --download-only --no-install-recommends -y libreoffice-writer libreoffice-impress libreoffice-calc poppler-utils
 
       - name: Install LibreOffice Writer, Impress, Calc, and Poppler runtimes
-        run: sudo apt-get -o Dir::Cache::archives="$RUNNER_TEMP/pdf-apt-archives" install --no-download --no-install-recommends -y "$RUNNER_TEMP"/pdf-apt-archives/*.deb
+        run: |
+          # workflowretry: allow Install cached archives without network downloads.
+          sudo apt-get -o Dir::Cache::archives="$RUNNER_TEMP/pdf-apt-archives" install --no-download --no-install-recommends -y "$RUNNER_TEMP"/pdf-apt-archives/*.deb
 
       - name: Run mandatory page rendering proof
         env:

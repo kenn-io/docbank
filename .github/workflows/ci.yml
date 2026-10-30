@@ -97,8 +97,10 @@ jobs:
           ./scripts/vercel-install-docs.sh
           echo "$PWD/.vercel-tools/bin" >> "$GITHUB_PATH"
 
+      - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
+
       - name: Install browser test dependencies
-        run: npm ci --prefix frontend
+        run: kit-retry 3 5 npm ci --prefix frontend
 
       - name: Start Playwright browser server
         id: browser_server
@@ -107,7 +109,7 @@ jobs:
         run: |
           version=$(node -p 'require("./node_modules/@playwright/test/package.json").version')
           image="mcr.microsoft.com/playwright:v$version-noble"
-          if ! docker pull "$image"; then
+          if ! kit-retry 3 5 docker pull "$image"; then
             echo "::error::Could not pull $image. Microsoft may not have published the image for this @playwright/test version yet."
             exit 1
           fi
@@ -116,6 +118,7 @@ jobs:
             "$image" \
             node node_modules/@playwright/test/cli.js run-server \
             --port 3000 --host 127.0.0.1)
+          # workflowretry: allow Poll the local service for readiness.
           until curl -s http://127.0.0.1:3000/; do
             [ "$(docker inspect -f '{{.State.Running}}' "$cid")" = true ] || { docker logs "$cid"; exit 1; }
             sleep 1
@@ -205,9 +208,11 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
+      - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
+
       - name: Install pinned Chromium
         run: |
-          npm ci --prefix frontend
+          kit-retry 3 5 npm ci --prefix frontend
           node frontend/node_modules/@playwright/test/cli.js install chromium
 
       - name: Qualify browser workflow with both SQLite builds
@@ -253,6 +258,8 @@ jobs:
       - name: Vet
         run: go vet -tags fts5 ./...
 
+      - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
+
       - name: Start S3-compatible test service
         env:
           RUSTFS_ACCESS_KEY: docbank-test
@@ -263,26 +270,20 @@ jobs:
           # MinIO no longer publishes images, so tests run against RustFS 1.0.0.
           image="docker.io/rustfs/rustfs@sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff"
           if ! docker image inspect "$image" >/dev/null 2>&1; then
-            for attempt in 1 2 3; do
-              if docker pull "$image"; then
-                break
-              fi
-              if [ "$attempt" = 3 ]; then
-                exit 1
-              fi
-              sleep $((attempt * 5))
-            done
+            kit-retry 3 5 docker pull "$image"
           fi
           echo "DOCBANK_S3_CONTAINER=$name" >> "$GITHUB_ENV"
           docker run --rm -d --name "$name"             -p 127.0.0.1::9000             -e RUSTFS_ACCESS_KEY -e RUSTFS_SECRET_KEY             "$image" >/dev/null
           port="$(docker port "$name" 9000/tcp | head -1 | awk -F: '{print $NF}')"
           endpoint="http://127.0.0.1:${port}"
           for _ in $(seq 1 30); do
+            # workflowretry: allow Poll the local service for readiness.
             if curl --fail --silent "${endpoint}/health/ready" >/dev/null; then
               break
             fi
             sleep 1
           done
+          # workflowretry: allow Poll the local service for readiness.
           if ! curl --fail --silent "${endpoint}/health/ready" >/dev/null; then
             docker logs "$name"
             exit 1
