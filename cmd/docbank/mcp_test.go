@@ -119,9 +119,35 @@ func TestMCPCommandWriteFlagsSelectTools(t *testing.T) {
 		{args: "mcp --allow-processing --allow-package-writes", processing: true, packages: true},
 	} {
 		t.Run(test.args, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
 			executable, err := os.Executable()
 			require.NoError(t, err)
-			names := mcpCatalog(t, executable, strings.Fields(test.args), []string{"DOCBANK_HOME=" + t.TempDir()})
+			command := exec.CommandContext(ctx, executable, "-test.run=^TestMCPCommandWriteFlagsSelectTools$")
+			command.Env = append(os.Environ(), childVariable+"="+test.args, "DOCBANK_HOME="+t.TempDir())
+			input, err := command.StdinPipe()
+			require.NoError(t, err)
+			defer func() { _ = input.Close() }()
+			output, err := command.StdoutPipe()
+			require.NoError(t, err)
+			require.NoError(t, command.Start())
+			t.Cleanup(func() { _ = command.Process.Kill() })
+			_, err = io.WriteString(input, `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}`+"\n")
+			require.NoError(t, err)
+			response, err := bufio.NewReader(output).ReadBytes('\n')
+			require.NoError(t, err)
+			var catalog struct {
+				Result struct {
+					Tools []struct {
+						Name string `json:"name"`
+					} `json:"tools"`
+				} `json:"result"`
+			}
+			require.NoError(t, json.Unmarshal(response, &catalog))
+			names := make(map[string]bool, len(catalog.Result.Tools))
+			for _, tool := range catalog.Result.Tools {
+				names[tool.Name] = true
+			}
 			assert.True(t, names["get_package_record"], "reads remain available with every flag combination")
 			assert.Equal(t, test.processing, names["start_processing"])
 			assert.Equal(t, test.kata, names["cite_kata_evidence"])
@@ -137,48 +163,10 @@ func TestMCPCommandWriteFlagsSelectTools(t *testing.T) {
 			for _, name := range []string{"preflight_load_file_package", "start_package_import", "resolve_package_custodian", "assign_package_custodian"} {
 				assert.Equal(t, test.packages, names[name], name)
 			}
+			require.NoError(t, input.Close())
+			require.NoError(t, command.Wait())
 		})
 	}
-}
-
-func mcpCatalog(t *testing.T, executable string, args, env []string) map[string]bool {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancel()
-	command := exec.CommandContext(ctx, executable, "-test.run=^TestMCPCommandWriteFlagsSelectTools$")
-	command.Env = append(append(os.Environ(), env...), "DOCBANK_TEST_MCP_TOOL_CATALOG="+strings.Join(args, " "))
-	input, err := command.StdinPipe()
-	require.NoError(t, err)
-	defer func() { _ = input.Close() }()
-	output, err := command.StdoutPipe()
-	require.NoError(t, err)
-	require.NoError(t, command.Start())
-	t.Cleanup(func() { _ = command.Process.Kill() })
-	reader := bufio.NewReader(output)
-	_, err = io.WriteString(input, `{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}`+"\n")
-	require.NoError(t, err)
-	discovery, err := reader.ReadString('\n')
-	require.NoError(t, err)
-	assert.Contains(t, discovery, `"result"`)
-	_, err = io.WriteString(input, `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}`+"\n")
-	require.NoError(t, err)
-	response, err := reader.ReadBytes('\n')
-	require.NoError(t, err)
-	var catalog struct {
-		Result struct {
-			Tools []struct {
-				Name string `json:"name"`
-			} `json:"tools"`
-		} `json:"result"`
-	}
-	require.NoError(t, json.Unmarshal(response, &catalog))
-	names := make(map[string]bool, len(catalog.Result.Tools))
-	for _, tool := range catalog.Result.Tools {
-		names[tool.Name] = true
-	}
-	require.NoError(t, input.Close())
-	require.NoError(t, command.Wait())
-	return names
 }
 
 func TestMCPCommandValidatesTransportSpecificOptionsBeforeStarting(t *testing.T) {
