@@ -106,6 +106,7 @@ func TestOperationCheckOrdersCallerExpiryAndTotalTimeout(t *testing.T) {
 
 	t.Run("total timeout", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
+			expiry := time.Now().UTC().Add(time.Minute).Format(TimestampForm)
 			operation, err := NewOperation(t.Context(), testProvider, expiry, time.Millisecond)
 			require.NoError(t, err)
 			defer operation.Cancel()

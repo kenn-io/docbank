@@ -122,22 +122,20 @@ func TestBridgeContractCancelsAcceptedResponseAfterUploadFailure(t *testing.T) {
 }
 
 func TestBridgeContractClassifiesStableSubmissionRateLimit(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		fixture := newBridgeFixture(t)
-		client := newTestBridgeClientWithHTTP(t, "https://bridge.invalid", fixture.descriptor, nil,
-			&http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
-				value := pendingEnvelope(fixture, "job-rejected-upload", JobFailed)
-				value["error"] = map[string]any{
-					"code": document.RenditionErrorRateLimited, "message": "synthetic rate limit",
-				}
-				return bridgeHTTPResponse(t, request, http.StatusTooManyRequests, value), nil
-			})})
+	fixture := newBridgeFixture(t)
+	client := newTestBridgeClientWithHTTP(t, "https://bridge.invalid", fixture.descriptor, nil,
+		&http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			value := pendingEnvelope(fixture, "job-rejected-upload", JobFailed)
+			value["error"] = map[string]any{
+				"code": document.RenditionErrorRateLimited, "message": "synthetic rate limit",
+			}
+			return bridgeHTTPResponse(t, request, http.StatusTooManyRequests, value), nil
+		})})
 
-		_, err := client.Render(t.Context(), fixture.upload(), fixture.authorization)
-		var providerError *document.RenditionProviderError
-		require.ErrorAs(t, err, &providerError)
-		assert.Equal(t, document.RenditionErrorRateLimited, providerError.Code())
-	})
+	_, err := client.Render(t.Context(), fixture.upload(), fixture.authorization)
+	var providerError *document.RenditionProviderError
+	require.ErrorAs(t, err, &providerError)
+	assert.Equal(t, document.RenditionErrorRateLimited, providerError.Code())
 }
 
 func TestBridgeContractWithholdsFilenameWhenDisclosureIsDisabled(t *testing.T) {
@@ -840,34 +838,32 @@ func TestBridgeContractPreservesCredentialFailuresAndStripsAmbientCookies(t *tes
 	})
 }
 
-func TestBridgeContractClassifiesPerRequestTimeouts(t *testing.T) {
-	t.Run("poll is retried", func(t *testing.T) {
-		synctest.Test(t, func(t *testing.T) {
-			fixture := newBridgeFixture(t)
-			var polls atomic.Int64
-			client := newTestBridgeClientWithHTTP(t, "https://bridge.invalid", fixture.descriptor, nil,
-				&http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
-					if request.Method == http.MethodPost {
-						_, err := io.Copy(io.Discard, request.Body)
-						require.NoError(t, err)
-						require.NoError(t, request.Body.Close())
-						return bridgeHTTPResponse(t, request, http.StatusAccepted,
-							pendingEnvelope(fixture, "job-slow", JobQueued)), nil
-					}
-					if request.Method == http.MethodGet {
-						polls.Add(1)
-						<-request.Context().Done()
-						return nil, request.Context().Err()
-					}
-					return &http.Response{StatusCode: http.StatusNoContent, Body: http.NoBody, Request: request}, nil
-				})})
-			client.executor.RequestTimeout = 10 * time.Millisecond
-			_, err := client.Render(t.Context(), fixture.upload(), fixture.authorization)
-			var providerError *document.RenditionProviderError
-			require.ErrorAs(t, err, &providerError)
-			assert.Equal(t, document.RenditionErrorAmbiguousSubmission, providerError.Code())
-			assert.Equal(t, int64(4), polls.Load())
-		})
+func TestBridgeContractPollTimeoutIsRetried(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		fixture := newBridgeFixture(t)
+		var polls atomic.Int64
+		client := newTestBridgeClientWithHTTP(t, "https://bridge.invalid", fixture.descriptor, nil,
+			&http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				if request.Method == http.MethodPost {
+					_, err := io.Copy(io.Discard, request.Body)
+					require.NoError(t, err)
+					require.NoError(t, request.Body.Close())
+					return bridgeHTTPResponse(t, request, http.StatusAccepted,
+						pendingEnvelope(fixture, "job-slow", JobQueued)), nil
+				}
+				if request.Method == http.MethodGet {
+					polls.Add(1)
+					<-request.Context().Done()
+					return nil, request.Context().Err()
+				}
+				return &http.Response{StatusCode: http.StatusNoContent, Body: http.NoBody, Request: request}, nil
+			})})
+		client.executor.RequestTimeout = 10 * time.Millisecond
+		_, err := client.Render(t.Context(), fixture.upload(), fixture.authorization)
+		var providerError *document.RenditionProviderError
+		require.ErrorAs(t, err, &providerError)
+		assert.Equal(t, document.RenditionErrorAmbiguousSubmission, providerError.Code())
+		assert.Equal(t, int64(4), polls.Load())
 	})
 }
 
