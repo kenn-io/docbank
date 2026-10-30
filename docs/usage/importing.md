@@ -115,7 +115,7 @@ The filename comes from a valid `Content-Disposition` filename, then the final U
 
 Provenance records the requested URL, final URL, completed fetch time in UTC, and the observed ETag and Last-Modified headers when supplied. URLs stay exactly as supplied. CLI and API JSON expose these values as `url_fetch`, with evidence version 1 and headers encoded as base64 to preserve their bytes. CLI and web views display readable header text, with reversible byte escapes for invalid UTF-8. Fetch time stays separate from import time; Last-Modified stays as observed, rather than becoming a document modification time.
 
-URL mode accepts `--dest`, `--json`, and `--progress`. Supply one URL per command. Filters, `--preflight`, and `--replace` apply to local imports.
+URL mode accepts `--dest` and `--json`. It validates `--progress` without rendering a progress bar. Supply one URL per command. Filters, `--preflight`, and `--replace` apply to local imports.
 
 ## Ordinary file imports
 

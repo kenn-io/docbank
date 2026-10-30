@@ -1,6 +1,10 @@
 package ingest
 
-import "encoding/json/v2"
+import (
+	"encoding/json/v2"
+	"net/url"
+	"time"
+)
 
 // URLFetch records the response observed by the importing client.
 type URLFetch struct {
@@ -16,6 +20,16 @@ type URLFetch struct {
 func ParseURLFetch(kind, description string) *URLFetch {
 	var f URLFetch
 	if kind != "url" || json.Unmarshal([]byte(description), &f, json.RejectUnknownMembers(true)) != nil || f.Version != 1 {
+		return nil
+	}
+	for _, raw := range []string{f.RequestedURL, f.FinalURL} {
+		u, err := url.Parse(raw)
+		if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
+			return nil
+		}
+	}
+	at, err := time.Parse(time.RFC3339Nano, f.FetchedAt)
+	if err != nil || at.Location() != time.UTC {
 		return nil
 	}
 	return &f

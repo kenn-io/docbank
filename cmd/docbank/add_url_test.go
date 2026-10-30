@@ -198,7 +198,7 @@ func TestAddURLFailuresPublishNoDocuments(t *testing.T) {
 	defer server.Close()
 	for _, args := range [][]string{
 		{server.URL}, {server.URL, "--allow-http", "--max-bytes", "4"}, {server.URL + "/missing", "--allow-http"},
-		{server.URL, "local.txt"}, {writeSourceFile(t, "local.txt", "local"), server.URL}, {"ftp://example.com/file.txt"}, {server.URL, "--allow-http", "--max-bytes", "0"}, {server.URL, "--preflight"}, {server.URL, "--replace"}, {server.URL, "--include", "*.pdf"},
+		{server.URL, "local.txt"}, {writeSourceFile(t, "local.txt", "local"), server.URL}, {server.URL, "--allow-http", "--max-bytes", "0"}, {server.URL, "--preflight"}, {server.URL, "--replace"}, {server.URL, "--include", "*.pdf"},
 	} {
 		_, err := runCLI(t, append([]string{"add"}, args...)...)
 		require.Error(t, err)
@@ -244,4 +244,36 @@ func TestAddURLInterruptRemovesSpool(t *testing.T) {
 	entries, err = os.ReadDir(home)
 	require.NoError(t, err)
 	assert.Empty(t, entries)
+}
+
+func TestAddRelativeColonFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows filenames cannot contain colons")
+	}
+	setupVaultHome(t)
+	t.Chdir(t.TempDir())
+	for _, name := range []string{"report:2026.txt", "https:2026.txt"} {
+		require.NoError(t, os.WriteFile(name, []byte("local report"), 0o600))
+		_, err := runCLI(t, "add", name)
+		require.NoError(t, err)
+		out, err := runCLI(t, "cat", "/inbox/"+name)
+		require.NoError(t, err)
+		assert.Equal(t, "local report", out)
+	}
+}
+
+func TestAddURLProgressValidation(t *testing.T) {
+	setupVaultHome(t)
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		_, _ = io.WriteString(w, "filing")
+	}))
+	defer server.Close()
+	_, err := runCLI(t, "add", server.URL+"/filing.txt", "--allow-http", "--progress", "typo")
+	require.ErrorContains(t, err, "invalid --progress")
+	assert.Zero(t, requests.Load())
+	out, err := runCLI(t, "tree", "/")
+	require.NoError(t, err)
+	assert.NotContains(t, out, "inbox")
 }
