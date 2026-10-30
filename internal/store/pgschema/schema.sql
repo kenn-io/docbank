@@ -1490,6 +1490,11 @@ CREATE TABLE {{schema}}.person_document_assertions (
 );
 
 CREATE TABLE {{schema}}.photo_faces (
+    roll DOUBLE PRECISION,
+    facing DOUBLE PRECISION,
+    eyes_open BIGINT,
+    smile BIGINT,
+    detector_fingerprint TEXT COLLATE "C",
     face_id TEXT COLLATE "C" PRIMARY KEY NOT NULL,
     content_version_id TEXT COLLATE "C" NOT NULL,
     x DOUBLE PRECISION NOT NULL,
