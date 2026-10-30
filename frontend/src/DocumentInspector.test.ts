@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import DocumentInspector from "./DocumentInspector.svelte";
-import type { Node } from "./generated/docbank.js";
+import type { ContentVersion, Node } from "./generated/docbank.js";
 
 const folder: Node = {
   id: 42,
@@ -193,4 +193,108 @@ it("removes an assigned tag directly and disables removal while tags are unavail
   expect(
     (screen.getByRole("button", { name: "Remove tag Review" }) as HTMLButtonElement).disabled,
   ).toBe(true);
+});
+
+it("shows PDF facts for the selected version and discards a late previous response", async () => {
+  const api = await import("./generated/docbank.js");
+  const { selectedSourceFromNode } = await import("./selectedSource.js");
+  const file = {
+    ...folder,
+    kind: "file" as const,
+    name: "contract.pdf",
+    path: "/contract.pdf",
+    mime_type: "application/pdf",
+    current_version_id: "version-a",
+    blob_hash: "a".repeat(64),
+  };
+  const source = selectedSourceFromNode(file, file.path);
+  let finish!: (value: ContentVersion) => void;
+  const request = vi
+    .spyOn(api, "getContentVersion")
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    )
+    .mockResolvedValueOnce({
+      introduced_operation_id: "operation",
+      node_revision: 1,
+      recorded_at: "2026-01-01T00:00:00Z",
+      size: 0,
+      transition_kind: "content_create",
+      id: "version-b",
+      node_id: 42,
+      blob_hash: "b".repeat(64),
+      source_metadata: {
+        contract_version: "source-metadata/v1",
+        checksum: "c".repeat(64),
+        extractor_fingerprint: "d".repeat(64),
+        attachment: { node_id: 42, content_version_id: "version-b" },
+        fields: [
+          {
+            key: "pdf.info.encrypted",
+            namespace: "pdf.info",
+            source_field: "encrypted",
+            sensitive: false,
+            value: { kind: "boolean", boolean: false },
+          },
+          {
+            key: "pdf.info.signature_field_count",
+            namespace: "pdf.info",
+            source_field: "signature_field_count",
+            sensitive: false,
+            value: { kind: "integer", integer: 2 },
+          },
+          {
+            key: "pdf.info.last_signature_covers_file",
+            namespace: "pdf.info",
+            source_field: "last_signature_covers_file",
+            sensitive: false,
+            value: { kind: "boolean", boolean: false },
+          },
+        ],
+        warnings: [],
+      },
+    } as ContentVersion);
+  const props = {
+    node: folder,
+    path: file.path,
+    tags: [],
+    tagsLoading: false,
+    tagsError: "",
+    source,
+    session: "synthetic-session",
+    onprovenance: vi.fn(),
+    onhistory: vi.fn(),
+  };
+  const view = render(DocumentInspector, props);
+  await vi.waitFor(() => expect(request).toHaveBeenCalledOnce());
+  await view.rerender({
+    ...props,
+    source: {
+      ...source,
+      key: "second",
+      versionID: "version-b",
+      blobHash: "b".repeat(64),
+      kind: "snapshot" as const,
+      observedAt: "2026-01-01",
+      originalTags: [],
+      collectionIDs: [],
+    },
+  });
+  expect((await screen.findByRole("region", { name: "PDF facts" })).textContent).toContain(
+    "Does not cover the whole file",
+  );
+  expect(screen.getByRole("region", { name: "PDF facts" }).textContent).toContain(
+    "Signature fields",
+  );
+  expect(request.mock.calls[1]?.[0]).toBe("version-b");
+  expect(request.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+  finish({ id: "version-a", node_id: 42, blob_hash: "a".repeat(64) } as ContentVersion);
+  await vi.waitFor(() =>
+    expect(screen.getByRole("region", { name: "PDF facts" }).textContent).toContain(
+      "Does not cover the whole file",
+    ),
+  );
 });

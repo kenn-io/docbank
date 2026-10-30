@@ -55,7 +55,7 @@ const (
 // vault then re-extracts every original, so the bump must be deliberate. The
 // shared email decoder recipe contributes its own identity to the fingerprint.
 const sourceMetadataExtractorDescriptor = "docbank-source-metadata:pdfcpu-info+xmp+pages," +
-	"ooxml-core+custom,emailmime,ical,visual-container+jpeg-tiff-raf-cr3-exif+mp4-created,media-id3+authored-xmp:v21"
+	"ooxml-core+custom,emailmime,ical,visual-container+jpeg-tiff-raf-cr3-exif+mp4-created,media-id3+authored-xmp:v22"
 
 var (
 	// SourceMetadataImplementationID identifies the parsers qualified by fixtures,
@@ -1082,7 +1082,21 @@ func (c *metadataCollector) extractPDF(data []byte) {
 	c.strings("keywords", "pdf.info", "Keywords", splitValues(metadata.Info.Keywords))
 	c.timestamp("created", "pdf.info", "CreationDate", metadata.Info.CreationDate)
 	c.timestamp("modified", "pdf.info", "ModDate", metadata.Info.ModDate)
-	c.integer("page_count", "pdf.info", "Pages", metadata.Pages)
+	if metadata.Pages > 0 {
+		c.integer("page_count", "pdf.info", "Pages", metadata.Pages)
+	}
+	facts := metadata.Facts
+	for key, value := range map[string]*bool{"encrypted": facts.Encrypted, "last_signature_covers_file": facts.LastSignatureCoversFile, "has_javascript": facts.HasJavaScript, "has_launch_actions": facts.HasLaunchActions} {
+		if value != nil {
+			c.boolean("pdf.info."+key, "pdf.info", key, *value)
+		}
+	}
+	for key, value := range map[string]*int64{"permission_bits": facts.PermissionBits, "signature_field_count": facts.SignatureFieldCount, "embedded_file_count": facts.EmbeddedFileCount} {
+		if value != nil {
+			c.integer("pdf.info."+key, "pdf.info", key, *value)
+		}
+	}
+	c.strings("pdf.info.permissions", "pdf.info", "Permissions", facts.Permissions)
 	for _, issue := range metadata.Issues {
 		namespace := "pdf.info"
 		if issue.SourceField == "XMP" {

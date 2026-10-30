@@ -16,6 +16,7 @@ import (
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/processing"
@@ -76,9 +77,12 @@ func TestNineReadToolHandlersReturnBoundedPrivateStructuredResults(t *testing.T)
 				assert.Equal(t, false, coverage["binding_required"])
 			}},
 		{name: "get_document", arguments: map[string]any{"node_id": 7, "content_version_id": testVersionID},
-			check: func(t *testing.T, _ map[string]any, result *sdkmcp.CallToolResult) {
+			check: func(t *testing.T, output map[string]any, result *sdkmcp.CallToolResult) {
 				t.Helper()
 				assert.Contains(t, resourceLinkURIs(result), canonicalTestRenditionURI())
+				assert.Equal(t, false, objectField(t, output, "pdf_facts")["encrypted"])
+				assert.EqualValues(t, 2, objectField(t, output, "pdf_facts")["signature_field_count"])
+				assert.NotContains(t, output, "source_metadata")
 			}},
 		{name: "list_document_versions", arguments: map[string]any{"node_id": 7, "limit": 1, "offset": 0},
 			check: func(t *testing.T, output map[string]any, _ *sdkmcp.CallToolResult) {
@@ -122,6 +126,7 @@ func TestNineReadToolHandlersReturnBoundedPrivateStructuredResults(t *testing.T)
 			assert.LessOrEqual(t, len(encoded), maxToolResponseBytes)
 			assert.NotContains(t, string(encoded), "/synthetic/private")
 			assert.NotContains(t, string(encoded), "raw-provider-response")
+			assert.NotContains(t, string(encoded), "hidden@example.com")
 			output := structuredMap(t, result.StructuredContent)
 			assertSchemaAccepts(t, schemas[test.name].OutputSchema, output)
 			assert.EqualValues(t, 0, output["ttlMs"])
@@ -671,6 +676,11 @@ func newReadToolDaemon(t *testing.T) *httptest.Server {
 			}}})
 		case "/api/v1/nodes/7":
 			writeDaemonJSON(t, response, api.Node{ID: 7, Name: "synthetic.md", Kind: "file",
+				SourceMetadata: &api.SourceMetadata{Fields: []document.SourceMetadataFieldV1{
+					{Key: "pdf.info.encrypted", Namespace: "pdf.info", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataBoolean, Boolean: new(false)}},
+					{Key: "pdf.info.signature_field_count", Namespace: "pdf.info", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataInteger, Integer: new(int64(2))}},
+					{Key: "email.bcc", Namespace: "email", Sensitive: true, Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: new("hidden@example.com")}},
+				}},
 				CurrentVersionID: testVersionID, Size: 12, MimeType: "text/markdown",
 				ModifiedAt: "2026-08-28T00:00:00Z", Path: "/synthetic.md"})
 		case "/api/v1/nodes/7/versions":

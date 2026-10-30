@@ -1,5 +1,6 @@
 <script lang="ts">
-  import type { Snippet } from "svelte";
+  import { untrack, type Snippet } from "svelte";
+  import { APIError } from "./api-transport.js";
   import * as api from "./generated/docbank.js";
   import "./inspector.css";
   import {
@@ -92,6 +93,80 @@
     ontags?: () => void;
     onremovetag?: (tag: Tag) => void;
   } = $props();
+  let pdfMetadata = $state<api.SourceMetadata>();
+  $effect(() => {
+    const selected = source;
+    const token = session;
+    void authorizationRevision;
+    const controller = new AbortController();
+    pdfMetadata = undefined;
+    if (selected && token && mediaType(selected.mimeType) === "application/pdf") {
+      void api
+        .getContentVersion(selected.versionID, { session: token, signal: controller.signal })
+        .then((version) => {
+          if (
+            !controller.signal.aborted &&
+            version.id === selected.versionID &&
+            version.node_id === selected.nodeID &&
+            version.blob_hash === selected.blobHash
+          )
+            pdfMetadata = version.source_metadata;
+        })
+        .catch((cause) => {
+          if (!controller.signal.aborted && cause instanceof APIError && cause.status === 401)
+            untrack(() => onauthfailure?.(cause));
+        });
+    }
+    return () => controller.abort();
+  });
+  const pdfValues = $derived(
+    new Map(
+      pdfMetadata?.fields
+        .filter((field) => field.namespace === "pdf.info")
+        .map((field) => [field.key, field.value]),
+    ),
+  );
+  const pdfAvailable = $derived(pdfValues.has("pdf.info.encrypted"));
+  const pdfLocked = $derived(
+    pdfMetadata?.warnings.some((warning) => warning.source_field === "Password"),
+  );
+  function pdfBoolean(key: string): string {
+    const value = pdfValues.get(`pdf.info.${key}`)?.boolean;
+    return value == null ? "Unknown" : value ? "Yes" : "No";
+  }
+  const pdfRows = $derived([
+    { label: "Encrypted", value: pdfBoolean("encrypted") },
+    {
+      label: "Permissions",
+      value: pdfValues.get("pdf.info.permissions")?.strings?.join(", ") ?? "Unknown",
+    },
+    {
+      label: "Signature fields",
+      value: String(pdfValues.get("pdf.info.signature_field_count")?.integer ?? "Unknown"),
+    },
+    ...(pdfValues.has("pdf.info.last_signature_covers_file") ||
+    pdfMetadata?.warnings.some((warning) =>
+      ["ByteRange", "SignatureFields"].includes(warning.source_field),
+    )
+      ? [
+          {
+            label: "Last signature",
+            value:
+              pdfValues.get("pdf.info.last_signature_covers_file")?.boolean == null
+                ? "Unknown"
+                : pdfValues.get("pdf.info.last_signature_covers_file")?.boolean
+                  ? "Covers the whole file"
+                  : "Does not cover the whole file",
+          },
+        ]
+      : []),
+    {
+      label: "Embedded files",
+      value: String(pdfValues.get("pdf.info.embedded_file_count")?.integer ?? "Unknown"),
+    },
+    { label: "JavaScript", value: pdfBoolean("has_javascript") },
+    { label: "Launch actions", value: pdfBoolean("has_launch_actions") },
+  ]);
   let protect = $state(false);
   let displayed = $state<{ origin: string; source: SelectedSource; revision: number }>();
   const download = $derived(displayed?.origin === source?.key ? displayed : undefined);
@@ -214,6 +289,13 @@
         </section>{/if}
     {:else}
       {@render currentTags()}
+    {/if}
+    {#if pdfAvailable}
+      <section class="pdf-facts" aria-label="PDF facts">
+        <h3>PDF</h3>
+        <InspectorDetails facts={pdfRows} />
+        {#if pdfLocked}<p>Other PDF facts need the document password</p>{/if}
+      </section>
     {/if}
     <TechnicalDetails
       facts={[
@@ -365,6 +447,10 @@
     flex-wrap: wrap;
     gap: var(--space-4);
     min-width: 0;
+  }
+  .pdf-facts {
+    display: grid;
+    gap: var(--space-4);
   }
   .current-details {
     display: grid;

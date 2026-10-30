@@ -426,6 +426,7 @@ type PDFMeasurements struct {
 // PDFMetadata contains optional metadata resolved after the authoritative core
 // object graph and page tree have been validated.
 type PDFMetadata struct {
+	Facts  PDFFacts
 	Pages  int64
 	Info   PDFInfoMetadata
 	XMP    []byte
@@ -529,12 +530,16 @@ func ReadPDFMetadata(data []byte) (PDFMetadata, error) {
 		MaxEntries:       sourceBytes,
 	})
 	if err != nil {
+		if errors.Is(err, pdfcpu.ErrWrongPassword) {
+			return PDFMetadata{Facts: PDFFacts{Encrypted: new(true)}, Issues: []PDFMetadataIssue{{SourceField: "Password"}}}, nil
+		}
 		return PDFMetadata{}, err
 	}
 	if context.PageCount <= 0 {
 		return PDFMetadata{}, errors.New("PDF page tree is empty")
 	}
 	metadata := PDFMetadata{Pages: int64(context.PageCount)}
+	readPDFFacts(context, sourceBytes, &metadata)
 	if context.Info != nil {
 		dictionary, err := context.DereferenceDict(*context.Info)
 		if err != nil {
@@ -586,11 +591,12 @@ func readPDFMetadataObjectGraph(data []byte, limits PDFLimits) (*model.Context, 
 	if err != nil {
 		return nil, fmt.Errorf("read PDF object graph: %w", err)
 	}
-	if context.Encrypt != nil {
-		return nil, ErrPDFEncrypted
-	}
 	if context.RootDict == nil {
 		return nil, errors.New("PDF catalog is missing")
+	}
+	form, hasForm := context.RootDict.Find("AcroForm")
+	if hasForm {
+		context.RootDict.Delete("AcroForm")
 	}
 	info := context.Info
 	context.Info = nil
@@ -599,12 +605,8 @@ func readPDFMetadataObjectGraph(data []byte, limits PDFLimits) (*model.Context, 
 		context.RootDict.Delete("Metadata")
 	}
 	err = api.ValidateContext(context)
-	if err == nil {
-		var external bool
-		external, err = pdfHasExternalReference(context)
-		if external {
-			err = ErrPDFExternalReference
-		}
+	if hasForm {
+		context.RootDict.Insert("AcroForm", form)
 	}
 	context.Info = info
 	if hasMetadata {

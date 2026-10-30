@@ -539,8 +539,60 @@ type getDocumentInput struct {
 	ContentVersionID string `json:"content_version_id"`
 }
 
+// pdfFactsOutput exposes only the declared PDF evidence, excluding other metadata.
+type pdfFactsOutput struct {
+	Encrypted               *bool    `json:"encrypted,omitempty"`
+	PermissionBits          *int64   `json:"permission_bits,omitempty"`
+	Permissions             []string `json:"permissions,omitempty"`
+	SignatureFieldCount     *int64   `json:"signature_field_count,omitempty"`
+	LastSignatureCoversFile *bool    `json:"last_signature_covers_file,omitempty"`
+	EmbeddedFileCount       *int64   `json:"embedded_file_count,omitempty"`
+	HasJavaScript           *bool    `json:"has_javascript,omitempty"`
+	HasLaunchActions        *bool    `json:"has_launch_actions,omitempty"`
+}
+
+func pdfFacts(metadata *api.SourceMetadata) *pdfFactsOutput {
+	if metadata == nil {
+		return nil
+	}
+	facts := &pdfFactsOutput{}
+	found := false
+	for _, field := range metadata.Fields {
+		if field.Namespace != "pdf.info" || field.Sensitive {
+			continue
+		}
+		switch field.Key {
+		case "pdf.info.encrypted":
+			facts.Encrypted = field.Value.Boolean
+		case "pdf.info.permission_bits":
+			facts.PermissionBits = field.Value.Integer
+		case "pdf.info.permissions":
+			facts.Permissions = field.Value.Strings
+		case "pdf.info.signature_field_count":
+			facts.SignatureFieldCount = field.Value.Integer
+		case "pdf.info.last_signature_covers_file":
+			facts.LastSignatureCoversFile = field.Value.Boolean
+		case "pdf.info.embedded_file_count":
+			facts.EmbeddedFileCount = field.Value.Integer
+		case "pdf.info.has_javascript":
+			facts.HasJavaScript = field.Value.Boolean
+		case "pdf.info.has_launch_actions":
+			facts.HasLaunchActions = field.Value.Boolean
+		default:
+			continue
+		}
+		found = true
+	}
+	if !found {
+		return nil
+	}
+	return facts
+}
+
 type documentOutput struct {
 	privateCache
+
+	PDFFacts *pdfFactsOutput `json:"pdf_facts,omitempty"`
 
 	NodeID           int64                           `json:"node_id"`
 	ContentVersionID string                          `json:"content_version_id"`
@@ -562,6 +614,7 @@ func getDocument(
 	type response struct {
 		document api.DocumentSummary
 		vaultID  string
+		pdfFacts *pdfFactsOutput
 	}
 	result, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (response, error) {
 		node, callErr := c.API().GetNode(ctx, &apiclient.GetNodeRequestOptions{PathParams: &apiclient.GetNodePath{ID: input.NodeID}})
@@ -585,13 +638,13 @@ func getDocument(
 		if callErr != nil {
 			return response{}, callErr
 		}
-		return response{document: page.Items[0], vaultID: info.VaultID}, nil
+		return response{document: page.Items[0], vaultID: info.VaultID, pdfFacts: pdfFacts(node.SourceMetadata)}, nil
 	})
 	if err != nil {
 		return documentOutput{}, nil, err
 	}
 	document := result.document
-	output := documentOutput{NodeID: document.NodeID, ContentVersionID: document.ContentVersionID,
+	output := documentOutput{PDFFacts: result.pdfFacts, NodeID: document.NodeID, ContentVersionID: document.ContentVersionID,
 		Path: document.Path, Name: document.Name, MediaType: document.MediaType, Size: document.Size,
 		ModifiedAt: document.ModifiedAt, ActiveRenditions: document.ActiveRenditions,
 		privateCache: newPrivateCache()}

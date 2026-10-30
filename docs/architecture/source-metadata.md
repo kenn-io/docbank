@@ -56,6 +56,42 @@ fields, `image.exif.body_serial_number`, and `email.bcc` are marked sensitive. T
 because its caller is trusted application code. Browser-session reads remove
 sensitive fields. Other callers must enforce their own disclosure boundary.
 
+## PDF evidence
+
+The inspector's PDF section, `docbank stat`, and MCP `get_document` expose
+these declared facts. MCP returns them in `pdf_facts`; other source metadata
+remains outside that response. The inspector reads the exact selected content
+version, including saved results whose live document has changed.
+
+| Key under `pdf.info.` | Type | Meaning |
+| --- | --- | --- |
+| `encrypted` | boolean | The original has PDF encryption. |
+| `permission_bits` | integer | Raw declared permission bits from the encryption dictionary. |
+| `permissions` | string list | Declared permissions, or full access for an unencrypted PDF. |
+| `signature_field_count` | integer | Logical signature fields, including unsigned fields and inherited field types, counted once per field rather than per widget. |
+| `last_signature_covers_file` | boolean | The latest declared signed revision's byte range ends at the original file length. |
+| `embedded_file_count` | integer | Reachable file specifications carrying an actual embedded stream, counted once across repeated references. |
+| `has_javascript` | boolean | Reachable JavaScript actions or a JavaScript name tree. |
+| `has_launch_actions` | boolean | Reachable Launch actions, including chained actions. |
+
+Coverage uses four nonnegative, ordered byte-range integers starting at zero
+and within the original file. The greatest endpoint selects the latest signed
+revision, independent of field order. Appended bytes make coverage false.
+Malformed signed values leave coverage unknown; unsigned fields provide no
+coverage value. Docbank doesn't validate certificates or cryptographic signatures.
+
+PDFs opening with the empty password can supply all these observations. A PDF
+requiring a password supplies `encrypted: true` and a `Password` warning;
+other facts remain unknown. Optional inspection failures omit the affected
+facts with warnings while retaining readable Info, XMP, and page evidence.
+Zero and false mean inspection completed. The existing 64 MiB source-metadata
+parser limit still applies. Actions are inspected as data and aren't executed.
+Strict processing inspection retains its encryption and external-reference refusals.
+
+The extractor version change queues existing originals for the daemon's usual
+metadata backfill. Re-extraction retains prior evidence generations and leaves
+the original bytes unchanged.
+
 ## Current format boundary
 
 Container facts are available for JPEG, PNG, WebP, GIF, and MP4 files within
