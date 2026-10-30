@@ -1729,6 +1729,7 @@ CREATE TABLE {{schema}}.photo_suggestions (
     suggestion_id        TEXT COLLATE "C" NOT NULL UNIQUE,
     content_version_id   TEXT COLLATE "C" NOT NULL,
     producer_fingerprint TEXT COLLATE "C" NOT NULL,
+    rotation             BIGINT,
     caption              TEXT COLLATE "C" NOT NULL DEFAULT '',
     tags_json            TEXT COLLATE "C" NOT NULL DEFAULT '[]',
     visible_text         TEXT COLLATE "C" NOT NULL DEFAULT '',
