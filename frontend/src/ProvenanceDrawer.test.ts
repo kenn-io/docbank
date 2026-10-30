@@ -125,3 +125,71 @@ it("offers the import ID for command-line imports", async () => {
     active.ingest_id,
   );
 });
+
+it.each(["text", "binary", false])(
+  "shows URL fetch evidence with optional headers: %s",
+  async (headers) => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          node,
+          items: [
+            {
+              ...active,
+              source_kind: "url",
+              original_path: "https://example.com/download?id=7",
+              url_fetch: {
+                version: 1,
+                requested_url: "https://example.com/download?id=7",
+                final_url: "https://example.com/filing.pdf",
+                fetched_at: "2026-10-01T12:34:56Z",
+                ...(headers
+                  ? {
+                      etag: btoa(headers === "binary" ? "\xff" : 'W/"edition-1"'),
+                      last_modified: btoa("server supplied text"),
+                    }
+                  : {}),
+              },
+            },
+          ],
+          total: 1,
+          limit: 1000,
+          offset: 0,
+        }),
+      ),
+    );
+    render(ProvenanceDrawer, {
+      session: "session",
+      node,
+      path: "/filing.pdf",
+      onclose: vi.fn(),
+      onauthfailure: vi.fn(),
+    });
+    expect(await screen.findByText("Added from URL")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Copy source path" }).textContent).toContain(
+      "https://example.com/download?id=7",
+    );
+    await fireEvent.click(screen.getByText("Import details"));
+    expect(screen.getByRole("button", { name: "Copy final URL" }).textContent).toContain(
+      "https://example.com/filing.pdf",
+    );
+    expect(
+      screen
+        .getByText("Added from URL")
+        .closest("li")
+        ?.querySelector("time")
+        ?.getAttribute("datetime"),
+    ).toBe("2026-10-01T12:34:56Z");
+    if (headers) {
+      expect(screen.getByRole("button", { name: "Copy ETag" }).textContent).toContain(
+        headers === "binary" ? "\\xff" : 'W/"edition-1"',
+      );
+      expect(screen.getByRole("button", { name: "Copy Last-Modified" }).textContent).toContain(
+        "server supplied text",
+      );
+    } else {
+      expect(screen.queryByText("ETag")).toBeNull();
+      expect(screen.queryByText("Last-Modified")).toBeNull();
+    }
+  },
+);

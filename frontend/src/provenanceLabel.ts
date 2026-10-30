@@ -1,6 +1,8 @@
 // What a provenance fact's source kind means to the person reading it.
 export function provenanceSourceLabel(kind: string): string {
   switch (kind) {
+    case "url":
+      return "Added from URL";
     case "cli":
       return "Added from command line";
     case "upload":
@@ -19,5 +21,15 @@ export function provenanceSourceLabel(kind: string): string {
       return "Imported photos";
     default:
       return "Imported document";
+  }
+}
+
+// JSON carries response headers as base64 to preserve their observed bytes.
+export function urlFetchHeader(value: string): string {
+  const bytes = Uint8Array.from(atob(value), (char) => char.charCodeAt(0));
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return Array.from(bytes, (byte) => "\\x" + byte.toString(16).padStart(2, "0")).join("");
   }
 }

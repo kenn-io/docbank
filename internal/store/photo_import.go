@@ -566,7 +566,7 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 				// Generic reuse matches by basename alone, so another folder's identical sidecar gets its own name.
 				options.exact = role == PhotoRoleSidecar
 				if !options.exact {
-					_, existingID, reuse, err := resolveIngestNameTx(tx, group.DestinationID, name, member.BlobHash, run.record.SourceKind)
+					_, existingID, reuse, err := resolveIngestNameTx(tx, group.DestinationID, name, member.BlobHash, run.record.SourceKind, member.OriginalPath)
 					if err != nil {
 						return err
 					}
@@ -574,7 +574,7 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 					options.exact = reuse && claimed[existingID]
 				}
 				if options.exact {
-					if name, _, _, err = resolveIngestNameTx(tx, group.DestinationID, name, "", run.record.SourceKind); err != nil {
+					if name, _, _, err = resolveIngestNameTx(tx, group.DestinationID, name, "", run.record.SourceKind, member.OriginalPath); err != nil {
 						return err
 					}
 				}

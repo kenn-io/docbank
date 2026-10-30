@@ -29,9 +29,10 @@ var (
 
 var addCmd = &cobra.Command{
 	Example: `  docbank add ./scans --dest /cases/acme
+  docbank add https://example.com/filing.pdf --dest /inbox
   docbank add ./mail --include '*.eml' --exclude drafts --preflight
   docbank add report.pdf --dest /cases/acme --replace --json`,
-	Long: `Copy local files or folders into the vault under --dest (default /inbox).
+	Long: `Copy local files, folders, or one URL into the vault under --dest (default /inbox).
 Missing destination directories are created. Re-adding the same content under
 the same name is skipped. Other name collisions add a suffixed sibling unless
 --replace adds a new version of the existing file instead.
@@ -42,9 +43,27 @@ Output: progress on stderr; --json prints
 Exit 1 if any file failed (each failure is listed).`,
 	GroupID: groupDocuments,
 	Use:     "add <path>...",
-	Short:   "Import files or directory trees into the vault",
+	Short:   "Import files, folders, or a URL into the vault",
 	Args:    cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) (retErr error) {
+		urlMode := false
+		for _, arg := range args {
+			urlMode = urlMode || isURLSource(arg)
+		}
+		if urlMode && (len(args) != 1 || len(addInclude) > 0 || len(addExclude) > 0 || addPreflight || addReplace) {
+			return usageError(errors.New("URL import requires one URL and cannot use filters, --preflight, or --replace"))
+		}
+		if urlMode {
+			mode, err := progressModeFromFlag("add", addProgress)
+			if err != nil {
+				return err
+			}
+			rep, err := addURL(cmd, args[0], mode)
+			if err != nil {
+				return err
+			}
+			return writeAddReport(cmd, rep, nil)
+		}
 		abs := make([]string, len(args))
 		for i, a := range args {
 			// Windows absolute-path resolution converts through UTF-16 and can
@@ -123,23 +142,29 @@ Exit 1 if any file failed (each failure is listed).`,
 		if len(rep.Failed) > 0 {
 			retErr = fmt.Errorf("%d file(s) failed to import", len(rep.Failed))
 		}
-		if addJSON {
-			enc := jsontext.NewEncoder(cmd.OutOrStdout(), jsontext.WithIndent("  "))
-			if err := json.MarshalEncode(enc, rep); err != nil && retErr == nil {
-				return fmt.Errorf("encoding ingest report: %w", err)
-			}
-		} else {
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "added: %d  skipped: %d  excluded: %d  failed: %d\n",
-				rep.Added, rep.Skipped, rep.Excluded, len(rep.Failed))
-			for _, f := range rep.Failed {
-				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "failed: %s: %s\n", f.Path, f.Error)
-			}
-		}
-		return retErr
+		return writeAddReport(cmd, rep, retErr)
 	},
 }
 
+func writeAddReport(cmd *cobra.Command, rep api.IngestReport, retErr error) error {
+	if addJSON {
+		enc := jsontext.NewEncoder(cmd.OutOrStdout(), jsontext.WithIndent("  "))
+		if err := json.MarshalEncode(enc, rep); err != nil && retErr == nil {
+			return fmt.Errorf("encoding ingest report: %w", err)
+		}
+	} else {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "added: %d  skipped: %d  excluded: %d  failed: %d\n",
+			rep.Added, rep.Skipped, rep.Excluded, len(rep.Failed))
+		for _, f := range rep.Failed {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "failed: %s: %s\n", f.Path, f.Error)
+		}
+	}
+	return retErr
+}
+
 func init() {
+	addCmd.Flags().BoolVar(&addAllowHTTP, "allow-http", false, "allow HTTP downloads and redirects")
+	addCmd.Flags().Int64Var(&addMaxBytes, "max-bytes", 100_000_000, "maximum URL download size in bytes")
 	addCmd.Flags().StringVar(&addDest, "dest", "/inbox", "virtual destination directory")
 	addCmd.Flags().StringArrayVar(&addInclude, "include", nil,
 		"include files matching a basename or source-relative path pattern (repeatable)")

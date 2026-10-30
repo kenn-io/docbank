@@ -11,6 +11,7 @@ import (
 	"net/textproto"
 	"net/url"
 	"strconv"
+	"strings"
 	"testing"
 	"uuid"
 
@@ -24,6 +25,7 @@ import (
 )
 
 type uploadRequest struct {
+	urlFetch     string
 	name         string
 	filename     string
 	content      []byte
@@ -58,6 +60,10 @@ func sendUpload(
 	require.NoError(t, writer.Close())
 
 	query := url.Values{"parent_id": {strconv.FormatInt(parentID, 10)}, "name": {in.name}}
+	if in.parentPath != "" {
+		query.Del("parent_id")
+		query.Set("parent_path", in.parentPath)
+	}
 	route := "/api/v1/uploads"
 	if in.pushName != "" {
 		route = "/api/v1/push/uploads"
@@ -76,6 +82,7 @@ func sendUpload(
 	req, err := http.NewRequest(http.MethodPost, tsURL+route+"?"+query.Encode(), &body)
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("X-Docbank-Url-Fetch", in.urlFetch)
 	req.Header.Set(api.BlobHashHeader, in.expectedHash)
 	req.Header.Set(api.BlobSizeHeader, strconv.FormatInt(in.expectedSize, 10))
 	resp, err := client.Do(req)
@@ -395,4 +402,100 @@ func TestPushRoutesRefuseTheNameOfAConfiguredWatch(t *testing.T) {
 	blobs, err := s.AllBlobs(t.Context())
 	require.NoError(t, err)
 	assert.Empty(t, blobs)
+}
+
+func TestUploadURLProvenanceIsAtomic(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	content := []byte("URL evidence")
+	fetch := `{"version":1,"requested_url":"https://example.com/download?q=1","final_url":"https://example.com/filing.txt","fetched_at":"2026-10-01T12:34:56.123Z","etag":"V/8=","last_modified":"c2VydmVyIHN1cHBsaWVkIHRleHQ="}`
+	in := uploadRequest{name: "filing.txt", content: content, expectedHash: uploadIdentity(content), expectedSize: int64(len(content)), urlFetch: fetch, parentPath: "/missing/nested"}
+	var before bytes.Buffer
+	require.NoError(t, s.ExportMetadata(t.Context(), &before))
+	for _, invalid := range []string{`{`, `{}`, strings.Repeat("x", 65537), strings.Replace(fetch, `"version":1`, `"version":2`, 1), strings.Replace(fetch, `"version":1`, `"version":1,"extra":true`, 1), strings.Replace(fetch, "https://example.com/download?q=1", "file:///tmp/input", 1), strings.Replace(fetch, "2026-10-01T12:34:56.123Z", "yesterday", 1)} {
+		rejected := in
+		rejected.urlFetch = invalid
+		resp, body := sendUpload(t, ts.URL, ts.Client(), s.RootID(), rejected)
+		require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+	}
+	in.extraPart = true
+	resp, body := sendUpload(t, ts.URL, ts.Client(), s.RootID(), in)
+	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+	in.extraPart = false
+	in.expectedHash = strings.Repeat("a", 64)
+	resp, body = sendUpload(t, ts.URL, ts.Client(), s.RootID(), in)
+	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+	var after bytes.Buffer
+	require.NoError(t, s.ExportMetadata(t.Context(), &after))
+	assert.Equal(t, before.String(), after.String())
+	in.expectedHash = uploadIdentity(content)
+	resp, body = sendUpload(t, ts.URL, ts.Client(), s.RootID(), in)
+	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
+	var receipt api.UploadReceipt
+	require.NoError(t, json.Unmarshal([]byte(body), &receipt))
+	page, err := s.NodeProvenance(t.Context(), receipt.Node.ID, 100, 0)
+	require.NoError(t, err)
+	require.Len(t, page.Items, 1)
+	assert.Equal(t, fetch, page.Items[0].SourceDescription)
+	after.Reset()
+	require.NoError(t, s.ExportMetadata(t.Context(), &after))
+	committed := after.String()
+	resp, body = sendUpload(t, ts.URL, ts.Client(), s.RootID(), in)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var skipped api.UploadReceipt
+	require.NoError(t, json.Unmarshal([]byte(body), &skipped))
+	assert.Equal(t, receipt.Node.ID, skipped.Node.ID)
+	assert.Equal(t, receipt.Node.Revision, skipped.Node.Revision)
+	after.Reset()
+	require.NoError(t, s.ExportMetadata(t.Context(), &after))
+	assert.Equal(t, committed, after.String())
+	for i, raw := range []string{strings.Replace(fetch, `"version":1`, `"version":2`, 1), strings.Replace(fetch, `"version":1`, `"version":1,"future":true`, 1)} {
+		run, err := s.BeginIngest(t.Context(), "url", raw)
+		require.NoError(t, err)
+		node, _, err := s.IngestFile(t.Context(), run, s.RootID(), fmt.Sprintf("future-%d.txt", i), in.expectedHash, in.expectedSize, "text/plain", fmt.Sprintf("https://example.com/future/%d", i), "")
+		require.NoError(t, err)
+		resp, body = get(t, ts, fmt.Sprintf("/api/v1/nodes/%d/provenance", node.ID), nil)
+		require.Equal(t, http.StatusOK, resp.StatusCode, body)
+		var unsupported api.ProvenancePage
+		require.NoError(t, json.Unmarshal([]byte(body), &unsupported))
+		require.Len(t, unsupported.Items, 1)
+		assert.Nil(t, unsupported.Items[0].URLFetch)
+		assert.Equal(t, raw, unsupported.Items[0].SourceDescription)
+		resp, body = get(t, ts, "/api/v1/collections", nil)
+		require.Equal(t, http.StatusOK, resp.StatusCode, body)
+		var collections api.CollectionPage
+		require.NoError(t, json.Unmarshal([]byte(body), &collections))
+		found := false
+		for _, collection := range collections.Items {
+			if collection.ID == run.ID() {
+				found = true
+				assert.Nil(t, collection.URLFetch)
+				assert.Equal(t, raw, collection.SourceDescription)
+			}
+		}
+		require.True(t, found)
+	}
+
+	in.content = []byte("new URL edition")
+	in.expectedHash = uploadIdentity(in.content)
+	in.expectedSize = int64(len(in.content))
+	resp, body = sendUpload(t, ts.URL, ts.Client(), s.RootID(), in)
+	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &receipt))
+	assert.Equal(t, "filing (2).txt", receipt.Node.Name)
+}
+
+func TestUploadRequiresOneDestination(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, nil)
+	for _, query := range []string{"parent_id=1&parent_path=/", "parent_path=relative", "parent_id=0", ""} {
+		req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/uploads?name=filing.txt&"+query, strings.NewReader(""))
+		require.NoError(t, err)
+		req.Header.Set(api.BlobHashHeader, uploadIdentity(nil))
+		req.Header.Set(api.BlobSizeHeader, "0")
+		resp, err := ts.Client().Do(req)
+		require.NoError(t, err)
+		_ = resp.Body.Close()
+		assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, query)
+	}
 }

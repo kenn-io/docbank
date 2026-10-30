@@ -2524,6 +2524,8 @@ components:
           format: int64
           minimum: 0
           type: integer
+        url_fetch:
+          $ref: "#/components/schemas/URLFetch"
       required:
         - id
         - source_kind
@@ -2765,6 +2767,8 @@ components:
           format: int64
           minimum: 0
           type: integer
+        url_fetch:
+          $ref: "#/components/schemas/URLFetch"
       required:
         - coverage
         - id
@@ -16635,6 +16639,8 @@ components:
         supersedes:
           pattern: ^[0-9a-f]{64}$
           type: string
+        url_fetch:
+          $ref: "#/components/schemas/URLFetch"
       required:
         - identity
         - node_id
@@ -20848,6 +20854,34 @@ components:
       required:
         - path
       type: object
+    URLFetch:
+      additionalProperties: false
+      properties:
+        etag:
+          contentEncoding: base64
+          type: string
+        fetched_at:
+          type: string
+        final_url:
+          type: string
+        last_modified:
+          contentEncoding: base64
+          type: string
+        requested_url:
+          type: string
+        version:
+          format: int64
+          type: integer
+      required:
+        - version
+        - requested_url
+        - final_url
+        - fetched_at
+      type: object
+      x-go-type: ingest.URLFetch
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/ingest
+        name: ingest
     UnassignTagPathRequest:
       additionalProperties: false
       properties:
@@ -31915,10 +31949,14 @@ paths:
       description: Streams exactly one multipart field named `file`. X-Docbank-Blob-Hash and X-Docbank-Blob-Size are required declarations for the file payload, not the multipart envelope. Success grants node/blob authority only after both match.
       operationId: uploadFile
       parameters:
+        - description: Absolute destination directory path; creates missing parents; exclusive with parent_id
+          in: query
+          name: parent_path
+          schema:
+            type: string
         - description: Stable destination directory node ID
           in: query
           name: parent_id
-          required: true
           schema:
             format: int64
             type: integer
@@ -31928,6 +31966,12 @@ paths:
           required: true
           schema:
             minLength: 1
+            type: string
+        - description: JSON URL fetch evidence
+          in: header
+          name: X-Docbank-URL-Fetch
+          schema:
+            maxLength: 65536
             type: string
         - description: Expected lowercase hexadecimal SHA-256 of the file payload
           in: header

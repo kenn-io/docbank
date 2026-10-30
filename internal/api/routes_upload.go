@@ -46,10 +46,12 @@ func registerUploadOpenAPI(api huma.API) {
 			"X-Docbank-Blob-Hash and X-Docbank-Blob-Size are required declarations for the file payload, " +
 			"not the multipart envelope. Success grants node/blob authority only after both match.",
 		Parameters: []*huma.Param{
-			{Name: "parent_id", In: openAPIQueryLocation, Required: true,
+			{Name: "parent_path", In: openAPIQueryLocation, Description: "Absolute destination directory path; creates missing parents; exclusive with parent_id", Schema: &huma.Schema{Type: openAPIStringType}},
+			{Name: "parent_id", In: openAPIQueryLocation,
 				Description: "Stable destination directory node ID", Schema: &huma.Schema{Type: "integer", Format: "int64"}},
 			{Name: "name", In: openAPIQueryLocation, Required: true,
 				Description: "Virtual filename; must equal the multipart filename", Schema: &huma.Schema{Type: openAPIStringType, MinLength: new(1)}},
+			{Name: "X-Docbank-URL-Fetch", In: "header", Description: "JSON URL fetch evidence", Schema: &huma.Schema{Type: openAPIStringType, MaxLength: new(65536)}},
 			{Name: BlobHashHeader, In: "header", Required: true,
 				Description: "Expected lowercase hexadecimal SHA-256 of the file payload",
 				Schema:      &huma.Schema{Type: openAPIStringType, Pattern: "^[0-9a-f]{64}$"}},
@@ -81,15 +83,32 @@ func handleUpload(w http.ResponseWriter, r *http.Request, d Deps, g *gate) {
 		writeError(w, identityErr)
 		return
 	}
+	var fetch *ingest.URLFetch
+	if raw := r.Header.Get("X-Docbank-Url-Fetch"); raw != "" {
+		if len(raw) <= 64<<10 {
+			fetch = ingest.ParseURLFetch("url", raw)
+		}
+		if fetch == nil {
+			writeError(w, NewError(http.StatusUnprocessableEntity, "validation", "invalid URL fetch evidence"))
+			return
+		}
+	}
 	var result ingest.UploadResult
 	received := receiveUpload(w, r, d, g, uploadPayload{
 		name: name, expectedSize: expectedSize,
 		prepare: func(ing *ingest.Ingester, mimeType string, content io.Reader) (*ingest.PreparedUpload, error) {
+			if parentID == 0 {
+				return ing.PrepareUploadPath(r.Context(), r.URL.Query().Get("parent_path"), name, mimeType, content, expectedHash, expectedSize)
+			}
 			return ing.PrepareUpload(r.Context(), parentID, name, mimeType, content, expectedHash, expectedSize)
 		},
 		commit: func(prepared *ingest.PreparedUpload) error {
 			var err error
-			result, err = prepared.Commit(r.Context())
+			if fetch != nil {
+				result, err = prepared.CommitURL(r.Context(), *fetch)
+			} else {
+				result, err = prepared.Commit(r.Context())
+			}
 			return err
 		},
 	})
@@ -195,7 +214,13 @@ func uploadMultipartReadError(err error, detail string) *Error {
 
 func parseUploadIdentity(r *http.Request) (int64, string, string, int64, *Error) {
 	parentID, err := strconv.ParseInt(r.URL.Query().Get("parent_id"), 10, 64)
-	if err != nil || parentID <= 0 {
+	if path := r.URL.Query().Get("parent_path"); path != "" {
+		if r.URL.Query().Get("parent_id") != "" || store.ValidatePushDestination(path) != nil {
+			return 0, "", "", 0, NewError(http.StatusUnprocessableEntity, "validation", "supply exactly one of parent_id or absolute parent_path")
+		}
+		parentID, err = 0, nil
+	}
+	if err != nil || (parentID <= 0 && r.URL.Query().Get("parent_path") == "") {
 		return 0, "", "", 0, NewError(http.StatusUnprocessableEntity, "validation",
 			"parent_id must be a positive node ID")
 	}

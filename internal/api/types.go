@@ -7,6 +7,7 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/backupapp"
+	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -537,6 +538,8 @@ type ProvenanceFact struct {
 	OriginalMTime     *string `json:"original_mtime,omitempty" format:"date-time"`
 	Supersedes        *string `json:"supersedes,omitempty" pattern:"^[0-9a-f]{64}$"`
 	Active            bool    `json:"active"`
+
+	URLFetch *ingest.URLFetch `json:"url_fetch,omitempty"`
 }
 
 // ProvenanceAppendRequest is the wire form of one post-ingest origin fact.
@@ -1475,6 +1478,7 @@ func fromStoreSourceMetadata(view store.SourceMetadataView, redactSensitive bool
 
 func fromStoreProvenanceFact(fact store.ProvenanceFact) ProvenanceFact {
 	return ProvenanceFact{
+		URLFetch: ingest.ParseURLFetch(fact.SourceKind, fact.SourceDescription),
 		Identity: fact.Identity, NodeID: fact.NodeID, IngestID: fact.IngestID,
 		IngestStartedAt: fact.IngestStartedAt, SourceKind: fact.SourceKind,
 		SourceDescription: fact.SourceDescription, OriginalPath: fact.OriginalPath,

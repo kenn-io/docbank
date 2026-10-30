@@ -290,12 +290,13 @@ func mutationCleanupResult(mutationErr, cleanupErr error) error {
 // validate the remainder of its transport envelope before Commit grants blob
 // and node authority.
 type PreparedUpload struct {
-	ing      *Ingester
-	parentID int64
-	push     *store.PushContent
-	name     string
-	mimeType string
-	result   UploadResult
+	ing           *Ingester
+	parentID      int64
+	directoryPlan *store.IngestDirectoryPlan
+	push          *store.PushContent
+	name          string
+	mimeType      string
+	result        UploadResult
 }
 
 // PrepareUpload streams one remote file through Kit's durable writer and
@@ -321,6 +322,20 @@ func (ing *Ingester) PrepareUpload(
 		return nil, err
 	}
 	prepared.parentID = parentID
+	return prepared, nil
+}
+
+// PrepareUploadPath verifies content with an authority-free destination plan.
+func (ing *Ingester) PrepareUploadPath(ctx context.Context, path, name, mimeType string, r io.Reader, expectedHash string, expectedSize int64) (*PreparedUpload, error) {
+	plan, err := ing.Store.PrepareIngestDirectory(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	prepared, err := ing.prepareContent(ctx, name, mimeType, r, expectedHash, expectedSize)
+	if err != nil {
+		return nil, err
+	}
+	prepared.directoryPlan = &plan
 	return prepared, nil
 }
 
@@ -376,17 +391,24 @@ func (ing *Ingester) prepareContent(
 
 // Commit grants application authority to a prepared upload and returns the
 // stable node for either a new import or an idempotent retry.
-func (p *PreparedUpload) Commit(ctx context.Context) (result UploadResult, retErr error) {
+func (p *PreparedUpload) Commit(ctx context.Context) (UploadResult, error) {
+	return p.commit(ctx, "upload", p.name, p.name)
+}
+
+func (p *PreparedUpload) commit(ctx context.Context, kind, description, origin string) (result UploadResult, retErr error) {
 	result = p.result
 	defer func() {
 		retErr = mutationCleanupResult(retErr, p.ing.cleanupLoose(result.ComputedHash))
 	}()
-	ingestID, err := p.ing.Store.BeginIngest(ctx, "upload", p.name)
+	ingestID, err := p.ing.Store.BeginIngest(ctx, kind, description)
 	if err != nil {
 		return result, err
 	}
-	result.Node, result.Added, err = p.ing.Store.IngestFile(ctx, ingestID, p.parentID,
-		p.name, result.ComputedHash, result.ComputedSize, p.mimeType, p.name, "", result.physical)
+	if p.directoryPlan != nil {
+		result.Node, result.Added, err = p.ing.Store.IngestFilePlanned(ctx, ingestID, *p.directoryPlan, p.name, result.ComputedHash, result.ComputedSize, p.mimeType, origin, "", result.physical)
+	} else {
+		result.Node, result.Added, err = p.ing.Store.IngestFile(ctx, ingestID, p.parentID, p.name, result.ComputedHash, result.ComputedSize, p.mimeType, origin, "", result.physical)
+	}
 	if err != nil {
 		return result, err
 	}

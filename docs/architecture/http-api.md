@@ -2059,8 +2059,7 @@ authority instead of silently dropping it.
 ## Addendum: `POST /uploads`
 
 `POST /uploads?parent_id=<id>&name=<filename>` accepts exactly one
-`multipart/form-data` file field named `file`. The query uses a stable
-destination directory ID rather than a mutable path. The multipart filename
+`multipart/form-data` file field named `file`. Supply exactly one destination selector: stable `parent_id` or absolute `parent_path`. Missing path directories publish in the document's content transaction after the complete upload is verified. A rejected upload leaves no destination directories or ingest record. The multipart filename
 must equal the normalized `name` query value, preventing the envelope and
 requested tree entry from describing different files.
 
@@ -2080,6 +2079,8 @@ version. Repeating the same name, hash, and parent converges to that stable
 node with `200` and `status: "skipped"`. The receipt always includes the
 server's `computed_hash`, `computed_size`, and the node's ID and revision.
 Clients compare the values themselves.
+
+URL imports may supply `X-Docbank-URL-Fetch`, a JSON descriptor capped at 64 KiB before decoding. Version 1 requires `version`, `requested_url`, `final_url`, and UTC `fetched_at`; optional `etag` and `last_modified` carry base64-encoded header bytes. Unsupported versions, unknown fields, and invalid descriptors are rejected before content preparation. The daemon consumes the supplied bytes and evidence; it does not fetch the URL. Content, missing directories, the ingest run, and its URL origin publish together after envelope verification. URL retries match the exact requested URL and equal current bytes within the destination, including after a rename. Distinct requested URLs retain separate documents even when their bytes match. A skip adds no ingest record or provenance. Readers expose supported evidence as `url_fetch` on provenance and collections, while retaining the raw source description for metadata export and unsupported stored formats.
 
 Uploads are file-granular. A caller sending many files issues independent
 requests (concurrently when useful), so one failure never makes the success of

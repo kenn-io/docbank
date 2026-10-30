@@ -428,3 +428,42 @@ it.each([
   );
   expect(await screen.findByText(description)).toBeTruthy();
 });
+
+it("shows a URL source in the row title and import details", async () => {
+  const source = {
+    ...collection,
+    source_kind: "url",
+    source_description: '{"version":1}',
+    url_fetch: {
+      version: 1,
+      requested_url: "https://example.com/filing.pdf?edition=1",
+      final_url: "https://example.com/filing.pdf",
+      fetched_at: "2026-10-01T12:34:56Z",
+    },
+  };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
+    String(input).includes("/members?")
+      ? json({ collection: source, items: [], total: 0, limit: 100, offset: 0 })
+      : String(input).endsWith("/label")
+        ? json(
+            {
+              ingest_id: source.id,
+              label: source.label,
+              revision: source.label_revision,
+              updated_at: source.label_updated_at,
+            },
+            '"3"',
+          )
+        : json({ items: [source], total: 1, limit: 100, offset: 0 }),
+  );
+  render(CollectionsDrawer, {
+    session: "session",
+    onclose: vi.fn(),
+    onauthfailure: vi.fn(),
+    onopenmember: vi.fn(),
+  });
+  const row = await screen.findByRole("button", { name: "Browse import Discovery batch" });
+  expect(row.getAttribute("title")).toBe(source.url_fetch.requested_url);
+  await fireEvent.click(row);
+  expect(await screen.findByText(source.url_fetch.requested_url)).toBeTruthy();
+});

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { provenanceSourceLabel } from "./provenanceLabel.js";
+  import { provenanceSourceLabel, urlFetchHeader } from "./provenanceLabel.js";
   import * as generated from "./generated/docbank.js";
   import { onMount } from "svelte";
   import { Chip, Spinner } from "@kenn-io/kit-ui";
@@ -82,18 +82,38 @@
     {:else}
       <ol aria-label="Imports">
         {#each page.items as fact (fact.identity)}
+          {@const recordedAt = fact.url_fetch?.fetched_at ?? fact.ingest_started_at}
           <li>
             <div class="import-heading">
               <strong>{provenanceSourceLabel(fact.source_kind)}</strong>
               {#if !fact.active}<Chip size="xs" tone="muted">Superseded</Chip>{/if}
             </div>
             <CopyValue value={fact.original_path} label="source path" />
-            <time datetime={fact.ingest_started_at} title={fact.ingest_started_at}
-              >{formatDate(fact.ingest_started_at)}</time
-            >
+            <time datetime={recordedAt} title={recordedAt}>{formatDate(recordedAt)}</time>
             <details>
               <summary>Import details</summary>
               <dl>
+                {#if fact.url_fetch}
+                  <div>
+                    <dt>Final URL</dt>
+                    <dd><CopyValue value={fact.url_fetch.final_url} label="final URL" /></dd>
+                  </div>
+                  {#if fact.url_fetch.etag}<div>
+                      <dt>ETag</dt>
+                      <dd>
+                        <CopyValue value={urlFetchHeader(fact.url_fetch.etag)} label="ETag" />
+                      </dd>
+                    </div>{/if}
+                  {#if fact.url_fetch.last_modified}<div>
+                      <dt>Last-Modified</dt>
+                      <dd>
+                        <CopyValue
+                          value={urlFetchHeader(fact.url_fetch.last_modified)}
+                          label="Last-Modified"
+                        />
+                      </dd>
+                    </div>{/if}
+                {/if}
                 <div>
                   <dt>Import ID</dt>
                   <dd><CopyValue value={fact.ingest_id} label="import ID" /></dd>
@@ -110,7 +130,7 @@
                   <dt>Source type</dt>
                   <dd>{fact.source_kind}</dd>
                 </div>
-                {#if fact.source_description !== fact.original_path}<div>
+                {#if !fact.url_fetch && fact.source_description !== fact.original_path}<div>
                     <dt>Source</dt>
                     <dd>{fact.source_description}</dd>
                   </div>{/if}
