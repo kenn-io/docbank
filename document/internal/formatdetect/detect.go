@@ -594,10 +594,6 @@ func readPDFMetadataObjectGraph(data []byte, limits PDFLimits) (*model.Context, 
 	if context.RootDict == nil {
 		return nil, errors.New("PDF catalog is missing")
 	}
-	form, hasForm := context.RootDict.Find("AcroForm")
-	if hasForm {
-		context.RootDict.Delete("AcroForm")
-	}
 	info := context.Info
 	context.Info = nil
 	metadata, hasMetadata := context.RootDict.Find("Metadata")
@@ -605,9 +601,6 @@ func readPDFMetadataObjectGraph(data []byte, limits PDFLimits) (*model.Context, 
 		context.RootDict.Delete("Metadata")
 	}
 	err = api.ValidateContext(context)
-	if hasForm {
-		context.RootDict.Insert("AcroForm", form)
-	}
 	context.Info = info
 	if hasMetadata {
 		context.RootDict.Insert("Metadata", metadata)
@@ -786,6 +779,10 @@ var pdfFileSpecPathKeys = []string{"F", "UF", "DOS", "Mac", "Unix"}
 // name over a single stream. Requiring each path key to have its own stream
 // rejects that document, and the file is embedded either way.
 func pdfCarriesEmbeddedFile(context *model.Context, dictionary types.Dict) (bool, error) {
+	return pdfVisitEmbeddedFileStreams(context, dictionary, nil)
+}
+
+func pdfVisitEmbeddedFileStreams(context *model.Context, dictionary types.Dict, visit func(types.Object)) (bool, error) {
 	object, ok := dictionary["EF"]
 	if !ok {
 		return false, nil
@@ -798,6 +795,7 @@ func pdfCarriesEmbeddedFile(context *model.Context, dictionary types.Dict) (bool
 	if !ok {
 		return false, nil
 	}
+	found := false
 	for _, key := range pdfFileSpecPathKeys {
 		entry, ok := streams[key]
 		if !ok {
@@ -809,10 +807,14 @@ func pdfCarriesEmbeddedFile(context *model.Context, dictionary types.Dict) (bool
 		}
 		switch value.(type) {
 		case types.StreamDict, *types.StreamDict:
-			return true, nil
+			if visit == nil {
+				return true, nil
+			}
+			visit(entry)
+			found = true
 		}
 	}
-	return false, nil
+	return found, nil
 }
 
 func pdfDictHasStringEntry(

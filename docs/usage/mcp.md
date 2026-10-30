@@ -332,6 +332,28 @@ sanitized JSON-RPC internal error. Stderr records the operation and a fixed
 error category for diagnosis. Neither path includes host paths, SQL, provider
 secrets, daemon keys, or unrequested document text.
 
+### PDF facts
+
+`get_document` includes `pdf_facts` for the requested content version when its
+PDF evidence is available. It contains only these optional fields:
+
+| Field | Meaning |
+| --- | --- |
+| `encrypted` | Whether the original declares PDF encryption. |
+| `permissions` | Declared operation labels for the encryption revision; `None` means no grants. Omitted for unencrypted PDFs. |
+| `signature_field_count` | Logical signature fields, including unsigned fields and inherited field types. |
+| `last_signature_covers_file` | Whether the latest declared signature range ends at the original file length. Appended bytes make it false. |
+| `embedded_file_count` | Distinct embedded stream references; aliases count once, and separate streams with equal bytes count separately. |
+| `has_javascript` | A reachable JavaScript action declares a script. |
+| `has_launch_actions` | A reachable Launch action declares a target. |
+
+Action evidence includes additional actions, name-tree values, annotations,
+and chained actions. Structure roles named like actions provide no action evidence.
+A password-locked PDF supplies `encrypted: true`; unavailable observations are
+omitted. Unsigned fields and unusable byte ranges omit signature coverage.
+Missing fields mean unknown, and absent PDF evidence omits `pdf_facts` entirely.
+Coverage describes byte ranges, without verifying certificates or signatures.
+
 ## Resources and rendition windows
 
 `resources/list` is intentionally empty. `list_documents`,

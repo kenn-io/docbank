@@ -66,12 +66,16 @@ version, including saved results whose live document has changed.
 | Key under `pdf.info.` | Type | Meaning |
 | --- | --- | --- |
 | `encrypted` | boolean | The original has PDF encryption. |
-| `permissions` | string list | Allowed operations: Print, Modify, Copy text and graphics, Annotate, Fill forms, Extract for accessibility, Assemble, and Print in high quality. None means no declared operations; Full access means an unencrypted PDF. |
+| `permissions` | string list | Declared operations for the encryption revision: Print, Modify, Copy text and graphics, Annotate and fill forms, Fill forms, Extract for accessibility, Assemble, and Print in high quality. None means no declared operations. Unencrypted PDFs omit this field. |
 | `signature_field_count` | integer | Logical signature fields, including unsigned fields and inherited field types, counted once per field rather than per widget. |
 | `last_signature_covers_file` | boolean | The latest declared signed revision's byte range ends at the original file length. |
-| `embedded_file_count` | integer | Reachable file specifications carrying an actual embedded stream, counted once across repeated references. |
-| `has_javascript` | boolean | Reachable JavaScript actions or a JavaScript name tree. |
-| `has_launch_actions` | boolean | Reachable Launch actions, including chained actions. |
+| `embedded_file_count` | integer | Distinct embedded stream references under reachable file specifications; repeated references count once, while distinct streams with equal bytes count separately. |
+| `has_javascript` | boolean | Reachable declared JavaScript actions with a script, including JavaScript name-tree entries. |
+| `has_launch_actions` | boolean | Reachable declared Launch actions with a target, including chained actions. |
+
+Action dictionaries may omit `Type` or declare `Type: Action`; structure roles
+with action-like names provide no action evidence. Revision-2 permissions use
+only their defined operation bits; later grants require revision 3 or above.
 
 Coverage uses four nonnegative, ordered byte-range integers starting at zero
 and within the original file. The greatest endpoint selects the latest signed

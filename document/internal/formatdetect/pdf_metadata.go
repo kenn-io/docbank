@@ -21,29 +21,36 @@ type PDFFacts struct {
 }
 
 func readPDFFacts(ctx *model.Context, size int64, metadata *PDFMetadata) {
-	facts := PDFFacts{Encrypted: new(ctx.Encrypt != nil), Permissions: []string{"Full access"}}
+	facts := PDFFacts{Encrypted: new(ctx.Encrypt != nil)}
 	if ctx.E != nil {
-		facts.Permissions = pdfPermissionNames(ctx.E.P)
+		facts.Permissions = pdfPermissionNames(ctx.E.R, ctx.E.P)
 	}
-	var embedded int64
+	embedded := map[int]bool{}
 	var javascript, launch bool
 	_, err := pdfWalkDicts(ctx, func(dictionary types.Dict) (bool, error) {
 		action, err := pdfDictName(ctx, dictionary, "S")
 		if err != nil {
 			return false, err
 		}
-		javascript = javascript || action == "JavaScript"
-		launch = launch || action == "Launch"
-		carries, err := pdfCarriesEmbeddedFile(ctx, dictionary)
-		if carries {
-			embedded++
+		dictionaryType, err := pdfDictName(ctx, dictionary, "Type")
+		if err != nil {
+			return false, err
 		}
+		if !dictionary.HasEntry("Type") || dictionaryType == "Action" {
+			javascript = javascript || action == "JavaScript" && dictionary["JS"] != nil
+			launch = launch || action == "Launch" && (dictionary["F"] != nil || dictionary["Win"] != nil || dictionary["Mac"] != nil || dictionary["Unix"] != nil)
+		}
+		_, err = pdfVisitEmbeddedFileStreams(ctx, dictionary, func(object types.Object) {
+			if ref, ok := object.(types.IndirectRef); ok {
+				embedded[ref.ObjectNumber.Value()] = true
+			}
+		})
 		return false, err
 	})
 	if err != nil {
 		metadata.Issues = append(metadata.Issues, PDFMetadataIssue{SourceField: "Evidence"})
 	} else {
-		facts.EmbeddedFileCount, facts.HasJavaScript, facts.HasLaunchActions = new(embedded), new(javascript), new(launch)
+		facts.EmbeddedFileCount, facts.HasJavaScript, facts.HasLaunchActions = new(int64(len(embedded))), new(javascript), new(launch)
 	}
 	count, endpoint, malformed, err := pdfSignatureFacts(ctx, size)
 	if err != nil {
@@ -115,7 +122,7 @@ func pdfSignatureFacts(ctx *model.Context, size int64) (count, endpoint int64, m
 			if err != nil {
 				return fmt.Errorf("inspect PDF evidence: %w", err)
 			}
-			if subtype == "Widget" && !dict.HasEntry("T") && !dict.HasEntry("FT") {
+			if subtype == "Widget" && !dict.HasEntry("T") && !dict.HasEntry("FT") && !dict.HasEntry("V") {
 				continue
 			}
 			hasFields = true
@@ -176,17 +183,17 @@ func pdfSignatureEndpoint(ctx *model.Context, object types.Object, size int64) (
 	return numbers[2] + numbers[3], nil
 }
 
-func pdfPermissionNames(bits int) []string {
+func pdfPermissionNames(revision, bits int) []string {
 	var names []string
 	for _, permission := range []struct {
 		flag model.PermissionFlags
 		name string
 	}{
 		{model.PermissionPrintRev2, "Print"}, {model.PermissionModify, "Modify"}, {model.PermissionExtract, "Copy text and graphics"},
-		{model.PermissionModAnnFillForm, "Annotate"}, {model.PermissionFillRev3, "Fill forms"}, {model.PermissionExtractRev3, "Extract for accessibility"},
+		{model.PermissionModAnnFillForm, "Annotate and fill forms"}, {model.PermissionFillRev3, "Fill forms"}, {model.PermissionExtractRev3, "Extract for accessibility"},
 		{model.PermissionAssembleRev3, "Assemble"}, {model.PermissionPrintRev3, "Print in high quality"},
 	} {
-		if model.PermissionFlags(bits)&permission.flag != 0 {
+		if (revision >= 3 || permission.flag <= model.PermissionModAnnFillForm) && model.PermissionFlags(bits)&permission.flag != 0 {
 			names = append(names, permission.name)
 		}
 	}

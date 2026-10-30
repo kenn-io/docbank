@@ -114,8 +114,25 @@ func PDFWithActionsAndAttachment() []byte {
 		"<< /Type /Catalog /Pages 2 0 R /Names << /EmbeddedFiles << /Names [(note.txt) 4 0 R] >> /JavaScript << /Names [(script) 6 0 R] >> >> /AF [4 0 R] /OpenAction 6 0 R >>",
 		"<< /Type /Pages /Count 1 /Kids [3 0 R] >>", "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Annots [8 0 R] >>",
 		"<< /Type /Filespec /F (note.txt) /EF << /F 5 0 R >> >>", "<< /Type /EmbeddedFile /Length 4 >>\nstream\nnote\nendstream",
-		"<< /S /JavaScript /JS (void 0) /Next 7 0 R >>", "<< /S /Launch /F (example.txt) >>", "<< /Type /Annot /Subtype /FileAttachment /Rect [0 0 10 10] /FS 4 0 R >>",
+		"<< /Type /Action /S /JavaScript /JS (void 0) /Next [7 0 R] >>", "<< /S /Launch /F (example.txt) >>", "<< /Type /Annot /Subtype /FileAttachment /Rect [0 0 10 10] /FS 4 0 R >>",
 	})
+}
+
+// PDFInlineAttachments references one stream through two inline file specifications.
+func PDFInlineAttachments() []byte {
+	return PDFObjects("synthetic inline attachments", []string{
+		"<< /Type /Catalog /Pages 2 0 R /Names << /EmbeddedFiles << /Names [(note.txt) << /Type /Filespec /F (note.txt) /EF << /F 4 0 R >> >>] >> >> /AF [<< /Type /Filespec /F (note.txt) /EF << /F 4 0 R >> >>] >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>", "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >>", "<< /Type /EmbeddedFile /Length 4 >>\nstream\nnote\nendstream"})
+}
+
+// PDFStructureRole uses an action name as a tagged-document structure role.
+func PDFStructureRole() []byte {
+	return PDFObjects("synthetic tagged PDF", []string{
+		"<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 4 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>", "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >>", "<< /Type /StructTreeRoot /K [5 0 R] /RoleMap << /Launch /P >> >>", "<< /Type /StructElem /S /Launch /P 4 0 R /Pg 3 0 R /K 0 >>"})
+}
+
+// PDFUnnamedSignatureWidget carries its signature value in an unnamed child widget.
+func PDFUnnamedSignatureWidget() []byte {
+	return PDFSignatureFields("[5 0 R]", "<< /FT /Sig /T (Parent) /Kids [6 0 R 7 0 R] >>", "<< /Subtype /Widget /Rect [0 0 1 1] /Parent 5 0 R /V << /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached /Contents <00> /ByteRange [0 10 20 LENGTH] >> >>", "<< /Subtype /Widget /Rect [0 0 1 1] /Parent 5 0 R >>")
 }
 
 // GIF returns a GIF with the given number of frames. Frames alternate between
@@ -384,8 +401,14 @@ func EncryptedPDF(userPW, ownerPW string, keyBits int) ([]byte, error) {
 }
 
 // EncryptPDF encrypts the supplied synthetic PDF.
-func EncryptPDF(data []byte, userPW, ownerPW string, keyBits int) ([]byte, error) {
+func EncryptPDF(data []byte, userPW, ownerPW string, keyBits int, permissions ...model.PermissionFlags) ([]byte, error) {
 	configuration := model.NewAESConfiguration(userPW, ownerPW, keyBits)
+	if keyBits == 40 {
+		configuration = model.NewRC4Configuration(userPW, ownerPW, keyBits)
+	}
+	if len(permissions) > 0 {
+		configuration.Permissions = permissions[0]
+	}
 	var output bytes.Buffer
 	if err := api.Encrypt(bytes.NewReader(data), &output, configuration); err != nil {
 		return nil, fmt.Errorf("encrypt synthetic PDF: %w", err)

@@ -289,6 +289,9 @@ it("shows PDF facts for the selected version and discards a late previous respon
   expect(screen.getByRole("region", { name: "PDF facts" }).textContent).toContain(
     "Signature fields",
   );
+  expect(screen.getByRole("region", { name: "PDF facts" }).textContent).not.toContain(
+    "Permissions",
+  );
   expect(request.mock.calls[1]?.[0]).toBe("version-b");
   expect(request.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
   finish({ id: "version-a", node_id: 42, blob_hash: "a".repeat(64) } as ContentVersion);

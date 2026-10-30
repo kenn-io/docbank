@@ -130,10 +130,14 @@
   }
   const pdfRows = $derived([
     { label: "Encrypted", value: pdfBoolean("encrypted") },
-    {
-      label: "Permissions",
-      value: pdfValues.get("pdf.info.permissions")?.strings?.join(", ") ?? "Unknown",
-    },
+    ...(pdfValues.get("pdf.info.encrypted")?.boolean
+      ? [
+          {
+            label: "Permissions",
+            value: pdfValues.get("pdf.info.permissions")?.strings?.join(", ") ?? "Unknown",
+          },
+        ]
+      : []),
     {
       label: "Signature fields",
       value: String(pdfValues.get("pdf.info.signature_field_count")?.integer ?? "Unknown"),
