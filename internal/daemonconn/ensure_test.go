@@ -268,10 +268,8 @@ func TestEnsureReplacesIncompatibleDaemon(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	rec.Address = strings.TrimPrefix(server.URL, "http://")
-	protocolVersion, err := strconv.Atoi(daemonProtocolVersion)
-	require.NoError(t, err)
-	rec.Metadata[metaProtocolVersion] = strconv.Itoa(protocolVersion - 1)
-	_, err = RuntimeStore(root).Write(rec)
+	rec.Metadata[metaProtocolVersion] = "99" // Before the v22 metadata qualification.
+	_, err := RuntimeStore(root).Write(rec)
 	require.NoError(t, err)
 	result, err := ensureDaemon(t.Context(), root,
 		func(_ context.Context, _ string) (kitdaemon.RuntimeRecord, error) {

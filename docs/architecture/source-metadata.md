@@ -95,7 +95,9 @@ leave coverage unknown, with a warning; unsigned fields provide no coverage valu
 Readable encrypted PDFs and PDFs with external references also supply Info
 and XMP evidence. PDFs opening with the empty password can supply all these observations. A PDF
 requiring a password supplies `encrypted: true` and a `Password` warning;
-other facts remain unknown. Optional inspection failures omit the affected
+other facts remain unknown. Unsupported encryption supplies `encrypted: true`
+and an `Encryption` warning, with the other facts unknown.
+Optional inspection failures omit the affected
 facts with warnings while retaining readable Info, XMP, and page evidence.
 Zero and false mean inspection completed. The existing 64 MiB source-metadata
 parser limit still applies. Actions are inspected as data and aren't executed.

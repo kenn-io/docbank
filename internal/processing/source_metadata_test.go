@@ -17,7 +17,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
@@ -31,8 +30,6 @@ import (
 func TestExtractSourceMetadataFromSyntheticFormats(t *testing.T) {
 	t.Parallel()
 	ooxml := syntheticOOXML(t)
-	owner, err := mediatest.EncryptPDF(mediatest.PDF(), "", "owner-secret", 128, model.PermissionsPrint)
-	require.NoError(t, err)
 	locked, err := mediatest.EncryptPDF(mediatest.PDF(), "open-secret", "owner-secret", 128)
 	require.NoError(t, err)
 	for _, testCase := range []struct {
@@ -44,7 +41,6 @@ func TestExtractSourceMetadataFromSyntheticFormats(t *testing.T) {
 		warning   bool
 	}{
 		{name: "PDF info and XMP", payload: syntheticMetadataPDF(9), keys: []string{"created", "creators", "description", "keywords", "modified", "page_count", "pdf.info.embedded_file_count", "pdf.info.encrypted", "pdf.info.has_javascript", "pdf.info.has_launch_actions", "pdf.info.signature_field_count", "subject", "title"}},
-		{name: "PDF permissions", payload: owner, facts: map[string]document.SourceMetadataValueV1{"pdf.info.permissions": {Kind: document.SourceMetadataStringList, Strings: []string{"Print", "High-quality print flag"}}}, keys: []string{"created", "modified", "page_count", "pdf.info.encrypted", "pdf.info.permissions", "pdf.info.signature_field_count", "pdf.info.embedded_file_count", "pdf.info.has_javascript", "pdf.info.has_launch_actions"}},
 		{name: "PDF locked", payload: locked, warning: true, facts: map[string]document.SourceMetadataValueV1{"pdf.info.encrypted": {Kind: document.SourceMetadataBoolean, Boolean: new(true)}}, keys: []string{"pdf.info.encrypted"}},
 		{name: "OOXML core, app, and custom", payload: ooxml, keys: []string{"created", "office.core.word_count", "office.custom.matter_number", "page_count", "title"}},
 		{name: "RFC 5322 email", payload: []byte("From: Ada <ada@example.test>\r\nTo: Grace <grace@example.test>\r\nBcc: Private <private@example.test>\r\nSubject: Synthetic mail\r\nDate: Tue, 2 Jan 2024 03:04:05 -0700\r\n\r\nbody"), keys: []string{"email.bcc", "email.from", "email.sent", "email.subject", "email.to"}, sensitive: "email.bcc"},

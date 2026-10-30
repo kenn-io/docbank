@@ -533,6 +533,9 @@ func ReadPDFMetadata(data []byte) (PDFMetadata, error) {
 		if errors.Is(err, pdfcpu.ErrWrongPassword) {
 			return PDFMetadata{Facts: PDFFacts{Encrypted: new(true)}, Issues: []PDFMetadataIssue{{SourceField: "Password"}}}, nil
 		}
+		if errors.Is(err, pdfcpu.ErrUnsupportedEncryptionFeature) {
+			return PDFMetadata{Facts: PDFFacts{Encrypted: new(true)}, Issues: []PDFMetadataIssue{{SourceField: "Encryption"}}}, nil
+		}
 		return PDFMetadata{}, err
 	}
 	if context.PageCount <= 0 {

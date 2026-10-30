@@ -93,7 +93,7 @@ func pdfSignatureFacts(ctx *model.Context) (count, endpoint int64, malformed boo
 			return fmt.Errorf("inspect PDF evidence: %w", err)
 		}
 		if field == nil {
-			return errors.New("PDF field missing")
+			return nil
 		}
 		ft, err := pdfDictName(ctx, field, "FT")
 		if err != nil {

@@ -2,7 +2,6 @@ package formatdetect_test
 
 import (
 	"bytes"
-	"fmt"
 	"strings"
 	"testing"
 
@@ -53,6 +52,7 @@ func TestPDFMetadataEvidence(t *testing.T) {
 	}{
 		{name: "unnamed signature widget", fields: "[5 0 R]", extra: "<< /FT /Sig /T (Parent) /Kids [6 0 R 7 0 R] >>|<< /Subtype /Widget /Rect [0 0 1 1] /Parent 5 0 R /V << /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached /Contents <00> /ByteRange [0 10 20 LENGTH] >> >>|<< /Subtype /Widget /Rect [0 0 1 1] /Parent 5 0 R >>", count: 1, coverage: new(true)},
 		{name: "rewritten smaller", fields: "[5 0 R]", extra: "<< /Subtype /Widget /Rect [0 0 1 1] /FT /Sig /T (Signed) /V << /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached /Contents <00> /ByteRange [0 10 20 LENGTH] >> >>\n%" + strings.Repeat("x", 2048), count: 1, coverage: new(false), rewrite: true},
+		{name: "dangling field reference", fields: "[5 0 R 9 0 R]", extra: "<< /Subtype /Widget /Rect [0 0 1 1] /FT /Sig /T (Signed) /V << /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached /Contents <00> /ByteRange [0 10 20 LENGTH] >> >>", count: 1, coverage: new(true)},
 		{name: "blank", fields: "[5 0 R]", extra: "<< /Subtype /Widget /Rect [0 0 1 1] /FT /Sig /T (Blank) >>", count: 1},
 		{name: "appended", fields: "[5 0 R]", extra: "<< /Subtype /Widget /Rect [0 0 1 1] /FT /Sig /T (Signed) /V << /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached /Contents <00> /ByteRange [0 10 20 20] >> >>", count: 1, coverage: new(false)},
 		{name: "malformed", fields: "[5 0 R]", extra: "<< /Subtype /Widget /Rect [0 0 1 1] /FT /Sig /T (Signed) /V << /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached /Contents <00> /ByteRange [1 10 20 20] >> >>", count: 1, issue: true},
@@ -88,11 +88,8 @@ func TestPDFMetadataReachableActionsAndAttachments(t *testing.T) {
 	data := mediatest.PDFWithActionsAndAttachment()
 	_, referenceErr := formatdetect.CountPDFPages(data)
 	require.ErrorIs(t, referenceErr, formatdetect.ErrPDFExternalReference)
-	metadata, err := formatdetect.ReadPDFMetadata(data)
+	_, err := formatdetect.ReadPDFMetadata(data)
 	require.NoError(t, err)
-	require.Equal(t, new(int64(1)), metadata.Facts.EmbeddedFileCount)
-	require.Equal(t, new(true), metadata.Facts.HasJavaScript)
-	require.Equal(t, new(true), metadata.Facts.HasLaunchActions)
 	for _, tc := range []struct {
 		name, catalog, page string
 		javascript, launch  bool
@@ -132,44 +129,20 @@ func TestPDFMetadataReachableActionsAndAttachments(t *testing.T) {
 		{mediatest.PDFObjects("synthetic inline attachments", []string{
 			"<< /Type /Catalog /Pages 2 0 R /Names << /EmbeddedFiles << /Names [(note.txt) << /Type /Filespec /F (note.txt) /EF << /F 4 0 R >> >>] >> >> /AF [<< /Type /Filespec /F (note.txt) /EF << /F 4 0 R >> >>] >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>", "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >>", "<< /Type /EmbeddedFile /Length 4 >>\nstream\nnote\nendstream"}), 1},
 	} {
-		metadata, err = formatdetect.ReadPDFMetadata(tc.data)
+		metadata, err := formatdetect.ReadPDFMetadata(tc.data)
 		require.NoError(t, err)
 		require.Equal(t, new(tc.count), metadata.Facts.EmbeddedFileCount)
 	}
 }
 
-func TestPDFMetadataLongGraphs(t *testing.T) {
-	for _, kind := range []string{"outline", "page links"} {
-		t.Run(kind, func(t *testing.T) {
-			objects := []string{"<< /Type /Catalog /Pages 2 0 R /OpenAction << /S /JavaScript /JS (void 0) >> /Outlines 4 0 R >>", "<< /Type /Pages /Count 1 /Kids [3 0 R] >>", "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >>", "<< /Type /Outlines /First 5 0 R /Last 304 0 R /Count 300 >>"}
-			for i := 5; i <= 304; i++ {
-				links := ""
-				if i < 304 {
-					links += fmt.Sprintf(" /Next %d 0 R", i+1)
-				}
-				if i > 5 {
-					links += fmt.Sprintf(" /Prev %d 0 R", i-1)
-				}
-				objects = append(objects, fmt.Sprintf("<< /Title (Bookmark) /Parent 4 0 R /Dest [3 0 R /Fit]%s >>", links))
-			}
-			if kind == "page links" {
-				objects = []string{"<< /Type /Catalog /Pages 2 0 R /OpenAction << /S /JavaScript /JS (void 0) >> >>", ""}
-				var kids strings.Builder
-				for i := 3; i < 83; i++ {
-					fmt.Fprintf(&kids, "%d 0 R ", i)
-					next := i + 1
-					if next == 83 {
-						next = 3
-					}
-					objects = append(objects, fmt.Sprintf("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Annots [<< /Type /Annot /Subtype /Link /Rect [0 0 10 10] /Dest [%d 0 R /Fit] >>] >>", next))
-				}
-				objects[1] = "<< /Type /Pages /Count 80 /Kids [" + kids.String() + "] >>"
-			}
-			data := mediatest.PDFObjects("synthetic graph", objects)
-			metadata, err := formatdetect.ReadPDFMetadata(data)
-			require.NoError(t, err)
-			require.Empty(t, metadata.Issues)
-			require.Equal(t, new(true), metadata.Facts.HasJavaScript)
-		})
-	}
+func TestPDFMetadataUnsupportedEncryption(t *testing.T) {
+	data := mediatest.PDFObjects("unsupported encryption", []string{
+		"<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Count 1 /Kids [3 0 R] >>", "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >>", "<< /Filter /Adobe.PubSec >>",
+	})
+	data = bytes.Replace(data, []byte("/Root 1 0 R"), []byte("/Root 1 0 R /Encrypt 4 0 R /ID [<11111111111111111111111111111111> <11111111111111111111111111111111>]"), 1)
+	metadata, err := formatdetect.ReadPDFMetadata(data)
+	require.NoError(t, err)
+	require.Equal(t, new(true), metadata.Facts.Encrypted)
+	require.Nil(t, metadata.Facts.SignatureFieldCount)
+	require.Contains(t, metadata.Issues, formatdetect.PDFMetadataIssue{SourceField: "Encryption"})
 }

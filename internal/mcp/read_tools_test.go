@@ -650,7 +650,7 @@ func newReadToolDaemon(t *testing.T) *httptest.Server {
 			writeDaemonJSON(t, response, api.DocumentPage{SourcePresent: request.URL.Query().Get("source_present") == "true",
 				PathPrefix: pathPrefix, Sort: "path", Direction: "asc", PageSize: 1,
 				Items: []api.DocumentSummary{{NodeID: 7, ContentVersionID: testVersionID,
-					Path: "/synthetic.md", Name: "synthetic.md", MediaType: "text/markdown", Size: 12,
+					Path: "/synthetic.pdf", Name: "synthetic.pdf", MediaType: "application/pdf", Size: 12,
 					ModifiedAt: "2026-08-28T00:00:00Z", ActiveRenditions: []api.DocumentRenditionIdentity{{
 						ProfileFingerprint: testProfileID, AttachmentID: testAttachmentID, BuildID: testBuildID,
 					}}}}, NextCursor: "next.token"})
@@ -663,27 +663,27 @@ func newReadToolDaemon(t *testing.T) *httptest.Server {
 				return
 			}
 			if !assert.Equal(t, api.DocumentIdentity{NodeID: 7, ContentVersionID: testVersionID,
-				Path: "/synthetic.md"}, input.Identities[0]) {
+				Path: "/synthetic.pdf"}, input.Identities[0]) {
 				return
 			}
 			writeDaemonJSON(t, response, api.DocumentSummaryResolveResponse{Items: []api.DocumentSummary{{
-				NodeID: 7, ContentVersionID: testVersionID, Path: "/synthetic.md", Name: "synthetic.md",
-				MediaType: "text/markdown", Size: 12, ModifiedAt: "2026-08-28T00:00:00Z",
+				NodeID: 7, ContentVersionID: testVersionID, Path: "/synthetic.pdf", Name: "synthetic.pdf",
+				MediaType: "application/pdf", Size: 12, ModifiedAt: "2026-08-28T00:00:00Z",
 				ActiveRenditions: []api.DocumentRenditionIdentity{{ProfileFingerprint: testProfileID,
 					AttachmentID: testAttachmentID, BuildID: testBuildID}},
 			}}})
 		case "/api/v1/nodes/7":
-			writeDaemonJSON(t, response, api.Node{ID: 7, Name: "synthetic.md", Kind: "file",
+			writeDaemonJSON(t, response, api.Node{ID: 7, Name: "synthetic.pdf", Kind: "file",
 				SourceMetadata: &api.SourceMetadata{Fields: []document.SourceMetadataFieldV1{
 					{Key: "pdf.info.encrypted", Namespace: "pdf.info", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataBoolean, Boolean: new(false)}},
 					{Key: "pdf.info.signature_field_count", Namespace: "pdf.info", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataInteger, Integer: new(int64(2))}},
 				}},
-				CurrentVersionID: testVersionID, Size: 12, MimeType: "text/markdown",
-				ModifiedAt: "2026-08-28T00:00:00Z", Path: "/synthetic.md"})
+				CurrentVersionID: testVersionID, Size: 12, MimeType: "application/pdf",
+				ModifiedAt: "2026-08-28T00:00:00Z", Path: "/synthetic.pdf"})
 		case "/api/v1/nodes/7/versions":
 			writeDaemonJSON(t, response, api.ContentVersionPage{Items: []api.ContentVersion{{ID: testVersionID,
 				NodeID: 7, BlobHash: strings.Repeat("a", 64), Size: 12,
-				MimeType: "text/markdown", RecordedAt: "2026-08-28T00:00:00Z"}},
+				MimeType: "application/pdf", RecordedAt: "2026-08-28T00:00:00Z"}},
 				Total: 1, Limit: 1, Offset: 0})
 		case "/api/v1/processing/source-fences/resolve":
 			var input api.DocumentSourceFenceResolveRequest
@@ -705,7 +705,7 @@ func newReadToolDaemon(t *testing.T) *httptest.Server {
 				Coverage:     api.DocumentSearchCoverage{ScopedDocuments: 1, CompleteDocuments: 1, State: "complete"},
 				Degradations: []string{"embedding_unavailable"}, Results: []api.DocumentSearchResult{{
 					VaultUID: testVaultID, NodeID: 7, ContentVersionID: testVersionID,
-					Rank: 1, Score: 1, Path: "/synthetic.md", Excerpt: "synthetic", LexicalRank: 1,
+					Rank: 1, Score: 1, Path: "/synthetic.pdf", Excerpt: "synthetic", LexicalRank: 1,
 					Evidence: []api.DocumentEvidenceReference{{Kind: "node_name"}},
 				}}})
 		case "/api/v1/renditions/windows":
