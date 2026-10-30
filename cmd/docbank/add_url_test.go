@@ -32,7 +32,7 @@ func TestAddURLImportsEvidence(t *testing.T) {
 			return
 		}
 		w.Header().Set("ETag", etag)
-		w.Header().Set("Content-Disposition", `attachment; filename*=UTF-8''report%5Cone.txt`)
+		w.Header().Set("Content-Disposition", `attachment; filename="C:filing.txt"`)
 		w.Header().Set("Last-Modified", "Wed, 21 Oct 2015 07:28:00 GMT")
 		_, _ = io.WriteString(w, content)
 	}))
@@ -78,6 +78,8 @@ func TestFetchURLBoundsSchemesNamesAndCleanup(t *testing.T) {
 		{name: "fallback", disposition: `attachment; filename="../bad"`, target: "/", bytes: 4, cap: 4, want: "download"},
 		{name: "newline path", target: "/report%0Aone.txt", bytes: 4, cap: 4, want: "download"},
 		{name: "backslash path", target: "/report%5Cone.txt", bytes: 4, cap: 4, want: "download"},
+		{name: "drive path", target: "/C:filing.txt", bytes: 4, cap: 4, want: "download"},
+		{name: "drive disposition", disposition: `attachment; filename="a:b.txt"`, target: "/header-name.txt", bytes: 4, cap: 4, want: "header-name.txt"},
 		{name: "newline disposition", disposition: `attachment; filename*=UTF-8''report%0Done%0A.txt`, target: "/header-name.txt", bytes: 4, cap: 4, want: "header-name.txt"},
 		{name: "chunked", chunked: true, bytes: 5, cap: 4, message: "download exceeds"},
 		{name: "interrupted", declared: 5, bytes: 2, cap: 5, message: "downloading:"},
