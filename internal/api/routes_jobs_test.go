@@ -150,9 +150,7 @@ func TestBrowserJobListWatchTags(t *testing.T) {
 		return ctx.Err()
 	}))
 	<-reported
-	require.NoError(t, supervisor.Start("watch:zmissing", func(context.Context) error {
-		return errors.New("synthetic terminal watch failure")
-	}))
+	require.NoError(t, supervisor.Start("watch:zmissing", func(context.Context) error { return errors.New("synthetic terminal watch failure") }))
 	require.Eventually(t, func() bool {
 		return slices.ContainsFunc(supervisor.Snapshot(), func(item jobs.Snapshot) bool {
 			return item.Name == "watch:zmissing" && item.Status == jobs.StatusFailed

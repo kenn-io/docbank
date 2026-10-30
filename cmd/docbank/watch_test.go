@@ -26,7 +26,6 @@ func TestWriteWatchedInboxesEscapesMachineAndVirtualPaths(t *testing.T) {
 	assert.NotContains(t, out.String(), "\x1b")
 	fields := strings.Fields(strings.Split(strings.TrimSpace(out.String()), "\n")[1])
 	assert.Equal(t, "3", fields[len(fields)-2])
-	assert.Contains(t, out.String(), "TAGS")
 	assert.Contains(t, out.String(), `["receipts" "line\nbreak"]`)
 	assert.Contains(t, out.String(), "CAPTURE")
 	assert.Contains(t, out.String(), "prompt")

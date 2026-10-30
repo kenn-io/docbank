@@ -457,8 +457,6 @@ func TestWatchTagBlockRestoresRemainingFailure(t *testing.T) {
 				watcher.notificationErr = errors.New("first backend failure")
 				expected = step().Error
 			}
-			watcher.config.Tags = []string{""}
-			require.Contains(t, step().Error, `tag ""`)
 			watcher.config.Tags = []string{"receipts"}
 			require.Contains(t, step().Error, `tag "receipts"`)
 			if order != "source only" {

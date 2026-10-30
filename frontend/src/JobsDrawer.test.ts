@@ -633,10 +633,11 @@ it("renders watch tags", async () => {
         name: "watch:receipts",
         lane: "watch:receipts",
         status: "running",
+        busy: true,
         tags: ["receipts", "2026"],
       },
     ]),
   );
   render(JobsDrawer, { session: "session", onclose: vi.fn(), onauthfailure: vi.fn() });
-  expect(await screen.findByText("Tags: receipts, 2026")).toBeTruthy();
+  expect(await screen.findAllByText("Tags: receipts, 2026")).toHaveLength(2);
 });
