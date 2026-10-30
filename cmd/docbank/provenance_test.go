@@ -46,6 +46,7 @@ func TestProvenanceCLIShowsHumanAndMachineAuthority(t *testing.T) {
 	fetch := &ingest.URLFetch{Version: 1, RequestedURL: "https://example.com/download?id=7", FinalURL: "https://example.com/filing.txt", FetchedAt: "2026-10-01T12:34:56Z", ETag: []byte("W/\"edition-\xff\""), LastModified: []byte("Wed, 21 Oct 2015 07:28:00 GMT")}
 	page.Items[0].URLFetch = fetch
 	page.Items[0].SourceKind = "url"
+	page.Items[0].OriginalPath = fetch.RequestedURL
 	raw, err := json.Marshal(fetch)
 	require.NoError(t, err)
 	page.Items[0].SourceDescription = string(raw)
@@ -54,6 +55,8 @@ func TestProvenanceCLIShowsHumanAndMachineAuthority(t *testing.T) {
 	cmd.SetOut(&human)
 	require.NoError(t, writeProvenance(cmd, page))
 	assert.Contains(t, human.String(), "Requested URL:")
+	assert.Contains(t, human.String(), "Final URL:")
+	assert.Contains(t, human.String(), "Fetch time:")
 	assert.NotContains(t, human.String(), "Source:")
 	assert.Contains(t, human.String(), strconv.Quote(string(fetch.LastModified)))
 	assert.Contains(t, human.String(), strconv.Quote(string(fetch.ETag)))

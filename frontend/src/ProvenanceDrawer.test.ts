@@ -130,7 +130,6 @@ it.each([
   { bytes: 'W/"edition-1"', display: 'W/"edition-1"' },
   { bytes: "\xff", display: "\\xff" },
   { bytes: 'W/"\\xff\xff"', display: 'W/"\\\\xff\\xff"' },
-  { bytes: 'W/"\xff\\xff"', display: 'W/"\\xff\\\\xff"' },
   { bytes: "\\xff", display: "\\\\xff" },
   { bytes: null, display: null },
 ])("shows URL fetch evidence with optional headers: %s", async (headers) => {

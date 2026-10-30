@@ -29,14 +29,7 @@ func TestAddURLImportsEvidence(t *testing.T) {
 	binary := buildDocbank(t)
 	t.Cleanup(func() { _, _ = daemonconn.Stop(context.Background(), home) })
 	content := "synthetic filing\n"
-	etag := "W/\"edition-\xff\""
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/download" {
-			http.Redirect(w, r, "/files/filing.txt", http.StatusFound)
-			return
-		}
-		w.Header().Set("ETag", etag)
-		w.Header().Set("Last-Modified", "Wed, 21 Oct 2015 07:28:00 GMT")
 		assert.Eventually(t, func() bool {
 			records, err := daemonconn.RuntimeStore(home).List()
 			return err == nil && len(records) == 0
@@ -44,7 +37,7 @@ func TestAddURLImportsEvidence(t *testing.T) {
 		_, _ = io.WriteString(w, content)
 	}))
 	defer server.Close()
-	requested := server.URL + "/download?id=7"
+	requested := server.URL + "/filing.txt"
 	command := exec.Command(binary, "add", requested, "--allow-http", "--dest", "/cases/filings", "--json")
 	out, err := command.CombinedOutput()
 	require.NoError(t, err, string(out))
@@ -59,23 +52,18 @@ func TestAddURLImportsEvidence(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(evidence), &page))
 	require.Len(t, page.Items, 1)
 	assert.Equal(t, ingestID, page.Items[0].IngestID)
-	fetch := page.Items[0].URLFetch
-	require.NotNil(t, fetch)
-	assert.Equal(t, requested, fetch.RequestedURL)
-	assert.Equal(t, server.URL+"/files/filing.txt", fetch.FinalURL)
-	assert.Equal(t, []byte(etag), fetch.ETag)
-	assert.Equal(t, []byte("Wed, 21 Oct 2015 07:28:00 GMT"), fetch.LastModified)
-	assert.NotEmpty(t, fetch.FetchedAt)
-	assert.Equal(t, requested, page.Items[0].OriginalPath)
+	require.NotNil(t, page.Items[0].URLFetch)
 }
 
 func TestFetchURLBoundsSchemesNamesAndCleanup(t *testing.T) {
 	for _, tc := range []struct {
-		name, disposition, target, want, message string
-		declared, bytes, cap, status             int
-		chunked                                  bool
+		name, disposition, target, finalTarget, want, message string
+		etag, lastModified                                    string
+		declared, bytes, cap, status                          int
+		chunked                                               bool
 	}{
 		{name: "boundary", target: "/files/report%20one.txt?q=1", bytes: 4, cap: 4, want: "report one.txt"},
+		{name: "redirect evidence", target: "/download?id=7", finalTarget: "/files/filing.txt", bytes: 4, cap: 4, want: "filing.txt", etag: "W/\"edition-\xff\"", lastModified: "Wed, 21 Oct 2015 07:28:00 GMT"},
 		{name: "disposition", disposition: `attachment; filename="server.txt"`, target: "/", bytes: 4, cap: 4, want: "server.txt"},
 		{name: "newline path", target: "/report%0Aone.txt", bytes: 4, cap: 4, want: "download"},
 		{name: "backslash path", target: "/report%5Cone.txt", bytes: 4, cap: 4, want: "download"},
@@ -92,6 +80,12 @@ func TestFetchURLBoundsSchemesNamesAndCleanup(t *testing.T) {
 			t.Setenv("TEMP", tmp)
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				assert.Equal(t, "identity", r.Header.Get("Accept-Encoding"))
+				if tc.finalTarget != "" && r.URL.Path == "/download" {
+					http.Redirect(w, r, tc.finalTarget, http.StatusFound)
+					return
+				}
+				w.Header().Set("ETag", tc.etag)
+				w.Header().Set("Last-Modified", tc.lastModified)
 				w.Header().Set("Content-Disposition", tc.disposition)
 				if tc.status != 0 {
 					w.WriteHeader(tc.status)
@@ -114,7 +108,14 @@ func TestFetchURLBoundsSchemesNamesAndCleanup(t *testing.T) {
 				assert.EqualValues(t, tc.bytes, download.size)
 				assert.Equal(t, tc.want, download.name)
 				assert.Equal(t, server.URL+tc.target, download.fetch.RequestedURL)
-				assert.Equal(t, server.URL+tc.target, download.fetch.FinalURL)
+				final := tc.target
+				if tc.finalTarget != "" {
+					final = tc.finalTarget
+					assert.Equal(t, []byte(tc.etag), download.fetch.ETag)
+					assert.Equal(t, []byte(tc.lastModified), download.fetch.LastModified)
+					assert.NotEmpty(t, download.fetch.FetchedAt)
+				}
+				assert.Equal(t, server.URL+final, download.fetch.FinalURL)
 				require.NoError(t, download.file.Close())
 				require.NoError(t, os.Remove(download.file.Name()))
 			}

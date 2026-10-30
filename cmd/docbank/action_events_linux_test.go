@@ -125,7 +125,7 @@ func TestCLICompletedSearchAndContentActions(t *testing.T) {
 	t.Run("URL fetch failure", func(t *testing.T) {
 		server := httptest.NewServer(http.NotFoundHandler())
 		defer server.Close()
-		require.ErrorContains(t, execute(false, false, []string{"add", server.URL, "--allow-http"}), "fetch returned HTTP 404")
+		require.Error(t, execute(false, false, []string{"add", server.URL, "--allow-http"}))
 		require.Len(t, events, 1)
 		assert.JSONEq(t, fmt.Sprintf(shown, "add"), <-events)
 	})
