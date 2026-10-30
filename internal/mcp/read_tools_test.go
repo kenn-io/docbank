@@ -256,6 +256,10 @@ func TestReadToolMapsSanitizedDaemonDomainErrors(t *testing.T) {
 		arguments        map[string]any
 		status           int
 	}{
+		{name: "reranking unavailable", tool: "search_documents", code: "reranking_unavailable", status: http.StatusUnprocessableEntity,
+			arguments: map[string]any{"query": "synthetic", "profile": "local", "filters": map[string]any{}, "rerank": true}},
+		{name: "reranking failed", tool: "search_documents", code: "reranking_failed", status: http.StatusBadGateway,
+			arguments: map[string]any{"query": "synthetic", "profile": "local", "filters": map[string]any{}, "rerank": true}},
 		{name: "not found", tool: "get_vault_info", code: "not_found", status: http.StatusNotFound,
 			arguments: map[string]any{}},
 		{name: "locked hidden asset", tool: "get_photo_asset", code: "hidden_locked", status: http.StatusForbidden,
@@ -419,9 +423,10 @@ func TestSearchReadRejectsResultsOutsideResolvedFence(t *testing.T) {
 func TestSearchReadValidatesEmptyFenceWithoutCallingSearch(t *testing.T) {
 	for _, test := range []struct {
 		name, query, profile, wantCode string
-		wantError                      bool
+		wantError, rerank              bool
 	}{
 		{name: "valid empty result", query: "synthetic", profile: "local"},
+		{name: "reranked empty result", query: "synthetic", profile: "local", rerank: true},
 		{name: "whitespace query", query: "   ", profile: "local", wantCode: "processing_failed", wantError: true},
 		{name: "unconfigured profile", query: "synthetic", profile: "missing",
 			wantCode: "processing_profile_unavailable", wantError: true},
@@ -442,6 +447,12 @@ func TestSearchReadValidatesEmptyFenceWithoutCallingSearch(t *testing.T) {
 					})
 				case "/api/v1/search/validate":
 					validationCalls++
+					var body api.DocumentSearchValidationRequest
+					if !assert.NoError(t, json.UnmarshalRead(request.Body, &body)) {
+						http.Error(response, "invalid synthetic search request", http.StatusBadRequest)
+						return
+					}
+					assert.Equal(t, test.rerank, body.Rerank)
 					if test.wantError {
 						status := http.StatusInternalServerError
 						if test.wantCode == "processing_profile_unavailable" {
@@ -469,7 +480,7 @@ func TestSearchReadValidatesEmptyFenceWithoutCallingSearch(t *testing.T) {
 
 			result, err := invokeReadTool(t.Context(), lease, "search_documents", map[string]any{
 				"query": test.query, "mode": "lexical", "limit": 1, "profile": test.profile,
-				"filters": map[string]any{},
+				"filters": map[string]any{}, "rerank": test.rerank,
 			})
 			assert.Equal(t, 1, validationCalls)
 			assert.Zero(t, searchCalls)
@@ -485,6 +496,9 @@ func TestSearchReadValidatesEmptyFenceWithoutCallingSearch(t *testing.T) {
 			output := structuredMap(t, result.StructuredContent)
 			assert.Equal(t, []any{}, output["results"])
 			assert.EqualValues(t, 0, output["observed_scope_count"])
+			if test.rerank {
+				assert.Equal(t, map[string]any{"outcome": "skipped", "candidate_count": float64(0)}, output["reranking"])
+			}
 		})
 	}
 }
@@ -767,4 +781,91 @@ func TestGetDocumentReturnsVaultInfoFailure(t *testing.T) {
 	}, func(*daemonconn.Connection) error { return nil })
 	_, _, err := getDocument(t.Context(), lease, []byte(`{"node_id":7,"content_version_id":"`+testVersionID+`"}`))
 	require.Error(t, err)
+}
+
+func TestSearchReadRerankOutputAndFalseBaseline(t *testing.T) {
+	const secondVersionID = "33333333-3333-4333-8333-333333333333"
+	for _, tc := range []struct {
+		name    string
+		rerank  bool
+		outcome string
+	}{{"false", false, ""}, {"applied", true, "applied"}, {"degraded", true, "degraded"}} {
+		t.Run(tc.name, func(t *testing.T) {
+			versions := []string{testVersionID}
+			documents := []api.DocumentSummary{{NodeID: 7, ContentVersionID: testVersionID, Path: "/synthetic.md", Name: "synthetic.md", MediaType: "text/markdown", ModifiedAt: "2026-08-28T00:00:00Z", ActiveRenditions: []api.DocumentRenditionIdentity{}}}
+			if tc.outcome == "applied" {
+				versions = append(versions, secondVersionID)
+				documents = append(documents, api.DocumentSummary{NodeID: 8, ContentVersionID: secondVersionID, Path: "/second.md", Name: "second.md", MediaType: "text/markdown", ModifiedAt: "2026-08-28T00:00:00Z", ActiveRenditions: []api.DocumentRenditionIdentity{}})
+			}
+			fingerprint, err := processing.SourceFenceFingerprint(processing.SourceFence{VaultUID: testVaultID, ContentVersionIDs: versions})
+			require.NoError(t, err)
+			daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v1/processing/source-fences/resolve":
+					writeDaemonJSON(t, w, api.DocumentSourceFenceResolution{Fence: api.ResolvedDocumentSourceFence{VaultUID: testVaultID, ContentVersionIDs: versions}, FenceFingerprint: fingerprint, ObservedScopeCount: len(versions)})
+				case "/api/v1/search":
+					var body map[string]any
+					if !assert.NoError(t, json.UnmarshalRead(r.Body, &body)) {
+						http.Error(w, "invalid synthetic search request", http.StatusBadRequest)
+						return
+					}
+					if tc.rerank {
+						assert.Equal(t, true, body["rerank"])
+					} else {
+						assert.NotContains(t, body, "rerank")
+					}
+					hit := map[string]any{"vault_uid": testVaultID, "node_id": 7, "content_version_id": testVersionID, "rank": 1, "score": 1.0 / 61, "path": "/synthetic.md", "lexical_rank": 1, "evidence": []any{map[string]any{"kind": "node_name"}}}
+					report := map[string]any{"requested_mode": "lexical", "actual_mode": "lexical", "coverage": map[string]any{"binding_required": false, "scoped_documents": len(versions), "complete_documents": len(versions), "state": "complete"}, "degradations": []any{}, "results": []any{hit}, "trace": []any{}, "truncated": false}
+					if tc.outcome == "applied" {
+						hit["score"] = 0.0
+						report["results"] = []any{hit, map[string]any{"vault_uid": testVaultID, "node_id": 8, "content_version_id": secondVersionID, "rank": 2, "score": 1.0 / 62, "path": "/second.md", "lexical_rank": 2, "evidence": []any{map[string]any{"kind": "node_name"}}}}
+						report["reranking"] = map[string]any{"outcome": "applied", "candidate_count": 1}
+					}
+					if tc.outcome == "degraded" {
+						report["reranking"] = map[string]any{"outcome": "degraded", "cause": "authorization_denied", "candidate_count": 1}
+						report["degradations"] = []string{"reranking_degraded"}
+					}
+					writeDaemonJSON(t, w, report)
+				case "/api/v1/documents/resolve":
+					writeDaemonJSON(t, w, map[string]any{"items": documents})
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(daemon.Close)
+			lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) { return daemonconn.New(daemon.URL, ""), nil }, func(*daemonconn.Connection) error { return nil })
+			result, err := invokeReadTool(t.Context(), lease, "search_documents", map[string]any{"query": "synthetic", "mode": "lexical", "profile": "local", "filters": map[string]any{}, "rerank": tc.rerank})
+			require.NoError(t, err)
+			output := structuredMap(t, result.StructuredContent)
+			hits, ok := output["results"].([]any)
+			require.True(t, ok)
+			if tc.outcome == "applied" {
+				require.Len(t, hits, 2)
+			} else {
+				require.Len(t, hits, 1)
+			}
+			hit, ok := hits[0].(map[string]any)
+			require.True(t, ok)
+			if tc.outcome == "" {
+				assert.NotContains(t, output, "reranking")
+				assert.NotContains(t, hit, "rerank_relevance")
+			} else {
+				receipt, ok := output["reranking"].(map[string]any)
+				require.True(t, ok)
+				assert.Equal(t, tc.outcome, receipt["outcome"])
+				if tc.outcome == "applied" {
+					assert.EqualValues(t, 1, receipt["candidate_count"])
+					require.Contains(t, hit, "rerank_relevance")
+					assert.EqualValues(t, 0, hit["rerank_relevance"])
+					secondHit, ok := hits[1].(map[string]any)
+					require.True(t, ok)
+					assert.NotContains(t, secondHit, "rerank_relevance")
+					assert.InDelta(t, 1.0/62, secondHit["score"], 1e-9)
+				} else {
+					assert.NotContains(t, hit, "rerank_relevance")
+					assert.Equal(t, "authorization_denied", receipt["cause"])
+				}
+			}
+		})
+	}
 }
