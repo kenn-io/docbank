@@ -239,7 +239,7 @@ func TestPhotoBrowseRouteContract(t *testing.T) {
 	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
 	require.Equal(t, "invalid_photo_cursor", decodeProblem(t, body).Code)
 	request := api.PhotoBrowseRequest{Query: api.QueryPayload(`{"filters":{"kinds":["photo"]},"sort":{"field":"name","direction":"asc"}}`)}
-	require.NoError(t, s.PublishPhotoQualitySignals(t.Context(), store.PhotoVisualPreviewTarget{VersionID: qualityNode.CurrentVersionID, SourceSHA256: qualityNode.BlobHash, Size: 10, MediaType: "image/jpeg"}, document.PhotoQualitySignals{Blur: 1}))
+	require.NoError(t, s.PublishPhotoQualitySignals(t.Context(), store.PhotoVisualPreviewTarget{VersionID: qualityNode.CurrentVersionID, SourceSHA256: qualityNode.BlobHash, Size: 10, MediaType: "image/jpeg"}, document.PhotoQualitySignals{Blur: 1}, ""))
 	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, request)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	require.NoError(t, json.Unmarshal([]byte(body), &page))
@@ -274,15 +274,21 @@ func TestPhotoBrowseRouteContract(t *testing.T) {
 	}
 	unmeasurable, err := s.CreateFile(t.Context(), s.RootID(), "unmeasurable.jpg", testHash("unmeasurable"), 10, "image/jpeg")
 	require.NoError(t, err)
-	require.NoError(t, s.PublishPhotoQualityUnavailable(t.Context(), store.PhotoVisualPreviewTarget{
-		VersionID: unmeasurable.CurrentVersionID, SourceSHA256: unmeasurable.BlobHash, Size: 10, MediaType: "image/jpeg",
-	}))
+	face, _, err := s.CreatePhotoFace(t.Context(), unmeasurable.CurrentVersionID, uuid.NewString(), document.FaceBox{Width: .5, Height: .5}, "")
+	require.NoError(t, err)
+	_, inputs, err := s.PhotoQualityFaces(t.Context(), unmeasurable.CurrentVersionID)
+	require.NoError(t, err)
+	require.NoError(t, s.PublishPhotoQualityUnavailable(t.Context(), store.PhotoVisualPreviewTarget{VersionID: unmeasurable.CurrentVersionID, SourceSHA256: unmeasurable.BlobHash, Size: 10, MediaType: "image/jpeg"}, inputs, document.PhotoFaceReport{FaceID: face.FaceID, Prominence: .25}))
 	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, request)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	require.NoError(t, json.Unmarshal([]byte(body), &page))
 	states := map[string]string{}
 	for _, row := range page.Items {
 		states[row.ContentVersionID] = row.Quality.State
+		if row.ContentVersionID == unmeasurable.CurrentVersionID {
+			require.Nil(t, row.Quality.Signals)
+			require.NotEmpty(t, row.Quality.FaceReports)
+		}
 	}
 	require.Equal(t, "unavailable", states[unmeasurable.CurrentVersionID])
 	request.Query = api.QueryPayload(`{"filters":{"kinds":["video"]}}`)

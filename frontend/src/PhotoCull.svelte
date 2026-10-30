@@ -1,5 +1,6 @@
 <script lang="ts">
   import IconAction from "./IconAction.svelte";
+  import PhotoBestShotBadge from "./PhotoBestShotBadge.svelte";
   import { onDestroy, onMount, untrack, tick } from "svelte";
   import { settleReads } from "./photoEvents.js";
   import { restorePhotoReviewFocus } from "./photoReview.js";
@@ -392,6 +393,29 @@
     )
       return { fileID: selected.display_file_id };
   }
+  async function respondBestShots(response: "accepted" | "dismissed") {
+    const stack = cull.currentStack;
+    if (!stack || !photo) return;
+    await editor.decideStack(
+      {
+        asset_ids: stack,
+        burst_gap_seconds: cull.run!.burstGapSeconds!,
+        current_id: photo.asset_id,
+        decision: "all",
+        hidden: photos.hidden,
+        responses: editor.bestShots.map((p) => ({ asset_id: p.asset_id, flag: p.flag, response })),
+      },
+      refresh,
+      {
+        observed: [photo, ...neighbors].filter((r) => stack.includes(r.asset_id)),
+        beforeWrite: () => cull.verifyDecision(),
+      },
+    );
+    if (!editor.error) {
+      await cull.regroup();
+      if (cull.currentStack) await editor.prepareStack(cull.currentStack, photos.hidden, true);
+    }
+  }
   async function applyDecision(selected: PhotoBrowseRow, patch: PhotoAuthoredPatch, retry = false) {
     checkingDecision = true;
     try {
@@ -709,6 +733,7 @@
       {:else}
         <div class="body">
           {#if photo}<PhotoStage
+              proposal={editor.bestShots.find((p) => p.asset_id === photo!.asset_id)}
               {faces}
               {photo}
               {photos}
@@ -791,6 +816,26 @@
                 !editor.canChooseStackRepresentative(currentID ?? "")}
               onclick={() => void decideStack("representative")}>Choose representative</Button
             >
+            {#if editor.bestShots.length}
+              <Button
+                size="sm"
+                disabled={busy ||
+                  editor.loading ||
+                  editor.stackLoading ||
+                  editor.conflict ||
+                  cull.stale}
+                onclick={() => void respondBestShots("accepted")}>Accept all</Button
+              >
+              <Button
+                size="sm"
+                disabled={busy ||
+                  editor.loading ||
+                  editor.stackLoading ||
+                  editor.conflict ||
+                  cull.stale}
+                onclick={() => void respondBestShots("dismissed")}>Dismiss all</Button
+              >
+            {/if}
           {/if}
           <IconAction
             ariaLabel="Previous photo"
@@ -868,6 +913,10 @@
                           ? [...selectedFrames, id]
                           : selectedFrames.filter((selected) => selected !== id);
                       }}
+                    />
+                    <PhotoBestShotBadge
+                      proposal={editor.bestShots.find((p) => p.asset_id === id)}
+                      compact
                     />
                   </div>{/if}
                 {#if row}<PhotoCell
@@ -979,6 +1028,8 @@
     align-self: stretch;
   }
   .frame-select {
+    display: flex;
+    gap: var(--space-2);
     position: absolute;
     top: 4px;
     left: 4px;

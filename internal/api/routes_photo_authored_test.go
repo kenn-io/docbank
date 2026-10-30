@@ -252,3 +252,48 @@ func TestPhotoAuthoredReceiptsRetainFlagOwner(t *testing.T) {
 	require.Contains(t, body, `"flag_owner":"return"`)
 	require.Contains(t, body, `"rating":4`)
 }
+
+func TestPhotoBestShotBrowserBatch(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	ctx := t.Context()
+	run, err := s.BeginIngest(ctx, "cli", "synthetic best shots")
+	require.NoError(t, err)
+	ids := []string{}
+	for i := range 2 {
+		name := fmt.Sprintf("best-%d.jpg", i)
+		node, err := s.IngestFileExact(ctx, run, s.RootID(), name, testHash(name), 20, "image/jpeg", "/shots/"+name, "2024-06-10T12:00:00Z")
+		require.NoError(t, err)
+		stamp := fmt.Sprintf("2024-06-10T12:00:0%dZ", i)
+		canonical, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1, Fields: []document.SourceMetadataFieldV1{{Key: "created", Namespace: "image.exif", SourceField: "DateTimeOriginal", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataTimestamp, Timestamp: &document.SourceMetadataTimestampV1{Raw: stamp, Normalized: stamp, Precision: document.SourceMetadataPrecisionSecond, Timezone: document.SourceMetadataTimezoneUTC}}}}})
+		require.NoError(t, err)
+		_, err = s.PublishSourceMetadata(ctx, node.BlobHash, processing.SourceMetadataExtractorFingerprint, canonical)
+		require.NoError(t, err)
+		require.NoError(t, s.PublishPhotoQualitySignals(ctx, store.PhotoVisualPreviewTarget{VersionID: node.CurrentVersionID, SourceSHA256: node.BlobHash, Size: 20, MediaType: "image/jpeg"}, document.PhotoQualitySignals{Focus: 0.9 - float64(i)*0.5}, ""))
+		asset, err := s.PhotoAssetForNode(ctx, node.ID)
+		require.NoError(t, err)
+		ids = append(ids, asset.ID)
+	}
+	browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)}
+	response, body := do(t, ts, http.MethodPost, "/api/v1/photos/authored/prepare", browser, api.PhotoAuthoredPrepareRequest{AssetIDs: ids, Stack: true})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var prepared api.PhotoAuthoredPreparation
+	require.NoError(t, json.Unmarshal([]byte(body), &prepared))
+	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", browser, api.PhotoBrowseRequest{Query: api.QueryPayload(`{"sort":{"field":"capture_time","direction":"desc"}}`), Stacks: true, PageSize: 10})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var page api.PhotoBrowsePage
+	require.NoError(t, json.Unmarshal([]byte(body), &page))
+	require.Len(t, page.Stacks, 1)
+	require.Equal(t, prepared.Proposals, page.Stacks[0].Proposals)
+	offers := prepared.Proposals
+	require.Len(t, offers, 2)
+	request := api.PhotoStackDecisionRequest{AssetIDs: ids, BurstGapSeconds: 2, Decision: "all", CurrentID: ids[0], Targets: apiEditTargets(prepared.Targets)}
+	for _, p := range offers {
+		request.Responses = append(request.Responses, store.PhotoBestShotResponse{AssetID: p.AssetID, Flag: p.Flag, Response: "accepted"})
+	}
+	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/authored/stack", browser, request)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var receipt store.PhotoAuthoredReceipt
+	require.NoError(t, json.Unmarshal([]byte(body), &receipt))
+	require.NotEmpty(t, receipt.ReceiptID)
+}

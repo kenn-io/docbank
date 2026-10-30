@@ -2290,3 +2290,41 @@ it("doesn't assign a newly created keyword to a replacement photo selection", as
   expect(editor.tags).toEqual([]);
   expect(editor.patch).toEqual({ caption: "Replacement draft" });
 });
+
+it("refreshes and clears best-shot offers with their prepared stack", async () => {
+  const editor = new PhotoAuthoredEditor("session", vi.fn());
+  const prepared = [preparedPhoto(1), preparedPhoto(2)];
+  const ids = prepared.map((p) => p.asset_id);
+  const offers = [
+    { asset_id: ids[0]!, flag: "pick" as const, rationale: "Best frame", confidence: 0.5 },
+    { asset_id: ids[1]!, flag: "reject" as const, rationale: "Weaker frame", confidence: 0.5 },
+  ];
+  vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue({
+    ...photoPreparation(prepared),
+    proposals: offers,
+  });
+  await editor.prepareStack(ids, false);
+  expect(editor.bestShots).toEqual(offers);
+  const restored = [
+    { ...offers[0]!, asset_id: ids[1]! },
+    { ...offers[1]!, asset_id: ids[0]! },
+  ];
+  const restoredTargets = prepared.map((target, i) =>
+    i === 0 ? { ...target, revision: 3 } : target,
+  );
+  vi.spyOn(api, "undoPhotoAuthored").mockResolvedValue({
+    receipt_id: "undo",
+    before: [{ ...prepared[0]!, revision: 2, values: { ...prepared[0]!.values, flag: "pick" } }],
+    after: [restoredTargets[0]!],
+  });
+  vi.mocked(api.preparePhotoAuthored).mockResolvedValue({
+    ...photoPreparation(restoredTargets),
+    proposals: restored,
+  });
+  await editor.undo(vi.fn(), "receipt");
+  expect(editor.bestShots).toEqual(restored);
+  vi.mocked(api.preparePhotoAuthored).mockResolvedValue(photoPreparation(prepared));
+  await editor.prepareStack(ids, false, true);
+  expect(editor.bestShots).toEqual([]);
+  editor.dispose();
+});
