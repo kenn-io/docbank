@@ -65,7 +65,7 @@ func mcpConfigServer(cmd *cobra.Command, agent agentmcp.Agent) (agentmcp.Server,
 	}
 	args := []string{"mcp", "--transport", "stdio"}
 	cmd.InheritedFlags().VisitAll(func(flag *pflag.Flag) {
-		if flag.Changed && strings.HasPrefix(flag.Name, "allow-") && flag.Value.String() == "true" {
+		if strings.HasPrefix(flag.Name, "allow-") && flag.Value.String() == "true" {
 			args = append(args, "--"+flag.Name)
 		}
 	})
@@ -93,7 +93,7 @@ func mcpConfigServer(cmd *cobra.Command, agent agentmcp.Agent) (agentmcp.Server,
 		} else if err != nil {
 			return agentmcp.Server{}, err
 		}
-		return agentmcp.Server{Transport: agentmcp.TransportHTTP, URL: "http://" + net.JoinHostPort(host, port) + "/mcp", BearerTokenEnvVar: variable}, nil
+		return agentmcp.Server{Transport: agentmcp.TransportHTTP, URL: "http://" + net.JoinHostPort(host, port) + mcpHTTPPath, BearerTokenEnvVar: variable}, nil
 	}
 	command, err := exec.LookPath(os.Args[0])
 	if err != nil && !errors.Is(err, exec.ErrDot) {
