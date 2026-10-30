@@ -50,8 +50,6 @@ func TestUnlockPDF(t *testing.T) {
 }
 
 func TestCountPDFPagesPasswordPolicy(t *testing.T) {
-	_, referenceErr := formatdetect.CountPDFPages(mediatest.PDFWithActionsAndAttachment())
-	require.ErrorIs(t, referenceErr, formatdetect.ErrPDFExternalReference)
 	plain := mediatest.PDFObjects("page count", []string{
 		"<< /Type /Catalog /Pages 2 0 R >>",
 		"<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R] /Count 3 >>",

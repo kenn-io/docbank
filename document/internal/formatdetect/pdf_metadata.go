@@ -3,6 +3,7 @@ package formatdetect
 import (
 	"errors"
 	"fmt"
+	"math"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
@@ -47,7 +48,7 @@ func readPDFFacts(ctx *model.Context, size int64, metadata *PDFMetadata) {
 	} else {
 		facts.EmbeddedFileCount, facts.HasJavaScript, facts.HasLaunchActions = new(int64(len(embedded))), new(javascript), new(launch)
 	}
-	count, endpoint, malformed, err := pdfSignatureFacts(ctx, size)
+	count, endpoint, malformed, err := pdfSignatureFacts(ctx)
 	if err != nil {
 		metadata.Issues = append(metadata.Issues, PDFMetadataIssue{SourceField: "SignatureFields"})
 	} else {
@@ -62,7 +63,7 @@ func readPDFFacts(ctx *model.Context, size int64, metadata *PDFMetadata) {
 	metadata.Facts = facts
 }
 
-func pdfSignatureFacts(ctx *model.Context, size int64) (count, endpoint int64, malformed bool, err error) {
+func pdfSignatureFacts(ctx *model.Context) (count, endpoint int64, malformed bool, err error) {
 	endpoint = -1
 	form, err := ctx.DereferenceDict(ctx.RootDict["AcroForm"])
 	if err != nil {
@@ -126,7 +127,7 @@ func pdfSignatureFacts(ctx *model.Context, size int64) (count, endpoint int64, m
 			return nil
 		}
 		count++
-		signedEnd, err := pdfSignatureEndpoint(ctx, value, size)
+		signedEnd, err := pdfSignatureEndpoint(ctx, value)
 		if err != nil {
 			malformed = true
 		} else {
@@ -142,7 +143,7 @@ func pdfSignatureFacts(ctx *model.Context, size int64) (count, endpoint int64, m
 	return count, endpoint, malformed, nil
 }
 
-func pdfSignatureEndpoint(ctx *model.Context, object types.Object, size int64) (int64, error) {
+func pdfSignatureEndpoint(ctx *model.Context, object types.Object) (int64, error) {
 	value, err := ctx.DereferenceDict(object)
 	if err != nil {
 		return -1, fmt.Errorf("read signature value: %w", err)
@@ -169,8 +170,8 @@ func pdfSignatureEndpoint(ctx *model.Context, object types.Object, size int64) (
 		}
 		numbers[i] = int64(number)
 	}
-	if numbers[0] != 0 || numbers[1] > numbers[2] || numbers[2] > size || numbers[3] > size-numbers[2] {
-		return -1, errors.New("signature range outside original")
+	if numbers[0] != 0 || numbers[1] > numbers[2] || numbers[3] > math.MaxInt64-numbers[2] {
+		return -1, errors.New("signature ranges overlap or overflow")
 	}
 	return numbers[2] + numbers[3], nil
 }
@@ -183,7 +184,7 @@ func pdfPermissionNames(revision, bits int) []string {
 	}{
 		{model.PermissionPrintRev2, "Print"}, {model.PermissionModify, "Modify"}, {model.PermissionExtract, "Copy text and graphics"},
 		{model.PermissionModAnnFillForm, "Annotate and fill forms"}, {model.PermissionFillRev3, "Fill forms"}, {model.PermissionExtractRev3, "Extract for accessibility"},
-		{model.PermissionAssembleRev3, "Assemble"}, {model.PermissionPrintRev3, "Print in high quality"},
+		{model.PermissionAssembleRev3, "Assemble"}, {model.PermissionPrintRev3, "High-quality print flag"},
 	} {
 		if (revision >= 3 || permission.flag <= model.PermissionModAnnFillForm) && model.PermissionFlags(bits)&permission.flag != 0 {
 			names = append(names, permission.name)

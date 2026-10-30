@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/packstore"
@@ -228,6 +229,65 @@ func TestVaultEnsureSourceMetadataProcessesExactVersion(t *testing.T) {
 	assert.Equal(t, metadata, retry)
 	_, err = vault.metadata.ContentVersionPhotoMetadata(t.Context(), first.Version.ID)
 	require.ErrorIs(t, err, store.ErrNotFound, "a calendar has no photo facts and gets no projection row")
+}
+
+func TestVaultPDFEvidenceAfterImportAndBackfill(t *testing.T) {
+	t.Parallel()
+	signed := mediatest.PDFSignatureFields("[5 0 R]", "<< /Subtype /Widget /Rect [0 0 1 1] /FT /Sig /T (Signature) /V << /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached /Contents <00> /ByteRange [0 10 20 LENGTH] >> >>")
+	encrypted, err := mediatest.EncryptPDF(mediatest.PDF(), "", "owner-secret", 128, model.PermissionsPrint)
+	require.NoError(t, err)
+	stale, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1, Fields: []document.SourceMetadataFieldV1{}, Warnings: []document.SourceMetadataWarningV1{}})
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name                      string
+		payload                   []byte
+		encrypted, script, launch bool
+		coverage                  *bool
+		signatures, embedded      int64
+		permissions               []string
+	}{
+		{name: "encrypted", payload: encrypted, encrypted: true, permissions: []string{"Print", "High-quality print flag"}},
+		{name: "signed", payload: signed, signatures: 1, coverage: new(true)},
+		{name: "appended", payload: append(bytes.Clone(signed), []byte("\n% amendment\n")...), signatures: 1, coverage: new(false)},
+		{name: "attachment", payload: mediatest.PDFWithActionsAndAttachment(), embedded: 1, script: true, launch: true},
+		{name: "JavaScript", payload: mediatest.PDFObjects("synthetic script", []string{"<< /Type /Catalog /Pages 2 0 R /OpenAction << /S /JavaScript /JS (void 0) >> >>", "<< /Type /Pages /Count 1 /Kids [3 0 R] >>", "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >>"}), script: true},
+	} {
+		for _, phase := range []string{"import", "backfill"} {
+			t.Run(tc.name+"/"+phase, func(t *testing.T) {
+				vault, err := New(t.Context(), Config{Root: t.TempDir()})
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, vault.Close()) })
+				receipt, err := vault.Create(t.Context(), "/contract.pdf", bytes.NewReader(tc.payload), CreateOptions{MediaType: "application/pdf", Expected: contentIdentity(tc.payload)})
+				require.NoError(t, err)
+				if phase == "import" {
+					_, err = vault.EnsureSourceMetadata(t.Context(), receipt.Version.ID)
+					require.NoError(t, err)
+				} else {
+					_, err = vault.metadata.PublishSourceMetadata(t.Context(), receipt.Version.BlobHash, strings.Repeat("a", 64), stale)
+					require.NoError(t, err)
+					targets, err := vault.metadata.MissingSourceMetadataTargetsAfter(t.Context(), internalprocessing.SourceMetadataExtractorFingerprint, "", 10)
+					require.NoError(t, err)
+					require.Len(t, targets, 1)
+					completed, err := internalprocessing.BackfillSourceMetadataTargets(t.Context(), vault.metadata, vault.blobs, vault.emailSpoolParent, targets)
+					require.NoError(t, err)
+					require.Equal(t, 1, completed)
+				}
+				metadata, err := vault.SourceMetadata(t.Context(), receipt.Version.ID)
+				require.NoError(t, err)
+				facts := map[string]document.SourceMetadataValueV1{}
+				for _, field := range metadata.Fields {
+					facts[field.Key] = field.Value
+				}
+				assert.Equal(t, new(tc.encrypted), facts["pdf.info.encrypted"].Boolean)
+				assert.Equal(t, tc.permissions, facts["pdf.info.permissions"].Strings)
+				assert.Equal(t, new(tc.signatures), facts["pdf.info.signature_field_count"].Integer)
+				assert.Equal(t, tc.coverage, facts["pdf.info.last_signature_covers_file"].Boolean)
+				assert.Equal(t, new(tc.embedded), facts["pdf.info.embedded_file_count"].Integer)
+				assert.Equal(t, new(tc.script), facts["pdf.info.has_javascript"].Boolean)
+				assert.Equal(t, new(tc.launch), facts["pdf.info.has_launch_actions"].Boolean)
+			})
+		}
+	}
 }
 
 func TestVaultEnsureSourceMetadataRefreshesOldExtractorGeneration(t *testing.T) {

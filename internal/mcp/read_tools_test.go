@@ -650,7 +650,7 @@ func newReadToolDaemon(t *testing.T) *httptest.Server {
 			writeDaemonJSON(t, response, api.DocumentPage{SourcePresent: request.URL.Query().Get("source_present") == "true",
 				PathPrefix: pathPrefix, Sort: "path", Direction: "asc", PageSize: 1,
 				Items: []api.DocumentSummary{{NodeID: 7, ContentVersionID: testVersionID,
-					Path: "/synthetic.md", Name: "synthetic.md", MediaType: "application/pdf", Size: 12,
+					Path: "/synthetic.md", Name: "synthetic.md", MediaType: "text/markdown", Size: 12,
 					ModifiedAt: "2026-08-28T00:00:00Z", ActiveRenditions: []api.DocumentRenditionIdentity{{
 						ProfileFingerprint: testProfileID, AttachmentID: testAttachmentID, BuildID: testBuildID,
 					}}}}, NextCursor: "next.token"})
@@ -668,7 +668,7 @@ func newReadToolDaemon(t *testing.T) *httptest.Server {
 			}
 			writeDaemonJSON(t, response, api.DocumentSummaryResolveResponse{Items: []api.DocumentSummary{{
 				NodeID: 7, ContentVersionID: testVersionID, Path: "/synthetic.md", Name: "synthetic.md",
-				MediaType: "application/pdf", Size: 12, ModifiedAt: "2026-08-28T00:00:00Z",
+				MediaType: "text/markdown", Size: 12, ModifiedAt: "2026-08-28T00:00:00Z",
 				ActiveRenditions: []api.DocumentRenditionIdentity{{ProfileFingerprint: testProfileID,
 					AttachmentID: testAttachmentID, BuildID: testBuildID}},
 			}}})
@@ -678,12 +678,12 @@ func newReadToolDaemon(t *testing.T) *httptest.Server {
 					{Key: "pdf.info.encrypted", Namespace: "pdf.info", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataBoolean, Boolean: new(false)}},
 					{Key: "pdf.info.signature_field_count", Namespace: "pdf.info", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataInteger, Integer: new(int64(2))}},
 				}},
-				CurrentVersionID: testVersionID, Size: 12, MimeType: "application/pdf",
+				CurrentVersionID: testVersionID, Size: 12, MimeType: "text/markdown",
 				ModifiedAt: "2026-08-28T00:00:00Z", Path: "/synthetic.md"})
 		case "/api/v1/nodes/7/versions":
 			writeDaemonJSON(t, response, api.ContentVersionPage{Items: []api.ContentVersion{{ID: testVersionID,
 				NodeID: 7, BlobHash: strings.Repeat("a", 64), Size: 12,
-				MimeType: "application/pdf", RecordedAt: "2026-08-28T00:00:00Z"}},
+				MimeType: "text/markdown", RecordedAt: "2026-08-28T00:00:00Z"}},
 				Total: 1, Limit: 1, Offset: 0})
 		case "/api/v1/processing/source-fences/resolve":
 			var input api.DocumentSourceFenceResolveRequest

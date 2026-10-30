@@ -58,6 +58,9 @@ sensitive fields. Other callers must enforce their own disclosure boundary.
 
 ## PDF evidence
 
+The v22 extractor fingerprint queues re-extraction of retained originals of
+every format, including photos and email, through the existing global backfill.
+
 The inspector's PDF section, `docbank stat`, and MCP `get_document` expose
 these declared facts. MCP returns them in `pdf_facts`; other source metadata
 remains outside that response. The inspector reads the exact selected content
@@ -66,7 +69,7 @@ version, including saved results whose live document has changed.
 | Key under `pdf.info.` | Type | Meaning |
 | --- | --- | --- |
 | `encrypted` | boolean | The original has PDF encryption. |
-| `permissions` | string list | Declared operations for the encryption revision: Print, Modify, Copy text and graphics, Annotate and fill forms, Fill forms, Extract for accessibility, Assemble, and Print in high quality. None means no declared operations. Unencrypted PDFs omit this field. |
+| `permissions` | string list | Raw permission flags defined by the encryption revision: Print, Modify, Copy text and graphics, Annotate and fill forms, Fill forms, Extract for accessibility, Assemble, and High-quality print flag. None means no declared operations. Unencrypted PDFs omit this field. |
 | `signature_field_count` | integer | Logical signature fields, including unsigned fields and inherited field types, counted once per field rather than per widget. |
 | `last_signature_covers_file` | boolean | The latest declared signed revision's byte range ends at the original file length. |
 | `embedded_file_count` | integer | Distinct embedded stream references under reachable file specifications; repeated references count once, while distinct streams with equal bytes count separately. |
@@ -77,11 +80,14 @@ Embedded streams occur under `EF` path entries `F`, `UF`, `DOS`, `Mac`, or
 `Unix`. The action and file predicates include reachable application data;
 they describe declarations, without claiming that a viewer executes them.
 Revision-2 permissions use only their defined operation bits; later grants
-require revision 3 or above.
+require revision 3 or above. The High-quality print flag alone grants no
+permission to print; Print must also be set. Each revision-defined bit is
+reported independently.
 
 Coverage uses four nonnegative, ordered byte-range integers starting at zero
-and within the original file. The greatest endpoint selects the latest signed
-revision, independent of field order. Appended bytes make coverage false.
+and an endpoint representable as an integer. The greatest endpoint selects the latest signed
+revision, independent of field order. An endpoint before or after the current
+file length makes coverage false, including appended bytes and smaller rewrites.
 A valid range reaching the original length establishes whole-file coverage
 even when an earlier range is malformed. Malformed signed values otherwise
 leave coverage unknown, with a warning; unsigned fields provide no coverage value. Docbank doesn't validate certificates or cryptographic signatures.

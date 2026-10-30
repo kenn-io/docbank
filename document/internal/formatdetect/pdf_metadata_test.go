@@ -1,10 +1,12 @@
 package formatdetect_test
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -20,7 +22,8 @@ func TestPDFMetadataEvidence(t *testing.T) {
 		permissions    []string
 	}{
 		{name: "plain"},
-		{name: "owner encrypted", keyBits: 128, flags: model.PermissionsPrint, permissions: []string{"Print", "Print in high quality"}},
+		{name: "owner encrypted", keyBits: 128, flags: model.PermissionsPrint, permissions: []string{"Print", "High-quality print flag"}},
+		{name: "bit 12 only", keyBits: 128, flags: model.PermissionsNone | model.PermissionPrintRev3, permissions: []string{"High-quality print flag"}},
 		{name: "locked", password: "open-secret", keyBits: 128, flags: model.PermissionsPrint},
 		{name: "revision 2", keyBits: 40, flags: model.PermissionFlags(0xFFC0), permissions: []string{"None"}},
 		{name: "annotation and forms", keyBits: 128, flags: model.PermissionsNone | model.PermissionModAnnFillForm, permissions: []string{"Annotate and fill forms"}},
@@ -38,7 +41,7 @@ func TestPDFMetadataEvidence(t *testing.T) {
 			assert.Equal(t, tc.permissions, metadata.Facts.Permissions)
 			if tc.password != "" {
 				assert.Nil(t, metadata.Facts.SignatureFieldCount)
-				assert.NotEmpty(t, metadata.Issues)
+				assert.Contains(t, metadata.Issues, formatdetect.PDFMetadataIssue{SourceField: "Password"})
 			}
 		})
 	}
@@ -46,11 +49,11 @@ func TestPDFMetadataEvidence(t *testing.T) {
 		name, extra, fields string
 		count               int64
 		coverage            *bool
-		issue               bool
+		issue, rewrite      bool
 	}{
 		{name: "unnamed signature widget", fields: "[5 0 R]", extra: "<< /FT /Sig /T (Parent) /Kids [6 0 R 7 0 R] >>|<< /Subtype /Widget /Rect [0 0 1 1] /Parent 5 0 R /V << /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached /Contents <00> /ByteRange [0 10 20 LENGTH] >> >>|<< /Subtype /Widget /Rect [0 0 1 1] /Parent 5 0 R >>", count: 1, coverage: new(true)},
+		{name: "rewritten smaller", fields: "[5 0 R]", extra: "<< /Subtype /Widget /Rect [0 0 1 1] /FT /Sig /T (Signed) /V << /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached /Contents <00> /ByteRange [0 10 20 LENGTH] >> >>\n%" + strings.Repeat("x", 2048), count: 1, coverage: new(false), rewrite: true},
 		{name: "blank", fields: "[5 0 R]", extra: "<< /Subtype /Widget /Rect [0 0 1 1] /FT /Sig /T (Blank) >>", count: 1},
-		{name: "signed", fields: "[5 0 R]", extra: "<< /Subtype /Widget /Rect [0 0 1 1] /FT /Sig /T (Signed) /V << /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached /Contents <00> /ByteRange [0 10 20 LENGTH] >> >>", count: 1, coverage: new(true)},
 		{name: "appended", fields: "[5 0 R]", extra: "<< /Subtype /Widget /Rect [0 0 1 1] /FT /Sig /T (Signed) /V << /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached /Contents <00> /ByteRange [0 10 20 20] >> >>", count: 1, coverage: new(false)},
 		{name: "malformed", fields: "[5 0 R]", extra: "<< /Subtype /Widget /Rect [0 0 1 1] /FT /Sig /T (Signed) /V << /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached /Contents <00> /ByteRange [1 10 20 20] >> >>", count: 1, issue: true},
 		{name: "latest first", fields: "[5 0 R 6 0 R]", extra: "<< /Subtype /Widget /Rect [0 0 1 1] /FT /Sig /T (Latest) /V << /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached /Contents <00> /ByteRange [0 10 20 LENGTH] >> >>|<< /Subtype /Widget /Rect [0 0 1 1] /FT /Sig /T (Older) /V << /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached /Contents <00> /ByteRange [0 10 20 20] >> >>", count: 2, coverage: new(true)},
@@ -62,23 +65,29 @@ func TestPDFMetadataEvidence(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			data := mediatest.PDFSignatureFields(tc.fields, strings.Split(tc.extra, "|")...)
+			if tc.rewrite {
+				var rewritten bytes.Buffer
+				require.NoError(t, api.AddProperties(bytes.NewReader(data), &rewritten, map[string]string{"Amendment": "Edited"}, model.NewDefaultConfiguration()))
+				require.Less(t, rewritten.Len(), len(data))
+				data = rewritten.Bytes()
+			}
 			metadata, err := formatdetect.ReadPDFMetadata(data)
 			require.NoError(t, err)
 			require.Equal(t, new(tc.count), metadata.Facts.SignatureFieldCount)
 			require.Equal(t, tc.coverage, metadata.Facts.LastSignatureCoversFile)
 			if tc.issue {
 				require.Contains(t, metadata.Issues, formatdetect.PDFMetadataIssue{SourceField: "ByteRange"})
+			} else {
+				require.NotContains(t, metadata.Issues, formatdetect.PDFMetadataIssue{SourceField: "ByteRange"})
 			}
 		})
 	}
-	t.Run("invalid form", func(t *testing.T) {
-		_, err := formatdetect.ReadPDFMetadata(mediatest.PDFSignatureFields("[5 0 R]", "<< /FT /Sig /T (Invalid) >>"))
-		require.Error(t, err)
-	})
 }
 
 func TestPDFMetadataReachableActionsAndAttachments(t *testing.T) {
 	data := mediatest.PDFWithActionsAndAttachment()
+	_, referenceErr := formatdetect.CountPDFPages(data)
+	require.ErrorIs(t, referenceErr, formatdetect.ErrPDFExternalReference)
 	metadata, err := formatdetect.ReadPDFMetadata(data)
 	require.NoError(t, err)
 	require.Equal(t, new(int64(1)), metadata.Facts.EmbeddedFileCount)
