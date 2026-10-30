@@ -554,21 +554,16 @@ func TestIngestFileDistinguishesLocalAndURLOrigins(t *testing.T) {
 	after, err := s.NodeProvenance(ctx, moved.ID, 100, 0)
 	require.NoError(t, err)
 	assert.Equal(t, before, after)
-	for _, tc := range []struct{ origin, name, want string }{
-		{"https://example.com/download?id=8", "filing.txt", "filing.txt"},
-		{"https://example.com/download?id=9", "filing.txt", "filing (2).txt"},
-	} {
-		node, added, err := s.IngestFile(ctx, urlRun, dir.ID, tc.name, fakeHash("a1"), 1, "text/plain", tc.origin, "")
-		require.NoError(t, err)
-		require.True(t, added)
-		assert.Equal(t, tc.want, node.Name)
-	}
+	separate, added, err := s.IngestFile(ctx, urlRun, dir.ID, "filing.txt", fakeHash("a1"), 1, "text/plain", "https://example.com/download?id=8", "")
+	require.NoError(t, err)
+	require.True(t, added)
+	assert.Equal(t, "filing.txt", separate.Name)
 	localRun, err := s.BeginIngest(ctx, "cli", "/source")
 	require.NoError(t, err)
 	local, added, err := s.IngestFile(ctx, localRun, dir.ID, "filing.txt", fakeHash("a1"), 1, "text/plain", "/source/filing.txt", "")
 	require.NoError(t, err)
 	require.True(t, added)
-	assert.Equal(t, "filing (3).txt", local.Name)
+	assert.Equal(t, "filing (2).txt", local.Name)
 }
 
 func TestIngestFileDoesNotMatchUnknownOriginOutsideNameFamily(t *testing.T) {

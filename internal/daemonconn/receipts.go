@@ -2628,7 +2628,7 @@ func (c *Connection) UploadURL(ctx context.Context, parentPath, name, mimeType, 
 func (c *Connection) upload(ctx context.Context, parentID int64, parentPath, name, mimeType, expectedHash string, expectedSize int64, content io.Reader, fetchJSON string) (api.UploadReceipt, error) {
 	var receipt api.UploadReceipt
 	if parentID <= 0 && parentPath == "" {
-		return receipt, errors.New("upload parent ID must be positive")
+		return receipt, errors.New("upload requires a positive parent ID or a destination path")
 	}
 	mimeType, err := validateUploadRequest(name, mimeType, expectedHash, expectedSize, content)
 	if err != nil {

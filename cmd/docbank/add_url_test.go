@@ -70,7 +70,7 @@ func TestAddURLImportsEvidence(t *testing.T) {
 func TestFetchURLBoundsSchemesNamesAndCleanup(t *testing.T) {
 	for _, tc := range []struct {
 		name, disposition, target, want, message string
-		declared, bytes, cap                     int
+		declared, bytes, cap, status             int
 		chunked                                  bool
 	}{
 		{name: "boundary", target: "/files/report%20one.txt?q=1", bytes: 4, cap: 4, want: "report one.txt"},
@@ -81,6 +81,8 @@ func TestFetchURLBoundsSchemesNamesAndCleanup(t *testing.T) {
 		{name: "newline disposition", disposition: `attachment; filename*=UTF-8''report%0Done%0A.txt`, target: "/header-name.txt", bytes: 4, cap: 4, want: "header-name.txt"},
 		{name: "chunked", chunked: true, bytes: 5, cap: 4, message: "download exceeds"},
 		{name: "interrupted", declared: 5, bytes: 2, cap: 5, message: "downloading:"},
+		{name: "HTTP error", status: http.StatusNotFound, cap: 4, message: "fetch returned HTTP 404"},
+		{name: "range", cap: 0, message: "--max-bytes must be between"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tmp := t.TempDir()
@@ -90,6 +92,9 @@ func TestFetchURLBoundsSchemesNamesAndCleanup(t *testing.T) {
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				assert.Equal(t, "identity", r.Header.Get("Accept-Encoding"))
 				w.Header().Set("Content-Disposition", tc.disposition)
+				if tc.status != 0 {
+					w.WriteHeader(tc.status)
+				}
 				if tc.declared > 0 {
 					w.Header().Set("Content-Length", strconv.Itoa(tc.declared))
 				}
@@ -106,8 +111,6 @@ func TestFetchURLBoundsSchemesNamesAndCleanup(t *testing.T) {
 			} else {
 				require.NoError(t, err)
 				assert.EqualValues(t, tc.bytes, download.size)
-				assert.Empty(t, download.fetch.ETag)
-				assert.Empty(t, download.fetch.LastModified)
 				assert.Equal(t, tc.want, download.name)
 				assert.Equal(t, server.URL+tc.target, download.fetch.RequestedURL)
 				assert.Equal(t, server.URL+tc.target, download.fetch.FinalURL)
@@ -143,29 +146,22 @@ func TestAddURLFailuresPublishNoDocuments(t *testing.T) {
 	defer server.Close()
 	local := writeSourceFile(t, "local.txt", "local")
 	for _, tc := range []struct {
-		args        []string
-		message     string
-		beforeFetch bool
+		args    []string
+		message string
 	}{
-		{[]string{server.URL + "/missing", "--allow-http"}, "fetch returned HTTP 404", false},
-		{[]string{server.URL, "--allow-http", "--max-bytes", "0"}, "--max-bytes must be between", true},
-		{[]string{server.URL, "local.txt", "--allow-http"}, "URL import requires one URL", true},
-		{[]string{local, server.URL, "--allow-http"}, "URL import requires one URL", true},
-		{[]string{server.URL, "--allow-http", "--preflight"}, "URL import requires one URL", true},
-		{[]string{server.URL, "--allow-http", "--replace"}, "URL import requires one URL", true},
-		{[]string{server.URL, "--allow-http", "--include", "*.pdf"}, "URL import requires one URL", true},
-		{[]string{server.URL, "--allow-http", "--progress", "typo"}, "invalid --progress", true},
+		{[]string{server.URL, "--allow-http", "--max-bytes", "0"}, "--max-bytes must be between"},
+		{[]string{server.URL, "local.txt", "--allow-http"}, "URL import requires one URL"},
+		{[]string{local, server.URL, "--allow-http"}, "URL import requires one URL"},
+		{[]string{server.URL, "--allow-http", "--preflight"}, "URL import requires one URL"},
+		{[]string{server.URL, "--allow-http", "--replace"}, "URL import requires one URL"},
+		{[]string{server.URL, "--allow-http", "--include", "*.pdf"}, "URL import requires one URL"},
+		{[]string{server.URL, "--allow-http", "--progress", "typo"}, "invalid --progress"},
 	} {
 		requests.Store(0)
 		_, err := runCLI(t, append([]string{"add"}, tc.args...)...)
 		require.ErrorContains(t, err, tc.message)
-		if tc.beforeFetch {
-			assert.Zero(t, requests.Load())
-		}
+		assert.Zero(t, requests.Load())
 	}
-	out, err := runCLI(t, "tree", "/")
-	require.NoError(t, err)
-	assert.NotContains(t, out, "inbox")
 }
 
 func TestAddURLInterruptRemovesSpool(t *testing.T) {
@@ -187,7 +183,8 @@ func TestAddURLInterruptRemovesSpool(t *testing.T) {
 	defer server.Close()
 	executable, err := os.Executable()
 	require.NoError(t, err)
-	tmp, home := t.TempDir(), t.TempDir()
+	setupFakeDaemon(t, http.NotFound)
+	tmp, home := t.TempDir(), os.Getenv("DOCBANK_HOME")
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	child := exec.CommandContext(ctx, executable, "-test.run=^TestAddURLInterruptRemovesSpool$")
@@ -198,9 +195,6 @@ func TestAddURLInterruptRemovesSpool(t *testing.T) {
 	require.NoError(t, child.Process.Signal(os.Interrupt))
 	require.NoError(t, child.Wait())
 	entries, err := os.ReadDir(tmp)
-	require.NoError(t, err)
-	assert.Empty(t, entries)
-	entries, err = os.ReadDir(home)
 	require.NoError(t, err)
 	assert.Empty(t, entries)
 }

@@ -107,11 +107,6 @@ func fetchURL(ctx context.Context, client http.Client, raw string, allowHTTP boo
 func addURL(cmd *cobra.Command, raw string) (rep api.IngestReport, retErr error) {
 	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	download, err := fetchURL(ctx, http.Client{}, raw, addAllowHTTP, addMaxBytes)
-	if err != nil {
-		return rep, err
-	}
-	defer func() { _ = download.file.Close(); _ = os.Remove(download.file.Name()) }()
 	c, err := daemonconn.Ensure(ctx)
 	if err != nil {
 		return rep, err
@@ -121,6 +116,11 @@ func addURL(cmd *cobra.Command, raw string) (rep api.IngestReport, retErr error)
 			reportFailure(cmd, c, "add", retErr, false)
 		}
 	}()
+	download, err := fetchURL(ctx, http.Client{}, raw, addAllowHTTP, addMaxBytes)
+	if err != nil {
+		return rep, err
+	}
+	defer func() { _ = download.file.Close(); _ = os.Remove(download.file.Name()) }()
 	receipt, err := c.UploadURL(ctx, addDest, download.name, download.mimeType, download.digest, download.size, download.file, download.fetch)
 	if err != nil {
 		return rep, err
