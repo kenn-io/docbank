@@ -142,6 +142,15 @@ func publishPhotoSuggestionTx(ctx context.Context, tx *sql.Tx, version, producer
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
+	if dismissed && explicit && owner != producer {
+		// An explicit request replaces another producer's restored dismissal.
+		// That dismissal stays settled with its producer, and the reply becomes
+		// a new suggestion, as it would before a backup.
+		if _, err := tx.ExecContext(ctx, `UPDATE photo_suggestions SET awaiting=0 WHERE id=?`, awaiting); err != nil {
+			return err
+		}
+		awaiting, dismissed, captionResolved, resolvedJSON = 0, false, false, ""
+	}
 	var resolved []string
 	if resolvedJSON != "" {
 		if err := json.Unmarshal([]byte(resolvedJSON), &resolved); err != nil {
