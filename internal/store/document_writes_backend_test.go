@@ -105,6 +105,25 @@ func TestDocumentWritesPostgres(t *testing.T) {
 	}
 }
 
+func TestDocumentNegativeSizePostgres(t *testing.T) {
+	t.Parallel()
+	s := newPostgresQueryStore(t)
+	ctx := t.Context()
+	// An otherwise valid compressed receipt must not hide an invalid logical
+	// size. The omitted receipt must reject it too, before synthesizing raw bytes.
+	for _, physical := range [][]BlobPhysical{nil, {{Encoding: "zstd", StoredBytes: 4, PackEligible: true}}} {
+		_, err := s.CreateFile(ctx, s.RootID(), "invalid.txt", fakeHash("f1"), -1, "text/plain", physical...)
+		require.ErrorContains(t, err, "content size must not be negative")
+		var retained int
+		require.NoError(t, s.db.QueryRowContext(ctx, `SELECT
+			(SELECT count(*) FROM nodes WHERE parent_id IS NOT NULL) +
+			(SELECT count(*) FROM blobs) +
+			(SELECT count(*) FROM content_versions) +
+			(SELECT count(*) FROM blob_locations)`).Scan(&retained))
+		require.Zero(t, retained, "a rejected create must leave no document or physical authority")
+	}
+}
+
 // The released SQLite trigger results are the oracle for retained photo facts.
 // Replace/revert must remove and restore the displayed bytes' source and date;
 // moving an unowned sibling sidecar must refresh its original's export work.
@@ -183,6 +202,53 @@ func TestDocumentSidecarWorkPostgres(t *testing.T) {
 		require.NoError(t, s.db.QueryRowContext(ctx, `SELECT count(*) FROM photo_xmp_unsettled WHERE asset_id=$1`, asset.ID).Scan(&queued))
 		require.Zero(t, queued)
 	}
+	// Renaming the original changes its saved photo input even though none of
+	// its photo_files memberships change.
+	for _, s := range []*Store{source, target} {
+		current, err := s.NodeByID(ctx, raw.NodeID)
+		require.NoError(t, err)
+		_, _, err = s.Move(ctx, raw.NodeID, s.RootID(), "renamed.cr2", current.Revision)
+		require.NoError(t, err)
+		targets, err := s.PhotoXMPTargetsAfter(ctx, "", 10)
+		require.NoError(t, err)
+		require.Len(t, targets, 1)
+		require.Equal(t, raw.NodeID, targets[0].NodeID)
+	}
+}
+
+func TestDocumentTextSuppressionPostgres(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	source := newTestStore(t)
+	hash := fakeHash("f2")
+	node, err := source.CreateFile(ctx, source.RootID(), "purged.txt", hash, 4, "text/plain")
+	require.NoError(t, err)
+	_, err = source.PurgeDerivatives(ctx, PurgeRequest{ContentVersionIDs: []string{node.CurrentVersionID}})
+	require.NoError(t, err)
+	setup, owner := pgtest.NewDatabase(t)
+	target := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+	tables := append(append([]string{}, postgresEnrollmentCatalogs...), "blob_locations")
+	copyStoreCatalogFixture(t, source, setup, tables)
+	target.primaryStoreID = source.primaryStoreID
+	// Purge isn't ported yet. Its real SQLite output supplies the retained
+	// suppression against which the shared scheduling query must operate.
+	require.NoError(t, target.withStorageTx(ctx, func(tx *sql.Tx) error {
+		return queueTextExtractionTx(ctx, tx, node.CurrentVersionID, hash, "text/plain")
+	}))
+	var queued, searchable int
+	require.NoError(t, target.db.QueryRowContext(ctx, `SELECT
+		(SELECT count(*) FROM text_extraction_queue),
+		(SELECT count(*) FROM text_searchable_versions)`).Scan(&queued, &searchable))
+	require.Zero(t, queued)
+	require.Zero(t, searchable)
+	// Suppression belongs to the purged version, not all future uses of its bytes.
+	created, err := target.CreateFile(ctx, target.RootID(), "new.txt", hash, 4, "text/plain")
+	require.NoError(t, err)
+	var version, queuedHash string
+	require.NoError(t, target.db.QueryRowContext(ctx, `SELECT version_id FROM text_searchable_versions`).Scan(&version))
+	require.Equal(t, created.CurrentVersionID, version)
+	require.NoError(t, target.db.QueryRowContext(ctx, `SELECT blob_hash FROM text_extraction_queue`).Scan(&queuedHash))
+	require.Equal(t, hash, queuedHash)
 }
 
 func TestDocumentBlobPromotionPostgres(t *testing.T) {

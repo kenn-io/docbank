@@ -55,6 +55,9 @@ type BlobPhysical struct {
 }
 
 func normalizeBlobPhysical(size int64, physical []BlobPhysical) (BlobPhysical, error) {
+	if size < 0 {
+		return BlobPhysical{}, errors.New("content size must not be negative")
+	}
 	if len(physical) > 1 {
 		return BlobPhysical{}, errors.New("at most one physical blob receipt may be supplied")
 	}
