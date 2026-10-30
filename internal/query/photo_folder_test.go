@@ -12,7 +12,7 @@ func TestPhotoFolderKey(t *testing.T) {
 		kind, desc, path, key string
 		valid                 bool
 	}{
-		{"url", "response", "https://example.com/photos/a.jpg", "", false},
+		{"url", `{"version":1,"requested_url":"https://example.com/photos/a.jpg","final_url":"https://example.com/photos/a.jpg","fetched_at":"2026-10-01T12:34:56Z"}`, "https://example.com/photos/a.jpg", "", false},
 		{"cli", "first", "/shots/a.jpg", "97310aecd6d353ecc4b0b3bbe2a48333e4be26fa435ef8edbce032e1da9fd52d", true},
 		{"cli", "second", "/shots/b.jpg", "97310aecd6d353ecc4b0b3bbe2a48333e4be26fa435ef8edbce032e1da9fd52d", true},
 		{"cli", "", `C:\shots\a.jpg`, "18e6828f06efb295809a602b37c11176daeb34f7d3265b6cc6ce16452d69045c", true},

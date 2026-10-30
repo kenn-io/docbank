@@ -126,7 +126,14 @@ it("offers the import ID for command-line imports", async () => {
   );
 });
 
-it.each(["text", "binary", false])(
+it.each([
+  { bytes: 'W/"edition-1"', display: 'W/"edition-1"' },
+  { bytes: "\xff", display: "\\xff" },
+  { bytes: 'W/"\\xff\xff"', display: 'W/"\\\\xff\\xff"' },
+  { bytes: 'W/"\xff\\xff"', display: 'W/"\\xff\\\\xff"' },
+  { bytes: "\\xff", display: "\\\\xff" },
+  { bytes: null, display: null },
+])(
   "shows URL fetch evidence with optional headers: %s",
   async (headers) => {
     const urlFetch = {
@@ -134,9 +141,9 @@ it.each(["text", "binary", false])(
       requested_url: "https://example.com/download?id=7",
       final_url: "https://example.com/filing.pdf",
       fetched_at: "2026-10-01T12:34:56Z",
-      ...(headers
+      ...(headers.bytes
         ? {
-            etag: btoa(headers === "binary" ? "\xff" : 'W/"edition-1"'),
+            etag: btoa(headers.bytes!),
             last_modified: btoa("server supplied text"),
           }
         : {}),
@@ -180,9 +187,9 @@ it.each(["text", "binary", false])(
         ?.querySelector("time")
         ?.getAttribute("datetime"),
     ).toBe("2026-10-01T12:34:56Z");
-    if (headers) {
+    if (headers.bytes) {
       expect(screen.getByRole("button", { name: "Copy ETag" }).textContent).toContain(
-        headers === "binary" ? "\\xff" : 'W/"edition-1"',
+        headers.display!,
       );
       expect(screen.getByRole("button", { name: "Copy Last-Modified" }).textContent).toContain(
         "server supplied text",

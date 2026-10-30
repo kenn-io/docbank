@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json/v2"
 	"fmt"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
@@ -181,13 +182,16 @@ func TestUploadRejectsMismatchedEvidenceWithoutAuthority(t *testing.T) {
 		wantCode   string
 		wantStatus int
 	}{
-		{name: "digest", mutate: func(in *uploadRequest) { in.expectedHash = uploadIdentity([]byte("other")) },
+		{name: "digest", mutate: func(in *uploadRequest) {
+			in.expectedHash = uploadIdentity([]byte("other"))
+			in.parentPath = "/missing/nested"
+		},
 			wantCode: "digest_mismatch", wantStatus: http.StatusUnprocessableEntity},
 		{name: "short size", mutate: func(in *uploadRequest) { in.expectedSize-- },
 			wantCode: "size_mismatch", wantStatus: http.StatusUnprocessableEntity},
 		{name: "long size", mutate: func(in *uploadRequest) { in.expectedSize++ },
 			wantCode: "size_mismatch", wantStatus: http.StatusUnprocessableEntity},
-		{name: "extra part", mutate: func(in *uploadRequest) { in.extraPart = true },
+		{name: "extra part", mutate: func(in *uploadRequest) { in.extraPart = true; in.parentPath = "/missing/nested" },
 			wantCode: "validation", wantStatus: http.StatusUnprocessableEntity},
 		{name: "different filename", mutate: func(in *uploadRequest) { in.filename = "other.txt" },
 			wantCode: "validation", wantStatus: http.StatusUnprocessableEntity},
@@ -204,6 +208,10 @@ func TestUploadRejectsMismatchedEvidenceWithoutAuthority(t *testing.T) {
 			assert.Contains(t, body, fmt.Sprintf(`"code":%q`, tt.wantCode))
 			_, err := s.NodeByPath(t.Context(), "/rejected.txt")
 			require.ErrorIs(t, err, store.ErrNotFound)
+			if in.parentPath != "" {
+				_, err := s.NodeByPath(t.Context(), "/missing")
+				require.ErrorIs(t, err, store.ErrNotFound)
+			}
 			blobs, err := s.AllBlobs(t.Context())
 			require.NoError(t, err)
 			assert.Empty(t, blobs, "failed upload must grant no blob authority")
@@ -407,29 +415,16 @@ func TestPushRoutesRefuseTheNameOfAConfiguredWatch(t *testing.T) {
 	assert.Empty(t, blobs)
 }
 
-func TestUploadURLProvenanceIsAtomic(t *testing.T) {
+func TestUploadURLMapsFetchEvidence(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	content := []byte("URL evidence")
 	fetch := `{"version":1,"requested_url":"https://example.com/download?q=1","final_url":"https://example.com/filing.txt","fetched_at":"2026-10-01T12:34:56.123Z","etag":"V/8=","last_modified":"c2VydmVyIHN1cHBsaWVkIHRleHQ="}`
 	in := uploadRequest{name: "filing.txt", content: content, expectedHash: uploadIdentity(content), expectedSize: int64(len(content)), urlFetch: fetch, parentPath: "/missing/nested"}
-	var before bytes.Buffer
-	require.NoError(t, s.ExportMetadata(t.Context(), &before))
 	rejected := in
 	rejected.urlFetch = strings.Replace(fetch, `"version":1`, `"version":2`, 1)
 	resp, body := sendUpload(t, ts.URL, ts.Client(), s.RootID(), rejected)
 	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
-	in.extraPart = true
-	resp, body = sendUpload(t, ts.URL, ts.Client(), s.RootID(), in)
-	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
-	in.extraPart = false
-	in.expectedHash = strings.Repeat("a", 64)
-	resp, body = sendUpload(t, ts.URL, ts.Client(), s.RootID(), in)
-	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
-	var after bytes.Buffer
-	require.NoError(t, s.ExportMetadata(t.Context(), &after))
-	assert.Equal(t, before.String(), after.String())
-	in.expectedHash = uploadIdentity(content)
 	resp, body = sendUpload(t, ts.URL, ts.Client(), s.RootID(), in)
 	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
 	var receipt api.UploadReceipt
@@ -462,7 +457,12 @@ func TestUploadRequiresOneDestination(t *testing.T) {
 		req.Header.Set(api.BlobSizeHeader, "0")
 		resp, err := ts.Client().Do(req)
 		require.NoError(t, err)
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
 		_ = resp.Body.Close()
 		assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, query)
+		if query == "parent_path=relative" {
+			assert.Contains(t, string(body), "valid absolute virtual path without dot segments")
+		}
 	}
 }

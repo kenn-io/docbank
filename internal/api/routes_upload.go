@@ -215,7 +215,7 @@ func parseUploadIdentity(r *http.Request) (int64, string, string, int64, *Error)
 	parentID, err := strconv.ParseInt(r.URL.Query().Get("parent_id"), 10, 64)
 	if path := r.URL.Query().Get("parent_path"); path != "" {
 		if r.URL.Query().Get("parent_id") != "" || store.ValidatePushDestination(path) != nil {
-			return 0, "", "", 0, NewError(http.StatusUnprocessableEntity, "validation", "supply exactly one of parent_id or absolute parent_path")
+			return 0, "", "", 0, NewError(http.StatusUnprocessableEntity, "validation", "supply exactly one of parent_id or parent_path; parent_path must be a valid absolute virtual path without dot segments")
 		}
 		parentID, err = 0, nil
 	}

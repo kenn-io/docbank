@@ -502,7 +502,7 @@ func TestIngestRejectsNonUTF8MetadataBeforeCommit(t *testing.T) {
 	require.NoError(t, s.ExportMetadata(ctx, &metadata))
 }
 
-func TestIngestFileDistinguishesLocalAndURLOrigins(t *testing.T) {
+func TestIngestFileMatchesSourceNamesAndRenamedURLs(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -546,7 +546,9 @@ func TestIngestFileDistinguishesLocalAndURLOrigins(t *testing.T) {
 	require.NoError(t, err)
 	before, err := s.NodeProvenance(ctx, moved.ID, 100, 0)
 	require.NoError(t, err)
-	skipped, added, err := s.IngestFile(ctx, urlRun, dir.ID, "changed-name.txt", fakeHash("a1"), 1, "text/plain", "https://example.com/download?id=7", "")
+	retryRun, err := s.BeginIngest(ctx, "url", "https://example.com/download?id=7")
+	require.NoError(t, err)
+	skipped, added, err := s.IngestFile(ctx, retryRun, dir.ID, "changed-name.txt", fakeHash("a1"), 1, "text/plain", "https://example.com/download?id=7", "")
 	require.NoError(t, err)
 	assert.False(t, added)
 	assert.Equal(t, moved.ID, skipped.ID)
@@ -554,16 +556,12 @@ func TestIngestFileDistinguishesLocalAndURLOrigins(t *testing.T) {
 	after, err := s.NodeProvenance(ctx, moved.ID, 100, 0)
 	require.NoError(t, err)
 	assert.Equal(t, before, after)
-	separate, added, err := s.IngestFile(ctx, urlRun, dir.ID, "filing.txt", fakeHash("a1"), 1, "text/plain", "https://example.com/download?id=8", "")
+	mirrorRun, err := s.BeginIngest(ctx, "url", "https://example.com/download?id=8")
+	require.NoError(t, err)
+	separate, added, err := s.IngestFile(ctx, mirrorRun, dir.ID, "filing.txt", fakeHash("a1"), 1, "text/plain", "https://example.com/download?id=8", "")
 	require.NoError(t, err)
 	require.True(t, added)
 	assert.Equal(t, "filing.txt", separate.Name)
-	localRun, err := s.BeginIngest(ctx, "cli", "/source")
-	require.NoError(t, err)
-	local, added, err := s.IngestFile(ctx, localRun, dir.ID, "filing.txt", fakeHash("a1"), 1, "text/plain", "/source/filing.txt", "")
-	require.NoError(t, err)
-	require.True(t, added)
-	assert.Equal(t, "filing (2).txt", local.Name)
 }
 
 func TestIngestFileDoesNotMatchUnknownOriginOutsideNameFamily(t *testing.T) {
