@@ -817,6 +817,8 @@ proposed workflow changes.
 
 Go test workflows set `GOTRACEBACK=all` for crashes. When diagnosing a hang, call Kit's `stacktest.Dump(t)` before failing an expired wait to log every goroutine's stack.
 
+CLI redaction verification tests run in separate test processes because the PDF worker's 1 GiB RSS ceiling counts all memory in its process. Each child keeps the real PDF checks and the qualified memory limit.
+
 Documentation browser checks use Microsoft's public Playwright image matching the installed `@playwright/test` version.
 Render PDF caches LibreOffice and Poppler installers by runner image, architecture, and workflow recipe.
 A cache miss downloads the packages and their missing dependencies.

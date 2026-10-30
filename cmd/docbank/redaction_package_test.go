@@ -47,6 +47,9 @@ func TestRecipientSelection(t *testing.T) {
 }
 
 func TestRecipientPackageRequiresFullPDFVerification(t *testing.T) {
+	if runRedactionVerificationInSubprocess(t) {
+		return
+	}
 	f := newRedactionVerifyFixture(t)
 	recipe, err := processing.BuildNumberedRecipe(uuid.New(), store.BatesNamespace{NamespaceID: uuid.New().String(), Prefix: "Q", Padding: 6}, 1, f.review)
 	require.NoError(t, err)
