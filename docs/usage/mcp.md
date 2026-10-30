@@ -334,25 +334,10 @@ secrets, daemon keys, or unrequested document text.
 
 ### PDF facts
 
-`get_document` includes `pdf_facts` for the requested content version when its
-PDF evidence is available. It contains only these optional fields:
-
-| Field | Meaning |
-| --- | --- |
-| `encrypted` | Whether the original declares PDF encryption. |
-| `permissions` | Declared operation labels for the encryption revision; `None` means no grants. Omitted for unencrypted PDFs. |
-| `signature_field_count` | Logical signature fields, including unsigned fields and inherited field types. |
-| `last_signature_covers_file` | Whether the latest declared signature range ends at the original file length. Appended bytes make it false. |
-| `embedded_file_count` | Distinct embedded stream references; aliases count once, and separate streams with equal bytes count separately. |
-| `has_javascript` | A reachable JavaScript action declares a script. |
-| `has_launch_actions` | A reachable Launch action declares a target. |
-
-Action evidence includes additional actions, name-tree values, annotations,
-and chained actions. Structure roles named like actions provide no action evidence.
-A password-locked PDF supplies `encrypted: true`; unavailable observations are
-omitted. Unsigned fields and unusable byte ranges omit signature coverage.
-Missing fields mean unknown, and absent PDF evidence omits `pdf_facts` entirely.
-Coverage describes byte ranges, without verifying certificates or signatures.
+`get_document` exposes `pdf_facts` for its accepted current content version.
+The [PDF evidence reference](../architecture/source-metadata.md#pdf-evidence)
+defines its seven fields and omission rules. Missing observations mean unknown;
+PDF evidence that hasn't been extracted omits `pdf_facts` entirely.
 
 ## Resources and rendition windows
 

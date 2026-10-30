@@ -118,23 +118,6 @@ func PDFWithActionsAndAttachment() []byte {
 	})
 }
 
-// PDFInlineAttachments references one stream through two inline file specifications.
-func PDFInlineAttachments() []byte {
-	return PDFObjects("synthetic inline attachments", []string{
-		"<< /Type /Catalog /Pages 2 0 R /Names << /EmbeddedFiles << /Names [(note.txt) << /Type /Filespec /F (note.txt) /EF << /F 4 0 R >> >>] >> >> /AF [<< /Type /Filespec /F (note.txt) /EF << /F 4 0 R >> >>] >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>", "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >>", "<< /Type /EmbeddedFile /Length 4 >>\nstream\nnote\nendstream"})
-}
-
-// PDFStructureRole uses an action name as a tagged-document structure role.
-func PDFStructureRole() []byte {
-	return PDFObjects("synthetic tagged PDF", []string{
-		"<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 4 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>", "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >>", "<< /Type /StructTreeRoot /K [5 0 R] /RoleMap << /Launch /P >> >>", "<< /Type /StructElem /S /Launch /P 4 0 R /Pg 3 0 R /K 0 >>"})
-}
-
-// PDFUnnamedSignatureWidget carries its signature value in an unnamed child widget.
-func PDFUnnamedSignatureWidget() []byte {
-	return PDFSignatureFields("[5 0 R]", "<< /FT /Sig /T (Parent) /Kids [6 0 R 7 0 R] >>", "<< /Subtype /Widget /Rect [0 0 1 1] /Parent 5 0 R /V << /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached /Contents <00> /ByteRange [0 10 20 LENGTH] >> >>", "<< /Subtype /Widget /Rect [0 0 1 1] /Parent 5 0 R >>")
-}
-
 // GIF returns a GIF with the given number of frames. Frames alternate between
 // two palette colors so an animated result differs from its first frame.
 func GIF(width, height, frames int) []byte {

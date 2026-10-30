@@ -32,19 +32,14 @@ func readPDFFacts(ctx *model.Context, size int64, metadata *PDFMetadata) {
 		if err != nil {
 			return false, err
 		}
-		dictionaryType, err := pdfDictName(ctx, dictionary, "Type")
-		if err != nil {
-			return false, err
-		}
-		if !dictionary.HasEntry("Type") || dictionaryType == "Action" {
-			javascript = javascript || action == "JavaScript" && dictionary["JS"] != nil
-			launch = launch || action == "Launch" && (dictionary["F"] != nil || dictionary["Win"] != nil || dictionary["Mac"] != nil || dictionary["Unix"] != nil)
-		}
-		_, err = pdfVisitEmbeddedFileStreams(ctx, dictionary, func(object types.Object) {
+		javascript = javascript || (action == "JavaScript" || action == "Rendition") && dictionary["JS"] != nil
+		launch = launch || action == "Launch" && (dictionary["F"] != nil || dictionary["Win"] != nil || dictionary["Mac"] != nil || dictionary["Unix"] != nil)
+		streams, err := pdfEmbeddedFileStreams(ctx, dictionary)
+		for _, object := range streams {
 			if ref, ok := object.(types.IndirectRef); ok {
 				embedded[ref.ObjectNumber.Value()] = true
 			}
-		})
+		}
 		return false, err
 	})
 	if err != nil {
@@ -59,7 +54,8 @@ func readPDFFacts(ctx *model.Context, size int64, metadata *PDFMetadata) {
 		facts.SignatureFieldCount = new(count)
 		if malformed {
 			metadata.Issues = append(metadata.Issues, PDFMetadataIssue{SourceField: "ByteRange"})
-		} else if endpoint >= 0 {
+		}
+		if endpoint == size || !malformed && endpoint >= 0 {
 			facts.LastSignatureCoversFile = new(endpoint == size)
 		}
 	}
@@ -118,11 +114,7 @@ func pdfSignatureFacts(ctx *model.Context, size int64) (count, endpoint int64, m
 			if err != nil {
 				return fmt.Errorf("inspect PDF evidence: %w", err)
 			}
-			subtype, err := pdfDictName(ctx, dict, "Subtype")
-			if err != nil {
-				return fmt.Errorf("inspect PDF evidence: %w", err)
-			}
-			if subtype == "Widget" && !dict.HasEntry("T") && !dict.HasEntry("FT") && !dict.HasEntry("V") {
+			if !dict.HasEntry("T") && !dict.HasEntry("FT") && !dict.HasEntry("V") && !dict.HasEntry("Kids") {
 				continue
 			}
 			hasFields = true

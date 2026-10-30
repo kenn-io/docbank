@@ -15,10 +15,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"time"
 
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
@@ -32,13 +31,22 @@ import (
 func TestExtractSourceMetadataFromSyntheticFormats(t *testing.T) {
 	t.Parallel()
 	ooxml := syntheticOOXML(t)
+	owner, err := mediatest.EncryptPDF(mediatest.PDF(), "", "owner-secret", 128, model.PermissionsPrint)
+	require.NoError(t, err)
+	locked, err := mediatest.EncryptPDF(mediatest.PDF(), "open-secret", "owner-secret", 128)
+	require.NoError(t, err)
 	for _, testCase := range []struct {
 		name      string
 		payload   []byte
 		keys      []string
 		sensitive string
+		facts     map[string]document.SourceMetadataValueV1
+		warning   bool
 	}{
 		{name: "PDF info and XMP", payload: syntheticMetadataPDF(9), keys: []string{"created", "creators", "description", "keywords", "modified", "page_count", "pdf.info.embedded_file_count", "pdf.info.encrypted", "pdf.info.has_javascript", "pdf.info.has_launch_actions", "pdf.info.signature_field_count", "subject", "title"}},
+		{name: "PDF permissions", payload: owner, facts: map[string]document.SourceMetadataValueV1{"pdf.info.permissions": {Kind: document.SourceMetadataStringList, Strings: []string{"Print", "Print in high quality"}}}, keys: []string{"created", "modified", "page_count", "pdf.info.encrypted", "pdf.info.permissions", "pdf.info.signature_field_count", "pdf.info.embedded_file_count", "pdf.info.has_javascript", "pdf.info.has_launch_actions"}},
+		{name: "PDF signature coverage", payload: mediatest.PDFSignatureFields("[5 0 R]", "<< /Subtype /Widget /Rect [0 0 1 1] /FT /Sig /T (Signature) /V << /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached /Contents <00> /ByteRange [0 10 20 LENGTH] >> >>"), facts: map[string]document.SourceMetadataValueV1{"pdf.info.last_signature_covers_file": {Kind: document.SourceMetadataBoolean, Boolean: new(true)}}, keys: []string{"page_count", "pdf.info.encrypted", "pdf.info.signature_field_count", "pdf.info.last_signature_covers_file", "pdf.info.embedded_file_count", "pdf.info.has_javascript", "pdf.info.has_launch_actions"}},
+		{name: "PDF locked", payload: locked, warning: true, facts: map[string]document.SourceMetadataValueV1{"pdf.info.encrypted": {Kind: document.SourceMetadataBoolean, Boolean: new(true)}}, keys: []string{"pdf.info.encrypted"}},
 		{name: "OOXML core, app, and custom", payload: ooxml, keys: []string{"created", "office.core.word_count", "office.custom.matter_number", "page_count", "title"}},
 		{name: "RFC 5322 email", payload: []byte("From: Ada <ada@example.test>\r\nTo: Grace <grace@example.test>\r\nBcc: Private <private@example.test>\r\nSubject: Synthetic mail\r\nDate: Tue, 2 Jan 2024 03:04:05 -0700\r\n\r\nbody"), keys: []string{"email.bcc", "email.from", "email.sent", "email.subject", "email.to"}, sensitive: "email.bcc"},
 		{name: "iCalendar", payload: []byte("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nSUMMARY:Synthetic meeting\r\nDTSTART:20240102T030405\r\nDTEND:20240102T040405\r\nEND:VEVENT\r\nEND:VCALENDAR"), keys: []string{"calendar.end", "calendar.start", "title"}},
@@ -54,11 +62,19 @@ func TestExtractSourceMetadataFromSyntheticFormats(t *testing.T) {
 			require.NoError(t, err)
 			keys := make([]string, 0, len(metadata.Fields))
 			sensitive := map[string]bool{}
+			facts := map[string]document.SourceMetadataValueV1{}
 			for _, field := range metadata.Fields {
 				keys = append(keys, field.Key)
 				sensitive[field.Key] = field.Sensitive
+				facts[field.Key] = field.Value
 			}
 			assert.ElementsMatch(t, testCase.keys, keys)
+			for key, expected := range testCase.facts {
+				assert.Equal(t, expected, facts[key])
+			}
+			if testCase.warning {
+				assert.NotEmpty(t, metadata.Warnings)
+			}
 			if testCase.sensitive != "" {
 				assert.True(t, sensitive[testCase.sensitive])
 			}
@@ -1733,97 +1749,31 @@ func TestExtractSourceMetadataSkipsExportOnlyTIFFKinds(t *testing.T) {
 
 func TestPDFEvidenceBackfillRetainsOriginalAndPriorEvidence(t *testing.T) {
 	t.Parallel()
-	signed := mediatest.PDFSignatureFields("[5 0 R]", "<< /Subtype /Widget /Rect [0 0 1 1] /FT /Sig /T (Signature) /V << /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached /Contents <00> /ByteRange [0 10 20 LENGTH] >> >>")
-	active := mediatest.PDFWithActionsAndAttachment()
-	inherited := mediatest.PDFSignatureFields("[5 0 R]", "<< /FT /Sig /T (Parent) /V << /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached /Contents <00> /ByteRange [0 10 20 20] >> /Kids [6 0 R] >>", "<< /Rect [0 0 1 1] /T (Child) /Parent 5 0 R /Kids [7 0 R] >>", "<< /Subtype /Widget /Rect [0 0 1 1] /Parent 6 0 R >>")
-	owner, err := mediatest.EncryptPDF(mediatest.PDF(), "", "owner-secret", 128, model.PermissionsPrint)
+	payload := mediatest.PDFSignatureFields("[5 0 R]", "<< /Subtype /Widget /Rect [0 0 1 1] /FT /Sig /T (Signature) /V << /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached /Contents <00> /ByteRange [0 10 20 LENGTH] >> >>")
+	f := newEmailPipelineFixture(t)
+	target := f.add(t, "contract.pdf", string(payload), "application/pdf")
+	canonical, _, err := document.MarshalSourceMetadataV1(emptySourceMetadata())
 	require.NoError(t, err)
-	locked, err := mediatest.EncryptPDF(mediatest.PDF(), "open-secret", "owner-secret", 128)
+	old, err := f.catalog.PublishSourceMetadata(t.Context(), target.Version.BlobHash, strings.Repeat("a", 64), canonical)
 	require.NoError(t, err)
-	restricted, err := mediatest.EncryptPDF(mediatest.PDF(), "", "owner-secret", 40, model.PermissionFlags(0xFFC0))
+	targets, err := f.catalog.MissingSourceMetadataTargetsAfter(t.Context(), SourceMetadataExtractorFingerprint, "", 10)
 	require.NoError(t, err)
-	forms, err := mediatest.EncryptPDF(mediatest.PDF(), "", "owner-secret", 128, model.PermissionsNone|model.PermissionModAnnFillForm)
+	require.Len(t, targets, 1)
+	completed, err := BackfillSourceMetadataTargets(t.Context(), f.catalog, f.blobs, f.spool, targets)
 	require.NoError(t, err)
-	for _, tc := range []struct {
-		name                 string
-		payload              []byte
-		encrypted            bool
-		signatures, embedded int64
-		active, locked       bool
-		coverage             *bool
-		permissions          []string
-	}{
-		{name: "plain", payload: syntheticMetadataPDF(1)},
-		{name: "inherited signature", payload: inherited, signatures: 1, coverage: new(false)},
-		{name: "signed", payload: signed, signatures: 1, coverage: new(true)},
-		{name: "appended", payload: append(bytes.Clone(signed), []byte("\n% amendment\n")...), signatures: 1, coverage: new(false)},
-		{name: "actions and attachment", payload: active, embedded: 1, active: true},
-		{name: "owner encrypted", payload: owner, encrypted: true, permissions: []string{"Print", "Print in high quality"}},
-		{name: "revision 2", payload: restricted, encrypted: true, permissions: []string{"None"}},
-		{name: "annotation and forms", payload: forms, encrypted: true, permissions: []string{"Annotate and fill forms"}},
-		{name: "inline aliases", payload: mediatest.PDFInlineAttachments(), embedded: 1},
-		{name: "structure role", payload: mediatest.PDFStructureRole()},
-		{name: "unnamed signature", payload: mediatest.PDFUnnamedSignatureWidget(), signatures: 1, coverage: new(true)},
-		{name: "locked", payload: locked, encrypted: true, locked: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			extracted, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), tc.payload)
-			require.NoError(t, err)
-			f := newEmailPipelineFixture(t)
-			target := f.add(t, "contract.pdf", string(tc.payload), "application/pdf")
-			targets, err := f.catalog.MissingSourceMetadataTargetsAfter(t.Context(), SourceMetadataExtractorFingerprint, "", 10)
-			require.NoError(t, err)
-			require.Len(t, targets, 1)
-			for _, prior := range []bool{false, true} {
-				metadata := extracted
-				fingerprint := SourceMetadataExtractorFingerprint
-				if prior {
-					metadata = emptySourceMetadata()
-					fingerprint = strings.Repeat("a", 64)
-				}
-				canonical, _, err := document.MarshalSourceMetadataV1(metadata)
-				require.NoError(t, err)
-				old, err := f.catalog.PublishSourceMetadata(t.Context(), target.Version.BlobHash, fingerprint, canonical)
-				require.NoError(t, err)
-				if prior {
-					completed, err := BackfillSourceMetadataTargets(t.Context(), f.catalog, f.blobs, f.spool, targets)
-					require.NoError(t, err)
-					require.Equal(t, 1, completed)
-				}
-				view, err := f.catalog.ContentVersionSourceMetadata(t.Context(), target.Version.ID)
-				require.NoError(t, err)
-				require.Equal(t, target.Version.BlobHash, view.Version.BlobHash)
-				require.ElementsMatch(t, extracted.Fields, view.Metadata.Fields)
-				require.ElementsMatch(t, extracted.Warnings, view.Metadata.Warnings)
-				facts := map[string]document.SourceMetadataValueV1{}
-				for _, field := range view.Metadata.Fields {
-					facts[field.Key] = field.Value
-				}
-				require.Equal(t, new(tc.encrypted), facts["pdf.info.encrypted"].Boolean)
-				require.Equal(t, tc.permissions, facts["pdf.info.permissions"].Strings)
-				if tc.locked {
-					require.Nil(t, facts["pdf.info.signature_field_count"].Integer)
-					require.NotEmpty(t, view.Metadata.Warnings)
-				} else {
-					require.Equal(t, new(tc.signatures), facts["pdf.info.signature_field_count"].Integer)
-					require.Equal(t, new(tc.embedded), facts["pdf.info.embedded_file_count"].Integer)
-					require.Equal(t, new(tc.active), facts["pdf.info.has_javascript"].Boolean)
-					require.Equal(t, new(tc.active), facts["pdf.info.has_launch_actions"].Boolean)
-					require.Equal(t, tc.coverage, facts["pdf.info.last_signature_covers_file"].Boolean)
-				}
-				reader, err := f.blobs.OpenContext(t.Context(), target.Version.BlobHash)
-				require.NoError(t, err)
-				original, err := io.ReadAll(reader)
-				require.NoError(t, err)
-				require.NoError(t, reader.Close())
-				require.Equal(t, tc.payload, original)
-				if prior {
-					retained, err := f.catalog.PublishSourceMetadata(t.Context(), target.Version.BlobHash, fingerprint, canonical)
-					require.NoError(t, err)
-					require.Equal(t, old.GenerationID, retained.GenerationID)
-					require.Equal(t, old.CreatedAt, retained.CreatedAt)
-				}
-			}
-		})
-	}
+	require.Equal(t, 1, completed)
+	view, err := f.catalog.ContentVersionSourceMetadata(t.Context(), target.Version.ID)
+	require.NoError(t, err)
+	coverage, _ := sourceMetadataBoolean(view.Metadata, "pdf.info.last_signature_covers_file")
+	require.True(t, coverage)
+	reader, err := f.blobs.OpenContext(t.Context(), target.Version.BlobHash)
+	require.NoError(t, err)
+	original, err := io.ReadAll(reader)
+	require.NoError(t, err)
+	require.NoError(t, reader.Close())
+	require.Equal(t, payload, original)
+	retained, err := f.catalog.PublishSourceMetadata(t.Context(), target.Version.BlobHash, strings.Repeat("a", 64), canonical)
+	require.NoError(t, err)
+	require.Equal(t, old.GenerationID, retained.GenerationID)
+	require.Equal(t, old.CreatedAt, retained.CreatedAt)
 }

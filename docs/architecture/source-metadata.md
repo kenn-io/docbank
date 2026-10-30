@@ -70,20 +70,24 @@ version, including saved results whose live document has changed.
 | `signature_field_count` | integer | Logical signature fields, including unsigned fields and inherited field types, counted once per field rather than per widget. |
 | `last_signature_covers_file` | boolean | The latest declared signed revision's byte range ends at the original file length. |
 | `embedded_file_count` | integer | Distinct embedded stream references under reachable file specifications; repeated references count once, while distinct streams with equal bytes count separately. |
-| `has_javascript` | boolean | Reachable declared JavaScript actions with a script, including JavaScript name-tree entries. |
-| `has_launch_actions` | boolean | Reachable declared Launch actions with a target, including chained actions. |
+| `has_javascript` | boolean | Reachable dictionaries declaring `S: JavaScript` or `S: Rendition` with a `JS` entry. |
+| `has_launch_actions` | boolean | Reachable dictionaries declaring `S: Launch` with `F`, `Win`, `Mac`, or `Unix`. |
 
-Action dictionaries may omit `Type` or declare `Type: Action`; structure roles
-with action-like names provide no action evidence. Revision-2 permissions use
-only their defined operation bits; later grants require revision 3 or above.
+Embedded streams occur under `EF` path entries `F`, `UF`, `DOS`, `Mac`, or
+`Unix`. The action and file predicates include reachable application data;
+they describe declarations, without claiming that a viewer executes them.
+Revision-2 permissions use only their defined operation bits; later grants
+require revision 3 or above.
 
 Coverage uses four nonnegative, ordered byte-range integers starting at zero
 and within the original file. The greatest endpoint selects the latest signed
 revision, independent of field order. Appended bytes make coverage false.
-Malformed signed values leave coverage unknown; unsigned fields provide no
-coverage value. Docbank doesn't validate certificates or cryptographic signatures.
+A valid range reaching the original length establishes whole-file coverage
+even when an earlier range is malformed. Malformed signed values otherwise
+leave coverage unknown, with a warning; unsigned fields provide no coverage value. Docbank doesn't validate certificates or cryptographic signatures.
 
-PDFs opening with the empty password can supply all these observations. A PDF
+Readable encrypted PDFs and PDFs with external references also supply Info
+and XMP evidence. PDFs opening with the empty password can supply all these observations. A PDF
 requiring a password supplies `encrypted: true` and a `Password` warning;
 other facts remain unknown. Optional inspection failures omit the affected
 facts with warnings while retaining readable Info, XMP, and page evidence.

@@ -779,23 +779,27 @@ var pdfFileSpecPathKeys = []string{"F", "UF", "DOS", "Mac", "Unix"}
 // name over a single stream. Requiring each path key to have its own stream
 // rejects that document, and the file is embedded either way.
 func pdfCarriesEmbeddedFile(context *model.Context, dictionary types.Dict) (bool, error) {
-	return pdfVisitEmbeddedFileStreams(context, dictionary, nil)
+	streams, err := pdfEmbeddedFileStreams(context, dictionary)
+	if len(streams) > 0 {
+		return true, nil
+	}
+	return false, err
 }
 
-func pdfVisitEmbeddedFileStreams(context *model.Context, dictionary types.Dict, visit func(types.Object)) (bool, error) {
+func pdfEmbeddedFileStreams(context *model.Context, dictionary types.Dict) ([]types.Object, error) {
 	object, ok := dictionary["EF"]
 	if !ok {
-		return false, nil
+		return nil, nil
 	}
 	resolved, err := context.Dereference(object)
 	if err != nil {
-		return false, fmt.Errorf("dereference PDF dictionary %q: %w", "EF", err)
+		return nil, fmt.Errorf("dereference PDF dictionary %q: %w", "EF", err)
 	}
 	streams, ok := resolved.(types.Dict)
 	if !ok {
-		return false, nil
+		return nil, nil
 	}
-	found := false
+	var refs []types.Object
 	for _, key := range pdfFileSpecPathKeys {
 		entry, ok := streams[key]
 		if !ok {
@@ -803,18 +807,14 @@ func pdfVisitEmbeddedFileStreams(context *model.Context, dictionary types.Dict, 
 		}
 		value, err := context.Dereference(entry)
 		if err != nil {
-			return false, fmt.Errorf("dereference PDF embedded file %q: %w", key, err)
+			return refs, fmt.Errorf("dereference PDF embedded file %q: %w", key, err)
 		}
 		switch value.(type) {
 		case types.StreamDict, *types.StreamDict:
-			if visit == nil {
-				return true, nil
-			}
-			visit(entry)
-			found = true
+			refs = append(refs, entry)
 		}
 	}
-	return found, nil
+	return refs, nil
 }
 
 func pdfDictHasStringEntry(

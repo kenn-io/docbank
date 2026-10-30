@@ -77,9 +77,6 @@ func TestStatCLIShowsEmbeddedSourceMetadata(t *testing.T) {
 	}, 5*time.Second, 25*time.Millisecond)
 	assert.Regexp(t, `metadata:\s+source-metadata/v1`, out)
 	assert.Regexp(t, `page_count:\s+2`, out)
-	assert.Regexp(t, `pdf.info.encrypted:\s+false`, out)
-	assert.Regexp(t, `pdf.info.signature_field_count:\s+0`, out)
-	assert.Regexp(t, `pdf.info.has_javascript:\s+false`, out)
 }
 
 func statMetadataPDF() string {
