@@ -82,14 +82,16 @@ func TestVoyageRetainedTextDocumentAndQuery(t *testing.T) {
 	}
 }
 
-func TestVoyageTextAllowsOnlyOptionalStringText(t *testing.T) {
+func TestVoyageTextAllowsOptionalNullableStringText(t *testing.T) {
 	for _, test := range []struct {
 		name, extra string
 		valid       bool
 	}{
+		{"missing text", "", true},
 		{"text", `,"text":"document envelope: passage"`, true},
 		{"unknown", `,"unreviewed":"synthetic"`, false}, {"wrong type", `,"text":42`, false},
-		{"null text", `,"text":null`, false}, {"duplicate text", `,"text":"a","text":"b"`, false},
+		{"null text", `,"text":null`, true}, {"object text", `,"text":{}`, false},
+		{"duplicate text", `,"text":"a","text":"b"`, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			body := string(voyageTextBody(t, voyage.TextModel, []int{0}, []int{1}))

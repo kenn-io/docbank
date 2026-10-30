@@ -805,6 +805,18 @@ func (s *Store) ResolveSemanticCandidates(ctx context.Context, profileFingerprin
 	inputKind document.EmbeddingInputKind, vectorSpaceID, expectedSourceManifest string,
 	neighbors []vectorindex.Neighbor, limit int, opts SearchOptions, excludedNodes map[int64]struct{},
 ) (_ SemanticSearchResolution, retErr error) {
+	return s.resolveSemanticCandidates(ctx, profileFingerprint, bindingID, inputKind, vectorSpaceID,
+		expectedSourceManifest, neighbors, limit, opts, excludedNodes, reduceSemanticCandidates)
+}
+
+type semanticReducer func(string, string, []vectorindex.Neighbor, int,
+	map[semanticEligibilityKey]SemanticSearchCandidate, map[int64]struct{}) ([]SemanticSearchCandidate, bool, int)
+
+func (s *Store) resolveSemanticCandidates(ctx context.Context, profileFingerprint, bindingID string,
+	inputKind document.EmbeddingInputKind, vectorSpaceID, expectedSourceManifest string,
+	neighbors []vectorindex.Neighbor, limit int, opts SearchOptions, excludedNodes map[int64]struct{},
+	reduce semanticReducer,
+) (_ SemanticSearchResolution, retErr error) {
 	if err := validateCatalogSHA256(vectorSpaceID, "semantic search vector-space ID"); err != nil {
 		return SemanticSearchResolution{}, err
 	}
@@ -842,7 +854,7 @@ func (s *Store) ResolveSemanticCandidates(ctx context.Context, profileFingerprin
 		if loadErr != nil {
 			return loadErr
 		}
-		result.Candidates, result.Truncated, result.NextNeighbor = reduceSemanticCandidates(s.vaultID, vectorSpaceID,
+		result.Candidates, result.Truncated, result.NextNeighbor = reduce(s.vaultID, vectorSpaceID,
 			neighbors, limit, eligible, excludedNodes)
 		for index := range result.Candidates {
 			candidate := &result.Candidates[index]
@@ -2074,6 +2086,10 @@ func currentRenditionHeadBuildIDsTx(
 // whitespace-separated term becomes a quoted prefix term. Embedded double
 // quotes are doubled per FTS5 string syntax.
 func ftsQuery(input string) string {
+	return strings.Join(ftsPrefixTerms(input), " ")
+}
+
+func ftsPrefixTerms(input string) []string {
 	var terms []string
 	for t := range strings.FieldsSeq(input) {
 		// Fields are non-empty; the fixed literal analyzer has no other
@@ -2081,7 +2097,7 @@ func ftsQuery(input string) string {
 		prepared, _ := lexical.Literal().PrepareLiteral(t)
 		terms = append(terms, prepared.Match+"*")
 	}
-	return strings.Join(terms, " ")
+	return terms
 }
 
 // nameSearchCandidates leaves filtering and name-based ties to the outer

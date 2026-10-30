@@ -105,6 +105,8 @@ func (envSecrets) ResolveSecret(ctx context.Context, binding string) (string, er
 	}
 	var name string
 	switch binding {
+	case "credential:voyage":
+		name = "VOYAGE_API_KEY"
 	case "synthetic:cohere":
 		name = "COHERE_API_KEY"
 	case "synthetic:typesafe":
