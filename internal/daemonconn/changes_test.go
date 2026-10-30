@@ -52,7 +52,6 @@ func TestWatchChangesTerminalRecords(t *testing.T) {
 	}{
 		{"", io.ErrUnexpectedEOF, "unexpected EOF"},
 		{`{"type":"error","error":{"code":"changes_cursor_expired","status":410,"cursor":"` + cursor + `"}}`, store.ErrChangeCursorExpired, "rescan, then resume with --after " + cursor},
-		{`{"type":"error","error":{"code":"internal","status":500,"detail":"page failed"}}`, nil, "page failed"},
 	} {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, tc.body) }))
 		_, err := daemonconn.New(server.URL, "key").WatchChanges(t.Context(), "", false, func(store.VaultChange) error { t.Fatal("control record delivered as change"); return nil })

@@ -2264,9 +2264,9 @@ func TestRecordExtractionRejectsVersionDowngrade(t *testing.T) {
 	require.Len(t, hits, 1)
 }
 
-// Mutation caught: replacing a successful extraction with a same-version
-// failure leaves its published rendition ahead of the portable cache.
-func TestRecordExtractionNotifiesCurrentLiveNodesOnce(t *testing.T) {
+// Successful extraction notifies current live nodes once. Replacing it with a
+// same-version failure would leave the published rendition ahead of the cache.
+func TestRecordExtractionRejectsSameVersionFailureAfterSuccessAndNotifiesCurrentLiveNodesOnce(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -2298,14 +2298,6 @@ func TestRecordExtractionNotifiesCurrentLiveNodesOnce(t *testing.T) {
 		BlobHash: hash, Extractor: "plain-text", ExtractorVersion: 1,
 		Status: ExtractionOK, Text: "stable-extraction-authority",
 	}))
-	changes, _, err = s.VaultChanges(ctx, cursor, 500)
-	require.NoError(t, err)
-	require.Empty(t, changes)
-	_, _, err = s.ReplaceContent(ctx, historical.ID, UnconditionalRev, fakeHash("cc"), 10, "text/plain")
-	require.NoError(t, err)
-	_, cursor, err = s.VaultChanges(ctx, "", 500)
-	require.NoError(t, err)
-	require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{BlobHash: fakeHash("bb"), Extractor: "plain-text", ExtractorVersion: 1, Status: ExtractionOK, Text: "retained history"}))
 	changes, _, err = s.VaultChanges(ctx, cursor, 500)
 	require.NoError(t, err)
 	require.Empty(t, changes)

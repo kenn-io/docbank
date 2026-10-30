@@ -321,7 +321,7 @@ func TestPostCutoverExtractionPublishesRenditionAuthority(t *testing.T) {
 
 	changes, _, err := s.VaultChanges(t.Context(), cursor, 500)
 	require.NoError(t, err)
-	require.Len(t, changes, 1, "migration owns publication, so the cache emits no duplicate")
+	require.Len(t, changes, 1, "rendition publication emits one change without a duplicate from the cache")
 
 	var cached, builds, heads int
 	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM content_fts`).Scan(&cached))

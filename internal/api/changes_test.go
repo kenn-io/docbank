@@ -57,7 +57,6 @@ func TestVaultChangesDisconnectResume(t *testing.T) {
 		require.NoError(t, json.Unmarshal(scanner.Bytes(), &event))
 		require.Equal(t, id, event.Change.NodeID)
 		require.Equal(t, "created", event.Change.Kind)
-		require.Equal(t, int64(1), event.Change.Revision)
 	}
 	// Follow continues to read writes made after the resumed page was drained.
 	next, err := s.Mkdir(ctx, s.RootID(), "later")

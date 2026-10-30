@@ -798,8 +798,10 @@ func TestPhotoDescriptionJobPublishesOneSuggestionAndSettles(t *testing.T) {
 		emptyRequest := photoDescriptionJobRequest(t, s, emptyNode.CurrentVersionID, producerB, false)
 		grantRenditionJobConsent(t, s, emptyRequest)
 		_, _, claim = startPhotoDescription(t, s, emptyRequest, at)
-		_, err = s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: preparedPhotoTargets(ctx, t, s, PhotoSetSelection{AssetIDs: []string{empty.ID}}), Patch: PhotoAuthoredPatch{Caption: new(caption)}})
-		require.NoError(t, err)
+		if caption == "Owned" {
+			_, err = s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: preparedPhotoTargets(ctx, t, s, PhotoSetSelection{AssetIDs: []string{empty.ID}}), Patch: PhotoAuthoredPatch{Caption: new(caption)}})
+			require.NoError(t, err)
+		}
 		_, before, err = s.VaultChanges(ctx, "", 500)
 		require.NoError(t, err)
 		_, err = s.PublishPhotoDescription(ctx, claim, photoDescriptionResult(caption), at)

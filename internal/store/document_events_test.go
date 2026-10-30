@@ -139,7 +139,7 @@ func TestPublishDocumentEventsRejectsMismatchedTargetIdentity(t *testing.T) {
 	assert.Zero(t, count)
 }
 
-func TestPublishDocumentEventsNotifiesChangedProjection(t *testing.T) {
+func TestPublishDocumentEventsAcceptsCanonicalEmptyProjectionAndNotifiesChangedProjection(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	version, target := ingestDocumentEventTarget(t, s, "undated.txt", "d4")
