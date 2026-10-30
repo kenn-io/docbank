@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"maps"
+	"math"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
@@ -22,6 +23,7 @@ const (
 	schemaJobIDField          = "job_id"
 	schemaCreatedAtField      = "created_at"
 	jsonSchemaConst           = "const"
+	jsonSchemaNumber          = "number"
 	maxToolResponseBytes      = 1 << 20
 	maxToolErrorBytes         = 1024
 	maxPathBytes              = 16 << 10
@@ -459,7 +461,7 @@ func batesRecipeSchema() schema {
 		"position":      enumSchema("top-left", "top-center", "top-right", "middle-left", "middle-center", "middle-right", "bottom-left", "bottom-center", "bottom-right"),
 		"margin_points": integerSchema(0, 144), "font_name": schema{"type": "string", jsonSchemaConst: "Helvetica"},
 		"font_size_points": schema{"type": "integer", jsonSchemaConst: 9}, "color": schema{"type": "string", jsonSchemaConst: "#000000"},
-		"opacity": schema{"type": "number", jsonSchemaConst: 1}, "units": schema{"type": "string", jsonSchemaConst: "point"},
+		"opacity": schema{"type": jsonSchemaNumber, jsonSchemaConst: 1}, "units": schema{"type": "string", jsonSchemaConst: "point"},
 		"rotation_policy": schema{"type": "string", jsonSchemaConst: "follow_page"}, "restamp": schema{"type": "boolean", jsonSchemaConst: false},
 		"engine_identity": objectSchema(schema{
 			"name": schema{"type": "string", jsonSchemaConst: "pdfcpu"}, "version": schema{"type": "string", jsonSchemaConst: "v0.15.0"},
@@ -595,6 +597,7 @@ func fenceInputProperties() schema {
 			"type": "array", "items": uuidSchema(), "minItems": 1, "maxItems": 4096, "uniqueItems": true,
 		},
 		"filters": objectSchema(schema{
+			"source_present":  booleanSchema(),
 			"tag_id":          uuidSchema(),
 			"mime_type":       stringSchema(255),
 			"under_node_id":   integerSchema(1, 0),
@@ -629,13 +632,15 @@ func getVaultInfoSchemas() (schema, schema) {
 
 func listDocumentsSchemas() (schema, schema) {
 	input := rootObjectSchema(schema{
-		"path_prefix": schema{"type": "string", "maxLength": maxPathCharacters, "pattern": "^/"},
-		"sort":        enumSchema("path", "name", "modified_at", "size", "media_type"),
-		"direction":   enumSchema("asc", "desc"),
-		"page_size":   integerSchema(1, 250),
-		"cursor":      cursorSchema(),
+		"source_present": booleanSchema(),
+		"path_prefix":    schema{"type": "string", "maxLength": maxPathCharacters, "pattern": "^/"},
+		"sort":           enumSchema("path", "name", "modified_at", "size", "media_type"),
+		"direction":      enumSchema("asc", "desc"),
+		"page_size":      integerSchema(1, 250),
+		"cursor":         cursorSchema(),
 	})
 	output := rootObjectSchema(withPrivateCache(schema{
+		"source_present":  booleanSchema(),
 		"path_prefix":     schema{"type": "string", "maxLength": maxPathCharacters, "pattern": "^/"},
 		"sort":            enumSchema("path", "name", "modified_at", "size", "media_type"),
 		"direction":       enumSchema("asc", "desc"),
@@ -655,6 +660,7 @@ func searchDocumentsSchemas() (schema, schema) {
 	properties["profile"] = schema{"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-z][a-z0-9_-]*$"}
 	properties["binding_id"] = stringSchema(128)
 	properties["explain"] = booleanSchema()
+	properties["rerank"] = booleanSchema()
 	input := rootObjectSchema(properties, "query", "profile")
 	// Keep the exactly-one-scope rule without a root oneOf, which Anthropic rejects.
 	input["if"] = schema{"required": []string{"content_version_ids"}}
@@ -664,7 +670,8 @@ func searchDocumentsSchemas() (schema, schema) {
 		"node_id":            integerSchema(1, 0),
 		"content_version_id": uuidSchema(),
 		"rank":               integerSchema(1, 100),
-		"score":              schema{"type": "number"},
+		"score":              schema{"type": jsonSchemaNumber},
+		"rerank_relevance":   schema{"type": jsonSchemaNumber},
 		"path":               schema{"type": "string", "minLength": 1, "maxLength": maxPathCharacters, "pattern": "^/"},
 		"excerpt":            stringSchema(512),
 		"evidence_ids":       arraySchema(stringSchema(1024), 64),
@@ -682,6 +689,11 @@ func searchDocumentsSchemas() (schema, schema) {
 			"complete_documents": integerSchema(0, 4096),
 			schemaStateField:     stringSchema(64),
 		}, "binding_required", "scoped_documents", "complete_documents", schemaStateField),
+		"reranking": objectSchema(schema{
+			"outcome":         enumSchema("applied", "skipped", "degraded"),
+			"cause":           stringSchema(64),
+			"candidate_count": integerSchema(0, 1000),
+		}, "outcome", "candidate_count"),
 		"skipped_reasons": arraySchema(stringSchema(64), 64),
 		"results":         arraySchema(result, 100),
 		"truncated":       booleanSchema(),
@@ -900,11 +912,15 @@ func getPhotoAssetSchemas() (schema, schema) {
 
 func photoFaceSchema() schema {
 	return objectSchema(schema{
-		"face_id":            uuidSchema(),
-		"content_version_id": uuidSchema(),
+		"roll":      schema{"type": jsonSchemaNumber, "minimum": -math.Pi, "maximum": math.Pi},
+		"facing":    schema{"type": jsonSchemaNumber, "minimum": 0, "maximum": 1},
+		"eyes_open": booleanSchema(), "smile": booleanSchema(),
+		"detector_fingerprint": sha256Schema(),
+		"face_id":              uuidSchema(),
+		"content_version_id":   uuidSchema(),
 		"box": objectSchema(schema{
-			"x": schema{"type": "number", "minimum": 0, "maximum": 1}, "y": schema{"type": "number", "minimum": 0, "maximum": 1},
-			"width": schema{"type": "number", "minimum": 0, "maximum": 1}, "height": schema{"type": "number", "minimum": 0, "maximum": 1},
+			"x": schema{"type": jsonSchemaNumber, "minimum": 0, "maximum": 1}, "y": schema{"type": jsonSchemaNumber, "minimum": 0, "maximum": 1},
+			"width": schema{"type": jsonSchemaNumber, "minimum": 0, "maximum": 1}, "height": schema{"type": jsonSchemaNumber, "minimum": 0, "maximum": 1},
 		}, "x", "y", "width", "height"),
 		schemaRevisionField: integerSchema(1, 0),
 		"assertion_id":      uuidSchema(),

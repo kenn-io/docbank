@@ -25,5 +25,8 @@ func (s *Store) enrollNewPhotoFileTx(ctx context.Context, tx *sql.Tx, created No
 	if _, err := s.insertPhotoAssetTx(ctx, tx, created.ID, inferPhotoRole(facts), facts.AssetKind); err != nil {
 		return fmt.Errorf("enrolling photo node %d: %w", created.ID, err)
 	}
-	return nil
+	if err := s.refreshPhotoTimelineTx(ctx, tx, created.ID); err != nil {
+		return err
+	}
+	return s.refreshNodePhotoWorkTx(ctx, tx, created, nil)
 }

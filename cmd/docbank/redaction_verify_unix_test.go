@@ -14,6 +14,9 @@ import (
 )
 
 func TestRedactionVerifyRejectsFIFO(t *testing.T) {
+	if runRedactionVerificationInSubprocess(t) {
+		return
+	}
 	f := newRedactionVerifyFixture(t)
 	f.archive(t, "valid")
 	binary := buildDocbank(t)

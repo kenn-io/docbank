@@ -3,7 +3,7 @@ name: Render PDF
 # Keep native renderer proof on disposable GitHub-hosted runners. PR changes
 # must exercise this job without changing the main-pinned CI workflow.
 on:
-  pull_request:
+  workflow_call:
   workflow_dispatch:
   push:
     branches: [main]
@@ -82,6 +82,7 @@ jobs:
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups), 'go')) }}
     name: LibreOffice owner proof
     runs-on: ubuntu-latest
+    timeout-minutes: 26
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -126,7 +127,7 @@ jobs:
           go test -tags fts5 -v -p 1 \
             ./internal/production/ ./internal/pdfproduction/ ./internal/processing/ \
             ./internal/api/ ./internal/daemonconn/ -run '^(TestAlign(QualifiedFont|FontProof)|TestNativeFont|TestInspectNativeTextFromInspection|TestRedaction|TestNativeRedactionRender|TestNumberedRedaction|TestNumberedDownload)' -count=1
-          if ! go test -tags fts5 -json ./cmd/docbank/ -run '^(TestNativePDF(Preparation|Redaction|RedactionRecovery)CLI|TestNumberedNativePDFCLI)$' -count=1 > /tmp/native-redaction-proof.jsonl; then
+          if ! go test -tags fts5 -json ./cmd/docbank/ -run '^(TestNativePDF(Preparation|Redaction|RedactionRecovery)CLI|TestNumberedNativePDFCLI|TestNumberedRecipientPackageCLI)$' -count=1 > /tmp/native-redaction-proof.jsonl; then
             cat /tmp/native-redaction-proof.jsonl
             exit 1
           fi
@@ -135,7 +136,8 @@ jobs:
           import json, sys
           events = [json.loads(line) for line in open(sys.argv[1])]
           for name in ("TestNativePDFPreparationCLI", "TestNativePDFRedactionCLI",
-                       "TestNativePDFRedactionRecoveryCLI", "TestNumberedNativePDFCLI"):
+                       "TestNativePDFRedactionRecoveryCLI", "TestNumberedNativePDFCLI",
+                       "TestNumberedRecipientPackageCLI"):
               outcomes = [event["Action"] for event in events
                           if event.get("Test") == name and event["Action"] in ("pass", "fail", "skip")]
               if outcomes != ["pass"]:

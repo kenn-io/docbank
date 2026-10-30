@@ -1,5 +1,5 @@
 // Package pgschema owns PostgreSQL schema installation and runtime validation.
-// It is an internal foundation; the document store still uses SQLite.
+// The public vault lifecycle still uses SQLite.
 package pgschema
 
 import (
@@ -95,6 +95,21 @@ func Setup(ctx context.Context, db *sql.DB, c Config) (uuid.UUID, error) {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO `+pgx.Identifier{c.Schema}.Sanitize()+`.nodes(id, name, kind, created_at, modified_at) VALUES (1,'','dir',$1,$1)`, now); err != nil {
 			return uuid.Nil(), fmt.Errorf("initialize postgres root: %w", err)
 		}
+		// Consent belongs to this storage incarnation, including an empty vault.
+		// Restore keeps a fresh target's pointer rather than reviving old grants.
+		if _, err := tx.ExecContext(ctx, `INSERT INTO `+pgx.Identifier{c.Schema}.Sanitize()+`.processing_incarnations(incarnation_id,created_at) VALUES ($1::uuid::text,$2)`, uuid.New(), now); err != nil {
+			return uuid.Nil(), fmt.Errorf("initialize postgres processing incarnation: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO `+pgx.Identifier{c.Schema}.Sanitize()+`.current_processing_incarnation(singleton,incarnation_id) SELECT 1,incarnation_id FROM `+pgx.Identifier{c.Schema}.Sanitize()+`.processing_incarnations`); err != nil {
+			return uuid.Nil(), fmt.Errorf("activate postgres processing incarnation: %w", err)
+		}
+
+		if _, err := tx.ExecContext(ctx, `INSERT INTO `+pgx.Identifier{c.Schema}.Sanitize()+`.blob_stores
+			(store_id,name,kind,role,lifecycle,binding,ownership_epoch,created_at)
+			VALUES ($1::uuid::text,'primary','filesystem','primary','active','builtin-primary',$2::uuid::text,$3)`, uuid.New(), uuid.New(), now); err != nil {
+			return uuid.Nil(), fmt.Errorf("initialize postgres primary blob store: %w", err)
+		}
+
 	case err != nil:
 		return uuid.Nil(), err
 	case owner != c.SchemaOwner:

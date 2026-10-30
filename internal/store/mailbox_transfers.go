@@ -102,7 +102,7 @@ func loadMailboxTransferReceipt(ctx context.Context, q metadataQuerier, id strin
 	var r MailboxTransferReceipt
 	var raw []byte
 	var archive, ref, version, publication string
-	err := q.QueryRowContext(ctx, `SELECT archive_id,source_ref,target_version_id,document_publication_id,receipt_json FROM mailbox_transfer_receipts WHERE id=?`, id).Scan(&archive, &ref, &version, &publication, &raw)
+	err := q.QueryRowContext(ctx, `SELECT archive_id,source_ref,target_version_id,document_publication_id,receipt_json FROM mailbox_transfer_receipts WHERE id=$1`, id).Scan(&archive, &ref, &version, &publication, &raw)
 	if errors.Is(err, sql.ErrNoRows) {
 		return r, ErrNotFound
 	}

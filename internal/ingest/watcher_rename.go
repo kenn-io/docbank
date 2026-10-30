@@ -40,6 +40,8 @@ type watchInventoryEntry struct {
 	observedAt time.Time
 }
 type watchInventory struct {
+	listed   map[string]struct{}
+	skipped  map[string]struct{}
 	files    map[string]watchInventoryEntry
 	order    []string
 	present  map[string]struct{}

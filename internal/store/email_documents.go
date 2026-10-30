@@ -207,7 +207,7 @@ func loadEmailDocumentPublication(ctx context.Context, q metadataQuerier, id str
 	var v emailDocumentPublicationRecord
 	var request, receipt []byte
 	var digest, parent, attachment string
-	err := q.QueryRowContext(ctx, `SELECT request_digest,parent_version_id,email_attachment_id,request_json,receipt_json FROM email_document_publications WHERE operation_id=?`, id).Scan(&digest, &parent, &attachment, &request, &receipt)
+	err := q.QueryRowContext(ctx, `SELECT request_digest,parent_version_id,email_attachment_id,request_json,receipt_json FROM email_document_publications WHERE operation_id=$1`, id).Scan(&digest, &parent, &attachment, &request, &receipt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return v, ErrNotFound
 	}

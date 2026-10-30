@@ -22,7 +22,7 @@ type metadataPhotoSuggestion struct {
 	Dismissed           bool     `json:"dismissed" db:"dismissed"`
 	CaptionResolved     bool     `json:"caption_resolved" db:"caption_resolved"`
 	ResolvedTags        []string `json:"resolved_tags" db:"resolved_tags_json,json"`
-	Awaiting            bool     `json:"awaiting" db:"awaiting OR caption<>'' OR tags_json<>'[]' OR visible_text<>''"`
+	Awaiting            bool     `json:"awaiting" db:"awaiting=1 OR caption<>'' OR tags_json<>'[]' OR visible_text<>''"`
 	CreatedAt           string   `json:"created_at" db:"created_at"`
 }
 

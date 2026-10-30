@@ -509,7 +509,7 @@ func TestPackageImportDiscardRepairsOrRetainsPhotoAssets(t *testing.T) {
 			require.Empty(t, repaired.Files)
 			require.Equal(t, asset.Revision+1, repaired.Revision)
 			require.Equal(t, 1, purges)
-			require.NoError(t, validatePhotoMetadataState(t.Context(), s.db, currentStorageSchemaVersion))
+			require.NoError(t, validatePhotoMetadataState(t.Context(), s.db, currentStorageSchemaVersion, false))
 		})
 	}
 }

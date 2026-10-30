@@ -55,6 +55,7 @@ jobs:
     if: &go-changed ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups), 'go')) }}
     name: PostgreSQL ${{ matrix.version }} metadata
     runs-on: ubuntu-24.04
+    timeout-minutes: 11
     strategy:
       fail-fast: false
       matrix:
@@ -99,6 +100,7 @@ jobs:
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups), 'docs')) }}
     name: Public documentation
     runs-on: ubuntu-24.04
+    timeout-minutes: 16
     steps:
       - name: Check out full repository history
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -180,6 +182,7 @@ jobs:
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups), 'frontend')) }}
     name: Web application
     runs-on: ubuntu-24.04
+    timeout-minutes: 12
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -199,6 +202,7 @@ jobs:
   released-schemas:
     name: Released storage schemas
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - name: Check out full repository history
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -262,6 +266,7 @@ jobs:
     if: *go-changed
     name: Linux tests
     runs-on: ubuntu-24.04
+    timeout-minutes: 38
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -351,6 +356,7 @@ jobs:
     if: *go-changed
     name: Pure-Go SQLite
     runs-on: ubuntu-24.04
+    timeout-minutes: 36
     env:
       CGO_ENABLED: "0"
     steps:
@@ -384,6 +390,7 @@ jobs:
     if: *go-changed
     name: golangci-lint
     runs-on: ubuntu-24.04
+    timeout-minutes: 23
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -403,7 +410,7 @@ jobs:
           extra-path: ~/.cache/golangci-lint
 
       - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        uses: step-security/golangci-lint-action@2697867e9c204558ca23d0decdd0039dc21f2b93 # v9.3.0
         with:
           version: v2.14.0
           # The job's Go cache group carries the analysis cache; the action's own key never refreshes.
@@ -436,6 +443,7 @@ jobs:
           - { runner: windows-11-vs2026-arm, goarch: arm64, shard: 3 }
           - { runner: windows-11-vs2026-arm, goarch: arm64, shard: 4 }
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: ${{ matrix.goarch == 'amd64' && (matrix.shard == 3 && 69 || 48) || (matrix.shard == 3 && 78 || 51) }}
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0

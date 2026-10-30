@@ -328,7 +328,7 @@ func openVaultWithRootOpener(
 	profiles := make(map[string]internalprocessing.ProfileConfig, len(config.Processing.Profiles))
 	for name, profile := range config.Processing.Profiles {
 		if profile.Profile.Rendition != nil && profile.Profile.Rendition.AdapterContract == document.VisionAdapterContract {
-			return nil, fmt.Errorf("processing profile %q: photo description needs the daemon, which owns suggestion review", name)
+			return nil, fmt.Errorf("processing profile %q: photo vision work needs the daemon, which owns photo results", name)
 		}
 		classifiers := make(map[string]func(error) (internalprocessing.EmbeddingProviderFailure, time.Duration),
 			len(profile.EmbeddingClassifiers))

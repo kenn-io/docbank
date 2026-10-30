@@ -87,7 +87,7 @@ func validatePhotoCheckoutReferences(ctx context.Context, q metadataQuerier) err
 }
 
 func exportPhotoCheckoutMetadata(ctx context.Context, q metadataQuerier, write metadataWrite) error {
-	rows, err := q.QueryContext(ctx, `SELECT c.checkout_id,c.selection_json,c.skipped_photos_json,c.skipped_photo_count,c.byte_limit,c.created_at,c.retention_released OR COALESCE(o.state,c.state) IN ('queued','running','paused'),c.retired_at FROM photo_checkouts c LEFT JOIN storage_operations o ON o.operation_id=c.operation_id ORDER BY c.checkout_id`)
+	rows, err := q.QueryContext(ctx, `SELECT c.checkout_id,c.selection_json,c.skipped_photos_json,c.skipped_photo_count,c.byte_limit,c.created_at,c.retention_released=1 OR COALESCE(o.state,c.state) IN ('queued','running','paused'),c.retired_at FROM photo_checkouts c LEFT JOIN storage_operations o ON o.operation_id=c.operation_id ORDER BY c.checkout_id`)
 	if err != nil {
 		return err
 	}

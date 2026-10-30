@@ -16,7 +16,7 @@ func TestEmbeddedVaultRejectsAVisionProfile(t *testing.T) {
 	t.Parallel()
 	server := httptest.NewServer(http.NotFoundHandler())
 	defer server.Close()
-	provider, err := vision.New(vision.Profile{Origin: server.URL, Model: "synthetic-vision", TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, server.Client())
+	provider, err := vision.New(vision.Profile{DescriptorID: vision.ProviderID, Origin: server.URL, Model: "synthetic-vision", TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, server.Client())
 	require.NoError(t, err)
 	profile := embeddedProcessingProfile(t, provider.Descriptor())
 	profile.Rendition.AdapterContract = vision.AdapterContract
@@ -24,5 +24,5 @@ func TestEmbeddedVaultRejectsAVisionProfile(t *testing.T) {
 	_, err = docbank.New(t.Context(), docbank.Config{Root: t.TempDir(), Processing: docbank.ProcessingOptions{Profiles: map[string]docbank.ProcessingProfileConfig{
 		"vision": {Profile: profile, RenditionProvider: provider, RenditionDisclosure: docbank.ProcessingRuntimeDisclosure{Endpoint: server.URL}},
 	}}})
-	require.ErrorContains(t, err, "photo description needs the daemon")
+	require.ErrorContains(t, err, "photo vision work needs the daemon")
 }
