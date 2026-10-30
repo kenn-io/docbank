@@ -2,11 +2,7 @@ package main
 
 import (
 	"encoding/json/v2"
-	"io"
-	"net/http"
-	"net/http/httptest"
 	"path/filepath"
-	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -43,21 +39,6 @@ func TestProvenanceCLIShowsHumanAndMachineAuthority(t *testing.T) {
 	out, err = runCLI(t, "provenance", "/archive/session.jsonl", "--offset", "10")
 	require.NoError(t, err)
 	assert.Contains(t, out, "no facts at offset 10 (1 total)")
-	etag := "W/\"edition-\xff\""
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("ETag", etag)
-		w.Header().Set("Last-Modified", "server supplied text")
-		_, _ = io.WriteString(w, "synthetic filing")
-	}))
-	defer server.Close()
-	_, err = runCLI(t, "add", server.URL+"/filing.txt", "--allow-http", "--dest", "/archive")
-	require.NoError(t, err)
-	human, err := runCLI(t, "provenance", "/archive/filing.txt")
-	require.NoError(t, err)
-	assert.Contains(t, human, "Requested URL:")
-	assert.NotContains(t, human, "Source:")
-	assert.Contains(t, human, strconv.Quote("server supplied text"))
-	assert.Contains(t, human, strconv.Quote(etag))
 }
 
 func TestProvenanceCLIValidatesPaginationBeforeDaemonStartup(t *testing.T) {

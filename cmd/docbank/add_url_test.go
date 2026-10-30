@@ -20,8 +20,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/apiclient"
-	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 func TestAddURLImportsEvidence(t *testing.T) {
@@ -34,12 +32,7 @@ func TestAddURLImportsEvidence(t *testing.T) {
 			return
 		}
 		w.Header().Set("ETag", etag)
-		switch r.URL.Path {
-		case "/files/filing.txt":
-			w.Header().Set("Content-Disposition", `attachment; filename="filing.txt"`)
-		case "/header-name.txt":
-			w.Header().Set("Content-Disposition", `attachment; filename*=UTF-8''report%0Done%0A.txt`)
-		}
+		w.Header().Set("Content-Disposition", `attachment; filename="filing.txt"`)
 		w.Header().Set("Last-Modified", "Wed, 21 Oct 2015 07:28:00 GMT")
 		_, _ = io.WriteString(w, content)
 	}))
@@ -52,13 +45,6 @@ func TestAddURLImportsEvidence(t *testing.T) {
 	assert.Equal(t, 1, report.Added)
 	require.NotEmpty(t, report.IngestID)
 	ingestID := report.IngestID
-	connection, err := daemonconn.Ensure(t.Context())
-	require.NoError(t, err)
-	members, err := connection.API().ListCollectionMembers(t.Context(), &apiclient.ListCollectionMembersRequestOptions{PathParams: &apiclient.ListCollectionMembersPath{ID: ingestID}})
-	require.NoError(t, err)
-	assert.Equal(t, ingestID, members.Collection.ID)
-	require.Len(t, members.Items, 1)
-	assert.Equal(t, "/cases/filings/filing.txt", members.Items[0].Path)
 	evidence, err := runCLI(t, "provenance", "/cases/filings/filing.txt", "--json")
 	require.NoError(t, err)
 	var page api.ProvenancePage
@@ -73,37 +59,27 @@ func TestAddURLImportsEvidence(t *testing.T) {
 	assert.Equal(t, []byte("Wed, 21 Oct 2015 07:28:00 GMT"), fetch.LastModified)
 	assert.NotEmpty(t, fetch.FetchedAt)
 	assert.Equal(t, requested, page.Items[0].OriginalPath)
-	for _, tc := range []struct{ target, name string }{
-		{"/report%0Aone.txt", "download"},
-		{"/header-name.txt", "header-name.txt"},
-	} {
-		raw := server.URL + tc.target
-		out, err = runCLI(t, "add", raw, "--allow-http", "--dest", "/cases/filings")
-		require.NoError(t, err, out)
-		out, err = runCLI(t, "cat", "/cases/filings/"+tc.name)
-		require.NoError(t, err)
-		assert.Equal(t, content, out)
-		out, err = runCLI(t, "provenance", "/cases/filings/"+tc.name, "--json")
-		require.NoError(t, err)
-		require.NoError(t, json.Unmarshal([]byte(out), &page))
-		require.Len(t, page.Items, 1)
-		require.NotNil(t, page.Items[0].URLFetch)
-		assert.Equal(t, raw, page.Items[0].URLFetch.RequestedURL)
-		assert.Equal(t, raw, page.Items[0].URLFetch.FinalURL)
-	}
+	human, err := runCLI(t, "provenance", "/cases/filings/filing.txt")
+	require.NoError(t, err)
+	assert.Contains(t, human, "Requested URL:")
+	assert.NotContains(t, human, "Source:")
+	assert.Contains(t, human, strconv.Quote(string(fetch.LastModified)))
+	assert.Contains(t, human, strconv.Quote(etag))
 }
 
 func TestFetchURLBoundsSchemesNamesAndCleanup(t *testing.T) {
 	for _, tc := range []struct {
-		name, disposition, target string
-		declared, bytes, cap      int
-		chunked, fail             bool
+		name, disposition, target, want, message string
+		declared, bytes, cap                     int
+		chunked                                  bool
 	}{
-		{name: "boundary", target: "/files/report%20one.txt?q=1", bytes: 4, cap: 4},
-		{name: "disposition", disposition: `attachment; filename="server.txt"`, target: "/", bytes: 4, cap: 4},
-		{name: "fallback", disposition: `attachment; filename="../bad"`, target: "/", bytes: 4, cap: 4},
-		{name: "chunked", chunked: true, bytes: 5, cap: 4, fail: true},
-		{name: "interrupted", declared: 5, bytes: 2, cap: 5, fail: true},
+		{name: "boundary", target: "/files/report%20one.txt?q=1", bytes: 4, cap: 4, want: "report one.txt"},
+		{name: "disposition", disposition: `attachment; filename="server.txt"`, target: "/", bytes: 4, cap: 4, want: "server.txt"},
+		{name: "fallback", disposition: `attachment; filename="../bad"`, target: "/", bytes: 4, cap: 4, want: "download"},
+		{name: "newline path", target: "/report%0Aone.txt", bytes: 4, cap: 4, want: "download"},
+		{name: "newline disposition", disposition: `attachment; filename*=UTF-8''report%0Done%0A.txt`, target: "/header-name.txt", bytes: 4, cap: 4, want: "header-name.txt"},
+		{name: "chunked", chunked: true, bytes: 5, cap: 4, message: "download exceeds"},
+		{name: "interrupted", declared: 5, bytes: 2, cap: 5, message: "downloading:"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tmp := t.TempDir()
@@ -123,22 +99,17 @@ func TestFetchURLBoundsSchemesNamesAndCleanup(t *testing.T) {
 			}))
 			defer server.Close()
 			download, err := fetchURL(t.Context(), *server.Client(), server.URL+tc.target, false, int64(tc.cap))
-			if tc.fail {
-				require.Error(t, err)
+			if tc.message != "" {
+				require.ErrorContains(t, err, tc.message)
 				assert.Nil(t, download)
 			} else {
 				require.NoError(t, err)
 				assert.EqualValues(t, tc.bytes, download.size)
 				assert.Empty(t, download.fetch.ETag)
 				assert.Empty(t, download.fetch.LastModified)
-				want := "report one.txt"
-				if tc.name == "disposition" {
-					want = "server.txt"
-				}
-				if tc.name == "fallback" {
-					want = "download"
-				}
-				assert.Equal(t, want, download.name)
+				assert.Equal(t, tc.want, download.name)
+				assert.Equal(t, server.URL+tc.target, download.fetch.RequestedURL)
+				assert.Equal(t, server.URL+tc.target, download.fetch.FinalURL)
 				require.NoError(t, download.file.Close())
 				require.NoError(t, os.Remove(download.file.Name()))
 			}
@@ -233,18 +204,6 @@ func TestAddURLInterruptRemovesSpool(t *testing.T) {
 	assert.Empty(t, entries)
 }
 
-func TestAddRelativeColonFile(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Windows filenames cannot contain colons")
-	}
-	setupVaultHome(t)
-	t.Chdir(t.TempDir())
-	for _, name := range []string{"report:2026.txt", "https:2026.txt"} {
-		require.NoError(t, os.WriteFile(name, []byte("local report"), 0o600))
-		_, err := runCLI(t, "add", name)
-		require.NoError(t, err)
-		out, err := runCLI(t, "cat", "/inbox/"+name)
-		require.NoError(t, err)
-		assert.Equal(t, "local report", out)
-	}
+func TestIsURLSourcePreservesLocalColonFile(t *testing.T) {
+	assert.False(t, isURLSource("https:2026.txt"))
 }

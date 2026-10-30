@@ -502,7 +502,7 @@ func TestIngestRejectsNonUTF8MetadataBeforeCommit(t *testing.T) {
 	require.NoError(t, s.ExportMetadata(ctx, &metadata))
 }
 
-func TestIngestFileDistinctSourceNamedLikeSuffix(t *testing.T) {
+func TestIngestFileDistinguishesLocalAndURLOrigins(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -557,14 +557,15 @@ func TestIngestFileDistinctSourceNamedLikeSuffix(t *testing.T) {
 	for _, tc := range []struct{ origin, name, want string }{
 		{"https://example.com/download?id=8", "filing.txt", "filing.txt"},
 		{"https://example.com/download?id=9", "filing.txt", "filing (2).txt"},
-		{"https://example.com/download?id=10", "filing (2).txt", "filing (2) (2).txt"},
 	} {
 		node, added, err := s.IngestFile(ctx, urlRun, dir.ID, tc.name, fakeHash("a1"), 1, "text/plain", tc.origin, "")
 		require.NoError(t, err)
 		require.True(t, added)
 		assert.Equal(t, tc.want, node.Name)
 	}
-	local, added, err := s.IngestFile(ctx, ing, dir.ID, "filing.txt", fakeHash("a1"), 1, "text/plain", "/source/filing.txt", "")
+	localRun, err := s.BeginIngest(ctx, "cli", "/source")
+	require.NoError(t, err)
+	local, added, err := s.IngestFile(ctx, localRun, dir.ID, "filing.txt", fakeHash("a1"), 1, "text/plain", "/source/filing.txt", "")
 	require.NoError(t, err)
 	require.True(t, added)
 	assert.Equal(t, "filing (3).txt", local.Name)

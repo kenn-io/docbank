@@ -394,16 +394,30 @@ const urlFetch = {
   fetched_at: "2026-10-01T12:34:56Z",
 };
 it.each([
-  { description: String.raw`["/synthetic/\a", "/synthetic/\\U0001f4c4"]` },
-  { description: String.raw`["/synthetic/reports", "/synthetic/reports"]` },
-  { description: JSON.stringify(urlFetch), url_fetch: urlFetch },
-])("shows the source description: $description", async ({ description, url_fetch }) => {
-  const source = {
-    ...collection,
-    source_description: description,
-    ...(url_fetch ? { source_kind: "url", url_fetch } : {}),
-  };
-  const display = url_fetch?.requested_url ?? description;
+  {
+    source: {
+      ...collection,
+      source_description: String.raw`["/synthetic/\a", "/synthetic/\\U0001f4c4"]`,
+    },
+    display: String.raw`["/synthetic/\a", "/synthetic/\\U0001f4c4"]`,
+  },
+  {
+    source: {
+      ...collection,
+      source_description: String.raw`["/synthetic/reports", "/synthetic/reports"]`,
+    },
+    display: String.raw`["/synthetic/reports", "/synthetic/reports"]`,
+  },
+  {
+    source: {
+      ...collection,
+      source_kind: "url",
+      source_description: JSON.stringify(urlFetch),
+      url_fetch: urlFetch,
+    },
+    display: urlFetch.requested_url,
+  },
+])("shows the source description: $display", async ({ source, display }) => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     if (String(input).includes("/members?"))
       return json({ collection: source, items: [], total: 0, limit: 100, offset: 0 });
