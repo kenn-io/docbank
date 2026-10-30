@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -396,6 +397,11 @@ func (service *Service) visionProbe(profile configuredProfile) MediaOriginProbe 
 // repeats no sooner than a minute later. A caller waiting for the probe in
 // flight gives up with its own context.
 func (service *Service) requireVisionReadiness(ctx context.Context, profile configuredProfile) error {
+	if profile.portable.Rendition.Descriptor.ID == document.FaceDetectionProviderID {
+		if err := service.catalog.RequireFaceDetectionSupported(ctx); err != nil {
+			return err
+		}
+	}
 	id := visionReadinessKey(profile.record.Fingerprint)
 	slot := service.visionLocks[id]
 	select {

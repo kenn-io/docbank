@@ -459,7 +459,7 @@ func validateProcessingProfile(profile ProcessingProfileV1) error {
 	}
 	if profile.Rendition != nil && profile.Rendition.AdapterContract == VisionAdapterContract &&
 		(profile.RetentionDisclosure.RetainSanitizedMarkdown || profile.RetentionDisclosure.RetainProviderMarkdown || profile.RetentionDisclosure.RetainTypedArtifacts) {
-		return errors.New("photo descriptions do not retain Markdown or typed artifacts")
+		return errors.New("photo vision profiles do not retain Markdown or typed artifacts")
 	}
 	if err := validateRetrievalPolicy(profile.Retrieval); err != nil {
 		return err
@@ -474,7 +474,7 @@ func validateProcessingProfile(profile ProcessingProfileV1) error {
 		}
 		names[binding.Name] = struct{}{}
 		if binding.InputKind == EmbeddingInputRenditionChunk && profile.Rendition != nil && profile.Rendition.AdapterContract == VisionAdapterContract {
-			return errors.New("rendition_chunk embeddings require a text rendition; photo descriptions publish suggestions")
+			return errors.New("rendition_chunk embeddings require a text rendition; photo vision profiles publish photo results")
 		}
 		if err := validateEmbeddingBinding(binding, profile.Rendition != nil); err != nil {
 			return fmt.Errorf("embedding binding %d: %w", index, err)

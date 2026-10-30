@@ -39,6 +39,7 @@ func check(err error) {
 }
 
 func main() {
+	detectedFaces := flag.Bool("detected-faces", false, "Include automatically detected synthetic faces")
 	suggestions := flag.Bool("suggestions", false, "Include synthetic photo suggestions")
 	namesakes := flag.Bool("namesakes", false, "Include people with the same name and distinct identities")
 	manyNamesakes := flag.Bool("many-namesakes", false, "Include 300 people named Alex")
@@ -278,6 +279,9 @@ func main() {
 		}
 		_, err = s.PublishVisualPreviewGeneration(ctx, node.CurrentVersionID, item.canonical, &item.physical)
 		check(err)
+		if *detectedFaces && index == 2 {
+			seedDetectedFaces(ctx, s, blobs, layout.BlobsDir(), node)
+		}
 		if *suggestions && (index == 0 || index == 2 || index == 9) {
 			value := document.PhotoDescription{Caption: "A calm harbor under a blue sky.", Tags: []string{"coast", "harbor"}, VisibleText: "QUAYSIDE"}
 			if index == 2 {
@@ -423,6 +427,14 @@ func editTargets(prepared []store.PhotoPreparedTarget) []store.PhotoAuthoredEdit
 
 // seedSuggestion exercises the same worker and publication path as a configured vision provider.
 func seedSuggestion(ctx context.Context, s *store.Store, blobs *blob.Store, spool string, node store.Node, value document.PhotoDescription) {
+	seedVisionResult(ctx, s, blobs, spool, node, value, vision.ProviderID)
+}
+
+func seedDetectedFaces(ctx context.Context, s *store.Store, blobs *blob.Store, spool string, node store.Node) {
+	seedVisionResult(ctx, s, blobs, spool, node, document.FaceDetection{Faces: []document.FaceObservation{{Box: document.FaceBox{X: .25, Y: .2, Width: .2, Height: .3}, Roll: new(0.0), Facing: new(.9), EyesOpen: new(true), Smile: new(false)}}}, document.FaceDetectionProviderID)
+}
+
+func seedVisionResult(ctx context.Context, s *store.Store, blobs *blob.Store, spool string, node store.Node, value any, task string) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
 		check(err)
@@ -437,7 +449,7 @@ func seedSuggestion(ctx context.Context, s *store.Store, blobs *blob.Store, spoo
 		check(err)
 	}))
 	defer server.Close()
-	provider, err := vision.New(vision.Profile{Origin: server.URL, Model: "synthetic-vision", TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, server.Client())
+	provider, err := vision.New(vision.Profile{DescriptorID: task, Origin: server.URL, Model: "synthetic-vision", TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, server.Client())
 	check(err)
 	hash := func(value string) string {
 		digest := sha256.Sum256([]byte(value))
@@ -468,7 +480,7 @@ func seedSuggestion(ctx context.Context, s *store.Store, blobs *blob.Store, spoo
 	check(err)
 	prepared, err := s.PreparePhotoAuthored(ctx, store.PhotoSetSelection{AssetIDs: []string{asset.ID}})
 	check(err)
-	if len(prepared.Suggestions) != 1 || prepared.Suggestions[0].Value.Caption != value.Caption {
+	if description, ok := value.(document.PhotoDescription); ok && (len(prepared.Suggestions) != 1 || prepared.Suggestions[0].Value.Caption != description.Caption) {
 		panic("photo description did not publish the suggestion")
 	}
 }

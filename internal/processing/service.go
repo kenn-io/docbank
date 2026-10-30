@@ -767,6 +767,10 @@ func (service *Service) planForSource(ctx context.Context, selector Selector, no
 		if profileRenditionInput(profile) == document.RenditionInputDerivedUpload {
 			plan.Estimate.Scope = "Granting consent automatically queues eligible photos throughout this vault."
 			plan.BackupConsequence = "Pending photo suggestions rebuild after restore; accepted and dismissed decisions are included in backups."
+			if hop.ProviderID == document.FaceDetectionProviderID {
+				plan.Estimate.Scope = "Granting consent automatically finds faces in eligible photos throughout this vault."
+				plan.BackupConsequence = "Face boxes, measurements, and your decisions are included in backups. Restoring a backup allows another scan and provider call for each eligible photo."
+			}
 			// Only the grid preview leaves the vault, not the original file.
 			view, reason, err := photoDescriptionPreview(ctx, service.catalog, version.ID)
 			if err != nil {

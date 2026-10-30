@@ -375,6 +375,14 @@ func runServe(ctx context.Context) (retErr error) {
 			return fmt.Errorf("starting photo descriptions: %w", err)
 		}
 	}
+
+	if processingService.HasPhotoFaceDetectionProfiles() {
+		if err := jobSupervisor.Start("process:photo-face-detection", func(ctx context.Context) error {
+			return processingService.PhotoFaceDetectionBackfill(ctx, logger, renditionWorkers)
+		}); err != nil {
+			return fmt.Errorf("starting photo face detection: %w", err)
+		}
+	}
 	if err := startEmbeddingWorkerIfReady(jobSupervisor, embeddingRuntimeRegistry,
 		func() (embeddingJobRunner, error) {
 			worker, workerErr := processing.NewEmbeddingWorker(processing.EmbeddingWorkerConfig{

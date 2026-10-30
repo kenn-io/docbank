@@ -2770,7 +2770,18 @@ CREATE TABLE IF NOT EXISTS person_document_assertions (
     UNIQUE (content_version_id, person_id, role)
 );
 
+CREATE TABLE IF NOT EXISTS photo_face_scans (
+ content_version_id TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,
+ detector_fingerprint TEXT NOT NULL,
+ PRIMARY KEY(content_version_id,detector_fingerprint)
+);
+
 CREATE TABLE IF NOT EXISTS photo_faces (
+    roll REAL,
+    facing REAL,
+    eyes_open INTEGER,
+    smile INTEGER,
+    detector_fingerprint TEXT,
     face_id TEXT PRIMARY KEY NOT NULL,
     content_version_id TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,
     x REAL NOT NULL,

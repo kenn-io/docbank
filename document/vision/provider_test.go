@@ -85,9 +85,11 @@ func TestParseDescription(t *testing.T) {
 func TestRenderSendsImageBytesOnce(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name, reply, want, finish string
-		code                      document.RenditionErrorCode
+		name, reply, want, finish, task string
+		tokens                          jsontext.Value
+		code                            document.RenditionErrorCode
 	}{
+		{name: "detected faces", task: document.FaceDetectionProviderID, tokens: jsontext.Value("4096"), reply: `{"faces":[]}`, want: `{"faces":[]}`},
 		{name: "valid reply", reply: `{"caption":"A dog.","tags":["dog"],"visible_text":"HELLO"}`, want: `{"caption":"A dog.","tags":["dog"],"visible_text":"HELLO"}`},
 		{name: "reply that is not JSON", reply: `A dog.`, code: document.RenditionErrorTransient},
 		{name: "empty reply", code: document.RenditionErrorTransient},
@@ -95,6 +97,12 @@ func TestRenderSendsImageBytesOnce(t *testing.T) {
 		{name: "policy refusal", finish: "content_filter", code: document.RenditionErrorPolicyRejected},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.task == "" {
+				tc.task = ProviderID
+			}
+			if tc.tokens == nil {
+				tc.tokens = jsontext.Value("2048")
+			}
 			var calls atomic.Int32
 			var imageData bytes.Buffer
 			require.NoError(t, jpeg.Encode(&imageData, image.NewRGBA(image.Rect(0, 0, 512, 1)), nil))
@@ -114,7 +122,7 @@ func TestRenderSendsImageBytesOnce(t *testing.T) {
 					w.WriteHeader(http.StatusBadRequest)
 					return
 				}
-				assert.Equal(t, jsontext.Value("2048"), fields["max_completion_tokens"])
+				assert.Equal(t, tc.tokens, fields["max_completion_tokens"])
 				assert.NotContains(t, fields, "max_tokens")
 				var body request
 				if !assert.NoError(t, json.Unmarshal(wire, &body)) {
@@ -122,6 +130,9 @@ func TestRenderSendsImageBytesOnce(t *testing.T) {
 					return
 				}
 				assert.Equal(t, "synthetic-vision", body.Model)
+				if tc.task == document.FaceDetectionProviderID {
+					assert.Contains(t, body.Messages[0].Content[0].Text, "Find every visible face")
+				}
 				encoded := strings.TrimPrefix(body.Messages[0].Content[1].ImageURL.URL, "data:image/jpeg;base64,")
 				actual, err := base64.StdEncoding.DecodeString(encoded)
 				assert.NoError(t, err)
@@ -135,7 +146,7 @@ func TestRenderSendsImageBytesOnce(t *testing.T) {
 				_, _ = w.Write(completion)
 			}))
 			defer server.Close()
-			p, err := New(Profile{Origin: server.URL, Model: "synthetic-vision", TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, server.Client())
+			p, err := New(Profile{DescriptorID: tc.task, Origin: server.URL, Model: "synthetic-vision", TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, server.Client())
 			require.NoError(t, err)
 			result, err := renderJPEG(t, p, data)
 			require.Equal(t, int32(1), calls.Load())
@@ -203,7 +214,7 @@ func TestProviderSendsItsBearerCredential(t *testing.T) {
 		_, _ = w.Write(visiontest.Completion(reply))
 	}))
 	defer server.Close()
-	profile := Profile{Origin: server.URL, Model: "synthetic-vision", TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20, SecretBinding: "vision-key"}
+	profile := Profile{DescriptorID: ProviderID, Origin: server.URL, Model: "synthetic-vision", TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20, SecretBinding: "vision-key"}
 
 	t.Run("sent on the probe and the description", func(t *testing.T) {
 		p, err := New(profile, testSecrets{"vision-key": "synthetic-secret"}, server.Client())
@@ -255,7 +266,7 @@ func TestProbeSendsSyntheticImageWithoutNamingColors(t *testing.T) {
 		_, _ = w.Write(visiontest.Completion("red,blue"))
 	}))
 	defer server.Close()
-	p, err := New(Profile{Origin: server.URL, Model: "synthetic-vision", TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, server.Client())
+	p, err := New(Profile{DescriptorID: ProviderID, Origin: server.URL, Model: "synthetic-vision", TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, server.Client())
 	require.NoError(t, err)
 	require.NoError(t, p.Probe(t.Context()))
 }
@@ -282,7 +293,7 @@ func TestProbeRequiresRecognitionOfSyntheticImage(t *testing.T) {
 				_, _ = w.Write(visiontest.Completion(tc.answer))
 			}))
 			defer server.Close()
-			p, err := New(Profile{Origin: server.URL, Model: "synthetic-vision", TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, server.Client())
+			p, err := New(Profile{DescriptorID: ProviderID, Origin: server.URL, Model: "synthetic-vision", TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, server.Client())
 			require.NoError(t, err)
 			err = p.Probe(t.Context())
 			if tc.ok {
