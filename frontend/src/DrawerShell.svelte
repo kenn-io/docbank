@@ -1,6 +1,6 @@
 <script lang="ts">
   import { getContext, type Snippet } from "svelte";
-  import { DetailDrawer } from "@kenn-io/kit-ui";
+  import { DetailDrawer, PageHeader } from "@kenn-io/kit-ui";
   import XIcon from "@lucide/svelte/icons/x";
   import IconAction from "./IconAction.svelte";
   import { drawerPage, drawerNavigation, type DrawerNavigation } from "./drawerNavigation.js";
@@ -32,16 +32,16 @@
 </script>
 
 {#if page}
+  {#snippet pageActions()}<div class="actions">{@render actions?.()}</div>{/snippet}
   <div>
-    <header class="browser-toolbar">
-      <svelte:element this={level === 1 ? "h1" : "h2"} class="page-title">{title}</svelte:element>
-      <div class="actions">{@render actions?.()}</div>
-    </header>
+    <div class="title-area">
+      <PageHeader {title} {level} actions={actions ? pageActions : undefined} />
+    </div>
     {@render children?.()}
     {@render footer?.()}
   </div>
 {:else}
-  <div class="shell" class:still>
+  <div class="shell" class:still class:tabbed={navigation}>
     <DetailDrawer
       width="min(720px, 100vw)"
       ariaLabel={navigation ? "System" : ariaLabel}
@@ -74,21 +74,23 @@
 {/if}
 
 <style>
-  .page-title {
-    margin: 0;
-    color: var(--text-primary);
-    font-size: var(--font-size-xl);
-    font-weight: 600;
-  }
-  .browser-toolbar {
-    padding-inline: var(--space-6);
-    border-bottom: 1px solid var(--border-default);
+  .title-area {
+    padding: var(--space-6) var(--space-6) var(--space-5);
   }
   .shell {
     display: contents;
   }
   .still :global(.kit-detail-drawer) {
     animation: none;
+  }
+  /* Section tabs sit on the drawer header's rule. The strip's own underline,
+     one header padding above that rule, would be a second line under the
+     title. */
+  .tabbed :global(.kit-detail-drawer__header) {
+    padding-bottom: 0;
+  }
+  .header :global(.tab-strip) {
+    border-bottom: 0;
   }
   .header {
     display: grid;
