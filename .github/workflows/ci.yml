@@ -46,6 +46,7 @@ jobs:
               - internal/daemonconn/testdata/processing_responses.json
               - internal/query/testdata/identity-vectors.json
             docs:
+              # Keep document/**: make docs-build runs its bridge contract tests.
               - '!{README.md,AGENTS.md,CLAUDE.md,cmd/**,docbank/**,internal/**,mcp/**,report/**,sqlite/**}'
 
   postgres:
