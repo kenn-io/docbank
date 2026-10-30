@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"maps"
+	"math"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
@@ -595,6 +596,7 @@ func fenceInputProperties() schema {
 			"type": "array", "items": uuidSchema(), "minItems": 1, "maxItems": 4096, "uniqueItems": true,
 		},
 		"filters": objectSchema(schema{
+			"source_present":  booleanSchema(),
 			"tag_id":          uuidSchema(),
 			"mime_type":       stringSchema(255),
 			"under_node_id":   integerSchema(1, 0),
@@ -629,13 +631,15 @@ func getVaultInfoSchemas() (schema, schema) {
 
 func listDocumentsSchemas() (schema, schema) {
 	input := rootObjectSchema(schema{
-		"path_prefix": schema{"type": "string", "maxLength": maxPathCharacters, "pattern": "^/"},
-		"sort":        enumSchema("path", "name", "modified_at", "size", "media_type"),
-		"direction":   enumSchema("asc", "desc"),
-		"page_size":   integerSchema(1, 250),
-		"cursor":      cursorSchema(),
+		"source_present": booleanSchema(),
+		"path_prefix":    schema{"type": "string", "maxLength": maxPathCharacters, "pattern": "^/"},
+		"sort":           enumSchema("path", "name", "modified_at", "size", "media_type"),
+		"direction":      enumSchema("asc", "desc"),
+		"page_size":      integerSchema(1, 250),
+		"cursor":         cursorSchema(),
 	})
 	output := rootObjectSchema(withPrivateCache(schema{
+		"source_present":  booleanSchema(),
 		"path_prefix":     schema{"type": "string", "maxLength": maxPathCharacters, "pattern": "^/"},
 		"sort":            enumSchema("path", "name", "modified_at", "size", "media_type"),
 		"direction":       enumSchema("asc", "desc"),
@@ -655,6 +659,7 @@ func searchDocumentsSchemas() (schema, schema) {
 	properties["profile"] = schema{"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-z][a-z0-9_-]*$"}
 	properties["binding_id"] = stringSchema(128)
 	properties["explain"] = booleanSchema()
+	properties["rerank"] = booleanSchema()
 	input := rootObjectSchema(properties, "query", "profile")
 	// Keep the exactly-one-scope rule without a root oneOf, which Anthropic rejects.
 	input["if"] = schema{"required": []string{"content_version_ids"}}
@@ -665,6 +670,7 @@ func searchDocumentsSchemas() (schema, schema) {
 		"content_version_id": uuidSchema(),
 		"rank":               integerSchema(1, 100),
 		"score":              schema{"type": "number"},
+		"rerank_relevance":   schema{"type": "number"},
 		"path":               schema{"type": "string", "minLength": 1, "maxLength": maxPathCharacters, "pattern": "^/"},
 		"excerpt":            stringSchema(512),
 		"evidence_ids":       arraySchema(stringSchema(1024), 64),
@@ -682,6 +688,11 @@ func searchDocumentsSchemas() (schema, schema) {
 			"complete_documents": integerSchema(0, 4096),
 			schemaStateField:     stringSchema(64),
 		}, "binding_required", "scoped_documents", "complete_documents", schemaStateField),
+		"reranking": objectSchema(schema{
+			"outcome":         enumSchema("applied", "skipped", "degraded"),
+			"cause":           stringSchema(64),
+			"candidate_count": integerSchema(0, 1000),
+		}, "outcome", "candidate_count"),
 		"skipped_reasons": arraySchema(stringSchema(64), 64),
 		"results":         arraySchema(result, 100),
 		"truncated":       booleanSchema(),
@@ -900,8 +911,12 @@ func getPhotoAssetSchemas() (schema, schema) {
 
 func photoFaceSchema() schema {
 	return objectSchema(schema{
-		"face_id":            uuidSchema(),
-		"content_version_id": uuidSchema(),
+		"roll":      schema{"type": "number", "minimum": -math.Pi, "maximum": math.Pi},
+		"facing":    schema{"type": "number", "minimum": 0, "maximum": 1},
+		"eyes_open": booleanSchema(), "smile": booleanSchema(),
+		"detector_fingerprint": sha256Schema(),
+		"face_id":              uuidSchema(),
+		"content_version_id":   uuidSchema(),
 		"box": objectSchema(schema{
 			"x": schema{"type": "number", "minimum": 0, "maximum": 1}, "y": schema{"type": "number", "minimum": 0, "maximum": 1},
 			"width": schema{"type": "number", "minimum": 0, "maximum": 1}, "height": schema{"type": "number", "minimum": 0, "maximum": 1},

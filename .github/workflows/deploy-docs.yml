@@ -14,6 +14,7 @@ jobs:
   deploy:
     name: Build and publish documentation
     runs-on: ubuntu-latest
+    timeout-minutes: 11
     environment: production
     steps:
       - name: Check out the selected branch or tag

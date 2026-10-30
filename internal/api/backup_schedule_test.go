@@ -762,6 +762,47 @@ func TestBackupScheduleUnusableOverrideLetsDaemonIdle(t *testing.T) {
 	})
 }
 
+// An interval change recomputes the next deadline without a capture. It must
+// not clear the cleanup failure from the capture before it.
+func TestBackupScheduleIntervalChangeKeepsCleanupFailure(t *testing.T) {
+	t.Parallel()
+	warmPackEncoders()
+	synctest.Test(t, func(t *testing.T) {
+		d := scheduledDeps(t)
+		repo, err := backup.Init(d.Cfg.Backup.Repo)
+		require.NoError(t, err)
+		_, err = createScheduledBackupSnapshot(t.Context(), repo, d)
+		require.NoError(t, err)
+		time.Sleep(time.Hour)
+		// Another writer holds the repository when retention tries to forget the old point.
+		var writer *backup.RepoLock
+		schedule := &backupSchedule{beforeForget: func() {
+			lock, err := repo.AcquireExclusiveLock("other-writer", false)
+			require.NoError(t, err)
+			writer = lock
+		}}
+		d.Jobs = jobs.New(t.Context(), d.Logger)
+		defer func() { require.NoError(t, d.Jobs.Shutdown(t.Context())) }()
+		require.NoError(t, d.Jobs.Start("backup:scheduled", func(ctx context.Context) error {
+			return runBackupSchedule(ctx, d, schedule)
+		}))
+		synctest.Wait()
+		require.NotNil(t, writer)
+		require.NoError(t, writer.Release())
+		cleanup := d.Jobs.Snapshot()[0].Error
+		require.Contains(t, cleanup, "forgetting scheduled backups")
+
+		_, err = d.Store.SetPhotoSettings(t.Context(), 1, store.PhotoSettingsUpdate{BackupIntervalSeconds: new(int64(24 * 60 * 60))})
+		require.NoError(t, err)
+		d.BackupScheduleWake <- struct{}{}
+		synctest.Wait()
+		points, err := repo.ListSnapshots()
+		require.NoError(t, err)
+		require.Len(t, points, 2, "the longer interval is not yet due")
+		require.Equal(t, cleanup, d.Jobs.Snapshot()[0].Error)
+	})
+}
+
 // A settings read that fails and recovers while the schedule waits must not
 // hide the cleanup failure from the capture before it.
 func TestBackupScheduleReadRecoveryKeepsCleanupFailure(t *testing.T) {

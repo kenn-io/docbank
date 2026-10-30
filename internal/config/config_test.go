@@ -1242,7 +1242,7 @@ func TestVisionRuntimeConfig(t *testing.T) {
 	profile.Runtime.MaxPollAttempts = 0
 	profile.Runtime.RequestTimeout = Duration(10 * time.Minute)
 	cfg := validRenditionRuntimeConfig(t)
-	descriptor, err := vision.Descriptor(profile.Model, document.RenditionTrustOperatorNetwork)
+	descriptor, err := vision.Descriptor(vision.ProviderID, profile.Model, document.RenditionTrustOperatorNetwork)
 	require.NoError(t, err)
 	profile.DescriptorID, profile.DescriptorFingerprint = descriptor.ID, descriptor.Fingerprint
 	cfg.RenditionProfiles["primary"] = profile
@@ -1251,6 +1251,12 @@ func TestVisionRuntimeConfig(t *testing.T) {
 	processingProfile.Embeddings = nil
 	cfg.ProcessingProfiles["archive"] = processingProfile
 	require.NoError(t, cfg.Validate())
+
+	t.Run("unrecognized task", func(t *testing.T) {
+		unknown := profile
+		unknown.DescriptorID = "unrecognized-task"
+		require.ErrorIs(t, validateRenditionRuntimeConfig(unknown, "vision"), vision.ErrUnknownTask)
+	})
 
 	t.Run("model on another adapter", func(t *testing.T) {
 		other := validRenditionRuntimeConfig(t)

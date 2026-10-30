@@ -589,7 +589,7 @@ func TestPhotoSuggestionBackupKeepsDecisions(t *testing.T) {
 		}
 		restoredVersion, freshVersion := version(asset), version(freshAsset)
 		targets := func(producer string, restoredOnly bool) []string {
-			page, err := restored.PhotoDescriptionTargets(ctx, producer, producer, "", 10, restoredOnly)
+			page, err := restored.PhotoDescriptionTargets(ctx, producer, producer, "", 10, restoredOnly, false)
 			require.NoError(t, err)
 			ids := []string{}
 			for _, version := range page {
@@ -844,15 +844,15 @@ func TestPhotoDescriptionTargetsReadsOnePageInOrder(t *testing.T) {
 		return out
 	}
 
-	first, err := s.PhotoDescriptionTargets(ctx, producerB, producerB, "", 2, false)
+	first, err := s.PhotoDescriptionTargets(ctx, producerB, producerB, "", 2, false, false)
 	require.NoError(t, err)
 	require.Equal(t, versions[:2], ids(first), "a small page holds the first targets in version order")
-	rest, err := s.PhotoDescriptionTargets(ctx, producerB, producerB, versions[1], 2, false)
+	rest, err := s.PhotoDescriptionTargets(ctx, producerB, producerB, versions[1], 2, false, false)
 	require.NoError(t, err)
 	require.Equal(t, versions[2:], ids(rest), "the cursor resumes after the last version read")
 }
 
-func TestPhotoDescriptionTargetsSkipPhotosWithActiveWorkForAnotherProfile(t *testing.T) {
+func TestPhotoDescriptionTargetsRespectActiveTaskScope(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -869,12 +869,15 @@ func TestPhotoDescriptionTargetsSkipPhotosWithActiveWorkForAnotherProfile(t *tes
 	startPhotoDescription(t, restored, requestA, at)
 
 	requestB := photoDescriptionJobRequest(t, restored, node.CurrentVersionID, producerB, false)
-	targets, err := restored.PhotoDescriptionTargets(ctx, requestB.Profile.Fingerprint, producerB, "", 10, true)
+	targets, err := restored.PhotoDescriptionTargets(ctx, requestB.Profile.Fingerprint, producerB, "", 10, true, false)
 	require.NoError(t, err)
 	require.Empty(t, targets, "another profile does not describe a photo whose description is already running")
-	targets, err = restored.PhotoDescriptionTargets(ctx, requestA.Profile.Fingerprint, producerA, "", 10, false)
+	targets, err = restored.PhotoDescriptionTargets(ctx, requestA.Profile.Fingerprint, producerA, "", 10, false, false)
 	require.NoError(t, err)
 	require.Empty(t, targets, "the running profile does not list it again either")
+	targets, err = restored.PhotoDescriptionTargets(ctx, "face-profile", "face-detector", "", 10, false, true)
+	require.NoError(t, err)
+	require.Len(t, targets, 1, "description work leaves face detection eligible")
 }
 
 func TestPhotoDescriptionExpiredGrantOverlappedByRenewalPublishesNothing(t *testing.T) {

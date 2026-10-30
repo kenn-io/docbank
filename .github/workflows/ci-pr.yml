@@ -1,12 +1,24 @@
 name: CI
 
-# The PR dispatcher always calls the main-pinned workflow on GitHub-hosted
-# runners. Changes to ci.yml take effect for PRs after they merge to main.
+# PR and merge-group candidates run ci.yml@main on GitHub-hosted runners; ci.yml changes apply after merging to main.
 on:
   pull_request:
+  merge_group:
+    types: [checks_requested]
 
 permissions: read-all
 
 jobs:
   run:
+    cache-mode: read
     uses: kenn-io/docbank/.github/workflows/ci.yml@main
+
+  gate:
+    name: CI gate
+    needs: run
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require successful CI
+        if: needs.run.result != 'success'
+        run: exit 1

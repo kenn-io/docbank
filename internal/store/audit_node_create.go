@@ -476,7 +476,7 @@ func (s *Store) persistAuditedCreationRecords(
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_baselines(
-		digest,scope_id,target_node_id,operation_id) VALUES(?,?,?,?)`,
+		digest,scope_id,target_node_id,operation_id) VALUES($1,$2,$3,$4)`,
 		baseline.digest.text, baseline.scope.scopeID, baseline.nodeID,
 		operationID); err != nil {
 		return fmt.Errorf("creating inherited audit baseline: %w", err)

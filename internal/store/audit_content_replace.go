@@ -63,13 +63,13 @@ func installAuditedContentVersionTx(
 		}
 	}
 	prior, err := scanContentVersion(tx.QueryRowContext(ctx,
-		`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id=?`,
+		`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id=$1`,
 		node.CurrentVersionID,
 	))
 	if err != nil {
 		return Node{}, ContentVersion{}, fmt.Errorf("reading audited prior content: %w", err)
 	}
-	updated, version, err := installContentVersionWithOperationTx(
+	updated, version, err := store.installContentVersionWithOperationTx(
 		ctx, tx, node, blobHash, size, mimeType, transitionKind, sourceVersionID, operation,
 	)
 	if err != nil {

@@ -32,6 +32,7 @@ export function laneTitle(lane: string): string {
     "process:vector-indexes": "Updating similarity search",
     "process:media-continuations": "Processing media",
     "process:photo-descriptions": "Describing photos",
+    "process:photo-face-detection": "Finding faces",
     "probe:media-origins": "Checking media sources",
     "maintenance:auxiliary-checksums": "Checking file hashes",
     "maintenance:retention": "Cleaning up old jobs",

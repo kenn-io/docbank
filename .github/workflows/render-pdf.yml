@@ -3,7 +3,7 @@ name: Render PDF
 # Keep native renderer proof on disposable GitHub-hosted runners. PR changes
 # must exercise this job without changing the main-pinned CI workflow.
 on:
-  pull_request:
+  workflow_call:
   workflow_dispatch:
   push:
     branches: [main]
@@ -59,6 +59,7 @@ jobs:
   libreoffice-owner:
     name: LibreOffice owner proof
     runs-on: ubuntu-latest
+    timeout-minutes: 26
     steps:
       - name: Check out repository
         uses: actions/checkout@v7.0.1

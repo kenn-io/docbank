@@ -16,6 +16,33 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
+func TestWatchSourcePresenceSymlinkEvidence(t *testing.T) {
+	for _, ancestor := range []bool{false, true} {
+		ing := newTestIngester(t)
+		source := writeTree(t, map[string]string{"sub/draft.md": "first"})
+		cfg := config.WatchConfig{Name: "notes", Source: source, Destination: "/archive", CaptureOnChange: true, ScanInterval: config.Duration(time.Second)}
+		w, err := NewWatcher(ing, t.TempDir(), cfg, runTestMutation, slog.New(slog.DiscardHandler))
+		require.NoError(t, err)
+		require.NoError(t, w.scan(t.Context(), openWatcherRoot(t, w)))
+		ref := "sub/draft.md"
+		if ancestor {
+			ref = "sub"
+		}
+		require.NoError(t, os.RemoveAll(filepath.Join(source, filepath.FromSlash(ref))))
+		require.NoError(t, os.Symlink(t.TempDir(), filepath.Join(source, filepath.FromSlash(ref))))
+		w, err = NewWatcher(ing, t.TempDir(), cfg, runTestMutation, slog.New(slog.DiscardHandler))
+		require.NoError(t, err)
+		require.NoError(t, w.scan(t.Context(), openWatcherRoot(t, w)))
+		fence, err := ing.Store.ResolveProcessingSourceFence(t.Context(), store.ProcessingSourceFenceRequest{Filters: &store.SearchOptions{SourcePresent: true}})
+		require.NoError(t, err)
+		want := 0
+		if ancestor {
+			want = 1
+		}
+		require.Len(t, fence.ContentVersionIDs, want, "a symlinked parent is unlisted; a symlink leaf is absent")
+	}
+}
+
 func TestWatcherDoesNotFollowSwappedDirectoryAncestor(t *testing.T) {
 	ing := newTestIngester(t)
 	source := writeTree(t, map[string]string{"sub/inside.txt": "inside"})

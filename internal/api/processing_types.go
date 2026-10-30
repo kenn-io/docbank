@@ -1,6 +1,7 @@
 package api
 
 type DocumentSourceFenceFilters struct {
+	SourcePresent  bool   `json:"source_present,omitzero"`
 	TagID          string `json:"tag_id,omitzero" format:"uuid"`
 	MIMEType       string `json:"mime_type,omitzero" maxLength:"255"`
 	UnderNodeID    int64  `json:"under_node_id,omitzero" minimum:"1"`

@@ -24,6 +24,9 @@ func (c *Connection) ListDocuments(
 		return api.DocumentPage{}, err
 	}
 	params := apiclient.ListDocumentsQuery{}
+	if query.SourcePresent {
+		params.SourcePresent = new(true)
+	}
 	if query.PathPrefix != "" {
 		params.PathPrefix = new(query.PathPrefix)
 	}
@@ -113,7 +116,8 @@ func validateDocumentPage(query api.DocumentQuery, page api.DocumentPage) error 
 	if err != nil {
 		return err
 	}
-	if page.PathPrefix != normalized.PathPrefix || page.Sort != string(normalized.Sort) ||
+	if page.SourcePresent != normalized.SourcePresent ||
+		page.PathPrefix != normalized.PathPrefix || page.Sort != string(normalized.Sort) ||
 		page.Direction != string(normalized.Direction) || page.PageSize != normalized.PageSize ||
 		len(page.Items) > page.PageSize {
 		return errors.New("document catalog response does not bind its query")
@@ -156,7 +160,8 @@ func validateDocumentSummary(item api.DocumentSummary, index int) error {
 
 func normalizeClientDocumentQuery(query api.DocumentQuery) (store.DocumentCatalogQuery, error) {
 	return store.NormalizeDocumentCatalogQuery(store.DocumentCatalogQuery{
-		PathPrefix: query.PathPrefix, Sort: store.DocumentCatalogSort(query.Sort),
+		SourcePresent: query.SourcePresent,
+		PathPrefix:    query.PathPrefix, Sort: store.DocumentCatalogSort(query.Sort),
 		Direction: store.DocumentCatalogDirection(query.Direction), PageSize: query.PageSize,
 	})
 }

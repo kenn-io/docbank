@@ -1,6 +1,6 @@
 import type { ProcessingFlowHop, ProcessingPlan } from "./generated/docbank.js";
 
-export type ProcessingPurpose = "extract" | "transcribe" | "describe" | "index";
+export type ProcessingPurpose = "extract" | "transcribe" | "describe" | "detect" | "index";
 
 export const processingSetupURL = "https://docbank.ai/docs/configuration/";
 
@@ -23,15 +23,20 @@ export const purposeLabels: Record<
     running: "Describing…",
     done: "Suggestion ready.",
   },
+  detect: { title: "Find faces", running: "Finding faces…", done: "Face scan finished." },
   index: { title: "Index for search", running: "Indexing…", done: "Indexed." },
+};
+
+const photoPurposes: Record<string, ProcessingPurpose> = {
+  "compatible-vision.detect-faces-v1": "detect",
 };
 
 export function processingPurpose(plan: ProcessingPlan, mediaType?: string): ProcessingPurpose {
   const rendition = plan.flow.find((hop) => hop.capability === "rendition");
   if (!rendition) return "index";
-  if (rendition.input_classes.includes("derived_upload")) return "describe";
-  if (mediaType?.startsWith("audio/")) return "transcribe";
-  return "extract";
+  if (rendition.input_classes.includes("derived_upload"))
+    return photoPurposes[rendition.provider_id] ?? "describe";
+  return mediaType?.startsWith("audio/") ? "transcribe" : "extract";
 }
 
 const providerNames: Record<string, string> = {
@@ -120,8 +125,13 @@ export function whereSentences(plan: ProcessingPlan): string[] {
   });
 }
 
+const keptByPurpose: Partial<Record<ProcessingPurpose, string>> = {
+  describe: "Saves a suggested caption and tags for you to review.",
+  detect: "Saves face boxes and measurements in the vault and its backups.",
+};
+
 export function keptSentence(plan: ProcessingPlan, purpose: ProcessingPurpose): string {
-  if (purpose === "describe") return "Saves a suggested caption and tags for you to review.";
+  if (keptByPurpose[purpose]) return keptByPurpose[purpose];
   const kept: string[] = [];
   if (plan.retained_classes.includes("sanitized_markdown"))
     kept.push(purpose === "transcribe" ? "the transcript" : "the extracted text");

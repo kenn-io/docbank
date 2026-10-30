@@ -2061,3 +2061,98 @@ CREATE UNIQUE INDEX custodian_primary_document ON {{schema}}.custodian_assignmen
 CREATE UNIQUE INDEX person_candidate_identity ON {{schema}}.person_match_candidates(actor_key, suggested_person_id, reason, evidence_sha256) WHERE suggested_person_id IS NOT NULL;
 
 CREATE UNIQUE INDEX person_candidate_identity_unsuggested ON {{schema}}.person_match_candidates(actor_key, reason, evidence_sha256) WHERE suggested_person_id IS NULL;
+
+CREATE TABLE {{schema}}.blob_locations (
+    blob_hash    TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.blobs(hash) ON DELETE CASCADE,
+    store_id     TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.blob_stores(store_id),
+    generation   TEXT COLLATE "C" NOT NULL,
+    kind         TEXT COLLATE "C" NOT NULL,
+    encoding     TEXT COLLATE "C",
+    stored_size  BIGINT NOT NULL,
+    pack_eligible BIGINT NOT NULL,
+    PRIMARY KEY (blob_hash, store_id)
+);
+
+CREATE TABLE {{schema}}.blob_packs (
+    store_id     TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.blob_stores(store_id),
+    pack_id      TEXT COLLATE "C" NOT NULL,
+    entry_count  BIGINT NOT NULL,
+    stored_bytes BIGINT NOT NULL,
+    created_at   TEXT COLLATE "C" NOT NULL,
+    scan_hash             TEXT COLLATE "C" NOT NULL DEFAULT '',
+    live_entries          BIGINT NOT NULL DEFAULT 0,
+    live_stored_bytes     BIGINT NOT NULL DEFAULT 0,
+    live_raw_bytes        BIGINT NOT NULL DEFAULT 0,
+    max_live_stored_len   BIGINT NOT NULL DEFAULT 0,
+    max_live_raw_len      BIGINT NOT NULL DEFAULT 0,
+    PRIMARY KEY (store_id, pack_id)
+);
+
+CREATE TABLE {{schema}}.blob_pack_entries (
+    blob_hash   TEXT COLLATE "C" NOT NULL,
+    store_id    TEXT COLLATE "C" NOT NULL,
+    pack_id     TEXT COLLATE "C" NOT NULL,
+    pack_offset BIGINT NOT NULL,
+    stored_len  BIGINT NOT NULL,
+    raw_len     BIGINT NOT NULL,
+    flags       BIGINT NOT NULL,
+    crc32c      BIGINT NOT NULL,
+    PRIMARY KEY (blob_hash, store_id),
+    FOREIGN KEY (store_id, pack_id)
+        REFERENCES {{schema}}.blob_packs(store_id, pack_id) ON DELETE CASCADE
+);
+
+CREATE TABLE {{schema}}.rendition_blob_staging (
+    blob_hash TEXT COLLATE "C" PRIMARY KEY REFERENCES {{schema}}.blobs(hash) ON DELETE CASCADE
+);
+
+CREATE TABLE {{schema}}.derivative_blob_purge_pending (
+    blob_hash TEXT COLLATE "C" PRIMARY KEY REFERENCES {{schema}}.blobs(hash) ON DELETE CASCADE
+);
+
+CREATE TABLE {{schema}}.text_extraction_queue (
+    blob_hash       TEXT COLLATE "C" PRIMARY KEY REFERENCES {{schema}}.blobs(hash) ON DELETE CASCADE,
+    next_attempt_at TEXT COLLATE "C" NOT NULL
+);
+
+CREATE TABLE {{schema}}.text_searchable_versions (
+    version_id TEXT COLLATE "C" PRIMARY KEY REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE
+);
+
+CREATE TABLE {{schema}}.photo_timeline (
+    file_id       TEXT COLLATE "C" PRIMARY KEY REFERENCES {{schema}}.photo_files(file_id) ON DELETE CASCADE,
+    sort_key      TEXT COLLATE "C" NOT NULL,
+    day           TEXT COLLATE "C" NOT NULL,
+    modified_time TEXT COLLATE "C",
+    folder_key    TEXT COLLATE "C"
+);
+
+CREATE TABLE {{schema}}.photo_source_claims (
+    file_id TEXT COLLATE "C" PRIMARY KEY REFERENCES {{schema}}.photo_files(file_id) ON DELETE CASCADE,
+    original_path TEXT COLLATE "C",
+    original_mtime TEXT COLLATE "C",
+    folder_key TEXT COLLATE "C"
+);
+
+CREATE INDEX blob_locations_store
+    ON {{schema}}.blob_locations(store_id, blob_hash);
+
+CREATE INDEX blob_pack_entries_pack
+    ON {{schema}}.blob_pack_entries(store_id, pack_id, blob_hash);
+
+CREATE INDEX blob_pack_entries_store_hash
+    ON {{schema}}.blob_pack_entries(store_id, blob_hash);
+
+CREATE INDEX blob_packs_dead_scan
+ON {{schema}}.blob_packs(store_id, scan_hash, pack_id) WHERE live_entries=0;
+
+CREATE INDEX blob_packs_live_scan
+ON {{schema}}.blob_packs(store_id, scan_hash, pack_id) WHERE live_entries>0;
+
+CREATE INDEX photo_timeline_sort_key ON {{schema}}.photo_timeline(sort_key);
+
+CREATE INDEX photo_timeline_folder ON {{schema}}.photo_timeline(folder_key, sort_key) WHERE folder_key IS NOT NULL;
+
+CREATE INDEX derivative_purge_suppressions_active_source
+    ON {{schema}}.derivative_purge_suppressions(source_sha256, profile_fingerprint)
+    WHERE active = 1;

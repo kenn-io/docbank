@@ -24,6 +24,7 @@ var (
 	searchJSON           bool
 	searchAgent          bool
 	searchFuzzy          bool
+	searchSourcePresent  bool
 	searchTag            string
 	searchMIME           string
 	searchUnder          string
@@ -56,14 +57,14 @@ var searchCmd = &cobra.Command{
   docbank search merger plan --under /cases/acme --json
   docbank search --tag urgent
   docbank search invocie --fuzzy --modified-since 2026-01-01T00:00:00Z`,
-	Long: `Query words are joined. Lexical search matches word prefixes, names before
-content, on current versions of live nodes.
-With a query embedding binding, plain text search runs hybrid retrieval over
-live files and appends matching folder names. Filters, --fuzzy, --limit above
+	Long: `Query words are joined; lexical search matches prefixes on current live
+names, then content.
+With a query embedding binding, plain search uses hybrid over live files and
+appends matching folders. Filters, --fuzzy, --limit above
 100, and --mode lexical use lexical search. A failed hybrid attempt prints
 "degraded: REASON" to stderr and returns lexical results.
---json prints lexical {hits, limit, truncated}, or for hybrid the processing
-report (actual_mode, coverage, results) plus folders.
+--json prints lexical {hits, limit, truncated} or hybrid processing results
+plus folders.
 --agent prints an OK header and one line per hit.
 --fuzzy appends filename/path matches with one typo.
 Explicit processing modes need --profile and --source-version UUIDs.
@@ -91,7 +92,7 @@ See docs/usage/search.md.`,
 			if len(args) != 0 {
 				return usageError(errors.New("--similar-to does not accept query text"))
 			}
-			for _, flag := range []string{"mode", "explain", "rerank", "tag", "mime-type", "under", "modified-since", "modified-before"} {
+			for _, flag := range []string{"mode", "explain", "rerank", "tag", "mime-type", "under", "modified-since", "modified-before", "source-present"} {
 				if cmd.Flags().Changed(flag) {
 					return usageError(fmt.Errorf("--similar-to cannot be combined with --%s", flag))
 				}
@@ -120,6 +121,9 @@ See docs/usage/search.md.`,
 			return usageError(errors.New("--version requires --similar-to"))
 		}
 		if documentSearchFlagsChanged(cmd) {
+			if cmd.Flags().Changed("source-present") {
+				return usageError(errors.New("--mode search cannot be combined with --source-present"))
+			}
 			if searchTag != "" || searchMIME != "" || searchUnder != "" || searchSince != "" || searchBefore != "" {
 				return usageError(errors.New("--mode search cannot be combined with tag, MIME, directory, or time filters"))
 			}
@@ -172,8 +176,9 @@ See docs/usage/search.md.`,
 			}
 		}()
 		opts := daemonconn.SearchOptions{
-			Fuzzy:    searchFuzzy,
-			MIMEType: mimeType, ModifiedSince: modifiedSince, ModifiedBefore: modifiedBefore,
+			SourcePresent: searchSourcePresent,
+			Fuzzy:         searchFuzzy,
+			MIMEType:      mimeType, ModifiedSince: modifiedSince, ModifiedBefore: modifiedBefore,
 		}
 		var tagName string
 		if searchTag != "" {
@@ -585,6 +590,7 @@ func writeFolderSearchHits(cmd *cobra.Command, folders []api.SearchHit, separate
 }
 
 func init() {
+	searchCmd.Flags().BoolVar(&searchSourcePresent, "source-present", false, "exclude documents whose watched source is known to be gone")
 	searchCmd.Flags().StringVar(&searchSimilarTo, "similar-to", "", "find similar files using the stored embedding of id:N or /path")
 	searchCmd.Flags().StringVar(&searchVersion, "version", "", "exact current source version for --similar-to")
 	searchCmd.Flags().IntVar(&searchLimit, "limit", defaultSearchLimit,

@@ -68,14 +68,14 @@ func ensurePrimaryBlobStoreTx(tx *sql.Tx) (BlobStore, error) {
 func primaryBlobStoreTx(tx *sql.Tx) (BlobStore, error) {
 	return scanBlobStore(tx.QueryRow(`
 		SELECT store_id, name, kind, role, lifecycle, binding, ownership_epoch, created_at
-		FROM blob_stores WHERE role = ?`, blobStoreRolePrimary))
+		FROM blob_stores WHERE role = $1`, blobStoreRolePrimary))
 }
 
 // PrimaryBlobStore returns the fixed local filesystem store.
 func (s *Store) PrimaryBlobStore(ctx context.Context) (BlobStore, error) {
 	store, err := scanBlobStore(s.db.QueryRowContext(ctx, `
 		SELECT store_id, name, kind, role, lifecycle, binding, ownership_epoch, created_at
-		FROM blob_stores WHERE role = ?`, blobStoreRolePrimary))
+		FROM blob_stores WHERE role = $1`, blobStoreRolePrimary))
 	if errors.Is(err, sql.ErrNoRows) {
 		return BlobStore{}, errors.New("primary blob store is missing")
 	}

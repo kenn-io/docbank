@@ -14,11 +14,14 @@ import (
 	"image/png"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 	"uuid"
 
 	"github.com/stretchr/testify/require"
@@ -29,7 +32,30 @@ import (
 	"go.kenn.io/docbank/internal/processing"
 )
 
+// The PDF worker measures whole-process RSS. Give each verification test its
+// own process so unrelated CLI tests cannot consume its qualified memory budget.
+func runRedactionVerificationInSubprocess(t *testing.T) bool {
+	t.Helper()
+	const child = "DOCBANK_TEST_REDACTION_VERIFICATION"
+	if os.Getenv(child) == t.Name() {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
+	defer cancel()
+	binary, err := os.Executable()
+	require.NoError(t, err)
+	cmd := exec.CommandContext(ctx, binary, "-test.run=^"+regexp.QuoteMeta(t.Name())+"$", "-test.v", "-test.timeout=5m", "-test.short="+strconv.FormatBool(testing.Short()))
+	cmd.Env = append(os.Environ(), child+"="+t.Name())
+	output, err := cmd.CombinedOutput()
+	require.NoError(t, err, "%s", output)
+	t.Log(string(output))
+	return true
+}
+
 func TestRedactionVerifyCLI(t *testing.T) {
+	if runRedactionVerificationInSubprocess(t) {
+		return
+	}
 	f := newRedactionVerifyFixture(t)
 	data := f.archive(t, "valid")
 	scratch := t.TempDir()
@@ -59,6 +85,9 @@ func TestRedactionVerifyCLI(t *testing.T) {
 }
 
 func TestRedactionVerifyV2(t *testing.T) {
+	if runRedactionVerificationInSubprocess(t) {
+		return
+	}
 	f := newRedactionVerifyFixture(t)
 	recipe := f.review.Recipe
 	recipe.WriterVersion = "docbank-fresh-objects/v2"
@@ -78,6 +107,9 @@ func TestRedactionVerifyV2(t *testing.T) {
 }
 
 func TestRedactionVerifyRejectsSelfConsistentPDF(t *testing.T) {
+	if runRedactionVerificationInSubprocess(t) {
+		return
+	}
 	for _, scenario := range []string{"non-PDF", "unmasked PDF"} {
 		t.Run(scenario, func(t *testing.T) {
 			f := newRedactionVerifyFixture(t)
@@ -100,6 +132,9 @@ func TestRedactionVerifyRejectsSelfConsistentPDF(t *testing.T) {
 }
 
 func TestRedactionVerifyErrors(t *testing.T) {
+	if runRedactionVerificationInSubprocess(t) {
+		return
+	}
 	for _, test := range []struct {
 		name string
 		exit int
@@ -130,6 +165,9 @@ func TestRedactionVerifyErrors(t *testing.T) {
 }
 
 func TestRedactionVerifyOutputAndCancellation(t *testing.T) {
+	if runRedactionVerificationInSubprocess(t) {
+		return
+	}
 	f := newRedactionVerifyFixture(t)
 	f.archive(t, "valid")
 	for _, asJSON := range []bool{false, true} {

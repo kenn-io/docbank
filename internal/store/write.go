@@ -18,7 +18,7 @@ func nodeByIDTx(tx *sql.Tx, id int64) (Node, error) {
 
 func bumpRevisionTx(tx *sql.Tx, id int64, now string) error {
 	if _, err := tx.Exec(
-		`UPDATE nodes SET revision = revision + 1, modified_at = ? WHERE id = ?`,
+		`UPDATE nodes SET revision = revision + 1, modified_at = $1 WHERE id = $2`,
 		now, id); err != nil {
 		return fmt.Errorf("bumping revision of node %d: %w", id, err)
 	}
@@ -158,7 +158,7 @@ func (s *Store) mkdirTx(
 		return Node{}, err
 	}
 	id, err := s.insertNodeTx(ctx, tx, parentID, name, nodeKindDir, nil, recordedAt)
-	if s.driver.IsUniqueViolation(err) {
+	if s.isUniqueViolation(err) {
 		return Node{}, fmt.Errorf("mkdir %q under node %d: %w", name, parentID, ErrExists)
 	}
 	if err != nil {
@@ -167,7 +167,11 @@ func (s *Store) mkdirTx(
 	if err := bumpRevisionTx(tx, parentID, recordedAt); err != nil {
 		return Node{}, err
 	}
-	return nodeByIDTx(tx, id)
+	updated, err := nodeByIDTx(tx, id)
+	if err != nil {
+		return Node{}, err
+	}
+	return updated, s.refreshNodePhotoWorkTx(ctx, tx, updated, nil)
 }
 
 // insertNodeTx allocates and inserts under the caller's storage transaction.
@@ -280,7 +284,7 @@ func (s *Store) EnsureBlobTx(tx *sql.Tx, hash string, size int64, physical ...Bl
 		return fmt.Errorf("recording blob %s: %w", hash, err)
 	}
 	result, err := tx.Exec(
-		`INSERT OR IGNORE INTO blobs(hash, size, created_at) VALUES (?, ?, ?)`,
+		`INSERT INTO blobs(hash, size, created_at) VALUES ($1, $2, $3) ON CONFLICT(hash) DO NOTHING`,
 		hash, size, nowRFC3339())
 	if err != nil {
 		return fmt.Errorf("recording blob %s: %w", hash, err)
@@ -295,12 +299,10 @@ func (s *Store) EnsureBlobTx(tx *sql.Tx, hash string, size int64, physical ...Bl
 		return err
 	}
 	if inserted != 0 {
-		return writeLooseLocationTx(
-			context.Background(), tx, s.primaryStoreID, hash, storage,
-		)
+		return s.writeLooseDocumentLocationTx(tx, hash, storage)
 	}
 	var recordedSize int64
-	if err := tx.QueryRow(`SELECT size FROM blobs WHERE hash=?`, hash).Scan(&recordedSize); err != nil {
+	if err := tx.QueryRow(`SELECT size FROM blobs WHERE hash=$1`, hash).Scan(&recordedSize); err != nil {
 		return fmt.Errorf("reading blob %s: %w", hash, err)
 	}
 	if recordedSize != size {
@@ -311,9 +313,7 @@ func (s *Store) EnsureBlobTx(tx *sql.Tx, hash string, size int64, physical ...Bl
 	if err != nil {
 		if errors.Is(err, ErrPhysicalAuthorityMissing) {
 			if storage.Created {
-				return writeLooseLocationTx(
-					context.Background(), tx, s.primaryStoreID, hash, storage,
-				)
+				return s.writeLooseDocumentLocationTx(tx, hash, storage)
 			}
 			if _, authorityErr := requirePhysicalAuthorityTx(tx, hash); authorityErr == nil {
 				return nil
@@ -333,9 +333,7 @@ func (s *Store) EnsureBlobTx(tx *sql.Tx, hash string, size int64, physical ...Bl
 			hash, storage.Encoding, storage.StoredBytes, current.Encoding, current.StoredBytes,
 		)
 	}
-	return writeLooseLocationTx(
-		context.Background(), tx, s.primaryStoreID, hash, storage,
-	)
+	return s.writeLooseDocumentLocationTx(tx, hash, storage)
 }
 
 func (s *Store) createFileTx(
@@ -366,7 +364,7 @@ func (s *Store) createFileWithOperationTx(
 		return Node{}, ContentVersion{}, err
 	}
 	id, err := s.insertNodeTx(ctx, tx, parentID, name, nodeKindFile, &operation.versionID, operation.recordedAt)
-	if s.driver.IsUniqueViolation(err) {
+	if s.isUniqueViolation(err) {
 		return Node{}, ContentVersion{}, fmt.Errorf(
 			"creating file %q under node %d: %w", name, parentID, ErrExists)
 	}
@@ -382,11 +380,14 @@ func (s *Store) createFileWithOperationTx(
 		`INSERT INTO content_versions (
 			version_id, node_id, blob_hash, size, mime_type, recorded_at,
 			node_revision, introduced_operation_id, transition_kind, source_version_id
-		 ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, 'content_create', NULL)`,
+		 ) VALUES ($1, $2, $3, $4, $5, $6, 1, $7, 'content_create', NULL)`,
 		operation.versionID, id, blobHash, size, storedMime, operation.recordedAt,
 		operation.operationID); err != nil {
 		return Node{}, ContentVersion{}, fmt.Errorf(
 			"recording initial content version for node %d: %w", id, err)
+	}
+	if err := s.promoteContentBlobTx(ctx, tx, blobHash); err != nil {
+		return Node{}, ContentVersion{}, err
 	}
 	if err := queueTextExtractionTx(ctx, tx, operation.versionID, blobHash, mimeType); err != nil {
 		return Node{}, ContentVersion{}, err
@@ -399,9 +400,12 @@ func (s *Store) createFileWithOperationTx(
 		return Node{}, ContentVersion{}, err
 	}
 	version, err := scanContentVersion(tx.QueryRow(
-		`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id=?`, operation.versionID,
+		`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id=$1`, operation.versionID,
 	))
 	if err != nil {
+		return Node{}, ContentVersion{}, err
+	}
+	if err := s.refreshNodePhotoWorkTx(ctx, tx, created, nil); err != nil {
 		return Node{}, ContentVersion{}, err
 	}
 	return created, version, nil
@@ -513,7 +517,7 @@ func isAncestorTx(tx *sql.Tx, maybeAncestor, candidate int64) (bool, error) {
 			return true, nil
 		}
 		var parent sql.NullInt64
-		err := tx.QueryRow(`SELECT parent_id FROM nodes WHERE id = ?`, cur).Scan(&parent)
+		err := tx.QueryRow(`SELECT parent_id FROM nodes WHERE id = $1`, cur).Scan(&parent)
 		if err != nil {
 			return false, fmt.Errorf("walking ancestry of node %d: %w", candidate, err)
 		}
@@ -714,10 +718,10 @@ func (s *Store) moveAtTx(
 		return Node{}, fmt.Errorf("moving node %d under %d: %w", id, newParentID, ErrCycle)
 	}
 	_, err = tx.Exec(
-		`UPDATE nodes SET parent_id = ?, name = ?, revision = revision + 1,
-		        modified_at = ? WHERE id = ?`,
+		`UPDATE nodes SET parent_id = $1, name = $2, revision = revision + 1,
+		        modified_at = $3 WHERE id = $4`,
 		newParentID, newName, recordedAt, id)
-	if s.driver.IsUniqueViolation(err) {
+	if s.isUniqueViolation(err) {
 		return Node{}, fmt.Errorf("moving node %d to %q: %w", id, newName, ErrExists)
 	}
 	if err != nil {
@@ -732,5 +736,9 @@ func (s *Store) moveAtTx(
 			return Node{}, err
 		}
 	}
-	return nodeByIDTx(tx, id)
+	updated, err := nodeByIDTx(tx, id)
+	if err != nil {
+		return Node{}, err
+	}
+	return updated, s.refreshNodePhotoWorkTx(context.Background(), tx, updated, &n)
 }

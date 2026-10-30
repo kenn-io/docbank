@@ -161,5 +161,5 @@ from the documentation image set. Tracing is disabled. Successful runs remove
 their synthetic vaults; failures stop the daemons and retain scratch for diagnosis.
 The runner also attempts shutdown if Playwright times out.
 
-The Numbered PDF browser recovery job in `render-pdf.yml` runs the branch's
-workflow on pull requests, so its evidence is available before merge.
+The Numbered PDF browser recovery job in `render-pdf.yml` runs through
+`render-pdf-pr.yml` on pull requests, so its evidence is available before merge.

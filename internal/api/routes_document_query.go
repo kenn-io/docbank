@@ -74,14 +74,15 @@ func registerDocumentQueryRoute(api huma.API, service *documentQueryService) {
 		OperationID: "listDocuments", Method: http.MethodGet, Path: "/api/v1/documents",
 		Summary: "List current live documents with authenticated keyset pagination",
 	}, func(ctx context.Context, input *struct {
-		PathPrefix string `query:"path_prefix" default:"/"`
-		Sort       string `query:"sort" default:"path" enum:"path,name,modified_at,size,media_type"`
-		Direction  string `query:"direction" default:"asc" enum:"asc,desc"`
-		PageSize   int    `query:"page_size" default:"50" minimum:"1" maximum:"250"`
-		Cursor     string `query:"cursor"`
+		PathPrefix    string `query:"path_prefix" default:"/"`
+		Sort          string `query:"sort" default:"path" enum:"path,name,modified_at,size,media_type"`
+		Direction     string `query:"direction" default:"asc" enum:"asc,desc"`
+		PageSize      int    `query:"page_size" default:"50" minimum:"1" maximum:"250"`
+		Cursor        string `query:"cursor"`
+		SourcePresent bool   `query:"source_present"`
 	}) (*response, error) {
 		page, err := service.ListDocuments(ctx, DocumentQuery{PathPrefix: input.PathPrefix,
-			Sort: input.Sort, Direction: input.Direction, PageSize: input.PageSize, Cursor: input.Cursor})
+			Sort: input.Sort, Direction: input.Direction, PageSize: input.PageSize, Cursor: input.Cursor, SourcePresent: input.SourcePresent})
 		if err != nil {
 			return nil, err
 		}
@@ -107,7 +108,8 @@ func registerDocumentQueryRoute(api huma.API, service *documentQueryService) {
 func (service *documentQueryService) toDocumentPage(
 	page store.DocumentCatalogPage,
 ) (DocumentPage, error) {
-	wire := DocumentPage{PathPrefix: page.Query.PathPrefix, Sort: string(page.Query.Sort),
+	wire := DocumentPage{SourcePresent: page.Query.SourcePresent,
+		PathPrefix: page.Query.PathPrefix, Sort: string(page.Query.Sort),
 		Direction: string(page.Query.Direction), PageSize: page.Query.PageSize,
 		Items: documentSummariesFromStore(page.Items)}
 	requests := make([]documentCursorRequest, 0, 2)
@@ -153,8 +155,8 @@ func documentSummariesFromStore(items []store.DocumentSummary) []DocumentSummary
 }
 
 func documentCursorQueryHash(query store.DocumentCatalogQuery) [sha256.Size]byte {
-	return sha256.Sum256([]byte(fmt.Sprintf("%q %s %s %d",
-		query.PathPrefix, query.Sort, query.Direction, query.PageSize)))
+	return sha256.Sum256([]byte(fmt.Sprintf("%q %s %s %d %t",
+		query.PathPrefix, query.Sort, query.Direction, query.PageSize, query.SourcePresent)))
 }
 
 func (service *documentQueryService) encodeCursors(
@@ -282,7 +284,8 @@ func (service *documentQueryService) verifyCursorEnvelope(raw string) ([]byte, e
 
 func (service *documentQueryService) ListDocuments(ctx context.Context, input DocumentQuery) (DocumentPage, error) {
 	query, err := store.NormalizeDocumentCatalogQuery(store.DocumentCatalogQuery{
-		PathPrefix: input.PathPrefix, Sort: store.DocumentCatalogSort(input.Sort),
+		SourcePresent: input.SourcePresent,
+		PathPrefix:    input.PathPrefix, Sort: store.DocumentCatalogSort(input.Sort),
 		Direction: store.DocumentCatalogDirection(input.Direction), PageSize: input.PageSize,
 	})
 	if err != nil {

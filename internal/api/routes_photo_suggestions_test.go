@@ -45,7 +45,7 @@ func TestPhotoSuggestionRoutesPassHiddenCookie(t *testing.T) {
 		_, _ = w.Write(visiontest.Completion(reply))
 	}))
 	t.Cleanup(endpoint.Close)
-	provider, err := vision.New(vision.Profile{Origin: endpoint.URL, Model: "synthetic-vision", TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, endpoint.Client())
+	provider, err := vision.New(vision.Profile{DescriptorID: vision.ProviderID, Origin: endpoint.URL, Model: "synthetic-vision", TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, endpoint.Client())
 	require.NoError(t, err)
 	profile := processingTestProfile(provider.Descriptor())
 	profile.Rendition.AdapterContract = vision.AdapterContract

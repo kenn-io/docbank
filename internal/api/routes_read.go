@@ -371,12 +371,14 @@ func registerReadRoutes(api huma.API, d Deps) {
 			"parameter-free MIME type matches the current file version with or without parameters. " +
 			"An optional live directory node ID restricts results to its descendants. Optional " +
 			"absolute modification timestamps form an inclusive-since, exclusive-before interval. " +
+			"source_present=true excludes documents whose watched source is observed gone; push-owned documents remain included. " +
 			"fuzzy=true appends bounded ASCII one-edit filename/path discovery after ordinary " +
 			"hits and includes a coverage receipt; it requires a nonblank query, and text " +
 			"outside the supplemental syntax reports not_run.",
 	}, func(ctx context.Context, in *struct {
 		Q              string `query:"q"`
 		Fuzzy          bool   `query:"fuzzy"`
+		SourcePresent  bool   `query:"source_present"`
 		Limit          int    `query:"limit" default:"50" minimum:"1" maximum:"1000"`
 		TagID          string `query:"tag_id" pattern:"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"`
 		MIMEType       string `query:"mime_type" maxLength:"255"`
@@ -395,7 +397,8 @@ func registerReadRoutes(api huma.API, d Deps) {
 			return nil, NewError(http.StatusUnprocessableEntity, "validation", err.Error())
 		}
 		opts := store.SearchOptions{
-			TagID: in.TagID, MIMEType: mimeType, UnderNodeID: in.UnderNodeID,
+			SourcePresent: in.SourcePresent,
+			TagID:         in.TagID, MIMEType: mimeType, UnderNodeID: in.UnderNodeID,
 			ModifiedSince: modifiedSince, ModifiedBefore: modifiedBefore,
 		}
 		var hits []store.SearchHit
@@ -416,7 +419,7 @@ func registerReadRoutes(api huma.API, d Deps) {
 		}
 		out := &searchOutput{Body: SearchReport{
 			Hits: []SearchHit{}, Limit: in.Limit, Truncated: truncated, Fuzzy: fuzzy,
-			TagID: in.TagID, MIMEType: mimeType, UnderNodeID: in.UnderNodeID,
+			SourcePresent: in.SourcePresent, TagID: in.TagID, MIMEType: mimeType, UnderNodeID: in.UnderNodeID,
 			ModifiedSince: modifiedSince, ModifiedBefore: modifiedBefore,
 		}}
 		for _, h := range hits {
