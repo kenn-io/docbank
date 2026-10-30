@@ -430,7 +430,7 @@ A figure is a token containing a digit,
 with edge punctuation trimmed. Whitespace, em dashes, horizontal bars, and
 `[ ] ( ) < > | * ~` backtick `=` `;` separate tokens.
 A leading `-`, `−`, `+`, or `±` stays as a sign, and a leading decimal point stays.
-Figures compare exactly across all resolved citations; markers don't scope them.
+Figures compare across all resolved citations; markers don't scope them. Recognized dates and currency amounts normalize as described below; other figures compare exactly.
 The first matching rule determines the verdict:
 
 - `ungrounded`: an unknown marker or a missing figure with all citations resolved. Example: `30` against cited `20`.
@@ -443,8 +443,12 @@ Results include figures, unknown marker indexes, citation
 statuses, and text digests, with private cache scope and zero TTL.
 
 - Figures keep their spelling, case, signs, and currency symbols. Example: `-.5` differs from `.5`.
-- Case, currency-prefix, and decimal-padding differences report `ungrounded`. Examples: `12-AB` against `12-ab`, `$5` against `5`, and `5.00` against `5`.
+- Identifiers and ordinary numbers keep their spelling. Examples: `12-AB` differs from `12-ab`, and `5.00` differs from `5`.
+- Dates accept `YYYY-MM-DD`, `YYYY/MM/DD`, `DD.MM.YYYY`, `DD/MM/YYYY`, `MM/DD/YYYY`, English month names or three-letter abbreviations with a day and year, and month and year. Ambiguous slash or dot dates may match either ordering; month-only dates do not match full dates. An RFC 3339 timestamp in a citation with uppercase `T`, uppercase `Z` when used, and seconds from `00` through `59` also supplies its written date; answer timestamps remain literal. Invalid dates remain literal figures.
+- Amounts accept currency symbols or uppercase ISO codes before or after a number, including `US$`, `C$`, and `A$`. Explicit signs remain distinct, including positive and negative zero; Unicode minus is accepted in amounts. Decimal and grouping separators and scales `thousand`, `million`, `billion`, `k`, `m`, and `bn` normalize using exact decimal arithmetic. Ambiguous single separators can represent grouping or a decimal. A bare `$` matches AUD, BBD, BMD, BND, BSD, BZD, CAD, FJD, GYD, HKD, JMD, KYD, LRD, NAD, NZD, SBD, SGD, SRD, TTD, TWD, USD, XCD, ZWD, and ZWL; `¥` matches JPY or CNY, `£` matches GBP, and `€` matches EUR; other symbols match themselves. Explicit ISO currencies must match each other. Adjacent uppercase words that are ISO codes, such as `ALL`, count as currency markers; conflicting markers do not match either currency.
+- A figure status of `value_only` means an amount has the same numeric value in a citation but no compatible currency. Whole bare numbers in citations use the same decimal and grouping rules for this diagnostic. It is ungrounded when all citations resolve; an unavailable citation still makes the overall result incomplete unless a marker is unknown.
 - Numbered-list numbers count as figures. Example: `1.` contributes `1`.
+- A citation beginning at the start of its rendition can identify Markdown list markers before amounts. At other offsets, a line-leading `- ` or `+ ` before a number or amount may be a list marker or a sign, so that figure cannot ground either interpretation. Cite a known document prefix or an unambiguous amount to check it.
 - Both sides undo Markdown punctuation escapes, including literal backslashes in plain-text bodies. Example: plain-text `INV\-5` matches `INV-5`.
 - Occurrence alone confirms neither the subject nor other claims. Example: a cited price doesn't establish which item it belongs to.
 
