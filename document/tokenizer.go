@@ -3,6 +3,7 @@ package document
 import (
 	"errors"
 	"fmt"
+	"unicode/utf8"
 )
 
 const (
@@ -39,6 +40,29 @@ type Tokenizer interface {
 	Identity() TokenizerIdentity
 	PrefixTokenCountsMonotonic() bool
 	Tokenize(text string, limit int) ([]TokenBoundary, error)
+}
+
+// UnicodeRuneTokenizer implements unicode-runes@v1 with one token per rune.
+type UnicodeRuneTokenizer struct{}
+
+func (UnicodeRuneTokenizer) Identity() TokenizerIdentity {
+	return TokenizerIdentity{
+		Name: "unicode-runes", Revision: "v1",
+	}
+}
+
+func (UnicodeRuneTokenizer) PrefixTokenCountsMonotonic() bool { return true }
+
+func (UnicodeRuneTokenizer) Tokenize(text string, limit int) ([]TokenBoundary, error) {
+	runeCount := utf8.RuneCountInString(text)
+	if runeCount > limit {
+		return nil, ErrTokenizerLimit
+	}
+	boundaries := make([]TokenBoundary, runeCount)
+	for index := range boundaries {
+		boundaries[index] = TokenBoundary{Start: index, End: index + 1}
+	}
+	return boundaries, nil
 }
 
 func validateTokenizerIdentity(identity TokenizerIdentity) error {
