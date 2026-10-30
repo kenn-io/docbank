@@ -41,16 +41,8 @@ func (ing *Ingester) ingestWatchedFile(
 	ctx context.Context, watchName, destination, sourceRef string,
 	expected localFileFingerprint, open localFileOpener, tags []string,
 ) (result WatchResult, retErr error) {
-	sourceRef = filepath.ToSlash(sourceRef)
-	if sourceRef == "." || sourceRef == "" || path.IsAbs(sourceRef) ||
-		sourceRef == ".." || strings.HasPrefix(sourceRef, "../") ||
-		path.Clean(sourceRef) != sourceRef {
-		return result, fmt.Errorf("invalid watched source reference %q", sourceRef)
-	}
-	if err := validateSourcePath(sourceRef); err != nil {
-		return result, err
-	}
-	if err := validateVirtualDestination(destination); err != nil {
+	sourceRef, err := ing.admitWatchedSource(ctx, watchName, destination, sourceRef, tags)
+	if err != nil {
 		return result, err
 	}
 
@@ -96,6 +88,38 @@ func (ing *Ingester) ingestWatchedFile(
 	}
 	result.Outcome = WatchAdded
 	return result, nil
+}
+
+// admitWatchedSource validates a watched file's target. A source the watch has
+// not recorded must have its tags before any bytes are published; recorded
+// sources keep recording edits. The import transaction checks tags again.
+func (ing *Ingester) admitWatchedSource(
+	ctx context.Context, watchName, destination, sourceRef string, tags []string,
+) (string, error) {
+	sourceRef = filepath.ToSlash(sourceRef)
+	if sourceRef == "." || sourceRef == "" || path.IsAbs(sourceRef) ||
+		sourceRef == ".." || strings.HasPrefix(sourceRef, "../") ||
+		path.Clean(sourceRef) != sourceRef {
+		return "", fmt.Errorf("invalid watched source reference %q", sourceRef)
+	}
+	if err := validateSourcePath(sourceRef); err != nil {
+		return "", err
+	}
+	if err := validateVirtualDestination(destination); err != nil {
+		return "", err
+	}
+	if len(tags) == 0 {
+		return sourceRef, nil
+	}
+	if recorded, err := ing.Store.HasWatchSource(ctx, watchName, sourceRef); err != nil || recorded {
+		return sourceRef, err
+	}
+	for _, name := range tags {
+		if _, err := ing.Store.ResolveWatchTag(ctx, name); err != nil {
+			return "", err
+		}
+	}
+	return sourceRef, nil
 }
 
 func validateVirtualDestination(destination string) error {

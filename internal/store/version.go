@@ -493,8 +493,17 @@ type watchSourceState struct {
 	size     int64
 }
 
+// HasWatchSource reports whether a watch has recorded sourceRef.
+func (s *Store) HasWatchSource(ctx context.Context, watchName, sourceRef string) (bool, error) {
+	_, err := watchSourceTx(ctx, s.db, watchName, sourceRef)
+	if errors.Is(err, ErrNotFound) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 func watchSourceTx(
-	ctx context.Context, tx *sql.Tx, watchName, sourceRef string,
+	ctx context.Context, tx rowQuerier, watchName, sourceRef string,
 ) (watchSourceState, error) {
 	var state watchSourceState
 	err := tx.QueryRowContext(ctx, `
