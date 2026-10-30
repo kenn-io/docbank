@@ -313,7 +313,7 @@ func selectPhotoDisplay(files []PhotoFile, preference *string, override *string)
 // single-asset mutations use validatePhotoAssetGraph.
 func validatePhotoGraph(ctx context.Context, q metadataQuerier) error {
 	var invalid int
-	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_files f LEFT JOIN nodes n ON n.id=f.node_id WHERE f.asset_id IS NULL AND (f.sidecar_of_file_id IS NOT NULL OR n.kind IS NOT 'file' OR n.current_version_id IS NULL)`).Scan(&invalid); err != nil {
+	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_files f LEFT JOIN nodes n ON n.id=f.node_id WHERE f.asset_id IS NULL AND (f.sidecar_of_file_id IS NOT NULL OR n.kind IS DISTINCT FROM 'file' OR n.current_version_id IS NULL)`).Scan(&invalid); err != nil {
 		return err
 	}
 	if invalid != 0 {

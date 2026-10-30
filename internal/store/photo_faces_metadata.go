@@ -47,7 +47,7 @@ func validatePhotoFaceDecisionReferences(ctx context.Context, q metadataQuerier)
 
 func validatePersonKeyFaces(ctx context.Context, q metadataQuerier, personID string, invalidError error) error {
 	var invalid bool
-	if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM persons p LEFT JOIN photo_faces f ON f.face_id=p.key_face_id LEFT JOIN person_document_assertions a ON a.assertion_id=f.assertion_id WHERE (?='' OR p.person_id=?) AND p.key_face_id IS NOT NULL AND (a.person_id IS NULL OR a.person_id<>p.person_id OR a.action<>'assert'))`, personID, personID).Scan(&invalid); err != nil {
+	if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM persons p LEFT JOIN photo_faces f ON f.face_id=p.key_face_id LEFT JOIN person_document_assertions a ON a.assertion_id=f.assertion_id WHERE ($1='' OR p.person_id=$2) AND p.key_face_id IS NOT NULL AND (a.person_id IS NULL OR a.person_id<>p.person_id OR a.action<>'assert'))`, personID, personID).Scan(&invalid); err != nil {
 		return err
 	}
 	if invalid {

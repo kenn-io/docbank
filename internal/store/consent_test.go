@@ -294,7 +294,7 @@ func TestProcessingConsentValidationRejectsCorruptRows(t *testing.T) {
 			END`)
 		require.NoError(t, err)
 
-		err = validateProcessingMetadataState(t.Context(), s.db)
+		err = validateProcessingMetadataState(t.Context(), s.db, false)
 		require.ErrorContains(t, err, "processing consent class sets are not canonical")
 	})
 
@@ -318,7 +318,7 @@ func TestProcessingConsentValidationRejectsCorruptRows(t *testing.T) {
 			END`)
 		require.NoError(t, err)
 
-		err = validateProcessingMetadataState(t.Context(), s.db)
+		err = validateProcessingMetadataState(t.Context(), s.db, false)
 		require.ErrorContains(t, err, "retained artifact classes cannot be null")
 	})
 
@@ -343,7 +343,7 @@ func TestProcessingConsentValidationRejectsCorruptRows(t *testing.T) {
 			END`)
 		require.NoError(t, err)
 
-		err = validateProcessingMetadataState(t.Context(), s.db)
+		err = validateProcessingMetadataState(t.Context(), s.db, false)
 		require.ErrorContains(t, err, "processing consent revoked_at")
 	})
 }

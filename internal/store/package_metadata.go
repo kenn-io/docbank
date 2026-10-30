@@ -79,7 +79,7 @@ func exportPackageMetadata(ctx context.Context, q metadataQuerier, write metadat
 			return err
 		}
 		var vaultID string
-		if err := q.QueryRowContext(ctx, `SELECT vault_uid FROM collection_snapshots WHERE snapshot_id=?`, id).Scan(&vaultID); err != nil {
+		if err := q.QueryRowContext(ctx, `SELECT vault_uid FROM collection_snapshots WHERE snapshot_id=$1`, id).Scan(&vaultID); err != nil {
 			return err
 		}
 		checksum, encoded, err := snapshotRowChecksum(snapshot)
@@ -297,7 +297,7 @@ func validatePackageMetadataState(ctx context.Context, q metadataQuerier, vaultI
 		return fmt.Errorf("validating package metadata: %w", err)
 	}
 	var foreignVault bool
-	if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM collection_snapshots WHERE vault_uid<>?)`, vaultID).Scan(&foreignVault); err != nil {
+	if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM collection_snapshots WHERE vault_uid<>$1)`, vaultID).Scan(&foreignVault); err != nil {
 		return err
 	}
 	if foreignVault {
@@ -326,7 +326,7 @@ func validatePackageMetadataState(ctx context.Context, q metadataQuerier, vaultI
 				return ErrPackageConflict
 			}
 			var exists bool
-			if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM ingests WHERE id=?)`, sourceID).Scan(&exists); err != nil {
+			if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM ingests WHERE id=$1)`, sourceID).Scan(&exists); err != nil {
 				return err
 			}
 			if !exists {
@@ -350,7 +350,7 @@ func validatePackageMetadataState(ctx context.Context, q metadataQuerier, vaultI
 			return ErrPackageConflict
 		}
 		var exists bool
-		if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM blobs WHERE hash=?)`, pkg.ManifestBlobSHA256).Scan(&exists); err != nil || !exists {
+		if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM blobs WHERE hash=$1)`, pkg.ManifestBlobSHA256).Scan(&exists); err != nil || !exists {
 			return ErrPackageConflict
 		}
 	}

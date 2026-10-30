@@ -16,7 +16,7 @@ var emailInventorySuppressionProfile = func() string {
 
 func emailInventorySuppressed(ctx context.Context, q metadataQuerier, v ContentVersion) (bool, error) {
 	var yes bool
-	err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM derivative_purge_suppressions WHERE source_sha256=? AND profile_fingerprint=? AND active=1)`, v.BlobHash, derivativeAttachmentSuppressionScope(v.ID, emailInventorySuppressionProfile)).Scan(&yes)
+	err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM derivative_purge_suppressions WHERE source_sha256=$1 AND profile_fingerprint=$2 AND active=1)`, v.BlobHash, derivativeAttachmentSuppressionScope(v.ID, emailInventorySuppressionProfile)).Scan(&yes)
 	return yes, err
 }
 

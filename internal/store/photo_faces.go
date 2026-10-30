@@ -385,8 +385,8 @@ func (s *Store) MarkPersonInPhoto(ctx context.Context, versionID, personID, pers
 func validatePhotoFaceReferences(ctx context.Context, q metadataQuerier) error {
 	var invalid bool
 	err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_faces f LEFT JOIN content_versions v ON v.version_id=f.content_version_id LEFT JOIN person_document_assertions a ON a.assertion_id=f.assertion_id WHERE v.version_id IS NULL OR (f.assertion_id IS NOT NULL AND (a.assertion_id IS NULL OR NOT (a.content_version_id=f.content_version_id AND a.role='depicted'))))
- OR EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.role='depicted' AND (a.action<>'withdrawn' OR EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=a.assertion_id)) GROUP BY a.content_version_id HAVING COUNT(*)>?)
- OR EXISTS(SELECT 1 FROM photo_faces GROUP BY content_version_id HAVING COUNT(*)>?)`, document.MaxPhotoRecordsPerVersion, document.MaxPhotoRecordsPerVersion).Scan(&invalid)
+ OR EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.role='depicted' AND (a.action<>'withdrawn' OR EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=a.assertion_id)) GROUP BY a.content_version_id HAVING COUNT(*)>$1)
+ OR EXISTS(SELECT 1 FROM photo_faces GROUP BY content_version_id HAVING COUNT(*)>$2)`, document.MaxPhotoRecordsPerVersion, document.MaxPhotoRecordsPerVersion).Scan(&invalid)
 	if err != nil {
 		return fmt.Errorf("checking face references: %w", err)
 	}
