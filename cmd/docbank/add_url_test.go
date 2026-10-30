@@ -19,10 +19,15 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 func TestAddURLImportsEvidence(t *testing.T) {
-	setupVaultHome(t)
+	home := t.TempDir()
+	t.Setenv("DOCBANK_HOME", home)
+	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte("[server]\nidle_timeout = \"150ms\"\n"), 0o600))
+	binary := buildDocbank(t)
+	t.Cleanup(func() { _, _ = daemonconn.Stop(context.Background(), home) })
 	content := "synthetic filing\n"
 	etag := "W/\"edition-\xff\""
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -32,14 +37,19 @@ func TestAddURLImportsEvidence(t *testing.T) {
 		}
 		w.Header().Set("ETag", etag)
 		w.Header().Set("Last-Modified", "Wed, 21 Oct 2015 07:28:00 GMT")
+		assert.Eventually(t, func() bool {
+			records, err := daemonconn.RuntimeStore(home).List()
+			return err == nil && len(records) == 0
+		}, 5*time.Second, 10*time.Millisecond, "daemon should idle out during the download")
 		_, _ = io.WriteString(w, content)
 	}))
 	defer server.Close()
 	requested := server.URL + "/download?id=7"
-	out, err := runCLI(t, "add", requested, "--allow-http", "--dest", "/cases/filings", "--json")
-	require.NoError(t, err, out)
+	command := exec.Command(binary, "add", requested, "--allow-http", "--dest", "/cases/filings", "--json")
+	out, err := command.CombinedOutput()
+	require.NoError(t, err, string(out))
 	var report api.IngestReport
-	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.NoError(t, json.Unmarshal(out, &report))
 	assert.Equal(t, 1, report.Added)
 	require.NotEmpty(t, report.IngestID)
 	ingestID := report.IngestID

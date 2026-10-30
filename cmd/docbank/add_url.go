@@ -111,28 +111,26 @@ func addURL(cmd *cobra.Command, raw string) (rep api.IngestReport, retErr error)
 	if err != nil {
 		return rep, err
 	}
-	defer func() {
-		if !isClosedOutputPipe(retErr) {
-			reportFailure(cmd, c, "add", retErr, false)
-		}
-	}()
+	defer func() { reportFailure(cmd, c, "add", retErr, false) }()
 	download, err := fetchURL(ctx, http.Client{}, raw, addAllowHTTP, addMaxBytes)
 	if err != nil {
 		return rep, err
 	}
 	defer func() { _ = download.file.Close(); _ = os.Remove(download.file.Name()) }()
+	fresh, err := daemonconn.Ensure(ctx)
+	if err != nil {
+		return rep, err
+	}
+	c = fresh
 	receipt, err := c.UploadURL(ctx, addDest, download.name, download.mimeType, download.digest, download.size, download.file, download.fetch)
 	if err != nil {
 		return rep, err
 	}
-	if receipt.Status == "added" {
-		rep.Added = 1
-		rep.IngestID = receipt.IngestID
-		reportAction(cmd, c, "document_added", "", "", false)
-	} else {
-		rep.Skipped = 1
+	if receipt.Status != "added" {
+		return api.IngestReport{Skipped: 1}, nil
 	}
-	return rep, nil
+	reportAction(cmd, c, "document_added", "", "", false)
+	return api.IngestReport{Added: 1, IngestID: receipt.IngestID}, nil
 }
 
 func isURLSource(raw string) bool {
