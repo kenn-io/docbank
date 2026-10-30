@@ -579,8 +579,11 @@ Removing a watch clears its observations. These marks do not change archived
 documents or their exported metadata.
 
 Collection listing, member pages, label changes and provenance history use the
-shared queries. Multi-statement collection,
-provenance and directory-plan reads use repeatable-read snapshots.
+shared queries. Multi-statement collection, provenance and directory-plan reads
+use repeatable-read snapshots. The `embedded:` source-kind prefix is
+case-insensitive on both backends. Caller-supplied evidence stays out of
+operational collections, collection labels and filesystem photo-source
+selection; its stored spelling and provenance remain unchanged.
 
 Provenance corrections append facts rather than replacing them. Ingest runs,
 provenance and version bindings have no runtime `UPDATE` grant. The runtime can

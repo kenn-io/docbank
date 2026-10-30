@@ -39,7 +39,7 @@ func collectionLabelTx(
 	err := q.QueryRowContext(ctx, `WITH `+CollectionMembershipCTE+`
 		SELECT i.started_at, l.label, l.revision, l.updated_at, l.ingest_id
 		FROM ingests i LEFT JOIN collection_labels l ON l.ingest_id=i.id
-		WHERE i.id=$1 AND i.source_kind NOT LIKE 'embedded:%'
+		WHERE i.id=$1 AND LOWER(i.source_kind) NOT LIKE 'embedded:%'
 		  AND (l.ingest_id IS NOT NULL OR EXISTS(
 			SELECT 1 FROM collection_members cm WHERE cm.ingest_id=i.id
 		  ))`, ingestID).Scan(&startedAt, &label, &revision, &updatedAt, &retained)
