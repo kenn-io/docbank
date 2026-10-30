@@ -975,10 +975,9 @@ func (w *Watcher) scan(ctx context.Context, root *watchRoot) error {
 }
 
 func (w *Watcher) scanWithHints(ctx context.Context, root *watchRoot, hints watchScanHints) (bool, error) {
-	for _, name := range w.config.Tags {
-		if _, err := w.ing.Store.ResolveWatchTag(ctx, name); err != nil {
-			return false, err
-		}
+	var err, tagErr error
+	for i := 0; i < len(w.config.Tags) && tagErr == nil; i++ {
+		_, tagErr = w.ing.Store.ResolveWatchTag(ctx, w.config.Tags[i])
 	}
 	if err := ctx.Err(); err != nil {
 		return false, err
@@ -1014,14 +1013,13 @@ func (w *Watcher) scanWithHints(ctx context.Context, root *watchRoot, hints watc
 		// be renames of accepted sources it did not see.
 		var deferred map[string]struct{}
 		if inventory.complete {
-			var err error
 			deferred, retained, err = w.rebindCandidates(ctx, root, inventory)
 			if err != nil {
 				return false, err
 			}
 			if err := w.reconcileSourcePresence(ctx, inventory, deferred, retained); err != nil {
 				if errors.Is(err, ErrRetryLater) {
-					return false, nil
+					return false, tagErr
 				}
 				return false, err
 			}
@@ -1033,7 +1031,9 @@ func (w *Watcher) scanWithHints(ctx context.Context, root *watchRoot, hints watc
 			if _, skip := deferred[rel]; skip {
 				continue
 			}
-			if err := w.processObservation(ctx, watchSource{root: root, ref: rel}, entry.state, entry.observedAt, seen, hints); err != nil {
+			if err = w.processObservation(ctx, watchSource{root: root, ref: rel}, entry.state, entry.observedAt, seen, hints); errors.As(err, new(*store.TagResolutionError)) {
+				tagErr = err
+			} else if err != nil {
 				return false, err
 			}
 		}
@@ -1046,10 +1046,10 @@ func (w *Watcher) scanWithHints(ctx context.Context, root *watchRoot, hints watc
 					w.interruptSettling(rel)
 				}
 			}
-			if len(inventory.blocked) != 0 {
+			if len(inventory.blocked) != 0 && tagErr == nil {
 				return false, fmt.Errorf("scanning watch %q: %w", w.config.Name, errors.Join(inventory.blocked...))
 			}
-			return false, nil
+			return false, tagErr
 		}
 	}
 	if w.notifications != nil && w.notificationErr == nil {
@@ -1067,7 +1067,7 @@ func (w *Watcher) scanWithHints(ctx context.Context, root *watchRoot, hints watc
 			delete(w.rejected, rel)
 		}
 	}
-	return true, nil
+	return true, tagErr
 }
 
 // reconcileSourcePresence records which watched sources a complete inventory

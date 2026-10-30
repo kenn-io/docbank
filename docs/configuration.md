@@ -339,13 +339,18 @@ arrives. Docbank commits the document and its tags together. Later source edits
 preserve manual tag changes.
 
 Docbank checks configured tag names before each scan. A missing or invalid name
-blocks that scan. New-document imports resolve the names again inside their
-transaction. A scan already underway can finish existing-document updates if a
-tag changes mid-scan. The error appears in `docbank watch list`, the API, and
-the web app's Running now drawer. Creating a missing tag resumes the next scan,
-without restarting the daemon. Status shows a tag failure until the next scan observes recovery, then the first
-outstanding notification failure, any remaining source block, or Idle. Renaming a configured tag requires updating the
-watch configuration. The CLI's `TAGS` column shows quoted names, or `[]` when unset.
+holds only new imports. Existing documents still record source edits, renames,
+and removals. Each new import resolves the names again inside its transaction,
+so a tag deleted during a scan also holds it.
+
+The error appears in `docbank watch list`, the API, and the web app's Running
+now drawer. Create the missing tag and the next scan imports the held files,
+without restarting the daemon. Status shows the tag failure until a scan
+observes recovery. Status then shows the first outstanding notification failure,
+any remaining source block, or Idle.
+
+Renaming a configured tag requires updating the watch configuration. The CLI's
+`TAGS` column shows quoted names, or `[]` when unset.
 
 Empty, absolute, parent-traversal, malformed, and backslash-containing glob
 rules fail watcher or folder-scanner construction with the watch name.

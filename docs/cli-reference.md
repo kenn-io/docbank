@@ -1846,7 +1846,7 @@ docbank watch list [--json]
 Lists the daemon's effective watched-inbox configuration in stable name order:
 the machine-local source, virtual-tree destination, complete settle window,
 minimum source age (`0s` when disabled), scan interval, exclusion count, configured
-tags in `TAGS`, and current runner state. A missing tag pauses the watch and names
+tags in `TAGS`, and current runner state. A missing tag holds new imports and names
 the unavailable tag in its error. A waiting watcher shows `idle`; it shows `running` while
 ingesting a file. Human output quotes source and destination paths so
 terminal control characters cannot disguise them. `--json` includes the
