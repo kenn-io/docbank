@@ -25,9 +25,9 @@ starting point.
 
 ## Vault change feed
 
-`GET /api/v1/changes?after=CURSOR&follow=true` requires an API key. It returns `application/x-ndjson`, one object per line with `cursor`, `kind`, `node_id`, and `revision`. Both parameters are optional. Without `after`, reading starts at the oldest retained event. Without `follow=true`, the response drains and closes. A follow response checks for new changes every second and closes on client disconnect or daemon shutdown.
+`GET /api/v1/changes?after=CURSOR&follow=true` requires an API key. It returns `application/x-ndjson`. Each change record is `{"type":"change","change":{"cursor":"…","kind":"created","node_id":2,"revision":1}}`. A finite drain ends with `{"type":"result"}`; EOF before that record means the drain was interrupted. Both parameters are optional. Without `after`, reading starts at the oldest retained event. Without `follow=true`, the response drains and closes. A follow response checks for new changes every second and closes on client disconnect or daemon shutdown.
 
-The daemon validates the cursor before sending response headers. A malformed cursor returns 400 `validation`. An expired cursor, another database's cursor, or a sequence beyond the current head returns 410 `changes_cursor_expired`; the problem body's `cursor` is the current head. Save it before rescanning, then resume after it. See [React to vault changes](../agents/integration.md#react-to-vault-changes) for event kinds, retention, and recovery.
+The daemon validates query encoding and the cursor before sending response headers. A malformed query or cursor returns 400 `validation`. An expired cursor, another database's cursor, or a sequence beyond the current head returns 410 `changes_cursor_expired`; the problem body's `cursor` is the current head. Save it before rescanning, then resume after it. After streaming starts, a read failure sends `{"type":"error","error":{...}}` and closes the stream. The nested error uses the same problem fields, including `changes_cursor_expired` and its recovery `cursor` when retention overtakes the reader. See [React to vault changes](../agents/integration.md#react-to-vault-changes) for event kinds, retention, and recovery.
 
 ## Mailbox imports and explicit EML transfers
 

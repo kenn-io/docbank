@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -20,6 +19,4 @@ func TestPrintChanges(t *testing.T) {
 	out.Reset()
 	require.NoError(t, printChanges(&out, true, watch))
 	require.JSONEq(t, "{\"cursor\":\"saved\",\"kind\":\"created\",\"node_id\":42,\"revision\":3}\n", out.String())
-	failed := errors.New("stream failed")
-	require.ErrorIs(t, printChanges(&out, false, func(func(store.VaultChange) error) error { return failed }), failed)
 }

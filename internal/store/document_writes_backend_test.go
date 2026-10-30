@@ -26,6 +26,11 @@ func TestDocumentWritesPostgres(t *testing.T) {
 				_, err = s.EnableInitialAudit(ctx, plan)
 				require.NoError(t, err)
 			}
+			// Exercise cursors beyond PostgreSQL's int4 range.
+			_, err := s.db.ExecContext(ctx, `UPDATE vault_change_head SET high_water=2147483648`)
+			require.NoError(t, err)
+			_, before, err := s.VaultChanges(ctx, "", 500)
+			require.NoError(t, err)
 			dir, path, err := s.MkdirPath(ctx, "/Documents")
 			require.NoError(t, err)
 			require.Equal(t, "/Documents", path)
@@ -57,7 +62,7 @@ func TestDocumentWritesPostgres(t *testing.T) {
 			require.ErrorIs(t, err, ErrStaleRevision)
 			reverted, version, _, err := s.RevertContent(ctx, original.ID, replaced.Node.Revision, original.CurrentVersionID)
 			require.NoError(t, err)
-			changes, _, err := s.VaultChanges(ctx, "", 500)
+			changes, _, err := s.VaultChanges(ctx, before, 500)
 			require.NoError(t, err)
 			require.Len(t, changes, 6)
 			require.Equal(t, []string{"created", "created", "created", "created", "version_added", "version_added"}, []string{changes[0].Kind, changes[1].Kind, changes[2].Kind, changes[3].Kind, changes[4].Kind, changes[5].Kind})

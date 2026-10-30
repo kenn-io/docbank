@@ -22948,7 +22948,7 @@ paths:
             application/x-ndjson:
               schema:
                 type: string
-          description: One vault change per line
+          description: NDJSON change records followed by a terminal result or error
         "400":
           content:
             application/problem+json:

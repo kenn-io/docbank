@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -34,20 +37,31 @@ func TestWatchChanges(t *testing.T) {
 	followCtx, cancel := context.WithCancel(ctx)
 	cancel()
 	require.ErrorIs(t, c.WatchChanges(followCtx, events[1].Cursor, true, nil), context.Canceled)
-}
-
-func TestWatchChangesExpired(t *testing.T) {
-	t.Parallel()
-	c, s := newClient(t, serverKey)
-	_, head, err := s.VaultChanges(t.Context(), "", 500)
-	require.NoError(t, err)
 	foreign := base64.RawURLEncoding.EncodeToString([]byte("11111111-1111-4111-8111-111111111111:0"))
-	called := false
-	err = c.WatchChanges(t.Context(), foreign, false, func(store.VaultChange) error { called = true; return nil })
+	err = c.WatchChanges(ctx, foreign, false, nil)
 	expired, ok := errors.AsType[*daemonconn.ChangeCursorExpiredError](err)
 	require.True(t, ok)
-	require.Equal(t, head, expired.Cursor)
+	require.Equal(t, events[1].Cursor, expired.Cursor)
 	require.ErrorIs(t, err, store.ErrChangeCursorExpired)
-	require.False(t, called)
-	require.Contains(t, err.Error(), "rescan, then resume with --after "+head)
+}
+
+func TestWatchChangesTerminalRecords(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		body   string
+		want   error
+		detail string
+	}{
+		{"", io.ErrUnexpectedEOF, "unexpected EOF"},
+		{`{"type":"error","error":{"code":"changes_cursor_expired","status":410,"cursor":"recovery"}}`, store.ErrChangeCursorExpired, "rescan, then resume with --after recovery"},
+		{`{"type":"error","error":{"code":"internal","detail":"page failed"}}`, nil, "page failed"},
+	} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, tc.body) }))
+		err := daemonconn.New(server.URL, "key").WatchChanges(t.Context(), "", false, func(store.VaultChange) error { t.Fatal("control record delivered as change"); return nil })
+		server.Close()
+		require.ErrorContains(t, err, tc.detail)
+		if tc.want != nil {
+			require.ErrorIs(t, err, tc.want)
+		}
+	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
 	"reflect"
 	"strconv"
 	"time"
@@ -11,6 +12,25 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/docbank/internal/store"
 )
+
+// ChangeEvent uses the same change/result/error framing as mailbox streams.
+type ChangeEvent struct {
+	Type   string             `json:"type"`
+	Change *store.VaultChange `json:"change,omitempty"`
+	Error  *Error             `json:"error,omitempty"`
+}
+
+func changeProblem(err error, head string) *Error {
+	if errors.Is(err, store.ErrChangeCursorExpired) {
+		problem := NewError(410, "changes_cursor_expired", "Rescan the vault, then resume from the supplied cursor.")
+		problem.Cursor = head
+		return problem
+	}
+	if errors.Is(err, store.ErrInvalidChangeCursor) {
+		return NewError(400, "validation", err.Error())
+	}
+	return NewError(500, "internal", err.Error())
+}
 
 const changesPath = "/api/v1/changes"
 
@@ -20,7 +40,7 @@ func registerChanges(shutdown context.Context, mux *http.ServeMux, api huma.API,
 		OperationID: "vaultChanges", Method: http.MethodGet, Path: changesPath, Summary: "Read resumable vault changes", Tags: []string{"Changes"},
 		Parameters: []*huma.Param{{Name: "after", In: "query", Schema: &huma.Schema{Type: openAPIStringType}}, {Name: "follow", In: "query", Schema: &huma.Schema{Type: "boolean"}}},
 		Responses: map[string]*huma.Response{
-			"200": {Description: "One vault change per line", Content: map[string]*huma.MediaType{mailboxNDJSONMediaType: {Schema: &huma.Schema{Type: openAPIStringType}}}},
+			"200": {Description: "NDJSON change records followed by a terminal result or error", Content: map[string]*huma.MediaType{mailboxNDJSONMediaType: {Schema: &huma.Schema{Type: openAPIStringType}}}},
 			"400": problem, "410": problem,
 		},
 	})
@@ -29,9 +49,14 @@ func registerChanges(shutdown context.Context, mux *http.ServeMux, api huma.API,
 		defer cancel()
 		stop := context.AfterFunc(shutdown, cancel)
 		defer stop()
-		after := r.URL.Query().Get("after")
+		query, err := url.ParseQuery(r.URL.RawQuery)
+		if err != nil {
+			writeError(w, NewError(400, "validation", "invalid change query: "+err.Error()))
+			return
+		}
+		after := query.Get("after")
 		follow := false
-		if value := r.URL.Query().Get("follow"); value != "" {
+		if value := query.Get("follow"); value != "" {
 			var err error
 			follow, err = strconv.ParseBool(value)
 			if err != nil {
@@ -41,20 +66,12 @@ func registerChanges(shutdown context.Context, mux *http.ServeMux, api huma.API,
 		}
 		changes, head, err := d.Store.VaultChanges(ctx, after, 500)
 		if err != nil {
-			if errors.Is(err, store.ErrChangeCursorExpired) {
-				problem := NewError(410, "changes_cursor_expired", "Rescan the vault, then resume from the supplied cursor.")
-				problem.Cursor = head
-				writeError(w, problem)
-			} else if errors.Is(err, store.ErrInvalidChangeCursor) {
-				writeError(w, NewError(400, "validation", err.Error()))
-			} else {
-				writeError(w, NewError(500, "internal", err.Error()))
-			}
+			writeError(w, changeProblem(err, head))
 			return
 		}
 		w.Header().Set("Content-Type", mailboxNDJSONMediaType)
 		w.Header().Set("Cache-Control", "no-store")
-		stream := newEventStreamWriter[store.VaultChange](w, cancel)
+		stream := newEventStreamWriter[ChangeEvent](w, cancel)
 		// Flush even an empty follow response so the client can start reading.
 		if f := responseFlusher(w); f != nil {
 			f.Flush()
@@ -63,7 +80,7 @@ func registerChanges(shutdown context.Context, mux *http.ServeMux, api huma.API,
 		defer ticker.Stop()
 		for {
 			for _, change := range changes {
-				stream.send(change)
+				stream.send(ChangeEvent{Type: "change", Change: &change})
 				if stream.err() != nil {
 					return
 				}
@@ -71,6 +88,7 @@ func registerChanges(shutdown context.Context, mux *http.ServeMux, api huma.API,
 			}
 			if len(changes) < 500 {
 				if !follow {
+					stream.send(ChangeEvent{Type: "result"})
 					return
 				}
 				if after == "" {
@@ -84,6 +102,7 @@ func registerChanges(shutdown context.Context, mux *http.ServeMux, api huma.API,
 			}
 			changes, head, err = d.Store.VaultChanges(ctx, after, 500)
 			if err != nil {
+				stream.send(ChangeEvent{Type: "error", Error: changeProblem(err, head)})
 				return
 			}
 		}

@@ -1983,6 +1983,9 @@ func insertRenditionAttachmentAndHeadTx(
 	if binding, err := emailPDFBinding(normalized.Profile); err != nil {
 		return err
 	} else if binding != nil {
+		if inserted != 0 {
+			return recordProcessedVersionTx(ctx, tx, normalized.ContentVersionID)
+		}
 		return nil
 	}
 	if err := publishRenditionHeadTx(ctx, tx, head); err != nil {

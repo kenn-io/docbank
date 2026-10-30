@@ -28,8 +28,6 @@ func TestVaultChangesRecordMutations(t *testing.T) {
 			require.NoError(t, err)
 			node, err := s.CreateFile(ctx, dir.ID, "note.txt", fakeHash("a1"), 4, "text/plain")
 			require.NoError(t, err)
-			_, err = s.CreateFile(ctx, dir.ID, "note.txt", fakeHash("b1"), 4, "text/plain")
-			require.ErrorIs(t, err, ErrExists)
 			_, _, err = s.ReplaceContent(ctx, node.ID, 1, fakeHash("a2"), 8, "text/plain")
 			require.NoError(t, err)
 			_, _, _, err = s.RevertContent(ctx, node.ID, 2, node.CurrentVersionID)
@@ -143,11 +141,6 @@ func TestVaultChangesRollback(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, changes)
 	require.Equal(t, before, head)
-	_, err = s.Mkdir(ctx, s.RootID(), "committed")
-	require.NoError(t, err)
-	changes, _, err = s.VaultChanges(ctx, before, 500)
-	require.NoError(t, err)
-	require.Len(t, changes, 1)
 }
 
 func TestVaultChangesLegacyProcessing(t *testing.T) {

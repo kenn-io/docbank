@@ -3,7 +3,6 @@ package api_test
 import (
 	"bufio"
 	"context"
-	"encoding/base64"
 	"encoding/json/v2"
 	"fmt"
 	"net/http"
@@ -15,7 +14,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/sqlite"
 )
 
 func TestVaultChangesDisconnectResume(t *testing.T) {
@@ -33,10 +32,10 @@ func TestVaultChangesDisconnectResume(t *testing.T) {
 	require.Equal(t, 200, resp.StatusCode)
 	scanner := bufio.NewScanner(resp.Body)
 	require.True(t, scanner.Scan())
-	var saved store.VaultChange
+	var saved api.ChangeEvent
 	require.NoError(t, json.Unmarshal(scanner.Bytes(), &saved))
-	require.Equal(t, node.ID, saved.NodeID)
-	require.Equal(t, "created", saved.Kind)
+	require.Equal(t, node.ID, saved.Change.NodeID)
+	require.Equal(t, "created", saved.Change.Kind)
 	require.NoError(t, resp.Body.Close())
 	var ids []int64
 	for i := range 3 {
@@ -44,7 +43,7 @@ func TestVaultChangesDisconnectResume(t *testing.T) {
 		require.NoError(t, err)
 		ids = append(ids, n.ID)
 	}
-	req, err = http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/api/v1/changes?follow=true&after="+url.QueryEscape(saved.Cursor), nil)
+	req, err = http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/api/v1/changes?follow=true&after="+url.QueryEscape(saved.Change.Cursor), nil)
 	require.NoError(t, err)
 	resumed, err := ts.Client().Do(req)
 	require.NoError(t, err)
@@ -53,45 +52,30 @@ func TestVaultChangesDisconnectResume(t *testing.T) {
 	scanner = bufio.NewScanner(resumed.Body)
 	for _, id := range ids {
 		require.True(t, scanner.Scan())
-		var event store.VaultChange
+		var event api.ChangeEvent
 		require.NoError(t, json.Unmarshal(scanner.Bytes(), &event))
-		require.Equal(t, id, event.NodeID)
-		require.Equal(t, "created", event.Kind)
-		require.Equal(t, int64(1), event.Revision)
+		require.Equal(t, id, event.Change.NodeID)
+		require.Equal(t, "created", event.Change.Kind)
+		require.Equal(t, int64(1), event.Change.Revision)
 	}
 	// Follow continues to read writes made after the resumed page was drained.
 	next, err := s.Mkdir(ctx, s.RootID(), "later")
 	require.NoError(t, err)
 	require.True(t, scanner.Scan())
-	var event store.VaultChange
+	var event api.ChangeEvent
 	require.NoError(t, json.Unmarshal(scanner.Bytes(), &event))
-	require.Equal(t, next.ID, event.NodeID)
+	require.Equal(t, next.ID, event.Change.NodeID)
 	require.NoError(t, resumed.Body.Close())
-	response, body := get(t, ts, "/api/v1/changes?after="+url.QueryEscape(event.Cursor), nil)
-	require.Equal(t, 200, response.StatusCode)
-	require.Empty(t, body)
 }
 
 func TestVaultChangesProblemsAndBrowserSession(t *testing.T) {
 	t.Parallel()
-	ts, s := newTestServer(t, nil)
-	_, head, err := s.VaultChanges(t.Context(), "", 500)
-	require.NoError(t, err)
-	raw, err := base64.RawURLEncoding.DecodeString(head)
-	require.NoError(t, err)
-	epoch, _, _ := strings.Cut(string(raw), ":")
-	future := base64.RawURLEncoding.EncodeToString([]byte(epoch + ":1"))
-	resp, body := get(t, ts, "/api/v1/changes?after="+future, nil)
-	require.Equal(t, 410, resp.StatusCode)
-	var problem api.Error
-	require.NoError(t, json.Unmarshal([]byte(body), &problem))
-	require.Equal(t, "changes_cursor_expired", problem.Code)
-	require.Equal(t, head, problem.Cursor)
-	resp, _ = get(t, ts, "/api/v1/changes?after=broken", nil)
-	require.Equal(t, 400, resp.StatusCode)
-	resp, _ = get(t, ts, "/api/v1/changes?follow=invalid", nil)
-	require.Equal(t, 400, resp.StatusCode)
-	resp, body = do(t, ts, http.MethodPost, "/api/daemon/web-session", nil, nil)
+	ts, _ := newTestServer(t, nil)
+	for _, query := range []string{"after=broken", "follow=invalid", "after=%ZZ", "follow=%ZZ", "after=x;y"} {
+		resp, _ := get(t, ts, "/api/v1/changes?"+query, nil)
+		require.Equal(t, 400, resp.StatusCode, query)
+	}
+	resp, body := do(t, ts, http.MethodPost, "/api/daemon/web-session", nil, nil)
 	require.Equal(t, 201, resp.StatusCode)
 	var issued struct {
 		Token string `json:"token"`
@@ -118,4 +102,44 @@ func TestVaultChangesEmptyFollowShutdown(t *testing.T) {
 	scanner := bufio.NewScanner(resp.Body)
 	require.False(t, scanner.Scan())
 	require.NoError(t, scanner.Err())
+}
+
+func TestVaultChangesLaterPageFailure(t *testing.T) {
+	t.Parallel()
+	for damage, code := range map[string]string{
+		`DELETE FROM vault_changes WHERE seq=501`:                    "changes_cursor_expired",
+		`UPDATE vault_changes SET node_revision='bad' WHERE seq=501`: "internal",
+	} {
+		for _, follow := range []bool{false, true} {
+			t.Run(code+"/"+strconv.FormatBool(follow), func(t *testing.T) {
+				t.Parallel()
+				ts, s := newTestServer(t, nil)
+				ts.Client().Timeout = 5 * time.Second
+				db, err := s.SQLiteDriver().Open(s.DBPath, sqlite.OpenOptions{Access: sqlite.ReadWriteExisting, TransactionMode: sqlite.Deferred})
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, db.Close()) })
+				// A full first page is readable; damage affects only the next page.
+				_, err = db.Exec(`INSERT INTO vault_changes WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<502) SELECT i,'created',1,1 FROM n`)
+				require.NoError(t, err)
+				_, err = db.Exec(`UPDATE vault_change_head SET high_water=502`)
+				require.NoError(t, err)
+				_, head, err := s.VaultChanges(t.Context(), "", 1)
+				require.NoError(t, err)
+				_, err = db.Exec(damage)
+				require.NoError(t, err)
+				response, body := get(t, ts, "/api/v1/changes?follow="+strconv.FormatBool(follow), nil)
+				require.Equal(t, 200, response.StatusCode)
+				lines := strings.Split(strings.TrimSpace(body), "\n")
+				require.Len(t, lines, 501)
+				var terminal api.ChangeEvent
+				require.NoError(t, json.Unmarshal([]byte(lines[500]), &terminal))
+				require.Equal(t, "error", terminal.Type)
+				require.NotNil(t, terminal.Error)
+				require.Equal(t, code, terminal.Error.Code)
+				if code == "changes_cursor_expired" {
+					require.Equal(t, head, terminal.Error.Cursor)
+				}
+			})
+		}
+	}
 }

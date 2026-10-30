@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"go.kenn.io/docbank/document"
@@ -146,18 +147,21 @@ func (s *Store) PublishSourceMetadata(
 			sourceSHA256, generation.GenerationID, nowRFC3339()); execErr != nil {
 			return execErr
 		}
-		rows, err := tx.QueryContext(ctx, `SELECT version_id FROM content_versions WHERE blob_hash=?`, sourceSHA256)
+		rows, err := tx.QueryContext(ctx, `SELECT version_id,node_id FROM content_versions WHERE blob_hash=? ORDER BY node_id`, sourceSHA256)
 		if err != nil {
 			return fmt.Errorf("reading source metadata versions: %w", err)
 		}
 		defer func() { _ = rows.Close() }()
 		var versionIDs []string
+		var nodeIDs []int64
 		for rows.Next() {
 			var versionID string
-			if err := rows.Scan(&versionID); err != nil {
+			var nodeID int64
+			if err := rows.Scan(&versionID, &nodeID); err != nil {
 				return err
 			}
 			versionIDs = append(versionIDs, versionID)
+			nodeIDs = append(nodeIDs, nodeID)
 		}
 		if err := rows.Err(); err != nil {
 			return err
@@ -165,8 +169,10 @@ func (s *Store) PublishSourceMetadata(
 		if err := rows.Close(); err != nil {
 			return err
 		}
-		_, err = invalidateDocumentEventsForVersionsTx(ctx, tx, versionIDs)
-		return err
+		if _, err = invalidateDocumentEventsForVersionsTx(ctx, tx, versionIDs); err != nil {
+			return err
+		}
+		return recordVaultChangesTx(ctx, tx, "processed", slices.Compact(nodeIDs)...)
 	})
 	return generation, err
 }

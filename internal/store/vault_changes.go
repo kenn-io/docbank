@@ -71,7 +71,7 @@ func (s *Store) VaultChanges(ctx context.Context, after string, limit int) (chan
 	}
 	rows, err := s.db.QueryContext(ctx, `WITH position AS (
         SELECT epoch, high_water,
-            CASE WHEN $1 < 0 THEN COALESCE((SELECT MIN(seq)-1 FROM vault_changes), high_water) ELSE $1 END AS after_seq
+            CASE WHEN CAST($1 AS BIGINT) < 0 THEN COALESCE((SELECT MIN(seq)-1 FROM vault_changes), high_water) ELSE $1 END AS after_seq
         FROM vault_change_head WHERE singleton=1
     ) SELECT p.epoch,p.high_water,p.after_seq,c.seq,c.kind,c.node_id,c.node_revision
     FROM position p LEFT JOIN vault_changes c

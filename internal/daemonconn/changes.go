@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
+	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -33,18 +34,24 @@ func (c *Connection) WatchChanges(ctx context.Context, after string, follow bool
 	scanner := bufio.NewScanner(response.Body)
 	scanner.Buffer(make([]byte, 4096), 128<<10)
 	for scanner.Scan() {
-		var change store.VaultChange
-		if err := json.Unmarshal(scanner.Bytes(), &change); err != nil {
+		var event api.ChangeEvent
+		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
 			return err
 		}
+		if event.Type == "error" && event.Error != nil {
+			return apiProblemError(*event.Error)
+		}
+		if event.Type == "result" {
+			return nil
+		}
+		if event.Type != "change" || event.Change == nil {
+			return integrityErrorf("invalid vault change record")
+		}
 		if receive != nil {
-			if err := receive(change); err != nil {
+			if err := receive(*event.Change); err != nil {
 				return err
 			}
 		}
 	}
-	if follow {
-		return errors.Join(io.ErrUnexpectedEOF, scanner.Err())
-	}
-	return scanner.Err()
+	return errors.Join(io.ErrUnexpectedEOF, scanner.Err())
 }

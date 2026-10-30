@@ -563,6 +563,9 @@ func (s *Store) trashEmpty(
 		if err != nil {
 			return fmt.Errorf("listing nodes affected by trash empty: %w", err)
 		}
+		if err := recordVaultChangesTx(ctx, tx, "removed", doomedIDs...); err != nil {
+			return err
+		}
 		if err := adjustPhotosForPurgedNodesTx(ctx, tx, doomedIDs); err != nil {
 			return err
 		}

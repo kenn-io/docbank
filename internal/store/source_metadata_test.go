@@ -63,7 +63,14 @@ func TestSourceMetadataRepublicationSelectsRecordedGeneration(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
 	sourceSHA256 := fakeHash("a1")
-	_, err := s.CreateFile(ctx, s.RootID(), "source-a.pdf", sourceSHA256, 1, "application/pdf")
+	node, err := s.CreateFile(ctx, s.RootID(), "source-a.pdf", sourceSHA256, 1, "application/pdf")
+	require.NoError(t, err)
+	// Two versions on one node must still publish one change for that node.
+	_, _, err = s.ReplaceContent(ctx, node.ID, node.Revision, sourceSHA256, 1, "application/pdf")
+	require.NoError(t, err)
+	other, err := s.CreateFile(ctx, s.RootID(), "source-b.pdf", sourceSHA256, 1, "application/pdf")
+	require.NoError(t, err)
+	_, before, err := s.VaultChanges(ctx, "", 500)
 	require.NoError(t, err)
 	metadataA := document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1,
 		Fields: []document.SourceMetadataFieldV1{{Key: "title", Namespace: "pdf.info", SourceField: "Title",
@@ -102,6 +109,13 @@ func TestSourceMetadataRepublicationSelectsRecordedGeneration(t *testing.T) {
 	require.NoError(t, s.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM source_metadata_generations WHERE source_sha256=?`, sourceSHA256).Scan(&generationCount))
 	assert.Equal(t, 2, generationCount)
+	changes, _, err := s.VaultChanges(ctx, before, 500)
+	require.NoError(t, err)
+	require.Len(t, changes, 6) // A, B, unchanged B, then A again, once per node.
+	for i, change := range changes {
+		require.Equal(t, "processed", change.Kind)
+		require.Equal(t, []int64{node.ID, other.ID}[i%2], change.NodeID)
+	}
 }
 
 func TestSourceMetadataHeadAppearsWhenMissingForRecordedEvidence(t *testing.T) {

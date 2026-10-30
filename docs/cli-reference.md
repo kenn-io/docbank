@@ -36,7 +36,7 @@ docbank changes [--after CURSOR] [--follow] [--json]
 
 Read committed vault changes in cursor order. The default output has four tab-separated columns: cursor, kind, node ID, and revision. `--json` prints one JSON event per line. `--after` resumes after a saved cursor; omitting it starts at the oldest retained event. `--follow` waits for new events after draining the backlog.
 
-An expired cursor produces a nonzero exit and a message to rescan, then resume with `--after CURSOR`. Save the supplied cursor before rescanning. See [React to vault changes](agents/integration.md#react-to-vault-changes) for event kinds and retention.
+An expired cursor produces a nonzero exit and a message to rescan, then resume with `--after CURSOR`, including when expiry happens during streaming. An interrupted drain or a later read failure also produces a nonzero exit. The command prints only change events; HTTP completion and error records stay out of stdout. Save the supplied cursor before rescanning. See [React to vault changes](agents/integration.md#react-to-vault-changes) for event kinds and retention.
 
 ## docbank kata
 
