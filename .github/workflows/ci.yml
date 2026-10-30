@@ -40,6 +40,9 @@ jobs:
               - '!{README.md,AGENTS.md,CLAUDE.md,docs/**,website/**,cmd/**,docbank/**,document/**,internal/**,mcp/**,report/**,sqlite/**}'
               - internal/web/**
               - internal/api/openapi*
+              - document/format_metadata.json
+              - internal/daemonconn/testdata/processing_responses.json
+              - internal/query/testdata/identity-vectors.json
             docs:
               - '!{README.md,AGENTS.md,CLAUDE.md,cmd/**,docbank/**,internal/**,mcp/**,report/**,sqlite/**}'
 
