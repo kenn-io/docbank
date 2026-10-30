@@ -2,6 +2,7 @@ name: Render PDF
 
 # Keep native renderer proof on disposable GitHub-hosted runners. PR changes
 # must exercise this job without changing the main-pinned CI workflow.
+# The LibreOffice proof uses the prebuilt image from .github/docker/render-pdf.
 on:
   workflow_call:
   workflow_dispatch:
@@ -56,10 +57,74 @@ jobs:
           cp -R frontend/dist/. internal/web/dist/
           node frontend/screenshots/bates-recovery.run.mjs
 
+  ensure_image:
+    name: Ensure Render PDF image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.resolve.outputs.image }}
+    env:
+      IMAGE: ghcr.io/kenn-io/docbank-render-pdf
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
+
+      - name: Resolve Render PDF image
+        id: resolve
+        shell: bash
+        env:
+          PR_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          set -euo pipefail
+
+          dockerfile=.github/docker/render-pdf/Dockerfile
+          recipe_digest="$(sha256sum "$dockerfile" | cut -d' ' -f1)"
+          image_tag="${IMAGE}:recipe-${recipe_digest:0:16}"
+
+          if inspect_output="$(docker buildx imagetools inspect "$image_tag" 2>&1)"; then
+            echo "Reusing $image_tag"
+          elif grep -Eqi 'manifest unknown|not found|no such manifest' <<<"$inspect_output"; then
+            if [[ "$GITHUB_EVENT_NAME" == "pull_request" && "$PR_HEAD_REPOSITORY" != "$GITHUB_REPOSITORY" ]]; then
+              echo "::error::The Render PDF image is missing. Run this workflow from a trusted branch first; fork pull requests cannot publish it."
+              exit 1
+            fi
+
+            docker buildx build \
+              --platform linux/amd64 \
+              --provenance=false \
+              --tag "$image_tag" \
+              --push .github/docker/render-pdf
+          else
+            echo "$inspect_output" >&2
+            exit 1
+          fi
+
+          manifest_digest="$(docker buildx imagetools inspect "$image_tag" --format '{{json .Manifest}}' | jq -er .digest)"
+          echo "image=${IMAGE}@${manifest_digest}" >> "$GITHUB_OUTPUT"
+
   libreoffice-owner:
     name: LibreOffice owner proof
+    needs: ensure_image
     runs-on: ubuntu-latest
     timeout-minutes: 26
+    env:
+      GOPATH: /home/proof/go
+      GOCACHE: /home/proof/.cache/go-build
+      DOCBANK_TEST_REQUIRE_SANDBOX: "1"
+    permissions:
+      contents: read
+    container:
+      image: ${{ needs.ensure_image.outputs.image }}
+      options: --privileged
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -72,28 +137,23 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Select package archive cache key
-        id: apt_key
-        run: echo "key=pdf-apt-${ImageOS}-${ImageVersion}-$(dpkg --print-architecture)-${{ hashFiles('.github/workflows/render-pdf.yml') }}" >> "$GITHUB_OUTPUT"
-
-      - name: Restore package archives
-        id: apt_cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.temp }}/pdf-apt-archives/*.deb
-          key: ${{ steps.apt_key.outputs.key }}
-
-      - name: Download package archives on a cache miss
-        if: steps.apt_cache.outputs.cache-hit != 'true'
+      - name: Prepare unprivileged sandbox proofs
         run: |
-          mkdir -p "$RUNNER_TEMP/pdf-apt-archives/partial"
-          sudo apt-get update
-          sudo apt-get -o Dir::Cache::archives="$RUNNER_TEMP/pdf-apt-archives" install --download-only --no-install-recommends -y libreoffice-writer libreoffice-impress libreoffice-calc poppler-utils
-
-      - name: Install LibreOffice Writer, Impress, Calc, and Poppler runtimes
-        run: sudo apt-get -o Dir::Cache::archives="$RUNNER_TEMP/pdf-apt-archives" install --no-download --no-install-recommends -y "$RUNNER_TEMP"/pdf-apt-archives/*.deb
+          set -eu
+          if [ -e /proc/sys/kernel/unprivileged_userns_clone ]; then
+            sysctl -w kernel.unprivileged_userns_clone=1
+          fi
+          if [ -e /proc/sys/user/max_user_namespaces ]; then
+            sysctl -w user.max_user_namespaces=15000
+          fi
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          mkdir -p "$GOPATH" "$GOCACHE"
+          chown -R proof:proof "$GITHUB_WORKSPACE" /home/proof
 
       - name: Run mandatory page rendering proof
+        shell: setpriv --reuid=proof --regid=proof --init-groups env HOME=/home/proof sh -e {0}
         env:
           CGO_ENABLED: "0"
         run: |
@@ -122,32 +182,13 @@ jobs:
           PY
 
       - name: Run mandatory owner proof
+        shell: setpriv --reuid=proof --regid=proof --init-groups env HOME=/home/proof sh -e {0}
         env:
           CGO_ENABLED: "0"
           DOCBANK_TEST_LIBREOFFICE_EXECUTABLE: /usr/lib/libreoffice/program/soffice.bin
-          DOCBANK_TEST_REQUIRE_SANDBOX: "1"
         run: |
           set -eu
-          if [ -e /proc/sys/kernel/unprivileged_userns_clone ]; then
-            sudo sysctl -w kernel.unprivileged_userns_clone=1
-          fi
-          if [ -e /proc/sys/user/max_user_namespaces ]; then
-            sudo sysctl -w user.max_user_namespaces=15000
-          fi
-          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
-            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-          fi
           test -x "$DOCBANK_TEST_LIBREOFFICE_EXECUTABLE"
           go test -tags fts5 -v ./document/internal/providerutil/sandbox/ ./document/trafilatura/ -count=1
           go test -tags fts5 -v ./document/renderpdf/ -run '^TestLibreOffice' -count=1
           go test -tags fts5 -v ./document/mistral/ -run '^(TestDOCXLibreOfficeRoute|TestRenderLaneLibreOfficeRoute)$' -count=1
-
-      - name: Save package archives
-        if: >-
-          steps.apt_cache.outputs.cache-hit != 'true'
-          && ((github.event_name == 'push' && github.ref == 'refs/heads/main')
-          || github.event_name == 'workflow_dispatch')
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.temp }}/pdf-apt-archives/*.deb
-          key: ${{ steps.apt_key.outputs.key }}
