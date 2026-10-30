@@ -11,8 +11,13 @@ import {
 } from "./email-viewer.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
+import { formatRawBytes } from "./format.js";
 
 describe("offline email presentation", () => {
+  it("preserves literal backslashes in raw UTF-8 headers", () => {
+    const headers = "Subject: C:\\reports\\2026\r\n";
+    expect(formatRawBytes(new TextEncoder().encode(headers))).toBe(headers);
+  });
   it("removes executable and network-bearing surfaces while retaining full quoted text", () => {
     const quote = "Quoted evidence. ".repeat(40);
     const result = sanitizeEmail(
