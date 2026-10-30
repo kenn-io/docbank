@@ -116,28 +116,14 @@ func matchWatchRenames(accepted map[string]watchObservation, inventory *watchInv
 	return candidates
 }
 
-// possibleRenameTargets returns new paths that a complete inventory could
-// rebind to an accepted source this incomplete one did not observe: the same
-// usable native identity and file. Importing one as a new document could split
-// that source's history. Paths rename matching could never rebind import now.
+// possibleRenameTargets returns new paths that rename matching would pair with
+// an accepted source given what this incomplete inventory saw. Importing one
+// as a new document could split that source's history if the source was
+// renamed. Paths matching would reject anyway import now.
 func possibleRenameTargets(accepted map[string]watchObservation, inventory *watchInventory) map[string]struct{} {
-	unseen := make(map[watchFileIdentity]fs.FileInfo)
-	for ref, observation := range accepted {
-		if observation.accepted == nil || !matchableWatchIdentity(observation.accepted.identity) {
-			continue
-		}
-		if _, observed := inventory.files[ref]; !observed {
-			unseen[observation.accepted.identity] = observation.accepted.info
-		}
-	}
 	targets := make(map[string]struct{})
-	for ref, entry := range inventory.files {
-		if observation, exists := accepted[ref]; exists && observation.accepted != nil {
-			continue
-		}
-		if info, ok := unseen[entry.state.identity]; ok && os.SameFile(info, entry.state.info) {
-			targets[ref] = struct{}{}
-		}
+	for _, candidate := range matchWatchRenames(accepted, inventory) {
+		targets[candidate.newRef] = struct{}{}
 	}
 	return targets
 }

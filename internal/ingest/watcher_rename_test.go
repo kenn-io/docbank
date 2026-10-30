@@ -232,30 +232,44 @@ func TestWatchExactOldRefCaseSensitiveHardLinkOccupancy(t *testing.T) {
 }
 
 func TestWatchPossibleRenameTargetsRequireRebindableEvidence(t *testing.T) {
-	dir := t.TempDir()
-	one, two := filepath.Join(dir, "one"), filepath.Join(dir, "two")
-	require.NoError(t, os.WriteFile(one, []byte("same"), 0o600))
-	require.NoError(t, os.WriteFile(two, []byte("same"), 0o600))
-	oneInfo, err := os.Stat(one)
-	require.NoError(t, err)
-	twoInfo, err := os.Stat(two)
+	file := filepath.Join(t.TempDir(), "file")
+	require.NoError(t, os.WriteFile(file, []byte("same"), 0o600))
+	info, err := os.Stat(file)
 	require.NoError(t, err)
 	object := watchObjectKey{mount: 1, file: 7}
 	identity := watchFileIdentity{object: object, birth: validWatchBirth(100, 200)}
-	// draft.md is accepted but unseen, as if an unrelated subtree kept the
-	// inventory incomplete.
-	accepted := map[string]watchObservation{
-		"draft.md": {accepted: &watchAcceptedSource{nodeID: 8, identity: identity, info: oneInfo}},
+	entry := func(id watchFileIdentity) watchInventoryEntry {
+		return watchInventoryEntry{state: watchFileState{identity: id, info: info}}
 	}
-	inventory := &watchInventory{files: map[string]watchInventoryEntry{
-		"renamed.md":     {state: watchFileState{identity: identity, info: oneInfo}},
-		"no-birth.md":    {state: watchFileState{identity: watchFileIdentity{object: object}, info: oneInfo}},
-		"other-birth.md": {state: watchFileState{identity: watchFileIdentity{object: object, birth: validWatchBirth(101, 0)}, info: oneInfo}},
-		"other-file.md":  {state: watchFileState{identity: identity, info: twoInfo}},
-	}}
-	assert.Equal(t, map[string]struct{}{"renamed.md": {}}, possibleRenameTargets(accepted, inventory),
-		"only paths a complete inventory could rebind wait; the rest import as new sources")
-
-	accepted["draft.md"].accepted.identity = watchFileIdentity{object: object}
-	assert.Empty(t, possibleRenameTargets(accepted, inventory), "an accepted source without birth evidence cannot be rebound")
+	for _, tc := range []struct {
+		name     string
+		accepted watchFileIdentity
+		files    map[string]watchInventoryEntry
+		present  []string
+		want     bool
+	}{
+		{"rebindable rename", identity, map[string]watchInventoryEntry{"renamed.md": entry(identity)}, nil, true},
+		{"new path without birth", identity, map[string]watchInventoryEntry{"renamed.md": entry(watchFileIdentity{object: object})}, nil, false},
+		{"reused object, other birth", identity, map[string]watchInventoryEntry{"renamed.md": entry(watchFileIdentity{object: object, birth: validWatchBirth(101, 0)})}, nil, false},
+		{"accepted source without birth", watchFileIdentity{object: object}, map[string]watchInventoryEntry{"renamed.md": entry(watchFileIdentity{object: object})}, nil, false},
+		{"old path occupied", identity, map[string]watchInventoryEntry{"renamed.md": entry(identity)}, []string{"draft.md"}, false},
+		{"two new names", identity, map[string]watchInventoryEntry{"renamed.md": entry(identity), "alias.md": entry(identity)}, nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// draft.md is accepted but not observed as a regular file, as if an
+			// unrelated subtree kept the inventory incomplete.
+			accepted := map[string]watchObservation{
+				"draft.md": {accepted: &watchAcceptedSource{nodeID: 8, identity: tc.accepted, info: info}},
+			}
+			inventory := &watchInventory{files: tc.files, present: make(map[string]struct{})}
+			for ref := range tc.files {
+				inventory.present[ref] = struct{}{}
+			}
+			for _, ref := range tc.present {
+				inventory.present[ref] = struct{}{}
+			}
+			_, deferred := possibleRenameTargets(accepted, inventory)["renamed.md"]
+			assert.Equal(t, tc.want, deferred, "only paths a complete inventory could rebind wait")
+		})
+	}
 }

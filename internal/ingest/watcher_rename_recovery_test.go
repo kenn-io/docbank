@@ -566,3 +566,21 @@ func TestWatchIncompletePassRestartsSettlingForUnseenFiles(t *testing.T) {
 	_, err = ing.Store.NodeByPath(t.Context(), "/archive/pending/draft.md")
 	require.NoError(t, err)
 }
+
+func TestWatchIncompletePassImportsRenameWithOccupiedOldPath(t *testing.T) {
+	watcher, root, ing, source, id := promptRenameFixture(t, runTestMutation)
+	// Rename matching rejects an occupied old path, so waiting cannot help.
+	require.NoError(t, os.Symlink(filepath.Join(source, "notes", "final.md"), filepath.Join(source, "draft.md")))
+	watcher.observeFile = func(file watchSource, withChange bool) (watchFileState, error) {
+		if file.ref == "unstable/other.md" {
+			return watchFileState{}, ErrSourceChanged
+		}
+		return file.observe(withChange)
+	}
+	complete, err := watcher.scanWithHints(t.Context(), root, watchScanHints{Reconcile: true})
+	require.NoError(t, err)
+	require.False(t, complete)
+	separate, err := ing.Store.NodeByPath(t.Context(), "/archive/notes/final.md")
+	require.NoError(t, err)
+	assert.NotEqual(t, id, separate.ID)
+}
