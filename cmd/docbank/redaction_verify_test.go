@@ -44,7 +44,7 @@ func runRedactionVerificationInSubprocess(t *testing.T) bool {
 	defer cancel()
 	binary, err := os.Executable()
 	require.NoError(t, err)
-	cmd := exec.CommandContext(ctx, binary, "-test.run=^"+regexp.QuoteMeta(t.Name())+"$", "-test.v", "-test.timeout=5m")
+	cmd := exec.CommandContext(ctx, binary, "-test.run=^"+regexp.QuoteMeta(t.Name())+"$", "-test.v", "-test.timeout=5m", "-test.short="+strconv.FormatBool(testing.Short()))
 	cmd.Env = append(os.Environ(), child+"="+t.Name())
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, "%s", output)
