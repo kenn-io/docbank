@@ -7,6 +7,7 @@
 
   let {
     title,
+    width = "min(720px, 100vw)",
     level = 1,
     ariaLabel = title,
     onclose,
@@ -17,6 +18,7 @@
     footer,
   }: {
     title: string;
+    width?: string;
     level?: 1 | 2;
     ariaLabel?: string;
     onclose: () => void;
@@ -43,7 +45,7 @@
 {:else}
   <div class="shell" class:still>
     <DetailDrawer
-      width="min(720px, 100vw)"
+      {width}
       ariaLabel={navigation ? "System" : ariaLabel}
       {onclose}
       {closeOnOverlayClick}

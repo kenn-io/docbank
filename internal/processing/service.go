@@ -136,6 +136,7 @@ type Service struct {
 	runsMu              sync.Mutex
 	runs                int
 	nativePDFOperation  string
+	redactionPreviews   redactionPreviewStore
 	stopping            bool
 	stop                context.CancelFunc
 	drained             chan struct{}
@@ -639,6 +640,7 @@ func NewService(config ServiceConfig) (*Service, error) {
 // Stop rejects new starts and cancels active processing, including work that
 // outlived its initiating request. Workers retain their durable recovery state.
 func (service *Service) Stop() {
+	defer service.RevokeRedactionPreviews("")
 	service.runsMu.Lock()
 	defer service.runsMu.Unlock()
 	if service.stopping {

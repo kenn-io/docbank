@@ -4304,6 +4304,13 @@ export interface NumberedReservation {
   state: string;
 }
 
+export interface NumberedDelivery {
+  artifact_manifest_sha256: string;
+  endorsements_sha256: string[];
+  layout_sha256: string[];
+  reservation: NumberedReservation;
+}
+
 export interface RedactionMask {
   /** @pattern ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ */
   id: string;
@@ -6962,6 +6969,14 @@ export interface PreviewBlobStoreRegistrationRequest {
   takeover?: boolean;
 }
 
+export interface PreviewInput {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  masks: RedactionMask[];
+  preparation: RedactionPreparation;
+  review_sha256: string;
+}
+
 export interface PreviewRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -7385,10 +7400,74 @@ export interface QueryPreview {
   query_fingerprint: string;
 }
 
+export interface RedactionFileDigest {
+  sha256: string;
+  size: number;
+}
+
+export interface RedactionReceipt {
+  admitted_node_revision: number;
+  contract: string;
+  decisions_sha256: string;
+  numbered?: NumberedDelivery;
+  page_count: number;
+  pdf: RedactionFileDigest;
+  preparation_sha256: string;
+  recipe: PDFRedactionRecipe;
+  resolved_sha256: string;
+  review_sha256: string;
+  selection: NativePDFSelection;
+  text: RedactionFileDigest;
+}
+
+export interface RedactionArchive {
+  receipt: RedactionReceipt;
+  sha256: string;
+  size: number;
+}
+
 export interface RedactionPreparationRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   selection: PageBinding;
+}
+
+export interface RedactionPreviewPage {
+  frame_sha256: string;
+  height: number;
+  number: number;
+  pixel_height: number;
+  pixel_width: number;
+  png: RedactionFileDigest;
+  text_end: number;
+  text_start: number;
+  width: number;
+}
+
+export interface RedactionPreview {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  archive: RedactionArchive;
+  contract: string;
+  expires_at: string;
+  id: string;
+  pages: RedactionPreviewPage[];
+}
+
+export interface RedactionPreviewConfirmation {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  archive_sha256: string;
+  confirmed: boolean;
+  review_sha256: string;
+}
+
+export interface RedactionPreviewTicket {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  sha256: string;
+  size: number;
+  url: string;
 }
 
 export interface RedactionRenderRequest {
@@ -18986,6 +19065,205 @@ return sessionJSON<RedactionPreparation>(getPrepareNativePDFUrl(),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(redactionPreparationRequest)
+  }
+);}
+
+
+
+export const getCreateRedactionPreviewUrl = () => {
+
+
+
+
+  return `/api/v1/redaction/previews`
+}
+
+/**
+ * @summary Render one temporary verified PDF preview
+ */
+export const createRedactionPreview = async (previewInput: NonReadonly<PreviewInput>, options?: Parameters<typeof sessionJSON>[1]): Promise<RedactionPreview> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<RedactionPreview>(getCreateRedactionPreviewUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(previewInput)
+  }
+);}
+
+
+
+export const getDiscardRedactionPreviewUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/redaction/previews/${encodeURIComponent(String(id))}`
+}
+
+/**
+ * @summary Discard a temporary redaction preview
+ */
+export const discardRedactionPreview = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
+
+  return sessionJSON<void>(getDiscardRedactionPreviewUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+export const getGetRedactionPreviewUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/redaction/previews/${encodeURIComponent(String(id))}`
+}
+
+/**
+ * @summary Read a temporary redaction preview
+ */
+export const getRedactionPreview = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<RedactionPreview> => {
+
+  return sessionJSON<RedactionPreview>(getGetRedactionPreviewUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getDownloadRedactionPreviewBundleUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/redaction/previews/${encodeURIComponent(String(id))}/bundle`
+}
+
+/**
+ * @summary Read verified temporary redaction output
+ */
+export const downloadRedactionPreviewBundle = (id: string, options?: Parameters<typeof sessionResponse>[1]) => {
+
+  return sessionResponse<Blob>(getDownloadRedactionPreviewBundleUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getDownloadRedactionPreviewUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/redaction/previews/${encodeURIComponent(String(id))}/download`
+}
+
+/**
+ * @summary Confirm and request a one-use ZIP download
+ */
+export const downloadRedactionPreview = async (id: string,
+    redactionPreviewConfirmation: NonReadonly<RedactionPreviewConfirmation>, options?: Parameters<typeof sessionJSON>[1]): Promise<RedactionPreviewTicket> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<RedactionPreviewTicket>(getDownloadRedactionPreviewUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(redactionPreviewConfirmation)
+  }
+);}
+
+
+
+export const getReadRedactionPreviewPageUrl = (id: string,
+    page: number,) => {
+
+
+
+
+  return `/api/v1/redaction/previews/${encodeURIComponent(String(id))}/pages/${encodeURIComponent(String(page))}`
+}
+
+/**
+ * @summary Read verified temporary redaction output
+ */
+export const readRedactionPreviewPage = (id: string,
+    page: number, options?: Parameters<typeof sessionResponse>[1]) => {
+
+  return sessionResponse<Blob>(getReadRedactionPreviewPageUrl(id,page),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getReadRedactionPreviewTextUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/redaction/previews/${encodeURIComponent(String(id))}/text`
+}
+
+/**
+ * @summary Read verified temporary redaction output
+ */
+export const readRedactionPreviewText = (id: string, options?: Parameters<typeof sessionResponse>[1]) => {
+
+  return sessionResponse<Blob>(getReadRedactionPreviewTextUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
   }
 );}
 

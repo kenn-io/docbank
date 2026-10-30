@@ -19,7 +19,7 @@ func registerRedactionPreparationRoute(api huma.API, d Deps) {
 	}
 	huma.Register(api, huma.Operation{
 		OperationID: "prepareNativePDF", Method: http.MethodPost, Path: "/api/v1/redaction/prepare",
-		Summary: "Inspect an exact retained native PDF for redaction preparation", MaxBodyBytes: 8 << 10,
+		Summary: "Inspect an exact retained native PDF for redaction preparation", MaxBodyBytes: 8 << 10, BodyReadTimeout: requestTimeout,
 		Errors: []int{400, 401, 403, 404, 408, 409, 413, 422, 500, 503, 504},
 	}, func(ctx context.Context, input *struct {
 		Body    processing.RedactionPreparationRequest
@@ -33,6 +33,9 @@ func registerRedactionPreparationRoute(api huma.API, d Deps) {
 			if errors.Is(err, processing.ErrRedactionPreparationInvalid) {
 				return nil, NewError(400, "invalid_redaction_preparation", "native PDF selection is invalid")
 			}
+			return nil, redactionPreparationProblem(ctx, err)
+		}
+		if err := clearRequestReadDeadline(ctx); err != nil {
 			return nil, redactionPreparationProblem(ctx, err)
 		}
 		result, err := d.Processing.PrepareNativePDF(ctx, request, d.PageRuntime)

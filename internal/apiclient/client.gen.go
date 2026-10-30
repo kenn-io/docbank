@@ -12372,6 +12372,306 @@ func (c *Client) PrepareNativePDF(ctx context.Context, options *PrepareNativePDF
 	return responseParser(ctx, resp)
 }
 
+// CreateRedactionPreview Render one temporary verified PDF preview
+func (c *Client) CreateRedactionPreview(ctx context.Context, options *CreateRedactionPreviewRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateRedactionPreviewResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/redaction/previews",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CreateRedactionPreviewResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(CreateRedactionPreviewResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CreateRedactionPreviewResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CreateRedactionPreviewErrorResponse](resp, "CreateRedactionPreviewErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/redaction/previews")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
+// DiscardRedactionPreview Discard a temporary redaction preview
+func (c *Client) DiscardRedactionPreview(ctx context.Context, options *DiscardRedactionPreviewRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/redaction/previews/{id}",
+		Method:     "DELETE",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*struct{}, error) {
+		switch resp.StatusCode {
+
+		case 204:
+
+			target := new(struct{})
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[DiscardRedactionPreviewErrorResponse](resp, "DiscardRedactionPreviewErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/redaction/previews/{id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 204)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetRedactionPreview Read a temporary redaction preview
+func (c *Client) GetRedactionPreview(ctx context.Context, options *GetRedactionPreviewRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetRedactionPreviewResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/redaction/previews/{id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetRedactionPreviewResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetRedactionPreviewResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetRedactionPreviewResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetRedactionPreviewErrorResponse](resp, "GetRedactionPreviewErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/redaction/previews/{id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// DownloadRedactionPreviewBundle Read verified temporary redaction output
+func (c *Client) DownloadRedactionPreviewBundle(ctx context.Context, options *DownloadRedactionPreviewBundleRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DownloadRedactionPreviewBundleResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/redaction/previews/{id}/bundle",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*DownloadRedactionPreviewBundleResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(DownloadRedactionPreviewBundleResponse(resp.Content))
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[DownloadRedactionPreviewBundleErrorResponse](resp, "DownloadRedactionPreviewBundleErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/redaction/previews/{id}/bundle")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// DownloadRedactionPreview Confirm and request a one-use ZIP download
+func (c *Client) DownloadRedactionPreview(ctx context.Context, options *DownloadRedactionPreviewRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DownloadRedactionPreviewResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/redaction/previews/{id}/download",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*DownloadRedactionPreviewResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(DownloadRedactionPreviewResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "DownloadRedactionPreviewResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[DownloadRedactionPreviewErrorResponse](resp, "DownloadRedactionPreviewErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/redaction/previews/{id}/download")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ReadRedactionPreviewPage Read verified temporary redaction output
+func (c *Client) ReadRedactionPreviewPage(ctx context.Context, options *ReadRedactionPreviewPageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReadRedactionPreviewPageResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/redaction/previews/{id}/pages/{page}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ReadRedactionPreviewPageResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ReadRedactionPreviewPageResponse(resp.Content))
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ReadRedactionPreviewPageErrorResponse](resp, "ReadRedactionPreviewPageErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/redaction/previews/{id}/pages/{page}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ReadRedactionPreviewText Read verified temporary redaction output
+func (c *Client) ReadRedactionPreviewText(ctx context.Context, options *ReadRedactionPreviewTextRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReadRedactionPreviewTextResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/redaction/previews/{id}/text",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ReadRedactionPreviewTextResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ReadRedactionPreviewTextResponse(resp.Content))
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ReadRedactionPreviewTextErrorResponse](resp, "ReadRedactionPreviewTextErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/redaction/previews/{id}/text")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // RenderNativePDF Render and verify a reviewed native PDF into one ZIP
 func (c *Client) RenderNativePDF(ctx context.Context, options *RenderNativePDFRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RenderNativePDFResponse, error) {
 	var err error
@@ -23647,6 +23947,224 @@ func (o *PrepareNativePDFRequestOptions) GetHeader() (map[string]string, error) 
 	return nil, nil
 }
 
+// CreateRedactionPreviewRequestOptions is the options needed to make a request to CreateRedactionPreview.
+type CreateRedactionPreviewRequestOptions struct {
+	Body *CreateRedactionPreviewBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CreateRedactionPreviewRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *CreateRedactionPreviewRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CreateRedactionPreviewRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CreateRedactionPreviewRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// DiscardRedactionPreviewRequestOptions is the options needed to make a request to DiscardRedactionPreview.
+type DiscardRedactionPreviewRequestOptions struct {
+	PathParams *DiscardRedactionPreviewPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *DiscardRedactionPreviewRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *DiscardRedactionPreviewRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *DiscardRedactionPreviewRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *DiscardRedactionPreviewRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetRedactionPreviewRequestOptions is the options needed to make a request to GetRedactionPreview.
+type GetRedactionPreviewRequestOptions struct {
+	PathParams *GetRedactionPreviewPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetRedactionPreviewRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetRedactionPreviewRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetRedactionPreviewRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetRedactionPreviewRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// DownloadRedactionPreviewBundleRequestOptions is the options needed to make a request to DownloadRedactionPreviewBundle.
+type DownloadRedactionPreviewBundleRequestOptions struct {
+	PathParams *DownloadRedactionPreviewBundlePath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *DownloadRedactionPreviewBundleRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *DownloadRedactionPreviewBundleRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *DownloadRedactionPreviewBundleRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *DownloadRedactionPreviewBundleRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// DownloadRedactionPreviewRequestOptions is the options needed to make a request to DownloadRedactionPreview.
+type DownloadRedactionPreviewRequestOptions struct {
+	PathParams *DownloadRedactionPreviewPath
+	Body       *DownloadRedactionPreviewBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *DownloadRedactionPreviewRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *DownloadRedactionPreviewRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *DownloadRedactionPreviewRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *DownloadRedactionPreviewRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ReadRedactionPreviewPageRequestOptions is the options needed to make a request to ReadRedactionPreviewPage.
+type ReadRedactionPreviewPageRequestOptions struct {
+	PathParams *ReadRedactionPreviewPagePath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ReadRedactionPreviewPageRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *ReadRedactionPreviewPageRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ReadRedactionPreviewPageRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ReadRedactionPreviewPageRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ReadRedactionPreviewTextRequestOptions is the options needed to make a request to ReadRedactionPreviewText.
+type ReadRedactionPreviewTextRequestOptions struct {
+	PathParams *ReadRedactionPreviewTextPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ReadRedactionPreviewTextRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *ReadRedactionPreviewTextRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ReadRedactionPreviewTextRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ReadRedactionPreviewTextRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // RenderNativePDFRequestOptions is the options needed to make a request to RenderNativePDF.
 type RenderNativePDFRequestOptions struct {
 	Body *RenderNativePDFBody
@@ -26643,6 +27161,31 @@ type GetDocumentProcessingJobPath struct {
 	ID string `json:"id"`
 }
 
+type DiscardRedactionPreviewPath struct {
+	ID string `json:"id"`
+}
+
+type GetRedactionPreviewPath struct {
+	ID string `json:"id"`
+}
+
+type DownloadRedactionPreviewBundlePath struct {
+	ID string `json:"id"`
+}
+
+type DownloadRedactionPreviewPath struct {
+	ID string `json:"id"`
+}
+
+type ReadRedactionPreviewPagePath struct {
+	ID   string `json:"id"`
+	Page int    `json:"page"`
+}
+
+type ReadRedactionPreviewTextPath struct {
+	ID string `json:"id"`
+}
+
 type GetDocumentRenditionPath struct {
 	AttachmentID string `json:"attachment_id"`
 }
@@ -27049,6 +27592,10 @@ type PreviewQueryHighlightsBody = SavedQueryV1Schema
 type ParseQueryBody = SavedQueryV1Schema
 
 type PrepareNativePDFBody = RedactionPreparationRequest
+
+type CreateRedactionPreviewBody = PreviewInput
+
+type DownloadRedactionPreviewBody = RedactionPreviewConfirmation
 
 type RenderNativePDFBody = RedactionRenderRequest
 
@@ -28683,6 +29230,32 @@ type PrepareNativePDFErrorResponseApplicationProblemPlusJSON503 api.Error
 
 type PrepareNativePDFErrorResponseApplicationProblemPlusJSON504 api.Error
 
+type CreateRedactionPreviewResponse = processing.RedactionPreview
+
+type CreateRedactionPreviewErrorResponse = Error
+
+type DiscardRedactionPreviewErrorResponse = Error
+
+type GetRedactionPreviewResponse = processing.RedactionPreview
+
+type GetRedactionPreviewErrorResponse = Error
+
+type DownloadRedactionPreviewBundleResponse = []byte
+
+type DownloadRedactionPreviewBundleErrorResponse = Error
+
+type DownloadRedactionPreviewResponse = RedactionPreviewTicket
+
+type DownloadRedactionPreviewErrorResponse = Error
+
+type ReadRedactionPreviewPageResponse = []byte
+
+type ReadRedactionPreviewPageErrorResponse = Error
+
+type ReadRedactionPreviewTextResponse = []byte
+
+type ReadRedactionPreviewTextErrorResponse = Error
+
 type RenderNativePDFResponse = []byte
 
 type RenderNativePDFErrorResponse = Error
@@ -29777,6 +30350,8 @@ type Node = api.Node
 
 type NodePage = api.NodePage
 
+type NumberedDelivery = processing.NumberedDelivery
+
 type NumberedFooter = pdfproduction.NumberedFooter
 
 type NumberedNamespace = processing.NumberedNamespace
@@ -30138,6 +30713,14 @@ type PreviewBlobStoreRegistrationRequest struct {
 	Takeover *bool   `json:"takeover,omitempty"`
 }
 
+type PreviewInput struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema       *string              `json:"$schema,omitempty"`
+	Masks        []RedactionMask      `json:"masks"`
+	Preparation  RedactionPreparation `json:"preparation"`
+	ReviewSha256 string               `json:"review_sha256"`
+}
+
 type PreviewRequest struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema  *string `json:"$schema,omitempty"`
@@ -30267,11 +30850,37 @@ type Receipt = bundle.Receipt
 
 type Recipe = pdfstamp.Recipe
 
+type RedactionArchive = processing.RedactionArchive
+
+type RedactionFileDigest = processing.RedactionFileDigest
+
 type RedactionMask = processing.RedactionMask
 
 type RedactionPreparation = processing.RedactionPreparation
 
 type RedactionPreparationRequest = processing.RedactionPreparationRequest
+
+type RedactionPreview = processing.RedactionPreview
+
+type RedactionPreviewConfirmation struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema        *string `json:"$schema,omitempty"`
+	ArchiveSha256 string  `json:"archive_sha256"`
+	Confirmed     bool    `json:"confirmed"`
+	ReviewSha256  string  `json:"review_sha256"`
+}
+
+type RedactionPreviewPage = processing.RedactionPreviewPage
+
+type RedactionPreviewTicket struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+	Sha256 string  `json:"sha256"`
+	Size   int64   `json:"size"`
+	URL    string  `json:"url"`
+}
+
+type RedactionReceipt = processing.RedactionReceipt
 
 type RedactionRenderRequest = processing.RedactionRenderRequest
 

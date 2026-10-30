@@ -21,6 +21,7 @@
   import TechnicalDetails from "./TechnicalDetails.svelte";
   import InspectorHistory from "./InspectorHistory.svelte";
   import CopyValue from "./CopyValue.svelte";
+  import RedactionDrawer from "./RedactionDrawer.svelte";
   import DownloadButton from "./DownloadButton.svelte";
   import type { SelectedSource } from "./selectedSource.js";
   import TagLabel from "./TagLabel.svelte";
@@ -94,10 +95,31 @@
   } = $props();
   let protect = $state(false);
   let displayed = $state<{ origin: string; source: SelectedSource; revision: number }>();
+  let redacting = $state<{ source: SelectedSource; revision: number }>();
+  const canRedact = $derived(
+    !snapshot &&
+      node?.kind === "file" &&
+      !node.trashed_at &&
+      source?.kind === "live" &&
+      mediaType(source.mimeType) === "application/pdf" &&
+      (!displayed || displayed.origin !== source.key || displayed.source.key === source.key),
+  );
+  const redactionDisabled = $derived(
+    actionsDisabled
+      ? "Refresh this view first"
+      : source?.size === 0
+        ? "An empty PDF cannot be redacted"
+        : (source?.size ?? 0) > 64 * 1024 * 1024
+          ? "PDF redaction supports files up to 64 MiB"
+          : "",
+  );
   const download = $derived(displayed?.origin === source?.key ? displayed : undefined);
   function showSource(next: SelectedSource, revision: number): void {
     if (source) displayed = { origin: source.key, source: next, revision };
   }
+  $effect(() => {
+    if (redacting && redacting.source.nodeID !== source?.nodeID) redacting = undefined;
+  });
   // The media type without parameters such as "; charset=utf-8".
   function mediaType(value: string | undefined): string {
     return (value ?? "").split(";")[0]!.trim() || "application/octet-stream";
@@ -135,6 +157,13 @@
       {onauthfailure}
     />
   {/if}
+  {#if canRedact && source && session && onauthfailure}<AppTooltip text={redactionDisabled}
+      ><Button
+        size="sm"
+        disabled={!!redactionDisabled}
+        onclick={() => (redacting = { source, revision: authorizationRevision })}>Redact PDF</Button
+      ></AppTooltip
+    >{/if}
   {#if onopen}<Button size="sm" tone="info" surface="solid" onclick={onopen}>Open</Button>{/if}
   {#if onprocess && profiles.length > 0}<AppTooltip
       text={actionsDisabled ? "Refresh this view first" : ""}
@@ -305,6 +334,14 @@
     {#snippet footer()}<Button onclick={() => (protect = false)}>Close</Button>{/snippet}
   </Modal>
 {/if}
+
+{#if redacting && session && onauthfailure}{#key redacting.source.key}<RedactionDrawer
+      {session}
+      source={redacting.source}
+      authorizationRevision={redacting.revision}
+      {onauthfailure}
+      onclose={() => (redacting = undefined)}
+    />{/key}{/if}
 
 <style>
   .assigned-tag {
