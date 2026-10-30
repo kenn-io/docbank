@@ -64,7 +64,7 @@ func (s *Store) RebindWatchedSource(ctx context.Context, watchName, oldRef, newR
 			return fmt.Errorf("watched node %d: %w", node.ID, ErrNotFile)
 		}
 		if retry {
-			_, err := tx.ExecContext(ctx, `DELETE FROM watch_source_absences WHERE watch_name=? AND source_ref=?`, watchName, newRef)
+			_, err := tx.ExecContext(ctx, `DELETE FROM watch_source_absences WHERE watch_name=$1 AND source_ref=$2`, watchName, newRef)
 			return err
 		}
 		result, err := tx.ExecContext(ctx, `UPDATE watch_sources SET source_ref=$1 WHERE watch_name=$2 AND source_ref=$3 AND node_id=$4`, newRef, watchName, oldRef, expectedNodeID)
@@ -78,7 +78,7 @@ func (s *Store) RebindWatchedSource(ctx context.Context, watchName, oldRef, newR
 		if count != 1 {
 			return fmt.Errorf("rebinding watched source: %w", ErrNotFound)
 		}
-		_, err = tx.ExecContext(ctx, `DELETE FROM watch_source_absences WHERE watch_name=? AND source_ref=?`, watchName, newRef)
+		_, err = tx.ExecContext(ctx, `DELETE FROM watch_source_absences WHERE watch_name=$1 AND source_ref=$2`, watchName, newRef)
 		return err
 	})
 	if err != nil {

@@ -83,6 +83,18 @@ func TestAuditEnrollmentCatalogsPostgres(t *testing.T) {
 			require.NoError(t, err)
 			return s
 		},
+		"detected faces": func(t *testing.T) *Store {
+			t.Helper()
+			fixture := newFaceDetectionTestFixture(t)
+			require.NoError(t, fixture.scan("b1",
+				document.FaceObservation{
+					Box:  document.FaceBox{X: .1, Y: .1, Width: .2, Height: .2},
+					Roll: new(0.0), Facing: new(.9), EyesOpen: new(true), Smile: new(false),
+				},
+				document.FaceObservation{Box: document.FaceBox{X: .7, Y: .7, Width: .2, Height: .2}},
+			))
+			return fixture.s
+		},
 		"photo checkout": func(t *testing.T) *Store {
 			t.Helper()
 			s := newTestStore(t)

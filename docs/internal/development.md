@@ -210,16 +210,19 @@ history, watch and push observations, and collection membership and labels also
 work through the native Store methods.
 
 A public PostgreSQL-backed vault is not available yet: daemon and embedded
-operations still open SQLite. Trash and purge, search, transfer, backup, restore
-and the complete physical-storage lifecycle remain unqualified.
+operations still open SQLite. Grouped photo imports, XMP sidecar writing, trash
+and purge, search, transfer, backup, restore and the complete physical-storage
+lifecycle remain unqualified.
 
 `Setup` takes a caller-owned `database/sql` pool authenticated as `SchemaOwner`
 and uses the explicit `Schema` setting. It creates a dedicated schema, canonical
 DDL, a UUIDv4 vault identity, a fresh processing-consent incarnation, the primary
-blob-store identity and ownership epoch, and the root directory in one transaction, under a
-schema-specific PostgreSQL advisory lock. Repeated setup preserves the identity,
-root, primary blob-store identity and epoch, and existing data. Existing empty or unrelated schemas, malformed
-identities and wrong owners are refused rather than repaired.
+blob-store identity and ownership epoch, initial people-state epochs, and the
+root directory in one transaction, under a schema-specific PostgreSQL advisory
+lock. Repeated setup preserves the identity,
+root, primary blob-store identity and epoch, people-state epochs, and existing
+data. Existing empty or unrelated schemas, malformed identities and wrong
+owners are refused rather than repaired.
 
 The catalogs keep vault references as native UUIDs and content-version and
 operation IDs as text, numeric node IDs,
@@ -304,6 +307,7 @@ GRANT INSERT ON documents.provenance, documents.provenance_version_bindings
 GRANT INSERT, UPDATE, DELETE ON documents.collection_labels TO docbank_runtime;
 GRANT INSERT, UPDATE ON documents.watch_sources, documents.push_sources
     TO docbank_runtime;
+GRANT INSERT, DELETE ON documents.watch_source_absences TO docbank_runtime;
 GRANT DELETE ON documents.document_event_heads, documents.document_event_generations,
     documents.document_people_heads, documents.document_people TO docbank_runtime;
 GRANT INSERT, UPDATE(revision, reason) ON documents.document_event_dirty
@@ -569,8 +573,13 @@ versions and record membership under the existing source and basename rules.
 Watch cursors continue to follow moved nodes. Unchanged source bytes preserve
 independent document edits; changed source bytes update the tracked node. Push
 can adopt a watch cursor, records subsequent observations atomically, and pages
-cursors in byte order. Collection listing, member pages, label changes and
-provenance history use the shared queries. Multi-statement collection,
+cursors in byte order. Complete watch inventories record and clear absence
+observations; rebinding a source clears its mark, including on an exact retry.
+Removing a watch clears its observations. These marks do not change archived
+documents or their exported metadata.
+
+Collection listing, member pages, label changes and provenance history use the
+shared queries. Multi-statement collection,
 provenance and directory-plan reads use repeatable-read snapshots.
 
 Provenance corrections append facts rather than replacing them. Ingest runs,
@@ -591,8 +600,9 @@ Operation tests use canonical setup and the runtime role, validate complete
 metadata and audit replay, and compare derived effects with real SQLite writes.
 They force a late invalidation failure to verify rollback, and commit concurrent
 writes during history reads to verify snapshot consistency. These capabilities
-do not expose a public PostgreSQL vault or qualify portable metadata import,
-collection snapshots, reporting, backup or restore.
+do not expose a public PostgreSQL vault or qualify grouped photo imports, XMP
+sidecar writing, portable metadata import, collection snapshots, reporting,
+backup or restore.
 
 #### Shared query qualification
 

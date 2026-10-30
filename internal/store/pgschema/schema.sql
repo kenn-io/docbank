@@ -885,6 +885,16 @@ CREATE TABLE {{schema}}.watch_sources (
     PRIMARY KEY (watch_name, source_ref)
 );
 
+CREATE TABLE {{schema}}.watch_source_absences (
+    watch_name TEXT COLLATE "C" NOT NULL,
+    source_ref TEXT COLLATE "C" NOT NULL,
+    absent_since TEXT COLLATE "C" NOT NULL,
+    PRIMARY KEY (watch_name, source_ref),
+    FOREIGN KEY (watch_name, source_ref)
+        REFERENCES {{schema}}.watch_sources(watch_name, source_ref)
+        ON UPDATE CASCADE ON DELETE CASCADE
+);
+
 CREATE TABLE {{schema}}.push_sources (
     push_name          TEXT COLLATE "C" NOT NULL,
     source_ref         TEXT COLLATE "C" NOT NULL,

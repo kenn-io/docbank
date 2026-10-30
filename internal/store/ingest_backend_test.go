@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -165,9 +166,37 @@ func TestWatchAndPushPostgres(t *testing.T) {
 	require.NoError(t, err)
 	node, err := s.IngestFileExact(ctx, run, s.RootID(), "note.txt", fakeHash("c1"), 4, "text/plain", "note.txt", "")
 	require.NoError(t, err)
+	absent := WatchPresenceScan{ListedDirs: []string{""}}
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	require.NoError(t, s.ReconcileWatchSourcePresence(ctx, "archive", absent, now))
+	var absentSince string
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT absent_since FROM watch_source_absences WHERE watch_name='archive' AND source_ref='note.txt'`).Scan(&absentSince))
+	require.Equal(t, "2026-01-02T03:04:05Z", absentSince)
 	rebound, err := s.RebindWatchedSource(ctx, "archive", "note.txt", "renamed.txt", node.ID)
 	require.NoError(t, err)
 	require.Equal(t, node, rebound)
+	var marks int
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT count(*) FROM watch_source_absences`).Scan(&marks))
+	require.Zero(t, marks, "rebinding clears the mark carried by the source foreign key")
+	// An exact retry must clear a mark recorded after the original rebind too.
+	require.NoError(t, s.ReconcileWatchSourcePresence(ctx, "archive", absent, now))
+	_, err = s.RebindWatchedSource(ctx, "archive", "note.txt", "renamed.txt", node.ID)
+	require.NoError(t, err)
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT count(*) FROM watch_source_absences`).Scan(&marks))
+	require.Zero(t, marks)
+	present := WatchPresenceScan{RegularFiles: []string{"renamed.txt"}}
+	require.NoError(t, s.ReconcileWatchSourcePresence(ctx, "archive", absent, now))
+	presenceChanged, err := s.WatchSourcePresenceChanged(ctx, "archive", present)
+	require.NoError(t, err)
+	require.True(t, presenceChanged)
+	require.NoError(t, s.ReconcileWatchSourcePresence(ctx, "archive", present, now))
+	presenceChanged, err = s.WatchSourcePresenceChanged(ctx, "archive", present)
+	require.NoError(t, err)
+	require.False(t, presenceChanged)
+	require.NoError(t, s.ReconcileWatchSourcePresence(ctx, "archive", absent, now))
+	require.NoError(t, s.DeleteWatchSourceAbsencesExcept(ctx, nil))
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT count(*) FROM watch_source_absences`).Scan(&marks))
+	require.Zero(t, marks, "removing a watch clears its presence observations")
 	moved, _, err := s.Move(ctx, node.ID, s.RootID(), "local.txt", node.Revision)
 	require.NoError(t, err)
 	edited, _, err := s.ReplaceContent(ctx, node.ID, moved.Revision, fakeHash("c2"), 8, "text/plain")
