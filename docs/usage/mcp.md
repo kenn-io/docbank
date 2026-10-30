@@ -203,6 +203,7 @@ resource links, is capped at 1 MiB.
 | `read_document_content` | Reads original bytes from a selected immutable version as base64. Requires the exact vault, node, version, SHA-256 and size from `list_document_versions`. Originals are limited to 32 MiB; byte windows default to 64 KiB and are capped at 256 KiB. Returns offset, next offset and EOF. Verify the assembled size and SHA-256 before using the bytes. No export job or local file is created. |
 | `list_document_versions` | Lists immutable versions, including each original's `blob_hash` and size, for one live file. Limit defaults to 100 and is capped at 250; offset is capped at 1,000,000. |
 | `resolve_text_citation` | Reopens a [saved quotation](#saved-text-citations) from exact retained rendition text. |
+| `check_answer` | Checks [answer figures](#check-figures-in-an-answer) against saved citations. |
 | `get_kata_context` | Reads an issue's [Docbank evidence and current source states](kata-evidence.md). |
 | `get_text_outline` | Reads the headings and whole-section bounds of [retained text](#read-complete-retained-sections). |
 | `read_text_section` | Reads an exact page of a retained section, with explicit completion. |
@@ -388,6 +389,35 @@ before any response starts, never after a domain failure.
 The [HTTP contract](../architecture/http-api.md#retained-text-citations) owns the
 complete field and error table. Current/live rendition resources and windows
 retain their existing behavior.
+
+## Check figures in an answer
+
+`check_answer` compares a plain-text `answer` with 1–8 saved `citations` on
+stdio and HTTP. Send 1–16,000 Unicode code points, at most 512 figures, and
+512 `[n]` markers. A marker is `[` with one to three digits and `]`, and an index
+outside 1 to the number of citations is unknown. Each citation requires a
+verified read, including duplicates. `[2024]` counts as a figure.
+A figure is a token containing a digit,
+with edge punctuation trimmed. Whitespace, em dashes, horizontal bars, and
+`[ ] ( ) < > | * ~` backtick `=` `;` separate tokens.
+A leading `-`, `−`, `+`, or `±` stays as a sign, and a leading decimal point stays.
+Figures compare exactly across all resolved citations; markers don't scope them.
+The first matching rule determines the verdict:
+
+- `ungrounded`: an unknown marker or a missing figure with all citations resolved. Example: `30` against cited `20`.
+- `incomplete`: any citation is unavailable. Example: one of two saved citations can no longer be read.
+- `no_figures`: the answer has no figures. Example: `The invoice is attached.`
+- `grounded`: every figure occurs in the cited text. Example: `200` against cited `1 200`.
+
+Other resolver failures return tool errors.
+Results include figures, unknown marker indexes, citation
+statuses, and text digests, with private cache scope and zero TTL.
+
+- Figures keep their spelling, case, signs, and currency symbols. Example: `-.5` differs from `.5`.
+- Case, currency-prefix, and decimal-padding differences report `ungrounded`. Examples: `12-AB` against `12-ab`, `$5` against `5`, and `5.00` against `5`.
+- Numbered-list numbers count as figures. Example: `1.` contributes `1`.
+- Both sides undo Markdown punctuation escapes, including literal backslashes in plain-text bodies. Example: plain-text `INV\-5` matches `INV-5`.
+- Occurrence alone confirms neither the subject nor other claims. Example: a cited price doesn't establish which item it belongs to.
 
 ## Read complete retained sections
 

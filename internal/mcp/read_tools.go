@@ -56,6 +56,8 @@ func executeReadTool(
 		output, err = readTextSection(ctx, lease, raw)
 	case textCitationTool.name:
 		output, err = resolveTextCitation(ctx, lease, raw)
+	case checkAnswerTool.name:
+		output, err = checkAnswer(ctx, lease, raw)
 	case "get_vault_info":
 		output, err = getVaultInfo(ctx, daemonDocumentSession(lease), raw)
 	case "list_documents":
