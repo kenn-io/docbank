@@ -258,6 +258,35 @@ all retained references for one hash, use `GET /api/v1/content-references` with
 live history, and trash. Duplicate discovery is a separate HTTP read. It does
 not change text-search results or automatically collapse them.
 
+### DOCX package matches
+
+Run `docbank duplicates docx --json`, or authenticated
+`GET /api/v1/duplicates/docx?limit=50&offset=0`, to find current DOCX files whose
+complete package contents match even when ZIP packaging differs. A timestamp-only
+change can change the original SHA-256 while leaving this package fingerprint
+unchanged.
+
+All entry names and uncompressed bytes must match. Differences in document XML,
+formatting, comments, tracked changes, properties, images, embedded files, or
+signatures keep files separate. ZIP timestamps, compression, entry order,
+comments, and extra header fields are ignored. This is not a text-only or visual
+comparison.
+
+Groups sort by the v1 package fingerprint and preview at most 16 current live
+documents, ordered by modification time then node ID. Each reference includes
+its original SHA-256, size, version, node ID, and path. Counts include exact-byte
+copies as well as packaging variants. History and trash are excluded. Pagination
+uses the same limits as exact duplicates; concurrent changes may affect later pages.
+
+The report uses background-extracted metadata. `unfingerprinted_references`
+counts current DOCX documents without usable evidence, including pending work,
+malformed files, and files above inspection limits. Wait for background processing
+before treating results as complete; warnings in source metadata explain skipped
+files. See [fingerprint limits](../architecture/source-metadata.md#docx-package-fingerprints).
+
+This command reports matches for review. It leaves originals, provenance,
+exact-byte duplicate results, and search results unchanged.
+
 ## Export search counts
 
 Use [Search exports](search-exports.md) to compare date-scoped search terms in

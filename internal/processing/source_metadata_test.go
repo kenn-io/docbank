@@ -37,7 +37,7 @@ func TestExtractSourceMetadataFromSyntheticFormats(t *testing.T) {
 		sensitive string
 	}{
 		{name: "PDF info and XMP", payload: syntheticMetadataPDF(9), keys: []string{"created", "creators", "description", "keywords", "modified", "page_count", "subject", "title"}},
-		{name: "OOXML core, app, and custom", payload: ooxml, keys: []string{"created", "office.core.word_count", "office.custom.matter_number", "page_count", "title"}},
+		{name: "OOXML core, app, and custom", payload: ooxml, keys: []string{"created", "office.core.word_count", "office.custom.matter_number", document.DOCXPackageFingerprintKey, "page_count", "title"}},
 		{name: "RFC 5322 email", payload: []byte("From: Ada <ada@example.test>\r\nTo: Grace <grace@example.test>\r\nBcc: Private <private@example.test>\r\nSubject: Synthetic mail\r\nDate: Tue, 2 Jan 2024 03:04:05 -0700\r\n\r\nbody"), keys: []string{"email.bcc", "email.from", "email.sent", "email.subject", "email.to"}, sensitive: "email.bcc"},
 		{name: "iCalendar", payload: []byte("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nSUMMARY:Synthetic meeting\r\nDTSTART:20240102T030405\r\nDTEND:20240102T040405\r\nEND:VEVENT\r\nEND:VCALENDAR"), keys: []string{"calendar.end", "calendar.start", "title"}},
 		{name: "JPEG EXIF", payload: syntheticExifJPEG(), keys: []string{"creators", "description", "media.container.animated", "media.container.format", "media.container.frame_count", "media.container.height_px", "media.container.kind", "media.container.width_px"}},

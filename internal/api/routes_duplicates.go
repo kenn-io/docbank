@@ -62,6 +62,7 @@ type DuplicateContextGroup struct {
 }
 
 func registerDuplicateRoutes(api huma.API, d Deps) {
+	registerDOCXDuplicateRoutes(api, d)
 	huma.Register(api, huma.Operation{
 		OperationID: "getDuplicateContentByHash", Method: http.MethodGet,
 		Path: "/api/v1/duplicates/by-hash", Summary: "Read one exact live-current duplicate group",

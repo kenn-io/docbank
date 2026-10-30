@@ -4,6 +4,9 @@ const (
 	// SourceMetadataContractV1 identifies canonical embedded source claims.
 	SourceMetadataContractV1 = "source-metadata/v1"
 
+	// DOCXPackageFingerprintKey identifies complete package contents, not raw bytes.
+	DOCXPackageFingerprintKey = "office.package.docx_sha256_v1"
+
 	MaxSourceMetadataFields       = 512
 	MaxSourceMetadataWarnings     = 256
 	MaxSourceMetadataListValues   = 256

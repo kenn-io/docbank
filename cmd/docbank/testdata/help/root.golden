@@ -48,6 +48,7 @@ Documents:
   versions  Inspect and maintain immutable content versions
 
 Search and text:
+  duplicates  Find matching documents
   formats  Report per-format capability coverage
   processing  Preview and run document processing
   rendition  Read retained document renditions

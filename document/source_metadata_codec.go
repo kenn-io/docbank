@@ -29,14 +29,14 @@ var sourceMetadataCommonKeys = map[string]bool{
 
 var sourceMetadataNamespaces = []string{
 	"calendar.", "email.", "image.exif.", "image.iptc.", "image.xmp.",
-	"media.container.", "media.id3.", "office.core.", "office.custom.",
+	"media.container.", "media.id3.", "office.core.", "office.custom.", "office.package.",
 	"pdf.info.", "xmp.",
 }
 
 var sourceMetadataSourceNamespaces = map[string]bool{
 	"calendar": true, "email": true, "image.exif": true, "image.iptc": true,
 	"image.xmp": true, "media.container": true, "media.id3": true,
-	"office.core": true, "office.custom": true, "pdf.info": true, "xmp": true,
+	"office.core": true, "office.custom": true, "office.package": true, "pdf.info": true, "xmp": true,
 }
 
 var forbiddenSourceMetadataSegments = map[string]bool{

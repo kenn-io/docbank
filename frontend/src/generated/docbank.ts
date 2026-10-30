@@ -1869,6 +1869,36 @@ export interface CustodianResolveRequest {
   person_id: string;
 }
 
+export interface DOCXDuplicateGroup {
+  /** @pattern ^[0-9a-f]{64}$ */
+  fingerprint: string;
+  /** @minimum 2 */
+  reference_count: number;
+  /** @maxItems 16 */
+  references: Node[];
+  references_truncated: boolean;
+}
+
+export interface DOCXDuplicatePage {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @maxItems 100 */
+  items: DOCXDuplicateGroup[];
+  /**
+     * @minimum 1
+     * @maximum 100
+     */
+  limit: number;
+  /** @minimum 0 */
+  offset: number;
+  /** @minimum 0 */
+  total: number;
+  /** @minimum 0 */
+  total_references: number;
+  /** @minimum 0 */
+  unfingerprinted_references: number;
+}
+
 export interface Identity {
   node_id: number;
   sha256: string;
@@ -9165,6 +9195,18 @@ sha256?: string;
 size?: number;
 };
 
+export type ListDOCXDuplicatesParams = {
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+/**
+ * @minimum 0
+ */
+offset?: number;
+};
+
 export type ListEmailDocumentRelationsParams = {
 parent_version_id?: string;
 child_version_id?: string;
@@ -12070,6 +12112,38 @@ export const getGetDuplicateContentByHashUrl = (params?: GetDuplicateContentByHa
 export const getDuplicateContentByHash = async (params?: GetDuplicateContentByHashParams, options?: Parameters<typeof sessionJSON>[1]): Promise<DuplicateContextGroup> => {
 
   return sessionJSON<DuplicateContextGroup>(getGetDuplicateContentByHashUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getListDOCXDuplicatesUrl = (params?: ListDOCXDuplicatesParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/duplicates/docx?${stringifiedParams}` : `/api/v1/duplicates/docx`
+}
+
+/**
+ * Ignores ZIP packaging only. Groups are ordered by the v1 package fingerprint; references retain raw SHA-256 and size. Counts exclude trash and history. Unfingerprinted references include pending, unsupported, or failed inspection. No originals are deleted or merged.
+ * @summary Find current DOCX files with identical package contents
+ */
+export const listDOCXDuplicates = async (params?: ListDOCXDuplicatesParams, options?: Parameters<typeof sessionJSON>[1]): Promise<DOCXDuplicatePage> => {
+
+  return sessionJSON<DOCXDuplicatePage>(getListDOCXDuplicatesUrl(params),
   {
     ...options,
     method: 'GET'
