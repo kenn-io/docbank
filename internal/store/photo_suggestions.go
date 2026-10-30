@@ -41,16 +41,22 @@ type PhotoSuggestion struct {
 	Value            document.PhotoDescription `json:"value"`
 }
 
+// photoRotationConfirmedSQL reports whether the owner confirmed the rotation
+// of the photo that suggestion row s describes.
+var photoRotationConfirmedSQL = `EXISTS(SELECT 1 FROM content_versions v JOIN photo_files f ON f.node_id=v.node_id WHERE v.version_id=s.content_version_id AND (f.confirmed_fields & ` + fmt.Sprint(PhotoConfirmedRotation) + `)<>0)`
+
 // photoSuggestionSettledSQL keeps automatic work settled once a row exists.
 // Explicit work refreshes unresolved rotation or dismissed text. Restored pending
 // fields still regenerate unless this producer was dismissed on that version.
+// A restored row with dismissed text waits only for rotation, so it settles
+// once the owner confirms the rotation.
 func photoSuggestionSettledSQL(version, producer string, explicit bool) string {
 	filter := ""
 	if explicit {
-		filter = ` AND (s.producer_fingerprint=` + producer + ` OR (NOT s.dismissed AND EXISTS(SELECT 1 FROM content_versions v JOIN photo_files f ON f.node_id=v.node_id WHERE v.version_id=s.content_version_id AND (f.confirmed_fields & ` + fmt.Sprint(PhotoConfirmedRotation) + `)<>0)))`
+		filter = ` AND (s.producer_fingerprint=` + producer + ` OR (NOT s.dismissed AND ` + photoRotationConfirmedSQL + `))`
 	}
 	return `(EXISTS(SELECT 1 FROM photo_suggestions s WHERE s.content_version_id=` + version + filter + `)
- AND (NOT EXISTS(SELECT 1 FROM photo_suggestions s WHERE s.content_version_id=` + version + ` AND s.awaiting)
+ AND (NOT EXISTS(SELECT 1 FROM photo_suggestions s WHERE s.content_version_id=` + version + ` AND s.awaiting AND NOT (s.dismissed AND ` + photoRotationConfirmedSQL + `))
   OR EXISTS(SELECT 1 FROM photo_suggestions s WHERE s.content_version_id=` + version + ` AND s.dismissed AND NOT s.awaiting AND s.producer_fingerprint=` + producer + `)))`
 }
 

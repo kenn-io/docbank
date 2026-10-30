@@ -1269,6 +1269,38 @@ func TestPhotoRotationRestoreKeepsDismissedProducer(t *testing.T) {
 	}
 }
 
+// A restored row with dismissed text waits only for rotation. Confirming a
+// rotation offered by face rolls settles it without another provider upload.
+func TestPhotoRotationRestoreSettlesAfterFaceConfirmation(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	asset := albumAsset(t, s, "landscape.jpg")
+	publishPhotoDescription(t, s, asset, producerA, document.PhotoDescription{Caption: "A landscape.", Rotation: new(90)})
+	proposal := photoSuggestionValues(t, s, asset.ID)[0]
+	_, err := s.RespondPhotoSuggestion(ctx, proposal.ID, dismissalOf(ctx, t, s, proposal))
+	require.NoError(t, err)
+	var metadata bytes.Buffer
+	require.NoError(t, s.ExportMetadata(ctx, &metadata))
+	restored := newTestStore(t)
+	require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(metadata.Bytes())))
+	require.NoError(t, restored.withStorageTx(ctx, func(tx *sql.Tx) error {
+		return publishFaceDetectionTx(ctx, tx, proposal.ContentVersionID, producerA, document.FaceDetection{Faces: []document.FaceObservation{
+			{Box: document.FaceBox{X: .1, Y: .1, Width: .2, Height: .2}, Roll: new(1.5707963267948966)},
+		}}, time.Now())
+	}))
+	settled, err := restored.photoDescriptionSettled(ctx, proposal.ContentVersionID, producerB, false)
+	require.NoError(t, err)
+	require.False(t, settled, "the restored rotation is still pending")
+	rotation := photoSuggestionValues(t, restored, asset.ID)[0]
+	require.Equal(t, "faces", rotation.RotationSource)
+	_, err = restored.RespondPhotoSuggestion(ctx, rotation.ID, PhotoSuggestionResponse{AssetID: rotation.AssetID, AssetRevision: rotation.AssetRevision, SourceRevision: rotation.SourceRevision, NodeRevision: rotation.NodeRevision, Response: "accepted", Rotation: rotation.Rotation})
+	require.NoError(t, err)
+	settled, err = restored.photoDescriptionSettled(ctx, proposal.ContentVersionID, producerB, false)
+	require.NoError(t, err)
+	require.True(t, settled, "dismissed text and a confirmed rotation leave nothing to ask for")
+}
+
 func TestPhotoRotationResponseRequiresCurrentProposal(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
