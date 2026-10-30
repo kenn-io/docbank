@@ -7,8 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Run through the same core catalog fixture on SQLite and PostgreSQL. Complete
-// mutation APIs are not yet available on PostgreSQL.
+// Run through the same canonical catalog fixture on SQLite and PostgreSQL.
 func checkPathQueries(t *testing.T, s *Store, directory, file Node) {
 	t.Helper()
 	ctx := t.Context()

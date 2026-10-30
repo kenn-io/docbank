@@ -25,7 +25,7 @@ func photoAssetByIDQuery(ctx context.Context, q metadataQuerier, id string) (Pho
 	if err := validateUUIDv4(id); err != nil {
 		return PhotoAsset{}, fmt.Errorf("photo asset %q: %w", id, ErrNotFound)
 	}
-	asset, err := scanPhotoAsset(q.QueryRowContext(ctx, `SELECT `+photoAssetColumns+` FROM photo_assets WHERE asset_id=?`, id))
+	asset, err := scanPhotoAsset(q.QueryRowContext(ctx, `SELECT `+photoAssetColumns+` FROM photo_assets WHERE asset_id=$1`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return PhotoAsset{}, ErrNotFound
 	} else if err != nil {
@@ -345,7 +345,7 @@ func scanPhotoFile(row scanner) (PhotoFile, error) {
 func loadPhotoFiles(ctx context.Context, q metadataQuerier, assetID string) ([]PhotoFile, error) {
 	rows, err := q.QueryContext(ctx, `
 		SELECT `+photoFileColumns+`
-		FROM photo_files WHERE asset_id=? ORDER BY file_id LIMIT ?`, assetID, PhotoMaxFiles+1)
+		FROM photo_files WHERE asset_id=$1 ORDER BY file_id LIMIT $2`, assetID, PhotoMaxFiles+1)
 	if err != nil {
 		return nil, fmt.Errorf("listing photo files: %w", err)
 	}
@@ -382,7 +382,7 @@ func (s *Store) insertPhotoFileTx(ctx context.Context, tx *sql.Tx, member PhotoF
 	if err := photoRoleValidOrError(member.Role); err != nil {
 		return err
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE photo_files SET asset_id=?,role=?,sidecar_of_file_id=? WHERE node_id=? AND asset_id IS NULL`, member.AssetID, member.Role, nullablePhotoString(member.SidecarOfID), member.NodeID)
+	result, err := tx.ExecContext(ctx, `UPDATE photo_files SET asset_id=$1,role=$2,sidecar_of_file_id=$3 WHERE node_id=$4 AND asset_id IS NULL`, member.AssetID, member.Role, nullablePhotoString(member.SidecarOfID), member.NodeID)
 	if err != nil {
 		return s.classifyPhotoFileInsertError(err)
 	}
@@ -397,8 +397,8 @@ func (s *Store) insertPhotoFileTx(ctx context.Context, tx *sql.Tx, member PhotoF
 	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO photo_files(file_id,asset_id,node_id,role,sidecar_of_file_id,created_at,source_provenance_identity)
-		VALUES(?,?,?,?,?,?,(SELECT p.identity FROM provenance p JOIN ingests i ON i.id=p.ingest_id
- WHERE p.node_id=? AND i.source_kind NOT LIKE 'embedded:%' AND NOT EXISTS(SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)
+		VALUES($1,$2,$3,$4,$5,$6,(SELECT p.identity FROM provenance p JOIN ingests i ON i.id=p.ingest_id
+ WHERE p.node_id=$7 AND i.source_kind NOT LIKE 'embedded:%' AND NOT EXISTS(SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)
  ORDER BY `+photoSourceObservedSQL+`,i.started_at,i.id,p.original_path,p.identity LIMIT 1))`, fileID, member.AssetID, member.NodeID, member.Role,
 		nullablePhotoString(member.SidecarOfID), member.CreatedAt, member.NodeID); err != nil {
 		return s.classifyPhotoFileInsertError(err)
@@ -414,7 +414,7 @@ func photoRoleValidOrError(role string) error {
 }
 
 func (s *Store) classifyPhotoFileInsertError(err error) error {
-	if s.driver.IsUniqueViolation(err) {
+	if s.isUniqueViolation(err) {
 		return fmt.Errorf("%w: node is already owned or file identity conflicts", ErrPhotoNodeOwned)
 	}
 	return fmt.Errorf("creating photo file: %w", err)
@@ -515,7 +515,7 @@ func (s *Store) insertPhotoAssetTx(ctx context.Context, tx *sql.Tx, nodeID int64
 	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO photo_assets(asset_id,kind,revision,created_at,updated_at)
-		VALUES(?,?,1,?,?)`, assetID, kind, now, now); err != nil {
+		VALUES($1,$2,1,$3,$4)`, assetID, kind, now, now); err != nil {
 		return PhotoAsset{}, fmt.Errorf("creating photo asset: %w", err)
 	}
 	if err := s.insertPhotoFileTx(ctx, tx, PhotoFile{AssetID: assetID, NodeID: nodeID, Role: role, CreatedAt: now}); err != nil {
@@ -531,7 +531,7 @@ func (s *Store) insertPhotoAssetTx(ctx context.Context, tx *sql.Tx, nodeID int64
 		return PhotoAsset{}, err
 	}
 	choice := selectPhotoDisplay(asset.Files, settings.Preference, nil)
-	if _, err := tx.ExecContext(ctx, `UPDATE photo_assets SET display_file_id=? WHERE asset_id=?`, nullablePhotoString(choice.FileID), assetID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE photo_assets SET display_file_id=$1 WHERE asset_id=$2`, nullablePhotoString(choice.FileID), assetID); err != nil {
 		return PhotoAsset{}, fmt.Errorf("selecting initial photo display: %w", err)
 	}
 	asset.DisplayFileID, asset.DisplaySource = choice.FileID, choice.Source

@@ -138,7 +138,7 @@ func (s *Store) PruneContentVersions(
 			return nil
 		}
 		if checkpointRequired {
-			updated, checkpoint, err := installContentVersionTx(
+			updated, checkpoint, err := s.installContentVersionTx(
 				ctx, tx, node, versions[0].BlobHash, versions[0].Size, versions[0].MimeType,
 				"content_replace", nil,
 			)

@@ -33,9 +33,15 @@ func TestSetupPreservesIdentity(t *testing.T) {
 	require.NoError(t, db.QueryRowContext(t.Context(), `WITH allocated AS (UPDATE documents.node_allocation SET high_water=high_water+1 WHERE singleton=1 RETURNING high_water)
 		INSERT INTO documents.nodes(id,parent_id,name,kind,created_at,modified_at)
 		SELECT high_water,$1,'kept','dir',$2,$2 FROM allocated RETURNING id`, rootID, childTime).Scan(&childID))
+	var primary, epoch string
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT store_id,ownership_epoch FROM documents.blob_stores WHERE role='primary'`).Scan(&primary, &epoch))
 	again, err := Setup(t.Context(), db, cfg)
 	require.NoError(t, err)
 	assert.Equal(t, id, again)
+	var keptPrimary, keptEpoch string
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT store_id,ownership_epoch FROM documents.blob_stores WHERE role='primary'`).Scan(&keptPrimary, &keptEpoch))
+	assert.Equal(t, primary, keptPrimary)
+	assert.Equal(t, epoch, keptEpoch)
 	var keptRootID, keptParent int64
 	var keptCreated, keptName string
 	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT id,created_at FROM documents.nodes WHERE parent_id IS NULL`).Scan(&keptRootID, &keptCreated))
