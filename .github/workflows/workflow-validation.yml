@@ -9,6 +9,9 @@ permissions:
   contents: read
 
 cache-mode: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   actionlint:
