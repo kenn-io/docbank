@@ -137,8 +137,8 @@ func publishPhotoSuggestionTx(ctx context.Context, tx *sql.Tx, version, producer
 	}
 	var awaiting int64
 	var captionResolved, dismissed bool
-	var resolvedJSON string
-	err := tx.QueryRowContext(ctx, `SELECT id,caption_resolved,dismissed,resolved_tags_json FROM photo_suggestions WHERE content_version_id=? AND awaiting ORDER BY producer_fingerprint=? DESC,id LIMIT 1`, version, producer).Scan(&awaiting, &captionResolved, &dismissed, &resolvedJSON)
+	var resolvedJSON, owner string
+	err := tx.QueryRowContext(ctx, `SELECT id,caption_resolved,dismissed,resolved_tags_json,producer_fingerprint FROM photo_suggestions WHERE content_version_id=? AND awaiting ORDER BY producer_fingerprint=? DESC,id LIMIT 1`, version, producer).Scan(&awaiting, &captionResolved, &dismissed, &resolvedJSON, &owner)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
@@ -160,12 +160,17 @@ func publishPhotoSuggestionTx(ctx context.Context, tx *sql.Tx, version, producer
 		return err
 	}
 	if awaiting != 0 {
-		// The restored row now belongs to the producer that regenerated it. An
-		// older row of that producer is superseded by the owner's decisions it holds.
-		if _, err := tx.ExecContext(ctx, `DELETE FROM photo_suggestions WHERE content_version_id=? AND producer_fingerprint=? AND id<>?`, version, producer, awaiting); err != nil {
-			return err
+		// A dismissed row regenerates only its rotation, so the dismissal stays
+		// with the producer whose text the owner dismissed. Otherwise the restored
+		// row now belongs to the producer that regenerated it, and an older row of
+		// that producer is superseded by the owner's decisions it holds.
+		if !dismissed {
+			owner = producer
+			if _, err := tx.ExecContext(ctx, `DELETE FROM photo_suggestions WHERE content_version_id=? AND producer_fingerprint=? AND id<>?`, version, producer, awaiting); err != nil {
+				return err
+			}
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE photo_suggestions SET producer_fingerprint=?,caption=?,tags_json=?,visible_text=?,rotation=?,awaiting=0 WHERE id=?`, producer, description.Caption, string(tags), description.VisibleText, description.Rotation, awaiting)
+		_, err = tx.ExecContext(ctx, `UPDATE photo_suggestions SET producer_fingerprint=?,caption=?,tags_json=?,visible_text=?,rotation=?,awaiting=0 WHERE id=?`, owner, description.Caption, string(tags), description.VisibleText, description.Rotation, awaiting)
 		return err
 	}
 	id, err := newUUIDv4()
