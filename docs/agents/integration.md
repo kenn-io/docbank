@@ -828,7 +828,9 @@ Cancellation or disconnection stops traversal and the active blob write.
 Files already published remain in the vault and are skipped on a rerun.
 
 Remote writers upload one file per multipart request. Compute the expected
-identity before sending bytes, and address the destination by directory ID:
+identity before sending bytes, and supply either `parent_id` or absolute
+`parent_path`. Missing path directories publish atomically with the verified
+upload:
 
 ```bash
 FILE=receipt.pdf
@@ -848,6 +850,11 @@ exactly one part named `file`, and its multipart filename must equal `name`.
 The hash and size headers describe that file payload. A top-level
 `Content-Digest` would describe the multipart envelope, so it is not the write
 precondition.
+
+To retain URL fetch evidence, supply `X-Docbank-URL-Fetch` as described in the
+[upload contract](../architecture/http-api.md#addendum-post-uploads). The CLI's
+[URL import](../usage/importing.md#import-from-a-url) downloads and supplies
+this evidence.
 
 On `201`, require `status: "added"`. An idempotent retry returns `200` with
 `status: "skipped"` and the same node. In both cases compare `computed_hash`

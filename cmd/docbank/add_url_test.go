@@ -34,7 +34,12 @@ func TestAddURLImportsEvidence(t *testing.T) {
 			return
 		}
 		w.Header().Set("ETag", etag)
-		w.Header().Set("Content-Disposition", `attachment; filename="filing.txt"`)
+		switch r.URL.Path {
+		case "/files/filing.txt":
+			w.Header().Set("Content-Disposition", `attachment; filename="filing.txt"`)
+		case "/header-name.txt":
+			w.Header().Set("Content-Disposition", `attachment; filename*=UTF-8''report%0Done%0A.txt`)
+		}
 		w.Header().Set("Last-Modified", "Wed, 21 Oct 2015 07:28:00 GMT")
 		_, _ = io.WriteString(w, content)
 	}))
@@ -68,6 +73,24 @@ func TestAddURLImportsEvidence(t *testing.T) {
 	assert.Equal(t, []byte("Wed, 21 Oct 2015 07:28:00 GMT"), fetch.LastModified)
 	assert.NotEmpty(t, fetch.FetchedAt)
 	assert.Equal(t, requested, page.Items[0].OriginalPath)
+	for _, tc := range []struct{ target, name string }{
+		{"/report%0Aone.txt", "download"},
+		{"/header-name.txt", "header-name.txt"},
+	} {
+		raw := server.URL + tc.target
+		out, err = runCLI(t, "add", raw, "--allow-http", "--dest", "/cases/filings")
+		require.NoError(t, err, out)
+		out, err = runCLI(t, "cat", "/cases/filings/"+tc.name)
+		require.NoError(t, err)
+		assert.Equal(t, content, out)
+		out, err = runCLI(t, "provenance", "/cases/filings/"+tc.name, "--json")
+		require.NoError(t, err)
+		require.NoError(t, json.Unmarshal([]byte(out), &page))
+		require.Len(t, page.Items, 1)
+		require.NotNil(t, page.Items[0].URLFetch)
+		assert.Equal(t, raw, page.Items[0].URLFetch.RequestedURL)
+		assert.Equal(t, raw, page.Items[0].URLFetch.FinalURL)
+	}
 }
 
 func TestFetchURLBoundsSchemesNamesAndCleanup(t *testing.T) {
