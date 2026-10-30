@@ -436,6 +436,8 @@ for the configured profile to process subsequent imports. `docbank watch list` a
 the web app's All workers table show the profile and whether consent is required,
 expired, or revoked. Scanner errors remain separate. Unsupported files are skipped.
 Admission failures are logged and retried on later scans while the daemon runs.
+Retries use the accepted vault copy after source touches or removal; newer imports supersede pending versions.
+Consent skips and missing or stale document authority end admission quietly.
 Imports stay accepted. A daemon stop between import and queue admission can leave
 a version unprocessed; use explicit processing for that version.
 

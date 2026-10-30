@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import JobsDrawer from "./JobsDrawer.svelte";
-import * as generated from "./generated/docbank.js";
 
 afterEach(() => {
   cleanup();
@@ -31,6 +30,7 @@ function jobsResponse(
 describe("background jobs drawer", () => {
   it("pauses an idle worker", async () => {
     let paused = false;
+    let processing = { profile: "mistral-ocr", consent_state: "required", error: "" };
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, options) => {
       if (options?.method === "PUT") paused = JSON.parse(String(options.body)).paused;
       return jobsResponse(
@@ -48,6 +48,13 @@ describe("background jobs drawer", () => {
             status: "running",
             busy: false,
             started_at: "2026-07-23T12:00:00Z",
+          },
+          {
+            name: "watch:inbox",
+            lane: "watch:inbox",
+            status: "failed",
+            error: "source unavailable",
+            processing,
           },
         ],
         [
@@ -70,6 +77,24 @@ describe("background jobs drawer", () => {
     expect(screen.getByRole("button", { name: "Resume Making previews" })).toBeTruthy();
     const write = fetchSpy.mock.calls.find(([, options]) => options?.method === "PUT")!;
     expect(String(write[0])).toContain("/lanes/derive%3Avisual-previews");
+    for (const consent_state of ["required", "active", "expired", "revoked"]) {
+      processing = { profile: "mistral-ocr", consent_state, error: "" };
+      await fireEvent.click(screen.getByRole("button", { name: "Refresh background jobs" }));
+      const text =
+        consent_state === "active"
+          ? "Processing profile: mistral-ocr"
+          : `Waiting on consent for mistral-ocr (${consent_state})`;
+      expect(await screen.findByText(text)).toBeTruthy();
+      const row = screen.getByRole("row", { name: /Watching inbox/ });
+      expect(within(row).getByText("source unavailable")).toBeTruthy();
+      expect(within(row).getByText("Failed")).toBeTruthy();
+    }
+    processing = { profile: "mistral-ocr", consent_state: "", error: "Consent status unavailable" };
+    await fireEvent.click(screen.getByRole("button", { name: "Refresh background jobs" }));
+    expect(
+      await screen.findByText("Processing profile: mistral-ocr. Consent status unavailable"),
+    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Resume Making previews" })).toBeTruthy();
   });
 
   it.each([
@@ -626,54 +651,4 @@ it("shows current running work ahead of a retained failure in the same lane", as
   expect(screen.getByText("1 running")).toBeTruthy();
   expect(within(lane).getByText("Earlier operation failed")).toBeTruthy();
   expect(screen.getByRole("row", { name: "Moving stored files Running" })).toBeTruthy();
-});
-
-it("keeps live watch consent visible while idle and preserves scanner errors", async () => {
-  let processing: { profile: string; consent_state?: string; error?: string };
-  vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
-    jobsResponse([
-      {
-        name: "watch:inbox",
-        lane: "watch:inbox",
-        status: "failed",
-        busy: false,
-        started_at: "2026-10-30T12:00:00Z",
-        error: "source unavailable",
-        processing,
-      },
-      {
-        name: "derive:visual-previews",
-        lane: "derive:visual-previews",
-        status: "running",
-        busy: false,
-        started_at: "2026-10-30T12:00:00Z",
-        controllable: true,
-        concurrency: 1,
-        control_revision: 1,
-      },
-    ]),
-  );
-  for (const consent_state of ["required", "active", "expired", "revoked"] as const) {
-    processing = { profile: "mistral-ocr", consent_state };
-    if (consent_state === "required") {
-      render(JobsDrawer, { session: "session", onclose: vi.fn(), onauthfailure: vi.fn() });
-    } else {
-      await fireEvent.click(screen.getByRole("button", { name: "Refresh background jobs" }));
-    }
-    const text =
-      consent_state === "active"
-        ? "Processing profile: mistral-ocr"
-        : `Waiting on consent for mistral-ocr (${consent_state})`;
-    expect(await screen.findByText(text)).toBeTruthy();
-    const row = screen.getByRole("row", { name: /Watching inbox/ });
-    expect(within(row).getByText("source unavailable")).toBeTruthy();
-    expect(within(row).getByText("Failed")).toBeTruthy();
-  }
-  processing = { profile: "mistral-ocr", error: "Consent status unavailable" };
-  await fireEvent.click(screen.getByRole("button", { name: "Refresh background jobs" }));
-  expect(
-    await screen.findByText("Processing profile: mistral-ocr. Consent status unavailable"),
-  ).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Pause Making previews" })).toBeTruthy();
-  expect(screen.getByText("source unavailable")).toBeTruthy();
 });

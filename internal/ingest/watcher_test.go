@@ -1173,49 +1173,65 @@ func TestWatcherRenameAndEditBeforeFirstScanKeepsNode(t *testing.T) {
 }
 
 func TestWatcherAfterImportKeepsCommittedVersionAndScannerStatus(t *testing.T) {
-	ing := newTestIngester(t)
-	source := writeTree(t, map[string]string{"report.txt": "first"})
-	inside := false
-	watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{
-		Name: "inbox", Source: source, Destination: "/inbox", CaptureOnChange: true,
-	}, func(fn func() error) error {
-		inside = true
-		defer func() { inside = false }()
-		return fn()
-	}, slog.New(slog.DiscardHandler))
-	require.NoError(t, err)
-	var imported []store.Node
-	watcher.AfterImport = func(ctx context.Context, node store.Node) error {
-		require.False(t, inside)
-		version, err := ing.Store.ContentVersionByID(ctx, node.CurrentVersionID)
-		require.NoError(t, err)
-		require.Equal(t, node.ID, version.NodeID)
-		imported = append(imported, node)
-		if len(imported) != 2 {
-			return errors.New("synthetic queue unavailable")
-		}
-		return nil
+	for _, change := range []string{"unchanged", "touch", "remove", "supersede"} {
+		t.Run(change, func(t *testing.T) {
+			ing := newTestIngester(t)
+			source := writeTree(t, map[string]string{"report.txt": "first"})
+			inside := false
+			watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{
+				Name: "inbox", Source: source, Destination: "/inbox", CaptureOnChange: true,
+			}, func(fn func() error) error {
+				inside = true
+				defer func() { inside = false }()
+				return fn()
+			}, slog.New(slog.DiscardHandler))
+			require.NoError(t, err)
+			var imported []store.Node
+			var contents []string
+			watcher.AfterImport = func(ctx context.Context, node store.Node) error {
+				require.False(t, inside)
+				version, err := ing.Store.ContentVersionByID(ctx, node.CurrentVersionID)
+				require.NoError(t, err)
+				reader, err := ing.Blobs.Open(version.BlobHash)
+				require.NoError(t, err)
+				data, err := io.ReadAll(reader)
+				require.NoError(t, err)
+				require.NoError(t, reader.Close())
+				contents = append(contents, string(data))
+				imported = append(imported, node)
+				if len(imported) == 1 {
+					return errors.New("synthetic queue unavailable")
+				}
+				return nil
+			}
+			root := openWatcherRoot(t, watcher)
+			require.NoError(t, watcher.scan(t.Context(), root))
+			require.Len(t, imported, 1)
+			filename := filepath.Join(source, "report.txt")
+			switch change {
+			case "touch":
+				require.NoError(t, os.Chtimes(filename, time.Now(), time.Now().Add(time.Minute)))
+			case "remove":
+				require.NoError(t, os.Remove(filename))
+			case "supersede":
+				require.NoError(t, os.WriteFile(filename, []byte("second version"), 0600))
+			}
+			require.NoError(t, watcher.scan(t.Context(), root))
+			require.Len(t, imported, 2)
+			if change == "supersede" {
+				require.Equal(t, []string{"first", "second version"}, contents)
+				require.NotEqual(t, imported[0].CurrentVersionID, imported[1].CurrentVersionID)
+			} else {
+				require.Equal(t, []string{"first", "first"}, contents, "retry reads the accepted vault copy")
+				require.Equal(t, imported[0].CurrentVersionID, imported[1].CurrentVersionID)
+			}
+			require.NoError(t, watcher.scan(t.Context(), root))
+			require.Len(t, imported, 2, "resolved admissions leave no retry work")
+			restarted, err := NewWatcher(ing, t.TempDir(), watcher.config, runTestMutation, slog.New(slog.DiscardHandler))
+			require.NoError(t, err)
+			restarted.AfterImport = watcher.AfterImport
+			require.NoError(t, restarted.scan(t.Context(), openWatcherRoot(t, restarted)))
+			require.Len(t, imported, 2, "historical imports are not admitted after restart")
+		})
 	}
-	root := openWatcherRoot(t, watcher)
-	require.NoError(t, watcher.scan(t.Context(), root))
-	require.Len(t, imported, 1)
-	require.NoError(t, watcher.scan(t.Context(), root))
-	require.Len(t, imported, 2)
-	require.Equal(t, imported[0], imported[1])
-	require.NoError(t, watcher.scan(t.Context(), root))
-	require.Len(t, imported, 2)
-	require.NoError(t, os.WriteFile(filepath.Join(source, "report.txt"), []byte("second version"), 0600))
-	require.NoError(t, watcher.scan(t.Context(), root))
-	require.Len(t, imported, 3)
-	require.Equal(t, imported[0].ID, imported[2].ID)
-	require.NotEqual(t, imported[0].CurrentVersionID, imported[2].CurrentVersionID)
-	require.NoError(t, os.WriteFile(filepath.Join(source, "report.txt"), []byte("third"), 0600))
-	require.NoError(t, watcher.scan(t.Context(), root))
-	require.Len(t, imported, 4)
-	require.NotEqual(t, imported[2].CurrentVersionID, imported[3].CurrentVersionID)
-	restarted, err := NewWatcher(ing, t.TempDir(), watcher.config, runTestMutation, slog.New(slog.DiscardHandler))
-	require.NoError(t, err)
-	restarted.AfterImport = watcher.AfterImport
-	require.NoError(t, restarted.scan(t.Context(), openWatcherRoot(t, restarted)))
-	require.Len(t, imported, 4, "historical imports are not admitted after restart")
 }

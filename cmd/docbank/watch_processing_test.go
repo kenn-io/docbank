@@ -97,9 +97,12 @@ func TestWatchMistralImportConsentAndExactVersions(t *testing.T) {
 	_, err = service.GrantConsent(t.Context(), processing.ConsentGrantRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, ExpiresAt: &expires})
 	require.NoError(t, err)
 	checkState("active")
+	missing := first
+	missing.CurrentVersionID = "00000000-0000-4000-8000-000000000001"
+	require.NoError(t, service.AdmitImportedRendition(t.Context(), missing, "documents"))
 	updated := importFile("report.pdf", mistraltest.MinimalPDF("with consent"))
-	require.Equal(t, first.ID, updated.ID)
 	require.NotEqual(t, first.CurrentVersionID, updated.CurrentVersionID)
+	require.NoError(t, service.AdmitImportedRendition(t.Context(), first, "documents"), "superseded authority finishes quietly")
 	job, queued, err := catalog.ClaimNextRenditionJob(t.Context(), "test-worker", time.Now(), time.Minute)
 	require.NoError(t, err)
 	require.True(t, queued)

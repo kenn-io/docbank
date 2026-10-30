@@ -57,7 +57,9 @@ docbank watch list --json
 
 Each item reports the local source, virtual destination, settle window,
 minimum source age, scan interval, the literal `exclude` and glob
-`exclude_patterns` lists, and current job record.
+`exclude_patterns` lists, and current job record. A configured profile adds optional
+`processing` status; see the [watch API](../architecture/http-api.md#background-job-status) for its fields.
+Human output appends a `PROCESSING` column. See [watch processing](../configuration.md#watched-inboxes) for consent and retry behavior.
 The settle window is the time a file must remain unchanged. A nonzero minimum
 age adds a separate check. It does not replace that window.
 

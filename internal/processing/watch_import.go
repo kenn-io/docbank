@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 
-	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -25,16 +24,14 @@ func (service *Service) RenditionConsentState(ctx context.Context, name string) 
 func (service *Service) AdmitImportedRendition(ctx context.Context, node store.Node, name string) (err error) {
 	defer func() {
 		state, consentErr := processingConsentState(err)
-		if consentErr == nil && state != "active" || errors.Is(err, ErrMediaProcessingUnsupported) || errors.Is(err, ErrSourceIneligible) {
+		if consentErr == nil && state != "active" || errors.Is(err, ErrMediaProcessingUnsupported) || errors.Is(err, ErrSourceIneligible) ||
+			errors.Is(err, store.ErrRenditionJobStaleAuthority) || errors.Is(err, store.ErrNotFound) {
 			err = nil
 		}
 	}()
 	profile, err := service.mediaProcessingProfile(name)
 	if err != nil {
 		return err
-	}
-	if profileRenditionInput(profile) != document.RenditionInputOriginalFile {
-		return nil
 	}
 	if _, err := service.catalog.AuthorizeProviderOperation(ctx, service.renditionConsentRequest(profile)); err != nil {
 		return err

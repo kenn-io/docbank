@@ -1407,6 +1407,10 @@ with API-key clients.
 joins the effective machine-local source, virtual destination, settle and scan
 durations, and the `exclude` and `exclude_patterns` lists with its current
 `watch:<name>` job record.
+Watches with a processing profile include `processing` with `profile` and `consent_state` (`active`, `required`, `expired`, or `revoked`).
+If consent lookup fails, `error` describes the status failure instead.
+`GET /jobs` includes the same optional status on watch jobs, so browser sessions can display it without access to machine-local watch configuration.
+Scanner failures remain in the job's own `error` field.
 The job is omitted only when no runner has been registered, which is not an
 ordinary live-daemon state. Configuration remains file-owned: this endpoint
 does not create, edit, or restart watches.
