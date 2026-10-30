@@ -20,7 +20,35 @@ env:
   GOFLAGS: -trimpath
 
 jobs:
+  changes:
+    name: Changed files
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      groups: ${{ steps.changes.outputs.groups }}
+      all: ${{ steps.changes.outputs.all }}
+    steps:
+      - name: Select affected checks
+        id: changes
+        uses: kenn-io/actions/changes@92f255293f1cfcf6998d1b87d0c2c3bb700d01e6
+        with:
+          filters: |
+            go:
+              - '!{README.md,AGENTS.md,CLAUDE.md,docs/**,website/**,frontend/**}'
+              - docs/configuration.md
+            frontend:
+              - '!{README.md,AGENTS.md,CLAUDE.md,docs/**,website/**,cmd/**,docbank/**,document/**,internal/**,mcp/**,report/**,sqlite/**}'
+              - internal/web/**
+              - internal/api/openapi*
+            docs:
+              - '!{README.md,AGENTS.md,CLAUDE.md,cmd/**,docbank/**,internal/**,mcp/**,report/**,sqlite/**}'
+
   postgres:
+    needs: changes
+    if: &go-changed ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups || '[]'), 'go')) }}
     name: PostgreSQL ${{ matrix.version }} metadata
     runs-on: ubuntu-24.04
     strategy:
@@ -63,6 +91,8 @@ jobs:
         run: make test-pg
 
   docs:
+    needs: changes
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups || '[]'), 'docs')) }}
     name: Public documentation
     runs-on: ubuntu-24.04
     steps:
@@ -142,6 +172,8 @@ jobs:
         run: docker logs playwright-browser-server
 
   frontend:
+    needs: changes
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups || '[]'), 'frontend')) }}
     name: Web application
     runs-on: ubuntu-24.04
     steps:
@@ -174,6 +206,8 @@ jobs:
         run: bash scripts/check-released-schemas.sh
 
   report-export-browser:
+    needs: changes
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups || '[]'), 'go') || contains(fromJSON(needs.changes.outputs.groups || '[]'), 'frontend')) }}
     name: Browser reports and original exports
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -220,6 +254,8 @@ jobs:
         run: make photo-tabs-browser-test
 
   test:
+    needs: changes
+    if: *go-changed
     name: Linux tests
     runs-on: ubuntu-24.04
     steps:
@@ -307,6 +343,8 @@ jobs:
         uses: ./.github/actions/go-cache-save
 
   purego:
+    needs: changes
+    if: *go-changed
     name: Pure-Go SQLite
     runs-on: ubuntu-24.04
     env:
@@ -338,6 +376,8 @@ jobs:
         uses: ./.github/actions/go-cache-save
 
   lint:
+    needs: changes
+    if: *go-changed
     name: golangci-lint
     runs-on: ubuntu-24.04
     steps:
@@ -375,6 +415,8 @@ jobs:
         uses: ./.github/actions/go-cache-save
 
   windows:
+    needs: changes
+    if: *go-changed
     name: Windows ${{ matrix.goarch }}${{ matrix.shard && format(' shard {0}', matrix.shard) || '' }}
     strategy:
       fail-fast: false
