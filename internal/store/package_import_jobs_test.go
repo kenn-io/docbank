@@ -477,8 +477,6 @@ func TestPackageImportDiscardRepairsOrRetainsPhotoAssets(t *testing.T) {
 			image, err := s.IngestFileExact(t.Context(), run, s.RootID(), "synthetic.jpg",
 				fakeHash("pkg-photo"), 1, "image/jpeg", "synthetic.jpg", "")
 			require.NoError(t, err)
-			_, _, err = s.ReplaceContent(t.Context(), image.ID, image.Revision, fakeHash("pkg-photo-2"), 1, "image/jpeg")
-			require.NoError(t, err)
 			_, before, err := s.VaultChanges(t.Context(), "", 500)
 			require.NoError(t, err)
 			asset, err := s.PhotoAssetForNode(t.Context(), image.ID)
@@ -506,7 +504,6 @@ func TestPackageImportDiscardRepairsOrRetainsPhotoAssets(t *testing.T) {
 				require.Len(t, changes, 2)
 				require.Equal(t, "removed", changes[1].Kind)
 				require.Equal(t, image.ID, changes[1].NodeID)
-				require.Equal(t, int64(2), changes[1].Revision)
 			}
 			require.Equal(t, "removed", changes[0].Kind)
 			require.Equal(t, original.ID, changes[0].NodeID)

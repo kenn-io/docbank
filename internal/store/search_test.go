@@ -2271,12 +2271,28 @@ func TestRecordExtractionRejectsSameVersionFailureAfterSuccess(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
 	hash := fakeHash("aa")
-	_, err := s.CreateFile(ctx, s.RootID(), "stable.txt", hash, 10, "text/plain")
+	first, err := s.CreateFile(ctx, s.RootID(), "stable.txt", hash, 10, "text/plain")
+	require.NoError(t, err)
+	second, err := s.CreateFile(ctx, s.RootID(), "shared.txt", hash, 10, "text/plain")
+	require.NoError(t, err)
+	_, cursor, err := s.VaultChanges(ctx, "", 500)
 	require.NoError(t, err)
 	require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{
 		BlobHash: hash, Extractor: "plain-text", ExtractorVersion: 1,
 		Status: ExtractionOK, Text: "stable-extraction-authority",
 	}))
+	changes, cursor, err := s.VaultChanges(ctx, cursor, 500)
+	require.NoError(t, err)
+	require.Len(t, changes, 2)
+	require.Equal(t, []int64{first.ID, second.ID}, []int64{changes[0].NodeID, changes[1].NodeID})
+	require.Equal(t, "processed", changes[0].Kind)
+	require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{
+		BlobHash: hash, Extractor: "plain-text", ExtractorVersion: 1,
+		Status: ExtractionOK, Text: "stable-extraction-authority",
+	}))
+	changes, _, err = s.VaultChanges(ctx, cursor, 500)
+	require.NoError(t, err)
+	require.Empty(t, changes)
 	_, err = s.MigrateLegacyPlainText(ctx)
 	require.NoError(t, err)
 
@@ -2289,7 +2305,7 @@ func TestRecordExtractionRejectsSameVersionFailureAfterSuccess(t *testing.T) {
 	require.NoError(t, err)
 	hits, _, err := s.SearchPage(ctx, "stable-extraction-authority", 20)
 	require.NoError(t, err)
-	require.Len(t, hits, 1)
+	require.Len(t, hits, 2)
 }
 
 // Mutation caught: accepting a newer plain-text result after legacy authority

@@ -312,10 +312,17 @@ func TestPostCutoverExtractionPublishesRenditionAuthority(t *testing.T) {
 	})
 	initial, err := s.MigrateLegacyPlainText(t.Context())
 	require.NoError(t, err)
+	_, cursor, err := s.VaultChanges(t.Context(), "", 500)
+	require.NoError(t, err)
 	require.NoError(t, s.RecordExtraction(t.Context(), ExtractionResult{
 		BlobHash: hash, Extractor: "plain-text", ExtractorVersion: 1,
 		Status: ExtractionOK, Text: "repaired-legacy-authority",
 	}))
+
+	changes, _, err := s.VaultChanges(t.Context(), cursor, 500)
+	require.NoError(t, err)
+	require.Len(t, changes, 1, "migration owns publication, so the cache emits no duplicate")
+	require.Equal(t, "processed", changes[0].Kind)
 
 	var cached, builds, heads int
 	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM content_fts`).Scan(&cached))

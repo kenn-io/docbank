@@ -10,7 +10,6 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
@@ -104,19 +103,30 @@ func TestVaultChangesLaterPageFailure(t *testing.T) {
 	db, err := s.SQLiteDriver().Open(s.DBPath, sqlite.OpenOptions{Access: sqlite.ReadWriteExisting, TransactionMode: sqlite.Deferred})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
-	// A full first page is readable; pruning overtakes the next page.
-	_, err = db.Exec(`INSERT INTO vault_changes WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<502) SELECT i,'created',1,1 FROM n`)
+	node, err := s.CreateFile(t.Context(), s.RootID(), "processed.txt", testHash("processed"), 4, "text/plain")
 	require.NoError(t, err)
+	_, cursor, err := s.VaultChanges(t.Context(), "", 1)
+	require.NoError(t, err)
+	// Stage a real retention prefix before opening the stream, then commit it
+	// after the response starts so a slow insert cannot race the first poll.
+	tx, err := db.BeginTx(t.Context(), nil)
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback() }()
+	_, err = tx.Exec(`INSERT INTO vault_changes WITH RECURSIVE n(i) AS (SELECT 2 UNION ALL SELECT i+1 FROM n WHERE i<100002) SELECT i,'processed',?,1 FROM n`, node.ID)
+	require.NoError(t, err)
+	_, err = tx.Exec(`DELETE FROM vault_changes WHERE seq<=2`)
+	require.NoError(t, err)
+	response, err := ts.Client().Get(ts.URL + "/api/v1/changes?follow=true&after=" + url.QueryEscape(cursor))
+	require.NoError(t, err)
+	defer func() { _ = response.Body.Close() }()
+	require.Equal(t, 200, response.StatusCode)
+	require.NoError(t, tx.Commit())
 	_, head, err := s.VaultChanges(t.Context(), "", 1)
 	require.NoError(t, err)
-	_, err = db.Exec(`DELETE FROM vault_changes WHERE seq=501`)
-	require.NoError(t, err)
-	response, body := get(t, ts, "/api/v1/changes", nil)
-	require.Equal(t, 200, response.StatusCode)
-	lines := strings.Split(strings.TrimSpace(body), "\n")
-	require.Len(t, lines, 501)
+	scanner := bufio.NewScanner(response.Body)
+	require.True(t, scanner.Scan())
 	var terminal api.ChangeEvent
-	require.NoError(t, json.Unmarshal([]byte(lines[500]), &terminal))
+	require.NoError(t, json.Unmarshal(scanner.Bytes(), &terminal))
 	require.Equal(t, "error", terminal.Type)
 	require.NotNil(t, terminal.Error)
 	require.Equal(t, "changes_cursor_expired", terminal.Error.Code)
@@ -128,7 +138,9 @@ func TestVaultChangesUnreadClientShutdown(t *testing.T) {
 	_, s := newTestServer(t, nil)
 	db, err := s.SQLiteDriver().Open(s.DBPath, sqlite.OpenOptions{Access: sqlite.ReadWriteExisting, TransactionMode: sqlite.Deferred})
 	require.NoError(t, err)
-	_, err = db.Exec(`INSERT INTO vault_changes WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<100000) SELECT i,'created',1,1 FROM n`)
+	node, err := s.CreateFile(t.Context(), s.RootID(), "busy.txt", testHash("busy"), 4, "text/plain")
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO vault_changes WITH RECURSIVE n(i) AS (SELECT 2 UNION ALL SELECT i+1 FROM n WHERE i<100000) SELECT i,'processed',?,1 FROM n`, node.ID)
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
 	done := make(chan struct{})

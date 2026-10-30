@@ -468,10 +468,11 @@ func (s *Store) RecordExtraction(ctx context.Context, result ExtractionResult) e
 		}
 		var storedVersion int64
 		var storedStatus string
+		var storedText sql.NullString
 		err := tx.QueryRowContext(ctx, `
-			SELECT extractor_version,status FROM extracted_text
+			SELECT extractor_version,status,text FROM extracted_text
 			WHERE blob_hash=? AND extractor=?`, result.BlobHash, result.Extractor,
-		).Scan(&storedVersion, &storedStatus)
+		).Scan(&storedVersion, &storedStatus, &storedText)
 		if err == nil && result.ExtractorVersion < storedVersion {
 			return fmt.Errorf(
 				"extractor %s result version %d is older than stored version %d",
@@ -519,6 +520,27 @@ func (s *Store) RecordExtraction(ctx context.Context, result ExtractionResult) e
 				return publishErr
 			}
 			publishRendition = published
+		}
+		if !publishRendition && storedText != (sql.NullString{String: result.Text, Valid: result.Status == ExtractionOK}) {
+			rows, err := tx.QueryContext(ctx, `SELECT DISTINCT node_id FROM content_versions WHERE blob_hash=? ORDER BY node_id`, result.BlobHash)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = rows.Close() }()
+			var ids []int64
+			for rows.Next() {
+				var id int64
+				if err := rows.Scan(&id); err != nil {
+					return errors.Join(err, rows.Close())
+				}
+				ids = append(ids, id)
+			}
+			if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+				return err
+			}
+			if err := recordVaultChangesTx(ctx, tx, "processed", ids...); err != nil {
+				return err
+			}
 		}
 		if !publishRendition {
 			if _, err := tx.ExecContext(ctx,

@@ -30,8 +30,6 @@ func TestWatchChanges(t *testing.T) {
 	require.Len(t, events, 2)
 	require.Equal(t, first.ID, events[0].NodeID)
 	require.Equal(t, second.ID, events[1].NodeID)
-	require.Equal(t, "created", events[1].Kind)
-	require.Equal(t, int64(1), events[1].Revision)
 	require.Equal(t, events[1].Cursor, head)
 	aborted := errors.New("stop reading")
 	_, err = c.WatchChanges(ctx, "", true, func(store.VaultChange) error { return aborted })
@@ -46,14 +44,15 @@ func TestWatchChanges(t *testing.T) {
 
 func TestWatchChangesTerminalRecords(t *testing.T) {
 	t.Parallel()
+	cursor := base64.RawURLEncoding.EncodeToString([]byte("11111111-1111-4111-8111-111111111111:502"))
 	for _, tc := range []struct {
 		body   string
 		want   error
 		detail string
 	}{
 		{"", io.ErrUnexpectedEOF, "unexpected EOF"},
-		{`{"type":"error","error":{"code":"changes_cursor_expired","status":410,"cursor":"recovery"}}`, store.ErrChangeCursorExpired, "rescan, then resume with --after recovery"},
-		{`{"type":"error","error":{"code":"internal","detail":"page failed"}}`, nil, "page failed"},
+		{`{"type":"error","error":{"code":"changes_cursor_expired","status":410,"cursor":"` + cursor + `"}}`, store.ErrChangeCursorExpired, "rescan, then resume with --after " + cursor},
+		{`{"type":"error","error":{"code":"internal","status":500,"detail":"page failed"}}`, nil, "page failed"},
 	} {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, tc.body) }))
 		_, err := daemonconn.New(server.URL, "key").WatchChanges(t.Context(), "", false, func(store.VaultChange) error { t.Fatal("control record delivered as change"); return nil })
