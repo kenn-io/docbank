@@ -92,8 +92,10 @@ func writeProvenance(cmd *cobra.Command, page api.ProvenancePage) error {
 			_, _ = fmt.Fprintf(w, "Provenance:\t%s\n", fact.Identity)
 			_, _ = fmt.Fprintf(w, "Status:\t%s\n", state)
 			_, _ = fmt.Fprintf(w, "Ingest:\t%s at %s\n", fact.IngestID, fact.IngestStartedAt)
-			_, _ = fmt.Fprintf(w, "Source:\t%s / %s\n",
-				strconv.Quote(fact.SourceKind), strconv.Quote(fact.SourceDescription))
+			if fact.URLFetch == nil {
+				_, _ = fmt.Fprintf(w, "Source:\t%s / %s\n",
+					strconv.Quote(fact.SourceKind), strconv.Quote(fact.SourceDescription))
+			}
 			_, _ = fmt.Fprintf(w, "Original path:\t%s\n", strconv.Quote(fact.OriginalPath))
 			if f := fact.URLFetch; f != nil {
 				_, _ = fmt.Fprintf(w, "Requested URL:\t%s\nFinal URL:\t%s\nFetch time:\t%s\n", strconv.Quote(f.RequestedURL), strconv.Quote(f.FinalURL), strconv.Quote(f.FetchedAt))

@@ -112,7 +112,7 @@ func TestUploadCreatesReceiptAndIdempotentRetry(t *testing.T) {
 	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
 	var added api.UploadReceipt
 	require.NoError(t, json.Unmarshal([]byte(body), &added))
-	assert.NotContains(t, body, `"ingest_id"`)
+	assert.NotEmpty(t, added.IngestID)
 	assert.Equal(t, "added", added.Status)
 	assert.Equal(t, in.expectedHash, added.ComputedHash)
 	assert.Equal(t, in.expectedSize, added.ComputedSize)

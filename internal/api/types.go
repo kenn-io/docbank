@@ -886,6 +886,7 @@ type ContentVerification struct {
 // now names them. Status is "added" for a new node and "skipped" for an
 // idempotent retry that converged on an existing node.
 type UploadReceipt struct {
+	IngestID     string `json:"ingest_id,omitempty" format:"uuid"`
 	Status       string `json:"status" enum:"added,skipped"`
 	Node         Node   `json:"node"`
 	ComputedHash string `json:"computed_hash" pattern:"^[0-9a-f]{64}$"`

@@ -127,6 +127,7 @@ func addURL(cmd *cobra.Command, raw string) (rep api.IngestReport, retErr error)
 	}
 	if receipt.Status == "added" {
 		rep.Added = 1
+		rep.IngestID = receipt.IngestID
 		reportAction(cmd, c, "document_added", "", "", false)
 	} else {
 		rep.Skipped = 1

@@ -8686,6 +8686,7 @@ export interface UploadReceipt {
   /** @pattern ^[0-9a-f]{64}$ */
   computed_hash: string;
   computed_size: number;
+  ingest_id?: string;
   node: Node;
   status: UploadReceiptStatus;
 }

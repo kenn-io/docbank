@@ -119,7 +119,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request, d Deps, g *gate) {
 		status, httpStatus = "added", http.StatusCreated
 	}
 	writeJSON(w, httpStatus, UploadReceipt{
-		Status: status, Node: fromStoreNode(result.Node),
+		Status: status, Node: fromStoreNode(result.Node), IngestID: result.IngestID,
 		ComputedHash: result.ComputedHash, ComputedSize: result.ComputedSize,
 	})
 }

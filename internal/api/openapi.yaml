@@ -20965,6 +20965,9 @@ components:
         computed_size:
           format: int64
           type: integer
+        ingest_id:
+          format: uuid
+          type: string
         node:
           $ref: "#/components/schemas/Node"
         status:

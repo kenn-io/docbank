@@ -20,6 +20,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/apiclient"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 func TestAddURLImportsEvidenceAndSkips(t *testing.T) {
@@ -48,6 +50,15 @@ func TestAddURLImportsEvidenceAndSkips(t *testing.T) {
 	var report api.IngestReport
 	require.NoError(t, json.Unmarshal([]byte(out), &report))
 	assert.Equal(t, 1, report.Added)
+	require.NotEmpty(t, report.IngestID)
+	ingestID := report.IngestID
+	connection, err := daemonconn.Ensure(t.Context())
+	require.NoError(t, err)
+	members, err := connection.API().ListCollectionMembers(t.Context(), &apiclient.ListCollectionMembersRequestOptions{PathParams: &apiclient.ListCollectionMembersPath{ID: ingestID}})
+	require.NoError(t, err)
+	assert.Equal(t, ingestID, members.Collection.ID)
+	require.Len(t, members.Items, 1)
+	assert.Equal(t, "/cases/filings/filing.txt", members.Items[0].Path)
 	out, err = runCLI(t, "cat", "/cases/filings/filing.txt")
 	require.NoError(t, err)
 	assert.Equal(t, content, out)
@@ -60,6 +71,7 @@ func TestAddURLImportsEvidenceAndSkips(t *testing.T) {
 	var page api.ProvenancePage
 	require.NoError(t, json.Unmarshal([]byte(evidence), &page))
 	require.Len(t, page.Items, 1)
+	assert.Equal(t, ingestID, page.Items[0].IngestID)
 	fetch := page.Items[0].URLFetch
 	require.NotNil(t, fetch)
 	assert.Equal(t, requested, fetch.RequestedURL)
@@ -71,6 +83,7 @@ func TestAddURLImportsEvidenceAndSkips(t *testing.T) {
 	human, err := runCLI(t, "provenance", "/cases/filings/reviewed.txt")
 	require.NoError(t, err)
 	assert.Contains(t, human, "Requested URL:")
+	assert.NotContains(t, human, strconv.Quote(page.Items[0].SourceDescription))
 	assert.Contains(t, human, strconv.Quote(string(fetch.LastModified)))
 	assert.Contains(t, human, strconv.Quote(etag))
 	filename.Store(new("changed-name.txt"))
@@ -78,6 +91,7 @@ func TestAddURLImportsEvidenceAndSkips(t *testing.T) {
 	require.NoError(t, err, out)
 	require.NoError(t, json.Unmarshal([]byte(out), &report))
 	assert.Equal(t, 1, report.Skipped)
+	assert.NotContains(t, out, `"ingest_id"`)
 	after, err := runCLI(t, "stat", "/cases/filings/reviewed.txt", "--json")
 	require.NoError(t, err)
 	assert.Equal(t, before, after)

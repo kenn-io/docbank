@@ -216,6 +216,7 @@ func (r progressReader) Read(buf []byte) (int, error) {
 // UploadResult is the server's independently computed receipt for one remote
 // file. Node is populated for both a new import and an idempotent retry.
 type UploadResult struct {
+	IngestID     string
 	Node         store.Node
 	Added        bool
 	ComputedHash string
@@ -412,6 +413,9 @@ func (p *PreparedUpload) CommitSource(ctx context.Context, kind, description, or
 	}
 	if err != nil {
 		return result, err
+	}
+	if result.Added {
+		result.IngestID = ingestID.ID()
 	}
 	return result, nil
 }
