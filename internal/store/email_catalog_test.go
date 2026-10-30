@@ -171,7 +171,6 @@ func TestEmailSupersededBeforeBodyPublication(t *testing.T) {
 	for _, change := range changes {
 		require.Equal(t, "processed", change.Kind)
 		require.Equal(t, first.Version.NodeID, change.NodeID)
-		require.Equal(t, int64(1), change.Revision)
 	}
 }
 

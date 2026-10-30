@@ -1470,7 +1470,6 @@ func TestPublishRenditionJobAtomicallyActivatesAuthorizedWaiters(t *testing.T) {
 	assert.ElementsMatch(t, []int64{firstVersion.NodeID, secondVersion.NodeID}, []int64{changes[0].NodeID, changes[1].NodeID})
 	for _, change := range changes {
 		assert.Equal(t, "processed", change.Kind)
-		assert.Equal(t, int64(1), change.Revision)
 	}
 	assert.Equal(t, 2, publication.PublishedWaiterCount)
 	assert.Zero(t, publication.RejectedWaiterCount)

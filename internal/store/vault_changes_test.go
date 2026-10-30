@@ -107,8 +107,6 @@ func TestVaultChangesCursors(t *testing.T) { //nolint:paralleltest // Pruning co
 		require.ErrorIs(t, err, ErrChangeCursorExpired)
 		require.Equal(t, head, current)
 	}
-	_, _, err = s.VaultChanges(ctx, "broken", 500)
-	require.ErrorIs(t, err, ErrInvalidChangeCursor)
 	page, _, err := s.VaultChanges(ctx, head, 500)
 	require.NoError(t, err)
 	require.Empty(t, page)

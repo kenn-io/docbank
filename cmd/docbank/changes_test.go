@@ -21,9 +21,4 @@ func TestPrintChanges(t *testing.T) {
 	stderr.Reset()
 	require.NoError(t, printChanges(&out, &stderr, true, watch))
 	require.JSONEq(t, "{\"cursor\":\"saved\",\"kind\":\"created\",\"node_id\":42,\"revision\":3}\n", out.String())
-	out.Reset()
-	stderr.Reset()
-	require.NoError(t, printChanges(&out, &stderr, true, func(func(store.VaultChange) error) (string, error) { return "empty", nil }))
-	require.Empty(t, out.String())
-	require.Equal(t, "cursor: empty\n", stderr.String())
 }

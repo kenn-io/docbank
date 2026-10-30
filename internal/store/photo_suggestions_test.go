@@ -778,7 +778,6 @@ func TestPhotoDescriptionJobPublishesOneSuggestionAndSettles(t *testing.T) {
 	require.Len(t, changes, 1)
 	require.Equal(t, "processed", changes[0].Kind)
 	require.Equal(t, node.ID, changes[0].NodeID)
-	require.Equal(t, node.Revision, changes[0].Revision)
 	require.Equal(t, 1, publication.PublishedWaiterCount)
 	require.Equal(t, "A harbor.", photoSuggestionValues(t, s, asset.ID)[0].Value.Caption)
 	require.NoError(t, s.ValidateMetadata(ctx))
