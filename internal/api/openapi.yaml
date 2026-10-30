@@ -31971,7 +31971,6 @@ paths:
           in: header
           name: X-Docbank-URL-Fetch
           schema:
-            maxLength: 65536
             type: string
         - description: Expected lowercase hexadecimal SHA-256 of the file payload
           in: header

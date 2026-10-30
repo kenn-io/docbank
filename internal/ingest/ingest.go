@@ -392,10 +392,11 @@ func (ing *Ingester) prepareContent(
 // Commit grants application authority to a prepared upload and returns the
 // stable node for either a new import or an idempotent retry.
 func (p *PreparedUpload) Commit(ctx context.Context) (UploadResult, error) {
-	return p.commit(ctx, "upload", p.name, p.name)
+	return p.CommitSource(ctx, "upload", p.name, p.name)
 }
 
-func (p *PreparedUpload) commit(ctx context.Context, kind, description, origin string) (result UploadResult, retErr error) {
+// CommitSource publishes verified content with its source evidence.
+func (p *PreparedUpload) CommitSource(ctx context.Context, kind, description, origin string) (result UploadResult, retErr error) {
 	result = p.result
 	defer func() {
 		retErr = mutationCleanupResult(retErr, p.ing.cleanupLoose(result.ComputedHash))

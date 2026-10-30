@@ -54,11 +54,7 @@ Exit 1 if any file failed (each failure is listed).`,
 			return usageError(errors.New("URL import requires one URL and cannot use filters, --preflight, or --replace"))
 		}
 		if urlMode {
-			mode, err := progressModeFromFlag("add", addProgress)
-			if err != nil {
-				return err
-			}
-			rep, err := addURL(cmd, args[0], mode)
+			rep, err := addURL(cmd, args[0])
 			if err != nil {
 				return err
 			}

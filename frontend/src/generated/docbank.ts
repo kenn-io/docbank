@@ -9997,7 +9997,6 @@ name: string;
 export type UploadFileHeaders = {
 /**
  * JSON URL fetch evidence
- * @maxLength 65536
  */
 'X-Docbank-URL-Fetch'?: string;
 /**

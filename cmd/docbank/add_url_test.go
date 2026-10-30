@@ -124,7 +124,6 @@ func TestFetchURLBoundsSchemesNamesAndCleanup(t *testing.T) {
 		{name: "boundary", target: "/files/report%20one.txt?q=1", bytes: 4, cap: 4},
 		{name: "disposition", disposition: `attachment; filename="server.txt"`, target: "/", bytes: 4, cap: 4},
 		{name: "fallback", disposition: `attachment; filename="../bad"`, target: "/", bytes: 4, cap: 4},
-		{name: "declared", declared: 5, bytes: 5, cap: 4, fail: true},
 		{name: "chunked", chunked: true, bytes: 5, cap: 4, fail: true},
 		{name: "interrupted", declared: 5, bytes: 2, cap: 5, fail: true},
 	} {

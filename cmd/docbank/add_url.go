@@ -71,9 +71,6 @@ func fetchURL(ctx context.Context, client http.Client, raw string, allowHTTP boo
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("fetch returned HTTP %d", resp.StatusCode)
 	}
-	if resp.ContentLength > maxBytes {
-		return nil, fmt.Errorf("download exceeds %d bytes", maxBytes)
-	}
 	file, err := os.CreateTemp("", "docbank-url-*")
 	if err != nil {
 		return nil, err
@@ -107,11 +104,9 @@ func fetchURL(ctx context.Context, client http.Client, raw string, allowHTTP boo
 	return &urlDownload{file: file, name: name, digest: hex.EncodeToString(hash.Sum(nil)), mimeType: ingest.DetectMIME(name, prefix), size: size, fetch: fetch}, nil
 }
 
-func addURL(cmd *cobra.Command, raw string, mode backupProgressMode) (rep api.IngestReport, retErr error) {
+func addURL(cmd *cobra.Command, raw string) (rep api.IngestReport, retErr error) {
 	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	renderer := newIngestProgressRenderer(cmd.ErrOrStderr(), mode)
-	defer renderer.finish()
 	download, err := fetchURL(ctx, http.Client{}, raw, addAllowHTTP, addMaxBytes)
 	if err != nil {
 		return rep, err
@@ -126,12 +121,10 @@ func addURL(cmd *cobra.Command, raw string, mode backupProgressMode) (rep api.In
 			reportFailure(cmd, c, "add", retErr, false)
 		}
 	}()
-	reader := newPutProgressReader(ctx, download.file, download.size, "upload", renderer.base, addJSON)
-	receipt, err := c.UploadURL(ctx, addDest, download.name, download.mimeType, download.digest, download.size, reader, download.fetch)
+	receipt, err := c.UploadURL(ctx, addDest, download.name, download.mimeType, download.digest, download.size, download.file, download.fetch)
 	if err != nil {
 		return rep, err
 	}
-	reader.finish()
 	if receipt.Status == "added" {
 		rep.Added = 1
 		reportAction(cmd, c, "document_added", "", "", false)

@@ -51,7 +51,7 @@ func registerUploadOpenAPI(api huma.API) {
 				Description: "Stable destination directory node ID", Schema: &huma.Schema{Type: "integer", Format: "int64"}},
 			{Name: "name", In: openAPIQueryLocation, Required: true,
 				Description: "Virtual filename; must equal the multipart filename", Schema: &huma.Schema{Type: openAPIStringType, MinLength: new(1)}},
-			{Name: "X-Docbank-URL-Fetch", In: "header", Description: "JSON URL fetch evidence", Schema: &huma.Schema{Type: openAPIStringType, MaxLength: new(65536)}},
+			{Name: "X-Docbank-URL-Fetch", In: "header", Description: "JSON URL fetch evidence", Schema: &huma.Schema{Type: openAPIStringType}},
 			{Name: BlobHashHeader, In: "header", Required: true,
 				Description: "Expected lowercase hexadecimal SHA-256 of the file payload",
 				Schema:      &huma.Schema{Type: openAPIStringType, Pattern: "^[0-9a-f]{64}$"}},
@@ -84,10 +84,9 @@ func handleUpload(w http.ResponseWriter, r *http.Request, d Deps, g *gate) {
 		return
 	}
 	var fetch *ingest.URLFetch
-	if raw := r.Header.Get("X-Docbank-Url-Fetch"); raw != "" {
-		if len(raw) <= 64<<10 {
-			fetch = ingest.ParseURLFetch("url", raw)
-		}
+	raw := r.Header.Get("X-Docbank-Url-Fetch")
+	if raw != "" {
+		fetch = ingest.ParseURLFetch("url", raw)
 		if fetch == nil {
 			writeError(w, NewError(http.StatusUnprocessableEntity, "validation", "invalid URL fetch evidence"))
 			return
@@ -105,7 +104,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request, d Deps, g *gate) {
 		commit: func(prepared *ingest.PreparedUpload) error {
 			var err error
 			if fetch != nil {
-				result, err = prepared.CommitURL(r.Context(), *fetch)
+				result, err = prepared.CommitSource(r.Context(), "url", raw, fetch.RequestedURL)
 			} else {
 				result, err = prepared.Commit(r.Context())
 			}
