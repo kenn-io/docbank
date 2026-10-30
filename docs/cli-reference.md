@@ -28,6 +28,25 @@ does not start a local daemon. Commands never open the vault directly. `docbank 
 `docbank daemon stop` never start a daemon. See [Daemon](architecture/daemon.md)
 and [Ownership and concurrency](architecture/locking.md).
 
+## docbank duplicates docx
+
+```text
+docbank duplicates docx [--limit N] [--offset N] [--json]
+```
+
+Find live current DOCX files with identical package contents, including copies
+whose ZIP timestamps, compression, or entry order differ. This is a read-only
+report. Every original keeps its own SHA-256, size, node, and version.
+
+The default page contains up to 50 groups; `--limit` accepts 1–100. Each group
+previews at most 16 documents. JSON includes exact group and reference totals,
+pagination, and `unfingerprinted_references`: current DOCX documents awaiting
+metadata processing or lacking a fingerprint because inspection failed or
+exceeded its limits. An empty report with that count above zero is incomplete.
+
+See [DOCX package matches](usage/searching.md#docx-package-matches) for the
+comparison boundary and API.
+
 ## docbank kata
 
 ```text

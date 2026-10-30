@@ -55,7 +55,7 @@ const (
 // vault then re-extracts every original, so the bump must be deliberate. The
 // shared email decoder recipe contributes its own identity to the fingerprint.
 const sourceMetadataExtractorDescriptor = "docbank-source-metadata:pdfcpu-info+xmp+pages," +
-	"ooxml-core+custom,emailmime,ical,visual-container+jpeg-tiff-raf-cr3-exif+mp4-created,media-id3+authored-xmp:v21"
+	"ooxml-core+custom+docx-package-v1,emailmime,ical,visual-container+jpeg-tiff-raf-cr3-exif+mp4-created,media-id3+authored-xmp:v22"
 
 var (
 	// SourceMetadataImplementationID identifies the parsers qualified by fixtures,
@@ -795,6 +795,9 @@ func ExtractSourceMetadata(ctx context.Context, spoolParent string, data []byte)
 	case bytes.HasPrefix(data, []byte("%PDF-")):
 		collector.extractPDF(data)
 	case bytes.HasPrefix(data, []byte("PK\x03\x04")):
+		if err := collector.extractDOCXFingerprint(ctx, data); err != nil {
+			return document.SourceMetadataV1{}, err
+		}
 		collector.extractOOXML(data)
 	case bytes.HasPrefix(data, []byte("BEGIN:VCALENDAR")):
 		collector.extractCalendar(data)

@@ -3647,6 +3647,81 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    DOCXDuplicateGroup:
+      additionalProperties: false
+      properties:
+        fingerprint:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        reference_count:
+          format: int64
+          minimum: 2
+          type: integer
+        references:
+          items:
+            $ref: "#/components/schemas/Node"
+          maxItems: 16
+          type: array
+        references_truncated:
+          type: boolean
+      required:
+        - fingerprint
+        - reference_count
+        - references
+        - references_truncated
+      type: object
+      x-go-type: api.DOCXDuplicateGroup
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    DOCXDuplicatePage:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/DOCXDuplicatePage.json
+          format: uri
+          readOnly: true
+          type: string
+        items:
+          items:
+            $ref: "#/components/schemas/DOCXDuplicateGroup"
+          maxItems: 100
+          type: array
+        limit:
+          format: int64
+          maximum: 100
+          minimum: 1
+          type: integer
+        offset:
+          format: int64
+          minimum: 0
+          type: integer
+        total:
+          format: int64
+          minimum: 0
+          type: integer
+        total_references:
+          format: int64
+          minimum: 0
+          type: integer
+        unfingerprinted_references:
+          format: int64
+          minimum: 0
+          type: integer
+      required:
+        - items
+        - total
+        - total_references
+        - unfingerprinted_references
+        - limit
+        - offset
+      type: object
+      x-go-type: api.DOCXDuplicatePage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     DateCandidate:
       additionalProperties: false
       properties:
@@ -23415,6 +23490,42 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Read one exact live-current duplicate group
+  /api/v1/duplicates/docx:
+    get:
+      description: Ignores ZIP packaging only. Groups are ordered by the v1 package fingerprint; references retain raw SHA-256 and size. Counts exclude trash and history. Unfingerprinted references include pending, unsupported, or failed inspection. No originals are deleted or merged.
+      operationId: listDOCXDuplicates
+      parameters:
+        - explode: false
+          in: query
+          name: limit
+          schema:
+            default: 50
+            format: int64
+            maximum: 100
+            minimum: 1
+            type: integer
+        - explode: false
+          in: query
+          name: offset
+          schema:
+            default: 0
+            format: int64
+            minimum: 0
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DOCXDuplicatePage"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Find current DOCX files with identical package contents
   /api/v1/email-document-processing:
     post:
       operationId: requestEmailDocumentProcessing

@@ -118,6 +118,7 @@ on a running daemon) and authenticates with `X-Api-Key` /
 | `GET /versions/{version_id}/email/generations/{generation_id}/parts/{part_path}/{role}` | stream one verified raw-header, decoded-payload, or UTF-8 body artifact | Implemented |
 | `GET /content-references?sha256=&limit=&offset=` | find every stable node/version pair retaining a content hash | Implemented |
 | `GET /duplicates?limit=&offset=` | list live current documents sharing content, with exact counts and bounded reference previews | Implemented |
+| `GET /duplicates/docx?limit=&offset=` | list current DOCX package matches while preserving each original's raw identity; see [comparison rules](../usage/searching.md#docx-package-matches) | Implemented |
 | `GET\|POST /tags` · `GET /tags/by-name` · `GET\|PATCH\|DELETE /tags/{tag_id}` | list, resolve, create, rename, or delete stable tag definitions | Implemented |
 | `GET /nodes/{id}/tags` · `GET /tags/{tag_id}/nodes` · `PUT\|DELETE /nodes/{id}/tags/{tag_id}` · `PUT\|DELETE /path/tags/{tag_id}` | inspect and change tag assignments | Implemented |
 | `GET\|POST /saved-queries` · `GET\|PATCH\|DELETE /saved-queries/{saved_query_id}` | list, create, inspect, edit, or delete named query and literal highlight definitions | Implemented |

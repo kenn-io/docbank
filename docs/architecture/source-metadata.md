@@ -97,6 +97,33 @@ before bounded parsing:
 Storage and read failures remain retryable. Other formats larger than 64 MiB
 receive `input_too_large` until they have a bounded parser.
 
+## DOCX package fingerprints
+
+DOCX metadata includes `office.package.docx_sha256_v1` in the `office.package`
+namespace. It identifies identical package contents without replacing the
+original SHA-256 or changing stored bytes. All entry names and all uncompressed
+bytes contribute, including properties, styles, comments, tracked changes,
+images, embedded files, and signatures. ZIP timestamps, compression, entry order,
+comments, and extra header fields do not contribute. XML is not normalized.
+
+The v1 digest starts with `docbank-docx-package-v1` followed by a zero byte.
+Entries follow bytewise name order. Each contributes its name length as an
+unsigned 64-bit big-endian integer, name bytes, uncompressed length in the same
+integer format, and complete uncompressed bytes. Directory entries participate.
+
+The shared format detector checks the DOCX markers, unique safe entry names,
+supported compression, lengths, and CRCs. Fingerprinting accepts sources through
+64 MiB and uses the detector's limits of 10,000 entries, 100 MiB per expanded
+entry, and 500 MiB total expanded content. Encrypted, malformed, and over-limit
+packages receive no fingerprint. A candidate containing `word/document.xml`
+that fails inspection receives `package_fingerprint_unavailable`.
+
+The daemon's existing metadata backfill computes this field for retained
+originals after the extractor changes. The duplicate query scans checksum-verified
+active metadata for current live DOCX references and reports missing fingerprints.
+It does not reread originals during a query, rewrite imports, delete files, or
+change exact-byte duplicate grouping. See [DOCX package matches](../usage/searching.md#docx-package-matches).
+
 ## Generations and reads
 
 An extractor fingerprint identifies the complete local parser bundle. A parser

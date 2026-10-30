@@ -2977,6 +2977,58 @@ func (c *Client) GetDuplicateContentByHash(ctx context.Context, options *GetDupl
 	return responseParser(ctx, resp)
 }
 
+// ListDOCXDuplicates Find current DOCX files with identical package contents
+func (c *Client) ListDOCXDuplicates(ctx context.Context, options *ListDOCXDuplicatesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListDOCXDuplicatesResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"limit":  {Style: "form", Explode: &[]bool{false}[0]},
+		"offset": {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/duplicates/docx",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListDOCXDuplicatesResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListDOCXDuplicatesResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListDOCXDuplicatesResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ListDOCXDuplicatesErrorResponse](resp, "ListDOCXDuplicatesErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/duplicates/docx")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // RequestEmailDocumentProcessing Request ordinary consent-aware attachment processing
 func (c *Client) RequestEmailDocumentProcessing(ctx context.Context, options *RequestEmailDocumentProcessingRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RequestEmailDocumentProcessingResponse, error) {
 	var err error
@@ -17426,6 +17478,37 @@ func (o *GetDuplicateContentByHashRequestOptions) GetHeader() (map[string]string
 	return nil, nil
 }
 
+// ListDOCXDuplicatesRequestOptions is the options needed to make a request to ListDOCXDuplicates.
+type ListDOCXDuplicatesRequestOptions struct {
+	Query *ListDOCXDuplicatesQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListDOCXDuplicatesRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListDOCXDuplicatesRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListDOCXDuplicatesRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListDOCXDuplicatesRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // RequestEmailDocumentProcessingRequestOptions is the options needed to make a request to RequestEmailDocumentProcessing.
 type RequestEmailDocumentProcessingRequestOptions struct {
 	Body *RequestEmailDocumentProcessingBody
@@ -27233,6 +27316,11 @@ type GetDuplicateContentByHashQuery struct {
 	Size   *int64  `json:"size,omitempty"`
 }
 
+type ListDOCXDuplicatesQuery struct {
+	Limit  *int64 `json:"limit,omitempty"`
+	Offset *int64 `json:"offset,omitempty"`
+}
+
 type ListEmailDocumentRelationsQuery struct {
 	ParentVersionID  *string `json:"parent_version_id,omitempty"`
 	ChildVersionID   *string `json:"child_version_id,omitempty"`
@@ -27736,6 +27824,10 @@ type ListDuplicateContentErrorResponse = Error
 type GetDuplicateContentByHashResponse = api.DuplicateContextGroup
 
 type GetDuplicateContentByHashErrorResponse = Error
+
+type ListDOCXDuplicatesResponse = api.DOCXDuplicatePage
+
+type ListDOCXDuplicatesErrorResponse = Error
 
 type RequestEmailDocumentProcessingResponse = document.EmailDocumentProcessingReceipt
 
@@ -29322,6 +29414,10 @@ type CustodianAssignment = api.CustodianAssignment
 type CustodianPage = api.CustodianPage
 
 type CustodianResolveRequest = api.CustodianResolveRequest
+
+type DOCXDuplicateGroup = api.DOCXDuplicateGroup
+
+type DOCXDuplicatePage = api.DOCXDuplicatePage
 
 type DateCandidate = report.DateCandidate
 
