@@ -804,6 +804,7 @@ Documentation browser checks use Microsoft's public Playwright image matching th
 Render PDF caches LibreOffice and Poppler installers by runner image, architecture, and workflow recipe.
 A cache miss downloads the packages and their missing dependencies.
 Only `main` pushes save automatically; pull requests only restore.
+Pull requests call `render-pdf.yml` through `render-pdf-pr.yml` with `cache-mode: read`.
 Explicit manual runs can save: dispatch Render PDF twice on the same branch and runner image to qualify cold and warm installs before merge.
 
 Go jobs restore build and module caches through `.github/actions/go-cache-restore`
