@@ -164,11 +164,7 @@ jobs:
           go test -tags fts5 -v -p 1 \
             ./internal/production/ ./internal/pdfproduction/ ./internal/processing/ \
             ./internal/api/ ./internal/daemonconn/ -run '^(TestAlign(QualifiedFont|FontProof)|TestNativeFont|TestInspectNativeTextFromInspection|TestRedaction|TestNativeRedactionRender|TestNumberedRedaction|TestNumberedDownload)' -count=1
-<<<<<<< HEAD
           if ! go test -tags fts5 -json ./cmd/docbank/ -run '^(TestNativePDF(Preparation|Redaction|RedactionRecovery)CLI|TestNumberedNativePDFCLI|TestNumberedRecipientPackageCLI)$' -count=1 > /tmp/native-redaction-proof.jsonl; then
-=======
-          if ! go test -tags fts5 -json ./cmd/docbank/ -run '^(TestNativePDF(Preparation|Redaction|RedactionRecovery)CLI|TestNumberedNativePDFCLI)$' -count=1 > /tmp/native-redaction-proof.jsonl; then
->>>>>>> 729443eef (fix(ci): retain numbered PDF renderer proofs)
             cat /tmp/native-redaction-proof.jsonl
             exit 1
           fi
@@ -177,12 +173,8 @@ jobs:
           import json, sys
           events = [json.loads(line) for line in open(sys.argv[1])]
           for name in ("TestNativePDFPreparationCLI", "TestNativePDFRedactionCLI",
-<<<<<<< HEAD
                        "TestNativePDFRedactionRecoveryCLI", "TestNumberedNativePDFCLI",
                        "TestNumberedRecipientPackageCLI"):
-=======
-                       "TestNativePDFRedactionRecoveryCLI", "TestNumberedNativePDFCLI"):
->>>>>>> 729443eef (fix(ci): retain numbered PDF renderer proofs)
               outcomes = [event["Action"] for event in events
                           if event.get("Test") == name and event["Action"] in ("pass", "fail", "skip")]
               if outcomes != ["pass"]:
