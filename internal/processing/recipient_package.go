@@ -15,7 +15,7 @@ import (
 
 	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/loadfile"
-	"go.kenn.io/docbank/internal/pdfstamp"
+	"go.kenn.io/docbank/internal/store"
 )
 
 const (
@@ -66,7 +66,7 @@ type RecipientPackageReceipt struct {
 }
 
 // ValidateRecipientDocuments admits public metadata before any PDF is opened.
-// Text descriptors are filled from the reviewed text by WriteRecipientPackage.
+// Text descriptors are pinned separately from each validated review before writing.
 func ValidateRecipientDocuments(documents []RecipientPackageDocument) error {
 	if len(documents) < 1 || len(documents) > MaxRecipientPackageDocuments {
 		return ErrRecipientPackageLimit
@@ -91,7 +91,10 @@ func ValidateRecipientDocuments(documents []RecipientPackageDocument) error {
 			}
 		}
 		for _, label := range d.Labels {
-			if len(label) == 0 || len(label) > pdfstamp.MaxLabelChars || !utf8.ValidString(label) || strings.ContainsAny(label, ",\r\n") || labels[label] {
+			if len(label) > store.MaxPackageLabelBytes {
+				return fmt.Errorf("%w: allocation %s label exceeds the recipient's %d-byte limit", ErrRecipientPackageInvalid, d.AllocationID, store.MaxPackageLabelBytes)
+			}
+			if len(label) == 0 || !utf8.ValidString(label) || strings.ContainsAny(label, ",\r\n") || labels[label] {
 				return fmt.Errorf("%w: allocation %s label %q cannot be preserved in OPT", ErrRecipientPackageInvalid, d.AllocationID, label)
 			}
 			labels[label] = true
@@ -130,7 +133,11 @@ func WriteRecipientPackage(ctx context.Context, out io.Writer, documents []Recip
 		return RecipientPackageReceipt{}, err
 	}
 	receipt := RecipientPackageReceipt{Contract: recipientPackageContract, DocumentCount: len(documents), Documents: slices.Clone(documents)}
-	receipt.DATProfile, receipt.OPTProfile = recipientProfiles()
+	var err error
+	receipt.DATProfile, receipt.OPTProfile, err = recipientProfiles()
+	if err != nil {
+		return receipt, err
+	}
 	writer := zip.NewWriter(&recipientBoundedWriter{ctx: ctx, out: out, remaining: MaxRecipientPackageBytes})
 	for i, d := range receipt.Documents {
 		if err := ctx.Err(); err != nil {
@@ -190,8 +197,14 @@ func writeRecipientDocument(ctx context.Context, writer *zip.Writer, d Recipient
 	if actual != d.PDF {
 		return d, ErrRecipientPackageIntegrity
 	}
-	d.Text, err = writeRecipientEntry(ctx, writer, fmt.Sprintf("VOL001/TEXT/%06d.txt", d.Ordinal), bytes.NewReader(text))
-	return d, err
+	actual, err = writeRecipientEntry(ctx, writer, fmt.Sprintf("VOL001/TEXT/%06d.txt", d.Ordinal), bytes.NewReader(text))
+	if err != nil {
+		return d, err
+	}
+	if actual != d.Text {
+		return d, ErrRecipientPackageIntegrity
+	}
+	return d, nil
 }
 
 func writeRecipientEntry(ctx context.Context, writer *zip.Writer, name string, reader io.Reader) (RecipientPackageFile, error) {

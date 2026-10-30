@@ -321,15 +321,17 @@ Create `selection.json` in the order the documents should appear:
 
 Paths are relative to the selection file; absolute paths are also accepted.
 Every allocation must be a completed numbered native redaction. Ordinary stamped
-exports are refused. Allocations and labels must be distinct, and labels containing
-commas or line breaks cannot be represented in OPT.
+exports are refused. Allocations and labels must be distinct. Labels must fit the
+recipient importer's 256-byte limit; commas and line breaks cannot be represented
+in OPT.
 
 ```sh
 docbank redaction package selection.json recipient.zip --json
 ```
 
-The command checks all local inputs before downloading any PDF. It then reads
-each document's inputs again and requires the same review digest. A changed file
+The command checks all local inputs and pins each reviewed text file's size and
+SHA-256 before downloading any PDF. It then reads each document's inputs again
+and requires the same review digest. A changed file
 is refused, never silently adopted. This reads each input twice while keeping
 only one full review and one downloaded PDF in memory or staging at a time.
 Supported v2 and v3 deliveries may be mixed. The daemon must hold the completed
@@ -358,8 +360,9 @@ directory beside the destination holds the growing ZIP and at most one PDF,
 up to 1 GiB combined plus metadata and filesystem overhead. Files on a memory-backed
 filesystem consume RAM beyond the renderer's RSS accounting.
 
-Publication never overwrites a destination. A failure removes staging and leaves
-no partial destination. If reporting fails after publication, the error names the
+Choose a destination outside the Docbank data directory. Publication never
+overwrites a destination. A failure removes staging and leaves no partial
+destination. If reporting fails after publication, the error names the
 saved file. A hard kill may leave a `docbank-recipient-*` directory beside the
 destination; after confirming the process has stopped, remove that exact directory
 and retry. Packaging does not retain its ZIP automatically; use `add` if wanted.

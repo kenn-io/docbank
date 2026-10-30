@@ -91,7 +91,9 @@ func publishRecipientPackage(ctx context.Context, cmd *cobra.Command, destinatio
 	if err != nil {
 		return err
 	}
-	if err = processing.VerifyRecipientPackage(ctx, stage.File, info.Size(), receipt); err != nil {
+	expected := receipt
+	expected.Documents = checked.Documents
+	if err = processing.VerifyRecipientPackage(ctx, stage.File, info.Size(), expected); err != nil {
 		return err
 	}
 	hash := sha256.New()

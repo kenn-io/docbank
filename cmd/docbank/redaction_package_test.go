@@ -81,6 +81,9 @@ func TestRecipientPackageRequiresFullPDFVerification(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
+			require.Equal(t, processing.RecipientPackageFile{
+				Path: "VOL001/TEXT/000001.txt", Size: 23, SHA256: redactionPDFHash([]byte("[REDACTED] KEEP SECRET\f")),
+			}, checked.Documents[0].Text)
 			destination := filepath.Join(t.TempDir(), "recipient.zip")
 			cmd := newRedactionPackageCommand()
 			cmd.SetOut(io.Discard)

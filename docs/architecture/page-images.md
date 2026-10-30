@@ -460,8 +460,10 @@ The saved-PDF qualification uses an upstream PDFium reader only in tests.
 The local `redaction package` command reads completed numbered artifacts through
 the existing daemon API and fully verifies each against a supplied review. It
 never captures source content or starts a render. All recorded metadata and local
-reviews are admitted before the first content request. Assembly re-reads each
-review and compares its pinned digest before calling the checked downloader.
+reviews are admitted before the first content request, including the size and
+SHA-256 of each review's sanitized text. Assembly re-reads each review and compares
+its pinned digest before calling the checked downloader. Both the writer and the
+final package check require the text to match its preflight identity.
 Only one staged PDF exists at a time, and the checked handle supplies the ZIP.
 
 The `native-pdf-recipient-package/v1` receipt binds public delivery identities,

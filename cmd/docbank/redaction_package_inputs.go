@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"go.kenn.io/docbank/document/redaction"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/processing"
@@ -111,6 +113,14 @@ func preflightRecipientPackage(ctx context.Context, c *daemonconn.Connection, se
 			return checked, redactionCLIError(err)
 		}
 		checked.Documents[i].ReviewSHA256 = review.SHA256
+		text, err := redaction.Text(review.Resolved)
+		if err != nil {
+			return checked, err
+		}
+		checked.Documents[i].Text = processing.RecipientPackageFile{
+			Path: fmt.Sprintf("VOL001/TEXT/%06d.txt", i+1), Size: int64(len(text)),
+			SHA256: fmt.Sprintf("%x", sha256.Sum256(text)),
+		}
 	}
 	return checked, nil
 }

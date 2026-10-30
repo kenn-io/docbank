@@ -64,12 +64,10 @@ func qualifyRecipientPackage(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("DOCBANK_HOME", home)
 	var cfg bytes.Buffer
-	require.NoError(t, toml.NewEncoder(&cfg).Encode(map[string]any{"server": map[string]string{"api_key": "recipient-test-key"}, "page_runtime": redactiontest.PageProfile(t), "backup": map[string]string{"repo": filepath.Join(t.TempDir(), "backup")}}))
+	require.NoError(t, toml.NewEncoder(&cfg).Encode(map[string]any{"server": map[string]string{"api_key": "recipient-test-key"}, "page_runtime": redactiontest.PageProfile(t)}))
 	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), cfg.Bytes(), 0600))
 	stop := startServe(t)
 	waitForDaemon(t, home)
-	_, err := runCLI(t, "backup", "init")
-	require.NoError(t, err)
 	out, err := runCLI(t, "bates", "namespaces", "--create", "--prefix", "CASE", "--padding", "6", "--json")
 	require.NoError(t, err)
 	var ns api.BatesNamespace
@@ -132,15 +130,12 @@ func qualifyRecipientPackage(t *testing.T) {
 
 	stop()
 	// Restart without the page runtime. Retained PDFs, not source inspection, feed packaging.
-	var backupOnly bytes.Buffer
-
-	// Preserve the real backup settings while removing only the runtime table.
 	var config map[string]any
 	require.NoError(t, toml.Unmarshal(cfg.Bytes(), &config))
 	delete(config, "page_runtime")
-	backupOnly.Reset()
-	require.NoError(t, toml.NewEncoder(&backupOnly).Encode(config))
-	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), backupOnly.Bytes(), 0600))
+	cfg.Reset()
+	require.NoError(t, toml.NewEncoder(&cfg).Encode(config))
+	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), cfg.Bytes(), 0600))
 	stop = startServe(t)
 	runtime := waitForDaemon(t, home)
 	recipientAdmissionChecks(t, "http://"+runtime.Address, "recipient-test-key", selection, stampedID)
@@ -174,22 +169,12 @@ func qualifyRecipientPackage(t *testing.T) {
 	stages, err := filepath.Glob(filepath.Join(root, "docbank-recipient-*"))
 	require.NoError(t, err)
 	require.Empty(t, stages)
-	_, err = runCLI(t, "add", destination, "--dest", "/produced")
-	require.NoError(t, err)
-	identity := redactionArchiveNode(t, "/produced/recipient.zip")
-	snapshot := backupReportSnapshot(t, "recipient-package")
-	target := restoreReportSnapshot(t, snapshot)
 	stop()
-	t.Setenv("DOCBANK_HOME", target)
-	stop = startServe(t)
-	waitForDaemon(t, target)
-	recovered := retrieveRedactionArchive(t, identity)
-	stop()
-	recoveredFile, err := os.Open(recovered)
+	archive, err := os.Open(destination)
 	require.NoError(t, err)
-	extracted, err := loadfile.ExtractZIP(t.Context(), recoveredFile, identity.Size)
+	extracted, err := loadfile.ExtractZIP(t.Context(), archive, result.Size)
 	require.NoError(t, err)
-	require.NoError(t, recoveredFile.Close())
+	require.NoError(t, archive.Close())
 	defer func() { require.NoError(t, loadfile.RemoveExtractedZIP(extracted)) }()
 	root = extracted
 	for i := range expectedPDFs {

@@ -9,11 +9,14 @@ import (
 	"go.kenn.io/docbank/internal/loadfile"
 )
 
-func recipientProfiles() (loadfile.Profile, loadfile.Profile) {
-	dat, _ := loadfile.ReadProfile("dat-concordance-v1")
+func recipientProfiles() (loadfile.Profile, loadfile.Profile, error) {
+	dat, err := loadfile.ReadProfile("dat-concordance-v1")
+	if err != nil {
+		return dat, loadfile.Profile{}, err
+	}
 	dat.Columns = []string{"DOCID", "LABELSET", "BEGBATES", "ENDBATES", "PDF", "TEXT", "PAGECOUNT"}
-	opt, _ := loadfile.ReadProfile("opt-standard-v1")
-	return dat, opt
+	opt, err := loadfile.ReadProfile("opt-standard-v1")
+	return dat, opt, err
 }
 
 func recipientMapping(columns []string) loadfile.Mapping {
@@ -44,7 +47,10 @@ func recipientImages(documents []RecipientPackageDocument) []loadfile.ImageRef {
 }
 
 func recipientMetadata(documents []RecipientPackageDocument) ([][]byte, error) {
-	dat, opt := recipientProfiles()
+	dat, opt, err := recipientProfiles()
+	if err != nil {
+		return nil, err
+	}
 	records := make([]loadfile.Record, len(documents))
 	for i, d := range documents {
 		records[i] = loadfile.Record{DocID: d.DocumentID, RowOrdinal: i + 1, ColumnOrder: dat.Columns}

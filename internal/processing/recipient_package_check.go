@@ -102,7 +102,10 @@ func recipientZIPError(err error) error {
 }
 
 func checkRecipientMetadata(receipt RecipientPackageReceipt, data [][]byte) error {
-	dat, opt := recipientProfiles()
+	dat, opt, err := recipientProfiles()
+	if err != nil {
+		return err
+	}
 	if receipt.Contract != recipientPackageContract || receipt.DocumentCount != len(receipt.Documents) ||
 		!reflect.DeepEqual(receipt.DATProfile, dat) || !reflect.DeepEqual(receipt.OPTProfile, opt) ||
 		receipt.LoadFile.Path != "VOL001/DATA.DAT" || receipt.PageMap.Path != "VOL001/DATA.OPT" || receipt.Mapping.Path != "mapping.json" {

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"testing"
 
@@ -21,7 +22,19 @@ func recipientDocuments() []RecipientPackageDocument {
 		AllocationID: "11111111-1111-4111-8111-111111111111", NamespaceID: "22222222-2222-4222-8222-222222222222",
 		ArtifactManifestSHA256: strings.Repeat("a", 64), RecipeSHA256: strings.Repeat("b", 64), ReviewSHA256: strings.Repeat("c", 64),
 		PageCount: 2, Labels: []string{"CASE000101", "CASE000102"},
-		PDF: RecipientPackageFile{Path: "VOL001/PDF/000001.pdf", Size: 3, SHA256: fmt.Sprintf("%x", sha256.Sum256([]byte("PDF")))}}}
+		Text: RecipientPackageFile{Path: "VOL001/TEXT/000001.txt", Size: 12, SHA256: fmt.Sprintf("%x", sha256.Sum256([]byte("SAFE\fSECOND\f")))},
+		PDF:  RecipientPackageFile{Path: "VOL001/PDF/000001.pdf", Size: 3, SHA256: fmt.Sprintf("%x", sha256.Sum256([]byte("PDF")))}}}
+}
+
+func TestRecipientPackageRejectsUnreviewedText(t *testing.T) {
+	t.Parallel()
+	source := &observedRecipientSource{Reader: strings.NewReader("PDF")}
+	var out bytes.Buffer
+	_, err := WriteRecipientPackage(t.Context(), &out, recipientDocuments(), func(context.Context, int) (io.ReadCloser, []byte, error) {
+		return source, []byte("LEAK\fSECOND\f"), nil
+	})
+	require.ErrorIs(t, err, ErrRecipientPackageIntegrity)
+	require.True(t, source.closed)
 }
 
 func TestRecipientPackage(t *testing.T) {
@@ -108,6 +121,7 @@ func TestRecipientPackageRejectsChangedMetadata(t *testing.T) {
 				return io.NopCloser(strings.NewReader("PDF")), []byte("SAFE\fSECOND\f"), nil
 			})
 			require.NoError(t, err)
+			pinned := slices.Clone(receipt.Documents)
 			z, err := zip.NewReader(bytes.NewReader(original.Bytes()), int64(original.Len()))
 			require.NoError(t, err)
 			var rewritten bytes.Buffer
@@ -130,8 +144,10 @@ func TestRecipientPackageRejectsChangedMetadata(t *testing.T) {
 					receipt.Mapping = recipientFile(f.Name, data)
 				case name == "text" && f.Name == "VOL001/TEXT/000001.txt":
 					data = []byte("LEAK\fSECOND\f")
+					receipt.Documents[0].Text = recipientFile(f.Name, data)
 				case name == "PDF" && f.Name == "VOL001/PDF/000001.pdf":
 					data = []byte("BAD")
+					receipt.Documents[0].PDF = recipientFile(f.Name, data)
 				}
 				if f.Name == "receipt.json" {
 					data, err = canonical.Marshal(receipt)
@@ -145,7 +161,9 @@ func TestRecipientPackageRejectsChangedMetadata(t *testing.T) {
 				require.NoError(t, err)
 			}
 			require.NoError(t, writer.Close())
-			require.ErrorIs(t, VerifyRecipientPackage(t.Context(), bytes.NewReader(rewritten.Bytes()), int64(rewritten.Len()), receipt), ErrRecipientPackageIntegrity)
+			expected := receipt
+			expected.Documents = pinned
+			require.ErrorIs(t, VerifyRecipientPackage(t.Context(), bytes.NewReader(rewritten.Bytes()), int64(rewritten.Len()), expected), ErrRecipientPackageIntegrity)
 		})
 	}
 }
@@ -159,7 +177,8 @@ func (r unreadRecipientArchive) ReadAt([]byte, int64) (int, error) {
 
 func TestRecipientPackageReadBound(t *testing.T) {
 	t.Parallel()
-	require.ErrorIs(t, VerifyRecipientPackage(t.Context(), unreadRecipientArchive{t}, MaxRecipientPackageBytes+1, RecipientPackageReceipt{}), ErrRecipientPackageLimit)
+	receipt := RecipientPackageReceipt{Documents: recipientDocuments()}
+	require.ErrorIs(t, VerifyRecipientPackage(t.Context(), unreadRecipientArchive{t}, MaxRecipientPackageBytes+1, receipt), ErrRecipientPackageLimit)
 }
 
 type observedRecipientSource struct {
@@ -197,6 +216,7 @@ func recipientTestDocuments(count, pages int) []RecipientPackageDocument {
 		}
 		d.DocumentID = d.Labels[0]
 		d.PDF.Path = fmt.Sprintf("VOL001/PDF/%06d.pdf", i+1)
+		d.Text.Path = fmt.Sprintf("VOL001/TEXT/%06d.txt", i+1)
 		docs = append(docs, d)
 	}
 	return docs
