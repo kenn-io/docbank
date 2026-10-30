@@ -440,6 +440,135 @@ func TestWatchIncompleteRunnerRecoveryPreservesNotificationError(t *testing.T) {
 }
 
 func TestWatchTagBlockRestoresRemainingFailure(t *testing.T) {
+	for _, failure := range []string{"replaced root", "trashed node"} {
+		for _, action := range []string{"scan recovery", "runner recovery", "runner cancellation"} {
+			t.Run(failure+"/"+action, func(t *testing.T) {
+				watcher, root, ing, source, _ := watcherFinalPair(t)
+				watcher.config.Tags = []string{"receipts"}
+				require.ErrorAs(t, watcher.scan(t.Context(), root), new(*store.TagResolutionError))
+				wantSourceError := "was replaced"
+				if failure == "replaced root" {
+					require.NoError(t, os.Rename(source, filepath.Join(t.TempDir(), "old-source")))
+					require.NoError(t, os.Mkdir(source, 0o700))
+				} else {
+					wantSourceError = "maps to trashed node"
+					node, err := ing.Store.NodeByPath(t.Context(), "/archive/a.md")
+					require.NoError(t, err)
+					_, _, err = ing.Store.Trash(t.Context(), node.ID, node.Revision)
+					require.NoError(t, err)
+					require.NoError(t, os.WriteFile(filepath.Join(source, "a.md"), []byte("edited after trash"), 0o600))
+				}
+				if action == "scan recovery" {
+					for range 2 {
+						err := watcher.scan(t.Context(), root)
+						assert.ErrorAs(t, err, new(*store.TagResolutionError), "missing tags must survive later source failures")
+						assert.ErrorContains(t, err, wantSourceError)
+					}
+					_, err := ing.Store.CreateTag(t.Context(), "receipts")
+					require.NoError(t, err)
+					err = watcher.scan(t.Context(), root)
+					require.ErrorContains(t, err, wantSourceError)
+					_, tagBlocked := errors.AsType[*store.TagResolutionError](err)
+					assert.False(t, tagBlocked, "tag recovery must expose the remaining source failure")
+					return
+				}
+
+				// The existing step helper expects every scan to continue. This
+				// runner must also expose its terminal error after tag recovery.
+				watcher.config.CaptureOnChange = false
+				watcher.config.ScanInterval = config.Duration(time.Millisecond)
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				supervisor := jobs.New(ctx, slog.New(slog.DiscardHandler))
+				ready, resume := make(chan struct{}), make(chan struct{})
+				done := make(chan error, 1)
+				require.NoError(t, supervisor.Start("watch:notes", func(ctx context.Context) error {
+					err := watcher.run(ctx, root, func() {
+						select {
+						case ready <- struct{}{}:
+						case <-ctx.Done():
+							return
+						}
+						select {
+						case <-resume:
+						case <-ctx.Done():
+						}
+					})
+					done <- err
+					return err
+				}))
+				t.Cleanup(func() {
+					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+					defer cancel()
+					require.NoError(t, supervisor.Shutdown(ctx))
+				})
+				for scan := range 3 {
+					select {
+					case <-ready:
+					case err := <-done:
+						t.Fatalf("watch stopped before tag recovery or controlled cancellation: %v", err)
+					case <-time.After(5 * time.Second):
+						t.Fatal("watch did not reach the next scan")
+					}
+					if scan > 0 {
+						snapshots := supervisor.Snapshot()
+						require.Len(t, snapshots, 1)
+						assert.Equal(t, jobs.StatusRunning, snapshots[0].Status)
+						assert.ErrorAs(t, snapshots[0].Cause, new(*store.TagResolutionError))
+						assert.Contains(t, snapshots[0].Error, `tag "receipts"`)
+						assert.Contains(t, snapshots[0].Error, wantSourceError)
+					}
+					if scan == 2 {
+						if action == "runner cancellation" {
+							cancel()
+							break
+						}
+						_, err := ing.Store.CreateTag(t.Context(), "receipts")
+						require.NoError(t, err)
+					}
+					resume <- struct{}{}
+				}
+				select {
+				case err := <-done:
+					if action == "runner cancellation" {
+						require.ErrorIs(t, err, context.Canceled)
+					} else {
+						require.ErrorContains(t, err, wantSourceError)
+					}
+					_, tagBlocked := errors.AsType[*store.TagResolutionError](err)
+					assert.False(t, tagBlocked)
+				case <-time.After(time.Second):
+					t.Fatal("watch did not return promptly after tag recovery or cancellation")
+				}
+				shutdownCtx, stop := context.WithTimeout(context.Background(), time.Second)
+				defer stop()
+				require.NoError(t, supervisor.Shutdown(shutdownCtx))
+				if action == "runner recovery" {
+					snapshots := supervisor.Snapshot()
+					require.Len(t, snapshots, 1)
+					assert.Equal(t, jobs.StatusFailed, snapshots[0].Status)
+					assert.Contains(t, snapshots[0].Error, wantSourceError)
+					_, tagBlocked := errors.AsType[*store.TagResolutionError](snapshots[0].Cause)
+					assert.False(t, tagBlocked)
+				}
+			})
+		}
+	}
+	t.Run("cancellation during tagged scan", func(t *testing.T) {
+		watcher, root, _, source, _ := watcherFinalPair(t)
+		watcher.config.Tags = []string{"receipts"}
+		require.NoError(t, os.WriteFile(filepath.Join(source, "new.md"), []byte("pending"), 0o600))
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		watcher.beforeFile = func(ctx context.Context, _ string) error {
+			cancel()
+			return ctx.Err()
+		}
+		err := watcher.scan(ctx, root)
+		require.ErrorIs(t, err, context.Canceled)
+		_, tagBlocked := errors.AsType[*store.TagResolutionError](err)
+		assert.False(t, tagBlocked, "cancellation must take priority over missing tags")
+	})
 	for _, order := range []string{"source only", "notification first", "notification during block"} {
 		t.Run(order, func(t *testing.T) {
 			watcher, root, ing, _, _ := watcherFinalPair(t)

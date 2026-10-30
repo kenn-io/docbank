@@ -154,15 +154,13 @@ func TestBrowserJobListWatchTags(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return supervisor.Snapshot()[0].Error != "" && supervisor.Snapshot()[1].Status == jobs.StatusFailed
 	}, time.Second, time.Millisecond)
-	ts, live := newTestServer(t, func(d *api.Deps) {
+	ts, _ := newTestServer(t, func(d *api.Deps) {
 		d.Jobs = supervisor
 		d.Cfg.Watches = []config.WatchConfig{
 			{Name: "receipts", Source: t.TempDir(), Destination: "/receipts", Tags: []string{"receipts"}},
 			{Name: "zmissing", Source: t.TempDir(), Destination: "/missing", Tags: []string{"receipts"}},
 		}
 	})
-	_, err := live.CreateTag(t.Context(), "receipts")
-	require.NoError(t, err)
 	headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)}
 	resp, body := get(t, ts, "/api/v1/jobs", headers)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)

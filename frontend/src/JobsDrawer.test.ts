@@ -407,6 +407,7 @@ describe("background jobs drawer", () => {
           started_at: "2026-07-23T11:00:00Z",
           finished_at: "2026-07-23T11:02:00Z",
           error: "source is unavailable",
+          tags: ["receipts", "2026"],
         },
       ]),
     );
@@ -419,16 +420,17 @@ describe("background jobs drawer", () => {
     });
 
     expect(await screen.findByRole("region", { name: "Extracting text" })).toBeTruthy();
-    const failed = within(screen.getByRole("row", { name: /Watching inbox Failed/ }));
+    const failed = within(screen.getByRole("row", { name: /Watching inbox.*Failed/ }));
     expect(failed.getByText("Failed")).toBeTruthy();
     expect(failed.getByText("source is unavailable")).toBeTruthy();
+    expect(screen.getAllByText("Tags: receipts, 2026")).toHaveLength(1);
     expect(screen.getByText("1 running")).toBeTruthy();
 
     await fireEvent.click(screen.getByRole("button", { name: "Close background jobs" }));
     expect(close).toHaveBeenCalledOnce();
   });
 
-  it("shows durable job progress and watch tags and cancels through the shared Jobs route", async () => {
+  it("shows durable job progress and cancels through the shared Jobs route", async () => {
     const id = "f6730699-23b5-458a-b6d9-11b140ac1f92";
     const placeId = "0b9d8f43-6f0e-4b4a-9d55-2f1c5b2b7c11";
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
@@ -482,7 +484,6 @@ describe("background jobs drawer", () => {
           lane: "watch:inbox",
           status: "running",
           busy: true,
-          tags: ["receipts", "2026"],
           started_at: "2026-07-23T11:00:00Z",
         },
       ]),
@@ -495,7 +496,6 @@ describe("background jobs drawer", () => {
     });
 
     const progress = await screen.findByRole("progressbar", { name: "Importing photos progress" });
-    expect(screen.getAllByText("Tags: receipts, 2026")).toHaveLength(2);
     expect(progress.getAttribute("aria-valuenow")).toBe("75");
     expect(progress.getAttribute("aria-valuemax")).toBe("301");
     expect(screen.getByRole("region", { name: "Importing photos" })).toBeTruthy();

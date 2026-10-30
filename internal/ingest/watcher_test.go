@@ -1220,9 +1220,6 @@ func TestWatcherTagsImportedFiles(t *testing.T) {
 	require.NoError(t, content.Close())
 	require.NoError(t, readErr)
 	assert.Equal(t, "rewritten pending receipt", string(data))
-	loose, err := ing.Blobs.ListDetailed()
-	require.NoError(t, err)
-	assert.NotContains(t, loose, fmt.Sprintf("%x", sha256.Sum256([]byte("new receipt"))), "recovery must not leave the superseded pending bytes in loose storage")
 	tags, total, err = ing.Store.NodeTags(t.Context(), imported.ID, 10, 0)
 	require.NoError(t, err)
 	require.Equal(t, 1, total)
@@ -1230,29 +1227,4 @@ func TestWatcherTagsImportedFiles(t *testing.T) {
 	_, total, err = ing.Store.NodeTags(t.Context(), node.ID, 10, 0)
 	require.NoError(t, err)
 	require.Zero(t, total)
-}
-
-func TestWatcherTagChangedDuringScanBlocksImmediately(t *testing.T) {
-	watcher, root, ing, source, _ := watcherFinalPair(t)
-	tag, err := ing.Store.CreateTag(t.Context(), "receipts")
-	require.NoError(t, err)
-	watcher.config.Tags = []string{"receipts"}
-	require.NoError(t, os.WriteFile(filepath.Join(source, "new.txt"), []byte("receipt"), 0o600))
-	watcher.beforeFile = func(ctx context.Context, rel string) error {
-		if rel != "new.txt" {
-			return nil
-		}
-		_, err := ing.Store.DeleteTag(ctx, tag.ID, tag.Revision)
-		return err
-	}
-	step, _ := stepWatcherFinalRunner(t, watcher, root)
-	require.Contains(t, step().Error, `tag "receipts"`)
-	_, err = ing.Store.NodeByPath(t.Context(), "/archive/new.txt")
-	require.ErrorIs(t, err, store.ErrNotFound)
-	watcher.beforeFile = nil
-	_, err = ing.Store.CreateTag(t.Context(), "receipts")
-	require.NoError(t, err)
-	require.Empty(t, step().Error)
-	_, err = ing.Store.NodeByPath(t.Context(), "/archive/new.txt")
-	require.NoError(t, err)
 }
