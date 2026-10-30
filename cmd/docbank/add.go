@@ -32,7 +32,8 @@ var addCmd = &cobra.Command{
   docbank add https://example.com/filing.pdf --dest /inbox
   docbank add ./mail --include '*.eml' --exclude drafts --preflight
   docbank add report.pdf --dest /cases/acme --replace --json`,
-	Long: `Copy local files, folders, or one URL into the vault under --dest (default /inbox).
+	Long: `Copy local files, folders, or one URL into the vault under --dest
+(default /inbox).
 Missing destination directories are created. Re-adding the same content under
 the same name is skipped. Other name collisions add a suffixed sibling unless
 --replace adds a new version of the existing file instead.
