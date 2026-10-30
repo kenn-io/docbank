@@ -1731,11 +1731,9 @@ func TestExtractSourceMetadataSkipsExportOnlyTIFFKinds(t *testing.T) {
 
 func TestPDFEvidenceBackfillRetainsOriginalAndPriorEvidence(t *testing.T) {
 	t.Parallel()
-	signed := mediatest.PDFObjects("synthetic signed contract", []string{
-		"<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [4 0 R] >> >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>", "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >>", "<< /FT /Sig /T (Signature) /V << /ByteRange [0 10 20 000000] >> >>"})
-	signed = bytes.ReplaceAll(signed, []byte("000000]"), fmt.Appendf(nil, "%06d]", len(signed)-20))
-	active := mediatest.PDFObjects("synthetic active PDF", []string{
-		"<< /Type /Catalog /Pages 2 0 R /OpenAction << /S /JavaScript /JS (void 0) /Next << /S /Launch /F (example.txt) >> >> /AF [4 0 R] >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>", "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >>", "<< /Type /Filespec /F (note.txt) /EF << /F 5 0 R >> >>", "<< /Type /EmbeddedFile /Length 4 >>\nstream\nnote\nendstream"})
+	signed := mediatest.PDFSignatureFields("[5 0 R]", "<< /Subtype /Widget /Rect [0 0 1 1] /FT /Sig /T (Signature) /V << /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached /Contents <00> /ByteRange [0 10 20 LENGTH] >> >>")
+	active := mediatest.PDFWithActionsAndAttachment()
+	inherited := mediatest.PDFSignatureFields("[5 0 R]", "<< /FT /Sig /T (Parent) /V << /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached /Contents <00> /ByteRange [0 10 20 20] >> /Kids [6 0 R] >>", "<< /T (Child) /Parent 5 0 R /Kids [7 0 R] >>", "<< /Subtype /Widget /Rect [0 0 1 1] /Parent 6 0 R >>")
 	owner, err := mediatest.EncryptPDF(mediatest.PDF(), "", "owner-secret", 128)
 	require.NoError(t, err)
 	locked, err := mediatest.EncryptPDF(mediatest.PDF(), "open-secret", "owner-secret", 128)
@@ -1749,6 +1747,7 @@ func TestPDFEvidenceBackfillRetainsOriginalAndPriorEvidence(t *testing.T) {
 		coverage             *bool
 	}{
 		{name: "plain", payload: syntheticMetadataPDF(1)},
+		{name: "inherited signature", payload: inherited, signatures: 1, coverage: new(false)},
 		{name: "signed", payload: signed, signatures: 1, coverage: new(true)},
 		{name: "appended", payload: append(bytes.Clone(signed), []byte("\n% amendment\n")...), signatures: 1, coverage: new(false)},
 		{name: "actions and attachment", payload: active, embedded: 1, active: true},
@@ -1756,6 +1755,8 @@ func TestPDFEvidenceBackfillRetainsOriginalAndPriorEvidence(t *testing.T) {
 		{name: "locked", payload: locked, encrypted: true, locked: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			extracted, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), tc.payload)
+			require.NoError(t, err)
 			f := newEmailPipelineFixture(t)
 			target := f.add(t, "contract.pdf", string(tc.payload), "application/pdf")
 			canonical, _, err := document.MarshalSourceMetadataV1(emptySourceMetadata())
@@ -1771,6 +1772,8 @@ func TestPDFEvidenceBackfillRetainsOriginalAndPriorEvidence(t *testing.T) {
 			view, err := f.catalog.ContentVersionSourceMetadata(t.Context(), target.Version.ID)
 			require.NoError(t, err)
 			require.Equal(t, target.Version.BlobHash, view.Version.BlobHash)
+			require.ElementsMatch(t, extracted.Fields, view.Metadata.Fields)
+			require.ElementsMatch(t, extracted.Warnings, view.Metadata.Warnings)
 			facts := map[string]document.SourceMetadataValueV1{}
 			for _, field := range view.Metadata.Fields {
 				facts[field.Key] = field.Value

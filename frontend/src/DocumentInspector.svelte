@@ -104,13 +104,7 @@
       void api
         .getContentVersion(selected.versionID, { session: token, signal: controller.signal })
         .then((version) => {
-          if (
-            !controller.signal.aborted &&
-            version.id === selected.versionID &&
-            version.node_id === selected.nodeID &&
-            version.blob_hash === selected.blobHash
-          )
-            pdfMetadata = version.source_metadata;
+          if (!controller.signal.aborted) pdfMetadata = version.source_metadata;
         })
         .catch((cause) => {
           if (!controller.signal.aborted && cause instanceof APIError && cause.status === 401)
@@ -130,9 +124,9 @@
   const pdfLocked = $derived(
     pdfMetadata?.warnings.some((warning) => warning.source_field === "Password"),
   );
-  function pdfBoolean(key: string): string {
+  function pdfBoolean(key: string, yes = "Yes", no = "No"): string {
     const value = pdfValues.get(`pdf.info.${key}`)?.boolean;
-    return value == null ? "Unknown" : value ? "Yes" : "No";
+    return value == null ? "Unknown" : value ? yes : no;
   }
   const pdfRows = $derived([
     { label: "Encrypted", value: pdfBoolean("encrypted") },
@@ -151,12 +145,11 @@
       ? [
           {
             label: "Last signature",
-            value:
-              pdfValues.get("pdf.info.last_signature_covers_file")?.boolean == null
-                ? "Unknown"
-                : pdfValues.get("pdf.info.last_signature_covers_file")?.boolean
-                  ? "Covers the whole file"
-                  : "Does not cover the whole file",
+            value: pdfBoolean(
+              "last_signature_covers_file",
+              "Covers the whole file",
+              "Does not cover the whole file",
+            ),
           },
         ]
       : []),

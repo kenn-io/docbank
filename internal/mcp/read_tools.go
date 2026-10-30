@@ -542,7 +542,6 @@ type getDocumentInput struct {
 // pdfFactsOutput exposes only the declared PDF evidence, excluding other metadata.
 type pdfFactsOutput struct {
 	Encrypted               *bool    `json:"encrypted,omitempty"`
-	PermissionBits          *int64   `json:"permission_bits,omitempty"`
 	Permissions             []string `json:"permissions,omitempty"`
 	SignatureFieldCount     *int64   `json:"signature_field_count,omitempty"`
 	LastSignatureCoversFile *bool    `json:"last_signature_covers_file,omitempty"`
@@ -556,16 +555,10 @@ func pdfFacts(metadata *api.SourceMetadata) *pdfFactsOutput {
 		return nil
 	}
 	facts := &pdfFactsOutput{}
-	found := false
 	for _, field := range metadata.Fields {
-		if field.Namespace != "pdf.info" || field.Sensitive {
-			continue
-		}
 		switch field.Key {
 		case "pdf.info.encrypted":
 			facts.Encrypted = field.Value.Boolean
-		case "pdf.info.permission_bits":
-			facts.PermissionBits = field.Value.Integer
 		case "pdf.info.permissions":
 			facts.Permissions = field.Value.Strings
 		case "pdf.info.signature_field_count":
@@ -578,12 +571,9 @@ func pdfFacts(metadata *api.SourceMetadata) *pdfFactsOutput {
 			facts.HasJavaScript = field.Value.Boolean
 		case "pdf.info.has_launch_actions":
 			facts.HasLaunchActions = field.Value.Boolean
-		default:
-			continue
 		}
-		found = true
 	}
-	if !found {
+	if facts.Encrypted == nil {
 		return nil
 	}
 	return facts

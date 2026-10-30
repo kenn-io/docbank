@@ -709,7 +709,7 @@ func getDocumentSchemas() (schema, schema) {
 	}, "node_id", "content_version_id")
 	output := rootObjectSchema(withPrivateCache(schema{
 		"pdf_facts": objectSchema(schema{
-			"encrypted": booleanSchema(), "permission_bits": integerSchema(-2147483648, 2147483647),
+			"encrypted":             booleanSchema(),
 			"permissions":           arraySchema(stringSchema(255), 16),
 			"signature_field_count": integerSchema(0, 0), "last_signature_covers_file": booleanSchema(),
 			"embedded_file_count": integerSchema(0, 0), "has_javascript": booleanSchema(), "has_launch_actions": booleanSchema(),

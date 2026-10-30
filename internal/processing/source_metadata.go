@@ -1091,7 +1091,7 @@ func (c *metadataCollector) extractPDF(data []byte) {
 			c.boolean("pdf.info."+key, "pdf.info", key, *value)
 		}
 	}
-	for key, value := range map[string]*int64{"permission_bits": facts.PermissionBits, "signature_field_count": facts.SignatureFieldCount, "embedded_file_count": facts.EmbeddedFileCount} {
+	for key, value := range map[string]*int64{"signature_field_count": facts.SignatureFieldCount, "embedded_file_count": facts.EmbeddedFileCount} {
 		if value != nil {
 			c.integer("pdf.info."+key, "pdf.info", key, *value)
 		}

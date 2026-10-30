@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
@@ -13,7 +12,6 @@ import (
 // Nil observations could not be established; zero and false are observations.
 type PDFFacts struct {
 	Encrypted               *bool
-	PermissionBits          *int64
 	Permissions             []string
 	SignatureFieldCount     *int64
 	LastSignatureCoversFile *bool
@@ -23,72 +21,26 @@ type PDFFacts struct {
 }
 
 func readPDFFacts(ctx *model.Context, size int64, metadata *PDFMetadata) {
-	facts := PDFFacts{Encrypted: new(ctx.Encrypt != nil)}
+	facts := PDFFacts{Encrypted: new(ctx.Encrypt != nil), Permissions: []string{"Full access"}}
 	if ctx.E != nil {
-		facts.PermissionBits = new(int64(ctx.E.P))
-		facts.Permissions = pdfcpu.PermissionsList(ctx.E.P)
-	} else {
-		facts.Permissions = pdfcpu.PermissionsList(0)
+		facts.Permissions = pdfPermissionNames(ctx.E.P)
 	}
 	var embedded int64
 	var javascript, launch bool
-	visited := map[int]bool{}
-	var walk func(types.Object, int) error
-	walk = func(object types.Object, depth int) error {
-		if depth > maxPDFPageTreeDepth {
-			return errors.New("PDF object depth exceeded")
+	_, err := pdfWalkDicts(ctx, func(dictionary types.Dict) (bool, error) {
+		action, err := pdfDictName(ctx, dictionary, "S")
+		if err != nil {
+			return false, err
 		}
-		if ref, ok := object.(types.IndirectRef); ok {
-			number := ref.ObjectNumber.Value()
-			if visited[number] {
-				return nil
-			}
-			visited[number] = true
-			resolved, err := ctx.Dereference(ref)
-			if err != nil {
-				return fmt.Errorf("inspect PDF evidence: %w", err)
-			}
-			return walk(resolved, depth+1)
+		javascript = javascript || action == "JavaScript"
+		launch = launch || action == "Launch"
+		carries, err := pdfCarriesEmbeddedFile(ctx, dictionary)
+		if carries {
+			embedded++
 		}
-		if stream, ok := pdfStreamDictionary(object); ok {
-			object = stream.Dict
-		}
-		switch value := object.(type) {
-		case types.Dict:
-			action, err := pdfDictName(ctx, value, "S")
-			if err != nil {
-				return fmt.Errorf("inspect PDF evidence: %w", err)
-			}
-			javascript = javascript || action == "JavaScript"
-			launch = launch || action == "Launch"
-			carries, err := pdfCarriesEmbeddedFile(ctx, value)
-			if err != nil {
-				return fmt.Errorf("inspect PDF evidence: %w", err)
-			}
-			if carries {
-				embedded++
-			}
-			for _, child := range value {
-				if err := walk(child, depth+1); err != nil {
-					return fmt.Errorf("inspect PDF evidence: %w", err)
-				}
-			}
-		case types.Array:
-			for _, child := range value {
-				if err := walk(child, depth+1); err != nil {
-					return fmt.Errorf("inspect PDF evidence: %w", err)
-				}
-			}
-		}
-		return nil
-	}
-	names, namesErr := ctx.DereferenceDict(ctx.RootDict["Names"])
-	if namesErr == nil && names != nil {
-		tree, err := ctx.DereferenceDict(names["JavaScript"])
-		namesErr = err
-		javascript = tree != nil
-	}
-	if err := walk(*ctx.Root, 0); err != nil || namesErr != nil {
+		return false, err
+	})
+	if err != nil {
 		metadata.Issues = append(metadata.Issues, PDFMetadataIssue{SourceField: "Evidence"})
 	} else {
 		facts.EmbeddedFileCount, facts.HasJavaScript, facts.HasLaunchActions = new(embedded), new(javascript), new(launch)
@@ -121,8 +73,8 @@ func pdfSignatureFacts(ctx *model.Context, size int64) (count, endpoint int64, m
 		return 0, -1, false, fmt.Errorf("read signature fields: %w", err)
 	}
 	visited := map[int]bool{}
-	var walk func(types.Object, string, int) error
-	walk = func(object types.Object, inherited string, depth int) error {
+	var walk func(types.Object, string, types.Object, int) error
+	walk = func(object types.Object, inherited string, value types.Object, depth int) error {
 		if depth > maxPDFPageTreeDepth {
 			return errors.New("PDF field depth exceeded")
 		}
@@ -146,6 +98,9 @@ func pdfSignatureFacts(ctx *model.Context, size int64) (count, endpoint int64, m
 		if ft == "" {
 			ft = inherited
 		}
+		if ownValue, exists := field.Find("V"); exists {
+			value = ownValue
+		}
 		kids, err := ctx.DereferenceArray(field["Kids"])
 		if err != nil {
 			return fmt.Errorf("inspect PDF evidence: %w", err)
@@ -164,7 +119,7 @@ func pdfSignatureFacts(ctx *model.Context, size int64) (count, endpoint int64, m
 				continue
 			}
 			hasFields = true
-			if err := walk(kid, ft, depth+1); err != nil {
+			if err := walk(kid, ft, value, depth+1); err != nil {
 				return fmt.Errorf("inspect PDF evidence: %w", err)
 			}
 		}
@@ -172,7 +127,7 @@ func pdfSignatureFacts(ctx *model.Context, size int64) (count, endpoint int64, m
 			return nil
 		}
 		count++
-		signedEnd, err := pdfSignatureEndpoint(ctx, field["V"], size)
+		signedEnd, err := pdfSignatureEndpoint(ctx, value, size)
 		if err != nil {
 			malformed = true
 		} else {
@@ -181,7 +136,7 @@ func pdfSignatureFacts(ctx *model.Context, size int64) (count, endpoint int64, m
 		return nil
 	}
 	for _, field := range fields {
-		if err := walk(field, "", 0); err != nil {
+		if err := walk(field, "", nil, 0); err != nil {
 			return 0, -1, false, fmt.Errorf("read signature fields: %w", err)
 		}
 	}
@@ -219,4 +174,24 @@ func pdfSignatureEndpoint(ctx *model.Context, object types.Object, size int64) (
 		return -1, errors.New("signature range outside original")
 	}
 	return numbers[2] + numbers[3], nil
+}
+
+func pdfPermissionNames(bits int) []string {
+	var names []string
+	for _, permission := range []struct {
+		flag model.PermissionFlags
+		name string
+	}{
+		{model.PermissionPrintRev2, "Print"}, {model.PermissionModify, "Modify"}, {model.PermissionExtract, "Copy text and graphics"},
+		{model.PermissionModAnnFillForm, "Annotate"}, {model.PermissionFillRev3, "Fill forms"}, {model.PermissionExtractRev3, "Extract for accessibility"},
+		{model.PermissionAssembleRev3, "Assemble"}, {model.PermissionPrintRev3, "Print in high quality"},
+	} {
+		if model.PermissionFlags(bits)&permission.flag != 0 {
+			names = append(names, permission.name)
+		}
+	}
+	if len(names) == 0 {
+		return []string{"None"}
+	}
+	return names
 }

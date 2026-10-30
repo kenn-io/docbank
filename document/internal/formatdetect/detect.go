@@ -671,6 +671,10 @@ func checkPDFReferences(context *model.Context, allowEmptyPassword bool) (*model
 }
 
 func pdfHasExternalReference(context *model.Context) (bool, error) {
+	return pdfWalkDicts(context, func(dictionary types.Dict) (bool, error) { return pdfDictHasExternalReference(context, dictionary) })
+}
+
+func pdfWalkDicts(context *model.Context, visit func(types.Dict) (bool, error)) (bool, error) {
 	if context.Root == nil {
 		return false, errors.New("PDF catalog is missing")
 	}
@@ -694,7 +698,7 @@ func pdfHasExternalReference(context *model.Context) (bool, error) {
 				pending = append(pending, resolved)
 			}
 		case types.Dict:
-			external, err := pdfDictHasExternalReference(context, value)
+			external, err := visit(value)
 			if err != nil || external {
 				return external, err
 			}

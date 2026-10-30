@@ -38,7 +38,7 @@ The current extractor publishes these fields when the source contains them:
 | `media.container` | JPEG, PNG, WebP, GIF, MP4, TIFF-family images, RAF, CR3 | `media.container.format`, `.kind`, `.width_px`, `.height_px`, `.frame_count`, `.animated`, `.duration_ms`; `created` for MP4 |
 | `image.exif` | JPEG APP1, TIFF-family images and RAW, RAF, CR3 | `image.exif.camera_make`, `.camera_model`, `.body_serial_number`, `.lens_make`, `.lens_model`, `.orientation`, `.iso`, `.exposure_time_seconds`, `.f_number`, `.exposure_bias_ev`, `.focal_length_mm`, `.pixel_width`, `.pixel_height`, `.gps_latitude`, `.gps_longitude`, `.gps_timestamp`; `created`, `modified`, `creators`, `description` |
 | `xmp` | XMP packets in PDF | `title`, `creators`, `subject`, `description`, `keywords`, `language`, `created`, `modified` |
-| `pdf.info` | PDF Info dictionary and page tree | `title`, `creators`, `subject`, `keywords`, `created`, `modified`, `page_count` |
+| `pdf.info` | PDF Info, page tree, encryption, form fields, attachments, and actions | `title`, `creators`, `subject`, `keywords`, `created`, `modified`, `page_count`, `pdf.info.encrypted`, `.permissions`, `.signature_field_count`, `.last_signature_covers_file`, `.embedded_file_count`, `.has_javascript`, `.has_launch_actions` |
 | `office.core` | OOXML core and application properties | `title`, `creators`, `subject`, `description`, `keywords`, `language`, `created`, `modified`, `page_count`, `office.core.word_count` |
 | `office.custom` | OOXML custom properties | `office.custom.<normalized_name>` |
 | `email` | RFC 5322 messages | `email.from`, `.to`, `.cc`, `.bcc`, `.subject`, `.sent`, `.received`; `attachment_count` |
@@ -66,8 +66,7 @@ version, including saved results whose live document has changed.
 | Key under `pdf.info.` | Type | Meaning |
 | --- | --- | --- |
 | `encrypted` | boolean | The original has PDF encryption. |
-| `permission_bits` | integer | Raw declared permission bits from the encryption dictionary. |
-| `permissions` | string list | Declared permissions, or full access for an unencrypted PDF. |
+| `permissions` | string list | Allowed operations: Print, Modify, Copy text and graphics, Annotate, Fill forms, Extract for accessibility, Assemble, and Print in high quality. None means no declared operations; Full access means an unencrypted PDF. |
 | `signature_field_count` | integer | Logical signature fields, including unsigned fields and inherited field types, counted once per field rather than per widget. |
 | `last_signature_covers_file` | boolean | The latest declared signed revision's byte range ends at the original file length. |
 | `embedded_file_count` | integer | Reachable file specifications carrying an actual embedded stream, counted once across repeated references. |
