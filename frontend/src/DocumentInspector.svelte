@@ -96,13 +96,13 @@
   let pdfMetadata = $state<api.SourceMetadata>();
   $effect(() => {
     const selected = source;
-    const token = session;
     void authorizationRevision;
     const controller = new AbortController();
-    pdfMetadata = undefined;
-    if (selected && token && mediaType(selected.mimeType) === "application/pdf") {
+    const known = node?.current_version_id === selected?.versionID && node?.source_metadata;
+    pdfMetadata = (session && selected && known) || undefined;
+    if (!known && selected && session && mediaType(selected.mimeType) === "application/pdf") {
       void api
-        .getContentVersion(selected.versionID, { session: token, signal: controller.signal })
+        .getContentVersion(selected.versionID, { session, signal: controller.signal })
         .then((version) => {
           if (!controller.signal.aborted) pdfMetadata = version.source_metadata;
         })

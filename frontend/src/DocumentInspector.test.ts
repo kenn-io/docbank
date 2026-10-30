@@ -196,7 +196,7 @@ it("removes an assigned tag directly and disables removal while tags are unavail
   ).toBe(true);
 });
 
-it("shows PDF facts for the selected version and discards a late previous response", async () => {
+it("reuses matching PDF facts, fetches missing or historical facts, and discards a late response", async () => {
   const api = await import("./generated/docbank.js");
   const { selectedSourceFromNode } = await import("./selectedSource.js");
   const file = {
@@ -217,21 +217,21 @@ it("shows PDF facts for the selected version and discards a late previous respon
     extractor_fingerprint: "d".repeat(64),
     attachment: { node_id: 42, content_version_id: "22222222-2222-4222-8222-222222222222" },
     fields: [
+      { source_field: "encrypted", value: { kind: "boolean" as const, boolean: false } },
+      { source_field: "signature_field_count", value: { kind: "integer" as const, integer: 1 } },
       {
-        key: "pdf.info.encrypted",
-        namespace: "pdf.info",
-        source_field: "encrypted",
-        sensitive: false,
-        value: { kind: "boolean", boolean: false },
-      },
-      {
-        key: "pdf.info.last_signature_covers_file",
-        namespace: "pdf.info",
         source_field: "last_signature_covers_file",
-        sensitive: false,
-        value: { kind: "boolean", boolean: false },
+        value: { kind: "boolean" as const, boolean: false },
       },
-    ],
+      { source_field: "embedded_file_count", value: { kind: "integer" as const, integer: 0 } },
+      { source_field: "has_javascript", value: { kind: "boolean" as const, boolean: false } },
+      { source_field: "has_launch_actions", value: { kind: "boolean" as const, boolean: false } },
+    ].map((field) => ({
+      ...field,
+      key: `pdf.info.${field.source_field}`,
+      namespace: "pdf.info",
+      sensitive: false,
+    })),
     warnings: [],
   };
   const current: ContentVersion = {
@@ -284,10 +284,17 @@ it("shows PDF facts for the selected version and discards a late previous respon
     onprovenance: vi.fn(),
     onhistory: vi.fn(),
   };
-  const view = render(DocumentInspector, props);
+  const enriched = { ...file, source_metadata: previous.source_metadata };
+  const view = render(DocumentInspector, { ...props, node: enriched });
+  expect(request).not.toHaveBeenCalled();
+  expect(screen.getByRole("region", { name: "PDF facts" }).textContent).toContain(
+    "Covers the whole file",
+  );
+  await view.rerender(props);
   await vi.waitFor(() => expect(request).toHaveBeenCalledOnce());
   await view.rerender({
     ...props,
+    node: enriched,
     source: {
       ...source,
       key: "second",

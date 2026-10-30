@@ -654,10 +654,14 @@ func newReadToolDaemon(t *testing.T) *httptest.Server {
 			if pathPrefix == "" {
 				pathPrefix = "/"
 			}
+			name, mediaType := "synthetic.md", "text/markdown"
+			if pathPrefix == "/synthetic.pdf" {
+				name, mediaType = "synthetic.pdf", "application/pdf"
+			}
 			writeDaemonJSON(t, response, api.DocumentPage{SourcePresent: request.URL.Query().Get("source_present") == "true",
 				PathPrefix: pathPrefix, Sort: "path", Direction: "asc", PageSize: 1,
 				Items: []api.DocumentSummary{{NodeID: 7, ContentVersionID: testVersionID,
-					Path: "/synthetic.pdf", Name: "synthetic.pdf", MediaType: "application/pdf", Size: 12,
+					Path: "/" + name, Name: name, MediaType: mediaType, Size: 12,
 					ModifiedAt: "2026-08-28T00:00:00Z", ActiveRenditions: []api.DocumentRenditionIdentity{{
 						ProfileFingerprint: testProfileID, AttachmentID: testAttachmentID, BuildID: testBuildID,
 					}}}}, NextCursor: "next.token"})
@@ -670,12 +674,12 @@ func newReadToolDaemon(t *testing.T) *httptest.Server {
 				return
 			}
 			if !assert.Equal(t, api.DocumentIdentity{NodeID: 7, ContentVersionID: testVersionID,
-				Path: "/synthetic.pdf"}, input.Identities[0]) {
+				Path: "/synthetic.md"}, input.Identities[0]) {
 				return
 			}
 			writeDaemonJSON(t, response, api.DocumentSummaryResolveResponse{Items: []api.DocumentSummary{{
-				NodeID: 7, ContentVersionID: testVersionID, Path: "/synthetic.pdf", Name: "synthetic.pdf",
-				MediaType: "application/pdf", Size: 12, ModifiedAt: "2026-08-28T00:00:00Z",
+				NodeID: 7, ContentVersionID: testVersionID, Path: "/synthetic.md", Name: "synthetic.md",
+				MediaType: "text/markdown", Size: 12, ModifiedAt: "2026-08-28T00:00:00Z",
 				ActiveRenditions: []api.DocumentRenditionIdentity{{ProfileFingerprint: testProfileID,
 					AttachmentID: testAttachmentID, BuildID: testBuildID}},
 			}}})
@@ -696,7 +700,7 @@ func newReadToolDaemon(t *testing.T) *httptest.Server {
 		case "/api/v1/nodes/7/versions":
 			writeDaemonJSON(t, response, api.ContentVersionPage{Items: []api.ContentVersion{{ID: testVersionID,
 				NodeID: 7, BlobHash: strings.Repeat("a", 64), Size: 12,
-				MimeType: "application/pdf", RecordedAt: "2026-08-28T00:00:00Z"}},
+				MimeType: "text/markdown", RecordedAt: "2026-08-28T00:00:00Z"}},
 				Total: 1, Limit: 1, Offset: 0})
 		case "/api/v1/processing/source-fences/resolve":
 			var input api.DocumentSourceFenceResolveRequest
@@ -718,7 +722,7 @@ func newReadToolDaemon(t *testing.T) *httptest.Server {
 				Coverage:     api.DocumentSearchCoverage{ScopedDocuments: 1, CompleteDocuments: 1, State: "complete"},
 				Degradations: []string{"embedding_unavailable"}, Results: []api.DocumentSearchResult{{
 					VaultUID: testVaultID, NodeID: 7, ContentVersionID: testVersionID,
-					Rank: 1, Score: 1, Path: "/synthetic.pdf", Excerpt: "synthetic", LexicalRank: 1,
+					Rank: 1, Score: 1, Path: "/synthetic.md", Excerpt: "synthetic", LexicalRank: 1,
 					Evidence: []api.DocumentEvidenceReference{{Kind: "node_name"}},
 				}}})
 		case "/api/v1/renditions/windows":

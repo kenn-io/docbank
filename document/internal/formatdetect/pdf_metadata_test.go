@@ -108,7 +108,7 @@ func TestPDFMetadataReachableActionsAndAttachments(t *testing.T) {
 			if data == nil {
 				data = mediatest.PDFObjects("/JavaScript /Launch", []string{
 					"<< /Type /Catalog /Pages 2 0 R " + tc.catalog + " >>", "<< /Type /Pages /Count 1 /Kids [3 0 R] >>",
-					"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] " + tc.page + " >>", "<< /S /JavaScript /Next << /S /Launch >> >>",
+					"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] " + tc.page + " >>", "<< /S /JavaScript /JS (void 0) /Next << /S /Launch /F (x) >> >>",
 				})
 			}
 			metadata, err := formatdetect.ReadPDFMetadata(data)
