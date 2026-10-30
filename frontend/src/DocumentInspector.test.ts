@@ -287,9 +287,10 @@ it("reuses matching PDF facts, fetches missing or historical facts, and discards
   const enriched = { ...file, source_metadata: previous.source_metadata };
   const view = render(DocumentInspector, { ...props, node: enriched });
   expect(request).not.toHaveBeenCalled();
-  expect(screen.getByRole("region", { name: "PDF facts" }).textContent).toContain(
+  expect(screen.getByRole("group", { name: "Security" }).textContent).toContain(
     "Covers the whole file",
   );
+  expect((screen.getByRole("group", { name: "Security" }) as HTMLDetailsElement).open).toBe(false);
   await view.rerender(props);
   await vi.waitFor(() => expect(request).toHaveBeenCalledOnce());
   await view.rerender({
@@ -306,18 +307,17 @@ it("reuses matching PDF facts, fetches missing or historical facts, and discards
       collectionIDs: [],
     },
   });
-  expect((await screen.findByRole("region", { name: "PDF facts" })).textContent).toContain(
+  expect((await screen.findByRole("group", { name: "Security" })).textContent).toContain(
     "Does not cover the whole file",
   );
 
-  expect(screen.getByRole("region", { name: "PDF facts" }).textContent).not.toContain(
-    "Permissions",
-  );
+  expect(screen.getByRole("group", { name: "Security" }).textContent).not.toContain("Permissions");
+  expect((screen.getByRole("group", { name: "Security" }) as HTMLDetailsElement).open).toBe(true);
   expect(request.mock.calls[1]?.[0]).toBe("22222222-2222-4222-8222-222222222222");
   finish(previous);
   await Promise.resolve();
   await tick();
-  expect(screen.getByRole("region", { name: "PDF facts" }).textContent).toContain(
+  expect(screen.getByRole("group", { name: "Security" }).textContent).toContain(
     "Does not cover the whole file",
   );
 });

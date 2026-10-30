@@ -128,8 +128,14 @@
     const value = pdfValues.get(`pdf.info.${key}`)?.boolean;
     return value == null ? "Unknown" : value ? yes : no;
   }
+  // Open when the PDF changed after signing or can run code.
+  const pdfFlagged = $derived(
+    pdfValues.get("pdf.info.last_signature_covers_file")?.boolean === false ||
+      !!pdfValues.get("pdf.info.has_javascript")?.boolean ||
+      !!pdfValues.get("pdf.info.has_launch_actions")?.boolean,
+  );
   const pdfRows = $derived([
-    { label: "Encrypted", value: pdfBoolean("encrypted") },
+    { label: "Encrypted", value: pdfLocked ? "Yes, needs a password" : pdfBoolean("encrypted") },
     ...(pdfValues.get("pdf.info.encrypted")?.boolean
       ? [
           {
@@ -288,11 +294,7 @@
       {@render currentTags()}
     {/if}
     {#if pdfAvailable}
-      <section class="pdf-facts" aria-label="PDF facts">
-        <h3>PDF</h3>
-        <InspectorDetails facts={pdfRows} />
-        {#if pdfLocked}<p>Other PDF facts need the document password</p>{/if}
-      </section>
+      <TechnicalDetails summary="Security" open={pdfFlagged} facts={pdfRows} />
     {/if}
     <TechnicalDetails
       facts={[
@@ -429,8 +431,8 @@
   }
   .tags-row {
     display: grid;
-    grid-template-columns: 76px minmax(0, 1fr);
-    gap: var(--space-3);
+    grid-template-columns: 96px minmax(0, 1fr);
+    gap: var(--space-5);
     align-items: baseline;
     font-size: var(--font-size-sm);
   }
@@ -444,10 +446,6 @@
     flex-wrap: wrap;
     gap: var(--space-4);
     min-width: 0;
-  }
-  .pdf-facts {
-    display: grid;
-    gap: var(--space-4);
   }
   .current-details {
     display: grid;
