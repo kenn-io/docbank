@@ -219,7 +219,7 @@ it("keeps unsupported content on the verified-download fallback without a previe
     onauthfailure: vi.fn(),
   });
 
-  expect(await screen.findByText(/not an eligible text or raster image preview/i)).toBeTruthy();
+  expect(await screen.findByText(/This file has no preview/i)).toBeTruthy();
   expect(screen.getByRole("button", { name: "Download" })).toBeTruthy();
   expect(fetchMock).not.toHaveBeenCalled();
 });
@@ -260,23 +260,7 @@ it("loads one exact rendition only while Text is active and keeps hostile markup
   };
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
-    if (path.endsWith("/api/v1/pages/inventory"))
-      return new Response(
-        JSON.stringify({
-          runtime_available: false,
-          inventory: {
-            source: {
-              version_id: selected.versionID,
-              sha256: selected.blobHash,
-              size: selected.size,
-            },
-            page_count: 0,
-            frames: [],
-            recipes: [],
-            images: [],
-          },
-        }),
-      );
+    if (path === "/api/daemon/web-download") return new Promise<Response>(() => {});
     if (path.endsWith("/api/v1/renditions/text"))
       return new Response(
         JSON.stringify({
@@ -339,7 +323,7 @@ it("loads one exact rendition only while Text is active and keeps hostile markup
     onauthfailure: vi.fn(),
   };
   const view = render(VerifiedPreview, props);
-  await screen.findByText(/No page inventory/);
+  await screen.findByText(/Verifying 0 B/);
   expect(fetchMock).toHaveBeenCalledTimes(1);
   await fireEvent.click(screen.getByRole("tab", { name: "Text" }));
   expect(await screen.findByText(/<script>alert\('blocked'\)<\/script>/)).toBeTruthy();
@@ -399,7 +383,7 @@ it.each(["unprocessed", "unconfigured"])(
 );
 
 it.each([0, 64 * 1024 * 1024 + 1])(
-  "offers download without requesting pages for a %i-byte PDF",
+  "offers download without requesting preview bytes for a %i-byte PDF",
   async (size) => {
     const selected = {
       ...source(new Uint8Array([1]), "33333333-3333-4333-8333-333333333333", "application/pdf"),
@@ -412,7 +396,7 @@ it.each([0, 64 * 1024 * 1024 + 1])(
       authorizationRevision: 8,
       onauthfailure: vi.fn(),
     });
-    await screen.findByText(/Download the verified original/);
+    await screen.findByText(/Download the verified original|use verified download instead/);
     expect(screen.queryByRole("button", { name: /Refresh|Render/ })).toBeNull();
     expect(fetcher).not.toHaveBeenCalled();
   },

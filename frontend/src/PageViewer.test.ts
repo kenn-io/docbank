@@ -280,7 +280,7 @@ function renderedInventory(dpis = [144]) {
   return { inventory, imageResponse };
 }
 
-it("navigates mixed-size pages, retains the page across tabs, and revokes URLs on page changes and unmount", async () => {
+it("navigates mixed-size retained pages and revokes URLs on page changes and unmount", async () => {
   const fixture = renderedInventory(),
     revoke = vi.fn(),
     close = vi.fn();
@@ -317,7 +317,7 @@ it("navigates mixed-size pages, retains the page across tabs, and revokes URLs o
       );
     return response({ items: [], truncated: false });
   });
-  const view = render(VerifiedPreview, props);
+  const view = render(PageViewer, props);
   const first = await screen.findByRole("img", { name: "Verified page 1 of mixed.pdf" });
   expect(first.parentElement?.style.aspectRatio).toBe("10000 / 20000");
   expect(screen.getByRole("button", { name: "Previous page" }).hasAttribute("disabled")).toBe(true);
@@ -333,13 +333,6 @@ it("navigates mixed-size pages, retains the page across tabs, and revokes URLs o
   expect(await screen.findByRole("img", { name: "Verified page 2 of renamed.pdf" })).toBe(second);
   expect(second.parentElement?.style.width).toBe("288px");
   expect(revoke).not.toHaveBeenCalledWith("blob:page-2");
-  await fireEvent.click(screen.getByRole("tab", { name: "Duplicates" }));
-  expect(screen.queryByRole("img")).toBeNull();
-  expect(revoke).not.toHaveBeenCalledWith("blob:page-2");
-  await fireEvent.click(screen.getByRole("tab", { name: "Preview" }));
-  expect(await screen.findByRole("img", { name: "Verified page 2 of renamed.pdf" })).toBe(second);
-  expect(second.getAttribute("src")).toBe("blob:page-2");
-  expect(second.parentElement?.style.width).toBe("288px");
   expect(fetcher.mock.calls.filter(([url]) => String(url).includes("/pages/image"))).toHaveLength(
     2,
   );
@@ -448,10 +441,12 @@ for (const { dpis, expectedDPI, runtime, png = false } of [
       selectedImage = images[index]!;
       return fixture.imageResponse(index);
     });
-    render(VerifiedPreview, {
-      ...props,
-      source: png ? { ...source, mimeType: "image/png", name: "native.png" } : source,
-    });
+    if (png)
+      render(VerifiedPreview, {
+        ...props,
+        source: { ...source, mimeType: "image/png", name: "native.png" },
+      });
+    else render(PageViewer, props);
     await screen.findByRole("img", {
       name: `Verified page 1 of ${png ? "native.png" : "mixed.pdf"}`,
     });

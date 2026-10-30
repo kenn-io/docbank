@@ -264,7 +264,7 @@
         {#if tab.value === displayedTab || visitedTabs.includes(tab.value)}
           <div hidden={tab.value !== displayedTab}>
             {#if tab.value === "preview"}
-              {#if displayedSource.mimeType === "application/pdf" || displayedSource.mimeType === "image/png"}
+              {#if displayedSource.mimeType === "image/png"}
                 <PageViewer
                   {session}
                   source={displayedSource}
@@ -340,6 +340,13 @@
     justify-content: space-between;
     gap: var(--space-2);
   }
+  .tab-content {
+    height: min(40vh, 480px);
+    overflow: auto;
+  }
+  .tab-content > div:not([hidden]) {
+    height: 100%;
+  }
   .tab-content :global(.original-preview pre),
   .tab-content :global(.original-preview .image-frame),
   .tab-content :global(.verified-text pre) {
@@ -349,6 +356,11 @@
   }
   .tab-content :global(.original-preview pre) {
     padding-right: calc(14px + var(--space-3));
+  }
+  .tab-content :global(.original-preview pre),
+  .tab-content :global(.verified-text pre),
+  .tab-content :global(.page-scroll) {
+    max-height: none;
   }
   .tab-content :global(.original-preview .verified) {
     top: 2px;

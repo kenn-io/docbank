@@ -141,7 +141,7 @@
               controller.signal,
               () => undefined,
             );
-            if (fallback.kind === "image") URL.revokeObjectURL(fallback.url);
+            if (fallback.kind !== "text") URL.revokeObjectURL(fallback.url);
             else if (current) {
               originalFallback = true;
               text = fallback.text;
