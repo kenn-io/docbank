@@ -80,8 +80,15 @@ func TestNineReadToolHandlersReturnBoundedPrivateStructuredResults(t *testing.T)
 			check: func(t *testing.T, output map[string]any, result *sdkmcp.CallToolResult) {
 				t.Helper()
 				assert.Contains(t, resourceLinkURIs(result), canonicalTestRenditionURI())
-				assert.Equal(t, false, objectField(t, output, "pdf_facts")["encrypted"])
-				assert.EqualValues(t, 2, objectField(t, output, "pdf_facts")["signature_field_count"])
+				facts := objectField(t, output, "pdf_facts")
+				assert.Equal(t, true, facts["encrypted"])
+				assert.Equal(t, []any{"Print", "High-quality print flag"}, facts["permissions"])
+				assert.EqualValues(t, 2, facts["signature_field_count"])
+				assert.Equal(t, false, facts["last_signature_covers_file"])
+				assert.EqualValues(t, 3, facts["embedded_file_count"])
+				assert.Equal(t, true, facts["has_javascript"])
+				assert.Equal(t, true, facts["has_launch_actions"])
+				assert.NotContains(t, facts, "title")
 			}},
 		{name: "list_document_versions", arguments: map[string]any{"node_id": 7, "limit": 1, "offset": 0},
 			check: func(t *testing.T, output map[string]any, _ *sdkmcp.CallToolResult) {
@@ -675,8 +682,14 @@ func newReadToolDaemon(t *testing.T) *httptest.Server {
 		case "/api/v1/nodes/7":
 			writeDaemonJSON(t, response, api.Node{ID: 7, Name: "synthetic.pdf", Kind: "file",
 				SourceMetadata: &api.SourceMetadata{Fields: []document.SourceMetadataFieldV1{
-					{Key: "pdf.info.encrypted", Namespace: "pdf.info", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataBoolean, Boolean: new(false)}},
+					{Key: "pdf.info.encrypted", Namespace: "pdf.info", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataBoolean, Boolean: new(true)}},
 					{Key: "pdf.info.signature_field_count", Namespace: "pdf.info", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataInteger, Integer: new(int64(2))}},
+					{Key: "pdf.info.permissions", Namespace: "pdf.info", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataStringList, Strings: []string{"Print", "High-quality print flag"}}},
+					{Key: "pdf.info.last_signature_covers_file", Namespace: "pdf.info", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataBoolean, Boolean: new(false)}},
+					{Key: "pdf.info.embedded_file_count", Namespace: "pdf.info", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataInteger, Integer: new(int64(3))}},
+					{Key: "pdf.info.has_javascript", Namespace: "pdf.info", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataBoolean, Boolean: new(true)}},
+					{Key: "pdf.info.has_launch_actions", Namespace: "pdf.info", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataBoolean, Boolean: new(true)}},
+					{Key: "title", Namespace: "pdf.info", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: new("Synthetic PDF")}},
 				}},
 				CurrentVersionID: testVersionID, Size: 12, MimeType: "application/pdf",
 				ModifiedAt: "2026-08-28T00:00:00Z", Path: "/synthetic.pdf"})

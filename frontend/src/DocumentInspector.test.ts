@@ -205,10 +205,64 @@ it("shows PDF facts for the selected version and discards a late previous respon
     name: "contract.pdf",
     path: "/contract.pdf",
     mime_type: "application/pdf",
+    size: 651,
     current_version_id: "11111111-1111-4111-8111-111111111111",
     blob_hash: "a".repeat(64),
   };
   const source = selectedSourceFromNode(file, file.path);
+
+  const metadata: NonNullable<ContentVersion["source_metadata"]> = {
+    contract_version: "source-metadata/v1",
+    checksum: "c".repeat(64),
+    extractor_fingerprint: "d".repeat(64),
+    attachment: { node_id: 42, content_version_id: "22222222-2222-4222-8222-222222222222" },
+    fields: [
+      {
+        key: "pdf.info.encrypted",
+        namespace: "pdf.info",
+        source_field: "encrypted",
+        sensitive: false,
+        value: { kind: "boolean", boolean: false },
+      },
+      {
+        key: "pdf.info.last_signature_covers_file",
+        namespace: "pdf.info",
+        source_field: "last_signature_covers_file",
+        sensitive: false,
+        value: { kind: "boolean", boolean: false },
+      },
+    ],
+    warnings: [],
+  };
+  const current: ContentVersion = {
+    id: "22222222-2222-4222-8222-222222222222",
+    node_id: 42,
+    blob_hash: "b".repeat(64),
+    introduced_operation_id: "33333333-3333-4333-8333-333333333333",
+    node_revision: 2,
+    recorded_at: "2026-01-01T00:00:00Z",
+    size: 651,
+    transition_kind: "content_replace",
+    source_metadata: metadata,
+  };
+  const previous: ContentVersion = {
+    ...current,
+    id: file.current_version_id,
+    blob_hash: file.blob_hash,
+    node_revision: 1,
+    introduced_operation_id: "44444444-4444-4444-8444-444444444444",
+    transition_kind: "content_create",
+    source_metadata: {
+      ...metadata,
+      checksum: "e".repeat(64),
+      attachment: { node_id: 42, content_version_id: file.current_version_id },
+      fields: metadata.fields.map((field) =>
+        field.key === "pdf.info.last_signature_covers_file"
+          ? { ...field, value: { ...field.value, boolean: true } }
+          : field,
+      ),
+    },
+  };
   let finish!: (value: ContentVersion) => void;
   const request = vi
     .spyOn(api, "getContentVersion")
@@ -218,23 +272,7 @@ it("shows PDF facts for the selected version and discards a late previous respon
           finish = resolve;
         }),
     )
-    .mockResolvedValueOnce({
-      source_metadata: {
-        fields: [
-          {
-            key: "pdf.info.encrypted",
-            namespace: "pdf.info",
-            value: { kind: "boolean", boolean: false },
-          },
-          {
-            key: "pdf.info.last_signature_covers_file",
-            namespace: "pdf.info",
-            value: { kind: "boolean", boolean: false },
-          },
-        ],
-        warnings: [],
-      },
-    } as unknown as ContentVersion);
+    .mockResolvedValueOnce(current);
   const props = {
     node: file,
     path: file.path,
@@ -269,7 +307,7 @@ it("shows PDF facts for the selected version and discards a late previous respon
     "Permissions",
   );
   expect(request.mock.calls[1]?.[0]).toBe("22222222-2222-4222-8222-222222222222");
-  finish({} as ContentVersion);
+  finish(previous);
   await Promise.resolve();
   await tick();
   expect(screen.getByRole("region", { name: "PDF facts" }).textContent).toContain(

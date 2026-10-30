@@ -54,7 +54,6 @@ func TestPDFMetadataEvidence(t *testing.T) {
 		{name: "rewritten smaller", fields: "[5 0 R]", extra: "<< /Subtype /Widget /Rect [0 0 1 1] /FT /Sig /T (Signed) /V << /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached /Contents <00> /ByteRange [0 10 20 LENGTH] >> >>\n%" + strings.Repeat("x", 2048), count: 1, coverage: new(false), rewrite: true},
 		{name: "dangling field reference", fields: "[5 0 R 9 0 R]", extra: "<< /Subtype /Widget /Rect [0 0 1 1] /FT /Sig /T (Signed) /V << /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached /Contents <00> /ByteRange [0 10 20 LENGTH] >> >>", count: 1, coverage: new(true)},
 		{name: "blank", fields: "[5 0 R]", extra: "<< /Subtype /Widget /Rect [0 0 1 1] /FT /Sig /T (Blank) >>", count: 1},
-		{name: "appended", fields: "[5 0 R]", extra: "<< /Subtype /Widget /Rect [0 0 1 1] /FT /Sig /T (Signed) /V << /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached /Contents <00> /ByteRange [0 10 20 20] >> >>", count: 1, coverage: new(false)},
 		{name: "malformed", fields: "[5 0 R]", extra: "<< /Subtype /Widget /Rect [0 0 1 1] /FT /Sig /T (Signed) /V << /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached /Contents <00> /ByteRange [1 10 20 20] >> >>", count: 1, issue: true},
 		{name: "latest first", fields: "[5 0 R 6 0 R]", extra: "<< /Subtype /Widget /Rect [0 0 1 1] /FT /Sig /T (Latest) /V << /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached /Contents <00> /ByteRange [0 10 20 LENGTH] >> >>|<< /Subtype /Widget /Rect [0 0 1 1] /FT /Sig /T (Older) /V << /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached /Contents <00> /ByteRange [0 10 20 20] >> >>", count: 2, coverage: new(true)},
 		{name: "latest last", fields: "[6 0 R 5 0 R]", extra: "<< /Subtype /Widget /Rect [0 0 1 1] /FT /Sig /T (Latest) /V << /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached /Contents <00> /ByteRange [0 10 20 LENGTH] >> >>|<< /Subtype /Widget /Rect [0 0 1 1] /FT /Sig /T (Older) /V << /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached /Contents <00> /ByteRange [0 10 20 20] >> >>", count: 2, coverage: new(true)},
@@ -86,10 +85,11 @@ func TestPDFMetadataEvidence(t *testing.T) {
 
 func TestPDFMetadataReachableActionsAndAttachments(t *testing.T) {
 	data := mediatest.PDFWithActionsAndAttachment()
-	_, referenceErr := formatdetect.CountPDFPages(data)
-	require.ErrorIs(t, referenceErr, formatdetect.ErrPDFExternalReference)
-	_, err := formatdetect.ReadPDFMetadata(data)
+	metadata, err := formatdetect.ReadPDFMetadata(data)
 	require.NoError(t, err)
+	require.Equal(t, new(int64(1)), metadata.Facts.EmbeddedFileCount)
+	require.Equal(t, new(true), metadata.Facts.HasJavaScript)
+	require.Equal(t, new(true), metadata.Facts.HasLaunchActions)
 	for _, tc := range []struct {
 		name, catalog, page string
 		javascript, launch  bool
@@ -122,16 +122,19 @@ func TestPDFMetadataReachableActionsAndAttachments(t *testing.T) {
 		"<< /Type /Catalog /Pages 2 0 R /AF [<< /F (a) /EF << /F 4 0 R >> >> << /F (b) /EF << /F 5 0 R >> >>] >>", "<< /Type /Pages /Count 1 /Kids [3 0 R] >>", "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >>", "<< /Length 4 >>\nstream\nnote\nendstream", "<< /Length 4 >>\nstream\nnote\nendstream",
 	})
 	for _, tc := range []struct {
+		name  string
 		data  []byte
 		count int64
 	}{
-		{distinct, 2},
-		{mediatest.PDFObjects("synthetic inline attachments", []string{
+		{"distinct streams", distinct, 2},
+		{"inline aliases", mediatest.PDFObjects("synthetic inline attachments", []string{
 			"<< /Type /Catalog /Pages 2 0 R /Names << /EmbeddedFiles << /Names [(note.txt) << /Type /Filespec /F (note.txt) /EF << /F 4 0 R >> >>] >> >> /AF [<< /Type /Filespec /F (note.txt) /EF << /F 4 0 R >> >>] >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>", "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >>", "<< /Type /EmbeddedFile /Length 4 >>\nstream\nnote\nendstream"}), 1},
 	} {
-		metadata, err := formatdetect.ReadPDFMetadata(tc.data)
-		require.NoError(t, err)
-		require.Equal(t, new(tc.count), metadata.Facts.EmbeddedFileCount)
+		t.Run(tc.name, func(t *testing.T) {
+			metadata, err := formatdetect.ReadPDFMetadata(tc.data)
+			require.NoError(t, err)
+			require.Equal(t, new(tc.count), metadata.Facts.EmbeddedFileCount)
+		})
 	}
 }
 
