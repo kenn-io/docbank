@@ -678,3 +678,27 @@ func TestMediaProcessingTransientStorageErrorKeepsReceiptQueued(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, targets, 1, "the backfill retries the receipt")
 }
+
+func TestWatchImportExpiredConsent(t *testing.T) {
+	t.Parallel()
+	f := newMediaStateFixture(t)
+	_, err := f.service.RevokeConsent(t.Context())
+	require.NoError(t, err)
+	authorization := f.service.renditionConsentRequest(f.service.profiles["speech"])
+	_, err = f.catalog.GrantConsent(t.Context(), store.ProcessingConsentGrantRequest{
+		Principal: authorization.Principal, Scope: authorization.Scope,
+		ProfileFingerprint: authorization.ProfileFingerprint, DisclosureFingerprint: authorization.DisclosureFingerprint,
+		InputClasses: authorization.InputClasses, RetainedArtifactClasses: authorization.RetainedArtifactClasses,
+		ExpiresAt: new(time.Now().Add(-time.Minute)),
+	})
+	require.NoError(t, err)
+	state, err := f.service.RenditionConsentState(t.Context(), "speech")
+	require.NoError(t, err)
+	require.Equal(t, "expired", state)
+	node, err := f.catalog.NodeByID(t.Context(), f.selector.NodeID)
+	require.NoError(t, err)
+	require.NoError(t, f.service.AdmitImportedRendition(t.Context(), node, "speech"))
+	_, queued, err := f.catalog.ClaimNextRenditionJob(t.Context(), "synthetic-worker", time.Now(), time.Minute)
+	require.NoError(t, err)
+	require.False(t, queued, "expired consent leaves the imported version unprocessed")
+}

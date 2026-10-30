@@ -13,7 +13,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/jobs"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -43,7 +45,14 @@ func TestListJobsReturnsStableObservableState(t *testing.T) {
 		return len(items) == 2 && items[0].Status == jobs.StatusFailed
 	}, time.Second, time.Millisecond)
 
-	ts, _ := newTestServer(t, func(d *api.Deps) { d.Jobs = supervisor })
+	ts, _ := newTestServer(t, func(d *api.Deps) {
+		d.Jobs = supervisor
+		d.Cfg.Watches = []config.WatchConfig{{Name: "inbox", Profile: "unavailable"}}
+		var err error
+		d.Processing, err = processing.NewService(processing.ServiceConfig{Catalog: d.Store, Blobs: d.Blobs, Gate: api.NewOperationGate(), SpoolDirectory: t.TempDir()})
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, d.Processing.Shutdown(context.Background())) })
+	})
 	resp, body := get(t, ts, "/api/v1/jobs", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	var got api.JobList
@@ -56,6 +65,16 @@ func TestListJobsReturnsStableObservableState(t *testing.T) {
 	assert.Equal(t, "watch:inbox", got.Items[1].Name)
 	assert.Equal(t, "running", got.Items[1].Status)
 	assert.Empty(t, got.Items[1].FinishedAt)
+	require.NotNil(t, got.Items[1].Processing)
+	assert.Equal(t, "unavailable", got.Items[1].Processing.Profile)
+	assert.Contains(t, got.Items[1].Processing.Error, "Consent status unavailable")
+	assert.Empty(t, got.Items[1].Error, "consent lookup failures leave the scanner healthy")
+	resp, body = get(t, ts, "/api/v1/watches", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var watches api.WatchedInboxList
+	require.NoError(t, json.Unmarshal([]byte(body), &watches))
+	require.Len(t, watches.Items, 1)
+	assert.Equal(t, got.Items[1].Processing, watches.Items[0].Processing)
 	close(release)
 }
 

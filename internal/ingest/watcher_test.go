@@ -79,6 +79,7 @@ func TestWatcherReportsBusyOnlyWhenIngesting(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ing := newTestIngester(t)
 		processed := 0
+		admitted := 0
 		source := writeTree(t, map[string]string{"report.txt": "report"})
 		var supervisor *jobs.Supervisor
 		watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{
@@ -93,6 +94,14 @@ func TestWatcherReportsBusyOnlyWhenIngesting(t *testing.T) {
 			return err
 		}, slog.New(slog.DiscardHandler))
 		require.NoError(t, err)
+		watcher.AfterImport = func(context.Context, store.Node) error {
+			assert.True(t, supervisor.Snapshot()[0].Busy, "initial and retried admission are busy")
+			admitted++
+			if admitted == 1 {
+				return errors.New("synthetic queue unavailable")
+			}
+			return nil
+		}
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		supervisor = jobs.New(ctx, slog.New(slog.DiscardHandler))
@@ -120,6 +129,7 @@ func TestWatcherReportsBusyOnlyWhenIngesting(t *testing.T) {
 		synctest.Wait()
 		assert.Equal(t, 1, processed)
 		assert.True(t, observedAfterIngest, "scan inspected an unsettled file after the import committed")
+		assert.Equal(t, 2, admitted, "failed admission retries on the next scan")
 		assert.False(t, supervisor.Snapshot()[0].Busy, "the scan finished")
 		_, err = ing.Store.NodeByPath(ctx, "/archive/z-unsettled.txt")
 		require.ErrorIs(t, err, store.ErrNotFound)

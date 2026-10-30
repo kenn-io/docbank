@@ -1481,6 +1481,7 @@ func (w *Watcher) processObservation(ctx context.Context, source watchSource, st
 			return nil
 		}
 		jobs.ReportBusy(ctx, true)
+		defer jobs.ReportBusy(ctx, false)
 		if w.process != nil {
 			err = w.process(ctx, rel, &observation, source.open)
 		} else {
@@ -1494,7 +1495,6 @@ func (w *Watcher) processObservation(ctx context.Context, source watchSource, st
 				})
 			})
 		}
-		jobs.ReportBusy(ctx, false)
 	}
 	if access, ok := errors.AsType[*SourceAccessError](err); ok && w.reject != nil &&
 		!errors.Is(err, ErrSourceChanged) &&
@@ -1544,6 +1544,8 @@ func (w *Watcher) processObservation(ctx context.Context, source watchSource, st
 }
 
 func (w *Watcher) retryAdmission(ctx context.Context, node store.Node) {
+	jobs.ReportBusy(ctx, true)
+	defer jobs.ReportBusy(ctx, false)
 	if err := w.AfterImport(ctx, node); err != nil {
 		w.pendingAdmissions[node.ID] = node
 		w.logger.Warn("watched inbox processing admission failed; retrying on next scan", "watch", w.config.Name, "node_id", node.ID, "error", err)

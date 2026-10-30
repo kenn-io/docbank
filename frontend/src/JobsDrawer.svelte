@@ -313,7 +313,7 @@
                 <th scope="row"
                   >{lane.title}
                   {#if processing}
-                    <p class="operation">
+                    <p class="operation processing">
                       {#if processing.error}
                         Processing profile: {processing.profile}. {processing.error}
                       {:else if processing.consent_state === "active"}
@@ -442,6 +442,11 @@
   }
   .operation {
     margin-top: var(--space-2);
+  }
+  .processing {
+    width: 0;
+    min-width: 100%;
+    overflow-wrap: anywhere;
   }
   .operation-row {
     justify-content: flex-end;
