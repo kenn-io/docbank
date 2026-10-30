@@ -50,21 +50,17 @@ func registerChanges(shutdown context.Context, mux *http.ServeMux, api huma.API,
 		defer cancel()
 		stop := context.AfterFunc(shutdown, cancel)
 		defer stop()
-		query, err := url.ParseQuery(r.URL.RawQuery)
-		if err != nil {
-			writeError(w, NewError(400, "validation", "invalid change query: "+err.Error()))
+		query, queryErr := url.ParseQuery(r.URL.RawQuery)
+		value := query.Get("follow")
+		if value == "" {
+			value = "false"
+		}
+		follow, err := strconv.ParseBool(value)
+		if queryErr != nil || err != nil {
+			writeError(w, NewError(400, "validation", "invalid change query or follow boolean"))
 			return
 		}
 		after := query.Get("after")
-		follow := false
-		if value := query.Get("follow"); value != "" {
-			var err error
-			follow, err = strconv.ParseBool(value)
-			if err != nil {
-				writeError(w, NewError(400, "validation", "follow must be a boolean"))
-				return
-			}
-		}
 		changes, head, err := d.Store.VaultChanges(ctx, after, 500)
 		if err != nil {
 			writeError(w, changeProblem(err, head))

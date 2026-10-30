@@ -242,7 +242,7 @@ func insertEmailBodyResult(ctx context.Context, tx *sql.Tx, versionID string, r 
 	_, err = tx.ExecContext(ctx, `INSERT INTO email_body_results(email_attachment_id,body_recipe_fingerprint,state,part_path,rendition_attachment_id,reason) VALUES(?,?,?,?,?,?)`, r.EmailAttachmentID, r.BodyRecipeFingerprint, r.State, r.PartPath, r.RenditionAttachmentID, r.Reason)
 	// Available bodies emit through rendition-head publication.
 	if err == nil && r.RenditionAttachmentID == nil {
-		return recordProcessedVersionTx(ctx, tx, versionID)
+		return recordProcessedTx(ctx, tx, versionID, "")
 	}
 	return err
 }

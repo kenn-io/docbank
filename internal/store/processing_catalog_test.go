@@ -92,7 +92,6 @@ func TestRenditionCatalogSharesOneBuildAcrossVersionProfilesWithinVault(t *testi
 	assert.Equal(t, 1, buildCount)
 	assert.Equal(t, 2, attachmentCount)
 
-	// A retained email PDF publishes once without replacing the body head.
 	f := newEmailFixture(t, s, "message.eml")
 	view, err := s.PublishEmailGeneration(t.Context(), f.publication)
 	require.NoError(t, err)

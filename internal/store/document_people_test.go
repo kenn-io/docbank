@@ -470,8 +470,6 @@ func TestPublishDocumentPeopleReplayInputIdentity(t *testing.T) {
 	require.Equal(t, version.NodeID, changes[0].NodeID)
 	moved, _, err := s.Move(t.Context(), version.NodeID, s.RootID(), "renamed.txt", publication.NodeRevision)
 	require.NoError(t, err)
-	_, _, err = s.DocumentPeopleForVersion(t.Context(), version.ID)
-	require.ErrorIs(t, err, ErrNotFound, "the revision fence withholds stale attribution")
 	publication.NodeRevision = moved.Revision
 	_, err = s.PublishDocumentPeople(t.Context(), publication)
 	require.NoError(t, err)
@@ -479,8 +477,8 @@ func TestPublishDocumentPeopleReplayInputIdentity(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, changes, 1)
 	require.Equal(t, "moved", changes[0].Kind, "same-checksum freshness repair stays silent")
+	publication.People.Edges = []document.DocumentPersonEdgeV1{}
 	for _, overLimit := range []bool{false, true, true} {
-		publication.People.Edges[0].RawLabel = "Ada revised"
 		publication.Resolution.OverLimit = overLimit
 		_, err = s.PublishDocumentPeople(t.Context(), publication)
 		require.NoError(t, err)

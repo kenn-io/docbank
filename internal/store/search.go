@@ -1984,7 +1984,7 @@ func insertRenditionAttachmentAndHeadTx(
 		return err
 	} else if binding != nil {
 		if inserted != 0 {
-			return recordProcessedVersionTx(ctx, tx, normalized.ContentVersionID)
+			return recordProcessedTx(ctx, tx, normalized.ContentVersionID, "")
 		}
 		return nil
 	}

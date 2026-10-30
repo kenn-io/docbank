@@ -172,7 +172,7 @@ func (s *Store) PublishSourceMetadata(
 		if activeChecksum == generation.Checksum {
 			return nil
 		}
-		return recordProcessedBlobTx(ctx, tx, sourceSHA256)
+		return recordProcessedTx(ctx, tx, "", sourceSHA256)
 	})
 	return generation, err
 }

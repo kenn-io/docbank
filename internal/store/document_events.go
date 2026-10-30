@@ -212,7 +212,7 @@ func (s *Store) publishDocumentEventsTx(
 		}
 	}
 	if outputChanged {
-		if err := recordProcessedVersionTx(ctx, tx, target.ContentVersionID); err != nil {
+		if err := recordProcessedTx(ctx, tx, target.ContentVersionID, ""); err != nil {
 			return DocumentEventGeneration{}, err
 		}
 	}

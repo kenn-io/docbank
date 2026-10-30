@@ -158,7 +158,7 @@ func publishPhotoSuggestionTx(ctx context.Context, tx *sql.Tx, version, producer
 	if err != nil || description.Caption == "" && len(description.Tags) == 0 && description.VisibleText == "" {
 		return err
 	}
-	return recordProcessedVersionTx(ctx, tx, version)
+	return recordProcessedTx(ctx, tx, version, "")
 }
 
 // normalizePhotoDescription gives tags their stored NFC identity and drops duplicates.

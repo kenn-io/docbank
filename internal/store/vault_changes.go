@@ -113,35 +113,23 @@ func publishRenditionHeadTx(ctx context.Context, tx *sql.Tx, head RenditionHeadR
 	if prior == head.AttachmentID {
 		return nil
 	}
-	return recordProcessedVersionTx(ctx, tx, head.ContentVersionID)
-}
-
-func recordProcessedVersionTx(ctx context.Context, tx *sql.Tx, version string) error {
-	return recordProcessedTx(ctx, tx, version, "")
-}
-
-func recordProcessedBlobTx(ctx context.Context, tx *sql.Tx, blob string) error {
-	return recordProcessedTx(ctx, tx, "", blob)
+	return recordProcessedTx(ctx, tx, head.ContentVersionID, "")
 }
 
 // Processing data may also belong to history. Notify only its current live users.
 func recordProcessedTx(ctx context.Context, tx *sql.Tx, version, blob string) error {
-	rows, err := tx.QueryContext(ctx, `SELECT n.id FROM nodes n
-		JOIN content_versions cv ON cv.version_id=n.current_version_id AND cv.node_id=n.id
-		WHERE n.trashed_at IS NULL AND (cv.version_id=$1 OR cv.blob_hash=$2) ORDER BY n.id`, version, blob)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = rows.Close() }()
 	var ids []int64
-	for rows.Next() {
+	err := queryRows(ctx, tx, `SELECT n.id FROM nodes n
+		JOIN content_versions cv ON cv.version_id=n.current_version_id AND cv.node_id=n.id
+		WHERE n.trashed_at IS NULL AND (cv.version_id=$1 OR cv.blob_hash=$2) ORDER BY n.id`, []any{version, blob}, func(rows *sql.Rows) error {
 		var id int64
 		if err := rows.Scan(&id); err != nil {
 			return err
 		}
 		ids = append(ids, id)
-	}
-	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return nil
+	})
+	if err != nil {
 		return err
 	}
 	return recordVaultChangesTx(ctx, tx, "processed", ids...)

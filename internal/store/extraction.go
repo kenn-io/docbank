@@ -522,7 +522,7 @@ func (s *Store) RecordExtraction(ctx context.Context, result ExtractionResult) e
 			publishRendition = published
 		}
 		if !publishRendition && storedText != (sql.NullString{String: result.Text, Valid: result.Status == ExtractionOK}) {
-			if err := recordProcessedBlobTx(ctx, tx, result.BlobHash); err != nil {
+			if err := recordProcessedTx(ctx, tx, "", result.BlobHash); err != nil {
 				return err
 			}
 		}

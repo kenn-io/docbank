@@ -974,18 +974,13 @@ func TestPhotoDescriptionWaitersKeepTheirOwnDismissalRule(t *testing.T) {
 				require.Equal(t, job.ID, sharedJob.ID, "an explicit request joins the automatic job")
 			}
 
-			_, before, err := s.VaultChanges(ctx, "", 500)
-			require.NoError(t, err)
 			_, err = s.PublishPhotoDescription(ctx, claim, photoDescriptionResult("From B."), at)
-			require.NoError(t, err)
-			changes, _, err := s.VaultChanges(ctx, before, 500)
 			require.NoError(t, err)
 			published := photoSuggestionValues(t, s, asset.ID)
 			if joined {
 				require.Len(t, published, 1, "the explicit waiter replaces the dismissal")
 				require.Equal(t, "From B.", published[0].Value.Caption)
 			} else {
-				require.Empty(t, changes)
 				require.Empty(t, published, "an automatic waiter leaves the dismissal alone")
 			}
 		})

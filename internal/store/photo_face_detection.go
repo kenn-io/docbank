@@ -164,5 +164,5 @@ func publishFaceDetectionTx(ctx context.Context, tx *sql.Tx, version, detector s
 	if err != nil || !changed {
 		return err
 	}
-	return recordProcessedVersionTx(ctx, tx, version)
+	return recordProcessedTx(ctx, tx, version, "")
 }

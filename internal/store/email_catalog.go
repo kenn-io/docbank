@@ -318,7 +318,7 @@ func (s *Store) publishEmailGenerationTx(ctx context.Context, tx *sql.Tx, p Emai
 			return err
 		}
 		if changed != 0 {
-			if err := recordProcessedVersionTx(ctx, tx, version.ID); err != nil {
+			if err := recordProcessedTx(ctx, tx, version.ID, ""); err != nil {
 				return err
 			}
 		}

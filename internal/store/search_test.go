@@ -2266,7 +2266,7 @@ func TestRecordExtractionRejectsVersionDowngrade(t *testing.T) {
 
 // Mutation caught: replacing a successful extraction with a same-version
 // failure leaves its published rendition ahead of the portable cache.
-func TestRecordExtractionRejectsSameVersionFailureAfterSuccess(t *testing.T) {
+func TestRecordExtractionNotifiesCurrentLiveNodesOnce(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()

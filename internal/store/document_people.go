@@ -548,7 +548,7 @@ func (s *Store) PublishDocumentPeople(ctx context.Context, p DocumentPeoplePubli
 			}
 		}
 		if outputChanged {
-			if err := recordProcessedVersionTx(ctx, tx, p.People.ContentVersionID); err != nil {
+			if err := recordProcessedTx(ctx, tx, p.People.ContentVersionID, ""); err != nil {
 				return err
 			}
 		}
