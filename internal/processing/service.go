@@ -1627,6 +1627,10 @@ func (service *Service) ResolveSourceFence(
 }
 
 func (service *Service) Search(ctx context.Context, request SearchRequest) (retrieval.Report, error) {
+	return service.searchWith(ctx, request, (*retrieval.Searcher).Search)
+}
+
+func (service *Service) searchWith(ctx context.Context, request SearchRequest, execute func(*retrieval.Searcher, context.Context, retrieval.Query) (retrieval.Report, error)) (retrieval.Report, error) {
 	explicit := request.Fence.VaultUID != "" || len(request.Fence.ContentVersionIDs) != 0
 	if explicit == (request.AllLive != nil) {
 		return retrieval.Report{}, fmt.Errorf("%w: send exactly one of fence or scope", store.ErrInvalidProcessingSourceFence)
@@ -1696,7 +1700,7 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 		searchScope.EmbeddingDescriptor = &descriptor
 		searchScope.VectorSpaceID = profile.vectorSpaces[prepared.bindingID]
 	}
-	report, err := prepared.searcher.Search(ctx, retrieval.Query{Text: request.Query, Mode: prepared.mode,
+	report, err := execute(prepared.searcher, ctx, retrieval.Query{Text: request.Query, Mode: prepared.mode,
 		LexicalLimit: profile.portable.Retrieval.LexicalLimit, VectorLimit: profile.portable.Retrieval.VectorLimit,
 		Limit: prepared.limit, Scope: searchScope, ContentFirst: request.ContentFirst,
 		ProcessingProfileFingerprint: profile.record.Fingerprint, BindingID: prepared.bindingID,

@@ -185,8 +185,16 @@ func loadCorpus(t *testing.T) embeddingeval.Corpus {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join("testdata", "corpus.json"))
 	require.NoError(t, err)
+	corpus, err := decodeComparisonCorpus(data)
+	require.NoError(t, err)
+	return corpus
+}
+
+func decodeComparisonCorpus(data []byte) (embeddingeval.Corpus, error) {
 	var source comparisonCorpus
-	require.NoError(t, json.Unmarshal(data, &source))
+	if err := json.Unmarshal(data, &source); err != nil {
+		return embeddingeval.Corpus{}, err
+	}
 	corpus := embeddingeval.Corpus{ID: source.ID, Version: source.Version}
 	for _, doc := range source.Documents {
 		corpus.Documents = append(corpus.Documents, embeddingeval.Document{ID: doc.ID, Text: doc.Text})
@@ -200,7 +208,7 @@ func loadCorpus(t *testing.T) embeddingeval.Corpus {
 		}
 		corpus.Queries = append(corpus.Queries, converted)
 	}
-	return corpus
+	return corpus, nil
 }
 
 type comparisonFixture struct {
