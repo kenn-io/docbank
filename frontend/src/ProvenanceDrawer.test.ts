@@ -129,6 +129,18 @@ it("offers the import ID for command-line imports", async () => {
 it.each(["text", "binary", false])(
   "shows URL fetch evidence with optional headers: %s",
   async (headers) => {
+    const urlFetch = {
+      version: 1,
+      requested_url: "https://example.com/download?id=7",
+      final_url: "https://example.com/filing.pdf",
+      fetched_at: "2026-10-01T12:34:56Z",
+      ...(headers
+        ? {
+            etag: btoa(headers === "binary" ? "\xff" : 'W/"edition-1"'),
+            last_modified: btoa("server supplied text"),
+          }
+        : {}),
+    };
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -138,18 +150,8 @@ it.each(["text", "binary", false])(
               ...active,
               source_kind: "url",
               original_path: "https://example.com/download?id=7",
-              url_fetch: {
-                version: 1,
-                requested_url: "https://example.com/download?id=7",
-                final_url: "https://example.com/filing.pdf",
-                fetched_at: "2026-10-01T12:34:56Z",
-                ...(headers
-                  ? {
-                      etag: btoa(headers === "binary" ? "\xff" : 'W/"edition-1"'),
-                      last_modified: btoa("server supplied text"),
-                    }
-                  : {}),
-              },
+              source_description: JSON.stringify(urlFetch),
+              url_fetch: urlFetch,
             },
           ],
           total: 1,
@@ -166,10 +168,8 @@ it.each(["text", "binary", false])(
       onauthfailure: vi.fn(),
     });
     expect(await screen.findByText("Added from URL")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Copy source path" }).textContent).toContain(
-      "https://example.com/download?id=7",
-    );
     await fireEvent.click(screen.getByText("Import details"));
+    expect(screen.queryByText("Source")).toBeNull();
     expect(screen.getByRole("button", { name: "Copy final URL" }).textContent).toContain(
       "https://example.com/filing.pdf",
     );

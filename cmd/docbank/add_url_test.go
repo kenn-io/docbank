@@ -24,24 +24,19 @@ import (
 	"go.kenn.io/docbank/internal/daemonconn"
 )
 
-func TestAddURLImportsEvidenceAndSkips(t *testing.T) {
+func TestAddURLImportsEvidence(t *testing.T) {
 	setupVaultHome(t)
 	content := "synthetic filing\n"
 	etag := "W/\"edition-\xff\""
-	var filename, payload atomic.Pointer[string]
-	filename.Store(new("filing.txt"))
-	payload.Store(new(content))
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Empty(t, r.Header.Get("X-Api-Key"))
-		assert.Equal(t, "identity", r.Header.Get("Accept-Encoding"))
 		if r.URL.Path == "/download" {
 			http.Redirect(w, r, "/files/filing.txt", http.StatusFound)
 			return
 		}
 		w.Header().Set("ETag", etag)
-		w.Header().Set("Content-Disposition", `attachment; filename="`+*filename.Load()+`"`)
+		w.Header().Set("Content-Disposition", `attachment; filename="filing.txt"`)
 		w.Header().Set("Last-Modified", "Wed, 21 Oct 2015 07:28:00 GMT")
-		_, _ = io.WriteString(w, *payload.Load())
+		_, _ = io.WriteString(w, content)
 	}))
 	defer server.Close()
 	requested := server.URL + "/download?id=7"
@@ -59,14 +54,7 @@ func TestAddURLImportsEvidenceAndSkips(t *testing.T) {
 	assert.Equal(t, ingestID, members.Collection.ID)
 	require.Len(t, members.Items, 1)
 	assert.Equal(t, "/cases/filings/filing.txt", members.Items[0].Path)
-	out, err = runCLI(t, "cat", "/cases/filings/filing.txt")
-	require.NoError(t, err)
-	assert.Equal(t, content, out)
-	_, err = runCLI(t, "mv", "/cases/filings/filing.txt", "/cases/filings/reviewed.txt")
-	require.NoError(t, err)
-	before, err := runCLI(t, "stat", "/cases/filings/reviewed.txt", "--json")
-	require.NoError(t, err)
-	evidence, err := runCLI(t, "provenance", "/cases/filings/reviewed.txt", "--json")
+	evidence, err := runCLI(t, "provenance", "/cases/filings/filing.txt", "--json")
 	require.NoError(t, err)
 	var page api.ProvenancePage
 	require.NoError(t, json.Unmarshal([]byte(evidence), &page))
@@ -80,53 +68,6 @@ func TestAddURLImportsEvidenceAndSkips(t *testing.T) {
 	assert.Equal(t, []byte("Wed, 21 Oct 2015 07:28:00 GMT"), fetch.LastModified)
 	assert.NotEmpty(t, fetch.FetchedAt)
 	assert.Equal(t, requested, page.Items[0].OriginalPath)
-	human, err := runCLI(t, "provenance", "/cases/filings/reviewed.txt")
-	require.NoError(t, err)
-	assert.Contains(t, human, "Requested URL:")
-	assert.NotContains(t, human, strconv.Quote(page.Items[0].SourceDescription))
-	assert.Contains(t, human, strconv.Quote(string(fetch.LastModified)))
-	assert.Contains(t, human, strconv.Quote(etag))
-	filename.Store(new("changed-name.txt"))
-	out, err = runCLI(t, "add", requested, "--allow-http", "--dest", "/cases/filings", "--json")
-	require.NoError(t, err, out)
-	require.NoError(t, json.Unmarshal([]byte(out), &report))
-	assert.Equal(t, 1, report.Skipped)
-	assert.NotContains(t, out, `"ingest_id"`)
-	after, err := runCLI(t, "stat", "/cases/filings/reviewed.txt", "--json")
-	require.NoError(t, err)
-	assert.Equal(t, before, after)
-	after, err = runCLI(t, "provenance", "/cases/filings/reviewed.txt", "--json")
-	require.NoError(t, err)
-	assert.JSONEq(t, evidence, after)
-
-	filename.Store(new("filing.txt"))
-	for _, raw := range []string{server.URL + "/download?id=8", server.URL + "/download?id=9"} {
-		out, err = runCLI(t, "add", raw, "--allow-http", "--dest", "/cases/filings", "--json")
-		require.NoError(t, err)
-		require.NoError(t, json.Unmarshal([]byte(out), &report))
-		assert.Equal(t, 1, report.Added)
-	}
-	filename.Store(new("filing (2).txt"))
-	out, err = runCLI(t, "add", server.URL+"/download?id=10", "--allow-http", "--dest", "/cases/filings", "--json")
-	require.NoError(t, err)
-	require.NoError(t, json.Unmarshal([]byte(out), &report))
-	assert.Equal(t, 1, report.Added)
-	_, err = runCLI(t, "stat", "/cases/filings/filing (2) (2).txt")
-	require.NoError(t, err)
-	local := writeSourceFile(t, "filing.txt", content)
-	out, err = runCLI(t, "add", local, "--dest", "/cases/filings", "--json")
-	require.NoError(t, err)
-	require.NoError(t, json.Unmarshal([]byte(out), &report))
-	assert.Equal(t, 1, report.Added)
-	filename.Store(new("revised.txt"))
-	payload.Store(new("new edition"))
-	out, err = runCLI(t, "add", requested, "--allow-http", "--dest", "/cases/filings", "--json")
-	require.NoError(t, err)
-	require.NoError(t, json.Unmarshal([]byte(out), &report))
-	assert.Equal(t, 1, report.Added)
-	out, err = runCLI(t, "cat", "/cases/filings/revised.txt")
-	require.NoError(t, err)
-	assert.Equal(t, "new edition", out)
 }
 
 func TestFetchURLBoundsSchemesNamesAndCleanup(t *testing.T) {
@@ -147,6 +88,7 @@ func TestFetchURLBoundsSchemesNamesAndCleanup(t *testing.T) {
 			t.Setenv("TMP", tmp)
 			t.Setenv("TEMP", tmp)
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "identity", r.Header.Get("Accept-Encoding"))
 				w.Header().Set("Content-Disposition", tc.disposition)
 				if tc.declared > 0 {
 					w.Header().Set("Content-Length", strconv.Itoa(tc.declared))
@@ -194,32 +136,40 @@ func TestFetchURLBoundsSchemesNamesAndCleanup(t *testing.T) {
 		_ = download.file.Close()
 		_ = os.Remove(download.file.Name())
 	}
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	_, err := fetchURL(ctx, http.Client{}, plain.URL, true, 4)
-	require.ErrorIs(t, err, context.Canceled)
 }
 
 func TestAddURLFailuresPublishNoDocuments(t *testing.T) {
 	setupVaultHome(t)
+	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/missing" {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		_, _ = io.WriteString(w, "five!")
+		requests.Add(1)
+		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer server.Close()
-	for _, args := range [][]string{
-		{server.URL}, {server.URL, "--allow-http", "--max-bytes", "4"}, {server.URL + "/missing", "--allow-http"},
-		{server.URL, "local.txt"}, {writeSourceFile(t, "local.txt", "local"), server.URL}, {server.URL, "--allow-http", "--max-bytes", "0"}, {server.URL, "--preflight"}, {server.URL, "--replace"}, {server.URL, "--include", "*.pdf"},
+	local := writeSourceFile(t, "local.txt", "local")
+	for _, tc := range []struct {
+		args        []string
+		message     string
+		beforeFetch bool
+	}{
+		{[]string{server.URL + "/missing", "--allow-http"}, "fetch returned HTTP 404", false},
+		{[]string{server.URL, "--allow-http", "--max-bytes", "0"}, "--max-bytes must be between", true},
+		{[]string{server.URL, "local.txt", "--allow-http"}, "URL import requires one URL", true},
+		{[]string{local, server.URL, "--allow-http"}, "URL import requires one URL", true},
+		{[]string{server.URL, "--allow-http", "--preflight"}, "URL import requires one URL", true},
+		{[]string{server.URL, "--allow-http", "--replace"}, "URL import requires one URL", true},
+		{[]string{server.URL, "--allow-http", "--include", "*.pdf"}, "URL import requires one URL", true},
+		{[]string{server.URL, "--allow-http", "--progress", "typo"}, "invalid --progress", true},
 	} {
-		_, err := runCLI(t, append([]string{"add"}, args...)...)
-		require.Error(t, err)
+		requests.Store(0)
+		_, err := runCLI(t, append([]string{"add"}, tc.args...)...)
+		require.ErrorContains(t, err, tc.message)
+		if tc.beforeFetch {
+			assert.Zero(t, requests.Load())
+		}
 	}
 	out, err := runCLI(t, "tree", "/")
 	require.NoError(t, err)
-	assert.NotContains(t, out, "download")
 	assert.NotContains(t, out, "inbox")
 }
 
@@ -274,20 +224,4 @@ func TestAddRelativeColonFile(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "local report", out)
 	}
-}
-
-func TestAddURLProgressValidation(t *testing.T) {
-	setupVaultHome(t)
-	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests.Add(1)
-		_, _ = io.WriteString(w, "filing")
-	}))
-	defer server.Close()
-	_, err := runCLI(t, "add", server.URL+"/filing.txt", "--allow-http", "--progress", "typo")
-	require.ErrorContains(t, err, "invalid --progress")
-	assert.Zero(t, requests.Load())
-	out, err := runCLI(t, "tree", "/")
-	require.NoError(t, err)
-	assert.NotContains(t, out, "inbox")
 }

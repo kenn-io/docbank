@@ -3,6 +3,7 @@
   import { Button, SelectDropdown } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
   import { randomUUID } from "./crypto.js";
+  import { formatRawBytes } from "./format.js";
   import { getNode, type Node } from "./generated/docbank.js";
   import type { SelectedSource } from "./selectedSource.js";
   import EmailPDFButton from "./EmailPDFButton.svelte";
@@ -85,15 +86,10 @@
         throw new Error("Email access identity changed.");
       node = { ...live, revision: authorizationRevision };
       if (headers) {
-        try {
-          raw = new TextDecoder("utf-8", { fatal: true }).decode(headers);
-        } catch {
-          raw =
-            "Invalid UTF-8 bytes shown as \\xNN; original bytes remain in the EML.\n" +
-            Array.from(headers, (byte) =>
-              byte < 128 ? String.fromCharCode(byte) : `\\x${byte.toString(16).padStart(2, "0")}`,
-            ).join("");
-        }
+        raw = formatRawBytes(
+          headers,
+          "Invalid UTF-8 bytes shown as \\xNN; original bytes remain in the EML.\n",
+        );
       } else raw = "Raw headers unavailable; download the original EML.";
       metadata = result;
       const message = result.evidence.inventory!.messages.find(

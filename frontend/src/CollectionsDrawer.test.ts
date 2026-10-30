@@ -387,19 +387,26 @@ describe("collections drawer", () => {
   });
 });
 
+const urlFetch = {
+  version: 1,
+  requested_url: "https://example.com/filing.pdf?edition=1",
+  final_url: "https://example.com/filing.pdf",
+  fetched_at: "2026-10-01T12:34:56Z",
+};
 it.each([
-  String.raw`["/synthetic/\a", "/synthetic/\\U0001f4c4"]`,
-  String.raw`["/synthetic/reports", "/synthetic/reports"]`,
-])("shows the source description verbatim: %s", async (description) => {
+  { description: String.raw`["/synthetic/\a", "/synthetic/\\U0001f4c4"]` },
+  { description: String.raw`["/synthetic/reports", "/synthetic/reports"]` },
+  { description: JSON.stringify(urlFetch), url_fetch: urlFetch },
+])("shows the source description: $description", async ({ description, url_fetch }) => {
+  const source = {
+    ...collection,
+    source_description: description,
+    ...(url_fetch ? { source_kind: "url", url_fetch } : {}),
+  };
+  const display = url_fetch?.requested_url ?? description;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     if (String(input).includes("/members?"))
-      return json({
-        collection: { ...collection, source_description: description },
-        items: [],
-        total: 0,
-        limit: 100,
-        offset: 0,
-      });
+      return json({ collection: source, items: [], total: 0, limit: 100, offset: 0 });
     if (String(input).endsWith("/label"))
       return json(
         {
@@ -410,12 +417,7 @@ it.each([
         },
         '"3"',
       );
-    return json({
-      items: [{ ...collection, source_description: description }],
-      total: 1,
-      limit: 100,
-      offset: 0,
-    });
+    return json({ items: [source], total: 1, limit: 100, offset: 0 });
   });
   render(CollectionsDrawer, {
     session: "synthetic",
@@ -423,47 +425,8 @@ it.each([
     onauthfailure: vi.fn(),
     onopenmember: vi.fn(),
   });
-  await fireEvent.click(
-    await screen.findByRole("button", { name: "Browse import Discovery batch" }),
-  );
-  expect(await screen.findByText(description)).toBeTruthy();
-});
-
-it("shows a URL source in the row title and import details", async () => {
-  const source = {
-    ...collection,
-    source_kind: "url",
-    source_description: '{"version":1}',
-    url_fetch: {
-      version: 1,
-      requested_url: "https://example.com/filing.pdf?edition=1",
-      final_url: "https://example.com/filing.pdf",
-      fetched_at: "2026-10-01T12:34:56Z",
-    },
-  };
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
-    String(input).includes("/members?")
-      ? json({ collection: source, items: [], total: 0, limit: 100, offset: 0 })
-      : String(input).endsWith("/label")
-        ? json(
-            {
-              ingest_id: source.id,
-              label: source.label,
-              revision: source.label_revision,
-              updated_at: source.label_updated_at,
-            },
-            '"3"',
-          )
-        : json({ items: [source], total: 1, limit: 100, offset: 0 }),
-  );
-  render(CollectionsDrawer, {
-    session: "session",
-    onclose: vi.fn(),
-    onauthfailure: vi.fn(),
-    onopenmember: vi.fn(),
-  });
   const row = await screen.findByRole("button", { name: "Browse import Discovery batch" });
-  expect(row.getAttribute("title")).toBe(source.url_fetch.requested_url);
+  expect(row.getAttribute("title")).toBe(display);
   await fireEvent.click(row);
-  expect(await screen.findByText(source.url_fetch.requested_url)).toBeTruthy();
+  expect(await screen.findByText(display)).toBeTruthy();
 });

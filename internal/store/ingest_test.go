@@ -534,6 +534,40 @@ func TestIngestFileDistinctSourceNamedLikeSuffix(t *testing.T) {
 		"report.pdf", fakeHash("a1"), 1, "application/pdf", "/src/report.pdf", "")
 	require.NoError(t, err)
 	assert.False(t, added)
+
+	dir, err := s.Mkdir(ctx, s.RootID(), "urls")
+	require.NoError(t, err)
+	urlRun, err := s.BeginIngest(ctx, "url", "https://example.com/download?id=7")
+	require.NoError(t, err)
+	original, added, err := s.IngestFile(ctx, urlRun, dir.ID, "filing.txt", fakeHash("a1"), 1, "text/plain", "https://example.com/download?id=7", "")
+	require.NoError(t, err)
+	require.True(t, added)
+	moved, _, err := s.Move(ctx, original.ID, dir.ID, "reviewed.txt", UnconditionalRev)
+	require.NoError(t, err)
+	before, err := s.NodeProvenance(ctx, moved.ID, 100, 0)
+	require.NoError(t, err)
+	skipped, added, err := s.IngestFile(ctx, urlRun, dir.ID, "changed-name.txt", fakeHash("a1"), 1, "text/plain", "https://example.com/download?id=7", "")
+	require.NoError(t, err)
+	assert.False(t, added)
+	assert.Equal(t, moved.ID, skipped.ID)
+	assert.Equal(t, moved.Revision, skipped.Revision)
+	after, err := s.NodeProvenance(ctx, moved.ID, 100, 0)
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
+	for _, tc := range []struct{ origin, name, want string }{
+		{"https://example.com/download?id=8", "filing.txt", "filing.txt"},
+		{"https://example.com/download?id=9", "filing.txt", "filing (2).txt"},
+		{"https://example.com/download?id=10", "filing (2).txt", "filing (2) (2).txt"},
+	} {
+		node, added, err := s.IngestFile(ctx, urlRun, dir.ID, tc.name, fakeHash("a1"), 1, "text/plain", tc.origin, "")
+		require.NoError(t, err)
+		require.True(t, added)
+		assert.Equal(t, tc.want, node.Name)
+	}
+	local, added, err := s.IngestFile(ctx, ing, dir.ID, "filing.txt", fakeHash("a1"), 1, "text/plain", "/source/filing.txt", "")
+	require.NoError(t, err)
+	require.True(t, added)
+	assert.Equal(t, "filing (3).txt", local.Name)
 }
 
 func TestIngestFileDoesNotMatchUnknownOriginOutsideNameFamily(t *testing.T) {

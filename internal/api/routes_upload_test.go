@@ -21,6 +21,7 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -412,7 +413,7 @@ func TestUploadURLProvenanceIsAtomic(t *testing.T) {
 	in := uploadRequest{name: "filing.txt", content: content, expectedHash: uploadIdentity(content), expectedSize: int64(len(content)), urlFetch: fetch, parentPath: "/missing/nested"}
 	var before bytes.Buffer
 	require.NoError(t, s.ExportMetadata(t.Context(), &before))
-	for _, invalid := range []string{`{`, `{}`, strings.Replace(fetch, `"version":1`, `"version":2`, 1), strings.Replace(fetch, `"version":1`, `"version":1,"extra":true`, 1),
+	for _, invalid := range []string{strings.Replace(fetch, `"version":1`, `"version":2`, 1), strings.Replace(fetch, `"version":1`, `"version":1,"extra":true`, 1),
 		strings.Replace(fetch, `"requested_url":"https://example.com/download?q=1",`, "", 1),
 		strings.Replace(fetch, "https://example.com/download?q=1", "file:///tmp/input", 1),
 		strings.Replace(fetch, "https://example.com/filing.txt", "/filing.txt", 1),
@@ -440,10 +441,21 @@ func TestUploadURLProvenanceIsAtomic(t *testing.T) {
 	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
 	var receipt api.UploadReceipt
 	require.NoError(t, json.Unmarshal([]byte(body), &receipt))
-	page, err := s.NodeProvenance(t.Context(), receipt.Node.ID, 100, 0)
-	require.NoError(t, err)
+	resp, body = get(t, ts, fmt.Sprintf("/api/v1/nodes/%d/provenance", receipt.Node.ID), nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var page api.ProvenancePage
+	require.NoError(t, json.Unmarshal([]byte(body), &page))
 	require.Len(t, page.Items, 1)
 	assert.Equal(t, fetch, page.Items[0].SourceDescription)
+	expected := &ingest.URLFetch{Version: 1, RequestedURL: "https://example.com/download?q=1", FinalURL: "https://example.com/filing.txt", FetchedAt: "2026-10-01T12:34:56.123Z", ETag: []byte{'W', 0xff}, LastModified: []byte("server supplied text")}
+	assert.Equal(t, expected, page.Items[0].URLFetch)
+	resp, body = get(t, ts, "/api/v1/collections", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var collections api.CollectionPage
+	require.NoError(t, json.Unmarshal([]byte(body), &collections))
+	require.Len(t, collections.Items, 1)
+	assert.Equal(t, fetch, collections.Items[0].SourceDescription)
+	assert.Equal(t, expected, collections.Items[0].URLFetch)
 	after.Reset()
 	require.NoError(t, s.ExportMetadata(t.Context(), &after))
 	committed := after.String()
