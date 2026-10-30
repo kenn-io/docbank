@@ -35,11 +35,13 @@ jobs:
           filters: |
             go:
               - '!{README.md,AGENTS.md,CLAUDE.md,docs/**,website/**,frontend/**}'
+              # Go tests check the configuration guide.
               - docs/configuration.md
             frontend:
               - '!{README.md,AGENTS.md,CLAUDE.md,docs/**,website/**,cmd/**,docbank/**,document/**,internal/**,mcp/**,report/**,sqlite/**}'
               - internal/web/**
               - internal/api/openapi*
+              # Frontend code and tests import these shared Go package inputs.
               - document/format_metadata.json
               - internal/daemonconn/testdata/processing_responses.json
               - internal/query/testdata/identity-vectors.json
