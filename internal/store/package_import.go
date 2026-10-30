@@ -20,6 +20,9 @@ var ErrAmbiguousLabel = errors.New("ambiguous_label: label matches more than one
 
 const packageReceiptRejected = "rejected"
 
+// MaxPackageLabelBytes bounds received labels in import and lookup.
+const MaxPackageLabelBytes = 256
+
 type PackageRecordRow struct {
 	PackageID    string `json:"package_id"`
 	RowID        string `json:"row_id"`
@@ -103,7 +106,7 @@ func validatePackageLabel(label PackageLabelRow) error {
 	if validateUUIDv4(label.PackageID) != nil ||
 		!slices.Contains([]string{packageDirectionReceived, "assigned"}, label.Provenance) ||
 		label.LabelSet == "" || len(label.LabelSet) > 256 || !utf8.ValidString(label.LabelSet) ||
-		label.Label == "" || len(label.Label) > 256 || !utf8.ValidString(label.Label) ||
+		label.Label == "" || len(label.Label) > MaxPackageLabelBytes || !utf8.ValidString(label.Label) ||
 		label.OccurrenceID == "" ||
 		validateUUIDv4(label.ContentVersionID) != nil || label.PageNumber < 0 ||
 		!slices.Contains([]string{"unknown", "verified"}, label.PageState) ||
@@ -416,7 +419,7 @@ func (s *Store) PackageRecord(ctx context.Context, packageID, rowID string) (Pac
 
 // LookupPackageLabel requires the caller to scope a reused sender label.
 func (s *Store) LookupPackageLabel(ctx context.Context, label, packageID, labelSet, provenance string) ([]PackageLabelRow, error) {
-	if label == "" || len(label) > 256 || packageID != "" && validateUUIDv4(packageID) != nil ||
+	if label == "" || len(label) > MaxPackageLabelBytes || packageID != "" && validateUUIDv4(packageID) != nil ||
 		labelSet != "" && len(labelSet) > 256 ||
 		provenance != "" && !slices.Contains([]string{packageDirectionReceived, "assigned"}, provenance) {
 		return nil, ErrPackageConflict

@@ -93,6 +93,14 @@ skips these messages, attachments, and containing folders while deleting
 unrelated eligible trash. Ordinary `docbank add message.eml` does not create an
 external transfer identity.
 
+## Receive a numbered redaction package
+
+Extract the recipient ZIP into a directory, then preflight its DAT and OPT files
+with the supplied `mapping.json`. Follow the
+[numbered package import procedure](document-processing.md#package-completed-numbered-pdfs-for-a-recipient)
+to import its PDFs, supplied text and received labels. This preserves the sender's
+numbering without allocating numbers locally.
+
 ## Ordinary file imports
 
 For each regular file, Docbank performs two steps:

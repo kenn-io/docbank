@@ -222,3 +222,9 @@ func selectBatesVerification(receipt api.BatesExport, review *processing.Redacti
 	}
 	return check, nil
 }
+
+// CheckNumberedBatesExport validates recorded recipe and allocation bindings.
+// A nil result identifies an ordinary stamped artifact, without downloading it.
+func CheckNumberedBatesExport(receipt api.BatesExport) (*processing.NumberedReservation, error) {
+	return checkedBatesRecipe(receipt, nil)
+}
