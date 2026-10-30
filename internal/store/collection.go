@@ -68,11 +68,11 @@ func collectionSummaryByID(
 	collection, err := scanCollection(q.QueryRowContext(ctx, `WITH `+CollectionMembershipCTE+`
 		SELECT `+collectionColumns+`
 		FROM ingests i
-		LEFT JOIN collection_members cm ON cm.ingest_id=?
+		LEFT JOIN collection_members cm ON cm.ingest_id=$1
 		LEFT JOIN nodes n ON n.id=cm.node_id
 		LEFT JOIN content_versions cv ON cv.version_id=n.current_version_id
 		LEFT JOIN collection_labels l ON l.ingest_id=i.id
-		WHERE i.id=? AND i.source_kind NOT LIKE 'embedded:%'
+		WHERE i.id=$2 AND i.source_kind NOT LIKE 'embedded:%'
 		GROUP BY i.id, i.source_kind, i.source_desc, i.started_at,
 			l.ingest_id, l.label, l.revision, l.updated_at
 		HAVING COUNT(cm.node_id)>0 OR l.ingest_id IS NOT NULL`, id, id))
@@ -97,7 +97,7 @@ func (s *Store) Collections(
 		totals AS (SELECT COUNT(*) AS total FROM eligible),
 		selected AS (
 			SELECT i.* FROM ingests i JOIN eligible e ON e.ingest_id=i.id
-			ORDER BY i.started_at DESC, i.id LIMIT ? OFFSET ?
+			ORDER BY i.started_at DESC, i.id LIMIT $1 OFFSET $2
 		)
 		SELECT totals.total, COALESCE(i.id, ''), COALESCE(i.source_kind, ''),
 			COALESCE(i.source_desc, ''), COALESCE(i.started_at, ''),
@@ -160,7 +160,7 @@ func (s *Store) CollectionMembers(
 	if err := validatePage(limit, offset); err != nil {
 		return CollectionMemberPage{}, err
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 	if err != nil {
 		return CollectionMemberPage{}, fmt.Errorf("starting collection member snapshot: %w", err)
 	}
@@ -173,9 +173,9 @@ func (s *Store) CollectionMembers(
 		SELECT `+nodeCols+`
 		FROM `+nodeFrom+`
 		JOIN collection_members cm ON cm.node_id=n.id
-		WHERE cm.ingest_id=?
+		WHERE cm.ingest_id=$1
 		ORDER BY n.name, n.id
-		LIMIT ? OFFSET ?`, id, limit, offset)
+		LIMIT $2 OFFSET $3`, id, limit, offset)
 	if err != nil {
 		return CollectionMemberPage{}, fmt.Errorf("listing collection %q members: %w", id, err)
 	}

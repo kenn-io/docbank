@@ -205,12 +205,13 @@ store qualification. Initial and additional audit enrollment work through the
 native preview and commit methods, including complete retained-metadata
 validation. Native directory/file creation, content confirmation, replacement,
 revert, and rename/move also work, including audited mutations and the required
-physical, extraction and photo catalog maintenance.
+physical, extraction and photo catalog maintenance. Document imports, source
+history, watch and push observations, and collection membership and labels also
+work through the native Store methods.
 
 A public PostgreSQL-backed vault is not available yet: daemon and embedded
-operations still open SQLite. Ingest/provenance publication, trash and purge,
-search, transfer, backup, restore and the complete physical-storage lifecycle
-remain unqualified.
+operations still open SQLite. Trash and purge, search, transfer, backup, restore
+and the complete physical-storage lifecycle remain unqualified.
 
 `Setup` takes a caller-owned `database/sql` pool authenticated as `SchemaOwner`
 and uses the explicit `Schema` setting. It creates a dedicated schema, canonical
@@ -292,11 +293,24 @@ GRANT UPDATE(live_entries, live_stored_bytes, live_raw_bytes,
 GRANT INSERT, UPDATE(next_attempt_at) ON documents.text_extraction_queue TO docbank_runtime;
 GRANT INSERT ON documents.text_searchable_versions TO docbank_runtime;
 GRANT INSERT, UPDATE(display_file_id) ON documents.photo_assets TO docbank_runtime;
-GRANT INSERT, UPDATE(asset_id, role, sidecar_of_file_id)
+GRANT INSERT, UPDATE(asset_id, role, sidecar_of_file_id, source_provenance_identity)
     ON documents.photo_files TO docbank_runtime;
 GRANT INSERT, DELETE ON documents.photo_timeline TO docbank_runtime;
 GRANT INSERT, UPDATE(original_path, original_mtime, folder_key)
     ON documents.photo_source_claims TO docbank_runtime;
+GRANT INSERT, DELETE ON documents.ingests TO docbank_runtime;
+GRANT INSERT ON documents.provenance, documents.provenance_version_bindings
+    TO docbank_runtime;
+GRANT INSERT, UPDATE, DELETE ON documents.collection_labels TO docbank_runtime;
+GRANT INSERT, UPDATE ON documents.watch_sources, documents.push_sources
+    TO docbank_runtime;
+GRANT DELETE ON documents.document_event_heads, documents.document_event_generations,
+    documents.document_people_heads, documents.document_people TO docbank_runtime;
+GRANT INSERT, UPDATE(revision, reason) ON documents.document_event_dirty
+    TO docbank_runtime;
+GRANT UPDATE(publication_epoch, updated_at)
+    ON documents.document_event_state, documents.document_people_state
+    TO docbank_runtime;
 ```
 
 Checksum rows are inserted or compared with the existing value, never updated;
@@ -541,6 +555,44 @@ technical metadata and sidecar receipts. Physical cases cover compressed
 receipts, missing authority and dead pack mappings surviving logical collection.
 These are internal Store capabilities; they do not expose a public PostgreSQL
 vault or qualify the remaining storage and recovery lifecycle.
+
+#### Imports and source history
+
+Native file imports publish their ingest run, provenance, exact-version binding,
+physical receipt and optional collection label in one storage transaction.
+Planned filesystem imports create their destination directories in that same
+transaction. A rejected label or receipt leaves none of those changes behind.
+Finalizing an empty labeled import creates its requested directories without
+retaining an empty ingest run or label. Repeated observations preserve content
+versions and record membership under the existing source and basename rules.
+
+Watch cursors continue to follow moved nodes. Unchanged source bytes preserve
+independent document edits; changed source bytes update the tracked node. Push
+can adopt a watch cursor, records subsequent observations atomically, and pages
+cursors in byte order. Collection listing, member pages, label changes and
+provenance history use the shared queries. Multi-statement collection,
+provenance and directory-plan reads use repeatable-read snapshots.
+
+Provenance corrections append facts rather than replacing them. Ingest runs,
+provenance and version bindings have no runtime `UPDATE` grant. The runtime can
+delete a run only for empty-import finalization; references from retained facts
+prevent deleting a document-bearing run. Existing audit restrictions on labels
+and supported source operations remain unchanged.
+
+On PostgreSQL, observation and correction operations refresh photo source
+claims, dates and export work inside the writer transaction. Binding or
+correcting evidence invalidates derived events and people, schedules event
+recomputation, and advances the publication epochs for removed projections.
+SQLite retains its released trigger ownership, including the event epoch's
+per-head increment. Canonical event tables support this invalidation and its
+cascades; event publication and derivation workers remain unqualified.
+
+Operation tests use canonical setup and the runtime role, validate complete
+metadata and audit replay, and compare derived effects with real SQLite writes.
+They force a late invalidation failure to verify rollback, and commit concurrent
+writes during history reads to verify snapshot consistency. These capabilities
+do not expose a public PostgreSQL vault or qualify portable metadata import,
+collection snapshots, reporting, backup or restore.
 
 #### Shared query qualification
 

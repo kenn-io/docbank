@@ -24,13 +24,13 @@ func (s *Store) RebindWatchedSource(ctx context.Context, watchName, oldRef, newR
 	var node Node
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var owned, occupied bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM push_sources WHERE node_id=?)`, expectedNodeID).Scan(&owned); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM push_sources WHERE node_id=$1)`, expectedNodeID).Scan(&owned); err != nil {
 			return err
 		}
 		if owned {
 			return fmt.Errorf("watched node %d is already owned by push", expectedNodeID)
 		}
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM push_sources WHERE push_name=? AND source_ref=?)`, watchName, newRef).Scan(&occupied); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM push_sources WHERE push_name=$1 AND source_ref=$2)`, watchName, newRef).Scan(&occupied); err != nil {
 			return err
 		}
 		if occupied {
@@ -67,7 +67,7 @@ func (s *Store) RebindWatchedSource(ctx context.Context, watchName, oldRef, newR
 			_, err := tx.ExecContext(ctx, `DELETE FROM watch_source_absences WHERE watch_name=? AND source_ref=?`, watchName, newRef)
 			return err
 		}
-		result, err := tx.ExecContext(ctx, `UPDATE watch_sources SET source_ref=? WHERE watch_name=? AND source_ref=? AND node_id=?`, newRef, watchName, oldRef, expectedNodeID)
+		result, err := tx.ExecContext(ctx, `UPDATE watch_sources SET source_ref=$1 WHERE watch_name=$2 AND source_ref=$3 AND node_id=$4`, newRef, watchName, oldRef, expectedNodeID)
 		if err != nil {
 			return fmt.Errorf("rebinding watched source: %w", err)
 		}
