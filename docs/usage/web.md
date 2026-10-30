@@ -1098,6 +1098,42 @@ fresh loopback web origin, and key login adds no Host restriction beyond the
 server's [`allowed_hosts`](../configuration.md). The usual `docbank web` fragment handoff also works
 with ephemeral API keys and keeps its existing upload proof and permissions.
 
+### Serve Docbank under a path
+
+Set `base_path` when other applications share the public origin:
+
+```toml
+[web]
+public_origin = "https://library.example.test"
+base_path = "/archive"
+```
+
+Restart the daemon, then open `https://library.example.test/archive/`.
+Keep `public_origin` free of paths. The proxy must preserve `/archive` in
+upstream requests, preserve the public `Host`, and forward WebSocket upgrades.
+For example, inside an existing Caddy HTTPS site:
+
+```caddyfile
+@docbank path /archive /archive/*
+handle @docbank {
+    reverse_proxy 127.0.0.1:7777
+}
+```
+
+Use `handle`, which preserves the path. `handle_path` would strip the prefix.
+The daemon redirects `/archive` to `/archive/`; nested pages, browser API
+requests, uploads, downloads, and assets stay beneath that prefix. Existing
+CLI API endpoints remain available at the backend root, and `docbank web`
+includes the path in its loopback launch URL. The proxy only needs to expose
+the configured prefix.
+
+Login cookies are scoped to the configured path and have distinct names for
+each origin and path. This lets separate Docbank instances share an origin.
+As with any applications on the same origin, their scripts share browser
+origin authority; a path is not a browser security boundary.
+
+### Browser sessions
+
 Key login sets a host-only, HttpOnly, SameSite=Strict instance cookie; HTTPS
 also sets Secure. Each tab receives its own token and upload proof.
 The cookie alone cannot read the vault. Requests need the tab token and cookie;

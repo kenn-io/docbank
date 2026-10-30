@@ -141,6 +141,7 @@ idle_timeout = "30m"  # background daemons only; "0" = never
 
 [web]
 enabled = true
+base_path = ""                 # empty = root; e.g. "/archive" (no trailing slash)
 public_origin = ""             # empty = loopback web origin; set = 32+ char api_key
 allowed_hosts = []             # extra exact host[:port] authorities; needs public_origin
 trust_private_network = false  # explicit trust for non-loopback HTTP
@@ -200,11 +201,16 @@ exclude_patterns = [".syncthing.*.tmp", "*.sync-conflict-*"]
   requests before exiting on its own. `"0"` disables idle shutdown.
   Foreground `docbank daemon run` ignores this and never idles out. A daemon
   hosting MCP HTTP also never idles out.
-- **`[web] enabled`**: serves the embedded web application at `/`.
+- **`[web] enabled`**: serves the embedded web application.
   `docbank web` starts or reconnects to the compatible daemon and opens an
   authenticated browser session on a fresh per-daemon loopback origin,
   independent of a configured `api_port`. Disabling it 404s `/`, `/searches`, `/productions`, `/imports`, `/trash`, `/photos`, `/photos/people`, `/photos/map`, `/photos/map/{set_id}`, `/photos/albums`, canonical `/photos/albums/{id}`, and `/assets/`.
   The API and `/docs` are unaffected. See [Web application](usage/web.md).
+- **`[web] base_path`**: mounts browser pages, assets, and API requests beneath a
+  path such as `/archive`. Empty means `/`. Use ASCII letters, digits, `-`, `.`,
+  `_`, and `~` in nonempty segments; omit the trailing slash. Dot segments and
+  reserved API prefixes such as `/api`, `/health`, and `/docs` are rejected.
+  The CLI retains its root API endpoints. See [proxy subpaths](usage/web.md#serve-docbank-under-a-path).
 - **`[mcp.http] enabled`**: hosts read-only MCP HTTP in the daemon. When unset,
   the daemon hosts it if the API binds loopback, `port` is unset, and the MCP
   bearer resolves in the daemon's environment; otherwise it logs why and starts
