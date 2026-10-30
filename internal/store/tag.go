@@ -453,6 +453,9 @@ func changeTagAssignmentTx(
 				"advancing node %d after tag assignment change: %w", node.ID, err,
 			)
 		}
+		if err := recordVaultChangesTx(context.Background(), tx, "tagged", node.ID); err != nil {
+			return TagAssignmentChange{}, err
+		}
 		result.Node, err = nodeByIDTx(tx, node.ID)
 		if err != nil {
 			return TagAssignmentChange{}, err
@@ -641,12 +644,20 @@ func checkTagRevision(tag Tag, expected int64) error {
 }
 
 func touchTaggedNodesTx(tx *sql.Tx, tagID, timestamp string) error {
-	if _, err := tx.Exec(`
+	var ids []int64
+	if err := queryRows(context.Background(), tx, `
 		UPDATE nodes SET revision = revision + 1, modified_at = ?
-		WHERE id IN (SELECT node_id FROM node_tags WHERE tag_id = ?)`, timestamp, tagID); err != nil {
+		WHERE id IN (SELECT node_id FROM node_tags WHERE tag_id = ?) RETURNING id`, []any{timestamp, tagID}, func(rows *sql.Rows) error {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return err
+		}
+		ids = append(ids, id)
+		return nil
+	}); err != nil {
 		return fmt.Errorf("advancing nodes assigned tag %s: %w", tagID, err)
 	}
-	return nil
+	return recordVaultChangesTx(context.Background(), tx, "tagged", ids...)
 }
 
 func validatePage(limit, offset int) error {

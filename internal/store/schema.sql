@@ -3078,3 +3078,15 @@ END;
 CREATE TRIGGER IF NOT EXISTS tag_fts_delete AFTER DELETE ON tags BEGIN
     DELETE FROM tag_fts WHERE tag_id=old.id;
 END;
+
+CREATE TABLE IF NOT EXISTS vault_change_head (
+    singleton INTEGER PRIMARY KEY,
+    epoch TEXT NOT NULL,
+    high_water INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS vault_changes (
+    seq INTEGER PRIMARY KEY,
+    kind TEXT NOT NULL,
+    node_id INTEGER NOT NULL,
+    node_revision INTEGER NOT NULL
+);

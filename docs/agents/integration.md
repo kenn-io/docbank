@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-09
+last_edited: 2026-10-30
 title: Agent integration guide
 description: Connect an agent to Docbank using its OpenAPI contract, authenticated HTTP API, revisions, and dry-run maintenance operations.
 ---
@@ -513,6 +513,37 @@ and then mutate by node ID: an ancestor can move without advancing the target
 node's revision. The path endpoint resolves the path and applies the change in
 one store transaction. Use the ID-addressed form only when the node ID itself
 is the intended target.
+
+## React to vault changes
+
+An API-key client can follow committed changes without comparing repeated vault listings:
+
+```bash
+docbank changes --follow --json
+docbank changes --after CURSOR --follow --json
+```
+
+Each line carries `cursor`, `kind`, `node_id`, and `revision`. Save the cursor after handling the event. A reconnect with `--after` replays subsequent retained events in commit order. Without `--follow`, the command drains the retained history and exits. An empty cursor starts at the oldest retained event.
+
+| Kind | Meaning |
+| --- | --- |
+| `created` | A file or directory was created. |
+| `version_added` | A content version was replaced, confirmed with new bytes, or reverted. |
+| `moved` | A node changed its name or parent. |
+| `tagged` | The node's tags changed, including a tag rename or deletion. |
+| `trashed` | A node was trashed, including each affected descendant. |
+| `restored` | A node was restored, including each affected descendant. |
+| `processed` | A readable processing result was published, such as text, a photo description, or face detection. |
+
+The feed retains the latest 100,000 events. Repeated no-op assignments, deduplicated imports, parent-directory revision bumps, processing failures, and embedding-index updates emit nothing. Use job status for processing failures. Photo hide and unhide also emit nothing. Events carry node identity and revision, and an API key can observe file nodes belonging to hidden photos. Browser sessions cannot read this feed.
+
+Cursors belong to one database incarnation. Restoring a vault creates a new incarnation, and backups omit the feed. An expired, foreign, or future cursor returns HTTP 410 with code `changes_cursor_expired` and a current `cursor`:
+
+1. Save that cursor before starting a fresh vault scan.
+2. Rescan the vault to rebuild your local view.
+3. Resume with `--after` and the saved cursor to include changes made during the scan.
+
+The CLI exits with an error and prints the resume cursor on expiry. Handle events idempotently, since a scan and replay can overlap. A later node lookup can return 404 if that node has since been removed. See the [HTTP route](../architecture/http-api.md#vault-change-feed) for direct clients.
 
 ## Follow backup progress without scraping a CLI
 

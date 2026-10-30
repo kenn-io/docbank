@@ -334,6 +334,15 @@ func (s *Store) applyBatchTagsTx(
 			}
 		}
 	}
+	ids := make([]int64, 0, len(changedIDs))
+	for _, result := range results {
+		if result.Changed {
+			ids = append(ids, result.NodeID)
+		}
+	}
+	if err := recordVaultChangesTx(ctx, tx, "tagged", ids...); err != nil {
+		return nil, err
+	}
 	return results, nil
 }
 

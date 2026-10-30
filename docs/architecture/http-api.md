@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-14
+last_edited: 2026-10-30
 title: HTTP API
 description: The agent-first HTTP API: filesystem-shaped endpoints, revision preconditions, and the daemon's error contract.
 ---
@@ -22,6 +22,12 @@ starting point.
 | When may I trust downloaded bytes? | [Content verification](#content-identity-and-verification-evidence) |
 | Which credentials does a request need? | [Authentication](#auth) |
 | How do I handle a failed request? | [Error mapping](#error-mapping) |
+
+## Vault change feed
+
+`GET /api/v1/changes?after=CURSOR&follow=true` requires an API key. It returns `application/x-ndjson`, one object per line with `cursor`, `kind`, `node_id`, and `revision`. Both parameters are optional. Without `after`, reading starts at the oldest retained event. Without `follow=true`, the response drains and closes. A follow response checks for new changes every second and closes on client disconnect or daemon shutdown.
+
+The daemon validates the cursor before sending response headers. A malformed cursor returns 400 `validation`. An expired cursor, another database's cursor, or a sequence beyond the current head returns 410 `changes_cursor_expired`; the problem body's `cursor` is the current head. Save it before rescanning, then resume after it. See [React to vault changes](../agents/integration.md#react-to-vault-changes) for event kinds, retention, and recovery.
 
 ## Mailbox imports and explicit EML transfers
 

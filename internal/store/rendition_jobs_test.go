@@ -1456,8 +1456,22 @@ func TestPublishRenditionJobAtomicallyActivatesAuthorizedWaiters(t *testing.T) {
 		t.Context(), claim, generationID, now.Add(3*time.Second))
 	require.NoError(t, err)
 
+	_, before, err := s.VaultChanges(t.Context(), "", 500)
+	require.NoError(t, err)
 	publication, err := s.PublishRenditionJob(t.Context(), claim, now.Add(4*time.Second))
 	require.NoError(t, err)
+	changes, _, err := s.VaultChanges(t.Context(), before, 500)
+	require.NoError(t, err)
+	require.Len(t, changes, 2)
+	firstVersion, err := s.ContentVersionByID(t.Context(), versions[0])
+	require.NoError(t, err)
+	secondVersion, err := s.ContentVersionByID(t.Context(), versions[1])
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []int64{firstVersion.NodeID, secondVersion.NodeID}, []int64{changes[0].NodeID, changes[1].NodeID})
+	for _, change := range changes {
+		assert.Equal(t, "processed", change.Kind)
+		assert.Equal(t, int64(1), change.Revision)
+	}
 	assert.Equal(t, 2, publication.PublishedWaiterCount)
 	assert.Zero(t, publication.RejectedWaiterCount)
 	assert.Equal(t, generationID, publication.LexicalGenerationID)

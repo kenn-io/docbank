@@ -459,7 +459,7 @@ func (s *Store) applyBatchMove(ctx context.Context, tx *sql.Tx, plan batchMovePl
 			return err
 		}
 	}
-	return nil
+	return recordVaultChangesTx(ctx, tx, "moved", sortedBatchMoveIDs(moved)...)
 }
 
 func (s *Store) batchMoveResults(

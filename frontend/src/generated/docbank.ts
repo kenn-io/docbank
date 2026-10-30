@@ -636,6 +636,7 @@ export interface Error {
   backup_forget?: BackupForgetReport;
   backup_prune?: BackupPruneReport;
   code?: string;
+  cursor?: string;
   detail?: string;
   errors?: string[];
   /** @maxItems 20 */
@@ -9040,6 +9041,11 @@ cursor?: string;
 limit?: number;
 };
 
+export type VaultChangesParams = {
+after?: string;
+follow?: boolean;
+};
+
 export type ListCollectionsParams = {
 /**
  * @minimum 1
@@ -9191,6 +9197,7 @@ export type GetExportJobEventsDefault = {
   backup_forget?: BackupForgetReport;
   backup_prune?: BackupPruneReport;
   code?: string;
+  cursor?: string;
   detail?: string;
   errors?: string[];
   /** @maxItems 20 */
@@ -11608,6 +11615,37 @@ return sessionJSON<BatesPlan>(getPlanBatesStampUrl(),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(batesPlanRequest)
+  }
+);}
+
+
+
+export const getVaultChangesUrl = (params?: VaultChangesParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/changes?${stringifiedParams}` : `/api/v1/changes`
+}
+
+/**
+ * @summary Read resumable vault changes
+ */
+export const vaultChanges = async (params?: VaultChangesParams, options?: Parameters<typeof sessionJSON>[1]): Promise<Response> => {
+
+  return sessionJSON<Response>(getVaultChangesUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
   }
 );}
 

@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-24
+last_edited: 2026-10-30
 title: CLI reference
 description: Every docbank command, with its flags, output formats, and error behavior.
 ---
@@ -27,6 +27,16 @@ if needed. `docbank push` selects an explicit keyed daemon with `--to` and
 does not start a local daemon. Commands never open the vault directly. `docbank daemon status` and
 `docbank daemon stop` never start a daemon. See [Daemon](architecture/daemon.md)
 and [Ownership and concurrency](architecture/locking.md).
+
+## docbank changes
+
+```text
+docbank changes [--after CURSOR] [--follow] [--json]
+```
+
+Read committed vault changes in cursor order. The default output has four tab-separated columns: cursor, kind, node ID, and revision. `--json` prints one JSON event per line. `--after` resumes after a saved cursor; omitting it starts at the oldest retained event. `--follow` waits for new events after draining the backlog.
+
+An expired cursor produces a nonzero exit and a message to rescan, then resume with `--after CURSOR`. Save the supplied cursor before rescanning. See [React to vault changes](agents/integration.md#react-to-vault-changes) for event kinds and retention.
 
 ## docbank kata
 

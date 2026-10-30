@@ -117,6 +117,7 @@ func (s *Store) TrashPathRevision(
 // trashNodeTx trashes a live node n (pre-checked by the caller) and its live
 // subtree within the caller's transaction.
 func (s *Store) trashNodeTx(ctx context.Context, tx *sql.Tx, n Node, now string) error {
+	var changeIDs []int64
 	removed, trashedIDs := map[string]int64{}, map[int64]struct{}{}
 	if err := queryRows(ctx, tx, `
 			WITH RECURSIVE subtree(id) AS (
@@ -136,6 +137,7 @@ func (s *Store) trashNodeTx(ctx context.Context, tx *sql.Tx, n Node, now string)
 		if err := rows.Scan(&id, &fileID, &originalNode); err != nil {
 			return err
 		}
+		changeIDs = append(changeIDs, id)
 		trashedIDs[id] = struct{}{}
 		if fileID.Valid {
 			removed[fileID.String] = originalNode.Int64
@@ -161,6 +163,9 @@ func (s *Store) trashNodeTx(ctx context.Context, tx *sql.Tx, n Node, now string)
 		if err := recordPhotoXMPDetachedTx(ctx, tx, fileID, false); err != nil {
 			return err
 		}
+	}
+	if err := recordVaultChangesTx(ctx, tx, "trashed", changeIDs...); err != nil {
+		return err
 	}
 	return bumpRevisionTx(tx, *n.ParentID, now)
 }
@@ -288,7 +293,8 @@ func (s *Store) restoreNodeTx(
 	// Then un-trash the descendants that share this operation's stamp.
 	// Their (parent, name) pairs cannot conflict: nothing could be
 	// created under a trashed directory in the interim.
-	if _, err := tx.Exec(`
+	ids := []int64{node.ID}
+	if err := queryRows(context.Background(), tx, `
 		WITH RECURSIVE subtree(id) AS (
 			SELECT id FROM nodes WHERE id = ?
 			UNION ALL
@@ -297,11 +303,21 @@ func (s *Store) restoreNodeTx(
 			WHERE n.trashed_at = ?
 		)
 		UPDATE nodes SET trashed_at = NULL, revision = revision + 1, modified_at = ?
-		WHERE id IN (SELECT id FROM subtree) AND trashed_at = ?`,
-		node.ID, *node.TrashedAt, now, *node.TrashedAt); err != nil {
+		WHERE id IN (SELECT id FROM subtree) AND trashed_at = ? RETURNING id`,
+		[]any{node.ID, *node.TrashedAt, now, *node.TrashedAt}, func(rows *sql.Rows) error {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return err
+			}
+			ids = append(ids, id)
+			return nil
+		}); err != nil {
 		return Node{}, fmt.Errorf("restoring subtree of node %d: %w", node.ID, err)
 	}
 	if err := bumpRevisionTx(tx, target.destID, now); err != nil {
+		return Node{}, err
+	}
+	if err := recordVaultChangesTx(context.Background(), tx, "restored", ids...); err != nil {
 		return Node{}, err
 	}
 	return nodeByIDTx(tx, node.ID)

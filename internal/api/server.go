@@ -248,6 +248,7 @@ func NewServer(d Deps) *Server {
 	photoEventsContext, stopPhotoEvents := context.WithCancel(context.Background())
 	s.stopPhotoEvents = stopPhotoEvents
 	registerPhotoEvents(photoEventsContext, mux, humaAPI, d)
+	registerChanges(photoEventsContext, mux, humaAPI, d)
 	registerPhotoRoutes(humaAPI, d, g)
 	registerPhotoFaceRoutes(humaAPI, d, g)
 	registerPhotoFaceDecisionRoutes(humaAPI, d, g)

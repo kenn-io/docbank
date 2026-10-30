@@ -1,0 +1,175 @@
+package store
+
+import (
+	"database/sql"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"strconv"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+func TestVaultChangesRecordMutations(t *testing.T) {
+	t.Parallel()
+	for _, audited := range []bool{false, true} {
+		t.Run(strconv.FormatBool(audited), func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			if audited {
+				plan, err := s.PreviewInitialAudit(ctx, s.RootID(), "cli", nil)
+				require.NoError(t, err)
+				_, err = s.EnableInitialAudit(ctx, plan)
+				require.NoError(t, err)
+			}
+			dir, err := s.Mkdir(ctx, s.RootID(), "inbox")
+			require.NoError(t, err)
+			node, err := s.CreateFile(ctx, dir.ID, "note.txt", fakeHash("a1"), 4, "text/plain")
+			require.NoError(t, err)
+			_, err = s.CreateFile(ctx, dir.ID, "note.txt", fakeHash("b1"), 4, "text/plain")
+			require.ErrorIs(t, err, ErrExists)
+			_, _, err = s.ReplaceContent(ctx, node.ID, 1, fakeHash("a2"), 8, "text/plain")
+			require.NoError(t, err)
+			_, _, _, err = s.RevertContent(ctx, node.ID, 2, node.CurrentVersionID)
+			require.NoError(t, err)
+			_, _, err = s.Move(ctx, node.ID, dir.ID, "renamed.txt", 3)
+			require.NoError(t, err)
+			_, err = s.BatchMove(ctx, []BatchMoveRequest{{NodeID: node.ID, IfRevision: 4, DestinationPath: "/inbox/final.txt"}})
+			require.NoError(t, err)
+			tag, err := s.CreateTag(ctx, "receipts")
+			require.NoError(t, err)
+			_, err = s.AssignTag(ctx, tag.ID, node.ID, 5)
+			require.NoError(t, err)
+			unchanged, err := s.AssignTag(ctx, tag.ID, node.ID, 6)
+			require.NoError(t, err)
+			require.False(t, unchanged.Changed)
+			_, err = s.UnassignTag(ctx, tag.ID, node.ID, 6)
+			require.NoError(t, err)
+			operation, err := newUUIDv4()
+			require.NoError(t, err)
+			_, err = s.BatchTags(ctx, BatchTagRequest{OperationID: operation, TagID: tag.ID, Assign: true, Nodes: []BatchTagTarget{{NodeID: node.ID, Revision: 7}}})
+			require.NoError(t, err)
+			tag, err = s.RenameTag(ctx, tag.ID, UnconditionalRev, "invoices")
+			require.NoError(t, err)
+			_, err = s.DeleteTag(ctx, tag.ID, tag.Revision)
+			require.NoError(t, err)
+			_, _, err = s.Trash(ctx, dir.ID, UnconditionalRev)
+			require.NoError(t, err)
+			_, _, err = s.Restore(ctx, dir.ID, UnconditionalRev)
+			require.NoError(t, err)
+			changes, head, err := s.VaultChanges(ctx, "", 500)
+			require.NoError(t, err)
+			type event struct {
+				kind         string
+				id, revision int64
+			}
+			got := make([]event, 0, len(changes))
+			for i, change := range changes {
+				got = append(got, event{change.Kind, change.NodeID, change.Revision})
+				raw, err := base64.RawURLEncoding.DecodeString(change.Cursor)
+				require.NoError(t, err)
+				require.True(t, strings.HasSuffix(string(raw), fmt.Sprintf(":%d", i+1)), "committed sequences must have no gaps")
+			}
+			require.Equal(t, []event{
+				{"created", dir.ID, 1}, {"created", node.ID, 1},
+				{"version_added", node.ID, 2}, {"version_added", node.ID, 3},
+				{"moved", node.ID, 4}, {"moved", node.ID, 5},
+				{"tagged", node.ID, 6}, {"tagged", node.ID, 7}, {"tagged", node.ID, 8}, {"tagged", node.ID, 9}, {"tagged", node.ID, 10},
+				{"trashed", dir.ID, 5}, {"trashed", node.ID, 11}, {"restored", dir.ID, 6}, {"restored", node.ID, 12},
+			}, got)
+			require.Equal(t, changes[len(changes)-1].Cursor, head)
+			page, _, err := s.VaultChanges(ctx, changes[0].Cursor, 2)
+			require.NoError(t, err)
+			require.Equal(t, changes[1:3], page)
+		})
+	}
+}
+
+func TestVaultChangesCursors(t *testing.T) { //nolint:paralleltest // Pruning coverage changes process-wide retention.
+	// Retention is process-wide. This test runs before parallel store tests.
+	prior := vaultChangeRetention
+	vaultChangeRetention = 2
+	t.Cleanup(func() { vaultChangeRetention = prior })
+	s := newTestStore(t)
+	ctx := t.Context()
+	_, empty, err := s.VaultChanges(ctx, "", 500)
+	require.NoError(t, err)
+	for _, name := range []string{"one", "two", "three"} {
+		_, err = s.Mkdir(ctx, s.RootID(), name)
+		require.NoError(t, err)
+	}
+	changes, head, err := s.VaultChanges(ctx, "", 500)
+	require.NoError(t, err)
+	require.Len(t, changes, 2)
+	raw, err := base64.RawURLEncoding.DecodeString(head)
+	require.NoError(t, err)
+	epoch, _, _ := strings.Cut(string(raw), ":")
+	for _, cursor := range []string{empty, changeCursor("11111111-1111-4111-8111-111111111111", 0), changeCursor(epoch, 4)} {
+		_, current, err := s.VaultChanges(ctx, cursor, 500)
+		require.ErrorIs(t, err, ErrChangeCursorExpired)
+		require.Equal(t, head, current)
+	}
+	_, _, err = s.VaultChanges(ctx, "broken", 500)
+	require.ErrorIs(t, err, ErrInvalidChangeCursor)
+	page, _, err := s.VaultChanges(ctx, head, 500)
+	require.NoError(t, err)
+	require.Empty(t, page)
+	// Even when every retained row is gone, only the head can resume.
+	_, err = s.db.Exec(`DELETE FROM vault_changes`)
+	require.NoError(t, err)
+	_, current, err := s.VaultChanges(ctx, changes[0].Cursor, 500)
+	require.ErrorIs(t, err, ErrChangeCursorExpired)
+	require.Equal(t, head, current)
+}
+
+func TestVaultChangesRollback(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	_, before, err := s.VaultChanges(ctx, "", 500)
+	require.NoError(t, err)
+	aborted := errors.New("abort mutation")
+	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		_, err := s.insertNodeTx(ctx, tx, s.RootID(), "rolled-back", "dir", nil, nowRFC3339())
+		if err != nil {
+			return err
+		}
+		return aborted
+	})
+	require.ErrorIs(t, err, aborted)
+	changes, head, err := s.VaultChanges(ctx, before, 500)
+	require.NoError(t, err)
+	require.Empty(t, changes)
+	require.Equal(t, before, head)
+	_, err = s.Mkdir(ctx, s.RootID(), "committed")
+	require.NoError(t, err)
+	changes, _, err = s.VaultChanges(ctx, before, 500)
+	require.NoError(t, err)
+	require.Len(t, changes, 1)
+}
+
+func TestVaultChangesLegacyProcessing(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	node, err := s.CreateFile(ctx, s.RootID(), "note.txt", fakeHash("61"), 4, "text/plain")
+	require.NoError(t, err)
+	_, before, err := s.VaultChanges(ctx, "", 500)
+	require.NoError(t, err)
+	require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{BlobHash: node.BlobHash, Extractor: "plain-text", ExtractorVersion: 1, Status: ExtractionOK, Text: "note"}))
+	_, err = s.MigrateLegacyPlainText(ctx)
+	require.NoError(t, err)
+	changes, head, err := s.VaultChanges(ctx, before, 500)
+	require.NoError(t, err)
+	require.Len(t, changes, 1)
+	require.Equal(t, "processed", changes[0].Kind)
+	require.Equal(t, node.ID, changes[0].NodeID)
+	require.Equal(t, int64(1), changes[0].Revision)
+	_, err = s.MigrateLegacyPlainText(ctx)
+	require.NoError(t, err)
+	changes, _, err = s.VaultChanges(ctx, head, 500)
+	require.NoError(t, err)
+	require.Empty(t, changes)
+}
