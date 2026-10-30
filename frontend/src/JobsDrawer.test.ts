@@ -30,7 +30,6 @@ function jobsResponse(
 describe("background jobs drawer", () => {
   it("pauses an idle worker", async () => {
     let paused = false;
-    let processing = { profile: "mistral-ocr", consent_state: "required", error: "" };
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, options) => {
       if (options?.method === "PUT") paused = JSON.parse(String(options.body)).paused;
       return jobsResponse(
@@ -48,13 +47,6 @@ describe("background jobs drawer", () => {
             status: "running",
             busy: false,
             started_at: "2026-07-23T12:00:00Z",
-          },
-          {
-            name: "watch:inbox",
-            lane: "watch:inbox",
-            status: "failed",
-            error: "source unavailable",
-            processing,
           },
         ],
         [
@@ -77,6 +69,22 @@ describe("background jobs drawer", () => {
     expect(screen.getByRole("button", { name: "Resume Making previews" })).toBeTruthy();
     const write = fetchSpy.mock.calls.find(([, options]) => options?.method === "PUT")!;
     expect(String(write[0])).toContain("/lanes/derive%3Avisual-previews");
+  });
+
+  it("shows watch processing status separately from scanner failures", async () => {
+    let processing = { profile: "mistral-ocr", consent_state: "required", error: "" };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      jobsResponse([
+        {
+          name: "watch:inbox",
+          lane: "watch:inbox",
+          status: "failed",
+          error: "source unavailable",
+          processing,
+        },
+      ]),
+    );
+    render(JobsDrawer, { session: "short-lived", onclose: vi.fn(), onauthfailure: vi.fn() });
     for (const consent_state of ["required", "active", "expired", "revoked"]) {
       processing = { profile: "mistral-ocr", consent_state, error: "" };
       await fireEvent.click(screen.getByRole("button", { name: "Refresh background jobs" }));
@@ -94,7 +102,6 @@ describe("background jobs drawer", () => {
     expect(
       await screen.findByText("Processing profile: mistral-ocr. Consent status unavailable"),
     ).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Resume Making previews" })).toBeTruthy();
   });
 
   it.each([

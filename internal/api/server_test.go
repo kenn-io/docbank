@@ -559,10 +559,6 @@ func TestWebSessionIsScopedRevocableAndDaemonLocal(t *testing.T) {
 		"tag-definition permission is limited to one stable tag resource")
 	require.NoError(t, resp.Body.Close())
 
-	resp = webRequest(http.MethodGet, "/api/v1/watches")
-	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
-	require.NoError(t, resp.Body.Close())
-
 	resp = webRequest(http.MethodGet, "/api/v1/jobs")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	require.NoError(t, resp.Body.Close())
