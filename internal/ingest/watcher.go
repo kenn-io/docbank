@@ -272,6 +272,9 @@ func watchMountForRoot(root *os.Root) (watchMount, error) {
 // Watcher scans one configured local inbox. Settled observations are in memory,
 // so a restart begins a new settle window. Prompt mode skips that delay.
 type Watcher struct {
+	// AfterImport runs outside the mutation gate after a committed add or update.
+	// Its failure is logged independently of scanner status.
+	AfterImport      func(context.Context, store.Node) error
 	process          func(context.Context, string, *watchObservation, localFileOpener) error
 	reject           func(context.Context, string, error) error
 	excluded         func(context.Context, string) error
@@ -1507,6 +1510,11 @@ func (w *Watcher) processObservation(ctx context.Context, source watchSource, st
 	}
 	if err != nil {
 		return fmt.Errorf("ingesting %q: %w", rel, err)
+	}
+	if w.process == nil && result.Outcome != WatchSkipped && w.AfterImport != nil {
+		if err := w.AfterImport(ctx, result.Node); err != nil {
+			w.logger.Warn("watched inbox processing skipped", "watch", w.config.Name, "node_id", result.Node.ID, "error", err)
+		}
 	}
 	delete(w.rejected, rel)
 	observation.processed = true

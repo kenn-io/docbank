@@ -1,6 +1,11 @@
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { beforeEach, afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import JobsDrawer from "./JobsDrawer.svelte";
+import * as generated from "./generated/docbank.js";
+
+beforeEach(() => {
+  vi.spyOn(generated, "listWatchedInboxes").mockResolvedValue({ items: [] });
+});
 
 afterEach(() => {
   cleanup();
@@ -625,4 +630,52 @@ it("shows current running work ahead of a retained failure in the same lane", as
   expect(screen.getByText("1 running")).toBeTruthy();
   expect(within(lane).getByText("Earlier operation failed")).toBeTruthy();
   expect(screen.getByRole("row", { name: "Moving stored files Running" })).toBeTruthy();
+});
+
+it("keeps live watch consent visible while idle and preserves scanner errors", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+    jobsResponse([
+      {
+        name: "watch:inbox",
+        lane: "watch:inbox",
+        status: "failed",
+        busy: false,
+        started_at: "2026-10-30T12:00:00Z",
+        error: "source unavailable",
+      },
+    ]),
+  );
+  const watches = vi.mocked(generated.listWatchedInboxes);
+  for (const consent_state of ["required", "active", "expired", "revoked"] as const) {
+    watches.mockResolvedValue({
+      items: [
+        {
+          name: "inbox",
+          profile: "mistral-ocr",
+          consent_state,
+          capture_on_change: false,
+          source: "/synthetic/inbox",
+          destination: "/inbox",
+          settle_time: "30s",
+          minimum_age: "0s",
+          scan_interval: "5s",
+          exclude: [],
+          exclude_patterns: [],
+        },
+      ],
+    });
+    if (consent_state === "required") {
+      render(JobsDrawer, { session: "session", onclose: vi.fn(), onauthfailure: vi.fn() });
+    } else {
+      await fireEvent.click(screen.getByRole("button", { name: "Refresh background jobs" }));
+    }
+    const text =
+      consent_state === "active"
+        ? "Processing profile: mistral-ocr"
+        : `Waiting on consent for mistral-ocr (${consent_state})`;
+    expect(await screen.findByText(text)).toBeTruthy();
+    const row = screen.getByRole("row", { name: /Watching inbox/ });
+    expect(within(row).getByText("source unavailable")).toBeTruthy();
+    expect(within(row).getByText("Failed")).toBeTruthy();
+  }
 });

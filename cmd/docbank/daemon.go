@@ -536,6 +536,11 @@ func runServe(ctx context.Context) (retErr error) {
 		if err != nil {
 			return fmt.Errorf("configuring watch %q: %w", watchConfig.Name, err)
 		}
+		if watchConfig.Profile != "" {
+			watcher.AfterImport = func(ctx context.Context, node store.Node) error {
+				return processingService.AdmitImportedRendition(ctx, node, watchConfig.Profile)
+			}
+		}
 		if err := jobSupervisor.Start("watch:"+watchConfig.Name, watcher.Run); err != nil {
 			return fmt.Errorf("starting watch %q: %w", watchConfig.Name, err)
 		}

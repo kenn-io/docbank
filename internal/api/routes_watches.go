@@ -18,7 +18,7 @@ func registerWatchRoutes(api huma.API, d Deps) {
 	huma.Register(api, huma.Operation{
 		OperationID: "listWatchedInboxes", Method: http.MethodGet, Path: "/api/v1/watches",
 		Summary: "List effective watched-inbox configuration and runner status",
-	}, func(_ context.Context, _ *struct{}) (*output, error) {
+	}, func(ctx context.Context, _ *struct{}) (*output, error) {
 		watches := slices.Clone(d.Cfg.Watches)
 		slices.SortFunc(watches, func(a, b config.WatchConfig) int {
 			return cmp.Compare(a.Name, b.Name)
@@ -39,6 +39,17 @@ func registerWatchRoutes(api huma.API, d Deps) {
 				ScanInterval:    watch.ScanInterval.Std().String(),
 				Exclude:         append([]string{}, watch.Exclude...),
 				ExcludePatterns: append([]string{}, watch.ExcludePatterns...),
+			}
+			if watch.Profile != "" {
+				item.Profile = watch.Profile
+				item.ConsentState = "required"
+				if d.Processing != nil {
+					state, err := d.Processing.RenditionConsentState(ctx, watch.Profile)
+					if err != nil {
+						return nil, huma.Error500InternalServerError("reading watched-inbox consent", err)
+					}
+					item.ConsentState = state
+				}
 			}
 			if job, ok := jobsByName["watch:"+watch.Name]; ok {
 				item.Job = &job

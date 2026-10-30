@@ -3,6 +3,7 @@ package ingest
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -1169,4 +1170,37 @@ func TestWatcherRenameAndEditBeforeFirstScanKeepsNode(t *testing.T) {
 	_, total, err := ing.Store.ContentVersions(t.Context(), original.ID, 10, 0)
 	require.NoError(t, err)
 	assert.Equal(t, 2, total)
+}
+
+func TestWatcherAfterImportKeepsCommittedVersionAndScannerStatus(t *testing.T) {
+	ing := newTestIngester(t)
+	source := writeTree(t, map[string]string{"report.txt": "first"})
+	inside := false
+	watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{
+		Name: "inbox", Source: source, Destination: "/inbox", CaptureOnChange: true,
+	}, func(fn func() error) error {
+		inside = true
+		defer func() { inside = false }()
+		return fn()
+	}, slog.New(slog.DiscardHandler))
+	require.NoError(t, err)
+	var imported []store.Node
+	watcher.AfterImport = func(ctx context.Context, node store.Node) error {
+		require.False(t, inside)
+		version, err := ing.Store.ContentVersionByID(ctx, node.CurrentVersionID)
+		require.NoError(t, err)
+		require.Equal(t, node.ID, version.NodeID)
+		imported = append(imported, node)
+		return errors.New("synthetic queue unavailable")
+	}
+	root := openWatcherRoot(t, watcher)
+	require.NoError(t, watcher.scan(t.Context(), root))
+	require.Len(t, imported, 1)
+	require.NoError(t, watcher.scan(t.Context(), root))
+	require.Len(t, imported, 1)
+	require.NoError(t, os.WriteFile(filepath.Join(source, "report.txt"), []byte("second version"), 0600))
+	require.NoError(t, watcher.scan(t.Context(), root))
+	require.Len(t, imported, 2)
+	require.Equal(t, imported[0].ID, imported[1].ID)
+	require.NotEqual(t, imported[0].CurrentVersionID, imported[1].CurrentVersionID)
 }

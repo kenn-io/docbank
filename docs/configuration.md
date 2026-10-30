@@ -423,6 +423,23 @@ person edits or reverts the Docbank node while the source stays unchanged, a
 daemon restart does not overwrite that working version. Only a later byte
 change at the watched source appends another version.
 
+Set `profile = "mistral-ocr"` in a `[[watch]]` entry to queue its configured
+processing profile's OCR or text-extraction stage after each added or updated
+version. The profile must include a rendition that accepts original documents;
+photo vision and embedding-only profiles aren't supported here. Omit `profile`
+to keep imports unprocessed.
+
+The rendition stage needs current consent for that profile configuration.
+Without it, files still import and stay unprocessed. `docbank watch list` and
+the web app's All workers table show the profile and whether consent is required,
+expired, or revoked. Scanner errors remain separate. Unsupported files are skipped.
+Queue failures are logged and leave the import accepted.
+
+Scheduling happens only at import. Granting consent later or adding a profile
+doesn't process older imports; use explicit processing for those documents.
+Unchanged rescans add no work. The existing durable workers execute the queued
+rendition; embedding stages require explicit profile execution.
+
 Watchers run as jobs named `watch:<name>`. `docbank watch list` and
 `GET /api/v1/watches` pair each runner's state with its effective source,
 destination, capture mode (`settled` or `prompt`), settle window,

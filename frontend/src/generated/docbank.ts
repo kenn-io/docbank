@@ -8751,14 +8751,26 @@ export interface VersionPruneRequest {
   version_ids?: string[];
 }
 
+export type WatchedInboxConsentState = typeof WatchedInboxConsentState[keyof typeof WatchedInboxConsentState];
+
+
+export const WatchedInboxConsentState = {
+  active: 'active',
+  required: 'required',
+  expired: 'expired',
+  revoked: 'revoked',
+} as const;
+
 export interface WatchedInbox {
   capture_on_change: boolean;
+  consent_state?: WatchedInboxConsentState;
   destination: string;
   exclude: string[];
   exclude_patterns: string[];
   job?: Job;
   minimum_age: string;
   name: string;
+  profile?: string;
   scan_interval: string;
   settle_time: string;
   source: string;

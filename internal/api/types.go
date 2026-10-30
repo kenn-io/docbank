@@ -1296,6 +1296,8 @@ type JobList struct {
 // state for one local watched source. Source is intentionally machine-local;
 // Destination is a path in the Docbank virtual tree.
 type WatchedInbox struct {
+	Profile         string   `json:"profile,omitzero"`
+	ConsentState    string   `json:"consent_state,omitzero" enum:"active,required,expired,revoked"`
 	CaptureOnChange bool     `json:"capture_on_change"`
 	Name            string   `json:"name"`
 	Source          string   `json:"source"`

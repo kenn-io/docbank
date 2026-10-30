@@ -21207,6 +21207,13 @@ components:
       properties:
         capture_on_change:
           type: boolean
+        consent_state:
+          enum:
+            - active
+            - required
+            - expired
+            - revoked
+          type: string
         destination:
           type: string
         exclude:
@@ -21222,6 +21229,8 @@ components:
         minimum_age:
           type: string
         name:
+          type: string
+        profile:
           type: string
         scan_interval:
           type: string

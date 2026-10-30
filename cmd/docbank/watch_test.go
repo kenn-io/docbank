@@ -42,3 +42,22 @@ func TestWriteWatchedInboxesDisplaysActivity(t *testing.T) {
 	}))
 	assert.Regexp(t, `waiting\s+idle\s`, out.String())
 }
+
+func TestWriteWatchedInboxesProcessingConsent(t *testing.T) {
+	for _, state := range []string{"active", "required", "expired", "revoked"} {
+		t.Run(state, func(t *testing.T) {
+			var out bytes.Buffer
+			require.NoError(t, writeWatchedInboxes(&out, []api.WatchedInbox{{
+				Name: "inbox", Profile: "mistral-ocr", ConsentState: state,
+				Job: &api.Job{Status: "failed", Error: "source unavailable"},
+			}}))
+			assert.Contains(t, out.String(), "mistral-ocr")
+			assert.Contains(t, out.String(), "source unavailable")
+			if state == "active" {
+				assert.NotContains(t, out.String(), "waiting on consent")
+			} else {
+				assert.Contains(t, out.String(), "waiting on consent: "+state)
+			}
+		})
+	}
+}
