@@ -139,8 +139,9 @@ that archive without uploading the same files again:
    in [Connect and push](#connect-and-push) before removing the last configured
    watch.
 2. Start `docbank push` from your working folder with exactly the old watch's
-   `name`. Preserve paths relative to the old watch's source root. For example,
-   `nested/notes.txt` must still be `nested/notes.txt` in the pushed folder.
+   `name`. Preserve current paths relative to the old watch's source root.
+   If a running daemon watch followed a rename to `nested/final.txt`, push that
+   file as `nested/final.txt` to adopt its existing node.
 3. Check the summary. Files matching the watch's last accepted bytes report
    unchanged, send no upload, and create no new nodes. Changed files append a
    version to the existing node, wherever that node is now.

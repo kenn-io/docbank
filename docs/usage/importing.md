@@ -498,15 +498,34 @@ or deletes source data. A time window cannot prove that a producer formally
 closed a file, so use a conservative age or point the watch at a completed-file
 handoff directory when one is available.
 
-The watch name and slash-separated relative source path form a stable, portable
-provenance identity. The first stable observation creates the file under
-`destination`. Later byte changes append content versions to that same node.
-This remains true if a person or agent moves or renames the Docbank node after
-ingestion. Docbank remembers the last content accepted from the source
-independently of the node's current version, so an unchanged source does not
-overwrite a later edit or revert after daemon restart. Removing the source
-leaves the archived node alone. Renaming a source-relative path creates a new
-identity. Docbank does not treat it as a move.
+The first stable observation creates a file under `destination` and records
+its original source-relative path as immutable provenance. Later byte changes
+append versions to that node. The watch name and current relative path form
+the operational cursor. The daemon can follow a live source rename when a
+complete scan finds one unique native file identity with a valid birth time,
+the old path is absent, and a final confined check confirms both facts.
+It updates the cursor without moving or renaming the archived node. A later
+source edit still appends to that node, even if you independently moved or
+renamed it inside Docbank.
+
+Rename continuity uses the native identity associated with the document through
+successful ingestion at the bound source path. Merely observing a replacement
+does not establish that ownership. If an editor atomically replaces a file and
+renames the replacement before Docbank accepts it at the old path, the new path
+is a new source—even if a complete scan saw it waiting to settle or meet minimum
+age. Once eligible, it creates a separate document if its archive destination is
+vacant; a destination conflict is reported otherwise. The earlier document and
+history remain. Successful acceptance at the old path can establish the new
+object's identity even when unchanged bytes need no new content version.
+
+Docbank remembers the last content accepted from the source independently of
+the node's selected version. An unchanged source does not overwrite a manual
+edit or revert after restart. Deleting a source leaves the archived node and
+history intact. A rename made while the daemon is stopped, a copy, a hard-link
+alias, an ambiguous replacement, or a filesystem without usable native birth
+evidence does not carry rename continuity. A newly seen path then follows the
+ordinary exact-destination rule; a collision is reported instead of silently
+joining documents.
 
 For an agent-session archive, use the source tree itself for the organization
 you want to retain. For example,

@@ -1898,23 +1898,37 @@ func validateWatchSourceRelations(ctx context.Context, tx metadataQuerier) error
 	if err := requireWatchSourceFiles("cursor", cursors, nodeKinds); err != nil {
 		return err
 	}
-	provenance, err := loadWatchSourceNodes(ctx, tx, "provenance", `
-		SELECT i.source_desc, p.original_path, p.node_id
-		FROM provenance p JOIN ingests i ON i.id = p.ingest_id
-		WHERE i.source_kind = 'watch'`)
+	rows, err := tx.QueryContext(ctx, `SELECT i.source_desc, p.original_path, p.node_id
+        FROM provenance p JOIN ingests i ON i.id = p.ingest_id
+        WHERE i.source_kind = 'watch'`)
 	if err != nil {
+		return fmt.Errorf("reading watched provenance: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	originals := make(map[int64]watchSourceKey)
+	for rows.Next() {
+		var key watchSourceKey
+		var nodeID int64
+		if err := rows.Scan(&key.watchName, &key.sourceRef, &nodeID); err != nil {
+			return err
+		}
+		if nodeKinds[nodeID] != nodeKindFile {
+			return fmt.Errorf("watched provenance references non-file node %d", nodeID)
+		}
+		if prior, exists := originals[nodeID]; exists && prior != key {
+			return fmt.Errorf("watched node %d has conflicting original paths", nodeID)
+		}
+		originals[nodeID] = key
+	}
+	if err := rows.Err(); err != nil {
 		return err
 	}
-	if err := requireWatchSourceFiles("provenance", provenance, nodeKinds); err != nil {
-		return err
-	}
-	if len(cursors) != len(provenance) {
+	if len(cursors) != len(originals) {
 		return errors.New("watched source cursors do not match provenance")
 	}
-	for key, nodeID := range provenance {
-		if cursors[key] != nodeID {
-			return fmt.Errorf("watched source cursor %q/%q does not match provenance",
-				key.watchName, key.sourceRef)
+	for key, nodeID := range cursors {
+		if original, exists := originals[nodeID]; !exists || original.watchName != key.watchName {
+			return fmt.Errorf("watched source cursor %q/%q does not match provenance owner", key.watchName, key.sourceRef)
 		}
 	}
 	return nil

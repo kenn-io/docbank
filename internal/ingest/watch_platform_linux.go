@@ -14,19 +14,38 @@ import (
 
 type watchMount uint64
 
-func watchMountForFile(file *os.File) (watchMount, error) {
+func watchMetadataForFile(file *os.File, _ fs.FileInfo) (watchMount, watchFileIdentity, error) {
 	var stat unix.Statx_t
-	err := unix.Statx(int(file.Fd()), "",
-		unix.AT_EMPTY_PATH|unix.AT_STATX_DONT_SYNC, unix.STATX_MNT_ID, &stat)
+	err := unix.Statx(int(file.Fd()), "", unix.AT_EMPTY_PATH|unix.AT_STATX_DONT_SYNC,
+		unix.STATX_MNT_ID|unix.STATX_INO|unix.STATX_BTIME, &stat)
 	if err != nil {
-		return 0, fmt.Errorf("reading reliable mount identity: %w", err)
+		return 0, watchFileIdentity{}, fmt.Errorf("reading reliable mount identity: %w", err)
 	}
 	if stat.Mask&unix.STATX_MNT_ID == 0 {
-		return 0, errors.New("kernel did not provide a reliable mount identity")
+		return 0, watchFileIdentity{}, errors.New("kernel did not provide a reliable mount identity")
 	}
-	return watchMount(stat.Mnt_id), nil
+	mount := watchMount(stat.Mnt_id)
+	return mount, watchIdentityFromStatx(mount, stat), nil
+}
+func watchIdentityFromStatx(mount watchMount, stat unix.Statx_t) watchFileIdentity {
+	identity := watchFileIdentity{object: watchObjectKey{mount: mount}}
+	if stat.Mask&unix.STATX_INO != 0 {
+		identity.object.file = stat.Ino
+	}
+	if stat.Mask&(unix.STATX_INO|unix.STATX_BTIME) == unix.STATX_INO|unix.STATX_BTIME {
+		identity.birth = validWatchBirth(stat.Btime.Sec, int64(stat.Btime.Nsec))
+	}
+	return identity
 }
 
+func watchMountForFile(file *os.File) (watchMount, error) {
+	info, err := file.Stat()
+	if err != nil {
+		return 0, err
+	}
+	mount, _, err := watchMetadataForFile(file, info)
+	return mount, err
+}
 func (mount watchMount) same(other watchMount) bool { return mount == other }
 
 func transientWatchObservationError(err error) bool {
