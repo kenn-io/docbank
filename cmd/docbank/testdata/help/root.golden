@@ -28,7 +28,7 @@ Usage:
   docbank [command]
 
 Documents:
-  add  Import files or directory trees into the vault
+  add  Import files, folders, or a URL into the vault
   cat  Print a file's original bytes to stdout
   edit  Edit a file through a new immutable content version
   get  Download one file with end-to-end verification

@@ -38,6 +38,8 @@ Key assumptions reviewers MUST account for:
    tunnel/VPN. Do not flag missing TLS, missing rate limiting, or
    multi-tenant concerns. DO flag any path that would serve without an
    effective key or accept a non-loopback bind.
+   Vault data and provenance share the owner's authority; retaining
+   owner-supplied values grants no additional reader access.
 
 5. DAEMON COMPATIBILITY: data commands accept only a daemon runtime
    record carrying this binary's protocol revision and an effective API

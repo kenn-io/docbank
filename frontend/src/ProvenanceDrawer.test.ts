@@ -125,3 +125,69 @@ it("offers the import ID for command-line imports", async () => {
     active.ingest_id,
   );
 });
+
+it.each([
+  { bytes: 'W/"\\xff\xff"', display: 'W/"\\\\xff\\xff"' },
+  { bytes: null, display: null },
+])("shows URL fetch evidence with optional headers: $display", async (headers) => {
+  const urlFetch = {
+    version: 1,
+    requested_url: "https://example.com/download?id=7",
+    final_url: "https://example.com/filing.pdf",
+    fetched_at: "2026-10-01T12:34:56Z",
+    ...(headers.bytes
+      ? {
+          etag: btoa(headers.bytes!),
+          last_modified: btoa("server supplied text"),
+        }
+      : {}),
+  };
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(
+      JSON.stringify({
+        node,
+        items: [
+          {
+            ...active,
+            source_kind: "url",
+            original_path: "https://example.com/download?id=7",
+            source_description: JSON.stringify(urlFetch),
+            url_fetch: urlFetch,
+          },
+        ],
+        total: 1,
+        limit: 1000,
+        offset: 0,
+      }),
+    ),
+  );
+  render(ProvenanceDrawer, {
+    session: "session",
+    node,
+    path: "/filing.pdf",
+    onclose: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  expect(await screen.findByText("Added from URL")).toBeTruthy();
+  await fireEvent.click(screen.getByText("Import details"));
+  expect(screen.queryByText("Source")).toBeNull();
+  expect(screen.getByRole("button", { name: "Copy final URL" }).textContent).toContain(
+    "https://example.com/filing.pdf",
+  );
+  expect(
+    screen
+      .getByText("Added from URL")
+      .closest("li")
+      ?.querySelector("time")
+      ?.getAttribute("datetime"),
+  ).toBe("2026-10-01T12:34:56Z");
+  if (headers.bytes) {
+    expect(screen.getByText(headers.display!)).toBeTruthy();
+    expect(screen.getByText("server supplied text")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Copy ETag" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Copy Last-Modified" })).toBeNull();
+  } else {
+    expect(screen.queryByText("ETag")).toBeNull();
+    expect(screen.queryByText("Last-Modified")).toBeNull();
+  }
+});

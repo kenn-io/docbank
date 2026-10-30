@@ -502,7 +502,7 @@ func TestIngestRejectsNonUTF8MetadataBeforeCommit(t *testing.T) {
 	require.NoError(t, s.ExportMetadata(ctx, &metadata))
 }
 
-func TestIngestFileDistinctSourceNamedLikeSuffix(t *testing.T) {
+func TestIngestFileMatchesSourceNamesAndRenamedURLs(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -534,6 +534,33 @@ func TestIngestFileDistinctSourceNamedLikeSuffix(t *testing.T) {
 		"report.pdf", fakeHash("a1"), 1, "application/pdf", "/src/report.pdf", "")
 	require.NoError(t, err)
 	assert.False(t, added)
+
+	dir, err := s.Mkdir(ctx, s.RootID(), "urls")
+	require.NoError(t, err)
+	urlRun, err := s.BeginIngest(ctx, "url", `{"version":1,"requested_url":"https://example.com/download?id=7","final_url":"https://example.com/filing.txt","fetched_at":"2026-10-01T12:34:56Z"}`)
+	require.NoError(t, err)
+	original, added, err := s.IngestFile(ctx, urlRun, dir.ID, "filing.txt", fakeHash("a1"), 1, "text/plain", "https://example.com/download?id=7", "")
+	require.NoError(t, err)
+	require.True(t, added)
+	moved, _, err := s.Move(ctx, original.ID, dir.ID, "reviewed.txt", UnconditionalRev)
+	require.NoError(t, err)
+	before, err := s.NodeProvenance(ctx, moved.ID, 100, 0)
+	require.NoError(t, err)
+	retryRun, err := s.BeginIngest(ctx, "url", `{"version":1,"requested_url":"https://example.com/download?id=7","final_url":"https://example.com/filing.txt","fetched_at":"2026-10-01T12:34:56Z"}`)
+	require.NoError(t, err)
+	skipped, added, err := s.IngestFile(ctx, retryRun, dir.ID, "changed-name.txt", fakeHash("a1"), 1, "text/plain", "https://example.com/download?id=7", "")
+	require.NoError(t, err)
+	assert.False(t, added)
+	assert.Equal(t, moved.ID, skipped.ID)
+	assert.Equal(t, moved.Revision, skipped.Revision)
+	after, err := s.NodeProvenance(ctx, moved.ID, 100, 0)
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
+	mirrorRun, err := s.BeginIngest(ctx, "url", `{"version":1,"requested_url":"https://example.com/download?id=8","final_url":"https://example.com/filing.txt","fetched_at":"2026-10-01T12:34:56Z"}`)
+	require.NoError(t, err)
+	_, added, err = s.IngestFile(ctx, mirrorRun, dir.ID, "filing.txt", fakeHash("a1"), 1, "text/plain", "https://example.com/download?id=8", "")
+	require.NoError(t, err)
+	require.True(t, added)
 }
 
 func TestIngestFileDoesNotMatchUnknownOriginOutsideNameFamily(t *testing.T) {

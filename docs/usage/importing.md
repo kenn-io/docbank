@@ -101,6 +101,22 @@ with the supplied `mapping.json`. Follow the
 to import its PDFs, supplied text and received labels. This preserves the sender's
 numbering without allocating numbers locally.
 
+## Import from a URL
+
+```bash
+docbank add https://example.com/filing.pdf --dest /inbox
+```
+
+Docbank downloads one URL before importing it and creates missing destination directories. HTTPS is required; `--allow-http` permits HTTP for the initial request and redirects. Other schemes are rejected, and downloads stop after ten redirects. There is no total download timeout; cancel the command to stop it.
+
+Downloads default to a 100,000,000-byte limit. Set `--max-bytes` to a positive byte count up to the vault's ingest limit. A response over the cap, an incomplete response, or any status other than HTTP 200 fails before import.
+
+The filename comes from a valid `Content-Disposition` filename, then the final URL's decoded last path component, then the requested URL's, or `download`. Query strings stay out of filenames. Repeating the exact requested URL with equal current bytes in the same destination skips the import, even after renaming the document or changing the response filename. Different URLs, including query variants and mirrors, retain distinct documents and origins. Changed bytes receive an ordinary collision suffix. A skip preserves the original provenance and revision.
+
+Provenance records the requested URL, final URL, completed fetch time in UTC, and the observed ETag and Last-Modified headers when supplied. URLs stay exactly as supplied. CLI and API JSON expose these values as `url_fetch`, with evidence version 1 and headers encoded as base64 to preserve their bytes. CLI and web views display readable header text, with reversible byte escapes for invalid UTF-8. Fetch time stays separate from import time; Last-Modified stays as observed, rather than becoming a document modification time.
+
+URL mode accepts `--dest` and `--json`. It validates `--progress` without rendering a progress bar. Supply one URL per command. Filters, `--preflight`, and `--replace` apply to local imports.
+
 ## Ordinary file imports
 
 For each regular file, Docbank performs two steps:

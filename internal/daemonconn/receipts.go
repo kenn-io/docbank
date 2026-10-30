@@ -37,6 +37,7 @@ import (
 	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/home"
+	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
@@ -2613,9 +2614,21 @@ func (c *Connection) Upload(
 	ctx context.Context, parentID int64, name, mimeType, expectedHash string,
 	expectedSize int64, content io.Reader,
 ) (api.UploadReceipt, error) {
+	return c.upload(ctx, parentID, "", name, mimeType, expectedHash, expectedSize, content, "")
+}
+
+func (c *Connection) UploadURL(ctx context.Context, parentPath, name, mimeType, expectedHash string, expectedSize int64, content io.Reader, fetch ingest.URLFetch) (api.UploadReceipt, error) {
+	encoded, err := json.Marshal(fetch)
+	if err != nil {
+		return api.UploadReceipt{}, err
+	}
+	return c.upload(ctx, 0, parentPath, name, mimeType, expectedHash, expectedSize, content, string(encoded))
+}
+
+func (c *Connection) upload(ctx context.Context, parentID int64, parentPath, name, mimeType, expectedHash string, expectedSize int64, content io.Reader, fetchJSON string) (api.UploadReceipt, error) {
 	var receipt api.UploadReceipt
-	if parentID <= 0 {
-		return receipt, errors.New("upload parent ID must be positive")
+	if parentID <= 0 && parentPath == "" {
+		return receipt, errors.New("upload requires a positive parent ID or a destination path")
 	}
 	mimeType, err := validateUploadRequest(name, mimeType, expectedHash, expectedSize, content)
 	if err != nil {
@@ -2624,7 +2637,17 @@ func (c *Connection) Upload(
 	resp, err := streamUpload(ctx, name, mimeType, content, func(
 		ctx context.Context, response **http.Response, editor runtime.RequestEditorFn,
 	) error {
-		_, callErr := c.apiWithResponse(response).UploadFile(ctx, &apiclient.UploadFileRequestOptions{Query: &apiclient.UploadFileQuery{ParentID: parentID, Name: name}, Header: &apiclient.UploadFileHeaders{XDocbankBlobHash: expectedHash, XDocbankBlobSize: expectedSize}}, editor)
+		query := &apiclient.UploadFileQuery{Name: name}
+		if parentPath != "" {
+			query.ParentPath = new(parentPath)
+		} else {
+			query.ParentID = new(parentID)
+		}
+		headers := &apiclient.UploadFileHeaders{XDocbankBlobHash: expectedHash, XDocbankBlobSize: expectedSize}
+		if fetchJSON != "" {
+			headers.XDocbankURLFetch = new(fetchJSON)
+		}
+		_, callErr := c.apiWithResponse(response).UploadFile(ctx, &apiclient.UploadFileRequestOptions{Query: query, Header: headers}, editor)
 		return callErr
 	})
 	if err != nil {

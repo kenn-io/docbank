@@ -1,6 +1,10 @@
+import { formatRawBytes } from "./format.js";
+
 // What a provenance fact's source kind means to the person reading it.
 export function provenanceSourceLabel(kind: string): string {
   switch (kind) {
+    case "url":
+      return "Added from URL";
     case "cli":
       return "Added from command line";
     case "upload":
@@ -20,4 +24,9 @@ export function provenanceSourceLabel(kind: string): string {
     default:
       return "Imported document";
   }
+}
+
+// JSON carries response headers as base64 to preserve their observed bytes.
+export function urlFetchHeader(b64: string): string {
+  return formatRawBytes(Uint8Array.from(atob(b64).replace(/\\/g, "\\\\"), (c) => c.charCodeAt(0)));
 }
