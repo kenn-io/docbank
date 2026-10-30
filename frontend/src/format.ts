@@ -37,7 +37,9 @@ export function formatRawBytes(bytes: Uint8Array, invalidPrefix = ""): string {
     return (
       invalidPrefix +
       Array.from(bytes, (byte) =>
-        byte < 128 ? String.fromCharCode(byte).replaceAll("\\", "\\\\") : `\\x${byte.toString(16).padStart(2, "0")}`,
+        byte < 128
+          ? String.fromCharCode(byte).replaceAll("\\", "\\\\")
+          : `\\x${byte.toString(16).padStart(2, "0")}`,
       ).join("")
     );
   }
