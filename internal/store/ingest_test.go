@@ -625,6 +625,7 @@ func TestIngestMatchesOnlyLiveCurrentContentInDestination(t *testing.T) {
 }
 
 func TestIngestFileExactTaggedRollsBackOnMissingTag(t *testing.T) {
+	t.Parallel()
 	for _, audited := range []bool{false, true} {
 		t.Run(map[bool]string{false: "plain", true: "audited"}[audited], func(t *testing.T) {
 			s := newTestStore(t)

@@ -428,7 +428,7 @@ describe("background jobs drawer", () => {
     expect(close).toHaveBeenCalledOnce();
   });
 
-  it("shows durable job progress and cancels through the shared Jobs route", async () => {
+  it("shows durable job progress and watch tags and cancels through the shared Jobs route", async () => {
     const id = "f6730699-23b5-458a-b6d9-11b140ac1f92";
     const placeId = "0b9d8f43-6f0e-4b4a-9d55-2f1c5b2b7c11";
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>

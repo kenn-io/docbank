@@ -75,6 +75,7 @@ func TestListWatchedInboxesReturnsEffectiveConfigAndRunnerState(t *testing.T) {
 	assert.Empty(t, got.Items[1].ExcludePatterns)
 	assert.Contains(t, body, `"exclude_patterns":[]`)
 	require.NotNil(t, got.Items[0].Job)
+	assert.Equal(t, []string{"receipts"}, got.Items[0].Job.Tags)
 	assert.Equal(t, "watch:archive", got.Items[0].Job.Name)
 	assert.Equal(t, "running", got.Items[0].Job.Status)
 	assert.Equal(t, "zeta", got.Items[1].Name)

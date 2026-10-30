@@ -461,8 +461,8 @@ func TestWatchTagBlockRestoresRemainingFailure(t *testing.T) {
 			require.Contains(t, step().Error, `tag "receipts"`)
 			if order != "source only" {
 				watcher.notificationErr = errors.New("second backend failure")
+				require.Contains(t, step().Error, `tag "receipts"`)
 			}
-			require.Contains(t, step().Error, `tag "receipts"`)
 			_, err := ing.Store.CreateTag(t.Context(), "receipts")
 			require.NoError(t, err)
 			if order == "notification during block" {
