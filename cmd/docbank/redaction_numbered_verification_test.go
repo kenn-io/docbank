@@ -21,6 +21,9 @@ import (
 )
 
 func TestNumberedDownloadMaskVerification(t *testing.T) {
+	if runRedactionVerificationInSubprocess(t) {
+		return
+	}
 	f := newRedactionVerifyFixture(t)
 	ns := store.BatesNamespace{NamespaceID: uuid.New().String(), Prefix: "Q", Padding: 6}
 	recipe, err := processing.BuildNumberedRecipe(uuid.New(), ns, 1, f.review)
@@ -63,6 +66,9 @@ func TestNumberedDownloadMaskVerification(t *testing.T) {
 }
 
 func TestNumberedArchiveVisibleNumberVerification(t *testing.T) {
+	if runRedactionVerificationInSubprocess(t) {
+		return
+	}
 	f := newRedactionVerifyFixture(t)
 	ns := store.BatesNamespace{NamespaceID: uuid.New().String(), Prefix: "Q", Padding: 6}
 	recipe, err := processing.BuildNumberedRecipe(uuid.New(), ns, 1, f.review)
