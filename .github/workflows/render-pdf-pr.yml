@@ -9,4 +9,7 @@ permissions:
 jobs:
   run:
     cache-mode: read
+    permissions:
+      contents: read
+      pull-requests: read
     uses: ./.github/workflows/render-pdf.yml

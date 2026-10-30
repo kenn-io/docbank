@@ -23,7 +23,28 @@ env:
   GOFLAGS: -trimpath
 
 jobs:
+  changes:
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    outputs:
+      groups: ${{ steps.changes.outputs.groups }}
+      all: ${{ steps.changes.outputs.all }}
+    steps:
+      - id: changes
+        uses: kenn-io/actions/changes@e7ba4b0b573de976989328726cdcc83f8a463367
+        with:
+          filters: |
+            go:
+              - '!{README.md,AGENTS.md,CLAUDE.md,docs/**,website/**,frontend/**}'
+            frontend:
+              - frontend/**
+
   bates-browser-recovery:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups), 'go') || contains(fromJSON(needs.changes.outputs.groups), 'frontend')) }}
     name: Numbered PDF browser recovery
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -57,6 +78,8 @@ jobs:
           node frontend/screenshots/bates-recovery.run.mjs
 
   libreoffice-owner:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups), 'go')) }}
     name: LibreOffice owner proof
     runs-on: ubuntu-latest
     timeout-minutes: 26
