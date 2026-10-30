@@ -29,6 +29,7 @@ const (
 )
 
 type webLoginPolicy struct {
+	basePath   string
 	origin     string
 	host       string
 	hosts      map[string]bool // nil unless public_origin enables the Host gate
@@ -79,6 +80,7 @@ func newWebLoginPolicy(d Deps) *webLoginPolicy {
 	cookie := base64.RawURLEncoding.EncodeToString(random[:])
 	parsed, _ := url.Parse(origin)
 	policy := &webLoginPolicy{
+		basePath:   d.Cfg.Web.BasePath,
 		origin:     origin,
 		host:       parsed.Host,
 		cookie:     cookie,
@@ -154,9 +156,12 @@ func (r *webSessionRegistry) issueLogin() (*webTabSession, error) {
 func webCookieName(p *webLoginPolicy) string {
 	// Browser cookies do not isolate by port, so keep same-host daemon origins
 	// from replacing one another's shared instance cookie.
-	digest := sha256.Sum256([]byte(p.origin))
+	digest := sha256.Sum256([]byte(p.origin + p.basePath))
 	name := "docbank_session_" + hex.EncodeToString(digest[:])
 	if strings.HasPrefix(p.origin, "https://") {
+		if p.basePath != "" {
+			return "__Secure-" + name
+		}
 		return "__Host-" + name
 	}
 	return name
@@ -253,7 +258,7 @@ func registerWebSignIn(mux *http.ServeMux, sessions *webSessionRegistry) {
 		// HTTP uses loopback or the operator's explicit private-network trust;
 		// HTTPS always uses Secure.
 		http.SetCookie(w, &http.Cookie{ //nolint:gosec // Secure follows the origin scheme, as above.
-			Name: webCookieName(policy), Value: policy.cookie, Path: "/", HttpOnly: true,
+			Name: webCookieName(policy), Value: policy.cookie, Path: policy.basePath + "/", HttpOnly: true,
 			Secure: strings.HasPrefix(policy.origin, "https://"), SameSite: http.SameSiteStrictMode,
 		})
 		writeJSON(w, http.StatusOK, webSignInStatus{Enabled: true, Session: tab})

@@ -44,7 +44,7 @@ var documentPages = []string{"/searches", "/productions", "/imports", "/trash"}
 // path. JavaScript and styles are public static bytes; every vault read still
 // crosses the authenticated /api/v1 surface.
 // A nil logger selects slog.Default.
-func registerWeb(mux *http.ServeMux, enabled bool, webURL, loginOrigin string, tiles config.MapTilesConfig, logger *slog.Logger) {
+func registerWeb(mux *http.ServeMux, enabled bool, webURL, loginOrigin, basePath string, tiles config.MapTilesConfig, logger *slog.Logger) {
 	if !enabled {
 		return
 	}
@@ -54,7 +54,7 @@ func registerWeb(mux *http.ServeMux, enabled bool, webURL, loginOrigin string, t
 	if err != nil {
 		panic("api: embedded web index is missing")
 	}
-	indexHTML = configureWebMap(indexHTML, tiles)
+	indexHTML = configureWebBasePath(configureWebMap(indexHTML, tiles), basePath)
 	images := "'self' data: blob:"
 	static := http.FileServer(http.FS(assets))
 	index := func(w http.ResponseWriter, _ *http.Request) {
@@ -266,4 +266,31 @@ func setWebHeaders(w http.ResponseWriter, images string, webURLs ...string) {
 			"base-uri 'none'; frame-ancestors 'none'")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+}
+
+// The CLI keeps its root API. Proxy requests retain the configured prefix until
+// this boundary, before authorization and timeout classification see the path.
+func webBasePathMiddleware(next http.Handler, basePath string) http.Handler {
+	if basePath == "" {
+		return next
+	}
+	mux := http.NewServeMux()
+	mux.Handle(basePath+"/", http.StripPrefix(basePath, next))
+	mux.Handle("/", next)
+	return mux
+}
+
+func webLaunchURL(origin, basePath string) string {
+	if origin == "" {
+		return ""
+	}
+	return strings.TrimSuffix(origin, "/") + basePath + "/"
+}
+
+func configureWebBasePath(index []byte, basePath string) []byte {
+	// Vite emits relative entry assets and resolves imported assets against their
+	// module URL. Only HTML entry points need a server-selected absolute path.
+	index = bytes.ReplaceAll(index, []byte(`="./assets/`), []byte(`="`+basePath+`/assets/`))
+	index = bytes.ReplaceAll(index, []byte(`="/assets/`), []byte(`="`+basePath+`/assets/`))
+	return bytes.Replace(index, []byte("</head>"), []byte(`<meta name="docbank-base-path" content="`+html.EscapeString(basePath)+`"></head>`), 1)
 }

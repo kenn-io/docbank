@@ -1,3 +1,4 @@
+import { webURL } from "./web-path.js";
 import { hmac } from "@noble/hashes/hmac.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
@@ -252,7 +253,7 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
       throw new Error("The verified upload channel is unavailable. Run `docbank web` again.");
     }
     const scheme = location.protocol === "https:" ? "wss:" : "ws:";
-    const socket = this.socketFactory(`${scheme}//${location.host}${uploadSocketPath}`);
+    const socket = this.socketFactory(`${scheme}//${location.host}${webURL(uploadSocketPath)}`);
     this.socket = socket;
     socket.binaryType = "arraybuffer";
     socket.addEventListener("message", (event) => this.receive(event));

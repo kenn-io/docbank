@@ -1,3 +1,4 @@
+import { webURL } from "./web-path.js";
 import * as generated from "./generated/docbank.js";
 import { type ContentVersion, type Node } from "./generated/docbank.js";
 import { sessionResponse } from "./api-transport.js";
@@ -477,7 +478,7 @@ function validateReady(event: DownloadEvent, authority: DownloadAuthority): Prep
 
 export function offerPreparedDownload(download: Pick<PreparedDownload, "url" | "name">): void {
   const link = document.createElement("a");
-  link.href = download.url;
+  link.href = webURL(download.url);
   link.download = download.name;
   link.rel = "noreferrer";
   link.hidden = true;
