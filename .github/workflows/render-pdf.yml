@@ -24,18 +24,15 @@ env:
 
 jobs:
   changes:
-    name: Changed files
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
-      contents: read
       pull-requests: read
     outputs:
       groups: ${{ steps.changes.outputs.groups }}
       all: ${{ steps.changes.outputs.all }}
     steps:
-      - name: Select affected checks
-        id: changes
+      - id: changes
         uses: kenn-io/actions/changes@92f255293f1cfcf6998d1b87d0c2c3bb700d01e6
         with:
           filters: |
@@ -43,13 +40,11 @@ jobs:
               - '!{README.md,AGENTS.md,CLAUDE.md,docs/**,website/**,frontend/**}'
               - docs/configuration.md
             frontend:
-              - '!{README.md,AGENTS.md,CLAUDE.md,docs/**,website/**,cmd/**,docbank/**,document/**,internal/**,mcp/**,report/**,sqlite/**}'
-              - internal/web/**
-              - internal/api/openapi*
+              - frontend/**
 
   bates-browser-recovery:
     needs: changes
-    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups || '[]'), 'go') || contains(fromJSON(needs.changes.outputs.groups || '[]'), 'frontend')) }}
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups || '[]'), 'go') || contains(fromJSON(needs.changes.outputs.groups || '[]'), 'frontend')) }}
     name: Numbered PDF browser recovery
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -84,7 +79,7 @@ jobs:
 
   libreoffice-owner:
     needs: changes
-    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups || '[]'), 'go')) }}
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups || '[]'), 'go')) }}
     name: LibreOffice owner proof
     runs-on: ubuntu-latest
     steps:
