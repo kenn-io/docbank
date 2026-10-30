@@ -14,6 +14,7 @@ import (
 	"go.kenn.io/docbank/document/redaction"
 	"go.kenn.io/docbank/internal/pdfproduction"
 	"go.kenn.io/docbank/internal/processing"
+	"go.kenn.io/docbank/internal/zipcheck"
 )
 
 // RedactionArchiveContents exposes the checked PDF without extracting another copy.
@@ -44,7 +45,7 @@ func VerifyRedactionArchive(ctx context.Context, reader io.ReaderAt, size int64,
 	limits := []uint64{512 << 20, (16 << 20) + 16, 256 << 10}
 	digests := make([]processing.RedactionFileDigest, 2)
 	for i, entry := range archive.File {
-		if entry.Name != names[i] || !entry.Mode().IsRegular() || entry.Method != zip.Store || entry.Flags&1 != 0 || len(entry.Extra) != 0 || entry.Comment != "" || entry.UncompressedSize64 > limits[i] || entry.CompressedSize64 != entry.UncompressedSize64 {
+		if entry.Name != names[i] || !zipcheck.StoredFile(entry) || entry.UncompressedSize64 > limits[i] {
 			return RedactionArchiveContents{}, integrityErrorf("redaction archive entry %d is invalid", i)
 		}
 		reader, err := entry.Open()

@@ -1237,6 +1237,7 @@ docbank redaction reserve <preparation.json> <masks.json> <review.json>
 docbank redaction render <preparation.json> <masks.json> <review.json> <output.zip>
   [--allocation <uuid>] [--overwrite] [--json]
 docbank redaction verify <preparation.json> <masks.json> <review.json> <archive.zip> [--json]
+docbank redaction package <selection.json> <recipient.zip> [--json]
 ```
 
 Prepare, resolve and render use the daemon to inspect and redact a retained
@@ -1270,6 +1271,12 @@ unmasked image content with the source or authenticate the producer. Compare the
 digest with the render-time value. See
 [Check and retain a saved archive](usage/document-processing.md#check-and-retain-a-saved-archive)
 for limits, exit codes and recovery.
+
+Package checks every selected review before downloading completed numbered PDFs,
+then saves their unchanged bytes, sanitized text, DAT, OPT, mapping and receipt in
+one recipient ZIP. It never overwrites the destination. See
+[Package completed numbered PDFs](usage/document-processing.md#package-completed-numbered-pdfs-for-a-recipient)
+for the selection format, limits and recipient import commands.
 
 ## docbank rendition
 

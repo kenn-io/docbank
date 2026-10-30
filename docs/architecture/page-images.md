@@ -454,3 +454,22 @@ that alias is unused on the source page. Every gap still needs complete masking.
 Preparation is an inspection step. It does not apply masks, approve a review,
 retain redaction outputs, or provide restart recovery or numbering.
 The saved-PDF qualification uses an upstream PDFium reader only in tests.
+
+### Recipient packages of completed deliveries
+
+The local `redaction package` command reads completed numbered artifacts through
+the existing daemon API and fully verifies each against a supplied review. It
+never captures source content or starts a render. All recorded metadata and local
+reviews are admitted before the first content request. Assembly re-reads each
+review and compares its pinned digest before calling the checked downloader.
+Only one staged PDF exists at a time, and the checked handle supplies the ZIP.
+
+The `native-pdf-recipient-package/v1` receipt binds public delivery identities,
+labels, review digests and file hashes. The ZIP uses stored entries with fixed DOS
+dates, no extra fields or comments, PDF/text pairs followed by DAT, OPT and the two
+root JSON files. Before atomic no-replace publication, an independent checker
+reads every entry through CRC and SHA-256 verification, parses DAT and OPT, applies
+the mapping and compares the resulting correspondence with admitted documents.
+No database rows or new API routes are needed. The existing importer owns received
+label authority. [The operator guide](../usage/document-processing.md#package-completed-numbered-pdfs-for-a-recipient)
+owns limits, staging, recovery and recipient instructions.
