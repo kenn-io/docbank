@@ -129,7 +129,7 @@ rebuilds document–person links from those records after rebuilding document
 events. In audited vaults, this rebuild does not create people or candidates.
 Actors without a retained match remain unresolved.
 
-It omits rebuildable full-text and vector indexes, `photo_quality_signals`, `photo_timeline`, `photo_technical_metadata`, pending photo suggestion text, and physical pack mappings.
+It omits rebuildable full-text and vector indexes, `photo_quality_signals`, `photo_timeline`, `photo_technical_metadata`, pending photo suggestion text and rotation angles, and physical pack mappings. Photo suggestion records retain decisions and an `awaiting` marker for unconfirmed rotation work. Restore regenerates that angle under fresh consent, preserving caption and tag decisions, including dismissal. Confirmed rotations stay settled.
 Restore rebuilds full-text search and vector indexes from retained records.
 When a vector source cannot be rebuilt locally, restore records that missing
 coverage instead of calling an external provider. Restore grants physical

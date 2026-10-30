@@ -3037,6 +3037,7 @@ CREATE TABLE IF NOT EXISTS photo_suggestions (
     suggestion_id        TEXT NOT NULL UNIQUE,
     content_version_id   TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,
     producer_fingerprint TEXT NOT NULL,
+    rotation             INTEGER,
     caption              TEXT NOT NULL DEFAULT '',
     tags_json            TEXT NOT NULL DEFAULT '[]',
     visible_text         TEXT NOT NULL DEFAULT '',

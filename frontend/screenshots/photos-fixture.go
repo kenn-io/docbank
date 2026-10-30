@@ -17,6 +17,7 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"time"
 
@@ -287,7 +288,7 @@ func main() {
 			check(processing.EvaluatePhotoQuality(ctx, s, blobs, store.PhotoVisualPreviewTarget{VersionID: node.CurrentVersionID, SourceSHA256: node.BlobHash, Size: node.Size, MediaType: node.MimeType}))
 		}
 		if *suggestions && (index == 0 || index == 2 || index == 9) {
-			value := document.PhotoDescription{Caption: "A calm harbor under a blue sky.", Tags: []string{"coast", "harbor"}, VisibleText: "QUAYSIDE"}
+			value := document.PhotoDescription{Caption: "A calm harbor under a blue sky.", Tags: []string{"coast", "harbor"}, VisibleText: "QUAYSIDE", Rotation: new(270)}
 			if index == 2 {
 				value = document.PhotoDescription{Caption: "A forest beside a lake.", Tags: []string{"forest"}}
 			}
@@ -484,7 +485,7 @@ func seedVisionResult(ctx context.Context, s *store.Store, blobs *blob.Store, sp
 	check(err)
 	prepared, err := s.PreparePhotoAuthored(ctx, store.PhotoSetSelection{AssetIDs: []string{asset.ID}})
 	check(err)
-	if description, ok := value.(document.PhotoDescription); ok && (len(prepared.Suggestions) != 1 || prepared.Suggestions[0].Value.Caption != description.Caption) {
+	if description, ok := value.(document.PhotoDescription); ok && (len(prepared.Suggestions) == 0 || !slices.ContainsFunc(prepared.Suggestions, func(s store.PhotoSuggestion) bool { return s.Value.Caption == description.Caption })) {
 		panic("photo description did not publish the suggestion")
 	}
 }

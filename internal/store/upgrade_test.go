@@ -597,6 +597,7 @@ func TestOpenRejectsCurrentDatabaseWithMissingExtendedTableColumn(t *testing.T) 
 		{name: "rendition_job_waiters", column: "failure_code"},
 		{name: "embedding_jobs", column: "receipt_json"},
 		{name: "document_people_builds", column: "target_epoch"},
+		{name: "photo_suggestions", column: "rotation"},
 	} {
 		for _, test := range v090UpgradeDrivers() {
 			t.Run(table.name+"/"+test.name, func(t *testing.T) {
