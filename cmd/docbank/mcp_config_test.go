@@ -36,7 +36,7 @@ func TestMCPConfigStdio(t *testing.T) {
 			require.NoError(t, err)
 			entry := decodeMCPConfig(t, client, out)
 			assert.Equal(t, executable, entry["command"])
-			assert.Equal(t, []any{"mcp", "--transport", "stdio", "--allow-processing", "--allow-package-writes", "--allow-photo-edits", "--allow-export-writes", "--allow-report-writes", "--allow-kata-writes"}, entry["args"])
+			assert.ElementsMatch(t, []any{"mcp", "--transport", "stdio", "--allow-processing", "--allow-package-writes", "--allow-photo-edits", "--allow-export-writes", "--allow-report-writes", "--allow-kata-writes"}, entry["args"])
 			env := map[string]any{"DOCBANK_HOME": root}
 			if client == "codex" {
 				env["CODEX_MCP_PROTOCOL_VERSION"] = "2026-07-28"
@@ -52,6 +52,20 @@ func TestMCPConfigStdio(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "existing client configuration\n", string(data))
 	}
+}
+
+func TestMCPConfigCurrentDirectoryLaunch(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	t.Setenv("DOCBANK_HOME", root)
+	t.Setenv("PATH", ".")
+	require.NoError(t, os.WriteFile(filepath.Join(root, "docbank.exe"), nil, 0o700))
+	original := os.Args[0]
+	os.Args[0] = "docbank.exe"
+	t.Cleanup(func() { os.Args[0] = original })
+	out, err := runCLI(t, "mcp", "config", "--client", "codex")
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(root, "docbank.exe"), decodeMCPConfig(t, "codex", out)["command"])
 }
 
 func TestMCPConfigPreservesSymlinkLaunchPath(t *testing.T) {
@@ -89,7 +103,6 @@ func TestMCPConfigErrorsLeaveStdoutEmpty(t *testing.T) {
 		{"--client", "codex", "--transport", "http"},
 		{"--client", "codex", "--transport", "http", "--listen", "127.0.0.1:0"},
 		{"--client", "codex", "--transport", "http", "--listen", "localhost:7341"},
-		{"--client", "codex", "--transport", "http", "--listen", "127.0.0.1:7341"},
 		{"--client", "codex", "--transport", "http", "--listen", "127.0.0.1:7341", "--allow-processing"},
 	} {
 		out, err := runCLI(t, append([]string{"mcp", "config"}, args...)...)
@@ -118,6 +131,9 @@ func TestMCPConfigHTTPReferencesCredentialWithoutReadingIt(t *testing.T) {
 	t.Setenv("DOCBANK_MCP_HTTP_TOKEN_FILE", "")
 	t.Setenv("DOCBANK_TEST_SNIPPET_TOKEN", "")
 	t.Setenv("DOCBANK_TEST_SNIPPET_TOKEN_FILE", filepath.Join(root, "missing-secret"))
+	out, err := runCLI(t, "mcp", "config", "--client", "codex", "--transport", "http", "--listen", "127.0.0.1:7341")
+	require.NoError(t, err)
+	assert.Equal(t, "DOCBANK_MCP_HTTP_TOKEN", decodeMCPConfig(t, "codex", out)["bearer_token_env_var"])
 	require.NoError(t, os.WriteFile(filepath.Join(root, "config.toml"), []byte(`[mcp.http]
 credential_binding = 'credential:snippet'
 [credential_bindings.snippet]
@@ -140,14 +156,14 @@ environment_variable = 'DOCBANK_TEST_SNIPPET_TOKEN'
 		}
 	}
 	t.Setenv("DOCBANK_MCP_HTTP_TOKEN_FILE", filepath.Join(root, "unreadable-secret"))
-	out, err := runCLI(t, "mcp", "config", "--client", "codex", "--transport", "http", "--listen", "127.0.0.1:7341")
+	out, err = runCLI(t, "mcp", "config", "--client", "codex", "--transport", "http", "--listen", "127.0.0.1:7341")
 	require.NoError(t, err)
 	assert.Equal(t, "DOCBANK_MCP_HTTP_TOKEN", decodeMCPConfig(t, "codex", out)["bearer_token_env_var"])
 }
 
 func TestMCPConfigStartsSelectedCatalog(t *testing.T) {
 	t.Setenv("DOCBANK_HOME", t.TempDir())
-	out, err := runCLI(t, "mcp", "config", "--client", "claude-code", "--allow-processing")
+	out, err := runCLI(t, "mcp", "config", "--client", "claude-code", "--allow-processing", "--allow-report-writes=false")
 	require.NoError(t, err)
 	var document struct {
 		Servers map[string]struct {

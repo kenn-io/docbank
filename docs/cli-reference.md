@@ -1407,7 +1407,8 @@ flags into the server's arguments. Client files remain untouched.
 HTTP requires a nonzero `--listen` address for an existing daemon or standalone
 listener. Wildcard addresses become loopback URLs ending in `/mcp`. The
 selected bearer binding appears as an environment-variable reference; its
-secret stays unresolved. HTTP write flags belong on a standalone listener's
+secret stays unresolved. With no selected binding, printing uses the listener's
+conventional `DOCBANK_MCP_HTTP_TOKEN` variable. HTTP write flags belong on a standalone listener's
 startup command.
 
 Clients must support MCP `2026-07-28`. With Codex 0.164.0, start either

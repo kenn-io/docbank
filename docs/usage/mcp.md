@@ -87,6 +87,8 @@ The URL ends in `/mcp`. Claude Code receives an `Authorization` header with
 `Bearer ${DOCBANK_MCP_HTTP_TOKEN}`; Codex receives
 `bearer_token_env_var = "DOCBANK_MCP_HTTP_TOKEN"`. The command reads the
 selected credential binding's variable name and leaves its value unresolved.
+If this shell has no binding, it prints `DOCBANK_MCP_HTTP_TOKEN`, the
+listener's conventional variable. The listener still requires its token.
 Make that variable available to the client too. If the listener reads
 `DOCBANK_MCP_HTTP_TOKEN_FILE`, the client still needs `DOCBANK_MCP_HTTP_TOKEN`
 containing the token itself. A custom binding uses its own variable name.

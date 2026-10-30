@@ -10,10 +10,12 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"go.kenn.io/kit/agentmcp"
 
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/home"
+	docmcp "go.kenn.io/docbank/internal/mcp"
 )
 
 func newMCPConfigCommand() *cobra.Command {
@@ -37,7 +39,7 @@ func newMCPConfigCommand() *cobra.Command {
 		default:
 			return errors.New("--client must be claude-code or codex")
 		}
-		server, err := mcpConfigServer(agent)
+		server, err := mcpConfigServer(cmd, agent)
 		if err != nil {
 			return err
 		}
@@ -53,7 +55,7 @@ func newMCPConfigCommand() *cobra.Command {
 	return cmd
 }
 
-func mcpConfigServer(agent agentmcp.Agent) (agentmcp.Server, error) {
+func mcpConfigServer(cmd *cobra.Command, agent agentmcp.Agent) (agentmcp.Server, error) {
 	if err := validateMCPCommandOptions(mcpTransport, mcpListen); err != nil {
 		return agentmcp.Server{}, err
 	}
@@ -62,20 +64,13 @@ func mcpConfigServer(agent agentmcp.Agent) (agentmcp.Server, error) {
 		return agentmcp.Server{}, err
 	}
 	args := []string{"mcp", "--transport", "stdio"}
-	for _, flag := range []struct {
-		name    string
-		enabled bool
-	}{
-		{"allow-processing", mcpAllowProcessing}, {"allow-package-writes", mcpAllowPackageWrites},
-		{"allow-photo-edits", mcpAllowPhotoEdits}, {"allow-export-writes", mcpAllowExportWrites},
-		{"allow-report-writes", mcpAllowReportWrites}, {"allow-kata-writes", mcpAllowKataWrites},
-	} {
-		if flag.enabled {
-			if mcpTransport == "http" {
-				return agentmcp.Server{}, errors.New("--allow-* flags belong on the HTTP listener's startup command")
-			}
-			args = append(args, "--"+flag.name)
+	cmd.InheritedFlags().VisitAll(func(flag *pflag.Flag) {
+		if flag.Changed && strings.HasPrefix(flag.Name, "allow-") && flag.Value.String() == "true" {
+			args = append(args, "--"+flag.Name)
 		}
+	})
+	if mcpTransport == "http" && len(args) > 3 {
+		return agentmcp.Server{}, errors.New("--allow-* flags belong on the HTTP listener's startup command")
 	}
 	if mcpTransport == "http" {
 		host, port, _ := net.SplitHostPort(mcpListen)
@@ -93,13 +88,15 @@ func mcpConfigServer(agent agentmcp.Agent) (agentmcp.Server, error) {
 			return agentmcp.Server{}, err
 		}
 		variable, err := mcpHTTPCredentialVariable(cfg)
-		if err != nil {
+		if errors.Is(err, errMCPHTTPCredentialUnset) {
+			variable = "DOCBANK_MCP_HTTP_TOKEN"
+		} else if err != nil {
 			return agentmcp.Server{}, err
 		}
 		return agentmcp.Server{Transport: agentmcp.TransportHTTP, URL: "http://" + net.JoinHostPort(host, port) + "/mcp", BearerTokenEnvVar: variable}, nil
 	}
 	command, err := exec.LookPath(os.Args[0])
-	if err != nil {
+	if err != nil && !errors.Is(err, exec.ErrDot) {
 		return agentmcp.Server{}, fmt.Errorf("resolving Docbank executable: %w", err)
 	}
 	command, err = filepath.Abs(command)
@@ -108,7 +105,7 @@ func mcpConfigServer(agent agentmcp.Agent) (agentmcp.Server, error) {
 	}
 	env := map[string]string{"DOCBANK_HOME": layout.Root}
 	if agent == agentmcp.AgentCodex {
-		env["CODEX_MCP_PROTOCOL_VERSION"] = "2026-07-28"
+		env["CODEX_MCP_PROTOCOL_VERSION"] = docmcp.ProtocolVersion
 	}
 	return agentmcp.Server{Command: command, Args: args, Env: env}, nil
 }
