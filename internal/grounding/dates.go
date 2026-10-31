@@ -11,8 +11,8 @@ import (
 
 var datePatterns = []*regexp.Regexp{
 	regexp.MustCompile(`^([0-9]{4})-([0-9]{2})-([0-9]{2})`),
-	regexp.MustCompile(`(?i)^([A-Za-z]+\.?)[\t\r\n ]+([0-9]{1,2}),?[\t\r\n ]+([0-9]{4})`),
-	regexp.MustCompile(`(?i)^([0-9]{1,2})[\t\r\n ]+([A-Za-z]+\.?)[\t\r\n ]+([0-9]{4})`),
+	regexp.MustCompile(`(?i)^([A-Za-z]+\.?) +([0-9]{1,2}),? +([0-9]{4})`),
+	regexp.MustCompile(`(?i)^([0-9]{1,2}) +([A-Za-z]+\.?) +([0-9]{4})`),
 }
 
 func dateAt(rs []rune) (int, string) {
@@ -29,7 +29,12 @@ func dateAt(rs []rune) (int, string) {
 		}
 		end = skipSpace(rs, end)
 	}
-	text := string(rs[:end])
+	text := strings.Map(func(r rune) rune {
+		if unicode.IsSpace(r) {
+			return ' '
+		}
+		return r
+	}, string(rs[:end]))
 	for kind, pattern := range datePatterns {
 		m := pattern.FindStringSubmatch(text)
 		if m == nil {
@@ -50,7 +55,7 @@ func dateAt(rs []rune) (int, string) {
 		}
 		end := len([]rune(m[0]))
 		date := time.Date(y, time.Month(month), day, 0, 0, 0, 0, time.UTC)
-		if y < 1 || day < 1 || date.Year() != y || int(date.Month()) != month || date.Day() != day {
+		if y < 1 || date.Year() != y || int(date.Month()) != month || date.Day() != day {
 			return end, ""
 		}
 		return end, fmt.Sprintf("%04d-%02d-%02d", y, month, day)

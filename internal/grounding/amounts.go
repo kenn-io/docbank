@@ -21,7 +21,7 @@ func currencyAt(rs []rune, start int) (int, string) {
 	}
 	if start+3 <= len(rs) {
 		code := string(rs[start : start+3])
-		if _, err := currency.ParseISO(code); err == nil && code == strings.ToUpper(code) && (start+3 == len(rs) || (!wordRune(rs[start+3]) || digit(rs[start+3]))) {
+		if _, err := currency.ParseISO(code); err == nil && code == strings.ToUpper(code) {
 			return start + 3, code
 		}
 	}
@@ -62,8 +62,14 @@ func amountValue(s string) string {
 	}
 	return integer
 }
+
 func amountAt(rs []rune) (int, string) {
-	i, code := currencyAt(rs, 0)
+	i := 0
+	signed := len(rs) > 0 && strings.ContainsRune("-+±\u2212", rs[0])
+	if signed {
+		i++
+	}
+	i, code := currencyAt(rs, i)
 	prefix := code != ""
 	i = skipSpace(rs, i)
 	numberStart := i
@@ -104,11 +110,14 @@ func amountAt(rs []rune) (int, string) {
 	for end < len(rs) && !unicode.IsSpace(rs[end]) {
 		end++
 	}
-	token := []rune(strings.TrimRightFunc(string(rs[start:end]), edge))
+	token := []rune(trim(rs[start:end]))
 	if markerEnd, marker := currencyAt(token, 0); marker != "" && markerEnd == len(token) {
 		if start == i {
 			return end, ""
 		}
+		return i, ""
+	}
+	if signed {
 		return i, ""
 	}
 	value := amountValue(string(rs[numberStart:numberEnd]))

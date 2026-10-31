@@ -37,11 +37,20 @@ func TestCheckAnswerTransports(t *testing.T) {
 }
 
 func TestCheckAnswerRetainedNormalization(t *testing.T) {
-	server, citation := newCitationMCPFixtureText(t, "text/html", "<p>2026-03-15</p>", "2026-03-15")
-	result := decodeResult(t, exportExchange(t, server, "stdio", "tools/call", map[string]any{
-		"name": "check_answer", "arguments": map[string]any{"answer": "March 15, 2026", "citations": []any{citation}},
-	}))
-	require.Equal(t, "grounded", objectField(t, result, "structuredContent")["status"])
+	for _, tc := range []struct{ name, answer, source, status string }{
+		{"date", "March 15, 2026", "2026-03-15", "grounded"},
+		{"conflicting prefix", "USD40", "CAD $40", "ungrounded"},
+		{"signed amount", "-USD5.00", "$5", "ungrounded"},
+		{"Unicode spaces", "March\u00a015,\u00a02026", "2026-03-15", "grounded"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server, citation := newCitationMCPFixtureText(t, "text/html", "<p>"+tc.source+"</p>", tc.source)
+			result := decodeResult(t, exportExchange(t, server, "stdio", "tools/call", map[string]any{
+				"name": "check_answer", "arguments": map[string]any{"answer": tc.answer, "citations": []any{citation}},
+			}))
+			require.Equal(t, tc.status, objectField(t, result, "structuredContent")["status"])
+		})
+	}
 }
 
 func TestCheckAnswerRejectsInvalidBeforeAcquisition(t *testing.T) {

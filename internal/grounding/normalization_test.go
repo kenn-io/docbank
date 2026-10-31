@@ -14,6 +14,8 @@ func TestNormalizedAmountSuffixNeighbors(t *testing.T) {
 	}{
 		{"suffix before date", "$40 on March 15, 2026", "40 USD\n2026-03-15", []Figure{{Text: "$40", Status: "found"}, {Text: "March 15, 2026", Status: "found"}}},
 		{"adjacent attached suffixes", "$40 CAD30", "40USD 30CAD", []Figure{{Text: "$40", Status: "found"}, {Text: "CAD30", Status: "found"}}},
+		{"adjacent spaced suffixes", "$40 CAD30", "40 USD 30 CAD", []Figure{{Text: "$40", Status: "found"}, {Text: "CAD30", Status: "found"}}},
+		{"signed suffix before amount", "CAD30", "-5 USD 30 CAD", []Figure{{Text: "CAD30", Status: "found"}}},
 		{"conflicting marker before date", "USD40 on March 15, 2026", "$40 CAD 2026-03-15", []Figure{{Text: "USD40", Status: "missing"}, {Text: "March 15, 2026", Status: "found"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -66,6 +68,25 @@ func TestNormalizedFigures(t *testing.T) {
 	}
 	cases := []testCase{}
 	for _, tc := range []struct{ answer, source, overall, figure string }{
+		{"USD40", "CAD $40", "ungrounded", "missing"},
+		{"USD40", "CAD. $40", "ungrounded", "missing"},
+		{"USD40", "'CAD $40'", "ungrounded", "missing"},
+		{"USD40", "$40 'CAD'", "ungrounded", "missing"},
+		{"USD40", "CAD$40", "ungrounded", "missing"},
+		{"USD40", "CAD USD 40", "ungrounded", "missing"},
+		{"$40", "$ USD40", "ungrounded", "missing"},
+		{"USD40", "$40CAD", "ungrounded", "missing"},
+		{"CAD $40", "USD40", "ungrounded", "missing"},
+		{"-USD5.00", "$5", "ungrounded", "missing"},
+		{"$5", "-USD5.00", "ungrounded", "missing"},
+		{"+USD5.00", "$5", "ungrounded", "missing"},
+		{"−USD5.00", "$5", "ungrounded", "missing"},
+		{"±USD5.00", "$5", "ungrounded", "missing"},
+		{"USD-5.00", "$5", "ungrounded", "missing"},
+		{"-5.00 USD", "$5", "ungrounded", "missing"},
+		{"$5", "-USD 5.00 USD", "ungrounded", "missing"},
+		{"March\u00a015,\u00a02026", "2026-03-15", "grounded", "found"},
+		{"2026-03-15", "15\u2009March\u00852026", "grounded", "found"},
 		{"March 15, 2026", "2026-03-15", "grounded", "found"},
 		{"March 16, 2026", "2026-03-15", "ungrounded", "missing"},
 		{"$1,250", "1,250 USD", "grounded", "found"},

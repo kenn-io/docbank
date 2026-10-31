@@ -8,7 +8,6 @@ import (
 )
 
 func digit(r rune) bool     { return r >= '0' && r <= '9' }
-func wordRune(r rune) bool  { return unicode.IsLetter(r) || unicode.IsMark(r) || unicode.IsNumber(r) }
 func separator(r rune) bool { return r == ',' || r == '.' }
 func skipSpace(rs []rune, i int) int {
 	for i < len(rs) && unicode.IsSpace(rs[i]) {
@@ -43,9 +42,20 @@ func normalizedFigures(text string) []normalizedFigure {
 			}
 			tokens = append(tokens, span{start, i})
 		}
+		previousUnparsed := false
 		for i := 0; i < len(tokens); {
 			start := tokens[i].start
 			start += trimStart(rs[start:tokens[i].end])
+			// Literal trimming can discard a sign before an ISO code. Keep it
+			// visible to normalization so signed amounts remain literal.
+			for j := tokens[i].start; j < start; j++ {
+				if strings.ContainsRune("-+±\u2212", rs[j]) {
+					if _, marker := currencyAt(rs, j+1); marker != "" {
+						start = j
+						break
+					}
+				}
+			}
 			matched := false
 			safe := 0
 			for kind, parse := range []func([]rune) (int, string){dateAt, amountAt} {
@@ -55,6 +65,13 @@ func normalizedFigures(text string) []normalizedFigure {
 				}
 				if end > safe {
 					safe = end
+				}
+				// A standalone marker before an amount makes its currency ambiguous.
+				if kind == 1 && previousUnparsed {
+					previous := []rune(trim(rs[tokens[i-1].start:tokens[i-1].end]))
+					if markerEnd, marker := currencyAt(previous, 0); marker != "" && markerEnd == len(previous) {
+						value = ""
+					}
 				}
 				if value == "" {
 					continue
@@ -74,12 +91,14 @@ func normalizedFigures(text string) []normalizedFigure {
 				}
 			}
 			if matched {
+				previousUnparsed = false
 				continue
 			}
 			next := i + 1
 			for next < len(tokens) && tokens[next].end <= safe {
 				next++
 			}
+			previousUnparsed = next == i+1 && safe == 0
 			for ; i < next; i++ {
 				token := string(rs[tokens[i].start:tokens[i].end])
 				for _, value := range extractDecoded(token) {
