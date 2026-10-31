@@ -111,7 +111,7 @@ func amountAt(rs []rune) (int, string) {
 		end++
 	}
 	token := []rune(trim(rs[start:end]))
-	if markerEnd, marker := currencyAt(token, 0); marker != "" && markerEnd == len(token) && !strings.ContainsAny(string(rs[i:start]), lineBreaks) {
+	if markerEnd, marker := currencyAt(token, 0); marker != "" && markerEnd == len(token) && strings.TrimFunc(string(rs[i:start]), amountGap) == "" {
 		if start == i {
 			return end, ""
 		}

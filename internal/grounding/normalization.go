@@ -7,12 +7,16 @@ import (
 	"github.com/yuin/goldmark/util"
 )
 
-const lineBreaks = "\r\n\u0085\u2028\u2029"
-
 func digit(r rune) bool     { return r >= '0' && r <= '9' }
 func separator(r rune) bool { return r == ',' || r == '.' }
+
+// Neighbor checks ignore edge punctuation and join only across spaces and tabs.
+func amountGap(r rune) bool {
+	return r == ' ' || r == '\t' || edge(r) && !unicode.IsSpace(r)
+}
+
 func skipSpace(rs []rune, i int, multiline bool) int {
-	for i < len(rs) && unicode.IsSpace(rs[i]) && (multiline || !strings.ContainsRune(lineBreaks, rs[i])) {
+	for i < len(rs) && (rs[i] == ' ' || rs[i] == '\t' || multiline && unicode.IsSpace(rs[i])) {
 		i++
 	}
 	return i
@@ -69,7 +73,7 @@ func normalizedFigures(text string) []normalizedFigure {
 					safe = end
 				}
 				// A standalone marker before an amount makes its currency ambiguous.
-				if kind == 1 && previousUnparsed && !strings.ContainsAny(string(rs[tokens[i-1].end:start]), lineBreaks) {
+				if kind == 1 && previousUnparsed && strings.TrimFunc(string(rs[tokens[i-1].end:start]), amountGap) == "" {
 					previous := []rune(trim(rs[tokens[i-1].start:tokens[i-1].end]))
 					if markerEnd, marker := currencyAt(previous, 0); marker != "" && markerEnd == len(previous) {
 						value = ""
