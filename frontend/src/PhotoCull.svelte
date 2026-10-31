@@ -743,7 +743,9 @@
       {:else}
         <div class="body">
           {#if photo}<PhotoStage
-              proposal={editor.bestShots.find((p) => p.asset_id === photo!.asset_id)}
+              proposal={cull.currentStack
+                ? editor.bestShots.find((p) => p.asset_id === photo!.asset_id)
+                : undefined}
               {faces}
               {photo}
               {photos}

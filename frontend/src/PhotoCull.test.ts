@@ -1802,7 +1802,10 @@ it("changes the burst gap from the cull header and regroups the pass", async () 
   await waitFor(() => expect(check).toHaveBeenCalled());
 });
 
-it("disables best-shot responses after a grouping error", async () => {
+it.each([
+  ["disables best-shot responses after a grouping error", false],
+  ["hides best-shot proposals after live metadata dissolves the current burst", true],
+] as const)("%s", async (_name, dissolves) => {
   const respond = vi.spyOn(api, "decidePhotoStack");
   vi.mocked(api.preparePhotoAuthored).mockImplementation(async (scope) => ({
     ...photoPreparation((scope.asset_ids ?? []).map((id) => preparedPhoto(Number(id.slice(6))))),
@@ -1810,9 +1813,22 @@ it("disables best-shot responses after a grouping error", async () => {
       ? [{ asset_id: "photo-1", flag: "pick", rationale: "Best frame", confidence: 0.5 }]
       : [],
   }));
-  const { cull } = await reviewTwoStacks();
+  const { cull, photos, container } = await reviewTwoStacks();
   const accept = await readyButton("Accept all");
   const dismiss = await readyButton("Dismiss all");
+  if (dissolves) {
+    await waitFor(() => expect(container.querySelector(".proposal")).toBeTruthy());
+    vi.mocked(api.groupPhotoStacks).mockResolvedValue({
+      groups: [],
+      unavailable_ids: [],
+      burst_gap_seconds: 2,
+    });
+    await act(() => photos.changed({}));
+    expect(cull.currentStack).toBeUndefined();
+    expect(cull.currentID).toBe("photo-1");
+    expect(container.querySelector(".proposal")).toBeNull();
+    return;
+  }
   vi.mocked(api.groupPhotoStacks).mockRejectedValueOnce(
     new APIError("Groups temporarily unavailable", 503, "unavailable"),
   );
