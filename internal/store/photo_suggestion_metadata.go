@@ -15,13 +15,14 @@ import (
 // repeated restores. An awaiting row regenerates after restore and fills only
 // the fields this record leaves open. A description with nothing pending is
 // restored settled. A dismissed row may still await a rotation answer; its
-// regenerated caption and tags stay dismissed.
+// regenerated caption and tags stay dismissed. A row whose text the owner
+// accepted in full exports as dismissed, so only its rotation regenerates.
 type metadataPhotoSuggestion struct {
 	Type                string   `json:"type"`
 	ID                  string   `json:"suggestion_id" db:"suggestion_id"`
 	ContentVersionID    string   `json:"content_version_id" db:"content_version_id"`
 	ProducerFingerprint string   `json:"producer_fingerprint" db:"producer_fingerprint"`
-	Dismissed           bool     `json:"dismissed" db:"dismissed"`
+	Dismissed           bool     `json:"dismissed" db:"dismissed OR ((caption_resolved OR resolved_tags_json<>'[]') AND awaiting=0 AND caption='' AND tags_json='[]' AND visible_text='')"`
 	CaptionResolved     bool     `json:"caption_resolved" db:"caption_resolved"`
 	ResolvedTags        []string `json:"resolved_tags" db:"resolved_tags_json,json"`
 	Awaiting            bool     `json:"awaiting" db:"awaiting=1 OR (rotation IS NOT NULL AND rotation>0 AND NOT EXISTS(SELECT 1 FROM content_versions v JOIN photo_files f ON f.node_id=v.node_id WHERE v.version_id=photo_suggestions.content_version_id AND (f.confirmed_fields & confirmed_rotation)<>0)) OR caption<>'' OR tags_json<>'[]' OR visible_text<>''"`
