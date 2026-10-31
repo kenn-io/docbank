@@ -396,7 +396,7 @@ func validatePhotoMetadataState(ctx context.Context, tx metadataQuerier, version
 	if version >= photoCheckoutsStorageSchemaVersion {
 		var invalid int
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_files f LEFT JOIN provenance p ON p.identity=f.source_provenance_identity LEFT JOIN ingests i ON i.id=p.ingest_id
- WHERE f.source_provenance_identity IS NOT NULL AND (p.identity IS NULL OR p.node_id<>f.node_id OR i.source_kind LIKE 'embedded:%')`).Scan(&invalid); err != nil {
+ WHERE f.source_provenance_identity IS NOT NULL AND (p.identity IS NULL OR p.node_id<>f.node_id OR LOWER(i.source_kind) LIKE 'embedded:%')`).Scan(&invalid); err != nil {
 			return err
 		}
 		if invalid != 0 {

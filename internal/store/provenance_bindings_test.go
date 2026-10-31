@@ -146,7 +146,7 @@ func TestProvenanceBindingWriterIsImmutableAndIdempotent(t *testing.T) {
 		WHERE content_version_id=?`, node.CurrentVersionID).Scan(&revision))
 
 	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-		return bindProvenanceVersionTx(t.Context(), tx, binding)
+		return s.bindProvenanceVersionTx(t.Context(), tx, binding)
 	}))
 	var replayRevision int64
 	require.NoError(t, s.db.QueryRow(`SELECT revision FROM document_event_dirty
@@ -156,7 +156,7 @@ func TestProvenanceBindingWriterIsImmutableAndIdempotent(t *testing.T) {
 	conflict := binding
 	conflict.ObservedAt = "2026-09-10T00:00:00.000000000Z"
 	err = s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-		return bindProvenanceVersionTx(t.Context(), tx, conflict)
+		return s.bindProvenanceVersionTx(t.Context(), tx, conflict)
 	})
 	require.ErrorContains(t, err, "provenance binding conflict")
 	require.Equal(t, binding, bindingForIngest(t, s, node.CurrentVersionID, run.ID()))
@@ -164,13 +164,13 @@ func TestProvenanceBindingWriterIsImmutableAndIdempotent(t *testing.T) {
 	invalid := binding
 	invalid.ObservedAt = "not-a-time"
 	err = s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-		return bindProvenanceVersionTx(t.Context(), tx, invalid)
+		return s.bindProvenanceVersionTx(t.Context(), tx, invalid)
 	})
 	require.ErrorContains(t, err, "observation time")
 	invalid = binding
 	invalid.BasisRef = "inferred"
 	err = s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-		return bindProvenanceVersionTx(t.Context(), tx, invalid)
+		return s.bindProvenanceVersionTx(t.Context(), tx, invalid)
 	})
 	require.ErrorContains(t, err, "invalid provenance binding basis")
 
@@ -181,7 +181,7 @@ func TestProvenanceBindingWriterIsImmutableAndIdempotent(t *testing.T) {
 	invalid = binding
 	invalid.ContentVersionID = other.CurrentVersionID
 	err = s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-		return bindProvenanceVersionTx(t.Context(), tx, invalid)
+		return s.bindProvenanceVersionTx(t.Context(), tx, invalid)
 	})
 	require.ErrorIs(t, err, ErrProvenanceMismatch)
 

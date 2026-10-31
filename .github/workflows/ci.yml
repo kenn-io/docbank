@@ -46,16 +46,16 @@ jobs:
           --health-retries 12
     steps:
       - name: Check out repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
       - name: Set up Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
           cache: false
       - name: Restore Go caches
-        uses: ./.github/actions/go-cache-restore
+        uses: $/.github/actions/go-cache-restore
         with:
           group: linux-cgo
       - name: Exercise schema lifecycle and node queries
@@ -67,32 +67,34 @@ jobs:
     name: Public documentation
     runs-on: ubuntu-24.04
     timeout-minutes: 16
+    env:
+      DOWNLOAD_RETRY: kit-retry 3 5
     steps:
       - name: Check out full repository history
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
           cache: false
 
       - name: Restore Go caches
-        uses: ./.github/actions/go-cache-restore
+        uses: $/.github/actions/go-cache-restore
         with:
           group: linux-cgo
 
       - name: Set up Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        uses: actions/setup-node@v7.1.0
         with:
           node-version: "24.22.1"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
 
       - name: Install pinned documentation tools
         run: |
@@ -154,18 +156,18 @@ jobs:
     timeout-minutes: 12
     steps:
       - name: Check out repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        uses: actions/setup-node@v7.1.0
         with:
           node-version: "24.22.1"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
 
       - name: Check and build web application
         run: make frontend-test
@@ -176,7 +178,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Check out full repository history
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -192,29 +194,29 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Check out repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
           cache: false
 
       - name: Restore Go caches
-        uses: ./.github/actions/go-cache-restore
+        uses: $/.github/actions/go-cache-restore
         with:
           group: linux-cgo
 
       - name: Set up Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        uses: actions/setup-node@v7.1.0
         with:
           node-version: "24.22.1"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
 
       - name: Install pinned Chromium
         run: |
@@ -240,25 +242,25 @@ jobs:
     timeout-minutes: 38
     steps:
       - name: Check out repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
           cache: false
 
       - name: Restore Go caches
-        uses: ./.github/actions/go-cache-restore
+        uses: $/.github/actions/go-cache-restore
         with:
           group: linux-cgo
 
       - name: Check Unix installer
         run: sh -n scripts/install.sh
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
 
       - name: Check Huma API contract
         run: |
@@ -319,7 +321,7 @@ jobs:
           fi
 
       - name: Save Go caches
-        uses: ./.github/actions/go-cache-save
+        uses: $/.github/actions/go-cache-save
 
   purego:
     name: Pure-Go SQLite
@@ -329,18 +331,18 @@ jobs:
       CGO_ENABLED: "0"
     steps:
       - name: Check out repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
           cache: false
 
       - name: Restore Go caches
-        uses: ./.github/actions/go-cache-restore
+        uses: $/.github/actions/go-cache-restore
         with:
           group: linux-purego
 
@@ -351,7 +353,7 @@ jobs:
         run: bash scripts/test-go-ci.sh
 
       - name: Save Go caches
-        uses: ./.github/actions/go-cache-save
+        uses: $/.github/actions/go-cache-save
 
   lint:
     name: golangci-lint
@@ -359,24 +361,24 @@ jobs:
     timeout-minutes: 23
     steps:
       - name: Check out repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
           cache: false
 
       - name: Restore Go caches
-        uses: ./.github/actions/go-cache-restore
+        uses: $/.github/actions/go-cache-restore
         with:
           group: linux-lint
           extra-path: ~/.cache/golangci-lint
 
       - name: Run golangci-lint
-        uses: step-security/golangci-lint-action@2697867e9c204558ca23d0decdd0039dc21f2b93 # v9.3.0
+        uses: step-security/golangci-lint-action@v9.3.0
         with:
           version: v2.14.0
           # The job's Go cache group carries the analysis cache; the action's own key never refreshes.
@@ -389,7 +391,7 @@ jobs:
         run: ./custom-gcl run ./...
 
       - name: Save Go caches
-        uses: ./.github/actions/go-cache-save
+        uses: $/.github/actions/go-cache-save
 
   windows:
     env:
@@ -414,18 +416,18 @@ jobs:
     timeout-minutes: ${{ matrix.goarch == 'amd64' && (matrix.shard == 3 && 69 || 48) || (matrix.shard == 3 && 78 || 51) }}
     steps:
       - name: Check out repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
           cache: false
 
       - name: Restore Go caches
-        uses: ./.github/actions/go-cache-restore
+        uses: $/.github/actions/go-cache-restore
         with:
           group: windows-${{ matrix.goarch }}
 
@@ -436,7 +438,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           [scriptblock]::Create((Get-Content -Raw scripts/install.ps1)) | Out-Null
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
         if: matrix.goarch == 'arm64'
 
       - name: Download ARM64 C compiler
@@ -483,4 +485,4 @@ jobs:
 
       - name: Save Go caches
         if: matrix.shard == 4
-        uses: ./.github/actions/go-cache-save
+        uses: $/.github/actions/go-cache-save

@@ -19,7 +19,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Check out repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
 
@@ -39,7 +39,7 @@ jobs:
               and .output[0].dest == "/out/" + $arch + ".oci.tar"' bake.json
           done
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
 
       - name: Build nonroot image and check startup
         run: |

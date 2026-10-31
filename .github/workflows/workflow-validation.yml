@@ -3,8 +3,8 @@ name: Workflow validation
 on:
   pull_request:
     paths:
-      - ".github/workflows/**"
       - ".github/actions/**"
+      - ".github/workflows/**"
       - "Makefile"
 
 permissions:
@@ -23,18 +23,36 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 18
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
           cache: false
-      - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
       - name: Check workflow download retries
         run: |
           GOFLAGS="${GOFLAGS:+$GOFLAGS }-n" kit-retry 3 5 make lint-workflow-retries
           make lint-workflow-retries
-      - uses: raven-actions/actionlint@3d39aea434753780c3b3d4a1a31c854b4dbf49d7 # v2.2.0
+      - uses: step-security/jactionlint@v2.2.0
         with:
-          version: 1.7.12
-          shellcheck: false
-          pyflakes: false
+          version: 2.3.0
+          profile: correctness
+          online: "false"
+          args: --shellcheck= --pyflakes=
+          working-directory: ${{ github.workspace }}
+
+  # The organization requires SHA-pinned actions. actions.lock pins every
+  # action, including ones that other actions call, so a stale lockfile fails
+  # jobs at setup.
+  actions-lock:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Verify the workflow action lockfile
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: make actions-lock-check

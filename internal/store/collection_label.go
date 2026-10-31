@@ -39,7 +39,7 @@ func collectionLabelTx(
 	err := q.QueryRowContext(ctx, `WITH `+CollectionMembershipCTE+`
 		SELECT i.started_at, l.label, l.revision, l.updated_at, l.ingest_id
 		FROM ingests i LEFT JOIN collection_labels l ON l.ingest_id=i.id
-		WHERE i.id=? AND i.source_kind NOT LIKE 'embedded:%'
+		WHERE i.id=$1 AND LOWER(i.source_kind) NOT LIKE 'embedded:%'
 		  AND (l.ingest_id IS NOT NULL OR EXISTS(
 			SELECT 1 FROM collection_members cm WHERE cm.ingest_id=i.id
 		  ))`, ingestID).Scan(&startedAt, &label, &revision, &updatedAt, &retained)
@@ -103,14 +103,14 @@ func (s *Store) SetCollectionLabel(
 		if !retained {
 			_, err = tx.ExecContext(ctx, `INSERT INTO collection_labels(
 				ingest_id,label,revision,updated_at
-			) VALUES(?,?,2,?)`, id, normalized, updatedAt)
+			) VALUES($1,$2,2,$3)`, id, normalized, updatedAt)
 		} else {
 			_, err = tx.ExecContext(ctx, `UPDATE collection_labels
-				SET label=?, revision=revision+1, updated_at=?
-				WHERE ingest_id=?`, normalized, updatedAt, id)
+				SET label=$1, revision=revision+1, updated_at=$2
+				WHERE ingest_id=$3`, normalized, updatedAt, id)
 		}
 		if err != nil {
-			if s.driver.IsUniqueViolation(err) {
+			if s.isUniqueViolation(err) {
 				return fmt.Errorf("collection label %q: %w", optionalString(normalized), ErrExists)
 			}
 			return fmt.Errorf("updating collection label %q: %w", id, err)
@@ -154,6 +154,6 @@ func insertInitialCollectionLabelTx(
 	}
 	_, err := tx.ExecContext(ctx, `INSERT INTO collection_labels(
 		ingest_id,label,revision,updated_at
-	) VALUES(?,?,1,?)`, run.ID(), run.initialLabel, run.record.StartedAt)
+	) VALUES($1,$2,1,$3)`, run.ID(), run.initialLabel, run.record.StartedAt)
 	return err
 }
