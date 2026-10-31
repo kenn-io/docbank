@@ -197,7 +197,7 @@ func (s *Store) checkoutEntriesTx(ctx context.Context, tx *sql.Tx, selection Pho
 	if err != nil {
 		return nil, estimate, err
 	}
-	sources, err := photoSourcesTx(ctx, tx, string(encodedIDs), true)
+	sources, err := s.photoSourcesTx(ctx, tx, string(encodedIDs), true)
 	if err != nil {
 		return nil, estimate, err
 	}

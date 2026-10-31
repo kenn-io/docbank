@@ -730,20 +730,12 @@ func (service *Service) Plan(ctx context.Context, selector Selector) (Plan, erro
 	plan.ConsentState = "active"
 	for _, request := range service.profileConsentRequests(profile) {
 		_, err := service.catalog.AuthorizeProviderOperation(ctx, request)
-		switch {
-		case err == nil:
-		case errors.Is(err, store.ErrProcessingConsentRevoked):
-			plan.ConsentState = "revoked"
-		case errors.Is(err, store.ErrProcessingConsentExpired):
-			if plan.ConsentState != "revoked" {
-				plan.ConsentState = "expired"
-			}
-		case errors.Is(err, store.ErrProcessingConsentRequired):
-			if plan.ConsentState == "active" {
-				plan.ConsentState = "required"
-			}
-		default:
+		state, err := processingConsentState(err)
+		if err != nil {
 			return Plan{}, err
+		}
+		if state == "revoked" || state == "expired" && plan.ConsentState != "revoked" || plan.ConsentState == "active" {
+			plan.ConsentState = state
 		}
 	}
 	plan.ConsentRequired = plan.ConsentState != "active"
@@ -771,6 +763,10 @@ func (service *Service) planForSource(ctx context.Context, selector Selector, no
 		}
 		if profileRenditionInput(profile) == document.RenditionInputDerivedUpload {
 			plan.BackupConsequence = "Pending photo suggestions rebuild after restore; accepted and dismissed decisions are included in backups."
+			if hop.ProviderID == document.FaceDetectionProviderID {
+				plan.Estimate.Scope = "Granting consent automatically finds faces in eligible photos throughout this vault."
+				plan.BackupConsequence = "Face boxes, measurements, and your decisions are included in backups. Restoring a backup allows another scan and provider call for each eligible photo."
+			}
 			// Only the grid preview leaves the vault, not the original file.
 			view, reason, err := photoDescriptionPreview(ctx, service.catalog, version.ID)
 			if err != nil {
@@ -962,6 +958,21 @@ func resultAttachmentID(photo bool, run renditionRun) string {
 		return ""
 	}
 	return run.attachmentID
+}
+
+func processingConsentState(err error) (string, error) {
+	switch {
+	case err == nil:
+		return "active", nil
+	case errors.Is(err, store.ErrProcessingConsentRevoked):
+		return "revoked", nil
+	case errors.Is(err, store.ErrProcessingConsentExpired):
+		return "expired", nil
+	case errors.Is(err, store.ErrProcessingConsentRequired):
+		return "required", nil
+	default:
+		return "", err
+	}
 }
 
 func processingConsentBoundaryError(err error) error {

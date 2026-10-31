@@ -53,7 +53,7 @@ func exportPageMetadata(ctx context.Context, q metadataQuerier, write metadataWr
 		}
 		var hash string
 		var size int64
-		if err := q.QueryRowContext(ctx, `SELECT blob_hash,size FROM content_versions WHERE version_id=?`, id).Scan(&hash, &size); err != nil {
+		if err := q.QueryRowContext(ctx, `SELECT blob_hash,size FROM content_versions WHERE version_id=$1`, id).Scan(&hash, &size); err != nil {
 			return err
 		}
 		if d.Source.SHA256 != hash || d.Source.Size != size {
@@ -124,7 +124,7 @@ func exportPageMetadata(ctx context.Context, q metadataQuerier, write metadataWr
 	}
 	pending := 0
 	for _, id := range jobs {
-		job, err := loadPageJob(ctx, q, `id=?`, id)
+		job, err := loadPageJob(ctx, q, `id=$1`, id)
 		if err != nil {
 			return err
 		}
@@ -139,7 +139,7 @@ func exportPageMetadata(ctx context.Context, q metadataQuerier, write metadataWr
 		}
 		var hash string
 		var size, nodeID int64
-		if err := q.QueryRowContext(ctx, `SELECT blob_hash,size,node_id FROM content_versions WHERE version_id=?`, job.Request.Source.VersionID).Scan(&hash, &size, &nodeID); err != nil {
+		if err := q.QueryRowContext(ctx, `SELECT blob_hash,size,node_id FROM content_versions WHERE version_id=$1`, job.Request.Source.VersionID).Scan(&hash, &size, &nodeID); err != nil {
 			return err
 		}
 		if hash != job.Request.Source.SHA256 || size != job.Request.Source.Size || nodeID != job.Request.NodeID {

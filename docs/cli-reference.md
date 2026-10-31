@@ -981,7 +981,7 @@ Selecting a photo member restores its whole group. Companions inside trashed fol
 ## docbank search
 
 ```
-docbank search [<query>...] [--tag <name-or-id>] [--mime-type <type/subtype>] [--under <path-or-id>] [--modified-since <timestamp>] [--modified-before <timestamp>] [--fuzzy] [--limit <n>] [--agent | --json]
+docbank search [<query>...] [--tag <name-or-id>] [--mime-type <type/subtype>] [--under <path-or-id>] [--modified-since <timestamp>] [--modified-before <timestamp>] [--source-present] [--fuzzy] [--limit <n>] [--agent | --json]
 ```
 
 Query words are joined. When a processing profile has a query embedding
@@ -1184,7 +1184,7 @@ version 1 request format, date choices, counts, and retention limits.
 ## docbank processing
 
 ```
-docbank processing vision-fingerprints --model <model> --trust-boundary <boundary> --endpoint <origin> --deployment-fingerprint <sha256>
+docbank processing vision-fingerprints [--task <descriptor-id>] --model <model> --trust-boundary <boundary> --endpoint <origin> --deployment-fingerprint <sha256>
 docbank processing profiles [--json]
 docbank processing probe --profile <name> --seeds <dir> [--overwrite]
 docbank processing coverage <version-uuid> --profile <name> [--json]
@@ -1193,7 +1193,7 @@ docbank processing build <path-or-id> --profile <name> --plan-fingerprint <sha25
 docbank processing status <job-id> [--json]
 ```
 
-`vision-fingerprints` prints the descriptor and disclosure fingerprints for a photo description profile. It runs locally without a daemon or provider credential. See [Photo descriptions](configuration.md#photo-descriptions).
+`vision-fingerprints` prints the descriptor and disclosure fingerprints for a vision profile. `--task` defaults to `compatible-vision.describe-v1`; use `compatible-vision.detect-faces-v1` for automatic face detection. It runs locally without a daemon or provider credential. See [Photo descriptions](configuration.md#photo-descriptions) and [Automatic face detection](configuration.md#automatic-face-detection).
 
 `probe` runs Mistral capability checks locally with the processing profile's policy, credential, and egress settings. It writes the manifest to the rendition runtime's configured `capability_manifest` path. Supply five synthetic native seeds and use `--overwrite` to replace an existing manifest. After saving, it prints the profile's `descriptor_fingerprint` and `disclosure_fingerprint`. See [Mistral OCR configuration](configuration.md#document-ocr-with-mistral).
 
@@ -1237,6 +1237,7 @@ docbank redaction reserve <preparation.json> <masks.json> <review.json>
 docbank redaction render <preparation.json> <masks.json> <review.json> <output.zip>
   [--allocation <uuid>] [--overwrite] [--json]
 docbank redaction verify <preparation.json> <masks.json> <review.json> <archive.zip> [--json]
+docbank redaction package <selection.json> <recipient.zip> [--json]
 ```
 
 Prepare, resolve and render use the daemon to inspect and redact a retained
@@ -1270,6 +1271,12 @@ unmasked image content with the source or authenticate the producer. Compare the
 digest with the render-time value. See
 [Check and retain a saved archive](usage/document-processing.md#check-and-retain-a-saved-archive)
 for limits, exit codes and recovery.
+
+Package checks every selected review before downloading completed numbered PDFs,
+then saves their unchanged bytes, sanitized text, DAT, OPT, mapping and receipt in
+one recipient ZIP. It never overwrites the destination. See
+[Package completed numbered PDFs](usage/document-processing.md#package-completed-numbered-pdfs-for-a-recipient)
+for the selection format, limits and recipient import commands.
 
 ## docbank rendition
 
@@ -1839,11 +1846,12 @@ docbank watch list [--json]
 Lists the daemon's effective watched-inbox configuration in stable name order:
 the machine-local source, virtual-tree destination, complete settle window,
 minimum source age (`0s` when disabled), scan interval, exclusion count, and
-current runner state. A waiting watcher shows `idle`; it shows `running` while
+current runner state. The final `PROCESSING` column shows the profile and any consent wait or status error, or `-` without a profile.
+A waiting watcher shows `idle`; it shows `running` while
 ingesting a file. Human output quotes source and destination paths so
 terminal control characters cannot disguise them. `--json` includes the
-complete exclusion rules and the corresponding job record for agents and
-automation.
+complete exclusion rules, the corresponding job record, and optional `processing` status for agents and automation.
+See the [watch API](architecture/http-api.md#background-job-status) for its fields.
 
 This command is inspection only. Edit `config.toml` and restart the daemon to
 change a watch.

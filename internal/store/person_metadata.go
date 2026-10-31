@@ -486,12 +486,12 @@ func validatePersonMetadataState(ctx context.Context, q metadataQuerier, version
 			   OR (c.scope_kind='document' AND (v.version_id IS NULL OR v.node_id<>c.node_id))
 		)`, nil},
 		{"person identity bounds", `SELECT EXISTS(
-			SELECT 1 FROM person_identities GROUP BY person_id HAVING COUNT(*)>?
+			SELECT 1 FROM person_identities GROUP BY person_id HAVING COUNT(*)>$1
 		)`, []any{document.MaxPersonIdentitiesPerPerson}},
 		{"person external identity bounds", `SELECT EXISTS(
-			SELECT 1 FROM person_external_identities GROUP BY person_id HAVING COUNT(*)>?
+			SELECT 1 FROM person_external_identities GROUP BY person_id HAVING COUNT(*)>$1
 		)`, []any{document.MaxPersonExternalIdentities}},
-		{"person candidate queue bounds", `SELECT COUNT(*)>? FROM person_match_candidates WHERE state='open'`, []any{maxOpenPersonCandidates}},
+		{"person candidate queue bounds", `SELECT COUNT(*)>$1 FROM person_match_candidates WHERE state='open'`, []any{maxOpenPersonCandidates}},
 		{"person candidate references", `SELECT EXISTS(
 			SELECT 1 FROM person_match_candidates c
 			WHERE (c.suggested_person_id IS NOT NULL
@@ -554,28 +554,42 @@ func validatePersonSplitMetadataState(ctx context.Context, q metadataQuerier) er
 		return err
 	}
 	defer func() { _ = rows.Close() }()
+	type splitRecord struct {
+		operationID, sourceID, targetID string
+	}
+	var records []splitRecord
 	for rows.Next() {
-		var operationID string
+		var record splitRecord
 		var raw []byte
-		if err := rows.Scan(&operationID, &raw); err != nil {
+		if err := rows.Scan(&record.operationID, &raw); err != nil {
 			return err
 		}
 		var receipt PersonSplitReceipt
 		if err := json.Unmarshal(raw, &receipt, json.RejectUnknownMembers(true)); err != nil {
 			return err
 		}
+		record.sourceID, record.targetID = receipt.SourcePersonID, receipt.NewPersonID
+		records = append(records, record)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, record := range records {
 		var sourceExists, targetExists bool
 		if err := q.QueryRowContext(ctx, `SELECT
-			EXISTS(SELECT 1 FROM persons WHERE person_id=? UNION ALL SELECT 1 FROM person_aliases WHERE retired_person_id=?),
-			EXISTS(SELECT 1 FROM persons WHERE person_id=? UNION ALL SELECT 1 FROM person_aliases WHERE retired_person_id=?)`,
-			receipt.SourcePersonID, receipt.SourcePersonID, receipt.NewPersonID, receipt.NewPersonID).Scan(&sourceExists, &targetExists); err != nil {
+			EXISTS(SELECT 1 FROM persons WHERE person_id=$1 UNION ALL SELECT 1 FROM person_aliases WHERE retired_person_id=$2),
+			EXISTS(SELECT 1 FROM persons WHERE person_id=$3 UNION ALL SELECT 1 FROM person_aliases WHERE retired_person_id=$4)`,
+			record.sourceID, record.sourceID, record.targetID, record.targetID).Scan(&sourceExists, &targetExists); err != nil {
 			return err
 		}
 		if !sourceExists || !targetExists {
-			return fmt.Errorf("person split %s references missing people", operationID)
+			return fmt.Errorf("person split %s references missing people", record.operationID)
 		}
 	}
-	return rows.Err()
+	return nil
 }
 
 type metadataPersonBeforeKey struct {

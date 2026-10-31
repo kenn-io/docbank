@@ -62,6 +62,8 @@ func TestGetPhotoFacesMCPPaginatesFacesAndAssertions(t *testing.T) {
 		{FaceID: "00000000-0000-4000-8000-000000000303", ContentVersionID: versionID, Box: document.FaceBox{X: 0.7, Y: 0.2, Width: 0.2, Height: 0.2}, Revision: 1, AssertionID: assertions[0].AssertionID, CreatedAt: stamp},
 		{FaceID: "00000000-0000-4000-8000-000000000304", ContentVersionID: versionID, Box: document.FaceBox{X: 0.7, Y: 0.6, Width: 0.2, Height: 0.2}, Revision: 1, CreatedAt: stamp},
 	}
+	faces[0].Roll, faces[0].Facing, faces[0].EyesOpen, faces[0].Smile = new(0.0), new(.7), new(false), new(true)
+	faces[0].DetectorFingerprint = strings.Repeat("a", 64)
 	faces[0].RejectedPersonIDs = []string{"00000000-0000-4000-8000-000000000203"}
 	faces[2].Dismissed = true
 	page := api.PhotoFacePage{Faces: faces, Assertions: assertions, People: []api.PhotoFacePerson{
@@ -95,6 +97,14 @@ func TestGetPhotoFacesMCPPaginatesFacesAndAssertions(t *testing.T) {
 	firstFace, ok := firstFaces[0].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, []any{"00000000-0000-4000-8000-000000000203"}, firstFace["rejected_person_ids"])
+
+	require.EqualValues(t, 0, firstFace["roll"])
+	require.InDelta(t, .7, firstFace["facing"], 1e-12)
+	require.Equal(t, false, firstFace["eyes_open"])
+	require.Equal(t, true, firstFace["smile"])
+	require.Equal(t, faces[0].DetectorFingerprint, firstFace["detector_fingerprint"])
+	require.NotContains(t, firstFaces[1], "roll")
+	require.NotContains(t, firstFaces[1], "detector_fingerprint")
 
 	last, err := invokeReadTool(t.Context(), lease, "get_photo_faces", map[string]any{"content_version_id": versionID, "limit": 2, "offset": 2})
 	require.NoError(t, err)

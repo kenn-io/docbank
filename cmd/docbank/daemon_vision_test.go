@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -23,9 +24,9 @@ import (
 	"go.kenn.io/docbank/internal/daemonconn"
 )
 
-func visionProcessingConfig(t *testing.T, endpoint string) config.Config {
+func visionProcessingConfig(t *testing.T, endpoint, task string) config.Config {
 	t.Helper()
-	descriptor, err := vision.Descriptor("synthetic-vision", document.RenditionTrustOperatorNetwork)
+	descriptor, err := vision.Descriptor(task, "synthetic-vision", document.RenditionTrustOperatorNetwork)
 	require.NoError(t, err)
 	cfg := config.Default()
 	cfg.CredentialBindings["vision"] = config.CredentialBindingConfig{EnvironmentVariable: "DOCBANK_TEST_VISION_KEY"}
@@ -55,6 +56,29 @@ func visionProcessingConfig(t *testing.T, endpoint string) config.Config {
 }
 
 func TestDaemonDescribesAPhotoWithAConfiguredVisionProfile(t *testing.T) {
+	daemon, _, asset := startVisionDaemonWithPhoto(t, vision.ProviderID, `{"caption":"A white panorama.","tags":["panorama"],"visible_text":""}`)
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		prepared, err := daemon.API().PreparePhotoAuthored(t.Context(), &apiclient.PreparePhotoAuthoredRequestOptions{Body: &api.PhotoAuthoredPrepareRequest{AssetIDs: []string{asset.ID}}})
+		require.NoError(c, err)
+		require.Len(c, prepared.Suggestions, 1)
+	}, 20*time.Second, 50*time.Millisecond)
+}
+
+func TestDaemonFindsFacesWithAConfiguredDetectionProfile(t *testing.T) {
+	daemon, node, _ := startVisionDaemonWithPhoto(t, document.FaceDetectionProviderID, `{"faces":[{"box":{"x":0.25,"y":0.2,"width":0.2,"height":0.3},"roll":0,"facing":0.9,"eyes_open":true,"smile":false}]}`)
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		page, err := daemon.API().ListPhotoFaces(t.Context(), &apiclient.ListPhotoFacesRequestOptions{PathParams: &apiclient.ListPhotoFacesPath{ContentVersionID: uuid.MustParse(node.CurrentVersionID)}})
+		require.NoError(c, err)
+		require.Len(c, page.Faces, 1)
+		require.Equal(c, document.FaceBox{X: .25, Y: .2, Width: .2, Height: .3}, page.Faces[0].Box)
+		require.NotEmpty(c, page.Faces[0].DetectorFingerprint)
+	}, 20*time.Second, 50*time.Millisecond)
+}
+
+// startVisionDaemonWithPhoto serves a daemon whose vision profile runs task,
+// adds a photo, and grants consent once the photo can be sent.
+func startVisionDaemonWithPhoto(t *testing.T, task, reply string) (*daemonconn.Connection, *api.Node, *apiclient.GetPhotoAssetByNodeResponse) {
+	t.Helper()
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/v1/chat/completions", r.URL.Path)
 		assert.Equal(t, "Bearer synthetic-vision-key", r.Header.Get("Authorization"))
@@ -62,15 +86,15 @@ func TestDaemonDescribesAPhotoWithAConfiguredVisionProfile(t *testing.T) {
 		if !assert.NoError(t, err) {
 			return
 		}
-		reply := `{"caption":"A white panorama.","tags":["panorama"],"visible_text":""}`
+		answer := reply
 		if visiontest.IsProbe(body) {
-			reply = "red,blue"
+			answer = "red,blue"
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(visiontest.Completion(reply))
+		_, _ = w.Write(visiontest.Completion(answer))
 	}))
 	t.Cleanup(provider.Close)
-	cfg := visionProcessingConfig(t, provider.URL)
+	cfg := visionProcessingConfig(t, provider.URL, task)
 	cfg.Server.APIKey = "synthetic-vision-daemon-key"
 	t.Setenv("DOCBANK_TEST_VISION_KEY", "synthetic-vision-key")
 	root := t.TempDir()
@@ -90,7 +114,7 @@ func TestDaemonDescribesAPhotoWithAConfiguredVisionProfile(t *testing.T) {
 	asset, err := daemon.API().GetPhotoAssetByNode(t.Context(), &apiclient.GetPhotoAssetByNodeRequestOptions{PathParams: &apiclient.GetPhotoAssetByNodePath{NodeID: node.ID}})
 	require.NoError(t, err)
 	selector := api.ProcessingSelector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "vision"}
-	// The photo is describable once its grid preview exists. The preview can
+	// The photo can be sent once its grid preview exists. The preview can
 	// land between planning and enqueueing, which changes the plan, so plan
 	// again after processing_plan_changed as a client would.
 	require.EventuallyWithT(t, func(c *assert.CollectT) {
@@ -100,9 +124,5 @@ func TestDaemonDescribesAPhotoWithAConfiguredVisionProfile(t *testing.T) {
 		_, err = daemon.EnqueueProcessing(t.Context(), api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true}, plan.ProfileFingerprint)
 		require.NoError(c, err)
 	}, 20*time.Second, 50*time.Millisecond)
-	require.EventuallyWithT(t, func(c *assert.CollectT) {
-		prepared, err := daemon.API().PreparePhotoAuthored(t.Context(), &apiclient.PreparePhotoAuthoredRequestOptions{Body: &api.PhotoAuthoredPrepareRequest{AssetIDs: []string{asset.ID}}})
-		require.NoError(c, err)
-		require.Len(c, prepared.Suggestions, 1)
-	}, 20*time.Second, 50*time.Millisecond)
+	return daemon, node, asset
 }

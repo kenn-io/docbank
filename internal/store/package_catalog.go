@@ -215,7 +215,7 @@ func loadPackageTx(ctx context.Context, tx metadataQuerier, id string) (Package,
 		COALESCE(p.ingest_id,''),COALESCE(p.export_plan_id,''),p.state,COALESCE(p.produced_on,''),
 		p.created_at,COALESCE(p.completed_at,''),COALESCE(s.member_count,0),COALESCE(s.page_count,0)
 		FROM packages p LEFT JOIN collection_snapshots s ON s.snapshot_id=p.snapshot_id
-		WHERE p.package_id=?`, id).Scan(&result.PackageID, &result.SnapshotID, &result.Direction,
+		WHERE p.package_id=$1`, id).Scan(&result.PackageID, &result.SnapshotID, &result.Direction,
 		&result.PackageName, &result.PartyLabel, &result.ProfileSHA256, &result.ProfileJSON,
 		&result.MappingSHA256, &result.MappingJSON, &result.ManifestSHA256,
 		&result.ManifestBlobSHA256, &result.PredecessorPackageID, &result.Relation,
@@ -228,7 +228,7 @@ func loadPackageTx(ctx context.Context, tx metadataQuerier, id string) (Package,
 		return Package{}, fmt.Errorf("reading package: %w", err)
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT ordinal,volume_name,declared_root,mapped_root,resolved_root_sha256
-		FROM package_volumes WHERE package_id=? ORDER BY ordinal`, id)
+		FROM package_volumes WHERE package_id=$1 ORDER BY ordinal`, id)
 	if err != nil {
 		return Package{}, err
 	}

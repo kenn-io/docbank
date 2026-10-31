@@ -28,6 +28,8 @@ import (
 
 const AdapterContract = document.VisionAdapterContract
 const ProviderID = "compatible-vision.describe-v1"
+
+const detectionPrompt = `Find every visible face in this photograph. Return strictly valid JSON, no markdown or commentary: {"faces":[{"box":{"x":0.1,"y":0.2,"width":0.2,"height":0.3},"roll":0,"facing":1,"eyes_open":true,"smile":false}]}. Boxes use normalized coordinates in this oriented preview. Roll is clockwise radians in [-pi,pi], measured from upright in this preview. Facing is a score in [0,1], with 1 facing the camera. Use null when a measurement is unavailable. Do not identify people. Return {"faces":[]} when no faces are visible.`
 const MaxRequestTimeout = 10 * time.Minute
 
 // MaxResponseBytes bounds a provider reply, so a configured limit cannot exceed it.
@@ -36,6 +38,9 @@ const InputProfile = "grid-jpeg-512-metadata-stripped-v1"
 
 // ErrInvalidTrustBoundary rejects a trust boundary without a network provider.
 var ErrInvalidTrustBoundary = errors.New("vision trust boundary must be operator_network or hosted_provider")
+
+// ErrUnknownTask rejects a descriptor ID without a vision task.
+var ErrUnknownTask = errors.New("unknown vision descriptor")
 
 var captionListMarker = regexp.MustCompile(`^\s*(?:[-*+]|\d+[.)])\s+`)
 var captionStrong = regexp.MustCompile(`\*\*([^*]+)\*\*`)
@@ -53,6 +58,7 @@ Caption: 1 to 3 neutral English sentences, at most 300 characters, plain text. T
 const provider = providerutil.Provider("vision")
 
 type Profile struct {
+	DescriptorID     string
 	Origin           string
 	Model            string
 	TrustBoundary    document.RenditionTrustBoundary
@@ -65,19 +71,37 @@ type Provider struct {
 	profile    Profile
 	descriptor document.RenditionDescriptor
 	http       *http.Client
+	prompt     string
+	tokens     int
 	credential providerutil.Credential
 }
 
-// Descriptor binds model, prompt, and input policy to the provider identity.
-func Descriptor(model string, trust document.RenditionTrustBoundary) (document.RenditionDescriptor, error) {
+// taskPrompt selects a task's prompt and completion budget. Detection output grows with each face.
+func taskPrompt(id string) (string, int, error) {
+	switch id {
+	case ProviderID:
+		return prompt, 2048, nil
+	case document.FaceDetectionProviderID:
+		return detectionPrompt, 4096, nil
+	default:
+		return "", 0, ErrUnknownTask
+	}
+}
+
+// Descriptor pins the selected task as well as its model and input policy.
+func Descriptor(id, model string, trust document.RenditionTrustBoundary) (document.RenditionDescriptor, error) {
+	text, _, err := taskPrompt(id)
+	if err != nil {
+		return document.RenditionDescriptor{}, err
+	}
 	if trust != document.RenditionTrustOperatorNetwork && trust != document.RenditionTrustHostedProvider {
 		return document.RenditionDescriptor{}, ErrInvalidTrustBoundary
 	}
 	if model == "" || len(model) > 255 || model != strings.TrimSpace(model) || strings.ContainsAny(model, "\r\n\x00") {
 		return document.RenditionDescriptor{}, errors.New("vision model is invalid")
 	}
-	fingerprint := providerutil.SHA256Hex([]byte(AdapterContract + "\x00" + model + "\x00" + InputProfile + "\x00" + prompt))
-	return document.NewRenditionDescriptor(document.RenditionDescriptor{ID: ProviderID, ContractVersion: document.RenditionProviderContractVersion, PolicyFingerprint: fingerprint, TrustBoundary: trust, SupportedFormats: []document.RenditionFormatCapability{{MediaFamily: "image", MediaType: "image/jpeg", InputKind: document.RenditionInputDerivedUpload}}, ReturnsStructured: true, ArtifactRoles: []document.EvidenceArtifactRole{document.EvidenceArtifactStructured}})
+	fingerprint := providerutil.SHA256Hex([]byte(AdapterContract + "\x00" + model + "\x00" + InputProfile + "\x00" + text))
+	return document.NewRenditionDescriptor(document.RenditionDescriptor{ID: id, ContractVersion: document.RenditionProviderContractVersion, PolicyFingerprint: fingerprint, TrustBoundary: trust, SupportedFormats: []document.RenditionFormatCapability{{MediaFamily: "image", MediaType: "image/jpeg", InputKind: document.RenditionInputDerivedUpload}}, ReturnsStructured: true, ArtifactRoles: []document.EvidenceArtifactRole{document.EvidenceArtifactStructured}})
 }
 
 // DisclosureFingerprint binds consent to the exact destination and deployment.
@@ -91,7 +115,7 @@ func ValidateOrigin(origin string, trust document.RenditionTrustBoundary) (strin
 }
 
 func New(profile Profile, secrets providerutil.SecretResolver, client *http.Client) (*Provider, error) {
-	descriptor, err := Descriptor(profile.Model, profile.TrustBoundary)
+	descriptor, err := Descriptor(profile.DescriptorID, profile.Model, profile.TrustBoundary)
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +136,8 @@ func New(profile Profile, secrets providerutil.SecretResolver, client *http.Clie
 	}
 	copyClient := *client
 	copyClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	return &Provider{profile: profile, descriptor: descriptor, http: &copyClient, credential: credential}, nil
+	text, tokens, _ := taskPrompt(profile.DescriptorID)
+	return &Provider{prompt: text, tokens: tokens, profile: profile, descriptor: descriptor, http: &copyClient, credential: credential}, nil
 }
 func (p *Provider) Descriptor() document.RenditionDescriptor {
 	return providerutil.CloneDescriptor(p.descriptor)
@@ -266,15 +291,20 @@ func (p *Provider) Render(ctx context.Context, upload document.AuthorizedUpload,
 	if err != nil {
 		return document.RenditionResult{}, err
 	}
-	raw, err := p.describe(ctx, data, prompt, 2048, authorization.ExpiresAt)
+	raw, err := p.describe(ctx, data, p.prompt, p.tokens, authorization.ExpiresAt)
 	if err != nil {
 		return document.RenditionResult{}, err
 	}
-	description, err := Parse(raw)
-	if err != nil {
-		return document.RenditionResult{}, provider.Classified(document.RenditionErrorTransient, "invalid photo description", err)
+	var value any
+	if p.descriptor.ID == document.FaceDetectionProviderID {
+		value, err = ParseFaces(raw)
+	} else {
+		value, err = Parse(raw)
 	}
-	payload, err := json.Marshal(description)
+	if err != nil {
+		return document.RenditionResult{}, provider.Classified(document.RenditionErrorTransient, "invalid vision result", err)
+	}
+	payload, err := json.Marshal(value)
 	if err != nil {
 		return document.RenditionResult{}, err
 	}
@@ -320,4 +350,46 @@ func (p *Provider) Probe(ctx context.Context) error {
 		return provider.Malformed("vision probe did not identify the synthetic image", nil)
 	}
 	return nil
+}
+
+// ParseFaces requires a complete reply with a faces array, clips boxes to the
+// frame, and drops faces that remain invalid. A nonempty array must contain at
+// least one valid face. Only an explicit empty array completes a scan with no faces.
+func ParseFaces(raw []byte) (document.FaceDetection, error) {
+	var fields struct {
+		Faces []jsontext.Value `json:"faces"`
+	}
+	raw = bytes.Trim(raw, " \t\r\n")
+	if bytes.HasPrefix(raw, []byte("```")) && bytes.HasSuffix(raw, []byte("```")) && len(raw) >= 6 {
+		raw = bytes.TrimPrefix(raw[3:len(raw)-3], []byte("json"))
+		raw = bytes.Trim(raw, " \t\r\n")
+	}
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return document.FaceDetection{}, err
+	}
+	if fields.Faces == nil {
+		return document.FaceDetection{}, errors.New("vision response requires a faces array")
+	}
+	if len(fields.Faces) > document.MaxPhotoRecordsPerVersion {
+		return document.FaceDetection{}, errors.New("too many detected faces")
+	}
+	out := document.FaceDetection{Faces: []document.FaceObservation{}}
+	for _, rawFace := range fields.Faces {
+		var observation document.FaceObservation
+		if json.Unmarshal(rawFace, &observation) != nil {
+			continue
+		}
+		box := &observation.Box
+		box.Width = min(box.Width+min(box.X, 0), 1-max(box.X, 0))
+		box.Height = min(box.Height+min(box.Y, 0), 1-max(box.Y, 0))
+		box.X, box.Y = max(box.X, 0), max(box.Y, 0)
+		if observation.Validate() != nil {
+			continue
+		}
+		out.Faces = append(out.Faces, observation)
+	}
+	if len(fields.Faces) > 0 && len(out.Faces) == 0 {
+		return document.FaceDetection{}, errors.New("invalid detected faces")
+	}
+	return out, nil
 }

@@ -431,6 +431,7 @@ type metadataQuerier interface {
 type metadataSourceLayout struct {
 	schemaVersion int
 	backupScoped  bool
+	postgres      bool // SQL dialect; schemaVersion selects the logical record shape.
 }
 
 func currentMetadataLayout() metadataSourceLayout {
@@ -531,7 +532,11 @@ func exportMetadataSnapshotWithVaultIdentity(
 		}
 	}
 	if layout.schemaVersion >= photoFacesStorageSchemaVersion {
-		if err := photoFaceMetadata.export(ctx, tx, write); err != nil {
+		var codec metadataRecordCodec = photoFaceMetadata
+		if layout.schemaVersion < photoFaceDetectionStorageSchemaVersion {
+			codec = photoFaceMetadataBeforeDetection
+		}
+		if err := codec.export(ctx, tx, write); err != nil {
 			return err
 		}
 	}
@@ -987,7 +992,7 @@ func (s *Store) importMetadata(ctx context.Context, r io.Reader) error {
 		if err != nil {
 			return err
 		}
-		if err := backfillPhotoSourcesTx(ctx, tx); err != nil {
+		if err := s.backfillPhotoSourcesTx(ctx, tx); err != nil {
 			return err
 		}
 		if err := refreshPhotoTechnicalMetadataTx(ctx, tx); err != nil {
@@ -1550,6 +1555,14 @@ func validateProvenanceTime(value string) error {
 	return nil
 }
 
+// validateMetadataState checks a storage mutation before its transaction commits.
+// Call it after the final mutation: PostgreSQL leaves deferred references immediate.
+func (s *Store) validateMetadataState(ctx context.Context, tx *sql.Tx, nodeSequence int64) error {
+	layout := currentMetadataLayout()
+	layout.postgres = s.postgresSchema != ""
+	return validateMetadataStateWithVaultIdentity(ctx, tx, nodeSequence, layout)
+}
+
 func validateMetadataState(ctx context.Context, tx metadataQuerier, nodeSequence int64) error {
 	return validateMetadataStateWithVaultIdentity(ctx, tx, nodeSequence, currentMetadataLayout())
 }
@@ -1598,7 +1611,7 @@ func validateMetadataStateWithVaultIdentity(
 		if err := validateMediaMetadataState(ctx, tx); err != nil {
 			return err
 		}
-		if err := validateProcessingMetadataState(ctx, tx); err != nil {
+		if err := validateProcessingMetadataState(ctx, tx, layout.postgres); err != nil {
 			return err
 		}
 		if err := validateEmbeddingMetadataState(ctx, tx); err != nil {
@@ -1616,7 +1629,7 @@ func validateMetadataStateWithVaultIdentity(
 			}
 		}
 		if layout.schemaVersion >= photoFacesStorageSchemaVersion {
-			if err := validatePhotoFaceMetadataState(ctx, tx); err != nil {
+			if err := validatePhotoFaceMetadataState(ctx, tx, layout.schemaVersion); err != nil {
 				return err
 			}
 		}
@@ -1637,7 +1650,7 @@ func validateMetadataStateWithVaultIdentity(
 			}
 		}
 		if layout.schemaVersion >= 25 {
-			if err := validatePhotoMetadataState(ctx, tx, layout.schemaVersion); err != nil {
+			if err := validatePhotoMetadataState(ctx, tx, layout.schemaVersion, layout.postgres); err != nil {
 				return err
 			}
 		}
@@ -1685,6 +1698,18 @@ func validateMetadataStateWithVaultIdentity(
 	if nodeSequence < maxNodeID {
 		return fmt.Errorf("node ID high-water mark %d is below maximum node ID %d", nodeSequence, maxNodeID)
 	}
+	if layout.postgres {
+		transaction, ok := tx.(*sql.Tx)
+		if !ok {
+			return errors.New("PostgreSQL metadata validation requires a transaction")
+		}
+		// Check pending deferred references before returning success. Keep them
+		// immediate for the rest of this transaction; commit still enforces them.
+		if _, err := transaction.ExecContext(ctx, `SET CONSTRAINTS ALL IMMEDIATE`); err != nil {
+			return fmt.Errorf("checking metadata foreign keys: %w", err)
+		}
+		return nil
+	}
 	rows, err := tx.QueryContext(ctx, `PRAGMA foreign_key_check`)
 	if err != nil {
 		return fmt.Errorf("checking metadata foreign keys: %w", err)
@@ -1709,7 +1734,7 @@ func validateVisualPreviewMetadataState(
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
 		SELECT 1 FROM visual_preview_generations g
 		JOIN content_versions v ON v.version_id=g.content_version_id
-		WHERE g.vault_uid<>? OR g.source_sha256<>v.blob_hash
+		WHERE g.vault_uid<>$1 OR g.source_sha256<>v.blob_hash
 	)`, vaultID).Scan(&mismatch); err != nil {
 		return fmt.Errorf("validating visual preview attachment: %w", err)
 	}
@@ -1830,7 +1855,7 @@ func validateMetadataRelations(ctx context.Context, tx metadataQuerier) error {
 			  SELECT 1 FROM content_versions v JOIN content_versions source ON source.version_id=v.source_version_id
 			  WHERE v.transition_kind='content_revert'
 			    AND (source.blob_hash != v.blob_hash OR source.size != v.size
-			         OR source.mime_type IS NOT v.mime_type)
+			         OR source.mime_type IS DISTINCT FROM v.mime_type)
 			)`},
 		{"content version size differs from blob authority", `
 			SELECT EXISTS(SELECT 1 FROM content_versions v JOIN blobs b ON b.hash=v.blob_hash WHERE v.size != b.size)`},
@@ -1898,23 +1923,37 @@ func validateWatchSourceRelations(ctx context.Context, tx metadataQuerier) error
 	if err := requireWatchSourceFiles("cursor", cursors, nodeKinds); err != nil {
 		return err
 	}
-	provenance, err := loadWatchSourceNodes(ctx, tx, "provenance", `
-		SELECT i.source_desc, p.original_path, p.node_id
-		FROM provenance p JOIN ingests i ON i.id = p.ingest_id
-		WHERE i.source_kind = 'watch'`)
+	rows, err := tx.QueryContext(ctx, `SELECT i.source_desc, p.original_path, p.node_id
+        FROM provenance p JOIN ingests i ON i.id = p.ingest_id
+        WHERE i.source_kind = 'watch'`)
 	if err != nil {
+		return fmt.Errorf("reading watched provenance: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	originals := make(map[int64]watchSourceKey)
+	for rows.Next() {
+		var key watchSourceKey
+		var nodeID int64
+		if err := rows.Scan(&key.watchName, &key.sourceRef, &nodeID); err != nil {
+			return err
+		}
+		if nodeKinds[nodeID] != nodeKindFile {
+			return fmt.Errorf("watched provenance references non-file node %d", nodeID)
+		}
+		if prior, exists := originals[nodeID]; exists && prior != key {
+			return fmt.Errorf("watched node %d has conflicting original paths", nodeID)
+		}
+		originals[nodeID] = key
+	}
+	if err := rows.Err(); err != nil {
 		return err
 	}
-	if err := requireWatchSourceFiles("provenance", provenance, nodeKinds); err != nil {
-		return err
-	}
-	if len(cursors) != len(provenance) {
+	if len(cursors) != len(originals) {
 		return errors.New("watched source cursors do not match provenance")
 	}
-	for key, nodeID := range provenance {
-		if cursors[key] != nodeID {
-			return fmt.Errorf("watched source cursor %q/%q does not match provenance",
-				key.watchName, key.sourceRef)
+	for key, nodeID := range cursors {
+		if original, exists := originals[nodeID]; !exists || original.watchName != key.watchName {
+			return fmt.Errorf("watched source cursor %q/%q does not match provenance owner", key.watchName, key.sourceRef)
 		}
 	}
 	return nil

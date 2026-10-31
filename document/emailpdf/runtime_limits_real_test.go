@@ -114,7 +114,7 @@ func TestRuntimeRealLimits(t *testing.T) {
 				}
 			}
 			if unit == "" {
-				time.Sleep(time.Millisecond) //nolint:kennlint // polls a real systemd renderer unit for readiness
+				time.Sleep(time.Millisecond) //nolint:kennlint // sleeptest: polls a real systemd renderer unit for readiness
 			}
 		}
 		if unit == "" {
@@ -233,7 +233,7 @@ func TestRuntimeRealLimits(t *testing.T) {
 				ready = true
 				break
 			}
-			time.Sleep(time.Millisecond) //nolint:kennlint // polls a real systemd renderer unit for readiness
+			time.Sleep(time.Millisecond) //nolint:kennlint // sleeptest: polls a real systemd renderer unit for readiness
 		}
 		if !ready {
 			_ = cmd.Process.Kill()

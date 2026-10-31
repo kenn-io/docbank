@@ -79,7 +79,7 @@ func TestPhotoHiddenLifecycle(t *testing.T) {
 	asset, err = s.PhotoAssetByID(ctx, asset.ID)
 	require.NoError(t, err)
 	assert.Nil(t, asset.HiddenAt)
-	require.NoError(t, validatePhotoMetadataState(ctx, s.db, currentStorageSchemaVersion))
+	require.NoError(t, validatePhotoMetadataState(ctx, s.db, currentStorageSchemaVersion, false))
 }
 
 func TestPhotoHiddenPasscodeNormalization(t *testing.T) {

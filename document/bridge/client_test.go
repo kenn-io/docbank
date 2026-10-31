@@ -121,7 +121,7 @@ func TestBridgeContractCancelsAcceptedResponseAfterUploadFailure(t *testing.T) {
 	assert.Equal(t, int64(1), deletes.Load())
 }
 
-func TestBridgeContractPreservesEarlyHTTPErrorWhileUploadIsBlocked(t *testing.T) {
+func TestBridgeContractClassifiesStableSubmissionRateLimit(t *testing.T) {
 	fixture := newBridgeFixture(t)
 	client := newTestBridgeClientWithHTTP(t, "https://bridge.invalid", fixture.descriptor, nil,
 		&http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
@@ -131,7 +131,6 @@ func TestBridgeContractPreservesEarlyHTTPErrorWhileUploadIsBlocked(t *testing.T)
 			}
 			return bridgeHTTPResponse(t, request, http.StatusTooManyRequests, value), nil
 		})})
-	client.executor.RequestTimeout = 20 * time.Millisecond
 
 	_, err := client.Render(t.Context(), fixture.upload(), fixture.authorization)
 	var providerError *document.RenditionProviderError
@@ -767,29 +766,31 @@ func (r *countingReader) Read(buffer []byte) (int, error) {
 }
 
 func TestBridgeContractClassifiesArtifactReadTimeout(t *testing.T) {
-	fixture := newBridgeFixture(t).withStructuredArtifact(t)
-	client := newTestBridgeClientWithHTTP(t, "https://bridge.invalid", fixture.descriptor, nil,
-		&http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
-			body, writer := io.Pipe()
-			go func() {
-				<-request.Context().Done()
-				_ = writer.CloseWithError(request.Context().Err())
-			}()
-			return &http.Response{
-				StatusCode: http.StatusOK, ContentLength: -1,
-				Header: http.Header{"Content-Type": []string{"application/json"}}, Body: body, Request: request,
-			}, nil
-		})})
-	client.executor.RequestTimeout = 10 * time.Millisecond
+	synctest.Test(t, func(t *testing.T) {
+		fixture := newBridgeFixture(t).withStructuredArtifact(t)
+		client := newTestBridgeClientWithHTTP(t, "https://bridge.invalid", fixture.descriptor, nil,
+			&http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				body, writer := io.Pipe()
+				go func() {
+					<-request.Context().Done()
+					_ = writer.CloseWithError(request.Context().Err())
+				}()
+				return &http.Response{
+					StatusCode: http.StatusOK, ContentLength: -1,
+					Header: http.Header{"Content-Type": []string{"application/json"}}, Body: body, Request: request,
+				}, nil
+			})})
+		client.executor.RequestTimeout = 10 * time.Millisecond
 
-	_, err := client.fetchArtifact(newTestRendering(t, fixture), "job-read-timeout", artifactPayload{
-		MediaType: "application/json", ByteLength: int64(len(fixture.artifact)),
-		SHA256: sha256String(fixture.artifact), ArtifactID: "structured-1",
+		_, err := client.fetchArtifact(newTestRendering(t, fixture), "job-read-timeout", artifactPayload{
+			MediaType: "application/json", ByteLength: int64(len(fixture.artifact)),
+			SHA256: sha256String(fixture.artifact), ArtifactID: "structured-1",
+		})
+		var providerError *document.RenditionProviderError
+		require.ErrorAs(t, err, &providerError)
+		assert.Equal(t, document.RenditionErrorTransient, providerError.Code())
+		assert.ErrorIs(t, err, context.DeadlineExceeded)
 	})
-	var providerError *document.RenditionProviderError
-	require.ErrorAs(t, err, &providerError)
-	assert.Equal(t, document.RenditionErrorTransient, providerError.Code())
-	assert.ErrorIs(t, err, context.DeadlineExceeded)
 }
 
 func TestBridgeContractPreservesCredentialFailuresAndStripsAmbientCookies(t *testing.T) {
@@ -837,22 +838,8 @@ func TestBridgeContractPreservesCredentialFailuresAndStripsAmbientCookies(t *tes
 	})
 }
 
-func TestBridgeContractClassifiesPerRequestTimeouts(t *testing.T) {
-	t.Run("submission is ambiguous", func(t *testing.T) {
-		fixture := newBridgeFixture(t)
-		client := newTestBridgeClientWithHTTP(t, "https://bridge.invalid", fixture.descriptor, nil,
-			&http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
-				<-request.Context().Done()
-				return nil, request.Context().Err()
-			})})
-		client.executor.RequestTimeout = 10 * time.Millisecond
-		_, err := client.Render(t.Context(), fixture.upload(), fixture.authorization)
-		var providerError *document.RenditionProviderError
-		require.ErrorAs(t, err, &providerError)
-		assert.Equal(t, document.RenditionErrorAmbiguousSubmission, providerError.Code())
-	})
-
-	t.Run("poll is retried", func(t *testing.T) {
+func TestBridgeContractPollTimeoutIsRetried(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
 		fixture := newBridgeFixture(t)
 		var polls atomic.Int64
 		client := newTestBridgeClientWithHTTP(t, "https://bridge.invalid", fixture.descriptor, nil,
@@ -1068,33 +1055,36 @@ func TestBridgeContractBoundsPollingRetriesAndRefusesRedirects(t *testing.T) {
 }
 
 func TestBridgeContractClassifiesInternalTotalTimeout(t *testing.T) {
-	fixture := newBridgeFixture(t)
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		switch request.Method {
-		case http.MethodPost:
-			assertMultipartRequest(t, request, fixture.authorization, fixture.source)
-			writeBridgeJSON(t, response, http.StatusAccepted,
-				pendingEnvelope(fixture, "job-total-timeout", JobQueued))
-		case http.MethodGet:
-			<-request.Context().Done()
-		case http.MethodDelete:
-			response.WriteHeader(http.StatusNoContent)
-		default:
-			response.WriteHeader(http.StatusMethodNotAllowed)
-		}
-	}))
-	t.Cleanup(server.Close)
-	client := newTestBridgeClient(t, server.URL, fixture.descriptor, nil)
-	client.totalTimeout = 20 * time.Millisecond
+	synctest.Test(t, func(t *testing.T) {
+		fixture := newBridgeFixture(t)
+		client := newTestBridgeClientWithHTTP(t, "https://bridge.invalid", fixture.descriptor, nil,
+			&http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				switch request.Method {
+				case http.MethodPost:
+					assertMultipartRequest(t, request, fixture.authorization, fixture.source)
+					require.NoError(t, request.Body.Close())
+					return bridgeHTTPResponse(t, request, http.StatusAccepted,
+						pendingEnvelope(fixture, "job-total-timeout", JobQueued)), nil
+				case http.MethodGet:
+					<-request.Context().Done()
+					return nil, request.Context().Err()
+				case http.MethodDelete:
+					return &http.Response{StatusCode: http.StatusNoContent, Body: http.NoBody, Request: request}, nil
+				default:
+					return nil, errors.New("unexpected bridge request")
+				}
+			})})
+		client.totalTimeout = 20 * time.Millisecond
 
-	_, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
-	var providerError *document.RenditionProviderError
-	require.ErrorAs(t, err, &providerError)
-	assert.Equal(t, document.RenditionErrorAmbiguousSubmission, providerError.Code())
-	cause, ok := errors.AsType[*document.RenditionProviderError](errors.Unwrap(providerError))
-	require.True(t, ok)
-	assert.Equal(t, document.RenditionErrorCapacity, cause.Code())
-	assert.ErrorIs(t, err, context.DeadlineExceeded)
+		_, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
+		var providerError *document.RenditionProviderError
+		require.ErrorAs(t, err, &providerError)
+		assert.Equal(t, document.RenditionErrorAmbiguousSubmission, providerError.Code())
+		cause, ok := errors.AsType[*document.RenditionProviderError](errors.Unwrap(providerError))
+		require.True(t, ok)
+		assert.Equal(t, document.RenditionErrorCapacity, cause.Code())
+		assert.ErrorIs(t, err, context.DeadlineExceeded)
+	})
 }
 
 func TestBridgeContractBoundsCancellationCleanup(t *testing.T) {

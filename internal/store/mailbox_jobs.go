@@ -180,7 +180,7 @@ func saveMailboxJob(ctx context.Context, tx *sql.Tx, j MailboxJob, insert bool) 
 func loadMailboxJob(ctx context.Context, q metadataQuerier, owner, id string) (MailboxJob, error) {
 	var b []byte
 	var state, claim, container string
-	err := q.QueryRowContext(ctx, `SELECT state,claim,container_id,job_json FROM mailbox_jobs WHERE id=? AND owner=?`, id, owner).Scan(&state, &claim, &container, &b)
+	err := q.QueryRowContext(ctx, `SELECT state,claim,container_id,job_json FROM mailbox_jobs WHERE id=$1 AND owner=$2`, id, owner).Scan(&state, &claim, &container, &b)
 	if errors.Is(err, sql.ErrNoRows) {
 		return MailboxJob{}, ErrNotFound
 	}
@@ -541,7 +541,7 @@ func (s *Store) MailboxOccurrences(ctx context.Context, owner, id string, after 
 	return mailboxOccurrences(ctx, s.db, id, after, limit)
 }
 func mailboxOccurrences(ctx context.Context, q metadataQuerier, id string, after int64, limit int) ([]MailboxOccurrence, error) {
-	rows, err := q.QueryContext(ctx, `SELECT ordinal,receipt_id,occurrence_json FROM mailbox_occurrences WHERE job_id=? AND ordinal>? ORDER BY ordinal LIMIT ?`, id, after, limit)
+	rows, err := q.QueryContext(ctx, `SELECT ordinal,receipt_id,occurrence_json FROM mailbox_occurrences WHERE job_id=$1 AND ordinal>$2 ORDER BY ordinal LIMIT $3`, id, after, limit)
 	if err != nil {
 		return nil, err
 	}

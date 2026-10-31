@@ -43,7 +43,9 @@ func TestListJobsReturnsStableObservableState(t *testing.T) {
 		return len(items) == 2 && items[0].Status == jobs.StatusFailed
 	}, time.Second, time.Millisecond)
 
-	ts, _ := newTestServer(t, func(d *api.Deps) { d.Jobs = supervisor })
+	ts, _ := newTestServer(t, func(d *api.Deps) {
+		d.Jobs = supervisor
+	})
 	resp, body := get(t, ts, "/api/v1/jobs", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	var got api.JobList

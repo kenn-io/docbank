@@ -1294,7 +1294,7 @@ func TestVisionRuntimeConfig(t *testing.T) {
 	profile.Runtime.MaxPollAttempts = 0
 	profile.Runtime.RequestTimeout = Duration(10 * time.Minute)
 	cfg := validRenditionRuntimeConfig(t)
-	descriptor, err := vision.Descriptor(profile.Model, document.RenditionTrustOperatorNetwork)
+	descriptor, err := vision.Descriptor(vision.ProviderID, profile.Model, document.RenditionTrustOperatorNetwork)
 	require.NoError(t, err)
 	profile.DescriptorID, profile.DescriptorFingerprint = descriptor.ID, descriptor.Fingerprint
 	cfg.RenditionProfiles["primary"] = profile
@@ -1303,6 +1303,12 @@ func TestVisionRuntimeConfig(t *testing.T) {
 	processingProfile.Embeddings = nil
 	cfg.ProcessingProfiles["archive"] = processingProfile
 	require.NoError(t, cfg.Validate())
+
+	t.Run("unrecognized task", func(t *testing.T) {
+		unknown := profile
+		unknown.DescriptorID = "unrecognized-task"
+		require.ErrorIs(t, validateRenditionRuntimeConfig(unknown, "vision"), vision.ErrUnknownTask)
+	})
 
 	t.Run("model on another adapter", func(t *testing.T) {
 		other := validRenditionRuntimeConfig(t)
@@ -1331,4 +1337,25 @@ func TestVisionRuntimeConfig(t *testing.T) {
 			require.ErrorContains(t, err, tc.wantError)
 		})
 	}
+}
+
+func TestWatchProcessingProfileValidation(t *testing.T) {
+	cfg := validProcessingConfig()
+	cfg.Watches = []WatchConfig{{Name: "inbox", Source: t.TempDir(), Destination: "/inbox",
+		SettleTime: Duration(time.Second), ScanInterval: Duration(time.Second), Profile: "archive"}}
+	require.NoError(t, cfg.Validate())
+	cfg.Watches[0].Profile = "missing"
+	require.ErrorContains(t, cfg.Validate(), "not defined")
+	cfg.Watches[0].Profile = "archive"
+	profile := cfg.ProcessingProfiles["archive"]
+	profile.Rendition, profile.Embeddings = "", nil
+	profile.RetainSanitizedMarkdown = false
+	cfg.ProcessingProfiles["archive"] = profile
+	require.ErrorContains(t, cfg.Validate(), "requires an original-document rendition")
+	profile.Rendition = "primary"
+	cfg.ProcessingProfiles["archive"] = profile
+	rendition := cfg.RenditionProfiles["primary"]
+	rendition.AdapterContract = document.VisionAdapterContract
+	cfg.RenditionProfiles["primary"] = rendition
+	require.ErrorContains(t, cfg.Validate(), "requires an original-document rendition")
 }

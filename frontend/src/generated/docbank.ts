@@ -2217,6 +2217,7 @@ export interface DocumentPage {
   path_prefix: string;
   previous_cursor?: string;
   sort: DocumentPageSort;
+  source_present?: boolean;
 }
 
 export interface DocumentSearchCoverage {
@@ -2458,6 +2459,7 @@ export interface DocumentSourceFenceFilters {
   mime_type?: string;
   modified_before?: string;
   modified_since?: string;
+  source_present?: boolean;
   tag_id?: string;
   /** @minimum 1 */
   under_node_id?: number;
@@ -3667,6 +3669,22 @@ export const JobStatus = {
   cancelled: 'cancelled',
 } as const;
 
+export type WatchProcessingStatusConsentState = typeof WatchProcessingStatusConsentState[keyof typeof WatchProcessingStatusConsentState];
+
+
+export const WatchProcessingStatusConsentState = {
+  active: 'active',
+  required: 'required',
+  expired: 'expired',
+  revoked: 'revoked',
+} as const;
+
+export interface WatchProcessingStatus {
+  consent_state?: WatchProcessingStatusConsentState;
+  error?: string;
+  profile: string;
+}
+
 export interface Job {
   /** Whether this job is processing work rather than waiting for an item or its next scheduled run. */
   busy: boolean;
@@ -3686,6 +3704,7 @@ export interface Job {
   operation_id?: string;
   paused: boolean;
   processed_bytes?: number;
+  processing?: WatchProcessingStatus;
   started_at: string;
   status: JobStatus;
   total_bytes?: number;
@@ -6465,11 +6484,20 @@ export interface PhotoFace {
   box: FaceBox;
   content_version_id: string;
   created_at: string;
+  detector_fingerprint?: string;
   dismissed: boolean;
+  /** @nullable */
+  eyes_open?: boolean | null;
   face_id: string;
+  /** @nullable */
+  facing?: number | null;
   /** @maxItems 1000 */
   rejected_person_ids?: string[];
   revision: number;
+  /** @nullable */
+  roll?: number | null;
+  /** @nullable */
+  smile?: boolean | null;
 }
 
 export type PhotoFaceDecisionRequestAction = typeof PhotoFaceDecisionRequestAction[keyof typeof PhotoFaceDecisionRequestAction];
@@ -8002,6 +8030,7 @@ export interface SearchReport {
   mime_type?: string;
   modified_before?: string;
   modified_since?: string;
+  source_present?: boolean;
   tag_id?: string;
   truncated: boolean;
   under_node_id?: number;
@@ -8761,6 +8790,7 @@ export interface WatchedInbox {
   job?: Job;
   minimum_age: string;
   name: string;
+  processing?: WatchProcessingStatus;
   scan_interval: string;
   settle_time: string;
   source: string;
@@ -9122,6 +9152,7 @@ direction?: ListDocumentsDirection;
  */
 page_size?: number;
 cursor?: string;
+source_present?: boolean;
 };
 
 export type ListDocumentsSort = typeof ListDocumentsSort[keyof typeof ListDocumentsSort];
@@ -9869,6 +9900,7 @@ export type RunSavedQueryHeaders = {
 export type SearchParams = {
 q?: string;
 fuzzy?: boolean;
+source_present?: boolean;
 /**
  * @minimum 1
  * @maximum 1000
@@ -19527,7 +19559,7 @@ export const getSearchUrl = (params?: SearchParams,) => {
 }
 
 /**
- * Name matches retain their established BM25 order and appear first; content-only matches follow in their own BM25 order. Every hit names its match source. The query may be empty when a tag or modification-time bound makes the page bounded; such filter-only results are ordered by modification time descending. An optional stable tag ID requires that assignment for every result. An optional parameter-free MIME type matches the current file version with or without parameters. An optional live directory node ID restricts results to its descendants. Optional absolute modification timestamps form an inclusive-since, exclusive-before interval. fuzzy=true appends bounded ASCII one-edit filename/path discovery after ordinary hits and includes a coverage receipt; it requires a nonblank query, and text outside the supplemental syntax reports not_run.
+ * Name matches retain their established BM25 order and appear first; content-only matches follow in their own BM25 order. Every hit names its match source. The query may be empty when a tag or modification-time bound makes the page bounded; such filter-only results are ordered by modification time descending. An optional stable tag ID requires that assignment for every result. An optional parameter-free MIME type matches the current file version with or without parameters. An optional live directory node ID restricts results to its descendants. Optional absolute modification timestamps form an inclusive-since, exclusive-before interval. source_present=true excludes documents whose watched source is observed gone; push-owned documents remain included. fuzzy=true appends bounded ASCII one-edit filename/path discovery after ordinary hits and includes a coverage receipt; it requires a nonblank query, and text outside the supplemental syntax reports not_run.
  * @summary Search live document names and extracted text
  */
 export const search = async (params?: SearchParams, options?: Parameters<typeof sessionJSON>[1]): Promise<SearchReport> => {

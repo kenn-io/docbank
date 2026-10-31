@@ -580,7 +580,7 @@ func (s *Store) decidePhotoStack(ctx context.Context, request PhotoStackDecision
 		// cannot omit a sibling or one half of a RAW/JPEG pair.
 		preparation := PhotoAuthoredPreparation{}
 		loaded := map[string]photoAuthoredLoaded{}
-		preparer := photoAuthoredPreparer{tx: tx, hidden: request.Hidden, settings: settings, result: &preparation, limit: MaxPhotoStackTargets, loaded: loaded}
+		preparer := photoAuthoredPreparer{store: s, tx: tx, hidden: request.Hidden, settings: settings, result: &preparation, limit: MaxPhotoStackTargets, loaded: loaded}
 		if err := preparer.prepare(ctx, request.AssetIDs); err != nil {
 			return err
 		}

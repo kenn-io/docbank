@@ -12,12 +12,13 @@ import (
 func newProcessingVisionFingerprintsCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "vision-fingerprints",
-		Short:   "Compute photo description configuration fingerprints",
+		Short:   "Compute vision configuration fingerprints",
 		Long:    "Print descriptor_fingerprint and disclosure_fingerprint as TOML assignments.\nUse the exact model, trust boundary, endpoint, and deployment from config.toml.\nThis command runs locally and requires no daemon or provider credential.",
 		Example: `  docbank processing vision-fingerprints --model vision-model --trust-boundary operator_network --endpoint http://127.0.0.1:8080 --deployment-fingerprint aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`,
 		Args:    cobra.NoArgs,
 	}
-	var model, trust, endpoint, deployment string
+	var model, trust, endpoint, deployment, task string
+	cmd.Flags().StringVar(&task, "task", vision.ProviderID, vision.ProviderID+" or "+document.FaceDetectionProviderID)
 	cmd.Flags().StringVar(&model, "model", "", "provider model (required)")
 	cmd.Flags().StringVar(&trust, "trust-boundary", "", "operator_network or hosted_provider (required)")
 	cmd.Flags().StringVar(&endpoint, "endpoint", "", "provider root origin (required)")
@@ -26,11 +27,13 @@ func newProcessingVisionFingerprintsCommand() *cobra.Command {
 		if !canonicalSHA256(deployment) {
 			return usageError(errors.New("--deployment-fingerprint must be lowercase SHA-256"))
 		}
-		descriptor, err := vision.Descriptor(model, document.RenditionTrustBoundary(trust))
+		descriptor, err := vision.Descriptor(task, model, document.RenditionTrustBoundary(trust))
 		if err != nil {
 			flag := "--model"
 			if errors.Is(err, vision.ErrInvalidTrustBoundary) {
 				flag = "--trust-boundary"
+			} else if errors.Is(err, vision.ErrUnknownTask) {
+				flag = "--task"
 			}
 			return usageError(fmt.Errorf("%s: %w", flag, err))
 		}

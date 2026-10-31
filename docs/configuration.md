@@ -373,21 +373,79 @@ producer offers a close/rename handoff.
 
 A file that disappears during observation, or is still held exclusively by a
 Windows producer, is treated as unsettled and retried from a fresh window.
-Other read failures appear as job errors.
+If a retryable observation failure, such as a file another program holds open,
+prevents a complete source inventory, the daemon still imports readable settled
+files. It defers only work that needs the whole tree: rename continuity, new
+paths that share native identity with an accepted source the scan did not see,
+and forgetting sources it did not see. The watch job stays running with a
+visible error, and the daemon logs the incomplete-inventory block once. A
+complete scan resumes deferred work and clears that signal; an active
+notification failure remains visible.
+A symlink replacing a known source file is skipped without following its target.
+A directory replacing that file uses normal confined traversal and exact-destination
+rules. The archived file and durable cursor remain. An occupied old path never
+authorizes a rename join. A symlink hiding previously observed descendants, a
+known path becoming another nonregular file, or a known path crossing a
+filesystem boundary skips that path and restarts the settle window for files
+below it. Reconciliation is deferred the same way, and the path appears in the
+watch job error until it recovers. Other permission or native observation
+failures stop the watch with a job error.
 
 Docbank identifies each watched source by `(name, relative source path)`.
 Keep the watch name when moving its local `source` root. Later content changes
 then add versions to the same Docbank node, even if someone moved that node in
 the virtual tree.
 
-Renaming the relative source path creates a new source identity. Each identity
-owns one Docbank node, and two watched sources cannot claim the same node.
-Deleting a source file does not delete its Docbank node.
+A live, unambiguous source rename can move that watch cursor to the current
+relative path while its original provenance and archived virtual location stay
+unchanged. The daemon needs unique native object and birth evidence from a
+complete scan; see [watched inboxes](usage/importing.md#continuously-ingest-a-local-inbox)
+for the limits. Each current cursor owns one Docbank node. Deleting a source
+file does not delete its Docbank node.
+
+After each complete scan, Docbank records when a cursor's source was first
+observed gone. The deepest directory listed on its path must lack it, so a
+deleted or renamed folder marks every file below it, and a directory or symlink
+at the old filename counts as gone. A folder that still exists but was not
+listed, such as a symlink, skipped subtree, excluded path, or filesystem
+boundary, leaves the files below it unchanged, as do uncertain rename
+candidates and incomplete scans. A regular file's
+return or a successful live rename clears the mark. Trashed documents are
+observed too, without restoring them.
+
+These observations stay local to storage and are not exported in metadata.
+Startup clears marks for watches no longer configured. Search and the document
+catalog can omit marked documents with `source_present`; defaults include
+them, and documents owned by push are always included by this filter.
 
 Docbank separately remembers the last bytes accepted from each source. If a
 person edits or reverts the Docbank node while the source stays unchanged, a
 daemon restart does not overwrite that working version. Only a later byte
 change at the watched source appends another version.
+
+Set `profile = "mistral-ocr"` in a `[[watch]]` entry to queue its configured
+processing profile's OCR or text-extraction stage after each added or updated
+version. The profile must include a rendition that accepts original documents;
+photo vision and embedding-only profiles aren't supported here. Omit `profile`
+to use only baseline plain-text extraction.
+
+The rendition stage needs current consent for that profile configuration.
+Without it, files still import with baseline plain-text extraction, but the
+configured rendition stays unprocessed. [Grant consent with `docbank processing build --consent`](usage/document-processing.md)
+for the configured profile to process subsequent imports. `docbank watch list` and
+the web app's All workers table show the profile and whether consent is required,
+expired, or revoked. Scanner errors remain separate. Unsupported files are skipped.
+An unexpected admission failure is logged once. The document stays imported
+and available for manual processing with `docbank processing build`.
+A newer save can supersede older queued work.
+Consent skips and missing or stale document authority end admission quietly.
+Imports stay accepted. A daemon stop between import and queue admission can leave
+a version unprocessed; use explicit processing for that version.
+
+Scheduling happens only at import. Granting consent later or adding a profile
+doesn't process older imports; use explicit processing for those documents.
+Unchanged rescans add no work. The existing durable workers execute the queued
+rendition; embedding stages require explicit profile execution.
 
 Watchers run as jobs named `watch:<name>`. `docbank watch list` and
 `GET /api/v1/watches` pair each runner's state with its effective source,
@@ -397,8 +455,8 @@ minimum source age, scan interval, and exclusion policy. JSON reports
 as `idle` and an ingesting watcher as `running`. `EXCLUDES` counts both literal
 and glob rules. Use `--json` when an agent needs the separate `exclude` and
 `exclude_patterns` lists. `docbank jobs` and `GET /api/v1/jobs` remain the
-all-task view. A source, destination, or read failure leaves the named job in
-the failed state and records the reason.
+all-task view. A permanent source, destination, or read failure leaves the named
+job in the failed state and records the reason.
 Restart the daemon after correcting the problem.
 Per-file successes are written to the daemon log. Prompt notifications are
 best effort: coalesced events and slow ingestion can miss intervening writes,
@@ -496,6 +554,18 @@ retain_typed_artifacts = false
 ```
 
 Automatic description picks the profile with the lexicographically smallest name among those with active [consent](usage/document-processing.md#describe-photos) whose provider passes its probe. If the probe for the smallest name fails, the next consented name receives the photos. Docbank checks readiness on demand when a description starts. Status output does not list it. An explicit build can name another profile, but it describes a photo only when the photo has no pending suggestion. A build for a photo that already has a pending suggestion from any profile completes without a provider call; dismiss that suggestion first to ask another profile.
+
+### Automatic face detection
+
+Detection is off until you add a separate vision rendition profile with `descriptor_id = "compatible-vision.detect-faces-v1"` and a processing profile that selects it. Reuse the photo-description example above, with separate profile names, and compute its fingerprints with the detection task:
+
+```sh
+docbank processing vision-fingerprints --task compatible-vision.detect-faces-v1 --model vision-model --trust-boundary operator_network --endpoint http://127.0.0.1:8080 --deployment-fingerprint aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+```
+
+Pin the printed fingerprints in that rendition profile and grant consent for its processing profile by reviewing `docbank processing plan <photo-path> --profile <detection-profile>`, then running `docbank processing build <photo-path> --profile <detection-profile> --plan-fingerprint <reviewed-sha256> --consent`. Consent for descriptions alone does not enable detection. Both tasks send the same stripped grid preview through the vision adapter, with one request per task. Each task selects the first ready, consented processing profile by name.
+
+Detection scans visible, included display photos with ready previews. A completed scan, including one with zero faces, prevents automatic and explicit requests from rescanning that version under the same request fingerprint. Changing the model, prompt, endpoint, deployment, or another fingerprinted request policy requires fresh consent and permits a new scan. Backups preserve faces and their measurements, while leaving scan completion behind; restored photos can reconcile after fresh consent, with one new provider call per photo.
 
 ### Document conversion with Docling
 

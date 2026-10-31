@@ -40,7 +40,7 @@ func TestMain(m *testing.M) {
 			os.Exit(2)
 		}
 		// Stand in for a child that has not published its runtime record yet.
-		time.Sleep(time.Minute) //nolint:kennlint // runs in a child process that stands in for an unready daemon
+		time.Sleep(time.Minute) //nolint:kennlint // sleeptest: runs in a child process that stands in for an unready daemon
 		os.Exit(0)
 	}
 	os.Exit(packagetest.RunWithLockRegistry(m))
@@ -145,6 +145,8 @@ func TestEnsureDiscoveryRejectsProtocolMismatch(t *testing.T) {
 	info := kitdaemon.PingInfo{Version: version.Version}
 
 	require.True(t, discoverOptions(true).Accept(rec, info))
+	rec.Metadata[metaProtocolVersion] = "94" // Before source_present filtering.
+	assert.False(t, discoverOptions(true).Accept(rec, info), "pre-filter daemons must not silently ignore source_present")
 	rec.Metadata[metaProtocolVersion] = daemonProtocolVersion + "-other"
 	assert.False(t, discoverOptions(true).Accept(rec, info), "an incompatible protocol must be replaced")
 	assert.True(t, discoverOptions(false).Accept(rec, info), "status/stop discovery must still see incompatible daemons")
@@ -682,5 +684,5 @@ func TestUnresponsiveDaemonHelper(_ *testing.T) {
 	if os.Getenv("DOCBANK_UNRESPONSIVE_HELPER") != "1" {
 		return
 	}
-	time.Sleep(30 * time.Second) //nolint:kennlint // runs in a helper process that stands in for an unresponsive daemon
+	time.Sleep(30 * time.Second) //nolint:kennlint // sleeptest: runs in a helper process that stands in for an unresponsive daemon
 }

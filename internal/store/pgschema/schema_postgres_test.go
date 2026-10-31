@@ -33,9 +33,28 @@ func TestSetupPreservesIdentity(t *testing.T) {
 	require.NoError(t, db.QueryRowContext(t.Context(), `WITH allocated AS (UPDATE documents.node_allocation SET high_water=high_water+1 WHERE singleton=1 RETURNING high_water)
 		INSERT INTO documents.nodes(id,parent_id,name,kind,created_at,modified_at)
 		SELECT high_water,$1,'kept','dir',$2,$2 FROM allocated RETURNING id`, rootID, childTime).Scan(&childID))
+	var primary, epoch string
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT store_id,ownership_epoch FROM documents.blob_stores WHERE role='primary'`).Scan(&primary, &epoch))
+	var bindingEpoch, publicationEpoch int64
+	var fingerprint, peopleUpdated string
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT binding_epoch,publication_epoch,resolver_fingerprint,updated_at FROM documents.document_people_state WHERE singleton=1`).Scan(&bindingEpoch, &publicationEpoch, &fingerprint, &peopleUpdated))
+	assert.Equal(t, int64(1), bindingEpoch)
+	assert.Equal(t, int64(1), publicationEpoch)
+	assert.Empty(t, fingerprint)
+	assert.Equal(t, rootCreated, peopleUpdated)
+	_, err = db.ExecContext(t.Context(), `UPDATE documents.document_people_state SET binding_epoch=2,publication_epoch=3,updated_at=$1 WHERE singleton=1`, childTime)
+	require.NoError(t, err)
 	again, err := Setup(t.Context(), db, cfg)
 	require.NoError(t, err)
 	assert.Equal(t, id, again)
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT binding_epoch,publication_epoch,updated_at FROM documents.document_people_state WHERE singleton=1`).Scan(&bindingEpoch, &publicationEpoch, &peopleUpdated))
+	assert.Equal(t, int64(2), bindingEpoch)
+	assert.Equal(t, int64(3), publicationEpoch)
+	assert.Equal(t, childTime, peopleUpdated)
+	var keptPrimary, keptEpoch string
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT store_id,ownership_epoch FROM documents.blob_stores WHERE role='primary'`).Scan(&keptPrimary, &keptEpoch))
+	assert.Equal(t, primary, keptPrimary)
+	assert.Equal(t, epoch, keptEpoch)
 	var keptRootID, keptParent int64
 	var keptCreated, keptName string
 	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT id,created_at FROM documents.nodes WHERE parent_id IS NULL`).Scan(&keptRootID, &keptCreated))

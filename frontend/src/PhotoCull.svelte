@@ -254,14 +254,11 @@
     const id = currentID;
     if (id && ids.includes(id)) loading = false;
     if (!id || !ids.includes(id) || (photo && photo.asset_id !== id)) return;
-    if (rows.has(id)) {
-      photo = rows.get(id);
-      error = "";
-    } else {
-      photo = undefined;
-      error = "This photo is no longer in this view.";
-      cull.unavailable(id);
-    }
+    photo = rows.get(id);
+    error = photo ? "" : "This photo is no longer in this view.";
+    if (!photo) return cull.unavailable(id);
+    if (!photos.blocking && !photos.error)
+      await faces.load(photo.kind === "photo" ? photo.content_version_id : "", true);
   }
   $effect(() => photos.watch(revalidate));
   $effect(() =>

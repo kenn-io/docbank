@@ -925,6 +925,7 @@ type SearchReport struct {
 	Hits           []SearchHit   `json:"hits"`
 	Limit          int           `json:"limit"`
 	Truncated      bool          `json:"truncated"`
+	SourcePresent  bool          `json:"source_present,omitzero"`
 	TagID          string        `json:"tag_id,omitzero"`
 	MIMEType       string        `json:"mime_type,omitzero"`
 	UnderNodeID    int64         `json:"under_node_id,omitzero"`
@@ -1236,6 +1237,8 @@ type VerifyReport struct {
 // Job is the observable state of one daemon-owned background task. Names are
 // stable within a daemon run; durable storage operations follow their retention.
 type Job struct {
+	Processing *WatchProcessingStatus `json:"processing,omitzero"`
+
 	Busy              bool             `json:"busy" doc:"Whether this job is processing work rather than waiting for an item or its next scheduled run."`
 	Lane              string           `json:"lane"`
 	CheckoutResults   map[string]int64 `json:"checkout_results,omitempty"`
@@ -1291,10 +1294,18 @@ type JobList struct {
 	LaneControlsError string `json:"lane_controls_error,omitzero"`
 }
 
+type WatchProcessingStatus struct {
+	Profile      string `json:"profile"`
+	ConsentState string `json:"consent_state,omitzero" enum:"active,required,expired,revoked"`
+	Error        string `json:"error,omitzero"`
+}
+
 // WatchedInbox is the daemon's effective configuration and current runner
 // state for one local watched source. Source is intentionally machine-local;
 // Destination is a path in the Docbank virtual tree.
 type WatchedInbox struct {
+	Processing *WatchProcessingStatus `json:"processing,omitzero"`
+
 	CaptureOnChange bool     `json:"capture_on_change"`
 	Name            string   `json:"name"`
 	Source          string   `json:"source"`

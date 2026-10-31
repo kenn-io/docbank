@@ -113,6 +113,9 @@ func TestRedactionVerifyErrorClasses(t *testing.T) {
 }
 
 func TestRedactionVerificationUsesOnlySnapshot(t *testing.T) {
+	if runRedactionVerificationInSubprocess(t) {
+		return
+	}
 	f := newRedactionVerifyFixture(t)
 	original := f.archive(t, "valid")
 	root := t.TempDir()

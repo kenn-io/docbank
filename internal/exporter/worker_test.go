@@ -28,7 +28,7 @@ type contentionDriver struct {
 }
 
 func (d *contentionDriver) Open(path string, options docsqlite.OpenOptions) (*sql.DB, error) {
-	options.BusyTimeout = time.Millisecond
+	options.BusyTimeout = time.Millisecond //nolint:kennlint // deadlinetest: the held SQLite lock must outlast a busy attempt to exercise worker retries
 	db, err := d.Driver.Open(path, options)
 	if err == nil {
 		d.dbs = append(d.dbs, db)
@@ -111,7 +111,7 @@ func TestWorkerStartupRemovesOnlyAbandonedPhotoStages(t *testing.T) {
 				select {
 				case err := <-done:
 					t.Fatalf("worker stopped during live preparation: %v", err)
-				case <-time.After(50 * time.Millisecond): //nolint:kennlint // the held preparation slot must block startup cleanup
+				case <-time.After(50 * time.Millisecond): //nolint:kennlint // deadlinetest: the held preparation slot must block startup cleanup
 				}
 				_, err := os.Stat(stage.Path())
 				require.NoError(t, err)
@@ -189,7 +189,7 @@ func TestWorkerRetriesCatalogContention(t *testing.T) {
 			select {
 			case err := <-done:
 				t.Fatalf("worker stopped during temporary contention: %v", err)
-			case <-time.After(50 * time.Millisecond): //nolint:kennlint // the timer shows the event does not happen; the open SQLite transaction keeps the worker in contention
+			case <-time.After(50 * time.Millisecond): //nolint:kennlint // deadlinetest: the timer shows the event does not happen; the open SQLite transaction keeps the worker in contention
 			}
 			require.NoError(t, tx.Rollback())
 			if phase == "startup" {
@@ -258,7 +258,7 @@ func TestWorkerDoesNotFenceClaimOnTemporaryReadContention(t *testing.T) {
 	err = catalog.CheckExportClaim(ctx, store.ExportClaim{})
 	require.True(t, catalog.RenditionJobErrorRetryable(err), "expected read contention, got %v", err)
 	// Allow at least one claim poll to observe the real read lock.
-	time.Sleep(350 * time.Millisecond) //nolint:kennlint // claim polls must see the real SQLite read lock, which runs on the wall clock
+	time.Sleep(350 * time.Millisecond) //nolint:kennlint // sleeptest: claim polls must see the real SQLite read lock, which runs on the wall clock
 	// Keep resumed reads from racing the last connection's WAL teardown.
 	for _, db := range driver.dbs {
 		db.SetMaxIdleConns(2)

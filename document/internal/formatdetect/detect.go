@@ -426,6 +426,7 @@ type PDFMeasurements struct {
 // PDFMetadata contains optional metadata resolved after the authoritative core
 // object graph and page tree have been validated.
 type PDFMetadata struct {
+	Facts  PDFFacts
 	Pages  int64
 	Info   PDFInfoMetadata
 	XMP    []byte
@@ -529,12 +530,19 @@ func ReadPDFMetadata(data []byte) (PDFMetadata, error) {
 		MaxEntries:       sourceBytes,
 	})
 	if err != nil {
+		if errors.Is(err, pdfcpu.ErrWrongPassword) {
+			return PDFMetadata{Facts: PDFFacts{Encrypted: new(true)}, Issues: []PDFMetadataIssue{{SourceField: "Password"}}}, nil
+		}
+		if errors.Is(err, pdfcpu.ErrUnsupportedEncryptionFeature) {
+			return PDFMetadata{Facts: PDFFacts{Encrypted: new(true)}, Issues: []PDFMetadataIssue{{SourceField: "Encryption"}}}, nil
+		}
 		return PDFMetadata{}, err
 	}
 	if context.PageCount <= 0 {
 		return PDFMetadata{}, errors.New("PDF page tree is empty")
 	}
 	metadata := PDFMetadata{Pages: int64(context.PageCount)}
+	readPDFFacts(context, sourceBytes, &metadata)
 	if context.Info != nil {
 		dictionary, err := context.DereferenceDict(*context.Info)
 		if err != nil {
@@ -586,9 +594,6 @@ func readPDFMetadataObjectGraph(data []byte, limits PDFLimits) (*model.Context, 
 	if err != nil {
 		return nil, fmt.Errorf("read PDF object graph: %w", err)
 	}
-	if context.Encrypt != nil {
-		return nil, ErrPDFEncrypted
-	}
 	if context.RootDict == nil {
 		return nil, errors.New("PDF catalog is missing")
 	}
@@ -599,13 +604,6 @@ func readPDFMetadataObjectGraph(data []byte, limits PDFLimits) (*model.Context, 
 		context.RootDict.Delete("Metadata")
 	}
 	err = api.ValidateContext(context)
-	if err == nil {
-		var external bool
-		external, err = pdfHasExternalReference(context)
-		if external {
-			err = ErrPDFExternalReference
-		}
-	}
 	context.Info = info
 	if hasMetadata {
 		context.RootDict.Insert("Metadata", metadata)
@@ -669,6 +667,10 @@ func checkPDFReferences(context *model.Context, allowEmptyPassword bool) (*model
 }
 
 func pdfHasExternalReference(context *model.Context) (bool, error) {
+	return pdfWalkDicts(context, func(dictionary types.Dict) (bool, error) { return pdfDictHasExternalReference(context, dictionary) })
+}
+
+func pdfWalkDicts(context *model.Context, visit func(types.Dict) (bool, error)) (bool, error) {
 	if context.Root == nil {
 		return false, errors.New("PDF catalog is missing")
 	}
@@ -692,7 +694,7 @@ func pdfHasExternalReference(context *model.Context) (bool, error) {
 				pending = append(pending, resolved)
 			}
 		case types.Dict:
-			external, err := pdfDictHasExternalReference(context, value)
+			external, err := visit(value)
 			if err != nil || external {
 				return external, err
 			}
@@ -780,18 +782,27 @@ var pdfFileSpecPathKeys = []string{"F", "UF", "DOS", "Mac", "Unix"}
 // name over a single stream. Requiring each path key to have its own stream
 // rejects that document, and the file is embedded either way.
 func pdfCarriesEmbeddedFile(context *model.Context, dictionary types.Dict) (bool, error) {
+	streams, err := pdfEmbeddedFileStreams(context, dictionary)
+	if len(streams) > 0 {
+		return true, nil
+	}
+	return false, err
+}
+
+func pdfEmbeddedFileStreams(context *model.Context, dictionary types.Dict) ([]types.Object, error) {
 	object, ok := dictionary["EF"]
 	if !ok {
-		return false, nil
+		return nil, nil
 	}
 	resolved, err := context.Dereference(object)
 	if err != nil {
-		return false, fmt.Errorf("dereference PDF dictionary %q: %w", "EF", err)
+		return nil, fmt.Errorf("dereference PDF dictionary %q: %w", "EF", err)
 	}
 	streams, ok := resolved.(types.Dict)
 	if !ok {
-		return false, nil
+		return nil, nil
 	}
+	var refs []types.Object
 	for _, key := range pdfFileSpecPathKeys {
 		entry, ok := streams[key]
 		if !ok {
@@ -799,14 +810,14 @@ func pdfCarriesEmbeddedFile(context *model.Context, dictionary types.Dict) (bool
 		}
 		value, err := context.Dereference(entry)
 		if err != nil {
-			return false, fmt.Errorf("dereference PDF embedded file %q: %w", key, err)
+			return refs, fmt.Errorf("dereference PDF embedded file %q: %w", key, err)
 		}
 		switch value.(type) {
 		case types.StreamDict, *types.StreamDict:
-			return true, nil
+			refs = append(refs, entry)
 		}
 	}
-	return false, nil
+	return refs, nil
 }
 
 func pdfDictHasStringEntry(

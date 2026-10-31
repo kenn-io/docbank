@@ -146,6 +146,11 @@ func TestPhotoEventsSignalWhatPhotosRead(t *testing.T) {
 		name string
 		do   func() error
 	}{
+		{"detected face", func() error {
+			return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+				return publishFaceDetectionTx(ctx, tx, node.CurrentVersionID, fakeHash("b1"), document.FaceDetection{Faces: []document.FaceObservation{{Box: document.FaceBox{Width: .2, Height: .3}}}}, time.Now())
+			})
+		}},
 		{"caption edit", func() error {
 			_, err := editPhotoAuthored(ctx, s, []PhotoAuthoredTarget{{FileID: asset.Files[0].ID, Revision: asset.Files[0].Revision, Patch: PhotoAuthoredPatch{Caption: new("River")}}})
 			return err
@@ -188,10 +193,16 @@ func TestPhotoEventsIgnoreBookkeeping(t *testing.T) {
 	t.Parallel()
 	s, _, source := newPublishedVectorIndexFixture(t)
 	now := time.Now().UTC()
+	node := browsePhotoNode(t, s, "portrait.jpg", catalogSourceHash, "image/jpeg")
 	require.NoError(t, putVectorIndexGenerationForTest(t, s, vectorIndexGenerationFixture("active", source, []byte("index"), now)))
 	execStorageTx(t, s, `INSERT OR IGNORE INTO text_extraction_queue(blob_hash,next_attempt_at) SELECT hash,'2026-01-01T00:00:00Z' FROM blobs LIMIT 1`)
 	events := watchPhotoChanges(t, s)
 	for name, write := range map[string]func(){
+		"empty face scan": func() {
+			require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+				return publishFaceDetectionTx(t.Context(), tx, node.CurrentVersionID, fakeHash("b1"), document.FaceDetection{}, now)
+			}))
+		},
 		"queue tick": func() {
 			execStorageTx(t, s, `UPDATE text_extraction_queue SET next_attempt_at='2026-01-02T00:00:00Z'`)
 		},

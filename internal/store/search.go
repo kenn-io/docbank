@@ -354,6 +354,7 @@ func boundedExplainedSearchExcerpt(value string) string {
 // descendants of one live directory. ModifiedSince is inclusive and
 // ModifiedBefore is exclusive; both accept absolute RFC3339 timestamps.
 type SearchOptions struct {
+	SourcePresent       bool
 	VectorSpaceID       string
 	EmbeddingDescriptor *document.EmbeddingDescriptor
 	PhotoScope          *PhotoBrowseRequest
@@ -1300,7 +1301,7 @@ func readCatalogLexicalManifestRowsTx(
 			SELECT s.build_id,s.segment_id,s.text,b.provider_operation_id
 			FROM rendition_lexical_segments s
 			JOIN rendition_builds b ON b.build_id=s.build_id
-			WHERE s.build_id=?
+			WHERE s.build_id=$1
 			ORDER BY s.build_id,s.segment_order,s.segment_id`, buildID)
 	}
 	if err != nil {
@@ -1463,13 +1464,13 @@ func readLexicalManifestRowsTx(
 			SELECT i.build_id,i.segment_id,i.text
 			FROM rendition_lexical_generation_builds gb
 			JOIN rendition_lexical_index i ON i.build_id=gb.build_id
-			WHERE gb.generation_id=?`, generationID)
+			WHERE gb.generation_id=$1`, generationID)
 	} else {
 		rows, err = tx.QueryContext(ctx, `
 			SELECT i.build_id,i.segment_id,i.text
 			FROM rendition_lexical_generation_builds gb
 			JOIN rendition_lexical_index i ON i.build_id=gb.build_id
-			WHERE gb.generation_id=? AND gb.build_id=?`, generationID, buildID)
+			WHERE gb.generation_id=$1 AND gb.build_id=$2`, generationID, buildID)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("reading lexical generation %s manifest: %w", generationID, err)
@@ -1531,7 +1532,7 @@ func lexicalGenerationBuildIDsTx(
 ) ([]string, error) {
 	return lexicalBuildIDsTx(ctx, tx, `
 		SELECT build_id FROM rendition_lexical_generation_builds
-		WHERE generation_id=? ORDER BY build_id`, []any{generationID})
+		WHERE generation_id=$1 ORDER BY build_id`, []any{generationID})
 }
 
 func lexicalBuildIDsTx(
@@ -2495,6 +2496,9 @@ func searchFilterSQL(opts SearchOptions) (string, []any) {
 		clauses []string
 		args    []any
 	)
+	if opts.SourcePresent {
+		clauses = append(clauses, "AND "+sourcePresentSQL)
+	}
 	if opts.photoFilter.sql != "" {
 		clauses = append(clauses, `AND n.id IN (`+opts.photoFilter.sql+`)`)
 		args = append(args, opts.photoFilter.args...)

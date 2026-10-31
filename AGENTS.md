@@ -223,6 +223,14 @@ Instructions for autonomous coding agents working in this repository.
   forward migrations, without changing msgvault's or SQLite's existing history.
   The [PostgreSQL guide](docs/internal/development.md#postgresql-schema-lifecycle)
   owns the concrete contracts and intentional differences.
+- Changes to catalogs read by shared metadata validation must update both
+  canonical schemas in the same change, even when the feature's PostgreSQL
+  writes are not ported yet. Keep SQL added to qualified operations portable,
+  and run the PostgreSQL lane with the new retained state populated.
+- Group PostgreSQL work into complete native operations. Keep the catalogs,
+  queries, validation, side effects and tests needed for an operation in one
+  pull request, rather than splitting them into prerequisite-only changes.
+  State the resulting capability and the remaining public API boundary.
 - Never encode enums or other closed value lists in either SQL schema, including
   states, phases, kinds, formats, and statuses. Store the value as text and
   reject unknown values in Go. The existing genesis-uniqueness index is a narrow

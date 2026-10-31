@@ -579,8 +579,8 @@ func requirePhotoFaceRejectionBound(ctx context.Context, tx metadataQuerier, fac
 		SELECT m.face_id FROM person_candidate_faces m
 		JOIN photo_faces f ON f.face_id=m.face_id AND f.content_version_id=m.content_version_id
 		JOIN person_match_candidates c ON c.candidate_id=m.candidate_id
-		WHERE ((?='' AND ?='' AND ?='') OR (m.face_id=? AND (?='' OR m.content_version_id=?)) OR EXISTS(
-			SELECT 1 FROM person_candidate_faces target WHERE target.candidate_id=? AND target.face_id=m.face_id AND target.content_version_id=m.content_version_id
+		WHERE (($1='' AND $2='' AND $3='') OR (m.face_id=$4 AND ($5='' OR m.content_version_id=$6)) OR EXISTS(
+			SELECT 1 FROM person_candidate_faces target WHERE target.candidate_id=$7 AND target.face_id=m.face_id AND target.content_version_id=m.content_version_id
 		)) AND c.state='rejected'
 		GROUP BY m.face_id,m.content_version_id HAVING COUNT(DISTINCT c.suggested_person_id)>1000
 	)`, faceID, versionID, candidateID, faceID, versionID, versionID, candidateID).Scan(&exceeded)

@@ -222,7 +222,7 @@ func TestEditUnchangedRejectsConcurrentReplacement(t *testing.T) {
 }
 
 func TestMain(m *testing.M) {
-	if len(os.Args) > 1 && os.Args[1] == "internal-email-pdf-worker" {
+	if len(os.Args) > 1 && (os.Args[1] == "internal-email-pdf-worker" || os.Args[1] == "internal-pdfstamp-worker") {
 		os.Exit(runProcess(os.Args[1:], os.Stdout, os.Stderr))
 	}
 	if os.Getenv("DOCBANK_EDIT_TEST_HELPER") == "1" {
@@ -253,7 +253,7 @@ func runEditHelper() int {
 			if time.Now().After(deadline) {
 				return 22
 			}
-			time.Sleep(20 * time.Millisecond) //nolint:kennlint // runs in the editor helper subprocess, polling for a file the test writes
+			time.Sleep(20 * time.Millisecond) //nolint:kennlint // sleeptest: runs in the editor helper subprocess, polling for a file the test writes
 		}
 	}
 	if os.Getenv("DOCBANK_EDIT_TEST_FAIL") == "1" {

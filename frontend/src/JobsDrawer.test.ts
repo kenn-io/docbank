@@ -71,6 +71,39 @@ describe("background jobs drawer", () => {
     expect(String(write[0])).toContain("/lanes/derive%3Avisual-previews");
   });
 
+  it("shows watch processing status separately from scanner failures", async () => {
+    let processing = { profile: "mistral-ocr", consent_state: "required", error: "" };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      jobsResponse([
+        {
+          name: "watch:inbox",
+          lane: "watch:inbox",
+          status: "failed",
+          error: "source unavailable",
+          processing,
+        },
+      ]),
+    );
+    render(JobsDrawer, { session: "short-lived", onclose: vi.fn(), onauthfailure: vi.fn() });
+    for (const consent_state of ["required", "active", "expired", "revoked"]) {
+      processing = { profile: "mistral-ocr", consent_state, error: "" };
+      await fireEvent.click(screen.getByRole("button", { name: "Refresh background jobs" }));
+      const text =
+        consent_state === "active"
+          ? "Processing profile: mistral-ocr"
+          : `Waiting on consent for mistral-ocr (${consent_state})`;
+      expect(await screen.findByText(text)).toBeTruthy();
+      const row = screen.getByRole("row", { name: /Watching inbox/ });
+      expect(within(row).getByText("source unavailable")).toBeTruthy();
+      expect(within(row).getByText("Failed")).toBeTruthy();
+    }
+    processing = { profile: "mistral-ocr", consent_state: "", error: "Consent status unavailable" };
+    await fireEvent.click(screen.getByRole("button", { name: "Refresh background jobs" }));
+    expect(
+      await screen.findByText("Processing profile: mistral-ocr. Consent status unavailable"),
+    ).toBeTruthy();
+  });
+
   it.each([
     {
       state: "queued in a paused lane",

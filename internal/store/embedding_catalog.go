@@ -619,8 +619,8 @@ func validateEmbeddingFailureEligibility(ctx context.Context, query metadataQuer
 	}
 	var newerHead bool
 	if err := query.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM embedding_heads
-		WHERE content_version_id=? AND profile_fingerprint=? AND binding_id=? AND input_kind=?
-		AND fencing_token>=?)`, record.ContentVersionID, record.ProcessingProfileFingerprint,
+		WHERE content_version_id=$1 AND profile_fingerprint=$2 AND binding_id=$3 AND input_kind=$4
+		AND fencing_token>=$5)`, record.ContentVersionID, record.ProcessingProfileFingerprint,
 		record.BindingID, record.InputKind, record.FencingToken).Scan(&newerHead); err != nil {
 		return fmt.Errorf("checking embedding failure head fence: %w", err)
 	}
@@ -1180,7 +1180,7 @@ func loadEmbeddingSetTx(ctx context.Context, tx metadataQuerier, id string) (Emb
 	var result EmbeddingSetRecord
 	err := tx.QueryRowContext(ctx, `SELECT embedding_set_id,vault_uid,binding_id,input_kind,
 		content_version_id,profile_fingerprint,embedding_input_fingerprint,vector_space_id,input_generation_id,
-		vector_set_id,created_at FROM embedding_sets WHERE embedding_set_id=?`, id).Scan(
+		vector_set_id,created_at FROM embedding_sets WHERE embedding_set_id=$1`, id).Scan(
 		&result.ID, &result.VaultID, &result.BindingID, &result.InputKind,
 		&result.ContentVersionID, &result.ProcessingProfileFingerprint, &result.EmbeddingInputFingerprint, &result.VectorSpace.ID,
 		&result.InputGeneration.ID, &result.VectorSet.ID, &result.CreatedAt)
@@ -1208,7 +1208,7 @@ func loadVectorSpaceTx(ctx context.Context, tx metadataQuerier, id string) (Embe
 	err := tx.QueryRowContext(ctx, `SELECT vector_space_id,contract_version,
 		descriptor_json,provider_descriptor,provider_revision,descriptor_fingerprint,compatibility_id,
 		dimensions,metric,normalization,scalar_encoding,document_formatter,query_formatter,
-		model_input_fingerprint FROM embedding_vector_spaces WHERE vector_space_id=?`, id).Scan(
+		model_input_fingerprint FROM embedding_vector_spaces WHERE vector_space_id=$1`, id).Scan(
 		&record.ID, &record.ContractVersion, &descriptorJSON, &record.ProviderDescriptor, &record.ProviderRevision,
 		&record.DescriptorFingerprint, &record.CompatibilityID, &record.Dimensions, &record.Metric,
 		&record.Normalization, &record.ScalarEncoding, &record.DocumentFormatter,
@@ -1267,7 +1267,7 @@ func loadInputGenerationTx(ctx context.Context, tx metadataQuerier, id string) (
 		profile_fingerprint,evidence_fingerprint,tokenizer_fingerprint,
 		chunk_policy_fingerprint,formatter_fingerprint,attachment_context_fingerprint,
 		attachment_id,input_count,created_at
-		FROM embedding_input_generations WHERE generation_id=?`, id).Scan(&record.ID,
+		FROM embedding_input_generations WHERE generation_id=$1`, id).Scan(&record.ID,
 		&generationBlob, &record.GenerationEncodedSize, &record.GenerationChecksum, &record.SourceVersionID, &record.ProcessingProfileFingerprint,
 		&record.EvidenceFingerprint, &record.TokenizerFingerprint, &record.ChunkPolicyFingerprint,
 		&record.FormatterFingerprint, &record.AttachmentContextFingerprint, &attachment,
@@ -1285,7 +1285,7 @@ func loadInputGenerationTx(ctx context.Context, tx metadataQuerier, id string) (
 		record.GenerationBlobHash = generationBlob.String
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT input_id,rendered_checksum
-		FROM embedding_generation_inputs WHERE generation_id=? ORDER BY input_order`, id)
+		FROM embedding_generation_inputs WHERE generation_id=$1 ORDER BY input_order`, id)
 	if err != nil {
 		return record, err
 	}
@@ -1313,7 +1313,7 @@ func loadVectorSetTx(ctx context.Context, tx metadataQuerier, id string) (Embedd
 	var record EmbeddingVectorSetRecord
 	err := tx.QueryRowContext(ctx, `SELECT vector_set_id,contract_version,vector_space_id,payload_blob_hash,
 		payload_size,payload_checksum,manifest_checksum,row_count,dimensions
-		FROM embedding_vector_sets WHERE vector_set_id=?`, id).Scan(&record.ID,
+		FROM embedding_vector_sets WHERE vector_set_id=$1`, id).Scan(&record.ID,
 		&record.ContractVersion, &record.VectorSpaceID, &record.PayloadBlobHash, &record.PayloadSize, &record.PayloadChecksum,
 		&record.ManifestChecksum, &record.RowCount, &record.Dimensions)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -1326,7 +1326,7 @@ func loadVectorSetTx(ctx context.Context, tx metadataQuerier, id string) (Embedd
 		return record, errors.New("embedding vector-set count is corrupt")
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT row_id,input_id,dimensions,checksum
-		FROM embedding_vector_rows WHERE vector_set_id=? ORDER BY row_order`, id)
+		FROM embedding_vector_rows WHERE vector_set_id=$1 ORDER BY row_order`, id)
 	if err != nil {
 		return record, err
 	}
@@ -1382,7 +1382,7 @@ func embeddingAttachmentEligible(ctx context.Context, tx metadataQuerier, versio
 	var attached int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM rendition_heads h
 		JOIN rendition_attachments a ON a.attachment_id=h.attachment_id
-		WHERE h.content_version_id=? AND h.profile_fingerprint=? AND h.attachment_id=?`,
+		WHERE h.content_version_id=$1 AND h.profile_fingerprint=$2 AND h.attachment_id=$3`,
 		versionID, profileFingerprint, attachmentID).Scan(&attached); err != nil {
 		return false, err
 	}

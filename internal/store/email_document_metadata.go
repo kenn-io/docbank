@@ -35,7 +35,7 @@ func exportEmailDocumentMetadata(ctx context.Context, q metadataQuerier, write m
 	after := ""
 	for {
 		var id string
-		err := q.QueryRowContext(ctx, `SELECT operation_id FROM email_document_publications WHERE operation_id>? ORDER BY operation_id LIMIT 1`, after).Scan(&id)
+		err := q.QueryRowContext(ctx, `SELECT operation_id FROM email_document_publications WHERE operation_id>$1 ORDER BY operation_id LIMIT 1`, after).Scan(&id)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil
 		}
@@ -102,7 +102,7 @@ func validateEmailDocumentPublication(ctx context.Context, q metadataQuerier, v 
 			}
 		}
 		var linked sql.NullString
-		if err = q.QueryRowContext(ctx, `SELECT child_version_id FROM email_document_relations WHERE operation_id=? AND occurrence_order=?`, r.OperationID, r.Order).Scan(&linked); err != nil {
+		if err = q.QueryRowContext(ctx, `SELECT child_version_id FROM email_document_relations WHERE operation_id=$1 AND occurrence_order=$2`, r.OperationID, r.Order).Scan(&linked); err != nil {
 			return err
 		}
 		if linked.Valid != (r.Child != nil) || (r.Child != nil && linked.String != r.Child.VersionID) {
@@ -113,7 +113,7 @@ func validateEmailDocumentPublication(ctx context.Context, q metadataQuerier, v 
 		return ErrEmailCorrupt
 	}
 	var count int
-	if err = q.QueryRowContext(ctx, `SELECT count(*) FROM email_document_relations WHERE operation_id=?`, v.Request.OperationID).Scan(&count); err != nil {
+	if err = q.QueryRowContext(ctx, `SELECT count(*) FROM email_document_relations WHERE operation_id=$1`, v.Request.OperationID).Scan(&count); err != nil {
 		return err
 	}
 	if count != len(parts) {

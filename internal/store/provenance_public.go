@@ -49,7 +49,7 @@ func (s *Store) NodeProvenance(
 	if offset < 0 {
 		return NodeProvenancePage{}, errors.New("provenance offset must not be negative")
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 	if err != nil {
 		return NodeProvenancePage{}, fmt.Errorf("starting provenance snapshot: %w", err)
 	}
@@ -70,7 +70,7 @@ func (s *Store) NodeProvenance(
 		}
 	}
 	if err := tx.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM provenance WHERE node_id = ?`, nodeID,
+		`SELECT COUNT(*) FROM provenance WHERE node_id = $1`, nodeID,
 	).Scan(&page.Total); err != nil {
 		return NodeProvenancePage{}, fmt.Errorf("counting provenance for node %d: %w", nodeID, err)
 	}
@@ -80,9 +80,9 @@ func (s *Store) NodeProvenance(
 		       p.original_mtime, p.supersedes,
 		       NOT EXISTS(SELECT 1 FROM provenance next WHERE next.supersedes = p.identity)
 		FROM provenance p JOIN ingests i ON i.id = p.ingest_id
-		WHERE p.node_id = ?
+		WHERE p.node_id = $1
 		ORDER BY i.started_at DESC, p.identity DESC
-		LIMIT ? OFFSET ?`, nodeID, limit, offset)
+		LIMIT $2 OFFSET $3`, nodeID, limit, offset)
 	if err != nil {
 		return NodeProvenancePage{}, fmt.Errorf("listing provenance for node %d: %w", nodeID, err)
 	}
