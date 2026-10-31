@@ -159,6 +159,10 @@ a match without an excerpt, because Docbank kept no readable text to quote.
 
 ## Source-fenced consumer contract
 
+Callers may send `scope: {"kind":"all_live"}` with optional metadata filters
+instead of a source fence; Docbank selects the current live files on the server
+and applies that scope throughout retrieval and reranking.
+
 The source fence is the vault identity and content-version set the caller
 supplies. Docbank enforces it before retrieval, not as a filter on results. It
 validates the vault identity and applies the content-version set before lexical

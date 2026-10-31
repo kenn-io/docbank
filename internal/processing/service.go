@@ -1624,13 +1624,14 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 				actual = retrieval.ModeLexical
 			}
 			report := retrieval.Report{RequestedMode: prepared.mode, ActualMode: actual,
-				Coverage: retrieval.Coverage{State: retrieval.CoverageComplete}}
+				Coverage: retrieval.Coverage{State: retrieval.CoverageUnknown}}
 			if semantic {
 				binding, err := selectEmbeddingBinding(profile.portable, prepared.bindingID)
 				if err != nil {
 					return retrieval.Report{}, err
 				}
 				report.Coverage.BindingRequired = binding.Activation == document.EmbeddingRequired
+				report.Coverage.State = retrieval.CoverageComplete
 			}
 			if request.Rerank {
 				report.Receipts = []retrieval.ProviderReceipt{{Stage: retrieval.ProviderStageReranking, Outcome: retrieval.ProviderOutcomeSkipped}}

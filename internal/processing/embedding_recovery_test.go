@@ -517,6 +517,14 @@ func TestSearchAllLiveEmptyScope(t *testing.T) {
 				report, err := service.Search(t.Context(), SearchRequest{Profile: "current", Query: "synthetic", Mode: "semantic", AllLive: &store.SearchOptions{}})
 				require.Error(t, err)
 				assert.Equal(t, retrieval.Report{}, report)
+				for _, mode := range []retrieval.Mode{retrieval.ModeLexical, retrieval.ModeAuto} {
+					t.Run(string(mode), func(t *testing.T) {
+						report, err := service.Search(t.Context(), SearchRequest{Profile: "current", Query: "synthetic", Mode: string(mode), AllLive: &store.SearchOptions{}})
+						require.NoError(t, err)
+						assert.Equal(t, retrieval.ModeLexical, report.ActualMode)
+						assert.Equal(t, retrieval.Coverage{State: retrieval.CoverageUnknown}, report.Coverage)
+					})
+				}
 			})
 		}
 	})

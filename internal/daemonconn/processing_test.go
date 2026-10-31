@@ -1031,8 +1031,8 @@ func TestProcessingClientValidatesStatusEmbeddingIdentities(t *testing.T) {
 func TestProcessingClientValidatesScopedSearchResponse(t *testing.T) {
 	for _, name := range []string{"valid", "coverage overflow"} {
 		t.Run(name, func(t *testing.T) {
-			request := api.DocumentSearchRequest{Query: "visible", Mode: "lexical", Profile: "private", Scope: &api.DocumentSearchScope{Kind: "all_live"}}
-			report := api.DocumentSearchReport{RequestedMode: "lexical", ActualMode: "lexical",
+			request := api.DocumentSearchRequest{Query: "visible", Mode: "hybrid", Profile: "private", Scope: &api.DocumentSearchScope{Kind: "all_live"}}
+			report := api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid",
 				Coverage: api.DocumentSearchCoverage{ScopedDocuments: 4099, CompleteDocuments: 2, State: "incomplete"},
 				Results: []api.DocumentSearchResult{
 					{VaultUID: "11111111-1111-4111-8111-111111111111", NodeID: 7, ContentVersionID: "22222222-2222-4222-8222-222222222222", Rank: 1, LexicalRank: 1, Score: 1, Path: "/visible.txt", Evidence: []api.DocumentEvidenceReference{{Kind: "node_name"}}},
