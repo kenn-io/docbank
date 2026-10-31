@@ -1,3 +1,6 @@
+# CI can retry acquisition commands inside mixed build/test recipes.
+DOWNLOAD_RETRY ?=
+
 # Makefile for docbank
 
 .DEFAULT_GOAL := help
@@ -96,12 +99,12 @@ generate-photo-policy:
 	go run -tags "$(BUILD_TAGS)" ./scripts/generate-photo-policy
 
 frontend:
-	cd frontend && npm ci && npm run build
+	cd frontend && $(DOWNLOAD_RETRY) npm ci && npm run build
 	find internal/web/dist -mindepth 1 ! -name .keep -exec rm -rf {} +
 	cp -R frontend/dist/. internal/web/dist/
 
 frontend-test:
-	cd frontend && npm ci
+	cd frontend && $(DOWNLOAD_RETRY) npm ci
 	cd frontend && npm run check:fmt-lint
 	cd frontend && npm run check
 	cd frontend && npm run check:kit-ui

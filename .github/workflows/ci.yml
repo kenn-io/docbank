@@ -92,12 +92,12 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
+      - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
+
       - name: Install pinned documentation tools
         run: |
-          ./scripts/vercel-install-docs.sh
+          kit-retry 3 5 ./scripts/vercel-install-docs.sh
           echo "$PWD/.vercel-tools/bin" >> "$GITHUB_PATH"
-
-      - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
 
       - name: Install browser test dependencies
         run: kit-retry 3 5 npm ci --prefix frontend
@@ -147,6 +147,8 @@ jobs:
         run: docker logs playwright-browser-server
 
   frontend:
+    env:
+      DOWNLOAD_RETRY: kit-retry 3 5
     name: Web application
     runs-on: ubuntu-24.04
     timeout-minutes: 12
@@ -162,6 +164,8 @@ jobs:
           node-version: "24.22.1"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+
+      - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
 
       - name: Check and build web application
         run: make frontend-test
@@ -181,6 +185,8 @@ jobs:
         run: bash scripts/check-released-schemas.sh
 
   report-export-browser:
+    env:
+      DOWNLOAD_RETRY: kit-retry 3 5
     name: Browser reports and original exports
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -213,7 +219,7 @@ jobs:
       - name: Install pinned Chromium
         run: |
           kit-retry 3 5 npm ci --prefix frontend
-          node frontend/node_modules/@playwright/test/cli.js install chromium
+          kit-retry 3 5 node frontend/node_modules/@playwright/test/cli.js install chromium
 
       - name: Qualify browser workflow with both SQLite builds
         run: make report-export-browser-test
@@ -423,6 +429,17 @@ jobs:
           $ErrorActionPreference = 'Stop'
           [scriptblock]::Create((Get-Content -Raw scripts/install.ps1)) | Out-Null
 
+      - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
+        if: matrix.goarch == 'arm64'
+
+      - name: Download ARM64 C compiler
+        if: matrix.goarch == 'arm64'
+        shell: bash
+        env:
+          LLVM_MINGW_VERSION: "20260602"
+          LLVM_MINGW_NAME: llvm-mingw-20260602-ucrt-aarch64
+        run: kit-download "https://github.com/mstorsjo/llvm-mingw/releases/download/$LLVM_MINGW_VERSION/$LLVM_MINGW_NAME.zip" "$RUNNER_TEMP/llvm-mingw.zip"
+
       - name: Set up ARM64 C compiler
         if: matrix.goarch == 'arm64'
         shell: pwsh
@@ -434,7 +451,6 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $zip = Join-Path $env:RUNNER_TEMP 'llvm-mingw.zip'
           $url = "https://github.com/mstorsjo/llvm-mingw/releases/download/$env:LLVM_MINGW_VERSION/$env:LLVM_MINGW_NAME.zip"
-          Invoke-WebRequest -Uri $url -OutFile $zip -MaximumRetryCount 3 -RetryIntervalSec 5
           $actual = (Get-FileHash -Path $zip -Algorithm SHA256).Hash.ToLower()
           if ($actual -ne $env:LLVM_MINGW_SHA256) {
             throw "Checksum mismatch for $url`n  expected $env:LLVM_MINGW_SHA256`n  actual   $actual"

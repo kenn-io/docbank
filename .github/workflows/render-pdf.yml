@@ -50,7 +50,7 @@ jobs:
           kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update
           kit-retry 3 5 sudo apt-get install --no-install-recommends -y poppler-utils util-linux
           kit-retry 3 5 npm --prefix frontend ci
-          node frontend/node_modules/@playwright/test/cli.js install --with-deps chromium
+          kit-retry 3 5 node frontend/node_modules/@playwright/test/cli.js install --with-deps chromium
       - name: Embed frontend and qualify both SQLite modes
         run: |
           npm --prefix frontend run build
