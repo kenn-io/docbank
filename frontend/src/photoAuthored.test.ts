@@ -2323,8 +2323,30 @@ it("refreshes and clears best-shot offers with their prepared stack", async () =
   });
   await editor.undo(vi.fn(), "receipt");
   expect(editor.bestShots).toEqual(restored);
-  vi.mocked(api.preparePhotoAuthored).mockResolvedValue(photoPreparation(prepared));
-  await editor.prepareStack(ids, false, true);
-  expect(editor.bestShots).toEqual([]);
+  for (const flag of ["pick", ""] as const) {
+    let written = false;
+    vi.mocked(api.preparePhotoAuthored).mockImplementation(async () => ({
+      ...photoPreparation(restoredTargets),
+      proposals: written ? [] : restored,
+    }));
+    await editor.prepareStack(ids, false, true);
+    expect(editor.bestShots).toEqual(restored);
+    // Cull resets the selection before editing the current frame.
+    editor.reset();
+    let finish!: (receipt: api.PhotoAuthoredReceipt) => void;
+    const edit = vi.spyOn(api, "editPhotoAuthored").mockImplementation(
+      () => new Promise((resolve) => (finish = resolve)),
+    );
+    const editing = editor.edit({ asset_ids: [ids[0]!] }, { flag }, false, vi.fn());
+    await vi.waitFor(() => expect(edit).toHaveBeenCalledOnce());
+    // A stack read during the write must leave the stack eligible for a fresh read.
+    await editor.prepareStack(ids, false);
+    written = true;
+    finish({ receipt_id: "edit", before: [], after: [] });
+    await editing;
+    await editor.prepareStack(ids, false);
+    expect(editor.bestShots).toEqual([]);
+    edit.mockRestore();
+  }
   editor.dispose();
 });

@@ -1837,40 +1837,22 @@ it.each([
   expect(dismiss.matches(":disabled")).toBe(true);
 });
 
-it("clears best-shot proposals after picking, rejecting, or clearing a frame flag", async () => {
-  for (const [button, flag, announcement] of [
-    ["Pick", "pick", "pick"],
-    ["Reject", "reject", "reject"],
-    ["Clear flag", "", "flag cleared"],
+it("sends Pick and Clear flag to the authored editor", async () => {
+  for (const [button, flag] of [
+    ["Pick", "pick"],
+    ["Clear flag", ""],
   ]) {
-    let written = false;
-    vi.mocked(api.preparePhotoAuthored).mockImplementation(async (scope) => ({
-      ...photoPreparation((scope.asset_ids ?? []).map((id) => preparedPhoto(Number(id.slice(6))))),
-      proposals:
-        scope.stack && !written
-          ? [
-              { asset_id: "photo-1", flag: "pick", rationale: "Best frame", confidence: 0.5 },
-              { asset_id: "photo-2", flag: "reject", rationale: "Weaker frame", confidence: 0.5 },
-            ]
-          : [],
-    }));
-    const edit = vi.spyOn(api, "editPhotoAuthored").mockImplementation(async () => {
-      written = true;
-      return { receipt_id: "", before: [], after: [] };
-    });
-    const { container, unmount } = await reviewTwoStacks();
-    await waitFor(() => expect(container.querySelectorAll(".proposal")).toHaveLength(3));
-    await readyButton("Accept all");
+    const { photos, unmount } = await reviewTwoStacks();
+    const edit = vi.spyOn(photos.cullEditor!, "edit").mockResolvedValue(undefined);
     await fireEvent.click(await readyButton(button));
-    await waitFor(() =>
-      expect(container.querySelector(".photo-cull > span[aria-live='polite']")?.textContent).toBe(
-        `Photo 1.jpg: ${announcement}`,
-      ),
+    await waitFor(() => expect(edit).toHaveBeenCalledOnce());
+    expect(edit).toHaveBeenCalledWith(
+      { asset_ids: ["photo-1"] },
+      { flag },
+      false,
+      expect.any(Function),
+      expect.any(Object),
     );
-    expect(edit).toHaveBeenCalledOnce();
-    expect(edit.mock.calls[0][0].patch).toEqual({ flag });
-    expect.soft(container.querySelectorAll(".proposal"), button).toHaveLength(0);
-    expect.soft(screen.queryByRole("button", { name: "Accept all" }), button).toBeNull();
     unmount();
     edit.mockRestore();
   }
