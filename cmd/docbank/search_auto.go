@@ -122,7 +122,7 @@ func automaticSearchFallback(ctx context.Context, err error) (automaticSearchOut
 
 // bindingSearchFailure reports whether another profile or binding could still
 // succeed. A binding without a built vector index reports not_found. Scope
-// failures such as stale_version repeat for every binding.
+// failures such as stale_index repeat for every binding.
 func bindingSearchFailure(reason string) bool {
 	switch reason {
 	case "processing_profile_unavailable", "processing_failed", "stale_index", "not_found",

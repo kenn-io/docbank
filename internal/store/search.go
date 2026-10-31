@@ -826,18 +826,31 @@ func (s *Store) semanticSearchAuthorityFence(ctx context.Context, profileFingerp
 	return source, required, complete, annRows, err
 }
 
+// LiveSearchScopeCount counts current live files in normalized search filters.
+func (s *Store) LiveSearchScopeCount(ctx context.Context, opts SearchOptions) (int, error) {
+	return liveSearchScopeCount(ctx, s.db, opts)
+}
+
+func liveSearchScopeCount(ctx context.Context, q metadataQuerier, opts SearchOptions) (int, error) {
+	filterSQL, filterArgs := searchFilterSQL(opts)
+	var count int
+	err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+nodeFrom+`
+		WHERE n.kind='file' AND n.trashed_at IS NULL AND cv.version_id IS NOT NULL `+filterSQL,
+		filterArgs...).Scan(&count)
+	return count, err
+}
+
 func semanticSearchCoverageTx(ctx context.Context, tx metadataQuerier, profileFingerprint, bindingID string,
 	inputKind document.EmbeddingInputKind, vectorSpaceID string, opts SearchOptions,
 ) (required, complete int, retErr error) {
-	filterSQL, filterArgs := searchFilterSQL(opts)
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+nodeFrom+`
-		WHERE n.kind='file' AND n.trashed_at IS NULL AND cv.version_id IS NOT NULL `+filterSQL,
-		filterArgs...).Scan(&required); err != nil {
+	required, err := liveSearchScopeCount(ctx, tx, opts)
+	if err != nil {
 		return 0, 0, err
 	}
+	filterSQL, filterArgs := searchFilterSQL(opts)
 	args := []any{profileFingerprint, bindingID, inputKind, vectorSpaceID}
 	args = append(args, filterArgs...)
-	err := tx.QueryRowContext(ctx, `SELECT COUNT(DISTINCT n.id) FROM `+nodeFrom+`
+	err = tx.QueryRowContext(ctx, `SELECT COUNT(DISTINCT n.id) FROM `+nodeFrom+`
 		JOIN embedding_heads eh ON eh.content_version_id=cv.version_id
 		JOIN embedding_sets es ON es.embedding_set_id=eh.embedding_set_id
 		 AND es.content_version_id=eh.content_version_id AND es.binding_id=eh.binding_id

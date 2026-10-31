@@ -603,12 +603,8 @@ func validateDocumentSearchReport(request api.DocumentSearchRequest, report api.
 	seenDocuments := make(map[resultIdentity]struct{}, len(report.Results))
 	seenLexicalRanks := make(map[int]struct{}, len(report.Results))
 	seenSemanticRanks := make(map[int]struct{}, len(report.Results))
-	vaultUID := request.Fence.VaultUID
 	for index, result := range report.Results {
-		if request.Scope != nil && index == 0 {
-			vaultUID = result.VaultUID
-		}
-		if result.VaultUID != vaultUID || !validUUIDv4(result.VaultUID) {
+		if (request.Scope == nil && result.VaultUID != request.Fence.VaultUID) || !validUUIDv4(result.VaultUID) {
 			return fmt.Errorf("result %d escaped the vault fence", index)
 		}
 		if _, allowed := versions[result.ContentVersionID]; (!allowed && request.Scope == nil) || !validUUIDv4(result.ContentVersionID) {

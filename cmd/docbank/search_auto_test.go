@@ -26,6 +26,7 @@ type automaticSearchCase struct {
 	profiles                        []api.ProcessingProfileSummary
 	profileError, searchError       string
 	malformed, cold, mixed          bool
+	empty                           bool
 	folderFirst, wantTruncated      bool
 	wantResults, wantFolders        int
 	jsonCLI, humanCLI, agentCLI     bool
@@ -50,6 +51,7 @@ func TestAutomaticSearchSelectionAndFallback(t *testing.T) {
 		{name: "JSON lexical truncation", profiles: profiles, limit: 1, jsonCLI: true, wantSearch: 1, wantHybrid: true, wantResults: 1, wantTruncated: true},
 		{name: "human folder fills page", profiles: profiles, limit: 1, folderFirst: true, humanCLI: true, wantSearch: 1, wantHybrid: true, wantTruncated: true},
 		{name: "human hybrid", profiles: profiles, limit: 50, humanCLI: true, wantSearch: 1, wantHybrid: true},
+		{name: "human empty scope", profiles: profiles, limit: 50, humanCLI: true, empty: true, wantSearch: 1, wantHybrid: true},
 		{name: "agent hybrid", profiles: profiles, limit: 50, agentCLI: true, wantSearch: 1, wantHybrid: true},
 		{name: "query length boundary", query: strings.Repeat("界", 8192), profiles: profiles, limit: 50, jsonCLI: true, wantSearch: 1, wantHybrid: true, wantResults: 1, wantFolders: 1},
 		{name: "query too long", query: strings.Repeat("界", 8193), profiles: profiles, limit: 50, jsonCLI: true, skipped: true},
@@ -155,6 +157,9 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 			if tc.folderFirst {
 				matches[0], matches[1] = matches[1], matches[0]
 			}
+			if tc.empty {
+				matches = nil
+			}
 			page := matches[:min(tc.limit, len(matches))]
 			assert.NoError(t, json.MarshalWrite(w, api.SearchReport{Limit: tc.limit, Hits: page, Truncated: len(matches) > tc.limit}))
 		case "GET /api/v1/processing/profiles":
@@ -205,6 +210,8 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 				problem(w, tc.searchError)
 			case tc.malformed:
 				_, _ = w.Write([]byte(`{"actual_mode":"semantic"}`))
+			case tc.empty:
+				assert.NoError(t, json.MarshalWrite(w, api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete"}}))
 			default:
 				assert.NoError(t, json.MarshalWrite(w, api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete", BindingRequired: true, ScopedDocuments: 1, CompleteDocuments: 1}, Results: []api.DocumentSearchResult{{VaultUID: vault, NodeID: 42, ContentVersionID: processingTestVersionID, Rank: 1, Score: .75, Path: "/query.txt", Excerpt: "query words", LexicalRank: 1, Evidence: []api.DocumentEvidenceReference{{Kind: "node_name"}}}}}))
 			}
@@ -239,6 +246,9 @@ func runAutomaticSearchCLI(t *testing.T, tc automaticSearchCase, serverURL strin
 	defer rootCmd.SetArgs(nil)
 	require.NoError(t, rootCmd.ExecuteContext(context.Background()))
 	switch {
+	case tc.empty:
+		assert.Equal(t, "mode: hybrid\ncoverage: complete (0/0 source document(s) complete)\nno matches inside the source fence\n", stdout.String())
+		assert.Empty(t, stderr.String())
 	case tc.agentCLI && tc.wantHybrid:
 		assert.Equal(t, "OK search count=2 query=\"query words\" mode=hybrid degraded=false truncated=false coverage=complete complete=1 scoped=1\n"+
 			"- selector=id:42 match=lexical score=0.75 path=/query.txt excerpt=\"query words\"\n"+

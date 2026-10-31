@@ -1612,6 +1612,24 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 	if err != nil {
 		return retrieval.Report{}, err
 	}
+	if request.AllLive != nil {
+		count, err := service.catalog.LiveSearchScopeCount(ctx, searchScope)
+		if err != nil {
+			return retrieval.Report{}, err
+		}
+		if count == 0 {
+			actual := prepared.mode
+			if actual == retrieval.ModeAuto {
+				actual = retrieval.ModeLexical
+			}
+			report := retrieval.Report{RequestedMode: prepared.mode, ActualMode: actual,
+				Coverage: retrieval.Coverage{State: retrieval.CoverageComplete}}
+			if request.Rerank {
+				report.Receipts = []retrieval.ProviderReceipt{{Stage: retrieval.ProviderStageReranking, Outcome: retrieval.ProviderOutcomeSkipped}}
+			}
+			return report, nil
+		}
+	}
 	if request.MediaSources != nil {
 		return service.searchMediaSources(ctx, request, ids, prepared)
 	}

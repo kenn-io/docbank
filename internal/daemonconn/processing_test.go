@@ -1029,7 +1029,7 @@ func TestProcessingClientValidatesStatusEmbeddingIdentities(t *testing.T) {
 }
 
 func TestProcessingClientValidatesScopedSearchResponse(t *testing.T) {
-	for _, name := range []string{"valid", "mixed vaults", "coverage overflow"} {
+	for _, name := range []string{"valid", "coverage overflow"} {
 		t.Run(name, func(t *testing.T) {
 			request := api.DocumentSearchRequest{Query: "visible", Mode: "lexical", Profile: "private", Scope: &api.DocumentSearchScope{Kind: "all_live"}}
 			report := api.DocumentSearchReport{RequestedMode: "lexical", ActualMode: "lexical",
@@ -1039,8 +1039,6 @@ func TestProcessingClientValidatesScopedSearchResponse(t *testing.T) {
 					{VaultUID: "11111111-1111-4111-8111-111111111111", NodeID: 8, ContentVersionID: "33333333-3333-4333-8333-333333333333", Rank: 2, LexicalRank: 2, Score: .5, Path: "/visible-2.txt", Evidence: []api.DocumentEvidenceReference{{Kind: "node_name"}}},
 				}}
 			switch name {
-			case "mixed vaults":
-				report.Results[1].VaultUID = "44444444-4444-4444-8444-444444444444"
 			case "coverage overflow":
 				report.Coverage.CompleteDocuments = 4100
 			}

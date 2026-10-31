@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -32,12 +33,15 @@ type recoveryTextProvider struct {
 
 	endpoint  string
 	documents *atomic.Int64
+	calls     *atomic.Int64
 }
 
 func newRecoveryProvider(t *testing.T, descriptor document.EmbeddingDescriptor) *recoveryTextProvider {
 	t.Helper()
 	var documents atomic.Int64
+	var calls atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
 		assert.Equal(t, "/v1/embeddings", r.URL.Path)
 		var input struct {
 			Input []string `json:"input"`
@@ -65,7 +69,7 @@ func newRecoveryProvider(t *testing.T, descriptor document.EmbeddingDescriptor) 
 	require.NoError(t, err)
 	provider, err := openaicompat.New(profile, nil, server.Client())
 	require.NoError(t, err)
-	return &recoveryTextProvider{recoveryEmbeddingProvider: provider, endpoint: server.URL, documents: &documents}
+	return &recoveryTextProvider{recoveryEmbeddingProvider: provider, endpoint: server.URL, documents: &documents, calls: &calls}
 }
 
 type embeddingRecoveryFixture struct {
@@ -446,6 +450,53 @@ func TestEmbeddingReuseRejectsInvalidRetainedEvidence(t *testing.T) {
 	require.Equal(t, "failed", status.State)
 	require.Equal(t, store.EmbeddingFailureInputRejected, status.FailureCode, "invalid retained evidence must fail like the provider path instead of retrying")
 	require.Zero(t, provider.documents.Load())
+}
+
+func TestSearchAllLiveEmptyScope(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"fresh with consent", "fresh without consent", "all trashed", "filter matches none", "populated without index"} {
+		t.Run(name, func(t *testing.T) {
+			f := newEmbeddingRecoveryFixture(t)
+			if name != "all trashed" && name != "filter matches none" {
+				catalog, err := store.Open(filepath.Join(t.TempDir(), "docbank.db"))
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, catalog.Close()) })
+				f.catalog = catalog
+			} else if name == "all trashed" {
+				for _, path := range []string{"/source.pdf", "/document-0.pdf", "/document-1.pdf"} {
+					_, _, err := f.catalog.TrashPath(t.Context(), path)
+					require.NoError(t, err)
+				}
+			}
+			provider := newRecoveryProvider(t, f.request.Descriptor)
+			service := f.service(t, provider.Descriptor(), provider)
+			if name != "fresh without consent" {
+				f.grant(t, service, true)
+			}
+			if name == "populated without index" {
+				receipt, err := f.blobs.WriteDetailedContext(t.Context(), strings.NewReader("unprocessed synthetic text"))
+				require.NoError(t, err)
+				_, err = f.catalog.CreateFile(t.Context(), f.catalog.RootID(), "unprocessed.txt", receipt.Hash, receipt.Size, "text/plain", processingBlobPhysical(t, receipt))
+				require.NoError(t, err)
+			}
+			filters := &store.SearchOptions{}
+			if name == "filter matches none" {
+				filters.MIMEType = "text/plain"
+			}
+			report, err := service.Search(t.Context(), SearchRequest{Profile: "current", Query: "synthetic", Mode: "hybrid", AllLive: filters})
+			if name == "populated without index" {
+				require.ErrorIs(t, err, store.ErrNotFound)
+				return
+			}
+			require.NoError(t, err)
+			assert.Empty(t, report.Results)
+			assert.Empty(t, report.Degradations)
+			assert.Equal(t, retrieval.ModeHybrid, report.RequestedMode)
+			assert.Equal(t, retrieval.ModeHybrid, report.ActualMode)
+			assert.Equal(t, retrieval.Coverage{State: retrieval.CoverageComplete}, report.Coverage)
+			assert.Zero(t, provider.calls.Load())
+		})
+	}
 }
 
 func TestSearchAllLiveBeyondExplicitFenceLimit(t *testing.T) {

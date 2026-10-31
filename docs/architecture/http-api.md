@@ -792,6 +792,7 @@ versions the request is authorized to read. Use the actual vault UUID and
 1–4,096 distinct canonical UUIDv4 versions for both coverage and search. A
 foreign vault or invalid source fence is rejected. `/api/v1/search` request
 bodies are bounded to 16 MiB.
+
 Search accepts exactly one of `fence` or `scope`. Send
 `"scope": {"kind": "all_live", "filters": {...}}` to search all live files
 without listing versions. Optional filters are `source_present`, `tag_id`,
@@ -800,6 +801,7 @@ the same semantics as source-fence resolution. Semantic and hybrid coverage
 reports `scoped_documents` and `complete_documents` over that population.
 A scope cannot be combined with `media_sources`. Explicit fences retain the
 4,096-version limit.
+A scope with no live files returns an empty report with complete 0/0 coverage.
 
 Search requires nonblank `query` text of at most 8,192 characters, `profile`,
 and `mode` (`lexical`, `semantic`, `hybrid`, or `auto`). `limit` defaults to 50
