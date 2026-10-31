@@ -56,11 +56,6 @@ func amountValue(s string) string {
 		}
 		integer = strings.Join(groups, "")
 	}
-	for _, r := range integer {
-		if !digit(r) {
-			return ""
-		}
-	}
 	integer = strings.TrimLeft(integer, "0")
 	if integer == "" {
 		integer = "0"
@@ -197,10 +192,10 @@ func suffixCurrencies(rs []rune, i int, classes []string) (int, []string) {
 	for {
 		start := skipSpace(rs, i)
 		end, code := currencyAt(rs, start)
-		if code == "" {
-			break
-		}
-		if end < len(rs) && !digit(rs[end]) && !unicode.IsSpace(rs[end]) && !unicode.Is(unicode.Sc, rs[end]) && !completeTokenTail(rs, end) {
+		next := skipSpace(rs, end)
+		if code == "" ||
+			next < len(rs) && (digit(rs[next]) || strings.ContainsRune("+-−±.", rs[next]) && next+1 < len(rs) && (digit(rs[next+1]) || rs[next+1] == '.' && next+2 < len(rs) && digit(rs[next+2]))) ||
+			end < len(rs) && !digit(rs[end]) && !unicode.IsSpace(rs[end]) && !unicode.Is(unicode.Sc, rs[end]) && !completeTokenTail(rs, end) {
 			break
 		}
 		classes = append(classes, code)

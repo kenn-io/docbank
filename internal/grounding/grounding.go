@@ -7,8 +7,6 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
-
-	"github.com/yuin/goldmark/util"
 )
 
 type Citation struct{ Text, Err, TextSHA256 string }
@@ -62,10 +60,6 @@ func trim(rs []rune) string {
 	return strings.TrimRightFunc(string(rs[trimStart(rs):]), edge)
 }
 
-func extract(text string) []string {
-	return extractDecoded(string(util.UnescapePunctuations([]byte(text))))
-}
-
 func extractDecoded(text string) []string {
 	figures := []string{}
 	for _, token := range strings.FieldsFunc(text, split) {
@@ -95,10 +89,10 @@ func (a Answer) Check(citations []Citation) Report {
 		status := c.Err
 		if status == "" {
 			status = "resolved"
-			for _, literal := range extract(c.Text) {
-				values[figureKey{"", literal}] = true
-			}
 			for _, figure := range normalizedFigures(c.Text) {
+				for _, literal := range extractDecoded(figure.text) {
+					values[figureKey{"", literal}] = true
+				}
 				if figure.value != "" {
 					values[figureKey{figure.kind, figure.value}] = true
 				}

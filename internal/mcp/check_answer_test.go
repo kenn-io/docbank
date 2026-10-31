@@ -52,6 +52,9 @@ func TestCheckAnswerRetainedNormalization(t *testing.T) {
 		{"text/plain", "Price: $40\n\n205 units", "Price: $40\n\n205 units", "$40", "grounded"},
 		{"text/plain", "USD 40 2026-03-15", "USD 40 2026-03-15", "$40 on March 15, 2026", "grounded"},
 		{"text/plain", wideDate, wideDate, "March 15, 2026", "grounded"},
+		{"text/plain", "USD 40\nCAD 30", "USD 40\nCAD 30", "$40 C$30", "grounded"},
+		{"text/plain", "2026-03-15", "2026-03-15", "March\u202815,\u20282026", "grounded"},
+		{"text/plain", "2026-03-15", "2026-03-15", "15\u2009March\u20092026", "grounded"},
 		{"text/plain", "$1,250.00", "$1,250.00", "$1,250", "grounded"},
 	} {
 		t.Run(tc.answer+"/"+tc.quote, func(t *testing.T) {

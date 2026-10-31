@@ -48,19 +48,6 @@ var literalMatchCases = []struct {
 	{"assignment delimiters", "5 and 6", "x=5;y=6", "grounded", "found", []string{"5", "6"}, []int{}},
 }
 
-func TestLiteralMatchInvariant(t *testing.T) {
-	for _, tc := range literalMatchCases {
-		if tc.status != "grounded" {
-			continue
-		}
-		t.Run(tc.name, func(t *testing.T) {
-			answer, err := Prepare(tc.answer)
-			require.NoError(t, err)
-			require.Equal(t, "grounded", answer.Check([]Citation{{Text: tc.source}}).Status)
-		})
-	}
-}
-
 func TestGrounding(t *testing.T) {
 	for _, tc := range literalMatchCases {
 		t.Run(tc.name, func(t *testing.T) {
