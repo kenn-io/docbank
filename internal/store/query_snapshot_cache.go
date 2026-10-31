@@ -481,6 +481,10 @@ func (s *QuerySnapshotService) page(
 	if err != nil {
 		return SnapshotPage{}, err
 	}
+	return s.cachedPage(owner, cursor, &cached)
+}
+
+func (s *QuerySnapshotService) cachedPage(owner, cursor string, cached *cachedQuerySnapshot) (SnapshotPage, error) {
 	payload, err := s.decodeCursor(owner, cursor)
 	if err != nil {
 		return SnapshotPage{}, err
@@ -489,13 +493,13 @@ func (s *QuerySnapshotService) page(
 	if err := json.Unmarshal(cached.metadata, &metadata); err != nil {
 		return SnapshotPage{}, fmt.Errorf("decoding cached query snapshot metadata: %w", err)
 	}
-	if payload.SnapshotID != snapshotID || payload.QueryFingerprint != metadata.QueryFingerprint ||
+	if payload.SnapshotID != cached.id || payload.QueryFingerprint != metadata.QueryFingerprint ||
 		payload.SortField != metadata.Query.Sort.Field || payload.SortDirection != metadata.Query.Sort.Direction ||
 		payload.PageSize != metadata.PageSize || payload.Offset < 0 || payload.Offset >= int64(len(cached.rows)) ||
 		payload.Offset%int64(metadata.PageSize) != 0 {
 		return SnapshotPage{}, ErrSnapshotCursor
 	}
-	return s.renderPage(&cached, payload.Offset)
+	return s.renderPage(cached, payload.Offset)
 }
 
 func (s *QuerySnapshotService) validatePhotoSnapshotPage(ctx context.Context, page SnapshotPage) error {
@@ -1028,10 +1032,13 @@ func (s *QuerySnapshotService) PhotoPage(ctx context.Context, owner, id, cursor 
 	if fingerprint != first.QueryFingerprint || coverage != first.Coverage || request.PageSize != first.PageSize || request.PhotoProjection != first.PhotoProjection {
 		return SnapshotPage{}, ErrSnapshotCursor
 	}
-	if cursor == "" {
-		return s.FirstPage(ctx, owner, id)
+	if err := ctx.Err(); err != nil {
+		return SnapshotPage{}, err
 	}
-	return s.page(ctx, owner, id, cursor)
+	if cursor == "" {
+		return s.renderPage(&cached, 0)
+	}
+	return s.cachedPage(owner, cursor, &cached)
 }
 
 func (s *Store) currentPhotoRowsTx(ctx context.Context, tx metadataQuerier, members []SnapshotMember, recipes map[string]string) ([]PhotoBrowseRow, error) {
