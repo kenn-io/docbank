@@ -642,11 +642,17 @@ func TestFuseReciprocalRankCollapsesCopiesOfOneDisplayedPhotoWithinLane(t *testi
 	duplicate := DocumentIdentity{VaultID: "vault", NodeID: 8, ContentVersionID: "version-dng"}
 	semanticOnly := DocumentIdentity{VaultID: "vault", NodeID: 9, ContentVersionID: "version-semantic"}
 	results, truncated, err := FuseReciprocalRank([]Candidate{
-		{Document: original, Lane: LaneLexical, Rank: 1, Path: "/original/photo.jpg", photoBlobHash: displayHash},
-		{Document: duplicate, Lane: LaneLexical, Rank: 2, Path: "/copy/photo.jpg", photoBlobHash: displayHash},
+		{Document: original, Lane: LaneLexical, Rank: 1, Path: "/original/photo.jpg", photoBlobHash: displayHash,
+			Evidence: []EvidenceReference{{Kind: "node_name", NodeID: 7}}},
+		{Document: duplicate, Lane: LaneLexical, Rank: 2, Path: "/copy/photo.jpg", photoBlobHash: displayHash,
+			Evidence: []EvidenceReference{{Kind: "node_name", NodeID: 8}}},
 	}, []Candidate{
 		{Document: semanticOnly, Lane: LaneSemantic, Rank: 1, VectorSpaceID: "space",
 			photoBlobHash: photoFusionBlob(scope, strings.Repeat("b", 64))},
+		{Document: duplicate, Lane: LaneSemantic, Rank: 2, VectorSpaceID: "space", photoBlobHash: displayHash,
+			Evidence: []EvidenceReference{{Kind: "embedding", NodeID: 8, VectorSpaceID: "space"}}},
+		{Document: original, Lane: LaneSemantic, Rank: 3, VectorSpaceID: "space", photoBlobHash: displayHash,
+			Evidence: []EvidenceReference{{Kind: "embedding", NodeID: 7, VectorSpaceID: "space"}}},
 	}, 2)
 	require.NoError(t, err)
 	assert.False(t, truncated)
@@ -654,7 +660,12 @@ func TestFuseReciprocalRankCollapsesCopiesOfOneDisplayedPhotoWithinLane(t *testi
 	assert.Equal(t, original, results[0].Document)
 	assert.Equal(t, "/original/photo.jpg", results[0].Path)
 	assert.Equal(t, 1, results[0].LexicalRank)
-	assert.InDelta(t, 1.0/61.0, results[0].Score, 1e-12)
+	assert.Equal(t, 2, results[0].SemanticRank)
+	assert.InDelta(t, 1.0/61.0+1.0/62.0, results[0].Score, 1e-12)
+	assert.Equal(t, []EvidenceReference{
+		{Kind: "node_name", NodeID: 7},
+		{Kind: "embedding", NodeID: 8, VectorSpaceID: "space"},
+	}, results[0].Evidence)
 	assert.Equal(t, semanticOnly, results[1].Document)
 	assert.Equal(t, 1, results[1].SemanticRank)
 }

@@ -96,11 +96,10 @@ func addLane(results map[fusionIdentity]*Result, candidates []Candidate, lane La
 		if result == nil {
 			result = &Result{Document: candidate.Document, Path: candidate.Path}
 			results[key] = result
-		} else if result.Path == "" {
-			// Lanes read on either side of query encoding can see a concurrent
-			// move. Keep the first lane's path; hybrid revalidation refreshes it.
-			result.Path = candidate.Path
+		} else if lane == LaneLexical && result.LexicalRank != 0 || lane == LaneSemantic && result.SemanticRank != 0 {
+			continue
 		}
+		result.Path = cmp.Or(result.Path, candidate.Path)
 		addCandidateContribution(result, candidate, lane)
 		result.Evidence = append(result.Evidence, candidate.Evidence...)
 	}
