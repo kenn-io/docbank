@@ -169,6 +169,13 @@ func (s *Store) bootstrapTx(incarnation *metadataProcessingIncarnation) error {
 		if _, err := tx.Exec(schemaSQL); err != nil {
 			return fmt.Errorf("applying schema: %w", err)
 		}
+		epoch, err := newUUIDv4()
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`INSERT INTO vault_change_head(singleton,epoch) VALUES(1,$1) ON CONFLICT(singleton) DO NOTHING`, epoch); err != nil {
+			return err
+		}
 		if err := initializeDocumentPeopleState(context.Background(), tx); err != nil {
 			return fmt.Errorf("initializing document people state: %w", err)
 		}

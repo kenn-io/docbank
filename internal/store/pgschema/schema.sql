@@ -2172,6 +2172,17 @@ CREATE INDEX derivative_purge_suppressions_active_source
     ON {{schema}}.derivative_purge_suppressions(source_sha256, profile_fingerprint)
     WHERE active = 1;
 
+CREATE TABLE IF NOT EXISTS {{schema}}.vault_change_head (
+    singleton BIGINT PRIMARY KEY,
+    epoch TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS {{schema}}.vault_changes (
+    seq BIGINT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    node_id BIGINT NOT NULL,
+    node_revision BIGINT NOT NULL
+);
+
 -- Derived event catalogs invalidated by provenance changes.
 CREATE TABLE {{schema}}.document_event_state (
     singleton BIGINT PRIMARY KEY, contract_version TEXT COLLATE "C" NOT NULL,

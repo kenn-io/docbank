@@ -131,9 +131,10 @@ func (s *Store) PublishSourceMetadata(
 		if err := insertPhotoTechnicalMetadataTx(ctx, tx, generation.GenerationID, photoFields); err != nil {
 			return fmt.Errorf("recording photo technical metadata: %w", err)
 		}
-		var activeGeneration string
-		headErr := tx.QueryRowContext(ctx, `SELECT generation_id FROM source_metadata_heads
-			WHERE source_sha256=?`, sourceSHA256).Scan(&activeGeneration)
+		var activeGeneration, activeChecksum string
+		headErr := tx.QueryRowContext(ctx, `SELECT h.generation_id,g.checksum FROM source_metadata_heads h
+			JOIN source_metadata_generations g ON g.generation_id=h.generation_id
+			WHERE h.source_sha256=?`, sourceSHA256).Scan(&activeGeneration, &activeChecksum)
 		if headErr != nil && !errors.Is(headErr, sql.ErrNoRows) {
 			return fmt.Errorf("reading active source metadata head: %w", headErr)
 		}
@@ -165,8 +166,13 @@ func (s *Store) PublishSourceMetadata(
 		if err := rows.Close(); err != nil {
 			return err
 		}
-		_, err = s.invalidateDocumentEventsForVersionsTx(ctx, tx, versionIDs)
-		return err
+		if _, err = s.invalidateDocumentEventsForVersionsTx(ctx, tx, versionIDs); err != nil {
+			return err
+		}
+		if activeChecksum == generation.Checksum {
+			return nil
+		}
+		return recordProcessedTx(ctx, tx, "", sourceSHA256)
 	})
 	return generation, err
 }

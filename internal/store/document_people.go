@@ -517,7 +517,7 @@ func (s *Store) PublishDocumentPeople(ctx context.Context, p DocumentPeoplePubli
 				return err
 			}
 		}
-		changed, err := documentPeopleHeadChangedTx(ctx, tx, p, generationID, state)
+		changed, outputChanged, err := documentPeopleHeadChangedTx(ctx, tx, p, generationID, checksum, state)
 		if err != nil {
 			return err
 		}
@@ -547,6 +547,11 @@ func (s *Store) PublishDocumentPeople(ctx context.Context, p DocumentPeoplePubli
 				return err
 			}
 		}
+		if outputChanged {
+			if err := recordProcessedTx(ctx, tx, p.People.ContentVersionID, ""); err != nil {
+				return err
+			}
+		}
 		var scanErr error
 		head, scanErr = documentPeopleHeadTx(ctx, tx, p.People.ContentVersionID)
 		return scanErr
@@ -571,17 +576,19 @@ func checkPeoplePublicationFence(ctx context.Context, tx *sql.Tx, p DocumentPeop
 	return nil
 }
 
-func documentPeopleHeadChangedTx(ctx context.Context, tx *sql.Tx, p DocumentPeoplePublication, generationID, state string) (bool, error) {
+func documentPeopleHeadChangedTx(ctx context.Context, tx *sql.Tx, p DocumentPeoplePublication, generationID, checksum, state string) (changed, outputChanged bool, err error) {
 	var h DocumentPeopleHead
-	err := tx.QueryRowContext(ctx, `SELECT content_version_id,event_generation_id,generation_id,inputs_sha256,resolver_fingerprint,binding_epoch,node_revision,edge_count,state,failure_reason,published_at FROM document_people_heads WHERE content_version_id=?`, p.People.ContentVersionID).
-		Scan(&h.ContentVersionID, &h.EventGenerationID, &h.GenerationID, &h.InputsSHA256, &h.ResolverFingerprint, &h.BindingEpoch, &h.NodeRevision, &h.EdgeCount, &h.State, &h.FailureReason, &h.PublishedAt)
+	var storedChecksum string
+	err = tx.QueryRowContext(ctx, `SELECT h.content_version_id,h.event_generation_id,h.generation_id,h.inputs_sha256,h.resolver_fingerprint,h.binding_epoch,h.node_revision,h.edge_count,h.state,h.failure_reason,h.published_at,COALESCE(g.checksum,'')
+		FROM document_people_heads h LEFT JOIN document_people_generations g ON g.generation_id=h.generation_id WHERE h.content_version_id=?`, p.People.ContentVersionID).
+		Scan(&h.ContentVersionID, &h.EventGenerationID, &h.GenerationID, &h.InputsSHA256, &h.ResolverFingerprint, &h.BindingEpoch, &h.NodeRevision, &h.EdgeCount, &h.State, &h.FailureReason, &h.PublishedAt, &storedChecksum)
 	if errors.Is(err, sql.ErrNoRows) {
-		return true, nil
+		return true, true, nil
 	}
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
-	return h.GenerationID != generationID || h.InputsSHA256 != p.InputsSHA256 || h.ResolverFingerprint != p.ResolverFingerprint || h.BindingEpoch != p.BindingEpoch || h.NodeRevision != p.NodeRevision || h.State != state || h.FailureReason != "" || h.EdgeCount != int64(len(p.People.Edges)), nil
+	return h.GenerationID != generationID || h.InputsSHA256 != p.InputsSHA256 || h.ResolverFingerprint != p.ResolverFingerprint || h.BindingEpoch != p.BindingEpoch || h.NodeRevision != p.NodeRevision || h.State != state || h.FailureReason != "" || h.EdgeCount != int64(len(p.People.Edges)), storedChecksum != checksum || h.State != state, nil
 }
 
 func invalidateDocumentPeopleForVersionsTx(ctx context.Context, tx *sql.Tx, versionIDs []string) error {

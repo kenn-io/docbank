@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -144,6 +146,8 @@ func TestEmailSupersededBeforeBodyPublication(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	f := newEmailFixture(t, s, "message.eml")
+	_, cursor, err := s.VaultChanges(t.Context(), "", 500)
+	require.NoError(t, err)
 	first, err := s.PublishEmailGeneration(t.Context(), f.publication)
 	require.NoError(t, err)
 	require.Equal(t, "pending", first.BodySearch.State)
@@ -161,6 +165,15 @@ func TestEmailSupersededBeforeBodyPublication(t *testing.T) {
 	reselected, err := s.PublishEmailGeneration(t.Context(), f.publication)
 	require.NoError(t, err)
 	require.Equal(t, "pending", reselected.BodySearch.State)
+	_, err = s.PublishEmailGeneration(t.Context(), f.publication)
+	require.NoError(t, err)
+	changes, _, err := s.VaultChanges(t.Context(), cursor, 500)
+	require.NoError(t, err)
+	require.Len(t, changes, 3, "initial selection, changed head, and reselection; retry is silent")
+	for _, change := range changes {
+		require.Equal(t, "processed", change.Kind)
+		require.Equal(t, first.Version.NodeID, change.NodeID)
+	}
 }
 
 func TestEmailPublicationRejectsInvalidAuthorityAtomically(t *testing.T) {
@@ -267,4 +280,41 @@ func TestEmailMissingStatesAndDeterministicRefusal(t *testing.T) {
 	_, err = s.EmailPart(t.Context(), n.CurrentVersionID, v.Generation.ID, "1", "raw_headers")
 	require.ErrorIs(t, err, ErrEmailPartUnavailable)
 	require.NoError(t, s.ValidateMetadata(t.Context()))
+}
+
+func TestEmailPDFAttachmentNotifiesOnce(t *testing.T) {
+	t.Parallel()
+	s, _ := newRenditionCatalogFixture(t)
+	f := newEmailFixture(t, s, "message.eml")
+	view, err := s.PublishEmailGeneration(t.Context(), f.publication)
+	require.NoError(t, err)
+	profile := catalogProcessingProfileWith(t, false, func(p *document.ProcessingProfileV1) {
+		*p, err = document.EmailPDFProfile(document.EmailPDFBindingV1{GenerationID: view.Generation.ID, GenerationChecksum: view.Generation.Checksum,
+			Recipe: document.EmailPDFRecipeV1{Contract: document.EmailPDFContract, RendererVersion: "synthetic-v1", RendererSHA256: fakeHash("a1"), WorkerSHA256: fakeHash("a2"), BubblewrapSHA256: fakeHash("a3"), FontsSHA256: fakeHash("a4"), Paper: "A4"}})
+		require.NoError(t, err)
+	})
+	pdf := catalogRenditionBuild(s, profile)
+	pdf.ID, pdf.SourceSHA256, pdf.Completeness = fakeHash("b5"), view.Version.BlobHash, document.EvidenceDegradedProvenance
+	pdf.Units, pdf.LexicalSegments = nil, nil
+	pdf.CapturedArtifactPolicy = jsontext.Value(`{"roles":[{"max_count":1,"min_count":1,"role":"email_pdf"},{"max_count":1,"min_count":1,"role":"normalized_evidence"},{"max_count":1,"min_count":1,"role":"sanitized_markdown"}],"version":1}`)
+	pdf.CapturedArtifactPolicyFingerprint = testSHA256(pdf.CapturedArtifactPolicy)
+	pdf.Artifacts = append(pdf.Artifacts, RenditionArtifactRecord{ID: "artifact_" + fakeHash("23"), Role: string(document.EvidenceArtifactPDF), BlobHash: catalogEvidenceBlobHash, Size: int64(len(catalogBlobContents[catalogEvidenceBlobHash])), Checksum: catalogEvidenceBlobHash, State: RenditionArtifactVerified})
+	pdf.DeclaredArtifactCount = len(pdf.Artifacts)
+	path, body := emailSelectedBody(view.Evidence)
+	require.NotNil(t, body)
+	pdf.ProviderReceipt, err = json.Marshal(document.RenditionReceipt{ProviderID: document.EmailPDFContract, SourceSHA256: pdf.SourceSHA256, RenditionRequestFingerprint: profile.RenditionRequestFingerprint,
+		EmailPDF: &document.EmailPDFOutputV1{BodyPath: *path, BodySHA256: body.SHA256, BodySize: body.Size, PDFSHA256: catalogEvidenceBlobHash, PDFSize: int64(len(catalogBlobContents[catalogEvidenceBlobHash])), Pages: 1}})
+	require.NoError(t, err)
+	require.NoError(t, s.StageRenditionBuild(t.Context(), pdf))
+	attachment := RenditionAttachmentRecord{ID: fakeHash("b6"), VaultID: s.VaultID(), ContentVersionID: view.Version.ID, BuildID: pdf.ID, Profile: profile, AttachedAt: nowRFC3339()}
+	_, cursor, err := s.VaultChanges(t.Context(), "", 500)
+	require.NoError(t, err)
+	for range 2 {
+		require.NoError(t, publishAttachmentForTest(t, s, attachment))
+	}
+	changes, _, err := s.VaultChanges(t.Context(), cursor, 500)
+	require.NoError(t, err)
+	require.Len(t, changes, 1)
+	require.Equal(t, "processed", changes[0].Kind)
+	require.Equal(t, view.Version.NodeID, changes[0].NodeID)
 }

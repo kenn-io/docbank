@@ -198,8 +198,8 @@ func (s *Store) publishDocumentEventsTx(
 		return DocumentEventGeneration{}, err
 	}
 
-	changed, err := documentEventHeadChanged(ctx, tx, target.ContentVersionID,
-		generation.GenerationID, target.InputEpoch)
+	changed, outputChanged, err := documentEventHeadChanged(ctx, tx, target.ContentVersionID,
+		generation.GenerationID, generation.Checksum, target.InputEpoch)
 	if err != nil {
 		return DocumentEventGeneration{}, err
 	}
@@ -216,6 +216,11 @@ func (s *Store) publishDocumentEventsTx(
 		if _, err := tx.ExecContext(ctx, `UPDATE document_event_state SET
 			publication_epoch=publication_epoch+1,updated_at=? WHERE singleton=1`, publishedAt); err != nil {
 			return DocumentEventGeneration{}, fmt.Errorf("advancing document event publication epoch: %w", err)
+		}
+	}
+	if outputChanged {
+		if err := recordProcessedTx(ctx, tx, target.ContentVersionID, ""); err != nil {
+			return DocumentEventGeneration{}, err
 		}
 	}
 	if err := recordDocumentEventAttemptTx(ctx, tx, target, inputsSHA256, "indexed", diagnostics); err != nil {
@@ -331,20 +336,21 @@ func documentEventBool(value bool) int {
 func documentEventHeadChanged(
 	ctx context.Context,
 	tx *sql.Tx,
-	versionID, generationID string,
+	versionID, generationID, checksum string,
 	inputEpoch int64,
-) (bool, error) {
-	var storedGeneration string
+) (changed, outputChanged bool, err error) {
+	var storedGeneration, storedChecksum string
 	var storedEpoch int64
-	err := tx.QueryRowContext(ctx, `SELECT generation_id,input_epoch FROM document_event_heads
-		WHERE content_version_id=?`, versionID).Scan(&storedGeneration, &storedEpoch)
+	err = tx.QueryRowContext(ctx, `SELECT h.generation_id,h.input_epoch,g.checksum
+		FROM document_event_heads h JOIN document_event_generations g ON g.generation_id=h.generation_id
+		WHERE h.content_version_id=?`, versionID).Scan(&storedGeneration, &storedEpoch, &storedChecksum)
 	if errors.Is(err, sql.ErrNoRows) {
-		return true, nil
+		return true, true, nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("reading document event head: %w", err)
+		return false, false, fmt.Errorf("reading document event head: %w", err)
 	}
-	return storedGeneration != generationID || storedEpoch != inputEpoch, nil
+	return storedGeneration != generationID || storedEpoch != inputEpoch, storedChecksum != checksum, nil
 }
 
 // DocumentEventsForVersion returns the selected canonical event record and

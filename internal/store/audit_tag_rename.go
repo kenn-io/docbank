@@ -61,6 +61,10 @@ func touchAuditedTagDefinitionNodesTx(
 	// Revisions cover every assigned node. modified_at is changed only where the
 	// scoped mutation commits the operation timestamp; the allocation-only form
 	// deliberately has no timestamp from which replay could derive that field.
+	ids, err := tagAssignmentNodeIDsTx(context.Background(), tx, tagID)
+	if err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`UPDATE nodes SET revision=revision+1
 		WHERE id IN (SELECT node_id FROM node_tags WHERE tag_id=?)`, tagID); err != nil {
 		return fmt.Errorf("advancing nodes assigned tag %s: %w", tagID, err)
@@ -72,7 +76,7 @@ func touchAuditedTagDefinitionNodesTx(
 			return fmt.Errorf("recording audited tag rename on node %d: %w", node.ID, err)
 		}
 	}
-	return nil
+	return recordVaultChangesTx(context.Background(), tx, "tagged", ids...)
 }
 
 func auditedTaggedNodesTx(

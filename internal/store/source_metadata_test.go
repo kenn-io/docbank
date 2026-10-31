@@ -63,7 +63,9 @@ func TestSourceMetadataRepublicationSelectsRecordedGeneration(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
 	sourceSHA256 := fakeHash("a1")
-	_, err := s.CreateFile(ctx, s.RootID(), "source-a.pdf", sourceSHA256, 1, "application/pdf")
+	node, err := s.CreateFile(ctx, s.RootID(), "source-a.pdf", sourceSHA256, 1, "application/pdf")
+	require.NoError(t, err)
+	_, before, err := s.VaultChanges(ctx, "", 500)
 	require.NoError(t, err)
 	metadataA := document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1,
 		Fields: []document.SourceMetadataFieldV1{{Key: "title", Namespace: "pdf.info", SourceField: "Title",
@@ -90,6 +92,18 @@ func TestSourceMetadataRepublicationSelectsRecordedGeneration(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, generationB.GenerationID, currentRetry.GenerationID)
 
+	// New extractor identity still selects a head, but identical facts stay silent.
+	_, unchangedCursor, err := s.VaultChanges(ctx, before, 500)
+	require.NoError(t, err)
+	fingerprintOnly, err := s.PublishSourceMetadata(ctx, sourceSHA256, fakeHash("f3"), canonicalB)
+	require.NoError(t, err)
+	active, _, err = s.ActiveSourceMetadata(ctx, sourceSHA256)
+	require.NoError(t, err)
+	require.Equal(t, fingerprintOnly.GenerationID, active.GenerationID)
+	unchanged, _, err := s.VaultChanges(ctx, unchangedCursor, 500)
+	require.NoError(t, err)
+	require.Empty(t, unchanged)
+
 	replayed, err := s.PublishSourceMetadata(ctx, sourceSHA256, fakeHash("f1"), canonicalA)
 	require.NoError(t, err)
 	assert.Equal(t, generationA.GenerationID, replayed.GenerationID)
@@ -101,7 +115,14 @@ func TestSourceMetadataRepublicationSelectsRecordedGeneration(t *testing.T) {
 	var generationCount int
 	require.NoError(t, s.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM source_metadata_generations WHERE source_sha256=?`, sourceSHA256).Scan(&generationCount))
-	assert.Equal(t, 2, generationCount)
+	assert.Equal(t, 3, generationCount)
+	changes, _, err := s.VaultChanges(ctx, before, 500)
+	require.NoError(t, err)
+	require.Len(t, changes, 3) // A, B, then A again.
+	for _, change := range changes {
+		require.Equal(t, "processed", change.Kind)
+		require.Equal(t, node.ID, change.NodeID)
+	}
 }
 
 func TestSourceMetadataHeadAppearsWhenMissingForRecordedEvidence(t *testing.T) {

@@ -2292,6 +2292,43 @@ func TestRecordExtractionRejectsSameVersionFailureAfterSuccess(t *testing.T) {
 	require.Len(t, hits, 1)
 }
 
+func TestRecordExtractionNotifiesCurrentLiveNodesOnce(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	hash := fakeHash("aa")
+	first, err := s.CreateFile(ctx, s.RootID(), "stable.txt", hash, 10, "text/plain")
+	require.NoError(t, err)
+	second, err := s.CreateFile(ctx, s.RootID(), "shared.txt", hash, 10, "text/plain")
+	require.NoError(t, err)
+	historical, err := s.CreateFile(ctx, s.RootID(), "historical.txt", hash, 10, "text/plain")
+	require.NoError(t, err)
+	_, _, err = s.ReplaceContent(ctx, historical.ID, historical.Revision, fakeHash("bb"), 10, "text/plain")
+	require.NoError(t, err)
+	trashed, err := s.CreateFile(ctx, s.RootID(), "trashed.txt", hash, 10, "text/plain")
+	require.NoError(t, err)
+	_, _, err = s.Trash(ctx, trashed.ID, trashed.Revision)
+	require.NoError(t, err)
+	_, cursor, err := s.VaultChanges(ctx, "", 500)
+	require.NoError(t, err)
+	require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{
+		BlobHash: hash, Extractor: "plain-text", ExtractorVersion: 1,
+		Status: ExtractionOK, Text: "stable-extraction-authority",
+	}))
+	changes, cursor, err := s.VaultChanges(ctx, cursor, 500)
+	require.NoError(t, err)
+	require.Len(t, changes, 2)
+	require.Equal(t, []int64{first.ID, second.ID}, []int64{changes[0].NodeID, changes[1].NodeID})
+	require.Equal(t, "processed", changes[0].Kind)
+	require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{
+		BlobHash: hash, Extractor: "plain-text", ExtractorVersion: 1,
+		Status: ExtractionOK, Text: "stable-extraction-authority",
+	}))
+	changes, _, err = s.VaultChanges(ctx, cursor, 500)
+	require.NoError(t, err)
+	require.Empty(t, changes)
+}
+
 // Mutation caught: accepting a newer plain-text result after legacy authority
 // publication can replace the portable version-1 source without a compatible
 // rendition transition.

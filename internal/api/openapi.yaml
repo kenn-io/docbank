@@ -6793,6 +6793,8 @@ components:
           $ref: "#/components/schemas/BackupPruneReport"
         code:
           type: string
+        cursor:
+          type: string
         detail:
           type: string
         errors:
@@ -22928,6 +22930,40 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Preview tentative Bates labels without stamping or reserving
+  /api/v1/changes:
+    get:
+      operationId: vaultChanges
+      parameters:
+        - in: query
+          name: after
+          schema:
+            type: string
+        - in: query
+          name: follow
+          schema:
+            type: boolean
+      responses:
+        "200":
+          content:
+            application/x-ndjson:
+              schema:
+                type: string
+          description: NDJSON change records followed by a terminal result or error
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Invalid or expired cursor
+        "410":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Invalid or expired cursor
+      summary: Read resumable vault changes
+      tags:
+        - Changes
   /api/v1/collections:
     get:
       description: Counts and bytes describe current live members. Empty runs remain directly accessible only when they retain label authority.
@@ -23878,6 +23914,8 @@ paths:
                   backup_prune:
                     $ref: "#/components/schemas/BackupPruneReport"
                   code:
+                    type: string
+                  cursor:
                     type: string
                   detail:
                     type: string

@@ -147,14 +147,18 @@ func publishPhotoSuggestionTx(ctx context.Context, tx *sql.Tx, version, producer
 			return err
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE photo_suggestions SET producer_fingerprint=?,caption=?,tags_json=?,visible_text=?,awaiting=0 WHERE id=?`, producer, description.Caption, string(tags), description.VisibleText, awaiting)
+	} else {
+		var id string
+		id, err = newUUIDv4()
+		if err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO photo_suggestions(suggestion_id,content_version_id,producer_fingerprint,caption,tags_json,visible_text,created_at) VALUES(?,?,?,?,?,?,?)`, id, version, producer, description.Caption, string(tags), description.VisibleText, at.UTC().Format(timestampLayout))
+	}
+	if err != nil || description.Caption == "" && len(description.Tags) == 0 && description.VisibleText == "" {
 		return err
 	}
-	id, err := newUUIDv4()
-	if err != nil {
-		return err
-	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO photo_suggestions(suggestion_id,content_version_id,producer_fingerprint,caption,tags_json,visible_text,created_at) VALUES(?,?,?,?,?,?,?)`, id, version, producer, description.Caption, string(tags), description.VisibleText, at.UTC().Format(timestampLayout))
-	return err
+	return recordProcessedTx(ctx, tx, version, "")
 }
 
 // normalizePhotoDescription gives tags their stored NFC identity and drops duplicates.

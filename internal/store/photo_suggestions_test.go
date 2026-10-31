@@ -769,8 +769,15 @@ func TestPhotoDescriptionJobPublishesOneSuggestionAndSettles(t *testing.T) {
 	grantRenditionJobConsent(t, s, request)
 	at := time.Now().UTC().Add(time.Minute)
 	_, _, claim := startPhotoDescription(t, s, request, at)
+	_, before, err := s.VaultChanges(ctx, "", 500)
+	require.NoError(t, err)
 	publication, err := s.PublishPhotoDescription(ctx, claim, photoDescriptionResult("A harbor."), at)
 	require.NoError(t, err)
+	changes, _, err := s.VaultChanges(ctx, before, 500)
+	require.NoError(t, err)
+	require.Len(t, changes, 1)
+	require.Equal(t, "processed", changes[0].Kind)
+	require.Equal(t, node.ID, changes[0].NodeID)
 	require.Equal(t, 1, publication.PublishedWaiterCount)
 	require.Equal(t, "A harbor.", photoSuggestionValues(t, s, asset.ID)[0].Value.Caption)
 	require.NoError(t, s.ValidateMetadata(ctx))
@@ -783,19 +790,30 @@ func TestPhotoDescriptionJobPublishesOneSuggestionAndSettles(t *testing.T) {
 	_, err = s.PublishPhotoDescription(ctx, claim, nil, at)
 	require.ErrorIs(t, err, ErrInvalidPhotoDescriptionResult)
 
-	// An empty answer publishes no text but still settles the version.
-	empty := albumAsset(t, s, "empty.jpg")
-	emptyNode, err := s.NodeByID(ctx, empty.Files[0].NodeID)
-	require.NoError(t, err)
-	emptyRequest := photoDescriptionJobRequest(t, s, emptyNode.CurrentVersionID, producerB, false)
-	grantRenditionJobConsent(t, s, emptyRequest)
-	_, _, claim = startPhotoDescription(t, s, emptyRequest, at)
-	_, err = s.PublishPhotoDescription(ctx, claim, photoDescriptionResult(""), at)
-	require.NoError(t, err)
-	require.Empty(t, photoSuggestionValues(t, s, empty.ID))
-	settled, err := s.photoDescriptionSettled(ctx, emptyNode.CurrentVersionID, producerB, false)
-	require.NoError(t, err)
-	require.True(t, settled, "an empty answer still settles the version")
+	for _, caption := range []string{"", "Owned"} {
+		// Empty and fully owned answers settle the version without announcing text.
+		empty := albumAsset(t, s, "empty-"+caption+".jpg")
+		emptyNode, err := s.NodeByID(ctx, empty.Files[0].NodeID)
+		require.NoError(t, err)
+		emptyRequest := photoDescriptionJobRequest(t, s, emptyNode.CurrentVersionID, producerB, false)
+		grantRenditionJobConsent(t, s, emptyRequest)
+		_, _, claim = startPhotoDescription(t, s, emptyRequest, at)
+		if caption == "Owned" {
+			_, err = s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: preparedPhotoTargets(ctx, t, s, PhotoSetSelection{AssetIDs: []string{empty.ID}}), Patch: PhotoAuthoredPatch{Caption: new(caption)}})
+			require.NoError(t, err)
+		}
+		_, before, err = s.VaultChanges(ctx, "", 500)
+		require.NoError(t, err)
+		_, err = s.PublishPhotoDescription(ctx, claim, photoDescriptionResult(caption), at)
+		require.NoError(t, err)
+		require.Empty(t, photoSuggestionValues(t, s, empty.ID))
+		changes, _, err = s.VaultChanges(ctx, before, 500)
+		require.NoError(t, err)
+		require.Empty(t, changes)
+		settled, err := s.photoDescriptionSettled(ctx, emptyNode.CurrentVersionID, producerB, false)
+		require.NoError(t, err)
+		require.True(t, settled, "empty and fully owned answers settle the version")
+	}
 }
 
 func TestPhotoDescriptionJobIsNeitherDocumentProcessingNorRebuildingCoverage(t *testing.T) {

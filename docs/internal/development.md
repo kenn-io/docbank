@@ -287,6 +287,7 @@ GRANT UPDATE(operation_sequence_high_water, allocation_entry_count, allocation_h
     ON documents.audit_authority TO docbank_runtime;
 GRANT UPDATE(entry_count, chain_head) ON documents.audit_scopes TO docbank_runtime;
 GRANT SELECT, UPDATE(high_water) ON documents.node_allocation TO docbank_runtime;
+GRANT SELECT, INSERT, DELETE ON documents.vault_changes TO docbank_runtime;
 GRANT SELECT, INSERT, DELETE ON documents.photo_xmp_unsettled TO docbank_runtime;
 GRANT INSERT, UPDATE ON documents.blob_locations TO docbank_runtime;
 GRANT DELETE ON documents.blob_pack_entries, documents.rendition_blob_staging,
