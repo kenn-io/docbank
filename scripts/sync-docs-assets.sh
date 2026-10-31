@@ -92,7 +92,7 @@ unset GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_NAMESPACE
 
 git_repo="$scratch/repository.git"
 git init --bare --quiet "$git_repo"
-git -C "$git_repo" fetch --quiet --depth=1 "$remote" "$asset_ref"
+${DOWNLOAD_RETRY:-} git -C "$git_repo" fetch --quiet --depth=1 "$remote" "$asset_ref"
 fetched="$(git -C "$git_repo" rev-parse 'FETCH_HEAD^{commit}')"
 if [[ "$fetched" != "$asset_ref" ]]; then
   printf 'fetched docs asset commit differs from pinned ref\n' >&2

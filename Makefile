@@ -169,9 +169,9 @@ docs-assets-test:
 	bash scripts/docs-assets-sync.test.sh
 
 docs-assets-sync:
-	$(DOWNLOAD_RETRY) ./scripts/sync-docs-assets.sh
+	./scripts/sync-docs-assets.sh
 
-docs-build: bridge-contract docs-subpath-test docs-assets-sync
+docs-build: bridge-contract docs-subpath-test
 	node scripts/docs/build.mjs
 
 docs-serve:
