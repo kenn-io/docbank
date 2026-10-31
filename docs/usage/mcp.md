@@ -436,7 +436,7 @@ The first matching rule determines the verdict:
 - `ungrounded`: an unknown marker or a missing figure with all citations resolved. Example: `30` against cited `20`.
 - `incomplete`: any citation is unavailable. Example: one of two saved citations can no longer be read.
 - `no_figures`: the answer has no figures. Example: `The invoice is attached.`
-- `grounded`: every figure occurs in the cited text. Example: `200` against cited `1 200`.
+- `grounded`: every figure has a literal or normalized match in the cited text. Example: `March 15, 2026` against cited `2026-03-15`.
 
 Other resolver failures return tool errors.
 Results include figures, unknown marker indexes, citation
@@ -445,7 +445,7 @@ statuses, and text digests, with private cache scope and zero TTL.
 - Reported figures keep their spelling. A recognized date or amount can span words, so `March 15, 2026` appears as one figure in the result. Literal comparison keeps case, signs before digits or currency symbols, and decimal points. Example: `-.5` differs from `.5`. Edge punctuation before an ISO code is trimmed for literal comparison, so `-USD5` matches `USD5`.
 - Identifiers and ordinary numbers keep their spelling. Examples: `12-AB` differs from `12-ab`, and `5.00` differs from `5`.
 - Dates accept `YYYY-MM-DD`, `Month D, YYYY`, and `D Month YYYY`, with Unicode whitespace between words. English months can use full names, three-letter abbreviations, or `Sept` and `Sept.`. Timestamps and invalid dates compare literally.
-- Amounts accept `$`, `€`, or `£` before a number, or an uppercase ISO currency code before or after it, spaced or attached. These symbols mean USD, EUR, and GBP. Commas group three digits, and a decimal point accepts one or two fractional digits. Leading and trailing zeros normalize, so `$1,250`, `USD 1250.00`, and `1,250 USD` match.
+- Amounts accept `$`, `€`, or `£` before a number, or an uppercase ISO currency code before or after it, spaced or attached. Codes such as `ALL` count as currency markers even when they could be ordinary words. These symbols mean USD, EUR, and GBP. Commas group three digits, and a decimal point accepts one or two fractional digits. Leading and trailing zeros normalize, so `$1,250`, `USD 1250.00`, and `1,250 USD` match.
 - Signed amounts and amounts with multiple currency markers compare literally. For example, `-USD5.00` supplies no normalized match for `$5`, and neither `CAD $40` nor `$40 CAD` supplies one for `USD40`. A bare marker after an amount remains available to the next parse, so `40USD 30CAD` supplies matches for `$40` and `CAD30`.
 - Numbered-list numbers count as figures. Example: `1.` contributes `1`.
 - Literal matches can also ground different date or currency labels. For example, `June 5, 2026` against `July 5, 2026`, or `USD 40` against `EUR 40`, grounds because the digit-containing tokens match. Use `$40` against `EUR 40` or `March 16, 2026` against `2026-03-15` for examples that report `missing`.

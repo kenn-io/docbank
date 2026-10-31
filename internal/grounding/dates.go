@@ -1,9 +1,7 @@
 package grounding
 
 import (
-	"fmt"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -40,41 +38,40 @@ func dateAt(rs []rune) (int, string) {
 		if m == nil {
 			continue
 		}
-		num := func(s string) int { v, _ := strconv.Atoi(s); return v }
-		var y, month, day int
-		switch kind {
-		case 0:
-			y, month, day = num(m[1]), num(m[2]), num(m[3])
-		case 1:
-			y, month, day = num(m[3]), englishMonth(m[1]), num(m[2])
-		case 2:
-			y, month, day = num(m[3]), englishMonth(m[2]), num(m[1])
-		}
-		if month == 0 {
-			continue
+		value, layout := m[0], time.DateOnly
+		if kind != 0 {
+			month, day := m[1], m[2]
+			if kind == 2 {
+				month, day = m[2], m[1]
+			}
+			month = englishMonth(month)
+			if month == "" {
+				continue
+			}
+			value, layout = m[3]+"-"+month+"-"+day, "2006-Jan-2"
 		}
 		end := len([]rune(m[0]))
-		date := time.Date(y, time.Month(month), day, 0, 0, 0, 0, time.UTC)
-		if y < 1 || date.Year() != y || int(date.Month()) != month || date.Day() != day {
+		date, err := time.Parse(layout, value)
+		if err != nil || date.Year() < 1 {
 			return end, ""
 		}
-		return end, fmt.Sprintf("%04d-%02d-%02d", y, month, day)
+		return end, date.Format(time.DateOnly)
 	}
 	return 0, ""
 }
 
-func englishMonth(s string) int {
+func englishMonth(s string) string {
 	s = strings.ToLower(s)
 	if strings.HasSuffix(s, ".") {
 		if len(s) != 4 && s != "sept." {
-			return 0
+			return ""
 		}
 		s = strings.TrimSuffix(s, ".")
 	}
-	for i, month := range []string{"january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"} {
+	for _, month := range []string{"january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"} {
 		if s == month || s == month[:3] || s == "sept" && month == "september" {
-			return i + 1
+			return month[:3]
 		}
 	}
-	return 0
+	return ""
 }
