@@ -3538,6 +3538,39 @@ it("retains accepted Meaning matches and selection while live refresh hydrates t
   photos.dispose();
 });
 
+it.each(["semantic", "hybrid"] as const)(
+  "keeps the %s snapshot, captured membership, and Select all when Burst gap changes",
+  async (mode) => {
+    let changed = false;
+    vi.spyOn(api, "listPhotoAssets").mockImplementation(async (request) => {
+      const accepted = !changed || request.snapshot_id === "accepted";
+      return {
+        items: accepted ? [photo(2), photo(1)] : [photo(3), photo(1)],
+        total: 2,
+        facets: [],
+        relevance_available: true,
+        snapshot_id: accepted ? "accepted" : "replacement",
+      };
+    });
+    vi.spyOn(api, "getPhotoSettings").mockResolvedValue({ revision: 1, burst_gap_seconds: 2 });
+    vi.spyOn(api, "setPhotoSettings").mockResolvedValue({ revision: 2, burst_gap_seconds: 5 });
+    const photos = new Photos("scoped", vi.fn(), false, {
+      ...photoQuery,
+      mode,
+      text: "sunset",
+    });
+    await photos.loadMore();
+    await photos.selectAllResults();
+    changed = true;
+    await photos.setBurstGap(5);
+    expect(photos.snapshotID).toBe("accepted");
+    expect(photos.items.map((row) => row.asset_id)).toEqual(["photo-2", "photo-1"]);
+    expect([...photos.selectedIDs]).toEqual(["photo-2", "photo-1"]);
+    expect(photos.allResults).toBe(true);
+    photos.dispose();
+  },
+);
+
 it("continues a metadata fallback with the captured query", async () => {
   const mode = "semantic";
   const read = vi.spyOn(api, "listPhotoAssets").mockImplementation(async (request) => ({

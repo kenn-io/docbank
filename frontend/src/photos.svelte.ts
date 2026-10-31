@@ -1714,7 +1714,7 @@ export class Photos {
     this.authFailure(cause);
     return cause instanceof Error ? cause.message : String(cause);
   }
-  async setBurstGap(gap: number, preserve?: () => (() => Promise<void>) | undefined) {
+  async setBurstGap(gap: number) {
     if (gap < 1 || gap > 30 || !Number.isInteger(gap)) {
       this.actionError = "burst gap must be a whole number of seconds from 1 to 30";
       return;
@@ -1730,7 +1730,7 @@ export class Photos {
       );
       this.burstGapSeconds = next.burst_gap_seconds;
       this.expandedStacks = new Set();
-      await this.refresh(preserve);
+      await this.refreshAfterChange();
     } catch (cause) {
       this.actionError = this.burstFailure(cause);
     }
