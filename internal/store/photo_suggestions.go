@@ -48,15 +48,15 @@ var photoRotationConfirmedSQL = `EXISTS(SELECT 1 FROM content_versions v JOIN ph
 // photoSuggestionSettledSQL keeps automatic work settled once a row exists.
 // Explicit work refreshes unresolved rotation or dismissed text. Restored pending
 // fields still regenerate unless this producer was dismissed on that version.
-// A restored row with dismissed text waits only for rotation, so it settles
-// once the owner confirms the rotation.
+// A restored row with dismissed or settled text waits only for rotation, so it
+// settles once the owner confirms the rotation.
 func photoSuggestionSettledSQL(version, producer string, explicit bool) string {
 	filter := ""
 	if explicit {
 		filter = ` AND (s.producer_fingerprint=` + producer + ` OR (NOT s.dismissed AND ` + photoRotationConfirmedSQL + `))`
 	}
 	return `(EXISTS(SELECT 1 FROM photo_suggestions s WHERE s.content_version_id=` + version + filter + `)
- AND (NOT EXISTS(SELECT 1 FROM photo_suggestions s WHERE s.content_version_id=` + version + ` AND s.awaiting AND NOT (s.dismissed AND ` + photoRotationConfirmedSQL + `))
+ AND (NOT EXISTS(SELECT 1 FROM photo_suggestions s WHERE s.content_version_id=` + version + ` AND s.awaiting AND NOT ((s.dismissed OR s.text_settled) AND ` + photoRotationConfirmedSQL + `))
   OR EXISTS(SELECT 1 FROM photo_suggestions s WHERE s.content_version_id=` + version + ` AND s.dismissed AND NOT s.awaiting AND s.producer_fingerprint=` + producer + `)))`
 }
 
@@ -142,9 +142,9 @@ func publishPhotoSuggestionTx(ctx context.Context, tx *sql.Tx, version, producer
 		return err
 	}
 	var awaiting int64
-	var captionResolved, dismissed bool
+	var captionResolved, dismissed, settledText bool
 	var resolvedJSON, owner string
-	err := tx.QueryRowContext(ctx, `SELECT id,caption_resolved,dismissed,resolved_tags_json,producer_fingerprint FROM photo_suggestions WHERE content_version_id=? AND awaiting ORDER BY producer_fingerprint=? DESC,id LIMIT 1`, version, producer).Scan(&awaiting, &captionResolved, &dismissed, &resolvedJSON, &owner)
+	err := tx.QueryRowContext(ctx, `SELECT id,caption_resolved,dismissed,text_settled,resolved_tags_json,producer_fingerprint FROM photo_suggestions WHERE content_version_id=? AND awaiting ORDER BY producer_fingerprint=? DESC,id LIMIT 1`, version, producer).Scan(&awaiting, &captionResolved, &dismissed, &settledText, &resolvedJSON, &owner)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
@@ -163,7 +163,7 @@ func publishPhotoSuggestionTx(ctx context.Context, tx *sql.Tx, version, producer
 			return err
 		}
 	}
-	if dismissed {
+	if dismissed || settledText {
 		description.Caption, description.Tags, description.VisibleText = "", []string{}, ""
 	}
 	if captionResolved {

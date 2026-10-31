@@ -15,17 +15,18 @@ import (
 // repeated restores. An awaiting row regenerates after restore and fills only
 // the fields this record leaves open. A description with nothing pending is
 // restored settled. A dismissed row may still await a rotation answer; its
-// regenerated caption and tags stay dismissed. A row whose text the owner
-// accepted in full exports as dismissed, so only its rotation regenerates.
+// regenerated caption and tags stay dismissed. TextSettled marks a row with no
+// text left to decide that was not dismissed, so it regenerates only rotation.
 type metadataPhotoSuggestion struct {
 	Type                string   `json:"type"`
 	ID                  string   `json:"suggestion_id" db:"suggestion_id"`
 	ContentVersionID    string   `json:"content_version_id" db:"content_version_id"`
 	ProducerFingerprint string   `json:"producer_fingerprint" db:"producer_fingerprint"`
-	Dismissed           bool     `json:"dismissed" db:"dismissed OR ((caption_resolved OR resolved_tags_json<>'[]') AND awaiting=0 AND caption='' AND tags_json='[]' AND visible_text='')"`
+	Dismissed           bool     `json:"dismissed" db:"dismissed"`
 	CaptionResolved     bool     `json:"caption_resolved" db:"caption_resolved"`
 	ResolvedTags        []string `json:"resolved_tags" db:"resolved_tags_json,json"`
 	Awaiting            bool     `json:"awaiting" db:"awaiting=1 OR (rotation IS NOT NULL AND rotation>0 AND NOT EXISTS(SELECT 1 FROM content_versions v JOIN photo_files f ON f.node_id=v.node_id WHERE v.version_id=photo_suggestions.content_version_id AND (f.confirmed_fields & confirmed_rotation)<>0)) OR caption<>'' OR tags_json<>'[]' OR visible_text<>''"`
+	TextSettled         bool     `json:"text_settled" db:"text_settled=1 OR (dismissed=0 AND awaiting=0 AND caption='' AND tags_json='[]' AND visible_text='')"`
 	CreatedAt           string   `json:"created_at" db:"created_at"`
 }
 
@@ -51,7 +52,7 @@ func validatePhotoSuggestionMetadata(value metadataPhotoSuggestion) error {
 }
 
 func insertPhotoSuggestionMetadata(ctx context.Context, tx *sql.Tx, value metadataPhotoSuggestion) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO photo_suggestions(suggestion_id,content_version_id,producer_fingerprint,dismissed,caption_resolved,resolved_tags_json,awaiting,created_at) VALUES(?,?,?,?,?,?,?,?)`,
-		value.ID, value.ContentVersionID, value.ProducerFingerprint, value.Dismissed, value.CaptionResolved, mustCatalogJSON(value.ResolvedTags), value.Awaiting, value.CreatedAt)
+	_, err := tx.ExecContext(ctx, `INSERT INTO photo_suggestions(suggestion_id,content_version_id,producer_fingerprint,dismissed,caption_resolved,resolved_tags_json,awaiting,text_settled,created_at) VALUES(?,?,?,?,?,?,?,?,?)`,
+		value.ID, value.ContentVersionID, value.ProducerFingerprint, value.Dismissed, value.CaptionResolved, mustCatalogJSON(value.ResolvedTags), value.Awaiting, value.TextSettled, value.CreatedAt)
 	return err
 }
