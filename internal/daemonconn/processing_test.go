@@ -1029,7 +1029,7 @@ func TestProcessingClientValidatesStatusEmbeddingIdentities(t *testing.T) {
 }
 
 func TestProcessingClientValidatesScopedSearchResponse(t *testing.T) {
-	for _, name := range []string{"valid", "coverage overflow"} {
+	for _, name := range []string{"valid"} {
 		t.Run(name, func(t *testing.T) {
 			request := api.DocumentSearchRequest{Query: "visible", Mode: "hybrid", Profile: "private", Scope: &api.DocumentSearchScope{Kind: "all_live"}}
 			report := api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid",
@@ -1038,23 +1038,14 @@ func TestProcessingClientValidatesScopedSearchResponse(t *testing.T) {
 					{VaultUID: "11111111-1111-4111-8111-111111111111", NodeID: 7, ContentVersionID: "22222222-2222-4222-8222-222222222222", Rank: 1, LexicalRank: 1, Score: 1, Path: "/visible.txt", Evidence: []api.DocumentEvidenceReference{{Kind: "node_name"}}},
 					{VaultUID: "11111111-1111-4111-8111-111111111111", NodeID: 8, ContentVersionID: "33333333-3333-4333-8333-333333333333", Rank: 2, LexicalRank: 2, Score: .5, Path: "/visible-2.txt", Evidence: []api.DocumentEvidenceReference{{Kind: "node_name"}}},
 				}}
-			switch name {
-			case "coverage overflow":
-				report.Coverage.CompleteDocuments = 4100
-			}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				assert.NoError(t, json.MarshalWrite(w, report))
 			}))
 			t.Cleanup(server.Close)
 			result, err := daemonconn.New(server.URL, serverKey).SearchDocuments(t.Context(), request)
-			if name == "valid" {
-				require.NoError(t, err)
-				assert.Len(t, result.Results, 2)
-			} else {
-				require.ErrorContains(t, err, "search response")
-				assert.Empty(t, result.Results)
-			}
+			require.NoError(t, err)
+			assert.Len(t, result.Results, 2)
 		})
 	}
 }

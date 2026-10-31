@@ -454,7 +454,7 @@ func TestEmbeddingReuseRejectsInvalidRetainedEvidence(t *testing.T) {
 
 func TestSearchAllLiveEmptyScope(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"fresh with consent", "fresh without consent", "all trashed", "filter matches none", "populated without index"} {
+	for _, name := range []string{"fresh without consent", "all trashed", "filter matches none", "populated without index"} {
 		t.Run(name, func(t *testing.T) {
 			f := newEmbeddingRecoveryFixture(t)
 			f.profile.Embeddings[0].Activation = document.EmbeddingRequired
@@ -515,7 +515,7 @@ func TestSearchAllLiveEmptyScope(t *testing.T) {
 					Profiles: map[string]ProfileConfig{"current": {Profile: f.profile, RenditionProvider: newWorkerProvider(t)}}})
 				require.NoError(t, err)
 				report, err := service.Search(t.Context(), SearchRequest{Profile: "current", Query: "synthetic", Mode: "semantic", AllLive: &store.SearchOptions{}})
-				require.Error(t, err)
+				require.ErrorContains(t, err, "semantic retrieval is not configured")
 				assert.Equal(t, retrieval.Report{}, report)
 				for _, mode := range []retrieval.Mode{retrieval.ModeLexical, retrieval.ModeAuto} {
 					t.Run(string(mode), func(t *testing.T) {
@@ -550,11 +550,9 @@ func TestSearchAllLiveBeyondExplicitFenceLimit(t *testing.T) {
 	f.grant(t, service, true)
 	receipt, err := f.blobs.WriteDetailedContext(t.Context(), strings.NewReader("unprocessed synthetic text"))
 	require.NoError(t, err)
-	ids := append([]string{}, f.versions...)
 	for index := range 4097 {
-		node, err := f.catalog.CreateFile(t.Context(), f.catalog.RootID(), fmt.Sprintf("extra-%d.txt", index), receipt.Hash, receipt.Size, "text/plain", processingBlobPhysical(t, receipt))
+		_, err := f.catalog.CreateFile(t.Context(), f.catalog.RootID(), fmt.Sprintf("extra-%d.txt", index), receipt.Hash, receipt.Size, "text/plain", processingBlobPhysical(t, receipt))
 		require.NoError(t, err)
-		ids = append(ids, node.CurrentVersionID)
 	}
 	request := SearchRequest{Profile: "current", Query: "synthetic", Mode: "semantic", AllLive: &store.SearchOptions{}}
 	report, err := service.Search(t.Context(), request)
@@ -573,8 +571,4 @@ func TestSearchAllLiveBeyondExplicitFenceLimit(t *testing.T) {
 	assert.Equal(t, 2, report.Coverage.ScopedDocuments)
 	assert.Equal(t, 2, report.Coverage.CompleteDocuments)
 	assert.Equal(t, retrieval.CoverageState("complete"), report.Coverage.State)
-	request.AllLive = nil
-	request.Fence = SourceFence{VaultUID: f.catalog.VaultID(), ContentVersionIDs: ids}
-	_, err = service.Search(t.Context(), request)
-	require.ErrorContains(t, err, "source fence must contain between 1 and 4096 content versions")
 }

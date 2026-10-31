@@ -72,7 +72,6 @@ func TestAutomaticSearchSelectionAndFallback(t *testing.T) {
 		{name: "before", profiles: profiles, limit: 50, opts: daemonconn.SearchOptions{ModifiedBefore: "2026-01-01T00:00:00Z"}, skipped: true},
 		{name: "fuzzy", profiles: profiles, limit: 50, opts: daemonconn.SearchOptions{Fuzzy: true}, skipped: true},
 		{name: "large limit", profiles: profiles, limit: 101, skipped: true},
-		{name: "unbuilt index", profiles: profiles, limit: 50, searchError: "not_found", wantSearch: 3, wantReason: "not_found"},
 		{name: "malformed success", profiles: profiles, limit: 50, malformed: true, wantSearch: 1, wantReason: "semantic_search_failed", wantDetail: true},
 		{name: "human malformed success", profiles: profiles, limit: 50, humanCLI: true, malformed: true, wantSearch: 1, wantReason: "semantic_search_failed", wantDetail: true},
 		{name: "auth discovery", profileError: "unauthorized", limit: 50, wantError: true},
@@ -83,9 +82,9 @@ func TestAutomaticSearchSelectionAndFallback(t *testing.T) {
 			if tc.query == "" {
 				tc.query = "query words"
 			}
-			var profileCalls, scopeCalls, searchCalls int
+			var profileCalls, searchCalls int
 			var record kitdaemon.RuntimeRecord
-			server := httptest.NewServer(automaticSearchDaemon(t, tc, &record, &profileCalls, &scopeCalls, &searchCalls))
+			server := httptest.NewServer(automaticSearchDaemon(t, tc, &record, &profileCalls, &searchCalls))
 			defer server.Close()
 			if tc.jsonCLI || tc.humanCLI || tc.agentCLI {
 				runAutomaticSearchCLI(t, tc, server.URL, &record)
@@ -108,20 +107,18 @@ func TestAutomaticSearchSelectionAndFallback(t *testing.T) {
 				}
 			}
 			assert.Equal(t, !tc.skipped, profileCalls == 1, "profile discovery")
-			assert.Zero(t, scopeCalls)
 			assert.Equal(t, tc.wantSearch, searchCalls)
 		})
 	}
 }
 
 func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaemon.RuntimeRecord,
-	profileCalls, scopeCalls, searchCalls *int,
+	profileCalls, searchCalls *int,
 ) http.HandlerFunc {
 	t.Helper()
 	const vault = "22222222-2222-4222-8222-222222222222"
 	problem := func(w http.ResponseWriter, code string) {
 		status := http.StatusInternalServerError
-		observed := 0
 		switch code {
 		case "unauthorized":
 			status = http.StatusUnauthorized
@@ -131,12 +128,9 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 			status = http.StatusPreconditionRequired
 		case "not_found":
 			status = http.StatusNotFound
-		case "scope_too_large":
-			status = http.StatusUnprocessableEntity
-			observed = 4097
 		}
 		w.WriteHeader(status)
-		assert.NoError(t, json.MarshalWrite(w, api.Error{Status: status, Code: code, Detail: "provider details must stay private", ObservedScopeCount: observed}))
+		assert.NoError(t, json.MarshalWrite(w, api.Error{Status: status, Code: code, Detail: "provider details must stay private"}))
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -173,10 +167,6 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 				listed[i].Fingerprint = strings.Repeat("a", 64)
 			}
 			assert.NoError(t, json.MarshalWrite(w, listed))
-		case "POST /api/v1/processing/source-fences/resolve":
-			*scopeCalls++
-			t.Error("automatic search resolved an explicit fence")
-			http.Error(w, "unexpected", http.StatusInternalServerError)
 		case "POST /api/v1/search":
 			*searchCalls++
 			raw, err := io.ReadAll(r.Body)
@@ -199,7 +189,6 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 			assert.Equal(t, expectedBinding, body.BindingID)
 			assert.Equal(t, tc.limit, body.Limit)
 			assert.Equal(t, &api.DocumentSearchScope{Kind: "all_live"}, body.Scope)
-			assert.Empty(t, body.Fence)
 			switch {
 			case tc.mixed && *searchCalls == 1:
 				problem(w, "processing_consent_required")

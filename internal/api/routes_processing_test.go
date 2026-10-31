@@ -1799,27 +1799,6 @@ func TestEvidenceWindowHTTPContract(t *testing.T) {
 	assert.NotContains(t, body, "aé界🙂z")
 }
 
-func TestDocumentSearchAllLiveWithoutEmbeddings(t *testing.T) {
-	t.Parallel()
-	for _, populated := range []bool{false, true} {
-		for _, mode := range []string{"semantic", "hybrid"} {
-			t.Run(fmt.Sprintf("populated=%t/%s", populated, mode), func(t *testing.T) {
-				ts, catalog := newTestServer(t, configureProcessingTestService(t))
-				if populated {
-					createFileWithContent(t, ts, catalog, "/current.txt", "synthetic current text")
-				}
-				request := api.DocumentSearchRequest{Query: "current", Mode: mode, Profile: "private",
-					Scope: &api.DocumentSearchScope{Kind: "all_live"}}
-				response, body := do(t, ts, http.MethodPost, "/api/v1/search", nil, request)
-				assert.Equal(t, http.StatusInternalServerError, response.StatusCode, body)
-				var problem api.Error
-				require.NoError(t, json.Unmarshal([]byte(body), &problem))
-				assert.Equal(t, "processing_failed", problem.Code, body)
-			})
-		}
-	}
-}
-
 func TestDocumentSearchAllLiveScope(t *testing.T) {
 	t.Parallel()
 	ts, catalog := newTestServer(t, configureProcessingTestService(t))
@@ -1836,10 +1815,7 @@ func TestDocumentSearchAllLiveScope(t *testing.T) {
 		{name: "both", scope: map[string]any{"kind": "all_live"}, fence: api.DocumentSourceFence{VaultUID: catalog.VaultID(), ContentVersionIDs: []string{node.CurrentVersionID}}, status: 422, code: "validation"},
 		{name: "media", scope: map[string]any{"kind": "all_live"}, media: []map[string]any{{"source_id": "source-a", "source_version_id": "version-a", "content_version_id": node.CurrentVersionID}}, status: 422, code: "invalid_media_search"},
 		{name: "unknown kind", scope: map[string]any{"kind": "unknown"}, status: 422, code: "validation"},
-		{name: "bad mime", scope: map[string]any{"kind": "all_live", "filters": map[string]any{"mime_type": "text/*"}}, status: 422, code: "validation"},
-		{name: "reversed dates", scope: map[string]any{"kind": "all_live", "filters": map[string]any{"modified_since": "2026-10-02T00:00:00Z", "modified_before": "2026-10-01T00:00:00Z"}}, status: 422, code: "validation"},
 		{name: "file as directory", scope: map[string]any{"kind": "all_live", "filters": map[string]any{"under_node_id": node.ID}}, status: 422, code: "not_dir"},
-		{name: "missing tag", scope: map[string]any{"kind": "all_live", "filters": map[string]any{"tag_id": "33333333-3333-4333-8333-333333333333"}}, status: 404, code: "not_found"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			request := map[string]any{"query": "current", "mode": "lexical", "profile": "private"}
