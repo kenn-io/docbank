@@ -236,17 +236,38 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
         await page.unroute("**/api/v1/redaction/previews", intercept);
       }
     }
-    const created = page.waitForResponse(
-      (r) =>
-        new URL(r.url()).pathname === "/api/v1/redaction/previews" &&
-        r.request().method() === "POST",
-    );
+    const createPreview = async (): Promise<RedactionPreview> => {
+      // Capture the real reply before forwarding it; Chromium can discard its response body.
+      const url = "**/api/v1/redaction/previews";
+      let body: Buffer | undefined;
+      const capture = async (route: Route) => {
+        if (route.request().method() !== "POST") return route.continue();
+        const response = await route.fetch();
+        try {
+          body = await response.body();
+          await route.fulfill({ response, body });
+        } finally {
+          await response.dispose();
+        }
+      };
+      await page.route(url, capture);
+      try {
+        const created = page.waitForResponse(
+          (r) =>
+            new URL(r.url()).pathname === "/api/v1/redaction/previews" &&
+            r.request().method() === "POST",
+        );
+        await drawer.getByRole("button", { name: "Preview redaction", exact: true }).click();
+        expect((await created).status()).toBe(201);
+        expect(body).toBeDefined();
+        return JSON.parse(body!.toString());
+      } finally {
+        await page.unroute(url, capture);
+      }
+    };
     // The daemon owns expiry; a fast browser clock must not forget a live preview.
     await page.clock.setFixedTime(new Date(Date.now() + 60 * 60 * 1000));
-    await drawer.getByRole("button", { name: "Preview redaction", exact: true }).click();
-    const response = await created;
-    expect(response.status()).toBe(201);
-    let preview: RedactionPreview = await response.json();
+    let preview = await createPreview();
     await expect(
       drawer.getByRole("img", { name: "Verified redacted page 1 of two-pages.pdf" }),
     ).toBeVisible({ timeout: 60000 });
@@ -285,15 +306,7 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
         .evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0),
     ).toBe(true);
     await expect(drawer.getByRole("button", { name: "Remove", exact: true })).toHaveCount(2);
-    const recreated = page.waitForResponse(
-      (r) =>
-        new URL(r.url()).pathname === "/api/v1/redaction/previews" &&
-        r.request().method() === "POST",
-    );
-    await drawer.getByRole("button", { name: "Preview redaction", exact: true }).click();
-    const second = await recreated;
-    expect(second.status()).toBe(201);
-    preview = await second.json();
+    preview = await createPreview();
     await expect(
       drawer.getByRole("img", { name: "Verified redacted page 2 of two-pages.pdf" }),
     ).toBeVisible();
