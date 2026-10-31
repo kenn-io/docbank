@@ -1203,7 +1203,8 @@ func TestPhotoRotationRestoreKeepsAcceptedTextSettled(t *testing.T) {
 		name     string
 		producer string
 		explicit bool
-	}{{"automatic publish", producerA, false}, {"explicit publish by B", producerB, true}} {
+		rotation *int
+	}{{"automatic publish", producerA, false, new(270)}, {"explicit publish by B", producerB, true, new(270)}, {"uncertain explicit publish by B", producerB, true, nil}} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := newTestStore(t)
 			asset := albumAsset(t, s, "landscape.jpg")
@@ -1217,10 +1218,17 @@ func TestPhotoRotationRestoreKeepsAcceptedTextSettled(t *testing.T) {
 
 			restored := restorePhotoSuggestionStore(t, s)
 			require.Empty(t, photoSuggestionValues(t, restored, asset.ID))
-			publishPhotoDescription(t, restored, asset, tc.producer, tc.explicit, document.PhotoDescription{Caption: "A forest.", Tags: []string{"forest"}, VisibleText: "NEW TEXT", Rotation: new(270)})
+			publishPhotoDescription(t, restored, asset, tc.producer, tc.explicit, document.PhotoDescription{Caption: "A forest.", Tags: []string{"forest"}, VisibleText: "NEW TEXT", Rotation: tc.rotation})
 			suggestions := photoSuggestionValues(t, restored, asset.ID)
+			if tc.rotation == nil {
+				require.Empty(t, suggestions, "uncertainty keeps accepted text settled")
+				settled, err := restored.photoDescriptionSettled(t.Context(), proposals[0].ContentVersionID, producerB, true)
+				require.NoError(t, err)
+				require.False(t, settled, "another explicit B request must call the provider to retry rotation")
+				return
+			}
 			require.Len(t, suggestions, 1, "refreshing rotation keeps accepted text settled")
-			require.Equal(t, new(270), suggestions[0].Rotation)
+			require.Equal(t, tc.rotation, suggestions[0].Rotation)
 			require.Empty(t, suggestions[0].Value.Caption)
 			require.Empty(t, suggestions[0].Value.Tags)
 			require.Empty(t, suggestions[0].Value.VisibleText)

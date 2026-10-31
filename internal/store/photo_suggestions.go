@@ -175,11 +175,10 @@ func publishPhotoSuggestionTx(ctx context.Context, tx *sql.Tx, version, producer
 		return err
 	}
 	if awaiting != 0 {
-		// A dismissed row regenerates only its rotation, so the dismissal stays
-		// with the producer whose text the owner dismissed. Otherwise the restored
-		// row now belongs to the producer that regenerated it, and an older row of
-		// that producer is superseded by the owner's decisions it holds.
-		if !dismissed {
+		// Rotation-only regeneration preserves the original text producer.
+		// Otherwise the regenerated text supersedes that producer's older row
+		// while retaining the owner's restored decisions.
+		if !dismissed && !settledText {
 			owner = producer
 			if _, err := tx.ExecContext(ctx, `DELETE FROM photo_suggestions WHERE content_version_id=? AND producer_fingerprint=? AND id<>?`, version, producer, awaiting); err != nil {
 				return err
