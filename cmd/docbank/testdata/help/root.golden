@@ -1,5 +1,5 @@
 Docbank keeps documents in a local vault: a virtual folder tree (/cases/a.pdf)
-over immutable, hash-verified content versions. A background daemon owns the
+over immutable, hash-verified content versions. A daemon owns the
 vault; data commands start it automatically ("docbank daemon stop" ends it).
 
 DOCBANK_HOME selects the vault (default ~/.docbank); the first data command
@@ -29,6 +29,7 @@ Usage:
 
 Documents:
   add  Import files or directory trees into the vault
+  cards  Manage cards
   cat  Print a file's original bytes to stdout
   edit  Edit a file through a new immutable content version
   get  Download one file with end-to-end verification
