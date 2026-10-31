@@ -168,25 +168,42 @@ func TestPhotoBestShotsFailedEnrichmentPublishesNothing(t *testing.T) {
 }
 func TestPhotoBestShotsConfirmedWinner(t *testing.T) {
 	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	ids := burstPhotos(t, s, 3)
-	seedBestShots(t, s, ids)
-	prep := bestShotPreparation(t, s, ids)
-	winner := prep.Proposals[0].AssetID
-	for _, target := range prep.Targets {
-		if target.AssetID == winner {
-			unflagged, err := s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: []PhotoAuthoredEditTarget{{PhotoAuthoredTargetRevision: target.PhotoAuthoredTargetRevision}}, Patch: PhotoAuthoredPatch{Flag: new("")}})
+	for _, tc := range []struct {
+		name   string
+		target int
+		flag   string
+	}{
+		{"clear winner", 0, ""},
+		{"pick non-winner", 1, "pick"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			ids := burstPhotos(t, s, 3)
+			seedBestShots(t, s, ids)
+			prep := bestShotPreparation(t, s, ids)
+			require.Len(t, prep.Proposals, 3)
+			winner := prep.Targets[0].AssetID
+			require.Equal(t, winner, prep.Proposals[0].AssetID)
+			target := prep.Targets[tc.target]
+			_, err := s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{
+				Targets: []PhotoAuthoredEditTarget{{PhotoAuthoredTargetRevision: target.PhotoAuthoredTargetRevision}},
+				Patch:   PhotoAuthoredPatch{Flag: new(tc.flag)},
+			})
 			require.NoError(t, err)
 			offers := bestShotPreparation(t, s, ids).Proposals
-			require.Len(t, offers, 2)
-			require.Equal(t, "pick", offers[0].Flag)
-			require.NotEqual(t, winner, offers[0].AssetID)
-			_, err = s.UndoPhotoAuthored(ctx, unflagged.ReceiptID)
-			require.NoError(t, err)
-		}
+			if tc.flag == "pick" {
+				require.NotEqual(t, winner, target.AssetID)
+				require.Empty(t, offers)
+			} else {
+				require.Len(t, offers, 2)
+				require.Equal(t, "pick", offers[0].Flag)
+				require.NotEqual(t, winner, offers[0].AssetID)
+			}
+		})
 	}
 }
+
 func TestPhotoBestShotsStaleFaces(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
