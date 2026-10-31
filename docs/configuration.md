@@ -450,7 +450,7 @@ minimum source age, scan interval, and exclusion policy. JSON reports
 as `idle` and an ingesting watcher as `running`. `EXCLUDES` counts both literal
 and glob rules. Use `--json` when an agent needs the separate `exclude` and
 `exclude_patterns` lists. `docbank jobs` and `GET /api/v1/jobs` remain the
-all-task view. While a configured tag is unavailable, its error takes priority
+all-task view. Once a scan finds a configured tag unavailable, its error takes priority
 and the watcher keeps polling, even after a permanent source, destination, or
 read failure. Once tags recover, any remaining permanent failure leaves the
 named job in the failed state and records the reason. Restart the daemon after

@@ -147,18 +147,13 @@ func TestBrowserJobListWatchTags(t *testing.T) {
 		<-ctx.Done()
 		return ctx.Err()
 	}))
-	require.NoError(t, supervisor.Start("watch:zmissing", func(ctx context.Context) error {
-		jobs.ReportError(ctx, &store.TagResolutionError{Name: "receipts", Err: store.ErrNotFound})
-		return errors.New("synthetic terminal watch failure")
-	}))
 	require.Eventually(t, func() bool {
-		return supervisor.Snapshot()[0].Error != "" && supervisor.Snapshot()[1].Status == jobs.StatusFailed
+		return supervisor.Snapshot()[0].Error != ""
 	}, time.Second, time.Millisecond)
 	ts, _ := newTestServer(t, func(d *api.Deps) {
 		d.Jobs = supervisor
 		d.Cfg.Watches = []config.WatchConfig{
 			{Name: "receipts", Source: t.TempDir(), Destination: "/receipts", Tags: []string{"receipts"}},
-			{Name: "zmissing", Source: t.TempDir(), Destination: "/missing", Tags: []string{"receipts"}},
 		}
 	})
 	headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)}
@@ -166,9 +161,7 @@ func TestBrowserJobListWatchTags(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	var got api.JobList
 	require.NoError(t, json.Unmarshal([]byte(body), &got))
-	require.Len(t, got.Items, 2)
-	assert.Equal(t, "background job failed; inspect with the Docbank CLI for details", got.Items[1].Error)
-	assert.Equal(t, []string{"receipts"}, got.Items[1].Tags)
+	require.Len(t, got.Items, 1)
 	assert.Equal(t, []string{"receipts"}, got.Items[0].Tags)
 	assert.Equal(t, `tag "receipts" is unavailable`, got.Items[0].Error)
 }

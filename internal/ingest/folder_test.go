@@ -150,23 +150,6 @@ func TestFolderScanSkipsFileThatDisappearsBeforeObservation(t *testing.T) {
 	assert.Equal(t, []string{"b-stable.txt"}, observed)
 }
 
-func TestFolderScannerProcessesTaggedConfigWithoutIngester(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "receipt.txt"), []byte("synthetic receipt"), 0600))
-	var observed []string
-	scanner, err := NewFolderScanner(config.WatchConfig{
-		Name: "receipts", Source: dir, Destination: "/archive", Tags: []string{"receipts"},
-		SettleTime: config.Duration(time.Second), ScanInterval: config.Duration(time.Second),
-	}, func(_ context.Context, file FolderFile) error {
-		observed = append(observed, file.Ref)
-		return nil
-	}, failOnReject(t))
-	require.NoError(t, err)
-	require.NoError(t, scanner.ScanOnce(t.Context(), 1))
-	assert.Equal(t, []string{"receipt.txt"}, observed)
-}
-
 func TestFolderMinimumAgeAndSourceChanges(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

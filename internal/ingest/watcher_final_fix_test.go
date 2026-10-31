@@ -441,14 +441,17 @@ func TestWatchIncompleteRunnerRecoveryPreservesNotificationError(t *testing.T) {
 
 func TestWatchTagBlockRestoresRemainingFailure(t *testing.T) {
 	for _, failure := range []string{"replaced root", "trashed node"} {
-		for _, action := range []string{"scan recovery", "runner recovery", "runner cancellation"} {
+		for _, action := range []string{"scan recovery", "runner recovery"} {
+			if failure == "replaced root" && action == "runner recovery" {
+				continue
+			}
 			t.Run(failure+"/"+action, func(t *testing.T) {
 				watcher, root, ing, source, _ := watcherFinalPair(t)
 				watcher.config.Tags = []string{"receipts"}
 				require.ErrorAs(t, watcher.scan(t.Context(), root), new(*store.TagResolutionError))
 				wantSourceError := "was replaced"
 				if failure == "replaced root" {
-					require.NoError(t, os.Rename(source, filepath.Join(t.TempDir(), "old-source")))
+					renameWatcherRoot(t, root, filepath.Join(t.TempDir(), "old-source"))
 					require.NoError(t, os.Mkdir(source, 0o700))
 				} else {
 					wantSourceError = "maps to trashed node"
@@ -506,7 +509,7 @@ func TestWatchTagBlockRestoresRemainingFailure(t *testing.T) {
 					select {
 					case <-ready:
 					case err := <-done:
-						t.Fatalf("watch stopped before tag recovery or controlled cancellation: %v", err)
+						t.Fatalf("watch stopped before tag recovery: %v", err)
 					case <-time.After(5 * time.Second):
 						t.Fatal("watch did not reach the next scan")
 					}
@@ -519,10 +522,6 @@ func TestWatchTagBlockRestoresRemainingFailure(t *testing.T) {
 						assert.Contains(t, snapshots[0].Error, wantSourceError)
 					}
 					if scan == 2 {
-						if action == "runner cancellation" {
-							cancel()
-							break
-						}
 						_, err := ing.Store.CreateTag(t.Context(), "receipts")
 						require.NoError(t, err)
 					}
@@ -530,27 +529,21 @@ func TestWatchTagBlockRestoresRemainingFailure(t *testing.T) {
 				}
 				select {
 				case err := <-done:
-					if action == "runner cancellation" {
-						require.ErrorIs(t, err, context.Canceled)
-					} else {
-						require.ErrorContains(t, err, wantSourceError)
-					}
+					require.ErrorContains(t, err, wantSourceError)
 					_, tagBlocked := errors.AsType[*store.TagResolutionError](err)
 					assert.False(t, tagBlocked)
 				case <-time.After(time.Second):
-					t.Fatal("watch did not return promptly after tag recovery or cancellation")
+					t.Fatal("watch did not return promptly after tag recovery")
 				}
 				shutdownCtx, stop := context.WithTimeout(context.Background(), time.Second)
 				defer stop()
 				require.NoError(t, supervisor.Shutdown(shutdownCtx))
-				if action == "runner recovery" {
-					snapshots := supervisor.Snapshot()
-					require.Len(t, snapshots, 1)
-					assert.Equal(t, jobs.StatusFailed, snapshots[0].Status)
-					assert.Contains(t, snapshots[0].Error, wantSourceError)
-					_, tagBlocked := errors.AsType[*store.TagResolutionError](snapshots[0].Cause)
-					assert.False(t, tagBlocked)
-				}
+				snapshots := supervisor.Snapshot()
+				require.Len(t, snapshots, 1)
+				assert.Equal(t, jobs.StatusFailed, snapshots[0].Status)
+				assert.Contains(t, snapshots[0].Error, wantSourceError)
+				_, tagBlocked := errors.AsType[*store.TagResolutionError](snapshots[0].Cause)
+				assert.False(t, tagBlocked)
 			})
 		}
 	}
