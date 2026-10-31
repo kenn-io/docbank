@@ -117,26 +117,26 @@ func (s *Store) TrashPathRevision(
 // trashNodeTx trashes a live node n (pre-checked by the caller) and its live
 // subtree within the caller's transaction.
 func (s *Store) trashNodeTx(ctx context.Context, tx *sql.Tx, n Node, now string) error {
-	removed, trashedIDs := map[string]int64{}, map[int64]struct{}{}
+	removed, trashedNodes := map[string]int64{}, map[int64]Node{}
 	if err := queryRows(ctx, tx, `
 			WITH RECURSIVE subtree(id) AS (
-				SELECT id FROM nodes WHERE id = ?
+				SELECT id FROM nodes WHERE id = $1
 				UNION ALL
 				SELECT n.id FROM nodes n
 				JOIN subtree st ON n.parent_id = st.id
 				WHERE n.trashed_at IS NULL
 			)
-			UPDATE nodes SET trashed_at = ?, revision = revision + 1, modified_at = ?
+			UPDATE nodes SET trashed_at = $2, revision = revision + 1, modified_at = $3
 			WHERE id IN (SELECT id FROM subtree)
-			RETURNING id,(SELECT sidecar_of_file_id FROM photo_files WHERE node_id=nodes.id),
+			RETURNING id,name,parent_id,(SELECT sidecar_of_file_id FROM photo_files WHERE node_id=nodes.id),
 			(SELECT o.node_id FROM photo_files f JOIN photo_files o ON o.file_id=f.sidecar_of_file_id WHERE f.node_id=nodes.id)`, []any{n.ID, now, now}, func(rows *sql.Rows) error {
-		var id int64
+		var node Node
 		var fileID sql.NullString
 		var originalNode sql.NullInt64
-		if err := rows.Scan(&id, &fileID, &originalNode); err != nil {
+		if err := rows.Scan(&node.ID, &node.Name, &node.ParentID, &fileID, &originalNode); err != nil {
 			return err
 		}
-		trashedIDs[id] = struct{}{}
+		trashedNodes[node.ID] = node
 		if fileID.Valid {
 			removed[fileID.String] = originalNode.Int64
 		}
@@ -149,20 +149,42 @@ func (s *Store) trashNodeTx(ctx context.Context, tx *sql.Tx, n Node, now string)
 	// trash root if the original parent were ever hard-deleted). The
 	// origin travels in trash_parent/trash_name; parent_id points at the
 	// tree root because the one_root index forbids a second NULL parent.
-	if _, err := tx.Exec(`UPDATE nodes SET parent_id = ?, trash_parent = ?, trash_name = ? WHERE id = ?`,
+	if _, err := tx.ExecContext(ctx, `UPDATE nodes SET parent_id = $1, trash_parent = $2, trash_name = $3 WHERE id = $4`,
 		s.rootID, *n.ParentID, n.Name, n.ID); err != nil {
 		return fmt.Errorf("recording trash origin of node %d: %w", n.ID, err)
 	}
 	for fileID, originalNode := range removed {
 		// An original trashed in this operation is ineligible, and its restore brings the sidecar back with it.
-		if _, together := trashedIDs[originalNode]; together {
+		if _, together := trashedNodes[originalNode]; together {
 			continue
 		}
-		if err := recordPhotoXMPDetachedTx(ctx, tx, fileID, false); err != nil {
+		if err := s.recordPhotoXMPDetachedTx(ctx, tx, fileID, false); err != nil {
 			return err
 		}
 	}
+	trashedNodes[n.ID] = Node{ID: n.ID, Name: n.Name, ParentID: &s.rootID}
+	if err := s.refreshTrashedNodeWorkTx(ctx, tx, trashedNodes, n); err != nil {
+		return err
+	}
 	return bumpRevisionTx(tx, *n.ParentID, now)
+}
+
+// The mutation returns the names and parents needed for sidecar pairing, so a
+// subtree needs no node-by-node metadata reload. Close its result set first.
+func (s *Store) refreshTrashedNodeWorkTx(ctx context.Context, tx *sql.Tx, nodes map[int64]Node, prior Node) error {
+	if s.postgresSchema == "" {
+		return nil
+	}
+	for id, node := range nodes {
+		var before *Node
+		if id == prior.ID {
+			before = &prior
+		}
+		if err := s.refreshNodePhotoWorkTx(ctx, tx, node, before); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // nextFreeNameTx finds the smallest free suffix candidate among live
@@ -173,8 +195,8 @@ func nextFreeNameTx(ctx context.Context, tx *sql.Tx, parentID int64, name string
 	for n := 1; n <= 2; n++ {
 		candidate := suffixedName(base, ext, n)
 		var one int
-		err := tx.QueryRow(
-			`SELECT 1 FROM nodes WHERE parent_id = ? AND name = ? AND trashed_at IS NULL`,
+		err := tx.QueryRowContext(ctx,
+			`SELECT 1 FROM nodes WHERE parent_id = $1 AND name = $2 AND trashed_at IS NULL`,
 			parentID, candidate).Scan(&one)
 		if errors.Is(err, sql.ErrNoRows) {
 			return candidate, nil
@@ -192,8 +214,8 @@ func nextFreeNameTx(ctx context.Context, tx *sql.Tx, parentID int64, name string
 			UNION ALL
 			SELECT n + 1 FROM candidates
 			WHERE EXISTS (
-				SELECT 1 FROM nodes WHERE parent_id = ? AND trashed_at IS NULL
-				AND name = ? || ' (' || candidates.n || ')' || ?
+				SELECT 1 FROM nodes WHERE parent_id = $1 AND trashed_at IS NULL
+				AND name = $2 || ' (' || candidates.n || ')' || $3
 			)
 		)
 		SELECT MAX(n) FROM candidates`, parentID, base, ext).Scan(&ordinal)
@@ -245,8 +267,8 @@ type restoreTarget struct {
 func (s *Store) restoreTargetTx(ctx context.Context, tx *sql.Tx, node Node) (restoreTarget, error) {
 	var trashParent sql.NullInt64
 	var trashName sql.NullString
-	if err := tx.QueryRow(
-		`SELECT trash_parent, trash_name FROM nodes WHERE id = ?`, node.ID,
+	if err := tx.QueryRowContext(ctx,
+		`SELECT trash_parent, trash_name FROM nodes WHERE id = $1`, node.ID,
 	).Scan(&trashParent, &trashName); err != nil {
 		return restoreTarget{}, fmt.Errorf("reading trash origin of node %d: %w", node.ID, err)
 	}
@@ -272,34 +294,45 @@ func (s *Store) restoreTargetTx(ctx context.Context, tx *sql.Tx, node Node) (res
 }
 
 func (s *Store) restoreNodeTx(
-	tx *sql.Tx, node Node, target restoreTarget, now string,
+	ctx context.Context, tx *sql.Tx, node Node, target restoreTarget, now string,
 ) (Node, error) {
 	// Reattach the top node FIRST — parent, final (possibly re-suffixed)
 	// name, and liveness in one statement. Un-trashing before renaming
 	// would trip the live-sibling unique index whenever the original
 	// name was reused while this node sat in the trash.
-	if _, err := tx.Exec(
-		`UPDATE nodes SET parent_id = ?, name = ?, trashed_at = NULL,
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE nodes SET parent_id = $1, name = $2, trashed_at = NULL,
 		        trash_parent = NULL, trash_name = NULL,
-		        revision = revision + 1, modified_at = ? WHERE id = ?`,
+		        revision = revision + 1, modified_at = $3 WHERE id = $4`,
 		target.destID, target.finalName, now, node.ID); err != nil {
 		return Node{}, fmt.Errorf("reattaching node %d: %w", node.ID, err)
 	}
 	// Then un-trash the descendants that share this operation's stamp.
 	// Their (parent, name) pairs cannot conflict: nothing could be
 	// created under a trashed directory in the interim.
-	if _, err := tx.Exec(`
+	restoredNodes := map[int64]Node{node.ID: {ID: node.ID, Name: target.finalName, ParentID: &target.destID}}
+	if err := queryRows(ctx, tx, `
 		WITH RECURSIVE subtree(id) AS (
-			SELECT id FROM nodes WHERE id = ?
+			SELECT id FROM nodes WHERE id = $1
 			UNION ALL
 			SELECT n.id FROM nodes n
 			JOIN subtree st ON n.parent_id = st.id
-			WHERE n.trashed_at = ?
+			WHERE n.trashed_at = $2
 		)
-		UPDATE nodes SET trashed_at = NULL, revision = revision + 1, modified_at = ?
-		WHERE id IN (SELECT id FROM subtree) AND trashed_at = ?`,
-		node.ID, *node.TrashedAt, now, *node.TrashedAt); err != nil {
+		UPDATE nodes SET trashed_at = NULL, revision = revision + 1, modified_at = $3
+		WHERE id IN (SELECT id FROM subtree) AND trashed_at = $4 RETURNING id,name,parent_id`,
+		[]any{node.ID, *node.TrashedAt, now, *node.TrashedAt}, func(rows *sql.Rows) error {
+			var descendant Node
+			if err := rows.Scan(&descendant.ID, &descendant.Name, &descendant.ParentID); err != nil {
+				return err
+			}
+			restoredNodes[descendant.ID] = descendant
+			return nil
+		}); err != nil {
 		return Node{}, fmt.Errorf("restoring subtree of node %d: %w", node.ID, err)
+	}
+	if err := s.refreshTrashedNodeWorkTx(ctx, tx, restoredNodes, node); err != nil {
+		return Node{}, err
 	}
 	if err := bumpRevisionTx(tx, target.destID, now); err != nil {
 		return Node{}, err
@@ -352,7 +385,7 @@ func (s *Store) TrashedRootsPage(
 		return nil, 0, errors.New("trash offset must not be negative")
 	}
 
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return nil, 0, fmt.Errorf("starting trash snapshot: %w", err)
 	}
@@ -361,7 +394,7 @@ func (s *Store) TrashedRootsPage(
 	const grouped = `WITH groups AS (
         SELECT n.id, file.asset_id,
         MAX(n.trashed_at) OVER (PARTITION BY COALESCE(file.asset_id, CAST(n.id AS TEXT))) AS latest_trash,
-        ROW_NUMBER() OVER (PARTITION BY COALESCE(file.asset_id, CAST(n.id AS TEXT)) ORDER BY (file.file_id=asset.display_file_id) DESC, n.trashed_at DESC, n.id DESC) AS representative
+        ROW_NUMBER() OVER (PARTITION BY COALESCE(file.asset_id, CAST(n.id AS TEXT)) ORDER BY CASE WHEN file.file_id=asset.display_file_id THEN 1 ELSE 0 END DESC, n.trashed_at DESC, n.id DESC) AS representative
         FROM nodes n LEFT JOIN photo_files file ON file.node_id=n.id
         LEFT JOIN photo_assets asset ON asset.asset_id=file.asset_id
         WHERE n.trash_name IS NOT NULL
@@ -380,7 +413,7 @@ func (s *Store) TrashedRootsPage(
 (SELECT COUNT(*) FROM photo_files member JOIN nodes file ON file.id=member.node_id WHERE member.asset_id=g.asset_id AND file.trashed_at IS NOT NULL), g.latest_trash
  FROM `+nodeFrom+` JOIN groups g ON g.id=n.id
 		 WHERE g.representative=1
-		 ORDER BY g.latest_trash DESC, n.id DESC LIMIT ? OFFSET ?`,
+		 ORDER BY g.latest_trash DESC, n.id DESC LIMIT $1 OFFSET $2`,
 		limit, offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("listing trash page: %w", err)

@@ -341,7 +341,7 @@ func photoAgreement(files []PhotoFile) map[string]bool {
 const photoFileLookupColumns = `file_id,COALESCE(asset_id,''),node_id,role,sidecar_of_file_id,created_at,revision,rating,flag,label,caption,creator,copyright,rotation,confirmed_fields,flag_owner`
 
 func photoFileByIDQuery(ctx context.Context, q metadataQuerier, id string) (PhotoFile, error) {
-	f, err := scanPhotoFile(q.QueryRowContext(ctx, `SELECT `+photoFileLookupColumns+` FROM photo_files WHERE file_id=?`, id))
+	f, err := scanPhotoFile(q.QueryRowContext(ctx, `SELECT `+photoFileLookupColumns+` FROM photo_files WHERE file_id=$1`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return f, ErrNotFound
 	}

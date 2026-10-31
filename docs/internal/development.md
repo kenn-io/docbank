@@ -295,7 +295,10 @@ GRANT UPDATE(live_entries, live_stored_bytes, live_raw_bytes,
     max_live_stored_len, max_live_raw_len) ON documents.blob_packs TO docbank_runtime;
 GRANT INSERT, UPDATE(next_attempt_at) ON documents.text_extraction_queue TO docbank_runtime;
 GRANT INSERT ON documents.text_searchable_versions TO docbank_runtime;
-GRANT INSERT, UPDATE(display_file_id) ON documents.photo_assets TO docbank_runtime;
+GRANT INSERT, UPDATE(hidden_at, excluded_at, display_file_id,
+    display_override_file_id, revision, updated_at)
+    ON documents.photo_assets TO docbank_runtime;
+GRANT INSERT, DELETE ON documents.photo_change_receipts TO docbank_runtime;
 GRANT INSERT, UPDATE(asset_id, role, sidecar_of_file_id, source_provenance_identity)
     ON documents.photo_files TO docbank_runtime;
 GRANT INSERT, DELETE ON documents.photo_timeline TO docbank_runtime;
@@ -559,6 +562,34 @@ technical metadata and sidecar receipts. Physical cases cover compressed
 receipts, missing authority and dead pack mappings surviving logical collection.
 These are internal Store capabilities; they do not expose a public PostgreSQL
 vault or qualify the remaining storage and recovery lifecycle.
+
+#### Recoverable deletion
+
+Native document and folder trash, photo-group trash, trash browsing and restore
+use the shared Store operations on both engines. Trashing records the original
+parent and name, stamps the live subtree together and preserves bytes and content
+history. Restore preserves node IDs, leaves independently trashed descendants
+alone, and uses the existing parent fallback and smallest free name suffix.
+Audited operations retain their scope restrictions and append the same canonical
+history as other document mutations.
+
+Photo recovery follows connected members across folders, restores original
+parents before children, and keeps sidecar sync history and recorded decisions.
+PostgreSQL refreshes export work inside the mutation transaction after node,
+asset and XMP receipt changes. SQLite keeps its released triggers. A failed final
+receipt write rolls back the nodes, audit advancement and export work together.
+The runtime role can insert photo receipts and delete the superseded XMP sync
+receipt; it has no receipt `UPDATE` grant.
+
+Trash pages count and select grouped photos and ordinary roots from one
+repeatable-read snapshot. Photo reads also request that isolation when assembling
+assets from multiple statements. Backend qualification compares populated photo
+state, receipts and export inputs against SQLite and validates the resulting
+ordinary and audited metadata.
+
+This is recoverable deletion through the internal Store. Permanent trash empty,
+retention and pruning, physical blob retirement, general photo editing, portable
+backup/restore and public PostgreSQL vault opening remain unqualified.
 
 #### Imports and source history
 
