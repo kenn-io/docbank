@@ -338,7 +338,6 @@ func (s *QuerySnapshotService) prepareSnapshot(
 		cancel()
 		return preparedQuerySnapshot{}, err
 	}
-	snapshotID := build.snapshotID
 	handedOff := false
 	defer func() {
 		if !handedOff {
@@ -348,8 +347,9 @@ func (s *QuerySnapshotService) prepareSnapshot(
 	}()
 
 	if normalized.RankPhotos != nil {
-		ranking, err := normalized.RankPhotos(buildCtx)
-		if err != nil {
+		rankCtx, stopRank := context.WithTimeout(buildCtx, options.BuildTimeout/2)
+		ranking, err := normalized.RankPhotos(rankCtx)
+		if stopRank(); err != nil {
 			return preparedQuerySnapshot{}, err
 		}
 		normalized.PhotoRanking = &ranking
@@ -403,7 +403,7 @@ func (s *QuerySnapshotService) prepareSnapshot(
 	if err != nil {
 		return preparedQuerySnapshot{}, fmt.Errorf("encoding cached query snapshot metadata: %w", err)
 	}
-	actualBytes := int64(len(metadata)) + encodedRowBytes + querySnapshotHandleOverhead + int64(len(owner)+len(snapshotID))
+	actualBytes := int64(len(metadata)) + encodedRowBytes + querySnapshotHandleOverhead + int64(len(owner)+len(build.snapshotID))
 	if actualBytes > build.reservedBytes {
 		if err := s.chargeBuild(build, 0, actualBytes-build.reservedBytes); err != nil {
 			return preparedQuerySnapshot{}, err
@@ -414,7 +414,7 @@ func (s *QuerySnapshotService) prepareSnapshot(
 	}
 	now := s.now().UTC()
 	cached := &cachedQuerySnapshot{
-		id: snapshotID, owner: owner, metadata: metadata, rows: encodedRows,
+		id: build.snapshotID, owner: owner, metadata: metadata, rows: encodedRows,
 		created: now, lastUsed: now, bytes: actualBytes,
 		serializedBytes: projection.SerializedBytes,
 	}

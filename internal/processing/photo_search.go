@@ -39,7 +39,7 @@ func (service *Service) searchPhotosWithAssetLookup(ctx context.Context, request
 		for _, binding := range profile.portable.Embeddings {
 			provider := profile.embedders[binding.Name]
 			_, hasFloor := profile.embeddingSimilarityFloors[binding.Name]
-			if binding.InputKind != document.EmbeddingInputImage || provider == nil || !provider.Descriptor().SupportsTextQuery {
+			if binding.InputKind != document.EmbeddingInputImage || provider == nil || !provider.Descriptor().SupportsTextQuery || errors.Is(ctx.Err(), context.DeadlineExceeded) {
 				continue
 			}
 			if !hasFloor {
@@ -84,10 +84,7 @@ func (service *Service) searchPhotoBinding(ctx context.Context, request store.Ph
 	report, err := searcher.Search(ctx, retrieval.Query{Text: semanticText, Mode: retrieval.Mode(request.Query.Mode), Limit: 1000, LexicalLimit: 1000, VectorLimit: 1000, MinVectorScore: &floor, ProcessingProfileFingerprint: profile.record.Fingerprint, BindingID: binding.Name, Authorization: authorization, Scope: store.SearchOptions{PhotoScope: &semanticRequest, PhotoLexicalQuery: &request.Query, VectorSpaceID: profile.vectorSpaces[binding.Name], EmbeddingDescriptor: &descriptor}})
 	fence.Close()
 	if err != nil {
-		if ctx.Err() != nil {
-			return result, ctx.Err()
-		}
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		if errors.Is(ctx.Err(), context.Canceled) || errors.Is(err, context.Canceled) {
 			return result, err
 		}
 		if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrVectorIndexSourceStale) {
