@@ -4305,6 +4305,7 @@ it("forwards the accepted photo action scope to Cull", async () => {
   photos.items = [photo(1)];
   photos.total = 1;
   photos.started = true;
+  photos.snapshotID = "ranked-snapshot";
   const scope = { query: photoQuery, asset_ids: ["photo-2"] };
   vi.spyOn(photos, "actionScope").mockResolvedValue(scope);
   const cache = new PhotoPreviewCache("scoped", vi.fn());
