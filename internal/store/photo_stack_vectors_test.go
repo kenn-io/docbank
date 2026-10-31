@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
@@ -93,6 +94,39 @@ func TestPhotoStackDecisionKeepsUnchangedStackAcrossIndexPublication(t *testing.
 	index.publish(t, unrelated, []float64{1, 0, 0, 0, 0, 0, 0, 0})
 	index.generation(t, "unchanged-after")
 	_, err = f.s.decidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: targets, Decision: "current", CurrentID: ids[0]}, vectors)
+	require.NoError(t, err)
+	flags, err := f.s.LookupPhotoFlags(t.Context(), ids)
+	require.NoError(t, err)
+	require.ElementsMatch(t, []PhotoFlagRow{{AssetID: ids[0], Flag: "pick"}, {AssetID: ids[1], Flag: "reject"}}, flags)
+}
+
+func TestPhotoStackDecisionSurvivesReclamationDuringVectorLoad(t *testing.T) {
+	t.Parallel()
+	f := newImageEmbeddingCatalogFixture(t)
+	ids := burstPhotos(t, f.s, 2)
+	index := newCursorIndexFixture(f)
+	for _, id := range ids {
+		index.publish(t, id, []float64{1, 0, 0, 0, 0, 0, 0, 0})
+	}
+	index.generation(t, "reclaim-before")
+	targets := preparedPhotoTargets(t.Context(), t, f.s, PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets})
+	run, err := f.s.BeginIngest(t.Context(), "cli", "synthetic unrelated photo")
+	require.NoError(t, err)
+	unrelated := stackPhoto(t, f.s, run, "/other/unrelated.jpg", "2024-06-11T12:00:00Z", document.SourceMetadataPrecisionSecond)
+	index.publish(t, unrelated, []float64{1, 0, 0, 0, 0, 0, 0, 0})
+	hookFired := false
+	f.s.photoStackGenerationLoadHook = func() {
+		if hookFired {
+			return
+		}
+		hookFired = true
+		index.generation(t, "reclaim-after")
+		removed, err := f.s.ReclaimVectorIndexGenerations(t.Context(), time.Now())
+		require.NoError(t, err)
+		require.Equal(t, 1, removed)
+	}
+	_, err = f.s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: targets, Decision: "current", CurrentID: ids[0]})
+	require.True(t, hookFired)
 	require.NoError(t, err)
 	flags, err := f.s.LookupPhotoFlags(t.Context(), ids)
 	require.NoError(t, err)

@@ -526,7 +526,12 @@ func (s *Store) DecidePhotoStack(ctx context.Context, request PhotoStackDecision
 			return PhotoAuthoredReceipt{}, fmt.Errorf("%w: selected_ids must belong to asset_ids", ErrInvalidPhotoAsset)
 		}
 	}
-	vectors, err := s.newPhotoStackVectorReader(ctx, s.db)
+	var vectors *photoStackVectorReader
+	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		vectors, err = s.newPhotoStackVectorReader(ctx, tx)
+		return err
+	})
 	if err != nil {
 		return PhotoAuthoredReceipt{}, err
 	}
