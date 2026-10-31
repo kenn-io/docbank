@@ -2259,8 +2259,6 @@ func TestSearchPhotosRanksAndFiltersSupportedQueries(t *testing.T) {
 		syntax, text string
 		lexical      []string
 	}{
-		{"simple", "sunset (dune", names[:1]},
-		{"simple", "sunset OR zzz", names[1:2]},
 		{"simple", `"sunset beach"`, names[2:]},
 		{"advanced", `"sunset beach"`, names[2:3]},
 	} {

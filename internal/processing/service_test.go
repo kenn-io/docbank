@@ -814,7 +814,7 @@ func TestProcessingServiceCoverageReportsRebuildWhilePreviousGenerationServes(t 
 	assert.Equal(t, "complete", coverage.State)
 }
 
-func TestProcessingMissingRequiredImageBindingRemainsPartial(t *testing.T) {
+func TestProcessingMissingImageBindingCompletesOptionalAndKeepsRequiredPartial(t *testing.T) {
 	t.Parallel()
 	for _, activation := range []document.EmbeddingActivation{document.EmbeddingOptional, document.EmbeddingRequired} {
 		t.Run(string(activation), func(t *testing.T) {
@@ -879,6 +879,8 @@ func TestImageOnlyStartRefusesMissingPreviewBeforeSavingConsent(t *testing.T) {
 	selector := Selector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "images"}
 	plan, err := x.service.Plan(t.Context(), selector)
 	require.NoError(t, err)
+	require.Equal(t, "Granting consent automatically queues eligible photos throughout this vault.", plan.Estimate.Scope)
+	require.Equal(t, []string{"byte_length", "content_hash", "detected_media_type"}, plan.Flow[0].RuntimeDisclosure.MetadataClasses)
 	require.True(t, plan.ConsentRequired)
 	job, err := x.service.Start(t.Context(), StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true})
 	require.ErrorIs(t, err, ErrSourceIneligible)

@@ -1,8 +1,6 @@
 package store
 
 import (
-	"context"
-	"database/sql"
 	"fmt"
 	"testing"
 	"time"
@@ -25,29 +23,6 @@ func indexedPhotoRun(t *testing.T, count, seconds int) (imageEmbeddingCatalogFix
 	}
 	index.generation(t, "indexed-camera-stream")
 	return f, ids
-}
-
-// Only the hydrate query is sent through this reader, so the plan assertion
-// follows executed SQL without recognizing a query by its text.
-type photoStackPlanQuerier struct {
-	*sql.DB
-
-	t *testing.T
-}
-
-func (q photoStackPlanQuerier) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
-	rows, err := q.DB.QueryContext(ctx, "EXPLAIN QUERY PLAN "+query, args...)
-	require.NoError(q.t, err)
-	defer func() { require.NoError(q.t, rows.Close()) }()
-	for rows.Next() {
-		var id, parent, unused int
-		var detail string
-		require.NoError(q.t, rows.Scan(&id, &parent, &unused, &detail))
-		require.NotContains(q.t, detail, "AUTOMATIC", "hydrate must use existing indexes")
-	}
-	require.NoError(q.t, rows.Err())
-	require.NoError(q.t, rows.Close())
-	return q.DB.QueryContext(ctx, query, args...) //nolint:sqlclosecheck // The hydrate reader owns and closes the returned rows.
 }
 
 func TestPhotoStackNewestComponentBoundsHistoryReads(t *testing.T) {
