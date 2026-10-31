@@ -49,7 +49,7 @@ func checkAnswer(ctx context.Context, lease *daemonLease, raw []byte) (checkAnsw
 				}
 				entry.Err = code
 			} else {
-				entry = grounding.Citation{Text: quote.Text, TextSHA256: quote.TextSHA256}
+				entry.Text, entry.TextSHA256 = quote.Text, quote.TextSHA256
 			}
 			result = append(result, entry)
 		}

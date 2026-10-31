@@ -22,23 +22,10 @@ func skipSpace(rs []rune, i int) int {
 }
 
 type normalizedFigure struct {
-	text, kind string
-	values     []string
+	text, kind, value string
 }
 
 type figureKey struct{ kind, value string }
-
-func (f normalizedFigure) comparisonKeys() []figureKey {
-	kind := ""
-	if f.kind == "amount" {
-		kind = "literal_amount"
-	}
-	keys := []figureKey{{kind, f.text}}
-	for _, value := range f.values {
-		keys = append(keys, figureKey{f.kind, value})
-	}
-	return keys
-}
 
 // Only consume a whole sequence of existing literal tokens. Unrecognized input
 // remains exactly the same figure that the literal checker would have seen.
@@ -67,24 +54,30 @@ func normalizedFigures(text string) []normalizedFigure {
 		for i := 0; i < len(tokens); {
 			start := tokens[i].start
 			start += trimStart(rs[start:tokens[i].end])
+			// Parse signs before ISO codes without changing literal trimming.
+			if start > tokens[i].start && strings.ContainsRune("-+±−", rs[start-1]) {
+				if _, code := currencyAt(rs, start); code != "" {
+					start--
+				}
+			}
 			matched := false
 			safe := 0
-			for kind, parse := range []func([]rune) (int, []string){dateAt, amountAt} {
-				end, values := parse(rs[start:])
+			for kind, parse := range []func([]rune) (int, string){dateAt, amountAt} {
+				end, value := parse(rs[start:])
 				if end > 0 {
 					end += start
 				}
 				if end > safe {
 					safe = end
 				}
-				if len(values) == 0 {
+				if value == "" {
 					continue
 				}
 				for j := i; j < len(tokens) && tokens[j].start < end; j++ {
 					token := rs[tokens[j].start:tokens[j].end]
 					trimmedEnd := tokens[j].start + len([]rune(strings.TrimRightFunc(string(token), edge)))
 					if end == trimmedEnd {
-						result = append(result, normalizedFigure{string(rs[start:end]), []string{"date", "amount"}[kind], values})
+						result = append(result, normalizedFigure{string(rs[start:end]), []string{"date", "amount"}[kind], value})
 						i = j + 1
 						matched = true
 						break

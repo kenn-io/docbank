@@ -3,10 +3,10 @@ package grounding
 import (
 	"fmt"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 var datePatterns = []*regexp.Regexp{
@@ -17,65 +17,41 @@ var datePatterns = []*regexp.Regexp{
 	regexp.MustCompile(`^([0-9]{4})-([0-9]{2})`),
 }
 
-// Token boundaries keep dates and amounts out of identifiers and longer values.
-func figureBoundary(rs []rune, end int) bool {
-	if end == len(rs) {
-		return true
-	}
-	r := rs[end]
-	if wordRune(r) {
-		return false
-	}
-	if r == '_' {
-		next := end
-		for next < len(rs) && rs[next] == '_' {
-			next++
+func dateAt(rs []rune) (int, string) {
+	// Dates have at most three words. Bound the word lengths while allowing
+	// whitespace throughout the caller's already bounded input.
+	end := 0
+	for range 3 {
+		start := end
+		for end < len(rs) && !unicode.IsSpace(rs[end]) && end-start < 10 {
+			end++
 		}
-		return next == len(rs) || !wordRune(rs[next])
-	}
-	if (r == '\u00a0' || r == '\u202f') && end+1 < len(rs) && digit(rs[end+1]) {
-		return false
-	}
-	if strings.ContainsRune("-/.,'", r) {
-		next := end + 1
-		for next < len(rs) && strings.ContainsRune("-/.,'", rs[next]) {
-			next++
+		if end < len(rs) && !unicode.IsSpace(rs[end]) {
+			break
 		}
-		if next < len(rs) && wordRune(rs[next]) {
-			return false
-		}
+		end = skipSpace(rs, end)
 	}
-	return true
-}
-
-func dateAt(rs []rune) (int, []string) {
-	text := string(rs[:min(len(rs), 64)])
+	text := string(rs[:end])
 	for kind, pattern := range datePatterns {
 		m := pattern.FindStringSubmatch(text)
 		if m == nil {
 			continue
 		}
 		end := len([]rune(m[0]))
-		if !figureBoundary(rs, end) {
-			continue
-		}
-		values := []string{}
+		value := ""
 		add := func(y, m, d int) {
 			if y < 1 || m < 1 || m > 12 {
 				return
 			}
-			value := fmt.Sprintf("%04d-%02d", y, m)
+			dateValue := fmt.Sprintf("%04d-%02d", y, m)
 			if d != -1 {
 				date := time.Date(y, time.Month(m), d, 0, 0, 0, 0, time.UTC)
 				if d < 1 || date.Year() != y || int(date.Month()) != m || date.Day() != d {
 					return
 				}
-				value += fmt.Sprintf("-%02d", d)
+				dateValue += fmt.Sprintf("-%02d", d)
 			}
-			if slices.Contains(values, value) {
-				return
-			}
-			values = append(values, value)
+			value = dateValue
 		}
 		num := func(s string) int { v, _ := strconv.Atoi(s); return v }
 		switch kind {
@@ -88,11 +64,14 @@ func dateAt(rs []rune) (int, []string) {
 			if m[2] != m[4] {
 				continue
 			}
-			add(num(m[5]), num(m[3]), num(m[1]))
-			add(num(m[5]), num(m[1]), num(m[3]))
-			if len(values) > 1 {
-				return end, nil
+			day, month := num(m[1]), num(m[3])
+			if day <= 12 && month <= 12 && day != month {
+				return end, ""
 			}
+			if month > 12 {
+				day, month = month, day
+			}
+			add(num(m[5]), month, day)
 		case 2:
 			month := englishMonth(m[1])
 			if month == 0 {
@@ -115,9 +94,9 @@ func dateAt(rs []rune) (int, []string) {
 			add(num(m[1]), num(m[2]), -1)
 		}
 		// A matched but impossible date falls through to its component numbers.
-		return end, values
+		return end, value
 	}
-	return 0, nil
+	return 0, ""
 }
 
 func englishMonth(s string) int {

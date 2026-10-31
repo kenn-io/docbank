@@ -53,11 +53,6 @@ func trimStart(rs []rune) int {
 		if strings.ContainsRune("-+±\u2212", rs[i]) && i+2 < len(rs) && rs[i+1] == '.' && unicode.IsDigit(rs[i+2]) {
 			break
 		}
-		if strings.ContainsRune("-+±−", rs[i]) {
-			if _, code := currencyAt(rs, i+1); code != "" {
-				break
-			}
-		}
 		i++
 	}
 	return i
@@ -104,15 +99,8 @@ func (a Answer) Check(citations []Citation) Report {
 				values[figureKey{"", literal}] = true
 			}
 			for _, figure := range normalizedFigures(c.Text) {
-				if figure.kind == "amount" {
-					values[figureKey{"literal_amount", figure.text}] = true
-				}
-				for _, value := range figure.values {
-					values[figureKey{figure.kind, value}] = true
-				}
-				// Literal spellings use a separate namespace from normalized values.
-				if figure.kind == "" {
-					values[figureKey{"literal_amount", figure.text}] = true
+				if figure.value != "" {
+					values[figureKey{figure.kind, figure.value}] = true
 				}
 			}
 		} else {
@@ -122,11 +110,13 @@ func (a Answer) Check(citations []Citation) Report {
 	}
 	missing := false
 	for _, figure := range a.figures {
-		status := "missing"
-		for _, key := range figure.comparisonKeys() {
-			if values[key] {
-				status = "found"
-				break
+		status := "found"
+		if !values[figureKey{figure.kind, figure.value}] {
+			for _, literal := range extractDecoded(figure.text) {
+				if !values[figureKey{"", literal}] {
+					status = "missing"
+					break
+				}
 			}
 		}
 		missing = missing || status == "missing"

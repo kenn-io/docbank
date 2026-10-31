@@ -9,6 +9,27 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
+func TestNormalizationAddsMatches(t *testing.T) {
+	for _, tc := range []struct{ answer, source string }{
+		{"$500", "Rent $500\n12 months"},
+		{"Paid $5 3 times", "$5 [3]"},
+		{"ALL 5", "5 invoices"},
+		{"TOP 10", "10 customers"},
+		{"$40", "Price: $40\n\n205 units"},
+		{"$40 on March 15, 2026", "USD 40 2026-03-15"},
+		{"March 15, 2026", "March" + strings.Repeat(" ", 64) + "15, 2026"},
+		{"2026-03-15", "March" + strings.Repeat(" ", 64) + "15, 2026"},
+		{"$1,250", "$1,250.00"},
+		{"$1,250", "USD 1250"},
+	} {
+		t.Run(tc.answer+"/"+tc.source, func(t *testing.T) {
+			answer, err := Prepare(tc.answer)
+			require.NoError(t, err)
+			require.Equal(t, "grounded", answer.Check([]Citation{{Text: tc.source}}).Status)
+		})
+	}
+}
+
 func TestNormalizedSavedListQuote(t *testing.T) {
 	evidencePolicy, err := document.NewEvidencePolicy(100_000)
 	require.NoError(t, err)
@@ -110,20 +131,20 @@ func TestNormalizedFigures(t *testing.T) {
 		{"USD 40", `"$40..5"`, "ungrounded", "missing"},
 		{"$40", "±USD40", "ungrounded", "missing"},
 		{"±USD40", "$40", "ungrounded", "missing"},
-		{"USD40", "±USD40", "ungrounded", "missing"},
-		{"±USD40", "USD40", "ungrounded", "missing"},
+		{"USD40", "±USD40", "grounded", "found"},
+		{"±USD40", "USD40", "grounded", "found"},
 		{"±$40", "±USD40", "grounded", "found"},
 		{"USD ±40", "±$40", "grounded", "found"},
 		{"±$40", "±40", "ungrounded", "missing"},
-		{"USD 40 USD/GBP", "EUR 40", "ungrounded", "missing"},
-		{"USD 40 USD_X", "EUR 40", "ungrounded", "missing"},
+		{"USD 40 USD/GBP", "EUR 40", "grounded", "found"},
+		{"USD 40 USD_X", "EUR 40", "grounded", "found"},
 		{"USD 40", "$40...", "grounded", "found"},
 		{"$40...", "USD 40", "grounded", "found"},
 		{"USD 40", "$40..5", "ungrounded", "missing"},
 		{"USD 123", "$1,2,3...", "ungrounded", "missing"},
 		{"USD 40", "INV-$40...", "ungrounded", "missing"},
-		{"$40", "$40 EUR...", "ungrounded", "missing"},
-		{"$40", "$40 EUR", "ungrounded", "missing"},
+		{"$40", "$40 EUR...", "grounded", "found"},
+		{"$40", "$40 EUR", "grounded", "found"},
 		{"$40", "_$40_", "grounded", "found"},
 		{"_$40_", "USD 40", "grounded", "found"},
 		{"2026-03-15", "_March 15, 2026_", "grounded", "found"},
@@ -132,16 +153,16 @@ func TestNormalizedFigures(t *testing.T) {
 		{"2026-03-15", "INV_2026-03-15", "ungrounded", "missing"},
 		{"40 USD", "40 USD 2026-03-15", "grounded", "found"},
 		{"CAD 40", "USD 40CAD 30", "ungrounded", "missing"},
-		{"USD 40 CAD%", "EUR 40", "ungrounded", "missing"},
-		{"USD 40 CAD:report", "EUR 40", "ungrounded", "missing"},
-		{"USD 40 CAD$%", "EUR 40", "ungrounded", "missing"},
+		{"USD 40 CAD%", "EUR 40", "grounded", "found"},
+		{"USD 40 CAD:report", "EUR 40", "grounded", "found"},
+		{"USD 40 CAD$%", "EUR 40", "grounded", "found"},
 		{"CAD 40", "$40 USD 2026-03-15T10:00:00Z", "ungrounded", "missing"},
 		{"CAD 40", "$40 USD 12:30", "ungrounded", "missing"},
 		{"CAD 40", "$40 USD -12:30", "ungrounded", "missing"},
 		{"CAD 40", "$40 USD 50-60", "ungrounded", "missing"},
 		{"CAD 40", "$40 USD 123ABC", "ungrounded", "missing"},
 		{"C$40", "CAD 40", "grounded", "found"},
-		{"USD 40", "CAD 40", "ungrounded", "missing"},
+		{"USD 40", "CAD 40", "grounded", "found"},
 		{"$40", "40", "ungrounded", "missing"},
 		{"+$40", "USD 40", "ungrounded", "missing"},
 		{"-$0", "USD 0", "ungrounded", "missing"},
@@ -150,8 +171,8 @@ func TestNormalizedFigures(t *testing.T) {
 		{"-$40", "USD 40", "ungrounded", "missing"},
 		{"$40", "USD 400", "ungrounded", "missing"},
 		{"USD 40", "INV-USD40", "ungrounded", "missing"},
-		{"USD 20", "$ : 20", "ungrounded", "missing"},
-		{"USD 20", "$[20]", "ungrounded", "missing"},
+		{"USD 20", "$ : 20", "grounded", "found"},
+		{"USD 20", "$[20]", "grounded", "found"},
 		{"4K", "4", "ungrounded", "missing"},
 		{"40", "USD 40", "grounded", "found"},
 	} {
@@ -163,8 +184,8 @@ func TestNormalizedFigures(t *testing.T) {
 		cases = append(cases, testCase{grouped, "USD 1205", "grounded", "", grouped, false}, testCase{"USD 1205", grouped, "grounded", "", "USD 1205", false})
 	}
 	for _, tc := range []struct{ answer, source, status string }{
-		{"USD 40", "USD 40 EUR", "missing"},
-		{"-USD40", "USD40", "missing"}, {"+USD40", "USD40", "missing"},
+		{"USD 40", "USD 40 EUR", "found"},
+		{"-USD40", "USD40", "found"}, {"+USD40", "USD40", "found"},
 		{"- USD40", "USD -40", "missing"}, {"-USD40", "USD -40", "found"}, {"+USD40", "USD +40", "found"},
 		{"$1200", "1\u00a0200", "missing"}, {"$200", "1\u00a0\u00a0200", "missing"}, {"$1200", "1,200", "missing"}, {"$40", "40.00", "missing"},
 		{"−$40", "−USD 40", "found"}, {"−$40", "USD 40", "missing"},
@@ -255,16 +276,16 @@ func TestNormalizationReviewRegressions(t *testing.T) {
 		{"June 5, 2026", "June\n5, 2026", "grounded"},
 		{"1,205 USD", "USD\n1,205", "grounded"},
 		{"USD 1", "$1 205", "ungrounded"},
-		{"$1", "$1 205", "ungrounded"},
+		{"$1", "$1 205", "grounded"},
 		{"$1 205", "$1", "ungrounded"},
 		{"$1 205", "$1 205", "grounded"},
 		{"USD 1205", "$1 205", "ungrounded"},
 		{"05.03.2026", "05.03.2026", "grounded"},
 		{"13/03/2026", "March 13, 2026", "grounded"},
-		{"May 3, 2026", "| May 3 | 2026 |", "ungrounded"},
+		{"May 3, 2026", "| May 3 | 2026 |", "grounded"},
 		{"March 5, 2026", "3/5/2026", "ungrounded"},
 		{"$1 205", "USD 1", "ungrounded"},
-		{"CAD+USD 40", "CAD USD 40", "ungrounded"},
+		{"CAD+USD 40", "CAD USD 40", "grounded"},
 	} {
 		t.Run(tc.answer+"/"+tc.source, func(t *testing.T) {
 			answer, err := Prepare(tc.answer)

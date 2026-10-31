@@ -430,7 +430,7 @@ A figure is a token containing a digit,
 with edge punctuation trimmed. Whitespace, em dashes, horizontal bars, and
 `[ ] ( ) < > | * ~` backtick `=` `;` separate tokens.
 A leading `-`, `−`, `+`, or `±` stays as a sign, and a leading decimal point stays.
-Figures compare across all resolved citations; markers don't scope them. Recognized dates and currency amounts normalize as described below; other figures compare exactly.
+Figures compare across all resolved citations; markers don't scope them. Normalization adds matches for recognized dates and currency amounts while preserving every literal match. A recognized figure is found if its normalized value matches or every digit-containing token in its spelling appears literally in the citations.
 The first matching rule determines the verdict:
 
 - `ungrounded`: an unknown marker or a missing figure with all citations resolved. Example: `30` against cited `20`.
@@ -442,13 +442,14 @@ Other resolver failures return tool errors.
 Results include figures, unknown marker indexes, citation
 statuses, and text digests, with private cache scope and zero TTL.
 
-- Figures keep their spelling, case, signs, and currency symbols. Example: `-.5` differs from `.5`.
+- Reported figures keep their spelling. Literal comparison keeps case, signs before digits or currency symbols, and decimal points. Example: `-.5` differs from `.5`. Edge punctuation before an ISO code is trimmed for literal comparison, so `-USD5` matches `USD5`.
 - Identifiers and ordinary numbers keep their spelling. Examples: `12-AB` differs from `12-ab`, and `5.00` differs from `5`.
-- Dates accept `YYYY-MM-DD`, `YYYY/MM/DD`, `DD.MM.YYYY`, `DD/MM/YYYY`, `MM/DD/YYYY`, English month names or three-letter abbreviations with a day and year, `Sept` or `Sept.`, and month and year. Numeric month and day parts require two digits. A numeric date with two valid, different month/day readings compares literally. Month-only dates do not match full dates. Timestamps and invalid dates remain literal figures. English dates may wrap across lines.
-- Amounts accept currency symbols or uppercase ISO codes before or after a number, including `US$`, `C$`, and `A$`. Explicit signs remain distinct, including positive and negative zero; Unicode minus is accepted in amounts. Decimal and grouping separators normalize using exact decimal arithmetic. A single comma or dot that permits both grouping and decimal readings keeps its numeric spelling, so `$1,250` matches `1,250 USD` but differs from `$1.250` and `$1.25`. A bare `$` matches USD, `£` matches GBP, and `€` matches EUR; other symbols match themselves. Explicit ISO currencies must match each other. Multiple currency markers compare literally. Currency markers and numbers may wrap across lines.
+- Dates accept `YYYY-MM-DD`, `YYYY/MM/DD`, `DD.MM.YYYY`, `DD/MM/YYYY`, `MM/DD/YYYY`, English month names or three-letter abbreviations with a day and year, `Sept` or `Sept.`, and month and year. Numeric month and day parts require two digits. A numeric date with two valid, different month/day readings compares literally. Month-only and full dates have distinct normalized values. Timestamps and invalid dates remain literal figures. English dates may wrap across lines.
+- Amounts accept currency symbols or uppercase ISO codes before or after a number, including `US$`, `C$`, and `A$`. Normalized values keep explicit signs, including positive and negative zero; Unicode minus is accepted in amounts. Commas, apostrophes, nonbreaking spaces, and narrow nonbreaking spaces separate groups of three digits. A decimal point accepts one or two fractional digits. Leading integer zeros and trailing fractional zeros normalize exactly, so `$1,250` matches `$1,250.00` and `USD 1250`. Other separator spellings compare literally, including decimal commas and three-digit fractions. A bare `$` matches USD, `£` matches GBP, and `€` matches EUR; other symbols match themselves, so `¥100` differs from `JPY 100`. Multiple currency markers compare literally. Currency markers and numbers may wrap across lines.
 - Numbered-list numbers count as figures. Example: `1.` contributes `1`.
-- Signs must touch the amount or its currency marker. A spaced sign is a separate token, so a cited bullet `- $40` grounds `$40` and leaves `-$40` missing. A different amount or incompatible currency reports `missing`.
-- ASCII spaces between digit groups keep the amount literal. Retained HTML can turn a nonbreaking grouping space into an ASCII space, so `$1 205` does not supply evidence for `USD 1` or `USD 1205`. Nonbreaking and narrow nonbreaking spaces that remain in the citation normalize as grouping separators.
+- Signs must touch the amount or its currency marker to normalize. A spaced sign is a separate token, so a cited bullet `- $40` grounds `$40` and leaves `-$40` missing.
+- Separate numeric words keep the amount literal. Retained HTML can turn a nonbreaking grouping space into an ASCII space, so `$1 205` grounds `$1` by literal comparison but supplies no normalized evidence for `USD 1` or `USD 1205`. An adjacent date stays independent, so `USD 40 2026-03-15` grounds `$40 on March 15, 2026`.
+- Literal matches can also ground different date or currency labels. For example, `June 5, 2026` against `July 5, 2026`, or `USD 40` against `EUR 40`, grounds because the digit-containing tokens match. Use `$40` against `EUR 40` or `March 16, 2026` against `2026-03-15` for examples that report `missing`.
 - Both sides undo Markdown punctuation escapes, including literal backslashes in plain-text bodies. Example: plain-text `INV\-5` matches `INV-5`.
 - Occurrence alone confirms neither the subject nor other claims. Example: a cited price doesn't establish which item it belongs to.
 

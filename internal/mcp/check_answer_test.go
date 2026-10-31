@@ -22,7 +22,7 @@ func TestCheckAnswerTransports(t *testing.T) {
 	citation.End = citation.Start + len([]rune(`$1,205`))
 	for _, tc := range []struct{ answer, status, figureStatus, figureText string }{
 		{"Invoice was $1,205 [1]", "grounded", "found", "$1,205"},
-		{"€1,205 [1]", "ungrounded", "missing", ""},
+		{"€1,205 [1]", "ungrounded", "missing", "€1,205"},
 	} {
 		result := decodeResult(t, exportExchange(t, server, "stdio", "tools/call", map[string]any{
 			"name": "check_answer", "arguments": map[string]any{"answer": tc.answer, "citations": []any{citation}},
@@ -35,24 +35,27 @@ func TestCheckAnswerTransports(t *testing.T) {
 		figure, ok := figures[0].(map[string]any)
 		require.True(t, ok)
 		require.Equal(t, tc.figureStatus, figure["status"])
-		if tc.figureText != "" {
-			require.Equal(t, "private", output["cacheScope"])
-			require.Equal(t, tc.figureText, figure["text"])
-		}
+		require.Equal(t, "private", output["cacheScope"])
+		require.Equal(t, tc.figureText, figure["text"])
 		assertSchemaAccepts(t, catalogMap(toolCatalog(ServerOptions{}))["check_answer"].OutputSchema, output)
 	}
 }
 
 func TestCheckAnswerRetainedNormalization(t *testing.T) {
-	for _, tc := range []struct{ body, quote, answer, status string }{
-		{"<p>$1&nbsp;205</p>", "$1 205", "USD 1", "ungrounded"},
-		{"<p>$1&nbsp;205</p>", "$1 205", "$1", "ungrounded"},
-		{"<p>$1&nbsp;205</p>", "$1 205", "$1 205", "grounded"},
-		{"<p>2026-03-15</p>", "2026-03-15", "March 15, 2026", "grounded"},
-		{"<p>1,250 USD</p>", "1,250 USD", "$1,250", "grounded"},
+	wideDate := "March" + strings.Repeat(" ", 64) + "15, 2026"
+	for _, tc := range []struct{ mediaType, body, quote, answer, status string }{
+		{"text/html", "<p>$1&nbsp;205</p>", "$1 205", "USD 1", "ungrounded"},
+		{"text/html", "<p>$1&nbsp;205</p>", "$1 205", "$1", "grounded"},
+		{"text/html", "<p>$1&nbsp;205</p>", "$1 205", "$1 205", "grounded"},
+		{"text/html", "<p>2026-03-15</p>", "2026-03-15", "March 15, 2026", "grounded"},
+		{"text/html", "<p>1,250 USD</p>", "1,250 USD", "$1,250", "grounded"},
+		{"text/plain", "Price: $40\n\n205 units", "Price: $40\n\n205 units", "$40", "grounded"},
+		{"text/plain", "USD 40 2026-03-15", "USD 40 2026-03-15", "$40 on March 15, 2026", "grounded"},
+		{"text/plain", wideDate, wideDate, "March 15, 2026", "grounded"},
+		{"text/plain", "$1,250.00", "$1,250.00", "$1,250", "grounded"},
 	} {
 		t.Run(tc.answer+"/"+tc.quote, func(t *testing.T) {
-			server, citation := newCitationMCPFixtureText(t, "text/html", tc.body, tc.quote)
+			server, citation := newCitationMCPFixtureText(t, tc.mediaType, tc.body, tc.quote)
 			for _, transport := range []string{"stdio", "http"} {
 				result := decodeResult(t, exportExchange(t, server, transport, "tools/call", map[string]any{
 					"name": "check_answer", "arguments": map[string]any{"answer": tc.answer, "citations": []any{citation}},
