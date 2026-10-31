@@ -296,4 +296,6 @@ func TestPhotoBestShotBrowserBatch(t *testing.T) {
 	var receipt store.PhotoAuthoredReceipt
 	require.NoError(t, json.Unmarshal([]byte(body), &receipt))
 	require.NotEmpty(t, receipt.ReceiptID)
+	require.Len(t, receipt.After, 2)
+	require.ElementsMatch(t, []string{"pick", "reject"}, []string{receipt.After[0].Values.Flag, receipt.After[1].Values.Flag})
 }
