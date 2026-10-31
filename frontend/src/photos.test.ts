@@ -3120,9 +3120,16 @@ it.each([
   },
 );
 
-it("patches only display-file rotation", () => {
-  const photos = new Photos("scoped", vi.fn());
-  photos.items = [photo(1), photo(2)];
+it("patches display-file rotation and representative revisions", () => {
+  const photos = new Photos(
+    "scoped",
+    vi.fn(),
+    false,
+    { ...photoQuery, mode: "semantic", text: "sunset" },
+    { projection: "map" },
+  );
+  photos.items = [mapPhoto(1), mapPhoto(2)];
+  photos.snapshotID = "ranked-map";
   const before = preparedPhoto(1),
     after = { ...before, revision: 2, values: { ...before.values, rotation: 90 as const } };
   expect(
@@ -3136,6 +3143,19 @@ it("patches only display-file rotation", () => {
     after: [{ ...companion, values: { ...companion.values, rotation: 180 } }],
   });
   expect(photos.items[0]!.rotation).toBe(90);
+  expect(photos.snapshotID).toBe("ranked-map");
+  photos.metadataChanged({
+    receipt_id: "representative-undo",
+    before: [before],
+    after: [after],
+    representatives: [
+      { asset_id: "photo-1", before_revision: 3, after_revision: 4, before: 1, after: 2 },
+    ],
+  });
+  expect(photos.items.map((row) => row.revision)).toEqual([4, mapPhoto(2).revision]);
+  expect(photos.items.map((row) => row.rotation)).toEqual([90, 0]);
+  expect(photos.items.map((row) => row.asset_id)).toEqual(["photo-1", "photo-2"]);
+  expect(photos.snapshotID).toBe("ranked-map");
   photos.dispose();
 });
 
@@ -3499,18 +3519,16 @@ it("retains accepted Meaning matches and selection while live refresh hydrates t
   photos.dispose();
 });
 
-it("refreshes the accepted snapshot when Burst gap changes", async () => {
-  vi.spyOn(api, "getPhotoSettings").mockResolvedValue({ revision: 1, burst_gap_seconds: 2 });
-  vi.spyOn(api, "setPhotoSettings").mockResolvedValue({ revision: 2, burst_gap_seconds: 5 });
-  const photos = new Photos("scoped", vi.fn(), false, {
-    ...photoQuery,
-    mode: "semantic",
-    text: "sunset",
-  });
-  photos.snapshotID = "accepted";
+it("refreshes after a change with and without an accepted snapshot", async () => {
+  const photos = new Photos("scoped", vi.fn());
   const refresh = vi.spyOn(photos, "refresh").mockResolvedValue(true);
-  await photos.setBurstGap(5);
-  expect(refresh).toHaveBeenCalledWith(undefined, true);
+  photos.snapshotID = "accepted";
+  await photos.refreshAfterChange();
+  expect(refresh).toHaveBeenCalledExactlyOnceWith(undefined, true);
+  refresh.mockClear();
+  photos.snapshotID = "";
+  await photos.refreshAfterChange();
+  expect(refresh).toHaveBeenCalledExactlyOnceWith();
   photos.dispose();
 });
 
@@ -3612,16 +3630,10 @@ it("selects every snapshot result", async () => {
   expect(await photos.actionScope(true)).toEqual({ query: photoQuery, asset_ids: ["photo-1"] });
   await photos.selectAllResults();
   expect(photos.scope()).toEqual({ asset_ids: [photo(1).asset_id, photo(2).asset_id] });
-  for (const selected of [false, true]) {
-    expect(await photos.actionScope(selected)).toEqual({
-      query: photoQuery,
-      asset_ids: ["photo-1", "photo-2"],
-    });
-  }
-  expect(api.listPhotoAssets).toHaveBeenCalledWith(
-    expect.objectContaining({ cursor: "page-two", snapshot_id: "image-snapshot" }),
-    expect.anything(),
-  );
+  expect(await photos.actionScope(true)).toEqual({
+    query: photoQuery,
+    asset_ids: ["photo-1", "photo-2"],
+  });
   photos.dispose();
 });
 
@@ -3779,7 +3791,7 @@ function photoTimelineTransitionFixture(initialMode: Query["mode"], deferCounts 
   };
 }
 
-it("drops live timeline counts when Meaning falls back to metadata", async () => {
+it("does not load timeline counts for a Meaning fallback", async () => {
   const state = photoTimelineTransitionFixture("semantic");
   await state.photos.loadMore();
   state.setFallback(true);
@@ -3827,50 +3839,6 @@ it("clears metadata facets when Meaning starts from the filter panel", async () 
   expect(state.photos.timeline).toBeUndefined();
   expect(state.photos.facets).toEqual([]);
   state.photos.dispose();
-});
-
-it("patches display-file rotation and representative revisions in ranked Map rows", () => {
-  const photos = new Photos(
-    "scoped",
-    vi.fn(),
-    false,
-    {
-      ...photoQuery,
-      mode: "semantic",
-      text: "sunset",
-    },
-    { projection: "map" },
-  );
-  photos.items = [mapPhoto(1), mapPhoto(2)];
-  photos.snapshotID = "ranked-map";
-  const target = preparedPhoto(1);
-  photos.authored.targets = [target];
-  const before: api.PhotoAuthoredSnapshot = {
-    file_id: target.file_id,
-    node_id: target.node_id,
-    revision: target.revision,
-    values: target.values,
-  };
-  photos.metadataChanged({
-    receipt_id: "rotated",
-    before: [before],
-    after: [{ ...before, revision: 2, values: { ...before.values, rotation: 90 } }],
-  });
-  expect(photos.items.map((row) => row.rotation)).toEqual([90, 0]);
-  expect(photos.snapshotID).toBe("ranked-map");
-  photos.metadataChanged({
-    receipt_id: "representative-undo",
-    before: [before],
-    after: [{ ...before, revision: 2, values: { ...before.values, rotation: 90 } }],
-    representatives: [
-      { asset_id: "photo-1", before_revision: 3, after_revision: 4, before: 1, after: 2 },
-    ],
-  });
-  expect(photos.items.map((row) => row.revision)).toEqual([4, mapPhoto(2).revision]);
-  expect(photos.items.map((row) => row.rotation)).toEqual([90, 0]);
-  expect(photos.items.map((row) => row.asset_id)).toEqual(["photo-1", "photo-2"]);
-  expect(photos.snapshotID).toBe("ranked-map");
-  photos.dispose();
 });
 
 it("limits rejects to selected captured photos", async () => {

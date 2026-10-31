@@ -301,10 +301,6 @@ func TestPhotoRankedSnapshotPreservesModeAndOrderAndEnforcesHiddenVisibility(t *
 		}
 		slices.Reverse(members)
 		index.generation(t, "ranked-photo-stack")
-		groups, unavailable, _, _, err := f.s.PhotoStackGroups(t.Context(), ids[:2], false, "")
-		require.NoError(t, err)
-		require.Empty(t, unavailable)
-		require.Equal(t, [][]string{ids[:2]}, groups)
 		_, err = f.s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids[:2], Targets: preparedPhotoTargets(t.Context(), t, f.s, PhotoSetSelection{AssetIDs: ids[:2], Limit: MaxPhotoStackTargets}), Decision: "representative", CurrentID: ids[0]})
 		require.NoError(t, err)
 

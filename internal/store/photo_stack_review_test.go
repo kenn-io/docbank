@@ -52,9 +52,8 @@ func (q photoStackPlanQuerier) QueryContext(ctx context.Context, query string, a
 
 func TestPhotoStackNewestComponentBoundsHistoryReads(t *testing.T) {
 	t.Parallel()
-	f, ids := indexedPhotoRun(t, 1500, 20)
+	f, ids := indexedPhotoRun(t, 30, 20)
 	last := ids[len(ids)-1]
-	limit := MaxPhotoStackFrames + 1
 	vectors, err := f.s.newPhotoStackVectorReader(t.Context(), f.s.db)
 	require.NoError(t, err)
 	frames, err := f.s.photoStackFrames(t.Context(), f.s.db, []string{last}, false, "")
@@ -68,5 +67,5 @@ func TestPhotoStackNewestComponentBoundsHistoryReads(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, component.frames, 1)
 	require.Equal(t, last, component.frames[0].AssetID)
-	require.LessOrEqual(t, hydrated, limit, "resolving the newest stack must bound total hydration")
+	require.LessOrEqual(t, hydrated, 7, "resolving the newest stack must hydrate only the 120-second window at 20-second spacing")
 }

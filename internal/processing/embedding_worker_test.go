@@ -2077,7 +2077,9 @@ func TestImageEmbeddingRuntimePreviewValidation(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEqual(t, f.written.Hash, workerHashBytes(data))
 	assert.Equal(t, metadata.SHA256, workerHashBytes(data))
-	work.ContentVersionID = publishRejectedPreview(t, f)("invalid-preview.jpg").CurrentVersionID
+	rejected := publishRejectedPreview(t, f)("invalid-preview.jpg")
+	work = EmbeddingWork{ContentVersionID: rejected.CurrentVersionID, ProcessingProfile: profile, Binding: x.binding, Descriptor: x.descriptor,
+		VectorSpaceID: x.service.profiles["images"].vectorSpaces[x.binding.Name]}
 	_, err = registry.Prepare(t.Context(), work)
 	require.ErrorIs(t, err, ErrEmbeddingInputRejected)
 }

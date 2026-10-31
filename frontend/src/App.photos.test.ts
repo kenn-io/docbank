@@ -3768,12 +3768,11 @@ it.each(["accepted receipt", "face write"] as const)(
     const album = changed.mock.contexts[1] as Photos;
     await act(() => {
       library.query = { ...library.query, mode: "semantic", text: "sunset" };
-      library.snapshotID = "ranked";
     });
-    const refresh = vi.spyOn(library, "refresh").mockResolvedValue(true);
+    const refresh = vi.spyOn(library, "refreshAfterChange").mockResolvedValue(true);
     if (trigger === "face write") await act(() => album.faceEditor.ondecision());
     else await act(() => album.authored.onXMPChanged!(changed.mock.calls.at(-1)![0]));
-    await waitFor(() => expect(refresh).toHaveBeenCalledWith(undefined, true));
+    await waitFor(() => expect(refresh).toHaveBeenCalledExactlyOnceWith());
   },
 );
 

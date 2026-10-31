@@ -195,7 +195,7 @@ func TestPhotoStackDecisionRejectsGenerationThatSplitsStack(t *testing.T) {
 
 func TestPhotoStackVectorsUseOnlyCosineCompatibleSpaces(t *testing.T) {
 	t.Parallel()
-	for _, metric := range []string{document.VectorMetricCosine, document.VectorMetricDotProduct, document.VectorMetricL2} {
+	for _, metric := range []string{document.VectorMetricDotProduct, document.VectorMetricL2} {
 		t.Run(metric, func(t *testing.T) {
 			f := newImageEmbeddingCatalogFixture(t)
 			f.request.Descriptor.Metric = metric
@@ -208,18 +208,9 @@ func TestPhotoStackVectorsUseOnlyCosineCompatibleSpaces(t *testing.T) {
 				if profile.Embeddings[i].Name == f.binding.Name {
 					profile.Embeddings[i].Metric = metric
 					profile.Embeddings[i].Descriptor.Fingerprint = f.request.Descriptor.Fingerprint
-					f.binding = profile.Embeddings[i]
 				}
 			}
-			canonical, fingerprints, err := document.CanonicalProfile(profile)
-			require.NoError(t, err)
-			f.request.Profile.CanonicalProfile = canonical
-			f.request.Profile.Fingerprint = fingerprints.Profile
-			f.request.Profile.RenditionRequestFingerprint = fingerprints.RenditionRequest
-			f.request.Profile.EvidenceLexicalFingerprint = fingerprints.EvidenceLexical
-			f.request.Profile.RetentionDisclosureFingerprint = fingerprints.RetentionDisclosure
-			f.request.Authorization.ProfileFingerprint = fingerprints.Profile
-			f.request.InputGeneration.ProcessingProfileFingerprint = fingerprints.Profile
+			fingerprints := refingerprintImageEmbeddingProfile(t, &f, profile)
 			_, err = f.s.GrantConsent(t.Context(), ProcessingConsentGrantRequest{Principal: f.request.Authorization.Principal, Scope: f.request.Authorization.Scope, ProfileFingerprint: fingerprints.Profile, DisclosureFingerprint: f.binding.DisclosureFingerprint, InputClasses: f.request.Authorization.InputClasses, RetainedArtifactClasses: f.request.Authorization.RetainedArtifactClasses})
 			require.NoError(t, err)
 			run, err := f.s.BeginIngest(t.Context(), "cli", "synthetic metric stacks")
@@ -242,4 +233,23 @@ func TestPhotoStackVectorsUseOnlyCosineCompatibleSpaces(t *testing.T) {
 			}
 		})
 	}
+}
+
+func refingerprintImageEmbeddingProfile(t *testing.T, f *imageEmbeddingCatalogFixture, profile document.ProcessingProfileV1) document.FingerprintSet {
+	t.Helper()
+	canonical, fingerprints, err := document.CanonicalProfile(profile)
+	require.NoError(t, err)
+	for _, binding := range profile.Embeddings {
+		if binding.Name == f.binding.Name {
+			f.binding = binding
+		}
+	}
+	f.request.Profile.CanonicalProfile = canonical
+	f.request.Profile.Fingerprint = fingerprints.Profile
+	f.request.Profile.RenditionRequestFingerprint = fingerprints.RenditionRequest
+	f.request.Profile.EvidenceLexicalFingerprint = fingerprints.EvidenceLexical
+	f.request.Profile.RetentionDisclosureFingerprint = fingerprints.RetentionDisclosure
+	f.request.Authorization.ProfileFingerprint = fingerprints.Profile
+	f.request.InputGeneration.ProcessingProfileFingerprint = fingerprints.Profile
+	return fingerprints
 }

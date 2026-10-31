@@ -861,10 +861,8 @@ it("retries incomplete grouping explicitly without resending the frozen run on f
   expect(cull.run?.groups).toEqual([ids]);
 });
 
-it("starts a ranked Cull from the accepted IDs after a filter tag is deleted", async () => {
-  const capture = vi
-    .spyOn(api, "createWorkspaceQuery")
-    .mockRejectedValue(new APIError("unknown tag reference", 422, "invalid_query"));
+it("starts from supplied IDs without capturing", async () => {
+  const capture = vi.spyOn(api, "createWorkspaceQuery");
   const ids = [photo(2).asset_id, photo(1).asset_id, photo(3).asset_id];
   const flags = vi.spyOn(api, "lookupPhotoFlags").mockResolvedValue({
     items: [

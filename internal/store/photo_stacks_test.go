@@ -1646,19 +1646,10 @@ func TestPhotoStackUnrelatedImageSpaceKeepsStacks(t *testing.T) {
 		portable.Embeddings = []document.EmbeddingBindingV1{f.binding}
 		portable.Embeddings[0].Model = other.request.Descriptor.Model
 		portable.Embeddings[0].Descriptor.Fingerprint = other.request.Descriptor.Fingerprint
-		canonical, fingerprints, err := document.CanonicalProfile(portable)
-		require.NoError(t, err)
+		fingerprints := refingerprintImageEmbeddingProfile(t, &other, portable)
 		if fingerprints.VectorSpace[f.binding.Name] >= index.space {
 			continue
 		}
-		other.binding = portable.Embeddings[0]
-		other.request.Profile.CanonicalProfile = canonical
-		other.request.Profile.Fingerprint = fingerprints.Profile
-		other.request.Profile.RenditionRequestFingerprint = fingerprints.RenditionRequest
-		other.request.Profile.EvidenceLexicalFingerprint = fingerprints.EvidenceLexical
-		other.request.Profile.RetentionDisclosureFingerprint = fingerprints.RetentionDisclosure
-		other.request.Authorization.ProfileFingerprint = fingerprints.Profile
-		other.request.InputGeneration.ProcessingProfileFingerprint = fingerprints.Profile
 		break
 	}
 	_, err = s.GrantConsent(t.Context(), ProcessingConsentGrantRequest{Principal: other.request.Authorization.Principal, Scope: other.request.Authorization.Scope, ProfileFingerprint: other.request.Profile.Fingerprint, DisclosureFingerprint: other.binding.DisclosureFingerprint, InputClasses: other.request.Authorization.InputClasses, RetainedArtifactClasses: other.request.Authorization.RetainedArtifactClasses})

@@ -479,13 +479,12 @@ it("allows another decision after reconciling its own flag and rating with auto-
   expect(photos.cullEditor!.conflict).toBe(false);
 });
 
-it("refreshes the accepted snapshot after a background XMP import in Cull", async () => {
+it("refreshes after a background XMP import in Cull", async () => {
   const { photos } = await reviewPhoto();
   try {
-    photos.snapshotID = "accepted";
-    const refresh = vi.spyOn(photos, "refresh").mockResolvedValue(true);
+    const refresh = vi.spyOn(photos, "refreshAfterChange").mockResolvedValue(true);
     await act(() => photos.cullEditor!.onXMPChanged!(undefined, []));
-    expect(refresh).toHaveBeenCalledWith(undefined, true);
+    expect(refresh).toHaveBeenCalledExactlyOnceWith();
   } finally {
     photos.dispose();
   }
