@@ -1825,6 +1825,45 @@ it("disables best-shot responses after a grouping error", async () => {
   expect(respond).not.toHaveBeenCalled();
 });
 
+it("clears best-shot proposals after picking, rejecting, or clearing a frame flag", async () => {
+  for (const [button, flag, announcement] of [
+    ["Pick", "pick", "pick"],
+    ["Reject", "reject", "reject"],
+    ["Clear flag", "", "flag cleared"],
+  ]) {
+    let written = false;
+    vi.mocked(api.preparePhotoAuthored).mockImplementation(async (scope) => ({
+      ...photoPreparation((scope.asset_ids ?? []).map((id) => preparedPhoto(Number(id.slice(6))))),
+      proposals:
+        scope.stack && !written
+          ? [
+              { asset_id: "photo-1", flag: "pick", rationale: "Best frame", confidence: 0.5 },
+              { asset_id: "photo-2", flag: "reject", rationale: "Weaker frame", confidence: 0.5 },
+            ]
+          : [],
+    }));
+    const edit = vi.spyOn(api, "editPhotoAuthored").mockImplementation(async () => {
+      written = true;
+      return { receipt_id: "", before: [], after: [] };
+    });
+    const { container, unmount } = await reviewTwoStacks();
+    await waitFor(() => expect(container.querySelectorAll(".proposal")).toHaveLength(3));
+    await readyButton("Accept all");
+    await fireEvent.click(await readyButton(button));
+    await waitFor(() =>
+      expect(container.querySelector(".photo-cull > span[aria-live='polite']")?.textContent).toBe(
+        `Photo 1.jpg: ${announcement}`,
+      ),
+    );
+    expect(edit).toHaveBeenCalledOnce();
+    expect(edit.mock.calls[0][0].patch).toEqual({ flag });
+    expect.soft(container.querySelectorAll(".proposal"), button).toHaveLength(0);
+    expect.soft(screen.queryByRole("button", { name: "Accept all" }), button).toBeNull();
+    unmount();
+    edit.mockRestore();
+  }
+});
+
 it("keeps Hidden scope for Accept all", async () => {
   const offer = {
     asset_id: "photo-1",
