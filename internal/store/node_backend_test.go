@@ -59,7 +59,8 @@ func newPostgresSchemaStore(t *testing.T, setup *sql.DB, cfg pgschema.Config) *S
 		"; GRANT UPDATE(live_entries,live_stored_bytes,live_raw_bytes,max_live_stored_len,max_live_raw_len) ON "+schema+".blob_packs TO "+quotedRole+
 		"; GRANT INSERT,UPDATE(next_attempt_at) ON "+schema+".text_extraction_queue TO "+quotedRole+
 		"; GRANT INSERT ON "+schema+".text_searchable_versions TO "+quotedRole+
-		"; GRANT INSERT,UPDATE(display_file_id) ON "+schema+".photo_assets TO "+quotedRole+
+		"; GRANT INSERT,UPDATE(hidden_at,excluded_at,display_file_id,display_override_file_id,revision,updated_at) ON "+schema+".photo_assets TO "+quotedRole+
+		"; GRANT INSERT,DELETE ON "+schema+".photo_change_receipts TO "+quotedRole+
 		"; GRANT INSERT,UPDATE(asset_id,role,sidecar_of_file_id,source_provenance_identity) ON "+schema+".photo_files TO "+quotedRole+
 		"; GRANT INSERT,DELETE ON "+schema+".photo_timeline TO "+quotedRole+
 		"; GRANT INSERT,UPDATE(original_path,original_mtime,folder_key) ON "+schema+".photo_source_claims TO "+quotedRole)

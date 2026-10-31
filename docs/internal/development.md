@@ -207,11 +207,13 @@ validation. Native directory/file creation, content confirmation, replacement,
 revert, and rename/move also work, including audited mutations and the required
 physical, extraction and photo catalog maintenance. Document imports, source
 history, watch and push observations, and collection membership and labels also
-work through the native Store methods.
+work through the native Store methods. Recoverable deletion covers document and
+folder trash, whole photo groups, trash browsing and restore, including audited
+mutations and photo sidecar decisions.
 
 A public PostgreSQL-backed vault is not available yet: daemon and embedded
-operations still open SQLite. Grouped photo imports, XMP sidecar writing, trash
-and purge, search, transfer, backup, restore and the complete physical-storage
+operations still open SQLite. Grouped photo imports, XMP sidecar writing,
+permanent purge, search, transfer, backup recovery and the complete physical-storage
 lifecycle remain unqualified.
 
 `Setup` takes a caller-owned `database/sql` pool authenticated as `SchemaOwner`
@@ -295,7 +297,10 @@ GRANT UPDATE(live_entries, live_stored_bytes, live_raw_bytes,
     max_live_stored_len, max_live_raw_len) ON documents.blob_packs TO docbank_runtime;
 GRANT INSERT, UPDATE(next_attempt_at) ON documents.text_extraction_queue TO docbank_runtime;
 GRANT INSERT ON documents.text_searchable_versions TO docbank_runtime;
-GRANT INSERT, UPDATE(display_file_id) ON documents.photo_assets TO docbank_runtime;
+GRANT INSERT, UPDATE(hidden_at, excluded_at, display_file_id,
+    display_override_file_id, revision, updated_at)
+    ON documents.photo_assets TO docbank_runtime;
+GRANT INSERT, DELETE ON documents.photo_change_receipts TO docbank_runtime;
 GRANT INSERT, UPDATE(asset_id, role, sidecar_of_file_id, source_provenance_identity)
     ON documents.photo_files TO docbank_runtime;
 GRANT INSERT, DELETE ON documents.photo_timeline TO docbank_runtime;
@@ -560,6 +565,34 @@ receipts, missing authority and dead pack mappings surviving logical collection.
 These are internal Store capabilities; they do not expose a public PostgreSQL
 vault or qualify the remaining storage and recovery lifecycle.
 
+#### Recoverable deletion
+
+Native document and folder trash, photo-group trash, trash browsing and restore
+use the shared Store operations on both engines. Trashing records the original
+parent and name, stamps the live subtree together and preserves bytes and content
+history. Restore preserves node IDs, leaves independently trashed descendants
+alone, and uses the existing parent fallback and smallest free name suffix.
+Audited operations retain their scope restrictions and append the same canonical
+history as other document mutations.
+
+Photo recovery follows connected members across folders, restores original
+parents before children, and keeps sidecar sync history and recorded decisions.
+PostgreSQL refreshes export work inside the mutation transaction after node,
+asset and XMP receipt changes. SQLite keeps its released triggers. A failed final
+receipt write rolls back the nodes, audit advancement and export work together.
+The runtime role can insert photo receipts and delete the superseded XMP sync
+receipt; it has no receipt `UPDATE` grant.
+
+Trash pages count and select grouped photos and ordinary roots from one
+repeatable-read snapshot. Photo reads also request that isolation when assembling
+assets from multiple statements. Backend qualification compares populated photo
+state, receipts and export inputs against SQLite and validates the resulting
+ordinary and audited metadata.
+
+This is recoverable deletion through the internal Store. Permanent trash empty,
+retention and pruning, physical blob retirement, general photo editing, portable
+backup/restore and public PostgreSQL vault opening remain unqualified.
+
 #### Imports and source history
 
 Native file imports publish their ingest run, provenance, exact-version binding,
@@ -696,8 +729,10 @@ The transaction tests cover callback failure, cancellation and commit-time
 constraint failure. Audit qualification also replays native SQLite-generated
 history against PostgreSQL's high-water mark after a failed insert. Complete
 enrollment also runs the full metadata validator described below.
-Native document-write tests also replay history after creation, content changes
-and moves. Other audited mutations and import remain unqualified.
+Native operation tests also replay history after creation, content changes,
+imports, moves, trash and restore. Qualification remains limited to the native
+operations described above; it does not enable every audited mutation or
+portable metadata import.
 
 The native canonical-record insertion helper also uses shared SQL. Its index
 builder rejects zero node IDs, operation sequences and entry counts in Go

@@ -61,7 +61,7 @@ func auditTopologyForNodeTx(
 ) (audit.Record, error) {
 	var row auditTopologyRow
 	err := tx.QueryRowContext(ctx, `SELECT id,parent_id,name,kind,created_at,modified_at,
-		trashed_at,trash_parent,trash_name FROM nodes WHERE id=?`, nodeID).Scan(
+		trashed_at,trash_parent,trash_name FROM nodes WHERE id=$1`, nodeID).Scan(
 		&row.id, &row.parentID, &row.name, &row.kind, &row.createdAt,
 		&row.modifiedAt, &row.trashedAt, &row.trashParent, &row.trashName,
 	)

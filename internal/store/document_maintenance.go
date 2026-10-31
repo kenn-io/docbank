@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 
 	"go.kenn.io/docbank/internal/query"
@@ -57,13 +58,23 @@ func (s *Store) refreshNodePhotoWorkTx(ctx context.Context, tx *sql.Tx, node Nod
 		}
 	}
 	for asset := range assets {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM photo_xmp_unsettled WHERE asset_id=$1`, asset); err != nil {
+		if err := s.refreshPhotoAssetWorkTx(ctx, tx, asset); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO photo_xmp_unsettled(asset_id)
+	}
+	return nil
+}
+
+func (s *Store) refreshPhotoAssetWorkTx(ctx context.Context, tx *sql.Tx, asset string) error {
+	if s.postgresSchema == "" {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM photo_xmp_unsettled WHERE asset_id=$1`, asset); err != nil {
+		return fmt.Errorf("clearing photo export work: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO photo_xmp_unsettled(asset_id)
    SELECT $1 WHERE EXISTS(SELECT 1 FROM photo_xmp_inputs WHERE asset_id=$1 AND eligible AND (pending OR conflicts<>0))`, asset); err != nil {
-			return err
-		}
+		return fmt.Errorf("refreshing photo export work: %w", err)
 	}
 	return nil
 }
