@@ -51,6 +51,10 @@ func TestCheckAnswerCurrencyLabel(t *testing.T) {
 			{"CAD : $40", "USD40"},
 			{"USD40", "$40 : CAD"},
 			{"$40 : CAD", "USD40"},
+			{"USD40", "CAD ($40)"},
+			{"CAD ($40)", "USD40"},
+			{"USD40", "($40) CAD"},
+			{"($40) CAD", "USD40"},
 		} {
 			t.Run(transport+"/"+tc.answer+"/"+tc.source, func(t *testing.T) {
 				server, citation := newCitationMCPFixtureText(t, "text/html", "<p>"+tc.source+"</p>", tc.source)
@@ -60,6 +64,18 @@ func TestCheckAnswerCurrencyLabel(t *testing.T) {
 				require.Equal(t, "ungrounded", objectField(t, result, "structuredContent")["status"])
 			})
 		}
+	}
+}
+
+func TestCheckAnswerAdjacentAmounts(t *testing.T) {
+	for _, transport := range []string{"stdio", "http"} {
+		t.Run(transport, func(t *testing.T) {
+			server, citation := newCitationMCPFixtureText(t, "text/html", "<p>USD 20, CAD 30</p>", "USD 20, CAD 30")
+			result := decodeResult(t, exportExchange(t, server, transport, "tools/call", map[string]any{
+				"name": "check_answer", "arguments": map[string]any{"answer": "$20 and CAD30 [1]", "citations": []any{citation}},
+			}))
+			require.Equal(t, "grounded", objectField(t, result, "structuredContent")["status"])
+		})
 	}
 }
 

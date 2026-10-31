@@ -3,6 +3,7 @@ package grounding
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -13,7 +14,7 @@ func TestNormalizedFigures(t *testing.T) {
 		figures                 []Figure
 	}
 	cases := []testCase{}
-	for _, gap := range []string{" : ", " , : \t", " ' : ' "} {
+	for _, gap := range []string{" : ", " , : \t", " ' : ' ", " (", ") ", "*", "|", ";", "[", "]", "<", ">", "~", "`", "=", "\u2014", "\u2015"} {
 		for _, ambiguous := range []string{"CAD" + gap + "$40", "$40" + gap + "CAD"} {
 			cases = append(cases,
 				testCase{"USD40", ambiguous, "ungrounded", []Figure{{Text: "USD40", Status: "missing"}}},
@@ -37,6 +38,7 @@ func TestNormalizedFigures(t *testing.T) {
 	}
 	for _, tc := range []struct{ answer, source, overall, text, figure string }{
 		{"USD40", "$40, CAD", "ungrounded", "USD40", "missing"},
+		{"USD40", "$40 CAD : end", "ungrounded", "USD40", "missing"},
 		{"$40, CAD", "USD40", "ungrounded", "$40", "missing"},
 		{"2026-03-155", "2026-03-15", "ungrounded", "2026-03-155", "missing"},
 		{"2026-03-15", "2026-03-155", "ungrounded", "2026-03-15", "missing"},
@@ -110,6 +112,10 @@ func TestNormalizedFigures(t *testing.T) {
 		cases = append(cases, testCase{tc.answer, tc.source, tc.overall, []Figure{{Text: tc.text, Status: tc.figure}}})
 	}
 	cases = append(cases,
+		testCase{"$20 CAD0.5", "USD 20, CAD .5", "grounded", []Figure{{Text: "$20", Status: "found"}, {Text: "CAD0.5", Status: "found"}}},
+		testCase{"$20 CAD30", "USD 20, CAD 30", "grounded", []Figure{{Text: "$20", Status: "found"}, {Text: "CAD30", Status: "found"}}},
+		testCase{"USD 20, CAD 30", "$20 CAD30", "grounded", []Figure{{Text: "USD 20", Status: "found"}, {Text: "CAD 30", Status: "found"}}},
+		testCase{"$20 CAD30", "USD 20; CAD 30", "grounded", []Figure{{Text: "$20", Status: "found"}, {Text: "CAD30", Status: "found"}}},
 		testCase{"$40 on March 15, 2026", "40 USD\n2026-03-15", "", []Figure{{Text: "$40", Status: "found"}, {Text: "March 15, 2026", Status: "found"}}},
 		testCase{"$40 CAD30", "40USD 30CAD", "", []Figure{{Text: "$40", Status: "found"}, {Text: "CAD30", Status: "found"}}},
 		testCase{"$40 CAD30", "40 USD 30 CAD", "", []Figure{{Text: "$40", Status: "found"}, {Text: "CAD30", Status: "found"}}},
@@ -133,4 +139,16 @@ func TestNormalizedFigures(t *testing.T) {
 			require.Equal(t, tc.figures, report.Figures)
 		})
 	}
+}
+
+func TestNormalizedPunctuationGap(t *testing.T) {
+	answer, err := Prepare("USD40")
+	require.NoError(t, err)
+	citations := make([]Citation, 8)
+	for i := range citations {
+		citations[i].Text = "CAD " + strings.Repeat(": ", 7900) + "$40"
+	}
+	start := time.Now()
+	require.Equal(t, "ungrounded", answer.Check(citations).Status)
+	require.Less(t, time.Since(start), 2*time.Second)
 }

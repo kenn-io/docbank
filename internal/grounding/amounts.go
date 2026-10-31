@@ -32,13 +32,8 @@ func currencyAt(rs []rune, start int) (int, string) {
 // remain literal rather than inferring a locale from the currency marker.
 func amountValue(s string) string {
 	integer, fraction, decimal := strings.Cut(s, ".")
-	if decimal && (fraction == "" || len(fraction) > 2) {
+	if s == "" || decimal && (fraction == "" || len(fraction) > 2) {
 		return ""
-	}
-	for _, r := range fraction {
-		if !digit(r) {
-			return ""
-		}
 	}
 	if strings.Contains(integer, ",") {
 		groups := strings.Split(integer, ",")
@@ -51,6 +46,11 @@ func amountValue(s string) string {
 			}
 		}
 		integer = strings.Join(groups, "")
+	}
+	for _, r := range integer + fraction {
+		if !digit(r) {
+			return ""
+		}
 	}
 	integer = strings.TrimLeft(integer, "0")
 	if integer == "" {
@@ -70,7 +70,6 @@ func amountAt(rs []rune) (int, string) {
 		i++
 	}
 	i, code := currencyAt(rs, i)
-	prefix := code != ""
 	i = skipSpace(rs, i, false)
 	numberStart := i
 	if i >= len(rs) || (!digit(rs[i]) && (rs[i] != '.' || i+1 >= len(rs) || !digit(rs[i+1]))) {
@@ -79,15 +78,10 @@ func amountAt(rs []rune) (int, string) {
 	for i < len(rs) && (digit(rs[i]) || separator(rs[i])) {
 		i++
 	}
-	// A terminal ellipsis is sentence punctuation, not a malformed number.
-	dots := i
-	for dots > numberStart && rs[dots-1] == '.' {
-		dots--
-	}
+	dots := numberStart + len(strings.TrimRight(string(rs[numberStart:i]), "."))
 	if i-dots >= 3 && dots > numberStart && digit(rs[dots-1]) && (i == len(rs) || unicode.IsSpace(rs[i]) || edge(rs[i])) {
 		i = dots
 	}
-	// Sentence punctuation and whitespace after the number are not part of it.
 	for i > numberStart && !digit(rs[i-1]) {
 		if i-numberStart >= 2 && separator(rs[i-1]) && separator(rs[i-2]) {
 			return 0, ""
@@ -95,9 +89,7 @@ func amountAt(rs []rune) (int, string) {
 		i--
 	}
 	numberEnd := i
-	// A suffix belongs only to an amount without a prefix. Inspect the next
-	// token itself, leaving any following figure for its own parse.
-	if !prefix {
+	if code == "" {
 		start := skipSpace(rs, i, false)
 		end, suffix := currencyAt(rs, start)
 		if suffix == "" || end-start != 3 {
@@ -107,15 +99,22 @@ func amountAt(rs []rune) (int, string) {
 	}
 	start := i + trimStart(rs[i:])
 	end := start
-	for end < len(rs) && !unicode.IsSpace(rs[end]) {
+	for end < len(rs) && !split(rs[end]) {
 		end++
 	}
 	token := []rune(trim(rs[start:end]))
 	if markerEnd, marker := currencyAt(token, 0); marker != "" && markerEnd == len(token) && strings.TrimFunc(string(rs[i:start]), amountGap) == "" {
+		next := skipSpace(rs, end, false)
+		number := next
+		for number < len(rs) && !split(rs[number]) {
+			number++
+		}
 		if start == i {
 			return end, ""
 		}
-		return i, ""
+		if next == number || amountValue(trim(rs[next:number])) == "" {
+			return i, ""
+		}
 	}
 	if signed {
 		return i, ""
