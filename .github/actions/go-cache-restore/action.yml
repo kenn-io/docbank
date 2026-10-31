@@ -57,8 +57,8 @@ runs:
     - name: Restore caches
       id: restore
       # The runner checks steps in $/ actions against the SHA-pinning rule, not
-      # actions.lock, so this ref stays a commit. `make actions-lock` rewrites it
-      # to a tag; restore the commit after running it.
+      # actions.lock, so this ref stays a commit. `make actions-lock` preserves
+      # it with --no-narrow and records the exact SHA ref in the lockfile.
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ env.GO_CACHE_PATHS }}

@@ -936,6 +936,11 @@ shards. Pull requests call `ci.yml` from `main`, so changes to that workflow tak
 effect for pull requests after merge. Workflow validation runs against the
 proposed workflow changes.
 
+Run `make actions-lock` after changing action references. It preserves commit
+references inside `$/` composite actions and records their exact references in
+the lockfile. A release-tag entry for the same commit does not cover a SHA
+reference when the runner prepares a job.
+
 Go test workflows set `GOTRACEBACK=all` for crashes. When diagnosing a hang, call Kit's `stacktest.Dump(t)` before failing an expired wait to log every goroutine's stack.
 
 CLI redaction verification tests run in separate test processes because the PDF worker's 1 GiB RSS ceiling counts all memory in its process. Each child keeps the real PDF checks and the qualified memory limit.

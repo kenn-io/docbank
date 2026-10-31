@@ -214,8 +214,9 @@ gh-actions-lock-install:
 	fi
 
 # Lock every workflow action after adding or bumping a `uses:` line
+# Keep the commit refs required by the runner inside $/ composite actions.
 actions-lock: gh-actions-lock-install
-	gh actions-lock --no-interactive
+	gh actions-lock --no-interactive --no-narrow
 
 # Offline check that every workflow action has a lockfile entry
 actions-lock-check-local: gh-actions-lock-install
