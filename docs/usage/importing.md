@@ -439,6 +439,7 @@ For directories that receive files over time, configure a daemon-owned
 name = "agent-sessions"
 source = "~/agent-sessions"
 destination = "/archives/agents"
+tags = ["agent-sessions"]
 settle_time = "30s"
 minimum_age = "168h"
 scan_interval = "5s"
@@ -553,10 +554,15 @@ files, prune versions, run GC, or rewrite existing packs. Portable
 [backup and restore](backup.md) preserve the mirrored hierarchy, source
 provenance, every retained version, and its verified bytes.
 
+The watcher applies configured tags to new imports. Once a scan finds a tag
+unavailable, new imports wait while edits to existing imports continue. Create
+the missing tag to resume imports on the next scan without restarting.
+
 The watcher uses the exact destination name and does not add a collision
-suffix. It stops with an error if unrelated content already occupies that path
-or the previously mapped node is in trash. `docbank jobs` reports the named
-`watch:<name>` job and any terminal error. Correct the problem and restart the
-daemon. Successful additions, updates, and unchanged observations appear in the
+suffix. Unrelated content at that path or a previously mapped node in trash
+causes a permanent failure. A missing tag keeps polling active until it recovers;
+any remaining permanent failure then stops the watch. `docbank jobs` reports
+the named `watch:<name>` job and its error. Correct permanent failures and
+restart the daemon. Successful additions, updates, and unchanged observations appear in the
 daemon log. See [Configuration](../configuration.md#watched-inboxes) for the
 complete field contract.

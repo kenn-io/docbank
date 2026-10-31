@@ -46,7 +46,7 @@ func TestListWatchedInboxesReturnsEffectiveConfigAndRunnerState(t *testing.T) {
 				ScanInterval: config.Duration(time.Second),
 			},
 			{
-				Name: "archive", Source: source, Destination: "/records",
+				Name: "archive", Source: source, Destination: "/records", Tags: []string{"receipts"},
 				CaptureOnChange: true,
 				SettleTime:      config.Duration(2 * time.Minute),
 				MinimumAge:      config.Duration(7 * 24 * time.Hour),
@@ -62,6 +62,7 @@ func TestListWatchedInboxesReturnsEffectiveConfigAndRunnerState(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &got))
 	require.Len(t, got.Items, 2)
 	assert.Equal(t, "archive", got.Items[0].Name)
+	assert.Equal(t, []string{"receipts"}, got.Items[0].Tags)
 	assert.True(t, got.Items[0].CaptureOnChange)
 	assert.Contains(t, body, `"capture_on_change":true`)
 	assert.Equal(t, source, got.Items[0].Source)

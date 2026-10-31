@@ -407,6 +407,7 @@ describe("background jobs drawer", () => {
           started_at: "2026-07-23T11:00:00Z",
           finished_at: "2026-07-23T11:02:00Z",
           error: "source is unavailable",
+          tags: ["receipts", "2026"],
         },
       ]),
     );
@@ -419,9 +420,10 @@ describe("background jobs drawer", () => {
     });
 
     expect(await screen.findByRole("region", { name: "Extracting text" })).toBeTruthy();
-    const failed = within(screen.getByRole("row", { name: /Watching inbox Failed/ }));
+    const failed = within(screen.getByRole("row", { name: /Watching inbox.*Failed/ }));
     expect(failed.getByText("Failed")).toBeTruthy();
     expect(failed.getByText("source is unavailable")).toBeTruthy();
+    expect(screen.getAllByText("Tags: receipts, 2026")).toHaveLength(1);
     expect(screen.getByText("1 running")).toBeTruthy();
 
     await fireEvent.click(screen.getByRole("button", { name: "Close background jobs" }));

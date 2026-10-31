@@ -53,7 +53,7 @@ func writeWatchedInboxes(w io.Writer, items []api.WatchedInbox) error {
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	if _, err := fmt.Fprintln(tw,
-		"NAME\tSTATUS\tCAPTURE\tSOURCE\tDESTINATION\tSETTLE\tMINIMUM AGE\tSCAN\tEXCLUDES\tERROR"); err != nil {
+		"NAME\tSTATUS\tCAPTURE\tSOURCE\tDESTINATION\tTAGS\tSETTLE\tMINIMUM AGE\tSCAN\tEXCLUDES\tERROR"); err != nil {
 		return fmt.Errorf("writing watched-inbox header: %w", err)
 	}
 	for _, item := range items {
@@ -68,9 +68,9 @@ func writeWatchedInboxes(w io.Writer, items []api.WatchedInbox) error {
 		if item.CaptureOnChange {
 			capture = "prompt"
 		}
-		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\n",
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\n",
 			item.Name, status, capture, strconv.QuoteToASCII(item.Source),
-			strconv.QuoteToASCII(item.Destination), item.SettleTime,
+			strconv.QuoteToASCII(item.Destination), fmt.Sprintf("%q", item.Tags), item.SettleTime,
 			item.MinimumAge, item.ScanInterval, len(item.Exclude)+len(item.ExcludePatterns), problem); err != nil {
 			return fmt.Errorf("writing watched-inbox row: %w", err)
 		}

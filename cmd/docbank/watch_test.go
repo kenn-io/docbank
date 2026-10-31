@@ -17,7 +17,8 @@ func TestWriteWatchedInboxesEscapesMachineAndVirtualPaths(t *testing.T) {
 		Name: "sessions", Source: "/local/agent\nsessions",
 		Destination: "/archives/\x1b[31msessions", SettleTime: "1h0m0s",
 		MinimumAge: "168h0m0s", ScanInterval: "1m0s", Exclude: []string{"cache/"}, ExcludePatterns: []string{"*.swp", "*.tmp"}, CaptureOnChange: true,
-		Job: &api.Job{Status: "running"},
+		Tags: []string{"receipts", "line\nbreak"},
+		Job:  &api.Job{Status: "running"},
 	}})
 	require.NoError(t, err)
 	assert.Contains(t, out.String(), `"/local/agent\nsessions"`)
@@ -25,6 +26,7 @@ func TestWriteWatchedInboxesEscapesMachineAndVirtualPaths(t *testing.T) {
 	assert.NotContains(t, out.String(), "\x1b")
 	fields := strings.Fields(strings.Split(strings.TrimSpace(out.String()), "\n")[1])
 	assert.Equal(t, "3", fields[len(fields)-2])
+	assert.Contains(t, out.String(), `["receipts" "line\nbreak"]`)
 	assert.Contains(t, out.String(), "CAPTURE")
 	assert.Contains(t, out.String(), "prompt")
 }

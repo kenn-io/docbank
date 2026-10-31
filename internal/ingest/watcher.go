@@ -39,18 +39,10 @@ type WatchResult struct {
 
 func (ing *Ingester) ingestWatchedFile(
 	ctx context.Context, watchName, destination, sourceRef string,
-	expected localFileFingerprint, open localFileOpener,
+	expected localFileFingerprint, open localFileOpener, tags []string,
 ) (result WatchResult, retErr error) {
-	sourceRef = filepath.ToSlash(sourceRef)
-	if sourceRef == "." || sourceRef == "" || path.IsAbs(sourceRef) ||
-		sourceRef == ".." || strings.HasPrefix(sourceRef, "../") ||
-		path.Clean(sourceRef) != sourceRef {
-		return result, fmt.Errorf("invalid watched source reference %q", sourceRef)
-	}
-	if err := validateSourcePath(sourceRef); err != nil {
-		return result, err
-	}
-	if err := validateVirtualDestination(destination); err != nil {
+	sourceRef, err := ing.admitWatchedSource(ctx, watchName, destination, sourceRef, tags)
+	if err != nil {
 		return result, err
 	}
 
@@ -87,15 +79,47 @@ func (ing *Ingester) ingestWatchedFile(
 	if err != nil {
 		return result, err
 	}
-	result.Node, err = ing.Store.IngestFileExact(
+	result.Node, err = ing.Store.IngestFileExactTagged(
 		ctx, run, parent.ID, path.Base(sourceRef), content.hash, content.size,
-		content.mimeType, sourceRef, content.mtime, content.physical,
+		content.mimeType, sourceRef, content.mtime, tags, content.physical,
 	)
 	if err != nil {
 		return result, fmt.Errorf("recording watched source %q: %w", sourceRef, err)
 	}
 	result.Outcome = WatchAdded
 	return result, nil
+}
+
+// admitWatchedSource validates a watched file's target. A source the watch has
+// not recorded must have its tags before any bytes are published; recorded
+// sources whose file is still live keep recording edits. The import transaction checks tags again.
+func (ing *Ingester) admitWatchedSource(
+	ctx context.Context, watchName, destination, sourceRef string, tags []string,
+) (string, error) {
+	sourceRef = filepath.ToSlash(sourceRef)
+	if sourceRef == "." || sourceRef == "" || path.IsAbs(sourceRef) ||
+		sourceRef == ".." || strings.HasPrefix(sourceRef, "../") ||
+		path.Clean(sourceRef) != sourceRef {
+		return "", fmt.Errorf("invalid watched source reference %q", sourceRef)
+	}
+	if err := validateSourcePath(sourceRef); err != nil {
+		return "", err
+	}
+	if err := validateVirtualDestination(destination); err != nil {
+		return "", err
+	}
+	if len(tags) == 0 {
+		return sourceRef, nil
+	}
+	if recorded, err := ing.Store.HasWatchSource(ctx, watchName, sourceRef); err != nil || recorded {
+		return sourceRef, err
+	}
+	for _, name := range tags {
+		if _, err := ing.Store.ResolveWatchTag(ctx, name); err != nil {
+			return "", err
+		}
+	}
+	return sourceRef, nil
 }
 
 func validateVirtualDestination(destination string) error {
@@ -340,12 +364,17 @@ func (w *Watcher) Run(ctx context.Context) error {
 // collector only records bounded hints; it never starts ingestion work.
 func (w *Watcher) run(ctx context.Context, root *watchRoot, beforeScan func()) error {
 	var source watchNotificationSource
+	var notificationFailure error
+	tagBlocked := false
 	degraded := false
 	blocked := false
 	retryEnrollment := w.config.CaptureOnChange
 	reportFailure := func(err error) {
 		if !degraded {
-			jobs.ReportError(ctx, err)
+			notificationFailure = err
+			if !tagBlocked {
+				jobs.ReportError(ctx, err)
+			}
 			w.logger.Warn("watch notifications unavailable; polling continues", "watch", w.config.Name, "error", err)
 		}
 		degraded = true
@@ -381,19 +410,33 @@ func (w *Watcher) run(ctx context.Context, root *watchRoot, beforeScan func()) e
 			beforeScan()
 		}
 		complete, err := w.scanWithHints(ctx, root, hints)
+		wasTagBlocked := tagBlocked
+		_, tagBlocked = errors.AsType[*store.TagResolutionError](err)
 		if w.notificationErr != nil {
 			failure := w.notificationErr
 			w.notificationErr = nil
 			disable(failure)
 		}
+		if tagBlocked {
+			jobs.ReportError(ctx, err)
+			if !wasTagBlocked {
+				w.logger.Warn("watch tags unavailable; polling continues", "watch", w.config.Name, "error", err)
+			}
+			return nil
+		}
+		if wasTagBlocked {
+			jobs.ReportError(ctx, notificationFailure)
+		}
 		if errors.Is(err, errWatchBlocked) || (err == nil && !complete) {
 			if err == nil {
 				err = fmt.Errorf("watch %q source inventory incomplete; reconciliation deferred", w.config.Name)
 			}
-			if !blocked {
+			if !blocked || wasTagBlocked {
 				if !degraded {
 					jobs.ReportError(ctx, err)
 				}
+			}
+			if !blocked {
 				w.logger.Warn("watch source blocks reconciliation; polling continues", "watch", w.config.Name, "error", err)
 			}
 			blocked = true
@@ -413,6 +456,7 @@ func (w *Watcher) run(ctx context.Context, root *watchRoot, beforeScan func()) e
 			jobs.ReportError(ctx, nil)
 			w.logger.Info("watch notifications restored", "watch", w.config.Name)
 			degraded = false
+			notificationFailure = nil
 		}
 		return nil
 	}
@@ -955,6 +999,10 @@ func (w *Watcher) scan(ctx context.Context, root *watchRoot) error {
 }
 
 func (w *Watcher) scanWithHints(ctx context.Context, root *watchRoot, hints watchScanHints) (bool, error) {
+	var err, tagErr error
+	for i := 0; w.process == nil && i < len(w.config.Tags) && tagErr == nil; i++ {
+		_, tagErr = w.ing.Store.ResolveWatchTag(ctx, w.config.Tags[i])
+	}
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
@@ -980,7 +1028,7 @@ func (w *Watcher) scanWithHints(ctx context.Context, root *watchRoot, hints watc
 		}
 	}
 	if err := w.scanDirectory(ctx, root, root.root, "", seen, hints, inventory); err != nil {
-		return false, fmt.Errorf("scanning watch %q: %w", w.config.Name, err)
+		return false, withTagError(ctx, tagErr, fmt.Errorf("scanning watch %q: %w", w.config.Name, err))
 	}
 	retained := make(map[string]struct{})
 	if inventory != nil {
@@ -989,16 +1037,15 @@ func (w *Watcher) scanWithHints(ctx context.Context, root *watchRoot, hints watc
 		// be renames of accepted sources it did not see.
 		var deferred map[string]struct{}
 		if inventory.complete {
-			var err error
 			deferred, retained, err = w.rebindCandidates(ctx, root, inventory)
 			if err != nil {
-				return false, err
+				return false, withTagError(ctx, tagErr, err)
 			}
 			if err := w.reconcileSourcePresence(ctx, inventory, deferred, retained); err != nil {
 				if errors.Is(err, ErrRetryLater) {
-					return false, nil
+					return false, tagErr
 				}
-				return false, err
+				return false, withTagError(ctx, tagErr, err)
 			}
 		} else {
 			deferred = possibleRenameTargets(w.observations, inventory)
@@ -1008,8 +1055,10 @@ func (w *Watcher) scanWithHints(ctx context.Context, root *watchRoot, hints watc
 			if _, skip := deferred[rel]; skip {
 				continue
 			}
-			if err := w.processObservation(ctx, watchSource{root: root, ref: rel}, entry.state, entry.observedAt, seen, hints); err != nil {
-				return false, err
+			if err = w.processObservation(ctx, watchSource{root: root, ref: rel}, entry.state, entry.observedAt, seen, hints); errors.As(err, new(*store.TagResolutionError)) {
+				tagErr = err
+			} else if err != nil {
+				return false, withTagError(ctx, tagErr, err)
 			}
 		}
 		if !inventory.complete {
@@ -1022,9 +1071,9 @@ func (w *Watcher) scanWithHints(ctx context.Context, root *watchRoot, hints watc
 				}
 			}
 			if len(inventory.blocked) != 0 {
-				return false, fmt.Errorf("scanning watch %q: %w", w.config.Name, errors.Join(inventory.blocked...))
+				return false, withTagError(ctx, tagErr, fmt.Errorf("scanning watch %q: %w", w.config.Name, errors.Join(inventory.blocked...)))
 			}
-			return false, nil
+			return false, tagErr
 		}
 	}
 	if w.notifications != nil && w.notificationErr == nil {
@@ -1042,7 +1091,16 @@ func (w *Watcher) scanWithHints(ctx context.Context, root *watchRoot, hints watc
 			delete(w.rejected, rel)
 		}
 	}
-	return true, nil
+	return true, tagErr
+}
+
+// withTagError keeps a missing-tag error beside a later scan failure, so the
+// tag status stays until the tag exists. Cancellation is reported alone.
+func withTagError(ctx context.Context, tagErr, err error) error {
+	if ctx.Err() != nil {
+		return err
+	}
+	return errors.Join(tagErr, err)
 }
 
 // reconcileSourcePresence records which watched sources a complete inventory
@@ -1469,7 +1527,7 @@ func (w *Watcher) processObservation(ctx context.Context, source watchSource, st
 				return w.ing.Blobs.WithMutation(ctx, func() error {
 					var writeErr error
 					result, writeErr = w.ing.ingestWatchedFile(
-						ctx, w.config.Name, w.config.Destination, rel, fingerprint, source.open,
+						ctx, w.config.Name, w.config.Destination, rel, fingerprint, source.open, w.config.Tags,
 					)
 					return writeErr
 				})

@@ -32,6 +32,7 @@ func registerWatchRoutes(api huma.API, d Deps) {
 		out := &output{Body: WatchedInboxList{Items: make([]WatchedInbox, 0, len(watches))}}
 		for _, watch := range watches {
 			item := WatchedInbox{
+				Tags: append([]string{}, watch.Tags...),
 				Name: watch.Name, Source: watch.Source, Destination: watch.Destination,
 				CaptureOnChange: watch.CaptureOnChange,
 				SettleTime:      watch.SettleTime.Std().String(),

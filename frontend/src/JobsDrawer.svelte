@@ -160,6 +160,11 @@
   }
 </script>
 
+{#snippet watchTags(lane: Lane)}
+  {@const tags = lane.members[0]?.tags}
+  {#if tags?.length}<div class="watch-tags">Tags: {tags.join(", ")}</div>{/if}
+{/snippet}
+
 {#snippet laneControls(lane: Lane)}
   {@const control = lane.control}
   {#if control?.can_set_concurrency}
@@ -244,6 +249,7 @@
                 {/if}
               </div>
             </div>
+            {@render watchTags(lane)}
             {#if lane.total !== undefined}
               {@const share = percent(lane.completed, lane.total)}
               <div class="progress">
@@ -309,7 +315,7 @@
           <tbody>
             {#each lanes as lane (lane.key)}
               <tr>
-                <th scope="row">{lane.title}</th>
+                <th scope="row">{lane.title}{@render watchTags(lane)}</th>
                 <td
                   ><span class="state" data-state={laneState(lane)}>{laneState(lane)}</span>
                   {#if !lane.visible}
@@ -465,6 +471,13 @@
   }
   td .controls {
     justify-content: flex-end;
+  }
+  .watch-tags {
+    margin-top: var(--space-1);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-normal);
+    overflow-wrap: anywhere;
   }
   .worker-count {
     width: 100px;

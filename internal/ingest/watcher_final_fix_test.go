@@ -313,7 +313,7 @@ func TestWatchNestedPermanentJoinedErrorKeepsEvidenceAndSiblingPending(t *testin
 // stepWatcherFinalRunner pauses the real runner before each scan. Advancing to
 // the next pause makes job, log and observation assertions race-free, including
 // when notification failure leaves only periodic reconciliation available.
-func stepWatcherFinalRunner(t *testing.T, watcher *Watcher, root *watchRoot) (func() jobs.Snapshot, *bytes.Buffer) {
+func stepWatcherFinalRunner(t *testing.T, watcher *Watcher, root *watchRoot) (func() jobs.Snapshot, *bytes.Buffer, func() (jobs.Snapshot, error)) {
 	t.Helper()
 	var logs bytes.Buffer
 	watcher.logger = slog.New(slog.NewTextHandler(&logs, nil))
@@ -322,9 +322,10 @@ func stepWatcherFinalRunner(t *testing.T, watcher *Watcher, root *watchRoot) (fu
 		return newFakeWatchNotificationSource(root), nil
 	}
 	ready, resume := make(chan struct{}), make(chan struct{})
+	done := make(chan error, 1)
 	supervisor := jobs.New(t.Context(), slog.New(slog.DiscardHandler))
 	require.NoError(t, supervisor.Start("watch:notes", func(ctx context.Context) error {
-		return watcher.run(ctx, root, func() {
+		err := watcher.run(ctx, root, func() {
 			select {
 			case ready <- struct{}{}:
 			case <-ctx.Done():
@@ -335,6 +336,8 @@ func stepWatcherFinalRunner(t *testing.T, watcher *Watcher, root *watchRoot) (fu
 			case <-ctx.Done():
 			}
 		})
+		done <- err
+		return err
 	}))
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -345,20 +348,37 @@ func stepWatcherFinalRunner(t *testing.T, watcher *Watcher, root *watchRoot) (fu
 		t.Helper()
 		select {
 		case <-ready:
+		case err := <-done:
+			t.Fatalf("watch stopped before the next scan: %v", err)
 		case <-time.After(5 * time.Second):
 			t.Fatal("watch runner did not reach the next scan")
 		}
 	}
 	awaitPause()
 	return func() jobs.Snapshot {
-		t.Helper()
-		resume <- struct{}{}
-		awaitPause()
-		snap := supervisor.Snapshot()
-		require.Len(t, snap, 1)
-		require.Equal(t, jobs.StatusRunning, snap[0].Status)
-		return snap[0]
-	}, &logs
+			t.Helper()
+			resume <- struct{}{}
+			awaitPause()
+			snap := supervisor.Snapshot()
+			require.Len(t, snap, 1)
+			require.Equal(t, jobs.StatusRunning, snap[0].Status)
+			return snap[0]
+		}, &logs, func() (jobs.Snapshot, error) {
+			t.Helper()
+			resume <- struct{}{}
+			var err error
+			select {
+			case err = <-done:
+			case <-time.After(time.Second):
+				t.Fatal("watch did not return promptly after recovery")
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			require.NoError(t, supervisor.Shutdown(ctx))
+			snap := supervisor.Snapshot()
+			require.Len(t, snap, 1)
+			return snap[0], err
+		}
 }
 
 func TestWatchIncompleteRunnerReportsAndImportsSibling(t *testing.T) {
@@ -374,7 +394,7 @@ func TestWatchIncompleteRunnerReportsAndImportsSibling(t *testing.T) {
 		}
 		return file.observe(withChange)
 	}
-	step, logs := stepWatcherFinalRunner(t, watcher, root)
+	step, logs, _ := stepWatcherFinalRunner(t, watcher, root)
 	notifier, ok := watcher.notifications.(*fakeWatchNotificationSource)
 	require.True(t, ok)
 	for range 3 {
@@ -406,24 +426,47 @@ func TestWatchIncompleteRunnerReportsAndImportsSibling(t *testing.T) {
 }
 
 func TestWatchIncompleteRunnerRecoveryPreservesNotificationError(t *testing.T) {
-	for _, failFirst := range []bool{false, true} {
-		t.Run(map[bool]string{false: "source first", true: "notifications first"}[failFirst], func(t *testing.T) {
+	for _, tc := range []struct {
+		name                    string
+		notificationsFirst      bool
+		tagBlock                bool
+		notificationDuringBlock bool
+	}{
+		{name: "source first"},
+		{name: "notifications first", notificationsFirst: true},
+		{name: "source first then notifications then tag block", tagBlock: true},
+		{name: "source first then tag block then notifications", tagBlock: true, notificationDuringBlock: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			watcher, root, ing, source, siblingID := watcherFinalPair(t)
 			require.NoError(t, os.WriteFile(filepath.Join(source, "b.md"), []byte("changed sibling"), 0o600))
-			held := !failFirst
+			held := !tc.notificationsFirst
 			watcher.observeFile = func(file watchSource, withChange bool) (watchFileState, error) {
 				if file.ref == "a.md" && held {
 					return watchFileState{}, ErrSourceChanged
 				}
 				return file.observe(withChange)
 			}
-			step, logs := stepWatcherFinalRunner(t, watcher, root)
-			if !failFirst {
+			step, logs, _ := stepWatcherFinalRunner(t, watcher, root)
+			if !tc.notificationsFirst {
 				require.Contains(t, step().Error, "incomplete")
 			}
+			if tc.notificationDuringBlock {
+				watcher.config.Tags = []string{"receipts"}
+				require.Contains(t, step().Error, `tag "receipts"`)
+			}
 			watcher.notificationErr = errors.New("synthetic notification backend failure")
-			notificationError := step().Error
-			require.Contains(t, notificationError, "notifications")
+			notificationError := `watch "notes" notifications: synthetic notification backend failure`
+			if !tc.notificationDuringBlock {
+				require.Equal(t, notificationError, step().Error)
+			}
+			if tc.tagBlock {
+				watcher.config.Tags = []string{"receipts"}
+				require.Contains(t, step().Error, `tag "receipts"`)
+				_, err := ing.Store.CreateTag(t.Context(), "receipts")
+				require.NoError(t, err)
+			}
+			require.Equal(t, notificationError, step().Error)
 			held = true
 			for range 2 {
 				require.Equal(t, notificationError, step().Error)
@@ -437,6 +480,111 @@ func TestWatchIncompleteRunnerRecoveryPreservesNotificationError(t *testing.T) {
 			require.NotContains(t, logs.String(), "watch notifications restored")
 		})
 	}
+}
+
+func TestWatchTagBlockRestoresRemainingFailure(t *testing.T) {
+	for _, failure := range []string{"replaced root", "trashed node"} {
+		for _, action := range []string{"scan recovery", "runner recovery"} {
+			if failure == "replaced root" && action == "runner recovery" {
+				continue
+			}
+			t.Run(failure+"/"+action, func(t *testing.T) {
+				watcher, root, ing, source, _ := watcherFinalPair(t)
+				watcher.config.Tags = []string{"receipts"}
+				require.ErrorAs(t, watcher.scan(t.Context(), root), new(*store.TagResolutionError))
+				wantSourceError := "was replaced"
+				if failure == "replaced root" {
+					renameWatcherRoot(t, root, filepath.Join(t.TempDir(), "old-source"))
+					require.NoError(t, os.Mkdir(source, 0o700))
+				} else {
+					wantSourceError = "maps to trashed node"
+					node, err := ing.Store.NodeByPath(t.Context(), "/archive/a.md")
+					require.NoError(t, err)
+					_, _, err = ing.Store.Trash(t.Context(), node.ID, node.Revision)
+					require.NoError(t, err)
+				}
+				if action == "scan recovery" {
+					edits := 1
+					if failure == "trashed node" {
+						edits = 2
+					}
+					for edit := range edits {
+						content := []byte(fmt.Sprintf("edited after trash %d", edit))
+						if failure == "trashed node" {
+							require.NoError(t, os.WriteFile(filepath.Join(source, "a.md"), content, 0o600))
+						}
+						err := watcher.scan(t.Context(), root)
+						require.ErrorAs(t, err, new(*store.TagResolutionError), "missing tags must survive later source failures")
+						require.ErrorContains(t, err, wantSourceError)
+					}
+					_, err := ing.Store.CreateTag(t.Context(), "receipts")
+					require.NoError(t, err)
+					err = watcher.scan(t.Context(), root)
+					require.ErrorContains(t, err, wantSourceError)
+					_, tagBlocked := errors.AsType[*store.TagResolutionError](err)
+					assert.False(t, tagBlocked, "tag recovery must expose the remaining source failure")
+					return
+				}
+				require.NoError(t, os.WriteFile(filepath.Join(source, "a.md"), []byte("edited after trash"), 0o600))
+
+				watcher.config.CaptureOnChange = false
+				step, _, finish := stepWatcherFinalRunner(t, watcher, root)
+				for range 2 {
+					snap := step()
+					assert.Equal(t, jobs.StatusRunning, snap.Status)
+					require.ErrorAs(t, snap.Cause, new(*store.TagResolutionError))
+					assert.Contains(t, snap.Error, `tag "receipts"`)
+					assert.Contains(t, snap.Error, wantSourceError)
+				}
+				_, err := ing.Store.CreateTag(t.Context(), "receipts")
+				require.NoError(t, err)
+				snap, err := finish()
+				require.ErrorContains(t, err, wantSourceError)
+				_, tagBlocked := errors.AsType[*store.TagResolutionError](err)
+				assert.False(t, tagBlocked)
+				assert.Equal(t, jobs.StatusFailed, snap.Status)
+				assert.Contains(t, snap.Error, wantSourceError)
+				require.ErrorContains(t, snap.Cause, wantSourceError)
+			})
+		}
+	}
+	t.Run("cancellation during tagged scan", func(t *testing.T) {
+		watcher, root, _, source, _ := watcherFinalPair(t)
+		watcher.config.Tags = []string{"receipts"}
+		require.NoError(t, os.WriteFile(filepath.Join(source, "new.md"), []byte("pending"), 0o600))
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		watcher.beforeFile = func(ctx context.Context, _ string) error {
+			cancel()
+			return ctx.Err()
+		}
+		err := watcher.scan(ctx, root)
+		require.ErrorIs(t, err, context.Canceled)
+		_, tagBlocked := errors.AsType[*store.TagResolutionError](err)
+		assert.False(t, tagBlocked, "cancellation must take priority over missing tags")
+	})
+	t.Run("source only", func(t *testing.T) {
+		watcher, root, ing, _, _ := watcherFinalPair(t)
+		held := true
+		watcher.observeFile = func(file watchSource, withChange bool) (watchFileState, error) {
+			if file.ref == "a.md" && held {
+				return watchFileState{}, ErrSourceChanged
+			}
+			return file.observe(withChange)
+		}
+		step, logs, _ := stepWatcherFinalRunner(t, watcher, root)
+		expected := step().Error
+		require.Contains(t, expected, "incomplete")
+		watcher.config.Tags = []string{"receipts"}
+		require.Contains(t, step().Error, `tag "receipts"`)
+		_, err := ing.Store.CreateTag(t.Context(), "receipts")
+		require.NoError(t, err)
+		require.Equal(t, expected, step().Error)
+		held = false
+		require.Empty(t, step().Error)
+		require.Equal(t, 1, strings.Count(logs.String(), "watch source blocks reconciliation"))
+		require.Equal(t, 1, strings.Count(logs.String(), "watch source reconciliation restored"))
+	})
 }
 
 // Consecutive incomplete inventories form one reported incident. A complete
@@ -459,7 +607,7 @@ func FuzzWatchRunnerIncompleteReportingTransitions(f *testing.F) {
 			}
 			return file.observe(withChange)
 		}
-		step, logs := stepWatcherFinalRunner(t, watcher, root)
+		step, logs, _ := stepWatcherFinalRunner(t, watcher, root)
 		// Bound filesystem work when materializing the generated sequence.
 		if len(data) > 32 {
 			data = data[:32]

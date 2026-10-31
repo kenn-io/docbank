@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -134,4 +136,32 @@ func TestBrowserJobListRedactsPrivateBackendErrors(t *testing.T) {
 	assert.NotEmpty(t, got.Items[0].Error)
 	assert.NotContains(t, got.Items[0].Error, "/Users/example")
 	assert.NotContains(t, got.Items[0].Error, "private.example.invalid")
+}
+
+func TestBrowserJobListWatchTags(t *testing.T) {
+	t.Parallel()
+	supervisor := jobs.New(t.Context(), slog.New(slog.DiscardHandler))
+	t.Cleanup(func() { require.NoError(t, supervisor.Shutdown(context.Background())) })
+	require.NoError(t, supervisor.Start("watch:receipts", func(ctx context.Context) error {
+		jobs.ReportError(ctx, fmt.Errorf("recording watched source %q: %w", "synthetic-receipt.txt", &store.TagResolutionError{Name: "receipts", Err: store.ErrNotFound}))
+		<-ctx.Done()
+		return ctx.Err()
+	}))
+	require.Eventually(t, func() bool {
+		return supervisor.Snapshot()[0].Error != ""
+	}, time.Second, time.Millisecond)
+	ts, _ := newTestServer(t, func(d *api.Deps) {
+		d.Jobs = supervisor
+		d.Cfg.Watches = []config.WatchConfig{
+			{Name: "receipts", Source: t.TempDir(), Destination: "/receipts", Tags: []string{"receipts"}},
+		}
+	})
+	headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)}
+	resp, body := get(t, ts, "/api/v1/jobs", headers)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var got api.JobList
+	require.NoError(t, json.Unmarshal([]byte(body), &got))
+	require.Len(t, got.Items, 1)
+	assert.Equal(t, []string{"receipts"}, got.Items[0].Tags)
+	assert.Equal(t, `tag "receipts" is unavailable`, got.Items[0].Error)
 }
