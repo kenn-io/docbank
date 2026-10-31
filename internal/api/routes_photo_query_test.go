@@ -32,6 +32,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -865,6 +866,53 @@ func (p togglePhotoImageProvider) Embed(ctx context.Context, inputs []document.E
 		return document.EmbeddingResult{}, errors.New("synthetic provider unavailable")
 	}
 	return p.EmbeddingProvider.Embed(ctx, inputs, authorization)
+}
+
+type stalledPhotoImageProvider struct {
+	document.EmbeddingProvider
+
+	queryCalls atomic.Int32
+}
+
+func (p *stalledPhotoImageProvider) Embed(ctx context.Context, inputs []document.EmbeddingInput, authorization document.EmbeddingAuthorization) (document.EmbeddingResult, error) {
+	if len(inputs) == 1 && inputs[0].Kind == document.EmbeddingInputQueryText {
+		p.queryCalls.Add(1)
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+		defer cancel()
+		<-ctx.Done()
+		return document.EmbeddingResult{}, ctx.Err()
+	}
+	return p.EmbeddingProvider.Embed(ctx, inputs, authorization)
+}
+
+func TestPhotoQueryFallsBackToMetadataWhenProviderStallsPastBuildDeadline(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{"semantic", "hybrid"} {
+		t.Run(mode, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				provider := newProcessingTestEmbeddingProvider(t)
+				provider.descriptor = photoImageDescriptor(t, provider.descriptor)
+				stalled := &stalledPhotoImageProvider{EmbeddingProvider: provider}
+				ts, catalog, _ := photoImageHTTPProfilesFixture(t, map[string]document.EmbeddingProvider{"private": stalled}, []string{"sunset.jpg", "harbor.jpg"})
+				ts.Close() // Exercise the handler directly so the fake clock can advance.
+				request := httptest.NewRequest(http.MethodPost, "http://localhost/api/v1/photos/assets/query", strings.NewReader(fmt.Sprintf(`{"query":{"mode":%q,"text":"sunset"}}`, mode)))
+				request.Header.Set("X-Api-Key", testAPIKey)
+				request.Header.Set("Content-Type", "application/json")
+				response := httptest.NewRecorder()
+				catalog.Server.Handler().ServeHTTP(response, request)
+				require.EqualValues(t, 1, stalled.queryCalls.Load())
+				require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+				var page api.PhotoBrowsePage
+				require.NoError(t, json.Unmarshal(response.Body.Bytes(), &page))
+				require.Equal(t, mode, page.RequestedMode)
+				require.Equal(t, "lexical", page.ActualMode)
+				require.Equal(t, "provider_unavailable", page.FallbackReason)
+				require.EqualValues(t, 1, page.Total)
+				require.Len(t, page.Items, 1)
+				require.Equal(t, "sunset.jpg", page.Items[0].Name)
+			})
+		})
+	}
 }
 
 func TestPhotoFallbackCursorSurvivesProviderRecovery(t *testing.T) {
