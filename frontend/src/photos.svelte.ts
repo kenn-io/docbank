@@ -1873,8 +1873,8 @@ export class Photos {
   private async loadRankedResults() {
     const snapshotID = this.snapshotID;
     while (this.cursor) {
-      const previous = this.cursor;
-      await this.loadMore();
+      const previous = this.loading ? null : this.cursor;
+      await (previous ? this.loadMore() : new Promise<void>((resolve) => this.idle.push(resolve)));
       if (this.error || this.cursor === previous || this.snapshotID !== snapshotID) return false;
     }
     return true;
