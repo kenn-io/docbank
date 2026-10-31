@@ -4,6 +4,34 @@ import * as api from "./generated/docbank";
 
 afterEach(() => vi.restoreAllMocks());
 
+it.each([
+  {
+    read: () => api.readRedactionPreviewPage("a".repeat(48), 1),
+    type: "image/png",
+    body: Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=",
+      "base64",
+    ),
+  },
+  {
+    read: () => api.readRedactionPreviewText("a".repeat(48)),
+    type: "text/plain",
+    body: Buffer.from("[REDACTED] café\f"),
+  },
+  {
+    read: () => api.downloadRedactionPreviewBundle("a".repeat(48)),
+    type: "application/zip",
+    body: Buffer.from([80, 75, 5, 6, ...Array(18).fill(0)]),
+  },
+])("preserves preview $type response bytes", async ({ read, type, body }) => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(body, { headers: { "Content-Type": type } }),
+  );
+  const response = await read();
+  expect(response).toBeInstanceOf(Response);
+  expect(Buffer.from(await (response as Response).arrayBuffer())).toEqual(body);
+});
+
 it("sends JSON metadata before the media file without a metadata filename", async () => {
   const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, request) => {
     const response = new Response(await (request?.body as Blob).text(), {

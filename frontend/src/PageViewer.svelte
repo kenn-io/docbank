@@ -1,5 +1,6 @@
 <script lang="ts">
   import { untrack } from "svelte";
+  import PageCanvas from "./PageCanvas.svelte";
   import OriginalPreview from "./OriginalPreview.svelte";
   import { maxPageSourceBytes } from "./pages.js";
   import { Button, Chip, SelectDropdown, Spinner } from "@kenn-io/kit-ui";
@@ -119,18 +120,13 @@
           >Render page {shown.page} at {pdfPageDPI} DPI</Button
         >
       {/if}
-      <!-- svelte-ignore a11y_no_noninteractive_tabindex (keyboard users must be able to scroll the image) -->
-      <div class="page-scroll" tabindex="0" role="region" aria-label="Scrollable page image">
-        <div
-          class="page-content"
-          style:width={zoom === "fit"
-            ? "100%"
-            : `${((shown.frame.width / 10000) * 96 * Number(zoom)) / 100}px`}
-          style:aspect-ratio={`${shown.frame.width} / ${shown.frame.height}`}
-        >
-          <img src={shown.url} alt={`Verified page ${shown.page} of ${source.name}`} />
-        </div>
-      </div>
+      <PageCanvas
+        url={shown.url}
+        width={shown.frame.width}
+        height={shown.frame.height}
+        {zoom}
+        label={`Verified page ${shown.page} of ${source.name}`}
+      />
     {:else if shown.status === "loading" || shown.status === "rendering"}
       <p class="notice" role="status">
         <Spinner size={14} />
@@ -200,21 +196,5 @@
     align-items: center;
     gap: var(--space-2);
     margin: 0;
-  }
-  .page-scroll {
-    overflow: auto;
-    max-height: 480px;
-    background: var(--bg-inset);
-  }
-  .page-content {
-    position: relative;
-    background: white;
-  }
-  img {
-    display: block;
-    width: 100%;
-    height: 100%;
-    position: absolute;
-    inset: 0;
   }
 </style>
