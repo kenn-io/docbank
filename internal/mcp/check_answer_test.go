@@ -25,14 +25,14 @@ func TestCheckAnswerTransports(t *testing.T) {
 	}))
 	output := objectField(t, result, "structuredContent")
 	require.Equal(t, "grounded", output["status"])
+	require.Equal(t, "private", output["cacheScope"])
 	figures, ok := output["figures"].([]any)
 	require.True(t, ok)
 	require.Len(t, figures, 1)
 	figure, ok := figures[0].(map[string]any)
 	require.True(t, ok)
-	require.Equal(t, "found", figure["status"])
-	require.Equal(t, "private", output["cacheScope"])
 	require.Equal(t, "$1,205", figure["text"])
+	require.Equal(t, "found", figure["status"])
 	assertSchemaAccepts(t, catalogMap(toolCatalog(ServerOptions{}))["check_answer"].OutputSchema, output)
 }
 

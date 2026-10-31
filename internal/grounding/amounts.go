@@ -11,14 +11,13 @@ func currencyAt(rs []rune, start int) (int, string) {
 	if start >= len(rs) {
 		return start, ""
 	}
-	for _, p := range []struct{ prefix, code string }{{"US$", "USD"}, {"C$", "CAD"}, {"A$", "AUD"}} {
-		end := start + len(p.prefix)
-		if end <= len(rs) && strings.EqualFold(string(rs[start:end]), p.prefix) {
-			return end, p.code
-		}
-	}
-	if unicode.Is(unicode.Sc, rs[start]) {
-		return start + 1, string(rs[start])
+	switch rs[start] {
+	case '$':
+		return start + 1, "USD"
+	case '€':
+		return start + 1, "EUR"
+	case '£':
+		return start + 1, "GBP"
 	}
 	if start+3 <= len(rs) {
 		code := string(rs[start : start+3])
@@ -41,11 +40,8 @@ func amountValue(s string) string {
 			return ""
 		}
 	}
-	for _, sep := range []string{",", "\u00a0", "\u202f", "'"} {
-		if !strings.Contains(integer, sep) {
-			continue
-		}
-		groups := strings.Split(integer, sep)
+	if strings.Contains(integer, ",") {
+		groups := strings.Split(integer, ",")
 		if len(groups[0]) < 1 || len(groups[0]) > 3 {
 			return ""
 		}
@@ -67,58 +63,12 @@ func amountValue(s string) string {
 	return integer
 }
 func amountAt(rs []rune) (int, string) {
-	// Recover before a maximal identifier or sign, while skipping any earlier
-	// currency-only tokens. Retrying the same long symbol/code run is quadratic.
-	i := 0
-	negative, signed, positive, plusMinus := false, false, false, false
-	classes := []string{}
-	prefixEnd, identifierStart, signStart := 0, -1, -1
-	failed := func() (int, string) {
-		safe := prefixEnd
-		if identifierStart >= 0 && identifierStart < safe {
-			safe = identifierStart
-		}
-		if signStart >= 0 && signStart < safe {
-			safe = signStart
-		}
-		if safe <= 0 {
-			return 0, ""
-		}
-		return safe, ""
-	}
-	for i < len(rs) {
-		if rs[i] == '-' || rs[i] == '−' || rs[i] == '+' || rs[i] == '±' {
-			if signed {
-				return failed()
-			}
-			negative, signed, positive, plusMinus = rs[i] == '-' || rs[i] == '−', true, rs[i] == '+', rs[i] == '±'
-			signStart = i
-			i++
-			if i < len(rs) && unicode.IsSpace(rs[i]) {
-				return failed()
-			}
-			if len(classes) > 0 {
-				prefixEnd = i
-			}
-			continue
-		}
-		end, code := currencyAt(rs, i)
-		if code == "" {
-			break
-		}
-		// A joined ISO token belongs to the identifier scanner if the amount
-		// fails. Inspect only its boundary; probing the remaining token at each
-		// currency code would make USD.USD... quadratic.
-		if identifierStart < 0 && end-i == 3 && isASCIIAlpha(rs[end-1]) && end < len(rs) && idChar(rs[end]) {
-			identifierStart = i
-		}
-		classes = append(classes, code)
-		i = skipSpace(rs, end)
-		prefixEnd = i
-	}
+	i, code := currencyAt(rs, 0)
+	prefix := code != ""
+	i = skipSpace(rs, i)
 	numberStart := i
 	if i >= len(rs) || (!digit(rs[i]) && (rs[i] != '.' || i+1 >= len(rs) || !digit(rs[i+1]))) {
-		return failed()
+		return 0, ""
 	}
 	for i < len(rs) && (digit(rs[i]) || separator(rs[i])) {
 		i++
@@ -133,86 +83,37 @@ func amountAt(rs []rune) (int, string) {
 	}
 	// Sentence punctuation and whitespace after the number are not part of it.
 	for i > numberStart && !digit(rs[i-1]) {
-		if i-numberStart >= 2 && strings.ContainsRune(",.'", rs[i-1]) && strings.ContainsRune(",.'", rs[i-2]) {
-			return failed()
+		if i-numberStart >= 2 && separator(rs[i-1]) && separator(rs[i-2]) {
+			return 0, ""
 		}
 		i--
 	}
 	numberEnd := i
-	// Separate numeric words can also be grouped amounts in retained HTML.
-	// Keep them literal, but leave adjacent dates and identifiers independent.
-	spaced := false
-	for {
+	// A suffix belongs only to an amount without a prefix. Inspect the next
+	// token itself, leaving any following figure for its own parse.
+	if !prefix {
 		start := skipSpace(rs, i)
-		end := start
-		for end < len(rs) && (digit(rs[end]) || separator(rs[end])) {
-			end++
+		end, suffix := currencyAt(rs, start)
+		if suffix == "" || end-start != 3 {
+			return 0, ""
 		}
-		if start == i || start == end || !digit(rs[start]) || !completeTokenTail(rs, end) {
-			break
-		}
-		i, spaced = end, true
+		i, code = end, suffix
 	}
-	i, classes = suffixCurrencies(rs, i, classes)
-	if spaced || len(classes) > 1 {
+	start := skipSpace(rs, i)
+	end := start
+	for end < len(rs) && !unicode.IsSpace(rs[end]) {
+		end++
+	}
+	token := []rune(strings.TrimRightFunc(string(rs[start:end]), edge))
+	if markerEnd, marker := currencyAt(token, 0); marker != "" && markerEnd == len(token) {
+		if start == i {
+			return end, ""
+		}
 		return i, ""
-	}
-	if len(classes) == 0 {
-		return failed()
-	}
-	code := classes[0]
-	switch code {
-	case "$":
-		code = "USD"
-	case "€":
-		code = "EUR"
-	case "£":
-		code = "GBP"
 	}
 	value := amountValue(string(rs[numberStart:numberEnd]))
 	if value == "" {
-		return failed()
-	}
-	if negative {
-		value = "-" + value
-	}
-	if positive {
-		value = "+" + value
-	}
-	if plusMinus {
-		value = "±" + value
+		return 0, ""
 	}
 	return i, code + " " + value
-}
-
-// Keep only markers that end at a complete token; a partial suffix must not
-// discard an amount already parsed before it.
-func suffixCurrencies(rs []rune, i int, classes []string) (int, []string) {
-	safe, count := i, len(classes)
-	for {
-		start := skipSpace(rs, i)
-		end, code := currencyAt(rs, start)
-		next := skipSpace(rs, end)
-		if code == "" ||
-			next < len(rs) && (digit(rs[next]) || strings.ContainsRune("+-−±.", rs[next]) && next+1 < len(rs) && (digit(rs[next+1]) || rs[next+1] == '.' && next+2 < len(rs) && digit(rs[next+2]))) ||
-			end < len(rs) && !digit(rs[end]) && !unicode.IsSpace(rs[end]) && !unicode.Is(unicode.Sc, rs[end]) && !completeTokenTail(rs, end) {
-			break
-		}
-		classes = append(classes, code)
-		i = end
-		if end == len(rs) || unicode.IsSpace(rs[end]) || edge(rs[end]) && completeTokenTail(rs, end) {
-			safe, count = i, len(classes)
-		}
-	}
-	return safe, classes[:count]
-}
-
-func completeTokenTail(rs []rune, end int) bool {
-	for end < len(rs) && !unicode.IsSpace(rs[end]) {
-		if !edge(rs[end]) {
-			return false
-		}
-		end++
-	}
-	return true
 }

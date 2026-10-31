@@ -7,13 +7,9 @@ import (
 	"github.com/yuin/goldmark/util"
 )
 
-func isASCIIAlpha(r rune) bool { return r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' }
-func digit(r rune) bool        { return r >= '0' && r <= '9' }
-func wordRune(r rune) bool     { return unicode.IsLetter(r) || unicode.IsMark(r) || unicode.IsNumber(r) }
-func idChar(r rune) bool       { return wordRune(r) || strings.ContainsRune("-/._", r) }
-func separator(r rune) bool {
-	return r == ',' || r == '.' || r == '\u00a0' || r == '\u202f' || r == '\''
-}
+func digit(r rune) bool     { return r >= '0' && r <= '9' }
+func wordRune(r rune) bool  { return unicode.IsLetter(r) || unicode.IsMark(r) || unicode.IsNumber(r) }
+func separator(r rune) bool { return r == ',' || r == '.' }
 func skipSpace(rs []rune, i int) int {
 	for i < len(rs) && unicode.IsSpace(rs[i]) {
 		i++
@@ -42,11 +38,7 @@ func normalizedFigures(text string) []normalizedFigure {
 				continue
 			}
 			start := i
-			for i < len(rs) {
-				grouping := (rs[i] == '\u00a0' || rs[i] == '\u202f') && i > start && i+1 < len(rs) && (digit(rs[i-1]) || rs[i-1] == '\u00a0' || rs[i-1] == '\u202f') && (digit(rs[i+1]) || rs[i+1] == '\u00a0' || rs[i+1] == '\u202f')
-				if unicode.IsSpace(rs[i]) && !grouping {
-					break
-				}
+			for i < len(rs) && !unicode.IsSpace(rs[i]) {
 				i++
 			}
 			tokens = append(tokens, span{start, i})
@@ -54,12 +46,6 @@ func normalizedFigures(text string) []normalizedFigure {
 		for i := 0; i < len(tokens); {
 			start := tokens[i].start
 			start += trimStart(rs[start:tokens[i].end])
-			// Parse signs before ISO codes without changing literal trimming.
-			if start > tokens[i].start && strings.ContainsRune("-+±−", rs[start-1]) {
-				if _, code := currencyAt(rs, start); code != "" {
-					start--
-				}
-			}
 			matched := false
 			safe := 0
 			for kind, parse := range []func([]rune) (int, string){dateAt, amountAt} {
