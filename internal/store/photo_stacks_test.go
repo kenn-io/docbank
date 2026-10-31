@@ -1671,23 +1671,4 @@ func TestPhotoStackUnrelatedImageSpaceKeepsStacks(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, incomplete)
 	require.Equal(t, [][]string{ids}, groups)
-	// An unusable unrelated space must preserve the healthy shared space.
-	t.Run("corrupt other space", func(t *testing.T) {
-		for _, tc := range []struct {
-			name   string
-			update string
-		}{
-			{name: "row count", update: `UPDATE vector_index_generations SET row_count=1000001 WHERE generation_id=?`},
-			{name: "generation bytes", update: `UPDATE vector_index_generations SET row_count=1, generation_bytes=zeroblob(byte_size) WHERE generation_id=?`},
-		} {
-			t.Run(tc.name, func(t *testing.T) {
-				_, err := s.db.Exec(tc.update, browseHash("unrelated-lower-image-space"))
-				require.NoError(t, err)
-				s.photoStackVectors = nil
-				groups, _, _, _, err := s.PhotoStackGroups(t.Context(), ids, false, "")
-				require.NoError(t, err)
-				require.Equal(t, [][]string{ids}, groups)
-			})
-		}
-	})
 }

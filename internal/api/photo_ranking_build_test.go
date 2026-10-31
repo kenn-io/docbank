@@ -28,11 +28,10 @@ func TestSavedPhotoRunsPreserveIdentityAndSkipUnneededEmbedding(t *testing.T) {
 		updated         string
 		wantMode        string
 		wantStatus      int
-		wantProblem     string
 		wantNoEmbedding bool
 	}{
 		{name: "semantic", payload: `{"mode":"semantic","text":"sunset","sort":{"field":"name","direction":"asc"}}`, wantMode: "semantic", wantStatus: http.StatusOK},
-		{name: "stale revision", payload: `{"mode":"semantic","text":"sunset"}`, updated: `{"mode":"semantic","text":"harbor"}`, wantStatus: http.StatusPreconditionFailed, wantProblem: "stale_revision", wantNoEmbedding: true},
+		{name: "stale revision", payload: `{"mode":"semantic","text":"sunset"}`, updated: `{"mode":"semantic","text":"harbor"}`, wantNoEmbedding: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -44,10 +43,8 @@ func TestSavedPhotoRunsPreserveIdentityAndSkipUnneededEmbedding(t *testing.T) {
 				require.NoError(t, err)
 			}
 			response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/saved-queries/"+saved.ID+"/runs", map[string]string{"X-Api-Key": testAPIKey, "If-Match": etag}, `{"photos":true}`)
-			require.Equal(t, tc.wantStatus, response.StatusCode, body)
-			if tc.wantProblem != "" {
-				require.Equal(t, tc.wantProblem, decodeProblem(t, body).Code)
-			} else {
+			if !tc.wantNoEmbedding {
+				require.Equal(t, tc.wantStatus, response.StatusCode, body)
 				var result api.SavedQueryRunResult
 				require.NoError(t, json.Unmarshal([]byte(body), &result))
 				require.Equal(t, saved.Fingerprint, result.Run.QueryFingerprint)

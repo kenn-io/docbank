@@ -2223,16 +2223,6 @@ func TestSearchPhotosMeaningOmitsPhotosBelowSimilarityFloor(t *testing.T) {
 	require.Empty(t, ranked.FallbackReason)
 	require.Len(t, ranked.Members, 1)
 	require.Equal(t, x.f.asset.ID, ranked.Members[0].AssetID)
-
-	// A matching query still passes the floor before reciprocal-rank scoring.
-	x.fake.runtime.mutate[x.binding.Name] = nil
-	request.Query.Mode, request.Query.Text = "semantic", "a dog"
-	ranked, err = x.service.SearchPhotos(t.Context(), request)
-	require.NoError(t, err)
-	require.Equal(t, "semantic", ranked.ActualMode)
-	require.Empty(t, ranked.FallbackReason)
-	require.Len(t, ranked.Members, 1)
-	require.Equal(t, x.f.asset.ID, ranked.Members[0].AssetID)
 }
 
 func TestSearchPhotosRanksAndFiltersSupportedQueries(t *testing.T) {

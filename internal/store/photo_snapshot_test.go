@@ -278,35 +278,73 @@ func TestPhotoRankedSnapshotPreservesModeAndOrderAndEnforcesHiddenVisibility(t *
 	t.Parallel()
 	t.Run("reversed order across the page boundary", func(t *testing.T) {
 		t.Parallel()
-		s := newTestStore(t)
-		var members []SnapshotMember
-		for i := range 51 {
-			name := fmt.Sprintf("image-%02d.jpg", i)
-			node := browsePhotoNode(t, s, name, browseHash(name), "image/jpeg")
-			asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
+		f := newImageEmbeddingCatalogFixture(t)
+		run, err := f.s.BeginIngest(t.Context(), "cli", "synthetic ranked photo stack")
+		require.NoError(t, err)
+		ids := make([]string, 51)
+		members := make([]SnapshotMember, len(ids))
+		index := newCursorIndexFixture(f)
+		for i := range ids {
+			stamp := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC).Add(time.Duration(i*120) * time.Second)
+			if i == 1 {
+				stamp = stamp.Add(-90 * time.Second)
+			}
+			ids[i] = stackPhoto(t, f.s, run, fmt.Sprintf("/ranked/frame-%02d.jpg", i), stamp.Format(time.RFC3339), document.SourceMetadataPrecisionSecond)
+			asset, err := f.s.PhotoAssetByID(t.Context(), ids[i])
 			require.NoError(t, err)
-			members = append(members, SnapshotMember{AssetID: asset.ID, NodeID: node.ID, ContentVersionID: node.CurrentVersionID})
+			node, err := f.s.NodeByID(t.Context(), asset.Files[0].NodeID)
+			require.NoError(t, err)
+			members[i] = SnapshotMember{AssetID: ids[i], NodeID: node.ID, ContentVersionID: node.CurrentVersionID}
+			if i <= 1 {
+				index.publish(t, ids[i], []float64{1, 0, 0, 0, 0, 0, 0, 0})
+			}
 		}
 		slices.Reverse(members)
-		ranking := &PhotoRanking{RequestedMode: "semantic", ActualMode: "semantic", CoverageIncomplete: true, Members: members}
-		service := NewQuerySnapshotService(s)
+		index.generation(t, "ranked-photo-stack")
+		groups, unavailable, _, _, err := f.s.PhotoStackGroups(t.Context(), ids[:2], false, "")
+		require.NoError(t, err)
+		require.Empty(t, unavailable)
+		require.Equal(t, [][]string{ids[:2]}, groups)
+		_, err = f.s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids[:2], Targets: preparedPhotoTargets(t.Context(), t, f.s, PhotoSetSelection{AssetIDs: ids[:2], Limit: MaxPhotoStackTargets}), Decision: "representative", CurrentID: ids[0]})
+		require.NoError(t, err)
+
+		service := NewQuerySnapshotService(f.s)
 		t.Cleanup(func() { require.NoError(t, service.Close()) })
-		first, err := service.Create(t.Context(), "owner", SnapshotRequest{Photos: true, PageSize: 50, Query: snapshotTestQuery(t, `{"mode":"semantic","text":"sunset","sort":{"field":"relevance","direction":"desc"}}`), PhotoRanking: ranking})
+		request := SnapshotRequest{
+			Photos: true, PageSize: 50,
+			Query:        snapshotTestQuery(t, `{"mode":"semantic","text":"sunset","sort":{"field":"relevance","direction":"desc"}}`),
+			PhotoRanking: &PhotoRanking{RequestedMode: "semantic", ActualMode: "semantic", CoverageIncomplete: true, Members: members},
+		}
+		first, err := service.Create(t.Context(), "owner", request)
 		require.NoError(t, err)
 		require.Equal(t, int64(51), first.Total)
 		require.Equal(t, members[0].AssetID, first.Rows[0].AssetID)
 		current, err := service.CurrentPhotoPage(t.Context(), first, PhotoBrowseRequest{})
 		require.NoError(t, err)
-		require.Equal(t, "image-50.jpg", current.Items[0].Name)
+		require.Equal(t, ids[50], current.Items[0].AssetID)
 		hidden := SnapshotRequest{Photos: true, PhotoHidden: true, Query: first.Query, PageSize: 50}
 		_, err = service.PhotoPage(t.Context(), "owner", first.SnapshotID, first.NextCursor, hidden)
 		require.ErrorIs(t, err, ErrSnapshotCursor)
+		page, err := service.CurrentPhotoPage(t.Context(), first, PhotoBrowseRequest{Stacks: true})
+		require.NoError(t, err)
+		for _, id := range ids[:2] {
+			require.True(t, slices.ContainsFunc(page.Items, func(row PhotoBrowseRow) bool { return row.AssetID == id }), "a selectable stack must include every member's display row")
+		}
+		require.Equal(t, ids[0], page.Items[49].AssetID, "the chosen representative must occupy the stack's highest-ranked position")
+		require.Equal(t, []PhotoStack{{AssetIDs: ids[:2], RepresentativeID: ids[0]}}, page.Stacks)
 
-		next, err := service.PhotoPage(t.Context(), "owner", first.SnapshotID, first.NextCursor, SnapshotRequest{Photos: true, Query: first.Query, PageSize: 50})
+		next, err := service.PhotoPage(t.Context(), "owner", first.SnapshotID, first.NextCursor, request)
 		require.NoError(t, err)
 		require.Equal(t, "semantic", next.PhotoRanking.ActualMode)
 		require.True(t, next.PhotoRanking.CoverageIncomplete)
 		require.Equal(t, members[50].AssetID, next.Rows[0].AssetID)
+		page, err = service.CurrentPhotoPage(t.Context(), next, PhotoBrowseRequest{Stacks: true})
+		require.NoError(t, err)
+		for _, id := range ids[:2] {
+			require.True(t, slices.ContainsFunc(page.Items, func(row PhotoBrowseRow) bool { return row.AssetID == id }), "a continuation must include its stack representative and member rows")
+		}
+		require.Equal(t, ids[0], page.Items[0].AssetID)
+		require.Equal(t, []PhotoStack{{AssetIDs: ids[:2], RepresentativeID: ids[0]}}, page.Stacks)
 	})
 	t.Run("member hidden before create is omitted", func(t *testing.T) {
 		t.Parallel()
@@ -326,66 +364,6 @@ func TestPhotoRankedSnapshotPreservesModeAndOrderAndEnforcesHiddenVisibility(t *
 			require.NotEqual(t, ids[0], row.AssetID)
 		}
 	})
-}
-
-func TestRankedPhotoSnapshotKeepsStacksAcrossPages(t *testing.T) {
-	t.Parallel()
-	f := newImageEmbeddingCatalogFixture(t)
-	run, err := f.s.BeginIngest(t.Context(), "cli", "synthetic ranked photo stack")
-	require.NoError(t, err)
-	ids := make([]string, 51)
-	members := make([]SnapshotMember, len(ids))
-	index := newCursorIndexFixture(f)
-	for i := range ids {
-		stamp := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC).Add(time.Duration(i*120) * time.Second)
-		if i == 50 {
-			stamp = stamp.Add(-90 * time.Second)
-		}
-		ids[i] = stackPhoto(t, f.s, run, fmt.Sprintf("/ranked/frame-%02d.jpg", i), stamp.Format(time.RFC3339), document.SourceMetadataPrecisionSecond)
-		asset, err := f.s.PhotoAssetByID(t.Context(), ids[i])
-		require.NoError(t, err)
-		node, err := f.s.NodeByID(t.Context(), asset.Files[0].NodeID)
-		require.NoError(t, err)
-		members[i] = SnapshotMember{AssetID: ids[i], NodeID: node.ID, ContentVersionID: node.CurrentVersionID}
-		if i >= 49 {
-			index.publish(t, ids[i], []float64{1, 0, 0, 0, 0, 0, 0, 0})
-		}
-	}
-	index.generation(t, "ranked-photo-stack")
-	groups, unavailable, _, _, err := f.s.PhotoStackGroups(t.Context(), ids[49:], false, "")
-	require.NoError(t, err)
-	require.Empty(t, unavailable)
-	require.Equal(t, [][]string{ids[49:]}, groups)
-	_, err = f.s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids[49:], Targets: preparedPhotoTargets(t.Context(), t, f.s, PhotoSetSelection{AssetIDs: ids[49:], Limit: MaxPhotoStackTargets}), Decision: "representative", CurrentID: ids[50]})
-	require.NoError(t, err)
-
-	service := NewQuerySnapshotService(f.s)
-	t.Cleanup(func() { require.NoError(t, service.Close()) })
-	request := SnapshotRequest{
-		Photos: true, PageSize: 50,
-		Query:        snapshotTestQuery(t, `{"mode":"semantic","text":"sunset","sort":{"field":"relevance","direction":"desc"}}`),
-		PhotoRanking: &PhotoRanking{RequestedMode: "semantic", ActualMode: "semantic", Members: members},
-	}
-	first, err := service.Create(t.Context(), "owner", request)
-	require.NoError(t, err)
-	require.NotEmpty(t, first.NextCursor)
-	page, err := service.CurrentPhotoPage(t.Context(), first, PhotoBrowseRequest{Stacks: true})
-	require.NoError(t, err)
-	for _, id := range ids[49:] {
-		require.True(t, slices.ContainsFunc(page.Items, func(row PhotoBrowseRow) bool { return row.AssetID == id }), "a selectable stack must include every member's display row")
-	}
-	require.Equal(t, ids[50], page.Items[49].AssetID, "the chosen representative must occupy the stack's highest-ranked position")
-	require.Equal(t, []PhotoStack{{AssetIDs: ids[49:], RepresentativeID: ids[50]}}, page.Stacks)
-
-	next, err := service.PhotoPage(t.Context(), "owner", first.SnapshotID, first.NextCursor, request)
-	require.NoError(t, err)
-	page, err = service.CurrentPhotoPage(t.Context(), next, PhotoBrowseRequest{Stacks: true})
-	require.NoError(t, err)
-	for _, id := range ids[49:] {
-		require.True(t, slices.ContainsFunc(page.Items, func(row PhotoBrowseRow) bool { return row.AssetID == id }), "a continuation must include its stack representative and member rows")
-	}
-	require.Equal(t, ids[50], page.Items[0].AssetID)
-	require.Equal(t, []PhotoStack{{AssetIDs: ids[49:], RepresentativeID: ids[50]}}, page.Stacks)
 }
 
 // createAllPhotosSnapshot snapshots every photo in capture order so a ranked

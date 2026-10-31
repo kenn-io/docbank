@@ -1454,7 +1454,7 @@ it.each(["success", "failure", "interrupted", "late"] as const)(
   },
 );
 
-it("explains the live metadata relevance limit and locks Meaning to Relevance sort", async () => {
+it("explains the live metadata relevance limit", async () => {
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -1477,27 +1477,53 @@ it("explains the live metadata relevance limit and locks Meaning to Relevance so
     "Showing the best 250 of 5,000 matches. Refine the search or sort by capture date to see all.";
   await screen.findByText(note);
   photos.query = { ...photos.query, mode: "semantic" };
-  photos.snapshotID = "accepted";
-  photos.items = Array.from({ length: 250 }, (_, i) => photo(i + 1));
-  photos.total = 500;
   photos.fallbackReason = "provider_unavailable";
-  photos.cursor = "next-page";
-  photos.truncated = false;
+  photos.snapshotID = "";
+  await screen.findByText(/Choose Metadata and sort by capture date to see all/);
+  photos.snapshotID = "accepted";
+  await waitFor(() =>
+    expect(screen.queryByText(/Choose Metadata and sort by capture date to see all/)).toBeNull(),
+  );
+  photos.query = { ...photos.query, mode: "lexical" };
+  photos.fallbackReason = "";
+  photos.snapshotID = "";
+  photos.total = 1;
+  await tick();
   await waitFor(() => expect(screen.queryByText(note)).toBeNull());
-  expect(screen.queryByText(/Choose Metadata and sort by capture date to see all/)).toBeNull();
+  photos.total = 5000;
+  photos.query = { ...photos.query, sort: { field: "capture_time", direction: "desc" } };
+  await tick();
+  await waitFor(() => expect(screen.queryByText(note)).toBeNull());
+  photos.dispose();
+  await cache.dispose();
+});
+
+it("locks Meaning to Relevance sort", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const photos = new Photos("scoped", vi.fn());
+  photos.started = true;
+  photos.items = [photo(1)];
+  photos.query = {
+    ...photos.query,
+    mode: "semantic",
+    text: "Canon",
+    sort: { field: "relevance", direction: "desc" },
+  };
+  photos.snapshotID = "accepted";
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  render(PhotosWorkspace, { photos, cache });
   await waitFor(() =>
     expect(screen.getByRole("combobox", { name: "Sort photos: Relevance" })).toHaveProperty(
       "disabled",
       true,
     ),
   );
-  photos.query = { ...photos.query, mode: "lexical" };
-  photos.snapshotID = "";
-  photos.total = 1;
-  await waitFor(() => expect(screen.queryByText(note)).toBeNull());
-  photos.total = 5000;
-  photos.query = { ...photos.query, sort: { field: "capture_time", direction: "desc" } };
-  await waitFor(() => expect(screen.queryByText(note)).toBeNull());
   photos.dispose();
   await cache.dispose();
 });
