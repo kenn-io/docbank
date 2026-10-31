@@ -3,6 +3,7 @@ package ingest
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -459,13 +460,21 @@ func TestWatchTagBlockRestoresRemainingFailure(t *testing.T) {
 					require.NoError(t, err)
 					_, _, err = ing.Store.Trash(t.Context(), node.ID, node.Revision)
 					require.NoError(t, err)
-					require.NoError(t, os.WriteFile(filepath.Join(source, "a.md"), []byte("edited after trash"), 0o600))
 				}
 				if action == "scan recovery" {
-					for range 2 {
+					for edit := range 2 {
+						content := []byte(fmt.Sprintf("edited after trash %d", edit))
+						if failure == "trashed node" {
+							require.NoError(t, os.WriteFile(filepath.Join(source, "a.md"), content, 0o600))
+						}
 						err := watcher.scan(t.Context(), root)
 						require.ErrorAs(t, err, new(*store.TagResolutionError), "missing tags must survive later source failures")
 						require.ErrorContains(t, err, wantSourceError)
+						if failure == "trashed node" {
+							loose, err := ing.Blobs.ListDetailed()
+							require.NoError(t, err)
+							assert.NotContains(t, loose, fmt.Sprintf("%x", sha256.Sum256(content)), "rejected edit must not publish a loose blob")
+						}
 					}
 					_, err := ing.Store.CreateTag(t.Context(), "receipts")
 					require.NoError(t, err)
@@ -475,6 +484,7 @@ func TestWatchTagBlockRestoresRemainingFailure(t *testing.T) {
 					assert.False(t, tagBlocked, "tag recovery must expose the remaining source failure")
 					return
 				}
+				require.NoError(t, os.WriteFile(filepath.Join(source, "a.md"), []byte("edited after trash"), 0o600))
 
 				// The existing step helper expects every scan to continue. This
 				// runner must also expose its terminal error after tag recovery.
