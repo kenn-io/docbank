@@ -1178,6 +1178,29 @@ func TestPhotoRotationResetsOnRepublish(t *testing.T) {
 	}
 }
 
+func TestPhotoRotationRestoreKeepsAcceptedTextSettled(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	asset := albumAsset(t, s, "landscape.jpg")
+	publishPhotoDescription(t, s, asset, producerA, document.PhotoDescription{Caption: "A landscape.", Tags: []string{"landscape", "trees"}, Rotation: new(90)})
+	proposals := photoSuggestionValues(t, s, asset.ID)
+	require.Len(t, proposals, 2)
+	acceptPhotoSuggestion(t, s, proposals[0], true, "landscape", "trees")
+	pending := photoSuggestionValues(t, s, asset.ID)
+	require.Len(t, pending, 1)
+	require.Equal(t, new(90), pending[0].Rotation)
+
+	restored := restorePhotoSuggestionStore(t, s)
+	require.Empty(t, photoSuggestionValues(t, restored, asset.ID))
+	publishPhotoDescription(t, restored, asset, producerA, document.PhotoDescription{Caption: "A forest.", Tags: []string{"forest"}, VisibleText: "NEW TEXT", Rotation: new(270)})
+	suggestions := photoSuggestionValues(t, restored, asset.ID)
+	require.Len(t, suggestions, 1, "regenerating a pending rotation must keep accepted text settled")
+	require.Equal(t, new(270), suggestions[0].Rotation)
+	require.Empty(t, suggestions[0].Value.Caption)
+	require.Empty(t, suggestions[0].Value.Tags)
+	require.Empty(t, suggestions[0].Value.VisibleText)
+}
+
 func TestPhotoRotationBackup(t *testing.T) {
 	t.Parallel()
 	for _, decision := range []string{"caption accepted", "caption dismissed", "rotation confirmed"} {
