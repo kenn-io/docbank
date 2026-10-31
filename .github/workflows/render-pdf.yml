@@ -23,6 +23,39 @@ env:
   GOFLAGS: -trimpath
 
 jobs:
+  redaction-browser-review:
+    name: Browser PDF redaction review
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Set up Node
+        uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 24.22.1
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install Poppler and Chromium
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y poppler-utils util-linux
+          npm --prefix frontend ci
+          node frontend/node_modules/@playwright/test/cli.js install --with-deps chromium
+      - name: Embed frontend and qualify both SQLite modes
+        run: |
+          npm --prefix frontend run build
+          find internal/web/dist -mindepth 1 ! -name .keep -exec rm -rf {} +
+          cp -R frontend/dist/. internal/web/dist/
+          node frontend/screenshots/redaction-review.run.mjs
+
   bates-browser-recovery:
     name: Numbered PDF browser recovery
     runs-on: ubuntu-latest

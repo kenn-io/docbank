@@ -20,7 +20,7 @@ func registerRedactionRoutes(mux *http.ServeMux, api huma.API, d Deps) {
 	}
 	huma.Register(api, huma.Operation{OperationID: "resolveNativePDF", Method: http.MethodPost,
 		Path: "/api/v1/redaction/resolve", Summary: "Review explicit masks against a freshly inspected retained PDF",
-		MaxBodyBytes: processing.MaxRedactionRequestBytes, BodyReadTimeout: -1,
+		MaxBodyBytes: processing.MaxRedactionRequestBytes, BodyReadTimeout: requestTimeout,
 		Errors: []int{400, 401, 403, 404, 408, 409, 413, 422, 500, 503, 504},
 	}, func(ctx context.Context, input *struct {
 		Body    processing.RedactionResolveRequest
@@ -29,6 +29,9 @@ func registerRedactionRoutes(mux *http.ServeMux, api huma.API, d Deps) {
 		request, err := processing.DecodeRedactionResolveRequest(input.RawBody)
 		if err != nil {
 			return nil, (*redactionWireError)(NewError(400, "invalid_redaction_request", "redaction request is invalid"))
+		}
+		if err := clearRequestReadDeadline(ctx); err != nil {
+			return nil, (*redactionWireError)(redactionProblem(ctx, err))
 		}
 		result, err := d.Processing.ResolveNativePDF(ctx, request, d.PageRuntime)
 		if err != nil {

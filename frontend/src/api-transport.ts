@@ -5,6 +5,7 @@ export interface Problem {
   title?: string;
   position?: unknown;
   errors?: unknown;
+  redaction?: unknown;
 }
 
 export class APIError extends Error {
@@ -14,6 +15,7 @@ export class APIError extends Error {
     readonly code: string,
     readonly position?: unknown,
     readonly errors: string[] = [],
+    readonly redaction?: unknown,
   ) {
     super(message);
     this.name = "APIError";
@@ -31,12 +33,13 @@ export function isCurrentSessionError(cause: unknown, activeSession: string): bo
 
 export interface SessionOptions extends RequestInit {
   session?: string;
+  responseLimit?: number;
 }
 
 // Reads that use POST for their request body, so scrolling or typing a search never defers a pass.
 // A missed entry only delays one refresh pass.
 const readOnlyPosts =
-  /^\/api\/v1\/(photos\/(assets\/(query|timeline|flags|[^/]+\/preview)|authored\/prepare|rejects\/preflight|stacks\/group|checkouts\/estimate)|queries\/parse)$/;
+  /^\/api\/v1\/(photos\/(assets\/(query|timeline|flags|[^/]+\/preview)|authored\/prepare|rejects\/preflight|stacks\/group|checkouts\/estimate)|queries\/parse|redaction\/(prepare|resolve|previews))$/;
 
 let mutations = 0;
 
@@ -71,7 +74,7 @@ export const sessionResponse = <_T>(
 
 async function send(
   url: string,
-  { session = "", ...init }: SessionOptions,
+  { session = "", responseLimit: _responseLimit, ...init }: SessionOptions,
   allowNotModified = false,
 ): Promise<Response> {
   const headers = new Headers(init.headers);
@@ -89,7 +92,9 @@ async function send(
   if (!response.ok && !(allowNotModified && response.status === 304)) {
     let problem: Problem = {};
     try {
-      const body: unknown = await response.json();
+      const body: unknown = url.startsWith("/api/v1/redaction/")
+        ? await boundedJSON(response, 16 << 20, init.signal)
+        : await response.json();
       if (body && typeof body === "object") problem = body as Problem;
     } catch {
       /* An empty error still carries its HTTP status. */
@@ -103,6 +108,7 @@ async function send(
       problem.code ?? "",
       problem.position,
       errors,
+      problem.redaction,
     );
     requestSessionByError.set(error, session);
     throw error;
@@ -121,10 +127,60 @@ export function sessionJSON<T>(url: string, options: SessionOptions): Promise<T>
   return counted(url, options.method, async () => {
     const response = await send(url, options, false);
     if (response.status === 204) return undefined as T;
-    return (await response.json()) as T;
+    return (
+      options.responseLimit === undefined
+        ? await response.json()
+        : await boundedJSON(response, options.responseLimit, options.signal)
+    ) as T;
   });
 }
 
 export async function sessionEmpty<_T>(url: string, options: SessionOptions): Promise<void> {
   await sessionResponse<Response>(url, options);
+}
+
+async function boundedJSON(
+  response: Response,
+  limit: number,
+  signal?: AbortSignal | null,
+): Promise<unknown> {
+  const failure = () => new Error("The response exceeds its size limit or is incomplete.");
+  const length = response.headers.get("Content-Length");
+  if (length !== null && (!/^\d+$/.test(length) || Number(length) > limit)) {
+    await response.body?.cancel();
+    throw failure();
+  }
+  if (!response.body) throw failure();
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  const abort = () => {
+    void reader.cancel().catch(() => undefined);
+  };
+  signal?.addEventListener("abort", abort, { once: true });
+  try {
+    while (true) {
+      signal?.throwIfAborted();
+      const item = await reader.read();
+      signal?.throwIfAborted();
+      if (item.done) break;
+      size += item.value.length;
+      if (size > limit) throw failure();
+      chunks.push(item.value);
+    }
+    if (length !== null && Number(length) !== size) throw failure();
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.length;
+    }
+    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
+  } catch (cause) {
+    await reader.cancel().catch(() => undefined);
+    throw cause;
+  } finally {
+    signal?.removeEventListener("abort", abort);
+    reader.releaseLock();
+  }
 }

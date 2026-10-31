@@ -60,6 +60,12 @@ func browserSessionRequest(ctx context.Context) bool {
 // timeout-exempt: long-running maintenance, integrity reads, bulk ingest, and
 // export preparation.
 func timeoutExempt(method, path string) bool {
+	if path == redactionPreviewsPath && method == http.MethodPost {
+		return true
+	}
+	if strings.HasPrefix(path, redactionPreviewsPath+"/") && method == http.MethodGet && (strings.Contains(path, "/pages/") || strings.HasSuffix(path, "/text") || strings.HasSuffix(path, "/bundle")) {
+		return true
+	}
 	if method == http.MethodGet && path == photoEventsPath || packageContainerTimeoutExempt(method, path) {
 		return true
 	}
@@ -338,7 +344,7 @@ func timeoutMiddleware(next http.Handler) http.Handler {
 		ctx := r.Context()
 		if r.Method == http.MethodPost {
 			switch r.URL.Path {
-			case processingPlansPath, kataCitePath, kataContextPath:
+			case processingPlansPath, kataCitePath, kataContextPath, "/api/v1/redaction/prepare", "/api/v1/redaction/resolve":
 				ctx = context.WithValue(ctx, responseControllerContextKey{}, http.NewResponseController(w))
 			}
 			if r.URL.Path == processingPlansPath {

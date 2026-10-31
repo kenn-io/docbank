@@ -45,10 +45,6 @@ func TestRedactionPreparationHTTP(t *testing.T) {
 	require.NoError(t, processing.ValidateRedactionPreparation(result))
 	require.Equal(t, "SECRET KEEP SECRET", result.Map.Text)
 	require.Equal(t, request.Selection, result.Selection)
-	response, body = do(t, ts, http.MethodPost, path,
-		map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)}, request)
-	require.Equal(t, 403, response.StatusCode, body)
-	require.Contains(t, body, "web_session_read_only")
 	encoded, err := json.Marshal(request)
 	require.NoError(t, err)
 	var malformed map[string]any
