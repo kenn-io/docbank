@@ -100,7 +100,12 @@ func TestProbeClassifiesRegisteredDeployment(t *testing.T) {
 					w.WriteHeader(http.StatusOK)
 					_, _ = w.Write([]byte(`{"data":`))
 					if err := http.NewResponseController(w).Flush(); err != nil {
-						t.Errorf("flush response: %v", err)
+						// On a slow runner the probe deadline can pass while the server
+						// still counts this connection as new. The subtest then ends and
+						// server.Close closes the connection under this handler.
+						if !errors.Is(err, net.ErrClosed) {
+							t.Errorf("flush response: %v", err)
+						}
 						return
 					}
 					<-r.Context().Done()
