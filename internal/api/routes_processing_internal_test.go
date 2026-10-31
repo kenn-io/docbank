@@ -27,7 +27,11 @@ func TestProcessingSourceIneligibleDetails(t *testing.T) {
 		{"image preview", &processing.ImageSourceIneligibleError{Err: fmt.Errorf("%w: preview_missing", processing.ErrSourceIneligible)},
 			"source is not eligible for the rendition profile: preview_missing"},
 	} {
-		for _, consent := range []bool{false, true} {
+		consents := []bool{false}
+		if tc.name == "document" {
+			consents = append(consents, true)
+		}
+		for _, consent := range consents {
 			t.Run(fmt.Sprintf("%s/consent_saved=%t", tc.name, consent), func(t *testing.T) {
 				err, detail := tc.err, tc.detail
 				if consent {

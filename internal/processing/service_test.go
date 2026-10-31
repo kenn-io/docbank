@@ -846,23 +846,6 @@ func TestRunEmbeddingsSkipsIneligibleImageBinding(t *testing.T) {
 	}
 }
 
-func TestImageOnlyStartReportsMissingPreview(t *testing.T) {
-	t.Parallel()
-	f := newPhotoDescriptionFixture(t)
-	x := newImageEmbeddingService(t, f)
-	node, err := f.catalog.CreateFile(t.Context(), f.catalog.RootID(), "without-preview.jpg", f.written.Hash, f.written.Size, "image/jpeg", processingBlobPhysical(t, f.written))
-	require.NoError(t, err)
-	selector := Selector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "images"}
-	plan, err := x.service.Plan(t.Context(), selector)
-	require.NoError(t, err)
-	_, err = x.service.Start(t.Context(), StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true})
-	require.ErrorIs(t, err, ErrSourceIneligible)
-	require.ErrorContains(t, err, "preview_missing")
-	_, imageSource := errors.AsType[*ImageSourceIneligibleError](err)
-	require.True(t, imageSource)
-	require.Zero(t, x.fake.runtime.callCount(x.binding.Name))
-}
-
 func TestProcessingMissingRequiredImageBindingRemainsPartial(t *testing.T) {
 	t.Parallel()
 	f := newPhotoDescriptionFixture(t)
@@ -914,6 +897,9 @@ func TestImageOnlyStartRefusesMissingPreviewBeforeSavingConsent(t *testing.T) {
 	require.True(t, plan.ConsentRequired)
 	job, err := x.service.Start(t.Context(), StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true})
 	require.ErrorIs(t, err, ErrSourceIneligible)
+	require.ErrorContains(t, err, "preview_missing")
+	_, imageSource := errors.AsType[*ImageSourceIneligibleError](err)
+	require.True(t, imageSource)
 	require.NotErrorIs(t, err, ErrConsentSaved)
 	require.Empty(t, job.ID)
 	plan, err = x.service.Plan(t.Context(), selector)

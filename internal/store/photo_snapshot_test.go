@@ -274,7 +274,7 @@ func TestPhotoSnapshotCreatePhotoAlbum(t *testing.T) {
 	}
 }
 
-func TestPhotoRankedSnapshotPreservesModeAndOrderAndRejectsHiddenScope(t *testing.T) {
+func TestPhotoRankedSnapshotPreservesModeAndOrderAndEnforcesHiddenVisibility(t *testing.T) {
 	t.Parallel()
 	t.Run("reversed order across the page boundary", func(t *testing.T) {
 		t.Parallel()

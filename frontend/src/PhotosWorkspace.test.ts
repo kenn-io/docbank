@@ -3178,7 +3178,7 @@ it("edits and clears a saved capture range in the Library Filters panel", async 
             {
               dimension: "year",
               available: true,
-              total: 2,
+              total: 1,
               missing: 0,
               other: 0,
               values: [
@@ -3187,12 +3187,6 @@ it("edits and clears a saved capture range in the Library Filters panel", async 
                   label: "2024",
                   count: 1,
                   selected: request.query.filters.capture_after === "2024-01-01",
-                },
-                {
-                  key: "2023",
-                  label: "2023",
-                  count: 1,
-                  selected: request.query.filters.capture_after === "2023-01-01",
                 },
               ],
             },

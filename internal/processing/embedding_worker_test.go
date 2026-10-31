@@ -2172,7 +2172,7 @@ func (x photoSearchFixture) alternate(t *testing.T, consent, indexed bool) (*Ser
 	alternateProvider := &embeddingWorkerProvider{runtime: x.fake.runtime, binding: binding.Name, descriptor: alternateDescriptor}
 	two, err := NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(), Principal: service.principal, Scope: service.scope, Profiles: map[string]ProfileConfig{"z-images": {Profile: portable, EmbeddingSimilarityFloors: map[string]float64{binding.Name: 0.2}, EmbeddingProviders: map[string]document.EmbeddingProvider{binding.Name: provider}}, "a-images": {Profile: alternate, EmbeddingSimilarityFloors: map[string]float64{binding.Name: 0.2}, EmbeddingProviders: map[string]document.EmbeddingProvider{binding.Name: alternateProvider}}}})
 	require.NoError(t, err)
-	if consent {
+	if consent || indexed {
 		f.grant(t, two, "a-images")
 	}
 	if indexed {
@@ -2188,6 +2188,11 @@ func (x photoSearchFixture) alternate(t *testing.T, consent, indexed bool) (*Ser
 		require.NoError(t, err)
 		_, err = indexer.Rebuild(t.Context(), alternateIDs.VectorSpace[binding.Name])
 		require.NoError(t, err)
+		if !consent {
+			_, err = two.RevokeConsent(t.Context())
+			require.NoError(t, err)
+			f.grant(t, two, "z-images")
+		}
 	}
 	return two, alternate, alternateProvider
 }
@@ -2353,7 +2358,7 @@ func TestSearchPhotosUsesLaterAvailableProfile(t *testing.T) {
 		consent, indexed bool
 		failure          error
 	}{
-		{name: "no consent", mode: "semantic"},
+		{name: "no consent", mode: "semantic", indexed: true},
 		{name: "no index", mode: "hybrid", consent: true},
 		{name: "transient failure", mode: "semantic", consent: true, indexed: true, failure: embeddingTransientError{}},
 	} {

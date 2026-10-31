@@ -85,11 +85,3 @@ func photoObservedFixture(t *testing.T) (*httptest.Server, *testStore, *photoQue
 	ts, catalog, _ := photoImageHTTPProfilesFixture(t, map[string]document.EmbeddingProvider{"private": observer}, []string{"sunset.jpg"}, false)
 	return ts, catalog, observer
 }
-
-func TestPhotoRankingRoutesReachImageQueryProvider(t *testing.T) {
-	t.Parallel()
-	ts, _, observer := photoObservedFixture(t)
-	response, result := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/photos/assets/query", map[string]string{"X-Api-Key": testAPIKey}, `{"query":{"mode":"semantic","text":"sunset"}}`)
-	require.Equal(t, http.StatusOK, response.StatusCode, result)
-	require.EqualValues(t, 1, observer.calls.Load())
-}

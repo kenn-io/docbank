@@ -930,11 +930,12 @@ func TestPhotoFallbackCursorSurvivesProviderRecovery(t *testing.T) {
 
 func TestPhotoSnapshotHTTPForwardsHiddenScope(t *testing.T) {
 	t.Parallel()
-	ts, catalog, _ := photoImageHTTPFixture(t, newProcessingTestEmbeddingProvider(t), []string{"sunset.jpg"})
+	ts, catalog, observer := photoObservedFixture(t)
 	require.NoError(t, catalog.SetupPhotoHidden(t.Context(), "synthetic-passcode"))
 	request := api.PhotoBrowseRequest{Query: api.QueryPayload(`{"mode":"semantic","text":"sunset"}`), PageSize: 1}
 	response, body := do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, request)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	require.EqualValues(t, 1, observer.calls.Load())
 	var first api.PhotoBrowsePage
 	require.NoError(t, json.Unmarshal([]byte(body), &first))
 	require.NotEmpty(t, first.SnapshotID)

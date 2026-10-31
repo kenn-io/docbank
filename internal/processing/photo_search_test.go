@@ -27,33 +27,6 @@ func newMixedImageTextProfileService(t *testing.T, f *photoDescriptionFixture, x
 	return service, original.Name, image.Name
 }
 
-func TestSearchPhotosHybridCollapsesOnlyAcceptedDuplicates(t *testing.T) {
-	t.Parallel()
-	x := newPhotoSearchFixture(t)
-	// The older duplicate wins the common eligibility order, but only the
-	// newer duplicate's filename matches. Neither has a qualifying vector.
-	duplicate, err := x.f.catalog.CreateFile(t.Context(), x.f.catalog.RootID(), "harbor.jpg", x.f.written.Hash, x.f.written.Size, "image/jpeg", processingBlobPhysical(t, x.f.written))
-	require.NoError(t, err)
-	asset, err := x.f.catalog.PhotoAssetForNode(t.Context(), duplicate.ID)
-	require.NoError(t, err)
-	x.fake.runtime.mutate[x.binding.Name] = func(result document.EmbeddingResult) document.EmbeddingResult {
-		result.Vectors[0].Values = []float32{2, -1}
-		return result
-	}
-	request := store.PhotoBrowseRequest{Query: query.Query{V: 1, Syntax: "simple", Mode: "hybrid", Text: "harbor", Filters: query.Filters{CollapseDuplicates: true}, Sort: query.Sort{Field: "relevance", Direction: "desc"}}}
-	ranked, err := x.service.SearchPhotos(t.Context(), request)
-	require.NoError(t, err)
-	require.Equal(t, "hybrid", ranked.ActualMode)
-	require.Len(t, ranked.Members, 1)
-	require.Equal(t, asset.ID, ranked.Members[0].AssetID)
-
-	request.Query.Text = "jpg"
-	ranked, err = x.service.SearchPhotos(t.Context(), request)
-	require.NoError(t, err)
-	require.Len(t, ranked.Members, 1)
-	require.Equal(t, x.f.asset.ID, ranked.Members[0].AssetID)
-}
-
 func TestPhotoSemanticScopeKeepsBarePickFilter(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

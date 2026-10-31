@@ -162,17 +162,29 @@ it.each(selectedFacetCases)(
   "keeps the selected %s facet editable",
   async (_name, selectedFacet) => {
     const onchange = vi.fn();
-    render(FacetSidebar, {
+    const query = {
+      ...originalQuery,
+      mode: selectedFacet.mode,
+      filters: { ...originalQuery.filters, ...selectedFacet.filters },
+    };
+    const view = render(FacetSidebar, {
       unit: "photos",
-      query: {
-        ...originalQuery,
-        mode: selectedFacet.mode,
-        filters: { ...originalQuery.filters, ...selectedFacet.filters },
-      },
-      facets: selectedFacet.facets,
+      query: _name === "capture year" ? originalQuery : query,
+      facets:
+        _name === "capture year"
+          ? [facet("year", { values: [{ key: "2024", label: "2024", count: 1, selected: false }] })]
+          : selectedFacet.facets,
       disabled: false,
       onchange,
     });
+    if (_name === "capture year") {
+      await fireEvent.click(screen.getByRole("button", { name: "2024, 1 photos" }));
+      expect(onchange.mock.lastCall?.[0].filters).toMatchObject({
+        capture_after: "2024-01-01",
+        capture_before: "2025-01-01",
+      });
+      await view.rerender({ query: onchange.mock.lastCall?.[0], facets: selectedFacet.facets });
+    }
     const selected = within(screen.getByRole("group", { name: selectedFacet.group })).getByRole(
       "button",
       { name: selectedFacet.button },
