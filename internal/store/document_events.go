@@ -100,7 +100,7 @@ func (s *Store) PublishDocumentEvents(
 // invalidateDocumentEventsForVersionsTx is the transaction seam for callers
 // that change event inputs. Input changes, head invalidation, and dirty-state
 // publication must commit or roll back together.
-func invalidateDocumentEventsForVersionsTx(
+func (s *Store) invalidateDocumentEventsForVersionsTx(
 	ctx context.Context, tx *sql.Tx, versionIDs []string,
 ) (int64, error) {
 	if err := invalidateDocumentPeopleForVersionsTx(ctx, tx, versionIDs); err != nil {
@@ -114,7 +114,7 @@ func invalidateDocumentEventsForVersionsTx(
 		}
 		seen[versionID] = struct{}{}
 		result, err := tx.ExecContext(ctx,
-			`DELETE FROM document_event_heads WHERE content_version_id=?`, versionID)
+			`DELETE FROM document_event_heads WHERE content_version_id=$1`, versionID)
 		if err != nil {
 			return 0, fmt.Errorf("invalidating document events for version %s: %w", versionID, err)
 		}
@@ -126,7 +126,7 @@ func invalidateDocumentEventsForVersionsTx(
 
 		var retained bool
 		if err := tx.QueryRowContext(ctx,
-			`SELECT EXISTS(SELECT 1 FROM content_versions WHERE version_id=?)`, versionID,
+			`SELECT EXISTS(SELECT 1 FROM content_versions WHERE version_id=$1)`, versionID,
 		).Scan(&retained); err != nil {
 			return 0, fmt.Errorf("checking document event version %s: %w", versionID, err)
 		}
@@ -136,12 +136,19 @@ func invalidateDocumentEventsForVersionsTx(
 			}
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM document_event_generations
-			WHERE content_version_id=? AND NOT EXISTS(SELECT 1 FROM document_event_heads h
+			WHERE content_version_id=$1 AND NOT EXISTS(SELECT 1 FROM document_event_heads h
 			WHERE h.generation_id=document_event_generations.generation_id)`, versionID); err != nil {
 			return 0, fmt.Errorf("collecting unreferenced document event generations: %w", err)
 		}
 	}
 
+	// SQLite's released delete trigger advances once per removed head.
+	if s.postgresSchema != "" && invalidated > 0 {
+		if _, err := tx.ExecContext(ctx, `UPDATE document_event_state
+			SET publication_epoch=publication_epoch+$1,updated_at=$2 WHERE singleton=1`, invalidated, nowRFC3339()); err != nil {
+			return 0, fmt.Errorf("advancing document event publication epoch: %w", err)
+		}
+	}
 	return invalidated, nil
 }
 

@@ -166,7 +166,7 @@ func (s *Store) PublishSourceMetadata(
 		if err := rows.Close(); err != nil {
 			return err
 		}
-		if _, err = invalidateDocumentEventsForVersionsTx(ctx, tx, versionIDs); err != nil {
+		if _, err = s.invalidateDocumentEventsForVersionsTx(ctx, tx, versionIDs); err != nil {
 			return err
 		}
 		if activeChecksum == generation.Checksum {

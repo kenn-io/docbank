@@ -500,7 +500,7 @@ func watchSourceTx(
 	err := tx.QueryRowContext(ctx, `
 		SELECT node_id, blob_hash, size
 		FROM watch_sources
-		WHERE watch_name = ? AND source_ref = ?`,
+		WHERE watch_name = $1 AND source_ref = $2`,
 		watchName, sourceRef,
 	).Scan(&state.nodeID, &state.blobHash, &state.size)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -518,8 +518,8 @@ func updateWatchSourceTx(
 	ctx context.Context, tx *sql.Tx, watchName, sourceRef, blobHash string, size int64,
 ) error {
 	result, err := tx.ExecContext(ctx, `
-		UPDATE watch_sources SET blob_hash = ?, size = ?
-		WHERE watch_name = ? AND source_ref = ?`,
+		UPDATE watch_sources SET blob_hash = $1, size = $2
+		WHERE watch_name = $3 AND source_ref = $4`,
 		blobHash, size, watchName, sourceRef,
 	)
 	if err != nil {

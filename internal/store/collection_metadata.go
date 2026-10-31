@@ -54,7 +54,7 @@ func validateCollectionLabelMetadataState(ctx context.Context, tx metadataQuerie
 			message: "collection label references a caller-supplied ingest",
 			query: `SELECT EXISTS(SELECT 1 FROM collection_labels l
 				JOIN ingests i ON i.id=l.ingest_id
-				WHERE i.source_kind LIKE 'embedded:%')`,
+				WHERE LOWER(i.source_kind) LIKE 'embedded:%')`,
 		},
 		{
 			message: "collection label timestamp precedes ingest start",

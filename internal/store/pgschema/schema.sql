@@ -885,6 +885,16 @@ CREATE TABLE {{schema}}.watch_sources (
     PRIMARY KEY (watch_name, source_ref)
 );
 
+CREATE TABLE {{schema}}.watch_source_absences (
+    watch_name TEXT COLLATE "C" NOT NULL,
+    source_ref TEXT COLLATE "C" NOT NULL,
+    absent_since TEXT COLLATE "C" NOT NULL,
+    PRIMARY KEY (watch_name, source_ref),
+    FOREIGN KEY (watch_name, source_ref)
+        REFERENCES {{schema}}.watch_sources(watch_name, source_ref)
+        ON UPDATE CASCADE ON DELETE CASCADE
+);
+
 CREATE TABLE {{schema}}.push_sources (
     push_name          TEXT COLLATE "C" NOT NULL,
     source_ref         TEXT COLLATE "C" NOT NULL,
@@ -2171,4 +2181,66 @@ CREATE TABLE IF NOT EXISTS {{schema}}.vault_changes (
     kind TEXT NOT NULL,
     node_id BIGINT NOT NULL,
     node_revision BIGINT NOT NULL
+);
+
+-- Derived event catalogs invalidated by provenance changes.
+CREATE TABLE {{schema}}.document_event_state (
+    singleton BIGINT PRIMARY KEY, contract_version TEXT COLLATE "C" NOT NULL,
+    deriver_fingerprint TEXT COLLATE "C" NOT NULL, input_epoch BIGINT NOT NULL,
+    publication_epoch BIGINT NOT NULL, updated_at TEXT COLLATE "C" NOT NULL
+);
+
+CREATE TABLE {{schema}}.document_event_generations (
+    generation_id TEXT COLLATE "C" PRIMARY KEY,
+    content_version_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE,
+    contract_version TEXT COLLATE "C" NOT NULL, deriver_fingerprint TEXT COLLATE "C" NOT NULL, inputs_sha256 TEXT COLLATE "C" NOT NULL,
+    document_kind TEXT COLLATE "C" NOT NULL,
+    canonical_json BYTEA NOT NULL,
+    checksum TEXT COLLATE "C" NOT NULL, event_count BIGINT NOT NULL, created_at TEXT COLLATE "C" NOT NULL,
+    UNIQUE (content_version_id, generation_id)
+);
+
+CREATE TABLE {{schema}}.document_event_heads (
+    content_version_id TEXT COLLATE "C" PRIMARY KEY REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE,
+    generation_id TEXT COLLATE "C" NOT NULL UNIQUE REFERENCES {{schema}}.document_event_generations(generation_id) ON DELETE CASCADE,
+    input_epoch BIGINT NOT NULL, published_at TEXT COLLATE "C" NOT NULL,
+    FOREIGN KEY (content_version_id, generation_id)
+        REFERENCES {{schema}}.document_event_generations(content_version_id, generation_id) ON DELETE CASCADE
+);
+
+CREATE TABLE {{schema}}.document_events (
+    generation_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.document_event_generations(generation_id) ON DELETE CASCADE,
+    event_id TEXT COLLATE "C" NOT NULL, source_key TEXT COLLATE "C" NOT NULL, date_kind TEXT COLLATE "C" NOT NULL,
+    source_kind_raw TEXT COLLATE "C" NOT NULL, date_value TEXT COLLATE "C" NOT NULL, raw_value TEXT COLLATE "C" NOT NULL,
+    precision TEXT COLLATE "C" NOT NULL, fraction_digits BIGINT NOT NULL,
+    timezone_kind TEXT COLLATE "C" NOT NULL, zone_text TEXT COLLATE "C" NOT NULL, offset_seconds BIGINT,
+    axis_key TEXT COLLATE "C" NOT NULL, utc_key TEXT COLLATE "C", claim_basis TEXT COLLATE "C" NOT NULL, parse_confidence TEXT COLLATE "C" NOT NULL,
+    evidence_kind TEXT COLLATE "C" NOT NULL, evidence_id TEXT COLLATE "C" NOT NULL, evidence_sha256 TEXT COLLATE "C" NOT NULL,
+    evidence_locator BYTEA NOT NULL, sensitive BIGINT NOT NULL,
+    PRIMARY KEY (generation_id, event_id),
+    UNIQUE (generation_id, source_key, date_kind)
+);
+
+CREATE TABLE {{schema}}.document_event_actors (
+    generation_id TEXT COLLATE "C" NOT NULL, event_id TEXT COLLATE "C" NOT NULL, role TEXT COLLATE "C" NOT NULL,
+    ordinal BIGINT NOT NULL, actor_key TEXT COLLATE "C" NOT NULL,
+    display_name TEXT COLLATE "C" NOT NULL, address TEXT COLLATE "C" NOT NULL, claim_json BYTEA NOT NULL,
+    evidence_kind TEXT COLLATE "C" NOT NULL, evidence_id TEXT COLLATE "C" NOT NULL,
+    sensitive BIGINT NOT NULL,
+    PRIMARY KEY (generation_id, event_id, role, ordinal),
+    FOREIGN KEY (generation_id, event_id)
+        REFERENCES {{schema}}.document_events(generation_id, event_id) ON DELETE CASCADE
+);
+
+CREATE TABLE {{schema}}.document_event_primaries (
+    generation_id TEXT COLLATE "C" NOT NULL, scope_class TEXT COLLATE "C" NOT NULL, disclosure TEXT COLLATE "C" NOT NULL,
+    event_id TEXT COLLATE "C" NOT NULL, rule_id TEXT COLLATE "C" NOT NULL, reason TEXT COLLATE "C" NOT NULL,
+    PRIMARY KEY (generation_id, scope_class, disclosure),
+    FOREIGN KEY (generation_id, event_id)
+        REFERENCES {{schema}}.document_events(generation_id, event_id) ON DELETE CASCADE
+);
+
+CREATE TABLE {{schema}}.document_event_dirty (
+    content_version_id TEXT COLLATE "C" PRIMARY KEY REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE,
+    revision BIGINT NOT NULL, reason TEXT COLLATE "C" NOT NULL
 );
