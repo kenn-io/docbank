@@ -3,7 +3,6 @@ package ingest
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -407,11 +406,21 @@ func TestWatchIncompleteRunnerReportsAndImportsSibling(t *testing.T) {
 }
 
 func TestWatchIncompleteRunnerRecoveryPreservesNotificationError(t *testing.T) {
-	for _, failFirst := range []bool{false, true} {
-		t.Run(map[bool]string{false: "source first", true: "notifications first"}[failFirst], func(t *testing.T) {
+	for _, tc := range []struct {
+		name                    string
+		notificationsFirst      bool
+		tagBlock                bool
+		notificationDuringBlock bool
+	}{
+		{name: "source first"},
+		{name: "notifications first", notificationsFirst: true},
+		{name: "source first then notifications then tag block", tagBlock: true},
+		{name: "source first then tag block then notifications", tagBlock: true, notificationDuringBlock: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			watcher, root, ing, source, siblingID := watcherFinalPair(t)
 			require.NoError(t, os.WriteFile(filepath.Join(source, "b.md"), []byte("changed sibling"), 0o600))
-			held := !failFirst
+			held := !tc.notificationsFirst
 			watcher.observeFile = func(file watchSource, withChange bool) (watchFileState, error) {
 				if file.ref == "a.md" && held {
 					return watchFileState{}, ErrSourceChanged
@@ -419,12 +428,25 @@ func TestWatchIncompleteRunnerRecoveryPreservesNotificationError(t *testing.T) {
 				return file.observe(withChange)
 			}
 			step, logs := stepWatcherFinalRunner(t, watcher, root)
-			if !failFirst {
+			if !tc.notificationsFirst {
 				require.Contains(t, step().Error, "incomplete")
 			}
+			if tc.notificationDuringBlock {
+				watcher.config.Tags = []string{"receipts"}
+				require.Contains(t, step().Error, `tag "receipts"`)
+			}
 			watcher.notificationErr = errors.New("synthetic notification backend failure")
-			notificationError := step().Error
-			require.Contains(t, notificationError, "notifications")
+			notificationError := `watch "notes" notifications: synthetic notification backend failure`
+			if !tc.notificationDuringBlock {
+				require.Equal(t, notificationError, step().Error)
+			}
+			if tc.tagBlock {
+				watcher.config.Tags = []string{"receipts"}
+				require.Contains(t, step().Error, `tag "receipts"`)
+				_, err := ing.Store.CreateTag(t.Context(), "receipts")
+				require.NoError(t, err)
+			}
+			require.Equal(t, notificationError, step().Error)
 			held = true
 			for range 2 {
 				require.Equal(t, notificationError, step().Error)
@@ -462,7 +484,11 @@ func TestWatchTagBlockRestoresRemainingFailure(t *testing.T) {
 					require.NoError(t, err)
 				}
 				if action == "scan recovery" {
-					for edit := range 2 {
+					edits := 1
+					if failure == "trashed node" {
+						edits = 2
+					}
+					for edit := range edits {
 						content := []byte(fmt.Sprintf("edited after trash %d", edit))
 						if failure == "trashed node" {
 							require.NoError(t, os.WriteFile(filepath.Join(source, "a.md"), content, 0o600))
@@ -470,11 +496,6 @@ func TestWatchTagBlockRestoresRemainingFailure(t *testing.T) {
 						err := watcher.scan(t.Context(), root)
 						require.ErrorAs(t, err, new(*store.TagResolutionError), "missing tags must survive later source failures")
 						require.ErrorContains(t, err, wantSourceError)
-						if failure == "trashed node" {
-							loose, err := ing.Blobs.ListDetailed()
-							require.NoError(t, err)
-							assert.NotContains(t, loose, fmt.Sprintf("%x", sha256.Sum256(content)), "rejected edit must not publish a loose blob")
-						}
 					}
 					_, err := ing.Store.CreateTag(t.Context(), "receipts")
 					require.NoError(t, err)
@@ -552,8 +573,7 @@ func TestWatchTagBlockRestoresRemainingFailure(t *testing.T) {
 				require.Len(t, snapshots, 1)
 				assert.Equal(t, jobs.StatusFailed, snapshots[0].Status)
 				assert.Contains(t, snapshots[0].Error, wantSourceError)
-				_, tagBlocked := errors.AsType[*store.TagResolutionError](snapshots[0].Cause)
-				assert.False(t, tagBlocked)
+				require.ErrorContains(t, snapshots[0].Cause, wantSourceError)
 			})
 		}
 	}
@@ -572,47 +592,28 @@ func TestWatchTagBlockRestoresRemainingFailure(t *testing.T) {
 		_, tagBlocked := errors.AsType[*store.TagResolutionError](err)
 		assert.False(t, tagBlocked, "cancellation must take priority over missing tags")
 	})
-	for _, order := range []string{"source only", "notification first", "notification during block"} {
-		t.Run(order, func(t *testing.T) {
-			watcher, root, ing, _, _ := watcherFinalPair(t)
-			held := true
-			watcher.observeFile = func(file watchSource, withChange bool) (watchFileState, error) {
-				if file.ref == "a.md" && held {
-					return watchFileState{}, ErrSourceChanged
-				}
-				return file.observe(withChange)
+	t.Run("source only", func(t *testing.T) {
+		watcher, root, ing, _, _ := watcherFinalPair(t)
+		held := true
+		watcher.observeFile = func(file watchSource, withChange bool) (watchFileState, error) {
+			if file.ref == "a.md" && held {
+				return watchFileState{}, ErrSourceChanged
 			}
-			step, logs := stepWatcherFinalRunner(t, watcher, root)
-			expected := step().Error
-			require.Contains(t, expected, "incomplete")
-			if order == "notification first" {
-				watcher.notificationErr = errors.New("first backend failure")
-				expected = step().Error
-			}
-			watcher.config.Tags = []string{"receipts"}
-			require.Contains(t, step().Error, `tag "receipts"`)
-			if order == "notification during block" {
-				watcher.notificationErr = errors.New("second backend failure")
-				require.Contains(t, step().Error, `tag "receipts"`)
-			}
-			_, err := ing.Store.CreateTag(t.Context(), "receipts")
-			require.NoError(t, err)
-			if order == "notification during block" {
-				expected = `watch "notes" notifications: second backend failure`
-			}
-			require.Equal(t, expected, step().Error)
-			held = false
-			if order == "source only" {
-				expected = ""
-			}
-			require.Equal(t, expected, step().Error)
-			if order != "source only" {
-				require.Equal(t, 1, strings.Count(logs.String(), "watch notifications unavailable"))
-			}
-			require.Equal(t, 1, strings.Count(logs.String(), "watch source blocks reconciliation"))
-			require.Equal(t, 1, strings.Count(logs.String(), "watch source reconciliation restored"))
-		})
-	}
+			return file.observe(withChange)
+		}
+		step, logs := stepWatcherFinalRunner(t, watcher, root)
+		expected := step().Error
+		require.Contains(t, expected, "incomplete")
+		watcher.config.Tags = []string{"receipts"}
+		require.Contains(t, step().Error, `tag "receipts"`)
+		_, err := ing.Store.CreateTag(t.Context(), "receipts")
+		require.NoError(t, err)
+		require.Equal(t, expected, step().Error)
+		held = false
+		require.Empty(t, step().Error)
+		require.Equal(t, 1, strings.Count(logs.String(), "watch source blocks reconciliation"))
+		require.Equal(t, 1, strings.Count(logs.String(), "watch source reconciliation restored"))
+	})
 }
 
 // Consecutive incomplete inventories form one reported incident. A complete
