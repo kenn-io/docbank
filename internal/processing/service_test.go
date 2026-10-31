@@ -870,6 +870,14 @@ func TestProcessingMissingRequiredImageBindingRemainsPartial(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "partial", status.State)
 
+	restarted, err := NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs,
+		Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(),
+		Principal: "synthetic-operator", Scope: "document-processing"})
+	require.NoError(t, err)
+	status, err = restarted.Status(t.Context(), job.ID)
+	require.NoError(t, err)
+	require.Equal(t, "partial", status.State)
+
 	_, err = EnsureVisualPreview(t.Context(), f.catalog, f.blobs, node.CurrentVersionID, f.recipe)
 	require.NoError(t, err)
 	plan, err = service.Plan(t.Context(), selector)
@@ -883,35 +891,6 @@ func TestProcessingMissingRequiredImageBindingRemainsPartial(t *testing.T) {
 		require.Equal(t, "completed", status.State)
 		require.Equal(t, 2, status.CompletedBindings)
 	}
-}
-
-func TestProcessingMissingRequiredImageBindingRemainsPartialAfterRestartWithoutProfile(t *testing.T) {
-	t.Parallel()
-	f := newPhotoDescriptionFixture(t)
-	x := newImageEmbeddingService(t, f)
-	x.binding.Activation = document.EmbeddingRequired
-	service, original, image := newMixedImageTextProfileService(t, f, x)
-	f.grant(t, service, "mixed")
-	node, err := f.catalog.CreateFile(t.Context(), f.catalog.RootID(), "without-preview.jpg", f.written.Hash, f.written.Size, "image/jpeg", processingBlobPhysical(t, f.written))
-	require.NoError(t, err)
-	selector := Selector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "mixed"}
-	plan, err := service.Plan(t.Context(), selector)
-	require.NoError(t, err)
-	job, err := service.Start(t.Context(), StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint})
-	require.NoError(t, err)
-	require.Len(t, job.EmbeddingJobIDs, 1)
-	sibling, err := f.catalog.EmbeddingJobByID(t.Context(), job.EmbeddingJobIDs[0])
-	require.NoError(t, err)
-	require.Equal(t, original, sibling.BindingID)
-	require.Equal(t, "completed", sibling.State)
-	require.Zero(t, x.fake.runtime.callCount(image))
-	restarted, err := NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs,
-		Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(),
-		Principal: "synthetic-operator", Scope: "document-processing"})
-	require.NoError(t, err)
-	status, err := restarted.Status(t.Context(), job.ID)
-	require.NoError(t, err)
-	require.Equal(t, "partial", status.State)
 }
 
 func TestImageOnlyStartRefusesMissingPreviewBeforeSavingConsent(t *testing.T) {

@@ -1537,7 +1537,7 @@ func TestPhotoStackPartialMetadataCandidates(t *testing.T) {
 	}
 }
 
-func TestPhotoStackVectorHydrationUsesActiveGenerationWithoutAutomaticIndex(t *testing.T) {
+func TestPhotoStackVectorHydrationUsesActiveGenerationAndAvoidsAutomaticQueryIndex(t *testing.T) {
 	t.Parallel()
 	f := newImageEmbeddingCatalogFixture(t)
 	s := f.s

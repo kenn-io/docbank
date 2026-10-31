@@ -20,4 +20,16 @@ func TestPhotoAssetIDsForNodesKeepsDistinctMembership(t *testing.T) {
 	ids, err := s.PhotoAssetIDsForNodes(t.Context(), []int64{second.ID, first.ID, first.ID, 999999}, false)
 	require.NoError(t, err)
 	require.Equal(t, map[int64]string{first.ID: a.ID, second.ID: b.ID}, ids)
+
+	duplicate, err := s.CreateFile(t.Context(), s.RootID(), "harbor.jpg", browseHash("first"), 20, "image/jpeg")
+	require.NoError(t, err)
+	duplicateAsset, err := s.PhotoAssetForNode(t.Context(), duplicate.ID)
+	require.NoError(t, err)
+	ids, err = s.PhotoAssetIDsForNodes(t.Context(), []int64{duplicate.ID}, true)
+	require.NoError(t, err)
+	require.Equal(t, map[int64]string{duplicate.ID: duplicateAsset.ID}, ids)
+
+	ids, err = s.PhotoAssetIDsForNodes(t.Context(), []int64{duplicate.ID, first.ID}, true)
+	require.NoError(t, err)
+	require.Equal(t, map[int64]string{first.ID: a.ID}, ids)
 }

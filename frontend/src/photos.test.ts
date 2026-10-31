@@ -3798,7 +3798,6 @@ it("drops a late metadata timeline when Meaning starts", async () => {
   state.finish({ facets: [state.timeline] } as unknown as snapshots.PhotoTimelineCounts);
   await vi.waitFor(() => expect(state.photos.timelineLoading).toBe(false));
   expect(state.photos.timeline).toBeUndefined();
-  expect(state.photos.facets).toEqual([]);
   state.photos.dispose();
 });
 

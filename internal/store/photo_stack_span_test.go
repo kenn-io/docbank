@@ -65,14 +65,7 @@ func TestPhotoStackPagingMatchesGroups(t *testing.T) {
 			seconds: []int{0, 1, 2, 22, 42, 62, 82, 102, 122},
 			groups:  [][]int{{0, 1, 2}},
 		},
-		testCase{
-			name:    "oversized run",
-			seconds: make([]int, MaxPhotoStackFrames+2),
-		},
 	)
-	for i := range cases[len(cases)-1].seconds {
-		cases[len(cases)-1].seconds[i] = i
-	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

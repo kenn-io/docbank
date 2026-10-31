@@ -82,6 +82,6 @@ func photoObservedFixture(t *testing.T) (*httptest.Server, *testStore, *photoQue
 	provider := newProcessingTestEmbeddingProvider(t)
 	provider.descriptor = photoImageDescriptor(t, provider.descriptor)
 	observer := &photoQueryObserver{EmbeddingProvider: provider}
-	ts, catalog, _ := photoImageHTTPProfilesFixture(t, map[string]document.EmbeddingProvider{"private": observer}, []string{"sunset.jpg"}, false)
+	ts, catalog, _ := photoImageHTTPProfilesFixture(t, map[string]document.EmbeddingProvider{"private": observer}, []string{"sunset.jpg"})
 	return ts, catalog, observer
 }

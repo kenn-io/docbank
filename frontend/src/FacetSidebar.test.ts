@@ -6,9 +6,9 @@ import type { SnapshotPage } from "./snapshots.js";
 
 afterEach(cleanup);
 
-it("selects unrated photos and empty flags and labels", async () => {
+it("selects unrated photos, empty flags and labels, and selects and clears a capture year", async () => {
   const onchange = vi.fn();
-  render(FacetSidebar, {
+  const view = render(FacetSidebar, {
     unit: "photos",
     query: originalQuery,
     onchange,
@@ -37,6 +37,19 @@ it("selects unrated photos and empty flags and labels", async () => {
     within(screen.getByRole("group", { name: "Color label facet" })).getByRole("button"),
   );
   expect(onchange.mock.lastCall?.[0].filters.labels).toEqual([""]);
+  await view.rerender({
+    query: originalQuery,
+    facets: [facet("year", { values: [{ key: "2024", label: "2024", count: 1, selected: false }] })],
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "2024, 1 photos" }));
+  expect(onchange.mock.lastCall?.[0].filters).toMatchObject({
+    capture_after: "2024-01-01",
+    capture_before: "2025-01-01",
+  });
+  await view.rerender({ query: onchange.mock.lastCall?.[0], facets: [] });
+  await fireEvent.click(screen.getByRole("button", { name: "2024, selected" }));
+  expect(onchange.mock.lastCall?.[0].filters.capture_after).toBeUndefined();
+  expect(onchange.mock.lastCall?.[0].filters.capture_before).toBeUndefined();
 });
 
 const selectedFacetCases: [
@@ -167,24 +180,13 @@ it.each(selectedFacetCases)(
       mode: selectedFacet.mode,
       filters: { ...originalQuery.filters, ...selectedFacet.filters },
     };
-    const view = render(FacetSidebar, {
+    render(FacetSidebar, {
       unit: "photos",
-      query: _name === "capture year" ? originalQuery : query,
-      facets:
-        _name === "capture year"
-          ? [facet("year", { values: [{ key: "2024", label: "2024", count: 1, selected: false }] })]
-          : selectedFacet.facets,
+      query,
+      facets: selectedFacet.facets,
       disabled: false,
       onchange,
     });
-    if (_name === "capture year") {
-      await fireEvent.click(screen.getByRole("button", { name: "2024, 1 photos" }));
-      expect(onchange.mock.lastCall?.[0].filters).toMatchObject({
-        capture_after: "2024-01-01",
-        capture_before: "2025-01-01",
-      });
-      await view.rerender({ query: onchange.mock.lastCall?.[0], facets: selectedFacet.facets });
-    }
     const selected = within(screen.getByRole("group", { name: selectedFacet.group })).getByRole(
       "button",
       { name: selectedFacet.button },

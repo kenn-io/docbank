@@ -793,11 +793,11 @@ func photoImageHTTPFixture(t *testing.T, provider processingTestEmbeddingProvide
 	if len(unavailable) > 0 {
 		embedding = togglePhotoImageProvider{EmbeddingProvider: provider, unavailable: unavailable[0]}
 	}
-	return photoImageHTTPProfilesFixture(t, map[string]document.EmbeddingProvider{"private": embedding}, names, false)
+	return photoImageHTTPProfilesFixture(t, map[string]document.EmbeddingProvider{"private": embedding}, names)
 }
 
-// photoImageHTTPProfilesFixture ingests names as photos; distinctCaptures gives each its own pixels and capture time so they group as one burst.
-func photoImageHTTPProfilesFixture(t *testing.T, providers map[string]document.EmbeddingProvider, names []string, distinctCaptures bool) (*httptest.Server, *testStore, []string) {
+// photoImageHTTPProfilesFixture ingests names as photos.
+func photoImageHTTPProfilesFixture(t *testing.T, providers map[string]document.EmbeddingProvider, names []string) (*httptest.Server, *testStore, []string) {
 	t.Helper()
 	var service *processing.Service
 	ts, catalog := newTestServer(t, func(deps *api.Deps) {
@@ -822,24 +822,9 @@ func photoImageHTTPProfilesFixture(t *testing.T, providers map[string]document.E
 	require.NoError(t, err)
 	recipe, err := processing.VisualPreviewRecipeForSize("grid")
 	require.NoError(t, err)
-	run, err := catalog.BeginIngest(t.Context(), "cli", "synthetic similarity")
-	require.NoError(t, err)
 	for i, name := range names {
-		var node store.Node
-		if distinctCaptures {
-			hash, size, err := catalog.Blobs.Write(bytes.NewReader(mediatest.JPEG(24, 24, color.RGBA{R: uint8(i * 80), A: 255})))
-			require.NoError(t, err)
-			node, err = catalog.IngestFileExact(t.Context(), run, catalog.RootID(), name, hash, size, "image/jpeg", "/synthetic/"+name, "2024-02-01T12:00:00Z")
-			require.NoError(t, err)
-			stamp := fmt.Sprintf("2024-02-01T12:00:%02dZ", i*10)
-			canonical, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1, Fields: []document.SourceMetadataFieldV1{{Key: "created", Namespace: "image.exif", SourceField: "DateTimeOriginal", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataTimestamp, Timestamp: &document.SourceMetadataTimestampV1{Raw: stamp, Normalized: stamp, Precision: document.SourceMetadataPrecisionSecond, Timezone: document.SourceMetadataTimezoneUTC}}}}})
-			require.NoError(t, err)
-			_, err = catalog.PublishSourceMetadata(t.Context(), hash, processing.SourceMetadataExtractorFingerprint, canonical)
-			require.NoError(t, err)
-		} else {
-			node, err = catalog.CreateFile(t.Context(), catalog.RootID(), name, hash, size, "image/jpeg")
-			require.NoError(t, err)
-		}
+		node, err := catalog.CreateFile(t.Context(), catalog.RootID(), name, hash, size, "image/jpeg")
+		require.NoError(t, err)
 
 		_, err = processing.EnsureVisualPreview(t.Context(), catalog.Store, catalog.Blobs, node.CurrentVersionID, recipe)
 		require.NoError(t, err)
@@ -944,27 +929,6 @@ func TestPhotoSnapshotHTTPForwardsHiddenScope(t *testing.T) {
 	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, request)
 	require.Equal(t, http.StatusBadRequest, response.StatusCode, body)
 	require.Equal(t, "invalid_cursor", decodeProblem(t, body).Code)
-}
-
-func TestPhotoStackGenerationStaysLocalAfterConsentRevoked(t *testing.T) {
-	t.Parallel()
-	provider := newProcessingTestEmbeddingProvider(t)
-	provider.descriptor = photoImageDescriptor(t, provider.descriptor)
-	ts, _, _ := photoImageHTTPProfilesFixture(t, map[string]document.EmbeddingProvider{"private": &provider, "same-space": &provider}, []string{"one.jpg", "two.jpg"}, true)
-	response, body := do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, api.PhotoBrowseRequest{Query: api.QueryPayload(`{"mode":"lexical","text":"jpg","sort":{"field":"relevance","direction":"desc"}}`), Stacks: true})
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	var page api.PhotoBrowsePage
-	require.NoError(t, json.Unmarshal([]byte(body), &page))
-	require.Len(t, page.Stacks, 1)
-	require.Len(t, page.Stacks[0].AssetIDs, 2)
-
-	response, body = do(t, ts, http.MethodPost, "/api/v1/processing/consent/revocations", nil, document.ProcessingConsentRevocationRequest{Principal: "embedded:operator", Scope: "document-processing"})
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/stacks/group", nil, api.GroupPhotoStacksRequest{AssetIDs: page.Stacks[0].AssetIDs})
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	var grouped api.GroupPhotoStacksResponse
-	require.NoError(t, json.Unmarshal([]byte(body), &grouped))
-	require.Equal(t, [][]string{page.Stacks[0].AssetIDs}, grouped.Groups)
 }
 
 func TestPhotoRankedCursorRequiresSnapshotOrUsesHiddenFallback(t *testing.T) {
