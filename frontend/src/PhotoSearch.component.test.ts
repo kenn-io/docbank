@@ -295,7 +295,17 @@ it.each([
     vi.stubGlobal(
       "fetch",
       vi.fn(() =>
-        Promise.resolve(Response.json({ items: [], total: 0, facets: [], fallback_reason })),
+        Promise.resolve(
+          Response.json({
+            items: [],
+            total: 0,
+            facets: [],
+            snapshot_id: "meaning-snapshot",
+            requested_mode: "semantic",
+            actual_mode: fallback_reason ? "lexical" : "semantic",
+            fallback_reason,
+          }),
+        ),
       ),
     );
     const photos = new Photos("scoped", vi.fn());

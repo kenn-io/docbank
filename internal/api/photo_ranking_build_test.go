@@ -22,48 +22,35 @@ type photoQueryObserver struct {
 
 func TestSavedPhotoRunsPreserveIdentityAndSkipUnneededEmbedding(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct {
-		name            string
-		payload         string
-		updated         string
-		wantMode        string
-		wantStatus      int
-		wantNoEmbedding bool
-	}{
-		{name: "semantic", payload: `{"mode":"semantic","text":"sunset","sort":{"field":"name","direction":"asc"}}`, wantMode: "semantic", wantStatus: http.StatusOK},
-		{name: "stale revision", payload: `{"mode":"semantic","text":"sunset"}`, updated: `{"mode":"semantic","text":"harbor"}`, wantNoEmbedding: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			ts, catalog, observer := photoObservedFixture(t)
-			saved, etag := createSavedQuery(t, ts.URL, "Synthetic saved photo query", tc.payload)
-			if tc.updated != "" {
-				updated := []byte(tc.updated)
-				_, err := catalog.UpdateSavedQuery(t.Context(), saved.ID, saved.Revision, store.SavedQueryPatch{Payload: &updated})
-				require.NoError(t, err)
-			}
-			response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/saved-queries/"+saved.ID+"/runs", map[string]string{"X-Api-Key": testAPIKey, "If-Match": etag}, `{"photos":true}`)
-			if !tc.wantNoEmbedding {
-				require.Equal(t, tc.wantStatus, response.StatusCode, body)
-				var result api.SavedQueryRunResult
-				require.NoError(t, json.Unmarshal([]byte(body), &result))
-				require.Equal(t, saved.Fingerprint, result.Run.QueryFingerprint)
-				if tc.wantMode != "" {
-					require.Equal(t, tc.wantMode, result.Snapshot.RequestedMode)
-					require.Equal(t, tc.wantMode, result.Snapshot.ActualMode)
-					require.Empty(t, result.Snapshot.FallbackReason)
-					require.NotEmpty(t, result.Run.RunID)
-					require.EqualValues(t, 1, result.Run.Total)
-					require.EqualValues(t, 1, result.Snapshot.Total)
-				}
-			}
-			if tc.wantNoEmbedding {
-				require.Zero(t, observer.calls.Load())
-			} else if tc.wantMode == "semantic" {
-				require.EqualValues(t, 1, observer.calls.Load())
-			}
-		})
-	}
+	t.Run("semantic", func(t *testing.T) {
+		t.Parallel()
+		ts, _, observer := photoObservedFixture(t)
+		saved, etag := createSavedQuery(t, ts.URL, "Synthetic saved photo query", `{"mode":"semantic","text":"sunset","sort":{"field":"name","direction":"asc"}}`)
+		response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/saved-queries/"+saved.ID+"/runs", map[string]string{"X-Api-Key": testAPIKey, "If-Match": etag}, `{"photos":true}`)
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+		var result api.SavedQueryRunResult
+		require.NoError(t, json.Unmarshal([]byte(body), &result))
+		require.Equal(t, saved.Fingerprint, result.Run.QueryFingerprint)
+		require.Equal(t, "semantic", result.Snapshot.RequestedMode)
+		require.Equal(t, "semantic", result.Snapshot.ActualMode)
+		require.Empty(t, result.Snapshot.FallbackReason)
+		require.NotEmpty(t, result.Run.RunID)
+		require.EqualValues(t, 1, result.Run.Total)
+		require.EqualValues(t, 1, result.Snapshot.Total)
+		require.EqualValues(t, 1, observer.calls.Load())
+	})
+	t.Run("stale revision", func(t *testing.T) {
+		t.Parallel()
+		ts, catalog, observer := photoObservedFixture(t)
+		saved, etag := createSavedQuery(t, ts.URL, "Synthetic saved photo query", `{"mode":"semantic","text":"sunset"}`)
+		updated := []byte(`{"mode":"semantic","text":"harbor"}`)
+		_, err := catalog.UpdateSavedQuery(t.Context(), saved.ID, saved.Revision, store.SavedQueryPatch{Payload: &updated})
+		require.NoError(t, err)
+		response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/saved-queries/"+saved.ID+"/runs", map[string]string{"X-Api-Key": testAPIKey, "If-Match": etag}, `{"photos":true}`)
+		require.Equal(t, http.StatusPreconditionFailed, response.StatusCode, body)
+		require.Equal(t, "stale_revision", decodeProblem(t, body).Code)
+		require.Zero(t, observer.calls.Load())
+	})
 }
 
 func (p *photoQueryObserver) Embed(ctx context.Context, inputs []document.EmbeddingInput, authorization document.EmbeddingAuthorization) (document.EmbeddingResult, error) {

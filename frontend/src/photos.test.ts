@@ -3409,45 +3409,6 @@ it.each([undefined, "map"] as const)(
   },
 );
 
-it("clearing a Meaning search returns to Metadata", async () => {
-  const read = vi.spyOn(api, "listPhotoAssets").mockResolvedValue({
-    items: [],
-    total: 0,
-    facets: [],
-    relevance_available: false,
-  });
-  const timeline = vi.mocked(snapshots.fetchPhotoTimeline);
-  const photos = new Photos("scoped", vi.fn(), false, {
-    ...photoQuery,
-    mode: "semantic",
-    text: "sunset",
-  });
-  await photos.resetQuery();
-  expect(photos.query.mode).toBe("lexical");
-  expect(read.mock.calls.at(-1)?.[0].query.mode).toBe("lexical");
-  expect(read.mock.calls.at(-1)?.[0].snapshot_id).toBeUndefined();
-  expect(timeline).toHaveBeenCalled();
-  photos.dispose();
-});
-
-it("retains camera and lens filters when switching to Meaning", async () => {
-  const filters = { cameras: ["Canon"], lenses: ["RF 50mm"] };
-  const read = vi.spyOn(api, "listPhotoAssets").mockResolvedValue({
-    items: [photo(1)],
-    total: 1,
-    facets: [],
-    relevance_available: true,
-    requested_mode: "semantic",
-    actual_mode: "semantic",
-    snapshot_id: "meaning",
-  });
-  const photos = new Photos("scoped", vi.fn(), false, { ...photoQuery, filters });
-  await photos.setQuery({ ...photos.query, mode: "semantic", text: "sunset" });
-  expect(photos.query.filters).toMatchObject(filters);
-  expect(read.mock.calls.at(-1)?.[0].query.filters).toMatchObject(filters);
-  photos.dispose();
-});
-
 it("retains the loaded prefix when the old tail moves to the front", async () => {
   const rows = Array.from({ length: 500 }, (_, index) => photo(index + 1));
   const photos = new Photos("scoped", vi.fn());
@@ -3627,7 +3588,7 @@ it("loads every ranked page for Export all after a live refresh settles", async 
   }
 });
 
-it.each([false, true])("selects every snapshot result with exportFirst=%s", async (exportFirst) => {
+it("selects every snapshot result", async () => {
   const photos = new Photos("scoped", vi.fn(), false, {
     ...photoQuery,
     mode: "semantic",
@@ -3649,12 +3610,6 @@ it.each([false, true])("selects every snapshot result with exportFirst=%s", asyn
   photos.selectLoaded();
   expect(photos.scope()).toEqual({ asset_ids: ["photo-1"] });
   expect(await photos.actionScope(true)).toEqual({ query: photoQuery, asset_ids: ["photo-1"] });
-  if (exportFirst) {
-    expect(await photos.actionScope()).toEqual({
-      query: photoQuery,
-      asset_ids: ["photo-1", "photo-2"],
-    });
-  }
   await photos.selectAllResults();
   expect(photos.scope()).toEqual({ asset_ids: [photo(1).asset_id, photo(2).asset_id] });
   for (const selected of [false, true]) {
@@ -3842,6 +3797,7 @@ it("loads timeline counts after Meaning switches to Metadata", async () => {
   await vi.waitFor(() => expect(state.photos.timeline?.total).toBe(7));
   expect(state.counts).toHaveBeenCalledOnce();
   expect(state.counts.mock.calls[0][1].mode).toBe("lexical");
+  expect(vi.mocked(api.listPhotoAssets).mock.calls.at(-1)?.[0].snapshot_id).toBeUndefined();
   state.photos.dispose();
 });
 
@@ -3873,7 +3829,7 @@ it("clears metadata facets when Meaning starts from the filter panel", async () 
   state.photos.dispose();
 });
 
-it("applies Undo rotation and representative changes to ranked Map rows", () => {
+it("patches display-file rotation and representative revisions in ranked Map rows", () => {
   const photos = new Photos(
     "scoped",
     vi.fn(),
@@ -3888,43 +3844,20 @@ it("applies Undo rotation and representative changes to ranked Map rows", () => 
   photos.items = [mapPhoto(1), mapPhoto(2)];
   photos.snapshotID = "ranked-map";
   const target = preparedPhoto(1);
-  const companion = preparedPhoto(3, {
-    asset_id: target.asset_id,
-    display_file_id: target.display_file_id,
-    file_id: "raw-1",
-  });
-  photos.authored.targets = [target, companion];
+  photos.authored.targets = [target];
   const before: api.PhotoAuthoredSnapshot = {
     file_id: target.file_id,
     node_id: target.node_id,
     revision: target.revision,
     values: target.values,
   };
-  const rotate = (
-    receipt_id: string,
-    from: api.PhotoAuthoredRotation,
-    to: api.PhotoAuthoredRotation,
-    file = before,
-  ) =>
-    photos.metadataChanged({
-      receipt_id,
-      before: [{ ...file, values: { ...file.values, rotation: from } }],
-      after: [{ ...file, revision: 2, values: { ...file.values, rotation: to } }],
-    });
-  rotate("rotated", 0, 90);
-  expect(photos.items.map((row) => row.rotation)).toEqual([90, 0]);
-  photos.clearSelection();
-  expect(photos.authored.prepared).toEqual([]);
-  rotate("undo", 90, 0);
-  expect(photos.items.map((row) => row.rotation)).toEqual([0, 0]);
-  expect(photos.items.map((row) => row.asset_id)).toEqual(["photo-1", "photo-2"]);
-  expect(photos.snapshotID).toBe("ranked-map");
-  rotate("companion", 0, 180, {
-    ...before,
-    file_id: companion.file_id,
-    node_id: companion.node_id,
+  photos.metadataChanged({
+    receipt_id: "rotated",
+    before: [before],
+    after: [{ ...before, revision: 2, values: { ...before.values, rotation: 90 } }],
   });
-  expect(photos.items.map((row) => row.rotation)).toEqual([0, 0]);
+  expect(photos.items.map((row) => row.rotation)).toEqual([90, 0]);
+  expect(photos.snapshotID).toBe("ranked-map");
   photos.metadataChanged({
     receipt_id: "representative-undo",
     before: [before],

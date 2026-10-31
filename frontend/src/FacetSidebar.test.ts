@@ -6,7 +6,7 @@ import type { SnapshotPage } from "./snapshots.js";
 
 afterEach(cleanup);
 
-it("selects unrated photos, empty flags and labels, and selects a capture year", async () => {
+it("narrows photos with metadata facets", async () => {
   const onchange = vi.fn();
   const view = render(FacetSidebar, {
     unit: "photos",
