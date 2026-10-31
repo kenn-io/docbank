@@ -12,8 +12,8 @@ import (
 var datePatterns = []*regexp.Regexp{
 	regexp.MustCompile(`^([0-9]{4})([-/])([0-9]{2})([-/])([0-9]{2})`),
 	regexp.MustCompile(`^([0-9]{2})([/.])([0-9]{2})([/.])([0-9]{4})`),
-	regexp.MustCompile(`(?i)^([A-Za-z]+\.?)[ \t\x{00a0}\x{202f}]+(?:([0-9]{1,2}),?[ \t\x{00a0}\x{202f}]+)?([0-9]{4})`),
-	regexp.MustCompile(`(?i)^([0-9]{1,2})[ \t\x{00a0}\x{202f}]+([A-Za-z]+\.?)[ \t\x{00a0}\x{202f}]+([0-9]{4})`),
+	regexp.MustCompile(`(?i)^([A-Za-z]+\.?)[\s\x{00a0}\x{202f}]+(?:([0-9]{1,2}),?[\s\x{00a0}\x{202f}]+)?([0-9]{4})`),
+	regexp.MustCompile(`(?i)^([0-9]{1,2})[\s\x{00a0}\x{202f}]+([A-Za-z]+\.?)[\s\x{00a0}\x{202f}]+([0-9]{4})`),
 	regexp.MustCompile(`^([0-9]{4})-([0-9]{2})`),
 }
 
@@ -48,13 +48,6 @@ func figureBoundary(rs []rune, end int) bool {
 	return true
 }
 
-func iso8601TimeContinuation(rs []rune, start int) bool {
-	if start+5 >= len(rs) || (rs[start] != 'T' && rs[start] != 't') {
-		return false
-	}
-	return digit(rs[start+1]) && digit(rs[start+2]) && rs[start+3] == ':' && digit(rs[start+4]) && digit(rs[start+5])
-}
-
 func dateAt(rs []rune) (int, []string) {
 	text := string(rs[:min(len(rs), 64)])
 	for kind, pattern := range datePatterns {
@@ -63,7 +56,7 @@ func dateAt(rs []rune) (int, []string) {
 			continue
 		}
 		end := len([]rune(m[0]))
-		if !figureBoundary(rs, end) && !iso8601TimeContinuation(rs, end) {
+		if !figureBoundary(rs, end) {
 			continue
 		}
 		values := []string{}
@@ -97,6 +90,9 @@ func dateAt(rs []rune) (int, []string) {
 			}
 			add(num(m[5]), num(m[3]), num(m[1]))
 			add(num(m[5]), num(m[1]), num(m[3]))
+			if len(values) > 1 {
+				return end, nil
+			}
 		case 2:
 			month := englishMonth(m[1])
 			if month == 0 {
@@ -127,13 +123,13 @@ func dateAt(rs []rune) (int, []string) {
 func englishMonth(s string) int {
 	s = strings.ToLower(s)
 	if strings.HasSuffix(s, ".") {
-		if len(s) != 4 {
+		if len(s) != 4 && s != "sept." {
 			return 0
 		}
 		s = strings.TrimSuffix(s, ".")
 	}
 	for i, month := range []string{"january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"} {
-		if s == month || s == month[:3] {
+		if s == month || s == month[:3] || s == "sept" && month == "september" {
 			return i + 1
 		}
 	}

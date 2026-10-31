@@ -109,12 +109,9 @@ func numberValues(s string) []string {
 	if parts[1] == "" {
 		return nil
 	}
-	dec := canonical(parts[0], parts[1])
-	if grouped {
-		v := canonical(strings.Join(parts, ""), "")
-		if v != dec {
-			return []string{v, dec}
-		}
+	if grouped && canonical(strings.Join(parts, ""), "") != canonical(parts[0], parts[1]) {
+		// Preserve the separator when grouping and decimal readings differ.
+		return []string{"literal:" + s}
 	}
-	return []string{dec}
+	return []string{canonical(parts[0], parts[1])}
 }

@@ -30,6 +30,11 @@ import (
 
 func newCitationMCPFixture(t *testing.T) (*Server, document.TextCitation) {
 	t.Helper()
+	return newCitationMCPFixtureText(t, "text/plain", "$1,205 aé界🙂z", "é界🙂")
+}
+
+func newCitationMCPFixtureText(t *testing.T, mediaType, body, quote string) (*Server, document.TextCitation) {
+	t.Helper()
 	root := t.TempDir()
 	require.NoError(t, os.Mkdir(filepath.Join(root, "spool"), 0o700))
 	catalog, err := store.Open(filepath.Join(root, "docbank.db"))
@@ -39,7 +44,7 @@ func newCitationMCPFixture(t *testing.T) (*Server, document.TextCitation) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, blobs.Close()) })
 	hash, size, err := blobs.Write(strings.NewReader("MIME-Version: 1.0\r\n" +
-		"Content-Type: text/plain; charset=utf-8\r\n\r\n$1,205 aé界🙂z\r\n"))
+		"Content-Type: " + mediaType + "; charset=utf-8\r\n\r\n" + body + "\r\n"))
 	require.NoError(t, err)
 	node, err := catalog.CreateFile(t.Context(), catalog.RootID(),
 		"quote.eml", hash, size, "message/rfc822")
@@ -58,7 +63,7 @@ func newCitationMCPFixture(t *testing.T) (*Server, document.TextCitation) {
 	markdown, err := io.ReadAll(reader)
 	require.NoError(t, err)
 	require.NoError(t, reader.Close())
-	prefix, _, found := strings.Cut(string(markdown), "é界🙂")
+	prefix, _, found := strings.Cut(string(markdown), quote)
 	require.True(t, found)
 	vaultID, err := uuid.Parse(catalog.VaultID())
 	require.NoError(t, err)
@@ -68,7 +73,7 @@ func newCitationMCPFixture(t *testing.T) (*Server, document.TextCitation) {
 	citation := document.TextCitation{Version: 1, VaultUID: vaultID, NodeID: node.ID,
 		ContentVersionID: versionID, ContentSHA256: hash,
 		RenditionAttachmentID: view.Attachment.ID,
-		BuildID:               view.Build.ID, RenditionSHA256: view.Build.MarkdownChecksum, Start: start, End: start + 3}
+		BuildID:               view.Build.ID, RenditionSHA256: view.Build.MarkdownChecksum, Start: start, End: start + utf8.RuneCountInString(quote)}
 	gate := api.NewOperationGate()
 	service, err := processing.NewService(processing.ServiceConfig{
 		Catalog: catalog, Blobs: blobs, Gate: gate, SpoolDirectory: filepath.Join(root, "spool")})

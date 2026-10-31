@@ -43,8 +43,8 @@ const delimiters = "\u2014\u2015[]()<>|*~`=;"
 
 func split(r rune) bool { return unicode.IsSpace(r) || strings.ContainsRune(delimiters, r) }
 
-// trim drops edge punctuation, keeping a sign or decimal point before a digit or currency symbol.
-func trim(rs []rune) string {
+// trimStart keeps signs and decimal points before digits or currency markers.
+func trimStart(rs []rune) int {
 	i := 0
 	for i < len(rs) && edge(rs[i]) {
 		if strings.ContainsRune("-+±.\u2212", rs[i]) && i+1 < len(rs) && (unicode.IsDigit(rs[i+1]) || unicode.Is(unicode.Sc, rs[i+1])) {
@@ -53,9 +53,18 @@ func trim(rs []rune) string {
 		if strings.ContainsRune("-+±\u2212", rs[i]) && i+2 < len(rs) && rs[i+1] == '.' && unicode.IsDigit(rs[i+2]) {
 			break
 		}
+		if strings.ContainsRune("-+±−", rs[i]) {
+			if _, code := currencyAt(rs, i+1); code != "" {
+				break
+			}
+		}
 		i++
 	}
-	return strings.TrimRightFunc(string(rs[i:]), edge)
+	return i
+}
+
+func trim(rs []rune) string {
+	return strings.TrimRightFunc(string(rs[trimStart(rs):]), edge)
 }
 
 func extract(text string) []string {
@@ -93,18 +102,17 @@ func (a Answer) Check(citations []Citation) Report {
 			status = "resolved"
 			for _, literal := range extract(c.Text) {
 				values[figureKey{"", literal}] = true
-				if date := timestampDate(literal); date != "" {
-					values[figureKey{"date", date}] = true
-				}
 			}
 			for _, figure := range normalizedFigures(c.Text) {
+				if figure.kind == "amount" {
+					values[figureKey{"literal_amount", figure.text}] = true
+				}
 				for _, value := range figure.values {
 					values[figureKey{figure.kind, value}] = true
 				}
-				// A fallback literal can also supply exact amount evidence.
-				// Recognized amounts supply only their full currency class.
+				// Literal spellings use a separate namespace from normalized values.
 				if figure.kind == "" {
-					values[figureKey{"amount", figure.text}] = true
+					values[figureKey{"literal_amount", figure.text}] = true
 				}
 			}
 		} else {

@@ -1,9 +1,7 @@
 package grounding
 
 import (
-	"regexp"
 	"strings"
-	"time"
 	"unicode"
 
 	"github.com/yuin/goldmark/util"
@@ -16,8 +14,8 @@ func idChar(r rune) bool       { return wordRune(r) || strings.ContainsRune("-/.
 func separator(r rune) bool {
 	return r == ',' || r == '.' || r == '\u00a0' || r == '\u202f' || r == '\''
 }
-func skipHorizontalSpace(rs []rune, i int) int {
-	for i < len(rs) && (rs[i] == ' ' || rs[i] == '\t' || rs[i] == '\u00a0' || rs[i] == '\u202f') {
+func skipSpace(rs []rune, i int) int {
+	for i < len(rs) && unicode.IsSpace(rs[i]) {
 		i++
 	}
 	return i
@@ -33,23 +31,11 @@ type figureKey struct{ kind, value string }
 func (f normalizedFigure) comparisonKeys() []figureKey {
 	kind := ""
 	if f.kind == "amount" {
-		kind = "amount"
+		kind = "literal_amount"
 	}
 	keys := []figureKey{{kind, f.text}}
 	for _, value := range f.values {
 		keys = append(keys, figureKey{f.kind, value})
-		if f.kind == "amount" {
-			code, number := amountParts(value)
-			for symbol, codes := range symbolCurrencies {
-				if code == symbol {
-					for _, compatible := range strings.Fields(codes) {
-						keys = append(keys, figureKey{"amount", compatible + " " + number})
-					}
-				} else if compatibleCurrency(code, symbol) {
-					keys = append(keys, figureKey{"amount", symbol + " " + number})
-				}
-			}
-		}
 	}
 	return keys
 }
@@ -59,7 +45,7 @@ func (f normalizedFigure) comparisonKeys() []figureKey {
 func normalizedFigures(text string) []normalizedFigure {
 	text = string(util.UnescapePunctuations([]byte(text)))
 	result := []normalizedFigure{}
-	for _, segment := range strings.FieldsFunc(text, func(r rune) bool { return strings.ContainsRune(delimiters, r) || r == '\n' || r == '\r' }) {
+	for _, segment := range strings.FieldsFunc(text, func(r rune) bool { return strings.ContainsRune(delimiters, r) }) {
 		rs := []rune(segment)
 		type span struct{ start, end int }
 		var tokens []span
@@ -80,23 +66,7 @@ func normalizedFigures(text string) []normalizedFigure {
 		}
 		for i := 0; i < len(tokens); {
 			start := tokens[i].start
-			for start < tokens[i].end && edge(rs[start]) {
-				r := rs[start]
-				if strings.ContainsRune("-+±.−", r) && start+1 < len(rs) && (unicode.IsDigit(rs[start+1]) || unicode.Is(unicode.Sc, rs[start+1])) {
-					break
-				}
-				if strings.ContainsRune("-+±−", r) && start+2 < len(rs) && rs[start+1] == '.' && unicode.IsDigit(rs[start+2]) {
-					break
-				}
-				if strings.ContainsRune("-+±−", r) {
-					next := start + 1
-					_, code := currencyAt(rs, next)
-					if code != "" || next < len(rs) && (digit(rs[next]) || rs[next] == '.' && next+1 < len(rs) && digit(rs[next+1])) {
-						break
-					}
-				}
-				start++
-			}
+			start += trimStart(rs[start:tokens[i].end])
 			matched := false
 			safe := 0
 			for kind, parse := range []func([]rune) (int, []string){dateAt, amountAt} {
@@ -140,18 +110,4 @@ func normalizedFigures(text string) []normalizedFigure {
 		}
 	}
 	return result
-}
-
-var timestampSyntax = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-]([01][0-9]|2[0-3]):[0-5][0-9])$`)
-
-// A complete RFC 3339 timestamp can supply its written calendar date, but an
-// answer timestamp itself remains a literal figure so its time is not lost.
-func timestampDate(token string) string {
-	if !timestampSyntax.MatchString(token) {
-		return ""
-	}
-	if _, err := time.Parse(time.RFC3339, token); err != nil {
-		return ""
-	}
-	return token[:10]
 }

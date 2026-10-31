@@ -1,23 +1,12 @@
 package grounding
 
 import (
-	"slices"
 	"strings"
 	"unicode"
 
 	"golang.org/x/text/currency"
 )
 
-// Compatibility is symmetric but deliberately not transitive: USD and CAD
-// each match a bare dollar symbol, but do not match each other.
-var symbolCurrencies = map[string]string{
-	"$": " AUD BBD BMD BND BSD BZD CAD FJD GYD HKD JMD KYD LRD NAD NZD SBD SGD SRD TTD TWD USD XCD ZWD ZWL ",
-	"¥": " JPY CNY ", "£": " GBP ", "€": " EUR ",
-}
-
-func compatibleCurrency(a, b string) bool {
-	return a == b || strings.Contains(symbolCurrencies[a], " "+b+" ") || strings.Contains(symbolCurrencies[b], " "+a+" ")
-}
 func currencyAt(rs []rune, start int) (int, string) {
 	if start >= len(rs) {
 		return start, ""
@@ -40,10 +29,6 @@ func currencyAt(rs []rune, start int) (int, string) {
 	return start, ""
 }
 func amountAt(rs []rune) (int, []string) {
-	return amountAtWithLookahead(rs, true)
-}
-
-func amountAtWithLookahead(rs []rune, lookahead bool) (int, []string) {
 	// Recover before a maximal identifier or sign, while skipping any earlier
 	// currency-only tokens. Retrying the same long symbol/code run is quadratic.
 	i := 0
@@ -90,7 +75,7 @@ func amountAtWithLookahead(rs []rune, lookahead bool) (int, []string) {
 			identifierStart = i
 		}
 		classes = append(classes, code)
-		i = skipHorizontalSpace(rs, end)
+		i = skipSpace(rs, end)
 		prefixEnd = i
 	}
 	numberStart := i
@@ -116,11 +101,39 @@ func amountAtWithLookahead(rs []rune, lookahead bool) (int, []string) {
 		i--
 	}
 	numberEnd := i
-	i, classes = suffixCurrencies(rs, i, classes, lookahead)
+	// A space between digit groups may have come from retained HTML text.
+	// Keep the whole spelling literal instead of accepting its leading units.
+	spaced := false
+	for {
+		next := skipSpace(rs, i)
+		if next == i || next == len(rs) || !digit(rs[next]) {
+			break
+		}
+		spaced = true
+		i = next
+		for i < len(rs) && (digit(rs[i]) || separator(rs[i])) {
+			i++
+		}
+	}
+	i, classes = suffixCurrencies(rs, i, classes)
 	if len(classes) == 0 {
+		if spaced {
+			return i, nil
+		}
 		return failed()
 	}
-	code := amountCurrencyClass(classes)
+	if spaced || len(classes) > 1 {
+		return i, []string{"literal:" + string(rs[:i])}
+	}
+	code := classes[0]
+	switch code {
+	case "$":
+		code = "USD"
+	case "€":
+		code = "EUR"
+	case "£":
+		code = "GBP"
+	}
 	if !figureBoundary(rs, i) {
 		return failed()
 	}
@@ -146,19 +159,12 @@ func amountAtWithLookahead(rs []rune, lookahead bool) (int, []string) {
 
 // Keep only markers that end at a complete token; a partial suffix must not
 // discard an amount already parsed before it.
-func suffixCurrencies(rs []rune, i int, classes []string, lookahead bool) (int, []string) {
+func suffixCurrencies(rs []rune, i int, classes []string) (int, []string) {
 	safe, count := i, len(classes)
 	for {
-		start := skipHorizontalSpace(rs, i)
+		start := skipSpace(rs, i)
 		end, code := currencyAt(rs, start)
 		if code == "" || end < len(rs) && !digit(rs[end]) && !figureBoundary(rs, end) {
-			break
-		}
-		next := skipHorizontalSpace(rs, end)
-		if next < len(rs) && strings.ContainsRune("+-−±", rs[next]) {
-			next++
-		}
-		if len(classes) > 0 && start > i && next < len(rs) && (digit(rs[next]) || rs[next] == '.' && next+1 < len(rs) && digit(rs[next+1])) && (!lookahead || completeFollowingAmount(rs[start:])) {
 			break
 		}
 		if end < len(rs) && !digit(rs[end]) && !unicode.IsSpace(rs[end]) && !unicode.Is(unicode.Sc, rs[end]) && !completeTokenTail(rs, end) {
@@ -171,38 +177,6 @@ func suffixCurrencies(rs []rune, i int, classes []string, lookahead bool) (int, 
 		}
 	}
 	return safe, classes[:count]
-}
-
-func amountParts(value string) (string, string) {
-	code, number, _ := strings.Cut(value, " ")
-	return code, number
-}
-
-// Multiple compatible markers narrow a symbol to its explicit ISO currency.
-// Conflicting combinations remain one class instead of discarding a marker.
-func amountCurrencyClass(classes []string) string {
-	slices.Sort(classes)
-	classes = slices.Compact(classes)
-	for _, a := range classes {
-		for _, b := range classes {
-			if !compatibleCurrency(a, b) {
-				return strings.Join(classes, "+")
-			}
-		}
-	}
-	for _, class := range classes {
-		if len(class) == 3 && isASCIIAlpha(rune(class[0])) {
-			return class
-		}
-	}
-	return classes[0]
-}
-
-// Look ahead at most one amount; require the parser to reach the end of its
-// last token, allowing only punctuation that the literal scanner would trim.
-func completeFollowingAmount(rs []rune) bool {
-	end, values := amountAtWithLookahead(rs, false)
-	return len(values) > 0 && completeTokenTail(rs, end)
 }
 
 func completeTokenTail(rs []rune, end int) bool {
