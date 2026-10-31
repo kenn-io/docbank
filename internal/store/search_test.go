@@ -549,59 +549,59 @@ func TestRevalidateSearchCandidatesAppliesCurrentScopeAndBlobEvidence(t *testing
 
 func TestRevalidateSearchCandidatesRechecksPhotoMetadataMatch(t *testing.T) {
 	t.Parallel()
-	s := newTestStore(t)
-	captioned := browsePhotoNode(t, s, "plain.jpg", browseHash("captioned"), "image/jpeg")
-	named := browsePhotoNode(t, s, "sunset-b.jpg", browseHash("named"), "image/jpeg")
-	file := mustPhotoAsset(t, s, captioned.ID).Files[0]
-	_, err := editPhotoAuthored(t.Context(), s, []PhotoAuthoredTarget{{FileID: file.ID, Revision: file.Revision, Patch: PhotoAuthoredPatch{Caption: new("sunset")}}})
-	require.NoError(t, err)
-	authored := snapshotTestQuery(t, `{"text":"sunset"}`)
-	opts := SearchOptions{PhotoScope: &PhotoBrowseRequest{Query: snapshotTestQuery(t, `{}`)}, PhotoLexicalQuery: &authored}
-	hits, _, err := s.SearchExplainedLexicalCandidates(t.Context(), "sunset", 10, opts, false)
-	require.NoError(t, err)
-	require.Len(t, hits, 2)
-	requested := make([]SearchCandidateIdentity, 0, len(hits))
-	for _, hit := range hits {
-		requested = append(requested, SearchCandidateIdentity{NodeID: hit.Node.ID, ContentVersionID: hit.Node.CurrentVersionID,
-			Evidence: []SearchEvidenceIdentity{{NodeID: hit.Node.ID, ContentVersionID: hit.Node.CurrentVersionID, Kind: "node_name", NodeName: hit.Node.Name}}})
-	}
-	file = mustPhotoAsset(t, s, captioned.ID).Files[0]
-	_, err = editPhotoAuthored(t.Context(), s, []PhotoAuthoredTarget{{FileID: file.ID, Revision: file.Revision, Patch: PhotoAuthoredPatch{Caption: new("")}}})
-	require.NoError(t, err)
+	t.Run("cleared caption", func(t *testing.T) {
+		s := newTestStore(t)
+		captioned := browsePhotoNode(t, s, "plain.jpg", browseHash("captioned"), "image/jpeg")
+		named := browsePhotoNode(t, s, "sunset-b.jpg", browseHash("named"), "image/jpeg")
+		file := mustPhotoAsset(t, s, captioned.ID).Files[0]
+		_, err := editPhotoAuthored(t.Context(), s, []PhotoAuthoredTarget{{FileID: file.ID, Revision: file.Revision, Patch: PhotoAuthoredPatch{Caption: new("sunset")}}})
+		require.NoError(t, err)
+		authored := snapshotTestQuery(t, `{"text":"sunset"}`)
+		opts := SearchOptions{PhotoScope: &PhotoBrowseRequest{Query: snapshotTestQuery(t, `{}`)}, PhotoLexicalQuery: &authored}
+		hits, _, err := s.SearchExplainedLexicalCandidates(t.Context(), "sunset", 10, opts, false)
+		require.NoError(t, err)
+		require.Len(t, hits, 2)
+		requested := make([]SearchCandidateIdentity, 0, len(hits))
+		for _, hit := range hits {
+			requested = append(requested, SearchCandidateIdentity{NodeID: hit.Node.ID, ContentVersionID: hit.Node.CurrentVersionID,
+				Evidence: []SearchEvidenceIdentity{{NodeID: hit.Node.ID, ContentVersionID: hit.Node.CurrentVersionID, Kind: "node_name", NodeName: hit.Node.Name}}})
+		}
+		file = mustPhotoAsset(t, s, captioned.ID).Files[0]
+		_, err = editPhotoAuthored(t.Context(), s, []PhotoAuthoredTarget{{FileID: file.ID, Revision: file.Revision, Patch: PhotoAuthoredPatch{Caption: new("")}}})
+		require.NoError(t, err)
 
-	revalidation, err := s.RevalidateSearchCandidates(t.Context(), requested, opts, "", "")
+		revalidation, err := s.RevalidateSearchCandidates(t.Context(), requested, opts, "", "")
 
-	require.NoError(t, err)
-	require.Len(t, revalidation.Candidates, 1, "a cleared caption must discard the metadata match")
-	assert.Equal(t, named.ID, revalidation.Candidates[0].NodeID)
-}
+		require.NoError(t, err)
+		require.Len(t, revalidation.Candidates, 1, "a cleared caption must discard the metadata match")
+		assert.Equal(t, named.ID, revalidation.Candidates[0].NodeID)
+	})
+	t.Run("per-source evidence", func(t *testing.T) {
+		s := newTestStore(t)
+		original := browsePhotoNode(t, s, "original.jpg", browseHash("shared"), "image/jpeg")
+		matched := browsePhotoNode(t, s, "sunset.jpg", original.BlobHash, "image/jpeg")
+		other := browsePhotoNode(t, s, "sunset-other.jpg", browseHash("other"), "image/jpeg")
+		lexical := snapshotTestQuery(t, `{"text":"sunset","filters":{"collapse_duplicates":true}}`)
+		opts := SearchOptions{PhotoScope: &PhotoBrowseRequest{Query: snapshotTestQuery(t, `{}`)}, PhotoLexicalQuery: &lexical}
+		valid := SearchCandidateIdentity{NodeID: matched.ID, ContentVersionID: matched.CurrentVersionID,
+			Evidence: []SearchEvidenceIdentity{
+				{NodeID: matched.ID, ContentVersionID: matched.CurrentVersionID, Kind: "node_name", NodeName: matched.Name},
+				{NodeID: original.ID, ContentVersionID: original.CurrentVersionID, Kind: "content_blob", BlobHash: original.BlobHash},
+			}}
+		wrongPhoto := SearchCandidateIdentity{NodeID: matched.ID, ContentVersionID: matched.CurrentVersionID,
+			Evidence: []SearchEvidenceIdentity{{NodeID: other.ID, ContentVersionID: other.CurrentVersionID, Kind: "node_name", NodeName: other.Name}}}
 
-func TestRevalidateSearchCandidatesChecksEachPhotoEvidenceSource(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	original := browsePhotoNode(t, s, "original.jpg", browseHash("shared"), "image/jpeg")
-	matched := browsePhotoNode(t, s, "sunset.jpg", original.BlobHash, "image/jpeg")
-	other := browsePhotoNode(t, s, "sunset-other.jpg", browseHash("other"), "image/jpeg")
-	lexical := snapshotTestQuery(t, `{"text":"sunset","filters":{"collapse_duplicates":true}}`)
-	opts := SearchOptions{PhotoScope: &PhotoBrowseRequest{Query: snapshotTestQuery(t, `{}`)}, PhotoLexicalQuery: &lexical}
-	valid := SearchCandidateIdentity{NodeID: matched.ID, ContentVersionID: matched.CurrentVersionID,
-		Evidence: []SearchEvidenceIdentity{
-			{NodeID: matched.ID, ContentVersionID: matched.CurrentVersionID, Kind: "node_name", NodeName: matched.Name},
-			{NodeID: original.ID, ContentVersionID: original.CurrentVersionID, Kind: "content_blob", BlobHash: original.BlobHash},
-		}}
-	wrongPhoto := SearchCandidateIdentity{NodeID: matched.ID, ContentVersionID: matched.CurrentVersionID,
-		Evidence: []SearchEvidenceIdentity{{NodeID: other.ID, ContentVersionID: other.CurrentVersionID, Kind: "node_name", NodeName: other.Name}}}
+		result, err := s.RevalidateSearchCandidates(t.Context(), []SearchCandidateIdentity{valid, wrongPhoto}, opts, "", "")
+		require.NoError(t, err)
+		require.Len(t, result.Candidates, 1, "each source must be a current copy of the displayed photo")
+		require.Equal(t, valid, result.Candidates[0].SearchCandidateIdentity)
 
-	result, err := s.RevalidateSearchCandidates(t.Context(), []SearchCandidateIdentity{valid, wrongPhoto}, opts, "", "")
-	require.NoError(t, err)
-	require.Len(t, result.Candidates, 1, "each source must be a current copy of the displayed photo")
-	require.Equal(t, valid, result.Candidates[0].SearchCandidateIdentity)
-
-	_, _, err = s.Trash(t.Context(), original.ID, original.Revision)
-	require.NoError(t, err)
-	result, err = s.RevalidateSearchCandidates(t.Context(), []SearchCandidateIdentity{valid}, opts, "", "")
-	require.NoError(t, err)
-	require.Empty(t, result.Candidates, "a live displayed photo must not hide stale evidence from another copy")
+		_, _, err = s.Trash(t.Context(), original.ID, original.Revision)
+		require.NoError(t, err)
+		result, err = s.RevalidateSearchCandidates(t.Context(), []SearchCandidateIdentity{valid}, opts, "", "")
+		require.NoError(t, err)
+		require.Empty(t, result.Candidates, "a live displayed photo must not hide stale evidence from another copy")
+	})
 }
 
 func TestRevalidateSearchCandidatesRequiresCurrentActiveRenditionEvidence(t *testing.T) {

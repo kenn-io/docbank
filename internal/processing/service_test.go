@@ -20,7 +20,6 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media"
-	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/document/plaintext"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -815,73 +814,59 @@ func TestProcessingServiceCoverageReportsRebuildWhilePreviousGenerationServes(t 
 	assert.Equal(t, "complete", coverage.State)
 }
 
-func TestRunEmbeddingsSkipsIneligibleImageBinding(t *testing.T) {
-	t.Parallel()
-	f := newPhotoDescriptionFixture(t)
-	x := newImageEmbeddingService(t, f)
-	service, original, image := newMixedImageTextProfileService(t, f, x)
-	fake := x.fake
-	f.grant(t, service, "mixed")
-	written, err := f.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(mediatest.PDF()))
-	require.NoError(t, err)
-	node, err := f.catalog.CreateFile(t.Context(), f.catalog.RootID(), "without-preview", written.Hash, written.Size, "application/pdf", processingBlobPhysical(t, written))
-	require.NoError(t, err)
-	version, err := f.catalog.ContentVersionByID(t.Context(), node.CurrentVersionID)
-	require.NoError(t, err)
-	ids, err := service.runEmbeddings(t.Context(), version, service.profiles["mixed"], service.principal, service.scope, "", nil)
-	require.NoError(t, err)
-	require.Len(t, ids, 1)
-	job, err := f.catalog.EmbeddingJobByID(t.Context(), ids[0])
-	require.NoError(t, err)
-	require.Equal(t, "completed", job.State)
-	require.Equal(t, 0, fake.runtime.callCount(image))
-	require.Positive(t, fake.runtime.callCount(original))
-}
-
 func TestProcessingMissingRequiredImageBindingRemainsPartial(t *testing.T) {
 	t.Parallel()
-	f := newPhotoDescriptionFixture(t)
-	x := newImageEmbeddingService(t, f)
-	x.binding.Activation = document.EmbeddingRequired
-	service, original, image := newMixedImageTextProfileService(t, f, x)
-	f.grant(t, service, "mixed")
-	node, err := f.catalog.CreateFile(t.Context(), f.catalog.RootID(), "without-preview.jpg", f.written.Hash, f.written.Size, "image/jpeg", processingBlobPhysical(t, f.written))
-	require.NoError(t, err)
-	selector := Selector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "mixed"}
-	plan, err := service.Plan(t.Context(), selector)
-	require.NoError(t, err)
-	job, err := service.Start(t.Context(), StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint})
-	require.NoError(t, err)
-	require.Len(t, job.EmbeddingJobIDs, 1)
-	sibling, err := f.catalog.EmbeddingJobByID(t.Context(), job.EmbeddingJobIDs[0])
-	require.NoError(t, err)
-	require.Equal(t, original, sibling.BindingID)
-	require.Equal(t, "completed", sibling.State)
-	require.Zero(t, x.fake.runtime.callCount(image))
-	status, err := service.Status(t.Context(), job.ID)
-	require.NoError(t, err)
-	require.Equal(t, "partial", status.State)
+	for _, activation := range []document.EmbeddingActivation{document.EmbeddingOptional, document.EmbeddingRequired} {
+		t.Run(string(activation), func(t *testing.T) {
+			f := newPhotoDescriptionFixture(t)
+			x := newImageEmbeddingService(t, f)
+			x.binding.Activation = activation
+			service, original, image := newMixedImageTextProfileService(t, f, x)
+			f.grant(t, service, "mixed")
+			node, err := f.catalog.CreateFile(t.Context(), f.catalog.RootID(), "without-preview.jpg", f.written.Hash, f.written.Size, "image/jpeg", processingBlobPhysical(t, f.written))
+			require.NoError(t, err)
+			selector := Selector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "mixed"}
+			plan, err := service.Plan(t.Context(), selector)
+			require.NoError(t, err)
+			job, err := service.Start(t.Context(), StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint})
+			require.NoError(t, err)
+			require.Len(t, job.EmbeddingJobIDs, 1)
+			sibling, err := f.catalog.EmbeddingJobByID(t.Context(), job.EmbeddingJobIDs[0])
+			require.NoError(t, err)
+			require.Equal(t, original, sibling.BindingID)
+			require.Equal(t, "completed", sibling.State)
+			require.Zero(t, x.fake.runtime.callCount(image))
+			require.Positive(t, x.fake.runtime.callCount(original))
+			expectedState := "completed"
+			if activation == document.EmbeddingRequired {
+				expectedState = "partial"
+			}
+			status, err := service.Status(t.Context(), job.ID)
+			require.NoError(t, err)
+			require.Equal(t, expectedState, status.State)
 
-	restarted, err := NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs,
-		Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(),
-		Principal: "synthetic-operator", Scope: "document-processing"})
-	require.NoError(t, err)
-	status, err = restarted.Status(t.Context(), job.ID)
-	require.NoError(t, err)
-	require.Equal(t, "partial", status.State)
+			restarted, err := NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs,
+				Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(),
+				Principal: "synthetic-operator", Scope: "document-processing"})
+			require.NoError(t, err)
+			status, err = restarted.Status(t.Context(), job.ID)
+			require.NoError(t, err)
+			require.Equal(t, expectedState, status.State)
 
-	_, err = EnsureVisualPreview(t.Context(), f.catalog, f.blobs, node.CurrentVersionID, f.recipe)
-	require.NoError(t, err)
-	plan, err = service.Plan(t.Context(), selector)
-	require.NoError(t, err)
-	recovered, err := service.Start(t.Context(), StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint})
-	require.NoError(t, err)
-	require.Len(t, recovered.EmbeddingJobIDs, 2)
-	for _, id := range []string{job.ID, recovered.ID} {
-		status, err = service.Status(t.Context(), id)
-		require.NoError(t, err)
-		require.Equal(t, "completed", status.State)
-		require.Equal(t, 2, status.CompletedBindings)
+			_, err = EnsureVisualPreview(t.Context(), f.catalog, f.blobs, node.CurrentVersionID, f.recipe)
+			require.NoError(t, err)
+			plan, err = service.Plan(t.Context(), selector)
+			require.NoError(t, err)
+			recovered, err := service.Start(t.Context(), StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint})
+			require.NoError(t, err)
+			require.Len(t, recovered.EmbeddingJobIDs, 2)
+			for _, id := range []string{job.ID, recovered.ID} {
+				status, err = service.Status(t.Context(), id)
+				require.NoError(t, err)
+				require.Equal(t, "completed", status.State)
+				require.Equal(t, 2, status.CompletedBindings)
+			}
+		})
 	}
 }
 

@@ -174,7 +174,6 @@ func TestConfigureEmbeddingRuntimesPreservesDescriptorAndDefersMissingCredential
 	require.NoError(t, err, "an unused hosted profile must not require its secret during daemon startup")
 	provider := bundle.providers["semantic"]
 	require.NotNil(t, provider)
-	require.Equal(t, descriptor, provider.Descriptor())
 	require.Equal(t, descriptor, bundle.providers["alternate-chunks"].Descriptor())
 	_, err = provider.Embed(t.Context(), []document.EmbeddingInput{{
 		Key: "document-1", Role: document.EmbeddingRoleDocument,

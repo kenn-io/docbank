@@ -908,9 +908,10 @@ func TestPhotoFallbackCursorSurvivesProviderRecovery(t *testing.T) {
 	request.Cursor = ""
 	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, request)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	require.NoError(t, json.Unmarshal([]byte(body), &next))
-	require.Equal(t, mode, next.ActualMode)
-	require.NotEmpty(t, next.SnapshotID)
+	var recovered api.PhotoBrowsePage
+	require.NoError(t, json.Unmarshal([]byte(body), &recovered))
+	require.Equal(t, mode, recovered.ActualMode)
+	require.NotEmpty(t, recovered.SnapshotID)
 }
 
 func TestPhotoSnapshotHTTPForwardsHiddenScope(t *testing.T) {

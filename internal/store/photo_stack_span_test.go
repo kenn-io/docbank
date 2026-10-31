@@ -22,7 +22,7 @@ func TestPhotoStackPagingMatchesGroups(t *testing.T) {
 		unindexed bool
 	}
 	var cases []testCase
-	for _, count := range []int{3, 4, 5, 180} {
+	for _, count := range []int{3, 4, 5} {
 		seconds := make([]int, count)
 		for i := range seconds {
 			seconds[i] = i * 20

@@ -72,6 +72,20 @@ func TestPhotoStackPagesReuseOpenedGeneration(t *testing.T) {
 		require.Equal(t, map[string]string{index.space: browseHash("replacement-image-generation")}, reader.heads)
 		require.Same(t, readers[0].indexes[0], reader.indexes[0])
 	}
+	t.Run("cancellation", func(t *testing.T) {
+		index.generation(t, "reader-errors")
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		reads := 0
+		q := photoStackGenerationQuerier{DB: f.s.db, beforeLoad: func() {
+			reads++
+			cancel()
+		}}
+		reader, err := f.s.newPhotoStackVectorReader(ctx, q)
+		require.Equal(t, 1, reads)
+		require.Nil(t, reader)
+		require.ErrorIs(t, err, context.Canceled)
+	})
 	require.NoError(t, f.s.Close())
 	require.Empty(t, f.s.photoStackVectors)
 }

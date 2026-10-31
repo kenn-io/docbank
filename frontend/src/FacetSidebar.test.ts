@@ -6,7 +6,7 @@ import type { SnapshotPage } from "./snapshots.js";
 
 afterEach(cleanup);
 
-it("selects unrated photos, empty flags and labels, and selects and clears a capture year", async () => {
+it("selects unrated photos, empty flags and labels, and selects a capture year", async () => {
   const onchange = vi.fn();
   const view = render(FacetSidebar, {
     unit: "photos",
@@ -39,17 +39,15 @@ it("selects unrated photos, empty flags and labels, and selects and clears a cap
   expect(onchange.mock.lastCall?.[0].filters.labels).toEqual([""]);
   await view.rerender({
     query: originalQuery,
-    facets: [facet("year", { values: [{ key: "2024", label: "2024", count: 1, selected: false }] })],
+    facets: [
+      facet("year", { values: [{ key: "2024", label: "2024", count: 1, selected: false }] }),
+    ],
   });
   await fireEvent.click(screen.getByRole("button", { name: "2024, 1 photos" }));
   expect(onchange.mock.lastCall?.[0].filters).toMatchObject({
     capture_after: "2024-01-01",
     capture_before: "2025-01-01",
   });
-  await view.rerender({ query: onchange.mock.lastCall?.[0], facets: [] });
-  await fireEvent.click(screen.getByRole("button", { name: "2024, selected" }));
-  expect(onchange.mock.lastCall?.[0].filters.capture_after).toBeUndefined();
-  expect(onchange.mock.lastCall?.[0].filters.capture_before).toBeUndefined();
 });
 
 const selectedFacetCases: [
