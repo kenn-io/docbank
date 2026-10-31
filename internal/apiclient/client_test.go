@@ -20,6 +20,21 @@ func (t responseTransport) ExecuteRequest(context.Context, *http.Request, string
 	return t.response, nil
 }
 
+func TestRedactionPreviewTextBytes(t *testing.T) {
+	builder, err := runtime.NewAPIClient("http://example.invalid")
+	require.NoError(t, err)
+	client := NewClient(responseTransport{APIClient: builder, response: &runtime.Response{
+		StatusCode: http.StatusOK,
+		Headers:    http.Header{"Content-Type": {"text/plain; charset=utf-8"}},
+		Content:    []byte("[REDACTED] café\f"),
+	}})
+	result, err := client.ReadRedactionPreviewText(t.Context(), &ReadRedactionPreviewTextRequestOptions{
+		PathParams: &ReadRedactionPreviewTextPath{ID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+	})
+	require.NoError(t, err)
+	require.Equal(t, []byte("[REDACTED] café\f"), *result)
+}
+
 func TestGeneratedErrorDecoding(t *testing.T) {
 	for _, tc := range []struct {
 		name, body string

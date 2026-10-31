@@ -321,3 +321,25 @@ it("reuses matching PDF facts, fetches missing or historical facts, and discards
     "Does not cover the whole file",
   );
 });
+
+it("offers redaction only for the live PDF with a usable source size", async () => {
+  const { selectedSourceFromNode } = await import("./selectedSource.js");
+  const node = { ...fileProps.node, name: "review.pdf", mime_type: "application/pdf" };
+  const source = selectedSourceFromNode(node, "/review.pdf");
+  const props = {
+    ...fileProps,
+    node,
+    source,
+    session: "synthetic",
+    authorizationRevision: node.revision,
+    onauthfailure: vi.fn(),
+  };
+  const view = render(DocumentInspector, props);
+  expect(screen.getByRole("button", { name: "Redact PDF" }).hasAttribute("disabled")).toBe(false);
+  await view.rerender({ ...props, source: { ...source, size: 0 } });
+  expect(screen.getByRole("button", { name: "Redact PDF" }).hasAttribute("disabled")).toBe(true);
+  await view.rerender({ ...props, source: { ...source, size: 64 * 1024 * 1024 + 1 } });
+  expect(screen.getByRole("button", { name: "Redact PDF" }).hasAttribute("disabled")).toBe(true);
+  await view.rerender({ ...props, source: { ...source, kind: "related" } });
+  expect(screen.queryByRole("button", { name: "Redact PDF" })).toBeNull();
+});

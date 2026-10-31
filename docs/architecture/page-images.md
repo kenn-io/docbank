@@ -115,8 +115,8 @@ unchanged.
 ## Native-PDF preparation
 
 `POST /api/v1/redaction/prepare` inspects one exact retained PDF selected by
-node ID, node revision and source version/hash/size. The API key is required;
-browser sessions are not admitted. The CLI entry point is
+node ID, node revision and source version/hash/size. API keys and browser
+sessions are admitted. The CLI entry point is
 [`redaction prepare`](../usage/document-processing.md#prepare-a-native-pdf).
 This read creates no jobs, attachments, stored maps or output PDFs.
 
@@ -293,6 +293,76 @@ context; memory refusal is `redaction_memory`, inner deadline is
 `redaction_worker_timeout`, and unexplained worker cancellation is a failure.
 Expected 503 refusals are logged at informational level; 500 failures retain
 their diagnostic cause.
+
+### Temporary browser redaction previews
+
+Browser review uses the native capture, resolve, render, burn, write and
+`VerifyFreshWithRecipe` pipeline. Preview creation retains the verified PNGs
+while plain and numbered rendering still delete them before packaging. It
+publishes only after the ZIP is complete and the standalone PDF is closed and
+removed. There is no second render for display or download.
+
+Authenticated preview routes are under `/api/v1/redaction/previews`:
+
+| Request | Result |
+|---|---|
+| `POST /previews` | Preparation, masks and review digest produce one owner-bound preview; allocation fields are refused. |
+| `GET /previews/{id}` | Bounded manifest with source/review/archive identities, page frame and PNG digests, pixel dimensions and text byte ranges. |
+| `GET /previews/{id}/pages/{page}` | One verified PNG, at most 128 MiB. |
+| `GET /previews/{id}/text` | Sanitized text read directly from the stored ZIP entry. |
+| `GET /previews/{id}/bundle` | ZIP for API-key clients. Browser sessions must use a ticket. |
+| `POST /previews/{id}/download` | Literal confirmation plus the review and archive digests produce a one-use, two-minute browser ticket. |
+| `DELETE /previews/{id}` | Retire this owner's preview. |
+| `DELETE /previews` | Cancel this owner's in-flight creation and preview transfers; retire its ready preview. Other owners and browser-session resources are unchanged. |
+
+The random 48-hex ID is never authority by itself. Unknown, expired, retired and
+other-owner previews return 410 `redaction_preview_unavailable`. Confirmation
+mismatch is 409 `redaction_review_changed`; an occupied cache is 503
+`redaction_preview_busy`. Only prepare, resolve and these preview operations are
+added to browser admission. Query parameters are refused. Direct render and
+reservations remain API-key-only.
+
+One mutex protects a global building, ready or retired-but-pinned entry. Ready
+publication is fenced against session revocation. It releases the native-PDF
+slot and retains the operation directory for a fixed 30-minute lifetime. Every
+admitted reader owns a file handle and pins the directory; discard and expiry
+refuse new readers but let admitted reads finish. Revocation and service stop
+cancel creation and active readers, including blocked socket writes. Unused
+tickets hold no pin or copy. Cleanup failure retains capacity and is reported.
+Startup spool recovery removes abandoned `native-pdf-*` directories.
+
+Prepare and resolve retain finite 60-second body/request deadlines. Preview
+creation has a finite 60-second body deadline, cleared after decoding, and a
+ten-minute work deadline. Binary delivery uses a ten-minute deadline, including
+socket writes. All responses are private and non-cacheable. The shared browser
+transport treats prepare, resolve and preview creation as read operations.
+
+Preview storage stays under the same private spool directory and operation
+ceiling. PNGs are capped at 128 MiB each and 1 GiB total; the ZIP at 544 MiB.
+
+| Phase | Maximum simultaneous file payload |
+|---|---|
+| Inspection and rendering | 1,088 MiB: PNGs and source copy |
+| Writing or verification | 2,048 MiB: PNGs, PDF and private PDF copy |
+| Packaging | 2,080 MiB plus bounded text/receipt: PNGs, PDF and ZIP |
+| Ready | 1,568 MiB: PNGs and ZIP only |
+
+One ready preview plus another native operation may use about 3.7 GiB. These
+are file-payload bounds, not a global disk quota; tmpfs space is outside process
+RSS accounting. Preview handles, masks and reviews are not persisted to SQLite.
+The browser keeps one displayed image URL, verifies its length/hash and PNG
+header before decode, and binds its frame to preparation before enabling drawing.
+The editor closes on pagehide and requests owner-scoped preview cancellation,
+including when creation has not returned a handle. It does not revoke the
+browser session or cancel unrelated exports and imports. A cached page returns
+with the editor closed. Lost cleanup messages rely on expiry.
+Canceled or ambiguous creation uses a fresh request to the owner-scoped discard
+route. The editor preserves masks and requires acknowledged cleanup before
+another creation attempt; a failed cleanup can be retried separately.
+The browser retains a preview handle until the server reports it unavailable or
+acknowledges discard; its wall clock does not establish expiry. Returning to
+original pages revalidates the source and reloads a verified image with the
+current node revision, preserving masks through metadata-only changes.
 
 ### Retained numbered native PDFs
 
