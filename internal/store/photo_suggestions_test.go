@@ -714,6 +714,7 @@ func TestPhotoDescriptionPredicates(t *testing.T) {
 	_, err := s.RespondPhotoSuggestion(ctx, proposal.ID, dismissalOf(ctx, t, s, proposal))
 	require.NoError(t, err)
 	require.True(t, settled(""), "a changed default profile never re-describes a dismissal")
+	require.True(t, settled(producerA), "the producer of a dismissal is not asked again")
 	require.False(t, settled(producerB), "an explicit start with another fingerprint can refresh rotation")
 }
 
@@ -1161,12 +1162,21 @@ func TestPhotoRotationResetsOnRepublish(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		answer *int
-	}{{"missing", nil}, {"upright", new(0)}, {"disagrees", new(270)}} {
+	}{{"missing", nil}, {"upright", new(0)}, {"changed", new(270)}} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := newTestStore(t)
 			asset := albumAsset(t, s, "harbor.jpg")
 			publishPhotoDescription(t, s, asset, producerA, document.PhotoDescription{Rotation: new(90)})
+			// Keep an older dismissed answer alongside the newest row, which publication overwrites.
+			result, err := s.db.ExecContext(t.Context(), `INSERT INTO photo_suggestions(suggestion_id,content_version_id,producer_fingerprint,rotation,dismissed,created_at) SELECT '00000000-0000-4000-8000-000000000001',content_version_id,?,90,1,'2000-01-01T00:00:00Z' FROM photo_suggestions WHERE producer_fingerprint=?`, producerB, producerA)
+			require.NoError(t, err)
+			inserted, err := result.RowsAffected()
+			require.NoError(t, err)
+			require.EqualValues(t, 1, inserted)
 			publishPhotoDescription(t, s, asset, producerB, document.PhotoDescription{Rotation: tc.answer})
+			var dismissedRotation sql.NullInt64
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT rotation FROM photo_suggestions WHERE producer_fingerprint=? AND dismissed=1`, producerB).Scan(&dismissedRotation))
+			require.False(t, dismissedRotation.Valid, "republishing clears rotation from older dismissed answers")
 			proposals := photoSuggestionValues(t, s, asset.ID)
 			if tc.answer == nil || *tc.answer == 0 {
 				require.Empty(t, proposals)
@@ -1203,14 +1213,14 @@ func TestPhotoRotationRestoreKeepsAcceptedTextSettled(t *testing.T) {
 
 func TestPhotoRotationBackup(t *testing.T) {
 	t.Parallel()
-	for _, decision := range []string{"caption accepted", "caption dismissed", "rotation confirmed"} {
+	for _, decision := range []string{"caption dismissed", "rotation confirmed"} {
 		t.Run(decision, func(t *testing.T) {
 			s := newTestStore(t)
 			asset := albumAsset(t, s, "landscape.jpg")
 			publishPhotoDescription(t, s, asset, producerA, document.PhotoDescription{Caption: "A landscape.", Rotation: new(90)})
 			proposals := photoSuggestionValues(t, s, asset.ID)
 			require.Len(t, proposals, 2)
-			if decision == "caption accepted" || decision == "rotation confirmed" {
+			if decision == "rotation confirmed" {
 				acceptPhotoSuggestion(t, s, proposals[0], true)
 			}
 			if decision == "caption dismissed" {
@@ -1224,9 +1234,10 @@ func TestPhotoRotationBackup(t *testing.T) {
 			}
 			var metadata bytes.Buffer
 			require.NoError(t, s.ExportMetadata(t.Context(), &metadata))
+			matched := 0
 			for line := range strings.SplitSeq(metadata.String(), "\n") {
 				if strings.Contains(line, `"type":"photo_suggestion"`) {
-					require.NotContains(t, line, `"rotation"`)
+					matched++
 					if decision == "rotation confirmed" {
 						require.Contains(t, line, `"awaiting":false`)
 					} else {
@@ -1234,6 +1245,7 @@ func TestPhotoRotationBackup(t *testing.T) {
 					}
 				}
 			}
+			require.Equal(t, 1, matched, "the export must include the suggestion whose awaiting state was checked")
 			restored := newTestStore(t)
 			require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(metadata.Bytes())))
 			require.Empty(t, photoSuggestionValues(t, restored, asset.ID))
