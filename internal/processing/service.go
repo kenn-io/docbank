@@ -1736,6 +1736,8 @@ func (service *Service) prepareSearch(
 				PolicyFingerprint:     profile.embedders[binding.Name].Descriptor().PolicyFingerprint,
 				MaxBatchItems:         1, MaxInputBytes: binding.MaxInputBytes, MaxResponseBytes: binding.MaxResponseBytes}
 		}
+	} else if mode == retrieval.ModeSemantic || mode == retrieval.ModeHybrid {
+		return preparedSearch{}, errors.New("semantic retrieval is not configured")
 	}
 	var rerankingAuth *rerankingAuthorizer
 	if request.Rerank {

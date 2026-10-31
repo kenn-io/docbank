@@ -433,7 +433,7 @@ func runDocumentSearch(cmd *cobra.Command, c *daemonconn.Connection, query strin
 	if options.Agent {
 		return writeDocumentSearchAgent(cmd, query, report, nil)
 	}
-	return writeDocumentSearchReport(cmd, report, options.Explain, nil)
+	return writeDocumentSearchReport(cmd, report, options.Explain, true, nil)
 }
 
 func validateDocumentSearchOptions(query string, options documentSearchCLIOptions) error {
@@ -516,13 +516,17 @@ func selectDocumentSearchBinding(mode, requested string, bindings []string) (str
 
 // writeDocumentSearchReport prints a processing report. Automatic search
 // passes the folder name hits it adds; explicit processing search passes nil.
-func writeDocumentSearchReport(cmd *cobra.Command, report api.DocumentSearchReport, explain bool,
+func writeDocumentSearchReport(cmd *cobra.Command, report api.DocumentSearchReport, explain, fenced bool,
 	folders []api.SearchHit,
 ) error {
 	writeDocumentSearchHeader(cmd, report)
 	out := cmd.OutOrStdout()
 	if len(report.Results) == 0 && len(folders) == 0 {
-		if _, err := fmt.Fprintln(out, "no matches inside the source fence"); err != nil {
+		message := "no matches in the search scope"
+		if fenced {
+			message = "no matches inside the source fence"
+		}
+		if _, err := fmt.Fprintln(out, message); err != nil {
 			return fmt.Errorf("writing empty document search result: %w", err)
 		}
 	}

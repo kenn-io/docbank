@@ -121,8 +121,7 @@ func automaticSearchFallback(ctx context.Context, err error) (automaticSearchOut
 }
 
 // bindingSearchFailure reports whether another profile or binding could still
-// succeed. A binding without a built vector index reports not_found. Scope
-// failures such as stale_index repeat for every binding.
+// succeed. A binding without a built vector index reports not_found.
 func bindingSearchFailure(reason string) bool {
 	switch reason {
 	case "processing_profile_unavailable", "processing_failed", "stale_index", "not_found",
@@ -157,7 +156,7 @@ func writeAutomaticSearch(cmd *cobra.Command, query string, report api.DocumentS
 	if searchAgent {
 		return writeDocumentSearchAgent(cmd, query, report, folders)
 	}
-	return writeDocumentSearchReport(cmd, report, false, folders)
+	return writeDocumentSearchReport(cmd, report, false, false, folders)
 }
 
 // writeSearchDegradation reports a failed hybrid attempt on stderr so stdout

@@ -247,7 +247,7 @@ func runAutomaticSearchCLI(t *testing.T, tc automaticSearchCase, serverURL strin
 	require.NoError(t, rootCmd.ExecuteContext(context.Background()))
 	switch {
 	case tc.empty:
-		assert.Equal(t, "mode: hybrid\ncoverage: complete (0/0 source document(s) complete)\nno matches inside the source fence\n", stdout.String())
+		assert.Equal(t, "mode: hybrid\ncoverage: complete (0/0 source document(s) complete)\nno matches in the search scope\n", stdout.String())
 		assert.Empty(t, stderr.String())
 	case tc.agentCLI && tc.wantHybrid:
 		assert.Equal(t, "OK search count=2 query=\"query words\" mode=hybrid degraded=false truncated=false coverage=complete complete=1 scoped=1\n"+
