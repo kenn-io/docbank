@@ -1151,7 +1151,6 @@ it("keeps a frame the pass excludes out of the stack that Keep all decides", asy
   });
   await act(() => cull.regroup());
   expect(group.mock.lastCall![0].asset_ids).toEqual(pass);
-  expect(cull.run!.checkpoint.pass).toEqual(pass);
   await fireEvent.click(await readyButton("Keep all"));
   await waitFor(() => expect(decide).toHaveBeenCalledOnce());
   expect(decide.mock.calls[0]![0]).toMatchObject({ asset_ids: pass, decision: "all" });

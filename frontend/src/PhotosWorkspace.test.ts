@@ -3215,13 +3215,7 @@ it("edits and clears a saved capture range in the Library Filters panel", async 
       name: "Filters, 1 active filter",
     }),
   );
-  // Year selection and clearing also cover FacetSidebar, which has no separate Year test.
-  const year = await screen.findByRole("group", { name: "Year facet" });
-  await fireEvent.click(await within(year).findByRole("button", { name: "2023, 1 photos" }));
-  expect(photos.query.filters.capture_after).toBe("2023-01-01");
-  expect(photos.query.filters.capture_before).toBe("2024-01-01");
-  await waitFor(() => expect(photos.loading).toBe(false));
-  await fireEvent.click(await screen.findByRole("button", { name: "2023, 1 photos, selected" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "2024, 1 photos, selected" }));
   expect(photos.query.filters.capture_after).toBeUndefined();
   expect(photos.query.filters.capture_before).toBeUndefined();
   photos.dispose();

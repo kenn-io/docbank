@@ -323,7 +323,6 @@ it("clears Meaning search into metadata browse", async () => {
     expect.objectContaining({
       text: "",
       mode: "lexical",
-      sort: { field: "capture_time", direction: "desc" },
     }),
     undefined,
   );

@@ -51,6 +51,61 @@ const selectedFacetCases: [
   },
 ][] = [
   [
+    "location",
+    {
+      mode: "semantic",
+      filters: { locations: ["Paris"] },
+      facets: [],
+      group: "Location facet",
+      button: "Paris, selected",
+      clears: ["locations"],
+    },
+  ],
+  [
+    "albums",
+    {
+      mode: "semantic",
+      filters: { set_ids: ["11111111-1111-4111-8111-111111111111"] },
+      facets: [],
+      group: "Albums facet",
+      button: "11111111-1111-4111-8111-111111111111, selected",
+      clears: ["set_ids"],
+    },
+  ],
+  [
+    "rating",
+    {
+      mode: "semantic",
+      filters: { rating_min: 3, rating_max: 3 },
+      facets: [],
+      group: "Rating facet",
+      button: "3 stars, selected",
+      clears: ["rating_min", "rating_max"],
+    },
+  ],
+  [
+    "flag",
+    {
+      mode: "semantic",
+      filters: { flags: ["pick"] },
+      facets: [],
+      group: "Flag facet",
+      button: "pick, selected",
+      clears: ["flags"],
+    },
+  ],
+  [
+    "color label",
+    {
+      mode: "semantic",
+      filters: { labels: ["red"] },
+      facets: [],
+      group: "Color label facet",
+      button: "red, selected",
+      clears: ["labels"],
+    },
+  ],
+  [
     "camera",
     {
       mode: "semantic",
