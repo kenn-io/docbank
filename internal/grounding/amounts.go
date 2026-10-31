@@ -89,6 +89,9 @@ func amountAt(rs []rune) (int, string) {
 		i--
 	}
 	numberEnd := i
+	if signed {
+		return i, ""
+	}
 	if code == "" {
 		start := skipSpace(rs, i, false)
 		end, suffix := currencyAt(rs, start)
@@ -112,12 +115,9 @@ func amountAt(rs []rune) (int, string) {
 		if start == i {
 			return end, ""
 		}
-		if next == number || amountValue(trim(rs[next:number])) == "" {
+		if next == number || amountValue(strings.TrimLeft(trim(rs[next:number]), "-+±\u2212")) == "" {
 			return i, ""
 		}
-	}
-	if signed {
-		return i, ""
 	}
 	value := amountValue(string(rs[numberStart:numberEnd]))
 	if value == "" {

@@ -110,8 +110,7 @@ func normalizedFigures(text string) []normalizedFigure {
 			}
 		}
 		for ; i < next; i++ {
-			token := string(rs[tokens[i].start:tokens[i].end])
-			for _, value := range extractDecoded(token) {
+			if value := trim(rs[tokens[i].start:tokens[i].end]); strings.ContainsFunc(value, unicode.IsDigit) {
 				result = append(result, normalizedFigure{text: value})
 			}
 		}
