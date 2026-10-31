@@ -1211,6 +1211,32 @@ func TestPhotoRotationRestoreKeepsAcceptedTextSettled(t *testing.T) {
 	require.Empty(t, suggestions[0].Value.VisibleText)
 }
 
+// Restored acceptance stays an acceptance, so an explicit request from another
+// provider refreshes only the rotation instead of replacing a dismissal.
+func TestPhotoRotationRestoreKeepsAcceptedTextFromExplicitRefresh(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	asset := albumAsset(t, s, "landscape.jpg")
+	publishPhotoDescription(t, s, asset, producerA, document.PhotoDescription{Caption: "A landscape.", Tags: []string{"landscape", "trees"}, Rotation: new(90)})
+	proposals := photoSuggestionValues(t, s, asset.ID)
+	require.Len(t, proposals, 2)
+	acceptPhotoSuggestion(t, s, proposals[0], true, "landscape", "trees")
+
+	restored := restorePhotoSuggestionStore(t, s)
+	require.NoError(t, restored.withStorageTx(ctx, func(tx *sql.Tx) error {
+		return publishPhotoSuggestionTx(ctx, tx, proposals[0].ContentVersionID, producerB, true, document.PhotoDescription{Caption: "A forest.", Tags: []string{"forest"}, VisibleText: "NEW TEXT", Rotation: new(270)}, time.Now().UTC())
+	}))
+	suggestions := photoSuggestionValues(t, restored, asset.ID)
+	require.Len(t, suggestions, 1, "an explicit refresh must keep accepted text settled")
+	require.Equal(t, new(270), suggestions[0].Rotation)
+	require.Empty(t, suggestions[0].Value.Caption)
+	require.Empty(t, suggestions[0].Value.Tags)
+	settled, err := restored.photoDescriptionSettled(ctx, proposals[0].ContentVersionID, producerA, false)
+	require.NoError(t, err)
+	require.True(t, settled, "automatic work stays settled after the refresh")
+}
+
 func TestPhotoRotationBackup(t *testing.T) {
 	t.Parallel()
 	for _, decision := range []string{"caption dismissed", "rotation confirmed"} {
