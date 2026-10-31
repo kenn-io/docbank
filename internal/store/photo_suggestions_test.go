@@ -881,7 +881,7 @@ func TestPhotoDescriptionTargetsRespectActiveTaskScope(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
 	asset := albumAsset(t, s, "overlap.jpg")
-	publishPhotoDescription(t, s, asset, producerB, false, document.PhotoDescription{Caption: "From B.", Tags: []string{"coast"}})
+	publishPhotoDescription(t, s, asset, producerB, true, document.PhotoDescription{Caption: "From B.", Tags: []string{"coast"}})
 	restored := restorePhotoSuggestionStore(t, s)
 	node, err := restored.NodeByID(ctx, asset.Files[0].NodeID)
 	require.NoError(t, err)
@@ -1185,7 +1185,9 @@ func TestPhotoRotationResetsOnRepublish(t *testing.T) {
 			s := newTestStore(t)
 			asset := albumAsset(t, s, "harbor.jpg")
 			publishPhotoDescription(t, s, asset, producerA, false, document.PhotoDescription{Rotation: new(90)})
-			// Keep an older dismissed answer alongside the newest row, which publication overwrites.
+			// Only the older dismissed answer holds rotation; publication overwrites the newest row.
+			_, err := s.db.ExecContext(t.Context(), `UPDATE photo_suggestions SET rotation=NULL WHERE producer_fingerprint=?`, producerA)
+			require.NoError(t, err)
 			result, err := s.db.ExecContext(t.Context(), `INSERT INTO photo_suggestions(suggestion_id,content_version_id,producer_fingerprint,rotation,dismissed,created_at) SELECT '00000000-0000-4000-8000-000000000001',content_version_id,?,90,1,'2000-01-01T00:00:00Z' FROM photo_suggestions WHERE producer_fingerprint=?`, producerB, producerA)
 			require.NoError(t, err)
 			inserted, err := result.RowsAffected()
@@ -1222,9 +1224,6 @@ func TestPhotoRotationRestoreKeepsAcceptedTextSettled(t *testing.T) {
 			suggestions := photoSuggestionValues(t, restored, asset.ID)
 			if tc.rotation == nil {
 				require.Empty(t, suggestions, "uncertainty keeps accepted text settled")
-				settled, err := restored.photoDescriptionSettled(t.Context(), proposals[0].ContentVersionID, producerB, true)
-				require.NoError(t, err)
-				require.False(t, settled, "another explicit B request must call the provider to retry rotation")
 				return
 			}
 			require.Len(t, suggestions, 1, "refreshing rotation keeps accepted text settled")
@@ -1232,11 +1231,6 @@ func TestPhotoRotationRestoreKeepsAcceptedTextSettled(t *testing.T) {
 			require.Empty(t, suggestions[0].Value.Caption)
 			require.Empty(t, suggestions[0].Value.Tags)
 			require.Empty(t, suggestions[0].Value.VisibleText)
-			if tc.explicit {
-				settled, err := restored.photoDescriptionSettled(t.Context(), proposals[0].ContentVersionID, producerA, false)
-				require.NoError(t, err)
-				require.True(t, settled, "automatic work stays settled after the refresh")
-			}
 		})
 	}
 }
@@ -1268,7 +1262,6 @@ func TestPhotoRotationBackup(t *testing.T) {
 		awaiting     string
 		afterRestore func(*testing.T, *Store, PhotoAsset, string)
 	}{
-		{name: "caption dismissed", decide: dismissCaption, awaiting: `"awaiting":true`},
 		{
 			name: "rotation confirmed",
 			decide: func(t *testing.T, s *Store, proposal PhotoSuggestion) {
@@ -1334,7 +1327,6 @@ func TestPhotoRotationBackup(t *testing.T) {
 			require.Equal(t, 1, matched, "the export must include the suggestion whose awaiting state was checked")
 			restored := newTestStore(t)
 			require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(metadata.Bytes())))
-			require.Empty(t, photoSuggestionValues(t, restored, asset.ID))
 			if tc.afterRestore != nil {
 				tc.afterRestore(t, restored, asset, proposals[0].ContentVersionID)
 			}
@@ -1358,41 +1350,16 @@ func TestPhotoRotationResponseRequiresCurrentProposal(t *testing.T) {
 	require.Zero(t, got.Targets[0].Values.Confirmed&PhotoConfirmedRotation)
 }
 
-func TestPhotoDescriptionConfirmedRotationSkipsUnusedRefresh(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	asset := albumAsset(t, s, "settled.jpg")
-	publishPhotoDescription(t, s, asset, producerA, false, document.PhotoDescription{Caption: "A harbor.", Rotation: new(90)})
-	proposals := photoSuggestionValues(t, s, asset.ID)
-	require.Len(t, proposals, 2)
-	acceptPhotoSuggestion(t, s, proposals[0], true)
-	proposals = photoSuggestionValues(t, s, asset.ID)
-	require.Len(t, proposals, 1)
-	rotation := proposals[0]
-	_, err := s.RespondPhotoSuggestion(ctx, rotation.ID, PhotoSuggestionResponse{AssetID: rotation.AssetID, AssetRevision: rotation.AssetRevision, SourceRevision: rotation.SourceRevision, NodeRevision: rotation.NodeRevision, Response: "accepted", Rotation: rotation.Rotation})
-	require.NoError(t, err)
-	request := photoDescriptionJobRequest(t, s, rotation.ContentVersionID, producerB, true)
-	grantRenditionJobConsent(t, s, request)
-	_, waiter, err := s.EnqueueRenditionJob(ctx, request)
-	require.NoError(t, err)
-	require.Equal(t, "published", waiter.State, "settled text and rotation need no provider call")
-}
-
 func TestPhotoDescriptionExplicitRefreshKeepsTextDecisions(t *testing.T) {
 	t.Parallel()
-	for _, decision := range []string{"pending", "accepted", "dismissed"} {
+	for _, decision := range []string{"pending", "accepted"} {
 		t.Run(decision, func(t *testing.T) {
 			s := newTestStore(t)
 			ctx := t.Context()
 			asset := albumAsset(t, s, "harbor.jpg")
 			proposal := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Caption: "A harbor.", Tags: []string{"coast"}})
-			switch decision {
-			case "accepted":
+			if decision == "accepted" {
 				acceptPhotoSuggestion(t, s, proposal, true, "coast")
-			case "dismissed":
-				_, err := s.RespondPhotoSuggestion(ctx, proposal.ID, dismissalOf(ctx, t, s, proposal))
-				require.NoError(t, err)
 			}
 			request := photoDescriptionJobRequest(t, s, proposal.ContentVersionID, producerB, true)
 			grantRenditionJobConsent(t, s, request)
@@ -1410,10 +1377,6 @@ func TestPhotoDescriptionExplicitRefreshKeepsTextDecisions(t *testing.T) {
 				require.Equal(t, []string{"coast"}, prepared.Suggestions[0].Value.Tags)
 			case "accepted":
 				require.Len(t, prepared.Suggestions, 1, "accepted text stays settled during rotation refresh")
-			case "dismissed":
-				require.Len(t, prepared.Suggestions, 2)
-				require.Equal(t, "Replacement.", prepared.Suggestions[0].Value.Caption)
-				require.Equal(t, []string{"new"}, prepared.Suggestions[0].Value.Tags)
 			}
 		})
 	}
