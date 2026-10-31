@@ -99,9 +99,9 @@
   const displayFacets = $derived.by(() => {
     const result: DisplayFacet[] = [...facets];
     const year = /^([0-9]{4})-01-01$/.exec(query.filters.capture_after ?? "")?.[1];
-    const selected: [Facet["dimension"], string[]][] = (["camera", "lens", "location", "set"] as const).map(
-      (dimension) => [dimension, query.filters[arrayFields[dimension]] ?? []],
-    );
+    const selected: [Facet["dimension"], string[]][] = (
+      ["camera", "lens", "location", "set"] as const
+    ).map((dimension) => [dimension, query.filters[arrayFields[dimension]] ?? []]);
     selected.push(
       ["year", year && query.filters.capture_before === yearBefore(year) ? [year] : []],
       [
