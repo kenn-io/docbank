@@ -35,8 +35,10 @@ docbank mcp config --client codex --allow-processing
 ```
 
 Paste Claude Code's JSON into your project's `.mcp.json`, or merge the
-`docbank` entry into its existing `mcpServers` object. Paste Codex's TOML into
-`~/.codex/config.toml`, replacing any existing `[mcp_servers.docbank]` entry.
+`docbank` entry into its existing `mcpServers` object. Keep this project's
+`.mcp.json` out of version control because it contains machine-specific paths.
+Paste Codex's TOML into `~/.codex/config.toml`, replacing any existing
+`[mcp_servers.docbank]` entry.
 See the [Claude Code MCP guide](https://code.claude.com/docs/en/mcp) and
 [Codex configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference).
 
@@ -48,8 +50,14 @@ client files untouched. Your client must support MCP `2026-07-28` and
 `server/discover`; configuration alone cannot add protocol support.
 
 Tested clients are Claude Code 2.1.301 and Codex 0.164.0.
-Start Codex with `codex --enable mcp_2026_07_28`
-for either transport. The generated stdio configuration also sets
+For Codex, run this once to persist the client's MCP protocol support in
+`config.toml` for either transport:
+
+```bash
+codex features enable mcp_2026_07_28
+```
+
+Then launch with plain `codex`. The generated stdio configuration also sets
 `CODEX_MCP_PROTOCOL_VERSION=2026-07-28` in the server's environment.
 After upgrading Docbank, rerun `docbank mcp config` and replace the saved
 configuration so its protocol selection matches the installed server.

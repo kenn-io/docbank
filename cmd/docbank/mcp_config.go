@@ -22,7 +22,9 @@ func newMCPConfigCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "config",
 		Short: "Print MCP client configuration",
-		Long:  "Print client configuration without editing client files.\nCodex 0.164.0 requires: codex --enable mcp_2026_07_28",
+		Long: "Print client configuration without editing client files.\n" +
+			"For Codex 0.164.0, run once to persist MCP protocol support in config.toml:\n" +
+			"  codex features enable mcp_2026_07_28\nThen launch with plain codex for either transport.",
 		Example: `  docbank mcp config --client claude-code
   docbank mcp config --client codex --allow-processing`,
 		Args: cobra.NoArgs,

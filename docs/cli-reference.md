@@ -1403,6 +1403,8 @@ Prints Claude Code JSON for `.mcp.json` or Codex TOML for
 `~/.codex/config.toml`. Stdio uses Docbank's absolute launch path, preserves
 symlinks, selects the vault through `DOCBANK_HOME`, and carries enabled write
 flags into the server's arguments. Client files remain untouched.
+Keep the project's `.mcp.json` out of version control because it contains
+machine-specific paths.
 
 HTTP requires a nonzero `--listen` address for an existing daemon or standalone
 listener. Wildcard addresses become loopback URLs ending in `/mcp`. The
@@ -1411,9 +1413,11 @@ secret stays unresolved. With no selected binding, printing uses the listener's
 conventional `DOCBANK_MCP_HTTP_TOKEN` variable. HTTP write flags belong on a standalone listener's
 startup command.
 
-Clients must support MCP `2026-07-28`. With Codex 0.164.0, start either
-transport with `codex --enable mcp_2026_07_28`. Generated Codex stdio
-configuration also sets `CODEX_MCP_PROTOCOL_VERSION=2026-07-28` for the server.
+Clients must support MCP `2026-07-28`. With Codex 0.164.0, run
+`codex features enable mcp_2026_07_28` once to persist the client's MCP protocol
+support in `config.toml` for either transport. Then launch with plain `codex`.
+Generated Codex stdio configuration also sets
+`CODEX_MCP_PROTOCOL_VERSION=2026-07-28` for the server.
 After upgrading Docbank, rerun `docbank mcp config` and replace the saved
 configuration so its protocol selection matches the installed server.
 See the [MCP setup guide](usage/mcp.md#start-the-server).
