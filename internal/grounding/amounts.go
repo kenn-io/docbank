@@ -71,7 +71,7 @@ func amountAt(rs []rune) (int, string) {
 	}
 	i, code := currencyAt(rs, i)
 	prefix := code != ""
-	i = skipSpace(rs, i)
+	i = skipSpace(rs, i, false)
 	numberStart := i
 	if i >= len(rs) || (!digit(rs[i]) && (rs[i] != '.' || i+1 >= len(rs) || !digit(rs[i+1]))) {
 		return 0, ""
@@ -98,20 +98,20 @@ func amountAt(rs []rune) (int, string) {
 	// A suffix belongs only to an amount without a prefix. Inspect the next
 	// token itself, leaving any following figure for its own parse.
 	if !prefix {
-		start := skipSpace(rs, i)
+		start := skipSpace(rs, i, false)
 		end, suffix := currencyAt(rs, start)
 		if suffix == "" || end-start != 3 {
 			return 0, ""
 		}
 		i, code = end, suffix
 	}
-	start := skipSpace(rs, i)
+	start := i + trimStart(rs[i:])
 	end := start
 	for end < len(rs) && !unicode.IsSpace(rs[end]) {
 		end++
 	}
 	token := []rune(trim(rs[start:end]))
-	if markerEnd, marker := currencyAt(token, 0); marker != "" && markerEnd == len(token) {
+	if markerEnd, marker := currencyAt(token, 0); marker != "" && markerEnd == len(token) && !strings.ContainsAny(string(rs[i:start]), lineBreaks) {
 		if start == i {
 			return end, ""
 		}

@@ -25,7 +25,7 @@ func dateAt(rs []rune) (int, string) {
 		if end < len(rs) && !unicode.IsSpace(rs[end]) {
 			break
 		}
-		end = skipSpace(rs, end)
+		end = skipSpace(rs, end, true)
 	}
 	text := strings.Map(func(r rune) rune {
 		if unicode.IsSpace(r) {

@@ -37,11 +37,22 @@ func TestCheckAnswerTransports(t *testing.T) {
 }
 
 func TestCheckAnswerRetainedNormalization(t *testing.T) {
-	server, citation := newCitationMCPFixtureText(t, "text/html", "<p>2026-03-15</p>", "2026-03-15")
-	result := decodeResult(t, exportExchange(t, server, "stdio", "tools/call", map[string]any{
-		"name": "check_answer", "arguments": map[string]any{"answer": "March 15, 2026", "citations": []any{citation}},
-	}))
-	require.Equal(t, "grounded", objectField(t, result, "structuredContent")["status"])
+	for _, tc := range []struct{ body, quote, answer, status string }{
+		{"<p>2026-03-15</p>", "2026-03-15", "March 15, 2026", "grounded"},
+		{"<p>Total: $40, CAD</p>", "$40, CAD", "USD40 [1]", "ungrounded"},
+		{"<p>USD40</p>", "USD40", "$40, CAD [1]", "ungrounded"},
+		{"<p>USD 20</p><p>CAD 30</p>", "USD 20\n\nCAD 30", "$20 and CAD30 [1]", "grounded"},
+		{"<p>$20 and CAD30</p>", "$20 and CAD30", "USD 20\n\nCAD 30 [1]", "grounded"},
+		{"<p>40</p><p>USD rate: 1.1</p>", "40\n\nUSD rate: 1.1", "$40 [1]", "ungrounded"},
+	} {
+		t.Run(tc.answer+"/"+tc.quote, func(t *testing.T) {
+			server, citation := newCitationMCPFixtureText(t, "text/html", tc.body, tc.quote)
+			result := decodeResult(t, exportExchange(t, server, "stdio", "tools/call", map[string]any{
+				"name": "check_answer", "arguments": map[string]any{"answer": tc.answer, "citations": []any{citation}},
+			}))
+			require.Equal(t, tc.status, objectField(t, result, "structuredContent")["status"])
+		})
+	}
 }
 
 func TestCheckAnswerRejectsInvalidBeforeAcquisition(t *testing.T) {

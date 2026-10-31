@@ -7,10 +7,12 @@ import (
 	"github.com/yuin/goldmark/util"
 )
 
+const lineBreaks = "\r\n\u0085\u2028\u2029"
+
 func digit(r rune) bool     { return r >= '0' && r <= '9' }
 func separator(r rune) bool { return r == ',' || r == '.' }
-func skipSpace(rs []rune, i int) int {
-	for i < len(rs) && unicode.IsSpace(rs[i]) {
+func skipSpace(rs []rune, i int, multiline bool) int {
+	for i < len(rs) && unicode.IsSpace(rs[i]) && (multiline || !strings.ContainsRune(lineBreaks, rs[i])) {
 		i++
 	}
 	return i
@@ -67,7 +69,7 @@ func normalizedFigures(text string) []normalizedFigure {
 					safe = end
 				}
 				// A standalone marker before an amount makes its currency ambiguous.
-				if kind == 1 && previousUnparsed {
+				if kind == 1 && previousUnparsed && !strings.ContainsAny(string(rs[tokens[i-1].end:start]), lineBreaks) {
 					previous := []rune(trim(rs[tokens[i-1].start:tokens[i-1].end]))
 					if markerEnd, marker := currencyAt(previous, 0); marker != "" && markerEnd == len(previous) {
 						value = ""

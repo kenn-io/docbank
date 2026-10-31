@@ -67,7 +67,27 @@ func TestNormalizedFigures(t *testing.T) {
 		second                                bool
 	}
 	cases := []testCase{}
+	for _, lineBreak := range []string{"\n", "\r\n", "\r", "\u0085", "\u2028", "\u2029"} {
+		for _, tc := range []struct{ answer, source, overall string }{
+			{"$40", "40" + lineBreak + "USD", "ungrounded"},
+			{"$40", "USD" + lineBreak + "40", "ungrounded"},
+			{"$40", "$" + lineBreak + "40", "ungrounded"},
+			{"USD40", "$40," + lineBreak + "CAD", "grounded"},
+			{"USD40", "CAD" + lineBreak + "$40", "grounded"},
+			{"USD 40", "USD" + lineBreak + "40", "grounded"},
+		} {
+			cases = append(cases,
+				testCase{tc.answer, tc.source, tc.overall, "", "", false},
+				testCase{tc.source, tc.answer, tc.overall, "", "", false},
+			)
+		}
+	}
 	for _, tc := range []struct{ answer, source, overall, figure string }{
+		{"USD40", "$40, CAD", "ungrounded", "missing"},
+		{"$40, CAD", "USD40", "ungrounded", "missing"},
+		{"2026-03-155", "2026-03-15", "ungrounded", "missing"},
+		{"2026-03-15", "2026-03-155", "ungrounded", "missing"},
+		{"2026-03-155", "2026-03-155", "grounded", "found"},
 		{"USD40", "CAD $40", "ungrounded", "missing"},
 		{"USD40", "CAD. $40", "ungrounded", "missing"},
 		{"USD40", "'CAD $40'", "ungrounded", "missing"},
@@ -161,6 +181,8 @@ func TestNormalizedFigures(t *testing.T) {
 		cases = append(cases, testCase{tc.answer, tc.source, tc.overall, tc.figure, "", false})
 	}
 	cases = append(cases,
+		testCase{"$20 CAD30", "USD 20\n\nCAD 30", "grounded", "found", "", true},
+		testCase{"USD 20\n\nCAD 30", "$20 CAD30", "grounded", "found", "", true},
 		testCase{"Paid $5 3 times", "$5 [3]", "grounded", "found", "", true},
 		testCase{"$40 on March 15, 2026", "USD 40 2026-03-15", "grounded", "found", "", true},
 		testCase{"March 15, 2026 [1]", "2026-03-15", "", "found", "March 15, 2026", false},
