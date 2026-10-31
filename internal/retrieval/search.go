@@ -92,6 +92,33 @@ func NewSearcher(config SearcherConfig) (*Searcher, error) {
 		reranking: config.Reranking, mediaEvidence: config.MediaEvidence}, nil
 }
 
+// SearchEmpty reports a semantic or hybrid scope already observed to be empty,
+// without acquiring semantic authority or sending query text to a provider.
+func (searcher *Searcher) SearchEmpty(ctx context.Context, mode Mode, bindingRequired bool) (Report, error) {
+	if err := ctx.Err(); err != nil {
+		return Report{}, err
+	}
+	coverage := Coverage{State: CoverageComplete, BindingRequired: bindingRequired}
+	var report Report
+	switch mode {
+	case ModeSemantic:
+		report = laneReport(mode, mode, coverage, nil, false)
+	case ModeHybrid:
+		var err error
+		report, err = makeHybridReport(mode, coverage, nil, nil, false, DefaultCandidateLimit)
+		if err != nil {
+			return Report{}, err
+		}
+	default:
+		return Report{}, errors.New("empty scope requires semantic or hybrid retrieval")
+	}
+	report, receipt, _, err := searcher.rerank(ctx, Query{}, report)
+	if receipt != nil {
+		report.Receipts = append(report.Receipts, *receipt)
+	}
+	return report, err
+}
+
 func (searcher *Searcher) Search(ctx context.Context, query Query) (Report, error) {
 	query, err := normalizeQuery(query)
 	if err != nil {

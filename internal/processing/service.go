@@ -1612,31 +1612,18 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 	if err != nil {
 		return retrieval.Report{}, err
 	}
-	if request.AllLive != nil {
+	semantic := prepared.mode == retrieval.ModeSemantic || prepared.mode == retrieval.ModeHybrid
+	if request.AllLive != nil && semantic && len(profile.portable.Embeddings) != 0 {
 		count, err := service.catalog.LiveSearchScopeCount(ctx, searchScope)
 		if err != nil {
 			return retrieval.Report{}, err
 		}
-		semantic := prepared.mode == retrieval.ModeSemantic || prepared.mode == retrieval.ModeHybrid
-		if count == 0 && (!semantic || len(profile.portable.Embeddings) != 0) {
-			actual := prepared.mode
-			if actual == retrieval.ModeAuto {
-				actual = retrieval.ModeLexical
+		if count == 0 {
+			binding, err := selectEmbeddingBinding(profile.portable, prepared.bindingID)
+			if err != nil {
+				return retrieval.Report{}, err
 			}
-			report := retrieval.Report{RequestedMode: prepared.mode, ActualMode: actual,
-				Coverage: retrieval.Coverage{State: retrieval.CoverageUnknown}}
-			if semantic {
-				binding, err := selectEmbeddingBinding(profile.portable, prepared.bindingID)
-				if err != nil {
-					return retrieval.Report{}, err
-				}
-				report.Coverage.BindingRequired = binding.Activation == document.EmbeddingRequired
-				report.Coverage.State = retrieval.CoverageComplete
-			}
-			if request.Rerank {
-				report.Receipts = []retrieval.ProviderReceipt{{Stage: retrieval.ProviderStageReranking, Outcome: retrieval.ProviderOutcomeSkipped}}
-			}
-			return report, nil
+			return prepared.searcher.SearchEmpty(ctx, prepared.mode, binding.Activation == document.EmbeddingRequired)
 		}
 	}
 	if request.MediaSources != nil {

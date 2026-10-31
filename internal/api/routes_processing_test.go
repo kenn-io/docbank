@@ -1799,6 +1799,32 @@ func TestEvidenceWindowHTTPContract(t *testing.T) {
 	assert.NotContains(t, body, "aé界🙂z")
 }
 
+func TestDocumentSearchAllLiveEmptyExplain(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, configureProcessingTestServiceWithEmbedding(t))
+	for _, tc := range []struct {
+		mode  string
+		trace []api.DocumentSearchTrace
+	}{
+		{"lexical", []api.DocumentSearchTrace{{Code: "lexical_candidates", Count: 0}}},
+		{"auto", []api.DocumentSearchTrace{{Code: "lexical_candidates", Count: 0}}},
+		{"semantic", []api.DocumentSearchTrace{{Code: "semantic_candidates", Count: 0}}},
+		{"hybrid", []api.DocumentSearchTrace{{Code: "lexical_candidates", Count: 0}, {Code: "semantic_candidates", Count: 0}, {Code: "fused_candidates", Count: 0}}},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			response, body := do(t, ts, http.MethodPost, "/api/v1/search", nil, map[string]any{
+				"profile": "private", "query": "synthetic", "mode": tc.mode,
+				"scope": map[string]any{"kind": "all_live"}, "explain": true,
+			})
+			require.Equal(t, http.StatusOK, response.StatusCode, body)
+			var report api.DocumentSearchReport
+			require.NoError(t, json.Unmarshal([]byte(body), &report))
+			assert.Empty(t, report.Results)
+			assert.Equal(t, tc.trace, report.Trace)
+		})
+	}
+}
+
 func TestDocumentSearchAutoPreservesRequestedMode(t *testing.T) {
 	t.Parallel()
 	ts, catalog := newTestServer(t, configureProcessingTestService(t))
