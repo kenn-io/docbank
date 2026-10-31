@@ -389,6 +389,10 @@ jobs:
         uses: ./.github/actions/go-cache-save
 
   windows:
+    env:
+      LLVM_MINGW_VERSION: "20260602"
+      LLVM_MINGW_NAME: llvm-mingw-20260602-ucrt-aarch64
+      LLVM_MINGW_SHA256: cb5c20fbe1808e31ada5cbe4efd9daa2fee19c91dac6ec5ca1ac46a9c7247e37
     name: Windows ${{ matrix.goarch }}${{ matrix.shard && format(' shard {0}', matrix.shard) || '' }}
     strategy:
       fail-fast: false
@@ -435,18 +439,11 @@ jobs:
       - name: Download ARM64 C compiler
         if: matrix.goarch == 'arm64'
         shell: bash
-        env:
-          LLVM_MINGW_VERSION: "20260602"
-          LLVM_MINGW_NAME: llvm-mingw-20260602-ucrt-aarch64
         run: kit-download "https://github.com/mstorsjo/llvm-mingw/releases/download/$LLVM_MINGW_VERSION/$LLVM_MINGW_NAME.zip" "$RUNNER_TEMP/llvm-mingw.zip"
 
       - name: Set up ARM64 C compiler
         if: matrix.goarch == 'arm64'
         shell: pwsh
-        env:
-          LLVM_MINGW_VERSION: "20260602"
-          LLVM_MINGW_NAME: llvm-mingw-20260602-ucrt-aarch64
-          LLVM_MINGW_SHA256: cb5c20fbe1808e31ada5cbe4efd9daa2fee19c91dac6ec5ca1ac46a9c7247e37
         run: |
           $ErrorActionPreference = 'Stop'
           $zip = Join-Path $env:RUNNER_TEMP 'llvm-mingw.zip'
