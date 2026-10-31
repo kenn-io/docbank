@@ -933,7 +933,7 @@ export class PhotoAuthoredEditor {
     const key = JSON.stringify([hidden, assetIDs]);
     if (this.controller.signal.aborted || (key === this.stackKey && !retry && !quiet)) return;
     // A quiet read keeps the current members and loading flags until it replaces the members.
-    if (quiet && this.stackLoading) return;
+    if (quiet ? this.stackLoading : this.busy) return;
     this.stackKey = key;
     this.stackRead.abort();
     const controller = (this.stackRead = new AbortController());
