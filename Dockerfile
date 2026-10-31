@@ -8,6 +8,7 @@ COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 COPY frontend/ ./
 COPY document/format_metadata.json /src/document/format_metadata.json
+COPY internal/pdfproduction/fonts/NotoSansJP.ttf /src/internal/pdfproduction/fonts/NotoSansJP.ttf
 RUN npm run build
 
 # Keep the Go version aligned with go.mod: source-metadata qualification

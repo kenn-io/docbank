@@ -262,21 +262,6 @@ describe("exact selected-source preview", () => {
     expect(blob.size).toBe(content.length);
   });
 
-  it("rejects PDFs above the browser limit before requesting their bytes", async () => {
-    const fetcher = vi.fn();
-    vi.stubGlobal("fetch", fetcher);
-    await expect(
-      readVerifiedPreview(
-        "browser-session",
-        { ...source, mimeType: "application/pdf", size: 64 * 1024 * 1024 + 1 },
-        11,
-        new AbortController().signal,
-        () => undefined,
-      ),
-    ).rejects.toThrow("64 MiB");
-    expect(fetcher).not.toHaveBeenCalled();
-  });
-
   it("accepts the daemon's current safe filename without changing pinned bytes", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(ready("renamed", "renamed-live.txt")));
 

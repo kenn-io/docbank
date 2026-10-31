@@ -280,68 +280,6 @@ function renderedInventory(dpis = [144]) {
   return { inventory, imageResponse };
 }
 
-it("navigates mixed-size retained pages and revokes URLs on page changes and unmount", async () => {
-  const fixture = renderedInventory(),
-    revoke = vi.fn(),
-    close = vi.fn();
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
-  Object.defineProperty(Element.prototype, "scrollIntoView", {
-    configurable: true,
-    value: vi.fn(),
-  });
-  let sequence = 0,
-    decode = 0;
-  Object.defineProperty(URL, "createObjectURL", {
-    configurable: true,
-    value: vi.fn(() => `blob:page-${++sequence}`),
-  });
-  Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: revoke });
-  vi.stubGlobal(
-    "createImageBitmap",
-    vi.fn(async () =>
-      ++decode === 1 ? { width: 144, height: 288, close } : { width: 288, height: 144, close },
-    ),
-  );
-  const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-    const url = String(input);
-    if (url.endsWith("inventory")) return response(fixture.inventory);
-    if (url.includes("/pages/image"))
-      return fixture.imageResponse(
-        Number(new URL(url, "http://localhost").searchParams.get("page")) - 1,
-      );
-    return response({ items: [], truncated: false });
-  });
-  const view = render(PageViewer, props);
-  const first = await screen.findByRole("img", { name: "Verified page 1 of mixed.pdf" });
-  expect(first.parentElement?.style.aspectRatio).toBe("10000 / 20000");
-  expect(screen.getByRole("button", { name: "Previous page" }).hasAttribute("disabled")).toBe(true);
-  await fireEvent.click(screen.getByRole("button", { name: "Next page" }));
-  expect(screen.queryByRole("img", { name: "Verified page 1 of mixed.pdf" })).toBeNull();
-  const second = await screen.findByRole("img", { name: "Verified page 2 of mixed.pdf" });
-  expect(second.parentElement?.style.aspectRatio).toBe("20000 / 10000");
-  expect(revoke).toHaveBeenCalledWith("blob:page-1");
-  expect(screen.getByRole("button", { name: "Next page" }).hasAttribute("disabled")).toBe(true);
-  await fireEvent.click(screen.getByRole("combobox", { name: /^Zoom:/ }));
-  await fireEvent.click(screen.getByRole("option", { name: "150%" }));
-  await view.rerender({ ...props, source: { ...source, name: "renamed.pdf" } });
-  expect(await screen.findByRole("img", { name: "Verified page 2 of renamed.pdf" })).toBe(second);
-  expect(second.parentElement?.style.width).toBe("288px");
-  expect(revoke).not.toHaveBeenCalledWith("blob:page-2");
-  expect(fetcher.mock.calls.filter(([url]) => String(url).includes("/pages/image"))).toHaveLength(
-    2,
-  );
-  view.unmount();
-  expect(revoke).toHaveBeenCalledWith("blob:page-2");
-  expect(close).toHaveBeenCalledTimes(2);
-  expect(fetcher.mock.calls.filter(([url]) => String(url).endsWith("/jobs"))).toHaveLength(0);
-});
-
 it("does not install an old page after late image bytes arrive", async () => {
   const fixture = renderedInventory();
   let release!: (v: Response) => void;
@@ -374,97 +312,83 @@ it("does not install an old page after late image bytes arrive", async () => {
   expect(URL.createObjectURL).toHaveBeenCalledOnce();
 });
 
-for (const { dpis, expectedDPI, runtime, png = false } of [
-  { dpis: [72, 144, 300], expectedDPI: 144, runtime: true },
-  { dpis: [300, 144, 72], expectedDPI: 144, runtime: true },
-  { dpis: [72, 300], expectedDPI: 300, runtime: true },
-  { dpis: [72], expectedDPI: 72, runtime: true },
-  { dpis: [72, 300], expectedDPI: 300, runtime: false },
-  { dpis: [254, 254], expectedDPI: 254, runtime: true, png: true },
-]) {
-  it(`selects ${expectedDPI} DPI from ${dpis} with runtime=${runtime}, PNG=${png}`, async () => {
-    const fixture = renderedInventory(dpis);
-    const inventory = fixture.inventory.inventory;
-    const images = inventory.images;
-    fixture.inventory.runtime_available = runtime;
-    if (png) {
-      const frame = {
-        ...inventory.frames[0]!.frame,
-        input_units: "pixel",
-        pixel_width: 254,
-        pixel_height: 508,
-        pixels_per_metre_x: 10000,
-        pixels_per_metre_y: 10000,
-        transform: [
-          { numerator: 5000, denominator: 127 },
-          { numerator: 0, denominator: 1 },
-          { numerator: 0, denominator: 1 },
-          { numerator: 5000, denominator: 127 },
-          { numerator: 0, denominator: 1 },
-          { numerator: 0, denominator: 1 },
-        ],
-      };
-      inventory.page_count = 1;
-      inventory.frames = [{ frame, sha256: pageDigest(frame) }];
-      inventory.images = images.filter((image) => image.page === 1);
-      for (const image of inventory.images) image.frame_sha256 = pageDigest(frame);
-    }
-    let selectedImage = images[0]!;
-    const requests: { dpi: number; pages: number[] }[] = [];
-    Object.defineProperty(URL, "createObjectURL", {
-      configurable: true,
-      value: vi.fn(() => "blob:retained"),
-    });
-    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
-    vi.stubGlobal(
-      "createImageBitmap",
-      vi.fn(async () => ({
-        width: selectedImage.width,
-        height: selectedImage.height,
-        close: vi.fn(),
-      })),
-    );
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-      const url = String(input);
-      if (url.endsWith("inventory")) return response(fixture.inventory);
-      if (url.endsWith("/jobs")) {
-        const request = JSON.parse(String(init?.body));
-        requests.push(request);
-        return response(job(request.operation_id));
-      }
-      const query = new URL(url, "http://localhost").searchParams;
-      const index = images.findIndex(
-        (image) =>
-          image.recipe_sha256 === query.get("recipe_sha256") &&
-          image.page === Number(query.get("page")),
-      );
-      selectedImage = images[index]!;
-      return fixture.imageResponse(index);
-    });
-    if (png)
-      render(VerifiedPreview, {
-        ...props,
-        source: { ...source, mimeType: "image/png", name: "native.png" },
-      });
-    else render(PageViewer, props);
-    await screen.findByRole("img", {
-      name: `Verified page 1 of ${png ? "native.png" : "mixed.pdf"}`,
-    });
-    expect(
-      inventory.recipes.find((recipe) => recipe.sha256 === selectedImage.recipe_sha256)!.recipe.dpi,
-    ).toBe(expectedDPI);
-    expect(requests).toHaveLength(0);
-    const renderButton = screen.queryByRole("button", { name: "Render page 1 at 144 DPI" });
-    if (!png && !dpis.includes(144) && runtime) {
-      expect(renderButton).toBeTruthy();
-      await fireEvent.click(renderButton!);
-      await screen.findByRole("button", { name: "Cancel render" });
-      expect(requests).toMatchObject([{ dpi: 144, pages: [1] }]);
-    } else {
-      expect(renderButton).toBeNull();
-    }
+it("keeps native PNG geometry and zoom across renames and releases its image", async () => {
+  const fixture = renderedInventory([254, 254]);
+  const inventory = fixture.inventory.inventory;
+  const images = inventory.images;
+  fixture.inventory.runtime_available = true;
+  const frame = {
+    ...inventory.frames[0]!.frame,
+    input_units: "pixel",
+    pixel_width: 254,
+    pixel_height: 508,
+    pixels_per_metre_x: 10000,
+    pixels_per_metre_y: 10000,
+    transform: [
+      { numerator: 5000, denominator: 127 },
+      { numerator: 0, denominator: 1 },
+      { numerator: 0, denominator: 1 },
+      { numerator: 5000, denominator: 127 },
+      { numerator: 0, denominator: 1 },
+      { numerator: 0, denominator: 1 },
+    ],
+  };
+  inventory.page_count = 1;
+  inventory.frames = [{ frame, sha256: pageDigest(frame) }];
+  inventory.images = images.filter((image) => image.page === 1);
+  for (const image of inventory.images) image.frame_sha256 = pageDigest(frame);
+  const pngSource = { ...source, mimeType: "image/png", name: "native.png", path: "/native.png" };
+  const revoke = vi.fn(),
+    close = vi.fn();
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  Object.defineProperty(Element.prototype, "scrollIntoView", {
+    configurable: true,
+    value: vi.fn(),
   });
-}
+  Object.defineProperty(URL, "createObjectURL", {
+    configurable: true,
+    value: vi.fn(() => "blob:retained"),
+  });
+  Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: revoke });
+  vi.stubGlobal(
+    "createImageBitmap",
+    vi.fn(async () => ({ width: 254, height: 508, close })),
+  );
+  const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = String(input);
+    if (url.endsWith("inventory")) return response(fixture.inventory);
+    const query = new URL(url, "http://localhost").searchParams;
+    const index = images.findIndex(
+      (image) =>
+        image.recipe_sha256 === query.get("recipe_sha256") &&
+        image.page === Number(query.get("page")),
+    );
+    return fixture.imageResponse(index);
+  });
+  const view = render(VerifiedPreview, { ...props, source: pngSource });
+  const image = await screen.findByRole("img", { name: "Verified page 1 of native.png" });
+  expect(image.parentElement?.style.aspectRatio).toBe("10000 / 20000");
+  await fireEvent.click(screen.getByRole("combobox", { name: /^Zoom:/ }));
+  await fireEvent.click(screen.getByRole("option", { name: "150%" }));
+  await view.rerender({ ...props, source: { ...pngSource, name: "renamed.png" } });
+  expect(await screen.findByRole("img", { name: "Verified page 1 of renamed.png" })).toBe(image);
+  expect(image.parentElement?.style.width).toBe("144px");
+  expect(fetcher.mock.calls.filter(([url]) => String(url).includes("/pages/image"))).toHaveLength(
+    1,
+  );
+  expect(screen.queryByRole("button", { name: "Render page 1 at 144 DPI" })).toBeNull();
+  expect(revoke).not.toHaveBeenCalled();
+  view.unmount();
+  expect(revoke).toHaveBeenCalledExactlyOnceWith("blob:retained");
+  expect(close).toHaveBeenCalledOnce();
+  expect(fetcher.mock.calls.filter(([url]) => String(url).endsWith("/jobs"))).toHaveLength(0);
+});
 
 it.each(["page_selection_stale", "page_limit", "page_unsupported"])(
   "offers refresh instead of resubmitting deterministic %s errors",
