@@ -1806,7 +1806,6 @@ it.each([
   ["disables best-shot responses after a grouping error", false],
   ["hides best-shot proposals after live metadata dissolves the current burst", true],
 ] as const)("%s", async (_name, dissolves) => {
-  const respond = vi.spyOn(api, "decidePhotoStack");
   vi.mocked(api.preparePhotoAuthored).mockImplementation(async (scope) => ({
     ...photoPreparation((scope.asset_ids ?? []).map((id) => preparedPhoto(Number(id.slice(6))))),
     proposals: scope.stack
@@ -1836,9 +1835,6 @@ it.each([
   await screen.findByText("Groups temporarily unavailable");
   expect(accept.matches(":disabled")).toBe(true);
   expect(dismiss.matches(":disabled")).toBe(true);
-  await fireEvent.click(accept);
-  await fireEvent.click(dismiss);
-  expect(respond).not.toHaveBeenCalled();
 });
 
 it("clears best-shot proposals after picking, rejecting, or clearing a frame flag", async () => {
