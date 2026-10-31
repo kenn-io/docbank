@@ -3584,6 +3584,49 @@ it("continues a metadata fallback with the captured query", async () => {
   photos.dispose();
 });
 
+it("loads every ranked page for Export all after a live refresh settles", async () => {
+  let finish!: (response: Response) => void;
+  const firstPage = {
+    items: [photo(1)],
+    total: 2,
+    snapshot_id: "accepted",
+    next_cursor: "page-two",
+  };
+  const fetcher = vi
+    .fn()
+    .mockResolvedValueOnce(Response.json(firstPage))
+    .mockImplementationOnce(() => new Promise<Response>((resolve) => (finish = resolve)))
+    .mockResolvedValueOnce(Response.json({ items: [photo(2)], total: 2, snapshot_id: "accepted" }));
+  stubPhotoFetch(fetcher);
+  const photos = new Photos("scoped", vi.fn(), false, {
+    ...photoQuery,
+    mode: "semantic",
+    text: "sunset",
+  });
+  try {
+    await photos.loadMore();
+    const refreshing = photos.refresh(undefined, true);
+    await waitFor(() => expect(finish).toBeDefined());
+    expect(photos.backgroundRefresh).toBe(true);
+    expect(photos.loading).toBe(true);
+    expect(photos.cursor).toBe("page-two");
+    const scope = photos.actionScope();
+    finish(Response.json(firstPage));
+    await refreshing;
+    expect(await scope).toEqual({
+      query: photoQuery,
+      asset_ids: ["photo-1", "photo-2"],
+    });
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    expect(JSON.parse(fetcher.mock.calls[2]![1].body)).toMatchObject({
+      cursor: "page-two",
+      snapshot_id: "accepted",
+    });
+  } finally {
+    photos.dispose();
+  }
+});
+
 it.each([false, true])("selects every snapshot result with exportFirst=%s", async (exportFirst) => {
   const photos = new Photos("scoped", vi.fn(), false, {
     ...photoQuery,
