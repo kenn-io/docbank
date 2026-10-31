@@ -63,7 +63,7 @@ func (s *Store) PhotoStackBestShots(ctx context.Context, stacks []PhotoStack, hi
 		for i, stack := range stacks {
 			prep := PhotoAuthoredPreparation{}
 			loaded := map[string]photoAuthoredLoaded{}
-			p := photoAuthoredPreparer{tx: tx, hidden: hidden, settings: settings, result: &prep, limit: MaxPhotoStackTargets, loaded: loaded}
+			p := photoAuthoredPreparer{store: s, tx: tx, hidden: hidden, settings: settings, result: &prep, limit: MaxPhotoStackTargets, loaded: loaded}
 			if err := p.prepare(ctx, stack.AssetIDs); err != nil {
 				return err
 			}
