@@ -27,6 +27,31 @@ const (
 	exitClaim     = 7
 )
 
+const searchQueryHint = `pass words, or filter with --tag, --modified-since or --modified-before; see "docbank search --help"`
+
+func missingBackupRepository(err error) bool {
+	return errors.Is(err, daemonconn.ErrBackupRepositoryNotConfigured)
+}
+
+// Remove generated transport wrappers by following their error identities.
+// Matching suffixes preserves user text (including a path containing the same
+// words) and leaves the original error chain available for classification.
+func cliErrorMessage(err error) string {
+	message := err.Error()
+	for cause := err; cause != nil; cause = errors.Unwrap(cause) {
+		wrapped := errors.Unwrap(cause)
+		if wrapped != nil && cause.Error() == "error executing request: "+wrapped.Error() {
+			if before, ok := strings.CutSuffix(message, cause.Error()); ok {
+				message = before + wrapped.Error()
+			}
+		}
+	}
+	if missingBackupRepository(err) {
+		message = strings.Replace(message, "pass repo or set [backup]", "pass --repo <dir> or set [backup]", 1)
+	}
+	return message
+}
+
 type exitError struct {
 	code int
 	err  error
@@ -81,7 +106,7 @@ func commandExitCode(err error, started bool) int {
 		errors.Is(err, store.ErrInvalidVersionPrune) ||
 		errors.Is(err, store.ErrInvalidAuditCursor) || errors.Is(err, store.ErrInvalidPhotoAsset) ||
 		errors.Is(err, store.ErrPhotoNodeNotEligible) ||
-		errors.Is(err, backupapp.ErrRepositoryOwnerConflict) {
+		errors.Is(err, backupapp.ErrRepositoryOwnerConflict) || missingBackupRepository(err) {
 		return exitUsage
 	}
 	if code, ok := daemonconn.ProblemCode(err); ok &&
@@ -110,23 +135,50 @@ func withHint(err error, hint string) error {
 
 // Hints belong to the CLI process boundary, not the daemon's problem contract.
 func commandErrorHint(cmd *cobra.Command, err error, code int, started bool) string {
-	if err == nil || strings.Contains(err.Error(), "Did you mean") {
+	if err == nil {
 		return ""
 	}
 	if hinted, ok := errors.AsType[*hintedError](err); ok {
 		return "hint: " + hinted.hint
 	}
+	if !started && strings.Contains(err.Error(), "\nDid you mean") {
+		return ""
+	}
+	path := "docbank"
+	if cmd != nil {
+		path = cmd.CommandPath()
+	}
+	help := fmt.Sprintf("run %q for flags and examples", path+" --help")
+	if problem, _ := daemonconn.ProblemCode(err); problem == "backup_repository" {
+		return `hint: check --repo and repository permissions, or set [backup] repo in $DOCBANK_HOME/config.toml; initialize a new repository with "docbank backup init --repo <dir>"`
+	}
+	if errors.Is(err, daemonconn.ErrDaemonConfigInvalid) {
+		return `hint: fix $DOCBANK_HOME/config.toml or its startup environment overrides, then retry; see "docbank daemon start --help"`
+	}
+	if errors.Is(err, store.ErrSearchQueryRequired) {
+		return "hint: " + searchQueryHint
+	}
+	if errors.Is(err, daemonconn.ErrProcessingUnavailable) {
+		return `hint: inspect "docbank processing profiles" and configure an available profile before planning again`
+	}
+	if (cmd == processingBuildCmd || cmd == searchCmd) &&
+		(errors.Is(err, daemonconn.ErrProcessingConsent) || errors.Is(err, daemonconn.ErrProcessingPlanChanged)) {
+		return `hint: review a fresh "docbank processing plan <path-or-id> --profile <profile>"; build only with its --plan-fingerprint and --consent`
+	}
+	if cmd == processingBuildCmd && code == exitGeneral {
+		return `hint: if a job id was returned, inspect "docbank processing status <job-id> --json" before starting more work; otherwise inspect "docbank jobs" for an accepted job before retrying`
+	}
 	switch code {
 	case exitUsage:
 		if started {
-			return ""
+			return "hint: " + help
 		}
 		if cmd == nil || cmd == rootCmd {
 			return `hint: run "docbank --help"`
 		}
 		usage := cmd.UseLine()
 		if len(usage) <= 120 && !strings.ContainsAny(usage, "\n\r") {
-			return "hint: usage: " + usage
+			return "hint: usage: " + usage + "; " + help
 		}
 		return fmt.Sprintf("hint: run %q", cmd.CommandPath()+" --help")
 	case exitBusy:
@@ -138,11 +190,45 @@ func commandErrorHint(cmd *cobra.Command, err error, code int, started bool) str
 		case errors.Is(err, daemonconn.ErrMaintenanceBusy):
 			return `hint: wait and retry; "docbank jobs" shows active work`
 		default:
-			return ""
+			return `hint: wait for the resource owner to finish; inspect "docbank daemon status" before retrying`
 		}
+	case exitNotFound:
+		if cmd == rmCmd || cmd == mvCmd {
+			return `hint: list paths with "docbank tree" or find by name with "docbank search <name>"; trashed nodes: "docbank trash list"`
+		}
+		if cmd == restoreCmd {
+			return `hint: list restorable ids with "docbank trash list"; permanently removed nodes cannot be restored`
+		}
+		return "hint: check the requested identity; " + help
+	case exitStale:
+		if errors.Is(err, store.ErrAuditPreviewStale) {
+			return `hint: review a fresh audit preview before confirming; see "docbank audit --help"`
+		}
+		return "hint: re-read the affected object and review any fresh preview before retrying with its current revision; " + help
+	case exitIntegrity:
+		return `hint: run "docbank verify" for a full report; do not trust affected bytes or retry writes until resolved`
 	case exitClaim:
 		return `hint: review the history with "docbank backup claim", then confirm it`
 	default:
-		return ""
+		return "hint: " + help + `; inspect "docbank daemon status" before deciding whether to retry`
+	}
+}
+
+func exitCodeName(code int) string {
+	switch code {
+	case exitUsage:
+		return "usage"
+	case exitNotFound:
+		return "not_found"
+	case exitStale:
+		return "stale"
+	case exitBusy:
+		return "busy"
+	case exitIntegrity:
+		return "integrity"
+	case exitClaim:
+		return "claim_required"
+	default:
+		return "error"
 	}
 }

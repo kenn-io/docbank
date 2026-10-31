@@ -222,7 +222,7 @@ func TestRunProcessErrorHints(t *testing.T) {
 	assert.True(t, strings.HasPrefix(stderr.String(), "error: "))
 	assert.Contains(t, stderr.String(), `hint: list paths with "docbank tree" or find by name with "docbank search <name>"`)
 	assert.Equal(t, exitNotFound, run("stat", "id:999"))
-	assert.NotContains(t, stderr.String(), "hint:")
+	assert.Contains(t, stderr.String(), "docbank trash list")
 	assert.Equal(t, exitSuccess, run("mkdir", "/gone"))
 	assert.Equal(t, exitSuccess, run("stat", "/gone", "--json"))
 	var gone struct {
@@ -262,22 +262,27 @@ func TestCommandErrorHint(t *testing.T) {
 		started bool
 		want    string
 	}{
-		{"arity", getCmd, errors.New("accepts 2 arg(s), received 1"), exitUsage, false, "hint: usage: docbank get <path-or-id> <local-file> [flags]"},
+		{"arity", getCmd, errors.New("accepts 2 arg(s), received 1"), exitUsage, false, "hint: usage: docbank get <path-or-id> <local-file> [flags]; run \"docbank get --help\" for flags and examples"},
 		{"root flag", rootCmd, errors.New("unknown flag"), exitUsage, false, `hint: run "docbank --help"`},
 		{"unknown command", nil, errors.New("unknown command"), exitUsage, false, `hint: run "docbank --help"`},
-		{"suggestion", rootCmd, errors.New("unknown command; Did you mean stat?"), exitUsage, false, ""},
+		{"suggestion", rootCmd, errors.New("unknown command\nDid you mean stat?"), exitUsage, false, ""},
 		{"multiline", multiline, errors.New("bad argument"), exitUsage, false, `hint: run "sample --help"`},
-		{"started usage", searchCmd, usageError(errors.New("bad limit")), exitUsage, true, ""},
-		{"missing job", jobsShowCmd, fmt.Errorf(`showing operation "unknown": %w`, store.ErrNotFound), exitNotFound, true, ""},
-		{"unclassified missing resource", lsCmd, store.ErrNotFound, exitNotFound, true, ""},
+		{"started usage", searchCmd, usageError(errors.New("bad limit")), exitUsage, true, `hint: run "docbank search --help" for flags and examples`},
+		{"missing job", jobsShowCmd, fmt.Errorf(`showing operation "unknown": %w`, store.ErrNotFound), exitNotFound, true, `hint: check the requested identity; run "docbank jobs show --help" for flags and examples`},
+		{"unclassified missing resource", lsCmd, store.ErrNotFound, exitNotFound, true, `hint: check the requested identity; run "docbank ls --help" for flags and examples`},
 		{"wrapped hint", lsCmd, fmt.Errorf("listing: %w", withHint(store.ErrNotFound, "try this")), exitNotFound, true, "hint: try this"},
-		{"vault locked", jobsCmd, home.ErrVaultLocked, exitBusy, true, ""},
+		{"vault locked", jobsCmd, home.ErrVaultLocked, exitBusy, true, `hint: wait for the resource owner to finish; inspect "docbank daemon status" before retrying`},
 		{"backup repository locked", backupCreateCmd, backup.ErrRepoLocked, exitBusy, true, `hint: wait for the backup repository owner; use --force-unlock only when its owner is known to be gone`},
-		{"pack retirement deferred", storageRepackCmd, packstore.ErrPackRetirementDeferred, exitBusy, true, ""},
+		{"pack retirement deferred", storageRepackCmd, packstore.ErrPackRetirementDeferred, exitBusy, true, `hint: wait for the resource owner to finish; inspect "docbank daemon status" before retrying`},
 		{"maintenance busy", jobsCmd, daemonconn.ErrMaintenanceBusy, exitBusy, true, `hint: wait and retry; "docbank jobs" shows active work`},
-		{"stale", rmCmd, store.ErrStaleRevision, exitStale, true, ""},
-		{"integrity", verifyCmd, daemonconn.ErrIntegrity, exitIntegrity, true, ""},
-		{"general", verifyCmd, errors.New("failed"), exitGeneral, true, ""},
+		{"stale", rmCmd, store.ErrStaleRevision, exitStale, true, `hint: re-read the affected object and review any fresh preview before retrying with its current revision; run "docbank rm --help" for flags and examples`},
+		{"integrity", verifyCmd, daemonconn.ErrIntegrity, exitIntegrity, true, `hint: run "docbank verify" for a full report; do not trust affected bytes or retry writes until resolved`},
+		{"config", infoCmd, daemonconn.ErrDaemonConfigInvalid, exitGeneral, true, `hint: fix $DOCBANK_HOME/config.toml or its startup environment overrides, then retry; see "docbank daemon start --help"`},
+		{"processing unavailable", processingPlanCmd, daemonconn.ErrProcessingUnavailable, exitGeneral, true, `hint: inspect "docbank processing profiles" and configure an available profile before planning again`},
+		{"processing consent", processingBuildCmd, daemonconn.ErrProcessingConsent, exitGeneral, true, `hint: review a fresh "docbank processing plan <path-or-id> --profile <profile>"; build only with its --plan-fingerprint and --consent`},
+		{"processing plan changed", processingBuildCmd, daemonconn.ErrProcessingPlanChanged, exitGeneral, true, `hint: review a fresh "docbank processing plan <path-or-id> --profile <profile>"; build only with its --plan-fingerprint and --consent`},
+		{"processing job outcome", processingBuildCmd, errors.New("processing job interrupted"), exitGeneral, true, `hint: if a job id was returned, inspect "docbank processing status <job-id> --json" before starting more work; otherwise inspect "docbank jobs" for an accepted job before retrying`},
+		{"general", verifyCmd, errors.New("failed"), exitGeneral, true, `hint: run "docbank verify --help" for flags and examples; inspect "docbank daemon status" before deciding whether to retry`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) { assert.Equal(t, tt.want, commandErrorHint(tt.cmd, tt.err, tt.code, tt.started)) })

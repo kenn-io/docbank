@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-24
+last_edited: 2026-10-31
 title: CLI reference
 description: Every docbank command, with its flags, output formats, and error behavior.
 ---
@@ -9,8 +9,8 @@ description: Every docbank command, with its flags, output formats, and error be
 Use this page to look up command syntax, flags, output, and failure behavior.
 For a first import, follow [Quickstart](quickstart.md).
 
-Run `docbank --help` for commands grouped by outcome, start-here examples,
-selectors, search scope, and exit codes. Follow with `docbank <command> --help`
+Run `docbank --help` for commands grouped by outcome, a numbered agent workflow,
+selectors, output modes, environment settings, and exit codes. Follow with `docbank <command> --help`
 for its workflow and flags. Runnable commands include examples; prerequisite
 examples show where version, job, and snapshot IDs come from.
 
@@ -18,9 +18,15 @@ Vault commands use `~/.docbank` unless `DOCBANK_HOME` selects another location.
 See [Configuration](configuration.md). Virtual paths are absolute,
 `/`-separated, and case-sensitive. Errors go to stderr and produce a nonzero
 exit code. Parsing errors (unknown commands or flags, wrong argument counts,
-missing required flags) include usage or a help command. Missing paths, trashed
-nodes, missing tags, a locked backup repository, and busy vault maintenance
-include a next-step hint. Hints stay on stderr.
+missing required flags) include usage or a help command. An unknown child of a
+command group, such as `docbank tag bogus`, fails with exit `2`; the bare
+`docbank tag` still shows help and succeeds. Errors include a next-step hint,
+or a command suggestion when Cobra can identify a likely typo. Hints name CLI
+commands and flags. They stay on stderr.
+
+Use `list` for `ls`, `show` for `cat`, `move` or `rename` for `mv`, and
+`remove` or `delete` for `rm`. These aliases have the same output and behavior.
+In particular, `show` prints original file bytes and `delete` moves to trash.
 
 Data commands send HTTP requests to the daemon and start it in the background
 if needed. `docbank push` selects an explicit keyed daemon with `--to` and
@@ -326,7 +332,37 @@ object used by the HTTP API.
 ## Process exit codes
 
 CLI process codes are stable so shell automation can branch without parsing
-stderr. Human error text remains explanatory and may change.
+stderr. Human error text remains explanatory and may change. Invocation and
+request-validation errors both use `2`; operational and internal failures use
+`1`. Missing backup repository configuration uses `2` and explains `--repo`
+and `backup init`; repository I/O failures still use `1`.
+
+Human errors print `error: MESSAGE` followed by `hint: NEXT STEP`. Search with
+`--agent` uses `Hint:` for its recovery line; its successful hit rows keep their
+existing format. Other commands support `--json` only where their help lists it.
+If that command has already parsed `--json` as true, its final error record on
+stderr is compact JSON with a trailing newline:
+
+```json
+{"error":{"message":"...","code":"not_found","exit":3,"hint":"list paths with \"docbank tree\" or find by name with \"docbank search <name>\""}}
+```
+
+The CLI `error.code` values are `error`, `usage`, `not_found`, `stale`, `busy`,
+`integrity`, and `claim_required`, corresponding to exits `1` through `7`.
+`error.hint` is omitted when a command suggestion already provides recovery.
+These are process categories; HTTP problem codes retain their richer meanings.
+
+Previews and progress can precede this final stderr record. For example,
+`backup claim --json` still prints its repository preview before requesting
+confirmation. Parse the final record separately from those diagnostics.
+`--json=false` keeps human errors. Flag parsing can fail before `--json` is
+read; those failures also stay human. A malformed repeated output flag keeps
+the last successfully parsed value. When search parses both `--agent` and
+`--json` as true, their mutual-exclusion error uses JSON.
+
+Success output stays on stdout. Commands may return a report or partial bytes
+before failing; always check the exit code. Recovery hints recommend inspection
+before retrying a write whose outcome is uncertain.
 
 | Code | Meaning | Typical action |
 |------|---------|----------------|

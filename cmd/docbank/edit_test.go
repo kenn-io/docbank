@@ -6,7 +6,10 @@ import (
 	"encoding/hex"
 	"encoding/json/v2"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -176,6 +179,87 @@ func TestEditFailureAndConcurrentReplacementDoNotOverwrite(t *testing.T) {
 	assert.Equal(t, string(concurrent), out)
 }
 
+func TestEditDoesNotWaitForEditorChildInheritingStderr(t *testing.T) {
+	_ = setupVaultHome(t)
+	initial := writeSourceFile(t, "notes.txt", "initial text")
+	_, err := runCLI(t, "add", initial, "--dest", "/inbox")
+	require.NoError(t, err)
+
+	childDir := t.TempDir()
+	marker := filepath.Join(childDir, "started")
+	finishedChild := filepath.Join(childDir, "finished")
+	childInput, releaseChildInput, err := os.Pipe()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = childInput.Close()
+		_ = releaseChildInput.Close()
+	})
+	previousInput := editCmd.InOrStdin()
+	editCmd.SetIn(childInput)
+	t.Cleanup(func() { editCmd.SetIn(previousInput) })
+	setEditHelper(t, "edited text")
+	t.Setenv("DOCBANK_EDIT_TEST_FAIL", "1")
+	t.Setenv("DOCBANK_EDIT_TEST_ORPHAN_MARKER", marker)
+	t.Setenv("DOCBANK_EDIT_TEST_ORPHAN_DONE", finishedChild)
+
+	releasedChild := false
+	releaseChild := func() {
+		if releasedChild {
+			return
+		}
+		releasedChild = true
+		if _, writeErr := releaseChildInput.Write([]byte{1}); writeErr != nil {
+			t.Errorf("releasing editor child: %v", writeErr)
+		}
+	}
+	t.Cleanup(func() {
+		releaseChild()
+		if _, statErr := os.Stat(marker); statErr == nil {
+			assert.Eventually(t, func() bool {
+				_, doneErr := os.Stat(finishedChild)
+				return doneErr == nil
+			}, 5*time.Second, 20*time.Millisecond)
+		}
+	})
+
+	type result struct {
+		code int
+		out  string
+	}
+	done := make(chan result, 1)
+	stderr, err := os.Create(filepath.Join(childDir, "stderr.log"))
+	require.NoError(t, err)
+	defer func() { _ = stderr.Close() }()
+	go func() {
+		var stdout bytes.Buffer
+		code := runProcess([]string{"edit", "/inbox/notes.txt", "--progress", "plain"}, &stdout, stderr)
+		done <- result{code: code, out: stdout.String()}
+	}()
+
+	require.Eventually(t, func() bool {
+		_, statErr := os.Stat(marker)
+		return statErr == nil
+	}, 10*time.Second, 20*time.Millisecond)
+
+	finishedBeforeRelease := false
+	var got result
+	select {
+	case got = <-done:
+		finishedBeforeRelease = true
+	case <-time.After(2 * time.Second):
+	}
+	releaseChild()
+	if !finishedBeforeRelease {
+		select {
+		case got = <-done:
+		case <-time.After(10 * time.Second):
+			t.Fatal("edit did not return after the inherited stderr writer closed")
+		}
+	}
+	require.Equal(t, 1, got.code, got.out)
+	assert.True(t, finishedBeforeRelease, "edit waited for the editor's background stderr child")
+}
+
 func TestEditUnchangedRejectsConcurrentReplacement(t *testing.T) {
 	_ = setupVaultHome(t)
 	initial := writeSourceFile(t, "notes.txt", "initial text")
@@ -222,6 +306,9 @@ func TestEditUnchangedRejectsConcurrentReplacement(t *testing.T) {
 }
 
 func TestMain(m *testing.M) {
+	if os.Getenv("DOCBANK_EDIT_TEST_ORPHAN") == "1" {
+		os.Exit(runEditTestOrphan())
+	}
 	if len(os.Args) > 1 && (os.Args[1] == "internal-email-pdf-worker" || os.Args[1] == "internal-pdfstamp-worker") {
 		os.Exit(runProcess(os.Args[1:], os.Stdout, os.Stderr))
 	}
@@ -256,11 +343,44 @@ func runEditHelper() int {
 			time.Sleep(20 * time.Millisecond) //nolint:kennlint // sleeptest: runs in the editor helper subprocess, polling for a file the test writes
 		}
 	}
+	if marker := os.Getenv("DOCBANK_EDIT_TEST_ORPHAN_MARKER"); marker != "" {
+		testBinary, err := os.Executable()
+		if err != nil {
+			return 25
+		}
+		child := exec.Command(testBinary, "-test.run=^TestMain$")
+		child.Env = []string{
+			"DOCBANK_EDIT_TEST_ORPHAN=1",
+			"DOCBANK_EDIT_TEST_ORPHAN_MARKER=" + marker,
+			"DOCBANK_EDIT_TEST_ORPHAN_DONE=" + os.Getenv("DOCBANK_EDIT_TEST_ORPHAN_DONE"),
+		}
+		child.Stdin = os.Stdin
+		child.Stderr = os.Stderr
+		if err := child.Start(); err != nil {
+			return 25
+		}
+	}
 	if os.Getenv("DOCBANK_EDIT_TEST_FAIL") == "1" {
 		return 23
 	}
 	if err := os.WriteFile(path, []byte(os.Getenv("DOCBANK_EDIT_TEST_CONTENT")), 0o600); err != nil {
 		return 24
+	}
+	return 0
+}
+
+func runEditTestOrphan() int {
+	marker := os.Getenv("DOCBANK_EDIT_TEST_ORPHAN_MARKER")
+	done := os.Getenv("DOCBANK_EDIT_TEST_ORPHAN_DONE")
+	if err := os.WriteFile(marker, []byte("started"), 0o600); err != nil {
+		return 26
+	}
+	var releaseSignal [1]byte
+	if _, err := io.ReadFull(os.Stdin, releaseSignal[:]); err != nil {
+		return 27
+	}
+	if err := os.WriteFile(done, []byte("finished"), 0o600); err != nil {
+		return 28
 	}
 	return 0
 }

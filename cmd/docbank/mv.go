@@ -30,6 +30,7 @@ type batchMovePlanItem struct {
 }
 
 var mvCmd = &cobra.Command{
+	Aliases: []string{"move", "rename"},
 	Example: `  docbank mv id:12 /cases/acme/invoice-2026.pdf
   docbank mv /inbox/scans /cases/acme/scans --json`,
 	Long: `Move or rename one node; id:N stays stable. batch applies a bounded JSON

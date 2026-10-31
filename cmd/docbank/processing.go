@@ -28,6 +28,8 @@ var (
 )
 
 var processingCmd = &cobra.Command{
+	Example: `  docbank processing profiles
+  docbank processing plan id:12 --profile <profile>`,
 	Long: `Builds derived text (renditions) and embeddings for one document version
 using a named profile. Profiles come from $DOCBANK_HOME/config.toml; the
 default daemon offers only supplied-captions and supplied-transcript, so

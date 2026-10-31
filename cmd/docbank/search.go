@@ -157,7 +157,7 @@ See docs/usage/search.md.`,
 		if searchTag == "" && store.SearchNeedsQuery(strings.Join(args, " "), store.SearchOptions{
 			MIMEType: mimeType, ModifiedSince: modifiedSince, ModifiedBefore: modifiedBefore,
 		}) {
-			return usageError(store.ErrSearchQueryRequired)
+			return withHint(usageError(store.ErrSearchQueryRequired), searchQueryHint)
 		}
 		var underSelector nodeSelector
 		if searchUnder != "" {
@@ -441,7 +441,8 @@ func validateDocumentSearchOptions(query string, options documentSearchCLIOption
 		if options.Mode == "" {
 			return usageError(errors.New("--mode is required with processing search options"))
 		}
-		return usageError(errors.New("--mode must be lexical, semantic, hybrid, or auto"))
+		return withHint(usageError(errors.New("--mode must be lexical, semantic, hybrid, or auto")),
+			`modes: lexical, semantic, hybrid, auto; plain "docbank search <words>" needs no mode flag`)
 	}
 	if options.Profile == "" {
 		return usageError(errors.New("--profile is required for processing search; list profiles with \"docbank processing profiles\""))

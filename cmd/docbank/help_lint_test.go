@@ -22,6 +22,7 @@ import (
 var updateHelpGolden = flag.Bool("update", false, "update CLI help golden files")
 var helpPlaceholder = regexp.MustCompile(`<[^<>\s]+>`)
 var helpEnvAssignment = regexp.MustCompile(`^[A-Za-z_][A-Za-z_0-9]*=`)
+var helpHintCommand = regexp.MustCompile(`"(docbank [^"\n]+)"`)
 
 // Parents whose RunE performs work, rather than just cmd.Help().
 var workParents = map[string]bool{
@@ -109,7 +110,7 @@ func TestHelpTreeLint(t *testing.T) {
 			require.NoError(t, err)
 			budget := 2500
 			if cmd == rootCmd {
-				budget = 4636
+				budget = 6500
 			}
 			if cmd == rootCmd || (!cmd.HasSubCommands() && cmd.Name() != "tui") {
 				assert.LessOrEqual(t, len(out), budget, "help byte budget")
@@ -249,19 +250,27 @@ func checkHelpExample(root *cobra.Command, line string) (*cobra.Command, error) 
 			return nil, errors.New("unsupported redirect or malformed placeholder")
 		}
 	}
+	configureCommandGroups(root)
 	cmd, args, err := root.Find(words[1:])
 	if err != nil {
 		return nil, fmt.Errorf("resolving help example: %w", err)
 	}
-	if cmd == root || cmd.Hidden || cmd.Name() == "help" || cmd.Name() == "completion" {
+	if cmd.Hidden || cmd.Name() == "help" || cmd.Name() == "completion" {
 		return nil, errors.New("example must resolve to a public command")
 	}
+	cmd.InitDefaultHelpFlag()
 	flags, err := cloneHelpFlags(cmd)
 	if err != nil {
 		return nil, err
 	}
 	if err = flags.Parse(args); err != nil {
 		return nil, fmt.Errorf("parsing help example flags: %w", err)
+	}
+	if help, _ := flags.GetBool("help"); help {
+		return cmd, nil
+	}
+	if cmd == root {
+		return nil, errors.New("example must resolve to a public command")
 	}
 	// This validator also closes over a production flag variable. Validate its
 	// arity and required target against the isolated copy instead.
@@ -350,6 +359,7 @@ func TestHelpExampleParsing(t *testing.T) {
 		line string
 		path string
 	}{
+		{`docbank --help`, "docbank"},
 		{`docbank cat id:12 > invoice.pdf`, "docbank cat"},
 		{`docbank search "merger plan" --json`, "docbank search"},
 		{`DOCBANK_HOME=/tmp/scratch docbank info --json`, "docbank info"},
@@ -426,4 +436,48 @@ func TestHelpExampleInheritedFlagsAreIsolated(t *testing.T) {
 	assert.Same(t, child, resolved)
 	assert.False(t, value)
 	assert.False(t, root.PersistentFlags().Lookup("json").Changed)
+}
+
+func TestHelpLongCommandsParse(t *testing.T) {
+	var walk func(*cobra.Command)
+	count := 0
+	walk = func(cmd *cobra.Command) {
+		if cmd.Hidden {
+			return
+		}
+		for line := range strings.SplitSeq(cmd.Long, "\n") {
+			if strings.HasPrefix(line, "  docbank ") {
+				_, err := checkHelpExample(rootCmd, line)
+				assert.NoError(t, err, "%s: %s", cmd.CommandPath(), line)
+				count++
+			}
+		}
+		for _, child := range cmd.Commands() {
+			walk(child)
+		}
+	}
+	walk(rootCmd)
+	assert.GreaterOrEqual(t, count, 8, "root guide must include the complete workflow")
+}
+
+func TestHelpAliasesResolve(t *testing.T) {
+	for alias, command := range map[string]string{"list": "ls", "remove": "rm", "delete": "rm", "move": "mv", "rename": "mv", "show": "cat"} {
+		cmd, _, err := rootCmd.Find([]string{alias})
+		require.NoError(t, err)
+		require.Equal(t, command, cmd.Name())
+		out, err := captureHelp(rootCmd, cmd)
+		require.NoError(t, err)
+		assert.Contains(t, out, "Aliases:")
+		assert.Contains(t, out, alias)
+	}
+}
+
+func assertHelpHintCommandsParse(t *testing.T, hint string) {
+	t.Helper()
+	matches := helpHintCommand.FindAllStringSubmatch(hint, -1)
+	require.NotEmpty(t, matches, "recovery hint has no quoted CLI command: %q", hint)
+	for _, match := range matches {
+		_, err := checkHelpExample(rootCmd, match[1])
+		assert.NoError(t, err, "recovery command in emitted hint: %s", match[1])
+	}
 }

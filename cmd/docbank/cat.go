@@ -11,6 +11,7 @@ import (
 )
 
 var catCmd = &cobra.Command{
+	Aliases: []string{"show"},
 	Example: `  docbank cat /cases/acme/notes.txt
   docbank cat id:12 > invoice.pdf`,
 	Long: `Streams the current version's original bytes. For binary files prefer

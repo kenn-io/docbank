@@ -18,6 +18,7 @@ type directoryListing struct {
 }
 
 var lsCmd = &cobra.Command{
+	Aliases: []string{listCommand},
 	Example: `  docbank ls
   docbank ls /cases/acme --json`,
 	GroupID: groupDocuments,
