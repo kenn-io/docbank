@@ -95,6 +95,9 @@ func Setup(ctx context.Context, db *sql.DB, c Config) (uuid.UUID, error) {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO `+pgx.Identifier{c.Schema}.Sanitize()+`.nodes(id, name, kind, created_at, modified_at) VALUES (1,'','dir',$1,$1)`, now); err != nil {
 			return uuid.Nil(), fmt.Errorf("initialize postgres root: %w", err)
 		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO `+pgx.Identifier{c.Schema}.Sanitize()+`.document_people_state(singleton,binding_epoch,updated_at) VALUES (1,1,$1)`, now); err != nil {
+			return uuid.Nil(), fmt.Errorf("initialize postgres people state: %w", err)
+		}
 		// Consent belongs to this storage incarnation, including an empty vault.
 		// Restore keeps a fresh target's pointer rather than reviving old grants.
 		if _, err := tx.ExecContext(ctx, `INSERT INTO `+pgx.Identifier{c.Schema}.Sanitize()+`.processing_incarnations(incarnation_id,created_at) VALUES ($1::uuid::text,$2)`, uuid.New(), now); err != nil {

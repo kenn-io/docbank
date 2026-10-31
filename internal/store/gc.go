@@ -272,7 +272,7 @@ func (s *Store) PurgeDerivatives(
 		if err != nil {
 			return err
 		}
-		if _, err := invalidateDocumentEventsForVersionsTx(ctx, tx, emailVersions); err != nil {
+		if _, err := s.invalidateDocumentEventsForVersionsTx(ctx, tx, emailVersions); err != nil {
 			return err
 		}
 		versionSet := stringSet(request.ContentVersionIDs)

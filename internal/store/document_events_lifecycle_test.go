@@ -41,7 +41,7 @@ func TestInvalidateDocumentEventsForVersionsRollsBackWithItsDirtyState(t *testin
 	}))
 
 	err = s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-		_, err := invalidateDocumentEventsForVersionsTx(t.Context(), tx, []string{node.CurrentVersionID})
+		_, err := s.invalidateDocumentEventsForVersionsTx(t.Context(), tx, []string{node.CurrentVersionID})
 		return err
 	})
 	require.ErrorContains(t, err, "forced dirty failure")
@@ -232,7 +232,7 @@ func TestLifecycleKeepsTimelineCoverageTruthful(t *testing.T) {
 	var removed int64
 	err = s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
 		var err error
-		removed, err = invalidateDocumentEventsForVersionsTx(t.Context(), tx, []string{trashedVersionID})
+		removed, err = s.invalidateDocumentEventsForVersionsTx(t.Context(), tx, []string{trashedVersionID})
 		return err
 	})
 	require.NoError(t, err)
