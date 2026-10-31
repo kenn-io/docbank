@@ -214,12 +214,14 @@ API-key-only. No MCP tool is exposed.
 Select a live PDF in **Documents**, then choose **Redact PDF**. The configured
 Linux amd64 page runtime is required. The editor supports one original PDF up
 to 64 MiB and 16 pages. Empty files, saved-result sources and related previews
-cannot start a review.
+cannot start a review. **Fit page** initially shows the whole page; choose
+**Fit width** or a percentage to inspect it more closely.
 
 1. Render any missing original page, then choose **Draw rectangle** or **Mask
    whole page**. To draw with the keyboard, focus the mask canvas, move with
    arrow keys and press Enter at each corner. Shift moves 0.1 inch; Escape
    cancels the unfinished rectangle. Page and zoom changes cancel it too.
+   Drawing stays on after each rectangle.
 2. Cover every coverage gap. An unordered gap needs a whole-page mask. If a
    rectangle cuts through text, review the proposed expansion and explicitly
    choose **Use expanded mask**, or keep editing.
@@ -237,11 +239,12 @@ bytes. Verification checks the masks and text; it does not prove unmasked pixels
 match the original or authenticate the producer.
 
 Only one temporary preview can be open across the daemon. It expires after
-30 minutes, and is removed on discard, editor-session revocation or daemon
-restart. Closing or reloading the tab revokes the editor's session and cancels
-active work and transfers. If a crash or lost cleanup request prevents that,
-wait for expiry. There is no saved draft or restart recovery. A ready preview
-releases the rendering slot but can retain up to 1.53 GiB of private spool files.
+30 minutes, and is removed on discard, sign-out or daemon restart. Closing or
+reloading the tab requests cancellation of this preview and its transfers. It
+does not end the browser session or cancel other exports and imports. Returning
+to a cached page leaves the editor closed. If a crash or lost cleanup request
+prevents removal, wait for expiry. There is no saved draft or restart recovery.
+A ready preview releases the rendering slot but can retain up to 1.53 GiB of private spool files.
 See [temporary-preview storage](../architecture/page-images.md#temporary-browser-redaction-previews).
 
 For later offline verification, expand **Private review files** and save the

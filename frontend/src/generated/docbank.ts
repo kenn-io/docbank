@@ -19070,6 +19070,30 @@ return sessionJSON<RedactionPreparation>(getPrepareNativePDFUrl(),
 
 
 
+export const getDiscardRedactionPreviewsUrl = () => {
+
+
+
+
+  return `/api/v1/redaction/previews`
+}
+
+/**
+ * @summary Cancel this owner's redaction preview and transfers
+ */
+export const discardRedactionPreviews = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
+
+  return sessionJSON<void>(getDiscardRedactionPreviewsUrl(),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
 export const getCreateRedactionPreviewUrl = () => {
 
 

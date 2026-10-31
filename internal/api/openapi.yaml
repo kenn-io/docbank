@@ -30098,6 +30098,18 @@ paths:
           description: Gateway Timeout
       summary: Inspect an exact retained native PDF for redaction preparation
   /api/v1/redaction/previews:
+    delete:
+      operationId: discardRedactionPreviews
+      responses:
+        "204":
+          description: Cancel this owner's redaction preview and transfers
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Preview request failed
+      summary: Cancel this owner's redaction preview and transfers
     post:
       operationId: createRedactionPreview
       requestBody:

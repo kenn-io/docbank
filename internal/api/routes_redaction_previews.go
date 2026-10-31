@@ -46,7 +46,10 @@ func redactionBrowserRequestAllowed(r *http.Request) bool {
 	if r.URL.RawQuery != "" {
 		return false
 	}
-	if r.URL.Path == "/api/v1/redaction/prepare" || r.URL.Path == "/api/v1/redaction/resolve" || r.URL.Path == redactionPreviewsPath {
+	if r.URL.Path == redactionPreviewsPath {
+		return r.Method == http.MethodPost || r.Method == http.MethodDelete
+	}
+	if r.URL.Path == "/api/v1/redaction/prepare" || r.URL.Path == "/api/v1/redaction/resolve" {
 		return r.Method == http.MethodPost
 	}
 	rest, ok := strings.CutPrefix(r.URL.Path, redactionPreviewsPath+"/")
@@ -74,7 +77,7 @@ func redactionBrowserRequestAllowed(r *http.Request) bool {
 
 func (s *Server) registerRedactionPreviews(mux *http.ServeMux) {
 	registerRedactionPreviewOpenAPI(s.api)
-	routes := []string{"POST " + redactionPreviewsPath, "GET " + redactionPreviewsPath + "/{id}", "DELETE " + redactionPreviewsPath + "/{id}",
+	routes := []string{"POST " + redactionPreviewsPath, "DELETE " + redactionPreviewsPath, "GET " + redactionPreviewsPath + "/{id}", "DELETE " + redactionPreviewsPath + "/{id}",
 		"GET " + redactionPreviewsPath + "/{id}/pages/{page}", "GET " + redactionPreviewsPath + "/{id}/text", "GET " + redactionPreviewsPath + "/{id}/bundle", "POST " + redactionPreviewsPath + "/{id}/download"}
 	for _, route := range routes {
 		mux.HandleFunc(route, s.serveRedactionPreview)
@@ -101,6 +104,11 @@ func (s *Server) serveRedactionPreview(w http.ResponseWriter, r *http.Request) {
 	r = r.WithContext(ctx)
 	id := r.PathValue("id")
 	if r.URL.Path == redactionPreviewsPath {
+		if r.Method == http.MethodDelete {
+			s.deps.Processing.RevokeRedactionPreviews(owner)
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		s.createRedactionPreviewHTTP(w, r, owner)
 		return
 	}
@@ -333,6 +341,7 @@ func registerRedactionPreviewOpenAPI(api huma.API) {
 		status                    string
 	}{
 		{"POST", redactionPreviewsPath, "createRedactionPreview", "Render one temporary verified PDF preview", reflect.TypeFor[previewInput](), manifest, "201"},
+		{"DELETE", redactionPreviewsPath, "discardRedactionPreviews", "Cancel this owner's redaction preview and transfers", nil, nil, "204"},
 		{"GET", redactionPreviewsPath + "/{id}", "getRedactionPreview", "Read a temporary redaction preview", nil, manifest, "200"},
 		{"DELETE", redactionPreviewsPath + "/{id}", "discardRedactionPreview", "Discard a temporary redaction preview", nil, nil, "204"},
 		{"POST", redactionPreviewsPath + "/{id}/download", "downloadRedactionPreview", "Confirm and request a one-use ZIP download", reflect.TypeFor[redactionPreviewConfirmation](), schemas.Schema(reflect.TypeFor[redactionPreviewTicket](), true, ""), "200"},

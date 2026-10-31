@@ -29,7 +29,11 @@
 >
   <div
     class="page-content"
-    style:width={zoom === "fit" ? "100%" : `${((width / 10000) * 96 * Number(zoom)) / 100}px`}
+    style:width={zoom === "page"
+      ? `min(100%, calc(${maxHeight} * ${width} / ${height}))`
+      : zoom === "fit"
+        ? "100%"
+        : `${((width / 10000) * 96 * Number(zoom)) / 100}px`}
     style:aspect-ratio={`${width} / ${height}`}
   >
     <img src={url} alt={label} />
@@ -45,6 +49,7 @@
   }
   .page-content {
     position: relative;
+    margin-inline: auto;
     background: white;
   }
   img {

@@ -22,13 +22,13 @@ const source: SelectedSource = {
 };
 it("Escape dismisses only the inner discard dialog, then closing aborts preparation", async () => {
   let signal: AbortSignal | undefined;
-  vi.spyOn(globalThis, "fetch").mockImplementation(
-    (_url, init) =>
-      new Promise((_resolve, reject) => {
-        signal = init?.signal as AbortSignal;
-        signal.addEventListener("abort", () => reject(signal?.reason), { once: true });
-      }),
-  );
+  vi.spyOn(globalThis, "fetch").mockImplementation((_url, init) => {
+    if (init?.method === "DELETE") return Promise.resolve(new Response(null, { status: 204 }));
+    return new Promise((_resolve, reject) => {
+      signal = init?.signal as AbortSignal;
+      signal.addEventListener("abort", () => reject(signal?.reason), { once: true });
+    });
+  });
   const onclose = vi.fn();
   render(RedactionDrawer, {
     session: "synthetic-tab",
@@ -68,4 +68,38 @@ it("routes an expired session to the app and never presents an empty successful 
   await vi.waitFor(() => expect(onauthfailure).toHaveBeenCalledOnce());
   expect(screen.queryByRole("button", { name: "Preview redaction" })).toBeNull();
   expect(screen.queryByText("No masks")).toBeNull();
+});
+
+it("pagehide releases only the preview and closes the cached editor", async () => {
+  let preparation: AbortSignal | undefined;
+  const cleanupRequests: { path: string; session: string | null; keepalive?: boolean }[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation((url, init) => {
+    if (init?.method === "DELETE") {
+      cleanupRequests.push({
+        path: String(url),
+        session: new Headers(init.headers).get("X-Docbank-Web-Session"),
+        keepalive: init.keepalive,
+      });
+      return Promise.resolve(new Response(null, { status: 204 }));
+    }
+    return new Promise((_resolve, reject) => {
+      preparation = init?.signal as AbortSignal;
+      preparation.addEventListener("abort", () => reject(preparation?.reason), { once: true });
+    });
+  });
+  const onclose = vi.fn();
+  render(RedactionDrawer, {
+    session: "synthetic-tab",
+    source,
+    authorizationRevision: 1,
+    onclose,
+    onauthfailure: vi.fn(),
+  });
+  await screen.findByText("Preparing PDF…");
+  await fireEvent(window, new PageTransitionEvent("pagehide", { persisted: true }));
+  expect(preparation?.aborted).toBe(true);
+  expect(cleanupRequests).toEqual([
+    { path: "/api/v1/redaction/previews", session: "synthetic-tab", keepalive: true },
+  ]);
+  expect(onclose).toHaveBeenCalledOnce();
 });

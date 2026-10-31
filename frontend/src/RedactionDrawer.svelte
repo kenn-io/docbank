@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
-  import { Button, Modal, SelectDropdown, Spinner } from "@kenn-io/kit-ui";
+  import { Button, Modal, SelectDropdown, Spinner, Toggle } from "@kenn-io/kit-ui";
   import DrawerShell from "./DrawerShell.svelte";
   import PageCanvas from "./PageCanvas.svelte";
   import RedactionCanvas from "./RedactionCanvas.svelte";
@@ -9,7 +9,7 @@
   import { APIError } from "./api-transport.js";
   import {
     getNode,
-    revokeWebSession,
+    discardRedactionPreviews,
     type RedactionPreparation,
     type RedactionMask,
     type RedactionReview,
@@ -53,7 +53,7 @@
   let error = $state("");
   let notice = $state("");
   let page = $state(1),
-    zoom = $state("fit");
+    zoom = $state("page");
   let tab = $state<"original" | "redacted" | "text">("original");
   let drawing = $state(false),
     dragging = $state(false),
@@ -136,7 +136,7 @@
     clearImage();
     viewer?.dispose();
     clearTimeout(expiry);
-    if (preview) void discardRedaction(session, preview, true).catch(() => undefined);
+    void discardRedactionPreviews({ session, keepalive: true }).catch(() => undefined);
     masks = [];
     preparation = undefined;
     review = undefined;
@@ -252,7 +252,6 @@
         selector: { kind: "rectangle", map_sha256: preparation!.map.sha256, boxes: [box] },
       },
     ];
-    drawing = false;
   }
   function maskPage() {
     if (busy || preview || !preparation || masks.length >= 256) return;
@@ -400,13 +399,6 @@
           phase = "editing";
         }
       });
-    const hide = () => {
-      controller.abort();
-      void revokeWebSession(undefined, { session: inputs.session, keepalive: true }).catch(
-        () => undefined,
-      );
-      dispose();
-    };
     const escape = (e: KeyboardEvent) => {
       if (e.key === "Escape" && dialog) {
         e.preventDefault();
@@ -414,10 +406,10 @@
         dialog = undefined;
       }
     };
-    window.addEventListener("pagehide", hide);
+    window.addEventListener("pagehide", close);
     window.addEventListener("keydown", escape, true);
     return () => {
-      window.removeEventListener("pagehide", hide);
+      window.removeEventListener("pagehide", close);
       window.removeEventListener("keydown", escape, true);
       dispose();
     };
@@ -462,8 +454,9 @@
           title="Zoom"
           value={zoom}
           options={[
+            { value: "page", label: "Fit page" },
             { value: "fit", label: "Fit width" },
-            ...[100, 200].map((n) => ({ value: String(n), label: `${n}%` })),
+            ...[50, 100, 200].map((n) => ({ value: String(n), label: `${n}%` })),
           ]}
           onchange={(v) => {
             zoom = v;
@@ -543,9 +536,10 @@
           <ol>
             {#each masks as mask, index (mask.id)}<li>
                 <span
-                  >{mask.selector.kind === "page" ? "Whole page" : "Rectangle"}
-                  {index + 1} · Page {mask.selector.pages?.join(", ") ??
-                    [...new Set(mask.selector.boxes?.map((b) => b.page))].join(", ")}</span
+                  >{#if mask.selector.kind === "page"}Whole page {mask.selector.pages?.join(", ")}
+                  {:else}Rectangle {index + 1} · Page {[
+                      ...new Set(mask.selector.boxes?.map((b) => b.page)),
+                    ].join(", ")}{/if}</span
                 ><Button
                   size="sm"
                   disabled={busy || !!preview}
@@ -570,11 +564,11 @@
               <p>
                 The selected region cuts through text. Review the full region before continuing.
               </p>
-              <ul>
-                {#each expansion.selector.boxes ?? [] as b}<li>
-                    Page {b.page}: ({b.x0}, {b.y0})–({b.x1}, {b.y1})
-                  </li>{/each}
-              </ul>
+              <div class="gap-pages">
+                {#each [...new Set(expansion.selector.boxes?.map((b) => b.page))] as n}
+                  <Button size="sm" onclick={() => changePage(n)}>Page {n}</Button>
+                {/each}
+              </div>
               <Button
                 size="sm"
                 tone="info"
@@ -616,20 +610,18 @@
         ><Button onclick={cancelRender}>Cancel preview</Button>
       {:else if preview}<Button disabled={downloading} onclick={() => void back()}
           >Back to masks</Button
-        ><Button disabled={downloading} onclick={() => void back()}>Discard preview</Button><Button
+        ><Button
           tone="info"
           surface="solid"
           disabled={downloading || outputLoading}
           onclick={() => (dialog = "download")}>Confirm and download ZIP</Button
         >
-      {:else if preparation}<Button
+      {:else if preparation}<Toggle
           disabled={busy || !imageReady || masks.length >= 256}
-          surface={drawing ? "solid" : "soft"}
-          onclick={() => {
-            drawing = !drawing;
-            dragging = false;
-          }}>Draw rectangle</Button
-        ><Button disabled={busy || !imageReady || masks.length >= 256} onclick={maskPage}
+          label="Draw rectangle"
+          bind:checked={drawing}
+          onchange={() => (dragging = false)}
+        /><Button disabled={busy || !imageReady || masks.length >= 256} onclick={maskPage}
           >Mask whole page</Button
         ><Button
           tone="info"
@@ -728,10 +720,6 @@
     gap: var(--space-3);
     border: 1px solid var(--border-default);
     padding: var(--space-3);
-  }
-  .expansion ul {
-    padding: 0;
-    font-size: var(--font-size-xs);
   }
   .footer {
     padding: var(--space-4) var(--space-6);

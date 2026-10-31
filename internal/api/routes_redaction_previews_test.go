@@ -98,6 +98,8 @@ func TestRedactionPreviewBrowserHTTP(t *testing.T) {
 	}
 	resp, body = call(bob, "DELETE", base, nil)
 	require.Equal(t, 410, resp.StatusCode, string(body))
+	resp, body = call(bob, "DELETE", "/api/v1/redaction/previews", nil)
+	require.Equal(t, 204, resp.StatusCode, string(body))
 	resp, body = call(alice, "GET", base+"/text", nil)
 	require.Equal(t, 200, resp.StatusCode, string(body))
 	require.Equal(t, "[REDACTED] KEEP SECRET\f", string(body))
@@ -139,8 +141,10 @@ func TestRedactionPreviewBrowserHTTP(t *testing.T) {
 		require.Equal(t, 404, resp.StatusCode)
 		require.NoError(t, resp.Body.Close())
 	}
-	resp, body = call(alice, "DELETE", base, nil)
+	resp, body = call(alice, "DELETE", "/api/v1/redaction/previews", nil)
 	require.Equal(t, 204, resp.StatusCode, string(body))
+	resp, body = call(alice, "GET", fmt.Sprintf("/api/v1/nodes/%d", node.ID), nil)
+	require.Equal(t, 200, resp.StatusCode, "discard must preserve the browser session: %s", body)
 	resp, body = call(alice, "DELETE", base, nil)
 	require.Equal(t, 410, resp.StatusCode, string(body))
 	// Recreate a preview and leave a real ticket transfer blocked on a small

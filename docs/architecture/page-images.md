@@ -313,6 +313,7 @@ Authenticated preview routes are under `/api/v1/redaction/previews`:
 | `GET /previews/{id}/bundle` | ZIP for API-key clients. Browser sessions must use a ticket. |
 | `POST /previews/{id}/download` | Literal confirmation plus the review and archive digests produce a one-use, two-minute browser ticket. |
 | `DELETE /previews/{id}` | Retire this owner's preview. |
+| `DELETE /previews` | Cancel this owner's in-flight creation and preview transfers; retire its ready preview. Other owners and browser-session resources are unchanged. |
 
 The random 48-hex ID is never authority by itself. Unknown, expired, retired and
 other-owner previews return 410 `redaction_preview_unavailable`. Confirmation
@@ -351,8 +352,10 @@ are file-payload bounds, not a global disk quota; tmpfs space is outside process
 RSS accounting. Preview handles, masks and reviews are not persisted to SQLite.
 The browser keeps one displayed image URL, verifies its length/hash and PNG
 header before decode, and binds its frame to preparation before enabling drawing.
-Its editor explicitly revokes the session on pagehide; session-duration telemetry
-alone does not release server resources. Lost cleanup messages rely on expiry.
+The editor closes on pagehide and requests owner-scoped preview cancellation,
+including when creation has not returned a handle. It does not revoke the
+browser session or cancel unrelated exports and imports. A cached page returns
+with the editor closed. Lost cleanup messages rely on expiry.
 The browser retains a preview handle until the server reports it unavailable or
 acknowledges discard; its wall clock does not establish expiry. Returning to
 original pages revalidates the source and reloads a verified image with the

@@ -12372,6 +12372,45 @@ func (c *Client) PrepareNativePDF(ctx context.Context, options *PrepareNativePDF
 	return responseParser(ctx, resp)
 }
 
+// DiscardRedactionPreviews Cancel this owner's redaction preview and transfers
+func (c *Client) DiscardRedactionPreviews(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/redaction/previews",
+		Method:     "DELETE",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*struct{}, error) {
+		switch resp.StatusCode {
+
+		case 204:
+
+			target := new(struct{})
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[DiscardRedactionPreviewsErrorResponse](resp, "DiscardRedactionPreviewsErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/redaction/previews")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 204)
+	}
+	return responseParser(ctx, resp)
+}
+
 // CreateRedactionPreview Render one temporary verified PDF preview
 func (c *Client) CreateRedactionPreview(ctx context.Context, options *CreateRedactionPreviewRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateRedactionPreviewResponse, error) {
 	var err error
@@ -29229,6 +29268,8 @@ type PrepareNativePDFErrorResponseApplicationProblemPlusJSON500 api.Error
 type PrepareNativePDFErrorResponseApplicationProblemPlusJSON503 api.Error
 
 type PrepareNativePDFErrorResponseApplicationProblemPlusJSON504 api.Error
+
+type DiscardRedactionPreviewsErrorResponse = Error
 
 type CreateRedactionPreviewResponse = processing.RedactionPreview
 
