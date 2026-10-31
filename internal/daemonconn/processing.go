@@ -520,7 +520,11 @@ func (c *Connection) ValidateDocumentSearch(
 }
 
 func validateDocumentSearchReport(request api.DocumentSearchRequest, report api.DocumentSearchReport) error {
-	if !validUUIDv4(request.Fence.VaultUID) || len(request.Fence.ContentVersionIDs) < 1 ||
+	if request.Scope != nil {
+		if request.Fence.VaultUID != "" || len(request.Fence.ContentVersionIDs) != 0 {
+			return errors.New("scoped request contains a fence")
+		}
+	} else if !validUUIDv4(request.Fence.VaultUID) || len(request.Fence.ContentVersionIDs) < 1 ||
 		len(request.Fence.ContentVersionIDs) > 4096 {
 		return errors.New("request fence identity is invalid")
 	}
@@ -577,7 +581,7 @@ func validateDocumentSearchReport(request api.DocumentSearchRequest, report api.
 	} else if report.Reranking != nil {
 		return errors.New("unrequested reranking receipt was returned")
 	}
-	if report.Coverage.ScopedDocuments < 0 || report.Coverage.ScopedDocuments > len(versions) ||
+	if report.Coverage.ScopedDocuments < 0 || (request.Scope == nil && report.Coverage.ScopedDocuments > len(versions)) ||
 		report.Coverage.CompleteDocuments < 0 ||
 		report.Coverage.CompleteDocuments > report.Coverage.ScopedDocuments ||
 		(report.Coverage.State != "unknown" && report.Coverage.State != "complete" &&
@@ -603,11 +607,15 @@ func validateDocumentSearchReport(request api.DocumentSearchRequest, report api.
 	seenDocuments := make(map[resultIdentity]struct{}, len(report.Results))
 	seenLexicalRanks := make(map[int]struct{}, len(report.Results))
 	seenSemanticRanks := make(map[int]struct{}, len(report.Results))
+	vaultUID := request.Fence.VaultUID
 	for index, result := range report.Results {
-		if result.VaultUID != request.Fence.VaultUID || !validUUIDv4(result.VaultUID) {
+		if request.Scope != nil && index == 0 {
+			vaultUID = result.VaultUID
+		}
+		if result.VaultUID != vaultUID || !validUUIDv4(result.VaultUID) {
 			return fmt.Errorf("result %d escaped the vault fence", index)
 		}
-		if _, allowed := versions[result.ContentVersionID]; !allowed || !validUUIDv4(result.ContentVersionID) {
+		if _, allowed := versions[result.ContentVersionID]; (!allowed && request.Scope == nil) || !validUUIDv4(result.ContentVersionID) {
 			return fmt.Errorf("result %d escaped the content-version fence", index)
 		}
 		if result.NodeID < 1 || result.Rank != index+1 || math.IsNaN(result.Score) || math.IsInf(result.Score, 0) {

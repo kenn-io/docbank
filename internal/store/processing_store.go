@@ -152,13 +152,9 @@ func (s *Store) resolveFilteredProcessingSourceFence(
 func (s *Store) resolveFilteredProcessingSourceFenceSnapshot(
 	ctx context.Context, snapshot *sql.Tx, filters SearchOptions,
 ) (ProcessingSourceFenceResolution, error) {
-	normalized, err := s.normalizeSearchOptionsWithQuerier(ctx, snapshot, filters)
+	normalized, err := s.normalizeProcessingSearchFilters(ctx, snapshot, filters)
 	if err != nil {
-		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrNotDir) {
-			return ProcessingSourceFenceResolution{}, err
-		}
-		return ProcessingSourceFenceResolution{}, fmt.Errorf("%w: %w",
-			ErrInvalidProcessingSourceFence, err)
+		return ProcessingSourceFenceResolution{}, err
 	}
 	filterSQL, args := searchFilterSQL(normalized)
 	var observed int
@@ -193,4 +189,23 @@ func (s *Store) resolveFilteredProcessingSourceFenceSnapshot(
 		return ProcessingSourceFenceResolution{}, errors.New("source-fence scope count disagrees")
 	}
 	return ProcessingSourceFenceResolution{ContentVersionIDs: ids, ObservedScopeCount: observed}, nil
+}
+
+// NormalizeProcessingSearchFilters validates a filter-only live search population.
+func (s *Store) NormalizeProcessingSearchFilters(ctx context.Context, filters SearchOptions) (SearchOptions, error) {
+	return s.normalizeProcessingSearchFilters(ctx, s.db, filters)
+}
+
+func (s *Store) normalizeProcessingSearchFilters(ctx context.Context, queryer rowQuerier, filters SearchOptions) (SearchOptions, error) {
+	if len(filters.ContentVersionIDs) != 0 {
+		return SearchOptions{}, fmt.Errorf("%w: metadata filters cannot contain a source fence", ErrInvalidProcessingSourceFence)
+	}
+	normalized, err := s.normalizeSearchOptionsWithQuerier(ctx, queryer, filters)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrNotDir) {
+			return SearchOptions{}, err
+		}
+		return SearchOptions{}, fmt.Errorf("%w: %w", ErrInvalidProcessingSourceFence, err)
+	}
+	return normalized, nil
 }

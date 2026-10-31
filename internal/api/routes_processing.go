@@ -423,7 +423,7 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 	})
 	huma.Register(api, huma.Operation{
 		OperationID: "searchDocuments", Method: http.MethodPost,
-		Path: "/api/v1/search", Summary: "Search exact source-fenced document versions",
+		Path: "/api/v1/search", Summary: "Search document versions by fence or live scope",
 		MaxBodyBytes: 16 << 20,
 	}, func(ctx context.Context, input *searchInput) (*searchOutput, error) {
 		report, err := searchDocuments(ctx, d.Processing, input.Body)
@@ -845,7 +845,7 @@ func fromProcessingError(err error) error {
 		result.ObservedScopeCount = scopeError.ObservedScopeCount
 		return result
 	}
-	if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrVersionNodeMismatch) || errors.Is(err, store.ErrSearchQueryRequired) {
+	if errors.Is(err, store.ErrNotDir) || errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrVersionNodeMismatch) || errors.Is(err, store.ErrSearchQueryRequired) {
 		return FromStoreError(err)
 	}
 	return NewError(http.StatusInternalServerError, "processing_failed", detailPrefix+"document processing failed")
@@ -857,9 +857,8 @@ func resolveDocumentSourceFence(ctx context.Context, service *processing.Service
 	}
 	var filters *store.SearchOptions
 	if input.Filters != nil {
-		filters = &store.SearchOptions{SourcePresent: input.Filters.SourcePresent, TagID: input.Filters.TagID,
-			MIMEType: input.Filters.MIMEType, UnderNodeID: input.Filters.UnderNodeID,
-			ModifiedSince: input.Filters.ModifiedSince, ModifiedBefore: input.Filters.ModifiedBefore}
+		options := searchFilterOptions(input.Filters)
+		filters = &options
 	}
 	resolved, err := service.ResolveSourceFence(ctx, processing.SourceFenceResolveRequest{
 		ContentVersionIDs: input.ContentVersionIDs, Filters: filters,
@@ -892,7 +891,15 @@ func searchDocuments(ctx context.Context, service *processing.Service, input Doc
 	if service == nil {
 		return DocumentSearchReport{}, processingUnavailable()
 	}
-	report, err := service.Search(ctx, processing.SearchRequest{Query: input.Query,
+	var allLive *store.SearchOptions
+	if input.Scope != nil {
+		if input.Scope.Kind != "all_live" {
+			return DocumentSearchReport{}, fromProcessingError(store.ErrInvalidProcessingSourceFence)
+		}
+		options := searchFilterOptions(input.Scope.Filters)
+		allLive = &options
+	}
+	report, err := service.Search(ctx, processing.SearchRequest{Query: input.Query, AllLive: allLive,
 		ContentFirst: input.ContentFirst,
 		Mode:         input.Mode, Limit: input.Limit, Profile: input.Profile,
 		BindingID: input.BindingID, Explain: input.Explain,
@@ -903,4 +910,13 @@ func searchDocuments(ctx context.Context, service *processing.Service, input Doc
 		return DocumentSearchReport{}, fromProcessingError(err)
 	}
 	return fromDocumentSearchReport(report, input.Explain), nil
+}
+
+func searchFilterOptions(filters *DocumentSourceFenceFilters) store.SearchOptions {
+	if filters == nil {
+		return store.SearchOptions{}
+	}
+	return store.SearchOptions{SourcePresent: filters.SourcePresent, TagID: filters.TagID,
+		MIMEType: filters.MIMEType, UnderNodeID: filters.UnderNodeID,
+		ModifiedSince: filters.ModifiedSince, ModifiedBefore: filters.ModifiedBefore}
 }

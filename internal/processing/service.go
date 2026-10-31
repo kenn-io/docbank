@@ -371,6 +371,7 @@ type Coverage struct {
 }
 
 type SearchRequest struct {
+	AllLive                         *store.SearchOptions
 	MediaSources                    []retrieval.MediaSourceSelector
 	Query, Mode, Profile, BindingID string
 	Limit                           int
@@ -1582,7 +1583,28 @@ func (service *Service) ResolveSourceFence(
 }
 
 func (service *Service) Search(ctx context.Context, request SearchRequest) (retrieval.Report, error) {
-	profile, ids, err := service.profileFence(request.Profile, request.Fence)
+	explicit := request.Fence.VaultUID != "" || len(request.Fence.ContentVersionIDs) != 0
+	if explicit == (request.AllLive != nil) {
+		return retrieval.Report{}, fmt.Errorf("%w: select exactly one request mode", store.ErrInvalidProcessingSourceFence)
+	}
+	if request.AllLive != nil && request.MediaSources != nil {
+		return retrieval.Report{}, ErrMediaSearchInvalid
+	}
+	var profile configuredProfile
+	var ids []string
+	var searchScope store.SearchOptions
+	var err error
+	if request.AllLive != nil {
+		var ok bool
+		profile, ok = service.profiles[request.Profile]
+		if !ok {
+			return retrieval.Report{}, ErrProfileNotConfigured
+		}
+		searchScope, err = service.catalog.NormalizeProcessingSearchFilters(ctx, *request.AllLive)
+	} else {
+		profile, ids, err = service.profileFence(request.Profile, request.Fence)
+		searchScope.ContentVersionIDs = ids
+	}
 	if err != nil {
 		return retrieval.Report{}, err
 	}
@@ -1611,7 +1633,6 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 			prepared.rerankingAuthorizer.queryFenceHeld = true
 		}
 	}
-	searchScope := store.SearchOptions{ContentVersionIDs: ids}
 	if provider := profile.embedders[prepared.bindingID]; provider != nil {
 		descriptor := provider.Descriptor()
 		searchScope.EmbeddingDescriptor = &descriptor

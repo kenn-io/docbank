@@ -445,6 +445,7 @@ export function validateDocumentSearchReport(
   const invalid = (): never => {
     throw new Error("The daemon returned an invalid search response.");
   };
+  if (!request.fence) throw new Error("A source fence is required.");
   if (
     !canonicalUUID(request.fence.vault_uid) ||
     request.fence.content_version_ids.length < 1 ||

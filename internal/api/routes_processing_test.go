@@ -1798,3 +1798,59 @@ func TestEvidenceWindowHTTPContract(t *testing.T) {
 	assert.Contains(t, body, `"code":"content_missing"`)
 	assert.NotContains(t, body, "aé界🙂z")
 }
+
+func TestDocumentSearchAllLiveScope(t *testing.T) {
+	t.Parallel()
+	ts, catalog := newTestServer(t, configureProcessingTestService(t))
+	node := createFileWithContent(t, ts, catalog, "/current.txt", "synthetic current text")
+	for _, tc := range []struct {
+		name   string
+		scope  any
+		fence  any
+		media  any
+		status int
+		code   string
+	}{
+		{name: "neither", status: 422, code: "validation"},
+		{name: "both", scope: map[string]any{"kind": "all_live"}, fence: api.DocumentSourceFence{VaultUID: catalog.VaultID(), ContentVersionIDs: []string{node.CurrentVersionID}}, status: 422, code: "validation"},
+		{name: "media", scope: map[string]any{"kind": "all_live"}, media: []map[string]any{{"source_id": "source-a", "source_version_id": "version-a", "content_version_id": node.CurrentVersionID}}, status: 422, code: "invalid_media_search"},
+		{name: "unknown kind", scope: map[string]any{"kind": "unknown"}, status: 422, code: "validation"},
+		{name: "bad mime", scope: map[string]any{"kind": "all_live", "filters": map[string]any{"mime_type": "text/*"}}, status: 422, code: "validation"},
+		{name: "reversed dates", scope: map[string]any{"kind": "all_live", "filters": map[string]any{"modified_since": "2026-10-02T00:00:00Z", "modified_before": "2026-10-01T00:00:00Z"}}, status: 422, code: "validation"},
+		{name: "file as directory", scope: map[string]any{"kind": "all_live", "filters": map[string]any{"under_node_id": node.ID}}, status: 422, code: "not_dir"},
+		{name: "missing tag", scope: map[string]any{"kind": "all_live", "filters": map[string]any{"tag_id": "33333333-3333-4333-8333-333333333333"}}, status: 404, code: "not_found"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			request := map[string]any{"query": "current", "mode": "lexical", "profile": "private"}
+			if tc.scope != nil {
+				request["scope"] = tc.scope
+			}
+			if tc.fence != nil {
+				request["fence"] = tc.fence
+			}
+			if tc.media != nil {
+				request["media_sources"] = tc.media
+			}
+			response, body := do(t, ts, http.MethodPost, "/api/v1/search", nil, request)
+			assert.Equal(t, tc.status, response.StatusCode, body)
+			var problem api.Error
+			require.NoError(t, json.Unmarshal([]byte(body), &problem))
+			assert.Equal(t, tc.code, problem.Code, body)
+		})
+	}
+	run, err := catalog.BeginIngest(t.Context(), "watch", "notes")
+	require.NoError(t, err)
+	_, err = catalog.IngestFileExact(t.Context(), run, catalog.RootID(), "current-gone.txt", node.BlobHash, node.Size, "text/plain", "current-gone.txt", "")
+	require.NoError(t, err)
+	require.NoError(t, catalog.ReconcileWatchSourcePresence(t.Context(), "notes", store.WatchPresenceScan{ListedDirs: []string{""}}, time.Now()))
+	client := daemonconn.New(ts.URL, testAPIKey)
+	request := api.DocumentSearchRequest{Query: "current", Mode: "lexical", Profile: "private", Scope: &api.DocumentSearchScope{Kind: "all_live"}}
+	report, err := client.SearchDocuments(t.Context(), request)
+	require.NoError(t, err)
+	require.Len(t, report.Results, 2)
+	request.Scope.Filters = &api.DocumentSourceFenceFilters{SourcePresent: true}
+	report, err = client.SearchDocuments(t.Context(), request)
+	require.NoError(t, err)
+	require.Len(t, report.Results, 1)
+	assert.Equal(t, node.CurrentVersionID, report.Results[0].ContentVersionID)
+}

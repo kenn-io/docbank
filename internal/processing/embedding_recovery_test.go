@@ -18,6 +18,7 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/document/openaicompat"
+	"go.kenn.io/docbank/internal/retrieval"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -445,4 +446,51 @@ func TestEmbeddingReuseRejectsInvalidRetainedEvidence(t *testing.T) {
 	require.Equal(t, "failed", status.State)
 	require.Equal(t, store.EmbeddingFailureInputRejected, status.FailureCode, "invalid retained evidence must fail like the provider path instead of retrying")
 	require.Zero(t, provider.documents.Load())
+}
+
+func TestSearchAllLiveBeyondExplicitFenceLimit(t *testing.T) {
+	t.Parallel()
+	f := newEmbeddingRecoveryFixture(t)
+	_, _, err := f.catalog.TrashPath(t.Context(), "/source.pdf")
+	require.NoError(t, err)
+	provider := newRecoveryProvider(t, f.request.Descriptor)
+	service := f.service(t, provider.Descriptor(), provider)
+	for _, id := range f.versions {
+		version, err := f.catalog.ContentVersionByID(t.Context(), id)
+		require.NoError(t, err)
+		selector := Selector{Profile: "current", NodeID: version.NodeID, ContentVersionID: id}
+		plan, err := service.Plan(t.Context(), selector)
+		require.NoError(t, err)
+		_, err = service.Start(t.Context(), StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true})
+		require.NoError(t, err)
+	}
+	f.grant(t, service, true)
+	receipt, err := f.blobs.WriteDetailedContext(t.Context(), strings.NewReader("unprocessed synthetic text"))
+	require.NoError(t, err)
+	ids := append([]string{}, f.versions...)
+	for index := range 4097 {
+		node, err := f.catalog.CreateFile(t.Context(), f.catalog.RootID(), fmt.Sprintf("extra-%d.txt", index), receipt.Hash, receipt.Size, "text/plain", processingBlobPhysical(t, receipt))
+		require.NoError(t, err)
+		ids = append(ids, node.CurrentVersionID)
+	}
+	request := SearchRequest{Profile: "current", Query: "synthetic", Mode: "semantic", AllLive: &store.SearchOptions{}}
+	report, err := service.Search(t.Context(), request)
+	require.NoError(t, err)
+	require.Len(t, report.Results, 2)
+	assert.Equal(t, 4099, report.Coverage.ScopedDocuments)
+	assert.Equal(t, 2, report.Coverage.CompleteDocuments)
+	assert.Equal(t, retrieval.CoverageState("incomplete"), report.Coverage.State)
+	for _, result := range report.Results {
+		assert.Contains(t, f.versions, result.Document.ContentVersionID)
+	}
+	request.AllLive = &store.SearchOptions{MIMEType: "application/pdf"}
+	report, err = service.Search(t.Context(), request)
+	require.NoError(t, err)
+	assert.Equal(t, 2, report.Coverage.ScopedDocuments)
+	assert.Equal(t, 2, report.Coverage.CompleteDocuments)
+	assert.Equal(t, retrieval.CoverageState("complete"), report.Coverage.State)
+	request.AllLive = nil
+	request.Fence = SourceFence{VaultUID: f.catalog.VaultID(), ContentVersionIDs: ids}
+	_, err = service.Search(t.Context(), request)
+	require.ErrorContains(t, err, "source fence must contain between 1 and 4096 content versions")
 }

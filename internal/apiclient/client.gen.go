@@ -13432,7 +13432,7 @@ func (c *Client) Search(ctx context.Context, options *SearchRequestOptions, reqE
 	return responseParser(ctx, resp)
 }
 
-// SearchDocuments Search exact source-fenced document versions
+// SearchDocuments Search document versions by fence or live scope
 func (c *Client) SearchDocuments(ctx context.Context, options *SearchDocumentsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchDocumentsResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
@@ -29990,6 +29990,8 @@ type DocumentSearchRequest = api.DocumentSearchRequest
 type DocumentSearchRerankingReceipt = api.DocumentSearchRerankingReceipt
 
 type DocumentSearchResult = api.DocumentSearchResult
+
+type DocumentSearchScope = api.DocumentSearchScope
 
 type DocumentSearchTrace = api.DocumentSearchTrace
 
