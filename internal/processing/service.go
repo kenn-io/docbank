@@ -1328,7 +1328,7 @@ func (service *Service) Status(ctx context.Context, jobID string) (Status, error
 		if err != nil {
 			return Status{}, err
 		}
-		return service.profileStatus(jobID, waiter.ProfileFingerprint, &rendition, embeddings), nil
+		return service.profileStatus(ctx, jobID, waiter.ProfileFingerprint, &rendition, embeddings)
 	}
 	if !errors.Is(waiterErr, store.ErrNotFound) {
 		return Status{}, waiterErr
@@ -1341,7 +1341,7 @@ func (service *Service) Status(ctx context.Context, jobID string) (Status, error
 		if err != nil {
 			return Status{}, err
 		}
-		return service.profileStatus(jobID, embedding.ProfileFingerprint, nil, embeddings), nil
+		return service.profileStatus(ctx, jobID, embedding.ProfileFingerprint, nil, embeddings)
 	}
 	if !errors.Is(embeddingErr, store.ErrNotFound) {
 		return Status{}, embeddingErr
@@ -1355,26 +1355,26 @@ func (service *Service) Status(ctx context.Context, jobID string) (Status, error
 	return aggregateStatus(jobID, &rendition, nil), nil
 }
 
-func (service *Service) profileStatus(jobID, profileFingerprint string, rendition *store.RenditionJob,
+func (service *Service) profileStatus(ctx context.Context, jobID, profileFingerprint string, rendition *store.RenditionJob,
 	embeddings []store.EmbeddingJobStatus,
-) Status {
+) (Status, error) {
+	record, err := service.catalog.ProcessingProfile(ctx, profileFingerprint)
+	if err != nil {
+		return Status{}, err
+	}
+	var profile document.ProcessingProfileV1
+	if err := json.Unmarshal(record.CanonicalProfile, &profile, json.RejectUnknownMembers(true)); err != nil {
+		return Status{}, err
+	}
 	status := aggregateStatus(jobID, rendition, embeddings)
-	if status.State != "completed" {
-		return status
-	}
-	for _, profile := range service.profiles {
-		if profile.record.Fingerprint != profileFingerprint {
-			continue
-		}
-		for _, binding := range profile.portable.Embeddings {
-			if binding.Activation == document.EmbeddingRequired &&
-				!slices.ContainsFunc(embeddings, func(job store.EmbeddingJobStatus) bool { return job.BindingID == binding.Name }) {
-				status.State, status.Phase = "partial", "embedding"
-				return status
-			}
+	for _, binding := range profile.Embeddings {
+		if status.State == "completed" && binding.Activation == document.EmbeddingRequired &&
+			!slices.ContainsFunc(embeddings, func(job store.EmbeddingJobStatus) bool { return job.BindingID == binding.Name }) {
+			status.State, status.Phase = "partial", "embedding"
+			break
 		}
 	}
-	return status
+	return status, nil
 }
 
 func aggregateStatus(jobID string, rendition *store.RenditionJob,

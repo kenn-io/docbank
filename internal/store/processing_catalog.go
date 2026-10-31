@@ -1025,6 +1025,10 @@ func validateRenditionBuildStateTx(ctx context.Context, tx metadataQuerier, buil
 	return nil
 }
 
+func (s *Store) ProcessingProfile(ctx context.Context, fingerprint string) (ProcessingProfileRecord, error) {
+	return loadProcessingProfile(ctx, s.db, fingerprint)
+}
+
 func loadProcessingProfile(ctx context.Context, tx metadataQuerier, fingerprint string) (ProcessingProfileRecord, error) {
 	record := ProcessingProfileRecord{Fingerprint: fingerprint}
 	var canonical string
