@@ -161,7 +161,7 @@ func provenanceAuditRecordByIdentity(
 	var ingestID, originalPath string
 	var originalMTime, supersedes sql.NullString
 	if err := tx.QueryRowContext(ctx, `SELECT node_id,ingest_id,original_path,
-		original_mtime,supersedes FROM provenance WHERE identity=?`, identity).Scan(
+		original_mtime,supersedes FROM provenance WHERE identity=$1`, identity).Scan(
 		&nodeID, &ingestID, &originalPath, &originalMTime, &supersedes,
 	); err != nil {
 		return audit.Record{}, fmt.Errorf("reading superseded provenance %s: %w", identity, err)

@@ -68,7 +68,7 @@ func validateAuditedProvenanceVersionBinding(
 	return nil
 }
 
-func bindProvenanceVersionTx(
+func (s *Store) bindProvenanceVersionTx(
 	ctx context.Context, tx *sql.Tx, binding ProvenanceVersionBinding,
 ) error {
 	if _, err := time.Parse(time.RFC3339Nano, binding.ObservedAt); err != nil {
@@ -81,11 +81,11 @@ func bindProvenanceVersionTx(
 		INSERT INTO provenance_version_bindings(
 			provenance_identity,content_version_id,observed_at,basis_ref
 		)
-		SELECT ?,?,?,?
+		SELECT $1,$2,$3,$4
 		WHERE EXISTS(
 			SELECT 1 FROM provenance p
 			JOIN content_versions cv ON cv.node_id=p.node_id
-			WHERE p.identity=? AND cv.version_id=?
+			WHERE p.identity=$5 AND cv.version_id=$6
 		)
 		ON CONFLICT(provenance_identity,content_version_id) DO NOTHING`,
 		binding.ProvenanceIdentity, binding.ContentVersionID,
@@ -98,7 +98,7 @@ func bindProvenanceVersionTx(
 	var observedAt, basisRef string
 	if err := tx.QueryRowContext(ctx, `
 		SELECT observed_at,basis_ref FROM provenance_version_bindings
-		WHERE provenance_identity=? AND content_version_id=?`,
+		WHERE provenance_identity=$1 AND content_version_id=$2`,
 		binding.ProvenanceIdentity, binding.ContentVersionID,
 	).Scan(&observedAt, &basisRef); errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("provenance binding must identify a version of the same node: %w", ErrProvenanceMismatch)
@@ -115,13 +115,13 @@ func bindProvenanceVersionTx(
 	if count == 0 {
 		return nil
 	}
-	_, err = invalidateDocumentEventsForVersionsTx(ctx, tx, []string{binding.ContentVersionID})
+	_, err = s.invalidateDocumentEventsForVersionsTx(ctx, tx, []string{binding.ContentVersionID})
 	return err
 }
 
-func invalidateSupersededProvenanceEventsTx(ctx context.Context, tx *sql.Tx, identity string) error {
+func (s *Store) invalidateSupersededProvenanceEventsTx(ctx context.Context, tx *sql.Tx, identity string) error {
 	rows, err := tx.QueryContext(ctx, `WITH RECURSIVE predecessors(identity,supersedes) AS (
-		SELECT identity,supersedes FROM provenance WHERE identity=?
+		SELECT identity,supersedes FROM provenance WHERE identity=$1
 		UNION ALL
 		SELECT p.identity,p.supersedes FROM provenance p
 		JOIN predecessors prior ON p.identity=prior.supersedes
@@ -149,7 +149,7 @@ func invalidateSupersededProvenanceEventsTx(ctx context.Context, tx *sql.Tx, ide
 	if len(versionIDs) == 0 {
 		return nil
 	}
-	_, err = invalidateDocumentEventsForVersionsTx(ctx, tx, versionIDs)
+	_, err = s.invalidateDocumentEventsForVersionsTx(ctx, tx, versionIDs)
 	return err
 }
 
@@ -161,7 +161,7 @@ func (s *Store) ProvenanceVersionBindings(
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT provenance_identity,content_version_id,observed_at,basis_ref
 		FROM provenance_version_bindings
-		WHERE content_version_id=?
+		WHERE content_version_id=$1
 		ORDER BY provenance_identity`, contentVersionID)
 	if err != nil {
 		return nil, fmt.Errorf("reading provenance version bindings: %w", err)

@@ -98,12 +98,12 @@ func (s *Store) AppendNodeProvenance(
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO provenance(
 			identity,node_id,ingest_id,original_path,original_mtime,supersedes)
-			VALUES(?,?,?,?,?,?)`, provenance.Identity, provenance.NodeID, provenance.IngestID,
+			VALUES($1,$2,$3,$4,$5,$6)`, provenance.Identity, provenance.NodeID, provenance.IngestID,
 			provenance.OriginalPath, nullString(provenance.OriginalMTime), nullString(provenance.Supersedes)); err != nil {
 			return fmt.Errorf("recording appended provenance: %w", err)
 		}
 		if provenance.Supersedes != nil {
-			if err := invalidateSupersededProvenanceEventsTx(ctx, tx, *provenance.Supersedes); err != nil {
+			if err := s.invalidateSupersededProvenanceEventsTx(ctx, tx, *provenance.Supersedes); err != nil {
 				return err
 			}
 		}
@@ -125,6 +125,14 @@ func (s *Store) AppendNodeProvenance(
 			IngestStartedAt: run.record.StartedAt, SourceKind: input.SourceKind,
 			SourceDescription: input.SourceDescription, OriginalPath: input.OriginalPath,
 			OriginalMTime: input.OriginalMTime, Supersedes: input.Supersedes, Active: true,
+		}
+		if provenance.Supersedes != nil {
+			if err := s.refreshPhotoTimelineTx(ctx, tx, input.NodeID); err != nil {
+				return fmt.Errorf("refreshing corrected photo timeline: %w", err)
+			}
+		}
+		if err := s.refreshNodePhotoWorkTx(ctx, tx, result.Node, &prior); err != nil {
+			return fmt.Errorf("refreshing provenance photo export: %w", err)
 		}
 		if !activeAudit {
 			return nil
@@ -149,7 +157,7 @@ func validateProvenancePredecessorTx(
 	var sourceKind string
 	if err := tx.QueryRowContext(ctx,
 		`SELECT p.node_id, i.source_kind
-		 FROM provenance p JOIN ingests i ON i.id=p.ingest_id WHERE p.identity=?`, identity,
+		 FROM provenance p JOIN ingests i ON i.id=p.ingest_id WHERE p.identity=$1`, identity,
 	).Scan(&predecessorNode, &sourceKind); errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("provenance predecessor %s was not found: %w", identity, ErrProvenanceMismatch)
 	} else if err != nil {
@@ -164,13 +172,13 @@ func validateProvenancePredecessorTx(
 	if !query.IsEmbeddedSourceKind(sourceKind) {
 		return fmt.Errorf("operational ingest provenance cannot be superseded: %w", ErrProvenanceMismatch)
 	}
-	var successor int
+	var successor bool
 	if err := tx.QueryRowContext(ctx,
-		`SELECT EXISTS(SELECT 1 FROM provenance WHERE supersedes=?)`, identity,
+		`SELECT EXISTS(SELECT 1 FROM provenance WHERE supersedes=$1)`, identity,
 	).Scan(&successor); err != nil {
 		return fmt.Errorf("checking provenance predecessor %s: %w", identity, err)
 	}
-	if successor != 0 {
+	if successor {
 		return fmt.Errorf("provenance predecessor %s is already superseded: %w", identity, ErrProvenanceMismatch)
 	}
 	return nil

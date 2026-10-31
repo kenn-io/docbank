@@ -9,13 +9,14 @@ import (
 
 // CollectionMembershipCTE is the shared active-file membership relation used
 // by every collection summary and member read. It intentionally omits WITH so
-// callers can compose it with other CTEs.
+// callers can compose it with other CTEs. LOWER preserves the case-insensitive
+// embedded-prefix rule on both database engines.
 const CollectionMembershipCTE = `collection_members AS (
     SELECT DISTINCT p.ingest_id, p.node_id
     FROM provenance p
     JOIN ingests i ON i.id = p.ingest_id
     JOIN nodes n ON n.id = p.node_id
-    WHERE i.source_kind NOT LIKE 'embedded:%'
+    WHERE LOWER(i.source_kind) NOT LIKE 'embedded:%'
       AND n.kind = 'file' AND n.trashed_at IS NULL
       AND NOT EXISTS (SELECT 1 FROM provenance later WHERE later.supersedes = p.identity)
 )`
@@ -68,11 +69,11 @@ func collectionSummaryByID(
 	collection, err := scanCollection(q.QueryRowContext(ctx, `WITH `+CollectionMembershipCTE+`
 		SELECT `+collectionColumns+`
 		FROM ingests i
-		LEFT JOIN collection_members cm ON cm.ingest_id=?
+		LEFT JOIN collection_members cm ON cm.ingest_id=$1
 		LEFT JOIN nodes n ON n.id=cm.node_id
 		LEFT JOIN content_versions cv ON cv.version_id=n.current_version_id
 		LEFT JOIN collection_labels l ON l.ingest_id=i.id
-		WHERE i.id=? AND i.source_kind NOT LIKE 'embedded:%'
+		WHERE i.id=$2 AND LOWER(i.source_kind) NOT LIKE 'embedded:%'
 		GROUP BY i.id, i.source_kind, i.source_desc, i.started_at,
 			l.ingest_id, l.label, l.revision, l.updated_at
 		HAVING COUNT(cm.node_id)>0 OR l.ingest_id IS NOT NULL`, id, id))
@@ -97,7 +98,7 @@ func (s *Store) Collections(
 		totals AS (SELECT COUNT(*) AS total FROM eligible),
 		selected AS (
 			SELECT i.* FROM ingests i JOIN eligible e ON e.ingest_id=i.id
-			ORDER BY i.started_at DESC, i.id LIMIT ? OFFSET ?
+			ORDER BY i.started_at DESC, i.id LIMIT $1 OFFSET $2
 		)
 		SELECT totals.total, COALESCE(i.id, ''), COALESCE(i.source_kind, ''),
 			COALESCE(i.source_desc, ''), COALESCE(i.started_at, ''),
@@ -160,7 +161,7 @@ func (s *Store) CollectionMembers(
 	if err := validatePage(limit, offset); err != nil {
 		return CollectionMemberPage{}, err
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 	if err != nil {
 		return CollectionMemberPage{}, fmt.Errorf("starting collection member snapshot: %w", err)
 	}
@@ -173,9 +174,9 @@ func (s *Store) CollectionMembers(
 		SELECT `+nodeCols+`
 		FROM `+nodeFrom+`
 		JOIN collection_members cm ON cm.node_id=n.id
-		WHERE cm.ingest_id=?
+		WHERE cm.ingest_id=$1
 		ORDER BY n.name, n.id
-		LIMIT ? OFFSET ?`, id, limit, offset)
+		LIMIT $2 OFFSET $3`, id, limit, offset)
 	if err != nil {
 		return CollectionMemberPage{}, fmt.Errorf("listing collection %q members: %w", id, err)
 	}
