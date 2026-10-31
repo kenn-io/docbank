@@ -67,6 +67,8 @@ jobs:
     name: Public documentation
     runs-on: ubuntu-24.04
     timeout-minutes: 16
+    env:
+      DOWNLOAD_RETRY: kit-retry 3 5
     steps:
       - name: Check out full repository history
         uses: actions/checkout@v7.0.1
@@ -92,13 +94,15 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+
       - name: Install pinned documentation tools
         run: |
-          ./scripts/vercel-install-docs.sh
+          kit-retry 3 5 ./scripts/vercel-install-docs.sh
           echo "$PWD/.vercel-tools/bin" >> "$GITHUB_PATH"
 
       - name: Install browser test dependencies
-        run: npm ci --prefix frontend
+        run: kit-retry 3 5 npm ci --prefix frontend
 
       - name: Start Playwright browser server
         id: browser_server
@@ -107,7 +111,7 @@ jobs:
         run: |
           version=$(node -p 'require("./node_modules/@playwright/test/package.json").version')
           image="mcr.microsoft.com/playwright:v$version-noble"
-          if ! docker pull "$image"; then
+          if ! kit-retry 3 5 docker pull "$image"; then
             echo "::error::Could not pull $image. Microsoft may not have published the image for this @playwright/test version yet."
             exit 1
           fi
@@ -116,6 +120,7 @@ jobs:
             "$image" \
             node node_modules/@playwright/test/cli.js run-server \
             --port 3000 --host 127.0.0.1)
+          # workflowretry: allow Poll the local service for readiness.
           until curl -s http://127.0.0.1:3000/; do
             [ "$(docker inspect -f '{{.State.Running}}' "$cid")" = true ] || { docker logs "$cid"; exit 1; }
             sleep 1
@@ -144,6 +149,8 @@ jobs:
         run: docker logs playwright-browser-server
 
   frontend:
+    env:
+      DOWNLOAD_RETRY: kit-retry 3 5
     name: Web application
     runs-on: ubuntu-24.04
     timeout-minutes: 12
@@ -159,6 +166,8 @@ jobs:
           node-version: "24.22.1"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
 
       - name: Check and build web application
         run: make frontend-test
@@ -178,6 +187,8 @@ jobs:
         run: bash scripts/check-released-schemas.sh
 
   report-export-browser:
+    env:
+      DOWNLOAD_RETRY: kit-retry 3 5
     name: Browser reports and original exports
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -205,10 +216,12 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+
       - name: Install pinned Chromium
         run: |
-          npm ci --prefix frontend
-          node frontend/node_modules/@playwright/test/cli.js install chromium
+          kit-retry 3 5 npm ci --prefix frontend
+          kit-retry 3 5 node frontend/node_modules/@playwright/test/cli.js install chromium
 
       - name: Qualify browser workflow with both SQLite builds
         run: make report-export-browser-test
@@ -247,8 +260,13 @@ jobs:
       - name: Check Unix installer
         run: sh -n scripts/install.sh
 
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+
       - name: Check Huma API contract
-        run: go run go.kenn.io/kit/cmd/huma-check@3e1f59e9011e878ec595aa04aebc8a77c5292c4d -fix=false -tags fts5 ./...
+        run: |
+          huma=go.kenn.io/kit/cmd/huma-check@3e1f59e9011e878ec595aa04aebc8a77c5292c4d
+          kit-retry 3 5 go run -n "$huma"
+          go run "$huma" -fix=false -tags fts5 ./...
 
       - name: Vet
         run: go vet -tags fts5 ./...
@@ -263,26 +281,20 @@ jobs:
           # MinIO no longer publishes images, so tests run against RustFS 1.0.0.
           image="docker.io/rustfs/rustfs@sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff"
           if ! docker image inspect "$image" >/dev/null 2>&1; then
-            for attempt in 1 2 3; do
-              if docker pull "$image"; then
-                break
-              fi
-              if [ "$attempt" = 3 ]; then
-                exit 1
-              fi
-              sleep $((attempt * 5))
-            done
+            kit-retry 3 5 docker pull "$image"
           fi
           echo "DOCBANK_S3_CONTAINER=$name" >> "$GITHUB_ENV"
           docker run --rm -d --name "$name"             -p 127.0.0.1::9000             -e RUSTFS_ACCESS_KEY -e RUSTFS_SECRET_KEY             "$image" >/dev/null
           port="$(docker port "$name" 9000/tcp | head -1 | awk -F: '{print $NF}')"
           endpoint="http://127.0.0.1:${port}"
           for _ in $(seq 1 30); do
+            # workflowretry: allow Poll the local service for readiness.
             if curl --fail --silent "${endpoint}/health/ready" >/dev/null; then
               break
             fi
             sleep 1
           done
+          # workflowretry: allow Poll the local service for readiness.
           if ! curl --fail --silent "${endpoint}/health/ready" >/dev/null; then
             docker logs "$name"
             exit 1
@@ -382,6 +394,10 @@ jobs:
         uses: $/.github/actions/go-cache-save
 
   windows:
+    env:
+      LLVM_MINGW_VERSION: "20260602"
+      LLVM_MINGW_NAME: llvm-mingw-20260602-ucrt-aarch64
+      LLVM_MINGW_SHA256: cb5c20fbe1808e31ada5cbe4efd9daa2fee19c91dac6ec5ca1ac46a9c7247e37
     name: Windows ${{ matrix.goarch }}${{ matrix.shard && format(' shard {0}', matrix.shard) || '' }}
     strategy:
       fail-fast: false
@@ -422,18 +438,21 @@ jobs:
           $ErrorActionPreference = 'Stop'
           [scriptblock]::Create((Get-Content -Raw scripts/install.ps1)) | Out-Null
 
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+        if: matrix.goarch == 'arm64'
+
+      - name: Download ARM64 C compiler
+        if: matrix.goarch == 'arm64'
+        shell: bash
+        run: kit-download "https://github.com/mstorsjo/llvm-mingw/releases/download/$LLVM_MINGW_VERSION/$LLVM_MINGW_NAME.zip" "$RUNNER_TEMP/llvm-mingw.zip"
+
       - name: Set up ARM64 C compiler
         if: matrix.goarch == 'arm64'
         shell: pwsh
-        env:
-          LLVM_MINGW_VERSION: "20260602"
-          LLVM_MINGW_NAME: llvm-mingw-20260602-ucrt-aarch64
-          LLVM_MINGW_SHA256: cb5c20fbe1808e31ada5cbe4efd9daa2fee19c91dac6ec5ca1ac46a9c7247e37
         run: |
           $ErrorActionPreference = 'Stop'
           $zip = Join-Path $env:RUNNER_TEMP 'llvm-mingw.zip'
           $url = "https://github.com/mstorsjo/llvm-mingw/releases/download/$env:LLVM_MINGW_VERSION/$env:LLVM_MINGW_NAME.zip"
-          Invoke-WebRequest -Uri $url -OutFile $zip -MaximumRetryCount 3 -RetryIntervalSec 5
           $actual = (Get-FileHash -Path $zip -Algorithm SHA256).Hash.ToLower()
           if ($actual -ne $env:LLVM_MINGW_SHA256) {
             throw "Checksum mismatch for $url`n  expected $env:LLVM_MINGW_SHA256`n  actual   $actual"

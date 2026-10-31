@@ -96,12 +96,12 @@ generate-photo-policy:
 	go run -tags "$(BUILD_TAGS)" ./scripts/generate-photo-policy
 
 frontend:
-	cd frontend && npm ci && npm run build
+	cd frontend && $(DOWNLOAD_RETRY) npm ci && npm run build
 	find internal/web/dist -mindepth 1 ! -name .keep -exec rm -rf {} +
 	cp -R frontend/dist/. internal/web/dist/
 
 frontend-test:
-	cd frontend && npm ci
+	cd frontend && $(DOWNLOAD_RETRY) npm ci
 	cd frontend && npm run check:fmt-lint
 	cd frontend && npm run check
 	cd frontend && npm run check:kit-ui
@@ -143,7 +143,7 @@ $(CUSTOM_GCL): .custom-gcl.yml
 lint: $(CUSTOM_GCL)
 	"$(CUSTOM_GCL)" run --allow-serial-runners --fix ./...
 
-lint-ci: $(CUSTOM_GCL)
+lint-ci: $(CUSTOM_GCL) lint-workflow-retries
 	"$(CUSTOM_GCL)" run --allow-serial-runners ./...
 
 tidy:
@@ -195,6 +195,10 @@ docs-deploy:
 
 help:
 	@echo "Targets: build homebrew install clean test test-pg test-v openapi generate-api generate-photo-policy frontend frontend-test frontend-dev report-export-browser-test photo-map-browser-test photo-tabs-browser-test docs-screenshots fmt lint lint-ci tidy install-hooks docs-install docs-subpath-test docs-assets-test docs-assets-sync docs-build docs-serve docs-link docs-deploy"
+
+.PHONY: lint-workflow-retries
+lint-workflow-retries:
+	GOOS= GOARCH= go run go.kenn.io/kit/cmd/kennlint@v0.47.3 workflow-retries
 
 # Workflow actions run at the commits in .github/workflows/actions.lock,
 # including actions that other actions call. The organization requires
