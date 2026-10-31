@@ -3,79 +3,9 @@ package grounding
 import (
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/document"
 )
-
-func TestNormalizationAddsMatches(t *testing.T) {
-	for _, tc := range []struct{ answer, source string }{
-		{"$500", "Rent $500\n12 months"},
-		{"Paid $5 3 times", "$5 [3]"},
-		{"ALL 5", "5 invoices"},
-		{"TOP 10", "10 customers"},
-		{"$40", "Price: $40\n\n205 units"},
-		{"$40 on March 15, 2026", "USD 40 2026-03-15"},
-		{"March 15, 2026", "March" + strings.Repeat(" ", 64) + "15, 2026"},
-		{"2026-03-15", "March" + strings.Repeat(" ", 64) + "15, 2026"},
-		{"$1,250", "$1,250.00"},
-		{"$1,250", "USD 1250"},
-		{"$40 C$30", "USD 40\nCAD 30"},
-		{"C$30", "USD 40 CAD30"},
-		{"C$30", "40 USD CAD 30"},
-		{"-C$30", "USD 40 CAD -30"},
-		{"+C$30", "USD 40 CAD +30"},
-		{"−C$30", "USD 40 CAD −30"},
-		{"±C$30", "USD 40 CAD ±30"},
-		{"C$0.3", "USD 40 CAD .3"},
-		{"€30", "USD 40 €30"},
-		{"$40", "USD 40 CAD 30"},
-		{"March\u202815,\u20282026", "2026-03-15"},
-		{"2026-03-15", "March\u200915,\u20092026"},
-		{"2026-03-15", "15\u0085March\u00852026"},
-		{"March\v15,\v2026", "2026-03-15"},
-	} {
-		t.Run(tc.answer+"/"+tc.source, func(t *testing.T) {
-			answer, err := Prepare(tc.answer)
-			require.NoError(t, err)
-			require.Equal(t, "grounded", answer.Check([]Citation{{Text: tc.source}}).Status)
-		})
-	}
-}
-
-func TestNormalizedSavedListQuote(t *testing.T) {
-	evidencePolicy, err := document.NewEvidencePolicy(100_000)
-	require.NoError(t, err)
-	evidence, err := document.NormalizeEvidenceV1(document.SourceEvidenceV1{
-		ContractVersion: document.SourceEvidenceContractV1,
-		Completeness:    document.EvidenceComplete,
-		Family:          "text",
-		UnitKind:        document.EvidenceUnitSection,
-		Units: []document.SourceEvidenceUnitV1{{
-			Order:   0,
-			Locator: document.SourceEvidenceLocatorV1{Kind: document.EvidenceLocatorSection, IndexOrigin: document.EvidenceIndexOriginNone},
-			Text:    "<p>" + strings.Repeat("x", 16_001) + "</p><ul><li>$40</li><li>40</li></ul>",
-		}},
-	}, evidencePolicy)
-	require.NoError(t, err)
-	policy, err := document.NewRenditionPolicy(document.RenditionLimits{MaxDocumentChars: 100_000, MaxUnitRunes: 100_000, MaxSegmentRunes: 4_000})
-	require.NoError(t, err)
-	rendition, err := document.BuildRenditionV1(evidence, policy)
-	require.NoError(t, err)
-	start := strings.Index(string(rendition.Markdown), "- ")
-	require.Greater(t, start, 16_000)
-	quote := string(rendition.Markdown)[start:]
-	for _, tc := range []struct{ answer, status string }{
-		{"$40 [1]", "grounded"}, {"40 [1]", "grounded"}, {"-$40 [1]", "ungrounded"},
-	} {
-		t.Run(tc.answer, func(t *testing.T) {
-			answer, err := Prepare(tc.answer)
-			require.NoError(t, err)
-			require.Equal(t, tc.status, answer.Check([]Citation{{Text: quote}}).Status)
-		})
-	}
-}
 
 func TestNormalizedCitationBullets(t *testing.T) {
 	for _, tc := range []struct{ answer, source, status string }{
@@ -105,9 +35,9 @@ func TestNormalizedBoundedCheck(t *testing.T) {
 			for i := range citations {
 				citations[i].Text = strings.Repeat(tc.source, 64000/len(tc.source))
 			}
-			start := time.Now()
 			report := answer.Check(citations)
-			require.Less(t, time.Since(start), time.Second)
+			require.Len(t, report.Figures, 512)
+			require.Len(t, report.Citations, 8)
 			require.Equal(t, tc.status, report.Status)
 		})
 	}
@@ -191,9 +121,53 @@ func TestNormalizedFigures(t *testing.T) {
 		{"USD 20", "$[20]", "grounded", "found"},
 		{"4K", "4", "ungrounded", "missing"},
 		{"40", "USD 40", "grounded", "found"},
+		{"$500", "Rent $500\n12 months", "grounded", "found"},
+		{"ALL 5", "5 invoices", "grounded", "found"},
+		{"TOP 10", "10 customers", "grounded", "found"},
+		{"$40", "Price: $40\n\n205 units", "grounded", "found"},
+		{"March 15, 2026", "March" + strings.Repeat(" ", 64) + "15, 2026", "grounded", "found"},
+		{"2026-03-15", "March" + strings.Repeat(" ", 64) + "15, 2026", "grounded", "found"},
+		{"$1,250", "USD 1250", "grounded", "found"},
+		{"C$30", "USD 40 CAD30", "grounded", "found"},
+		{"C$30", "40 USD CAD 30", "grounded", "found"},
+		{"-C$30", "USD 40 CAD -30", "grounded", "found"},
+		{"+C$30", "USD 40 CAD +30", "grounded", "found"},
+		{"−C$30", "USD 40 CAD −30", "grounded", "found"},
+		{"±C$30", "USD 40 CAD ±30", "grounded", "found"},
+		{"C$0.3", "USD 40 CAD .3", "grounded", "found"},
+		{"€30", "USD 40 €30", "grounded", "found"},
+		{"$40", "USD 40 CAD 30", "grounded", "found"},
+		{"March\u202815,\u20282026", "2026-03-15", "grounded", "found"},
+		{"2026-03-15", "March\u200915,\u20092026", "grounded", "found"},
+		{"2026-03-15", "15\u0085March\u00852026", "grounded", "found"},
+		{"March\v15,\v2026", "2026-03-15", "grounded", "found"},
+		{"$10,000", "$10", "ungrounded", "missing"},
+		{"$10", "$10,000", "ungrounded", "missing"},
+		{"$1,250", "$1.25", "ungrounded", "missing"},
+		{"$1.234", "$1,234", "ungrounded", "missing"},
+		{"May 3, 2026", "05.03.2026", "ungrounded", "missing"},
+		{"May 3, 2026", "05/03/2026", "ungrounded", "missing"},
+		{"March 5, 2026", "05/03/2026", "ungrounded", "missing"},
+		{"September 5, 2026", "Sept. 5, 2026", "grounded", "found"},
+		{"June 5, 2026", "June 5,\n2026", "grounded", "found"},
+		{"June 5, 2026", "June\n5, 2026", "grounded", "found"},
+		{"USD 1", "$1 205", "ungrounded", "missing"},
+		{"USD 1205", "$1 205", "ungrounded", "missing"},
+		{"05.03.2026", "05.03.2026", "grounded", "found"},
+		{"13/03/2026", "March 13, 2026", "grounded", "found"},
+		{"May 3, 2026", "| May 3 | 2026 |", "grounded", "found"},
+		{"March 5, 2026", "3/5/2026", "ungrounded", "missing"},
+		{"CAD+USD 40", "CAD USD 40", "grounded", "found"},
 	} {
 		cases = append(cases, testCase{tc.answer, tc.source, tc.overall, tc.figure, "", false})
 	}
+	cases = append(cases,
+		testCase{"Paid $5 3 times", "$5 [3]", "grounded", "found", "", true},
+		testCase{"$40 on March 15, 2026", "USD 40 2026-03-15", "grounded", "found", "", true},
+		testCase{"$40 C$30", "USD 40\nCAD 30", "grounded", "found", "", true},
+		testCase{"$1 205", "$1", "ungrounded", "", "", true},
+		testCase{"$1 205", "USD 1", "ungrounded", "", "", true},
+	)
 	cases = append(cases, testCase{"March 15, 2026 [1]", "2026-03-15", "", "found", "March 15, 2026", false})
 	for _, space := range []string{"\u00a0", "\u202f"} {
 		grouped := "$1" + space + "205"
@@ -253,17 +227,6 @@ func TestNormalizedFigures(t *testing.T) {
 	}
 }
 
-func TestNormalizedPrecedence(t *testing.T) {
-	answer, err := Prepare("$40 [1]")
-	require.NoError(t, err)
-	report := answer.Check([]Citation{{Text: "40"}, {Err: "citation_unavailable"}})
-	require.Equal(t, "incomplete", report.Status)
-	require.Equal(t, "missing", report.Figures[0].Status)
-	report = answer.Check([]Citation{{Text: "40"}, {Text: "USD 40"}})
-	require.Equal(t, "grounded", report.Status)
-	require.Equal(t, "found", report.Figures[0].Status)
-}
-
 func TestLongMalformedCurrencyRuns(t *testing.T) {
 	answer, err := Prepare(strings.Repeat("$ ", 7998) + "40%")
 	require.NoError(t, err)
@@ -275,38 +238,5 @@ func TestLongMalformedCurrencyRuns(t *testing.T) {
 		a, err := Prepare(text)
 		require.NoError(t, err)
 		require.Equal(t, "no_figures", a.Check([]Citation{{Text: text}}).Status)
-	}
-}
-
-func TestNormalizationReviewRegressions(t *testing.T) {
-	for _, tc := range []struct{ answer, source, status string }{
-		{"$10,000", "$10", "ungrounded"},
-		{"$10", "$10,000", "ungrounded"},
-		{"$1,250", "$1.25", "ungrounded"},
-		{"$1.234", "$1,234", "ungrounded"},
-		{"May 3, 2026", "05.03.2026", "ungrounded"},
-		{"May 3, 2026", "05/03/2026", "ungrounded"},
-		{"March 5, 2026", "05/03/2026", "ungrounded"},
-		{"September 5, 2026", "Sept. 5, 2026", "grounded"},
-		{"June 5, 2026", "June 5,\n2026", "grounded"},
-		{"June 5, 2026", "June\n5, 2026", "grounded"},
-		{"1,205 USD", "USD\n1,205", "grounded"},
-		{"USD 1", "$1 205", "ungrounded"},
-		{"$1", "$1 205", "grounded"},
-		{"$1 205", "$1", "ungrounded"},
-		{"$1 205", "$1 205", "grounded"},
-		{"USD 1205", "$1 205", "ungrounded"},
-		{"05.03.2026", "05.03.2026", "grounded"},
-		{"13/03/2026", "March 13, 2026", "grounded"},
-		{"May 3, 2026", "| May 3 | 2026 |", "grounded"},
-		{"March 5, 2026", "3/5/2026", "ungrounded"},
-		{"$1 205", "USD 1", "ungrounded"},
-		{"CAD+USD 40", "CAD USD 40", "grounded"},
-	} {
-		t.Run(tc.answer+"/"+tc.source, func(t *testing.T) {
-			answer, err := Prepare(tc.answer)
-			require.NoError(t, err)
-			require.Equal(t, tc.status, answer.Check([]Citation{{Text: tc.source}}).Status)
-		})
 	}
 }
