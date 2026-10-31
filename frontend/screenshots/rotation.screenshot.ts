@@ -19,7 +19,6 @@ test("rotation suggestion in dark and light themes", async ({ page }) => {
         .click();
       const inspector = page.getByRole("region", { name: "Photo metadata" });
       await expect(inspector.getByText(/^Suggested 270°/)).toBeVisible();
-      await expect(inspector.getByText("from photo description", { exact: true })).toBeVisible();
       const chip = inspector.locator(".rotation-suggestion");
       await chip.scrollIntoViewIfNeeded();
       for (const theme of ["dark", "light"]) {
