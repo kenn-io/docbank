@@ -323,7 +323,7 @@ func validatePhotoGraph(ctx context.Context, q metadataQuerier) error {
 }
 
 func validatePhotoAssetGraph(ctx context.Context, q metadataQuerier, assetID string) error {
-	return validatePhotoGraphWhere(ctx, q, "WHERE a.asset_id=?", assetID)
+	return validatePhotoGraphWhere(ctx, q, "WHERE a.asset_id=$1", assetID)
 }
 
 func validatePhotoGraphWhere(ctx context.Context, q metadataQuerier, where string, args ...any) error {

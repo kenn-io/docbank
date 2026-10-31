@@ -12,6 +12,11 @@ import (
 
 func TestSealedSnapshotRetainsSourceVersionDuringPrune(t *testing.T) {
 	t.Parallel()
+	checkSealedSnapshotRetainsSourceVersionDuringPrune(t, false)
+}
+
+func checkSealedSnapshotRetainsSourceVersionDuringPrune(t *testing.T, postgres bool) {
+	t.Helper()
 	s := newTestStore(t)
 	body := []byte("Original package source")
 	hash := sha256.Sum256(body)
@@ -36,6 +41,9 @@ func TestSealedSnapshotRetainsSourceVersionDuringPrune(t *testing.T) {
 	updated, _, err := s.ReplaceContent(t.Context(), node.ID, node.Revision,
 		hex.EncodeToString(replacementHash[:]), int64(len(replacement)), "text/plain")
 	require.NoError(t, err)
+	if postgres {
+		s, _ = copyRetentionStore(t, s)
+	}
 	selector := VersionPruneSelector{VersionIDs: []string{oldVersion}}
 	for _, run := range []bool{false, true} {
 		_, err = s.PruneContentVersions(t.Context(), node.ID, updated.Revision, selector, run)
@@ -47,6 +55,11 @@ func TestSealedSnapshotRetainsSourceVersionDuringPrune(t *testing.T) {
 
 func TestTrashEmptySkipsSealedSnapshotSourceAndDeletesOtherTrash(t *testing.T) {
 	t.Parallel()
+	checkTrashEmptySkipsSealedSnapshotSourceAndDeletesOtherTrash(t, false)
+}
+
+func checkTrashEmptySkipsSealedSnapshotSourceAndDeletesOtherTrash(t *testing.T, postgres bool) {
+	t.Helper()
 	s := newTestStore(t)
 	protected, err := s.CreateFile(t.Context(), s.RootID(), "snapshot-source.txt", fakeHash("c1"), 10, "text/plain")
 	require.NoError(t, err)
@@ -65,6 +78,9 @@ func TestTrashEmptySkipsSealedSnapshotSourceAndDeletesOtherTrash(t *testing.T) {
 	require.NoError(t, err)
 	_, _, err = s.Trash(t.Context(), unrelated.ID, unrelated.Revision)
 	require.NoError(t, err)
+	if postgres {
+		s, _ = copyRetentionStore(t, s)
+	}
 	preview, err := s.TrashEmptyBounded(t.Context(), 0, 1, false)
 	require.NoError(t, err)
 	require.EqualValues(t, 1, preview.Candidates)

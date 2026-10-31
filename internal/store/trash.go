@@ -481,7 +481,7 @@ func (s *Store) trashEmpty(
 	where := `trash_name IS NOT NULL`
 	var args []any
 	if olderThan > 0 {
-		where += ` AND trashed_at <= ?`
+		where += ` AND trashed_at <= $1`
 		args = append(args, time.Now().UTC().Add(-olderThan).Format(timestampLayout))
 	}
 	// Media, mailbox, and package authority retain exact content versions.
@@ -531,7 +531,7 @@ func (s *Store) trashEmpty(
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM nodes WHERE `+where+` AND id IN (`+retainedNodes+`)`, args...).Scan(&rep.Retained); err != nil {
 			return fmt.Errorf("counting retained trash roots: %w", err)
 		}
-		batch, err := photoTrashSelectionTx(ctx, tx, deletable, args, maxRoots)
+		batch, err := s.photoTrashSelectionTx(ctx, tx, deletable, args, maxRoots)
 		if err != nil {
 			return err
 		}
@@ -573,14 +573,14 @@ func (s *Store) trashEmpty(
 		if err != nil {
 			return err
 		}
-		if err := deleteRenditionAuthorityForVersionsTx(ctx, tx, versionIDs); err != nil {
+		if err := s.deleteRenditionAuthorityForVersionsTx(ctx, tx, versionIDs); err != nil {
 			return err
 		}
 		doomedIDs, err := doomedNodeIDsTx(ctx, tx, selection, selectionArgs...)
 		if err != nil {
 			return fmt.Errorf("listing nodes affected by trash empty: %w", err)
 		}
-		if err := adjustPhotosForPurgedNodesTx(ctx, tx, doomedIDs); err != nil {
+		if err := s.adjustPhotosForPurgedNodesTx(ctx, tx, doomedIDs); err != nil {
 			return err
 		}
 		// One trash-empty operation advances each affected tag once, even when
@@ -599,12 +599,41 @@ func (s *Store) trashEmpty(
 			)`, selectionArgs...); err != nil {
 			return fmt.Errorf("advancing tags affected by trash empty: %w", err)
 		}
-		res, err := tx.Exec(
+		if err := s.beforeContentVersionDeletionTx(ctx, tx, versionIDs); err != nil {
+			return err
+		}
+		// Capture paired originals before cascading node deletion loses the old
+		// sidecar names and parents. Ordinary nodes need no export-work lookup.
+		var pairedAssets []string
+		if s.postgresSchema != "" {
+			err := queryRows(ctx, tx, `WITH RECURSIVE roots(id) AS (`+selection+`),
+    doomed(id) AS (SELECT id FROM roots UNION ALL SELECT n.id FROM nodes n JOIN doomed d ON n.parent_id=d.id)
+    SELECT DISTINCT f.asset_id FROM doomed d JOIN nodes sidecar ON sidecar.id=d.id
+    JOIN nodes original ON original.parent_id=sidecar.parent_id AND original.name=left(sidecar.name,-4)
+    JOIN photo_files f ON f.node_id=original.id
+    WHERE right(sidecar.name,4)='.xmp' AND f.asset_id IS NOT NULL`, selectionArgs, func(rows *sql.Rows) error {
+				var asset string
+				if err := rows.Scan(&asset); err != nil {
+					return err
+				}
+				pairedAssets = append(pairedAssets, asset)
+				return nil
+			})
+			if err != nil {
+				return fmt.Errorf("finding photo work affected by trash empty: %w", err)
+			}
+		}
+		res, err := tx.ExecContext(ctx,
 			`WITH roots(id) AS (`+selection+`) DELETE FROM nodes WHERE id IN (SELECT id FROM roots)`,
 			selectionArgs...,
 		)
 		if err != nil {
 			return fmt.Errorf("emptying trash: %w", err)
+		}
+		for _, asset := range pairedAssets {
+			if err := s.refreshPhotoAssetWorkTx(ctx, tx, asset); err != nil {
+				return err
+			}
 		}
 		rep.Deleted, err = res.RowsAffected()
 		if err != nil {

@@ -98,6 +98,11 @@ func TestPruneContentVersionsPreviewRunAndMetadataRoundTrip(t *testing.T) {
 
 func TestPruneContentVersionsCancelsOrphanedRenditionJob(t *testing.T) {
 	t.Parallel()
+	checkPruneContentVersionsCancelsOrphanedRenditionJob(t, false)
+}
+
+func checkPruneContentVersionsCancelsOrphanedRenditionJob(t *testing.T, postgres bool) {
+	t.Helper()
 	s, versions := newRenditionCatalogFixture(t)
 	ctx := t.Context()
 	profile := catalogProcessingProfile(t, false)
@@ -118,9 +123,12 @@ func TestPruneContentVersionsCancelsOrphanedRenditionJob(t *testing.T) {
 	node, err := s.NodeByPath(ctx, "/synthetic-source-a.pdf")
 	require.NoError(t, err)
 	node, _, err = s.ReplaceContent(
-		ctx, node.ID, node.Revision, fakeHash("pruned-job-current"), 24, "application/pdf",
+		ctx, node.ID, node.Revision, testSHA256([]byte("pruned-job-current")), 24, "application/pdf",
 	)
 	require.NoError(t, err)
+	if postgres {
+		s, _ = copyRetentionStore(t, s)
+	}
 	receipt, err := s.PruneContentVersions(ctx, node.ID, node.Revision,
 		VersionPruneSelector{VersionIDs: []string{versions[0]}}, true)
 	require.NoError(t, err)
@@ -130,12 +138,12 @@ func TestPruneContentVersionsCancelsOrphanedRenditionJob(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 	var waiters int
 	require.NoError(t, s.db.QueryRow(
-		`SELECT COUNT(*) FROM rendition_job_waiters WHERE job_id=?`, job.ID,
+		`SELECT COUNT(*) FROM rendition_job_waiters WHERE job_id=$1`, job.ID,
 	).Scan(&waiters))
 	assert.Zero(t, waiters)
 	var roots int
 	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM current_rendition_roots
-		WHERE root_id IN (?,?)`, renditionJobRootID("build", job.ID),
+		WHERE root_id IN ($1,$2)`, renditionJobRootID("build", job.ID),
 		renditionJobRootID("generation", job.ID)).Scan(&roots))
 	assert.Zero(t, roots)
 }
@@ -193,6 +201,11 @@ func TestPruneContentVersionKeepsCheckpointedProviderClaimWhileReselectingWaiter
 
 func TestPruneContentVersionClearsDeletedAuthorityFromOperatorRequiredJob(t *testing.T) {
 	t.Parallel()
+	checkPruneContentVersionClearsDeletedAuthorityFromOperatorRequiredJob(t, false)
+}
+
+func checkPruneContentVersionClearsDeletedAuthorityFromOperatorRequiredJob(t *testing.T, postgres bool) {
+	t.Helper()
 	s, versions := newRenditionCatalogFixture(t)
 	ctx := t.Context()
 	profile := catalogProcessingProfile(t, false)
@@ -216,6 +229,9 @@ func TestPruneContentVersionClearsDeletedAuthorityFromOperatorRequiredJob(t *tes
 		ctx, node.ID, node.Revision, testSHA256([]byte("operator-required-prune-current")),
 		27, "application/pdf")
 	require.NoError(t, err)
+	if postgres {
+		s, _ = copyRetentionStore(t, s)
+	}
 	_, err = s.PruneContentVersions(ctx, node.ID, node.Revision,
 		VersionPruneSelector{VersionIDs: []string{versions[0]}}, true)
 	require.NoError(t, err)
@@ -228,14 +244,18 @@ func TestPruneContentVersionClearsDeletedAuthorityFromOperatorRequiredJob(t *tes
 	var revocationFence sql.NullInt64
 	require.NoError(t, s.db.QueryRow(`SELECT selected_waiter_id,authorization_grant_id,
 		authorization_incarnation_id,authorization_revocation_fence
-		FROM rendition_jobs WHERE job_id=?`, job.ID).Scan(
+		FROM rendition_jobs WHERE job_id=$1`, job.ID).Scan(
 		&selected, &grant, &incarnation, &revocationFence))
 	assert.False(t, selected.Valid)
 	assert.False(t, grant.Valid)
 	assert.False(t, incarnation.Valid)
 	assert.False(t, revocationFence.Valid)
-	var exported bytes.Buffer
-	require.NoError(t, s.ExportMetadata(ctx, &exported))
+	if postgres {
+		checkRetentionMetadata(t, s)
+	} else {
+		var exported bytes.Buffer
+		require.NoError(t, s.ExportMetadata(ctx, &exported))
+	}
 }
 
 func TestPruneContentVersionRequeuesSharedStagedJobAndRetainsRoot(t *testing.T) {
@@ -630,6 +650,11 @@ func TestPruneSoleWaiterKeepsRetriedProviderResumeFence(t *testing.T) {
 
 func TestPruneContentVersionsRetainsDependenciesAndCheckpointsAllPrior(t *testing.T) {
 	t.Parallel()
+	checkPruneContentVersionsRetainsDependenciesAndCheckpointsAllPrior(t, false)
+}
+
+func checkPruneContentVersionsRetainsDependenciesAndCheckpointsAllPrior(t *testing.T, postgres bool) {
+	t.Helper()
 	s := newTestStore(t)
 	ctx := t.Context()
 	created, err := s.CreateFile(ctx, s.RootID(), "reverted.txt", fakeHash("d4"), 40, "text/plain")
@@ -643,6 +668,9 @@ func TestPruneContentVersionsRetainsDependenciesAndCheckpointsAllPrior(t *testin
 	)
 	require.NoError(t, err)
 
+	if postgres {
+		s, _ = copyRetentionStore(t, s)
+	}
 	protected, err := s.PruneContentVersions(ctx, created.ID, reverted.Revision,
 		VersionPruneSelector{VersionIDs: []string{created.CurrentVersionID}}, false)
 	require.NoError(t, err)
@@ -717,6 +745,11 @@ func TestPruneContentVersionsRemovesRenditionAttachment(t *testing.T) {
 
 func TestPruneContentVersionsAccountsForVisualPreviewOutputs(t *testing.T) {
 	t.Parallel()
+	checkPruneContentVersionsAccountsForVisualPreviewOutputs(t, false)
+}
+
+func checkPruneContentVersionsAccountsForVisualPreviewOutputs(t *testing.T, postgres bool) {
+	t.Helper()
 	s := newTestStore(t)
 	ctx := t.Context()
 	created, err := s.CreateFile(ctx, s.RootID(), "photo.jpg", fakeHash("91"), 10, "image/jpeg")
@@ -744,6 +777,9 @@ func TestPruneContentVersionsAccountsForVisualPreviewOutputs(t *testing.T) {
 		&BlobPhysical{Encoding: looseEncodingRaw, StoredBytes: 9})
 	require.NoError(t, err)
 
+	if postgres {
+		s, _ = copyRetentionStore(t, s)
+	}
 	preview, err := s.PruneContentVersions(ctx, created.ID, current.Revision,
 		VersionPruneSelector{KeepNewest: 1}, false)
 	require.NoError(t, err)
@@ -770,6 +806,11 @@ func TestPruneContentVersionsAccountsForVisualPreviewOutputs(t *testing.T) {
 
 func TestPruneContentVersionsAccountsForPageImages(t *testing.T) {
 	t.Parallel()
+	checkPruneContentVersionsAccountsForPageImages(t, false)
+}
+
+func checkPruneContentVersionsAccountsForPageImages(t *testing.T, postgres bool) {
+	t.Helper()
 	s := newTestStore(t)
 	ctx := t.Context()
 	historical := pageStoreRequest(t, s)
@@ -802,9 +843,12 @@ func TestPruneContentVersionsAccountsForPageImages(t *testing.T) {
 	addTestPack(t, s, "page-image-pack", 1, 6, nowRFC3339())
 	addTestPackEntry(t, s, fakeHash("c2"), "page-image-pack", 0, 6, 10)
 	_, err = s.db.Exec(`UPDATE blob_locations SET kind='packed',encoding=NULL,stored_size=6
-		WHERE blob_hash=? AND store_id=?`, fakeHash("c2"), s.primaryStoreID)
+		WHERE blob_hash=$1 AND store_id=$2`, fakeHash("c2"), s.primaryStoreID)
 	require.NoError(t, err)
 
+	if postgres {
+		s, _ = copyRetentionStore(t, s)
+	}
 	for _, run := range []bool{false, true} {
 		result, err := s.PruneContentVersions(ctx, current.ID, current.Revision,
 			VersionPruneSelector{KeepNewest: 1}, run)
@@ -862,6 +906,11 @@ func TestPruneContentVersionsReportsPackedAndSharedConsequences(t *testing.T) {
 
 func TestPruneContentVersionsReportsMixedLocationsAcrossStores(t *testing.T) {
 	t.Parallel()
+	checkPruneContentVersionsReportsMixedLocationsAcrossStores(t, false)
+}
+
+func checkPruneContentVersionsReportsMixedLocationsAcrossStores(t *testing.T, postgres bool) {
+	t.Helper()
 	s := newTestStore(t)
 	ctx := t.Context()
 	created, err := s.CreateFile(ctx, s.RootID(), "mixed.txt", fakeHash("d7"), 60, "text/plain")
@@ -880,22 +929,25 @@ func TestPruneContentVersionsReportsMixedLocationsAcrossStores(t *testing.T) {
 	_, err = s.db.Exec(`
 		UPDATE blob_locations
 		SET kind='packed',encoding=NULL,stored_size=17
-		WHERE blob_hash=? AND store_id=?`, historical.BlobHash, s.primaryStoreID)
+		WHERE blob_hash=$1 AND store_id=$2`, historical.BlobHash, s.primaryStoreID)
 	require.NoError(t, err)
 	const secondaryID = "40000000-0000-4000-8000-000000000001"
 	_, err = s.db.Exec(`
 		INSERT INTO blob_stores(
 			store_id,name,kind,role,lifecycle,binding,ownership_epoch,created_at
-		) VALUES(?, 'archive', 'filesystem', 'secondary', 'active', 'archive', ?, ?)`,
+		) VALUES($1, 'archive', 'filesystem', 'secondary', 'active', 'archive', $2, $3)`,
 		secondaryID, "40000000-0000-4000-8000-000000000002", nowRFC3339())
 	require.NoError(t, err)
 	_, err = s.db.Exec(`
 		INSERT INTO blob_locations(
 			blob_hash,store_id,generation,kind,encoding,stored_size,pack_eligible
-		) VALUES(?, ?, ?, 'loose', 'zstd', 11, 1)`, historical.BlobHash, secondaryID,
+		) VALUES($1, $2, $3, 'loose', 'zstd', 11, 1)`, historical.BlobHash, secondaryID,
 		"40000000-0000-4000-8000-000000000003")
 	require.NoError(t, err)
 
+	if postgres {
+		s, _ = copyRetentionStore(t, s)
+	}
 	preview, err := s.PruneContentVersions(ctx, created.ID, current.Revision,
 		VersionPruneSelector{VersionIDs: []string{historical.ID}}, false)
 	require.NoError(t, err)

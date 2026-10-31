@@ -450,7 +450,7 @@ func (s *Store) SealExportSource(ctx context.Context, owner, id string) (bundle.
 func checkExportVersionsRetained(ctx context.Context, q metadataQuerier, versions []string) error {
 	for _, id := range versions {
 		var expiry string
-		err := q.QueryRowContext(ctx, `SELECT s.expires_at FROM export_sources s JOIN export_members m ON m.source_id=s.id WHERE m.version_id=? ORDER BY s.expires_at DESC LIMIT 1`, id).Scan(&expiry)
+		err := q.QueryRowContext(ctx, `SELECT s.expires_at FROM export_sources s JOIN export_members m ON m.source_id=s.id WHERE m.version_id=$1 ORDER BY s.expires_at DESC LIMIT 1`, id).Scan(&expiry)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}

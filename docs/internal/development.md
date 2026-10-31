@@ -209,11 +209,12 @@ physical, extraction and photo catalog maintenance. Document imports, source
 history, watch and push observations, and collection membership and labels also
 work through the native Store methods. Recoverable deletion covers document and
 folder trash, whole photo groups, trash browsing and restore, including audited
-mutations and photo sidecar decisions.
+mutations and photo sidecar decisions. Permanent trash emptying and content-version
+pruning preserve retention holds and related catalog state.
 
 A public PostgreSQL-backed vault is not available yet: daemon and embedded
 operations still open SQLite. Grouped photo imports, XMP sidecar writing,
-permanent purge, search, transfer, backup recovery and the complete physical-storage
+derivative collection, search, transfer, backup recovery and the complete physical-storage
 lifecycle remain unqualified.
 
 `Setup` takes a caller-owned `database/sql` pool authenticated as `SchemaOwner`
@@ -320,6 +321,23 @@ GRANT INSERT, UPDATE(revision, reason) ON documents.document_event_dirty
 GRANT UPDATE(publication_epoch, updated_at)
     ON documents.document_event_state, documents.document_people_state
     TO docbank_runtime;
+GRANT DELETE ON documents.rendition_heads, documents.rendition_attachments,
+    documents.rendition_job_waiters, documents.email_attachments,
+    documents.embedding_jobs, documents.embedding_heads, documents.embedding_sets,
+    documents.photo_files TO docbank_runtime;
+GRANT DELETE, UPDATE(state, phase, claim_owner, lease_expires_at, claim_epoch,
+    available_at, selected_waiter_id, authorization_grant_id,
+    authorization_incarnation_id, authorization_revocation_fence,
+    provider_started, provider_resume_handle, execution_snapshot_json,
+    lexical_generation_id, failure_code, updated_at)
+    ON documents.rendition_jobs TO docbank_runtime;
+GRANT UPDATE(state, failure_code, updated_at)
+    ON documents.rendition_job_waiters TO docbank_runtime;
+GRANT INSERT, DELETE, UPDATE(root_kind, target_kind, target_id, fencing_token,
+    recorded_at, expires_at, active, released_at)
+    ON documents.current_rendition_roots TO docbank_runtime;
+GRANT UPDATE(revision) ON documents.tags TO docbank_runtime;
+GRANT UPDATE(binding_epoch) ON documents.document_people_state TO docbank_runtime;
 ```
 
 Checksum rows are inserted or compared with the existing value, never updated;
@@ -493,6 +511,14 @@ changes refresh photo export work, including both ends of an unowned sibling
 sidecar move. Reintroducing a blob updates summaries of surviving pack mappings
 and removes its old primary mapping when a new loose receipt replaces it.
 
+Permanent version deletion advances people-binding and event-publication epochs
+before their owning rows disappear through cascades. Pruning refreshes the
+surviving photo's source claims, timeline and export work after deletion. Trash
+emptying collects affected photo identities before removing memberships and
+receipts, repairs the surviving assets, and refreshes paired sidecar work after
+node deletion. These effects share the deletion transaction; a failure retains
+the original versions, jobs, receipts, epochs and node revisions.
+
 !!! info "Planned"
 
     Preserve these effects as the remaining mutation, import, restore and
@@ -505,8 +531,6 @@ and removes its old primary mapping when a new loose receipt replaces it.
     | Change | Required catalog effect |
     | --- | --- |
     | Insert a content version | Remove its blob from `rendition_blob_staging` and `derivative_blob_purge_pending` |
-    | Delete a version with person assertions | Advance `document_people_state.binding_epoch` and its update timestamp before cascades remove those assertions |
-    | Delete a photo's version | Queue its node in `photo_timeline_pending` |
     | Change a photo node's current version | Queue its node when the version changes |
     | Add or remove an audit membership | Queue eligible photo assets associated with that node in `photo_xmp_unsettled` |
     | Add or remove audit authority | Queue every eligible photo asset in `photo_xmp_unsettled` |
@@ -589,9 +613,36 @@ assets from multiple statements. Backend qualification compares populated photo
 state, receipts and export inputs against SQLite and validates the resulting
 ordinary and audited metadata.
 
-This is recoverable deletion through the internal Store. Permanent trash empty,
-retention and pruning, physical blob retirement, general photo editing, portable
-backup/restore and public PostgreSQL vault opening remain unqualified.
+General photo editing, portable backup/restore and public PostgreSQL vault
+opening remain unqualified.
+
+#### Permanent cleanup
+
+`TrashEmpty`, `TrashEmptyBounded` and `PruneContentVersions` use the same native
+operation on both backends. A trash batch completes the last connected photo
+group even when that exceeds its root limit. Live, too-new or retained peers
+hold the group. Email publications, mailbox receipts, snapshots, packages,
+media authority and active photo checkouts preserve their existing retention
+rules; an unrelated trash root can still be deleted. A retained export refuses
+an execution until its authority is released.
+
+Version pruning preserves revert dependencies and photo sidecar history. The
+all-prior selector can install a source-free checkpoint for a current revert.
+A pruning operation that removes history advances the node revision once. Its inventory
+separates shared bytes from loose and packed bytes eligible for later cleanup;
+it does not report physical space reclaimed.
+
+Before deleting a version, cleanup removes its serving attachments, embedding
+sets and worker waiters. Shared rendition jobs retain or reselect remaining
+consumers under current consent. In-flight calls keep their claim; staged work
+can be requeued with a new fencing token. An orphaned ambiguous provider call
+keeps its durable record so cleanup cannot silently authorize a repeat call.
+Immutable derivative generations remain available for later collection.
+
+Both destructive operations retain the existing refusal while audit authority
+is active. Dry runs can inspect candidates but do not authorize deletion.
+Physical byte deletion, general derivative collection and processing workers
+remain separate, unqualified PostgreSQL operations.
 
 #### Imports and source history
 

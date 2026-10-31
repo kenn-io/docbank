@@ -13,7 +13,7 @@ import (
 // authority before its owning content versions are permanently deleted.
 // Immutable builds remain cataloged until ordinary derivative GC proves that
 // no attachment or other root still needs them.
-func deleteRenditionAuthorityForVersionsTx(
+func (s *Store) deleteRenditionAuthorityForVersionsTx(
 	ctx context.Context, tx *sql.Tx, versionIDs []string,
 ) (retErr error) {
 	if len(versionIDs) == 0 {
@@ -29,19 +29,19 @@ func deleteRenditionAuthorityForVersionsTx(
 		return err
 	}
 	deleteHeads, err := tx.PrepareContext(ctx,
-		`DELETE FROM rendition_heads WHERE content_version_id=?`)
+		`DELETE FROM rendition_heads WHERE content_version_id=$1`)
 	if err != nil {
 		return fmt.Errorf("preparing rendition head deletion: %w", err)
 	}
 	defer func() { retErr = errors.Join(retErr, deleteHeads.Close()) }()
 	deleteAttachments, err := tx.PrepareContext(ctx,
-		`DELETE FROM rendition_attachments WHERE content_version_id=?`)
+		`DELETE FROM rendition_attachments WHERE content_version_id=$1`)
 	if err != nil {
 		return fmt.Errorf("preparing rendition attachment deletion: %w", err)
 	}
 	defer func() { retErr = errors.Join(retErr, deleteAttachments.Close()) }()
 	deleteJobWaiters, err := tx.PrepareContext(ctx,
-		`DELETE FROM rendition_job_waiters WHERE content_version_id=?`)
+		`DELETE FROM rendition_job_waiters WHERE content_version_id=$1`)
 	if err != nil {
 		return fmt.Errorf("preparing rendition job waiter deletion: %w", err)
 	}
@@ -57,7 +57,7 @@ func deleteRenditionAuthorityForVersionsTx(
 			return fmt.Errorf("deleting rendition job waiters for content version %s: %w", versionID, err)
 		}
 	}
-	return reconcileRenditionJobsAfterWaiterDeletionTx(ctx, tx, nowRFC3339(), nil)
+	return s.reconcileRenditionJobsAfterWaiterDeletionTx(ctx, tx, nowRFC3339(), nil)
 }
 
 // deleteEmbeddingAuthorityForVersionsTx removes dependent derivative
@@ -66,23 +66,23 @@ func deleteRenditionAuthorityForVersionsTx(
 // applies its roots independently after the version-owned sets are gone.
 func deleteEmbeddingAuthorityForVersionsTx(ctx context.Context, tx *sql.Tx, versionIDs []string) error {
 	for _, versionID := range versionIDs {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM current_rendition_roots WHERE root_kind=? AND root_id IN (
-            SELECT job_id FROM embedding_jobs WHERE content_version_id=?)`, RenditionRootWorkerLease, versionID); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM current_rendition_roots WHERE root_kind=$1 AND root_id IN (
+            SELECT job_id FROM embedding_jobs WHERE content_version_id=$2)`, RenditionRootWorkerLease, versionID); err != nil {
 			return fmt.Errorf("releasing embedding job roots: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_jobs WHERE content_version_id=?`, versionID); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_jobs WHERE content_version_id=$1`, versionID); err != nil {
 			return fmt.Errorf("deleting embedding jobs: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM current_rendition_roots WHERE
 			target_kind='embedding_set' AND target_id IN (
-				SELECT embedding_set_id FROM embedding_sets WHERE content_version_id=?)`,
+				SELECT embedding_set_id FROM embedding_sets WHERE content_version_id=$1)`,
 			versionID); err != nil {
 			return fmt.Errorf("releasing embedding roots for content version %s: %w", versionID, err)
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_heads WHERE content_version_id=?`, versionID); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_heads WHERE content_version_id=$1`, versionID); err != nil {
 			return fmt.Errorf("deleting embedding heads for content version %s: %w", versionID, err)
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_sets WHERE content_version_id=?`, versionID); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_sets WHERE content_version_id=$1`, versionID); err != nil {
 			return fmt.Errorf("deleting embedding sets for content version %s: %w", versionID, err)
 		}
 	}
@@ -94,17 +94,18 @@ func deleteEmbeddingAuthorityForVersionsTx(ctx context.Context, tx *sql.Tx, vers
 // consumer remains. Orphaned work is fenced and removed, except that ambiguous
 // provider egress keeps a durable tombstone so a later enqueue cannot silently
 // resubmit the same call.
-func reconcileRenditionJobsAfterWaiterDeletionTx(
+func (s *Store) reconcileRenditionJobsAfterWaiterDeletionTx(
 	ctx context.Context, tx *sql.Tx, at string, jobIDs []string,
 ) (retErr error) {
+	d := metadataJSONDialect{postgres: s.postgresSchema != ""}
 	encoded, err := json.Marshal(jobIDs)
 	if err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE rendition_jobs SET
 		selected_waiter_id=NULL,authorization_grant_id=NULL,
-		authorization_incarnation_id=NULL,authorization_revocation_fence=NULL,updated_at=?
-		WHERE (? OR job_id IN (SELECT value FROM json_each(?))) AND state IN ('completed','operator_required')
+		authorization_incarnation_id=NULL,authorization_revocation_fence=NULL,updated_at=$1
+		WHERE ($2 OR job_id IN (SELECT value FROM `+d.arrayValues("$3")+`)) AND state IN ('completed','operator_required')
 		  AND selected_waiter_id IS NOT NULL
 		  AND NOT EXISTS (
 			SELECT 1 FROM rendition_job_waiters w
@@ -117,7 +118,7 @@ func reconcileRenditionJobsAfterWaiterDeletionTx(
 		       COALESCE(failure_code,''),
 		       provider_resume_handle IS NOT NULL AND execution_snapshot_json IS NOT NULL
 		FROM rendition_jobs
-		WHERE (? OR job_id IN (SELECT value FROM json_each(?))) AND state IN ('queued','running','retry_wait','failed')
+		WHERE ($1 OR job_id IN (SELECT value FROM `+d.arrayValues("$2")+`)) AND state IN ('queued','running','retry_wait','failed')
 		  AND selected_waiter_id IS NOT NULL
 		  AND NOT EXISTS (
 			SELECT 1 FROM rendition_job_waiters w
@@ -170,14 +171,14 @@ func reconcileRenditionJobsAfterWaiterDeletionTx(
 			if _, err := tx.ExecContext(ctx, `UPDATE rendition_jobs SET
 				selected_waiter_id=NULL,authorization_grant_id=NULL,
 				authorization_incarnation_id=NULL,authorization_revocation_fence=NULL,
-				updated_at=? WHERE job_id=?`, at, job.ID); err != nil {
+				updated_at=$1 WHERE job_id=$2`, at, job.ID); err != nil {
 				return fmt.Errorf("clearing deleted failed rendition authority: %w", err)
 			}
 			continue
 		}
 		var hasWaiting bool
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
-			SELECT 1 FROM rendition_job_waiters WHERE job_id=? AND state='waiting'
+			SELECT 1 FROM rendition_job_waiters WHERE job_id=$1 AND state='waiting'
 		)`, job.ID).Scan(&hasWaiting); err != nil {
 			return fmt.Errorf("checking remaining rendition waiters: %w", err)
 		}
@@ -214,7 +215,7 @@ func reconcileRenditionJobsAfterWaiterDeletionTx(
 					WHEN phase='provider' AND provider_started=1 THEN 'ambiguous'
 					ELSE 'stale_authority'
 				END,
-				updated_at=? WHERE job_id=?`, at, job.ID); err != nil {
+				updated_at=$1 WHERE job_id=$2`, at, job.ID); err != nil {
 				return fmt.Errorf("fencing orphaned rendition job: %w", err)
 			}
 			continue
@@ -229,9 +230,9 @@ func reconcileRenditionJobsAfterWaiterDeletionTx(
 				ctx, tx, affectedJob.vaultID, job, atTime)
 			if selectErr == nil {
 				if _, err := tx.ExecContext(ctx, `UPDATE rendition_jobs SET
-					selected_waiter_id=?,authorization_grant_id=?,
-					authorization_incarnation_id=?,authorization_revocation_fence=?,updated_at=?
-					WHERE job_id=?`, waiterID, authorization.GrantID,
+					selected_waiter_id=$1,authorization_grant_id=$2,
+					authorization_incarnation_id=$3,authorization_revocation_fence=$4,updated_at=$5
+					WHERE job_id=$6`, waiterID, authorization.GrantID,
 					authorization.ProcessingIncarnationID, authorization.RevocationFence,
 					at, job.ID); err != nil {
 					return fmt.Errorf("reselecting in-flight rendition waiter: %w", err)
@@ -246,7 +247,7 @@ func reconcileRenditionJobsAfterWaiterDeletionTx(
 				state='operator_required',claim_owner=NULL,lease_expires_at=NULL,
 				selected_waiter_id=NULL,authorization_grant_id=NULL,
 				authorization_incarnation_id=NULL,authorization_revocation_fence=NULL,
-				failure_code='ambiguous',updated_at=? WHERE job_id=?`, at, job.ID); err != nil {
+				failure_code='ambiguous',updated_at=$1 WHERE job_id=$2`, at, job.ID); err != nil {
 				return fmt.Errorf("fencing unauthorized in-flight rendition job: %w", err)
 			}
 			continue
@@ -254,15 +255,15 @@ func reconcileRenditionJobsAfterWaiterDeletionTx(
 
 		if _, err := tx.ExecContext(ctx, `UPDATE rendition_jobs SET
 			state='queued',claim_owner=NULL,lease_expires_at=NULL,
-			claim_epoch=claim_epoch+1,available_at=?,selected_waiter_id=NULL,
+			claim_epoch=claim_epoch+1,available_at=$1,selected_waiter_id=NULL,
 			authorization_grant_id=NULL,authorization_incarnation_id=NULL,
-			authorization_revocation_fence=NULL,failure_code=NULL,updated_at=?
-			WHERE job_id=?`, at, at, job.ID); err != nil {
+			authorization_revocation_fence=NULL,failure_code=NULL,updated_at=$2
+			WHERE job_id=$3`, at, at, job.ID); err != nil {
 			return fmt.Errorf("requeueing rendition job for remaining waiters: %w", err)
 		}
 		var generationID sql.NullString
 		if err := tx.QueryRowContext(ctx,
-			`SELECT lexical_generation_id FROM rendition_jobs WHERE job_id=?`, job.ID,
+			`SELECT lexical_generation_id FROM rendition_jobs WHERE job_id=$1`, job.ID,
 		).Scan(&generationID); err != nil {
 			return fmt.Errorf("reading requeued rendition generation: %w", err)
 		}
@@ -272,10 +273,10 @@ func reconcileRenditionJobsAfterWaiterDeletionTx(
 		}
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE current_rendition_roots SET
-		active=0,released_at=?
+		active=0,released_at=$1
 		WHERE active=1 AND EXISTS (
 			SELECT 1 FROM rendition_jobs j
-			WHERE (? OR j.job_id IN (SELECT value FROM json_each(?)))
+			WHERE ($2 OR j.job_id IN (SELECT value FROM `+d.arrayValues("$3")+`))
 			  AND (current_rendition_roots.root_id='rendition_job_build_' || j.job_id
 			       OR current_rendition_roots.root_id='rendition_job_generation_' || j.job_id)
 			  AND NOT EXISTS (
@@ -288,7 +289,7 @@ func reconcileRenditionJobsAfterWaiterDeletionTx(
 	if _, err := tx.ExecContext(ctx, `DELETE FROM current_rendition_roots
 		WHERE EXISTS (
 			SELECT 1 FROM rendition_jobs j
-			WHERE (? OR j.job_id IN (SELECT value FROM json_each(?)))
+			WHERE ($1 OR j.job_id IN (SELECT value FROM `+d.arrayValues("$2")+`))
 			  AND (current_rendition_roots.root_id='rendition_job_build_' || j.job_id
 			       OR current_rendition_roots.root_id='rendition_job_generation_' || j.job_id)
 			  AND j.state<>'operator_required'
@@ -300,7 +301,7 @@ func reconcileRenditionJobsAfterWaiterDeletionTx(
 		return fmt.Errorf("deleting orphaned rendition job roots: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM rendition_jobs
-		WHERE (? OR job_id IN (SELECT value FROM json_each(?))) AND state<>'operator_required'
+		WHERE ($1 OR job_id IN (SELECT value FROM `+d.arrayValues("$2")+`)) AND state<>'operator_required'
 		  AND NOT EXISTS (
 			SELECT 1 FROM rendition_job_waiters w WHERE w.job_id=rendition_jobs.job_id
 		  )`, jobIDs == nil, string(encoded)); err != nil {
@@ -312,7 +313,7 @@ func reconcileRenditionJobsAfterWaiterDeletionTx(
 // purgeRenditionJobWaitersTx applies explicit derivative selectors to pending
 // consumers before GC computes reachability. It returns exact durable
 // suppressions so the same authority cannot be silently enqueued again.
-func purgeRenditionJobWaitersTx(
+func (s *Store) purgeRenditionJobWaitersTx(
 	ctx context.Context, tx *sql.Tx, versionSet, attachmentSet, buildSet map[string]struct{},
 	all bool, purgedAt string,
 ) (_ []derivativePurgeSuppression, retErr error) {
@@ -384,12 +385,12 @@ func purgeRenditionJobWaitersTx(
 	}
 	for _, waiterID := range waiterIDs {
 		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM rendition_job_waiters WHERE waiter_id=?`, waiterID); err != nil {
+			`DELETE FROM rendition_job_waiters WHERE waiter_id=$1`, waiterID); err != nil {
 			return nil, fmt.Errorf("deleting purged rendition job waiter %s: %w", waiterID, err)
 		}
 	}
 	if len(jobIDs) != 0 {
-		if err := reconcileRenditionJobsAfterWaiterDeletionTx(ctx, tx, purgedAt, derivativeSortedKeys(jobIDs)); err != nil {
+		if err := s.reconcileRenditionJobsAfterWaiterDeletionTx(ctx, tx, purgedAt, derivativeSortedKeys(jobIDs)); err != nil {
 			return nil, err
 		}
 	}

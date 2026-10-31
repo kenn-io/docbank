@@ -74,6 +74,14 @@ func newPostgresSchemaStore(t *testing.T, setup *sql.DB, cfg pgschema.Config) *S
 		"; GRANT INSERT,UPDATE(revision,reason) ON "+schema+".document_event_dirty TO "+quotedRole+
 		"; GRANT UPDATE(publication_epoch,updated_at) ON "+schema+".document_people_state,"+schema+".document_event_state TO "+quotedRole)
 	require.NoError(t, err)
+
+	_, err = setup.ExecContext(ctx, "GRANT DELETE ON "+schema+".rendition_heads,"+schema+".rendition_attachments,"+schema+".rendition_job_waiters,"+schema+".email_attachments,"+schema+".embedding_jobs,"+schema+".embedding_heads,"+schema+".embedding_sets,"+schema+".photo_files TO "+quotedRole+
+		"; GRANT DELETE,UPDATE(state,phase,claim_owner,lease_expires_at,claim_epoch,available_at,selected_waiter_id,authorization_grant_id,authorization_incarnation_id,authorization_revocation_fence,provider_started,provider_resume_handle,execution_snapshot_json,lexical_generation_id,failure_code,updated_at) ON "+schema+".rendition_jobs TO "+quotedRole+
+		"; GRANT UPDATE(state,failure_code,updated_at) ON "+schema+".rendition_job_waiters TO "+quotedRole+
+		"; GRANT INSERT,DELETE,UPDATE(root_kind,target_kind,target_id,fencing_token,recorded_at,expires_at,active,released_at) ON "+schema+".current_rendition_roots TO "+quotedRole+
+		"; GRANT UPDATE(revision) ON "+schema+".tags TO "+quotedRole+
+		"; GRANT UPDATE(binding_epoch) ON "+schema+".document_people_state TO "+quotedRole)
+	require.NoError(t, err)
 	config, err := pgx.ParseConfig(os.Getenv("DOCBANK_TEST_POSTGRES_DSN"))
 	require.NoError(t, err)
 	require.NoError(t, setup.QueryRowContext(ctx, `SELECT current_database()`).Scan(&config.Database))

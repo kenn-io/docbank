@@ -38,3 +38,11 @@ func (d metadataJSONDialect) maximum() string {
 	}
 	return "MAX"
 }
+
+// arrayValues expands a JSON array parameter. Callers use [] for an empty set.
+func (d metadataJSONDialect) arrayValues(parameter string) string {
+	if d.postgres {
+		return "jsonb_array_elements_text(CAST(" + parameter + " AS jsonb)) AS items(value)"
+	}
+	return "json_each(" + parameter + ")"
+}

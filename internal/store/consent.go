@@ -435,22 +435,22 @@ func authorizeProviderOperationInConsentSetTx(
 	statement := `
 		SELECT grant_id,revocation_fence,expires_at
 		FROM processing_consent_grants
-		WHERE vault_uid=? AND incarnation_id=? AND principal=? AND scope=?
-		  AND profile_fingerprint=? AND disclosure_fingerprint=?
-		  AND input_classes_json=? AND retained_classes_json=?`
+		WHERE vault_uid=$1 AND incarnation_id=$2 AND principal=$3 AND scope=$4
+		  AND profile_fingerprint=$5 AND disclosure_fingerprint=$6
+		  AND input_classes_json=$7 AND retained_classes_json=$8`
 	args := []any{vaultID, incarnationID,
 		authority.principal, authority.scope, authority.profile, authority.disclosure,
 		authority.inputsJSON, authority.retainedJSON}
 	if request.PriorAuthorization != nil {
-		statement += ` AND grant_id=?`
+		statement += ` AND grant_id=$9`
 		args = append(args, request.PriorAuthorization.GrantID)
 	}
 	if admittedGrantID != "" {
-		statement += ` AND consent_set_id=(
+		statement += fmt.Sprintf(` AND consent_set_id=(
 			SELECT consent_set_id FROM processing_consent_grants
-			WHERE grant_id=? AND vault_uid=? AND incarnation_id=?
-		)`
-		args = append(args, admittedGrantID, vaultID, incarnationID)
+			WHERE grant_id=$%d AND vault_uid=$1 AND incarnation_id=$2
+		)`, len(args)+1)
+		args = append(args, admittedGrantID)
 	}
 	statement += ` ORDER BY issued_at DESC,grant_id DESC`
 	rows, err := querier.QueryContext(ctx, statement, args...)
@@ -519,7 +519,7 @@ func consentRevocationFenceTx(
 	var fence int64
 	if err := tx.QueryRowContext(ctx, `
 		SELECT COALESCE(MAX(fence),0) FROM processing_consent_revocations
-		WHERE vault_uid=? AND incarnation_id=? AND principal=? AND scope=?`,
+		WHERE vault_uid=$1 AND incarnation_id=$2 AND principal=$3 AND scope=$4`,
 		vaultID, incarnationID, principal, scope).Scan(&fence); err != nil {
 		return 0, fmt.Errorf("reading processing consent revocation fence: %w", err)
 	}
