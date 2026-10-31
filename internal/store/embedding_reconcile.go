@@ -446,7 +446,7 @@ func (s *Store) discoverImageEmbeddingJobs(ctx context.Context, request Embeddin
 			continue
 		}
 		err = request.Mutate(ctx, func() error {
-			_, err := s.EnqueueEmbeddingJob(ctx, EmbeddingJobRequest{ContentVersionID: target.version, Profile: target.profile, BindingID: target.binding.Name, Descriptor: descriptor, InputGeneration: generation, Authorization: target.consent})
+			_, err := s.EnqueueEmbeddingJob(ctx, EmbeddingJobRequest{ContentVersionID: target.version, Profile: target.profile, BindingID: target.binding.Name, VectorSpaceID: request.VectorSpaces[target.profile.Fingerprint+"/"+target.binding.Name].ID, Descriptor: descriptor, InputGeneration: generation, Authorization: target.consent})
 			return err
 		})
 		if err != nil && !errors.Is(err, ErrEmbeddingJobFenced) && !errors.Is(err, ErrProcessingConsentRevoked) && !errors.Is(err, ErrProcessingConsentExpired) && !errors.Is(err, ErrProcessingConsentRequired) {
