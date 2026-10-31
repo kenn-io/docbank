@@ -803,6 +803,8 @@ A scope cannot be combined with `media_sources`. Explicit fences retain the
 4,096-version limit.
 A scope with no live files returns an empty report with complete 0/0 coverage.
 
+The CLI's automatic search sends a scope; the web app, TUI, MCP, and Go library still send fences.
+
 Search requires nonblank `query` text of at most 8,192 characters, `profile`,
 and `mode` (`lexical`, `semantic`, `hybrid`, or `auto`). `limit` defaults to 50
 and accepts 1–100. `binding_id` selects the embedding binding. Omitting it uses

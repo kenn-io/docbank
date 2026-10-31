@@ -457,6 +457,7 @@ func TestSearchAllLiveEmptyScope(t *testing.T) {
 	for _, name := range []string{"fresh with consent", "fresh without consent", "all trashed", "filter matches none", "populated without index"} {
 		t.Run(name, func(t *testing.T) {
 			f := newEmbeddingRecoveryFixture(t)
+			f.profile.Embeddings[0].Activation = document.EmbeddingRequired
 			if name != "all trashed" && name != "filter matches none" {
 				catalog, err := store.Open(filepath.Join(t.TempDir(), "docbank.db"))
 				require.NoError(t, err)
@@ -493,15 +494,38 @@ func TestSearchAllLiveEmptyScope(t *testing.T) {
 			assert.Empty(t, report.Degradations)
 			assert.Equal(t, retrieval.ModeHybrid, report.RequestedMode)
 			assert.Equal(t, retrieval.ModeHybrid, report.ActualMode)
-			assert.Equal(t, retrieval.Coverage{State: retrieval.CoverageComplete}, report.Coverage)
+			assert.Equal(t, retrieval.Coverage{State: retrieval.CoverageComplete, BindingRequired: true}, report.Coverage)
 			assert.Zero(t, provider.calls.Load())
 		})
 	}
+	t.Run("without embedding bindings", func(t *testing.T) {
+		f := newEmbeddingRecoveryFixture(t)
+		f.profile.Embeddings = nil
+		for _, populated := range []bool{false, true} {
+			t.Run(fmt.Sprintf("populated=%t", populated), func(t *testing.T) {
+				catalog := f.catalog
+				if !populated {
+					var err error
+					catalog, err = store.Open(filepath.Join(t.TempDir(), "docbank.db"))
+					require.NoError(t, err)
+					t.Cleanup(func() { require.NoError(t, catalog.Close()) })
+				}
+				service, err := NewService(ServiceConfig{Catalog: catalog, Blobs: f.blobs,
+					Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(),
+					Profiles: map[string]ProfileConfig{"current": {Profile: f.profile, RenditionProvider: newWorkerProvider(t)}}})
+				require.NoError(t, err)
+				report, err := service.Search(t.Context(), SearchRequest{Profile: "current", Query: "synthetic", Mode: "semantic", AllLive: &store.SearchOptions{}})
+				require.Error(t, err)
+				assert.Equal(t, retrieval.Report{}, report)
+			})
+		}
+	})
 }
 
 func TestSearchAllLiveBeyondExplicitFenceLimit(t *testing.T) {
 	t.Parallel()
 	f := newEmbeddingRecoveryFixture(t)
+	f.profile.Embeddings[0].Activation = document.EmbeddingRequired
 	_, _, err := f.catalog.TrashPath(t.Context(), "/source.pdf")
 	require.NoError(t, err)
 	provider := newRecoveryProvider(t, f.request.Descriptor)
@@ -530,6 +554,7 @@ func TestSearchAllLiveBeyondExplicitFenceLimit(t *testing.T) {
 	require.Len(t, report.Results, 2)
 	assert.Equal(t, 4099, report.Coverage.ScopedDocuments)
 	assert.Equal(t, 2, report.Coverage.CompleteDocuments)
+	assert.True(t, report.Coverage.BindingRequired)
 	assert.Equal(t, retrieval.CoverageState("incomplete"), report.Coverage.State)
 	for _, result := range report.Results {
 		assert.Contains(t, f.versions, result.Document.ContentVersionID)
