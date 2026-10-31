@@ -90,6 +90,10 @@ func (a Answer) Check(citations []Citation) Report {
 		if status == "" {
 			status = "resolved"
 			for _, figure := range normalizedFigures(c.Text) {
+				if figure.kind == "" {
+					values[figureKey{"", figure.text}] = true
+					continue
+				}
 				for _, literal := range extractDecoded(figure.text) {
 					values[figureKey{"", literal}] = true
 				}
@@ -105,7 +109,11 @@ func (a Answer) Check(citations []Citation) Report {
 	missing := false
 	for _, figure := range a.figures {
 		status := "found"
-		if !values[figureKey{figure.kind, figure.value}] {
+		if figure.kind == "" {
+			if !values[figureKey{"", figure.text}] {
+				status = "missing"
+			}
+		} else if !values[figureKey{figure.kind, figure.value}] {
 			for _, literal := range extractDecoded(figure.text) {
 				if !values[figureKey{"", literal}] {
 					status = "missing"

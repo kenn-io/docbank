@@ -48,7 +48,7 @@ func normalizedFigures(text string) []normalizedFigure {
 			}
 			tokens = append(tokens, span{start, i})
 		}
-		previousUnparsed := false
+		previousUnparsed := -1
 		for i := 0; i < len(tokens); {
 			start := tokens[i].start
 			start += trimStart(rs[start:tokens[i].end])
@@ -73,8 +73,8 @@ func normalizedFigures(text string) []normalizedFigure {
 					safe = end
 				}
 				// A standalone marker before an amount makes its currency ambiguous.
-				if kind == 1 && previousUnparsed && strings.TrimFunc(string(rs[tokens[i-1].end:start]), amountGap) == "" {
-					previous := []rune(trim(rs[tokens[i-1].start:tokens[i-1].end]))
+				if kind == 1 && previousUnparsed >= 0 && strings.TrimFunc(string(rs[tokens[previousUnparsed].end:start]), amountGap) == "" {
+					previous := []rune(trim(rs[tokens[previousUnparsed].start:tokens[previousUnparsed].end]))
 					if markerEnd, marker := currencyAt(previous, 0); marker != "" && markerEnd == len(previous) {
 						value = ""
 					}
@@ -97,14 +97,19 @@ func normalizedFigures(text string) []normalizedFigure {
 				}
 			}
 			if matched {
-				previousUnparsed = false
+				previousUnparsed = -1
 				continue
 			}
 			next := i + 1
 			for next < len(tokens) && tokens[next].end <= safe {
 				next++
 			}
-			previousUnparsed = next == i+1 && safe == 0
+			if trim(rs[tokens[i].start:tokens[i].end]) != "" {
+				previousUnparsed = -1
+				if next == i+1 && safe == 0 {
+					previousUnparsed = i
+				}
+			}
 			for ; i < next; i++ {
 				token := string(rs[tokens[i].start:tokens[i].end])
 				for _, value := range extractDecoded(token) {

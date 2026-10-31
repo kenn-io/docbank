@@ -13,6 +13,15 @@ func TestNormalizedFigures(t *testing.T) {
 		figures                 []Figure
 	}
 	cases := []testCase{}
+	for _, gap := range []string{" : ", " , : \t", " ' : ' "} {
+		for _, ambiguous := range []string{"CAD" + gap + "$40", "$40" + gap + "CAD"} {
+			cases = append(cases,
+				testCase{"USD40", ambiguous, "ungrounded", []Figure{{Text: "USD40", Status: "missing"}}},
+				testCase{ambiguous, "USD40", "ungrounded", []Figure{{Text: "$40", Status: "missing"}}},
+				testCase{ambiguous, ambiguous, "grounded", []Figure{{Text: "$40", Status: "found"}}},
+			)
+		}
+	}
 	for _, lineBreak := range []string{"\n", "\r\n", "\r", "\u0085", "\u2028", "\u2029", "\f", "\v"} {
 		for _, tc := range []struct{ answer, source, overall, status string }{
 			{"$40", "40" + lineBreak + "USD", "ungrounded", "missing"},
@@ -20,6 +29,8 @@ func TestNormalizedFigures(t *testing.T) {
 			{"$40", "$" + lineBreak + "40", "ungrounded", "missing"},
 			{"USD40", "$40," + lineBreak + "CAD", "grounded", "found"},
 			{"USD40", "CAD" + lineBreak + "$40", "grounded", "found"},
+			{"USD40", "CAD :" + lineBreak + "$40", "grounded", "found"},
+			{"USD40", "$40 :" + lineBreak + "CAD", "grounded", "found"},
 		} {
 			cases = append(cases, testCase{tc.answer, tc.source, tc.overall, []Figure{{Text: tc.answer, Status: tc.status}}})
 		}
