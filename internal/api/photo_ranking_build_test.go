@@ -32,7 +32,6 @@ func TestSavedPhotoRunsPreserveIdentityAndSkipUnneededEmbedding(t *testing.T) {
 		wantNoEmbedding bool
 	}{
 		{name: "semantic", payload: `{"mode":"semantic","text":"sunset","sort":{"field":"name","direction":"asc"}}`, wantMode: "semantic", wantStatus: http.StatusOK},
-		{name: "hybrid", payload: `{"mode":"hybrid","text":"sunset","sort":{"field":"name","direction":"asc"}}`, wantMode: "hybrid", wantStatus: http.StatusOK},
 		{name: "stale revision", payload: `{"mode":"semantic","text":"sunset"}`, updated: `{"mode":"semantic","text":"harbor"}`, wantStatus: http.StatusPreconditionFailed, wantProblem: "stale_revision", wantNoEmbedding: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

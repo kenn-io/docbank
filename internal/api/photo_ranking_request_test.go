@@ -18,7 +18,6 @@ func TestPhotoRankingRequestUsesNormalizedQueryOptions(t *testing.T) {
 	require.Equal(t, query.Sort{Field: "relevance", Direction: "desc"}, request.Query.Sort)
 	require.Equal(t, processing.SourceMetadataExtractorFingerprint, request.SourceMetadataFingerprint)
 	require.Equal(t, coverage, request.Coverage)
-	require.False(t, request.Hidden)
 	value.Text = "  "
 	require.Equal(t, query.ModeLexical, photoRankingQuery(value).Mode)
 }

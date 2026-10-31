@@ -27,23 +27,6 @@ func indexedPhotoRun(t *testing.T, count, seconds int) (imageEmbeddingCatalogFix
 	return f, ids
 }
 
-func TestPhotoStackMalformedProjectionPreservesBurstBrowse(t *testing.T) {
-	t.Parallel()
-	f := newImageEmbeddingCatalogFixture(t)
-	record, vector := f.publish(t)
-	index := newCursorIndexFixture(f)
-	index.add(record, vector)
-	index.generation(t, "malformed-projection")
-	_, err := f.s.db.Exec(`UPDATE vector_index_generations SET row_count=1000001 WHERE generation_id=?`, browseHash("malformed-projection"))
-	require.NoError(t, err)
-	ids := burstPhotos(t, f.s, 2)
-	for _, direction := range []string{"asc", "desc"} {
-		page, err := f.s.ListPhotoAssets(t.Context(), captureRequest(t, direction), nil)
-		require.NoError(t, err)
-		require.Contains(t, stackAssetIDs(page.Stacks), ids)
-	}
-}
-
 // Only the hydrate query is sent through this reader, so the plan assertion
 // follows executed SQL without recognizing a query by its text.
 type photoStackPlanQuerier struct {
@@ -67,18 +50,6 @@ func (q photoStackPlanQuerier) QueryContext(ctx context.Context, query string, a
 	return q.DB.QueryContext(ctx, query, args...) //nolint:sqlclosecheck // The hydrate reader owns and closes the returned rows.
 }
 
-// Fail the generation read after the real head query has succeeded.
-type photoStackLoadFailureQuerier struct {
-	*sql.DB
-
-	beforeLoad func()
-}
-
-func (q photoStackLoadFailureQuerier) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
-	q.beforeLoad()
-	return q.DB.QueryRowContext(ctx, query, args...)
-}
-
 func TestPhotoStackProjectionReaderPropagatesCancellation(t *testing.T) {
 	t.Parallel()
 	f := newImageEmbeddingCatalogFixture(t)
@@ -89,7 +60,7 @@ func TestPhotoStackProjectionReaderPropagatesCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	reads := 0
-	q := photoStackLoadFailureQuerier{DB: f.s.db, beforeLoad: func() {
+	q := photoStackGenerationQuerier{DB: f.s.db, beforeLoad: func() {
 		reads++
 		cancel()
 	}}

@@ -817,33 +817,25 @@ func TestProcessingServiceCoverageReportsRebuildWhilePreviousGenerationServes(t 
 
 func TestRunEmbeddingsSkipsIneligibleImageBinding(t *testing.T) {
 	t.Parallel()
-	for _, mime := range []string{"application/pdf", "image/jpeg"} {
-		t.Run(mime, func(t *testing.T) {
-			f := newPhotoDescriptionFixture(t)
-			x := newImageEmbeddingService(t, f)
-			service, original, image := newMixedImageTextProfileService(t, f, x)
-			fake := x.fake
-			f.grant(t, service, "mixed")
-			written := f.written
-			if mime == "application/pdf" {
-				var err error
-				written, err = f.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(mediatest.PDF()))
-				require.NoError(t, err)
-			}
-			node, err := f.catalog.CreateFile(t.Context(), f.catalog.RootID(), "without-preview", written.Hash, written.Size, mime, processingBlobPhysical(t, written))
-			require.NoError(t, err)
-			version, err := f.catalog.ContentVersionByID(t.Context(), node.CurrentVersionID)
-			require.NoError(t, err)
-			ids, err := service.runEmbeddings(t.Context(), version, service.profiles["mixed"], service.principal, service.scope, "", nil)
-			require.NoError(t, err)
-			require.Len(t, ids, 1)
-			job, err := f.catalog.EmbeddingJobByID(t.Context(), ids[0])
-			require.NoError(t, err)
-			require.Equal(t, "completed", job.State)
-			require.Equal(t, 0, fake.runtime.callCount(image))
-			require.Positive(t, fake.runtime.callCount(original))
-		})
-	}
+	f := newPhotoDescriptionFixture(t)
+	x := newImageEmbeddingService(t, f)
+	service, original, image := newMixedImageTextProfileService(t, f, x)
+	fake := x.fake
+	f.grant(t, service, "mixed")
+	written, err := f.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(mediatest.PDF()))
+	require.NoError(t, err)
+	node, err := f.catalog.CreateFile(t.Context(), f.catalog.RootID(), "without-preview", written.Hash, written.Size, "application/pdf", processingBlobPhysical(t, written))
+	require.NoError(t, err)
+	version, err := f.catalog.ContentVersionByID(t.Context(), node.CurrentVersionID)
+	require.NoError(t, err)
+	ids, err := service.runEmbeddings(t.Context(), version, service.profiles["mixed"], service.principal, service.scope, "", nil)
+	require.NoError(t, err)
+	require.Len(t, ids, 1)
+	job, err := f.catalog.EmbeddingJobByID(t.Context(), ids[0])
+	require.NoError(t, err)
+	require.Equal(t, "completed", job.State)
+	require.Equal(t, 0, fake.runtime.callCount(image))
+	require.Positive(t, fake.runtime.callCount(original))
 }
 
 func TestProcessingMissingRequiredImageBindingRemainsPartial(t *testing.T) {

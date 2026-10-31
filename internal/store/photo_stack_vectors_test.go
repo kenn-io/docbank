@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json/v2"
-	"strings"
 	"testing"
 	"time"
 
@@ -12,15 +11,15 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
-type photoStackCountingQuerier struct {
+type photoStackGenerationQuerier struct {
 	*sql.DB
 
-	generationReads int
+	beforeLoad func()
 }
 
-func (q *photoStackCountingQuerier) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
-	if strings.Contains(query, "generation_bytes") {
-		q.generationReads++
+func (q photoStackGenerationQuerier) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+	if q.beforeLoad != nil {
+		q.beforeLoad()
 	}
 	return q.DB.QueryRowContext(ctx, query, args...)
 }
@@ -32,20 +31,21 @@ func TestPhotoStackPagesReuseOpenedGeneration(t *testing.T) {
 	index := newCursorIndexFixture(f)
 	index.add(record, vector)
 	index.generation(t, "reused-image-generation")
-	q := &photoStackCountingQuerier{DB: f.s.db}
+	generationReads := 0
+	q := &photoStackGenerationQuerier{DB: f.s.db, beforeLoad: func() { generationReads++ }}
 	first, err := f.s.newPhotoStackVectorReader(t.Context(), q)
 	require.NoError(t, err)
 	require.Len(t, first.indexes, 1)
 	second, err := f.s.newPhotoStackVectorReader(t.Context(), q)
 	require.NoError(t, err)
 	require.Same(t, first.indexes[0], second.indexes[0], "the immutable generation is reused")
-	require.Equal(t, 1, q.generationReads)
+	require.Equal(t, 1, generationReads)
 	index.generation(t, "replacement-image-generation")
 	replacement, err := f.s.newPhotoStackVectorReader(t.Context(), q)
 	require.NoError(t, err)
 	require.Len(t, replacement.indexes, 1)
 	require.NotSame(t, first.indexes[0], replacement.indexes[0])
-	require.Equal(t, 2, q.generationReads)
+	require.Equal(t, 2, generationReads)
 	require.Len(t, f.s.photoStackVectors, 1, "retain only the current generation per space")
 	type result struct {
 		reader *photoStackVectorReader

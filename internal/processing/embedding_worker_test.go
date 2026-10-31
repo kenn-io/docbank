@@ -2096,7 +2096,7 @@ func TestImageEmbeddingProfilesSharingDescriptorRegisterOneRuntime(t *testing.T)
 	assert.Equal(t, []string{x.descriptor.Fingerprint}, shared.EmbeddingRuntimes().Fingerprints())
 }
 
-func newImageEmbeddingService(t *testing.T, f *photoDescriptionFixture) photoSearchFixture {
+func newImageEmbeddingService(t *testing.T, f *photoDescriptionFixture, wrapProvider ...func(*embeddingWorkerProvider) document.EmbeddingProvider) photoSearchFixture {
 	t.Helper()
 	fake := newEmbeddingWorkerFixture(t)
 	descriptor := fake.descriptor
@@ -2111,8 +2111,12 @@ func newImageEmbeddingService(t *testing.T, f *photoDescriptionFixture) photoSea
 	portable.Rendition = nil
 	portable.Embeddings = []document.EmbeddingBindingV1{binding}
 	provider := &embeddingWorkerProvider{runtime: fake.runtime, binding: binding.Name, descriptor: descriptor}
+	var selected document.EmbeddingProvider = provider
+	if len(wrapProvider) > 0 {
+		selected = wrapProvider[0](provider)
+	}
 	fake.runtime.consumeOriginal = true
-	service, err := NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(), Principal: "synthetic-operator", Scope: "document-processing", Profiles: map[string]ProfileConfig{"images": {Profile: portable, EmbeddingSimilarityFloors: map[string]float64{binding.Name: 0.2}, EmbeddingProviders: map[string]document.EmbeddingProvider{binding.Name: provider}, EmbeddingClassifiers: map[string]func(error) (EmbeddingProviderFailure, time.Duration){binding.Name: fake.runtime.Classify}}}})
+	service, err := NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(), Principal: "synthetic-operator", Scope: "document-processing", Profiles: map[string]ProfileConfig{"images": {Profile: portable, EmbeddingSimilarityFloors: map[string]float64{binding.Name: 0.2}, EmbeddingProviders: map[string]document.EmbeddingProvider{binding.Name: selected}, EmbeddingClassifiers: map[string]func(error) (EmbeddingProviderFailure, time.Duration){binding.Name: fake.runtime.Classify}}}})
 	require.NoError(t, err)
 	return photoSearchFixture{f: f, fake: fake, descriptor: descriptor, portable: portable, binding: binding, provider: provider, service: service}
 }
@@ -2128,7 +2132,7 @@ type photoSearchFixture struct {
 	indexer    *vectorworker.IndexWorker
 }
 
-func newPhotoSearchFixture(t *testing.T) photoSearchFixture {
+func newPhotoSearchFixture(t *testing.T, wrapProvider ...func(*embeddingWorkerProvider) document.EmbeddingProvider) photoSearchFixture {
 	t.Helper()
 	f := newPhotoDescriptionFixture(t)
 	_, err := f.catalog.SetPhotoAssetExcluded(t.Context(), f.asset.ID, f.asset.Revision, true)
@@ -2139,7 +2143,7 @@ func newPhotoSearchFixture(t *testing.T) photoSearchFixture {
 	require.NoError(t, err)
 	_, err = EnsureVisualPreview(t.Context(), f.catalog, f.blobs, f.node.CurrentVersionID, f.recipe)
 	require.NoError(t, err)
-	x := newImageEmbeddingService(t, f)
+	x := newImageEmbeddingService(t, f, wrapProvider...)
 	fake, descriptor, portable, binding, provider, service := x.fake, x.descriptor, x.portable, x.binding, x.provider, x.service
 	f.grant(t, service, "images")
 	worker, err := NewEmbeddingWorker(EmbeddingWorkerConfig{Catalog: f.catalog, Authority: f.catalog, Blobs: f.blobs, GenerationBlobs: f.blobs, Runtime: service.EmbeddingRuntimes(), Gate: newTestOperationGate(), Owner: "synthetic-images", RetryLimit: 3, RetryBaseDelay: time.Millisecond, MaxRetryDelay: time.Second, AttemptLifetime: 10 * time.Minute, MaxRows: 100, MaxDimensions: 100, MaxVectorBlobBytes: 1 << 20, LeaseDuration: time.Minute, IdleDelay: time.Millisecond, DescriptorFingerprints: []string{descriptor.Fingerprint}})
