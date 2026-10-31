@@ -1106,6 +1106,10 @@ export class Photos {
     return settleReads([...this.readers].map((reader) => reader(change)));
   }
 
+  refreshAfterChange() {
+    return this.snapshotID ? this.refresh(undefined, true).catch(() => {}) : this.refresh();
+  }
+
   async refresh(preserve?: () => (() => Promise<void>) | undefined, live = false) {
     this.timelineController.abort();
     this.timelineLoading = false;

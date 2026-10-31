@@ -2923,9 +2923,7 @@
         : photos.authored.targets.length > 0;
       const refresh =
         photos.snapshotID || !rotations || photos.loading || photos.reloadsAfter(rotations)
-          ? photos.snapshotID
-            ? photos.refresh(undefined, true).catch(() => {})
-            : photos.refresh()
+          ? photos.refreshAfterChange()
           : Promise.resolve();
       if (preparedChanged) void refresh.then(() => photos.authored.reload());
     }
@@ -2948,7 +2946,7 @@
   }
 
   function refreshForPeople(photos: Photos) {
-    return photos.snapshotID ? photos.refresh(undefined, true).catch(() => {}) : photos.refresh();
+    return photos.refreshAfterChange();
   }
 
   function handlePhotoFacesChanged(): void {

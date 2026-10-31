@@ -479,6 +479,36 @@ it("allows another decision after reconciling its own flag and rating with auto-
   expect(photos.cullEditor!.conflict).toBe(false);
 });
 
+it("keeps ranked snapshot membership and selection after a background XMP import in Cull", async () => {
+  let changed = false;
+  const read = vi.spyOn(api, "listPhotoAssets").mockImplementation(async (request) => {
+    const accepted = !changed || request.snapshot_id === "accepted";
+    return {
+      items: accepted ? [photo(2), photo(1)] : [photo(3), photo(1)],
+      total: 2,
+      facets: [],
+      relevance_available: true,
+      snapshot_id: accepted ? "accepted" : "replacement",
+    };
+  });
+  const { photos } = await reviewPhoto();
+  try {
+    photos.query = { ...photos.query, mode: "semantic", text: "sunset" };
+    await act(() => photos.loadMore());
+    await act(() => photos.selectAllResults());
+    changed = true;
+    await act(() => photos.cullEditor!.onXMPChanged!(undefined, []));
+    expect(photos.snapshotID).toBe("accepted");
+    expect(photos.items.map((row) => row.asset_id)).toEqual(["photo-2", "photo-1"]);
+    expect([...photos.selectedIDs]).toEqual(["photo-2", "photo-1"]);
+    expect(photos.allResults).toBe(true);
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(read.mock.calls[1]![0]).toMatchObject({ snapshot_id: "accepted" });
+  } finally {
+    photos.dispose();
+  }
+});
+
 it("shows a background import's rating, rotation, and flag and tells the app", async () => {
   vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:synthetic-photo");
   vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
