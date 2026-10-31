@@ -39,10 +39,12 @@ jobs:
               and .output[0].dest == "/out/" + $arch + ".oci.tar"' bake.json
           done
 
+      - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
+
       - name: Build nonroot image and check startup
         run: |
           trap 'docker rm -f docbank-smoke >/dev/null 2>&1 || true' EXIT
-          docker build --build-arg VERSION=dev -t docbank:smoke .
+          kit-retry 3 5 docker build --build-arg VERSION=dev -t docbank:smoke .
           docker run --rm docbank:smoke version
           test "$(docker run --rm --entrypoint id docbank:smoke -u)" = 1000
           if timeout --kill-after=5s 30s docker run --rm --name docbank-smoke docbank:smoke > startup.log 2>&1; then
