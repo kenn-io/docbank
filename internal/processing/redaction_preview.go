@@ -17,8 +17,8 @@ import (
 )
 
 // CreateRedactionPreview renders once. publish fences publication against browser
-// session revocation; API-key callers may leave it nil. The directory belongs to
-// the operation until that fence succeeds.
+// session revocation; API-key callers may leave it nil. The reserved preview owns
+// staging until cleanup succeeds, including when creation fails.
 func (s *Service) CreateRedactionPreview(ctx context.Context, owner string, request RedactionRenderRequest,
 	runtime *pagerender.Runtime, publish func(func() error) error,
 ) (RedactionPreview, error) {
@@ -52,14 +52,20 @@ func (s *Service) createRedactionPreview(ctx context.Context, owner string, requ
 		if !e.ready {
 			e.retired = true
 		}
-		e.pins-- // Creation owns the entry until every failure path has cleaned up.
+		e.pins-- // Creation pins staging through rendering and publication.
 		resultErr = errors.Join(resultErr, s.cleanRedactionPreviewLocked())
 	}()
 	op, err := s.beginNativePDFOperation(workCtx, "preview")
 	if err != nil {
 		return result, err
 	}
-	defer func() { resultErr = errors.Join(resultErr, op.Close()) }()
+	s.redactionPreviews.mu.Lock()
+	e.directory = op.directory
+	s.redactionPreviews.mu.Unlock()
+	defer func() {
+		op.directory = "" // The preview cache retains failed cleanup for retry.
+		resultErr = errors.Join(resultErr, op.Close())
+	}()
 	admitted, pdf, err := s.prepareRedactionRender(op.ctx, op, request, runtime, controls)
 	if err != nil {
 		return result, err
@@ -91,7 +97,6 @@ func (s *Service) createRedactionPreview(ctx context.Context, owner string, requ
 		for _, page := range pdf.pages {
 			e.pagePaths = append(e.pagePaths, page.path)
 		}
-		e.directory, op.directory = op.directory, ""
 		e.ready = true
 		e.timer = time.AfterFunc(redactionPreviewLifetime, func() {
 			s.redactionPreviews.mu.Lock()

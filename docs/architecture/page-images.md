@@ -322,15 +322,17 @@ mismatch is 409 `redaction_review_changed`; an occupied cache is 503
 added to browser admission. Query parameters are refused. Direct render and
 reservations remain API-key-only.
 
-One mutex protects a global building, ready or retired-but-pinned entry. Ready
-publication is fenced against session revocation. It releases the native-PDF
+One mutex protects a global building, ready or retired entry awaiting readers or
+cleanup. Ready publication is fenced against session revocation. It releases the native-PDF
 slot and retains the operation directory for a fixed 30-minute lifetime. Every
 admitted reader owns a file handle and pins the directory; discard and expiry
 refuse new readers but let admitted reads finish. Revocation and service stop
 cancel creation and active readers, including blocked socket writes. Unused
-tickets hold no pin or copy. Cleanup failure retains capacity. Explicit
-owner-scoped discard returns the error so the editor can retry; logout and
-shutdown cleanup log failures.
+tickets hold no pin or copy. Cleanup failure retains the directory and capacity,
+including after failed creation. Once a retired preview's creation and readers
+finish, it releases its lifecycle registration even if deletion fails, so shutdown
+can drain. Explicit owner-scoped discard returns cleanup errors so the editor can
+retry; logout and shutdown cleanup log failures.
 Startup spool recovery removes abandoned `native-pdf-*` directories.
 
 Prepare and resolve retain finite 60-second body/request deadlines. Preview

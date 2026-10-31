@@ -36,16 +36,19 @@ func (s *Service) cleanRedactionPreviewLocked() error {
 	if e == nil || !e.retired || e.pins != 0 {
 		return nil
 	}
+	if e.timer != nil {
+		e.timer.Stop()
+	}
+	e.cancel()
+	if e.finish != nil {
+		defer e.finish() // No active work remains, even if deletion needs a retry.
+		e.finish = nil
+	}
 	if e.directory != "" {
 		if err := os.RemoveAll(e.directory); err != nil {
 			return err
 		}
 	}
-	if e.timer != nil {
-		e.timer.Stop()
-	}
-	e.cancel()
-	e.finish()
 	s.redactionPreviews.entry = nil
 	return nil
 }
