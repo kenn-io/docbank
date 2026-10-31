@@ -1802,6 +1802,29 @@ it("changes the burst gap from the cull header and regroups the pass", async () 
   await waitFor(() => expect(check).toHaveBeenCalled());
 });
 
+it("disables best-shot responses after a grouping error", async () => {
+  const respond = vi.spyOn(api, "decidePhotoStack");
+  vi.mocked(api.preparePhotoAuthored).mockImplementation(async (scope) => ({
+    ...photoPreparation((scope.asset_ids ?? []).map((id) => preparedPhoto(Number(id.slice(6))))),
+    proposals: scope.stack
+      ? [{ asset_id: "photo-1", flag: "pick", rationale: "Best frame", confidence: 0.5 }]
+      : [],
+  }));
+  const { cull } = await reviewTwoStacks();
+  const accept = await readyButton("Accept all");
+  const dismiss = await readyButton("Dismiss all");
+  vi.mocked(api.groupPhotoStacks).mockRejectedValueOnce(
+    new APIError("Groups temporarily unavailable", 503, "unavailable"),
+  );
+  await act(() => cull.regroup());
+  await screen.findByText("Groups temporarily unavailable");
+  expect(accept.matches(":disabled")).toBe(true);
+  expect(dismiss.matches(":disabled")).toBe(true);
+  await fireEvent.click(accept);
+  await fireEvent.click(dismiss);
+  expect(respond).not.toHaveBeenCalled();
+});
+
 it("keeps Hidden scope for Accept all", async () => {
   const offer = {
     asset_id: "photo-1",

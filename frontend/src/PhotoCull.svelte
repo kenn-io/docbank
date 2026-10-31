@@ -395,8 +395,18 @@
   }
   async function respondBestShots(response: "accepted" | "dismissed") {
     const stack = cull.currentStack;
-    if (!stack || !photo) return;
-    await editor.decideStack(
+    if (
+      !photo ||
+      !stack ||
+      cull.stackLoading ||
+      cull.stackError ||
+      loading ||
+      cull.busy ||
+      cull.stale ||
+      busy
+    )
+      return;
+    const success = await editor.decideStack(
       {
         asset_ids: stack,
         burst_gap_seconds: cull.run!.burstGapSeconds!,
@@ -411,7 +421,7 @@
         beforeWrite: () => cull.verifyDecision(),
       },
     );
-    if (!editor.error) {
+    if (success) {
       await cull.regroup();
       if (cull.currentStack) await editor.prepareStack(cull.currentStack, photos.hidden, true);
     }
@@ -820,18 +830,24 @@
               <Button
                 size="sm"
                 disabled={busy ||
-                  editor.loading ||
-                  editor.stackLoading ||
+                  !photo ||
+                  loading ||
                   editor.conflict ||
+                  cull.stackLoading ||
+                  !!cull.stackError ||
+                  editor.stackLoading ||
                   cull.stale}
                 onclick={() => void respondBestShots("accepted")}>Accept all</Button
               >
               <Button
                 size="sm"
                 disabled={busy ||
-                  editor.loading ||
-                  editor.stackLoading ||
+                  !photo ||
+                  loading ||
                   editor.conflict ||
+                  cull.stackLoading ||
+                  !!cull.stackError ||
+                  editor.stackLoading ||
                   cull.stale}
                 onclick={() => void respondBestShots("dismissed")}>Dismiss all</Button
               >
