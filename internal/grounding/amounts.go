@@ -72,7 +72,7 @@ func amountAt(rs []rune) (int, string) {
 	i, code := currencyAt(rs, i)
 	i = skipSpace(rs, i, false)
 	numberStart := i
-	if i >= len(rs) || (!digit(rs[i]) && (rs[i] != '.' || i+1 >= len(rs) || !digit(rs[i+1]))) {
+	if _, date := dateAt(rs[i:]); date != "" || i >= len(rs) || (!digit(rs[i]) && (rs[i] != '.' || i+1 >= len(rs) || !digit(rs[i+1]))) {
 		return 0, ""
 	}
 	for i < len(rs) && (digit(rs[i]) || separator(rs[i])) {
@@ -115,7 +115,7 @@ func amountAt(rs []rune) (int, string) {
 		if start == i {
 			return end, ""
 		}
-		if next == number || amountValue(strings.TrimLeft(trim(rs[next:number]), "-+±\u2212")) == "" {
+		if _, date := dateAt(rs[next:]); date != "" || next == number || amountValue(strings.TrimLeft(trim(rs[next:number]), "-+±\u2212")) == "" {
 			return i, ""
 		}
 	}
