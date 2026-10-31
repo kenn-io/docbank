@@ -97,9 +97,7 @@ func (a Answer) Check(citations []Citation) Report {
 				for _, literal := range extractDecoded(figure.text) {
 					values[figureKey{"", literal}] = true
 				}
-				if figure.value != "" {
-					values[figureKey{figure.kind, figure.value}] = true
-				}
+				values[figureKey{figure.kind, figure.value}] = true
 			}
 		} else {
 			unavailable = true
