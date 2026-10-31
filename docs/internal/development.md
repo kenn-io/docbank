@@ -207,11 +207,13 @@ validation. Native directory/file creation, content confirmation, replacement,
 revert, and rename/move also work, including audited mutations and the required
 physical, extraction and photo catalog maintenance. Document imports, source
 history, watch and push observations, and collection membership and labels also
-work through the native Store methods.
+work through the native Store methods. Recoverable deletion covers document and
+folder trash, whole photo groups, trash browsing and restore, including audited
+mutations and photo sidecar decisions.
 
 A public PostgreSQL-backed vault is not available yet: daemon and embedded
-operations still open SQLite. Grouped photo imports, XMP sidecar writing, trash
-and purge, search, transfer, backup, restore and the complete physical-storage
+operations still open SQLite. Grouped photo imports, XMP sidecar writing,
+permanent purge, search, transfer, backup recovery and the complete physical-storage
 lifecycle remain unqualified.
 
 `Setup` takes a caller-owned `database/sql` pool authenticated as `SchemaOwner`
@@ -727,8 +729,10 @@ The transaction tests cover callback failure, cancellation and commit-time
 constraint failure. Audit qualification also replays native SQLite-generated
 history against PostgreSQL's high-water mark after a failed insert. Complete
 enrollment also runs the full metadata validator described below.
-Native document-write tests also replay history after creation, content changes
-and moves. Other audited mutations and import remain unqualified.
+Native operation tests also replay history after creation, content changes,
+imports, moves, trash and restore. Qualification remains limited to the native
+operations described above; it does not enable every audited mutation or
+portable metadata import.
 
 The native canonical-record insertion helper also uses shared SQL. Its index
 builder rejects zero node IDs, operation sequences and entry counts in Go
