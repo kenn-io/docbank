@@ -308,8 +308,22 @@
           >
           <tbody>
             {#each lanes as lane (lane.key)}
+              {@const processing = lane.members.find((item) => item.processing)?.processing}
               <tr>
-                <th scope="row">{lane.title}</th>
+                <th scope="row"
+                  >{lane.title}
+                  {#if processing}
+                    <p class="operation processing">
+                      {#if processing.error}
+                        Processing profile: {processing.profile}. {processing.error}
+                      {:else if processing.consent_state === "active"}
+                        Processing profile: {processing.profile}
+                      {:else}
+                        Waiting on consent for {processing.profile} ({processing.consent_state})
+                      {/if}
+                    </p>
+                  {/if}
+                </th>
                 <td
                   ><span class="state" data-state={laneState(lane)}>{laneState(lane)}</span>
                   {#if !lane.visible}
@@ -428,6 +442,11 @@
   }
   .operation {
     margin-top: var(--space-2);
+  }
+  .processing {
+    width: 0;
+    min-width: 100%;
+    overflow-wrap: anywhere;
   }
   .operation-row {
     justify-content: flex-end;

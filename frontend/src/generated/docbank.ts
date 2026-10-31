@@ -3669,6 +3669,22 @@ export const JobStatus = {
   cancelled: 'cancelled',
 } as const;
 
+export type WatchProcessingStatusConsentState = typeof WatchProcessingStatusConsentState[keyof typeof WatchProcessingStatusConsentState];
+
+
+export const WatchProcessingStatusConsentState = {
+  active: 'active',
+  required: 'required',
+  expired: 'expired',
+  revoked: 'revoked',
+} as const;
+
+export interface WatchProcessingStatus {
+  consent_state?: WatchProcessingStatusConsentState;
+  error?: string;
+  profile: string;
+}
+
 export interface Job {
   /** Whether this job is processing work rather than waiting for an item or its next scheduled run. */
   busy: boolean;
@@ -3688,6 +3704,7 @@ export interface Job {
   operation_id?: string;
   paused: boolean;
   processed_bytes?: number;
+  processing?: WatchProcessingStatus;
   started_at: string;
   status: JobStatus;
   total_bytes?: number;
@@ -8759,6 +8776,7 @@ export interface WatchedInbox {
   job?: Job;
   minimum_age: string;
   name: string;
+  processing?: WatchProcessingStatus;
   scan_interval: string;
   settle_time: string;
   source: string;

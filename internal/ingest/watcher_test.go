@@ -3,6 +3,7 @@ package ingest
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -78,6 +79,7 @@ func TestWatcherReportsBusyOnlyWhenIngesting(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ing := newTestIngester(t)
 		processed := 0
+		var admissionBusy []bool
 		source := writeTree(t, map[string]string{"report.txt": "report"})
 		var supervisor *jobs.Supervisor
 		watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{
@@ -92,6 +94,10 @@ func TestWatcherReportsBusyOnlyWhenIngesting(t *testing.T) {
 			return err
 		}, slog.New(slog.DiscardHandler))
 		require.NoError(t, err)
+		watcher.AfterImport = func(context.Context, store.Node) error {
+			admissionBusy = append(admissionBusy, supervisor.Snapshot()[0].Busy)
+			return errors.New("synthetic queue unavailable")
+		}
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		supervisor = jobs.New(ctx, slog.New(slog.DiscardHandler))
@@ -112,6 +118,7 @@ func TestWatcherReportsBusyOnlyWhenIngesting(t *testing.T) {
 		time.Sleep(time.Second)
 		synctest.Wait()
 		assert.Equal(t, 1, processed)
+		require.Equal(t, []bool{true}, admissionBusy, "processing admission is busy")
 		// A scan collects its inventory before importing, so the next scan
 		// observes after the import. Keep the second file unsettled for it.
 		require.NoError(t, os.WriteFile(filepath.Join(source, "z-unsettled.txt"), []byte("still writing more"), 0o600))
@@ -1169,4 +1176,37 @@ func TestWatcherRenameAndEditBeforeFirstScanKeepsNode(t *testing.T) {
 	_, total, err := ing.Store.ContentVersions(t.Context(), original.ID, 10, 0)
 	require.NoError(t, err)
 	assert.Equal(t, 2, total)
+}
+
+func TestWatcherAfterImportKeepsCommittedVersionAndScannerStatus(t *testing.T) {
+	ing := newTestIngester(t)
+	source := writeTree(t, map[string]string{"report.txt": "first"})
+	inside := false
+	watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{
+		Name: "inbox", Source: source, Destination: "/inbox", CaptureOnChange: true,
+	}, func(fn func() error) error {
+		inside = true
+		defer func() { inside = false }()
+		return fn()
+	}, slog.New(slog.DiscardHandler))
+	require.NoError(t, err)
+	var imported []store.Node
+	watcher.AfterImport = func(ctx context.Context, node store.Node) error {
+		require.False(t, inside)
+		version, err := ing.Store.ContentVersionByID(ctx, node.CurrentVersionID)
+		require.NoError(t, err)
+		require.Equal(t, node.ID, version.NodeID)
+		imported = append(imported, node)
+		return errors.New("synthetic queue unavailable")
+	}
+	root := openWatcherRoot(t, watcher)
+	require.NoError(t, watcher.scan(t.Context(), root))
+	require.Len(t, imported, 1)
+	require.NoError(t, watcher.scan(t.Context(), root))
+	require.Len(t, imported, 1)
+	require.NoError(t, os.WriteFile(filepath.Join(source, "report.txt"), []byte("second version"), 0600))
+	require.NoError(t, watcher.scan(t.Context(), root))
+	require.Len(t, imported, 2)
+	require.Equal(t, imported[0].ID, imported[1].ID)
+	require.NotEqual(t, imported[0].CurrentVersionID, imported[1].CurrentVersionID)
 }
