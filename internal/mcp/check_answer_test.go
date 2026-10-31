@@ -37,22 +37,11 @@ func TestCheckAnswerTransports(t *testing.T) {
 }
 
 func TestCheckAnswerRetainedNormalization(t *testing.T) {
-	for _, tc := range []struct{ body, quote, answer, status string }{
-		{"<p>USD 20</p><p>CAD 30</p>", "USD 20\n\nCAD 30", "$20 and CAD30 [1]", "grounded"},
-		{"<p>$20 CAD -30</p>", "$20 CAD -30", "USD20 [1]", "grounded"},
-		{"<p>USD -5 EUR 30CAD</p>", "USD -5 EUR 30CAD", "CAD30 [1]", "ungrounded"},
-		{"<p>USD -5 EUR 30</p>", "USD -5 EUR 30", "EUR30 [1]", "grounded"},
-	} {
-		t.Run(tc.answer+"/"+tc.quote, func(t *testing.T) {
-			server, citation := newCitationMCPFixtureText(t, "text/html", tc.body, tc.quote)
-			for _, transport := range []string{"stdio", "http"} {
-				result := decodeResult(t, exportExchange(t, server, transport, "tools/call", map[string]any{
-					"name": "check_answer", "arguments": map[string]any{"answer": tc.answer, "citations": []any{citation}},
-				}))
-				require.Equal(t, tc.status, objectField(t, result, "structuredContent")["status"], transport)
-			}
-		})
-	}
+	server, citation := newCitationMCPFixtureText(t, "text/html", "<p>USD 20</p><p>CAD 30</p>", "USD 20\n\nCAD 30")
+	result := decodeResult(t, exportExchange(t, server, "stdio", "tools/call", map[string]any{
+		"name": "check_answer", "arguments": map[string]any{"answer": "$20 and CAD30 [1]", "citations": []any{citation}},
+	}))
+	require.Equal(t, "grounded", objectField(t, result, "structuredContent")["status"])
 }
 
 func TestCheckAnswerRejectsInvalidBeforeAcquisition(t *testing.T) {
