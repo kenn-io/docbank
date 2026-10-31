@@ -1,7 +1,8 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
+import { tick } from "svelte";
 import DocumentInspector from "./DocumentInspector.svelte";
-import type { Node } from "./generated/docbank.js";
+import type { ContentVersion, Node } from "./generated/docbank.js";
 
 const folder: Node = {
   id: 42,
@@ -193,4 +194,130 @@ it("removes an assigned tag directly and disables removal while tags are unavail
   expect(
     (screen.getByRole("button", { name: "Remove tag Review" }) as HTMLButtonElement).disabled,
   ).toBe(true);
+});
+
+it("reuses matching PDF facts, fetches missing or historical facts, and discards a late response", async () => {
+  const api = await import("./generated/docbank.js");
+  const { selectedSourceFromNode } = await import("./selectedSource.js");
+  const file = {
+    ...folder,
+    kind: "file" as const,
+    name: "contract.pdf",
+    path: "/contract.pdf",
+    mime_type: "application/pdf",
+    size: 651,
+    current_version_id: "11111111-1111-4111-8111-111111111111",
+    blob_hash: "a".repeat(64),
+  };
+  const source = selectedSourceFromNode(file, file.path);
+
+  const metadata: NonNullable<ContentVersion["source_metadata"]> = {
+    contract_version: "source-metadata/v1",
+    checksum: "c".repeat(64),
+    extractor_fingerprint: "d".repeat(64),
+    attachment: { node_id: 42, content_version_id: "22222222-2222-4222-8222-222222222222" },
+    fields: [
+      { source_field: "encrypted", value: { kind: "boolean" as const, boolean: false } },
+      { source_field: "signature_field_count", value: { kind: "integer" as const, integer: 1 } },
+      {
+        source_field: "last_signature_covers_file",
+        value: { kind: "boolean" as const, boolean: false },
+      },
+      { source_field: "embedded_file_count", value: { kind: "integer" as const, integer: 0 } },
+      { source_field: "has_javascript", value: { kind: "boolean" as const, boolean: false } },
+      { source_field: "has_launch_actions", value: { kind: "boolean" as const, boolean: false } },
+    ].map((field) => ({
+      ...field,
+      key: `pdf.info.${field.source_field}`,
+      namespace: "pdf.info",
+      sensitive: false,
+    })),
+    warnings: [],
+  };
+  const current: ContentVersion = {
+    id: "22222222-2222-4222-8222-222222222222",
+    node_id: 42,
+    blob_hash: "b".repeat(64),
+    introduced_operation_id: "33333333-3333-4333-8333-333333333333",
+    node_revision: 2,
+    recorded_at: "2026-01-01T00:00:00Z",
+    size: 651,
+    transition_kind: "content_replace",
+    source_metadata: metadata,
+  };
+  const previous: ContentVersion = {
+    ...current,
+    id: file.current_version_id,
+    blob_hash: file.blob_hash,
+    node_revision: 1,
+    introduced_operation_id: "44444444-4444-4444-8444-444444444444",
+    transition_kind: "content_create",
+    source_metadata: {
+      ...metadata,
+      checksum: "e".repeat(64),
+      attachment: { node_id: 42, content_version_id: file.current_version_id },
+      fields: metadata.fields.map((field) =>
+        field.key === "pdf.info.last_signature_covers_file"
+          ? { ...field, value: { ...field.value, boolean: true } }
+          : field,
+      ),
+    },
+  };
+  let finish!: (value: ContentVersion) => void;
+  const request = vi
+    .spyOn(api, "getContentVersion")
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    )
+    .mockResolvedValueOnce(current);
+  const props = {
+    node: file,
+    path: file.path,
+    tags: [],
+    tagsLoading: false,
+    tagsError: "",
+    source,
+    session: "synthetic-session",
+    onprovenance: vi.fn(),
+    onhistory: vi.fn(),
+  };
+  const enriched = { ...file, source_metadata: previous.source_metadata };
+  const view = render(DocumentInspector, { ...props, node: enriched });
+  expect(request).not.toHaveBeenCalled();
+  expect(screen.getByRole("group", { name: "Security" }).textContent).toContain(
+    "Covers the whole file",
+  );
+  expect((screen.getByRole("group", { name: "Security" }) as HTMLDetailsElement).open).toBe(false);
+  await view.rerender(props);
+  await vi.waitFor(() => expect(request).toHaveBeenCalledOnce());
+  await view.rerender({
+    ...props,
+    node: enriched,
+    source: {
+      ...source,
+      key: "second",
+      versionID: "22222222-2222-4222-8222-222222222222",
+      blobHash: "b".repeat(64),
+      kind: "snapshot" as const,
+      observedAt: "2026-01-01",
+      originalTags: [],
+      collectionIDs: [],
+    },
+  });
+  expect((await screen.findByRole("group", { name: "Security" })).textContent).toContain(
+    "Does not cover the whole file",
+  );
+
+  expect(screen.getByRole("group", { name: "Security" }).textContent).not.toContain("Permissions");
+  expect((screen.getByRole("group", { name: "Security" }) as HTMLDetailsElement).open).toBe(true);
+  expect(request.mock.calls[1]?.[0]).toBe("22222222-2222-4222-8222-222222222222");
+  finish(previous);
+  await Promise.resolve();
+  await tick();
+  expect(screen.getByRole("group", { name: "Security" }).textContent).toContain(
+    "Does not cover the whole file",
+  );
 });

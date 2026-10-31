@@ -75,8 +75,8 @@ func TestStatCLIShowsEmbeddedSourceMetadata(t *testing.T) {
 		out, err = runCLI(t, "stat", "/archive/report.pdf")
 		return err == nil && strings.Contains(out, `"Synthetic report"`)
 	}, 5*time.Second, 25*time.Millisecond)
-	assert.Contains(t, out, "metadata:      source-metadata/v1")
-	assert.Contains(t, out, "page_count:  2")
+	assert.Regexp(t, `metadata:\s+source-metadata/v1`, out)
+	assert.Regexp(t, `page_count:\s+2`, out)
 }
 
 func statMetadataPDF() string {
