@@ -166,6 +166,7 @@ pack_max_bytes = 268435456  # 256 MiB soft raw-byte budget per run
 name = "agent-sessions"
 source = "~/agent-sessions"
 destination = "/archives/agents"
+tags = ["receipts"] # optional; tags must already exist
 settle_time = "30s"
 minimum_age = "168h" # optional; 7 days since source modification
 scan_interval = "5s"
@@ -443,15 +444,17 @@ change at the watched source appends another version.
 
 Watchers run as jobs named `watch:<name>`. `docbank watch list` and
 `GET /api/v1/watches` pair each runner's state with its effective source,
-destination, capture mode (`settled` or `prompt`), settle window,
+destination, tags, capture mode (`settled` or `prompt`), settle window,
 minimum source age, scan interval, and exclusion policy. JSON reports
 `capture_on_change` as a boolean. `docbank watch list` shows a waiting watcher
 as `idle` and an ingesting watcher as `running`. `EXCLUDES` counts both literal
 and glob rules. Use `--json` when an agent needs the separate `exclude` and
 `exclude_patterns` lists. `docbank jobs` and `GET /api/v1/jobs` remain the
-all-task view. A permanent source, destination, or read failure leaves the named
-job in the failed state and records the reason.
-Restart the daemon after correcting the problem.
+all-task view. While a configured tag is unavailable, its error takes priority
+and the watcher keeps polling, even after a permanent source, destination, or
+read failure. Once tags recover, any remaining permanent failure leaves the
+named job in the failed state and records the reason. Restart the daemon after
+correcting that problem.
 Per-file successes are written to the daemon log. Prompt notifications are
 best effort: coalesced events and slow ingestion can miss intervening writes,
 and readable intermediate content may be captured. The scanner still enforces

@@ -1000,7 +1000,7 @@ func (w *Watcher) scan(ctx context.Context, root *watchRoot) error {
 
 func (w *Watcher) scanWithHints(ctx context.Context, root *watchRoot, hints watchScanHints) (bool, error) {
 	var err, tagErr error
-	for i := 0; i < len(w.config.Tags) && tagErr == nil; i++ {
+	for i := 0; w.process == nil && i < len(w.config.Tags) && tagErr == nil; i++ {
 		_, tagErr = w.ing.Store.ResolveWatchTag(ctx, w.config.Tags[i])
 	}
 	if err := ctx.Err(); err != nil {
