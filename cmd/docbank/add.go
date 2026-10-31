@@ -121,7 +121,8 @@ Exit 1 if any file failed (each failure is listed).`,
 			reportAction(cmd, c, "document_added", "", "", false)
 		}
 		if len(rep.Failed) > 0 {
-			retErr = fmt.Errorf("%d file(s) failed to import", len(rep.Failed))
+			retErr = withHint(fmt.Errorf("%d file(s) failed to import", len(rep.Failed)),
+				`inspect the failed paths in the report, fix them and retry "docbank add <local-path>"; identical content at the same name is skipped`)
 		}
 		if addJSON {
 			enc := jsontext.NewEncoder(cmd.OutOrStdout(), jsontext.WithIndent("  "))

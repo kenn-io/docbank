@@ -99,7 +99,7 @@ func runEdit(cmd *cobra.Command, vaultPath string) (retErr error) {
 	)
 	process.Stdin = cmd.InOrStdin()
 	process.Stdout = cmd.OutOrStdout()
-	process.Stderr = cmd.ErrOrStderr()
+	process.Stderr = editorStderrWriter(cmd.ErrOrStderr())
 	if err := process.Run(); err != nil {
 		return fmt.Errorf("editor %q failed: %w", editor[0], err)
 	}
@@ -206,6 +206,20 @@ func runEdit(cmd *cobra.Command, vaultPath string) (retErr error) {
 		return fmt.Errorf("writing edit result: %w", err)
 	}
 	return nil
+}
+
+func editorStderrWriter(stderr io.Writer) io.Writer {
+	diagnostics, ok := stderr.(*cliDiagnosticWriter)
+	if !ok {
+		return stderr
+	}
+	file, ok := diagnostics.Writer.(*os.File)
+	if !ok {
+		return stderr
+	}
+	// A non-file writer makes os/exec copy through a pipe. An editor child may
+	// inherit that pipe and keep Run waiting after the configured editor exits.
+	return file
 }
 
 func editorCommand(override string) ([]string, error) {

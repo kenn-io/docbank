@@ -13,8 +13,6 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-const photoCheckoutListCommand = "list"
-
 func checkoutSelection(cmd *cobra.Command) (store.PhotoCheckoutSelection, error) {
 	assets, _ := cmd.Flags().GetStringSlice("asset")
 	albums, _ := cmd.Flags().GetStringSlice("album")
@@ -93,7 +91,7 @@ Use retire to release source holds.`, Args: cobra.NoArgs, RunE: func(cmd *cobra.
 		}
 		command.AddCommand(child)
 	}
-	command.AddCommand(&cobra.Command{Use: photoCheckoutListCommand, Short: "List photo checkouts", Example: "  docbank photos checkout list", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+	command.AddCommand(&cobra.Command{Use: listCommand, Short: "List photo checkouts", Example: "  docbank photos checkout list", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		connection, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err

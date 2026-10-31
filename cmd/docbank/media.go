@@ -32,6 +32,7 @@ var (
 )
 
 var mediaCmd = &cobra.Command{
+	Example: `  docbank media list`,
 	Long: `Retain recordings and transcripts. Output: JSON receipts and pages.
 source ID: recording identity from submit or list.
 occurrence: one caller's reference and revision for that recording.
@@ -93,7 +94,7 @@ var mediaSubmitCmd = &cobra.Command{
 
 var mediaListCmd = &cobra.Command{
 	Example: `  docbank media list`,
-	Use:     "list",
+	Use:     listCommand,
 	Short:   "List caller-visible recording sources",
 	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
@@ -227,7 +228,7 @@ Output: JSON.`,
 
 var mediaOccurrencesListCmd = &cobra.Command{
 	Example: `  docbank media occurrences list --source-id <source-id>`,
-	Use:     "list",
+	Use:     listCommand,
 	Short:   "List caller-visible occurrences",
 	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
