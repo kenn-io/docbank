@@ -1,6 +1,3 @@
-# CI can retry acquisition commands inside mixed build/test recipes.
-DOWNLOAD_RETRY ?=
-
 # Makefile for docbank
 
 .DEFAULT_GOAL := help
@@ -143,7 +140,7 @@ $(CUSTOM_GCL): .custom-gcl.yml
 	fi
 	golangci-lint custom --destination "$(CURDIR)/.cache/golangci-lint" --name custom-gcl
 
-lint: $(CUSTOM_GCL) lint-workflow-retries
+lint: $(CUSTOM_GCL)
 	"$(CUSTOM_GCL)" run --allow-serial-runners --fix ./...
 
 lint-ci: $(CUSTOM_GCL) lint-workflow-retries
