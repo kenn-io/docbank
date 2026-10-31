@@ -893,9 +893,6 @@ func searchDocuments(ctx context.Context, service *processing.Service, input Doc
 	}
 	var allLive *store.SearchOptions
 	if input.Scope != nil {
-		if input.Scope.Kind != "all_live" {
-			return DocumentSearchReport{}, fromProcessingError(store.ErrInvalidProcessingSourceFence)
-		}
 		options := searchFilterOptions(input.Scope.Filters)
 		allLive = &options
 	}

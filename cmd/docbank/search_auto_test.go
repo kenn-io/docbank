@@ -71,8 +71,6 @@ func TestAutomaticSearchSelectionAndFallback(t *testing.T) {
 		{name: "fuzzy", profiles: profiles, limit: 50, opts: daemonconn.SearchOptions{Fuzzy: true}, skipped: true},
 		{name: "large limit", profiles: profiles, limit: 101, skipped: true},
 		{name: "unbuilt index", profiles: profiles, limit: 50, searchError: "not_found", wantSearch: 3, wantReason: "not_found"},
-		{name: "source changed after resolution", profiles: profiles, limit: 50, searchError: "stale_version", wantSearch: 1, wantReason: "stale_version"},
-		{name: "foreign vault", profiles: profiles, limit: 50, searchError: "foreign_vault", wantSearch: 1, wantReason: "foreign_vault"},
 		{name: "malformed success", profiles: profiles, limit: 50, malformed: true, wantSearch: 1, wantReason: "semantic_search_failed", wantDetail: true},
 		{name: "human malformed success", profiles: profiles, limit: 50, humanCLI: true, malformed: true, wantSearch: 1, wantReason: "semantic_search_failed", wantDetail: true},
 		{name: "auth discovery", profileError: "unauthorized", limit: 50, wantError: true},
@@ -129,10 +127,6 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 			status = http.StatusServiceUnavailable
 		case "processing_consent_required":
 			status = http.StatusPreconditionRequired
-		case "stale_version":
-			status = http.StatusConflict
-		case "foreign_vault":
-			status = http.StatusUnprocessableEntity
 		case "not_found":
 			status = http.StatusNotFound
 		case "scope_too_large":

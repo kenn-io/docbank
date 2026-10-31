@@ -520,12 +520,8 @@ func (c *Connection) ValidateDocumentSearch(
 }
 
 func validateDocumentSearchReport(request api.DocumentSearchRequest, report api.DocumentSearchReport) error {
-	if request.Scope != nil {
-		if request.Fence.VaultUID != "" || len(request.Fence.ContentVersionIDs) != 0 {
-			return errors.New("scoped request contains a fence")
-		}
-	} else if !validUUIDv4(request.Fence.VaultUID) || len(request.Fence.ContentVersionIDs) < 1 ||
-		len(request.Fence.ContentVersionIDs) > 4096 {
+	if request.Scope == nil && (!validUUIDv4(request.Fence.VaultUID) || len(request.Fence.ContentVersionIDs) < 1 ||
+		len(request.Fence.ContentVersionIDs) > 4096) {
 		return errors.New("request fence identity is invalid")
 	}
 	versions := make(map[string]struct{}, len(request.Fence.ContentVersionIDs))

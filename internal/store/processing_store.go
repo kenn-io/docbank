@@ -197,9 +197,6 @@ func (s *Store) NormalizeProcessingSearchFilters(ctx context.Context, filters Se
 }
 
 func (s *Store) normalizeProcessingSearchFilters(ctx context.Context, queryer rowQuerier, filters SearchOptions) (SearchOptions, error) {
-	if len(filters.ContentVersionIDs) != 0 {
-		return SearchOptions{}, fmt.Errorf("%w: metadata filters cannot contain a source fence", ErrInvalidProcessingSourceFence)
-	}
 	normalized, err := s.normalizeSearchOptionsWithQuerier(ctx, queryer, filters)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrNotDir) {

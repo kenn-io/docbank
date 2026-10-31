@@ -1029,7 +1029,7 @@ func TestProcessingClientValidatesStatusEmbeddingIdentities(t *testing.T) {
 }
 
 func TestProcessingClientValidatesScopedSearchResponse(t *testing.T) {
-	for _, name := range []string{"valid", "mixed vaults", "fence supplied", "coverage overflow"} {
+	for _, name := range []string{"valid", "mixed vaults", "coverage overflow"} {
 		t.Run(name, func(t *testing.T) {
 			request := api.DocumentSearchRequest{Query: "visible", Mode: "lexical", Profile: "private", Scope: &api.DocumentSearchScope{Kind: "all_live"}}
 			report := api.DocumentSearchReport{RequestedMode: "lexical", ActualMode: "lexical",
@@ -1041,8 +1041,6 @@ func TestProcessingClientValidatesScopedSearchResponse(t *testing.T) {
 			switch name {
 			case "mixed vaults":
 				report.Results[1].VaultUID = "44444444-4444-4444-8444-444444444444"
-			case "fence supplied":
-				request.Fence.ContentVersionIDs = []string{report.Results[0].ContentVersionID}
 			case "coverage overflow":
 				report.Coverage.CompleteDocuments = 4100
 			}
