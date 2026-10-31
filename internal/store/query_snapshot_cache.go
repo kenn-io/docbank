@@ -461,6 +461,19 @@ func (s *QuerySnapshotService) finalizeSavedRun(
 func (s *QuerySnapshotService) Page(
 	ctx context.Context, owner, snapshotID, cursor string,
 ) (SnapshotPage, error) {
+	page, err := s.page(ctx, owner, snapshotID, cursor)
+	if err != nil {
+		return SnapshotPage{}, err
+	}
+	if err := s.validatePhotoSnapshotPage(ctx, page); err != nil {
+		return SnapshotPage{}, err
+	}
+	return page, nil
+}
+
+func (s *QuerySnapshotService) page(
+	ctx context.Context, owner, snapshotID, cursor string,
+) (SnapshotPage, error) {
 	if err := ctx.Err(); err != nil {
 		return SnapshotPage{}, err
 	}
@@ -482,14 +495,7 @@ func (s *QuerySnapshotService) Page(
 		payload.Offset%int64(metadata.PageSize) != 0 {
 		return SnapshotPage{}, ErrSnapshotCursor
 	}
-	page, err := s.renderPage(&cached, payload.Offset)
-	if err != nil {
-		return SnapshotPage{}, err
-	}
-	if err := s.validatePhotoSnapshotPage(ctx, page); err != nil {
-		return SnapshotPage{}, err
-	}
-	return page, nil
+	return s.renderPage(&cached, payload.Offset)
 }
 
 func (s *QuerySnapshotService) validatePhotoSnapshotPage(ctx context.Context, page SnapshotPage) error {
@@ -990,14 +996,7 @@ func (s *QuerySnapshotService) FirstPage(ctx context.Context, owner, snapshotID 
 	if err != nil {
 		return SnapshotPage{}, err
 	}
-	page, err := s.renderPage(&cached, 0)
-	if err != nil {
-		return SnapshotPage{}, err
-	}
-	if err := s.validatePhotoSnapshotPage(ctx, page); err != nil {
-		return SnapshotPage{}, err
-	}
-	return page, nil
+	return s.renderPage(&cached, 0)
 }
 
 // PhotoPage binds continuation inputs to the admitted view, including its projection.
@@ -1032,7 +1031,7 @@ func (s *QuerySnapshotService) PhotoPage(ctx context.Context, owner, id, cursor 
 	if cursor == "" {
 		return s.FirstPage(ctx, owner, id)
 	}
-	return s.Page(ctx, owner, id, cursor)
+	return s.page(ctx, owner, id, cursor)
 }
 
 func (s *Store) currentPhotoRowsTx(ctx context.Context, tx metadataQuerier, members []SnapshotMember, recipes map[string]string) ([]PhotoBrowseRow, error) {
