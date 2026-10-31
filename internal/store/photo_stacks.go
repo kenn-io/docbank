@@ -541,7 +541,10 @@ func (s *Store) decidePhotoStack(ctx context.Context, request PhotoStackDecision
 			return err
 		}
 		if !maps.Equal(heads, vectors.heads) {
-			return ErrStalePhotoStack
+			vectors, err = s.newPhotoStackVectorReader(ctx, tx)
+			if err != nil {
+				return err
+			}
 		}
 		if request.Hidden {
 			if _, err := s.hiddenSession(ctx, tx); err != nil {

@@ -75,7 +75,7 @@ func TestPhotoStackPagesReuseOpenedGeneration(t *testing.T) {
 	require.Empty(t, f.s.photoStackVectors)
 }
 
-func TestPhotoStackDecisionRejectsGenerationPublishedBeforeTransaction(t *testing.T) {
+func TestPhotoStackDecisionKeepsUnchangedStackAcrossIndexPublication(t *testing.T) {
 	t.Parallel()
 	f := newImageEmbeddingCatalogFixture(t)
 	ids := burstPhotos(t, f.s, 2)
@@ -83,12 +83,67 @@ func TestPhotoStackDecisionRejectsGenerationPublishedBeforeTransaction(t *testin
 	for _, id := range ids {
 		index.publish(t, id, []float64{1, 0, 0, 0, 0, 0, 0, 0})
 	}
+	index.generation(t, "unchanged-before")
+	targets := preparedPhotoTargets(t.Context(), t, f.s, PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets})
+	vectors, err := f.s.newPhotoStackVectorReader(t.Context(), f.s.db)
+	require.NoError(t, err)
+	run, err := f.s.BeginIngest(t.Context(), "cli", "synthetic unrelated photo")
+	require.NoError(t, err)
+	unrelated := stackPhoto(t, f.s, run, "/other/unrelated.jpg", "2024-06-11T12:00:00Z", document.SourceMetadataPrecisionSecond)
+	index.publish(t, unrelated, []float64{1, 0, 0, 0, 0, 0, 0, 0})
+	index.generation(t, "unchanged-after")
+	_, err = f.s.decidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: targets, Decision: "current", CurrentID: ids[0]}, vectors)
+	require.NoError(t, err)
+	flags, err := f.s.LookupPhotoFlags(t.Context(), ids)
+	require.NoError(t, err)
+	require.ElementsMatch(t, []PhotoFlagRow{{AssetID: ids[0], Flag: "pick"}, {AssetID: ids[1], Flag: "reject"}}, flags)
+}
+
+func TestPhotoStackDecisionRejectsGenerationThatSplitsStack(t *testing.T) {
+	t.Parallel()
+	f := newImageEmbeddingCatalogFixture(t)
+	run, err := f.s.BeginIngest(t.Context(), "cli", "synthetic image-linked stack")
+	require.NoError(t, err)
+	ids := []string{
+		stackPhoto(t, f.s, run, "/shots/one.jpg", "2024-06-10T12:00:00Z", document.SourceMetadataPrecisionSecond),
+		stackPhoto(t, f.s, run, "/shots/two.jpg", "2024-06-10T12:00:10Z", document.SourceMetadataPrecisionSecond),
+	}
+	index := newCursorIndexFixture(f)
+	var record EmbeddingSetRecord
+	for _, id := range ids {
+		asset, err := f.s.PhotoAssetByID(t.Context(), id)
+		require.NoError(t, err)
+		node, err := f.s.NodeByID(t.Context(), asset.Files[0].NodeID)
+		require.NoError(t, err)
+		var vector document.VectorSetV1
+		record, vector = f.forNode(t, node).publish(t, []float64{1, 0, 0, 0, 0, 0, 0, 0})
+		index.add(record, vector)
+	}
 	index.generation(t, "decision-before")
+	require.Equal(t, [][]int{{0, 1}}, stackIndexes(t, f.s, ids))
 	targets := preparedPhotoTargets(t.Context(), t, f.s, PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets})
 	vectors, err := f.s.newPhotoStackVectorReader(t.Context(), f.s.db)
 	require.NoError(t, err)
 	before, err := f.s.LookupPhotoFlags(t.Context(), ids)
 	require.NoError(t, err)
+	index.vectors[1].Vectors = [][]float32{{0, 1, 0, 0, 0, 0, 0, 0}}
+	payload, checksum, err := document.EncodeVectorSetV1(index.vectors[1])
+	require.NoError(t, err)
+	record.ID = browseHash("orthogonal-image-vector-set")
+	record.VectorSet.ID = checksum
+	record.VectorSet.PayloadChecksum = checksum
+	record.VectorSet.PayloadBlobHash = testSHA256(payload)
+	record.VectorSet.Payload = payload
+	require.NoError(t, f.s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+		return f.s.EnsureBlobTx(tx, record.VectorSet.PayloadBlobHash, int64(len(payload)))
+	}))
+	require.NoError(t, f.s.StageEmbeddingSet(t.Context(), record))
+	require.NoError(t, f.s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
+		Key:   EmbeddingHeadKey{ContentVersionID: record.ContentVersionID, BindingID: record.BindingID, InputKind: record.InputKind},
+		SetID: record.ID, VectorSpaceID: record.VectorSpace.ID, ProcessingProfileFingerprint: record.ProcessingProfileFingerprint,
+		PublishedAt: embeddingCatalogTime, FencingToken: 2,
+	}))
+	index.checksums[1] = checksum
 	index.generation(t, "decision-after")
 	_, err = f.s.decidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: targets, Decision: "current", CurrentID: ids[0]}, vectors)
 	require.ErrorIs(t, err, ErrStalePhotoStack)
