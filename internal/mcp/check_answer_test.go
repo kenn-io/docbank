@@ -25,7 +25,7 @@ func TestCheckAnswerTransports(t *testing.T) {
 	citation.End = citation.Start + len([]rune(`$1,205`))
 	for _, tc := range []struct{ answer, status, figureStatus, figureText string }{
 		{"Invoice was $1,205 [1]", "grounded", "found", "$1,205"},
-		{"€1,205 [1]", "ungrounded", "value_only", ""},
+		{"€1,205 [1]", "ungrounded", "missing", ""},
 	} {
 		result := decodeResult(t, exportExchange(t, server, "stdio", "tools/call", map[string]any{
 			"name": "check_answer", "arguments": map[string]any{"answer": tc.answer, "citations": []any{citation}},
@@ -46,8 +46,8 @@ func TestCheckAnswerTransports(t *testing.T) {
 	}
 }
 
-func TestCheckAnswerCitationStartControlsListEvidence(t *testing.T) {
-	const quote = "- $40"
+func TestCheckAnswerCitationBullets(t *testing.T) {
+	quote := "- $40"
 	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var citation document.TextCitation
 		if err := json.UnmarshalRead(r.Body, &citation); err != nil {
@@ -63,9 +63,10 @@ func TestCheckAnswerCitationStartControlsListEvidence(t *testing.T) {
 	t.Cleanup(daemon.Close)
 	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, exportTestLease(t, daemon.URL))
 	for _, tc := range []struct {
-		start          int
-		answer, status string
-	}{{0, "$40", "grounded"}, {0, "-$40", "ungrounded"}, {1, "$40", "ungrounded"}, {1, "-$40", "ungrounded"}} {
+		start                 int
+		answer, quote, status string
+	}{{0, "$40", "- $40", "grounded"}, {0, "-$40", "- $40", "ungrounded"}, {1, "$40", "- $40", "grounded"}, {1, "-$40", "- $40", "ungrounded"}, {1, "40", "- 40", "grounded"}} {
+		quote = tc.quote
 		citation := citationMCPArguments()
 		citation["start"], citation["end"] = tc.start, tc.start+len(quote)
 		result := decodeResult(t, exportExchange(t, server, "stdio", "tools/call", map[string]any{

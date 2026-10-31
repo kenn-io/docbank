@@ -30,7 +30,7 @@ func TestGrounding(t *testing.T) {
 		{"negative sign", "-5", "5", "ungrounded", "missing", []string{"-5"}, []int{}},
 		{"Unicode minus", "−5", "5", "ungrounded", "missing", []string{"−5"}, []int{}},
 		{"identifier before amount", "INV-5 had 200", "INV-5 200", "grounded", "found", []string{"INV-5", "200"}, []int{}},
-		{"suffix currency", "20€", "20$", "ungrounded", "value_only", []string{"20€"}, []int{}},
+		{"suffix currency", "20€", "20$", "ungrounded", "missing", []string{"20€"}, []int{}},
 		{"identifier stays whole", "INV-5", "5", "ungrounded", "missing", []string{"INV-5"}, []int{}},
 		{"marker separates figures", "5[1]6", "5 6", "grounded", "found", []string{"5", "6"}, []int{}},
 		{"em dash separates", "$1,250—matching", "$1,250", "grounded", "found", []string{"$1,250"}, []int{}},

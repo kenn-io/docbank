@@ -11,10 +11,7 @@ import (
 	"github.com/yuin/goldmark/util"
 )
 
-type Citation struct {
-	Text, Err, TextSHA256 string
-	AtDocumentStart       bool
-}
+type Citation struct{ Text, Err, TextSHA256 string }
 type CitationResult struct {
 	Index      int    `json:"index"`
 	Status     string `json:"status"`
@@ -81,7 +78,7 @@ func Prepare(answer string) (Answer, error) {
 		a.markers = append(a.markers, n)
 		return "\n"
 	})
-	a.figures = normalizedFigures(answer, false)
+	a.figures = normalizedFigures(answer)
 	if len(a.figures) > 512 || len(a.markers) > 512 {
 		return Answer{}, errors.New("answer exceeds figure or marker limit")
 	}
@@ -89,24 +86,26 @@ func Prepare(answer string) (Answer, error) {
 }
 func (a Answer) Check(citations []Citation) Report {
 	report := Report{Citations: []CitationResult{}, Figures: []Figure{}, UnknownMarkers: []int{}}
-	values, unavailable := map[string]bool{}, false
-	var normalized []normalizedFigure
+	values, unavailable := map[figureKey]bool{}, false
 	for i, c := range citations {
 		status := c.Err
 		if status == "" {
 			status = "resolved"
-			for _, literal := range extract(citationText(&c)) {
-				values[literal] = true
+			for _, literal := range extract(c.Text) {
+				values[figureKey{"", literal}] = true
 				if date := timestampDate(literal); date != "" {
-					normalized = append(normalized, normalizedFigure{kind: "date", values: []string{date}})
+					values[figureKey{"date", date}] = true
 				}
 			}
-			for _, value := range normalizedFigures(c.Text, true) {
-				if value.kind == "" || value.kind == "bare" {
-					value.values = bareNumberValues(value.text)
+			for _, figure := range normalizedFigures(c.Text) {
+				for _, value := range figure.values {
+					values[figureKey{figure.kind, value}] = true
 				}
-				values[value.text] = true
-				normalized = append(normalized, value)
+				// A fallback literal can also supply exact amount evidence.
+				// Recognized amounts supply only their full currency class.
+				if figure.kind == "" {
+					values[figureKey{"amount", figure.text}] = true
+				}
 			}
 		} else {
 			unavailable = true
@@ -114,52 +113,16 @@ func (a Answer) Check(citations []Citation) Report {
 		report.Citations = append(report.Citations, CitationResult{Index: i + 1, Status: status, TextSHA256: c.TextSHA256})
 	}
 	missing := false
-	for _, value := range a.figures {
-		status := "found"
-		if value.kind == "amount" || !values[value.text] {
-			status = "missing"
-			for _, source := range normalized {
-				if value.kind == "date" && source.kind == "date" {
-					for _, a := range value.values {
-						for _, b := range source.values {
-							if a == b {
-								status = "found"
-							}
-						}
-					}
-				}
-				if value.kind == "amount" {
-					if source.kind == "" && source.text == value.text {
-						status = "found"
-					}
-					for _, a := range value.values {
-						ac, av := amountParts(a)
-						if source.kind == "amount" {
-							for _, b := range source.values {
-								bc, bv := amountParts(b)
-								if av == bv {
-									if compatibleCurrency(ac, bc) {
-										status = "found"
-									} else if status != "found" {
-										status = "value_only"
-									}
-								}
-							}
-						} else if (source.kind == "" || source.kind == "bare") && status != "found" {
-							for _, number := range source.values {
-								if number == av {
-									status = "value_only"
-								}
-							}
-						}
-					}
-				}
-			}
-			if status != "found" {
-				missing = true
+	for _, figure := range a.figures {
+		status := "missing"
+		for _, key := range figure.comparisonKeys() {
+			if values[key] {
+				status = "found"
+				break
 			}
 		}
-		report.Figures = append(report.Figures, Figure{Text: value.text, Status: status})
+		missing = missing || status == "missing"
+		report.Figures = append(report.Figures, Figure{Text: figure.text, Status: status})
 	}
 	for _, n := range a.markers {
 		if n < 1 || n > len(citations) {

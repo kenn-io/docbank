@@ -28,9 +28,35 @@ type normalizedFigure struct {
 	values     []string
 }
 
+type figureKey struct{ kind, value string }
+
+func (f normalizedFigure) comparisonKeys() []figureKey {
+	kind := ""
+	if f.kind == "amount" {
+		kind = "amount"
+	}
+	keys := []figureKey{{kind, f.text}}
+	for _, value := range f.values {
+		keys = append(keys, figureKey{f.kind, value})
+		if f.kind == "amount" {
+			code, number := amountParts(value)
+			for symbol, codes := range symbolCurrencies {
+				if code == symbol {
+					for _, compatible := range strings.Fields(codes) {
+						keys = append(keys, figureKey{"amount", compatible + " " + number})
+					}
+				} else if compatibleCurrency(code, symbol) {
+					keys = append(keys, figureKey{"amount", symbol + " " + number})
+				}
+			}
+		}
+	}
+	return keys
+}
+
 // Only consume a whole sequence of existing literal tokens. Unrecognized input
 // remains exactly the same figure that the literal checker would have seen.
-func normalizedFigures(text string, source bool) []normalizedFigure {
+func normalizedFigures(text string) []normalizedFigure {
 	text = string(util.UnescapePunctuations([]byte(text)))
 	result := []normalizedFigure{}
 	for _, segment := range strings.FieldsFunc(text, func(r rune) bool { return strings.ContainsRune(delimiters, r) || r == '\n' || r == '\r' }) {
@@ -63,7 +89,7 @@ func normalizedFigures(text string, source bool) []normalizedFigure {
 					break
 				}
 				if strings.ContainsRune("-+±−", r) {
-					next := skipHorizontalSpace(rs, start+1)
+					next := start + 1
 					_, code := currencyAt(rs, next)
 					if code != "" || next < len(rs) && (digit(rs[next]) || rs[next] == '.' && next+1 < len(rs) && digit(rs[next+1])) {
 						break
@@ -107,16 +133,8 @@ func normalizedFigures(text string, source bool) []normalizedFigure {
 			}
 			for ; i < next; i++ {
 				token := string(rs[tokens[i].start:tokens[i].end])
-				grouped := source && strings.ContainsAny(token, "\u00a0\u202f")
-				if grouped {
-					result = append(result, normalizedFigure{text: token, kind: "bare"})
-				}
 				for _, value := range extractDecoded(token) {
-					kind := ""
-					if grouped {
-						kind = "literal"
-					}
-					result = append(result, normalizedFigure{text: value, kind: kind})
+					result = append(result, normalizedFigure{text: value})
 				}
 			}
 		}

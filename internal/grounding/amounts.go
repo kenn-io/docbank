@@ -8,8 +8,6 @@ import (
 	"golang.org/x/text/currency"
 )
 
-var amountScales = map[string]int{"thousand": 3, "million": 6, "billion": 9, "k": 3, "m": 6, "bn": 9}
-
 // Compatibility is symmetric but deliberately not transitive: USD and CAD
 // each match a bare dollar symbol, but do not match each other.
 var symbolCurrencies = map[string]string{
@@ -72,7 +70,10 @@ func amountAtWithLookahead(rs []rune, lookahead bool) (int, []string) {
 			}
 			negative, signed, positive, plusMinus = rs[i] == '-' || rs[i] == '−', true, rs[i] == '+', rs[i] == '±'
 			signStart = i
-			i = skipHorizontalSpace(rs, i+1)
+			i++
+			if i < len(rs) && unicode.IsSpace(rs[i]) {
+				return failed()
+			}
 			if len(classes) > 0 {
 				prefixEnd = i
 			}
@@ -115,21 +116,12 @@ func amountAtWithLookahead(rs []rune, lookahead bool) (int, []string) {
 		i--
 	}
 	numberEnd := i
-	scaleStart := skipHorizontalSpace(rs, i)
-	scaleEnd := scaleStart
-	for scaleEnd < len(rs) && isASCIIAlpha(rs[scaleEnd]) {
-		scaleEnd++
-	}
-	power := amountScales[strings.ToLower(string(rs[scaleStart:scaleEnd]))]
-	if power > 0 {
-		i = scaleEnd
-	}
 	i, classes = suffixCurrencies(rs, i, classes, lookahead)
 	if len(classes) == 0 {
 		return failed()
 	}
 	code := amountCurrencyClass(classes)
-	if !figureBoundary(rs, i) && (power <= 0 || i >= len(rs) || rs[i] != ',' || i+1 >= len(rs) || !digit(rs[i+1])) {
+	if !figureBoundary(rs, i) {
 		return failed()
 	}
 	values := numberValues(string(rs[numberStart:numberEnd]))
@@ -138,15 +130,14 @@ func amountAtWithLookahead(rs []rune, lookahead bool) (int, []string) {
 	}
 	result := make([]string, 0, len(values))
 	for _, value := range values {
-		value = scaleDecimal(value, power, negative)
+		if negative {
+			value = "-" + value
+		}
 		if positive {
 			value = "+" + value
 		}
 		if plusMinus {
 			value = "±" + value
-		}
-		if negative && value == "0" {
-			value = "-0"
 		}
 		result = append(result, code+" "+value)
 	}
@@ -165,7 +156,7 @@ func suffixCurrencies(rs []rune, i int, classes []string, lookahead bool) (int, 
 		}
 		next := skipHorizontalSpace(rs, end)
 		if next < len(rs) && strings.ContainsRune("+-−±", rs[next]) {
-			next = skipHorizontalSpace(rs, next+1)
+			next++
 		}
 		if len(classes) > 0 && start > i && next < len(rs) && (digit(rs[next]) || rs[next] == '.' && next+1 < len(rs) && digit(rs[next+1])) && (!lookahead || completeFollowingAmount(rs[start:])) {
 			break
@@ -180,23 +171,6 @@ func suffixCurrencies(rs []rune, i int, classes []string, lookahead bool) (int, 
 		}
 	}
 	return safe, classes[:count]
-}
-
-// Move the decimal point using digits, never a floating-point conversion.
-func scaleDecimal(value string, power int, negative bool) string {
-	parts := strings.SplitN(value, ".", 2)
-	integer, fraction := parts[0], ""
-	if len(parts) == 2 {
-		fraction = parts[1]
-	}
-	if power > 0 {
-		if len(fraction) < power {
-			fraction += strings.Repeat("0", power-len(fraction))
-		}
-		integer += fraction[:power]
-		fraction = fraction[power:]
-	}
-	return canonical(integer, fraction, negative)
 }
 
 func amountParts(value string) (string, string) {

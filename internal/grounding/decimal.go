@@ -2,7 +2,7 @@ package grounding
 
 import "strings"
 
-func canonical(integer, fraction string, neg bool) string {
+func canonical(integer, fraction string) string {
 	integer = strings.TrimLeft(integer, "0")
 	if integer == "" {
 		integer = "0"
@@ -11,14 +11,9 @@ func canonical(integer, fraction string, neg bool) string {
 	if fraction != "" {
 		integer += "." + fraction
 	}
-	if neg && integer != "0" {
-		integer = "-" + integer
-	}
 	return integer
 }
 func numberValues(s string) []string {
-	neg := strings.HasPrefix(s, "-")
-	s = strings.TrimPrefix(s, "-")
 	if s == "" {
 		return nil
 	}
@@ -28,13 +23,7 @@ func numberValues(s string) []string {
 		}
 	}
 	if !strings.ContainsAny(s, ",.\u00a0\u202f'") {
-		if len(s) >= 2 && s[0] == '0' {
-			if neg {
-				return []string{"-" + s}
-			}
-			return []string{s}
-		}
-		return []string{canonical(s, "", neg)}
+		return []string{canonical(s, "")}
 	}
 	// Non-decimal grouping separators must delimit groups of three.
 	for _, sep := range []string{"\u00a0", "\u202f", "'"} {
@@ -95,7 +84,7 @@ func numberValues(s string) []string {
 				return nil
 			}
 		}
-		return []string{canonical(strings.Join(g, ""), parts[1], neg)}
+		return []string{canonical(strings.Join(g, ""), parts[1])}
 	}
 	sep := ","
 	if dots > 0 {
@@ -103,7 +92,7 @@ func numberValues(s string) []string {
 	}
 	parts := strings.Split(s, sep)
 	if len(parts) == 1 {
-		return []string{canonical(s, "", neg)}
+		return []string{canonical(s, "")}
 	}
 	grouped := len(parts[0]) >= 1 && len(parts[0]) <= 3
 	for _, p := range parts[1:] {
@@ -115,49 +104,17 @@ func numberValues(s string) []string {
 		if !grouped {
 			return nil
 		}
-		return []string{canonical(strings.Join(parts, ""), "", neg)}
+		return []string{canonical(strings.Join(parts, ""), "")}
 	}
 	if parts[1] == "" {
 		return nil
 	}
-	dec := canonical(parts[0], parts[1], neg)
+	dec := canonical(parts[0], parts[1])
 	if grouped {
-		v := canonical(strings.Join(parts, ""), "", neg)
+		v := canonical(strings.Join(parts, ""), "")
 		if v != dec {
 			return []string{v, dec}
 		}
 	}
 	return []string{dec}
-}
-
-// bareNumberValues is used only for the amount value-only diagnostic.
-func bareNumberValues(text string) []string {
-	positive, negative, plusMinus := false, false, false
-	if strings.HasPrefix(text, "+") {
-		positive = true
-		text = text[1:]
-	} else if strings.HasPrefix(text, "±") {
-		plusMinus = true
-		text = strings.TrimPrefix(text, "±")
-	} else if strings.HasPrefix(text, "-") {
-		negative = true
-		text = text[1:]
-	} else if strings.HasPrefix(text, "−") {
-		negative = true
-		text = strings.TrimPrefix(text, "−")
-	}
-	values := numberValues(text)
-	for i, value := range values {
-		values[i] = scaleDecimal(value, 0, negative)
-		if positive {
-			values[i] = "+" + values[i]
-		}
-		if plusMinus {
-			values[i] = "±" + values[i]
-		}
-		if negative && values[i] == "0" {
-			values[i] = "-0"
-		}
-	}
-	return values
 }
