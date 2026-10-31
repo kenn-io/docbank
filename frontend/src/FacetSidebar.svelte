@@ -99,24 +99,21 @@
   const displayFacets = $derived.by(() => {
     const result: DisplayFacet[] = [...facets];
     const year = /^([0-9]{4})-01-01$/.exec(query.filters.capture_after ?? "")?.[1];
-    if (
-      year &&
-      query.filters.capture_before === yearBefore(year) &&
-      !facets.some((facet) => facet.dimension === "year")
-    ) {
-      result.push({
-        dimension: "year",
-        available: true,
-        total: 0,
-        missing: 0,
-        other: 0,
-        selectedOnly: true,
-        values: [{ key: year, label: year, count: 0, selected: true }],
-      });
-    }
-    for (const dimension of ["camera", "lens"] as const) {
-      const field = arrayFields[dimension];
-      const values = (query.filters[field] as string[] | undefined) ?? [];
+    const selected: [Facet["dimension"], string[]][] = (["camera", "lens", "location", "set"] as const).map(
+      (dimension) => [dimension, query.filters[arrayFields[dimension]] ?? []],
+    );
+    selected.push(
+      ["year", year && query.filters.capture_before === yearBefore(year) ? [year] : []],
+      [
+        "rating",
+        query.filters.rating_min != null && query.filters.rating_min === query.filters.rating_max
+          ? [String(query.filters.rating_min)]
+          : [],
+      ],
+      ["flag", query.filters.flags?.map((value) => value || "none") ?? []],
+      ["label", query.filters.labels?.map((value) => value || "none") ?? []],
+    );
+    for (const [dimension, values] of selected) {
       if (!values.length || facets.some((facet) => facet.dimension === dimension)) continue;
       result.push({
         dimension,
