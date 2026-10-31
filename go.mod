@@ -38,7 +38,7 @@ require (
 	github.com/tetratelabs/wazero v1.12.0
 	github.com/yuin/goldmark v1.8.5
 	go.kenn.io/kata v0.19.0
-	go.kenn.io/kit v0.47.4-0.20261030195609-114a7f076b34
+	go.kenn.io/kit v0.47.4-0.20261031000842-7e5092cd9702
 	golang.org/x/crypto v0.58.0
 	golang.org/x/image v0.44.0
 	golang.org/x/net v0.62.0
