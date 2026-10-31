@@ -282,7 +282,7 @@ func TestEmailMissingStatesAndDeterministicRefusal(t *testing.T) {
 	require.NoError(t, s.ValidateMetadata(t.Context()))
 }
 
-func TestEmailPDFAttachmentNotifiesCurrentNodeOnce(t *testing.T) {
+func TestEmailPDFAttachmentNotifiesOnce(t *testing.T) {
 	t.Parallel()
 	s, _ := newRenditionCatalogFixture(t)
 	f := newEmailFixture(t, s, "message.eml")

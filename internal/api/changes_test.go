@@ -95,7 +95,7 @@ func TestVaultChangesEmptyFollowShutdown(t *testing.T) {
 	require.NoError(t, scanner.Err())
 }
 
-func TestVaultChangesLaterPageFailure(t *testing.T) {
+func TestVaultChangesLaterPollFailure(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	ts.Client().Timeout = 5 * time.Second

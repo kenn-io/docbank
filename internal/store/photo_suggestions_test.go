@@ -812,7 +812,7 @@ func TestPhotoDescriptionJobPublishesOneSuggestionAndSettles(t *testing.T) {
 		require.Empty(t, changes)
 		settled, err := s.photoDescriptionSettled(ctx, emptyNode.CurrentVersionID, producerB, false)
 		require.NoError(t, err)
-		require.True(t, settled, "an empty answer still settles the version")
+		require.True(t, settled, "empty and fully owned answers settle the version")
 	}
 }
 

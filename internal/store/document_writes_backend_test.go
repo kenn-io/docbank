@@ -31,6 +31,8 @@ func TestDocumentWritesPostgres(t *testing.T) {
 			// Exercise cursors beyond PostgreSQL's int4 range with a real file.
 			_, err = s.db.ExecContext(ctx, `INSERT INTO vault_changes(seq,kind,node_id,node_revision) VALUES(2147483648,'processed',$1,$2)`, photo.ID, photo.Revision)
 			require.NoError(t, err)
+			_, err = s.db.ExecContext(ctx, `DELETE FROM vault_changes WHERE seq=1`)
+			require.NoError(t, err)
 			_, before, err := s.VaultChanges(ctx, "", 500)
 			require.NoError(t, err)
 			dir, path, err := s.MkdirPath(ctx, "/Documents")

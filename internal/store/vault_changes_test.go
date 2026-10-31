@@ -90,6 +90,8 @@ func TestVaultChangesCursors(t *testing.T) { //nolint:paralleltest // Pruning co
 	t.Cleanup(func() { vaultChangeRetention = prior })
 	s := newTestStore(t)
 	ctx := t.Context()
+	_, _, err := s.VaultChanges(ctx, "broken", 500)
+	require.ErrorIs(t, err, ErrInvalidChangeCursor)
 	_, empty, err := s.VaultChanges(ctx, "", 500)
 	require.NoError(t, err)
 	for _, name := range []string{"one", "two", "three"} {
