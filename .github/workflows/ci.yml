@@ -258,13 +258,16 @@ jobs:
       - name: Check Unix installer
         run: sh -n scripts/install.sh
 
+      - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
+
       - name: Check Huma API contract
-        run: go run go.kenn.io/kit/cmd/huma-check@3e1f59e9011e878ec595aa04aebc8a77c5292c4d -fix=false -tags fts5 ./...
+        run: |
+          huma=go.kenn.io/kit/cmd/huma-check@3e1f59e9011e878ec595aa04aebc8a77c5292c4d
+          kit-retry 3 5 go run -n "$huma"
+          go run "$huma" -fix=false -tags fts5 ./...
 
       - name: Vet
         run: go vet -tags fts5 ./...
-
-      - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
 
       - name: Start S3-compatible test service
         env:
