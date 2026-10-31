@@ -801,7 +801,8 @@ the same semantics as source-fence resolution. Semantic and hybrid coverage
 reports `scoped_documents` and `complete_documents` over that population.
 A scope cannot be combined with `media_sources`. Explicit fences retain the
 4,096-version limit.
-A scope with no live files returns an empty report with complete 0/0 coverage for semantic and hybrid modes, or unknown coverage for lexical and auto modes.
+A scope with no live files returns an empty report with complete 0/0 coverage
+for semantic and hybrid modes, or unknown coverage for lexical and auto modes.
 
 The CLI's automatic search sends a scope; the web app, TUI, MCP, and Go library still send fences.
 
