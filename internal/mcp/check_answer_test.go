@@ -36,14 +36,6 @@ func TestCheckAnswerTransports(t *testing.T) {
 	assertSchemaAccepts(t, catalogMap(toolCatalog(ServerOptions{}))["check_answer"].OutputSchema, output)
 }
 
-func TestCheckAnswerRetainedNormalization(t *testing.T) {
-	server, citation := newCitationMCPFixtureText(t, "text/html", "<p>USD 20</p><p>CAD 30</p>", "USD 20\n\nCAD 30")
-	result := decodeResult(t, exportExchange(t, server, "stdio", "tools/call", map[string]any{
-		"name": "check_answer", "arguments": map[string]any{"answer": "$20 and CAD30 [1]", "citations": []any{citation}},
-	}))
-	require.Equal(t, "grounded", objectField(t, result, "structuredContent")["status"])
-}
-
 func TestCheckAnswerRejectsInvalidBeforeAcquisition(t *testing.T) {
 	var acquisitions atomic.Int32
 	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {

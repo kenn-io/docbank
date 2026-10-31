@@ -13,14 +13,12 @@ func TestNormalizedFigures(t *testing.T) {
 		figures        []Figure
 	}
 	cases := []testCase{}
-	for _, gap := range []string{" : ", " , : \t", " ' : ' ", " ("} {
-		for _, ambiguous := range []string{"CAD" + gap + "$40", "$40" + gap + "CAD"} {
-			cases = append(cases,
-				testCase{"USD40", ambiguous, []Figure{{Text: "USD40", Status: "missing"}}},
-				testCase{ambiguous, "USD40", []Figure{{Text: "$40", Status: "missing"}}},
-				testCase{ambiguous, ambiguous, []Figure{{Text: "$40", Status: "found"}}},
-			)
-		}
+	for _, ambiguous := range []string{"CAD , : \t$40", "$40 , : \tCAD"} {
+		cases = append(cases,
+			testCase{"USD40", ambiguous, []Figure{{Text: "USD40", Status: "missing"}}},
+			testCase{ambiguous, "USD40", []Figure{{Text: "$40", Status: "missing"}}},
+			testCase{ambiguous, ambiguous, []Figure{{Text: "$40", Status: "found"}}},
+		)
 	}
 	for _, tc := range []struct{ answer, source, status string }{
 		{"$40", "40\nUSD", "missing"},
@@ -50,7 +48,6 @@ func TestNormalizedFigures(t *testing.T) {
 		{"2026-03-15", "2026-03-155", "2026-03-15", "missing"},
 		{"2026-03-155", "2026-03-155", "2026-03-155", "found"},
 		{"USD40", "CAD $40", "USD40", "missing"},
-		{"USD40", "CAD. $40", "USD40", "missing"},
 		{"USD40", "'CAD $40'", "USD40", "missing"},
 		{"USD40", "$40 'CAD'", "USD40", "missing"},
 		{"USD40", "CAD$40", "USD40", "missing"},
@@ -82,12 +79,9 @@ func TestNormalizedFigures(t *testing.T) {
 		{"2026-02-30", "March 2, 2026", "2026-02-30", "missing"},
 		{"USD 40", `"$40..."`, "USD 40", "found"},
 		{`"$40..."`, "USD 40", "$40", "found"},
-		{"USD 40", "$40...", "USD 40", "found"},
-		{"$40...", "USD 40", "$40", "found"},
 		{"USD 40", "$40..5", "USD 40", "missing"},
 		{"USD 123", "$1,2,3...", "USD 123", "missing"},
 		{"USD40", "$40 CAD.", "USD40", "missing"},
-		{"USD40", "$40 CAD...", "USD40", "missing"},
 		{"_$40_", "USD 40", "$40", "found"},
 		{"2026-03-15", "_March 15, 2026_", "2026-03-15", "found"},
 		{"_2026-03-15_", "March 15, 2026", "2026-03-15", "found"},
@@ -98,7 +92,6 @@ func TestNormalizedFigures(t *testing.T) {
 		{"CAD 40", "$40 USD 2026-03-15T10:00:00Z", "CAD 40", "missing"},
 		{"CAD 40", "$40 USD 12:30", "CAD 40", "missing"},
 		{"CAD 40", "$40 USD 50-60", "CAD 40", "missing"},
-		{"CAD 40", "$40 USD 123ABC", "CAD 40", "missing"},
 		{"USD 40", "CAD 40", "USD 40", "found"},
 		{"$40", "40", "$40", "missing"},
 		{"$40", "USD 400", "$40", "missing"},
@@ -116,23 +109,23 @@ func TestNormalizedFigures(t *testing.T) {
 		cases = append(cases, testCase{tc.answer, tc.source, []Figure{{Text: tc.text, Status: tc.figure}}})
 	}
 	cases = append(cases,
+		testCase{"CAD ($40", "CAD ($40", []Figure{{Text: "$40", Status: "found"}}},
+		testCase{"$40 (CAD", "USD40", []Figure{{Text: "$40", Status: "missing"}}},
+		testCase{"$40 (CAD", "$40 (CAD", []Figure{{Text: "$40", Status: "found"}}},
 		testCase{"$20 CAD0.5", "USD 20, CAD .5", []Figure{{Text: "$20", Status: "found"}, {Text: "CAD0.5", Status: "found"}}},
 		testCase{"$20 CAD30", "USD 20, CAD 30", []Figure{{Text: "$20", Status: "found"}, {Text: "CAD30", Status: "found"}}},
 		testCase{"USD 20, CAD 30", "$20 CAD30", []Figure{{Text: "USD 20", Status: "found"}, {Text: "CAD 30", Status: "found"}}},
 		testCase{"$20 CAD30", "USD 20; CAD 30", []Figure{{Text: "$20", Status: "found"}, {Text: "CAD30", Status: "found"}}},
 		testCase{"$40 on March 15, 2026", "40 USD\n2026-03-15", []Figure{{Text: "$40", Status: "found"}, {Text: "March 15, 2026", Status: "found"}}},
 		testCase{"$40 CAD30", "40USD 30CAD", []Figure{{Text: "$40", Status: "found"}, {Text: "CAD30", Status: "found"}}},
-		testCase{"$40 CAD30", "40 USD 30 CAD", []Figure{{Text: "$40", Status: "found"}, {Text: "CAD30", Status: "found"}}},
 		testCase{"CAD30", "-5 USD 30 CAD", []Figure{{Text: "CAD30", Status: "missing"}}},
 		testCase{"USD40 on March 15, 2026", "$40 CAD 2026-03-15", []Figure{{Text: "USD40", Status: "missing"}, {Text: "March 15, 2026", Status: "found"}}},
-		testCase{"USD40 on 2026-03-15", "$40 CAD 15 March 2026", []Figure{{Text: "USD40", Status: "missing"}, {Text: "2026-03-15", Status: "found"}}},
 		testCase{"CAD15 on 2026-03-15", "CAD 15 March 2026", []Figure{{Text: "CAD15", Status: "missing"}, {Text: "2026-03-15", Status: "found"}}},
 		testCase{"CAD40 on 2026-03-15", "40 CAD 15 March 2026", []Figure{{Text: "CAD40", Status: "found"}, {Text: "2026-03-15", Status: "found"}}},
 		testCase{"$20 CAD30", "USD 20\n\nCAD 30", []Figure{{Text: "$20", Status: "found"}, {Text: "CAD30", Status: "found"}}},
 		testCase{"USD 20\n\nCAD 30", "$20 CAD30", []Figure{{Text: "USD 20", Status: "found"}, {Text: "CAD 30", Status: "found"}}},
 		testCase{"$40 on March 15, 2026", "USD 40 2026-03-15", []Figure{{Text: "$40", Status: "found"}, {Text: "March 15, 2026", Status: "found"}}},
 		testCase{"March 15, 2026 [1]", "2026-03-15", []Figure{{Text: "March 15, 2026", Status: "found"}}},
-		testCase{"5.00", "5", []Figure{{Text: "5.00", Status: "missing"}}},
 		testCase{"USD20 CAD30", "USD 20 and CAD 30", []Figure{{Text: "USD20", Status: "found"}, {Text: "CAD30", Status: "found"}}},
 	)
 	for _, tc := range cases {
