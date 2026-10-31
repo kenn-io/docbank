@@ -328,7 +328,9 @@ slot and retains the operation directory for a fixed 30-minute lifetime. Every
 admitted reader owns a file handle and pins the directory; discard and expiry
 refuse new readers but let admitted reads finish. Revocation and service stop
 cancel creation and active readers, including blocked socket writes. Unused
-tickets hold no pin or copy. Cleanup failure retains capacity and is reported.
+tickets hold no pin or copy. Cleanup failure retains capacity. Explicit
+owner-scoped discard returns the error so the editor can retry; logout and
+shutdown cleanup log failures.
 Startup spool recovery removes abandoned `native-pdf-*` directories.
 
 Prepare and resolve retain finite 60-second body/request deadlines. Preview

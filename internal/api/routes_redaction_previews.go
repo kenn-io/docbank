@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"io"
+	"log/slog"
 	"mime"
 	"net/http"
 	"reflect"
@@ -105,7 +106,11 @@ func (s *Server) serveRedactionPreview(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if r.URL.Path == redactionPreviewsPath {
 		if r.Method == http.MethodDelete {
-			s.deps.Processing.RevokeRedactionPreviews(owner)
+			if err := s.deps.Processing.DiscardRedactionPreviews(owner); err != nil {
+				slog.Error("discarding redaction preview", "error", err)
+				writeError(w, redactionProblem(ctx, err))
+				return
+			}
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}

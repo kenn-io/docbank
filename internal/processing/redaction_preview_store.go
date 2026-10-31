@@ -98,21 +98,27 @@ func (s *Service) DiscardRedactionPreview(owner, id string) error {
 	return s.cleanRedactionPreviewLocked()
 }
 
-// RevokeRedactionPreviews interrupts admitted readers and in-flight creation. Empty owner
-// is reserved for service shutdown; HTTP callers never supply an owner.
-func (s *Service) RevokeRedactionPreviews(owner string) {
+// DiscardRedactionPreviews interrupts admitted readers and in-flight creation, returning
+// cleanup errors so explicit callers can retry. Empty owner is reserved for service
+// shutdown; HTTP callers never supply an owner.
+func (s *Service) DiscardRedactionPreviews(owner string) error {
 	if s == nil {
-		return
+		return nil
 	}
 	s.redactionPreviews.mu.Lock()
 	defer s.redactionPreviews.mu.Unlock()
 	e := s.redactionPreviews.entry
 	if e == nil || owner != "" && e.owner != owner {
-		return
+		return nil
 	}
 	e.retired = true
 	e.cancel()
-	if err := s.cleanRedactionPreviewLocked(); err != nil {
+	return s.cleanRedactionPreviewLocked()
+}
+
+// RevokeRedactionPreviews performs best-effort cleanup for logout and shutdown.
+func (s *Service) RevokeRedactionPreviews(owner string) {
+	if err := s.DiscardRedactionPreviews(owner); err != nil {
 		slog.Error("removing revoked redaction preview", "error", err)
 	}
 }

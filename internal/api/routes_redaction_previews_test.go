@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -143,6 +144,32 @@ func TestRedactionPreviewBrowserHTTP(t *testing.T) {
 		require.Equal(t, 404, resp.StatusCode)
 		require.NoError(t, resp.Body.Close())
 	}
+	t.Run("cleanup failure", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("root bypasses directory permissions")
+		}
+		directories, err := filepath.Glob(filepath.Join(spool, "native-pdf-*"))
+		require.NoError(t, err)
+		require.Len(t, directories, 1)
+		directory := directories[0]
+		require.NoError(t, os.Chmod(directory, 0o500))
+		defer func() { require.NoError(t, os.Chmod(directory, 0o700)) }()
+		req, err := http.NewRequest(http.MethodDelete, ts.URL+"/api/v1/redaction/previews", nil)
+		require.NoError(t, err)
+		req.Header.Set(api.WebSessionHeader, alice)
+		req.Header["X-Api-Key"] = []string{""}
+		resp, err := ts.Client().Do(req)
+		require.NoError(t, err)
+		defer func() { require.NoError(t, resp.Body.Close()) }()
+		require.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+		var problem api.Error
+		require.NoError(t, json.UnmarshalRead(resp.Body, &problem))
+		require.Equal(t, "redaction_failed", problem.Code)
+		files, err := os.ReadDir(directory)
+		require.NoError(t, err)
+		require.NotEmpty(t, files, "failed discard must retain the preview for cleanup retry")
+	})
+	// Restored permissions let the same owner retry cleanup and create another preview.
 	resp, body = call(alice, "DELETE", "/api/v1/redaction/previews", nil)
 	require.Equal(t, 204, resp.StatusCode, string(body))
 	resp, body = call(alice, "GET", fmt.Sprintf("/api/v1/nodes/%d", node.ID), nil)
