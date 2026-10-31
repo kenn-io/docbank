@@ -26,8 +26,10 @@ func TestDocumentWritesPostgres(t *testing.T) {
 				_, err = s.EnableInitialAudit(ctx, plan)
 				require.NoError(t, err)
 			}
-			// Exercise cursors beyond PostgreSQL's int4 range.
-			_, err := s.db.ExecContext(ctx, `INSERT INTO vault_changes(seq,kind,node_id,node_revision) VALUES(2147483648,'created',1,1)`)
+			photo, err := s.CreateFile(ctx, s.RootID(), "photo.jpg", fakeHash("a3"), 4, "image/jpeg")
+			require.NoError(t, err)
+			// Exercise cursors beyond PostgreSQL's int4 range with a real file.
+			_, err = s.db.ExecContext(ctx, `INSERT INTO vault_changes(seq,kind,node_id,node_revision) VALUES(2147483648,'processed',$1,$2)`, photo.ID, photo.Revision)
 			require.NoError(t, err)
 			_, before, err := s.VaultChanges(ctx, "", 500)
 			require.NoError(t, err)
@@ -62,12 +64,11 @@ func TestDocumentWritesPostgres(t *testing.T) {
 			require.ErrorIs(t, err, ErrStaleRevision)
 			reverted, version, _, err := s.RevertContent(ctx, original.ID, replaced.Node.Revision, original.CurrentVersionID)
 			require.NoError(t, err)
-			changes, _, err := s.VaultChanges(ctx, before, 500)
-			require.NoError(t, err)
-			require.Len(t, changes, 6)
 			require.Equal(t, original.BlobHash, reverted.BlobHash)
 			require.Equal(t, "content_revert", version.TransitionKind)
 			require.Equal(t, new(original.CurrentVersionID), version.SourceVersionID)
+			changes, _, err := s.VaultChanges(ctx, before, 500)
+			require.NoError(t, err)
 			moved, path, err := s.Move(ctx, original.ID, dir.ID, "final.txt", reverted.Revision)
 			require.NoError(t, err)
 			require.Equal(t, "/Documents/final.txt", path)
@@ -93,8 +94,6 @@ func TestDocumentWritesPostgres(t *testing.T) {
 			require.NoError(t, s.db.QueryRowContext(ctx, `SELECT count(*) FROM text_extraction_queue`).Scan(&queued))
 			require.Equal(t, 3, eligible)
 			require.Equal(t, 2, queued)
-			photo, err := s.CreateFile(ctx, dir.ID, "photo.jpg", fakeHash("a3"), 4, "image/jpeg")
-			require.NoError(t, err)
 			var enrolled int
 			require.NoError(t, s.db.QueryRowContext(ctx, `SELECT count(*) FROM photo_files WHERE node_id=$1`, photo.ID).Scan(&enrolled))
 			if audited {
@@ -102,6 +101,7 @@ func TestDocumentWritesPostgres(t *testing.T) {
 			} else {
 				require.Equal(t, 1, enrolled)
 			}
+			require.Len(t, changes, 6)
 			require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
 				high, err := s.auditNodeSequence(ctx, tx)
 				if err != nil {

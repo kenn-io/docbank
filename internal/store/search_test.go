@@ -2264,9 +2264,35 @@ func TestRecordExtractionRejectsVersionDowngrade(t *testing.T) {
 	require.Len(t, hits, 1)
 }
 
-// Successful extraction notifies current live nodes once. Replacing it with a
-// same-version failure would leave the published rendition ahead of the cache.
-func TestRecordExtractionRejectsSameVersionFailureAfterSuccessAndNotifiesCurrentLiveNodesOnce(t *testing.T) {
+// Mutation caught: replacing a successful extraction with a same-version
+// failure leaves its published rendition ahead of the portable cache.
+func TestRecordExtractionRejectsSameVersionFailureAfterSuccess(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	hash := fakeHash("aa")
+	_, err := s.CreateFile(ctx, s.RootID(), "stable.txt", hash, 10, "text/plain")
+	require.NoError(t, err)
+	require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{
+		BlobHash: hash, Extractor: "plain-text", ExtractorVersion: 1,
+		Status: ExtractionOK, Text: "stable-extraction-authority",
+	}))
+	_, err = s.MigrateLegacyPlainText(ctx)
+	require.NoError(t, err)
+
+	err = s.RecordExtraction(ctx, ExtractionResult{
+		BlobHash: hash, Extractor: "plain-text", ExtractorVersion: 1,
+		Status: ExtractionFailed, Error: "synthetic later failure",
+	})
+	require.ErrorContains(t, err, "cannot replace a successful extraction")
+	_, err = s.MigrateLegacyPlainText(ctx)
+	require.NoError(t, err)
+	hits, _, err := s.SearchPage(ctx, "stable-extraction-authority", 20)
+	require.NoError(t, err)
+	require.Len(t, hits, 1)
+}
+
+func TestRecordExtractionNotifiesCurrentLiveNodesOnce(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -2301,19 +2327,6 @@ func TestRecordExtractionRejectsSameVersionFailureAfterSuccessAndNotifiesCurrent
 	changes, _, err = s.VaultChanges(ctx, cursor, 500)
 	require.NoError(t, err)
 	require.Empty(t, changes)
-	_, err = s.MigrateLegacyPlainText(ctx)
-	require.NoError(t, err)
-
-	err = s.RecordExtraction(ctx, ExtractionResult{
-		BlobHash: hash, Extractor: "plain-text", ExtractorVersion: 1,
-		Status: ExtractionFailed, Error: "synthetic later failure",
-	})
-	require.ErrorContains(t, err, "cannot replace a successful extraction")
-	_, err = s.MigrateLegacyPlainText(ctx)
-	require.NoError(t, err)
-	hits, _, err := s.SearchPage(ctx, "stable-extraction-authority", 20)
-	require.NoError(t, err)
-	require.Len(t, hits, 2)
 }
 
 // Mutation caught: accepting a newer plain-text result after legacy authority
