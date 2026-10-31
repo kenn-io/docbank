@@ -1097,7 +1097,7 @@ and must be supplied separately after restoring a vault.
 
 | Fields | Meaning |
 | --- | --- |
-| `adapter_contract` | `docbank-openai-compatible-embeddings/v1` for rendition chunks, `docbank-voyage-embeddings/v1` for rendition chunks and original files, `docbank-standard-embedding-bridge/v1` for text and original-file inputs, or `docbank-standard-embedding-bridge/v2` for image inputs. |
+| `adapter_contract` | `docbank-openai-compatible-embeddings/v1` for rendition chunks, `docbank-voyage-embeddings/v1` for rendition chunks and original files, or `docbank-standard-embedding-bridge/v2` for image inputs and text queries. |
 | `endpoint`, `model_revision` | Exact provider endpoint and pinned revision. OpenAI-compatible endpoints are origins without a path; Voyage uses `https://api.voyageai.com/v1`. |
 | `deployment_epoch`, `provider_revision_header` | OpenAI-compatible runtimes require exactly one. Voyage text runtimes require an epoch and forbid a revision header. The epoch must equal `model_revision`; an OpenAI-compatible revision header must echo the pinned revision in every response. |
 | `capability_manifest` | Voyage original-file runtimes require an absolute path to a capability manifest matching their model, media policy, and descriptor. Voyage text runtimes forbid this field. |

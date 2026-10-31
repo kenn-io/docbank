@@ -1183,7 +1183,6 @@ func TestImageEmbeddingProfileUsesStandardBridge(t *testing.T) {
 		inputKind, metric                  string
 	}{
 		{"standard bridge v2", "docbank-standard-embedding-bridge/v2", "http://embedding.example.invalid", "", false, nil, "", ""},
-		{"old bridge version", "docbank-standard-embedding-bridge/v1", "http://embedding.example.invalid", "image input requires the v2 standard embedding bridge", false, nil, "", ""},
 		{"v2 text input", "docbank-standard-embedding-bridge/v2", "http://embedding.example.invalid", "v2 standard embedding bridge requires image input", true, nil, "rendition_chunk", ""},
 		{"image chunk policy", "docbank-standard-embedding-bridge/v2", "http://embedding.example.invalid", "image input must not define chunk policy or max input tokens", true, nil, "", ""},
 		{"cosine lower boundary", "docbank-standard-embedding-bridge/v2", "http://embedding.example.invalid", "", false, new(-1.0), "", ""},
@@ -1192,7 +1191,7 @@ func TestImageEmbeddingProfileUsesStandardBridge(t *testing.T) {
 		{"cosine above upper boundary", "docbank-standard-embedding-bridge/v2", "http://embedding.example.invalid", "min_query_similarity", false, new(1.1), "", ""},
 		{"cosine below lower boundary", "docbank-standard-embedding-bridge/v2", "http://embedding.example.invalid", "min_query_similarity", false, new(-1.1), "", ""},
 		{"unsupported floor metric", "docbank-standard-embedding-bridge/v2", "http://embedding.example.invalid", "min_query_similarity", false, new(0.2), "", "l2"},
-		{"text input with image floor", "docbank-standard-embedding-bridge/v1", "http://embedding.example.invalid", "min_query_similarity", true, new(0.2), "rendition_chunk", ""},
+		{"text input with image floor", "docbank-openai-compatible-embeddings/v1", "http://embedding.example.invalid", "min_query_similarity", true, new(0.2), "rendition_chunk", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

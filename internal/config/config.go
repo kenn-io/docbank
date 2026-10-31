@@ -1373,7 +1373,6 @@ func validateEmbeddingProfileConfig(profile EmbeddingProfileConfig, prefix strin
 		}
 		if runtime.AdapterContract != "docbank-openai-compatible-embeddings/v1" &&
 			runtime.AdapterContract != "docbank-voyage-embeddings/v1" &&
-			runtime.AdapterContract != "docbank-standard-embedding-bridge/v1" &&
 			runtime.AdapterContract != "docbank-standard-embedding-bridge/v2" {
 			return fmt.Errorf("%s runtime adapter_contract is unsupported", prefix)
 		}
@@ -1393,7 +1392,7 @@ func validateEmbeddingProfileConfig(profile EmbeddingProfileConfig, prefix strin
 			return fmt.Errorf("%s model_input is invalid or incompatible", prefix)
 		}
 		switch runtime.AdapterContract {
-		case "docbank-standard-embedding-bridge/v1", "docbank-standard-embedding-bridge/v2":
+		case "docbank-standard-embedding-bridge/v2":
 			if runtime.CapabilityManifest != "" || runtime.ProviderRevisionHeader != "" || (parsed.Path != "" && parsed.Path != "/") {
 				return fmt.Errorf("%s bridge runtime authority is invalid", prefix)
 			}
