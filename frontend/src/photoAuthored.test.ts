@@ -2334,9 +2334,9 @@ it("refreshes and clears best-shot offers with their prepared stack", async () =
     // Cull resets the selection before editing the current frame.
     editor.reset();
     let finish!: (receipt: api.PhotoAuthoredReceipt) => void;
-    const edit = vi.spyOn(api, "editPhotoAuthored").mockImplementation(
-      () => new Promise((resolve) => (finish = resolve)),
-    );
+    const edit = vi
+      .spyOn(api, "editPhotoAuthored")
+      .mockImplementation(() => new Promise((resolve) => (finish = resolve)));
     const editing = editor.edit({ asset_ids: [ids[0]!] }, { flag }, false, vi.fn());
     await vi.waitFor(() => expect(edit).toHaveBeenCalledOnce());
     // A stack read during the write must leave the stack eligible for a fresh read.
