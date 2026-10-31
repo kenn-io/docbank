@@ -866,6 +866,17 @@ func (service *Service) StartWithProgress(ctx context.Context, request StartRequ
 			return Job{}, fmt.Errorf("%w: %s", ErrSourceIneligible, capability.Reason)
 		}
 	}
+	if profile.portable.Rendition == nil && len(profile.portable.Embeddings) != 0 &&
+		!slices.ContainsFunc(profile.portable.Embeddings, func(binding document.EmbeddingBindingV1) bool {
+			return binding.InputKind != document.EmbeddingInputImage
+		}) {
+		if _, _, _, err := strippedPhotoPreview(ctx, service.catalog, service.blobs, version.ID); err != nil {
+			if errors.Is(err, ErrSourceIneligible) {
+				err = &ImageSourceIneligibleError{Err: err}
+			}
+			return Job{}, err
+		}
+	}
 	if request.Consent {
 		if err := service.grantProfileConsent(ctx, profile, nil); err != nil {
 			return Job{}, err
@@ -1317,7 +1328,7 @@ func (service *Service) Status(ctx context.Context, jobID string) (Status, error
 		if err != nil {
 			return Status{}, err
 		}
-		return aggregateStatus(jobID, &rendition, embeddings), nil
+		return service.profileStatus(jobID, waiter.ProfileFingerprint, &rendition, embeddings), nil
 	}
 	if !errors.Is(waiterErr, store.ErrNotFound) {
 		return Status{}, waiterErr
@@ -1330,7 +1341,7 @@ func (service *Service) Status(ctx context.Context, jobID string) (Status, error
 		if err != nil {
 			return Status{}, err
 		}
-		return aggregateStatus(jobID, nil, embeddings), nil
+		return service.profileStatus(jobID, embedding.ProfileFingerprint, nil, embeddings), nil
 	}
 	if !errors.Is(embeddingErr, store.ErrNotFound) {
 		return Status{}, embeddingErr
@@ -1342,6 +1353,28 @@ func (service *Service) Status(ctx context.Context, jobID string) (Status, error
 		return Status{}, err
 	}
 	return aggregateStatus(jobID, &rendition, nil), nil
+}
+
+func (service *Service) profileStatus(jobID, profileFingerprint string, rendition *store.RenditionJob,
+	embeddings []store.EmbeddingJobStatus,
+) Status {
+	status := aggregateStatus(jobID, rendition, embeddings)
+	if status.State != "completed" {
+		return status
+	}
+	for _, profile := range service.profiles {
+		if profile.record.Fingerprint != profileFingerprint {
+			continue
+		}
+		for _, binding := range profile.portable.Embeddings {
+			if binding.Activation == document.EmbeddingRequired &&
+				!slices.ContainsFunc(embeddings, func(job store.EmbeddingJobStatus) bool { return job.BindingID == binding.Name }) {
+				status.State, status.Phase = "partial", "embedding"
+				return status
+			}
+		}
+	}
+	return status
 }
 
 func aggregateStatus(jobID string, rendition *store.RenditionJob,

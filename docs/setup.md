@@ -146,4 +146,4 @@ Both must pass on a supported platform. If `go test` fails with
 
 ## Enable photo meaning search
 
-Configure an image/text provider through the standard embedding bridge and grant processing consent for its image binding and text queries. See [Embed photos for meaning search](usage/document-processing.md#embed-photos-for-meaning-search). Eligible photo previews then queue automatically. Photos offers Meaning and Hybrid search after setup; an unavailable provider, consent, or index shows the metadata fallback reason.
+Configure an image/text provider through the standard embedding bridge and grant processing consent for its image binding and text queries. See [Embed photos for meaning search](usage/document-processing.md#embed-photos-for-meaning-search). Eligible photo previews then queue automatically. The Photos Find by control always offers Meaning and Hybrid search. Without setup, or when the provider, consent, or index is unavailable, search falls back to metadata and explains why.

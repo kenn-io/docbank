@@ -94,17 +94,11 @@ func (s *Store) newPhotoStackVectorReader(ctx context.Context, q metadataQuerier
 			// when an active generation is damaged.
 			continue
 		}
-		current, err := photoStackVectorHeads(ctx, q)
-		if err != nil {
-			return nil, err
-		}
 		s.photoStackVectorsMu.Lock()
-		if current[space] == id {
-			if opened := s.photoStackVectors[space]; opened.id == id {
-				index = opened.index
-			} else {
-				s.photoStackVectors[space] = photoStackOpenedGeneration{id: id, index: index}
-			}
+		if opened := s.photoStackVectors[space]; opened.id == id {
+			index = opened.index
+		} else {
+			s.photoStackVectors[space] = photoStackOpenedGeneration{id: id, index: index}
 		}
 		s.photoStackVectorsMu.Unlock()
 		reader.indexes = append(reader.indexes, index)
