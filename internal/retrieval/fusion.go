@@ -38,11 +38,11 @@ func FuseReciprocalRank(lexical, semantic []Candidate, limit int) ([]Result, boo
 		key := fmt.Sprintf("%020d", index)
 		keys[identity], metadata[key] = key, byDocument[identity]
 	}
-	rankLane := func(candidates []Candidate) embedding.ScopedCandidates {
-		lane := embedding.ScopedCandidates{Candidates: make([]embedding.RankedCandidate, len(candidates))}
-		for index, candidate := range candidates {
-			lane.Candidates[index] = embedding.RankedCandidate{
-				Key: keys[candidateFusionIdentity(candidate)], Rank: candidate.Rank, Score: candidate.Score,
+	rankLane := func(candidates []Candidate) (lane embedding.ScopedCandidates) {
+		for _, candidate := range candidates { // Copies of one displayed photo keep their best rank.
+			key := keys[candidateFusionIdentity(candidate)]
+			if !slices.ContainsFunc(lane.Candidates, func(kept embedding.RankedCandidate) bool { return kept.Key == key }) {
+				lane.Candidates = append(lane.Candidates, embedding.RankedCandidate{Key: key, Rank: candidate.Rank, Score: candidate.Score})
 			}
 		}
 		return lane
@@ -136,11 +136,11 @@ func fusionContributions(candidate embedding.FusedCandidate) []Contribution {
 
 func addCandidateContribution(result *Result, candidate Candidate, lane Lane) {
 	if lane == LaneLexical {
-		result.LexicalRank = candidate.Rank
-		result.Excerpt = candidate.Excerpt
-		result.rerankExcerpt = candidate.Excerpt
+		result.LexicalRank = cmp.Or(result.LexicalRank, candidate.Rank) // Lanes list copies best first.
+		result.Excerpt = cmp.Or(result.Excerpt, candidate.Excerpt)
+		result.rerankExcerpt = cmp.Or(result.rerankExcerpt, candidate.Excerpt)
 	} else {
-		result.SemanticRank = candidate.Rank
+		result.SemanticRank = cmp.Or(result.SemanticRank, candidate.Rank)
 		nameOnly := len(result.Evidence) == 1 && result.Evidence[0].Kind == "node_name"
 		if result.rerankExcerpt == "" || nameOnly && strings.TrimSpace(candidate.Excerpt) != "" {
 			result.rerankExcerpt = candidate.Excerpt
