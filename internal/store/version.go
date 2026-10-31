@@ -435,19 +435,8 @@ func (s *Store) SyncWatchedContent(
 		changed bool
 	)
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		cursor, err := watchSourceTx(ctx, tx, watchName, sourceRef)
+		cursor, n, err := watchTargetTx(ctx, tx, watchName, sourceRef)
 		if err != nil {
-			return err
-		}
-		n, err := nodeByIDTx(tx, cursor.nodeID)
-		if err != nil {
-			return err
-		}
-		if n.TrashedAt != nil {
-			return fmt.Errorf("watched source %q/%q maps to trashed node %d",
-				watchName, sourceRef, n.ID)
-		}
-		if err := validateContentReplacementTarget(n, UnconditionalRev); err != nil {
 			return err
 		}
 		if cursor.blobHash == blobHash && cursor.size == size {
@@ -493,13 +482,29 @@ type watchSourceState struct {
 	size     int64
 }
 
-// HasWatchSource reports whether a watch has recorded sourceRef.
+// HasWatchSource reports whether a watch has recorded sourceRef to a live file.
 func (s *Store) HasWatchSource(ctx context.Context, watchName, sourceRef string) (bool, error) {
-	_, err := watchSourceTx(ctx, s.db, watchName, sourceRef)
+	_, _, err := watchTargetTx(ctx, s.db, watchName, sourceRef)
 	if errors.Is(err, ErrNotFound) {
 		return false, nil
 	}
 	return err == nil, err
+}
+
+// watchTargetTx resolves a recorded watched source to the live file its edits replace.
+func watchTargetTx(ctx context.Context, q rowQuerier, watchName, sourceRef string) (watchSourceState, Node, error) {
+	cursor, err := watchSourceTx(ctx, q, watchName, sourceRef)
+	if err != nil {
+		return watchSourceState{}, Node{}, err
+	}
+	n, err := nodeByIDQuery(ctx, q, cursor.nodeID)
+	if err != nil {
+		return watchSourceState{}, Node{}, err
+	}
+	if n.TrashedAt != nil {
+		return watchSourceState{}, Node{}, fmt.Errorf("watched source %q/%q maps to trashed node %d", watchName, sourceRef, n.ID)
+	}
+	return cursor, n, validateContentReplacementTarget(n, UnconditionalRev)
 }
 
 func watchSourceTx(

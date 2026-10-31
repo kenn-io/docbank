@@ -92,7 +92,7 @@ func (ing *Ingester) ingestWatchedFile(
 
 // admitWatchedSource validates a watched file's target. A source the watch has
 // not recorded must have its tags before any bytes are published; recorded
-// sources keep recording edits. The import transaction checks tags again.
+// sources whose file is still live keep recording edits. The import transaction checks tags again.
 func (ing *Ingester) admitWatchedSource(
 	ctx context.Context, watchName, destination, sourceRef string, tags []string,
 ) (string, error) {
