@@ -167,8 +167,8 @@ func TestNormalizedFigures(t *testing.T) {
 		testCase{"$40 C$30", "USD 40\nCAD 30", "grounded", "found", "", true},
 		testCase{"$1 205", "$1", "ungrounded", "", "", true},
 		testCase{"$1 205", "USD 1", "ungrounded", "", "", true},
+		testCase{"March 15, 2026 [1]", "2026-03-15", "", "found", "March 15, 2026", false},
 	)
-	cases = append(cases, testCase{"March 15, 2026 [1]", "2026-03-15", "", "found", "March 15, 2026", false})
 	for _, space := range []string{"\u00a0", "\u202f"} {
 		grouped := "$1" + space + "205"
 		cases = append(cases, testCase{grouped, "USD 1205", "grounded", "", grouped, false}, testCase{"USD 1205", grouped, "grounded", "", "USD 1205", false})
