@@ -18,7 +18,7 @@ explains how.
 
 - Import files and whole directory trees. Docbank never modifies the source.
 - Choose which files to import with include and exclude globs. Replace
-  existing content on purpose with `docbank add --replace`.
+  existing content on purpose with `docbank document add --replace`.
 - Import MBOX and Google Takeout archives. Each occurrence of a message is kept
   separately, and attachments become documents of their own.
 - Import load-file packages with their supplied text, page maps, labels,

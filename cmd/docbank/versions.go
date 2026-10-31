@@ -33,7 +33,7 @@ var (
 var versionsCmd = &cobra.Command{
 	Long: `Each put, revert, or edit that changes content adds an immutable content
 version (UUID).
-list shows them newest first; cat prints one; revert (top-level) makes an old
+list shows them newest first; cat prints one; document revert makes an old
 one current; prune releases history.`,
 	GroupID: groupDocuments,
 	Use:     "versions",
@@ -45,8 +45,8 @@ one current; prune releases history.`,
 }
 
 var versionsListCmd = &cobra.Command{
-	Example: `  docbank versions list id:12
-  docbank versions list /cases/acme/invoice.pdf --json`,
+	Example: `  docbank document versions list id:12
+  docbank document versions list /cases/acme/invoice.pdf --json`,
 	Use:   "list <path-or-id>",
 	Short: "List a file's immutable content versions",
 	Args:  cobra.ExactArgs(1),
@@ -101,7 +101,7 @@ var versionsListCmd = &cobra.Command{
 }
 
 var versionsShowCmd = &cobra.Command{
-	Example: `  docbank versions show <version-uuid> --json`,
+	Example: `  docbank document versions show <version-uuid> --json`,
 	Use:     "show <version-uuid>",
 	Short:   "Show one immutable content version",
 	Args:    cobra.ExactArgs(1),
@@ -143,7 +143,7 @@ var versionsShowCmd = &cobra.Command{
 }
 
 var versionsCatCmd = &cobra.Command{
-	Example: `  docbank versions cat <version-uuid> > old.pdf`,
+	Example: `  docbank document versions cat <version-uuid> > old.pdf`,
 	Use:     "cat <version-uuid>",
 	Short:   "Write one immutable content version to stdout",
 	Args:    cobra.ExactArgs(1),
@@ -168,8 +168,8 @@ var versionsCatCmd = &cobra.Command{
 }
 
 var versionsPruneCmd = &cobra.Command{
-	Example: `  docbank versions prune id:12 --keep-newest 3
-  docbank versions prune id:12 --keep-newest 3 --run`,
+	Example: `  docbank document versions prune id:12 --keep-newest 3
+  docbank document versions prune id:12 --keep-newest 3 --run`,
 	Use:   "prune <path-or-id>",
 	Short: "Preview or release selected version history",
 	Long: `Release selected immutable history while retaining the current content. This
@@ -293,5 +293,5 @@ func init() {
 		"apply the change (default is a dry run)")
 	versionsPruneCmd.Flags().BoolVar(&pruneJSON, "json", false, "print JSON to stdout")
 	versionsCmd.AddCommand(versionsListCmd, versionsShowCmd, versionsCatCmd, versionsPruneCmd)
-	rootCmd.AddCommand(versionsCmd)
+	registerGroupedCommand(documentCmd, versionsCmd, "versions")
 }

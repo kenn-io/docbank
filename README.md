@@ -79,8 +79,8 @@ see [Run in a container](docs/usage/containers.md).
 The first data command creates the vault and starts its daemon:
 
 ```bash
-docbank add ~/Documents --dest /archive
-docbank tree /archive
+docbank document add ~/Documents --dest /archive
+docbank document tree /archive
 docbank search "tax return"
 docbank web
 ```
@@ -90,11 +90,11 @@ verifies a file before handing it back. Replacing content adds a version and
 leaves the earlier ones in place, and a rename keeps the document's ID:
 
 ```bash
-docbank get /archive/Documents/receipt.pdf ./receipt.pdf
-docbank versions list /archive/Documents/receipt.pdf
-docbank put revised-receipt.pdf /archive/Documents/receipt.pdf
-docbank mv /archive/Documents/receipt.pdf /archive/Documents/receipt-2026.pdf
-docbank verify
+docbank document get /archive/Documents/receipt.pdf ./receipt.pdf
+docbank document versions list /archive/Documents/receipt.pdf
+docbank document put revised-receipt.pdf /archive/Documents/receipt.pdf
+docbank document move /archive/Documents/receipt.pdf /archive/Documents/receipt-2026.pdf
+docbank vault verify
 ```
 
 Create a backup, verify it, and restore it into a separate directory to check:

@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-25
+last_edited: 2026-10-31
 title: Configuration
 description: Vault location, data layout, config.toml, and environment variables.
 ---
@@ -33,11 +33,11 @@ environment variable:
 export DOCBANK_HOME=/Volumes/Archive/docbank
 ```
 
-Run `docbank info` after selecting a vault to see its canonical path and vault
+Run `docbank vault info` after selecting a vault to see its canonical path and vault
 ID. This helps when one machine has several independent Docbank archives:
 
 ```bash
-DOCBANK_HOME=/Volumes/Archive/docbank docbank info
+DOCBANK_HOME=/Volumes/Archive/docbank docbank vault info
 ```
 
 The directory layout is created on first use:
@@ -100,8 +100,8 @@ owns or creates the vault root.
     Don't edit or prune `blobs/` or a secondary namespace by hand. The
     database authorizes physical files, including files for prior document
     versions. To reclaim space, use `docbank trash empty --run`,
-    `docbank gc --run`, and (for dead packed payload) `docbank storage repack`.
-    To check integrity, use `docbank verify`.
+    `docbank vault gc --run`, and (for dead packed payload) `docbank storage repack`.
+    To check integrity, use `docbank vault verify`.
 
 ## config.toml
 
@@ -316,7 +316,7 @@ with periodic reconciliation at the same interval.
 in Docbank's virtual tree. Symlinks and other non-regular entries inside the
 source are ignored. `exclude` stays a literal name-or-relative-path rule,
 including names containing `*`, `?`, or `[`. Add `exclude_patterns` for glob
-rules with the same [syntax as `docbank add`](usage/importing.md#choose-files-with-include-and-exclude-rules):
+rules with the same [syntax as `docbank document add`](usage/importing.md#choose-files-with-include-and-exclude-rules):
 a pattern without `/` matches basenames at any depth; one with `/` matches
 paths relative to the source root. Use `/` separators on every platform.
 Matching is case-sensitive; `*` and `?` do not cross `/`, and `**` is not
@@ -475,7 +475,7 @@ A configured watch keeps a
 background daemon alive regardless of `idle_timeout`.
 
 Inspect the source facts recorded for an imported file with
-`docbank provenance <path-or-id>` or `GET /api/v1/nodes/{id}/provenance`.
+`docbank document provenance <path-or-id>` or `GET /api/v1/nodes/{id}/provenance`.
 Provenance is distinct from job status. It survives daemon restarts and
 records where successfully ingested content came from, while `docbank jobs`
 describes only the current daemon run.

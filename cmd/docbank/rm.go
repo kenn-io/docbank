@@ -14,9 +14,9 @@ import (
 var rmJSON bool
 
 var rmCmd = &cobra.Command{
-	Example: `  docbank rm id:12
+	Example: `  docbank document remove id:12
   docbank trash list
-  docbank restore id:12`,
+  docbank document restore id:12`,
 	GroupID: groupDocuments,
 	Use:     "rm <path-or-id>",
 	Short:   "Move a node (and its subtree) to the trash",
@@ -52,7 +52,7 @@ separate explicit maintenance steps.`,
 			return writeCLIJSON(cmd.OutOrStdout(), n)
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(),
-			"trashed [%s] %s (restore with: docbank restore %s)\n",
+			"trashed [%s] %s (restore with: docbank document restore %s)\n",
 			formatNodeSelector(n.ID), n.Path, formatNodeSelector(n.ID))
 		return nil
 	},
@@ -60,5 +60,5 @@ separate explicit maintenance steps.`,
 
 func init() {
 	rmCmd.Flags().BoolVar(&rmJSON, "json", false, "print JSON to stdout")
-	rootCmd.AddCommand(rmCmd)
+	registerGroupedCommand(documentCmd, rmCmd, "remove")
 }

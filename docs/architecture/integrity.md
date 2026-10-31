@@ -40,11 +40,11 @@ user's privileges. Consequently:
 | A deleted blob stays deleted | `blob.Remove` | shard dir fsync before gc deletes the metadata row, including on the already-missing retry path |
 | A stored object is what its name claims *structurally* | `blob.Write` dedup check | Kit performs a no-follow identity check; a wrong-sized object, symlink, or special file fails closed and is left unchanged for explicit recovery |
 | Reads serve only stored blobs | `blob.Open` / `blob.Exists` | no-follow open + regular-file check on the blob itself; the vault's own directory structure above it is trusted per the boundary above (a symlinked shard dir is user-privileged relocation or tampering, not an attack Docbank can meaningfully resist) |
-| Metadata and audit authority are internally consistent | `docbank verify` | relational validation plus independent replay and reconciliation of canonical audit history |
+| Metadata and audit authority are internally consistent | `docbank vault verify` | relational validation plus independent replay and reconciliation of canonical audit history |
 | Permanent audit evidence and retained bytes agree | `docbank audit verify` | independent replay, an optional exact-prefix proof against externally recorded lineage/scope evidence, and a re-hash of every unique protected blob |
-| Content matches its hash *byte-for-byte* | `docbank verify`; `POST /nodes/{id}/verify` | full-vault re-hash on demand, or a revision-bound fresh read of one file through the mixed store |
+| Content matches its hash *byte-for-byte* | `docbank vault verify`; `POST /nodes/{id}/verify` | full-vault re-hash on demand, or a revision-bound fresh read of one file through the mixed store |
 | An embedded repair preserves logical identity | `Vault.RepairContent` | trusted bytes are fully checked against the existing logical SHA-256 and size before loose physical authority replaces raw, zstd, or packed authority; nodes and versions remain unchanged |
-| No orphan blob file survives | `docbank gc` | reachability query for rows **plus** a directory scan for files that never gained (or lost) their row |
+| No orphan blob file survives | `docbank vault gc` | reachability query for rows **plus** a directory scan for files that never gained (or lost) their row |
 | Imports read the file they classified | ingest | `O_NOFOLLOW` + fstat at open, not the earlier `Lstat`/`WalkDir` classification |
 | Remote writes match the writer's bytes | `POST /uploads` | required SHA-256/size declarations are compared with Kit's streamed result before any blob row or node authority commits |
 | Mutations act on the node the caller named | store | id-addressed mutations (`Move`, `Trash`, `Restore`) require an `If-Match` revision precondition; path-addressed mutations (`MovePath`, `TrashPath`, backing `POST /path/move` and `/path/trash`) resolve and mutate inside one store transaction. Either way, there is no path-race window between resolving a name and acting on it |
@@ -63,7 +63,7 @@ import would double the I/O of the most common bulk-import case to
 detect exactly one thing the structural check misses: **same-length
 corrupt bytes**, i.e. bit rot or tampering.
 
-`docbank verify` owns detection of same-length corruption. A corrupt blob also
+`docbank vault verify` owns detection of same-length corruption. A corrupt blob also
 affects every node that already references it. Verification scans all blobs,
 so detection does not depend on a later duplicate import.
 
@@ -85,7 +85,7 @@ bytes before relying on them.
 
 ### No fd-relative directory traversal on import
 
-`docbank add` walks source trees by path (`filepath.WalkDir`). A
+`docbank document add` walks source trees by path (`filepath.WalkDir`). A
 directory swapped for a symlink *between classification and descent*
 can redirect the walk, but only when an actor mutates the user's own
 source tree mid-import, which is outside the trust boundary above. The

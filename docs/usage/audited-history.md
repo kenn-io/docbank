@@ -212,7 +212,7 @@ corresponding verified backups. The proof cannot detect an attacker who can
 replace both the vault and your separately recorded evidence. The external copy
 is the trust anchor.
 
-`docbank audit verify` hashes protected content only. `docbank verify` is the
+`docbank audit verify` hashes protected content only. `docbank vault verify` is the
 broader whole-vault check. It performs the same metadata and audit replay, then
 hashes every cataloged blob, including content outside audit membership.
 

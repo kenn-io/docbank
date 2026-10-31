@@ -29,7 +29,7 @@ var (
 )
 
 var editCmd = &cobra.Command{
-	Example: `  docbank edit /cases/acme/notes.md --editor vi`,
+	Example: `  docbank document edit /cases/acme/notes.md --editor vi`,
 	GroupID: groupDocuments,
 	Use:     "edit <path-or-id>",
 	Short:   "Edit a file through a new immutable content version",
@@ -364,5 +364,5 @@ func init() {
 		"set the media type on the new version instead of preserving the current type")
 	editCmd.Flags().StringVar(&editProgress, "progress", "auto",
 		"progress output mode: auto, bar, or plain")
-	rootCmd.AddCommand(editCmd)
+	registerGroupedCommand(documentCmd, editCmd, "edit")
 }

@@ -43,7 +43,7 @@ therefore the topology-independent recovery authority. It reads one verified
 candidate for every logical blob or fails without publishing a partial
 snapshot. Keep the configuration if you customized it. Logs, locks, and
 runtime records are not archive state. A restored copy is not trusted until
-`docbank verify` succeeds.
+`docbank vault verify` succeeds.
 
 ## How does capture keep one consistent view?
 

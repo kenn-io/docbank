@@ -8,6 +8,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -73,7 +74,7 @@ func runCLI(t *testing.T, args ...string) (string, error) {
 	resetFlags(rootCmd)
 	var out bytes.Buffer
 	rootCmd.SetOut(&out)
-	rootCmd.SetErr(&out)
+	rootCmd.SetErr(io.Discard)
 	rootCmd.SetArgs(args)
 	err := rootCmd.ExecuteContext(context.Background())
 	rootCmd.SetArgs(nil)

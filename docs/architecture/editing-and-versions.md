@@ -10,8 +10,8 @@ The file's **node ID** identifies the document across moves and renames. A
 **version ID** identifies one retained state of that file, including its bytes
 and media type.
 
-Use `docbank put` to replace content, `docbank edit` to use a local editor, and
-`docbank revert` to make a prior version current again. Users and agents can
+Use `docbank document put` to replace content, `docbank document edit` to use a local editor, and
+`docbank document revert` to make a prior version current again. Users and agents can
 list versions, inspect one by UUID, and retrieve its bytes after the file moves
 or is renamed. This page owns the version, replacement, reversion, and pruning
 contracts.
@@ -39,10 +39,10 @@ also creates no version.
 ## Read surfaces
 
 ```bash
-docbank versions list /taxes/2025/return.pdf
-docbank versions show <version-uuid> --json
-docbank versions cat <version-uuid> > return.pdf
-docbank refs <sha256>
+docbank document versions list /taxes/2025/return.pdf
+docbank document versions show <version-uuid> --json
+docbank document versions cat <version-uuid> > return.pdf
+docbank document refs <sha256>
 ```
 
 `versions list` is newest-first and bounded by `--limit` and `--offset`.
@@ -84,7 +84,7 @@ the state they captured.
 ## Replacing content
 
 ```bash
-docbank put revised.pdf /taxes/2025/return.pdf
+docbank document put revised.pdf /taxes/2025/return.pdf
 ```
 
 `put` opens a regular source without following a final symlink, detects or
@@ -114,7 +114,7 @@ shared blob.
 ## Interactive editing
 
 ```bash
-docbank edit /taxes/2025/notes.md
+docbank document edit /taxes/2025/notes.md
 ```
 
 `edit` privately stages the current immutable version and accepts the staged
@@ -142,7 +142,7 @@ rather than falsely inviting a retry.
 ## Reverting content
 
 ```bash
-docbank revert /taxes/2025/return.pdf <prior-version-uuid>
+docbank document revert /taxes/2025/return.pdf <prior-version-uuid>
 ```
 
 Reversion changes metadata only. The selected version must belong to the
@@ -176,10 +176,10 @@ When a file's old versions are no longer wanted, the operator prunes them with
 a command that previews by default:
 
 ```bash
-docbank versions prune /taxes/2025/return.pdf --keep-newest 3
-docbank versions prune /taxes/2025/return.pdf --older-than 365d
-docbank versions prune /taxes/2025/return.pdf --version <version-uuid>
-docbank versions prune /taxes/2025/return.pdf --all-prior
+docbank document versions prune /taxes/2025/return.pdf --keep-newest 3
+docbank document versions prune /taxes/2025/return.pdf --older-than 365d
+docbank document versions prune /taxes/2025/return.pdf --version <version-uuid>
+docbank document versions prune /taxes/2025/return.pdf --all-prior
 ```
 
 Exactly one selector is accepted. Nothing changes without `--run`, and every

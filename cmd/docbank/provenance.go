@@ -22,7 +22,7 @@ var (
 )
 
 var provenanceCmd = &cobra.Command{
-	Example: `  docbank provenance id:12 --json`,
+	Example: `  docbank document provenance id:12 --json`,
 	GroupID: groupDocuments,
 	Use:     "provenance <path-or-id>",
 	Short:   "Show where a document came from",
@@ -121,5 +121,5 @@ func init() {
 		"number of provenance records to skip")
 	provenanceCmd.Flags().BoolVar(&provenanceJSON, "json", false,
 		"print JSON to stdout")
-	rootCmd.AddCommand(provenanceCmd)
+	registerGroupedCommand(documentCmd, provenanceCmd, "provenance")
 }

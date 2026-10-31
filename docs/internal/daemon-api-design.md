@@ -266,7 +266,7 @@ the index to existing vaults on open; query results and job history are unchange
 
 ### Content-hash references
 
-`GET /api/v1/content-references` and `docbank refs` return retained logical
+`GET /api/v1/content-references` and `docbank document refs` return retained logical
 versions of the selected content, including history and trash. The lookup
 counts and orders matching version identities before loading full metadata,
 checksums, and live paths for the selected page. Both the total and page come

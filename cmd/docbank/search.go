@@ -453,7 +453,7 @@ func validateDocumentSearchOptions(query string, options documentSearchCLIOption
 		return usageError(errors.New("search query must not be empty"))
 	}
 	if len(options.ContentVersionIDs) == 0 {
-		return usageError(errors.New("at least one --source-version is required; use current_version_id from \"docbank stat <path-or-id> --json\""))
+		return usageError(errors.New("at least one --source-version is required; use current_version_id from \"docbank document stat <path-or-id> --json\""))
 	}
 	if len(options.ContentVersionIDs) > 4096 {
 		return usageError(errors.New("at most 4096 --source-version values are allowed"))

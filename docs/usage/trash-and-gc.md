@@ -5,7 +5,7 @@ description: How deletion and space reclamation work, from trash through garbage
 
 # Trash, garbage collection, repack, and verify
 
-`docbank rm` moves documents to recoverable trash. To delete them permanently
+`docbank document remove` moves documents to recoverable trash. To delete them permanently
 and reclaim space, you must empty trash, run garbage collection (GC), and
 repack eligible packed content. GC removes stored content with no remaining
 references. Repack rewrites pack files to remove unused bytes.
@@ -14,10 +14,10 @@ There is no `rm --hard`. GC and repack do not run automatically:
 
 ```mermaid
 flowchart LR
-    A[live node] -- "docbank rm" --> B[trash]
-    B -- "docbank restore" --> A
+    A[live node] -- "docbank document remove" --> B[trash]
+    B -- "docbank document restore" --> A
     B -- "docbank trash empty --run" --> C[tree metadata gone; blob may be unreachable]
-    C -- "docbank gc --run" --> D[blob authority removed]
+    C -- "docbank vault gc --run" --> D[blob authority removed]
     D -- "loose storage: same GC run" --> E[loose file removed]
     D -- "packed storage" --> F[dead immutable pack range]
     F -- "docbank storage repack" --> G[sparse source pack retired]
@@ -25,7 +25,7 @@ flowchart LR
 
 ## Stage 1: Trash (`rm`, `restore`, `trash list`)
 
-`docbank rm <path-or-id>` marks the node, and for a directory its whole
+`docbank document remove <path-or-id>` marks the node, and for a directory its whole
 subtree, as trashed. The tree entry disappears from `ls`, `tree`, and `search`,
 the name becomes reusable, and the bytes are untouched. Running GC after `rm`
 does nothing to that content because trash remains a live, restorable
@@ -46,7 +46,7 @@ Human output uses UTC second precision. `--json` keeps the full timestamps for
 automation.
 
 Only trash *roots* are listed. Trashing a directory produces one entry, and
-`docbank restore id:<id>` brings the entire subtree back to its original
+`docbank document restore id:<id>` brings the entire subtree back to its original
 location. If a live node has since taken the name, the restored node gets a
 suffix (`return.pdf` → `return (2).pdf`). If the original parent was itself
 permanently deleted, the node is restored under `/`.
@@ -57,7 +57,7 @@ parent leaves separately trashed items in trash unless photo-group recovery incl
 
 Photos' **Trash rejected photos** action in the **⋯** menu moves a reviewed batch of fully rejected photos and their sidecars to recoverable trash. Photos' **Move to trash** action and `docbank photos assets trash <asset-id>` move all asset members together with an asset revision check. The browser Trash page and paginated TUI list group independently trashed photo members into one row. The CLI's unpaged list keeps its ordinary node listing. Restoring any photo member restores its whole group, including companions in other folders. If that member belongs to a trashed folder, restore also recovers the folder's original subtree.
 
-Recovery follows companions transitively. A recovered folder brings back the companions of every photo inside it, and any trashed folder holding one of those companions returns with all its contents. One restore can therefore recover several folders. The restore response and `docbank restore` report only the selected node; list the trash afterward to see what remains.
+Recovery follows companions transitively. A recovered folder brings back the companions of every photo inside it, and any trashed folder holding one of those companions returns with all its contents. One restore can therefore recover several folders. The restore response and `docbank document restore` report only the selected node; list the trash afterward to see what remains.
 
 `trash list --json` returns the roots under `items`. For maintenance
 automation, `trash empty --json` returns `candidate_roots`, `retained_roots`,
@@ -93,9 +93,9 @@ blocks permanent deletion or version pruning, the error names its operation ID.
 Inspect that receipt before releasing its references:
 
 ```bash
-docbank email-documents show <operation-id>
-docbank email-documents relations --parent-version <version-uuid>
-docbank email-documents release <operation-id> --request-digest <request-digest>
+docbank email documents show <operation-id>
+docbank email documents relations --parent-version <version-uuid>
+docbank email documents release <operation-id> --request-digest <request-digest>
 ```
 
 `show` and `relations` return JSON. Copy `request_digest` from the inspected
@@ -122,8 +122,8 @@ Preview-first [version pruning](../architecture/editing-and-versions.md#choosing
 can release a prior version's reference without deleting the current file.
 
 ```bash
-docbank gc          # dry run: candidate count and reclaimable bytes
-docbank gc --run    # remove unreachable authority and loose files
+docbank vault gc          # dry run: candidate count and reclaimable bytes
+docbank vault gc --run    # remove unreachable authority and loose files
 ```
 
 For loose blobs, the reported reclaimable count is the physical number of raw
@@ -181,7 +181,7 @@ describes the full daemon maintenance commands.
 ## Verify
 
 ```bash
-docbank verify
+docbank vault verify
 ```
 
 Docbank validates metadata and audit history, then reads every stored blob

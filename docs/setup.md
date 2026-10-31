@@ -123,8 +123,8 @@ There is no init step. The first command you run creates the vault layout
 under `~/.docbank/` (database, blob directory, lock file):
 
 ```bash
-docbank add ~/Desktop/some-document.pdf
-docbank ls /inbox
+docbank document add ~/Desktop/some-document.pdf
+docbank document list /inbox
 ```
 
 Set `DOCBANK_HOME` to keep the vault somewhere else. See

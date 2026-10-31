@@ -111,7 +111,7 @@ participate; do not run independent registries against shared vault trees. Stop 
 processes before changing its location, and never delete its identities.
 
 The Dockerfile supplies the ordinary binary. To run a local command in the
-running container, use `docker exec docbank docbank info`; it discovers and
+running container, use `docker exec docbank docbank vault info`; it discovers and
 authenticates to the daemon through the private runtime record. Background
 start and foreground run use the same ownership rules. Use the documented
 [backup and restore workflow](backup.md), and save configuration separately.

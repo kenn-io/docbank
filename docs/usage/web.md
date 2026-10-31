@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-28
+last_edited: 2026-10-31
 title: Web application
 description: Find, read, organize, and export documents in the local, authenticated web app.
 ---
@@ -614,7 +614,7 @@ authenticated API workflows.
 Each message occurrence becomes its own email document. Repeated messages
 remain separate occurrences, and attachments become child documents. An
 interrupted import resumes after its last saved message. See
-[mailbox import](../cli-reference.md#docbank-mailbox) for CLI status and receipts.
+[mailbox import](../cli-reference.md#docbank-email-mailbox) for CLI status and receipts.
 
 ![A completed Takeout import with three separate message occurrences](https://docbank.ai/assets/generated/web-mailbox-import.png)
 
@@ -775,7 +775,7 @@ session.
 Preparation streams on the daemon and does not buffer the object in browser
 memory. It temporarily needs local free space equal to the document's logical
 size. Docbank reports that verified bytes were handed to the browser, not that
-the browser or operating system completed its final save. Use `docbank get`
+the browser or operating system completed its final save. Use `docbank document get`
 when automation needs a durable receipt after private staging, file sync,
 atomic publication, and parent-directory sync.
 
@@ -812,7 +812,7 @@ uses the live document's current name.
 Version comparison remains a CLI or authenticated API workflow.
 
 The drawer reads at most the newest 1,000 versions and says when older history
-exists. Use `docbank versions list`, its pagination flags, or the authenticated
+exists. Use `docbank document versions list`, its pagination flags, or the authenticated
 HTTP API for exhaustive automation. This view does not compare bytes, revert,
 or prune history.
 
@@ -835,7 +835,7 @@ supplied by an embedded application.
 The browser does not open, validate, change, or retain that external source.
 
 The drawer reads at most the newest 1,000 facts and says when older provenance
-exists. Use `docbank provenance`, its pagination flags, or the authenticated
+exists. Use `docbank document provenance`, its pagination flags, or the authenticated
 HTTP API for exhaustive automation. Provenance correction and external-content
 pinning are not browser workflows.
 

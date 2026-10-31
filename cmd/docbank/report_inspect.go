@@ -17,7 +17,7 @@ import (
 
 func newReportShowCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Example: `  docbank search-export show <report-id>`,
+		Example: `  docbank report show <report-id>`,
 		Use:     "show <report-id>",
 		Short:   "Inspect a live frozen report",
 		Args:    cobra.ExactArgs(1)}
@@ -45,7 +45,7 @@ func newReportShowCommand() *cobra.Command {
 
 func newReportHistoryCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Example: `  docbank search-export history`,
+		Example: `  docbank report history`,
 		Use:     "history",
 		Short:   "List recorded report runs",
 		Args:    cobra.NoArgs}

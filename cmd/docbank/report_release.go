@@ -10,7 +10,7 @@ import (
 
 func newReportReleaseCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Example: `  docbank search-export release <report-id> --json`,
+		Example: `  docbank report release <report-id> --json`,
 		Use:     "release <report-id>",
 		Short:   "Release a live report and its retained evidence",
 		Long: `Discard this report's live packet and date-review evidence. History, saved

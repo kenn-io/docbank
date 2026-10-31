@@ -124,7 +124,7 @@ history lists recorded runs; download saves a retained report.`,
 		Use:     "search-export",
 		Short:   "Export search counts and review saved evidence"}
 	terms := &cobra.Command{
-		Example: `  docbank search-export create --input req.json --output out.zip`,
+		Example: `  docbank report create --input req.json --output out.zip`,
 		Use:     "create",
 		Short:   "Export search counts from the current vault",
 		Args:    cobra.NoArgs}
@@ -153,14 +153,14 @@ history lists recorded runs; download saves a retained report.`,
 			return err
 		}
 		if err := writeReportCoverage(cmd.OutOrStdout(), summary); err != nil {
-			return fmt.Errorf("report %s; inspect with docbank search-export show %s: %w",
+			return fmt.Errorf("report %s; inspect with docbank report show %s: %w",
 				summary.ID, summary.ID, err)
 		}
 		if summary.State == "needs_review" {
 			_, err = fmt.Fprintf(cmd.OutOrStdout(), "export %s needs date review; run docbank search-export dates %s, then docbank search-export revise %s --choices choices.json --output %s\n",
 				summary.ID, summary.ID, summary.ID, output)
 			if err != nil {
-				return fmt.Errorf("report %s; run docbank search-export dates %s; "+
+				return fmt.Errorf("report %s; run docbank report dates %s; "+
 					"writing review instructions: %w", summary.ID, summary.ID, err)
 			}
 			return nil
@@ -177,7 +177,7 @@ history lists recorded runs; download saves a retained report.`,
 	}
 
 	verify := &cobra.Command{
-		Example: `  docbank search-export verify out.zip`,
+		Example: `  docbank report verify out.zip`,
 		Use:     "verify <report.zip>",
 		Short:   "Check a report packet without opening a vault",
 		Args:    cobra.ExactArgs(1),
@@ -194,7 +194,7 @@ history lists recorded runs; download saves a retained report.`,
 		}}
 
 	csv := &cobra.Command{
-		Example: `  docbank search-export csv out.zip --output counts.csv`,
+		Example: `  docbank report csv out.zip --output counts.csv`,
 		Use:     "csv <report.zip>",
 		Short:   "Extract verified report counts without opening a vault",
 		Args:    cobra.ExactArgs(1)}
@@ -231,7 +231,7 @@ history lists recorded runs; download saves a retained report.`,
 	}
 
 	dates := &cobra.Command{
-		Example: `  docbank search-export dates <report-id>`,
+		Example: `  docbank report dates <report-id>`,
 		Use:     "dates <report-id>",
 		Short:   "Inspect frozen date candidates",
 		Args:    cobra.ExactArgs(1)}
@@ -252,7 +252,7 @@ history lists recorded runs; download saves a retained report.`,
 	}
 
 	revise := &cobra.Command{
-		Example: `  docbank search-export revise <report-id> --choices choices.json --output revised.zip`,
+		Example: `  docbank report revise <report-id> --choices choices.json --output revised.zip`,
 		Use:     "revise <report-id>",
 		Short:   "Apply reviewed dates to a frozen report",
 		Args:    cobra.ExactArgs(1)}
@@ -281,13 +281,13 @@ history lists recorded runs; download saves a retained report.`,
 			return err
 		}
 		if err := writeReportCoverage(cmd.OutOrStdout(), summary); err != nil {
-			return fmt.Errorf("report %s; inspect with docbank search-export show %s: %w",
+			return fmt.Errorf("report %s; inspect with docbank report show %s: %w",
 				summary.ID, summary.ID, err)
 		}
 		if summary.State == "needs_review" {
 			_, err = fmt.Fprintf(cmd.OutOrStdout(), "export %s still needs date review; run docbank search-export dates %s\n", summary.ID, summary.ID)
 			if err != nil {
-				return fmt.Errorf("report %s; run docbank search-export dates %s; "+
+				return fmt.Errorf("report %s; run docbank report dates %s; "+
 					"writing revision status: %w", summary.ID, summary.ID, err)
 			}
 			return nil
@@ -305,5 +305,5 @@ history lists recorded runs; download saves a retained report.`,
 	root.AddCommand(terms, verify, csv, dates, revise)
 	root.AddCommand(newReportShowCommand(), newReportHistoryCommand())
 	root.AddCommand(newReportDownloadCommand(), newReportReleaseCommand())
-	rootCmd.AddCommand(root)
+	registerGroupedCommand(rootCmd, root, "report")
 }

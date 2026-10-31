@@ -326,7 +326,7 @@ var (
 
 var backupRestoreCmd = &cobra.Command{
 	Example: `  docbank backup restore --repo ~/docbank-backup --target ~/restored-vault
-  DOCBANK_HOME=~/restored-vault docbank info`,
+  DOCBANK_HOME=~/restored-vault docbank vault info`,
 	Long: `Restores the latest snapshot unless <snapshot> (from backup list) is given.
 The target must be empty unless --overwrite.`,
 	Use:   "restore [<snapshot>]",

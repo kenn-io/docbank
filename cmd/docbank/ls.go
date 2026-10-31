@@ -18,8 +18,8 @@ type directoryListing struct {
 }
 
 var lsCmd = &cobra.Command{
-	Example: `  docbank ls
-  docbank ls /cases/acme --json`,
+	Example: `  docbank document list
+  docbank document list /cases/acme --json`,
 	GroupID: groupDocuments,
 	Use:     "ls [path-or-id]",
 	Short:   "List one virtual directory (default /)",
@@ -67,5 +67,5 @@ var lsCmd = &cobra.Command{
 
 func init() {
 	lsCmd.Flags().BoolVar(&lsJSON, "json", false, "print JSON to stdout")
-	rootCmd.AddCommand(lsCmd)
+	registerGroupedCommand(documentCmd, lsCmd, "list")
 }

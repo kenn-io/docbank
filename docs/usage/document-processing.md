@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-24
+last_edited: 2026-10-31
 title: Document processing
 description: Preview, consent to, and run document processing. The original version is never changed.
 ---
@@ -380,7 +380,7 @@ To import the delivered ZIP, extract it first, then run:
 docbank package preflight ./recipient --profile dat-concordance-v1 \
   --page-map-profile opt-standard-v1 --encoding utf-8 \
   --map ./recipient/mapping.json --json
-docbank mkdir /received
+docbank document mkdir /received
 docbank package import <preflight-id> --name "Received delivery" \
   --into /received --index-supplied-text --json
 docbank package import status <operation-id> --json
@@ -432,9 +432,9 @@ that independent record.
 To retain the ZIP in a vault, use ordinary file storage:
 
 ```sh
-docbank mkdir /produced
-docbank add redacted.zip --dest /produced
-docbank get /produced/redacted.zip recovered.zip
+docbank document mkdir /produced
+docbank document add redacted.zip --dest /produced
+docbank document get /produced/redacted.zip recovered.zip
 docbank redaction verify preparation.json masks.json review.json recovered.zip
 ```
 
@@ -465,7 +465,7 @@ file is configured.
 Import the original, inspect its plan, and consent to the exact destination:
 
 ```bash
-docbank add /path/to/report.pdf --dest /inbox
+docbank document add /path/to/report.pdf --dest /inbox
 docbank processing plan /inbox/report.pdf --profile <configured-profile>
 docbank processing build /inbox/report.pdf \
   --profile <configured-profile> \
@@ -608,7 +608,7 @@ Use `stat --json` to obtain a file's `current_version_id`, then inspect that
 version without starting processing:
 
 ```bash
-docbank stat /inbox/notes.txt --json
+docbank document stat /inbox/notes.txt --json
 docbank processing coverage <version-uuid> --profile <name> --json
 docbank rendition window /inbox/notes.txt --version <version-uuid> --profile <name>
 ```

@@ -25,23 +25,23 @@ over immutable, hash-verified content versions. A background daemon owns the
 vault; data commands start it automatically ("docbank daemon stop" ends it).
 
 DOCBANK_HOME selects the vault (default ~/.docbank); the first data command
-creates it. "docbank info" confirms the selected vault's path and identity.
+creates it. "docbank vault info" confirms its path and identity.
 
 Start here:
-  docbank add ./scans --dest /cases/acme   import files/folders (creates dirs)
-  docbank tree /cases                      browse; shows id:N selectors
-  docbank search invoice 2026 --json       find by name or text content
-  docbank cat /cases/acme/notes.txt        print a file's original bytes
-  docbank get id:12 ./invoice.pdf          save a verified local copy
-  docbank backup init --repo ~/backup      then: backup create --repo ~/backup
+  docbank document add ./scans --dest /cases   import files/folders
+  docbank document tree /cases                browse; shows id:N selectors
+  docbank search invoice 2026 --json          find by name or text content
+  docbank document cat /cases/notes.txt       print a file's original bytes
+  docbank document get id:12 ./invoice.pdf    save a verified local copy
+  docbank backup init --repo ~/backup         then: backup create
 
 Concepts:
-  path-or-id  a node is "/abs/path" or "id:N"; id:N survives mv and rename
-  version     put/edit add an immutable version (UUID); revert restores one
+  path-or-id  a node is "/abs/path" or "id:N"; id:N survives document move
+  version     document put/edit add a version; document revert restores one
   text        search reads text/*, JSON and email bodies; PDFs and Office
               files need a processing profile (see "docbank processing")
   rendition   derived Markdown text made by a processing profile
-  deletion    rm -> trash empty -> gc -> storage repack; each step is explicit
+  deletion    document remove -> trash empty -> vault gc -> storage repack
 
 Most read commands accept --json. Exit codes: 0 ok, 1 error, 2 usage,
 3 not found, 4 stale revision, 5 busy/locked, 6 integrity failure.`,
@@ -50,6 +50,7 @@ Most read commands accept --json. Exit codes: 0 ok, 1 error, 2 usage,
 	// Cobra checks required flags and flag groups after PersistentPreRun, so
 	// validate them here before the process boundary marks command execution.
 	PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+		warnLegacyCommand(cmd)
 		if err := cmd.ValidateRequiredFlags(); err != nil {
 			return usageError(err)
 		}

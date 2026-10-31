@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-09
+last_edited: 2026-10-31
 title: Agent integration guide
 description: Connect an agent to Docbank using its OpenAPI contract, authenticated HTTP API, revisions, and dry-run maintenance operations.
 ---
@@ -40,11 +40,11 @@ Before operating on an unfamiliar machine or switching archives, confirm which
 vault is selected:
 
 ```bash
-docbank info --json
+docbank vault info --json
 ```
 
 Treat `vault_id` as the vault's identity and `vault_path` as its location on
-this machine. `DOCBANK_HOME=/path/to/another/vault docbank info --json` selects
+this machine. `DOCBANK_HOME=/path/to/another/vault docbank vault info --json` selects
 and confirms another independently owned archive without changing a global
 profile or opening its database directly.
 
@@ -221,13 +221,13 @@ listings print copyable selectors such as `id:42`, and existing-node commands
 accept either that selector or an absolute path:
 
 ```bash
-docbank stat id:42 --json
-docbank cat id:42
-docbank versions list id:42 --json
-docbank mv id:42 /review/approved.pdf --json
+docbank document stat id:42 --json
+docbank document cat id:42
+docbank document versions list id:42 --json
+docbank document move id:42 /review/approved.pdf --json
 ```
 
-Use `docbank stat` when a shell agent needs a single snapshot of one node.
+Use `docbank document stat` when a shell agent needs a single snapshot of one node.
 Its JSON includes the node revision and, for files, the current version,
 SHA-256, size, and MIME type. A trashed ID remains inspectable but has no live
 `path`.
@@ -249,7 +249,7 @@ that fit the task and inspect `truncated` plus `omissions` before assuming the
 result is complete:
 
 ```bash
-docbank tree /taxes -L 3 --max-entries 500 --json
+docbank document tree /taxes -L 3 --max-entries 500 --json
 ```
 
 Use `--all` only when you know the complete subtree is small enough to return.
@@ -355,7 +355,7 @@ private and returns a JSON receipt only after verifying and publishing the
 complete file:
 
 ```bash
-docbank get id:42 ./document.bin --json
+docbank document get id:42 ./document.bin --json
 ```
 
 Independent HTTP clients should retrieve file bytes by ID, not path:
@@ -608,7 +608,7 @@ Accept replacement only when every receipt check passes:
 HTTP 200 alone is not enough. The old version remains available. On `412`,
 read the node again and reconsider the decision before retrying.
 
-`docbank edit` is a human-directed wrapper around the same contract. It opens
+`docbank document edit` is a human-directed wrapper around the same contract. It opens
 an interactive local editor and has no JSON mode. Agents should use the raw
 replacement API or typed client so they can keep and validate the full receipt
 themselves.
@@ -684,7 +684,7 @@ path as it exists when the transaction runs. Use ID plus revision when an
 agent previously inspected a particular node and wants lost-update protection.
 
 For a reorganization that must not partially apply, send one plan to
-`POST /api/v1/batch/move` or use `docbank mv batch`. Each source is either an
+`POST /api/v1/batch/move` or use `docbank document move batch`. Each source is either an
 absolute `source_path`, resolved inside the transaction, or a `node_id` with
 the revision the agent inspected. Every `destination_path` is the node's full
 final path, and its parent resolves in the planned final tree. An existing

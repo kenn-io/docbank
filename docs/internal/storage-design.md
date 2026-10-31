@@ -196,7 +196,7 @@ it cannot remove a packed duplicate while a sibling writer is verifying it.
 Cancellation cleans prepared duplicates backed by packs and leaves unreferenced
 loose content for exclusive GC, just as other failed writes do.
 
-Local add, automatic `docbank put`, and load-file package staging use the same
+Local add, automatic `docbank document put`, and load-file package staging use the same
 pinned byte detector after reading the source prefix and keep the `.eml` rule
 first. A valid extension refines unknown bytes, including empty files, a
 compatible hierarchy or alias, or one of the closed suffix cases. Explicit
