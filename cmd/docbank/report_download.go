@@ -24,7 +24,7 @@ func newReportDownloadCommand() *cobra.Command {
 			return usageError(errors.New("report ID must be 48 lowercase hexadecimal characters"))
 		}
 		if output == "" {
-			return usageError(errors.New("search-export download requires --output"))
+			return usageError(fmt.Errorf("%s download requires --output", reportCommandPath(cmd)))
 		}
 		if _, err := prepareGetDestination(output, overwrite); err != nil {
 			return usageError(err)

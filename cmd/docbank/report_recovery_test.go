@@ -81,7 +81,7 @@ func TestReportDeliveryErrors(t *testing.T) {
 		code  int
 		hint  string
 	}{
-		{daemonconn.ErrReportReviewRequired, exitGeneral, "search-export dates " + id},
+		{daemonconn.ErrReportReviewRequired, exitGeneral, "report dates " + id},
 		{io.ErrUnexpectedEOF, exitGeneral, "inspect"},
 		{daemonconn.ErrIntegrity, exitIntegrity, "inspect"},
 	} {

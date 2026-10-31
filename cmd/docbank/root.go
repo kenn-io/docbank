@@ -50,7 +50,6 @@ Most read commands accept --json. Exit codes: 0 ok, 1 error, 2 usage,
 	// Cobra checks required flags and flag groups after PersistentPreRun, so
 	// validate them here before the process boundary marks command execution.
 	PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
-		warnLegacyCommand(cmd)
 		if err := cmd.ValidateRequiredFlags(); err != nil {
 			return usageError(err)
 		}

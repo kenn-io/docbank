@@ -38,7 +38,7 @@ func newReportShowCommand() *cobra.Command {
 		if asJSON {
 			return writeCLIJSON(cmd.OutOrStdout(), summary)
 		}
-		return writeReportSummary(cmd.OutOrStdout(), summary)
+		return writeReportSummary(cmd.OutOrStdout(), summary, reportCommandPath(cmd))
 	}
 	return cmd
 }
@@ -72,12 +72,12 @@ func newReportHistoryCommand() *cobra.Command {
 		if asJSON {
 			return writeCLIJSON(cmd.OutOrStdout(), page)
 		}
-		return writeReportHistory(cmd.OutOrStdout(), *page, offset)
+		return writeReportHistory(cmd.OutOrStdout(), *page, offset, reportCommandPath(cmd))
 	}
 	return cmd
 }
 
-func writeReportSummary(output io.Writer, summary report.Summary) error {
+func writeReportSummary(output io.Writer, summary report.Summary, commandPath string) error {
 	var text strings.Builder
 	fmt.Fprintf(&text, "report %s · %s\nobserved: %s\nexpires: %s\n",
 		summary.ID, summary.State, summary.ObservedAt.Format(time.RFC3339),
@@ -97,9 +97,9 @@ func writeReportSummary(output io.Writer, summary report.Summary) error {
 	}
 	if summary.State == "needs_review" {
 		fmt.Fprintf(&text, "%d unresolved dates; counts and downloads are withheld.\n"+
-			"Run docbank search-export dates %s, then docbank search-export revise %s "+
+			"Run %s dates %s, then %s revise %s "+
 			"--choices choices.json --output <path>.\n",
-			summary.UnresolvedDates, summary.ID, summary.ID)
+			summary.UnresolvedDates, commandPath, summary.ID, commandPath, summary.ID)
 	} else {
 		fmt.Fprintf(&text, "bundle: %d bytes · SHA-256 %s\n", summary.BundleBytes, summary.BundleSHA256)
 	}
@@ -109,7 +109,7 @@ func writeReportSummary(output io.Writer, summary report.Summary) error {
 	return writeReportCoverage(output, summary)
 }
 
-func writeReportHistory(output io.Writer, page store.TermReportHistoryPage, offset int) error {
+func writeReportHistory(output io.Writer, page store.TermReportHistoryPage, offset int, commandPath string) error {
 	var text strings.Builder
 	text.WriteString("History records past runs; it does not retain downloadable artifacts.\n")
 	for _, item := range page.Items {
@@ -124,7 +124,7 @@ func writeReportHistory(output io.Writer, page store.TermReportHistoryPage, offs
 	}
 	fmt.Fprintf(&text, "%d returned · %d recorded runs total\n", len(page.Items), page.Total)
 	if next := offset + len(page.Items); len(page.Items) > 0 && next < page.Total {
-		fmt.Fprintf(&text, "Next page: docbank search-export history --offset %d\n", next)
+		fmt.Fprintf(&text, "Next page: %s history --offset %d\n", commandPath, next)
 	}
 	if _, err := io.WriteString(output, text.String()); err != nil {
 		return fmt.Errorf("writing report history: %w", err)

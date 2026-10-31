@@ -17,9 +17,9 @@ func newReportReleaseCommand() *cobra.Command {
 files and child reports remain.
 If report_retained is returned, retry after the download closes; even
 download && release can need a deliberate retry.
-After an uncertain reply, inspect search-export show <report-id>. HTTP 410 means
-no owned live handle remains. HTTP 503 means reporting is unavailable and does
-not confirm release.`,
+After an uncertain reply, inspect docbank report show <report-id>. HTTP 410
+means no owned live handle remains. HTTP 503 means reporting is unavailable
+and does not confirm release.`,
 		Args: func(cmd *cobra.Command, args []string) error {
 			return usageError(cobra.ExactArgs(1)(cmd, args))
 		},

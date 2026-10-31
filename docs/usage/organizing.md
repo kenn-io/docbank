@@ -7,7 +7,7 @@ description: Browse, move, rename, and tag documents in the virtual tree.
 # Organizing and tagging
 
 Move, rename, and tag documents without rewriting their stored bytes. The
-folders in `ls` and `tree` are database entries. Even moving a 4 GB archive
+folders in `document list` and `document tree` are database entries. Even moving a 4 GB archive
 changes only metadata. See [Storage](../architecture/storage.md) for how the
 folder tree relates to stored content.
 
@@ -20,8 +20,8 @@ docbank document cat /taxes/w2.pdf  # stream file bytes to stdout
 docbank document get /taxes/w2.pdf ./w2.pdf  # verify, then atomically publish a local file
 ```
 
-Use `ls --json` for a directory envelope containing the resolved directory and
-its ordered children. `tree --json` returns the root plus a flat pre-order list
+Use `docbank document list --json` for a directory envelope containing the resolved directory and
+its ordered children. `docbank document tree --json` returns the root plus a flat pre-order list
 whose entries carry absolute paths and depths, so a script can walk a subtree
 without parsing indentation.
 
@@ -42,10 +42,11 @@ specific file or folder regardless of its current name. JSON uses numeric node
 IDs, and the [HTTP API](../architecture/http-api.md) uses IDs as its primary
 selectors.
 
-Live-tree commands such as `ls`, `tree`, `mv`, `rm`, `put`, `edit`, `revert`,
+Live-tree commands such as `document list`, `document tree`, `document move`,
+`document remove`, `document put`, `document edit`, `document revert`,
 version pruning, and tag assignment reject a trashed selector. You can still
 read a trashed node's content, versions, and audit history by stable ID. Use
-`restore id:N` before changing it again.
+`docbank document restore id:N` before changing it again.
 
 ## Moving and renaming
 
@@ -144,7 +145,7 @@ not current membership. See the
 
 ## Atomic bulk reorganization
 
-Use `mv batch` when a reorganization must either happen completely or leave the
+Use `docbank document move batch` when a reorganization must either happen completely or leave the
 tree untouched. The command reads a JSON plan from a file, or from standard
 input with `-`:
 
@@ -179,7 +180,7 @@ and binds the plan to its current revision. Receipts preserve plan order and
 return each node's stable ID, prior path, final path, and resulting revision.
 Plans accept at most 1,000 moves so validation and responses remain bounded.
 
-Repeated `docbank document move` commands are independent transactions. Use `mv batch`
+Repeated `docbank document move` commands are independent transactions. Use `docbank document move batch`
 when partial completion is not acceptable.
 
 Next: find what you filed with [Searching](searching.md), or manage

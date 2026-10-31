@@ -163,7 +163,7 @@ An active download returns `409 report_retained`; retry deliberately after it
 closes. Even `download && release` can need a retry because the server closes
 its reader after sending the final bytes. The command does not retry for you.
 
-After an uncertain reply, run `search-export show <report-id>`. A successful
+After an uncertain reply, run `docbank report show <report-id>`. A successful
 read means the handle remains. `410 report_unavailable` means no live handle
 owned by this caller remains; it does not establish which call removed it.
 `503 report_unavailable` means reporting itself is unavailable and says nothing

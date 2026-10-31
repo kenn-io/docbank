@@ -14,6 +14,8 @@ func runProcess(args []string, stdout, stderr io.Writer) int {
 	rootCmd.SetArgs(args)
 	rootCmd.SetOut(stdout)
 	rootCmd.SetErr(stderr)
+	cmd, _, _ := rootCmd.Find(args)
+	warnLegacyCommand(cmd)
 	if err := Execute(); err != nil {
 		_, _ = fmt.Fprintln(stderr, "error:", err)
 		code := commandExitCode(err, commandStarted)

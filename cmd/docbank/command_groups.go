@@ -12,10 +12,13 @@ import (
 
 // Cobra's Deprecated field prints to stdout, which would corrupt JSON and cat
 // output. Keep replacement metadata here and print the notice on stderr from
-// the root execution hook instead.
+// the process boundary before Cobra parses arguments instead.
 const legacyCommandReplacement = "docbank.legacy-replacement"
 
 func warnLegacyCommand(cmd *cobra.Command) {
+	if cmd == nil {
+		return
+	}
 	if replacement := cmd.Annotations[legacyCommandReplacement]; replacement != "" {
 		cmd.PrintErrf("Command %q is deprecated, use '%s' instead\n", cmd.Name(), replacement)
 	}

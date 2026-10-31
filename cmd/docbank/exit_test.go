@@ -214,7 +214,7 @@ func TestRunProcessErrorHints(t *testing.T) {
 		return runProcess(args, &stdout, &stderr)
 	}
 	assert.Equal(t, exitUsage, run("get", "id:1"))
-	assert.Equal(t, "error: accepts 2 arg(s), received 1", strings.SplitN(stderr.String(), "\n", 2)[0])
+	assert.Contains(t, stderr.String(), "\nerror: accepts 2 arg(s), received 1\n")
 	assert.Contains(t, stderr.String(), "hint: usage: docbank get <path-or-id> <local-file>")
 	assert.Equal(t, 1, strings.Count(stderr.String(), "hint:"))
 	assert.Empty(t, stdout.String())
@@ -263,7 +263,7 @@ func TestCommandErrorHint(t *testing.T) {
 		started bool
 		want    string
 	}{
-		{"arity", getCmd, errors.New("accepts 2 arg(s), received 1"), exitUsage, false, "hint: usage: docbank get <path-or-id> <local-file> [flags]"},
+		{"arity", getCmd, errors.New("accepts 2 arg(s), received 1"), exitUsage, false, "hint: usage: docbank document get <path-or-id> <local-file> [flags]"},
 		{"root flag", rootCmd, errors.New("unknown flag"), exitUsage, false, `hint: run "docbank --help"`},
 		{"unknown command", nil, errors.New("unknown command"), exitUsage, false, `hint: run "docbank --help"`},
 		{"suggestion", rootCmd, errors.New("unknown command; Did you mean stat?"), exitUsage, false, ""},

@@ -173,8 +173,8 @@ var versionsPruneCmd = &cobra.Command{
 	Use:   "prune <path-or-id>",
 	Short: "Preview or release selected version history",
 	Long: `Release selected immutable history while retaining the current content. This
-changes logical reachability only: run gc for loose bytes and storage repack for
-dead packed space. The default is a dry run.`,
+changes logical reachability only: run vault gc for loose bytes and
+storage repack for dead packed space. The default is a dry run.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		request := api.VersionPruneRequest{

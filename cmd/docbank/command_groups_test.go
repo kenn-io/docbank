@@ -8,11 +8,14 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/report"
 )
 
 var commandGroupCases = map[string]string{
@@ -121,6 +124,126 @@ func TestCommandGroupsUsageAndNestedDeprecation(t *testing.T) {
 	var out, stderr bytes.Buffer
 	assert.Equal(t, 2, runProcess([]string{"versions", "list", "id:12", "--limit", "-1"}, &out, &stderr))
 	assert.Contains(t, stderr.String(), "deprecated, use 'docbank document versions list' instead")
+}
+
+func TestCommandGroupsDeprecationBeforeParsingAndHelp(t *testing.T) {
+	t.Setenv("DOCBANK_HOME", t.TempDir())
+	defer resetFlags(rootCmd)
+	for _, tc := range []struct {
+		args []string
+		code int
+		path string
+	}{
+		{[]string{"get", "id:12"}, 2, "document get"},
+		{[]string{"get", "--not-a-flag"}, 2, "document get"},
+		{[]string{"get", "--help"}, 0, "document get"},
+		{[]string{"search-export", "--help"}, 0, "report"},
+		{[]string{"versions", "list", "--help"}, 0, "document versions list"},
+	} {
+		t.Run(strings.Join(tc.args, "/"), func(t *testing.T) {
+			resetFlags(rootCmd)
+			var out, stderr bytes.Buffer
+			assert.Equal(t, tc.code, runProcess(tc.args, &out, &stderr))
+			assert.Equal(t, 1, strings.Count(stderr.String(), "is deprecated"))
+			assert.Contains(t, stderr.String(), "use 'docbank "+tc.path+"' instead")
+			assert.NotContains(t, out.String(), "is deprecated")
+		})
+	}
+}
+
+// Unknown flags must fail before any daemon access, regardless of their value,
+// and compatibility warnings must never enter stdout or change the exit code.
+func FuzzCommandGroupsLegacyParsing(f *testing.F) {
+	for legacy := range commandGroupCases {
+		f.Add(legacy, "synthetic")
+	}
+	f.Fuzz(func(t *testing.T, legacy, value string) {
+		canonical, ok := commandGroupCases[legacy]
+		if !ok {
+			t.Skip()
+		}
+		t.Setenv("DOCBANK_HOME", t.TempDir())
+		defer resetFlags(rootCmd)
+		flag := "--not-a-real-flag=" + value
+		var out, stderr bytes.Buffer
+		resetFlags(rootCmd)
+		assert.Equal(t, exitUsage, runProcess([]string{legacy, flag}, &out, &stderr))
+		assert.Empty(t, out.String())
+		assert.Equal(t, 1, strings.Count(stderr.String(), "is deprecated"))
+		assert.Contains(t, stderr.String(), "use 'docbank "+canonical+"' instead")
+		out.Reset()
+		stderr.Reset()
+		resetFlags(rootCmd)
+		assert.Equal(t, exitUsage, runProcess(append(strings.Fields(canonical), flag), &out, &stderr))
+		assert.Empty(t, out.String())
+		assert.NotContains(t, stderr.String(), "is deprecated")
+	})
+}
+
+func TestCommandGroupsReportGuidanceMatchesInvokedSpelling(t *testing.T) {
+	id := strings.Repeat("a", 48)
+	request := report.Request{Version: 1, AllDocuments: true, Timezone: "UTC", CoverageMode: "available_only",
+		Terms: []report.Term{{Number: 1, Expression: "alpha", Syntax: "simple", Dates: report.DateRange{Start: "2024-01-01", End: "2026-12-31"}}},
+	}
+	observed := time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC)
+	summary := report.Summary{ID: id, State: "needs_review", UnresolvedDates: 1,
+		ObservedAt: observed, ExpiresAt: observed.Add(time.Hour), Terms: request.Terms}
+	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/search-exports" {
+			assert.NoError(t, json.MarshalWrite(w, store.TermReportHistoryPage{
+				Total: 2, Items: []store.TermReportHistory{{Summary: summary}},
+			}))
+			return
+		}
+		if r.URL.Path == "/api/v1/search-exports/"+id+"/revisions" {
+			child := summary
+			child.ID, child.ParentID = strings.Repeat("b", 48), id
+			assert.NoError(t, json.MarshalWrite(w, child))
+			return
+		}
+		assert.NoError(t, json.MarshalWrite(w, summary))
+	})
+	input := filepath.Join(t.TempDir(), "request.json")
+	requestJSON, err := json.Marshal(request)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(input, requestJSON, 0o600))
+	choices := filepath.Join(t.TempDir(), "choices.json")
+	require.NoError(t, os.WriteFile(choices, []byte("[]"), 0o600))
+	for _, args := range [][]string{
+		{"show", id}, {"history", "--limit", "1"},
+		{"create", "--input", input, "--output", filepath.Join(t.TempDir(), "report.zip")},
+		{"revise", id, "--choices", choices, "--output", filepath.Join(t.TempDir(), "revised.zip")},
+	} {
+		t.Run(args[0], func(t *testing.T) {
+			var canonical string
+			for _, spelling := range []string{"report", "search-export"} {
+				out, err := runCLI(t, append([]string{spelling}, args...)...)
+				require.NoError(t, err)
+				assert.Contains(t, out, "docbank "+spelling+" ")
+				if spelling == "report" {
+					assert.NotContains(t, out, "search-export")
+					canonical = out
+				} else {
+					assert.Equal(t, strings.ReplaceAll(canonical, "docbank report ", "docbank search-export "), out)
+				}
+			}
+		})
+	}
+}
+
+func TestCommandGroupsReportValidationMatchesInvokedSpelling(t *testing.T) {
+	t.Setenv("DOCBANK_HOME", t.TempDir())
+	for _, spelling := range []string{"report", "search-export"} {
+		for _, args := range [][]string{
+			{"create"}, {"csv", "synthetic.zip"},
+			{"revise", strings.Repeat("a", 48)}, {"download", strings.Repeat("a", 48)},
+		} {
+			out, err := runCLI(t, append([]string{spelling}, args...)...)
+			require.ErrorContains(t, err, spelling+" "+args[0]+" requires --")
+			assert.Empty(t, out)
+			assert.Equal(t, exitUsage, commandExitCode(err, true))
+		}
+	}
 }
 
 func TestCommandGroupsSearchStillAcceptsActionWords(t *testing.T) {

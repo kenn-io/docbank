@@ -152,10 +152,13 @@ evidence; leave `search` arguments available for arbitrary query words. Existing
 domain groups keep their names. Use `registerGroupedCommand` after installing
 the command's flags and children when moving another command. It retains a
 hidden root definition for at least one release, with separate Cobra state and
-shared handler flag values. Deprecation notices go to stderr through the root
-hook; Cobra's built-in `Deprecated` field writes to stdout and breaks JSON and
-raw byte output. Keep nested compatibility definitions covered by
+shared handler flag values. Deprecation notices go to stderr at the process
+boundary before argument parsing, including errors and help; Cobra's built-in
+`Deprecated` field writes to stdout and breaks JSON and raw byte output.
+Keep nested compatibility definitions covered by
 `command_groups_test.go` and update the CLI reference mapping.
+Report text chooses its next-step command from the invoked spelling so the
+canonical path stays discoverable and legacy successful stdout stays compatible.
 
 ### Add a data operation
 
