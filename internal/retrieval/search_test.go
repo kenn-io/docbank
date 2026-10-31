@@ -639,11 +639,11 @@ func TestFuseReciprocalRankCollapsesCopiesOfOneDisplayedPhotoWithinLane(t *testi
 		PhotoLexicalQuery: &query.Query{Filters: query.Filters{CollapseDuplicates: true}}}
 	displayHash := photoFusionBlob(scope, strings.Repeat("a", 64))
 	original := DocumentIdentity{VaultID: "vault", NodeID: 7, ContentVersionID: "version-raw"}
-	copy := DocumentIdentity{VaultID: "vault", NodeID: 8, ContentVersionID: "version-dng"}
+	duplicate := DocumentIdentity{VaultID: "vault", NodeID: 8, ContentVersionID: "version-dng"}
 	semanticOnly := DocumentIdentity{VaultID: "vault", NodeID: 9, ContentVersionID: "version-semantic"}
 	results, truncated, err := FuseReciprocalRank([]Candidate{
 		{Document: original, Lane: LaneLexical, Rank: 1, Path: "/original/photo.jpg", photoBlobHash: displayHash},
-		{Document: copy, Lane: LaneLexical, Rank: 2, Path: "/copy/photo.jpg", photoBlobHash: displayHash},
+		{Document: duplicate, Lane: LaneLexical, Rank: 2, Path: "/copy/photo.jpg", photoBlobHash: displayHash},
 	}, []Candidate{
 		{Document: semanticOnly, Lane: LaneSemantic, Rank: 1, VectorSpaceID: "space",
 			photoBlobHash: photoFusionBlob(scope, strings.Repeat("b", 64))},
