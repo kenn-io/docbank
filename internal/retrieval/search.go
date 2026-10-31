@@ -524,7 +524,10 @@ func normalizeQuery(query Query) (Query, error) {
 	if err != nil {
 		return Query{}, err
 	}
-	query.Mode, query.Limit = Mode(options.Mode), options.CandidateLimit
+	if query.Mode == "" {
+		query.Mode = ModeAuto
+	}
+	query.Limit = options.CandidateLimit
 	if query.LexicalLimit == 0 {
 		query.LexicalLimit = query.Limit
 	}

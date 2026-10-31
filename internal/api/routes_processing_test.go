@@ -1799,6 +1799,29 @@ func TestEvidenceWindowHTTPContract(t *testing.T) {
 	assert.NotContains(t, body, "aé界🙂z")
 }
 
+func TestDocumentSearchAutoPreservesRequestedMode(t *testing.T) {
+	t.Parallel()
+	ts, catalog := newTestServer(t, configureProcessingTestService(t))
+	node := createFileWithContent(t, ts, catalog, "/current.txt", "synthetic current text")
+	client := daemonconn.New(ts.URL, testAPIKey)
+	for _, scope := range []string{"all_live", "explicit_fence"} {
+		t.Run(scope, func(t *testing.T) {
+			request := api.DocumentSearchRequest{Query: "current", Mode: "auto", Profile: "private"}
+			if scope == "all_live" {
+				request.Scope = &api.DocumentSearchScope{Kind: "all_live"}
+			} else {
+				request.Fence = api.DocumentSourceFence{VaultUID: catalog.VaultID(), ContentVersionIDs: []string{node.CurrentVersionID}}
+			}
+			report, err := client.SearchDocuments(t.Context(), request)
+			require.NoError(t, err)
+			assert.Equal(t, "auto", report.RequestedMode)
+			assert.Equal(t, "lexical", report.ActualMode)
+			require.Len(t, report.Results, 1)
+			assert.Equal(t, node.CurrentVersionID, report.Results[0].ContentVersionID)
+		})
+	}
+}
+
 func TestDocumentSearchAllLiveScope(t *testing.T) {
 	t.Parallel()
 	ts, catalog := newTestServer(t, configureProcessingTestService(t))
