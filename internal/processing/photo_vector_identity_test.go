@@ -19,6 +19,7 @@ func (p selectedImageProvider) VectorIdentity() (string, error) {
 }
 
 func TestPhotoEmbeddingPreservesSelectedVectorIdentity(t *testing.T) {
+	t.Parallel()
 	for _, automatic := range []bool{true, false} {
 		name := "explicit-search"
 		if automatic {
