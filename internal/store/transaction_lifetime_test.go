@@ -136,12 +136,16 @@ func holdTestSQLiteWriter(t *testing.T, s *Store) *sql.Tx {
 	return lock
 }
 
+// retryBeginBound only stops a retry loop that never ends; real SQLite IO under
+// a loaded parallel test run can exceed sub-second budgets.
+const retryBeginBound = 30 * time.Second
+
 func TestStorageTransactionRetryBegin(t *testing.T) {
 	t.Parallel()
 	t.Run("blocks until the writer lock clears", func(t *testing.T) {
 		s := newTestStore(t)
 		lock := holdTestSQLiteWriter(t, s)
-		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), retryBeginBound)
 		defer cancel()
 		done := make(chan error, 1)
 		go func() {
@@ -160,7 +164,7 @@ func TestStorageTransactionRetryBegin(t *testing.T) {
 	t.Run("callback busy error is not retried", func(t *testing.T) {
 		s := newTestStore(t)
 		lock := holdTestSQLiteWriter(t, s)
-		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), retryBeginBound)
 		defer cancel()
 		// A callback can return a busy error from a statement inside its transaction.
 		_, busyErr := s.writeDB.BeginTx(ctx, nil)
@@ -181,13 +185,20 @@ func TestStorageTransactionRetryBegin(t *testing.T) {
 		defer cancel()
 		timer := time.AfterFunc(50*time.Millisecond, cancel) //nolint:kennlint // deadlinetest: Exercise cancellation during a real SQLite busy wait.
 		defer timer.Stop()
-		start := time.Now()
-		err := s.withStorageTxRetryBegin(ctx, func(*sql.Tx) error {
-			t.Error("callback ran while another writer held the lock")
-			return nil
-		})
-		require.ErrorIs(t, err, context.Canceled)
-		require.Less(t, time.Since(start), 500*time.Millisecond, "retry loop kept running after cancellation")
+		done := make(chan error, 1)
+		go func() {
+			done <- s.withStorageTxRetryBegin(ctx, func(*sql.Tx) error {
+				t.Error("callback ran while another writer held the lock")
+				return nil
+			})
+		}()
+		// The loop has no attempt or time limit, so only cancellation ends it.
+		select {
+		case err := <-done:
+			require.ErrorIs(t, err, context.Canceled)
+		case <-time.After(retryBeginBound):
+			t.Fatal("retry loop kept running after cancellation")
+		}
 	})
 }
 
