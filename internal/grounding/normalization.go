@@ -76,7 +76,7 @@ func normalizedFigures(text string) []normalizedFigure {
 			}
 			// A standalone marker before an amount makes its currency ambiguous.
 			if kind == 1 && previousUnparsed >= 0 && strings.TrimFunc(string(rs[tokens[previousUnparsed].end:start]), amountGap) == "" {
-				previous := []rune(trim(rs[tokens[previousUnparsed].start:tokens[previousUnparsed].end]))
+				previous := []rune(strings.TrimFunc(string(rs[tokens[previousUnparsed].start:tokens[previousUnparsed].end]), edge))
 				if markerEnd, marker := currencyAt(previous, 0); marker != "" && markerEnd == len(previous) {
 					continue
 				}
