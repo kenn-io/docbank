@@ -438,7 +438,14 @@ func searchDocuments(
 		report     api.DocumentSearchReport
 		documents  []api.DocumentSummary
 	}
-	result, err := documentRead(ctx, session, func(ctx context.Context, c documentClient) (response, error) {
+	result, err := documentRead(ctx, session, func(ctx context.Context, c documentClient) (out response, err error) {
+		defer func() {
+			if daemon, ok := c.(daemonDocumentClient); ok && err == nil && len(out.report.Results) == 0 {
+				receipt := api.DocumentSearchMiss(input.Query, input.Profile, input.BindingID, out.resolution.FenceFingerprint, len(out.resolution.Fence.ContentVersionIDs), out.report)
+				receipt.Filters = map[string]any{"scope": input.Filters}
+				daemon.RecordMiss(ctx, receipt)
+			}
+		}()
 		resolution, callErr := c.ResolveDocumentSourceFence(ctx, api.DocumentSourceFenceResolveRequest{
 			ContentVersionIDs: input.ContentVersionIDs, Filters: input.Filters})
 		if callErr != nil {

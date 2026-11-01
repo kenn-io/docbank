@@ -53,7 +53,11 @@ export class SnapshotWorkspace {
   async run(
     query: Query,
     options: SnapshotOptions,
-  ): Promise<{ type: "text"; empty: boolean } | { type: "failed"; cause: Error } | undefined> {
+  ): Promise<
+    | { type: "text"; empty: boolean; receipt: generated.MissLogRequest }
+    | { type: "failed"; cause: Error }
+    | undefined
+  > {
     this.invalidateActions();
     const epoch = this.epoch;
     const session = this.getSession();
@@ -63,7 +67,20 @@ export class SnapshotWorkspace {
     if (error) return { type: "failed", cause: error };
     if (status === "ready") {
       void this.refreshRetained();
-      return { type: "text", empty: page?.rows.length === 0 };
+      const { text, ...filters } = query;
+      return {
+        type: "text",
+        empty: page?.rows.length === 0,
+        receipt: {
+          query: text,
+          requested_mode: query.mode,
+          actual_mode: page?.query.mode ?? query.mode,
+          profile: options.profile,
+          filters,
+          coverage: page?.coverage,
+          truncated: !!page?.next_cursor,
+        },
+      };
     }
   }
 

@@ -122,6 +122,7 @@ interface HarnessOptions {
   legacyPending?: boolean;
   childrenPending?: boolean;
   rerankReport?: unknown;
+  rerankStatus?: number;
   rerankPending?: boolean;
   // A pending rerank rejects on abort, as fetch does, instead of resolving later.
   rerankAbortable?: boolean;
@@ -158,6 +159,7 @@ function installHarness(options: HarnessOptions) {
   };
   const postBodies: Record<string, unknown>[] = [];
   const fenceBodies: Record<string, unknown>[] = [];
+  const misses: Record<string, unknown>[] = [];
   let rerankResolve: ((response: Response) => void) | undefined;
   let baseResolve: ((response: Response) => void) | undefined;
   let profilesResolve: ((response: Response) => void) | undefined;
@@ -188,6 +190,10 @@ function installHarness(options: HarnessOptions) {
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     const method = init?.method ?? "GET";
+    if (url === "/api/v1/miss-log" && method === "POST") {
+      misses.push(JSON.parse(String(init?.body)));
+      return new Response(null, { status: 204 });
+    }
     if (url === "/api/v1/path?path=%2F") return json(root);
     if (url === "/api/v1/nodes/1/children?limit=1000&offset=0") {
       return json({
@@ -279,6 +285,11 @@ function installHarness(options: HarnessOptions) {
       if (options.baseSearchStatus)
         return new Response("search failure", { status: options.baseSearchStatus });
       if (body.rerank) {
+        if (options.rerankStatus)
+          return Response.json(
+            { detail: "synthetic rerank failure" },
+            { status: options.rerankStatus },
+          );
         if (options.rerankPending && options.rerankAbortable)
           return new Promise<Response>((_, reject) =>
             init?.signal?.addEventListener("abort", () =>
@@ -317,6 +328,7 @@ function installHarness(options: HarnessOptions) {
   });
   return {
     fetchMock,
+    misses,
     postBodies,
     fenceBodies,
     resolveRerank: (response: Response) => rerankResolve?.(response),
@@ -412,6 +424,7 @@ it.each([
       expect(harness.postBodies).toHaveLength(0);
       if (!embeddings) expect(harness.legacyCalls()).toBe(1);
     }
+    expect(harness.misses).toHaveLength(0);
   },
 );
 
@@ -1072,13 +1085,27 @@ it("shows the empty-fence note without posting a search and reports it once, not
     files: [file],
     baseReport: report("hybrid", []),
     emptyFence: true,
+    tagSearch: { hits: [], limit: 1000, truncated: false, tag_id: tagID },
   });
   render(App);
   await screen.findAllByText("empty.txt");
+  await fireEvent.click(
+    await screen.findByRole("combobox", { name: "Browse or filter by tag: All tags" }),
+  );
+  await fireEvent.click(screen.getByRole("option", { name: "reviewed (1)" }));
   await submitSearch("nothing");
   await screen.findByText("No documents match the current filter.");
   expect(harness.postBodies).toHaveLength(0);
   expect(action).toHaveBeenCalledExactlyOnceWith("short-lived", "search_empty", "hybrid");
+  expect(harness.misses).toEqual([
+    expect.objectContaining({
+      query: "nothing",
+      filters: { tag_id: tagID },
+      document_count: 0,
+      coverage: { state: "complete" },
+      fence_fingerprint: expect.stringMatching(/^sha256:/),
+    }),
+  ]);
   expect(searchRun).not.toHaveBeenCalled();
   // A refresh reruns the same search without a new submission.
   const fences = harness.fenceBodies.length;
@@ -1557,7 +1584,7 @@ it.each(["unrun edit", "failed search"])(
 
 it("filtered search walkthrough reaches accepted results", async () => {
   const file = node(2, "report.txt", baseVersion);
-  const harness = installHarness({
+  const options: HarnessOptions = {
     profiles: [
       {
         name: "private",
@@ -1586,10 +1613,13 @@ it("filtered search walkthrough reaches accepted results", async () => {
       },
     ],
     baseReport: report("hybrid", [result(file, 1, "report excerpt")]),
-  });
+  };
+  const harness = installHarness(options);
   render(App);
+  await screen.findAllByText("report.txt");
   await submitSearch("annual report");
   await screen.findByText("report excerpt");
+  expect(harness.misses).toHaveLength(0);
   expect(screen.queryByText("Filters search names and text only.")).toBeNull();
   await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
   await fireEvent.input(screen.getByLabelText("Filters JSON"), {
@@ -1912,3 +1942,93 @@ it.each(["names", "meaning", "frozen"])(
     }
   },
 );
+
+it.each(["plain", "rerank", "fallback", "filtered"])(
+  "records an empty %s submission once",
+  async (kind) => {
+    const rerank = kind === "rerank";
+    const harness = installHarness({
+      profiles: [
+        {
+          name: "private",
+          fingerprint: "a".repeat(64),
+          rendition: true,
+          embedding_bindings: ["embed"],
+          reranking_available: rerank,
+        },
+      ],
+      files: [node(2, "existing.txt", baseVersion)],
+      baseReport: report("hybrid", []),
+      ...(kind === "fallback"
+        ? { baseSearchStatus: 500, tagSearch: { hits: [], limit: 1000, truncated: false } }
+        : {}),
+      rerankReport: report("hybrid", [], { outcome: "skipped", candidate_count: 0 }),
+    });
+    render(App);
+    await screen.findAllByText("existing.txt");
+    if (rerank)
+      await fireEvent.click(await screen.findByRole("checkbox", { name: "Rerank results" }));
+    if (kind === "filtered") {
+      await fireEvent.input(screen.getByRole("searchbox", { name: "Search documents" }), {
+        target: { value: "missing" },
+      });
+      await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+      await fireEvent.input(screen.getByLabelText("Filters JSON"), {
+        target: { value: '{"size_min":20}' },
+      });
+      await screen.findByRole("status", { name: "Query valid" });
+      await fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    } else {
+      await submitSearch("missing");
+    }
+    await waitFor(() => expect(harness.misses).toHaveLength(1));
+    expect(harness.misses[0]).toMatchObject({
+      query: "missing",
+      ...(kind === "fallback"
+        ? {
+            requested_mode: "hybrid",
+            actual_mode: "lexical",
+            profile: "private",
+            binding_id: "embed",
+            degradations: [screen.getByText(/Natural-language search unavailable/).textContent],
+          }
+        : kind === "filtered"
+          ? {
+              filters: { filters: { size_min: 20 } },
+              actual_mode: "lexical",
+              coverage: { configuration: "unconfigured" },
+            }
+          : { binding_id: "embed", actual_mode: "hybrid", document_count: 2 }),
+    });
+    if (kind === "fallback" || kind === "filtered") return;
+    await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
+    await waitFor(() => expect(harness.postBodies.length).toBeGreaterThan(rerank ? 2 : 1));
+    expect(harness.misses).toHaveLength(1);
+  },
+);
+
+it("records failed reranking after an empty base search", async () => {
+  const harness = installHarness({
+    profiles: [
+      {
+        name: "private",
+        fingerprint: "a".repeat(64),
+        rendition: true,
+        embedding_bindings: ["embed"],
+        reranking_available: true,
+      },
+    ],
+    files: [node(2, "existing.txt", baseVersion)],
+    baseReport: report("hybrid", []),
+    rerankStatus: 500,
+  });
+  render(App);
+  await screen.findAllByText("existing.txt");
+  await fireEvent.click(await screen.findByRole("checkbox", { name: "Rerank results" }));
+  await submitSearch("missing");
+  await waitFor(() => expect(harness.misses).toHaveLength(1));
+  expect(harness.misses[0]).toMatchObject({
+    query: "missing",
+    reranking: { outcome: "failed", cause: expect.stringContaining("synthetic rerank failure") },
+  });
+});
