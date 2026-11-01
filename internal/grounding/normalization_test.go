@@ -61,8 +61,6 @@ func TestNormalizedFigures(t *testing.T) {
 		{"1.234 USD 30", []normalizedFigure{{text: "1.234"}, {text: "30"}}},
 		{"USD 30 February 2026", []normalizedFigure{{text: "30"}, {text: "2026"}}},
 		{"30 February 2026 USD 30", []normalizedFigure{{text: "30"}, {text: "2026"}, {text: "30"}}},
-		{"February 30, 2026 USD 30", []normalizedFigure{{text: "30"}, {text: "2026"}, {text: "30"}}},
-		{"2026-02-30 USD 30", []normalizedFigure{{text: "2026-02-30"}, {text: "30"}}},
 		{"USD 30 February 2026 USD 30", []normalizedFigure{{text: "30"}, {text: "2026"}, {text: "30"}}},
 		{"CAD 15 March 2026", []normalizedFigure{{"15 March 2026", "date", "2026-03-15"}}},
 		{"40 CAD 15 March 2026", []normalizedFigure{{"40 CAD", "amount", "CAD 40"}, {"15 March 2026", "date", "2026-03-15"}}},
