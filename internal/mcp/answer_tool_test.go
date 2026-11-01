@@ -239,7 +239,7 @@ func TestAnswerQuestionEmptyFenceValidatesWithoutSearch(t *testing.T) {
 			if err != nil || f.validations != 1 || len(f.requests) != 0 || out.Receipt.SearchExecuted || out.Receipt.ExecutedQuerySHA256 != "" || out.Status != answer.NoMatch || !out.CoverageComplete || len(out.CoverageReasons) != 0 {
 				t.Fatalf("out=%+v err=%v", out, err)
 			}
-			if tc.rerank && (out.Receipt.Reranking == nil || out.Receipt.Reranking.Outcome != "not_reported") {
+			if tc.rerank && (out.Receipt.Reranking == nil || out.Receipt.Reranking.Outcome != "skipped") {
 				t.Fatalf("receipt=%+v", out.Receipt.Reranking)
 			}
 		})
@@ -269,7 +269,7 @@ func TestAnswerQuestionSchemaPreservesProviderScoreScale(t *testing.T) {
 }
 
 func TestAnswerProcessingErrorsStayScopedToAnswerTool(t *testing.T) {
-	for code, status := range map[string]int{"processing_unavailable": 503, "processing_profile_unavailable": 422, "reranking_unavailable": 422, "reranking_failed": 502, "stale_index": 409} {
+	for code, status := range map[string]int{"processing_unavailable": 503, "processing_profile_unavailable": 422, "stale_index": 409} {
 		if _, mapped := domainToolError(api.NewError(status, code, "private provider details")); mapped {
 			t.Fatalf("answer-specific mapping for %s changed another tool's error contract", code)
 		}
@@ -285,7 +285,7 @@ func TestAnswerProcessingErrorsStayScopedToAnswerTool(t *testing.T) {
 			if !ok || output.Code != code || strings.Contains(output.Message, "private") {
 				t.Fatalf("output=%+v", result.StructuredContent)
 			}
-			wantMessage := "The requested reranking could not be completed."
+			wantMessage := "Document reranking failed; check the daemon log before retrying."
 			if code == "stale_index" {
 				wantMessage = "The selected index needs rebuilding."
 			}
