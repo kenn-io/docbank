@@ -24,7 +24,7 @@
     "leaflet": "1.9.4",
     "leaflet.markercluster": "1.5.3",
     "svelte": "5.56.4",
-    "yaml": "2.8.1"
+    "yaml": "2.8.3"
   },
   "devDependencies": {
     "@playwright/test": "1.64.1",
