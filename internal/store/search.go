@@ -1168,14 +1168,14 @@ func stageLexicalGenerationRowsTx(
 	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO rendition_lexical_generations(generation_id,segment_count,build_count,built_at)
-		VALUES(?,?,?,?)`, generation.ID, generation.SegmentCount, generation.BuildCount, nowRFC3339(),
+		VALUES($1,$2,$3,$4)`, generation.ID, generation.SegmentCount, generation.BuildCount, nowRFC3339(),
 	); err != nil {
 		return LexicalGeneration{}, fmt.Errorf("completing lexical generation %s: %w", generationID, err)
 	}
 	for _, buildID := range buildIDs {
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO rendition_lexical_generation_builds(generation_id,build_id)
-			VALUES(?,?)`, generationID, buildID); err != nil {
+			VALUES($1,$2)`, generationID, buildID); err != nil {
 			return LexicalGeneration{}, fmt.Errorf(
 				"recording lexical generation %s build %s: %w", generationID, buildID, err)
 		}
@@ -1186,7 +1186,7 @@ func stageLexicalGenerationRowsTx(
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO rendition_lexical_generation_manifests(
 			generation_id,manifest_digest,build_digest
-		) VALUES(?,?,?)`, generation.ID, generation.ManifestDigest, generation.BuildDigest,
+		) VALUES($1,$2,$3)`, generation.ID, generation.ManifestDigest, generation.BuildDigest,
 	); err != nil {
 		return LexicalGeneration{}, fmt.Errorf("recording lexical generation %s manifest: %w", generationID, err)
 	}
@@ -1268,7 +1268,7 @@ func indexLexicalSegmentsTx(
 		done, known := indexed[segment.buildID]
 		if !known {
 			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
-				SELECT 1 FROM rendition_lexical_index WHERE build_id=?)`, segment.buildID,
+				SELECT 1 FROM rendition_lexical_index WHERE build_id=$1)`, segment.buildID,
 			).Scan(&done); err != nil {
 				return fmt.Errorf("checking lexical index for build %s: %w", segment.buildID, err)
 			}
@@ -1277,8 +1277,11 @@ func indexLexicalSegmentsTx(
 		if done {
 			continue
 		}
+		// The store writer lock serializes allocation. These rebuildable row IDs
+		// follow SQLite's INTEGER PRIMARY KEY behavior on both backends.
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO rendition_lexical_index(build_id,segment_id,text) VALUES(?,?,?)`,
+			INSERT INTO rendition_lexical_index(row_id,build_id,segment_id,text)
+			SELECT COALESCE(MAX(row_id),0)+1,$1,$2,$3 FROM rendition_lexical_index`,
 			segment.buildID, segment.segmentID, segment.text,
 		); err != nil {
 			return fmt.Errorf("indexing lexical segment %s of build %s: %w",
@@ -1507,7 +1510,7 @@ func loadAndValidateLexicalGenerationTx(
 		FROM rendition_lexical_generations g
 		LEFT JOIN rendition_lexical_generation_manifests m
 		  ON m.generation_id=g.generation_id
-		WHERE g.generation_id=?`, generationID,
+		WHERE g.generation_id=$1`, generationID,
 	).Scan(&generation.SegmentCount, &generation.BuildCount, &manifestDigest, &buildDigest)
 	if errors.Is(err, sql.ErrNoRows) {
 		return LexicalGeneration{}, ErrNotFound

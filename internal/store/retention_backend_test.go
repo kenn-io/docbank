@@ -55,7 +55,7 @@ func copyRetentionStore(t *testing.T, source *Store) (*Store, *sql.DB) {
 	_, err := setup.ExecContext(t.Context(), `UPDATE documents.vault_metadata SET vault_uid=$1`, source.vaultID)
 	require.NoError(t, err)
 	target.vaultID = source.vaultID
-	tables := append(append([]string{}, postgresEnrollmentCatalogs...), "blob_locations", "blob_packs", "blob_pack_entries", "photo_source_claims", "photo_timeline", "document_event_state", "document_event_generations", "document_event_heads", "document_events", "document_event_actors", "document_event_primaries", "document_event_dirty")
+	tables := append(append([]string{}, postgresEnrollmentCatalogs...), "blob_locations", "blob_packs", "blob_pack_entries", "photo_source_claims", "photo_timeline", "document_event_state", "document_event_generations", "document_event_heads", "document_events", "document_event_actors", "document_event_primaries", "document_event_dirty", "text_searchable_versions", "text_extraction_queue")
 	copyStoreCatalogFixture(t, source, setup, tables)
 	target.primaryStoreID = source.primaryStoreID
 	return target, setup

@@ -157,14 +157,15 @@ type purgeAttachment struct {
 }
 
 // expireSelectedDerivativeRootsTx preserves unrelated lease state during a purge.
-func expireSelectedDerivativeRootsTx(ctx context.Context, tx *sql.Tx, kind CurrentRenditionTargetKind, ids []string, at string) (int, error) {
+func (s *Store) expireSelectedDerivativeRootsTx(ctx context.Context, tx *sql.Tx, kind CurrentRenditionTargetKind, ids []string, at string) (int, error) {
+	d := metadataJSONDialect{postgres: s.postgresSchema != ""}
 	encoded, err := json.Marshal(ids)
 	if err != nil {
 		return 0, err
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE current_rendition_roots SET active=0,released_at=?
-		WHERE target_kind=? AND target_id IN (SELECT value FROM json_each(?))
-		AND active=1 AND expires_at IS NOT NULL AND expires_at<=?`, at, kind, string(encoded), at)
+	result, err := tx.ExecContext(ctx, `UPDATE current_rendition_roots SET active=0,released_at=$1
+		WHERE target_kind=$2 AND target_id IN (SELECT value FROM `+d.arrayValues("$3")+`)
+		AND active=1 AND expires_at IS NOT NULL AND expires_at<=$4`, at, kind, string(encoded), at)
 	if err != nil {
 		return 0, fmt.Errorf("expiring selected derivative roots: %w", err)
 	}
@@ -241,6 +242,7 @@ func stringColumnTx(
 func (s *Store) PurgeDerivatives(
 	ctx context.Context, request PurgeRequest,
 ) (PurgeReport, error) {
+	d := metadataJSONDialect{postgres: s.postgresSchema != ""}
 	if err := validatePurgeRequest(request); err != nil {
 		return PurgeReport{}, err
 	}
@@ -258,8 +260,8 @@ func (s *Store) PurgeDerivatives(
 		var result sql.Result
 		if collectGarbage {
 			result, err = tx.ExecContext(ctx, `
-			UPDATE current_rendition_roots SET active=0,released_at=?
-			WHERE active=1 AND expires_at IS NOT NULL AND expires_at<=?`, asOf, asOf)
+			UPDATE current_rendition_roots SET active=0,released_at=$1
+			WHERE active=1 AND expires_at IS NOT NULL AND expires_at<=$2`, asOf, asOf)
 			if err != nil {
 				return fmt.Errorf("removing expired current rendition roots: %w", err)
 			}
@@ -280,11 +282,11 @@ func (s *Store) PurgeDerivatives(
 		explicitBuilds := stringSet(request.BuildIDs)
 		requestedBuilds := stringSet(request.BuildIDs)
 		rootedEmbeddingAttachments := make(map[string]struct{})
-		embeddingSuppressions, err := prepareEmbeddingPurgeTx(ctx, tx, request, asOf)
+		embeddingSuppressions, err := s.prepareEmbeddingPurgeTx(ctx, tx, request, asOf)
 		if err != nil {
 			return err
 		}
-		embeddingPayloads, err := purgeEmbeddingCatalogTx(
+		embeddingPayloads, err := s.purgeEmbeddingCatalogTx(
 			ctx, tx, versionSet, attachmentSet, explicitBuilds, request.All,
 			asOf, &report, rootedEmbeddingAttachments,
 		)
@@ -325,9 +327,9 @@ func (s *Store) PurgeDerivatives(
 				return err
 			}
 			ids, err := stringColumnTx(ctx, tx, "selected legacy rendition builds", `
-				SELECT build_id FROM rendition_builds WHERE provider_operation_id=?
+				SELECT build_id FROM rendition_builds WHERE provider_operation_id=$1
 				AND source_sha256 IN (SELECT blob_hash FROM content_versions
-				WHERE version_id IN (SELECT value FROM json_each(?)))`, legacyPlainTextProvider, string(versions))
+				WHERE version_id IN (SELECT value FROM `+d.arrayValues("$2")+`))`, legacyPlainTextProvider, string(versions))
 			if err != nil {
 				return err
 			}
@@ -338,7 +340,7 @@ func (s *Store) PurgeDerivatives(
 
 		for _, attachment := range selected {
 			result, err := tx.ExecContext(ctx,
-				`DELETE FROM rendition_heads WHERE attachment_id=?`, attachment.id)
+				`DELETE FROM rendition_heads WHERE attachment_id=$1`, attachment.id)
 			if err != nil {
 				return fmt.Errorf("removing rendition head for attachment %s: %w", attachment.id, err)
 			}
@@ -350,11 +352,11 @@ func (s *Store) PurgeDerivatives(
 			if _, rooted := rootedEmbeddingAttachments[attachment.id]; rooted {
 				continue
 			}
-			if _, err := tx.ExecContext(ctx, `DELETE FROM email_body_results WHERE rendition_attachment_id=?`, attachment.id); err != nil {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM email_body_results WHERE rendition_attachment_id=$1`, attachment.id); err != nil {
 				return err
 			}
 			result, err = tx.ExecContext(ctx,
-				`DELETE FROM rendition_attachments WHERE attachment_id=?`, attachment.id)
+				`DELETE FROM rendition_attachments WHERE attachment_id=$1`, attachment.id)
 			if err != nil {
 				return fmt.Errorf("removing rendition attachment %s: %w", attachment.id, err)
 			}
@@ -366,7 +368,7 @@ func (s *Store) PurgeDerivatives(
 		}
 
 		if !collectGarbage {
-			count, err := expireSelectedDerivativeRootsTx(ctx, tx, RenditionRootBuild, derivativeSortedKeys(requestedBuilds), asOf)
+			count, err := s.expireSelectedDerivativeRootsTx(ctx, tx, RenditionRootBuild, derivativeSortedKeys(requestedBuilds), asOf)
 			if err != nil {
 				return err
 			}
@@ -383,11 +385,11 @@ func (s *Store) PurgeDerivatives(
 			}
 			var rooted bool
 			if err := tx.QueryRowContext(ctx, `SELECT
-				EXISTS(SELECT 1 FROM rendition_attachments WHERE build_id=?) OR
+				EXISTS(SELECT 1 FROM rendition_attachments WHERE build_id=$1) OR
 				EXISTS(SELECT 1 FROM current_rendition_roots
-				       WHERE target_kind='rendition_build' AND target_id=?
+				       WHERE target_kind='rendition_build' AND target_id=$2
 				         AND active=1
-				         AND (expires_at IS NULL OR expires_at>?))`, buildID, buildID, asOf,
+				         AND (expires_at IS NULL OR expires_at>$3))`, buildID, buildID, asOf,
 			).Scan(&rooted); err != nil {
 				return fmt.Errorf("checking rendition build %s roots: %w", buildID, err)
 			}
@@ -403,8 +405,8 @@ func (s *Store) PurgeDerivatives(
 		for buildID := range requestedBuilds {
 			var exists, attached bool
 			if err := tx.QueryRowContext(ctx,
-				`SELECT EXISTS(SELECT 1 FROM rendition_builds WHERE build_id=?),
-				        EXISTS(SELECT 1 FROM rendition_attachments WHERE build_id=?)`, buildID, buildID,
+				`SELECT EXISTS(SELECT 1 FROM rendition_builds WHERE build_id=$1),
+				        EXISTS(SELECT 1 FROM rendition_attachments WHERE build_id=$2)`, buildID, buildID,
 			).Scan(&exists, &attached); err != nil {
 				return fmt.Errorf("checking rendition build %s remaining attachments: %w", buildID, err)
 			}
@@ -459,7 +461,7 @@ func (s *Store) PurgeDerivatives(
 		for buildID := range logicallyPurgedBuilds {
 			var sourceHash, providerOperationID string
 			if err := tx.QueryRowContext(ctx, `SELECT source_sha256,provider_operation_id
-				FROM rendition_builds WHERE build_id=?`, buildID,
+				FROM rendition_builds WHERE build_id=$1`, buildID,
 			).Scan(&sourceHash, &providerOperationID); err != nil {
 				return fmt.Errorf("reading logically purged build %s: %w", buildID, err)
 			}
@@ -501,7 +503,7 @@ func (s *Store) PurgeDerivatives(
 			              WHERE r.target_kind='lexical_generation'
 			                AND r.target_id=g.generation_id
 			                AND r.active=1
-			                AND (r.expires_at IS NULL OR r.expires_at>?))
+			                AND (r.expires_at IS NULL OR r.expires_at>$1))
 			FROM rendition_lexical_generations g ORDER BY g.generation_id`, asOf)
 		if err != nil {
 			return fmt.Errorf("listing lexical generations for collection: %w", err)
@@ -544,14 +546,14 @@ func (s *Store) PurgeDerivatives(
 			}
 			if replacement.ID == "" {
 				if _, err := tx.ExecContext(ctx,
-					`DELETE FROM rendition_lexical_heads WHERE generation_id=?`, generation.id,
+					`DELETE FROM rendition_lexical_heads WHERE generation_id=$1`, generation.id,
 				); err != nil {
 					return fmt.Errorf("revoking empty lexical generation %s head: %w", generation.id, err)
 				}
 			} else {
 				if _, err := tx.ExecContext(ctx, `
-					UPDATE rendition_lexical_heads SET generation_id=?
-					WHERE singleton=1 AND generation_id=?`, replacement.ID, generation.id,
+					UPDATE rendition_lexical_heads SET generation_id=$1
+					WHERE singleton=1 AND generation_id=$2`, replacement.ID, generation.id,
 				); err != nil {
 					return fmt.Errorf("publishing lexical purge replacement %s: %w",
 						replacement.ID, err)
@@ -567,7 +569,7 @@ func (s *Store) PurgeDerivatives(
 				continue
 			}
 			if !collectGarbage {
-				count, err := expireSelectedDerivativeRootsTx(ctx, tx, RenditionRootLexicalGeneration, []string{generation.id}, asOf)
+				count, err := s.expireSelectedDerivativeRootsTx(ctx, tx, RenditionRootLexicalGeneration, []string{generation.id}, asOf)
 				if err != nil {
 					return err
 				}
@@ -588,23 +590,23 @@ func (s *Store) PurgeDerivatives(
 				continue
 			}
 			if _, err = tx.ExecContext(ctx,
-				`DELETE FROM rendition_lexical_heads WHERE generation_id=?`, generation.id,
+				`DELETE FROM rendition_lexical_heads WHERE generation_id=$1`, generation.id,
 			); err != nil {
 				return fmt.Errorf("removing lexical generation %s head: %w", generation.id, err)
 			}
 			if _, err := tx.ExecContext(ctx,
-				`DELETE FROM rendition_lexical_generation_manifests WHERE generation_id=?`, generation.id,
+				`DELETE FROM rendition_lexical_generation_manifests WHERE generation_id=$1`, generation.id,
 			); err != nil {
 				return fmt.Errorf("removing lexical generation %s manifest: %w", generation.id, err)
 			}
 			if _, err := tx.ExecContext(ctx, `UPDATE rendition_jobs
 				SET lexical_generation_id=NULL
-				WHERE phase='published' AND lexical_generation_id=?`, generation.id); err != nil {
+				WHERE phase='published' AND lexical_generation_id=$1`, generation.id); err != nil {
 				return fmt.Errorf("releasing collected lexical generation %s from completed jobs: %w",
 					generation.id, err)
 			}
 			result, err = tx.ExecContext(ctx,
-				`DELETE FROM rendition_lexical_generations WHERE generation_id=?`, generation.id)
+				`DELETE FROM rendition_lexical_generations WHERE generation_id=$1`, generation.id)
 			if err != nil {
 				return fmt.Errorf("removing lexical generation %s: %w", generation.id, err)
 			}
@@ -663,7 +665,7 @@ func (s *Store) PurgeDerivatives(
 			var sourceHash, providerOperationID string
 			if err := tx.QueryRowContext(ctx,
 				`SELECT source_sha256,provider_operation_id
-				 FROM rendition_builds WHERE build_id=?`, buildID,
+				 FROM rendition_builds WHERE build_id=$1`, buildID,
 			).Scan(&sourceHash, &providerOperationID); err != nil {
 				return fmt.Errorf("reading rendition build %s source: %w", buildID, err)
 			}
@@ -672,7 +674,7 @@ func (s *Store) PurgeDerivatives(
 			}
 			blobHashes, err := stringColumnTx(ctx, tx,
 				"rendition build "+buildID+" artifact blobs",
-				`SELECT blob_hash FROM rendition_artifacts WHERE build_id=? ORDER BY blob_hash`, buildID)
+				`SELECT blob_hash FROM rendition_artifacts WHERE build_id=$1 ORDER BY blob_hash`, buildID)
 			if err != nil {
 				return err
 			}
@@ -683,10 +685,10 @@ func (s *Store) PurgeDerivatives(
 				query       string
 				destination *int
 			}{
-				{`DELETE FROM rendition_lexical_index WHERE build_id=?`, &report.RemovedLexicalRows},
-				{`DELETE FROM rendition_lexical_segments WHERE build_id=?`, &report.RemovedLexicalSegments},
-				{`DELETE FROM rendition_units WHERE build_id=?`, &report.RemovedUnits},
-				{`DELETE FROM rendition_artifacts WHERE build_id=?`, &report.RemovedArtifacts},
+				{`DELETE FROM rendition_lexical_index WHERE build_id=$1`, &report.RemovedLexicalRows},
+				{`DELETE FROM rendition_lexical_segments WHERE build_id=$1`, &report.RemovedLexicalSegments},
+				{`DELETE FROM rendition_units WHERE build_id=$1`, &report.RemovedUnits},
+				{`DELETE FROM rendition_artifacts WHERE build_id=$1`, &report.RemovedArtifacts},
 			}
 			for _, child := range children {
 				result, err := tx.ExecContext(ctx, child.query, buildID)
@@ -700,7 +702,7 @@ func (s *Store) PurgeDerivatives(
 				*child.destination += count
 			}
 			result, err := tx.ExecContext(ctx,
-				`DELETE FROM rendition_builds WHERE build_id=?`, buildID)
+				`DELETE FROM rendition_builds WHERE build_id=$1`, buildID)
 			if err != nil {
 				return fmt.Errorf("removing rendition build %s: %w", buildID, err)
 			}
@@ -719,12 +721,14 @@ func (s *Store) PurgeDerivatives(
 			if !suppressed {
 				continue
 			}
-			if _, err := tx.ExecContext(ctx, `DELETE FROM content_fts WHERE rowid IN (
-				SELECT rowid FROM extracted_text WHERE blob_hash=?
-			)`, sourceHash); err != nil {
-				return fmt.Errorf("removing legacy lexical cache for %s: %w", sourceHash, err)
+			if s.postgresSchema == "" {
+				if _, err := tx.ExecContext(ctx, `DELETE FROM content_fts WHERE rowid IN (
+					SELECT rowid FROM extracted_text WHERE blob_hash=$1
+				)`, sourceHash); err != nil {
+					return fmt.Errorf("removing legacy lexical cache for %s: %w", sourceHash, err)
+				}
 			}
-			result, err := tx.ExecContext(ctx, `DELETE FROM extracted_text WHERE blob_hash=?`, sourceHash)
+			result, err := tx.ExecContext(ctx, `DELETE FROM extracted_text WHERE blob_hash=$1`, sourceHash)
 			if err != nil {
 				return fmt.Errorf("removing legacy cache for %s: %w", sourceHash, err)
 			}
@@ -734,7 +738,7 @@ func (s *Store) PurgeDerivatives(
 			}
 			report.RemovedLegacyCacheRows += count
 			if _, err := tx.ExecContext(ctx,
-				`DELETE FROM text_extraction_queue WHERE blob_hash=?`, sourceHash,
+				`DELETE FROM text_extraction_queue WHERE blob_hash=$1`, sourceHash,
 			); err != nil {
 				return fmt.Errorf("removing legacy cache work for %s: %w", sourceHash, err)
 			}
@@ -742,14 +746,14 @@ func (s *Store) PurgeDerivatives(
 
 		for hash := range artifactBlobs {
 			var reachable bool
-			if err := tx.QueryRowContext(ctx, `WITH target(hash) AS (SELECT ?)
+			if err := tx.QueryRowContext(ctx, `WITH target(hash) AS (SELECT $1)
 				SELECT `+blobReferencedSQL("target.hash", blobRootReferences)+` FROM target`,
 				hash).Scan(&reachable); err != nil {
 				return fmt.Errorf("checking purged derivative blob %s reachability: %w", hash, err)
 			}
 			if !reachable {
 				if _, err := tx.ExecContext(ctx, `INSERT INTO derivative_blob_purge_pending(blob_hash)
-					VALUES(?) ON CONFLICT(blob_hash) DO NOTHING`, hash); err != nil {
+					VALUES($1) ON CONFLICT(blob_hash) DO NOTHING`, hash); err != nil {
 					return fmt.Errorf("persisting derivative blob purge target %s: %w", hash, err)
 				}
 			}
@@ -786,7 +790,7 @@ func (s *Store) PurgeDerivatives(
 			// Only the objects made unreachable by this purge belong in its receipt.
 			for _, hash := range derivativeSortedKeys(artifactBlobs) {
 				var pending bool
-				if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM derivative_blob_purge_pending WHERE blob_hash=?)`, hash).Scan(&pending); err != nil {
+				if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM derivative_blob_purge_pending WHERE blob_hash=$1)`, hash).Scan(&pending); err != nil {
 					return err
 				}
 				if pending {
@@ -826,7 +830,7 @@ func legacyVersionPurgeScopesTx(
 	rows, err := tx.QueryContext(ctx, `
 		SELECT v.version_id,v.blob_hash,e.extractor,e.extractor_version,e.status,e.text
 		FROM content_versions v
-		LEFT JOIN extracted_text e ON e.blob_hash=v.blob_hash AND e.extractor=?
+		LEFT JOIN extracted_text e ON e.blob_hash=v.blob_hash AND e.extractor=$1
 		ORDER BY v.version_id`, legacyPlainTextExtractor)
 	if err != nil {
 		return nil, nil, fmt.Errorf("reading legacy versions for derivative purge: %w", err)
@@ -835,6 +839,7 @@ func legacyVersionPurgeScopesTx(
 	sources = make(map[string]struct{})
 	seen := make(map[string]struct{})
 	var scopes []derivativePurgeSuppression
+	var selectedVersions []string
 	for rows.Next() {
 		var versionID, blobHash string
 		var extractor, status sql.NullString
@@ -865,13 +870,19 @@ func legacyVersionPurgeScopesTx(
 			scopes = append(scopes, scope)
 		}
 		sources[blobHash] = struct{}{}
-		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM text_searchable_versions WHERE version_id=?`, versionID); err != nil {
-			return nil, nil, fmt.Errorf("revoking legacy searchable version %s: %w", versionID, err)
-		}
+		selectedVersions = append(selectedVersions, versionID)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, nil, fmt.Errorf("reading legacy versions for derivative purge: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, nil, fmt.Errorf("closing legacy purge scopes: %w", err)
+	}
+	for _, versionID := range selectedVersions {
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM text_searchable_versions WHERE version_id=$1`, versionID); err != nil {
+			return nil, nil, fmt.Errorf("revoking legacy searchable version %s: %w", versionID, err)
+		}
 	}
 	return scopes, sources, nil
 }
@@ -912,10 +923,11 @@ func validatePurgeRequest(request PurgeRequest) error {
 	return nil
 }
 
-func purgeEmbeddingCatalogTx(
+func (s *Store) purgeEmbeddingCatalogTx(
 	ctx context.Context, tx *sql.Tx, versionSet, attachmentSet, buildSet map[string]struct{},
 	all bool, asOf string, report *PurgeReport, rootedAttachments map[string]struct{},
 ) (_ []string, retErr error) {
+	d := metadataJSONDialect{postgres: s.postgresSchema != ""}
 	rows, err := tx.QueryContext(ctx, `SELECT s.embedding_set_id,s.content_version_id,
 		s.input_generation_id,s.vector_set_id,v.payload_blob_hash,
 		COALESCE(g.attachment_id,''),COALESCE(a.build_id,'')
@@ -972,9 +984,9 @@ func purgeEmbeddingCatalogTx(
 		generationIDs, err = stringColumnTx(ctx, tx, "selected embedding purge generations", `
 			SELECT g.generation_id FROM embedding_input_generations g
 			LEFT JOIN rendition_attachments a ON a.attachment_id=g.attachment_id
-			WHERE ? OR g.source_version_id IN (SELECT value FROM json_each(?))
-			OR g.attachment_id IN (SELECT value FROM json_each(?))
-			OR a.build_id IN (SELECT value FROM json_each(?)) ORDER BY g.generation_id`, args...)
+			WHERE $1 OR g.source_version_id IN (SELECT value FROM `+d.arrayValues("$2")+`)
+			OR g.attachment_id IN (SELECT value FROM `+d.arrayValues("$3")+`)
+			OR a.build_id IN (SELECT value FROM `+d.arrayValues("$4")+`) ORDER BY g.generation_id`, args...)
 		if err != nil {
 			return nil, err
 		}
@@ -987,13 +999,13 @@ func purgeEmbeddingCatalogTx(
 		if err != nil {
 			return nil, err
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM current_rendition_roots WHERE root_kind=? AND root_id IN (
-			SELECT job_id FROM embedding_jobs WHERE generation_id IN (SELECT value FROM json_each(?)))`,
+		if _, err := tx.ExecContext(ctx, `DELETE FROM current_rendition_roots WHERE root_kind=$1 AND root_id IN (
+			SELECT job_id FROM embedding_jobs WHERE generation_id IN (SELECT value FROM `+d.arrayValues("$2")+`))`,
 			RenditionRootWorkerLease, string(generations)); err != nil {
 			return nil, fmt.Errorf("removing selected embedding worker leases: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_jobs
-			WHERE generation_id IN (SELECT value FROM json_each(?))`, string(generations)); err != nil {
+			WHERE generation_id IN (SELECT value FROM `+d.arrayValues("$1")+`)`, string(generations)); err != nil {
 			return nil, fmt.Errorf("removing selected embedding jobs: %w", err)
 		}
 		roots := map[CurrentRenditionTargetKind][]string{RenditionRootEmbeddingGeneration: generationIDs}
@@ -1020,7 +1032,7 @@ func purgeEmbeddingCatalogTx(
 			}
 		}
 		for kind, ids := range roots {
-			count, err := expireSelectedDerivativeRootsTx(ctx, tx, kind, ids, asOf)
+			count, err := s.expireSelectedDerivativeRootsTx(ctx, tx, kind, ids, asOf)
 			if err != nil {
 				return nil, err
 			}
@@ -1033,11 +1045,11 @@ func purgeEmbeddingCatalogTx(
 		var rooted bool
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
 			SELECT 1 FROM current_rendition_roots r
-			WHERE r.active=1 AND (r.expires_at IS NULL OR r.expires_at>?) AND (
-				(r.target_kind='embedding_set' AND r.target_id=?) OR
-				(r.target_kind='embedding_input_generation' AND r.target_id=?) OR
-				(r.target_kind='embedding_vector_set' AND r.target_id=?) OR
-				(r.target_kind='embedding_payload' AND r.target_id=?)
+			WHERE r.active=1 AND (r.expires_at IS NULL OR r.expires_at>$1) AND (
+				(r.target_kind='embedding_set' AND r.target_id=$2) OR
+				(r.target_kind='embedding_input_generation' AND r.target_id=$3) OR
+				(r.target_kind='embedding_vector_set' AND r.target_id=$4) OR
+				(r.target_kind='embedding_payload' AND r.target_id=$5)
 			))`, asOf, candidate.id, candidate.generationID,
 			candidate.vectorSetID, candidate.payload).Scan(&rooted); err != nil {
 			return nil, fmt.Errorf("checking embedding set roots: %w", err)
@@ -1045,7 +1057,7 @@ func purgeEmbeddingCatalogTx(
 		if rooted {
 			if candidate.explicit {
 				result, err := tx.ExecContext(ctx,
-					`DELETE FROM embedding_heads WHERE embedding_set_id=?`, candidate.id)
+					`DELETE FROM embedding_heads WHERE embedding_set_id=$1`, candidate.id)
 				if err != nil {
 					return nil, fmt.Errorf("removing rooted embedding head: %w", err)
 				}
@@ -1066,14 +1078,14 @@ func purgeEmbeddingCatalogTx(
 			}
 			var collectable bool
 			if err := tx.QueryRowContext(ctx, `SELECT
-				NOT EXISTS(SELECT 1 FROM embedding_heads WHERE embedding_set_id=?)
+				NOT EXISTS(SELECT 1 FROM embedding_heads WHERE embedding_set_id=$1)
 				AND NOT EXISTS(
 					SELECT 1 FROM content_versions cv
 					JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id
 					 AND n.trashed_at IS NULL
-					WHERE cv.version_id=? AND (
-						?='' OR EXISTS(SELECT 1 FROM rendition_heads rh
-							WHERE rh.content_version_id=? AND rh.attachment_id=?)
+					WHERE cv.version_id=$2 AND (
+						$3='' OR EXISTS(SELECT 1 FROM rendition_heads rh
+							WHERE rh.content_version_id=$4 AND rh.attachment_id=$5)
 					)
 				)`, candidate.id, candidate.versionID, candidate.attachmentID,
 				candidate.versionID, candidate.attachmentID).Scan(&collectable); err != nil {
@@ -1092,7 +1104,7 @@ func purgeEmbeddingCatalogTx(
 			vectorIDs = append(vectorIDs, candidate.vectorSetID)
 		}
 		result, err := tx.ExecContext(ctx,
-			`DELETE FROM embedding_heads WHERE embedding_set_id=?`, candidate.id)
+			`DELETE FROM embedding_heads WHERE embedding_set_id=$1`, candidate.id)
 		if err != nil {
 			return nil, fmt.Errorf("removing embedding head: %w", err)
 		}
@@ -1104,8 +1116,8 @@ func purgeEmbeddingCatalogTx(
 		// A collected set no longer needs its terminal execution record. Pending
 		// work still owns its inputs, including jobs waiting to retry.
 		if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_jobs
-			WHERE generation_id=? AND state IN ('completed','failed','abandoned') AND EXISTS (
-				SELECT 1 FROM embedding_sets s WHERE s.embedding_set_id=?
+			WHERE generation_id=$1 AND state IN ('completed','failed','abandoned') AND EXISTS (
+				SELECT 1 FROM embedding_sets s WHERE s.embedding_set_id=$2
 				  AND s.content_version_id=embedding_jobs.content_version_id
 				  AND s.profile_fingerprint=embedding_jobs.profile_fingerprint
 				  AND s.binding_id=embedding_jobs.binding_id AND s.input_kind=embedding_jobs.input_kind
@@ -1115,7 +1127,7 @@ func purgeEmbeddingCatalogTx(
 			return nil, fmt.Errorf("removing collected embedding jobs: %w", err)
 		}
 		result, err = tx.ExecContext(ctx,
-			`DELETE FROM embedding_sets WHERE embedding_set_id=?`, candidate.id)
+			`DELETE FROM embedding_sets WHERE embedding_set_id=$1`, candidate.id)
 		if err != nil {
 			return nil, fmt.Errorf("removing embedding set: %w", err)
 		}
@@ -1125,7 +1137,7 @@ func purgeEmbeddingCatalogTx(
 		}
 		report.RemovedEmbeddingSets += count
 	}
-	collected, err := collectOrphanEmbeddingArtifactsTx(ctx, tx, asOf, generationIDs, vectorIDs)
+	collected, err := s.collectOrphanEmbeddingArtifactsTx(ctx, tx, asOf, generationIDs, vectorIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -1244,8 +1256,8 @@ func (s *Store) ReleaseCurrentRenditionRoot(
 	var released bool
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		result, err := tx.ExecContext(ctx, `
-			UPDATE current_rendition_roots SET active=0,released_at=?
-			WHERE root_id=? AND fencing_token=? AND active=1`,
+			UPDATE current_rendition_roots SET active=0,released_at=$1
+			WHERE root_id=$2 AND fencing_token=$3 AND active=1`,
 			nowRFC3339(), rootID, fencingToken)
 		if err != nil {
 			return fmt.Errorf("releasing current rendition root %s: %w", rootID, err)
@@ -1346,7 +1358,7 @@ func requireCurrentRenditionTargetTx(
 
 // DerivativeGCPlan returns the complete currently-unrooted derivative set.
 func (s *Store) DerivativeGCPlan(ctx context.Context) (_ DerivativeGCPlan, retErr error) {
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return DerivativeGCPlan{}, fmt.Errorf("starting derivative GC snapshot: %w", err)
 	}
@@ -1373,7 +1385,7 @@ func (s *Store) DerivativeGCPlan(ctx context.Context) (_ DerivativeGCPlan, retEr
 			SELECT 1 FROM current_rendition_roots r
 			WHERE r.target_kind='rendition_build' AND r.target_id=b.build_id
 			  AND r.active=1
-			  AND (r.expires_at IS NULL OR r.expires_at>?)
+			  AND (r.expires_at IS NULL OR r.expires_at>$1)
 		)
 		ORDER BY b.build_id,a.blob_hash`, asOf)
 	if err != nil {
@@ -1411,7 +1423,7 @@ func (s *Store) DerivativeGCPlan(ctx context.Context) (_ DerivativeGCPlan, retEr
 		              WHERE r.target_kind='lexical_generation'
 		                AND r.target_id=g.generation_id
 		                AND r.active=1
-		                AND (r.expires_at IS NULL OR r.expires_at>?))
+		                AND (r.expires_at IS NULL OR r.expires_at>$1))
 		FROM rendition_lexical_generations g ORDER BY g.generation_id`, asOf)
 	if err != nil {
 		return DerivativeGCPlan{}, fmt.Errorf("planning lexical generations: %w", err)
@@ -1442,7 +1454,7 @@ func (s *Store) DerivativeGCPlan(ctx context.Context) (_ DerivativeGCPlan, retEr
 		buildIDs, err := stringColumnTx(ctx, tx,
 			"rooted lexical generation "+generationID, `
 			SELECT build_id FROM rendition_lexical_generation_builds
-			WHERE generation_id=? ORDER BY build_id`, generationID)
+			WHERE generation_id=$1 ORDER BY build_id`, generationID)
 		if err != nil {
 			return DerivativeGCPlan{}, err
 		}
@@ -1468,7 +1480,7 @@ func (s *Store) DerivativeGCPlan(ctx context.Context) (_ DerivativeGCPlan, retEr
 		WHERE NOT EXISTS (SELECT 1 FROM embedding_heads h WHERE h.embedding_set_id=s.embedding_set_id)
 		  AND NOT EXISTS (
 			SELECT 1 FROM current_rendition_roots r
-			WHERE r.active=1 AND (r.expires_at IS NULL OR r.expires_at>?) AND (
+			WHERE r.active=1 AND (r.expires_at IS NULL OR r.expires_at>$1) AND (
 				(r.target_kind='embedding_set' AND r.target_id=s.embedding_set_id) OR
 				(r.target_kind='embedding_input_generation' AND r.target_id=s.input_generation_id) OR
 				(r.target_kind='embedding_vector_set' AND r.target_id=s.vector_set_id) OR
@@ -1509,7 +1521,7 @@ func (s *Store) DerivativeGCPlan(ctx context.Context) (_ DerivativeGCPlan, retEr
 	}
 	expiredRows, err := tx.QueryContext(ctx, `
 		SELECT root_id FROM current_rendition_roots
-		WHERE active=1 AND expires_at IS NOT NULL AND expires_at<=? ORDER BY root_id`, asOf)
+		WHERE active=1 AND expires_at IS NOT NULL AND expires_at<=$1 ORDER BY root_id`, asOf)
 	if err != nil {
 		return DerivativeGCPlan{}, fmt.Errorf("planning expired current rendition roots: %w", err)
 	}
@@ -1548,7 +1560,7 @@ func pageLimitWithSentinel(limit int) (int, error) {
 func (s *Store) BlobInfo(ctx context.Context, hash string) (BlobInfo, error) {
 	var info BlobInfo
 	err := s.db.QueryRowContext(ctx,
-		`SELECT hash, size FROM blobs WHERE hash = ?`, hash,
+		`SELECT hash, size FROM blobs WHERE hash = $1`, hash,
 	).Scan(&info.Hash, &info.Size)
 	if errors.Is(err, sql.ErrNoRows) {
 		return BlobInfo{}, ErrNotFound

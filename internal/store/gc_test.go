@@ -272,6 +272,11 @@ func TestDerivativeGCPlanHonorsEveryTypedBuildRootAndFencing(t *testing.T) {
 
 func TestPurgeDerivativesRetainsActiveWorkerThenCollectsExpiredFence(t *testing.T) {
 	t.Parallel()
+	checkPurgeDerivativesRetainsActiveWorkerThenCollectsExpiredFence(t, false)
+}
+
+func checkPurgeDerivativesRetainsActiveWorkerThenCollectsExpiredFence(t *testing.T, postgres bool) {
+	t.Helper()
 	// Mutation caught: ignoring an active worker lease can remove its exact
 	// staged build during maintenance; retaining an expired renewed fence leaks
 	// a crashed worker's complete manifest forever.
@@ -287,6 +292,9 @@ func TestPurgeDerivativesRetainsActiveWorkerThenCollectsExpiredFence(t *testing.
 	}
 	require.NoError(t, s.PutCurrentRenditionRoot(ctx, root))
 
+	if postgres {
+		s, _ = copyRetentionStore(t, s)
+	}
 	report, err := s.PurgeDerivatives(ctx, PurgeRequest{})
 	require.NoError(t, err)
 	assert.Zero(t, report.RemovedBuilds)
@@ -536,6 +544,11 @@ func TestDerivativeGCPlanRetainsZeroSegmentBuildThroughGenerationMembership(t *t
 
 func TestPurgeDerivativesRemovesCompleteLiveManifestButNeverOriginal(t *testing.T) {
 	t.Parallel()
+	checkPurgeDerivativesRemovesCompleteLiveManifestButNeverOriginal(t, false)
+}
+
+func checkPurgeDerivativesRemovesCompleteLiveManifestButNeverOriginal(t *testing.T, postgres bool) {
+	t.Helper()
 	// Mutation caught: deleting only Markdown or attachments would leave
 	// normalized evidence, provider artifacts, units, segments, FTS rows,
 	// legacy cache text, or the immutable build receipt in the live vault.
@@ -561,6 +574,9 @@ func TestPurgeDerivativesRemovesCompleteLiveManifestButNeverOriginal(t *testing.
 		Status: ExtractionOK, Text: "portable legacy sensitive text",
 	}))
 
+	if postgres {
+		s, _ = copyRetentionStore(t, s)
+	}
 	report, err := s.PurgeDerivatives(ctx, PurgeRequest{ContentVersionIDs: versions})
 	require.NoError(t, err)
 	assert.Equal(t, 1, report.RemovedHeads)
@@ -584,6 +600,9 @@ func TestPurgeDerivativesRemovesCompleteLiveManifestButNeverOriginal(t *testing.
 		"rendition_lexical_generation_manifests", "rendition_lexical_index",
 		"extracted_text", "content_fts",
 	} {
+		if postgres && table == "content_fts" {
+			continue
+		}
 		var count int
 		require.NoError(t, s.db.QueryRow("SELECT COUNT(*) FROM "+table).Scan(&count))
 		assert.Zero(t, count, table)
