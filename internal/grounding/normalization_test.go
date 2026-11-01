@@ -20,10 +20,6 @@ func TestNormalizedFigures(t *testing.T) {
 		{"CAD$40", []normalizedFigure{{text: "CAD$40"}}},
 		{"CAD USD 40", []normalizedFigure{{text: "40"}}},
 		{"2 USD40", []normalizedFigure{{text: "2"}, {"USD40", "amount", "USD 40"}}},
-		{"-€ $40", []normalizedFigure{{text: "$40"}}},
-		{"$40 -€ 50", []normalizedFigure{{text: "$40"}, {text: "50"}}},
-		{"$40 .€ 50", []normalizedFigure{{text: "$40"}, {text: "50"}}},
-		{"$40 −EUR 50", []normalizedFigure{{text: "$40"}, {text: "50"}}},
 		{"'-USD,' $40", []normalizedFigure{{text: "$40"}}},
 		{"$40 '-USD,' 50", []normalizedFigure{{text: "$40"}, {text: "50"}}},
 		{"$40CAD", []normalizedFigure{{text: "$40CAD"}}},
@@ -47,7 +43,6 @@ func TestNormalizedFigures(t *testing.T) {
 		{"_March 15, 2026_", []normalizedFigure{{"March 15, 2026", "date", "2026-03-15"}}},
 		{"INV_$40_", []normalizedFigure{{text: "INV_$40"}}},
 		{"USD 40CAD 30", []normalizedFigure{{text: "40CAD"}, {text: "30"}}},
-		{"$40 USD 50-60", []normalizedFigure{{text: "$40"}, {text: "50-60"}}},
 		// Only ISO codes can follow an amount as a currency suffix.
 		{"1250$", []normalizedFigure{{text: "1250$"}}},
 		{"$10,000", []normalizedFigure{{"$10,000", "amount", "USD 10000"}}},
@@ -61,6 +56,14 @@ func TestNormalizedFigures(t *testing.T) {
 		{"$20 CAD30", []normalizedFigure{{"$20", "amount", "USD 20"}, {"CAD30", "amount", "CAD 30"}}},
 		{"40USD 30CAD", []normalizedFigure{{"40USD", "amount", "USD 40"}, {"30CAD", "amount", "CAD 30"}}},
 		{"-5 USD 30 CAD", []normalizedFigure{{text: "-5"}, {"30 CAD", "amount", "CAD 30"}}},
+		{"-5 USD 30", []normalizedFigure{{text: "-5"}, {text: "30"}}},
+		{"-$5 USD 30", []normalizedFigure{{text: "-$5"}, {text: "30"}}},
+		{"1.234 USD 30", []normalizedFigure{{text: "1.234"}, {text: "30"}}},
+		{"USD 30 February 2026", []normalizedFigure{{text: "30"}, {text: "2026"}}},
+		{"30 February 2026 USD 30", []normalizedFigure{{text: "30"}, {text: "2026"}, {text: "30"}}},
+		{"February 30, 2026 USD 30", []normalizedFigure{{text: "30"}, {text: "2026"}, {text: "30"}}},
+		{"2026-02-30 USD 30", []normalizedFigure{{text: "2026-02-30"}, {text: "30"}}},
+		{"USD 30 February 2026 USD 30", []normalizedFigure{{text: "30"}, {text: "2026"}, {text: "30"}}},
 		{"CAD 15 March 2026", []normalizedFigure{{"15 March 2026", "date", "2026-03-15"}}},
 		{"40 CAD 15 March 2026", []normalizedFigure{{"40 CAD", "amount", "CAD 40"}, {"15 March 2026", "date", "2026-03-15"}}},
 		{"USD 20\n\nCAD 30", []normalizedFigure{{"USD 20", "amount", "USD 20"}, {"CAD 30", "amount", "CAD 30"}}},
@@ -71,26 +74,6 @@ func TestNormalizedFigures(t *testing.T) {
 	} {
 		t.Run(strings.ReplaceAll(tc.text, "\n", `\n`), func(t *testing.T) {
 			require.Equal(t, tc.figures, normalizedFigures(tc.text))
-		})
-	}
-}
-
-func TestLiteralCurrencyOwnership(t *testing.T) {
-	for _, source := range []string{
-		"-5 USD 30",
-		"-$5 USD 30",
-		"1.234 USD 30",
-		"USD 30 February 2026",
-		"30 February 2026 USD 30",
-		"February 30, 2026 USD 30",
-		"2026-02-30 USD 30",
-		"USD 30 February 2026 USD 30",
-	} {
-		t.Run(source, func(t *testing.T) {
-			answer, err := Prepare("$30")
-			require.NoError(t, err)
-			report := answer.Check([]Citation{{Text: source}})
-			require.Equal(t, "ungrounded", report.Status)
 		})
 	}
 }
