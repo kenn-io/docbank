@@ -2266,3 +2266,18 @@ CREATE INDEX photo_assets_display_override_file ON {{schema}}.photo_assets(displ
 CREATE INDEX photo_faces_version ON {{schema}}.photo_faces(content_version_id, face_id);
 CREATE INDEX person_candidate_faces_version ON {{schema}}.person_candidate_faces(content_version_id, candidate_id);
 CREATE INDEX photo_checkout_entries_version ON {{schema}}.photo_checkout_entries(version_id);
+
+-- Exact cleanup survives removal of logical blob membership.
+CREATE TABLE {{schema}}.gc_loose_retirements (
+    store_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.blob_stores(store_id),
+    blob_hash TEXT COLLATE "C" NOT NULL,
+    loose_encoding BIGINT NOT NULL,
+    PRIMARY KEY (store_id, blob_hash, loose_encoding)
+);
+
+CREATE TABLE {{schema}}.derivative_pack_purge_pending (
+    store_id TEXT COLLATE "C" NOT NULL,
+    pack_id TEXT COLLATE "C" NOT NULL,
+    PRIMARY KEY (store_id, pack_id),
+    FOREIGN KEY (store_id, pack_id) REFERENCES {{schema}}.blob_packs(store_id, pack_id) ON DELETE CASCADE
+);

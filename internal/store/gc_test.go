@@ -2090,9 +2090,9 @@ func TestRepackSelectionQueriesUseSummaryIndexes(t *testing.T) {
 		args      []any
 		wantIndex string
 	}{
-		{name: "dead", query: deadPackUsagePageSQL, args: []any{2},
+		{name: "dead", query: s.deadPackUsagePageSQL(), args: []any{2},
 			wantIndex: "blob_packs_dead_scan"},
-		{name: "sparse", query: sparseRepackScanPageSQL, args: []any{"", "", "", 2},
+		{name: "sparse", query: s.sparseRepackScanPageSQL(), args: []any{"", "", "", 2},
 			wantIndex: "blob_packs_live_scan"},
 	}
 	for _, test := range tests {

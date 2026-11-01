@@ -148,34 +148,12 @@ func (s *Store) refreshPhotoTimelineTx(ctx context.Context, tx *sql.Tx, nodeID i
 }
 
 func (s *Store) writeLooseDocumentLocationTx(ctx context.Context, tx *sql.Tx, hash string, physical BlobPhysical) error {
-	// Dead mappings can survive logical collection. Reintroducing their blob
-	// makes secondary mappings live, while a new primary loose receipt removes
-	// its old mapping. SQLite's insert/delete triggers maintain these summaries.
-	var packs [][2]string
-	if s.postgresSchema != "" {
-		if err := queryRows(ctx, tx, `SELECT store_id,pack_id FROM blob_pack_entries WHERE blob_hash=$1`, []any{hash}, func(rows *sql.Rows) error {
-			var pack [2]string
-			if err := rows.Scan(&pack[0], &pack[1]); err != nil {
-				return err
-			}
-			packs = append(packs, pack)
-			return nil
-		}); err != nil {
-			return err
-		}
+	packs, err := s.packSummaryKeysTx(ctx, tx, []string{hash})
+	if err != nil {
+		return err
 	}
 	if err := writeLooseLocationTx(ctx, tx, s.primaryStoreID, hash, physical); err != nil {
 		return err
 	}
-	for _, pack := range packs {
-		if _, err := tx.ExecContext(ctx, `UPDATE blob_packs SET
-			(live_entries,live_stored_bytes,live_raw_bytes,max_live_stored_len,max_live_raw_len) = (
-				SELECT count(*),COALESCE(sum(e.stored_len),0),COALESCE(sum(e.raw_len),0),COALESCE(max(e.stored_len),0),COALESCE(max(e.raw_len),0)
-				FROM blob_pack_entries e JOIN blobs b ON b.hash=e.blob_hash
-				WHERE e.store_id=$1 AND e.pack_id=$2)
-			WHERE store_id=$1 AND pack_id=$2`, pack[0], pack[1]); err != nil {
-			return err
-		}
-	}
-	return nil
+	return s.refreshPackSummariesTx(ctx, tx, packs)
 }
