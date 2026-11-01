@@ -25,7 +25,7 @@ var backendMaintenanceEffects = []backendMaintenance{
  blob_pack_summary_mapping_update blob_pack_summary_blob_delete blob_pack_summary_blob_insert`},
 	{"content promotion", "document_maintenance.go: promoteContentBlobTx", "documents contracts", `
  content_versions_promote_rendition_staging content_versions_revoke_derivative_purge`},
-	{"invalidation epochs", "document_events.go and retention_maintenance.go", "sources/retention contracts; worker publication remains unqualified", `
+	{"invalidation epochs", "document_events.go and retention_maintenance.go", "sources/retention/metadata-events contracts; people publication remains unqualified", `
  document_event_heads_deleted content_versions_invalidate_person_bindings`},
 	{"photo timeline", "document_maintenance.go: refreshPhotoTimelineTx", "documents/imports/sources/retention contracts; SQLite pending table is a trigger intermediate", `
  photo_timeline_refresh photo_timeline_file_insert photo_timeline_role_change
@@ -40,12 +40,13 @@ var backendMaintenanceEffects = []backendMaintenance{
  photo_xmp_unsettled_membership_insert photo_xmp_unsettled_authority_insert`},
 	{"audit deletion queue", "unported: metadata import/restore", "must queue affected photos when replacing authority/memberships", `
  photo_xmp_unsettled_membership_delete photo_xmp_unsettled_authority_delete`},
-	{"photo metadata publication", "unported: technical metadata and XMP writers", "must refresh timeline and export queue in the publishing transaction", `
+	{"photo metadata publication", "document_maintenance.go: refreshSourceMetadataPhotosTx", "metadata-events contracts; head deletion during recovery remains unqualified", `
  photo_timeline_technical_insert photo_timeline_technical_delete
  photo_timeline_head_insert photo_timeline_head_update
  photo_xmp_unsettled_technical_insert photo_xmp_unsettled_technical_delete
- photo_xmp_unsettled_head_insert photo_xmp_unsettled_head_update photo_xmp_unsettled_head_delete
- photo_xmp_unsettled_receipt_insert photo_xmp_unsettled_receipt_update`},
+ photo_xmp_unsettled_head_insert photo_xmp_unsettled_head_update`},
+	{"photo metadata recovery and XMP publication", "unported: source-head recovery and XMP writers", "must refresh export work when heads or receipts change", `
+ photo_xmp_unsettled_head_delete photo_xmp_unsettled_receipt_insert photo_xmp_unsettled_receipt_update`},
 	{"people candidates", "unported: person candidate publication", "must update the candidate-to-face projection in the publishing transaction", `
  person_candidate_faces_insert person_candidate_faces_update`},
 	{"lexical indexes", "unported: search", "must preserve eligible rows and index access; schema comparison excludes FTS virtual/shadow tables", `
@@ -60,10 +61,10 @@ var backendMaintenanceEffects = []backendMaintenance{
  processing_incarnations_immutable_update processing_incarnations_immutable_delete
  processing_consent_grants_immutable_update processing_consent_grants_immutable_delete
  processing_consent_revocations_immutable_update processing_consent_revocations_immutable_delete`},
+	{"metadata and event evidence", "source_metadata.go and document_events.go; INSERT-only publication grants", "metadata-events contracts; retained evidence is never rewritten", `
+ source_metadata_generations_immutable_update document_event_generations_immutable_update
+ document_events_immutable_update document_event_actors_immutable_update document_event_primaries_immutable_update`},
 	{"retained processing records", "no runtime UPDATE grant; producers unported", "enrollment validates retained rows; derivatives/retention may delete them, never rewrite them", `
- source_metadata_generations_immutable_update
- document_event_generations_immutable_update document_events_immutable_update
- document_event_actors_immutable_update document_event_primaries_immutable_update
  document_people_generations_immutable_update
  media_sources_immutable_update media_source_versions_immutable_update
  media_input_artifacts_immutable_update visual_preview_generations_immutable_update

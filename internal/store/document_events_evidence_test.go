@@ -35,7 +35,7 @@ func TestDocumentEventEvidenceLoadsExactBindingAndChangesWithMTime(t *testing.T)
 		if _, err := tx.ExecContext(t.Context(), `DROP TRIGGER provenance_immutable_update`); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(t.Context(), `UPDATE provenance SET original_mtime=? WHERE identity=?`,
+		_, err := tx.ExecContext(t.Context(), `UPDATE provenance SET original_mtime=$1 WHERE identity=$2`,
 			"2024-01-02T03:04:06Z", snapshot.Bindings[0].Binding.ProvenanceIdentity)
 		return err
 	}))
@@ -71,7 +71,7 @@ func TestDocumentEventEvidenceCorruptionCanBeFencedAsTerminalFailure(t *testing.
 		if _, err := tx.ExecContext(t.Context(), `DROP TRIGGER source_metadata_generations_immutable_update`); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(t.Context(), `UPDATE source_metadata_generations SET canonical_json=? WHERE generation_id=?`,
+		_, err := tx.ExecContext(t.Context(), `UPDATE source_metadata_generations SET canonical_json=$1 WHERE generation_id=$2`,
 			[]byte(`{"broken":`), generation.GenerationID)
 		return err
 	}))
@@ -118,7 +118,7 @@ func TestDocumentEventEvidenceRetainsCompleteDigestBeyondDerivationBound(t *test
 				return err
 			}
 			_, err := tx.ExecContext(t.Context(), `UPDATE provenance_version_bindings
-				SET basis_ref=? WHERE provenance_identity=? AND content_version_id=?`,
+				SET basis_ref=$1 WHERE provenance_identity=$2 AND content_version_id=$3`,
 				"changed beyond retained prefix", lastIdentity, target.ContentVersionID)
 			return err
 		}))
@@ -163,7 +163,7 @@ func TestDocumentEventEvidenceHashesSourceMetadataAsBlobBytes(t *testing.T) {
 					return err
 				}
 				_, err := tx.ExecContext(t.Context(), `UPDATE source_metadata_generations
-					SET canonical_json=CAST(? AS TEXT) WHERE generation_id=?`, string(raw), generation.GenerationID)
+					SET canonical_json=CAST($1 AS TEXT) WHERE generation_id=$2`, string(raw), generation.GenerationID)
 				return err
 			}))
 
@@ -177,9 +177,9 @@ func TestDocumentEventEvidenceHashesSourceMetadataAsBlobBytes(t *testing.T) {
 	}
 }
 
-func TestF10PublicationDirtiesOnlyWhenActiveHeadChanges(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkF10PublicationDirtiesOnlyWhenActiveHeadChanges(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	node, err := s.CreateFile(t.Context(), s.RootID(), "head.pdf", fakeHash("e83"), 8, "application/pdf")
 	require.NoError(t, err)
 	copyNode, err := s.CreateFile(t.Context(), s.RootID(), "head-copy.pdf", fakeHash("e83"), 8, "application/pdf")
@@ -200,7 +200,7 @@ func TestF10PublicationDirtiesOnlyWhenActiveHeadChanges(t *testing.T) {
 	}
 	beforePublicationTime, err := s.LoadDocumentEventEvidence(t.Context(), target)
 	require.NoError(t, err)
-	_, err = s.db.ExecContext(t.Context(), `UPDATE source_metadata_heads SET published_at=? WHERE source_sha256=?`,
+	_, err = s.db.ExecContext(t.Context(), `UPDATE source_metadata_heads SET published_at=$1 WHERE source_sha256=$2`,
 		"2099-01-01T00:00:00Z", node.BlobHash)
 	require.NoError(t, err)
 	afterPublicationTime, err := s.LoadDocumentEventEvidence(t.Context(), target)
@@ -218,9 +218,9 @@ func TestF10PublicationDirtiesOnlyWhenActiveHeadChanges(t *testing.T) {
 	require.Equal(t, int64(2), documentEventDirtyRevision(t, s, copyNode.CurrentVersionID))
 }
 
-func TestDocumentEventPublicationRequiresCapturedManifestDigest(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkDocumentEventPublicationRequiresCapturedManifestDigest(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	version, _ := ingestDocumentEventTarget(t, s, "publish.txt", "e84")
 	require.NoError(t, s.EnsureDocumentEventRecipe(t.Context(), DocumentEventsDeriverFingerprint))
 	target := requireDocumentEventTarget(t, s, version.ID)
@@ -254,7 +254,7 @@ func documentEventDirtyRevision(t *testing.T, s *Store, versionID string) int64 
 	t.Helper()
 	var revision int64
 	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COALESCE((SELECT revision
-		FROM document_event_dirty WHERE content_version_id=?),0)`, versionID).Scan(&revision))
+		FROM document_event_dirty WHERE content_version_id=$1),0)`, versionID).Scan(&revision))
 	return revision
 }
 
@@ -268,15 +268,15 @@ func documentEventTargetWithBindings(t *testing.T, count int) (*Store, DocumentE
 			ingestID := fmt.Sprintf("10000000-0000-4000-8000-%012x", index+1)
 			identity := fakeHash(fmt.Sprintf("%04x", index+1))
 			if _, err := tx.ExecContext(t.Context(), `INSERT INTO ingests(id,started_at,source_kind,source_desc)
-				VALUES(?,?,?,?)`, ingestID, "2024-01-02T03:04:05Z", "test", "bounded evidence"); err != nil {
+				VALUES($1,$2,$3,$4)`, ingestID, "2024-01-02T03:04:05Z", "test", "bounded evidence"); err != nil {
 				return err
 			}
 			if _, err := tx.ExecContext(t.Context(), `INSERT INTO provenance(identity,node_id,ingest_id,original_path)
-				VALUES(?,?,?,?)`, identity, node.ID, ingestID, fmt.Sprintf("/synthetic/%04d", index)); err != nil {
+				VALUES($1,$2,$3,$4)`, identity, node.ID, ingestID, fmt.Sprintf("/synthetic/%04d", index)); err != nil {
 				return err
 			}
 			if _, err := tx.ExecContext(t.Context(), `INSERT INTO provenance_version_bindings(
-				provenance_identity,content_version_id,observed_at,basis_ref) VALUES(?,?,?,?)`,
+				provenance_identity,content_version_id,observed_at,basis_ref) VALUES($1,$2,$3,$4)`,
 				identity, node.CurrentVersionID, "2024-01-02T03:04:05Z", "test"); err != nil {
 				return err
 			}

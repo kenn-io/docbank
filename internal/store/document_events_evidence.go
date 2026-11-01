@@ -95,7 +95,7 @@ func (s *Store) LoadDocumentEventEvidence(
 	ctx context.Context,
 	target DocumentEventTarget,
 ) (DocumentEventEvidenceSnapshot, error) {
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return DocumentEventEvidenceSnapshot{}, fmt.Errorf("starting document event evidence snapshot: %w", err)
 	}
@@ -118,7 +118,7 @@ func (s *Store) loadDocumentEventEvidenceTx(
 	decodeMetadata bool,
 ) (DocumentEventEvidenceSnapshot, error) {
 	version, err := scanContentVersion(tx.QueryRowContext(ctx,
-		`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id=?`,
+		`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id=$1`,
 		target.ContentVersionID))
 	if err != nil {
 		return DocumentEventEvidenceSnapshot{}, fmt.Errorf("reading document event evidence version: %w", err)
@@ -134,7 +134,7 @@ func (s *Store) loadDocumentEventEvidenceTx(
 	snapshot := DocumentEventEvidenceSnapshot{
 		VaultUID: vaultUID, Target: target, Bindings: []BoundProvenanceEventInput{},
 	}
-	metadataManifest, semanticErr, err := loadDocumentEventMetadataEvidence(ctx, tx, target.BlobHash, &snapshot, decodeMetadata)
+	metadataManifest, semanticErr, err := s.loadDocumentEventMetadataEvidence(ctx, tx, target.BlobHash, &snapshot, decodeMetadata)
 	if err != nil {
 		return DocumentEventEvidenceSnapshot{}, err
 	}
@@ -169,7 +169,7 @@ func (s *Store) loadDocumentEventEvidenceTx(
 	return snapshot, errors.Join(semanticErr, boundErr)
 }
 
-func loadDocumentEventMetadataEvidence(
+func (s *Store) loadDocumentEventMetadataEvidence(
 	ctx context.Context,
 	tx metadataQuerier,
 	blobHash string,
@@ -180,7 +180,7 @@ func loadDocumentEventMetadataEvidence(
 	err := tx.QueryRowContext(ctx, `SELECT g.generation_id,g.source_sha256,g.contract_version,
 		g.extractor_fingerprint,g.checksum,g.created_at
 		FROM source_metadata_heads h JOIN source_metadata_generations g
-		ON g.generation_id=h.generation_id WHERE h.source_sha256=?`, blobHash).Scan(
+		ON g.generation_id=h.generation_id WHERE h.source_sha256=$1`, blobHash).Scan(
 		&generation.GenerationID, &generation.SourceSHA256, &generation.ContractVersion,
 		&generation.ExtractorFingerprint, &generation.Checksum, &generation.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -201,9 +201,15 @@ func loadDocumentEventMetadataEvidence(
 	if !decodeMetadata {
 		return manifest, nil, nil
 	}
+	// SQLite may retain a TEXT-typed value in a BLOB column. Cast there so
+	// byte bounds and corruption detection include multibyte and NUL data.
+	payload := "CAST(canonical_json AS BLOB)"
+	if s.postgresSchema != "" {
+		payload = "canonical_json" // PostgreSQL enforces bytea storage.
+	}
 	var byteLength int64
-	if err := tx.QueryRowContext(ctx, `SELECT length(CAST(canonical_json AS BLOB))
-		FROM source_metadata_generations WHERE generation_id=?`, generation.GenerationID).Scan(&byteLength); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT length(`+payload+`)
+		FROM source_metadata_generations WHERE generation_id=$1`, generation.GenerationID).Scan(&byteLength); err != nil {
 		return documentEventMetadataManifest{}, nil, fmt.Errorf("reading source metadata length: %w", err)
 	}
 	if byteLength > document.MaxSourceMetadataEncodedBytes {
@@ -211,8 +217,8 @@ func loadDocumentEventMetadataEvidence(
 			generation.GenerationID, ErrDocumentEventEvidenceUnavailable), nil
 	}
 	var raw []byte
-	if err := tx.QueryRowContext(ctx, `SELECT CAST(canonical_json AS BLOB)
-		FROM source_metadata_generations WHERE generation_id=?`, generation.GenerationID).Scan(&raw); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT `+payload+`
+		FROM source_metadata_generations WHERE generation_id=$1`, generation.GenerationID).Scan(&raw); err != nil {
 		return documentEventMetadataManifest{}, nil, fmt.Errorf("reading source metadata evidence: %w", err)
 	}
 	snapshot.MetadataGeneration.CanonicalJSON = raw
@@ -235,7 +241,7 @@ func loadBoundDocumentEventEvidence(
 	rows, err := tx.QueryContext(ctx, `WITH RECURSIVE resolved_binding AS (
 		SELECT provenance_identity,content_version_id,observed_at,basis_ref,
 			provenance_identity AS claim_identity
-		FROM provenance_version_bindings WHERE content_version_id=?
+		FROM provenance_version_bindings WHERE content_version_id=$1
 		UNION ALL
 		SELECT b.provenance_identity,b.content_version_id,b.observed_at,b.basis_ref,p.identity
 		FROM resolved_binding b JOIN provenance p ON p.supersedes=b.claim_identity

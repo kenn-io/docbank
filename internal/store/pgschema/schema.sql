@@ -2287,3 +2287,21 @@ CREATE TABLE {{schema}}.derivative_pack_purge_pending (
     PRIMARY KEY (store_id, pack_id),
     FOREIGN KEY (store_id, pack_id) REFERENCES {{schema}}.blob_packs(store_id, pack_id) ON DELETE CASCADE
 );
+
+CREATE TABLE {{schema}}.photo_technical_metadata_state (
+    singleton         bigint PRIMARY KEY,
+    projection_recipe text COLLATE "C" NOT NULL
+);
+
+CREATE TABLE {{schema}}.document_event_builds (
+    operation_id text COLLATE "C" PRIMARY KEY, request_sha256 text COLLATE "C" NOT NULL, deriver_fingerprint text COLLATE "C" NOT NULL,
+    state text COLLATE "C" NOT NULL, target_epoch bigint NOT NULL,
+    scanned bigint NOT NULL, published bigint NOT NULL, unavailable bigint NOT NULL,
+    failed bigint NOT NULL, started_at text COLLATE "C" NOT NULL, updated_at text COLLATE "C" NOT NULL, finished_at text COLLATE "C"
+);
+
+CREATE TABLE {{schema}}.document_event_attempts (
+    content_version_id text COLLATE "C" PRIMARY KEY REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE,
+    input_epoch bigint NOT NULL, input_revision bigint NOT NULL, inputs_sha256 text COLLATE "C" NOT NULL,
+    state text COLLATE "C" NOT NULL, diagnostic_json bytea NOT NULL, attempted_at text COLLATE "C" NOT NULL
+);

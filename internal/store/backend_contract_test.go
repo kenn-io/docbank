@@ -119,6 +119,151 @@ var backendSuites = []backendSuite{
 	{name: "retained-face-metadata", postgres: "retained-data validation", scope: "Validates copied face metadata; does not qualify PostgreSQL detection/publication.", scenarios: []backendScenario{
 		{"PhotoFaceMetadata", nil, checkPhotoFaceMetadataPostgres},
 	}},
+	{name: "metadata-events", postgres: "native operations", scope: "Source metadata, photo technical projections and document-event publication, attempts and rebuilds.", scenarios: []backendScenario{
+		{"SourceMetadataPhotoEffects", nil, checkSourceMetadataPhotoEffectsPostgres},
+		{"MetadataEventSnapshots", nil, checkMetadataEventSnapshotsPostgres},
+		{"MetadataPublicationRollback", nil, checkMetadataPublicationRollbackPostgres},
+		{"SourceMetadataRepublicationSelectsRecordedGeneration", func(t *testing.T) {
+			t.Helper()
+			checkSourceMetadataRepublicationSelectsRecordedGeneration(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkSourceMetadataRepublicationSelectsRecordedGeneration(t, newPostgresQueryStore)
+		}},
+		{"HistoricalSourceMetadataOmitsCurrentAttachmentFacts", func(t *testing.T) {
+			t.Helper()
+			checkHistoricalSourceMetadataOmitsCurrentAttachmentFacts(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkHistoricalSourceMetadataOmitsCurrentAttachmentFacts(t, newPostgresQueryStore)
+		}},
+		{"TrashedSourceMetadataOmitsLiveAttachmentFacts", func(t *testing.T) {
+			t.Helper()
+			checkTrashedSourceMetadataOmitsLiveAttachmentFacts(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkTrashedSourceMetadataOmitsLiveAttachmentFacts(t, newPostgresQueryStore)
+		}},
+		{"NodeSourceMetadataViewKeepsAttachmentCoordinatesTogether", func(t *testing.T) {
+			t.Helper()
+			checkNodeSourceMetadataViewKeepsAttachmentCoordinatesTogether(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkNodeSourceMetadataViewKeepsAttachmentCoordinatesTogether(t, newPostgresQueryStore)
+		}},
+		{"MissingSourceMetadataTargetsAreFingerprintScopedAndResumable", func(t *testing.T) {
+			t.Helper()
+			checkMissingSourceMetadataTargetsAreFingerprintScopedAndResumable(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkMissingSourceMetadataTargetsAreFingerprintScopedAndResumable(t, newPostgresQueryStore)
+		}},
+		{"MissingSourceMetadataTargetsIncludeDistinctRetainedContent", func(t *testing.T) {
+			t.Helper()
+			checkMissingSourceMetadataTargetsIncludeDistinctRetainedContent(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkMissingSourceMetadataTargetsIncludeDistinctRetainedContent(t, newPostgresQueryStore)
+		}},
+		{"PhotoTechnicalMetadataRepublication", func(t *testing.T) {
+			t.Helper()
+			checkPhotoTechnicalMetadataRepublication(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPhotoTechnicalMetadataRepublication(t, newPostgresQueryStore)
+		}},
+		{"PhotoTechnicalMetadataVersionBinding", func(t *testing.T) {
+			t.Helper()
+			checkPhotoTechnicalMetadataVersionBinding(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPhotoTechnicalMetadataVersionBinding(t, newPostgresQueryStore)
+		}},
+		{"PublishDocumentEventsAcceptsCanonicalEmptyProjection", func(t *testing.T) {
+			t.Helper()
+			checkPublishDocumentEventsAcceptsCanonicalEmptyProjection(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPublishDocumentEventsAcceptsCanonicalEmptyProjection(t, newPostgresQueryStore)
+		}},
+		{"PublishDocumentEventsRetainsActorEvidenceInProjections", func(t *testing.T) {
+			t.Helper()
+			checkPublishDocumentEventsRetainsActorEvidenceInProjections(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPublishDocumentEventsRetainsActorEvidenceInProjections(t, newPostgresQueryStore)
+		}},
+		{"DocumentEventStateAndRecipeAreLazyAndIdempotent", func(t *testing.T) {
+			t.Helper()
+			checkDocumentEventStateAndRecipeAreLazyAndIdempotent(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentEventStateAndRecipeAreLazyAndIdempotent(t, newPostgresQueryStore)
+		}},
+		{"MissingDocumentEventTargetsUsesEpochRevisionAndUUIDCursor", func(t *testing.T) {
+			t.Helper()
+			checkMissingDocumentEventTargetsUsesEpochRevisionAndUUIDCursor(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkMissingDocumentEventTargetsUsesEpochRevisionAndUUIDCursor(t, newPostgresQueryStore)
+		}},
+		{"DocumentEventAttemptsFenceInputsAndStopTerminalRetry", func(t *testing.T) {
+			t.Helper()
+			checkDocumentEventAttemptsFenceInputsAndStopTerminalRetry(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentEventAttemptsFenceInputsAndStopTerminalRetry(t, newPostgresQueryStore)
+		}},
+		{"DocumentEventRebuildReceiptIsAtomicAndIdempotent", func(t *testing.T) {
+			t.Helper()
+			checkDocumentEventRebuildReceiptIsAtomicAndIdempotent(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentEventRebuildReceiptIsAtomicAndIdempotent(t, newPostgresQueryStore)
+		}},
+		{"DocumentEventBuildRefreshCountsCurrentTerminalAttempts", func(t *testing.T) {
+			t.Helper()
+			checkDocumentEventBuildRefreshCountsCurrentTerminalAttempts(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentEventBuildRefreshCountsCurrentTerminalAttempts(t, newPostgresQueryStore)
+		}},
+		{"F10PublicationDirtiesOnlyWhenActiveHeadChanges", func(t *testing.T) {
+			t.Helper()
+			checkF10PublicationDirtiesOnlyWhenActiveHeadChanges(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkF10PublicationDirtiesOnlyWhenActiveHeadChanges(t, newPostgresQueryStore)
+		}},
+		{"DocumentEventPublicationRequiresCapturedManifestDigest", func(t *testing.T) {
+			t.Helper()
+			checkDocumentEventPublicationRequiresCapturedManifestDigest(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentEventPublicationRequiresCapturedManifestDigest(t, newPostgresQueryStore)
+		}},
+		{"DocumentEventCoverageReportUsesOnlyFreshCurrentFileHeads", func(t *testing.T) {
+			t.Helper()
+			checkDocumentEventCoverageReportUsesOnlyFreshCurrentFileHeads(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentEventCoverageReportUsesOnlyFreshCurrentFileHeads(t, newPostgresQueryStore)
+		}},
+		{"DocumentEventCoverageReportsFreshTerminalStates", func(t *testing.T) {
+			t.Helper()
+			checkDocumentEventCoverageReportsFreshTerminalStates(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentEventCoverageReportsFreshTerminalStates(t, newPostgresQueryStore)
+		}},
+		{"OlderCompleteReceiptCanCoexistWithNewerPendingCurrentCoverage", func(t *testing.T) {
+			t.Helper()
+			checkOlderCompleteReceiptCanCoexistWithNewerPendingCurrentCoverage(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkOlderCompleteReceiptCanCoexistWithNewerPendingCurrentCoverage(t, newPostgresQueryStore)
+		}},
+	}},
 	{name: "processing-publication", postgres: "unqualified", scope: "Rendition, extraction, embedding, page, email and media producers remain unqualified; retained-state cleanup is covered above."},
 	{name: "photo-editing", postgres: "unqualified", scope: "Grouped import, XMP writing, authored metadata, people/face publication and photo review workflows remain unqualified."},
 	{name: "search", postgres: "unqualified", scope: "Lexical/vector search and query execution remain unqualified; matching metadata columns do not establish ranking or index parity."},
