@@ -312,17 +312,21 @@ func TestCleanupEmbeddingAuthorityPostgres(t *testing.T) {
 
 func TestCleanupSidecarHistoryPostgres(t *testing.T) {
 	t.Parallel()
-	source, _, raw := xmpSidecarPhoto(t)
+	source := newTestStore(t)
 	ctx := t.Context()
-	importXMP(t, source, raw.ID, PhotoAuthored{Rating: 4, Confirmed: PhotoConfirmedRating})
-	work, _, err := source.ClassifyPhotoXMP(ctx, raw.ID)
-	require.NoError(t, err)
-	sidecar := work.Sidecar.Node
-
+	asset := authoredPair(t, source)
+	raw := fileByRole(asset.Files, PhotoRoleRAW)
 	evidence, err := source.BeginIngest(ctx, "Embedded:agent", "Sidecar evidence")
 	require.NoError(t, err)
-	_, _, err = source.IngestFile(ctx, evidence, *sidecar.ParentID, sidecar.Name, sidecar.BlobHash, sidecar.Size, sidecar.MimeType, "/evidence/sidecar.xmp", "")
+	sidecar, err := source.IngestFileExact(ctx, evidence, source.RootID(), "capture.xmp", fakeHash("c3"), 4, "application/rdf+xml", "/evidence/sidecar.xmp", "")
 	require.NoError(t, err)
+	_, err = source.AttachPhotoFile(ctx, asset.ID, asset.Revision, sidecar.ID, PhotoRoleSidecar, &raw.ID)
+	require.NoError(t, err)
+	importXMP(t, source, raw.ID, PhotoAuthored{Rating: 4, Confirmed: PhotoConfirmedRating})
+	facts, err := source.NodeProvenance(ctx, sidecar.ID, 10, 0)
+	require.NoError(t, err)
+	require.Len(t, facts.Items, 1)
+	require.Equal(t, "/evidence/sidecar.xmp", facts.Items[0].OriginalPath)
 	sidecar, err = source.NodeByID(ctx, sidecar.ID)
 	require.NoError(t, err)
 	current, _, err := source.ReplaceContent(ctx, sidecar.ID, sidecar.Revision, fakeHash("e5"), 50, "application/rdf+xml")
