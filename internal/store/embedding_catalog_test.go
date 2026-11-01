@@ -992,7 +992,7 @@ func embeddingSetFixture(
 		panic(err)
 	}
 	var sourceChecksum string
-	if err := s.db.QueryRow(`SELECT blob_hash FROM content_versions WHERE version_id=?`, versionID).Scan(&sourceChecksum); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT blob_hash FROM content_versions WHERE version_id=?`, versionID).Scan(&sourceChecksum); err != nil {
 		panic(err)
 	}
 	_, fingerprints, err := document.CanonicalProfile(profile)
@@ -1922,7 +1922,7 @@ func newImageEmbeddingCatalogFixture(t *testing.T) imageEmbeddingCatalogFixture 
 	require.NoError(t, err)
 	preview, err := s.PublishVisualPreview(t.Context(), version, readyVisualPreviewWithRecipe(t, node.BlobHash, testSHA256([]byte("grid-coverage")), 9, recipe), &BlobPhysical{Encoding: looseEncodingRaw, StoredBytes: 9})
 	require.NoError(t, err)
-	record := embeddingSetFixture(s, version, profile.Fingerprint, document.EmbeddingInputOriginalFile, bindingID, "")
+	record := embeddingSetFixture(t.Context(), s, version, profile.Fingerprint, document.EmbeddingInputOriginalFile, bindingID, "")
 	descriptor := record.VectorSpace.Descriptor
 	descriptor.InputKinds = []document.EmbeddingInputKind{document.EmbeddingInputImage}
 	descriptor, err = document.NewEmbeddingDescriptor(descriptor)
@@ -1985,7 +1985,7 @@ func (f imageEmbeddingCatalogFixture) publish(t *testing.T, values ...[]float64)
 	payload, checksum, err := document.EncodeVectorSetV1(vector)
 	require.NoError(t, err)
 	payloadHash := testSHA256(payload)
-	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error { return s.EnsureBlobTx(tx, payloadHash, int64(len(payload))) }))
+	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error { return s.EnsureBlobTx(t.Context(), tx, payloadHash, int64(len(payload))) }))
 	record := EmbeddingSetRecord{ID: testSHA256([]byte("image-vector-set" + version + bindingID)), VaultID: s.VaultID(), BindingID: bindingID, InputKind: document.EmbeddingInputImage, ContentVersionID: version, ProcessingProfileFingerprint: profile.Fingerprint, EmbeddingInputFingerprint: work.EmbeddingInputFingerprint, VectorSpace: EmbeddingVectorSpaceRecord{ID: work.VectorSpaceID, ContractVersion: EmbeddingVectorSpaceContractV1, Descriptor: descriptor}, InputGeneration: work.InputGeneration, VectorSet: EmbeddingVectorSetRecord{ID: checksum, ContractVersion: EmbeddingVectorSetContractV1, VectorSpaceID: work.VectorSpaceID, PayloadBlobHash: payloadHash, PayloadChecksum: checksum, Payload: payload}, CreatedAt: embeddingCatalogTime}
 	require.NoError(t, s.StageEmbeddingSetWithLease(t.Context(), record, claim.AttemptID, claim.Epoch, time.Now()))
 	prior, err := s.AuthorizeProviderOperation(t.Context(), consent)
@@ -2026,8 +2026,8 @@ func TestEmbeddingReconciliationRestoresPendingImageGenerationInMixedProfile(t *
 		return ensureProcessingProfileTx(t.Context(), tx, f.request.Profile)
 	}))
 	var secondVersion string
-	require.NoError(t, f.s.db.QueryRow(`SELECT version_id FROM content_versions WHERE blob_hash=? ORDER BY version_id LIMIT 1`, catalogSourceHash).Scan(&secondVersion))
-	record := embeddingSetFixture(f.s, secondVersion, f.request.Profile.Fingerprint, document.EmbeddingInputOriginalFile, "required", "")
+	require.NoError(t, f.s.db.QueryRowContext(t.Context(), `SELECT version_id FROM content_versions WHERE blob_hash=? ORDER BY version_id LIMIT 1`, catalogSourceHash).Scan(&secondVersion))
+	record := embeddingSetFixture(t.Context(), f.s, secondVersion, f.request.Profile.Fingerprint, document.EmbeddingInputOriginalFile, "required", "")
 	require.NoError(t, f.s.StageEmbeddingSet(t.Context(), record))
 	require.NoError(t, f.s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
 		FencingToken: 1,
@@ -2045,7 +2045,7 @@ func TestEmbeddingReconciliationRestoresPendingImageGenerationInMixedProfile(t *
 	_, err = f.s.EnqueueEmbeddingJob(t.Context(), f.request)
 	require.NoError(t, err)
 	// Restore retains pending generations but omits job rows.
-	_, err = f.s.db.Exec(`DELETE FROM embedding_jobs`)
+	_, err = f.s.db.ExecContext(t.Context(), `DELETE FROM embedding_jobs`)
 	require.NoError(t, err)
 	_, err = f.s.ReconcileEmbeddingJobs(t.Context(), EmbeddingReconcileRequest{
 		ImageProfiles: []ProcessingProfileRecord{f.request.Profile},
@@ -2059,7 +2059,7 @@ func TestEmbeddingReconciliationRestoresPendingImageGenerationInMixedProfile(t *
 	})
 	require.NoError(t, err)
 	var imageJobs, originalJobs int
-	require.NoError(t, f.s.db.QueryRow(`SELECT
+	require.NoError(t, f.s.db.QueryRowContext(t.Context(), `SELECT
 		(SELECT COUNT(*) FROM embedding_jobs WHERE content_version_id=? AND binding_id='optional' AND input_kind='image'),
 		(SELECT COUNT(*) FROM embedding_jobs WHERE content_version_id=? AND binding_id='required')`,
 		f.node.CurrentVersionID, f.node.CurrentVersionID).Scan(&imageJobs, &originalJobs))
@@ -2091,7 +2091,7 @@ func TestEmbeddingReconciliationPreparesEachImageOnce(t *testing.T) {
 					require.NoError(t, err)
 				} else {
 					// Job rows would also suppress reopening; only the published heads may.
-					_, err := f.s.db.Exec(`DELETE FROM embedding_jobs`)
+					_, err := f.s.db.ExecContext(t.Context(), `DELETE FROM embedding_jobs`)
 					require.NoError(t, err)
 				}
 			}

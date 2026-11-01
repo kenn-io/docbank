@@ -845,7 +845,7 @@ func TestProcessingMissingImageBindingCompletesOptionalAndKeepsRequiredPartial(t
 			require.NoError(t, err)
 			require.Equal(t, expectedState, status.State)
 
-			restarted, err := NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs,
+			restarted, err := NewService(t.Context(), ServiceConfig{Catalog: f.catalog, Blobs: f.blobs,
 				Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(),
 				Principal: "synthetic-operator", Scope: "document-processing"})
 			require.NoError(t, err)

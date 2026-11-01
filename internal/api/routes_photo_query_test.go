@@ -821,11 +821,11 @@ func photoImageHTTPProfilesFixture(t *testing.T, providers map[string]document.E
 		gate := api.NewOperationGate()
 		deps.Gate = gate
 		var err error
-		service, err = processing.NewService(processing.ServiceConfig{Catalog: deps.Store, Blobs: deps.Blobs, Gate: gate, SpoolDirectory: filepath.Join(deps.VaultRoot, "blobs", "tmp"), Profiles: profiles})
+		service, err = processing.NewService(t.Context(), processing.ServiceConfig{Catalog: deps.Store, Blobs: deps.Blobs, Gate: gate, SpoolDirectory: filepath.Join(deps.VaultRoot, "blobs", "tmp"), Profiles: profiles})
 		require.NoError(t, err)
 		deps.Processing = service
 	})
-	hash, size, err := catalog.Blobs.Write(bytes.NewReader(mediatest.JPEG(24, 24, color.White)))
+	hash, size, err := catalog.Blobs.WriteContext(t.Context(), bytes.NewReader(mediatest.JPEG(24, 24, color.White)))
 	require.NoError(t, err)
 	recipe, err := processing.VisualPreviewRecipeForSize("grid")
 	require.NoError(t, err)
@@ -900,7 +900,7 @@ func TestPhotoQueryFallsBackToMetadataWhenProviderStallsPastBuildDeadline(t *tes
 		stalled := &stalledPhotoImageProvider{EmbeddingProvider: provider}
 		ts, catalog, _ := photoImageHTTPProfilesFixture(t, map[string]document.EmbeddingProvider{"private": stalled}, []string{"sunset.jpg", "harbor.jpg"})
 		ts.Close() // Exercise the handler directly so the fake clock can advance.
-		request := httptest.NewRequest(http.MethodPost, "http://localhost/api/v1/photos/assets/query", strings.NewReader(fmt.Sprintf(`{"query":{"mode":%q,"text":"sunset"}}`, mode)))
+		request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://localhost/api/v1/photos/assets/query", strings.NewReader(fmt.Sprintf(`{"query":{"mode":%q,"text":"sunset"}}`, mode)))
 		request.Header.Set("X-Api-Key", testAPIKey)
 		request.Header.Set("Content-Type", "application/json")
 		response := httptest.NewRecorder()
@@ -923,7 +923,7 @@ func TestPhotoFallbackCursorSurvivesProviderRecovery(t *testing.T) {
 	t.Parallel()
 	unavailable := new(atomic.Bool)
 	ts, catalog, _ := photoImageHTTPFixture(t, newProcessingTestEmbeddingProvider(t), []string{"sunset-00.jpg"}, unavailable)
-	hash, size, err := catalog.Blobs.Write(bytes.NewReader(mediatest.JPEG(24, 24, color.White)))
+	hash, size, err := catalog.Blobs.WriteContext(t.Context(), bytes.NewReader(mediatest.JPEG(24, 24, color.White)))
 	require.NoError(t, err)
 	for i := 1; i < 51; i++ {
 		name := fmt.Sprintf("sunset-%02d.jpg", i)
