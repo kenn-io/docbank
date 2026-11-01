@@ -13293,6 +13293,10 @@ components:
           items:
             $ref: "#/components/schemas/PhotoAsset"
           type: array
+        proposals:
+          items:
+            $ref: "#/components/schemas/PhotoBestShotProposal"
+          type: array
         suggestions:
           items:
             $ref: "#/components/schemas/PhotoSuggestion"
@@ -13407,6 +13411,58 @@ components:
         - values
       type: object
       x-go-type: store.PhotoAuthoredSnapshot
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
+    PhotoBestShotProposal:
+      additionalProperties: false
+      properties:
+        asset_id:
+          type: string
+        confidence:
+          format: double
+          maximum: 1
+          minimum: 0
+          type: number
+        flag:
+          enum:
+            - pick
+            - reject
+          type: string
+        rationale:
+          type: string
+      required:
+        - asset_id
+        - flag
+        - rationale
+        - confidence
+      type: object
+      x-go-type: document.PhotoBestShotProposal
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
+    PhotoBestShotResponse:
+      additionalProperties: false
+      properties:
+        asset_id:
+          format: uuid
+          type: string
+        flag:
+          enum:
+            - pick
+            - reject
+          type: string
+        response:
+          enum:
+            - accepted
+            - dismissed
+          type: string
+      required:
+        - asset_id
+        - flag
+        - response
+      type: object
+      x-go-type: store.PhotoBestShotResponse
       x-go-type-import:
         path: go.kenn.io/docbank/internal/store
         name: store
@@ -13663,6 +13719,11 @@ components:
         quality:
           additionalProperties: false
           properties:
+            face_reports:
+              items:
+                $ref: "#/components/schemas/PhotoFaceReport"
+              maxItems: 1000
+              type: array
             signals:
               anyOf:
                 - $ref: "#/components/schemas/PhotoQualitySignals"
@@ -14342,6 +14403,57 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/store
         name: store
+    PhotoFaceReport:
+      additionalProperties: false
+      properties:
+        eyes_open:
+          type:
+            - boolean
+            - "null"
+        face_id:
+          type: string
+        facing:
+          format: double
+          type:
+            - number
+            - "null"
+        grade:
+          enum:
+            - ""
+            - red
+            - yellow
+            - green
+          type: string
+        light:
+          format: double
+          type:
+            - number
+            - "null"
+        prominence:
+          format: double
+          type: number
+        sharpness:
+          format: double
+          type:
+            - number
+            - "null"
+        smile:
+          type:
+            - boolean
+            - "null"
+      required:
+        - face_id
+        - sharpness
+        - light
+        - facing
+        - prominence
+        - eyes_open
+        - smile
+      type: object
+      x-go-type: document.PhotoFaceReport
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     PhotoFaceResult:
       additionalProperties: false
       properties:
@@ -15245,6 +15357,10 @@ components:
           maxItems: 500
           minItems: 2
           type: array
+        proposals:
+          items:
+            $ref: "#/components/schemas/PhotoBestShotProposal"
+          type: array
         representative_id:
           format: uuid
           type: string
@@ -15291,6 +15407,11 @@ components:
           type: string
         hidden:
           type: boolean
+        responses:
+          items:
+            $ref: "#/components/schemas/PhotoBestShotResponse"
+          maxItems: 500
+          type: array
         selected_ids:
           items:
             type: string

@@ -5845,6 +5845,25 @@ export interface PhotoAuthoredEditRequest {
   targets: PhotoAuthoredEditTarget[];
 }
 
+export type PhotoBestShotProposalFlag = typeof PhotoBestShotProposalFlag[keyof typeof PhotoBestShotProposalFlag];
+
+
+export const PhotoBestShotProposalFlag = {
+  pick: 'pick',
+  reject: 'reject',
+} as const;
+
+export interface PhotoBestShotProposal {
+  asset_id: string;
+  /**
+     * @minimum 0
+     * @maximum 1
+     */
+  confidence: number;
+  flag: PhotoBestShotProposalFlag;
+  rationale: string;
+}
+
 export interface PhotoKeywordNode {
   after_revision: number;
   node_id: number;
@@ -5965,6 +5984,7 @@ export interface PhotoAuthoredPreparation {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   assets: PhotoAsset[];
+  proposals?: PhotoBestShotProposal[];
   suggestions?: PhotoSuggestion[];
   targets: PhotoPreparedTarget[];
 }
@@ -5980,6 +6000,28 @@ export interface PhotoAuthoredPrepareRequest {
   skip_unavailable?: boolean;
   /** Prepare up to 2,000 live files for a complete stack decision. */
   stack?: boolean;
+}
+
+export type PhotoBestShotResponseFlag = typeof PhotoBestShotResponseFlag[keyof typeof PhotoBestShotResponseFlag];
+
+
+export const PhotoBestShotResponseFlag = {
+  pick: 'pick',
+  reject: 'reject',
+} as const;
+
+export type PhotoBestShotResponseResponse = typeof PhotoBestShotResponseResponse[keyof typeof PhotoBestShotResponseResponse];
+
+
+export const PhotoBestShotResponseResponse = {
+  accepted: 'accepted',
+  dismissed: 'dismissed',
+} as const;
+
+export interface PhotoBestShotResponse {
+  asset_id: string;
+  flag: PhotoBestShotResponseFlag;
+  response: PhotoBestShotResponseResponse;
 }
 
 export interface WorkspaceFacetValue {
@@ -6059,6 +6101,32 @@ export interface PhotoPreviewSlots {
   large: PhotoPreviewSlot;
 }
 
+export type PhotoFaceReportGrade = typeof PhotoFaceReportGrade[keyof typeof PhotoFaceReportGrade];
+
+
+export const PhotoFaceReportGrade = {
+  '': '',
+  red: 'red',
+  yellow: 'yellow',
+  green: 'green',
+} as const;
+
+export interface PhotoFaceReport {
+  /** @nullable */
+  eyes_open: boolean | null;
+  face_id: string;
+  /** @nullable */
+  facing: number | null;
+  grade?: PhotoFaceReportGrade;
+  /** @nullable */
+  light: number | null;
+  prominence: number;
+  /** @nullable */
+  sharpness: number | null;
+  /** @nullable */
+  smile: boolean | null;
+}
+
 export interface PhotoQualitySignals {
   /**
      * @minimum 0
@@ -6122,6 +6190,8 @@ export const PhotoBrowseRowRotation = {
 } as const;
 
 export type PhotoBrowseRowQuality = {
+  /** @maxItems 1000 */
+  face_reports?: PhotoFaceReport[];
   signals: PhotoQualitySignals | null;
   state: PhotoBrowseRowQualityState;
 };
@@ -6232,6 +6302,7 @@ export interface PhotoStack {
      * @maxItems 500
      */
   asset_ids: string[];
+  proposals?: PhotoBestShotProposal[];
   representative_id: string;
 }
 
@@ -6723,6 +6794,8 @@ export interface PhotoStackDecisionRequest {
   current_id: string;
   decision: PhotoStackDecisionRequestDecision;
   hidden?: boolean;
+  /** @maxItems 500 */
+  responses?: PhotoBestShotResponse[];
   /** @maxItems 500 */
   selected_ids?: string[];
   /**

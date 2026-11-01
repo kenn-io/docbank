@@ -12,8 +12,8 @@ func TestPhotoQualityScalarBounds(t *testing.T) {
 	s := newTestStore(t)
 	node := browsePhotoNode(t, s, "measured.jpg", browseHash("measured-bounds"), "image/jpeg")
 	scores := document.PhotoQualitySignals{Focus: 0.704, Blur: 0.296, Brightness: 0.5, ColorRed: 0.4, ColorGreen: 0.5, ColorBlue: 0.6, Framing: 0.7, Aesthetics: 0.8}
-	require.NoError(t, s.PublishPhotoQualitySignals(t.Context(), qualityTarget(node), scores))
-	require.NoError(t, s.PublishPhotoQualitySignals(t.Context(), qualityTarget(node), document.PhotoQualitySignals{Focus: 1}))
+	require.NoError(t, s.PublishPhotoQualitySignals(t.Context(), qualityTarget(node), scores, ""))
+	require.NoError(t, s.PublishPhotoQualitySignals(t.Context(), qualityTarget(node), document.PhotoQualitySignals{Focus: 1}, ""))
 	browsePhotoNode(t, s, "pending.jpg", browseHash("pending-bounds"), "image/jpeg")
 	page := browsePhotoPage(t, s, `{"filters":{"focus_max":"0.704"}}`)
 	require.Len(t, page.Items, 1)
@@ -52,7 +52,7 @@ func TestPhotoQualityPendingDisplayOwnership(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
 	jpg := browsePhotoNode(t, s, "ready.jpg", browseHash("ready-ownership"), "image/jpeg")
-	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(jpg), document.PhotoQualitySignals{Focus: 0.1}))
+	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(jpg), document.PhotoQualitySignals{Focus: 0.1}, ""))
 	browsePhotoNode(t, s, "ordinary.txt", browseHash("quality-document"), "text/plain")
 	browsePhotoNode(t, s, "video.mp4", browseHash("quality-video"), "video/mp4")
 	excluded := browsePhotoNode(t, s, "excluded-quality.jpg", browseHash("excluded-quality"), "image/jpeg")
@@ -95,8 +95,8 @@ func TestPhotoQualityPendingDisplayOwnership(t *testing.T) {
 		}
 	}
 	check([]int64{missing.ID, unsupported.ID, missingMIME.ID, genericMIME.ID}, []int64{jpg.ID})
-	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(missingMIME), document.PhotoQualitySignals{}))
-	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(genericMIME), document.PhotoQualitySignals{}))
+	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(missingMIME), document.PhotoQualitySignals{}, ""))
+	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(genericMIME), document.PhotoQualitySignals{}, ""))
 	check([]int64{missing.ID, unsupported.ID}, []int64{jpg.ID, missingMIME.ID, genericMIME.ID})
 }
 
@@ -114,7 +114,7 @@ func TestPhotoQualityFiltersFollowMetadataVersion(t *testing.T) {
 	require.NoError(t, err)
 	asset, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, jpeg.ID, PhotoRoleImage, nil)
 	require.NoError(t, err)
-	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(raw), document.PhotoQualitySignals{Focus: 0.8}))
+	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(raw), document.PhotoQualitySignals{Focus: 0.8}, ""))
 	_, err = s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, new(fileByRole(asset.Files, PhotoRoleImage).ID))
 	require.NoError(t, err)
 	snapshot, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: snapshotTestQuery(t, `{"filters":{"focus_min":"0.7"}}`)})
@@ -136,8 +136,8 @@ func TestPhotoQualityUnavailableIsTerminal(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	node := browsePhotoNode(t, s, "undecodable.jpg", browseHash("undecodable-quality"), "image/jpeg")
-	require.NoError(t, s.PublishPhotoQualityUnavailable(t.Context(), qualityTarget(node)))
-	require.NoError(t, s.PublishPhotoQualitySignals(t.Context(), qualityTarget(node), document.PhotoQualitySignals{Focus: 1}))
+	require.NoError(t, s.PublishPhotoQualityUnavailable(t.Context(), qualityTarget(node), ""))
+	require.NoError(t, s.PublishPhotoQualitySignals(t.Context(), qualityTarget(node), document.PhotoQualitySignals{Focus: 1}, ""))
 	page := browsePhotoPage(t, s, `{}`)
 	require.Len(t, page.Items, 1)
 	require.Nil(t, page.Items[0].Quality)

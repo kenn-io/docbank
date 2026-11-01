@@ -3358,3 +3358,27 @@ it("retains the loaded prefix when the old tail moves to the front", async () =>
   expect(photos.items.map((row) => row.asset_id)).toEqual(ordered.map((row) => row.asset_id));
   photos.dispose();
 });
+
+it.each([0, 2])(
+  "refreshes stack projections when flag confirmation changes from %s",
+  async (confirmed) => {
+    const photos = new Photos("scoped", vi.fn());
+    photos.items = [
+      { ...photo(1), stack: { asset_ids: ["photo-1", "photo-2"], representative_id: "photo-1" } },
+    ];
+    const before = preparedPhoto(1);
+    const result = photos.metadataChanged({
+      receipt_id: "confirmation",
+      before: [{ ...before, values: { ...before.values, confirmed_fields: confirmed } }],
+      after: [
+        {
+          ...before,
+          revision: 2,
+          values: { ...before.values, confirmed_fields: confirmed === 0 ? 2 : 0 },
+        },
+      ],
+    });
+    expect(result.stacksUnresolved).toBe(true);
+    photos.dispose();
+  },
+);

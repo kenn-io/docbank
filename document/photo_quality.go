@@ -8,23 +8,29 @@ import (
 )
 
 const (
-	photoQualityRevision     = "v2"
-	PhotoQualityFocusCeiling = 0.15
+	photoQualityRevision      = "v3"
+	PhotoQualityFaceMinPixels = 8
+	PhotoQualityFocusCeiling  = 0.15
 )
 
 // PhotoQualitySignals measures preview pixels on a calibrated 0..1 scale.
 type PhotoQualitySignals struct {
-	Focus      float64 `json:"focus" minimum:"0" maximum:"1"`
-	Blur       float64 `json:"blur" minimum:"0" maximum:"1"`
-	Brightness float64 `json:"brightness" minimum:"0" maximum:"1"`
-	ColorRed   float64 `json:"color_red" minimum:"0" maximum:"1"`
-	ColorGreen float64 `json:"color_green" minimum:"0" maximum:"1"`
-	ColorBlue  float64 `json:"color_blue" minimum:"0" maximum:"1"`
-	Framing    float64 `json:"framing" minimum:"0" maximum:"1"`
-	Aesthetics float64 `json:"aesthetics" minimum:"0" maximum:"1"`
+	FaceReports []PhotoFaceReport `json:"-"` // Exposed by API PhotoQuality.face_reports.
+	Focus       float64           `json:"focus" minimum:"0" maximum:"1"`
+	Blur        float64           `json:"blur" minimum:"0" maximum:"1"`
+	Brightness  float64           `json:"brightness" minimum:"0" maximum:"1"`
+	ColorRed    float64           `json:"color_red" minimum:"0" maximum:"1"`
+	ColorGreen  float64           `json:"color_green" minimum:"0" maximum:"1"`
+	ColorBlue   float64           `json:"color_blue" minimum:"0" maximum:"1"`
+	Framing     float64           `json:"framing" minimum:"0" maximum:"1"`
+	Aesthetics  float64           `json:"aesthetics" minimum:"0" maximum:"1"`
 }
 
 func ValidatePhotoQualitySignals(s PhotoQualitySignals) error {
+	if err := ValidatePhotoFaceReports(s.FaceReports); err != nil {
+		return err
+	}
+
 	for _, v := range []float64{
 		s.Focus, s.Blur, s.Brightness, s.ColorRed, s.ColorGreen, s.ColorBlue, s.Framing, s.Aesthetics,
 	} {
@@ -32,6 +38,21 @@ func ValidatePhotoQualitySignals(s PhotoQualitySignals) error {
 			return errors.New("photo quality scores must be finite and within 0..1")
 		}
 	}
+	return nil
+}
+
+func ValidatePhotoFaceReports(reports []PhotoFaceReport) error {
+	if len(reports) > MaxPhotoRecordsPerVersion {
+		return errors.New("too many face reports")
+	}
+	for _, r := range reports {
+		for _, v := range []*float64{r.Sharpness, r.Light, r.Facing, &r.Prominence} {
+			if v != nil && (math.IsNaN(*v) || math.IsInf(*v, 0) || *v < 0 || *v > 1) {
+				return errors.New("invalid face report score")
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -51,7 +72,7 @@ var photoQualityFingerprints = sync.OnceValues(func() (PhotoQualityFingerprints,
 	if err != nil {
 		return PhotoQualityFingerprints{}, fmt.Errorf("fingerprinting photo quality grid recipe: %w", err)
 	}
-	evaluator := sha256Hex(fmt.Appendf(nil, "photo-quality:%s:16x16:catmull-rom:%s:focus-ceiling=%g:%s", photoQualityRevision, xImageDrawVersion, PhotoQualityFocusCeiling, grid))
+	evaluator := sha256Hex(fmt.Appendf(nil, "photo-quality:%s:16x16:catmull-rom:%s:focus-ceiling=%g:face-min-edge=%d:face-light=balanced:prominence=box-area:face-inputs=json-array-v1:%s", photoQualityRevision, xImageDrawVersion, PhotoQualityFocusCeiling, PhotoQualityFaceMinPixels, grid))
 	return PhotoQualityFingerprints{GridRecipe: grid, Evaluator: evaluator}, nil
 })
 
