@@ -254,6 +254,8 @@ var postgresEnrollmentCatalogs = []string{
 	"mailbox_jobs",
 	"media_operations",
 	"node_tags",
+	"node_supersessions",
+	"node_effective_windows",
 	"packages",
 	"person_candidate_faces",
 	"person_external_identities",

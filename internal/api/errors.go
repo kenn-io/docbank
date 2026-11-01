@@ -115,6 +115,7 @@ var storeErrCodes = []struct {
 	{store.ErrInvalidPerson, http.StatusUnprocessableEntity, "invalid_person"},
 	{store.ErrCustodianConflict, http.StatusConflict, "custodian_conflict"},
 	{store.ErrProvenanceMismatch, http.StatusConflict, "provenance_mismatch"},
+	{store.ErrInvalidSupersession, http.StatusUnprocessableEntity, "invalid_supersession"},
 	{store.ErrInvalidProvenanceTime, http.StatusUnprocessableEntity, "invalid_provenance_time"},
 	{store.ErrNotDir, http.StatusUnprocessableEntity, "not_dir"},
 	{store.ErrNotFile, http.StatusUnprocessableEntity, "not_file"},
