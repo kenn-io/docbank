@@ -868,6 +868,32 @@
     if (selectedStack) await editor.prepareStack(selectedStack.asset_ids, photos.hidden);
   }
 
+  async function respondBestShots(response: "accepted" | "dismissed") {
+    if (!selectedStack?.proposals?.length) return;
+    const members = new Set(selectedStack.asset_ids);
+    await editor.decideStack(
+      {
+        hidden: photos.hidden,
+        asset_ids: selectedStack.asset_ids,
+        burst_gap_seconds: photos.burstGapSeconds,
+        decision: "all",
+        current_id: selectedStack.asset_ids[0]!,
+        responses: (selectedStack.proposals ?? []).map((p) => ({
+          asset_id: p.asset_id,
+          flag: p.flag,
+          response,
+        })),
+      },
+      metadataRefresh,
+      {
+        observed: shown.filter(
+          (row): row is PhotoBrowseRow => "display_file_id" in row && members.has(row.asset_id),
+        ),
+      },
+    );
+    if (!editor.error && selectedStack)
+      await editor.prepareStack(selectedStack.asset_ids, photos.hidden, true);
+  }
   async function decideStack(decision: "all" | "selected" | "representative") {
     if (!selectedStack || editor.busy || editor.loading || editor.stackLoading) return;
     const members = new Set(selectedStack.asset_ids);
@@ -1485,6 +1511,24 @@
               {:else}
                 {#if shown.length || !mapMode}
                   {#key photos.query}
+                    {#if selectedStack?.proposals?.length}<div class="best-shots-review">
+                        <Button
+                          size="sm"
+                          disabled={editor.busy ||
+                            editor.loading ||
+                            editor.stackLoading ||
+                            editor.conflict}
+                          onclick={() => void respondBestShots("accepted")}>Accept all</Button
+                        >
+                        <Button
+                          size="sm"
+                          disabled={editor.busy ||
+                            editor.loading ||
+                            editor.stackLoading ||
+                            editor.conflict}
+                          onclick={() => void respondBestShots("dismissed")}>Dismiss all</Button
+                        >
+                      </div>{/if}
                     <PhotoGrid
                       bind:this={grid}
                       bind:scrollTop={photos.scrollTop}
@@ -1851,6 +1895,12 @@
 {/if}
 
 <style>
+  .best-shots-review {
+    display: flex;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-4);
+    background: var(--bg-inset);
+  }
   .photo-layout {
     display: flex;
     flex: 1;

@@ -7,6 +7,8 @@ import type {
 
 import type { PhotoAuthoredEditor } from "./photoAuthored.svelte.js";
 
+const confirmedFlag = 2;
+
 export type { PhotoStack };
 export type PhotoBrowseRow = WirePhotoBrowseRow & { stack?: PhotoStack };
 
@@ -50,11 +52,16 @@ export function photoStacksChanged(
   const assets = new Map(rows.map((row) => [row.display_file_id, row.asset_id]));
   for (const editor of editors)
     for (const file of editor?.prepared ?? []) assets.set(file.file_id, file.asset_id);
-  const before = new Map(receipt.before.map((file) => [file.file_id, file.values.flag]));
+  const before = new Map(receipt.before.map((file) => [file.file_id, file.values]));
   const affected = new Set([
     ...(receipt.representatives ?? []).map((change) => change.asset_id),
     ...receipt.after
-      .filter((file) => before.get(file.file_id) !== file.values.flag)
+      .filter(
+        (file) =>
+          before.get(file.file_id)?.flag !== file.values.flag ||
+          ((before.get(file.file_id)?.confirmed_fields ?? 0) & confirmedFlag) !==
+            ((file.values.confirmed_fields ?? 0) & confirmedFlag),
+      )
       .map((file) => assets.get(file.file_id)),
   ]);
   // A receipt can mention a companion outside the current preparation, especially on Undo.

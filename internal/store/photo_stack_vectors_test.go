@@ -114,6 +114,40 @@ func TestPhotoStackDecisionKeepsUnchangedStackAcrossIndexPublication(t *testing.
 	require.ElementsMatch(t, []PhotoFlagRow{{AssetID: ids[0], Flag: "pick"}, {AssetID: ids[1], Flag: "reject"}}, flags)
 }
 
+func TestPhotoStackKeeperSuggestionsForImageSimilarity(t *testing.T) {
+	t.Parallel()
+	f := newImageEmbeddingCatalogFixture(t)
+	run, err := f.s.BeginIngest(t.Context(), "cli", "synthetic image-linked keepers")
+	require.NoError(t, err)
+	ids := []string{
+		stackPhoto(t, f.s, run, "/shots/one.jpg", "2024-06-10T12:00:00Z", document.SourceMetadataPrecisionSecond),
+		stackPhoto(t, f.s, run, "/shots/two.jpg", "2024-06-10T12:00:10Z", document.SourceMetadataPrecisionSecond),
+	}
+	require.Empty(t, stackIndexes(t, f.s, ids))
+	index := newCursorIndexFixture(f)
+	for _, id := range ids {
+		index.publish(t, id, []float64{1, 0, 0, 0, 0, 0, 0, 0})
+	}
+	index.generation(t, "image-linked-keepers")
+	require.Equal(t, [][]int{{0, 1}}, stackIndexes(t, f.s, ids))
+	seedBestShots(t, f.s, ids)
+	stacks := []PhotoStack{{AssetIDs: ids, RepresentativeID: ids[0]}}
+	require.NoError(t, f.s.PhotoStackBestShots(t.Context(), stacks, false))
+	require.Len(t, stacks[0].Proposals, 2)
+	require.Equal(t, ids[0], stacks[0].Proposals[0].AssetID)
+	require.Equal(t, "pick", stacks[0].Proposals[0].Flag)
+	require.Equal(t, ids[1], stacks[0].Proposals[1].AssetID)
+	require.Equal(t, "reject", stacks[0].Proposals[1].Flag)
+	request := bestShotRequest(t, f.s, ids)
+	require.Len(t, request.Responses, 2)
+	receipt, err := f.s.DecidePhotoStack(t.Context(), request)
+	require.NoError(t, err)
+	require.NotEmpty(t, receipt.ReceiptID)
+	flags, err := f.s.LookupPhotoFlags(t.Context(), ids)
+	require.NoError(t, err)
+	require.ElementsMatch(t, []PhotoFlagRow{{AssetID: ids[0], Flag: "pick"}, {AssetID: ids[1], Flag: "reject"}}, flags)
+}
+
 func TestPhotoStackDecisionRejectsGenerationThatSplitsStack(t *testing.T) {
 	t.Parallel()
 	f := newImageEmbeddingCatalogFixture(t)

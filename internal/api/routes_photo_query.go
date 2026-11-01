@@ -133,6 +133,9 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 		if err != nil {
 			return nil, workspaceQueryError(err)
 		}
+		if err := d.Store.PhotoStackBestShots(ctx, page.Stacks, in.Body.Hidden); err != nil {
+			d.Logger.Warn("compute photo best shots", "error", err)
+		}
 		wire := PhotoBrowsePage{
 			GroupingIncomplete: page.GroupingIncomplete,
 			Items:              make([]PhotoBrowseRow, len(page.Items)), Total: page.Total, BurstGapSeconds: page.BurstGapSeconds,
@@ -149,7 +152,7 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 			}
 		}
 		for _, stack := range page.Stacks {
-			wire.Stacks = append(wire.Stacks, PhotoStack{AssetIDs: stack.AssetIDs, RepresentativeID: stack.RepresentativeID})
+			wire.Stacks = append(wire.Stacks, PhotoStack{AssetIDs: stack.AssetIDs, RepresentativeID: stack.RepresentativeID, Proposals: stack.Proposals})
 		}
 		if in.Body.Projection == "map" {
 			wire.Items = []PhotoBrowseRow{}
@@ -419,14 +422,14 @@ func photoQualityWire(row store.PhotoBrowseRow) *PhotoQuality {
 	if row.Kind != "photo" {
 		return nil
 	}
-	state := "pending"
+	q, preview := &PhotoQuality{State: "pending", Signals: row.Quality}, row.Previews["grid"]
 	if row.Quality != nil {
-		state = "ready"
-	} else if preview := row.Previews["grid"]; row.QualityUnavailable ||
-		preview.State == "unsupported" || preview.State == "failed" {
-		state = "unavailable"
+		q.State, q.FaceReports = "ready", row.Quality.FaceReports
 	}
-	return &PhotoQuality{State: state, Signals: row.Quality}
+	if row.QualityUnavailable || row.Quality == nil && (preview.State == "unsupported" || preview.State == "failed") {
+		q.State, q.Signals = "unavailable", nil
+	}
+	return q
 }
 
 func photoPreviewSlot(assetID, state string, generation *store.VisualPreviewGeneration) PhotoPreviewSlot {

@@ -39,6 +39,7 @@ func check(err error) {
 }
 
 func main() {
+	bestShots := flag.Bool("best-shots", false, "Measure synthetic frames for best-shot proposals")
 	detectedFaces := flag.Bool("detected-faces", false, "Include automatically detected synthetic faces")
 	suggestions := flag.Bool("suggestions", false, "Include synthetic photo suggestions")
 	namesakes := flag.Bool("namesakes", false, "Include people with the same name and distinct identities")
@@ -281,6 +282,9 @@ func main() {
 		check(err)
 		if *detectedFaces && index == 2 {
 			seedDetectedFaces(ctx, s, blobs, layout.BlobsDir(), node)
+		}
+		if *bestShots {
+			check(processing.EvaluatePhotoQuality(ctx, s, blobs, store.PhotoVisualPreviewTarget{VersionID: node.CurrentVersionID, SourceSHA256: node.BlobHash, Size: node.Size, MediaType: node.MimeType}))
 		}
 		if *suggestions && (index == 0 || index == 2 || index == 9) {
 			value := document.PhotoDescription{Caption: "A calm harbor under a blue sky.", Tags: []string{"coast", "harbor"}, VisibleText: "QUAYSIDE"}

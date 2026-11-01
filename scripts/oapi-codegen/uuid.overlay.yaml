@@ -10,3 +10,7 @@ actions:
       x-go-type: uuid.UUID
       x-go-type-import:
         path: uuid
+  # Preview text is a byte stream, not a JSON-encoded runtime.File.
+  - target: $.paths['/api/v1/redaction/previews/{id}/text'].get.responses['200'].content['text/plain'].schema
+    update:
+      x-go-type: '[]byte'

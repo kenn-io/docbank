@@ -309,6 +309,14 @@ browser session does not preserve the drawer's job handle.
 
 ![A verified bundle ready to download from the reviewed frozen selection](https://docbank.ai/assets/generated/web-export-ready.png)
 
+## Review and redact a PDF
+
+Select a live PDF in Documents and choose **Redact PDF** to mark rectangles or
+whole pages, inspect verified output and sanitized text, and download one ZIP.
+The original is unchanged. Reviews are temporary and require the configured
+Linux amd64 page runtime. See the [browser PDF review workflow](document-processing.md#review-a-pdf-in-the-browser)
+for coverage gaps, private review files, expiry and download limits.
+
 ## Stamp selected pages with Bates labels
 
 Open **Export → Bates-numbered PDFs…** and select a sealed package. Bates labels

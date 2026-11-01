@@ -186,6 +186,7 @@ func NewServer(d Deps) *Server {
 			s.termReports.Revoke(owner)
 		}
 		s.webDownloads.revokeOwner(owner)
+		d.Processing.RevokeRedactionPreviews(owner)
 		if d.Store != nil {
 			// Hidden unlocks are vault-wide, so ending any browser session locks Hidden.
 			if err := d.Store.LockPhotoHidden(context.Background()); err != nil {
@@ -226,6 +227,7 @@ func NewServer(d Deps) *Server {
 	registerMailboxRoutes(mux, humaAPI, d, g)
 	registerContentWriteRoute(mux, humaAPI, d, g)
 	registerRedactionRoutes(mux, humaAPI, d)
+	s.registerRedactionPreviews(mux)
 	registerContentRevertRoute(humaAPI, d, g)
 	registerContentPruneRoute(humaAPI, d, g)
 	registerProvenanceRoutes(humaAPI, d, g)

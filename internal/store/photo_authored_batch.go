@@ -8,8 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"log/slog"
 	"math"
 	"slices"
+
+	"go.kenn.io/docbank/document"
 )
 
 type PhotoKeywordEdit struct {
@@ -73,9 +76,10 @@ type PhotoPreparedTarget struct {
 }
 
 type PhotoAuthoredPreparation struct {
-	Suggestions []PhotoSuggestion     `json:"suggestions,omitempty"`
-	Assets      []PhotoAsset          `json:"assets"`
-	Targets     []PhotoPreparedTarget `json:"targets"`
+	Proposals   []document.PhotoBestShotProposal `json:"proposals,omitempty"`
+	Suggestions []PhotoSuggestion                `json:"suggestions,omitempty"`
+	Assets      []PhotoAsset                     `json:"assets"`
+	Targets     []PhotoPreparedTarget            `json:"targets"`
 }
 
 type PhotoAuthoredBatch struct {
@@ -99,10 +103,21 @@ func (s *Store) PreparePhotoAuthored(ctx context.Context, selection PhotoSetSele
 		if err != nil {
 			return err
 		}
-		preparer := photoAuthoredPreparer{store: s, tx: tx, hidden: selection.Hidden, single: len(ids) == 1, settings: settings, result: &result, limit: selection.Limit}
+		var loaded map[string]photoAuthoredLoaded
+		if selection.Limit == MaxPhotoStackTargets {
+			loaded = map[string]photoAuthoredLoaded{}
+		}
+		preparer := photoAuthoredPreparer{store: s, tx: tx, hidden: selection.Hidden, single: len(ids) == 1, settings: settings, result: &result, limit: selection.Limit, loaded: loaded}
 		for chunk := range slices.Chunk(ids, photoSelectionChunkSize) {
 			if err := preparer.prepare(ctx, chunk); err != nil {
 				return err
+			}
+		}
+		if selection.Limit == MaxPhotoStackTargets && len(ids) > 1 {
+			if offers, offerErr := s.bestShotsTx(ctx, tx, ids, result, loaded); offerErr == nil {
+				result.Proposals = offers
+			} else {
+				slog.WarnContext(ctx, "compute prepared photo best shots", "error", offerErr)
 			}
 		}
 		if len(result.Assets) == 1 {

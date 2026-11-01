@@ -167,7 +167,7 @@ func TestPhotoBrowseDisplayMetadata(t *testing.T) {
 	ctx := t.Context()
 	raw := browsePhotoNode(t, s, "capture.raw", browseHash("raw-member"), "application/octet-stream")
 	jpeg := browsePhotoNode(t, s, "capture.jpg", browseHash("jpeg-member"), "image/jpeg")
-	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(jpeg), document.PhotoQualitySignals{Focus: 0.1}))
+	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(jpeg), document.PhotoQualitySignals{Focus: 0.1}, ""))
 	jpegAsset, err := s.PhotoAssetForNode(ctx, jpeg.ID)
 	require.NoError(t, err)
 	_, err = s.DetachPhotoFile(ctx, jpegAsset.ID, jpegAsset.Revision, jpegAsset.Files[0].ID, PhotoDetachOptions{})
@@ -178,7 +178,7 @@ func TestPhotoBrowseDisplayMetadata(t *testing.T) {
 	require.NoError(t, err)
 	browsePhotoMetadata(t, s, raw, "raw-fields", photoMetadataField("image.exif.camera_make", "image.exif", "Make", photoString("Camera A")))
 	browsePhotoMetadata(t, s, jpeg, "jpeg-fields", photoMetadataField("image.exif.lens_model", "image.exif", "LensModel", photoString("Lens B")))
-	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(raw), document.PhotoQualitySignals{Focus: 0.8}))
+	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(raw), document.PhotoQualitySignals{Focus: 0.8}, ""))
 	_, err = s.CreateSavedQuery(ctx, "Selected focus", "", SavedQueryKindQuery, []byte(`{"filters":{"focus_min":"0.7"}}`))
 	require.NoError(t, err)
 	qualityQuery := `{"syntax":"advanced","text":"saved:\"Selected focus\""}`
