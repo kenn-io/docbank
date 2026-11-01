@@ -21,11 +21,11 @@ func TestNormalizedFigures(t *testing.T) {
 		{"CAD\n$40", []normalizedFigure{{"$40", "amount", "USD 40"}}},
 		{"CAD :\n$40", []normalizedFigure{{"$40", "amount", "USD 40"}}},
 		{"$40 :\nCAD", []normalizedFigure{{"$40", "amount", "USD 40"}}},
-		{"$20 CAD -30", []normalizedFigure{{"$20", "amount", "USD 20"}, {text: "-30"}}},
-		{"$20 CAD +30", []normalizedFigure{{"$20", "amount", "USD 20"}, {text: "+30"}}},
-		{"$20 CAD ±.5", []normalizedFigure{{"$20", "amount", "USD 20"}, {text: "±.5"}}},
-		{"$20 CAD −30", []normalizedFigure{{"$20", "amount", "USD 20"}, {text: "−30"}}},
-		{"$20 CAD 30EUR", []normalizedFigure{{"$20", "amount", "USD 20"}, {text: "30EUR"}}},
+		// A marker after an amount leaves that amount literal, whatever follows.
+		{"$20 CAD -30EUR", []normalizedFigure{{text: "$20"}, {text: "-30EUR"}}},
+		{"$20 CAD 30EUR.", []normalizedFigure{{text: "$20"}, {text: "30EUR"}}},
+		{"$20 CAD .5EUR", []normalizedFigure{{text: "$20"}, {text: ".5EUR"}}},
+		{"$40 CAD _15 March 2026_", []normalizedFigure{{text: "$40"}, {"15 March 2026", "date", "2026-03-15"}}},
 		{"USD -5 EUR 30CAD", []normalizedFigure{{text: "-5"}, {text: "30CAD"}}},
 		{"USD -5 EUR 30", []normalizedFigure{{text: "-5"}, {"EUR 30", "amount", "EUR 30"}}},
 		{"USD +5 EUR 30", []normalizedFigure{{text: "+5"}, {"EUR 30", "amount", "EUR 30"}}},
@@ -89,10 +89,10 @@ func TestNormalizedFigures(t *testing.T) {
 		{"| May 3 | 2026 |", []normalizedFigure{{text: "3"}, {text: "2026"}}},
 		{"$40 (CAD", []normalizedFigure{{text: "$40"}}},
 		{"$20 CAD0.5", []normalizedFigure{{"$20", "amount", "USD 20"}, {"CAD0.5", "amount", "CAD 0.5"}}},
-		{"USD 20, CAD .5", []normalizedFigure{{"USD 20", "amount", "USD 20"}, {"CAD .5", "amount", "CAD 0.5"}}},
+		{"USD 20, CAD .5", []normalizedFigure{{text: "20"}, {"CAD .5", "amount", "CAD 0.5"}}},
 		{"$20 CAD30", []normalizedFigure{{"$20", "amount", "USD 20"}, {"CAD30", "amount", "CAD 30"}}},
-		{"USD 20, CAD 30", []normalizedFigure{{"USD 20", "amount", "USD 20"}, {"CAD 30", "amount", "CAD 30"}}},
-		{"USD 20; CAD 30", []normalizedFigure{{"USD 20", "amount", "USD 20"}, {"CAD 30", "amount", "CAD 30"}}},
+		{"USD 20, CAD 30", []normalizedFigure{{text: "20"}, {"CAD 30", "amount", "CAD 30"}}},
+		{"USD 20; CAD 30", []normalizedFigure{{text: "20"}, {"CAD 30", "amount", "CAD 30"}}},
 		{"$40 CAD30", []normalizedFigure{{"$40", "amount", "USD 40"}, {"CAD30", "amount", "CAD 30"}}},
 		{"40USD 30CAD", []normalizedFigure{{"40USD", "amount", "USD 40"}, {"30CAD", "amount", "CAD 30"}}},
 		{"-5 USD 30 CAD", []normalizedFigure{{text: "-5"}, {text: "30"}}},
@@ -106,13 +106,6 @@ func TestNormalizedFigures(t *testing.T) {
 	} {
 		t.Run(strings.ReplaceAll(tc.text, "\n", `\n`), func(t *testing.T) {
 			require.Equal(t, tc.figures, normalizedFigures(tc.text))
-			if tc.text == "USD 40CAD 30" {
-				// A touching marker rejects the entire ambiguous token, even
-				// when the following number could otherwise claim that marker.
-				end, value := amountAt([]rune(tc.text))
-				require.Equal(t, 9, end)
-				require.Empty(t, value)
-			}
 		})
 	}
 

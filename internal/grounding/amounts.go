@@ -106,19 +106,10 @@ func amountAt(rs []rune) (int, string) {
 		end++
 	}
 	token := []rune(trim(rs[start:end]))
+	// A marker after an amount may belong to it or to whatever follows, so the
+	// amount stays literal. The marker remains available to a following amount.
 	if markerEnd, marker := currencyAt(token, 0); marker != "" && markerEnd == len(token) && strings.TrimFunc(string(rs[i:start]), amountGap) == "" {
-		next := skipSpace(rs, end, false)
-		number := next
-		for number < len(rs) && !split(rs[number]) {
-			number++
-		}
-		if start == i {
-			return end, ""
-		}
-		following, suffixed := amountAt(rs[next:number])
-		if _, date := dateAt(rs[next:]); date != "" || next == number || amountValue(strings.TrimLeft(trim(rs[next:number]), "-+±\u2212")) == "" && (suffixed == "" || following != number-next || !digit(rs[next])) {
-			return i, ""
-		}
+		return i, ""
 	}
 	if value := amountValue(string(rs[numberStart:numberEnd])); value != "" {
 		return i, code + " " + value
