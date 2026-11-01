@@ -119,28 +119,24 @@ test("reads PDFs and Markdown from file rows without a page runtime", async ({
   await expect(inspector.getByRole("region", { name: "Pages of Sample.pdf" })).toBeVisible();
   expect(originalLoads).toBe(0);
   expect(page.workers()).toHaveLength(0);
-  await inspector.getByRole("tab", { name: "Text", exact: true }).click();
-  const visibleText = inspector.getByText("Text extraction isn't set up.", { exact: true });
-  await expect(visibleText).toBeVisible();
-  await visibleText.evaluate((element) => {
-    const selection = window.getSelection()!;
-    const range = document.createRange();
-    range.selectNodeContents(element);
-    selection.removeAllRanges();
-    selection.addRange(range);
-  });
-  await page.keyboard.press("ControlOrMeta+c");
-  await expect
-    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
-    .toBe("Text extraction isn't set up.");
-  await inspector.getByRole("tab", { name: "Preview", exact: true }).click();
 
   await pdfRow.dblclick();
   const reader = page.getByRole("dialog", { name: "Read Sample.pdf" });
   await expect(reader.locator("embedpdf-container img").first()).toBeVisible();
   expect(originalLoads).toBe(1);
   await expect(reader.getByRole("button", { name: "Redact PDF", exact: true })).toBeEnabled();
+  // A mounted viewer must leave Copy outside its shadow root to the browser.
+  await page.evaluate(() => navigator.clipboard.writeText("Clipboard sentinel"));
+  await reader.getByText("Sample.pdf", { exact: true }).evaluate((element) => {
+    const selection = window.getSelection()!;
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    selection.removeAllRanges();
+    selection.addRange(range);
+  });
   await reader.getByRole("button", { name: "Close", exact: true }).focus();
+  await page.keyboard.press("ControlOrMeta+c");
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("Sample.pdf");
   await page.keyboard.press("Tab");
   await expect(reader.locator("embedpdf-container")).toBeFocused();
   await page.keyboard.press("Tab");
