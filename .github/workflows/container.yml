@@ -39,10 +39,12 @@ jobs:
               and .output[0].dest == "/out/" + $arch + ".oci.tar"' bake.json
           done
 
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+
       - name: Build nonroot image and check startup
         run: |
           trap 'docker rm -f docbank-smoke >/dev/null 2>&1 || true' EXIT
-          docker build --build-arg VERSION=dev -t docbank:smoke .
+          kit-retry 3 5 docker build --build-arg VERSION=dev -t docbank:smoke .
           docker run --rm docbank:smoke version
           test "$(docker run --rm --entrypoint id docbank:smoke -u)" = 1000
           if timeout --kill-after=5s 30s docker run --rm --name docbank-smoke docbank:smoke > startup.log 2>&1; then
@@ -72,12 +74,14 @@ jobs:
             -e DOCBANK_ALLOWED_HOSTS=docbank:8485 \
             docbank:smoke
           for _ in $(seq 60); do
+            # workflowretry: allow Poll the local service for readiness.
             if curl -fsS -H 'Host: docbank:8485' http://127.0.0.1:18485/health >/dev/null; then
               break
             fi
             sleep 1
           done
           status() {
+            # workflowretry: allow Assert HTTP authentication and host-policy status codes.
             curl -s -o /dev/null -w '%{http_code}' "$@" http://127.0.0.1:18485/api/v1/info
           }
           test "$(status -H 'Host: docbank:8485' -H "Authorization: Bearer $key")" = 200

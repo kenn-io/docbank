@@ -89,6 +89,7 @@ run_sync() {
   DOCBANK_DOCS_ASSETS_MANIFEST="$manifest" \
   DOCBANK_DOCS_ASSETS_REF="$ref_file" \
   DOCBANK_DOCS_ASSETS_CACHE="$cache" \
+  DOWNLOAD_RETRY='' \
   PATH="$sync_bin" \
     "$sync_script"
 }

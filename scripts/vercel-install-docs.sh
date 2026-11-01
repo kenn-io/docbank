@@ -31,7 +31,7 @@ trap 'rm -rf -- "$scratch"' EXIT HUP INT TERM
 archive="$scratch/uv.tar.gz"
 url="https://github.com/astral-sh/uv/releases/download/$uv_version/uv-$target.tar.gz"
 
-curl --fail --location --silent --show-error "$url" --output "$archive"
+curl --fail --location --silent --show-error --connect-timeout 30 --speed-limit 1 --speed-time 60 "$url" --output "$archive"
 printf '%s  %s\n' "$expected_sha" "$archive" | sha256sum -c -
 tar -xzf "$archive" -C "$scratch"
 
