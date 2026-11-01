@@ -273,8 +273,8 @@ Only version-list searches return `fence`, `fence_fingerprint`, and
 searches return it only with hits. Every search returns requested and actual
 mode, coverage, skipped reasons, and truncation state. It returns at most 100
 hits. Each excerpt is capped at 512 characters. Each hit has at most 64 evidence
-identities of at most 1,024 characters each. A result contains at most 64 skipped-reason codes
-of at most 64 characters each.
+identities of at most 1,024 characters each. A result contains at most 64
+skipped-reason codes of at most 64 characters each.
 
 Set `rerank: true` to request the profile's configured reranker. The query and
 bounded candidate excerpts are sent to the provider only under the existing

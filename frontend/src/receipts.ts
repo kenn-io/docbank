@@ -404,7 +404,6 @@ export function validateDocumentSearchReport(
   const invalid = (): never => {
     throw new Error("The daemon returned an invalid search response.");
   };
-  if (Boolean(request.fence) === Boolean(request.scope)) invalid();
   const versions = new Set<string>();
   if (request.fence) {
     if (

@@ -159,10 +159,6 @@ describe("search result authority", () => {
     report.coverage.scoped_documents = 5000;
     report.coverage.complete_documents = 5000;
     expect(validateDocumentSearchReport(report, scoped).results).toHaveLength(1);
-    expect(() => validateDocumentSearchReport(report, { ...request, fence: undefined })).toThrow();
-    expect(() =>
-      validateDocumentSearchReport(report, { ...request, scope: scoped.scope }),
-    ).toThrow();
     report.results[0]!.vault_uid = "invalid";
     expect(() => validateDocumentSearchReport(report, scoped)).toThrow();
   });
