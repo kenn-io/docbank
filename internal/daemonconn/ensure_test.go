@@ -119,6 +119,16 @@ func TestVerifyRecordProcess(t *testing.T) {
 	require.Error(t, verifyRecordProcess(rec), "missing identity cannot authorize signaling")
 }
 
+func TestStopRefusesUnverifiedPID(t *testing.T) {
+	_, rec := startUnresponsiveRuntime(t)
+	rec.ProcessIdentity = ""
+	rec.ProcessIdentityV2 = ""
+
+	err := signalStopRecord(t.Context(), rec)
+	require.ErrorContains(t, err, "recorded process identity")
+	assert.True(t, kitdaemon.ProcessAlive(rec.PID), "an unverified PID must not be signaled")
+}
+
 // A version-matched record without a published API key is a pre-key daemon:
 // Ensure's discovery must reject it (so the replace path stops it) instead of
 // returning a client that is either unauthenticated or doomed to 401s. The

@@ -10,7 +10,8 @@ import (
 	"go.kenn.io/docbank/internal/audit"
 )
 
-func TestAuditAdvancementPostgres(t *testing.T) {
+func checkAuditAdvancementPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	source, destination, publish, _, child, _ := newAuditHistoryPostgresFixture(t)
 	publish()

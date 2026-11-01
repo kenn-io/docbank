@@ -303,6 +303,22 @@ func TestServeRequiresKeyEvenWhenConfigIsKeyless(t *testing.T) {
 	assert.NotEqual(t, http.StatusUnauthorized, resp.StatusCode)
 }
 
+func TestServeDiscoveryUsesStableProcessIdentity(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("DOCBANK_HOME", dir)
+	startServe(t)
+	rec := waitForDaemon(t, dir)
+
+	// Older records also carried a wall-clock estimate. In containers it can
+	// change between reads even though the kernel process identity is unchanged.
+	rec.Metadata["create_time"] = "1"
+	_, err := daemonconn.RuntimeStore(dir).Write(rec)
+	require.NoError(t, err)
+
+	_, err = runCLI(t, "ls", "/")
+	require.NoError(t, err, "a CLI read must reuse the running daemon")
+}
+
 // Fresh SQLite initialization and shutdown can each exceed ten seconds on busy
 // Windows CI runners. These tests check daemon behavior, not performance.
 const (

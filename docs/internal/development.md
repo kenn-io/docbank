@@ -217,6 +217,78 @@ in `releasedSchemaFixtures`. Three checks enforce this:
   binary, so bumping the schema fails until the released version has a cutover
   adapter.
 
+### Backend support and drift checks
+
+`store.Store` is the database API boundary. Operations keep their validation,
+transactions, result assembly and catalog maintenance together. Backend-specific
+helpers handle concrete SQL and driver differences. The coverage machinery is
+compiled only into tests: it adds no interface dispatch, capability lookup or
+extra query to application requests.
+
+From the repository root, inspect the current evidence without opening a database:
+
+```sh
+make backend-coverage
+```
+
+The report distinguishes native PostgreSQL operations, retained-data validation
+and unqualified operations. A copied SQLite catalog can prove that PostgreSQL
+reads and validates it; it cannot qualify the worker that would produce it.
+Scenario counts describe the tests, not a completeness percentage or a
+performance guarantee. Unlisted operations remain unqualified. The public vault
+still opens SQLite.
+
+These test files own the inventory:
+
+- `internal/store/backend_contract_test.go` registers the executable scenarios
+  and their scope. Existing cases run once per backend. Shared cases use the same
+  assertions with each backend's fixture; PostgreSQL-specific cases cover its
+  snapshots, locks and native mutations. SQLite also keeps its full existing suite.
+- `internal/store/backend_schema_test.go` compares freshly installed canonical
+  catalogs: tables, logical column types, nullability, primary-key order,
+  foreign-key columns and actions, and index key columns, order, uniqueness and
+  partial status. It also checks PostgreSQL's byte-order text collation.
+  `backend_schema_exceptions_test.go` names each intentional or deferred
+  difference. Unlisted differences fail; resolved or stale exceptions fail too.
+- `internal/store/backend_maintenance_test.go` describes SQLite catalog effects
+  and their PostgreSQL owners or unqualified operations for the report. Keep
+  this inventory current when porting an effect. Operation tests establish
+  behavioral equivalence by exercising the writes and checking their results.
+
+The schema comparison deliberately normalizes integer widths, UUID/text storage
+and SQLite's nullable primary-key metadata. It excludes FTS virtual/shadow
+tables, engine allocation machinery and SQLite's released version field. It
+does not compare defaults, views, trigger bodies, expression/predicate SQL or
+foreign-key deferral timing. Those need operation tests. Matching index shapes
+also do not prove matching query plans: keep expressions aligned with their
+indexes and check plans on representative data when porting a query. Deferred
+indexes remain a performance qualification gap, including on tables that native
+operations already use.
+
+Run the shared SQLite contracts in both supported builds:
+
+```sh
+go test -race -tags fts5 ./internal/store -run '^TestBackendContractsSQLite$'
+CGO_ENABLED=0 go test -tags fts5 ./internal/store -run '^TestBackendContractsSQLite$'
+```
+
+With `DOCBANK_TEST_POSTGRES_DSN` set to a disposable PostgreSQL server, run
+`make test-pg` for setup, permissions and the complete PostgreSQL contract suite.
+CI runs that lane on PostgreSQL 16 and 18. To focus on one operation or the schema:
+
+```sh
+go test -tags fts5 ./internal/store -run '^TestBackendContractsPostgres/documents/'
+go test -tags fts5 ./internal/store -run '^TestBackendContractsPostgres/schema/Schema$'
+```
+
+Add new PostgreSQL cases to the registry so the report and CI select the same
+functions. Prefer one shared scenario where both backends have the same contract;
+keep backend-specific failure and concurrency evidence where it adds coverage.
+Do not repeat shared Go rejection cases on both databases merely to increase
+counts. Port a complete operation with its access indexes, validation, catalog
+effects and rollback behavior, then remove the relevant exceptions. Keep
+remaining implementation work in Kata rather than adding task lists to this guide.
+
 ### PostgreSQL schema lifecycle
 
 `internal/store/pgschema` owns canonical PostgreSQL catalogs for internal
@@ -561,49 +633,23 @@ receipts, repairs the surviving assets, and refreshes paired sidecar work after
 node deletion. These effects share the deletion transaction; a failure retains
 the original versions, jobs, receipts, epochs and node revisions.
 
-!!! info "Planned"
+`make backend-coverage` reports the recorded SQLite catalog effects,
+their PostgreSQL owners and their remaining boundaries. Audit enrollment already
+queues affected photos through `queueAuditPhotosTx`. Deleting authority or
+memberships during import/restore still needs that effect. Technical metadata,
+XMP publication, people candidates and search also have unported effects; their
+retained tables do not establish write support.
 
-    Preserve these effects as the remaining mutation, import, restore and
-    maintenance operations are ported. PostgreSQL does not use maintenance
-    triggers; the Go operation owns the related changes.
+For each remaining port, capture affected identities before cascades remove the
+rows that identify them. Validate values and immutable-record rules in the Go
+write path, including imports and restores, and verify commit and rollback
+through the native operation. PostgreSQL does not use maintenance triggers.
 
-    SQLite currently owns these effects in triggers. They are separate from
-    value validation and must not disappear when a write is ported:
-
-    | Change | Required catalog effect |
-    | --- | --- |
-    | Insert a content version | Remove its blob from `rendition_blob_staging` and `derivative_blob_purge_pending` |
-    | Change a photo node's current version | Queue its node when the version changes |
-    | Add or remove an audit membership | Queue eligible photo assets associated with that node in `photo_xmp_unsettled` |
-    | Add or remove audit authority | Queue every eligible photo asset in `photo_xmp_unsettled` |
-    | Record a checksum | Keep the existing value immutable; reject a conflicting value in Go and omit runtime `UPDATE` privileges |
-
-    Initial and additional enrollment persistence already queue affected assets
-    on PostgreSQL through the shared audit writers, as described under
-    [shared query qualification](#shared-query-qualification). The remaining
-    mutation, cascading deletion and restore paths must preserve these effects
-    too; the presence of photo tables does not qualify those operations.
-
-    Shared Go validation must also enforce the audit invariants currently
-    covered by SQLite checks: one active authority row at `singleton=1`, known
-    record kinds, and positive stored operation sequences and entry counts
-    wherever present. Validate records before insertion and the complete
-    authority within the transaction, including imports and restores. The
-    PostgreSQL write paths must not rely on SQLite constraints for these rules.
-
-    This table identifies the immediate dependencies of the core catalogs,
-    not the complete trigger inventory. Bulk and cascading deletions must
-    capture affected identities before deleting the rows that identify them.
-    Each port must cover normal and audited writes, imports, restores and
-    maintenance paths, and verify both commit and rollback effects on both
-    backends. Engine-specific index maintenance, such as SQLite FTS5, remains
-    part of that engine's search implementation.
-
-    Preserve released SQLite schemas and their triggers. Replace each trigger
-    through the supported SQLite layout cutover only when its shared Go owner
-    is present. Do not run both owners for an effect such as advancing a binding
-    epoch. Successful SQL alone does not qualify a write; its related catalog
-    effects must be implemented too.
+Preserve released SQLite schemas and their triggers. Replace each trigger
+through the supported SQLite layout cutover only when its Go owner is present.
+Do not run both owners for an effect such as advancing a binding epoch.
+Engine-specific index maintenance, such as SQLite FTS5, remains part of that
+engine's search implementation.
 
 #### Native document writes
 
