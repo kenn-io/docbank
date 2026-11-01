@@ -293,9 +293,9 @@ func TestContentReferenceLookupIsLogicalPaginatedAndRepresentationNeutral(t *tes
 	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	ctx := t.Context()
-	wantedHash, wantedSize, err := s.Blobs.Write(strings.NewReader("shared content"))
+	wantedHash, wantedSize, err := s.Blobs.WriteContext(t.Context(), strings.NewReader("shared content"))
 	require.NoError(t, err)
-	replacementHash, replacementSize, err := s.Blobs.Write(strings.NewReader("replacement"))
+	replacementHash, replacementSize, err := s.Blobs.WriteContext(t.Context(), strings.NewReader("replacement"))
 	require.NoError(t, err)
 
 	historical, err := s.CreateFile(

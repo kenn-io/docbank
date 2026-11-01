@@ -212,7 +212,7 @@ func TestProbeMediaOriginsRecordsEvidence(t *testing.T) {
 				DeploymentRevision: "v-synthetic", ProbeState: string(capselfhosted.ProbeProviderUnavailable)}, nil
 		},
 	}
-	service, err := NewService(ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
+	service, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
 		Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Principal: "operator:probes",
 		MediaOrigins: origins, MediaOriginProbes: probes, MediaTokenKey: [32]byte{1},
 		Clock: func() time.Time { return now }})
@@ -233,7 +233,7 @@ func TestProbeMediaOriginsRecordsEvidence(t *testing.T) {
 	cancel()
 	require.ErrorIs(t, service.ProbeMediaOrigins(canceled), context.Canceled)
 
-	_, err = NewService(ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
+	_, err = NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
 		Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), MediaOrigins: origins,
 		MediaOriginProbes: map[string]MediaOriginProbe{"missing": probes["a"]}, MediaTokenKey: [32]byte{1}})
 	require.ErrorContains(t, err, "has no registered origin")
@@ -272,7 +272,7 @@ func TestNewServiceRejectsMediaOriginGuards(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			cfg := base()
 			test.edit(&cfg)
-			_, err := NewService(cfg)
+			_, err := NewService(t.Context(), cfg)
 			require.ErrorContains(t, err, test.want)
 		})
 	}

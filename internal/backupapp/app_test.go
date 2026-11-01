@@ -284,7 +284,7 @@ func TestJSONLBackupRestoresPeopleAndRebuildsAttribution(t *testing.T) {
 func TestPhotoBackupRoundTrip(t *testing.T) {
 	fixture := newArchiveFixture(t)
 	ctx := t.Context()
-	hash, size, err := fixture.blobs.Write(strings.NewReader("photo bytes"))
+	hash, size, err := fixture.blobs.WriteContext(t.Context(), strings.NewReader("photo bytes"))
 	require.NoError(t, err)
 	node, err := fixture.metadata.CreateFile(ctx, fixture.metadata.RootID(), "photo.jpg",
 		hash, size, "image/jpeg")
@@ -3151,11 +3151,11 @@ func TestSnapshotCoverageRestoreProofAndHistoricalManifest(t *testing.T) {
 
 func TestBackupCoverageCountsPartiallyTrashedPhotoAsset(t *testing.T) {
 	fixture := newArchiveFixture(t)
-	rawHash, rawSize, err := fixture.blobs.Write(strings.NewReader("raw bytes"))
+	rawHash, rawSize, err := fixture.blobs.WriteContext(t.Context(), strings.NewReader("raw bytes"))
 	require.NoError(t, err)
 	raw, err := fixture.metadata.CreateFile(t.Context(), fixture.metadata.RootID(), "photo.raw", rawHash, rawSize, "application/octet-stream")
 	require.NoError(t, err)
-	imageHash, imageSize, err := fixture.blobs.Write(strings.NewReader("jpeg bytes"))
+	imageHash, imageSize, err := fixture.blobs.WriteContext(t.Context(), strings.NewReader("jpeg bytes"))
 	require.NoError(t, err)
 	image, err := fixture.metadata.CreateFile(t.Context(), fixture.metadata.RootID(), "photo.jpg", imageHash, imageSize, "image/jpeg")
 	require.NoError(t, err)

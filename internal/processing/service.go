@@ -380,7 +380,7 @@ type SearchRequest struct {
 
 type SearchReport = retrieval.Report
 
-func NewService(config ServiceConfig) (*Service, error) {
+func NewService(ctx context.Context, config ServiceConfig) (*Service, error) {
 	if config.Catalog == nil || config.Blobs == nil || renditionInterfaceNil(config.Gate) {
 		return nil, errors.New("processing service requires catalog, blob store, and operation gate")
 	}
@@ -553,7 +553,7 @@ func NewService(config ServiceConfig) (*Service, error) {
 				if err != nil {
 					return nil, err
 				}
-				vectorSpace, err = config.Catalog.SelectEmbeddingVectorSpace(context.Background(), vectorSpace, id, descriptor)
+				vectorSpace, err = config.Catalog.SelectEmbeddingVectorSpace(ctx, vectorSpace, id, descriptor)
 				if err != nil {
 					return nil, err
 				}
@@ -1732,7 +1732,7 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 		if len(jobIDs) == 1 && onEnqueued != nil {
 			onEnqueued(slices.Clone(jobIDs))
 			var cancel context.CancelFunc
-			ctx, cancel = service.continueRun(ctx)
+			ctx, cancel = service.continueRun(ctx) //nolint:fatcontext // runs once, after the first job is enqueued
 			defer cancel()
 		}
 	}

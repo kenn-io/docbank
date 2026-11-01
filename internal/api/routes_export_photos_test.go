@@ -38,7 +38,7 @@ func TestPhotoExportAPIPlanZIPAndTicket(t *testing.T) {
 		d.Exports = worker
 	})
 	pixels := mediatest.JPEG(9, 6, color.Transparent)
-	hash, size, err := s.Blobs.Write(bytes.NewReader(pixels))
+	hash, size, err := s.Blobs.WriteContext(t.Context(), bytes.NewReader(pixels))
 	require.NoError(t, err)
 	n, err := s.CreateFile(t.Context(), s.RootID(), "synthetic-export.jpg", hash, size, "image/jpeg")
 	require.NoError(t, err)
@@ -155,7 +155,7 @@ func TestPhotoExportUnavailableMemberNamesPhoto(t *testing.T) {
 				content = oversizedPNGHeader(10001, 10001)
 			}
 
-			hash, size, err := s.Blobs.Write(bytes.NewReader(content))
+			hash, size, err := s.Blobs.WriteContext(t.Context(), bytes.NewReader(content))
 			require.NoError(t, err)
 			var members []bundle.Member
 			if state == "unsupported" {
@@ -172,7 +172,7 @@ func TestPhotoExportUnavailableMemberNamesPhoto(t *testing.T) {
 			case "missing-blob":
 				err = s.Blobs.Remove(hash)
 			case "replaced":
-				hash, size, err = s.Blobs.Write(bytes.NewReader([]byte("replacement member")))
+				hash, size, err = s.Blobs.WriteContext(t.Context(), bytes.NewReader([]byte("replacement member")))
 				require.NoError(t, err)
 				_, _, err = s.ReplaceContent(t.Context(), n.ID, n.Revision, hash, size, mediaType)
 			}
@@ -228,7 +228,7 @@ func TestPhotoExportClassifiesSourceReadFailures(t *testing.T) {
 			}
 			ts, s := newTestServer(t, nil)
 			content := mediatest.JPEG(2, 2, color.White)
-			hash, size, err := s.Blobs.Write(bytes.NewReader(content))
+			hash, size, err := s.Blobs.WriteContext(t.Context(), bytes.NewReader(content))
 			require.NoError(t, err)
 			n, err := s.CreateFile(t.Context(), s.RootID(), "damaged-source.jpg", hash, size, "image/jpeg")
 			require.NoError(t, err)

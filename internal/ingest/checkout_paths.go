@@ -127,7 +127,7 @@ func checkoutDestinationsRelateToPath(ctx context.Context, checkouts []store.Pho
 			return nil, err
 		}
 		destination := checkout.Destination
-		overlap, err := PathsOverlapContext(ctx, pathname, destination)
+		overlap, err := PathsOverlap(ctx, pathname, destination)
 		if err != nil && !CheckoutPathMissing(err) {
 			checks[i].err = err
 			continue

@@ -179,7 +179,7 @@ func (f *photoDescriptionFixture) newVisionServiceWith(t *testing.T, models map[
 		f.profile = profile
 		profiles[name] = ProfileConfig{Profile: profile, RenditionProvider: provider, RenditionDisclosure: RuntimeDisclosure{Endpoint: f.server.URL}}
 	}
-	service, err := NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(), Principal: "synthetic-operator", Scope: "document-processing",
+	service, err := NewService(t.Context(), ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(), Principal: "synthetic-operator", Scope: "document-processing",
 		Clock:    func() time.Time { return time.Now().UTC().Add(time.Duration(f.skew.Load())) },
 		Profiles: profiles})
 	require.NoError(t, err)
@@ -737,7 +737,7 @@ func TestPhotoDescriptionLimitUsesFinalUpload(t *testing.T) {
 				if oversized {
 					profile.portable.Rendition.MaxDocumentBytes--
 				}
-				f.service, err = NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: ctx, Principal: "synthetic-operator", Scope: "document-processing",
+				f.service, err = NewService(t.Context(), ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: ctx, Principal: "synthetic-operator", Scope: "document-processing",
 					Profiles: map[string]ProfileConfig{"vision": {Profile: profile.portable, RenditionProvider: profile.provider, RenditionDisclosure: RuntimeDisclosure{Endpoint: f.server.URL}}}})
 				require.NoError(t, err)
 				plan, err := f.service.Plan(ctx, f.selector("vision"))

@@ -40,7 +40,7 @@ func TestReferencedMediaUsesUploadEligibilityAndLimit(t *testing.T) {
 			node, err := fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), test.filename,
 				written.Hash, written.Size, test.retainedType, processingBlobPhysical(t, written))
 			require.NoError(t, err)
-			service, err := NewService(ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
+			service, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
 				Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), MediaMaxBytes: test.maximum,
 			})
 			require.NoError(t, err)
@@ -80,7 +80,7 @@ func TestMediaRejectsMissingProfileAndConsentBeforeSealing(t *testing.T) {
 	var profile document.ProcessingProfileV1
 	require.NoError(t, json.Unmarshal(record.CanonicalProfile, &profile))
 	profile.Rendition.TrustBoundary = string(provider.Descriptor().TrustBoundary)
-	service, err := NewService(ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
+	service, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
 		Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(),
 		Profiles: map[string]ProfileConfig{"speech": {Profile: profile, RenditionProvider: provider}}})
 	require.NoError(t, err)
@@ -111,7 +111,7 @@ func TestMediaEnqueueRejectsEmbeddingOnlyProfile(t *testing.T) {
 	profile.RetentionDisclosure.RetainProviderMarkdown = false
 	profile.RetentionDisclosure.RetainTypedArtifacts = true
 	provider := &embeddingWorkerProvider{runtime: fake.runtime, binding: original.BindingID, descriptor: original.Descriptor}
-	service, err := NewService(ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
+	service, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
 		Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(),
 		Profiles: map[string]ProfileConfig{"direct": {Profile: profile,
 			EmbeddingProviders: map[string]document.EmbeddingProvider{original.BindingID: provider}}}})

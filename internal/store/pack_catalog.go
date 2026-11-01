@@ -44,6 +44,7 @@ func (c *PackCatalog) PrimaryStoreID() packstore.StoreID {
 // bindings its location is implicit in the vault, but Kit still uses the
 // marker to fence destructive physical work.
 func (c *PackCatalog) PrimaryOwnership() packstore.Ownership {
+	// Kit's packstore.Catalog interface gives this method no context.
 	primary, err := c.store.PrimaryBlobStore(context.Background())
 	if err != nil {
 		return packstore.Ownership{}

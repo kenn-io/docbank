@@ -24,7 +24,7 @@ func TestPhotoSuggestionRoutesPassHiddenCookie(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
 	ts, s := newTestServer(t, nil)
-	hash, size, err := s.Blobs.Write(bytes.NewReader(mediatest.JPEG(8, 8, color.White)))
+	hash, size, err := s.Blobs.WriteContext(t.Context(), bytes.NewReader(mediatest.JPEG(8, 8, color.White)))
 	require.NoError(t, err)
 	node, err := s.CreateFile(ctx, s.RootID(), "synthetic.jpg", hash, size, "image/jpeg")
 	require.NoError(t, err)
@@ -51,7 +51,7 @@ func TestPhotoSuggestionRoutesPassHiddenCookie(t *testing.T) {
 	profile.Rendition.AdapterContract = vision.AdapterContract
 	profile.Rendition.DiscloseFilename = false
 	profile.RetentionDisclosure.RetainSanitizedMarkdown = false
-	service, err := processing.NewService(processing.ServiceConfig{Catalog: s.Store, Blobs: s.Blobs, Gate: api.NewOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: ctx,
+	service, err := processing.NewService(t.Context(), processing.ServiceConfig{Catalog: s.Store, Blobs: s.Blobs, Gate: api.NewOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: ctx,
 		Profiles: map[string]processing.ProfileConfig{"vision": {Profile: profile, RenditionProvider: provider, RenditionDisclosure: processing.RuntimeDisclosure{Endpoint: endpoint.URL}}}})
 	require.NoError(t, err)
 	recipe, err := processing.VisualPreviewRecipeForSize("grid")

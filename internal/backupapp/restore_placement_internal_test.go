@@ -223,7 +223,7 @@ func TestPrepareRestoreMappingsRejectsOverlappingFilesystemNamespaces(t *testing
 	}
 
 	_, err := prepareRestoreMappings(
-		filepath.Join(root, "restore"), mapping, manifest, bindings, nil,
+		t.Context(), filepath.Join(root, "restore"), mapping, manifest, bindings, nil,
 	)
 	require.ErrorContains(t, err, "overlaps")
 }
@@ -242,7 +242,7 @@ func TestPrepareRestoreMappingsRejectsInvalidAndPrimaryStoreNames(t *testing.T) 
 				}},
 			}
 			_, err := prepareRestoreMappings(
-				t.TempDir(), mapping, manifest,
+				t.Context(), t.TempDir(), mapping, manifest,
 				map[string]config.StoreBindingConfig{
 					"archive": {Kind: "filesystem", Path: t.TempDir()},
 				}, nil,
@@ -279,7 +279,7 @@ func TestPrepareRestoreMappingsRejectsOverlappingS3Prefixes(t *testing.T) {
 		},
 	}
 
-	_, err := prepareRestoreMappings(t.TempDir(), mapping, manifest, bindings, nil)
+	_, err := prepareRestoreMappings(t.Context(), t.TempDir(), mapping, manifest, bindings, nil)
 	require.ErrorContains(t, err, "overlaps")
 }
 
@@ -310,7 +310,7 @@ func TestPrepareRestoreMappingsRejectsImplicitAndExplicitAWSEndpoints(t *testing
 		},
 	}
 
-	_, err := prepareRestoreMappings(t.TempDir(), mapping, manifest, bindings, nil)
+	_, err := prepareRestoreMappings(t.Context(), t.TempDir(), mapping, manifest, bindings, nil)
 	require.ErrorContains(t, err, "overlaps")
 }
 
@@ -333,7 +333,7 @@ func TestPrepareRestoreMappingsRejectsProtectedFilesystemNamespaces(t *testing.T
 				"archive": {Kind: "filesystem", Path: filepath.Join(protected, "secondary")},
 			}
 			_, err := prepareRestoreMappings(
-				filepath.Join(root, "restore"), mapping, manifest, bindings,
+				t.Context(), filepath.Join(root, "restore"), mapping, manifest, bindings,
 				[]string{
 					filepath.Join(root, "live-vault"),
 					filepath.Join(root, "backup-repository"),

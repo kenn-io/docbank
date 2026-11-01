@@ -632,7 +632,8 @@ func ServeHTTP(ctx context.Context, server *Server, address string, options HTTP
 		}
 		return fmt.Errorf("serve MCP HTTP: %w", err)
 	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), defaultHTTPShutdownTimeout)
+		// The bounded drain runs after ctx ends, so it must not inherit that cancellation.
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), defaultHTTPShutdownTimeout)
 		defer cancel()
 		shutdownErr := httpServer.Shutdown(shutdownCtx)
 		serveErr := <-serveDone

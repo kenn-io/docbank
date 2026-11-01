@@ -259,7 +259,7 @@ func TestProcessingCoverageTracksTrashRestoreAndSupersessionEligibility(t *testi
 	require.NoError(t, err)
 	assert.Equal(t, 1, readCoverage(node.CurrentVersionID).Renditions.Complete)
 
-	replacementHash, replacementSize, err := catalog.Blobs.Write(strings.NewReader("replacement evidence\n"))
+	replacementHash, replacementSize, err := catalog.Blobs.WriteContext(t.Context(), strings.NewReader("replacement evidence\n"))
 	require.NoError(t, err)
 	replaced, replacement, err := catalog.ReplaceContent(t.Context(), restored.ID, restored.Revision,
 		replacementHash, replacementSize, "text/plain")
@@ -369,7 +369,7 @@ func TestProcessingSourceFenceResolveRouteFailsClosedWithStableSanitizedErrors(t
 	ts, catalog := newTestServer(t, configureProcessingTestService(t))
 	current := createFileWithContent(t, ts, catalog, "/current.txt", "current\n")
 	oldID := current.CurrentVersionID
-	replacementHash, replacementSize, err := catalog.Blobs.Write(strings.NewReader("replacement\n"))
+	replacementHash, replacementSize, err := catalog.Blobs.WriteContext(t.Context(), strings.NewReader("replacement\n"))
 	require.NoError(t, err)
 	current, _, err = catalog.ReplaceContent(t.Context(), current.ID, current.Revision,
 		replacementHash, replacementSize, "text/plain")
@@ -1224,7 +1224,7 @@ func configureProcessingTestServiceWithReranker(t *testing.T, reranker retrieval
 		require.NoError(t, err)
 		gate := api.NewOperationGate()
 		deps.Gate = gate
-		service, err := processing.NewService(processing.ServiceConfig{
+		service, err := processing.NewService(t.Context(), processing.ServiceConfig{
 			Catalog: deps.Store, Blobs: deps.Blobs, Gate: gate,
 			SpoolDirectory: filepath.Join(deps.VaultRoot, "blobs", "tmp"),
 			Profiles: map[string]processing.ProfileConfig{"private": {
@@ -1301,7 +1301,7 @@ func configureProcessingTestServiceWithProviderAndRegistry(t *testing.T,
 	return func(deps *api.Deps) {
 		gate := api.NewOperationGate()
 		deps.Gate = gate
-		service, err := processing.NewService(processing.ServiceConfig{
+		service, err := processing.NewService(t.Context(), processing.ServiceConfig{
 			Catalog: deps.Store, Blobs: deps.Blobs, Gate: gate,
 			SpoolDirectory:    filepath.Join(deps.VaultRoot, "blobs", "tmp"),
 			RenditionRuntimes: registry,
@@ -1425,7 +1425,7 @@ func configureProcessingTestServiceWithProviders(t *testing.T, rendition documen
 		}}
 		gate := api.NewOperationGate()
 		deps.Gate = gate
-		service, err := processing.NewService(processing.ServiceConfig{
+		service, err := processing.NewService(t.Context(), processing.ServiceConfig{
 			Catalog: deps.Store, Blobs: deps.Blobs, Gate: gate,
 			SpoolDirectory: filepath.Join(deps.VaultRoot, "blobs", "tmp"),
 			Profiles: map[string]processing.ProfileConfig{"private": {
@@ -1580,7 +1580,7 @@ func TestProcessingReportsConsentExpiredDuringRendition(t *testing.T) { //nolint
 	ts, catalog := newTestServer(t, func(deps *api.Deps) {
 		gate := api.NewOperationGate()
 		deps.Gate = gate
-		deps.Processing, err = processing.NewService(processing.ServiceConfig{
+		deps.Processing, err = processing.NewService(t.Context(), processing.ServiceConfig{
 			Catalog: deps.Store, Blobs: deps.Blobs, Gate: gate,
 			SpoolDirectory: filepath.Join(deps.VaultRoot, "blobs", "tmp"),
 			Profiles: map[string]processing.ProfileConfig{"private": {

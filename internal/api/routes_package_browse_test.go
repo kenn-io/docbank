@@ -185,7 +185,7 @@ func TestPackageCustodianResolveRejectsOtherScopes(t *testing.T) {
 	pkg, _, _ := seedBrowseReceivedPackage(t, catalog, false)
 	run, err := catalog.BeginIngest(t.Context(), "manual", "synthetic collection")
 	require.NoError(t, err)
-	hash, size, err := catalog.Blobs.Write(strings.NewReader("synthetic document"))
+	hash, size, err := catalog.Blobs.WriteContext(t.Context(), strings.NewReader("synthetic document"))
 	require.NoError(t, err)
 	node, err := catalog.IngestFileExact(t.Context(), run, catalog.RootID(), "ordinary.txt",
 		hash, size, "text/plain", "ordinary.txt", "")
@@ -364,7 +364,7 @@ func seedBrowseReceivedPackage(t *testing.T, catalog *testStore, sensitive bool)
 	profileDigest := sha256.Sum256(profileJSON)
 	mappingJSON := []byte("{}")
 	mappingDigest := sha256.Sum256(mappingJSON)
-	manifestHash, manifestSize, err := catalog.Blobs.Write(strings.NewReader("synthetic received manifest"))
+	manifestHash, manifestSize, err := catalog.Blobs.WriteContext(t.Context(), strings.NewReader("synthetic received manifest"))
 	require.NoError(t, err)
 	require.NoError(t, catalog.RecordBlob(t.Context(), manifestHash, manifestSize,
 		store.BlobPhysical{Encoding: "raw", StoredBytes: manifestSize}))
@@ -427,7 +427,7 @@ func seedBrowseReceivedPackage(t *testing.T, catalog *testStore, sensitive bool)
 func seedBrowseProducedPackage(t *testing.T, catalog *testStore) store.Package {
 	t.Helper()
 	body := "synthetic produced document"
-	hash, size, err := catalog.Blobs.Write(strings.NewReader(body))
+	hash, size, err := catalog.Blobs.WriteContext(t.Context(), strings.NewReader(body))
 	require.NoError(t, err)
 	node, err := catalog.CreateFile(t.Context(), catalog.RootID(), "produced.txt", hash, size, "text/plain")
 	require.NoError(t, err)
@@ -441,7 +441,7 @@ func seedBrowseProducedPackage(t *testing.T, catalog *testStore) store.Package {
 		}},
 	})
 	require.NoError(t, err)
-	manifestHash, manifestSize, err := catalog.Blobs.Write(strings.NewReader("synthetic produced manifest"))
+	manifestHash, manifestSize, err := catalog.Blobs.WriteContext(t.Context(), strings.NewReader("synthetic produced manifest"))
 	require.NoError(t, err)
 	require.NoError(t, catalog.RecordBlob(t.Context(), manifestHash, manifestSize,
 		store.BlobPhysical{Encoding: "raw", StoredBytes: manifestSize}))

@@ -44,7 +44,7 @@ func newPreparationFixture(t *testing.T, text string) preparationFixture {
 	node, err := f.catalog.CreateFile(t.Context(), f.catalog.RootID(), "native.pdf",
 		receipt.Hash, receipt.Size, "application/pdf", processingBlobPhysical(t, receipt))
 	require.NoError(t, err)
-	service, err := NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newTestOperationGate(),
+	service, err := NewService(t.Context(), ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newTestOperationGate(),
 		SpoolDirectory: filepath.Join(t.TempDir(), "spool")})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, service.Shutdown(context.Background())) })

@@ -145,7 +145,7 @@ func TestWorkerIndexesVerifiedUTF8AndUsesMutationGate(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, blobs.Close()) })
 
 	content := "The lighthouse keeps a verified archive.\n"
-	hash, size, err := blobs.Write(strings.NewReader(content))
+	hash, size, err := blobs.WriteContext(t.Context(), strings.NewReader(content))
 	require.NoError(t, err)
 	node, err := s.CreateFile(
 		t.Context(), s.RootID(), "notes.md", hash, size, "text/markdown; charset=utf-8",
@@ -214,7 +214,7 @@ func TestWorkerRetriesTransientOpenFailure(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, blobs.Close()) })
 
 	content := "A recoverable nebula record.\n"
-	hash, size, err := blobs.Write(strings.NewReader(content))
+	hash, size, err := blobs.WriteContext(t.Context(), strings.NewReader(content))
 	require.NoError(t, err)
 	_, err = s.CreateFile(t.Context(), s.RootID(), "notes.txt", hash, size, "text/plain")
 	require.NoError(t, err)

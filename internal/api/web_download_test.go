@@ -144,7 +144,7 @@ func TestWebDownloadPreparesOneRetainedVersion(t *testing.T) {
 	document := createFileWithContent(t, ts, s, "/report.txt", historicalContent)
 	historical, err := s.ContentVersionByID(t.Context(), document.CurrentVersionID)
 	require.NoError(t, err)
-	replacementHash, replacementSize, err := s.Blobs.Write(strings.NewReader("second edition\n"))
+	replacementHash, replacementSize, err := s.Blobs.WriteContext(t.Context(), strings.NewReader("second edition\n"))
 	require.NoError(t, err)
 	document, _, err = s.ReplaceContent(
 		t.Context(), document.ID, document.Revision,
@@ -239,7 +239,7 @@ func TestWebPreviewRejectsIneligibleAndOversizedSourcesBeforeStaging(t *testing.
 	t.Parallel()
 	t.Run("active document MIME", func(t *testing.T) {
 		ts, s := newTestServer(t, nil)
-		hash, size, err := s.Blobs.Write(strings.NewReader("<script>top.location='https://example.invalid'</script>"))
+		hash, size, err := s.Blobs.WriteContext(t.Context(), strings.NewReader("<script>top.location='https://example.invalid'</script>"))
 		require.NoError(t, err)
 		document, err := s.CreateFile(t.Context(), s.RootID(), "hostile.html", hash, size, "text/html")
 		require.NoError(t, err)
@@ -347,7 +347,7 @@ func TestWebPreviewRejectsRasterDimensionsBeforePublishingTicket(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ts, s := newTestServer(t, nil)
-			hash, size, err := s.Blobs.Write(bytes.NewReader(test.data))
+			hash, size, err := s.Blobs.WriteContext(t.Context(), bytes.NewReader(test.data))
 			require.NoError(t, err)
 			node, err := s.CreateFile(t.Context(), s.RootID(), test.name, hash, size, test.mime)
 			require.NoError(t, err)

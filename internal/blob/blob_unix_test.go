@@ -17,7 +17,7 @@ import (
 func TestOpenAndExistsRefuseSymlinkedBlob(t *testing.T) {
 	bs := newTestBlobStore(t)
 	content := "real bytes"
-	hash, _, err := bs.Write(strings.NewReader(content))
+	hash, _, err := bs.WriteContext(t.Context(), strings.NewReader(content))
 	require.NoError(t, err)
 
 	// Swap the stored blob for a symlink to identical bytes elsewhere. The
@@ -31,10 +31,10 @@ func TestOpenAndExistsRefuseSymlinkedBlob(t *testing.T) {
 	require.NoError(t, os.Remove(final))
 	require.NoError(t, os.Symlink(outside, final))
 
-	_, err = bs.Open(hash)
+	_, err = bs.OpenContext(t.Context(), hash)
 	require.Error(t, err)
 
-	ok, err := bs.Exists(hash)
+	ok, err := bs.Exists(t.Context(), hash)
 	require.Error(t, err)
 	assert.False(t, ok, "a symlink at the blob path is not a stored blob")
 }

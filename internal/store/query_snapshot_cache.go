@@ -188,6 +188,7 @@ func newQuerySnapshotService(store *Store, options querySnapshotServiceOptions) 
 			panic(fmt.Sprintf("generating query snapshot cursor key: %v", err))
 		}
 	}
+	// Snapshot builds belong to the service and stop when it closes.
 	stopCtx, stopCancel := context.WithCancel(context.Background())
 	service := &QuerySnapshotService{
 		store: store, snapshots: make(map[string]*cachedQuerySnapshot),

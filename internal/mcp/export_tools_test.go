@@ -200,7 +200,7 @@ func newNativeExportFixture(t *testing.T) *nativeExportFixture {
 
 func (f *nativeExportFixture) addFile(t *testing.T, name, content string) bundle.Member {
 	t.Helper()
-	hash, size, err := f.blobs.Write(strings.NewReader(content))
+	hash, size, err := f.blobs.WriteContext(t.Context(), strings.NewReader(content))
 	require.NoError(t, err)
 	node, err := f.catalog.CreateFile(t.Context(), f.catalog.RootID(), name, hash, size, "text/plain")
 	require.NoError(t, err)

@@ -80,7 +80,7 @@ func TestMediaEnqueueAuthorizedReturnsBeforeProvider(t *testing.T) {
 	var portable document.ProcessingProfileV1
 	require.NoError(t, json.Unmarshal(record.CanonicalProfile, &portable))
 	portable.Rendition.TrustBoundary = string(provider.Descriptor().TrustBoundary)
-	service, err := NewService(ServiceConfig{
+	service, err := NewService(t.Context(), ServiceConfig{
 		Catalog: fixture.catalog, Blobs: fixture.blobs, Gate: newWorkerTestGate(),
 		SpoolDirectory: t.TempDir(), Principal: "operator:synthetic", Scope: "document-processing",
 		Profiles: map[string]ProfileConfig{"speech": {Profile: portable, RenditionProvider: provider}},
@@ -240,7 +240,7 @@ func TestMediaContinuationCancellationBeforeEmbeddingResumesAfterReopen(t *testi
 	spool := filepath.Join(root, "spool")
 	require.NoError(t, os.MkdirAll(spool, 0o700))
 	newService := func() *Service {
-		service, serviceErr := NewService(ServiceConfig{
+		service, serviceErr := NewService(t.Context(), ServiceConfig{
 			Catalog: catalog, Blobs: blobs, Gate: newWorkerTestGate(), SpoolDirectory: spool,
 			Principal: "operator:cancel-restart", Scope: "document-processing",
 			Profiles: map[string]ProfileConfig{"speech": {
@@ -413,7 +413,7 @@ func newMediaStateFixtureWithoutConsent(tb testing.TB) mediaStateFixture {
 	var portable document.ProcessingProfileV1
 	require.NoError(tb, json.Unmarshal(record.CanonicalProfile, &portable))
 	portable.Rendition.TrustBoundary = string(provider.Descriptor().TrustBoundary)
-	service, err := NewService(ServiceConfig{
+	service, err := NewService(tb.Context(), ServiceConfig{
 		Catalog: fixture.catalog, Blobs: fixture.blobs, Gate: newWorkerTestGate(),
 		SpoolDirectory: tb.TempDir(), Principal: "operator:synthetic", Scope: "document-processing",
 		Profiles: map[string]ProfileConfig{"speech": {Profile: portable, RenditionProvider: provider}},
@@ -472,7 +472,7 @@ func TestMediaBackfillPreservesCompletedRevokedInput(t *testing.T) {
 			f := newMediaStateFixture(t)
 			name, profile, err := NewSuppliedMediaProfile(f.catalog, f.blobs, f.service.principal)
 			require.NoError(t, err)
-			f.service, err = NewService(ServiceConfig{
+			f.service, err = NewService(t.Context(), ServiceConfig{
 				Catalog: f.catalog, Blobs: f.blobs, Gate: newWorkerTestGate(),
 				SpoolDirectory: t.TempDir(), Principal: f.service.principal, Scope: f.service.scope,
 				Profiles: map[string]ProfileConfig{name: profile},
@@ -561,7 +561,7 @@ func TestMediaAdmissionInterruptedBeforeJobResumesThroughBackfill(t *testing.T) 
 			service.gate = gate
 			require.ErrorIs(t, err, context.Canceled)
 			// A restarted process keeps only the catalog; the job-less receipt is its sole record.
-			service, err = NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newWorkerTestGate(),
+			service, err = NewService(t.Context(), ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newWorkerTestGate(),
 				SpoolDirectory: t.TempDir(), Principal: "operator:synthetic", Scope: "document-processing",
 				Profiles: map[string]ProfileConfig{"speech": {Profile: service.profiles["speech"].portable,
 					RenditionProvider: f.provider}}})

@@ -123,10 +123,10 @@ func TestPurgeDerivativesRetiresPackedDerivativeBytes(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, records, 1)
 	assert.Equal(t, int64(2), records[0].EntryCount)
-	_, err = blobs.Open(written.Hash)
+	_, err = blobs.OpenContext(t.Context(), written.Hash)
 	require.ErrorIs(t, err, os.ErrNotExist)
 	for _, original := range originals {
-		reader, openErr := blobs.Open(original.Hash)
+		reader, openErr := blobs.OpenContext(t.Context(), original.Hash)
 		require.NoError(t, openErr)
 		require.NoError(t, reader.Close())
 	}

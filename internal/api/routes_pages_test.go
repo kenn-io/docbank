@@ -16,7 +16,7 @@ func TestPageAPIRequiresExactSelectionAndConfiguredRuntime(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	data := []byte("synthetic unsupported source")
-	hash, size, err := s.Blobs.Write(bytes.NewReader(data))
+	hash, size, err := s.Blobs.WriteContext(t.Context(), bytes.NewReader(data))
 	require.NoError(t, err)
 	node, err := s.CreateFile(t.Context(), s.RootID(), "synthetic.pdf", hash, size, "application/pdf")
 	require.NoError(t, err)

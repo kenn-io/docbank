@@ -62,7 +62,7 @@ func TestEmailStoreArchivePhysicalPortabilityAndMaintenance(t *testing.T) {
 	require.Equal(t, 1, report.Purge.RemovedEmailGenerations)
 	require.Equal(t, len(f.Email.Generation.Artifacts), report.Purge.RemovedEmailPartArtifacts)
 	for hash := range f.Payloads {
-		exists, err := f.Blobs.Exists(hash)
+		exists, err := f.Blobs.Exists(t.Context(), hash)
 		require.NoError(t, err)
 		if hash == body.SHA256 {
 			require.True(t, exists)

@@ -39,7 +39,7 @@ func checkoutService(t *testing.T) Service {
 
 func checkoutPhoto(t *testing.T, s Service, name, content string) store.PhotoAsset {
 	t.Helper()
-	hash, size, err := s.Blobs.Write(strings.NewReader(content))
+	hash, size, err := s.Blobs.WriteContext(t.Context(), strings.NewReader(content))
 	require.NoError(t, err)
 	node, err := s.Store.CreateFile(t.Context(), s.Store.RootID(), name, hash, size, "image/jpeg")
 	require.NoError(t, err)
@@ -566,7 +566,7 @@ func TestCheckoutRunOutcomes(t *testing.T) {
 			{"IMG.JPG", store.PhotoRoleImage, "image/jpeg"},
 			{"IMG.ARW.XMP", store.PhotoRoleSidecar, "application/rdf+xml"},
 		} {
-			hash, size, err := s.Blobs.Write(strings.NewReader(member.name))
+			hash, size, err := s.Blobs.WriteContext(t.Context(), strings.NewReader(member.name))
 			require.NoError(t, err)
 			members = append(members, store.PhotoImportMember{Name: member.name, Role: member.role, MediaType: member.mediaType, BlobHash: hash, Size: size, OriginalPath: filepath.Join(source, member.name)})
 		}
@@ -582,7 +582,7 @@ func TestCheckoutRunOutcomes(t *testing.T) {
 		require.NoError(t, err)
 		node, err := s.Store.NodeByID(ctx, asset.Files[0].NodeID)
 		require.NoError(t, err)
-		hash, size, err := s.Blobs.Write(strings.NewReader("new bytes"))
+		hash, size, err := s.Blobs.WriteContext(t.Context(), strings.NewReader("new bytes"))
 		require.NoError(t, err)
 		_, _, err = s.Store.ReplaceContent(ctx, node.ID, node.Revision, hash, size, "image/jpeg")
 		require.NoError(t, err)

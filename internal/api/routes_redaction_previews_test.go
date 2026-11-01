@@ -34,14 +34,14 @@ func TestRedactionPreviewBrowserHTTP(t *testing.T) {
 	var spool string
 	ts, vault := newTestServer(t, func(d *api.Deps) {
 		spool = filepath.Join(d.VaultRoot, "blobs", "tmp")
-		service, err := processing.NewService(processing.ServiceConfig{Catalog: d.Store, Blobs: d.Blobs, Gate: api.NewOperationGate(), SpoolDirectory: spool})
+		service, err := processing.NewService(t.Context(), processing.ServiceConfig{Catalog: d.Store, Blobs: d.Blobs, Gate: api.NewOperationGate(), SpoolDirectory: spool})
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, service.Shutdown(context.Background())) })
 		d.Processing, d.PageRuntime = service, runtime
 		processingService = service
 	})
 	pdf := redactiontest.PDF(t, []string{"SECRET KEEP SECRET"}, "")
-	hash, size, err := vault.Blobs.Write(bytes.NewReader(pdf))
+	hash, size, err := vault.Blobs.WriteContext(t.Context(), bytes.NewReader(pdf))
 	require.NoError(t, err)
 	node, err := vault.CreateFile(t.Context(), vault.RootID(), "synthetic.pdf", hash, size, "application/pdf")
 	require.NoError(t, err)

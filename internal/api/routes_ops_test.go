@@ -469,7 +469,7 @@ func TestVaultInfoIdentifiesRootAndSummarizesContents(t *testing.T) {
 	docs, err := s.Mkdir(t.Context(), s.RootID(), "docs")
 	require.NoError(t, err)
 	content := "vault inventory"
-	hash, size, err := s.Blobs.Write(strings.NewReader(content))
+	hash, size, err := s.Blobs.WriteContext(t.Context(), strings.NewReader(content))
 	require.NoError(t, err)
 	file, err := s.CreateFile(t.Context(), docs.ID, "record.txt", hash, size, "text/plain")
 	require.NoError(t, err)
@@ -664,7 +664,7 @@ func TestGCRevokesPackedBlobAuthority(t *testing.T) {
 	assert.Zero(t, gcReport.ReclaimedFiles)
 	assert.Equal(t, 1, gcReport.RemovedBlobs)
 
-	_, err = s.Blobs.Open(file.BlobHash)
+	_, err = s.Blobs.OpenContext(t.Context(), file.BlobHash)
 	require.ErrorIs(t, err, os.ErrNotExist)
 	entries, err := store.NewPackCatalog(s.Store).ListIndexed(t.Context())
 	require.NoError(t, err)
@@ -839,7 +839,7 @@ func TestGCEndpointAdvancesPastLiveOnlyRawPage(t *testing.T) {
 func TestGCEndpointRetainsFullPhysicalOrphanReconciliation(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)
-	hash, size, err := s.Blobs.Write(strings.NewReader("untracked physical content"))
+	hash, size, err := s.Blobs.WriteContext(t.Context(), strings.NewReader("untracked physical content"))
 	require.NoError(t, err)
 	path := filepath.Join(s.BlobsDir, hash[:2], hash)
 	require.FileExists(t, path)

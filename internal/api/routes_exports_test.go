@@ -76,7 +76,7 @@ func TestExportRevocationInterruptsActiveWorkBehindMaintenance(t *testing.T) {
 	token := issueWebSession(t, ts)
 	headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: token}
 	owner := fmt.Sprintf("%x", sha256.Sum256([]byte(token)))
-	hash, size, err := s.Blobs.Write(bytes.NewReader([]byte("synthetic cancellation payload")))
+	hash, size, err := s.Blobs.WriteContext(t.Context(), bytes.NewReader([]byte("synthetic cancellation payload")))
 	require.NoError(t, err)
 	n, err := s.CreateFile(t.Context(), s.RootID(), "cancel.txt", hash, size, "text/plain")
 	require.NoError(t, err)
@@ -408,7 +408,7 @@ func TestExportDerivedRolesFreezeReceiptsAcrossHeadReplacement(t *testing.T) {
 	require.NoError(t, err)
 	var pixels bytes.Buffer
 	require.NoError(t, png.Encode(&pixels, image.NewRGBA(image.Rect(0, 0, 72, 72))))
-	imageHash, imageSize, err := s.Blobs.Write(bytes.NewReader(pixels.Bytes()))
+	imageHash, imageSize, err := s.Blobs.WriteContext(t.Context(), bytes.NewReader(pixels.Bytes()))
 	require.NoError(t, err)
 	require.NoError(t, s.PublishPageImage(t.Context(), claim, document.PageImageV1{Contract: document.PageImageContractV1, Source: selected, Page: 1, FrameSHA256: frameHash, RecipeSHA256: recipeHash, SHA256: imageHash, Size: imageSize, Width: 72, Height: 72}, recipe, &store.BlobPhysical{Encoding: "raw", StoredBytes: imageSize}))
 	require.NoError(t, s.FinishPageJob(t.Context(), claim, "completed", ""))
@@ -419,7 +419,7 @@ func TestExportDerivedRolesFreezeReceiptsAcrossHeadReplacement(t *testing.T) {
 	require.Equal(t, 3, plan.RoleEntries)
 	_, err = s.PurgeDerivatives(t.Context(), store.PurgeRequest{ContentVersionIDs: []string{n.CurrentVersionID}})
 	require.ErrorIs(t, err, bundle.ErrRetained)
-	newHash, newSize, err := s.Blobs.Write(bytes.NewReader([]byte("new synthetic head")))
+	newHash, newSize, err := s.Blobs.WriteContext(t.Context(), bytes.NewReader([]byte("new synthetic head")))
 	require.NoError(t, err)
 	_, _, err = s.ReplaceContent(t.Context(), n.ID, n.Revision, newHash, newSize, "text/plain")
 	require.NoError(t, err)

@@ -114,7 +114,7 @@ func BenchmarkDocbankVerifiedRead64MiB(b *testing.B) {
 			b.ResetTimer()
 			peakFDs := baselineFDs
 			for range b.N {
-				stream, size, err := fixture.blobs.OpenStream(fixture.nodes[0].BlobHash)
+				stream, size, err := fixture.blobs.OpenStreamContext(b.Context(), fixture.nodes[0].BlobHash)
 				if err != nil {
 					b.Fatalf("opening verified stream: %v", err)
 				}
@@ -206,7 +206,7 @@ func BenchmarkDocbankLooseRead1GiB(b *testing.B) {
 	b.ResetTimer()
 	peakFDs := baselineFDs
 	for range b.N {
-		stream, size, err := fixture.blobs.OpenStream(fixture.nodes[0].BlobHash)
+		stream, size, err := fixture.blobs.OpenStreamContext(b.Context(), fixture.nodes[0].BlobHash)
 		if err != nil {
 			b.Fatalf("opening loose stream: %v", err)
 		}

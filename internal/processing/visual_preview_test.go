@@ -59,7 +59,7 @@ func TestByteFirstPNGRefinementKeepsAnimatedPNGPreviewable(t *testing.T) {
 			node, err := catalog.NodeByPath(t.Context(), "/inbox/animation"+suffix)
 			require.NoError(t, err)
 			require.Equal(t, "image/png", node.MimeType)
-			stored, err := blobs.Open(node.BlobHash)
+			stored, err := blobs.OpenContext(t.Context(), node.BlobHash)
 			require.NoError(t, err)
 			storedBytes, err := io.ReadAll(stored)
 			require.NoError(t, err)

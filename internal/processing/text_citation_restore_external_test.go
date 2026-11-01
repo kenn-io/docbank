@@ -54,7 +54,7 @@ func TestResolveTextCitationPhysicalRestore(t *testing.T) {
 	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(target, "blobs"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, blobs.Close()) })
-	service, err := processing.NewService(processing.ServiceConfig{Catalog: catalog, Blobs: blobs,
+	service, err := processing.NewService(t.Context(), processing.ServiceConfig{Catalog: catalog, Blobs: blobs,
 		Gate: api.NewOperationGate(), SpoolDirectory: filepath.Join(t.TempDir(), "spool")})
 	require.NoError(t, err)
 	got, err := service.ResolveTextCitation(t.Context(), f.Citation)

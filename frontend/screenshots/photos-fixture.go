@@ -72,7 +72,7 @@ func main() {
 	ctx := context.Background()
 	layout := home.Layout{Root: args[0]}
 	check(layout.Ensure())
-	s, err := store.Open(layout.DBPath())
+	s, err := store.Open(ctx, layout.DBPath())
 	check(err)
 	defer func() { check(s.Close()) }()
 	var pairedPerson string
@@ -164,7 +164,7 @@ func main() {
 		}
 		var encoded bytes.Buffer
 		check(jpeg.Encode(&encoded, frame, &jpeg.Options{Quality: 85}))
-		hash, size, err := blobs.Write(bytes.NewReader(encoded.Bytes()))
+		hash, size, err := blobs.WriteContext(ctx, bytes.NewReader(encoded.Bytes()))
 		check(err)
 		product, err := processing.ProduceVisualPreviewForRecipe(ctx, bytes.NewReader(encoded.Bytes()), processing.VisualPreviewTarget{SourceSHA256: hash, Size: size, MediaType: "image/jpeg"}, recipe)
 		check(err)
@@ -233,7 +233,7 @@ func main() {
 	var firstAssetID string
 	for index := range count {
 		if *unavailable && index == count-1 {
-			hash, size, err := blobs.Write(bytes.NewReader([]byte("synthetic undecodable JPEG")))
+			hash, size, err := blobs.WriteContext(ctx, bytes.NewReader([]byte("synthetic undecodable JPEG")))
 			check(err)
 			_, err = s.CreateFile(ctx, s.RootID(), "Synthetic-unavailable.jpg", hash, size, "image/jpeg")
 			check(err)
@@ -300,7 +300,7 @@ func main() {
 			if *namesakes && index == 1 {
 				// This portrait RAW preview is framed differently from its landscape JPEG.
 				rawBytes := mediatest.TIFFWithEmbeddedJPEG(1, mediatest.TIFFJPEGPreview{Data: samples[0].source})
-				rawHash, rawSize, err = blobs.Write(bytes.NewReader(rawBytes))
+				rawHash, rawSize, err = blobs.WriteContext(ctx, bytes.NewReader(rawBytes))
 				check(err)
 				rawMIME = "image/x-canon-cr2"
 			}
@@ -336,7 +336,7 @@ func main() {
 		unavailable, err := s.BeginIngest(ctx, "cli", "unavailable namesake photos")
 		check(err)
 		for index := range 2 {
-			hash, size, err := blobs.Write(bytes.NewReader(fmt.Appendf(nil, "synthetic undecodable JPEG %d", index)))
+			hash, size, err := blobs.WriteContext(ctx, bytes.NewReader(fmt.Appendf(nil, "synthetic undecodable JPEG %d", index)))
 			check(err)
 			name := fmt.Sprintf("Unavailable-namesake-%d.jpg", index)
 			node, err := s.IngestFileExact(ctx, unavailable, s.RootID(), name, hash, size, "image/jpeg", "/synthetic/unavailable/"+name, fmt.Sprintf("2026-10-0%dT12:00:00Z", index+1))
@@ -470,7 +470,7 @@ func seedVisionResult(ctx context.Context, s *store.Store, blobs *blob.Store, sp
 		RetentionDisclosure: document.RetentionDisclosurePolicyV1{AttachmentPolicyFingerprint: hash("attachment"), ConsentFingerprint: hash("consent"), TrustBoundary: string(descriptor.TrustBoundary)},
 		Retrieval:           document.RetrievalPolicyV1{LexicalLimit: 50, VectorLimit: 50},
 	}
-	service, err := processing.NewService(processing.ServiceConfig{Catalog: s, Blobs: blobs, Gate: api.NewOperationGate(), SpoolDirectory: spool, Profiles: map[string]processing.ProfileConfig{"vision": {Profile: profile, RenditionProvider: provider, RenditionDisclosure: processing.RuntimeDisclosure{Endpoint: server.URL}}}})
+	service, err := processing.NewService(ctx, processing.ServiceConfig{Catalog: s, Blobs: blobs, Gate: api.NewOperationGate(), SpoolDirectory: spool, Profiles: map[string]processing.ProfileConfig{"vision": {Profile: profile, RenditionProvider: provider, RenditionDisclosure: processing.RuntimeDisclosure{Endpoint: server.URL}}}})
 	check(err)
 	defer service.Stop()
 	selector := processing.Selector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "vision"}

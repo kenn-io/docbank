@@ -517,7 +517,7 @@ func (w *Watcher) openRoot(ctx context.Context) (*watchRoot, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolving vault root for watch %q: %w", w.config.Name, err)
 	}
-	overlaps, err := PathsOverlapContext(ctx, root, vaultRoot)
+	overlaps, err := PathsOverlap(ctx, root, vaultRoot)
 	if err != nil {
 		return nil, fmt.Errorf("checking watch %q source against the vault: %w", w.config.Name, err)
 	}
@@ -745,11 +745,7 @@ func watchDirectoryIdentities(ctx context.Context, dir *os.Root) ([]fs.FileInfo,
 // PathsOverlap reports lexical or filesystem-identity ancestry. Storage and
 // watched-inbox admission share this check so an aliased vault directory
 // cannot become its own input or secondary namespace.
-func PathsOverlap(left, right string) (bool, error) {
-	return PathsOverlapContext(context.Background(), left, right)
-}
-
-func PathsOverlapContext(ctx context.Context, left, right string) (bool, error) {
+func PathsOverlap(ctx context.Context, left, right string) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
@@ -821,13 +817,7 @@ func resolveExistingPathPrefixContext(ctx context.Context, pathname string) (str
 
 // WatchBindingOverlap reports whether one filesystem store binding can expose
 // its managed objects through a configured watched inbox.
-func WatchBindingOverlap(
-	watches []config.WatchConfig, binding config.StoreBindingConfig,
-) (string, bool, error) {
-	return WatchBindingOverlapContext(context.Background(), watches, binding)
-}
-
-func WatchBindingOverlapContext(ctx context.Context, watches []config.WatchConfig, binding config.StoreBindingConfig) (string, bool, error) {
+func WatchBindingOverlap(ctx context.Context, watches []config.WatchConfig, binding config.StoreBindingConfig) (string, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return "", false, err
 	}
@@ -835,7 +825,7 @@ func WatchBindingOverlapContext(ctx context.Context, watches []config.WatchConfi
 		return "", false, nil
 	}
 	for _, watch := range watches {
-		overlap, err := PathsOverlapContext(ctx, watch.Source, binding.Path)
+		overlap, err := PathsOverlap(ctx, watch.Source, binding.Path)
 		if err != nil && !CheckoutPathMissing(err) {
 			return watch.Name, false, err
 		}

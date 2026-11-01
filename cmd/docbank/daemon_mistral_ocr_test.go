@@ -207,7 +207,7 @@ func TestMistralPasswordFileProcessing(t *testing.T) {
 	require.NoError(t, err)
 	node, err := catalog.CreateFile(t.Context(), catalog.RootID(), "statement.pdf", written.Hash, written.Size, "application/pdf", store.BlobPhysical{Encoding: encoding, StoredBytes: written.StoredSize})
 	require.NoError(t, err)
-	service, err := processing.NewService(processing.ServiceConfig{Catalog: catalog, Blobs: blobs, Gate: api.NewOperationGate(), Profiles: profiles, SpoolDirectory: t.TempDir(), Lifecycle: t.Context()})
+	service, err := processing.NewService(t.Context(), processing.ServiceConfig{Catalog: catalog, Blobs: blobs, Gate: api.NewOperationGate(), Profiles: profiles, SpoolDirectory: t.TempDir(), Lifecycle: t.Context()})
 	require.NoError(t, err)
 	defer func() { require.NoError(t, service.Shutdown(context.Background())) }()
 	cfg.Server.APIKey = "synthetic-key"

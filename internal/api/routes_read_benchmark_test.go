@@ -81,7 +81,7 @@ func BenchmarkContentDownload(b *testing.B) {
 				content := bytes.Repeat(block, size/len(block))
 				sum := sha256.Sum256(content)
 				wantDigest := "sha-256=:" + base64.StdEncoding.EncodeToString(sum[:]) + ":"
-				hash, storedSize, err := s.Blobs.Write(bytes.NewReader(content))
+				hash, storedSize, err := s.Blobs.WriteContext(b.Context(), bytes.NewReader(content))
 				require.NoError(b, err)
 				node, err := s.CreateFile(b.Context(), s.RootID(), "content.bin",
 					hash, storedSize, "application/octet-stream")
@@ -234,7 +234,7 @@ func BenchmarkDocumentContentSearchHTTP(b *testing.B) {
 					provider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
 					require.NoError(b, err)
 					d.Gate = api.NewOperationGate()
-					d.Processing, err = processing.NewService(processing.ServiceConfig{
+					d.Processing, err = processing.NewService(b.Context(), processing.ServiceConfig{
 						Catalog: d.Store, Blobs: d.Blobs, Gate: d.Gate,
 						SpoolDirectory: filepath.Join(d.VaultRoot, "blobs", "tmp"),
 						Profiles: map[string]processing.ProfileConfig{"private": {

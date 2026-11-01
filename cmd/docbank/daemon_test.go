@@ -218,7 +218,7 @@ func TestConfiguredWatchStoresRejectOverlapBeforeDaemonStartup(t *testing.T) {
 		Lifecycle: "active", Binding: "archive",
 	}}
 
-	err := validateConfiguredWatchStores(cfg, stores)
+	err := validateConfiguredWatchStores(t.Context(), cfg, stores)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "overlaps filesystem store")
 }

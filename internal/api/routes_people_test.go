@@ -29,7 +29,7 @@ func TestPeopleBrowserMergeReceiptOmitsMovedEvidence(t *testing.T) {
 			absorbed, err := s.CreatePerson(ctx, "Hidden Absorbed", "operator")
 			require.NoError(t, err)
 			for _, person := range []store.Person{survivor, absorbed} {
-				hash, size, err := s.Blobs.Write(strings.NewReader(person.DisplayName))
+				hash, size, err := s.Blobs.WriteContext(t.Context(), strings.NewReader(person.DisplayName))
 				require.NoError(t, err)
 				photo, err := s.CreateFile(ctx, s.RootID(), person.DisplayName+".jpg", hash, size, "image/jpeg")
 				require.NoError(t, err)
@@ -129,7 +129,7 @@ func TestPeopleBrowserMergeReplayAfterChainedMerge(t *testing.T) {
 	require.Equal(t, strconv.Quote(strconv.FormatInt(receipt.SurvivorRevisionAfter, 10)), response.Header.Get("ETag"))
 
 	// A concealed canonical survivor maps the replay refusal to 404.
-	hash, size, err := s.Blobs.Write(strings.NewReader("synthetic portrait"))
+	hash, size, err := s.Blobs.WriteContext(t.Context(), strings.NewReader("synthetic portrait"))
 	require.NoError(t, err)
 	photo, err := s.CreateFile(ctx, s.RootID(), "portrait.jpg", hash, size, "image/jpeg")
 	require.NoError(t, err)

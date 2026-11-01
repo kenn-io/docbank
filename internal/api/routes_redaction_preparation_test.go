@@ -23,14 +23,14 @@ import (
 func TestRedactionPreparationHTTP(t *testing.T) {
 	runtime := redactiontest.PageRuntime(t)
 	ts, s := newTestServer(t, func(d *api.Deps) {
-		service, err := processing.NewService(processing.ServiceConfig{Catalog: d.Store, Blobs: d.Blobs,
+		service, err := processing.NewService(t.Context(), processing.ServiceConfig{Catalog: d.Store, Blobs: d.Blobs,
 			Gate: api.NewOperationGate(), SpoolDirectory: filepath.Join(d.VaultRoot, "blobs", "tmp")})
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, service.Shutdown(context.Background())) })
 		d.Processing, d.PageRuntime = service, runtime
 	})
 	data := redactiontest.PDF(t, []string{"SECRET KEEP SECRET"}, "")
-	hash, size, err := s.Blobs.Write(bytes.NewReader(data))
+	hash, size, err := s.Blobs.WriteContext(t.Context(), bytes.NewReader(data))
 	require.NoError(t, err)
 	node, err := s.CreateFile(t.Context(), s.RootID(), "native.pdf", hash, size, "application/pdf")
 	require.NoError(t, err)
@@ -72,7 +72,7 @@ func TestRedactionPreparationHTTP(t *testing.T) {
 		t.Run(sample.name, func(t *testing.T) {
 			pdf := redactiontest.FontPDF(sample.content,
 				"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding /ToUnicode 6 0 R >>", sample.cmap)
-			hash, size, err := s.Blobs.Write(bytes.NewReader(pdf))
+			hash, size, err := s.Blobs.WriteContext(t.Context(), bytes.NewReader(pdf))
 			require.NoError(t, err)
 			node, err := s.CreateFile(t.Context(), s.RootID(), sample.name+".pdf", hash, size, "application/pdf")
 			require.NoError(t, err)

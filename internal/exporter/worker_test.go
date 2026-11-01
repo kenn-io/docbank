@@ -53,7 +53,7 @@ func workerFixture(t *testing.T, gate exporter.Gate) (*exporter.Worker, *store.S
 	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(root, "blobs"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, blobs.Close()) })
-	hash, size, err := blobs.Write(bytes.NewBufferString("synthetic original\n"))
+	hash, size, err := blobs.WriteContext(t.Context(), bytes.NewBufferString("synthetic original\n"))
 	require.NoError(t, err)
 	node, err := catalog.CreateFile(t.Context(), catalog.RootID(), "synthetic.txt", hash, size, "text/plain")
 	require.NoError(t, err)

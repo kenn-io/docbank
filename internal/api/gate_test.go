@@ -252,7 +252,7 @@ func TestScheduledPackDeadlineClearsAdmissionAfterBackupCapture(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = blobs.Close() })
 
-	hash, size, err := blobs.Write(strings.NewReader("scheduled pack capture"))
+	hash, size, err := blobs.WriteContext(t.Context(), strings.NewReader("scheduled pack capture"))
 	require.NoError(t, err)
 	_, err = metadata.CreateFile(t.Context(), metadata.RootID(), "capture.txt", hash, size, "text/plain")
 	require.NoError(t, err)

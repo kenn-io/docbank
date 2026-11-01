@@ -139,7 +139,7 @@ func TestMixedStoreLifecyclePreservesMembershipAndBytes(t *testing.T) {
 	})
 	require.NoError(t, err)
 	for _, item := range fixtures[:2] {
-		_, err := physical.Open(item.hash)
+		_, err := physical.OpenContext(t.Context(), item.hash)
 		require.ErrorIs(t, err, os.ErrNotExist)
 	}
 
@@ -385,7 +385,7 @@ func TestDeferredRetirementCommitsAuthorityAndPackReconcilesOrphan(t *testing.T)
 
 func assertBlobContent(t *testing.T, physical *blob.Store, hash, want string) {
 	t.Helper()
-	reader, size, err := physical.OpenStream(hash)
+	reader, size, err := physical.OpenStreamContext(t.Context(), hash)
 	require.NoError(t, err)
 	data, readErr := io.ReadAll(reader)
 	closeErr := reader.Close()

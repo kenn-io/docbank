@@ -94,7 +94,7 @@ func TestRealPageAPIBackupRestoreAndGC(t *testing.T) {
 	worker, err := processing.NewPageWorker(catalog, blobs, engine, gate)
 	require.NoError(t, err)
 	add := func(name, mediaType string, data []byte) store.PageBinding {
-		hash, size, err := blobs.Write(bytes.NewReader(data))
+		hash, size, err := blobs.WriteContext(t.Context(), bytes.NewReader(data))
 		require.NoError(t, err)
 		node, err := catalog.CreateFile(t.Context(), catalog.RootID(), name, hash, size, mediaType)
 		require.NoError(t, err)

@@ -21,7 +21,7 @@ func newRemoteRecordingTestService(
 	origins map[string]MediaOriginPolicy,
 ) *Service {
 	t.Helper()
-	service, err := NewService(ServiceConfig{
+	service, err := NewService(t.Context(), ServiceConfig{
 		Catalog: fixture.catalog, Blobs: fixture.blobs, Gate: newWorkerTestGate(),
 		SpoolDirectory: t.TempDir(), Principal: principal, MediaMaxBytes: maximum,
 		MediaOrigins: origins, MediaTokenKey: [32]byte{1},

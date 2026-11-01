@@ -336,9 +336,9 @@ func TestEgressBoundsTLSHandshake(t *testing.T) {
 	t.Run("policy timeout", func(t *testing.T) {
 		transport := newTransport(t, 25*time.Millisecond)
 		result := make(chan error, 1)
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://127.0.0.1:"+strconv.Itoa(int(port)), nil)
+		require.NoError(t, err)
 		go func() {
-			request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://127.0.0.1:"+strconv.Itoa(int(port)), nil)
-			require.NoError(t, err)
 			response, err := (&http.Client{Transport: transport}).Do(request)
 			if response != nil {
 				_ = response.Body.Close()

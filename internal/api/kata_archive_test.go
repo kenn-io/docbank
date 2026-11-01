@@ -23,7 +23,7 @@ func TestKataContextOriginalCacheIsScopedToRequestAndSource(t *testing.T) {
 	blobs, err := blob.New(store.NewPackCatalog(s), blobsDir)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = blobs.Close() })
-	hash, size, err := blobs.Write(strings.NewReader("hello world"))
+	hash, size, err := blobs.WriteContext(t.Context(), strings.NewReader("hello world"))
 	require.NoError(t, err)
 	node, err := s.CreateFile(t.Context(), s.RootID(), "notes.txt", hash, size, "text/plain")
 	require.NoError(t, err)
@@ -62,7 +62,7 @@ func TestKataContextOriginalCacheIsScopedToRequestAndSource(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "failed", resolution.State)
 	// Reload a successful original before checking the content-hash boundary.
-	_, _, err = blobs.Write(strings.NewReader("hello world"))
+	_, _, err = blobs.WriteContext(t.Context(), strings.NewReader("hello world"))
 	require.NoError(t, err)
 	service, err = kataService(deps, gate)
 	require.NoError(t, err)
@@ -70,7 +70,7 @@ func TestKataContextOriginalCacheIsScopedToRequestAndSource(t *testing.T) {
 	_, err = service.Archive.Prepare(t.Context(), selection)
 	require.NoError(t, err)
 	// A new content hash for the first node also requires a new read.
-	newHash, newSize, err := blobs.Write(strings.NewReader("hello again"))
+	newHash, newSize, err := blobs.WriteContext(t.Context(), strings.NewReader("hello again"))
 	require.NoError(t, err)
 	_, _, err = s.ReplaceContent(t.Context(), node.ID, node.Revision, newHash, newSize, "text/plain")
 	require.NoError(t, err)
@@ -110,7 +110,7 @@ func TestKataOriginalPreparationFailures(t *testing.T) {
 		{name: "quote_mismatch", mimeType: "text/plain", content: []byte("hello"), end: 5, quote: "other", detail: "quote does not match the selected range"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			hash, size, err := blobs.Write(bytes.NewReader(tc.content))
+			hash, size, err := blobs.WriteContext(t.Context(), bytes.NewReader(tc.content))
 			require.NoError(t, err)
 			node, err := s.CreateFile(t.Context(), s.RootID(), tc.name+".txt", hash, size, tc.mimeType)
 			require.NoError(t, err)

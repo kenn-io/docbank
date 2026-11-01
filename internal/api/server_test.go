@@ -121,7 +121,7 @@ func testHash(seed string) string {
 //nolint:unparam // see comment above; ts is part of the shared fixture signature.
 func createFileWithContent(t *testing.T, ts *httptest.Server, s *testStore, path, content string) store.Node {
 	t.Helper()
-	hash, size, err := s.Blobs.Write(strings.NewReader(content))
+	hash, size, err := s.Blobs.WriteContext(t.Context(), strings.NewReader(content))
 	require.NoError(t, err)
 	name := strings.TrimPrefix(path, "/")
 	n, err := s.CreateFile(t.Context(), s.RootID(), name, hash, size, "text/plain")

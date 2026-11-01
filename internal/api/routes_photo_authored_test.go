@@ -26,7 +26,7 @@ func photoXMPResolveFixture(t *testing.T, caption string) (*httptest.Server, str
 	if caption != "" {
 		packet = strings.Replace(packet, `/>`, ` xmlns:dc="http://purl.org/dc/elements/1.1/" dc:description="Outside"/>`, 1)
 	}
-	hash, size, err := s.Blobs.Write(strings.NewReader("synthetic JPEG"))
+	hash, size, err := s.Blobs.WriteContext(t.Context(), strings.NewReader("synthetic JPEG"))
 	require.NoError(t, err)
 	photo, err := s.CreateFile(ctx, s.RootID(), "photo.jpg", hash, size, "image/jpeg")
 	require.NoError(t, err)
@@ -34,7 +34,7 @@ func photoXMPResolveFixture(t *testing.T, caption string) (*httptest.Server, str
 	require.NoError(t, err)
 	_, err = s.PublishSourceMetadata(ctx, hash, processing.SourceMetadataExtractorFingerprint, canonical)
 	require.NoError(t, err)
-	hash, size, err = s.Blobs.Write(strings.NewReader(packet))
+	hash, size, err = s.Blobs.WriteContext(t.Context(), strings.NewReader(packet))
 	require.NoError(t, err)
 	sidecar, err := s.CreateFile(ctx, s.RootID(), "photo.jpg.xmp", hash, size, "application/rdf+xml")
 	require.NoError(t, err)
@@ -89,7 +89,7 @@ func TestPhotoAuthoredRoutes(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	ctx := t.Context()
-	hash, size, err := s.Blobs.Write(strings.NewReader("synthetic JPEG"))
+	hash, size, err := s.Blobs.WriteContext(t.Context(), strings.NewReader("synthetic JPEG"))
 	require.NoError(t, err)
 	node, err := s.CreateFile(ctx, s.RootID(), "synthetic.jpg", hash, size, "image/jpeg")
 	require.NoError(t, err)

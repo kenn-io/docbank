@@ -29,7 +29,7 @@ func configureRemoteManualTestService(t *testing.T) func(*api.Deps) {
 		deps.Gate = gate
 		name, profile, err := processing.NewSuppliedMediaProfile(deps.Store, deps.Blobs, "daemon:operator")
 		require.NoError(t, err)
-		service, err := processing.NewService(processing.ServiceConfig{
+		service, err := processing.NewService(t.Context(), processing.ServiceConfig{
 			Catalog: deps.Store, Blobs: deps.Blobs, Gate: gate,
 			SpoolDirectory: filepath.Join(deps.VaultRoot, "blobs", "tmp"), Principal: "daemon:operator",
 			Profiles: map[string]processing.ProfileConfig{name: profile},

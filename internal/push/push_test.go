@@ -879,7 +879,7 @@ func readNode(t *testing.T, f *fixture, id int64) string {
 	t.Helper()
 	node, err := f.store.NodeByID(t.Context(), id)
 	require.NoError(t, err)
-	reader, err := f.blobs.Open(node.BlobHash)
+	reader, err := f.blobs.OpenContext(t.Context(), node.BlobHash)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, reader.Close()) }()
 	content, err := io.ReadAll(reader)

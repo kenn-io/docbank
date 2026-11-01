@@ -47,7 +47,7 @@ func TestMediaAcquisitionPlanBindsCurrentPolicyPrincipalIncarnationAndExpiry(t *
 		RetainedClasses:   []string{"recording_bytes", "caption_input"},
 		ReferencePrefixes: []string{"https://recordings.invalid/"}, AcquisitionAvailable: true}
 	newService := func(principal string, origins map[string]MediaOriginPolicy) *Service {
-		service, err := NewService(ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
+		service, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
 			Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Principal: principal,
 			MediaTokenKey: key, MediaOrigins: origins,
 			Clock: func() time.Time { return now }})
@@ -136,7 +136,7 @@ func TestRemoteRecordingReplaysBeforeOriginAdmission(t *testing.T) {
 	policy := MediaOriginPolicy{OriginID: "original", Provider: "synthetic",
 		ReferencePrefixes: []string{"https://recordings.invalid/"}}
 	newService := func(principal string, origins map[string]MediaOriginPolicy) *Service {
-		service, err := NewService(ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
+		service, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
 			Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Principal: principal,
 			MediaOrigins: origins, MediaTokenKey: [32]byte{1}})
 		require.NoError(t, err)
