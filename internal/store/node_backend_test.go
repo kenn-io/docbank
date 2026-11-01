@@ -87,6 +87,11 @@ func newPostgresSchemaStore(t *testing.T, setup *sql.DB, cfg pgschema.Config) *S
 		"; GRANT UPDATE(generation_id) ON "+schema+".rendition_lexical_heads TO "+quotedRole+
 		"; GRANT INSERT,UPDATE(purged_at,active,superseded_at,superseding_build_id) ON "+schema+".derivative_purge_suppressions TO "+quotedRole)
 	require.NoError(t, err)
+	_, err = setup.ExecContext(ctx, "GRANT INSERT,DELETE,UPDATE(scan_hash) ON "+schema+".blob_packs TO "+quotedRole+
+		"; GRANT INSERT,UPDATE ON "+schema+".blob_pack_entries TO "+quotedRole+
+		"; GRANT DELETE ON "+schema+".blob_locations TO "+quotedRole+
+		"; GRANT INSERT,DELETE ON "+schema+".gc_loose_retirements,"+schema+".derivative_pack_purge_pending TO "+quotedRole)
+	require.NoError(t, err)
 	config, err := pgx.ParseConfig(os.Getenv("DOCBANK_TEST_POSTGRES_DSN"))
 	require.NoError(t, err)
 	require.NoError(t, setup.QueryRowContext(ctx, `SELECT current_database()`).Scan(&config.Database))

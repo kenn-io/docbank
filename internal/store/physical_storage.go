@@ -219,7 +219,7 @@ func (s *Store) LooseBacklog(ctx context.Context) (LooseBacklog, error) {
 		       COALESCE(SUM(CASE WHEN l.encoding = 'raw' THEN 1 ELSE 0 END), 0),
 		       COALESCE(SUM(CASE WHEN l.encoding = 'zstd' THEN 1 ELSE 0 END), 0)
 		FROM blob_locations l JOIN blobs b ON b.hash = l.blob_hash
-		WHERE l.store_id = ? AND l.kind = ? AND l.pack_eligible = 1`,
+		WHERE l.store_id = $1 AND l.kind = $2 AND l.pack_eligible = 1`,
 		s.primaryStoreID, blobLocationKindLoose,
 	).Scan(&backlog.EligibleObjects, &backlog.EligibleBytes, &backlog.EligibleStoredBytes,
 		&backlog.RawObjects, &backlog.CompressedObjects)

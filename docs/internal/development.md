@@ -231,12 +231,14 @@ folder trash, whole photo groups, trash browsing and restore, including audited
 mutations and photo sidecar decisions. Permanent trash emptying and content-version
 pruning preserve retention holds and related catalog state. Derivative cleanup
 covers purge previews, rendition and embedding collection, extracted-text and
-email cleanup, and explicit rebuild authorization.
+email cleanup, and explicit rebuild authorization. Primary blob packing,
+repacking, bounded GC catalog selection and exact physical cleanup receipts
+also work with PostgreSQL metadata.
 
 A public PostgreSQL-backed vault is not available yet: daemon and embedded
 operations still open SQLite. Grouped photo imports, XMP sidecar writing,
-processing workers, search, transfer, backup recovery and the complete
-physical-storage lifecycle remain unqualified.
+processing workers, search, transfer, backup recovery, multi-store placement
+and storage-operation jobs remain unqualified.
 
 `Setup` takes a caller-owned `database/sql` pool authenticated as `SchemaOwner`
 and uses the explicit `Schema` setting. It creates a dedicated schema, canonical
@@ -312,7 +314,11 @@ GRANT UPDATE(operation_sequence_high_water, allocation_entry_count, allocation_h
 GRANT UPDATE(entry_count, chain_head) ON documents.audit_scopes TO docbank_runtime;
 GRANT SELECT, UPDATE(high_water) ON documents.node_allocation TO docbank_runtime;
 GRANT SELECT, INSERT, DELETE ON documents.photo_xmp_unsettled TO docbank_runtime;
-GRANT INSERT, UPDATE ON documents.blob_locations TO docbank_runtime;
+GRANT INSERT, UPDATE, DELETE ON documents.blob_locations TO docbank_runtime;
+GRANT INSERT, UPDATE ON documents.blob_pack_entries TO docbank_runtime;
+GRANT INSERT, DELETE, UPDATE(scan_hash) ON documents.blob_packs TO docbank_runtime;
+GRANT INSERT, DELETE ON documents.gc_loose_retirements,
+    documents.derivative_pack_purge_pending TO docbank_runtime;
 GRANT DELETE ON documents.blob_pack_entries, documents.rendition_blob_staging,
     documents.derivative_blob_purge_pending TO docbank_runtime;
 GRANT UPDATE(live_entries, live_stored_bytes, live_raw_bytes,
@@ -517,8 +523,7 @@ rejects a conflicting checksum without changing the retained value. The runtime
 role needs only `SELECT` and `INSERT` on `blob_checksums`. SHA-256 remains the
 blob identity; MD5 is auxiliary metadata. This qualifies checksum recording and
 readback. Native document writes also record physical receipts as described
-below; checksum backfill and the complete physical-storage lifecycle remain
-unqualified.
+below. Checksum backfill remains unqualified.
 
 !!! info "Planned"
 
@@ -682,8 +687,8 @@ JSON values alone do not preserve indexed lookup plans.
 
 Both destructive operations retain the existing refusal while audit authority
 is active. Dry runs can inspect candidates but do not authorize deletion.
-Physical byte deletion and processing workers remain separate, unqualified
-PostgreSQL operations.
+Physical reclamation uses the separate catalog operations described below;
+processing workers remain unqualified.
 
 #### Derivative cleanup
 
@@ -716,6 +721,40 @@ writes allocate their rebuildable row IDs under the store writer lock. SQLite
 continues to maintain its FTS shadow tables through its released triggers;
 PostgreSQL has only the retained lexical catalogs at this stage. Cleanup does
 not qualify PostgreSQL search or processing publication.
+
+#### Physical packing and collection
+
+The native `PackCatalog` supports Kit's primary-store pack and repack lifecycle
+with PostgreSQL metadata. Kit still writes and verifies the physical files;
+Docbank supplies logical membership, read locations, mappings and pack summaries.
+Packing replaces loose authority with verified packed authority. Repacking
+checks the complete live mapping set before publishing replacements. A failed
+transaction retains the original authority and mappings.
+
+PostgreSQL mutation helpers refresh affected pack summaries once per pack inside
+the writer transaction. This includes adoption, replacement, index removal,
+loose repair, logical collection and re-ingest. SQLite keeps its released
+summary triggers. Counts, totals and maxima describe only live members; dead
+mappings remain until physical retirement. A pack's scan key stays stable after
+publication, even when its lowest member disappears. Bounded GC and repack scans
+count examined rows, including ineligible entries, and retain byte-order cursors
+and SQLite's existing index hints.
+
+Logical blob deletion and exact cleanup receipts commit together. Receipts name
+the store and loose encoding or immutable pack, survive a failed physical cleanup,
+and can be retried. Before retiring a loose object, the caller checks its receipt
+again: renewed location authority consumes stale work without authorizing byte
+deletion. Completion removes only that exact receipt. Pack retirement removes
+its pending receipt through the catalog's foreign key. The caller must still
+hold exclusive vault/blob-root ownership across physical maintenance; the SQL
+writer lock alone cannot serialize filesystem publication.
+
+PostgreSQL tests run Kit's existing catalog contract against setup-owned DDL and
+a separate runtime role. A real-file lifecycle packs documents, revokes collected
+members, repacks the survivor and reads its original bytes. Additional cases
+cover bounded scans, summary changes, rollback and cleanup replay after content
+is reauthorized. This qualifies the primary catalog and cleanup protocol, not
+public PostgreSQL vault opening, multi-store placement, storage jobs or recovery.
 
 #### Imports and source history
 
