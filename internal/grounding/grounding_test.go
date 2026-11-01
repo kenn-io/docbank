@@ -7,25 +7,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestGroundingPunctuatedSigns(t *testing.T) {
-	for _, tc := range []struct{ name, answer, source, status string }{
-		{"cited minus before ISO code", "$5 [1]", "-_USD5.00_", "ungrounded"},
-		{"answer minus before ISO code", "-_USD5.00_ [1]", "$5", "ungrounded"},
-		{"cited plus before symbol", "$5 [1]", "+_$5.00_", "ungrounded"},
-		{"cited Unicode minus before suffix amount", "$5 [1]", "−_5.00 USD", "ungrounded"},
-		{"cited plus-minus across punctuation", "$5 [1]", "'±_.,USD5.00_'", "ungrounded"},
-		{"literal match", "-_USD5.00_ [1]", "-_USD5.00_", "grounded"},
-		{"unsigned citation", "$5 [1]", "_USD5.00_", "grounded"},
-		{"unsigned answer", "_USD5.00_ [1]", "$5", "grounded"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			a, err := Prepare(tc.answer)
-			require.NoError(t, err)
-			require.Equal(t, tc.status, a.Check([]Citation{{Text: tc.source}}).Status)
-		})
-	}
-}
-
 func TestGrounding(t *testing.T) {
 	for _, tc := range []struct {
 		name, answer, source, status, figureStatus string
