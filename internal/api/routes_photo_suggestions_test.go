@@ -89,7 +89,7 @@ func TestPhotoRotationResponseRoute(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
 	ts, s := newTestServer(t, nil)
-	hash, size, err := s.Blobs.Write(bytes.NewReader(mediatest.JPEG(8, 8, color.White)))
+	hash, size, err := s.Blobs.WriteContext(ctx, bytes.NewReader(mediatest.JPEG(8, 8, color.White)))
 	require.NoError(t, err)
 	node, err := s.CreateFile(ctx, s.RootID(), "synthetic.jpg", hash, size, "image/jpeg")
 	require.NoError(t, err)
