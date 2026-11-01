@@ -630,8 +630,20 @@ deployment, or descriptor mismatch prevents startup. Profiles sharing a
 descriptor must agree on all effective runtime and credential settings.
 A runtime without a selecting processing profile stays staged.
 
-PDF results can preserve exact page evidence, including blank pages. Other
-formats use bounded Markdown with explicitly degraded provenance. The existing
+PDF results can preserve exact page evidence, including blank pages. Each page
+unit holds the page's text items and tables. A table becomes a Markdown table
+on the one page its provenance names, after the text that Docling's reading
+order puts before it. Text inside a picture, such as a letterhead or a scanned
+page, and captions are ordinary text items, so they stay on their pages too.
+Docbank never assigns content to a guessed page. The page evidence is partial,
+with a field omission for each unmapped kind, when:
+
+- a table spans several pages, has no provenance, names a page outside the
+  result, or has a missing or ragged grid;
+- a table or picture carries a Docling description or classification;
+- the result contains key-value, form, or field items.
+
+Other formats use bounded Markdown with explicitly degraded provenance. The existing
 upload authorization, sanitization, publication, and lexical indexing checks
 still apply. Original bytes remain unchanged. After changing the descriptor,
 queued work fails with `stale_authority`; plan and consent to the changed profile
