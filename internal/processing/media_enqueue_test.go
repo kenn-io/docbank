@@ -386,6 +386,16 @@ type mediaStateFixture struct {
 
 func newMediaStateFixture(tb testing.TB) mediaStateFixture {
 	tb.Helper()
+	f := newMediaStateFixtureWithoutConsent(tb)
+	plan, err := f.service.Plan(tb.Context(), f.selector)
+	require.NoError(tb, err)
+	_, err = f.service.GrantConsent(tb.Context(), ConsentGrantRequest{Selector: f.selector, PlanFingerprint: plan.Fingerprint})
+	require.NoError(tb, err)
+	return f
+}
+
+func newMediaStateFixtureWithoutConsent(tb testing.TB) mediaStateFixture {
+	tb.Helper()
 	fixture := newPublicationFixture(tb)
 	descriptor, err := document.NewRenditionDescriptor(document.RenditionDescriptor{
 		ID: "synthetic.media-worker-v1", ContractVersion: document.RenditionProviderContractVersion,
@@ -411,10 +421,6 @@ func newMediaStateFixture(tb testing.TB) mediaStateFixture {
 	require.NoError(tb, err)
 	f := mediaStateFixture{publicationFixture: fixture, service: service, provider: provider}
 	f.version, f.selector = f.addWAV(tb, "source.wav", mediatest.WAV())
-	plan, err := service.Plan(tb.Context(), f.selector)
-	require.NoError(tb, err)
-	_, err = service.GrantConsent(tb.Context(), ConsentGrantRequest{Selector: f.selector, PlanFingerprint: plan.Fingerprint})
-	require.NoError(tb, err)
 	return f
 }
 
@@ -677,4 +683,65 @@ func TestMediaProcessingTransientStorageErrorKeepsReceiptQueued(t *testing.T) {
 	targets, err = f.service.MediaProcessingTargets(t.Context(), "", 10)
 	require.NoError(t, err)
 	require.Len(t, targets, 1, "the backfill retries the receipt")
+}
+
+func TestWatchImportAdmission(t *testing.T) {
+	t.Parallel()
+	for _, state := range []string{"required", "active", "revoked", "expired", "stale version", "unsupported source"} {
+		t.Run(state, func(t *testing.T) {
+			f := newMediaStateFixtureWithoutConsent(t)
+			node, err := f.catalog.NodeByID(t.Context(), f.selector.NodeID)
+			require.NoError(t, err)
+			if state != "required" {
+				plan, err := f.service.Plan(t.Context(), f.selector)
+				require.NoError(t, err)
+				_, err = f.service.GrantConsent(t.Context(), ConsentGrantRequest{Selector: f.selector, PlanFingerprint: plan.Fingerprint})
+				require.NoError(t, err)
+			}
+			switch state {
+			case "active", "stale version":
+				raw := mediatest.WAV()
+				raw[len(raw)-1] = 129
+				written, err := f.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(raw))
+				require.NoError(t, err)
+				updated, _, err := f.catalog.ReplaceContent(t.Context(), node.ID, node.Revision, written.Hash, written.Size, "audio/wav", processingBlobPhysical(t, written))
+				require.NoError(t, err)
+				require.NotEqual(t, node.CurrentVersionID, updated.CurrentVersionID)
+				if state == "active" {
+					node = updated
+				}
+			case "unsupported source":
+				written, err := f.blobs.WriteDetailedContext(t.Context(), bytes.NewBufferString("synthetic text"))
+				require.NoError(t, err)
+				node, err = f.catalog.CreateFile(t.Context(), f.catalog.RootID(), "notes.txt", written.Hash, written.Size, "text/plain", processingBlobPhysical(t, written))
+				require.NoError(t, err)
+			case "revoked":
+				_, err := f.service.RevokeConsent(t.Context())
+				require.NoError(t, err)
+			case "expired":
+				_, err := f.service.RevokeConsent(t.Context())
+				require.NoError(t, err)
+				authorization := f.service.renditionConsentRequest(f.service.profiles["speech"])
+				_, err = f.catalog.GrantConsent(t.Context(), store.ProcessingConsentGrantRequest{
+					Principal: authorization.Principal, Scope: authorization.Scope,
+					ProfileFingerprint: authorization.ProfileFingerprint, DisclosureFingerprint: authorization.DisclosureFingerprint,
+					InputClasses: authorization.InputClasses, RetainedArtifactClasses: authorization.RetainedArtifactClasses,
+					ExpiresAt: new(time.Now().Add(-time.Minute)),
+				})
+				require.NoError(t, err)
+				got, err := f.service.RenditionConsentState(t.Context(), "speech")
+				require.NoError(t, err)
+				require.Equal(t, "expired", got)
+			}
+			require.NoError(t, f.service.AdmitImportedRendition(t.Context(), node, "speech"))
+			claim, queued, err := f.catalog.ClaimNextRenditionJob(t.Context(), "synthetic-worker", time.Now(), time.Minute)
+			require.NoError(t, err)
+			require.Equal(t, state == "active", queued)
+			if queued {
+				work, err := f.catalog.RenditionJobWorkByClaim(t.Context(), claim, time.Now())
+				require.NoError(t, err)
+				require.Equal(t, node.CurrentVersionID, work.Waiter.ContentVersionID)
+			}
+		})
+	}
 }

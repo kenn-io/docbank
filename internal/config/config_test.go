@@ -1286,3 +1286,24 @@ func TestVisionRuntimeConfig(t *testing.T) {
 		})
 	}
 }
+
+func TestWatchProcessingProfileValidation(t *testing.T) {
+	cfg := validProcessingConfig()
+	cfg.Watches = []WatchConfig{{Name: "inbox", Source: t.TempDir(), Destination: "/inbox",
+		SettleTime: Duration(time.Second), ScanInterval: Duration(time.Second), Profile: "archive"}}
+	require.NoError(t, cfg.Validate())
+	cfg.Watches[0].Profile = "missing"
+	require.ErrorContains(t, cfg.Validate(), "not defined")
+	cfg.Watches[0].Profile = "archive"
+	profile := cfg.ProcessingProfiles["archive"]
+	profile.Rendition, profile.Embeddings = "", nil
+	profile.RetainSanitizedMarkdown = false
+	cfg.ProcessingProfiles["archive"] = profile
+	require.ErrorContains(t, cfg.Validate(), "requires an original-document rendition")
+	profile.Rendition = "primary"
+	cfg.ProcessingProfiles["archive"] = profile
+	rendition := cfg.RenditionProfiles["primary"]
+	rendition.AdapterContract = document.VisionAdapterContract
+	cfg.RenditionProfiles["primary"] = rendition
+	require.ErrorContains(t, cfg.Validate(), "requires an original-document rendition")
+}

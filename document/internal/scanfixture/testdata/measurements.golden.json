@@ -43,7 +43,7 @@
         "MaxEntryBytes": 0
       },
       "InspectError": "PDF is encrypted",
-      "MetadataError": "PDF is encrypted",
+      "MetadataError": "",
       "Unbounded": false
     },
     {

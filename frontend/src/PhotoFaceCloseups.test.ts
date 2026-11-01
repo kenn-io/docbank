@@ -53,7 +53,9 @@ it("keeps captions without a matching preview and reuses image nodes when names 
     fit: { ...fit, content_version_id: "version-a" },
   });
   expect(
-    [...component.container.querySelectorAll("figcaption")].map((caption) => caption.textContent),
+    [...component.container.querySelectorAll("figcaption")].map((caption) =>
+      caption.textContent?.trim(),
+    ),
   ).toEqual(["Ada", "Face 1", "Face 2 · Ada"]);
   const images = component.container.querySelectorAll("img");
   expect([...images].map((img) => img.getAttribute("alt"))).toEqual(["", "", ""]);
@@ -66,4 +68,50 @@ it("keeps captions without a matching preview and reuses image nodes when names 
   });
   expect(component.container.querySelectorAll("img")[2]).toBe(images[2]);
   expect(screen.getByText("Face 2 · Grace")).toBeTruthy();
+});
+
+it("renders the server grade with the six measurements", () => {
+  const light = 0.9;
+  const prominence = 0.1;
+  const grade = "green" as const;
+  const faces = new PhotoFaces("session", () => {});
+  const face = photoFace({ assertion_id: undefined });
+  faces.faces = [face];
+  faces.version = face.content_version_id;
+  const selected = {
+    ...photo(1),
+    content_version_id: face.content_version_id,
+    quality: {
+      state: "ready" as const,
+      face_reports: [
+        {
+          grade,
+          face_id: face.face_id,
+          sharpness: 0.8,
+          light,
+          facing: null,
+          prominence,
+          eyes_open: null,
+          smile: true,
+        },
+      ],
+      signals: {
+        focus: 0.5,
+        blur: 0.5,
+        brightness: 0.5,
+        color_red: 0,
+        color_green: 0,
+        color_blue: 0,
+        framing: 0,
+        aesthetics: 0,
+      },
+    },
+  };
+  render(PhotoFaceCloseups, { photo: selected, faces });
+  for (const label of ["Sharpness", "Light", "Facing", "Prominence", "Eyes", "Smile"])
+    expect(screen.getByText(label)).toBeTruthy();
+  expect(screen.getAllByTitle("Unavailable")).toHaveLength(2);
+  expect(screen.getByText(grade)).toBeTruthy();
+  expect(screen.getByText("Yes")).toBeTruthy();
+  faces.dispose();
 });

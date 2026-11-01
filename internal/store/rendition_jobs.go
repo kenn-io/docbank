@@ -800,7 +800,7 @@ func selectRenditionJobWaiterTx(
 			return "", ProviderOperationAuthorization{}, err
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE rendition_job_waiters
-			SET state='rejected',failure_code=?,updated_at=? WHERE waiter_id=?`,
+			SET state='rejected',failure_code=$1,updated_at=$2 WHERE waiter_id=$3`,
 			failureCode, at.Format(timestampLayout), candidateID); err != nil {
 			return "", ProviderOperationAuthorization{}, fmt.Errorf(
 				"rejecting unauthorized rendition waiter: %w", err)
@@ -1659,7 +1659,7 @@ func mediaInputBindingVisibleForSourceTx(
 
 func renditionWaitingIDsTx(ctx context.Context, tx *sql.Tx, jobID string) (_ []string, retErr error) {
 	rows, err := tx.QueryContext(ctx, `SELECT waiter_id FROM rendition_job_waiters
-		WHERE job_id=? AND state='waiting' ORDER BY waiter_id`, jobID)
+		WHERE job_id=$1 AND state='waiting' ORDER BY waiter_id`, jobID)
 	if err != nil {
 		return nil, fmt.Errorf("reading rendition waiters: %w", err)
 	}
@@ -1747,7 +1747,7 @@ func loadRenditionJobTx(ctx context.Context, query rowQuerier, id string) (Rendi
 		       (SELECT COUNT(*) FROM rendition_job_waiters w WHERE w.job_id=j.job_id),
 		       (SELECT COUNT(*) FROM rendition_job_waiters w
 		        WHERE w.job_id=j.job_id AND w.state='published')
-		FROM rendition_jobs j WHERE j.job_id=?`, id).Scan(
+		FROM rendition_jobs j WHERE j.job_id=$1`, id).Scan(
 		&job.ID, &job.SourceSHA256, &job.RenditionRequestFingerprint,
 		&job.EvidenceLexicalFingerprint, &job.CapturedArtifactPolicyFingerprint,
 		&job.ExecutionIdentityFingerprint, &job.State, &job.Phase, &job.ClaimEpoch,
@@ -1849,7 +1849,7 @@ func renditionWaiterAuthorizationTx(
 		JOIN content_versions v ON v.version_id=w.content_version_id
 		JOIN nodes n ON n.id=v.node_id
 		JOIN processing_profiles p ON p.profile_fingerprint=w.profile_fingerprint
-		WHERE w.waiter_id=? AND w.job_id=? AND w.state='waiting'`,
+		WHERE w.waiter_id=$1 AND w.job_id=$2 AND w.state='waiting'`,
 		waiterID, job.ID).Scan(&request.Principal, &request.Scope,
 		&request.ProfileFingerprint, &request.DisclosureFingerprint,
 		&inputJSON, &retainedJSON, &grantID, &incarnationID, &revocationFence,

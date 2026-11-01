@@ -18,9 +18,10 @@ workflows:
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-node@v7.1.0'
         - 'kenn-io/kit@v0.47.3'
+    '.github/workflows/render-pdf-image.yml':
+        - 'actions/checkout@v7.0.1'
     '.github/workflows/render-pdf-pr.yml': []
     '.github/workflows/render-pdf.yml':
-        - 'actions/cache@v6.1.0'
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-go@v7.0.0'
         - 'actions/setup-node@v7.1.0'

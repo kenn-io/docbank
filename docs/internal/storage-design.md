@@ -650,6 +650,8 @@ Burst grouping partitions photos by the timeline `folder_key` and the displayed 
 
 Schema 30 adds `photo_quality_signals`, a derived row per content version and evaluator fingerprint. It records focus, blur, brightness, color, framing, and aesthetics from the verified grid preview, or an unavailable result. It stays out of metadata JSONL and backups; the quality worker rebuilds it from ready previews.
 
+Schema 43 adds `face_reports_json` for per-face report cards and `face_inputs` for the face-input signature that publication rechecks.
+
 ### Photo suggestions
 
 Schema 43 adds `photo_suggestions`, one row per content version and producer fingerprint. A row holds the pending caption, tags, and visible text, the dismissed flag, the accepted-caption flag and accepted tags, and an `awaiting` flag for a restored row that regenerates. Pending text lives only in the database. Metadata JSONL carries the `photo_suggestion` record with the decisions and `awaiting`, never the text.

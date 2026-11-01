@@ -36,7 +36,7 @@ func purgeEmailCatalogTx(ctx context.Context, tx *sql.Tx, request PurgeRequest, 
 			if _, ok := selected[id]; !request.All && !ok {
 				continue
 			}
-			retained, err := stringColumnTx(ctx, tx, "retaining email publications", `SELECT operation_id FROM email_document_publications WHERE parent_version_id=? ORDER BY operation_id`, id)
+			retained, err := stringColumnTx(ctx, tx, "retaining email publications", `SELECT operation_id FROM email_document_publications WHERE parent_version_id=$1 ORDER BY operation_id`, id)
 			if err != nil {
 				return nil, nil, nil, err
 			}
@@ -50,7 +50,7 @@ func purgeEmailCatalogTx(ctx context.Context, tx *sql.Tx, request PurgeRequest, 
 			if err != nil {
 				return nil, nil, nil, err
 			}
-			generationIDs, err := stringColumnTx(ctx, tx, "email generation", `SELECT generation_id FROM email_attachments WHERE content_version_id=? ORDER BY generation_id`, id)
+			generationIDs, err := stringColumnTx(ctx, tx, "email generation", `SELECT generation_id FROM email_attachments WHERE content_version_id=$1 ORDER BY generation_id`, id)
 			if err != nil {
 				return nil, nil, nil, err
 			}
@@ -76,8 +76,8 @@ func purgeEmailCatalogTx(ctx context.Context, tx *sql.Tx, request PurgeRequest, 
 				query string
 				count *int
 			}{
-				{`DELETE FROM email_heads WHERE content_version_id=?`, &report.RemovedEmailHeads},
-				{`DELETE FROM email_attachments WHERE content_version_id=?`, &report.RemovedEmailAttachments},
+				{`DELETE FROM email_heads WHERE content_version_id=$1`, &report.RemovedEmailHeads},
+				{`DELETE FROM email_attachments WHERE content_version_id=$1`, &report.RemovedEmailAttachments},
 			} {
 				result, err := tx.ExecContext(ctx, entry.query, id)
 				if err != nil {
@@ -98,12 +98,12 @@ func purgeEmailCatalogTx(ctx context.Context, tx *sql.Tx, request PurgeRequest, 
 	}
 	var blobs []string
 	for _, id := range ids {
-		hashes, err := stringColumnTx(ctx, tx, "email artifact", `SELECT blob_hash FROM email_part_artifacts WHERE generation_id=? ORDER BY blob_hash`, id)
+		hashes, err := stringColumnTx(ctx, tx, "email artifact", `SELECT blob_hash FROM email_part_artifacts WHERE generation_id=$1 ORDER BY blob_hash`, id)
 		if err != nil {
 			return nil, nil, nil, err
 		}
 		blobs = append(blobs, hashes...)
-		result, err := tx.ExecContext(ctx, `DELETE FROM email_part_artifacts WHERE generation_id=?`, id)
+		result, err := tx.ExecContext(ctx, `DELETE FROM email_part_artifacts WHERE generation_id=$1`, id)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -112,7 +112,7 @@ func purgeEmailCatalogTx(ctx context.Context, tx *sql.Tx, request PurgeRequest, 
 			return nil, nil, nil, err
 		}
 		report.RemovedEmailPartArtifacts += count
-		if _, err := tx.ExecContext(ctx, `DELETE FROM email_generations WHERE generation_id=?`, id); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM email_generations WHERE generation_id=$1`, id); err != nil {
 			return nil, nil, nil, err
 		}
 		report.RemovedEmailGenerations++
@@ -122,14 +122,14 @@ func purgeEmailCatalogTx(ctx context.Context, tx *sql.Tx, request PurgeRequest, 
 
 func deleteEmailAuthorityForVersionsTx(ctx context.Context, tx *sql.Tx, versions []string) error {
 	for _, id := range versions {
-		retained, err := stringColumnTx(ctx, tx, "retaining email publications", `SELECT operation_id FROM email_document_publications WHERE parent_version_id=? UNION SELECT operation_id FROM email_document_relations WHERE child_version_id=? ORDER BY operation_id`, id, id)
+		retained, err := stringColumnTx(ctx, tx, "retaining email publications", `SELECT operation_id FROM email_document_publications WHERE parent_version_id=$1 UNION SELECT operation_id FROM email_document_relations WHERE child_version_id=$2 ORDER BY operation_id`, id, id)
 		if err != nil {
 			return err
 		}
 		if len(retained) != 0 {
 			return emailDocumentRetentionConflict(ctx, tx, retained)
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM email_attachments WHERE content_version_id=?`, id); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM email_attachments WHERE content_version_id=$1`, id); err != nil {
 			return err
 		}
 	}
@@ -140,7 +140,7 @@ func emailDocumentRetentionConflict(ctx context.Context, q metadataQuerier, oper
 	commands := make([]string, len(operationIDs))
 	for i, id := range operationIDs {
 		var mailbox bool
-		if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM mailbox_transfer_receipts WHERE document_publication_id=?)`, id).Scan(&mailbox); err != nil {
+		if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM mailbox_transfer_receipts WHERE document_publication_id=$1)`, id).Scan(&mailbox); err != nil {
 			return err
 		}
 		if mailbox {

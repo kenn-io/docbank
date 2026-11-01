@@ -119,7 +119,7 @@ responseParser := func(_ context.Context, resp *runtime.Response) (*{{template "
         target := new(struct{})
         {{else if .IsRaw}}
         target := new({{.ResponseName}}(resp.Content))
-        {{else if eq .Schema.GoType "string"}}
+        {{else if or (eq .Schema.GoType "string") (eq .Schema.GoType "[]byte")}}
         target := new({{.ResponseName}}(resp.Content))
         {{else}}
         target := new({{.ResponseName}})

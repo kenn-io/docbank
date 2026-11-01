@@ -405,7 +405,7 @@ or `pending` with `signals: null` while work can finish. A measured zero stays z
 Replacing content or changing the display file selects that version's signals.
 Videos have no quality object. `unavailable` with `signals: null` means work
 has finished without scores: the grid preview is unsupported or failed, or its
-verified bytes do not decode. Temporary read failures stay `pending` and retry.
+verified bytes do not decode; detected faces still appear in `face_reports` without Sharpness or Light. Temporary read failures stay `pending` and retry.
 
 All scores use the 0..1 scale. Focus measures adjacent luminance differences
 on a 16-by-16 sample, stretched by a 0.15 calibration ceiling. At that size it
@@ -895,3 +895,13 @@ Each face shares its number across the inspector, Loupe, and Cull closeup. Cull 
 Choose an active person's name beside the picker to filter photos to that person. Library links open Library; Hidden links stay in the unlocked Hidden view. This clears the text search and shows every match in capture-time order. Naming or clearing a face refreshes loaded views with person filters or search text in the same Hidden scope. Choose **Retry** after a People page error, including an empty first page. Retired names keep their labels and correction controls. Face labels follow the photo through rotation, zoom, and pan.
 
 Cull shows whole-photo marks first, then one closeup per face in creation order, matching the Face N labels. Closeups share the fit preview already loaded for the photo and rotate with it. If that preview is unavailable, each tile says **No preview**; choose **Retry preview** to try again.
+
+## Best shots
+
+Burst stacks show KEEP and CUT suggestions automatically when at least two frames have comparable measurements. The planner ranks shared focus, open eyes, aesthetics, and framing, with weights of 100, 90, 50, and 45. The eyes score uses the least-open prominent face. Blur duplicates inverse focus, so it adds no second vote. Ties favor RAW originals, then stable photo IDs. An unmeasured frame stays undecided. Frames with confirmed flags leave planning before ranking. A stack with an owner-confirmed pick receives no further keeper proposals.
+
+Face closeups show Sharpness, Light, Facing, Prominence, Eyes, and Smile. Missing observations show Unavailable. A face's worst measured sharpness, light, facing, or eyes score sets its grade. Below 0.33 is red for a subject occupying at least 2.1% of the frame, otherwise yellow. Scores from 0.33 to below 0.42 are yellow; 0.42 and above are green. Smile describes the face and doesn't affect its grade. Tiny crops leave sharpness and light unavailable.
+
+Select a stack and choose **Accept all** or **Dismiss all**. P picks and X rejects through the ordinary photo editor. Acceptance checks the displayed KEEP/CUT choices, complete file revisions, and observed stack membership in one transaction. A changed choice or stack asks you to reload and changes nothing. Each batch creates one receipt. Undo restores accepted or manually edited flags, or reverses the latest dismissal, making the suggestions available again. Dismiss confirms each offered frame's current flag as your choice. **Keep current** preserves those flags on the other frames.
+
+Backups retain confirmed flags. Pending suggestions and face report caches regenerate locally. Audited vaults support the same best-shot decisions and ordinary P/X edits.

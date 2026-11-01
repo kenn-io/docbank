@@ -131,6 +131,12 @@ func registerJobRoutes(api huma.API, d Deps) {
 					continue
 				}
 				job := observableJob(snapshot)
+				for _, watch := range d.Cfg.Watches {
+					if snapshot.Name == "watch:"+watch.Name {
+						job.Processing = watchProcessingStatus(ctx, d, watch.Profile)
+						break
+					}
+				}
 				applyControl(&job, controls, snapshot.Name, snapshot.Status == jobs.StatusRunning)
 				if redactErrors && job.Error != "" {
 					job.Error = "background job failed; inspect with the Docbank CLI for details"

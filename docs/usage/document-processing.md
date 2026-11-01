@@ -101,7 +101,8 @@ accepted atom count and ordered/unordered gap counts. It does not print original
 text. `--json` returns the complete `native-pdf-preparation/v1` envelope,
 **including unredacted text**. Treat any saved JSON like the original document.
 Agents can use the same JSON command or authenticated
-`POST /api/v1/redaction/prepare`; no browser or MCP action is exposed.
+`POST /api/v1/redaction/prepare`. The browser uses the same preparation in its
+[PDF review editor](#review-a-pdf-in-the-browser); no MCP tool is exposed.
 
 Preparation returns coverage gaps for inspection. Every ordered gap must be
 fully masked, and an unordered gap requires masking its whole page, before the
@@ -204,8 +205,56 @@ source pixels. Plain rendering retains no job, attachment or output for later do
 A killed daemon may leave private files in its spool; see the
 [staging bounds](../architecture/page-images.md#native-pdf-mask-execution).
 Agents can use these commands or the authenticated `POST /api/v1/redaction/resolve`
-and `/api/v1/redaction/render` routes. Browser sessions and MCP tools do not
-expose these operations.
+and `/api/v1/redaction/render` routes. Browser sessions use resolve and the
+temporary-preview routes described below; direct render and reservations remain
+API-key-only. No MCP tool is exposed.
+
+### Review a PDF in the browser
+
+Select a live PDF in **Documents**, then choose **Redact PDF**. The configured
+Linux amd64 page runtime is required. The editor supports one original PDF up
+to 64 MiB and 16 pages. Empty files, saved-result sources and related previews
+cannot start a review. **Fit page** initially shows the whole page; choose
+**Fit width** or a percentage to inspect it more closely.
+
+1. Render any missing original page, then choose **Draw rectangle** or **Mask
+   whole page**. To draw with the keyboard, focus the mask canvas, move with
+   arrow keys and press Enter at each corner. Shift moves 0.1 inch; Escape
+   cancels the unfinished rectangle. Page and zoom changes cancel it too.
+   Drawing stays on after each rectangle.
+2. Cover every coverage gap. An unordered gap needs a whole-page mask. If a
+   rectangle cuts through text, review the proposed expansion and explicitly
+   choose **Use expanded mask**, or keep editing.
+3. Choose **Preview redaction**. Inspect **Redacted** and **Text** on each page.
+   The displayed page images are the exact images verified against this PDF.
+4. Choose **Confirm and download ZIP**, then **Download ZIP**. Extract
+   `redacted.pdf` to open it. The ZIP also contains the sanitized text and receipt.
+   Keep the tab open until the transfer finishes.
+
+The original is unchanged. A changed source version before preview requires
+reopening the intended PDF; tags, names and moves preserve masks. Once ready,
+the preview is frozen even if the original is replaced or trashed. **Back to
+masks** discards that output before editing. Repeated downloads return identical
+bytes. Verification checks the masks and text; it does not prove unmasked pixels
+match the original or authenticate the producer.
+
+Canceling a preview keeps the masks. If creation loses its response, the editor
+releases any server preview before enabling another attempt. If cleanup fails,
+choose **Release preview** to retry it.
+
+Only one temporary preview can be open across the daemon. It expires after
+30 minutes, and is removed on discard, sign-out or daemon restart. Closing or
+reloading the tab requests cancellation of this preview and its transfers. It
+does not end the browser session or cancel other exports and imports. Returning
+to a cached page leaves the editor closed. If a crash or lost cleanup request
+prevents removal, wait for expiry. There is no saved draft or restart recovery.
+A ready preview releases the rendering slot but can retain up to 1.53 GiB of private spool files.
+See [temporary-preview storage](../architecture/page-images.md#temporary-browser-redaction-previews).
+
+For later offline verification, expand **Private review files** and save the
+preparation, masks and review. Their names contain `PRIVATE`; preparation
+contains unredacted evidence. Keep all three separate from the delivery ZIP.
+Use them with [`redaction verify`](#check-and-retain-a-saved-archive).
 
 ### Deliver one reviewed PDF with Bates numbers
 

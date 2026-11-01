@@ -1,5 +1,6 @@
 <script lang="ts">
-  import type { Snippet } from "svelte";
+  import { untrack, type Snippet } from "svelte";
+  import { APIError } from "./api-transport.js";
   import * as api from "./generated/docbank.js";
   import "./inspector.css";
   import {
@@ -21,6 +22,7 @@
   import TechnicalDetails from "./TechnicalDetails.svelte";
   import InspectorHistory from "./InspectorHistory.svelte";
   import CopyValue from "./CopyValue.svelte";
+  import RedactionDrawer from "./RedactionDrawer.svelte";
   import DownloadButton from "./DownloadButton.svelte";
   import type { SelectedSource } from "./selectedSource.js";
   import TagLabel from "./TagLabel.svelte";
@@ -92,12 +94,110 @@
     ontags?: () => void;
     onremovetag?: (tag: Tag) => void;
   } = $props();
+  let pdfMetadata = $state<api.SourceMetadata>();
+  $effect(() => {
+    const selected = source;
+    void authorizationRevision;
+    const controller = new AbortController();
+    const known = node?.current_version_id === selected?.versionID && node?.source_metadata;
+    pdfMetadata = (session && selected && known) || undefined;
+    if (!known && selected && session && mediaType(selected.mimeType) === "application/pdf") {
+      void api
+        .getContentVersion(selected.versionID, { session, signal: controller.signal })
+        .then((version) => {
+          if (!controller.signal.aborted) pdfMetadata = version.source_metadata;
+        })
+        .catch((cause) => {
+          if (!controller.signal.aborted && cause instanceof APIError && cause.status === 401)
+            untrack(() => onauthfailure?.(cause));
+        });
+    }
+    return () => controller.abort();
+  });
+  const pdfValues = $derived(
+    new Map(
+      pdfMetadata?.fields
+        .filter((field) => field.namespace === "pdf.info")
+        .map((field) => [field.key, field.value]),
+    ),
+  );
+  const pdfAvailable = $derived(pdfValues.has("pdf.info.encrypted"));
+  const pdfLocked = $derived(
+    pdfMetadata?.warnings.some((warning) => warning.source_field === "Password"),
+  );
+  function pdfBoolean(key: string, yes = "Yes", no = "No"): string {
+    const value = pdfValues.get(`pdf.info.${key}`)?.boolean;
+    return value == null ? "Unknown" : value ? yes : no;
+  }
+  // Open when the PDF changed after signing or can run code.
+  const pdfFlagged = $derived(
+    pdfValues.get("pdf.info.last_signature_covers_file")?.boolean === false ||
+      !!pdfValues.get("pdf.info.has_javascript")?.boolean ||
+      !!pdfValues.get("pdf.info.has_launch_actions")?.boolean,
+  );
+  const pdfRows = $derived([
+    { label: "Encrypted", value: pdfLocked ? "Yes, needs a password" : pdfBoolean("encrypted") },
+    ...(pdfValues.get("pdf.info.encrypted")?.boolean
+      ? [
+          {
+            label: "Permissions",
+            value: pdfValues.get("pdf.info.permissions")?.strings?.join(", ") ?? "Unknown",
+          },
+        ]
+      : []),
+    {
+      label: "Signature fields",
+      value: String(pdfValues.get("pdf.info.signature_field_count")?.integer ?? "Unknown"),
+    },
+    ...(pdfValues.has("pdf.info.last_signature_covers_file") ||
+    pdfMetadata?.warnings.some((warning) =>
+      ["ByteRange", "SignatureFields"].includes(warning.source_field),
+    )
+      ? [
+          {
+            label: "Last signature",
+            value: pdfBoolean(
+              "last_signature_covers_file",
+              "Covers the whole file",
+              "Does not cover the whole file",
+            ),
+          },
+        ]
+      : []),
+    {
+      label: "Embedded files",
+      value: String(pdfValues.get("pdf.info.embedded_file_count")?.integer ?? "Unknown"),
+    },
+    { label: "JavaScript", value: pdfBoolean("has_javascript") },
+    { label: "Launch actions", value: pdfBoolean("has_launch_actions") },
+  ]);
   let protect = $state(false);
   let displayed = $state<{ origin: string; source: SelectedSource; revision: number }>();
+  let redacting = $state<{ source: SelectedSource; revision: number }>();
+  const canRedact = $derived(
+    !snapshot &&
+      node?.kind === "file" &&
+      !node.trashed_at &&
+      source?.kind === "live" &&
+      mediaType(source.mimeType) === "application/pdf" &&
+      (!displayed || displayed.origin !== source.key || displayed.source.key === source.key),
+  );
+  const redactionDisabled = $derived(
+    actionsDisabled
+      ? "Refresh this view first"
+      : source?.size === 0
+        ? "An empty PDF cannot be redacted"
+        : (source?.size ?? 0) > 64 * 1024 * 1024
+          ? "PDF redaction supports files up to 64 MiB"
+          : "",
+  );
   const download = $derived(displayed?.origin === source?.key ? displayed : undefined);
   function showSource(next: SelectedSource, revision: number): void {
     if (source) displayed = { origin: source.key, source: next, revision };
   }
+  $effect(() => {
+    if (redacting && redacting.source.nodeID !== source?.nodeID) redacting = undefined;
+  });
   // The media type without parameters such as "; charset=utf-8".
   function mediaType(value: string | undefined): string {
     return (value ?? "").split(";")[0]!.trim() || "application/octet-stream";
@@ -135,6 +235,13 @@
       {onauthfailure}
     />
   {/if}
+  {#if canRedact && source && session && onauthfailure}<AppTooltip text={redactionDisabled}
+      ><Button
+        size="sm"
+        disabled={!!redactionDisabled}
+        onclick={() => (redacting = { source, revision: authorizationRevision })}>Redact PDF</Button
+      ></AppTooltip
+    >{/if}
   {#if onopen}<Button size="sm" tone="info" surface="solid" onclick={onopen}>Open</Button>{/if}
   {#if onprocess && profiles.length > 0}<AppTooltip
       text={actionsDisabled ? "Refresh this view first" : ""}
@@ -214,6 +321,9 @@
         </section>{/if}
     {:else}
       {@render currentTags()}
+    {/if}
+    {#if pdfAvailable}
+      <TechnicalDetails summary="Security" open={pdfFlagged} facts={pdfRows} />
     {/if}
     <TechnicalDetails
       facts={[
@@ -306,6 +416,14 @@
   </Modal>
 {/if}
 
+{#if redacting && session && onauthfailure}{#key redacting.source.key}<RedactionDrawer
+      {session}
+      source={redacting.source}
+      authorizationRevision={redacting.revision}
+      {onauthfailure}
+      onclose={() => (redacting = undefined)}
+    />{/key}{/if}
+
 <style>
   .assigned-tag {
     position: relative;
@@ -350,8 +468,8 @@
   }
   .tags-row {
     display: grid;
-    grid-template-columns: 76px minmax(0, 1fr);
-    gap: var(--space-3);
+    grid-template-columns: 96px minmax(0, 1fr);
+    gap: var(--space-5);
     align-items: baseline;
     font-size: var(--font-size-sm);
   }
