@@ -297,7 +297,7 @@ calling processing providers. See
 [Backup architecture](../architecture/backup.md#which-retained-records-must-round-trip)
 for retained records and rebuildable indexes.
 
-Snapshots keep photo suggestion dismissals and accepted-field decisions but omit suggestion text. After restore and fresh processing consent, only undecided fields are described again.
+Snapshots keep photo suggestion dismissals and accepted-field decisions, plus a marker for an unconfirmed rotation proposal. They omit generated text and rotation angles. After restore and fresh processing consent, only undecided fields are described again. A dismissed caption stays dismissed while its pending rotation regenerates; a confirmed rotation needs no regeneration.
 
 ## Restore and prove a snapshot
 

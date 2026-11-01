@@ -14209,6 +14209,14 @@ components:
       properties:
         caption:
           type: string
+        rotation:
+          enum:
+            - 0
+            - 90
+            - 180
+            - 270
+          format: int64
+          type: integer
         tags:
           items:
             type: string
@@ -15477,6 +15485,15 @@ components:
         node_revision:
           format: int64
           type: integer
+        rotation:
+          enum:
+            - 90
+            - 180
+            - 270
+          format: int64
+          type: integer
+        rotation_source:
+          type: string
         source_revision:
           format: int64
           type: integer
@@ -15525,6 +15542,14 @@ components:
             - accepted
             - dismissed
           type: string
+        rotation:
+          description: The clockwise angle shown in the rotation proposal, also supplied on dismissal.
+          enum:
+            - 90
+            - 180
+            - 270
+          format: int64
+          type: integer
         source_revision:
           format: int64
           type: integer

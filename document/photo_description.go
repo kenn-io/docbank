@@ -8,6 +8,7 @@ import (
 
 // PhotoDescription is one indivisible proposal from a vision provider.
 type PhotoDescription struct {
+	Rotation    *int     `json:"rotation,omitempty" enum:"0,90,180,270"`
 	Caption     string   `json:"caption"`
 	Tags        []string `json:"tags"`
 	VisibleText string   `json:"visible_text"`
@@ -24,6 +25,9 @@ const (
 // Tags arrive normalized, so it leaves the empty, UTF-8, and control checks to
 // the tag normalizer and checks only the bounds the normalizer does not.
 func ValidatePhotoDescription(value PhotoDescription) error {
+	if value.Rotation != nil && *value.Rotation != 0 && *value.Rotation != 90 && *value.Rotation != 180 && *value.Rotation != 270 {
+		return errors.New("photo description rotation is invalid")
+	}
 	for _, text := range []string{value.Caption, value.VisibleText} {
 		if len(text) > MaxPhotoTextBytes || !utf8.ValidString(text) || strings.ContainsRune(text, 0) {
 			return errors.New("photo description text is invalid")

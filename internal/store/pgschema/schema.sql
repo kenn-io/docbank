@@ -1741,6 +1741,7 @@ CREATE TABLE {{schema}}.photo_suggestions (
     suggestion_id        TEXT COLLATE "C" NOT NULL UNIQUE,
     content_version_id   TEXT COLLATE "C" NOT NULL,
     producer_fingerprint TEXT COLLATE "C" NOT NULL,
+    rotation             BIGINT,
     caption              TEXT COLLATE "C" NOT NULL DEFAULT '',
     tags_json            TEXT COLLATE "C" NOT NULL DEFAULT '[]',
     visible_text         TEXT COLLATE "C" NOT NULL DEFAULT '',
@@ -1748,6 +1749,7 @@ CREATE TABLE {{schema}}.photo_suggestions (
     caption_resolved     BIGINT NOT NULL DEFAULT 0,
     resolved_tags_json   TEXT COLLATE "C" NOT NULL DEFAULT '[]',
     awaiting             BIGINT NOT NULL DEFAULT 0,
+    text_settled         BIGINT NOT NULL DEFAULT 0,
     created_at           TEXT COLLATE "C" NOT NULL,
     UNIQUE (content_version_id, producer_fingerprint)
 );
