@@ -33,14 +33,26 @@ func EvaluatePhotoQuality(
 	if err != nil {
 		return fmt.Errorf("reading photo quality preview: %w", err)
 	}
-	decoded, ok := decodePhotoQualityPreview(body, output)
-	if !ok {
-		return s.PublishPhotoQualityUnavailable(ctx, target)
-	}
-	if err := ctx.Err(); err != nil {
+	faces, inputs, err := s.PhotoQualityFaces(ctx, target.VersionID)
+	if err != nil {
 		return err
 	}
-	return s.PublishPhotoQualitySignals(ctx, target, measurePhotoQuality(decoded))
+	reports := make([]document.PhotoFaceReport, len(faces))
+	for i, f := range faces {
+		reports[i] = document.PhotoFaceReport{FaceID: f.FaceID, Prominence: f.Box.Width * f.Box.Height, Facing: f.Facing, EyesOpen: f.EyesOpen, Smile: f.Smile}
+	}
+	decoded, ok := decodePhotoQualityPreview(body, output)
+	if !ok {
+		return s.PublishPhotoQualityUnavailable(ctx, target, inputs, reports...)
+	} else if err := ctx.Err(); err != nil {
+		return err
+	}
+	signals := measurePhotoQuality(decoded)
+	for i, face := range faces {
+		measurePhotoFace(decoded, face, &reports[i])
+	}
+	signals.FaceReports = reports
+	return s.PublishPhotoQualitySignals(ctx, target, signals, inputs)
 }
 
 func decodePhotoQualityPreview(body []byte, output *document.VisualPreviewOutputV1) (image.Image, bool) {
@@ -103,8 +115,24 @@ func measurePhotoQuality(source image.Image) document.PhotoQualitySignals {
 		}
 		s.Framing = min(max(1-distance/0.5, 0), 1)
 	}
-	balanced := 1 - min(math.Abs(s.Brightness-0.5)*2, 1)
 	contrast := max(s.ColorRed, s.ColorGreen, s.ColorBlue) - min(s.ColorRed, s.ColorGreen, s.ColorBlue)
-	s.Aesthetics = min(max(s.Focus*0.35+balanced*0.25+contrast*0.20+s.Framing*0.20, 0), 1)
+	s.Aesthetics = min(max(s.Focus*0.35+balancedExposure(s.Brightness)*0.25+contrast*0.20+s.Framing*0.20, 0), 1)
 	return s
+}
+
+func measurePhotoFace(source image.Image, face store.PhotoFace, r *document.PhotoFaceReport) {
+	b := source.Bounds()
+	box := image.Rect(b.Min.X+int(face.Box.X*float64(b.Dx())), b.Min.Y+int(face.Box.Y*float64(b.Dy())), b.Min.X+int((face.Box.X+face.Box.Width)*float64(b.Dx())), b.Min.Y+int((face.Box.Y+face.Box.Height)*float64(b.Dy()))).Intersect(b)
+	if box.Dx() < document.PhotoQualityFaceMinPixels || box.Dy() < document.PhotoQualityFaceMinPixels {
+		return
+	}
+	crop := image.NewRGBA(image.Rect(0, 0, box.Dx(), box.Dy()))
+	draw.Draw(crop, crop.Bounds(), source, box.Min, draw.Src)
+	measured := measurePhotoQuality(crop)
+	r.Sharpness = new(measured.Focus)
+	r.Light = new(balancedExposure(measured.Brightness))
+}
+
+func balancedExposure(brightness float64) float64 {
+	return 1 - min(math.Abs(brightness-0.5)*2, 1)
 }

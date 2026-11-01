@@ -57,7 +57,7 @@ func (s *Store) PrepareIngestDirectory(
 	if err != nil {
 		return IngestDirectoryPlan{}, err
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 	if err != nil {
 		return IngestDirectoryPlan{}, fmt.Errorf("beginning ingest directory snapshot: %w", err)
 	}
@@ -88,7 +88,7 @@ func (s *Store) ExtendIngestDirectory(
 		plan.segments = append(append([]string(nil), plan.segments...), normalized...)
 		return plan, nil
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 	if err != nil {
 		return IngestDirectoryPlan{}, fmt.Errorf("beginning ingest directory snapshot: %w", err)
 	}
@@ -211,7 +211,7 @@ func (s *Store) ensureIngestRunForMutationTx(
 	if err == nil || run.initialLabel == nil {
 		return inserted, err
 	}
-	if s.driver.IsUniqueViolation(err) {
+	if s.isUniqueViolation(err) {
 		return false, initialIngestAdmissionError{cause: fmt.Errorf(
 			"collection label %q: %w", *run.initialLabel, ErrExists,
 		)}
@@ -260,7 +260,7 @@ func (s *Store) FinalizeIngestDirectories(
 			return nil
 		}
 		labelResult, err := tx.ExecContext(ctx,
-			`DELETE FROM collection_labels WHERE ingest_id=?`, run.ID(),
+			`DELETE FROM collection_labels WHERE ingest_id=$1`, run.ID(),
 		)
 		if err != nil {
 			return fmt.Errorf("removing zero-document collection label: %w", err)
@@ -272,7 +272,7 @@ func (s *Store) FinalizeIngestDirectories(
 		if labelRows != 1 {
 			return fmt.Errorf("removing zero-document collection label changed %d rows", labelRows)
 		}
-		runResult, err := tx.ExecContext(ctx, `DELETE FROM ingests WHERE id=?`, run.ID())
+		runResult, err := tx.ExecContext(ctx, `DELETE FROM ingests WHERE id=$1`, run.ID())
 		if err != nil {
 			return fmt.Errorf("removing zero-document ingest: %w", err)
 		}

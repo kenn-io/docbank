@@ -127,7 +127,7 @@ func activeProvenanceMatchesTx(
 	rows, err := tx.QueryContext(ctx, `
 		SELECT i.source_kind, i.source_desc, p.original_path, p.original_mtime
 		FROM provenance AS p JOIN ingests AS i ON i.id = p.ingest_id
-		WHERE p.node_id = ?
+		WHERE p.node_id = $1
 		  AND NOT EXISTS (
 			SELECT 1 FROM provenance AS successor WHERE successor.supersedes = p.identity
 		  )`, nodeID)
@@ -166,7 +166,7 @@ func ensureIngestRunTx(ctx context.Context, tx *sql.Tx, run IngestRun) (bool, er
 	}
 	var alreadyStored bool
 	if err := tx.QueryRowContext(ctx,
-		`SELECT EXISTS(SELECT 1 FROM ingests WHERE id=?)`, run.record.ID,
+		`SELECT EXISTS(SELECT 1 FROM ingests WHERE id=$1)`, run.record.ID,
 	).Scan(&alreadyStored); err != nil {
 		return false, fmt.Errorf("checking ingest run %s: %w", run.record.ID, err)
 	}
@@ -180,8 +180,8 @@ func ensureIngestRunTx(ctx context.Context, tx *sql.Tx, run IngestRun) (bool, er
 		}
 	}
 	result, err := tx.ExecContext(ctx,
-		`INSERT OR IGNORE INTO ingests (id, started_at, source_kind, source_desc)
-		 VALUES (?, ?, ?, ?)`,
+		`INSERT INTO ingests (id, started_at, source_kind, source_desc)
+		 VALUES ($1, $2, $3, $4) ON CONFLICT(id) DO NOTHING`,
 		run.record.ID, run.record.StartedAt, run.record.SourceKind, run.record.SourceDesc)
 	if err != nil {
 		return false, fmt.Errorf("recording ingest run: %w", err)
@@ -192,7 +192,7 @@ func ensureIngestRunTx(ctx context.Context, tx *sql.Tx, run IngestRun) (bool, er
 	}
 	stored := metadataIngest{Type: metadataIngestType}
 	if err := tx.QueryRowContext(ctx,
-		`SELECT id,started_at,source_kind,source_desc FROM ingests WHERE id=?`,
+		`SELECT id,started_at,source_kind,source_desc FROM ingests WHERE id=$1`,
 		run.record.ID).Scan(
 		&stored.ID, &stored.StartedAt, &stored.SourceKind, &stored.SourceDesc,
 	); err != nil {
@@ -234,9 +234,9 @@ func resolveIngestNameTx(
 		 LEFT JOIN ingests AS i ON i.id = p.ingest_id
 		 WHERE n.id IN (
 			 SELECT candidate.id FROM content_versions AS cv
-			 CROSS JOIN nodes AS candidate ON candidate.id = cv.node_id
-			 WHERE cv.blob_hash = ? AND candidate.current_version_id = cv.version_id
-			   AND candidate.parent_id = ? AND candidate.trashed_at IS NULL AND candidate.kind = 'file'
+			 JOIN nodes AS candidate ON candidate.id = cv.node_id
+			 WHERE cv.blob_hash = $1 AND candidate.current_version_id = cv.version_id
+			   AND candidate.parent_id = $2 AND candidate.trashed_at IS NULL AND candidate.kind = 'file'
 		 )
 		 ORDER BY n.id`, blobHash, parentID)
 	if err != nil {
@@ -274,10 +274,10 @@ func resolveIngestNameTx(
 	// Unicode and SQL wildcard characters in the basename stay literal.
 	conflicts, err := tx.Query(`
 		SELECT name, kind FROM nodes
-		WHERE parent_id = ? AND name = ? AND trashed_at IS NULL
+		WHERE parent_id = $1 AND name = $2 AND trashed_at IS NULL
 		UNION ALL
 		SELECT name, kind FROM nodes
-		WHERE parent_id = ? AND name >= ? AND name < ? AND trashed_at IS NULL`,
+		WHERE parent_id = $3 AND name >= $4 AND name < $5 AND trashed_at IS NULL`,
 		parentID, name, parentID, base+" (", base+" )")
 	if err != nil {
 		return "", 0, false, fmt.Errorf("listing conflicting names for %q: %w", name, err)
@@ -418,7 +418,7 @@ func (s *Store) ingestFileTx(
 	if options.exact {
 		var existingID int64
 		err := tx.QueryRow(
-			`SELECT id FROM nodes WHERE parent_id = ? AND name = ? AND trashed_at IS NULL`,
+			`SELECT id FROM nodes WHERE parent_id = $1 AND name = $2 AND trashed_at IS NULL`,
 			parentID, name).Scan(&existingID)
 		switch {
 		case err == nil:
@@ -442,7 +442,7 @@ func (s *Store) ingestFileTx(
 				return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, fmt.Errorf("reconciling idempotent ingest content: %w", err)
 			}
 			receipt.Node, err = scanNode(tx.QueryRow(
-				`SELECT `+nodeCols+` FROM `+nodeFrom+` WHERE n.id = ?`, existingID))
+				`SELECT `+nodeCols+` FROM `+nodeFrom+` WHERE n.id = $1`, existingID))
 			if err != nil {
 				return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, fmt.Errorf("reading idempotent ingest node %d: %w", existingID, err)
 			}
@@ -463,7 +463,7 @@ func (s *Store) ingestFileTx(
 				return receipt, added, resolution, nil
 			}
 			receipt.Version, err = scanContentVersion(tx.QueryRow(
-				`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id = ?`,
+				`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id = $1`,
 				receipt.Node.CurrentVersionID,
 			))
 			if err != nil {
@@ -524,7 +524,7 @@ func (s *Store) ingestFileTx(
 	if _, err := tx.Exec(
 		`INSERT INTO provenance (
 			identity, node_id, ingest_id, original_path, original_mtime, supersedes
-		 ) VALUES (?, ?, ?, ?, ?, ?)`,
+		 ) VALUES ($1, $2, $3, $4, $5, $6)`,
 		provenance.Identity, provenance.NodeID, provenance.IngestID,
 		provenance.OriginalPath, provenance.OriginalMTime, provenance.Supersedes); err != nil {
 		return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, fmt.Errorf("recording provenance for %q: %w", finalName, err)
@@ -535,7 +535,7 @@ func (s *Store) ingestFileTx(
 		ObservedAt:         run.record.StartedAt,
 		BasisRef:           provenanceVersionBindingBasis,
 	}
-	if err := bindProvenanceVersionTx(ctx, tx, binding); err != nil {
+	if err := s.bindProvenanceVersionTx(ctx, tx, binding); err != nil {
 		return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, fmt.Errorf("binding provenance for %q: %w", finalName, err)
 	}
 	if run.operationalWatch {
@@ -600,7 +600,7 @@ func insertWatchSourceTx(
 	}
 	if _, err := tx.Exec(
 		`INSERT INTO watch_sources(watch_name,source_ref,node_id,blob_hash,size)
-		 VALUES(?,?,?,?,?)`,
+		 VALUES($1,$2,$3,$4,$5)`,
 		watchName, sourceRef, nodeID, blobHash, size,
 	); err != nil {
 		return fmt.Errorf("recording watched source %q/%q: %w", watchName, sourceRef, err)

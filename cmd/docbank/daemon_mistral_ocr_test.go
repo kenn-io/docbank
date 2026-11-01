@@ -90,7 +90,8 @@ func TestMistralOCRRuntimeManifest(t *testing.T) {
 	require.Empty(t, profiles)
 }
 
-func TestDaemonMistralOCRProcessing(t *testing.T) {
+func startMistralOCRDaemon(t *testing.T, watches []config.WatchConfig) *daemonconn.Connection {
+	t.Helper()
 	cfg, _ := mistralOCRProcessingConfig(t)
 	providerRuntime := cfg.RenditionProfiles["documents"].Runtime
 	providerRuntime.AllowedCIDRs = []string{"192.0.2.0/32"}
@@ -101,14 +102,20 @@ func TestDaemonMistralOCRProcessing(t *testing.T) {
 	require.NoError(t, cfg.Validate())
 	cfg.Server.APIKey = "synthetic-mistral-daemon-key"
 	t.Setenv("DOCBANK_TEST_MISTRAL_OCR_KEY", "synthetic-mistral-key")
-	source := mistraltest.MinimalPDF("synthetic daemon OCR")
 	root := t.TempDir()
+	cfg.Watches = watches
 	require.NoError(t, writeDaemonASRConfig(root, cfg))
 	t.Setenv("DOCBANK_HOME", root)
 	startServe(t)
 	runtime := waitForDaemon(t, root)
 	daemon := daemonconn.New("http://"+runtime.Address, cfg.Server.APIKey)
 	t.Cleanup(func() { require.NoError(t, daemon.Close()) })
+	return daemon
+}
+
+func TestDaemonMistralOCRProcessing(t *testing.T) {
+	daemon := startMistralOCRDaemon(t, nil)
+	source := mistraltest.MinimalPDF("synthetic daemon OCR")
 	output, err := runCLI(t, "processing", "profiles", "--json")
 	require.NoError(t, err)
 	var profiles []api.ProcessingProfileSummary
@@ -137,6 +144,33 @@ func TestDaemonMistralOCRProcessing(t *testing.T) {
 		require.Equal(c, "retry_wait", status.State, "%+v", status)
 		require.Equal(c, "transient", status.FailureCode)
 	}, 20*time.Second, 20*time.Millisecond)
+}
+
+func TestDaemonWatchProfileAdmitsImports(t *testing.T) {
+	inbox := t.TempDir()
+	daemon := startMistralOCRDaemon(t, []config.WatchConfig{{Name: "inbox", Source: inbox, Destination: "/inbox", Profile: "documents", CaptureOnChange: true, ScanInterval: config.Duration(10 * time.Millisecond)}})
+	path := filepath.Join(t.TempDir(), "consent.pdf")
+	require.NoError(t, os.WriteFile(path, mistraltest.MinimalPDF("consent source"), 0600))
+	_, err := runCLI(t, "add", path, "--dest", "/documents")
+	require.NoError(t, err)
+	node, err := daemon.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/documents/consent.pdf"}})
+	require.NoError(t, err)
+	selector := api.ProcessingSelector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "documents"}
+	plan, err := daemon.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
+	require.NoError(t, err)
+	_, err = daemon.API().GrantDocumentProcessingConsent(t.Context(), &apiclient.GrantDocumentProcessingConsentRequestOptions{Body: &api.ProcessingConsentGrantRequest{Selector: selector, PlanFingerprint: plan.Fingerprint}})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(inbox, "watched.pdf"), mistraltest.MinimalPDF("watched after consent"), 0600))
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		node, err := daemon.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/inbox/watched.pdf"}})
+		require.NoError(c, err)
+		items, err := daemon.ResolveDocumentSummaries(t.Context(), api.DocumentSummaryResolveRequest{Identities: []api.DocumentIdentity{
+			{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Path: "/inbox/watched.pdf"},
+		}})
+		require.NoError(c, err)
+		require.Len(c, items, 1)
+		require.NotEmpty(c, items[0].LatestProcessingState, "daemon watch callback queues the exact imported version")
+	}, 10*time.Second, 20*time.Millisecond)
 }
 
 func TestMistralPasswordFileProcessing(t *testing.T) {

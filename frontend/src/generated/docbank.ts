@@ -3669,6 +3669,22 @@ export const JobStatus = {
   cancelled: 'cancelled',
 } as const;
 
+export type WatchProcessingStatusConsentState = typeof WatchProcessingStatusConsentState[keyof typeof WatchProcessingStatusConsentState];
+
+
+export const WatchProcessingStatusConsentState = {
+  active: 'active',
+  required: 'required',
+  expired: 'expired',
+  revoked: 'revoked',
+} as const;
+
+export interface WatchProcessingStatus {
+  consent_state?: WatchProcessingStatusConsentState;
+  error?: string;
+  profile: string;
+}
+
 export interface Job {
   /** Whether this job is processing work rather than waiting for an item or its next scheduled run. */
   busy: boolean;
@@ -3688,6 +3704,7 @@ export interface Job {
   operation_id?: string;
   paused: boolean;
   processed_bytes?: number;
+  processing?: WatchProcessingStatus;
   started_at: string;
   status: JobStatus;
   total_bytes?: number;
@@ -4302,6 +4319,13 @@ export interface NumberedReservation {
   request_sha256: string;
   snapshot_id: string;
   state: string;
+}
+
+export interface NumberedDelivery {
+  artifact_manifest_sha256: string;
+  endorsements_sha256: string[];
+  layout_sha256: string[];
+  reservation: NumberedReservation;
 }
 
 export interface RedactionMask {
@@ -5821,6 +5845,25 @@ export interface PhotoAuthoredEditRequest {
   targets: PhotoAuthoredEditTarget[];
 }
 
+export type PhotoBestShotProposalFlag = typeof PhotoBestShotProposalFlag[keyof typeof PhotoBestShotProposalFlag];
+
+
+export const PhotoBestShotProposalFlag = {
+  pick: 'pick',
+  reject: 'reject',
+} as const;
+
+export interface PhotoBestShotProposal {
+  asset_id: string;
+  /**
+     * @minimum 0
+     * @maximum 1
+     */
+  confidence: number;
+  flag: PhotoBestShotProposalFlag;
+  rationale: string;
+}
+
 export interface PhotoKeywordNode {
   after_revision: number;
   node_id: number;
@@ -5941,6 +5984,7 @@ export interface PhotoAuthoredPreparation {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   assets: PhotoAsset[];
+  proposals?: PhotoBestShotProposal[];
   suggestions?: PhotoSuggestion[];
   targets: PhotoPreparedTarget[];
 }
@@ -5956,6 +6000,28 @@ export interface PhotoAuthoredPrepareRequest {
   skip_unavailable?: boolean;
   /** Prepare up to 2,000 live files for a complete stack decision. */
   stack?: boolean;
+}
+
+export type PhotoBestShotResponseFlag = typeof PhotoBestShotResponseFlag[keyof typeof PhotoBestShotResponseFlag];
+
+
+export const PhotoBestShotResponseFlag = {
+  pick: 'pick',
+  reject: 'reject',
+} as const;
+
+export type PhotoBestShotResponseResponse = typeof PhotoBestShotResponseResponse[keyof typeof PhotoBestShotResponseResponse];
+
+
+export const PhotoBestShotResponseResponse = {
+  accepted: 'accepted',
+  dismissed: 'dismissed',
+} as const;
+
+export interface PhotoBestShotResponse {
+  asset_id: string;
+  flag: PhotoBestShotResponseFlag;
+  response: PhotoBestShotResponseResponse;
 }
 
 export interface WorkspaceFacetValue {
@@ -6035,6 +6101,32 @@ export interface PhotoPreviewSlots {
   large: PhotoPreviewSlot;
 }
 
+export type PhotoFaceReportGrade = typeof PhotoFaceReportGrade[keyof typeof PhotoFaceReportGrade];
+
+
+export const PhotoFaceReportGrade = {
+  '': '',
+  red: 'red',
+  yellow: 'yellow',
+  green: 'green',
+} as const;
+
+export interface PhotoFaceReport {
+  /** @nullable */
+  eyes_open: boolean | null;
+  face_id: string;
+  /** @nullable */
+  facing: number | null;
+  grade?: PhotoFaceReportGrade;
+  /** @nullable */
+  light: number | null;
+  prominence: number;
+  /** @nullable */
+  sharpness: number | null;
+  /** @nullable */
+  smile: boolean | null;
+}
+
 export interface PhotoQualitySignals {
   /**
      * @minimum 0
@@ -6098,6 +6190,8 @@ export const PhotoBrowseRowRotation = {
 } as const;
 
 export type PhotoBrowseRowQuality = {
+  /** @maxItems 1000 */
+  face_reports?: PhotoFaceReport[];
   signals: PhotoQualitySignals | null;
   state: PhotoBrowseRowQualityState;
 };
@@ -6208,6 +6302,7 @@ export interface PhotoStack {
      * @maxItems 500
      */
   asset_ids: string[];
+  proposals?: PhotoBestShotProposal[];
   representative_id: string;
 }
 
@@ -6700,6 +6795,8 @@ export interface PhotoStackDecisionRequest {
   decision: PhotoStackDecisionRequestDecision;
   hidden?: boolean;
   /** @maxItems 500 */
+  responses?: PhotoBestShotResponse[];
+  /** @maxItems 500 */
   selected_ids?: string[];
   /**
      * @minItems 1
@@ -6960,6 +7057,14 @@ export interface PreviewBlobStoreRegistrationRequest {
      */
   name: string;
   takeover?: boolean;
+}
+
+export interface PreviewInput {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  masks: RedactionMask[];
+  preparation: RedactionPreparation;
+  review_sha256: string;
 }
 
 export interface PreviewRequest {
@@ -7385,10 +7490,74 @@ export interface QueryPreview {
   query_fingerprint: string;
 }
 
+export interface RedactionFileDigest {
+  sha256: string;
+  size: number;
+}
+
+export interface RedactionReceipt {
+  admitted_node_revision: number;
+  contract: string;
+  decisions_sha256: string;
+  numbered?: NumberedDelivery;
+  page_count: number;
+  pdf: RedactionFileDigest;
+  preparation_sha256: string;
+  recipe: PDFRedactionRecipe;
+  resolved_sha256: string;
+  review_sha256: string;
+  selection: NativePDFSelection;
+  text: RedactionFileDigest;
+}
+
+export interface RedactionArchive {
+  receipt: RedactionReceipt;
+  sha256: string;
+  size: number;
+}
+
 export interface RedactionPreparationRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   selection: PageBinding;
+}
+
+export interface RedactionPreviewPage {
+  frame_sha256: string;
+  height: number;
+  number: number;
+  pixel_height: number;
+  pixel_width: number;
+  png: RedactionFileDigest;
+  text_end: number;
+  text_start: number;
+  width: number;
+}
+
+export interface RedactionPreview {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  archive: RedactionArchive;
+  contract: string;
+  expires_at: string;
+  id: string;
+  pages: RedactionPreviewPage[];
+}
+
+export interface RedactionPreviewConfirmation {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  archive_sha256: string;
+  confirmed: boolean;
+  review_sha256: string;
+}
+
+export interface RedactionPreviewTicket {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  sha256: string;
+  size: number;
+  url: string;
 }
 
 export interface RedactionRenderRequest {
@@ -8759,6 +8928,7 @@ export interface WatchedInbox {
   job?: Job;
   minimum_age: string;
   name: string;
+  processing?: WatchProcessingStatus;
   scan_interval: string;
   settle_time: string;
   source: string;
@@ -18986,6 +19156,229 @@ return sessionJSON<RedactionPreparation>(getPrepareNativePDFUrl(),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(redactionPreparationRequest)
+  }
+);}
+
+
+
+export const getDiscardRedactionPreviewsUrl = () => {
+
+
+
+
+  return `/api/v1/redaction/previews`
+}
+
+/**
+ * @summary Cancel this owner's redaction preview and transfers
+ */
+export const discardRedactionPreviews = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
+
+  return sessionJSON<void>(getDiscardRedactionPreviewsUrl(),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+export const getCreateRedactionPreviewUrl = () => {
+
+
+
+
+  return `/api/v1/redaction/previews`
+}
+
+/**
+ * @summary Render one temporary verified PDF preview
+ */
+export const createRedactionPreview = async (previewInput: NonReadonly<PreviewInput>, options?: Parameters<typeof sessionJSON>[1]): Promise<RedactionPreview> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<RedactionPreview>(getCreateRedactionPreviewUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(previewInput)
+  }
+);}
+
+
+
+export const getDiscardRedactionPreviewUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/redaction/previews/${encodeURIComponent(String(id))}`
+}
+
+/**
+ * @summary Discard a temporary redaction preview
+ */
+export const discardRedactionPreview = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
+
+  return sessionJSON<void>(getDiscardRedactionPreviewUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+export const getGetRedactionPreviewUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/redaction/previews/${encodeURIComponent(String(id))}`
+}
+
+/**
+ * @summary Read a temporary redaction preview
+ */
+export const getRedactionPreview = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<RedactionPreview> => {
+
+  return sessionJSON<RedactionPreview>(getGetRedactionPreviewUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getDownloadRedactionPreviewBundleUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/redaction/previews/${encodeURIComponent(String(id))}/bundle`
+}
+
+/**
+ * @summary Read verified temporary redaction output
+ */
+export const downloadRedactionPreviewBundle = (id: string, options?: Parameters<typeof sessionResponse>[1]) => {
+
+  return sessionResponse<Blob>(getDownloadRedactionPreviewBundleUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getDownloadRedactionPreviewUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/redaction/previews/${encodeURIComponent(String(id))}/download`
+}
+
+/**
+ * @summary Confirm and request a one-use ZIP download
+ */
+export const downloadRedactionPreview = async (id: string,
+    redactionPreviewConfirmation: NonReadonly<RedactionPreviewConfirmation>, options?: Parameters<typeof sessionJSON>[1]): Promise<RedactionPreviewTicket> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<RedactionPreviewTicket>(getDownloadRedactionPreviewUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(redactionPreviewConfirmation)
+  }
+);}
+
+
+
+export const getReadRedactionPreviewPageUrl = (id: string,
+    page: number,) => {
+
+
+
+
+  return `/api/v1/redaction/previews/${encodeURIComponent(String(id))}/pages/${encodeURIComponent(String(page))}`
+}
+
+/**
+ * @summary Read verified temporary redaction output
+ */
+export const readRedactionPreviewPage = (id: string,
+    page: number, options?: Parameters<typeof sessionResponse>[1]) => {
+
+  return sessionResponse<Blob>(getReadRedactionPreviewPageUrl(id,page),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getReadRedactionPreviewTextUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/redaction/previews/${encodeURIComponent(String(id))}/text`
+}
+
+/**
+ * @summary Read verified temporary redaction output
+ */
+export const readRedactionPreviewText = (id: string, options?: Parameters<typeof sessionResponse>[1]) => {
+
+  return sessionResponse<Blob>(getReadRedactionPreviewTextUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
   }
 );}
 

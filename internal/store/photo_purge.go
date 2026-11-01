@@ -7,13 +7,10 @@ import (
 	"fmt"
 )
 
-// photoXMPPurgeReceipts finds the sync receipts of the purged originals by file ID.
-const photoXMPPurgeReceipts = `SELECT receipt_id FROM photo_change_receipts INDEXED BY photo_change_receipts_xmp_file WHERE operation='xmp_sync' AND CAST(json_extract(after_json,'$.file_id') AS TEXT) IN (SELECT file_id FROM photo_files WHERE node_id IN (SELECT value FROM json_each(?1)))`
-
 // adjustPhotosForPurgedNodesTx removes memberships before a permanent node
 // deletion. Assets remain as empty, revisioned graph rows so receipts and later
 // restore/import validation retain their identity.
-func adjustPhotosForPurgedNodesTx(ctx context.Context, tx *sql.Tx, nodeIDs []int64) error {
+func (s *Store) adjustPhotosForPurgedNodesTx(ctx context.Context, tx *sql.Tx, nodeIDs []int64) error {
 	if len(nodeIDs) == 0 {
 		return nil
 	}
@@ -21,7 +18,7 @@ func adjustPhotosForPurgedNodesTx(ctx context.Context, tx *sql.Tx, nodeIDs []int
 	var targetFileIDs []string
 	var photoNodeIDs []int64
 	for _, nodeID := range nodeIDs {
-		rows, err := tx.QueryContext(ctx, `SELECT COALESCE(asset_id,''), file_id, role FROM photo_files WHERE node_id=?`, nodeID)
+		rows, err := tx.QueryContext(ctx, `SELECT COALESCE(asset_id,''), file_id, role FROM photo_files WHERE node_id=$1`, nodeID)
 		if err != nil {
 			return fmt.Errorf("finding photo memberships for purged node %d: %w", nodeID, err)
 		}
@@ -49,7 +46,7 @@ func adjustPhotosForPurgedNodesTx(ctx context.Context, tx *sql.Tx, nodeIDs []int
 		}
 	}
 	for _, targetFileID := range targetFileIDs {
-		rows, err := tx.QueryContext(ctx, `SELECT asset_id FROM photo_files WHERE sidecar_of_file_id=?`, targetFileID)
+		rows, err := tx.QueryContext(ctx, `SELECT asset_id FROM photo_files WHERE sidecar_of_file_id=$1`, targetFileID)
 		if err != nil {
 			return fmt.Errorf("finding sidecars for purged photo source %s: %w", targetFileID, err)
 		}
@@ -78,7 +75,7 @@ func adjustPhotosForPurgedNodesTx(ctx context.Context, tx *sql.Tx, nodeIDs []int
 		before[assetID] = asset
 	}
 	for _, targetFileID := range targetFileIDs {
-		if _, err := tx.ExecContext(ctx, `UPDATE photo_files SET asset_id=NULL,sidecar_of_file_id=NULL WHERE sidecar_of_file_id=?`, targetFileID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE photo_files SET asset_id=NULL,sidecar_of_file_id=NULL WHERE sidecar_of_file_id=$1`, targetFileID); err != nil {
 			return fmt.Errorf("removing sidecars for purged photo source %s: %w", targetFileID, err)
 		}
 	}
@@ -87,27 +84,21 @@ func adjustPhotosForPurgedNodesTx(ctx context.Context, tx *sql.Tx, nodeIDs []int
 		if err != nil {
 			return fmt.Errorf("encoding purged photo nodes: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx, `WITH RECURSIVE nodes_to_purge(id) AS (SELECT value FROM json_each(?)), doomed(receipt_id) AS (`+photoXMPPurgeReceipts+`
- UNION
- SELECT r.receipt_id FROM photo_change_receipts r
- WHERE r.operation IN ('authored','authored_undo','authored_sidecar') AND
- (EXISTS (SELECT 1 FROM json_each(r.after_json,'$.after') entry WHERE json_extract(entry.value,'$.node_id') IN (SELECT id FROM nodes_to_purge))
- OR json_extract(r.after_json,'$.sidecar.node_id') IN (SELECT id FROM nodes_to_purge))
- UNION
- SELECT r.receipt_id FROM photo_change_receipts r JOIN doomed d ON json_extract(r.after_json,'$.undo_of')=d.receipt_id
- WHERE r.operation='authored_undo'
- ) DELETE FROM photo_change_receipts WHERE receipt_id IN (SELECT receipt_id FROM doomed)`, string(encoded)); err != nil {
+		if _, err := tx.ExecContext(ctx, s.purgedPhotoReceiptsSQL(), string(encoded)); err != nil {
 			return fmt.Errorf("removing authored receipts for purged nodes: %w", err)
 		}
 	}
 	for _, nodeID := range nodeIDs {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM photo_files WHERE node_id=?`, nodeID); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM photo_files WHERE node_id=$1`, nodeID); err != nil {
 			return fmt.Errorf("removing photo membership for purged node %d: %w", nodeID, err)
 		}
 	}
 	for _, old := range before {
 		if _, err := commitPhotoAssetTx(ctx, tx, old, old, "purge"); err != nil {
 			return fmt.Errorf("repairing photo asset %s after purge: %w", old.ID, err)
+		}
+		if err := s.refreshPhotoAssetWorkTx(ctx, tx, old.ID); err != nil {
+			return err
 		}
 		if err := validatePhotoAssetGraph(ctx, tx, old.ID); err != nil {
 			return err
@@ -138,4 +129,23 @@ func doomedNodeIDsTx(ctx context.Context, tx *sql.Tx, selection string, args ...
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+func (s *Store) purgedPhotoReceiptsSQL() string {
+	d := metadataJSONDialect{postgres: s.postgresSchema != ""}
+	receiptTable := "photo_change_receipts r"
+	if !d.postgres {
+		receiptTable += " INDEXED BY photo_change_receipts_xmp_file"
+	}
+	xmpReceipts := `SELECT receipt_id FROM ` + receiptTable + ` WHERE operation='xmp_sync' AND ` + d.indexedText("r.after_json", "file_id") + ` IN (SELECT file_id FROM photo_files WHERE node_id IN (SELECT id FROM nodes_to_purge))`
+	return `WITH RECURSIVE nodes_to_purge(id) AS (SELECT CAST(value AS BIGINT) FROM ` + d.arrayValues("$1") + `), doomed(receipt_id) AS (` + xmpReceipts + `
+ UNION
+ SELECT r.receipt_id FROM photo_change_receipts r
+ WHERE r.operation IN ('authored','authored_undo','authored_sidecar') AND
+ (EXISTS (SELECT 1 FROM ` + d.receiptArray("after") + ` entry WHERE ` + d.number("entry.value", "node_id") + ` IN (SELECT id FROM nodes_to_purge))
+ OR ` + d.number("r.after_json", "sidecar.node_id") + ` IN (SELECT id FROM nodes_to_purge))
+ UNION
+ SELECT r.receipt_id FROM photo_change_receipts r JOIN doomed d ON ` + d.text("r.after_json", "undo_of") + `=d.receipt_id
+ WHERE r.operation='authored_undo'
+ ) DELETE FROM photo_change_receipts WHERE receipt_id IN (SELECT receipt_id FROM doomed)`
 }

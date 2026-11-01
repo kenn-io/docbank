@@ -2,12 +2,16 @@
   import InspectorDetails, { type InspectorFact } from "./InspectorDetails.svelte";
 
   // Identifiers and hashes: copyable when needed, out of the way otherwise.
-  let { facts }: { facts: InspectorFact[] } = $props();
+  let {
+    facts,
+    summary = "Details",
+    open = false,
+  }: { facts: InspectorFact[]; summary?: string; open?: boolean } = $props();
 </script>
 
-<details class="technical">
-  <summary>Details</summary>
-  <InspectorDetails {facts} label="Technical details" />
+<details class="technical" aria-label={summary} {open}>
+  <summary>{summary}</summary>
+  <InspectorDetails {facts} label={summary === "Details" ? "Technical details" : summary} />
 </details>
 
 <style>

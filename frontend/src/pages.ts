@@ -169,7 +169,7 @@ function rational(n: bigint, d: bigint): PageRational {
     denominator: integer(Number(d / a), 1),
   };
 }
-function decodeFrame(v: unknown, source: PageSource, page: number): PageFrame {
+export function decodePageFrame(v: unknown, source: PageSource, page: number): PageFrame {
   const o = object(
     v,
     [
@@ -386,7 +386,7 @@ export function decodePageInventory(v: unknown, source: PageSource): PageInvento
   const count = integer(o.page_count, 0, 1000);
   const frames = array(o.frames, 1000).map((value, index) => {
     const view = object(value, ["frame", "sha256"]);
-    const frame = decodeFrame(view.frame, source, index + 1);
+    const frame = decodePageFrame(view.frame, source, index + 1);
     requireValue(pageDigest(frame) === hash(view.sha256), "Invalid page frame digest");
     return { frame, sha256: view.sha256 as string };
   });

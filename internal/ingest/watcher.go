@@ -272,6 +272,9 @@ func watchMountForRoot(root *os.Root) (watchMount, error) {
 // Watcher scans one configured local inbox. Settled observations are in memory,
 // so a restart begins a new settle window. Prompt mode skips that delay.
 type Watcher struct {
+	// AfterImport runs outside the mutation gate after a committed add or update.
+	// Its failure is logged independently of scanner status.
+	AfterImport      func(context.Context, store.Node) error
 	process          func(context.Context, string, *watchObservation, localFileOpener) error
 	reject           func(context.Context, string, error) error
 	excluded         func(context.Context, string) error
@@ -1456,12 +1459,15 @@ func (w *Watcher) processObservation(ctx context.Context, source watchSource, st
 	var result WatchResult
 	if err == nil {
 		minimumAge := w.config.MinimumAge.Std()
-		if observation.processed ||
-			(!w.immediate && !w.config.CaptureOnChange && observedAt.Sub(observation.stableSince) < w.config.SettleTime.Std()) ||
+		if observation.processed {
+			return nil
+		}
+		if (!w.immediate && !w.config.CaptureOnChange && observedAt.Sub(observation.stableSince) < w.config.SettleTime.Std()) ||
 			(minimumAge > 0 && observedAt.Sub(time.Unix(0, fingerprint.modTime)) < minimumAge) {
 			return nil
 		}
 		jobs.ReportBusy(ctx, true)
+		defer jobs.ReportBusy(ctx, false)
 		if w.process != nil {
 			err = w.process(ctx, rel, &observation, source.open)
 		} else {
@@ -1475,7 +1481,6 @@ func (w *Watcher) processObservation(ctx context.Context, source watchSource, st
 				})
 			})
 		}
-		jobs.ReportBusy(ctx, false)
 	}
 	if access, ok := errors.AsType[*SourceAccessError](err); ok && w.reject != nil &&
 		!errors.Is(err, ErrSourceChanged) &&
@@ -1507,6 +1512,11 @@ func (w *Watcher) processObservation(ctx context.Context, source watchSource, st
 	}
 	if err != nil {
 		return fmt.Errorf("ingesting %q: %w", rel, err)
+	}
+	if w.process == nil && result.Outcome != WatchSkipped && w.AfterImport != nil {
+		if err := w.AfterImport(ctx, result.Node); err != nil {
+			w.logger.Warn("watched inbox processing admission failed; use docbank processing build to process the imported document", "watch", w.config.Name, "node_id", result.Node.ID, "error", err)
+		}
 	}
 	delete(w.rejected, rel)
 	observation.processed = true

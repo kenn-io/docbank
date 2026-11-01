@@ -15,51 +15,71 @@ import (
 // still be running without a set row. A scoped rendition purge fences bindings
 // only when it selects their current rendition; obsolete attachments already
 // fail the current-attachment check and must not suppress newer work.
-func prepareEmbeddingPurgeTx(
+func (s *Store) prepareEmbeddingPurgeTx(
 	ctx context.Context, tx *sql.Tx, request PurgeRequest, asOf string,
 ) (_ []derivativePurgeSuppression, retErr error) {
 	if !request.All && len(request.ContentVersionIDs)+len(request.AttachmentIDs)+len(request.BuildIDs) == 0 {
 		return nil, nil
 	}
+	d := metadataJSONDialect{postgres: s.postgresSchema != ""}
 	args := []any{request.All}
 	for _, ids := range [][]string{request.ContentVersionIDs, request.AttachmentIDs, request.BuildIDs} {
-		for _, id := range ids {
-			args = append(args, id)
+		encoded, err := json.Marshal(ids)
+		if err != nil {
+			return nil, err
 		}
+		args = append(args, string(encoded))
 	}
 	rows, err := tx.QueryContext(ctx, `WITH scopes AS (
 		SELECT cv.version_id,p.profile_fingerprint,1 AS all_bindings
 		FROM content_versions cv CROSS JOIN processing_profiles p
-		WHERE ? OR cv.version_id IN (`+placeholders(len(request.ContentVersionIDs))+`)
+		WHERE $1 OR cv.version_id IN (SELECT value FROM `+d.arrayValues("$2")+`)
 		UNION ALL
 		SELECT a.content_version_id,a.profile_fingerprint,0
 		FROM rendition_attachments a
 		JOIN rendition_heads h ON h.content_version_id=a.content_version_id
 		  AND h.profile_fingerprint=a.profile_fingerprint AND h.attachment_id=a.attachment_id
-		WHERE a.attachment_id IN (`+placeholders(len(request.AttachmentIDs))+`)
-		   OR a.build_id IN (`+placeholders(len(request.BuildIDs))+`)
+		WHERE a.attachment_id IN (SELECT value FROM `+d.arrayValues("$3")+`)
+		   OR a.build_id IN (SELECT value FROM `+d.arrayValues("$4")+`)
 	)
 	SELECT cv.version_id,cv.blob_hash,p.profile_fingerprint,p.canonical_profile,MAX(s.all_bindings)
 	FROM scopes s JOIN content_versions cv ON cv.version_id=s.version_id
 	JOIN processing_profiles p ON p.profile_fingerprint=s.profile_fingerprint
-	GROUP BY p.profile_fingerprint,cv.version_id
+	GROUP BY p.profile_fingerprint,cv.version_id,cv.blob_hash,p.canonical_profile
 	ORDER BY p.profile_fingerprint,cv.version_id`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("listing embedding purge scopes: %w", err)
 	}
 	defer func() { retErr = errors.Join(retErr, rows.Close()) }()
+	type scope struct {
+		versionID, source, fingerprint string
+		allBindings                    bool
+	}
+	var scopes []scope
+	profiles := make(map[string]string)
+	for rows.Next() {
+		var value scope
+		var canonical string
+		if err := rows.Scan(&value.versionID, &value.source, &value.fingerprint, &canonical, &value.allBindings); err != nil {
+			return nil, fmt.Errorf("reading embedding purge scope: %w", err)
+		}
+		profiles[value.fingerprint] = canonical
+		scopes = append(scopes, value)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("listing embedding purge scopes: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("closing embedding purge scopes: %w", err)
+	}
 	var result []derivativePurgeSuppression
 	var lastProfile string
 	var profile document.ProcessingProfileV1
-	for rows.Next() {
-		var versionID, source, fingerprint, canonical string
-		var allBindings bool
-		if err := rows.Scan(&versionID, &source, &fingerprint, &canonical, &allBindings); err != nil {
-			return nil, fmt.Errorf("reading embedding purge scope: %w", err)
-		}
+	for _, value := range scopes {
+		versionID, source, fingerprint, allBindings := value.versionID, value.source, value.fingerprint, value.allBindings
 		if fingerprint != lastProfile {
 			profile = document.ProcessingProfileV1{}
-			if err := json.Unmarshal([]byte(canonical), &profile); err != nil {
+			if err := json.Unmarshal([]byte(profiles[fingerprint]), &profile); err != nil {
 				return nil, fmt.Errorf("decoding embedding purge profile: %w", err)
 			}
 			lastProfile = fingerprint
@@ -69,16 +89,16 @@ func prepareEmbeddingPurgeTx(
 				continue
 			}
 			if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_failures
-				WHERE content_version_id=? AND profile_fingerprint=? AND binding_id=? AND input_kind=?`,
+				WHERE content_version_id=$1 AND profile_fingerprint=$2 AND binding_id=$3 AND input_kind=$4`,
 				versionID, fingerprint, binding.Name, binding.InputKind); err != nil {
 				return nil, fmt.Errorf("clearing purged embedding failures: %w", err)
 			}
-			if _, err := tx.ExecContext(ctx, `DELETE FROM current_rendition_roots WHERE root_kind=? AND root_id IN (
-                SELECT job_id FROM embedding_jobs WHERE content_version_id=? AND profile_fingerprint=? AND binding_id=? AND input_kind=?)`,
+			if _, err := tx.ExecContext(ctx, `DELETE FROM current_rendition_roots WHERE root_kind=$1 AND root_id IN (
+                SELECT job_id FROM embedding_jobs WHERE content_version_id=$2 AND profile_fingerprint=$3 AND binding_id=$4 AND input_kind=$5)`,
 				RenditionRootWorkerLease, versionID, fingerprint, binding.Name, binding.InputKind); err != nil {
 				return nil, err
 			}
-			if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_jobs WHERE content_version_id=? AND profile_fingerprint=? AND binding_id=? AND input_kind=?`,
+			if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_jobs WHERE content_version_id=$1 AND profile_fingerprint=$2 AND binding_id=$3 AND input_kind=$4`,
 				versionID, fingerprint, binding.Name, binding.InputKind); err != nil {
 				return nil, err
 			}
@@ -88,9 +108,6 @@ func prepareEmbeddingPurgeTx(
 				purgedAt: asOf, active: true,
 			})
 		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("listing embedding purge scopes: %w", err)
 	}
 	return result, nil
 }
@@ -119,7 +136,7 @@ func (s *Store) AuthorizeEmbeddingRebuild(ctx context.Context, authorization Emb
 	}
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var source string
-		if err := tx.QueryRowContext(ctx, `SELECT blob_hash FROM content_versions WHERE version_id=?`,
+		if err := tx.QueryRowContext(ctx, `SELECT blob_hash FROM content_versions WHERE version_id=$1`,
 			authorization.Key.ContentVersionID).Scan(&source); err != nil {
 			return fmt.Errorf("reading embedding rebuild source: %w", err)
 		}
@@ -160,7 +177,7 @@ func loadEmbeddingPurgeSuppressionTx(
 	ctx context.Context, tx *sql.Tx, key EmbeddingHeadKey, profileFingerprint string,
 ) (derivativePurgeSuppression, error) {
 	var source string
-	if err := tx.QueryRowContext(ctx, `SELECT blob_hash FROM content_versions WHERE version_id=?`,
+	if err := tx.QueryRowContext(ctx, `SELECT blob_hash FROM content_versions WHERE version_id=$1`,
 		key.ContentVersionID).Scan(&source); err != nil {
 		return derivativePurgeSuppression{}, fmt.Errorf("reading embedding purge source: %w", err)
 	}

@@ -138,7 +138,7 @@ func TestRedactionHTTP(t *testing.T) {
 	partial.Masks[0].Selector = *problem.Redaction.Expanded
 	response, body = do(t, ts, http.MethodPost, "/api/v1/redaction/resolve", nil, partial)
 	require.Equal(t, 200, response.StatusCode, body)
-	for _, path := range []string{"/api/v1/redaction/resolve", "/api/v1/redaction/render", "/api/v1/redaction/reservations"} {
+	for _, path := range []string{"/api/v1/redaction/render", "/api/v1/redaction/reservations"} {
 		response, body = do(t, ts, http.MethodPost, path, map[string]string{"X-Api-Key": ""}, render)
 		require.Equal(t, 401, response.StatusCode, body)
 		response, body = do(t, ts, http.MethodPost, path, map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)}, render)

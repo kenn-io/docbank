@@ -70,7 +70,8 @@ export class PhotoAuthoredEditor {
   get stackTargets() {
     return this.stackFiles;
   }
-  private setStack(targets: PreparedFile[]) {
+  private setStack(targets: PreparedFile[], offers: api.PhotoBestShotProposal[] = []) {
+    this.bestShots = offers;
     // A draft keeps the revisions it started from, so Apply still reports an outside change.
     const keep = (target: PreparedFile) =>
       this.dirty && this.editIDs.has(target.file_id)
@@ -97,6 +98,7 @@ export class PhotoAuthoredEditor {
     for (const id of Object.keys(this.held))
       if (!this.editIDs.has(id) && !this.stackIDs.has(id)) delete this.held[id];
   }
+  bestShots = $state<api.PhotoBestShotProposal[]>([]);
   stackLoading = $state(false);
   canChooseStackRepresentative(assetID: string) {
     const rejected = new Set(
@@ -434,6 +436,7 @@ export class PhotoAuthoredEditor {
     this.held = {};
     this.editIDs = new Set();
     this.stackIDs = new Set();
+    this.bestShots = [];
     this.stackKey = "";
     this.stackError = "";
     this.stackLoading = false;
@@ -930,7 +933,7 @@ export class PhotoAuthoredEditor {
     const key = JSON.stringify([hidden, assetIDs]);
     if (this.controller.signal.aborted || (key === this.stackKey && !retry && !quiet)) return;
     // A quiet read keeps the current members and loading flags until it replaces the members.
-    if (quiet && this.stackLoading) return;
+    if (quiet ? this.stackLoading : this.busy) return;
     this.stackKey = key;
     this.stackRead.abort();
     const controller = (this.stackRead = new AbortController());
@@ -949,7 +952,7 @@ export class PhotoAuthoredEditor {
         ),
       );
       if (signal.aborted || (quiet && (this.busy || this.dirty))) return;
-      this.setStack(prepared.targets);
+      this.setStack(prepared.targets, prepared.proposals ?? []);
       return true;
     } catch (cause) {
       if (signal.aborted) return;
@@ -1103,7 +1106,8 @@ export class PhotoAuthoredEditor {
         this.endWrite(write);
         await refresh(receipt, tags);
       });
-      if (this.suggestions.length) await this.reload();
+      if (this.suggestions.length || this.stackIDs.size)
+        await this.reload(false, this.suggestions.length === 0);
     } catch (cause) {
       if (!this.controller.signal.aborted) {
         this.error =

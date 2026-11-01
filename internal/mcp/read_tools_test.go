@@ -16,6 +16,7 @@ import (
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/processing"
@@ -76,9 +77,18 @@ func TestNineReadToolHandlersReturnBoundedPrivateStructuredResults(t *testing.T)
 				assert.Equal(t, false, coverage["binding_required"])
 			}},
 		{name: "get_document", arguments: map[string]any{"node_id": 7, "content_version_id": testVersionID},
-			check: func(t *testing.T, _ map[string]any, result *sdkmcp.CallToolResult) {
+			check: func(t *testing.T, output map[string]any, result *sdkmcp.CallToolResult) {
 				t.Helper()
 				assert.Contains(t, resourceLinkURIs(result), canonicalTestRenditionURI())
+				facts := objectField(t, output, "pdf_facts")
+				assert.Equal(t, true, facts["encrypted"])
+				assert.Equal(t, []any{"Print", "High-quality print flag"}, facts["permissions"])
+				assert.EqualValues(t, 2, facts["signature_field_count"])
+				assert.Equal(t, false, facts["last_signature_covers_file"])
+				assert.EqualValues(t, 3, facts["embedded_file_count"])
+				assert.Equal(t, true, facts["has_javascript"])
+				assert.Equal(t, true, facts["has_launch_actions"])
+				assert.NotContains(t, facts, "title")
 			}},
 		{name: "list_document_versions", arguments: map[string]any{"node_id": 7, "limit": 1, "offset": 0},
 			check: func(t *testing.T, output map[string]any, _ *sdkmcp.CallToolResult) {
@@ -644,10 +654,14 @@ func newReadToolDaemon(t *testing.T) *httptest.Server {
 			if pathPrefix == "" {
 				pathPrefix = "/"
 			}
+			name, mediaType := "synthetic.md", "text/markdown"
+			if pathPrefix == "/synthetic.pdf" {
+				name, mediaType = "synthetic.pdf", "application/pdf"
+			}
 			writeDaemonJSON(t, response, api.DocumentPage{SourcePresent: request.URL.Query().Get("source_present") == "true",
 				PathPrefix: pathPrefix, Sort: "path", Direction: "asc", PageSize: 1,
 				Items: []api.DocumentSummary{{NodeID: 7, ContentVersionID: testVersionID,
-					Path: "/synthetic.md", Name: "synthetic.md", MediaType: "text/markdown", Size: 12,
+					Path: "/" + name, Name: name, MediaType: mediaType, Size: 12,
 					ModifiedAt: "2026-08-28T00:00:00Z", ActiveRenditions: []api.DocumentRenditionIdentity{{
 						ProfileFingerprint: testProfileID, AttachmentID: testAttachmentID, BuildID: testBuildID,
 					}}}}, NextCursor: "next.token"})
@@ -670,9 +684,19 @@ func newReadToolDaemon(t *testing.T) *httptest.Server {
 					AttachmentID: testAttachmentID, BuildID: testBuildID}},
 			}}})
 		case "/api/v1/nodes/7":
-			writeDaemonJSON(t, response, api.Node{ID: 7, Name: "synthetic.md", Kind: "file",
-				CurrentVersionID: testVersionID, Size: 12, MimeType: "text/markdown",
-				ModifiedAt: "2026-08-28T00:00:00Z", Path: "/synthetic.md"})
+			writeDaemonJSON(t, response, api.Node{ID: 7, Name: "synthetic.pdf", Kind: "file",
+				SourceMetadata: &api.SourceMetadata{Fields: []document.SourceMetadataFieldV1{
+					{Key: "pdf.info.encrypted", Namespace: "pdf.info", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataBoolean, Boolean: new(true)}},
+					{Key: "pdf.info.signature_field_count", Namespace: "pdf.info", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataInteger, Integer: new(int64(2))}},
+					{Key: "pdf.info.permissions", Namespace: "pdf.info", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataStringList, Strings: []string{"Print", "High-quality print flag"}}},
+					{Key: "pdf.info.last_signature_covers_file", Namespace: "pdf.info", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataBoolean, Boolean: new(false)}},
+					{Key: "pdf.info.embedded_file_count", Namespace: "pdf.info", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataInteger, Integer: new(int64(3))}},
+					{Key: "pdf.info.has_javascript", Namespace: "pdf.info", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataBoolean, Boolean: new(true)}},
+					{Key: "pdf.info.has_launch_actions", Namespace: "pdf.info", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataBoolean, Boolean: new(true)}},
+					{Key: "title", Namespace: "pdf.info", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: new("Synthetic PDF")}},
+				}},
+				CurrentVersionID: testVersionID, Size: 12, MimeType: "application/pdf",
+				ModifiedAt: "2026-08-28T00:00:00Z", Path: "/synthetic.pdf"})
 		case "/api/v1/nodes/7/versions":
 			writeDaemonJSON(t, response, api.ContentVersionPage{Items: []api.ContentVersion{{ID: testVersionID,
 				NodeID: 7, BlobHash: strings.Repeat("a", 64), Size: 12,

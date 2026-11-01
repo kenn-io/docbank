@@ -424,7 +424,7 @@ func (s *Store) FinishPackageImportJob(ctx context.Context, id string, epoch int
 			}
 		}
 		if state == packageStateFailed {
-			if err := discardUnreceiptedPackageFilesTx(ctx, tx, pkg); err != nil {
+			if err := s.discardUnreceiptedPackageFilesTx(ctx, tx, pkg); err != nil {
 				return err
 			}
 		}
@@ -469,7 +469,7 @@ func (s *Store) CancelPackageImportJob(ctx context.Context, owner, operationID s
 		if pkg.State != "importing" {
 			return ErrPackageConflict
 		}
-		if err := discardUnreceiptedPackageFilesTx(ctx, tx, pkg); err != nil {
+		if err := s.discardUnreceiptedPackageFilesTx(ctx, tx, pkg); err != nil {
 			return err
 		}
 		now := nowRFC3339()

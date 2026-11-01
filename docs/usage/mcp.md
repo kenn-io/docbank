@@ -380,6 +380,13 @@ sanitized JSON-RPC internal error. Stderr records the operation and a fixed
 error category for diagnosis. Neither path includes host paths, SQL, provider
 secrets, daemon keys, or unrequested document text.
 
+### PDF facts
+
+`get_document` exposes `pdf_facts` for its accepted current content version.
+The [PDF evidence reference](../architecture/source-metadata.md#pdf-evidence)
+defines its seven fields and omission rules. Missing observations mean unknown;
+PDF evidence that hasn't been extracted omits `pdf_facts` entirely.
+
 ## Resources and rendition windows
 
 `resources/list` is intentionally empty. `list_documents`,
