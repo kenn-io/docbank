@@ -15,6 +15,9 @@ import (
 
 const nodeIDSelectorPrefix = "id:"
 
+const nodeSelectorHint = `a node is "/abs/path" or "id:N"; run "docbank tree /" to see paths and ids`
+const missingNodeIDHint = `ids come from "docbank tree" or "docbank search <name>"; trashed nodes: "docbank trash list"`
+
 type nodeSelector struct {
 	raw  string
 	path string
@@ -27,15 +30,15 @@ func parseNodeSelector(raw string) (nodeSelector, error) {
 		digits := after
 		id, err := strconv.ParseInt(digits, 10, 64)
 		if err != nil || id < 1 || strconv.FormatInt(id, 10) != digits {
-			return nodeSelector{}, usageError(fmt.Errorf(
-				"invalid node selector %q: use id:<positive-decimal>", raw))
+			return nodeSelector{}, withHint(usageError(fmt.Errorf(
+				"invalid node selector %q: use id:<positive-decimal>", raw)), nodeSelectorHint)
 		}
 		selector.id = id
 		return selector, nil
 	}
 	if !strings.HasPrefix(raw, "/") {
-		return nodeSelector{}, usageError(errors.New(
-			"node selector must be an absolute virtual path or id:<positive-decimal>"))
+		return nodeSelector{}, withHint(usageError(errors.New(
+			"node selector must be an absolute virtual path or id:<positive-decimal>")), nodeSelectorHint)
 	}
 	selector.path = raw
 	return selector, nil
@@ -68,9 +71,12 @@ func (s nodeSelector) resolveIncludingTrash(
 	}
 	if err != nil {
 		err = fmt.Errorf("resolving %q: %w", s.raw, err)
-		if s.id == 0 && errors.Is(err, store.ErrNotFound) {
-			err = withHint(err,
-				`list paths with "docbank tree" or find by name with "docbank search <name>"`)
+		if errors.Is(err, store.ErrNotFound) {
+			hint := `list paths with "docbank tree" or find by name with "docbank search <name>"`
+			if s.isID() {
+				hint = missingNodeIDHint
+			}
+			err = withHint(err, hint)
 		}
 		return api.Node{}, err
 	}

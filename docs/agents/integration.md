@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-09
+last_edited: 2026-10-30
 title: Agent integration guide
 description: Connect an agent to Docbank using its OpenAPI contract, authenticated HTTP API, revisions, and dry-run maintenance operations.
 ---
@@ -15,16 +15,18 @@ Go applications that own a separate archive can use the
 
 ## Choose the interface
 
-Use the CLI for human-directed shell work and simple orchestration. Use HTTP
-for structured agent workflows, pagination, machine-readable errors, and
-revision-aware mutations.
+Use the CLI for shell orchestration; `docbank --help` includes the agent workflow
+and output modes. Use HTTP for pagination and revision-aware integrations that
+need the full problem contract.
 
 For simple shell orchestration, CLI exit codes distinguish invalid usage (`2`),
 missing vault objects (`3`), stale state (`4`), busy resources (`5`), and
 integrity findings (`6`) from general failures (`1`). Verification may emit a
 complete report before exiting `6`, so JSON on stdout does not mean success.
-The [CLI reference](../cli-reference.md#process-exit-codes)
-defines the full contract. Independent integrations should use the richer HTTP
+With parsed `--json`, failures end with a machine-readable error record on
+stderr, after any existing diagnostics. The
+[CLI reference](../cli-reference.md#process-exit-codes) defines its shape and
+the full exit-code contract. Independent integrations should use the richer HTTP
 problem `code` values below.
 
 For a small shell workflow, `mv`, `rm`, and `restore` accept `--json` and

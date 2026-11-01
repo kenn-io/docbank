@@ -129,12 +129,13 @@ runnable leaves and parents that perform work 1–4 synthetic example commands.
 Add working parents to `workParents` in `cmd/docbank/help_lint_test.go`.
 Prerequisite examples may invoke siblings; every line must parse and at least
 one must invoke the owning command. The lint clones flag values and checks
-syntax and arity without executing examples.
+syntax and arity without executing examples. Indented command lines in Long
+text, root workflow steps, and quoted recovery commands are checked too.
 
 Use a command group at the root, source each ID, and mark required flags.
 Keep descriptions short: at most 12 Long lines for leaves and 20 for parents;
 root help and the TUI key table have explicit exceptions. Root help is limited
-to 4,500 bytes and leaves to 2,500, except the TUI. Only root help has a golden,
+to 6,500 bytes and leaves to 2,500, except the TUI. Only root help has a golden,
 so command examples can improve without maintaining hundreds of snapshots.
 After an intentional root change, review and regenerate it from the repository
 root:
@@ -144,7 +145,22 @@ go test -tags fts5 ./cmd/docbank -run TestRootHelpGolden -update
 ```
 
 Keep the CLI reference and guide examples in sync. Error next-step hints belong
-at the CLI process boundary; preserve error prefixes and daemon problem text.
+at the CLI process boundary. Keep underlying error identity and daemon problem
+text intact; strip only generated transport wrappers from CLI presentation.
+Initialize Cobra's default help and completion commands before configuring
+group argument checks. Diagnostic writers preserve terminal file descriptors
+so automatic progress and action reporting still recognize stderr terminals.
+Failed output-mode assignments preserve the last successfully parsed value.
+Missing repository configuration gets a narrow internal typed cause when the
+client decodes its exact problem code/detail pair. Do not classify every
+`backup_repository` problem as invalid usage: that code also covers I/O failures.
+
+The CLI property tests use Hegel alongside deterministic regressions. Keep its
+Go module current with `go get hegel.dev/go/hegel@latest`. Hegel currently ships
+engines for Linux and Windows amd64/arm64 and macOS arm64; the property file
+excludes macOS amd64 until an engine is available. Deterministic CLI tests keep
+running on every supported platform. Remove that exception when Hegel supports
+the remaining architecture.
 
 ### Add a data operation
 
