@@ -1,8 +1,11 @@
 review_guidelines = """
 docbank is a single-user personal document archive: a local daemon owns
 the vault (SQLite + content-addressed blobs) and the CLI, agents, and a
-static web UI are HTTP clients of its loopback API. Not designed for
-multi-user, multi-tenant, or internet-facing deployment.
+static web UI are HTTP clients of its API, which binds to loopback by
+default. Go applications may instead own a separately rooted vault
+in-process through the public embedded API (`go.kenn.io/docbank/docbank`);
+embedded and daemon ownership share the same exclusive hierarchy lock.
+Not designed for multi-user, multi-tenant, or internet-facing deployment.
 
 Key assumptions reviewers MUST account for:
 
@@ -33,11 +36,15 @@ Key assumptions reviewers MUST account for:
    the owner-private $DOCBANK_HOME (0700 on Unix, a restricted DACL on
    Windows) — readable only by the vault owner, exactly
    like the shutdown token. Keyless config is therefore NOT
-   unauthenticated. Binds are loopback-only by validation; the API is
-   plain HTTP by design and remote access is documented as SSH
-   tunnel/VPN. Do not flag missing TLS, missing rate limiting, or
+   unauthenticated. Binds default to loopback. A non-loopback bind must
+   be an IP address with an explicit configured `api_key`; it is an
+   operator opt-in to a trusted private network, encrypted tunnel, or
+   HTTPS proxy (docs/usage/containers.md). The API is plain HTTP by
+   design. The Host allowlist rejects unconfigured names, including on
+   wildcard binds. Do not flag missing TLS, missing rate limiting, or
    multi-tenant concerns. DO flag any path that would serve without an
-   effective key or accept a non-loopback bind.
+   effective key, accept a non-loopback bind without an explicit key, or
+   treat a wildcard bind as an arbitrary-Host allowance.
 
 5. DAEMON COMPATIBILITY: data commands accept only a daemon runtime
    record carrying this binary's protocol revision and an effective API
@@ -75,7 +82,12 @@ Key assumptions reviewers MUST account for:
    account on the daemon host, which already grants filesystem access
    exceeding anything ingest exposes — do not flag tunneled loopback
    as an ingest capability bypass; there is no principal with the API
-   key and tunnel access but without shell.
+   key and tunnel access but without shell. The same per-request
+   loopback fence covers ingest preflight, backup restore, explicit
+   backup repository paths, and photo checkout folder binding; remote
+   clients send document bytes through POST /api/v1/uploads. DO flag a
+   route that names daemon-host paths and is reachable from a
+   non-loopback peer.
 
 9. SINGLE-USER SCALE: do not flag O(n) scans, in-memory pagination, or
    missing batching at personal-archive scale unless the code path is
@@ -87,7 +99,7 @@ Key assumptions reviewers MUST account for:
    assets can compromise the repository, and a CI-held signing key
    would sign whatever that attacker releases. Ed25519 signing with an
    offline/protected key is tracked (kata issue "Sign releases for
-   docbank update") for before the repo goes public. Do not re-flag
+   docbank update"). Do not re-flag
    unsigned release checksums; DO flag any weakening beyond this
    (e.g. skipping checksum verification itself).
 
@@ -108,8 +120,10 @@ Key assumptions reviewers MUST account for:
 
 12. DOCS FOLLOW THE RELEASE BOUNDARY: user-facing sources on main describe
    every merged capability directly in present tense, including homepage and
-   install-adjacent copy. The public Zensical site is not deployed until the
-   corresponding binary release is tagged, so do not demand "next release",
+   install-adjacent copy, because they describe the candidate release.
+   Published documentation describes its selected release; documentation
+   patches deploy independently of software releases and must stay accurate
+   for the version they describe. Do not demand "next release",
    source-build-only, or newest-tag qualifiers for merged capabilities.
    Release preparation must ensure capability documentation matches the binary
    being tagged. After the tag and GitHub release exist, the finalized release
