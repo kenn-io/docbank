@@ -809,6 +809,7 @@ func TestNaturalSearchSettingsUseLatestSubmittedQuery(t *testing.T) {
 	for _, acceptedQuery := range []string{"", "older query"} {
 		t.Run("previous="+acceptedQuery, func(t *testing.T) {
 			fake := newFakeBackend()
+			fake.naturalSearch = naturalSearchReport(2, "version-2", "matching document")
 			fake.profiles[0].RerankingAvailable = true
 			model, err := New(t.Context(), fake)
 			require.NoError(t, err)
