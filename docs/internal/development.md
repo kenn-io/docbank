@@ -976,11 +976,13 @@ Go test workflows set `GOTRACEBACK=all` for crashes. When diagnosing a hang, cal
 CLI redaction verification tests run in separate test processes because the PDF worker's 1 GiB RSS ceiling counts all memory in its process. Each child keeps the real PDF checks and the qualified memory limit.
 
 Documentation browser checks use Microsoft's public Playwright image matching the installed `@playwright/test` version.
-Render PDF caches LibreOffice and Poppler installers by runner image, architecture, and workflow recipe.
-A cache miss downloads the packages and their missing dependencies.
-Only `main` pushes save automatically; pull requests only restore.
-Pull requests call `render-pdf.yml` through `render-pdf-pr.yml` with `cache-mode: read`.
-Explicit manual runs can save: dispatch Render PDF twice on the same branch and runner image to qualify cold and warm installs before merge.
+The LibreOffice PDF proof runs in a GHCR image built from `.github/docker/render-pdf/Dockerfile` and tagged by that file's hash.
+The Render PDF image workflow (`render-pdf-image.yml`) publishes missing images on `main` pushes or a manual run from a trusted branch, then runs the proofs.
+Only its publishing job requests `packages: write`. Update the Ubuntu digest to refresh the installed packages.
+Pull requests call `render-pdf.yml` through `render-pdf-pr.yml` with `contents: read` and `cache-mode: read`.
+Image lookup is anonymous. If a recipe's image is missing, publish it with the Render PDF image workflow from a trusted branch containing that Dockerfile, then rerun the proofs.
+The browser proofs still install Poppler, util-linux, and Chromium on their runners.
+The GHCR package must be public so fork pull requests can reuse the image.
 
 Go jobs restore build and module caches through `.github/actions/go-cache-restore`
 by group: Linux CGO, Linux pure-Go, lint (with the golangci-lint analysis
