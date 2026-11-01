@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -104,7 +105,7 @@ func (s *Store) PruneContentVersions(
 		if err := retainMediaAuthorityVersionsTx(tx, candidateSet, retainedSet); err != nil {
 			return err
 		}
-		if err := retainPhotoXMPVersionsTx(ctx, tx, node, candidateSet, retainedSet); err != nil {
+		if err := s.retainPhotoXMPVersionsTx(ctx, tx, node, candidateSet, retainedSet); err != nil {
 			return err
 		}
 		checkpointRequired = checkpointRequired && candidateSet[node.CurrentVersionID]
@@ -159,13 +160,22 @@ func (s *Store) PruneContentVersions(
 		for index, version := range result.Candidates {
 			versionIDs[index] = version.ID
 		}
-		if err := deleteRenditionAuthorityForVersionsTx(ctx, tx, versionIDs); err != nil {
+		if err := s.deleteRenditionAuthorityForVersionsTx(ctx, tx, versionIDs); err != nil {
+			return err
+		}
+		if err := s.beforeContentVersionDeletionTx(ctx, tx, versionIDs); err != nil {
 			return err
 		}
 		for _, version := range result.Candidates {
-			if _, err := tx.Exec(`DELETE FROM content_versions WHERE version_id = ?`, version.ID); err != nil {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM content_versions WHERE version_id = $1`, version.ID); err != nil {
 				return fmt.Errorf("pruning content version %s: %w", version.ID, err)
 			}
+		}
+		if err := s.refreshPhotoTimelineTx(ctx, tx, node.ID); err != nil {
+			return err
+		}
+		if err := s.refreshNodePhotoWorkTx(ctx, tx, result.Node, nil); err != nil {
+			return err
 		}
 		result.DeletedVersions = len(result.Candidates)
 		result.Changed = true
@@ -185,7 +195,7 @@ func (s *Store) PruneContentVersions(
 
 // retainPhotoXMPVersionsTx keeps every recorded history's settled version and
 // each live source's latest version across attachment changes.
-func retainPhotoXMPVersionsTx(ctx context.Context, tx *sql.Tx, node Node, candidates, retained map[string]bool) error {
+func (s *Store) retainPhotoXMPVersionsTx(ctx context.Context, tx *sql.Tx, node Node, candidates, retained map[string]bool) error {
 	if len(candidates) == 0 {
 		return nil
 	}
@@ -199,12 +209,7 @@ func retainPhotoXMPVersionsTx(ctx context.Context, tx *sql.Tx, node Node, candid
 			retained[source.VersionID] = true
 		}
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT r.after_json
- FROM photo_files sf JOIN photo_change_receipts r INDEXED BY photo_change_receipts_xmp_sidecar
- ON r.operation='xmp_sync'
- WHERE sf.node_id=? AND CAST(json_extract(r.after_json,'$.sync.sidecar.file_id') AS TEXT)=sf.file_id
- AND json_extract(r.after_json,'$.sync.sidecar.node_id')=sf.node_id
- AND json_extract(r.after_json,'$.sync.settled.version_id') IS NOT NULL`, node.ID)
+	rows, err := tx.QueryContext(ctx, s.retainedPhotoXMPReceiptsSQL(), node.ID)
 	if err != nil {
 		return err
 	}
@@ -226,6 +231,20 @@ func retainPhotoXMPVersionsTx(ctx context.Context, tx *sql.Tx, node Node, candid
 	return errors.Join(rows.Err(), rows.Close())
 }
 
+func (s *Store) retainedPhotoXMPReceiptsSQL() string {
+	d := metadataJSONDialect{postgres: s.postgresSchema != ""}
+	receiptTable := "photo_change_receipts r"
+	if !d.postgres {
+		receiptTable += " INDEXED BY photo_change_receipts_xmp_sidecar"
+	}
+	return `SELECT r.after_json
+ FROM photo_files sf JOIN ` + receiptTable + `
+ ON r.operation='xmp_sync'
+ WHERE sf.node_id=$1 AND ` + d.indexedText("r.after_json", "sync.sidecar.file_id") + `=sf.file_id
+ AND ` + d.number("r.after_json", "sync.sidecar.node_id") + `=sf.node_id
+ AND ` + d.text("r.after_json", "sync.settled.version_id") + ` IS NOT NULL`
+}
+
 func snapshotRetainedVersionTx(ctx context.Context, tx *sql.Tx, candidates map[string]bool) (string, error) {
 	ids := make([]string, 0, len(candidates))
 	for id := range candidates {
@@ -235,20 +254,18 @@ func snapshotRetainedVersionTx(ctx context.Context, tx *sql.Tx, candidates map[s
 	const batchSize = 200
 	for start := 0; start < len(ids); start += batchSize {
 		batch := ids[start:min(start+batchSize, len(ids))]
-		args := make([]any, len(batch)*4)
+		args := make([]any, len(batch))
 		for i, id := range batch {
-			for group := range 4 {
-				args[group*len(batch)+i] = id
-			}
+			args[i] = id
 		}
 		query := `SELECT content_version_id FROM collection_snapshot_members
-			WHERE content_version_id IN (` + placeholders(len(batch)) + `)
+			WHERE content_version_id IN (` + numberedPlaceholders(len(batch)) + `)
 			UNION SELECT content_version_id FROM collection_snapshot_representations
-			WHERE content_version_id IN (` + placeholders(len(batch)) + `)
+			WHERE content_version_id IN (` + numberedPlaceholders(len(batch)) + `)
 			UNION SELECT content_version_id FROM package_labels
-			WHERE content_version_id IN (` + placeholders(len(batch)) + `)
+			WHERE content_version_id IN (` + numberedPlaceholders(len(batch)) + `)
 			UNION SELECT content_version_id FROM package_import_receipts
-			WHERE content_version_id IN (` + placeholders(len(batch)) + `)
+			WHERE content_version_id IN (` + numberedPlaceholders(len(batch)) + `)
 			ORDER BY content_version_id LIMIT 1`
 		var retained string
 		err := tx.QueryRowContext(ctx, query, args...).Scan(&retained)
@@ -281,11 +298,11 @@ func retainMediaAuthorityVersionsTx(tx *sql.Tx, candidates, retained map[string]
 		}
 		err := func() error {
 			rows, err := tx.Query(`SELECT content_version_id FROM media_source_versions
-		WHERE content_version_id IN (`+placeholders(len(batch))+`)
+		WHERE content_version_id IN (`+numberedPlaceholders(len(batch))+`)
 		UNION SELECT content_version_id FROM media_input_artifacts
-		WHERE content_version_id IN (`+placeholders(len(batch))+`)
+		WHERE content_version_id IN (`+numberedPlaceholders(len(batch))+`)
 		UNION SELECT e.version_id FROM photo_checkout_entries e JOIN photo_checkouts c ON c.checkout_id=e.checkout_id WHERE (`+photoCheckoutHoldPredicate+`)
-		AND e.version_id IN (`+placeholders(len(batch))+`)`, append(append(args, args...), args...)...)
+		AND e.version_id IN (`+numberedPlaceholders(len(batch))+`)`, args...)
 			if err != nil {
 				return err
 			}
@@ -355,7 +372,7 @@ func ValidateVersionPruneSelector(selector VersionPruneSelector) error {
 func contentVersionsForNodeTx(tx *sql.Tx, nodeID int64) ([]ContentVersion, error) {
 	rows, err := tx.Query(
 		`SELECT `+contentVersionCols+` FROM content_versions
-		 WHERE node_id = ? ORDER BY node_revision DESC, version_id`, nodeID,
+		 WHERE node_id = $1 ORDER BY node_revision DESC, version_id`, nodeID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("listing content versions of node %d for pruning: %w", nodeID, err)
@@ -470,7 +487,7 @@ func contentVersionOwnersTx(tx *sql.Tx, versionIDs []string) (map[string]int64, 
 		args[index] = id
 	}
 	rows, err := tx.Query(`SELECT version_id, node_id FROM content_versions
-		WHERE version_id IN (`+placeholders(len(versionIDs))+`)`, args...)
+		WHERE version_id IN (`+numberedPlaceholders(len(versionIDs))+`)`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("resolving selected content versions: %w", err)
 	}
@@ -590,7 +607,7 @@ func addVersionPruneOutputRefsBatchTx(
 			UNION ALL
 			SELECT version_id, blob_hash FROM page_images
 		)
-		WHERE version_id IN (`+placeholders(len(args))+`)
+		WHERE version_id IN (`+numberedPlaceholders(len(args))+`)
 		GROUP BY blob_hash`, args...)
 	if err != nil {
 		return fmt.Errorf("inventorying version-prune outputs: %w", err)
@@ -640,7 +657,7 @@ func versionPruneBlobStatsBatchTx(
 			`+blobReferenceRowsSQL(blobRootReferences)+`
 			) refs
 			JOIN blobs b ON b.hash = refs.blob_hash
-			WHERE refs.blob_hash IN (`+placeholders(len(hashes))+`)
+			WHERE refs.blob_hash IN (`+numberedPlaceholders(len(hashes))+`)
 			GROUP BY refs.blob_hash, b.size`, args...)
 	if err != nil {
 		return fmt.Errorf("inventorying version-prune blobs: %w", err)
@@ -675,7 +692,7 @@ func inventoryVersionPruneLocationsTx(
 		FROM blob_locations l
 		LEFT JOIN blob_pack_entries p
 		  ON p.blob_hash = l.blob_hash AND p.store_id = l.store_id
-		WHERE l.blob_hash IN (`+placeholders(len(hashes))+`)
+		WHERE l.blob_hash IN (`+numberedPlaceholders(len(hashes))+`)
 		ORDER BY l.blob_hash, l.store_id`, args...)
 	if err != nil {
 		return fmt.Errorf("inventorying version-prune locations: %w", err)
@@ -717,4 +734,13 @@ func inventoryVersionPruneLocationsTx(
 		return fmt.Errorf("inventorying version-prune locations: %w", err)
 	}
 	return nil
+}
+
+// Numbered parameters can be reused by each arm of a UNION on both engines.
+func numberedPlaceholders(count int) string {
+	values := make([]string, count)
+	for i := range values {
+		values[i] = fmt.Sprintf("$%d", i+1)
+	}
+	return strings.Join(values, ",")
 }

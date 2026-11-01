@@ -37,7 +37,7 @@ func (s *Store) IngestPackageFileWithReceipt(
 // discardUnreceiptedPackageFilesTx removes document authority, leaving shared
 // bytes to ordinary garbage collection. A receipt retains every representation,
 // including supplied text and pages that are not its primary content version.
-func discardUnreceiptedPackageFilesTx(ctx context.Context, tx *sql.Tx, pkg Package) error {
+func (s *Store) discardUnreceiptedPackageFilesTx(ctx context.Context, tx *sql.Tx, pkg Package) error {
 	rows, err := tx.QueryContext(ctx, `WITH retained(version_id) AS (
 		SELECT content_version_id FROM package_import_receipts
 		UNION
@@ -73,10 +73,10 @@ func discardUnreceiptedPackageFilesTx(ctx context.Context, tx *sql.Tx, pkg Packa
 	if len(nodeIDs) == 0 {
 		return nil
 	}
-	if err := deleteRenditionAuthorityForVersionsTx(ctx, tx, versionIDs); err != nil {
+	if err := s.deleteRenditionAuthorityForVersionsTx(ctx, tx, versionIDs); err != nil {
 		return err
 	}
-	if err := adjustPhotosForPurgedNodesTx(ctx, tx, slices.Compact(slices.Clone(nodeIDs))); err != nil {
+	if err := s.adjustPhotosForPurgedNodesTx(ctx, tx, slices.Compact(slices.Clone(nodeIDs))); err != nil {
 		return err
 	}
 	encoded, err := json.Marshal(nodeIDs)

@@ -293,7 +293,7 @@ type photoTrashSelection struct {
 	held  int64
 }
 
-func photoTrashSelectionTx(ctx context.Context, tx *sql.Tx, eligibleWhere string, args []any, maxRoots int) (photoTrashSelection, error) {
+func (s *Store) photoTrashSelectionTx(ctx context.Context, tx *sql.Tx, eligibleWhere string, args []any, maxRoots int) (photoTrashSelection, error) {
 	// Walk upward from photo members once, so ordinary folders need no inspection.
 	rows, err := tx.QueryContext(ctx, `WITH RECURSIVE photo_nodes(id) AS (
  SELECT node_id FROM photo_files WHERE asset_id IS NOT NULL
@@ -374,6 +374,6 @@ func photoTrashSelectionTx(ctx context.Context, tx *sql.Tx, eligibleWhere string
 		return photoTrashSelection{}, err
 	}
 	return photoTrashSelection{
-		query: `SELECT value FROM json_each(?)`, args: []any{string(encoded)}, more: more, held: held,
+		query: `SELECT CAST(value AS BIGINT) FROM ` + (metadataJSONDialect{postgres: s.postgresSchema != ""}).arrayValues("$1"), args: []any{string(encoded)}, more: more, held: held,
 	}, nil
 }

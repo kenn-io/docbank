@@ -2235,3 +2235,34 @@ CREATE TABLE {{schema}}.document_event_dirty (
     content_version_id TEXT COLLATE "C" PRIMARY KEY REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE,
     revision BIGINT NOT NULL, reason TEXT COLLATE "C" NOT NULL
 );
+
+-- Permanent document cleanup follows these references for retention checks and
+-- cascades. PostgreSQL does not create indexes for foreign-key child columns.
+CREATE INDEX nodes_trash_parent ON {{schema}}.nodes(trash_parent);
+CREATE INDEX collection_snapshot_members_version ON {{schema}}.collection_snapshot_members(content_version_id);
+CREATE INDEX export_members_version ON {{schema}}.export_members(version_id);
+CREATE INDEX package_labels_version ON {{schema}}.package_labels(content_version_id);
+CREATE INDEX package_import_receipts_version ON {{schema}}.package_import_receipts(content_version_id);
+CREATE INDEX media_versions_content ON {{schema}}.media_source_versions(content_version_id, source_id);
+CREATE INDEX media_input_artifacts_version ON {{schema}}.media_input_artifacts(content_version_id);
+CREATE INDEX mailbox_transfer_receipts_version ON {{schema}}.mailbox_transfer_receipts(target_version_id);
+CREATE INDEX page_render_jobs_node ON {{schema}}.page_render_jobs(node_id);
+CREATE INDEX page_render_jobs_version ON {{schema}}.page_render_jobs(version_id);
+CREATE INDEX rendition_job_waiters_job ON {{schema}}.rendition_job_waiters(job_id, state, waiter_id);
+CREATE INDEX rendition_job_waiters_content_version ON {{schema}}.rendition_job_waiters(content_version_id, job_id);
+CREATE INDEX embedding_sets_content_version ON {{schema}}.embedding_sets(content_version_id, embedding_set_id);
+CREATE INDEX embedding_heads_set ON {{schema}}.embedding_heads(embedding_set_id);
+CREATE INDEX email_body_results_rendition ON {{schema}}.email_body_results(rendition_attachment_id);
+CREATE INDEX email_document_publications_attachment ON {{schema}}.email_document_publications(email_attachment_id);
+CREATE INDEX email_document_publications_version ON {{schema}}.email_document_publications(parent_version_id);
+CREATE INDEX email_document_relations_version ON {{schema}}.email_document_relations(child_version_id);
+CREATE INDEX custodian_assignments_node ON {{schema}}.custodian_assignments(node_id);
+CREATE INDEX custodian_assignments_version ON {{schema}}.custodian_assignments(content_version_id);
+CREATE INDEX document_people_node ON {{schema}}.document_people(node_id);
+CREATE INDEX document_people_generations_version ON {{schema}}.document_people_generations(content_version_id);
+CREATE INDEX document_event_generations_version ON {{schema}}.document_event_generations(content_version_id);
+CREATE INDEX photo_assets_display_file ON {{schema}}.photo_assets(display_file_id);
+CREATE INDEX photo_assets_display_override_file ON {{schema}}.photo_assets(display_override_file_id);
+CREATE INDEX photo_faces_version ON {{schema}}.photo_faces(content_version_id, face_id);
+CREATE INDEX person_candidate_faces_version ON {{schema}}.person_candidate_faces(content_version_id, candidate_id);
+CREATE INDEX photo_checkout_entries_version ON {{schema}}.photo_checkout_entries(version_id);

@@ -60,7 +60,7 @@ const photoDescriptionEligibility = `a.kind='photo' AND ` + liveIncludedDisplayP
 
 func photoDescriptionEligibleTx(ctx context.Context, q metadataQuerier, versionID string) (bool, error) {
 	var eligible bool
-	err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM content_versions v JOIN nodes n ON n.id=v.node_id JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE v.version_id=? AND n.current_version_id=v.version_id AND a.display_file_id=f.file_id AND `+photoDescriptionEligibility+`)`, versionID).Scan(&eligible)
+	err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM content_versions v JOIN nodes n ON n.id=v.node_id JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE v.version_id=$1 AND n.current_version_id=v.version_id AND a.display_file_id=f.file_id AND `+photoDescriptionEligibility+`)`, versionID).Scan(&eligible)
 	return eligible, err
 }
 
@@ -451,7 +451,7 @@ func photoDescriptionInputTx(ctx context.Context, tx *sql.Tx, execution document
 		return err
 	}
 	var checksum string
-	err = tx.QueryRowContext(ctx, `SELECT g.checksum FROM visual_preview_generations g WHERE g.content_version_id=? AND g.recipe_fingerprint=? AND g.source_sha256=? AND g.state='ready'`, versionID, fingerprints.GridRecipe, sourceSHA256).Scan(&checksum)
+	err = tx.QueryRowContext(ctx, `SELECT g.checksum FROM visual_preview_generations g WHERE g.content_version_id=$1 AND g.recipe_fingerprint=$2 AND g.source_sha256=$3 AND g.state='ready'`, versionID, fingerprints.GridRecipe, sourceSHA256).Scan(&checksum)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrRenditionJobStaleAuthority
 	}

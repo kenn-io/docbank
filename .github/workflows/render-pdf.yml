@@ -44,7 +44,11 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: Install Poppler and Chromium
         run: |
-          sudo apt-get update
+          # Match runner-images' bounded mirror failover, including Playwright's apt calls.
+          # https://github.com/actions/runner-images/issues/14594
+          printf '%s\n' 'Acquire::Retries "1";' 'Acquire::http::Timeout "15";' 'Acquire::https::Timeout "15";' |
+            sudo tee /etc/apt/apt.conf.d/zz-retries
+          sudo apt-get -o APT::Update::Error-Mode=any update
           sudo apt-get install --no-install-recommends -y poppler-utils util-linux
           npm --prefix frontend ci
           node frontend/node_modules/@playwright/test/cli.js install --with-deps chromium
@@ -77,7 +81,11 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: Install Poppler and Chromium
         run: |
-          sudo apt-get update
+          # Match runner-images' bounded mirror failover, including Playwright's apt calls.
+          # https://github.com/actions/runner-images/issues/14594
+          printf '%s\n' 'Acquire::Retries "1";' 'Acquire::http::Timeout "15";' 'Acquire::https::Timeout "15";' |
+            sudo tee /etc/apt/apt.conf.d/zz-retries
+          sudo apt-get -o APT::Update::Error-Mode=any update
           sudo apt-get install --no-install-recommends -y poppler-utils util-linux
           npm --prefix frontend ci
           node frontend/node_modules/@playwright/test/cli.js install --with-deps chromium

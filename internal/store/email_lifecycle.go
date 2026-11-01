@@ -122,14 +122,14 @@ func purgeEmailCatalogTx(ctx context.Context, tx *sql.Tx, request PurgeRequest, 
 
 func deleteEmailAuthorityForVersionsTx(ctx context.Context, tx *sql.Tx, versions []string) error {
 	for _, id := range versions {
-		retained, err := stringColumnTx(ctx, tx, "retaining email publications", `SELECT operation_id FROM email_document_publications WHERE parent_version_id=? UNION SELECT operation_id FROM email_document_relations WHERE child_version_id=? ORDER BY operation_id`, id, id)
+		retained, err := stringColumnTx(ctx, tx, "retaining email publications", `SELECT operation_id FROM email_document_publications WHERE parent_version_id=$1 UNION SELECT operation_id FROM email_document_relations WHERE child_version_id=$2 ORDER BY operation_id`, id, id)
 		if err != nil {
 			return err
 		}
 		if len(retained) != 0 {
 			return emailDocumentRetentionConflict(ctx, tx, retained)
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM email_attachments WHERE content_version_id=?`, id); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM email_attachments WHERE content_version_id=$1`, id); err != nil {
 			return err
 		}
 	}
@@ -140,7 +140,7 @@ func emailDocumentRetentionConflict(ctx context.Context, q metadataQuerier, oper
 	commands := make([]string, len(operationIDs))
 	for i, id := range operationIDs {
 		var mailbox bool
-		if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM mailbox_transfer_receipts WHERE document_publication_id=?)`, id).Scan(&mailbox); err != nil {
+		if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM mailbox_transfer_receipts WHERE document_publication_id=$1)`, id).Scan(&mailbox); err != nil {
 			return err
 		}
 		if mailbox {
