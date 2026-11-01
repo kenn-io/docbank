@@ -1,6 +1,6 @@
 import { expect, test as base } from "@playwright/test";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -123,6 +123,7 @@ test("reads PDFs and Markdown from file rows without a page runtime", async ({
   await pdfRow.dblclick();
   const reader = page.getByRole("dialog", { name: "Read Sample.pdf" });
   await expect(reader.locator("embedpdf-container img").first()).toBeVisible();
+  await expect(reader.getByRole("button", { name: "Redact PDF", exact: true })).toBeEnabled();
   await reader.getByRole("button", { name: "Close", exact: true }).focus();
   await page.keyboard.press("Tab");
   await expect(reader.locator("embedpdf-container")).toBeFocused();
@@ -135,6 +136,21 @@ test("reads PDFs and Markdown from file rows without a page runtime", async ({
   const pageImage = await reader.locator("embedpdf-container img").first().boundingBox();
   expect(pageImage).not.toBeNull();
   await page.mouse.click(pageImage!.x + pageImage!.width / 2, pageImage!.y + 100);
+  await page.mouse.move(
+    pageImage!.x + (70 / 612) * pageImage!.width,
+    pageImage!.y + (64 / 792) * pageImage!.height,
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    pageImage!.x + (360 / 612) * pageImage!.width,
+    pageImage!.y + (64 / 792) * pageImage!.height,
+    { steps: 8 },
+  );
+  await page.mouse.up();
+  await page.keyboard.press("ControlOrMeta+c");
+  await expect
+    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+    .toContain("Synthetic PDF preview");
   await page.keyboard.press("ControlOrMeta+f");
   await expect(inspector.getByRole("textbox", { name: "Search", exact: true })).toBeHidden();
   await reader.getByRole("textbox", { name: "Search", exact: true }).fill("Second page evidence");
@@ -154,10 +170,20 @@ test("reads PDFs and Markdown from file rows without a page runtime", async ({
     )
     .toBeGreaterThan(0);
   await page.screenshot({ path: path.join(output!, "pdf-reader.png") });
+  await page.setViewportSize({ width: 640, height: 900 });
+  await expect(reader.getByRole("button", { name: "Close", exact: true })).toBeInViewport();
+  await expect(reader.getByRole("button", { name: "Redact PDF", exact: true })).toBeInViewport();
+  await page.screenshot({ path: path.join(output!, "pdf-reader-narrow.png") });
+  await page.setViewportSize({ width: 1440, height: 960 });
   await reader.getByRole("button", { name: "Document Menu" }).click();
   await page.getByRole("menuitem", { name: "Print", exact: true }).click();
   await expect(reader.getByRole("heading", { name: "Print Settings" })).toBeVisible();
   await reader.getByRole("button", { name: "Cancel", exact: true }).click();
+  const downloaded = page.waitForEvent("download");
+  await reader.getByRole("button", { name: "Download", exact: true }).click();
+  const download = await downloaded;
+  expect(download.suggestedFilename()).toBe("Sample.pdf");
+  expect(await readFile((await download.path())!, "utf8")).toBe(syntheticPDF());
   await reader.getByRole("button", { name: "Close", exact: true }).click();
   await expect(reader).toBeHidden();
   await expect(pdfRow).toBeFocused();
@@ -195,6 +221,14 @@ test("reads PDFs and Markdown from file rows without a page runtime", async ({
   await expect(markdown.getByRole("heading", { name: "Review notes" })).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(result).toBeFocused();
+  await search.fill("Sample");
+  await search.press("Enter");
+  const frozenPDF = page.locator("tr[data-snapshot-node]").filter({ hasText: "Sample.pdf" });
+  await frozenPDF.dblclick();
+  await expect(reader.locator("embedpdf-container img").first()).toBeVisible();
+  await expect(reader.getByRole("button", { name: "Redact PDF", exact: true })).toBeHidden();
+  await page.keyboard.press("Escape");
+  await expect(frozenPDF).toBeFocused();
   expect(errors).toEqual([]);
   expect(externalRequests).toEqual([]);
 });

@@ -5189,6 +5189,7 @@
         session={webSession}
         source={reader.source}
         authorizationRevision={reader.revision}
+        redactionAvailable={!liveSelectionNeedsRefresh && !currentInspectorNode?.trashed_at}
         onauthfailure={handleFailure}
         onclose={closeReader}
       />
