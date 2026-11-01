@@ -2209,7 +2209,8 @@
         type: baseReport.actual_mode,
         empty: baseRows.length === 0 && nameRows.length === 0,
       };
-      if (!naturalSearchRerank(profile, mode, naturalRerank)) return outcome;
+      if (baseReport.results.length === 0 || !naturalSearchRerank(profile, mode, naturalRerank))
+        return outcome;
       naturalRerankPending = true;
       try {
         const reranked = await documentSearch(

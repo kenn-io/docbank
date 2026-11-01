@@ -29,44 +29,29 @@ func naturalSearchReport(nodeID int64, versionID, excerpt string) api.DocumentSe
 	}
 }
 
-func TestEmptyNaturalSearchReportsAfterRerank(t *testing.T) {
-	for _, replaced := range []bool{false, true} {
-		t.Run(map[bool]string{false: "reply", true: "replaced pending"}[replaced], func(t *testing.T) {
+func TestEmptyNaturalSearchSkipsRerank(t *testing.T) {
+	for _, scopedDocuments := range []int{0, 2} {
+		t.Run(map[int]string{0: "empty scope", 2: "no matches"}[scopedDocuments], func(t *testing.T) {
 			fake := newFakeBackend()
 			fake.profiles[0].RerankingAvailable = true
 			fake.naturalSearch = api.DocumentSearchReport{
 				RequestedMode: "lexical", ActualMode: "lexical",
-				Coverage: api.DocumentSearchCoverage{ScopedDocuments: 2, CompleteDocuments: 2, State: "complete"},
+				Coverage: api.DocumentSearchCoverage{ScopedDocuments: scopedDocuments, CompleteDocuments: scopedDocuments, State: "complete"},
 			}
-			fake.naturalRerankSearch = fake.naturalSearch
-			fake.naturalRerankSearch.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "skipped"}
 			model, err := New(t.Context(), fake)
 			require.NoError(t, err)
 			model.naturalProfiles = fake.profiles
-			model.naturalMode = naturalLexical
-			model.naturalRerank = true
-			model.requestID, model.reportSearchID = 7, 7
-			model.naturalSearchID = 3
+			model.naturalMode, model.naturalRerank = naturalLexical, true
+			model.requestID, model.reportSearchID, model.naturalSearchID = 7, 7, 3
 			base := model.loadNaturalSearch("missing", model.requestID)()
-			model, rerank := updateModel(t, model, base)
-			require.NotNil(t, rerank)
-			assert.Empty(t, fake.actions)
-			if replaced {
-				model.requestID, model.reportSearchID = 8, 8
-				model.naturalSearchID = 4
-				base = model.loadNaturalSearch("another", model.requestID)()
-				model, rerank = updateModel(t, model, base)
-				batch, ok := rerank().(tea.BatchMsg)
-				require.True(t, ok)
-				rerank = batch[0]
-			} else {
-				batch, ok := rerank().(tea.BatchMsg)
-				require.True(t, ok)
-				model, rerank = updateModel(t, model, batch[0]())
-			}
-			runModelCommand(t, model, rerank)
-			want := []actionCall{{event: "search_run", searchType: "lexical"}, {event: "search_empty", searchType: "lexical"}}
-			assert.Equal(t, want, fake.actions)
+			model, cmd := updateModel(t, model, base)
+			assert.False(t, model.naturalRerankPending)
+			model = runModelCommand(t, model, cmd)
+			assert.False(t, model.naturalRerankPending)
+			require.Len(t, fake.naturalSearchRequests, 1)
+			assert.False(t, fake.naturalSearchRequests[0].Rerank)
+			assert.Empty(t, model.rows)
+			assert.Equal(t, []actionCall{{event: "search_run", searchType: "lexical"}, {event: "search_empty", searchType: "lexical"}}, fake.actions)
 		})
 	}
 }

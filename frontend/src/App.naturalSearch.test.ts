@@ -1017,42 +1017,47 @@ it("sends the selected tag filter in the all-live scope", async () => {
   expect(harness.postBodies[0]).not.toHaveProperty("fence");
 });
 
-it("shows the empty-population note and reports a submitted search once", async () => {
-  const searchRun = vi.spyOn(actions, "reportSearch").mockImplementation(() => {});
-  const failure = vi.spyOn(actions, "reportFailure").mockImplementation(() => {});
-  const file = node(2, "empty.txt", baseVersion);
-  const harness = installHarness({
-    profiles: [
-      {
-        name: "private",
-        fingerprint: "a".repeat(64),
-        rendition: true,
-        embedding_bindings: ["embed"],
-        reranking_available: false,
+it.each([false, true])(
+  "shows the empty-population note and reports a submitted search once, rerank=%s",
+  async (rerank) => {
+    const searchRun = vi.spyOn(actions, "reportSearch").mockImplementation(() => {});
+    const failure = vi.spyOn(actions, "reportFailure").mockImplementation(() => {});
+    const file = node(2, "empty.txt", baseVersion);
+    const harness = installHarness({
+      profiles: [
+        {
+          name: "private",
+          fingerprint: "a".repeat(64),
+          rendition: true,
+          embedding_bindings: ["embed"],
+          reranking_available: true,
+        },
+      ],
+      files: [file],
+      rerankReport: report("hybrid", [], { outcome: "skipped", candidate_count: 0 }),
+      baseReport: {
+        ...report("hybrid", []),
+        coverage: {
+          binding_required: true,
+          scoped_documents: 0,
+          complete_documents: 0,
+          state: "complete",
+        },
       },
-    ],
-    files: [file],
-    baseReport: {
-      ...report("hybrid", []),
-      coverage: {
-        binding_required: true,
-        scoped_documents: 0,
-        complete_documents: 0,
-        state: "complete",
-      },
-    },
-  });
-  render(App);
-  await screen.findAllByText("empty.txt");
-  await submitSearch("nothing");
-  await screen.findByText("No documents match the current filter.");
-  expect(harness.postBodies).toHaveLength(1);
-  expect(searchRun).toHaveBeenCalledExactlyOnceWith("short-lived", "hybrid", true);
-  await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
-  await waitFor(() => expect(harness.postBodies).toHaveLength(2));
-  expect(searchRun).toHaveBeenCalledOnce();
-  expect(failure).not.toHaveBeenCalled();
-});
+    });
+    render(App);
+    await screen.findAllByText("empty.txt");
+    if (rerank) await fireEvent.click(screen.getByRole("checkbox", { name: "Rerank results" }));
+    await submitSearch("nothing");
+    await screen.findByText("No documents match the current filter.");
+    expect(harness.postBodies).toHaveLength(1);
+    expect(searchRun).toHaveBeenCalledExactlyOnceWith("short-lived", "hybrid", true);
+    await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
+    await waitFor(() => expect(harness.postBodies).toHaveLength(2));
+    expect(searchRun).toHaveBeenCalledOnce();
+    expect(failure).not.toHaveBeenCalled();
+  },
+);
 
 it("keeps a non-401 processing failure on the legacy GET path", async () => {
   const failure = vi.spyOn(actions, "reportFailure").mockImplementation(() => {});

@@ -2451,7 +2451,7 @@ func (m Model) applyNaturalSearchBase(msg naturalSearchBaseLoadedMsg) (tea.Model
 	m.naturalResultMode = msg.naturalMode
 	m.naturalSearchNote = naturalSearchReportNote(msg.report)
 	profile := m.selectedNaturalProfile()
-	if m.naturalRerank && profile != nil && profile.RerankingAvailable {
+	if len(msg.report.Results) > 0 && m.naturalRerank && profile != nil && profile.RerankingAvailable {
 		m.naturalRerankPending = true
 		rerank := m.loadNaturalRerank(msg.requestID, msg.searchID, msg.request, msg.naturalMode)
 		if m.reportSearchID != msg.requestID || msg.report.ActualMode == "" {
