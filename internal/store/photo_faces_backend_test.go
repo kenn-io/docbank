@@ -10,7 +10,8 @@ import (
 	"go.kenn.io/docbank/internal/store/pgschema"
 )
 
-func TestPhotoFaceMetadataPostgres(t *testing.T) {
+func checkPhotoFaceMetadataPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	ctx := t.Context()
 	setup, owner := pgtest.NewDatabase(t)

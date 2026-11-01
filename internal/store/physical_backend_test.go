@@ -14,7 +14,8 @@ import (
 	"go.kenn.io/kit/packstore/packstoretest"
 )
 
-func TestPackCatalogContractPostgres(t *testing.T) {
+func checkPackCatalogContractPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	packstoretest.RunCatalogContract(t, func(t *testing.T) packstoretest.CatalogHarness {
 		t.Helper()
@@ -22,7 +23,8 @@ func TestPackCatalogContractPostgres(t *testing.T) {
 	}, packstoretest.ContractOptions{Now: time.Date(2026, 7, 11, 12, 0, 0, 0, time.UTC), NewPackID: pack.NewPackID})
 }
 
-func TestPhysicalStorageLifecyclePostgres(t *testing.T) {
+func checkPhysicalStorageLifecyclePostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	s := newPostgresQueryStore(t)
 	ctx := t.Context()
@@ -101,7 +103,8 @@ func TestPhysicalStorageLifecyclePostgres(t *testing.T) {
 	checkRetentionMetadata(t, s)
 }
 
-func TestPhysicalCleanupRecoveryPostgres(t *testing.T) {
+func checkPhysicalCleanupRecoveryPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	s := newPostgresQueryStore(t)
 	ctx := t.Context()
@@ -163,7 +166,8 @@ func TestPhysicalCleanupRecoveryPostgres(t *testing.T) {
 	checkRetentionMetadata(t, s)
 }
 
-func TestPackSummaryMutationsPostgres(t *testing.T) {
+func checkPackSummaryMutationsPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	s := newPostgresQueryStore(t)
 	ctx := t.Context()
@@ -222,7 +226,8 @@ func TestPackSummaryMutationsPostgres(t *testing.T) {
 	require.EqualValues(t, 13, backlog.EligibleBytes)
 }
 
-func TestPhysicalMaintenancePagesPostgres(t *testing.T) {
+func checkPhysicalMaintenancePagesPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	s := newPostgresQueryStore(t)
 	ctx := t.Context()

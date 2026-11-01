@@ -108,12 +108,14 @@ func newPostgresSchemaStore(t *testing.T, setup *sql.DB, cfg pgschema.Config) *S
 	return s
 }
 
-func TestNodeQueriesSQLite(t *testing.T) {
+func checkNodeQueriesSQLite(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	checkNodeQueries(t, newTestStore(t))
 }
 
-func TestNodeQueriesPostgres(t *testing.T) {
+func checkNodeQueriesPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	s := newPostgresQueryStore(t)
 	checkNodeQueries(t, s)

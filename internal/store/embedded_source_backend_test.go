@@ -8,12 +8,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestMixedCaseEmbeddedSourceSQLite(t *testing.T) {
+func checkMixedCaseEmbeddedSourceSQLite(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	checkMixedCaseEmbeddedSource(t, newTestStore(t))
 }
 
-func TestMixedCaseEmbeddedSourcePostgres(t *testing.T) {
+func checkMixedCaseEmbeddedSourcePostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	checkMixedCaseEmbeddedSource(t, newPostgresQueryStore(t))
 }

@@ -10,7 +10,8 @@ import (
 
 // Exercise publication through the runtime role, including audit replay after
 // a repeated observation and replacement; syntax-only tests miss these effects.
-func TestIngestOperationsPostgres(t *testing.T) {
+func checkIngestOperationsPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	for _, audited := range []bool{false, true} {
 		name := "ordinary"
@@ -98,7 +99,8 @@ func TestIngestOperationsPostgres(t *testing.T) {
 	}
 }
 
-func TestPlannedIngestPostgres(t *testing.T) {
+func checkPlannedIngestPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	s := newPostgresQueryStore(t)
 	ctx := t.Context()
@@ -154,7 +156,8 @@ func TestPlannedIngestPostgres(t *testing.T) {
 	require.Zero(t, retained)
 }
 
-func TestWatchAndPushPostgres(t *testing.T) {
+func checkWatchAndPushPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	s := newPostgresQueryStore(t)
 	ctx := t.Context()

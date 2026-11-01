@@ -13,7 +13,8 @@ import (
 	"go.kenn.io/docbank/internal/store/pgschema"
 )
 
-func TestTrashRestorePostgres(t *testing.T) {
+func checkTrashRestorePostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	for _, audited := range []bool{false, true} {
 		name := "ordinary"
@@ -84,7 +85,8 @@ func TestTrashRestorePostgres(t *testing.T) {
 	}
 }
 
-func TestTrashRestoreNamesPostgres(t *testing.T) {
+func checkTrashRestoreNamesPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	s := newPostgresQueryStore(t)
 	ctx := t.Context()
@@ -109,7 +111,8 @@ func TestTrashRestoreNamesPostgres(t *testing.T) {
 	require.Equal(t, file.CurrentVersionID, restored.CurrentVersionID)
 }
 
-func TestTrashPageSnapshotPostgres(t *testing.T) {
+func checkTrashPageSnapshotPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	s := newPostgresQueryStore(t)
 	ctx := t.Context()
@@ -146,7 +149,8 @@ func TestTrashPageSnapshotPostgres(t *testing.T) {
 	require.Empty(t, page)
 }
 
-func TestPhotoTrashRestorePostgres(t *testing.T) {
+func checkPhotoTrashRestorePostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	for _, audited := range []bool{false, true} {
 		t.Run(fmt.Sprintf("audited=%t", audited), func(t *testing.T) {

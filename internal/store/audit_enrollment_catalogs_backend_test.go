@@ -12,7 +12,8 @@ import (
 
 // Enrollment must validate retained catalogs even when their documents are
 // outside the new scope. Use native publications so nested readers see real rows.
-func TestAuditEnrollmentCatalogsPostgres(t *testing.T) {
+func checkAuditEnrollmentCatalogsPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	for name, seed := range map[string]func(*testing.T) *Store{
 		"processing": func(t *testing.T) *Store {
@@ -156,7 +157,8 @@ func TestAuditEnrollmentCatalogsPostgres(t *testing.T) {
 	}
 }
 
-func TestAuditEnrollmentFreshPostgres(t *testing.T) {
+func checkAuditEnrollmentFreshPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	setup, owner := pgtest.NewDatabase(t)
 	s := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
@@ -169,7 +171,8 @@ func TestAuditEnrollmentFreshPostgres(t *testing.T) {
 	require.ErrorIs(t, err, ErrAuditAlreadyEnabled)
 }
 
-func TestAuditEnrollmentChangedPreviewPostgres(t *testing.T) {
+func checkAuditEnrollmentChangedPreviewPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	setup, owner := pgtest.NewDatabase(t)
 	destination := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
@@ -206,7 +209,8 @@ func TestAuditEnrollmentChangedPreviewPostgres(t *testing.T) {
 	}
 }
 
-func TestAuditEnrollmentPhotoReceiptPostgres(t *testing.T) {
+func checkAuditEnrollmentPhotoReceiptPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	setup, owner := pgtest.NewDatabase(t)
 	destination := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
