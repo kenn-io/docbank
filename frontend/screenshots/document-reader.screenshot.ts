@@ -202,7 +202,7 @@ test("reads PDFs and Markdown from file rows without a page runtime", async ({
   await expect(markdown.getByRole("heading", { name: "Review notes" })).toBeVisible();
   await expect(markdown.getByRole("listitem")).toHaveCount(2);
   await expect(markdown.getByRole("cell", { name: "Reviewed" })).toBeVisible();
-  expect(await page.evaluate(() => "markdownExecuted" in window)).toBe(false);
+  await expect(markdown.getByRole("article").locator("script")).toHaveCount(0);
   await page.screenshot({ path: path.join(output!, "markdown-reader.png") });
   await page.keyboard.press("Escape");
   await expect(markdownRow).toBeFocused();
