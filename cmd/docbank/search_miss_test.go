@@ -17,7 +17,7 @@ import (
 )
 
 func TestSubmittedSearchMissRecording(t *testing.T) {
-	for _, mode := range []string{"auto", "lexical", "explicit", "fallback"} {
+	for _, mode := range []string{"auto", "lexical", "explicit", "fallback", "emptyscope"} {
 		for _, nameMatch := range []bool{false, true} {
 			if mode == "explicit" && nameMatch {
 				continue
@@ -35,9 +35,13 @@ func TestSubmittedSearchMissRecording(t *testing.T) {
 						assert.NoError(t, json.MarshalWrite(w, api.VaultInfo{VaultID: vault}))
 					case "/api/v1/processing/source-fences/resolve":
 						resolutions++
-						fp, err := processing.SourceFenceFingerprint(processing.SourceFence{VaultUID: vault, ContentVersionIDs: []string{processingTestVersionID}})
+						versions := []string{processingTestVersionID}
+						if mode == "emptyscope" {
+							versions = []string{}
+						}
+						fp, err := processing.SourceFenceFingerprint(processing.SourceFence{VaultUID: vault, ContentVersionIDs: versions})
 						assert.NoError(t, err)
-						assert.NoError(t, json.MarshalWrite(w, api.DocumentSourceFenceResolution{Fence: api.ResolvedDocumentSourceFence{VaultUID: vault, ContentVersionIDs: []string{processingTestVersionID}}, FenceFingerprint: fp, ObservedScopeCount: 1}))
+						assert.NoError(t, json.MarshalWrite(w, api.DocumentSourceFenceResolution{Fence: api.ResolvedDocumentSourceFence{VaultUID: vault, ContentVersionIDs: versions}, FenceFingerprint: fp, ObservedScopeCount: len(versions)}))
 					case "/api/v1/search":
 						if r.Method == http.MethodPost {
 							var request api.DocumentSearchRequest
@@ -52,7 +56,11 @@ func TestSubmittedSearchMissRecording(t *testing.T) {
 								_, _ = io.WriteString(w, `{"status":500,"code":"processing_failed","detail":"synthetic failure"}`)
 								return
 							}
-							assert.NoError(t, json.MarshalWrite(w, api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete", ScopedDocuments: 1, CompleteDocuments: 1}}))
+							coverage := api.DocumentSearchCoverage{State: "complete", ScopedDocuments: 1, CompleteDocuments: 1}
+							if mode == "emptyscope" {
+								coverage.ScopedDocuments, coverage.CompleteDocuments = 0, 0
+							}
+							assert.NoError(t, json.MarshalWrite(w, api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: coverage}))
 						} else {
 							report := api.SearchReport{Limit: 50, SourcePresent: mode == "lexical"}
 							if nameMatch {
@@ -96,11 +104,20 @@ func TestSubmittedSearchMissRecording(t *testing.T) {
 					if mode == "explicit" {
 						require.Zero(t, resolutions)
 					}
+					if mode == "emptyscope" {
+						require.Zero(t, resolutions)
+					}
 					if mode == "explicit" || mode == "auto" {
 						require.Equal(t, "embed", misses[0].BindingID)
 						require.Equal(t, "hybrid", misses[0].RequestedMode)
 						require.Equal(t, "hybrid", misses[0].ActualMode)
 						require.Equal(t, new(1), misses[0].DocumentCount)
+					}
+					if mode == "emptyscope" {
+						require.Equal(t, new(0), misses[0].DocumentCount)
+						require.Empty(t, misses[0].FenceFingerprint)
+						require.Equal(t, "hybrid", misses[0].ActualMode)
+						require.Equal(t, "complete", misses[0].Coverage["state"])
 					}
 					if mode == "fallback" {
 						require.Equal(t, "private", misses[0].Profile)
