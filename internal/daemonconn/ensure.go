@@ -93,9 +93,6 @@ func discoverOptions(requireVersion bool) kitdaemon.DiscoverOptions {
 		Probe:           probeOptions(),
 		RequirePIDAlive: true,
 		Accept: func(rec kitdaemon.RuntimeRecord, info kitdaemon.PingInfo) bool {
-			if !createTimeMatches(rec) {
-				return false
-			}
 			if !requireVersion {
 				return true
 			}
@@ -685,7 +682,7 @@ func proveOwnershipWithClient(
 }
 
 // Stop gracefully stops the discovered daemon: token endpoint first,
-// SIGTERM only when create_time still matches the recorded PID. Returns
+// SIGTERM only when the process identity still matches the recorded PID. Returns
 // false when no daemon was running.
 func Stop(ctx context.Context, root string) (bool, error) {
 	root, err := home.CanonicalRoot(root)
@@ -700,7 +697,7 @@ func Stop(ctx context.Context, root string) (bool, error) {
 		return true, stopRecord(ctx, rec)
 	}
 	// A daemon that already closed its listener can still be draining jobs.
-	// Recognize only a create-time-verified runtime PID without ping evidence.
+	// Recognize only an identity-verified runtime PID without ping evidence.
 	rec, ok, err = liveRuntimeRecord(root)
 	if err != nil || !ok {
 		return false, err
@@ -714,7 +711,7 @@ func stopRecord(ctx context.Context, rec kitdaemon.RuntimeRecord) error {
 	c, proofErr := newProvenClientFor(ctx, rec)
 	if proofErr != nil {
 		// Endpoint ownership could not be proven without exposing credentials.
-		// Signal only the create-time-verified process recorded in private state.
+		// Signal only the identity-verified process recorded in private state.
 		return signalStopRecord(ctx, rec)
 	}
 	if token := rec.Metadata[metaShutdownToken]; token != "" {
@@ -776,14 +773,14 @@ func forceStopRecord(ctx context.Context, rec kitdaemon.RuntimeRecord) error {
 }
 
 func verifyRecordProcess(rec kitdaemon.RuntimeRecord) error {
-	if !createTimeMatches(rec) {
-		return errors.New("daemon PID no longer matches its recorded create time; not signaling")
+	if kitdaemon.CompareRuntimeProcessIdentity(rec) != kitdaemon.ProcessIdentityMatch {
+		return errors.New("daemon PID no longer matches its recorded process identity; not signaling")
 	}
 	return nil
 }
 
 // liveRuntimeRecord finds a non-responsive daemon only when its owner-private
-// record carries a create time that still matches a live process. Ping-less
+// record carries a process identity that still matches a live process. Ping-less
 // records without that proof are never trusted for waiting or signaling.
 func liveRuntimeRecord(root string) (kitdaemon.RuntimeRecord, bool, error) {
 	info, err := os.Stat(root)
@@ -804,8 +801,8 @@ func liveRuntimeRecord(root string) (kitdaemon.RuntimeRecord, bool, error) {
 			fmt.Errorf("listing daemon runtime records: %w", err)
 	}
 	for _, rec := range records {
-		if rec.Service != Service || rec.Metadata[metaCreateTime] == "" ||
-			!kitdaemon.ProcessAlive(rec.PID) || !createTimeMatches(rec) {
+		if rec.Service != Service || !kitdaemon.RuntimeProcessAlive(rec) ||
+			kitdaemon.CompareRuntimeProcessIdentity(rec) != kitdaemon.ProcessIdentityMatch {
 			continue
 		}
 		return rec, true, nil

@@ -42,8 +42,8 @@ are crashes, stale process state, PID reuse, accidental damage, and serving an
 object whose identity is false—not an adversary already able to rewrite the
 user's vault.
 
-The runtime record contains PID, process create-time, endpoint, build version,
-protocol revision, shutdown token, and effective API key. Create-time prevents
+The runtime record contains PID, Kit process identity, endpoint, build version,
+protocol revision, shutdown token, and effective API key. Process identity prevents
 a stale record from targeting a reused PID. The record is runtime state, not
 archive state.
 

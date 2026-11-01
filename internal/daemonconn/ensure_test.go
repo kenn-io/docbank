@@ -105,18 +105,18 @@ func TestStartCancellationStopsUnreadyChild(t *testing.T) {
 	assert.False(t, kitdaemon.ProcessAlive(pid), "failed startup must release its child process")
 }
 
-func TestCreateTimeMatches(t *testing.T) {
+func TestVerifyRecordProcess(t *testing.T) {
 	rec := NewRecord("127.0.0.1:1", "key", "tok", "")
 	require.Equal(t, os.Getpid(), rec.PID)
-	assert.True(t, createTimeMatches(rec), "own record must match")
+	require.NoError(t, verifyRecordProcess(rec), "own record must match")
 
-	// Simulate PID reuse: same live PID, different recorded create time.
-	rec.Metadata[metaCreateTime] = strconv.FormatInt(1, 10)
-	assert.False(t, createTimeMatches(rec), "mismatched create_time must read as dead")
+	// A live PID with another process's identity must not be signaled.
+	rec.PID = os.Getppid()
+	require.Error(t, verifyRecordProcess(rec))
 
-	// Records without the key (older daemons) match trivially.
-	delete(rec.Metadata, metaCreateTime)
-	assert.True(t, createTimeMatches(rec))
+	rec.PID = os.Getpid()
+	rec.ProcessIdentity, rec.ProcessIdentityV2 = "", ""
+	require.Error(t, verifyRecordProcess(rec), "missing identity cannot authorize signaling")
 }
 
 // A version-matched record without a published API key is a pre-key daemon:
@@ -654,10 +654,10 @@ func startUnresponsiveRuntime(t *testing.T) (string, kitdaemon.RuntimeRecord) {
 		}
 	})
 
-	var created int64
+	var identity kitdaemon.ProcessIdentity
 	require.Eventually(t, func() bool {
 		var ok bool
-		created, ok = processCreateTimeMillis(cmd.Process.Pid)
+		identity, ok = kitdaemon.ReadProcessIdentity(cmd.Process.Pid)
 		return ok
 	}, 5*time.Second, 10*time.Millisecond)
 
@@ -666,13 +666,10 @@ func startUnresponsiveRuntime(t *testing.T) (string, kitdaemon.RuntimeRecord) {
 		Network: kitdaemon.NetworkTCP, Address: "127.0.0.1:1",
 	})
 	rec.PID = cmd.Process.Pid
-	identity, ok := kitdaemon.ReadProcessIdentity(rec.PID)
-	require.True(t, ok, "read helper process identity")
 	rec.ProcessIdentity = ""
 	rec.ProcessIdentityV2 = identity
 	rec.Metadata = map[string]string{
-		metaCreateTime: strconv.FormatInt(created, 10),
-		metaAPIKey:     "key", metaProtocolVersion: daemonProtocolVersion,
+		metaAPIKey: "key", metaProtocolVersion: daemonProtocolVersion,
 		metaShutdownToken: "token",
 	}
 	_, err := RuntimeStore(root).Write(rec)
