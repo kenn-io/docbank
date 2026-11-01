@@ -459,7 +459,7 @@ func TestSearchAllLiveEmptyScope(t *testing.T) {
 			f := newEmbeddingRecoveryFixture(t)
 			f.profile.Embeddings[0].Activation = document.EmbeddingRequired
 			if name != "all trashed" && name != "filter matches none" {
-				catalog, err := store.Open(filepath.Join(t.TempDir(), "docbank.db"))
+				catalog, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "docbank.db"))
 				require.NoError(t, err)
 				t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 				f.catalog = catalog
@@ -506,11 +506,11 @@ func TestSearchAllLiveEmptyScope(t *testing.T) {
 				catalog := f.catalog
 				if !populated {
 					var err error
-					catalog, err = store.Open(filepath.Join(t.TempDir(), "docbank.db"))
+					catalog, err = store.Open(t.Context(), filepath.Join(t.TempDir(), "docbank.db"))
 					require.NoError(t, err)
 					t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 				}
-				service, err := NewService(ServiceConfig{Catalog: catalog, Blobs: f.blobs,
+				service, err := NewService(t.Context(), ServiceConfig{Catalog: catalog, Blobs: f.blobs,
 					Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(),
 					Profiles: map[string]ProfileConfig{"current": {Profile: f.profile, RenditionProvider: newWorkerProvider(t)}}})
 				require.NoError(t, err)
