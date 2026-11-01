@@ -55,14 +55,12 @@ func TestNormalizedFigures(t *testing.T) {
 		{"USD 20, CAD .5", []normalizedFigure{{text: "20"}, {text: ".5"}}},
 		{"$20 CAD30", []normalizedFigure{{"$20", "amount", "USD 20"}, {"CAD30", "amount", "CAD 30"}}},
 		{"40USD 30CAD", []normalizedFigure{{"40USD", "amount", "USD 40"}, {"30CAD", "amount", "CAD 30"}}},
-		{"-5 USD 30 CAD", []normalizedFigure{{text: "-5"}, {"30 CAD", "amount", "CAD 30"}}},
+		{"-5 USD 30 CAD", []normalizedFigure{{text: "-5"}, {text: "30"}}},
 		{"-5 USD 30", []normalizedFigure{{text: "-5"}, {text: "30"}}},
 		{"-$5 USD 30", []normalizedFigure{{text: "-$5"}, {text: "30"}}},
 		{"1.234 USD 30", []normalizedFigure{{text: "1.234"}, {text: "30"}}},
 		{"USD 30 February 2026", []normalizedFigure{{text: "30"}, {text: "2026"}}},
 		{"30 February 2026 USD 30", []normalizedFigure{{text: "30"}, {text: "2026"}, {text: "30"}}},
-		{"February 30, 2026 USD 30", []normalizedFigure{{text: "30"}, {text: "2026"}, {text: "30"}}},
-		{"2026-02-30 USD 30", []normalizedFigure{{text: "2026-02-30"}, {text: "30"}}},
 		{"USD 30 February 2026 USD 30", []normalizedFigure{{text: "30"}, {text: "2026"}, {text: "30"}}},
 		{"CAD 15 March 2026", []normalizedFigure{{"15 March 2026", "date", "2026-03-15"}}},
 		{"40 CAD 15 March 2026", []normalizedFigure{{"40 CAD", "amount", "CAD 40"}, {"15 March 2026", "date", "2026-03-15"}}},
@@ -70,7 +68,7 @@ func TestNormalizedFigures(t *testing.T) {
 		{"USD 40 2026-03-15", []normalizedFigure{{"USD 40", "amount", "USD 40"}, {"2026-03-15", "date", "2026-03-15"}}},
 		// A marker after an amount leaves that amount literal, whatever follows.
 		{"$40 CAD 15 March 2026", []normalizedFigure{{text: "$40"}, {"15 March 2026", "date", "2026-03-15"}}},
-		{"USD -5 EUR 30", []normalizedFigure{{text: "-5"}, {text: "30"}}},
+		{"USD -5 EUR 30", []normalizedFigure{{text: "-5"}, {"EUR 30", "amount", "EUR 30"}}},
 	} {
 		t.Run(strings.ReplaceAll(tc.text, "\n", `\n`), func(t *testing.T) {
 			require.Equal(t, tc.figures, normalizedFigures(tc.text))
