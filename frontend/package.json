@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "postinstall": "node scripts/patch-embedpdf.mjs",
     "dev": "vp dev",
     "build": "vp build",
     "fmt": "vp fmt",

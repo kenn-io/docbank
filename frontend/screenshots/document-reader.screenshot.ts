@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test as base } from "@playwright/test";
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -14,7 +14,7 @@ const binary = path.join(
   process.platform === "win32" ? "docbank.exe" : "docbank",
 );
 const output = process.env.DOCBANK_DOCUMENT_READER_PROOF_DIR;
-test.skip(!output, "DOCBANK_DOCUMENT_READER_PROOF_DIR enables the document reader proof");
+base.skip(!output, "DOCBANK_DOCUMENT_READER_PROOF_DIR enables the document reader proof");
 
 function syntheticPDF(): string {
   const streams = ["Synthetic PDF preview", "Second page evidence"].map(
@@ -45,127 +45,206 @@ function syntheticPDF(): string {
   );
 }
 
-test("reads PDFs and Markdown from file rows without a page runtime", async ({ page }) => {
+const test = base.extend<{ readerURL: string }>({
+  readerURL: async ({ page }, use) => {
+    const workspace = await mkdtemp(path.join(tmpdir(), "docbank-reader-"));
+    const docbank = async (...args: string[]) =>
+      (
+        await run(binary, args, {
+          cwd: repository,
+          env: { ...process.env, DOCBANK_HOME: path.join(workspace, "vault") },
+          timeout: 60_000,
+        })
+      ).stdout.trim();
+    try {
+      await mkdir(output!, { recursive: true });
+      for (const [name, content] of [
+        ["Sample.pdf", syntheticPDF()],
+        [
+          "Notes.md",
+          "# Review notes\n\n- First item\n- Second item\n\n| File | Status |\n| --- | --- |\n| Sample | Reviewed |\n\n<script>window.markdownExecuted = true</script>\n",
+        ],
+      ]) {
+        const file = path.join(workspace, name!);
+        await writeFile(file, content!);
+        await docbank("add", file, "--dest", "/");
+      }
+      const webURL = await docbank("web", "--no-browser");
+      await use(webURL);
+    } finally {
+      await page.goto("about:blank");
+      await docbank("daemon", "stop");
+      await rm(workspace, { recursive: true, force: true });
+    }
+  },
+});
+
+test("reads PDFs and Markdown from file rows without a page runtime", async ({
+  page,
+  context,
+  readerURL: webURL,
+}) => {
   page.setDefaultTimeout(15_000);
-  const workspace = await mkdtemp(path.join(tmpdir(), "docbank-reader-"));
-  const docbank = async (...args: string[]) =>
-    (
-      await run(binary, args, {
-        cwd: repository,
-        env: { ...process.env, DOCBANK_HOME: path.join(workspace, "vault") },
-        timeout: 60_000,
-      })
-    ).stdout.trim();
   const errors: string[] = [];
   const externalRequests: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   page.on("console", (message) => {
     if (message.type() === "error") errors.push(message.text());
   });
-  try {
-    await mkdir(output!, { recursive: true });
-    for (const [name, content] of [
-      ["Sample.pdf", syntheticPDF()],
-      [
-        "Notes.md",
-        "# Review notes\n\n- First item\n- Second item\n\n| File | Status |\n| --- | --- |\n| Sample | Reviewed |\n\n<script>window.markdownExecuted = true</script>\n",
-      ],
-    ]) {
-      const file = path.join(workspace, name!);
-      await writeFile(file, content!);
-      await docbank("add", file, "--dest", "/");
-    }
-    const webURL = await docbank("web", "--no-browser");
-    const origin = new URL(webURL).origin;
-    page.on("request", (request) => {
-      if (/^https?:/.test(request.url()) && new URL(request.url()).origin !== origin)
-        externalRequests.push(request.url());
-    });
-    await page.goto(webURL);
-    const pdfRow = page
-      .getByRole("row")
-      .filter({ has: page.getByRole("cell", { name: "Sample.pdf", exact: true }) });
-    await pdfRow.click();
-    const inspector = page.getByRole("complementary", { name: "Document inspector" });
-    await expect(inspector.locator("embedpdf-container img").first()).toBeVisible();
-    const previewWorkers = page.workers().length;
-    await pdfRow.dblclick();
-    const reader = page.getByRole("dialog", { name: "Read Sample.pdf" });
-    await expect(reader.locator("embedpdf-container img").first()).toBeVisible();
-    await reader.getByRole("button", { name: "Close", exact: true }).focus();
-    await page.keyboard.press("Tab");
-    await expect(reader.getByRole("button", { name: "Document Menu" })).toBeFocused();
-    const zoom = reader.getByRole("textbox", { name: "Set zoom" });
-    await zoom.fill("100");
-    await zoom.press("Enter");
-    await expect(zoom).toHaveValue("100");
-    await reader.getByRole("button", { name: "Search", exact: true }).click();
-    await reader.getByRole("textbox", { name: "Search", exact: true }).fill("Second page evidence");
-    await reader.getByText("Second page evidence", { exact: true }).click();
-    await expect
-      .poll(() =>
-        reader
-          .locator("embedpdf-container img")
-          .evaluateAll(
-            (images) =>
-              images.filter(
-                (image) =>
-                  (image as HTMLImageElement).complete &&
-                  (image as HTMLImageElement).naturalWidth > 0,
-              ).length,
-          ),
-      )
-      .toBeGreaterThan(0);
-    await page.screenshot({ path: path.join(output!, "pdf-reader.png") });
-    await reader.getByRole("button", { name: "Document Menu" }).click();
-    await page.getByRole("menuitem", { name: "Print", exact: true }).click();
-    await expect(reader.getByRole("heading", { name: "Print Settings" })).toBeVisible();
-    await reader.getByRole("button", { name: "Cancel", exact: true }).click();
-    await reader.getByRole("button", { name: "Close", exact: true }).click();
-    await expect(reader).toBeHidden();
-    await expect(pdfRow).toBeFocused();
-    await expect.poll(() => page.workers().length).toBe(previewWorkers);
-    await pdfRow.press("Enter");
-    await expect(reader.locator("embedpdf-container img").first()).toBeVisible();
-    await page.keyboard.press("Escape");
-    await expect(reader).toBeHidden();
-    await expect(pdfRow).toBeFocused();
+  const origin = new URL(webURL).origin;
+  page.on("request", (request) => {
+    if (/^https?:/.test(request.url()) && new URL(request.url()).origin !== origin)
+      externalRequests.push(request.url());
+  });
+  await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin });
+  await page.goto(webURL);
+  const pdfRow = page
+    .getByRole("row")
+    .filter({ has: page.getByRole("cell", { name: "Sample.pdf", exact: true }) });
+  await pdfRow.click();
+  const inspector = page.getByRole("complementary", { name: "Document inspector" });
+  await expect(inspector.locator("embedpdf-container img").first()).toBeVisible();
+  await inspector.getByRole("tab", { name: "Text", exact: true }).click();
+  const visibleText = inspector.getByText("Text extraction isn't set up.", { exact: true });
+  await expect(visibleText).toBeVisible();
+  await visibleText.evaluate((element) => {
+    const selection = window.getSelection()!;
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    selection.removeAllRanges();
+    selection.addRange(range);
+  });
+  await page.keyboard.press("ControlOrMeta+c");
+  await expect
+    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+    .toBe("Text extraction isn't set up.");
+  await inspector.getByRole("tab", { name: "Preview", exact: true }).click();
+  const previewWorkers = page.workers().length;
+  await pdfRow.dblclick();
+  const reader = page.getByRole("dialog", { name: "Read Sample.pdf" });
+  await expect(reader.locator("embedpdf-container img").first()).toBeVisible();
+  await reader.getByRole("button", { name: "Close", exact: true }).focus();
+  await page.keyboard.press("Tab");
+  await expect(reader.locator("embedpdf-container")).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(reader.getByRole("button", { name: "Document Menu" })).toBeFocused();
+  const zoom = reader.getByRole("textbox", { name: "Set zoom" });
+  await zoom.fill("100");
+  await zoom.press("Enter");
+  await expect(zoom).toHaveValue("100");
+  const pageImage = await reader.locator("embedpdf-container img").first().boundingBox();
+  expect(pageImage).not.toBeNull();
+  await page.mouse.click(pageImage!.x + pageImage!.width / 2, pageImage!.y + 100);
+  await page.keyboard.press("ControlOrMeta+f");
+  await expect(inspector.getByRole("textbox", { name: "Search", exact: true })).toBeHidden();
+  await reader.getByRole("textbox", { name: "Search", exact: true }).fill("Second page evidence");
+  await reader.getByText("Second page evidence", { exact: true }).click();
+  await expect
+    .poll(() =>
+      reader
+        .locator("embedpdf-container img")
+        .evaluateAll(
+          (images) =>
+            images.filter(
+              (image) =>
+                (image as HTMLImageElement).complete &&
+                (image as HTMLImageElement).naturalWidth > 0,
+            ).length,
+        ),
+    )
+    .toBeGreaterThan(0);
+  await page.screenshot({ path: path.join(output!, "pdf-reader.png") });
+  await reader.getByRole("button", { name: "Document Menu" }).click();
+  await page.getByRole("menuitem", { name: "Print", exact: true }).click();
+  await expect(reader.getByRole("heading", { name: "Print Settings" })).toBeVisible();
+  await reader.getByRole("button", { name: "Cancel", exact: true }).click();
+  await reader.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(reader).toBeHidden();
+  await expect(pdfRow).toBeFocused();
+  await expect.poll(() => page.workers().length).toBe(previewWorkers);
+  await pdfRow.press("Enter");
+  await expect(reader.locator("embedpdf-container img").first()).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(reader).toBeHidden();
+  await expect(pdfRow).toBeFocused();
 
-    const markdownRow = page
+  const markdownRow = page
+    .getByRole("row")
+    .filter({ has: page.getByRole("cell", { name: "Notes.md", exact: true }) });
+  await markdownRow.dblclick();
+  const markdown = page.getByRole("dialog", { name: "Read Notes.md" });
+  await expect(markdown.getByRole("heading", { name: "Review notes" })).toBeVisible();
+  await expect(markdown.getByRole("listitem")).toHaveCount(2);
+  await expect(markdown.getByRole("cell", { name: "Reviewed" })).toBeVisible();
+  expect(await page.evaluate(() => "markdownExecuted" in window)).toBe(false);
+  await page.screenshot({ path: path.join(output!, "markdown-reader.png") });
+  await page.keyboard.press("Escape");
+  await expect(markdownRow).toBeFocused();
+  await expect.poll(() => page.workers().length).toBe(0);
+  await inspector.getByRole("button", { name: "Open", exact: true }).click();
+  await expect(markdown.getByRole("heading", { name: "Review notes" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await page.getByRole("combobox", { name: "Search syntax: Plain words" }).click();
+  await page.getByRole("option", { name: "Query syntax" }).click();
+  const search = page.getByRole("searchbox", { name: "Search documents" });
+  await search.fill("Notes");
+  await search.press("Enter");
+  const result = page.locator("tr[data-snapshot-node]").filter({ hasText: "Notes.md" });
+  await expect(result).toBeVisible();
+  await result.dblclick();
+  await expect(markdown.getByRole("heading", { name: "Review notes" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(result).toBeFocused();
+  expect(errors).toEqual([]);
+  expect(externalRequests).toEqual([]);
+});
+
+test("releases an engine that finishes initializing after changing documents", async ({
+  page,
+  readerURL,
+}) => {
+  await page.addInitScript(() => {
+    const NativeWorker = window.Worker;
+    const state = Object.assign(window, { readerWorkersCreated: 0 });
+    window.Worker = class extends NativeWorker {
+      constructor(...args: ConstructorParameters<typeof Worker>) {
+        super(...args);
+        state.readerWorkersCreated++;
+      }
+    };
+  });
+  let release!: () => void;
+  const heldImport = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let requested!: () => void;
+  const importRequested = new Promise<void>((resolve) => {
+    requested = resolve;
+  });
+  await page.route("**/worker-engine-*.js", async (route) => {
+    requested();
+    await heldImport;
+    await route.continue();
+  });
+  try {
+    await page.goto(readerURL);
+    await page
       .getByRole("row")
-      .filter({ has: page.getByRole("cell", { name: "Notes.md", exact: true }) });
-    await markdownRow.dblclick();
-    const markdown = page.getByRole("dialog", { name: "Read Notes.md" });
-    await expect(markdown.getByRole("heading", { name: "Review notes" })).toBeVisible();
-    await expect(markdown.getByRole("listitem")).toHaveCount(2);
-    await expect(markdown.getByRole("cell", { name: "Reviewed" })).toBeVisible();
-    expect(await page.evaluate(() => "markdownExecuted" in window)).toBe(false);
-    await page.screenshot({ path: path.join(output!, "markdown-reader.png") });
-    await page.keyboard.press("Escape");
-    await expect(markdownRow).toBeFocused();
+      .filter({ has: page.getByRole("cell", { name: "Sample.pdf", exact: true }) })
+      .click();
+    await importRequested;
+    await page
+      .getByRole("row")
+      .filter({ has: page.getByRole("cell", { name: "Notes.md", exact: true }) })
+      .click();
+    await expect(page.getByRole("heading", { name: "Review notes" })).toBeVisible();
+    release();
+    await expect
+      .poll(() => page.evaluate(() => Reflect.get(window, "readerWorkersCreated")))
+      .toBeGreaterThan(0);
     await expect.poll(() => page.workers().length).toBe(0);
-    await inspector.getByRole("button", { name: "Open", exact: true }).click();
-    await expect(markdown.getByRole("heading", { name: "Review notes" })).toBeVisible();
-    await page.keyboard.press("Escape");
-    await page.getByRole("combobox", { name: "Search syntax: Plain words" }).click();
-    await page.getByRole("option", { name: "Query syntax" }).click();
-    const search = page.getByRole("searchbox", { name: "Search documents" });
-    await search.fill("Notes");
-    await search.press("Enter");
-    const result = page.locator("tr[data-snapshot-node]").filter({ hasText: "Notes.md" });
-    await expect(result).toBeVisible();
-    await result.dblclick();
-    await expect(markdown.getByRole("heading", { name: "Review notes" })).toBeVisible();
-    await page.keyboard.press("Escape");
-    await expect(result).toBeFocused();
-    expect(errors).toEqual([]);
-    expect(externalRequests).toEqual([]);
   } finally {
-    try {
-      await page.goto("about:blank");
-    } finally {
-      await docbank("daemon", "stop");
-      await rm(workspace, { recursive: true, force: true });
-    }
+    release();
+    await page.goto("about:blank");
   }
 });

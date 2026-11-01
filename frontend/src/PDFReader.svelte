@@ -9,6 +9,10 @@
 {#key url}
   <PDFViewer
     style="width: 100%; height: 100%;"
+    oninit={(container) => {
+      container.tabIndex = 0;
+      container.setAttribute("aria-label", `PDF document: ${name}`);
+    }}
     config={{
       // The engine runs in a blob worker, whose URL cannot resolve relative assets.
       wasmUrl: new URL(wasmUrl, window.location.href).href,
