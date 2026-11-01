@@ -685,8 +685,8 @@ func searchDocumentsSchemas() (schema, schema) {
 		"actual_mode":          enumSchema("lexical", "semantic", "hybrid"),
 		"coverage": objectSchema(schema{
 			"binding_required":   booleanSchema(),
-			"scoped_documents":   integerSchema(0, 4096),
-			"complete_documents": integerSchema(0, 4096),
+			"scoped_documents":   integerSchema(0, 0),
+			"complete_documents": integerSchema(0, 0),
 			schemaStateField:     stringSchema(64),
 		}, "binding_required", "scoped_documents", "complete_documents", schemaStateField),
 		"reranking": objectSchema(schema{
@@ -697,8 +697,10 @@ func searchDocumentsSchemas() (schema, schema) {
 		"skipped_reasons": arraySchema(stringSchema(64), 64),
 		"results":         arraySchema(result, 100),
 		"truncated":       booleanSchema(),
-	}), cacheRequired("vault_id", "fence", "fence_fingerprint", "observed_scope_count", "requested_mode",
+	}), cacheRequired("vault_id", "requested_mode",
 		"actual_mode", "coverage", "skipped_reasons", "results", "truncated")...)
+	output["if"] = schema{kataRequiredField: []string{"fence"}}
+	output["then"] = schema{kataRequiredField: []string{"fence_fingerprint", "observed_scope_count"}}
 	return input, output
 }
 

@@ -412,9 +412,9 @@ type searchDocumentsOutput struct {
 	privateCache
 
 	VaultID            string                              `json:"vault_id"`
-	Fence              sourceFenceOutput                   `json:"fence"`
-	FenceFingerprint   string                              `json:"fence_fingerprint"`
-	ObservedScopeCount int                                 `json:"observed_scope_count"`
+	Fence              *sourceFenceOutput                  `json:"fence,omitzero"`
+	FenceFingerprint   string                              `json:"fence_fingerprint,omitzero"`
+	ObservedScopeCount int                                 `json:"observed_scope_count,omitzero"`
 	RequestedMode      string                              `json:"requested_mode"`
 	ActualMode         string                              `json:"actual_mode"`
 	Coverage           searchCoverageOutput                `json:"coverage"`
@@ -435,42 +435,38 @@ func searchDocuments(
 
 	type response struct {
 		resolution api.DocumentSourceFenceResolution
+		vaultID    string
 		report     api.DocumentSearchReport
 		documents  []api.DocumentSummary
 	}
 	result, err := documentRead(ctx, session, func(ctx context.Context, c documentClient) (response, error) {
-		resolution, callErr := c.ResolveDocumentSourceFence(ctx, api.DocumentSourceFenceResolveRequest{
-			ContentVersionIDs: input.ContentVersionIDs, Filters: input.Filters})
-		if callErr != nil {
-			return response{}, callErr
-		}
-		if len(resolution.Fence.ContentVersionIDs) == 0 {
-			callErr = c.ValidateDocumentSearch(ctx, api.DocumentSearchValidationRequest{
-				Query: input.Query, Mode: input.Mode, Limit: input.Limit, Profile: input.Profile,
-				BindingID: input.BindingID, Explain: input.Explain, Rerank: input.Rerank,
-			})
+		request := api.DocumentSearchRequest{Query: input.Query, Mode: input.Mode, Limit: input.Limit,
+			Profile: input.Profile, BindingID: input.BindingID, Explain: input.Explain, Rerank: input.Rerank}
+		var resolution api.DocumentSourceFenceResolution
+		if input.Filters != nil {
+			request.Scope = &api.DocumentSearchScope{Kind: "all_live", Filters: input.Filters}
+		} else {
+			var callErr error
+			resolution, callErr = c.ResolveDocumentSourceFence(ctx, api.DocumentSourceFenceResolveRequest{ContentVersionIDs: input.ContentVersionIDs})
 			if callErr != nil {
 				return response{}, callErr
 			}
-			var reranking *api.DocumentSearchRerankingReceipt
-			if input.Rerank {
-				reranking = &api.DocumentSearchRerankingReceipt{Outcome: "skipped"}
-			}
-			return response{resolution: resolution, report: api.DocumentSearchReport{
-				Reranking: reranking, RequestedMode: effectiveSearchMode(input.Mode), ActualMode: effectiveEmptySearchMode(input.Mode),
-				Coverage:     api.DocumentSearchCoverage{State: "complete"},
-				Degradations: []string{}, Results: []api.DocumentSearchResult{}, Trace: []api.DocumentSearchTrace{},
-			}}, nil
+			request.Fence = api.DocumentSourceFence{VaultUID: resolution.Fence.VaultUID, ContentVersionIDs: slices.Clone(resolution.Fence.ContentVersionIDs)}
 		}
-		report, callErr := c.SearchDocuments(ctx, api.DocumentSearchRequest{Query: input.Query,
-			Mode: input.Mode, Limit: input.Limit, Profile: input.Profile, BindingID: input.BindingID,
-			Explain: input.Explain, Rerank: input.Rerank, Fence: api.DocumentSourceFence{VaultUID: resolution.Fence.VaultUID,
-				ContentVersionIDs: slices.Clone(resolution.Fence.ContentVersionIDs)}})
+		report, callErr := c.SearchDocuments(ctx, request)
 		if callErr != nil {
 			return response{}, callErr
 		}
 		if len(report.Results) == 0 {
-			return response{resolution: resolution, report: report, documents: []api.DocumentSummary{}}, nil
+			vaultID := resolution.Fence.VaultUID
+			if request.Scope != nil {
+				info, callErr := c.VaultInfo(ctx)
+				if callErr != nil {
+					return response{}, callErr
+				}
+				vaultID = info.VaultID
+			}
+			return response{resolution: resolution, vaultID: vaultID, report: report, documents: []api.DocumentSummary{}}, nil
 		}
 		identities := make([]api.DocumentIdentity, len(report.Results))
 		for index, item := range report.Results {
@@ -482,23 +478,25 @@ func searchDocuments(
 		if callErr != nil {
 			return response{}, callErr
 		}
-		return response{resolution: resolution, report: report, documents: documents}, nil
+		return response{resolution: resolution, vaultID: report.Results[0].VaultUID, report: report, documents: documents}, nil
 	})
 	if err != nil {
 		return searchDocumentsOutput{}, nil, err
 	}
-	output := searchDocumentsOutput{VaultID: result.resolution.Fence.VaultUID,
-		Fence: sourceFenceOutput{VaultID: result.resolution.Fence.VaultUID,
-			ContentVersionIDs: slices.Clone(result.resolution.Fence.ContentVersionIDs)},
-		FenceFingerprint:   result.resolution.FenceFingerprint,
-		ObservedScopeCount: result.resolution.ObservedScopeCount,
-		RequestedMode:      result.report.RequestedMode, ActualMode: result.report.ActualMode,
+	output := searchDocumentsOutput{VaultID: result.vaultID,
+		RequestedMode: result.report.RequestedMode, ActualMode: result.report.ActualMode,
 		Coverage: searchCoverageOutput{BindingRequired: result.report.Coverage.BindingRequired,
 			ScopedDocuments:   result.report.Coverage.ScopedDocuments,
 			CompleteDocuments: result.report.Coverage.CompleteDocuments, State: result.report.Coverage.State},
 		SkippedReasons: slices.Clone(result.report.Degradations),
 		Results:        make([]searchResultOutput, len(result.report.Results)), Truncated: result.report.Truncated,
 		Reranking: result.report.Reranking, privateCache: newPrivateCache()}
+	if input.Filters == nil {
+		output.Fence = &sourceFenceOutput{VaultID: result.resolution.Fence.VaultUID,
+			ContentVersionIDs: slices.Clone(result.resolution.Fence.ContentVersionIDs)}
+		output.FenceFingerprint = result.resolution.FenceFingerprint
+		output.ObservedScopeCount = result.resolution.ObservedScopeCount
+	}
 	for index, item := range result.report.Results {
 		evidence := make([]string, len(item.Evidence))
 		for evidenceIndex, identity := range item.Evidence {
@@ -517,7 +515,7 @@ func searchDocuments(
 			output.Results[index].RerankRelevance = &score
 		}
 	}
-	return output, documentResourceLinks(result.resolution.Fence.VaultUID, result.documents), nil
+	return output, documentResourceLinks(result.vaultID, result.documents), nil
 }
 
 func effectiveSearchMode(mode string) string {
@@ -525,13 +523,6 @@ func effectiveSearchMode(mode string) string {
 		return "auto"
 	}
 	return mode
-}
-
-func effectiveEmptySearchMode(mode string) string {
-	if mode == "semantic" || mode == "hybrid" {
-		return mode
-	}
-	return "lexical"
 }
 
 type getDocumentInput struct {

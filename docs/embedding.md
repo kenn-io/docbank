@@ -18,7 +18,7 @@ Use the HTTP API when independent processes need to share one standalone vault.
 
 `Vault.CallReadTool` runs `get_vault_info`, `list_documents`, and
 `search_documents` on the vault your application already owns. It uses the same
-handlers, schemas, authenticated cursors, search source-fence resolver, result
+handlers, schemas, authenticated cursors, search scope, result
 bounds and private-cache metadata as the standalone tools. It starts no
 listener, discovers no daemon and reads no owner credentials.
 

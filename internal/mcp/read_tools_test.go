@@ -431,7 +431,7 @@ func TestSearchReadRejectsResultsOutsideResolvedFence(t *testing.T) {
 	assert.NotContains(t, err.Error(), otherVersion)
 }
 
-func TestSearchReadValidatesEmptyFenceWithoutCallingSearch(t *testing.T) {
+func TestSearchReadScopedEmptySearchKeepsVaultIdentity(t *testing.T) {
 	for _, test := range []struct {
 		name, query, profile, wantCode string
 		wantError, rerank              bool
@@ -444,30 +444,19 @@ func TestSearchReadValidatesEmptyFenceWithoutCallingSearch(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			searchCalls := 0
-			validationCalls := 0
-			emptyFingerprint, err := processing.SourceFenceFingerprint(processing.SourceFence{
-				VaultUID: testVaultID, ContentVersionIDs: []string{},
-			})
-			require.NoError(t, err)
 			daemon := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 				switch request.URL.Path {
-				case "/api/v1/processing/source-fences/resolve":
-					var scope api.DocumentSourceFenceResolveRequest
-					if !assert.NoError(t, json.UnmarshalRead(request.Body, &scope)) || !assert.NotNil(t, scope.Filters) {
+				case "/api/v1/info":
+					writeDaemonJSON(t, response, api.VaultInfo{VaultID: testVaultID})
+				case "/api/v1/search":
+					searchCalls++
+					var body api.DocumentSearchRequest
+					if !assert.NoError(t, json.UnmarshalRead(request.Body, &body)) || !assert.NotNil(t, body.Scope) || !assert.NotNil(t, body.Scope.Filters) {
 						return
 					}
-					assert.True(t, scope.Filters.SourcePresent)
-					writeDaemonJSON(t, response, api.DocumentSourceFenceResolution{
-						Fence:            api.ResolvedDocumentSourceFence{VaultUID: testVaultID, ContentVersionIDs: []string{}},
-						FenceFingerprint: emptyFingerprint, ObservedScopeCount: 0,
-					})
-				case "/api/v1/search/validate":
-					validationCalls++
-					var body api.DocumentSearchValidationRequest
-					if !assert.NoError(t, json.UnmarshalRead(request.Body, &body)) {
-						http.Error(response, "invalid synthetic search request", http.StatusBadRequest)
-						return
-					}
+					assert.Equal(t, "all_live", body.Scope.Kind)
+					assert.True(t, body.Scope.Filters.SourcePresent)
+					assert.Empty(t, body.Fence)
 					assert.Equal(t, test.rerank, body.Rerank)
 					if test.wantError {
 						status := http.StatusInternalServerError
@@ -481,10 +470,13 @@ func TestSearchReadValidatesEmptyFenceWithoutCallingSearch(t *testing.T) {
 						})
 						return
 					}
-					writeDaemonJSON(t, response, api.DocumentSearchValidation{Valid: true})
-				case "/api/v1/search":
-					searchCalls++
-					http.Error(response, "search must not run for an empty fence", http.StatusInternalServerError)
+					report := api.DocumentSearchReport{RequestedMode: "lexical", ActualMode: "lexical",
+						Coverage:     api.DocumentSearchCoverage{State: "complete"},
+						Degradations: []string{}, Results: []api.DocumentSearchResult{}}
+					if test.rerank {
+						report.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "skipped"}
+					}
+					writeDaemonJSON(t, response, report)
 				default:
 					http.NotFound(response, request)
 				}
@@ -498,8 +490,7 @@ func TestSearchReadValidatesEmptyFenceWithoutCallingSearch(t *testing.T) {
 				"query": test.query, "mode": "lexical", "limit": 1, "profile": test.profile,
 				"filters": map[string]any{"source_present": true}, "rerank": test.rerank,
 			})
-			assert.Equal(t, 1, validationCalls)
-			assert.Zero(t, searchCalls)
+			assert.Equal(t, 1, searchCalls)
 			if test.wantError {
 				require.Error(t, err)
 				facts, ok := daemonProblemFacts(err)
@@ -511,7 +502,10 @@ func TestSearchReadValidatesEmptyFenceWithoutCallingSearch(t *testing.T) {
 			require.NoError(t, err)
 			output := structuredMap(t, result.StructuredContent)
 			assert.Equal(t, []any{}, output["results"])
-			assert.EqualValues(t, 0, output["observed_scope_count"])
+			assert.Equal(t, testVaultID, output["vault_id"])
+			assert.NotContains(t, output, "fence")
+			assert.NotContains(t, output, "fence_fingerprint")
+			assert.NotContains(t, output, "observed_scope_count")
 			if test.rerank {
 				assert.Equal(t, map[string]any{"outcome": "skipped", "candidate_count": float64(0)}, output["reranking"])
 			}
@@ -829,18 +823,16 @@ func TestSearchReadRerankOutputAndFalseBaseline(t *testing.T) {
 				versions = append(versions, secondVersionID)
 				documents = append(documents, api.DocumentSummary{NodeID: 8, ContentVersionID: secondVersionID, Path: "/second.md", Name: "second.md", MediaType: "text/markdown", ModifiedAt: "2026-08-28T00:00:00Z", ActiveRenditions: []api.DocumentRenditionIdentity{}})
 			}
-			fingerprint, err := processing.SourceFenceFingerprint(processing.SourceFence{VaultUID: testVaultID, ContentVersionIDs: versions})
-			require.NoError(t, err)
 			daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
-				case "/api/v1/processing/source-fences/resolve":
-					writeDaemonJSON(t, w, api.DocumentSourceFenceResolution{Fence: api.ResolvedDocumentSourceFence{VaultUID: testVaultID, ContentVersionIDs: versions}, FenceFingerprint: fingerprint, ObservedScopeCount: len(versions)})
 				case "/api/v1/search":
 					var body map[string]any
 					if !assert.NoError(t, json.UnmarshalRead(r.Body, &body)) {
 						http.Error(w, "invalid synthetic search request", http.StatusBadRequest)
 						return
 					}
+					assert.Equal(t, map[string]any{"kind": "all_live", "filters": map[string]any{}}, body["scope"])
+					assert.NotContains(t, body, "fence")
 					if tc.rerank {
 						assert.Equal(t, true, body["rerank"])
 					} else {

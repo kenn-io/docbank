@@ -502,23 +502,6 @@ func validateDocumentSimilarReport(request api.DocumentSimilarRequest, report ap
 	return validateDocumentSearchReport(api.DocumentSearchRequest{Mode: "semantic", Limit: request.Limit, Fence: request.Fence}, converted)
 }
 
-// ValidateDocumentSearch asks the daemon to apply ordinary search semantics
-// without executing a search. It is used only for an exact empty source fence.
-func (c *Connection) ValidateDocumentSearch(
-	ctx context.Context, request api.DocumentSearchValidationRequest,
-) error {
-	var result api.DocumentSearchValidation
-	apiResponse, err := c.API().ValidateDocumentSearch(ctx, &apiclient.ValidateDocumentSearchRequestOptions{Body: &request})
-	if err != nil {
-		return err
-	}
-	result = *apiResponse
-	if !result.Valid {
-		return errors.New("search validation response is invalid")
-	}
-	return nil
-}
-
 func validateDocumentSearchReport(request api.DocumentSearchRequest, report api.DocumentSearchReport) error {
 	if request.Scope == nil && (!validUUIDv4(request.Fence.VaultUID) || len(request.Fence.ContentVersionIDs) < 1 ||
 		len(request.Fence.ContentVersionIDs) > 4096) {

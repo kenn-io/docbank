@@ -804,7 +804,8 @@ A scope cannot be combined with `media_sources`. Explicit fences retain the
 A scope with no live files returns an empty report with complete 0/0 coverage
 for semantic and hybrid modes, or unknown coverage for lexical and auto modes.
 
-The CLI's automatic search sends a scope; the web app, TUI, MCP, and Go library still send fences.
+The CLI's automatic search, web app, TUI, and MCP filter searches send a scope.
+The Go library and MCP version lists send fences.
 
 Search requires nonblank `query` text of at most 8,192 characters, `profile`,
 and `mode` (`lexical`, `semantic`, `hybrid`, or `auto`). `limit` defaults to 50

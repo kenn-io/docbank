@@ -17,7 +17,6 @@ import (
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -63,7 +62,6 @@ type Backend interface {
 	Node(ctx context.Context, nodeID int64) (api.Node, error)
 	ChildrenPage(ctx context.Context, nodeID int64, limit, offset int) (api.NodePage, error)
 	Search(ctx context.Context, query string, limit int) (api.SearchReport, error)
-	ResolveDocumentSourceFence(ctx context.Context, request api.DocumentSourceFenceResolveRequest) (api.DocumentSourceFenceResolution, error)
 	NodeTags(ctx context.Context, nodeID int64, limit, offset int) (api.TagPage, error)
 	Jobs(ctx context.Context) ([]api.Job, error)
 	Info(ctx context.Context) (api.VaultInfo, error)
@@ -2157,20 +2155,8 @@ func (m Model) loadNaturalSearch(query string, requestID uint64) tea.Cmd {
 			return naturalSearchBaseLoadedMsg{requestID: requestID, searchID: searchID, query: query, naturalMode: mode,
 				err: fmt.Errorf("%s search requires an embedding binding", mode)}
 		}
-		resolution, err := backend.ResolveDocumentSourceFence(ctx, api.DocumentSourceFenceResolveRequest{
-			Filters: &api.DocumentSourceFenceFilters{},
-		})
-		if err != nil {
-			return naturalSearchBaseLoadedMsg{requestID: requestID, searchID: searchID, query: query, naturalMode: mode, err: err}
-		}
 		request := api.DocumentSearchRequest{Query: query, Mode: wireMode, Limit: maxNaturalSearchItems,
-			Profile: profile.Name, BindingID: binding, Fence: api.DocumentSourceFence{
-				VaultUID: resolution.Fence.VaultUID, ContentVersionIDs: resolution.Fence.ContentVersionIDs,
-			}, Explain: true}
-		if len(resolution.Fence.ContentVersionIDs) == 0 {
-			return naturalSearchBaseLoadedMsg{requestID: requestID, searchID: searchID, query: query, naturalMode: mode, request: request,
-				report: api.DocumentSearchReport{}, rows: []row{}}
-		}
+			Profile: profile.Name, BindingID: binding, Scope: &api.DocumentSearchScope{Kind: "all_live"}, Explain: true}
 		report, err := backend.SearchDocuments(ctx, request)
 		if err != nil {
 			return naturalSearchBaseLoadedMsg{requestID: requestID, searchID: searchID, query: query, naturalMode: mode, request: request, err: err}
@@ -2463,23 +2449,6 @@ func (m Model) applyNaturalSearchBase(msg naturalSearchBaseLoadedMsg) (tea.Model
 	}
 	m.applyNaturalRows(msg.query, msg.rows, msg.report.Truncated)
 	m.naturalResultMode = msg.naturalMode
-	if len(msg.request.Fence.ContentVersionIDs) == 0 {
-		submitted := m.reportSearchID == msg.requestID
-		m.reportSearchID = 0
-		m.naturalSearchNote = naturalSearchReportNote(msg.report)
-		if !submitted {
-			return m, nil
-		}
-		if _, err := query.Canonical(query.Query{V: 1, Text: msg.query, Syntax: "simple", Mode: "lexical", Sort: query.Sort{Field: "name", Direction: "asc"}}); err != nil {
-			return m, nil
-		}
-		// No search ran, so there is no search_run; a submission still counts as an empty search.
-		searchType := msg.request.Mode
-		if searchType == naturalAuto {
-			searchType = naturalLexical
-		}
-		return m, m.reportAction("search_empty", searchType, "")
-	}
 	m.naturalSearchNote = naturalSearchReportNote(msg.report)
 	profile := m.selectedNaturalProfile()
 	if m.naturalRerank && profile != nil && profile.RerankingAvailable {

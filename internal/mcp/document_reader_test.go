@@ -82,7 +82,7 @@ func TestEmbeddedDocumentToolsMatchDaemon(t *testing.T) {
 			assert.Equal(t, expected.Content, actual.Content)
 		})
 	}
-	// Resolve the complete population and reject it; never silently truncate it.
+	// Filter searches cover live populations larger than an explicit version list.
 	for i := range 4096 {
 		f.addFile(t, "extra-"+strconv.Itoa(i)+".txt", "same")
 	}
@@ -90,14 +90,16 @@ func TestEmbeddedDocumentToolsMatchDaemon(t *testing.T) {
 		"query": "alpha", "profile": profileName, "mode": "lexical", "filters": map[string]any{},
 	}})
 	require.NoError(t, err)
-	require.True(t, result.IsError)
-	encoded, err := json.Marshal(result.StructuredContent)
-	require.NoError(t, err)
-	var failure struct {
-		Code     string `json:"code"`
-		Observed int    `json:"observed_scope_count"`
-	}
-	require.NoError(t, json.Unmarshal(encoded, &failure))
-	assert.Equal(t, "scope_too_large", failure.Code)
-	assert.Equal(t, 4097, failure.Observed)
+	require.False(t, result.IsError)
+	output := structuredMap(t, result.StructuredContent)
+	assert.NotContains(t, output, "fence")
+	assert.NotContains(t, output, "fence_fingerprint")
+	assert.NotContains(t, output, "observed_scope_count")
+	assert.Equal(t, f.catalog.VaultID(), output["vault_id"])
+	hits, ok := output["results"].([]any)
+	require.True(t, ok)
+	require.Len(t, hits, 1)
+	hit, ok := hits[0].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "/alpha.txt", hit["path"])
 }
