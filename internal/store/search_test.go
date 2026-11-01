@@ -181,7 +181,8 @@ func TestResolveSemanticCandidatesCollapsesPhotoDuplicatesBeforeLimit(t *testing
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			s, _, profile, _ := newEmbeddingCatalogFixture(t)
+			f := newImageEmbeddingCatalogFixture(t)
+			s, profile := f.s, f.request.Profile
 			var nodes []Node
 			if tc.indexed == "all" {
 				for _, file := range []struct{ name, hash string }{
@@ -217,16 +218,7 @@ func TestResolveSemanticCandidatesCollapsesPhotoDuplicatesBeforeLimit(t *testing
 			var records []EmbeddingSetRecord
 			var neighbors []vectorindex.Neighbor
 			for index, node := range indexedNodes {
-				record := embeddingSetFixture(s, node.CurrentVersionID, profile.Fingerprint,
-					document.EmbeddingInputOriginalFile, "optional", "")
-				require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
-				require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
-					FencingToken: 1,
-					Key: EmbeddingHeadKey{ContentVersionID: node.CurrentVersionID,
-						BindingID: record.BindingID, InputKind: record.InputKind},
-					SetID: record.ID, VectorSpaceID: record.VectorSpace.ID,
-					ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
-				}))
+				record, _ := f.forNode(t, node).publish(t)
 				records = append(records, record)
 				score := []float64{1, 0.99, 0.8}[index]
 				neighbors = append(neighbors, vectorindex.Neighbor{

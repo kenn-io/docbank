@@ -55,7 +55,7 @@ func TestPhotoSemanticScopeKeepsBarePickFilter(t *testing.T) {
 func TestDocumentSearchSelectsTextBindingInMixedProfile(t *testing.T) {
 	t.Parallel()
 	t.Run("image-only profile", func(t *testing.T) {
-		x := newPhotoSearchFixture(t)
+		x := newImageEmbeddingService(t, newPhotoDescriptionFixture(t))
 		report, err := x.service.Search(t.Context(), SearchRequest{Profile: "images", Query: "unmatchednebula", Mode: "hybrid", Fence: SourceFence{VaultUID: x.f.catalog.VaultID(), ContentVersionIDs: []string{x.f.node.CurrentVersionID}}})
 		require.NoError(t, err)
 		require.Equal(t, "hybrid", string(report.RequestedMode))

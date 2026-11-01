@@ -3450,37 +3450,102 @@ it("retains the loaded prefix when the old tail moves to the front", async () =>
   photos.dispose();
 });
 
-it.each(["hidden", "empty"] as const)(
-  "keeps %s actions within their accepted scope",
-  async (mode) => {
-    const photos = new Photos("scoped", vi.fn(), mode === "hidden", {
-      ...photoQuery,
-      mode: "semantic",
-      text: "sunset OR zzz",
-    });
-    const fallback = mode === "hidden";
-    photos.fallbackReason = fallback ? "hidden_photos" : "";
-    photos.snapshotID = fallback ? "" : "frozen";
-    photos.items = mode === "empty" ? [] : [photo(1), photo(2)];
-    photos.total = photos.items.length;
-    photos.started = true;
-    const scope = await photos.actionScope();
-    if (mode === "empty") {
-      expect(scope).toBeUndefined();
+it.each([
+  "hidden fallback",
+  "empty",
+  "selection plus select-all",
+  "all pages after a refresh",
+] as const)("keeps actionScope within its accepted scope: %s", async (mode) => {
+  const photos = new Photos("scoped", vi.fn(), mode === "hidden fallback", {
+    ...photoQuery,
+    mode: "semantic",
+    text: mode === "hidden fallback" ? "sunset OR zzz" : "sunset",
+    ...(mode === "selection plus select-all" && {
+      sort: { field: "relevance", direction: "desc" } as const,
+    }),
+  });
+  try {
+    if (mode === "hidden fallback" || mode === "empty") {
+      photos.fallbackReason = mode === "hidden fallback" ? "hidden_photos" : "";
+      photos.snapshotID = mode === "hidden fallback" ? "" : "frozen";
+      photos.items = mode === "empty" ? [] : [photo(1), photo(2)];
+      photos.total = photos.items.length;
+      photos.started = true;
+      const scope = await photos.actionScope();
+      if (mode === "empty") {
+        expect(scope).toBeUndefined();
+      } else {
+        expect(scope).toEqual({
+          query: {
+            ...photoQuery,
+            mode: "lexical",
+            text: "sunset OR zzz",
+            sort: { field: "relevance", direction: "desc" },
+          },
+          asset_ids: [],
+        });
+      }
+    } else if (mode === "selection plus select-all") {
+      photos.items = [photo(1)];
+      photos.total = 2;
+      photos.started = true;
+      photos.cursor = "page-two";
+      photos.snapshotID = "image-snapshot";
+      vi.spyOn(api, "listPhotoAssets").mockResolvedValue({
+        items: [photo(2)],
+        total: 2,
+        facets: [],
+        relevance_available: true,
+        snapshot_id: "image-snapshot",
+      });
+      photos.selectLoaded();
+      expect(photos.scope()).toEqual({ asset_ids: ["photo-1"] });
+      expect(await photos.actionScope(true)).toEqual({ query: photoQuery, asset_ids: ["photo-1"] });
+      await photos.selectAllResults();
+      expect(photos.scope()).toEqual({ asset_ids: [photo(1).asset_id, photo(2).asset_id] });
+      expect(await photos.actionScope(true)).toEqual({
+        query: photoQuery,
+        asset_ids: ["photo-1", "photo-2"],
+      });
     } else {
-      expect(scope).toEqual({
-        query: {
-          ...photoQuery,
-          mode: "lexical",
-          text: fallback ? "sunset OR zzz" : "",
-          ...(fallback && { sort: { field: "relevance", direction: "desc" } }),
-        },
-        asset_ids: fallback ? [] : ["photo-1", "photo-2"],
+      let finish!: (response: Response) => void;
+      const firstPage = {
+        items: [photo(1)],
+        total: 2,
+        snapshot_id: "accepted",
+        next_cursor: "page-two",
+      };
+      const fetcher = vi
+        .fn()
+        .mockResolvedValueOnce(Response.json(firstPage))
+        .mockImplementationOnce(() => new Promise<Response>((resolve) => (finish = resolve)))
+        .mockResolvedValueOnce(
+          Response.json({ items: [photo(2)], total: 2, snapshot_id: "accepted" }),
+        );
+      stubPhotoFetch(fetcher);
+      await photos.loadMore();
+      const refreshing = photos.refresh(undefined, true);
+      await waitFor(() => expect(finish).toBeDefined());
+      expect(photos.backgroundRefresh).toBe(true);
+      expect(photos.loading).toBe(true);
+      expect(photos.cursor).toBe("page-two");
+      const scope = photos.actionScope();
+      finish(Response.json(firstPage));
+      await refreshing;
+      expect(await scope).toEqual({
+        query: photoQuery,
+        asset_ids: ["photo-1", "photo-2"],
+      });
+      expect(fetcher).toHaveBeenCalledTimes(3);
+      expect(JSON.parse(fetcher.mock.calls[2]![1].body)).toMatchObject({
+        cursor: "page-two",
+        snapshot_id: "accepted",
       });
     }
+  } finally {
     photos.dispose();
-  },
-);
+  }
+});
 
 it("retains accepted Meaning matches and selection while live refresh hydrates their display facts", async () => {
   const mode = "semantic";
@@ -3560,80 +3625,6 @@ it("continues a metadata fallback with the captured query", async () => {
     cursor: "fallback-tail",
   });
   expect(photos.items.map((row) => row.asset_id)).toEqual(["photo-1", "photo-2"]);
-  photos.dispose();
-});
-
-it("loads every ranked page for Export all after a live refresh settles", async () => {
-  let finish!: (response: Response) => void;
-  const firstPage = {
-    items: [photo(1)],
-    total: 2,
-    snapshot_id: "accepted",
-    next_cursor: "page-two",
-  };
-  const fetcher = vi
-    .fn()
-    .mockResolvedValueOnce(Response.json(firstPage))
-    .mockImplementationOnce(() => new Promise<Response>((resolve) => (finish = resolve)))
-    .mockResolvedValueOnce(Response.json({ items: [photo(2)], total: 2, snapshot_id: "accepted" }));
-  stubPhotoFetch(fetcher);
-  const photos = new Photos("scoped", vi.fn(), false, {
-    ...photoQuery,
-    mode: "semantic",
-    text: "sunset",
-  });
-  try {
-    await photos.loadMore();
-    const refreshing = photos.refresh(undefined, true);
-    await waitFor(() => expect(finish).toBeDefined());
-    expect(photos.backgroundRefresh).toBe(true);
-    expect(photos.loading).toBe(true);
-    expect(photos.cursor).toBe("page-two");
-    const scope = photos.actionScope();
-    finish(Response.json(firstPage));
-    await refreshing;
-    expect(await scope).toEqual({
-      query: photoQuery,
-      asset_ids: ["photo-1", "photo-2"],
-    });
-    expect(fetcher).toHaveBeenCalledTimes(3);
-    expect(JSON.parse(fetcher.mock.calls[2]![1].body)).toMatchObject({
-      cursor: "page-two",
-      snapshot_id: "accepted",
-    });
-  } finally {
-    photos.dispose();
-  }
-});
-
-it("selects every snapshot result", async () => {
-  const photos = new Photos("scoped", vi.fn(), false, {
-    ...photoQuery,
-    mode: "semantic",
-    text: "sunset",
-    sort: { field: "relevance", direction: "desc" },
-  });
-  photos.items = [photo(1)];
-  photos.total = 2;
-  photos.started = true;
-  photos.cursor = "page-two";
-  photos.snapshotID = "image-snapshot";
-  vi.spyOn(api, "listPhotoAssets").mockResolvedValue({
-    items: [photo(2)],
-    total: 2,
-    facets: [],
-    relevance_available: true,
-    snapshot_id: "image-snapshot",
-  });
-  photos.selectLoaded();
-  expect(photos.scope()).toEqual({ asset_ids: ["photo-1"] });
-  expect(await photos.actionScope(true)).toEqual({ query: photoQuery, asset_ids: ["photo-1"] });
-  await photos.selectAllResults();
-  expect(photos.scope()).toEqual({ asset_ids: [photo(1).asset_id, photo(2).asset_id] });
-  expect(await photos.actionScope(true)).toEqual({
-    query: photoQuery,
-    asset_ids: ["photo-1", "photo-2"],
-  });
   photos.dispose();
 });
 

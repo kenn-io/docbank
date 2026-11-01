@@ -2066,82 +2066,65 @@ func TestEmbeddingReconciliationRestoresPendingImageGenerationInMixedProfile(t *
 	require.Zero(t, originalJobs)
 }
 
-func TestEmbeddingReconciliationSkipsPurgeSuppressedImages(t *testing.T) {
+func TestEmbeddingReconciliationPreparesEachImageOnce(t *testing.T) {
 	t.Parallel()
-	f := newImageEmbeddingCatalogFixture(t)
-	for _, name := range []string{"optional", "other-image"} {
-		bound := f
-		bound.binding.Name, bound.request.BindingID = name, name
-		bound.request.InputGeneration.ID = ImageEmbeddingGenerationID(f.node.CurrentVersionID, f.request.Profile.Fingerprint, name, f.request.InputGeneration.EvidenceFingerprint)
-		bound.publish(t)
-	}
-	_, err := f.s.PurgeDerivatives(t.Context(), PurgeRequest{ContentVersionIDs: []string{f.node.CurrentVersionID}})
-	require.NoError(t, err)
-	calls := 0
-	request := EmbeddingReconcileRequest{ImageProfiles: []ProcessingProfileRecord{f.request.Profile}, Limit: 100, At: time.Now(), DescriptorFingerprints: []string{f.request.Descriptor.Fingerprint}, Mutate: embeddingTestMutation, PrepareImageGeneration: func(_ context.Context, _ ProcessingProfileRecord, binding document.EmbeddingBindingV1, version string) (EmbeddingInputGenerationRecord, document.EmbeddingDescriptor, error) {
-		calls++
-		generation := f.request.InputGeneration
-		generation.ID = ImageEmbeddingGenerationID(version, f.request.Profile.Fingerprint, binding.Name, generation.EvidenceFingerprint)
-		return generation, f.request.Descriptor, nil
-	}}
-	for range 2 {
-		_, err := f.s.ReconcileEmbeddingJobs(t.Context(), request)
-		require.NoError(t, err)
-	}
-	require.Zero(t, calls, "purge-suppressed photos must not have their previews prepared")
-}
-
-func TestEmbeddingReconciliationDiscoversImagesAcrossPagesOnce(t *testing.T) {
-	t.Parallel()
-	f := newImageEmbeddingCatalogFixture(t)
-	// Only this photo has a preview; unrelated eligible photos still consume pages.
-	for i := range 4097 {
-		_, err := f.s.CreateFile(t.Context(), f.s.RootID(), fmt.Sprintf("scope-%04d.jpg", i), testSHA256([]byte(fmt.Sprintf("scope-%04d", i))), 20, "image/jpeg")
-		require.NoError(t, err)
-	}
-	calls := 0
-	request := EmbeddingReconcileRequest{ImageProfiles: []ProcessingProfileRecord{f.request.Profile}, Limit: 100, At: time.Now(), DescriptorFingerprints: []string{f.request.Descriptor.Fingerprint}, Mutate: embeddingTestMutation, PrepareImageGeneration: func(_ context.Context, _ ProcessingProfileRecord, binding document.EmbeddingBindingV1, version string) (EmbeddingInputGenerationRecord, document.EmbeddingDescriptor, error) {
-		require.Equal(t, f.node.CurrentVersionID, version)
-		calls++
-		generation := f.request.InputGeneration
-		generation.ID = ImageEmbeddingGenerationID(version, f.request.Profile.Fingerprint, binding.Name, generation.EvidenceFingerprint)
-		return generation, f.request.Descriptor, nil
-	}}
-	for range 2 {
-		pages := 0
-		for {
-			result, err := f.s.ReconcileEmbeddingJobs(t.Context(), request)
-			require.NoError(t, err)
-			pages++
-			request.After, request.ImageAfter = result.Next, result.ImageNext
-			if request.ImageAfter == (ImageReconcilePosition{}) {
-				break
+	for _, name := range []string{"paged discovery", "published heads not reopened", "purge-suppressed"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newImageEmbeddingCatalogFixture(t)
+			if name == "paged discovery" {
+				// Only this photo has a preview; unrelated eligible photos still consume pages.
+				for i := range 4097 {
+					_, err := f.s.CreateFile(t.Context(), f.s.RootID(), fmt.Sprintf("scope-%04d.jpg", i), testSHA256([]byte(fmt.Sprintf("scope-%04d", i))), 20, "image/jpeg")
+					require.NoError(t, err)
+				}
+			} else {
+				for _, binding := range []string{"optional", "other-image"} {
+					bound := f
+					bound.binding.Name, bound.request.BindingID = binding, binding
+					bound.request.InputGeneration.ID = ImageEmbeddingGenerationID(f.node.CurrentVersionID, f.request.Profile.Fingerprint, binding, f.request.InputGeneration.EvidenceFingerprint)
+					bound.publish(t)
+				}
+				if name == "purge-suppressed" {
+					_, err := f.s.PurgeDerivatives(t.Context(), PurgeRequest{ContentVersionIDs: []string{f.node.CurrentVersionID}})
+					require.NoError(t, err)
+				} else {
+					// Job rows would also suppress reopening; only the published heads may.
+					_, err := f.s.db.Exec(`DELETE FROM embedding_jobs`)
+					require.NoError(t, err)
+				}
 			}
-			require.Less(t, pages, 50)
-		}
-		require.Greater(t, pages, 40)
+			calls := 0
+			request := EmbeddingReconcileRequest{ImageProfiles: []ProcessingProfileRecord{f.request.Profile}, Limit: 100, At: time.Now(), DescriptorFingerprints: []string{f.request.Descriptor.Fingerprint}, Mutate: embeddingTestMutation, PrepareImageGeneration: func(_ context.Context, _ ProcessingProfileRecord, binding document.EmbeddingBindingV1, version string) (EmbeddingInputGenerationRecord, document.EmbeddingDescriptor, error) {
+				require.Equal(t, f.node.CurrentVersionID, version)
+				calls++
+				generation := f.request.InputGeneration
+				generation.ID = ImageEmbeddingGenerationID(version, f.request.Profile.Fingerprint, binding.Name, generation.EvidenceFingerprint)
+				return generation, f.request.Descriptor, nil
+			}}
+			for range 2 {
+				pages := 0
+				for {
+					result, err := f.s.ReconcileEmbeddingJobs(t.Context(), request)
+					require.NoError(t, err)
+					pages++
+					request.After, request.ImageAfter = result.Next, result.ImageNext
+					if request.ImageAfter == (ImageReconcilePosition{}) {
+						break
+					}
+					require.Less(t, pages, 50)
+				}
+				if name == "paged discovery" {
+					require.Greater(t, pages, 40)
+				}
+			}
+			if name == "paged discovery" {
+				require.Equal(t, 2, calls, "each binding prepares its own generation once")
+			} else {
+				require.Zero(t, calls, "published or purge-suppressed photos must not reopen their previews")
+			}
+		})
 	}
-	require.Equal(t, 2, calls, "each binding prepares its own generation once")
-	// The profile has two image bindings. Publish each without invoking a provider.
-	for _, name := range []string{"optional", "other-image"} {
-		bound := f
-		bound.binding.Name, bound.request.BindingID = name, name
-		bound.request.InputGeneration.ID = ImageEmbeddingGenerationID(f.node.CurrentVersionID, f.request.Profile.Fingerprint, name, f.request.InputGeneration.EvidenceFingerprint)
-		bound.publish(t)
-	}
-	// Job rows would also suppress reopening; only the published heads may.
-	_, err := f.s.db.Exec(`DELETE FROM embedding_jobs`)
-	require.NoError(t, err)
-	request.After, request.ImageAfter = "", ImageReconcilePosition{}
-	for {
-		result, err := f.s.ReconcileEmbeddingJobs(t.Context(), request)
-		require.NoError(t, err)
-		request.After, request.ImageAfter = result.Next, result.ImageNext
-		if request.ImageAfter == (ImageReconcilePosition{}) {
-			break
-		}
-	}
-	require.Equal(t, 2, calls, "published images must not reopen their previews")
 }
 
 func (f imageEmbeddingCatalogFixture) forNode(t *testing.T, node Node) imageEmbeddingCatalogFixture {

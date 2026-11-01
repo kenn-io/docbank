@@ -2164,7 +2164,7 @@ func newPhotoSearchFixture(t *testing.T, wrapProvider ...func(*embeddingWorkerPr
 	return photoSearchFixture{f, fake, descriptor, portable, binding, provider, service, indexer}
 }
 
-func (x photoSearchFixture) alternate(t *testing.T, consent, indexed bool) (*Service, document.ProcessingProfileV1, *embeddingWorkerProvider) {
+func (x photoSearchFixture) alternate(t *testing.T, consent, indexed bool) (*Service, *embeddingWorkerProvider) {
 	t.Helper()
 	f, descriptor, portable, binding, provider, service, indexer := x.f, x.descriptor, x.portable, x.binding, x.provider, x.service, x.indexer
 	// Search selection follows active image index authority across profiles.
@@ -2200,7 +2200,7 @@ func (x photoSearchFixture) alternate(t *testing.T, consent, indexed bool) (*Ser
 			f.grant(t, two, "z-images")
 		}
 	}
-	return two, alternate, alternateProvider
+	return two, alternateProvider
 }
 
 func TestSearchPhotosMeaningOmitsPhotosBelowSimilarityFloor(t *testing.T) {
@@ -2294,6 +2294,29 @@ func TestSearchPhotosFallsBackToLexical(t *testing.T) {
 	semantic := func() store.PhotoBrowseRequest {
 		return store.PhotoBrowseRequest{Query: query.Query{V: 1, Syntax: "simple", Mode: "semantic", Text: "sunset", Sort: query.Sort{Field: "relevance", Direction: "desc"}}}
 	}
+	for _, mode := range []string{"semantic", "hybrid"} {
+		t.Run(mode+" provider deadline", func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				x := newPhotoSearchFixture(t)
+				x.f.server.Close() // The unused vision listener would keep the fake clock from advancing.
+				calls := x.fake.runtime.callCount(x.binding.Name)
+				x.fake.runtime.block = true
+				ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+				defer cancel()
+				request := semantic()
+				request.Query.Mode = mode
+				ranked, err := x.service.SearchPhotos(ctx, request)
+				require.NoError(t, err)
+				require.ErrorIs(t, ctx.Err(), context.DeadlineExceeded)
+				require.Equal(t, calls+1, x.fake.runtime.callCount(x.binding.Name))
+				require.Equal(t, mode, ranked.RequestedMode)
+				require.Equal(t, "lexical", ranked.ActualMode)
+				require.Equal(t, "provider_unavailable", ranked.FallbackReason)
+				require.Empty(t, ranked.Members)
+			})
+		})
+	}
+
 	t.Run("consent_required", func(t *testing.T) {
 		t.Parallel()
 		x := newPhotoSearchFixture(t)
@@ -2359,7 +2382,7 @@ func TestSearchPhotosUsesLaterAvailableProfile(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			x := newPhotoSearchFixture(t)
-			two, _, provider := x.alternate(t, tc.consent, tc.indexed)
+			two, provider := x.alternate(t, tc.consent, tc.indexed)
 			if tc.failure != nil {
 				unavailable := newEmbeddingWorkerFixture(t).runtime
 				unavailable.failures[x.binding.Name] = []error{tc.failure}
