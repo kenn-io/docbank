@@ -22,7 +22,28 @@ env:
   GOFLAGS: -trimpath
 
 jobs:
+  changes:
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    outputs:
+      groups: ${{ steps.changes.outputs.groups }}
+      all: ${{ steps.changes.outputs.all }}
+    steps:
+      - id: changes
+        uses: kenn-io/actions/changes@main
+        with:
+          filters: |
+            go:
+              - '!{README.md,AGENTS.md,CLAUDE.md,docs/**,website/**,frontend/**}'
+            frontend:
+              - frontend/**
+
   redaction-browser-review:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups), 'go') || contains(fromJSON(needs.changes.outputs.groups), 'frontend')) }}
     name: Browser PDF redaction review
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -60,6 +81,8 @@ jobs:
           node frontend/screenshots/redaction-review.run.mjs
 
   bates-browser-recovery:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups), 'go') || contains(fromJSON(needs.changes.outputs.groups), 'frontend')) }}
     name: Numbered PDF browser recovery
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -97,6 +120,8 @@ jobs:
           node frontend/screenshots/bates-recovery.run.mjs
 
   ensure_image:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups), 'go')) }}
     name: Resolve Render PDF image
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -133,8 +158,9 @@ jobs:
           echo "image=${IMAGE}@${manifest_digest}" >> "$GITHUB_OUTPUT"
 
   libreoffice-owner:
+    needs: [changes, ensure_image]
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups), 'go')) && needs.ensure_image.result == 'success' }}
     name: LibreOffice owner proof
-    needs: ensure_image
     runs-on: ubuntu-latest
     timeout-minutes: 26
     env:

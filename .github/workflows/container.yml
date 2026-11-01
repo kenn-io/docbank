@@ -13,7 +13,26 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    outputs:
+      groups: ${{ steps.changes.outputs.groups }}
+      all: ${{ steps.changes.outputs.all }}
+    steps:
+      - id: changes
+        uses: kenn-io/actions/changes@main
+        with:
+          filters: |
+            go:
+              - '!{README.md,AGENTS.md,CLAUDE.md,docs/**,website/**}'
+
   smoke:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups), 'go')) }}
     name: Stock image
     runs-on: ubuntu-24.04
     timeout-minutes: 30

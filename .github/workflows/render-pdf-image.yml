@@ -52,4 +52,7 @@ jobs:
 
   proofs:
     needs: publish
+    permissions:
+      contents: read
+      pull-requests: read
     uses: ./.github/workflows/render-pdf.yml
