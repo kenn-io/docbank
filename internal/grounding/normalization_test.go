@@ -7,6 +7,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestStandaloneCurrencyMarkers(t *testing.T) {
+	for _, marker := range []string{"-€", "+£", "±$", "−EUR", ".€", "€.:", "'-USD,'"} {
+		t.Run(marker, func(t *testing.T) {
+			require.Equal(t, []normalizedFigure{{text: "$40"}}, normalizedFigures(marker+" $40"))
+			require.Equal(t, []normalizedFigure{{text: "$40"}, {text: "50"}}, normalizedFigures("$40 "+marker+" 50"))
+		})
+	}
+}
+
 func TestNormalizedFigures(t *testing.T) {
 	for _, tc := range []struct {
 		text    string

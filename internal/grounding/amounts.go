@@ -105,7 +105,7 @@ func amountAt(rs []rune) (int, string) {
 	for end < len(rs) && !split(rs[end]) {
 		end++
 	}
-	token := []rune(trim(rs[start:end]))
+	token := []rune(strings.TrimFunc(string(rs[start:end]), edge))
 	// A marker after an amount may belong to it or to whatever follows, so the
 	// amount stays literal. The marker remains available to a following amount.
 	if markerEnd, marker := currencyAt(token, 0); marker != "" && markerEnd == len(token) && strings.TrimFunc(string(rs[i:start]), amountGap) == "" {
