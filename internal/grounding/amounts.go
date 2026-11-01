@@ -107,7 +107,7 @@ func amountAt(rs []rune) (int, string) {
 	token := []rune(strings.TrimFunc(string(rs[start:end]), edge))
 	// An adjacent marker belongs to this amount, which stays literal.
 	if markerEnd, marker := currencyAt(token, 0); marker != "" && markerEnd == len(token) && strings.TrimFunc(string(rs[i:start]), amountGap) == "" {
-		return end, ""
+		return start + markerEnd, ""
 	}
 	if value := amountValue(string(rs[numberStart:numberEnd])); !signed && value != "" {
 		return i, code + " " + value

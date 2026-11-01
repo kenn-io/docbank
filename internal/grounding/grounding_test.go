@@ -7,6 +7,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestGroundingAfterPunctuatedCurrency(t *testing.T) {
+	a, err := Prepare("$30")
+	require.NoError(t, err)
+	report := a.Check([]Citation{{Text: "$40 CAD. USD30"}})
+	require.Equal(t, "grounded", report.Status)
+}
+
 func TestGrounding(t *testing.T) {
 	for _, tc := range []struct {
 		name, answer, source, status, figureStatus string
