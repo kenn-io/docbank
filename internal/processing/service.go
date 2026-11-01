@@ -1545,6 +1545,28 @@ func (service *Service) ResolveSourceFence(
 }
 
 func (service *Service) Search(ctx context.Context, request SearchRequest) (retrieval.Report, error) {
+	return service.searchWith(ctx, request, (*retrieval.Searcher).Search)
+}
+
+// PreparePassageEvaluation shares Search's profile, source fence and provider
+// authorization. The returned private text is exclusively for offline tooling.
+func (service *Service) PreparePassageEvaluation(ctx context.Context, request SearchRequest) (*retrieval.PassageEvaluation, error) {
+	var evaluation *retrieval.PassageEvaluation
+	if request.MediaSources != nil || request.Rerank {
+		return nil, errors.New("offline passage evaluation requires ordinary unreranked search")
+	}
+	_, err := service.searchWith(ctx, request, func(searcher *retrieval.Searcher, ctx context.Context, query retrieval.Query) (retrieval.Report, error) {
+		var err error
+		evaluation, err = searcher.PreparePassageEvaluation(ctx, query)
+		if err != nil {
+			return retrieval.Report{}, err
+		}
+		return evaluation.Report, nil
+	})
+	return evaluation, err
+}
+
+func (service *Service) searchWith(ctx context.Context, request SearchRequest, execute func(*retrieval.Searcher, context.Context, retrieval.Query) (retrieval.Report, error)) (retrieval.Report, error) {
 	profile, ids, err := service.profileFence(request.Profile, request.Fence)
 	if err != nil {
 		return retrieval.Report{}, err
@@ -1580,7 +1602,7 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 		searchScope.EmbeddingDescriptor = &descriptor
 		searchScope.VectorSpaceID = profile.vectorSpaces[prepared.bindingID]
 	}
-	return prepared.searcher.Search(ctx, retrieval.Query{Text: request.Query, Mode: prepared.mode,
+	return execute(prepared.searcher, ctx, retrieval.Query{Text: request.Query, Mode: prepared.mode,
 		LexicalLimit: profile.portable.Retrieval.LexicalLimit, VectorLimit: profile.portable.Retrieval.VectorLimit,
 		Limit: prepared.limit, Scope: searchScope, ContentFirst: request.ContentFirst,
 		ProcessingProfileFingerprint: profile.record.Fingerprint, BindingID: prepared.bindingID,

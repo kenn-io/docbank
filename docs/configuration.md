@@ -1161,8 +1161,8 @@ not accept a text deployment epoch.
 The adapter sends `input_type = "document"` for chunks and `"query"` for text
 queries. It pins `output_dimension`, requests float vectors, disables provider
 truncation, and omits `encoding_format`. It checks unit length without
-renormalizing the response. Voyage may echo each input as a `text` member,
-so set `max_response_bytes` to cover the vectors plus the echoed text.
+renormalizing the response. Voyage may echo each input as a string `text` member
+or return `null`. Set `max_response_bytes` to cover the vectors plus the echoed text.
 Semantic and hybrid searches can select this binding; lexical search does not
 send a query to Voyage. Consent and retained input requirements still apply.
 

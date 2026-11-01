@@ -49,8 +49,9 @@ const (
 )
 
 type mediaEvidenceInput struct {
-	excerpt string
-	span    *MediaTimeSpan
+	excerpt    string
+	span       *MediaTimeSpan
+	sourceSpan document.ChunkSpan
 }
 
 func NewMediaEvidenceResolver(blobs MediaEvidenceBlobReader) *MediaEvidenceResolver {
@@ -148,7 +149,7 @@ func (resolver *MediaEvidenceResolver) load(ctx context.Context, artifacts store
 		if err != nil {
 			return nil, err
 		}
-		inputs[input.Key] = mediaEvidenceInput{excerpt: input.Content, span: span}
+		inputs[input.Key] = mediaEvidenceInput{excerpt: input.Content, span: span, sourceSpan: input.SourceSpan}
 	}
 	return inputs, nil
 }

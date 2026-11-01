@@ -489,6 +489,101 @@ tests compile the live adapter setup and check pricing inputs without making
 live calls. To include costs, also set `RERANK_PRICING_DATE` (`YYYY-MM-DD`),
 `TYPESAFE_MICROS_PER_TOKEN`, and `COHERE_MICROS_PER_SEARCH_UNIT` together.
 
+### Compare passage reranking
+
+The offline passage gate compares no rerank, today's exact reranker excerpts,
+and up to one or three selected passages per candidate (P1 and P3). It uses
+real local plain-text renditions, 1,536-rune chunks with 128-rune overlap,
+Voyage `voyage-4-large` 256-dimensional embeddings, and actual hybrid
+retrieval at K=20. It freezes candidates before the three reranking arms run.
+This tooling does not change serving search or processing configuration.
+
+The selector keeps lexical AND-of-prefix matching and eligible semantic chunk
+neighbors. It interleaves their ranks, removes overlaps within the same
+source/build/unit, and uses 1,536-byte UTF-8 windows. Each window centers on
+its own text's first native FTS prefix match across the query fields, including
+punctuation and accent folding. Text without a match starts at its head. It reports excluded
+matches, fallbacks, unknown coordinates, late segments, and the 4,096-row
+lexical selection cap. Normal top-K retrieval truncation is expected. Stale
+artifacts, selection caps, provider failures, or missing scores make the gate
+inconclusive. Failed arms retain the frozen baseline order.
+
+The [public conversion recipe](https://github.com/kenn-io/docbank/tree/main/scripts/rerank-eval/mldr)
+pins MLDR English test at revision
+`d67138e705d963e346253a80e59676ddb418810a`, verifies source hashes, and fixes
+100 queries plus all test-positive articles and 2,000 hash-selected distractors.
+This relevance-enriched pool is not the full benchmark. Unjudged documents
+count as nonrelevant. Keep corpus text, IDs, transient vaults, and detailed
+observations outside Git; publish the aggregate report and recipe only.
+
+MLDR provides whole positive articles without answer offsets or critical-span
+labels. The **long-positive visibility proxy** includes queries with at least
+one positive article of at least 8,192 UTF-8 bytes whose full text is absent
+from its actual current excerpt; an unretrieved positive has an empty excerpt.
+At least 30 proxy queries are required. The report separately counts queries
+retrieving a positive. Critical-span evidence remains unavailable.
+
+The fixed `2026-10-30v1` gate runs Voyage `rerank-2.5` with all scores and
+`truncation:false`. Three repetitions rotate current/P1/P3 order. It averages
+repetitions within each query, then takes 10,000 paired query bootstrap
+resamples with seed `20261030` and percentile 95% intervals. Each of P1 and P3
+must meet every bound:
+
+| Measure | Required result |
+| --- | --- |
+| Proxy nDCG@10 difference from current | Lower confidence bound > 0 |
+| Full-set nDCG@10 difference | Lower bound ≥ -0.01 and upper bound ≥ 0 |
+| Existing short corpus and four deterministic long controls | Mean nDCG@10 loss ≤ 0.01 on each corpus |
+| p95 selection plus provider time | ≤ 5 seconds and ≤ 1.5 times current; each arm has its own five-second deadline |
+| Mean input text bytes and local token estimate | Each ≤ 4 times current |
+
+Input text bytes count the query once plus sent passage text. Reports retain
+passage-only bytes, logical bytes/runes, serialized JSON bytes, and p95/worst
+input ratios separately. The pinned `cl100k_base` tokenizer
+(`github.com/tiktoken-go/tokenizer` v0.10.0) is an offline estimate independent
+of Voyage's tokenizer; its rerank estimate counts the query per sent passage.
+Returned rerank `total_tokens` and the corresponding cost are separate
+observations. List prices dated 2026-10-30 are $0.05/million rerank input tokens
+and $0.12/million embedding input tokens, ignoring free allowances. The existing
+embedding adapter exposes no usage. Preparation and reranking each use one
+attempt; this evaluation profile classifies embedding failures as permanent.
+The budget reserves a local-token embedding cost estimate before each call and
+reports it separately from observed rerank usage. Local estimates do not
+represent the provider invoice.
+
+Preregister this gate in the evaluation PR before the first full provider run.
+Prepare the pinned corpus with the recipe, supply `VOYAGE_API_KEY` through a
+secret-injecting child process, and run from the repository root:
+
+```sh
+RERANK_EVAL_LIVE=1 \
+RERANK_PASSAGE_CORPUS=/tmp/docbank-passage-eval-20261030/corpus.json \
+RERANK_PASSAGE_OUTPUT=/tmp/docbank-passage-eval-20261030/results \
+GOMAXPROCS=2 GOFLAGS=-p=2 \
+go test -tags fts5 ./scripts/rerank-eval -run '^TestLivePassageGate$' \
+  -count=1 -timeout=2h10m -v
+```
+
+`RERANK_PASSAGE_OUTPUT` must name a directory that does not exist. The harness
+rejects an existing directory before reading the corpus or contacting a provider.
+
+One run uses the same live provider for the short, deterministic long, and
+public corpora. Offline synthetic checks validate the mechanics and supply no
+provider quality evidence. The two-hour clock starts with preparation; stop at
+$25 estimated provider cost or that deadline. Ctrl-C cancels the run, writes
+completed observations to the output directory, and closes temporary resources.
+An interrupted or otherwise incomplete run reports an inconclusive gate.
+
+`observations.json` retains query IDs, baseline orders, repeated measurements,
+and failures in the external output directory. Metric arrays use
+no-rerank/current/P1/P3 order and omit unknown critical-span counts. `aggregate.json` and
+`report.md` contain aggregate evidence suitable for review. The Go test's exit
+status indicates harness execution; read the explicit pass/fail/inconclusive
+decision. The harness stops processing workers, closes stores, and removes its
+temporary vaults when it exits, including failures. It leaves the external
+corpus and reports for the operator to review and clean up. A failed or
+inconclusive gate does not justify changing production passage defaults.
+
 ## Choose an embedding provider
 
 The adapters below implement `document.EmbeddingProvider`. Their descriptors
@@ -523,8 +618,8 @@ Voyage text profiles can embed retained rendition chunks and serve text queries
 when the operator supplies `EmbeddingProfile.DeploymentEpoch`, sets the descriptor's
 `ModelRevision` to that epoch, and enables `SupportsTextQuery`. The native adapter
 sends document/query roles, pins dimensions, and requests float vectors without
-`encoding_format`. It accepts the optional string `text` response item member
-and discards it; all other unknown members still fail decoding. Other providers
+`encoding_format`. It accepts a missing, string, or `null` `text` response item
+member and discards it; all other unknown members still fail decoding. Other providers
 keep their existing strict schemas. Finite, nonzero vectors must match the pinned
 dimension. Retrieval profiles require cosine distance and unit-length vectors;
 the squared norm may differ from one by at most `1e-4`. The adapter never silently
