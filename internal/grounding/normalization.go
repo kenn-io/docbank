@@ -66,14 +66,8 @@ func normalizedFigures(text string) []normalizedFigure {
 			if end > 0 {
 				end += start
 			}
-			if value == "" {
-				if end > safe {
-					safe = end
-				}
-				continue
-			}
 			// A standalone marker before an amount makes its currency ambiguous.
-			if kind == 1 && previousUnparsed >= 0 && strings.TrimFunc(string(rs[tokens[previousUnparsed].end:start]), amountGap) == "" {
+			if value != "" && kind == 1 && previousUnparsed >= 0 && strings.TrimFunc(string(rs[tokens[previousUnparsed].end:start]), amountGap) == "" {
 				previous := []rune(strings.TrimFunc(string(rs[tokens[previousUnparsed].start:tokens[previousUnparsed].end]), edge))
 				if markerEnd, marker := currencyAt(previous, 0); marker != "" && markerEnd == len(previous) {
 					continue
@@ -83,6 +77,10 @@ func normalizedFigures(text string) []normalizedFigure {
 				token := rs[tokens[j].start:tokens[j].end]
 				trimmedEnd := tokens[j].start + len([]rune(strings.TrimRightFunc(string(token), edge)))
 				if end == trimmedEnd {
+					if value == "" {
+						safe = max(safe, end)
+						break
+					}
 					result = append(result, normalizedFigure{string(rs[start:end]), []string{"date", "amount"}[kind], value})
 					i = j + 1
 					matched = true
