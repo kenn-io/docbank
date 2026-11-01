@@ -184,7 +184,7 @@ func TestPhotoStackDecisionRejectsGenerationThatSplitsStack(t *testing.T) {
 	record.VectorSet.PayloadBlobHash = testSHA256(payload)
 	record.VectorSet.Payload = payload
 	require.NoError(t, f.s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-		return f.s.EnsureBlobTx(tx, record.VectorSet.PayloadBlobHash, int64(len(payload)))
+		return f.s.EnsureBlobTx(t.Context(), tx, record.VectorSet.PayloadBlobHash, int64(len(payload)))
 	}))
 	require.NoError(t, f.s.StageEmbeddingSet(t.Context(), record))
 	require.NoError(t, f.s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{

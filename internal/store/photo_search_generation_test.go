@@ -23,7 +23,7 @@ func TestPhotoSearchRevalidationCompilesAfterPublication(t *testing.T) {
 	require.NoError(t, s.PublishRenditionAndLexicalHeads(t.Context(), attachment, head, first.ID))
 	second, err := s.StageLexicalGeneration(t.Context(), fakeHash("92"))
 	require.NoError(t, err)
-	publisher, err := Open(s.path)
+	publisher, err := Open(t.Context(), s.path)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, publisher.Close()) })
 

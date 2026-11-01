@@ -2092,7 +2092,7 @@ func TestImageEmbeddingProfilesSharingDescriptorRegisterOneRuntime(t *testing.T)
 	sibling := x.portable
 	sibling.Embeddings = slices.Clone(x.portable.Embeddings)
 	sibling.Embeddings[0].DisclosureFingerprint = workerHash("sibling-disclosure")
-	shared, err := NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(), Principal: "synthetic-operator", Scope: "document-processing", Profiles: map[string]ProfileConfig{"images": {Profile: x.portable, EmbeddingProviders: map[string]document.EmbeddingProvider{x.binding.Name: x.provider}}, "sibling": {Profile: sibling, EmbeddingProviders: map[string]document.EmbeddingProvider{x.binding.Name: x.provider}}}})
+	shared, err := NewService(t.Context(), ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(), Principal: "synthetic-operator", Scope: "document-processing", Profiles: map[string]ProfileConfig{"images": {Profile: x.portable, EmbeddingProviders: map[string]document.EmbeddingProvider{x.binding.Name: x.provider}}, "sibling": {Profile: sibling, EmbeddingProviders: map[string]document.EmbeddingProvider{x.binding.Name: x.provider}}}})
 	require.NoError(t, err)
 	assert.True(t, shared.EmbeddingRuntimes().Ready())
 	assert.Equal(t, []string{x.descriptor.Fingerprint}, shared.EmbeddingRuntimes().Fingerprints())
@@ -2118,7 +2118,7 @@ func newImageEmbeddingService(t *testing.T, f *photoDescriptionFixture, wrapProv
 		selected = wrapProvider[0](provider)
 	}
 	fake.runtime.consumeOriginal = true
-	service, err := NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(), Principal: "synthetic-operator", Scope: "document-processing", Profiles: map[string]ProfileConfig{"images": {Profile: portable, EmbeddingSimilarityFloors: map[string]float64{binding.Name: 0.2}, EmbeddingProviders: map[string]document.EmbeddingProvider{binding.Name: selected}, EmbeddingClassifiers: map[string]func(error) (EmbeddingProviderFailure, time.Duration){binding.Name: fake.runtime.Classify}}}})
+	service, err := NewService(t.Context(), ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(), Principal: "synthetic-operator", Scope: "document-processing", Profiles: map[string]ProfileConfig{"images": {Profile: portable, EmbeddingSimilarityFloors: map[string]float64{binding.Name: 0.2}, EmbeddingProviders: map[string]document.EmbeddingProvider{binding.Name: selected}, EmbeddingClassifiers: map[string]func(error) (EmbeddingProviderFailure, time.Duration){binding.Name: fake.runtime.Classify}}}})
 	require.NoError(t, err)
 	return photoSearchFixture{f: f, fake: fake, descriptor: descriptor, portable: portable, binding: binding, provider: provider, service: service}
 }
@@ -2176,7 +2176,7 @@ func (x photoSearchFixture) alternate(t *testing.T, consent, indexed bool) (*Ser
 	alternate.Embeddings = slices.Clone(portable.Embeddings)
 	alternate.Embeddings[0].Descriptor.Fingerprint = alternateDescriptor.Fingerprint
 	alternateProvider := &embeddingWorkerProvider{runtime: x.fake.runtime, binding: binding.Name, descriptor: alternateDescriptor}
-	two, err := NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(), Principal: service.principal, Scope: service.scope, Profiles: map[string]ProfileConfig{"z-images": {Profile: portable, EmbeddingSimilarityFloors: map[string]float64{binding.Name: 0.2}, EmbeddingProviders: map[string]document.EmbeddingProvider{binding.Name: provider}}, "a-images": {Profile: alternate, EmbeddingSimilarityFloors: map[string]float64{binding.Name: 0.2}, EmbeddingProviders: map[string]document.EmbeddingProvider{binding.Name: alternateProvider}}}})
+	two, err := NewService(t.Context(), ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(), Principal: service.principal, Scope: service.scope, Profiles: map[string]ProfileConfig{"z-images": {Profile: portable, EmbeddingSimilarityFloors: map[string]float64{binding.Name: 0.2}, EmbeddingProviders: map[string]document.EmbeddingProvider{binding.Name: provider}}, "a-images": {Profile: alternate, EmbeddingSimilarityFloors: map[string]float64{binding.Name: 0.2}, EmbeddingProviders: map[string]document.EmbeddingProvider{binding.Name: alternateProvider}}}})
 	require.NoError(t, err)
 	if consent || indexed {
 		f.grant(t, two, "a-images")

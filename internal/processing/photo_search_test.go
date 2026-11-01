@@ -19,7 +19,7 @@ func newMixedImageTextProfileService(t *testing.T, f *photoDescriptionFixture, x
 	image.Name = "image"
 	portable := x.portable
 	portable.Embeddings = []document.EmbeddingBindingV1{image, original}
-	service, err := NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(), Principal: "synthetic-operator", Scope: "document-processing", Profiles: map[string]ProfileConfig{"mixed": {Profile: portable, EmbeddingProviders: map[string]document.EmbeddingProvider{
+	service, err := NewService(t.Context(), ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(), Principal: "synthetic-operator", Scope: "document-processing", Profiles: map[string]ProfileConfig{"mixed": {Profile: portable, EmbeddingProviders: map[string]document.EmbeddingProvider{
 		image.Name:    &embeddingWorkerProvider{runtime: x.fake.runtime, binding: image.Name, descriptor: x.descriptor},
 		original.Name: &embeddingWorkerProvider{runtime: x.fake.runtime, binding: original.Name, descriptor: x.fake.descriptor},
 	}}}})
