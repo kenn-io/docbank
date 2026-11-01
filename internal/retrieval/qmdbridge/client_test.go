@@ -111,7 +111,7 @@ func TestSearchPreservesResponseBodyDeadline(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	client := newTestClient(t, server, root, &authorizerStub{}, &authorityStub{}, 1<<20)
-	client.profile.RequestTimeout = 25 * time.Millisecond
+	client.profile.RequestTimeout = 25 * time.Millisecond //nolint:kennlint // deadlinetest: the real HTTP body waits for cancellation, so its request deadline must expire
 
 	_, err := client.Search(t.Context(), Request{Searches: []Search{{Type: SearchLexical, Query: "private"}}, Limit: 5})
 	require.ErrorIs(t, err, context.DeadlineExceeded)
@@ -380,7 +380,7 @@ func TestSearchHoldsConsentThroughEgress(t *testing.T) {
 			case err := <-revoked:
 				t.Errorf("revocation completed before the authorized HTTP request: %v", err)
 				early = true
-			case <-time.After(20 * time.Millisecond): //nolint:kennlint // the timer shows the event does not happen; the authorized request fence keeps revocation blocked
+			case <-time.After(20 * time.Millisecond): //nolint:kennlint // deadlinetest: the timer shows the event does not happen; the authorized request fence keeps revocation blocked
 			}
 			close(authorizer.proceed)
 			<-started
@@ -389,7 +389,7 @@ func TestSearchHoldsConsentThroughEgress(t *testing.T) {
 				case err := <-revoked:
 					t.Errorf("revocation completed while reading the response: %v", err)
 					early = true
-				case <-time.After(20 * time.Millisecond): //nolint:kennlint // the timer shows the event does not happen; the open response keeps revocation blocked
+				case <-time.After(20 * time.Millisecond): //nolint:kennlint // deadlinetest: the timer shows the event does not happen; the open response keeps revocation blocked
 				}
 			}
 			if outcome == "canceled" {

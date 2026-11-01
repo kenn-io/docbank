@@ -22,10 +22,10 @@ func photoXMPSourceVersionsTx(ctx context.Context, q metadataQuerier, nodeID int
 	err := queryRows(ctx, q, `SELECT p.original_path,COALESCE(v.blob_hash,''),COALESCE(v.version_id,''),COALESCE(v.size,0) FROM provenance p
  JOIN ingests i ON i.id=p.ingest_id LEFT JOIN provenance_version_bindings b ON b.provenance_identity=p.identity
  LEFT JOIN content_versions v ON v.version_id=b.content_version_id AND v.node_id=p.node_id
- WHERE p.node_id=? AND EXISTS(SELECT 1 FROM photo_files pf WHERE pf.node_id=p.node_id AND pf.role='sidecar')
- AND i.source_kind NOT LIKE 'embedded:%' AND i.source_kind<>'photo-checkout'
+ WHERE p.node_id=$1 AND EXISTS(SELECT 1 FROM photo_files pf WHERE pf.node_id=p.node_id AND pf.role='sidecar')
+ AND LOWER(i.source_kind) NOT LIKE 'embedded:%' AND i.source_kind<>'photo-checkout'
  AND NOT EXISTS(SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)
- ORDER BY b.observed_at DESC,v.node_revision DESC,p.identity DESC`, []any{nodeID}, func(rows *sql.Rows) error {
+ ORDER BY b.observed_at DESC NULLS LAST,v.node_revision DESC NULLS LAST,p.identity DESC`, []any{nodeID}, func(rows *sql.Rows) error {
 		var s photoXMPSourceVersion
 		if err := rows.Scan(&s.Path, &s.Digest, &s.VersionID, &s.Size); err != nil {
 			return err

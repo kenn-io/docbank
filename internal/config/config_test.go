@@ -17,6 +17,39 @@ import (
 	"go.kenn.io/docbank/document/vision"
 )
 
+func TestBackupScheduleConfig(t *testing.T) {
+	for _, tc := range []struct {
+		name, body, problem string
+		interval            time.Duration
+		keepLast            int
+	}{
+		{"disabled", "", "", 0, 0},
+		{"disabled with retention", "repo = 'snapshots'\ninterval = '0'\nkeep_last = 14", "", 0, 14},
+		{"enabled", "repo = 'snapshots'\ninterval = '24h'\nkeep_last = 14", "", 24 * time.Hour, 14},
+		{"minimum interval", "repo = 'snapshots'\ninterval = '1m'\nkeep_last = 1", "", time.Minute, 1},
+		{"short interval", "repo = 'snapshots'\ninterval = '59s'\nkeep_last = 1", "at least one minute", 0, 0},
+		{"missing repo", "interval = '24h'\nkeep_last = 14", "repo and positive keep_last", 0, 0},
+		{"missing count", "repo = 'snapshots'\ninterval = '24h'", "positive keep_last", 0, 0},
+		{"negative count", "keep_last = -1", "must not be negative", 0, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := privateTestConfigDir(t)
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte("[backup]\n"+tc.body), 0o600))
+			cfg, err := Load(dir)
+			if err == nil {
+				err = cfg.Validate()
+			}
+			if tc.problem != "" {
+				require.ErrorContains(t, err, tc.problem)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.interval, cfg.Backup.Interval.Std())
+			require.Equal(t, tc.keepLast, cfg.Backup.KeepLast)
+		})
+	}
+}
+
 func TestLoadParsesFile(t *testing.T) {
 	dir := privateTestConfigDir(t)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte(
@@ -778,7 +811,7 @@ func TestLoadParsesWatchedInboxesAndAppliesDefaults(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte(
 		"[[watch]]\nname = \"documents\"\nsource = \""+filepath.ToSlash(source)+"\"\n"+
 			"destination = \"/inbox/documents\"\nexclude = [\".tmp\", \"cache/\"]\nexclude_patterns = [\"*.swp\", \".syncthing.*.tmp\"]\n"+
-			"settle_time = \"45s\"\nminimum_age = \"168h\"\nscan_interval = \"3s\"\n\n"+
+			"settle_time = \"45s\"\nminimum_age = \"168h\"\nscan_interval = \"3s\"\ncapture_on_change = true\n\n"+
 			"[[watch]]\nname = \"sessions\"\nsource = \""+relativeHomeSource+"\"\n"+
 			"destination = \"/agents/sessions\"\n"), 0o600))
 
@@ -790,6 +823,7 @@ func TestLoadParsesWatchedInboxesAndAppliesDefaults(t *testing.T) {
 	assert.Equal(t, 45*time.Second, c.Watches[0].SettleTime.Std())
 	assert.Equal(t, 7*24*time.Hour, c.Watches[0].MinimumAge.Std())
 	assert.Equal(t, 3*time.Second, c.Watches[0].ScanInterval.Std())
+	assert.True(t, c.Watches[0].CaptureOnChange)
 	assert.Equal(t, []string{".tmp", "cache/"}, c.Watches[0].Exclude)
 	assert.Equal(t, []string{"*.swp", ".syncthing.*.tmp"}, c.Watches[0].ExcludePatterns)
 	assert.Empty(t, c.Watches[1].ExcludePatterns)
@@ -799,6 +833,7 @@ func TestLoadParsesWatchedInboxesAndAppliesDefaults(t *testing.T) {
 	assert.Equal(t, 30*time.Second, c.Watches[1].SettleTime.Std())
 	assert.Zero(t, c.Watches[1].MinimumAge.Std())
 	assert.Equal(t, 5*time.Second, c.Watches[1].ScanInterval.Std())
+	assert.False(t, c.Watches[1].CaptureOnChange)
 	require.NoError(t, c.Validate())
 }
 
@@ -1207,7 +1242,7 @@ func TestVisionRuntimeConfig(t *testing.T) {
 	profile.Runtime.MaxPollAttempts = 0
 	profile.Runtime.RequestTimeout = Duration(10 * time.Minute)
 	cfg := validRenditionRuntimeConfig(t)
-	descriptor, err := vision.Descriptor(profile.Model, document.RenditionTrustOperatorNetwork)
+	descriptor, err := vision.Descriptor(vision.ProviderID, profile.Model, document.RenditionTrustOperatorNetwork)
 	require.NoError(t, err)
 	profile.DescriptorID, profile.DescriptorFingerprint = descriptor.ID, descriptor.Fingerprint
 	cfg.RenditionProfiles["primary"] = profile
@@ -1216,6 +1251,12 @@ func TestVisionRuntimeConfig(t *testing.T) {
 	processingProfile.Embeddings = nil
 	cfg.ProcessingProfiles["archive"] = processingProfile
 	require.NoError(t, cfg.Validate())
+
+	t.Run("unrecognized task", func(t *testing.T) {
+		unknown := profile
+		unknown.DescriptorID = "unrecognized-task"
+		require.ErrorIs(t, validateRenditionRuntimeConfig(unknown, "vision"), vision.ErrUnknownTask)
+	})
 
 	t.Run("model on another adapter", func(t *testing.T) {
 		other := validRenditionRuntimeConfig(t)
@@ -1244,4 +1285,25 @@ func TestVisionRuntimeConfig(t *testing.T) {
 			require.ErrorContains(t, err, tc.wantError)
 		})
 	}
+}
+
+func TestWatchProcessingProfileValidation(t *testing.T) {
+	cfg := validProcessingConfig()
+	cfg.Watches = []WatchConfig{{Name: "inbox", Source: t.TempDir(), Destination: "/inbox",
+		SettleTime: Duration(time.Second), ScanInterval: Duration(time.Second), Profile: "archive"}}
+	require.NoError(t, cfg.Validate())
+	cfg.Watches[0].Profile = "missing"
+	require.ErrorContains(t, cfg.Validate(), "not defined")
+	cfg.Watches[0].Profile = "archive"
+	profile := cfg.ProcessingProfiles["archive"]
+	profile.Rendition, profile.Embeddings = "", nil
+	profile.RetainSanitizedMarkdown = false
+	cfg.ProcessingProfiles["archive"] = profile
+	require.ErrorContains(t, cfg.Validate(), "requires an original-document rendition")
+	profile.Rendition = "primary"
+	cfg.ProcessingProfiles["archive"] = profile
+	rendition := cfg.RenditionProfiles["primary"]
+	rendition.AdapterContract = document.VisionAdapterContract
+	cfg.RenditionProfiles["primary"] = rendition
+	require.ErrorContains(t, cfg.Validate(), "requires an original-document rendition")
 }

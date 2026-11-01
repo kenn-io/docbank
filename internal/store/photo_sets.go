@@ -278,7 +278,7 @@ func (s *Store) UpdatePhotoSet(ctx context.Context, id string, revision int64, n
 			}
 			out.CoverAssetID = *cover
 		}
-		if out.Name != before.Name || out.Starred != before.Starred || !equalPhotoString(out.CoverAssetID, before.CoverAssetID) {
+		if out.Name != before.Name || out.Starred != before.Starred || !equalPhotoOptional(out.CoverAssetID, before.CoverAssetID) {
 			out, err = commitPhotoSet(ctx, tx, before, out, "set_update", nil)
 			if err != nil {
 				return err

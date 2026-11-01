@@ -30,13 +30,17 @@ import (
 func TestExtractSourceMetadataFromSyntheticFormats(t *testing.T) {
 	t.Parallel()
 	ooxml := syntheticOOXML(t)
+	locked, err := mediatest.EncryptPDF(mediatest.PDF(), "open-secret", "owner-secret", 128)
+	require.NoError(t, err)
 	for _, testCase := range []struct {
 		name      string
 		payload   []byte
 		keys      []string
 		sensitive string
+		facts     map[string]document.SourceMetadataValueV1
 	}{
-		{name: "PDF info and XMP", payload: syntheticMetadataPDF(9), keys: []string{"created", "creators", "description", "keywords", "modified", "page_count", "subject", "title"}},
+		{name: "PDF info and XMP", payload: syntheticMetadataPDF(9), keys: []string{"created", "creators", "description", "keywords", "modified", "page_count", "pdf.info.embedded_file_count", "pdf.info.encrypted", "pdf.info.has_javascript", "pdf.info.has_launch_actions", "pdf.info.signature_field_count", "subject", "title"}},
+		{name: "PDF locked", payload: locked, facts: map[string]document.SourceMetadataValueV1{"pdf.info.encrypted": {Kind: document.SourceMetadataBoolean, Boolean: new(true)}}, keys: []string{"pdf.info.encrypted"}},
 		{name: "OOXML core, app, and custom", payload: ooxml, keys: []string{"created", "office.core.word_count", "office.custom.matter_number", "page_count", "title"}},
 		{name: "RFC 5322 email", payload: []byte("From: Ada <ada@example.test>\r\nTo: Grace <grace@example.test>\r\nBcc: Private <private@example.test>\r\nSubject: Synthetic mail\r\nDate: Tue, 2 Jan 2024 03:04:05 -0700\r\n\r\nbody"), keys: []string{"email.bcc", "email.from", "email.sent", "email.subject", "email.to"}, sensitive: "email.bcc"},
 		{name: "iCalendar", payload: []byte("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nSUMMARY:Synthetic meeting\r\nDTSTART:20240102T030405\r\nDTEND:20240102T040405\r\nEND:VEVENT\r\nEND:VCALENDAR"), keys: []string{"calendar.end", "calendar.start", "title"}},
@@ -52,11 +56,16 @@ func TestExtractSourceMetadataFromSyntheticFormats(t *testing.T) {
 			require.NoError(t, err)
 			keys := make([]string, 0, len(metadata.Fields))
 			sensitive := map[string]bool{}
+			facts := map[string]document.SourceMetadataValueV1{}
 			for _, field := range metadata.Fields {
 				keys = append(keys, field.Key)
 				sensitive[field.Key] = field.Sensitive
+				facts[field.Key] = field.Value
 			}
 			assert.ElementsMatch(t, testCase.keys, keys)
+			for key, expected := range testCase.facts {
+				assert.Equal(t, expected, facts[key])
+			}
 			if testCase.sensitive != "" {
 				assert.True(t, sensitive[testCase.sensitive])
 			}

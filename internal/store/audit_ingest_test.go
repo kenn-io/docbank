@@ -40,7 +40,7 @@ func TestLegacyAuditedIngestCreationRoundTripsWithoutBindings(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		authority, scopes, _, err := loadAuditedNodeAuthority(t.Context(), tx, scope.ID)
+		authority, scopes, _, err := s.loadAuditedNodeAuthority(t.Context(), tx, scope.ID)
 		if err != nil {
 			return err
 		}
@@ -81,8 +81,8 @@ func TestLegacyAuditedIngestCreationRoundTripsWithoutBindings(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		return persistAuditedNodeCreation(
-			t.Context(), tx, s.vaultID, authority, scopes, prior, resulting,
+		return s.persistAuditedNodeCreation(
+			t.Context(), tx, authority, scopes, prior, resulting,
 			created, version, operation.operationID, operation.recordedAt, &legacy,
 		)
 	}))

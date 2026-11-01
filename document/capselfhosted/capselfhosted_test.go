@@ -68,7 +68,7 @@ func TestProbeClassifiesRegisteredDeployment(t *testing.T) {
 		{name: "tls_verification_failed", state: capselfhosted.ProbeTLSVerificationFailed, root: false},
 		{name: "credential_missing", state: capselfhosted.ProbeCredentialMissing, secret: "missing"},
 		{name: "provider_rate_limited", state: capselfhosted.ProbeProviderRateLimited, code: http.StatusTooManyRequests},
-		{name: "provider_timeout", state: capselfhosted.ProbeProviderUnavailable, stallBody: true, timeout: 10 * time.Millisecond},
+		{name: "provider_timeout", state: capselfhosted.ProbeProviderUnavailable, stallBody: true, timeout: 10 * time.Millisecond}, //nolint:kennlint // deadlinetest: the stalled response must expire so the probe reports provider unavailability
 		{name: "provider_body_error", state: capselfhosted.ProbeProviderUnavailable, abortBody: true},
 		{name: "contract_mismatch_status", state: capselfhosted.ProbeContractMismatch, code: http.StatusPaymentRequired},
 		{name: "contract_mismatch_body", state: capselfhosted.ProbeContractMismatch, body: `{"data":[]}`},
@@ -100,7 +100,12 @@ func TestProbeClassifiesRegisteredDeployment(t *testing.T) {
 					w.WriteHeader(http.StatusOK)
 					_, _ = w.Write([]byte(`{"data":`))
 					if err := http.NewResponseController(w).Flush(); err != nil {
-						t.Errorf("flush response: %v", err)
+						// On a slow runner the probe deadline can pass while the server
+						// still counts this connection as new. The subtest then ends and
+						// server.Close closes the connection under this handler.
+						if !errors.Is(err, net.ErrClosed) {
+							t.Errorf("flush response: %v", err)
+						}
 						return
 					}
 					<-r.Context().Done()

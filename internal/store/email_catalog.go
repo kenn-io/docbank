@@ -141,7 +141,7 @@ func validateEmailGeneration(g EmailGenerationRecord) (document.EmailV1, error) 
 func validateEmailBlobRefs(ctx context.Context, q metadataQuerier, g EmailGenerationRecord) error {
 	for _, a := range g.Artifacts {
 		var size int64
-		err := q.QueryRowContext(ctx, `SELECT size FROM blobs WHERE hash=?`, a.BlobSHA256).Scan(&size)
+		err := q.QueryRowContext(ctx, `SELECT size FROM blobs WHERE hash=$1`, a.BlobSHA256).Scan(&size)
 		if err != nil {
 			return fmt.Errorf("%w: part blob: %w", ErrEmailCorrupt, err)
 		}
@@ -153,14 +153,14 @@ func validateEmailBlobRefs(ctx context.Context, q metadataQuerier, g EmailGenera
 }
 func loadEmailGeneration(ctx context.Context, q metadataQuerier, id string) (EmailGenerationRecord, document.EmailV1, error) {
 	var g EmailGenerationRecord
-	err := q.QueryRowContext(ctx, `SELECT generation_id,source_sha256,source_size,recipe_fingerprint,canonical_json,checksum,created_at FROM email_generations WHERE generation_id=?`, id).Scan(&g.ID, &g.SourceSHA256, &g.SourceSize, &g.RecipeFingerprint, &g.CanonicalJSON, &g.Checksum, &g.CreatedAt)
+	err := q.QueryRowContext(ctx, `SELECT generation_id,source_sha256,source_size,recipe_fingerprint,canonical_json,checksum,created_at FROM email_generations WHERE generation_id=$1`, id).Scan(&g.ID, &g.SourceSHA256, &g.SourceSize, &g.RecipeFingerprint, &g.CanonicalJSON, &g.Checksum, &g.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return g, document.EmailV1{}, ErrNotFound
 	}
 	if err != nil {
 		return g, document.EmailV1{}, err
 	}
-	rows, err := q.QueryContext(ctx, `SELECT part_path,role,blob_hash,size FROM email_part_artifacts WHERE generation_id=? ORDER BY part_path,role`, id)
+	rows, err := q.QueryContext(ctx, `SELECT part_path,role,blob_hash,size FROM email_part_artifacts WHERE generation_id=$1 ORDER BY part_path,role`, id)
 	if err != nil {
 		return g, document.EmailV1{}, err
 	}
@@ -185,7 +185,7 @@ func loadEmailGeneration(ctx context.Context, q metadataQuerier, id string) (Ema
 }
 func loadEmailAttachment(ctx context.Context, q metadataQuerier, id string) (EmailAttachmentRecord, error) {
 	var a EmailAttachmentRecord
-	err := q.QueryRowContext(ctx, `SELECT attachment_id,content_version_id,generation_id,attached_at FROM email_attachments WHERE attachment_id=?`, id).Scan(&a.ID, &a.ContentVersionID, &a.GenerationID, &a.AttachedAt)
+	err := q.QueryRowContext(ctx, `SELECT attachment_id,content_version_id,generation_id,attached_at FROM email_attachments WHERE attachment_id=$1`, id).Scan(&a.ID, &a.ContentVersionID, &a.GenerationID, &a.AttachedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return a, ErrNotFound
 	}
@@ -199,7 +199,7 @@ func loadEmailAttachment(ctx context.Context, q metadataQuerier, id string) (Ema
 	return a, validateMetadataTime("email attached_at", a.AttachedAt)
 }
 func emailVersion(ctx context.Context, q metadataQuerier, id string) (ContentVersion, error) {
-	return scanContentVersion(q.QueryRowContext(ctx, `SELECT `+contentVersionCols+` FROM content_versions WHERE version_id=?`, id))
+	return scanContentVersion(q.QueryRowContext(ctx, `SELECT `+contentVersionCols+` FROM content_versions WHERE version_id=$1`, id))
 }
 func (s *Store) EmailGenerationForSource(ctx context.Context, sourceSHA256 string, sourceSize int64, recipeFingerprint string) (EmailGenerationRecord, error) {
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
@@ -357,9 +357,9 @@ func emailMetadataView(ctx context.Context, q metadataQuerier, v ContentVersion,
 	}
 	var id string
 	if generationID == "" {
-		err = q.QueryRowContext(ctx, `SELECT attachment_id FROM email_heads WHERE content_version_id=?`, v.ID).Scan(&id)
+		err = q.QueryRowContext(ctx, `SELECT attachment_id FROM email_heads WHERE content_version_id=$1`, v.ID).Scan(&id)
 	} else {
-		err = q.QueryRowContext(ctx, `SELECT attachment_id FROM email_attachments WHERE content_version_id=? AND generation_id=?`, v.ID, generationID).Scan(&id)
+		err = q.QueryRowContext(ctx, `SELECT attachment_id FROM email_attachments WHERE content_version_id=$1 AND generation_id=$2`, v.ID, generationID).Scan(&id)
 	}
 	if errors.Is(err, sql.ErrNoRows) {
 		if generationID != "" {

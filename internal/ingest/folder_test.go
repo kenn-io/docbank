@@ -356,3 +356,40 @@ func TestFolderScannerExcludePatterns(t *testing.T) {
 	require.NoError(t, scanner.ScanOnce(t.Context(), 1))
 	assert.Equal(t, []string{"note.md"}, observed)
 }
+
+func TestFolderWatchHintDoesNotHashUnrelatedAcceptedFile(t *testing.T) {
+	source := t.TempDir()
+	for _, ref := range []string{"one.txt", "two.txt"} {
+		require.NoError(t, os.WriteFile(filepath.Join(source, ref), []byte(ref), 0600))
+	}
+	processed := make(map[string]int)
+	scanner, err := NewFolderScanner(config.WatchConfig{
+		Name: "notes", Source: source, Destination: "/archive", CaptureOnChange: true,
+		SettleTime: config.Duration(time.Hour), ScanInterval: config.Duration(time.Hour),
+	}, func(ctx context.Context, file FolderFile) error {
+		processed[file.Ref]++
+		_, err := file.Digest(ctx)
+		return err
+	}, failOnReject(t))
+	require.NoError(t, err)
+	root, err := scanner.openRoot()
+	require.NoError(t, err)
+	defer func() { require.NoError(t, root.Close()) }()
+	require.NoError(t, scanner.watcher.scan(t.Context(), root))
+	require.Equal(t, map[string]int{"one.txt": 1, "two.txt": 1}, processed)
+	twoPath := filepath.Join(source, "two.txt")
+	twoInfo, err := os.Stat(twoPath)
+	require.NoError(t, err)
+	// Preserve the file fingerprint so only an unfiltered digest recheck can
+	// discover this edit during the hinted scan.
+	require.NoError(t, os.WriteFile(twoPath, []byte("TWO.TXT"), 0600))
+	require.NoError(t, os.Chtimes(twoPath, twoInfo.ModTime(), twoInfo.ModTime()))
+	twoAfter, err := os.Stat(twoPath)
+	require.NoError(t, err)
+	require.Equal(t, twoInfo.Size(), twoAfter.Size())
+	assert.True(t, twoInfo.ModTime().Equal(twoAfter.ModTime()))
+	requireScanComplete(t, checkedScan(scanner.watcher.scanWithHints(t.Context(), root, watchScanHints{
+		Dirty: map[string]struct{}{"one.txt": {}},
+	})))
+	require.Equal(t, map[string]int{"one.txt": 2, "two.txt": 1}, processed)
+}

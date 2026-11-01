@@ -48,8 +48,12 @@ type Store struct {
 // format without changing that portable contract.
 const currentStorageSchemaVersion = 43
 const photoSuggestionsStorageSchemaVersion = 43
+const photoFaceDetectionStorageSchemaVersion = 43
 
 const photoBurstStorageSchemaVersion = 41
+
+// photoSettingsOverridesStorageSchemaVersion adds the backup schedule and hidden lifetime columns.
+const photoSettingsOverridesStorageSchemaVersion = 43
 
 const peopleStorageSchemaVersion = 15
 const photoFacesStorageSchemaVersion = 35
@@ -395,15 +399,22 @@ func (s *Store) withStorageTxRetryBegin(ctx context.Context, fn func(tx *sql.Tx)
 // unsupported operations are rejected before they can alter state.
 func (s *Store) withLogicalTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		active, err := auditAuthorityActiveTx(ctx, tx)
-		if err != nil {
+		if err := requireLogicalMutationSupported(ctx, tx); err != nil {
 			return err
-		}
-		if active {
-			return ErrAuditMutationUnsupported
 		}
 		return fn(tx)
 	})
+}
+
+func requireLogicalMutationSupported(ctx context.Context, q metadataQuerier) error {
+	active, err := auditAuthorityActiveTx(ctx, q)
+	if err != nil {
+		return err
+	}
+	if active {
+		return ErrAuditMutationUnsupported
+	}
+	return nil
 }
 
 const timestampLayout = schemaformat.TimestampLayout

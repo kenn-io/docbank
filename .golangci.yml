@@ -56,6 +56,7 @@ linters:
     - intrange
     - iotamixing
     - kennlint
+    - kennnolint
     - loggercheck
     - makezero
     - mirror
@@ -104,7 +105,14 @@ linters:
   #   pending dedicated passes: contextcheck, noctx (see follow-up PRs)
 
   settings:
+    nolintlint:
+      require-specific: true
+
     custom:
+      kennnolint:
+        type: module
+        description: Require a kit analyzer and reason in suppressions.
+        original-url: go.kenn.io/kit/lint/nolintdirective
       kennlint:
         type: module
         description: Kit sleeptest and deadlinetest, wall-clock sleeps and sub-second budgets in tests outside synctest.

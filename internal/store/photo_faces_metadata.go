@@ -7,7 +7,7 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
-type metadataPhotoFace struct {
+type metadataPhotoFaceBeforeDetection struct {
 	Type             string  `json:"type"`
 	FaceID           string  `json:"face_id" db:"face_id"`
 	ContentVersionID string  `json:"content_version_id" db:"content_version_id"`
@@ -20,19 +20,44 @@ type metadataPhotoFace struct {
 	CreatedAt        string  `json:"created_at" db:"created_at"`
 }
 
+type metadataPhotoFace struct {
+	Roll                *float64 `json:"roll,omitempty" db:"roll"`
+	Facing              *float64 `json:"facing,omitempty" db:"facing"`
+	EyesOpen            *bool    `json:"eyes_open,omitempty" db:"eyes_open"`
+	Smile               *bool    `json:"smile,omitempty" db:"smile"`
+	DetectorFingerprint *string  `json:"detector_fingerprint,omitempty" db:"detector_fingerprint"`
+	Type                string   `json:"type"`
+	FaceID              string   `json:"face_id" db:"face_id"`
+	ContentVersionID    string   `json:"content_version_id" db:"content_version_id"`
+	X                   float64  `json:"x" db:"x"`
+	Y                   float64  `json:"y" db:"y"`
+	Width               float64  `json:"width" db:"width"`
+	Height              float64  `json:"height" db:"height"`
+	Revision            int64    `json:"revision" db:"revision"`
+	AssertionID         *string  `json:"assertion_id" db:"assertion_id"`
+	CreatedAt           string   `json:"created_at" db:"created_at"`
+}
+
 var photoFaceMetadata = newMetadataTable(metadataTable[metadataPhotoFace]{record: metadataPhotoFace{Type: "photo_face"}, table: "photo_faces", suffix: "ORDER BY face_id", validate: func(v metadataPhotoFace) error {
 	if v.Type != "photo_face" {
 		return ErrInvalidPhotoFace
 	}
-	face := PhotoFace{FaceID: v.FaceID, ContentVersionID: v.ContentVersionID, Box: document.FaceBox{X: v.X, Y: v.Y, Width: v.Width, Height: v.Height}, Revision: v.Revision, CreatedAt: v.CreatedAt}
+	face := PhotoFace{FaceID: v.FaceID, ContentVersionID: v.ContentVersionID, Box: document.FaceBox{X: v.X, Y: v.Y, Width: v.Width, Height: v.Height}, Revision: v.Revision, CreatedAt: v.CreatedAt, Roll: v.Roll, Facing: v.Facing, EyesOpen: v.EyesOpen, Smile: v.Smile}
+	if v.DetectorFingerprint != nil {
+		face.DetectorFingerprint = *v.DetectorFingerprint
+	}
 	if v.AssertionID != nil {
 		face.AssertionID = *v.AssertionID
 	}
 	return validatePhotoFace(face)
 }, checkExport: true})
 
-func validatePhotoFaceMetadataState(ctx context.Context, q metadataQuerier) error {
-	if err := photoFaceMetadata.validateRows(ctx, q); err != nil {
+func validatePhotoFaceMetadataState(ctx context.Context, q metadataQuerier, version int) error {
+	var codec metadataRecordCodec = photoFaceMetadata
+	if version < photoFaceDetectionStorageSchemaVersion {
+		codec = photoFaceMetadataBeforeDetection
+	}
+	if err := codec.validateRows(ctx, q); err != nil {
 		return fmt.Errorf("validating photo face metadata records: %w", err)
 	}
 	return validatePhotoFaceReferences(ctx, q)
@@ -47,7 +72,7 @@ func validatePhotoFaceDecisionReferences(ctx context.Context, q metadataQuerier)
 
 func validatePersonKeyFaces(ctx context.Context, q metadataQuerier, personID string, invalidError error) error {
 	var invalid bool
-	if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM persons p LEFT JOIN photo_faces f ON f.face_id=p.key_face_id LEFT JOIN person_document_assertions a ON a.assertion_id=f.assertion_id WHERE (?='' OR p.person_id=?) AND p.key_face_id IS NOT NULL AND (a.person_id IS NULL OR a.person_id<>p.person_id OR a.action<>'assert'))`, personID, personID).Scan(&invalid); err != nil {
+	if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM persons p LEFT JOIN photo_faces f ON f.face_id=p.key_face_id LEFT JOIN person_document_assertions a ON a.assertion_id=f.assertion_id WHERE ($1='' OR p.person_id=$2) AND p.key_face_id IS NOT NULL AND (a.person_id IS NULL OR a.person_id<>p.person_id OR a.action<>'assert'))`, personID, personID).Scan(&invalid); err != nil {
 		return err
 	}
 	if invalid {
@@ -55,3 +80,11 @@ func validatePersonKeyFaces(ctx context.Context, q metadataQuerier, personID str
 	}
 	return nil
 }
+
+var photoFaceMetadataBeforeDetection = newMetadataTable(metadataTable[metadataPhotoFaceBeforeDetection]{record: metadataPhotoFaceBeforeDetection{Type: "photo_face"}, table: "photo_faces", suffix: "ORDER BY face_id", checkExport: true, validate: func(v metadataPhotoFaceBeforeDetection) error {
+	face := PhotoFace{FaceID: v.FaceID, ContentVersionID: v.ContentVersionID, Box: document.FaceBox{X: v.X, Y: v.Y, Width: v.Width, Height: v.Height}, Revision: v.Revision, CreatedAt: v.CreatedAt}
+	if v.AssertionID != nil {
+		face.AssertionID = *v.AssertionID
+	}
+	return validatePhotoFace(face)
+}})

@@ -3957,6 +3957,102 @@ it.each([false, true])("revalidates People after refresh, readable=%s", async (r
   }
 });
 
+it.each(["inspector", "loupe"])(
+  "reloads detected faces after a live change in %s",
+  async (mode) => {
+    const { component, props, photos, read } = await facesWorkspaceSetup();
+    if (mode === "loupe") {
+      await fireEvent.click(screen.getByRole("button", { name: "Open Photo 1.jpg" }));
+      await component.rerender({ ...props, photoID: "photo-1" });
+      await screen.findByRole("dialog", { name: /^Photo viewer,/ });
+    }
+    read.mockResolvedValue(
+      photoFacePageFor(photo(1), {
+        faces: [
+          photoFace({ content_version_id: "version-1" }),
+          photoFace({
+            face_id: "face-b",
+            content_version_id: "version-1",
+            assertion_id: undefined,
+            detector_fingerprint: "a".repeat(64),
+          }),
+        ],
+      }),
+    );
+    vi.spyOn(photos, "lookup").mockResolvedValue(photo(1));
+    await act(() => photos.changed({}));
+    await screen.findByRole("button", { name: "Find or create a person: Face 2" });
+  },
+);
+
+it("awaits live face reads and keeps authorized faces", async () => {
+  const { photos, read } = await facesWorkspaceSetup();
+  vi.spyOn(photos, "lookup").mockResolvedValue(photo(1));
+  let finish!: (page: ReturnType<typeof photoFacePage>) => void;
+  read.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  let completed = false;
+  const changing = photos.changed({}).then(() => {
+    completed = true;
+  });
+  await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+  expect(completed).toBe(false);
+  expect(screen.queryByRole("button", { name: "Find or create a person: Ada" })).toBeTruthy();
+  const signal = read.mock.calls[1][1]?.signal;
+  await act(() => {
+    photos.backgroundRefresh = true;
+    photos.loading = true;
+    photos.items = [photo(1)];
+  });
+  expect(screen.queryByRole("button", { name: "Find or create a person: Ada" })).toBeTruthy();
+  expect(signal?.aborted).toBe(false);
+  await act(() => {
+    photos.loading = false;
+    photos.backgroundRefresh = false;
+  });
+  await act(async () => {
+    finish(photoFacePageFor(photo(1)));
+    await changing;
+  });
+});
+
+it("retries a live refresh after a stalled lookup read", async () => {
+  const { photos, read } = await facesWorkspaceSetup();
+  const timer = new AbortController();
+  const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(timer.signal);
+  let signal: AbortSignal | undefined;
+  const stalled = (requestSignal: AbortSignal) => {
+    signal = requestSignal;
+    return new Promise<never>((_resolve, reject) =>
+      requestSignal.addEventListener("abort", () => reject(requestSignal.reason)),
+    );
+  };
+  const lookup = vi.spyOn(photos, "lookup").mockResolvedValue(photo(1));
+  lookup.mockImplementationOnce((_id, signal) => stalled(signal));
+  const reason = new DOMException("Timed out", "TimeoutError");
+  let failure: unknown;
+  const changing = photos.changed({}).catch((cause) => {
+    failure = cause;
+  });
+  await waitFor(() => expect(signal).toBeDefined());
+  timer.abort(reason);
+  await waitFor(() => expect(failure).toBe(reason));
+  await changing;
+  expect(timeout).toHaveBeenCalledWith(30_000);
+  timeout.mockRestore();
+  read.mockResolvedValue(
+    photoFacePageFor(photo(1), {
+      faces: [photoFace({ content_version_id: "version-1", assertion_id: undefined })],
+    }),
+  );
+  await act(() => photos.changed({}));
+  await screen.findByRole("button", { name: "Find or create a person: Face 1" });
+});
+
 it("reports an uncertain clear after remount", async () => {
   vi.stubGlobal(
     "ResizeObserver",
@@ -4027,49 +4123,82 @@ it("reports an uncertain clear after remount", async () => {
   await cache.dispose();
 });
 
+async function cullFacesWorkspaceSetup(rows: ReturnType<typeof photo>[], filtered = false) {
+  vi.stubGlobal("indexedDB", new IDBFactory());
+  vi.stubGlobal("IDBKeyRange", IDBKeyRange);
+  vi.spyOn(api, "getPhotoSettings").mockResolvedValue({
+    revision: 1,
+    preference: null,
+    burst_gap_seconds: 2,
+  });
+  vi.spyOn(api, "groupPhotoStacks").mockResolvedValue({
+    groups: [],
+    unavailable_ids: [],
+    burst_gap_seconds: 2,
+  });
+  const setup = await facesWorkspaceSetup();
+  const { component, props, photos } = setup;
+  if (filtered) {
+    await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
+    photos.query = { ...photos.query, text: "Photo" };
+  }
+  const review = new PhotoCull(photos.session, photoCullStorage("vault"), vi.fn());
+  review.run = {
+    ids: rows.map((row) => row.asset_id),
+    checkpoint: {
+      runID: "run",
+      revision: 0,
+      pass: rows.map((row) => row.asset_id),
+      position: 0,
+      visited: ["photo-1"],
+      skipped: [],
+      unavailable: [],
+      scope: "all",
+      autoAdvance: false,
+    },
+  };
+  await photoCullStorage("vault").replace(review.run);
+  vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue(photoPreparation([preparedPhoto(1)]));
+  photos.cull = review;
+  photos.cullVaultID = "vault";
+  photos.culling = true;
+  await component.rerender({ ...props, vaultID: "vault" });
+  const dialog = await screen.findByRole("dialog", { name: "Cull photos" });
+  const closeups = await within(dialog).findByRole("region", { name: "Face closeups" });
+  await within(closeups).findByText("Face 1 · Ada");
+  return { ...setup, review, dialog };
+}
+
+it("refreshes detected Cull crops through its existing batched photo read", async () => {
+  const { photos, read, dialog } = await cullFacesWorkspaceSetup([photo(1)]);
+  const lookup = vi.spyOn(photos, "lookup").mockResolvedValue(photo(1));
+  const batched = vi.spyOn(photos, "lookupMany").mockResolvedValue([photo(1)]);
+  read.mockResolvedValue(
+    photoFacePageFor(photo(1), {
+      faces: [
+        photoFace({ content_version_id: "version-1" }),
+        photoFace({
+          face_id: "face-b",
+          content_version_id: "version-1",
+          assertion_id: undefined,
+          detector_fingerprint: "a".repeat(64),
+        }),
+      ],
+    }),
+  );
+  await act(() => photos.changed({}));
+  await within(await within(dialog).findByRole("region", { name: "Face closeups" })).findByText(
+    "Face 2",
+  );
+  expect(batched).toHaveBeenCalledExactlyOnceWith(["photo-1"], expect.any(AbortSignal));
+  expect(lookup).not.toHaveBeenCalled();
+});
+
 it.each([false, true])(
   "restores Cull faces after a filtered rating refresh, leaves filter=%s",
   async (leavesFilter) => {
-    vi.stubGlobal("indexedDB", new IDBFactory());
-    vi.stubGlobal("IDBKeyRange", IDBKeyRange);
-    vi.spyOn(api, "getPhotoSettings").mockResolvedValue({
-      revision: 1,
-      preference: null,
-      burst_gap_seconds: 2,
-    });
-    vi.spyOn(api, "groupPhotoStacks").mockResolvedValue({
-      groups: [],
-      unavailable_ids: [],
-      burst_gap_seconds: 2,
-    });
-    const { component, props, photos, read } = await facesWorkspaceSetup();
-    await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
-    photos.query = { ...photos.query, text: "Photo" };
     const rows = [photo(1), photo(2)];
-    const review = new PhotoCull(photos.session, photoCullStorage("vault"), vi.fn());
-    review.run = {
-      ids: rows.map((row) => row.asset_id),
-      checkpoint: {
-        runID: "run",
-        revision: 0,
-        pass: rows.map((row) => row.asset_id),
-        position: 0,
-        visited: ["photo-1"],
-        skipped: [],
-        unavailable: [],
-        scope: "all",
-        autoAdvance: false,
-      },
-    };
-    await photoCullStorage("vault").replace(review.run);
-    vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue(photoPreparation([preparedPhoto(1)]));
-    photos.cull = review;
-    photos.cullVaultID = "vault";
-    photos.culling = true;
-    await component.rerender({ ...props, vaultID: "vault" });
-    const dialog = await screen.findByRole("dialog", { name: "Cull photos" });
-    const closeups = await within(dialog).findByRole("region", { name: "Face closeups" });
-    await within(closeups).findByText("Face 1 · Ada");
+    const { photos, read, review, dialog } = await cullFacesWorkspaceSetup(rows, true);
     let finishRefresh!: () => void;
     stubPhotoFetch(async (url, init) => {
       if (!url.endsWith("/photos/assets/query")) throw new Error(url);
@@ -4122,5 +4251,40 @@ it("names the photo being edited in the metadata panel header", async () => {
   const panel = await screen.findByRole("complementary", { name: "Photo details" });
   expect(within(panel).getByRole("heading", { level: 2, name: photo(1).name })).toBeTruthy();
   expect(within(panel).queryByRole("heading", { name: "Metadata" })).toBeNull();
+  photos.dispose();
+});
+
+it("submits the KEEP/CUT choices displayed in Library when preparation has newer measurements", async () => {
+  const photos = workspaceWithPreparedPhoto();
+  const proposals = [
+    { asset_id: "photo-1", flag: "pick" as const, rationale: "Best frame", confidence: 0.5 },
+    { asset_id: "photo-2", flag: "reject" as const, rationale: "Weaker frame", confidence: 0.5 },
+  ];
+  const stack = { asset_ids: ["photo-1", "photo-2"], representative_id: "photo-1", proposals };
+  photos.items = [
+    { ...photo(1), stack },
+    { ...photo(2), stack },
+  ];
+  photos.selectLoaded();
+  vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue({
+    ...photoPreparation([preparedPhoto(1), preparedPhoto(2)]),
+    proposals: proposals.map((p) => ({ ...p, flag: p.flag === "pick" ? "reject" : "pick" })),
+  });
+  const respond = vi.spyOn(api, "decidePhotoStack").mockResolvedValue({
+    receipt_id: "receipt",
+    before: [preparedPhoto(1)],
+    after: [
+      { ...preparedPhoto(1), revision: 2, values: { ...preparedPhoto(1).values, flag: "pick" } },
+    ],
+  });
+  vi.spyOn(photos, "refresh").mockResolvedValue(true);
+  render(PhotosWorkspace, { photos, cache: { get: vi.fn() } as unknown as PhotoPreviewCache });
+  await waitFor(() => expect(photos.authored.stackTargets).toHaveLength(2));
+  expect(screen.getByLabelText("Suggested keep")).toBeTruthy();
+  await fireEvent.click(screen.getByRole("button", { name: "Accept all" }));
+  await waitFor(() => expect(respond).toHaveBeenCalledOnce());
+  expect(respond.mock.calls[0]![0].responses).toEqual(
+    proposals.map((p) => ({ asset_id: p.asset_id, flag: p.flag, response: "accepted" })),
+  );
   photos.dispose();
 });

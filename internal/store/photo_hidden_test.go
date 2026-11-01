@@ -79,7 +79,7 @@ func TestPhotoHiddenLifecycle(t *testing.T) {
 	asset, err = s.PhotoAssetByID(ctx, asset.ID)
 	require.NoError(t, err)
 	assert.Nil(t, asset.HiddenAt)
-	require.NoError(t, validatePhotoMetadataState(ctx, s.db, currentStorageSchemaVersion))
+	require.NoError(t, validatePhotoMetadataState(ctx, s.db, currentStorageSchemaVersion, false))
 }
 
 func TestPhotoHiddenPasscodeNormalization(t *testing.T) {
@@ -514,4 +514,22 @@ func TestPhotoHiddenCoverAndPromoteAuthorization(t *testing.T) {
 	asset, err = s.SetPhotoAssetHidden(unlocked, asset.ID, asset.Revision, false)
 	require.NoError(t, err)
 	require.Nil(t, asset.HiddenAt)
+}
+
+func TestPhotoHiddenUnlockLifetimeOverride(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	now := time.Now().UTC()
+	s.photoHiddenNow = func() time.Time { return now }
+	require.NoError(t, s.SetupPhotoHidden(t.Context(), "synthetic-passcode"))
+	settings, err := s.SetPhotoSettings(t.Context(), 1, PhotoSettingsUpdate{HiddenUnlockLifetimeSeconds: new(int64(900))})
+	require.NoError(t, err)
+	_, expiry, err := s.UnlockPhotoHidden(t.Context(), "synthetic-passcode")
+	require.NoError(t, err)
+	require.Equal(t, now.Add(15*time.Minute), expiry)
+	_, err = s.SetPhotoSettings(t.Context(), settings.Revision, PhotoSettingsUpdate{ResetHiddenUnlockLifetime: true})
+	require.NoError(t, err)
+	_, expiry, err = s.UnlockPhotoHidden(t.Context(), "synthetic-passcode")
+	require.NoError(t, err)
+	require.Equal(t, now.Add(5*time.Minute), expiry)
 }

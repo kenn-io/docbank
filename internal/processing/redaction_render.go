@@ -26,8 +26,9 @@ type nativeRedactionHooks struct {
 	beforePackage func(string) error
 }
 type nativeRedactionControls struct {
-	limits nativeRedactionLimits
-	hooks  nativeRedactionHooks
+	limits      nativeRedactionLimits
+	retainPages bool
+	hooks       nativeRedactionHooks
 }
 
 func (service *Service) RenderNativePDF(ctx context.Context, request RedactionRenderRequest,
@@ -97,6 +98,7 @@ func (service *Service) renderNativePDF(ctx context.Context, request RedactionRe
 type renderedNativePDF struct {
 	file   *os.File
 	digest RedactionFileDigest
+	pages  []redactionArtifact
 }
 
 func (p renderedNativePDF) Close() error { return p.file.Close() }
@@ -104,7 +106,11 @@ func (p renderedNativePDF) Close() error { return p.file.Close() }
 func renderRedactionPDF(ctx context.Context, dir string, admitted admittedRedaction,
 	controls nativeRedactionControls,
 ) (result renderedNativePDF, resultErr error) {
-	pages, err := renderRedactionArtifacts(ctx, dir, admitted, controls.limits.png)
+	pageLimit := controls.limits.png
+	if controls.retainPages {
+		pageLimit = min(pageLimit, MaxRedactionPreviewPNGBytes)
+	}
+	pages, err := renderRedactionArtifacts(ctx, dir, admitted, controls.limits.png, pageLimit)
 	if err != nil {
 		return result, err
 	}
@@ -134,7 +140,7 @@ func renderRedactionPDF(ctx context.Context, dir string, admitted admittedRedact
 	}
 	verification := redactionVerification(dir, pages)
 	verification.PDFSHA256 = digest.SHA256
-	if err := pdfproduction.VerifyFresh(ctx, file, digest.Size, verification); err != nil {
+	if err := pdfproduction.VerifyFreshWithRecipe(ctx, file, digest.Size, verification, admitted.review.Recipe); err != nil {
 		return result, fmt.Errorf("%w: %w", ErrRedactionPreparationIntegrity, err)
 	}
 	if controls.hooks.afterVerify != nil {
@@ -142,12 +148,14 @@ func renderRedactionPDF(ctx context.Context, dir string, admitted admittedRedact
 			return result, err
 		}
 	}
-	for _, page := range pages {
-		if err := os.Remove(page.path); err != nil {
-			return result, fmt.Errorf("remove verified page artifact: %w", err)
+	if !controls.retainPages {
+		for _, page := range pages {
+			if err := os.Remove(page.path); err != nil {
+				return result, fmt.Errorf("remove verified page artifact: %w", err)
+			}
 		}
 	}
-	return renderedNativePDF{file: file, digest: digest}, nil
+	return renderedNativePDF{file: file, digest: digest, pages: pages}, nil
 }
 
 func redactionRenderFailure(err error) error {

@@ -202,6 +202,13 @@ func runServe(ctx context.Context) (retErr error) {
 	if err := validateConfiguredWatchStores(cfg, catalogStores); err != nil {
 		return err
 	}
+	watchNames := make([]string, 0, len(cfg.Watches))
+	for _, watch := range cfg.Watches {
+		watchNames = append(watchNames, watch.Name)
+	}
+	if err := s.DeleteWatchSourceAbsencesExcept(sigCtx, watchNames); err != nil {
+		return err
+	}
 	storeSpecs, err := validateConfiguredCheckoutStartup(sigCtx, cfg, catalogStores, func(ctx context.Context, binding config.StoreBindingConfig) error {
 		return validateCheckoutBinding(ctx, s, binding)
 	})
@@ -300,6 +307,13 @@ func runServe(ctx context.Context) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("configuring executable processing profiles: %w", err)
 	}
+	for _, watch := range cfg.Watches {
+		if watch.Profile != "" {
+			if _, ok := processingProfiles[watch.Profile]; !ok {
+				return fmt.Errorf("watch %q profile %q has no executable runtime", watch.Name, watch.Profile)
+			}
+		}
+	}
 	suppliedName, suppliedProfile, err := processing.NewSuppliedMediaProfile(s, blobs, "daemon:operator")
 	if err != nil {
 		return fmt.Errorf("configuring supplied media profile: %w", err)
@@ -366,6 +380,14 @@ func runServe(ctx context.Context) (retErr error) {
 			return processingService.PhotoDescriptionBackfill(ctx, logger, renditionWorkers)
 		}); err != nil {
 			return fmt.Errorf("starting photo descriptions: %w", err)
+		}
+	}
+
+	if processingService.HasPhotoFaceDetectionProfiles() {
+		if err := jobSupervisor.Start("process:photo-face-detection", func(ctx context.Context) error {
+			return processingService.PhotoFaceDetectionBackfill(ctx, logger, renditionWorkers)
+		}); err != nil {
+			return fmt.Errorf("starting photo face detection: %w", err)
 		}
 	}
 	if err := startEmbeddingWorkerIfReady(jobSupervisor, embeddingRuntimeRegistry,
@@ -521,6 +543,11 @@ func runServe(ctx context.Context) (retErr error) {
 		if err != nil {
 			return fmt.Errorf("configuring watch %q: %w", watchConfig.Name, err)
 		}
+		if watchConfig.Profile != "" {
+			watcher.AfterImport = func(ctx context.Context, node store.Node) error {
+				return processingService.AdmitImportedRendition(ctx, node, watchConfig.Profile)
+			}
+		}
 		if err := jobSupervisor.Start("watch:"+watchConfig.Name, watcher.Run); err != nil {
 			return fmt.Errorf("starting watch %q: %w", watchConfig.Name, err)
 		}
@@ -573,11 +600,16 @@ func runServe(ctx context.Context) (retErr error) {
 		}
 	}
 
+	tracker := api.NewActivityTracker()
+	backupScheduleWake := make(chan struct{}, 1)
+	if err := api.StartBackupSchedule(ctx, api.Deps{Store: s, Blobs: blobs, VaultRoot: layout.Root, Cfg: cfg, Gate: operationGate, Logger: logger, Jobs: jobSupervisor, Tracker: tracker, BackupScheduleWake: backupScheduleWake}); err != nil {
+		return fmt.Errorf("starting scheduled backups: %w", err)
+	}
+
 	var stopOnce sync.Once
 	stopCh := make(chan struct{})
 	stop := func() { stopOnce.Do(func() { close(stopCh) }) }
 
-	tracker := api.NewActivityTracker()
 	photoImports := api.NewPhotoImportRunner(api.Deps{Store: s, Blobs: blobs, Gate: operationGate, Tracker: tracker})
 	if err := photoImports.Resume(sigCtx, jobSupervisor); err != nil {
 		return err
@@ -600,7 +632,8 @@ func runServe(ctx context.Context) (retErr error) {
 		RequestEmailPDF:           requestEmailPDF,
 		EmailPDFUnavailableReason: emailPDFUnavailableReason,
 		StartedAt:                 time.Now(), ShutdownToken: shutdownToken, Shutdown: stop, Tracker: tracker,
-		Jobs: jobSupervisor, Gate: operationGate, WebURL: webURL, BlobRegistry: blobRegistry,
+		BackupScheduleWake: backupScheduleWake,
+		Jobs:               jobSupervisor, Gate: operationGate, WebURL: webURL, BlobRegistry: blobRegistry,
 		WebLoginEnabled: webLoginEnabled, APIAddress: addr,
 		Processing: processingService, EnsureEmail: processing.EnsureEmailTarget,
 		PublishEmailDocuments: processing.PublishEmailDocuments,

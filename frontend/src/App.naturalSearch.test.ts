@@ -522,6 +522,44 @@ it("shows base rows while reranking and applies the validated order", async () =
   expect(harness.postBodies[1]?.rerank).toBe(true);
 });
 
+it("returns to the results when reranking is toggled on a tool page", async () => {
+  const file = node(2, "base.txt", baseVersion);
+  const harness = installHarness({
+    profiles: [
+      {
+        name: "private",
+        fingerprint: "a".repeat(64),
+        rendition: true,
+        embedding_bindings: ["embed"],
+        reranking_available: true,
+      },
+    ],
+    files: [file],
+    baseReport: report("hybrid", [result(file, 1, "base excerpt")]),
+    rerankReport: report("hybrid", [result(file, 1, "reranked excerpt")], {
+      outcome: "applied",
+      candidate_count: 1,
+    }),
+  });
+  const search = harness.fetchMock.getMockImplementation()!;
+  harness.fetchMock.mockImplementation(async (input, init) =>
+    String(input).startsWith("/api/v1/trash?")
+      ? json({ items: [], total: 0, limit: 1000, offset: 0 })
+      : search(input, init),
+  );
+  render(App);
+  await screen.findAllByText("base.txt");
+  await submitSearch("annual report");
+  expect(await screen.findByText("base excerpt")).toBeTruthy();
+  await fireEvent.click(screen.getByRole("button", { name: "Recoverable trash" }));
+  await screen.findByRole("main", { name: "Trash" });
+
+  await fireEvent.click(screen.getByRole("checkbox", { name: "Rerank results" }));
+  expect(await screen.findByText("reranked excerpt")).toBeTruthy();
+  expect(location.pathname).toBe("/");
+  expect(screen.queryByRole("main", { name: "Trash" })).toBeNull();
+});
+
 it("refreshes live nodes before replacing rows with reranked results", async () => {
   const file = node(2, "base.txt", baseVersion);
   const renamed = { ...file, name: "renamed.txt", path: "/renamed.txt" };

@@ -70,7 +70,7 @@ func TestPhotoSetLifecycle(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, asset, actual)
 	}
-	require.NoError(t, validatePhotoMetadataState(ctx, s.db, currentStorageSchemaVersion))
+	require.NoError(t, validatePhotoMetadataState(ctx, s.db, currentStorageSchemaVersion, false))
 }
 
 func TestPhotoSetSelectionRollback(t *testing.T) {
@@ -172,7 +172,7 @@ func TestPhotoSetQueryReceiptsCoverCompleteLargeScope(t *testing.T) {
 	summary, err = s.PhotoSet(ctx, set.ID, "")
 	require.NoError(t, err)
 	require.Zero(t, summary.MemberCount)
-	require.NoError(t, validatePhotoMetadataState(ctx, s.db, currentStorageSchemaVersion))
+	require.NoError(t, validatePhotoMetadataState(ctx, s.db, currentStorageSchemaVersion, false))
 }
 
 func TestPhotoSetBrowseFiltersVisibilityAndCursor(t *testing.T) {

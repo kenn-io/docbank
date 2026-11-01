@@ -1082,7 +1082,7 @@ func TestPhotoCheckoutPublicationOrdersEligibilityMutationsAndRecordsCancellatio
 					select {
 					case err := <-changed:
 						t.Fatalf("eligibility changed during installation: %v", err)
-					case <-time.After(50 * time.Millisecond): //nolint:kennlint // the tree RWMutex has no waiter signal
+					case <-time.After(50 * time.Millisecond): //nolint:kennlint // deadlinetest: the tree RWMutex has no waiter signal
 					}
 				}
 				_, err := s.SetPhotoAssetExcluded(ctx, other.ID, other.Revision, true)

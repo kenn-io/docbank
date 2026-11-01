@@ -208,7 +208,8 @@ docbank photos faces withdraw-rejection <content-version-id> --face ID --person 
 docbank photos faces undo <receipt-id>
 docbank photos settings show
 docbank photos settings set [raw|image] [--burst-gap-seconds SECONDS] [--revision REV]
-docbank photos settings reset [--revision REV]
+docbank photos settings set <key> <value> [--revision REV]
+docbank photos settings reset [key] [--revision REV]
 docbank photos hidden setup|change|disable|lock|state|reset
 docbank photos assets hide <asset-id> [--revision REV]
 docbank photos assets unhide <asset-id|node-selector> [--revision REV]
@@ -233,6 +234,8 @@ instead. `inspect` also accepts an `id:N` or path selector for a member file.
 image member and never become the display member. `timeline` counts the photos
 a QueryV1 scope selects by recorded capture day; see
 [Count photos by capture day](usage/photos.md#count-photos-by-capture-day).
+
+`photos settings set hidden_unlock_lifetime <duration>` changes how long future Hidden unlocks last, using Go duration syntax such as `15m`, and `photos settings reset hidden_unlock_lifetime` restores five minutes. Backup schedule overrides use [`backup schedule`](#docbank-backup). Browser sessions cannot write either.
 
 Photo assets, albums, memberships, settings, receipts, and checkout definitions are included in JSONL backup and restore. Sidecars require a selected eligible original; name errors skip the whole affected photo. The estimate and the checkout in create, status, and list JSON report up to 20 `skipped_photos` details and the total `skipped_photo_count`; status and list also print a short skip summary to stderr. A selection with no remaining files fails. Failed and cancelled checkouts release unpublished source holds and destination reservations. Published or uncertain copies retain their bases until `photos checkout retire <checkout-id>` releases all holds. Retirement preserves copies and history. Queued or running work keeps retirement pending until it finishes or is cancelled; if the lane is paused, resume or cancel the job through Jobs first.
 
@@ -329,11 +332,12 @@ stderr. Human error text remains explanatory and may change.
 |------|---------|----------------|
 | `0` | Success, including an empty result or a dry run that found nothing | Continue |
 | `1` | General operational failure, such as local I/O, transport, daemon, or an otherwise unclassified conflict | Report or inspect stderr |
-| `2` | Invalid command usage, arguments, flag combinations, values, or request validation | Correct the invocation |
+| `2` | Invalid command usage, arguments, flag combinations, values, request validation, or a backup repository that belongs to another vault | Correct the invocation or select this vault's repository |
 | `3` | The daemon returned `not_found` for the requested vault object | Refresh names or identities |
-| `4` | Stale optimistic state: a revision or audit enrollment preview no longer matches | Re-read, reconsider, and retry deliberately |
+| `4` | Stale optimistic state: a revision, audit enrollment preview, or backup claim preview no longer matches | Re-read, reconsider, and retry deliberately |
 | `5` | Vault maintenance is active, or a vault, backup repository, or physical pack resource is busy or locked | Wait and retry, or release the known owner; do not blindly force-unlock |
 | `6` | A completed verification reported integrity findings, or a content stream failed terminal size/hash/digest proof | Do not trust or publish the affected bytes |
+| `7` | The backup repository has history this vault installation has not claimed, as after upgrading or restoring | Review it with `docbank backup claim`, then confirm |
 
 Integrity commands may write their complete human or JSON report before
 exiting `6`. The report is evidence, not a success indication. Failures that
@@ -977,7 +981,7 @@ Selecting a photo member restores its whole group. Companions inside trashed fol
 ## docbank search
 
 ```
-docbank search [<query>...] [--tag <name-or-id>] [--mime-type <type/subtype>] [--under <path-or-id>] [--modified-since <timestamp>] [--modified-before <timestamp>] [--fuzzy] [--limit <n>] [--agent | --json]
+docbank search [<query>...] [--tag <name-or-id>] [--mime-type <type/subtype>] [--under <path-or-id>] [--modified-since <timestamp>] [--modified-before <timestamp>] [--source-present] [--fuzzy] [--limit <n>] [--agent | --json]
 ```
 
 Query words are joined. When a processing profile has a query embedding
@@ -1180,7 +1184,7 @@ version 1 request format, date choices, counts, and retention limits.
 ## docbank processing
 
 ```
-docbank processing vision-fingerprints --model <model> --trust-boundary <boundary> --endpoint <origin> --deployment-fingerprint <sha256>
+docbank processing vision-fingerprints [--task <descriptor-id>] --model <model> --trust-boundary <boundary> --endpoint <origin> --deployment-fingerprint <sha256>
 docbank processing profiles [--json]
 docbank processing probe --profile <name> --seeds <dir> [--overwrite]
 docbank processing coverage <version-uuid> --profile <name> [--json]
@@ -1189,7 +1193,7 @@ docbank processing build <path-or-id> --profile <name> --plan-fingerprint <sha25
 docbank processing status <job-id> [--json]
 ```
 
-`vision-fingerprints` prints the descriptor and disclosure fingerprints for a photo description profile. It runs locally without a daemon or provider credential. See [Photo descriptions](configuration.md#photo-descriptions).
+`vision-fingerprints` prints the descriptor and disclosure fingerprints for a vision profile. `--task` defaults to `compatible-vision.describe-v1`; use `compatible-vision.detect-faces-v1` for automatic face detection. It runs locally without a daemon or provider credential. See [Photo descriptions](configuration.md#photo-descriptions) and [Automatic face detection](configuration.md#automatic-face-detection).
 
 `probe` runs Mistral capability checks locally with the processing profile's policy, credential, and egress settings. It writes the manifest to the rendition runtime's configured `capability_manifest` path. Supply five synthetic native seeds and use `--overwrite` to replace an existing manifest. After saving, it prints the profile's `descriptor_fingerprint` and `disclosure_fingerprint`. See [Mistral OCR configuration](configuration.md#document-ocr-with-mistral).
 
@@ -1233,6 +1237,7 @@ docbank redaction reserve <preparation.json> <masks.json> <review.json>
 docbank redaction render <preparation.json> <masks.json> <review.json> <output.zip>
   [--allocation <uuid>] [--overwrite] [--json]
 docbank redaction verify <preparation.json> <masks.json> <review.json> <archive.zip> [--json]
+docbank redaction package <selection.json> <recipient.zip> [--json]
 ```
 
 Prepare, resolve and render use the daemon to inspect and redact a retained
@@ -1266,6 +1271,12 @@ unmasked image content with the source or authenticate the producer. Compare the
 digest with the render-time value. See
 [Check and retain a saved archive](usage/document-processing.md#check-and-retain-a-saved-archive)
 for limits, exit codes and recovery.
+
+Package checks every selected review before downloading completed numbered PDFs,
+then saves their unchanged bytes, sanitized text, DAT, OPT, mapping and receipt in
+one recipient ZIP. It never overwrites the destination. See
+[Package completed numbered PDFs](usage/document-processing.md#package-completed-numbered-pdfs-for-a-recipient)
+for the selection format, limits and recipient import commands.
 
 ## docbank rendition
 
@@ -1574,6 +1585,7 @@ problem was found.
 
 ```text
 docbank backup init [--repo <dir>] [--json]
+docbank backup claim [--repo <dir>] [--yes] [--json]
 docbank backup create [--repo <dir>] [--tag <label>] [--jobs <n>]
                       [--force-unlock] [--progress auto|bar|plain] [--json]
 docbank backup list [--repo <dir>] [--json]
@@ -1586,6 +1598,9 @@ docbank backup restore [<snapshot>] --target <dir> [--repo <dir>] [--overwrite]
 docbank backup forget <snapshot> [<snapshot>...] [--repo <dir>] [--dry-run]
                       [--allow-empty] [--force-unlock] [--json]
 docbank backup prune [--repo <dir>] [--dry-run] [--force-unlock] [--json]
+docbank backup schedule show
+docbank backup schedule set <interval|keep_last> <value> [--revision REV]
+docbank backup schedule reset <interval|keep_last> [--revision REV]
 ```
 
 Creates, lists, verifies, restores, and removes recovery points in a Kit backup
@@ -1595,12 +1610,23 @@ repository and reclaims unused backup storage. Supply `--repo` or configure
 | Command | Behavior |
 |---------|----------|
 | `init` | Initialize a repository |
+| `claim` | Preview and confirm adoption of existing repository history; `--yes` confirms without a prompt |
 | `create` | Capture a verified snapshot using logical JSONL metadata |
 | `list` | List snapshot history |
 | `verify` | Check the latest snapshot, a named snapshot, or every snapshot with `--all`; `--quick` skips content reads |
 | `restore` | Restore the latest or a named snapshot to a separate `--target` |
 | `forget` | Remove exact snapshot IDs; `--allow-empty` permits removing the last recovery point |
 | `prune` | Remove unused packs and rewrite eligible partly live packs; `--dry-run` reports the plan |
+| `schedule` | Show, override, or reset the scheduled interval and `keep_last` without a restart; output is JSON |
+
+`schedule set interval` takes a Go duration such as `24h`, where `0` disables
+scheduling. `schedule reset` returns a key to `config.toml`. Writes read the
+current settings revision and retry once if another write changes it first;
+`--revision` fails with exit code 4 instead.
+
+`claim --json` writes the final claim object with `owned` true or false to
+stdout. Previews and prompts go to stderr. Confirmation applies only to the
+previewed history; a repository that changed after the preview exits `4`.
 
 `create` pauses mutations briefly to fix the metadata view for the snapshot.
 It then streams loose or packed content while normal daemon work resumes.
@@ -1820,11 +1846,12 @@ docbank watch list [--json]
 Lists the daemon's effective watched-inbox configuration in stable name order:
 the machine-local source, virtual-tree destination, complete settle window,
 minimum source age (`0s` when disabled), scan interval, exclusion count, and
-current runner state. A waiting watcher shows `idle`; it shows `running` while
+current runner state. The final `PROCESSING` column shows the profile and any consent wait or status error, or `-` without a profile.
+A waiting watcher shows `idle`; it shows `running` while
 ingesting a file. Human output quotes source and destination paths so
 terminal control characters cannot disguise them. `--json` includes the
-complete exclusion rules and the corresponding job record for agents and
-automation.
+complete exclusion rules, the corresponding job record, and optional `processing` status for agents and automation.
+See the [watch API](architecture/http-api.md#background-job-status) for its fields.
 
 This command is inspection only. Edit `config.toml` and restart the daemon to
 change a watch.

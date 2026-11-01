@@ -115,8 +115,8 @@ unchanged.
 ## Native-PDF preparation
 
 `POST /api/v1/redaction/prepare` inspects one exact retained PDF selected by
-node ID, node revision and source version/hash/size. The API key is required;
-browser sessions are not admitted. The CLI entry point is
+node ID, node revision and source version/hash/size. API keys and browser
+sessions are admitted. The CLI entry point is
 [`redaction prepare`](../usage/document-processing.md#prepare-a-native-pdf).
 This read creates no jobs, attachments, stored maps or output PDFs.
 
@@ -227,6 +227,26 @@ files do not depend on the verifying Go toolchain's encoder. This does not
 eliminate hidden variation in compression choices. Render-time `VerifyFresh`
 keeps its separate byte-exact comparison against independently staged PNG rows.
 
+Font storage is selected by the qualified review recipe before parsing the PDF.
+Writer v2 requires the original raw font object; v3 requires `FlateDecode`, with
+an exact decoded length and the same pinned font SHA-256. A v3 font stream is
+limited to 10 MiB, contains exactly one zlib stream, and must have no preset
+dictionary or trailing bytes. Valid alternate compression settings are accepted;
+verification does not depend on a particular Go encoder. A raw v3 font or a
+compressed v2 font is an integrity failure. Supported historical writers are
+listed in `internal/pdfproduction/dependencies.json`.
+
+New resolve calls use v3. Existing v2 deliveries remain fully verifiable; v2
+rendering is reserved for allocations already created with that recipe. A new
+reservation or plain render from a v2 review returns `redaction_review_changed`
+(exit 4), with advice to resolve again. Reservation replay precedes this check,
+so pending v2 allocations keep their review digest and labels.
+Client and service admission reconstruct the request's review digest against the
+two qualified native recipes. Allocation admission also checks the rebuilt
+numbered recipe against the ledger before capture. No failed PDF check is retried
+under another format. The writer retains one immutable compressed-font buffer
+per process; request cancellation and memory refusals are not cached.
+
 The offline result remains the checked receipt plus the whole-ZIP size and SHA-256.
 It establishes reviewed mask and text agreement, but cannot establish that
 unmasked image content matches the source or authenticate the producer. Detecting
@@ -273,6 +293,80 @@ context; memory refusal is `redaction_memory`, inner deadline is
 `redaction_worker_timeout`, and unexplained worker cancellation is a failure.
 Expected 503 refusals are logged at informational level; 500 failures retain
 their diagnostic cause.
+
+### Temporary browser redaction previews
+
+Browser review uses the native capture, resolve, render, burn, write and
+`VerifyFreshWithRecipe` pipeline. Preview creation retains the verified PNGs
+while plain and numbered rendering still delete them before packaging. It
+publishes only after the ZIP is complete and the standalone PDF is closed and
+removed. There is no second render for display or download.
+
+Authenticated preview routes are under `/api/v1/redaction/previews`:
+
+| Request | Result |
+|---|---|
+| `POST /previews` | Preparation, masks and review digest produce one owner-bound preview; allocation fields are refused. |
+| `GET /previews/{id}` | Bounded manifest with source/review/archive identities, page frame and PNG digests, pixel dimensions and text byte ranges. |
+| `GET /previews/{id}/pages/{page}` | One verified PNG, at most 128 MiB. |
+| `GET /previews/{id}/text` | Sanitized text read directly from the stored ZIP entry. |
+| `GET /previews/{id}/bundle` | ZIP for API-key clients. Browser sessions must use a ticket. |
+| `POST /previews/{id}/download` | Literal confirmation plus the review and archive digests produce a one-use, two-minute browser ticket. |
+| `DELETE /previews/{id}` | Retire this owner's preview. |
+| `DELETE /previews` | Cancel this owner's in-flight creation and preview transfers; retire its ready preview. Other owners and browser-session resources are unchanged. |
+
+The random 48-hex ID is never authority by itself. Unknown, expired, retired and
+other-owner previews return 410 `redaction_preview_unavailable`. Confirmation
+mismatch is 409 `redaction_review_changed`; an occupied cache is 503
+`redaction_preview_busy`. Only prepare, resolve and these preview operations are
+added to browser admission. Query parameters are refused. Direct render and
+reservations remain API-key-only.
+
+One mutex protects a global building, ready or retired entry awaiting readers or
+cleanup. Ready publication is fenced against session revocation. It releases the native-PDF
+slot and retains the operation directory for a fixed 30-minute lifetime. Every
+admitted reader owns a file handle and pins the directory; discard and expiry
+refuse new readers but let admitted reads finish. Revocation and service stop
+cancel creation and active readers, including blocked socket writes. Unused
+tickets hold no pin or copy. Cleanup failure retains the directory and capacity,
+including after failed creation. Once a retired preview's creation and readers
+finish, it releases its lifecycle registration even if deletion fails, so shutdown
+can drain. Explicit owner-scoped discard returns cleanup errors so the editor can
+retry; logout and shutdown cleanup log failures.
+Startup spool recovery removes abandoned `native-pdf-*` directories.
+
+Prepare and resolve retain finite 60-second body/request deadlines. Preview
+creation has a finite 60-second body deadline, cleared after decoding, and a
+ten-minute work deadline. Binary delivery uses a ten-minute deadline, including
+socket writes. All responses are private and non-cacheable. The shared browser
+transport treats prepare, resolve and preview creation as read operations.
+
+Preview storage stays under the same private spool directory and operation
+ceiling. PNGs are capped at 128 MiB each and 1 GiB total; the ZIP at 544 MiB.
+
+| Phase | Maximum simultaneous file payload |
+|---|---|
+| Inspection and rendering | 1,088 MiB: PNGs and source copy |
+| Writing or verification | 2,048 MiB: PNGs, PDF and private PDF copy |
+| Packaging | 2,080 MiB plus bounded text/receipt: PNGs, PDF and ZIP |
+| Ready | 1,568 MiB: PNGs and ZIP only |
+
+One ready preview plus another native operation may use about 3.7 GiB. These
+are file-payload bounds, not a global disk quota; tmpfs space is outside process
+RSS accounting. Preview handles, masks and reviews are not persisted to SQLite.
+The browser keeps one displayed image URL, verifies its length/hash and PNG
+header before decode, and binds its frame to preparation before enabling drawing.
+The editor closes on pagehide and requests owner-scoped preview cancellation,
+including when creation has not returned a handle. It does not revoke the
+browser session or cancel unrelated exports and imports. A cached page returns
+with the editor closed. Lost cleanup messages rely on expiry.
+Canceled or ambiguous creation uses a fresh request to the owner-scoped discard
+route. The editor preserves masks and requires acknowledged cleanup before
+another creation attempt; a failed cleanup can be retried separately.
+The browser retains a preview handle until the server reports it unavailable or
+acknowledges discard; its wall clock does not establish expiry. Returning to
+original pages revalidates the source and reloads a verified image with the
+current node revision, preserving masks through metadata-only changes.
 
 ### Retained numbered native PDFs
 
@@ -344,7 +438,10 @@ The retained object is the PDF, not the ZIP or review inputs. Backup and restore
 retain its artifact records, number lookup and snapshot source. The original
 remains retained indefinitely, including after trash empty and GC; this slice
 has no snapshot release or range-void path. Each fresh PDF embeds the full
-qualified font, about 9.6 MB per document. See the
+qualified font. New reviews use writer v3, which stores that font with PDF's
+`FlateDecode` filter: about 6 MB per sparse document instead of 9.6 MB. Image-heavy
+files save the same approximately 3.62 MB of font storage, not a fixed percentage.
+The decoded font identity and glyph coverage are unchanged. See the
 [numbered-delivery guide](../usage/document-processing.md#deliver-one-reviewed-pdf-with-bates-numbers)
 for consent, retries and the distinct verification claims.
 
@@ -431,3 +528,24 @@ that alias is unused on the source page. Every gap still needs complete masking.
 Preparation is an inspection step. It does not apply masks, approve a review,
 retain redaction outputs, or provide restart recovery or numbering.
 The saved-PDF qualification uses an upstream PDFium reader only in tests.
+
+### Recipient packages of completed deliveries
+
+The local `redaction package` command reads completed numbered artifacts through
+the existing daemon API and fully verifies each against a supplied review. It
+never captures source content or starts a render. All recorded metadata and local
+reviews are admitted before the first content request, including the size and
+SHA-256 of each review's sanitized text. Assembly re-reads each review and compares
+its pinned digest before calling the checked downloader. Both the writer and the
+final package check require the text to match its preflight identity.
+Only one staged PDF exists at a time, and the checked handle supplies the ZIP.
+
+The `native-pdf-recipient-package/v1` receipt binds public delivery identities,
+labels, review digests and file hashes. The ZIP uses stored entries with fixed DOS
+dates, no extra fields or comments, PDF/text pairs followed by DAT, OPT and the two
+root JSON files. Before atomic no-replace publication, an independent checker
+reads every entry through CRC and SHA-256 verification, parses DAT and OPT, applies
+the mapping and compares the resulting correspondence with admitted documents.
+No database rows or new API routes are needed. The existing importer owns received
+label authority. [The operator guide](../usage/document-processing.md#package-completed-numbered-pdfs-for-a-recipient)
+owns limits, staging, recovery and recipient instructions.

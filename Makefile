@@ -79,8 +79,8 @@ test:
 .PHONY: test-pg
 test-pg:
 	@test -n "$${DOCBANK_TEST_POSTGRES_DSN:-}" || (echo 'Set DOCBANK_TEST_POSTGRES_DSN to a disposable PostgreSQL test server' >&2; exit 1)
-	go test -race -count=1 -timeout 3m -tags "$(BUILD_TAGS)" ./internal/store/pgschema
-	go test -race -count=1 -timeout 3m -tags "$(BUILD_TAGS)" ./internal/store -run 'Postgres$$'
+	go test -race -parallel 4 -count=1 -timeout 3m -tags "$(BUILD_TAGS)" ./internal/store/pgschema
+	go test -race -parallel 4 -count=1 -timeout 3m -tags "$(BUILD_TAGS)" ./internal/store -run 'Postgres$$'
 
 test-v:
 	go test -timeout 20m -tags "$(BUILD_TAGS)" -v ./...
@@ -89,7 +89,7 @@ openapi:
 	go run -tags "$(BUILD_TAGS)" ./cmd/docbank openapi > internal/api/openapi.yaml
 
 generate-api: openapi generate-photo-policy
-	go run github.com/doordash-oss/oapi-codegen-dd/v3/cmd/oapi-codegen@v3.75.15 --config scripts/oapi-codegen/config.yaml internal/api/openapi.yaml
+	go run github.com/doordash-oss/oapi-codegen-dd/v3/cmd/oapi-codegen@v3.76.5 --config scripts/oapi-codegen/config.yaml internal/api/openapi.yaml
 	cd frontend && npm run generate:api
 
 generate-photo-policy:
@@ -114,6 +114,14 @@ frontend-dev:
 
 report-export-browser-test: frontend
 	node frontend/screenshots/report-export.run.mjs
+
+.PHONY: bates-recovery-browser-test
+bates-recovery-browser-test: frontend
+	node frontend/screenshots/bates-recovery.run.mjs
+
+.PHONY: redaction-review-browser-test
+redaction-review-browser-test: frontend
+	node frontend/screenshots/redaction-review.run.mjs
 
 photo-map-browser-test: frontend
 	go build -tags "$(BUILD_TAGS) screenshot_tiles" -o bin/docbank-map$(if $(filter Windows_NT,$(OS)),.exe) ./cmd/docbank
@@ -190,4 +198,33 @@ docs-deploy:
 	./scripts/deploy-docs.sh
 
 help:
-	@echo "Targets: build homebrew install clean test test-pg test-v openapi generate-api generate-photo-policy frontend frontend-test frontend-dev report-export-browser-test photo-map-browser-test photo-tabs-browser-test docs-screenshots fmt lint lint-ci tidy install-hooks docs-install docs-subpath-test docs-assets-test docs-assets-sync docs-build docs-serve docs-link docs-deploy"
+	@echo "Targets: build homebrew install clean test test-pg test-v openapi generate-api generate-photo-policy frontend frontend-test frontend-dev report-export-browser-test redaction-review-browser-test photo-map-browser-test photo-tabs-browser-test docs-screenshots fmt lint lint-ci tidy install-hooks docs-install docs-subpath-test docs-assets-test docs-assets-sync docs-build docs-serve docs-link docs-deploy"
+
+# Workflow actions run at the commits in .github/workflows/actions.lock,
+# including actions that other actions call. The organization requires
+# SHA-pinned actions, and the lockfile is what satisfies that for nested refs.
+# The version comes from constraints.ghActionsLock in renovate.json.
+# Renovate uses the same version when it regenerates the lockfile after
+# bumping an action.
+GH_ACTIONS_LOCK_VERSION ?= $(shell sed -nE "s/^[[:space:]]*\"?ghActionsLock\"?:[[:space:]]*[\"']([^\"']*)[\"'].*/\1/p" renovate.json)
+
+.PHONY: gh-actions-lock-install actions-lock actions-lock-check-local actions-lock-check
+
+gh-actions-lock-install:
+	@test -n "$(GH_ACTIONS_LOCK_VERSION)" || { echo "constraints.ghActionsLock is missing from renovate.json" >&2; exit 1; }
+	@if [ "$$(gh actions-lock --version 2>/dev/null)" != "actions-lock version $(GH_ACTIONS_LOCK_VERSION)" ]; then \
+		gh extension remove actions-lock >/dev/null 2>&1 || true; \
+		gh extension install github/gh-actions-lock --pin $(GH_ACTIONS_LOCK_VERSION); \
+	fi
+
+# Lock every workflow action after adding or bumping a `uses:` line
+actions-lock: gh-actions-lock-install
+	gh actions-lock --no-interactive
+
+# Offline check that every workflow action has a lockfile entry
+actions-lock-check-local: gh-actions-lock-install
+	gh actions-lock --verify-local
+
+# Network check that the lockfile is complete and every locked commit is still valid
+actions-lock-check: gh-actions-lock-install
+	gh actions-lock --verify

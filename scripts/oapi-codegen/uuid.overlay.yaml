@@ -1,0 +1,16 @@
+overlay: 1.0.0
+info:
+  title: Standard library UUIDs
+  version: 1.0.0
+actions:
+  # Generate format: uuid as the standard library uuid.UUID instead of the
+  # generator's default github.com/google/uuid.
+  - target: $..[?(@.format == 'uuid')]
+    update:
+      x-go-type: uuid.UUID
+      x-go-type-import:
+        path: uuid
+  # Preview text is a byte stream, not a JSON-encoded runtime.File.
+  - target: $.paths['/api/v1/redaction/previews/{id}/text'].get.responses['200'].content['text/plain'].schema
+    update:
+      x-go-type: '[]byte'

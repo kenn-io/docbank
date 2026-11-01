@@ -254,6 +254,7 @@ func validateEmbeddingMetadataState(ctx context.Context, tx metadataQuerier) (re
 		return fmt.Errorf("listing embedding heads for validation: %w", err)
 	}
 	defer func() { retErr = errors.Join(retErr, headRows.Close()) }()
+	var heads []EmbeddingHeadRecord
 	for headRows.Next() {
 		var record EmbeddingHeadRecord
 		if err := headRows.Scan(&record.Key.ContentVersionID, &record.Key.BindingID,
@@ -264,6 +265,16 @@ func validateEmbeddingMetadataState(ctx context.Context, tx metadataQuerier) (re
 		if err := validateEmbeddingHeadRecord(record); err != nil {
 			return fmt.Errorf("validating embedding head: %w", err)
 		}
+		heads = append(heads, record)
+	}
+	if err := headRows.Err(); err != nil {
+		return fmt.Errorf("iterating embedding heads for validation: %w", err)
+	}
+	if err := headRows.Close(); err != nil {
+		return fmt.Errorf("closing embedding heads after validation: %w", err)
+	}
+
+	for _, record := range heads {
 		set, err := loadEmbeddingSetTx(ctx, tx, record.SetID)
 		if err != nil {
 			return err
@@ -276,12 +287,6 @@ func validateEmbeddingMetadataState(ctx context.Context, tx metadataQuerier) (re
 		if !eligible {
 			return errors.New("embedding head attachment is not current")
 		}
-	}
-	if err := headRows.Err(); err != nil {
-		return fmt.Errorf("iterating embedding heads for validation: %w", err)
-	}
-	if err := headRows.Close(); err != nil {
-		return fmt.Errorf("closing embedding heads after validation: %w", err)
 	}
 
 	failureRows, err := tx.QueryContext(ctx, `SELECT content_version_id,profile_fingerprint,
@@ -417,7 +422,7 @@ func validateRestoredEmbeddingAuthority(ctx context.Context, tx metadataQuerier,
 	}
 	if set.InputKind == document.EmbeddingInputOriginalFile {
 		var sourceHash string
-		if err := tx.QueryRowContext(ctx, `SELECT blob_hash FROM content_versions WHERE version_id=?`, set.ContentVersionID).Scan(&sourceHash); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT blob_hash FROM content_versions WHERE version_id=$1`, set.ContentVersionID).Scan(&sourceHash); err != nil {
 			return err
 		}
 		if set.InputGeneration.GenerationBlobHash != "" || set.InputGeneration.GenerationEncodedSize != 0 ||
@@ -437,8 +442,8 @@ func validateRestoredEmbeddingAuthority(ctx context.Context, tx metadataQuerier,
 	}
 	var evidenceChecksum string
 	if err := tx.QueryRowContext(ctx, `SELECT b.evidence_checksum FROM rendition_attachments a
-		JOIN rendition_builds b ON b.build_id=a.build_id WHERE a.attachment_id=?
-		AND a.content_version_id=? AND a.profile_fingerprint=?`, set.InputGeneration.AttachmentID,
+		JOIN rendition_builds b ON b.build_id=a.build_id WHERE a.attachment_id=$1
+		AND a.content_version_id=$2 AND a.profile_fingerprint=$3`, set.InputGeneration.AttachmentID,
 		set.ContentVersionID, set.ProcessingProfileFingerprint).Scan(&evidenceChecksum); err != nil {
 		return err
 	}

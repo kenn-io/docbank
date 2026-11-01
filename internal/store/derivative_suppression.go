@@ -258,7 +258,7 @@ func legacyDerivativeSuppressedTx(
 	var suppressed bool
 	err := tx.QueryRowContext(ctx, `SELECT EXISTS(
 		SELECT 1 FROM derivative_purge_suppressions
-		WHERE source_sha256=? AND profile_fingerprint=? AND active=1
+		WHERE source_sha256=$1 AND profile_fingerprint=$2 AND active=1
 	)`, sourceSHA256, derivativeAttachmentSuppressionScope(
 		contentVersionID, profileFingerprint)).Scan(&suppressed)
 	return suppressed, err

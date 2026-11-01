@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -59,6 +60,12 @@ func browserSessionRequest(ctx context.Context) bool {
 // timeout-exempt: long-running maintenance, integrity reads, bulk ingest, and
 // export preparation.
 func timeoutExempt(method, path string) bool {
+	if path == redactionPreviewsPath && method == http.MethodPost {
+		return true
+	}
+	if strings.HasPrefix(path, redactionPreviewsPath+"/") && method == http.MethodGet && (strings.Contains(path, "/pages/") || strings.HasSuffix(path, "/text") || strings.HasSuffix(path, "/bundle")) {
+		return true
+	}
 	if method == http.MethodGet && path == photoEventsPath || packageContainerTimeoutExempt(method, path) {
 		return true
 	}
@@ -72,7 +79,7 @@ func timeoutExempt(method, path string) bool {
 		"/api/v1/exports/sources", "/api/v1/exports/plans", "/api/v1/bates/allocations", "/api/v1/bates/exports",
 		"/api/v1/storage/pack", "/api/v1/storage/repack", "/api/v1/uploads",
 		"/api/v1/backup/snapshots", "/api/v1/backup/snapshots/stream",
-		"/api/v1/backup/forget", "/api/v1/backup/prune",
+		"/api/v1/backup/forget", "/api/v1/backup/prune", "/api/v1/backup/claim",
 		"/api/v1/backup/verify", "/api/v1/backup/verify/stream",
 		"/api/v1/backup/restore", "/api/v1/backup/restore/stream",
 		webDownloadPreparePath, webDownloadFilePath, webUploadSocketPath:
@@ -220,6 +227,9 @@ func clearLongRunningBodyReadDeadlines(api huma.API) {
 // web assets carry no vault data. Everything else requires the key —
 // the daemon always has one; see NewServer.
 func authExempt(path string) bool {
+	if slices.Contains(documentPages, path) {
+		return true
+	}
 	if isPhotoAlbumPage(path) || isPhotoMapPage(path) {
 		return true
 	}
@@ -334,7 +344,7 @@ func timeoutMiddleware(next http.Handler) http.Handler {
 		ctx := r.Context()
 		if r.Method == http.MethodPost {
 			switch r.URL.Path {
-			case processingPlansPath, kataCitePath, kataContextPath:
+			case processingPlansPath, kataCitePath, kataContextPath, "/api/v1/redaction/prepare", "/api/v1/redaction/resolve":
 				ctx = context.WithValue(ctx, responseControllerContextKey{}, http.NewResponseController(w))
 			}
 			if r.URL.Path == processingPlansPath {

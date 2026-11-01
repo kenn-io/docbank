@@ -29,7 +29,7 @@ func (s *Store) restoreAuditedTx(
 	if err != nil {
 		return Node{}, err
 	}
-	restored, err := s.restoreNodeTx(tx, node, snapshot.target, snapshot.recordedAt)
+	restored, err := s.restoreNodeTx(ctx, tx, node, snapshot.target, snapshot.recordedAt)
 	if err != nil {
 		return Node{}, err
 	}
@@ -104,7 +104,7 @@ func (s *Store) prepareAuditedRestore(
 			node.ID, ErrAuditMutationUnsupported,
 		)
 	}
-	authority, scopes, nodeSequence, err := loadAuditedNodeAuthority(ctx, tx, node.ID)
+	authority, scopes, nodeSequence, err := s.loadAuditedNodeAuthority(ctx, tx, node.ID)
 	if err != nil {
 		return snapshot, err
 	}
@@ -214,7 +214,7 @@ func trashedSubtreeIDsTx(
 	ctx context.Context, tx *sql.Tx, rootID int64, trashedAt string,
 ) ([]int64, error) {
 	rows, err := tx.QueryContext(
-		ctx, `SELECT id,parent_id FROM nodes WHERE trashed_at=? ORDER BY id`, trashedAt,
+		ctx, `SELECT id,parent_id FROM nodes WHERE trashed_at=$1 ORDER BY id`, trashedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("listing trashed subtree of node %d: %w", rootID, err)

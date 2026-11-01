@@ -194,7 +194,7 @@ maintenance sides:
 - create, ingest, move, trash, and restore take the shared side;
 - trash empty, GC, and verify take the exclusive side.
 
-Once maintenance is running or queued, a new HTTP mutation returns
+Once maintenance is running or waiting for in-flight mutations, a new HTTP mutation returns
 `503 maintenance_busy` instead of waiting indefinitely. Daemon-owned
 background jobs keep the blocking shared-side behavior so a transient
 maintenance pass does not permanently fail durable work. Maintenance is exempt
@@ -319,7 +319,7 @@ Relevance builds one ordered asset snapshot through `QuerySnapshotService`, with
 
 Browser sessions additionally allow hidden-state GET, setup/change/disable/unlock/lock POSTs and asset hide/unhide POSTs, with empty query strings. Reset requires the API key.
 
-Hidden state uses the vault-wide passcode and five-minute HttpOnly, SameSite=Strict loopback cookie. Unlock records passcode failures in a storage transaction so directory audit preserves read access. Store keeps session digests and expiry times in memory; lock and browser-session revocation clear them. State reports server-relative seconds beside each deadline. Authentication changes serialize session creation and revocation. Five failures within sixty seconds persist a five-minute lockout; sessions clear at restart and stay outside backups. Hide/unhide use asset revisions and receipts. Disable atomically unhides assets; reset retains flags. Locked Photos readers and mutation responses conceal hidden graphs. Album summaries retain hidden membership in `member_count`, count only visible members in `included_count`, and omit hidden explicit covers while locked. Cover selection requires the same authorization. Documents remain accessible and their snapshots stay valid.
+Hidden state uses the vault-wide passcode and an HttpOnly, SameSite=Strict loopback cookie that lasts the configured unlock lifetime, five minutes by default. Unlock records passcode failures in a storage transaction so directory audit preserves read access. Store keeps session digests and expiry times in memory; lock and browser-session revocation clear them. State reports server-relative seconds beside each deadline. Authentication changes serialize session creation and revocation. Five failures within sixty seconds persist a five-minute lockout; sessions clear at restart and stay outside backups. Hide/unhide use asset revisions and receipts. Disable atomically unhides assets; reset retains flags. Locked Photos readers and mutation responses conceal hidden graphs. Album summaries retain hidden membership in `member_count`, count only visible members in `included_count`, and omit hidden explicit covers while locked. Cover selection requires the same authorization. Documents remain accessible and their snapshots stay valid.
 
 A browser window that has opened Photos queues a keepalive lock on tab hide after pending Hidden writes, including an in-flight unlock, and reports failures with Retry lock in any workspace. Hidden stays concealed until a lock succeeds. Page close sends an immediate keepalive lock and, when Hidden writes are pending, queues another after them; closing during an unlock remains best effort. The active Library or Hidden view polls hidden state. A failed state read conceals that view and disposes its preview cache while retaining its photo model. Successful status validation refreshes concealed photos before redisplay; unchanged successful state clears only the read error. On return, Library and the open album's photo list reload. The Albums index keeps its album list. HTTP 401 follows the shared browser session-expired path.
 
@@ -651,6 +651,16 @@ origin, completeness, omission and truncation flags, and per-unit optional
 
 Snapshot summaries expose optional versioned `coverage` from manifest stats. Historical manifests omit it. Restore proves recorded coverage before publication and restores photo checkouts unbound.
 
+`POST /api/v1/backup/init` returns `{id, path}`. `POST /api/v1/backup/claim` accepts optional `repo` and `fingerprint`. It returns `id`, `path`, `snapshot_count`, optional `newest_at`, `owned`, optional `takeover`, and `fingerprint`. Confirmation sends the preview's `fingerprint`, which binds the claim to the reviewed owner marker and snapshot IDs. Both routes require the master API credential; explicit repository paths remain loopback-only. A claim cannot take another vault's repository.
+
+Ownership and claim failures return HTTP 409 with distinct problem codes:
+
+| Code | Meaning |
+| --- | --- |
+| `backup_repository_owner_conflict` | The owner marker names another vault. |
+| `backup_repository_claim_required` | Unmarked history, or another installation of this vault, requires an explicit claim before capture. |
+| `backup_claim_changed` | The repository changed after the claim preview. |
+
 `POST /api/v1/backup/forget` accepts exact `snapshot_ids`, `dry_run`, `allow_empty`, and `force_unlock`. Empty selections return 422; last-snapshot and retained-parent conflicts return 409. Unknown selected snapshot IDs return 404; filesystem I/O failures remain server errors. `POST /api/v1/backup/prune` accepts `dry_run` and `force_unlock`. Both accept the existing repository selection, require the master API credential, and reject browser mutations. Explicit repository paths remain loopback-only. Both routes exempt maintenance from the ordinary request timeout and retain caller cancellation.
 
-Cleanup responses report planned and completed work. Error envelopes retain `backup_forget` or `backup_prune` reports, including partial progress. The daemon client preserves these reports for text and JSON CLI output before returning the original error. Protocol 87 carries these summaries and operations. Fresh-home recovery uses a temporary daemon home and restores into a separate target, then starts the restored vault as described in the [backup guide](../usage/backup.md#recover-on-a-fresh-installation).
+Cleanup responses report planned and completed work. Error envelopes retain `backup_forget` or `backup_prune` reports, including partial progress. The daemon client preserves these reports for text and JSON CLI output before returning the original error. Protocol 87 carries these summaries and operations. Protocol 97 carries installation-bound ownership checks and fingerprinted claim operations. Protocol 98 carries runtime backup schedule and Hidden unlock lifetime settings. Fresh-home recovery uses a temporary daemon home and restores into a separate target, then starts the restored vault as described in the [backup guide](../usage/backup.md#recover-on-a-fresh-installation).

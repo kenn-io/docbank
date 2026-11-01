@@ -34,6 +34,7 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/processing"
@@ -450,6 +451,10 @@ var codeToTypedErr = map[string]error{
 	"snapshot_busy":                   store.ErrSnapshotBusy,
 	"snapshot_too_large":              store.ErrQuerySnapshotTooLarge,
 	"invalid_saved_query_run":         store.ErrInvalidSavedQueryRun,
+
+	"backup_repository_owner_conflict": backupapp.ErrRepositoryOwnerConflict,
+	"backup_repository_claim_required": backupapp.ErrRepositoryClaimRequired,
+	"backup_claim_changed":             backupapp.ErrRepositoryClaimChanged,
 }
 
 // maxErrorResponseBytes bounds daemon problem bodies while leaving room for
@@ -506,6 +511,9 @@ func apiProblemError(e api.Error) error {
 			detail = e.Detail
 		}
 	} else {
+		if e.Status == http.StatusUnprocessableEntity && e.Code == "validation" && len(e.Errors) > 0 {
+			e.Detail += "; " + strings.Join(e.Errors, "; ")
+		}
 		cause = fmt.Errorf("daemon error (%d %s): %s", e.Status, e.Code, e.Detail)
 	}
 	if e.Redaction != nil {
@@ -972,6 +980,7 @@ func IsCanonicalUUIDv4(value string) bool {
 // live directory's descendants, and an optional half-open modification-time
 // interval.
 type SearchOptions struct {
+	SourcePresent  bool
 	Fuzzy          bool
 	TagID          string
 	MIMEType       string
@@ -1006,6 +1015,9 @@ func (c *Connection) SearchWithOptions(
 		return out, err
 	}
 	params := apiclient.SearchQuery{}
+	if opts.SourcePresent {
+		params.SourcePresent = new(true)
+	}
 	params.Q = new(query)
 	params.Limit = new(int64(limit))
 	if opts.Fuzzy {
@@ -1031,7 +1043,7 @@ func (c *Connection) SearchWithOptions(
 		return out, err
 	}
 	out = *apiResponse
-	if out.TagID != opts.TagID || out.MIMEType != mimeType ||
+	if out.SourcePresent != opts.SourcePresent || out.TagID != opts.TagID || out.MIMEType != mimeType ||
 		out.UnderNodeID != opts.UnderNodeID || out.ModifiedSince != modifiedSince ||
 		out.ModifiedBefore != modifiedBefore {
 		return api.SearchReport{}, errors.New("search response has inconsistent filter authority")

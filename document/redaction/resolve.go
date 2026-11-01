@@ -875,16 +875,24 @@ func requireGapsMasked(m TextMap, masks map[int][]pixelRect, recipe Recipe, work
 }
 
 func qualifiedRecipe(recipe Recipe) bool {
-	return (recipe.DPI == 300 || recipe.DPI == 600) && recipe == qualifiedRecipeAtDPI(recipe.DPI)
+	if recipe.DPI != 300 && recipe.DPI != 600 {
+		return false
+	}
+	for _, version := range []string{"docbank-fresh-objects/v3", "docbank-fresh-objects/v2"} {
+		if recipe == qualifiedRecipeAtDPI(recipe.DPI, version) {
+			return true
+		}
+	}
+	return false
 }
 
-func qualifiedRecipeAtDPI(dpi int) Recipe {
+func qualifiedRecipeAtDPI(dpi int, version string) Recipe {
 	if dpi != 300 && dpi != 600 {
 		return Recipe{}
 	}
 	return Recipe{
 		Contract: "raster-redaction/v1", RendererSHA256: "f651270c675cac90702b762f4b95d2b34e365cdb374065e40af016f4f0f304ea",
-		WriterVersion: "docbank-fresh-objects/v2", FontSHA256: "c2f3b4d463500a2ddcd3849cded1fceeb9fd6d1c32e6cbecd568453ba50fc68f",
+		WriterVersion: version, FontSHA256: "c2f3b4d463500a2ddcd3849cded1fceeb9fd6d1c32e6cbecd568453ba50fc68f",
 		DPI: dpi, PaddingPixels: 2, MaxPixels: 40_000_000, MaxAxis: 16_384,
 		WASMMemoryBytes: 512 << 20, PageTimeoutSeconds: 60, QualifiedPeakRSSBytes: 1 << 30, MaxStagingBytes: 100 << 30,
 	}
@@ -892,10 +900,12 @@ func qualifiedRecipeAtDPI(dpi int) Recipe {
 
 func qualifiedRecipeBySHA256(digest string) (Recipe, bool) {
 	for _, dpi := range []int{300, 600} {
-		recipe := qualifiedRecipeAtDPI(dpi)
-		encoded, err := canonical.Marshal(recipe)
-		if err == nil && sha256Hex(encoded) == digest {
-			return recipe, true
+		for _, version := range []string{"docbank-fresh-objects/v3", "docbank-fresh-objects/v2"} {
+			recipe := qualifiedRecipeAtDPI(dpi, version)
+			encoded, err := canonical.Marshal(recipe)
+			if err == nil && sha256Hex(encoded) == digest {
+				return recipe, true
+			}
 		}
 	}
 	return Recipe{}, false

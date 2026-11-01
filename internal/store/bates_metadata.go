@@ -91,7 +91,7 @@ func exportBatesMetadata(ctx context.Context, q metadataQuerier, write metadataW
 	for _, id := range ids {
 		var r metadataBatesNamespaceRecord
 		r.Type = metadataBatesNamespace
-		if err := q.QueryRowContext(ctx, `SELECT namespace_id,prefix,suffix,padding,created_at FROM bates_namespaces WHERE namespace_id=?`, id).
+		if err := q.QueryRowContext(ctx, `SELECT namespace_id,prefix,suffix,padding,created_at FROM bates_namespaces WHERE namespace_id=$1`, id).
 			Scan(&r.NamespaceID, &r.Prefix, &r.Suffix, &r.Padding, &r.CreatedAt); err != nil {
 			return err
 		}
@@ -100,7 +100,7 @@ func exportBatesMetadata(ctx context.Context, q metadataQuerier, write metadataW
 		}
 		var cursor metadataBatesCursorRecord
 		cursor.Type = metadataBatesNamespaceCursor
-		if err := q.QueryRowContext(ctx, `SELECT namespace_id,next_sequence FROM bates_namespace_cursors WHERE namespace_id=?`, id).
+		if err := q.QueryRowContext(ctx, `SELECT namespace_id,next_sequence FROM bates_namespace_cursors WHERE namespace_id=$1`, id).
 			Scan(&cursor.NamespaceID, &cursor.NextSequence); err != nil {
 			return err
 		}
@@ -117,7 +117,7 @@ func exportBatesMetadata(ctx context.Context, q metadataQuerier, write metadataW
 		var committed sql.NullString
 		r.Type = metadataBatesAllocation
 		if err := q.QueryRowContext(ctx, `SELECT allocation_id,operation_id,namespace_id,snapshot_id,request_sha256,recipe_sha256,
-			start_sequence,end_sequence,state,created_at,committed_at FROM bates_allocations WHERE allocation_id=?`, id).
+			start_sequence,end_sequence,state,created_at,committed_at FROM bates_allocations WHERE allocation_id=$1`, id).
 			Scan(&r.AllocationID, &r.OperationID, &r.NamespaceID, &r.SnapshotID, &r.RequestSHA256, &r.RecipeSHA256,
 				&r.StartSequence, &r.EndSequence, &r.State, &r.CreatedAt, &committed); err != nil {
 			return err
@@ -164,7 +164,7 @@ func exportBatesArtifactMetadata(ctx context.Context, q metadataQuerier, write m
 
 func exportBatesLabels(ctx context.Context, q metadataQuerier, write metadataWrite, allocationID string) error {
 	rows, err := q.QueryContext(ctx, `SELECT ordinal,namespace_id,sequence,occurrence_id,source_page,output_page,label
-		FROM bates_page_labels WHERE allocation_id=? ORDER BY ordinal`, allocationID)
+		FROM bates_page_labels WHERE allocation_id=$1 ORDER BY ordinal`, allocationID)
 	if err != nil {
 		return err
 	}
@@ -269,11 +269,11 @@ func validateBatesMetadataState(ctx context.Context, q metadataQuerier) error {
 		var cursor, maxEnd int64
 		var prefix, suffix string
 		var padding int
-		if err := q.QueryRowContext(ctx, `SELECT c.next_sequence,n.prefix,n.suffix,n.padding FROM bates_namespace_cursors c JOIN bates_namespaces n USING(namespace_id) WHERE c.namespace_id=?`, id).
+		if err := q.QueryRowContext(ctx, `SELECT c.next_sequence,n.prefix,n.suffix,n.padding FROM bates_namespace_cursors c JOIN bates_namespaces n USING(namespace_id) WHERE c.namespace_id=$1`, id).
 			Scan(&cursor, &prefix, &suffix, &padding); err != nil {
 			return err
 		}
-		if err := q.QueryRowContext(ctx, `SELECT COALESCE(MAX(end_sequence),0) FROM bates_allocations WHERE namespace_id=?`, id).Scan(&maxEnd); err != nil {
+		if err := q.QueryRowContext(ctx, `SELECT COALESCE(MAX(end_sequence),0) FROM bates_allocations WHERE namespace_id=$1`, id).Scan(&maxEnd); err != nil {
 			return err
 		}
 		if cursor > batesMaxSequence(padding)+1 {
@@ -334,7 +334,7 @@ func validateBatesCommitsHaveArtifacts(ctx context.Context, q metadataQuerier) e
 	var allocationID, state string
 	err := q.QueryRowContext(ctx, `SELECT a.allocation_id,a.state FROM bates_allocations a
 		LEFT JOIN bates_artifacts r USING(allocation_id)
-		WHERE (a.state=? AND r.artifact_id IS NULL) OR (a.state<>? AND r.artifact_id IS NOT NULL)
+		WHERE (a.state=$1 AND r.artifact_id IS NULL) OR (a.state<>$2 AND r.artifact_id IS NOT NULL)
 		ORDER BY a.allocation_id LIMIT 1`, batesAllocationStateCommitted, batesAllocationStateCommitted).
 		Scan(&allocationID, &state)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -377,7 +377,7 @@ func snapshotSelectedPages(ctx context.Context, q metadataQuerier, snapshotID st
 func validateBatesNamespaceLabels(ctx context.Context, q metadataQuerier, namespaceID, prefix, suffix string, padding int) error {
 	rows, err := q.QueryContext(ctx, `SELECT a.allocation_id,a.start_sequence,a.end_sequence,l.ordinal,l.sequence,l.occurrence_id,
 		l.source_page,l.output_page,l.label,l.namespace_id FROM bates_allocations a LEFT JOIN bates_page_labels l ON l.allocation_id=a.allocation_id
-		WHERE a.namespace_id=? ORDER BY a.start_sequence,l.ordinal`, namespaceID)
+		WHERE a.namespace_id=$1 ORDER BY a.start_sequence,l.ordinal`, namespaceID)
 	if err != nil {
 		return err
 	}

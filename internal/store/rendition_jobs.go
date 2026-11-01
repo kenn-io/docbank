@@ -354,7 +354,7 @@ func (s *Store) EnqueueRenditionJob(
 		if err != nil {
 			return fmt.Errorf("joining rendition job: %w", err)
 		}
-		if request.ExplicitStart {
+		if request.ExplicitStart && request.ExecutionIdentity.Authorization.ProviderID != document.FaceDetectionProviderID {
 			if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO photo_description_explicit_waiters(waiter_id) VALUES(?)`, waiterID); err != nil {
 				return fmt.Errorf("recording explicit start: %w", err)
 			}
@@ -365,13 +365,13 @@ func (s *Store) EnqueueRenditionJob(
 		if derived {
 			// A waiter that an explicit start created stays explicit when an automatic request joins it.
 			explicit := request.ExplicitStart
-			if !explicit {
+			if !explicit && request.ExecutionIdentity.Authorization.ProviderID != document.FaceDetectionProviderID {
 				if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_description_explicit_waiters WHERE waiter_id=?)`, waiterID).Scan(&explicit); err != nil {
 					return fmt.Errorf("reading explicit start: %w", err)
 				}
 			}
 			var joinErr error
-			job, waiter, joinErr = joinPhotoDescriptionTx(ctx, tx, jobID, waiterID, request.ContentVersionID, profile.RenditionRequestFingerprint, explicit, now)
+			job, waiter, joinErr = joinPhotoDescriptionTx(ctx, tx, jobID, waiterID, request.ContentVersionID, profile.RenditionRequestFingerprint, explicit, now, request.ExecutionIdentity.Authorization.ProviderID == document.FaceDetectionProviderID)
 			return joinErr
 		}
 		var alreadyActive bool
@@ -800,7 +800,7 @@ func selectRenditionJobWaiterTx(
 			return "", ProviderOperationAuthorization{}, err
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE rendition_job_waiters
-			SET state='rejected',failure_code=?,updated_at=? WHERE waiter_id=?`,
+			SET state='rejected',failure_code=$1,updated_at=$2 WHERE waiter_id=$3`,
 			failureCode, at.Format(timestampLayout), candidateID); err != nil {
 			return "", ProviderOperationAuthorization{}, fmt.Errorf(
 				"rejecting unauthorized rendition waiter: %w", err)
@@ -1398,18 +1398,8 @@ func (s *Store) PublishPhotoDescription(
 func (s *Store) publishRenditionJob(
 	ctx context.Context, claim RenditionJobClaim, result *document.RenditionResult, at time.Time,
 ) (RenditionJobPublication, error) {
-	var description document.PhotoDescription
-	if result != nil {
-		if len(result.Artifacts) != 1 || result.Artifacts[0].Role != document.EvidenceArtifactStructured {
-			return RenditionJobPublication{}, ErrInvalidPhotoDescriptionResult
-		}
-		if err := json.Unmarshal(result.Artifacts[0].Payload, &description, json.RejectUnknownMembers(true)); err != nil {
-			return RenditionJobPublication{}, fmt.Errorf("%w: %w", ErrInvalidPhotoDescriptionResult, err)
-		}
-		var err error
-		if description, err = normalizePhotoDescription(description); err != nil {
-			return RenditionJobPublication{}, fmt.Errorf("%w: %w", ErrInvalidPhotoDescriptionResult, err)
-		}
+	if result != nil && (len(result.Artifacts) != 1 || result.Artifacts[0].Role != document.EvidenceArtifactStructured) {
+		return RenditionJobPublication{}, ErrInvalidPhotoDescriptionResult
 	}
 	publication := RenditionJobPublication{JobID: claim.JobID}
 	var publicationErr error
@@ -1538,14 +1528,33 @@ func (s *Store) publishRenditionJob(
 			return nil
 		}
 		if derived {
-			// One answer serves every waiter; an explicit one may replace a dismissal.
-			var explicit bool
-			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_description_explicit_waiters e JOIN rendition_job_waiters w ON w.waiter_id=e.waiter_id
+			version := authorized[0].waiter.ContentVersionID
+			if executionIdentity.Authorization.ProviderID == document.FaceDetectionProviderID {
+				var detection document.FaceDetection
+				if err := json.Unmarshal(result.Artifacts[0].Payload, &detection, json.RejectUnknownMembers(true)); err != nil || detection.Faces == nil {
+					return ErrInvalidPhotoDescriptionResult
+				}
+				if err := publishFaceDetectionTx(ctx, tx, version, job.RenditionRequestFingerprint, detection, at); err != nil {
+					return err
+				}
+			} else {
+				// One answer serves every waiter; an explicit one may replace a dismissal.
+				var explicit bool
+				if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_description_explicit_waiters e JOIN rendition_job_waiters w ON w.waiter_id=e.waiter_id
  WHERE w.job_id=? AND w.state='waiting')`, claim.JobID).Scan(&explicit); err != nil {
-				return err
-			}
-			if err := publishPhotoSuggestionTx(ctx, tx, authorized[0].waiter.ContentVersionID, job.RenditionRequestFingerprint, explicit, description, at); err != nil {
-				return err
+					return err
+				}
+				var description document.PhotoDescription
+				if err := json.Unmarshal(result.Artifacts[0].Payload, &description, json.RejectUnknownMembers(true)); err != nil {
+					return fmt.Errorf("%w: %w", ErrInvalidPhotoDescriptionResult, err)
+				}
+				description, err = normalizePhotoDescription(description)
+				if err != nil {
+					return fmt.Errorf("%w: %w", ErrInvalidPhotoDescriptionResult, err)
+				}
+				if err := publishPhotoSuggestionTx(ctx, tx, version, job.RenditionRequestFingerprint, explicit, description, at); err != nil {
+					return err
+				}
 			}
 		} else {
 			pairs := make([]renditionPublicationPair, 0, len(authorized))
@@ -1650,7 +1659,7 @@ func mediaInputBindingVisibleForSourceTx(
 
 func renditionWaitingIDsTx(ctx context.Context, tx *sql.Tx, jobID string) (_ []string, retErr error) {
 	rows, err := tx.QueryContext(ctx, `SELECT waiter_id FROM rendition_job_waiters
-		WHERE job_id=? AND state='waiting' ORDER BY waiter_id`, jobID)
+		WHERE job_id=$1 AND state='waiting' ORDER BY waiter_id`, jobID)
 	if err != nil {
 		return nil, fmt.Errorf("reading rendition waiters: %w", err)
 	}
@@ -1738,7 +1747,7 @@ func loadRenditionJobTx(ctx context.Context, query rowQuerier, id string) (Rendi
 		       (SELECT COUNT(*) FROM rendition_job_waiters w WHERE w.job_id=j.job_id),
 		       (SELECT COUNT(*) FROM rendition_job_waiters w
 		        WHERE w.job_id=j.job_id AND w.state='published')
-		FROM rendition_jobs j WHERE j.job_id=?`, id).Scan(
+		FROM rendition_jobs j WHERE j.job_id=$1`, id).Scan(
 		&job.ID, &job.SourceSHA256, &job.RenditionRequestFingerprint,
 		&job.EvidenceLexicalFingerprint, &job.CapturedArtifactPolicyFingerprint,
 		&job.ExecutionIdentityFingerprint, &job.State, &job.Phase, &job.ClaimEpoch,
@@ -1840,7 +1849,7 @@ func renditionWaiterAuthorizationTx(
 		JOIN content_versions v ON v.version_id=w.content_version_id
 		JOIN nodes n ON n.id=v.node_id
 		JOIN processing_profiles p ON p.profile_fingerprint=w.profile_fingerprint
-		WHERE w.waiter_id=? AND w.job_id=? AND w.state='waiting'`,
+		WHERE w.waiter_id=$1 AND w.job_id=$2 AND w.state='waiting'`,
 		waiterID, job.ID).Scan(&request.Principal, &request.Scope,
 		&request.ProfileFingerprint, &request.DisclosureFingerprint,
 		&inputJSON, &retainedJSON, &grantID, &incarnationID, &revocationFence,

@@ -57,7 +57,9 @@ docbank watch list --json
 
 Each item reports the local source, virtual destination, settle window,
 minimum source age, scan interval, the literal `exclude` and glob
-`exclude_patterns` lists, and current job record.
+`exclude_patterns` lists, and current job record. A configured profile adds optional
+`processing` status; see the [watch API](../architecture/http-api.md#background-job-status) for its fields.
+Human output appends a `PROCESSING` column. See [watch processing](../configuration.md#watched-inboxes) for consent behavior.
 The settle window is the time a file must remain unchanged. A nonzero minimum
 age adds a separate check. It does not replace that window.
 
@@ -998,7 +1000,7 @@ physically reclaimed.
 `POST /api/v1/verify` validates logical metadata and audit history before
 re-hashing every stored blob. It is read-only but can be expensive. Maintenance
 requests serialize against mutations and may run without the ordinary request
-timeout. A new mutation submitted after maintenance is running or queued gets
+timeout. A new mutation submitted while maintenance is running or waiting for in-flight mutations gets
 `503 maintenance_busy`. Retry it after the operator-visible maintenance ends.
 This is a transient refusal, not evidence that the requested mutation committed.
 Treat either `metadata_problems` or blob `problems` as a failed verification.

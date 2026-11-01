@@ -16,7 +16,7 @@ func TestWriteWatchedInboxesEscapesMachineAndVirtualPaths(t *testing.T) {
 	err := writeWatchedInboxes(&out, []api.WatchedInbox{{
 		Name: "sessions", Source: "/local/agent\nsessions",
 		Destination: "/archives/\x1b[31msessions", SettleTime: "1h0m0s",
-		MinimumAge: "168h0m0s", ScanInterval: "1m0s", Exclude: []string{"cache/"}, ExcludePatterns: []string{"*.swp", "*.tmp"},
+		MinimumAge: "168h0m0s", ScanInterval: "1m0s", Exclude: []string{"cache/"}, ExcludePatterns: []string{"*.swp", "*.tmp"}, CaptureOnChange: true,
 		Job: &api.Job{Status: "running"},
 	}})
 	require.NoError(t, err)
@@ -24,7 +24,9 @@ func TestWriteWatchedInboxesEscapesMachineAndVirtualPaths(t *testing.T) {
 	assert.Contains(t, out.String(), `"/archives/\x1b[31msessions"`)
 	assert.NotContains(t, out.String(), "\x1b")
 	fields := strings.Fields(strings.Split(strings.TrimSpace(out.String()), "\n")[1])
-	assert.Equal(t, "3", fields[len(fields)-2])
+	assert.Equal(t, "3", fields[len(fields)-3])
+	assert.Contains(t, out.String(), "CAPTURE")
+	assert.Contains(t, out.String(), "prompt")
 }
 
 func TestWriteWatchedInboxesExplainsEmptyConfig(t *testing.T) {
@@ -34,9 +36,23 @@ func TestWriteWatchedInboxesExplainsEmptyConfig(t *testing.T) {
 }
 
 func TestWriteWatchedInboxesDisplaysActivity(t *testing.T) {
-	var out bytes.Buffer
-	require.NoError(t, writeWatchedInboxes(&out, []api.WatchedInbox{
-		{Name: "waiting", Job: &api.Job{Status: "running"}},
-	}))
-	assert.Regexp(t, `waiting\s+idle\s`, out.String())
+	for _, tc := range []struct {
+		name       string
+		processing *api.WatchProcessingStatus
+		want       string
+	}{
+		{"no profile", nil, `-`},
+		{"active", &api.WatchProcessingStatus{Profile: "mistral-ocr", ConsentState: "active"}, `mistral-ocr`},
+		{"waiting", &api.WatchProcessingStatus{Profile: "mistral-ocr", ConsentState: "revoked"}, `mistral-ocr \(waiting on consent: revoked\)`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			require.NoError(t, writeWatchedInboxes(&out, []api.WatchedInbox{
+				{Name: "waiting", Processing: tc.processing, Job: &api.Job{Status: "running"}},
+			}))
+			assert.Regexp(t, `waiting\s+idle\s`, out.String())
+			assert.Regexp(t, `EXCLUDES\s+ERROR\s+PROCESSING`, out.String())
+			assert.Regexp(t, tc.want+`\s*$`, out.String())
+		})
+	}
 }

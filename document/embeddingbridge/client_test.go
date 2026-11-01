@@ -1374,7 +1374,7 @@ func TestRequestTimeoutClassification(t *testing.T) {
 					<-request.Context().Done()
 				}))
 				profile := fixture.profile
-				profile.RequestTimeout = 100 * time.Millisecond
+				profile.RequestTimeout = 100 * time.Millisecond //nolint:kennlint // deadlinetest: the blocked secret or HTTP request must expire and retain its timeout classification
 				fingerprint, err := embeddingbridge.PolicyFingerprint(profile)
 				require.NoError(t, err)
 				profile.Descriptor.PolicyFingerprint = fingerprint
@@ -1392,7 +1392,7 @@ func TestRequestTimeoutClassification(t *testing.T) {
 				ctx := t.Context()
 				if callerDeadline {
 					var cancel context.CancelFunc
-					ctx, cancel = context.WithTimeout(ctx, 20*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the handler blocks until the request ends
+					ctx, cancel = context.WithTimeout(ctx, 20*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the handler blocks until the request ends
 					defer cancel()
 				}
 				_, err = client.Embed(ctx, oneTextInput("alpha"), authorization)

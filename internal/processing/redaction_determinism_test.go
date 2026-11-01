@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/redaction"
+	"go.kenn.io/docbank/internal/pdfproduction"
 	"go.kenn.io/docbank/internal/redactiontest"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -51,13 +52,13 @@ func TestRedactionPreparationDeterministic(t *testing.T) {
 	require.Equal(t, first.EvidenceSHA256, second.EvidenceSHA256)
 	require.Equal(t, first.Map.SHA256, second.Map.SHA256)
 	masks := []RedactionMask{{ID: uuid.New(), Selector: redaction.Selector{Kind: "page", MapSHA256: first.Map.SHA256, Pages: []int{1, 2}}}}
-	a, err := BuildRedactionReview(first, masks, node.Revision)
+	a, err := BuildRedactionReview(first, masks, node.Revision, pdfproduction.QualifiedRecipe())
 	require.NoError(t, err)
-	b, err := BuildRedactionReview(second, masks, node.Revision)
+	b, err := BuildRedactionReview(second, masks, node.Revision, pdfproduction.QualifiedRecipe())
 	require.NoError(t, err)
 	require.Equal(t, a.SHA256, b.SHA256)
 	masks[0].Selector.Pages = []int{1}
-	_, err = BuildRedactionReview(first, masks, node.Revision)
+	_, err = BuildRedactionReview(first, masks, node.Revision, pdfproduction.QualifiedRecipe())
 	var problem *redaction.Problem
 	require.ErrorAs(t, err, &problem)
 	require.Equal(t, "mapping_incomplete", problem.Code)

@@ -16,6 +16,7 @@ import (
 	"io"
 	"math"
 	"slices"
+	"strings"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
@@ -95,6 +96,26 @@ func PDFObjects(comment string, objects []string) []byte {
 	_, _ = fmt.Fprintf(&output,
 		"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(objects)+1, xref)
 	return output.Bytes()
+}
+
+// PDFSignatureFields builds signature fields with exact-length range placeholders.
+func PDFSignatureFields(fields string, fieldObjects ...string) []byte {
+	objects := []string{"<< /Type /Catalog /Pages 2 0 R /AcroForm 4 0 R >>", "<< /Type /Pages /Count 1 /Kids [3 0 R] >>", "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>", "<< /Fields " + fields + " >>"}
+	for _, object := range fieldObjects {
+		objects = append(objects, strings.ReplaceAll(object, "LENGTH", "000000"))
+	}
+	data := PDFObjects("synthetic signature fields", objects)
+	return bytes.ReplaceAll(data, []byte("000000]"), fmt.Appendf(nil, "%06d]", len(data)-20))
+}
+
+// PDFWithActionsAndAttachment carries one attachment, a script, and a chained Launch action.
+func PDFWithActionsAndAttachment() []byte {
+	return PDFObjects("synthetic evidence", []string{
+		"<< /Type /Catalog /Pages 2 0 R /Names << /EmbeddedFiles << /Names [(note.txt) 4 0 R] >> /JavaScript << /Names [(script) 6 0 R] >> >> /AF [4 0 R] /OpenAction 6 0 R >>",
+		"<< /Type /Pages /Count 1 /Kids [3 0 R] >>", "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Annots [8 0 R] >>",
+		"<< /Type /Filespec /F (note.txt) /EF << /F 5 0 R >> >>", "<< /Type /EmbeddedFile /Length 4 >>\nstream\nnote\nendstream",
+		"<< /Type /Action /S /JavaScript /JS (void 0) /Next [7 0 R] >>", "<< /S /Launch /F (example.txt) >>", "<< /Type /Annot /Subtype /FileAttachment /Rect [0 0 10 10] /FS 4 0 R >>",
+	})
 }
 
 // GIF returns a GIF with the given number of frames. Frames alternate between
@@ -363,8 +384,14 @@ func EncryptedPDF(userPW, ownerPW string, keyBits int) ([]byte, error) {
 }
 
 // EncryptPDF encrypts the supplied synthetic PDF.
-func EncryptPDF(data []byte, userPW, ownerPW string, keyBits int) ([]byte, error) {
+func EncryptPDF(data []byte, userPW, ownerPW string, keyBits int, permissions ...model.PermissionFlags) ([]byte, error) {
 	configuration := model.NewAESConfiguration(userPW, ownerPW, keyBits)
+	if keyBits == 40 {
+		configuration = model.NewRC4Configuration(userPW, ownerPW, keyBits)
+	}
+	if len(permissions) > 0 {
+		configuration.Permissions = permissions[0]
+	}
 	var output bytes.Buffer
 	if err := api.Encrypt(bytes.NewReader(data), &output, configuration); err != nil {
 		return nil, fmt.Errorf("encrypt synthetic PDF: %w", err)

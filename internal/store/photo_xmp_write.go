@@ -64,7 +64,7 @@ func (s *Store) PublishPhotoXMP(ctx context.Context, plan PhotoXMPPlan, hash str
 			if err := checkPhotoXMPWorkTx(ctx, tx, w); err != nil {
 				return err
 			}
-			return settlePhotoXMPTx(ctx, tx, w, photoXMPReceipt{State: PhotoXMPStateInvalid, Reason: "The XMP sync history exceeds its size limit. Detach this sidecar and attach a different XMP file to start a new history."})
+			return s.settlePhotoXMPTx(ctx, tx, w, photoXMPReceipt{State: PhotoXMPStateInvalid, Reason: "The XMP sync history exceeds its size limit. Detach this sidecar and attach a different XMP file to start a new history."})
 		})
 	}
 	if err != nil {
@@ -94,14 +94,14 @@ func (s *Store) publishPhotoXMPTx(ctx context.Context, tx *sql.Tx, run IngestRun
 	var imported *PhotoAuthoredReceipt
 	w, sc := plan.Work, plan.Work.Sidecar
 	if plan.Refusal != "" || plan.State != "" {
-		return nil, settlePhotoXMPTx(ctx, tx, w, photoXMPReceipt{State: cmp.Or(plan.State, PhotoXMPStateInvalid), Reason: boundPhotoXMPReason(plan.Refusal)})
+		return nil, s.settlePhotoXMPTx(ctx, tx, w, photoXMPReceipt{State: cmp.Or(plan.State, PhotoXMPStateInvalid), Reason: boundPhotoXMPReason(plan.Refusal)})
 	}
 	if plan.Conflicts != 0 {
 		var keywords []string
 		if plan.Conflicts&PhotoXMPKeywordsBit != 0 {
 			keywords = plan.Packet.Keywords
 		}
-		return nil, settlePhotoXMPTx(ctx, tx, w, photoXMPReceipt{State: PhotoXMPStateConflict, Conflicts: plan.Conflicts, ConflictPath: plan.ConflictPath, ConflictFileID: sc.FileID, Fold: plan.Fold, ConflictKeywords: keywords, ConflictValues: new(PhotoXMPOverlay(PhotoAuthored{}, plan.Packet.PhotoAuthored, plan.Conflicts))})
+		return nil, s.settlePhotoXMPTx(ctx, tx, w, photoXMPReceipt{State: PhotoXMPStateConflict, Conflicts: plan.Conflicts, ConflictPath: plan.ConflictPath, ConflictFileID: sc.FileID, Fold: plan.Fold, ConflictKeywords: keywords, ConflictValues: new(PhotoXMPOverlay(PhotoAuthored{}, plan.Packet.PhotoAuthored, plan.Conflicts))})
 	}
 	r := photoXMPSync{}
 	if old := w.History; old != nil {
@@ -147,7 +147,7 @@ func (s *Store) publishPhotoXMPTx(ctx context.Context, tx *sql.Tx, run IngestRun
 	if len(ignored) > 0 {
 		reason = "Unsupported XMP values left unchanged: " + strings.Join(ignored, ", ") + ". Edit these fields in Metadata to replace them."
 	}
-	return imported, settlePhotoXMPTx(ctx, tx, w, photoXMPReceipt{State: PhotoXMPStateSynced, Reason: reason, Sync: &r})
+	return imported, s.settlePhotoXMPTx(ctx, tx, w, photoXMPReceipt{State: PhotoXMPStateSynced, Reason: reason, Sync: &r})
 }
 
 // keepReadable gives each field this packet could not read the value of the last

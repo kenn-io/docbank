@@ -96,7 +96,7 @@ type pushState struct {
 func pushStateTx(ctx context.Context, tx *sql.Tx, name, ref string) (pushState, error) {
 	var state pushState
 	err := tx.QueryRowContext(ctx, `SELECT node_id, blob_hash, size, accepted_at
-  FROM push_sources WHERE push_name=? AND source_ref=?`, name, ref).
+  FROM push_sources WHERE push_name=$1 AND source_ref=$2`, name, ref).
 		Scan(&state.Node.ID, &state.Hash, &state.Size, &state.AcceptedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		// A stopped daemon watch can hand this identity to a client without
@@ -111,7 +111,7 @@ func pushStateTx(ctx context.Context, tx *sql.Tx, name, ref string) (pushState, 
 		return pushState{}, fmt.Errorf("reading push source: %w", err)
 	}
 	// Use the snapshot's node projection so the source and head agree.
-	state.Node, err = scanNode(tx.QueryRowContext(ctx, `SELECT `+nodeCols+` FROM `+nodeFrom+` WHERE n.id=?`, state.Node.ID))
+	state.Node, err = scanNode(tx.QueryRowContext(ctx, `SELECT `+nodeCols+` FROM `+nodeFrom+` WHERE n.id=$1`, state.Node.ID))
 	if err != nil {
 		return pushState{}, err
 	}
@@ -151,13 +151,13 @@ func (s *Store) PushCursors(ctx context.Context, name, after string, limit int) 
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT p.source_ref, p.node_id, p.blob_hash, p.size, n.trashed_at IS NOT NULL
 		FROM push_sources p JOIN nodes n ON n.id=p.node_id
-		WHERE p.push_name=? AND p.source_ref>?
+		WHERE p.push_name=$1 AND p.source_ref>$2
 		UNION ALL
 		SELECT w.source_ref, w.node_id, w.blob_hash, w.size, n.trashed_at IS NOT NULL
 		FROM watch_sources w JOIN nodes n ON n.id=w.node_id
-		WHERE w.watch_name=? AND w.source_ref>? AND NOT EXISTS (
+		WHERE w.watch_name=$3 AND w.source_ref>$4 AND NOT EXISTS (
 			SELECT 1 FROM push_sources p WHERE p.push_name=w.watch_name AND p.source_ref=w.source_ref)
-		ORDER BY 1 LIMIT ?`, name, after, name, after, limit)
+		ORDER BY 1 LIMIT $5`, name, after, name, after, limit)
 	if err != nil {
 		return nil, fmt.Errorf("listing push cursors: %w", err)
 	}
@@ -260,7 +260,7 @@ func pushParentSegments(parentPath string) ([]string, error) {
 // first document. A run ID that names another source's run is refused.
 func pushRunTx(ctx context.Context, tx *sql.Tx, runID, name string) (IngestRun, error) {
 	record := metadataIngest{Type: metadataIngestType}
-	err := tx.QueryRowContext(ctx, `SELECT id,started_at,source_kind,source_desc FROM ingests WHERE id=?`,
+	err := tx.QueryRowContext(ctx, `SELECT id,started_at,source_kind,source_desc FROM ingests WHERE id=$1`,
 		runID).Scan(&record.ID, &record.StartedAt, &record.SourceKind, &record.SourceDesc)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
@@ -350,7 +350,7 @@ func insertPushSourceTx(
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO push_sources(
 		push_name,source_ref,node_id,provenance_identity,blob_hash,size,accepted_at
-	) VALUES(?,?,?,?,?,?,?)
+	) VALUES($1,$2,$3,$4,$5,$6,$7)
 	ON CONFLICT(push_name,source_ref) DO UPDATE SET
 		node_id=excluded.node_id,
 		provenance_identity=excluded.provenance_identity,
@@ -383,7 +383,7 @@ func validatePushSourceRelations(ctx context.Context, tx metadataQuerier) (retEr
   LEFT JOIN provenance_version_bindings b ON b.provenance_identity=p.identity
   LEFT JOIN content_versions cv ON cv.version_id=b.content_version_id
   WHERE i.source_kind='push'
-  GROUP BY i.source_desc,p.original_path,p.node_id,p.identity,i.started_at
+  GROUP BY i.source_desc,p.original_path,p.node_id,p.identity,i.started_at,i.id
   ORDER BY i.source_desc,p.original_path,i.started_at,i.id`)
 	if err != nil {
 		return fmt.Errorf("reading push provenance: %w", err)

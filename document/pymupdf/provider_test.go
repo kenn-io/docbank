@@ -191,7 +191,7 @@ func TestProviderTerminatesChildThatNeverStopsOversizedOutput(t *testing.T) {
 
 func TestProviderEnforcesTimeoutAndCancellation(t *testing.T) {
 	t.Run("timeout", func(t *testing.T) {
-		provider := newTestProvider(t, helperExecutable(t, "wait"), 20*time.Millisecond, 1<<20)
+		provider := newTestProvider(t, helperExecutable(t, "wait"), 20*time.Millisecond, 1<<20) //nolint:kennlint // deadlinetest: the waiting child must reach its deadline and be terminated
 		upload := newTestUpload(testPDF(2))
 		started := time.Now()
 		_, err := provider.Render(t.Context(), upload,

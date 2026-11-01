@@ -111,11 +111,18 @@ func validateEmailMetadataState(ctx context.Context, q metadataQuerier) error {
 			return err
 		}
 	}
-	return emailHeadMetadata.export(ctx, q, func(value any) error {
+	var heads []metadataEmailHead
+	if err := emailHeadMetadata.export(ctx, q, func(value any) error {
 		h, ok := value.(metadataEmailHead)
 		if !ok {
 			return errors.New("invalid email head validator input")
 		}
+		heads = append(heads, h)
+		return nil
+	}); err != nil {
+		return err
+	}
+	for _, h := range heads {
 		a, err := loadEmailAttachment(ctx, q, h.AttachmentID)
 		if err != nil {
 			return err
@@ -123,6 +130,9 @@ func validateEmailMetadataState(ctx context.Context, q metadataQuerier) error {
 		if a.ContentVersionID != h.ContentVersionID || a.AttachedAt != h.PublishedAt {
 			return fmt.Errorf("%w: email head identity or observation", ErrEmailCorrupt)
 		}
-		return validateMetadataTime("email published_at", h.PublishedAt)
-	})
+		if err := validateMetadataTime("email published_at", h.PublishedAt); err != nil {
+			return err
+		}
+	}
+	return nil
 }

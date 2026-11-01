@@ -16,6 +16,7 @@ import (
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/processing"
@@ -58,9 +59,10 @@ func TestNineReadToolHandlersReturnBoundedPrivateStructuredResults(t *testing.T)
 			assert.Equal(t, testVaultID, output["vault_id"])
 			assert.NotContains(t, output, "vault_path")
 		}},
-		{name: "list_documents", arguments: map[string]any{"page_size": 1, "cursor": "opaque.token"}, check: func(t *testing.T, output map[string]any, result *sdkmcp.CallToolResult) {
+		{name: "list_documents", arguments: map[string]any{"page_size": 1, "cursor": "opaque.token", "source_present": true}, check: func(t *testing.T, output map[string]any, result *sdkmcp.CallToolResult) {
 			t.Helper()
 			assert.Equal(t, "next.token", output["next_cursor"])
+			assert.Equal(t, true, output["source_present"])
 			assert.Contains(t, resourceLinkURIs(result), canonicalTestRenditionURI())
 		}},
 		{name: "search_documents", arguments: map[string]any{"query": "synthetic", "profile": "local",
@@ -75,9 +77,18 @@ func TestNineReadToolHandlersReturnBoundedPrivateStructuredResults(t *testing.T)
 				assert.Equal(t, false, coverage["binding_required"])
 			}},
 		{name: "get_document", arguments: map[string]any{"node_id": 7, "content_version_id": testVersionID},
-			check: func(t *testing.T, _ map[string]any, result *sdkmcp.CallToolResult) {
+			check: func(t *testing.T, output map[string]any, result *sdkmcp.CallToolResult) {
 				t.Helper()
 				assert.Contains(t, resourceLinkURIs(result), canonicalTestRenditionURI())
+				facts := objectField(t, output, "pdf_facts")
+				assert.Equal(t, true, facts["encrypted"])
+				assert.Equal(t, []any{"Print", "High-quality print flag"}, facts["permissions"])
+				assert.EqualValues(t, 2, facts["signature_field_count"])
+				assert.Equal(t, false, facts["last_signature_covers_file"])
+				assert.EqualValues(t, 3, facts["embedded_file_count"])
+				assert.Equal(t, true, facts["has_javascript"])
+				assert.Equal(t, true, facts["has_launch_actions"])
+				assert.NotContains(t, facts, "title")
 			}},
 		{name: "list_document_versions", arguments: map[string]any{"node_id": 7, "limit": 1, "offset": 0},
 			check: func(t *testing.T, output map[string]any, _ *sdkmcp.CallToolResult) {
@@ -256,6 +267,10 @@ func TestReadToolMapsSanitizedDaemonDomainErrors(t *testing.T) {
 		arguments        map[string]any
 		status           int
 	}{
+		{name: "reranking unavailable", tool: "search_documents", code: "reranking_unavailable", status: http.StatusUnprocessableEntity,
+			arguments: map[string]any{"query": "synthetic", "profile": "local", "filters": map[string]any{}, "rerank": true}},
+		{name: "reranking failed", tool: "search_documents", code: "reranking_failed", status: http.StatusBadGateway,
+			arguments: map[string]any{"query": "synthetic", "profile": "local", "filters": map[string]any{}, "rerank": true}},
 		{name: "not found", tool: "get_vault_info", code: "not_found", status: http.StatusNotFound,
 			arguments: map[string]any{}},
 		{name: "locked hidden asset", tool: "get_photo_asset", code: "hidden_locked", status: http.StatusForbidden,
@@ -419,9 +434,10 @@ func TestSearchReadRejectsResultsOutsideResolvedFence(t *testing.T) {
 func TestSearchReadValidatesEmptyFenceWithoutCallingSearch(t *testing.T) {
 	for _, test := range []struct {
 		name, query, profile, wantCode string
-		wantError                      bool
+		wantError, rerank              bool
 	}{
 		{name: "valid empty result", query: "synthetic", profile: "local"},
+		{name: "reranked empty result", query: "synthetic", profile: "local", rerank: true},
 		{name: "whitespace query", query: "   ", profile: "local", wantCode: "processing_failed", wantError: true},
 		{name: "unconfigured profile", query: "synthetic", profile: "missing",
 			wantCode: "processing_profile_unavailable", wantError: true},
@@ -437,6 +453,11 @@ func TestSearchReadValidatesEmptyFenceWithoutCallingSearch(t *testing.T) {
 			daemon := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 				switch request.URL.Path {
 				case "/api/v1/processing/source-fences/resolve":
+					var scope api.DocumentSourceFenceResolveRequest
+					if !assert.NoError(t, json.UnmarshalRead(request.Body, &scope)) || !assert.NotNil(t, scope.Filters) {
+						return
+					}
+					assert.True(t, scope.Filters.SourcePresent)
 					writeDaemonJSON(t, response, api.DocumentSourceFenceResolution{
 						Fence:            api.ResolvedDocumentSourceFence{VaultUID: testVaultID, ContentVersionIDs: []string{}},
 						FenceFingerprint: emptyFingerprint, ObservedScopeCount: 0,
@@ -446,6 +467,12 @@ func TestSearchReadValidatesEmptyFenceWithoutCallingSearch(t *testing.T) {
 					response.WriteHeader(http.StatusNoContent)
 				case "/api/v1/search/validate":
 					validationCalls++
+					var body api.DocumentSearchValidationRequest
+					if !assert.NoError(t, json.UnmarshalRead(request.Body, &body)) {
+						http.Error(response, "invalid synthetic search request", http.StatusBadRequest)
+						return
+					}
+					assert.Equal(t, test.rerank, body.Rerank)
 					if test.wantError {
 						status := http.StatusInternalServerError
 						if test.wantCode == "processing_profile_unavailable" {
@@ -473,7 +500,7 @@ func TestSearchReadValidatesEmptyFenceWithoutCallingSearch(t *testing.T) {
 
 			result, err := invokeReadTool(t.Context(), lease, "search_documents", map[string]any{
 				"query": test.query, "mode": "lexical", "limit": 1, "profile": test.profile,
-				"filters": map[string]any{},
+				"filters": map[string]any{"source_present": true}, "rerank": test.rerank,
 			})
 			assert.Equal(t, 1, validationCalls)
 			assert.Zero(t, searchCalls)
@@ -494,6 +521,9 @@ func TestSearchReadValidatesEmptyFenceWithoutCallingSearch(t *testing.T) {
 			output := structuredMap(t, result.StructuredContent)
 			assert.Equal(t, []any{}, output["results"])
 			assert.EqualValues(t, 0, output["observed_scope_count"])
+			if test.rerank {
+				assert.Equal(t, map[string]any{"outcome": "skipped", "candidate_count": float64(0)}, output["reranking"])
+			}
 		})
 	}
 }
@@ -635,14 +665,20 @@ func newReadToolDaemon(t *testing.T) *httptest.Server {
 		case "/api/v1/documents":
 			if request.URL.Query().Has("cursor") {
 				assert.Equal(t, "opaque.token", request.URL.Query().Get("cursor"))
+				assert.Equal(t, "true", request.URL.Query().Get("source_present"))
 			}
 			pathPrefix := request.URL.Query().Get("path_prefix")
 			if pathPrefix == "" {
 				pathPrefix = "/"
 			}
-			writeDaemonJSON(t, response, api.DocumentPage{PathPrefix: pathPrefix, Sort: "path", Direction: "asc", PageSize: 1,
+			name, mediaType := "synthetic.md", "text/markdown"
+			if pathPrefix == "/synthetic.pdf" {
+				name, mediaType = "synthetic.pdf", "application/pdf"
+			}
+			writeDaemonJSON(t, response, api.DocumentPage{SourcePresent: request.URL.Query().Get("source_present") == "true",
+				PathPrefix: pathPrefix, Sort: "path", Direction: "asc", PageSize: 1,
 				Items: []api.DocumentSummary{{NodeID: 7, ContentVersionID: testVersionID,
-					Path: "/synthetic.md", Name: "synthetic.md", MediaType: "text/markdown", Size: 12,
+					Path: "/" + name, Name: name, MediaType: mediaType, Size: 12,
 					ModifiedAt: "2026-08-28T00:00:00Z", ActiveRenditions: []api.DocumentRenditionIdentity{{
 						ProfileFingerprint: testProfileID, AttachmentID: testAttachmentID, BuildID: testBuildID,
 					}}}}, NextCursor: "next.token"})
@@ -665,9 +701,19 @@ func newReadToolDaemon(t *testing.T) *httptest.Server {
 					AttachmentID: testAttachmentID, BuildID: testBuildID}},
 			}}})
 		case "/api/v1/nodes/7":
-			writeDaemonJSON(t, response, api.Node{ID: 7, Name: "synthetic.md", Kind: "file",
-				CurrentVersionID: testVersionID, Size: 12, MimeType: "text/markdown",
-				ModifiedAt: "2026-08-28T00:00:00Z", Path: "/synthetic.md"})
+			writeDaemonJSON(t, response, api.Node{ID: 7, Name: "synthetic.pdf", Kind: "file",
+				SourceMetadata: &api.SourceMetadata{Fields: []document.SourceMetadataFieldV1{
+					{Key: "pdf.info.encrypted", Namespace: "pdf.info", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataBoolean, Boolean: new(true)}},
+					{Key: "pdf.info.signature_field_count", Namespace: "pdf.info", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataInteger, Integer: new(int64(2))}},
+					{Key: "pdf.info.permissions", Namespace: "pdf.info", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataStringList, Strings: []string{"Print", "High-quality print flag"}}},
+					{Key: "pdf.info.last_signature_covers_file", Namespace: "pdf.info", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataBoolean, Boolean: new(false)}},
+					{Key: "pdf.info.embedded_file_count", Namespace: "pdf.info", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataInteger, Integer: new(int64(3))}},
+					{Key: "pdf.info.has_javascript", Namespace: "pdf.info", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataBoolean, Boolean: new(true)}},
+					{Key: "pdf.info.has_launch_actions", Namespace: "pdf.info", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataBoolean, Boolean: new(true)}},
+					{Key: "title", Namespace: "pdf.info", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: new("Synthetic PDF")}},
+				}},
+				CurrentVersionID: testVersionID, Size: 12, MimeType: "application/pdf",
+				ModifiedAt: "2026-08-28T00:00:00Z", Path: "/synthetic.pdf"})
 		case "/api/v1/nodes/7/versions":
 			writeDaemonJSON(t, response, api.ContentVersionPage{Items: []api.ContentVersion{{ID: testVersionID,
 				NodeID: 7, BlobHash: strings.Repeat("a", 64), Size: 12,
@@ -784,4 +830,91 @@ func TestGetDocumentReturnsVaultInfoFailure(t *testing.T) {
 	}, func(*daemonconn.Connection) error { return nil })
 	_, _, err := getDocument(t.Context(), lease, []byte(`{"node_id":7,"content_version_id":"`+testVersionID+`"}`))
 	require.Error(t, err)
+}
+
+func TestSearchReadRerankOutputAndFalseBaseline(t *testing.T) {
+	const secondVersionID = "33333333-3333-4333-8333-333333333333"
+	for _, tc := range []struct {
+		name    string
+		rerank  bool
+		outcome string
+	}{{"false", false, ""}, {"applied", true, "applied"}, {"degraded", true, "degraded"}} {
+		t.Run(tc.name, func(t *testing.T) {
+			versions := []string{testVersionID}
+			documents := []api.DocumentSummary{{NodeID: 7, ContentVersionID: testVersionID, Path: "/synthetic.md", Name: "synthetic.md", MediaType: "text/markdown", ModifiedAt: "2026-08-28T00:00:00Z", ActiveRenditions: []api.DocumentRenditionIdentity{}}}
+			if tc.outcome == "applied" {
+				versions = append(versions, secondVersionID)
+				documents = append(documents, api.DocumentSummary{NodeID: 8, ContentVersionID: secondVersionID, Path: "/second.md", Name: "second.md", MediaType: "text/markdown", ModifiedAt: "2026-08-28T00:00:00Z", ActiveRenditions: []api.DocumentRenditionIdentity{}})
+			}
+			fingerprint, err := processing.SourceFenceFingerprint(processing.SourceFence{VaultUID: testVaultID, ContentVersionIDs: versions})
+			require.NoError(t, err)
+			daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v1/processing/source-fences/resolve":
+					writeDaemonJSON(t, w, api.DocumentSourceFenceResolution{Fence: api.ResolvedDocumentSourceFence{VaultUID: testVaultID, ContentVersionIDs: versions}, FenceFingerprint: fingerprint, ObservedScopeCount: len(versions)})
+				case "/api/v1/search":
+					var body map[string]any
+					if !assert.NoError(t, json.UnmarshalRead(r.Body, &body)) {
+						http.Error(w, "invalid synthetic search request", http.StatusBadRequest)
+						return
+					}
+					if tc.rerank {
+						assert.Equal(t, true, body["rerank"])
+					} else {
+						assert.NotContains(t, body, "rerank")
+					}
+					hit := map[string]any{"vault_uid": testVaultID, "node_id": 7, "content_version_id": testVersionID, "rank": 1, "score": 1.0 / 61, "path": "/synthetic.md", "lexical_rank": 1, "evidence": []any{map[string]any{"kind": "node_name"}}}
+					report := map[string]any{"requested_mode": "lexical", "actual_mode": "lexical", "coverage": map[string]any{"binding_required": false, "scoped_documents": len(versions), "complete_documents": len(versions), "state": "complete"}, "degradations": []any{}, "results": []any{hit}, "trace": []any{}, "truncated": false}
+					if tc.outcome == "applied" {
+						hit["score"] = 0.0
+						report["results"] = []any{hit, map[string]any{"vault_uid": testVaultID, "node_id": 8, "content_version_id": secondVersionID, "rank": 2, "score": 1.0 / 62, "path": "/second.md", "lexical_rank": 2, "evidence": []any{map[string]any{"kind": "node_name"}}}}
+						report["reranking"] = map[string]any{"outcome": "applied", "candidate_count": 1}
+					}
+					if tc.outcome == "degraded" {
+						report["reranking"] = map[string]any{"outcome": "degraded", "cause": "authorization_denied", "candidate_count": 1}
+						report["degradations"] = []string{"reranking_degraded"}
+					}
+					writeDaemonJSON(t, w, report)
+				case "/api/v1/documents/resolve":
+					writeDaemonJSON(t, w, map[string]any{"items": documents})
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(daemon.Close)
+			lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) { return daemonconn.New(daemon.URL, ""), nil }, func(*daemonconn.Connection) error { return nil })
+			result, err := invokeReadTool(t.Context(), lease, "search_documents", map[string]any{"query": "synthetic", "mode": "lexical", "profile": "local", "filters": map[string]any{}, "rerank": tc.rerank})
+			require.NoError(t, err)
+			output := structuredMap(t, result.StructuredContent)
+			hits, ok := output["results"].([]any)
+			require.True(t, ok)
+			if tc.outcome == "applied" {
+				require.Len(t, hits, 2)
+			} else {
+				require.Len(t, hits, 1)
+			}
+			hit, ok := hits[0].(map[string]any)
+			require.True(t, ok)
+			if tc.outcome == "" {
+				assert.NotContains(t, output, "reranking")
+				assert.NotContains(t, hit, "rerank_relevance")
+			} else {
+				receipt, ok := output["reranking"].(map[string]any)
+				require.True(t, ok)
+				assert.Equal(t, tc.outcome, receipt["outcome"])
+				if tc.outcome == "applied" {
+					assert.EqualValues(t, 1, receipt["candidate_count"])
+					require.Contains(t, hit, "rerank_relevance")
+					assert.EqualValues(t, 0, hit["rerank_relevance"])
+					secondHit, ok := hits[1].(map[string]any)
+					require.True(t, ok)
+					assert.NotContains(t, secondHit, "rerank_relevance")
+					assert.InDelta(t, 1.0/62, secondHit["score"], 1e-9)
+				} else {
+					assert.NotContains(t, hit, "rerank_relevance")
+					assert.Equal(t, "authorization_denied", receipt["cause"])
+				}
+			}
+		})
+	}
 }

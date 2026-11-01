@@ -21,6 +21,7 @@ import (
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/pdfproduction"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/redactiontest"
 	"go.kenn.io/docbank/internal/store"
@@ -36,18 +37,23 @@ func TestNumberedNativePDFCLI(t *testing.T) {
 		}
 	}
 	const child = "DOCBANK_TEST_NUMBERED_NATIVE_PDF"
-	if os.Getenv(child) != "1" {
-		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
-		defer cancel()
-		binary, err := os.Executable()
-		require.NoError(t, err)
-		cmd := exec.CommandContext(ctx, binary, "-test.run=^TestNumberedNativePDFCLI$", "-test.v", "-test.timeout=5m")
-		cmd.Env = append(os.Environ(), child+"=1")
-		out, err := cmd.CombinedOutput()
-		require.NoError(t, err, "%s", out)
-		t.Log(string(out))
+	if os.Getenv(child) == "" {
+		for _, version := range []string{"v2", "v3"} {
+			t.Run(version, func(t *testing.T) {
+				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
+				defer cancel()
+				binary, err := os.Executable()
+				require.NoError(t, err)
+				cmd := exec.CommandContext(ctx, binary, "-test.run=^TestNumberedNativePDFCLI$", "-test.v", "-test.timeout=5m")
+				cmd.Env = append(os.Environ(), child+"="+version)
+				out, err := cmd.CombinedOutput()
+				require.NoError(t, err, "%s", out)
+				t.Log(string(out))
+			})
+		}
 		return
 	}
+
 	root := t.TempDir()
 	t.Setenv("DOCBANK_HOME", root)
 	configuration := map[string]any{"page_runtime": redactiontest.PageProfile(t),
@@ -77,12 +83,70 @@ func TestNumberedNativePDFCLI(t *testing.T) {
 			Kind: "text", MapSHA256: f.prep.Map.SHA256, Span: &redaction.Span{Start: page.Span.Start, End: page.Span.Start + 6}}}
 	}
 	f.resolve(t, masks)
+	var historical processing.RedactionReview
+	if os.Getenv(child) == "v2" {
+		// Retain the reviewed recipe across the upgrade; no writer-selection flag.
+		recipe := pdfproduction.QualifiedRecipe()
+		recipe.WriterVersion = "docbank-fresh-objects/v2"
+		historical, err = processing.BuildRedactionReview(
+			f.prep, masks, f.prep.Selection.Revision, recipe)
+		require.NoError(t, err)
+		data, err := json.Marshal(historical)
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(f.review, data, 0600))
+	}
 	out, err := runCLI(t, "bates", "namespaces", "--create", "--prefix", "QUAL", "--padding", "6", "--json")
 	require.NoError(t, err)
 	var namespace api.BatesNamespace
 	require.NoError(t, json.Unmarshal([]byte(out), &namespace))
 	reserve := []string{"redaction", "reserve", f.preparation, f.masks, f.review,
 		"--namespace", namespace.NamespaceID, "--start", "1", "--retain-original", "--json"}
+	if os.Getenv(child) == "v2" {
+		_, err = runCLI(t, reserve...)
+		require.Equal(t, exitStale, commandExitCode(err, true))
+		require.ErrorContains(t, err, "resolve again")
+		plain := filepath.Join(f.dir, "obsolete.zip")
+		_, err = runCLI(t, "redaction", "render", f.preparation, f.masks, f.review, plain)
+		require.Equal(t, exitStale, commandExitCode(err, true))
+		require.ErrorContains(t, err, "resolve again")
+		_, err = os.Stat(plain)
+		require.ErrorIs(t, err, os.ErrNotExist)
+
+		// Seed a pending pre-upgrade reservation through the real storage contract.
+		// The daemon is stopped; no admission bypass is exposed to callers.
+		stop()
+		catalog, err := store.Open(filepath.Join(root, "docbank.db"))
+		require.NoError(t, err)
+		ns := store.BatesNamespace{NamespaceID: namespace.NamespaceID, Prefix: "QUAL", Padding: 6}
+		recipe, err := processing.BuildNumberedRecipe(
+			uuid.MustParse(catalog.VaultID()), ns, 1, historical)
+		require.NoError(t, err)
+		request, err := recipe.PlanRequest(uuid.New())
+		require.NoError(t, err)
+		request.OperationID = uuid.New().String()
+		_, err = catalog.ReplaySnapshotBatesRange(t.Context(), request)
+		require.ErrorIs(t, err, store.ErrNotFound, "refused reservation must not retain numbers")
+		source := f.prep.Selection.Source
+		occurrence := request.Pages[0].OccurrenceID
+		snapshot := store.SnapshotSealRequest{SnapshotID: request.SnapshotID,
+			Members: []store.CollectionSnapshotMember{{
+				Ordinal: 1, OccurrenceID: occurrence, NodeID: f.prep.Selection.NodeID,
+				ContentVersionID: source.VersionID, BlobSHA256: source.SHA256, Size: source.Size,
+				FamilyID: occurrence, FamilyOrder: 1, DisplayName: "original.pdf",
+				FrozenFieldsJSON: "{}", DocumentKind: "other", SelectedSourcePages: []int{1, 2},
+				SelectedPDFSHA256: source.SHA256, SourcePageCount: 2,
+				Representations: []store.CollectionSnapshotRepresentation{{
+					OccurrenceID: occurrence, Role: "native", Status: "available", TextAuthority: "none",
+					ContentVersionID: source.VersionID, BlobSHA256: source.SHA256,
+					MediaType: "application/pdf", Size: source.Size, VerifiedPageCount: 2,
+				}},
+			}}}
+		_, err = catalog.ReserveSnapshotBatesRange(t.Context(), snapshot, request)
+		require.NoError(t, err)
+		require.NoError(t, catalog.Close())
+		stop = startServe(t)
+		waitForDaemon(t, root)
+	}
 	out, err = runCLI(t, reserve...)
 	require.NoError(t, err, out)
 	var reservation processing.NumberedReservation
@@ -100,10 +164,18 @@ func TestNumberedNativePDFCLI(t *testing.T) {
 	var afterMetadata processing.NumberedReservation
 	require.NoError(t, json.Unmarshal([]byte(out), &afterMetadata))
 	require.Equal(t, reservation, afterMetadata)
+	stop()
+	stop = startServe(t)
+	waitForDaemon(t, root)
 	for _, args := range [][]string{{"rm", "/reviewed/renamed.pdf"}, {"trash", "empty", "--run"}, {"gc", "--run"}} {
 		_, err := runCLI(t, args...)
 		require.NoError(t, err)
 	}
+	out, err = runCLI(t, reserve...)
+	require.NoError(t, err, out)
+	var afterTrash processing.NumberedReservation
+	require.NoError(t, json.Unmarshal([]byte(out), &afterTrash))
+	require.Equal(t, reservation, afterTrash)
 	archive := filepath.Join(f.dir, "delivery.zip")
 	render := []string{"redaction", "render", f.preparation, f.masks, f.review, archive,
 		"--allocation", reservation.AllocationID.String(), "--json"}
@@ -112,6 +184,7 @@ func TestNumberedNativePDFCLI(t *testing.T) {
 	var rendered processing.RedactionArchive
 	require.NoError(t, json.Unmarshal([]byte(out), &rendered))
 	files, receipt := readNativeRedactionZIP(t, archive)
+	require.Equal(t, "docbank-fresh-objects/"+os.Getenv(child), receipt.Numbered.Reservation.Recipe.Renderer.WriterVersion)
 	require.Equal(t, "[REDACTED] KEEP SECRET\f[REDACTED] SECOND PAGE\f", string(files["redacted.txt"]))
 	require.Equal(t, reservation.AllocationID, receipt.Numbered.Reservation.AllocationID)
 	pages := readRedactionPDFPages(t, files["redacted.pdf"])

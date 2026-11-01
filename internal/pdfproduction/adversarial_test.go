@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/klippa-app/go-pdfium"
@@ -433,25 +434,28 @@ func TestVerifyDeadlineInterruptsInFlightEvidence(t *testing.T) {
 	original, a := freshFixture(t)
 	for _, stage := range []string{"artifact", "text", "endorsements"} {
 		t.Run(stage, func(t *testing.T) {
-			input := verificationFor(t, []PageArtifact{a})
-			wait := func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }
-			switch stage {
-			case "artifact":
-				input.NextPageArtifact = func(ctx context.Context) (PageArtifact, error) { return PageArtifact{}, wait(ctx) }
-			case "text":
-				input.NextText = func(ctx context.Context) (int, []byte, error) { return 0, nil, wait(ctx) }
-			case "endorsements":
-				input.NextEndorsements = func(ctx context.Context) (redaction.PageLayout, []redaction.Endorsement, error) {
-					return redaction.PageLayout{}, nil, wait(ctx)
+			synctest.Test(t, func(t *testing.T) {
+				input := verificationFor(t, []PageArtifact{a})
+				wait := func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }
+				switch stage {
+				case "artifact":
+					input.NextPageArtifact = func(ctx context.Context) (PageArtifact, error) { return PageArtifact{}, wait(ctx) }
+				case "text":
+					input.NextText = func(ctx context.Context) (int, []byte, error) { return 0, nil, wait(ctx) }
+				case "endorsements":
+					input.NextEndorsements = func(ctx context.Context) (redaction.PageLayout, []redaction.Endorsement, error) {
+						return redaction.PageLayout{}, nil, wait(ctx)
+					}
 				}
-			}
-			recipe := qualificationRecipe()
-			recipe.PageTimeoutSeconds = 1
-			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
-			defer cancel()
-			start := time.Now()
-			require.ErrorIs(t, verifyFresh(ctx, bytes.NewReader(original), int64(len(original)), input, recipe), context.DeadlineExceeded)
-			require.Less(t, time.Since(start), 2*time.Second, "evidence must stop at its page deadline, not the later caller deadline")
+				recipe := qualificationRecipe()
+				recipe.PageTimeoutSeconds = 1
+				ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+				defer cancel()
+				start := time.Now()
+				require.ErrorIs(t, verifyFresh(ctx, bytes.NewReader(original), int64(len(original)), input, recipe), context.DeadlineExceeded)
+				require.Equal(t, time.Second, time.Since(start), "evidence must stop at its page deadline, not the later caller deadline")
+				require.NoError(t, ctx.Err(), "the caller deadline must remain unexpired")
+			})
 		})
 	}
 }
@@ -564,7 +568,7 @@ func FuzzFreshEnvelopeAndStreams(f *testing.F) {
 			t.Skip()
 		}
 		reader := bytes.NewReader(data)
-		_, _ = parseFreshIndex(t.Context(), reader, int64(len(data)), 1)
+		_, _ = parseFreshIndex(t.Context(), reader, int64(len(data)), 1, QualifiedRecipe())
 		index := &freshIndex{reader: reader, offsets: []int64{0, 0}, ends: []int64{0, int64(len(data))}}
 		_, _ = index.stream(t.Context(), 1, "")
 	})

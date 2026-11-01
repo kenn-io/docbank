@@ -170,8 +170,10 @@ func (c Config) MCPHTTPListenAddr() string {
 // compression policy. An empty Repo keeps backup commands available through
 // an explicit request path without silently choosing storage under the vault.
 type BackupConfig struct {
-	Repo      string `toml:"repo"`
-	ZstdLevel int    `toml:"zstd_level"`
+	Repo      string   `toml:"repo"`
+	ZstdLevel int      `toml:"zstd_level"`
+	Interval  Duration `toml:"interval"`
+	KeepLast  int      `toml:"keep_last"`
 }
 
 // MissLogConfig controls the optional private search miss log.
@@ -208,13 +210,15 @@ type StoreBindingConfig struct {
 // source path form the stable, portable source identity; Source itself is a
 // machine-local location and is intentionally not archive metadata.
 type WatchConfig struct {
-	Name         string   `toml:"name"`
-	Source       string   `toml:"source"`
-	Destination  string   `toml:"destination"`
-	SettleTime   Duration `toml:"settle_time"`
-	MinimumAge   Duration `toml:"minimum_age"`
-	ScanInterval Duration `toml:"scan_interval"`
-	Exclude      []string `toml:"exclude"`
+	Profile         string   `toml:"profile"`
+	CaptureOnChange bool     `toml:"capture_on_change"`
+	Name            string   `toml:"name"`
+	Source          string   `toml:"source"`
+	Destination     string   `toml:"destination"`
+	SettleTime      Duration `toml:"settle_time"`
+	MinimumAge      Duration `toml:"minimum_age"`
+	ScanInterval    Duration `toml:"scan_interval"`
+	Exclude         []string `toml:"exclude"`
 	// ExcludePatterns uses docbank add glob semantics; Exclude stays literal.
 	ExcludePatterns []string `toml:"exclude_patterns"`
 }
@@ -753,6 +757,9 @@ func (c Config) Validate() error {
 	if c.Backup.ZstdLevel != 0 && (c.Backup.ZstdLevel < 1 || c.Backup.ZstdLevel > 19) {
 		return fmt.Errorf("[backup] zstd_level %d: want 0 or 1-19", c.Backup.ZstdLevel)
 	}
+	if err := c.Backup.ValidateSchedule(); err != nil {
+		return err
+	}
 	if c.Storage.PackMaxBytes < 0 {
 		return errors.New("[storage] pack_max_bytes must not be negative")
 	}
@@ -775,6 +782,15 @@ func (c Config) Validate() error {
 		return err
 	}
 	for _, watch := range c.Watches {
+		if watch.Profile != "" {
+			profile, err := c.ProcessingProfile(watch.Profile)
+			if err != nil {
+				return fmt.Errorf("watch %q profile: %w", watch.Name, err)
+			}
+			if profile.Document.Rendition == nil || profile.Document.Rendition.AdapterContract == document.VisionAdapterContract {
+				return fmt.Errorf("watch %q profile %q requires an original-document rendition", watch.Name, watch.Profile)
+			}
+		}
 		if err := validateWatch(watch); err != nil {
 			return err
 		}
@@ -1130,7 +1146,7 @@ func validateRenditionRuntimeConfig(profile RenditionProfileConfig, prefix strin
 		if runtime.RequestTimeout.Std() <= 0 || runtime.RequestTimeout.Std() > vision.MaxRequestTimeout {
 			return fmt.Errorf("%s runtime request_timeout must be positive and at most 10m", prefix)
 		}
-		if _, err := vision.Descriptor(profile.Model, document.RenditionTrustBoundary(profile.TrustBoundary)); err != nil {
+		if _, err := vision.Descriptor(profile.DescriptorID, profile.Model, document.RenditionTrustBoundary(profile.TrustBoundary)); err != nil {
 			return fmt.Errorf("%s: %w", prefix, err)
 		}
 		if profile.DiscloseFilename || len(profile.RequestedArtifacts) != 1 || profile.RequestedArtifacts[0] != string(document.EvidenceArtifactStructured) || profile.MaxResponseBytes > vision.MaxResponseBytes {
@@ -1663,4 +1679,18 @@ func isLoopbackHost(host string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+// ValidateSchedule checks the interval and whether an enabled schedule can run.
+func (c BackupConfig) ValidateSchedule() error {
+	if c.Interval.Std() < 0 || c.KeepLast < 0 {
+		return errors.New("[backup] interval and keep_last must not be negative")
+	}
+	if c.Interval.Std() > 0 && c.Interval.Std() < time.Minute {
+		return errors.New("[backup] interval must be at least one minute when enabled")
+	}
+	if c.Interval.Std() > 0 && (c.Repo == "" || c.KeepLast < 1) {
+		return errors.New("[backup] repo and positive keep_last are required when interval is enabled")
+	}
+	return nil
 }

@@ -30,6 +30,10 @@ func classifyRedactionProblem(ctx context.Context, err error) *Error {
 		return NewError(504, "redaction_timeout", "native PDF request timed out")
 	case errors.Is(ctx.Err(), context.Canceled):
 		return NewError(408, "redaction_canceled", "native PDF request canceled")
+	case errors.Is(err, processing.ErrRedactionPreviewBusy):
+		return NewError(503, "redaction_preview_busy", err.Error())
+	case errors.Is(err, processing.ErrRedactionPreviewUnavailable):
+		return NewError(410, "redaction_preview_unavailable", err.Error())
 	case errors.Is(err, processing.ErrRedactionPreparationUnavailable):
 		return NewError(503, "redaction_unavailable", "native PDF operation unavailable; check the daemon and configured Linux amd64 page runtime")
 	case errors.Is(err, processing.ErrRedactionPreparationBusy):
@@ -72,6 +76,8 @@ func classifyRedactionProblem(ctx context.Context, err error) *Error {
 		return NewError(409, "redaction_preparation_changed", "native PDF evidence changed; prepare and review again")
 	case errors.Is(err, processing.ErrRedactionReviewChanged):
 		return NewError(409, "redaction_review_changed", "native PDF masks or review changed; resolve and review again")
+	case errors.Is(err, processing.ErrRedactionReviewOutdated):
+		return NewError(409, "redaction_review_changed", err.Error())
 	case errors.Is(err, processing.ErrRedactionPreparationLimit):
 		return NewError(422, "redaction_limit", "native PDF operation exceeds its size or work limits")
 	case errors.Is(err, processing.ErrRedactionPreparationUnsupported):

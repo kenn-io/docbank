@@ -101,7 +101,7 @@ func (s *Store) prepareAuditedMove(
 	if inCycle {
 		return snapshot, "", false, fmt.Errorf("moving node %d under %d: %w", id, newParentID, ErrCycle)
 	}
-	authority, scopes, nodeSequence, err := loadAuditedNodeAuthority(ctx, tx, id)
+	authority, scopes, nodeSequence, err := s.loadAuditedNodeAuthority(ctx, tx, id)
 	if err != nil {
 		return snapshot, "", false, err
 	}
@@ -201,7 +201,7 @@ func nodeInAuditScopeTx(
 ) (bool, error) {
 	var member bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
-		SELECT 1 FROM audit_memberships WHERE scope_id=? AND node_id=?
+		SELECT 1 FROM audit_memberships WHERE scope_id=$1 AND node_id=$2
 	)`, scopeID, nodeID).Scan(&member); err != nil {
 		return false, fmt.Errorf("checking audit membership for node %d: %w", nodeID, err)
 	}
@@ -212,7 +212,7 @@ func auditScopeMemberSetTx(
 	ctx context.Context, tx *sql.Tx, scopeID string,
 ) (map[uint64]bool, error) {
 	rows, err := tx.QueryContext(ctx,
-		`SELECT node_id FROM audit_memberships WHERE scope_id=? ORDER BY node_id`, scopeID)
+		`SELECT node_id FROM audit_memberships WHERE scope_id=$1 ORDER BY node_id`, scopeID)
 	if err != nil {
 		return nil, fmt.Errorf("listing audit scope %s members: %w", scopeID, err)
 	}
@@ -237,7 +237,7 @@ func auditScopeMemberSetTx(
 
 func liveSubtreeIDsTx(ctx context.Context, tx *sql.Tx, rootID int64) ([]int64, error) {
 	rows, err := tx.QueryContext(ctx, `WITH RECURSIVE subtree(id) AS (
-		SELECT id FROM nodes WHERE id=? AND trashed_at IS NULL
+		SELECT id FROM nodes WHERE id=$1 AND trashed_at IS NULL
 		UNION ALL
 		SELECT node.id FROM nodes node JOIN subtree ON node.parent_id=subtree.id
 		WHERE node.trashed_at IS NULL

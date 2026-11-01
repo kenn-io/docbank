@@ -7,6 +7,9 @@ generate:
   client: true
   validation:
     skip: true
+overlay:
+  sources:
+    - scripts/oapi-codegen/uuid.overlay.yaml
 user-templates:
   header.tmpl: scripts/oapi-codegen/header.tmpl
   types.tmpl: scripts/oapi-codegen/types.tmpl

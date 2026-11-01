@@ -70,6 +70,9 @@ func (s *Store) trashPhotoAssetTx(
 		return PhotoAsset{}, 0, nil
 	}
 	result, err := commitPhotoAssetTx(ctx, tx, asset, asset, "trash")
+	if err == nil {
+		err = s.refreshPhotoAssetWorkTx(ctx, tx, asset.ID)
+	}
 	return result, trashed, err
 }
 
@@ -82,7 +85,7 @@ type photoTrashGroup struct {
 func trashRootTx(ctx context.Context, tx *sql.Tx, node Node) (Node, error) {
 	for node.TrashedAt != nil {
 		var name sql.NullString
-		if err := tx.QueryRowContext(ctx, `SELECT trash_name FROM nodes WHERE id=?`, node.ID).Scan(&name); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT trash_name FROM nodes WHERE id=$1`, node.ID).Scan(&name); err != nil {
 			return Node{}, err
 		}
 		if name.Valid {
@@ -110,7 +113,7 @@ func photoTrashGroupTx(ctx context.Context, tx *sql.Tx, root Node) (photoTrashGr
 		node := pending[i]
 		ids, err := func() (ids []string, err error) {
 			rows, err := tx.QueryContext(ctx, `WITH RECURSIVE tree(id) AS (
- SELECT id FROM nodes WHERE id=?
+ SELECT id FROM nodes WHERE id=$1
  UNION ALL SELECT child.id FROM nodes child JOIN tree ON child.parent_id=tree.id)
  SELECT DISTINCT asset_id FROM photo_files WHERE asset_id IS NOT NULL AND node_id IN (SELECT id FROM tree)`, node.ID)
 			if err != nil {
@@ -173,7 +176,7 @@ func restoreRootTx(ctx context.Context, s *Store, tx *sql.Tx, node Node, active 
 	if err != nil {
 		return Node{}, err
 	}
-	return s.restoreNodeTx(tx, node, target, nowRFC3339())
+	return s.restoreNodeTx(ctx, tx, node, target, nowRFC3339())
 }
 
 func (s *Store) restorePhotoGroupTx(ctx context.Context, tx *sql.Tx, node Node, ifRev int64, active bool) (Node, error) {
@@ -222,6 +225,9 @@ func (s *Store) restorePhotoGroupTx(ctx context.Context, tx *sql.Tx, node Node, 
 		if _, err := commitPhotoAssetTx(ctx, tx, asset, asset, "restore"); err != nil {
 			return Node{}, err
 		}
+		if err := s.refreshPhotoAssetWorkTx(ctx, tx, asset.ID); err != nil {
+			return Node{}, err
+		}
 	}
 	return nodeByIDTx(tx, node.ID)
 }
@@ -232,7 +238,7 @@ func photoRestoreOrderTx(ctx context.Context, tx *sql.Tx, roots map[int64]Node) 
 	for id := range roots {
 		ids = append(ids, id)
 		var parent sql.NullInt64
-		if err := tx.QueryRowContext(ctx, `SELECT trash_parent FROM nodes WHERE id=?`, id).Scan(&parent); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT trash_parent FROM nodes WHERE id=$1`, id).Scan(&parent); err != nil {
 			return nil, err
 		}
 		for parent.Valid {
@@ -240,7 +246,7 @@ func photoRestoreOrderTx(ctx context.Context, tx *sql.Tx, roots map[int64]Node) 
 				dependencies[id] = parent.Int64
 				break
 			}
-			err := tx.QueryRowContext(ctx, `SELECT parent_id FROM nodes WHERE id=?`, parent.Int64).Scan(&parent)
+			err := tx.QueryRowContext(ctx, `SELECT parent_id FROM nodes WHERE id=$1`, parent.Int64).Scan(&parent)
 			if err == sql.ErrNoRows {
 				break
 			}
@@ -287,7 +293,7 @@ type photoTrashSelection struct {
 	held  int64
 }
 
-func photoTrashSelectionTx(ctx context.Context, tx *sql.Tx, eligibleWhere string, args []any, maxRoots int) (photoTrashSelection, error) {
+func (s *Store) photoTrashSelectionTx(ctx context.Context, tx *sql.Tx, eligibleWhere string, args []any, maxRoots int) (photoTrashSelection, error) {
 	// Walk upward from photo members once, so ordinary folders need no inspection.
 	rows, err := tx.QueryContext(ctx, `WITH RECURSIVE photo_nodes(id) AS (
  SELECT node_id FROM photo_files WHERE asset_id IS NOT NULL
@@ -368,6 +374,6 @@ func photoTrashSelectionTx(ctx context.Context, tx *sql.Tx, eligibleWhere string
 		return photoTrashSelection{}, err
 	}
 	return photoTrashSelection{
-		query: `SELECT value FROM json_each(?)`, args: []any{string(encoded)}, more: more, held: held,
+		query: `SELECT CAST(value AS BIGINT) FROM ` + (metadataJSONDialect{postgres: s.postgresSchema != ""}).arrayValues("$1"), args: []any{string(encoded)}, more: more, held: held,
 	}, nil
 }

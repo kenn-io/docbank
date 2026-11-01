@@ -200,11 +200,12 @@ resource links, is capped at 1 MiB.
 | `get_export_status` | Reads one retained native export job, including progress, failure code, and any completed receipt. It never downloads or releases the job. |
 | `get_vault_info` | Returns the stable vault ID and aggregate live, trash, version, and blob counts. It never returns the host vault path. |
 | `list_documents` | Lists current, live files. `path_prefix` defaults to `/` and is capped at 16,384 Unicode characters and 16 KiB of UTF-8. Sorts are `path`, `name`, `modified_at`, `size`, and `media_type`, in `asc` or `desc` order. Page size defaults to 50 and is capped at 250. |
-| `search_documents` | Requires a 1–8,192-character query, a 1–128-character processing profile name, and exactly one source selector: 1–4,096 unique content-version IDs or metadata filters. Mode defaults to `auto` and may be `auto`, `lexical`, `semantic`, or `hybrid`; result limit defaults to 20 and is capped at 100. Optional binding IDs are capped at 128 characters. |
+| `search_documents` | Requires a 1–8,192-character query, a 1–128-character processing profile name, and exactly one source selector: 1–4,096 unique content-version IDs or metadata filters. Mode defaults to `auto` and may be `auto`, `lexical`, `semantic`, or `hybrid`; result limit defaults to 20 and is capped at 100. Optional binding IDs are capped at 128 characters. Optional `rerank` is a boolean that requests the profile's configured reranker. |
 | `get_document` | Requires an exact positive node ID and current content-version UUID. A stale, trashed, moved-to-another-version, or mismatched identity is rejected. |
 | `read_document_content` | Reads original bytes from a selected immutable version as base64. Requires the exact vault, node, version, SHA-256 and size from `list_document_versions`. Originals are limited to 32 MiB; byte windows default to 64 KiB and are capped at 256 KiB. Returns offset, next offset and EOF. Verify the assembled size and SHA-256 before using the bytes. No export job or local file is created. |
 | `list_document_versions` | Lists immutable versions, including each original's `blob_hash` and size, for one live file. Limit defaults to 100 and is capped at 250; offset is capped at 1,000,000. |
 | `resolve_text_citation` | Reopens a [saved quotation](#saved-text-citations) from exact retained rendition text. |
+| `check_answer` | Checks [answer figures](#check-figures-in-an-answer) against saved citations. |
 | `get_kata_context` | Reads an issue's [Docbank evidence and current source states](kata-evidence.md). |
 | `get_text_outline` | Reads the headings and whole-section bounds of [retained text](#read-complete-retained-sections). |
 | `read_text_section` | Reads an exact page of a retained section, with explicit completion. |
@@ -259,6 +260,11 @@ quota. The size bound accommodates paths up to 16 KiB. Tampered, expired,
 reused-for-another-query, or daemon-restart-invalidated cursors fail instead of
 restarting at page one.
 
+`list_documents.source_present` and `search_documents.filters.source_present`
+optionally exclude documents whose watched source is known to be gone.
+Both default to false. Push-owned documents remain included. The filter is
+applied before pagination and source-fence limits.
+
 Before searching, `search_documents` resolves its selector to a source fence:
 the exact set of current, live versions it will search. Filters may select a
 tag UUID, a MIME type of at most 255 characters, a positive ancestor node ID,
@@ -270,6 +276,23 @@ reasons, and truncation state. It returns at most 100 hits. Each excerpt is
 capped at 512 characters and each hit has at most 64 evidence identities of at
 most 1,024 characters each. A result contains at most 64 skipped-reason codes
 of at most 64 characters each.
+
+Set `rerank: true` to request the profile's configured reranker. The query and
+bounded candidate excerpts are sent to the provider only under the existing
+reranking consent grant. `search_documents` reports `openWorldHint: true`
+because a reranked search can send the query and excerpts to a provider.
+The optional `reranking` receipt reports `applied`,
+`skipped`, or `degraded`, the candidate count, and any failure cause. When the
+receipt is `applied`, the first `candidate_count` hits include `rerank_relevance`
+equal to their `score`, including zero. Later hits omit `rerank_relevance`.
+Applied searches use different `score` scales, provider relevance for the first
+`candidate_count` hits and search scores for later hits, so clients must not
+sort the whole list by `score`.
+A degraded search retains its original order and adds
+`reranking_degraded` to skipped reasons, unless the profile fails closed.
+MCP returns `reranking_unavailable` when no reranker is configured and
+`reranking_failed` when reranking fails under a fail-closed policy; these
+errors omit provider bodies, credentials, query text, and excerpts.
 
 Document summaries use paths of at most 16,384 characters, names and MIME types
 of at most 255 characters, and at most 64 active rendition identities.
@@ -310,6 +333,13 @@ Invalid tool arguments use JSON-RPC `-32602`. Unexpected failures use a
 sanitized JSON-RPC internal error. Stderr records the operation and a fixed
 error category for diagnosis. Neither path includes host paths, SQL, provider
 secrets, daemon keys, or unrequested document text.
+
+### PDF facts
+
+`get_document` exposes `pdf_facts` for its accepted current content version.
+The [PDF evidence reference](../architecture/source-metadata.md#pdf-evidence)
+defines its seven fields and omission rules. Missing observations mean unknown;
+PDF evidence that hasn't been extracted omits `pdf_facts` entirely.
 
 ## Resources and rendition windows
 
@@ -390,6 +420,35 @@ before any response starts, never after a domain failure.
 The [HTTP contract](../architecture/http-api.md#retained-text-citations) owns the
 complete field and error table. Current/live rendition resources and windows
 retain their existing behavior.
+
+## Check figures in an answer
+
+`check_answer` compares a plain-text `answer` with 1–8 saved `citations` on
+stdio and HTTP. Send 1–16,000 Unicode code points, at most 512 figures, and
+512 `[n]` markers. A marker is `[` with one to three digits and `]`, and an index
+outside 1 to the number of citations is unknown. Each citation requires a
+verified read, including duplicates. `[2024]` counts as a figure.
+A figure is a token containing a digit,
+with edge punctuation trimmed. Whitespace, em dashes, horizontal bars, and
+`[ ] ( ) < > | * ~` backtick `=` `;` separate tokens.
+A leading `-`, `−`, `+`, or `±` stays as a sign, and a leading decimal point stays.
+Figures compare exactly across all resolved citations; markers don't scope them.
+The first matching rule determines the verdict:
+
+- `ungrounded`: an unknown marker or a missing figure with all citations resolved. Example: `30` against cited `20`.
+- `incomplete`: any citation is unavailable. Example: one of two saved citations can no longer be read.
+- `no_figures`: the answer has no figures. Example: `The invoice is attached.`
+- `grounded`: every figure occurs in the cited text. Example: `200` against cited `1 200`.
+
+Other resolver failures return tool errors.
+Results include figures, unknown marker indexes, citation
+statuses, and text digests, with private cache scope and zero TTL.
+
+- Figures keep their spelling, case, signs, and currency symbols. Example: `-.5` differs from `.5`.
+- Case, currency-prefix, and decimal-padding differences report `ungrounded`. Examples: `12-AB` against `12-ab`, `$5` against `5`, and `5.00` against `5`.
+- Numbered-list numbers count as figures. Example: `1.` contributes `1`.
+- Both sides undo Markdown punctuation escapes, including literal backslashes in plain-text bodies. Example: plain-text `INV\-5` matches `INV-5`.
+- Occurrence alone confirms neither the subject nor other claims. Example: a cited price doesn't establish which item it belongs to.
 
 ## Read complete retained sections
 

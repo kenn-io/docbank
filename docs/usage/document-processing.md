@@ -101,7 +101,8 @@ accepted atom count and ordered/unordered gap counts. It does not print original
 text. `--json` returns the complete `native-pdf-preparation/v1` envelope,
 **including unredacted text**. Treat any saved JSON like the original document.
 Agents can use the same JSON command or authenticated
-`POST /api/v1/redaction/prepare`; no browser or MCP action is exposed.
+`POST /api/v1/redaction/prepare`. The browser uses the same preparation in its
+[PDF review editor](#review-a-pdf-in-the-browser); no MCP tool is exposed.
 
 Preparation returns coverage gaps for inspection. Every ordered gap must be
 fully masked, and an unordered gap requires masking its whole page, before the
@@ -125,6 +126,8 @@ still apply.
 ## Describe photos
 
 Configure a [vision profile](../configuration.md#photo-descriptions), review `processing plan` for a photo, and grant consent with `processing build`. Eligible photos then queue automatically, a few at a time. The provider receives the cached grid JPEG, at most 512 pixels on its longest edge and re-encoded without metadata; filenames and original bytes stay in the vault. Hidden, excluded, trashed, and superseded photos are skipped before the call and again at publication, and a hidden photo retries once it is eligible again.
+
+[Automatic face detection](../configuration.md#automatic-face-detection) requires separate profile consent and sends the same stripped grid preview.
 
 The first request to a provider checks it with a synthetic image, and a failed check retries no sooner than a minute later. If it fails when you grant consent, the error says consent was saved. Caption, tags, and visible text arrive as one [suggestion](photos.md#suggested-metadata). An invalid caption or an oversized tag is dropped alone; a non-JSON reply publishes nothing. A dropped connection, timeout, or daemon restart during a description call retries it with backoff, since a description has no side effects.
 
@@ -202,8 +205,56 @@ source pixels. Plain rendering retains no job, attachment or output for later do
 A killed daemon may leave private files in its spool; see the
 [staging bounds](../architecture/page-images.md#native-pdf-mask-execution).
 Agents can use these commands or the authenticated `POST /api/v1/redaction/resolve`
-and `/api/v1/redaction/render` routes. Browser sessions and MCP tools do not
-expose these operations.
+and `/api/v1/redaction/render` routes. Browser sessions use resolve and the
+temporary-preview routes described below; direct render and reservations remain
+API-key-only. No MCP tool is exposed.
+
+### Review a PDF in the browser
+
+Select a live PDF in **Documents**, then choose **Redact PDF**. The configured
+Linux amd64 page runtime is required. The editor supports one original PDF up
+to 64 MiB and 16 pages. Empty files, saved-result sources and related previews
+cannot start a review. **Fit page** initially shows the whole page; choose
+**Fit width** or a percentage to inspect it more closely.
+
+1. Render any missing original page, then choose **Draw rectangle** or **Mask
+   whole page**. To draw with the keyboard, focus the mask canvas, move with
+   arrow keys and press Enter at each corner. Shift moves 0.1 inch; Escape
+   cancels the unfinished rectangle. Page and zoom changes cancel it too.
+   Drawing stays on after each rectangle.
+2. Cover every coverage gap. An unordered gap needs a whole-page mask. If a
+   rectangle cuts through text, review the proposed expansion and explicitly
+   choose **Use expanded mask**, or keep editing.
+3. Choose **Preview redaction**. Inspect **Redacted** and **Text** on each page.
+   The displayed page images are the exact images verified against this PDF.
+4. Choose **Confirm and download ZIP**, then **Download ZIP**. Extract
+   `redacted.pdf` to open it. The ZIP also contains the sanitized text and receipt.
+   Keep the tab open until the transfer finishes.
+
+The original is unchanged. A changed source version before preview requires
+reopening the intended PDF; tags, names and moves preserve masks. Once ready,
+the preview is frozen even if the original is replaced or trashed. **Back to
+masks** discards that output before editing. Repeated downloads return identical
+bytes. Verification checks the masks and text; it does not prove unmasked pixels
+match the original or authenticate the producer.
+
+Canceling a preview keeps the masks. If creation loses its response, the editor
+releases any server preview before enabling another attempt. If cleanup fails,
+choose **Release preview** to retry it.
+
+Only one temporary preview can be open across the daemon. It expires after
+30 minutes, and is removed on discard, sign-out or daemon restart. Closing or
+reloading the tab requests cancellation of this preview and its transfers. It
+does not end the browser session or cancel other exports and imports. Returning
+to a cached page leaves the editor closed. If a crash or lost cleanup request
+prevents removal, wait for expiry. There is no saved draft or restart recovery.
+A ready preview releases the rendering slot but can retain up to 1.53 GiB of private spool files.
+See [temporary-preview storage](../architecture/page-images.md#temporary-browser-redaction-previews).
+
+For later offline verification, expand **Private review files** and save the
+preparation, masks and review. Their names contain `PRIVATE`; preparation
+contains unredacted evidence. Keep all three separate from the delivery ZIP.
+Use them with [`redaction verify`](#check-and-retain-a-saved-archive).
 
 ### Deliver one reviewed PDF with Bates numbers
 
@@ -234,7 +285,7 @@ records the reservation, labels and indefinite original retention.
 The vault retains the numbered **PDF**, its recipe and page receipts. It does not
 retain the ZIP, sidecar or the preparation, masks and review files. Keep those
 three review inputs separately for full verification and ZIP reconstruction.
-Each PDF currently embeds about 9.6 MB of font data, even for a small document.
+Each new PDF embeds about 6 MB of compressed font data, even for a small document.
 
 Reservation and snapshot creation are atomic. After an interrupted reservation,
 repeat exactly the same command with the same review, namespace, start and
@@ -269,9 +320,15 @@ the checked recipe before download; a failed full check never retries a narrower
 one. Recovery without review files works after restart and backup/restore,
 without a configured page runtime or the original renderer, writer or font version.
 Its assurance depends on the vault's retained record. Full verification requires
-a matching engine recipe; a mismatch reports "verifier version differs" (exit 1),
-not an integrity failure. Footer text and placement must match exactly. Visible
-numbers are compared with independently rendered expected labels. Each grayscale
+a supported engine recipe. Both the original v2 writer and the compressed-font
+v3 writer are supported for verification. Unfinished v2 reservations still render
+with their original review and numbers. To start a new reservation or plain
+render from an old v2 review, resolve again; otherwise the command exits 4.
+New reviews use v3, saving about 3.62 MB per PDF without changing its font or
+character coverage. Other unqualified engine identities report "verifier
+version differs" (exit 1), not an integrity failure. Footer text and placement
+must match exactly. Visible numbers are compared with independently rendered
+expected labels. Each grayscale
 sample inside the label box may differ by at most 16 on the 0–255 scale; positions
 must match, and pixels outside the box must be white. Render-time verification
 still compares the complete raster exactly. Full verification still does not prove unmasked pixels match the source
@@ -282,7 +339,109 @@ Agents can reserve and render through the CLI or API-key-only
 The existing MCP `export_bates_file` tool supports the reduced recovery check
 and reports its scope. It does not accept review files or reserve numbered
 redactions. No browser control is included. Load-file exports accept ordinary
-stamped allocations only; download a numbered native PDF directly by its allocation.
+stamped allocations only. Use `redaction package` for a recipient delivery of numbered redactions.
+
+### Package completed numbered PDFs for a recipient
+
+`redaction package` puts completed numbered redactions into one ZIP for import
+by a recipient. It preserves each retained PDF and its numbers, verifies masks,
+text and visible labels against your saved reviews, and includes label-free
+text plus DAT, OPT and mapping files. It creates no new reservation or rendering.
+
+Create `selection.json` in the order the documents should appear:
+
+```json
+{
+  "contract": "native-pdf-recipient-selection/v1",
+  "documents": [
+    {
+      "allocation_id": "11111111-1111-4111-8111-111111111111",
+      "preparation": "first/preparation.json",
+      "masks": "first/masks.json",
+      "review": "first/review.json"
+    },
+    {
+      "allocation_id": "22222222-2222-4222-8222-222222222222",
+      "preparation": "second/preparation.json",
+      "masks": "second/masks.json",
+      "review": "second/review.json"
+    }
+  ]
+}
+```
+
+Paths are relative to the selection file; absolute paths are also accepted.
+Every allocation must be a completed numbered native redaction. Ordinary stamped
+exports are refused. Allocations and labels must be distinct. Labels must fit the
+recipient importer's 256-byte limit; commas and line breaks cannot be represented
+in OPT.
+
+```sh
+docbank redaction package selection.json recipient.zip --json
+```
+
+The command checks all local inputs and pins each reviewed text file's size and
+SHA-256 before downloading any PDF. It then reads each document's inputs again
+and requires the same review digest. A changed file
+is refused, never silently adopted. This reads each input twice while keeping
+only one full review and one downloaded PDF in memory or staging at a time.
+Supported v2 and v3 deliveries may be mixed. The daemon must hold the completed
+artifacts; a live source or configured page runtime is not needed. Embedded
+PDFium still performs full verification, with no reduced-check fallback.
+
+The ZIP contains one `VOL001` directory. Each document has `PDF/000001.pdf` and
+`TEXT/000001.txt` paths assigned by selection order. `DATA.DAT` has one row per
+document, and `DATA.OPT` has one row per page pointing into that whole PDF. The
+first label is the document ID; existing ranges and gaps remain unchanged.
+`mapping.json` and `receipt.json` sit at the ZIP root. The receipt records file
+hashes, allocation and namespace IDs, labels and review digests. It contains no
+original text, source identities, masks or review payloads. Keep the input files
+privately; they are not sent to the recipient.
+
+JSON reports `state`, `destination`, `size`, `sha256`, `receipt_sha256`,
+`verification: "masks_text_and_numbers"` and the receipt. Save the whole-ZIP hash
+separately. Verification does not prove unmasked pixels match the original or
+authenticate the producer.
+
+Limits are 16 documents, 16 pages per document, 64 pages total and 512 MiB for the
+complete ZIP. The selection and each metadata entry are limited to 256 KiB;
+each text file is limited to 16 MiB. The command has a 30-minute deadline, with
+10 minutes per PDF and the existing renderer memory and page limits. A private
+directory beside the destination holds the growing ZIP and at most one PDF,
+up to 1 GiB combined plus metadata and filesystem overhead. Files on a memory-backed
+filesystem consume RAM beyond the renderer's RSS accounting.
+
+Choose a destination outside the Docbank data directory. Publication never
+overwrites a destination. A failure removes staging and leaves no partial
+destination. If reporting fails after publication, the error names the
+saved file. A hard kill may leave a `docbank-recipient-*` directory beside the
+destination; after confirming the process has stopped, remove that exact directory
+and retry. Packaging does not retain its ZIP automatically; use `add` if wanted.
+Existing allocations continue to retain their unredacted originals indefinitely.
+
+Malformed or oversized inputs exit 2, changed reviews exit 4, resource refusals
+exit 5, and PDF or package mismatches exit 6. Missing retained artifacts exit 3;
+unsupported verifier versions, I/O failures and cancellation exit 1.
+
+To import the delivered ZIP, extract it first, then run:
+
+```sh
+docbank package preflight ./recipient --profile dat-concordance-v1 \
+  --page-map-profile opt-standard-v1 --encoding utf-8 \
+  --map ./recipient/mapping.json --json
+docbank mkdir /received
+docbank package import <preflight-id> --name "Received delivery" \
+  --into /received --index-supplied-text --json
+docbank package import status <operation-id> --json
+```
+
+Use the returned preflight ID; do not add `--accept-partial` to bypass an error.
+`package preflight` accepts a directory. Direct ZIP import is available through
+the existing sealed mailbox-container API path. Recipient import preserves the
+sender's PDFs, text and labels; it does not check the sender's private review or
+establish provenance. Range endpoints are recorded under the sender's namespace
+UUID; every OPT page label is recorded under `received`, with received provenance.
+Import creates no recipient Bates namespace or allocation.
 
 ### Check and retain a saved archive
 

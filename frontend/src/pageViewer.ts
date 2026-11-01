@@ -132,7 +132,7 @@ export class PageViewerSession {
       this.disposed ||
       !Number.isInteger(page) ||
       page < 1 ||
-      page > (this.state.inventory?.inventory.page_count || 1)
+      page > (this.state.inventory?.inventory.page_count || 16)
     )
       return;
     const signal = this.reset();
@@ -151,6 +151,8 @@ export class PageViewerSession {
     if (job) verifyJobInventory(job, inventory);
     const page = this.state.page,
       frame = inventory.inventory.frames[page - 1]?.frame;
+    if (inventory.inventory.page_count > 0 && page > inventory.inventory.page_count)
+      throw new Error("The selected page is not in the source inventory.");
     this.publish({ inventory, frame });
     const result = job?.results.find((v) => v.page === page);
     const recipes = new Map(inventory.inventory.recipes.map((v) => [v.sha256, v.recipe]));

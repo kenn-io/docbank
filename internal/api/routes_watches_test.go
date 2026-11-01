@@ -15,6 +15,7 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/jobs"
+	"go.kenn.io/docbank/sqlite"
 )
 
 func TestListWatchedInboxesReturnsEffectiveConfigAndRunnerState(t *testing.T) {
@@ -47,6 +48,7 @@ func TestListWatchedInboxesReturnsEffectiveConfigAndRunnerState(t *testing.T) {
 			},
 			{
 				Name: "archive", Source: source, Destination: "/records",
+				CaptureOnChange: true,
 				SettleTime:      config.Duration(2 * time.Minute),
 				MinimumAge:      config.Duration(7 * 24 * time.Hour),
 				ScanInterval:    config.Duration(15 * time.Second),
@@ -61,6 +63,8 @@ func TestListWatchedInboxesReturnsEffectiveConfigAndRunnerState(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &got))
 	require.Len(t, got.Items, 2)
 	assert.Equal(t, "archive", got.Items[0].Name)
+	assert.True(t, got.Items[0].CaptureOnChange)
+	assert.Contains(t, body, `"capture_on_change":true`)
 	assert.Equal(t, source, got.Items[0].Source)
 	assert.Equal(t, "/records", got.Items[0].Destination)
 	assert.Equal(t, "2m0s", got.Items[0].SettleTime)
@@ -74,6 +78,7 @@ func TestListWatchedInboxesReturnsEffectiveConfigAndRunnerState(t *testing.T) {
 	assert.Equal(t, "watch:archive", got.Items[0].Job.Name)
 	assert.Equal(t, "running", got.Items[0].Job.Status)
 	assert.Equal(t, "zeta", got.Items[1].Name)
+	assert.False(t, got.Items[1].CaptureOnChange)
 	assert.Equal(t, "0s", got.Items[1].MinimumAge)
 	assert.Empty(t, got.Items[1].Exclude)
 	assert.Nil(t, got.Items[1].Job)
@@ -88,4 +93,40 @@ func TestListWatchedInboxesReturnsEmptyObject(t *testing.T) {
 	var got api.WatchedInboxList
 	require.NoError(t, json.Unmarshal([]byte(body), &got))
 	assert.Empty(t, got.Items)
+}
+
+func TestWatchProcessingStatusLookupFailure(t *testing.T) {
+	t.Parallel()
+	supervisor := jobs.New(t.Context(), slog.New(slog.DiscardHandler))
+	t.Cleanup(func() { require.NoError(t, supervisor.Shutdown(context.Background())) })
+	require.NoError(t, supervisor.Start("watch:inbox", func(ctx context.Context) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}))
+	ts, catalog := newTestServer(t, func(d *api.Deps) {
+		d.Jobs = supervisor
+		d.Cfg.Watches = []config.WatchConfig{{Name: "inbox", Profile: "private"}}
+		configureProcessingTestService(t)(d)
+		t.Cleanup(func() { require.NoError(t, d.Processing.Shutdown(context.Background())) })
+	})
+	db, err := catalog.SQLiteDriver().Open(catalog.DBPath, sqlite.OpenOptions{Access: sqlite.ReadWriteExisting, TransactionMode: sqlite.Deferred})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	// Break only consent lookup so the shared catalog can still list jobs.
+	_, err = db.ExecContext(t.Context(), `DROP TABLE processing_consent_grants`)
+	require.NoError(t, err)
+	resp, body := get(t, ts, "/api/v1/watches", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var watches api.WatchedInboxList
+	require.NoError(t, json.Unmarshal([]byte(body), &watches))
+	require.Len(t, watches.Items, 1)
+	require.NotNil(t, watches.Items[0].Processing)
+	assert.Contains(t, watches.Items[0].Processing.Error, "Consent status unavailable")
+	resp, body = get(t, ts, "/api/v1/jobs", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var jobs api.JobList
+	require.NoError(t, json.Unmarshal([]byte(body), &jobs))
+	require.Len(t, jobs.Items, 1)
+	assert.Equal(t, watches.Items[0].Processing, jobs.Items[0].Processing)
+	assert.Empty(t, jobs.Items[0].Error, "consent lookup failures leave the scanner healthy")
 }

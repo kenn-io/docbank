@@ -651,7 +651,7 @@ func TestProcessingShutdownDrainsAcceptedJobAndPreservesRecovery(t *testing.T) {
 
 	// HTTP shutdown cannot drain the worker after this client has disconnected.
 	// The API owner must cancel it and wait for provider cleanup itself.
-	shutdownCtx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the provider holds accepted processing until released
+	shutdownCtx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the provider holds accepted processing until released
 	defer cancel()
 	require.ErrorIs(t, catalog.Server.Shutdown(shutdownCtx), context.DeadlineExceeded)
 	select {
@@ -667,7 +667,7 @@ func TestProcessingShutdownDrainsAcceptedJobAndPreservesRecovery(t *testing.T) {
 	select {
 	case <-closed:
 		t.Fatal("server closed while the provider still owned processing resources")
-	case <-time.After(50 * time.Millisecond): //nolint:kennlint // the timer shows the event does not happen; the provider holds accepted processing, so Close cannot finish
+	case <-time.After(50 * time.Millisecond): //nolint:kennlint // deadlinetest: the timer shows the event does not happen; the provider holds accepted processing, so Close cannot finish
 	}
 	closeProcessingSignal(provider.release)
 	select {
@@ -798,7 +798,7 @@ func assertProcessingSurvivesDisconnect(t *testing.T, ts *httptest.Server, selec
 			t.Fatal("provider did not start after durable job publication")
 		}
 		require.NoError(t, result.response.Body.Close())
-		time.Sleep(50 * time.Millisecond) //nolint:kennlint // gives the server's real TCP connection time to observe the client disconnect
+		time.Sleep(50 * time.Millisecond) //nolint:kennlint // sleeptest: gives the server's real TCP connection time to observe the client disconnect
 		closeProcessingSignal(release)
 		require.Eventually(t, func() bool {
 			statusResponse, statusBody := get(t, ts, "/api/v1/processing/jobs/"+jobID, nil)
@@ -1597,7 +1597,7 @@ func TestProcessingReportsConsentExpiredDuringRendition(t *testing.T) { //nolint
 	grant := api.ProcessingConsentGrantRequest{Selector: selector, PlanFingerprint: plan.Fingerprint}
 	expires := time.Now().UTC().Add(2 * time.Second)
 	grant.ExpiresAt = expires.Format(time.RFC3339Nano)
-	provider.afterRender = func() { time.Sleep(time.Until(expires) + time.Millisecond) } //nolint:kennlint // consent expiry is checked against the store's real clock, which has no seam
+	provider.afterRender = func() { time.Sleep(time.Until(expires) + time.Millisecond) } //nolint:kennlint // sleeptest: consent expiry is checked against the store's real clock, which has no seam
 
 	_, err = c.API().GrantDocumentProcessingConsent(t.Context(), &apiclient.GrantDocumentProcessingConsentRequestOptions{Body: new(grant)})
 

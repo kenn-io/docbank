@@ -71,7 +71,8 @@ type releasedStorageSchema struct {
 	// carry, such as the physical blob catalog, after the import.
 	restoreSourceState func(context.Context, metadataQuerier, *Store) error
 	// keepsProcessingIncarnation makes the target adopt the source's current
-	// processing incarnation, so existing consent stays valid.
+	// processing incarnation, so existing consent and backup repository
+	// ownership stay valid.
 	keepsProcessingIncarnation bool
 }
 
@@ -130,7 +131,7 @@ var releasedStorageSchemas = []releasedStorageSchema{
 		exportMetadata: func(ctx context.Context, source *sql.Tx, dst io.Writer) error {
 			return exportReleasedMetadataSnapshot(ctx, source, dst, 41)
 		},
-		restoreSourceState:         restoreV28SourceState,
+		restoreSourceState:         restoreV41SourceState,
 		keepsProcessingIncarnation: true,
 	},
 }
@@ -172,7 +173,7 @@ var currentSchemaTables = [...]string{
 	"processing_consent_grants", "rendition_job_waiters", "embedding_jobs",
 	"persons", "person_identities", "person_external_identities", "person_external_uid_aliases",
 	"person_aliases", "person_merges", "person_splits", "custodian_assignments",
-	"document_people_state", "person_match_candidates", "person_document_assertions", "photo_faces",
+	"document_people_state", "person_match_candidates", "person_document_assertions", "photo_faces", "photo_face_scans",
 	"document_people_generations", "document_people_heads", "document_people_builds",
 	"document_people",
 }
@@ -788,6 +789,17 @@ func restoreV28SourceState(ctx context.Context, source metadataQuerier, target *
 			return err
 		}
 		return restoreMediaReceipts(ctx, source, tx)
+	})
+}
+
+// restoreV41SourceState also keeps machine-local checkout bindings and file
+// observations, which metadata import clears for a restore.
+func restoreV41SourceState(ctx context.Context, source metadataQuerier, target *Store) error {
+	if err := restoreV28SourceState(ctx, source, target); err != nil {
+		return err
+	}
+	return target.withStorageTx(ctx, func(tx *sql.Tx) error {
+		return replaceImportedTables(ctx, source, tx, []string{"photo_checkouts", "photo_checkout_entries"})
 	})
 }
 

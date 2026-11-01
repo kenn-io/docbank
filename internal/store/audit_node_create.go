@@ -22,8 +22,8 @@ type auditedCreationBaseline struct {
 	topology audit.Record
 }
 
-func persistAuditedNodeCreation(
-	ctx context.Context, tx *sql.Tx, vaultID string,
+func (s *Store) persistAuditedNodeCreation(
+	ctx context.Context, tx *sql.Tx,
 	authority auditAuthorityState, scopes []auditScopeState,
 	priorParent, resultingParent, created Node, version ContentVersion,
 	operationID, recordedAt string, metadata *auditedCreationMetadata,
@@ -36,7 +36,7 @@ func persistAuditedNodeCreation(
 		return err
 	}
 	values, err := makeAuditedMutationValues(
-		vaultID, authority.lineageID, operationID, recordedAt,
+		s.vaultID, authority.lineageID, operationID, recordedAt,
 	)
 	if err != nil {
 		return err
@@ -90,7 +90,7 @@ func persistAuditedNodeCreation(
 	if err != nil {
 		return err
 	}
-	if err := persistAuditedCreationRecords(
+	if err := s.persistAuditedCreationRecords(
 		ctx, tx, baseline, topologyDelta, events, mutation, metadata,
 	); err != nil {
 		return err
@@ -100,7 +100,7 @@ func persistAuditedNodeCreation(
 	); err != nil {
 		return err
 	}
-	nodeSequence, err := auditNodeSequence(ctx, tx)
+	nodeSequence, err := s.auditNodeSequence(ctx, tx)
 	if err != nil {
 		return err
 	}
@@ -122,22 +122,7 @@ func persistAuditedNodeCreation(
 	if err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE audit_authority
-		SET operation_sequence_high_water=?,allocation_entry_count=?,allocation_head=?
-		WHERE singleton=1`, operationSequence, allocationCount, allocationHead.text); err != nil {
-		return fmt.Errorf("advancing audit allocation authority: %w", err)
-	}
-	return nil
-}
-
-func auditNodeSequence(ctx context.Context, tx *sql.Tx) (int64, error) {
-	var sequence int64
-	if err := tx.QueryRowContext(ctx,
-		`SELECT seq FROM sqlite_sequence WHERE name='nodes'`,
-	).Scan(&sequence); err != nil {
-		return 0, fmt.Errorf("reading node ID high-water mark: %w", err)
-	}
-	return sequence, nil
+	return updateAuditAuthorityHead(ctx, tx, operationSequence, allocationCount, allocationHead.text)
 }
 
 func auditTopologyForLiveNode(node Node) (audit.Record, error) {
@@ -478,7 +463,7 @@ func makeAuditedCreationMutation(
 	}}
 }
 
-func persistAuditedCreationRecords(
+func (s *Store) persistAuditedCreationRecords(
 	ctx context.Context, tx *sql.Tx, baseline auditedCreationBaseline,
 	topologyDelta audit.Record, events []audit.Record, mutation audit.Record,
 	metadata *auditedCreationMetadata,
@@ -491,14 +476,12 @@ func persistAuditedCreationRecords(
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_baselines(
-		digest,scope_id,target_node_id,operation_id) VALUES(?,?,?,?)`,
+		digest,scope_id,target_node_id,operation_id) VALUES($1,$2,$3,$4)`,
 		baseline.digest.text, baseline.scope.scopeID, baseline.nodeID,
 		operationID); err != nil {
 		return fmt.Errorf("creating inherited audit baseline: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_memberships(
-		scope_id,node_id,baseline_digest) VALUES(?,?,?)`,
-		baseline.scope.scopeID, baseline.nodeID, baseline.digest.text); err != nil {
+	if err := s.insertAuditMembershipTx(ctx, tx, baseline.scope.scopeID, baseline.nodeID, baseline.digest.text); err != nil {
 		return fmt.Errorf("creating inherited audit membership for node %d: %w", baseline.nodeID, err)
 	}
 	if err := insertAuditRecord(ctx, tx, topologyDelta); err != nil {
@@ -542,12 +525,7 @@ func advanceAuditedCreationScope(
 	if err := insertAuditRecord(ctx, tx, entry); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE audit_scopes
-		SET entry_count=?,chain_head=? WHERE scope_id=?`,
-		entryCount, head.text, baseline.scope.scopeID); err != nil {
-		return fmt.Errorf("advancing audit scope %s: %w", baseline.scope.scopeID, err)
-	}
-	return nil
+	return updateAuditScopeHead(ctx, tx, baseline.scope.scopeID, entryCount, head.text)
 }
 
 func makeAuditedCreationAllocationEntry(

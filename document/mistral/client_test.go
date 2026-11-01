@@ -446,7 +446,7 @@ func TestClientPreservesRequestAccounting(t *testing.T) {
 		},
 		{
 			name: "retry wait canceled", statuses: []int{http.StatusTooManyRequests},
-			retryAfter: "60", timeout: 20 * time.Millisecond, wantError: context.DeadlineExceeded,
+			retryAfter: "60", timeout: 20 * time.Millisecond, wantError: context.DeadlineExceeded, //nolint:kennlint // deadlinetest: this timeout is consumed only inside the synctest bubble below
 			wantMetrics: RequestMetrics{Requests: 1, Retries: 0, Latency: 10 * time.Millisecond},
 		},
 	} {

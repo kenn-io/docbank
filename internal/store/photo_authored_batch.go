@@ -8,8 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"log/slog"
 	"math"
 	"slices"
+
+	"go.kenn.io/docbank/document"
 )
 
 type PhotoKeywordEdit struct {
@@ -73,9 +76,10 @@ type PhotoPreparedTarget struct {
 }
 
 type PhotoAuthoredPreparation struct {
-	Suggestions []PhotoSuggestion     `json:"suggestions,omitempty"`
-	Assets      []PhotoAsset          `json:"assets"`
-	Targets     []PhotoPreparedTarget `json:"targets"`
+	Proposals   []document.PhotoBestShotProposal `json:"proposals,omitempty"`
+	Suggestions []PhotoSuggestion                `json:"suggestions,omitempty"`
+	Assets      []PhotoAsset                     `json:"assets"`
+	Targets     []PhotoPreparedTarget            `json:"targets"`
 }
 
 type PhotoAuthoredBatch struct {
@@ -99,10 +103,21 @@ func (s *Store) PreparePhotoAuthored(ctx context.Context, selection PhotoSetSele
 		if err != nil {
 			return err
 		}
-		preparer := photoAuthoredPreparer{tx: tx, hidden: selection.Hidden, single: len(ids) == 1, settings: settings, result: &result, limit: selection.Limit}
+		var loaded map[string]photoAuthoredLoaded
+		if selection.Limit == MaxPhotoStackTargets {
+			loaded = map[string]photoAuthoredLoaded{}
+		}
+		preparer := photoAuthoredPreparer{store: s, tx: tx, hidden: selection.Hidden, single: len(ids) == 1, settings: settings, result: &result, limit: selection.Limit, loaded: loaded}
 		for chunk := range slices.Chunk(ids, photoSelectionChunkSize) {
 			if err := preparer.prepare(ctx, chunk); err != nil {
 				return err
+			}
+		}
+		if selection.Limit == MaxPhotoStackTargets && len(ids) > 1 {
+			if offers, offerErr := s.bestShotsTx(ctx, tx, ids, result, loaded); offerErr == nil {
+				result.Proposals = offers
+			} else {
+				slog.WarnContext(ctx, "compute prepared photo best shots", "error", offerErr)
 			}
 		}
 		if len(result.Assets) == 1 {
@@ -136,6 +151,7 @@ func (s *Store) photoAuthoredSelectionIDs(ctx context.Context, tx *sql.Tx, selec
 
 // photoAuthoredPreparer accumulates edit targets for one PreparePhotoAuthored call.
 type photoAuthoredPreparer struct {
+	store    *Store
 	tx       *sql.Tx
 	hidden   bool
 	single   bool
@@ -271,7 +287,7 @@ func (p photoAuthoredPreparer) appendAsset(ctx context.Context, id string, asset
 		target.DisplayFileID = *asset.DisplayFileID
 		target.AssetID, target.AssetRevision, target.FileID, target.Revision, target.NodeID, target.Values = id, asset.Revision, file.ID, file.Revision, file.NodeID, file.Authored()
 		if p.single && photoSidecarTargetRole(file.Role) {
-			state, err := photoXMPStateTx(ctx, p.tx, file, p.single)
+			state, err := p.store.photoXMPStateTx(ctx, p.tx, file, p.single)
 			if err != nil {
 				return err
 			}
@@ -445,7 +461,7 @@ func checkPhotoAuthoredBatchTargetTx(ctx context.Context, tx *sql.Tx, request Ph
 // Checkout, XMP, and face receipts count nodes or their own history, so they never advance an asset revision.
 func photoAssetSidecarOnlySinceTx(ctx context.Context, tx *sql.Tx, assetID string, seen, current int64) error {
 	revision := seen
-	err := queryRows(ctx, tx, `SELECT before_revision,after_revision,before_json,after_json FROM photo_change_receipts WHERE asset_id=? AND before_revision>=? AND after_revision<=? AND after_revision>before_revision AND operation NOT IN ('checkout_commit','xmp_sync','face_decision') ORDER BY before_revision`, []any{assetID, revision, current}, func(rows *sql.Rows) error {
+	err := queryRows(ctx, tx, `SELECT before_revision,after_revision,before_json,after_json FROM photo_change_receipts WHERE asset_id=$1 AND before_revision>=$2 AND after_revision<=$3 AND after_revision>before_revision AND operation NOT IN ('checkout_commit','xmp_sync','face_decision') ORDER BY before_revision`, []any{assetID, revision, current}, func(rows *sql.Rows) error {
 		var beforeRevision, afterRevision int64
 		var beforeJSON, afterJSON []byte
 		if err := rows.Scan(&beforeRevision, &afterRevision, &beforeJSON, &afterJSON); err != nil {
@@ -484,10 +500,10 @@ func photoAuthoredAssetUnchanged(before, after photoReceiptAssetState) bool {
 	if before.ID != after.ID || before.Kind != after.Kind {
 		return false
 	}
-	if !equalPhotoString(before.HiddenAt, after.HiddenAt) || !equalPhotoString(before.ExcludedAt, after.ExcludedAt) {
+	if !equalPhotoOptional(before.HiddenAt, after.HiddenAt) || !equalPhotoOptional(before.ExcludedAt, after.ExcludedAt) {
 		return false
 	}
-	return equalPhotoString(before.DisplayFileID, after.DisplayFileID) && equalPhotoString(before.DisplayOverrideFileID, after.DisplayOverrideFileID)
+	return equalPhotoOptional(before.DisplayFileID, after.DisplayFileID) && equalPhotoOptional(before.DisplayOverrideFileID, after.DisplayOverrideFileID)
 }
 
 // photoKeywordPlan lists keyword changes sorted by tag and node, with each tag's

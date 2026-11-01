@@ -11,7 +11,7 @@ $ErrorActionPreference = 'Stop'
 $legacy = @('./docbank', './internal/store', './cmd/docbank')
 # Seed measured hot packages; distribute the remainder round-robin across all four shards.
 $groups = @{
-    1 = @($legacy[1], './internal/daemonconn')
+    1 = @($legacy[1], './internal/daemonconn', './internal/kataevidence')
     2 = @($legacy[0], './internal/api')
     3 = @($legacy[2])
     4 = @('./internal/processing')
@@ -40,6 +40,13 @@ if ($ShardCount -eq 4 -and $Shard -ne 'all') {
 }
 
 # Git Bash enables backup privileges for its children, which lets reads bypass exclusive file locks.
+if ($ShardCount -eq 4 -and $Shard -eq '1') {
+    # Kata fixture shutdown checkpoints SQLite within five seconds. Keep it
+    # separate from the store suite's concurrent database and filesystem work.
+    go test -timeout 30m -tags fts5 @args ./internal/kataevidence
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    $packages = @($packages | Where-Object { $_ -ne './internal/kataevidence' })
+}
 if ($ShardCount -eq 4 -and $Shard -eq '3') {
     # Lifecycle tests spawn daemons with readiness deadlines; give them the runner first.
     go test -timeout 30m -tags fts5 @args ./cmd/docbank

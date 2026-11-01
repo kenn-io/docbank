@@ -18,7 +18,7 @@ func registerWatchRoutes(api huma.API, d Deps) {
 	huma.Register(api, huma.Operation{
 		OperationID: "listWatchedInboxes", Method: http.MethodGet, Path: "/api/v1/watches",
 		Summary: "List effective watched-inbox configuration and runner status",
-	}, func(_ context.Context, _ *struct{}) (*output, error) {
+	}, func(ctx context.Context, _ *struct{}) (*output, error) {
 		watches := slices.Clone(d.Cfg.Watches)
 		slices.SortFunc(watches, func(a, b config.WatchConfig) int {
 			return cmp.Compare(a.Name, b.Name)
@@ -33,12 +33,14 @@ func registerWatchRoutes(api huma.API, d Deps) {
 		for _, watch := range watches {
 			item := WatchedInbox{
 				Name: watch.Name, Source: watch.Source, Destination: watch.Destination,
+				CaptureOnChange: watch.CaptureOnChange,
 				SettleTime:      watch.SettleTime.Std().String(),
 				MinimumAge:      watch.MinimumAge.Std().String(),
 				ScanInterval:    watch.ScanInterval.Std().String(),
 				Exclude:         append([]string{}, watch.Exclude...),
 				ExcludePatterns: append([]string{}, watch.ExcludePatterns...),
 			}
+			item.Processing = watchProcessingStatus(ctx, d, watch.Profile)
 			if job, ok := jobsByName["watch:"+watch.Name]; ok {
 				item.Job = &job
 			}
@@ -46,4 +48,22 @@ func registerWatchRoutes(api huma.API, d Deps) {
 		}
 		return out, nil
 	})
+}
+
+func watchProcessingStatus(ctx context.Context, d Deps, profile string) *WatchProcessingStatus {
+	if profile == "" {
+		return nil
+	}
+	status := &WatchProcessingStatus{Profile: profile}
+	if d.Processing == nil {
+		status.Error = "Processing status unavailable"
+		return status
+	}
+	state, err := d.Processing.RenditionConsentState(ctx, profile)
+	if err != nil {
+		status.Error = "Consent status unavailable; inspect with the Docbank CLI for details"
+	} else {
+		status.ConsentState = state
+	}
+	return status
 }

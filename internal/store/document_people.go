@@ -588,8 +588,8 @@ func invalidateDocumentPeopleForVersionsTx(ctx context.Context, tx *sql.Tx, vers
 	var removed int64
 	for _, versionID := range slices.Compact(slices.Sorted(slices.Values(versionIDs))) {
 		for _, query := range []string{
-			`DELETE FROM document_people_heads WHERE content_version_id=?`,
-			`DELETE FROM document_people WHERE content_version_id=?`,
+			`DELETE FROM document_people_heads WHERE content_version_id=$1`,
+			`DELETE FROM document_people WHERE content_version_id=$1`,
 		} {
 			result, err := tx.ExecContext(ctx, query, versionID)
 			if err != nil {
@@ -606,7 +606,7 @@ func invalidateDocumentPeopleForVersionsTx(ctx context.Context, tx *sql.Tx, vers
 		return nil
 	}
 	_, err := tx.ExecContext(ctx, `UPDATE document_people_state
-		SET publication_epoch=publication_epoch+1,updated_at=? WHERE singleton=1`, nowRFC3339())
+		SET publication_epoch=publication_epoch+1,updated_at=$1 WHERE singleton=1`, nowRFC3339())
 	return err
 }
 

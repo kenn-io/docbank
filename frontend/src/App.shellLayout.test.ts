@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import App from "./App.svelte";
+import { productionPackage } from "./package-test-fixtures.js";
 import { root } from "./version-test-fixtures.js";
 import { savePanelWidth } from "./panelWidth.js";
 import { VerifiedUploadChannel } from "./upload.js";
@@ -167,19 +168,7 @@ function start(sets: "empty" | "package" | "bates" = "empty", failedListing?: st
     if (url === failedListing) return new Response("listing unavailable", { status: 500 });
     const value = url.startsWith("/api/v1/packages?")
       ? {
-          items:
-            sets === "package"
-              ? [
-                  {
-                    package_id: "review",
-                    package_name: "Review set",
-                    direction: "received",
-                    state: "complete",
-                    page_count: 0,
-                    member_count: 1,
-                  },
-                ]
-              : [],
+          items: sets === "package" ? [productionPackage()] : [],
           limit: 250,
         }
       : url.startsWith("/api/v1/bates/exports?")
@@ -277,12 +266,9 @@ it("keeps Productions visible when refreshing a confirmed package listing fails"
   expect(screen.getByRole("button", { name: "Productions" })).toBeTruthy();
 });
 
-it("opens production sets from the sidebar between Searches and Imports", async () => {
+it("places Productions in the sidebar between Searches and Imports", async () => {
   start("package");
   const production = await screen.findByRole("button", { name: "Productions" });
   expect(production.previousElementSibling?.textContent).toContain("Searches");
   expect(production.nextElementSibling?.textContent).toContain("Imports");
-  await fireEvent.click(production);
-  expect(await screen.findByRole("dialog", { name: "Productions" })).toBeTruthy();
-  expect(await screen.findByText("Review set")).toBeTruthy();
 });

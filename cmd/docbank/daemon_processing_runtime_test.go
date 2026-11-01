@@ -22,6 +22,7 @@ import (
 	"go.kenn.io/docbank/document/docling"
 	"go.kenn.io/docbank/document/epub"
 	"go.kenn.io/docbank/document/plaintext"
+	"go.kenn.io/docbank/document/vision"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/config"
@@ -652,7 +653,7 @@ func TestDaemonStartsConfiguredRenditionWorker(t *testing.T) {
 }
 
 func TestExecutableProcessingProfilesRejectsVisionDisclosureThatDoesNotBindTheEndpoint(t *testing.T) {
-	cfg := visionProcessingConfig(t, "http://127.0.0.1:5001")
+	cfg := visionProcessingConfig(t, "http://127.0.0.1:5001", vision.ProviderID)
 	binding := cfg.RenditionProfiles["vision"]
 	binding.DisclosureFingerprint = strings.Repeat("a", 64)
 	cfg.RenditionProfiles["vision"] = binding

@@ -37,7 +37,7 @@ func exportMailboxJobs(ctx context.Context, q metadataQuerier, write metadataWri
 	after := ""
 	for {
 		var owner, id string
-		err := q.QueryRowContext(ctx, `SELECT owner,id FROM mailbox_jobs WHERE id>? ORDER BY id LIMIT 1`, after).Scan(&owner, &id)
+		err := q.QueryRowContext(ctx, `SELECT owner,id FROM mailbox_jobs WHERE id>$1 ORDER BY id LIMIT 1`, after).Scan(&owner, &id)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil
 		}

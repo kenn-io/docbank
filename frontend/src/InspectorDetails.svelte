@@ -28,11 +28,11 @@
 </dl>
 
 <style>
-  /* One label column for every row, as wide as its longest label. */
+  /* One label column for every row, as wide as its longest label. The minimum lines up separate lists. */
   .inspector-details {
     display: grid;
-    grid-template-columns: minmax(76px, max-content) minmax(0, 1fr);
-    gap: var(--space-4) var(--space-3);
+    grid-template-columns: minmax(96px, max-content) minmax(0, 1fr);
+    gap: var(--space-4) var(--space-5);
     align-items: baseline;
     margin: 0;
     min-width: 0;

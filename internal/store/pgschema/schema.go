@@ -1,5 +1,5 @@
 // Package pgschema owns PostgreSQL schema installation and runtime validation.
-// It is an internal foundation; the document store still uses SQLite.
+// The public vault lifecycle still uses SQLite.
 package pgschema
 
 import (
@@ -17,11 +17,6 @@ import (
 
 	"go.kenn.io/docbank/internal/store/schemaformat"
 )
-
-// Version identifies the current PostgreSQL layout, independently of SQLite.
-// The first supported backend release establishes the migration floor. Until
-// then, there is no released PostgreSQL layout to upgrade.
-const Version = 3
 
 //go:embed schema.sql
 var schemaSQL string
@@ -89,14 +84,35 @@ func Setup(ctx context.Context, db *sql.DB, c Config) (uuid.UUID, error) {
 		if _, err := tx.ExecContext(ctx, strings.ReplaceAll(schemaSQL, "{{schema}}", pgx.Identifier{c.Schema}.Sanitize())); err != nil {
 			return uuid.Nil(), fmt.Errorf("install postgres metadata schema: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO `+pgx.Identifier{c.Schema}.Sanitize()+`.vault_metadata(singleton, vault_uid, schema_version) VALUES (1,$1,$2)`, uuid.New(), Version); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO `+pgx.Identifier{c.Schema}.Sanitize()+`.vault_metadata(singleton, vault_uid) VALUES (1,$1)`, uuid.New()); err != nil {
 			return uuid.Nil(), fmt.Errorf("initialize postgres vault identity: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO `+pgx.Identifier{c.Schema}.Sanitize()+`.node_allocation(singleton, high_water) VALUES (1,1)`); err != nil {
+			return uuid.Nil(), fmt.Errorf("initialize postgres node allocation: %w", err)
 		}
 		// Shared queries compare timestamps as text, using fixed-width UTC values.
 		now := time.Now().UTC().Format(schemaformat.TimestampLayout)
-		if _, err := tx.ExecContext(ctx, `INSERT INTO `+pgx.Identifier{c.Schema}.Sanitize()+`.nodes(name, kind, created_at, modified_at) VALUES ('','dir',$1,$1)`, now); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO `+pgx.Identifier{c.Schema}.Sanitize()+`.nodes(id, name, kind, created_at, modified_at) VALUES (1,'','dir',$1,$1)`, now); err != nil {
 			return uuid.Nil(), fmt.Errorf("initialize postgres root: %w", err)
 		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO `+pgx.Identifier{c.Schema}.Sanitize()+`.document_people_state(singleton,binding_epoch,updated_at) VALUES (1,1,$1)`, now); err != nil {
+			return uuid.Nil(), fmt.Errorf("initialize postgres people state: %w", err)
+		}
+		// Consent belongs to this storage incarnation, including an empty vault.
+		// Restore keeps a fresh target's pointer rather than reviving old grants.
+		if _, err := tx.ExecContext(ctx, `INSERT INTO `+pgx.Identifier{c.Schema}.Sanitize()+`.processing_incarnations(incarnation_id,created_at) VALUES ($1::uuid::text,$2)`, uuid.New(), now); err != nil {
+			return uuid.Nil(), fmt.Errorf("initialize postgres processing incarnation: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO `+pgx.Identifier{c.Schema}.Sanitize()+`.current_processing_incarnation(singleton,incarnation_id) SELECT 1,incarnation_id FROM `+pgx.Identifier{c.Schema}.Sanitize()+`.processing_incarnations`); err != nil {
+			return uuid.Nil(), fmt.Errorf("activate postgres processing incarnation: %w", err)
+		}
+
+		if _, err := tx.ExecContext(ctx, `INSERT INTO `+pgx.Identifier{c.Schema}.Sanitize()+`.blob_stores
+			(store_id,name,kind,role,lifecycle,binding,ownership_epoch,created_at)
+			VALUES ($1::uuid::text,'primary','filesystem','primary','active','builtin-primary',$2::uuid::text,$3)`, uuid.New(), uuid.New(), now); err != nil {
+			return uuid.Nil(), fmt.Errorf("initialize postgres primary blob store: %w", err)
+		}
+
 	case err != nil:
 		return uuid.Nil(), err
 	case owner != c.SchemaOwner:
@@ -159,7 +175,7 @@ func Validate(ctx context.Context, db *sql.DB, c Config) (uuid.UUID, error) {
 		return uuid.Nil(), err
 	}
 	if canWrite {
-		return uuid.Nil(), errors.New("postgres runtime role must not change vault identity or schema version")
+		return uuid.Nil(), errors.New("postgres runtime role must not change vault identity")
 	}
 	if err := tx.Commit(); err != nil {
 		return uuid.Nil(), err
@@ -185,8 +201,7 @@ func validateIdentity(ctx context.Context, tx *sql.Tx, c Config) (uuid.UUID, err
 	var columns, keys int
 	err = tx.QueryRowContext(ctx, `SELECT count(*) FROM pg_attribute WHERE attrelid=$1 AND attnum>0 AND NOT attisdropped
 		AND attnotnull AND ((attname='singleton' AND atttypid='int2'::regtype)
-		OR (attname='vault_uid' AND atttypid='uuid'::regtype)
-		OR (attname='schema_version' AND atttypid='int4'::regtype))`, relation).Scan(&columns)
+		OR (attname='vault_uid' AND atttypid='uuid'::regtype))`, relation).Scan(&columns)
 	if err != nil {
 		return uuid.Nil(), err
 	}
@@ -197,22 +212,22 @@ func validateIdentity(ctx context.Context, tx *sql.Tx, c Config) (uuid.UUID, err
 	if err != nil {
 		return uuid.Nil(), err
 	}
-	if columns != 3 || keys != 2 {
+	if columns != 2 || keys != 2 {
 		return uuid.Nil(), errors.New("postgres vault identity has an unsupported table layout")
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT singleton, vault_uid, schema_version FROM `+pgx.Identifier{c.Schema}.Sanitize()+`.vault_metadata`)
+	rows, err := tx.QueryContext(ctx, `SELECT singleton, vault_uid FROM `+pgx.Identifier{c.Schema}.Sanitize()+`.vault_metadata`)
 	if err != nil {
 		return uuid.Nil(), fmt.Errorf("read postgres vault identity: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	var id uuid.UUID
-	var singleton, version, count int
+	var singleton, count int
 	for rows.Next() {
 		count++
 		if count > 1 {
 			return uuid.Nil(), errors.New("postgres metadata has multiple vault identities")
 		}
-		if err := rows.Scan(&singleton, &id, &version); err != nil {
+		if err := rows.Scan(&singleton, &id); err != nil {
 			return uuid.Nil(), err
 		}
 	}
@@ -221,9 +236,6 @@ func validateIdentity(ctx context.Context, tx *sql.Tx, c Config) (uuid.UUID, err
 	}
 	if count != 1 || singleton != 1 || id == uuid.Nil() || id[6]>>4 != 4 || id[8]>>6 != 2 {
 		return uuid.Nil(), errors.New("postgres metadata has no valid vault identity")
-	}
-	if version != Version {
-		return uuid.Nil(), fmt.Errorf("postgres metadata schema version %d is not supported by this binary (requires %d)", version, Version)
 	}
 	return id, nil
 }

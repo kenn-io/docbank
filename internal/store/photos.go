@@ -25,7 +25,7 @@ func photoAssetByIDQuery(ctx context.Context, q metadataQuerier, id string) (Pho
 	if err := validateUUIDv4(id); err != nil {
 		return PhotoAsset{}, fmt.Errorf("photo asset %q: %w", id, ErrNotFound)
 	}
-	asset, err := scanPhotoAsset(q.QueryRowContext(ctx, `SELECT `+photoAssetColumns+` FROM photo_assets WHERE asset_id=?`, id))
+	asset, err := scanPhotoAsset(q.QueryRowContext(ctx, `SELECT `+photoAssetColumns+` FROM photo_assets WHERE asset_id=$1`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return PhotoAsset{}, ErrNotFound
 	} else if err != nil {
@@ -50,7 +50,7 @@ func completePhotoAsset(asset PhotoAsset, settings PhotoSettings) (PhotoAsset, e
 	asset.Agreement = photoAgreement(asset.Files)
 	choice := selectPhotoDisplay(asset.Files, settings.Preference, asset.DisplayOverrideFileID)
 	asset.DisplaySource = choice.Source
-	if !equalPhotoString(asset.DisplayFileID, choice.FileID) {
+	if !equalPhotoOptional(asset.DisplayFileID, choice.FileID) {
 		return PhotoAsset{}, fmt.Errorf("%w: asset %s has a stale display pointer", ErrInvalidPhotoAsset, asset.ID)
 	}
 	if err := validatePhotoAssetPointers(asset, asset.Files); err != nil {
@@ -60,7 +60,7 @@ func completePhotoAsset(asset PhotoAsset, settings PhotoSettings) (PhotoAsset, e
 }
 
 func (s *Store) photoReadTx(ctx context.Context, fn func(*sql.Tx) error) error {
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return fmt.Errorf("beginning photo read transaction: %w", err)
 	}
@@ -78,9 +78,9 @@ func photoSettingsTx(ctx context.Context, q metadataQuerier) (PhotoSettings, err
 	var settings PhotoSettings
 	var preference sql.NullString
 	err := q.QueryRowContext(ctx, `
-		SELECT preference, revision, updated_at, COALESCE(burst_gap_seconds,2)
+		SELECT preference, revision, updated_at, COALESCE(burst_gap_seconds,2), backup_interval_seconds, backup_keep_last, hidden_unlock_lifetime_seconds
 		FROM photo_library_settings WHERE singleton=1`).Scan(
-		&preference, &settings.Revision, &settings.UpdatedAt, &settings.BurstGapSeconds,
+		&preference, &settings.Revision, &settings.UpdatedAt, &settings.BurstGapSeconds, &settings.BackupIntervalSeconds, &settings.BackupKeepLast, &settings.HiddenUnlockLifetimeSeconds,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return PhotoSettings{Revision: 1, UpdatedAt: "", BurstGapSeconds: 2}, nil
@@ -199,7 +199,7 @@ func photoAssetMemberChanges(before, after PhotoAsset) []photoReceiptMemberChang
 	for _, id := range ordered {
 		beforeFile, hadBefore := beforeByID[id]
 		afterFile, hadAfter := afterByID[id]
-		if hadBefore && hadAfter && beforeFile.NodeID == afterFile.NodeID && beforeFile.Role == afterFile.Role && equalPhotoString(beforeFile.SidecarOfID, afterFile.SidecarOfID) {
+		if hadBefore && hadAfter && beforeFile.NodeID == afterFile.NodeID && beforeFile.Role == afterFile.Role && equalPhotoOptional(beforeFile.SidecarOfID, afterFile.SidecarOfID) {
 			continue
 		}
 		change := photoReceiptMemberChange{FileID: id}
@@ -231,10 +231,13 @@ func photoAssetState(asset PhotoAsset, changes []photoReceiptMemberChange) any {
 
 func photoSettingsState(settings PhotoSettings) any {
 	return struct {
-		BurstGapSeconds int     `json:"burst_gap_seconds"`
-		Preference      *string `json:"preference"`
-		Revision        int64   `json:"revision"`
-	}{settings.BurstGapSeconds, settings.Preference, settings.Revision}
+		BurstGapSeconds             int     `json:"burst_gap_seconds"`
+		Preference                  *string `json:"preference"`
+		Revision                    int64   `json:"revision"`
+		BackupIntervalSeconds       *int64  `json:"backup_interval_seconds,omitzero"`
+		BackupKeepLast              *int    `json:"backup_keep_last,omitzero"`
+		HiddenUnlockLifetimeSeconds *int64  `json:"hidden_unlock_lifetime_seconds,omitzero"`
+	}{settings.BurstGapSeconds, settings.Preference, settings.Revision, settings.BackupIntervalSeconds, settings.BackupKeepLast, settings.HiddenUnlockLifetimeSeconds}
 }
 
 func marshalPhotoState(value any) (string, error) {
@@ -300,7 +303,7 @@ func writePhotoReceiptTx(ctx context.Context, tx *sql.Tx, receipt photoReceipt) 
 		INSERT INTO photo_change_receipts(
 			receipt_id, operation, asset_id, settings_key, set_id, before_revision,
 			after_revision, before_json, after_json, created_at
-		) VALUES(?,?,?,?,?,?,?,?,?,?)`, receiptID, receipt.Operation, nullablePhotoText(receipt.AssetID),
+		) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, receiptID, receipt.Operation, nullablePhotoText(receipt.AssetID),
 		nullablePhotoText(receipt.SettingsKey), nullablePhotoText(receipt.SetID), receipt.BeforeRevision, receipt.AfterRevision,
 		beforeJSON, afterJSON, nowRFC3339()); err != nil {
 		return fmt.Errorf("recording photo receipt: %w", err)
@@ -315,7 +318,7 @@ func nullablePhotoText(value string) any {
 	return value
 }
 
-func equalPhotoString(left, right *string) bool {
+func equalPhotoOptional[T comparable](left, right *T) bool {
 	if left == nil || right == nil {
 		return left == nil && right == nil
 	}
@@ -342,7 +345,7 @@ func scanPhotoFile(row scanner) (PhotoFile, error) {
 func loadPhotoFiles(ctx context.Context, q metadataQuerier, assetID string) ([]PhotoFile, error) {
 	rows, err := q.QueryContext(ctx, `
 		SELECT `+photoFileColumns+`
-		FROM photo_files WHERE asset_id=? ORDER BY file_id LIMIT ?`, assetID, PhotoMaxFiles+1)
+		FROM photo_files WHERE asset_id=$1 ORDER BY file_id LIMIT $2`, assetID, PhotoMaxFiles+1)
 	if err != nil {
 		return nil, fmt.Errorf("listing photo files: %w", err)
 	}
@@ -379,7 +382,7 @@ func (s *Store) insertPhotoFileTx(ctx context.Context, tx *sql.Tx, member PhotoF
 	if err := photoRoleValidOrError(member.Role); err != nil {
 		return err
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE photo_files SET asset_id=?,role=?,sidecar_of_file_id=? WHERE node_id=? AND asset_id IS NULL`, member.AssetID, member.Role, nullablePhotoString(member.SidecarOfID), member.NodeID)
+	result, err := tx.ExecContext(ctx, `UPDATE photo_files SET asset_id=$1,role=$2,sidecar_of_file_id=$3 WHERE node_id=$4 AND asset_id IS NULL`, member.AssetID, member.Role, nullablePhotoString(member.SidecarOfID), member.NodeID)
 	if err != nil {
 		return s.classifyPhotoFileInsertError(err)
 	}
@@ -394,8 +397,8 @@ func (s *Store) insertPhotoFileTx(ctx context.Context, tx *sql.Tx, member PhotoF
 	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO photo_files(file_id,asset_id,node_id,role,sidecar_of_file_id,created_at,source_provenance_identity)
-		VALUES(?,?,?,?,?,?,(SELECT p.identity FROM provenance p JOIN ingests i ON i.id=p.ingest_id
- WHERE p.node_id=? AND i.source_kind NOT LIKE 'embedded:%' AND NOT EXISTS(SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)
+		VALUES($1,$2,$3,$4,$5,$6,(SELECT p.identity FROM provenance p JOIN ingests i ON i.id=p.ingest_id
+ WHERE p.node_id=$7 AND LOWER(i.source_kind) NOT LIKE 'embedded:%' AND NOT EXISTS(SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)
  ORDER BY `+photoSourceObservedSQL+`,i.started_at,i.id,p.original_path,p.identity LIMIT 1))`, fileID, member.AssetID, member.NodeID, member.Role,
 		nullablePhotoString(member.SidecarOfID), member.CreatedAt, member.NodeID); err != nil {
 		return s.classifyPhotoFileInsertError(err)
@@ -411,7 +414,7 @@ func photoRoleValidOrError(role string) error {
 }
 
 func (s *Store) classifyPhotoFileInsertError(err error) error {
-	if s.driver.IsUniqueViolation(err) {
+	if s.isUniqueViolation(err) {
 		return fmt.Errorf("%w: node is already owned or file identity conflicts", ErrPhotoNodeOwned)
 	}
 	return fmt.Errorf("creating photo file: %w", err)
@@ -512,7 +515,7 @@ func (s *Store) insertPhotoAssetTx(ctx context.Context, tx *sql.Tx, nodeID int64
 	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO photo_assets(asset_id,kind,revision,created_at,updated_at)
-		VALUES(?,?,1,?,?)`, assetID, kind, now, now); err != nil {
+		VALUES($1,$2,1,$3,$4)`, assetID, kind, now, now); err != nil {
 		return PhotoAsset{}, fmt.Errorf("creating photo asset: %w", err)
 	}
 	if err := s.insertPhotoFileTx(ctx, tx, PhotoFile{AssetID: assetID, NodeID: nodeID, Role: role, CreatedAt: now}); err != nil {
@@ -528,7 +531,7 @@ func (s *Store) insertPhotoAssetTx(ctx context.Context, tx *sql.Tx, nodeID int64
 		return PhotoAsset{}, err
 	}
 	choice := selectPhotoDisplay(asset.Files, settings.Preference, nil)
-	if _, err := tx.ExecContext(ctx, `UPDATE photo_assets SET display_file_id=? WHERE asset_id=?`, nullablePhotoString(choice.FileID), assetID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE photo_assets SET display_file_id=$1 WHERE asset_id=$2`, nullablePhotoString(choice.FileID), assetID); err != nil {
 		return PhotoAsset{}, fmt.Errorf("selecting initial photo display: %w", err)
 	}
 	asset.DisplayFileID, asset.DisplaySource = choice.FileID, choice.Source
@@ -642,8 +645,8 @@ func commitPhotoAssetTx(ctx context.Context, tx *sql.Tx, before, asset PhotoAsse
 	asset.DisplayFileID, asset.DisplaySource = choice.FileID, choice.Source
 	asset.Revision++
 	if _, err := tx.ExecContext(ctx, `
-		UPDATE photo_assets SET hidden_at=?, excluded_at=?, display_file_id=?, display_override_file_id=?,
-			revision=?, updated_at=? WHERE asset_id=?`,
+		UPDATE photo_assets SET hidden_at=$1, excluded_at=$2, display_file_id=$3, display_override_file_id=$4,
+			revision=$5, updated_at=$6 WHERE asset_id=$7`,
 		nullablePhotoString(asset.HiddenAt), nullablePhotoString(asset.ExcludedAt), nullablePhotoString(asset.DisplayFileID),
 		nullablePhotoString(asset.DisplayOverrideFileID), asset.Revision, nowRFC3339(), asset.ID); err != nil {
 		return PhotoAsset{}, fmt.Errorf("updating photo asset %s: %w", asset.ID, err)
@@ -672,7 +675,7 @@ func (s *Store) photoOwnershipError(ctx context.Context, tx *sql.Tx, owner strin
 
 func photoAssetOwningNodeTx(ctx context.Context, tx *sql.Tx, nodeID int64) (string, bool, error) {
 	var assetID string
-	err := tx.QueryRowContext(ctx, `SELECT asset_id FROM photo_files WHERE node_id=? AND asset_id IS NOT NULL`, nodeID).Scan(&assetID)
+	err := tx.QueryRowContext(ctx, `SELECT asset_id FROM photo_files WHERE node_id=$1 AND asset_id IS NOT NULL`, nodeID).Scan(&assetID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", false, nil
 	}
@@ -796,7 +799,7 @@ func (s *Store) DetachPhotoFile(ctx context.Context, assetID string, revision in
 			return false, ErrNotFound
 		}
 		if file.SidecarOfID != nil {
-			if err := recordPhotoXMPDetachedTx(ctx, tx, *file.SidecarOfID, true); err != nil {
+			if err := s.recordPhotoXMPDetachedTx(ctx, tx, *file.SidecarOfID, true); err != nil {
 				return false, err
 			}
 		}
@@ -811,7 +814,7 @@ func (s *Store) DetachPhotoFile(ctx context.Context, assetID string, revision in
 				return false, fmt.Errorf("%w: photo source has dependent sidecars", ErrInvalidPhotoAsset)
 			}
 			if dependents > 0 {
-				if err := recordPhotoXMPDetachedTx(ctx, tx, fileID, true); err != nil {
+				if err := s.recordPhotoXMPDetachedTx(ctx, tx, fileID, true); err != nil {
 					return false, err
 				}
 			}
@@ -853,7 +856,7 @@ func (s *Store) SetPhotoDisplay(ctx context.Context, assetID string, revision in
 				return false, fmt.Errorf("%w: sidecars cannot display", ErrInvalidPhotoAsset)
 			}
 		}
-		if equalPhotoString(asset.DisplayOverrideFileID, override) {
+		if equalPhotoOptional(asset.DisplayOverrideFileID, override) {
 			return false, nil
 		}
 		asset.DisplayOverrideFileID = override
@@ -870,23 +873,29 @@ func photoFileByID(files []PhotoFile, id string) (PhotoFile, bool) {
 	return PhotoFile{}, false
 }
 
-// PhotoSettingsUpdate changes the display preference, the burst gap, or both.
-// Gap-only updates keep the preference. ResetPreference clears it, including
-// with a gap update. An empty update resets the preference and keeps the gap.
+// PhotoSettingsUpdate keeps omitted overrides. Reset flags restore inheritance.
+// An empty update resets the display preference.
 type PhotoSettingsUpdate struct {
-	Preference      *string
-	ResetPreference bool
-	BurstGapSeconds *int
+	BurstGapSeconds             *int
+	Preference                  *string
+	ResetPreference             bool
+	BackupIntervalSeconds       *int64
+	ResetBackupInterval         bool
+	BackupKeepLast              *int
+	ResetBackupKeepLast         bool
+	HiddenUnlockLifetimeSeconds *int64
+	ResetHiddenUnlockLifetime   bool
+	ValidateSchedule            func(PhotoSettings) error
 }
 
-// SetPhotoSettings applies one settings update with one revision and receipt.
-// A preference change atomically fans the inherited choice across every asset.
+// SetPhotoSettings applies one update with one revision and receipt. Only
+// preference changes recompute and validate the photo graph.
 func (s *Store) SetPhotoSettings(ctx context.Context, revision int64, update PhotoSettingsUpdate) (PhotoSettings, error) {
 	if revision < 1 {
 		return PhotoSettings{}, fmt.Errorf("%w: revision must be positive", ErrStaleRevision)
 	}
-	if !photoPreferenceValid(update.Preference) || update.ResetPreference && update.Preference != nil {
-		return PhotoSettings{}, fmt.Errorf("%w: invalid preference", ErrInvalidPhotoAsset)
+	if update.ResetPreference && update.Preference != nil || update.ResetBackupInterval && update.BackupIntervalSeconds != nil || update.ResetBackupKeepLast && update.BackupKeepLast != nil || update.ResetHiddenUnlockLifetime && update.HiddenUnlockLifetimeSeconds != nil {
+		return PhotoSettings{}, fmt.Errorf("%w: a setting cannot be set and reset together", ErrInvalidPhotoAsset)
 	}
 	if gap := update.BurstGapSeconds; gap != nil && (*gap < 1 || *gap > 30) {
 		return PhotoSettings{}, fmt.Errorf("%w: burst gap must be 1 to 30 seconds", ErrInvalidPhotoAsset)
@@ -901,13 +910,30 @@ func (s *Store) SetPhotoSettings(ctx context.Context, revision int64, update Pho
 			return fmt.Errorf("photo settings at revision %d, expected %d: %w", current.Revision, revision, ErrStaleRevision)
 		}
 		next := current
-		if update.Preference != nil || update.ResetPreference || update.BurstGapSeconds == nil {
-			next.Preference = update.Preference
-		}
 		if update.BurstGapSeconds != nil {
 			next.BurstGapSeconds = *update.BurstGapSeconds
 		}
-		if next.BurstGapSeconds == current.BurstGapSeconds && equalPhotoString(current.Preference, next.Preference) {
+		if update.Preference != nil || update.ResetPreference || update.BurstGapSeconds == nil && update.BackupIntervalSeconds == nil && update.BackupKeepLast == nil && update.HiddenUnlockLifetimeSeconds == nil && !update.ResetBackupInterval && !update.ResetBackupKeepLast && !update.ResetHiddenUnlockLifetime {
+			next.Preference = update.Preference
+		}
+		if update.BackupIntervalSeconds != nil || update.ResetBackupInterval {
+			next.BackupIntervalSeconds = update.BackupIntervalSeconds
+		}
+		if update.BackupKeepLast != nil || update.ResetBackupKeepLast {
+			next.BackupKeepLast = update.BackupKeepLast
+		}
+		if update.HiddenUnlockLifetimeSeconds != nil || update.ResetHiddenUnlockLifetime {
+			next.HiddenUnlockLifetimeSeconds = update.HiddenUnlockLifetimeSeconds
+		}
+		if err := ValidatePhotoSettings(next); err != nil {
+			return err
+		}
+		if update.ValidateSchedule != nil && (!equalPhotoOptional(current.BackupIntervalSeconds, next.BackupIntervalSeconds) || !equalPhotoOptional(current.BackupKeepLast, next.BackupKeepLast)) {
+			if err := update.ValidateSchedule(next); err != nil {
+				return err
+			}
+		}
+		if next.BurstGapSeconds == current.BurstGapSeconds && equalPhotoOptional(current.Preference, next.Preference) && equalPhotoOptional(current.BackupIntervalSeconds, next.BackupIntervalSeconds) && equalPhotoOptional(current.BackupKeepLast, next.BackupKeepLast) && equalPhotoOptional(current.HiddenUnlockLifetimeSeconds, next.HiddenUnlockLifetimeSeconds) {
 			result = current
 			return nil
 		}
@@ -915,7 +941,7 @@ func (s *Store) SetPhotoSettings(ctx context.Context, revision int64, update Pho
 		if err != nil {
 			return err
 		}
-		if active && !equalPhotoString(current.Preference, next.Preference) {
+		if active && !equalPhotoOptional(current.Preference, next.Preference) {
 			return fmt.Errorf("%w: display preference cannot be changed in an audited vault; set the burst gap without a preference", ErrAuditMutationUnsupported)
 		}
 		priorBurst, err := photoBurstSettingsTx(ctx, tx)
@@ -924,13 +950,13 @@ func (s *Store) SetPhotoSettings(ctx context.Context, revision int64, update Pho
 		}
 		// Read assets before the new preference is visible; reads resolve the display choice.
 		var assets []PhotoAsset
-		if !equalPhotoString(current.Preference, next.Preference) {
+		if !equalPhotoOptional(current.Preference, next.Preference) {
 			if assets, err = allPhotoAssetsTx(ctx, tx); err != nil {
 				return err
 			}
 		}
 		next.Revision, next.UpdatedAt = current.Revision+1, nowRFC3339()
-		if _, err := tx.ExecContext(ctx, `INSERT INTO photo_library_settings(singleton,preference,revision,updated_at,burst_gap_seconds) VALUES(1,?,?,?,?) ON CONFLICT(singleton) DO UPDATE SET preference=excluded.preference,revision=excluded.revision,updated_at=excluded.updated_at,burst_gap_seconds=excluded.burst_gap_seconds`, nullablePhotoString(next.Preference), next.Revision, next.UpdatedAt, next.BurstGapSeconds); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO photo_library_settings(singleton,preference,revision,updated_at,burst_gap_seconds,backup_interval_seconds,backup_keep_last,hidden_unlock_lifetime_seconds) VALUES(1,?,?,?,?,?,?,?) ON CONFLICT(singleton) DO UPDATE SET preference=excluded.preference,revision=excluded.revision,updated_at=excluded.updated_at,burst_gap_seconds=excluded.burst_gap_seconds,backup_interval_seconds=excluded.backup_interval_seconds,backup_keep_last=excluded.backup_keep_last,hidden_unlock_lifetime_seconds=excluded.hidden_unlock_lifetime_seconds`, nullablePhotoString(next.Preference), next.Revision, next.UpdatedAt, next.BurstGapSeconds, next.BackupIntervalSeconds, next.BackupKeepLast, next.HiddenUnlockLifetimeSeconds); err != nil {
 			return err
 		}
 		if err := writePhotoReceiptTx(ctx, tx, photoReceipt{
@@ -949,7 +975,7 @@ func (s *Store) SetPhotoSettings(ctx context.Context, revision int64, update Pho
 		}
 		for _, asset := range assets {
 			choice := selectPhotoDisplay(asset.Files, next.Preference, asset.DisplayOverrideFileID)
-			if equalPhotoString(asset.DisplayFileID, choice.FileID) {
+			if equalPhotoOptional(asset.DisplayFileID, choice.FileID) {
 				continue
 			}
 			if _, err := commitPhotoAssetTx(ctx, tx, asset, asset, "settings_recompute"); err != nil {

@@ -1166,6 +1166,16 @@ CREATE TABLE IF NOT EXISTS watch_sources (
     PRIMARY KEY (watch_name, source_ref)
 ) WITHOUT ROWID;
 
+-- Operational presence observations are intentionally absent from metadata-v1.
+CREATE TABLE IF NOT EXISTS watch_source_absences (
+    watch_name   TEXT NOT NULL,
+    source_ref   TEXT NOT NULL,
+    absent_since TEXT NOT NULL,
+    PRIMARY KEY (watch_name, source_ref),
+    FOREIGN KEY (watch_name, source_ref) REFERENCES watch_sources(watch_name, source_ref)
+        ON UPDATE CASCADE ON DELETE CASCADE
+) WITHOUT ROWID;
+
 -- A pushed source remembers its last accepted digest independently of its
 -- prunable content-version history. Each source owns its node. The digest is
 -- identity evidence, not a physical-byte reference; pruning can release the
@@ -2422,6 +2432,9 @@ CREATE TABLE IF NOT EXISTS photo_library_settings (
     revision     INTEGER NOT NULL DEFAULT 1,
     updated_at   TEXT NOT NULL,
     burst_gap_seconds INTEGER,
+    backup_interval_seconds INTEGER,
+    backup_keep_last INTEGER,
+    hidden_unlock_lifetime_seconds INTEGER,
     representative_sequence INTEGER
 );
 
@@ -2765,7 +2778,18 @@ CREATE TABLE IF NOT EXISTS person_document_assertions (
     UNIQUE (content_version_id, person_id, role)
 );
 
+CREATE TABLE IF NOT EXISTS photo_face_scans (
+ content_version_id TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,
+ detector_fingerprint TEXT NOT NULL,
+ PRIMARY KEY(content_version_id,detector_fingerprint)
+);
+
 CREATE TABLE IF NOT EXISTS photo_faces (
+    roll REAL,
+    facing REAL,
+    eyes_open INTEGER,
+    smile INTEGER,
+    detector_fingerprint TEXT,
     face_id TEXT PRIMARY KEY NOT NULL,
     content_version_id TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,
     x REAL NOT NULL,
@@ -2936,6 +2960,8 @@ CREATE TABLE IF NOT EXISTS photo_quality_signals (
  focus REAL, blur REAL, brightness REAL,
  color_red REAL, color_green REAL, color_blue REAL,
  framing REAL, aesthetics REAL,
+ face_reports_json TEXT,
+ face_inputs TEXT NOT NULL DEFAULT '',
  PRIMARY KEY(content_version_id,evaluator_fingerprint)
 );
 CREATE TABLE IF NOT EXISTS photo_hidden_credentials (

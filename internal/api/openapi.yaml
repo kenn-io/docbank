@@ -1187,6 +1187,49 @@ components:
       required:
         - target
       type: object
+    BackupSchedule:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/BackupSchedule.json
+          format: uri
+          readOnly: true
+          type: string
+        effective_interval_seconds:
+          description: Interval in force; 0 disables scheduling.
+          format: int64
+          type: integer
+        effective_keep_last:
+          description: Scheduled points retention keeps.
+          format: int64
+          type: integer
+        interval_seconds:
+          description: Runtime override; absent inherits config.toml.
+          format: int64
+          type:
+            - integer
+            - "null"
+        keep_last:
+          description: Runtime override; absent inherits config.toml.
+          format: int64
+          type:
+            - integer
+            - "null"
+        revision:
+          format: int64
+          minimum: 1
+          type: integer
+      required:
+        - effective_interval_seconds
+        - effective_keep_last
+        - revision
+      type: object
+      x-go-type: api.BackupSchedule
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     BackupSnapshot:
       additionalProperties: false
       properties:
@@ -2422,6 +2465,24 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/kataevidence
         name: kataevidence
+    ClaimBackupRepositoryRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ClaimBackupRepositoryRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        fingerprint:
+          description: Confirms the claim previewed with this fingerprint
+          maxLength: 64
+          minLength: 64
+          type: string
+        repo:
+          type: string
+      type: object
     Collection:
       additionalProperties: false
       properties:
@@ -4266,6 +4327,8 @@ components:
             - size
             - media_type
           type: string
+        source_present:
+          type: boolean
       required:
         - path_prefix
         - sort
@@ -4794,6 +4857,8 @@ components:
         modified_since:
           format: date-time
           type: string
+        source_present:
+          type: boolean
         tag_id:
           format: uuid
           type: string
@@ -8112,6 +8177,8 @@ components:
         processed_bytes:
           format: int64
           type: integer
+        processing:
+          $ref: "#/components/schemas/WatchProcessingStatus"
         started_at:
           type: string
         status:
@@ -10047,6 +10114,31 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    NumberedDelivery:
+      additionalProperties: false
+      properties:
+        artifact_manifest_sha256:
+          type: string
+        endorsements_sha256:
+          items:
+            type: string
+          type: array
+        layout_sha256:
+          items:
+            type: string
+          type: array
+        reservation:
+          $ref: "#/components/schemas/NumberedReservation"
+      required:
+        - reservation
+        - artifact_manifest_sha256
+        - layout_sha256
+        - endorsements_sha256
+      type: object
+      x-go-type: processing.NumberedDelivery
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/processing
+        name: processing
     NumberedFooter:
       additionalProperties: false
       properties:
@@ -13371,6 +13463,10 @@ components:
           items:
             $ref: "#/components/schemas/PhotoAsset"
           type: array
+        proposals:
+          items:
+            $ref: "#/components/schemas/PhotoBestShotProposal"
+          type: array
         suggestions:
           items:
             $ref: "#/components/schemas/PhotoSuggestion"
@@ -13485,6 +13581,58 @@ components:
         - values
       type: object
       x-go-type: store.PhotoAuthoredSnapshot
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
+    PhotoBestShotProposal:
+      additionalProperties: false
+      properties:
+        asset_id:
+          type: string
+        confidence:
+          format: double
+          maximum: 1
+          minimum: 0
+          type: number
+        flag:
+          enum:
+            - pick
+            - reject
+          type: string
+        rationale:
+          type: string
+      required:
+        - asset_id
+        - flag
+        - rationale
+        - confidence
+      type: object
+      x-go-type: document.PhotoBestShotProposal
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
+    PhotoBestShotResponse:
+      additionalProperties: false
+      properties:
+        asset_id:
+          format: uuid
+          type: string
+        flag:
+          enum:
+            - pick
+            - reject
+          type: string
+        response:
+          enum:
+            - accepted
+            - dismissed
+          type: string
+      required:
+        - asset_id
+        - flag
+        - response
+      type: object
+      x-go-type: store.PhotoBestShotResponse
       x-go-type-import:
         path: go.kenn.io/docbank/internal/store
         name: store
@@ -13741,6 +13889,11 @@ components:
         quality:
           additionalProperties: false
           properties:
+            face_reports:
+              items:
+                $ref: "#/components/schemas/PhotoFaceReport"
+              maxItems: 1000
+              type: array
             signals:
               anyOf:
                 - $ref: "#/components/schemas/PhotoQualitySignals"
@@ -14255,10 +14408,21 @@ components:
           type: string
         created_at:
           type: string
+        detector_fingerprint:
+          type: string
         dismissed:
           type: boolean
+        eyes_open:
+          type:
+            - boolean
+            - "null"
         face_id:
           type: string
+        facing:
+          format: double
+          type:
+            - number
+            - "null"
         rejected_person_ids:
           items:
             type: string
@@ -14267,6 +14431,15 @@ components:
         revision:
           format: int64
           type: integer
+        roll:
+          format: double
+          type:
+            - number
+            - "null"
+        smile:
+          type:
+            - boolean
+            - "null"
       required:
         - face_id
         - content_version_id
@@ -14400,6 +14573,57 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/store
         name: store
+    PhotoFaceReport:
+      additionalProperties: false
+      properties:
+        eyes_open:
+          type:
+            - boolean
+            - "null"
+        face_id:
+          type: string
+        facing:
+          format: double
+          type:
+            - number
+            - "null"
+        grade:
+          enum:
+            - ""
+            - red
+            - yellow
+            - green
+          type: string
+        light:
+          format: double
+          type:
+            - number
+            - "null"
+        prominence:
+          format: double
+          type: number
+        sharpness:
+          format: double
+          type:
+            - number
+            - "null"
+        smile:
+          type:
+            - boolean
+            - "null"
+      required:
+        - face_id
+        - sharpness
+        - light
+        - facing
+        - prominence
+        - eyes_open
+        - smile
+      type: object
+      x-go-type: document.PhotoFaceReport
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     PhotoFaceResult:
       additionalProperties: false
       properties:
@@ -15246,6 +15470,11 @@ components:
           maximum: 30
           minimum: 1
           type: integer
+        hidden_unlock_lifetime_seconds:
+          format: int64
+          type:
+            - integer
+            - "null"
         preference:
           enum:
             - raw
@@ -15298,6 +15527,10 @@ components:
           maxItems: 500
           minItems: 2
           type: array
+        proposals:
+          items:
+            $ref: "#/components/schemas/PhotoBestShotProposal"
+          type: array
         representative_id:
           format: uuid
           type: string
@@ -15344,6 +15577,11 @@ components:
           type: string
         hidden:
           type: boolean
+        responses:
+          items:
+            $ref: "#/components/schemas/PhotoBestShotResponse"
+          maxItems: 500
+          type: array
         selected_ids:
           items:
             type: string
@@ -15915,6 +16153,29 @@ components:
       required:
         - name
         - binding
+      type: object
+    PreviewInput:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PreviewInput.json
+          format: uri
+          readOnly: true
+          type: string
+        masks:
+          items:
+            $ref: "#/components/schemas/RedactionMask"
+          type: array
+        preparation:
+          $ref: "#/components/schemas/RedactionPreparation"
+        review_sha256:
+          type: string
+      required:
+        - preparation
+        - masks
+        - review_sha256
       type: object
     PreviewRequest:
       additionalProperties: false
@@ -17178,6 +17439,41 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/pdfstamp
         name: pdfstamp
+    RedactionArchive:
+      additionalProperties: false
+      properties:
+        receipt:
+          $ref: "#/components/schemas/RedactionReceipt"
+        sha256:
+          type: string
+        size:
+          format: int64
+          type: integer
+      required:
+        - receipt
+        - size
+        - sha256
+      type: object
+      x-go-type: processing.RedactionArchive
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/processing
+        name: processing
+    RedactionFileDigest:
+      additionalProperties: false
+      properties:
+        sha256:
+          type: string
+        size:
+          format: int64
+          type: integer
+      required:
+        - size
+        - sha256
+      type: object
+      x-go-type: processing.RedactionFileDigest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/processing
+        name: processing
     RedactionMask:
       additionalProperties: false
       properties:
@@ -17247,6 +17543,172 @@ components:
         - selection
       type: object
       x-go-type: processing.RedactionPreparationRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/processing
+        name: processing
+    RedactionPreview:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/RedactionPreview.json
+          format: uri
+          readOnly: true
+          type: string
+        archive:
+          $ref: "#/components/schemas/RedactionArchive"
+        contract:
+          type: string
+        expires_at:
+          format: date-time
+          type: string
+        id:
+          type: string
+        pages:
+          items:
+            $ref: "#/components/schemas/RedactionPreviewPage"
+          type: array
+      required:
+        - contract
+        - id
+        - expires_at
+        - archive
+        - pages
+      type: object
+      x-go-type: processing.RedactionPreview
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/processing
+        name: processing
+    RedactionPreviewConfirmation:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/RedactionPreviewConfirmation.json
+          format: uri
+          readOnly: true
+          type: string
+        archive_sha256:
+          type: string
+        confirmed:
+          type: boolean
+        review_sha256:
+          type: string
+      required:
+        - confirmed
+        - review_sha256
+        - archive_sha256
+      type: object
+    RedactionPreviewPage:
+      additionalProperties: false
+      properties:
+        frame_sha256:
+          type: string
+        height:
+          format: int64
+          type: integer
+        number:
+          format: int64
+          type: integer
+        pixel_height:
+          format: int64
+          type: integer
+        pixel_width:
+          format: int64
+          type: integer
+        png:
+          $ref: "#/components/schemas/RedactionFileDigest"
+        text_end:
+          format: int64
+          type: integer
+        text_start:
+          format: int64
+          type: integer
+        width:
+          format: int64
+          type: integer
+      required:
+        - number
+        - frame_sha256
+        - width
+        - height
+        - pixel_width
+        - pixel_height
+        - png
+        - text_start
+        - text_end
+      type: object
+      x-go-type: processing.RedactionPreviewPage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/processing
+        name: processing
+    RedactionPreviewTicket:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/RedactionPreviewTicket.json
+          format: uri
+          readOnly: true
+          type: string
+        sha256:
+          type: string
+        size:
+          format: int64
+          type: integer
+        url:
+          type: string
+      required:
+        - url
+        - size
+        - sha256
+      type: object
+    RedactionReceipt:
+      additionalProperties: false
+      properties:
+        admitted_node_revision:
+          format: int64
+          type: integer
+        contract:
+          type: string
+        decisions_sha256:
+          type: string
+        numbered:
+          $ref: "#/components/schemas/NumberedDelivery"
+        page_count:
+          format: int64
+          type: integer
+        pdf:
+          $ref: "#/components/schemas/RedactionFileDigest"
+        preparation_sha256:
+          type: string
+        recipe:
+          $ref: "#/components/schemas/PDFRedactionRecipe"
+        resolved_sha256:
+          type: string
+        review_sha256:
+          type: string
+        selection:
+          $ref: "#/components/schemas/NativePDFSelection"
+        text:
+          $ref: "#/components/schemas/RedactionFileDigest"
+      required:
+        - contract
+        - selection
+        - admitted_node_revision
+        - preparation_sha256
+        - decisions_sha256
+        - review_sha256
+        - resolved_sha256
+        - recipe
+        - page_count
+        - pdf
+        - text
+      type: object
+      x-go-type: processing.RedactionReceipt
       x-go-type-import:
         path: go.kenn.io/docbank/internal/processing
         name: processing
@@ -17943,6 +18405,42 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    RepositoryClaim:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/RepositoryClaim.json
+          format: uri
+          readOnly: true
+          type: string
+        fingerprint:
+          type: string
+        id:
+          type: string
+        newest_at:
+          type: string
+        owned:
+          type: boolean
+        path:
+          type: string
+        snapshot_count:
+          format: int64
+          type: integer
+        takeover:
+          type: boolean
+      required:
+        - id
+        - path
+        - snapshot_count
+        - owned
+        - fingerprint
+      type: object
+      x-go-type: backupapp.RepositoryClaim
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/backupapp
+        name: backupapp
     Request:
       additionalProperties: false
       properties:
@@ -18929,6 +19427,8 @@ components:
           type: string
         modified_since:
           type: string
+        source_present:
+          type: boolean
         tag_id:
           type: string
         truncated:
@@ -18993,6 +19493,38 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/kataevidence
         name: kataevidence
+    SetBackupScheduleRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/SetBackupScheduleRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        interval_seconds:
+          description: Omit to keep the override; 0 disables scheduling.
+          format: int64
+          maximum: 9223372036
+          minimum: 0
+          type: integer
+        keep_last:
+          description: Omit to keep the override.
+          format: int64
+          minimum: 1
+          type: integer
+        reset_interval:
+          description: Inherit the interval from config.toml.
+          type: boolean
+        reset_keep_last:
+          description: Inherit keep_last from config.toml.
+          type: boolean
+      type: object
+      x-go-type: api.SetBackupScheduleRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     SetCollectionLabelRequest:
       additionalProperties: false
       properties:
@@ -19092,16 +19624,25 @@ components:
           type:
             - integer
             - "null"
+        hidden_unlock_lifetime_seconds:
+          description: Omit to keep the override.
+          format: int64
+          maximum: 86400
+          minimum: 1
+          type: integer
         preference:
-          description: Omit to keep the display preference when changing the burst gap, or reset it otherwise.
+          description: Omit to keep the preference when updating other fields, or reset it for an empty update.
           enum:
             - raw
             - image
           type:
             - string
             - "null"
+        reset_hidden_unlock_lifetime:
+          description: Reset Hidden unlock lifetime to five minutes.
+          type: boolean
         reset_preference:
-          description: Reset the display preference, including when changing the burst gap. Conflicts with preference.
+          description: Reset preference to its default. Conflicts with preference.
           type: boolean
       type: object
       x-go-type: api.SetPhotoSettingsRequest
@@ -21203,9 +21744,32 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/document/bundle
         name: bundle
+    WatchProcessingStatus:
+      additionalProperties: false
+      properties:
+        consent_state:
+          enum:
+            - active
+            - required
+            - expired
+            - revoked
+          type: string
+        error:
+          type: string
+        profile:
+          type: string
+      required:
+        - profile
+      type: object
+      x-go-type: api.WatchProcessingStatus
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     WatchedInbox:
       additionalProperties: false
       properties:
+        capture_on_change:
+          type: boolean
         destination:
           type: string
         exclude:
@@ -21222,6 +21786,8 @@ components:
           type: string
         name:
           type: string
+        processing:
+          $ref: "#/components/schemas/WatchProcessingStatus"
         scan_interval:
           type: string
         settle_time:
@@ -21229,6 +21795,7 @@ components:
         source:
           type: string
       required:
+        - capture_on_change
         - name
         - source
         - destination
@@ -22251,6 +22818,29 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Replay audit authority and verify every protected blob
+  /api/v1/backup/claim:
+    post:
+      operationId: claimBackupRepository
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClaimBackupRepositoryRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RepositoryClaim"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Preview a backup repository claim, or confirm one with the preview's fingerprint
   /api/v1/backup/forget:
     post:
       operationId: forgetBackupSnapshots
@@ -22367,6 +22957,59 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Restore and prove a snapshot while streaming structured progress
+  /api/v1/backup/schedule:
+    get:
+      operationId: getBackupSchedule
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackupSchedule"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Inspect the backup schedule and its runtime overrides
+    put:
+      operationId: setBackupSchedule
+      parameters:
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetBackupScheduleRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackupSchedule"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Override the backup interval or retention without a restart
   /api/v1/backup/snapshots:
     get:
       operationId: listBackupSnapshots
@@ -23228,6 +23871,11 @@ paths:
           name: cursor
           schema:
             type: string
+        - explode: false
+          in: query
+          name: source_present
+          schema:
+            type: boolean
       responses:
         "200":
           content:
@@ -29850,6 +30498,199 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Gateway Timeout
       summary: Inspect an exact retained native PDF for redaction preparation
+  /api/v1/redaction/previews:
+    delete:
+      operationId: discardRedactionPreviews
+      responses:
+        "204":
+          description: Cancel this owner's redaction preview and transfers
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Preview request failed
+      summary: Cancel this owner's redaction preview and transfers
+    post:
+      operationId: createRedactionPreview
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PreviewInput"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RedactionPreview"
+          description: Render one temporary verified PDF preview
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Preview request failed
+      summary: Render one temporary verified PDF preview
+  /api/v1/redaction/previews/{id}:
+    delete:
+      operationId: discardRedactionPreview
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            pattern: ^[0-9a-f]{48}$
+            type: string
+      responses:
+        "204":
+          description: Discard a temporary redaction preview
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Preview request failed
+      summary: Discard a temporary redaction preview
+    get:
+      operationId: getRedactionPreview
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            pattern: ^[0-9a-f]{48}$
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RedactionPreview"
+          description: Read a temporary redaction preview
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Preview request failed
+      summary: Read a temporary redaction preview
+  /api/v1/redaction/previews/{id}/bundle:
+    get:
+      operationId: downloadRedactionPreviewBundle
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            pattern: ^[0-9a-f]{48}$
+            type: string
+      responses:
+        "200":
+          content:
+            application/zip:
+              schema:
+                contentMediaType: application/octet-stream
+                format: binary
+                type: string
+          description: Verified output bytes
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Preview request failed
+      summary: Read verified temporary redaction output
+  /api/v1/redaction/previews/{id}/download:
+    post:
+      operationId: downloadRedactionPreview
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            pattern: ^[0-9a-f]{48}$
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RedactionPreviewConfirmation"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RedactionPreviewTicket"
+          description: Confirm and request a one-use ZIP download
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Preview request failed
+      summary: Confirm and request a one-use ZIP download
+  /api/v1/redaction/previews/{id}/pages/{page}:
+    get:
+      operationId: readRedactionPreviewPage
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            pattern: ^[0-9a-f]{48}$
+            type: string
+        - in: path
+          name: page
+          required: true
+          schema:
+            maximum: 16
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            image/png:
+              schema:
+                contentMediaType: application/octet-stream
+                format: binary
+                type: string
+          description: Verified output bytes
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Preview request failed
+      summary: Read verified temporary redaction output
+  /api/v1/redaction/previews/{id}/text:
+    get:
+      operationId: readRedactionPreviewText
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            pattern: ^[0-9a-f]{48}$
+            type: string
+      responses:
+        "200":
+          content:
+            text/plain:
+              schema:
+                contentMediaType: application/octet-stream
+                format: binary
+                type: string
+          description: Verified output bytes
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Preview request failed
+      summary: Read verified temporary redaction output
   /api/v1/redaction/render:
     post:
       operationId: renderNativePDF
@@ -30576,7 +31417,7 @@ paths:
       summary: Run one revision-fenced saved query and retain its receipt
   /api/v1/search:
     get:
-      description: Name matches retain their established BM25 order and appear first; content-only matches follow in their own BM25 order. Every hit names its match source. The query may be empty when a tag or modification-time bound makes the page bounded; such filter-only results are ordered by modification time descending. An optional stable tag ID requires that assignment for every result. An optional parameter-free MIME type matches the current file version with or without parameters. An optional live directory node ID restricts results to its descendants. Optional absolute modification timestamps form an inclusive-since, exclusive-before interval. fuzzy=true appends bounded ASCII one-edit filename/path discovery after ordinary hits and includes a coverage receipt; it requires a nonblank query, and text outside the supplemental syntax reports not_run.
+      description: Name matches retain their established BM25 order and appear first; content-only matches follow in their own BM25 order. Every hit names its match source. The query may be empty when a tag or modification-time bound makes the page bounded; such filter-only results are ordered by modification time descending. An optional stable tag ID requires that assignment for every result. An optional parameter-free MIME type matches the current file version with or without parameters. An optional live directory node ID restricts results to its descendants. Optional absolute modification timestamps form an inclusive-since, exclusive-before interval. source_present=true excludes documents whose watched source is observed gone; push-owned documents remain included. fuzzy=true appends bounded ASCII one-edit filename/path discovery after ordinary hits and includes a coverage receipt; it requires a nonblank query, and text outside the supplemental syntax reports not_run.
       operationId: search
       parameters:
         - explode: false
@@ -30587,6 +31428,11 @@ paths:
         - explode: false
           in: query
           name: fuzzy
+          schema:
+            type: boolean
+        - explode: false
+          in: query
+          name: source_present
           schema:
             type: boolean
         - explode: false

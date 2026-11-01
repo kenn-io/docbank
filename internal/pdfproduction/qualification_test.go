@@ -386,13 +386,15 @@ func TestPNGRowStreamMatchesIndependentPixels(t *testing.T) {
 
 func TestFreshRejectsAlteredEmbeddedFont(t *testing.T) {
 	a := unicodeArtifact(t)
+	recipe := qualificationRecipe()
+	recipe.WriterVersion = "docbank-fresh-objects/v2"
 	var output bytes.Buffer
-	require.NoError(t, writeFresh(t.Context(), &output, &artifactSequence{pages: []PageArtifact{a}}, PDFWriteOptions{Recipe: qualificationRecipe(), StagingDirectory: t.TempDir(), MaxBytes: qualificationRecipe().MaxStagingBytes}))
+	require.NoError(t, writeFresh(t.Context(), &output, &artifactSequence{pages: []PageArtifact{a}}, PDFWriteOptions{Recipe: recipe, StagingDirectory: t.TempDir(), MaxBytes: qualificationRecipe().MaxStagingBytes}))
 	data := output.Bytes()
 	start := bytes.Index(data, fontBytes[:64])
 	require.Positive(t, start)
 	data[start+len(fontBytes)-1] ^= 1
-	require.Error(t, VerifyFresh(t.Context(), bytes.NewReader(data), int64(len(data)), verificationFor(t, []PageArtifact{a})))
+	require.Error(t, VerifyFreshWithRecipe(t.Context(), bytes.NewReader(data), int64(len(data)), verificationFor(t, []PageArtifact{a}), recipe))
 }
 
 func TestFreshComparesActualPixelsWithStagedEvidence(t *testing.T) {
@@ -686,7 +688,7 @@ func TestWASMBackingConcurrentAcquireCancellation(t *testing.T) {
 	manager := newBackingManager(128)
 	first, err := manager.acquire(t.Context(), 128)
 	require.NoError(t, err)
-	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the first lease holds the only backing
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the first lease holds the only backing
 	defer cancel()
 	result := make(chan error, 1)
 	go func() {
@@ -766,7 +768,7 @@ func TestPDFiumSequentialEnginesReuseBacking(t *testing.T) {
 	e2, ok := second.(*pdfiumEngine)
 	require.True(t, ok)
 	require.Same(t, e1.cache, e2.cache, "concurrent engine acquisition shares only pinned compiled code")
-	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the first engine holds the shared session
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the first engine holds the shared session
 	defer cancel()
 	require.ErrorIs(t, e2.withInstance(ctx, func(pdfium.Pdfium) error { t.Fatal("concurrent session entered WASM"); return nil }), context.DeadlineExceeded)
 	require.Nil(t, e2.session, "waiting must not allocate a second backing")

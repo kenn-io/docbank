@@ -136,6 +136,7 @@ type Service struct {
 	runsMu              sync.Mutex
 	runs                int
 	nativePDFOperation  string
+	redactionPreviews   redactionPreviewStore
 	stopping            bool
 	stop                context.CancelFunc
 	drained             chan struct{}
@@ -639,6 +640,7 @@ func NewService(config ServiceConfig) (*Service, error) {
 // Stop rejects new starts and cancels active processing, including work that
 // outlived its initiating request. Workers retain their durable recovery state.
 func (service *Service) Stop() {
+	defer service.RevokeRedactionPreviews("")
 	service.runsMu.Lock()
 	defer service.runsMu.Unlock()
 	if service.stopping {
@@ -703,38 +705,34 @@ func (service *Service) Plan(ctx context.Context, selector Selector) (Plan, erro
 	if err != nil {
 		return Plan{}, err
 	}
-	plan, err := service.planForSource(ctx, selector, node, version, profile)
-	if err != nil {
-		return Plan{}, err
-	}
+	var ineligibleReason string
 	if profile.portable.Rendition != nil {
 		capability, err := service.inspectPlannedRendition(ctx, node, version, profile)
 		if err != nil {
 			return Plan{}, err
 		}
 		if !capability.Eligible {
-			plan.RenditionIneligibleReason = string(capability.Reason)
+			ineligibleReason = string(capability.Reason)
 		}
 	}
+	// A ready photo preview is immutable. Inspect it before estimating its
+	// bytes so publication cannot leave an eligible plan with a stale estimate.
+	plan, err := service.planForSource(ctx, selector, node, version, profile)
+	if err != nil {
+		return Plan{}, err
+	}
+	plan.RenditionIneligibleReason = ineligibleReason
 	// Current grants are advisory; execution checks them again. Grant changes
 	// do not change the reviewed source, disclosure, or plan fingerprint.
 	plan.ConsentState = "active"
 	for _, request := range service.profileConsentRequests(profile) {
 		_, err := service.catalog.AuthorizeProviderOperation(ctx, request)
-		switch {
-		case err == nil:
-		case errors.Is(err, store.ErrProcessingConsentRevoked):
-			plan.ConsentState = "revoked"
-		case errors.Is(err, store.ErrProcessingConsentExpired):
-			if plan.ConsentState != "revoked" {
-				plan.ConsentState = "expired"
-			}
-		case errors.Is(err, store.ErrProcessingConsentRequired):
-			if plan.ConsentState == "active" {
-				plan.ConsentState = "required"
-			}
-		default:
+		state, err := processingConsentState(err)
+		if err != nil {
 			return Plan{}, err
+		}
+		if state == "revoked" || state == "expired" && plan.ConsentState != "revoked" || plan.ConsentState == "active" {
+			plan.ConsentState = state
 		}
 	}
 	plan.ConsentRequired = plan.ConsentState != "active"
@@ -763,6 +761,10 @@ func (service *Service) planForSource(ctx context.Context, selector Selector, no
 		if profileRenditionInput(profile) == document.RenditionInputDerivedUpload {
 			plan.Estimate.Scope = "Granting consent automatically queues eligible photos throughout this vault."
 			plan.BackupConsequence = "Pending photo suggestions rebuild after restore; accepted and dismissed decisions are included in backups."
+			if hop.ProviderID == document.FaceDetectionProviderID {
+				plan.Estimate.Scope = "Granting consent automatically finds faces in eligible photos throughout this vault."
+				plan.BackupConsequence = "Face boxes, measurements, and your decisions are included in backups. Restoring a backup allows another scan and provider call for each eligible photo."
+			}
 			// Only the grid preview leaves the vault, not the original file.
 			view, reason, err := photoDescriptionPreview(ctx, service.catalog, version.ID)
 			if err != nil {
@@ -954,6 +956,21 @@ func resultAttachmentID(photo bool, run renditionRun) string {
 		return ""
 	}
 	return run.attachmentID
+}
+
+func processingConsentState(err error) (string, error) {
+	switch {
+	case err == nil:
+		return "active", nil
+	case errors.Is(err, store.ErrProcessingConsentRevoked):
+		return "revoked", nil
+	case errors.Is(err, store.ErrProcessingConsentExpired):
+		return "expired", nil
+	case errors.Is(err, store.ErrProcessingConsentRequired):
+		return "required", nil
+	default:
+		return "", err
+	}
 }
 
 func processingConsentBoundaryError(err error) error {

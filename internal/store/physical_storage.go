@@ -55,6 +55,9 @@ type BlobPhysical struct {
 }
 
 func normalizeBlobPhysical(size int64, physical []BlobPhysical) (BlobPhysical, error) {
+	if size < 0 {
+		return BlobPhysical{}, errors.New("content size must not be negative")
+	}
 	if len(physical) > 1 {
 		return BlobPhysical{}, errors.New("at most one physical blob receipt may be supplied")
 	}
@@ -88,7 +91,7 @@ const physicalContentSQL = `
 	 AND l.store_id = (SELECT store_id FROM blob_stores WHERE role = 'primary')
 	LEFT JOIN blob_pack_entries i
 	  ON i.blob_hash = l.blob_hash AND i.store_id = l.store_id
-	WHERE b.hash = ?`
+	WHERE b.hash = $1`
 
 const authorizedPhysicalContentSQL = `
 	SELECT b.size, l.encoding, l.stored_size, l.pack_eligible,
@@ -97,7 +100,7 @@ const authorizedPhysicalContentSQL = `
 	JOIN blob_locations l ON l.blob_hash = b.hash
 	LEFT JOIN blob_pack_entries i
 	  ON i.blob_hash = l.blob_hash AND i.store_id = l.store_id
-	WHERE b.hash = ?
+	WHERE b.hash = $1
 	  AND (
 	    (l.kind = 'loose' AND l.encoding IN ('raw', 'zstd'))
 	    OR (l.kind = 'packed' AND i.blob_hash IS NOT NULL)
@@ -187,7 +190,7 @@ func requirePhysicalAuthorityTx(tx *sql.Tx, hash string) (int64, error) {
 			    OR (l.kind='packed' AND e.blob_hash IS NOT NULL)
 			  )
 		)
-		FROM blobs b WHERE b.hash=?`,
+		FROM blobs b WHERE b.hash=$1`,
 		hash,
 	).Scan(&size, &location)
 	if errors.Is(err, sql.ErrNoRows) {

@@ -1,6 +1,7 @@
 <script lang="ts">
+  import { drawerPage } from "./drawerNavigation.js";
   import DrawerShell from "./DrawerShell.svelte";
-  import { untrack } from "svelte";
+  import { getContext, untrack } from "svelte";
   import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
   import PlusIcon from "@lucide/svelte/icons/plus";
   import XIcon from "@lucide/svelte/icons/x";
@@ -42,28 +43,28 @@
   }
   let { session, initialExpression, initialDocuments, onclose, onauthfailure }: Props = $props();
 
-  const today = new Date().toISOString().slice(0, 10);
+  const page = getContext<boolean>(drawerPage);
+  let editing = $state(!page);
+
   const zone = "UTC";
   function newTerm(number: number, expression = ""): Term {
+    const today = new Date().toISOString().slice(0, 10);
     return { number, expression, syntax: "simple", dates: { start: "2000-01-01", end: today } };
   }
-  let draft = $state<Request>({
-    version: 1,
-    all_documents: untrack(() => initialDocuments === undefined),
-    selected_documents: untrack(() =>
-      initialDocuments === undefined
-        ? undefined
-        : { documents: initialDocuments.map((id) => ({ ...id })) },
-    ),
-    timezone: zone,
-    coverage_mode: "strict",
-    terms: [
-      newTerm(
-        1,
-        untrack(() => initialExpression),
-      ),
-    ],
-  });
+  function newDraft(): Request {
+    return {
+      version: 1,
+      all_documents: initialDocuments === undefined,
+      selected_documents:
+        initialDocuments === undefined
+          ? undefined
+          : { documents: initialDocuments.map((id) => ({ ...id })) },
+      timezone: zone,
+      coverage_mode: "strict",
+      terms: [newTerm(1, initialExpression)],
+    };
+  }
+  let draft = $state<Request>(untrack(newDraft));
   let history = $state<TermReportHistory[]>([]);
   let historyTotal = $state(0);
   let historyLoading = $state(false);
@@ -88,14 +89,18 @@
 
   $effect(() => {
     const currentSession = session;
-    untrack(() => {
-      void loadHistory(currentSession, true);
-      void loadCollections(currentSession, true);
-    });
+    untrack(() => void loadHistory(currentSession, true));
     return () => {
       generation += 1;
       historyGeneration += 1;
     };
+  });
+
+  // Only the report form lists imports, so the Searches page loads them when it opens.
+  $effect(() => {
+    if (!editing) return;
+    const currentSession = session;
+    untrack(() => void loadCollections(currentSession, true));
   });
 
   function fail(cause: unknown): void {
@@ -202,7 +207,21 @@
     draft.terms = [...draft.terms, newTerm(next)];
   }
 
+  function openDraft(): void {
+    draft = newDraft();
+    editing = true;
+    error = "";
+    notice = "";
+  }
+
+  function cancelDraft(): void {
+    editing = false;
+    error = "";
+    notice = "";
+  }
+
   function useHistory(item: TermReportHistory): void {
+    editing = true;
     const source = item.request;
     draft = {
       ...source,
@@ -416,16 +435,8 @@
   }
 </script>
 
-<DrawerShell
-  title="Search term report"
-  ariaLabel="Search term report"
-  closeLabel="Close search term report"
-  {onclose}
->
-  <div class="tool-body">
-    {#if error}<p class="tool-error" role="alert">{error}</p>{/if}
-    {#if notice}<p role="status">{notice}</p>{/if}
-
+{#snippet reportBody()}
+  {#snippet reportForm()}
     <section class="tool-section" aria-label="Report terms">
       <div class="terms" role="table" aria-label="Terms">
         <div class="term-row term-head" role="row">
@@ -579,10 +590,17 @@
     </details>
 
     <div class="tool-actions">
+      {#if page}<Button disabled={busy} onclick={cancelDraft}>Cancel</Button>{/if}
       <Button tone="info" surface="solid" disabled={busy} onclick={() => void run()}
         >{busy ? "Creating report…" : "Create report"}</Button
       >
     </div>
+  {/snippet}
+  <div class="tool-body">
+    {#if error}<p class="tool-error" role="alert">{error}</p>{/if}
+    {#if notice}<p role="status">{notice}</p>{/if}
+
+    {#if editing}{@render reportForm()}{/if}
 
     {#if active}
       <Card level="default" padding="sm" title={draftChanged ? "Previous report" : "Report"}>
@@ -799,6 +817,18 @@
         </div>{/if}
     </section>
   </div>
+{/snippet}
+
+<DrawerShell
+  title={page ? "Reports" : "Search term report"}
+  level={page ? 2 : 1}
+  closeLabel="Close search term report"
+  {onclose}
+>
+  {#snippet actions()}
+    {#if page && !editing}<Button size="sm" onclick={openDraft}>Run report</Button>{/if}
+  {/snippet}
+  {@render reportBody()}
 </DrawerShell>
 
 <style>

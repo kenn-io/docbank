@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -31,11 +30,31 @@ func TestSetupPreservesIdentity(t *testing.T) {
 	var rootCreated string
 	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT id,created_at FROM documents.nodes WHERE parent_id IS NULL`).Scan(&rootID, &rootCreated))
 	const childTime = "2026-01-01T00:00:00.000000000Z"
-	require.NoError(t, db.QueryRowContext(t.Context(), `INSERT INTO documents.nodes(parent_id,name,kind,created_at,modified_at)
-		VALUES($1,'kept','dir',$2,$2) RETURNING id`, rootID, childTime).Scan(&childID))
+	require.NoError(t, db.QueryRowContext(t.Context(), `WITH allocated AS (UPDATE documents.node_allocation SET high_water=high_water+1 WHERE singleton=1 RETURNING high_water)
+		INSERT INTO documents.nodes(id,parent_id,name,kind,created_at,modified_at)
+		SELECT high_water,$1,'kept','dir',$2,$2 FROM allocated RETURNING id`, rootID, childTime).Scan(&childID))
+	var primary, epoch string
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT store_id,ownership_epoch FROM documents.blob_stores WHERE role='primary'`).Scan(&primary, &epoch))
+	var bindingEpoch, publicationEpoch int64
+	var fingerprint, peopleUpdated string
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT binding_epoch,publication_epoch,resolver_fingerprint,updated_at FROM documents.document_people_state WHERE singleton=1`).Scan(&bindingEpoch, &publicationEpoch, &fingerprint, &peopleUpdated))
+	assert.Equal(t, int64(1), bindingEpoch)
+	assert.Equal(t, int64(1), publicationEpoch)
+	assert.Empty(t, fingerprint)
+	assert.Equal(t, rootCreated, peopleUpdated)
+	_, err = db.ExecContext(t.Context(), `UPDATE documents.document_people_state SET binding_epoch=2,publication_epoch=3,updated_at=$1 WHERE singleton=1`, childTime)
+	require.NoError(t, err)
 	again, err := Setup(t.Context(), db, cfg)
 	require.NoError(t, err)
 	assert.Equal(t, id, again)
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT binding_epoch,publication_epoch,updated_at FROM documents.document_people_state WHERE singleton=1`).Scan(&bindingEpoch, &publicationEpoch, &peopleUpdated))
+	assert.Equal(t, int64(2), bindingEpoch)
+	assert.Equal(t, int64(3), publicationEpoch)
+	assert.Equal(t, childTime, peopleUpdated)
+	var keptPrimary, keptEpoch string
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT store_id,ownership_epoch FROM documents.blob_stores WHERE role='primary'`).Scan(&keptPrimary, &keptEpoch))
+	assert.Equal(t, primary, keptPrimary)
+	assert.Equal(t, epoch, keptEpoch)
 	var keptRootID, keptParent int64
 	var keptCreated, keptName string
 	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT id,created_at FROM documents.nodes WHERE parent_id IS NULL`).Scan(&keptRootID, &keptCreated))
@@ -45,11 +64,12 @@ func TestSetupPreservesIdentity(t *testing.T) {
 	assert.Equal(t, rootID, keptParent)
 	assert.Equal(t, "kept", keptName)
 	assert.Equal(t, childTime, keptCreated)
+	var highWater int64
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT high_water FROM documents.node_allocation WHERE singleton=1`).Scan(&highWater))
+	assert.Equal(t, childID, highWater)
 	var stored uuid.UUID
-	var version int
-	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT vault_uid, schema_version FROM documents.vault_metadata WHERE singleton=1`).Scan(&stored, &version))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT vault_uid FROM documents.vault_metadata WHERE singleton=1`).Scan(&stored))
 	assert.Equal(t, id, stored)
-	assert.Equal(t, Version, version)
 
 	// A separate schema is a separate vault, even within the same database.
 	other, err := Setup(t.Context(), db, Config{Schema: "other_documents", SchemaOwner: owner})
@@ -105,7 +125,7 @@ func TestRuntimeCannotChangeSchema(t *testing.T) {
 	for _, tc := range []struct{ name, grant, revoke string }{
 		{"schema create", "GRANT CREATE ON SCHEMA documents TO ", "REVOKE CREATE ON SCHEMA documents FROM "},
 		{"identity write", "GRANT UPDATE ON documents.vault_metadata TO ", "REVOKE UPDATE ON documents.vault_metadata FROM "},
-		{"identity column write", "GRANT UPDATE(schema_version) ON documents.vault_metadata TO ", "REVOKE UPDATE(schema_version) ON documents.vault_metadata FROM "},
+		{"identity column write", "GRANT UPDATE(vault_uid) ON documents.vault_metadata TO ", "REVOKE UPDATE(vault_uid) ON documents.vault_metadata FROM "},
 		{"owner membership", "GRANT " + quotedOwner + " TO ", "REVOKE " + quotedOwner + " FROM "},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -152,13 +172,6 @@ func TestRuntimeCannotChangeSchema(t *testing.T) {
 		_, err = Validate(t.Context(), selected, cfg)
 		require.ErrorContains(t, err, "requires a separate runtime role", "selecting a lesser role must not hide the login's privileges")
 	})
-	_, err = setup.ExecContext(t.Context(), "UPDATE documents.vault_metadata SET schema_version=$1", Version+1)
-	require.NoError(t, err)
-	_, err = Validate(t.Context(), runtime, cfg)
-	require.Error(t, err)
-	var version int
-	require.NoError(t, runtime.QueryRowContext(t.Context(), `SELECT schema_version FROM documents.vault_metadata`).Scan(&version))
-	assert.Equal(t, Version+1, version, "runtime validation must not repair an unsupported version")
 }
 
 func TestSetupRefusesUnownedOrInvalidState(t *testing.T) {
@@ -167,7 +180,7 @@ func TestSetupRefusesUnownedOrInvalidState(t *testing.T) {
 		{"empty schema", `CREATE SCHEMA documents`},
 		{"unrelated schema", `CREATE SCHEMA documents; CREATE TABLE documents.kept(value text); INSERT INTO documents.kept VALUES('keep me')`},
 		{"wrong singleton", `UPDATE documents.vault_metadata SET singleton=2`},
-		{"multiple identities", `INSERT INTO documents.vault_metadata VALUES (2,'11111111-1111-4111-8111-111111111111',2)`},
+		{"multiple identities", `INSERT INTO documents.vault_metadata VALUES (2,'11111111-1111-4111-8111-111111111111')`},
 		{"missing identity", `DELETE FROM documents.vault_metadata`},
 		{"nil identity", `UPDATE documents.vault_metadata SET vault_uid='00000000-0000-0000-0000-000000000000'`},
 		{"wrong table shape", `ALTER TABLE documents.vault_metadata DROP CONSTRAINT vault_metadata_pkey`},
@@ -191,28 +204,6 @@ func TestSetupRefusesUnownedOrInvalidState(t *testing.T) {
 				require.NoError(t, db.QueryRowContext(t.Context(), `SELECT value FROM documents.kept`).Scan(&kept))
 				assert.Equal(t, "keep me", kept)
 			}
-		})
-	}
-}
-
-func TestSetupPreservesUnsupportedVersion(t *testing.T) {
-	t.Parallel()
-	for _, version := range []int{0, 1, 2, Version + 1} {
-		t.Run(strconv.Itoa(version), func(t *testing.T) {
-			t.Parallel()
-			db, owner := pgtest.NewDatabase(t)
-			cfg := Config{Schema: "documents", SchemaOwner: owner}
-			original, err := Setup(t.Context(), db, cfg)
-			require.NoError(t, err)
-			_, err = db.ExecContext(t.Context(), `UPDATE documents.vault_metadata SET schema_version=$1`, version)
-			require.NoError(t, err)
-			_, err = Setup(t.Context(), db, cfg)
-			require.Error(t, err)
-			var kept uuid.UUID
-			var keptVersion int
-			require.NoError(t, db.QueryRowContext(t.Context(), `SELECT vault_uid, schema_version FROM documents.vault_metadata`).Scan(&kept, &keptVersion))
-			assert.Equal(t, original, kept)
-			assert.Equal(t, version, keptVersion)
 		})
 	}
 }

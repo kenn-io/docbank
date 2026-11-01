@@ -20,12 +20,9 @@ import (
 // RenderNativePDFTo verifies the archive in a caller-owned private file before publication.
 func (c *Connection) RenderNativePDFTo(ctx context.Context, request processing.RedactionRenderRequest, output *os.File) (processing.RedactionArchive, error) {
 	var result processing.RedactionArchive
-	review, err := processing.BuildRedactionReview(request.Preparation, request.Masks, request.Preparation.Selection.Revision)
+	review, err := processing.MatchRedactionReview(request.Preparation, request.Masks, request.Preparation.Selection.Revision, request.ReviewSHA256)
 	if err != nil {
 		return result, err
-	}
-	if review.SHA256 != request.ReviewSHA256 {
-		return result, processing.ErrRedactionReviewChanged
 	}
 	if output == nil {
 		return result, errors.New("redaction output file is required")

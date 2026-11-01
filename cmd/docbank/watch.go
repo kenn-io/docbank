@@ -53,7 +53,7 @@ func writeWatchedInboxes(w io.Writer, items []api.WatchedInbox) error {
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	if _, err := fmt.Fprintln(tw,
-		"NAME\tSTATUS\tSOURCE\tDESTINATION\tSETTLE\tMINIMUM AGE\tSCAN\tEXCLUDES\tERROR"); err != nil {
+		"NAME\tSTATUS\tCAPTURE\tSOURCE\tDESTINATION\tSETTLE\tMINIMUM AGE\tSCAN\tEXCLUDES\tERROR\tPROCESSING"); err != nil {
 		return fmt.Errorf("writing watched-inbox header: %w", err)
 	}
 	for _, item := range items {
@@ -64,10 +64,23 @@ func writeWatchedInboxes(w io.Writer, items []api.WatchedInbox) error {
 				problem = strconv.QuoteToASCII(item.Job.Error)
 			}
 		}
-		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\n",
-			item.Name, status, strconv.QuoteToASCII(item.Source),
+		capture := "settled"
+		if item.CaptureOnChange {
+			capture = "prompt"
+		}
+		processing := "-"
+		if status := item.Processing; status != nil {
+			processing = status.Profile
+			if status.Error != "" {
+				processing += " (" + status.Error + ")"
+			} else if status.ConsentState != "active" {
+				processing += " (waiting on consent: " + status.ConsentState + ")"
+			}
+		}
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\n",
+			item.Name, status, capture, strconv.QuoteToASCII(item.Source),
 			strconv.QuoteToASCII(item.Destination), item.SettleTime,
-			item.MinimumAge, item.ScanInterval, len(item.Exclude)+len(item.ExcludePatterns), problem); err != nil {
+			item.MinimumAge, item.ScanInterval, len(item.Exclude)+len(item.ExcludePatterns), problem, processing); err != nil {
 			return fmt.Errorf("writing watched-inbox row: %w", err)
 		}
 	}

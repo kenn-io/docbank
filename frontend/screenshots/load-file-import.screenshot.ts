@@ -116,7 +116,7 @@ test.describe("load-file import screenshot", () => {
     await expect(page.getByText("Import complete", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Close load-file import" }).click();
     await page.getByRole("button", { name: "Productions", exact: true }).click();
-    const productions = page.getByRole("dialog", { name: "Productions" });
+    const productions = page.getByRole("main", { name: "Productions" });
     await productions.locator("summary", { hasText: "Synthetic-production" }).click();
     await expect(productions.getByText("Imported", { exact: true })).toBeVisible();
     await page.screenshot({ path: path.join(output, "productions-imported.png"), fullPage: true });

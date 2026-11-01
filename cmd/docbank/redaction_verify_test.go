@@ -14,11 +14,14 @@ import (
 	"image/png"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 	"uuid"
 
 	"github.com/stretchr/testify/require"
@@ -29,7 +32,30 @@ import (
 	"go.kenn.io/docbank/internal/processing"
 )
 
+// The PDF worker measures whole-process RSS. Give each verification test its
+// own process so unrelated CLI tests cannot consume its qualified memory budget.
+func runRedactionVerificationInSubprocess(t *testing.T) bool {
+	t.Helper()
+	const child = "DOCBANK_TEST_REDACTION_VERIFICATION"
+	if os.Getenv(child) == t.Name() {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
+	defer cancel()
+	binary, err := os.Executable()
+	require.NoError(t, err)
+	cmd := exec.CommandContext(ctx, binary, "-test.run=^"+regexp.QuoteMeta(t.Name())+"$", "-test.v", "-test.timeout=5m", "-test.short="+strconv.FormatBool(testing.Short()))
+	cmd.Env = append(os.Environ(), child+"="+t.Name())
+	output, err := cmd.CombinedOutput()
+	require.NoError(t, err, "%s", output)
+	t.Log(string(output))
+	return true
+}
+
 func TestRedactionVerifyCLI(t *testing.T) {
+	if runRedactionVerificationInSubprocess(t) {
+		return
+	}
 	f := newRedactionVerifyFixture(t)
 	data := f.archive(t, "valid")
 	scratch := t.TempDir()
@@ -58,7 +84,32 @@ func TestRedactionVerifyCLI(t *testing.T) {
 	require.Empty(t, entries)
 }
 
+func TestRedactionVerifyV2(t *testing.T) {
+	if runRedactionVerificationInSubprocess(t) {
+		return
+	}
+	f := newRedactionVerifyFixture(t)
+	recipe := f.review.Recipe
+	recipe.WriterVersion = "docbank-fresh-objects/v2"
+	var err error
+	f.review, err = processing.BuildRedactionReview(f.request.Preparation, f.request.Masks,
+		f.request.Preparation.Selection.Revision, recipe)
+	require.NoError(t, err)
+	data, err := json.Marshal(f.review)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(f.args[4], data, 0600))
+	f.archive(t, "valid")
+	output, err := runCLI(t, append(f.args, "--json")...)
+	require.NoError(t, err)
+	var result processing.RedactionArchive
+	require.NoError(t, json.Unmarshal([]byte(output), &result))
+	require.Equal(t, f.review.SHA256, result.Receipt.ReviewSHA256)
+}
+
 func TestRedactionVerifyRejectsSelfConsistentPDF(t *testing.T) {
+	if runRedactionVerificationInSubprocess(t) {
+		return
+	}
 	for _, scenario := range []string{"non-PDF", "unmasked PDF"} {
 		t.Run(scenario, func(t *testing.T) {
 			f := newRedactionVerifyFixture(t)
@@ -81,6 +132,9 @@ func TestRedactionVerifyRejectsSelfConsistentPDF(t *testing.T) {
 }
 
 func TestRedactionVerifyErrors(t *testing.T) {
+	if runRedactionVerificationInSubprocess(t) {
+		return
+	}
 	for _, test := range []struct {
 		name string
 		exit int
@@ -111,6 +165,9 @@ func TestRedactionVerifyErrors(t *testing.T) {
 }
 
 func TestRedactionVerifyOutputAndCancellation(t *testing.T) {
+	if runRedactionVerificationInSubprocess(t) {
+		return
+	}
 	f := newRedactionVerifyFixture(t)
 	f.archive(t, "valid")
 	for _, asJSON := range []bool{false, true} {
@@ -168,7 +225,7 @@ func newRedactionVerifyFixture(t *testing.T) redactionVerifyFixture {
 		Kind: "text", MapSHA256: f.request.Preparation.Map.SHA256, Span: &redaction.Span{End: 6},
 	}}}
 	f.review, err = processing.BuildRedactionReview(f.request.Preparation, f.request.Masks,
-		f.request.Preparation.Selection.Revision)
+		f.request.Preparation.Selection.Revision, pdfproduction.QualifiedRecipe())
 	require.NoError(t, err)
 	for i, value := range []any{f.request.Masks, f.review} {
 		data, err := json.Marshal(value)

@@ -91,7 +91,7 @@ func (s *Store) observeOperationalIngestTx(
 	}
 	var exists bool
 	if err := tx.QueryRowContext(ctx,
-		`SELECT EXISTS(SELECT 1 FROM provenance WHERE identity=?)`, fact.Identity,
+		`SELECT EXISTS(SELECT 1 FROM provenance WHERE identity=$1)`, fact.Identity,
 	).Scan(&exists); err != nil {
 		return Node{}, fmt.Errorf("checking operational ingest observation: %w", err)
 	}
@@ -100,7 +100,7 @@ func (s *Store) observeOperationalIngestTx(
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO provenance(
 		identity,node_id,ingest_id,original_path,original_mtime,supersedes
-	) VALUES(?,?,?,?,?,NULL)`, fact.Identity, fact.NodeID, fact.IngestID,
+	) VALUES($1,$2,$3,$4,$5,NULL)`, fact.Identity, fact.NodeID, fact.IngestID,
 		fact.OriginalPath, fact.OriginalMTime); err != nil {
 		return Node{}, fmt.Errorf("recording operational ingest observation: %w", err)
 	}
@@ -112,11 +112,11 @@ func (s *Store) observeOperationalIngestTx(
 	if observedVersionID != "" {
 		binding = &ProvenanceVersionBinding{ProvenanceIdentity: fact.Identity, ContentVersionID: observedVersionID,
 			ObservedAt: operation.recordedAt, BasisRef: provenanceVersionBindingBasis}
-		if err := bindProvenanceVersionTx(ctx, tx, *binding); err != nil {
+		if err := s.bindProvenanceVersionTx(ctx, tx, *binding); err != nil {
 			return Node{}, fmt.Errorf("binding operational ingest observation: %w", err)
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE photo_files SET source_provenance_identity=? WHERE node_id=? AND source_provenance_identity IS NULL`, fact.Identity, prior.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE photo_files SET source_provenance_identity=$1 WHERE node_id=$2 AND source_provenance_identity IS NULL`, fact.Identity, prior.ID); err != nil {
 		return Node{}, fmt.Errorf("recording first photo source: %w", err)
 	}
 	if err := bumpRevisionTx(tx, prior.ID, operation.recordedAt); err != nil {
@@ -126,12 +126,18 @@ func (s *Store) observeOperationalIngestTx(
 	if err != nil {
 		return Node{}, err
 	}
+	if err := s.refreshPhotoTimelineTx(ctx, tx, prior.ID); err != nil {
+		return Node{}, fmt.Errorf("refreshing observed photo timeline: %w", err)
+	}
+	if err := s.refreshNodePhotoWorkTx(ctx, tx, resulting, &prior); err != nil {
+		return Node{}, fmt.Errorf("refreshing observed photo export: %w", err)
+	}
 	active, err := auditAuthorityActiveTx(ctx, tx)
 	if err != nil {
 		return Node{}, err
 	}
 	if active {
-		authority, scopes, nodeSequence, err := loadAuditedNodeAuthority(ctx, tx, prior.ID)
+		authority, scopes, nodeSequence, err := s.loadAuditedNodeAuthority(ctx, tx, prior.ID)
 		if err != nil {
 			return Node{}, err
 		}

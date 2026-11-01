@@ -246,6 +246,7 @@
     if (filter && person && filter.name !== person.display_name)
       photos.personFilter = { id: filter.id, name: person.display_name };
   });
+  let faceRefreshController: AbortController | undefined;
   $effect(() => {
     const cullID = culling ? cull?.currentID : undefined;
     const id = culling
@@ -257,7 +258,7 @@
             ? [...photos.selectedIDs][0]
             : undefined);
     const validating =
-      photos.loading || photos.error || (!culling && photoID && (detailLoading || detailError));
+      photos.blocking || photos.error || (!culling && photoID && (detailLoading || detailError));
     const row = culling
       ? cullPhoto?.asset_id === cullID
         ? cullPhoto
@@ -279,7 +280,10 @@
         return;
       }
       if (!id && inspectorFaces.busy) return;
-      if (id !== photos.faceAssetID) target(undefined);
+      if (id !== photos.faceAssetID) {
+        faceRefreshController?.abort();
+        target(undefined);
+      }
       if (row && row.asset_id === id && "content_version_id" in row) target(row);
       else {
         inspectorFaces.conceal();
@@ -501,6 +505,7 @@
   onDestroy(() => {
     alive = false;
     detailController?.abort();
+    faceRefreshController?.abort();
   });
   let picker = $state<{ focus: () => void; addToTarget: () => Promise<boolean> }>();
   let renaming = $state(false);
@@ -672,12 +677,29 @@
     }
   }
   $effect(() =>
-    photos.watch((change: PhotoChange) => {
-      return settleReads([
+    photos.watch(async (change: PhotoChange) => {
+      const id = photos.faceAssetID;
+      faceRefreshController?.abort();
+      const controller = (faceRefreshController = new AbortController());
+      await settleReads([
         photoID ? revalidateDetail(photoID, change.listRefreshed) : undefined,
         // The editor retains changes until the user clears a draft.
         editor.invalidate(),
       ]);
+      if (!id || culling || id !== photos.faceAssetID || controller.signal.aborted) return;
+      if (photos.blocking || photos.error || (photoID && (detailLoading || detailError)))
+        return inspectorFaces.conceal();
+      const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]);
+      let row: PhotoBrowseRow | undefined;
+      try {
+        row = photoID === id ? current : await photos.lookup(id, signal);
+      } catch (cause) {
+        if (controller.signal.aborted) return;
+        inspectorFaces.conceal();
+        throw cause;
+      }
+      if (!controller.signal.aborted && id === photos.faceAssetID)
+        await inspectorFaces.load(row?.kind === "photo" ? row.content_version_id : "", true);
     }),
   );
   async function restoreGrid() {
@@ -828,6 +850,32 @@
     if (selectedStack) await editor.prepareStack(selectedStack.asset_ids, photos.hidden);
   }
 
+  async function respondBestShots(response: "accepted" | "dismissed") {
+    if (!selectedStack?.proposals?.length) return;
+    const members = new Set(selectedStack.asset_ids);
+    await editor.decideStack(
+      {
+        hidden: photos.hidden,
+        asset_ids: selectedStack.asset_ids,
+        burst_gap_seconds: photos.burstGapSeconds,
+        decision: "all",
+        current_id: selectedStack.asset_ids[0]!,
+        responses: (selectedStack.proposals ?? []).map((p) => ({
+          asset_id: p.asset_id,
+          flag: p.flag,
+          response,
+        })),
+      },
+      metadataRefresh,
+      {
+        observed: shown.filter(
+          (row): row is PhotoBrowseRow => "display_file_id" in row && members.has(row.asset_id),
+        ),
+      },
+    );
+    if (!editor.error && selectedStack)
+      await editor.prepareStack(selectedStack.asset_ids, photos.hidden, true);
+  }
   async function decideStack(decision: "all" | "selected" | "representative") {
     if (!selectedStack || editor.busy || editor.loading || editor.stackLoading) return;
     const members = new Set(selectedStack.asset_ids);
@@ -1425,6 +1473,24 @@
               {:else}
                 {#if shown.length || !mapMode}
                   {#key photos.query}
+                    {#if selectedStack?.proposals?.length}<div class="best-shots-review">
+                        <Button
+                          size="sm"
+                          disabled={editor.busy ||
+                            editor.loading ||
+                            editor.stackLoading ||
+                            editor.conflict}
+                          onclick={() => void respondBestShots("accepted")}>Accept all</Button
+                        >
+                        <Button
+                          size="sm"
+                          disabled={editor.busy ||
+                            editor.loading ||
+                            editor.stackLoading ||
+                            editor.conflict}
+                          onclick={() => void respondBestShots("dismissed")}>Dismiss all</Button
+                        >
+                      </div>{/if}
                     <PhotoGrid
                       bind:this={grid}
                       bind:scrollTop={photos.scrollTop}
@@ -1791,6 +1857,12 @@
 {/if}
 
 <style>
+  .best-shots-review {
+    display: flex;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-4);
+    background: var(--bg-inset);
+  }
   .photo-layout {
     display: flex;
     flex: 1;

@@ -92,7 +92,7 @@ func (s *Store) prepareAuditedTrash(
 	if node.ParentID == nil {
 		return snapshot, ErrIsRoot
 	}
-	authority, scopes, nodeSequence, err := loadAuditedNodeAuthority(ctx, tx, node.ID)
+	authority, scopes, nodeSequence, err := s.loadAuditedNodeAuthority(ctx, tx, node.ID)
 	if err != nil {
 		return snapshot, err
 	}

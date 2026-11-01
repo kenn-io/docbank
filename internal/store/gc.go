@@ -272,7 +272,7 @@ func (s *Store) PurgeDerivatives(
 		if err != nil {
 			return err
 		}
-		if _, err := invalidateDocumentEventsForVersionsTx(ctx, tx, emailVersions); err != nil {
+		if _, err := s.invalidateDocumentEventsForVersionsTx(ctx, tx, emailVersions); err != nil {
 			return err
 		}
 		versionSet := stringSet(request.ContentVersionIDs)
@@ -291,7 +291,7 @@ func (s *Store) PurgeDerivatives(
 		if err != nil {
 			return err
 		}
-		jobPurgeScopes, err := purgeRenditionJobWaitersTx(
+		jobPurgeScopes, err := s.purgeRenditionJobWaitersTx(
 			ctx, tx, versionSet, attachmentSet, explicitBuilds, request.All, asOf)
 		if err != nil {
 			return err
@@ -1184,7 +1184,7 @@ func putCurrentRenditionRootTx(
 	err := tx.QueryRowContext(ctx, `
 			SELECT root_id,root_kind,target_kind,target_id,fencing_token,recorded_at,
 			       COALESCE(expires_at,''),active
-			FROM current_rendition_roots WHERE root_id=?`, root.ID,
+			FROM current_rendition_roots WHERE root_id=$1`, root.ID,
 	).Scan(&stored.ID, &stored.Kind, &stored.TargetKind, &stored.TargetID,
 		&stored.FencingToken, &stored.RecordedAt, &stored.ExpiresAt, &storedActive)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -1215,7 +1215,7 @@ func putCurrentRenditionRootTx(
 				INSERT INTO current_rendition_roots(
 					root_id,root_kind,target_kind,target_id,fencing_token,recorded_at,expires_at,
 					active,released_at
-				) VALUES(?,?,?,?,?,?,NULLIF(?,''),1,NULL)`, root.ID, root.Kind, root.TargetKind,
+				) VALUES($1,$2,$3,$4,$5,$6,NULLIF($7,''),1,NULL)`, root.ID, root.Kind, root.TargetKind,
 			root.TargetID, root.FencingToken, root.RecordedAt, root.ExpiresAt)
 		if err != nil {
 			return fmt.Errorf("recording current rendition root %s: %w", root.ID, err)
@@ -1224,9 +1224,9 @@ func putCurrentRenditionRootTx(
 	}
 	if _, err := tx.ExecContext(ctx, `
 			UPDATE current_rendition_roots
-			SET root_kind=?,target_kind=?,target_id=?,fencing_token=?,recorded_at=?,
-			    expires_at=NULLIF(?,''),active=1,released_at=NULL
-			WHERE root_id=?`, root.Kind, root.TargetKind, root.TargetID,
+			SET root_kind=$1,target_kind=$2,target_id=$3,fencing_token=$4,recorded_at=$5,
+			    expires_at=NULLIF($6,''),active=1,released_at=NULL
+			WHERE root_id=$7`, root.Kind, root.TargetKind, root.TargetID,
 		root.FencingToken, root.RecordedAt, root.ExpiresAt, root.ID); err != nil {
 		return fmt.Errorf("renewing current rendition root %s: %w", root.ID, err)
 	}
@@ -1303,37 +1303,37 @@ func requireCurrentRenditionTargetTx(
 	switch root.TargetKind {
 	case RenditionRootBuild:
 		if err := tx.QueryRowContext(ctx,
-			`SELECT EXISTS(SELECT 1 FROM rendition_builds WHERE build_id=?)`, root.TargetID,
+			`SELECT EXISTS(SELECT 1 FROM rendition_builds WHERE build_id=$1)`, root.TargetID,
 		).Scan(&present); err != nil {
 			return fmt.Errorf("checking current rendition build root: %w", err)
 		}
 	case RenditionRootLexicalGeneration:
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
-			SELECT 1 FROM rendition_lexical_generations WHERE generation_id=?
+			SELECT 1 FROM rendition_lexical_generations WHERE generation_id=$1
 		)`, root.TargetID).Scan(&present); err != nil {
 			return fmt.Errorf("checking current lexical generation root: %w", err)
 		}
 	case RenditionRootEmbeddingSet:
 		if err := tx.QueryRowContext(ctx,
-			`SELECT EXISTS(SELECT 1 FROM embedding_sets WHERE embedding_set_id=?)`, root.TargetID,
+			`SELECT EXISTS(SELECT 1 FROM embedding_sets WHERE embedding_set_id=$1)`, root.TargetID,
 		).Scan(&present); err != nil {
 			return fmt.Errorf("checking embedding set root: %w", err)
 		}
 	case RenditionRootEmbeddingGeneration:
 		if err := tx.QueryRowContext(ctx,
-			`SELECT EXISTS(SELECT 1 FROM embedding_input_generations WHERE generation_id=?)`, root.TargetID,
+			`SELECT EXISTS(SELECT 1 FROM embedding_input_generations WHERE generation_id=$1)`, root.TargetID,
 		).Scan(&present); err != nil {
 			return fmt.Errorf("checking embedding generation root: %w", err)
 		}
 	case RenditionRootEmbeddingVectorSet:
 		if err := tx.QueryRowContext(ctx,
-			`SELECT EXISTS(SELECT 1 FROM embedding_vector_sets WHERE vector_set_id=?)`, root.TargetID,
+			`SELECT EXISTS(SELECT 1 FROM embedding_vector_sets WHERE vector_set_id=$1)`, root.TargetID,
 		).Scan(&present); err != nil {
 			return fmt.Errorf("checking embedding vector-set root: %w", err)
 		}
 	case RenditionRootEmbeddingPayload:
 		if err := tx.QueryRowContext(ctx,
-			`SELECT EXISTS(SELECT 1 FROM embedding_vector_sets WHERE payload_blob_hash=?)`, root.TargetID,
+			`SELECT EXISTS(SELECT 1 FROM embedding_vector_sets WHERE payload_blob_hash=$1)`, root.TargetID,
 		).Scan(&present); err != nil {
 			return fmt.Errorf("checking embedding payload root: %w", err)
 		}

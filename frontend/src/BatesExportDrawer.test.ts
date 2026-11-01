@@ -482,7 +482,7 @@ it("lists imported and exported production sets across every page without requir
   expect(within(list).getAllByText("Exported")).toHaveLength(2);
   expect(list.querySelectorAll("details[open]")).toHaveLength(0);
   await fireEvent.click(within(list).getByText("Bates export"));
-  expect(await screen.findByRole("button", { name: "Download verified PDF" })).toBeTruthy();
+  expect(await screen.findByRole("button", { name: "Download PDF" })).toBeTruthy();
   expect(fetcher.mock.calls.every(([, init]) => !init?.method || init.method === "GET")).toBe(true);
 });
 
@@ -554,11 +554,11 @@ it("shows a package and its Bates export once with receipt actions inside the co
   await fireEvent.click(within(row).getByRole("button", { name: "Refresh receipt" }));
   await waitFor(() => expect(requests).toContain(`/api/v1/bates/exports/${receipt.allocation_id}`));
   await waitFor(() =>
-    expect(
-      within(row).getByRole("button", { name: "Download verified PDF" }).hasAttribute("disabled"),
-    ).toBe(false),
+    expect(within(row).getByRole("button", { name: "Download PDF" }).hasAttribute("disabled")).toBe(
+      false,
+    ),
   );
-  await fireEvent.click(within(row).getByRole("button", { name: "Download verified PDF" }));
+  await fireEvent.click(within(row).getByRole("button", { name: "Download PDF" }));
   await waitFor(() => expect(click).toHaveBeenCalledOnce());
   expect(requests).toContain(`/api/v1/bates/exports/${receipt.allocation_id}/download`);
   await fireEvent.click(name);

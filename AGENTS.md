@@ -98,6 +98,16 @@ Instructions for autonomous coding agents working in this repository.
   message. Published documentation describes its selected release; sources on
   `main` describe the candidate release in present tense. Follow
   [docs/README.md](docs/README.md) for the publishing layout and checks.
+- Keep the [review-to-delivery roadmap (#719)](https://github.com/kenn-io/docbank/issues/719)
+  current when its scope changes, at implementation PR handoff, and when a later
+  session confirms a merge. Check GitHub's actual PR state. Update the existing
+  outcome, next step, date, and original-proposal-to-delivery mapping; distinguish
+  merged, under review, proposed, and deferred work. Say when a proposal was only
+  partly delivered. Lead with outcomes and intent, link evidence, and replace
+  stale text instead of appending progress narratives. Keep execution detail in
+  Kata and commands in their owning guides. This does not authorize merging or
+  CI polling. If the issue cannot be updated, report the pending update in the
+  handoff.
 
 ## Repository layout
 
@@ -199,14 +209,28 @@ Instructions for autonomous coding agents working in this repository.
   identify the reusable contracts and intentional differences. Preserve one
   implementation of Docbank's operation semantics; isolate concrete SQL and
   driver differences rather than copying an entire backend.
+- Preserve audit allocation semantics across backends: committed node IDs are
+  consecutive, failed transactions consume none, and deletion never permits
+  reuse. PostgreSQL uses a transactional counter, not a native sequence. Keep
+  text sorting in SQLite byte order; the development guide owns the details.
 - Keep PostgreSQL development consistent with msgvault and Kata: use pgx through
   the existing `database/sql` store boundary, explicit schema and schema-owner
   settings, setup-only DDL and validation-only runtime opening. Reuse existing
   query, search and fixture facilities before adding another abstraction.
-  Follow Kata's canonical fresh DDL and numbered forward-migration discipline
-  for new PostgreSQL history, without converting msgvault's or SQLite's existing
-  history. The [PostgreSQL guide](docs/internal/development.md#postgresql-schema-lifecycle)
+  Until the first release with PostgreSQL support, edit canonical DDL directly:
+  no layout version bumps, compatibility gates or migrations for development
+  schemas. That release establishes the baseline for Kata-style numbered
+  forward migrations, without changing msgvault's or SQLite's existing history.
+  The [PostgreSQL guide](docs/internal/development.md#postgresql-schema-lifecycle)
   owns the concrete contracts and intentional differences.
+- Changes to catalogs read by shared metadata validation must update both
+  canonical schemas in the same change, even when the feature's PostgreSQL
+  writes are not ported yet. Keep SQL added to qualified operations portable,
+  and run the PostgreSQL lane with the new retained state populated.
+- Group PostgreSQL work into complete native operations. Keep the catalogs,
+  queries, validation, side effects and tests needed for an operation in one
+  pull request, rather than splitting them into prerequisite-only changes.
+  State the resulting capability and the remaining public API boundary.
 - Never encode enums or other closed value lists in either SQL schema, including
   states, phases, kinds, formats, and statuses. Store the value as text and
   reject unknown values in Go. The existing genesis-uniqueness index is a narrow

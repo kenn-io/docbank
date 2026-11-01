@@ -53,8 +53,8 @@ func (s *Store) ResolveBlobLocations(
 		LEFT JOIN blob_locations l ON l.blob_hash = b.hash
 		LEFT JOIN blob_pack_entries e
 		  ON e.blob_hash = l.blob_hash AND e.store_id = l.store_id
-		WHERE b.hash = ?
-		ORDER BY CASE WHEN l.store_id = ? THEN 0 ELSE 1 END, l.store_id`,
+		WHERE b.hash = $1
+		ORDER BY CASE WHEN l.store_id = $2 THEN 0 ELSE 1 END, l.store_id`,
 		hash.String(), s.primaryStoreID,
 	)
 	if err != nil {
@@ -183,7 +183,7 @@ func writeLooseLocationTx(
 	}
 	if _, err := tx.ExecContext(ctx, `
 		DELETE FROM blob_pack_entries
-		WHERE blob_hash=? AND store_id=?`,
+		WHERE blob_hash=$1 AND store_id=$2`,
 		hash, storeID,
 	); err != nil {
 		return fmt.Errorf("retiring packed mapping for loose blob %s: %w", hash, err)
@@ -191,7 +191,7 @@ func writeLooseLocationTx(
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO blob_locations(
 			blob_hash, store_id, generation, kind, encoding, stored_size, pack_eligible
-		) VALUES(?, ?, ?, ?, ?, ?, ?)
+		) VALUES($1, $2, $3, $4, $5, $6, $7)
 		ON CONFLICT(blob_hash, store_id) DO UPDATE SET
 			generation=excluded.generation,
 			kind=excluded.kind,
@@ -199,7 +199,7 @@ func writeLooseLocationTx(
 			stored_size=excluded.stored_size,
 			pack_eligible=excluded.pack_eligible`,
 		hash, storeID, generation, blobLocationKindLoose, physical.Encoding,
-		physical.StoredBytes, physical.PackEligible,
+		physical.StoredBytes, boolInt(physical.PackEligible),
 	)
 	if err != nil {
 		return fmt.Errorf("recording loose blob location %s: %w", hash, err)

@@ -92,7 +92,7 @@ func mailboxManifest(c MailboxContainer) (string, error) {
 }
 func loadMailboxContainer(ctx context.Context, q metadataQuerier, owner, id string) (MailboxContainer, error) {
 	var c MailboxContainer
-	err := q.QueryRowContext(ctx, `SELECT id,owner,sha256,size,format,state,created_at,manifest_sha256 FROM mailbox_containers WHERE id=? AND owner=?`, id, owner).Scan(&c.ID, &c.Owner, &c.SHA256, &c.Size, &c.Format, &c.State, &c.CreatedAt, &c.ManifestSHA256)
+	err := q.QueryRowContext(ctx, `SELECT id,owner,sha256,size,format,state,created_at,manifest_sha256 FROM mailbox_containers WHERE id=$1 AND owner=$2`, id, owner).Scan(&c.ID, &c.Owner, &c.SHA256, &c.Size, &c.Format, &c.State, &c.CreatedAt, &c.ManifestSHA256)
 	if errors.Is(err, sql.ErrNoRows) {
 		return c, ErrNotFound
 	}
@@ -105,7 +105,7 @@ func loadMailboxContainer(ctx context.Context, q metadataQuerier, owner, id stri
 	if c.State != "uploading" && c.State != mailboxContainerSealed {
 		return c, ErrMailboxInvalid
 	}
-	rows, err := q.QueryContext(ctx, `SELECT chunk_index,blob_hash,size FROM mailbox_chunks WHERE container_id=? ORDER BY chunk_index LIMIT 4097`, id)
+	rows, err := q.QueryContext(ctx, `SELECT chunk_index,blob_hash,size FROM mailbox_chunks WHERE container_id=$1 ORDER BY chunk_index LIMIT 4097`, id)
 	if err != nil {
 		return c, err
 	}

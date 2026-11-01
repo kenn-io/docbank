@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document/redaction"
 	"go.kenn.io/docbank/internal/loadfile"
+	"go.kenn.io/docbank/internal/pdfproduction"
 	"go.kenn.io/docbank/internal/redactiontest"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -23,7 +24,7 @@ func TestNumberedRedactionRetainedSource(t *testing.T) {
 	require.NoError(t, err)
 	masks := []RedactionMask{{ID: uuid.New(), Selector: redaction.Selector{
 		Kind: "text", MapSHA256: prep.Map.SHA256, Span: &redaction.Span{End: 6}}}}
-	review, err := BuildRedactionReview(prep, masks, 1)
+	review, err := BuildRedactionReview(prep, masks, 1, pdfproduction.QualifiedRecipe())
 	require.NoError(t, err)
 	ns, err := f.catalog.EnsureBatesNamespace(t.Context(), "Q", "", 2)
 	require.NoError(t, err)
@@ -80,7 +81,7 @@ func TestNumberedRedactionUnfitLabelRetainsNothing(t *testing.T) {
 	require.NoError(t, err)
 	masks := []RedactionMask{{ID: uuid.New(), Selector: redaction.Selector{
 		Kind: "text", MapSHA256: prep.Map.SHA256, Span: &redaction.Span{End: 6}}}}
-	review, err := BuildRedactionReview(prep, masks, 1)
+	review, err := BuildRedactionReview(prep, masks, 1, pdfproduction.QualifiedRecipe())
 	require.NoError(t, err)
 	ns, err := f.catalog.EnsureBatesNamespace(t.Context(), strings.Repeat("M", 128), "", 6)
 	require.NoError(t, err)

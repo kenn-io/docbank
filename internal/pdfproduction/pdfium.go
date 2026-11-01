@@ -249,7 +249,7 @@ func verifyFresh(ctx context.Context, reader io.ReaderAt, size int64, input Veri
 		return errors.New("final PDF snapshot digest differs from publication digest")
 	}
 	reader, size = snapshot.file, snapshot.size
-	index, err := parseFreshIndex(setupCtx, reader, size, n)
+	index, err := parseFreshIndex(setupCtx, reader, size, n, recipe)
 	setupCancel()
 	if err != nil {
 		return err

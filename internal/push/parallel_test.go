@@ -102,13 +102,9 @@ func TestPushOverlapsUploadsAndHandlesCancellation(t *testing.T) {
 			} else {
 				unblock()
 			}
-			completionDeadline := time.NewTimer(30 * time.Second)
-			defer completionDeadline.Stop()
-			select {
-			case <-done:
-			case <-completionDeadline.C:
-				t.Fatal("push did not finish before the completion deadline")
-			}
+			// The barrier proves concurrency. Let the suite deadline bound the
+			// 65 durable uploads, without imposing a filesystem throughput target.
+			<-done
 			unblock()
 			server.Close()
 			require.EqualValues(t, 32, peak.Load())

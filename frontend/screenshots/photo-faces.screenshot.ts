@@ -9,6 +9,32 @@ const output = process.env.DOCBANK_FACES_SCREENSHOT_DIR;
 test.use({ actionTimeout: 15_000 });
 test.skip(!output, "DOCBANK_FACES_SCREENSHOT_DIR enables synthetic face review proof");
 
+test("shows detected faces in the inspector and loupe", async ({ page }) => {
+  const fixture = photoFixture(
+    await mkdtemp(path.join(repository, ".superpowers", "detected-faces-proof-")),
+  );
+  try {
+    await fixture.seed(3, "--detected-faces");
+    await mkdir(output!, { recursive: true });
+    const url = new URL(await fixture.run("web", "--no-browser"));
+    url.pathname = "/photos";
+    await page.goto(url.href);
+    await page
+      .getByRole("button", { name: "Select Synthetic-photo-00003.jpg", exact: true })
+      .dblclick();
+    const loupe = page.getByRole("dialog", { name: /^Photo viewer,/ });
+    await expect(loupe.locator(".face-box")).toHaveText("Face 1");
+    const people = loupe.getByRole("region", { name: "People", exact: true });
+    await people.scrollIntoViewIfNeeded();
+    await expect(
+      people.getByRole("button", { name: "Find or create a person: Face 1" }),
+    ).toBeVisible();
+    await captureThemes(page, output!, "after-detection-inspector-loupe");
+  } finally {
+    await fixture.dispose();
+  }
+});
+
 async function captureDialogThemes(
   page: Page,
   dialog: Locator,

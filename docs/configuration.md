@@ -155,6 +155,8 @@ allowed_hosts = []      # additional MCP HTTP Host names, optionally with ports
 [backup]
 repo = ""           # no implicit repository; set a path or pass --repo
 zstd_level = 0      # 0 = Kit default; otherwise 1-19
+interval = "0"      # disabled; for example, "24h"
+keep_last = 0       # choose a positive retained count before enabling
 
 [storage]
 pack_interval = "0"        # disabled; for example, "1h"
@@ -167,6 +169,7 @@ destination = "/archives/agents"
 settle_time = "30s"
 minimum_age = "168h" # optional; 7 days since source modification
 scan_interval = "5s"
+capture_on_change = false # opt in to prompt reads for working files
 exclude = [".DS_Store", "cache/"]
 exclude_patterns = [".syncthing.*.tmp", "*.sync-conflict-*"]
 ```
@@ -200,7 +203,7 @@ exclude_patterns = [".syncthing.*.tmp", "*.sync-conflict-*"]
 - **`[web] enabled`**: serves the embedded web application at `/`.
   `docbank web` starts or reconnects to the compatible daemon and opens an
   authenticated browser session on a fresh per-daemon loopback origin,
-  independent of a configured `api_port`. Disabling it 404s `/`, `/photos`, `/photos/people`, `/photos/map`, `/photos/map/{set_id}`, `/photos/albums`, canonical `/photos/albums/{id}`, and `/assets/`.
+  independent of a configured `api_port`. Disabling it 404s `/`, `/searches`, `/productions`, `/imports`, `/trash`, `/photos`, `/photos/people`, `/photos/map`, `/photos/map/{set_id}`, `/photos/albums`, canonical `/photos/albums/{id}`, and `/assets/`.
   The API and `/docs` are unaffected. See [Web application](usage/web.md).
 - **`[mcp.http] enabled`**: hosts read-only MCP HTTP in the daemon. When unset,
   the daemon hosts it if the API binds loopback, `port` is unset, and the MCP
@@ -224,12 +227,24 @@ exclude_patterns = [".syncthing.*.tmp", "*.sync-conflict-*"]
   Keep the repository outside the live vault in normal deployments.
 - **`[backup] zstd_level`**: repository compression level. `0` uses Kit's
   default. Other values must be between `1` and `19`.
+- **`[backup] interval`**: schedules captures at this interval. `"0"` disables
+  the schedule. An enabled schedule requires a configured `repo` and a positive
+  `keep_last`. Values must be nonnegative; enabled intervals must be at least one minute.
+  A `docbank backup schedule set interval` override takes precedence over this
+  value, and `docbank backup schedule reset interval` returns control to `config.toml`.
+- **`[backup] keep_last`**: number of scheduled snapshots to retain after each
+  capture. Values must be nonnegative. Manual snapshots remain outside this policy.
+  `docbank backup schedule set keep_last` overrides it at runtime.
 - **`[storage] pack_interval`**: schedules non-destructive packing of
   authorized loose blobs. `"0"` disables the schedule. A configured schedule
   runs once when the daemon starts and then at this interval.
 - **`[storage] pack_max_bytes`**: soft raw-byte budget for each
   scheduled run. It must be positive when `pack_interval` is enabled. Remaining
   loose content waits for a later run.
+
+Restart the daemon after changing backup scheduling configuration.
+See [Schedule backups](usage/backup.md#schedule-backups) for initialization,
+retention, scheduled tag rules, retries, and stale warnings.
 
 Scheduled packing is visible as the `storage:pack` job and keeps an auto-started
 daemon alive so the schedule can run. It uses the same maintenance gate
@@ -293,7 +308,10 @@ the complete transport boundary.
 
 ### Watched inboxes
 
-Each `[[watch]]` entry makes the daemon poll one local directory recursively.
+Each `[[watch]]` entry makes the daemon scan one local directory recursively.
+The default settled mode polls at `scan_interval`. Set
+`capture_on_change = true` for prompt reads after filesystem notifications,
+with periodic reconciliation at the same interval.
 `source` must be absolute or begin with `~/`. `destination` is an absolute path
 in Docbank's virtual tree. Symlinks and other non-regular entries inside the
 source are ignored. `exclude` stays a literal name-or-relative-path rule,
@@ -328,20 +346,24 @@ own input.
 
 The daemon checks each file in this order:
 
-1. Observe the same filesystem identity, size, modification time, and change time
-   for the complete `settle_time`.
+1. In settled mode, observe the same filesystem identity, size, modification
+   time, and native change timestamp when available for the complete
+   `settle_time`; fall back to size and modification time when it is absent.
+   Prompt mode skips only this delay.
 2. Require the source modification time to satisfy `minimum_age`, if enabled.
 3. Read the file, then check that the source path still names the same object.
    If it changed, do not accept the read as a Docbank node.
 
 For example, `minimum_age = "168h"` requires a file to be at least seven days
-old and unchanged for the complete settle window. The default `"0s"` disables
-this age check. The source timestamp still applies after a daemon restart,
-but the in-memory settle observation starts again. This helps with sessions or
+old and, in settled mode, unchanged for the complete settle window. The default
+`"0s"` disables this age check. The source timestamp still applies after a
+daemon restart, but only settled mode starts a new in-memory settle window. This helps with sessions or
 recordings that pause before they finish.
 
-`scan_interval` controls observation frequency. Zero settle and scan values
-select the defaults shown above. Any other value must be positive.
+`scan_interval` controls periodic observation frequency. Zero settle and scan
+values select the defaults shown above. `capture_on_change` defaults to
+`false`; prompt mode still uses the configured positive `settle_time` value
+for configuration compatibility, but it does not delay admission. Any other value must be positive.
 `minimum_age` must not be negative.
 
 Minimum age is a conservative time policy, not proof that the producing
@@ -351,33 +373,105 @@ producer offers a close/rename handoff.
 
 A file that disappears during observation, or is still held exclusively by a
 Windows producer, is treated as unsettled and retried from a fresh window.
-Other read failures appear as job errors.
+If a retryable observation failure, such as a file another program holds open,
+prevents a complete source inventory, the daemon still imports readable settled
+files. It defers only work that needs the whole tree: rename continuity, new
+paths that share native identity with an accepted source the scan did not see,
+and forgetting sources it did not see. The watch job stays running with a
+visible error, and the daemon logs the incomplete-inventory block once. A
+complete scan resumes deferred work and clears that signal; an active
+notification failure remains visible.
+A symlink replacing a known source file is skipped without following its target.
+A directory replacing that file uses normal confined traversal and exact-destination
+rules. The archived file and durable cursor remain. An occupied old path never
+authorizes a rename join. A symlink hiding previously observed descendants, a
+known path becoming another nonregular file, or a known path crossing a
+filesystem boundary skips that path and restarts the settle window for files
+below it. Reconciliation is deferred the same way, and the path appears in the
+watch job error until it recovers. Other permission or native observation
+failures stop the watch with a job error.
 
 Docbank identifies each watched source by `(name, relative source path)`.
 Keep the watch name when moving its local `source` root. Later content changes
 then add versions to the same Docbank node, even if someone moved that node in
 the virtual tree.
 
-Renaming the relative source path creates a new source identity. Each identity
-owns one Docbank node, and two watched sources cannot claim the same node.
-Deleting a source file does not delete its Docbank node.
+A live, unambiguous source rename can move that watch cursor to the current
+relative path while its original provenance and archived virtual location stay
+unchanged. The daemon needs unique native object and birth evidence from a
+complete scan; see [watched inboxes](usage/importing.md#continuously-ingest-a-local-inbox)
+for the limits. Each current cursor owns one Docbank node. Deleting a source
+file does not delete its Docbank node.
+
+After each complete scan, Docbank records when a cursor's source was first
+observed gone. The deepest directory listed on its path must lack it, so a
+deleted or renamed folder marks every file below it, and a directory or symlink
+at the old filename counts as gone. A folder that still exists but was not
+listed, such as a symlink, skipped subtree, excluded path, or filesystem
+boundary, leaves the files below it unchanged, as do uncertain rename
+candidates and incomplete scans. A regular file's
+return or a successful live rename clears the mark. Trashed documents are
+observed too, without restoring them.
+
+These observations stay local to storage and are not exported in metadata.
+Startup clears marks for watches no longer configured. Search and the document
+catalog can omit marked documents with `source_present`; defaults include
+them, and documents owned by push are always included by this filter.
 
 Docbank separately remembers the last bytes accepted from each source. If a
 person edits or reverts the Docbank node while the source stays unchanged, a
 daemon restart does not overwrite that working version. Only a later byte
 change at the watched source appends another version.
 
+Set `profile = "mistral-ocr"` in a `[[watch]]` entry to queue its configured
+processing profile's OCR or text-extraction stage after each added or updated
+version. The profile must include a rendition that accepts original documents;
+photo vision and embedding-only profiles aren't supported here. Omit `profile`
+to use only baseline plain-text extraction.
+
+The rendition stage needs current consent for that profile configuration.
+Without it, files still import with baseline plain-text extraction, but the
+configured rendition stays unprocessed. [Grant consent with `docbank processing build --consent`](usage/document-processing.md)
+for the configured profile to process subsequent imports. `docbank watch list` and
+the web app's All workers table show the profile and whether consent is required,
+expired, or revoked. Scanner errors remain separate. Unsupported files are skipped.
+An unexpected admission failure is logged once. The document stays imported
+and available for manual processing with `docbank processing build`.
+A newer save can supersede older queued work.
+Consent skips and missing or stale document authority end admission quietly.
+Imports stay accepted. A daemon stop between import and queue admission can leave
+a version unprocessed; use explicit processing for that version.
+
+Scheduling happens only at import. Granting consent later or adding a profile
+doesn't process older imports; use explicit processing for those documents.
+Unchanged rescans add no work. The existing durable workers execute the queued
+rendition; embedding stages require explicit profile execution.
+
 Watchers run as jobs named `watch:<name>`. `docbank watch list` and
 `GET /api/v1/watches` pair each runner's state with its effective source,
-destination, settle window, minimum source age, scan interval, and exclusion
-policy. `docbank watch list` shows a waiting watcher as `idle` and an ingesting
-watcher as `running`. `EXCLUDES` counts both literal and glob rules. Use
-`--json` when an agent needs the separate `exclude` and `exclude_patterns`
-lists. `docbank jobs` and `GET /api/v1/jobs` remain the all-task view. A source,
-destination, or read failure leaves the named job in the failed state and
-records the reason.
+destination, capture mode (`settled` or `prompt`), settle window,
+minimum source age, scan interval, and exclusion policy. JSON reports
+`capture_on_change` as a boolean. `docbank watch list` shows a waiting watcher
+as `idle` and an ingesting watcher as `running`. `EXCLUDES` counts both literal
+and glob rules. Use `--json` when an agent needs the separate `exclude` and
+`exclude_patterns` lists. `docbank jobs` and `GET /api/v1/jobs` remain the
+all-task view. A permanent source, destination, or read failure leaves the named
+job in the failed state and records the reason.
 Restart the daemon after correcting the problem.
-Per-file successes are written to the daemon log. A configured watch keeps a
+Per-file successes are written to the daemon log. Prompt notifications are
+best effort: coalesced events and slow ingestion can miss intervening writes,
+and readable intermediate content may be captured. The scanner still enforces
+the same root, exclusion, symlink, mount, stable-read, and mutation boundaries.
+Notification hints use at most 1,024 pending paths; overflow requests full
+reconciliation. Native subscriptions use at most 32,768 entry units, one plus
+the current immediate entry count for each admitted directory. That count
+covers handles a macOS backend may open for children, though the OS can fail
+earlier. A backend or budget failure closes all subscriptions and visibly
+degrades to periodic scans until restart; a directory vanished during
+subscription is retried once at the next periodic scan. The watch job and log
+report the failure and any restoration.
+
+A configured watch keeps a
 background daemon alive regardless of `idle_timeout`.
 
 Inspect the source facts recorded for an imported file with
@@ -460,6 +554,18 @@ retain_typed_artifacts = false
 ```
 
 Automatic description picks the profile with the lexicographically smallest name among those with active [consent](usage/document-processing.md#describe-photos) whose provider passes its probe. If the probe for the smallest name fails, the next consented name receives the photos. Docbank checks readiness on demand when a description starts. Status output does not list it. An explicit build can name another profile, but it describes a photo only when the photo has no pending suggestion. A build for a photo that already has a pending suggestion from any profile completes without a provider call; dismiss that suggestion first to ask another profile.
+
+### Automatic face detection
+
+Detection is off until you add a separate vision rendition profile with `descriptor_id = "compatible-vision.detect-faces-v1"` and a processing profile that selects it. Reuse the photo-description example above, with separate profile names, and compute its fingerprints with the detection task:
+
+```sh
+docbank processing vision-fingerprints --task compatible-vision.detect-faces-v1 --model vision-model --trust-boundary operator_network --endpoint http://127.0.0.1:8080 --deployment-fingerprint aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+```
+
+Pin the printed fingerprints in that rendition profile and grant consent for its processing profile by reviewing `docbank processing plan <photo-path> --profile <detection-profile>`, then running `docbank processing build <photo-path> --profile <detection-profile> --plan-fingerprint <reviewed-sha256> --consent`. Consent for descriptions alone does not enable detection. Both tasks send the same stripped grid preview through the vision adapter, with one request per task. Each task selects the first ready, consented processing profile by name.
+
+Detection scans visible, included display photos with ready previews. A completed scan, including one with zero faces, prevents automatic and explicit requests from rescanning that version under the same request fingerprint. Changing the model, prompt, endpoint, deployment, or another fingerprinted request policy requires fresh consent and permits a new scan. Backups preserve faces and their measurements, while leaving scan completion behind; restored photos can reconcile after fresh consent, with one new provider call per photo.
 
 ### Document conversion with Docling
 

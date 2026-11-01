@@ -43,10 +43,11 @@ const (
 )
 
 type DocumentCatalogQuery struct {
-	PathPrefix string
-	Sort       DocumentCatalogSort
-	Direction  DocumentCatalogDirection
-	PageSize   int
+	SourcePresent bool
+	PathPrefix    string
+	Sort          DocumentCatalogSort
+	Direction     DocumentCatalogDirection
+	PageSize      int
 }
 
 // DocumentCatalogPosition is the typed live-keyset boundary authenticated by
@@ -131,7 +132,7 @@ func (s *Store) ListDocuments(
 	if err != nil && !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrNotDir) {
 		return DocumentCatalogPage{}, fmt.Errorf("resolving document catalog prefix: %w", err)
 	}
-	args := documentCatalogArgs(root.ID, normalized.PathPrefix)
+	args := append(documentCatalogArgs(root.ID, normalized.PathPrefix), normalized.SourcePresent)
 	page, err := s.queryDocumentCatalogPage(ctx, tx, normalized, boundary, traversal, args)
 	if err != nil {
 		return DocumentCatalogPage{}, err
@@ -341,7 +342,7 @@ live_nodes(id,path,depth) AS (
         COALESCE(cv.mime_type,'') AS media_type,cv.size,n.modified_at
  FROM live_nodes l JOIN nodes n ON n.id=l.id
  JOIN content_versions cv ON cv.node_id=n.id AND cv.version_id=n.current_version_id
- WHERE n.kind='file' AND l.path IS NOT NULL
+ WHERE n.kind='file' AND l.path IS NOT NULL AND (?=0 OR ` + sourcePresentSQL + `)
 )
 `
 

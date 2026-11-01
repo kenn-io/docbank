@@ -102,7 +102,7 @@ on a running daemon) and authenticates with `X-Api-Key` /
 | `POST /photos/assets/{asset_id}/trash` | atomically move every live photo member to recoverable trash | Implemented |
 | `PUT /photos/assets/{asset_id}/display` · `GET\|PUT /photos/settings` | set an asset display override or vault preference | Implemented |
 | `POST /photos/assets/{asset_id}/hide` · `POST /photos/assets/{asset_id}/unhide` | change Photos visibility under `If-Match` | Implemented |
-| `GET /photos/hidden` · `POST /photos/hidden/{setup,change,disable,unlock,lock,reset}` | manage the vault passcode and five-minute unlock | Implemented |
+| `GET /photos/hidden` · `POST /photos/hidden/{setup,change,disable,unlock,lock,reset}` | manage the vault passcode and configurable unlock lifetime | Implemented |
 | `POST /photos/checkouts/estimate` · `POST /photos/checkouts` | estimate or create writable photo copies; creation is loopback-only | Implemented |
 | `POST /photos/checkouts/{id}/scan` · `POST /photos/checkouts/{id}/commit` | inspect working edits or commit stable bytes as new versions under the recorded bases | Implemented |
 | `POST /photos/checkouts/{id}/rebind` | verify and bind a restored checkout folder; loopback-only | Implemented |
@@ -162,7 +162,8 @@ on a running daemon) and authenticates with `X-Api-Key` /
 | `GET /storage` · `POST /storage/pack` · `POST /storage/repack` | inspect usage / pack loose blobs / compact sparse packs | Implemented |
 | `GET /jobs` | inspect daemon-owned background tasks and terminal failures; a `running` job with `busy: false` is waiting for work or its next run, and clients show it as idle | Implemented |
 | `GET /watches` | inspect effective watched-inbox configuration and runner state | Implemented |
-| `POST /backup/init` · `POST /backup/snapshots` · `POST /backup/snapshots/stream` · `GET /backup/snapshots` | initialize a repository / create with JSON or streamed progress / list snapshots | Implemented |
+| `GET\|PUT /backup/schedule` | inspect or override the scheduled interval and retention | Implemented |
+| `POST /backup/init` · `POST /backup/claim` · `POST /backup/snapshots` · `POST /backup/snapshots/stream` · `GET /backup/snapshots` | initialize or claim a repository / create with JSON or streamed progress / list snapshots | Implemented |
 
 ### Format capability coverage
 
@@ -1171,7 +1172,7 @@ dropping it.
 
 These root-level routes are outside `/api/v1` and auth-exempt: `GET /health`,
 `GET /api/ping` (daemon discovery), `GET /docs` and the OpenAPI documents,
-and `/`, `/photos`, `/photos/people`, `/photos/map`, `/photos/map/{set_id}`, `/photos/albums`, `/photos/albums/{set_id}`, and `/assets/` (the static web application, when `[web] enabled`). Album page IDs must be canonical UUIDv4 values.
+and `/`, `/searches`, `/productions`, `/imports`, `/trash`, `/photos`, `/photos/people`, `/photos/map`, `/photos/map/{set_id}`, `/photos/albums`, `/photos/albums/{set_id}`, and `/assets/` (the static web application, when `[web] enabled`). Album page IDs must be canonical UUIDv4 values.
 
 A hidden `POST /api/daemon/shutdown` (not in the OpenAPI document) backs
 `docbank daemon stop`. It isn't auth-exempt: it requires both the API key and
@@ -1288,7 +1289,28 @@ each requested move.
 
 `POST /backup/init` accepts `{"repo": "/absolute/server/path"}` and returns
 the repository identity and canonical path. `repo` may be omitted when
-`[backup] repo` is configured. `POST /backup/snapshots` accepts the same
+`[backup] repo` is configured.
+
+`GET /backup/schedule` returns the runtime overrides `interval_seconds` and
+`keep_last`, when set, beside `effective_interval_seconds`,
+`effective_keep_last`, and the vault settings `revision`, also sent as `ETag`.
+`PUT /backup/schedule` requires `If-Match` and accepts `interval_seconds`,
+`reset_interval`, `keep_last`, and `reset_keep_last`. It rejects an empty body,
+`null`, and a value that would leave an enabled schedule invalid against
+`config.toml`. Both routes require the master API credential. The repository
+path is not a runtime override.
+
+`POST /backup/claim` accepts `{repo?, fingerprint?}` to assign a repository's
+history to this vault installation. Omit `fingerprint` to preview its `id`,
+`path`, `snapshot_count`, optional `newest_at`, `owned`, `takeover`, and
+`fingerprint`. `takeover` means another installation of this vault, such as the
+original of a restored copy, owns the repository and loses capture access when
+the claim is confirmed. Send the preview's `fingerprint` to confirm; a repository
+that changed since the preview returns `409 backup_claim_changed`. A claim
+cannot take another vault's repository. Claim uses the same repository
+selection and master API authority as initialization.
+
+`POST /backup/snapshots` accepts the same
 optional repository plus `tag`, `jobs`, and `force_unlock`. It returns a
 stable logical summary rather than exposing Kit's physical manifest layout.
 The `/backup/snapshots/stream` variant accepts the same body and returns
@@ -1385,6 +1407,10 @@ with API-key clients.
 joins the effective machine-local source, virtual destination, settle and scan
 durations, and the `exclude` and `exclude_patterns` lists with its current
 `watch:<name>` job record.
+Watches with a processing profile include `processing` with `profile` and `consent_state` (`active`, `required`, `expired`, or `revoked`).
+If consent lookup fails, `error` describes the status failure instead.
+`GET /jobs` includes the same optional status on watch jobs, so browser sessions can display it without access to machine-local watch configuration.
+Scanner failures remain in the job's own `error` field.
 The job is omitted only when no runner has been registered, which is not an
 ordinary live-daemon state. Configuration remains file-owned: this endpoint
 does not create, edit, or restart watches.
@@ -1492,7 +1518,7 @@ A face conflict returns `409 person_merge_conflict` with up to 20 visible `face_
 
 `POST` on the same path accepts `box: {x, y, width, height}` and optional `person_id`, or `person_id` for a whole-photo mark. To create a person with that mark, also supply `person_name` and choose a UUIDv4 `person_id`. Retain both fields for retries. A new name must be nonblank and at most 200 UTF-8 bytes. A name without an ID, an existing ID with a different name, or `person_name` with a box returns `422 invalid_photo_face`. A retired person returns `404 not_found`. Repeating the same ID and name reuses the saved person and assertion. The person and mark save in one transaction, so a refused mark leaves no new person. A boxed request requires a caller-supplied UUIDv4 `face_id`. Retain it for retries: the same ID, version and box return the current saved result, including a named face whose person has since retired; a supplied person must match its canonical person. Conflicting reuse returns `409 exists`. A write past 1,000 faces or 1,000 depicted people on one version returns `409 photo_face_limit`. The result contains `face` for a box and the saved `assertion` when a person is supplied. Repeated whole-photo marks reuse their assertion.
 
-Boxes use normalized coordinates in the EXIF-oriented preview before authored rotation. API-key clients can use every face route. Browser sessions can list faces, create boxed faces, mark an existing person or create a person by name in a whole photo, and name, clear, or remove a face through revision-fenced `name`, `retract`, or `dismiss` decisions. They can clear an existing whole-photo mark with `retract`, its `assertion_id`, and its assertion `revision`. `reject`, `withdraw_rejection`, and `key` require the API key. Hidden photos also require the existing unlock cookie. Replies use `Cache-Control: no-store`. Audited vault writes fail with `audit_mutation_unsupported`. Detection and face suggestions are unavailable. See [photo face storage](https://github.com/kenn-io/docbank/blob/main/docs/internal/storage-design.md#photo-face-authority) for replay, merge and backup rules.
+Boxes use normalized coordinates in the EXIF-oriented preview before authored rotation. API-key clients can use every face route. Browser sessions can list faces, create boxed faces, mark an existing person or create a person by name in a whole photo, and name, clear, or remove a face through revision-fenced `name`, `retract`, or `dismiss` decisions. They can clear an existing whole-photo mark with `retract`, its `assertion_id`, and its assertion `revision`. `reject`, `withdraw_rejection`, and `key` require the API key. Hidden photos also require the existing unlock cookie. Replies use `Cache-Control: no-store`. Audited vault writes fail with `audit_mutation_unsupported`. [Automatic face detection](https://github.com/kenn-io/docbank/blob/main/docs/configuration.md#automatic-face-detection) adds unnamed faces when configured and consent is granted. Face suggestions remain unavailable. See [photo face storage](https://github.com/kenn-io/docbank/blob/main/docs/internal/storage-design.md#photo-face-authority) for replay, merge and backup rules.
 
 `POST /api/v1/photos/versions/{content_version_id}/face-decisions` takes `face_id`, `revision`, and `action` (`name`, `retract`, `reject`, `dismiss`, `withdraw_rejection`, or `key`). Naming takes either `person_id` or `person_name`, limited to 200 UTF-8 bytes. `retract` accepts exactly one `face_id` or whole-photo `assertion_id`. Clearing a whole-photo mark keeps its assertion active while named faces still use it; otherwise it becomes withdrawn. A new name creates the person and assigns the face in one transaction; a failed revision check rolls both back. Retain `operation_id` for an identical replay after an uncertain response. Rejection, withdrawal and key selection take `person_id`; key selection also takes `person_revision`, and omitting `face_id` clears the key. Existing IDs replay through create; edits use this decision route. Each decision returns `receipt_id`. Undoing a face's new-name decision retires the new person unless it was edited or has other evidence. Undoing that undo returns not found once the person is retired. Clearing a name or a whole-photo mark leaves the person. `POST /api/v1/photos/face-decisions/{receipt_id}/undo` restores changed rows while their saved revisions still match, returning `412 stale_revision` after a conflicting edit. Face reads include `rejected_person_ids` and `dismissed`; dismissed records remain in the API for undo and disappear from browser rows, boxes, and closeups.
 
@@ -1586,7 +1612,7 @@ The endpoint returns an empty `receipt_id` and empty `before` and `after` arrays
 
 `POST /photos/assets/{asset_id}/hide` and `/unhide` require `If-Match` and return the asset and ETag. Interactive Photos reads and mutations of already-hidden assets require an unlock. Background imports continue updating hidden files and return ordinary import receipts. Hide requires configured credentials. Unhide of an already-hidden asset requires an unlock; a visible no-op still requires the current revision. Ordinary Documents reads retain file access.
 
-`GET /photos/hidden` returns `configured`, opaque equality token `change_id`, and optional `expires_at` and `locked_until`, each paired with whole seconds remaining in `expires_in` and `locked_for`. POST `setup`, `unlock` and `disable` accept `passcode`; `change` also accepts `new_passcode`. Lock and reset require the JSON body `{}`. Unlock sets the HttpOnly, SameSite=Strict `docbank-hidden-<SHA-256 of request host and port>` cookie for five minutes; loopback HTTP omits Secure. Lock revokes every session, as does revoking or ending any browser session. Disable verifies the passcode and atomically unhides assets; reset preserves hidden flags while clearing auth. Unlock and lock remain available under audit. Five failures in sixty seconds persist a five-minute lockout with `Retry-After`. The active Library or Hidden view checks access every two seconds, conceals its view and deletes cached previews on a changed `change_id`, on 401 or 403, after any Hidden read failure, or after three consecutive Library read failures, and refreshes before redisplay; HTTP 401 uses the browser session-expired flow. A browser window that has opened Photos queues a keepalive lock on tab hide after pending Hidden writes, including an in-flight unlock, and offers Retry lock after failure in any workspace. Hidden stays concealed until a lock succeeds. Page close sends an immediate keepalive lock and, when Hidden writes are pending, queues another after them; closing during an unlock remains best effort. On return, Library and the open album's photo list reload before redisplay. The Albums index keeps its album list. Documents snapshots remain valid.
+`GET /photos/hidden` returns `configured`, opaque equality token `change_id`, and optional `expires_at` and `locked_until`, each paired with whole seconds remaining in `expires_in` and `locked_for`. POST `setup`, `unlock` and `disable` accept `passcode`; `change` also accepts `new_passcode`. Lock and reset require the JSON body `{}`. Unlock sets the HttpOnly, SameSite=Strict `docbank-hidden-<SHA-256 of request host and port>` cookie for the configured lifetime, five minutes by default; loopback HTTP omits Secure. Lock revokes every session, as does revoking or ending any browser session. Disable verifies the passcode and atomically unhides assets; reset preserves hidden flags while clearing auth. Unlock and lock remain available under audit. Five failures in sixty seconds persist a five-minute lockout with `Retry-After`. The active Library or Hidden view checks access every two seconds, conceals its view and deletes cached previews on a changed `change_id`, on 401 or 403, after any Hidden read failure, or after three consecutive Library read failures, and refreshes before redisplay; HTTP 401 uses the browser session-expired flow. A browser window that has opened Photos queues a keepalive lock on tab hide after pending Hidden writes, including an in-flight unlock, and offers Retry lock after failure in any workspace. Hidden stays concealed until a lock succeeds. Page close sends an immediate keepalive lock and, when Hidden writes are pending, queues another after them; closing during an unlock remains best effort. On return, Library and the open album's photo list reload before redisplay. The Albums index keeps its album list. Documents snapshots remain valid.
 
 `GET /photos/assets/{asset_id}/previews/{generation_id}` returns complete verified JPEG bytes for an included asset's current display version, or an assigned source grid version when `person_id` is supplied. An unavailable or stale generation returns 404. Missing retained bytes return `photo_preview_unavailable`; failed byte verification returns `photo_preview_corrupt`. Success includes Content-Length, Content-Digest, the quoted generation ETag and `X-Content-Type-Options: nosniff`. Visible previews use `Cache-Control: private, no-cache`; hidden previews require an unlock and use `no-store`, including `304`. A matching `If-None-Match` returns bodyless `304` after checking current display eligibility, without reopening the blob. Excluded or replaced displays return `404` even with a matching validator. Responses also vary by Cookie. Browser sessions permit the exact list POST, timeline POST, `POST /photos/assets/flags`, `POST /photos/authored/prepare`, `POST /photos/authored/edit`, `POST /photos/authored/{receipt_id}/undo`, `POST /photos/authored/{file_id}/xmp`, preview GET with an optional `person_id`, `GET /photos/events`, hidden-state GET, interactive hidden POSTs and asset hide/unhide POSTs and `POST /photos/assets/{asset_id}/trash`, `POST /photos/rejects/preflight`, and `POST /photos/rejects/trash` with empty query strings. Reset requires the API key. Preview slot states are `missing`, `ready`, `unsupported` and `failed`; only ready results carry URLs. This read never generates a derivative.
 
@@ -1666,6 +1692,7 @@ and maintenance are exceptions:
 | `PUT\|DELETE /nodes/{id}/tags/{tag_id}` | required: target node revision; the tag revision also advances on a real assignment change |
 | `POST /photos/assets/{asset_id}/files`, `DELETE /photos/assets/{asset_id}/files/{file_id}`, `POST /photos/assets/{asset_id}/exclude`, `POST /photos/assets/{asset_id}/trash`, `PUT /photos/assets/{asset_id}/display`, `POST /photos/assets/{asset_id}/hide`, `POST /photos/assets/{asset_id}/unhide` | required: photo asset revision |
 | `PUT /photos/settings` | required: photo library settings revision |
+| `PUT /backup/schedule` | required: vault settings revision, shared with photo settings |
 | `POST /photos/rejects/trash` | body: each previewed target's `revision` and `member_revision`; no `If-Match` header |
 | `PATCH /people/by-id/{person_id}` | required: person revision |
 | `POST /people/by-id/{person_id}/retire` | required: person revision |
@@ -2284,9 +2311,11 @@ held for the daemon's whole lifetime, not per request, so an in-process
 `sync.RWMutex`-shaped gate serializes them against regular mutations.
 Ordinary mutating handlers (`PATCH`, trash, restore, create, ingest) take the
 read side and may run concurrently with each other. Maintenance handlers take
-the write side. Once maintenance is running or queued for that write side, a
-new HTTP mutation fails immediately with `503 maintenance_busy` instead of
-becoming an indistinguishable long wait.
+the write side. Once maintenance is running or waiting for in-flight mutations
+to finish, a new HTTP mutation fails immediately with `503 maintenance_busy`
+instead of becoming an indistinguishable long wait. Maintenance still waiting
+for an active backup capture does not refuse mutations, because it holds
+nothing they need.
 Daemon-owned background jobs keep blocking gate semantics so a transient
 maintenance run does not permanently fail a watcher or extraction worker.
 Maintenance routes are exempt from the per-request timeout since
@@ -2350,7 +2379,7 @@ Host checks precede authentication and accept loopback, the concrete bind IP,
 the dedicated browser origin, and explicit `allowed_hosts`; wildcard listeners
 do not accept arbitrary names. Server-path ingest remains loopback-peer only.
 `/health`, `/api/ping`, `/docs`, the OpenAPI documents, and the static web application at
-`/`, `/photos`, `/photos/people`, `/photos/map`, `/photos/map/{set_id}`, `/photos/albums`, canonical `/photos/albums/{id}` pages, and `/assets/` are auth-exempt. Everything else, including the shutdown
+`/`, `/searches`, `/productions`, `/imports`, `/trash`, `/photos`, `/photos/people`, `/photos/map`, `/photos/map/{set_id}`, `/photos/albums`, canonical `/photos/albums/{id}` pages, and `/assets/` are auth-exempt. Everything else, including the shutdown
 route, requires the key.
 
 ## Error mapping
@@ -2373,6 +2402,9 @@ include a `position` span:
 | `not_found` | 404 | `store.ErrNotFound` |
 | `exists` | 409 | `store.ErrExists` (name collision) |
 | `cycle` | 409 | `store.ErrCycle` (move under own descendant) |
+| `backup_repository_owner_conflict` | 409 | the owner marker names another vault |
+| `backup_repository_claim_required` | 409 | unmarked history, or another installation of this vault, requires an explicit claim before capture |
+| `backup_claim_changed` | 409 | the repository changed after the claim preview |
 | `audit_mutation_unsupported` | 409 | the audited vault does not yet record this logical mutation class |
 | `audit_already_enabled` | 409 | an initial-scope preview cannot execute because audit authority was enabled concurrently |
 | `audit_scope_overlap` | 409 | the proposed scope shares a live or retained-trash member with permanent protection |
@@ -2416,7 +2448,7 @@ include a `position` span:
 | `loopback_only` | 403 | server-path ingest, preflight, backup restore, or explicit backup `repo` called by a non-loopback peer |
 | `digest_mismatch` / `size_mismatch` | 422 | uploaded file bytes disagree with the required declaration; no node/blob authority committed |
 | `too_large` | 413 | upload exceeded its declared size plus bounded multipart overhead |
-| `maintenance_busy` | 503 | exclusive vault maintenance is running or queued; retry the mutation after it finishes |
+| `maintenance_busy` | 503 | exclusive vault maintenance is running or waiting for in-flight mutations; retry the mutation after it finishes |
 | `pack_retirement_deferred` | 503 | repack authority committed but an old source pack remains physically locked; release the lock, then run `storage pack` reconciliation |
 | `unauthorized` | 401 | missing or invalid API key; bad shutdown token |
 | `web_session_read_only` | 403 | a daemon-issued browser session attempted an endpoint outside its attenuated allowlist |

@@ -49,7 +49,7 @@ func installAuditedContentVersionTx(
 			"audited %s has inconsistent source-version authority", transitionKind,
 		)
 	}
-	authority, scopes, nodeSequence, err := loadAuditedNodeAuthority(ctx, tx, node.ID)
+	authority, scopes, nodeSequence, err := store.loadAuditedNodeAuthority(ctx, tx, node.ID)
 	if err != nil {
 		return Node{}, ContentVersion{}, err
 	}
@@ -63,13 +63,13 @@ func installAuditedContentVersionTx(
 		}
 	}
 	prior, err := scanContentVersion(tx.QueryRowContext(ctx,
-		`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id=?`,
+		`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id=$1`,
 		node.CurrentVersionID,
 	))
 	if err != nil {
 		return Node{}, ContentVersion{}, fmt.Errorf("reading audited prior content: %w", err)
 	}
-	updated, version, err := installContentVersionWithOperationTx(
+	updated, version, err := store.installContentVersionWithOperationTx(
 		ctx, tx, node, blobHash, size, mimeType, transitionKind, sourceVersionID, operation,
 	)
 	if err != nil {
@@ -84,16 +84,16 @@ func installAuditedContentVersionTx(
 	return updated, version, nil
 }
 
-func loadAuditedNodeAuthority(
+func (s *Store) loadAuditedNodeAuthority(
 	ctx context.Context, tx *sql.Tx, nodeID int64,
 ) (auditAuthorityState, []auditScopeState, int64, error) {
-	authority, nodeSequence, err := loadAuditAuthorityTx(ctx, tx)
+	authority, nodeSequence, err := s.loadAuditAuthorityTx(ctx, tx)
 	if err != nil {
 		return authority, nil, 0, err
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT scope.scope_id,scope.entry_count,scope.chain_head
 		FROM audit_scopes scope JOIN audit_memberships membership USING(scope_id)
-		WHERE membership.node_id=? ORDER BY scope.scope_id`, nodeID)
+		WHERE membership.node_id=$1 ORDER BY scope.scope_id`, nodeID)
 	if err != nil {
 		return authority, nil, 0, fmt.Errorf("reading audit memberships for node %d: %w", nodeID, err)
 	}
@@ -115,7 +115,7 @@ func loadAuditedNodeAuthority(
 	return authority, scopes, nodeSequence, nil
 }
 
-func loadAuditAuthorityTx(
+func (s *Store) loadAuditAuthorityTx(
 	ctx context.Context, tx *sql.Tx,
 ) (auditAuthorityState, int64, error) {
 	var authority auditAuthorityState
@@ -131,11 +131,9 @@ func loadAuditAuthorityTx(
 	if authority.sequence != authority.allocationCount {
 		return authority, 0, errors.New("audit allocation count disagrees with operation sequence")
 	}
-	var nodeSequence int64
-	if err := tx.QueryRowContext(ctx,
-		`SELECT seq FROM sqlite_sequence WHERE name='nodes'`,
-	).Scan(&nodeSequence); err != nil {
-		return authority, 0, fmt.Errorf("reading node ID high-water mark: %w", err)
+	nodeSequence, err := s.auditNodeSequence(ctx, tx)
+	if err != nil {
+		return authority, 0, err
 	}
 	return authority, nodeSequence, nil
 }
@@ -248,10 +246,8 @@ func advanceAuditedMutationScopes(
 		if err := insertAuditRecord(ctx, tx, entry); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE audit_scopes
-			SET entry_count=?,chain_head=? WHERE scope_id=?`,
-			entryCount, head.text, scope.scopeID); err != nil {
-			return fmt.Errorf("advancing audit scope %s: %w", scope.scopeID, err)
+		if err := updateAuditScopeHead(ctx, tx, scope.scopeID, entryCount, head.text); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -272,12 +268,7 @@ func advanceAuditAuthority(
 	if err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE audit_authority
-		SET operation_sequence_high_water=?,allocation_entry_count=?,allocation_head=?
-		WHERE singleton=1`, operationSequence, allocationCount, allocationHead.text); err != nil {
-		return fmt.Errorf("advancing audit allocation authority: %w", err)
-	}
-	return nil
+	return updateAuditAuthorityHead(ctx, tx, operationSequence, allocationCount, allocationHead.text)
 }
 
 type auditedMutationValues struct {

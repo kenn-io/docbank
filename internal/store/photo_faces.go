@@ -23,6 +23,12 @@ func (photoFaceExistsError) Error() string {
 func (photoFaceExistsError) Is(target error) bool { return target == ErrExists }
 
 type PhotoFace struct {
+	Roll                *float64 `json:"roll,omitzero"`
+	Facing              *float64 `json:"facing,omitzero"`
+	EyesOpen            *bool    `json:"eyes_open,omitzero"`
+	Smile               *bool    `json:"smile,omitzero"`
+	DetectorFingerprint string   `json:"detector_fingerprint,omitzero"`
+
 	FaceID            string           `json:"face_id"`
 	ContentVersionID  string           `json:"content_version_id"`
 	Box               document.FaceBox `json:"box"`
@@ -35,17 +41,26 @@ type PhotoFace struct {
 
 func validatePhotoFace(face PhotoFace) error {
 	if validateUUIDv4(face.FaceID) != nil || validateUUIDv4(face.ContentVersionID) != nil || face.Revision < 1 ||
-		(face.AssertionID != "" && validateUUIDv4(face.AssertionID) != nil) || face.Box.Validate() != nil {
+		(face.AssertionID != "" && validateUUIDv4(face.AssertionID) != nil) {
+		return ErrInvalidPhotoFace
+	}
+	if face.DetectorFingerprint != "" && validateCatalogSHA256(face.DetectorFingerprint, "detector fingerprint") != nil {
+		return ErrInvalidPhotoFace
+	}
+	if face.DetectorFingerprint == "" && (face.Roll != nil || face.Facing != nil || face.EyesOpen != nil || face.Smile != nil) {
+		return ErrInvalidPhotoFace
+	}
+	if (document.FaceObservation{Box: face.Box, Roll: face.Roll, Facing: face.Facing, EyesOpen: face.EyesOpen, Smile: face.Smile}).Validate() != nil {
 		return ErrInvalidPhotoFace
 	}
 	return validateMetadataTime("face created_at", face.CreatedAt)
 }
 
-const photoFaceColumns = `face_id,content_version_id,x,y,width,height,revision,COALESCE(assertion_id,''),created_at`
+const photoFaceColumns = `face_id,content_version_id,x,y,width,height,revision,COALESCE(assertion_id,''),created_at,roll,facing,eyes_open,smile,COALESCE(detector_fingerprint,'')`
 
 func scanPhotoFace(row scanner) (PhotoFace, error) {
 	var face PhotoFace
-	err := row.Scan(&face.FaceID, &face.ContentVersionID, &face.Box.X, &face.Box.Y, &face.Box.Width, &face.Box.Height, &face.Revision, &face.AssertionID, &face.CreatedAt)
+	err := row.Scan(&face.FaceID, &face.ContentVersionID, &face.Box.X, &face.Box.Y, &face.Box.Width, &face.Box.Height, &face.Revision, &face.AssertionID, &face.CreatedAt, &face.Roll, &face.Facing, &face.EyesOpen, &face.Smile, &face.DetectorFingerprint)
 	return face, err
 }
 
@@ -231,7 +246,7 @@ func (s *Store) PhotoFacePersonNames(ctx context.Context, versionID string) ([]P
 }
 
 func insertPhotoFaceTx(ctx context.Context, tx *sql.Tx, face PhotoFace) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO photo_faces(face_id,content_version_id,x,y,width,height,revision,assertion_id,created_at) VALUES(?,?,?,?,?,?,?,?,?)`, face.FaceID, face.ContentVersionID, face.Box.X, face.Box.Y, face.Box.Width, face.Box.Height, face.Revision, nullableString(face.AssertionID), face.CreatedAt)
+	_, err := tx.ExecContext(ctx, `INSERT INTO photo_faces(face_id,content_version_id,x,y,width,height,revision,assertion_id,created_at,roll,facing,eyes_open,smile,detector_fingerprint) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, face.FaceID, face.ContentVersionID, face.Box.X, face.Box.Y, face.Box.Width, face.Box.Height, face.Revision, nullableString(face.AssertionID), face.CreatedAt, face.Roll, face.Facing, face.EyesOpen, face.Smile, nullableString(face.DetectorFingerprint))
 	return err
 }
 
@@ -385,8 +400,8 @@ func (s *Store) MarkPersonInPhoto(ctx context.Context, versionID, personID, pers
 func validatePhotoFaceReferences(ctx context.Context, q metadataQuerier) error {
 	var invalid bool
 	err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_faces f LEFT JOIN content_versions v ON v.version_id=f.content_version_id LEFT JOIN person_document_assertions a ON a.assertion_id=f.assertion_id WHERE v.version_id IS NULL OR (f.assertion_id IS NOT NULL AND (a.assertion_id IS NULL OR NOT (a.content_version_id=f.content_version_id AND a.role='depicted'))))
- OR EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.role='depicted' AND (a.action<>'withdrawn' OR EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=a.assertion_id)) GROUP BY a.content_version_id HAVING COUNT(*)>?)
- OR EXISTS(SELECT 1 FROM photo_faces GROUP BY content_version_id HAVING COUNT(*)>?)`, document.MaxPhotoRecordsPerVersion, document.MaxPhotoRecordsPerVersion).Scan(&invalid)
+ OR EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.role='depicted' AND (a.action<>'withdrawn' OR EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=a.assertion_id)) GROUP BY a.content_version_id HAVING COUNT(*)>$1)
+ OR EXISTS(SELECT 1 FROM photo_faces GROUP BY content_version_id HAVING COUNT(*)>$2)`, document.MaxPhotoRecordsPerVersion, document.MaxPhotoRecordsPerVersion).Scan(&invalid)
 	if err != nil {
 		return fmt.Errorf("checking face references: %w", err)
 	}

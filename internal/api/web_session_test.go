@@ -128,7 +128,7 @@ func TestWebSessionPhotoGroupingAndCheckpointMethods(t *testing.T) {
 	}
 }
 
-func TestPhotoAlbumPages(t *testing.T) {
+func TestWebPages(t *testing.T) {
 	t.Parallel()
 	mux := http.NewServeMux()
 	registerWeb(mux, true, "http://localhost", "", config.MapTilesConfig{}, nil)
@@ -139,6 +139,11 @@ func TestPhotoAlbumPages(t *testing.T) {
 		{"/photos/albums", true},
 		{"/photos/albums/11111111-1111-4111-8111-111111111111", true},
 		{"/photos/albums/invalid", false},
+		{"/searches", true},
+		{"/productions", true},
+		{"/imports", true},
+		{"/trash", true},
+		{"/searches/x", false},
 	} {
 		require.Equal(t, tc.allowed, authExempt(tc.path), tc.path)
 		response := httptest.NewRecorder()
