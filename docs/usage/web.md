@@ -312,8 +312,8 @@ browser session does not preserve the drawer's job handle.
 ## Review and redact a PDF
 
 Open a live PDF and choose **Redact PDF** in the reader, or use the same action
-in the Documents inspector. Mark rectangles or whole pages, inspect verified
-output and sanitized text, and download one ZIP. Closing the review returns to
+in the Documents inspector. Mark rectangles or whole pages on the same reader,
+inspect verified output and sanitized text, and download one ZIP. Closing the review returns to
 the reader's page and zoom; unsaved masks require confirmation before discard.
 The original is unchanged. Reviews are temporary and require the configured
 Linux amd64 page runtime. See the [browser PDF review workflow](document-processing.md#review-a-pdf-in-the-browser)
@@ -714,7 +714,8 @@ the version selected by a frozen snapshot.
 
 PDFs open in EmbedPDF, with search, zoom, page navigation, thumbnails, text
 selection and printing. **Download** saves the selected original. **Redact PDF**
-opens the review workflow for live PDFs; frozen search results stay read-only.
+switches live PDFs to review in the same workspace; frozen search results stay
+read-only.
 Its rendering engine and fonts ship with Docbank; viewing a PDF
 needs no optional server runtime or external asset download. PDF previews are
 limited to 64 MiB. Markdown displays headings, lists, tables and code blocks;

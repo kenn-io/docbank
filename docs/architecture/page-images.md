@@ -354,8 +354,25 @@ ceiling. PNGs are capped at 128 MiB each and 1 GiB total; the ZIP at 544 MiB.
 One ready preview plus another native operation may use about 3.7 GiB. These
 are file-payload bounds, not a global disk quota; tmpfs space is outside process
 RSS accounting. Preview handles, masks and reviews are not persisted to SQLite.
-The browser keeps one displayed image URL, verifies its length/hash and PNG
-header before decode, and binds its frame to preparation before enabling drawing.
+The browser keeps the original's verified bytes in one EmbedPDF reader during
+reading and review. Original pixels are an unchecked browser rendering. Page
+count, boxes, intrinsic rotation and dimensions must match preparation before
+marking is enabled. Crop-relative rectangles are transformed through the
+preparation's rational affine transform; all four corners are rounded outward
+into physical mask coordinates. Coverage and expansion overlays never enter the
+library's pending-redaction list. Docbank owns committed masks and never invokes
+the library's Apply/Commit operation.
+
+The pinned viewer extension reports actual base/tile image decoding and provides
+an inert layer inside the existing page transform. Drawing requires the current
+page's displayed images to have decoded; redraw, failure and disposal cancel
+unfinished marks. Generation-scoped callbacks cannot revive a retired render.
+Print/export commands stay disabled during review, as do the library's redaction
+commands. The same worker and original bytes survive mode changes.
+
+Redacted keeps one server PNG URL, verifies its length/hash and header before
+decode, and binds its frame to preparation. These are the images checked against
+the delivered PDF. Text is compared with the resolved runs.
 The editor closes on pagehide and requests owner-scoped preview cancellation,
 including when creation has not returned a handle. It does not revoke the
 browser session or cancel unrelated exports and imports. A cached page returns
@@ -364,9 +381,9 @@ Canceled or ambiguous creation uses a fresh request to the owner-scoped discard
 route. The editor preserves masks and requires acknowledged cleanup before
 another creation attempt; a failed cleanup can be retried separately.
 The browser retains a preview handle until the server reports it unavailable or
-acknowledges discard; its wall clock does not establish expiry. Returning to
-original pages revalidates the source and reloads a verified image with the
-current node revision, preserving masks through metadata-only changes.
+acknowledges discard; its wall clock does not establish expiry. Preparing and
+creating output revalidate the live source. Metadata-only changes
+keep the original reader and masks; a changed version blocks new output.
 
 ### Retained numbered native PDFs
 

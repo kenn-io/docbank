@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { ReaderReview, ReaderReviewStatus, PDFReviewBridge } from "./pdfReview.js";
   import { untrack } from "svelte";
   import { Spinner } from "@kenn-io/kit-ui";
   import AppTooltip from "./AppTooltip.svelte";
@@ -19,12 +20,18 @@
     authorizationRevision,
     onauthfailure,
     expanded = false,
+    review,
+    onstatus,
+    onbridge,
   }: {
     session: string;
     source: SelectedSource;
     authorizationRevision: number;
     onauthfailure: (cause: unknown) => void;
     expanded?: boolean;
+    review?: ReaderReview;
+    onstatus?: (status: ReaderReviewStatus) => void;
+    onbridge?: (bridge: PDFReviewBridge) => void;
   } = $props();
   let preview = $state<Preview | null>(null);
   let progress = $state<DownloadProgress | null>(null);
@@ -38,7 +45,7 @@
     publishedURL = "";
   }
 
-  const previewKey = $derived(`${session}:${source.key}:${authorizationRevision}`);
+  const previewKey = $derived(`${session}:${source.key}`);
   $effect(() => {
     void previewKey;
     return untrack(() => {
@@ -113,7 +120,7 @@
     {#await import("./PDFReader.svelte")}
       {@render loadingReader()}
     {:then module}
-      <module.default url={preview.url} name={source.name} />
+      <module.default url={preview.url} name={source.name} {review} {onstatus} {onbridge} />
     {:catch}
       {@render readerUnavailable()}
     {/await}
