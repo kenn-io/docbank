@@ -125,5 +125,5 @@ func commandGroupHelp(cmd *cobra.Command, args []string) error {
 	if len(args) != 0 {
 		return usageError(fmt.Errorf("unknown command %q for %q", args[0], cmd.CommandPath()))
 	}
-	return cmd.Help()
+	return cmd.Help() //nolint:wrapcheck // Cobra help errors are returned at the CLI boundary.
 }

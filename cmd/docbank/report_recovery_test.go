@@ -257,7 +257,7 @@ func TestReportCLIKnownResultOutputErrors(t *testing.T) {
 					_, err = verifyReportFile(t.Context(), destination)
 					require.NoError(t, err)
 				} else {
-					require.ErrorContains(t, err, "search-export show "+created.ID)
+					require.ErrorContains(t, err, "report show "+created.ID)
 					require.NoFileExists(t, destination)
 				}
 			})
