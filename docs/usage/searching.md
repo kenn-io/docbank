@@ -33,8 +33,10 @@ to be gone. It works with ordinary and fuzzy search. Omit it to include those
 archived documents. It requires a query or the usual tag/time anchor and
 cannot be combined with processing-mode flags or `--similar-to`.
 HTTP search and the document catalog accept `source_present=true` and echo it
-in their responses; processing source-fence filters accept the same boolean
-before counting the 4,096-version limit. These observations do not establish that every unmarked source exists.
+in their responses. Processing search filters accept the same boolean and
+search every matching live file without a 4,096-version cap. That cap applies
+to explicit version lists. Empty scopes run a normal search, including query
+and profile validation. These observations do not establish that every unmarked source exists.
 Use `GET /api/v1/duplicates` to find other documents holding the same bytes.
 
 Ordinary lexical output looks like this:

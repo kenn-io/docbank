@@ -411,7 +411,7 @@ type sourceFenceOutput struct {
 type searchDocumentsOutput struct {
 	privateCache
 
-	VaultID            string                              `json:"vault_id"`
+	VaultID            string                              `json:"vault_id,omitzero"`
 	Fence              *sourceFenceOutput                  `json:"fence,omitzero"`
 	FenceFingerprint   string                              `json:"fence_fingerprint,omitzero"`
 	ObservedScopeCount int                                 `json:"observed_scope_count,omitzero"`
@@ -458,15 +458,7 @@ func searchDocuments(
 			return response{}, callErr
 		}
 		if len(report.Results) == 0 {
-			vaultID := resolution.Fence.VaultUID
-			if request.Scope != nil {
-				info, callErr := c.VaultInfo(ctx)
-				if callErr != nil {
-					return response{}, callErr
-				}
-				vaultID = info.VaultID
-			}
-			return response{resolution: resolution, vaultID: vaultID, report: report, documents: []api.DocumentSummary{}}, nil
+			return response{resolution: resolution, vaultID: resolution.Fence.VaultUID, report: report, documents: []api.DocumentSummary{}}, nil
 		}
 		identities := make([]api.DocumentIdentity, len(report.Results))
 		for index, item := range report.Results {

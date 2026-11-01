@@ -64,11 +64,11 @@ hold its admission fence through each call, including cursor continuations.
 The vault's lifecycle lock keeps it open until admitted operations return.
 
 Search requires a configured processing `profile` and exactly one of
-`content_version_ids` or `filters`. The native resolver rejects a population
-over 4,096 current versions with `scope_too_large` and its observed count;
-it never truncates the scope. Narrow the filters and retry. Empty selections
-still validate the query and profile. Vault info reports logical inventory for
-the admitted vault. Exact-document retrieval is outside this execution subset.
+`content_version_ids` or `filters`. Explicit version lists are capped at 4,096
+current versions. Filter searches cover every matching live file without that
+cap. Empty scopes run a normal search, including query and profile validation.
+Vault info reports logical inventory for the admitted vault.
+Exact-document retrieval is outside this execution subset.
 Cursors belong to the reader's vault and process lifetime; restart listing
 after reopening the vault. Responses retain `cacheScope: private` and
 `ttlMs: 0`.

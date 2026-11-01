@@ -269,7 +269,8 @@ characters, a positive ancestor node ID, and RFC 3339 `modified_since` or
 `modified_before` bounds of at most 64 characters each. Explicit version lists
 resolve to an exact source fence of up to 4,096 current, live versions.
 Only version-list searches return `fence`, `fence_fingerprint`, and
-`observed_scope_count`. Every search returns `vault_id`, requested and actual
+`observed_scope_count`. Version-list searches always return `vault_id`; filter
+searches return it only with hits. Every search returns requested and actual
 mode, coverage, skipped reasons, and truncation state. It returns at most 100
 hits. Each excerpt is capped at 512 characters. Each hit has at most 64 evidence
 identities of at most 1,024 characters each. A result contains at most 64 skipped-reason codes

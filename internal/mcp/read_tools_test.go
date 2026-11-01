@@ -431,7 +431,7 @@ func TestSearchReadRejectsResultsOutsideResolvedFence(t *testing.T) {
 	assert.NotContains(t, err.Error(), otherVersion)
 }
 
-func TestSearchReadScopedEmptySearchKeepsVaultIdentity(t *testing.T) {
+func TestSearchReadScopedEmptySearchSkipsVaultInfo(t *testing.T) {
 	for _, test := range []struct {
 		name, query, profile, wantCode string
 		wantError, rerank              bool
@@ -444,10 +444,12 @@ func TestSearchReadScopedEmptySearchKeepsVaultIdentity(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			searchCalls := 0
+			infoCalls := 0
 			daemon := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 				switch request.URL.Path {
 				case "/api/v1/info":
-					writeDaemonJSON(t, response, api.VaultInfo{VaultID: testVaultID})
+					infoCalls++
+					http.Error(response, "unreadable unrelated blob shard", http.StatusInternalServerError)
 				case "/api/v1/search":
 					searchCalls++
 					var body api.DocumentSearchRequest
@@ -471,7 +473,7 @@ func TestSearchReadScopedEmptySearchKeepsVaultIdentity(t *testing.T) {
 						return
 					}
 					report := api.DocumentSearchReport{RequestedMode: "lexical", ActualMode: "lexical",
-						Coverage:     api.DocumentSearchCoverage{State: "complete"},
+						Coverage:     api.DocumentSearchCoverage{State: "unknown"},
 						Degradations: []string{}, Results: []api.DocumentSearchResult{}}
 					if test.rerank {
 						report.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "skipped"}
@@ -491,6 +493,7 @@ func TestSearchReadScopedEmptySearchKeepsVaultIdentity(t *testing.T) {
 				"filters": map[string]any{"source_present": true}, "rerank": test.rerank,
 			})
 			assert.Equal(t, 1, searchCalls)
+			assert.Zero(t, infoCalls)
 			if test.wantError {
 				require.Error(t, err)
 				facts, ok := daemonProblemFacts(err)
@@ -502,7 +505,7 @@ func TestSearchReadScopedEmptySearchKeepsVaultIdentity(t *testing.T) {
 			require.NoError(t, err)
 			output := structuredMap(t, result.StructuredContent)
 			assert.Equal(t, []any{}, output["results"])
-			assert.Equal(t, testVaultID, output["vault_id"])
+			assert.NotContains(t, output, "vault_id")
 			assert.NotContains(t, output, "fence")
 			assert.NotContains(t, output, "fence_fingerprint")
 			assert.NotContains(t, output, "observed_scope_count")
@@ -545,6 +548,7 @@ func TestSearchReadWithNonEmptyFenceAndNoHitsSkipsDocumentResolution(t *testing.
 	assert.Zero(t, resolveCalls)
 	assert.Empty(t, resourceLinkURIs(result))
 	assert.Equal(t, []any{}, structuredMap(t, result.StructuredContent)["results"])
+	assert.Equal(t, testVaultID, structuredMap(t, result.StructuredContent)["vault_id"])
 }
 
 func TestSearchReadResolvesOneBoundedBatchOfCurrentDocumentsForResourceLinks(t *testing.T) {
