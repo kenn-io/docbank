@@ -9944,6 +9944,31 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    NumberedDelivery:
+      additionalProperties: false
+      properties:
+        artifact_manifest_sha256:
+          type: string
+        endorsements_sha256:
+          items:
+            type: string
+          type: array
+        layout_sha256:
+          items:
+            type: string
+          type: array
+        reservation:
+          $ref: "#/components/schemas/NumberedReservation"
+      required:
+        - reservation
+        - artifact_manifest_sha256
+        - layout_sha256
+        - endorsements_sha256
+      type: object
+      x-go-type: processing.NumberedDelivery
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/processing
+        name: processing
     NumberedFooter:
       additionalProperties: false
       properties:
@@ -13268,6 +13293,10 @@ components:
           items:
             $ref: "#/components/schemas/PhotoAsset"
           type: array
+        proposals:
+          items:
+            $ref: "#/components/schemas/PhotoBestShotProposal"
+          type: array
         suggestions:
           items:
             $ref: "#/components/schemas/PhotoSuggestion"
@@ -13382,6 +13411,58 @@ components:
         - values
       type: object
       x-go-type: store.PhotoAuthoredSnapshot
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
+    PhotoBestShotProposal:
+      additionalProperties: false
+      properties:
+        asset_id:
+          type: string
+        confidence:
+          format: double
+          maximum: 1
+          minimum: 0
+          type: number
+        flag:
+          enum:
+            - pick
+            - reject
+          type: string
+        rationale:
+          type: string
+      required:
+        - asset_id
+        - flag
+        - rationale
+        - confidence
+      type: object
+      x-go-type: document.PhotoBestShotProposal
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
+    PhotoBestShotResponse:
+      additionalProperties: false
+      properties:
+        asset_id:
+          format: uuid
+          type: string
+        flag:
+          enum:
+            - pick
+            - reject
+          type: string
+        response:
+          enum:
+            - accepted
+            - dismissed
+          type: string
+      required:
+        - asset_id
+        - flag
+        - response
+      type: object
+      x-go-type: store.PhotoBestShotResponse
       x-go-type-import:
         path: go.kenn.io/docbank/internal/store
         name: store
@@ -13638,6 +13719,11 @@ components:
         quality:
           additionalProperties: false
           properties:
+            face_reports:
+              items:
+                $ref: "#/components/schemas/PhotoFaceReport"
+              maxItems: 1000
+              type: array
             signals:
               anyOf:
                 - $ref: "#/components/schemas/PhotoQualitySignals"
@@ -14317,6 +14403,57 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/store
         name: store
+    PhotoFaceReport:
+      additionalProperties: false
+      properties:
+        eyes_open:
+          type:
+            - boolean
+            - "null"
+        face_id:
+          type: string
+        facing:
+          format: double
+          type:
+            - number
+            - "null"
+        grade:
+          enum:
+            - ""
+            - red
+            - yellow
+            - green
+          type: string
+        light:
+          format: double
+          type:
+            - number
+            - "null"
+        prominence:
+          format: double
+          type: number
+        sharpness:
+          format: double
+          type:
+            - number
+            - "null"
+        smile:
+          type:
+            - boolean
+            - "null"
+      required:
+        - face_id
+        - sharpness
+        - light
+        - facing
+        - prominence
+        - eyes_open
+        - smile
+      type: object
+      x-go-type: document.PhotoFaceReport
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     PhotoFaceResult:
       additionalProperties: false
       properties:
@@ -15220,6 +15357,10 @@ components:
           maxItems: 500
           minItems: 2
           type: array
+        proposals:
+          items:
+            $ref: "#/components/schemas/PhotoBestShotProposal"
+          type: array
         representative_id:
           format: uuid
           type: string
@@ -15266,6 +15407,11 @@ components:
           type: string
         hidden:
           type: boolean
+        responses:
+          items:
+            $ref: "#/components/schemas/PhotoBestShotResponse"
+          maxItems: 500
+          type: array
         selected_ids:
           items:
             type: string
@@ -15837,6 +15983,29 @@ components:
       required:
         - name
         - binding
+      type: object
+    PreviewInput:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PreviewInput.json
+          format: uri
+          readOnly: true
+          type: string
+        masks:
+          items:
+            $ref: "#/components/schemas/RedactionMask"
+          type: array
+        preparation:
+          $ref: "#/components/schemas/RedactionPreparation"
+        review_sha256:
+          type: string
+      required:
+        - preparation
+        - masks
+        - review_sha256
       type: object
     PreviewRequest:
       additionalProperties: false
@@ -17100,6 +17269,41 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/pdfstamp
         name: pdfstamp
+    RedactionArchive:
+      additionalProperties: false
+      properties:
+        receipt:
+          $ref: "#/components/schemas/RedactionReceipt"
+        sha256:
+          type: string
+        size:
+          format: int64
+          type: integer
+      required:
+        - receipt
+        - size
+        - sha256
+      type: object
+      x-go-type: processing.RedactionArchive
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/processing
+        name: processing
+    RedactionFileDigest:
+      additionalProperties: false
+      properties:
+        sha256:
+          type: string
+        size:
+          format: int64
+          type: integer
+      required:
+        - size
+        - sha256
+      type: object
+      x-go-type: processing.RedactionFileDigest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/processing
+        name: processing
     RedactionMask:
       additionalProperties: false
       properties:
@@ -17169,6 +17373,172 @@ components:
         - selection
       type: object
       x-go-type: processing.RedactionPreparationRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/processing
+        name: processing
+    RedactionPreview:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/RedactionPreview.json
+          format: uri
+          readOnly: true
+          type: string
+        archive:
+          $ref: "#/components/schemas/RedactionArchive"
+        contract:
+          type: string
+        expires_at:
+          format: date-time
+          type: string
+        id:
+          type: string
+        pages:
+          items:
+            $ref: "#/components/schemas/RedactionPreviewPage"
+          type: array
+      required:
+        - contract
+        - id
+        - expires_at
+        - archive
+        - pages
+      type: object
+      x-go-type: processing.RedactionPreview
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/processing
+        name: processing
+    RedactionPreviewConfirmation:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/RedactionPreviewConfirmation.json
+          format: uri
+          readOnly: true
+          type: string
+        archive_sha256:
+          type: string
+        confirmed:
+          type: boolean
+        review_sha256:
+          type: string
+      required:
+        - confirmed
+        - review_sha256
+        - archive_sha256
+      type: object
+    RedactionPreviewPage:
+      additionalProperties: false
+      properties:
+        frame_sha256:
+          type: string
+        height:
+          format: int64
+          type: integer
+        number:
+          format: int64
+          type: integer
+        pixel_height:
+          format: int64
+          type: integer
+        pixel_width:
+          format: int64
+          type: integer
+        png:
+          $ref: "#/components/schemas/RedactionFileDigest"
+        text_end:
+          format: int64
+          type: integer
+        text_start:
+          format: int64
+          type: integer
+        width:
+          format: int64
+          type: integer
+      required:
+        - number
+        - frame_sha256
+        - width
+        - height
+        - pixel_width
+        - pixel_height
+        - png
+        - text_start
+        - text_end
+      type: object
+      x-go-type: processing.RedactionPreviewPage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/processing
+        name: processing
+    RedactionPreviewTicket:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/RedactionPreviewTicket.json
+          format: uri
+          readOnly: true
+          type: string
+        sha256:
+          type: string
+        size:
+          format: int64
+          type: integer
+        url:
+          type: string
+      required:
+        - url
+        - size
+        - sha256
+      type: object
+    RedactionReceipt:
+      additionalProperties: false
+      properties:
+        admitted_node_revision:
+          format: int64
+          type: integer
+        contract:
+          type: string
+        decisions_sha256:
+          type: string
+        numbered:
+          $ref: "#/components/schemas/NumberedDelivery"
+        page_count:
+          format: int64
+          type: integer
+        pdf:
+          $ref: "#/components/schemas/RedactionFileDigest"
+        preparation_sha256:
+          type: string
+        recipe:
+          $ref: "#/components/schemas/PDFRedactionRecipe"
+        resolved_sha256:
+          type: string
+        review_sha256:
+          type: string
+        selection:
+          $ref: "#/components/schemas/NativePDFSelection"
+        text:
+          $ref: "#/components/schemas/RedactionFileDigest"
+      required:
+        - contract
+        - selection
+        - admitted_node_revision
+        - preparation_sha256
+        - decisions_sha256
+        - review_sha256
+        - resolved_sha256
+        - recipe
+        - page_count
+        - pdf
+        - text
+      type: object
+      x-go-type: processing.RedactionReceipt
       x-go-type-import:
         path: go.kenn.io/docbank/internal/processing
         name: processing
@@ -29873,6 +30243,199 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Gateway Timeout
       summary: Inspect an exact retained native PDF for redaction preparation
+  /api/v1/redaction/previews:
+    delete:
+      operationId: discardRedactionPreviews
+      responses:
+        "204":
+          description: Cancel this owner's redaction preview and transfers
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Preview request failed
+      summary: Cancel this owner's redaction preview and transfers
+    post:
+      operationId: createRedactionPreview
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PreviewInput"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RedactionPreview"
+          description: Render one temporary verified PDF preview
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Preview request failed
+      summary: Render one temporary verified PDF preview
+  /api/v1/redaction/previews/{id}:
+    delete:
+      operationId: discardRedactionPreview
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            pattern: ^[0-9a-f]{48}$
+            type: string
+      responses:
+        "204":
+          description: Discard a temporary redaction preview
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Preview request failed
+      summary: Discard a temporary redaction preview
+    get:
+      operationId: getRedactionPreview
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            pattern: ^[0-9a-f]{48}$
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RedactionPreview"
+          description: Read a temporary redaction preview
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Preview request failed
+      summary: Read a temporary redaction preview
+  /api/v1/redaction/previews/{id}/bundle:
+    get:
+      operationId: downloadRedactionPreviewBundle
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            pattern: ^[0-9a-f]{48}$
+            type: string
+      responses:
+        "200":
+          content:
+            application/zip:
+              schema:
+                contentMediaType: application/octet-stream
+                format: binary
+                type: string
+          description: Verified output bytes
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Preview request failed
+      summary: Read verified temporary redaction output
+  /api/v1/redaction/previews/{id}/download:
+    post:
+      operationId: downloadRedactionPreview
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            pattern: ^[0-9a-f]{48}$
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RedactionPreviewConfirmation"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RedactionPreviewTicket"
+          description: Confirm and request a one-use ZIP download
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Preview request failed
+      summary: Confirm and request a one-use ZIP download
+  /api/v1/redaction/previews/{id}/pages/{page}:
+    get:
+      operationId: readRedactionPreviewPage
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            pattern: ^[0-9a-f]{48}$
+            type: string
+        - in: path
+          name: page
+          required: true
+          schema:
+            maximum: 16
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            image/png:
+              schema:
+                contentMediaType: application/octet-stream
+                format: binary
+                type: string
+          description: Verified output bytes
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Preview request failed
+      summary: Read verified temporary redaction output
+  /api/v1/redaction/previews/{id}/text:
+    get:
+      operationId: readRedactionPreviewText
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            pattern: ^[0-9a-f]{48}$
+            type: string
+      responses:
+        "200":
+          content:
+            text/plain:
+              schema:
+                contentMediaType: application/octet-stream
+                format: binary
+                type: string
+          description: Verified output bytes
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Preview request failed
+      summary: Read verified temporary redaction output
   /api/v1/redaction/render:
     post:
       operationId: renderNativePDF

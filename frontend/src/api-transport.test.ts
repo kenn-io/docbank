@@ -150,3 +150,51 @@ it.each([
   expect(error.message).toBe(expected);
   expect(error.errors).toEqual([]);
 });
+
+it("preserves a bounded redaction expansion without counting rendering as a write", async () => {
+  const expansion = {
+    code: "selection_expansion_required",
+    decision_ids: ["00000000-0000-4000-8000-000000000001"],
+    expanded: {
+      kind: "rectangle",
+      map_sha256: "a".repeat(64),
+      boxes: [{ page: 1, frame_sha256: "b".repeat(64), x0: 1, y0: 2, x1: 10, y1: 20 }],
+    },
+  };
+  let answer!: (value: Response) => void;
+  vi.spyOn(globalThis, "fetch").mockImplementation(
+    () => new Promise<Response>((resolve) => (answer = resolve)),
+  );
+  const request = sessionJSON("/api/v1/redaction/resolve", {
+    method: "POST",
+    session: "tab",
+    responseLimit: 16 << 20,
+  }).catch((cause: unknown) => cause);
+  expect(mutationsInFlight()).toBe(0);
+  answer(
+    Response.json({ code: "selection_expansion_required", redaction: expansion }, { status: 422 }),
+  );
+  const cause = await request;
+  expect(cause).toBeInstanceOf(APIError);
+  expect((cause as APIError).redaction).toEqual(expansion);
+  expect(isCurrentSessionError(cause, "tab")).toBe(true);
+});
+
+it("bounds valid JSON before decoding even with an understated Content-Length", async () => {
+  const cancel = vi.fn();
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(
+      new ReadableStream({
+        start(c) {
+          c.enqueue(new TextEncoder().encode('{"value":1}       '));
+        },
+        cancel,
+      }),
+      { headers: { "Content-Length": "11" } },
+    ),
+  );
+  await expect(
+    sessionJSON("/api/v1/redaction/resolve", { session: "tab", responseLimit: 12 }),
+  ).rejects.toThrow("response exceeds");
+  expect(cancel).toHaveBeenCalled();
+});

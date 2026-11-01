@@ -1670,6 +1670,8 @@ CREATE TABLE {{schema}}.photo_quality_signals (
     color_blue DOUBLE PRECISION,
     framing DOUBLE PRECISION,
     aesthetics DOUBLE PRECISION,
+    face_reports_json TEXT,
+    face_inputs TEXT COLLATE "C" NOT NULL DEFAULT '',
     PRIMARY KEY(content_version_id,evaluator_fingerprint)
 );
 
