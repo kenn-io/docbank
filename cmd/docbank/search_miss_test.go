@@ -54,7 +54,7 @@ func TestSubmittedSearchMissRecording(t *testing.T) {
 							}
 							assert.NoError(t, json.MarshalWrite(w, api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete", ScopedDocuments: 1, CompleteDocuments: 1}}))
 						} else {
-							report := api.SearchReport{Limit: 50}
+							report := api.SearchReport{Limit: 50, SourcePresent: mode == "lexical"}
 							if nameMatch {
 								report.Hits = []api.SearchHit{{Node: api.Node{ID: 7, Kind: "dir"}, Path: "/match", Match: "name"}}
 							}
@@ -76,7 +76,7 @@ func TestSubmittedSearchMissRecording(t *testing.T) {
 				rootCmd.SetErr(io.Discard)
 				args := []string{"search", "missing", "--json"}
 				if mode == "lexical" {
-					args = append(args, "--mode", "lexical")
+					args = append(args, "--mode", "lexical", "--source-present")
 				}
 				if mode == "explicit" {
 					args = append(args, "--mode", "hybrid", "--profile", "private", "--binding", "embed", "--source-version", processingTestVersionID)
@@ -88,7 +88,11 @@ func TestSubmittedSearchMissRecording(t *testing.T) {
 				} else {
 					require.Len(t, misses, 1)
 					require.Equal(t, "missing", misses[0].Query)
-					require.Empty(t, misses[0].Filters)
+					if mode == "lexical" {
+						require.Equal(t, map[string]any{"source_present": true}, misses[0].Filters)
+					} else {
+						require.Empty(t, misses[0].Filters)
+					}
 					if mode == "explicit" {
 						require.Zero(t, resolutions)
 					}

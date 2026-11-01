@@ -231,7 +231,7 @@ See docs/usage/search.md.`,
 				if empty {
 					receipt := misslog.Request{Query: query, RequestedMode: "lexical", ActualMode: "lexical", Truncated: rep.Truncated,
 						Filters: map[string]any{}}
-					for key, value := range map[string]any{"fuzzy": opts.Fuzzy, "tag_id": opts.TagID, "mime_type": opts.MIMEType, "under_node_id": opts.UnderNodeID, "modified_since": opts.ModifiedSince, "modified_before": opts.ModifiedBefore} {
+					for key, value := range map[string]any{"fuzzy": opts.Fuzzy, "source_present": opts.SourcePresent, "tag_id": opts.TagID, "mime_type": opts.MIMEType, "under_node_id": opts.UnderNodeID, "modified_since": opts.ModifiedSince, "modified_before": opts.ModifiedBefore} {
 						if value != "" && value != false && value != int64(0) {
 							receipt.Filters[key] = value
 						}
