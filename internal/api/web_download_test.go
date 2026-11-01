@@ -281,7 +281,7 @@ func TestWebPreviewPDF(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	content := "%PDF-1.7\nsynthetic PDF download bytes\n%%EOF\n"
-	hash, size, err := s.Blobs.Write(strings.NewReader(content))
+	hash, size, err := s.Blobs.WriteContext(t.Context(), strings.NewReader(content))
 	require.NoError(t, err)
 	document, err := s.CreateFile(t.Context(), s.RootID(), "report.pdf", hash, size, "application/pdf")
 	require.NoError(t, err)
