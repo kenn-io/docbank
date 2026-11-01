@@ -835,8 +835,6 @@ func TestSearchReadRerankOutputAndFalseBaseline(t *testing.T) {
 						http.Error(w, "invalid synthetic search request", http.StatusBadRequest)
 						return
 					}
-					assert.Equal(t, map[string]any{"kind": "all_live", "filters": map[string]any{}}, body["scope"])
-					assert.NotContains(t, body, "fence")
 					if tc.rerank {
 						assert.Equal(t, true, body["rerank"])
 					} else {

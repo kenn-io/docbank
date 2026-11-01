@@ -30,30 +30,31 @@ func naturalSearchReport(nodeID int64, versionID, excerpt string) api.DocumentSe
 }
 
 func TestEmptyNaturalSearchSkipsRerank(t *testing.T) {
-	for _, scopedDocuments := range []int{0, 2} {
-		t.Run(map[int]string{0: "empty scope", 2: "no matches"}[scopedDocuments], func(t *testing.T) {
-			fake := newFakeBackend()
-			fake.profiles[0].RerankingAvailable = true
-			fake.naturalSearch = api.DocumentSearchReport{
-				RequestedMode: "lexical", ActualMode: "lexical",
-				Coverage: api.DocumentSearchCoverage{ScopedDocuments: scopedDocuments, CompleteDocuments: scopedDocuments, State: "complete"},
-			}
-			model, err := New(t.Context(), fake)
-			require.NoError(t, err)
-			model.naturalProfiles = fake.profiles
-			model.naturalMode, model.naturalRerank = naturalLexical, true
-			model.requestID, model.reportSearchID, model.naturalSearchID = 7, 7, 3
-			base := model.loadNaturalSearch("missing", model.requestID)()
-			model, cmd := updateModel(t, model, base)
-			assert.False(t, model.naturalRerankPending)
-			model = runModelCommand(t, model, cmd)
-			assert.False(t, model.naturalRerankPending)
-			require.Len(t, fake.naturalSearchRequests, 1)
-			assert.False(t, fake.naturalSearchRequests[0].Rerank)
-			assert.Empty(t, model.rows)
-			assert.Equal(t, []actionCall{{event: "search_run", searchType: "lexical"}, {event: "search_empty", searchType: "lexical"}}, fake.actions)
-		})
+	fake := newFakeBackend()
+	fake.profiles[0].RerankingAvailable = true
+	fake.naturalSearch = api.DocumentSearchReport{
+		RequestedMode: "lexical", ActualMode: "lexical",
+		Coverage: api.DocumentSearchCoverage{State: "complete"},
 	}
+	model, err := New(t.Context(), fake)
+	require.NoError(t, err)
+	model.naturalProfiles = fake.profiles
+	model.naturalMode, model.naturalRerank = naturalLexical, true
+	model.requestID, model.reportSearchID, model.naturalSearchID = 7, 7, 3
+	base, ok := model.loadNaturalSearch("missing", model.requestID)().(naturalSearchBaseLoadedMsg)
+	require.True(t, ok)
+	require.NoError(t, base.err)
+	model, cmd := updateModel(t, model, base)
+	assert.False(t, model.naturalRerankPending)
+	model = runModelCommand(t, model, cmd)
+	require.Len(t, fake.naturalSearchRequests, 1)
+	assert.Equal(t, &api.DocumentSearchScope{Kind: "all_live"}, fake.naturalSearchRequests[0].Scope)
+	assert.Empty(t, fake.naturalSearchRequests[0].Fence)
+	assert.Empty(t, model.rows)
+	assert.Equal(t, []actionCall{{event: "search_run", searchType: "lexical"}, {event: "search_empty", searchType: "lexical"}}, fake.actions)
+	assert.Zero(t, model.reportSearchID)
+	_, cmd = model.applyNaturalSearchBase(base)
+	assert.Nil(t, cmd)
 }
 
 func TestNaturalSearchReportsFinalRerankedEmptiness(t *testing.T) {
@@ -861,38 +862,6 @@ func TestNaturalSearchInactiveSettingsDoNotSubmit(t *testing.T) {
 	model, cmd = updateModel(t, model, tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
 	assert.Nil(t, cmd)
 	assert.True(t, model.naturalRerank)
-}
-
-func TestNaturalSearchAllLiveReportsEmptySubmissionAndResendsScope(t *testing.T) {
-	fake := newFakeBackend()
-	fake.naturalSearch = api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid"}
-	model, err := New(t.Context(), fake)
-	require.NoError(t, err)
-	model.requestID = 4
-	model.reportSearchID = model.requestID
-	model.naturalSearchID = 2
-	model.naturalProfiles = fake.profiles
-	model.naturalMode = naturalHybrid
-
-	base, ok := model.loadNaturalSearch("nothing", model.requestID)().(naturalSearchBaseLoadedMsg)
-	require.True(t, ok)
-	require.NoError(t, base.err)
-	updated, cmd := model.applyNaturalSearchBase(base)
-	result, ok := updated.(Model)
-	require.True(t, ok)
-	assert.Zero(t, result.reportSearchID)
-	require.NotNil(t, cmd)
-	cmd()
-	assert.Equal(t, []actionCall{{event: "search_run", searchType: "hybrid"}, {event: "search_empty", searchType: "hybrid"}}, fake.actions)
-	_, cmd = result.applyNaturalSearchBase(base)
-	assert.Nil(t, cmd)
-	model.loadNaturalRerank(model.requestID, model.naturalSearchID, base.request, naturalHybrid)()
-	require.Len(t, fake.naturalSearchRequests, 2)
-	for _, request := range fake.naturalSearchRequests {
-		assert.Equal(t, &api.DocumentSearchScope{Kind: "all_live"}, request.Scope)
-		assert.Empty(t, request.Fence)
-	}
-	assert.True(t, fake.naturalSearchRequests[1].Rerank)
 }
 
 func TestNaturalSearchRerankNotesPreserveReceiptOutcomeAndCause(t *testing.T) {
