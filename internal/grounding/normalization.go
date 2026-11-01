@@ -51,14 +51,12 @@ func normalizedFigures(text string) []normalizedFigure {
 	for i := 0; i < len(tokens); {
 		start := tokens[i].start
 		start += trimStart(rs[start:tokens[i].end])
-		// Literal trimming can discard a sign before an ISO code. Keep it
+		// Literal trimming can discard a sign before edge punctuation. Keep it
 		// visible to normalization so signed amounts remain literal.
 		for j := tokens[i].start; j < start; j++ {
 			if strings.ContainsRune("-+±\u2212", rs[j]) {
-				if _, marker := currencyAt(rs, j+1); marker != "" {
-					start = j
-					break
-				}
+				start = j
+				break
 			}
 		}
 		matched := false
