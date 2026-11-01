@@ -23,6 +23,14 @@ type documentClient interface {
 
 type daemonDocumentClient struct{ *daemonconn.Connection }
 
+func (c daemonDocumentClient) ListDocumentProcessingProfiles(ctx context.Context) ([]api.ProcessingProfileSummary, error) {
+	profiles, err := c.API().ListDocumentProcessingProfiles(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return *profiles, nil
+}
+
 func (c daemonDocumentClient) VaultInfo(ctx context.Context) (api.VaultInfo, error) {
 	info, err := c.API().VaultInfo(ctx)
 	if err != nil {
@@ -36,16 +44,20 @@ func (c daemonDocumentClient) VaultInfo(ctx context.Context) (api.VaultInfo, err
 type documentReadSession func(context.Context, func(context.Context, documentClient) error) error
 
 func daemonDocumentSession(lease *daemonLease) documentReadSession {
-	return func(ctx context.Context, call func(context.Context, documentClient) error) error {
+	return daemonClientSession(lease, func(c *daemonconn.Connection) documentClient { return daemonDocumentClient{c} })
+}
+
+func daemonClientSession[C documentClient](lease *daemonLease, client func(*daemonconn.Connection) C) func(context.Context, func(context.Context, C) error) error {
+	return func(ctx context.Context, call func(context.Context, C) error) error {
 		_, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (struct{}, error) {
-			return struct{}{}, call(ctx, daemonDocumentClient{c})
+			return struct{}{}, call(ctx, client(c))
 		})
 		return err
 	}
 }
-func documentRead[T any](ctx context.Context, session documentReadSession, call func(context.Context, documentClient) (T, error)) (T, error) {
+func documentRead[T any, C documentClient](ctx context.Context, session func(context.Context, func(context.Context, C) error) error, call func(context.Context, C) (T, error)) (T, error) {
 	var out T
-	err := session(ctx, func(ctx context.Context, c documentClient) error {
+	err := session(ctx, func(ctx context.Context, c C) error {
 		var err error
 		out, err = call(ctx, c)
 		return err
@@ -105,6 +117,15 @@ func CallDocumentReadTool(ctx context.Context, reader *api.DocumentReader, req *
 
 func readToolFailure(logger *slog.Logger, name string, err error) (*sdkmcp.CallToolResult, error) {
 	logOperationError(logger, name, err)
+	if name == "answer_question" {
+		facts, _ := toolProblemFacts(err)
+		code := facts.Code
+		if _, ok := answerErrorMessages[code]; ok {
+			if result, ok := domainToolErrorResult(code, 0); ok {
+				return result, nil
+			}
+		}
+	}
 	if domain, ok := domainToolError(err); ok {
 		return domain, nil
 	}
