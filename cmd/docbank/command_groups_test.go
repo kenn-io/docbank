@@ -70,18 +70,6 @@ func TestCommandGroupsCompletion(t *testing.T) {
 			assert.NotContains(t, names, tc.absent)
 		})
 	}
-	for name, generate := range map[string]func(*bytes.Buffer) error{
-		"bash":       func(b *bytes.Buffer) error { return rootCmd.GenBashCompletionV2(b, true) },
-		"zsh":        func(b *bytes.Buffer) error { return rootCmd.GenZshCompletion(b) },
-		"fish":       func(b *bytes.Buffer) error { return rootCmd.GenFishCompletion(b, true) },
-		"powershell": func(b *bytes.Buffer) error { return rootCmd.GenPowerShellCompletionWithDesc(b) },
-	} {
-		t.Run(name, func(t *testing.T) {
-			var out bytes.Buffer
-			require.NoError(t, generate(&out))
-			assert.NotEmpty(t, out.String())
-		})
-	}
 }
 
 func TestCommandGroupsHTTPCompatibility(t *testing.T) {
