@@ -66,7 +66,7 @@
       if (receipt) await refresh(receipt, tags);
       else {
         onmetadatachanged?.(undefined, tags);
-        await Promise.all([photos.refresh(), reloadHeldRows()]);
+        await Promise.all([photos.refreshAfterChange(), reloadHeldRows()]);
       }
     };
   });
@@ -292,7 +292,7 @@
   async function refresh(receipt: PhotoAuthoredReceipt, tags: Tag[]) {
     onmetadatachanged?.(receipt, tags);
     const changes = photos.metadataChanged(receipt);
-    if (photos.started && photos.reloadsAfter(changes)) void photos.refresh();
+    if (photos.started && photos.reloadsAfter(changes)) void photos.refreshAfterChange();
     reconcile(receipt.after, receipt.representatives);
     if (
       receipt.after.some((after) => {

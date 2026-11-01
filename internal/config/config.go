@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math"
 	"net"
 	"net/netip"
 	"net/url"
@@ -280,6 +281,7 @@ type EmbeddingRuntimeConfig struct {
 
 	AdapterContract        string   `toml:"adapter_contract"`
 	ModelRevision          string   `toml:"model_revision"`
+	MinQuerySimilarity     *float64 `toml:"min_query_similarity"`
 	DeploymentEpoch        string   `toml:"deployment_epoch"`
 	ProviderRevisionHeader string   `toml:"provider_revision_header"`
 	CapabilityManifest     string   `toml:"capability_manifest"`
@@ -1322,8 +1324,8 @@ func validateEmbeddingProfileConfig(profile EmbeddingProfileConfig, prefix strin
 	if profile.Activation != string(document.EmbeddingOptional) && profile.Activation != string(document.EmbeddingRequired) {
 		return fmt.Errorf("%s activation must be optional or required", prefix)
 	}
-	if profile.InputKind != string(document.EmbeddingInputOriginalFile) && profile.InputKind != string(document.EmbeddingInputRenditionChunk) {
-		return fmt.Errorf("%s input_kind must be original_file or rendition_chunk", prefix)
+	if profile.InputKind != string(document.EmbeddingInputOriginalFile) && profile.InputKind != string(document.EmbeddingInputRenditionChunk) && profile.InputKind != string(document.EmbeddingInputImage) {
+		return fmt.Errorf("%s input_kind must be original_file, image, or rendition_chunk", prefix)
 	}
 	if profile.Dimensions <= 0 || profile.Dimensions > 1_000_000 {
 		return fmt.Errorf("%s dimensions must be between 1 and 1000000", prefix)
@@ -1351,12 +1353,27 @@ func validateEmbeddingProfileConfig(profile EmbeddingProfileConfig, prefix strin
 			return fmt.Errorf("%s chunk truncation_policy must be %s or %s", prefix, document.TruncationPolicyReject, document.TruncationPolicyTruncateIndivisible)
 		}
 	} else if profile.Chunk != (EmbeddingChunkConfig{}) || profile.MaxInputTokens != 0 {
-		return fmt.Errorf("%s original_file input must not define chunk policy or max input tokens", prefix)
+		return fmt.Errorf("%s %s input must not define chunk policy or max input tokens", prefix, profile.InputKind)
 	}
 	if profile.Runtime != nil {
 		runtime := profile.Runtime
+		if floor := runtime.MinQuerySimilarity; floor != nil {
+			if profile.InputKind != string(document.EmbeddingInputImage) || profile.Metric == document.VectorMetricL2 {
+				return fmt.Errorf("%s runtime min_query_similarity requires image input with cosine or dot_product metric", prefix)
+			}
+			if math.IsNaN(*floor) || math.IsInf(*floor, 0) || profile.Metric == document.VectorMetricCosine && (*floor < -1 || *floor > 1) {
+				return fmt.Errorf("%s runtime min_query_similarity must be finite and within [-1, 1] for cosine", prefix)
+			}
+		}
+		if profile.InputKind == string(document.EmbeddingInputImage) && runtime.AdapterContract != "docbank-standard-embedding-bridge/v2" {
+			return fmt.Errorf("%s image input requires the v2 standard embedding bridge", prefix)
+		}
+		if profile.InputKind != string(document.EmbeddingInputImage) && runtime.AdapterContract == "docbank-standard-embedding-bridge/v2" {
+			return fmt.Errorf("%s v2 standard embedding bridge requires image input", prefix)
+		}
 		if runtime.AdapterContract != "docbank-openai-compatible-embeddings/v1" &&
-			runtime.AdapterContract != "docbank-voyage-embeddings/v1" {
+			runtime.AdapterContract != "docbank-voyage-embeddings/v1" &&
+			runtime.AdapterContract != "docbank-standard-embedding-bridge/v2" {
 			return fmt.Errorf("%s runtime adapter_contract is unsupported", prefix)
 		}
 		parsed, err := validateProviderEgressConfig(runtime.ProviderEgressConfig, prefix)
@@ -1375,6 +1392,10 @@ func validateEmbeddingProfileConfig(profile EmbeddingProfileConfig, prefix strin
 			return fmt.Errorf("%s model_input is invalid or incompatible", prefix)
 		}
 		switch runtime.AdapterContract {
+		case "docbank-standard-embedding-bridge/v2":
+			if runtime.CapabilityManifest != "" || runtime.ProviderRevisionHeader != "" || (parsed.Path != "" && parsed.Path != "/") {
+				return fmt.Errorf("%s bridge runtime authority is invalid", prefix)
+			}
 		case "docbank-openai-compatible-embeddings/v1":
 			if profile.InputKind != string(document.EmbeddingInputRenditionChunk) || runtime.CapabilityManifest != "" ||
 				(parsed.Path != "" && parsed.Path != "/") || (runtime.DeploymentEpoch == "") == (runtime.ProviderRevisionHeader == "") {

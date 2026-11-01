@@ -420,6 +420,12 @@ func validateRestoredEmbeddingAuthority(ctx context.Context, tx metadataQuerier,
 	if err := validateEmbeddingBindingAuthority(set, binding, fingerprints); err != nil {
 		return err
 	}
+	if set.InputKind == document.EmbeddingInputImage {
+		if set.InputGeneration.GenerationBlobHash != "" || set.InputGeneration.GenerationEncodedSize != 0 || set.InputGeneration.AttachmentID != "" || len(set.InputGeneration.Inputs) != 1 || set.InputGeneration.Inputs[0] != (EmbeddingInputReference{ID: set.ContentVersionID, RenderedChecksum: set.InputGeneration.GenerationChecksum}) {
+			return errors.New("stored image generation has invalid artifact fields or input checksum reference")
+		}
+		return nil
+	}
 	if set.InputKind == document.EmbeddingInputOriginalFile {
 		var sourceHash string
 		if err := tx.QueryRowContext(ctx, `SELECT blob_hash FROM content_versions WHERE version_id=$1`, set.ContentVersionID).Scan(&sourceHash); err != nil {

@@ -813,3 +813,84 @@ func TestProcessingServiceCoverageReportsRebuildWhilePreviousGenerationServes(t 
 	assert.Zero(t, coverage.Renditions.PreviousServing)
 	assert.Equal(t, "complete", coverage.State)
 }
+
+func TestProcessingMissingImageBindingCompletesOptionalAndKeepsRequiredPartial(t *testing.T) {
+	t.Parallel()
+	for _, activation := range []document.EmbeddingActivation{document.EmbeddingOptional, document.EmbeddingRequired} {
+		t.Run(string(activation), func(t *testing.T) {
+			f := newPhotoDescriptionFixture(t)
+			x := newImageEmbeddingService(t, f)
+			x.binding.Activation = activation
+			service, original, image := newMixedImageTextProfileService(t, f, x)
+			f.grant(t, service, "mixed")
+			node, err := f.catalog.CreateFile(t.Context(), f.catalog.RootID(), "without-preview.jpg", f.written.Hash, f.written.Size, "image/jpeg", processingBlobPhysical(t, f.written))
+			require.NoError(t, err)
+			selector := Selector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "mixed"}
+			plan, err := service.Plan(t.Context(), selector)
+			require.NoError(t, err)
+			job, err := service.Start(t.Context(), StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint})
+			require.NoError(t, err)
+			require.Len(t, job.EmbeddingJobIDs, 1)
+			sibling, err := f.catalog.EmbeddingJobByID(t.Context(), job.EmbeddingJobIDs[0])
+			require.NoError(t, err)
+			require.Equal(t, original, sibling.BindingID)
+			require.Equal(t, "completed", sibling.State)
+			require.Zero(t, x.fake.runtime.callCount(image))
+			require.Positive(t, x.fake.runtime.callCount(original))
+			expectedState := "completed"
+			if activation == document.EmbeddingRequired {
+				expectedState = "partial"
+			}
+			status, err := service.Status(t.Context(), job.ID)
+			require.NoError(t, err)
+			require.Equal(t, expectedState, status.State)
+
+			restarted, err := NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs,
+				Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(),
+				Principal: "synthetic-operator", Scope: "document-processing"})
+			require.NoError(t, err)
+			status, err = restarted.Status(t.Context(), job.ID)
+			require.NoError(t, err)
+			require.Equal(t, expectedState, status.State)
+
+			_, err = EnsureVisualPreview(t.Context(), f.catalog, f.blobs, node.CurrentVersionID, f.recipe)
+			require.NoError(t, err)
+			plan, err = service.Plan(t.Context(), selector)
+			require.NoError(t, err)
+			recovered, err := service.Start(t.Context(), StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint})
+			require.NoError(t, err)
+			require.Len(t, recovered.EmbeddingJobIDs, 2)
+			for _, id := range []string{job.ID, recovered.ID} {
+				status, err = service.Status(t.Context(), id)
+				require.NoError(t, err)
+				require.Equal(t, "completed", status.State)
+				require.Equal(t, 2, status.CompletedBindings)
+			}
+		})
+	}
+}
+
+func TestImageOnlyStartRefusesMissingPreviewBeforeSavingConsent(t *testing.T) {
+	t.Parallel()
+	f := newPhotoDescriptionFixture(t)
+	x := newImageEmbeddingService(t, f)
+	node, err := f.catalog.CreateFile(t.Context(), f.catalog.RootID(), "without-preview.jpg", f.written.Hash, f.written.Size, "image/jpeg", processingBlobPhysical(t, f.written))
+	require.NoError(t, err)
+	selector := Selector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "images"}
+	plan, err := x.service.Plan(t.Context(), selector)
+	require.NoError(t, err)
+	require.Equal(t, "Granting consent automatically queues eligible photos throughout this vault.", plan.Estimate.Scope)
+	require.Equal(t, []string{"byte_length", "content_hash", "detected_media_type"}, plan.Flow[0].RuntimeDisclosure.MetadataClasses)
+	require.True(t, plan.ConsentRequired)
+	job, err := x.service.Start(t.Context(), StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true})
+	require.ErrorIs(t, err, ErrSourceIneligible)
+	require.ErrorContains(t, err, "preview_missing")
+	_, imageSource := errors.AsType[*ImageSourceIneligibleError](err)
+	require.True(t, imageSource)
+	require.NotErrorIs(t, err, ErrConsentSaved)
+	require.Empty(t, job.ID)
+	plan, err = x.service.Plan(t.Context(), selector)
+	require.NoError(t, err)
+	require.True(t, plan.ConsentRequired, "an ineligible image must be refused before saving vault-wide consent")
+	require.Zero(t, x.fake.runtime.callCount(x.binding.Name))
+}

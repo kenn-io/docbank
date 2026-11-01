@@ -299,7 +299,7 @@ func runServe(ctx context.Context) (retErr error) {
 	if emailPDFRuntime != nil {
 		requestEmailPDF = emailPDFRuntime.Submit
 	}
-	embeddingRuntimes, err := configureEmbeddingRuntimeBundle(cfg, blobs, layout.BlobTmpDir())
+	embeddingRuntimes, err := configureEmbeddingRuntimeBundle(cfg)
 	if err != nil {
 		return fmt.Errorf("configuring embedding runtimes: %w", err)
 	}

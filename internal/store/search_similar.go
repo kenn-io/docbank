@@ -51,7 +51,7 @@ func (source *similarSourceCapture) load(ctx context.Context, tx metadataQuerier
 		return err
 	}
 	eligible, err := loadSemanticEligibility(ctx, tx, profile, binding, kind, space,
-		" AND n.id=? AND cv.version_id=?", []any{source.NodeID, source.ContentVersionID})
+		" AND n.id=? AND cv.version_id=?", []any{source.NodeID, source.ContentVersionID}, false)
 	if err != nil {
 		return err
 	}

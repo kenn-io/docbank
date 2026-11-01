@@ -480,6 +480,17 @@ it("allows another decision after reconciling its own flag and rating with auto-
   expect(photos.cullEditor!.conflict).toBe(false);
 });
 
+it("refreshes after a background XMP import in Cull", async () => {
+  const { photos } = await reviewPhoto();
+  try {
+    const refresh = vi.spyOn(photos, "refreshAfterChange").mockResolvedValue(true);
+    await act(() => photos.cullEditor!.onXMPChanged!(undefined, []));
+    expect(refresh).toHaveBeenCalledExactlyOnceWith();
+  } finally {
+    photos.dispose();
+  }
+});
+
 it("shows a background import's rating, rotation, and flag and tells the app", async () => {
   vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:synthetic-photo");
   vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});

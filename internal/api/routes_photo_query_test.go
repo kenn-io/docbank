@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -17,17 +18,21 @@ import (
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/vectorworker"
 	"go.kenn.io/kit/packstore"
 	"image"
 	"image/color"
 	"image/jpeg"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -776,6 +781,248 @@ func TestLookupPhotoFlags(t *testing.T) {
 			var result api.PhotoFlagsResponse
 			require.NoError(t, json.Unmarshal([]byte(body), &result))
 			require.Equal(t, []store.PhotoFlagRow{{AssetID: liveID, Flag: ""}}, result.Items)
+		})
+	}
+}
+
+func photoImageDescriptor(t *testing.T, descriptor document.EmbeddingDescriptor) document.EmbeddingDescriptor {
+	t.Helper()
+	descriptor.InputKinds = []document.EmbeddingInputKind{document.EmbeddingInputImage}
+	descriptor, err := document.NewEmbeddingDescriptor(descriptor)
+	require.NoError(t, err)
+	return descriptor
+}
+
+func photoImageHTTPFixture(t *testing.T, provider processingTestEmbeddingProvider, names []string, unavailable ...*atomic.Bool) (*httptest.Server, *testStore, []string) {
+	t.Helper()
+	provider.descriptor = photoImageDescriptor(t, provider.descriptor)
+	var embedding document.EmbeddingProvider = provider
+	if len(unavailable) > 0 {
+		embedding = togglePhotoImageProvider{EmbeddingProvider: provider, unavailable: unavailable[0]}
+	}
+	return photoImageHTTPProfilesFixture(t, map[string]document.EmbeddingProvider{"private": embedding}, names)
+}
+
+// photoImageHTTPProfilesFixture ingests names as photos.
+func photoImageHTTPProfilesFixture(t *testing.T, providers map[string]document.EmbeddingProvider, names []string) (*httptest.Server, *testStore, []string) {
+	t.Helper()
+	var service *processing.Service
+	ts, catalog := newTestServer(t, func(deps *api.Deps) {
+		profiles := map[string]processing.ProfileConfig{}
+		for name, provider := range providers {
+			descriptor := provider.Descriptor()
+			profile := processingTestProfile(document.RenditionDescriptor{})
+			profile.Rendition = nil
+			profile.RetentionDisclosure.RetainSanitizedMarkdown = false
+			profile.RetentionDisclosure.TrustBoundary = string(descriptor.TrustBoundary)
+			profile.Embeddings = []document.EmbeddingBindingV1{{Activation: document.EmbeddingOptional, AuthorizationFingerprint: processingTestHash("embedding-authorization"), CompatibilityID: descriptor.CompatibilityID, CredentialBinding: "credential:test", Descriptor: document.ProviderDescriptorV1{ID: descriptor.ID, Fingerprint: descriptor.Fingerprint}, Dimensions: descriptor.Dimension, DisclosureFingerprint: processingTestHash("embedding-disclosure"), DocumentFormatter: descriptor.DocumentFormatter, InputKind: document.EmbeddingInputImage, MaxBatchItems: 8, MaxInputBytes: 1 << 20, MaxResponseBytes: 1 << 20, Metric: descriptor.Metric, Model: descriptor.Model, ModelInput: descriptor.ModelInput, Name: "semantic", Normalization: descriptor.Normalization, QueryFormatter: descriptor.QueryFormatter, ScalarEncoding: descriptor.ScalarEncoding, TrustBoundary: string(descriptor.TrustBoundary)}}
+			profiles[name] = processing.ProfileConfig{Profile: profile, EmbeddingProviders: map[string]document.EmbeddingProvider{"semantic": provider}, EmbeddingSimilarityFloors: map[string]float64{"semantic": 0}}
+		}
+		gate := api.NewOperationGate()
+		deps.Gate = gate
+		var err error
+		service, err = processing.NewService(processing.ServiceConfig{Catalog: deps.Store, Blobs: deps.Blobs, Gate: gate, SpoolDirectory: filepath.Join(deps.VaultRoot, "blobs", "tmp"), Profiles: profiles})
+		require.NoError(t, err)
+		deps.Processing = service
+	})
+	hash, size, err := catalog.Blobs.Write(bytes.NewReader(mediatest.JPEG(24, 24, color.White)))
+	require.NoError(t, err)
+	recipe, err := processing.VisualPreviewRecipeForSize("grid")
+	require.NoError(t, err)
+	for i, name := range names {
+		node, err := catalog.CreateFile(t.Context(), catalog.RootID(), name, hash, size, "image/jpeg")
+		require.NoError(t, err)
+
+		_, err = processing.EnsureVisualPreview(t.Context(), catalog.Store, catalog.Blobs, node.CurrentVersionID, recipe)
+		require.NoError(t, err)
+		for name := range providers {
+			selector := processing.Selector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: name}
+			plan, err := service.Plan(t.Context(), selector)
+			require.NoError(t, err)
+			_, err = service.Start(t.Context(), processing.StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: i == 0})
+			require.NoError(t, err)
+		}
+	}
+	spaces, err := catalog.ListVectorIndexSpaces(t.Context())
+	require.NoError(t, err)
+	indexer, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{Catalog: catalog.Store, Owner: "syntax-images", BuildLease: time.Minute, ReaderLease: time.Minute, IdleDelay: time.Millisecond, Mutate: api.NewOperationGate().MutateContext, ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
+		reader, err := catalog.Blobs.OpenContext(ctx, member.PayloadBlobHash)
+		if err != nil {
+			return nil, err
+		}
+		defer func() { require.NoError(t, reader.Close()) }()
+		return io.ReadAll(reader)
+	}})
+	require.NoError(t, err)
+	for _, space := range spaces {
+		_, err = indexer.Rebuild(t.Context(), space)
+		require.NoError(t, err)
+	}
+	return ts, catalog, spaces
+}
+
+type togglePhotoImageProvider struct {
+	document.EmbeddingProvider
+
+	unavailable *atomic.Bool
+}
+
+func (p togglePhotoImageProvider) Embed(ctx context.Context, inputs []document.EmbeddingInput, authorization document.EmbeddingAuthorization) (document.EmbeddingResult, error) {
+	if p.unavailable.Load() {
+		return document.EmbeddingResult{}, errors.New("synthetic provider unavailable")
+	}
+	return p.EmbeddingProvider.Embed(ctx, inputs, authorization)
+}
+
+type stalledPhotoImageProvider struct {
+	document.EmbeddingProvider
+
+	queryCalls atomic.Int32
+}
+
+func (p *stalledPhotoImageProvider) Embed(ctx context.Context, inputs []document.EmbeddingInput, authorization document.EmbeddingAuthorization) (document.EmbeddingResult, error) {
+	if len(inputs) == 1 && inputs[0].Kind == document.EmbeddingInputQueryText {
+		p.queryCalls.Add(1)
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+		defer cancel()
+		<-ctx.Done()
+		return document.EmbeddingResult{}, ctx.Err()
+	}
+	return p.EmbeddingProvider.Embed(ctx, inputs, authorization)
+}
+
+func TestPhotoQueryFallsBackToMetadataWhenProviderStallsPastBuildDeadline(t *testing.T) {
+	t.Parallel()
+	const mode = "semantic"
+	synctest.Test(t, func(t *testing.T) {
+		provider := newProcessingTestEmbeddingProvider(t)
+		provider.descriptor = photoImageDescriptor(t, provider.descriptor)
+		stalled := &stalledPhotoImageProvider{EmbeddingProvider: provider}
+		ts, catalog, _ := photoImageHTTPProfilesFixture(t, map[string]document.EmbeddingProvider{"private": stalled}, []string{"sunset.jpg", "harbor.jpg"})
+		ts.Close() // Exercise the handler directly so the fake clock can advance.
+		request := httptest.NewRequest(http.MethodPost, "http://localhost/api/v1/photos/assets/query", strings.NewReader(fmt.Sprintf(`{"query":{"mode":%q,"text":"sunset"}}`, mode)))
+		request.Header.Set("X-Api-Key", testAPIKey)
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		catalog.Server.Handler().ServeHTTP(response, request)
+		require.EqualValues(t, 1, stalled.queryCalls.Load())
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		var page api.PhotoBrowsePage
+		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &page))
+		require.Equal(t, mode, page.RequestedMode)
+		require.Equal(t, "lexical", page.ActualMode)
+		require.Equal(t, "provider_unavailable", page.FallbackReason)
+		require.EqualValues(t, 1, page.Total)
+		require.Len(t, page.Items, 1)
+		require.Equal(t, "sunset.jpg", page.Items[0].Name)
+		require.NotEmpty(t, page.SnapshotID)
+	})
+}
+
+func TestPhotoFallbackCursorSurvivesProviderRecovery(t *testing.T) {
+	t.Parallel()
+	unavailable := new(atomic.Bool)
+	ts, catalog, _ := photoImageHTTPFixture(t, newProcessingTestEmbeddingProvider(t), []string{"sunset-00.jpg"}, unavailable)
+	hash, size, err := catalog.Blobs.Write(bytes.NewReader(mediatest.JPEG(24, 24, color.White)))
+	require.NoError(t, err)
+	for i := 1; i < 51; i++ {
+		name := fmt.Sprintf("sunset-%02d.jpg", i)
+		if i == 50 {
+			name = "sunset.jpg"
+		}
+		_, err := catalog.CreateFile(t.Context(), catalog.RootID(), name, hash, size, "image/jpeg")
+		require.NoError(t, err)
+	}
+	const mode = "semantic"
+	request := api.PhotoBrowseRequest{Query: api.QueryPayload(fmt.Sprintf(`{"mode":%q,"text":"sunset","sort":{"field":"name","direction":"asc"}}`, mode)), PageSize: 50}
+	unavailable.Store(true)
+	response, body := do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, request)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var first api.PhotoBrowsePage
+	require.NoError(t, json.Unmarshal([]byte(body), &first))
+	require.Equal(t, "provider_unavailable", first.FallbackReason)
+	require.NotEmpty(t, first.SnapshotID, "fallback retains relevance order across pages")
+	require.NotEmpty(t, first.NextCursor)
+	require.Equal(t, mode, first.RequestedMode)
+	require.Equal(t, "lexical", first.ActualMode)
+	require.Len(t, first.Items, 50)
+	unavailable.Store(false)
+	request.SnapshotID, request.Cursor = first.SnapshotID, first.NextCursor
+	var next api.PhotoBrowsePage
+	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, request)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &next))
+	require.Equal(t, "lexical", next.ActualMode)
+	require.Equal(t, "provider_unavailable", next.FallbackReason)
+	require.Equal(t, first.SnapshotID, next.SnapshotID)
+	require.Len(t, next.Items, 1)
+	request.SnapshotID = ""
+	request.Cursor = ""
+	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, request)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var recovered api.PhotoBrowsePage
+	require.NoError(t, json.Unmarshal([]byte(body), &recovered))
+	require.Equal(t, mode, recovered.ActualMode)
+	require.NotEmpty(t, recovered.SnapshotID)
+}
+
+func TestPhotoSnapshotHTTPForwardsHiddenScope(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, nil)
+	request := api.PhotoBrowseRequest{Query: api.QueryPayload(`{"mode":"semantic","text":"sunset"}`), PageSize: 1}
+	response, body := do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, request)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var first api.PhotoBrowsePage
+	require.NoError(t, json.Unmarshal([]byte(body), &first))
+	require.NotEmpty(t, first.SnapshotID)
+	request.SnapshotID, request.Hidden = first.SnapshotID, true
+	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, request)
+	require.Equal(t, http.StatusBadRequest, response.StatusCode, body)
+	require.Equal(t, "invalid_cursor", decodeProblem(t, body).Code)
+}
+
+func TestPhotoRankedCursorRequiresSnapshotOrUsesHiddenFallback(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	for _, hidden := range []bool{false, true} {
+		t.Run(strconv.FormatBool(hidden), func(t *testing.T) {
+			headers := map[string]string{}
+			for i := range 2 {
+				node, err := s.CreateFile(t.Context(), s.RootID(), fmt.Sprintf("cursor-%t-%d.jpg", hidden, i), testHash(fmt.Sprintf("cursor-%t-%d", hidden, i)), 20, "image/jpeg")
+				require.NoError(t, err)
+				if hidden {
+					if i == 0 {
+						require.NoError(t, s.SetupPhotoHidden(t.Context(), "synthetic-passcode"))
+					}
+					asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
+					require.NoError(t, err)
+					_, err = s.SetPhotoAssetHidden(t.Context(), asset.ID, asset.Revision, true)
+					require.NoError(t, err)
+				}
+			}
+			if hidden {
+				_, cookie, err := daemonconn.New(ts.URL, testAPIKey).PhotoHidden(t.Context(), "unlock", "synthetic-passcode", "")
+				require.NoError(t, err)
+				headers["Cookie"] = cookie
+			}
+			request := api.PhotoBrowseRequest{Hidden: hidden, Query: api.QueryPayload(`{"syntax":"advanced","text":"name:cursor","sort":{"field":"name","direction":"asc"}}`), PageSize: 1}
+			response, body := do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", headers, request)
+			require.Equal(t, http.StatusOK, response.StatusCode, body)
+			var page api.PhotoBrowsePage
+			require.NoError(t, json.Unmarshal([]byte(body), &page))
+			require.NotEmpty(t, page.NextCursor)
+			request.Query = api.QueryPayload(`{"mode":"semantic","syntax":"advanced","text":"name:cursor","sort":{"field":"name","direction":"asc"}}`)
+			request.Cursor = page.NextCursor
+			response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", headers, request)
+			if hidden {
+				require.Equal(t, http.StatusOK, response.StatusCode, body)
+				require.NoError(t, json.Unmarshal([]byte(body), &page))
+				require.Equal(t, "hidden_photos", page.FallbackReason)
+				require.Len(t, page.Items, 1)
+			} else {
+				require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+				require.Equal(t, "invalid_photo_cursor", decodeProblem(t, body).Code)
+			}
 		})
 	}
 }

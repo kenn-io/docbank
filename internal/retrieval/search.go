@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -168,16 +169,7 @@ func (searcher *Searcher) revalidateReport(ctx context.Context, query Query, rep
 	}
 	requested := make([]store.SearchCandidateIdentity, len(report.Results))
 	for i, result := range report.Results {
-		evidence := make([]store.SearchEvidenceIdentity, len(result.Evidence))
-		for j, reference := range result.Evidence {
-			evidence[j] = store.SearchEvidenceIdentity{Kind: reference.Kind, NodeName: reference.NodeName,
-				VectorSpaceID: reference.VectorSpaceID, EmbeddingSetID: reference.EmbeddingSetID,
-				InputGenerationID: reference.InputGenerationID, InputID: reference.InputID,
-				InputKind: reference.InputKind, BuildID: reference.BuildID, SegmentID: reference.SegmentID,
-				BlobHash: reference.BlobHash, SourceManifestChecksum: reference.SourceManifestChecksum}
-		}
-		requested[i] = store.SearchCandidateIdentity{NodeID: result.Document.NodeID,
-			ContentVersionID: result.Document.ContentVersionID, Evidence: evidence}
+		requested[i] = searchCandidateIdentity(result)
 	}
 	semanticProfile, semanticBinding := "", ""
 	if report.ActualMode == ModeSemantic || report.ActualMode == ModeHybrid {
@@ -220,6 +212,27 @@ func (searcher *Searcher) revalidateReport(ctx context.Context, query Query, rep
 	}
 	report.Results = results
 	return report, nil
+}
+
+func searchCandidateIdentity(result Result) store.SearchCandidateIdentity {
+	evidence := make([]store.SearchEvidenceIdentity, len(result.Evidence))
+	for i, reference := range result.Evidence {
+		evidence[i] = store.SearchEvidenceIdentity{NodeID: reference.NodeID, ContentVersionID: reference.ContentVersionID,
+			Kind: reference.Kind, NodeName: reference.NodeName, VectorSpaceID: reference.VectorSpaceID,
+			EmbeddingSetID: reference.EmbeddingSetID, InputGenerationID: reference.InputGenerationID,
+			InputID: reference.InputID, InputKind: reference.InputKind, BuildID: reference.BuildID,
+			SegmentID: reference.SegmentID, BlobHash: reference.BlobHash,
+			SourceManifestChecksum: reference.SourceManifestChecksum}
+	}
+	return store.SearchCandidateIdentity{NodeID: result.Document.NodeID,
+		ContentVersionID: result.Document.ContentVersionID, Evidence: evidence}
+}
+
+func photoFusionBlob(scope store.SearchOptions, hash string) string {
+	if scope.CollapsesPhotoDuplicates() {
+		return hash
+	}
+	return ""
 }
 
 func (searcher *Searcher) searchBase(ctx context.Context, query Query) (Report, error) {
@@ -424,6 +437,14 @@ func (searcher *Searcher) semantic(ctx context.Context, query Query) (_ []Candid
 	if err != nil {
 		return nil, coverage, false, err
 	}
+	if query.MinVectorScore != nil {
+		if descriptor.Metric == document.VectorMetricL2 {
+			return nil, coverage, false, errors.New("minimum vector score requires cosine or dot_product metric")
+		}
+		neighbors = neighbors[:sort.Search(len(neighbors), func(i int) bool {
+			return neighbors[i].Score < *query.MinVectorScore
+		})]
+	}
 	candidates := make([]Candidate, 0, min(query.VectorLimit, len(neighbors)))
 	seen := make(map[int64]struct{})
 	pageLimit := query.VectorLimit
@@ -478,7 +499,7 @@ func (searcher *Searcher) semantic(ctx context.Context, query Query) (_ []Candid
 			candidates = append(candidates, Candidate{Document: DocumentIdentity{VaultID: item.VaultID,
 				NodeID: item.NodeID, ContentVersionID: item.ContentVersionID}, Lane: LaneSemantic,
 				Rank: len(candidates) + 1, Score: item.Score, Path: item.Path, VectorSpaceID: item.VectorSpaceID,
-				Excerpt: item.Excerpt, Evidence: []EvidenceReference{reference}})
+				Excerpt: item.Excerpt, Evidence: []EvidenceReference{reference}, photoBlobHash: photoFusionBlob(query.Scope, item.BlobHash)})
 		}
 		if len(candidates) == query.VectorLimit || !resolution.Truncated {
 			break
@@ -542,7 +563,7 @@ func (searcher *Searcher) collectLexical(ctx context.Context, query Query) ([]Ca
 		reference.TimeSpan = span
 		candidates[index] = Candidate{Document: DocumentIdentity{VaultID: searcher.backend.VaultID(),
 			NodeID: hit.Node.ID, ContentVersionID: hit.Node.CurrentVersionID}, Lane: LaneLexical,
-			Rank: index + 1, Path: hit.Path, Excerpt: hit.Excerpt,
+			Rank: index + 1, Path: hit.Path, Excerpt: hit.Excerpt, photoBlobHash: photoFusionBlob(query.Scope, hit.Node.BlobHash),
 			Evidence: []EvidenceReference{reference}}
 		if len(query.Scope.SelectedBuilds) != 0 {
 			candidates[index].Document.BuildID = hit.BuildID

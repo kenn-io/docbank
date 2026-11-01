@@ -36,6 +36,8 @@ type Store struct {
 	photoPublicationMu     sync.Mutex
 	photoPublicationLocks  map[string]*photoPublicationLock
 	photoEvents            photoEventFeed
+	photoStackVectorsMu    sync.Mutex
+	photoStackVectors      map[string]photoStackOpenedGeneration
 	photoHiddenNow         func() time.Time
 	photoHiddenAuthMu      sync.Mutex // Serialize session creation and revocation across database commits.
 	photoHiddenSessionsMu  sync.Mutex
@@ -252,7 +254,11 @@ func (s *Store) SQLiteDriver() docsqlite.Driver { return s.driver }
 // Close closes both database pools.
 func (s *Store) Close() error {
 	s.closePhotoEvents()
-	return errors.Join(s.db.Close(), s.writeDB.Close())
+	err := errors.Join(s.db.Close(), s.writeDB.Close())
+	s.photoStackVectorsMu.Lock()
+	s.photoStackVectors = nil
+	s.photoStackVectorsMu.Unlock()
+	return err
 }
 
 // Checkpoint truncates the WAL after all application writes have completed.

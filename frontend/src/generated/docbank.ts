@@ -6275,6 +6275,7 @@ export interface PhotoMapRow {
   asset_id: string;
   /** @nullable */
   capture_time: string | null;
+  display_file_id: string;
   /**
      * Set only when the file modified time, not a capture date, placed the photo.
      * @nullable
@@ -6309,22 +6310,29 @@ export interface PhotoStack {
 export interface PhotoBrowsePage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  actual_mode?: string;
   /**
      * @minimum 1
      * @maximum 30
      */
   burst_gap_seconds?: number;
+  coverage_incomplete?: boolean;
   facets: PhotoBrowsePageFacetsItem[];
+  fallback_reason?: string;
   /** Photos with stale source metadata group as photos with no serial until it updates, so their stacks can change. */
   grouping_incomplete?: boolean;
   items: PhotoBrowseRow[];
   map_items?: PhotoMapRow[];
+  member_hash?: string;
   next_cursor?: string;
   relevance_available: boolean;
+  requested_mode?: string;
+  snapshot_id?: string;
   /** Bursts among items when stacks were requested; other items are single photos. */
   stacks?: PhotoStack[];
   /** @minimum 0 */
   total: number;
+  truncated?: boolean;
 }
 
 export type PhotoBrowseRequestFacetsItem = typeof PhotoBrowseRequestFacetsItem[keyof typeof PhotoBrowseRequestFacetsItem];
@@ -6365,6 +6373,7 @@ export interface PhotoBrowseRequest {
   page_size?: number;
   projection?: PhotoBrowseRequestProjection;
   query: SavedQueryV1Schema;
+  snapshot_id?: string;
   /** Group capture-time pages into whole bursts, extending page_size by up to 499 frames. Relevance groups only returned matches, placing each burst at its best-ranked member. Other sorts keep individual rows. */
   stacks?: boolean;
 }
@@ -8099,12 +8108,15 @@ export type WorkspaceQueryResponseFacetsItem = {
 export interface WorkspaceQueryResponse {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  actual_mode?: string;
   coverage: WorkspaceQueryCoverage;
+  coverage_incomplete?: boolean;
   created_at: string;
   dependencies: WorkspaceQueryDependency[];
   expires_at: string;
   /** @maxItems 8 */
   facets: WorkspaceQueryResponseFacetsItem[];
+  fallback_reason?: string;
   generation: WorkspaceQueryGeneration;
   /** @pattern ^[0-9a-f]{64}$ */
   member_hash: string;
@@ -8117,6 +8129,7 @@ export interface WorkspaceQueryResponse {
   query: SavedQueryV1Schema;
   /** @pattern ^sha256:[0-9a-f]{64}$ */
   query_fingerprint: string;
+  requested_mode?: string;
   /** @maxItems 250 */
   rows: WorkspaceQueryRow[];
   snapshot: boolean;
@@ -8128,6 +8141,7 @@ export interface WorkspaceQueryResponse {
   total: number;
   /** @minimum 0 */
   total_bytes: number;
+  truncated?: boolean;
 }
 
 export interface SavedQueryRunResult {

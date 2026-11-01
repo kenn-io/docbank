@@ -12,6 +12,8 @@ import (
 	"slices"
 	"sync"
 	"time"
+
+	"go.kenn.io/docbank/internal/query"
 )
 
 const (
@@ -329,13 +331,13 @@ func (s *QuerySnapshotService) prepareSnapshot(
 	if owner == "" {
 		return preparedQuerySnapshot{}, errors.New("query snapshot owner is required")
 	}
-	buildCtx, cancel := context.WithCancel(ctx)
+	options := defaultSnapshotMaterializeOptions()
+	buildCtx, cancel := context.WithTimeout(ctx, options.BuildTimeout)
 	build, err := s.admitNewBuild(owner, cancel, request.FacetsOnly, request.ReplacesSnapshotID)
 	if err != nil {
 		cancel()
 		return preparedQuerySnapshot{}, err
 	}
-	snapshotID := build.snapshotID
 	handedOff := false
 	defer func() {
 		if !handedOff {
@@ -344,7 +346,14 @@ func (s *QuerySnapshotService) prepareSnapshot(
 		}
 	}()
 
-	options := defaultSnapshotMaterializeOptions()
+	if normalized.RankPhotos != nil {
+		rankCtx, stopRank := context.WithTimeout(buildCtx, options.BuildTimeout/2)
+		ranking, err := normalized.RankPhotos(rankCtx)
+		if stopRank(); err != nil {
+			return preparedQuerySnapshot{}, err
+		}
+		normalized.PhotoRanking = &ranking
+	}
 	options.Now = s.now
 	options.SavedQuery = saved
 	var chargedRows, chargedBytes int64
@@ -394,7 +403,7 @@ func (s *QuerySnapshotService) prepareSnapshot(
 	if err != nil {
 		return preparedQuerySnapshot{}, fmt.Errorf("encoding cached query snapshot metadata: %w", err)
 	}
-	actualBytes := int64(len(metadata)) + encodedRowBytes + querySnapshotHandleOverhead + int64(len(owner)+len(snapshotID))
+	actualBytes := int64(len(metadata)) + encodedRowBytes + querySnapshotHandleOverhead + int64(len(owner)+len(build.snapshotID))
 	if actualBytes > build.reservedBytes {
 		if err := s.chargeBuild(build, 0, actualBytes-build.reservedBytes); err != nil {
 			return preparedQuerySnapshot{}, err
@@ -405,7 +414,7 @@ func (s *QuerySnapshotService) prepareSnapshot(
 	}
 	now := s.now().UTC()
 	cached := &cachedQuerySnapshot{
-		id: snapshotID, owner: owner, metadata: metadata, rows: encodedRows,
+		id: build.snapshotID, owner: owner, metadata: metadata, rows: encodedRows,
 		created: now, lastUsed: now, bytes: actualBytes,
 		serializedBytes: projection.SerializedBytes,
 	}
@@ -452,6 +461,19 @@ func (s *QuerySnapshotService) finalizeSavedRun(
 func (s *QuerySnapshotService) Page(
 	ctx context.Context, owner, snapshotID, cursor string,
 ) (SnapshotPage, error) {
+	page, err := s.page(ctx, owner, snapshotID, cursor)
+	if err != nil {
+		return SnapshotPage{}, err
+	}
+	if err := s.validatePhotoSnapshotPage(ctx, page); err != nil {
+		return SnapshotPage{}, err
+	}
+	return page, nil
+}
+
+func (s *QuerySnapshotService) page(
+	ctx context.Context, owner, snapshotID, cursor string,
+) (SnapshotPage, error) {
 	if err := ctx.Err(); err != nil {
 		return SnapshotPage{}, err
 	}
@@ -459,6 +481,10 @@ func (s *QuerySnapshotService) Page(
 	if err != nil {
 		return SnapshotPage{}, err
 	}
+	return s.cachedPage(owner, cursor, &cached)
+}
+
+func (s *QuerySnapshotService) cachedPage(owner, cursor string, cached *cachedQuerySnapshot) (SnapshotPage, error) {
 	payload, err := s.decodeCursor(owner, cursor)
 	if err != nil {
 		return SnapshotPage{}, err
@@ -467,20 +493,13 @@ func (s *QuerySnapshotService) Page(
 	if err := json.Unmarshal(cached.metadata, &metadata); err != nil {
 		return SnapshotPage{}, fmt.Errorf("decoding cached query snapshot metadata: %w", err)
 	}
-	if payload.SnapshotID != snapshotID || payload.QueryFingerprint != metadata.QueryFingerprint ||
+	if payload.SnapshotID != cached.id || payload.QueryFingerprint != metadata.QueryFingerprint ||
 		payload.SortField != metadata.Query.Sort.Field || payload.SortDirection != metadata.Query.Sort.Direction ||
 		payload.PageSize != metadata.PageSize || payload.Offset < 0 || payload.Offset >= int64(len(cached.rows)) ||
 		payload.Offset%int64(metadata.PageSize) != 0 {
 		return SnapshotPage{}, ErrSnapshotCursor
 	}
-	page, err := s.renderPage(&cached, payload.Offset)
-	if err != nil {
-		return SnapshotPage{}, err
-	}
-	if err := s.validatePhotoSnapshotPage(ctx, page); err != nil {
-		return SnapshotPage{}, err
-	}
-	return page, nil
+	return s.renderPage(cached, payload.Offset)
 }
 
 func (s *QuerySnapshotService) validatePhotoSnapshotPage(ctx context.Context, page SnapshotPage) error {
@@ -970,4 +989,104 @@ func (s *QuerySnapshotService) stats() snapshotCacheStats {
 		CachedBytes: s.cachedBytes, ReservedBytes: s.reservedBytes,
 		ActiveBuilders: int64(len(s.builds)),
 	}
+}
+
+// PhotoPage binds continuation inputs to the admitted view, including its projection.
+func (s *QuerySnapshotService) PhotoPage(ctx context.Context, owner, id, cursor string, request SnapshotRequest) (SnapshotPage, error) {
+	// Photo snapshots contain Library members only.
+	if request.PhotoHidden {
+		return SnapshotPage{}, ErrSnapshotCursor
+	}
+	cached, err := s.lookup(owner, id)
+	if err != nil {
+		return SnapshotPage{}, err
+	}
+	var first SnapshotProjection
+	if err := json.Unmarshal(cached.metadata, &first); err != nil {
+		return SnapshotPage{}, err
+	}
+	request, err = normalizeQuerySnapshotRequest(request)
+	if err != nil {
+		return SnapshotPage{}, err
+	}
+	fingerprint, err := query.Fingerprint(request.Query)
+	if err != nil {
+		return SnapshotPage{}, err
+	}
+	coverage, err := normalizeCoverageSelection(request.Coverage)
+	if err != nil {
+		return SnapshotPage{}, err
+	}
+	if fingerprint != first.QueryFingerprint || coverage != first.Coverage || request.PageSize != first.PageSize || request.PhotoProjection != first.PhotoProjection {
+		return SnapshotPage{}, ErrSnapshotCursor
+	}
+	if err := ctx.Err(); err != nil {
+		return SnapshotPage{}, err
+	}
+	if cursor == "" {
+		return s.renderPage(&cached, 0)
+	}
+	return s.cachedPage(owner, cursor, &cached)
+}
+
+func (s *Store) currentPhotoRowsTx(ctx context.Context, tx metadataQuerier, members []SnapshotMember, recipes map[string]string) ([]PhotoBrowseRow, error) {
+	if err := validatePhotoSnapshotMembersTx(ctx, tx, members); err != nil {
+		return nil, err
+	}
+	encoded, err := json.Marshal(members)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT `+photoBrowseSelect+`,'',0 FROM `+photoBrowseDisplayFrom+` JOIN json_each(?) frozen ON json_extract(frozen.value,'$.asset_id')=a.asset_id WHERE `+photoBrowseLiveDisplay+` ORDER BY CAST(frozen.key AS INTEGER)`, string(encoded))
+	if err != nil {
+		return nil, err
+	}
+	photos, err := scanPhotoBrowseRows(rows, PhotoBrowsePosition{})
+	if err == nil && recipes != nil {
+		err = s.hydratePhotoPreviews(ctx, tx, PhotoBrowseRequest{Recipes: recipes}, photos)
+	}
+	return photos, err
+}
+
+// CurrentPhotoPage reads current display values while retaining the accepted order.
+func (s *QuerySnapshotService) CurrentPhotoPage(ctx context.Context, snapshot SnapshotPage, request PhotoBrowseRequest) (PhotoBrowsePage, error) {
+	page := PhotoBrowsePage{Total: snapshot.Total, RelevanceAvailable: true}
+	err := s.store.photoReadTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		page.Items, err = s.store.currentPhotoRowsTx(ctx, tx, snapshotMembers(snapshot.Rows), request.Recipes)
+		if err != nil {
+			return err
+		}
+		for i, row := range snapshot.Rows {
+			page.Items[i].MatchedAISuggestion = row.SuggestionMatch
+		}
+		return s.groupCurrentPhotoPage(ctx, tx, snapshot.SnapshotID, request, &page)
+	})
+	return page, err
+}
+
+// groupCurrentPhotoPage groups across every frozen member, so a stack that
+// straddles ranked pages keeps its full membership on each page it intersects.
+func (s *QuerySnapshotService) groupCurrentPhotoPage(ctx context.Context, q metadataQuerier, snapshotID string, request PhotoBrowseRequest, page *PhotoBrowsePage) error {
+	if !request.Stacks {
+		return nil
+	}
+	s.mu.Lock()
+	cached, ok := s.snapshots[snapshotID]
+	var rows [][]byte
+	if ok {
+		rows = cached.rows
+	}
+	s.mu.Unlock()
+	if !ok {
+		return ErrSnapshotGone
+	}
+	members, ids := make([]SnapshotRow, len(rows)), make([]string, len(rows))
+	for i, raw := range rows {
+		if err := json.Unmarshal(raw, &members[i]); err != nil {
+			return fmt.Errorf("decoding cached query snapshot row: %w", err)
+		}
+		ids[i] = members[i].AssetID
+	}
+	return s.store.groupFrozenPhotoPage(ctx, q, page, members, ids, request)
 }

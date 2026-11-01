@@ -140,7 +140,7 @@ func independentExactDot(manifest Manifest, sets []document.VectorSetV1, query [
 		if neighbors[left].Score != neighbors[right].Score {
 			return neighbors[left].Score > neighbors[right].Score
 		}
-		return compareIdentity(neighbors[left].RowIdentity, neighbors[right].RowIdentity) < 0
+		return CompareIdentity(neighbors[left].RowIdentity, neighbors[right].RowIdentity) < 0
 	})
 	return neighbors[:k]
 }

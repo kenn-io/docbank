@@ -60,7 +60,7 @@ func TestPhotoCursor(t *testing.T) {
 	require.NoError(t, err)
 	decoded, err := service.decodePhotoCursor(cursor)
 	require.NoError(t, err)
-	require.Equal(t, position, decoded)
+	require.Equal(t, position, decoded.Position)
 	for _, invalid := range []string{cursor + "a", strings.Repeat("a", MaxDocumentCursorBytes+1), "bad", cursor + "."} {
 		_, err := service.decodePhotoCursor(invalid)
 		require.ErrorIs(t, err, store.ErrInvalidPhotoCursor)

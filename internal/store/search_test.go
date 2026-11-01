@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/vectorindex"
 )
 
@@ -165,6 +166,112 @@ func TestSimilarOrdinarySemanticSearchPreservesIdenticalDocuments(t *testing.T) 
 	t.Log("duplicate rows remain separate in ordinary semantic search")
 	assert.Equal(t, result.Candidates[0].BlobHash, result.Candidates[1].BlobHash)
 	assert.NotEqual(t, result.Candidates[0].NodeID, result.Candidates[1].NodeID)
+}
+
+func TestResolveSemanticCandidatesCollapsesPhotoDuplicatesBeforeLimit(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name          string
+		indexed       string
+		wantNodeNames []string
+		limit         int
+	}{
+		{name: "one representative before the limit", indexed: "all", wantNodeNames: []string{"duplicate-a.jpg", "distinct.jpg"}, limit: 2},
+		{name: "keep the indexed later duplicate", indexed: "later", wantNodeNames: []string{"newer-indexed.jpg"}, limit: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newImageEmbeddingCatalogFixture(t)
+			s, profile := f.s, f.request.Profile
+			var nodes []Node
+			if tc.indexed == "all" {
+				for _, file := range []struct{ name, hash string }{
+					{"duplicate-a.jpg", catalogSourceHash},
+					{"duplicate-b.jpg", catalogSourceHash},
+					{"distinct.jpg", catalogEvidenceBlobHash},
+				} {
+					node, err := s.CreateFile(t.Context(), s.RootID(), file.name, file.hash,
+						int64(len(catalogBlobContents[file.hash])), "image/jpeg")
+					require.NoError(t, err)
+					nodes = append(nodes, node)
+				}
+			} else {
+				older, err := s.CreateFile(t.Context(), s.RootID(), "older-unindexed.jpg",
+					catalogSourceHash, int64(len(catalogBlobContents[catalogSourceHash])), "image/jpeg")
+				require.NoError(t, err)
+				indexed, err := s.CreateFile(t.Context(), s.RootID(), "newer-indexed.jpg",
+					catalogSourceHash, int64(len(catalogBlobContents[catalogSourceHash])), "image/jpeg")
+				require.NoError(t, err)
+				_, err = s.db.ExecContext(t.Context(), `UPDATE nodes SET modified_at=? WHERE id=?`,
+					"2026-01-01T00:00:00.000000000Z", older.ID)
+				require.NoError(t, err)
+				_, err = s.db.ExecContext(t.Context(), `UPDATE nodes SET modified_at=? WHERE id=?`,
+					"2026-01-02T00:00:00.000000000Z", indexed.ID)
+				require.NoError(t, err)
+				nodes = []Node{older, indexed}
+			}
+
+			indexedNodes := nodes
+			if tc.indexed == "later" {
+				indexedNodes = nodes[1:]
+			}
+			var records []EmbeddingSetRecord
+			var neighbors []vectorindex.Neighbor
+			for index, node := range indexedNodes {
+				record, _ := f.forNode(t, node).publish(t)
+				records = append(records, record)
+				score := []float64{1, 0.99, 0.8}[index]
+				neighbors = append(neighbors, vectorindex.Neighbor{
+					SetID: record.VectorSet.ID, InputKey: record.InputGeneration.Inputs[0].ID,
+					InputChecksum: record.InputGeneration.Inputs[0].RenderedChecksum, Score: score,
+				})
+			}
+			source, err := s.CaptureVectorIndexSource(t.Context(), records[0].VectorSpace.ID)
+			require.NoError(t, err)
+			scope := PhotoBrowseRequest{Query: query.Query{V: 1, Syntax: "simple", Mode: "lexical",
+				Sort: query.Sort{Field: "name", Direction: "asc"}}}
+			lexicalQuery := scope.Query
+			lexicalQuery.Filters.CollapseDuplicates = true
+			options := SearchOptions{PhotoScope: &scope, PhotoLexicalQuery: &lexicalQuery}
+			_, _, _, annRows, err := s.semanticSearchAuthorityFence(t.Context(), profile.Fingerprint,
+				records[0].BindingID, records[0].InputKind, records[0].VectorSpace.ID, options, nil)
+			require.NoError(t, err)
+			wantInputKeys := make([]string, 0, len(tc.wantNodeNames))
+			for _, name := range tc.wantNodeNames {
+				for _, node := range indexedNodes {
+					if node.Name == name {
+						wantInputKeys = append(wantInputKeys, node.CurrentVersionID)
+					}
+				}
+			}
+			require.Len(t, annRows, len(wantInputKeys))
+			gotInputKeys := make([]string, len(annRows))
+			for index, row := range annRows {
+				gotInputKeys[index] = row.InputKey
+			}
+			assert.ElementsMatch(t, wantInputKeys, gotInputKeys)
+
+			resolution, err := s.ResolveSemanticCandidates(t.Context(), profile.Fingerprint,
+				records[0].BindingID, records[0].InputKind, records[0].VectorSpace.ID,
+				source.ManifestChecksum, neighbors, tc.limit, options, nil)
+			require.NoError(t, err)
+			wantIDs := make([]int64, 0, len(tc.wantNodeNames))
+			for _, name := range tc.wantNodeNames {
+				for _, node := range nodes {
+					if node.Name == name {
+						wantIDs = append(wantIDs, node.ID)
+					}
+				}
+			}
+			require.Len(t, resolution.Candidates, len(wantIDs))
+			gotIDs := make([]int64, len(resolution.Candidates))
+			for index, candidate := range resolution.Candidates {
+				gotIDs[index] = candidate.NodeID
+			}
+			assert.ElementsMatch(t, wantIDs, gotIDs)
+			assert.False(t, resolution.Truncated)
+		})
+	}
 }
 
 func TestResolveSemanticCandidatesReturnsOnlyCurrentScopedHeads(t *testing.T) {
@@ -325,7 +432,7 @@ func TestRevalidateSearchCandidatesPreservesOrderAtTheCandidateLimit(t *testing.
 			node = second
 		}
 		requested[i] = SearchCandidateIdentity{NodeID: node.ID, ContentVersionID: node.CurrentVersionID,
-			Evidence: []SearchEvidenceIdentity{{Kind: "node_name", NodeName: node.Name}}}
+			Evidence: []SearchEvidenceIdentity{{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Kind: "node_name", NodeName: node.Name}}}
 	}
 
 	revalidation, err := s.RevalidateSearchCandidates(t.Context(), requested, SearchOptions{}, "", "")
@@ -349,13 +456,13 @@ func TestRevalidateSearchCandidatesRefreshesPathsAfterFiltering(t *testing.T) {
 	second, err := s.CreateFile(ctx, parent.ID, "second.txt", fakeHash("second"), 6, "text/plain")
 	require.NoError(t, err)
 	a := SearchCandidateIdentity{NodeID: first.ID, ContentVersionID: first.CurrentVersionID,
-		Evidence: []SearchEvidenceIdentity{{Kind: "node_name", NodeName: first.Name}}}
+		Evidence: []SearchEvidenceIdentity{{NodeID: first.ID, ContentVersionID: first.CurrentVersionID, Kind: "node_name", NodeName: first.Name}}}
 	b := SearchCandidateIdentity{NodeID: second.ID, ContentVersionID: second.CurrentVersionID,
-		Evidence: []SearchEvidenceIdentity{{Kind: "node_name", NodeName: second.Name}}}
+		Evidence: []SearchEvidenceIdentity{{NodeID: second.ID, ContentVersionID: second.CurrentVersionID, Kind: "node_name", NodeName: second.Name}}}
 	// Expanded query variants can read the same node before and after a rename.
 	stale := a
-	stale.Evidence = []SearchEvidenceIdentity{{Kind: "node_name", NodeName: "renamed.txt"},
-		{Kind: "node_name", NodeName: first.Name}}
+	stale.Evidence = []SearchEvidenceIdentity{{NodeID: first.ID, ContentVersionID: first.CurrentVersionID, Kind: "node_name", NodeName: "renamed.txt"},
+		{NodeID: first.ID, ContentVersionID: first.CurrentVersionID, Kind: "node_name", NodeName: first.Name}}
 	missing := a
 	missing.NodeID = second.ID + 100
 	requested := []SearchCandidateIdentity{stale, b, missing, a, a}
@@ -392,9 +499,9 @@ func TestRevalidateSearchCandidatesAppliesCurrentScopeAndBlobEvidence(t *testing
 	require.NoError(t, err)
 	requested := []SearchCandidateIdentity{
 		{NodeID: text.ID, ContentVersionID: text.CurrentVersionID,
-			Evidence: []SearchEvidenceIdentity{{Kind: "content_blob", BlobHash: text.BlobHash}}},
+			Evidence: []SearchEvidenceIdentity{{NodeID: text.ID, ContentVersionID: text.CurrentVersionID, Kind: "content_blob", BlobHash: text.BlobHash}}},
 		{NodeID: pdf.ID, ContentVersionID: pdf.CurrentVersionID,
-			Evidence: []SearchEvidenceIdentity{{Kind: "content_blob", BlobHash: pdf.BlobHash}}},
+			Evidence: []SearchEvidenceIdentity{{NodeID: pdf.ID, ContentVersionID: pdf.CurrentVersionID, Kind: "content_blob", BlobHash: pdf.BlobHash}}},
 	}
 
 	revalidation, err := s.RevalidateSearchCandidates(t.Context(), requested,
@@ -421,7 +528,7 @@ func TestRevalidateSearchCandidatesAppliesCurrentScopeAndBlobEvidence(t *testing
 	require.NoError(t, err)
 	require.Len(t, revalidation.Candidates, 1, "a tag edit must not discard current content evidence")
 	nameMatch := SearchCandidateIdentity{NodeID: text.ID, ContentVersionID: text.CurrentVersionID,
-		Evidence: []SearchEvidenceIdentity{{Kind: "node_name", NodeName: text.Name}}}
+		Evidence: []SearchEvidenceIdentity{{NodeID: text.ID, ContentVersionID: text.CurrentVersionID, Kind: "node_name", NodeName: text.Name}}}
 	_, _, err = s.Move(t.Context(), text.ID, s.RootID(), "renamed.txt", tagged.Node.Revision)
 	require.NoError(t, err)
 	revalidation, err = s.RevalidateSearchCandidates(t.Context(),
@@ -430,6 +537,63 @@ func TestRevalidateSearchCandidatesAppliesCurrentScopeAndBlobEvidence(t *testing
 	require.Len(t, revalidation.Candidates, 1, "a rename must discard only the stale name match")
 	assert.Equal(t, requested[0], revalidation.Candidates[0].SearchCandidateIdentity)
 	assert.Equal(t, "/renamed.txt", revalidation.Candidates[0].Path)
+}
+
+func TestRevalidateSearchCandidatesRechecksPhotoMetadataMatch(t *testing.T) {
+	t.Parallel()
+	t.Run("cleared caption", func(t *testing.T) {
+		s := newTestStore(t)
+		captioned := browsePhotoNode(t, s, "plain.jpg", browseHash("captioned"), "image/jpeg")
+		named := browsePhotoNode(t, s, "sunset-b.jpg", browseHash("named"), "image/jpeg")
+		file := mustPhotoAsset(t, s, captioned.ID).Files[0]
+		_, err := editPhotoAuthored(t.Context(), s, []PhotoAuthoredTarget{{FileID: file.ID, Revision: file.Revision, Patch: PhotoAuthoredPatch{Caption: new("sunset")}}})
+		require.NoError(t, err)
+		authored := snapshotTestQuery(t, `{"text":"sunset"}`)
+		opts := SearchOptions{PhotoScope: &PhotoBrowseRequest{Query: snapshotTestQuery(t, `{}`)}, PhotoLexicalQuery: &authored}
+		hits, _, err := s.SearchExplainedLexicalCandidates(t.Context(), "sunset", 10, opts, false)
+		require.NoError(t, err)
+		require.Len(t, hits, 2)
+		requested := make([]SearchCandidateIdentity, 0, len(hits))
+		for _, hit := range hits {
+			requested = append(requested, SearchCandidateIdentity{NodeID: hit.Node.ID, ContentVersionID: hit.Node.CurrentVersionID,
+				Evidence: []SearchEvidenceIdentity{{NodeID: hit.Node.ID, ContentVersionID: hit.Node.CurrentVersionID, Kind: "node_name", NodeName: hit.Node.Name}}})
+		}
+		file = mustPhotoAsset(t, s, captioned.ID).Files[0]
+		_, err = editPhotoAuthored(t.Context(), s, []PhotoAuthoredTarget{{FileID: file.ID, Revision: file.Revision, Patch: PhotoAuthoredPatch{Caption: new("")}}})
+		require.NoError(t, err)
+
+		revalidation, err := s.RevalidateSearchCandidates(t.Context(), requested, opts, "", "")
+
+		require.NoError(t, err)
+		require.Len(t, revalidation.Candidates, 1, "a cleared caption must discard the metadata match")
+		assert.Equal(t, named.ID, revalidation.Candidates[0].NodeID)
+	})
+	t.Run("per-source evidence", func(t *testing.T) {
+		s := newTestStore(t)
+		original := browsePhotoNode(t, s, "original.jpg", browseHash("shared"), "image/jpeg")
+		matched := browsePhotoNode(t, s, "sunset.jpg", original.BlobHash, "image/jpeg")
+		other := browsePhotoNode(t, s, "sunset-other.jpg", browseHash("other"), "image/jpeg")
+		lexical := snapshotTestQuery(t, `{"text":"sunset","filters":{"collapse_duplicates":true}}`)
+		opts := SearchOptions{PhotoScope: &PhotoBrowseRequest{Query: snapshotTestQuery(t, `{}`)}, PhotoLexicalQuery: &lexical}
+		valid := SearchCandidateIdentity{NodeID: matched.ID, ContentVersionID: matched.CurrentVersionID,
+			Evidence: []SearchEvidenceIdentity{
+				{NodeID: matched.ID, ContentVersionID: matched.CurrentVersionID, Kind: "node_name", NodeName: matched.Name},
+				{NodeID: original.ID, ContentVersionID: original.CurrentVersionID, Kind: "content_blob", BlobHash: original.BlobHash},
+			}}
+		wrongPhoto := SearchCandidateIdentity{NodeID: matched.ID, ContentVersionID: matched.CurrentVersionID,
+			Evidence: []SearchEvidenceIdentity{{NodeID: other.ID, ContentVersionID: other.CurrentVersionID, Kind: "node_name", NodeName: other.Name}}}
+
+		result, err := s.RevalidateSearchCandidates(t.Context(), []SearchCandidateIdentity{valid, wrongPhoto}, opts, "", "")
+		require.NoError(t, err)
+		require.Len(t, result.Candidates, 1, "each source must be a current copy of the displayed photo")
+		require.Equal(t, valid, result.Candidates[0].SearchCandidateIdentity)
+
+		_, _, err = s.Trash(t.Context(), original.ID, original.Revision)
+		require.NoError(t, err)
+		result, err = s.RevalidateSearchCandidates(t.Context(), []SearchCandidateIdentity{valid}, opts, "", "")
+		require.NoError(t, err)
+		require.Empty(t, result.Candidates, "a live displayed photo must not hide stale evidence from another copy")
+	})
 }
 
 func TestRevalidateSearchCandidatesRequiresCurrentActiveRenditionEvidence(t *testing.T) {
@@ -449,7 +613,7 @@ func TestRevalidateSearchCandidatesRequiresCurrentActiveRenditionEvidence(t *tes
 	require.NoError(t, s.db.QueryRow(`SELECT n.id FROM nodes n JOIN content_versions cv
 		ON cv.node_id=n.id WHERE cv.version_id=?`, versions[0]).Scan(&nodeID))
 	requested := []SearchCandidateIdentity{{NodeID: nodeID, ContentVersionID: versions[0],
-		Evidence: []SearchEvidenceIdentity{{Kind: "rendition_segment", BuildID: build.ID,
+		Evidence: []SearchEvidenceIdentity{{NodeID: nodeID, ContentVersionID: versions[0], Kind: "rendition_segment", BuildID: build.ID,
 			SegmentID: build.LexicalSegments[0].ID}}}}
 
 	revalidation, err := s.RevalidateSearchCandidates(t.Context(), requested, SearchOptions{}, "", "")
@@ -480,7 +644,7 @@ func TestRevalidateSearchCandidatesRejectsStaleSemanticSourceAndHead(t *testing.
 	require.NoError(t, s.db.QueryRow(`SELECT n.id FROM nodes n JOIN content_versions cv
 		ON cv.node_id=n.id WHERE cv.version_id=?`, versionID).Scan(&nodeID))
 	requested := []SearchCandidateIdentity{{NodeID: nodeID, ContentVersionID: versionID,
-		Evidence: []SearchEvidenceIdentity{{Kind: "embedding", VectorSpaceID: record.VectorSpace.ID,
+		Evidence: []SearchEvidenceIdentity{{NodeID: nodeID, ContentVersionID: versionID, Kind: "embedding", VectorSpaceID: record.VectorSpace.ID,
 			EmbeddingSetID: record.ID, InputGenerationID: record.InputGeneration.ID,
 			InputID: record.InputGeneration.Inputs[0].ID, InputKind: record.InputKind,
 			SourceManifestChecksum: source.ManifestChecksum}}}}
@@ -530,7 +694,7 @@ func TestChunkSemanticAuthorityKeepsResultsCoverageAndRevalidationConsistent(t *
 	require.NoError(t, s.db.QueryRow(`SELECT n.id FROM nodes n JOIN content_versions cv
 		ON cv.node_id=n.id WHERE cv.version_id=?`, versionID).Scan(&nodeID))
 	requested := []SearchCandidateIdentity{{NodeID: nodeID,
-		ContentVersionID: versionID, Evidence: []SearchEvidenceIdentity{{Kind: "embedding",
+		ContentVersionID: versionID, Evidence: []SearchEvidenceIdentity{{NodeID: nodeID, ContentVersionID: versionID, Kind: "embedding",
 			VectorSpaceID: record.VectorSpace.ID, EmbeddingSetID: record.ID,
 			InputGenerationID: record.InputGeneration.ID, InputID: record.InputGeneration.Inputs[0].ID,
 			InputKind: record.InputKind, SourceManifestChecksum: source.ManifestChecksum}}}}
@@ -1199,7 +1363,7 @@ func TestSearchContentScopeFollowsMovedDirectories(t *testing.T) {
 		Status: ExtractionOK, Text: "quarterly notes",
 	}))
 	requested := []SearchCandidateIdentity{{NodeID: file.ID, ContentVersionID: file.CurrentVersionID,
-		Evidence: []SearchEvidenceIdentity{{Kind: "content_blob", BlobHash: file.BlobHash}}}}
+		Evidence: []SearchEvidenceIdentity{{NodeID: file.ID, ContentVersionID: file.CurrentVersionID, Kind: "content_blob", BlobHash: file.BlobHash}}}}
 	opts := SearchOptions{UnderNodeID: scope.ID}
 	branch, err = s.NodeByID(ctx, branch.ID)
 	require.NoError(t, err)

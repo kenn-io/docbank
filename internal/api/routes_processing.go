@@ -796,6 +796,9 @@ func fromProcessingError(err error) error {
 	if errors.Is(err, processing.ErrConsentSaved) {
 		detailPrefix = "processing consent was saved: "
 	}
+	if imageSource, ok := errors.AsType[*processing.ImageSourceIneligibleError](err); ok {
+		return NewError(http.StatusUnprocessableEntity, "rendition_source_ineligible", detailPrefix+imageSource.Error())
+	}
 	for _, item := range []struct {
 		target error
 		status int

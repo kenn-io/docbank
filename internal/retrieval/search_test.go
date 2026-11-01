@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/docbank/internal/vectorindex"
 )
@@ -179,7 +180,7 @@ func TestSearcherRevalidatesTheNameItMatched(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, backend.revalidated, 1)
 	require.NotEmpty(t, backend.revalidated[0].Evidence)
-	assert.Equal(t, store.SearchEvidenceIdentity{Kind: "node_name", NodeName: "semantic.pdf"},
+	assert.Equal(t, store.SearchEvidenceIdentity{NodeID: 8, ContentVersionID: "version-semantic", Kind: "node_name", NodeName: "semantic.pdf"},
 		backend.revalidated[0].Evidence[0])
 }
 
@@ -629,6 +630,44 @@ func TestFuseReciprocalRankPreservesExactLaneContributions(t *testing.T) {
 	assert.InDelta(t, 1.0/62.0, results[0].Explanation[1].Contribution, 1e-12)
 	assert.Equal(t, semanticOnly, results[1].Document,
 		"equal RRF scores use stable document identity, never raw lane score")
+}
+
+func TestFuseReciprocalRankCollapsesCopiesOfOneDisplayedPhotoWithinLane(t *testing.T) {
+	t.Parallel()
+
+	scope := store.SearchOptions{PhotoScope: &store.PhotoBrowseRequest{},
+		PhotoLexicalQuery: &query.Query{Filters: query.Filters{CollapseDuplicates: true}}}
+	displayHash := photoFusionBlob(scope, strings.Repeat("a", 64))
+	original := DocumentIdentity{VaultID: "vault", NodeID: 7, ContentVersionID: "version-raw"}
+	duplicate := DocumentIdentity{VaultID: "vault", NodeID: 8, ContentVersionID: "version-dng"}
+	semanticOnly := DocumentIdentity{VaultID: "vault", NodeID: 9, ContentVersionID: "version-semantic"}
+	results, truncated, err := FuseReciprocalRank([]Candidate{
+		{Document: original, Lane: LaneLexical, Rank: 1, Path: "/original/photo.jpg", photoBlobHash: displayHash,
+			Evidence: []EvidenceReference{{Kind: "node_name", NodeID: 7}}},
+		{Document: duplicate, Lane: LaneLexical, Rank: 2, Path: "/copy/photo.jpg", photoBlobHash: displayHash,
+			Evidence: []EvidenceReference{{Kind: "node_name", NodeID: 8}}},
+	}, []Candidate{
+		{Document: semanticOnly, Lane: LaneSemantic, Rank: 1, VectorSpaceID: "space",
+			photoBlobHash: photoFusionBlob(scope, strings.Repeat("b", 64))},
+		{Document: duplicate, Lane: LaneSemantic, Rank: 2, VectorSpaceID: "space", photoBlobHash: displayHash,
+			Evidence: []EvidenceReference{{Kind: "embedding", NodeID: 8, VectorSpaceID: "space"}}},
+		{Document: original, Lane: LaneSemantic, Rank: 3, VectorSpaceID: "space", photoBlobHash: displayHash,
+			Evidence: []EvidenceReference{{Kind: "embedding", NodeID: 7, VectorSpaceID: "space"}}},
+	}, 2)
+	require.NoError(t, err)
+	assert.False(t, truncated)
+	require.Len(t, results, 2)
+	assert.Equal(t, original, results[0].Document)
+	assert.Equal(t, "/original/photo.jpg", results[0].Path)
+	assert.Equal(t, 1, results[0].LexicalRank)
+	assert.Equal(t, 2, results[0].SemanticRank)
+	assert.InDelta(t, 1.0/61.0+1.0/62.0, results[0].Score, 1e-12)
+	assert.Equal(t, []EvidenceReference{
+		{Kind: "node_name", NodeID: 7},
+		{Kind: "embedding", NodeID: 8, VectorSpaceID: "space"},
+	}, results[0].Evidence)
+	assert.Equal(t, semanticOnly, results[1].Document)
+	assert.Equal(t, 1, results[1].SemanticRank)
 }
 
 func TestFuseReciprocalRankKeepsLexicalPathAfterConcurrentMove(t *testing.T) {

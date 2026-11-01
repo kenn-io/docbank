@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
-import type { DocumentSearchRequest } from "./generated/docbank.js";
+import type { DocumentSearchReport, DocumentSearchRequest } from "./generated/docbank.js";
 import { validateDocumentSearchReport, validateDocumentSourceFenceResolution } from "./receipts.js";
 
 const vault = "11111111-1111-4111-8111-111111111111";
@@ -197,7 +197,7 @@ describe("search result authority", () => {
     profile: "private",
     fence: { vault_uid: vaultID, content_version_ids: [versionID, otherVersionID] },
   };
-  const valid = () => ({
+  const valid = (): DocumentSearchReport => ({
     requested_mode: "semantic",
     actual_mode: "semantic",
     coverage: {
@@ -310,12 +310,42 @@ describe("search result authority", () => {
     });
   });
 
+  it("accepts image evidence while rejecting rendition fields", () => {
+    const report = valid();
+    const evidence = report.results[0]!.evidence[0]!;
+    evidence.input_kind = "image";
+    evidence.build_id = "";
+    expect(validateDocumentSearchReport(report, request).results[0]!.evidence[0]!.input_kind).toBe(
+      "image",
+    );
+    evidence.build_id = "f".repeat(64);
+    expect(() => validateDocumentSearchReport(report, request)).toThrow(/invalid search response/);
+    evidence.build_id = "";
+    Object.assign(evidence, { time_span: { start_ms: 0, end_ms: 1000 } });
+    expect(() => validateDocumentSearchReport(report, request)).toThrow(/invalid search response/);
+  });
+
   it("accepts rendition-chunk embedding evidence with a build and time span", () => {
     const report = valid();
     const mediaIdentity = { build_id: "f".repeat(64), time_span: { start_ms: 1000, end_ms: 2000 } };
     Object.assign(report.results[0]!.evidence[0]!, mediaIdentity);
     expect(validateDocumentSearchReport(report, request)).toMatchObject({
       results: [{ evidence: [mediaIdentity] }],
+    });
+  });
+
+  it("accepts lexical fallback for a hybrid request with an image-only profile", () => {
+    const hybridRequest = { ...request, mode: "hybrid" as const, profile: "images" };
+    const report = valid();
+    report.requested_mode = "hybrid";
+    report.actual_mode = "lexical";
+    report.results[0]!.semantic_rank = 0;
+    report.results[0]!.lexical_rank = 1;
+    report.results[0]!.evidence = [{ kind: "node_name" }];
+    expect(validateDocumentSearchReport(report, hybridRequest)).toMatchObject({
+      requested_mode: "hybrid",
+      actual_mode: "lexical",
+      results: [{ lexical_rank: 1, path: "/visible.pdf" }],
     });
   });
 });
