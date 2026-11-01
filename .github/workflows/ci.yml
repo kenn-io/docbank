@@ -31,7 +31,7 @@ jobs:
       all: ${{ steps.changes.outputs.all }}
     steps:
       - id: changes
-        uses: kenn-io/actions/changes@e7ba4b0b573de976989328726cdcc83f8a463367
+        uses: kenn-io/actions/changes@main
         with:
           filters: |
             go:
@@ -43,6 +43,7 @@ jobs:
               - internal/web/**
               - internal/api/openapi*
               # Frontend code and tests import these shared Go package inputs.
+              - cmd/docbank/testdata/redaction-preparation.json
               - document/format_metadata.json
               - internal/daemonconn/testdata/processing_responses.json
               - internal/query/testdata/identity-vectors.json
