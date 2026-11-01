@@ -248,6 +248,20 @@ CREATE TABLE {{schema}}.node_tags (
     PRIMARY KEY (node_id, tag_id)
 );
 
+CREATE TABLE {{schema}}.node_supersessions (
+    successor_node_id BIGINT NOT NULL REFERENCES {{schema}}.nodes(id) ON DELETE CASCADE,
+    predecessor_node_id BIGINT NOT NULL REFERENCES {{schema}}.nodes(id) ON DELETE CASCADE,
+    note TEXT COLLATE "C" NOT NULL DEFAULT '',
+    recorded_at TEXT COLLATE "C" NOT NULL,
+    PRIMARY KEY (successor_node_id, predecessor_node_id)
+);
+
+CREATE TABLE {{schema}}.node_effective_windows (
+    node_id BIGINT PRIMARY KEY REFERENCES {{schema}}.nodes(id) ON DELETE CASCADE,
+    effective_from TEXT COLLATE "C",
+    effective_to TEXT COLLATE "C"
+);
+
 CREATE TABLE {{schema}}.photo_assets (
     asset_id                  TEXT COLLATE "C" PRIMARY KEY,
     kind                      TEXT COLLATE "C" NOT NULL,
@@ -350,6 +364,9 @@ CREATE INDEX photo_technical_metadata_location
     ON {{schema}}.photo_technical_metadata(latitude, longitude);
 
 CREATE INDEX node_tags_tag ON {{schema}}.node_tags(tag_id);
+
+CREATE INDEX node_supersessions_predecessor
+    ON {{schema}}.node_supersessions(predecessor_node_id, successor_node_id);
 
 CREATE INDEX photo_files_asset ON {{schema}}.photo_files(asset_id, role, file_id);
 
