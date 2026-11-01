@@ -19,6 +19,7 @@ func TestNormalizedFigures(t *testing.T) {
 		{"CAD :\n$40", []normalizedFigure{{"$40", "amount", "USD 40"}}},
 		{"CAD$40", []normalizedFigure{{text: "CAD$40"}}},
 		{"CAD USD 40", []normalizedFigure{{text: "40"}}},
+		{"2 USD40", []normalizedFigure{{text: "2"}, {"USD40", "amount", "USD 40"}}},
 		{"-€ $40", []normalizedFigure{{text: "$40"}}},
 		{"$40 -€ 50", []normalizedFigure{{text: "$40"}, {text: "50"}}},
 		{"$40 .€ 50", []normalizedFigure{{text: "$40"}, {text: "50"}}},

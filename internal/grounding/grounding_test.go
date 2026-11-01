@@ -92,11 +92,3 @@ func TestGrounding(t *testing.T) {
 		}
 	})
 }
-
-func TestGroundingAmountAfterBareNumber(t *testing.T) {
-	a, err := Prepare("$40")
-	require.NoError(t, err)
-	report := a.Check([]Citation{{Text: "2 USD40"}})
-	require.Equal(t, "grounded", report.Status)
-	require.Equal(t, []Figure{{Text: "$40", Status: "found"}}, report.Figures)
-}
