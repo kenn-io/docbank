@@ -51,9 +51,13 @@ and storage repack as separate explicit maintenance steps.`,
 		if rmJSON {
 			return writeCLIJSON(cmd.OutOrStdout(), n)
 		}
+		restore := "docbank document restore"
+		if cmd.Annotations[legacyCommandReplacement] != "" {
+			restore = "docbank restore"
+		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(),
-			"trashed [%s] %s (restore with: docbank document restore %s)\n",
-			formatNodeSelector(n.ID), n.Path, formatNodeSelector(n.ID))
+			"trashed [%s] %s (restore with: %s %s)\n",
+			formatNodeSelector(n.ID), n.Path, restore, formatNodeSelector(n.ID))
 		return nil
 	},
 }

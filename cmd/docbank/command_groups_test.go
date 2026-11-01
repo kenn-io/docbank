@@ -126,6 +126,24 @@ func TestCommandGroupsUsageAndNestedDeprecation(t *testing.T) {
 	assert.Contains(t, stderr.String(), "deprecated, use 'docbank document versions list' instead")
 }
 
+func TestCommandGroupsRemoveGuidanceMatchesInvokedSpelling(t *testing.T) {
+	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "POST /api/v1/path/trash", r.Method+" "+r.URL.Path)
+		_, _ = w.Write([]byte(`{"id":12,"path":"/synthetic/note.txt"}`))
+	})
+	for _, tc := range []struct {
+		args    []string
+		restore string
+	}{
+		{[]string{"rm", "/synthetic/note.txt"}, "docbank restore"},
+		{[]string{"document", "remove", "/synthetic/note.txt"}, "docbank document restore"},
+	} {
+		out, err := runCLI(t, tc.args...)
+		require.NoError(t, err)
+		assert.Equal(t, "trashed [id:12] /synthetic/note.txt (restore with: "+tc.restore+" id:12)\n", out)
+	}
+}
+
 func TestCommandGroupsDeprecationBeforeParsingAndHelp(t *testing.T) {
 	t.Setenv("DOCBANK_HOME", t.TempDir())
 	defer resetFlags(rootCmd)
