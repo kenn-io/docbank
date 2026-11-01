@@ -5,41 +5,34 @@
   import DownloadButton from "./DownloadButton.svelte";
   import OriginalPreview from "./OriginalPreview.svelte";
   import RedactionDrawer from "./RedactionDrawer.svelte";
-  import { parseMediaType } from "./query.js";
+  import { pdfRedactionAction } from "./documentReader.js";
+  import type { Node } from "./generated/docbank.js";
   import type { SelectedSource } from "./selectedSource.js";
   let {
     session,
     source,
     authorizationRevision,
-    redactionAvailable = false,
+    node,
+    actionsDisabled = false,
     onauthfailure,
     onclose,
   }: {
     session: string;
     source: SelectedSource;
     authorizationRevision: number;
-    redactionAvailable?: boolean;
+    node?: Node;
+    actionsDisabled?: boolean;
     onauthfailure: (cause: unknown) => void;
     onclose: () => void;
   } = $props();
   let redacting = $state(false);
   let review = $state<ReturnType<typeof RedactionDrawer>>();
   let reviewTrigger: HTMLElement | undefined;
-  const canRedact = $derived(
-    redactionAvailable &&
-      source.kind === "live" &&
-      parseMediaType(source.mimeType) === "application/pdf",
-  );
-  const redactionDisabled = $derived(
-    source.size === 0
-      ? "An empty PDF cannot be redacted"
-      : source.size > 64 * 1024 * 1024
-        ? "PDF redaction supports files up to 64 MiB"
-        : "",
-  );
+  const redactionAction = $derived(pdfRedactionAction(source, node, actionsDisabled));
+  const redactionDisabled = $derived(redactionAction?.disabledReason ?? "");
 </script>
 
-<div inert={redacting}>
+<div class="reader-shell" inert={redacting}>
   <Modal
     title={source.name}
     ariaLabel={`Read ${source.name}`}
@@ -56,7 +49,7 @@
     </div>
     {#snippet footer()}
       <DownloadButton {session} {source} {authorizationRevision} {onauthfailure} />
-      {#if canRedact}
+      {#if redactionAction}
         <AppTooltip text={redactionDisabled}>
           <Button
             disabled={!!redactionDisabled}
@@ -87,9 +80,19 @@
 {/if}
 
 <style>
+  .reader-shell :global(.kit-modal-panel) {
+    height: calc(100svh - 32px);
+  }
+  .reader-shell :global(.kit-modal-body) {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
   .reader-content {
-    height: calc(100svh - 190px);
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
     overflow: auto;
-    min-height: 200px;
   }
 </style>

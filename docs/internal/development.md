@@ -59,6 +59,13 @@ upstream release supplies both fixes, and rerun the document-reader browser
 proof before changing the pin. The container frontend stage includes the patch
 script and the bundled fallback font.
 
+The PDF rendering CI lane runs `frontend/screenshots/redaction-review.run.mjs`
+against both SQLite builds. It executes the document-reader and redaction-review
+browser cases with synthetic vaults and the built application. Reader cases cover
+activation, clipboard shortcuts, worker cleanup, Markdown form removal, link
+isolation, failed module loading and delayed file details. Selecting PDFs in the
+inspector must not prepare original-file downloads or start PDF workers.
+
 ## Share the Go build cache across worktrees
 
 Make targets and CI compile Go with `-trimpath`, so binaries record

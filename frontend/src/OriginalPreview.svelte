@@ -101,13 +101,21 @@
     </div>
   {:else if preview?.kind === "text"}
     {#if isMarkdown(source)}
-      {#await import("./MarkdownPreview.svelte") then module}
+      {#await import("./MarkdownPreview.svelte")}
+        {@render loadingReader()}
+      {:then module}
         <module.default text={preview.text} />
+      {:catch}
+        {@render readerUnavailable()}
       {/await}
     {:else}<pre>{preview.text}</pre>{/if}
   {:else if preview?.kind === "pdf"}
-    {#await import("./PDFReader.svelte") then module}
+    {#await import("./PDFReader.svelte")}
+      {@render loadingReader()}
+    {:then module}
       <module.default url={preview.url} name={source.name} />
+    {:catch}
+      {@render readerUnavailable()}
     {/await}
   {:else if preview?.kind === "image"}
     <div class="image-frame">
@@ -122,6 +130,15 @@
       >
     </div>{/if}
 </div>
+
+{#snippet loadingReader()}
+  <div class="preview-loading" role="status"><Spinner size={14} /> Loading reader…</div>
+{/snippet}
+{#snippet readerUnavailable()}
+  <div role="alert">
+    <p>The reader could not load. Reopen Docbank to try again.</p>
+  </div>
+{/snippet}
 
 <style>
   .original-preview {

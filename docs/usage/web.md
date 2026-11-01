@@ -718,7 +718,8 @@ opens the review workflow for live PDFs; frozen search results stay read-only.
 Its rendering engine and fonts ship with Docbank; viewing a PDF
 needs no optional server runtime or external asset download. PDF previews are
 limited to 64 MiB. Markdown displays headings, lists, tables and code blocks;
-embedded HTML is sanitized before display. Other eligible UTF-8 text appears
+embedded HTML is sanitized and form controls are removed before display. Links
+open in a separate tab. Other eligible UTF-8 text appears
 as plain text. Text previews are limited to 16 MiB.
 
 The inspector also previews bounded PNG, JPEG and WebP images. Animated WebP
@@ -728,7 +729,10 @@ or oversized files remain available through **Download**. Reclicking a selected
 item retains its preview and metadata; browsing keeps the preview area a
 consistent height while the next file loads.
 
-PNGs with retained page geometry use the retained-page preview. Choose
+Selecting a PDF in the inspector reads its retained page images without loading
+the whole PDF or starting a browser PDF engine. Open the reader to load the
+verified original. PNGs with retained page geometry also use the retained-page
+preview. Choose
 **Render page** when an image is missing; this needs the
 [optional local page runtime](../architecture/page-images.md). Other PNGs use
 the verified original-image preview, including when that runtime is unavailable.

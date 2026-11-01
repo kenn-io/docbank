@@ -4927,7 +4927,10 @@
                           </td>
                         {/if}
                         {#if similarAvailable}
-                          <td onkeydown={(event) => event.stopPropagation()}>
+                          <td
+                            onkeydown={(event) => event.stopPropagation()}
+                            ondblclick={(event) => event.stopPropagation()}
+                          >
                             {#if row.node.kind === "file" && row.node.current_version_id}
                               <IconAction
                                 size="sm"
@@ -5189,7 +5192,8 @@
         session={webSession}
         source={reader.source}
         authorizationRevision={reader.revision}
-        redactionAvailable={!liveSelectionNeedsRefresh && !currentInspectorNode?.trashed_at}
+        node={selectedTagsLoading ? undefined : (currentInspectorNode ?? undefined)}
+        actionsDisabled={liveSelectionNeedsRefresh}
         onauthfailure={handleFailure}
         onclose={closeReader}
       />

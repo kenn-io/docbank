@@ -264,7 +264,7 @@
         {#if tab.value === displayedTab || visitedTabs.includes(tab.value)}
           <div hidden={tab.value !== displayedTab}>
             {#if tab.value === "preview"}
-              {#if displayedSource.mimeType === "image/png"}
+              {#if parseMediaType(displayedSource.mimeType) === "application/pdf" || displayedSource.mimeType === "image/png"}
                 <PageViewer
                   {session}
                   source={displayedSource}

@@ -53,7 +53,7 @@ it.each(["none", "tags", "audit"])(
       if (url.includes("/nodes/1/children?"))
         return json({ directory: root, items: [node], total: 1, limit: 1000, offset: 0 });
       if (url === "/api/v1/nodes/2") return json(node);
-      if (url === "/api/daemon/web-download") {
+      if (url.endsWith("/pages/inventory")) {
         previews++;
         return new Promise<Response>(() => {});
       }
@@ -87,13 +87,13 @@ it.each(["none", "tags", "audit"])(
     render(App);
     if (failure === "tags")
       await screen.findByText("Refresh the current view before using document actions.");
-    else await screen.findByText(/Verifying 0 B/);
+    else await screen.findByText(/Verifying page…/);
     if (failure === "audit") {
       await waitFor(() => expect(auditAttempts).toBe(1));
       await act(() => Promise.resolve());
     }
     await fireEvent.click(screen.getByRole("cell", { name: "synthetic.pdf" }));
-    await screen.findByText(/Verifying 0 B/);
+    await screen.findByText(/Verifying page…/);
     await waitFor(() => {
       expect(screen.queryByText("Tag request lost")).toBeNull();
       expect(screen.queryByText("Audit request lost")).toBeNull();

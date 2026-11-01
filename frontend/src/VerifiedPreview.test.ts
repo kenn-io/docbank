@@ -260,7 +260,7 @@ it("loads one exact rendition only while Text is active and keeps hostile markup
   };
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
-    if (path === "/api/daemon/web-download") return new Promise<Response>(() => {});
+    if (path.endsWith("/pages/inventory")) return new Promise<Response>(() => {});
     if (path.endsWith("/api/v1/renditions/text"))
       return new Response(
         JSON.stringify({
@@ -323,7 +323,7 @@ it("loads one exact rendition only while Text is active and keeps hostile markup
     onauthfailure: vi.fn(),
   };
   const view = render(VerifiedPreview, props);
-  await screen.findByText(/Verifying 0 B/);
+  await screen.findByText(/Verifying page…/);
   expect(fetchMock).toHaveBeenCalledTimes(1);
   await fireEvent.click(screen.getByRole("tab", { name: "Text" }));
   expect(await screen.findByText(/<script>alert\('blocked'\)<\/script>/)).toBeTruthy();

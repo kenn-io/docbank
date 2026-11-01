@@ -265,5 +265,6 @@ func setWebHeaders(w http.ResponseWriter, images string, webURLs ...string) {
 			"connect-src "+connectSources.String()+" blob:; object-src 'none'; "+
 			"frame-src 'self' blob:; base-uri 'none'; frame-ancestors 'none'")
 	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 }

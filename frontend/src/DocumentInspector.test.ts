@@ -336,6 +336,12 @@ it("offers redaction only for the live PDF with a usable source size", async () 
   };
   const view = render(DocumentInspector, props);
   expect(screen.getByRole("button", { name: "Redact PDF" }).hasAttribute("disabled")).toBe(false);
+  await view.rerender({ ...props, node: undefined });
+  expect(screen.queryByRole("button", { name: "Redact PDF" })).toBeNull();
+  await view.rerender({ ...props, node: { ...node, trashed_at: "2026-10-31T12:00:00Z" } });
+  expect(screen.queryByRole("button", { name: "Redact PDF" })).toBeNull();
+  await view.rerender({ ...props, actionsDisabled: true });
+  expect(screen.getByRole("button", { name: "Redact PDF" }).hasAttribute("disabled")).toBe(true);
   await view.rerender({ ...props, source: { ...source, size: 0 } });
   expect(screen.getByRole("button", { name: "Redact PDF" }).hasAttribute("disabled")).toBe(true);
   await view.rerender({ ...props, source: { ...source, size: 64 * 1024 * 1024 + 1 } });
