@@ -700,11 +700,7 @@ func searchDocumentsSchemas() (schema, schema) {
 			"complete_documents": integerSchema(0, 0),
 			schemaStateField:     stringSchema(64),
 		}, "binding_required", "scoped_documents", "complete_documents", schemaStateField),
-		"reranking": objectSchema(schema{
-			"outcome":         enumSchema("applied", "skipped", "degraded"),
-			"cause":           stringSchema(64),
-			"candidate_count": integerSchema(0, 1000),
-		}, "outcome", "candidate_count"),
+		"reranking":       searchRerankingSchema(),
 		"skipped_reasons": arraySchema(stringSchema(64), 64),
 		"results":         arraySchema(result, 100),
 		"truncated":       booleanSchema(),
@@ -721,6 +717,14 @@ func searchDocumentsSchemas() (schema, schema) {
 		},
 	}
 	return input, output
+}
+
+func searchRerankingSchema() schema {
+	return objectSchema(schema{
+		"outcome":         enumSchema("applied", "skipped", "degraded"),
+		"cause":           stringSchema(64),
+		"candidate_count": integerSchema(0, 1000),
+	}, "outcome", "candidate_count")
 }
 
 func getDocumentSchemas() (schema, schema) {

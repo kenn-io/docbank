@@ -122,14 +122,15 @@ func selectAnswerSearch(profiles []api.ProcessingProfileSummary, input answerInp
 				break
 			}
 		}
-		candidates = slices.DeleteFunc(candidates, func(candidate daemonconn.SearchCandidate) bool {
-			return candidate.Profile != selected.Name || (input.BindingID != "" && candidate.Binding != input.BindingID)
-		})
-		if len(candidates) > 1 {
-			candidates = candidates[:1]
-		}
 		if input.BindingID != "" {
 			candidates = []daemonconn.SearchCandidate{{Profile: input.Profile, Binding: input.BindingID}}
+		} else {
+			candidates = slices.DeleteFunc(candidates, func(candidate daemonconn.SearchCandidate) bool {
+				return candidate.Profile != selected.Name
+			})
+			if len(candidates) > 1 {
+				candidates = candidates[:1]
+			}
 		}
 	}
 	return selected, candidates, nil
@@ -244,15 +245,7 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 	}
 	coverage := result.report.Coverage
 	out.Receipt.Coverage = &coverage
-	if result.report.Reranking != nil {
-		out.Receipt.Reranking = result.report.Reranking
-	} else {
-		outcome := "not_requested"
-		if input.Rerank {
-			outcome = "not_reported"
-		}
-		out.Receipt.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: outcome}
-	}
+	out.Receipt.Reranking = result.report.Reranking
 	out.CoverageComplete = (result.report.ActualMode == "semantic" || result.report.ActualMode == "hybrid") && coverage.State == "complete"
 	if result.binding == "" || (result.report.ActualMode != "semantic" && result.report.ActualMode != "hybrid") {
 		if result.executed {
@@ -271,16 +264,12 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 	if result.report.Truncated {
 		out.CoverageReasons = append(out.CoverageReasons, "retrieval_truncated")
 	}
-	for _, item := range result.report.Results {
+	for index, item := range result.report.Results {
 		ids, err := encodeSearchEvidenceIDs(item.Evidence)
 		if err != nil {
 			return answerOutput{}, nil, err
 		}
-		var relevance *float64
-		if result.report.Reranking != nil && result.report.Reranking.Outcome == "applied" && item.Rank <= result.report.Reranking.CandidateCount {
-			score := item.Score
-			relevance = &score
-		}
+		relevance := searchRerankRelevance(item, index, result.report.Reranking)
 		if answerContentExcerpt(item) {
 			out.Passages = append(out.Passages, answer.Passage{NodeID: item.NodeID, ContentVersionID: item.ContentVersionID, Path: item.Path, Rank: item.Rank, Text: item.Excerpt, TextBytes: len(item.Excerpt), EvidenceIDs: ids, Relevance: relevance})
 		} else {
