@@ -75,9 +75,6 @@ func (s *Store) newPhotoStackVectorReader(ctx context.Context, q metadataQuerier
 	}
 	s.photoStackVectorsMu.Unlock()
 	for space, id := range missing {
-		if s.photoStackGenerationLoadHook != nil {
-			s.photoStackGenerationLoadHook()
-		}
 		stored, err := loadVectorIndexGenerationTx(ctx, q, id)
 		if errors.Is(err, errUnusableVectorIndexGeneration) {
 			continue

@@ -42,8 +42,6 @@ type Store struct {
 	photoHiddenAuthMu      sync.Mutex // Serialize session creation and revocation across database commits.
 	photoHiddenSessionsMu  sync.Mutex
 	photoHiddenSessions    map[string]time.Time
-
-	photoStackGenerationLoadHook func()
 }
 
 // currentStorageSchemaVersion identifies the canonical SQLite layout created
