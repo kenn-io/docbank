@@ -456,6 +456,11 @@ jobs:
           GOOS: windows
         run: ./custom-gcl run ./...
 
+      - name: Run golangci-lint for macOS
+        env:
+          GOOS: darwin
+        run: ./custom-gcl run ./...
+
       - name: Save Go caches
         uses: $/.github/actions/go-cache-save
 
