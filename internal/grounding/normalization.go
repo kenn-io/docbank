@@ -66,10 +66,10 @@ func normalizedFigures(text string) []normalizedFigure {
 			if end > 0 {
 				end += start
 			}
-			if end > safe {
-				safe = end
-			}
 			if value == "" {
+				if end > safe {
+					safe = end
+				}
 				continue
 			}
 			// A standalone marker before an amount makes its currency ambiguous.
