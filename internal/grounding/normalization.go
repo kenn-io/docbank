@@ -100,7 +100,7 @@ func normalizedFigures(text string) []normalizedFigure {
 			continue
 		}
 		next := i + 1
-		for next < len(tokens) && tokens[next].end <= safe {
+		for next < len(tokens) && tokens[next].start < safe {
 			next++
 		}
 		if trim(rs[tokens[i].start:tokens[i].end]) != "" {

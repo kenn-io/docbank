@@ -115,13 +115,13 @@ func amountAt(rs []rune) (int, string) {
 		if start == i {
 			return end, ""
 		}
-		if _, date := dateAt(rs[next:]); date != "" || next == number || amountValue(strings.TrimLeft(trim(rs[next:number]), "-+±\u2212")) == "" {
+		following, suffixed := amountAt(rs[next:number])
+		if _, date := dateAt(rs[next:]); date != "" || next == number || amountValue(strings.TrimLeft(trim(rs[next:number]), "-+±\u2212")) == "" && (suffixed == "" || following != number-next || !digit(rs[next])) {
 			return i, ""
 		}
 	}
-	value := amountValue(string(rs[numberStart:numberEnd]))
-	if value == "" {
-		return 0, ""
+	if value := amountValue(string(rs[numberStart:numberEnd])); value != "" {
+		return i, code + " " + value
 	}
-	return i, code + " " + value
+	return 0, ""
 }
