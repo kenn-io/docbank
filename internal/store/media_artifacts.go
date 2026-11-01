@@ -181,7 +181,7 @@ func (s *Store) RetainRemoteRecordingMedia(
 			}
 		}
 
-		if err := s.EnsureBlobTx(tx, request.InputSHA, request.ByteLength, request.Physical); err != nil {
+		if err := s.EnsureBlobTx(ctx, tx, request.InputSHA, request.ByteLength, request.Physical); err != nil {
 			return "", err
 		}
 
@@ -272,7 +272,7 @@ func (s *Store) sealMediaContentTx(
 		if !matched {
 			return ContentVersion{}, ErrMediaOperationConflict
 		}
-		receipt, err := s.confirmContentWithReceiptTx(tx, existing, existing.Revision,
+		receipt, err := s.confirmContentWithReceiptTx(ctx, tx, existing, existing.Revision,
 			content.BlobHash, content.Size, content.MimeType, physical)
 		return receipt.Version, err
 	}

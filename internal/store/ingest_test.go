@@ -68,7 +68,7 @@ func TestIngestFileIdempotency(t *testing.T) {
 	assert.Equal(t, "report (3).pdf", n3.Name)
 
 	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		_, err := tx.Exec(`DELETE FROM blob_locations WHERE blob_hash=?`, fakeHash("a1"))
+		_, err := tx.ExecContext(t.Context(), `DELETE FROM blob_locations WHERE blob_hash=?`, fakeHash("a1"))
 		return err
 	}))
 	_, _, err = s.IngestFile(ctx, ing, s.RootID(),
@@ -242,7 +242,7 @@ func TestIngestFileRecordsProvenance(t *testing.T) {
 
 	var identity, origPath, origMtime string
 	var supersedes sql.NullString
-	require.NoError(t, s.db.QueryRow(
+	require.NoError(t, s.db.QueryRowContext(t.Context(),
 		`SELECT identity, original_path, original_mtime, supersedes
 		 FROM provenance WHERE node_id = ?`,
 		n.ID).Scan(&identity, &origPath, &origMtime, &supersedes))
@@ -250,7 +250,7 @@ func TestIngestFileRecordsProvenance(t *testing.T) {
 	assert.Equal(t, "2026-01-02T03:04:05Z", origMtime)
 	assert.False(t, supersedes.Valid)
 	var storedIngestID string
-	require.NoError(t, s.db.QueryRow(
+	require.NoError(t, s.db.QueryRowContext(t.Context(),
 		`SELECT ingest_id FROM provenance WHERE node_id = ?`, n.ID,
 	).Scan(&storedIngestID))
 	assert.Equal(t, ing.ID(), storedIngestID)
@@ -317,7 +317,7 @@ func TestSyncWatchedContentFollowsMovedNodeWithoutOverwritingIndependentEdit(t *
 	assert.Empty(t, noVersion.ID)
 
 	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		_, err := tx.Exec(`DELETE FROM blob_locations WHERE blob_hash=?`, fakeHash("c3"))
+		_, err := tx.ExecContext(t.Context(), `DELETE FROM blob_locations WHERE blob_hash=?`, fakeHash("c3"))
 		return err
 	}))
 	missingNode, missingVersion, missingChanged, err := s.SyncWatchedContent(
@@ -413,14 +413,14 @@ func TestIngestAndProvenanceFactsAreImmutable(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, added)
 
-	_, err = s.db.Exec(`UPDATE ingests SET source_desc='rewritten' WHERE id=?`, ingestID.ID())
+	_, err = s.db.ExecContext(t.Context(), `UPDATE ingests SET source_desc='rewritten' WHERE id=?`, ingestID.ID())
 	require.ErrorContains(t, err, "ingest records are immutable")
-	_, err = s.db.Exec(`UPDATE provenance SET original_path='/rewritten' WHERE node_id=?`, node.ID)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE provenance SET original_path='/rewritten' WHERE node_id=?`, node.ID)
 	require.ErrorContains(t, err, "provenance records are immutable")
 
 	var sourceDesc, originalPath string
-	require.NoError(t, s.db.QueryRow(`SELECT source_desc FROM ingests WHERE id=?`, ingestID.ID()).Scan(&sourceDesc))
-	require.NoError(t, s.db.QueryRow(`SELECT original_path FROM provenance WHERE node_id=?`, node.ID).Scan(&originalPath))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT source_desc FROM ingests WHERE id=?`, ingestID.ID()).Scan(&sourceDesc))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT original_path FROM provenance WHERE node_id=?`, node.ID).Scan(&originalPath))
 	assert.Equal(t, "source", sourceDesc)
 	assert.Equal(t, "/source/a.txt", originalPath)
 }
@@ -437,7 +437,7 @@ func TestIngestIdempotencyUsesActiveProvenanceLeaf(t *testing.T) {
 	require.True(t, added)
 
 	var priorIdentity string
-	require.NoError(t, s.db.QueryRow(
+	require.NoError(t, s.db.QueryRowContext(t.Context(),
 		`SELECT identity FROM provenance WHERE node_id=?`, node.ID,
 	).Scan(&priorIdentity))
 	corrected := metadataProvenance{
@@ -446,7 +446,7 @@ func TestIngestIdempotencyUsesActiveProvenanceLeaf(t *testing.T) {
 	}
 	corrected.Identity, err = provenanceIdentity(corrected)
 	require.NoError(t, err)
-	_, err = s.db.Exec(`INSERT INTO provenance(
+	_, err = s.db.ExecContext(t.Context(), `INSERT INTO provenance(
 		identity,node_id,ingest_id,original_path,original_mtime,supersedes
 	) VALUES(?,?,?,?,?,?)`, corrected.Identity, corrected.NodeID, corrected.IngestID,
 		corrected.OriginalPath, corrected.OriginalMTime, corrected.Supersedes)

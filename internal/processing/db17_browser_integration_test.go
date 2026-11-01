@@ -112,7 +112,7 @@ func NewDB17BrowserTestFixture(t *testing.T) DB17BrowserTestFixture {
 	require.Contains(t, string(preview), "Extracted alpha evidence from a real synthetic PDF.")
 
 	vault := t.TempDir()
-	catalog, err := store.Open(filepath.Join(vault, "docbank.db"))
+	catalog, err := store.Open(t.Context(), filepath.Join(vault, "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = catalog.Close() })
 	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(vault, "blobs"))

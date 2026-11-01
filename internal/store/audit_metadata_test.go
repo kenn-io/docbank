@@ -26,7 +26,7 @@ const (
 func TestInitialAuditAuthorityMetadataRoundTrip(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	source, err := Open(t.Context(), filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, source.Close()) })
 	seedMetadataRoundTrip(t, source)
@@ -42,7 +42,7 @@ func TestInitialAuditAuthorityMetadataRoundTrip(t *testing.T) {
 	assert.Contains(t, first.String(), `"type":"audit_scope"`)
 	assert.Contains(t, first.String(), `"kind":"allocation_entry"`)
 
-	restored, err := Open(filepath.Join(t.TempDir(), "restored.db"))
+	restored, err := Open(t.Context(), filepath.Join(t.TempDir(), "restored.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(first.Bytes())))
@@ -51,7 +51,7 @@ func TestInitialAuditAuthorityMetadataRoundTrip(t *testing.T) {
 	assert.Equal(t, first.Bytes(), roundTrip.Bytes())
 
 	var scopes, memberships, records int64
-	require.NoError(t, restored.db.QueryRow(`SELECT
+	require.NoError(t, restored.db.QueryRowContext(t.Context(), `SELECT
 		(SELECT COUNT(*) FROM audit_scopes),
 		(SELECT COUNT(*) FROM audit_memberships),
 		(SELECT COUNT(*) FROM audit_records)`).Scan(&scopes, &memberships, &records))
@@ -62,7 +62,7 @@ func TestInitialAuditAuthorityMetadataRoundTrip(t *testing.T) {
 
 func TestInitialAuditGenesisRejectsLiveSiblingCollision(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)
@@ -106,7 +106,7 @@ func TestInitialAuditGenesisRejectsLiveSiblingCollision(t *testing.T) {
 
 func TestInitialAuditAuthorityImportRejectsCorruptionAndRollsBack(t *testing.T) {
 	t.Parallel()
-	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	source, err := Open(t.Context(), filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, source.Close()) })
 	seedMetadataRoundTrip(t, source)
@@ -124,7 +124,7 @@ func TestInitialAuditAuthorityImportRejectsCorruptionAndRollsBack(t *testing.T) 
 		require.NoError(t, marshalErr)
 		return result
 	})
-	restored, err := Open(filepath.Join(t.TempDir(), "restored.db"))
+	restored, err := Open(t.Context(), filepath.Join(t.TempDir(), "restored.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	originalVaultID := restored.VaultID()
@@ -132,15 +132,15 @@ func TestInitialAuditAuthorityImportRejectsCorruptionAndRollsBack(t *testing.T) 
 	require.ErrorContains(t, err, "allocation authority does not match")
 	assert.Equal(t, originalVaultID, restored.VaultID())
 	var nodes, auditRows int64
-	require.NoError(t, restored.db.QueryRow(`SELECT COUNT(*) FROM nodes`).Scan(&nodes))
-	require.NoError(t, restored.db.QueryRow(`SELECT COUNT(*) FROM audit_records`).Scan(&auditRows))
+	require.NoError(t, restored.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM nodes`).Scan(&nodes))
+	require.NoError(t, restored.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM audit_records`).Scan(&auditRows))
 	assert.Equal(t, int64(1), nodes)
 	assert.Zero(t, auditRows)
 }
 
 func TestInitialAuditAuthorityImportRejectsIncompleteMembership(t *testing.T) {
 	t.Parallel()
-	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	source, err := Open(t.Context(), filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, source.Close()) })
 	seedMetadataRoundTrip(t, source)
@@ -151,19 +151,19 @@ func TestInitialAuditAuthorityImportRejectsIncompleteMembership(t *testing.T) {
 	require.NoError(t, source.ExportMetadata(t.Context(), &exported))
 
 	incomplete := removeFirstAuditMetadataRecord(t, exported.Bytes(), metadataAuditMembershipType)
-	restored, err := Open(filepath.Join(t.TempDir(), "restored.db"))
+	restored, err := Open(t.Context(), filepath.Join(t.TempDir(), "restored.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	err = restored.ImportMetadata(t.Context(), bytes.NewReader(incomplete))
 	require.ErrorContains(t, err, "membership projection does not match")
 	var records int64
-	require.NoError(t, restored.db.QueryRow(`SELECT COUNT(*) FROM audit_records`).Scan(&records))
+	require.NoError(t, restored.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM audit_records`).Scan(&records))
 	assert.Zero(t, records)
 }
 
 func TestAuditAuthorityImportRejectsUntrustedScopeCounts(t *testing.T) {
 	t.Parallel()
-	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	source, err := Open(t.Context(), filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, source.Close()) })
 	seedMetadataRoundTrip(t, source)
@@ -182,7 +182,7 @@ func TestAuditAuthorityImportRejectsUntrustedScopeCounts(t *testing.T) {
 		scopes = append(scopes, scope)
 	}
 	input := appendMetadataRecords(t, exported.Bytes(), scopes...)
-	restored, err := Open(filepath.Join(t.TempDir(), "restored.db"))
+	restored, err := Open(t.Context(), filepath.Join(t.TempDir(), "restored.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	originalVaultID := restored.VaultID()
@@ -191,7 +191,7 @@ func TestAuditAuthorityImportRejectsUntrustedScopeCounts(t *testing.T) {
 	require.ErrorContains(t, err, "maximum 1000")
 	assert.Equal(t, originalVaultID, restored.VaultID())
 	var nodes, scopeCount int64
-	require.NoError(t, restored.db.QueryRow(`SELECT
+	require.NoError(t, restored.db.QueryRowContext(t.Context(), `SELECT
 		(SELECT COUNT(*) FROM nodes),
 		(SELECT COUNT(*) FROM audit_scopes)`).Scan(&nodes, &scopeCount))
 	assert.Equal(t, int64(1), nodes)
@@ -209,7 +209,7 @@ func TestAuditScopeRecordsRejectsUntrustedEntryCountWithoutPreallocation(t *test
 
 func TestInitialAuditAuthorityImportActivatesAfterWholeStream(t *testing.T) {
 	t.Parallel()
-	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	source, err := Open(t.Context(), filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, source.Close()) })
 	seedMetadataRoundTrip(t, source)
@@ -220,7 +220,7 @@ func TestInitialAuditAuthorityImportActivatesAfterWholeStream(t *testing.T) {
 	require.NoError(t, source.ExportMetadata(t.Context(), &exported))
 
 	reordered := moveFirstMetadataRecordAfterHeader(t, exported.Bytes(), metadataAuditAuthorityType)
-	restored, err := Open(filepath.Join(t.TempDir(), "restored.db"))
+	restored, err := Open(t.Context(), filepath.Join(t.TempDir(), "restored.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(reordered)))
@@ -229,28 +229,28 @@ func TestInitialAuditAuthorityImportActivatesAfterWholeStream(t *testing.T) {
 
 func TestInitialAuditRootEnrollmentAdoptsUnknownOriginTrash(t *testing.T) {
 	t.Parallel()
-	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	source, err := Open(t.Context(), filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, source.Close()) })
 	seedMetadataRoundTrip(t, source)
-	_, err = source.db.Exec(`UPDATE nodes SET trash_parent=NULL WHERE id=11`)
+	_, err = source.db.ExecContext(t.Context(), `UPDATE nodes SET trash_parent=NULL WHERE id=11`)
 	require.NoError(t, err)
 	seedInitialAuditAuthority(t, source, source.RootID())
 
 	var exported bytes.Buffer
 	require.NoError(t, source.ExportMetadata(t.Context(), &exported))
-	restored, err := Open(filepath.Join(t.TempDir(), "restored.db"))
+	restored, err := Open(t.Context(), filepath.Join(t.TempDir(), "restored.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
 	var memberships int64
-	require.NoError(t, restored.db.QueryRow(`SELECT COUNT(*) FROM audit_memberships`).Scan(&memberships))
+	require.NoError(t, restored.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM audit_memberships`).Scan(&memberships))
 	assert.Equal(t, int64(5), memberships, "root scope adopts live nodes and unresolved retained trash")
 }
 
 func TestImportMetadataRejectsOrphanAuditRecord(t *testing.T) {
 	t.Parallel()
-	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	source, err := Open(t.Context(), filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, source.Close()) })
 	var exported bytes.Buffer
@@ -267,19 +267,19 @@ func TestImportMetadataRejectsOrphanAuditRecord(t *testing.T) {
 	input := appendMetadataRecords(t, exported.Bytes(), metadataAuditRecord{
 		Type: metadataAuditRecordType, Digest: mustAuditRecordDigest(t, record), Record: recordJSON,
 	})
-	restored, err := Open(filepath.Join(t.TempDir(), "restored.db"))
+	restored, err := Open(t.Context(), filepath.Join(t.TempDir(), "restored.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	err = restored.ImportMetadata(t.Context(), bytes.NewReader(input))
 	require.ErrorContains(t, err, "dormant audit authority")
 	var records int64
-	require.NoError(t, restored.db.QueryRow(`SELECT COUNT(*) FROM audit_records`).Scan(&records))
+	require.NoError(t, restored.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM audit_records`).Scan(&records))
 	assert.Zero(t, records)
 }
 
 func TestImportMetadataRejectsAuditRecordDigestMismatch(t *testing.T) {
 	t.Parallel()
-	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	source, err := Open(t.Context(), filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, source.Close()) })
 	seedMetadataRoundTrip(t, source)
@@ -302,19 +302,19 @@ func TestImportMetadataRejectsAuditRecordDigestMismatch(t *testing.T) {
 		require.NoError(t, err)
 		return result
 	})
-	restored, err := Open(filepath.Join(t.TempDir(), "restored.db"))
+	restored, err := Open(t.Context(), filepath.Join(t.TempDir(), "restored.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	err = restored.ImportMetadata(t.Context(), bytes.NewReader(corrupt))
 	require.ErrorContains(t, err, "digest does not match")
 	var records int64
-	require.NoError(t, restored.db.QueryRow(`SELECT COUNT(*) FROM audit_records`).Scan(&records))
+	require.NoError(t, restored.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM audit_records`).Scan(&records))
 	assert.Zero(t, records)
 }
 
 func TestAuditImportAppliesExactMetadataV1RecordSchemas(t *testing.T) {
 	t.Parallel()
-	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	source, err := Open(t.Context(), filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, source.Close()) })
 	seedMetadataRoundTrip(t, source)
@@ -340,7 +340,7 @@ func TestAuditImportAppliesExactMetadataV1RecordSchemas(t *testing.T) {
 			return result
 		},
 	)
-	restored, err := Open(filepath.Join(t.TempDir(), "restored.db"))
+	restored, err := Open(t.Context(), filepath.Join(t.TempDir(), "restored.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	err = restored.ImportMetadata(t.Context(), bytes.NewReader(malformed))
@@ -349,7 +349,7 @@ func TestAuditImportAppliesExactMetadataV1RecordSchemas(t *testing.T) {
 
 func TestAuditValidationRejectsDirectDatabaseDivergence(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)
@@ -358,10 +358,10 @@ func TestAuditValidationRejectsDirectDatabaseDivergence(t *testing.T) {
 	seedInitialAuditAuthority(t, s, target.ID)
 
 	var wrongHead string
-	require.NoError(t, s.db.QueryRow(
+	require.NoError(t, s.db.QueryRowContext(t.Context(),
 		`SELECT digest FROM audit_records WHERE kind='allocation_entry'`,
 	).Scan(&wrongHead))
-	_, err = s.db.Exec(`UPDATE audit_scopes SET chain_head=?`, wrongHead)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE audit_scopes SET chain_head=?`, wrongHead)
 	require.NoError(t, err)
 	err = s.ValidateMetadata(t.Context())
 	require.ErrorContains(t, err, "audit scope authority does not match replayed history")
@@ -371,7 +371,7 @@ func TestAuditValidationRejectsDirectDatabaseDivergence(t *testing.T) {
 
 func TestInitialAuditAuthorityRejectsUnsupportedLogicalMutations(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)
@@ -394,7 +394,7 @@ func TestInitialAuditAuthorityRejectsUnsupportedLogicalMutations(t *testing.T) {
 
 func TestSavedQueryRunRejectsActiveAuditAuthorityWithoutPublishingHandle(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)
@@ -414,7 +414,7 @@ func TestSavedQueryRunRejectsActiveAuditAuthorityWithoutPublishingHandle(t *test
 
 func TestInitialAuditAuthorityAllowsReadOnlyMaintenancePreviews(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)
@@ -445,14 +445,14 @@ func TestInitialAuditAuthorityAllowsReadOnlyMaintenancePreviews(t *testing.T) {
 func TestInitialAuditAuthorityAllowsUnreferencedBlobGC(t *testing.T) {
 	t.Parallel()
 	const orphanHash = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
-	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)
-	_, err = s.db.Exec(`INSERT INTO blobs(hash,size,created_at)
+	_, err = s.db.ExecContext(t.Context(), `INSERT INTO blobs(hash,size,created_at)
 		VALUES(?,4,'2026-07-17T00:00:00.000000000Z')`, orphanHash)
 	require.NoError(t, err)
-	_, err = s.db.Exec(`INSERT INTO extracted_text(
+	_, err = s.db.ExecContext(t.Context(), `INSERT INTO extracted_text(
 		blob_hash,extractor,extractor_version,status,attempts,extracted_at)
 		VALUES(?,'synthetic',1,'ok',1,'2026-07-17T00:00:00.000000000Z')`, orphanHash)
 	require.NoError(t, err)
@@ -466,7 +466,7 @@ func TestInitialAuditAuthorityAllowsUnreferencedBlobGC(t *testing.T) {
 	require.NoError(t, s.DeleteBlobRows(t.Context(), []string{orphanHash}))
 
 	var rows int64
-	require.NoError(t, s.db.QueryRow(`SELECT
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT
 		(SELECT COUNT(*) FROM blobs WHERE hash=?) +
 		(SELECT COUNT(*) FROM extracted_text WHERE blob_hash=?)`, orphanHash, orphanHash).Scan(&rows))
 	assert.Zero(t, rows)
@@ -476,7 +476,7 @@ func TestInitialAuditAuthorityAllowsUnreferencedBlobGC(t *testing.T) {
 func TestInitialAuditAuthorityReopens(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "vault.db")
-	s, err := Open(path)
+	s, err := Open(t.Context(), path)
 	require.NoError(t, err)
 	seedMetadataRoundTrip(t, s)
 	target, err := s.NodeByPath(t.Context(), "/Projects")
@@ -484,7 +484,7 @@ func TestInitialAuditAuthorityReopens(t *testing.T) {
 	seedInitialAuditAuthority(t, s, target.ID)
 	require.NoError(t, s.Close())
 
-	reopened, err := Open(path)
+	reopened, err := Open(t.Context(), path)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, reopened.Close()) })
 	require.NoError(t, reopened.ExportMetadata(t.Context(), &bytes.Buffer{}))

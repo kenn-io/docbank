@@ -40,7 +40,7 @@ func newDocumentInspectionFixture(t *testing.T) *documentInspectionFixture {
 	cfg.ProcessingProfiles["portable"] = portable.config.ProcessingProfiles["archive"]
 	f := &documentInspectionFixture{root: t.TempDir(), config: cfg,
 		nodes: map[string]store.Node{}, attachments: map[string]store.RenditionAttachmentRecord{}}
-	catalog, err := store.Open(filepath.Join(f.root, "docbank.db"))
+	catalog, err := store.Open(t.Context(), filepath.Join(f.root, "docbank.db"))
 	require.NoError(t, err)
 	defer func() { require.NoError(t, catalog.Close()) }()
 	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(f.root, "blobs"))

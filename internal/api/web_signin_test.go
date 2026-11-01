@@ -14,7 +14,7 @@ func TestWebSignInStatusAvailableWithoutMasterKey(t *testing.T) {
 	cfg.Server.APIKey = "synthetic-master-key"
 	s := NewServer(Deps{Cfg: cfg})
 	defer s.Close()
-	r := httptest.NewRequest(http.MethodGet, "http://localhost/api/daemon/web-auth", nil)
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://localhost/api/daemon/web-auth", nil)
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, r)
 	require.Equal(t, http.StatusOK, w.Code)
@@ -31,7 +31,7 @@ func TestWebSignInPublicOriginAllowsVerifiedUploadInCSP(t *testing.T) {
 	defer s.Close()
 	for _, path := range []string{"/", "/photos", "/assets/index.js"} {
 		w := httptest.NewRecorder()
-		s.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, cfg.Web.PublicOrigin+path, nil))
+		s.Handler().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, cfg.Web.PublicOrigin+path, nil))
 		require.Contains(t, w.Header().Get("Content-Security-Policy"), "wss://archive.example.test")
 		require.Contains(t, w.Header().Get("Content-Security-Policy"), "ws://localhost:7777")
 	}

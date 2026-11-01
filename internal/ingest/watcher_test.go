@@ -85,7 +85,7 @@ func TestWatcherReportsBusyOnlyWhenIngesting(t *testing.T) {
 		watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{
 			Name: "activity", Source: source, Destination: "/archive",
 			SettleTime: config.Duration(time.Second), ScanInterval: config.Duration(time.Second),
-		}, func(fn func() error) error {
+		}, func(_ context.Context, fn func() error) error {
 			assert.True(t, supervisor.Snapshot()[0].Busy, "ingesting a settled file is busy")
 			err := fn()
 			if err == nil {
@@ -154,7 +154,7 @@ func assertWatcherSameSizeAndMtimeVersions(t *testing.T, initial, changed []byte
 	}
 	ing := newTestIngester(t)
 	mutationCalls := 0
-	mutate := func(fn func() error) error {
+	mutate := func(_ context.Context, fn func() error) error {
 		mutationCalls++
 		return fn()
 	}
@@ -261,7 +261,7 @@ func TestWatcherWaitsForStabilityAndUpdatesTheSameMovedNode(t *testing.T) {
 	ing := newTestIngester(t)
 	expectedUpdatedContent := []byte("{\"message\":\"second\"}\n")
 	mutationCalls := 0
-	mutate := func(fn func() error) error {
+	mutate := func(_ context.Context, fn func() error) error {
 		mutationCalls++
 		return fn()
 	}
@@ -460,7 +460,7 @@ func TestWatcherRetriesFileThatDisappearsBeforeIngest(t *testing.T) {
 	source := writeTree(t, map[string]string{"document.txt": "ready"})
 	sourcePath := filepath.Join(source, "document.txt")
 	removeBeforeIngest := false
-	mutate := func(fn func() error) error {
+	mutate := func(_ context.Context, fn func() error) error {
 		if removeBeforeIngest {
 			removeBeforeIngest = false
 			require.NoError(t, os.Remove(sourcePath))
@@ -736,7 +736,7 @@ func TestLocalFileReadRejectsConcurrentChange(t *testing.T) {
 
 func stringsReader(value string) io.Reader { return strings.NewReader(value) }
 
-func runTestMutation(fn func() error) error { return fn() }
+func runTestMutation(_ context.Context, fn func() error) error { return fn() }
 
 func TestWatchTreeTraversalHonorsContext(t *testing.T) {
 	t.Parallel()
@@ -969,7 +969,7 @@ func TestWatchCaptureOnChangeAdmission(t *testing.T) {
 			watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{
 				Name: "notes", Source: source, Destination: "/archive", CaptureOnChange: tc.prompt,
 				SettleTime: config.Duration(10 * time.Second), MinimumAge: config.Duration(tc.minimumAge), ScanInterval: config.Duration(time.Hour),
-			}, func(fn func() error) error {
+			}, func(_ context.Context, fn func() error) error {
 				attempts++
 				if tc.retry && attempts == 1 {
 					return ErrRetryLater
@@ -1184,7 +1184,7 @@ func TestWatcherAfterImportKeepsCommittedVersionAndScannerStatus(t *testing.T) {
 	inside := false
 	watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{
 		Name: "inbox", Source: source, Destination: "/inbox", CaptureOnChange: true,
-	}, func(fn func() error) error {
+	}, func(_ context.Context, fn func() error) error {
 		inside = true
 		defer func() { inside = false }()
 		return fn()

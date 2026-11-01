@@ -195,7 +195,7 @@ func TestMistralPasswordFileProcessing(t *testing.T) {
 	bound.RenditionProvider, err = adapter.newProvider(environmentCredentialSecrets{variables: map[string]string{"docling": "DOCBANK_TEST_MISTRAL_OCR_KEY"}}, &http.Client{Transport: transport})
 	require.NoError(t, err)
 	root := t.TempDir()
-	catalog, err := store.Open(filepath.Join(root, "docbank.db"))
+	catalog, err := store.Open(t.Context(), filepath.Join(root, "docbank.db"))
 	require.NoError(t, err)
 	defer func() { require.NoError(t, catalog.Close()) }()
 	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(root, "blobs"))

@@ -103,7 +103,7 @@ func registerStorageRegistryRoutes(api huma.API, d Deps, g *gate) {
 		if err := validateStorageNamespace(ctx, d, plan.store.Binding, plan.binding, stores, false); err != nil {
 			return nil, err
 		}
-		err = g.mutate(func() error {
+		err = g.mutate(ctx, func() error {
 			if proof != nil {
 				paths, err := storageProtectionPaths(ctx, d, plan.binding)
 				if err != nil {
@@ -152,7 +152,7 @@ func registerStorageRegistryRoutes(api huma.API, d Deps, g *gate) {
 		StoreID string `path:"store_id"`
 	}) (*storeOutput, error) {
 		var output *storeOutput
-		err := g.mutate(func() error {
+		err := g.mutate(ctx, func() error {
 			if err := d.Store.DetachBlobStore(ctx, in.StoreID); err != nil {
 				return FromStoreError(err)
 			}
@@ -180,7 +180,7 @@ func registerStorageRegistryRoutes(api huma.API, d Deps, g *gate) {
 	}, func(ctx context.Context, in *struct {
 		StoreID string `path:"store_id"`
 	}) (*struct{}, error) {
-		err := g.mutate(func() error {
+		err := g.mutate(ctx, func() error {
 			item, err := d.Store.BlobStoreBySelector(ctx, in.StoreID)
 			if err != nil {
 				return FromStoreError(err)

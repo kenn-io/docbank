@@ -15,7 +15,7 @@ func BenchmarkBatchMove(b *testing.B) {
 		for _, count := range []int{1, 100, 1000} {
 			for _, noop := range []bool{false, true} {
 				b.Run(fmt.Sprintf("depth=%d/moves=%d/noop=%t", depth, count, noop), func(b *testing.B) {
-					s, err := Open(filepath.Join(b.TempDir(), "docbank.db"))
+					s, err := Open(b.Context(), filepath.Join(b.TempDir(), "docbank.db"))
 					require.NoError(b, err)
 					b.Cleanup(func() { require.NoError(b, s.Close()) })
 					ctx := b.Context()

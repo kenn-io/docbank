@@ -17,7 +17,7 @@ import (
 func BenchmarkMissingSourceMetadataTargets(b *testing.B) {
 	for _, corpus := range []struct{ blobs, copies int }{{1, 1}, {100, 1}, {100, 100}, {1000, 1}} {
 		b.Run(fmt.Sprintf("blobs=%d/copies=%d", corpus.blobs, corpus.copies), func(b *testing.B) {
-			s, err := Open(filepath.Join(b.TempDir(), "docbank.db"))
+			s, err := Open(b.Context(), filepath.Join(b.TempDir(), "docbank.db"))
 			require.NoError(b, err)
 			b.Cleanup(func() { require.NoError(b, s.Close()) })
 			ctx := b.Context()
@@ -71,7 +71,7 @@ func BenchmarkMissingSourceMetadataTargets(b *testing.B) {
 func BenchmarkNodeSourceMetadataView(b *testing.B) {
 	for _, depth := range []int{1, 8, 32} {
 		b.Run(fmt.Sprintf("depth=%d", depth), func(b *testing.B) {
-			s, err := Open(filepath.Join(b.TempDir(), "docbank.db"))
+			s, err := Open(b.Context(), filepath.Join(b.TempDir(), "docbank.db"))
 			require.NoError(b, err)
 			b.Cleanup(func() { require.NoError(b, s.Close()) })
 			parentPath := strings.Repeat("/folder", depth-1)

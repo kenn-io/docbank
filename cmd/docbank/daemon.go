@@ -190,7 +190,7 @@ func runServe(ctx context.Context) (retErr error) {
 	sigCtx, sigCancel := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer sigCancel()
 
-	s, err := store.Open(layout.DBPath())
+	s, err := store.Open(sigCtx, layout.DBPath())
 	if err != nil {
 		return err
 	}
@@ -538,7 +538,7 @@ func runServe(ctx context.Context) (retErr error) {
 	for _, watchConfig := range cfg.Watches {
 		watcher, err := ingest.NewWatcher(
 			&ingest.Ingester{Store: s, Blobs: blobs}, layout.Root, watchConfig,
-			operationGate.Mutate, logger,
+			operationGate.MutateContext, logger,
 		)
 		if err != nil {
 			return fmt.Errorf("configuring watch %q: %w", watchConfig.Name, err)

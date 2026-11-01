@@ -176,9 +176,11 @@ func TestLongRunningHumaOperationOutlivesDefaultBodyDeadline(t *testing.T) {
 		err    error
 	}
 	done := make(chan result, 1)
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL+"/api/v1/backup/snapshots", bytes.NewReader([]byte(`{}`)))
+	require.NoError(t, err)
+	request.Header.Set("Content-Type", "application/json")
 	go func() {
-		resp, err := http.Post(server.URL+"/api/v1/backup/snapshots",
-			"application/json", bytes.NewReader([]byte(`{}`)))
+		resp, err := http.DefaultClient.Do(request)
 		if err != nil {
 			done <- result{err: err}
 			return
@@ -220,18 +222,18 @@ func TestEmailPartStreamAndEnsureHaveNoRequestDeadline(t *testing.T) {
 		deadline <- present
 	}))
 
-	request := httptest.NewRequest(http.MethodGet,
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
 		"/api/v1/versions/11111111-1111-4111-8111-111111111111/email/generations/"+
 			strings.Repeat("a", 64)+"/parts/1.2/decoded_payload", nil)
 	handler.ServeHTTP(httptest.NewRecorder(), request)
 	assert.False(t, <-deadline)
 
-	request = httptest.NewRequest(http.MethodPost,
+	request = httptest.NewRequestWithContext(t.Context(), http.MethodPost,
 		"/api/v1/versions/11111111-1111-4111-8111-111111111111/email", nil)
 	handler.ServeHTTP(httptest.NewRecorder(), request)
 	assert.False(t, <-deadline)
 
-	request = httptest.NewRequest(http.MethodGet,
+	request = httptest.NewRequestWithContext(t.Context(), http.MethodGet,
 		"/api/v1/versions/11111111-1111-4111-8111-111111111111/email", nil)
 	handler.ServeHTTP(httptest.NewRecorder(), request)
 	assert.True(t, <-deadline)
@@ -265,8 +267,11 @@ func TestMediaRetryOutlivesRequestTimeout(t *testing.T) {
 			_, err := writer.Write([]byte(`{}`))
 			_ = writer.CloseWithError(err)
 		}()
-		response, err := server.Client().Post(server.URL+"/api/v1/media/sources/source-1/retry",
-			"application/json", reader)
+		client := server.Client() // Client starts the server and sets URL.
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL+"/api/v1/media/sources/source-1/retry", reader)
+		require.NoError(t, err)
+		request.Header.Set("Content-Type", "application/json")
+		response, err := client.Do(request)
 		require.NoError(t, err)
 		defer func() { require.NoError(t, response.Body.Close()) }()
 		body, err := io.ReadAll(response.Body)
@@ -310,7 +315,7 @@ func TestPackagePreflightHasNoRequestDeadline(t *testing.T) {
 		_, present := r.Context().Deadline()
 		assert.False(t, present)
 	}))
-	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/v1/packages/preflights", nil))
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/packages/preflights", nil))
 }
 
 func TestExportPreparationOutlivesRequestTimeout(t *testing.T) {
@@ -344,7 +349,11 @@ func TestExportPreparationOutlivesRequestTimeout(t *testing.T) {
 					_, err := writer.Write([]byte(`{}`))
 					_ = writer.CloseWithError(err)
 				}()
-				response, err := server.Client().Post(server.URL+strings.ReplaceAll(route, "{id}", "a2b864dd-bcd9-4c63-a1bd-321293fbbd34"), "application/json", reader)
+				client := server.Client() // Client starts the server and sets URL.
+				request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL+strings.ReplaceAll(route, "{id}", "a2b864dd-bcd9-4c63-a1bd-321293fbbd34"), reader)
+				require.NoError(t, err)
+				request.Header.Set("Content-Type", "application/json")
+				response, err := client.Do(request)
 				require.NoError(t, err)
 				defer func() { require.NoError(t, response.Body.Close()) }()
 				body, err := io.ReadAll(response.Body)
@@ -418,7 +427,11 @@ func TestLargeAudioPlanClearsHandlerReadDeadline(t *testing.T) {
 			return &struct{ Body string }{Body: "planned"}, ctx.Err()
 		})
 		server := httptest.NewTestServer(t, timeoutMiddleware(mux))
-		response, err := server.Client().Post(server.URL+processingPlansPath, "application/json", strings.NewReader("{}"))
+		client := server.Client() // Client starts the server and sets URL.
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL+processingPlansPath, strings.NewReader("{}"))
+		require.NoError(t, err)
+		request.Header.Set("Content-Type", "application/json")
+		response, err := client.Do(request)
 		require.NoError(t, err)
 		defer func() { require.NoError(t, response.Body.Close()) }()
 		body, err := io.ReadAll(response.Body)

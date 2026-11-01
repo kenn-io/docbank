@@ -27,16 +27,16 @@ func (s *Store) renameAuditedTagTx(
 		return Tag{}, fmt.Errorf("allocating audited tag-rename operation: %w", err)
 	}
 	recordedAt := nowRFC3339()
-	renamed, err := s.renameTagDefinitionTx(tx, current, name)
+	renamed, err := s.renameTagDefinitionTx(ctx, tx, current, name)
 	if err != nil {
 		return Tag{}, err
 	}
-	if err := touchAuditedTagDefinitionNodesTx(tx, current.ID, priorNodes, recordedAt); err != nil {
+	if err := touchAuditedTagDefinitionNodesTx(ctx, tx, current.ID, priorNodes, recordedAt); err != nil {
 		return Tag{}, err
 	}
 	resultingNodes := make([]Node, len(priorNodes))
 	for index, prior := range priorNodes {
-		resultingNodes[index], err = nodeByIDTx(tx, prior.ID)
+		resultingNodes[index], err = nodeByIDTx(ctx, tx, prior.ID)
 		if err != nil {
 			return Tag{}, err
 		}
@@ -56,17 +56,18 @@ type auditedTagCandidate struct {
 }
 
 func touchAuditedTagDefinitionNodesTx(
+	ctx context.Context,
 	tx *sql.Tx, tagID string, audited []Node, recordedAt string,
 ) error {
 	// Revisions cover every assigned node. modified_at is changed only where the
 	// scoped mutation commits the operation timestamp; the allocation-only form
 	// deliberately has no timestamp from which replay could derive that field.
-	if _, err := tx.Exec(`UPDATE nodes SET revision=revision+1
+	if _, err := tx.ExecContext(ctx, `UPDATE nodes SET revision=revision+1
 		WHERE id IN (SELECT node_id FROM node_tags WHERE tag_id=?)`, tagID); err != nil {
 		return fmt.Errorf("advancing nodes assigned tag %s: %w", tagID, err)
 	}
 	for _, node := range audited {
-		if _, err := tx.Exec(
+		if _, err := tx.ExecContext(ctx,
 			`UPDATE nodes SET modified_at=? WHERE id=?`, recordedAt, node.ID,
 		); err != nil {
 			return fmt.Errorf("recording audited tag rename on node %d: %w", node.ID, err)
@@ -126,7 +127,7 @@ func auditedTaggedNodesTx(
 	})
 	nodes := make([]Node, len(nodeIDs))
 	for index, nodeID := range nodeIDs {
-		nodes[index], err = nodeByIDTx(tx, nodeID)
+		nodes[index], err = nodeByIDTx(ctx, tx, nodeID)
 		if err != nil {
 			return nil, nil, nil, err
 		}

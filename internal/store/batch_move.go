@@ -455,7 +455,7 @@ func (s *Store) applyBatchMove(ctx context.Context, tx *sql.Tx, plan batchMovePl
 		if moved[id] {
 			continue
 		}
-		if err := bumpRevisionTx(tx, id, plan.recordedAt); err != nil {
+		if err := bumpRevisionTx(ctx, tx, id, plan.recordedAt); err != nil {
 			return err
 		}
 	}
@@ -470,7 +470,7 @@ func (s *Store) batchMoveResults(
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		node, err := nodeByIDTx(tx, move.nodeID)
+		node, err := nodeByIDTx(ctx, tx, move.nodeID)
 		if err != nil {
 			return nil, err
 		}

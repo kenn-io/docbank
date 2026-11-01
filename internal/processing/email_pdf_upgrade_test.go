@@ -47,7 +47,7 @@ func releasedEmailPDFFixture(t *testing.T) (emailPipelineFixture, store.EmailTar
 	loose := filepath.Join(root, "blobs", hash[:2], hash)
 	require.NoError(t, os.MkdirAll(filepath.Dir(loose), 0700))
 	require.NoError(t, os.WriteFile(loose, []byte(emailPipelineSource), 0600))
-	catalog, err := store.Open(dbPath, driver)
+	catalog, err := store.Open(t.Context(), dbPath, driver)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(root, "blobs"))

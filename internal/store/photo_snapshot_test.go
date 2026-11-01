@@ -35,7 +35,7 @@ func TestPhotoSnapshotOrderAndFlagsMatchBrowse(t *testing.T) {
 		display := asset.Files[0]
 		_, err = editPhotoAuthored(t.Context(), s, []PhotoAuthoredTarget{{FileID: display.ID, Revision: display.Revision, Patch: PhotoAuthoredPatch{Flag: new("pick")}}})
 		require.NoError(t, err)
-		_, err = s.db.Exec(`UPDATE nodes SET modified_at=? WHERE id=?`, fmt.Sprintf("2024-01-%02dT00:00:00.000000000Z", file.modifiedDay), node.ID)
+		_, err = s.db.ExecContext(t.Context(), `UPDATE nodes SET modified_at=? WHERE id=?`, fmt.Sprintf("2024-01-%02dT00:00:00.000000000Z", file.modifiedDay), node.ID)
 		require.NoError(t, err)
 	}
 	service := NewQuerySnapshotService(s)
@@ -201,7 +201,7 @@ func TestPhotoSnapshotCreatePhotoAlbum(t *testing.T) {
 					for _, file := range member.Files {
 						if member.ID != asset.ID || file.Role == PhotoRoleRAW {
 							// Descending names deliberately reverse UUID order.
-							_, err := s.db.Exec(`UPDATE nodes SET name=? WHERE id=?`, fmt.Sprintf("harbor-%d.cr2", i), file.NodeID)
+							_, err := s.db.ExecContext(t.Context(), `UPDATE nodes SET name=? WHERE id=?`, fmt.Sprintf("harbor-%d.cr2", i), file.NodeID)
 							require.NoError(t, err)
 						}
 					}
@@ -216,7 +216,7 @@ func TestPhotoSnapshotCreatePhotoAlbum(t *testing.T) {
 			require.NoError(t, err)
 			switch scenario {
 			case "trashed":
-				_, err = s.db.Exec(`UPDATE nodes SET trashed_at=? WHERE id=?`, nowRFC3339(), asset.Files[0].NodeID)
+				_, err = s.db.ExecContext(t.Context(), `UPDATE nodes SET trashed_at=? WHERE id=?`, nowRFC3339(), asset.Files[0].NodeID)
 			case "RAW detached from a kept asset":
 				require.Len(t, page.Rows, 4)
 				for _, row := range page.Rows {
@@ -243,7 +243,7 @@ func TestPhotoSnapshotCreatePhotoAlbum(t *testing.T) {
 			if scenario == "trashed" {
 				require.ErrorIs(t, err, ErrPhotoSnapshotMemberNotInLibrary)
 				var albums, receipts int
-				require.NoError(t, s.db.QueryRow(`SELECT (SELECT COUNT(*) FROM photo_sets),(SELECT COUNT(*) FROM photo_change_receipts WHERE operation LIKE 'set_%')`).Scan(&albums, &receipts))
+				require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT (SELECT COUNT(*) FROM photo_sets),(SELECT COUNT(*) FROM photo_change_receipts WHERE operation LIKE 'set_%')`).Scan(&albums, &receipts))
 				require.Zero(t, albums)
 				require.Zero(t, receipts)
 				return
@@ -253,7 +253,7 @@ func TestPhotoSnapshotCreatePhotoAlbum(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, "Frozen", stored.Name)
 			var receipts int
-			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM photo_change_receipts WHERE set_id=? AND operation='set_create'`, album.ID).Scan(&receipts))
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM photo_change_receipts WHERE set_id=? AND operation='set_create'`, album.ID).Scan(&receipts))
 			require.Equal(t, 1, receipts)
 			ids, err := photoSetMemberIDs(t.Context(), s.db, album.ID)
 			require.NoError(t, err)

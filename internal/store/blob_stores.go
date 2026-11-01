@@ -31,8 +31,8 @@ type BlobStore struct {
 	CreatedAt      time.Time
 }
 
-func ensurePrimaryBlobStoreTx(tx *sql.Tx) (BlobStore, error) {
-	store, err := primaryBlobStoreTx(tx)
+func ensurePrimaryBlobStoreTx(ctx context.Context, tx *sql.Tx) (BlobStore, error) {
+	store, err := primaryBlobStoreTx(ctx, tx)
 	if err == nil {
 		return store, nil
 	}
@@ -48,7 +48,7 @@ func ensurePrimaryBlobStoreTx(tx *sql.Tx) (BlobStore, error) {
 		return BlobStore{}, fmt.Errorf("creating primary ownership epoch: %w", err)
 	}
 	createdAt := nowRFC3339()
-	if _, err := tx.Exec(`
+	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO blob_stores(
 			store_id, name, kind, role, lifecycle, binding, ownership_epoch, created_at
 		) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -65,8 +65,8 @@ func ensurePrimaryBlobStoreTx(tx *sql.Tx) (BlobStore, error) {
 	}, nil
 }
 
-func primaryBlobStoreTx(tx *sql.Tx) (BlobStore, error) {
-	return scanBlobStore(tx.QueryRow(`
+func primaryBlobStoreTx(ctx context.Context, tx *sql.Tx) (BlobStore, error) {
+	return scanBlobStore(tx.QueryRowContext(ctx, `
 		SELECT store_id, name, kind, role, lifecycle, binding, ownership_epoch, created_at
 		FROM blob_stores WHERE role = $1`, blobStoreRolePrimary))
 }

@@ -26,7 +26,7 @@ func importCollection(
 	}
 	raw, err := json.Marshal(body)
 	require.NoError(t, err)
-	req, err := http.NewRequest(http.MethodPost, tsURL+"/api/v1/ingest", bytes.NewReader(raw))
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, tsURL+"/api/v1/ingest", bytes.NewReader(raw))
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(req)
@@ -132,7 +132,7 @@ func TestCollectionsHTTPValidatesAuthIdentityAndPageBounds(t *testing.T) {
 	ts, _ := newTestServer(t, nil)
 	for name, key := range map[string]string{"missing": "", "wrong": "wrong-key"} {
 		t.Run(name, func(t *testing.T) {
-			req, err := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/collections", nil)
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, ts.URL+"/api/v1/collections", nil)
 			require.NoError(t, err)
 			req.Header["X-Api-Key"] = []string{key}
 			resp, err := ts.Client().Do(req)
@@ -336,7 +336,7 @@ func TestCollectionRoutesHaveExactBrowserSessionAllowList(t *testing.T) {
 
 	request := func(method, path string) *http.Response {
 		t.Helper()
-		req, err := http.NewRequest(method, ts.URL+path, nil)
+		req, err := http.NewRequestWithContext(t.Context(), method, ts.URL+path, nil)
 		require.NoError(t, err)
 		req.Header["X-Api-Key"] = []string{""}
 		req.Header.Set(api.WebSessionHeader, issued.Token)
@@ -356,7 +356,7 @@ func TestCollectionRoutesHaveExactBrowserSessionAllowList(t *testing.T) {
 	}
 
 	putBody := bytes.NewBufferString(`{"label":"Browser label"}`)
-	req, err := http.NewRequest(http.MethodPut, ts.URL+base+"/label", putBody)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPut, ts.URL+base+"/label", putBody)
 	require.NoError(t, err)
 	req.Header["X-Api-Key"] = []string{""}
 	req.Header.Set(api.WebSessionHeader, issued.Token)

@@ -40,7 +40,7 @@ func BenchmarkPushFolder(b *testing.B) {
 				func() {
 					vault := b.TempDir()
 					defer func() { require.NoError(b, os.RemoveAll(vault)) }()
-					s, err := store.Open(filepath.Join(vault, "vault.db"))
+					s, err := store.Open(b.Context(), filepath.Join(vault, "vault.db"))
 					require.NoError(b, err)
 					defer func() { require.NoError(b, s.Close()) }()
 					blobs, err := blob.NewWithOptions(store.NewPackCatalog(s),

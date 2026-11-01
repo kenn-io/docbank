@@ -129,7 +129,7 @@ func TestPhotoCheckoutRoutes(t *testing.T) {
 func TestPhotoCheckoutRoutesStartFailure(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	catalog, err := store.Open(filepath.Join(dir, "docbank.db"))
+	catalog, err := store.Open(t.Context(), filepath.Join(dir, "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(dir, "blobs"))
@@ -149,7 +149,7 @@ func TestPhotoCheckoutRoutesStartFailure(t *testing.T) {
 	t.Cleanup(server.Close)
 	payload, err := json.Marshal(api.PhotoCheckoutCreateRequest{Selection: store.PhotoCheckoutSelection{All: true}, Destination: t.TempDir(), ByteLimit: 100})
 	require.NoError(t, err)
-	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/api/v1/photos/checkouts", strings.NewReader(string(payload)))
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://127.0.0.1/api/v1/photos/checkouts", strings.NewReader(string(payload)))
 	request.RemoteAddr = "127.0.0.1:12345"
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-Api-Key", testAPIKey)

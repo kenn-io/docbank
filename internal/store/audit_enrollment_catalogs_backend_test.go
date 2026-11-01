@@ -36,7 +36,7 @@ func TestAuditEnrollmentCatalogsPostgres(t *testing.T) {
 				{document.EmbeddingInputOriginalFile, "optional", ""},
 				{document.EmbeddingInputRenditionChunk, "chunk", attachment},
 			} {
-				record := embeddingSetFixture(s, version, profile.Fingerprint, input.kind, input.binding, input.attachment)
+				record := embeddingSetFixture(t.Context(), s, version, profile.Fingerprint, input.kind, input.binding, input.attachment)
 				require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
 				require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
 					FencingToken: 1, Key: EmbeddingHeadKey{ContentVersionID: version, BindingID: input.binding, InputKind: input.kind},

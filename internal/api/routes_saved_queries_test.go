@@ -22,7 +22,7 @@ func rawJSONRequest(
 	t *testing.T, tsURL, method, path string, headers map[string]string, body string,
 ) (*http.Response, string) {
 	t.Helper()
-	req, err := http.NewRequest(method, tsURL+path, strings.NewReader(body))
+	req, err := http.NewRequestWithContext(t.Context(), method, tsURL+path, strings.NewReader(body))
 	require.NoError(t, err)
 	if body != "" {
 		req.Header.Set("Content-Type", "application/json")
@@ -62,7 +62,7 @@ func streamedJSONRequest(
 	t *testing.T, tsURL, method, path string, headers map[string]string, body string,
 ) (*http.Response, string) {
 	t.Helper()
-	req, err := http.NewRequest(method, tsURL+path, struct{ io.Reader }{strings.NewReader(body)})
+	req, err := http.NewRequestWithContext(t.Context(), method, tsURL+path, struct{ io.Reader }{strings.NewReader(body)})
 	require.NoError(t, err)
 	require.Zero(t, req.ContentLength)
 	req.Header.Set("Content-Type", "application/json")

@@ -121,7 +121,7 @@ func (s *Store) previewInitialAudit(
 		if err != nil {
 			return err
 		}
-		if err := validateLiveAuditEnrollmentTarget(tx, targetNodeID); err != nil {
+		if err := validateLiveAuditEnrollmentTarget(ctx, tx, targetNodeID); err != nil {
 			return err
 		}
 		targetPath, err := pathOf(ctx, tx, targetNodeID)
@@ -209,7 +209,7 @@ func (s *Store) EnableInitialAudit(
 	}
 	var status AuditStatus
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		if err := requireLiveAuditPreviewTarget(tx, plan.input.targetNodeID); err != nil {
+		if err := requireLiveAuditPreviewTarget(ctx, tx, plan.input.targetNodeID); err != nil {
 			return err
 		}
 		if plan.initial {
@@ -257,16 +257,16 @@ func (s *Store) EnableInitialAudit(
 	return status, err
 }
 
-func requireLiveAuditPreviewTarget(tx *sql.Tx, targetNodeID int64) error {
-	err := validateLiveAuditEnrollmentTarget(tx, targetNodeID)
+func requireLiveAuditPreviewTarget(ctx context.Context, tx *sql.Tx, targetNodeID int64) error {
+	err := validateLiveAuditEnrollmentTarget(ctx, tx, targetNodeID)
 	if errors.Is(err, ErrNotFound) || errors.Is(err, ErrNotDir) {
 		return ErrAuditPreviewStale
 	}
 	return err
 }
 
-func validateLiveAuditEnrollmentTarget(tx *sql.Tx, targetNodeID int64) error {
-	target, err := nodeByIDTx(tx, targetNodeID)
+func validateLiveAuditEnrollmentTarget(ctx context.Context, tx *sql.Tx, targetNodeID int64) error {
+	target, err := nodeByIDTx(ctx, tx, targetNodeID)
 	if err != nil {
 		return fmt.Errorf("audit enrollment target %d: %w", targetNodeID, err)
 	}
@@ -697,7 +697,7 @@ func auditStatusTx(
 	}
 	for index := range status.Scopes {
 		scope := &status.Scopes[index]
-		target, err := nodeByIDTx(tx, scope.TargetNodeID)
+		target, err := nodeByIDTx(ctx, tx, scope.TargetNodeID)
 		if err != nil {
 			return AuditStatus{}, err
 		}
@@ -722,7 +722,7 @@ func auditStatusTx(
 func auditMembershipStatusTx(
 	ctx context.Context, tx *sql.Tx, nodeID int64,
 ) (AuditMembershipStatus, error) {
-	node, err := nodeByIDTx(tx, nodeID)
+	node, err := nodeByIDTx(ctx, tx, nodeID)
 	if err != nil {
 		return AuditMembershipStatus{}, err
 	}

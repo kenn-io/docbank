@@ -407,7 +407,7 @@ func TestEnqueueCompletedRenditionJobRestoresSupersededHeadWithoutProviderEgress
 			require.NoError(t, err)
 			assert.Equal(t, job.ID, active.Build.ID)
 			var providerStarted bool
-			require.NoError(t, s.db.QueryRow(
+			require.NoError(t, s.db.QueryRowContext(t.Context(),
 				`SELECT provider_started FROM rendition_jobs WHERE job_id=?`, job.ID,
 			).Scan(&providerStarted))
 			assert.False(t, providerStarted,
@@ -1014,7 +1014,7 @@ func TestRenditionJobNoHandleRetryKeepsAdmissionAuthority(t *testing.T) {
 	assert.Equal(t, RenditionPhaseQueued, current.Phase)
 	var selected, grant, incarnation, snapshot sql.NullString
 	var fence sql.NullInt64
-	require.NoError(t, s.db.QueryRow(`SELECT selected_waiter_id,authorization_grant_id,
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT selected_waiter_id,authorization_grant_id,
 		authorization_incarnation_id,authorization_revocation_fence,execution_snapshot_json
 		FROM rendition_jobs WHERE job_id=?`, job.ID).Scan(
 		&selected, &grant, &incarnation, &fence, &snapshot))
@@ -1316,7 +1316,7 @@ func TestRenditionJobProviderFenceRechecksConsentAndSource(t *testing.T) {
 		require.NoError(t, err)
 		driftedHash := testSHA256([]byte("synthetic drifted authority"))
 		require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-			if err := s.EnsureBlobTx(tx, driftedHash, 20); err != nil {
+			if err := s.EnsureBlobTx(t.Context(), tx, driftedHash, 20); err != nil {
 				return err
 			}
 			_, err := tx.ExecContext(t.Context(),
@@ -1472,7 +1472,7 @@ func TestPublishRenditionJobAtomicallyActivatesAuthorizedWaiters(t *testing.T) {
 	assert.Equal(t, secondWaiter.AttachmentID, second.Attachment.ID)
 	var selected, grant, incarnation sql.NullString
 	var revocationFence sql.NullInt64
-	require.NoError(t, s.db.QueryRow(`SELECT selected_waiter_id,authorization_grant_id,
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT selected_waiter_id,authorization_grant_id,
 		authorization_incarnation_id,authorization_revocation_fence
 		FROM rendition_jobs WHERE job_id=?`, job.ID).Scan(
 		&selected, &grant, &incarnation, &revocationFence))
@@ -1578,7 +1578,7 @@ func TestRenditionJobRecoversFromStaleLexicalPublicationWithoutRepeatingEgress(t
 		t.Context(), firstClaim, RenditionFailureTransient,
 		now.Add(6*time.Second), now.Add(7*time.Second)))
 	var providerStarted bool
-	require.NoError(t, s.db.QueryRow(
+	require.NoError(t, s.db.QueryRowContext(t.Context(),
 		`SELECT provider_started FROM rendition_jobs WHERE job_id=?`, firstJob.ID,
 	).Scan(&providerStarted))
 	assert.True(t, providerStarted, "lexical-only retry must retain original egress authority")
@@ -1673,7 +1673,7 @@ func TestPublishRenditionJobRejectsWaiterRetainedPolicyDrift(t *testing.T) {
 		t.Context(), claim, testSHA256([]byte("retained-policy-generation")),
 		now.Add(3*time.Second))
 	require.NoError(t, err)
-	_, err = s.db.Exec(`UPDATE rendition_job_waiters
+	_, err = s.db.ExecContext(t.Context(), `UPDATE rendition_job_waiters
 		SET retained_classes_json='["normalized_evidence"]' WHERE waiter_id=?`, waiter.ID)
 	require.NoError(t, err)
 
@@ -1751,7 +1751,7 @@ func TestPublishRenditionJobAllowsDegradedActivationForStaleWaiter(t *testing.T)
 	require.NoError(t, err)
 	driftedHash := testSHA256([]byte("synthetic secondary waiter drift"))
 	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-		if err := s.EnsureBlobTx(tx, driftedHash, 32); err != nil {
+		if err := s.EnsureBlobTx(t.Context(), tx, driftedHash, 32); err != nil {
 			return err
 		}
 		_, err := tx.ExecContext(t.Context(),

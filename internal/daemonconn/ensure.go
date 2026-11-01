@@ -515,14 +515,16 @@ func start(ctx context.Context, root string, requireVersion bool) (_ kitdaemon.R
 			}
 		}
 		rec := kitdaemon.RuntimeRecord{PID: child.Pid}
-		if dead, _ := waitDead(context.Background(), rec, daemon.GracefulExitTimeout); dead {
+		// Reap the child even when ctx ended the startup wait.
+		cleanupCtx := context.WithoutCancel(ctx)
+		if dead, _ := waitDead(cleanupCtx, rec, daemon.GracefulExitTimeout); dead {
 			return
 		}
 		if err := child.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
 			retErr = errors.Join(retErr, fmt.Errorf("terminating unready daemon: %w", err))
 			return
 		}
-		if dead, _ := waitDead(context.Background(), rec, daemon.ForcedExitTimeout); !dead {
+		if dead, _ := waitDead(cleanupCtx, rec, daemon.ForcedExitTimeout); !dead {
 			retErr = errors.Join(retErr, fmt.Errorf("daemon pid %d did not exit after failed startup", child.Pid))
 		}
 	}()

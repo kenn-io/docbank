@@ -60,7 +60,7 @@ func (files *filesystemIngest) flush(
 		// Cancellation can leave prepared files that never reached a transaction.
 		for _, file := range pending {
 			if file.content.hash != "" {
-				retErr = errors.Join(retErr, files.ing.cleanupLoose(file.content.hash))
+				retErr = errors.Join(retErr, files.ing.cleanupLoose(ctx, file.content.hash))
 			}
 		}
 	}()
@@ -85,7 +85,7 @@ func (files *filesystemIngest) flush(
 			}
 		}
 		if file.content.hash != "" {
-			err = mutationCleanupResult(err, files.ing.cleanupLoose(file.content.hash))
+			err = mutationCleanupResult(err, files.ing.cleanupLoose(ctx, file.content.hash))
 			file.content.hash = ""
 		}
 		if err := files.recordOutcome(ctx, rep, file.sourcePath, added, resolution, err, progress); err != nil {

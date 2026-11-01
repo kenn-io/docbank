@@ -12,7 +12,7 @@ import (
 // photoXMPPairs creates a synthetic JPEG+XMP folder without blob I/O.
 func photoXMPPairs(tb testing.TB, count int) (*Store, Node) {
 	tb.Helper()
-	s, err := Open(filepath.Join(tb.TempDir(), "docbank.db"))
+	s, err := Open(tb.Context(), filepath.Join(tb.TempDir(), "docbank.db"))
 	require.NoError(tb, err)
 	tb.Cleanup(func() { require.NoError(tb, s.Close()) })
 	folder, err := s.Mkdir(tb.Context(), s.RootID(), "Photos")
@@ -76,7 +76,7 @@ func photoXMPAuthority(b *testing.B, s *Store, digest string, on bool) error {
 // BenchmarkPhotoXMPBulkNodeUpdate times a bulk revision bump over 100k non-photo nodes,
 // as trash, tag renames, and tagged-node touches do.
 func BenchmarkPhotoXMPBulkNodeUpdate(b *testing.B) {
-	s, err := Open(filepath.Join(b.TempDir(), "docbank.db"))
+	s, err := Open(b.Context(), filepath.Join(b.TempDir(), "docbank.db"))
 	require.NoError(b, err)
 	b.Cleanup(func() { require.NoError(b, s.Close()) })
 	require.NoError(b, s.withStorageTx(b.Context(), func(tx *sql.Tx) error {

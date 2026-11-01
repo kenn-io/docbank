@@ -39,7 +39,7 @@ import (
 )
 
 func TestProcessingBackfillsRegisterOnceAndPublishPhotoState(t *testing.T) {
-	catalog, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	catalog, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "test.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(t.TempDir(), "blobs"))
@@ -283,7 +283,9 @@ func TestServeRequiresKeyEvenWhenConfigIsKeyless(t *testing.T) {
 
 	// No X-Api-Key at all: any local OS user reaching the loopback port
 	// without a key must be refused, not silently served.
-	resp, err := http.Get("http://" + rec.Address + "/api/v1/nodes/1")
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+rec.Address+"/api/v1/nodes/1", nil)
+	require.NoError(t, err)
+	resp, err := http.DefaultClient.Do(request)
 	require.NoError(t, err)
 	_ = resp.Body.Close()
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
@@ -292,7 +294,7 @@ func TestServeRequiresKeyEvenWhenConfigIsKeyless(t *testing.T) {
 	// user CLI path (runtime record) must be able to use it successfully.
 	key := rec.Metadata["api_key"]
 	require.NotEmpty(t, key, "runtime record must carry the ephemeral api key")
-	req, err := http.NewRequest(http.MethodGet, "http://"+rec.Address+"/api/v1/nodes/1", nil)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+rec.Address+"/api/v1/nodes/1", nil)
 	require.NoError(t, err)
 	req.Header.Set("X-Api-Key", key)
 	resp, err = http.DefaultClient.Do(req)
@@ -341,7 +343,9 @@ func waitForDaemon(t *testing.T, dir string) kitdaemon.RuntimeRecord {
 			return false
 		}
 		rec = recs[0]
-		resp, err := healthClient.Get("http://" + rec.Address + "/health")
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+rec.Address+"/health", nil)
+		require.NoError(t, err)
+		resp, err := healthClient.Do(request)
 		if err != nil {
 			return false
 		}
@@ -355,7 +359,7 @@ func newCheckoutReservationFixture(t *testing.T) (*store.Store, string, string, 
 	t.Helper()
 	layout := home.Layout{Root: t.TempDir()}
 	require.NoError(t, layout.Ensure())
-	catalog, err := store.Open(layout.DBPath())
+	catalog, err := store.Open(t.Context(), layout.DBPath())
 	require.NoError(t, err)
 	node, err := catalog.CreateFile(t.Context(), catalog.RootID(), "photo.jpg", strings.Repeat("a", 64), 20, "image/jpeg")
 	require.NoError(t, err)
@@ -519,7 +523,7 @@ func TestCheckoutBindingValidationPersistsFolderReuseAcrossRestart(t *testing.T)
 	t.Parallel()
 	layout := home.Layout{Root: t.TempDir()}
 	require.NoError(t, layout.Ensure())
-	catalog, err := store.Open(layout.DBPath())
+	catalog, err := store.Open(t.Context(), layout.DBPath())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 	node, err := catalog.CreateFile(t.Context(), catalog.RootID(), "photo.jpg", strings.Repeat("a", 64), 20, "image/jpeg")
@@ -539,7 +543,7 @@ func TestCheckoutBindingValidationPersistsFolderReuseAcrossRestart(t *testing.T)
 	require.NoError(t, check(t.Context(), binding))
 	require.NoError(t, blob.EnsureFilesystemNamespace(destination))
 	require.NoError(t, catalog.Close())
-	catalog, err = store.Open(layout.DBPath())
+	catalog, err = store.Open(t.Context(), layout.DBPath())
 	require.NoError(t, err)
 	check = func(ctx context.Context, binding config.StoreBindingConfig) error {
 		return validateCheckoutBinding(ctx, catalog, binding)

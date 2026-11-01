@@ -59,7 +59,7 @@ func (ing *Ingester) ingestWatchedFile(
 		return result, err
 	}
 	defer func() {
-		retErr = mutationCleanupResult(retErr, ing.cleanupLoose(content.hash))
+		retErr = mutationCleanupResult(retErr, ing.cleanupLoose(ctx, content.hash))
 	}()
 	existing, _, changed, err := ing.Store.SyncWatchedContent(
 		ctx, watchName, sourceRef,
@@ -287,7 +287,7 @@ type Watcher struct {
 	vaultDirs        []fs.FileInfo
 	config           config.WatchConfig
 	excludes         exclusions
-	mutate           func(func() error) error
+	mutate           func(context.Context, func() error) error
 	logger           *slog.Logger
 	now              func() time.Time
 	beforeDescend    func(string)
@@ -304,7 +304,7 @@ type Watcher struct {
 // NewWatcher validates the non-filesystem portion of one watched inbox.
 func NewWatcher(
 	ing *Ingester, vaultRoot string, cfg config.WatchConfig,
-	mutate func(func() error) error, logger *slog.Logger,
+	mutate func(context.Context, func() error) error, logger *slog.Logger,
 ) (*Watcher, error) {
 	if ing == nil || ing.Store == nil || ing.Blobs == nil {
 		return nil, errors.New("watched inbox requires an ingester")
@@ -1067,7 +1067,7 @@ func (w *Watcher) reconcileSourcePresence(ctx context.Context, inventory *watchI
 	}
 	jobs.ReportBusy(ctx, true)
 	defer jobs.ReportBusy(ctx, false)
-	return w.mutate(func() error {
+	return w.mutate(ctx, func() error {
 		return w.ing.Store.ReconcileWatchSourcePresence(ctx, w.config.Name, presence, w.now())
 	})
 }
@@ -1471,7 +1471,7 @@ func (w *Watcher) processObservation(ctx context.Context, source watchSource, st
 		if w.process != nil {
 			err = w.process(ctx, rel, &observation, source.open)
 		} else {
-			err = w.mutate(func() error {
+			err = w.mutate(ctx, func() error {
 				return w.ing.Blobs.WithMutation(ctx, func() error {
 					var writeErr error
 					result, writeErr = w.ing.ingestWatchedFile(

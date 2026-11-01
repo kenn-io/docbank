@@ -180,7 +180,13 @@ func loseNumberedReservationReply(t *testing.T, daemon *httptest.Server,
 	var calls atomic.Int32
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
-		response, err := daemon.Client().Post(daemon.URL+r.URL.Path, "application/json", r.Body)
+		forwarded, err := http.NewRequestWithContext(r.Context(), http.MethodPost, daemon.URL+r.URL.Path, r.Body)
+		if err != nil {
+			replies <- committedReply{err: err}
+			return
+		}
+		forwarded.Header.Set("Content-Type", "application/json")
+		response, err := daemon.Client().Do(forwarded)
 		if err != nil {
 			replies <- committedReply{err: err}
 			return

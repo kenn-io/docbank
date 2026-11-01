@@ -61,7 +61,7 @@ func registerProvenanceRoutes(api huma.API, d Deps, g *gate) {
 			return nil, err
 		}
 		var result *provenanceAppendOutput
-		err = g.mutate(func() error {
+		err = g.mutate(ctx, func() error {
 			appended, appendErr := d.Store.AppendNodeProvenance(ctx, store.ProvenanceAppendInput{
 				NodeID: in.ID, IfRevision: revision, SourceKind: in.Body.SourceKind,
 				SourceDescription: in.Body.SourceDescription, OriginalPath: in.Body.OriginalPath,

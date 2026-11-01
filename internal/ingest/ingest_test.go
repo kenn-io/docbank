@@ -39,7 +39,7 @@ func newTestIngesterWithOptions(t *testing.T, options blob.Options) *Ingester {
 	home := t.TempDir()
 	blobsDir := filepath.Join(home, "blobs")
 	require.NoError(t, os.MkdirAll(filepath.Join(blobsDir, "tmp"), 0o700))
-	s, err := store.Open(filepath.Join(home, "docbank.db"))
+	s, err := store.Open(t.Context(), filepath.Join(home, "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	blobs, err := blob.NewWithOptions(store.NewPackCatalog(s), blobsDir, options)
@@ -452,7 +452,7 @@ func TestDetectMimeUsesNativeWindowsJPEGRegistry(t *testing.T) {
 		t.Skip("native registry proof runs on Windows")
 	}
 	extensionMIME := mime.TypeByExtension(".jpg")
-	registry, err := exec.Command("reg", "query", `HKCR\.jpg`, "/v", "Content Type").CombinedOutput()
+	registry, err := exec.CommandContext(t.Context(), "reg", "query", `HKCR\.jpg`, "/v", "Content Type").CombinedOutput()
 	require.NoError(t, err, string(registry))
 	t.Logf("registry: %s; Go lookup: %s", strings.TrimSpace(string(registry)), extensionMIME)
 	if extensionMIME != "application/jpg" {
@@ -1216,7 +1216,7 @@ func TestRejectedUploadPreservesAuthorityFreeAndRemovesPackedDuplicateLooseFiles
 			bytes.NewReader(content), hash, int64(len(content)),
 		)
 		require.NoError(t, err)
-		require.NoError(t, prepared.Discard())
+		require.NoError(t, prepared.Discard(t.Context()))
 		loose, err := ing.Blobs.List()
 		require.NoError(t, err)
 		assert.Len(t, loose, 1)
@@ -1460,7 +1460,7 @@ func TestEnsureSourceDirRejectsPathOutsideWalkRoot(t *testing.T) {
 		return
 	}
 
-	cmd := exec.Command(os.Args[0], "-test.run=^TestEnsureSourceDirRejectsPathOutsideWalkRoot$", "-test.count=1") //nolint:gosec // os.Args[0] is the trusted current test executable.
+	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestEnsureSourceDirRejectsPathOutsideWalkRoot$", "-test.count=1") //nolint:gosec // os.Args[0] is the trusted current test executable.
 	cmd.Env = append(os.Environ(), childEnv+"=1")
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(output))

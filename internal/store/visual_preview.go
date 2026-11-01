@@ -96,7 +96,7 @@ func (s *Store) publishVisualPreview(
 			return errors.New("visual preview source does not match content version")
 		}
 		if preview.State == document.VisualPreviewReady {
-			if err := s.EnsureBlobTx(tx, preview.Output.BlobSHA256, preview.Output.Size, *physical); err != nil {
+			if err := s.EnsureBlobTx(ctx, tx, preview.Output.BlobSHA256, preview.Output.Size, *physical); err != nil {
 				return fmt.Errorf("recording visual preview output: %w", err)
 			}
 		}

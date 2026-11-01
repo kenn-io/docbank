@@ -25,7 +25,7 @@ func TestNodeViewPinsNodeAndPathAcrossConcurrentTrash(t *testing.T) {
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
-	snapshot, err := nodeByIDTx(tx, node.ID)
+	snapshot, err := nodeByIDTx(t.Context(), tx, node.ID)
 	require.NoError(t, err)
 
 	go func() {

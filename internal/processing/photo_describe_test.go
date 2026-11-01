@@ -66,7 +66,7 @@ func newPhotoDescriptionFixture(t *testing.T) *photoDescriptionFixture {
 	t.Helper()
 	f := &photoDescriptionFixture{reply: `{"caption":"A white panorama.","tags":["panorama","harbor"],"visible_text":"HELLO"}`}
 	ctx := t.Context()
-	catalog, err := store.Open(filepath.Join(t.TempDir(), "vault.db"))
+	catalog, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(t.TempDir(), "blobs"))

@@ -68,7 +68,7 @@ func buildDocbankVersion(tb testing.TB, v string) string {
 				args = append(args, "-ldflags", "-X go.kenn.io/docbank/internal/version.Version="+v)
 			}
 			args = append(args, "-o", bin, "go.kenn.io/docbank/cmd/docbank")
-			cmd := exec.Command("go", args...)
+			cmd := exec.CommandContext(tb.Context(), "go", args...)
 			cmd.Env = append(os.Environ(), "CGO_ENABLED=1")
 			if out, err := cmd.CombinedOutput(); err != nil {
 				return "", fmt.Errorf("build docbank: %w\n%s", err, out)
@@ -99,7 +99,7 @@ func TestLifecycleStartStatusRestartStop(t *testing.T) {
 	env := append(os.Environ(), "DOCBANK_HOME="+dir)
 
 	run := func(args ...string) (string, error) {
-		cmd := exec.Command(bin, args...)
+		cmd := exec.CommandContext(t.Context(), bin, args...)
 		cmd.Env = env
 		out, err := cmd.CombinedOutput()
 		return string(out), err
@@ -148,7 +148,7 @@ func TestDaemonStartDoesNotInitializeRestoreOwnedMissingTarget(t *testing.T) {
 	defer func() { _ = lock.Release() }()
 
 	target := filepath.Join(parent, "docbank.db")
-	cmd := exec.Command(bin, "daemon", "start")
+	cmd := exec.CommandContext(t.Context(), bin, "daemon", "start")
 	cmd.Env = append(os.Environ(), "DOCBANK_HOME="+target)
 	out, err := cmd.CombinedOutput()
 	require.Error(t, err, string(out))
@@ -183,7 +183,7 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	env := append(os.Environ(), "DOCBANK_HOME="+dir)
 
 	run := func(bin string, args ...string) (string, error) {
-		cmd := exec.Command(bin, args...)
+		cmd := exec.CommandContext(t.Context(), bin, args...)
 		cmd.Env = env
 		out, err := cmd.CombinedOutput()
 		return string(out), err
@@ -522,7 +522,7 @@ func TestRestartWhenNotRunningStartsFresh(t *testing.T) {
 	env := append(os.Environ(), "DOCBANK_HOME="+dir)
 
 	run := func(args ...string) (string, error) {
-		cmd := exec.Command(bin, args...)
+		cmd := exec.CommandContext(t.Context(), bin, args...)
 		cmd.Env = env
 		out, err := cmd.CombinedOutput()
 		return string(out), err

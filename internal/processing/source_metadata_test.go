@@ -1385,7 +1385,7 @@ func TestBackfillSourceMetadataPublishesOnlyAfterVerifiedEOF(t *testing.T) {
 func TestSourceMetadataPublishesPhotoTechnicalProjection(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
-	s, err := store.Open(filepath.Join(t.TempDir(), "docbank.db"))
+	s, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	payload := syntheticRichExifTIFF()

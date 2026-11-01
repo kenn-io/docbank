@@ -32,7 +32,7 @@ func TestMailboxContainerSessions(t *testing.T) {
 	require.Equal(t, "sealed", sealed.State)
 	require.Len(t, sealed.Chunks, 1)
 	require.Error(t, s.AbortMailboxContainer(ctx, req.Owner, req.ID))
-	_, err = s.db.Exec(`UPDATE mailbox_containers SET created_at=?`, time.Now().Add(-48*time.Hour).UTC().Format(timestampLayout))
+	_, err = s.db.ExecContext(t.Context(), `UPDATE mailbox_containers SET created_at=?`, time.Now().Add(-48*time.Hour).UTC().Format(timestampLayout))
 	require.NoError(t, err)
 	require.NoError(t, s.CleanupMailboxContainers(ctx))
 	_, err = s.MailboxContainer(ctx, req.Owner, req.ID)
@@ -128,7 +128,7 @@ func TestMailboxContainerQuotaExpiryAndCapacity(t *testing.T) {
 	req.ID = "c"
 	_, err = s.BeginMailboxContainer(ctx, req)
 	require.Error(t, err)
-	_, err = s.db.Exec(`UPDATE mailbox_containers SET created_at=?`, time.Now().Add(-25*time.Hour).UTC().Format(timestampLayout))
+	_, err = s.db.ExecContext(t.Context(), `UPDATE mailbox_containers SET created_at=?`, time.Now().Add(-25*time.Hour).UTC().Format(timestampLayout))
 	require.NoError(t, err)
 	_, err = s.BeginMailboxContainer(ctx, req)
 	require.NoError(t, err)

@@ -47,7 +47,7 @@ func workerFixture(t *testing.T, gate exporter.Gate) (*exporter.Worker, *store.S
 	root := t.TempDir()
 	driver := &contentionDriver{Driver: store.DefaultSQLiteDriver()}
 	path := filepath.Join(root, "vault.db")
-	catalog, err := store.Open(path, driver)
+	catalog, err := store.Open(t.Context(), path, driver)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(root, "blobs"))

@@ -110,7 +110,7 @@ func registerCollectionRoutes(api huma.API, d Deps, g *gate) {
 			return nil, err
 		}
 		var out *collectionLabelOutput
-		err = g.mutate(func() error {
+		err = g.mutate(ctx, func() error {
 			label, setErr := d.Store.SetCollectionLabel(ctx, in.ID, revision, in.Body.Label)
 			if setErr != nil {
 				return FromStoreError(setErr)

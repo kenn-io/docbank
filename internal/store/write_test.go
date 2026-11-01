@@ -37,13 +37,13 @@ func TestCreateFile(t *testing.T) {
 	assert.Equal(t, int64(1), versions[0].NodeRevision)
 	assert.Equal(t, "content_create", versions[0].TransitionKind)
 	require.NoError(t, validateUUIDv4(versions[0].IntroducedOperationID))
-	_, err = s.db.Exec(`UPDATE content_versions SET transition_kind='content_replace' WHERE version_id=?`,
+	_, err = s.db.ExecContext(t.Context(), `UPDATE content_versions SET transition_kind='content_replace' WHERE version_id=?`,
 		f.CurrentVersionID)
 	require.Error(t, err, "revision one must remain the content_create transition")
 
 	// Blob row exists.
 	var size int64
-	require.NoError(t, s.db.QueryRow(
+	require.NoError(t, s.db.QueryRowContext(t.Context(),
 		`SELECT size FROM blobs WHERE hash = ?`, fakeHash("a1")).Scan(&size))
 	assert.Equal(t, int64(1234), size)
 
@@ -57,7 +57,7 @@ func TestCreateFile(t *testing.T) {
 	assert.NotEqual(t, f.CurrentVersionID, copyNode.CurrentVersionID,
 		"deduplicated bytes still belong to distinct document versions")
 	var blobCount int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM blobs`).Scan(&blobCount))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM blobs`).Scan(&blobCount))
 	assert.Equal(t, 1, blobCount)
 }
 
@@ -94,7 +94,7 @@ func TestCurrentVersionMustBelongToItsNode(t *testing.T) {
 	require.NoError(t, err)
 
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		_, updateErr := tx.Exec(`UPDATE nodes SET current_version_id = ? WHERE id = ?`,
+		_, updateErr := tx.ExecContext(t.Context(), `UPDATE nodes SET current_version_id = ? WHERE id = ?`,
 			second.CurrentVersionID, first.ID)
 		return updateErr
 	})
@@ -147,7 +147,7 @@ func TestReplaceContentCreatesImmutableHead(t *testing.T) {
 	assert.Equal(t, replacement.BlobHash, sameVersion.BlobHash)
 	assert.Equal(t, updated.Revision+1, sameBytes.Revision)
 	var blobCount int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM blobs`).Scan(&blobCount))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM blobs`).Scan(&blobCount))
 	assert.Equal(t, 2, blobCount)
 }
 
@@ -175,7 +175,7 @@ func TestReplaceContentRejectsInvalidTargetAndStaleRevision(t *testing.T) {
 	require.Len(t, versions, 1)
 	assert.Equal(t, file.CurrentVersionID, versions[0].ID)
 	var candidateBlobs int
-	require.NoError(t, s.db.QueryRow(
+	require.NoError(t, s.db.QueryRowContext(t.Context(),
 		`SELECT COUNT(*) FROM blobs WHERE hash = ?`, fakeHash("b2")).Scan(&candidateBlobs))
 	assert.Zero(t, candidateBlobs, "failed replacements must not grant blob authority")
 }
@@ -224,7 +224,7 @@ func TestRevertContentCreatesNewHeadFromPriorAuthority(t *testing.T) {
 	assert.Equal(t, replacement.ID, versions[2].ID)
 	assert.Equal(t, created.CurrentVersionID, versions[3].ID)
 	var blobCount int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM blobs`).Scan(&blobCount))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM blobs`).Scan(&blobCount))
 	assert.Equal(t, 2, blobCount, "reversion must not create or copy a blob")
 }
 
@@ -293,7 +293,7 @@ func TestEnsureBlobTxAdoptsVerifiedPrimaryForSecondaryOnlyBlob(t *testing.T) {
 	require.NoError(t, err)
 
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		return s.EnsureBlobTx(tx, hash, 3, BlobPhysical{
+		return s.EnsureBlobTx(t.Context(), tx, hash, 3, BlobPhysical{
 			Encoding: looseEncodingRaw, StoredBytes: 3,
 			PackEligible: true, Created: true,
 		})
@@ -331,7 +331,7 @@ func TestEnsureBlobTxPreservesSecondaryAuthorityForDeduplicatedPrimary(t *testin
 	require.NoError(t, err)
 
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		return s.EnsureBlobTx(tx, hash, 3, BlobPhysical{
+		return s.EnsureBlobTx(t.Context(), tx, hash, 3, BlobPhysical{
 			Encoding: looseEncodingRaw, StoredBytes: 3,
 			PackEligible: true, Created: false,
 		})
@@ -391,14 +391,14 @@ func TestEnsureBlobTxRetiresDeadPackMappingBeforeLooseReingest(t *testing.T) {
 	ctx := t.Context()
 	hash := fakeHash("a5")
 	packID := pack.NewPackID()
-	_, err := s.db.Exec(`
+	_, err := s.db.ExecContext(t.Context(), `
 		INSERT INTO blob_packs(
 			store_id,pack_id,entry_count,stored_bytes,created_at
 		) VALUES(?,?,1,32,?)`,
 		s.primaryStoreID, packID, nowRFC3339(),
 	)
 	require.NoError(t, err)
-	_, err = s.db.Exec(`
+	_, err = s.db.ExecContext(t.Context(), `
 		INSERT INTO blob_pack_entries(
 			blob_hash,store_id,pack_id,pack_offset,stored_len,raw_len,flags,crc32c
 		) VALUES(?,?,?,?,3,3,0,0)`,
@@ -407,14 +407,14 @@ func TestEnsureBlobTxRetiresDeadPackMappingBeforeLooseReingest(t *testing.T) {
 	require.NoError(t, err)
 
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		return s.EnsureBlobTx(tx, hash, 3, BlobPhysical{
+		return s.EnsureBlobTx(t.Context(), tx, hash, 3, BlobPhysical{
 			Encoding: looseEncodingRaw, StoredBytes: 3,
 			PackEligible: true, Created: true,
 		})
 	})
 	require.NoError(t, err)
 	var mappings int
-	require.NoError(t, s.db.QueryRow(`
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `
 		SELECT COUNT(*) FROM blob_pack_entries
 		WHERE blob_hash=? AND store_id=?`,
 		hash, s.primaryStoreID,

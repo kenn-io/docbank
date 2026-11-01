@@ -58,7 +58,7 @@ func newTestServer(tb testing.TB, mutate func(*api.Deps)) (*httptest.Server, *te
 	tb.Helper()
 	dir := tb.TempDir()
 	dbPath := filepath.Join(dir, "docbank.db")
-	s, err := store.Open(dbPath)
+	s, err := store.Open(tb.Context(), dbPath)
 	require.NoError(tb, err)
 	tb.Cleanup(func() { _ = s.Close() })
 	blobsDir := filepath.Join(dir, "blobs")
@@ -131,7 +131,7 @@ func createFileWithContent(t *testing.T, ts *httptest.Server, s *testStore, path
 
 func get(t *testing.T, ts *httptest.Server, path string, hdr map[string]string) (*http.Response, string) {
 	t.Helper()
-	req, err := http.NewRequest(http.MethodGet, ts.URL+path, nil)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, ts.URL+path, nil)
 	require.NoError(t, err)
 	for k, v := range hdr {
 		req.Header.Set(k, v)
@@ -154,7 +154,7 @@ func do(t *testing.T, ts *httptest.Server, method, path string, hdr map[string]s
 		require.NoError(t, err)
 		reader = bytes.NewReader(b)
 	}
-	req, err := http.NewRequest(method, ts.URL+path, reader)
+	req, err := http.NewRequestWithContext(t.Context(), method, ts.URL+path, reader)
 	require.NoError(t, err)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -184,7 +184,7 @@ func try(t *testing.T, ts *httptest.Server, method, path string, hdr map[string]
 		}
 		reader = bytes.NewReader(b)
 	}
-	req, err := http.NewRequest(method, ts.URL+path, reader)
+	req, err := http.NewRequestWithContext(t.Context(), method, ts.URL+path, reader)
 	if err != nil {
 		return nil, "", err
 	}
@@ -391,7 +391,7 @@ func TestWebSessionIsScopedRevocableAndDaemonLocal(t *testing.T) {
 	_, err = s.EnableInitialAudit(t.Context(), plan)
 	require.NoError(t, err)
 
-	req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/daemon/web-session", nil)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+"/api/daemon/web-session", nil)
 	require.NoError(t, err)
 	resp, err := ts.Client().Do(req)
 	require.NoError(t, err)
@@ -413,7 +413,7 @@ func TestWebSessionIsScopedRevocableAndDaemonLocal(t *testing.T) {
 
 	webRequest := func(method, path string) *http.Response {
 		t.Helper()
-		request, requestErr := http.NewRequest(method, ts.URL+path, nil)
+		request, requestErr := http.NewRequestWithContext(t.Context(), method, ts.URL+path, nil)
 		require.NoError(t, requestErr)
 		request.Header["X-Api-Key"] = []string{""}
 		request.Header.Set(api.WebSessionHeader, issued.Token)
@@ -464,7 +464,7 @@ func TestWebSessionIsScopedRevocableAndDaemonLocal(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	require.NoError(t, resp.Body.Close())
 
-	assignTagRequest, err := http.NewRequest(
+	assignTagRequest, err := http.NewRequestWithContext(t.Context(),
 		http.MethodPut,
 		ts.URL+"/api/v1/nodes/"+strconv.FormatInt(document.ID, 10)+
 			"/tags/"+reviewedTag.ID,
@@ -484,7 +484,7 @@ func TestWebSessionIsScopedRevocableAndDaemonLocal(t *testing.T) {
 	assert.Equal(t, reviewedTag.ID, assigned.Tag.ID)
 	document.Revision = assigned.Node.Revision
 
-	unassignTagRequest, err := http.NewRequest(
+	unassignTagRequest, err := http.NewRequestWithContext(t.Context(),
 		http.MethodDelete,
 		ts.URL+"/api/v1/nodes/"+strconv.FormatInt(document.ID, 10)+
 			"/tags/"+reviewedTag.ID,
@@ -504,7 +504,7 @@ func TestWebSessionIsScopedRevocableAndDaemonLocal(t *testing.T) {
 	assert.Equal(t, reviewedTag.ID, unassigned.Tag.ID)
 	document.Revision = unassigned.Node.Revision
 
-	createTagRequest, err := http.NewRequest(
+	createTagRequest, err := http.NewRequestWithContext(t.Context(),
 		http.MethodPost, ts.URL+"/api/v1/tags",
 		strings.NewReader(`{"name":"filing"}`),
 	)
@@ -521,7 +521,7 @@ func TestWebSessionIsScopedRevocableAndDaemonLocal(t *testing.T) {
 	assert.Equal(t, "filing", browserTag.Name)
 	assert.EqualValues(t, 1, browserTag.Revision)
 
-	renameTagRequest, err := http.NewRequest(
+	renameTagRequest, err := http.NewRequestWithContext(t.Context(),
 		http.MethodPatch, ts.URL+"/api/v1/tags/"+browserTag.ID,
 		strings.NewReader(`{"name":"filed"}`),
 	)
@@ -538,7 +538,7 @@ func TestWebSessionIsScopedRevocableAndDaemonLocal(t *testing.T) {
 	assert.Equal(t, "filed", browserTag.Name)
 	assert.EqualValues(t, 2, browserTag.Revision)
 
-	deleteTagRequest, err := http.NewRequest(
+	deleteTagRequest, err := http.NewRequestWithContext(t.Context(),
 		http.MethodDelete, ts.URL+"/api/v1/tags/"+browserTag.ID, nil,
 	)
 	require.NoError(t, err)
@@ -610,7 +610,7 @@ func TestWebSessionIsScopedRevocableAndDaemonLocal(t *testing.T) {
 	}
 	provenanceBody, err := json.Marshal(provenanceRequest)
 	require.NoError(t, err)
-	provenanceHTTP, err := http.NewRequest(
+	provenanceHTTP, err := http.NewRequestWithContext(t.Context(),
 		http.MethodPost,
 		ts.URL+"/api/v1/nodes/"+strconv.FormatInt(document.ID, 10)+"/provenance",
 		bytes.NewReader(provenanceBody),
@@ -627,7 +627,7 @@ func TestWebSessionIsScopedRevocableAndDaemonLocal(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 	assert.Contains(t, string(provenanceResponseBody), `"code":"web_session_read_only"`)
 
-	trashRequest, err := http.NewRequest(
+	trashRequest, err := http.NewRequestWithContext(t.Context(),
 		http.MethodPost,
 		ts.URL+"/api/v1/nodes/"+strconv.FormatInt(document.ID, 10)+"/trash",
 		nil,
@@ -659,7 +659,7 @@ func TestWebSessionIsScopedRevocableAndDaemonLocal(t *testing.T) {
 		"browser sessions cannot use the master API's unbounded trash listing")
 	require.NoError(t, resp.Body.Close())
 
-	restoreRequest, err := http.NewRequest(
+	restoreRequest, err := http.NewRequestWithContext(t.Context(),
 		http.MethodPost,
 		ts.URL+"/api/v1/nodes/"+strconv.FormatInt(document.ID, 10)+"/restore",
 		nil,
@@ -703,7 +703,7 @@ func TestWebSessionIsScopedRevocableAndDaemonLocal(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 
 	other, _ := newTestServer(t, nil)
-	req, err = http.NewRequest(http.MethodGet, other.URL+"/api/v1/path?path=/", nil)
+	req, err = http.NewRequestWithContext(t.Context(), http.MethodGet, other.URL+"/api/v1/path?path=/", nil)
 	require.NoError(t, err)
 	req.Header["X-Api-Key"] = []string{""}
 	req.Header.Set(api.WebSessionHeader, issued.Token)
@@ -728,7 +728,7 @@ func TestWebSessionRequiresEnabledCompiledApplication(t *testing.T) {
 		func(d *api.Deps) { d.WebURL = "" },
 	} {
 		ts, _ := newTestServer(t, mutate)
-		req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/daemon/web-session", nil)
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+"/api/daemon/web-session", nil)
 		require.NoError(t, err)
 		resp, err := ts.Client().Do(req)
 		require.NoError(t, err)
@@ -750,7 +750,7 @@ func TestShutdownRoute(t *testing.T) {
 	ts, _ := newTestServer(t, mutate)
 
 	// No key, no token.
-	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/daemon/shutdown", nil)
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+"/api/daemon/shutdown", nil)
 	req.Header.Set("X-Api-Key", "")
 	resp, err := ts.Client().Do(req)
 	require.NoError(t, err)
@@ -759,7 +759,7 @@ func TestShutdownRoute(t *testing.T) {
 
 	// Correct key, but no token: authMiddleware passes it through, the
 	// shutdown handler itself rejects it.
-	req, _ = http.NewRequest(http.MethodPost, ts.URL+"/api/daemon/shutdown", nil)
+	req, _ = http.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+"/api/daemon/shutdown", nil)
 	req.Header.Set("X-Api-Key", testAPIKey)
 	resp, err = ts.Client().Do(req)
 	require.NoError(t, err)
@@ -768,7 +768,7 @@ func TestShutdownRoute(t *testing.T) {
 
 	// Correct token, but no key: authMiddleware rejects it before the
 	// shutdown handler ever sees the token.
-	req, _ = http.NewRequest(http.MethodPost, ts.URL+"/api/daemon/shutdown", nil)
+	req, _ = http.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+"/api/daemon/shutdown", nil)
 	req.Header.Set("X-Api-Key", "")
 	req.Header.Set("X-Docbank-Daemon-Token", "tok")
 	resp, err = ts.Client().Do(req)
@@ -777,7 +777,7 @@ func TestShutdownRoute(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 
 	// Both correct: succeeds.
-	req, _ = http.NewRequest(http.MethodPost, ts.URL+"/api/daemon/shutdown", nil)
+	req, _ = http.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+"/api/daemon/shutdown", nil)
 	req.Header.Set("X-Api-Key", testAPIKey)
 	req.Header.Set("X-Docbank-Daemon-Token", "tok")
 	resp, err = ts.Client().Do(req)

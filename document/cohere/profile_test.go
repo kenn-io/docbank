@@ -111,7 +111,7 @@ func TestNewReplacesCallerHTTPAuthority(t *testing.T) {
 	assert.NotSame(t, ambient, client.http.Transport)
 	assert.Nil(t, client.http.Jar)
 	assert.Zero(t, client.http.Timeout)
-	request, err := http.NewRequest(http.MethodGet, "https://example.com", nil)
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://example.com", nil)
 	require.NoError(t, err)
 	require.ErrorIs(t, client.http.CheckRedirect(request, nil), http.ErrUseLastResponse)
 }

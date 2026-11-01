@@ -85,37 +85,37 @@ func TestMailboxCheckpointFailureRollsBackMessageAndReceipt(t *testing.T) {
 	require.NoError(t, s.StartMailboxOccurrence(ctx, j.ID, j.Claim, o))
 	p := MailboxTransferPublication{Owner: c.Owner, Request: MailboxTransferRequest{ArchiveID: "mailbox:" + j.CollectionID, Reference: "0:1", SHA256: c.SHA256, Size: c.Size, Settings: settings, DestinationID: s.RootID(), Name: "message.eml"}, Email: f.publication, Location: &location}
 	var before int
-	require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM nodes`).Scan(&before))
-	_, err = s.db.Exec(`CREATE TRIGGER fail_mailbox_checkpoint BEFORE UPDATE ON mailbox_jobs BEGIN SELECT RAISE(ABORT,'synthetic checkpoint rollback'); END`)
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT count(*) FROM nodes`).Scan(&before))
+	_, err = s.db.ExecContext(t.Context(), `CREATE TRIGGER fail_mailbox_checkpoint BEFORE UPDATE ON mailbox_jobs BEGIN SELECT RAISE(ABORT,'synthetic checkpoint rollback'); END`)
 	require.NoError(t, err)
 	require.Error(t, s.CommitMailboxOccurrence(ctx, j.ID, j.Claim, o, &p))
 	var after, receipts int
-	require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM nodes`).Scan(&after))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT count(*) FROM nodes`).Scan(&after))
 	require.Equal(t, before, after)
-	require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM mailbox_transfer_receipts`).Scan(&receipts))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT count(*) FROM mailbox_transfer_receipts`).Scan(&receipts))
 	require.Zero(t, receipts)
 	unchanged, err := s.MailboxJob(ctx, c.Owner, j.ID)
 	require.NoError(t, err)
 	require.Zero(t, unchanged.Checkpoint)
 	require.Equal(t, int64(1), unchanged.Pending)
-	_, err = s.db.Exec(`DROP TRIGGER fail_mailbox_checkpoint`)
+	_, err = s.db.ExecContext(t.Context(), `DROP TRIGGER fail_mailbox_checkpoint`)
 	require.NoError(t, err)
 	require.NoError(t, s.CommitMailboxOccurrence(ctx, j.ID, j.Claim, o, &p))
 	require.NoError(t, s.ValidateMetadata(ctx))
 	var original []byte
-	require.NoError(t, s.db.QueryRow(`SELECT occurrence_json FROM mailbox_occurrences WHERE job_id=?`, j.ID).Scan(&original))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT occurrence_json FROM mailbox_occurrences WHERE job_id=?`, j.ID).Scan(&original))
 	var changed MailboxOccurrence
 	require.NoError(t, json.Unmarshal(original, &changed))
 	changed.Location.RawSHA256 = fakeHash("ab")
 	raw, err := json.Marshal(changed)
 	require.NoError(t, err)
-	_, err = s.db.Exec(`UPDATE mailbox_occurrences SET occurrence_json=? WHERE job_id=?`, raw, j.ID)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE mailbox_occurrences SET occurrence_json=? WHERE job_id=?`, raw, j.ID)
 	require.NoError(t, err)
 	require.Error(t, s.ValidateMetadata(ctx), "occurrence and transfer location must agree exactly")
-	_, err = s.db.Exec(`UPDATE mailbox_occurrences SET occurrence_json=? WHERE job_id=?`, original, j.ID)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE mailbox_occurrences SET occurrence_json=? WHERE job_id=?`, original, j.ID)
 	require.NoError(t, err)
 	var originalReceipt []byte
-	require.NoError(t, s.db.QueryRow(`SELECT receipt_json FROM mailbox_transfer_receipts`).Scan(&originalReceipt))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT receipt_json FROM mailbox_transfer_receipts`).Scan(&originalReceipt))
 	for _, field := range []string{"hash", "size"} {
 		t.Run("emitted_"+field, func(t *testing.T) {
 			var receipt MailboxTransferReceipt
@@ -131,16 +131,16 @@ func TestMailboxCheckpointFailureRollsBackMessageAndReceipt(t *testing.T) {
 			require.NoError(t, marshalErr)
 			rawReceipt, marshalErr := json.Marshal(receipt)
 			require.NoError(t, marshalErr)
-			_, updateErr := s.db.Exec(`UPDATE mailbox_occurrences SET occurrence_json=? WHERE job_id=?`, rawOccurrence, j.ID)
+			_, updateErr := s.db.ExecContext(t.Context(), `UPDATE mailbox_occurrences SET occurrence_json=? WHERE job_id=?`, rawOccurrence, j.ID)
 			require.NoError(t, updateErr)
-			_, updateErr = s.db.Exec(`UPDATE mailbox_transfer_receipts SET receipt_json=?`, rawReceipt)
+			_, updateErr = s.db.ExecContext(t.Context(), `UPDATE mailbox_transfer_receipts SET receipt_json=?`, rawReceipt)
 			require.NoError(t, updateErr)
 			require.Error(t, s.ValidateMetadata(ctx), "matching locations must still identify the retained EML target")
 		})
 	}
-	_, err = s.db.Exec(`UPDATE mailbox_occurrences SET occurrence_json=? WHERE job_id=?`, original, j.ID)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE mailbox_occurrences SET occurrence_json=? WHERE job_id=?`, original, j.ID)
 	require.NoError(t, err)
-	_, err = s.db.Exec(`UPDATE mailbox_transfer_receipts SET receipt_json=?`, originalReceipt)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE mailbox_transfer_receipts SET receipt_json=?`, originalReceipt)
 	require.NoError(t, err)
 	require.NoError(t, s.ValidateMetadata(ctx))
 }

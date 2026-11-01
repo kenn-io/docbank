@@ -65,23 +65,23 @@ func TestOpenCutsOverReleasedV090ThroughJSONL(t *testing.T) {
 			dbPath := filepath.Join(t.TempDir(), "docbank.db")
 			fixture := createV090Fixture(t, dbPath, test.driver)
 
-			s, err := Open(dbPath, test.driver)
+			s, err := Open(t.Context(), dbPath, test.driver)
 			require.NoError(t, err)
 			var schemaVersion int
-			require.NoError(t, s.db.QueryRow(`
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `
 				SELECT schema_version FROM vault_metadata WHERE singleton = 1`).Scan(&schemaVersion))
 			assert.Equal(t, currentStorageSchemaVersion, schemaVersion)
 			var collectionLabels int
-			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM collection_labels`).Scan(&collectionLabels))
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM collection_labels`).Scan(&collectionLabels))
 			assert.Zero(t, collectionLabels, "released metadata predates collection labels")
 			var preflights int
-			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM package_preflights`).Scan(&preflights))
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM package_preflights`).Scan(&preflights))
 			assert.Zero(t, preflights)
 			var upgraded bytes.Buffer
 			require.NoError(t, s.ExportMetadata(t.Context(), &upgraded))
 			assertReleasedMetadataWithEmptyLexicalHead(t, fixture.metadata, upgraded.Bytes())
 			var provenance, bindings, eventState int
-			require.NoError(t, s.db.QueryRow(`SELECT
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT
 				(SELECT COUNT(*) FROM provenance),
 				(SELECT COUNT(*) FROM provenance_version_bindings),
 				(SELECT COUNT(*) FROM document_event_state)`).Scan(
@@ -104,12 +104,12 @@ func TestOpenCutsOverReleasedV090ThroughJSONL(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, "packed", packed.Kind)
 			var restoredPackID string
-			require.NoError(t, s.db.QueryRow(`
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `
 				SELECT pack_id FROM blob_pack_entries WHERE blob_hash = ?`,
 				fixture.packedHash).Scan(&restoredPackID))
 			assert.Equal(t, fixture.packID, restoredPackID)
 			var deadLiveEntries int64
-			require.NoError(t, s.db.QueryRow(`
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `
 				SELECT live_entries FROM blob_packs WHERE pack_id = ?`,
 				fixture.deadPackID).Scan(&deadLiveEntries))
 			assert.Zero(t, deadLiveEntries, "dead v0.9.0 pack inventory is preserved")
@@ -120,13 +120,13 @@ func TestOpenCutsOverReleasedV090ThroughJSONL(t *testing.T) {
 				Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred,
 			})
 			require.NoError(t, err)
-			columns, err := tableColumns(backup, "blobs")
+			columns, err := queryTableColumns(t.Context(), backup, "blobs")
 			require.NoError(t, err)
 			assert.Equal(t, []string{"created_at", "hash", "size"}, columns,
 				"the retained recovery database stays in the released schema")
 			require.NoError(t, backup.Close())
 
-			reopened, err := Open(dbPath, test.driver)
+			reopened, err := Open(t.Context(), dbPath, test.driver)
 			require.NoError(t, err)
 			require.NoError(t, reopened.Close())
 		})
@@ -149,20 +149,20 @@ func TestUpgradeLegacyPlainTextCutsOverServingAuthority(t *testing.T) {
 				Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
 			})
 			require.NoError(t, err)
-			result, err := db.Exec(`INSERT INTO extracted_text(
+			result, err := db.ExecContext(t.Context(), `INSERT INTO extracted_text(
 				blob_hash,extractor,extractor_version,status,error,attempts,text,extracted_at
 			) VALUES(?, 'plain-text', 1, 'ok', NULL, 1, ?, ?)`,
 				fixture.looseHash, legacyText, legacyMigrationTimestamp)
 			require.NoError(t, err)
 			rowID, err := result.LastInsertId()
 			require.NoError(t, err)
-			_, err = db.Exec(`INSERT INTO content_fts(rowid,blob_hash,extractor,text)
+			_, err = db.ExecContext(t.Context(), `INSERT INTO content_fts(rowid,blob_hash,extractor,text)
 				VALUES(?,?,'plain-text',?)`, rowID, fixture.looseHash, legacyText)
 			require.NoError(t, err)
-			_, err = db.Exec(`INSERT INTO text_searchable_versions(version_id) VALUES(?)`, legacyVersion)
+			_, err = db.ExecContext(t.Context(), `INSERT INTO text_searchable_versions(version_id) VALUES(?)`, legacyVersion)
 			require.NoError(t, err)
 			var oldTextName string
-			require.NoError(t, db.QueryRow(`
+			require.NoError(t, db.QueryRowContext(t.Context(), `
 				SELECT n.name FROM content_fts
 				JOIN content_versions v ON v.blob_hash=content_fts.blob_hash
 				JOIN nodes n ON n.current_version_id=v.version_id
@@ -172,7 +172,7 @@ func TestUpgradeLegacyPlainTextCutsOverServingAuthority(t *testing.T) {
 			assert.Equal(t, "loose.txt", oldTextName)
 			require.NoError(t, db.Close())
 
-			s, err := Open(dbPath, test.driver)
+			s, err := Open(t.Context(), dbPath, test.driver)
 			require.NoError(t, err)
 			textHits, _, err := s.SearchPage(t.Context(), "heritage-token", 20)
 			require.NoError(t, err)
@@ -186,14 +186,14 @@ func TestUpgradeLegacyPlainTextCutsOverServingAuthority(t *testing.T) {
 			assert.Equal(t, SearchMatchName, nameHits[0].Match)
 
 			var builds, heads, legacyFTS int
-			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_builds`).Scan(&builds))
-			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_heads`).Scan(&heads))
-			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM content_fts`).Scan(&legacyFTS))
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM rendition_builds`).Scan(&builds))
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM rendition_heads`).Scan(&heads))
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM content_fts`).Scan(&legacyFTS))
 			assert.Equal(t, 1, builds)
 			assert.Equal(t, 1, heads)
 			assert.Zero(t, legacyFTS, "published current database serves only rendition authority")
 			var unitID, text string
-			require.NoError(t, s.db.QueryRow(`
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `
 				SELECT u.evidence_unit_id,l.text FROM rendition_units u
 				JOIN rendition_lexical_segments l USING(build_id)
 			`).Scan(&unitID, &text))
@@ -206,7 +206,7 @@ func TestUpgradeLegacyPlainTextCutsOverServingAuthority(t *testing.T) {
 			})
 			require.NoError(t, err)
 			var retainedText string
-			require.NoError(t, backup.QueryRow(`
+			require.NoError(t, backup.QueryRowContext(t.Context(), `
 				SELECT text FROM extracted_text
 				WHERE blob_hash=? AND extractor='plain-text'`, fixture.looseHash,
 			).Scan(&retainedText))
@@ -220,11 +220,11 @@ func TestFreshStoresRecordCurrentStorageSchemaVersion(t *testing.T) {
 	t.Parallel()
 	for _, test := range v090UpgradeDrivers() {
 		t.Run(test.name, func(t *testing.T) {
-			s, err := Open(filepath.Join(t.TempDir(), "docbank.db"), test.driver)
+			s, err := Open(t.Context(), filepath.Join(t.TempDir(), "docbank.db"), test.driver)
 			require.NoError(t, err)
 			defer func() { require.NoError(t, s.Close()) }()
 			var version int
-			require.NoError(t, s.db.QueryRow(`
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `
 				SELECT schema_version FROM vault_metadata WHERE singleton = 1`).Scan(&version))
 			assert.Equal(t, currentStorageSchemaVersion, version)
 		})
@@ -237,11 +237,11 @@ func TestUpgradeReleasedSchemaCreatesEmptySavedQueryRunAuthority(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			dbPath := filepath.Join(t.TempDir(), "docbank.db")
 			createV090Fixture(t, dbPath, test.driver)
-			s, err := Open(dbPath, test.driver)
+			s, err := Open(t.Context(), dbPath, test.driver)
 			require.NoError(t, err)
 			defer func() { require.NoError(t, s.Close()) }()
 			var count int
-			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM saved_query_runs`).Scan(&count))
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM saved_query_runs`).Scan(&count))
 			assert.Zero(t, count)
 		})
 	}
@@ -253,7 +253,7 @@ func TestUpgradeReleasedSchemasCreateEmptyPhotoAuthority(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			dbPath := filepath.Join(t.TempDir(), "docbank.db")
 			createV090Fixture(t, dbPath, test.driver)
-			s, err := Open(dbPath, test.driver)
+			s, err := Open(t.Context(), dbPath, test.driver)
 			require.NoError(t, err)
 			defer func() { require.NoError(t, s.Close()) }()
 			for _, table := range []string{
@@ -261,7 +261,7 @@ func TestUpgradeReleasedSchemasCreateEmptyPhotoAuthority(t *testing.T) {
 				"photo_technical_metadata", "photo_checkouts", "photo_checkout_entries",
 			} {
 				var count int
-				require.NoError(t, s.db.QueryRow("SELECT COUNT(*) FROM "+table).Scan(&count), table)
+				require.NoError(t, s.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM "+table).Scan(&count), table)
 				assert.Zero(t, count, table)
 			}
 		})
@@ -273,18 +273,18 @@ func TestOpenRejectsUnreleasedSchemaWithoutCutover(t *testing.T) {
 	for _, test := range v090UpgradeDrivers() {
 		t.Run(test.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "docbank.db")
-			s, err := Open(path, test.driver)
+			s, err := Open(t.Context(), path, test.driver)
 			require.NoError(t, err)
-			_, err = s.db.Exec(`DROP TABLE provenance_version_bindings`)
+			_, err = s.db.ExecContext(t.Context(), `DROP TABLE provenance_version_bindings`)
 			require.NoError(t, err)
 			unreleased := photoBurstStorageSchemaVersion
 			for slices.Contains(releasedStorageSchemaVersions, unreleased) {
 				unreleased--
 			}
-			_, err = s.db.Exec(`UPDATE vault_metadata SET schema_version=? WHERE singleton=1`, unreleased)
+			_, err = s.db.ExecContext(t.Context(), `UPDATE vault_metadata SET schema_version=? WHERE singleton=1`, unreleased)
 			require.NoError(t, err)
 			require.NoError(t, s.Close())
-			reopened, err := Open(path, test.driver)
+			reopened, err := Open(t.Context(), path, test.driver)
 			if reopened != nil {
 				require.NoError(t, reopened.Close())
 			}
@@ -303,12 +303,12 @@ func TestOpenRejectsCurrentDatabaseWithoutPhotoXMPInputs(t *testing.T) {
 		for _, driver := range v090UpgradeDrivers() {
 			t.Run(object.name+"/"+driver.name, func(t *testing.T) {
 				path := filepath.Join(t.TempDir(), "docbank.db")
-				s, err := Open(path, driver.driver)
+				s, err := Open(t.Context(), path, driver.driver)
 				require.NoError(t, err)
-				_, err = s.db.Exec("DROP " + object.kind + " " + object.name)
+				_, err = s.db.ExecContext(t.Context(), "DROP "+object.kind+" "+object.name)
 				require.NoError(t, err)
 				require.NoError(t, s.Close())
-				reopened, err := Open(path, driver.driver)
+				reopened, err := Open(t.Context(), path, driver.driver)
 				if reopened != nil {
 					require.NoError(t, reopened.Close())
 				}
@@ -323,7 +323,7 @@ func TestOpenRejectsCurrentDatabaseWithoutProvenanceVersionBindings(t *testing.T
 	for _, test := range v090UpgradeDrivers() {
 		t.Run(test.name, func(t *testing.T) {
 			dbPath := filepath.Join(t.TempDir(), "docbank.db")
-			s, err := Open(dbPath, test.driver)
+			s, err := Open(t.Context(), dbPath, test.driver)
 			require.NoError(t, err)
 			require.NoError(t, s.Close())
 
@@ -331,11 +331,11 @@ func TestOpenRejectsCurrentDatabaseWithoutProvenanceVersionBindings(t *testing.T
 				Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
 			})
 			require.NoError(t, err)
-			_, err = db.Exec(`DROP TABLE provenance_version_bindings`)
+			_, err = db.ExecContext(t.Context(), `DROP TABLE provenance_version_bindings`)
 			require.NoError(t, err)
 			require.NoError(t, db.Close())
 
-			reopened, err := Open(dbPath, test.driver)
+			reopened, err := Open(t.Context(), dbPath, test.driver)
 			if reopened != nil {
 				require.NoError(t, reopened.Close())
 			}
@@ -349,7 +349,7 @@ func TestOpenRejectsCurrentDatabaseWithoutPersonAuthority(t *testing.T) {
 	for _, test := range v090UpgradeDrivers() {
 		t.Run(test.name, func(t *testing.T) {
 			dbPath := filepath.Join(t.TempDir(), "docbank.db")
-			s, err := Open(dbPath, test.driver)
+			s, err := Open(t.Context(), dbPath, test.driver)
 			require.NoError(t, err)
 			require.NoError(t, s.Close())
 
@@ -357,11 +357,11 @@ func TestOpenRejectsCurrentDatabaseWithoutPersonAuthority(t *testing.T) {
 				Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
 			})
 			require.NoError(t, err)
-			_, err = db.Exec(`DROP TABLE persons`)
+			_, err = db.ExecContext(t.Context(), `DROP TABLE persons`)
 			require.NoError(t, err)
 			require.NoError(t, db.Close())
 
-			reopened, err := Open(dbPath, test.driver)
+			reopened, err := Open(t.Context(), dbPath, test.driver)
 			if reopened != nil {
 				require.NoError(t, reopened.Close())
 			}
@@ -376,12 +376,12 @@ func TestOpenRejectsInvalidPackagePreflightLayout(t *testing.T) {
 		for _, change := range []string{"DROP TABLE package_preflights", "ALTER TABLE package_preflights DROP COLUMN source_ref"} {
 			t.Run(driver.name+"/"+change, func(t *testing.T) {
 				dbPath := filepath.Join(t.TempDir(), "docbank.db")
-				s, err := Open(dbPath, driver.driver)
+				s, err := Open(t.Context(), dbPath, driver.driver)
 				require.NoError(t, err)
-				_, err = s.db.Exec(change)
+				_, err = s.db.ExecContext(t.Context(), change)
 				require.NoError(t, err)
 				require.NoError(t, s.Close())
-				reopened, err := Open(dbPath, driver.driver)
+				reopened, err := Open(t.Context(), dbPath, driver.driver)
 				if reopened != nil {
 					require.NoError(t, reopened.Close())
 				}
@@ -397,12 +397,12 @@ func TestOpenRejectsInvalidTermReportHistoryLayout(t *testing.T) {
 		for _, change := range []string{"DROP TABLE term_report_history", "ALTER TABLE term_report_history DROP COLUMN parent_id"} {
 			t.Run(driver.name+"/"+change, func(t *testing.T) {
 				dbPath := filepath.Join(t.TempDir(), "docbank.db")
-				s, err := Open(dbPath, driver.driver)
+				s, err := Open(t.Context(), dbPath, driver.driver)
 				require.NoError(t, err)
-				_, err = s.db.Exec(change)
+				_, err = s.db.ExecContext(t.Context(), change)
 				require.NoError(t, err)
 				require.NoError(t, s.Close())
-				reopened, err := Open(dbPath, driver.driver)
+				reopened, err := Open(t.Context(), dbPath, driver.driver)
 				if reopened != nil {
 					require.NoError(t, reopened.Close())
 				}
@@ -424,7 +424,7 @@ func TestOpenRejectsCurrentDatabaseWithoutAttributionTables(t *testing.T) {
 		for _, test := range v090UpgradeDrivers() {
 			t.Run(table+"/"+test.name, func(t *testing.T) {
 				dbPath := filepath.Join(t.TempDir(), "docbank.db")
-				s, err := Open(dbPath, test.driver)
+				s, err := Open(t.Context(), dbPath, test.driver)
 				require.NoError(t, err)
 				require.NoError(t, s.Close())
 
@@ -432,11 +432,11 @@ func TestOpenRejectsCurrentDatabaseWithoutAttributionTables(t *testing.T) {
 					Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
 				})
 				require.NoError(t, err)
-				_, err = db.Exec("DROP TABLE " + table)
+				_, err = db.ExecContext(t.Context(), "DROP TABLE "+table)
 				require.NoError(t, err)
 				require.NoError(t, db.Close())
 
-				reopened, err := Open(dbPath, test.driver)
+				reopened, err := Open(t.Context(), dbPath, test.driver)
 				if reopened != nil {
 					require.NoError(t, reopened.Close())
 				}
@@ -460,11 +460,11 @@ func TestOpenAcceptsCurrentSchemaColumnAddedToEmbeddedSchema(t *testing.T) { //n
 			schemaSQL = schema
 
 			dbPath := filepath.Join(t.TempDir(), "docbank.db")
-			s, err := Open(dbPath, test.driver)
+			s, err := Open(t.Context(), dbPath, test.driver)
 			require.NoError(t, err)
 			require.NoError(t, s.Close())
 
-			reopened, err := Open(dbPath, test.driver)
+			reopened, err := Open(t.Context(), dbPath, test.driver)
 			require.NoError(t, err)
 			require.NoError(t, reopened.Close())
 		})
@@ -477,10 +477,10 @@ func TestCanonicalCurrentSchemaDerivationDoesNotCacheErrors(t *testing.T) { //no
 	schemaSQL = schemaSQLWithAddedColumn(t, originalSchema, "blobs", "synthetic_derivation_retry_269")
 	driver := &flakySchemaDriver{Driver: DefaultSQLiteDriver()}
 
-	_, err := canonicalCurrentSchemaColumns(driver)
+	_, err := canonicalCurrentSchemaColumns(t.Context(), driver)
 	require.ErrorContains(t, err, "synthetic derivation failure")
 
-	columns, err := canonicalCurrentSchemaColumns(driver)
+	columns, err := canonicalCurrentSchemaColumns(t.Context(), driver)
 	require.NoError(t, err)
 	assert.Contains(t, columns["blobs"], "synthetic_derivation_retry_269")
 }
@@ -492,11 +492,11 @@ func TestCanonicalCurrentSchemaDerivationSeparatesSameNamedDrivers(t *testing.T)
 	plain := &schemaVariantDriver{Driver: base}
 	variant := &schemaVariantDriver{Driver: base, extraColumn: extraColumn}
 
-	columns, err := canonicalCurrentSchemaColumns(plain)
+	columns, err := canonicalCurrentSchemaColumns(t.Context(), plain)
 	require.NoError(t, err)
 	assert.NotContains(t, columns["blobs"], extraColumn)
 
-	columns, err = canonicalCurrentSchemaColumns(variant)
+	columns, err = canonicalCurrentSchemaColumns(t.Context(), variant)
 	require.NoError(t, err)
 	assert.Contains(t, columns["blobs"], extraColumn)
 }
@@ -526,7 +526,8 @@ func (d *schemaVariantDriver) Open(path string, opts docsqlite.OpenOptions) (*sq
 	if err != nil || d.extraColumn == "" || opts.Access != docsqlite.Create {
 		return db, err
 	}
-	if _, err := db.Exec(schemaSQL + "\nALTER TABLE blobs ADD COLUMN " + d.extraColumn + " TEXT"); err != nil {
+	// docsqlite.Driver.Open has no context parameter.
+	if _, err := db.ExecContext(context.Background(), schemaSQL+"\nALTER TABLE blobs ADD COLUMN "+d.extraColumn+" TEXT"); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -569,7 +570,7 @@ func TestOpenRejectsCurrentDatabaseWithForeignColumn(t *testing.T) {
 		for _, test := range v090UpgradeDrivers() {
 			t.Run(table.name+"/"+test.name, func(t *testing.T) {
 				dbPath := filepath.Join(t.TempDir(), "docbank.db")
-				s, err := Open(dbPath, test.driver)
+				s, err := Open(t.Context(), dbPath, test.driver)
 				require.NoError(t, err)
 				require.NoError(t, s.Close())
 
@@ -577,11 +578,11 @@ func TestOpenRejectsCurrentDatabaseWithForeignColumn(t *testing.T) {
 					Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
 				})
 				require.NoError(t, err)
-				_, err = db.Exec(`ALTER TABLE ` + table.name + ` ADD COLUMN synthetic_unexpected_269 TEXT`)
+				_, err = db.ExecContext(t.Context(), `ALTER TABLE `+table.name+` ADD COLUMN synthetic_unexpected_269 TEXT`)
 				require.NoError(t, err)
 				require.NoError(t, db.Close())
 
-				_, err = Open(dbPath, test.driver)
+				_, err = Open(t.Context(), dbPath, test.driver)
 				require.ErrorContains(t, err, table.expected)
 			})
 		}
@@ -601,7 +602,7 @@ func TestOpenRejectsCurrentDatabaseWithMissingExtendedTableColumn(t *testing.T) 
 		for _, test := range v090UpgradeDrivers() {
 			t.Run(table.name+"/"+test.name, func(t *testing.T) {
 				dbPath := filepath.Join(t.TempDir(), "docbank.db")
-				s, err := Open(dbPath, test.driver)
+				s, err := Open(t.Context(), dbPath, test.driver)
 				require.NoError(t, err)
 				require.NoError(t, s.Close())
 
@@ -609,11 +610,11 @@ func TestOpenRejectsCurrentDatabaseWithMissingExtendedTableColumn(t *testing.T) 
 					Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
 				})
 				require.NoError(t, err)
-				_, err = db.Exec(`ALTER TABLE ` + table.name + ` DROP COLUMN ` + table.column)
+				_, err = db.ExecContext(t.Context(), `ALTER TABLE `+table.name+` DROP COLUMN `+table.column)
 				require.NoError(t, err)
 				require.NoError(t, db.Close())
 
-				_, err = Open(dbPath, test.driver)
+				_, err = Open(t.Context(), dbPath, test.driver)
 				require.ErrorContains(t, err, "has an unexpected "+table.name+" layout")
 			})
 		}
@@ -635,7 +636,7 @@ func TestOpenCutsOverEveryReleasedSchemaV2LayoutThroughJSONL(t *testing.T) {
 				dbPath := filepath.Join(t.TempDir(), "docbank.db")
 				fixture := createV2Fixture(t, dbPath, driver.driver, layout.addition)
 
-				s, err := Open(dbPath, driver.driver)
+				s, err := Open(t.Context(), dbPath, driver.driver)
 				require.NoError(t, err)
 				var upgraded bytes.Buffer
 				require.NoError(t, s.ExportMetadata(t.Context(), &upgraded))
@@ -665,7 +666,7 @@ func TestOpenCutsOverEveryReleasedSchemaV2LayoutThroughJSONL(t *testing.T) {
 				require.ErrorIs(t, err, ErrPhysicalAuthorityMissing)
 
 				var storeID string
-				require.NoError(t, s.db.QueryRow(`
+				require.NoError(t, s.db.QueryRowContext(t.Context(), `
 					SELECT store_id FROM blob_pack_entries WHERE blob_hash = ?`,
 					fixture.packedHash).Scan(&storeID))
 				assert.Equal(t, primary.ID, storeID)
@@ -676,7 +677,7 @@ func TestOpenCutsOverEveryReleasedSchemaV2LayoutThroughJSONL(t *testing.T) {
 					Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred,
 				})
 				require.NoError(t, err)
-				kind, err := classifyDatabaseSchema(driver.driver, backup)
+				kind, err := classifyDatabaseSchema(t.Context(), driver.driver, backup)
 				require.NoError(t, err)
 				assert.Equal(t, 2, kind.version)
 				assert.NotNil(t, kind.source)
@@ -693,19 +694,19 @@ func TestOpenCutsOverReleasedSchemaV3ThroughJSONL(t *testing.T) {
 			dbPath := filepath.Join(t.TempDir(), "docbank.db")
 			fixture := createV3Fixture(t, dbPath, test.driver)
 
-			s, err := Open(dbPath, test.driver)
+			s, err := Open(t.Context(), dbPath, test.driver)
 			require.NoError(t, err)
 			var schemaVersion int
-			require.NoError(t, s.db.QueryRow(`
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `
 				SELECT schema_version FROM vault_metadata WHERE singleton=1`).Scan(&schemaVersion))
 			assert.Equal(t, currentStorageSchemaVersion, schemaVersion)
 			var upgraded bytes.Buffer
 			require.NoError(t, s.ExportMetadata(t.Context(), &upgraded))
 			assert.Equal(t, fixture.metadata, upgraded.Bytes())
 			var stores, locations int
-			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM blob_stores
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM blob_stores
 				WHERE store_id IN (?,?)`, fixture.primaryStoreID, fixture.secondaryStoreID).Scan(&stores))
-			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM blob_locations
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM blob_locations
 				WHERE blob_hash=? AND store_id IN (?,?)`, fixture.blobHash,
 				fixture.primaryStoreID, fixture.secondaryStoreID).Scan(&locations))
 			assert.Equal(t, 2, stores)
@@ -716,7 +717,7 @@ func TestOpenCutsOverReleasedSchemaV3ThroughJSONL(t *testing.T) {
 				Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred,
 			})
 			require.NoError(t, err)
-			kind, err := classifyDatabaseSchema(test.driver, backup)
+			kind, err := classifyDatabaseSchema(t.Context(), test.driver, backup)
 			require.NoError(t, err)
 			assert.Equal(t, 3, kind.version)
 			assert.NotNil(t, kind.source)
@@ -752,7 +753,7 @@ func seedV3Evacuation(t *testing.T, path string, driver docsqlite.Driver, fixtur
 		{`INSERT INTO storage_operation_cleanup(operation_id,store_id,loose_hash) VALUES(?,?,?)`,
 			[]any{operationID, fixture.secondaryStoreID, fixture.blobHash}},
 	} {
-		_, err := db.Exec(statement.query, statement.args...)
+		_, err := db.ExecContext(t.Context(), statement.query, statement.args...)
 		require.NoError(t, err)
 	}
 	require.NoError(t, db.Close())
@@ -783,7 +784,7 @@ func TestUpgradeReleasedSchemaV3KeepsStorageOperations(t *testing.T) {
 			require.NoError(t, source.Close())
 			require.Equal(t, 4, strings.Count(released, "\n"))
 
-			s, err := Open(dbPath, test.driver)
+			s, err := Open(t.Context(), dbPath, test.driver)
 			require.NoError(t, err)
 			defer func() { require.NoError(t, s.Close()) }()
 			assert.Equal(t, released, dumpReleasedStorageOperations(t, s.db))
@@ -806,13 +807,13 @@ func TestOpenRejectsChangedReleasedSchemaV3StorageOperations(t *testing.T) {
 				Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
 			})
 			require.NoError(t, err)
-			_, err = db.Exec(`ALTER TABLE storage_operations ADD COLUMN unexpected TEXT`)
+			_, err = db.ExecContext(t.Context(), `ALTER TABLE storage_operations ADD COLUMN unexpected TEXT`)
 			require.NoError(t, err)
 			require.NoError(t, db.Close())
 			before, err := os.ReadFile(dbPath)
 			require.NoError(t, err)
 
-			s, err := Open(dbPath, test.driver)
+			s, err := Open(t.Context(), dbPath, test.driver)
 			if s != nil {
 				require.NoError(t, s.Close())
 			}
@@ -846,31 +847,31 @@ func TestUpgradeReleasedV014MigratesPlainText(t *testing.T) {
 			require.NoError(t, err)
 			tx, err := db.BeginTx(t.Context(), nil)
 			require.NoError(t, err)
-			_, err = tx.Exec(`INSERT INTO nodes(
+			_, err = tx.ExecContext(t.Context(), `INSERT INTO nodes(
 				id,parent_id,name,kind,current_version_id,revision,created_at,modified_at
 			) VALUES(2,1,'released.txt','file',?,1,?,?)`, versionID, timestamp, timestamp)
 			require.NoError(t, err)
-			_, err = tx.Exec(`INSERT INTO content_versions(
+			_, err = tx.ExecContext(t.Context(), `INSERT INTO content_versions(
 				version_id,node_id,blob_hash,size,mime_type,recorded_at,node_revision,
 				introduced_operation_id,transition_kind
 			) VALUES(?,2,?,17,'text/plain',?,1,?,'content_create')`,
 				versionID, fixture.blobHash, timestamp, operation)
 			require.NoError(t, err)
-			result, err := tx.Exec(`INSERT INTO extracted_text(
+			result, err := tx.ExecContext(t.Context(), `INSERT INTO extracted_text(
 				blob_hash,extractor,extractor_version,status,error,attempts,text,extracted_at
 			) VALUES(?,'plain-text',1,'ok',NULL,1,?,?)`, fixture.blobHash, text, timestamp)
 			require.NoError(t, err)
 			rowID, err := result.LastInsertId()
 			require.NoError(t, err)
-			_, err = tx.Exec(`INSERT INTO content_fts(rowid,blob_hash,extractor,text)
+			_, err = tx.ExecContext(t.Context(), `INSERT INTO content_fts(rowid,blob_hash,extractor,text)
 				VALUES(?,?,'plain-text',?)`, rowID, fixture.blobHash, text)
 			require.NoError(t, err)
-			_, err = tx.Exec(`INSERT INTO text_searchable_versions(version_id) VALUES(?)`, versionID)
+			_, err = tx.ExecContext(t.Context(), `INSERT INTO text_searchable_versions(version_id) VALUES(?)`, versionID)
 			require.NoError(t, err)
 			require.NoError(t, tx.Commit())
 			require.NoError(t, db.Close())
 
-			s, err := Open(dbPath, test.driver)
+			s, err := Open(t.Context(), dbPath, test.driver)
 			require.NoError(t, err)
 			hits, _, err := s.SearchPage(t.Context(), text, 20)
 			require.NoError(t, err)
@@ -878,8 +879,8 @@ func TestUpgradeReleasedV014MigratesPlainText(t *testing.T) {
 			assert.Equal(t, "/released.txt", hits[0].Path)
 			assert.Equal(t, SearchMatchContent, hits[0].Match)
 			var heads, legacyFTS int
-			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_heads`).Scan(&heads))
-			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM content_fts`).Scan(&legacyFTS))
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM rendition_heads`).Scan(&heads))
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM content_fts`).Scan(&legacyFTS))
 			assert.Equal(t, 1, heads)
 			assert.Zero(t, legacyFTS)
 			require.NoError(t, s.Close())
@@ -889,7 +890,7 @@ func TestUpgradeReleasedV014MigratesPlainText(t *testing.T) {
 			})
 			require.NoError(t, err)
 			var retained string
-			require.NoError(t, backup.QueryRow(`
+			require.NoError(t, backup.QueryRowContext(t.Context(), `
 				SELECT text FROM extracted_text
 				WHERE blob_hash=? AND extractor='plain-text'`, fixture.blobHash,
 			).Scan(&retained))
@@ -918,12 +919,12 @@ func TestUpgradeEveryReleasedSchemaV2LayoutMigratesLegacyPlainText(t *testing.T)
 				const legacyText = "schema-v2-heritage Cafe\u0301\r\nexact bytes"
 				addV2LegacyPlainText(t, dbPath, driver.driver, fixture.rawHash, legacyText)
 
-				s, err := Open(dbPath, driver.driver)
+				s, err := Open(t.Context(), dbPath, driver.driver)
 				require.NoError(t, err)
 				var builds, heads, legacyFTS int
-				require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_builds`).Scan(&builds))
-				require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_heads`).Scan(&heads))
-				require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM content_fts`).Scan(&legacyFTS))
+				require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM rendition_builds`).Scan(&builds))
+				require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM rendition_heads`).Scan(&heads))
+				require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM content_fts`).Scan(&legacyFTS))
 				assert.Equal(t, 1, builds)
 				assert.Equal(t, 1, heads)
 				assert.Zero(t, legacyFTS)
@@ -938,7 +939,7 @@ func TestUpgradeEveryReleasedSchemaV2LayoutMigratesLegacyPlainText(t *testing.T)
 				})
 				require.NoError(t, err)
 				var retained string
-				require.NoError(t, backup.QueryRow(`
+				require.NoError(t, backup.QueryRowContext(t.Context(), `
 					SELECT text FROM extracted_text
 					WHERE blob_hash=? AND extractor='plain-text'`, fixture.rawHash,
 				).Scan(&retained))
@@ -954,7 +955,7 @@ func TestOpenRejectsDatabaseFromNewerStorageSchema(t *testing.T) {
 	for _, test := range v090UpgradeDrivers() {
 		t.Run(test.name, func(t *testing.T) {
 			dbPath := filepath.Join(t.TempDir(), "docbank.db")
-			s, err := Open(dbPath, test.driver)
+			s, err := Open(t.Context(), dbPath, test.driver)
 			require.NoError(t, err)
 			require.NoError(t, s.Close())
 
@@ -962,12 +963,12 @@ func TestOpenRejectsDatabaseFromNewerStorageSchema(t *testing.T) {
 				Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
 			})
 			require.NoError(t, err)
-			_, err = db.Exec(`UPDATE vault_metadata SET schema_version = ? WHERE singleton = 1`,
+			_, err = db.ExecContext(t.Context(), `UPDATE vault_metadata SET schema_version = ? WHERE singleton = 1`,
 				currentStorageSchemaVersion+1)
 			require.NoError(t, err)
 			require.NoError(t, db.Close())
 
-			_, err = Open(dbPath, test.driver)
+			_, err = Open(t.Context(), dbPath, test.driver)
 			require.ErrorContains(t, err, "is newer than binary schema")
 		})
 	}
@@ -978,7 +979,7 @@ func TestCurrentSchemaFencesReleasedV090Binary(t *testing.T) {
 	for _, test := range v090UpgradeDrivers() {
 		t.Run(test.name, func(t *testing.T) {
 			dbPath := filepath.Join(t.TempDir(), "docbank.db")
-			s, err := Open(dbPath, test.driver)
+			s, err := Open(t.Context(), dbPath, test.driver)
 			require.NoError(t, err)
 			require.NoError(t, s.Close())
 
@@ -986,10 +987,10 @@ func TestCurrentSchemaFencesReleasedV090Binary(t *testing.T) {
 				Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
 			})
 			require.NoError(t, err)
-			_, err = db.Exec(schemaV090SQL)
+			_, err = db.ExecContext(t.Context(), schemaV090SQL)
 			require.NoError(t, err, "the released bootstrap applies its idempotent schema first")
 			var vaultID string
-			err = db.QueryRow(`SELECT vault_id FROM vault_metadata WHERE singleton = 1`).Scan(&vaultID)
+			err = db.QueryRowContext(t.Context(), `SELECT vault_id FROM vault_metadata WHERE singleton = 1`).Scan(&vaultID)
 			require.ErrorContains(t, err, "no such column", "the released mandatory startup read must fail")
 			require.NoError(t, db.Close())
 		})
@@ -1001,12 +1002,12 @@ func TestReleasedRecoveryCopyDoesNotResurrectDeletedVault(t *testing.T) {
 	driver := DefaultSQLiteDriver()
 	dbPath := filepath.Join(t.TempDir(), "docbank.db")
 	createV090Fixture(t, dbPath, driver)
-	s, err := Open(dbPath, driver)
+	s, err := Open(t.Context(), dbPath, driver)
 	require.NoError(t, err)
 	require.NoError(t, s.Close())
 	require.NoError(t, os.Remove(dbPath))
 
-	_, err = Open(dbPath, driver)
+	_, err = Open(t.Context(), dbPath, driver)
 	require.ErrorContains(t, err, "refusing to resurrect an old vault")
 	_, statErr := os.Stat(dbPath)
 	require.ErrorIs(t, statErr, os.ErrNotExist)
@@ -1023,14 +1024,14 @@ func TestOpenCompletesInterruptedReleasedCutover(t *testing.T) {
 	stagePath := upgradeStagePath(dbPath, sourceSchema.version)
 	jsonlPath := upgradeJSONLPath(dbPath, sourceSchema.version)
 
-	source, err := openReleasedSource(dbPath, driver, sourceSchema)
+	source, err := openReleasedSource(t.Context(), dbPath, driver, sourceSchema)
 	require.NoError(t, err)
 	snapshot, err := source.BeginTx(t.Context(), &sql.TxOptions{ReadOnly: true})
 	require.NoError(t, err)
-	require.NoError(t, writeUpgradeJSONL(snapshot, jsonlPath, sourceSchema))
-	target, err := openCurrentStore(stagePath, driver, nil)
+	require.NoError(t, writeUpgradeJSONL(t.Context(), snapshot, jsonlPath, sourceSchema))
+	target, err := openCurrentStore(t.Context(), stagePath, driver, nil)
 	require.NoError(t, err)
-	require.NoError(t, importUpgradeJSONL(target, jsonlPath, sourceSchema))
+	require.NoError(t, importUpgradeJSONL(t.Context(), target, jsonlPath, sourceSchema))
 	require.NoError(t, sourceSchema.restoreSourceState(t.Context(), snapshot, target))
 	require.NoError(t, target.ValidateMetadata(t.Context()))
 	require.NoError(t, target.Checkpoint(t.Context()))
@@ -1040,7 +1041,7 @@ func TestOpenCompletesInterruptedReleasedCutover(t *testing.T) {
 	require.NoError(t, os.Remove(jsonlPath))
 	require.NoError(t, os.Rename(dbPath, dbPath+sourceSchema.backupSuffix))
 
-	recovered, err := Open(dbPath, driver)
+	recovered, err := Open(t.Context(), dbPath, driver)
 	require.NoError(t, err)
 	var metadata bytes.Buffer
 	require.NoError(t, recovered.ExportMetadata(t.Context(), &metadata))
@@ -1066,25 +1067,25 @@ func TestInterruptedUpgradeStageMigratesLegacyBeforePublication(t *testing.T) {
 			stagePath := upgradeStagePath(dbPath, sourceSchema.version)
 			jsonlPath := upgradeJSONLPath(dbPath, sourceSchema.version)
 
-			source, err := openReleasedSource(dbPath, test.driver, sourceSchema)
+			source, err := openReleasedSource(t.Context(), dbPath, test.driver, sourceSchema)
 			require.NoError(t, err)
 			snapshot, err := source.BeginTx(t.Context(), &sql.TxOptions{ReadOnly: true})
 			require.NoError(t, err)
-			require.NoError(t, writeUpgradeJSONL(snapshot, jsonlPath, sourceSchema))
-			target, err := openCurrentStore(stagePath, test.driver, nil)
+			require.NoError(t, writeUpgradeJSONL(t.Context(), snapshot, jsonlPath, sourceSchema))
+			target, err := openCurrentStore(t.Context(), stagePath, test.driver, nil)
 			require.NoError(t, err)
-			require.NoError(t, importUpgradeJSONL(target, jsonlPath, sourceSchema))
+			require.NoError(t, importUpgradeJSONL(t.Context(), target, jsonlPath, sourceSchema))
 			require.NoError(t, sourceSchema.restoreSourceState(t.Context(), snapshot, target))
 			require.NoError(t, target.Close())
 			require.NoError(t, snapshot.Rollback())
 			require.NoError(t, source.Close())
 
-			require.NoError(t, validateUpgradeStage(stagePath, test.driver))
-			stage, err := openCurrentStore(stagePath, test.driver, nil)
+			require.NoError(t, validateUpgradeStage(t.Context(), stagePath, test.driver))
+			stage, err := openCurrentStore(t.Context(), stagePath, test.driver, nil)
 			require.NoError(t, err)
 			var heads, legacyFTS int
-			require.NoError(t, stage.db.QueryRow(`SELECT COUNT(*) FROM rendition_heads`).Scan(&heads))
-			require.NoError(t, stage.db.QueryRow(`SELECT COUNT(*) FROM content_fts`).Scan(&legacyFTS))
+			require.NoError(t, stage.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM rendition_heads`).Scan(&heads))
+			require.NoError(t, stage.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM content_fts`).Scan(&legacyFTS))
 			assert.Equal(t, 1, heads)
 			assert.Zero(t, legacyFTS)
 			hits, _, err := stage.SearchPage(t.Context(), "interrupted-stage-heritage", 20)
@@ -1109,7 +1110,7 @@ func TestInvalidStageRestoresSourceBeforeRemovingRecoveryMarker(t *testing.T) { 
 	removeInvalidUpgradeStage = func(string) error {
 		return errors.New("injected invalid-stage cleanup failure")
 	}
-	_, err := Open(dbPath, driver)
+	_, err := Open(t.Context(), dbPath, driver)
 	require.ErrorContains(t, err, "injected invalid-stage cleanup failure")
 	_, err = os.Stat(dbPath)
 	require.NoError(t, err, "the released source is authoritative before marker cleanup")
@@ -1119,7 +1120,7 @@ func TestInvalidStageRestoresSourceBeforeRemovingRecoveryMarker(t *testing.T) { 
 	require.ErrorIs(t, err, os.ErrNotExist)
 
 	removeInvalidUpgradeStage = originalRemove
-	recovered, err := Open(dbPath, driver)
+	recovered, err := Open(t.Context(), dbPath, driver)
 	require.NoError(t, err)
 	require.NoError(t, recovered.Close())
 }
@@ -1139,13 +1140,13 @@ func TestV090CutoverPublicationFailureRestoresReleasedDatabase(t *testing.T) { /
 		return originalRename(oldPath, newPath)
 	}
 
-	_, err := Open(dbPath, driver)
+	_, err := Open(t.Context(), dbPath, driver)
 	require.ErrorContains(t, err, "injected upgraded-database publication failure")
 	db, err := driver.Open(dbPath, docsqlite.OpenOptions{
 		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred,
 	})
 	require.NoError(t, err)
-	kind, err := classifyDatabaseSchema(driver, db)
+	kind, err := classifyDatabaseSchema(t.Context(), driver, db)
 	require.NoError(t, err)
 	assert.Equal(t, 1, kind.version, "the released source is restored after publication fails")
 	assert.NotNil(t, kind.source)
@@ -1154,7 +1155,7 @@ func TestV090CutoverPublicationFailureRestoresReleasedDatabase(t *testing.T) { /
 	require.ErrorIs(t, err, os.ErrNotExist)
 
 	renameUpgradeFile = originalRename
-	s, err := Open(dbPath, driver)
+	s, err := Open(t.Context(), dbPath, driver)
 	require.NoError(t, err)
 	require.NoError(t, s.Close())
 }
@@ -1165,11 +1166,11 @@ func createV090Fixture(t *testing.T, path string, driver docsqlite.Driver) v090F
 		Access: docsqlite.Create, TransactionMode: docsqlite.Immediate,
 	})
 	require.NoError(t, err)
-	_, err = db.Exec(schemaV090SQL)
+	_, err = db.ExecContext(t.Context(), schemaV090SQL)
 	require.NoError(t, err)
 	tx, err := db.BeginTx(t.Context(), nil)
 	require.NoError(t, err)
-	_, err = tx.Exec(`PRAGMA defer_foreign_keys = ON`)
+	_, err = tx.ExecContext(t.Context(), `PRAGMA defer_foreign_keys = ON`)
 	require.NoError(t, err)
 	const (
 		timestamp    = "2026-07-19T12:00:00.000000000Z"
@@ -1232,7 +1233,7 @@ func createV090Fixture(t *testing.T, path string, driver docsqlite.Driver) v090F
 			[]any{danglingHash, deadPackID, pack.MinEntryOffset}},
 	}
 	for _, statement := range statements {
-		_, err := tx.Exec(statement.query, statement.args...)
+		_, err := tx.ExecContext(t.Context(), statement.query, statement.args...)
 		require.NoError(t, err)
 	}
 	require.NoError(t, tx.Commit())
@@ -1257,16 +1258,16 @@ func addV090LegacyPlainText(
 		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
 	})
 	require.NoError(t, err)
-	result, err := db.Exec(`INSERT INTO extracted_text(
+	result, err := db.ExecContext(t.Context(), `INSERT INTO extracted_text(
 		blob_hash,extractor,extractor_version,status,error,attempts,text,extracted_at
 	) VALUES(?,'plain-text',1,'ok',NULL,1,?,?)`, blobHash, text, legacyMigrationTimestamp)
 	require.NoError(t, err)
 	rowID, err := result.LastInsertId()
 	require.NoError(t, err)
-	_, err = db.Exec(`INSERT INTO content_fts(rowid,blob_hash,extractor,text)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO content_fts(rowid,blob_hash,extractor,text)
 		VALUES(?,?,'plain-text',?)`, rowID, blobHash, text)
 	require.NoError(t, err)
-	_, err = db.Exec(`INSERT INTO text_searchable_versions(version_id)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO text_searchable_versions(version_id)
 		VALUES('20000000-0000-4000-8000-000000000001')`)
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
@@ -1280,17 +1281,17 @@ func createV2Fixture(
 		Access: docsqlite.Create, TransactionMode: docsqlite.Immediate,
 	})
 	require.NoError(t, err)
-	_, err = db.Exec(schemaV090SQL)
+	_, err = db.ExecContext(t.Context(), schemaV090SQL)
 	require.NoError(t, err)
-	_, err = db.Exec(schemaV0100PhysicalSQL)
+	_, err = db.ExecContext(t.Context(), schemaV0100PhysicalSQL)
 	require.NoError(t, err)
 	if layoutAddition != "" {
-		_, err = db.Exec(layoutAddition)
+		_, err = db.ExecContext(t.Context(), layoutAddition)
 		require.NoError(t, err)
 	}
 	tx, err := db.BeginTx(t.Context(), nil)
 	require.NoError(t, err)
-	_, err = tx.Exec(`PRAGMA defer_foreign_keys = ON`)
+	_, err = tx.ExecContext(t.Context(), `PRAGMA defer_foreign_keys = ON`)
 	require.NoError(t, err)
 	const (
 		timestamp   = "2026-07-19T12:00:00.000000000Z"
@@ -1325,7 +1326,7 @@ func createV2Fixture(
 			[]any{packedHash, packID, pack.MinEntryOffset}},
 	}
 	for _, statement := range statements {
-		_, err := tx.Exec(statement.query, statement.args...)
+		_, err := tx.ExecContext(t.Context(), statement.query, statement.args...)
 		require.NoError(t, err)
 	}
 	require.NoError(t, tx.Commit())
@@ -1348,7 +1349,7 @@ func createV3Fixture(t *testing.T, path string, driver docsqlite.Driver) v3Fixtu
 		Access: docsqlite.Create, TransactionMode: docsqlite.Immediate,
 	})
 	require.NoError(t, err)
-	_, err = db.Exec(schemaV0140SQL)
+	_, err = db.ExecContext(t.Context(), schemaV0140SQL)
 	require.NoError(t, err)
 	const (
 		timestamp        = "2026-08-16T12:00:00.000000000Z"
@@ -1359,7 +1360,7 @@ func createV3Fixture(t *testing.T, path string, driver docsqlite.Driver) v3Fixtu
 	)
 	tx, err := db.BeginTx(t.Context(), nil)
 	require.NoError(t, err)
-	_, err = tx.Exec(`PRAGMA defer_foreign_keys=ON`)
+	_, err = tx.ExecContext(t.Context(), `PRAGMA defer_foreign_keys=ON`)
 	require.NoError(t, err)
 	statements := []struct {
 		query string
@@ -1381,7 +1382,7 @@ func createV3Fixture(t *testing.T, path string, driver docsqlite.Driver) v3Fixtu
 			VALUES(?,?,'2','loose','raw',17,0)`, []any{blobHash, secondaryStoreID}},
 	}
 	for _, statement := range statements {
-		_, err = tx.Exec(statement.query, statement.args...)
+		_, err = tx.ExecContext(t.Context(), statement.query, statement.args...)
 		require.NoError(t, err)
 	}
 	require.NoError(t, tx.Commit())
@@ -1412,28 +1413,28 @@ func addV2LegacyPlainText(
 	)
 	tx, err := db.BeginTx(t.Context(), nil)
 	require.NoError(t, err)
-	_, err = tx.Exec(`PRAGMA defer_foreign_keys = ON`)
+	_, err = tx.ExecContext(t.Context(), `PRAGMA defer_foreign_keys = ON`)
 	require.NoError(t, err)
-	_, err = tx.Exec(`INSERT INTO nodes(id,parent_id,name,kind,current_version_id,revision,
+	_, err = tx.ExecContext(t.Context(), `INSERT INTO nodes(id,parent_id,name,kind,current_version_id,revision,
 		created_at,modified_at) VALUES(2,1,'raw.txt','file',?,1,?,?)`,
 		versionID, timestamp, timestamp)
 	require.NoError(t, err)
-	_, err = tx.Exec(`INSERT INTO content_versions(
+	_, err = tx.ExecContext(t.Context(), `INSERT INTO content_versions(
 		version_id,node_id,blob_hash,size,mime_type,recorded_at,node_revision,
 		introduced_operation_id,transition_kind
 	) VALUES(?,2,?,5,'text/plain',?,1,?,'content_create')`,
 		versionID, blobHash, timestamp, operation)
 	require.NoError(t, err)
-	result, err := tx.Exec(`INSERT INTO extracted_text(
+	result, err := tx.ExecContext(t.Context(), `INSERT INTO extracted_text(
 		blob_hash,extractor,extractor_version,status,error,attempts,text,extracted_at
 	) VALUES(?,'plain-text',1,'ok',NULL,1,?,?)`, blobHash, text, timestamp)
 	require.NoError(t, err)
 	rowID, err := result.LastInsertId()
 	require.NoError(t, err)
-	_, err = tx.Exec(`INSERT INTO content_fts(rowid,blob_hash,extractor,text)
+	_, err = tx.ExecContext(t.Context(), `INSERT INTO content_fts(rowid,blob_hash,extractor,text)
 		VALUES(?,?,'plain-text',?)`, rowID, blobHash, text)
 	require.NoError(t, err)
-	_, err = tx.Exec(`INSERT INTO text_searchable_versions(version_id) VALUES(?)`, versionID)
+	_, err = tx.ExecContext(t.Context(), `INSERT INTO text_searchable_versions(version_id) VALUES(?)`, versionID)
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 	require.NoError(t, db.Close())
@@ -1508,12 +1509,12 @@ func TestOpenRejectsIncompleteVectorIndexSchema(t *testing.T) {
 	for _, driver := range v090UpgradeDrivers() {
 		t.Run(driver.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "docbank.db")
-			s, err := Open(path, driver.driver)
+			s, err := Open(t.Context(), path, driver.driver)
 			require.NoError(t, err)
-			_, err = s.db.Exec(`DROP TABLE vector_index_unavailable_coverage`)
+			_, err = s.db.ExecContext(t.Context(), `DROP TABLE vector_index_unavailable_coverage`)
 			require.NoError(t, err)
 			require.NoError(t, s.Close())
-			reopened, err := Open(path, driver.driver)
+			reopened, err := Open(t.Context(), path, driver.driver)
 			if reopened != nil {
 				require.NoError(t, reopened.Close())
 			}
@@ -1527,16 +1528,16 @@ func TestVectorIndexSchemaHasDistinctVersion(t *testing.T) {
 	for _, driver := range v090UpgradeDrivers() {
 		t.Run(driver.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "docbank.db")
-			s, err := Open(path, driver.driver)
+			s, err := Open(t.Context(), path, driver.driver)
 			require.NoError(t, err)
 			var version int
-			require.NoError(t, s.db.QueryRow(`SELECT schema_version FROM vault_metadata WHERE singleton=1`).Scan(&version))
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT schema_version FROM vault_metadata WHERE singleton=1`).Scan(&version))
 			require.Greater(t, version, 5, "vector indexes must be distinguishable from the parent embedding layout")
 			// Schema 5 was never released and has no supported on-disk upgrade path.
-			_, err = s.db.Exec(`UPDATE vault_metadata SET schema_version=5 WHERE singleton=1`)
+			_, err = s.db.ExecContext(t.Context(), `UPDATE vault_metadata SET schema_version=5 WHERE singleton=1`)
 			require.NoError(t, err)
 			require.NoError(t, s.Close())
-			reopened, err := Open(path, driver.driver)
+			reopened, err := Open(t.Context(), path, driver.driver)
 			if reopened != nil {
 				require.NoError(t, reopened.Close())
 			}

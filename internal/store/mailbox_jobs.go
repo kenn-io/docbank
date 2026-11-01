@@ -53,9 +53,9 @@ func normalizeMailboxSettings(s MailboxSettings) (MailboxSettings, error) {
 	return s, nil
 }
 
-func validateMailboxLabelTagsTx(tx *sql.Tx, tags map[string]string) error {
+func validateMailboxLabelTagsTx(ctx context.Context, tx *sql.Tx, tags map[string]string) error {
 	for label, id := range tags {
-		if _, err := tagByIDTx(tx, id); err != nil {
+		if _, err := tagByIDTx(ctx, tx, id); err != nil {
 			return fmt.Errorf("mailbox label %q: %w", label, err)
 		}
 	}
@@ -292,10 +292,10 @@ func (s *Store) BeginMailboxJob(ctx context.Context, owner string, r MailboxJobR
 		if c.State != mailboxContainerSealed || c.SHA256 != r.ContainerSHA256 {
 			return ErrMailboxConflict
 		}
-		if _, err = liveDirTx(tx, r.Settings.DestinationID); err != nil {
+		if _, err = liveDirTx(ctx, tx, r.Settings.DestinationID); err != nil {
 			return err
 		}
-		if err = validateMailboxLabelTagsTx(tx, r.Settings.LabelTags); err != nil {
+		if err = validateMailboxLabelTagsTx(ctx, tx, r.Settings.LabelTags); err != nil {
 			return err
 		}
 		if err = mailboxJobQuota(ctx, tx, owner); err != nil {
@@ -388,7 +388,7 @@ func (s *Store) ResumeMailboxJob(ctx context.Context, owner string, r MailboxJob
 		if !reflect.DeepEqual(j.MailboxJobRequest, r) || j.ScannedTail || r.Settings.ValidateExecution() != nil {
 			return ErrMailboxConflict
 		}
-		if err = validateMailboxLabelTagsTx(tx, r.Settings.LabelTags); err != nil {
+		if err = validateMailboxLabelTagsTx(ctx, tx, r.Settings.LabelTags); err != nil {
 			return err
 		}
 		if j.State == mailboxJobQueued || j.State == mailboxJobRunning {

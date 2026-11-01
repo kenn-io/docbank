@@ -127,7 +127,7 @@ func TestPackAdoptionClearsLooseAuthority(t *testing.T) {
 	}, physical)
 	var kind string
 	var encoding any
-	require.NoError(t, s.db.QueryRow(`
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `
 		SELECT kind, encoding FROM blob_locations
 		WHERE blob_hash = ? AND store_id = ?`,
 		hash.String(), s.primaryStoreID).Scan(&kind, &encoding))
@@ -342,7 +342,7 @@ func (h *docbankPackHarness) SetMember(hash packstore.Hash, member bool) {
 	h.t.Helper()
 	if member {
 		err := h.store.withStorageTx(h.t.Context(), func(tx *sql.Tx) error {
-			return h.store.EnsureBlobTx(tx, hash.String(), 13, BlobPhysical{
+			return h.store.EnsureBlobTx(h.t.Context(), tx, hash.String(), 13, BlobPhysical{
 				Encoding: looseEncodingRaw, StoredBytes: 13, PackEligible: true,
 				Created: true,
 			})
@@ -350,16 +350,16 @@ func (h *docbankPackHarness) SetMember(hash packstore.Hash, member bool) {
 		require.NoError(h.t, err)
 		return
 	}
-	_, err := h.store.db.Exec(`DELETE FROM blobs WHERE hash = ?`, hash.String())
+	_, err := h.store.db.ExecContext(h.t.Context(), `DELETE FROM blobs WHERE hash = ?`, hash.String())
 	require.NoError(h.t, err)
 }
 
 func (h *docbankPackHarness) SetCandidate(candidate packstore.Candidate) {
 	h.t.Helper()
-	_, err := h.store.db.Exec(`UPDATE blobs SET size = ? WHERE hash = ?`,
+	_, err := h.store.db.ExecContext(h.t.Context(), `UPDATE blobs SET size = ? WHERE hash = ?`,
 		candidate.Size, candidate.Hash.String())
 	require.NoError(h.t, err)
-	_, err = h.store.db.Exec(`
+	_, err = h.store.db.ExecContext(h.t.Context(), `
 		UPDATE blob_locations
 		SET stored_size = ?, pack_eligible = CASE WHEN ? <= ? THEN 1 ELSE 0 END
 		WHERE blob_hash = ? AND store_id = ?`,

@@ -34,14 +34,14 @@ func (s *Store) moveAuditedTx(
 		return snapshot.priorSubtree[id], nil
 	}
 	moved, err := s.moveAtTx(
-		tx, id, newParentID, normalizedName, ifRev, snapshot.recordedAt,
+		ctx, tx, id, newParentID, normalizedName, ifRev, snapshot.recordedAt,
 	)
 	if err != nil {
 		return Node{}, err
 	}
 	resultingNodes := make(map[int64]Node, len(snapshot.priorNodes))
 	for nodeID := range snapshot.priorNodes {
-		node, err := nodeByIDTx(tx, nodeID)
+		node, err := nodeByIDTx(ctx, tx, nodeID)
 		if err != nil {
 			return Node{}, err
 		}
@@ -50,7 +50,7 @@ func (s *Store) moveAuditedTx(
 	resultingSubtree := make(map[int64]Node, len(snapshot.subtreeIDs))
 	resultingPaths := make(map[int64]string, len(snapshot.subtreeIDs))
 	for _, nodeID := range snapshot.subtreeIDs {
-		node, err := nodeByIDTx(tx, nodeID)
+		node, err := nodeByIDTx(ctx, tx, nodeID)
 		if err != nil {
 			return Node{}, err
 		}
@@ -79,7 +79,7 @@ func (s *Store) prepareAuditedMove(
 	if err != nil {
 		return snapshot, "", false, err
 	}
-	moved, err := nodeByIDTx(tx, id)
+	moved, err := nodeByIDTx(ctx, tx, id)
 	if err != nil {
 		return snapshot, "", false, err
 	}
@@ -91,10 +91,10 @@ func (s *Store) prepareAuditedMove(
 			"node %d at revision %d, expected %d: %w", id, moved.Revision, ifRev, ErrStaleRevision,
 		)
 	}
-	if _, err := liveDirTx(tx, newParentID); err != nil {
+	if _, err := liveDirTx(ctx, tx, newParentID); err != nil {
 		return snapshot, "", false, err
 	}
-	inCycle, err := isAncestorTx(tx, id, newParentID)
+	inCycle, err := isAncestorTx(ctx, tx, id, newParentID)
 	if err != nil {
 		return snapshot, "", false, err
 	}
@@ -160,7 +160,7 @@ func (s *Store) prepareAuditedMove(
 		if !member {
 			return snapshot, "", false, unsupportedAuditedNodeMutation(nodeID)
 		}
-		node, err := nodeByIDTx(tx, nodeID)
+		node, err := nodeByIDTx(ctx, tx, nodeID)
 		if err != nil {
 			return snapshot, "", false, err
 		}
@@ -177,7 +177,7 @@ func (s *Store) prepareAuditedMove(
 	slices.Sort(directIDs)
 	priorNodes := make(map[int64]Node, len(directIDs))
 	for _, nodeID := range directIDs {
-		node, err := nodeByIDTx(tx, nodeID)
+		node, err := nodeByIDTx(ctx, tx, nodeID)
 		if err != nil {
 			return snapshot, "", false, err
 		}

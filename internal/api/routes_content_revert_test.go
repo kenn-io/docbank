@@ -22,7 +22,7 @@ func postContentRevert(
 	t.Helper()
 	body, err := json.Marshal(map[string]string{"source_version_id": sourceVersionID})
 	require.NoError(t, err)
-	req, err := http.NewRequest(http.MethodPost,
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost,
 		fmt.Sprintf("%s/api/v1/nodes/%d/revert", tsURL, nodeID), bytes.NewReader(body))
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
@@ -73,7 +73,9 @@ func TestContentRevertAdoptsPackedPriorVersionWithoutCopyingBlob(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, beforeStats, afterStats, "reversion must not copy loose or packed bytes")
 
-	currentResp, err := ts.Client().Get(fmt.Sprintf("%s/api/v1/nodes/%d/content", ts.URL, created.ID))
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("%s/api/v1/nodes/%d/content", ts.URL, created.ID), nil)
+	require.NoError(t, err)
+	currentResp, err := ts.Client().Do(request)
 	require.NoError(t, err)
 	current, err := io.ReadAll(currentResp.Body)
 	require.NoError(t, err)

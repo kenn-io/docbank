@@ -35,7 +35,7 @@ func TestAuditedTrashRecordsSubtreeAndRoundTrips(t *testing.T) {
 	require.NoError(t, s.ValidateMetadata(t.Context()))
 
 	var raw []byte
-	require.NoError(t, s.db.QueryRow(
+	require.NoError(t, s.db.QueryRowContext(t.Context(),
 		`SELECT record_json FROM audit_records WHERE kind='path_effect_list'`,
 	).Scan(&raw))
 	effectList, err := audit.UnmarshalJSONRecord(raw)
@@ -54,7 +54,7 @@ func TestAuditedTrashRecordsSubtreeAndRoundTrips(t *testing.T) {
 
 	var exported bytes.Buffer
 	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
-	restored, err := Open(filepath.Join(t.TempDir(), "restored.db"))
+	restored, err := Open(t.Context(), filepath.Join(t.TempDir(), "restored.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
@@ -86,7 +86,7 @@ func TestAuditedTrashPathUsesSameTransaction(t *testing.T) {
 
 func TestAuditedRootScopeTrashRecordsRootParentTouch(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)
@@ -125,7 +125,7 @@ func TestAuditedTrashRollsBackTreeAndHistory(t *testing.T) {
 	s := newAuditedMoveStore(t)
 	work, err := s.NodeByPath(t.Context(), "/Projects/Work")
 	require.NoError(t, err)
-	_, err = s.db.Exec(`CREATE TRIGGER reject_audit_trash_scope_advance
+	_, err = s.db.ExecContext(t.Context(), `CREATE TRIGGER reject_audit_trash_scope_advance
 		BEFORE UPDATE ON audit_scopes BEGIN
 		SELECT RAISE(ABORT, 'forced audit trash failure'); END`)
 	require.NoError(t, err)
@@ -137,7 +137,7 @@ func TestAuditedTrashRollsBackTreeAndHistory(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, work.ID, *unchanged.ParentID)
 	var sequence, records int64
-	require.NoError(t, s.db.QueryRow(`SELECT
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT
 		(SELECT operation_sequence_high_water FROM audit_authority),
 		(SELECT COUNT(*) FROM audit_records)`).Scan(&sequence, &records))
 	assert.Equal(t, int64(1), sequence)

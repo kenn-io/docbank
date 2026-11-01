@@ -148,7 +148,7 @@ func TestFinalizePlannedIngestDirectoriesLeavesNoZeroDocumentReceipt(t *testing.
 	_, err = s.CollectionByID(ctx, run.ID())
 	require.ErrorIs(t, err, ErrNotFound)
 	var ingests, labels, provenance int
-	require.NoError(t, s.db.QueryRow(`SELECT
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT
 		(SELECT COUNT(*) FROM ingests),
 		(SELECT COUNT(*) FROM collection_labels),
 		(SELECT COUNT(*) FROM provenance)`).Scan(&ingests, &labels, &provenance))

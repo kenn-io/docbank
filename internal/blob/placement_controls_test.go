@@ -25,7 +25,7 @@ func TestPlacementPauseAtObjectBoundaryThenCancel(t *testing.T) {
 	control, err := metadata.SetLaneControl(t.Context(), store.LaneControl{Lane: "place", Paused: true, Concurrency: 1}, 1)
 	require.NoError(t, err)
 	paused := false
-	runner.Commit = func(fn func() error) error {
+	runner.Commit = func(_ context.Context, fn func() error) error {
 		if err := fn(); err != nil {
 			return err
 		}

@@ -1048,7 +1048,7 @@ func (s *Store) RecordRenditionBlob(
 	ctx context.Context, hash string, size int64, physical BlobPhysical,
 ) error {
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		if err := s.EnsureBlobTx(tx, hash, size, physical); err != nil {
+		if err := s.EnsureBlobTx(ctx, tx, hash, size, physical); err != nil {
 			return err
 		}
 		if physical.Created {
@@ -1614,7 +1614,8 @@ func (s *Store) withLexicalGenerationRead(
 	var lease *LexicalGenerationLease
 	defer func() {
 		if active {
-			_, err := conn.ExecContext(context.Background(), "ROLLBACK")
+			// Roll back even when ctx is canceled so the pooled connection is clean.
+			_, err := conn.ExecContext(context.WithoutCancel(ctx), "ROLLBACK")
 			retErr = errors.Join(retErr, err)
 		}
 		if lease != nil {

@@ -148,7 +148,7 @@ func receiveUpload(w http.ResponseWriter, r *http.Request, d Deps, g *gate, payl
 		writeError(w, NewError(http.StatusUnprocessableEntity, "validation", mimeErr.Error()))
 		return false
 	}
-	opErr := g.mutate(func() error {
+	opErr := g.mutate(r.Context(), func() error {
 		return d.Blobs.WithMutation(r.Context(), func() error {
 			limited := &io.LimitedReader{R: part, N: payload.expectedSize + 1}
 			ing := &ingest.Ingester{Store: d.Store, Blobs: d.Blobs}
@@ -157,7 +157,7 @@ func receiveUpload(w http.ResponseWriter, r *http.Request, d Deps, g *gate, payl
 				return prepareErr
 			}
 			if err := requireUploadEnvelopeEnd(multipartReader); err != nil {
-				return errors.Join(err, prepared.Discard())
+				return errors.Join(err, prepared.Discard(r.Context()))
 			}
 			return payload.commit(prepared)
 		})

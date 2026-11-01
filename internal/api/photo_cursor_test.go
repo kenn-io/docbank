@@ -47,7 +47,7 @@ func TestPhotoBrowserPermissions(t *testing.T) {
 		{http.MethodPost, "/api/v1/photos/assets/invalid/preview", false},
 		{http.MethodGet, "/api/v1/photos/assets/query", false}, {http.MethodPost, "/api/v1/photos/assets/query?extra=1", false}, {http.MethodGet, preview + "?extra=1", false}, {http.MethodPost, preview, false}, {http.MethodGet, preview + "/other", false}, {http.MethodGet, base + "/previews/bad", false}, {http.MethodGet, base, false}, {http.MethodPost, base + "/exclude", false}, {http.MethodGet, "/api/v1/content-versions/00000000-0000-4000-8000-000000000001/content", false},
 	} {
-		require.Equal(t, tc.allowed, webSessionRequestAllowed(httptest.NewRequest(tc.method, tc.path, nil)), tc.path)
+		require.Equal(t, tc.allowed, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), tc.method, tc.path, nil)), tc.path)
 	}
 }
 

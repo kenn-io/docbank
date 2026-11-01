@@ -70,7 +70,7 @@ func (r countedReader) Read(p []byte) (int, error) {
 func newClient(t *testing.T, clientKey string) (*daemonconn.Connection, *store.Store) {
 	t.Helper()
 	dir := t.TempDir()
-	s, err := store.Open(filepath.Join(dir, "docbank.db"))
+	s, err := store.Open(t.Context(), filepath.Join(dir, "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = s.Close() })
 	cfg := config.Default()

@@ -22,7 +22,7 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 			return nil, err
 		}
 		var out *photoAssetOutput
-		err = g.mutate(func() error {
+		err = g.mutate(ctx, func() error {
 			asset, err := d.Store.TrashPhotoAsset(ctx, in.AssetID, revision)
 			if err != nil {
 				return FromStoreError(err)
@@ -39,7 +39,7 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 		DefaultStatus: http.StatusCreated,
 	}, func(ctx context.Context, in *struct{ Body CreatePhotoAssetRequest }) (*photoAssetOutput, error) {
 		var out *photoAssetOutput
-		err := g.mutate(func() error {
+		err := g.mutate(ctx, func() error {
 			asset, err := d.Store.CreatePhotoAsset(ctx, in.Body.NodeID, in.Body.Role, in.Body.Kind)
 			if err != nil {
 				return FromStoreError(err)
@@ -89,7 +89,7 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 			return nil, err
 		}
 		var out *photoAssetOutput
-		err = g.mutate(func() error {
+		err = g.mutate(ctx, func() error {
 			asset, callErr := d.Store.AttachPhotoFile(ctx, in.AssetID, revision, in.Body.NodeID, in.Body.Role, in.Body.SidecarOfID)
 			if callErr != nil {
 				return FromStoreError(callErr)
@@ -114,7 +114,7 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 			return nil, err
 		}
 		var out *photoAssetOutput
-		err = g.mutate(func() error {
+		err = g.mutate(ctx, func() error {
 			asset, callErr := d.Store.DetachPhotoFile(ctx, in.AssetID, revision, in.FileID, store.PhotoDetachOptions{ClearDependentSidecars: in.ClearDependentSidecars})
 			if callErr != nil {
 				return FromStoreError(callErr)
@@ -138,7 +138,7 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 			return nil, err
 		}
 		var out *photoAssetOutput
-		err = g.mutate(func() error {
+		err = g.mutate(ctx, func() error {
 			asset, callErr := d.Store.SetPhotoAssetExcluded(ctx, in.AssetID, revision, in.Body.Excluded)
 			if callErr != nil {
 				return FromStoreError(callErr)
@@ -169,7 +169,7 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 			expectedRevision = &revision
 		}
 		var out *photoAssetOutput
-		err := g.mutate(func() error {
+		err := g.mutate(ctx, func() error {
 			asset, callErr := d.Store.PromotePhotoNode(ctx, in.NodeID, expectedRevision, in.Body.Role, in.Body.Kind)
 			if callErr != nil {
 				return FromStoreError(callErr)
@@ -193,7 +193,7 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 			return nil, err
 		}
 		var out *photoAssetOutput
-		err = g.mutate(func() error {
+		err = g.mutate(ctx, func() error {
 			asset, callErr := d.Store.SetPhotoDisplay(ctx, in.AssetID, revision, in.Body.FileID)
 			if callErr != nil {
 				return FromStoreError(callErr)
@@ -227,7 +227,7 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 			return nil, err
 		}
 		var out *photoSettingsOutput
-		err = g.mutate(func() error {
+		err = g.mutate(ctx, func() error {
 			settings, callErr := d.Store.SetPhotoSettings(ctx, revision, update)
 			if callErr != nil {
 				return FromStoreError(callErr)

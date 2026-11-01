@@ -8,16 +8,16 @@ import (
 	"strings"
 )
 
-func nodeByIDTx(tx *sql.Tx, id int64) (Node, error) {
-	n, err := scanNode(tx.QueryRow(`SELECT `+nodeCols+` FROM `+nodeFrom+` WHERE n.id = $1`, id))
+func nodeByIDTx(ctx context.Context, tx *sql.Tx, id int64) (Node, error) {
+	n, err := scanNode(tx.QueryRowContext(ctx, `SELECT `+nodeCols+` FROM `+nodeFrom+` WHERE n.id = $1`, id))
 	if err != nil {
 		return Node{}, fmt.Errorf("node %d: %w", id, err)
 	}
 	return n, nil
 }
 
-func bumpRevisionTx(tx *sql.Tx, id int64, now string) error {
-	if _, err := tx.Exec(
+func bumpRevisionTx(ctx context.Context, tx *sql.Tx, id int64, now string) error {
+	if _, err := tx.ExecContext(ctx,
 		`UPDATE nodes SET revision = revision + 1, modified_at = $1 WHERE id = $2`,
 		now, id); err != nil {
 		return fmt.Errorf("bumping revision of node %d: %w", id, err)
@@ -26,8 +26,8 @@ func bumpRevisionTx(tx *sql.Tx, id int64, now string) error {
 }
 
 // liveDirTx loads id and errors unless it is a live directory.
-func liveDirTx(tx *sql.Tx, id int64) (Node, error) {
-	n, err := nodeByIDTx(tx, id)
+func liveDirTx(ctx context.Context, tx *sql.Tx, id int64) (Node, error) {
+	n, err := nodeByIDTx(ctx, tx, id)
 	if err != nil {
 		return Node{}, err
 	}
@@ -123,7 +123,7 @@ func (s *Store) mkdirNodeTx(
 	if !active {
 		return s.mkdirTx(ctx, tx, parentID, name, nowRFC3339())
 	}
-	priorParent, err := liveDirTx(tx, parentID)
+	priorParent, err := liveDirTx(ctx, tx, parentID)
 	if err != nil {
 		return Node{}, err
 	}
@@ -140,7 +140,7 @@ func (s *Store) mkdirNodeTx(
 	if err != nil {
 		return Node{}, err
 	}
-	resultingParent, err := nodeByIDTx(tx, parentID)
+	resultingParent, err := nodeByIDTx(ctx, tx, parentID)
 	if err != nil {
 		return Node{}, err
 	}
@@ -154,7 +154,7 @@ func (s *Store) mkdirNodeTx(
 func (s *Store) mkdirTx(
 	ctx context.Context, tx *sql.Tx, parentID int64, name, recordedAt string,
 ) (Node, error) {
-	if _, err := liveDirTx(tx, parentID); err != nil {
+	if _, err := liveDirTx(ctx, tx, parentID); err != nil {
 		return Node{}, err
 	}
 	id, err := s.insertNodeTx(ctx, tx, parentID, name, nodeKindDir, nil, recordedAt)
@@ -164,10 +164,10 @@ func (s *Store) mkdirTx(
 	if err != nil {
 		return Node{}, fmt.Errorf("mkdir %q under node %d: %w", name, parentID, err)
 	}
-	if err := bumpRevisionTx(tx, parentID, recordedAt); err != nil {
+	if err := bumpRevisionTx(ctx, tx, parentID, recordedAt); err != nil {
 		return Node{}, err
 	}
-	updated, err := nodeByIDTx(tx, id)
+	updated, err := nodeByIDTx(ctx, tx, id)
 	if err != nil {
 		return Node{}, err
 	}
@@ -269,7 +269,7 @@ func (s *Store) EnsureDir(ctx context.Context, parentID int64, name string) (Nod
 // RecordBlob records durable bytes without a GC hold. Callers hold a blob
 // mutation lease until publication; unreferenced bytes remain collectible.
 func (s *Store) RecordBlob(ctx context.Context, hash string, size int64, physical BlobPhysical) error {
-	return s.withStorageTx(ctx, func(tx *sql.Tx) error { return s.EnsureBlobTx(tx, hash, size, physical) })
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error { return s.EnsureBlobTx(ctx, tx, hash, size, physical) })
 }
 
 // EnsureBlobTx records a blob row if missing. The blob file must already be
@@ -278,12 +278,12 @@ func (s *Store) RecordBlob(ctx context.Context, hash string, size int64, physica
 // still have catalog-authorized loose or packed bytes. Missing physical
 // authority requires explicit verified repair; an ordinary write receipt is
 // not sufficient to adopt potentially unverified deduplicated bytes.
-func (s *Store) EnsureBlobTx(tx *sql.Tx, hash string, size int64, physical ...BlobPhysical) error {
+func (s *Store) EnsureBlobTx(ctx context.Context, tx *sql.Tx, hash string, size int64, physical ...BlobPhysical) error {
 	storage, err := normalizeBlobPhysical(size, physical)
 	if err != nil {
 		return fmt.Errorf("recording blob %s: %w", hash, err)
 	}
-	result, err := tx.Exec(
+	result, err := tx.ExecContext(ctx,
 		`INSERT INTO blobs(hash, size, created_at) VALUES ($1, $2, $3) ON CONFLICT(hash) DO NOTHING`,
 		hash, size, nowRFC3339())
 	if err != nil {
@@ -293,29 +293,29 @@ func (s *Store) EnsureBlobTx(tx *sql.Tx, hash string, size int64, physical ...Bl
 	if err != nil {
 		return fmt.Errorf("checking blob %s insertion: %w", hash, err)
 	}
-	if err := ensureBlobChecksumTx(tx, BlobChecksumRecord{
+	if err := ensureBlobChecksumTx(ctx, tx, BlobChecksumRecord{
 		BlobSHA256: hash, MD5: storage.MD5,
 	}); err != nil {
 		return err
 	}
 	if inserted != 0 {
-		return s.writeLooseDocumentLocationTx(tx, hash, storage)
+		return s.writeLooseDocumentLocationTx(ctx, tx, hash, storage)
 	}
 	var recordedSize int64
-	if err := tx.QueryRow(`SELECT size FROM blobs WHERE hash=$1`, hash).Scan(&recordedSize); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT size FROM blobs WHERE hash=$1`, hash).Scan(&recordedSize); err != nil {
 		return fmt.Errorf("reading blob %s: %w", hash, err)
 	}
 	if recordedSize != size {
 		return fmt.Errorf("blob %s: recorded size %d does not match caller size %d",
 			hash, recordedSize, size)
 	}
-	current, err := physicalContentTx(tx, hash)
+	current, err := physicalContentTx(ctx, tx, hash)
 	if err != nil {
 		if errors.Is(err, ErrPhysicalAuthorityMissing) {
 			if storage.Created {
-				return s.writeLooseDocumentLocationTx(tx, hash, storage)
+				return s.writeLooseDocumentLocationTx(ctx, tx, hash, storage)
 			}
-			if _, authorityErr := requirePhysicalAuthorityTx(tx, hash); authorityErr == nil {
+			if _, authorityErr := requirePhysicalAuthorityTx(ctx, tx, hash); authorityErr == nil {
 				return nil
 			} else if !errors.Is(authorityErr, ErrPhysicalAuthorityMissing) {
 				return fmt.Errorf("verifying blob %s: %w", hash, authorityErr)
@@ -333,7 +333,7 @@ func (s *Store) EnsureBlobTx(tx *sql.Tx, hash string, size int64, physical ...Bl
 			hash, storage.Encoding, storage.StoredBytes, current.Encoding, current.StoredBytes,
 		)
 	}
-	return s.writeLooseDocumentLocationTx(tx, hash, storage)
+	return s.writeLooseDocumentLocationTx(ctx, tx, hash, storage)
 }
 
 func (s *Store) createFileTx(
@@ -357,10 +357,10 @@ func (s *Store) createFileWithOperationTx(
 	if err := validateUTF8Field("content MIME type", mimeType); err != nil {
 		return Node{}, ContentVersion{}, err
 	}
-	if _, err := liveDirTx(tx, parentID); err != nil {
+	if _, err := liveDirTx(ctx, tx, parentID); err != nil {
 		return Node{}, ContentVersion{}, err
 	}
-	if err := s.EnsureBlobTx(tx, blobHash, size, physical...); err != nil {
+	if err := s.EnsureBlobTx(ctx, tx, blobHash, size, physical...); err != nil {
 		return Node{}, ContentVersion{}, err
 	}
 	id, err := s.insertNodeTx(ctx, tx, parentID, name, nodeKindFile, &operation.versionID, operation.recordedAt)
@@ -376,7 +376,7 @@ func (s *Store) createFileWithOperationTx(
 	if mimeType != "" {
 		storedMime = mimeType
 	}
-	if _, err := tx.Exec(
+	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO content_versions (
 			version_id, node_id, blob_hash, size, mime_type, recorded_at,
 			node_revision, introduced_operation_id, transition_kind, source_version_id
@@ -392,14 +392,14 @@ func (s *Store) createFileWithOperationTx(
 	if err := queueTextExtractionTx(ctx, tx, operation.versionID, blobHash, mimeType); err != nil {
 		return Node{}, ContentVersion{}, err
 	}
-	if err := bumpRevisionTx(tx, parentID, operation.recordedAt); err != nil {
+	if err := bumpRevisionTx(ctx, tx, parentID, operation.recordedAt); err != nil {
 		return Node{}, ContentVersion{}, err
 	}
-	created, err := nodeByIDTx(tx, id)
+	created, err := nodeByIDTx(ctx, tx, id)
 	if err != nil {
 		return Node{}, ContentVersion{}, err
 	}
-	version, err := scanContentVersion(tx.QueryRow(
+	version, err := scanContentVersion(tx.QueryRowContext(ctx,
 		`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id=$1`, operation.versionID,
 	))
 	if err != nil {
@@ -459,7 +459,7 @@ func (s *Store) createFileWithReceiptTx(
 			ctx, tx, parentID, name, blobHash, size, mimeType, physical...,
 		)
 	} else {
-		priorParent, err := liveDirTx(tx, parentID)
+		priorParent, err := liveDirTx(ctx, tx, parentID)
 		if err != nil {
 			return ContentWriteReceipt{}, err
 		}
@@ -477,7 +477,7 @@ func (s *Store) createFileWithReceiptTx(
 		if err != nil {
 			return ContentWriteReceipt{}, err
 		}
-		resultingParent, err := nodeByIDTx(tx, parentID)
+		resultingParent, err := nodeByIDTx(ctx, tx, parentID)
 		if err != nil {
 			return ContentWriteReceipt{}, err
 		}
@@ -490,7 +490,7 @@ func (s *Store) createFileWithReceiptTx(
 	if err != nil {
 		return ContentWriteReceipt{}, err
 	}
-	receipt.Physical, err = authorizedPhysicalContentTx(tx, blobHash)
+	receipt.Physical, err = authorizedPhysicalContentTx(ctx, tx, blobHash)
 	if err != nil {
 		return ContentWriteReceipt{}, err
 	}
@@ -510,14 +510,14 @@ func (s *Store) CreateFile(
 
 // isAncestorTx reports whether maybeAncestor is candidate itself or one of
 // its ancestors (walking parent links).
-func isAncestorTx(tx *sql.Tx, maybeAncestor, candidate int64) (bool, error) {
+func isAncestorTx(ctx context.Context, tx *sql.Tx, maybeAncestor, candidate int64) (bool, error) {
 	cur := candidate
 	for {
 		if cur == maybeAncestor {
 			return true, nil
 		}
 		var parent sql.NullInt64
-		err := tx.QueryRow(`SELECT parent_id FROM nodes WHERE id = $1`, cur).Scan(&parent)
+		err := tx.QueryRowContext(ctx, `SELECT parent_id FROM nodes WHERE id = $1`, cur).Scan(&parent)
 		if err != nil {
 			return false, fmt.Errorf("walking ancestry of node %d: %w", candidate, err)
 		}
@@ -546,7 +546,7 @@ func (s *Store) Move(
 		if active {
 			moved, err = s.moveAuditedTx(ctx, tx, id, newParentID, newName, ifRev)
 		} else {
-			moved, err = s.moveTx(tx, id, newParentID, newName, ifRev)
+			moved, err = s.moveTx(ctx, tx, id, newParentID, newName, ifRev)
 		}
 		if err == nil {
 			movedPath, err = pathOf(ctx, tx, moved.ID)
@@ -600,7 +600,7 @@ func (s *Store) MoveToPath(
 	var moved Node
 	var movedPath string
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		src, err := nodeByIDTx(tx, id)
+		src, err := nodeByIDTx(ctx, tx, id)
 		if err != nil {
 			return err
 		}
@@ -631,7 +631,7 @@ func (s *Store) moveNodeToPathTx(
 	if active {
 		moved, err = s.moveAuditedTx(ctx, tx, src.ID, newParentID, newName, ifRev)
 	} else {
-		moved, err = s.moveTx(tx, src.ID, newParentID, newName, ifRev)
+		moved, err = s.moveTx(ctx, tx, src.ID, newParentID, newName, ifRev)
 	}
 	if err != nil {
 		return Node{}, "", err
@@ -677,11 +677,12 @@ func (s *Store) resolveMoveTargetTx(
 	return parent.ID, segs[len(segs)-1], nil
 }
 
-func (s *Store) moveTx(tx *sql.Tx, id, newParentID int64, newName string, ifRev int64) (Node, error) {
-	return s.moveAtTx(tx, id, newParentID, newName, ifRev, nowRFC3339())
+func (s *Store) moveTx(ctx context.Context, tx *sql.Tx, id, newParentID int64, newName string, ifRev int64) (Node, error) {
+	return s.moveAtTx(ctx, tx, id, newParentID, newName, ifRev, nowRFC3339())
 }
 
 func (s *Store) moveAtTx(
+	ctx context.Context,
 	tx *sql.Tx, id, newParentID int64, newName string, ifRev int64, recordedAt string,
 ) (Node, error) {
 	if id == s.rootID {
@@ -691,7 +692,7 @@ func (s *Store) moveAtTx(
 	if err != nil {
 		return Node{}, err
 	}
-	n, err := nodeByIDTx(tx, id)
+	n, err := nodeByIDTx(ctx, tx, id)
 	if err != nil {
 		return Node{}, err
 	}
@@ -702,7 +703,7 @@ func (s *Store) moveAtTx(
 		return Node{}, fmt.Errorf("node %d at revision %d, expected %d: %w",
 			id, n.Revision, ifRev, ErrStaleRevision)
 	}
-	if _, err := liveDirTx(tx, newParentID); err != nil {
+	if _, err := liveDirTx(ctx, tx, newParentID); err != nil {
 		return Node{}, err
 	}
 	if *n.ParentID == newParentID && n.Name == newName {
@@ -710,14 +711,14 @@ func (s *Store) moveAtTx(
 	}
 	// The destination may not be the node itself or any of its
 	// descendants (equivalently: id may not be an ancestor of dest).
-	inCycle, err := isAncestorTx(tx, id, newParentID)
+	inCycle, err := isAncestorTx(ctx, tx, id, newParentID)
 	if err != nil {
 		return Node{}, err
 	}
 	if inCycle {
 		return Node{}, fmt.Errorf("moving node %d under %d: %w", id, newParentID, ErrCycle)
 	}
-	_, err = tx.Exec(
+	_, err = tx.ExecContext(ctx,
 		`UPDATE nodes SET parent_id = $1, name = $2, revision = revision + 1,
 		        modified_at = $3 WHERE id = $4`,
 		newParentID, newName, recordedAt, id)
@@ -728,17 +729,17 @@ func (s *Store) moveAtTx(
 		return Node{}, fmt.Errorf("moving node %d: %w", id, err)
 	}
 	oldParent := *n.ParentID
-	if err := bumpRevisionTx(tx, oldParent, recordedAt); err != nil {
+	if err := bumpRevisionTx(ctx, tx, oldParent, recordedAt); err != nil {
 		return Node{}, err
 	}
 	if newParentID != oldParent {
-		if err := bumpRevisionTx(tx, newParentID, recordedAt); err != nil {
+		if err := bumpRevisionTx(ctx, tx, newParentID, recordedAt); err != nil {
 			return Node{}, err
 		}
 	}
-	updated, err := nodeByIDTx(tx, id)
+	updated, err := nodeByIDTx(ctx, tx, id)
 	if err != nil {
 		return Node{}, err
 	}
-	return updated, s.refreshNodePhotoWorkTx(context.Background(), tx, updated, &n)
+	return updated, s.refreshNodePhotoWorkTx(ctx, tx, updated, &n)
 }

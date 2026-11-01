@@ -118,7 +118,7 @@ func pushStateTx(ctx context.Context, tx *sql.Tx, name, ref string) (pushState, 
 	if state.Node.TrashedAt != nil {
 		return pushState{}, fmt.Errorf("push source %q/%q maps to trashed node %d: %w", name, ref, state.Node.ID, ErrExists)
 	}
-	if _, err := requirePhysicalAuthorityTx(tx, state.Node.BlobHash); err != nil {
+	if _, err := requirePhysicalAuthorityTx(ctx, tx, state.Node.BlobHash); err != nil {
 		return pushState{}, err
 	}
 	return state, nil

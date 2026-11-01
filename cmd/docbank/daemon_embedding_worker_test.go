@@ -71,7 +71,7 @@ func TestDaemonRecoversSemanticSpaceEmbeddingJob(t *testing.T) {
 	layout := home.Layout{Root: root}
 	require.NoError(t, layout.Ensure())
 	func() {
-		catalog, err := store.Open(layout.DBPath())
+		catalog, err := store.Open(t.Context(), layout.DBPath())
 		require.NoError(t, err)
 		defer func() { require.NoError(t, catalog.Close()) }()
 		blobs, err := blob.New(store.NewPackCatalog(catalog), layout.BlobsDir())

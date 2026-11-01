@@ -973,7 +973,7 @@ func validateRenditionBuildBlobAuthorityTx(
 	} else if err != nil {
 		return fmt.Errorf("reading rendition source blob %s: %w", record.SourceSHA256, err)
 	}
-	if _, err := requirePhysicalAuthorityTx(tx, record.SourceSHA256); err != nil {
+	if _, err := requirePhysicalAuthorityTx(ctx, tx, record.SourceSHA256); err != nil {
 		return fmt.Errorf("validating rendition source blob %s: %w", record.SourceSHA256, err)
 	}
 	for _, artifact := range record.Artifacts {
@@ -986,7 +986,7 @@ func validateRenditionBuildBlobAuthorityTx(
 		if size != artifact.Size {
 			return fmt.Errorf("rendition artifact %s size %d disagrees with blob size %d", artifact.ID, artifact.Size, size)
 		}
-		if _, err := requirePhysicalAuthorityTx(tx, artifact.BlobHash); err != nil {
+		if _, err := requirePhysicalAuthorityTx(ctx, tx, artifact.BlobHash); err != nil {
 			return fmt.Errorf("validating rendition artifact blob %s: %w", artifact.BlobHash, err)
 		}
 	}

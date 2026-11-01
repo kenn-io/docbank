@@ -112,7 +112,7 @@ func TestTermReportReleaseDuringDownload(t *testing.T) {
 	resume := sync.OnceFunc(func() { close(writer.resume) })
 	finished := make(chan struct{})
 	t.Cleanup(func() { resume(); <-finished })
-	request := httptest.NewRequest(http.MethodGet, path+"/bundle", nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path+"/bundle", nil)
 	request.Host = "localhost"
 	request.Header.Set("X-Api-Key", testAPIKey)
 	go func() {

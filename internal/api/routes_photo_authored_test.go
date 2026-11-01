@@ -163,7 +163,7 @@ func TestPhotoStackDecisionBounds(t *testing.T) {
 	// the store without creating 2,000 live targets.
 	for _, tc := range []struct{ size, status int }{{576 << 10, http.StatusConflict}, {(576 << 10) + 1, http.StatusRequestEntityTooLarge}} {
 		payload := string(encoded) + strings.Repeat(" ", tc.size-len(encoded))
-		req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/photos/authored/stack", strings.NewReader(payload))
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+"/api/v1/photos/authored/stack", strings.NewReader(payload))
 		require.NoError(t, err)
 		req.Header.Set("Content-Type", "application/json")
 		res, err := ts.Client().Do(req)

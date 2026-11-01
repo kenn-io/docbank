@@ -14,7 +14,7 @@ import (
 func BenchmarkResolveIngestName(b *testing.B) {
 	for _, siblings := range []int{0, 100, 1000, 10000} {
 		b.Run(fmt.Sprintf("siblings=%d", siblings), func(b *testing.B) {
-			s, err := Open(filepath.Join(b.TempDir(), "docbank.db"))
+			s, err := Open(b.Context(), filepath.Join(b.TempDir(), "docbank.db"))
 			require.NoError(b, err)
 			b.Cleanup(func() { require.NoError(b, s.Close()) })
 			for i := range siblings {
@@ -27,7 +27,7 @@ func BenchmarkResolveIngestName(b *testing.B) {
 			defer func() { require.NoError(b, tx.Rollback()) }()
 			b.ReportAllocs()
 			for b.Loop() {
-				name, _, skipped, err := resolveIngestNameTx(tx, s.RootID(), "new.bin",
+				name, _, skipped, err := resolveIngestNameTx(b.Context(), tx, s.RootID(), "new.bin",
 					fmt.Sprintf("%064x", siblings+1), "cli")
 				require.NoError(b, err)
 				require.False(b, skipped)
@@ -42,7 +42,7 @@ func BenchmarkResolveIngestName(b *testing.B) {
 func BenchmarkResolveIngestNameSharedContent(b *testing.B) {
 	for _, siblings := range []int{100, 1000, 10000} {
 		b.Run(fmt.Sprintf("siblings=%d", siblings), func(b *testing.B) {
-			s, err := Open(filepath.Join(b.TempDir(), "docbank.db"))
+			s, err := Open(b.Context(), filepath.Join(b.TempDir(), "docbank.db"))
 			require.NoError(b, err)
 			b.Cleanup(func() { require.NoError(b, s.Close()) })
 			run, err := s.BeginIngest(b.Context(), "cli", "Synthetic identical files")
@@ -72,7 +72,7 @@ func BenchmarkResolveIngestNameSharedContent(b *testing.B) {
 				b.Run(tc.label, func(b *testing.B) {
 					b.ReportAllocs()
 					for b.Loop() {
-						name, id, skipped, err := resolveIngestNameTx(tx, s.RootID(), tc.name, fakeHash("a1"), "cli")
+						name, id, skipped, err := resolveIngestNameTx(b.Context(), tx, s.RootID(), tc.name, fakeHash("a1"), "cli")
 						if err != nil || id != tc.existingID || skipped != (tc.existingID != 0) ||
 							(!skipped && name != tc.name) {
 							b.Fatalf("resolved name=%q id=%d skipped=%v err=%v", name, id, skipped, err)

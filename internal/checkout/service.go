@@ -234,7 +234,7 @@ func (s Service) validateRootOverlap(ctx context.Context, destination, excludedI
 	return nil
 }
 
-func (s Service) Start(supervisor *jobs.Supervisor, c store.PhotoCheckout, root *os.Root) error {
+func (s Service) Start(ctx context.Context, supervisor *jobs.Supervisor, c store.PhotoCheckout, root *os.Root) error {
 	err := s.start(supervisor, c, root, false)
 	if err != nil {
 		if root != nil {
@@ -299,7 +299,7 @@ func (s Service) Resume(ctx context.Context, supervisor *jobs.Supervisor) error 
 			return err
 		}
 		if op.Kind != store.StorageOperationKindPhotoCheckout {
-			if err := s.StartOperation(supervisor, c); err != nil && !errors.Is(err, jobs.ErrDuplicate) {
+			if err := s.StartOperation(ctx, supervisor, c); err != nil && !errors.Is(err, jobs.ErrDuplicate) {
 				return err
 			}
 			continue

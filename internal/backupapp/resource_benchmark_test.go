@@ -61,7 +61,7 @@ func newResourceFixture(b *testing.B, sizes ...int64) *resourceFixture {
 func newEmptyResourceFixture(b *testing.B) *resourceFixture {
 	b.Helper()
 	root := b.TempDir()
-	metadata, err := store.Open(filepath.Join(root, "docbank.db"))
+	metadata, err := store.Open(b.Context(), filepath.Join(root, "docbank.db"))
 	require.NoError(b, err)
 	blobsDir := filepath.Join(root, "blobs")
 	require.NoError(b, os.MkdirAll(filepath.Join(blobsDir, "tmp"), 0o700))

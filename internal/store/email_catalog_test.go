@@ -94,7 +94,7 @@ func emailTableCounts(t *testing.T, s *Store) []int {
 	var result []int
 	for _, table := range []string{"email_generations", "email_part_artifacts", "email_attachments", "email_heads", "email_body_results", "rendition_blob_staging"} {
 		var n int
-		require.NoError(t, s.db.QueryRow("SELECT COUNT(*) FROM "+table).Scan(&n))
+		require.NoError(t, s.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM "+table).Scan(&n))
 		result = append(result, n)
 	}
 	return result
@@ -109,7 +109,7 @@ func TestEmailPublicationSharesGenerationAndRetiresStaging(t *testing.T) {
 	require.Equal(t, "pending", first.BodySearch.State)
 	for hash := range f.bytes {
 		var n int
-		require.NoError(t, s.db.QueryRow("SELECT COUNT(*) FROM rendition_blob_staging WHERE blob_hash=?", hash).Scan(&n))
+		require.NoError(t, s.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM rendition_blob_staging WHERE blob_hash=?", hash).Scan(&n))
 		require.Zero(t, n)
 	}
 	node, err := s.CreateFile(t.Context(), s.RootID(), "second.eml", first.Version.BlobHash, first.Version.Size, "message/rfc822")
@@ -190,11 +190,11 @@ func TestEmailPublicationRejectsInvalidAuthorityAtomically(t *testing.T) {
 				require.NoError(t, e)
 				p.ContentVersionID = n.CurrentVersionID
 			case "missing_blob":
-				_, err = s.db.Exec("PRAGMA foreign_keys=OFF")
+				_, err = s.db.ExecContext(t.Context(), "PRAGMA foreign_keys=OFF")
 				require.NoError(t, err)
-				_, err = s.db.Exec("DELETE FROM blobs WHERE hash=?", p.Artifacts[0].BlobSHA256)
+				_, err = s.db.ExecContext(t.Context(), "DELETE FROM blobs WHERE hash=?", p.Artifacts[0].BlobSHA256)
 				require.NoError(t, err)
-				_, err = s.db.Exec("PRAGMA foreign_keys=ON")
+				_, err = s.db.ExecContext(t.Context(), "PRAGMA foreign_keys=ON")
 				require.NoError(t, err)
 			}
 			before := emailTableCounts(t, s)
@@ -202,7 +202,7 @@ func TestEmailPublicationRejectsInvalidAuthorityAtomically(t *testing.T) {
 			require.Error(t, err)
 			require.Equal(t, before, emailTableCounts(t, s))
 			var selected string
-			require.NoError(t, s.db.QueryRow("SELECT attachment_id FROM email_heads WHERE content_version_id=?", first.Version.ID).Scan(&selected))
+			require.NoError(t, s.db.QueryRowContext(t.Context(), "SELECT attachment_id FROM email_heads WHERE content_version_id=?", first.Version.ID).Scan(&selected))
 			require.Equal(t, first.Attachment.ID, selected)
 		})
 	}
@@ -223,7 +223,7 @@ func TestEmailPublicationRollbackPreservesNewStagingAndOldHead(t *testing.T) {
 		require.NoError(t, s.RecordRenditionBlob(t.Context(), a.BlobSHA256, a.Size, BlobPhysical{Encoding: "raw", StoredBytes: a.Size, PackEligible: true, Created: true}))
 	}
 	before := emailTableCounts(t, s)
-	_, err = s.db.Exec(`CREATE TRIGGER fail_email_head BEFORE UPDATE ON email_heads BEGIN SELECT RAISE(ABORT,'synthetic email head failure'); END`)
+	_, err = s.db.ExecContext(t.Context(), `CREATE TRIGGER fail_email_head BEFORE UPDATE ON email_heads BEGIN SELECT RAISE(ABORT,'synthetic email head failure'); END`)
 	require.NoError(t, err)
 	_, err = s.PublishEmailGeneration(t.Context(), p)
 	require.ErrorContains(t, err, "synthetic email head failure")
@@ -231,7 +231,7 @@ func TestEmailPublicationRollbackPreservesNewStagingAndOldHead(t *testing.T) {
 	got, err := s.EmailMetadata(t.Context(), first.Version.ID)
 	require.NoError(t, err)
 	require.Equal(t, first.Generation.ID, got.Generation.ID)
-	_, err = s.db.Exec(`DROP TRIGGER fail_email_head`)
+	_, err = s.db.ExecContext(t.Context(), `DROP TRIGGER fail_email_head`)
 	require.NoError(t, err)
 	_, err = s.PublishEmailGeneration(t.Context(), p)
 	require.NoError(t, err)

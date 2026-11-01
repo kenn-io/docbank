@@ -311,7 +311,7 @@ func TestCheckoutInspectionCancellationFinalizesRetirement(t *testing.T) {
 			if state == "start failure" {
 				supervisor := jobs.New(t.Context(), nil)
 				require.NoError(t, supervisor.Shutdown(t.Context()))
-				require.Error(t, s.StartOperation(supervisor, c))
+				require.Error(t, s.StartOperation(t.Context(), supervisor, c))
 				final, err := s.Store.StorageOperation(t.Context(), op.ID)
 				require.NoError(t, err)
 				require.Equal(t, store.StorageOperationFailed, final.State)

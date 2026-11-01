@@ -65,7 +65,7 @@ func TestRedactionRenderHTTPDeadline(t *testing.T) {
 			request := processing.RedactionRenderRequest{ReviewSHA256: strings.Repeat("b", 64), Masks: []processing.RedactionMask{{ID: uuid.New(), Selector: redaction.Selector{Kind: "page", MapSHA256: strings.Repeat("c", 64), Pages: []int{1}}}}}
 			body, err := json.Marshal(request)
 			require.NoError(t, err)
-			conn, err := net.Dial("tcp", strings.TrimPrefix(server.URL, "http://"))
+			conn, err := (&net.Dialer{}).DialContext(t.Context(), "tcp", strings.TrimPrefix(server.URL, "http://"))
 			require.NoError(t, err)
 			defer func() { _ = conn.Close() }()
 			tcp, ok := conn.(*net.TCPConn)
@@ -89,7 +89,10 @@ func TestRedactionRenderHTTPDeadline(t *testing.T) {
 				t.Fatal("non-reading client held render beyond its deadline")
 			}
 			require.NoError(t, conn.Close())
-			resp, err := http.Post(server.URL, "application/json", bytes.NewReader(body))
+			httpRequest, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL, bytes.NewReader(body))
+			require.NoError(t, err)
+			httpRequest.Header.Set("Content-Type", "application/json")
+			resp, err := http.DefaultClient.Do(httpRequest)
 			require.NoError(t, err)
 			output, err := io.ReadAll(resp.Body)
 			require.NoError(t, err)

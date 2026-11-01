@@ -69,7 +69,7 @@ func DefaultSQLiteDriver() docsqlite.Driver { return defaultSQLiteDriver() }
 // Open opens (creating if needed) the database at path, applies the schema,
 // and guarantees the root directory node exists. When driver is omitted, CGO
 // builds use mattn/go-sqlite3 and no-CGO builds use modernc.org/sqlite.
-func Open(path string, drivers ...docsqlite.Driver) (*Store, error) {
+func Open(ctx context.Context, path string, drivers ...docsqlite.Driver) (*Store, error) {
 	if len(drivers) > 1 {
 		return nil, errors.New("opening database: at most one sqlite driver may be supplied")
 	}
@@ -80,17 +80,17 @@ func Open(path string, drivers ...docsqlite.Driver) (*Store, error) {
 	if err := docsqlite.Validate(driver); err != nil {
 		return nil, fmt.Errorf("opening database: %w", err)
 	}
-	if err := prepareReleasedSchemaUpgrade(path, driver); err != nil {
+	if err := prepareReleasedSchemaUpgrade(ctx, path, driver); err != nil {
 		return nil, err
 	}
-	s, err := openCurrentStore(path, driver, nil)
+	s, err := openCurrentStore(ctx, path, driver, nil)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := s.MigrateLegacyPlainText(context.Background()); err != nil {
+	if _, err := s.MigrateLegacyPlainText(ctx); err != nil {
 		return nil, errors.Join(err, s.Close())
 	}
-	if err := s.refreshPhotoTechnicalMetadata(context.Background()); err != nil {
+	if err := s.refreshPhotoTechnicalMetadata(ctx); err != nil {
 		return nil, errors.Join(err, s.Close())
 	}
 	return s, nil
@@ -101,16 +101,17 @@ func Open(path string, drivers ...docsqlite.Driver) (*Store, error) {
 // upgrades belong to the ordinary Open path; restore validation must observe
 // the logical snapshot exactly as it was imported, before that post-publication
 // migration runs.
-func OpenForRestore(path string, driver docsqlite.Driver) (*Store, error) {
+func OpenForRestore(ctx context.Context, path string, driver docsqlite.Driver) (*Store, error) {
 	if err := docsqlite.Validate(driver); err != nil {
 		return nil, fmt.Errorf("opening restore database: %w", err)
 	}
-	return openCurrentStore(path, driver, nil)
+	return openCurrentStore(ctx, path, driver, nil)
 }
 
 // openCurrentStore opens or creates a current-schema store. A new store adopts
 // incarnation when it is non-nil and otherwise starts a fresh one.
 func openCurrentStore(
+	ctx context.Context,
 	path string, driver docsqlite.Driver, incarnation *metadataProcessingIncarnation,
 ) (*Store, error) {
 	db, err := driver.Open(path, docsqlite.OpenOptions{
@@ -129,7 +130,7 @@ func openCurrentStore(
 	// Read snapshots use the separate deferred pool and do not reserve the writer.
 	writeDB.SetMaxOpenConns(1)
 	s := &Store{db: db, writeDB: writeDB, path: path, driver: driver, photoHiddenSessions: make(map[string]time.Time), photoExportSlot: make(chan struct{}, 1)}
-	if err := s.bootstrap(incarnation); err != nil {
+	if err := s.bootstrap(ctx, incarnation); err != nil {
 		_ = s.Close()
 		return nil, err
 	}
@@ -146,10 +147,10 @@ func openCurrentStore(
 // idempotent, so retrying the whole transaction is safe. The root
 // insert-then-select stays a single atomic statement as extra insurance
 // against racing a read-then-insert into the one_root unique index.
-func (s *Store) bootstrap(incarnation *metadataProcessingIncarnation) error {
+func (s *Store) bootstrap(ctx context.Context, incarnation *metadataProcessingIncarnation) error {
 	deadline := time.Now().Add(5 * time.Second)
-	_, err := backoff.Retry(context.Background(), func() (struct{}, error) {
-		err := s.bootstrapTx(incarnation)
+	_, err := backoff.Retry(ctx, func() (struct{}, error) {
+		err := s.bootstrapTx(ctx, incarnation)
 		if err == nil {
 			return struct{}{}, nil
 		}
@@ -159,24 +160,29 @@ func (s *Store) bootstrap(incarnation *metadataProcessingIncarnation) error {
 		return struct{}{}, err
 	}, backoff.WithBackOff(backoff.NewConstantBackOff(10*time.Millisecond)), backoff.WithMaxTries(0), backoff.WithMaxElapsedTime(0))
 	if err != nil {
-		return backoff.AsRetryError(err).LastErr
+		retryErr := backoff.AsRetryError(err)
+		if errors.Is(retryErr.Cause, backoff.ErrPermanent) {
+			return retryErr.LastErr
+		}
+		// Only cancellation ends this otherwise unbounded retry early.
+		return fmt.Errorf("bootstrapping database: %w", errors.Join(retryErr.Cause, retryErr.LastErr))
 	}
 	return nil
 }
 
-func (s *Store) bootstrapTx(incarnation *metadataProcessingIncarnation) error {
-	return s.withStorageTx(context.Background(), func(tx *sql.Tx) error {
-		if _, err := tx.Exec(schemaSQL); err != nil {
+func (s *Store) bootstrapTx(ctx context.Context, incarnation *metadataProcessingIncarnation) error {
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, schemaSQL); err != nil {
 			return fmt.Errorf("applying schema: %w", err)
 		}
-		if err := initializeDocumentPeopleState(context.Background(), tx); err != nil {
+		if err := initializeDocumentPeopleState(ctx, tx); err != nil {
 			return fmt.Errorf("initializing document people state: %w", err)
 		}
-		if err := validateEmbeddingCatalogSchemaTx(context.Background(), tx); err != nil {
+		if err := validateEmbeddingCatalogSchemaTx(ctx, tx); err != nil {
 			return err
 		}
 		var schemaVersion int
-		if err := tx.QueryRow(`
+		if err := tx.QueryRowContext(ctx, `
 			SELECT vault_uid, schema_version FROM vault_metadata WHERE singleton = 1`).Scan(
 			&s.vaultID, &schemaVersion,
 		); errors.Is(err, sql.ErrNoRows) {
@@ -184,7 +190,7 @@ func (s *Store) bootstrapTx(incarnation *metadataProcessingIncarnation) error {
 			if idErr != nil {
 				return fmt.Errorf("creating vault identity: %w", idErr)
 			}
-			if _, idErr = tx.Exec(
+			if _, idErr = tx.ExecContext(ctx,
 				`INSERT INTO vault_metadata(singleton, vault_uid, schema_version)
 				 VALUES(1, ?, ?)`, vaultID, currentStorageSchemaVersion,
 			); idErr != nil {
@@ -203,23 +209,23 @@ func (s *Store) bootstrapTx(incarnation *metadataProcessingIncarnation) error {
 		if err := validateUUIDv4(s.vaultID); err != nil {
 			return fmt.Errorf("validating vault identity: %w", err)
 		}
-		if err := ensureProcessingIncarnationTx(tx, incarnation); err != nil {
+		if err := ensureProcessingIncarnationTx(ctx, tx, incarnation); err != nil {
 			return err
 		}
-		primary, err := ensurePrimaryBlobStoreTx(tx)
+		primary, err := ensurePrimaryBlobStoreTx(ctx, tx)
 		if err != nil {
 			return err
 		}
 		s.primaryStoreID = primary.ID
 		now := nowRFC3339()
-		if _, err := tx.Exec(
+		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO nodes (parent_id, name, kind, created_at, modified_at)
 			 SELECT NULL, '', 'dir', ?, ?
 			 WHERE NOT EXISTS (SELECT 1 FROM nodes WHERE parent_id IS NULL)`,
 			now, now); err != nil {
 			return fmt.Errorf("creating root node: %w", err)
 		}
-		if err := tx.QueryRow(
+		if err := tx.QueryRowContext(ctx,
 			`SELECT id FROM nodes WHERE parent_id IS NULL`).Scan(&s.rootID); err != nil {
 			return fmt.Errorf("looking up root node: %w", err)
 		}

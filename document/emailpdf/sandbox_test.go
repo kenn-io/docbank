@@ -31,7 +31,7 @@ func TestSandboxDeniesHostAccessAndAllowsStagedFiles(t *testing.T) {
 		require.Error(t, os.WriteFile(hostFile, []byte("unexpected host mutation"), 0o600))
 		_, err = os.Stat("/proc/" + os.Getenv("DOCBANK_EMAILPDF_HOST_PID"))
 		require.ErrorIs(t, err, os.ErrNotExist, "renderer must not see the host test process")
-		connection, err := net.DialTimeout("tcp", os.Getenv("DOCBANK_EMAILPDF_HOST_LISTENER"), time.Second)
+		connection, err := (&net.Dialer{Timeout: time.Second}).DialContext(t.Context(), "tcp", os.Getenv("DOCBANK_EMAILPDF_HOST_LISTENER"))
 		if connection != nil {
 			_ = connection.Close()
 		}
@@ -89,10 +89,10 @@ func TestSandboxDeniesHostAccessAndAllowsStagedFiles(t *testing.T) {
 	require.NoError(t, os.WriteFile(hostFile, []byte("synthetic host contents"), 0o600))
 	control, err := os.ReadFile(hostFile)
 	require.NoError(t, err)
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, listener.Close()) })
-	connection, err := net.DialTimeout("tcp", listener.Addr().String(), time.Second)
+	connection, err := (&net.Dialer{Timeout: time.Second}).DialContext(t.Context(), "tcp", listener.Addr().String())
 	require.NoError(t, err, "host control must reach its listener")
 	require.NoError(t, connection.Close())
 	hostPID := strconv.Itoa(os.Getpid())

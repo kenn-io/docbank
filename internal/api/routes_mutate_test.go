@@ -206,7 +206,7 @@ func TestBatchMoveSwapsCoordinatesThroughTypedClient(t *testing.T) {
 func TestTypedRoutesRejectDuplicateJSONMembers(t *testing.T) {
 	t.Parallel()
 	ts, _ := newTestServer(t, nil)
-	req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/path/trash",
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+"/api/v1/path/trash",
 		bytes.NewBufferString(`{"path":"/first","path":"/second"}`))
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
@@ -251,7 +251,7 @@ func TestPathMutationsRejectInvalidUTF8BeforeJSONDecoding(t *testing.T) {
 				require.NoError(t, err)
 				invalidBody := bytes.Replace(validBody, []byte("\ufffd"), []byte{0xff}, 1)
 				require.NotEqual(t, validBody, invalidBody)
-				req, err := http.NewRequest(http.MethodPost, ts.URL+operation.path, bytes.NewReader(invalidBody))
+				req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+operation.path, bytes.NewReader(invalidBody))
 				require.NoError(t, err)
 				if contentType.value != "" {
 					req.Header.Set("Content-Type", contentType.value)

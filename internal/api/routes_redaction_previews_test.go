@@ -46,7 +46,10 @@ func TestRedactionPreviewBrowserHTTP(t *testing.T) {
 	node, err := vault.CreateFile(t.Context(), vault.RootID(), "synthetic.pdf", hash, size, "application/pdf")
 	require.NoError(t, err)
 	issue := func() string {
-		resp, err := ts.Client().Post(ts.URL+"/api/daemon/web-session", "application/json", nil)
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+"/api/daemon/web-session", nil)
+		require.NoError(t, err)
+		request.Header.Set("Content-Type", "application/json")
+		resp, err := ts.Client().Do(request)
 		require.NoError(t, err)
 		defer func() { require.NoError(t, resp.Body.Close()) }()
 		require.Equal(t, 201, resp.StatusCode)
@@ -61,7 +64,7 @@ func TestRedactionPreviewBrowserHTTP(t *testing.T) {
 		t.Helper()
 		data, err := json.Marshal(input)
 		require.NoError(t, err)
-		req, err := http.NewRequest(method, ts.URL+path, bytes.NewReader(data))
+		req, err := http.NewRequestWithContext(t.Context(), method, ts.URL+path, bytes.NewReader(data))
 		require.NoError(t, err)
 		req.Header.Set(api.WebSessionHeader, token)
 		req.Header.Set("Content-Type", "application/json")
@@ -126,7 +129,9 @@ func TestRedactionPreviewBrowserHTTP(t *testing.T) {
 			URL string `json:"url"`
 		}
 		require.NoError(t, json.Unmarshal(body, &ticket))
-		resp, err := http.Get(ts.URL + ticket.URL)
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, ts.URL+ticket.URL, nil)
+		require.NoError(t, err)
+		resp, err := http.DefaultClient.Do(request)
 		require.NoError(t, err)
 		require.Equal(t, 200, resp.StatusCode)
 		data, err := io.ReadAll(resp.Body)
@@ -139,7 +144,9 @@ func TestRedactionPreviewBrowserHTTP(t *testing.T) {
 		}
 		digest = sha256.Sum256(data)
 		require.Equal(t, preview.Archive.SHA256, hex.EncodeToString(digest[:]))
-		resp, err = http.Get(ts.URL + ticket.URL)
+		request, err = http.NewRequestWithContext(t.Context(), http.MethodGet, ts.URL+ticket.URL, nil)
+		require.NoError(t, err)
+		resp, err = http.DefaultClient.Do(request)
 		require.NoError(t, err)
 		require.Equal(t, 404, resp.StatusCode)
 		require.NoError(t, resp.Body.Close())
@@ -154,7 +161,7 @@ func TestRedactionPreviewBrowserHTTP(t *testing.T) {
 		directory := directories[0]
 		require.NoError(t, os.Chmod(directory, 0o500))
 		defer func() { require.NoError(t, os.Chmod(directory, 0o700)) }()
-		req, err := http.NewRequest(http.MethodDelete, ts.URL+"/api/v1/redaction/previews", nil)
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodDelete, ts.URL+"/api/v1/redaction/previews", nil)
 		require.NoError(t, err)
 		req.Header.Set(api.WebSessionHeader, alice)
 		req.Header["X-Api-Key"] = []string{""}
@@ -196,7 +203,7 @@ func TestRedactionPreviewBrowserHTTP(t *testing.T) {
 	finished := make(chan any, 1)
 	go func() {
 		defer func() { finished <- recover() }()
-		ts.Config.Handler.ServeHTTP(output, httptest.NewRequest(http.MethodGet, ts.URL+ticket.URL, nil))
+		ts.Config.Handler.ServeHTTP(output, httptest.NewRequestWithContext(t.Context(), http.MethodGet, ts.URL+ticket.URL, nil))
 	}()
 	select {
 	case <-writing:

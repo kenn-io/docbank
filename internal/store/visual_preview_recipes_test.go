@@ -72,12 +72,12 @@ func TestVisualPreviewRecipeStates(t *testing.T) {
 			generation, err := s.PublishVisualPreviewGeneration(t.Context(), node.CurrentVersionID, canonical, physical)
 			require.NoError(t, err)
 			var storedState string
-			require.NoError(t, s.db.QueryRow(`SELECT state FROM visual_preview_generations WHERE generation_id=?`, generation.GenerationID).Scan(&storedState))
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT state FROM visual_preview_generations WHERE generation_id=?`, generation.GenerationID).Scan(&storedState))
 			require.Equal(t, string(state), storedState)
 			view, err := s.ContentVersionVisualPreviewByRecipe(t.Context(), node.CurrentVersionID, generation.RecipeFingerprint)
 			require.NoError(t, err)
 			require.Equal(t, state, view.Generation.Preview.State)
-			_, err = s.db.Exec(`UPDATE visual_preview_generations SET state='invalid' WHERE generation_id=?`, generation.GenerationID)
+			_, err = s.db.ExecContext(t.Context(), `UPDATE visual_preview_generations SET state='invalid' WHERE generation_id=?`, generation.GenerationID)
 			require.ErrorContains(t, err, "immutable")
 		})
 	}
@@ -106,7 +106,7 @@ func TestMissingPhotoVisualPreviewTargetsAfter(t *testing.T) {
 			continue
 		}
 		if state == "excluded" {
-			_, err = s.db.Exec(`UPDATE photo_assets SET excluded_at='2026-01-01T00:00:00Z' WHERE asset_id=?`, asset.ID)
+			_, err = s.db.ExecContext(t.Context(), `UPDATE photo_assets SET excluded_at='2026-01-01T00:00:00Z' WHERE asset_id=?`, asset.ID)
 			require.NoError(t, err)
 			continue
 		}
@@ -203,7 +203,7 @@ func TestPhotoVisualPreviewTargetWithoutMediaType(t *testing.T) {
 	_, err = s.PhotoAssetForNode(t.Context(), tagged.ID)
 	require.NoError(t, err)
 	var stored sql.NullString
-	require.NoError(t, s.db.QueryRow(`SELECT mime_type FROM content_versions WHERE version_id=?`, untagged.CurrentVersionID).Scan(&stored))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT mime_type FROM content_versions WHERE version_id=?`, untagged.CurrentVersionID).Scan(&stored))
 	require.False(t, stored.Valid)
 	recipe := visualPreviewRecipe()
 	recipe.MaxEdgePixels = 512

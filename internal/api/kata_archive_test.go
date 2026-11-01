@@ -16,7 +16,7 @@ import (
 
 func TestKataContextOriginalCacheIsScopedToRequestAndSource(t *testing.T) {
 	root := t.TempDir()
-	s, err := store.Open(filepath.Join(root, "docbank.db"))
+	s, err := store.Open(t.Context(), filepath.Join(root, "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = s.Close() })
 	blobsDir := filepath.Join(root, "blobs")
@@ -83,7 +83,7 @@ func TestKataContextOriginalCacheIsScopedToRequestAndSource(t *testing.T) {
 func TestKataOriginalPreparationFailures(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	s, err := store.Open(filepath.Join(root, "docbank.db"))
+	s, err := store.Open(t.Context(), filepath.Join(root, "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = s.Close() })
 	blobs, err := blob.New(store.NewPackCatalog(s), filepath.Join(root, "blobs"))

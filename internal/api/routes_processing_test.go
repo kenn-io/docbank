@@ -767,7 +767,7 @@ func assertProcessingSurvivesDisconnect(t *testing.T, ts *httptest.Server, selec
 	payload, err := json.Marshal(map[string]any{"selector": selector,
 		"plan_fingerprint": plan.Fingerprint, "consent": true})
 	require.NoError(t, err)
-	request, err := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/processing/jobs", bytes.NewReader(payload))
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+"/api/v1/processing/jobs", bytes.NewReader(payload))
 	require.NoError(t, err)
 	request.Header.Set("Content-Type", "application/json")
 
@@ -1548,7 +1548,7 @@ func TestRenditionDownloadOutlivesRequestTimeout(t *testing.T) {
 	job := processingJobFromStream(t, body)
 	_, full := get(t, ts, "/api/v1/renditions/"+job.AttachmentID, nil)
 	synctest.Test(t, func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "http://localhost/api/v1/renditions/"+job.AttachmentID, nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://localhost/api/v1/renditions/"+job.AttachmentID, nil)
 		req.Header.Set("X-Api-Key", testAPIKey)
 		writer := &slowRenditionWriter{ResponseRecorder: httptest.NewRecorder(),
 			afterFirstWrite: func() { time.Sleep(61 * time.Second) }}

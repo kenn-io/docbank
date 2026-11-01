@@ -28,7 +28,7 @@ func TestAuditedTagCreationRoundTripsBeforeAssignment(t *testing.T) {
 	assert.Equal(t, "tag_assign", auditEventKindForSequence(t, s, 3))
 
 	var sequence, allocations, scopeEntries, mutations, deltas int64
-	require.NoError(t, s.db.QueryRow(`SELECT
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT
 		(SELECT operation_sequence_high_water FROM audit_authority),
 		(SELECT allocation_entry_count FROM audit_authority),
 		(SELECT entry_count FROM audit_scopes),
@@ -43,7 +43,7 @@ func TestAuditedTagCreationRoundTripsBeforeAssignment(t *testing.T) {
 
 	var exported bytes.Buffer
 	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
-	restored, err := Open(filepath.Join(t.TempDir(), "restored.db"))
+	restored, err := Open(t.Context(), filepath.Join(t.TempDir(), "restored.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
@@ -59,7 +59,7 @@ func TestAuditedTagCreationNameConflictDoesNotAdvanceLineage(t *testing.T) {
 	require.ErrorIs(t, err, ErrExists)
 
 	var sequence, deltas int64
-	require.NoError(t, s.db.QueryRow(`SELECT
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT
 		(SELECT operation_sequence_high_water FROM audit_authority),
 		(SELECT COUNT(*) FROM audit_records WHERE kind='attached_metadata_delta')`,
 	).Scan(&sequence, &deltas))
@@ -71,7 +71,7 @@ func TestAuditedTagCreationNameConflictDoesNotAdvanceLineage(t *testing.T) {
 func TestAuditedTagCreationRollsBackWithLineage(t *testing.T) {
 	t.Parallel()
 	s, _, _ := newAuditedTagStore(t)
-	_, err := s.db.Exec(`CREATE TRIGGER reject_tag_creation_authority_advance
+	_, err := s.db.ExecContext(t.Context(), `CREATE TRIGGER reject_tag_creation_authority_advance
 		BEFORE UPDATE ON audit_authority BEGIN
 		SELECT RAISE(ABORT, 'forced tag-creation failure'); END`)
 	require.NoError(t, err)
@@ -81,7 +81,7 @@ func TestAuditedTagCreationRollsBackWithLineage(t *testing.T) {
 	_, err = s.TagByName(t.Context(), "rollback")
 	require.ErrorIs(t, err, ErrNotFound)
 	var sequence, deltas int64
-	require.NoError(t, s.db.QueryRow(`SELECT
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT
 		(SELECT operation_sequence_high_water FROM audit_authority),
 		(SELECT COUNT(*) FROM audit_records WHERE kind='attached_metadata_delta')`,
 	).Scan(&sequence, &deltas))
@@ -99,13 +99,13 @@ func TestAuditedTagCreationImportRejectsMissingCurrentDefinition(t *testing.T) {
 	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
 	malformed := omitMetadataTagDefinition(t, exported.Bytes(), created.ID)
 
-	restored, err := Open(filepath.Join(t.TempDir(), "restored.db"))
+	restored, err := Open(t.Context(), filepath.Join(t.TempDir(), "restored.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	err = restored.ImportMetadata(t.Context(), bytes.NewReader(malformed))
 	require.ErrorContains(t, err, "replayed audit attachments do not match current metadata")
 	var tagRows, auditRows int64
-	require.NoError(t, restored.db.QueryRow(`SELECT
+	require.NoError(t, restored.db.QueryRowContext(t.Context(), `SELECT
 		(SELECT COUNT(*) FROM tags),
 		(SELECT COUNT(*) FROM audit_records)`).Scan(&tagRows, &auditRows))
 	assert.Zero(t, tagRows)

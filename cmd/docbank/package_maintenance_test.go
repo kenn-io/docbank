@@ -18,7 +18,7 @@ import (
 
 func TestRetentionMaintenanceExpiresRecordsHourly(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		catalog, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+		catalog, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "test.db"))
 		require.NoError(t, err)
 		defer func() { require.NoError(t, catalog.Close()) }()
 		record := store.PackagePreflightRecord{

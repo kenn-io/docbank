@@ -44,13 +44,13 @@ func TestAuditedInScopeMoveRecordsDescendantPathsAndRoundTrips(t *testing.T) {
 	assert.Equal(t, archive.Revision+1, updatedArchive.Revision)
 
 	var sequence, records int64
-	require.NoError(t, s.db.QueryRow(`SELECT
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT
 		(SELECT operation_sequence_high_water FROM audit_authority),
 		(SELECT COUNT(*) FROM audit_records)`).Scan(&sequence, &records))
 	assert.Equal(t, int64(2), sequence)
 	assert.Equal(t, int64(15), records)
 	var raw []byte
-	require.NoError(t, s.db.QueryRow(
+	require.NoError(t, s.db.QueryRowContext(t.Context(),
 		`SELECT record_json FROM audit_records WHERE kind='path_effect_list'`,
 	).Scan(&raw))
 	effectList, err := audit.UnmarshalJSONRecord(raw)
@@ -63,7 +63,7 @@ func TestAuditedInScopeMoveRecordsDescendantPathsAndRoundTrips(t *testing.T) {
 
 	var exported bytes.Buffer
 	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
-	restored, err := Open(filepath.Join(t.TempDir(), "restored.db"))
+	restored, err := Open(t.Context(), filepath.Join(t.TempDir(), "restored.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
@@ -87,7 +87,7 @@ func TestAuditedInScopeRenameRecordsOnePathEffect(t *testing.T) {
 	assert.Equal(t, "renamed.txt", renamed.Name)
 	require.NoError(t, s.ValidateMetadata(t.Context()))
 	var effects int64
-	require.NoError(t, s.db.QueryRow(`SELECT json_array_length(
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT json_array_length(
 		json_extract(record_json, '$.fields.effects'))
 		FROM audit_records WHERE kind='path_effect_list'`).Scan(&effects))
 	assert.Equal(t, int64(1), effects)
@@ -112,7 +112,7 @@ func TestAuditedBatchMoveRecordsOneAtomicFinalTopology(t *testing.T) {
 	require.NoError(t, s.ValidateMetadata(t.Context()))
 
 	var sequence, moveMutations int64
-	require.NoError(t, s.db.QueryRow(`SELECT
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT
 		(SELECT operation_sequence_high_water FROM audit_authority),
 		(SELECT COUNT(*) FROM audit_records WHERE kind='canonical_mutation')`,
 	).Scan(&sequence, &moveMutations))
@@ -121,7 +121,7 @@ func TestAuditedBatchMoveRecordsOneAtomicFinalTopology(t *testing.T) {
 
 	var exported bytes.Buffer
 	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
-	restored, err := Open(filepath.Join(t.TempDir(), "restored.db"))
+	restored, err := Open(t.Context(), filepath.Join(t.TempDir(), "restored.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
@@ -135,7 +135,7 @@ func TestAuditedBatchMoveRecordsOneAtomicFinalTopology(t *testing.T) {
 
 func TestAuditedRootScopeRenameHandlesRootTimestampTouch(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)
@@ -155,7 +155,7 @@ func TestAuditedRootScopeRenameHandlesRootTimestampTouch(t *testing.T) {
 
 func TestAuditedMoveRejectsRetainedTrashOriginPathChange(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	projects, err := s.Mkdir(t.Context(), s.RootID(), "Projects")
@@ -178,7 +178,7 @@ func TestAuditedMoveRejectsRetainedTrashOriginPathChange(t *testing.T) {
 	_, err = s.NodeByPath(t.Context(), "/Projects")
 	require.NoError(t, err)
 	var sequence int64
-	require.NoError(t, s.db.QueryRow(
+	require.NoError(t, s.db.QueryRowContext(t.Context(),
 		`SELECT operation_sequence_high_water FROM audit_authority`,
 	).Scan(&sequence))
 	assert.Equal(t, int64(1), sequence)
@@ -248,7 +248,7 @@ func TestAuditedMoveRollsBackTreeAndHistory(t *testing.T) {
 	require.NoError(t, err)
 	archive, err := s.NodeByPath(t.Context(), "/Projects/Archive")
 	require.NoError(t, err)
-	_, err = s.db.Exec(`CREATE TRIGGER reject_audit_move_scope_advance
+	_, err = s.db.ExecContext(t.Context(), `CREATE TRIGGER reject_audit_move_scope_advance
 		BEFORE UPDATE ON audit_scopes BEGIN
 		SELECT RAISE(ABORT, 'forced audit move failure'); END`)
 	require.NoError(t, err)
@@ -260,7 +260,7 @@ func TestAuditedMoveRollsBackTreeAndHistory(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, work.ID, *unchanged.ParentID)
 	var sequence, records int64
-	require.NoError(t, s.db.QueryRow(`SELECT
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT
 		(SELECT operation_sequence_high_water FROM audit_authority),
 		(SELECT COUNT(*) FROM audit_records)`).Scan(&sequence, &records))
 	assert.Equal(t, int64(1), sequence)
@@ -269,7 +269,7 @@ func TestAuditedMoveRollsBackTreeAndHistory(t *testing.T) {
 
 func newAuditedMoveStore(t *testing.T) *Store {
 	t.Helper()
-	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)

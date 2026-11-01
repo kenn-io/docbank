@@ -18,10 +18,10 @@ func TestTimelineDirtyStateCascadesWithVersion(t *testing.T) {
 	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
 		return markDocumentEventDirtyTx(t.Context(), tx, node.CurrentVersionID, "test")
 	}))
-	_, err = s.db.Exec(`DELETE FROM nodes WHERE id=?`, node.ID)
+	_, err = s.db.ExecContext(t.Context(), `DELETE FROM nodes WHERE id=?`, node.ID)
 	require.NoError(t, err)
 	var count int
-	require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM document_event_dirty`).Scan(&count))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT count(*) FROM document_event_dirty`).Scan(&count))
 	require.Zero(t, count)
 }
 
@@ -84,7 +84,7 @@ func TestChangedEvidenceRevokesPublishedDocumentEvents(t *testing.T) {
 				return err
 			}
 
-			_, err = s.db.Exec(`CREATE TRIGGER reject_timeline_dirty
+			_, err = s.db.ExecContext(t.Context(), `CREATE TRIGGER reject_timeline_dirty
 				BEFORE INSERT ON document_event_dirty BEGIN
 				SELECT RAISE(ABORT, 'forced dirty failure'); END`)
 			require.NoError(t, err)
@@ -94,7 +94,7 @@ func TestChangedEvidenceRevokesPublishedDocumentEvents(t *testing.T) {
 			view, err := s.DocumentEventsForVersion(ctx, version.ID)
 			require.NoError(t, err)
 			require.Equal(t, generations[version.ID], view.Generation.GenerationID)
-			_, err = s.db.Exec(`DROP TRIGGER reject_timeline_dirty`)
+			_, err = s.db.ExecContext(t.Context(), `DROP TRIGGER reject_timeline_dirty`)
 			require.NoError(t, err)
 
 			require.NoError(t, changeEvidence())
@@ -241,7 +241,7 @@ func TestLifecycleKeepsTimelineCoverageTruthful(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound, "removed consumed evidence cannot serve an old head")
 	assertDocumentEventGenerationCount(t, s, invalidatedGeneration.Generation.GenerationID, 0)
 	var dirtyRevision int64
-	require.NoError(t, s.db.QueryRow(`SELECT revision FROM document_event_dirty
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT revision FROM document_event_dirty
 		WHERE content_version_id=?`, trashedVersionID).Scan(&dirtyRevision))
 	require.Positive(t, dirtyRevision)
 	coverage, err = s.DocumentEventCoverageReport(t.Context())
@@ -306,7 +306,7 @@ func drainLifecycleDocumentEventsOnce(t *testing.T, s *Store) {
 func assertDocumentEventGenerationCount(t *testing.T, s *Store, generationID string, want int) {
 	t.Helper()
 	var count int
-	require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM document_event_generations
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT count(*) FROM document_event_generations
 		WHERE generation_id=?`, generationID).Scan(&count))
 	assert.Equal(t, want, count)
 }

@@ -23,7 +23,7 @@ func TestProcessingCoverageLargeFenceKeepsStatesDisjoint(t *testing.T) {
 	}
 	ids = append(ids, "00000000-0000-4000-8000-000000000001")
 	for _, id := range ids[:2] {
-		record := embeddingSetFixture(s, id, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
+		record := embeddingSetFixture(t.Context(), s, id, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 		require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
 		require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
 			FencingToken: 1, Key: EmbeddingHeadKey{ContentVersionID: id, BindingID: record.BindingID, InputKind: record.InputKind},
@@ -31,7 +31,7 @@ func TestProcessingCoverageLargeFenceKeepsStatesDisjoint(t *testing.T) {
 			ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
 		}))
 	}
-	chunk := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
+	chunk := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), chunk))
 	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
 		FencingToken: 1, Key: EmbeddingHeadKey{ContentVersionID: versionID, BindingID: chunk.BindingID, InputKind: chunk.InputKind},
@@ -120,7 +120,7 @@ func TestProcessingCoverageReportsRebuildWhilePreviousGenerationServes(t *testin
 func TestProcessingCoverageEmbeddingReplacementKeepsServingHead(t *testing.T) {
 	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
-	old := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
+	old := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), old))
 	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
 		FencingToken: 1,
@@ -172,7 +172,7 @@ func TestProcessingCoverageEmbeddingReplacementKeepsServingHead(t *testing.T) {
 func TestProcessingCoverageChunkRequiresCurrentEvidence(t *testing.T) {
 	t.Parallel()
 	s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
-	chunk := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
+	chunk := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), chunk))
 	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
 		FencingToken: 1,
@@ -186,9 +186,9 @@ func TestProcessingCoverageChunkRequiresCurrentEvidence(t *testing.T) {
 	coverage, err := s.ProcessingCoverage(t.Context(), scope)
 	require.NoError(t, err)
 	require.Equal(t, "complete", coverage.Embeddings[0].State)
-	_, err = s.db.Exec(`DROP TRIGGER rendition_builds_immutable_update`)
+	_, err = s.db.ExecContext(t.Context(), `DROP TRIGGER rendition_builds_immutable_update`)
 	require.NoError(t, err)
-	_, err = s.db.Exec(`UPDATE rendition_builds SET evidence_checksum=? WHERE build_id=(
+	_, err = s.db.ExecContext(t.Context(), `UPDATE rendition_builds SET evidence_checksum=? WHERE build_id=(
 		SELECT build_id FROM rendition_attachments WHERE attachment_id=?)`, testSHA256([]byte("changed-evidence")), attachmentID)
 	require.NoError(t, err)
 	coverage, err = s.ProcessingCoverage(t.Context(), scope)
@@ -260,9 +260,9 @@ func TestProcessingCoverageValidatesEachBuildAndSnapshot(t *testing.T) {
 			assert.Equal(t, 2, coverage.Renditions.Complete)
 			// Deliberately corrupt retained text after a successful read. Coverage
 			// must still validate every distinct build in the new snapshot.
-			_, err = s.db.Exec(`DROP TRIGGER rendition_lexical_segments_immutable_update`)
+			_, err = s.db.ExecContext(t.Context(), `DROP TRIGGER rendition_lexical_segments_immutable_update`)
 			require.NoError(t, err)
-			_, err = s.db.Exec(`UPDATE rendition_lexical_segments SET char_end=999 WHERE build_id=?`, corruptBuild)
+			_, err = s.db.ExecContext(t.Context(), `UPDATE rendition_lexical_segments SET char_end=999 WHERE build_id=?`, corruptBuild)
 			require.NoError(t, err)
 			_, err = s.ProcessingCoverage(t.Context(), scope)
 			require.ErrorContains(t, err, "rendition lexical segment 0 is invalid")

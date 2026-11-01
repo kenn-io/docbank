@@ -194,7 +194,7 @@ func TestCheckoutWorkerFailureReleasesOperation(t *testing.T) {
 	require.NoError(t, err)
 	supervisor := jobs.New(t.Context(), nil)
 	t.Cleanup(func() { require.NoError(t, supervisor.Shutdown(context.Background())) })
-	require.NoError(t, s.StartOperation(supervisor, c))
+	require.NoError(t, s.StartOperation(t.Context(), supervisor, c))
 	require.Eventually(t, func() bool {
 		registered := supervisor.Snapshot()
 		return len(registered) == 1 && registered[0].FinishedAt != nil

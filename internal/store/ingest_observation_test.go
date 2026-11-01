@@ -38,7 +38,7 @@ func TestOperationalReimportKeepsVersionAndAddsMembership(t *testing.T) {
 	assert.False(t, replayAdded)
 	assert.Equal(t, second.Revision, replayed.Revision)
 	var facts int64
-	require.NoError(t, s.db.QueryRow(
+	require.NoError(t, s.db.QueryRowContext(t.Context(),
 		`SELECT COUNT(*) FROM provenance WHERE node_id=? AND ingest_id=?`, second.ID, secondRun.ID(),
 	).Scan(&facts))
 	assert.Equal(t, int64(1), facts)
@@ -155,7 +155,7 @@ func TestReplaceContentForIngestRollsBackOnLabelConflict(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, first, unchanged)
 	var versions, ingests int64
-	require.NoError(t, s.db.QueryRow(`SELECT
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT
 		(SELECT COUNT(*) FROM content_versions WHERE node_id=?),
 		(SELECT COUNT(*) FROM ingests WHERE id=?)`, first.ID, conflictRun.ID()).Scan(&versions, &ingests))
 	assert.Equal(t, int64(1), versions)
@@ -185,7 +185,7 @@ func TestReplaceContentForIngestRejectsStaleRevisionBeforePublishingRun(t *testi
 	require.NoError(t, err)
 	assert.Equal(t, first, unchanged)
 	var ingests, facts int64
-	require.NoError(t, s.db.QueryRow(`SELECT
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT
 		(SELECT COUNT(*) FROM ingests WHERE id=?),
 		(SELECT COUNT(*) FROM provenance WHERE ingest_id=?)`, run.ID(), run.ID()).Scan(&ingests, &facts))
 	assert.Zero(t, ingests)

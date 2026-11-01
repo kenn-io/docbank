@@ -193,7 +193,7 @@ func TestMediaEnqueueAuthorizedReturnsBeforeProvider(t *testing.T) {
 func TestMediaContinuationCancellationBeforeEmbeddingResumesAfterReopen(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	catalog, err := store.Open(filepath.Join(root, "docbank.db"))
+	catalog, err := store.Open(t.Context(), filepath.Join(root, "docbank.db"))
 	require.NoError(t, err)
 	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(root, "blobs"))
 	require.NoError(t, err)
@@ -304,7 +304,7 @@ func TestMediaContinuationCancellationBeforeEmbeddingResumesAfterReopen(t *testi
 	blobs = nil
 	require.NoError(t, catalog.Close())
 	catalog = nil
-	catalog, err = store.Open(filepath.Join(root, "docbank.db"))
+	catalog, err = store.Open(t.Context(), filepath.Join(root, "docbank.db"))
 	require.NoError(t, err)
 	blobs, err = blob.New(store.NewPackCatalog(catalog), filepath.Join(root, "blobs"))
 	require.NoError(t, err)
@@ -619,7 +619,7 @@ func TestMediaOperationStateFollowsJob(t *testing.T) {
 	// A restore starts a new processing incarnation while both jobs are queued.
 	var archive bytes.Buffer
 	require.NoError(t, f.catalog.ExportMetadata(ctx, &archive))
-	restored, err := store.Open(filepath.Join(t.TempDir(), "restored.db"))
+	restored, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "restored.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	require.NoError(t, restored.ImportMetadata(ctx, &archive))

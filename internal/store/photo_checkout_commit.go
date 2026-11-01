@@ -192,7 +192,7 @@ func (s *Store) CommitPhotoCheckoutEntry(ctx context.Context, c PhotoCheckout, e
 		if err != nil {
 			return err
 		}
-		node, err := nodeByIDTx(tx, nodeID)
+		node, err := nodeByIDTx(ctx, tx, nodeID)
 		if err != nil {
 			return err
 		}

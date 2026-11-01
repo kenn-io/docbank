@@ -63,7 +63,7 @@ func TestEmailDocumentsMetadataRoundTripAndTamper(t *testing.T) {
 			target := newTestStore(t)
 			require.Error(t, target.ImportMetadata(t.Context(), bytes.NewReader(bytes.Join(lines, []byte("\n")))))
 			var count int
-			require.NoError(t, target.db.QueryRow(`SELECT count(*) FROM email_document_publications`).Scan(&count))
+			require.NoError(t, target.db.QueryRowContext(t.Context(), `SELECT count(*) FROM email_document_publications`).Scan(&count))
 			require.Zero(t, count)
 		})
 	}
@@ -209,14 +209,14 @@ func TestEmailDocumentsConcurrentReplayBoundedPagesAndRollback(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidEmailDocumentRequest)
 	// Fail only after the ordinary child was inserted: all audit, node, version,
 	// queue and relation writes must roll back with the failed receipt.
-	_, err = s.db.Exec(`CREATE TRIGGER fail_email_documents BEFORE INSERT ON email_document_publications BEGIN SELECT RAISE(ABORT,'synthetic receipt failure'); END`)
+	_, err = s.db.ExecContext(t.Context(), `CREATE TRIGGER fail_email_documents BEFORE INSERT ON email_document_publications BEGIN SELECT RAISE(ABORT,'synthetic receipt failure'); END`)
 	require.NoError(t, err)
 	var before, after int
-	require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM nodes`).Scan(&before))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT count(*) FROM nodes`).Scan(&before))
 	next = attachmentRequest(t, s, view, "rollback")
 	_, err = s.PublishEmailDocuments(t.Context(), next)
 	require.ErrorContains(t, err, "synthetic receipt failure")
-	require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM nodes`).Scan(&after))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT count(*) FROM nodes`).Scan(&after))
 	require.Equal(t, before, after)
 	require.NoError(t, s.ValidateMetadata(t.Context()))
 }

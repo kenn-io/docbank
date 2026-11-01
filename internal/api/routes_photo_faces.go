@@ -80,7 +80,7 @@ func registerPhotoFaceRoutes(api huma.API, d Deps, g *gate) {
 		Body             CreatePhotoFaceRequest
 	}) (*struct{ Body PhotoFaceResult }, error) {
 		var result PhotoFaceResult
-		err := g.mutate(func() error {
+		err := g.mutate(ctx, func() error {
 			personName := ""
 			if in.Body.PersonName != nil {
 				personName = *in.Body.PersonName
@@ -133,7 +133,7 @@ func registerPhotoFaceDecisionRoutes(api huma.API, d Deps, g *gate) {
 			return nil, NewError(http.StatusForbidden, "web_session_read_only", "Browser sessions can only name, clear, or remove faces and clear whole-photo marks.")
 		}
 		var receipt store.PhotoFaceDecisionReceipt
-		err := g.mutate(func() error {
+		err := g.mutate(ctx, func() error {
 			var err error
 			receipt, err = d.Store.DecidePhotoFace(ctx, in.ContentVersionID, store.PhotoFaceDecisionRequest(in.Body))
 			if err != nil {
@@ -151,7 +151,7 @@ func registerPhotoFaceDecisionRoutes(api huma.API, d Deps, g *gate) {
 		OperationID string `query:"operation_id" format:"uuid"`
 	}) (*struct{ Body PhotoFaceDecisionResult }, error) {
 		var receipt store.PhotoFaceDecisionReceipt
-		err := g.mutate(func() error {
+		err := g.mutate(ctx, func() error {
 			var err error
 			receipt, err = d.Store.UndoPhotoFaceDecisionWithOperationID(ctx, in.ReceiptID, in.OperationID)
 			if err != nil {

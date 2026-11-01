@@ -59,7 +59,7 @@ func TestLargeObjectBackupRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.Positive(t, result.PackedAttachmentBlobs, "small fixture files still restore into managed packs")
 	assert.Equal(t, int64(1), result.LooseAttachmentBlobs, "the large logical object restores as one loose file")
-	restored, err := store.OpenForRestore(filepath.Join(target, "docbank.db"), store.DefaultSQLiteDriver())
+	restored, err := store.OpenForRestore(t.Context(), filepath.Join(target, "docbank.db"), store.DefaultSQLiteDriver())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	blobs, err := blob.New(store.NewPackCatalog(restored), filepath.Join(target, "blobs"))

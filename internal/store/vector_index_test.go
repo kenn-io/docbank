@@ -21,7 +21,7 @@ import (
 func TestVectorIndexSourceCapturesExactEligibleMembership(t *testing.T) {
 	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
-	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
+	record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint,
 		document.EmbeddingInputOriginalFile, "optional", "")
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
 	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
@@ -53,7 +53,7 @@ func TestVectorIndexSourceCapturesExactEligibleMembership(t *testing.T) {
 func TestVectorIndexPublicationFencesMembershipDriftAndKeepsPriorHead(t *testing.T) {
 	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
-	first := embeddingSetFixture(s, versionID, profile.Fingerprint,
+	first := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint,
 		document.EmbeddingInputOriginalFile, "optional", "")
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), first))
 	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
@@ -147,7 +147,7 @@ func TestVectorIndexProjectionStateIsExcludedFromPortableMetadata(t *testing.T) 
 	for _, table := range []string{"vector_index_generations", "vector_index_heads",
 		"vector_index_build_jobs", "vector_index_reader_leases", "vector_index_unavailable_coverage"} {
 		var count int
-		require.NoError(t, restored.db.QueryRow(`SELECT COUNT(*) FROM `+table).Scan(&count))
+		require.NoError(t, restored.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM `+table).Scan(&count))
 		assert.Zero(t, count, table)
 	}
 }
@@ -155,7 +155,7 @@ func TestVectorIndexProjectionStateIsExcludedFromPortableMetadata(t *testing.T) 
 func TestVectorIndexCandidateCanBeRestagedAfterCrashedClaimExpires(t *testing.T) {
 	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
-	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
+	record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint,
 		document.EmbeddingInputOriginalFile, "optional", "")
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
 	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
@@ -194,7 +194,7 @@ func TestVectorIndexCandidateCanBeRestagedAfterCrashedClaimExpires(t *testing.T)
 func TestVectorIndexPayloadDistinguishesMissingFromCorruptAuthority(t *testing.T) {
 	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
-	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
+	record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint,
 		document.EmbeddingInputOriginalFile, "optional", "")
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
 	member := VectorIndexMember{EmbeddingSetID: record.ID, VectorSetID: record.VectorSet.ID,
@@ -276,7 +276,7 @@ func vectorIndexGenerationExistsForTest(t *testing.T, s *Store, generationID str
 func TestVectorIndexChangedMembershipSupersedesLiveBuildClaim(t *testing.T) {
 	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
-	first := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
+	first := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), first))
 	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
 		FencingToken: 1, Key: EmbeddingHeadKey{ContentVersionID: versionID, BindingID: first.BindingID, InputKind: first.InputKind},
@@ -293,7 +293,7 @@ func TestVectorIndexChangedMembershipSupersedesLiveBuildClaim(t *testing.T) {
 	require.False(t, claimed)
 	secondProfile := embeddingCatalogProfileVariant(t)
 	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error { return ensureProcessingProfileTx(t.Context(), tx, secondProfile) }))
-	second := embeddingSetFixture(s, versionID, secondProfile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
+	second := embeddingSetFixture(t.Context(), s, versionID, secondProfile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 	second.ID = testSHA256([]byte("second-profile-index-set"))
 	second.InputGeneration.ID = testSHA256([]byte("second-profile-index-input"))
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), second))
@@ -323,7 +323,7 @@ func TestVectorIndexChangedMembershipSupersedesLiveBuildClaim(t *testing.T) {
 func newPublishedVectorIndexFixture(t *testing.T) (*Store, EmbeddingSetRecord, VectorIndexSource) {
 	t.Helper()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
-	record := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
+	record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
 	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
 		FencingToken: 1, Key: EmbeddingHeadKey{ContentVersionID: versionID, BindingID: record.BindingID, InputKind: record.InputKind},
@@ -343,7 +343,7 @@ func TestVectorIndexAcquisitionRejectsTrashedMembership(t *testing.T) {
 	_, err := s.AcquireVectorIndexGeneration(t.Context(), source.VectorSpaceID, "before-trash", now, time.Minute)
 	require.NoError(t, err)
 	var nodeID int64
-	require.NoError(t, s.db.QueryRow(`SELECT id FROM nodes WHERE current_version_id=?`, record.ContentVersionID).Scan(&nodeID))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT id FROM nodes WHERE current_version_id=?`, record.ContentVersionID).Scan(&nodeID))
 	_, _, err = s.Trash(t.Context(), nodeID, UnconditionalRev)
 	require.NoError(t, err)
 	_, err = s.AcquireVectorIndexGeneration(t.Context(), source.VectorSpaceID, "after-trash", now, time.Minute)
@@ -356,7 +356,7 @@ func TestVectorIndexSweepIncludesSpacesAfterLastEmbeddingHeadIsRemoved(t *testin
 	generation := vectorIndexGenerationFixture("active", source, []byte("index"), time.Now().UTC())
 	require.NoError(t, putVectorIndexGenerationForTest(t, s, generation))
 	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-		_, err := tx.Exec(`DELETE FROM embedding_heads`)
+		_, err := tx.ExecContext(t.Context(), `DELETE FROM embedding_heads`)
 		return err
 	}))
 	spaces, err := s.ListVectorIndexSpaces(t.Context())
@@ -374,7 +374,7 @@ func TestVectorIndexRetirementPreservesReadersUntilLeaseRelease(t *testing.T) {
 	require.NoError(t, err)
 	require.ErrorIs(t, s.RetireEmptyVectorIndexHead(t.Context(), source.VectorSpaceID, now), ErrVectorIndexSourceStale)
 	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-		_, err := tx.Exec(`DELETE FROM embedding_heads`)
+		_, err := tx.ExecContext(t.Context(), `DELETE FROM embedding_heads`)
 		return err
 	}))
 	require.NoError(t, s.RetireEmptyVectorIndexHead(t.Context(), source.VectorSpaceID, now))

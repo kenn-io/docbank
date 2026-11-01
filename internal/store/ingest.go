@@ -218,6 +218,7 @@ func ensureIngestRunTx(ctx context.Context, tx *sql.Tx, run IngestRun) (bool, er
 // is a distinct file, not a re-import. Otherwise returns the smallest free
 // candidate name.
 func resolveIngestNameTx(
+	ctx context.Context,
 	tx *sql.Tx, parentID int64, name, blobHash, sourceKind string,
 ) (string, int64, bool, error) {
 	base, ext := splitSuffix(name)
@@ -225,7 +226,7 @@ func resolveIngestNameTx(
 	// origins. SQLite can visit those IDs in order without sorting provenance,
 	// so an early match need not load every sibling's origins. The left join
 	// preserves the name fallback for unknown origins.
-	rows, err := tx.Query(
+	rows, err := tx.QueryContext(ctx,
 		`SELECT n.id, n.name, i.source_kind, p.original_path FROM nodes AS n
 		 LEFT JOIN provenance AS p ON p.node_id = n.id
 		   AND NOT EXISTS (
@@ -272,7 +273,7 @@ func resolveIngestNameTx(
 	// Two disjoint index ranges cover the original name and every possible
 	// suffix. The upper bound ends in ')' (the byte after '('), so arbitrary
 	// Unicode and SQL wildcard characters in the basename stay literal.
-	conflicts, err := tx.Query(`
+	conflicts, err := tx.QueryContext(ctx, `
 		SELECT name, kind FROM nodes
 		WHERE parent_id = $1 AND name = $2 AND trashed_at IS NULL
 		UNION ALL
@@ -417,7 +418,7 @@ func (s *Store) ingestFileTx(
 	finalName := name
 	if options.exact {
 		var existingID int64
-		err := tx.QueryRow(
+		err := tx.QueryRowContext(ctx,
 			`SELECT id FROM nodes WHERE parent_id = $1 AND name = $2 AND trashed_at IS NULL`,
 			parentID, name).Scan(&existingID)
 		switch {
@@ -432,16 +433,16 @@ func (s *Store) ingestFileTx(
 		var existingID int64
 		var skip bool
 		finalName, existingID, skip, err = resolveIngestNameTx(
-			tx, parentID, name, blobHash, run.record.SourceKind,
+			ctx, tx, parentID, name, blobHash, run.record.SourceKind,
 		)
 		if err != nil {
 			return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
 		}
 		if skip {
-			if err := s.EnsureBlobTx(tx, blobHash, size, physical...); err != nil {
+			if err := s.EnsureBlobTx(ctx, tx, blobHash, size, physical...); err != nil {
 				return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, fmt.Errorf("reconciling idempotent ingest content: %w", err)
 			}
-			receipt.Node, err = scanNode(tx.QueryRow(
+			receipt.Node, err = scanNode(tx.QueryRowContext(ctx,
 				`SELECT `+nodeCols+` FROM `+nodeFrom+` WHERE n.id = $1`, existingID))
 			if err != nil {
 				return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, fmt.Errorf("reading idempotent ingest node %d: %w", existingID, err)
@@ -462,14 +463,14 @@ func (s *Store) ingestFileTx(
 			if !options.completeReceipt {
 				return receipt, added, resolution, nil
 			}
-			receipt.Version, err = scanContentVersion(tx.QueryRow(
+			receipt.Version, err = scanContentVersion(tx.QueryRowContext(ctx,
 				`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id = $1`,
 				receipt.Node.CurrentVersionID,
 			))
 			if err != nil {
 				return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, fmt.Errorf("reading idempotent ingest version of node %d: %w", existingID, err)
 			}
-			receipt.Physical, err = authorizedPhysicalContentTx(tx, blobHash)
+			receipt.Physical, err = authorizedPhysicalContentTx(ctx, tx, blobHash)
 			if err != nil {
 				return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
 			}
@@ -486,7 +487,7 @@ func (s *Store) ingestFileTx(
 		prior     Node
 	)
 	if active {
-		prior, err = liveDirTx(tx, parentID)
+		prior, err = liveDirTx(ctx, tx, parentID)
 		if err != nil {
 			return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
 		}
@@ -521,7 +522,7 @@ func (s *Store) ingestFileTx(
 	if err := validateProvenanceRecord(provenance); err != nil {
 		return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, fmt.Errorf("validating provenance for %q: %w", finalName, err)
 	}
-	if _, err := tx.Exec(
+	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO provenance (
 			identity, node_id, ingest_id, original_path, original_mtime, supersedes
 		 ) VALUES ($1, $2, $3, $4, $5, $6)`,
@@ -540,7 +541,7 @@ func (s *Store) ingestFileTx(
 	}
 	if run.operationalWatch {
 		if err := insertWatchSourceTx(
-			tx, run.record.SourceDesc, provenance.OriginalPath,
+			ctx, tx, run.record.SourceDesc, provenance.OriginalPath,
 			receipt.Node.ID, blobHash, size,
 		); err != nil {
 			return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
@@ -556,7 +557,7 @@ func (s *Store) ingestFileTx(
 		}
 	}
 	if active {
-		resultingParent, err := nodeByIDTx(tx, parentID)
+		resultingParent, err := nodeByIDTx(ctx, tx, parentID)
 		if err != nil {
 			return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
 		}
@@ -579,7 +580,7 @@ func (s *Store) ingestFileTx(
 		}
 	}
 	if options.completeReceipt {
-		receipt.Physical, err = authorizedPhysicalContentTx(tx, blobHash)
+		receipt.Physical, err = authorizedPhysicalContentTx(ctx, tx, blobHash)
 		if err != nil {
 			return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
 		}
@@ -589,6 +590,7 @@ func (s *Store) ingestFileTx(
 }
 
 func insertWatchSourceTx(
+	ctx context.Context,
 	tx *sql.Tx, watchName, sourceRef string, nodeID int64, blobHash string, size int64,
 ) error {
 	record := metadataWatchSource{
@@ -598,7 +600,7 @@ func insertWatchSourceTx(
 	if err := validateWatchSourceRecord(record); err != nil {
 		return fmt.Errorf("validating watched source %q/%q: %w", watchName, sourceRef, err)
 	}
-	if _, err := tx.Exec(
+	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO watch_sources(watch_name,source_ref,node_id,blob_hash,size)
 		 VALUES($1,$2,$3,$4,$5)`,
 		watchName, sourceRef, nodeID, blobHash, size,

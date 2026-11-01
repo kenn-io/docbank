@@ -522,7 +522,7 @@ func planPhotoKeywordsTx(ctx context.Context, tx *sql.Tx, keywords []PhotoKeywor
 		if _, duplicate := plan.states[keyword.TagID]; duplicate {
 			return plan, ErrInvalidPhotoAsset
 		}
-		tag, err := tagByIDTx(tx, keyword.TagID)
+		tag, err := tagByIDTx(ctx, tx, keyword.TagID)
 		if err != nil {
 			return plan, err
 		}

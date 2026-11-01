@@ -53,7 +53,7 @@ func TestSourceMetadataGenerationsAreImmutableAndAttachmentFactsStayJoined(t *te
 	require.NoError(t, err)
 	otherGeneration, err := s.PublishSourceMetadata(ctx, other.BlobHash, fakeHash("f1"), canonical)
 	require.NoError(t, err)
-	_, err = s.db.Exec(`UPDATE source_metadata_heads SET generation_id=? WHERE source_sha256=?`,
+	_, err = s.db.ExecContext(t.Context(), `UPDATE source_metadata_heads SET generation_id=? WHERE source_sha256=?`,
 		otherGeneration.GenerationID, version.BlobHash)
 	require.Error(t, err, "a head must not select another original's evidence")
 }
@@ -235,7 +235,7 @@ func TestNodeSourceMetadataViewPinsPathAndEvidenceAcrossWrites(t *testing.T) {
 	// Commit both changes after resolving the node, before the detail read
 	// loads its path and metadata. All three must retain the original snapshot.
 	view, err := s.nodeSourceMetadataView(ctx, func(tx *sql.Tx) (Node, error) {
-		resolved, err := nodeByIDTx(tx, node.ID)
+		resolved, err := nodeByIDTx(t.Context(), tx, node.ID)
 		require.NoError(t, err)
 		_, _, err = s.Move(ctx, node.ID, s.RootID(), "after.pdf", node.Revision)
 		require.NoError(t, err)
@@ -327,7 +327,7 @@ func TestSourceMetadataJSONLRoundTripsAcrossSQLiteDrivers(t *testing.T) {
 		driver docsqlite.Driver
 	}{{"default", DefaultSQLiteDriver()}, {"pure Go", modernc.Driver{}}} {
 		t.Run(testCase.name, func(t *testing.T) {
-			source, err := Open(filepath.Join(t.TempDir(), "source.db"), testCase.driver)
+			source, err := Open(t.Context(), filepath.Join(t.TempDir(), "source.db"), testCase.driver)
 			require.NoError(t, err)
 			defer func() { require.NoError(t, source.Close()) }()
 			node, err := source.CreateFile(t.Context(), source.RootID(), "report.pdf", fakeHash("a1"), 4, "application/pdf")
@@ -340,7 +340,7 @@ func TestSourceMetadataJSONLRoundTripsAcrossSQLiteDrivers(t *testing.T) {
 			var exported bytes.Buffer
 			require.NoError(t, source.ExportMetadata(t.Context(), &exported))
 			assert.Contains(t, exported.String(), `"type":"source_metadata_generation"`)
-			target, err := Open(filepath.Join(t.TempDir(), "target.db"), testCase.driver)
+			target, err := Open(t.Context(), filepath.Join(t.TempDir(), "target.db"), testCase.driver)
 			require.NoError(t, err)
 			defer func() { require.NoError(t, target.Close()) }()
 			require.NoError(t, target.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))

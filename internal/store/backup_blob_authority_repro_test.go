@@ -16,7 +16,7 @@ func TestBackupCaptureFollowsBlobRootReferences(t *testing.T) { //nolint:paralle
 	ctx := t.Context()
 	probe := fakeHash("267")
 	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		return s.EnsureBlobTx(tx, probe, 7)
+		return s.EnsureBlobTx(t.Context(), tx, probe, 7)
 	}))
 
 	canonical, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{

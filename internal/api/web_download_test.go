@@ -33,7 +33,7 @@ func TestWebDownloadVerifiesBeforeOneUseBrowserHandoff(t *testing.T) {
 	const content = "synthetic quarterly report\n"
 	document := createFileWithContent(t, ts, s, "/quarterly-report.txt", content)
 
-	sessionRequest, err := http.NewRequest(
+	sessionRequest, err := http.NewRequestWithContext(t.Context(),
 		http.MethodPost, ts.URL+"/api/daemon/web-session", nil,
 	)
 	require.NoError(t, err)
@@ -52,7 +52,7 @@ func TestWebDownloadVerifiesBeforeOneUseBrowserHandoff(t *testing.T) {
 		"size": document.Size,
 	})
 	require.NoError(t, err)
-	prepareRequest, err := http.NewRequest(
+	prepareRequest, err := http.NewRequestWithContext(t.Context(),
 		http.MethodPost, ts.URL+"/api/daemon/web-download", bytes.NewReader(requestBody),
 	)
 	require.NoError(t, err)
@@ -103,7 +103,7 @@ func TestWebDownloadVerifiesBeforeOneUseBrowserHandoff(t *testing.T) {
 	assert.Equal(t, document.BlobHash, ready.BlobHash)
 	require.Contains(t, ready.URL, "?ticket=")
 
-	downloadRequest, err := http.NewRequest(http.MethodGet, ts.URL+ready.URL, nil)
+	downloadRequest, err := http.NewRequestWithContext(t.Context(), http.MethodGet, ts.URL+ready.URL, nil)
 	require.NoError(t, err)
 	downloadRequest.Header["X-Api-Key"] = []string{""}
 	downloadResponse, err := ts.Client().Do(downloadRequest)
@@ -128,7 +128,7 @@ func TestWebDownloadVerifiesBeforeOneUseBrowserHandoff(t *testing.T) {
 	assert.Equal(t, "attachment", disposition)
 	assert.Equal(t, document.Name, params["filename"])
 
-	reusedRequest, err := http.NewRequest(http.MethodGet, ts.URL+ready.URL, nil)
+	reusedRequest, err := http.NewRequestWithContext(t.Context(), http.MethodGet, ts.URL+ready.URL, nil)
 	require.NoError(t, err)
 	reusedRequest.Header["X-Api-Key"] = []string{""}
 	reusedResponse, err := ts.Client().Do(reusedRequest)
@@ -158,7 +158,7 @@ func TestWebDownloadPreparesOneRetainedVersion(t *testing.T) {
 		"size": historical.Size,
 	})
 	require.NoError(t, err)
-	request, err := http.NewRequest(
+	request, err := http.NewRequestWithContext(t.Context(),
 		http.MethodPost, ts.URL+"/api/daemon/web-download", bytes.NewReader(requestBody),
 	)
 	require.NoError(t, err)
@@ -195,7 +195,9 @@ func TestWebDownloadPreparesOneRetainedVersion(t *testing.T) {
 	assert.Equal(t, historical.ID, ready.VersionID)
 	assert.Equal(t, historical.BlobHash, ready.BlobHash)
 
-	download, err := ts.Client().Get(ts.URL + ready.URL)
+	request, err = http.NewRequestWithContext(t.Context(), http.MethodGet, ts.URL+ready.URL, nil)
+	require.NoError(t, err)
+	download, err := ts.Client().Do(request)
 	require.NoError(t, err)
 	body, err := io.ReadAll(download.Body)
 	require.NoError(t, err)
@@ -217,7 +219,7 @@ func TestWebDownloadRejectsAStaleSelectionBeforeStaging(t *testing.T) {
 		"size": document.Size,
 	})
 	require.NoError(t, err)
-	request, err := http.NewRequest(
+	request, err := http.NewRequestWithContext(t.Context(),
 		http.MethodPost, ts.URL+"/api/daemon/web-download", bytes.NewReader(requestBody),
 	)
 	require.NoError(t, err)
@@ -291,7 +293,9 @@ func TestWebPreviewTicketCancellationIsOwnerScopedAndSessionRevoked(t *testing.T
 	response := cancelWebDownload(t, ts, otherSession, firstURL)
 	assert.Equal(t, http.StatusNotFound, response.StatusCode)
 	require.NoError(t, response.Body.Close())
-	response, err := ts.Client().Get(ts.URL + firstURL)
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, ts.URL+firstURL, nil)
+	require.NoError(t, err)
+	response, err = ts.Client().Do(request)
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, response.StatusCode)
 	require.NoError(t, response.Body.Close())
@@ -300,20 +304,24 @@ func TestWebPreviewTicketCancellationIsOwnerScopedAndSessionRevoked(t *testing.T
 	response = cancelWebDownload(t, ts, firstSession, cancelledURL)
 	assert.Equal(t, http.StatusNoContent, response.StatusCode)
 	require.NoError(t, response.Body.Close())
-	response, err = ts.Client().Get(ts.URL + cancelledURL)
+	request, err = http.NewRequestWithContext(t.Context(), http.MethodGet, ts.URL+cancelledURL, nil)
+	require.NoError(t, err)
+	response, err = ts.Client().Do(request)
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusNotFound, response.StatusCode)
 	require.NoError(t, response.Body.Close())
 
 	revokedURL := readyWebDownloadURL(t, prepareWebDownload(t, ts, firstSession, authority))
-	revoke, err := http.NewRequest(http.MethodDelete, ts.URL+"/api/daemon/web-session", nil)
+	revoke, err := http.NewRequestWithContext(t.Context(), http.MethodDelete, ts.URL+"/api/daemon/web-session", nil)
 	require.NoError(t, err)
 	revoke.Header.Set(api.WebSessionHeader, firstSession)
 	response, err = ts.Client().Do(revoke)
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusNoContent, response.StatusCode)
 	require.NoError(t, response.Body.Close())
-	response, err = ts.Client().Get(ts.URL + revokedURL)
+	request, err = http.NewRequestWithContext(t.Context(), http.MethodGet, ts.URL+revokedURL, nil)
+	require.NoError(t, err)
+	response, err = ts.Client().Do(request)
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusNotFound, response.StatusCode)
 	require.NoError(t, response.Body.Close())
@@ -346,7 +354,9 @@ func TestWebPreviewRejectsRasterDimensionsBeforePublishingTicket(t *testing.T) {
 			response := prepareWebDownload(t, ts, "", map[string]any{"node_id": node.ID, "revision": node.Revision, "version_id": node.CurrentVersionID, "blob_hash": node.BlobHash, "size": node.Size, "purpose": "preview"})
 			if test.ready {
 				previewURL := readyWebDownloadURL(t, response)
-				preview, err := ts.Client().Get(ts.URL + previewURL)
+				request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, ts.URL+previewURL, nil)
+				require.NoError(t, err)
+				preview, err := ts.Client().Do(request)
 				require.NoError(t, err)
 				require.Equal(t, http.StatusOK, preview.StatusCode)
 				content, err := io.ReadAll(preview.Body)
@@ -423,7 +433,10 @@ func writePNGChunk(out *bytes.Buffer, kind string, payload []byte) {
 
 func issueWebSession(t *testing.T, ts *httptest.Server) string {
 	t.Helper()
-	response, err := ts.Client().Post(ts.URL+"/api/daemon/web-session", "", nil)
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+"/api/daemon/web-session", nil)
+	require.NoError(t, err)
+	request.Header.Set("Content-Type", "")
+	response, err := ts.Client().Do(request)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusCreated, response.StatusCode)
 	var session struct {
@@ -440,7 +453,7 @@ func prepareWebDownload(
 	t.Helper()
 	body, err := json.Marshal(authority)
 	require.NoError(t, err)
-	request, err := http.NewRequest(http.MethodPost, ts.URL+"/api/daemon/web-download", bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+"/api/daemon/web-download", bytes.NewReader(body))
 	require.NoError(t, err)
 	request.Header.Set("Content-Type", "application/json")
 	if session != "" {
@@ -482,7 +495,7 @@ func cancelWebDownload(
 	t.Helper()
 	ticket := strings.TrimPrefix(readyURL, "/api/daemon/web-download/file?ticket=")
 	require.NotEqual(t, readyURL, ticket)
-	request, err := http.NewRequest(
+	request, err := http.NewRequestWithContext(t.Context(),
 		http.MethodDelete, ts.URL+"/api/daemon/web-download?ticket="+ticket, nil,
 	)
 	require.NoError(t, err)

@@ -47,7 +47,7 @@ func newXMPEnv(t *testing.T, files ...photoGroupFile) *xmpEnv {
 func newXMPStore(t *testing.T) *xmpEnv {
 	t.Helper()
 	root := t.TempDir()
-	catalog, err := store.Open(filepath.Join(root, "docbank.db"))
+	catalog, err := store.Open(t.Context(), filepath.Join(root, "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(root, "blobs"))

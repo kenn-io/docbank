@@ -1251,7 +1251,7 @@ func TestPhotoSettingsBackupCompatibility(t *testing.T) {
 	restored := newTestStore(t)
 	require.NoError(t, restored.ImportMetadata(t.Context(), strings.NewReader(v1)))
 	var sequence int64
-	require.NoError(t, restored.db.QueryRow(`SELECT representative_sequence FROM photo_library_settings`).Scan(&sequence))
+	require.NoError(t, restored.db.QueryRowContext(t.Context(), `SELECT representative_sequence FROM photo_library_settings`).Scan(&sequence))
 	require.Zero(t, sequence)
 	settings, err := restored.PhotoSettings(t.Context())
 	require.NoError(t, err)
@@ -1273,7 +1273,7 @@ func TestPhotoSettingsBackupCompatibility(t *testing.T) {
 			restored := newTestStore(t)
 			require.NoError(t, restored.ImportMetadata(t.Context(), strings.NewReader(stream)))
 			var actual *int64
-			require.NoError(t, restored.db.QueryRow(`SELECT representative_sequence FROM photo_library_settings`).Scan(&actual))
+			require.NoError(t, restored.db.QueryRowContext(t.Context(), `SELECT representative_sequence FROM photo_library_settings`).Scan(&actual))
 			require.Equal(t, sequence.want, actual)
 			settings, err := restored.PhotoSettings(t.Context())
 			require.NoError(t, err)
@@ -1336,7 +1336,7 @@ func TestPhotoRepresentativeImportRejectsInconsistentBackup(t *testing.T) {
 				_, err = s.UndoPhotoAuthored(t.Context(), receipt.ReceiptID)
 				require.NoError(t, err)
 				var choices int
-				require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM photo_assets WHERE representative_rank IS NOT NULL`).Scan(&choices))
+				require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM photo_assets WHERE representative_rank IS NOT NULL`).Scan(&choices))
 				require.Zero(t, choices)
 			}
 			var backup bytes.Buffer
@@ -1360,7 +1360,7 @@ func TestPhotoRepresentativeDecisionKeepsDefaultSettings(t *testing.T) {
 	s := newTestStore(t)
 	ids := burstPhotos(t, s, 2)
 	var count int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM photo_library_settings`).Scan(&count))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM photo_library_settings`).Scan(&count))
 	require.Zero(t, count)
 	_, err := s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets}), CurrentID: ids[0], Decision: "representative"})
 	require.NoError(t, err)

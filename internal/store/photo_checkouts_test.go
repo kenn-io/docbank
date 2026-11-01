@@ -329,7 +329,7 @@ func TestPhotoCheckoutMetadata(t *testing.T) {
 			portableLines[i] = encoded
 			require.NoError(t, err)
 		}
-		windowsRestored, err := Open(filepath.Join(t.TempDir(), "windows-colon-restored.db"))
+		windowsRestored, err := Open(t.Context(), filepath.Join(t.TempDir(), "windows-colon-restored.db"))
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, windowsRestored.Close()) })
 		require.NoError(t, windowsRestored.ImportMetadata(t.Context(), bytes.NewReader(bytes.Join(portableLines, []byte{'\n'}))))
@@ -372,7 +372,7 @@ func TestPhotoCheckoutMetadata(t *testing.T) {
 				}
 			}
 			require.True(t, changed, bad.name)
-			invalid, err := Open(filepath.Join(t.TempDir(), bad.name+".db"))
+			invalid, err := Open(t.Context(), filepath.Join(t.TempDir(), bad.name+".db"))
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, invalid.Close()) })
 			err = invalid.ImportMetadata(t.Context(), bytes.NewReader(bytes.Join(lines, []byte{'\n'})))

@@ -151,19 +151,19 @@ func scanPhysicalContent(row scanner, hash string) (PhysicalContent, error) {
 	return physical, nil
 }
 
-func physicalContentTx(tx *sql.Tx, hash string) (PhysicalContent, error) {
-	return scanPhysicalContent(tx.QueryRow(physicalContentSQL, hash), hash)
+func physicalContentTx(ctx context.Context, tx *sql.Tx, hash string) (PhysicalContent, error) {
+	return scanPhysicalContent(tx.QueryRowContext(ctx, physicalContentSQL, hash), hash)
 }
 
 // authorizedPhysicalContentTx returns the deterministic preferred catalog
 // representation for a mutation receipt. Unlike physicalContentTx, which is
 // intentionally primary-specific for local packing and repair, this accepts a
 // secondary-only blob after EnsureBlobTx has validated its authority.
-func authorizedPhysicalContentTx(tx *sql.Tx, hash string) (PhysicalContent, error) {
-	if _, err := requirePhysicalAuthorityTx(tx, hash); err != nil {
+func authorizedPhysicalContentTx(ctx context.Context, tx *sql.Tx, hash string) (PhysicalContent, error) {
+	if _, err := requirePhysicalAuthorityTx(ctx, tx, hash); err != nil {
 		return PhysicalContent{}, err
 	}
-	physical, err := scanPhysicalContent(tx.QueryRow(authorizedPhysicalContentSQL, hash), hash)
+	physical, err := scanPhysicalContent(tx.QueryRowContext(ctx, authorizedPhysicalContentSQL, hash), hash)
 	if errors.Is(err, ErrNotFound) {
 		return PhysicalContent{}, fmt.Errorf("blob %s: %w", hash, ErrPhysicalAuthorityMissing)
 	}
@@ -173,12 +173,12 @@ func authorizedPhysicalContentTx(tx *sql.Tx, hash string) (PhysicalContent, erro
 // requirePhysicalAuthorityTx returns the logical size only when the catalog
 // authorizes either loose or packed bytes for hash. Logical membership alone
 // is insufficient for reads or for creating another current reference.
-func requirePhysicalAuthorityTx(tx *sql.Tx, hash string) (int64, error) {
+func requirePhysicalAuthorityTx(ctx context.Context, tx *sql.Tx, hash string) (int64, error) {
 	var (
 		size     int64
 		location bool
 	)
-	err := tx.QueryRow(`
+	err := tx.QueryRowContext(ctx, `
 		SELECT b.size, EXISTS(
 			SELECT 1
 			FROM blob_locations l

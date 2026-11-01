@@ -63,7 +63,8 @@ func (r *Runtime) CheckAvailable(ctx context.Context) (retErr error) {
 	diagnostic.Reset()
 	command.Stderr = &diagnostic
 	err = command.Run()
-	if cleanupErr := stopUnit(context.Background(), unit); cleanupErr != nil {
+	// Stop the unit even when ctx ended the probe.
+	if cleanupErr := stopUnit(context.WithoutCancel(ctx), unit); cleanupErr != nil {
 		return fmt.Errorf("%w: could not confirm probe service cleanup; restore access to the systemd user manager and restart the daemon: %w", ErrUnavailable, cleanupErr)
 	}
 	cleanupSafe = true

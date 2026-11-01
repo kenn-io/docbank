@@ -53,7 +53,7 @@ func newPackageImportTestEnvWithNativeFile(t *testing.T, count int, acceptPartia
 	t.Helper()
 	ctx := t.Context()
 	vault := t.TempDir()
-	catalog, err := store.Open(filepath.Join(vault, "docbank.db"))
+	catalog, err := store.Open(t.Context(), filepath.Join(vault, "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(vault, "blobs"))

@@ -40,7 +40,7 @@ import (
 func TestByteFirstPNGRefinementKeepsAnimatedPNGPreviewable(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	catalog, err := store.Open(filepath.Join(root, "docbank.db"))
+	catalog, err := store.Open(t.Context(), filepath.Join(root, "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(root, "blobs"))

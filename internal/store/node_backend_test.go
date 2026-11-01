@@ -214,7 +214,7 @@ func checkNodeQueries(t *testing.T, s *Store) {
 		VALUES ($1, $2, $3, 17, 'application/pdf', $4, 1, $5, 'content_create')`,
 		versionID, fileID, hash, recordedAt, operationID)
 	require.NoError(t, err)
-	inside, err := nodeByIDTx(tx, fileID)
+	inside, err := nodeByIDTx(t.Context(), tx, fileID)
 	require.NoError(t, err)
 	require.Equal(t, fileID, inside.ID)
 	require.NoError(t, tx.Commit())

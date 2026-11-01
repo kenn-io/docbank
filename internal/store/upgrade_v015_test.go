@@ -50,19 +50,19 @@ func newReleasedFixtureStore(t *testing.T, path string, driver docsqlite.Driver,
 	db, err := driver.Open(path, docsqlite.OpenOptions{Access: docsqlite.Create, TransactionMode: docsqlite.Immediate})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
-	_, err = db.Exec(schema)
+	_, err = db.ExecContext(t.Context(), schema)
 	require.NoError(t, err)
-	_, err = db.Exec(`INSERT INTO vault_metadata(singleton,vault_uid,schema_version) VALUES(1,?,?)`, releasedFixtureVaultID, version)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO vault_metadata(singleton,vault_uid,schema_version) VALUES(1,?,?)`, releasedFixtureVaultID, version)
 	require.NoError(t, err)
-	_, err = db.Exec(`INSERT INTO nodes(id,parent_id,name,kind,revision,created_at,modified_at)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO nodes(id,parent_id,name,kind,revision,created_at,modified_at)
 		VALUES(1,NULL,'','dir',1,'2026-08-16T12:00:00.000000000Z','2026-08-16T12:00:00.000000000Z')`)
 	require.NoError(t, err)
 	tx, err := db.BeginTx(t.Context(), nil)
 	require.NoError(t, err)
-	primary, err := ensurePrimaryBlobStoreTx(tx)
+	primary, err := ensurePrimaryBlobStoreTx(t.Context(), tx)
 	require.NoError(t, err)
 	require.NoError(t, initializeDocumentPeopleState(t.Context(), tx))
-	require.NoError(t, ensureProcessingIncarnationTx(tx, nil))
+	require.NoError(t, ensureProcessingIncarnationTx(t.Context(), tx, nil))
 	require.NoError(t, tx.Commit())
 	return db, &Store{db: db, writeDB: db, rootID: 1, vaultID: releasedFixtureVaultID, primaryStoreID: primary.ID, driver: driver}
 }
@@ -127,7 +127,7 @@ func TestUpgradeReleasedV0160KeepsPhotoCheckoutState(t *testing.T) {
 			}
 			require.NoError(t, db.Close())
 
-			s, err := Open(path, driver.driver)
+			s, err := Open(t.Context(), path, driver.driver)
 			require.NoError(t, err)
 			defer func() { require.NoError(t, s.Close()) }()
 
@@ -165,13 +165,13 @@ func seedV0150PendingWork(t *testing.T, db *sql.DB, legacy *Store) (photoNodeID 
 
 	// Current operation seeding needs checkout retention tables. Temporary
 	// tables keep the released on-disk schema exact for the upgrade.
-	_, err = db.Exec(`CREATE TEMP TABLE photo_checkouts (checkout_id TEXT, operation_id TEXT, retired_at TEXT);
+	_, err = db.ExecContext(t.Context(), `CREATE TEMP TABLE photo_checkouts (checkout_id TEXT, operation_id TEXT, retired_at TEXT);
 		CREATE TEMP TABLE photo_checkout_entries (checkout_id TEXT, file_id TEXT, published INTEGER)`)
 	require.NoError(t, err)
 	operation, err := legacy.CreateLocalOperation(ctx, StorageOperationKindPhotoImport, `{}`)
 	require.NoError(t, err)
 	purged := fakeHash("b2")
-	require.NoError(t, legacy.withStorageTx(ctx, func(tx *sql.Tx) error { return legacy.EnsureBlobTx(tx, purged, 9) }))
+	require.NoError(t, legacy.withStorageTx(ctx, func(tx *sql.Tx) error { return legacy.EnsureBlobTx(t.Context(), tx, purged, 9) }))
 	for _, statement := range []struct {
 		query string
 		args  []any
@@ -188,7 +188,7 @@ func seedV0150PendingWork(t *testing.T, db *sql.DB, legacy *Store) (photoNodeID 
 		{`INSERT INTO derivative_pack_purge_pending(store_id,pack_id) VALUES(?,'purged-pack')`,
 			[]any{legacy.primaryStoreID}},
 	} {
-		_, err := db.Exec(statement.query, statement.args...)
+		_, err := db.ExecContext(t.Context(), statement.query, statement.args...)
 		require.NoError(t, err)
 	}
 	return node.ID, job.ID, operation.ID
@@ -213,12 +213,12 @@ func TestUpgradeReleasedV0150PreservesAuthorityAndPendingWork(t *testing.T) {
 			require.Equal(t, len(releasedStorageOperationTables)+len(releasedPendingDeletionTables),
 				strings.Count(pending, "\n"), "the fixture seeds one row in every copied table")
 
-			s, err := Open(path, driver.driver)
+			s, err := Open(t.Context(), path, driver.driver)
 			require.NoError(t, err)
 			defer func() { require.NoError(t, s.Close()) }()
 
 			var version int
-			require.NoError(t, s.db.QueryRow(`SELECT schema_version FROM vault_metadata`).Scan(&version))
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT schema_version FROM vault_metadata`).Scan(&version))
 			assert.Equal(t, currentStorageSchemaVersion, version)
 			var upgraded bytes.Buffer
 			require.NoError(t, s.ExportMetadata(t.Context(), &upgraded))
@@ -265,21 +265,21 @@ func TestEveryReleasedSchemaFixtureUpgrades(t *testing.T) {
 				first := uuid.New().String()
 				second := uuid.New().String()
 				at := nowRFC3339()
-				_, err = db.Exec(`INSERT INTO saved_query_runs(run_id,saved_query_id,saved_query_revision,query_fingerprint,snapshot_id,member_hash,total,total_bytes,ran_at,expires_at) VALUES(?,?,1,?,?,?,0,0,?,?)`, first, definition.ID, definition.Fingerprint, strings.Repeat("a", 32), strings.Repeat("b", 64), at, at)
+				_, err = db.ExecContext(t.Context(), `INSERT INTO saved_query_runs(run_id,saved_query_id,saved_query_revision,query_fingerprint,snapshot_id,member_hash,total,total_bytes,ran_at,expires_at) VALUES(?,?,1,?,?,?,0,0,?,?)`, first, definition.ID, definition.Fingerprint, strings.Repeat("a", 32), strings.Repeat("b", 64), at, at)
 				require.NoError(t, err)
-				_, err = db.Exec(`INSERT INTO saved_query_runs(run_id,saved_query_id,saved_query_revision,query_fingerprint,snapshot_id,member_hash,total,total_bytes,ran_at,expires_at,previous_run_id,previous_member_hash,previous_total,previous_query_fingerprint) VALUES(?,?,1,?,?,?,0,0,?,?,?,?,0,?)`, second, definition.ID, definition.Fingerprint, strings.Repeat("c", 32), strings.Repeat("b", 64), at, at, first, strings.Repeat("b", 64), definition.Fingerprint)
+				_, err = db.ExecContext(t.Context(), `INSERT INTO saved_query_runs(run_id,saved_query_id,saved_query_revision,query_fingerprint,snapshot_id,member_hash,total,total_bytes,ran_at,expires_at,previous_run_id,previous_member_hash,previous_total,previous_query_fingerprint) VALUES(?,?,1,?,?,?,0,0,?,?,?,?,0,?)`, second, definition.ID, definition.Fingerprint, strings.Repeat("c", 32), strings.Repeat("b", 64), at, at, first, strings.Repeat("b", 64), definition.Fingerprint)
 				require.NoError(t, err)
 				// Backup repository ownership and consent name the installation's
 				// processing incarnation, so an upgrade must keep it.
 				var incarnationTables int
-				require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE name='current_processing_incarnation'`).Scan(&incarnationTables))
+				require.NoError(t, db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM sqlite_master WHERE name='current_processing_incarnation'`).Scan(&incarnationTables))
 				var incarnation ProcessingIncarnation
 				if incarnationTables == 1 {
 					incarnation, err = legacy.CurrentProcessingIncarnation(t.Context())
 					require.NoError(t, err)
 				}
 				require.NoError(t, db.Close())
-				s, err := Open(path, driver.driver)
+				s, err := Open(t.Context(), path, driver.driver)
 				require.NoError(t, err)
 				defer func() { require.NoError(t, s.Close()) }()
 				if incarnationTables == 1 {
@@ -294,7 +294,7 @@ func TestEveryReleasedSchemaFixtureUpgrades(t *testing.T) {
 				assert.False(t, firstRun.Photos)
 				assert.False(t, secondRun.Photos)
 				var current int
-				require.NoError(t, s.db.QueryRow(`SELECT schema_version FROM vault_metadata`).Scan(&current))
+				require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT schema_version FROM vault_metadata`).Scan(&current))
 				assert.Equal(t, currentStorageSchemaVersion, current)
 				asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
 				require.NoError(t, err)
@@ -305,7 +305,7 @@ func TestEveryReleasedSchemaFixtureUpgrades(t *testing.T) {
 				require.NoError(t, err)
 				currentNode, err := s.NodeByID(t.Context(), node.ID)
 				var absenceCount int
-				require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM watch_source_absences`).Scan(&absenceCount))
+				require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM watch_source_absences`).Scan(&absenceCount))
 				require.Zero(t, absenceCount)
 				require.NoError(t, err)
 				face, _, err := s.CreatePhotoFace(t.Context(), currentNode.CurrentVersionID, uuid.New().String(), document.FaceBox{Width: 0.2, Height: 0.2}, person.PersonID)
@@ -360,12 +360,12 @@ func TestOpenRejectsChangedReleasedV0150Layout(t *testing.T) {
 		t.Run(driver.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "docbank.db")
 			db, _ := newReleasedFixtureStore(t, path, driver.driver, schemaV0150SQL, 28)
-			_, err := db.Exec(`ALTER TABLE storage_operations ADD COLUMN unexpected TEXT`)
+			_, err := db.ExecContext(t.Context(), `ALTER TABLE storage_operations ADD COLUMN unexpected TEXT`)
 			require.NoError(t, err)
 			require.NoError(t, db.Close())
 			before, err := os.ReadFile(path)
 			require.NoError(t, err)
-			s, err := Open(path, driver.driver)
+			s, err := Open(t.Context(), path, driver.driver)
 			if s != nil {
 				require.NoError(t, s.Close())
 			}
@@ -381,7 +381,7 @@ func TestImportMetadataProcessingIncarnationAcceptsOnlyIdenticalExistingRow(t *t
 	t.Parallel()
 	s := newTestStore(t)
 	current := metadataProcessingIncarnation{Type: metadataProcessingIncarnationType}
-	require.NoError(t, s.db.QueryRow(`SELECT incarnation_id,created_at FROM processing_incarnations`).
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT incarnation_id,created_at FROM processing_incarnations`).
 		Scan(&current.ID, &current.CreatedAt))
 	tx, err := s.db.BeginTx(t.Context(), nil)
 	require.NoError(t, err)
@@ -397,7 +397,7 @@ func TestImportMetadataProcessingIncarnationAcceptsOnlyIdenticalExistingRow(t *t
 	require.NoError(t, importMetadataProcessingIncarnation(t.Context(), tx, older))
 
 	var count int
-	require.NoError(t, tx.QueryRow(`SELECT COUNT(*) FROM processing_incarnations`).Scan(&count))
+	require.NoError(t, tx.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM processing_incarnations`).Scan(&count))
 	assert.Equal(t, 2, count)
 }
 
@@ -424,7 +424,7 @@ func TestUpgradeReleasedV0150KeepsExportState(t *testing.T) {
 			job.OperationID = uuid.New().String()
 			completed, err := legacy.QueueExportJob(ctx, "master", job)
 			require.NoError(t, err)
-			_, err = db.Exec(`UPDATE export_jobs SET state='completed',archive_name=? WHERE id=?`,
+			_, err = db.ExecContext(t.Context(), `UPDATE export_jobs SET state='completed',archive_name=? WHERE id=?`,
 				completed.ID+".zip", completed.ID)
 			require.NoError(t, err)
 			job.OperationID = uuid.New().String()
@@ -441,7 +441,7 @@ func TestUpgradeReleasedV0150KeepsExportState(t *testing.T) {
 			require.NoError(t, snapshot.Rollback())
 			require.NoError(t, db.Close())
 
-			s, err := Open(path, driver.driver)
+			s, err := Open(t.Context(), path, driver.driver)
 			require.NoError(t, err)
 			defer func() { require.NoError(t, s.Close()) }()
 
@@ -492,7 +492,7 @@ func TestUpgradeReleasedV0150KeepsAdmittedMediaQueued(t *testing.T) {
 			require.Empty(t, admitted.JobID, "admission committed before a rendition job was bound")
 			require.NoError(t, db.Close())
 
-			s, err := Open(path, driver.driver)
+			s, err := Open(t.Context(), path, driver.driver)
 			require.NoError(t, err)
 			defer func() { require.NoError(t, s.Close()) }()
 
@@ -537,7 +537,7 @@ func TestUpgradeReleasedV0150KeepsFailedEmbeddingJobs(t *testing.T) {
 			dumpReleasedTable(t, db, "embedding_jobs", &released)
 			require.NoError(t, db.Close())
 
-			s, err := Open(path, driver.driver)
+			s, err := Open(t.Context(), path, driver.driver)
 			require.NoError(t, err)
 			defer func() { require.NoError(t, s.Close()) }()
 
@@ -566,7 +566,7 @@ func TestUpgradeReleasedV0150KeepsPackagePreflight(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, db.Close())
 
-			s, err := Open(path, driver.driver)
+			s, err := Open(t.Context(), path, driver.driver)
 			require.NoError(t, err)
 			defer func() { require.NoError(t, s.Close()) }()
 
@@ -590,10 +590,10 @@ func TestUpgradeReleasedV0150KeepsMailboxUpload(t *testing.T) {
 			first, last := MailboxChunk{Index: 0, SHA256: fakeHash("ab0"), Size: MailboxChunkBytes},
 				MailboxChunk{Index: 1, SHA256: fakeHash("ab1"), Size: 1}
 			require.NoError(t, legacy.withStorageTx(ctx, func(tx *sql.Tx) error {
-				if err := legacy.EnsureBlobTx(tx, first.SHA256, first.Size); err != nil {
+				if err := legacy.EnsureBlobTx(t.Context(), tx, first.SHA256, first.Size); err != nil {
 					return err
 				}
-				return legacy.EnsureBlobTx(tx, last.SHA256, last.Size)
+				return legacy.EnsureBlobTx(t.Context(), tx, last.SHA256, last.Size)
 			}))
 			upload := MailboxContainerRequest{ID: "upload", Owner: "one", SHA256: fakeHash("abc"),
 				Size: MailboxChunkBytes + 1, Format: "mbox"}
@@ -604,7 +604,7 @@ func TestUpgradeReleasedV0150KeepsMailboxUpload(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, db.Close())
 
-			s, err := Open(path, driver.driver)
+			s, err := Open(t.Context(), path, driver.driver)
 			require.NoError(t, err)
 			defer func() { require.NoError(t, s.Close()) }()
 
@@ -662,14 +662,14 @@ func TestUpgradeReleasedSchemasQueueSidecarPhotos(t *testing.T) {
 				seedReleasedPhotoAsset(t, db, jpeg.ID)
 				const assetID = "40000000-0000-4000-8000-000000000001"
 				rawID, sidecarID := uuid.New().String(), uuid.New().String()
-				_, err := db.Exec(`INSERT INTO photo_files(file_id,asset_id,node_id,role,sidecar_of_file_id,created_at)
+				_, err := db.ExecContext(t.Context(), `INSERT INTO photo_files(file_id,asset_id,node_id,role,sidecar_of_file_id,created_at)
 				VALUES(?,?,?,'raw',NULL,?), (?,?,?,'sidecar',?,?)`, rawID, assetID, raw.ID, raw.CreatedAt, sidecarID, assetID, sidecar.ID, rawID, sidecar.CreatedAt)
 				require.NoError(t, err)
-				_, err = db.Exec(`UPDATE photo_assets SET revision=2,display_file_id=? WHERE asset_id=?`, rawID, assetID)
+				_, err = db.ExecContext(t.Context(), `UPDATE photo_assets SET revision=2,display_file_id=? WHERE asset_id=?`, rawID, assetID)
 				require.NoError(t, err)
 				seedReleasedXMPOrientation(t, db, raw)
 				require.NoError(t, db.Close())
-				s, err := Open(path, driver.driver)
+				s, err := Open(t.Context(), path, driver.driver)
 				require.NoError(t, err)
 				t.Cleanup(func() { require.NoError(t, s.Close()) })
 				targets, err := s.PhotoXMPTargetsAfter(ctx, "", 10)
@@ -688,9 +688,9 @@ func seedReleasedXMPOrientation(t *testing.T, db *sql.DB, raw Node) {
 	metadata, checksum, err := document.DecodeSourceMetadataV1(canonical)
 	require.NoError(t, err)
 	generationID := sourceMetadataGenerationID(raw.BlobHash, metadata.ContractVersion, fakeHash("ee"), checksum)
-	_, err = db.Exec(`INSERT INTO source_metadata_generations(generation_id,source_sha256,contract_version,extractor_fingerprint,canonical_json,checksum,created_at) VALUES(?,?,?,?,?,?,?)`, generationID, raw.BlobHash, metadata.ContractVersion, fakeHash("ee"), canonical, checksum, raw.CreatedAt)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO source_metadata_generations(generation_id,source_sha256,contract_version,extractor_fingerprint,canonical_json,checksum,created_at) VALUES(?,?,?,?,?,?,?)`, generationID, raw.BlobHash, metadata.ContractVersion, fakeHash("ee"), canonical, checksum, raw.CreatedAt)
 	require.NoError(t, err)
-	_, err = db.Exec(`INSERT INTO source_metadata_heads(source_sha256,generation_id,published_at) VALUES(?,?,?)`, raw.BlobHash, generationID, raw.CreatedAt)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO source_metadata_heads(source_sha256,generation_id,published_at) VALUES(?,?,?)`, raw.BlobHash, generationID, raw.CreatedAt)
 	require.NoError(t, err)
 }
 
@@ -701,7 +701,7 @@ func seedReleasedPhotoAsset(t *testing.T, db *sql.DB, nodeID int64) {
 	const at = "2026-10-05T12:00:00.000000000Z"
 	tx, err := db.BeginTx(t.Context(), nil)
 	require.NoError(t, err)
-	_, err = tx.Exec(`PRAGMA defer_foreign_keys=ON`)
+	_, err = tx.ExecContext(t.Context(), `PRAGMA defer_foreign_keys=ON`)
 	require.NoError(t, err)
 	for _, statement := range []struct {
 		query string
@@ -714,7 +714,7 @@ func seedReleasedPhotoAsset(t *testing.T, db *sql.DB, nodeID int64) {
 		{`INSERT INTO photo_change_receipts(receipt_id,operation,asset_id,before_revision,after_revision,before_json,after_json,created_at)
 			VALUES(?,'create',?,0,1,'{}','{}',?)`, []any{receiptID, assetID, at}},
 	} {
-		_, err := tx.Exec(statement.query, statement.args...)
+		_, err := tx.ExecContext(t.Context(), statement.query, statement.args...)
 		require.NoError(t, err)
 	}
 	require.NoError(t, tx.Commit())
@@ -775,7 +775,7 @@ func seedReleasedMtime(t *testing.T, db *sql.DB, nodeID int64, mtime string) {
 	t.Helper()
 	const at = "2026-10-05T12:00:00.000000000Z"
 	var versionID, ingestID string
-	require.NoError(t, db.QueryRow("SELECT current_version_id FROM nodes WHERE id=?", nodeID).Scan(&versionID))
+	require.NoError(t, db.QueryRowContext(t.Context(), "SELECT current_version_id FROM nodes WHERE id=?", nodeID).Scan(&versionID))
 	ingestID = "40000000-0000-4000-8000-000000000010"
 	fact := metadataProvenance{Type: metadataProvenanceType, NodeID: nodeID, IngestID: ingestID, OriginalPath: "/shots/released.jpg", OriginalMTime: &mtime}
 	identity, err := provenanceIdentity(fact)
@@ -788,7 +788,7 @@ func seedReleasedMtime(t *testing.T, db *sql.DB, nodeID int64, mtime string) {
 		{"INSERT INTO provenance(identity,node_id,ingest_id,original_path,original_mtime) VALUES(?,?,?,?,?)", []any{identity, nodeID, ingestID, "/shots/released.jpg", mtime}},
 		{"INSERT INTO provenance_version_bindings(provenance_identity,content_version_id,observed_at,basis_ref) VALUES(?,?,?,?)", []any{identity, versionID, at, provenanceVersionBindingBasis}},
 	} {
-		_, err := db.Exec(statement.query, statement.args...)
+		_, err := db.ExecContext(t.Context(), statement.query, statement.args...)
 		require.NoError(t, err)
 	}
 }

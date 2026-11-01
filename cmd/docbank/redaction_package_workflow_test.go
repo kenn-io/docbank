@@ -353,7 +353,7 @@ func recipientAdmissionChecks(t *testing.T, address, key string, selection recip
 // Seed the pre-upgrade ledger through its normal transaction while the daemon is stopped.
 func seedRecipientV2Reservation(t *testing.T, home string, namespace api.BatesNamespace, start int64, review processing.RedactionReview) {
 	t.Helper()
-	catalog, err := store.Open(filepath.Join(home, "docbank.db"))
+	catalog, err := store.Open(t.Context(), filepath.Join(home, "docbank.db"))
 	require.NoError(t, err)
 	defer func() { require.NoError(t, catalog.Close()) }()
 	recipe, err := processing.BuildNumberedRecipe(uuid.MustParse(catalog.VaultID()), store.BatesNamespace{NamespaceID: namespace.NamespaceID, Prefix: namespace.Prefix, Padding: namespace.Padding}, start, review)

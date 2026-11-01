@@ -126,7 +126,7 @@ func TestCandidateDecisionsAdvanceBindingEpochEvenWithoutNewAssertions(t *testin
 			ContentVersionID: versionID, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "rejected-claim",
 		}}))
 		var epochBefore int64
-		require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&epochBefore))
+		require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&epochBefore))
 		_, err := s.DecidePersonCandidate(t.Context(), CandidateDecision{
 			CandidateID: candidate.CandidateID, Action: "reject", ExpectedRevision: candidate.Revision,
 		})
@@ -147,7 +147,7 @@ func TestCandidateDecisionsAdvanceBindingEpochEvenWithoutNewAssertions(t *testin
 			ContentVersionID: versionID, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "existing-claim",
 		}}))
 		var epochBefore int64
-		require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&epochBefore))
+		require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&epochBefore))
 		_, err = s.DecidePersonCandidate(t.Context(), CandidateDecision{
 			CandidateID: candidate.CandidateID, Action: "link", PersonID: person.PersonID,
 			ExpectedRevision: candidate.Revision,
@@ -162,17 +162,17 @@ func TestCandidateDecisionsAdvanceBindingEpochEvenWithoutNewAssertions(t *testin
 		candidate := openCandidateForTest(t, s, candidateForTest(t, "name_alias:pruned", "Pruned", "", []PersonCandidateOccurrence{{
 			ContentVersionID: versionID, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "pruned-claim",
 		}}))
-		_, err := s.db.Exec(`DELETE FROM nodes WHERE id=?`, nodeID)
+		_, err := s.db.ExecContext(t.Context(), `DELETE FROM nodes WHERE id=?`, nodeID)
 		require.NoError(t, err)
 		var epochBefore int64
-		require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&epochBefore))
+		require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&epochBefore))
 		decided, err := s.DecidePersonCandidate(t.Context(), CandidateDecision{
 			CandidateID: candidate.CandidateID, Action: "reject", ExpectedRevision: candidate.Revision,
 		})
 		require.NoError(t, err)
 		require.Equal(t, "rejected", decided.State)
 		var epoch int64
-		require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&epoch))
+		require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&epoch))
 		require.Equal(t, epochBefore+1, epoch)
 	})
 }
@@ -180,7 +180,7 @@ func TestCandidateDecisionsAdvanceBindingEpochEvenWithoutNewAssertions(t *testin
 func assertCandidateDecisionEpoch(t *testing.T, s *Store, epochBefore int64) {
 	t.Helper()
 	var epoch int64
-	require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&epoch))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&epoch))
 	require.Equal(t, epochBefore+1, epoch)
 }
 
@@ -192,7 +192,7 @@ func TestAssertDocumentPersonUsesRevisionFenceAndBindingEpoch(t *testing.T) {
 	require.NoError(t, err)
 
 	var epochBefore int64
-	require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&epochBefore))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&epochBefore))
 	created, err := s.AssertDocumentPerson(t.Context(), PersonDocumentAssertion{
 		ContentVersionID: versionID, PersonID: person.PersonID, Role: "custodian",
 		Action: "assert", Note: "Reviewed source", Revision: 1,
@@ -215,7 +215,7 @@ func TestAssertDocumentPersonUsesRevisionFenceAndBindingEpoch(t *testing.T) {
 	require.ErrorIs(t, err, ErrStaleRevision)
 
 	var epoch int64
-	require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&epoch))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&epoch))
 	require.Equal(t, epochBefore+2, epoch)
 }
 
@@ -223,7 +223,7 @@ func TestOpenPersonCandidateReportsQueueCapacity(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	_, versionID := seedPeopleVersion(t, s)
-	_, err := s.db.Exec(`WITH RECURSIVE seq(n) AS (
+	_, err := s.db.ExecContext(t.Context(), `WITH RECURSIVE seq(n) AS (
 		SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n < ?
 	) INSERT INTO person_match_candidates(
 		candidate_id,actor_key,display_name,suggested_person_id,reason,evidence_json,evidence_sha256,
@@ -543,7 +543,7 @@ func TestCandidateRejectionDoesNotNeedEvidenceDecode(t *testing.T) {
 	candidate := openCandidateForTest(t, s, candidateForTest(t, "name_alias:example", "Example Person", "", []PersonCandidateOccurrence{{
 		ContentVersionID: version, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "claim",
 	}}))
-	_, err := s.db.Exec(`UPDATE person_match_candidates SET evidence_json=? WHERE candidate_id=?`, []byte("{"), candidate.CandidateID)
+	_, err := s.db.ExecContext(t.Context(), `UPDATE person_match_candidates SET evidence_json=? WHERE candidate_id=?`, []byte("{"), candidate.CandidateID)
 	require.NoError(t, err)
 	decided, err := s.DecidePersonCandidate(t.Context(), CandidateDecision{CandidateID: candidate.CandidateID, Action: "reject", ExpectedRevision: candidate.Revision})
 	require.NoError(t, err)
@@ -602,15 +602,15 @@ func TestPersonAssertionDeletionAdvancesBindingEpoch(t *testing.T) {
 					return err
 				}
 				var before, preview, after int64
-				require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&before))
+				require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&before))
 				require.NoError(t, remove(false))
-				require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&preview))
+				require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&preview))
 				require.Equal(t, before, preview)
 				require.NoError(t, remove(true))
 				assertions, err := s.DocumentPersonAssertions(ctx, original.CurrentVersionID)
 				require.NoError(t, err)
 				require.Empty(t, assertions)
-				require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&after))
+				require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&after))
 				if asserted {
 					require.Greater(t, after, before)
 				} else {

@@ -30,16 +30,16 @@ func (s *Store) deleteAuditedTagTx(
 	}
 	recordedAt := nowRFC3339()
 	if err := touchAuditedTagDefinitionNodesTx(
-		tx, current.ID, priorNodes, recordedAt,
+		ctx, tx, current.ID, priorNodes, recordedAt,
 	); err != nil {
 		return Tag{}, err
 	}
-	if err := deleteTagDefinitionTx(tx, current.ID); err != nil {
+	if err := deleteTagDefinitionTx(ctx, tx, current.ID); err != nil {
 		return Tag{}, err
 	}
 	resultingNodes := make([]Node, len(priorNodes))
 	for index, prior := range priorNodes {
-		resultingNodes[index], err = nodeByIDTx(tx, prior.ID)
+		resultingNodes[index], err = nodeByIDTx(ctx, tx, prior.ID)
 		if err != nil {
 			return Tag{}, err
 		}

@@ -21,7 +21,7 @@ func postContentPrune(
 	t.Helper()
 	payload, err := json.Marshal(body)
 	require.NoError(t, err)
-	req, err := http.NewRequest(http.MethodPost,
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost,
 		fmt.Sprintf("%s/api/v1/nodes/%d/versions/prune", tsURL, nodeID), bytes.NewReader(payload))
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
@@ -78,7 +78,9 @@ func TestContentVersionPrunePreviewsThenReleasesHistory(t *testing.T) {
 	assert.Equal(t, revision+1, receipt.Node.Revision)
 	assert.Equal(t, replaced.Version.ID, receipt.Node.CurrentVersionID)
 
-	oldResp, err := ts.Client().Get(ts.URL + "/api/v1/versions/" + oldVersionID)
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, ts.URL+"/api/v1/versions/"+oldVersionID, nil)
+	require.NoError(t, err)
+	oldResp, err := ts.Client().Do(request)
 	require.NoError(t, err)
 	require.NoError(t, oldResp.Body.Close())
 	assert.Equal(t, http.StatusNotFound, oldResp.StatusCode)

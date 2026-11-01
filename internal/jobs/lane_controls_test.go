@@ -18,7 +18,7 @@ func TestStorageAdmissionDefersAndReclaimsSameOperation(t *testing.T) {
 	for _, action := range []string{"resume", "cancel", "shutdown", "control error", "cancel with broken controls"} {
 		t.Run(action, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "vault.db")
-			metadata, err := store.Open(path)
+			metadata, err := store.Open(t.Context(), path)
 			require.NoError(t, err)
 			defer func() { require.NoError(t, metadata.Close()) }()
 			operation, err := metadata.CreateLocalOperation(t.Context(), store.StorageOperationKindPhotoImport, `{"source_root":"example"}`)
@@ -113,7 +113,7 @@ func TestStorageAdmissionClearsUnreadableNoteAfterRestart(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
-				metadata, err := store.Open(filepath.Join(t.TempDir(), "vault.db"))
+				metadata, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "vault.db"))
 				require.NoError(t, err)
 				defer func() { require.NoError(t, metadata.Close()) }()
 				operation, err := metadata.CreateLocalOperation(

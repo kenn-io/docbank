@@ -29,17 +29,17 @@ func TestRenditionBuildReadDormantAndValidated(t *testing.T) {
 	// The private fixture deliberately bypasses immutable-row protection so the
 	// read seam's validation and vault binding can be exercised against corrupt
 	// stored state.
-	_, err = s.db.Exec("DROP TRIGGER rendition_builds_immutable_update")
+	_, err = s.db.ExecContext(t.Context(), "DROP TRIGGER rendition_builds_immutable_update")
 	require.NoError(t, err)
 	for _, tc := range []struct{ field, value string }{{"completed_at", "invalid"}} {
 		t.Run(tc.field, func(t *testing.T) {
 			var original string
-			require.NoError(t, s.db.QueryRow("SELECT "+tc.field+" FROM rendition_builds WHERE build_id=?", build.ID).Scan(&original))
-			_, err := s.db.Exec("UPDATE rendition_builds SET "+tc.field+"=? WHERE build_id=?", tc.value, build.ID)
+			require.NoError(t, s.db.QueryRowContext(t.Context(), "SELECT "+tc.field+" FROM rendition_builds WHERE build_id=?", build.ID).Scan(&original))
+			_, err := s.db.ExecContext(t.Context(), "UPDATE rendition_builds SET "+tc.field+"=? WHERE build_id=?", tc.value, build.ID)
 			require.NoError(t, err)
 			_, err = s.RenditionBuild(t.Context(), build.ID)
 			require.Error(t, err)
-			_, err = s.db.Exec("UPDATE rendition_builds SET "+tc.field+"=? WHERE build_id=?", original, build.ID)
+			_, err = s.db.ExecContext(t.Context(), "UPDATE rendition_builds SET "+tc.field+"=? WHERE build_id=?", original, build.ID)
 			require.NoError(t, err)
 		})
 	}

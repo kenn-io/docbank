@@ -82,7 +82,7 @@ func TestWebUploadInactivityReleasesMutationGate(t *testing.T) {
 			ctx: r.Context(), conn: conn, requestID: "stalled",
 			inactivity: 25 * time.Millisecond,
 		}
-		result <- g.mutate(func() error {
+		result <- g.mutate(r.Context(), func() error {
 			_, err := reader.Read(make([]byte, 1))
 			return err
 		})

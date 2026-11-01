@@ -375,7 +375,7 @@ func (s *Store) photoImportCurrentDuplicateTx(
 		*changedSource = *changedSource || found
 		return node, found, err
 	}
-	if err := s.EnsureBlobTx(tx, member.BlobHash, member.Size, photoImportPhysical(member)...); err != nil {
+	if err := s.EnsureBlobTx(ctx, tx, member.BlobHash, member.Size, photoImportPhysical(member)...); err != nil {
 		return Node{}, false, fmt.Errorf("reconciling duplicate photo content: %w", err)
 	}
 	// Unchanged outside bytes keep a newer Docbank version current and bind
@@ -432,7 +432,7 @@ func (s *Store) photoImportChangedSourceTx(
 	if err != nil || nodeID == 0 {
 		return Node{}, false, err
 	}
-	prior, err := nodeByIDTx(tx, nodeID)
+	prior, err := nodeByIDTx(ctx, tx, nodeID)
 	if err != nil {
 		return Node{}, false, err
 	}
@@ -566,7 +566,7 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 				// Generic reuse matches by basename alone, so another folder's identical sidecar gets its own name.
 				options.exact = role == PhotoRoleSidecar
 				if !options.exact {
-					_, existingID, reuse, err := resolveIngestNameTx(tx, group.DestinationID, name, member.BlobHash, run.record.SourceKind)
+					_, existingID, reuse, err := resolveIngestNameTx(ctx, tx, group.DestinationID, name, member.BlobHash, run.record.SourceKind)
 					if err != nil {
 						return err
 					}
@@ -574,7 +574,7 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 					options.exact = reuse && claimed[existingID]
 				}
 				if options.exact {
-					if name, _, _, err = resolveIngestNameTx(tx, group.DestinationID, name, "", run.record.SourceKind); err != nil {
+					if name, _, _, err = resolveIngestNameTx(ctx, tx, group.DestinationID, name, "", run.record.SourceKind); err != nil {
 						return err
 					}
 				}

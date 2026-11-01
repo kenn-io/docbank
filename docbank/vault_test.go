@@ -1463,7 +1463,7 @@ func TestVaultRepairPreservesLooseEncodingAcrossPostPublicationFailure(t *testin
 				},
 			)
 			require.NoError(t, err)
-			_, err = control.Exec(`
+			_, err = control.ExecContext(t.Context(), `
 				CREATE TRIGGER fail_repair_authority
 				BEFORE UPDATE OF encoding ON blob_locations
 				BEGIN SELECT RAISE(ABORT, 'forced repair authority failure'); END`)
@@ -1473,7 +1473,7 @@ func TestVaultRepairPreservesLooseEncodingAcrossPostPublicationFailure(t *testin
 				t.Context(), created.Computed, bytes.NewReader(content),
 			)
 			require.ErrorContains(t, err, "forced repair authority failure")
-			_, err = control.Exec(`DROP TRIGGER fail_repair_authority`)
+			_, err = control.ExecContext(t.Context(), `DROP TRIGGER fail_repair_authority`)
 			require.NoError(t, err)
 			require.NoError(t, control.Close())
 			require.NoError(t, vault.Close())

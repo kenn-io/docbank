@@ -17,7 +17,7 @@ func TestPublishDocumentEventsIsIdempotentAndDetectsCorruption(t *testing.T) {
 	canonical, checksum, err := document.MarshalDocumentEventsV1(record)
 	require.NoError(t, err)
 
-	_, err = s.db.Exec(`INSERT INTO document_event_state(
+	_, err = s.db.ExecContext(t.Context(), `INSERT INTO document_event_state(
 		singleton,contract_version,deriver_fingerprint,input_epoch,publication_epoch,updated_at
 	) VALUES(1,?,?,?,?,?)`, document.DocumentEventsContractV1, fakeHash("f1"), 1, 1,
 		"2020-01-01T00:00:00Z")
@@ -41,10 +41,10 @@ func TestPublishDocumentEventsIsIdempotentAndDetectsCorruption(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, firstView.PublishedAt, secondView.PublishedAt)
 	var publicationEpoch int64
-	require.NoError(t, s.db.QueryRow(`SELECT publication_epoch FROM document_event_state WHERE singleton=1`).Scan(&publicationEpoch))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT publication_epoch FROM document_event_state WHERE singleton=1`).Scan(&publicationEpoch))
 	assert.Equal(t, int64(2), publicationEpoch, "unchanged replay must not advance the publication epoch")
 
-	_, err = s.db.Exec(`UPDATE document_event_generations SET checksum=? WHERE generation_id=?`,
+	_, err = s.db.ExecContext(t.Context(), `UPDATE document_event_generations SET checksum=? WHERE generation_id=?`,
 		fakeHash("ff"), first.GenerationID)
 	require.Error(t, err, "generation parent rows must be immutable")
 
@@ -55,7 +55,7 @@ func TestPublishDocumentEventsIsIdempotentAndDetectsCorruption(t *testing.T) {
 	otherInputsSHA256 := requireDocumentEventInputsSHA256(t, s, otherTarget)
 	otherID := document.DocumentEventGenerationID(s.VaultID(), otherVersion.ID,
 		document.DocumentEventsContractV1, fakeHash("f1"), otherInputsSHA256)
-	_, err = s.db.Exec(`INSERT INTO document_event_generations(
+	_, err = s.db.ExecContext(t.Context(), `INSERT INTO document_event_generations(
 		generation_id,content_version_id,contract_version,deriver_fingerprint,inputs_sha256,
 		document_kind,canonical_json,checksum,event_count,created_at
 	) VALUES(?,?,?,?,?,?,?,?,?,?)`, otherID, otherVersion.ID, document.DocumentEventsContractV1,
@@ -64,28 +64,28 @@ func TestPublishDocumentEventsIsIdempotentAndDetectsCorruption(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.PublishDocumentEvents(ctx, otherTarget, fakeHash("f1"), otherInputsSHA256, otherCanonical)
 	require.ErrorIs(t, err, ErrDocumentEventsCorrupt)
-	_, err = s.db.Exec(`DELETE FROM nodes WHERE id=?`, otherVersion.NodeID)
+	_, err = s.db.ExecContext(t.Context(), `DELETE FROM nodes WHERE id=?`, otherVersion.NodeID)
 	require.NoError(t, err)
 
-	_, err = s.db.Exec(`DROP TRIGGER document_event_generations_immutable_update`)
+	_, err = s.db.ExecContext(t.Context(), `DROP TRIGGER document_event_generations_immutable_update`)
 	require.NoError(t, err)
-	_, err = s.db.Exec(`UPDATE document_event_generations SET checksum='doctored' WHERE generation_id=?`, first.GenerationID)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE document_event_generations SET checksum='doctored' WHERE generation_id=?`, first.GenerationID)
 	require.NoError(t, err)
 	_, err = s.DocumentEventsForVersion(ctx, version.ID)
 	require.ErrorIs(t, err, ErrDocumentEventsCorrupt)
 	_, err = s.PublishDocumentEvents(ctx, target, fakeHash("f1"), inputsSHA256, canonical)
 	require.ErrorIs(t, err, ErrDocumentEventsCorrupt)
 
-	_, err = s.db.Exec(`INSERT INTO document_event_dirty(content_version_id,revision,reason)
+	_, err = s.db.ExecContext(t.Context(), `INSERT INTO document_event_dirty(content_version_id,revision,reason)
 		VALUES(?,1,'test') ON CONFLICT(content_version_id) DO UPDATE SET
 		revision=revision+1,reason=excluded.reason`, version.ID)
 	require.NoError(t, err)
-	_, err = s.db.Exec(`UPDATE document_event_attempts SET
+	_, err = s.db.ExecContext(t.Context(), `UPDATE document_event_attempts SET
 		input_epoch=?,input_revision=?,inputs_sha256=?,state=?,diagnostic_json=?,attempted_at=?
 		WHERE content_version_id=?`, target.InputEpoch, target.InputRevision, inputsSHA256,
 		"failed", []byte(`[]`), "2020-01-01T00:00:00Z", version.ID)
 	require.NoError(t, err)
-	_, err = s.db.Exec(`DELETE FROM nodes WHERE id=?`, version.NodeID)
+	_, err = s.db.ExecContext(t.Context(), `DELETE FROM nodes WHERE id=?`, version.NodeID)
 	require.NoError(t, err)
 	for _, check := range []struct {
 		query string
@@ -96,7 +96,7 @@ func TestPublishDocumentEventsIsIdempotentAndDetectsCorruption(t *testing.T) {
 		{`SELECT count(*) FROM document_event_dirty WHERE content_version_id=?`, version.ID},
 		{`SELECT count(*) FROM document_event_attempts WHERE content_version_id=?`, version.ID},
 	} {
-		require.NoError(t, s.db.QueryRow(check.query, check.key).Scan(&publicationEpoch), check.query)
+		require.NoError(t, s.db.QueryRowContext(t.Context(), check.query, check.key).Scan(&publicationEpoch), check.query)
 		assert.Zero(t, publicationEpoch, check.query)
 	}
 }
@@ -135,7 +135,7 @@ func TestPublishDocumentEventsRejectsMismatchedTargetIdentity(t *testing.T) {
 		})
 	}
 	var count int
-	require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM document_event_generations`).Scan(&count))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT count(*) FROM document_event_generations`).Scan(&count))
 	assert.Zero(t, count)
 }
 
@@ -235,7 +235,7 @@ func ingestDocumentEventTarget(t *testing.T, s *Store, name, hashSeed string) (C
 	version, err := s.ContentVersionByID(t.Context(), node.CurrentVersionID)
 	require.NoError(t, err)
 	var inputRevision int64
-	require.NoError(t, s.db.QueryRow(`SELECT COALESCE((SELECT revision
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COALESCE((SELECT revision
 		FROM document_event_dirty WHERE content_version_id=?),0)`, version.ID).Scan(&inputRevision))
 	return version, DocumentEventTarget{
 		ContentVersionID: version.ID, BlobHash: version.BlobHash, MIMEType: version.MimeType,

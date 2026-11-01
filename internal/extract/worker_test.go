@@ -137,7 +137,7 @@ func TestWorkerStopsBeforeMutationBodyWhenAdmissionIsCanceled(t *testing.T) {
 
 func TestWorkerIndexesVerifiedUTF8AndUsesMutationGate(t *testing.T) {
 	dir := t.TempDir()
-	s, err := store.Open(filepath.Join(dir, "docbank.db"))
+	s, err := store.Open(t.Context(), filepath.Join(dir, "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	blobs, err := blob.New(store.NewPackCatalog(s), filepath.Join(dir, "blobs"))
@@ -181,7 +181,7 @@ func TestWorkerIndexesVerifiedUTF8AndUsesMutationGate(t *testing.T) {
 
 func TestWorkerRecordsDeterministicFailuresWithoutOpeningOversizeBlob(t *testing.T) {
 	dir := t.TempDir()
-	s, err := store.Open(filepath.Join(dir, "docbank.db"))
+	s, err := store.Open(t.Context(), filepath.Join(dir, "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	blobs, err := blob.New(store.NewPackCatalog(s), filepath.Join(dir, "blobs"))
@@ -206,7 +206,7 @@ func TestWorkerRecordsDeterministicFailuresWithoutOpeningOversizeBlob(t *testing
 
 func TestWorkerRetriesTransientOpenFailure(t *testing.T) {
 	dir := t.TempDir()
-	s, err := store.Open(filepath.Join(dir, "docbank.db"))
+	s, err := store.Open(t.Context(), filepath.Join(dir, "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	blobs, err := blob.New(store.NewPackCatalog(s), filepath.Join(dir, "blobs"))

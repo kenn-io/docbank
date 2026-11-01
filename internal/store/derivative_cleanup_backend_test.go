@@ -56,8 +56,8 @@ func TestDerivativeEmbeddingRootsPostgres(t *testing.T) {
 	t.Parallel()
 	source, version, profile, attachment := newEmbeddingCatalogFixture(t)
 	ctx := t.Context()
-	chunk := embeddingSetFixture(source, version, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachment)
-	direct := embeddingSetFixture(source, version, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
+	chunk := embeddingSetFixture(t.Context(), source, version, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachment)
+	direct := embeddingSetFixture(t.Context(), source, version, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 	for _, record := range []EmbeddingSetRecord{chunk, direct} {
 		require.NoError(t, source.StageEmbeddingSet(ctx, record))
 		require.NoError(t, source.PublishEmbeddingHead(ctx, EmbeddingHeadRecord{FencingToken: 1, Key: EmbeddingHeadKey{ContentVersionID: version, BindingID: record.BindingID, InputKind: record.InputKind}, SetID: record.ID, VectorSpaceID: record.VectorSpace.ID, ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime}))

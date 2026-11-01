@@ -1189,7 +1189,7 @@ func TestPhotoFaceUndoRetiresUnusedCreatedPerson(t *testing.T) {
 			undo, err := s.UndoPhotoFaceDecision(ctx, named.ReceiptID)
 			require.NoError(t, err)
 			var state string
-			require.NoError(t, s.db.QueryRow(`SELECT state FROM persons WHERE person_id=?`, personID).Scan(&state))
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT state FROM persons WHERE person_id=?`, personID).Scan(&state))
 			if mode == "untouched" {
 				require.Equal(t, "retired", state)
 				people, _, err := s.PeopleByDisplayName(ctx, "Zed", "", "", 10, false, PeopleSearchOptions{})
@@ -1201,7 +1201,7 @@ func TestPhotoFaceUndoRetiresUnusedCreatedPerson(t *testing.T) {
 				require.NotEqual(t, "retired", state)
 				if mode == "second face" {
 					var action string
-					require.NoError(t, s.db.QueryRow(`SELECT action FROM person_document_assertions WHERE person_id=? AND content_version_id=?`, personID, node.CurrentVersionID).Scan(&action))
+					require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT action FROM person_document_assertions WHERE person_id=? AND content_version_id=?`, personID, node.CurrentVersionID).Scan(&action))
 					require.Equal(t, "assert", action)
 				}
 			}
@@ -1253,7 +1253,7 @@ func TestPhotoFaceNamingPreservesReplayDigestsAndClearedPeople(t *testing.T) {
 				_, err = s.DecidePhotoFace(ctx, n.CurrentVersionID, stale)
 				require.ErrorIs(t, err, ErrStaleRevision)
 				var count int
-				require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM persons WHERE display_name='Grace'`).Scan(&count))
+				require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM persons WHERE display_name='Grace'`).Scan(&count))
 				require.Equal(t, 1, count)
 			}
 			request.PersonName = ""
@@ -1296,7 +1296,7 @@ func TestPhotoFaceNamingPreservesPreparedMetadata(t *testing.T) {
 					version, err := s.ContentVersionByID(ctx, node.CurrentVersionID)
 					require.NoError(t, err)
 					var inputRevision int64
-					require.NoError(t, s.db.QueryRow(`SELECT COALESCE((SELECT revision FROM document_event_dirty WHERE content_version_id=?),0)`, version.ID).Scan(&inputRevision))
+					require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COALESCE((SELECT revision FROM document_event_dirty WHERE content_version_id=?),0)`, version.ID).Scan(&inputRevision))
 					target := DocumentEventTarget{ContentVersionID: version.ID, BlobHash: version.BlobHash, MIMEType: version.MimeType, RecordedAt: version.RecordedAt, NodeID: version.NodeID, Size: version.Size, InputEpoch: 1, InputRevision: inputRevision}
 					record := documentEventRecord(t, s.VaultID(), version.ID, "f1")
 					record.DocumentKind = "image"
@@ -1318,14 +1318,14 @@ func TestPhotoFaceNamingPreservesPreparedMetadata(t *testing.T) {
 				var revision int64
 				var modified string
 				var epoch int64
-				require.NoError(t, s.db.QueryRow(`SELECT revision,modified_at FROM nodes WHERE id=?`, node.ID).Scan(&revision, &modified))
-				require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&epoch))
+				require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT revision,modified_at FROM nodes WHERE id=?`, node.ID).Scan(&revision, &modified))
+				require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&epoch))
 				_, err = s.DecidePhotoFace(ctx, node.CurrentVersionID, request)
 				require.NoError(t, err)
 				var afterRevision, afterEpoch int64
 				var afterModified string
-				require.NoError(t, s.db.QueryRow(`SELECT revision,modified_at FROM nodes WHERE id=?`, node.ID).Scan(&afterRevision, &afterModified))
-				require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&afterEpoch))
+				require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT revision,modified_at FROM nodes WHERE id=?`, node.ID).Scan(&afterRevision, &afterModified))
+				require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&afterEpoch))
 				if events {
 					require.Equal(t, epoch+1, afterEpoch)
 					_, err = s.PublishDocumentPeople(ctx, oldPublication)
@@ -1338,7 +1338,7 @@ func TestPhotoFaceNamingPreservesPreparedMetadata(t *testing.T) {
 				require.Equal(t, revision, afterRevision)
 				require.Equal(t, modified, afterModified)
 				var count int
-				require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM node_tags WHERE node_id=? AND tag_id=?`, node.ID, tag.ID).Scan(&count))
+				require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM node_tags WHERE node_id=? AND tag_id=?`, node.ID, tag.ID).Scan(&count))
 				require.Equal(t, 1, count)
 			})
 		}

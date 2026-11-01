@@ -15,7 +15,7 @@ func registerPhotoSuggestionRoutes(api huma.API, d Deps, g *gate) {
 		Body         store.PhotoSuggestionResponse
 	}) (*struct{ Body store.PhotoSuggestion }, error) {
 		var result store.PhotoSuggestion
-		err := g.mutate(func() error {
+		err := g.mutate(ctx, func() error {
 			var err error
 			result, err = d.Store.RespondPhotoSuggestion(ctx, in.SuggestionID, in.Body)
 			if errors.Is(err, store.ErrPhotoSuggestionConflict) {

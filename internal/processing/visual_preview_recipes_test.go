@@ -134,7 +134,7 @@ func TestProduceVisualPreviewVerifiesUnsupportedSource(t *testing.T) {
 
 func TestEnsureVisualPreviewForRecipe(t *testing.T) {
 	t.Parallel()
-	catalog, err := store.Open(filepath.Join(t.TempDir(), "docbank.db"))
+	catalog, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(t.TempDir(), "blobs"))
@@ -185,7 +185,7 @@ func TestEnsureVisualPreviewForRecipe(t *testing.T) {
 
 func TestEnsureVisualPreviewFailureKeepsAuthorityFreeOutput(t *testing.T) {
 	t.Parallel()
-	catalog, err := store.Open(filepath.Join(t.TempDir(), "docbank.db"))
+	catalog, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(t.TempDir(), "blobs"))

@@ -15,7 +15,7 @@ import (
 func TestRerankingOnlyRevalidatesCurrentCandidates(t *testing.T) {
 	for _, change := range []string{"unchanged", "ancestor moved", "moved outside scope", "trashed", "content changed"} {
 		t.Run(change, func(t *testing.T) {
-			catalog, err := store.Open(filepath.Join(t.TempDir(), "search.db"))
+			catalog, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "search.db"))
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 			ancestor, err := catalog.Mkdir(t.Context(), catalog.RootID(), "before")
@@ -80,7 +80,7 @@ func (backend *changingSearchBackend) SearchExplainedLexicalCandidates(ctx conte
 }
 
 func TestExpandedSearchRefreshesPathsAfterAncestorMove(t *testing.T) {
-	catalog, err := store.Open(filepath.Join(t.TempDir(), "search.db"))
+	catalog, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "search.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 	ancestor, err := catalog.Mkdir(t.Context(), catalog.RootID(), "before")
@@ -110,7 +110,7 @@ func TestExpandedSearchRefreshesPathsAfterAncestorMove(t *testing.T) {
 }
 
 func TestExpansionValidatesScopeBeforeAuthorizationAndProvider(t *testing.T) {
-	catalog, err := store.Open(filepath.Join(t.TempDir(), "search.db"))
+	catalog, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "search.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 	file, err := catalog.CreateFile(t.Context(), catalog.RootID(), "needle.txt", strings.Repeat("a", 64), 1, "text/plain")
@@ -155,7 +155,7 @@ func TestExpansionValidatesScopeBeforeAuthorizationAndProvider(t *testing.T) {
 }
 
 func TestSearchContentFirstModes(t *testing.T) {
-	catalog, err := store.Open(filepath.Join(t.TempDir(), "search.db"))
+	catalog, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "search.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 	name, err := catalog.CreateFile(t.Context(), catalog.RootID(), "mercury-name.txt", strings.Repeat("a", 64), 1, "text/plain")

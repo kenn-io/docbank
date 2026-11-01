@@ -123,7 +123,7 @@ func TestBrowserJobListRedactsPrivateBackendErrors(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal([]byte(body), &issued))
 	require.NotEmpty(t, issued.Token)
-	req, err := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/jobs", nil)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, ts.URL+"/api/v1/jobs", nil)
 	require.NoError(t, err)
 	req.Header["X-Api-Key"] = []string{""}
 	req.Header.Set(api.WebSessionHeader, issued.Token)

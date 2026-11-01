@@ -453,8 +453,8 @@ func (s *Store) photoAssetForMutationTx(ctx context.Context, tx *sql.Tx, assetID
 	return asset, nil
 }
 
-func photoNodeForMutationTx(tx *sql.Tx, nodeID int64) (Node, PhotoNodeFacts, error) {
-	node, err := nodeByIDTx(tx, nodeID)
+func photoNodeForMutationTx(ctx context.Context, tx *sql.Tx, nodeID int64) (Node, PhotoNodeFacts, error) {
+	node, err := nodeByIDTx(ctx, tx, nodeID)
 	if err != nil {
 		return Node{}, PhotoNodeFacts{}, err
 	}
@@ -467,7 +467,7 @@ func photoNodeForMutationTx(tx *sql.Tx, nodeID int64) (Node, PhotoNodeFacts, err
 // photoAssetCreateTx creates a singleton asset on an explicit request and
 // reports every refusal as an error.
 func (s *Store) photoAssetCreateTx(ctx context.Context, tx *sql.Tx, nodeID int64, explicitRole, explicitKind string) (PhotoAsset, error) {
-	_, facts, err := photoNodeForMutationTx(tx, nodeID)
+	_, facts, err := photoNodeForMutationTx(ctx, tx, nodeID)
 	if err != nil {
 		return PhotoAsset{}, err
 	}
@@ -723,7 +723,7 @@ func (s *Store) PromotePhotoNode(ctx context.Context, nodeID int64, expectedRevi
 			if kind != "" && asset.Kind != kind {
 				return false, fmt.Errorf("%w: existing asset kind is %s, requested %s", ErrInvalidPhotoAsset, asset.Kind, kind)
 			}
-			if _, _, err := photoNodeForMutationTx(tx, nodeID); err != nil {
+			if _, _, err := photoNodeForMutationTx(ctx, tx, nodeID); err != nil {
 				return false, err
 			}
 			if asset.ExcludedAt == nil {
@@ -749,7 +749,7 @@ func (s *Store) AttachPhotoFile(ctx context.Context, assetID string, revision, n
 		return PhotoAsset{}, fmt.Errorf("%w: unknown role %q", ErrInvalidPhotoAsset, role)
 	}
 	return s.mutatePhotoAsset(ctx, assetID, revision, "attach", func(tx *sql.Tx, asset *PhotoAsset) (bool, error) {
-		node, facts, err := photoNodeForMutationTx(tx, nodeID)
+		node, facts, err := photoNodeForMutationTx(ctx, tx, nodeID)
 		if err != nil {
 			return false, err
 		}

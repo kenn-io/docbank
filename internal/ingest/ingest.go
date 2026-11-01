@@ -60,7 +60,7 @@ func (ing *Ingester) publishPhotoXMPBytes(ctx context.Context, plan store.PhotoX
 	if err != nil {
 		return nil, err
 	}
-	defer func() { retErr = mutationCleanupResult(retErr, ing.cleanupLoose(written.Hash)) }()
+	defer func() { retErr = mutationCleanupResult(retErr, ing.cleanupLoose(ctx, written.Hash)) }()
 	physical, err := physicalReceipt(written)
 	if err != nil {
 		return nil, err
@@ -250,8 +250,8 @@ func physicalReceipt(receipt blob.WriteReceipt) (store.BlobPhysical, error) {
 // between physical publication and its metadata commit. Exclusively serialized
 // GC reclaims true orphans. The detached timeout lets cleanup finish after a
 // request cancellation.
-func (ing *Ingester) cleanupLoose(hash string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+func (ing *Ingester) cleanupLoose(ctx context.Context, hash string) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	authority, err := ing.Store.PhysicalContent(ctx, hash)
 	var remove bool
@@ -359,17 +359,17 @@ func (ing *Ingester) prepareContent(
 	result.ComputedHash, result.ComputedSize = written.Hash, written.Size
 	result.physical, err = physicalReceipt(written)
 	if err != nil {
-		return nil, errors.Join(err, ing.cleanupLoose(written.Hash))
+		return nil, errors.Join(err, ing.cleanupLoose(ctx, written.Hash))
 	}
 	if result.ComputedSize != expectedSize {
 		return nil, errors.Join(fmt.Errorf("declared %d bytes, received %d: %w",
 			expectedSize, result.ComputedSize, ErrUploadSizeMismatch),
-			ing.cleanupLoose(written.Hash))
+			ing.cleanupLoose(ctx, written.Hash))
 	}
 	if result.ComputedHash != expectedHash {
 		return nil, errors.Join(fmt.Errorf("declared SHA-256 %s, computed %s: %w",
 			expectedHash, result.ComputedHash, ErrUploadDigestMismatch),
-			ing.cleanupLoose(written.Hash))
+			ing.cleanupLoose(ctx, written.Hash))
 	}
 	return &PreparedUpload{ing: ing, name: name, mimeType: mimeType, result: result}, nil
 }
@@ -379,7 +379,7 @@ func (ing *Ingester) prepareContent(
 func (p *PreparedUpload) Commit(ctx context.Context) (result UploadResult, retErr error) {
 	result = p.result
 	defer func() {
-		retErr = mutationCleanupResult(retErr, p.ing.cleanupLoose(result.ComputedHash))
+		retErr = mutationCleanupResult(retErr, p.ing.cleanupLoose(ctx, result.ComputedHash))
 	}()
 	ingestID, err := p.ing.Store.BeginIngest(ctx, "upload", p.name)
 	if err != nil {
@@ -396,7 +396,7 @@ func (p *PreparedUpload) Commit(ctx context.Context) (result UploadResult, retEr
 // CommitPush grants source and version authority only after transport verification.
 func (p *PreparedUpload) CommitPush(ctx context.Context, source store.PushSource) (result UploadResult, outcome string, retErr error) {
 	result = p.result
-	defer func() { retErr = mutationCleanupResult(retErr, p.ing.cleanupLoose(result.ComputedHash)) }()
+	defer func() { retErr = mutationCleanupResult(retErr, p.ing.cleanupLoose(ctx, result.ComputedHash)) }()
 	if p.push == nil {
 		return result, "", errors.New("push commit requires a payload prepared for push")
 	}
@@ -412,11 +412,11 @@ func (p *PreparedUpload) CommitPush(ctx context.Context, source store.PushSource
 // transport envelope is rejected before Commit. Authority-free bytes are left
 // for exclusively serialized GC because another writer may still be using the
 // same content-addressed path.
-func (p *PreparedUpload) Discard() error {
+func (p *PreparedUpload) Discard(ctx context.Context) error {
 	if p == nil {
 		return nil
 	}
-	return p.ing.cleanupLoose(p.result.ComputedHash)
+	return p.ing.cleanupLoose(ctx, p.result.ComputedHash)
 }
 
 // ReplaceContent streams a remote body into durable authority-free storage,
@@ -450,7 +450,7 @@ func (ing *Ingester) CommitVerifiedContent(ctx context.Context, r io.Reader, exp
 	if err != nil {
 		return written, err
 	}
-	defer func() { retErr = mutationCleanupResult(retErr, ing.cleanupLoose(written.Hash)) }()
+	defer func() { retErr = mutationCleanupResult(retErr, ing.cleanupLoose(ctx, written.Hash)) }()
 	physical, err := physicalReceipt(written)
 	if err != nil {
 		return written, err
@@ -1107,7 +1107,7 @@ func (ing *Ingester) readLocalFileWith(
 ) (result localFileContent, retErr error) {
 	result, retErr = ing.prepareLocalFileWith(ctx, open, sourcePath, progress, expected)
 	if retErr != nil && result.hash != "" {
-		retErr = errors.Join(retErr, ing.cleanupLoose(result.hash))
+		retErr = errors.Join(retErr, ing.cleanupLoose(ctx, result.hash))
 	}
 	return result, retErr
 }

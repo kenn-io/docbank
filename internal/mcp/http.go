@@ -604,7 +604,7 @@ func ListenHTTP(ctx context.Context, server *Server, address string, options HTT
 	if err != nil {
 		return nil, nil, err
 	}
-	listener, err := net.Listen("tcp", address)
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", address)
 	if err != nil {
 		return nil, nil, fmt.Errorf("listen for MCP HTTP: %w", err)
 	}

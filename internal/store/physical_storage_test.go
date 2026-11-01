@@ -30,7 +30,7 @@ func TestLooseBacklogUsesIndexedPhysicalState(t *testing.T) {
 			{"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", 40,
 				BlobPhysical{Encoding: "raw", StoredBytes: 40, PackEligible: true}},
 		} {
-			if _, err := tx.Exec(`INSERT INTO blobs(hash,size,created_at) VALUES(?,?,?)`,
+			if _, err := tx.ExecContext(t.Context(), `INSERT INTO blobs(hash,size,created_at) VALUES(?,?,?)`,
 				item.hash, item.size, created); err != nil {
 				return err
 			}

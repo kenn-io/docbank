@@ -19,18 +19,18 @@ func TestTermReportBrowserAllowlistRequiresExactRoutes(t *testing.T) {
 		{http.MethodPost, "/api/v1/search-exports/" + id + "/revisions"},
 		{http.MethodPost, "/api/v1/search-exports/" + id + "/download"},
 	} {
-		require.True(t, webSessionRequestAllowed(httptest.NewRequest(item.method, item.path, nil)), item.path)
-		require.False(t, webSessionRequestAllowed(httptest.NewRequest(item.method, item.path+"?extra=1", nil)), item.path)
+		require.True(t, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), item.method, item.path, nil)), item.path)
+		require.False(t, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), item.method, item.path+"?extra=1", nil)), item.path)
 	}
-	require.True(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodGet, "/api/v1/search-exports", nil)))
-	require.True(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodGet, "/api/v1/search-exports?offset=20&limit=20", nil)))
-	require.False(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodGet, "/api/v1/search-exports?other=1", nil)))
+	require.True(t, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/search-exports", nil)))
+	require.True(t, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/search-exports?offset=20&limit=20", nil)))
+	require.False(t, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/search-exports?other=1", nil)))
 	for _, item := range []struct{ method, path string }{
 		{http.MethodGet, "/api/v1/search-exports/" + id + "/csv"},
 		{http.MethodGet, "/api/v1/search-exports/" + id + "/bundle"},
 		{http.MethodPost, "/api/v1/search-exports/" + strings.Repeat("z", 48) + "/dates"},
 		{http.MethodPost, "/api/v1/search-exports/" + id + "/dates/extra"},
 	} {
-		require.False(t, webSessionRequestAllowed(httptest.NewRequest(item.method, item.path, nil)), item.path)
+		require.False(t, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), item.method, item.path, nil)), item.path)
 	}
 }

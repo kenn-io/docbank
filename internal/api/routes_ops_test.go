@@ -209,7 +209,7 @@ func TestIngestRejectsNonLoopback(t *testing.T) {
 	// Deps are built directly (not via newTestServer) to mirror its internals:
 	// a real store and blob dir under a temp directory.
 	dir := t.TempDir()
-	s, err := store.Open(filepath.Join(dir, "docbank.db"))
+	s, err := store.Open(t.Context(), filepath.Join(dir, "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = s.Close() })
 	blobsDir := filepath.Join(dir, "blobs")
@@ -223,7 +223,7 @@ func TestIngestRejectsNonLoopback(t *testing.T) {
 	srv := api.NewServer(api.Deps{Store: s, Blobs: blobs, VaultRoot: dir, Cfg: cfg})
 	for _, path := range []string{"/api/v1/ingest", "/api/v1/ingest/stream", "/api/v1/ingest/preflight", "/api/v1/packages/preflights"} {
 		t.Run(path, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodPost, "http://localhost"+path, strings.NewReader(`{"paths":["/x"],"dest":"/inbox"}`))
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://localhost"+path, strings.NewReader(`{"paths":["/x"],"dest":"/inbox"}`))
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("X-Api-Key", "test-key")
 			req.RemoteAddr = "192.0.2.1:4444"
@@ -261,7 +261,7 @@ func TestIngestRoutesRejectInvalidJSONTextBeforeDecoding(t *testing.T) {
 				"/api/v1/ingest", "/api/v1/ingest/stream", "/api/v1/ingest/preflight",
 			} {
 				t.Run(route, func(t *testing.T) {
-					req, reqErr := http.NewRequest(http.MethodPost, ts.URL+route, bytes.NewReader(tt.body))
+					req, reqErr := http.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+route, bytes.NewReader(tt.body))
 					require.NoError(t, reqErr)
 					req.Header.Set("Content-Type", "application/json")
 					resp, reqErr := ts.Client().Do(req)
@@ -299,7 +299,7 @@ func TestIngestRoutesAcceptPairedSurrogatePath(t *testing.T) {
 			body = bytes.Replace(body, []byte("\U0001f600"), []byte(`\ud83d\ude00`), 1)
 			require.Contains(t, string(body), `\ud83d\ude00`)
 
-			req, err := http.NewRequest(http.MethodPost, ts.URL+route, bytes.NewReader(body))
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+route, bytes.NewReader(body))
 			require.NoError(t, err)
 			req.Header.Set("Content-Type", "application/json")
 			resp, err := ts.Client().Do(req)

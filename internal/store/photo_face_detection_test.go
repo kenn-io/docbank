@@ -171,7 +171,7 @@ func TestPhotoFaceDetectionReleasedFaces(t *testing.T) {
 			_, err := db.ExecContext(ctx, `INSERT INTO photo_faces(face_id,content_version_id,x,y,width,height,revision,created_at) VALUES(?,?,0,0,0.2,0.3,1,?)`, faceID, node.CurrentVersionID, nowRFC3339())
 			require.NoError(t, err)
 			require.NoError(t, db.Close())
-			upgraded, err := Open(path, driver.driver)
+			upgraded, err := Open(t.Context(), path, driver.driver)
 			require.NoError(t, err)
 			defer func() { require.NoError(t, upgraded.Close()) }()
 			faces, err := photoFacesQuery(ctx, upgraded.db, node.CurrentVersionID)

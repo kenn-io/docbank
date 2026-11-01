@@ -14,7 +14,7 @@ func TestBackupExcludesTheProjectionButShipsBindings(t *testing.T) {
 	t.Parallel()
 	source := newTestStore(t)
 	version, target := ingestDocumentEventTarget(t, source, "bound.txt", "a1")
-	_, err := source.db.Exec(`INSERT INTO document_event_state(
+	_, err := source.db.ExecContext(t.Context(), `INSERT INTO document_event_state(
 		singleton,contract_version,deriver_fingerprint,input_epoch,publication_epoch,updated_at
 	) VALUES(1,?,?,?,?,?)`, document.DocumentEventsContractV1, fakeHash("f1"), 1, 1,
 		"2020-01-01T00:00:00Z")
@@ -73,7 +73,7 @@ func TestBackupExcludesTheProjectionButShipsBindings(t *testing.T) {
 	require.Len(t, missing, 1)
 	assert.Equal(t, version.ID, missing[0].ContentVersionID)
 	var stateRows int
-	require.NoError(t, restored.db.QueryRow(`SELECT COUNT(*) FROM document_event_state`).Scan(&stateRows))
+	require.NoError(t, restored.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM document_event_state`).Scan(&stateRows))
 	assert.Zero(t, stateRows, "read-only coverage must keep event control state lazy")
 }
 
@@ -84,7 +84,7 @@ func TestPristineCheckRefusesAnExistingProjection(t *testing.T) {
 	require.NoError(t, source.ExportMetadata(t.Context(), &exported))
 
 	target := newTestStore(t)
-	_, err := target.db.Exec(`INSERT INTO document_event_state(
+	_, err := target.db.ExecContext(t.Context(), `INSERT INTO document_event_state(
 		singleton,contract_version,deriver_fingerprint,input_epoch,publication_epoch,updated_at
 	) VALUES(1,'document-events/v1','test',1,1,'2020-01-01T00:00:00Z')`)
 	require.NoError(t, err)

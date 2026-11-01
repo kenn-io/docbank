@@ -158,7 +158,7 @@ func TestDocumentInspectionRenditionReplacement(t *testing.T) {
 	_, err := runCLI(t, args...)
 	require.NoError(t, err)
 	stop()
-	catalog, err := store.Open(filepath.Join(f.root, "docbank.db"))
+	catalog, err := store.Open(t.Context(), filepath.Join(f.root, "docbank.db"))
 	require.NoError(t, err)
 	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(f.root, "blobs"))
 	require.NoError(t, err)

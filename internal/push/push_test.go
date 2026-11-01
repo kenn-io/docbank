@@ -73,7 +73,7 @@ type fixture struct {
 func newFixture(t *testing.T, configure ...func(*config.Config)) *fixture {
 	t.Helper()
 	dir := t.TempDir()
-	s, err := store.Open(filepath.Join(dir, "vault.db"))
+	s, err := store.Open(t.Context(), filepath.Join(dir, "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	blobsDir := filepath.Join(dir, "blobs")
@@ -506,7 +506,7 @@ func TestPushTakesOverDaemonWatchWithZeroUploads(t *testing.T) {
 	cfg.SettleTime = config.Duration(time.Second)
 	cfg.ScanInterval = config.Duration(100 * time.Millisecond)
 	w, err := ingest.NewWatcher(&ingest.Ingester{Store: f.store, Blobs: f.blobs}, f.vaultRoot, cfg,
-		func(fn func() error) error { return fn() }, slog.New(slog.DiscardHandler))
+		func(_ context.Context, fn func() error) error { return fn() }, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	ctx, stop := context.WithCancel(t.Context())
 	defer stop()

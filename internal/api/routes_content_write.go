@@ -89,7 +89,7 @@ func handleContentWrite(w http.ResponseWriter, r *http.Request, d Deps, g *gate)
 	}
 
 	var result ingest.ReplacementResult
-	opErr := g.mutate(func() error {
+	opErr := g.mutate(r.Context(), func() error {
 		return d.Blobs.WithMutation(r.Context(), func() error {
 			limited := &io.LimitedReader{R: r.Body, N: expectedSize + 1}
 			ing := &ingest.Ingester{Store: d.Store, Blobs: d.Blobs}

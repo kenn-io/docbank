@@ -18,7 +18,7 @@ func BenchmarkMediaOperationHistory(b *testing.B) {
 		sameSource bool
 	}{{0, false}, {1000, false}, {10000, false}, {1000, true}, {10000, true}} {
 		b.Run(fmt.Sprintf("history=%d/same_source=%t", shape.history, shape.sameSource), func(b *testing.B) {
-			s, err := Open(filepath.Join(b.TempDir(), "docbank.db"))
+			s, err := Open(b.Context(), filepath.Join(b.TempDir(), "docbank.db"))
 			require.NoError(b, err)
 			b.Cleanup(func() { require.NoError(b, s.Close()) })
 			ctx := b.Context()

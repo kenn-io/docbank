@@ -28,7 +28,7 @@ import (
 func checkoutService(t *testing.T) Service {
 	t.Helper()
 	vault := t.TempDir()
-	catalog, err := store.Open(filepath.Join(vault, "docbank.db"))
+	catalog, err := store.Open(t.Context(), filepath.Join(vault, "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(vault, "blobs"))
@@ -331,7 +331,7 @@ func TestCheckoutStartFailurePersistsFailureAndClosesRoot(t *testing.T) {
 				supervisor = jobs.New(t.Context(), nil)
 				supervisor.Stop()
 			}
-			cause := s.Start(supervisor, c, root)
+			cause := s.Start(t.Context(), supervisor, c, root)
 			require.Error(t, cause)
 			_, err = root.Stat(".")
 			require.Error(t, err)
@@ -627,7 +627,7 @@ func TestCheckoutRunOutcomes(t *testing.T) {
 		require.Equal(t, filepath.Base(entries[0].Path), string(content))
 		supervisor := jobs.New(ctx, nil)
 		defer func() { require.NoError(t, supervisor.Shutdown(context.Background())) }()
-		require.NoError(t, s.Start(supervisor, c, root))
+		require.NoError(t, s.Start(t.Context(), supervisor, c, root))
 		require.Eventually(t, func() bool {
 			operation, err := s.Store.StorageOperation(ctx, op.ID)
 			return err == nil && operation.FinishedAt != nil

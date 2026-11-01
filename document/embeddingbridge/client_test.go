@@ -61,7 +61,7 @@ type bridgeFixture struct {
 
 func newBridgeFixture(t *testing.T, handler http.Handler) bridgeFixture {
 	t.Helper()
-	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp4", "127.0.0.1:0")
 	require.NoError(t, err)
 	server := &http.Server{Handler: handler, ReadHeaderTimeout: time.Second}
 	serveDone := make(chan struct{})

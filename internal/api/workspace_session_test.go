@@ -35,7 +35,7 @@ func TestAuthenticatedSnapshotOwnerIsExplicitAndBrowserRevocationCancelsRequest(
 			<-r.Context().Done()
 			close(canceled)
 		}), "master-key", sessions, "master-owner")
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/workspace/queries", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/workspace/queries", nil)
 		req.Header.Set(WebSessionHeader, token)
 		done := make(chan struct{})
 		go func() {
@@ -63,7 +63,7 @@ func TestServerShutdownInvalidatesSnapshotsWithCanceledContext(t *testing.T) {
 			name = "expired"
 		}
 		t.Run(name, func(t *testing.T) {
-			catalog, err := store.Open(filepath.Join(t.TempDir(), "docbank.db"))
+			catalog, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "docbank.db"))
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 			_, err = catalog.CreateFile(t.Context(), catalog.RootID(), "bounded.txt",
