@@ -168,7 +168,7 @@ func TestAnswerQuestionEvidenceAndCoverage(t *testing.T) {
 }
 
 func TestAnswerQuestionEnvelopeBound(t *testing.T) {
-	f := &answerFakeClient{report: api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete", ScopedDocuments: 50, CompleteDocuments: 50}}}
+	f := &answerFakeClient{report: api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete", ScopedDocuments: 50, CompleteDocuments: 50}, Reranking: &api.DocumentSearchRerankingReceipt{Outcome: "applied", CandidateCount: 50}}}
 	pathPrefix := "/" + strings.Repeat(strings.Repeat("p", 254)+"/", 63)
 	for i := 1; i <= 50; i++ {
 		version := fmt.Sprintf("00000000-0000-4000-8000-%012d", i+1)
@@ -180,7 +180,7 @@ func TestAnswerQuestionEnvelopeBound(t *testing.T) {
 				AttachmentID: fmt.Sprintf("%064x", i*64+j+1), BuildID: fmt.Sprintf("%064x", 10000+i*64+j+1)}
 		}
 		f.documents = append(f.documents, api.DocumentSummary{NodeID: int64(i), ContentVersionID: version, Path: pathPrefix + name, Name: name, ActiveRenditions: renditions})
-		f.results = append(f.results, api.DocumentSearchResult{VaultUID: "00000000-0000-4000-8000-000000000001", NodeID: int64(i), ContentVersionID: version, Path: pathPrefix + name, Rank: i, LexicalRank: i, Score: 1 / float64(60+i), Excerpt: strings.Repeat("x", 512), Evidence: []api.DocumentEvidenceReference{
+		f.results = append(f.results, api.DocumentSearchResult{VaultUID: "00000000-0000-4000-8000-000000000001", NodeID: int64(i), ContentVersionID: version, Path: pathPrefix + name, Rank: i, LexicalRank: i, Score: float64(51-i) / 50, Excerpt: strings.Repeat("x", 512), Evidence: []api.DocumentEvidenceReference{
 			{Kind: "rendition_segment", BuildID: strings.Repeat("a", 64), SegmentID: "segment-a"},
 		}})
 	}
@@ -189,7 +189,7 @@ func TestAnswerQuestionEnvelopeBound(t *testing.T) {
 	last.SemanticRank = 1
 	last.Evidence = append(last.Evidence, api.DocumentEvidenceReference{Kind: "embedding", VectorSpaceID: vectorSpaceID, EmbeddingSetID: strings.Repeat("d", 64), InputGenerationID: strings.Repeat("e", 64), InputID: "input-a", InputKind: "rendition_chunk", BuildID: strings.Repeat("a", 64), SourceManifestChecksum: strings.Repeat("f", 64)})
 	session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
-	out, links, err := answerQuestion(context.Background(), session, []byte(`{"question":"example","limit":50,"max_passage_bytes":65536}`))
+	out, links, err := answerQuestion(context.Background(), session, []byte(`{"question":"example","limit":50,"max_passage_bytes":65536,"rerank":true}`))
 	if err != nil {
 		t.Fatal(err)
 	}
