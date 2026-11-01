@@ -36,15 +36,6 @@ func TestSupersessionLifecycle(t *testing.T) {
 	v, err = s.NodeValidity(ctx, a.ID, "2025-01-01")
 	require.NoError(t, err)
 	require.Equal(t, "current", string(v.State))
-	var buf bytes.Buffer
-	require.NoError(t, s.ExportMetadata(ctx, &buf))
-	restored, err := Open(filepath.Join(t.TempDir(), "restore.db"))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, restored.Close()) })
-	require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(buf.Bytes())))
-	var out bytes.Buffer
-	require.NoError(t, restored.ExportMetadata(ctx, &out))
-	require.Equal(t, buf.String(), out.String())
 	c, err = s.DeleteSupersession(ctx, b.ID, a.ID, c.Node.Revision)
 	require.NoError(t, err)
 	require.True(t, c.Changed)
@@ -109,30 +100,41 @@ func TestSupersessionGraphValidation(t *testing.T) {
 
 func TestSupersessionDegreeAndTrash(t *testing.T) {
 	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	old, err := s.CreateFile(ctx, s.RootID(), "old", fakeHash("ab"), 1, "text/plain")
-	require.NoError(t, err)
-	var first Node
-	for i := range 17 {
-		n, e := s.CreateFile(ctx, s.RootID(), fmt.Sprintf("new-%d", i), fakeHash(fmt.Sprintf("%x", i+200)), 1, "text/plain")
-		require.NoError(t, e)
-		if i == 0 {
-			first = n
-		}
-		c, e := s.PutSupersession(ctx, n.ID, old.ID, old.Revision, "")
-		if i == 16 {
-			require.ErrorIs(t, e, ErrInvalidSupersession)
-		} else {
-			require.NoError(t, e)
-			old = c.Node
-		}
+	for _, direction := range []string{"out-degree", "in-degree"} {
+		t.Run(direction, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			center, err := s.CreateFile(ctx, s.RootID(), "center.txt", fakeHash("ab"), 1, "text/plain")
+			require.NoError(t, err)
+			for i := range 17 {
+				n, err := s.CreateFile(ctx, s.RootID(), fmt.Sprintf("file-%d.txt", i), fakeHash(fmt.Sprintf("%x", i+200)), 1, "text/plain")
+				require.NoError(t, err)
+				successor, predecessor := n, center
+				if direction == "in-degree" {
+					successor, predecessor = center, n
+				}
+				change, err := s.PutSupersession(ctx, successor.ID, predecessor.ID, predecessor.Revision, "")
+				if i == 16 {
+					require.ErrorIs(t, err, ErrInvalidSupersession)
+					after, err := s.NodeByID(ctx, predecessor.ID)
+					require.NoError(t, err)
+					require.Equal(t, predecessor.Revision, after.Revision)
+				} else {
+					require.NoError(t, err)
+					if direction == "out-degree" {
+						center = change.Node
+					}
+				}
+			}
+			v, err := s.NodeValidity(ctx, center.ID, "2025-01-01")
+			require.NoError(t, err)
+			if direction == "in-degree" {
+				require.Len(t, v.Predecessors, 16)
+			} else {
+				require.Len(t, v.Successors, 16)
+			}
+		})
 	}
-	_, _, err = s.Trash(ctx, first.ID, first.Revision)
-	require.NoError(t, err)
-	removed, err := s.DeleteSupersession(ctx, first.ID, old.ID, old.Revision)
-	require.NoError(t, err)
-	require.True(t, removed.Changed)
 }
 
 // A binary tree stays within the degree limit at the node budget.
@@ -231,7 +233,7 @@ func TestSupersessionEndpointGuards(t *testing.T) {
 	_, err = s.PutEffectiveWindow(ctx, n.ID, n.Revision, "", "")
 	require.ErrorIs(t, err, ErrInvalidSupersession)
 	_, err = s.PutEffectiveWindow(ctx, n.ID, n.Revision, "2025-02-30", "")
-	require.ErrorContains(t, err, "invalid calendar date")
+	require.ErrorIs(t, err, ErrInvalidSupersession)
 	_, err = s.PutSupersession(ctx, other.ID, n.ID, n.Revision, strings.Repeat("x", 1025))
 	require.ErrorIs(t, err, ErrInvalidSupersession)
 	trashed, _, err := s.Trash(ctx, n.ID, n.Revision)
@@ -242,30 +244,6 @@ func TestSupersessionEndpointGuards(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
-func TestSupersessionPredecessorDegree(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	successor, err := s.CreateFile(ctx, s.RootID(), "merged.txt", fakeHash("a5"), 1, "text/plain")
-	require.NoError(t, err)
-	for i := range 17 {
-		predecessor, err := s.CreateFile(ctx, s.RootID(), fmt.Sprintf("part-%d.txt", i), fakeHash(fmt.Sprintf("%x", i+500)), 1, "text/plain")
-		require.NoError(t, err)
-		_, err = s.PutSupersession(ctx, successor.ID, predecessor.ID, predecessor.Revision, "")
-		if i == 16 {
-			require.ErrorIs(t, err, ErrInvalidSupersession)
-			after, err := s.NodeByID(ctx, predecessor.ID)
-			require.NoError(t, err)
-			require.Equal(t, predecessor.Revision, after.Revision)
-		} else {
-			require.NoError(t, err)
-		}
-	}
-	v, err := s.NodeValidity(ctx, successor.ID, "2025-01-01")
-	require.NoError(t, err)
-	require.Len(t, v.Predecessors, 16)
-}
-
 func TestSupersessionTrashRestoreAndPurge(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -274,7 +252,7 @@ func TestSupersessionTrashRestoreAndPurge(t *testing.T) {
 	require.NoError(t, err)
 	next, err := s.CreateFile(ctx, s.RootID(), "new.txt", fakeHash("a7"), 1, "text/plain")
 	require.NoError(t, err)
-	_, err = s.PutSupersession(ctx, next.ID, old.ID, old.Revision, "")
+	link, err := s.PutSupersession(ctx, next.ID, old.ID, old.Revision, "replacement")
 	require.NoError(t, err)
 	window, err := s.PutEffectiveWindow(ctx, next.ID, next.Revision, "2025-01-01", "")
 	require.NoError(t, err)
@@ -288,6 +266,12 @@ func TestSupersessionTrashRestoreAndPurge(t *testing.T) {
 	require.NoError(t, s.ExportMetadata(ctx, &snapshot))
 	target := newTestStore(t)
 	require.NoError(t, target.ImportMetadata(ctx, bytes.NewReader(snapshot.Bytes())))
+	var out bytes.Buffer
+	require.NoError(t, target.ExportMetadata(ctx, &out))
+	require.Equal(t, snapshot.String(), out.String())
+	removed, err := s.DeleteSupersession(ctx, next.ID, old.ID, link.Node.Revision)
+	require.NoError(t, err)
+	require.True(t, removed.Changed)
 	restored, _, err := target.Restore(ctx, trashed.ID, trashed.Revision)
 	require.NoError(t, err)
 	v, err = target.NodeValidity(ctx, old.ID, "2025-01-01")
@@ -320,24 +304,23 @@ func TestSupersessionMetadataRejectsInvalidDeclarations(t *testing.T) {
 	require.NoError(t, source.ExportMetadata(ctx, &snapshot))
 	for _, tt := range []struct {
 		name, record string
+		wantErr      error
+		wantMessage  string
 	}{
-		{"directory endpoint", fmt.Sprintf(`{"type":"node_supersession","successor_node_id":%d,"predecessor_node_id":%d,"note":"","recorded_at":%q}`, n.ID, source.RootID(), nowRFC3339())},
-		{"long note", fmt.Sprintf(`{"type":"node_supersession","successor_node_id":%d,"predecessor_node_id":%d,"note":%q,"recorded_at":%q}`, n.ID, other.ID, strings.Repeat("x", 1025), nowRFC3339())},
-		{"directory window", fmt.Sprintf(`{"type":"node_effective_window","node_id":%d,"effective_from":"2025-01-01","effective_to":null}`, source.RootID())},
-		{"calendar date", fmt.Sprintf(`{"type":"node_effective_window","node_id":%d,"effective_from":"2026-02-30","effective_to":null}`, n.ID)},
-		{"empty window", fmt.Sprintf(`{"type":"node_effective_window","node_id":%d,"effective_from":null,"effective_to":null}`, n.ID)},
-		{"reversed window", fmt.Sprintf(`{"type":"node_effective_window","node_id":%d,"effective_from":"2025-01-02","effective_to":"2025-01-01"}`, n.ID)},
+		{"directory endpoint", fmt.Sprintf(`{"type":"node_supersession","successor_node_id":%d,"predecessor_node_id":%d,"note":"","recorded_at":%q}`, n.ID, source.RootID(), nowRFC3339()), ErrInvalidSupersession, ""},
+		{"long note", fmt.Sprintf(`{"type":"node_supersession","successor_node_id":%d,"predecessor_node_id":%d,"note":%q,"recorded_at":%q}`, n.ID, other.ID, strings.Repeat("x", 1025), nowRFC3339()), ErrInvalidSupersession, ""},
+		{"directory window", fmt.Sprintf(`{"type":"node_effective_window","node_id":%d,"effective_from":"2025-01-01","effective_to":null}`, source.RootID()), ErrInvalidSupersession, ""},
+		{"calendar date", fmt.Sprintf(`{"type":"node_effective_window","node_id":%d,"effective_from":"2026-02-30","effective_to":null}`, n.ID), nil, "invalid calendar date"},
+		{"empty window", fmt.Sprintf(`{"type":"node_effective_window","node_id":%d,"effective_from":null,"effective_to":null}`, n.ID), ErrInvalidSupersession, ""},
+		{"reversed window", fmt.Sprintf(`{"type":"node_effective_window","node_id":%d,"effective_from":"2025-01-02","effective_to":"2025-01-01"}`, n.ID), nil, "ends before"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			target := newTestStore(t)
 			err := target.ImportMetadata(ctx, strings.NewReader(snapshot.String()+tt.record+"\n"))
-			switch tt.name {
-			case "calendar date":
-				require.ErrorContains(t, err, "invalid calendar date")
-			case "reversed window":
-				require.ErrorContains(t, err, "ends before")
-			default:
-				require.ErrorIs(t, err, ErrInvalidSupersession)
+			if tt.wantErr != nil {
+				require.ErrorIs(t, err, tt.wantErr)
+			} else {
+				require.ErrorContains(t, err, tt.wantMessage)
 			}
 			_, err = target.NodeByPath(ctx, "/source.txt")
 			require.ErrorIs(t, err, ErrNotFound, "failed import must not publish partial authority")

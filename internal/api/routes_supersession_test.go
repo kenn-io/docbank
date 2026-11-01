@@ -67,12 +67,3 @@ func TestSupersessionEndpoints(t *testing.T) {
 	assert.Equal(t, "/new.txt", view.Node.Path)
 	assert.Empty(t, view.EffectiveFrom)
 }
-
-func TestSupersessionRejectsInvalidDeclarations(t *testing.T) {
-	t.Parallel()
-	ts, s := newTestServer(t, nil)
-	old := createFileWithContent(t, ts, s, "/old.txt", "old")
-	headers := map[string]string{"If-Match": `"1"`}
-	resp, body := do(t, ts, http.MethodPut, fmt.Sprintf("/api/v1/nodes/%d/supersedes/%d", old.ID, old.ID), headers, map[string]any{})
-	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
-}

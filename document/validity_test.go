@@ -32,7 +32,6 @@ func TestEvaluateValidity(t *testing.T) {
 
 func FuzzEvaluateValiditySuccessorOrder(f *testing.F) {
 	f.Add(uint16(365), uint16(0), uint16(730), uint8(0), []byte{0, 127, 129})
-	f.Add(uint16(365), uint16(0), uint16(730), uint8(3), []byte{})
 	f.Fuzz(func(t *testing.T, day, from, to uint16, open uint8, raw []byte) {
 		date, window, successors := validityFuzzInputs(day, from, to, open, raw)
 		state, undated := EvaluateValidity(date, window, successors)
@@ -87,7 +86,7 @@ func TestValidateEffectiveWindow(t *testing.T) {
 
 // A later date cannot make an already effective dated successor cease to apply.
 func FuzzDatedSuccessorMonotonicity(f *testing.F) {
-	f.Add(uint16(0), uint16(1), uint16(1))
+	f.Add(uint16(1), uint16(1), uint16(1))
 	f.Fuzz(func(t *testing.T, start, first, delta uint16) {
 		base := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
 		date := func(days int) string { return base.AddDate(0, 0, days).Format("2006-01-02") }

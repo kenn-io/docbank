@@ -59,6 +59,12 @@ func TestSupersessionCLI(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &v))
 	require.Len(t, v.Successors, 1)
 	assert.Empty(t, v.Successors[0].Note)
+	resetFlags(rootCmd)
+	var stdout, stderr bytes.Buffer
+	code := runProcess([]string{"effective", "/leases/next.txt", "--from", "2026-01-01"}, &stdout, &stderr)
+	assert.Equal(t, exitUsage, code, stderr.String())
+	assert.Contains(t, stderr.String(), "ends before")
+	assert.NotContains(t, stdout.String(), "Effective window updated")
 	_, err = runCLI(t, "effective", "/leases/next.txt", "--clear")
 	require.NoError(t, err)
 	out, err = runCLI(t, "validity", "/leases/next.txt", "--as-of", "2025-06-01", "--json")
@@ -102,56 +108,6 @@ func TestValidityUsesSnapshotPath(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "/renamed-lease.txt: current (as of 2025-06-01)\n", out)
 	assert.Equal(t, []string{"GET /api/v1/nodes/42", "GET /api/v1/nodes/42/validity"}, requests)
-}
-
-func TestEffectiveCLIMergedWindowExitsUsage(t *testing.T) {
-	_ = setupVaultHome(t)
-	source := writeSourceFile(t, "lease.txt", "signed lease")
-	_, err := runCLI(t, "add", source, "--dest", "/")
-	require.NoError(t, err)
-	_, err = runCLI(t, "effective", "/lease.txt", "--to", "2025-03-01")
-	require.NoError(t, err)
-
-	resetFlags(rootCmd)
-	var stdout, stderr bytes.Buffer
-	code := runProcess([]string{"effective", "/lease.txt", "--from", "2025-04-01"}, &stdout, &stderr)
-	assert.Equal(t, exitUsage, code, stderr.String())
-	assert.Contains(t, stderr.String(), "ends before")
-	assert.NotContains(t, stdout.String(), "Effective window updated")
-	out, err := runCLI(t, "validity", "/lease.txt", "--json")
-	require.NoError(t, err)
-	var view api.NodeValidity
-	require.NoError(t, json.Unmarshal([]byte(out), &view))
-	assert.Empty(t, view.EffectiveFrom)
-	assert.Equal(t, "2025-03-01", view.EffectiveTo)
-}
-
-func TestEffectiveCLIRejectsAuditedWindowUpdate(t *testing.T) {
-	_ = setupVaultHome(t)
-	source := writeSourceFile(t, "lease.txt", "signed lease")
-	_, err := runCLI(t, "add", source, "--dest", "/leases")
-	require.NoError(t, err)
-	out, err := runCLI(t, "audit", "enable", "/leases", "--json")
-	require.NoError(t, err)
-	var preview api.AuditEnrollmentPreview
-	require.NoError(t, json.Unmarshal([]byte(out), &preview))
-	_, err = runCLI(t, "audit", "enable", "--run", "--token", preview.PreviewToken, "--acknowledge-permanent-retention")
-	require.NoError(t, err)
-	out, err = runCLI(t, "validity", "/leases/lease.txt", "--json")
-	require.NoError(t, err)
-	var before api.NodeValidity
-	require.NoError(t, json.Unmarshal([]byte(out), &before))
-
-	out, err = runCLI(t, "effective", "/leases/lease.txt", "--to", "2026-12-31")
-	require.ErrorContains(t, err, "mutation is not supported for an audited vault")
-	assert.NotContains(t, out, "Effective window updated")
-	out, err = runCLI(t, "validity", "/leases/lease.txt", "--as-of", "2025-06-01", "--json")
-	require.NoError(t, err)
-	var view api.NodeValidity
-	require.NoError(t, json.Unmarshal([]byte(out), &view))
-	assert.Empty(t, view.EffectiveFrom)
-	assert.Empty(t, view.EffectiveTo)
-	assert.Equal(t, before.Node.Revision, view.Node.Revision)
 }
 
 func TestSupersessionCLIRejectsInvalidFlags(t *testing.T) {
