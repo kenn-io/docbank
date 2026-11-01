@@ -210,12 +210,14 @@ history, watch and push observations, and collection membership and labels also
 work through the native Store methods. Recoverable deletion covers document and
 folder trash, whole photo groups, trash browsing and restore, including audited
 mutations and photo sidecar decisions. Permanent trash emptying and content-version
-pruning preserve retention holds and related catalog state.
+pruning preserve retention holds and related catalog state. Derivative cleanup
+covers purge previews, rendition and embedding collection, extracted-text and
+email cleanup, and explicit rebuild authorization.
 
 A public PostgreSQL-backed vault is not available yet: daemon and embedded
 operations still open SQLite. Grouped photo imports, XMP sidecar writing,
-derivative collection, search, transfer, backup recovery and the complete physical-storage
-lifecycle remain unqualified.
+processing workers, search, transfer, backup recovery and the complete
+physical-storage lifecycle remain unqualified.
 
 `Setup` takes a caller-owned `database/sql` pool authenticated as `SchemaOwner`
 and uses the explicit `Schema` setting. It creates a dedicated schema, canonical
@@ -338,6 +340,22 @@ GRANT INSERT, DELETE, UPDATE(root_kind, target_kind, target_id, fencing_token,
     ON documents.current_rendition_roots TO docbank_runtime;
 GRANT UPDATE(revision) ON documents.tags TO docbank_runtime;
 GRANT UPDATE(binding_epoch) ON documents.document_people_state TO docbank_runtime;
+GRANT DELETE ON documents.embedding_input_generations, documents.embedding_vector_sets,
+    documents.embedding_vector_spaces, documents.embedding_failures,
+    documents.email_heads, documents.email_part_artifacts, documents.email_generations,
+    documents.email_body_results, documents.rendition_builds, documents.rendition_artifacts,
+    documents.rendition_units, documents.rendition_lexical_segments,
+    documents.rendition_lexical_index, documents.rendition_lexical_heads,
+    documents.rendition_lexical_generations, documents.rendition_lexical_generation_manifests,
+    documents.text_searchable_versions, documents.extracted_text,
+    documents.text_extraction_queue TO docbank_runtime;
+GRANT INSERT ON documents.derivative_blob_purge_pending,
+    documents.rendition_lexical_generations, documents.rendition_lexical_generation_builds,
+    documents.rendition_lexical_generation_manifests, documents.rendition_lexical_index
+    TO docbank_runtime;
+GRANT UPDATE(generation_id) ON documents.rendition_lexical_heads TO docbank_runtime;
+GRANT INSERT, UPDATE(purged_at, active, superseded_at, superseding_build_id)
+    ON documents.derivative_purge_suppressions TO docbank_runtime;
 ```
 
 Checksum rows are inserted or compared with the existing value, never updated;
@@ -645,8 +663,40 @@ JSON values alone do not preserve indexed lookup plans.
 
 Both destructive operations retain the existing refusal while audit authority
 is active. Dry runs can inspect candidates but do not authorize deletion.
-Physical byte deletion, general derivative collection and processing workers
-remain separate, unqualified PostgreSQL operations.
+Physical byte deletion and processing workers remain separate, unqualified
+PostgreSQL operations.
+
+#### Derivative cleanup
+
+`PurgeDerivatives` removes selected derived data through one shared storage
+transaction. Version, attachment and build selectors keep their existing scope;
+`All` selects all derivative authority, while an empty request collects only
+unrooted garbage. Original versions and their bytes remain intact. Unreachable
+derivative blobs enter the pending collection catalog; this operation does not
+delete physical bytes or claim reclaimed space.
+
+Active worker and reader leases, durable roots and retained exports keep their
+existing protection. A purge can revoke a serving head while a reader still
+retains its immutable data. Shared extracted text and email generations survive
+until no remaining version needs them. Email document publication receipts block
+an exact purge and cause a bulk purge to skip the retained inventory.
+
+Purge suppressions and their audit records commit with the removals. Explicit
+rendition and embedding rebuild authorization supersedes only the requested
+suppression. A failure rolls back the entire operation, including head changes,
+replacement lexical generations, audit advancement and pending collection rows.
+
+`DerivativePurgeFingerprint` reads its selected identities in one statement and
+preserves the same compact identity bytes on both backends. `DerivativeGCPlan`
+uses one repeatable-read snapshot for builds, generations and roots, so a lease
+change between queries cannot produce a mixed plan. Execution checks current
+retention again under the writer lock.
+
+Lexical replacement preserves surviving build membership and text. Shared index
+writes allocate their rebuildable row IDs under the store writer lock. SQLite
+continues to maintain its FTS shadow tables through its released triggers;
+PostgreSQL has only the retained lexical catalogs at this stage. Cleanup does
+not qualify PostgreSQL search or processing publication.
 
 #### Imports and source history
 

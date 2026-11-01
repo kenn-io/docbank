@@ -94,8 +94,8 @@ func (s *Store) authorizeDerivativeRebuildTx(
 	}
 	result, err := tx.ExecContext(ctx, `
 			UPDATE derivative_purge_suppressions
-			SET active=0,superseded_at=?,superseding_build_id=?
-			WHERE source_sha256=? AND profile_fingerprint=? AND build_id=? AND active=1`,
+			SET active=0,superseded_at=$1,superseding_build_id=$2
+			WHERE source_sha256=$3 AND profile_fingerprint=$4 AND build_id=$5 AND active=1`,
 		authorization.AuthorizedAt, authorization.SupersedingBuildID,
 		authorization.SourceSHA256, profileFingerprint,
 		authorization.PurgedBuildID)
@@ -174,7 +174,7 @@ func installDerivativePurgeSuppressionRecordsTx(
 				INSERT INTO derivative_purge_suppressions(
 					source_sha256,profile_fingerprint,build_id,purged_at,active,
 					superseded_at,superseding_build_id
-				) VALUES(?,?,?,?,1,NULL,NULL)
+				) VALUES($1,$2,$3,$4,1,NULL,NULL)
 				ON CONFLICT(source_sha256,profile_fingerprint,build_id) DO UPDATE SET
 					purged_at=excluded.purged_at,active=1,
 					superseded_at=NULL,superseding_build_id=NULL`,
@@ -203,7 +203,7 @@ func loadDerivativePurgeSuppressionScopesTx(
 ) ([]derivativePurgeSuppression, error) {
 	var sourceSHA256 string
 	if err := tx.QueryRowContext(ctx,
-		`SELECT source_sha256 FROM rendition_builds WHERE build_id=?`, buildID,
+		`SELECT source_sha256 FROM rendition_builds WHERE build_id=$1`, buildID,
 	).Scan(&sourceSHA256); err != nil {
 		return nil, fmt.Errorf("reading derivative purge suppression scope: %w", err)
 	}
@@ -234,7 +234,7 @@ func loadDerivativePurgeSuppressionTx(
 	err := tx.QueryRowContext(ctx, `
 		SELECT purged_at,active,superseded_at,superseding_build_id
 		FROM derivative_purge_suppressions
-		WHERE source_sha256=? AND profile_fingerprint=? AND build_id=?`,
+		WHERE source_sha256=$1 AND profile_fingerprint=$2 AND build_id=$3`,
 		sourceSHA256, profileFingerprint, buildID).Scan(
 		&record.purgedAt, &record.active, &supersededAt, &supersedingBuildID)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -270,7 +270,7 @@ func derivativeBuildSuppressedTx(
 	var suppressed bool
 	err := tx.QueryRowContext(ctx, `SELECT EXISTS(
 		SELECT 1 FROM derivative_purge_suppressions
-		WHERE source_sha256=? AND profile_fingerprint=? AND build_id=? AND active=1
+		WHERE source_sha256=$1 AND profile_fingerprint=$2 AND build_id=$3 AND active=1
 	)`, sourceSHA256, derivativeBuildSuppressionProfile, buildID).Scan(&suppressed)
 	return suppressed, err
 }
@@ -282,8 +282,8 @@ func derivativeAttachmentSuppressedTx(
 	var suppressed bool
 	err := tx.QueryRowContext(ctx, `SELECT EXISTS(
 		SELECT 1 FROM derivative_purge_suppressions
-		WHERE source_sha256=? AND build_id=? AND active=1
-		  AND profile_fingerprint IN (?,?)
+		WHERE source_sha256=$1 AND build_id=$2 AND active=1
+		  AND profile_fingerprint IN ($3,$4)
 	)`, sourceSHA256, buildID, derivativeAttachmentSuppressionScope(
 		contentVersionID, profileFingerprint), derivativeBuildSuppressionProfile).Scan(&suppressed)
 	return suppressed, err

@@ -96,7 +96,7 @@ func legacyTextExtractionSuppressedTx(
 	var extractorVersion int64
 	var text sql.NullString
 	err := tx.QueryRowContext(ctx, `SELECT extractor,extractor_version,status,text
-		FROM extracted_text WHERE blob_hash=? AND extractor=?`,
+		FROM extracted_text WHERE blob_hash=$1 AND extractor=$2`,
 		blobHash, legacyPlainTextExtractor,
 	).Scan(&extractor, &extractorVersion, &status, &text)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -117,16 +117,26 @@ func legacyTextExtractionSuppressedTx(
 	}
 	rows, err := tx.QueryContext(ctx, `
 		SELECT v.version_id FROM content_versions v
-		WHERE v.blob_hash=? ORDER BY v.version_id`, blobHash)
+		WHERE v.blob_hash=$1 ORDER BY v.version_id`, blobHash)
 	if err != nil {
 		return false, err
 	}
 	defer func() { _ = rows.Close() }()
+	var versions []string
 	for rows.Next() {
 		var versionID string
 		if err := rows.Scan(&versionID); err != nil {
 			return false, err
 		}
+		versions = append(versions, versionID)
+	}
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	if err := rows.Close(); err != nil {
+		return false, err
+	}
+	for _, versionID := range versions {
 		suppressed, err := legacyDerivativeSuppressedTx(
 			ctx, tx, blobHash, versionID, profile.Fingerprint)
 		if err != nil {
@@ -135,9 +145,6 @@ func legacyTextExtractionSuppressedTx(
 		if !suppressed {
 			return false, nil
 		}
-	}
-	if err := rows.Err(); err != nil {
-		return false, err
 	}
 	return true, nil
 }

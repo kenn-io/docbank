@@ -17,9 +17,10 @@ type embeddingOrphanCollection struct {
 // collectOrphanEmbeddingArtifactsTx is the shared terminal collection path
 // for explicit purge and ordinary derivative GC. Sets own membership; active
 // roots can retain either immutable artifact independently.
-func collectOrphanEmbeddingArtifactsTx(
+func (s *Store) collectOrphanEmbeddingArtifactsTx(
 	ctx context.Context, tx *sql.Tx, asOf string, generationIDs, vectorIDs []string,
 ) (_ embeddingOrphanCollection, retErr error) {
+	d := metadataJSONDialect{postgres: s.postgresSchema != ""}
 	var result embeddingOrphanCollection
 	generations, err := json.Marshal(generationIDs)
 	if err != nil {
@@ -35,7 +36,7 @@ func collectOrphanEmbeddingArtifactsTx(
 	// A current but trashed version remains restorable, so trash alone is
 	// deliberately not a reason to discard its work.
 	if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_jobs AS j
-		WHERE (? OR j.generation_id IN (SELECT value FROM json_each(?))) AND j.state IN ('completed','failed','abandoned')
+		WHERE ($1 OR j.generation_id IN (SELECT value FROM `+d.arrayValues("$2")+`)) AND j.state IN ('completed','failed','abandoned')
 		AND EXISTS (SELECT 1 FROM embedding_input_generations g WHERE g.generation_id=j.generation_id
 		    AND NOT EXISTS (SELECT 1 FROM embedding_sets s WHERE s.input_generation_id=g.generation_id)
 		    AND NOT EXISTS (SELECT 1 FROM content_versions v JOIN nodes n ON n.current_version_id=v.version_id
@@ -45,12 +46,12 @@ func collectOrphanEmbeddingArtifactsTx(
 		return result, fmt.Errorf("collecting superseded terminal embedding jobs: %w", err)
 	}
 	generationRows, err := tx.QueryContext(ctx, `DELETE FROM embedding_input_generations AS g
-		WHERE (? OR g.generation_id IN (SELECT value FROM json_each(?))) AND NOT EXISTS (SELECT 1 FROM embedding_jobs j WHERE j.generation_id=g.generation_id) AND NOT EXISTS (
+		WHERE ($1 OR g.generation_id IN (SELECT value FROM `+d.arrayValues("$2")+`)) AND NOT EXISTS (SELECT 1 FROM embedding_jobs j WHERE j.generation_id=g.generation_id) AND NOT EXISTS (
 			SELECT 1 FROM embedding_sets s WHERE s.input_generation_id=g.generation_id
 		) AND NOT EXISTS (
 			SELECT 1 FROM current_rendition_roots r
 			WHERE r.target_kind='embedding_input_generation' AND r.target_id=g.generation_id
-			  AND r.active=1 AND (r.expires_at IS NULL OR r.expires_at>?)
+			  AND r.active=1 AND (r.expires_at IS NULL OR r.expires_at>$3)
 		) RETURNING COALESCE(generation_blob_hash,''),evidence_fingerprint`, generationIDs == nil, string(generations), asOf)
 	if err != nil {
 		return result, fmt.Errorf("collecting orphan embedding input generations: %w", err)
@@ -74,11 +75,11 @@ func collectOrphanEmbeddingArtifactsTx(
 	}
 
 	vectorRows, err := tx.QueryContext(ctx, `DELETE FROM embedding_vector_sets AS v
-		WHERE (? OR v.vector_set_id IN (SELECT value FROM json_each(?))) AND NOT EXISTS (
+		WHERE ($1 OR v.vector_set_id IN (SELECT value FROM `+d.arrayValues("$2")+`)) AND NOT EXISTS (
 			SELECT 1 FROM embedding_sets s WHERE s.vector_set_id=v.vector_set_id
 		) AND NOT EXISTS (
 			SELECT 1 FROM current_rendition_roots r
-			WHERE r.active=1 AND (r.expires_at IS NULL OR r.expires_at>?) AND (
+			WHERE r.active=1 AND (r.expires_at IS NULL OR r.expires_at>$3) AND (
 				(r.target_kind='embedding_vector_set' AND r.target_id=v.vector_set_id) OR
 				(r.target_kind='embedding_payload' AND r.target_id=v.payload_blob_hash)
 			)
@@ -115,9 +116,9 @@ func collectOrphanEmbeddingArtifactsTx(
 		return result, err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM current_rendition_roots WHERE
- (target_kind='embedding_input_generation' AND (? OR target_id IN (SELECT value FROM json_each(?))) AND NOT EXISTS (SELECT 1 FROM embedding_input_generations g WHERE g.generation_id=target_id)) OR
- (target_kind='embedding_vector_set' AND (? OR target_id IN (SELECT value FROM json_each(?))) AND NOT EXISTS (SELECT 1 FROM embedding_vector_sets v WHERE v.vector_set_id=target_id)) OR
- (target_kind='embedding_payload' AND (? OR target_id IN (SELECT value FROM json_each(?))) AND NOT EXISTS (SELECT 1 FROM embedding_vector_sets v WHERE v.payload_blob_hash=target_id))`,
+ (target_kind='embedding_input_generation' AND ($1 OR target_id IN (SELECT value FROM `+d.arrayValues("$2")+`)) AND NOT EXISTS (SELECT 1 FROM embedding_input_generations g WHERE g.generation_id=target_id)) OR
+ (target_kind='embedding_vector_set' AND ($3 OR target_id IN (SELECT value FROM `+d.arrayValues("$4")+`)) AND NOT EXISTS (SELECT 1 FROM embedding_vector_sets v WHERE v.vector_set_id=target_id)) OR
+ (target_kind='embedding_payload' AND ($5 OR target_id IN (SELECT value FROM `+d.arrayValues("$6")+`)) AND NOT EXISTS (SELECT 1 FROM embedding_vector_sets v WHERE v.payload_blob_hash=target_id))`,
 		generationIDs == nil, string(generations), vectorIDs == nil, string(vectors), vectorIDs == nil, string(payloads)); err != nil {
 		return result, fmt.Errorf("removing collected embedding roots: %w", err)
 	}
