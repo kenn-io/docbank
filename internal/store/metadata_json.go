@@ -13,6 +13,17 @@ func (d metadataJSONDialect) text(expression, path string) string {
 	return "json_extract(" + expression + ",'$." + path + "')"
 }
 
+// indexedText matches the receipt indexes' casts, JSON operators and collation.
+func (d metadataJSONDialect) indexedText(expression, path string) string {
+	if !d.postgres {
+		return "CAST(" + d.text(expression, path) + " AS TEXT)"
+	}
+	if !strings.Contains(path, ".") {
+		return "(" + expression + "::jsonb ->> '" + path + "') COLLATE \"C\""
+	}
+	return d.text(expression, path) + ` COLLATE "C"`
+}
+
 func (d metadataJSONDialect) number(expression, path string) string {
 	return "CAST(" + d.text(expression, path) + " AS BIGINT)"
 }

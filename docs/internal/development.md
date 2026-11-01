@@ -639,6 +639,10 @@ can be requeued with a new fencing token. An orphaned ambiguous provider call
 keeps its durable record so cleanup cannot silently authorize a repeat call.
 Immutable derivative generations remain available for later collection.
 
+Receipt lookups must match each backend's expression indexes exactly: retain
+SQLite's text cast and PostgreSQL's JSON operator and `C` collation. Equivalent
+JSON values alone do not preserve indexed lookup plans.
+
 Both destructive operations retain the existing refusal while audit authority
 is active. Dry runs can inspect candidates but do not authorize deletion.
 Physical byte deletion, general derivative collection and processing workers
