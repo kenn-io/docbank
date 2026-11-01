@@ -15,7 +15,7 @@ func TestPhotoXMPPlacementCleanupRetryExcludesPublication(t *testing.T) {
 	t.Parallel()
 	fixture := newTestIngester(t)
 	catalog := fixture.Store
-	hash, size, err := fixture.Blobs.Write(strings.NewReader("synthetic JPEG"))
+	hash, size, err := fixture.Blobs.WriteContext(t.Context(), strings.NewReader("synthetic JPEG"))
 	require.NoError(t, err)
 	node, err := catalog.CreateFile(t.Context(), catalog.RootID(), "capture.jpg", hash, size, "image/jpeg")
 	require.NoError(t, err)

@@ -14,7 +14,7 @@ func TestMediaRevokeIsPrincipalScopedAndIdempotent(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
-	_, err := s.db.Exec(`INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
+	_, err := s.db.ExecContext(t.Context(), `INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
 		strings.Repeat("a", 64), nowRFC3339())
 	require.NoError(t, err)
 	in := MediaOccurrenceInput{
@@ -28,7 +28,7 @@ func TestMediaRevokeIsPrincipalScopedAndIdempotent(t *testing.T) {
 	in.ID = "occ-a-2"
 	require.NoError(t, declareTestOccurrence(ctx, s, in))
 	var visible int
-	require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM media_occurrences
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT count(*) FROM media_occurrences
 		WHERE caller_principal='a' AND visible=1`).Scan(&visible))
 	require.Equal(t, 1, visible)
 }
@@ -37,7 +37,7 @@ func TestMediaOccurrenceRejectsChangedClaimsAndKeepsOtherPrincipalVisible(t *tes
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
-	_, err := s.db.Exec(`INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
+	_, err := s.db.ExecContext(t.Context(), `INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
 		strings.Repeat("a", 64), nowRFC3339())
 	require.NoError(t, err)
 	a := MediaOccurrenceInput{ID: "occ-a", SourceID: "source", Principal: "a", Ref: "same", Revision: "1", MessageJSON: "{}"}
@@ -48,7 +48,7 @@ func TestMediaOccurrenceRejectsChangedClaimsAndKeepsOtherPrincipalVisible(t *tes
 	require.ErrorIs(t, declareTestOccurrence(ctx, s, a), ErrMediaOccurrenceConflict)
 	require.NoError(t, revokeTestOccurrence(ctx, s, "a", "occ-a"))
 	var visible int
-	require.NoError(t, s.db.QueryRow(`SELECT visible FROM media_occurrences WHERE occurrence_id='occ-b'`).Scan(&visible))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT visible FROM media_occurrences WHERE occurrence_id='occ-b'`).Scan(&visible))
 	require.Equal(t, 1, visible)
 }
 
@@ -56,7 +56,7 @@ func TestMediaOccurrenceConcurrentDeclarationCreatesOneRevision(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
-	_, err := s.db.Exec(`INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
+	_, err := s.db.ExecContext(t.Context(), `INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
 		strings.Repeat("a", 64), nowRFC3339())
 	require.NoError(t, err)
 	in := MediaOccurrenceInput{ID: "occ", SourceID: "source", Principal: "a", Ref: "r", Revision: "1", MessageJSON: "{}"}
@@ -76,7 +76,7 @@ func TestMediaOccurrenceConcurrentDeclarationCreatesOneRevision(t *testing.T) {
 		require.NoError(t, err)
 	}
 	var occurrences int
-	require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM media_occurrences`).Scan(&occurrences))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT count(*) FROM media_occurrences`).Scan(&occurrences))
 	require.Equal(t, 1, occurrences)
 }
 
@@ -88,7 +88,7 @@ func TestPublishMediaSourceVersionBindsOnlyUnboundOccurrences(t *testing.T) {
 	require.NoError(t, err)
 	second, err := s.CreateFile(ctx, s.RootID(), "second.mp3", fakeHash("b2"), 20, "audio/mpeg")
 	require.NoError(t, err)
-	_, err = s.db.Exec(`INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
+	_, err = s.db.ExecContext(t.Context(), `INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
 		strings.Repeat("a", 64), nowRFC3339())
 	require.NoError(t, err)
 	require.NoError(t, declareTestOccurrence(ctx, s, MediaOccurrenceInput{
@@ -109,10 +109,10 @@ func TestPublishMediaSourceVersionBindsOnlyUnboundOccurrences(t *testing.T) {
 	})
 	require.ErrorIs(t, err, ErrMediaOccurrenceConflict)
 	var boundVersion string
-	require.NoError(t, s.db.QueryRow(`SELECT source_version_id FROM media_occurrences WHERE occurrence_id='bound'`).Scan(&boundVersion))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT source_version_id FROM media_occurrences WHERE occurrence_id='bound'`).Scan(&boundVersion))
 	require.Equal(t, "version-1", boundVersion)
 	var versions int
-	require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM media_source_versions`).Scan(&versions))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT count(*) FROM media_source_versions`).Scan(&versions))
 	require.Equal(t, 1, versions, "failed binding rolls back the new source version")
 }
 
@@ -122,7 +122,7 @@ func TestPublishMediaSourceVersionRejectsNonObjectCaptureBeforeMutation(t *testi
 	ctx := t.Context()
 	recording, err := s.CreateFile(ctx, s.RootID(), "recording.mp3", fakeHash("a1"), 10, "audio/mpeg")
 	require.NoError(t, err)
-	_, err = s.db.Exec(`INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
+	_, err = s.db.ExecContext(t.Context(), `INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
 		strings.Repeat("a", 64), nowRFC3339())
 	require.NoError(t, err)
 
@@ -133,7 +133,7 @@ func TestPublishMediaSourceVersionRejectsNonObjectCaptureBeforeMutation(t *testi
 	})
 	require.ErrorIs(t, err, ErrMediaSourceConflict)
 	var rows int
-	require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM media_source_versions`).Scan(&rows))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT count(*) FROM media_source_versions`).Scan(&rows))
 	require.Zero(t, rows)
 	require.NoError(t, s.ExportMetadata(ctx, &bytes.Buffer{}))
 }
@@ -141,7 +141,7 @@ func TestPublishMediaSourceVersionRejectsNonObjectCaptureBeforeMutation(t *testi
 func TestMediaOccurrenceMutationsRespectAuditedVaultGuard(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	_, err := s.db.Exec(`INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
+	_, err := s.db.ExecContext(t.Context(), `INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
 		strings.Repeat("a", 64), nowRFC3339())
 	require.NoError(t, err)
 	seedInitialAuditAuthority(t, s, s.RootID())
@@ -158,7 +158,7 @@ func declareTestOccurrence(ctx context.Context, s *Store, in MediaOccurrenceInpu
 
 func revokeTestOccurrence(ctx context.Context, s *Store, principal, id string) error {
 	var revision string
-	_ = s.db.QueryRow(`SELECT caller_revision FROM media_occurrences WHERE occurrence_id=?`, id).Scan(&revision)
+	_ = s.db.QueryRowContext(ctx, `SELECT caller_revision FROM media_occurrences WHERE occurrence_id=?`, id).Scan(&revision)
 	_, err := s.RecordMediaOccurrenceRevocation(ctx, testMediaOperation("revoke_occurrence", principal), id, revision)
 	return err
 }

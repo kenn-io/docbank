@@ -64,7 +64,7 @@ func testLegacyProfileReuse(t *testing.T, modelInput *document.ModelInputContrac
 	build := catalogRenditionBuild(s, profile)
 	attachment := RenditionAttachmentRecord{ID: testSHA256([]byte("openai-compatible-attachment")), VaultID: s.VaultID(), ContentVersionID: version, BuildID: build.ID, Profile: profile, AttachedAt: embeddingCatalogTime}
 	require.NoError(t, publishRenditionForTest(t, s, attachment, embeddingCatalogTime, testSHA256([]byte("openai-compatible-lexical"))))
-	retained := embeddingSetFixture(s, version, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachment.ID)
+	retained := embeddingSetFixture(t.Context(), s, version, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachment.ID)
 	retained.VectorSpace.Descriptor = descriptor
 	retained, err = normalizeEmbeddingSetRecord(retained)
 	require.NoError(t, err)

@@ -190,6 +190,7 @@ func newQuerySnapshotService(store *Store, options querySnapshotServiceOptions) 
 			panic(fmt.Sprintf("generating query snapshot cursor key: %v", err))
 		}
 	}
+	// Snapshot builds belong to the service and stop when it closes.
 	stopCtx, stopCancel := context.WithCancel(context.Background())
 	service := &QuerySnapshotService{
 		store: store, snapshots: make(map[string]*cachedQuerySnapshot),
@@ -252,7 +253,7 @@ func (s *QuerySnapshotService) CreateFacets(
 // mutate, when supplied, coordinates only the receipt write with maintenance.
 func (s *QuerySnapshotService) RunSaved(
 	ctx context.Context, owner, id string, expectedRevision int64, request SnapshotRequest,
-	mutate func(func() error) error,
+	mutate func(context.Context, func() error) error,
 ) (SavedQueryRun, SnapshotPage, error) {
 	if request.FacetsOnly {
 		return SavedQueryRun{}, SnapshotPage{}, ErrInvalidSavedQueryRun
@@ -303,7 +304,7 @@ func (s *QuerySnapshotService) RunSaved(
 	if mutate == nil {
 		err = write()
 	} else {
-		err = mutate(write)
+		err = mutate(prepared.ctx, write)
 	}
 	if err != nil {
 		return SavedQueryRun{}, SnapshotPage{}, err

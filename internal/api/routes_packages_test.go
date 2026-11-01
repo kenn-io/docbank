@@ -334,7 +334,7 @@ func TestSealedZIPPackagePreflightRetainsContainerBinding(t *testing.T) {
 		"container_id": containerID, "sha256": hex.EncodeToString(digest[:]), "size": archive.Len(),
 	}), nil)
 	require.Equal(t, 201, created.Code, created.Body.String())
-	upload, err := http.NewRequest(http.MethodPut, srv.ts.URL+"/api/v1/packages/containers/"+containerID+"/chunks/0", bytes.NewReader(archive.Bytes()))
+	upload, err := http.NewRequestWithContext(t.Context(), http.MethodPut, srv.ts.URL+"/api/v1/packages/containers/"+containerID+"/chunks/0", bytes.NewReader(archive.Bytes()))
 	require.NoError(t, err)
 	upload.Header.Set(api.BlobHashHeader, hex.EncodeToString(digest[:]))
 	upload.Header.Set(api.BlobSizeHeader, strconv.Itoa(archive.Len()))

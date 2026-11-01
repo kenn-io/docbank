@@ -83,7 +83,7 @@ func (s *Store) ContentVersionViewByID(
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	node, err := nodeByIDTx(tx, nodeID)
+	node, err := nodeByIDTx(ctx, tx, nodeID)
 	if err != nil {
 		return ContentVersionView{}, err
 	}
@@ -200,7 +200,7 @@ func (s *Store) ReplaceContentWithReceipt(
 	}
 	var receipt ContentWriteReceipt
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		n, err := nodeByIDTx(tx, nodeID)
+		n, err := nodeByIDTx(ctx, tx, nodeID)
 		if err != nil {
 			return err
 		}
@@ -210,7 +210,7 @@ func (s *Store) ReplaceContentWithReceipt(
 		if err != nil {
 			return err
 		}
-		receipt.Physical, err = authorizedPhysicalContentTx(tx, blobHash)
+		receipt.Physical, err = authorizedPhysicalContentTx(ctx, tx, blobHash)
 		return err
 	})
 	if err != nil {
@@ -234,12 +234,12 @@ func (s *Store) ConfirmContentWithReceipt(
 	}
 	var receipt ContentWriteReceipt
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		n, err := nodeByIDTx(tx, nodeID)
+		n, err := nodeByIDTx(ctx, tx, nodeID)
 		if err != nil {
 			return err
 		}
 		receipt, err = s.confirmContentWithReceiptTx(
-			tx, n, ifRev, blobHash, size, mimeType, physical...,
+			ctx, tx, n, ifRev, blobHash, size, mimeType, physical...,
 		)
 		return err
 	})
@@ -272,12 +272,12 @@ func (s *Store) ConfirmIngestedContentWithReceipt(
 	storedSourceKind := callerSuppliedSourceKindPrefix + sourceKind
 	var receipt ContentWriteReceipt
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		n, err := nodeByIDTx(tx, nodeID)
+		n, err := nodeByIDTx(ctx, tx, nodeID)
 		if err != nil {
 			return err
 		}
 		receipt, err = s.confirmContentWithReceiptTx(
-			tx, n, ifRev, blobHash, size, mimeType, physical...,
+			ctx, tx, n, ifRev, blobHash, size, mimeType, physical...,
 		)
 		if err != nil {
 			return err
@@ -341,13 +341,13 @@ func (s *Store) ReplaceContentForIngest(
 		changed bool
 	)
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		prior, err := nodeByIDTx(tx, nodeID)
+		prior, err := nodeByIDTx(ctx, tx, nodeID)
 		if err != nil {
 			return err
 		}
 		if prior.BlobHash == blobHash && prior.Size == size {
 			receipt, err = s.confirmContentWithReceiptTx(
-				tx, prior, ifRev, blobHash, size, prior.MimeType, physical...,
+				ctx, tx, prior, ifRev, blobHash, size, prior.MimeType, physical...,
 			)
 		} else {
 			receipt.Node, receipt.Version, err = s.replaceContentTx(
@@ -368,7 +368,7 @@ func (s *Store) ReplaceContentForIngest(
 		if err != nil {
 			return err
 		}
-		receipt.Physical, err = authorizedPhysicalContentTx(tx, blobHash)
+		receipt.Physical, err = authorizedPhysicalContentTx(ctx, tx, blobHash)
 		return err
 	})
 	if err != nil {
@@ -378,6 +378,7 @@ func (s *Store) ReplaceContentForIngest(
 }
 
 func (s *Store) confirmContentWithReceiptTx(
+	ctx context.Context,
 	tx *sql.Tx, n Node, ifRev int64, blobHash string, size int64, mimeType string,
 	physical ...BlobPhysical,
 ) (ContentWriteReceipt, error) {
@@ -393,19 +394,19 @@ func (s *Store) confirmContentWithReceiptTx(
 			n.ID, ifRev, ErrStaleRevision,
 		)
 	}
-	if err := s.EnsureBlobTx(tx, blobHash, size, physical...); err != nil {
+	if err := s.EnsureBlobTx(ctx, tx, blobHash, size, physical...); err != nil {
 		return ContentWriteReceipt{}, err
 	}
 	receipt := ContentWriteReceipt{Node: n}
 	var err error
-	receipt.Version, err = scanContentVersion(tx.QueryRow(
+	receipt.Version, err = scanContentVersion(tx.QueryRowContext(ctx,
 		`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id = $1`,
 		n.CurrentVersionID,
 	))
 	if err != nil {
 		return ContentWriteReceipt{}, fmt.Errorf("reading current version of node %d: %w", n.ID, err)
 	}
-	receipt.Physical, err = authorizedPhysicalContentTx(tx, blobHash)
+	receipt.Physical, err = authorizedPhysicalContentTx(ctx, tx, blobHash)
 	if err != nil {
 		return ContentWriteReceipt{}, err
 	}
@@ -439,7 +440,7 @@ func (s *Store) SyncWatchedContent(
 		if err != nil {
 			return err
 		}
-		n, err := nodeByIDTx(tx, cursor.nodeID)
+		n, err := nodeByIDTx(ctx, tx, cursor.nodeID)
 		if err != nil {
 			return err
 		}
@@ -451,11 +452,11 @@ func (s *Store) SyncWatchedContent(
 			return err
 		}
 		if cursor.blobHash == blobHash && cursor.size == size {
-			if err := s.EnsureBlobTx(tx, blobHash, size, physical...); err != nil {
+			if err := s.EnsureBlobTx(ctx, tx, blobHash, size, physical...); err != nil {
 				return fmt.Errorf("reconciling unchanged watched content: %w", err)
 			}
 			if n.BlobHash != blobHash {
-				if _, err := requirePhysicalAuthorityTx(tx, n.BlobHash); err != nil {
+				if _, err := requirePhysicalAuthorityTx(ctx, tx, n.BlobHash); err != nil {
 					return fmt.Errorf("checking unchanged watched content: %w", err)
 				}
 			}
@@ -463,7 +464,7 @@ func (s *Store) SyncWatchedContent(
 			return nil
 		}
 		if n.BlobHash == blobHash && n.Size == size {
-			if err := s.EnsureBlobTx(tx, blobHash, size, physical...); err != nil {
+			if err := s.EnsureBlobTx(ctx, tx, blobHash, size, physical...); err != nil {
 				return fmt.Errorf("checking unchanged watched content: %w", err)
 			}
 			updated = n
@@ -551,7 +552,7 @@ func (s *Store) replaceContentTx(
 			ctx, tx, s, n, blobHash, size, mimeType, "content_replace", nil, physical...,
 		)
 	}
-	if err := s.EnsureBlobTx(tx, blobHash, size, physical...); err != nil {
+	if err := s.EnsureBlobTx(ctx, tx, blobHash, size, physical...); err != nil {
 		return Node{}, ContentVersion{}, err
 	}
 	return s.installContentVersionTx(
@@ -575,14 +576,14 @@ func (s *Store) RevertContent(
 		source  ContentVersion
 	)
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		n, err := nodeByIDTx(tx, nodeID)
+		n, err := nodeByIDTx(ctx, tx, nodeID)
 		if err != nil {
 			return err
 		}
 		if err := validateContentReplacementTarget(n, ifRev); err != nil {
 			return err
 		}
-		source, err = scanContentVersion(tx.QueryRow(
+		source, err = scanContentVersion(tx.QueryRowContext(ctx,
 			`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id = $1`, sourceVersionID))
 		if err != nil {
 			return fmt.Errorf("content version %q: %w", sourceVersionID, err)
@@ -599,7 +600,7 @@ func (s *Store) RevertContent(
 			return fmt.Errorf("source version %s revision %d is not older than node %d next revision %d",
 				source.ID, source.NodeRevision, nodeID, n.Revision+1)
 		}
-		catalogSize, err := requirePhysicalAuthorityTx(tx, source.BlobHash)
+		catalogSize, err := requirePhysicalAuthorityTx(ctx, tx, source.BlobHash)
 		if err != nil {
 			return fmt.Errorf("checking source blob %s: %w", source.BlobHash, err)
 		}
@@ -671,7 +672,7 @@ func (s *Store) installContentVersionWithOperationTx(
 	if mimeType != "" {
 		storedMime = mimeType
 	}
-	if _, err := tx.Exec(
+	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO content_versions (
 			version_id, node_id, blob_hash, size, mime_type, recorded_at,
 			node_revision, introduced_operation_id, transition_kind, source_version_id
@@ -688,13 +689,13 @@ func (s *Store) installContentVersionWithOperationTx(
 	if err := queueTextExtractionTx(ctx, tx, operation.versionID, blobHash, mimeType); err != nil {
 		return Node{}, ContentVersion{}, err
 	}
-	if _, err := tx.Exec(
+	if _, err := tx.ExecContext(ctx,
 		`UPDATE nodes SET current_version_id = $1, revision = $2, modified_at = $3 WHERE id = $4`,
 		operation.versionID, newRevision, operation.recordedAt, n.ID); err != nil {
 		return Node{}, ContentVersion{}, fmt.Errorf(
 			"installing %s content version for node %d: %w", transitionKind, n.ID, err)
 	}
-	updated, err := nodeByIDTx(tx, n.ID)
+	updated, err := nodeByIDTx(ctx, tx, n.ID)
 	if err != nil {
 		return Node{}, ContentVersion{}, err
 	}
@@ -704,7 +705,7 @@ func (s *Store) installContentVersionWithOperationTx(
 	if err := s.refreshNodePhotoWorkTx(ctx, tx, updated, &n); err != nil {
 		return Node{}, ContentVersion{}, err
 	}
-	version, err := scanContentVersion(tx.QueryRow(
+	version, err := scanContentVersion(tx.QueryRowContext(ctx,
 		`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id = $1`, operation.versionID))
 	if err != nil {
 		return Node{}, ContentVersion{}, err
@@ -717,7 +718,7 @@ func (s *Store) installContentVersionWithOperationTx(
 // because this preflight is an optimization rather than mutation authority.
 func (s *Store) CheckContentReplacementTarget(ctx context.Context, nodeID, ifRev int64) error {
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		n, err := nodeByIDTx(tx, nodeID)
+		n, err := nodeByIDTx(ctx, tx, nodeID)
 		if err != nil {
 			return err
 		}

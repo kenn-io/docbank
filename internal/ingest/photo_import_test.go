@@ -272,7 +272,7 @@ func TestPhotoImportPublishedBytes(t *testing.T) {
 	require.Equal(t, int64(1), report.Receipt.Added)
 	node, err := ing.Store.NodeByPath(t.Context(), "/photos/capture.JPG")
 	require.NoError(t, err)
-	reader, err := ing.Blobs.Open(node.BlobHash)
+	reader, err := ing.Blobs.OpenContext(t.Context(), node.BlobHash)
 	require.NoError(t, err)
 	got, readErr := io.ReadAll(reader)
 	require.NoError(t, errors.Join(readErr, reader.Close()))

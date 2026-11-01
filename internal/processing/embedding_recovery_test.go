@@ -156,7 +156,7 @@ func (f embeddingRecoveryFixture) service(t *testing.T, descriptor document.Embe
 	rendition := newWorkerProvider(t)
 	rendition.textForSource = true
 	config.RenditionProvider = rendition
-	service, err := NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(), Principal: f.request.Authorization.Principal, Scope: f.request.Authorization.Scope, Profiles: map[string]ProfileConfig{"current": config}})
+	service, err := NewService(t.Context(), ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(), Principal: f.request.Authorization.Principal, Scope: f.request.Authorization.Scope, Profiles: map[string]ProfileConfig{"current": config}})
 	require.NoError(t, err)
 	return service
 }

@@ -31,7 +31,7 @@ func TestEmailPDFRetainedReceiptReuseAndPhysicalBackup(t *testing.T) {
 				destination := filepath.Join(t.TempDir(), "restored")
 				_, err = backupapp.Restore(t.Context(), repository, "email-pdf", backup.RestoreOptions{TargetDir: destination, Jobs: 2})
 				require.NoError(t, err)
-				restored, err := store.OpenForRestore(filepath.Join(destination, "docbank.db"), store.DefaultSQLiteDriver())
+				restored, err := store.OpenForRestore(t.Context(), filepath.Join(destination, "docbank.db"), store.DefaultSQLiteDriver())
 				require.NoError(t, err)
 				t.Cleanup(func() { require.NoError(t, restored.Close()) })
 				bs, err := blob.New(store.NewPackCatalog(restored), filepath.Join(destination, "blobs"))

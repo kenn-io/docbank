@@ -110,7 +110,7 @@ func TestBatchTagReceiptMetadataRejectsTamperingTransactionally(t *testing.T) {
 			require.Error(t, err)
 			assert.Equal(t, targetVaultID, target.VaultID())
 			var nodes, receipts int
-			require.NoError(t, target.db.QueryRow(`SELECT
+			require.NoError(t, target.db.QueryRowContext(t.Context(), `SELECT
 				(SELECT COUNT(*) FROM nodes),
 				(SELECT COUNT(*) FROM batch_tag_receipts)`).Scan(&nodes, &receipts))
 			assert.Equal(t, 1, nodes)
@@ -132,9 +132,9 @@ func TestBatchTagReceiptStateValidationRejectsCorruptStoredBytes(t *testing.T) {
 		Nodes: []BatchTagTarget{{NodeID: node.ID, Revision: node.Revision}},
 	})
 	require.NoError(t, err)
-	_, err = s.db.Exec(`DROP TRIGGER batch_tag_receipts_immutable_update`)
+	_, err = s.db.ExecContext(t.Context(), `DROP TRIGGER batch_tag_receipts_immutable_update`)
 	require.NoError(t, err, "simulate corruption outside the supported Store boundary")
-	_, err = s.db.Exec(`UPDATE batch_tag_receipts SET receipt_json=receipt_json||x'0a'
+	_, err = s.db.ExecContext(t.Context(), `UPDATE batch_tag_receipts SET receipt_json=receipt_json||x'0a'
 		WHERE operation_id=?`, receipt.OperationID)
 	require.NoError(t, err)
 	err = s.ValidateMetadata(t.Context())
@@ -159,13 +159,13 @@ func TestBatchTagReceiptRowsAreImmutable(t *testing.T) {
 		Nodes: []BatchTagTarget{{NodeID: node.ID, Revision: node.Revision}},
 	})
 	require.NoError(t, err)
-	_, err = s.db.Exec(`UPDATE batch_tag_receipts SET request_digest=request_digest
+	_, err = s.db.ExecContext(t.Context(), `UPDATE batch_tag_receipts SET request_digest=request_digest
 		WHERE operation_id=?`, receipt.OperationID)
 	require.ErrorContains(t, err, "immutable")
-	_, err = s.db.Exec(`DELETE FROM batch_tag_receipts WHERE operation_id=?`, receipt.OperationID)
+	_, err = s.db.ExecContext(t.Context(), `DELETE FROM batch_tag_receipts WHERE operation_id=?`, receipt.OperationID)
 	require.ErrorContains(t, err, "immutable")
 	var rows int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM batch_tag_receipts
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM batch_tag_receipts
 		WHERE operation_id=?`, receipt.OperationID).Scan(&rows))
 	assert.Equal(t, 1, rows)
 }
@@ -189,7 +189,7 @@ func TestBatchTagReceiptMakesMetadataTargetNonPristine(t *testing.T) {
 	err = target.ImportMetadata(t.Context(), bytes.NewReader(emptyExport.Bytes()))
 	require.ErrorContains(t, err, "not pristine")
 	var receipts int
-	require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM batch_tag_receipts`).Scan(&receipts))
+	require.NoError(t, target.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM batch_tag_receipts`).Scan(&receipts))
 	assert.Equal(t, 1, receipts)
 }
 
@@ -208,7 +208,7 @@ func TestAuditedBatchTagReceiptSurvivesBackupMetadataSnapshot(t *testing.T) {
 	require.NoError(t, snapshot.ExportBackup(t.Context(), &backup))
 	require.NoError(t, snapshot.Close())
 
-	restored, err := Open(filepath.Join(t.TempDir(), "restored.db"))
+	restored, err := Open(t.Context(), filepath.Join(t.TempDir(), "restored.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(backup.Bytes())))

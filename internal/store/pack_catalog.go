@@ -44,6 +44,7 @@ func (c *PackCatalog) PrimaryStoreID() packstore.StoreID {
 // bindings its location is implicit in the vault, but Kit still uses the
 // marker to fence destructive physical work.
 func (c *PackCatalog) PrimaryOwnership() packstore.Ownership {
+	// Kit's packstore.Catalog interface gives this method no context.
 	primary, err := c.store.PrimaryBlobStore(context.Background())
 	if err != nil {
 		return packstore.Ownership{}
@@ -102,7 +103,7 @@ func (c *PackRestoreCatalog) ReplaceRestoredPacks(
 		return fmt.Errorf("beginning restored pack catalog replacement: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	primary, err := primaryBlobStoreTx(tx)
+	primary, err := primaryBlobStoreTx(ctx, tx)
 	if err != nil {
 		return fmt.Errorf("reading restored primary blob store: %w", err)
 	}
@@ -503,7 +504,7 @@ func (s *Store) repairBlobAuthorityTx(
 		return 0, fmt.Errorf("blob %s: recorded size %d does not match repaired size %d",
 			hash, recordedSize, size)
 	}
-	if err := ensureBlobChecksumTx(tx, BlobChecksumRecord{
+	if err := ensureBlobChecksumTx(ctx, tx, BlobChecksumRecord{
 		BlobSHA256: hash, MD5: storage.MD5,
 	}); err != nil {
 		return 0, err

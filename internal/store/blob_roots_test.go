@@ -28,13 +28,13 @@ func TestBlobReachabilityRuleAgreesAcrossConsumers(t *testing.T) {
 	require.NoError(t, s.RecordRenditionBlob(ctx, staged, 5,
 		BlobPhysical{Encoding: looseEncodingRaw, StoredBytes: 5, Created: true}))
 	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		if err := s.EnsureBlobTx(tx, orphan, 3); err != nil {
+		if err := s.EnsureBlobTx(t.Context(), tx, orphan, 3); err != nil {
 			return err
 		}
-		if err := s.EnsureBlobTx(tx, purgePending, 4); err != nil {
+		if err := s.EnsureBlobTx(t.Context(), tx, purgePending, 4); err != nil {
 			return err
 		}
-		_, err := tx.Exec(`INSERT INTO derivative_blob_purge_pending(blob_hash) VALUES(?)`, purgePending)
+		_, err := tx.ExecContext(t.Context(), `INSERT INTO derivative_blob_purge_pending(blob_hash) VALUES(?)`, purgePending)
 		return err
 	}))
 

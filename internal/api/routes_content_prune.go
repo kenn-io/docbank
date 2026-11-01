@@ -33,7 +33,7 @@ func registerContentPruneRoute(api huma.API, d Deps, g *gate) {
 			return nil, NewError(http.StatusUnprocessableEntity, "invalid_version_prune", err.Error())
 		}
 		var report VersionPruneReport
-		err = g.mutate(func() error {
+		err = g.mutate(ctx, func() error {
 			result, pruneErr := d.Store.PruneContentVersions(
 				ctx, in.ID, revision, selector, in.Body.Run,
 			)

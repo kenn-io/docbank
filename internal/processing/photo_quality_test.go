@@ -95,7 +95,7 @@ func TestPhotoQualityGoldenVector(t *testing.T) {
 
 func TestPhotoQualityPreviewPipeline(t *testing.T) {
 	t.Parallel()
-	catalog, err := store.Open(filepath.Join(t.TempDir(), "docbank.db"))
+	catalog, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(t.TempDir(), "blobs"))
@@ -122,7 +122,7 @@ func TestPhotoQualityPreviewPipeline(t *testing.T) {
 
 func TestPhotoQualityUndecodablePreviewIsUnavailable(t *testing.T) {
 	t.Parallel()
-	catalog, err := store.Open(filepath.Join(t.TempDir(), "docbank.db"))
+	catalog, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(t.TempDir(), "blobs"))

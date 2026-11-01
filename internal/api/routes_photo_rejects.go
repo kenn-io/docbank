@@ -60,7 +60,7 @@ func registerPhotoRejectRoutes(api huma.API, d Deps, g *gate) {
 		ctx context.Context, in *struct{ Body MovePhotoRejectsRequest },
 	) (*struct{ Body PhotoRejectsMoved }, error) {
 		var result PhotoRejectsMoved
-		err := g.mutate(func() error {
+		err := g.mutate(ctx, func() error {
 			var err error
 			result, err = d.Store.MovePhotoRejects(ctx, in.Body.Hidden, in.Body.Targets)
 			return FromStoreError(err)

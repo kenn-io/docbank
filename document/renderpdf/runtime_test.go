@@ -23,7 +23,7 @@ func TestRuntimeDiscoveryRejectsSpecialFiles(t *testing.T) {
 	}
 	root := t.TempDir()
 	socketPath := filepath.Join(root, "socket")
-	listener, err := net.Listen("unix", socketPath)
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", socketPath)
 	require.NoError(t, err)
 	defer func() { _ = listener.Close() }()
 	require.NoError(t, os.WriteFile(filepath.Join(root, "safe"), []byte("safe"), 0o644))

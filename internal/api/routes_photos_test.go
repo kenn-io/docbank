@@ -19,7 +19,7 @@ import (
 func TestPhotoRoutesEnforceIfMatch(t *testing.T) {
 	t.Parallel()
 	ts, fixture := newTestServer(t, nil)
-	hash, size, err := fixture.Blobs.Write(strings.NewReader("jpeg"))
+	hash, size, err := fixture.Blobs.WriteContext(t.Context(), strings.NewReader("jpeg"))
 	require.NoError(t, err)
 	node, err := fixture.CreateFile(t.Context(), fixture.RootID(), "photo.jpg", hash, size, "image/jpeg")
 	require.NoError(t, err)
@@ -51,7 +51,7 @@ func TestPhotoRoutesEnforceIfMatch(t *testing.T) {
 func TestPhotoTrashRouteRevision(t *testing.T) {
 	t.Parallel()
 	ts, fixture := newTestServer(t, nil)
-	hash, size, err := fixture.Blobs.Write(strings.NewReader("synthetic jpeg"))
+	hash, size, err := fixture.Blobs.WriteContext(t.Context(), strings.NewReader("synthetic jpeg"))
 	require.NoError(t, err)
 	node, err := fixture.CreateFile(t.Context(), fixture.RootID(), "photo.jpg", hash, size, "image/jpeg")
 	require.NoError(t, err)
@@ -69,7 +69,7 @@ func TestPhotoTrashRouteRevision(t *testing.T) {
 func TestPhotoRoutesCreatePromoteAndConcurrentRevisionWinner(t *testing.T) {
 	t.Parallel()
 	ts, fixture := newTestServer(t, nil)
-	hash, size, err := fixture.Blobs.Write(strings.NewReader("raw"))
+	hash, size, err := fixture.Blobs.WriteContext(t.Context(), strings.NewReader("raw"))
 	require.NoError(t, err)
 	node, err := fixture.CreateFile(t.Context(), fixture.RootID(), "capture.bin", hash, size, "application/octet-stream")
 	require.NoError(t, err)
@@ -107,7 +107,7 @@ func TestPhotoRoutesCreatePromoteAndConcurrentRevisionWinner(t *testing.T) {
 	assert.NotEmpty(t, promotedAsset.UpdatedAt)
 	assert.Nil(t, promotedAsset.ExcludedAt)
 
-	secondHash, secondSize, err := fixture.Blobs.Write(strings.NewReader("second raw"))
+	secondHash, secondSize, err := fixture.Blobs.WriteContext(t.Context(), strings.NewReader("second raw"))
 	require.NoError(t, err)
 	secondNode, err := fixture.CreateFile(t.Context(), fixture.RootID(), "second.bin", secondHash, secondSize, "application/octet-stream")
 	require.NoError(t, err)
@@ -145,7 +145,7 @@ func TestPhotoRoutesCreatePromoteAndConcurrentRevisionWinner(t *testing.T) {
 func TestPhotoRoutesAndClientTraversal(t *testing.T) {
 	t.Parallel()
 	ts, fixture := newTestServer(t, nil)
-	hash, size, err := fixture.Blobs.Write(strings.NewReader("jpeg"))
+	hash, size, err := fixture.Blobs.WriteContext(t.Context(), strings.NewReader("jpeg"))
 	require.NoError(t, err)
 	node, err := fixture.CreateFile(t.Context(), fixture.RootID(), "photo.jpg", hash, size, "image/jpeg")
 	require.NoError(t, err)
@@ -166,11 +166,11 @@ func TestPhotoRoutesAndClientTraversal(t *testing.T) {
 func TestTrashEmptyReportsPhotoHeldRoots(t *testing.T) {
 	t.Parallel()
 	ts, fixture := newTestServer(t, nil)
-	rawHash, rawSize, err := fixture.Blobs.Write(strings.NewReader("synthetic raw"))
+	rawHash, rawSize, err := fixture.Blobs.WriteContext(t.Context(), strings.NewReader("synthetic raw"))
 	require.NoError(t, err)
 	raw, err := fixture.CreateFile(t.Context(), fixture.RootID(), "capture.raw", rawHash, rawSize, "application/octet-stream")
 	require.NoError(t, err)
-	jpegHash, jpegSize, err := fixture.Blobs.Write(strings.NewReader("synthetic jpeg"))
+	jpegHash, jpegSize, err := fixture.Blobs.WriteContext(t.Context(), strings.NewReader("synthetic jpeg"))
 	require.NoError(t, err)
 	jpeg, err := fixture.CreateFile(t.Context(), fixture.RootID(), "capture.jpg", jpegHash, jpegSize, "image/jpeg")
 	require.NoError(t, err)

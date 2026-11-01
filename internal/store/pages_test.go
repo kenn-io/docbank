@@ -316,7 +316,7 @@ func TestPageJobRejectsFailureCodeOnQueuedResult(t *testing.T) {
 func TestPageAuthoritySurvivesCurrentSchemaReopen(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "pages.db")
-	s, err := Open(path)
+	s, err := Open(t.Context(), path)
 	require.NoError(t, err)
 	request := pageStoreRequest(t, s)
 	_, err = s.QueuePageJob(t.Context(), uuid.NewString(), request)
@@ -325,7 +325,7 @@ func TestPageAuthoritySurvivesCurrentSchemaReopen(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, s.PublishPageFrames(t.Context(), claim, pageStoreFrames(t, request)))
 	require.NoError(t, s.Close())
-	reopened, err := Open(path)
+	reopened, err := Open(t.Context(), path)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, reopened.Close()) })
 	inventory, err := reopened.PageInventory(t.Context(), request.Binding())

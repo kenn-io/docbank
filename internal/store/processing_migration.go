@@ -135,7 +135,7 @@ func (s *Store) MigrateLegacyPlainText(
 			if buildSuppressed {
 				continue
 			}
-			if _, authorityErr := requirePhysicalAuthorityTx(tx, row.blobHash); authorityErr != nil {
+			if _, authorityErr := requirePhysicalAuthorityTx(ctx, tx, row.blobHash); authorityErr != nil {
 				if errors.Is(authorityErr, ErrNotFound) ||
 					errors.Is(authorityErr, ErrPhysicalAuthorityMissing) {
 					continue

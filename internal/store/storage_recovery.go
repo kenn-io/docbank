@@ -55,7 +55,7 @@ func (s *Store) PlanStorageRecovery(
 				ErrBlobStoreState,
 			)
 		}
-		destination, err = primaryBlobStoreTx(tx)
+		destination, err = primaryBlobStoreTx(ctx, tx)
 		if err != nil {
 			return StorageRecoveryPlan{}, fmt.Errorf(
 				"reading primary salvage destination: %w", err,
@@ -213,7 +213,7 @@ func (s *Store) BeginStorageRecoveryPublication(
 				operationID, ErrStorageOperationTerminal,
 			)
 		}
-		if err := validateStorageRecoveryPriorTx(tx, plan); err != nil {
+		if err := validateStorageRecoveryPriorTx(ctx, tx, plan); err != nil {
 			return err
 		}
 		if cursor == storageOperationFinalizingCursor {
@@ -286,7 +286,7 @@ func (s *Store) CommitStorageRecovery(
 		if size != plan.Size || receipt.Loose.LogicalSize != plan.Size {
 			return packstore.ErrPhysicalCorrupt
 		}
-		if err := validateStorageRecoveryPriorTx(tx, plan); err != nil {
+		if err := validateStorageRecoveryPriorTx(ctx, tx, plan); err != nil {
 			return err
 		}
 		encoding, err := looseEncodingName(receipt.Loose.Encoding)
@@ -332,12 +332,12 @@ func (s *Store) CommitStorageRecovery(
 	})
 }
 
-func validateStorageRecoveryPriorTx(tx *sql.Tx, plan StorageRecoveryPlan) error {
+func validateStorageRecoveryPriorTx(ctx context.Context, tx *sql.Tx, plan StorageRecoveryPlan) error {
 	hash, err := packstore.ParseHash(plan.Hash)
 	if err != nil {
 		return fmt.Errorf("parsing recovery target hash: %w", err)
 	}
-	current, present, err := blobReadLocationTx(tx, hash, plan.Destination)
+	current, present, err := blobReadLocationTx(ctx, tx, hash, plan.Destination)
 	if err != nil {
 		return err
 	}
@@ -354,9 +354,10 @@ func validateStorageRecoveryPriorTx(tx *sql.Tx, plan StorageRecoveryPlan) error 
 }
 
 func blobReadLocationTx(
+	ctx context.Context,
 	tx *sql.Tx, hash packstore.Hash, storeID string,
 ) (packstore.ReadLocation, bool, error) {
-	location, present, err := scanBlobReadLocation(tx.QueryRow(`
+	location, present, err := scanBlobReadLocation(tx.QueryRowContext(ctx, `
 		SELECT b.size,l.store_id,l.generation,l.kind,l.encoding,
 		       l.stored_size,l.pack_eligible,
 		       e.pack_id,e.pack_offset,e.stored_len,e.raw_len,e.flags,e.crc32c

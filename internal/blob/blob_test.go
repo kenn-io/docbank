@@ -363,7 +363,7 @@ func TestWriteDoesNotMasqueradeAsRepair(t *testing.T) {
 
 func assertVerifiedBlob(t *testing.T, bs *Store, hash string, want []byte) {
 	t.Helper()
-	stream, logicalSize, err := bs.OpenStream(hash)
+	stream, logicalSize, err := bs.OpenStreamContext(t.Context(), hash)
 	require.NoError(t, err)
 	got, err := io.ReadAll(stream)
 	require.NoError(t, err)
@@ -392,7 +392,7 @@ func TestWriteAcceptsLooseBlobAbovePackingLimit(t *testing.T) {
 	assert.Equal(t, wantSize, receipt.Size)
 	assert.False(t, receipt.PackEligible)
 
-	stream, gotSize, err := bs.OpenStream(receipt.Hash)
+	stream, gotSize, err := bs.OpenStreamContext(t.Context(), receipt.Hash)
 	require.NoError(t, err)
 	assert.Equal(t, wantSize, gotSize)
 	written, err := io.Copy(io.Discard, stream)
@@ -421,7 +421,7 @@ func TestWriteAndReadBack(t *testing.T) {
 	wantHash := sha256.Sum256([]byte(content))
 	wantHex := hex.EncodeToString(wantHash[:])
 
-	hash, size, err := bs.Write(strings.NewReader(content))
+	hash, size, err := bs.WriteContext(t.Context(), strings.NewReader(content))
 	require.NoError(t, err)
 	assert.Equal(t, wantHex, hash)
 	assert.Equal(t, int64(len(content)), size)
@@ -429,14 +429,14 @@ func TestWriteAndReadBack(t *testing.T) {
 	// Sharded path: blobs/<aa>/<hash>.
 	assert.Equal(t, filepath.Join(bs.dir, wantHex[:2], wantHex), bs.path(hash))
 
-	f, err := bs.Open(hash)
+	f, err := bs.OpenContext(t.Context(), hash)
 	require.NoError(t, err)
 	defer func() { _ = f.Close() }()
 	got, err := io.ReadAll(f)
 	require.NoError(t, err)
 	assert.Equal(t, content, string(got))
 
-	ok, err := bs.Exists(hash)
+	ok, err := bs.Exists(t.Context(), hash)
 	require.NoError(t, err)
 	assert.True(t, ok)
 
@@ -461,10 +461,10 @@ func TestOpenSeekableContextReturnsLogicalSize(t *testing.T) {
 func TestOpenStreamRequiresTerminalVerification(t *testing.T) {
 	bs := newTestBlobStore(t)
 	content := "stream me completely"
-	hash, _, err := bs.Write(strings.NewReader(content))
+	hash, _, err := bs.WriteContext(t.Context(), strings.NewReader(content))
 	require.NoError(t, err)
 
-	partial, size, err := bs.OpenStream(hash)
+	partial, size, err := bs.OpenStreamContext(t.Context(), hash)
 	require.NoError(t, err)
 	assert.Equal(t, int64(len(content)), size)
 	buf := make([]byte, 1)
@@ -473,7 +473,7 @@ func TestOpenStreamRequiresTerminalVerification(t *testing.T) {
 	assert.False(t, partial.Verified())
 	require.ErrorIs(t, partial.Close(), pack.ErrVerificationIncomplete)
 
-	complete, size, err := bs.OpenStream(hash)
+	complete, size, err := bs.OpenStreamContext(t.Context(), hash)
 	require.NoError(t, err)
 	got, err := io.ReadAll(complete)
 	require.NoError(t, err)
@@ -485,7 +485,7 @@ func TestOpenStreamRequiresTerminalVerification(t *testing.T) {
 
 func TestOpenStreamHonorsCancellation(t *testing.T) {
 	bs := newTestBlobStore(t)
-	hash, _, err := bs.Write(strings.NewReader("cancel this stream"))
+	hash, _, err := bs.WriteContext(t.Context(), strings.NewReader("cancel this stream"))
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(t.Context())
@@ -500,11 +500,11 @@ func TestOpenStreamHonorsCancellation(t *testing.T) {
 func TestOpenStreamDetectsLooseCorruption(t *testing.T) {
 	bs := newTestBlobStore(t)
 	content := "expected bytes"
-	hash, _, err := bs.Write(strings.NewReader(content))
+	hash, _, err := bs.WriteContext(t.Context(), strings.NewReader(content))
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(bs.path(hash), []byte("corrupted data"), 0o600))
 
-	stream, _, err := bs.OpenStream(hash)
+	stream, _, err := bs.OpenStreamContext(t.Context(), hash)
 	require.NoError(t, err)
 	_, err = io.ReadAll(stream)
 	require.ErrorIs(t, err, packstore.ErrContentMismatch)
@@ -514,11 +514,11 @@ func TestOpenStreamDetectsLooseCorruption(t *testing.T) {
 
 func TestRemoveAndCleanTmp(t *testing.T) {
 	bs := newTestBlobStore(t)
-	hash, _, err := bs.Write(strings.NewReader("bye"))
+	hash, _, err := bs.WriteContext(t.Context(), strings.NewReader("bye"))
 	require.NoError(t, err)
 
 	require.NoError(t, bs.Remove(hash))
-	ok, err := bs.Exists(hash)
+	ok, err := bs.Exists(t.Context(), hash)
 	require.NoError(t, err)
 	assert.False(t, ok)
 	// Removing a missing blob is not an error (GC re-run reconciles).
@@ -535,10 +535,10 @@ func TestRemoveAndCleanTmp(t *testing.T) {
 func TestInvalidHashRejected(t *testing.T) {
 	bs := newTestBlobStore(t)
 
-	_, err := bs.Open("short")
+	_, err := bs.OpenContext(t.Context(), "short")
 	require.ErrorIs(t, err, ErrInvalidHash)
 
-	ok, err := bs.Exists("short")
+	ok, err := bs.Exists(t.Context(), "short")
 	require.ErrorIs(t, err, ErrInvalidHash)
 	assert.False(t, ok)
 
@@ -562,7 +562,7 @@ func TestWriteSurfacesSyncDirFailure(t *testing.T) {
 	pack.SyncDir = func(string) error { return errors.New("boom") }
 	t.Cleanup(func() { pack.SyncDir = orig })
 
-	hash, size, err := bs.Write(strings.NewReader(content))
+	hash, size, err := bs.WriteContext(t.Context(), strings.NewReader(content))
 	require.Error(t, err)
 	require.ErrorContains(t, err, "sync")
 
@@ -578,7 +578,7 @@ func TestWriteDedupFastPathSurfacesSyncDirFailure(t *testing.T) {
 	bs := newTestBlobStoreWithOptions(t, ManagedOptions())
 	content := "dedup me"
 
-	hash1, size1, err := bs.Write(strings.NewReader(content))
+	hash1, size1, err := bs.WriteContext(t.Context(), strings.NewReader(content))
 	require.NoError(t, err)
 
 	orig := pack.SyncDir
@@ -588,7 +588,7 @@ func TestWriteDedupFastPathSurfacesSyncDirFailure(t *testing.T) {
 	// Second write hits the dedup fast path (blob already exists), which
 	// must still sync the shard dir and surface a failure there instead of
 	// reporting durable success.
-	hash2, size2, err := bs.Write(strings.NewReader(content))
+	hash2, size2, err := bs.WriteContext(t.Context(), strings.NewReader(content))
 	require.Error(t, err)
 	require.ErrorContains(t, err, "sync")
 	assert.Empty(t, hash2)
@@ -617,7 +617,7 @@ func TestCleanTmpRefusesSymlinkedTmpDir(t *testing.T) {
 
 func TestRemoveSurfacesSyncDirFailure(t *testing.T) {
 	bs := newTestBlobStore(t)
-	hash, _, err := bs.Write(strings.NewReader("gone"))
+	hash, _, err := bs.WriteContext(t.Context(), strings.NewReader("gone"))
 	require.NoError(t, err)
 
 	orig := pack.SyncDir
@@ -656,7 +656,7 @@ func TestWriteRefusesInvalidExistingObject(t *testing.T) {
 	// Kit fails closed rather than replacing a path whose identity raced or
 	// was tampered with.
 	require.NoError(t, os.WriteFile(final, []byte("truncated"), 0o600))
-	h, _, err := bs.Write(strings.NewReader(content))
+	h, _, err := bs.WriteContext(t.Context(), strings.NewReader(content))
 	require.ErrorIs(t, err, packstore.ErrContentMismatch)
 	assert.Empty(t, h)
 	got, err := os.ReadFile(final)
@@ -668,7 +668,7 @@ func TestWriteRefusesInvalidExistingObject(t *testing.T) {
 	require.NoError(t, os.WriteFile(other, []byte(content), 0o600))
 	require.NoError(t, os.Remove(final))
 	require.NoError(t, os.Symlink(other, final))
-	_, _, err = bs.Write(strings.NewReader(content))
+	_, _, err = bs.WriteContext(t.Context(), strings.NewReader(content))
 	require.ErrorIs(t, err, packstore.ErrContentMismatch)
 	fi, err := os.Lstat(final)
 	require.NoError(t, err)
@@ -678,6 +678,6 @@ func TestWriteRefusesInvalidExistingObject(t *testing.T) {
 	// dedup success.
 	require.NoError(t, os.Remove(final))
 	require.NoError(t, os.Mkdir(final, 0o700))
-	_, _, err = bs.Write(strings.NewReader(content))
+	_, _, err = bs.WriteContext(t.Context(), strings.NewReader(content))
 	require.Error(t, err)
 }

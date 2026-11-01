@@ -105,7 +105,7 @@ func (s *Store) BatchTags(ctx context.Context, request BatchTagRequest) (BatchTa
 			return err
 		}
 
-		tag, err := tagByIDTx(tx, request.TagID)
+		tag, err := tagByIDTx(ctx, tx, request.TagID)
 		if err != nil {
 			return err
 		}
@@ -117,7 +117,7 @@ func (s *Store) BatchTags(ctx context.Context, request BatchTagRequest) (BatchTa
 		if err != nil {
 			return err
 		}
-		finalTag, err := tagByIDTx(tx, request.TagID)
+		finalTag, err := tagByIDTx(ctx, tx, request.TagID)
 		if err != nil {
 			return err
 		}
@@ -158,7 +158,7 @@ func (s *Store) PreviewBatchTags(
 		return BatchTagPreview{}, fmt.Errorf("starting batch tag preview: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	tag, err := tagByIDTx(tx, tagID)
+	tag, err := tagByIDTx(ctx, tx, tagID)
 	if err != nil {
 		return BatchTagPreview{}, err
 	}

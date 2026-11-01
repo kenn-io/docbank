@@ -117,7 +117,7 @@ func (s *Store) AuditHistory(
 	ctx context.Context, nodeID int64, limit int, cursor string,
 ) (AuditEventPage, error) {
 	return s.auditHistorySnapshot(ctx, limit, cursor, func(tx *sql.Tx) (Node, error) {
-		return nodeByIDTx(tx, nodeID)
+		return nodeByIDTx(ctx, tx, nodeID)
 	})
 }
 
@@ -237,7 +237,7 @@ func auditScopeStatusByIDTx(
 	if err != nil {
 		return AuditScopeStatus{}, fmt.Errorf("reading audit scope %s: %w", scopeID, err)
 	}
-	target, err := nodeByIDTx(tx, scope.TargetNodeID)
+	target, err := nodeByIDTx(ctx, tx, scope.TargetNodeID)
 	if err != nil {
 		return AuditScopeStatus{}, err
 	}

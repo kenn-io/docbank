@@ -16,7 +16,7 @@ import (
 
 func TestDocumentEventRestoreDrainPublishesAnEmptyVault(t *testing.T) {
 	t.Parallel()
-	catalog, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	catalog, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "test.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 
@@ -535,7 +535,7 @@ func (catalog *documentEventStaleOnceCatalog) PublishDocumentEvents(
 
 func openDocumentEventTestStore(t *testing.T) *store.Store {
 	t.Helper()
-	catalog, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	catalog, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "test.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 	return catalog

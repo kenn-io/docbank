@@ -32,7 +32,7 @@ func BenchmarkPhotoImportMetadata(b *testing.B) {
 				for b.Loop() {
 					b.StopTimer()
 					dir := b.TempDir()
-					s, err := Open(filepath.Join(dir, "docbank.db"))
+					s, err := Open(b.Context(), filepath.Join(dir, "docbank.db"))
 					require.NoError(b, err)
 					run, err := s.BeginIngest(b.Context(), "cli", "Synthetic photo corpus")
 					require.NoError(b, err)
@@ -106,7 +106,7 @@ func BenchmarkNonPhotoIngest(b *testing.B) {
 			for b.Loop() {
 				b.StopTimer()
 				dir := b.TempDir()
-				s, err := Open(filepath.Join(dir, "docbank.db"))
+				s, err := Open(b.Context(), filepath.Join(dir, "docbank.db"))
 				require.NoError(b, err)
 				run, err := s.BeginIngest(b.Context(), "cli", "Synthetic documents")
 				require.NoError(b, err)

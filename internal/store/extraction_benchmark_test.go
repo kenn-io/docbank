@@ -22,7 +22,7 @@ func BenchmarkIngestMetadata(b *testing.B) {
 				for b.Loop() {
 					b.StopTimer()
 					dir := b.TempDir()
-					s, err := Open(filepath.Join(dir, "docbank.db"))
+					s, err := Open(b.Context(), filepath.Join(dir, "docbank.db"))
 					require.NoError(b, err)
 					require.NoError(b, s.withStorageTx(b.Context(), func(tx *sql.Tx) error {
 						for i := range existing {
@@ -59,7 +59,7 @@ func BenchmarkIngestMetadata(b *testing.B) {
 func BenchmarkRebuildTextExtractionState(b *testing.B) {
 	for _, files := range []int{128, 1000} {
 		b.Run(fmt.Sprintf("files=%d", files), func(b *testing.B) {
-			s, err := Open(filepath.Join(b.TempDir(), "docbank.db"))
+			s, err := Open(b.Context(), filepath.Join(b.TempDir(), "docbank.db"))
 			require.NoError(b, err)
 			b.Cleanup(func() { require.NoError(b, s.Close()) })
 			for i := range files {
@@ -74,8 +74,8 @@ func BenchmarkRebuildTextExtractionState(b *testing.B) {
 				}))
 			}
 			var queued, searchable int
-			require.NoError(b, s.db.QueryRow(`SELECT count(*) FROM text_extraction_queue`).Scan(&queued))
-			require.NoError(b, s.db.QueryRow(`SELECT count(*) FROM text_searchable_versions`).Scan(&searchable))
+			require.NoError(b, s.db.QueryRowContext(b.Context(), `SELECT count(*) FROM text_extraction_queue`).Scan(&queued))
+			require.NoError(b, s.db.QueryRowContext(b.Context(), `SELECT count(*) FROM text_searchable_versions`).Scan(&searchable))
 			require.Equal(b, files, queued)
 			require.Equal(b, files, searchable)
 		})

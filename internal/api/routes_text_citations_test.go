@@ -44,7 +44,7 @@ func newCitationHTTPFixture(t *testing.T, gate citationTestGate) citationHTTPFix
 		renditionTextConfig(d)
 		cfg = d.Cfg
 		var err error
-		service, err = processing.NewService(processing.ServiceConfig{
+		service, err = processing.NewService(t.Context(), processing.ServiceConfig{
 			Catalog: d.Store, Blobs: d.Blobs, Gate: gate,
 			SpoolDirectory: filepath.Join(d.VaultRoot, "blobs", "tmp"),
 		})

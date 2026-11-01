@@ -12,7 +12,7 @@ import (
 
 func TestAuditEnrollmentPreviewEnablesExactReviewedAuthority(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)
@@ -75,7 +75,7 @@ func TestAdditionalAuditScopeCapacityMatchesEvidenceBound(t *testing.T) {
 
 func TestAuditEnrollmentPreviewRejectsChangedVaultState(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)
@@ -101,7 +101,7 @@ func TestAuditEnrollmentPreviewRejectsTrashedOrDeletedTargetAsStale(t *testing.T
 			name = "deleted"
 		}
 		t.Run(name, func(t *testing.T) {
-			s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+			s, err := Open(t.Context(), filepath.Join(t.TempDir(), "vault.db"))
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, s.Close()) })
 			seedMetadataRoundTrip(t, s)
@@ -127,7 +127,7 @@ func TestAuditEnrollmentPreviewRejectsTrashedOrDeletedTargetAsStale(t *testing.T
 
 func TestAuditEnrollmentPreviewIsVaultBoundAndRejectsOverlap(t *testing.T) {
 	t.Parallel()
-	first, err := Open(filepath.Join(t.TempDir(), "first.db"))
+	first, err := Open(t.Context(), filepath.Join(t.TempDir(), "first.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, first.Close()) })
 	seedMetadataRoundTrip(t, first)
@@ -136,7 +136,7 @@ func TestAuditEnrollmentPreviewIsVaultBoundAndRejectsOverlap(t *testing.T) {
 	plan, err := first.PreviewInitialAudit(t.Context(), target.ID, "api", nil)
 	require.NoError(t, err)
 
-	second, err := Open(filepath.Join(t.TempDir(), "second.db"))
+	second, err := Open(t.Context(), filepath.Join(t.TempDir(), "second.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, second.Close()) })
 	_, err = second.EnableInitialAudit(t.Context(), plan)
@@ -152,7 +152,7 @@ func TestAuditEnrollmentPreviewIsVaultBoundAndRejectsOverlap(t *testing.T) {
 
 func TestAuditEnrollmentAddsDisjointScopeAndRoundTrips(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)
@@ -193,13 +193,13 @@ func TestAuditEnrollmentAddsDisjointScopeAndRoundTrips(t *testing.T) {
 	assertAuditMetadataRoundTrip(t, s)
 
 	incomplete := removeAuditScopeByID(t, after.Bytes(), preview.ScopeID)
-	restored, err := Open(filepath.Join(t.TempDir(), "incomplete.db"))
+	restored, err := Open(t.Context(), filepath.Join(t.TempDir(), "incomplete.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	err = restored.ImportMetadata(t.Context(), bytes.NewReader(incomplete))
 	require.Error(t, err)
 	var auditRecords int
-	require.NoError(t, restored.db.QueryRow(`SELECT COUNT(*) FROM audit_records`).Scan(&auditRecords))
+	require.NoError(t, restored.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM audit_records`).Scan(&auditRecords))
 	assert.Zero(t, auditRecords, "invalid multi-scope import must roll back")
 }
 
@@ -220,7 +220,7 @@ func removeAuditScopeByID(t *testing.T, input []byte, scopeID string) []byte {
 
 func TestAuditStatusExplainsDormantAndProtectedNodes(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)

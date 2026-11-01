@@ -137,7 +137,7 @@ func registerMailboxRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
 		}
 		request := store.MailboxContainerRequest{ID: input.ID, Owner: mailboxOwner(d), SHA256: input.SHA256, Size: input.Size, Format: input.Format}
 		var c store.MailboxContainer
-		err := g.mutate(func() error { var err error; c, err = d.Store.BeginMailboxContainer(r.Context(), request); return err })
+		err := g.mutate(r.Context(), func() error { var err error; c, err = d.Store.BeginMailboxContainer(r.Context(), request); return err })
 		if err != nil {
 			writeMailboxError(w, err)
 			return
@@ -164,7 +164,7 @@ func registerMailboxRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, size)
-		err = g.mutate(func() error {
+		err = g.mutate(r.Context(), func() error {
 			return service.UploadChunk(r.Context(), mailboxOwner(d), r.PathValue("id"), index, r.Header.Get(BlobHashHeader), size, r.Body)
 		})
 		if err != nil {
@@ -175,7 +175,7 @@ func registerMailboxRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
 	})
 	mux.HandleFunc("POST /api/v1/mailbox/containers/{id}/seal", func(w http.ResponseWriter, r *http.Request) {
 		var c store.MailboxContainer
-		err := g.mutate(func() error {
+		err := g.mutate(r.Context(), func() error {
 			var err error
 			c, err = service.Seal(r.Context(), mailboxOwner(d), r.PathValue("id"))
 			return err
@@ -187,7 +187,7 @@ func registerMailboxRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
 		writeJSON(w, 200, c)
 	})
 	mux.HandleFunc("DELETE /api/v1/mailbox/containers/{id}", func(w http.ResponseWriter, r *http.Request) {
-		err := g.mutate(func() error { return d.Store.AbortMailboxContainer(r.Context(), mailboxOwner(d), r.PathValue("id")) })
+		err := g.mutate(r.Context(), func() error { return d.Store.AbortMailboxContainer(r.Context(), mailboxOwner(d), r.PathValue("id")) })
 		if err != nil {
 			writeMailboxError(w, err)
 			return
@@ -214,7 +214,7 @@ func registerMailboxRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
 			return
 		}
 		var j store.MailboxJob
-		err := g.mutate(func() error {
+		err := g.mutate(r.Context(), func() error {
 			var err error
 			j, err = d.Store.BeginMailboxJob(r.Context(), mailboxOwner(d), request.storeRequest())
 			return err
@@ -267,7 +267,7 @@ func registerMailboxRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
 		writeJSON(w, 200, out)
 	})
 	mux.HandleFunc("POST /api/v1/mailbox/jobs/{id}/cancel", func(w http.ResponseWriter, r *http.Request) {
-		err := g.mutate(func() error { return d.Store.CancelMailboxJob(r.Context(), mailboxOwner(d), r.PathValue("id")) })
+		err := g.mutate(r.Context(), func() error { return d.Store.CancelMailboxJob(r.Context(), mailboxOwner(d), r.PathValue("id")) })
 		if err != nil {
 			writeMailboxError(w, err)
 			return
@@ -284,7 +284,7 @@ func registerMailboxRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
 			return
 		}
 		var j store.MailboxJob
-		err := g.mutate(func() error {
+		err := g.mutate(r.Context(), func() error {
 			var err error
 			j, err = d.Store.ResumeMailboxJob(r.Context(), mailboxOwner(d), input.Request.storeRequest(), input.Continuation)
 			return err
@@ -306,7 +306,7 @@ func registerMailboxTransferRoutes(mux *http.ServeMux, d Deps, g *gate, service 
 			return
 		}
 		a := store.MailboxArchive{ID: input.ID, Owner: mailboxOwner(d), Description: input.Description}
-		err := g.mutate(func() error { return d.Store.RegisterMailboxArchive(r.Context(), a) })
+		err := g.mutate(r.Context(), func() error { return d.Store.RegisterMailboxArchive(r.Context(), a) })
 		if err != nil {
 			writeMailboxError(w, err)
 			return
@@ -330,7 +330,7 @@ func registerMailboxTransferRoutes(mux *http.ServeMux, d Deps, g *gate, service 
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, request.Size)
 		var receipt store.MailboxTransferReceipt
-		err = g.mutate(func() error {
+		err = g.mutate(r.Context(), func() error {
 			var err error
 			receipt, err = service.Transfer(r.Context(), mailboxOwner(d), request, r.Body)
 			return err

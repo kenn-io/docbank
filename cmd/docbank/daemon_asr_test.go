@@ -530,7 +530,7 @@ func TestDaemonDoclingASRMetadataRestoreRequiresFreshConsent(t *testing.T) {
 	beforeRestore := provider.requests.Load()
 
 	var sourceMetadata bytes.Buffer
-	sourceCatalog, err := store.Open((home.Layout{Root: sourceRoot}).DBPath())
+	sourceCatalog, err := store.Open(t.Context(), (home.Layout{Root: sourceRoot}).DBPath())
 	require.NoError(t, err)
 	require.NoError(t, sourceCatalog.ExportMetadata(t.Context(), &sourceMetadata))
 	require.NoError(t, sourceCatalog.Close())
@@ -716,7 +716,7 @@ func restoreDaemonASRMetadata(
 	root := t.TempDir()
 	layout := home.Layout{Root: root}
 	require.NoError(t, layout.Ensure())
-	catalog, err := store.Open(layout.DBPath())
+	catalog, err := store.Open(t.Context(), layout.DBPath())
 	require.NoError(t, err)
 	require.NoError(t, catalog.ImportMetadata(t.Context(), bytes.NewReader(metadata)))
 	for _, testCase := range cases {

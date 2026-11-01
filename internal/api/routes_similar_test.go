@@ -131,7 +131,7 @@ func TestSimilarMissingCoverageRequiresSourceFenceAndCurrentIdentity(t *testing.
 	response, body = do(t, ts, http.MethodPost, "/api/v1/search/similar", nil, request)
 	assert.Equal(t, http.StatusNotFound, response.StatusCode, body)
 	request.Selector.NodeID = node.ID
-	hash, size, err := catalog.Blobs.Write(strings.NewReader("changed synthetic source"))
+	hash, size, err := catalog.Blobs.WriteContext(t.Context(), strings.NewReader("changed synthetic source"))
 	require.NoError(t, err)
 	updated, _, err := catalog.ReplaceContent(t.Context(), node.ID, store.UnconditionalRev, hash, size, node.MimeType)
 	require.NoError(t, err)

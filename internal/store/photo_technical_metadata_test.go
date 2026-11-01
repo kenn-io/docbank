@@ -382,7 +382,7 @@ func TestPhotoTechnicalMetadataRecipeChangeReprojectsOnOpen(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
 	path := filepath.Join(t.TempDir(), "docbank.db")
-	s, err := Open(path)
+	s, err := Open(t.Context(), path)
 	require.NoError(t, err)
 	stale, err := s.CreateFile(ctx, s.RootID(), "stale.jpg", fakeHash("b2"), 1, "image/jpeg")
 	require.NoError(t, err)
@@ -409,7 +409,7 @@ func TestPhotoTechnicalMetadataRecipeChangeReprojectsOnOpen(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, s.Close())
 
-	reopened, err := Open(path)
+	reopened, err := Open(t.Context(), path)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, reopened.Close()) })
 	for versionID, want := range map[string]string{stale.CurrentVersionID: "Current", gained.CurrentVersionID: "Gained"} {
@@ -582,7 +582,7 @@ func TestPhotoTechnicalMetadataGenerationCascade(t *testing.T) {
 	require.NoError(t, s.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM photo_technical_metadata WHERE generation_id=?`, generation.GenerationID).Scan(&projections))
 	assert.Zero(t, projections)
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM photo_metadata_fts WHERE generation_id=?`, generation.GenerationID).Scan(&projections))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM photo_metadata_fts WHERE generation_id=?`, generation.GenerationID).Scan(&projections))
 	require.Zero(t, projections)
 }
 

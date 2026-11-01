@@ -103,7 +103,7 @@ func registerSavedQueryRoutes(api huma.API, d Deps, g *gate, snapshots *store.Qu
 		Body SavedQueryCreateRequest
 	}) (*savedQueryOutput, error) {
 		var out *savedQueryOutput
-		err := g.mutate(func() error {
+		err := g.mutate(ctx, func() error {
 			saved, err := d.Store.CreateSavedQuery(
 				ctx, in.Body.Name, in.Body.Description, in.Body.Kind, in.Body.Payload,
 			)
@@ -164,7 +164,7 @@ func registerSavedQueryRoutes(api huma.API, d Deps, g *gate, snapshots *store.Qu
 			patch.Payload = &payload
 		}
 		var out *savedQueryOutput
-		err = g.mutate(func() error {
+		err = g.mutate(ctx, func() error {
 			saved, err := d.Store.UpdateSavedQuery(ctx, in.SavedQueryID, revision, patch)
 			if err != nil {
 				return FromStoreError(err)
@@ -188,7 +188,7 @@ func registerSavedQueryRoutes(api huma.API, d Deps, g *gate, snapshots *store.Qu
 			return nil, err
 		}
 		var out *savedQueryOutput
-		err = g.mutate(func() error {
+		err = g.mutate(ctx, func() error {
 			saved, err := d.Store.DeleteSavedQuery(ctx, in.SavedQueryID, revision)
 			if err != nil {
 				return FromStoreError(err)

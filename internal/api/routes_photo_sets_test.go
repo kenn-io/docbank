@@ -16,7 +16,7 @@ func TestPhotoAlbumRoutesAndClient(t *testing.T) {
 	t.Parallel()
 	ts, vault := newTestServer(t, nil)
 	ctx := t.Context()
-	hash, size, err := vault.Blobs.Write(strings.NewReader("synthetic photo"))
+	hash, size, err := vault.Blobs.WriteContext(t.Context(), strings.NewReader("synthetic photo"))
 	require.NoError(t, err)
 	node, err := vault.CreateFile(ctx, vault.RootID(), "photo.jpg", hash, size, "image/jpeg")
 	require.NoError(t, err)

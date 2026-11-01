@@ -69,7 +69,7 @@ func TestNativeExportHTTPDeadline(t *testing.T) {
 	destination := filepath.Join(dir, "originals.zip")
 	require.NoError(t, os.WriteFile(destination, []byte("existing destination"), 0o600))
 	args := map[string]any{"job_id": job.ID, "destination_path": destination, "overwrite": true}
-	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/mcp",
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://127.0.0.1/mcp",
 		bytes.NewReader(requestFor("tools/call", map[string]any{
 			"name": "download_export", "arguments": args,
 		})))
@@ -477,7 +477,7 @@ func TestHTTPSubscriptionWithoutCapabilitiesCompletesOverSSE(t *testing.T) {
 		"params": map[string]any{"_meta": testRequestMeta(), "notifications": map[string]any{}},
 	})
 	require.NoError(t, err)
-	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/mcp", bytes.NewReader(body))
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://127.0.0.1/mcp", bytes.NewReader(body))
 	request.Header = protocolHeaders("subscriptions/listen", "")
 	request.Header.Set("Authorization", "Bearer "+testMCPBearer)
 	response := httptest.NewRecorder()
@@ -503,7 +503,7 @@ func TestHTTPTransportEnforcesBodyAndHeaderLimitsBeforeDispatch(t *testing.T) {
 	handler, err := wrapHTTPTransport(inner, HTTPOptions{BearerToken: testMCPBearer})
 	require.NoError(t, err)
 
-	bodyRequest := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/mcp",
+	bodyRequest := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://127.0.0.1/mcp",
 		strings.NewReader(strings.Repeat("x", maxHTTPRequestBytes+1)))
 	bodyRequest.Header = authenticatedTransportHeaders()
 	bodyResponse := httptest.NewRecorder()
@@ -511,7 +511,7 @@ func TestHTTPTransportEnforcesBodyAndHeaderLimitsBeforeDispatch(t *testing.T) {
 	assert.Equal(t, http.StatusRequestEntityTooLarge, bodyResponse.Code)
 	assert.False(t, dispatched)
 
-	headerRequest := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/mcp", strings.NewReader("{}"))
+	headerRequest := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://127.0.0.1/mcp", strings.NewReader("{}"))
 	headerRequest.Header = authenticatedTransportHeaders()
 	headerRequest.Header.Set("X-Synthetic-Oversized", strings.Repeat("h", maxHTTPHeaderBytes))
 	headerResponse := httptest.NewRecorder()
@@ -525,7 +525,7 @@ func TestHTTPTransportRejectsChunkedOversizedBodyBeforeProtocolDecode(t *testing
 		BearerToken: testMCPBearer,
 	})
 	require.NoError(t, err)
-	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/mcp",
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://127.0.0.1/mcp",
 		strings.NewReader(strings.Repeat("x", maxHTTPRequestBytes+1)))
 	request.ContentLength = -1
 	request.Header = protocolHeaders("server/discover", "")
@@ -555,7 +555,7 @@ func TestHTTPTransportBoundsConcurrentActivity(t *testing.T) {
 	firstDone := make(chan *httptest.ResponseRecorder, 1)
 	go func() {
 		response := httptest.NewRecorder()
-		handler.ServeHTTP(response, authenticatedRequest("127.0.0.1:41001"))
+		handler.ServeHTTP(response, authenticatedRequest(t.Context(), "127.0.0.1:41001"))
 		firstDone <- response
 	}()
 	<-entered
@@ -563,13 +563,13 @@ func TestHTTPTransportBoundsConcurrentActivity(t *testing.T) {
 	secondDone := make(chan *httptest.ResponseRecorder, 1)
 	go func() {
 		response := httptest.NewRecorder()
-		handler.ServeHTTP(response, authenticatedRequest("127.0.0.1:41002"))
+		handler.ServeHTTP(response, authenticatedRequest(t.Context(), "127.0.0.1:41002"))
 		secondDone <- response
 	}()
 	<-entered
 
 	global := httptest.NewRecorder()
-	handler.ServeHTTP(global, authenticatedRequest("127.0.0.3:41001"))
+	handler.ServeHTTP(global, authenticatedRequest(t.Context(), "127.0.0.3:41001"))
 	assert.Equal(t, http.StatusTooManyRequests, global.Code)
 
 	close(release)
@@ -603,7 +603,7 @@ func TestHTTPTransportBuffersJSONResponseBeforeEnforcingExactCap(t *testing.T) {
 			require.NoError(t, err)
 			response := httptest.NewRecorder()
 
-			handler.ServeHTTP(response, authenticatedRequest("127.0.0.1:41001"))
+			handler.ServeHTTP(response, authenticatedRequest(t.Context(), "127.0.0.1:41001"))
 
 			assert.Equal(t, test.wantStatus, response.Code)
 			assert.Equal(t, test.wantBody, response.Body.String())
@@ -642,7 +642,7 @@ func TestHTTPTransportSSECapEmitsOnlyCompleteEvents(t *testing.T) {
 			require.NoError(t, err)
 			response := httptest.NewRecorder()
 
-			handler.ServeHTTP(response, authenticatedRequest("127.0.0.1:41001"))
+			handler.ServeHTTP(response, authenticatedRequest(t.Context(), "127.0.0.1:41001"))
 
 			assert.Equal(t, test.want, response.Body.String())
 			assert.Equal(t, "no-store", response.Header().Get("Cache-Control"))
@@ -667,7 +667,7 @@ func TestHTTPTransportCapsResponsesAndLogsOnlyStableTelemetry(t *testing.T) {
 	})
 	require.NoError(t, err)
 	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, authenticatedRequest("127.0.0.1:41001"))
+	handler.ServeHTTP(response, authenticatedRequest(t.Context(), "127.0.0.1:41001"))
 
 	assert.Equal(t, http.StatusInternalServerError, response.Code)
 	assert.Equal(t, "MCP response too large\n", response.Body.String())
@@ -681,13 +681,13 @@ func TestHTTPTransportCapsResponsesAndLogsOnlyStableTelemetry(t *testing.T) {
 func TestHTTPTransportSocketDeadlinesInterruptSlowIOAndReleaseActivity(t *testing.T) {
 	for _, test := range []struct {
 		name       string
-		newRequest func(*deadlineResponseWriter) *http.Request
+		newRequest func(context.Context, *deadlineResponseWriter) *http.Request
 		inner      http.Handler
 	}{
 		{
 			name: "slow upload",
-			newRequest: func(writer *deadlineResponseWriter) *http.Request {
-				request := authenticatedRequest("127.0.0.1:41001")
+			newRequest: func(ctx context.Context, writer *deadlineResponseWriter) *http.Request {
+				request := authenticatedRequest(ctx, "127.0.0.1:41001")
 				request.Body = &deadlineBody{deadline: writer.readExpired}
 				request.ContentLength = -1
 				return request
@@ -698,8 +698,8 @@ func TestHTTPTransportSocketDeadlinesInterruptSlowIOAndReleaseActivity(t *testin
 		},
 		{
 			name: "slow response reader",
-			newRequest: func(*deadlineResponseWriter) *http.Request {
-				return authenticatedRequest("127.0.0.1:41001")
+			newRequest: func(ctx context.Context, _ *deadlineResponseWriter) *http.Request {
+				return authenticatedRequest(ctx, "127.0.0.1:41001")
 			},
 			inner: http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
 				_, _ = response.Write([]byte("bounded response"))
@@ -715,7 +715,7 @@ func TestHTTPTransportSocketDeadlinesInterruptSlowIOAndReleaseActivity(t *testin
 				writer := newDeadlineResponseWriter(test.name == "slow response reader")
 				done := make(chan struct{})
 				go func() {
-					handler.ServeHTTP(writer, test.newRequest(writer))
+					handler.ServeHTTP(writer, test.newRequest(t.Context(), writer))
 					close(done)
 				}()
 				time.Sleep(20 * time.Millisecond)
@@ -724,7 +724,7 @@ func TestHTTPTransportSocketDeadlinesInterruptSlowIOAndReleaseActivity(t *testin
 
 				// The timed-out request must no longer hold either semaphore.
 				response := httptest.NewRecorder()
-				handler.ServeHTTP(response, authenticatedRequest("127.0.0.1:41001"))
+				handler.ServeHTTP(response, authenticatedRequest(t.Context(), "127.0.0.1:41001"))
 				assert.NotEqual(t, http.StatusTooManyRequests, response.Code)
 				assert.True(t, writer.readDeadlineSet || writer.writeDeadlineSet)
 			})
@@ -892,7 +892,7 @@ func TestHTTPDisconnectPropagatesCancellationIntoSDKHandler(t *testing.T) {
 		})
 		require.NoError(t, err)
 		ctx, cancel := context.WithCancel(t.Context())
-		request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/mcp", bytes.NewReader(body)).WithContext(ctx)
+		request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://127.0.0.1/mcp", bytes.NewReader(body)).WithContext(ctx)
 		request.Header = protocolHeaders("synthetic/block", "")
 		request.Header.Set("Authorization", "Bearer "+testMCPBearer)
 		done := make(chan struct{})
@@ -910,7 +910,7 @@ func TestHTTPDisconnectPropagatesCancellationIntoSDKHandler(t *testing.T) {
 
 func newHTTPDiscoverRequest(t *testing.T) *http.Request {
 	t.Helper()
-	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/mcp",
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://127.0.0.1/mcp",
 		bytes.NewReader(fixture(t, "discover.json")))
 	request.Header = protocolHeaders("server/discover", "")
 	return request
@@ -922,8 +922,8 @@ func authenticatedTransportHeaders() http.Header {
 	return header
 }
 
-func authenticatedRequest(remoteAddress string) *http.Request {
-	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/mcp", strings.NewReader("{}"))
+func authenticatedRequest(ctx context.Context, remoteAddress string) *http.Request {
+	request := httptest.NewRequestWithContext(ctx, http.MethodPost, "http://127.0.0.1/mcp", strings.NewReader("{}"))
 	request.Header = authenticatedTransportHeaders()
 	request.RemoteAddr = remoteAddress
 	return request

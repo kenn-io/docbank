@@ -66,7 +66,7 @@ func rebuildStateRows(t *testing.T, s *Store) string {
 	} {
 		var fingerprint string
 		var epoch, publication int64
-		err := s.db.QueryRow(query).Scan(&fingerprint, &epoch, &publication)
+		err := s.db.QueryRowContext(t.Context(), query).Scan(&fingerprint, &epoch, &publication)
 		if errors.Is(err, sql.ErrNoRows) {
 			out.WriteString("(no row); ")
 			continue
@@ -119,7 +119,7 @@ func TestUpgradeReleasedV0150KeepsRebuildReceipts(t *testing.T) {
 			sourceState := rebuildStateRows(t, legacy)
 			require.NoError(t, db.Close())
 
-			s, err := Open(path, driver.driver)
+			s, err := Open(t.Context(), path, driver.driver)
 			require.NoError(t, err)
 			defer func() { require.NoError(t, s.Close()) }()
 			for id, released := range events {

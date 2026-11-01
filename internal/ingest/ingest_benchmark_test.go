@@ -45,7 +45,7 @@ func BenchmarkAddPaths(b *testing.B) {
 			for b.Loop() {
 				b.StopTimer()
 				vault := b.TempDir()
-				s, err := store.Open(filepath.Join(vault, "docbank.db"))
+				s, err := store.Open(b.Context(), filepath.Join(vault, "docbank.db"))
 				require.NoError(b, err)
 				blobs, err := blob.NewWithOptions(store.NewPackCatalog(s),
 					filepath.Join(vault, "blobs"), blob.ManagedOptions())
@@ -82,7 +82,7 @@ func BenchmarkAddLabeledDirectoryTree(b *testing.B) {
 			for b.Loop() {
 				b.StopTimer()
 				vault := b.TempDir()
-				s, err := store.Open(filepath.Join(vault, "docbank.db"))
+				s, err := store.Open(b.Context(), filepath.Join(vault, "docbank.db"))
 				require.NoError(b, err)
 				blobs, err := blob.NewWithOptions(store.NewPackCatalog(s),
 					filepath.Join(vault, "blobs"), blob.ManagedOptions())

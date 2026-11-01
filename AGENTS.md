@@ -69,6 +69,26 @@ Instructions for autonomous coding agents working in this repository.
   The manual production workflow deploys its selected branch or tag through
   the protected production environment.
 
+## Contexts
+
+- A function that does I/O, queries a database, calls a provider or
+  subprocess, or waits on a gate, lock, timer or channel takes
+  `ctx context.Context` first and passes it on. Do not add new context-free
+  wrappers around context-aware functions.
+- Create a root context only where no caller context exists: `main`, signal
+  handling, `TestMain`, a callback whose interface has no context, and owner
+  lifetimes that outlive a request (the job supervisor, server and session
+  lifetimes, vault workers). Say why in a short comment.
+- Cleanup that must finish after cancellation derives from
+  `context.WithoutCancel(ctx)`, usually with its own timeout: loose-blob
+  cleanup, systemd unit stop, connection rollback, and drains after shutdown.
+- Tests use `t.Context()` or `b.Context()`. A `t.Cleanup` function uses
+  `context.WithoutCancel(t.Context())` because the test context is already
+  canceled. Inside `synctest.Test`, use the bubble's `t`.
+- `make lint` enforces the mechanical rules with `noctx`, `fatcontext`,
+  `usetesting` and `govet`; `.golangci.yml` records why `containedctx` and
+  `contextcheck` stay off.
+
 ## Documentation
 
 - Use Superpowers specs and plans while designing and implementing work. Keep

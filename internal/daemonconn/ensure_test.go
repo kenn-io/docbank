@@ -637,7 +637,7 @@ func startUnresponsiveRuntime(t *testing.T) (string, kitdaemon.RuntimeRecord) {
 	// The exact current test executable is intentional: the selected helper
 	// provides a portable child PID on Unix and Windows without a shell.
 	//nolint:gosec // os.Args[0] is not user-controlled command text in this test.
-	cmd := exec.Command(os.Args[0], "-test.run=^TestUnresponsiveDaemonHelper$")
+	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestUnresponsiveDaemonHelper$")
 	cmd.Env = append(os.Environ(), "DOCBANK_UNRESPONSIVE_HELPER=1")
 	require.NoError(t, cmd.Start())
 	done := make(chan struct{})

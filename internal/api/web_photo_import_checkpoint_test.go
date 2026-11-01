@@ -23,7 +23,7 @@ func TestPhotoImportCheckpointBrowserProfile(t *testing.T) {
 	token := issueWebSession(t, ts)
 	request := func(method, path, body string, cookie *http.Cookie, credential, host, origin string) *http.Response {
 		t.Helper()
-		req, err := http.NewRequest(method, ts.URL+path, strings.NewReader(body))
+		req, err := http.NewRequestWithContext(t.Context(), method, ts.URL+path, strings.NewReader(body))
 		require.NoError(t, err)
 		req.Host = host
 		req.Header.Set("X-Api-Key", "")
@@ -174,7 +174,7 @@ func TestPhotoImportCheckpointBrowserProfile(t *testing.T) {
 		require.Equal(t, 204, call("PUT", endpoint, change, profile).StatusCode)
 		// The same profile locator on another vault cannot retrieve this manifest.
 		other, _ := newTestServer(t, nil)
-		req, err := http.NewRequest(http.MethodGet, other.URL+endpoint, nil)
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, other.URL+endpoint, nil)
 		require.NoError(t, err)
 		req.Host = host
 		req.Header.Set("Origin", origin)
@@ -296,7 +296,7 @@ func TestPhotoImportCheckpointCookieOrigin(t *testing.T) {
 			require.NoError(t, err)
 			call := func(method, path, body string, cookie *http.Cookie) *http.Response {
 				t.Helper()
-				req, err := http.NewRequest(method, ts.URL+path, strings.NewReader(body))
+				req, err := http.NewRequestWithContext(t.Context(), method, ts.URL+path, strings.NewReader(body))
 				require.NoError(t, err)
 				req.Host = profileURL.Host
 				req.Header.Set("X-Api-Key", "")

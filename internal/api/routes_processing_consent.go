@@ -17,7 +17,7 @@ func registerProcessingConsentRoutes(mux *http.ServeMux, api huma.API, d Deps, g
 			return
 		}
 		var receipt document.ProcessingConsentReceipt
-		err := g.mutate(func() error {
+		err := g.mutate(r.Context(), func() error {
 			var err error
 			receipt, err = d.Store.GrantProcessingConsent(r.Context(), request)
 			return err
@@ -38,7 +38,7 @@ func registerProcessingConsentRoutes(mux *http.ServeMux, api huma.API, d Deps, g
 			return
 		}
 		var receipt document.ProcessingConsentRevocationReceipt
-		err := g.mutate(func() error {
+		err := g.mutate(r.Context(), func() error {
 			var err error
 			receipt, err = d.Store.RevokeProcessingConsent(r.Context(), request)
 			return err

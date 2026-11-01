@@ -70,7 +70,7 @@ func TestDaemonRecoversSemanticSpaceEmbeddingJob(t *testing.T) {
 	layout := home.Layout{Root: root}
 	require.NoError(t, layout.Ensure())
 	func() {
-		catalog, err := store.Open(layout.DBPath())
+		catalog, err := store.Open(t.Context(), layout.DBPath())
 		require.NoError(t, err)
 		defer func() { require.NoError(t, catalog.Close()) }()
 		blobs, err := blob.New(store.NewPackCatalog(catalog), layout.BlobsDir())
@@ -80,7 +80,7 @@ func TestDaemonRecoversSemanticSpaceEmbeddingJob(t *testing.T) {
 		require.NoError(t, err)
 		profiles, err := executableProcessingProfiles(cfg, bundle)
 		require.NoError(t, err)
-		service, err := processing.NewService(processing.ServiceConfig{Catalog: catalog, Blobs: blobs, Gate: api.NewOperationGate(), Profiles: profiles, Principal: "daemon:operator", Scope: "document-processing", SpoolDirectory: layout.BlobTmpDir(), Lifecycle: t.Context()})
+		service, err := processing.NewService(t.Context(), processing.ServiceConfig{Catalog: catalog, Blobs: blobs, Gate: api.NewOperationGate(), Profiles: profiles, Principal: "daemon:operator", Scope: "document-processing", SpoolDirectory: layout.BlobTmpDir(), Lifecycle: t.Context()})
 		require.NoError(t, err)
 		defer func() { require.NoError(t, service.Shutdown(t.Context())) }()
 		receipt, err := blobs.WriteDetailedContext(t.Context(), strings.NewReader("a selected document"))

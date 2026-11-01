@@ -230,10 +230,10 @@ func TestBatesLedgerRejectsMutationAndCursorRewind(t *testing.T) {
 func TestConcurrentBatesReservationsNeverOverlap(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "bates.db")
-	a, err := Open(path)
+	a, err := Open(t.Context(), path)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, a.Close()) })
-	b, err := Open(path)
+	b, err := Open(t.Context(), path)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, b.Close()) })
 	snapshot, inputs := batesFixture(t, a)

@@ -245,7 +245,7 @@ func (s *Store) PublishPageImage(ctx context.Context, claim PageJobClaim, image 
 		if _, err := putPageRecipe(ctx, tx, recipe); err != nil {
 			return err
 		}
-		if err := s.EnsureBlobTx(tx, image.SHA256, image.Size, *physical); err != nil {
+		if err := s.EnsureBlobTx(ctx, tx, image.SHA256, image.Size, *physical); err != nil {
 			return err
 		}
 		encoded, hash, err := document.MarshalPageImageV1(image)

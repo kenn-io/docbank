@@ -46,7 +46,7 @@ func registerAuditRoutes(
 			label = &in.Body.AgentLabel
 		}
 		var out *auditPreviewOutput
-		err := g.mutate(func() error {
+		err := g.mutate(ctx, func() error {
 			var plan *store.AuditEnrollmentPlan
 			var err error
 			if in.Body.Path != "" {
@@ -90,7 +90,7 @@ func registerAuditRoutes(
 				"acknowledge permanent protected history and vault-wide metadata retention")
 		}
 		var out *auditStatusOutput
-		err := g.mutate(func() error {
+		err := g.mutate(ctx, func() error {
 			plan, err := previews.take(in.Body.PreviewToken)
 			if err != nil {
 				return NewError(http.StatusConflict, "audit_preview_stale", err.Error())

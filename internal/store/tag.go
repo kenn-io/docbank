@@ -188,7 +188,7 @@ func (s *Store) RenameTag(ctx context.Context, id string, ifRev int64, name stri
 	}
 	var renamed Tag
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		current, err := tagByIDTx(tx, id)
+		current, err := tagByIDTx(ctx, tx, id)
 		if err != nil {
 			return err
 		}
@@ -207,7 +207,7 @@ func (s *Store) RenameTag(ctx context.Context, id string, ifRev int64, name stri
 			renamed, err = s.renameAuditedTagTx(ctx, tx, current, name)
 			return err
 		}
-		renamed, err = s.renameTagTx(tx, current, name, nowRFC3339())
+		renamed, err = s.renameTagTx(ctx, tx, current, name, nowRFC3339())
 		return err
 	})
 	if err != nil {
@@ -217,20 +217,21 @@ func (s *Store) RenameTag(ctx context.Context, id string, ifRev int64, name stri
 }
 
 func (s *Store) renameTagTx(
+	ctx context.Context,
 	tx *sql.Tx, current Tag, name, recordedAt string,
 ) (Tag, error) {
-	renamed, err := s.renameTagDefinitionTx(tx, current, name)
+	renamed, err := s.renameTagDefinitionTx(ctx, tx, current, name)
 	if err != nil {
 		return Tag{}, err
 	}
-	if err := touchTaggedNodesTx(tx, current.ID, recordedAt); err != nil {
+	if err := touchTaggedNodesTx(ctx, tx, current.ID, recordedAt); err != nil {
 		return Tag{}, err
 	}
 	return renamed, nil
 }
 
-func (s *Store) renameTagDefinitionTx(tx *sql.Tx, current Tag, name string) (Tag, error) {
-	if _, err := tx.Exec(
+func (s *Store) renameTagDefinitionTx(ctx context.Context, tx *sql.Tx, current Tag, name string) (Tag, error) {
+	if _, err := tx.ExecContext(ctx,
 		`UPDATE tags SET name = ?, revision = revision + 1 WHERE id = ?`, name, current.ID,
 	); err != nil {
 		if s.driver.IsUniqueViolation(err) {
@@ -249,7 +250,7 @@ func (s *Store) renameTagDefinitionTx(tx *sql.Tx, current Tag, name string) (Tag
 func (s *Store) DeleteTag(ctx context.Context, id string, ifRev int64) (Tag, error) {
 	var deleted Tag
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		current, err := tagByIDTx(tx, id)
+		current, err := tagByIDTx(ctx, tx, id)
 		if err != nil {
 			return err
 		}
@@ -264,7 +265,7 @@ func (s *Store) DeleteTag(ctx context.Context, id string, ifRev int64) (Tag, err
 			deleted, err = s.deleteAuditedTagTx(ctx, tx, current)
 			return err
 		}
-		deleted, err = deleteTagTx(tx, current, nowRFC3339())
+		deleted, err = deleteTagTx(ctx, tx, current, nowRFC3339())
 		return err
 	})
 	if err != nil {
@@ -273,19 +274,19 @@ func (s *Store) DeleteTag(ctx context.Context, id string, ifRev int64) (Tag, err
 	return deleted, nil
 }
 
-func deleteTagTx(tx *sql.Tx, current Tag, recordedAt string) (Tag, error) {
-	if err := touchTaggedNodesTx(tx, current.ID, recordedAt); err != nil {
+func deleteTagTx(ctx context.Context, tx *sql.Tx, current Tag, recordedAt string) (Tag, error) {
+	if err := touchTaggedNodesTx(ctx, tx, current.ID, recordedAt); err != nil {
 		return Tag{}, err
 	}
-	if err := deleteTagDefinitionTx(tx, current.ID); err != nil {
+	if err := deleteTagDefinitionTx(ctx, tx, current.ID); err != nil {
 		return Tag{}, err
 	}
 	return current, nil
 }
 
-func deleteTagDefinitionTx(tx *sql.Tx, tagID string) error {
+func deleteTagDefinitionTx(ctx context.Context, tx *sql.Tx, tagID string) error {
 	var active bool
-	if err := tx.QueryRow(`SELECT EXISTS(
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
 		SELECT 1 FROM mailbox_jobs j, json_each(CAST(j.job_json AS TEXT), '$.settings.label_tags') mapping
 		WHERE j.state IN ('queued','running') AND mapping.value=?)`, tagID).Scan(&active); err != nil {
 		return fmt.Errorf("checking mailbox jobs for tag %s: %w", tagID, err)
@@ -293,7 +294,7 @@ func deleteTagDefinitionTx(tx *sql.Tx, tagID string) error {
 	if active {
 		return fmt.Errorf("%w: tag %s is used by a queued or running mailbox job; cancel the job before deleting the tag", ErrMailboxConflict, tagID)
 	}
-	if _, err := tx.Exec(`DELETE FROM tags WHERE id = ?`, tagID); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM tags WHERE id = ?`, tagID); err != nil {
 		return fmt.Errorf("deleting tag %s: %w", tagID, err)
 	}
 	return nil
@@ -336,7 +337,7 @@ func (s *Store) changeTagAssignment(
 ) (TagAssignmentChange, error) {
 	var result TagAssignmentChange
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		node, err := nodeByIDTx(tx, nodeID)
+		node, err := nodeByIDTx(ctx, tx, nodeID)
 		if err != nil {
 			return err
 		}
@@ -400,7 +401,7 @@ func changeTagAssignmentTx(
 	assign bool,
 	recordedAt string,
 ) (TagAssignmentChange, error) {
-	tag, err := tagByIDTx(tx, tagID)
+	tag, err := tagByIDTx(ctx, tx, tagID)
 	if err != nil {
 		return TagAssignmentChange{}, err
 	}
@@ -409,7 +410,7 @@ func changeTagAssignmentTx(
 			node.ID, node.Revision, ifRev, ErrStaleRevision)
 	}
 	var present int
-	if err := tx.QueryRow(
+	if err := tx.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM node_tags WHERE node_id = ? AND tag_id = ?`, node.ID, tagID,
 	).Scan(&present); err != nil {
 		return TagAssignmentChange{}, fmt.Errorf(
@@ -419,7 +420,7 @@ func changeTagAssignmentTx(
 	result := TagAssignmentChange{Node: node, Tag: tag, Changed: (present == 0) == assign}
 	if result.Changed {
 		if assign {
-			if _, err := tx.Exec(
+			if _, err := tx.ExecContext(ctx,
 				`INSERT INTO node_tags(node_id, tag_id) VALUES(?, ?)`, node.ID, tagID,
 			); err != nil {
 				return TagAssignmentChange{}, fmt.Errorf(
@@ -428,7 +429,7 @@ func changeTagAssignmentTx(
 			}
 			result.Tag.AssignmentCount++
 		} else {
-			if _, err := tx.Exec(
+			if _, err := tx.ExecContext(ctx,
 				`DELETE FROM node_tags WHERE node_id = ? AND tag_id = ?`, node.ID, tagID,
 			); err != nil {
 				return TagAssignmentChange{}, fmt.Errorf(
@@ -437,7 +438,7 @@ func changeTagAssignmentTx(
 			}
 			result.Tag.AssignmentCount--
 		}
-		if _, err := tx.Exec(
+		if _, err := tx.ExecContext(ctx,
 			`UPDATE tags SET revision = revision + 1 WHERE id = ?`, tagID,
 		); err != nil {
 			return TagAssignmentChange{}, fmt.Errorf(
@@ -445,7 +446,7 @@ func changeTagAssignmentTx(
 			)
 		}
 		result.Tag.Revision++
-		if _, err := tx.Exec(
+		if _, err := tx.ExecContext(ctx,
 			`UPDATE nodes SET revision = revision + 1, modified_at = ? WHERE id = ?`,
 			recordedAt, node.ID,
 		); err != nil {
@@ -453,7 +454,7 @@ func changeTagAssignmentTx(
 				"advancing node %d after tag assignment change: %w", node.ID, err,
 			)
 		}
-		result.Node, err = nodeByIDTx(tx, node.ID)
+		result.Node, err = nodeByIDTx(ctx, tx, node.ID)
 		if err != nil {
 			return TagAssignmentChange{}, err
 		}
@@ -618,11 +619,11 @@ func (s *Store) taggedNodes(
 	return nodes, assignmentTotal, 0, nil
 }
 
-func tagByIDTx(tx *sql.Tx, id string) (Tag, error) {
+func tagByIDTx(ctx context.Context, tx *sql.Tx, id string) (Tag, error) {
 	if err := validateUUIDv4(id); err != nil {
 		return Tag{}, fmt.Errorf("tag %q: %w", id, ErrNotFound)
 	}
-	tag, err := scanTag(tx.QueryRow(`
+	tag, err := scanTag(tx.QueryRowContext(ctx, `
 		SELECT t.id, t.name, t.revision,
 		       (SELECT COUNT(*) FROM node_tags WHERE tag_id = t.id)
 		FROM tags t WHERE t.id = ?`, id))
@@ -640,8 +641,8 @@ func checkTagRevision(tag Tag, expected int64) error {
 	return nil
 }
 
-func touchTaggedNodesTx(tx *sql.Tx, tagID, timestamp string) error {
-	if _, err := tx.Exec(`
+func touchTaggedNodesTx(ctx context.Context, tx *sql.Tx, tagID, timestamp string) error {
+	if _, err := tx.ExecContext(ctx, `
 		UPDATE nodes SET revision = revision + 1, modified_at = ?
 		WHERE id IN (SELECT node_id FROM node_tags WHERE tag_id = ?)`, timestamp, tagID); err != nil {
 		return fmt.Errorf("advancing nodes assigned tag %s: %w", tagID, err)

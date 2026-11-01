@@ -159,7 +159,7 @@ func TestStorageWriterAdmissionPostgres(t *testing.T) {
 			go func() {
 				defer close(secondDone)
 				secondErr = s.withStorageTx(waitCtx, func(tx *sql.Tx) error {
-					node, err := nodeByIDTx(tx, s.RootID())
+					node, err := nodeByIDTx(t.Context(), tx, s.RootID())
 					if err != nil {
 						return err
 					}

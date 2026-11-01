@@ -192,7 +192,7 @@ func TestPackageExportSelectedPDFThroughPublicImport(t *testing.T) { //nolint:pa
 			freshPkg, imported := importExportFixture(t, fresh, freshCatalog, extracted, verified.Receipt.Profile.ID, mapping)
 			require.Len(t, imported, 1)
 			require.Equal(t, len(test.pages), imported[0].SourcePageCount)
-			stream, err := freshCatalog.Blobs.Open(imported[0].BlobSHA256)
+			stream, err := freshCatalog.Blobs.OpenContext(t.Context(), imported[0].BlobSHA256)
 			require.NoError(t, err)
 			defer func() { require.NoError(t, stream.Close()) }()
 			importedBytes, err := io.ReadAll(stream)
@@ -223,7 +223,7 @@ func TestPackageExportSelectsOnlyProfileTextRoles(t *testing.T) {
 	}
 	textRepresentations := make(map[string]store.CollectionSnapshotRepresentation)
 	for role, content := range textContents {
-		hash, size, err := catalog.Blobs.Write(bytes.NewBufferString(content))
+		hash, size, err := catalog.Blobs.WriteContext(t.Context(), bytes.NewBufferString(content))
 		require.NoError(t, err)
 		require.NoError(t, catalog.RecordBlob(t.Context(), hash, size, store.BlobPhysical{Encoding: "raw", StoredBytes: size}))
 		textRepresentations[role] = store.CollectionSnapshotRepresentation{
@@ -289,7 +289,7 @@ func TestPackageExportSelectsOnlyProfileTextRoles(t *testing.T) {
 				var importedText []string
 				for _, rep := range imported[0].Representations {
 					if rep.Role == "supplied_text" && rep.Status == "available" {
-						reader, err := freshCatalog.Blobs.Open(rep.BlobSHA256)
+						reader, err := freshCatalog.Blobs.OpenContext(t.Context(), rep.BlobSHA256)
 						require.NoError(t, err)
 						content, err := io.ReadAll(reader)
 						require.NoError(t, err)

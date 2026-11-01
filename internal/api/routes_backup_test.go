@@ -350,7 +350,7 @@ func TestBackupRestoreProgressProofAndConfinement(t *testing.T) { //nolint:paral
 	assert.True(t, report.Proof.SQLiteIntegrity)
 	assert.True(t, report.Proof.ManifestStats)
 
-	restoredStore, err := store.Open(filepath.Join(target, "docbank.db"))
+	restoredStore, err := store.Open(t.Context(), filepath.Join(target, "docbank.db"))
 	require.NoError(t, err)
 	restoredBlobs, err := blob.New(store.NewPackCatalog(restoredStore), filepath.Join(target, "blobs"))
 	require.NoError(t, err)

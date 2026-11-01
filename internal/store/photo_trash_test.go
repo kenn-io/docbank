@@ -317,7 +317,7 @@ func TestPhotoRestoreOriginalParentOrder(t *testing.T) {
 				require.NoError(t, err)
 				folder, _, err := s.Trash(t.Context(), container.ID, UnconditionalRev)
 				require.NoError(t, err)
-				_, err = s.db.Exec(`UPDATE nodes SET trashed_at=? WHERE trashed_at=?`, time.Now().UTC().Add(-time.Hour).Format(timestampLayout), *folder.TrashedAt)
+				_, err = s.db.ExecContext(t.Context(), `UPDATE nodes SET trashed_at=? WHERE trashed_at=?`, time.Now().UTC().Add(-time.Hour).Format(timestampLayout), *folder.TrashedAt)
 				require.NoError(t, err)
 				_, _, err = s.Restore(t.Context(), ordinary.ID, UnconditionalRev)
 				require.ErrorIs(t, err, ErrNotTrashed)
@@ -370,13 +370,13 @@ func TestPhotoTrashPageUsesLatestMemberTime(t *testing.T) {
 	_, _, err := s.Trash(t.Context(), nodes[0].ID, UnconditionalRev)
 	require.NoError(t, err)
 	old := time.Now().UTC().Add(-48 * time.Hour).Format(timestampLayout)
-	_, err = s.db.Exec(`UPDATE nodes SET trashed_at=? WHERE id=?`, old, nodes[0].ID)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE nodes SET trashed_at=? WHERE id=?`, old, nodes[0].ID)
 	require.NoError(t, err)
 	doc, err := s.CreateFile(t.Context(), s.RootID(), "notes.txt", fakeHash("b2"), 1, "text/plain")
 	require.NoError(t, err)
 	_, _, err = s.Trash(t.Context(), doc.ID, UnconditionalRev)
 	require.NoError(t, err)
-	_, err = s.db.Exec(`UPDATE nodes SET trashed_at=? WHERE id=?`, time.Now().UTC().Add(-24*time.Hour).Format(timestampLayout), doc.ID)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE nodes SET trashed_at=? WHERE id=?`, time.Now().UTC().Add(-24*time.Hour).Format(timestampLayout), doc.ID)
 	require.NoError(t, err)
 	_, err = s.TrashPhotoAsset(t.Context(), asset.ID, asset.Revision)
 	require.NoError(t, err)
@@ -458,7 +458,7 @@ func checkPhotoTrashEmptyCompleteGroups(t *testing.T, postgres bool) {
 				require.NoError(t, err)
 			}
 			if mode == "new peer" {
-				_, err := s.db.Exec(`UPDATE nodes SET trashed_at=$1 WHERE id IN ($2, $3)`, time.Now().UTC().Add(-48*time.Hour).Format(timestampLayout), nodes[0].ID, nodes[1].ID)
+				_, err := s.db.ExecContext(t.Context(), `UPDATE nodes SET trashed_at=$1 WHERE id IN ($2, $3)`, time.Now().UTC().Add(-48*time.Hour).Format(timestampLayout), nodes[0].ID, nodes[1].ID)
 				require.NoError(t, err)
 				age = 24 * time.Hour
 			}
@@ -543,7 +543,7 @@ func BenchmarkTrashEmptyLarge(b *testing.B) {
 	for _, kind := range []string{"files", "folders", "photos"} {
 		for _, count := range []int{1000, 10000} {
 			b.Run(fmt.Sprintf("%s/%d", kind, count), func(b *testing.B) {
-				s, err := Open(filepath.Join(b.TempDir(), "trash.db"))
+				s, err := Open(b.Context(), filepath.Join(b.TempDir(), "trash.db"))
 				require.NoError(b, err)
 				b.Cleanup(func() { require.NoError(b, s.Close()) })
 				require.NoError(b, s.withStorageTx(b.Context(), func(tx *sql.Tx) error {
@@ -594,7 +594,7 @@ func TestPhotoTrashLateFailureRollsBack(t *testing.T) {
 			if mode == "audit unsupported" {
 				seedInitialAuditAuthority(t, s, *nodes[0].ParentID)
 			} else {
-				_, err := s.db.Exec(`CREATE TRIGGER fail_photo_trash BEFORE UPDATE OF trashed_at ON nodes WHEN NEW.id=` + strconv.FormatInt(nodes[2].ID, 10) + ` AND NEW.trashed_at IS NOT NULL BEGIN SELECT RAISE(ABORT, 'late failure'); END`)
+				_, err := s.db.ExecContext(t.Context(), `CREATE TRIGGER fail_photo_trash BEFORE UPDATE OF trashed_at ON nodes WHEN NEW.id=`+strconv.FormatInt(nodes[2].ID, 10)+` AND NEW.trashed_at IS NOT NULL BEGIN SELECT RAISE(ABORT, 'late failure'); END`)
 				require.NoError(t, err)
 			}
 			_, err := s.TrashPhotoAsset(t.Context(), asset.ID, asset.Revision)
@@ -620,7 +620,7 @@ func TestPhotoTrashJSONLRecovery(t *testing.T) {
 	require.NoError(t, err)
 	var exported bytes.Buffer
 	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
-	target, err := Open(filepath.Join(t.TempDir(), "recovered.db"))
+	target, err := Open(t.Context(), filepath.Join(t.TempDir(), "recovered.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, target.Close()) })
 	require.NoError(t, target.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))

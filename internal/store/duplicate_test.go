@@ -213,7 +213,7 @@ func TestDuplicateReferencesExposeActiveOperationalCollections(t *testing.T) {
 	require.NoError(t, err)
 	addCollectionMembership(t, s, superseded, first.ID, "/synthetic/old.txt", nil)
 	var prior string
-	require.NoError(t, s.db.QueryRow(`SELECT identity FROM provenance
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT identity FROM provenance
 		WHERE ingest_id=? AND node_id=?`, superseded.ID(), first.ID).Scan(&prior))
 	correction, err := s.BeginIngestWithLabel(ctx, "cli", "Corrected import", new("Corrected"))
 	require.NoError(t, err)
@@ -268,12 +268,12 @@ func TestDuplicateReferencesAndCollectionsAreBounded(t *testing.T) {
 	tied := base.Add(2 * time.Nanosecond).Format(timestampLayout)
 	later := base.Add(3 * time.Nanosecond).Format(timestampLayout)
 	for _, node := range nodes {
-		_, err := s.db.Exec(`UPDATE nodes SET modified_at=? WHERE id=?`, later, node.ID)
+		_, err := s.db.ExecContext(t.Context(), `UPDATE nodes SET modified_at=? WHERE id=?`, later, node.ID)
 		require.NoError(t, err)
 	}
-	_, err := s.db.Exec(`UPDATE nodes SET modified_at=? WHERE id=?`, early, nodes[2].ID)
+	_, err := s.db.ExecContext(t.Context(), `UPDATE nodes SET modified_at=? WHERE id=?`, early, nodes[2].ID)
 	require.NoError(t, err)
-	_, err = s.db.Exec(`UPDATE nodes SET modified_at=? WHERE id IN (?,?)`,
+	_, err = s.db.ExecContext(t.Context(), `UPDATE nodes SET modified_at=? WHERE id IN (?,?)`,
 		tied, nodes[1].ID, nodes[3].ID)
 	require.NoError(t, err)
 

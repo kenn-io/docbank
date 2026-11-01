@@ -85,7 +85,7 @@ func TestWatcherReportsBusyOnlyWhenIngesting(t *testing.T) {
 		watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{
 			Name: "activity", Source: source, Destination: "/archive",
 			SettleTime: config.Duration(time.Second), ScanInterval: config.Duration(time.Second),
-		}, func(fn func() error) error {
+		}, func(_ context.Context, fn func() error) error {
 			assert.True(t, supervisor.Snapshot()[0].Busy, "ingesting a settled file is busy")
 			err := fn()
 			if err == nil {
@@ -154,7 +154,7 @@ func assertWatcherSameSizeAndMtimeVersions(t *testing.T, initial, changed []byte
 	}
 	ing := newTestIngester(t)
 	mutationCalls := 0
-	mutate := func(fn func() error) error {
+	mutate := func(_ context.Context, fn func() error) error {
 		mutationCalls++
 		return fn()
 	}
@@ -199,7 +199,7 @@ func assertWatcherSameSizeAndMtimeVersions(t *testing.T, initial, changed []byte
 	} else {
 		assert.Equal(t, accepted.CurrentVersionID, updated.CurrentVersionID)
 	}
-	content, err := ing.Blobs.Open(updated.BlobHash)
+	content, err := ing.Blobs.OpenContext(t.Context(), updated.BlobHash)
 	require.NoError(t, err)
 	currentBytes, err := io.ReadAll(content)
 	require.NoError(t, err)
@@ -217,7 +217,7 @@ func assertWatcherSameSizeAndMtimeVersions(t *testing.T, initial, changed []byte
 	assert.Equal(t, 2, mutationCalls)
 	require.Len(t, versions, wantVersions)
 	for _, version := range versions {
-		content, err := ing.Blobs.Open(version.BlobHash)
+		content, err := ing.Blobs.OpenContext(t.Context(), version.BlobHash)
 		require.NoError(t, err)
 		got, err := io.ReadAll(content)
 		require.NoError(t, err)
@@ -261,7 +261,7 @@ func TestWatcherWaitsForStabilityAndUpdatesTheSameMovedNode(t *testing.T) {
 	ing := newTestIngester(t)
 	expectedUpdatedContent := []byte("{\"message\":\"second\"}\n")
 	mutationCalls := 0
-	mutate := func(fn func() error) error {
+	mutate := func(_ context.Context, fn func() error) error {
 		mutationCalls++
 		return fn()
 	}
@@ -318,7 +318,7 @@ func TestWatcherWaitsForStabilityAndUpdatesTheSameMovedNode(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 2, total)
 	require.Len(t, versions, 2)
-	content, err := ing.Blobs.Open(updated.BlobHash)
+	content, err := ing.Blobs.OpenContext(t.Context(), updated.BlobHash)
 	require.NoError(t, err)
 	contentBytes, err := io.ReadAll(content)
 	require.NoError(t, err)
@@ -326,7 +326,7 @@ func TestWatcherWaitsForStabilityAndUpdatesTheSameMovedNode(t *testing.T) {
 	assert.Equal(t, expectedUpdatedContent, contentBytes)
 
 	manualContent := "{\"message\":\"local edit\"}\n"
-	manualHash, manualSize, err := ing.Blobs.Write(strings.NewReader(manualContent))
+	manualHash, manualSize, err := ing.Blobs.WriteContext(t.Context(), strings.NewReader(manualContent))
 	require.NoError(t, err)
 	manuallyEdited, _, err := ing.Store.ReplaceContent(
 		t.Context(), node.ID, updated.Revision, manualHash, manualSize, "application/json",
@@ -460,7 +460,7 @@ func TestWatcherRetriesFileThatDisappearsBeforeIngest(t *testing.T) {
 	source := writeTree(t, map[string]string{"document.txt": "ready"})
 	sourcePath := filepath.Join(source, "document.txt")
 	removeBeforeIngest := false
-	mutate := func(fn func() error) error {
+	mutate := func(_ context.Context, fn func() error) error {
 		if removeBeforeIngest {
 			removeBeforeIngest = false
 			require.NoError(t, os.Remove(sourcePath))
@@ -511,7 +511,7 @@ func TestWatcherRejectsVaultOverlapAndDestinationConflicts(t *testing.T) {
 	source := writeTree(t, map[string]string{"conflict.txt": "watched"})
 	parent, err := ing.Store.MkdirAll(t.Context(), "/inbox")
 	require.NoError(t, err)
-	hash, size, err := ing.Blobs.Write(stringsReader("existing"))
+	hash, size, err := ing.Blobs.WriteContext(t.Context(), stringsReader("existing"))
 	require.NoError(t, err)
 	_, err = ing.Store.CreateFile(t.Context(), parent.ID, "conflict.txt", hash, size, "text/plain")
 	require.NoError(t, err)
@@ -536,7 +536,7 @@ func TestPathsOverlapUsesFilesystemIdentityForAliases(t *testing.T) {
 	assert.False(t, pathContains(vaultRoot, aliasedChild),
 		"the test must exercise identity rather than lexical containment")
 
-	overlaps, err := PathsOverlap(vaultRoot, aliasedChild)
+	overlaps, err := PathsOverlap(t.Context(), vaultRoot, aliasedChild)
 	require.NoError(t, err)
 	assert.True(t, overlaps)
 }
@@ -552,7 +552,7 @@ func TestWatchBindingOverlapRejectsMissingPathThroughAlias(t *testing.T) {
 		"the test must exercise identity rather than lexical containment")
 
 	watchName, overlaps, err := WatchBindingOverlap(
-		[]config.WatchConfig{{Name: "inbox", Source: watchSource}},
+		t.Context(), []config.WatchConfig{{Name: "inbox", Source: watchSource}},
 		config.StoreBindingConfig{Kind: "filesystem", Path: bindingPath},
 	)
 	require.NoError(t, err)
@@ -573,7 +573,7 @@ func TestWatchBindingOverlapRejectsMissingPathThroughDescendantAlias(t *testing.
 		"the test must exercise identity rather than lexical containment")
 
 	watchName, overlaps, err := WatchBindingOverlap(
-		[]config.WatchConfig{{Name: "inbox", Source: watchSource}},
+		t.Context(), []config.WatchConfig{{Name: "inbox", Source: watchSource}},
 		config.StoreBindingConfig{Kind: "filesystem", Path: bindingPath},
 	)
 	require.NoError(t, err)
@@ -597,7 +597,7 @@ func TestPathsOverlapUsesFilesystemIdentityForCaseAliases(t *testing.T) {
 		t.Skip("case variant does not identify the same directory")
 	}
 
-	overlaps, err := PathsOverlap(vaultRoot, alias)
+	overlaps, err := PathsOverlap(t.Context(), vaultRoot, alias)
 	require.NoError(t, err)
 	assert.True(t, overlaps)
 }
@@ -736,7 +736,7 @@ func TestLocalFileReadRejectsConcurrentChange(t *testing.T) {
 
 func stringsReader(value string) io.Reader { return strings.NewReader(value) }
 
-func runTestMutation(fn func() error) error { return fn() }
+func runTestMutation(_ context.Context, fn func() error) error { return fn() }
 
 func TestWatchTreeTraversalHonorsContext(t *testing.T) {
 	t.Parallel()
@@ -969,7 +969,7 @@ func TestWatchCaptureOnChangeAdmission(t *testing.T) {
 			watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{
 				Name: "notes", Source: source, Destination: "/archive", CaptureOnChange: tc.prompt,
 				SettleTime: config.Duration(10 * time.Second), MinimumAge: config.Duration(tc.minimumAge), ScanInterval: config.Duration(time.Hour),
-			}, func(fn func() error) error {
+			}, func(_ context.Context, fn func() error) error {
 				attempts++
 				if tc.retry && attempts == 1 {
 					return ErrRetryLater
@@ -1073,7 +1073,7 @@ func TestPromptWatchDirtyUnchangedSourcePreservesManualHeadAcrossRestart(t *test
 	require.NoError(t, watcher.scan(t.Context(), root))
 	node, err := ing.Store.NodeByPath(t.Context(), "/archive/notes.txt")
 	require.NoError(t, err)
-	hash, size, err := ing.Blobs.Write(strings.NewReader("manual"))
+	hash, size, err := ing.Blobs.WriteContext(t.Context(), strings.NewReader("manual"))
 	require.NoError(t, err)
 	manual, _, err := ing.Store.ReplaceContent(t.Context(), node.ID, node.Revision, hash, size, "text/plain")
 	require.NoError(t, err)
@@ -1126,7 +1126,7 @@ func TestWatcherLiveRenameKeepsNodeAndHistory(t *testing.T) {
 	require.NoError(t, err)
 	bytesByVersion := make(map[string]string)
 	for _, version := range versions {
-		reader, openErr := ing.Blobs.Open(version.BlobHash)
+		reader, openErr := ing.Blobs.OpenContext(t.Context(), version.BlobHash)
 		require.NoError(t, openErr)
 		data, readErr := io.ReadAll(reader)
 		require.NoError(t, readErr)
@@ -1184,7 +1184,7 @@ func TestWatcherAfterImportKeepsCommittedVersionAndScannerStatus(t *testing.T) {
 	inside := false
 	watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{
 		Name: "inbox", Source: source, Destination: "/inbox", CaptureOnChange: true,
-	}, func(fn func() error) error {
+	}, func(_ context.Context, fn func() error) error {
 		inside = true
 		defer func() { inside = false }()
 		return fn()

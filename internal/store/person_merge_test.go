@@ -120,7 +120,7 @@ func TestMergePersonsRejectsMovedRecordsBeyondReceiptLimit(t *testing.T) {
 	absorbed, err := s.CreatePerson(t.Context(), "A. Lovelace", "operator")
 	require.NoError(t, err)
 	// Each UUID-length assignment ID takes 38 receipt bytes with its quotes.
-	_, err = s.db.Exec(`WITH RECURSIVE seq(value) AS (
+	_, err = s.db.ExecContext(t.Context(), `WITH RECURSIVE seq(value) AS (
 		VALUES(1) UNION ALL SELECT value+1 FROM seq WHERE value<?
 	) INSERT INTO custodian_assignments(assignment_id,scope_kind,node_id,content_version_id,person_id,raw_label,raw_label_folded,rank,basis,source_ref,recorded_at)
 	SELECT printf('00000000-0000-4000-8000-%012d',value),'document',?,?,?,'Synthetic','synthetic','additional','operator_assigned','test',? FROM seq`,

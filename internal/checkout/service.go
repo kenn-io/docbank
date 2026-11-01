@@ -127,7 +127,7 @@ func (s Service) protectedRoots(ctx context.Context, destination, excludedID str
 		if err != nil {
 			// Compare paths and root identities without walking an unreadable
 			// released folder, so unrelated checkout destinations stay usable.
-			overlap, overlapErr := ingest.PathsOverlapContext(ctx, c.Destination, destination)
+			overlap, overlapErr := ingest.PathsOverlap(ctx, c.Destination, destination)
 			if overlapErr != nil {
 				return nil, overlapErr
 			}
@@ -220,9 +220,9 @@ func (s Service) validateRootOverlap(ctx context.Context, destination, excludedI
 		}
 		var overlap bool
 		if statErr == nil && info.IsDir() && other != s.VaultRoot && other != (home.Layout{Root: s.VaultRoot}).BlobsDir() {
-			_, overlap, err = ingest.WatchBindingOverlapContext(ctx, []config.WatchConfig{{Name: "checkout protection", Source: other}}, config.StoreBindingConfig{Kind: "filesystem", Path: destination})
+			_, overlap, err = ingest.WatchBindingOverlap(ctx, []config.WatchConfig{{Name: "checkout protection", Source: other}}, config.StoreBindingConfig{Kind: "filesystem", Path: destination})
 		} else {
-			overlap, err = ingest.PathsOverlapContext(ctx, destination, other)
+			overlap, err = ingest.PathsOverlap(ctx, destination, other)
 		}
 		if overlap {
 			return fmt.Errorf("%w: destination overlaps a vault, storage root, watched folder, or checkout", store.ErrInvalidPhotoCheckout)
@@ -234,7 +234,7 @@ func (s Service) validateRootOverlap(ctx context.Context, destination, excludedI
 	return nil
 }
 
-func (s Service) Start(supervisor *jobs.Supervisor, c store.PhotoCheckout, root *os.Root) error {
+func (s Service) Start(ctx context.Context, supervisor *jobs.Supervisor, c store.PhotoCheckout, root *os.Root) error {
 	err := s.start(supervisor, c, root, false)
 	if err != nil {
 		if root != nil {
@@ -299,7 +299,7 @@ func (s Service) Resume(ctx context.Context, supervisor *jobs.Supervisor) error 
 			return err
 		}
 		if op.Kind != store.StorageOperationKindPhotoCheckout {
-			if err := s.StartOperation(supervisor, c); err != nil && !errors.Is(err, jobs.ErrDuplicate) {
+			if err := s.StartOperation(ctx, supervisor, c); err != nil && !errors.Is(err, jobs.ErrDuplicate) {
 				return err
 			}
 			continue

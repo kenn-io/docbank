@@ -128,7 +128,7 @@ func TestEmailTargetsSkipCompletedCorruptionAndContinueToPending(t *testing.T) {
 	require.NoError(t, s.RecordEmailBodyUnavailable(
 		t.Context(), complete.Attachment.ID, bodyRecipe, new("1.1"), "empty_body",
 	))
-	_, err = s.db.Exec(`UPDATE email_generations SET canonical_json=? WHERE generation_id=?`,
+	_, err = s.db.ExecContext(t.Context(), `UPDATE email_generations SET canonical_json=? WHERE generation_id=?`,
 		[]byte(`{}`), complete.Generation.ID)
 	require.NoError(t, err)
 	pending, err := s.CreateFile(t.Context(), s.RootID(), "pending.eml",
@@ -175,11 +175,11 @@ func TestEmailAuditPurgeRollbackReplayAndTamper(t *testing.T) {
 	require.NoError(t, err)
 	var before bytes.Buffer
 	require.NoError(t, s.ExportMetadata(t.Context(), &before))
-	_, err = s.db.Exec(`CREATE TRIGGER fail_email_audit BEFORE INSERT ON audit_records BEGIN SELECT RAISE(ABORT,'synthetic audit failure'); END`)
+	_, err = s.db.ExecContext(t.Context(), `CREATE TRIGGER fail_email_audit BEFORE INSERT ON audit_records BEGIN SELECT RAISE(ABORT,'synthetic audit failure'); END`)
 	require.NoError(t, err)
 	_, err = s.PurgeDerivatives(t.Context(), PurgeRequest{All: true})
 	require.ErrorContains(t, err, "synthetic audit failure")
-	_, err = s.db.Exec(`DROP TRIGGER fail_email_audit`)
+	_, err = s.db.ExecContext(t.Context(), `DROP TRIGGER fail_email_audit`)
 	require.NoError(t, err)
 	var after bytes.Buffer
 	require.NoError(t, s.ExportMetadata(t.Context(), &after))
@@ -201,7 +201,7 @@ func TestEmailAuditPurgeRollbackReplayAndTamper(t *testing.T) {
 	require.NoError(t, restored.ValidateMetadata(t.Context()))
 	_, err = restored.EmailMetadata(t.Context(), v.Version.ID)
 	require.ErrorIs(t, err, ErrEmailDerivativeSuppressed)
-	_, err = restored.db.Exec(`UPDATE derivative_purge_suppressions SET active=0,superseded_at=?,superseding_build_id=? WHERE profile_fingerprint=?`, "2026-09-09T12:00:00.000000000Z", fakeHash("ea"), derivativeAttachmentSuppressionScope(v.Version.ID, emailInventorySuppressionProfile))
+	_, err = restored.db.ExecContext(t.Context(), `UPDATE derivative_purge_suppressions SET active=0,superseded_at=?,superseding_build_id=? WHERE profile_fingerprint=?`, "2026-09-09T12:00:00.000000000Z", fakeHash("ea"), derivativeAttachmentSuppressionScope(v.Version.ID, emailInventorySuppressionProfile))
 	require.NoError(t, err)
 	require.Error(t, restored.ValidateMetadata(t.Context()), "unrecorded suppression rewrite must fail audit replay")
 }

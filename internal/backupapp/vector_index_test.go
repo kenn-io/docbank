@@ -8,7 +8,7 @@ import (
 )
 
 func TestRebuildRestoredVectorIndexesAcceptsVaultWithoutEmbeddingAuthority(t *testing.T) {
-	metadata, err := store.Open(filepath.Join(t.TempDir(), "docbank.db"))
+	metadata, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, metadata.Close()) })
 	report, err := rebuildRestoredVectorIndexes(t.Context(), metadata, nil)

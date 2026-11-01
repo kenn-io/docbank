@@ -85,7 +85,7 @@ func TestEmailDocumentsProcessingClassifiesInvalidAndStaleRequests(t *testing.T)
 			require.ErrorIs(t, err, ErrInvalidEmailDocumentRequest)
 		})
 	}
-	_, err = s.db.Exec(`CREATE TRIGGER fail_email_job BEFORE INSERT ON rendition_jobs BEGIN SELECT RAISE(ABORT,'synthetic job write failure'); END`)
+	_, err = s.db.ExecContext(t.Context(), `CREATE TRIGGER fail_email_job BEFORE INSERT ON rendition_jobs BEGIN SELECT RAISE(ABORT,'synthetic job write failure'); END`)
 	require.NoError(t, err)
 	_, err = s.RequestEmailDocumentProcessing(t.Context(), request)
 	require.ErrorContains(t, err, "synthetic job write failure")
@@ -149,7 +149,7 @@ func TestEmailDocumentsProcessingReportsServingRenditionOutcomes(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
 				for _, hash := range []string{catalogEvidenceBlobHash, catalogMarkdownBlobHash} {
-					if err := s.EnsureBlobTx(tx, hash, int64(len(catalogBlobContents[hash]))); err != nil {
+					if err := s.EnsureBlobTx(t.Context(), tx, hash, int64(len(catalogBlobContents[hash]))); err != nil {
 						return err
 					}
 				}

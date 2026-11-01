@@ -9,13 +9,13 @@ import (
 func peopleBindingEpoch(t *testing.T, s *Store) int64 {
 	t.Helper()
 	var epoch int64
-	require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&epoch))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&epoch))
 	return epoch
 }
 
 func rawRebuildTimes(t *testing.T, s *Store, table, operationID string) (updatedAt string, finishedAt *string) {
 	t.Helper()
-	require.NoError(t, s.db.QueryRow(`SELECT updated_at,finished_at FROM `+table+` WHERE operation_id=?`, operationID).
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT updated_at,finished_at FROM `+table+` WHERE operation_id=?`, operationID).
 		Scan(&updatedAt, &finishedAt))
 	return updatedAt, finishedAt
 }
@@ -27,7 +27,7 @@ func TestDocumentPeopleRebuildConflictKeepsErrExists(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.RebuildDocumentPeople(t.Context(), operationID)
 	require.NoError(t, err)
-	_, err = s.db.Exec(`UPDATE document_people_builds SET request_sha256=? WHERE operation_id=?`, fakeHash("f1"), operationID)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE document_people_builds SET request_sha256=? WHERE operation_id=?`, fakeHash("f1"), operationID)
 	require.NoError(t, err)
 	epoch := peopleBindingEpoch(t, s)
 
@@ -40,7 +40,7 @@ func TestDocumentPeopleRebuildConflictKeepsErrExists(t *testing.T) {
 func TestDocumentPeopleRebuildRollsBackEpochWhenReceiptInsertFails(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	_, err := s.db.Exec(`CREATE TRIGGER reject_document_people_build
+	_, err := s.db.ExecContext(t.Context(), `CREATE TRIGGER reject_document_people_build
 		BEFORE INSERT ON document_people_builds BEGIN SELECT RAISE(ABORT, 'reject build'); END`)
 	require.NoError(t, err)
 	epoch := peopleBindingEpoch(t, s)
@@ -212,14 +212,14 @@ func TestRebuildReceiptsRejectCorruptRows(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.RebuildDocumentPeople(t.Context(), peopleID)
 	require.NoError(t, err)
-	_, err = s.db.Exec(`UPDATE document_people_builds SET state='completed',finished_at='' WHERE operation_id=?`, peopleID)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE document_people_builds SET state='completed',finished_at='' WHERE operation_id=?`, peopleID)
 	require.NoError(t, err)
 	_, err = s.DocumentPeopleBuild(t.Context(), peopleID)
 	require.ErrorIs(t, err, ErrDocumentPeopleCorrupt)
 
 	events, err := s.StartDocumentEventRebuild(t.Context(), "40000000-0000-4000-8000-000000000003", fakeHash("a1"))
 	require.NoError(t, err)
-	_, err = s.db.Exec(`UPDATE document_event_builds SET scanned=scanned+1 WHERE operation_id=?`, events.OperationID)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE document_event_builds SET scanned=scanned+1 WHERE operation_id=?`, events.OperationID)
 	require.NoError(t, err)
 	_, err = s.DocumentEventBuild(t.Context(), events.OperationID)
 	require.ErrorIs(t, err, errDocumentEventBuildInvalid)

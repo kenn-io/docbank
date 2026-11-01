@@ -87,7 +87,7 @@ func ensureVisualPreview(
 				return err
 			}
 			defer func() {
-				cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 				defer cancel()
 				// Authority-free bytes may belong to a concurrent uncommitted upload.
 				// Both daemon and embedded callers leave these files for Pack to reconcile.

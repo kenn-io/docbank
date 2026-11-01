@@ -143,7 +143,7 @@ func TestLauncherStatusProtocolIsModeSpecific(t *testing.T) {
 }
 
 func TestNativeRunnerDeniesLoopbackNetworkAccess(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	requireNativeNoError(t, err)
 	defer func() { _ = listener.Close() }()
 	runner, err := NewNativeRunner()
@@ -189,7 +189,7 @@ func TestNativeRunnerIsolatesHostIPC(t *testing.T) {
 
 func TestNativeRunnerDeniesHostPathnameUnixSocketAccess(t *testing.T) {
 	socketPath := filepath.Join(t.TempDir(), "host.sock")
-	listener, err := net.Listen("unix", socketPath)
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", socketPath)
 	requireNativeNoError(t, err)
 	defer func() { _ = listener.Close() }()
 	runner, err := NewNativeRunner()
@@ -202,7 +202,7 @@ func TestNativeRunnerDeniesHostPathnameUnixSocketAccess(t *testing.T) {
 
 func TestPrivateRootDeniesHostPathnameUnixSockets(t *testing.T) {
 	socketPath := filepath.Join(t.TempDir(), "host.sock")
-	listener, err := net.Listen("unix", socketPath)
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", socketPath)
 	requireNativeNoError(t, err)
 	defer func() { _ = listener.Close() }()
 	runner, err := NewNativeRunner()
@@ -222,7 +222,7 @@ func TestPrivateRootDeniesSocketInsertedAfterRuntimeDiscovery(t *testing.T) {
 	// This manifest represents the regular file discovered before the socket exists.
 	entry := RuntimeFile{SourcePath: declaredPath, GuestPath: "/usr/runtime/socket-dir/declared", SHA256: hex.EncodeToString(digest[:])}
 	socketPath := filepath.Join(runtimeDir, "inserted.sock")
-	listener, err := net.Listen("unix", socketPath)
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", socketPath)
 	requireNativeNoError(t, err)
 	defer func() { _ = listener.Close() }()
 	request := privateTestRequest(t, buildSandboxHelper(t, "file-unix-network", "/usr/runtime/socket-dir/inserted.sock", "result.bin"))
@@ -276,7 +276,7 @@ func TestPrivateRootAllowsOnlyUnixSockets(t *testing.T) {
 	assert.Equal(t, "sha256:"+strings.Repeat("0", 64), result.Attestation.RuntimeIdentity)
 	assert.True(t, result.Attestation.UnixIPCAllowed)
 
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	requireNativeNoError(t, err)
 	defer func() { _ = listener.Close() }()
 	result, err = runner.Run(t.Context(), privateTestRequest(t,
@@ -645,7 +645,7 @@ func buildSandboxHelper(t *testing.T, mode, networkAddress, outputName string) s
 		"-X=main.mode=" + mode, "-X=main.networkAddress=" + networkAddress,
 		"-X=main.outputName=" + outputName,
 	}, " ")
-	command := exec.Command("go", "build", "-trimpath", "-ldflags", ldflags,
+	command := exec.CommandContext(t.Context(), "go", "build", "-trimpath", "-ldflags", ldflags,
 		"-o", target, "./testdata/sandboxhelper")
 	environment := os.Environ()
 	set := false

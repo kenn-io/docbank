@@ -53,7 +53,7 @@ func TestProcessingServiceRefusesUnsupportedFormatBeforeEnqueue(t *testing.T) {
 	var profile document.ProcessingProfileV1
 	require.NoError(t, json.Unmarshal(stored.CanonicalProfile, &profile))
 	profile.Rendition.TrustBoundary = string(provider.Descriptor().TrustBoundary)
-	service, err := NewService(ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
+	service, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
 		Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(),
 		Profiles: map[string]ProfileConfig{"pdf": {Profile: profile, RenditionProvider: provider}},
 	})
@@ -266,7 +266,7 @@ func TestProcessingServiceCompletesEmbeddingAfterWorkerStops(t *testing.T) {
 	profile.RetentionDisclosure.RetainSanitizedMarkdown = false
 	profile.RetentionDisclosure.RetainProviderMarkdown = false
 	provider := &embeddingWorkerProvider{runtime: fake.runtime, binding: original.BindingID, descriptor: original.Descriptor}
-	service, err := NewService(ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
+	service, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
 		Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(),
 		Principal: original.Authorization.Principal, Scope: original.Authorization.Scope,
 		Profiles: map[string]ProfileConfig{"direct": {Profile: profile,
@@ -307,7 +307,7 @@ func TestProcessingServiceAnnouncesFirstEmbeddingBeforeLaterEnqueues(t *testing.
 				profile.Embeddings = append(profile.Embeddings, binding)
 				providers[name] = provider
 			}
-			service, err := NewService(ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
+			service, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
 				Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(),
 				Principal: original.Authorization.Principal, Scope: original.Authorization.Scope,
 				Profiles: map[string]ProfileConfig{"direct": {Profile: profile, EmbeddingProviders: providers}}})
@@ -570,7 +570,7 @@ func TestEmbeddingOnlyConsentPreconditions(t *testing.T) { //nolint:paralleltest
 				configured.EmbeddingClassifiers = map[string]func(error) (EmbeddingProviderFailure, time.Duration){original.BindingID: func(error) (EmbeddingProviderFailure, time.Duration) { return EmbeddingProviderAuthorization, 0 }}
 				config.Profiles["direct"] = configured
 			}
-			service, err := NewService(config)
+			service, err := NewService(t.Context(), config)
 			require.NoError(t, err)
 			version, err := fixture.catalog.ContentVersionByID(t.Context(), original.ContentVersionID)
 			require.NoError(t, err)
@@ -751,7 +751,7 @@ func TestProcessingServiceCoverageReportsRebuildWhilePreviousGenerationServes(t 
 	require.NoError(t, json.Unmarshal(profile.CanonicalProfile, &portable, json.RejectUnknownMembers(true)))
 	portable.Rendition.TrustBoundary = string(provider.Descriptor().TrustBoundary)
 	gate := newWorkerTestGate()
-	service, err := NewService(ServiceConfig{
+	service, err := NewService(t.Context(), ServiceConfig{
 		Catalog: fixture.catalog, Blobs: fixture.blobs, Gate: gate,
 		SpoolDirectory: filepath.Join(t.TempDir(), "spool"),
 		Profiles: map[string]ProfileConfig{"private": {

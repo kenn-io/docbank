@@ -158,7 +158,7 @@ func TestExportEmailPDFPinsRetainedReceiptAndArchive(t *testing.T) {
 	}
 	var metadata bytes.Buffer
 	require.NoError(t, f.catalog.ExportMetadata(t.Context(), &metadata))
-	restored, err := store.Open(filepath.Join(t.TempDir(), "restored.db"))
+	restored, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "restored.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(metadata.Bytes())))

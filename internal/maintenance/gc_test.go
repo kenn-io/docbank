@@ -71,7 +71,7 @@ func TestPurgeDerivativesRetiresPackedDerivativeBytes(t *testing.T) {
 	// Mutation caught: catalog GC alone marks a packed derivative dead while its
 	// sensitive bytes remain recoverable from a dense live immutable pack file.
 	root := t.TempDir()
-	metadata, err := store.Open(filepath.Join(root, "metadata.db"))
+	metadata, err := store.Open(t.Context(), filepath.Join(root, "metadata.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, metadata.Close()) })
 	blobRoot := filepath.Join(root, "blobs")
@@ -123,10 +123,10 @@ func TestPurgeDerivativesRetiresPackedDerivativeBytes(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, records, 1)
 	assert.Equal(t, int64(2), records[0].EntryCount)
-	_, err = blobs.Open(written.Hash)
+	_, err = blobs.OpenContext(t.Context(), written.Hash)
 	require.ErrorIs(t, err, os.ErrNotExist)
 	for _, original := range originals {
-		reader, openErr := blobs.Open(original.Hash)
+		reader, openErr := blobs.OpenContext(t.Context(), original.Hash)
 		require.NoError(t, openErr)
 		require.NoError(t, reader.Close())
 	}
@@ -137,7 +137,7 @@ func TestPurgeDerivativesRetriesDurablePackedErasureAfterInterruption(t *testing
 	root := t.TempDir()
 	databasePath := filepath.Join(root, "metadata.db")
 	blobRoot := filepath.Join(root, "blobs")
-	metadata, err := store.Open(databasePath)
+	metadata, err := store.Open(t.Context(), databasePath)
 	require.NoError(t, err)
 	blobs, err := blob.New(store.NewPackCatalog(metadata), blobRoot)
 	require.NoError(t, err)
@@ -195,7 +195,7 @@ func TestPurgeDerivativesRetriesDurablePackedErasureAfterInterruption(t *testing
 	require.NoError(t, blobs.Close())
 	require.NoError(t, metadata.Close())
 
-	metadata, err = store.Open(databasePath)
+	metadata, err = store.Open(t.Context(), databasePath)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, metadata.Close()) })
 	blobs, err = blob.New(store.NewPackCatalog(metadata), blobRoot)
@@ -217,7 +217,7 @@ func TestPurgeDerivativesRetriesDurableLooseErasureAfterInterruption(t *testing.
 	root := t.TempDir()
 	databasePath := filepath.Join(root, "metadata.db")
 	blobRoot := filepath.Join(root, "blobs")
-	metadata, err := store.Open(databasePath)
+	metadata, err := store.Open(t.Context(), databasePath)
 	require.NoError(t, err)
 	blobs, err := blob.New(store.NewPackCatalog(metadata), blobRoot)
 	require.NoError(t, err)
@@ -253,7 +253,7 @@ func TestPurgeDerivativesRetriesDurableLooseErasureAfterInterruption(t *testing.
 	require.NoError(t, blobs.Close())
 	require.NoError(t, metadata.Close())
 
-	metadata, err = store.Open(databasePath)
+	metadata, err = store.Open(t.Context(), databasePath)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, metadata.Close()) })
 	blobs, err = blob.New(store.NewPackCatalog(metadata), blobRoot)
@@ -275,7 +275,7 @@ func TestPurgeDerivativesRunsLocationAwarePhysicalGC(t *testing.T) {
 	// Mutation caught: stopping after catalog-manifest deletion leaves sensitive
 	// loose provider output in the live vault instead of completing physical GC.
 	root := t.TempDir()
-	metadata, err := store.Open(filepath.Join(root, "metadata.db"))
+	metadata, err := store.Open(t.Context(), filepath.Join(root, "metadata.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, metadata.Close()) })
 	blobRoot := filepath.Join(root, "blobs")

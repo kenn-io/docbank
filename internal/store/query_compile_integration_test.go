@@ -218,7 +218,7 @@ func TestCompiledQuerySQLiteRequiresPopulationRelations(t *testing.T) {
 	require.NoError(t, err)
 	statement, args, err := bindQueryPopulation(population, CoverageSelection{}, "")
 	require.NoError(t, err)
-	rows, err := s.db.Query(statement, args...)
+	rows, err := s.db.QueryContext(t.Context(), statement, args...)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, rows.Close()) }()
 	var got []int64

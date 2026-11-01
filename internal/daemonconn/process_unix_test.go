@@ -19,7 +19,7 @@ import (
 func TestForceTerminateKillsProcessIgnoringTerm(t *testing.T) {
 	ready := filepath.Join(t.TempDir(), "ready")
 	//nolint:gosec // exact current test executable, no shell or user command text.
-	cmd := exec.Command(os.Args[0], "-test.run=^TestIgnoreTermHelper$")
+	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestIgnoreTermHelper$")
 	cmd.Env = append(os.Environ(),
 		"DOCBANK_IGNORE_TERM_HELPER=1", "DOCBANK_HELPER_READY="+ready)
 	require.NoError(t, cmd.Start())

@@ -16,7 +16,7 @@ import (
 
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
-	s, err := Open(filepath.Join(t.TempDir(), "docbank.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	return s
@@ -53,7 +53,7 @@ func TestStorageTransactionPreservesCancellationAfterRollback(t *testing.T) {
 					cancel()
 					synctest.Wait()
 					var value int
-					readErr := tx.QueryRow("SELECT 1").Scan(&value)
+					readErr := tx.QueryRowContext(t.Context(), "SELECT 1").Scan(&value)
 					if phase == "callback" {
 						return readErr
 					}
@@ -74,21 +74,21 @@ func TestOpenRejectsObsoletePreReleaseSchema(t *testing.T) {
 		Access: docsqlite.Create, TransactionMode: docsqlite.Immediate,
 	})
 	require.NoError(t, err)
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		CREATE TABLE blobs (
 			hash TEXT PRIMARY KEY, size INTEGER NOT NULL, created_at TEXT NOT NULL
 		)`)
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
 
-	_, err = Open(dbPath, driver)
+	_, err = Open(t.Context(), dbPath, driver)
 	require.ErrorContains(t, err, "unsupported schema")
 }
 
 func TestOpenBootstrapsRoot(t *testing.T) {
 	t.Parallel()
 	dbPath := filepath.Join(t.TempDir(), "docbank.db")
-	s, err := Open(dbPath)
+	s, err := Open(t.Context(), dbPath)
 	require.NoError(t, err)
 	rootID := s.RootID()
 	assert.Positive(t, rootID)
@@ -97,14 +97,14 @@ func TestOpenBootstrapsRoot(t *testing.T) {
 	require.NoError(t, s.Close())
 
 	// Reopen: same root, no duplicate.
-	s2, err := Open(dbPath)
+	s2, err := Open(t.Context(), dbPath)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, s2.Close()) }()
 	assert.Equal(t, rootID, s2.RootID())
 	assert.Equal(t, vaultID, s2.VaultID())
 
 	var count int
-	require.NoError(t, s2.db.QueryRow(
+	require.NoError(t, s2.db.QueryRowContext(t.Context(),
 		`SELECT COUNT(*) FROM nodes WHERE parent_id IS NULL`).Scan(&count))
 	assert.Equal(t, 1, count)
 }
@@ -120,7 +120,7 @@ func TestOpenConcurrentBootstrap(t *testing.T) { //nolint:paralleltest // owns c
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			stores[i], errs[i] = Open(dbPath)
+			stores[i], errs[i] = Open(t.Context(), dbPath)
 		}(i)
 	}
 	wg.Wait()
@@ -136,7 +136,7 @@ func TestOpenConcurrentBootstrap(t *testing.T) { //nolint:paralleltest // owns c
 	}()
 
 	var count int
-	require.NoError(t, stores[0].db.QueryRow(
+	require.NoError(t, stores[0].db.QueryRowContext(t.Context(),
 		`SELECT COUNT(*) FROM nodes WHERE parent_id IS NULL`).Scan(&count))
 	assert.Equal(t, 1, count)
 }
@@ -144,7 +144,7 @@ func TestOpenConcurrentBootstrap(t *testing.T) { //nolint:paralleltest // owns c
 func TestSchemaForbidsSecondRoot(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	_, err := s.db.Exec(
+	_, err := s.db.ExecContext(t.Context(),
 		`INSERT INTO nodes (parent_id, name, kind, created_at, modified_at)
 		 VALUES (NULL, 'root2', 'dir', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`)
 	require.Error(t, err)

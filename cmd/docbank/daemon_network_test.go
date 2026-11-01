@@ -69,7 +69,7 @@ func TestLocalDiscoveryReusesLoopbackAndWildcardListeners(t *testing.T) {
 	} {
 		t.Run(test.address, func(t *testing.T) {
 			t.Parallel()
-			listener, err := net.Listen(test.network, test.address)
+			listener, err := (&net.ListenConfig{}).Listen(t.Context(), test.network, test.address)
 			if err != nil && test.network == "tcp6" {
 				t.Skipf("IPv6 unavailable: %v", err)
 			}
@@ -84,7 +84,7 @@ func TestLocalDiscoveryReusesLoopbackAndWildcardListeners(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, test.localHost, host)
 			assert.Equal(t, boundPort, port)
-			connection, err := net.DialTimeout(test.network, address, time.Second)
+			connection, err := (&net.Dialer{Timeout: time.Second}).DialContext(t.Context(), test.network, address)
 			require.NoError(t, err)
 			require.NoError(t, connection.Close())
 		})
@@ -201,7 +201,7 @@ func TestConcreteNetworkDaemonKeepsLocalImports(t *testing.T) {
 	}
 	stop()
 	for _, address := range []string{rec.Address, networkAddress} {
-		listener, err := net.Listen("tcp", address)
+		listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", address)
 		require.NoError(t, err, "listener must be released on shutdown: %s", address)
 		require.NoError(t, listener.Close())
 	}

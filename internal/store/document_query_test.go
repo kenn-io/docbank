@@ -62,7 +62,7 @@ func TestDocumentCatalogNormalizesPathPrefixAndUsesStableTies(t *testing.T) {
 	for index, parent := range []int64{alpha.ID, beta.ID} {
 		node, createErr := s.CreateFile(t.Context(), parent, "shared.txt", fakeHash(fmt.Sprintf("d%d", index)), 7, "text/plain")
 		require.NoError(t, createErr)
-		_, updateErr := s.db.Exec(`UPDATE nodes SET modified_at=? WHERE id=?`,
+		_, updateErr := s.db.ExecContext(t.Context(), `UPDATE nodes SET modified_at=? WHERE id=?`,
 			"2026-08-28T10:00:00.000000000Z", node.ID)
 		require.NoError(t, updateErr)
 	}
@@ -504,7 +504,7 @@ func seedDocumentCatalog(t *testing.T, s *Store) {
 		node, createErr := s.CreateFile(t.Context(), fixture.parent, fixture.name,
 			fakeHash(fmt.Sprintf("catalog-%d", index)), fixture.size, fixture.media)
 		require.NoError(t, createErr)
-		_, updateErr := s.db.Exec(`UPDATE nodes SET modified_at=? WHERE id=?`, fixture.modified, node.ID)
+		_, updateErr := s.db.ExecContext(t.Context(), `UPDATE nodes SET modified_at=? WHERE id=?`, fixture.modified, node.ID)
 		require.NoError(t, updateErr)
 	}
 	hidden, err := s.CreateFile(t.Context(), alpha.ID, "hidden.txt", fakeHash("hidden"), 5, "text/plain")
@@ -522,7 +522,7 @@ func seedTiedDocumentCatalog(t *testing.T, s *Store) map[string]Node {
 		node, err := s.CreateFile(t.Context(), dir.ID, "shared.txt",
 			fakeHash(fmt.Sprintf("matrix-%d", index)), 7, "text/plain")
 		require.NoError(t, err)
-		_, err = s.db.Exec(`UPDATE nodes SET modified_at=? WHERE id=?`,
+		_, err = s.db.ExecContext(t.Context(), `UPDATE nodes SET modified_at=? WHERE id=?`,
 			"2026-08-28T10:00:00.000000000Z", node.ID)
 		require.NoError(t, err)
 		nodes["/"+directoryName+"/shared.txt"] = node

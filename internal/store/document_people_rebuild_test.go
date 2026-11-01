@@ -22,7 +22,7 @@ func TestPeopleRebuildReplay(t *testing.T) {
 	require.Equal(t, int64(2), first.TargetEpoch)
 
 	var count int
-	require.NoError(t, s.db.QueryRow(
+	require.NoError(t, s.db.QueryRowContext(t.Context(),
 		`SELECT COUNT(*) FROM document_people_builds WHERE operation_id=?`, operationID,
 	).Scan(&count))
 	require.Equal(t, 1, count)

@@ -212,7 +212,7 @@ func TestCollectionMembershipFollowsSupersessionAndTrash(t *testing.T) {
 	assert.Equal(t, int64(1), collection.FileCount)
 
 	var prior string
-	require.NoError(t, s.db.QueryRow(`SELECT identity FROM provenance WHERE node_id=?`, node.ID).Scan(&prior))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT identity FROM provenance WHERE node_id=?`, node.ID).Scan(&prior))
 	correction, err := s.BeginCallerSuppliedIngest(ctx, "correction", "Synthetic correction")
 	require.NoError(t, err)
 	addCollectionMembership(t, s, correction, node.ID, "opaque/corrected.txt", &prior)
@@ -268,7 +268,7 @@ func addCollectionMembership(
 			return err
 		}
 		fact.Identity = identity
-		_, err = tx.Exec(`INSERT INTO provenance(
+		_, err = tx.ExecContext(tb.Context(), `INSERT INTO provenance(
 			identity,node_id,ingest_id,original_path,original_mtime,supersedes
 		) VALUES(?,?,?,?,?,?)`, fact.Identity, fact.NodeID, fact.IngestID,
 			fact.OriginalPath, fact.OriginalMTime, fact.Supersedes)

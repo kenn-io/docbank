@@ -73,7 +73,7 @@ func sendUpload(
 			query.Set("run_id", uuid.NewV4().String())
 		}
 	}
-	req, err := http.NewRequest(http.MethodPost, tsURL+route+"?"+query.Encode(), &body)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, tsURL+route+"?"+query.Encode(), &body)
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	req.Header.Set(api.BlobHashHeader, in.expectedHash)
@@ -221,7 +221,7 @@ func TestUploadRejectsTruncatedMultipartAsValidation(t *testing.T) {
 	body := fmt.Sprintf("--%s\r\nContent-Disposition: form-data; name=\"file\"; filename=\"bad.txt\"\r\n"+
 		"Content-Type: text/plain\r\n\r\n%s", boundary, content)
 	query := url.Values{"parent_id": {strconv.FormatInt(s.RootID(), 10)}, "name": {"bad.txt"}}
-	req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/uploads?"+query.Encode(), bytes.NewBufferString(body))
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+"/api/v1/uploads?"+query.Encode(), bytes.NewBufferString(body))
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "multipart/form-data; boundary="+boundary)
 	req.Header.Set(api.BlobHashHeader, uploadIdentity([]byte(content)))

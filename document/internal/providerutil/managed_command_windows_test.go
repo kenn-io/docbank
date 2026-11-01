@@ -76,7 +76,7 @@ func TestManagedCommandStartsWindowsProcessSuspended(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	command := exec.Command(executable,
+	command := exec.CommandContext(t.Context(), executable,
 		"-test.run=^TestManagedCommandStopsOnCancellation$", "--", "process", marker)
 	tree, err := newManagedProcessTree(command)
 	if err != nil {

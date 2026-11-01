@@ -68,7 +68,7 @@ func TestWatchBindingOverlapRejectsMissingPathThroughBindAliasToDescendant(t *te
 		"the bind alias must hide lexical ancestry")
 
 	watchName, overlaps, err := WatchBindingOverlap(
-		[]config.WatchConfig{{Name: "inbox", Source: watchSource}},
+		t.Context(), []config.WatchConfig{{Name: "inbox", Source: watchSource}},
 		config.StoreBindingConfig{Kind: "filesystem", Path: bindingPath},
 	)
 	require.NoError(t, err)

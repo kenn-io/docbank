@@ -78,7 +78,7 @@ func TestEmailDocumentsAtomicStaleDestinationAndExplicitReuse(t *testing.T) {
 	_, err = s.PublishEmailDocuments(t.Context(), req)
 	require.ErrorIs(t, err, ErrStaleRevision)
 	var count int
-	require.NoError(t, s.db.QueryRow("SELECT count(*) FROM email_document_publications").Scan(&count))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), "SELECT count(*) FROM email_document_publications").Scan(&count))
 	require.Zero(t, count)
 	req = attachmentRequest(t, s, view, "mail-first")
 	first, err := s.PublishEmailDocuments(t.Context(), req)

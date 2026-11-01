@@ -148,7 +148,7 @@ func TestReportSummaryOutput(t *testing.T) {
 }
 
 func TestReportHistoryShortPageOutput(t *testing.T) {
-	catalog, err := store.Open(filepath.Join(t.TempDir(), "history.db"))
+	catalog, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "history.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 	request := report.Request{Version: 1, AllDocuments: true, Timezone: "UTC", CoverageMode: "strict"}

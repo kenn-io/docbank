@@ -79,6 +79,7 @@ func (r *webSessionRegistry) issue() (string, string, error) {
 	}
 	token := base64.RawURLEncoding.EncodeToString(raw)
 	digest := sha256.Sum256([]byte(token))
+	// The session outlives the request that created it and ends on revocation.
 	sessionCtx, cancel := context.WithCancel(context.Background())
 	r.mu.Lock()
 	if r.closing {

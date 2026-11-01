@@ -30,13 +30,13 @@ import (
 func TestRedactionHTTP(t *testing.T) {
 	runtime := redactiontest.PageRuntime(t)
 	ts, s := newTestServer(t, func(d *api.Deps) {
-		service, err := processing.NewService(processing.ServiceConfig{Catalog: d.Store, Blobs: d.Blobs, Gate: api.NewOperationGate(), SpoolDirectory: filepath.Join(d.VaultRoot, "blobs", "tmp")})
+		service, err := processing.NewService(t.Context(), processing.ServiceConfig{Catalog: d.Store, Blobs: d.Blobs, Gate: api.NewOperationGate(), SpoolDirectory: filepath.Join(d.VaultRoot, "blobs", "tmp")})
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, service.Shutdown(context.Background())) })
 		d.Processing, d.PageRuntime = service, runtime
 	})
 	data := redactiontest.PDF(t, []string{"SECRET KEEP SECRET"}, "")
-	hash, size, err := s.Blobs.Write(bytes.NewReader(data))
+	hash, size, err := s.Blobs.WriteContext(t.Context(), bytes.NewReader(data))
 	require.NoError(t, err)
 	node, err := s.CreateFile(t.Context(), s.RootID(), "native.pdf", hash, size, "application/pdf")
 	require.NoError(t, err)
@@ -180,7 +180,13 @@ func loseNumberedReservationReply(t *testing.T, daemon *httptest.Server,
 	var calls atomic.Int32
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
-		response, err := daemon.Client().Post(daemon.URL+r.URL.Path, "application/json", r.Body)
+		forwarded, err := http.NewRequestWithContext(r.Context(), http.MethodPost, daemon.URL+r.URL.Path, r.Body)
+		if err != nil {
+			replies <- committedReply{err: err}
+			return
+		}
+		forwarded.Header.Set("Content-Type", "application/json")
+		response, err := daemon.Client().Do(forwarded)
 		if err != nil {
 			replies <- committedReply{err: err}
 			return

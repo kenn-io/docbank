@@ -35,7 +35,7 @@ func TestWebMapConfiguration(t *testing.T) {
 	for _, path := range paths {
 		t.Run(path, func(t *testing.T) {
 			response := httptest.NewRecorder()
-			mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+			mux.ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil))
 			require.Equal(t, http.StatusOK, response.Code)
 			body := response.Body.String()
 			assert.Contains(t, strings.ToLower(body), "<!doctype html>")
@@ -52,19 +52,19 @@ func TestWebMapConfiguration(t *testing.T) {
 		})
 	}
 	invalid := httptest.NewRecorder()
-	mux.ServeHTTP(invalid, httptest.NewRequest(http.MethodGet, "/photos/map/invalid", nil))
+	mux.ServeHTTP(invalid, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/photos/map/invalid", nil))
 	require.Equal(t, http.StatusNotFound, invalid.Code)
 	mux = http.NewServeMux()
 	registerWeb(mux, true, "http://localhost:8080", "", config.MapTilesConfig{}, nil)
 	for _, path := range paths {
 		disabled := httptest.NewRecorder()
-		mux.ServeHTTP(disabled, httptest.NewRequest(http.MethodGet, path, nil))
+		mux.ServeHTTP(disabled, httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil))
 		require.Equal(t, http.StatusOK, disabled.Code)
 		assert.Contains(t, disabled.Header().Get("Content-Security-Policy"), "img-src 'self' data: blob:;")
 		assert.Contains(t, html.UnescapeString(disabled.Body.String()), `"tile_url":""`)
 	}
 	disabled := httptest.NewRecorder()
-	mux.ServeHTTP(disabled, httptest.NewRequest(http.MethodGet, webMapTilePath+"/3/4/5", nil))
+	mux.ServeHTTP(disabled, httptest.NewRequestWithContext(t.Context(), http.MethodGet, webMapTilePath+"/3/4/5", nil))
 	assert.Equal(t, http.StatusNotFound, disabled.Code)
 }
 
@@ -84,8 +84,8 @@ func newTileRig(t *testing.T, upstream *httptest.Server, client *http.Client) ti
 	return tileRig{handler: mapTileHandler(tiles, client, slog.New(slog.NewTextHandler(logs, nil))), logs: logs}
 }
 
-func (rig tileRig) get(path string) *httptest.ResponseRecorder {
-	request := httptest.NewRequest(http.MethodGet, path, nil)
+func (rig tileRig) get(ctx context.Context, path string) *httptest.ResponseRecorder {
+	request := httptest.NewRequestWithContext(ctx, http.MethodGet, path, nil)
 	request.Header.Set("Cookie", "session=browser")
 	request.Header.Set("Referer", "http://localhost:8080/photos/map")
 	request.Header.Set(WebSessionHeader, "tab")
@@ -110,12 +110,16 @@ func TestWebMapTileProxy(t *testing.T) {
 		client, err := newMapTileClient(config.MapTilesConfig{TileURL: upstream.URL})
 		require.NoError(t, err)
 		assert.Equal(t, mapTileTimeout, client.Timeout)
-		response, err := client.Get("https://elsewhere.invalid/0/0/0")
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://elsewhere.invalid/0/0/0", nil)
+		require.NoError(t, err)
+		response, err := client.Do(request)
 		if response != nil {
 			_ = response.Body.Close()
 		}
 		require.ErrorIs(t, err, providerhttp.ErrDestinationDenied)
-		response, err = client.Get(upstream.URL)
+		request, err = http.NewRequestWithContext(t.Context(), http.MethodGet, upstream.URL, nil)
+		require.NoError(t, err)
+		response, err = client.Do(request)
 		if response != nil {
 			_ = response.Body.Close()
 		}
@@ -170,7 +174,7 @@ func TestWebMapTileProxy(t *testing.T) {
 			tile := webMapTilePath + "/1/1/0"
 			if tc.name == "png" {
 				for _, path := range []string{"/6/0/0", "/-1/0/0", "/1/2/0", "/1/0/2", "/1/x/0", "/1/+1/0", "/01/0/0", "/1/00/0", "/1/0/00", "/999999999999999999999/0/0"} {
-					response := rig.get(webMapTilePath + path)
+					response := rig.get(t.Context(), webMapTilePath+path)
 					assert.Equal(t, http.StatusBadRequest, response.Code, path)
 					assert.Contains(t, response.Body.String(), "invalid_map_tile")
 				}
@@ -188,7 +192,7 @@ func TestWebMapTileProxy(t *testing.T) {
 				response.Code = 0
 				rig.handler.ServeHTTP(response, request)
 			} else {
-				response = rig.get(tile)
+				response = rig.get(t.Context(), tile)
 			}
 			if tc.reason != "" {
 				assert.Equal(t, http.StatusBadGateway, response.Code)
@@ -233,13 +237,13 @@ func TestWebMapTileProxy(t *testing.T) {
 func TestWebMapTileBrowserAllowlist(t *testing.T) {
 	t.Parallel()
 	allowed := webMapTilePath + "/3/4/5"
-	assert.True(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodGet, allowed, nil)))
+	assert.True(t, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), http.MethodGet, allowed, nil)))
 	for _, tc := range []struct{ method, path string }{
 		{http.MethodGet, allowed + "?key=x"},
 		{http.MethodPost, allowed},
 		{http.MethodGet, allowed + "/6"},
 		{http.MethodGet, webMapTilePath + "/3/4"},
 	} {
-		assert.False(t, webSessionRequestAllowed(httptest.NewRequest(tc.method, tc.path, nil)), tc.method+" "+tc.path)
+		assert.False(t, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), tc.method, tc.path, nil)), tc.method+" "+tc.path)
 	}
 }

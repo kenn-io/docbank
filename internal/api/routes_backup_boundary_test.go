@@ -33,7 +33,7 @@ func TestBackupRestoreMapErrorDoesNotEchoFileContents(t *testing.T) {
 		"store_map":   storeMap,
 	})
 	require.NoError(t, err)
-	request := httptest.NewRequest(http.MethodPost, ts.URL+"/api/v1/backup/restore", bytes.NewReader(requestBody))
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+"/api/v1/backup/restore", bytes.NewReader(requestBody))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-Api-Key", testAPIKey)
 	request.RemoteAddr = "127.0.0.1:12345"
@@ -69,7 +69,7 @@ func TestBackupRestoreRejectsNetworkPeers(t *testing.T) {
 				"snapshot_id": snapshot.ID,
 			})
 			require.NoError(t, err)
-			request := httptest.NewRequest(http.MethodPost, ts.URL+endpoint, bytes.NewReader(requestBody))
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+endpoint, bytes.NewReader(requestBody))
 			request.Header.Set("Content-Type", "application/json")
 			request.Header.Set("X-Api-Key", testAPIKey)
 			request.Header.Set("X-Forwarded-For", "127.0.0.1")
@@ -108,7 +108,7 @@ func TestBackupExplicitRepositoryRejectsNetworkPeers(t *testing.T) {
 				requestBody, err = json.Marshal(test.body)
 				require.NoError(t, err)
 			}
-			request := httptest.NewRequest(test.method, ts.URL+test.path, bytes.NewReader(requestBody))
+			request := httptest.NewRequestWithContext(t.Context(), test.method, ts.URL+test.path, bytes.NewReader(requestBody))
 			request.Header.Set("Content-Type", "application/json")
 			request.Header.Set("X-Api-Key", testAPIKey)
 			request.RemoteAddr = "192.0.2.46:12345"
@@ -134,7 +134,7 @@ func TestBackupConfiguredRepositoryRemainsAvailableToNetworkPeers(t *testing.T) 
 			requestBody, err = json.Marshal(body)
 			require.NoError(t, err)
 		}
-		request := httptest.NewRequest(method, ts.URL+path, bytes.NewReader(requestBody))
+		request := httptest.NewRequestWithContext(t.Context(), method, ts.URL+path, bytes.NewReader(requestBody))
 		request.Header.Set("Content-Type", "application/json")
 		request.Header.Set("X-Api-Key", testAPIKey)
 		request.RemoteAddr = "192.0.2.47:12345"

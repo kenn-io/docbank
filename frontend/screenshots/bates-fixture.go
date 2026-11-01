@@ -37,7 +37,7 @@ func main() {
 	ctx := context.Background()
 	layout := home.Layout{Root: os.Args[1]}
 	check(layout.Ensure())
-	s, err := store.Open(layout.DBPath())
+	s, err := store.Open(ctx, layout.DBPath())
 	check(err)
 	defer func() { check(s.Close()) }()
 	blobs, err := blob.New(store.NewPackCatalog(s), layout.BlobsDir())
@@ -52,7 +52,7 @@ func main() {
 	}
 	var pdfBuffer bytes.Buffer
 	check(pdf.Output(&pdfBuffer))
-	pdfHash, pdfSize, err := blobs.Write(bytes.NewReader(pdfBuffer.Bytes()))
+	pdfHash, pdfSize, err := blobs.WriteContext(ctx, bytes.NewReader(pdfBuffer.Bytes()))
 	check(err)
 	node, err := s.CreateFile(ctx, s.RootID(), "Synthetic-review.pdf", pdfHash, pdfSize, "application/pdf")
 	check(err)
@@ -84,7 +84,7 @@ func main() {
 	check(err)
 
 	manifest := []byte(`{"synthetic":"bates"}`)
-	manifestHash, manifestSize, err := blobs.Write(bytes.NewReader(manifest))
+	manifestHash, manifestSize, err := blobs.WriteContext(ctx, bytes.NewReader(manifest))
 	check(err)
 	_, err = s.CreateFile(ctx, s.RootID(), "Synthetic-Bates-manifest.json", manifestHash, manifestSize, "application/json")
 	check(err)

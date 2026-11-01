@@ -61,7 +61,7 @@ func (s *Store) AppendNodeProvenance(
 	}
 	var result ProvenanceAppendResult
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		prior, err := nodeByIDTx(tx, input.NodeID)
+		prior, err := nodeByIDTx(ctx, tx, input.NodeID)
 		if err != nil {
 			return err
 		}
@@ -107,10 +107,10 @@ func (s *Store) AppendNodeProvenance(
 				return err
 			}
 		}
-		if err := bumpRevisionTx(tx, input.NodeID, run.record.StartedAt); err != nil {
+		if err := bumpRevisionTx(ctx, tx, input.NodeID, run.record.StartedAt); err != nil {
 			return err
 		}
-		result.Node, err = nodeByIDTx(tx, input.NodeID)
+		result.Node, err = nodeByIDTx(ctx, tx, input.NodeID)
 		if err != nil {
 			return err
 		}

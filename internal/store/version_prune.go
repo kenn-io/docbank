@@ -82,14 +82,14 @@ func (s *Store) PruneContentVersions(
 		runTx = s.withLogicalTx
 	}
 	err := runTx(ctx, func(tx *sql.Tx) error {
-		node, err := nodeByIDTx(tx, nodeID)
+		node, err := nodeByIDTx(ctx, tx, nodeID)
 		if err != nil {
 			return err
 		}
 		if err := validateContentReplacementTarget(node, ifRev); err != nil {
 			return err
 		}
-		versions, err := contentVersionsForNodeTx(tx, nodeID)
+		versions, err := contentVersionsForNodeTx(ctx, tx, nodeID)
 		if err != nil {
 			return err
 		}
@@ -98,11 +98,11 @@ func (s *Store) PruneContentVersions(
 		}
 
 		candidateSet, retainedSet, cutoff, checkpointRequired, err :=
-			selectVersionPruneCandidates(tx, node, versions, selector)
+			selectVersionPruneCandidates(ctx, tx, node, versions, selector)
 		if err != nil {
 			return err
 		}
-		if err := retainMediaAuthorityVersionsTx(tx, candidateSet, retainedSet); err != nil {
+		if err := retainMediaAuthorityVersionsTx(ctx, tx, candidateSet, retainedSet); err != nil {
 			return err
 		}
 		if err := s.retainPhotoXMPVersionsTx(ctx, tx, node, candidateSet, retainedSet); err != nil {
@@ -132,7 +132,7 @@ func (s *Store) PruneContentVersions(
 				result.DependencyRetained = append(result.DependencyRetained, version)
 			}
 		}
-		if err := populateVersionPruneBlobStats(tx, &result, checkpointRequired); err != nil {
+		if err := populateVersionPruneBlobStats(ctx, tx, &result, checkpointRequired); err != nil {
 			return err
 		}
 		if !run || len(candidateSet) == 0 {
@@ -150,7 +150,7 @@ func (s *Store) PruneContentVersions(
 			result.Checkpoint = &checkpoint
 		} else {
 			now := nowRFC3339()
-			if err := bumpRevisionTx(tx, node.ID, now); err != nil {
+			if err := bumpRevisionTx(ctx, tx, node.ID, now); err != nil {
 				return err
 			}
 			result.Node.Revision++
@@ -280,7 +280,7 @@ func snapshotRetainedVersionTx(ctx context.Context, tx *sql.Tx, candidates map[s
 	return "", nil
 }
 
-func retainMediaAuthorityVersionsTx(tx *sql.Tx, candidates, retained map[string]bool) error {
+func retainMediaAuthorityVersionsTx(ctx context.Context, tx *sql.Tx, candidates, retained map[string]bool) error {
 	if len(candidates) == 0 {
 		return nil
 	}
@@ -297,7 +297,7 @@ func retainMediaAuthorityVersionsTx(tx *sql.Tx, candidates, retained map[string]
 			args = append(args, id)
 		}
 		err := func() error {
-			rows, err := tx.Query(`SELECT content_version_id FROM media_source_versions
+			rows, err := tx.QueryContext(ctx, `SELECT content_version_id FROM media_source_versions
 		WHERE content_version_id IN (`+numberedPlaceholders(len(batch))+`)
 		UNION SELECT content_version_id FROM media_input_artifacts
 		WHERE content_version_id IN (`+numberedPlaceholders(len(batch))+`)
@@ -369,8 +369,8 @@ func ValidateVersionPruneSelector(selector VersionPruneSelector) error {
 	return nil
 }
 
-func contentVersionsForNodeTx(tx *sql.Tx, nodeID int64) ([]ContentVersion, error) {
-	rows, err := tx.Query(
+func contentVersionsForNodeTx(ctx context.Context, tx *sql.Tx, nodeID int64) ([]ContentVersion, error) {
+	rows, err := tx.QueryContext(ctx,
 		`SELECT `+contentVersionCols+` FROM content_versions
 		 WHERE node_id = $1 ORDER BY node_revision DESC, version_id`, nodeID,
 	)
@@ -393,6 +393,7 @@ func contentVersionsForNodeTx(tx *sql.Tx, nodeID int64) ([]ContentVersion, error
 }
 
 func selectVersionPruneCandidates(
+	ctx context.Context,
 	tx *sql.Tx, node Node, versions []ContentVersion, selector VersionPruneSelector,
 ) (map[string]bool, map[string]bool, string, bool, error) {
 	candidates := make(map[string]bool)
@@ -420,7 +421,7 @@ func selectVersionPruneCandidates(
 			candidates[id] = true
 		}
 		if len(missing) > 0 {
-			owners, err := contentVersionOwnersTx(tx, missing)
+			owners, err := contentVersionOwnersTx(ctx, tx, missing)
 			if err != nil {
 				return nil, nil, "", false, err
 			}
@@ -481,12 +482,12 @@ func retainContentVersionDependencies(
 	}
 }
 
-func contentVersionOwnersTx(tx *sql.Tx, versionIDs []string) (map[string]int64, error) {
+func contentVersionOwnersTx(ctx context.Context, tx *sql.Tx, versionIDs []string) (map[string]int64, error) {
 	args := make([]any, len(versionIDs))
 	for index, id := range versionIDs {
 		args[index] = id
 	}
-	rows, err := tx.Query(`SELECT version_id, node_id FROM content_versions
+	rows, err := tx.QueryContext(ctx, `SELECT version_id, node_id FROM content_versions
 		WHERE version_id IN (`+numberedPlaceholders(len(versionIDs))+`)`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("resolving selected content versions: %w", err)
@@ -508,6 +509,7 @@ func contentVersionOwnersTx(tx *sql.Tx, versionIDs []string) (map[string]int64, 
 }
 
 func populateVersionPruneBlobStats(
+	ctx context.Context,
 	tx *sql.Tx, result *VersionPruneResult, checkpointRequired bool,
 ) error {
 	selectedByHash := make(map[string]int)
@@ -516,7 +518,7 @@ func populateVersionPruneBlobStats(
 		selectedByHash[version.BlobHash]++
 		versionIDs = append(versionIDs, version.ID)
 	}
-	if err := addVersionPruneOutputRefsTx(tx, versionIDs, selectedByHash); err != nil {
+	if err := addVersionPruneOutputRefsTx(ctx, tx, versionIDs, selectedByHash); err != nil {
 		return err
 	}
 	result.UniqueBlobs = len(selectedByHash)
@@ -528,7 +530,7 @@ func populateVersionPruneBlobStats(
 		hashes = append(hashes, hash)
 	}
 	sort.Strings(hashes)
-	stats, err := versionPruneBlobStatsTx(tx, hashes)
+	stats, err := versionPruneBlobStatsTx(ctx, tx, hashes)
 	if err != nil {
 		return err
 	}
@@ -577,13 +579,14 @@ func populateVersionPruneBlobStats(
 }
 
 func addVersionPruneOutputRefsTx(
+	ctx context.Context,
 	tx *sql.Tx, versionIDs []string, selectedByHash map[string]int,
 ) error {
 	const batchSize = 500
 	for start := 0; start < len(versionIDs); start += batchSize {
 		end := min(start+batchSize, len(versionIDs))
 		if err := addVersionPruneOutputRefsBatchTx(
-			tx, versionIDs[start:end], selectedByHash,
+			ctx, tx, versionIDs[start:end], selectedByHash,
 		); err != nil {
 			return err
 		}
@@ -592,13 +595,14 @@ func addVersionPruneOutputRefsTx(
 }
 
 func addVersionPruneOutputRefsBatchTx(
+	ctx context.Context,
 	tx *sql.Tx, versionIDs []string, selectedByHash map[string]int,
 ) (retErr error) {
 	args := make([]any, len(versionIDs))
 	for index, id := range versionIDs {
 		args[index] = id
 	}
-	rows, err := tx.Query(`
+	rows, err := tx.QueryContext(ctx, `
 		SELECT blob_hash, COUNT(*)
 		FROM (
 			SELECT content_version_id AS version_id, output_blob_hash AS blob_hash
@@ -632,12 +636,12 @@ func addVersionPruneOutputRefsBatchTx(
 	return nil
 }
 
-func versionPruneBlobStatsTx(tx *sql.Tx, hashes []string) (map[string]pruneBlobStats, error) {
+func versionPruneBlobStatsTx(ctx context.Context, tx *sql.Tx, hashes []string) (map[string]pruneBlobStats, error) {
 	const batchSize = 500
 	stats := make(map[string]pruneBlobStats, len(hashes))
 	for start := 0; start < len(hashes); start += batchSize {
 		end := min(start+batchSize, len(hashes))
-		if err := versionPruneBlobStatsBatchTx(tx, hashes[start:end], stats); err != nil {
+		if err := versionPruneBlobStatsBatchTx(ctx, tx, hashes[start:end], stats); err != nil {
 			return nil, err
 		}
 	}
@@ -645,13 +649,14 @@ func versionPruneBlobStatsTx(tx *sql.Tx, hashes []string) (map[string]pruneBlobS
 }
 
 func versionPruneBlobStatsBatchTx(
+	ctx context.Context,
 	tx *sql.Tx, hashes []string, stats map[string]pruneBlobStats,
 ) error {
 	args := make([]any, len(hashes))
 	for index, hash := range hashes {
 		args[index] = hash
 	}
-	rows, err := tx.Query(`
+	rows, err := tx.QueryContext(ctx, `
 			SELECT refs.blob_hash, COUNT(*), b.size
 			FROM (
 			`+blobReferenceRowsSQL(blobRootReferences)+`
@@ -677,17 +682,18 @@ func versionPruneBlobStatsBatchTx(
 	if err := rows.Close(); err != nil {
 		return fmt.Errorf("closing version-prune blob inventory: %w", err)
 	}
-	return inventoryVersionPruneLocationsTx(tx, hashes, stats)
+	return inventoryVersionPruneLocationsTx(ctx, tx, hashes, stats)
 }
 
 func inventoryVersionPruneLocationsTx(
+	ctx context.Context,
 	tx *sql.Tx, hashes []string, stats map[string]pruneBlobStats,
 ) error {
 	args := make([]any, len(hashes))
 	for index, hash := range hashes {
 		args[index] = hash
 	}
-	rows, err := tx.Query(`
+	rows, err := tx.QueryContext(ctx, `
 		SELECT l.blob_hash, l.kind, l.stored_size, p.stored_len
 		FROM blob_locations l
 		LEFT JOIN blob_pack_entries p

@@ -59,7 +59,7 @@ func TestEmailPDFMetadataDoesNotReadPDFBytes(t *testing.T) {
 		d.Gate = gate
 		d.RequestEmailPDF = runtime.Submit
 	})
-	hash, size, err := s.Blobs.Write(strings.NewReader("Subject: Synthetic\r\nContent-Type: text/plain\r\n\r\nbody"))
+	hash, size, err := s.Blobs.WriteContext(t.Context(), strings.NewReader("Subject: Synthetic\r\nContent-Type: text/plain\r\n\r\nbody"))
 	require.NoError(t, err)
 	node, err := s.CreateFile(t.Context(), s.RootID(), "synthetic.eml", hash, size, "message/rfc822")
 	require.NoError(t, err)

@@ -100,7 +100,7 @@ func TestMediaCursorRejectsAnotherPrincipal(t *testing.T) {
 	var key [32]byte
 	key[0] = 4
 	newService := func(principal string) *Service {
-		service, err := NewService(ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
+		service, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
 			Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Principal: principal,
 			MediaTokenKey: key})
 		require.NoError(t, err)
@@ -124,10 +124,10 @@ func TestMediaRevocationAcrossOperations(t *testing.T) {
 			OriginID: "synthetic", Provider: "synthetic",
 			ReferencePrefixes: []string{"https://recordings.invalid/"},
 		}}}
-	owner, err := NewService(config)
+	owner, err := NewService(t.Context(), config)
 	require.NoError(t, err)
 	config.Principal = "operator:other"
-	other, err := NewService(config)
+	other, err := NewService(t.Context(), config)
 	require.NoError(t, err)
 	retained, err := owner.SubmitRemoteRecording(t.Context(), RemoteRecordingRequest{
 		OperationID: uuid.New().String(), ReferenceURL: "https://recordings.invalid/call",
@@ -176,7 +176,7 @@ func TestMediaRevocationAcrossOperations(t *testing.T) {
 func TestMediaListPagesByIDAcrossChanges(t *testing.T) {
 	t.Parallel()
 	fixture := newPublicationFixture(t)
-	owner, err := NewService(ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
+	owner, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
 		Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Principal: "operator:pages",
 		MediaTokenKey: [32]byte{2}, MediaOrigins: map[string]MediaOriginPolicy{"synthetic": {
 			OriginID: "synthetic", Provider: "synthetic", ReferencePrefixes: []string{"https://recordings.invalid/"},

@@ -99,7 +99,7 @@ func TestPublishRenditionExactRetryIgnoresDerivedMD5(t *testing.T) {
 func TestAuxiliaryChecksumBackfillResumesAndReadsPackedOnlyContent(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	catalog, err := store.Open(filepath.Join(root, "docbank.db"))
+	catalog, err := store.Open(t.Context(), filepath.Join(root, "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(root, "blobs"))
@@ -555,7 +555,7 @@ type publicationIDs struct {
 func newPublicationFixture(tb testing.TB) publicationFixture {
 	tb.Helper()
 	root := tb.TempDir()
-	catalog, err := store.Open(filepath.Join(root, "docbank.db"))
+	catalog, err := store.Open(tb.Context(), filepath.Join(root, "docbank.db"))
 	require.NoError(tb, err)
 	tb.Cleanup(func() { require.NoError(tb, catalog.Close()) })
 	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(root, "blobs"))

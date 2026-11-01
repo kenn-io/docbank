@@ -43,7 +43,7 @@ func TestDocumentPeopleCoverageTracksRetainedLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, receipt.DeletedVersions)
 	var edges int
-	require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM document_people WHERE content_version_id=?`, version.ID).Scan(&edges))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT count(*) FROM document_people WHERE content_version_id=?`, version.ID).Scan(&edges))
 	require.Zero(t, edges)
 	_, _, err = s.PersonByID(t.Context(), person.PersonID)
 	require.NoError(t, err, "pruning derived links retains person authority")
@@ -70,7 +70,7 @@ func TestChangedSourceEvidenceRemovesDocumentPeople(t *testing.T) {
 	_, _, err = s.DocumentPeopleForVersion(t.Context(), version.ID)
 	require.ErrorIs(t, err, ErrNotFound)
 	var edges int
-	require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM document_people WHERE content_version_id=?`, version.ID).Scan(&edges))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT count(*) FROM document_people WHERE content_version_id=?`, version.ID).Scan(&edges))
 	require.Zero(t, edges)
 	after, err := s.DocumentPeopleCoverage(t.Context())
 	require.NoError(t, err)
@@ -106,10 +106,10 @@ func TestEmailDerivativePurgeInvalidatesPeopleAndPreservesManualAuthority(t *tes
 	_, _, err = s.DocumentPeopleForVersion(t.Context(), published.Version.ID)
 	require.ErrorIs(t, err, ErrNotFound)
 	var projected, heads, dirty, assertions int
-	require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM document_people WHERE content_version_id=?`, published.Version.ID).Scan(&projected))
-	require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM document_people_heads WHERE content_version_id=?`, published.Version.ID).Scan(&heads))
-	require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM document_event_dirty WHERE content_version_id=?`, published.Version.ID).Scan(&dirty))
-	require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM person_document_assertions WHERE assertion_id=?`, assertion.AssertionID).Scan(&assertions))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT count(*) FROM document_people WHERE content_version_id=?`, published.Version.ID).Scan(&projected))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT count(*) FROM document_people_heads WHERE content_version_id=?`, published.Version.ID).Scan(&heads))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT count(*) FROM document_event_dirty WHERE content_version_id=?`, published.Version.ID).Scan(&dirty))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT count(*) FROM person_document_assertions WHERE assertion_id=?`, assertion.AssertionID).Scan(&assertions))
 	require.Zero(t, projected)
 	require.Zero(t, heads)
 	require.Equal(t, 1, dirty)

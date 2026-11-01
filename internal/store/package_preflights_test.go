@@ -22,7 +22,7 @@ func TestPackagePreflightReadExpiresBeforeCleanup(t *testing.T) {
 		_, err = s.PackagePreflight(t.Context(), record.Owner, record.PreflightID)
 		require.ErrorIs(t, err, ErrNotFound)
 		var retained int
-		require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM package_preflights WHERE preflight_id=?`, record.PreflightID).Scan(&retained))
+		require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM package_preflights WHERE preflight_id=?`, record.PreflightID).Scan(&retained))
 		require.Equal(t, 1, retained, "expiry must be enforced before cleanup deletes the row")
 	})
 }

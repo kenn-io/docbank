@@ -47,7 +47,9 @@ func BenchmarkResolvePath(b *testing.B) {
 			endpoint := ts.URL + "/api/v1/path?path=" + url.QueryEscape(path)
 			b.ReportAllocs()
 			for b.Loop() {
-				response, err := ts.Client().Get(endpoint)
+				request, err := http.NewRequestWithContext(b.Context(), http.MethodGet, endpoint, nil)
+				require.NoError(b, err)
+				response, err := ts.Client().Do(request)
 				require.NoError(b, err)
 				var got api.Node
 				decodeErr := json.UnmarshalRead(response.Body, &got)
@@ -79,7 +81,7 @@ func BenchmarkContentDownload(b *testing.B) {
 				content := bytes.Repeat(block, size/len(block))
 				sum := sha256.Sum256(content)
 				wantDigest := "sha-256=:" + base64.StdEncoding.EncodeToString(sum[:]) + ":"
-				hash, storedSize, err := s.Blobs.Write(bytes.NewReader(content))
+				hash, storedSize, err := s.Blobs.WriteContext(b.Context(), bytes.NewReader(content))
 				require.NoError(b, err)
 				node, err := s.CreateFile(b.Context(), s.RootID(), "content.bin",
 					hash, storedSize, "application/octet-stream")
@@ -93,7 +95,9 @@ func BenchmarkContentDownload(b *testing.B) {
 				b.SetBytes(int64(size))
 				b.ReportAllocs()
 				for b.Loop() {
-					response, err := ts.Client().Get(url)
+					request, err := http.NewRequestWithContext(b.Context(), http.MethodGet, url, nil)
+					require.NoError(b, err)
+					response, err := ts.Client().Do(request)
 					require.NoError(b, err)
 					written, err := io.Copy(io.Discard, response.Body)
 					closeErr := response.Body.Close()
@@ -137,7 +141,9 @@ func BenchmarkDuplicatePageHTTP(b *testing.B) {
 			endpoint := ts.URL + "/api/v1/duplicates?limit=50"
 			b.ReportAllocs()
 			for b.Loop() {
-				response, err := ts.Client().Get(endpoint)
+				request, err := http.NewRequestWithContext(b.Context(), http.MethodGet, endpoint, nil)
+				require.NoError(b, err)
+				response, err := ts.Client().Do(request)
 				require.NoError(b, err)
 				var page api.DuplicatePage
 				decodeErr := json.UnmarshalRead(response.Body, &page)
@@ -195,7 +201,9 @@ func BenchmarkScopedSearchHTTP(b *testing.B) {
 						}
 						b.ReportAllocs()
 						for b.Loop() {
-							response, err := ts.Client().Get(endpoint)
+							request, err := http.NewRequestWithContext(b.Context(), http.MethodGet, endpoint, nil)
+							require.NoError(b, err)
+							response, err := ts.Client().Do(request)
 							require.NoError(b, err)
 							var report api.SearchReport
 							decodeErr := json.UnmarshalRead(response.Body, &report)
@@ -226,7 +234,7 @@ func BenchmarkDocumentContentSearchHTTP(b *testing.B) {
 					provider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
 					require.NoError(b, err)
 					d.Gate = api.NewOperationGate()
-					d.Processing, err = processing.NewService(processing.ServiceConfig{
+					d.Processing, err = processing.NewService(b.Context(), processing.ServiceConfig{
 						Catalog: d.Store, Blobs: d.Blobs, Gate: d.Gate,
 						SpoolDirectory: filepath.Join(d.VaultRoot, "blobs", "tmp"),
 						Profiles: map[string]processing.ProfileConfig{"private": {
@@ -259,7 +267,10 @@ func BenchmarkDocumentContentSearchHTTP(b *testing.B) {
 				require.NoError(b, err)
 				b.ReportAllocs()
 				for b.Loop() {
-					response, err := ts.Client().Post(ts.URL+"/api/v1/search", "application/json", bytes.NewReader(body))
+					request, err := http.NewRequestWithContext(b.Context(), http.MethodPost, ts.URL+"/api/v1/search", bytes.NewReader(body))
+					require.NoError(b, err)
+					request.Header.Set("Content-Type", "application/json")
+					response, err := ts.Client().Do(request)
 					require.NoError(b, err)
 					var report api.DocumentSearchReport
 					decodeErr := json.UnmarshalRead(response.Body, &report)

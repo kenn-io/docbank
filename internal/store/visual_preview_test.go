@@ -117,7 +117,7 @@ func TestVisualPreviewHeadAppearsWhenMissingForRecordedGeneration(t *testing.T) 
 
 	first, err := s.PublishVisualPreview(t.Context(), node.CurrentVersionID, canonical, physical)
 	require.NoError(t, err)
-	_, err = s.db.Exec(`DELETE FROM visual_preview_heads WHERE content_version_id=?`, node.CurrentVersionID)
+	_, err = s.db.ExecContext(t.Context(), `DELETE FROM visual_preview_heads WHERE content_version_id=?`, node.CurrentVersionID)
 	require.NoError(t, err)
 
 	recovered, err := s.PublishVisualPreview(t.Context(), node.CurrentVersionID, canonical, physical)
@@ -259,7 +259,7 @@ func TestVisualPreviewMetadataRejectsOutputBlobSizeMismatch(t *testing.T) {
 	_, err = s.PublishVisualPreview(t.Context(), created.CurrentVersionID, canonical,
 		&BlobPhysical{Encoding: looseEncodingRaw, StoredBytes: 8})
 	require.NoError(t, err)
-	_, err = s.db.Exec(`UPDATE blobs SET size=9 WHERE hash=?`, fakeHash("82"))
+	_, err = s.db.ExecContext(t.Context(), `UPDATE blobs SET size=9 WHERE hash=?`, fakeHash("82"))
 	require.NoError(t, err)
 
 	err = s.ValidateMetadata(t.Context())

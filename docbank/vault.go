@@ -172,7 +172,7 @@ func New(ctx context.Context, config Config) (_ *Vault, retErr error) {
 		return nil, err
 	}
 	layout := home.Layout{Root: config.Root}
-	return openVaultWithLayout(config, blobOptions, layout)
+	return openVaultWithLayout(ctx, config, blobOptions, layout)
 }
 
 func normalizeVaultConfig(
@@ -223,15 +223,17 @@ func normalizeVaultConfig(
 }
 
 func openVaultWithLayout(
+	ctx context.Context,
 	config Config,
 	blobOptions blob.Options,
 	layout home.Layout,
 ) (_ *Vault, retErr error) {
 	return openVaultWithRootOpener(
-		config, blobOptions, layout, layout.OpenAndLockExclusive)
+		ctx, config, blobOptions, layout, layout.OpenAndLockExclusive)
 }
 
 func openVaultWithRootOpener(
+	ctx context.Context,
 	config Config,
 	blobOptions blob.Options,
 	layout home.Layout,
@@ -247,14 +249,14 @@ func openVaultWithRootOpener(
 		}
 	}()
 	if err := backupapp.RecoverInterruptedPrimaryHandoff(
-		context.Background(), layout.Root, config.SQLite,
+		ctx, layout.Root, config.SQLite,
 	); err != nil {
 		return nil, err
 	}
 	if err := layout.Ensure(); err != nil {
 		return nil, err
 	}
-	metadata, err := store.Open(layout.DBPath(), config.SQLite)
+	metadata, err := store.Open(ctx, layout.DBPath(), config.SQLite)
 	if err != nil {
 		return nil, err
 	}
@@ -263,7 +265,7 @@ func openVaultWithRootOpener(
 			retErr = errors.Join(retErr, metadata.Close())
 		}
 	}()
-	catalogStores, err := metadata.BlobStores(context.Background())
+	catalogStores, err := metadata.BlobStores(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -285,7 +287,7 @@ func openVaultWithRootOpener(
 			ForcePathStyle: binding.ForcePathStyle,
 		}
 	}
-	blobOptions.Registry = blob.NewRegistry(context.Background(), metadata.VaultID(), bindings, specs)
+	blobOptions.Registry = blob.NewRegistry(ctx, metadata.VaultID(), bindings, specs)
 	blobs, err := blob.NewWithOptions(store.NewPackCatalog(metadata), layout.BlobsDir(), blobOptions)
 	if err != nil {
 		_ = blobOptions.Registry.Close()
@@ -309,13 +311,13 @@ func openVaultWithRootOpener(
 			retErr = errors.Join(retErr, spoolLock.Release())
 		}
 	}()
-	if _, err := upload.RecoverStale(context.Background(), spoolDirectory); err != nil {
+	if _, err := upload.RecoverStale(ctx, spoolDirectory); err != nil {
 		return nil, fmt.Errorf("recovering processing uploads: %w", err)
 	}
-	if err := internalprocessing.RecoverNativePDFSpool(context.Background(), spoolDirectory); err != nil {
+	if err := internalprocessing.RecoverNativePDFSpool(ctx, spoolDirectory); err != nil {
 		return nil, fmt.Errorf("recovering native PDF staging: %w", err)
 	}
-	if _, err := emailmime.RecoverStale(context.Background(), layout.BlobTmpDir()); err != nil {
+	if _, err := emailmime.RecoverStale(ctx, layout.BlobTmpDir()); err != nil {
 		return nil, err
 	}
 	if err := blobs.CleanTmp(); err != nil {
@@ -367,7 +369,7 @@ func openVaultWithRootOpener(
 		return nil, fmt.Errorf("configured processing profile %q conflicts with the built-in media profile", captionName)
 	}
 	profiles[captionName] = captionProfile
-	processingService, err := internalprocessing.NewService(internalprocessing.ServiceConfig{
+	processingService, err := internalprocessing.NewService(ctx, internalprocessing.ServiceConfig{
 		Catalog: metadata, Blobs: blobs, Gate: embeddedMutationGate{vault: vault},
 		Profiles: profiles, SpoolDirectory: spoolDirectory, MediaMaxBytes: config.Processing.MediaMaxBytes,
 	})
@@ -400,6 +402,7 @@ func openVaultWithRootOpener(
 			return nil, err
 		}
 	}
+	// Workers belong to the vault and run until Close, after New returns.
 	workerContext, cancelWorkers := context.WithCancel(context.Background())
 	vault.processingCancel = cancelWorkers
 	packageMailbox := mailbox.Service{Store: metadata, Blobs: blobs}
@@ -1181,7 +1184,7 @@ func (v *Vault) writeHeld(
 		physicalCreated = physical.Created
 		defer func() {
 			if resultErr != nil {
-				resultErr = errors.Join(resultErr, v.removeUnrecordedLoose(hash))
+				resultErr = errors.Join(resultErr, v.removeUnrecordedLoose(ctx, hash))
 				return
 			}
 			if receipt.Physical.Kind == "" {
@@ -1373,8 +1376,9 @@ func (v *Vault) LooseBacklog(ctx context.Context) (LooseBacklog, error) {
 	return fromStoreLooseBacklog(backlog), nil
 }
 
-func (v *Vault) removeUnrecordedLoose(hash string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+func (v *Vault) removeUnrecordedLoose(ctx context.Context, hash string) error {
+	// Cleanup runs after a failed put, including one failed by cancellation.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	recorded, err := v.metadata.HasBlob(ctx, hash)
 	if err != nil {

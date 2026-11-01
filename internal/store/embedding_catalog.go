@@ -913,7 +913,7 @@ func requireEmbeddingPhysicalAuthorityTx(ctx context.Context, tx *sql.Tx, record
 		if hash == "" {
 			continue // Original-file inputs have no separate generation artifact.
 		}
-		if _, err := requirePhysicalAuthorityTx(tx, hash); err != nil {
+		if _, err := requirePhysicalAuthorityTx(ctx, tx, hash); err != nil {
 			return fmt.Errorf("validating embedding blob physical authority: %w", err)
 		}
 	}

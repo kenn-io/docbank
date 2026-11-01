@@ -22,7 +22,7 @@ func TestMediaSearchSelectsCoveringBuildBeforeLimits(t *testing.T) {
 	f := newMediaStateFixture(t)
 	name, supplied, err := NewSuppliedMediaProfile(f.catalog, f.blobs, f.service.principal)
 	require.NoError(t, err)
-	service, err := NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs,
+	service, err := NewService(t.Context(), ServiceConfig{Catalog: f.catalog, Blobs: f.blobs,
 		Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Principal: f.service.principal,
 		Profiles: map[string]ProfileConfig{
 			"speech": {Profile: f.service.profiles["speech"].portable, RenditionProvider: f.provider},

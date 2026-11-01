@@ -20,9 +20,9 @@ func TestEmbeddingCatalogHeadsAndFailuresAreProfileScoped(t *testing.T) {
 		return ensureProcessingProfileTx(t.Context(), tx, secondProfile)
 	}))
 
-	first := embeddingSetFixture(s, versionID, firstProfile.Fingerprint,
+	first := embeddingSetFixture(t.Context(), s, versionID, firstProfile.Fingerprint,
 		document.EmbeddingInputOriginalFile, "optional", "")
-	second := embeddingSetFixture(s, versionID, secondProfile.Fingerprint,
+	second := embeddingSetFixture(t.Context(), s, versionID, secondProfile.Fingerprint,
 		document.EmbeddingInputOriginalFile, "optional", "")
 	second.ID = testSHA256([]byte("second-profile-embedding-set"))
 	second.InputGeneration.ID = testSHA256([]byte("second-profile-input-generation"))
@@ -51,7 +51,7 @@ func TestEmbeddingCatalogHeadsAndFailuresAreProfileScoped(t *testing.T) {
 	}
 
 	var heads, failures int
-	require.NoError(t, s.db.QueryRow(`SELECT
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT
 		(SELECT COUNT(*) FROM embedding_heads WHERE content_version_id=?),
 		(SELECT COUNT(*) FROM embedding_failures WHERE content_version_id=?)`,
 		versionID, versionID).Scan(&heads, &failures))
@@ -99,7 +99,7 @@ func TestEmbeddingCatalogVocabularyIsValidatedOutsideSQLite(t *testing.T) {
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
-			record := embeddingSetFixture(s, versionID, profile.Fingerprint,
+			record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint,
 				document.EmbeddingInputOriginalFile, "optional", "")
 			require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
 			require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
@@ -116,14 +116,14 @@ func TestEmbeddingCatalogVocabularyIsValidatedOutsideSQLite(t *testing.T) {
 				FailureCode: EmbeddingFailureProviderUnavailable, FailedAt: embeddingCatalogTime,
 			}))
 			if testCase.dropTrigger != "" {
-				_, err := s.db.Exec(`DROP TRIGGER ` + testCase.dropTrigger)
+				_, err := s.db.ExecContext(t.Context(), `DROP TRIGGER `+testCase.dropTrigger)
 				require.NoError(t, err)
 			}
 			if testCase.before != "" {
-				_, err := s.db.Exec(testCase.before)
+				_, err := s.db.ExecContext(t.Context(), testCase.before)
 				require.NoError(t, err)
 			}
-			_, err := s.db.Exec(testCase.mutation)
+			_, err := s.db.ExecContext(t.Context(), testCase.mutation)
 			require.NoError(t, err)
 			require.ErrorContains(t, s.ValidateMetadata(t.Context()), testCase.want)
 		})
@@ -150,7 +150,7 @@ func TestEmbeddingCatalogMetadataRejectsFailureOutsideProfile(t *testing.T) {
 				BindingID: "required", InputKind: document.EmbeddingInputOriginalFile,
 				FailureCode: EmbeddingFailureProviderUnavailable, FailedAt: embeddingCatalogTime,
 			}))
-			_, err := s.db.Exec(`UPDATE embedding_failures SET binding_id=?,input_kind=?`,
+			_, err := s.db.ExecContext(t.Context(), `UPDATE embedding_failures SET binding_id=?,input_kind=?`,
 				testCase.bindingID, testCase.inputKind)
 			require.NoError(t, err)
 			require.ErrorContains(t, s.ValidateMetadata(t.Context()), testCase.want)
@@ -192,12 +192,12 @@ func TestEmbeddingCatalogPolicyLimitsAreValidatedOutsideSQLite(t *testing.T) {
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
-			record := embeddingSetFixture(s, versionID, profile.Fingerprint,
+			record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint,
 				document.EmbeddingInputOriginalFile, "optional", "")
 			require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
-			_, err := s.db.Exec(`DROP TRIGGER embedding_` + strings.TrimPrefix(testCase.table, "embedding_") + `_immutable_update`)
+			_, err := s.db.ExecContext(t.Context(), `DROP TRIGGER embedding_`+strings.TrimPrefix(testCase.table, "embedding_")+`_immutable_update`)
 			require.NoError(t, err)
-			_, err = s.db.Exec(testCase.mutation, testCase.args...)
+			_, err = s.db.ExecContext(t.Context(), testCase.mutation, testCase.args...)
 			require.NoError(t, err)
 			require.ErrorContains(t, s.ValidateMetadata(t.Context()), testCase.want)
 		})
@@ -207,7 +207,7 @@ func TestEmbeddingCatalogPolicyLimitsAreValidatedOutsideSQLite(t *testing.T) {
 func TestEmbeddingCatalogVersionPruneRetainsPinnedArtifactsUntilGC(t *testing.T) {
 	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
-	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
+	record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint,
 		document.EmbeddingInputOriginalFile, "optional", "")
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
 	roots := []CurrentRenditionRoot{
@@ -223,11 +223,11 @@ func TestEmbeddingCatalogVersionPruneRetainsPinnedArtifactsUntilGC(t *testing.T)
 	}
 
 	var nodeID, revision int64
-	require.NoError(t, s.db.QueryRow(`SELECT id,revision FROM nodes WHERE current_version_id=?`,
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT id,revision FROM nodes WHERE current_version_id=?`,
 		versionID).Scan(&nodeID, &revision))
 	replacementHash := fakeHash("pinned-authority-prune-replacement")
 	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-		return s.EnsureBlobTx(tx, replacementHash, 24)
+		return s.EnsureBlobTx(t.Context(), tx, replacementHash, 24)
 	}))
 	updated, _, err := s.ReplaceContent(t.Context(), nodeID, revision, replacementHash, 24, "application/pdf")
 	require.NoError(t, err)
@@ -236,7 +236,7 @@ func TestEmbeddingCatalogVersionPruneRetainsPinnedArtifactsUntilGC(t *testing.T)
 	require.NoError(t, err)
 
 	var versionAndSet, artifacts, activeRoots int
-	require.NoError(t, s.db.QueryRow(`SELECT
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT
 		(SELECT COUNT(*) FROM content_versions WHERE version_id=?) +
 		(SELECT COUNT(*) FROM embedding_sets WHERE embedding_set_id=?),
 		(SELECT COUNT(*) FROM embedding_input_generations WHERE generation_id=?) +
@@ -255,7 +255,7 @@ func TestEmbeddingCatalogVersionPruneRetainsPinnedArtifactsUntilGC(t *testing.T)
 	}
 	_, err = s.PurgeDerivatives(t.Context(), PurgeRequest{})
 	require.NoError(t, err)
-	require.NoError(t, s.db.QueryRow(`SELECT
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT
 		(SELECT COUNT(*) FROM embedding_input_generations WHERE generation_id=?) +
 		(SELECT COUNT(*) FROM embedding_vector_sets WHERE vector_set_id=?)`,
 		record.InputGeneration.ID, record.VectorSet.ID).Scan(&artifacts))
@@ -265,7 +265,7 @@ func TestEmbeddingCatalogVersionPruneRetainsPinnedArtifactsUntilGC(t *testing.T)
 func TestEmbeddingCatalogSnapshotValidationChecksStoredRows(t *testing.T) {
 	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
-	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
+	record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint,
 		document.EmbeddingInputOriginalFile, "optional", "")
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
 	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {

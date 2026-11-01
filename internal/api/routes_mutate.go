@@ -54,7 +54,7 @@ func registerMutateRoutes(api huma.API, d Deps, g *gate) {
 				"kind \"file\" is not supported here: use POST /api/v1/ingest or POST /api/v1/uploads")
 		}
 		var out *nodeOutput
-		err := g.mutate(func() error {
+		err := g.mutate(ctx, func() error {
 			n, path, err := d.Store.MkdirWithPath(ctx, in.Body.ParentID, in.Body.Name)
 			if err != nil {
 				return FromStoreError(err)
@@ -95,7 +95,7 @@ func registerMutateRoutes(api huma.API, d Deps, g *gate) {
 				"nothing to do: set dest_path, new_parent_id, and/or new_name")
 		}
 		var out *nodeOutput
-		err = g.mutate(func() error {
+		err = g.mutate(ctx, func() error {
 			if in.Body.DestPath != nil {
 				n, path, err := d.Store.MoveToPath(ctx, in.ID, rev, *in.Body.DestPath)
 				if err != nil {
@@ -146,7 +146,7 @@ func registerMutateRoutes(api huma.API, d Deps, g *gate) {
 				fmt.Sprintf("path %q must be absolute (start with /)", in.Body.Path))
 		}
 		var out *nodeOutput
-		err := g.mutate(func() error {
+		err := g.mutate(ctx, func() error {
 			n, path, err := d.Store.MkdirPath(ctx, in.Body.Path)
 			if err != nil {
 				return FromStoreError(err)
@@ -176,7 +176,7 @@ func registerMutateRoutes(api huma.API, d Deps, g *gate) {
 			}
 		}
 		var out *nodeOutput
-		err := g.mutate(func() error {
+		err := g.mutate(ctx, func() error {
 			n, path, err := d.Store.MovePath(ctx, in.Body.SrcPath, in.Body.DestPath)
 			if err != nil {
 				return FromStoreError(err)
@@ -225,7 +225,7 @@ func registerMutateRoutes(api huma.API, d Deps, g *gate) {
 			}
 		}
 		var output *batchMoveOutput
-		err := g.mutate(func() error {
+		err := g.mutate(ctx, func() error {
 			results, err := d.Store.BatchMove(ctx, moves)
 			if err != nil {
 				return FromStoreError(err)
@@ -256,7 +256,7 @@ func registerMutateRoutes(api huma.API, d Deps, g *gate) {
 			return nil, err
 		}
 		var out *nodeOutput
-		err = g.mutate(func() error {
+		err = g.mutate(ctx, func() error {
 			// The store computes the pre-trash path inside the trash
 			// transaction: afterwards the trash root is re-parented (the
 			// path would misleadingly render as a live-looking "/<name>"),
@@ -291,7 +291,7 @@ func registerMutateRoutes(api huma.API, d Deps, g *gate) {
 				fmt.Sprintf("path %q must be absolute (start with /)", in.Body.Path))
 		}
 		var out *nodeOutput
-		err := g.mutate(func() error {
+		err := g.mutate(ctx, func() error {
 			// The canonical pre-trash path comes from inside the trash
 			// transaction (see trashNode); the request path may be
 			// non-normalized.
@@ -317,7 +317,7 @@ func registerMutateRoutes(api huma.API, d Deps, g *gate) {
 			return nil, err
 		}
 		var out *nodeOutput
-		err = g.mutate(func() error {
+		err = g.mutate(ctx, func() error {
 			n, path, err := d.Store.Restore(ctx, in.ID, rev)
 			if err != nil {
 				return FromStoreError(err)

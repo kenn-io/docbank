@@ -23,7 +23,7 @@ func TestMediaDiskExhaustionIsRetryableAndCleansStage(t *testing.T) {
 	t.Parallel()
 	f := newPublicationFixture(t)
 	spool := t.TempDir()
-	service, err := NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newWorkerTestGate(), SpoolDirectory: spool})
+	service, err := NewService(t.Context(), ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newWorkerTestGate(), SpoolDirectory: spool})
 	require.NoError(t, err)
 	raw := mediatest.WAV()
 	_, err = service.StageMediaContent(t.Context(), exhaustedMediaReader{}, int64(len(raw)), 4<<30, processingHash(string(raw)))

@@ -10,7 +10,7 @@ import (
 
 func TestAuditHistoryPagesCanonicalNodeEvents(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	taxes, err := s.Mkdir(t.Context(), s.RootID(), "Taxes")
@@ -83,7 +83,7 @@ func TestAuditHistoryPagesCanonicalNodeEvents(t *testing.T) {
 
 func TestAuditHistoryCursorRemainsStableWhenNewEventsArrive(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	taxes, err := s.Mkdir(t.Context(), s.RootID(), "Taxes")
@@ -116,7 +116,7 @@ func TestAuditHistoryCursorRemainsStableWhenNewEventsArrive(t *testing.T) {
 
 func TestAuditScopeHistoryPagesEveryMemberEvent(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	taxes, err := s.Mkdir(t.Context(), s.RootID(), "Taxes")
@@ -236,7 +236,7 @@ func TestAuditHistoryProjectsTagAndProvenanceChanges(t *testing.T) {
 	})
 
 	t.Run("filesystem provenance", func(t *testing.T) {
-		s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+		s, err := Open(t.Context(), filepath.Join(t.TempDir(), "vault.db"))
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, s.Close()) })
 		seedMetadataRoundTrip(t, s)

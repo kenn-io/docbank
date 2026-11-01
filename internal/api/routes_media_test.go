@@ -435,7 +435,7 @@ func TestMediaUploadsOutliveRequestTimeout(t *testing.T) {
 					_, writeErr := stream.Write(body.Bytes())
 					_ = stream.CloseWithError(writeErr)
 				}()
-				request := httptest.NewRequest(http.MethodPost, "http://localhost"+endpoint, reader)
+				request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://localhost"+endpoint, reader)
 				request.Header.Set("X-Api-Key", testAPIKey)
 				request.Header.Set("Content-Type", writer.FormDataContentType())
 				response := httptest.NewRecorder()
@@ -728,7 +728,7 @@ func newOtherPrincipalMediaServer(t *testing.T, catalog *testStore) *httptest.Se
 	require.NoError(t, err)
 	var tokenKey [32]byte
 	tokenKey[0] = 7
-	service, err := processing.NewService(processing.ServiceConfig{
+	service, err := processing.NewService(t.Context(), processing.ServiceConfig{
 		Catalog: catalog.Store, Blobs: catalog.Blobs, Gate: gate,
 		SpoolDirectory: filepath.Join(filepath.Dir(catalog.DBPath), "blobs", "tmp"),
 		Principal:      "daemon:other",
@@ -759,7 +759,7 @@ func configureMediaTestService(t *testing.T, lexicalLimit int) func(*api.Deps) {
 		}
 		var key [32]byte
 		key[0] = 7
-		service, err := processing.NewService(processing.ServiceConfig{Catalog: deps.Store,
+		service, err := processing.NewService(t.Context(), processing.ServiceConfig{Catalog: deps.Store,
 			Blobs: deps.Blobs, Gate: gate, SpoolDirectory: filepath.Join(deps.VaultRoot, "blobs", "tmp"),
 			Principal: "daemon:operator",
 			Profiles:  map[string]processing.ProfileConfig{name: profile}, MediaTokenKey: key,

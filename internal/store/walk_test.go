@@ -462,7 +462,7 @@ func TestWalkMidPageCancellationRollsBackFrontierAndStats(t *testing.T) {
 
 func newTestStoreWithDriver(t *testing.T, driver docsqlite.Driver) *Store {
 	t.Helper()
-	s, err := Open(filepath.Join(t.TempDir(), "docbank.db"), driver)
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "docbank.db"), driver)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	return s

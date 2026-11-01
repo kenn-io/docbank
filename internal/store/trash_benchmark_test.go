@@ -16,7 +16,7 @@ func BenchmarkTrashedRootsPage(b *testing.B) {
 	for _, groups := range []int{10, 1000, 10000} {
 		for _, members := range []int{1, 3} {
 			b.Run(fmt.Sprintf("groups=%d/members=%d", groups, members), func(b *testing.B) {
-				s, err := Open(filepath.Join(b.TempDir(), "docbank.db"))
+				s, err := Open(b.Context(), filepath.Join(b.TempDir(), "docbank.db"))
 				require.NoError(b, err)
 				b.Cleanup(func() { require.NoError(b, s.Close()) })
 				ctx := b.Context()
@@ -95,7 +95,7 @@ func BenchmarkTrashedRootsPage(b *testing.B) {
 func BenchmarkRestoreNameCollision(b *testing.B) {
 	for _, conflicts := range []int{0, 1, 10, 1000, 10000} {
 		b.Run(fmt.Sprintf("conflicts=%d", conflicts), func(b *testing.B) {
-			s, err := Open(filepath.Join(b.TempDir(), "docbank.db"))
+			s, err := Open(b.Context(), filepath.Join(b.TempDir(), "docbank.db"))
 			require.NoError(b, err)
 			b.Cleanup(func() { require.NoError(b, s.Close()) })
 			require.NoError(b, s.withStorageTx(b.Context(), func(tx *sql.Tx) error {

@@ -14,7 +14,7 @@ func BenchmarkMailboxJobs(b *testing.B) {
 	for _, jobs := range []int{100, 1000} {
 		for _, entries := range []int{0, 1000} {
 			b.Run(fmt.Sprintf("jobs=%d/entries=%d", jobs, entries), func(b *testing.B) {
-				s, err := Open(filepath.Join(b.TempDir(), "docbank.db"))
+				s, err := Open(b.Context(), filepath.Join(b.TempDir(), "docbank.db"))
 				require.NoError(b, err)
 				b.Cleanup(func() { require.NoError(b, s.Close()) })
 				ctx := b.Context()

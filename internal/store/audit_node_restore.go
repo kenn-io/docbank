@@ -36,7 +36,7 @@ func (s *Store) restoreAuditedTx(
 	resultingNodes := make(map[int64]Node, len(snapshot.priorNodes))
 	resultingTopology := make(map[int64]audit.Record, len(snapshot.priorNodes))
 	for nodeID := range snapshot.priorNodes {
-		resulting, err := nodeByIDTx(tx, nodeID)
+		resulting, err := nodeByIDTx(ctx, tx, nodeID)
 		if err != nil {
 			return Node{}, err
 		}
@@ -158,7 +158,7 @@ func (s *Store) prepareAuditedRestore(
 		if !member {
 			return snapshot, unsupportedAuditedNodeMutation(nodeID)
 		}
-		prior, err := nodeByIDTx(tx, nodeID)
+		prior, err := nodeByIDTx(ctx, tx, nodeID)
 		if err != nil {
 			return snapshot, err
 		}
@@ -188,7 +188,7 @@ func (s *Store) prepareAuditedRestore(
 	priorNodes := make(map[int64]Node, len(changedIDs))
 	priorTopology := make(map[int64]audit.Record, len(changedIDs))
 	for _, nodeID := range changedIDs {
-		prior, err := nodeByIDTx(tx, nodeID)
+		prior, err := nodeByIDTx(ctx, tx, nodeID)
 		if err != nil {
 			return snapshot, err
 		}

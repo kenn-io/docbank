@@ -47,7 +47,7 @@ func newXMPEnv(t *testing.T, files ...photoGroupFile) *xmpEnv {
 func newXMPStore(t *testing.T) *xmpEnv {
 	t.Helper()
 	root := t.TempDir()
-	catalog, err := store.Open(filepath.Join(root, "docbank.db"))
+	catalog, err := store.Open(t.Context(), filepath.Join(root, "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(root, "blobs"))
@@ -532,7 +532,7 @@ func TestPhotoXMPSourceReplacementKeepsAuthoredRotation(t *testing.T) {
 				e.importFiles(photoGroupFile{xmpRaw, store.PhotoRoleRAW, "image/x-sony-arw", "replacement RAW"})
 				e.orient(e.node(e.raw().NodeID).BlobHash, SourceMetadataExtractorFingerprint, 6)
 			} else {
-				hash, _, err := e.blobs.Write(strings.NewReader("replacement source"))
+				hash, _, err := e.blobs.WriteContext(t.Context(), strings.NewReader("replacement source"))
 				require.NoError(t, err)
 				_, _, err = e.catalog.ReplaceContent(t.Context(), before.ID, before.Revision, hash, 18, "image/x-sony-arw")
 				require.NoError(t, err)

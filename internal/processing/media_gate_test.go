@@ -15,7 +15,7 @@ func TestMediaMutationsWaitForMaintenance(t *testing.T) {
 		t.Run(operation, func(t *testing.T) {
 			fixture := newPublicationFixture(t)
 			gate := newWorkerTestGate()
-			service, err := NewService(ServiceConfig{
+			service, err := NewService(t.Context(), ServiceConfig{
 				Catalog: fixture.catalog, Blobs: fixture.blobs, Gate: gate,
 				SpoolDirectory: t.TempDir(), Principal: "daemon:operator", MediaTokenKey: [32]byte{1},
 				MediaOrigins: map[string]MediaOriginPolicy{"synthetic": {

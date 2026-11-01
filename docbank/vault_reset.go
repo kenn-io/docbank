@@ -130,7 +130,7 @@ func ResetVault(
 		)
 	}
 
-	fresh, err = openVaultWithRootOpener(config, blobOptions, sourceLayout, func() (
+	fresh, err = openVaultWithRootOpener(ctx, config, blobOptions, sourceLayout, func() (
 		*os.Root, *home.Lock, error,
 	) {
 		return transition.OpenAndLockReplacement()

@@ -39,7 +39,7 @@ func newTestIngesterWithOptions(t *testing.T, options blob.Options) *Ingester {
 	home := t.TempDir()
 	blobsDir := filepath.Join(home, "blobs")
 	require.NoError(t, os.MkdirAll(filepath.Join(blobsDir, "tmp"), 0o700))
-	s, err := store.Open(filepath.Join(home, "docbank.db"))
+	s, err := store.Open(t.Context(), filepath.Join(home, "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	blobs, err := blob.NewWithOptions(store.NewPackCatalog(s), blobsDir, options)
@@ -95,7 +95,7 @@ func TestAddSingleFile(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "text/plain; charset=utf-8", n.MimeType)
 
-	ok, err := ing.Blobs.Exists(n.BlobHash)
+	ok, err := ing.Blobs.Exists(t.Context(), n.BlobHash)
 	require.NoError(t, err)
 	assert.True(t, ok)
 
@@ -452,7 +452,7 @@ func TestDetectMimeUsesNativeWindowsJPEGRegistry(t *testing.T) {
 		t.Skip("native registry proof runs on Windows")
 	}
 	extensionMIME := mime.TypeByExtension(".jpg")
-	registry, err := exec.Command("reg", "query", `HKCR\.jpg`, "/v", "Content Type").CombinedOutput()
+	registry, err := exec.CommandContext(t.Context(), "reg", "query", `HKCR\.jpg`, "/v", "Content Type").CombinedOutput()
 	require.NoError(t, err, string(registry))
 	t.Logf("registry: %s; Go lookup: %s", strings.TrimSpace(string(registry)), extensionMIME)
 	if extensionMIME != "application/jpg" {
@@ -475,7 +475,7 @@ func TestPrepareUploadRetainsOriginalBytesForEveryCatalogFormat(t *testing.T) {
 			require.NoError(t, err)
 			result, err := prepared.Commit(t.Context())
 			require.NoError(t, err)
-			reader, err := ing.Blobs.Open(result.Node.BlobHash)
+			reader, err := ing.Blobs.OpenContext(t.Context(), result.Node.BlobHash)
 			require.NoError(t, err)
 			retained, readErr := io.ReadAll(reader)
 			require.NoError(t, errors.Join(readErr, reader.Close()))
@@ -670,7 +670,7 @@ func TestAddPathsRecordsSignatureMediaType(t *testing.T) {
 	require.Equal(t, 1, total)
 	require.Equal(t, created.CurrentVersionID, createdVersions[0].ID)
 	require.Equal(t, "image/jpeg", createdVersions[0].MimeType)
-	stored, err := ing.Blobs.Open(created.BlobHash)
+	stored, err := ing.Blobs.OpenContext(t.Context(), created.BlobHash)
 	require.NoError(t, err)
 	storedBytes, readErr := io.ReadAll(stored)
 	require.NoError(t, errors.Join(readErr, stored.Close()))
@@ -693,12 +693,12 @@ func TestAddPathsRecordsSignatureMediaType(t *testing.T) {
 	require.Equal(t, "image/jpeg", versions[1].MimeType)
 	require.Equal(t, created.CurrentVersionID, versions[1].ID)
 	require.Equal(t, created.BlobHash, versions[1].BlobHash)
-	stored, err = ing.Blobs.Open(updated.BlobHash)
+	stored, err = ing.Blobs.OpenContext(t.Context(), updated.BlobHash)
 	require.NoError(t, err)
 	storedBytes, readErr = io.ReadAll(stored)
 	require.NoError(t, errors.Join(readErr, stored.Close()))
 	require.Equal(t, png, storedBytes)
-	stored, err = ing.Blobs.Open(versions[1].BlobHash)
+	stored, err = ing.Blobs.OpenContext(t.Context(), versions[1].BlobHash)
 	require.NoError(t, err)
 	storedBytes, readErr = io.ReadAll(stored)
 	require.NoError(t, errors.Join(readErr, stored.Close()))
@@ -1216,7 +1216,7 @@ func TestRejectedUploadPreservesAuthorityFreeAndRemovesPackedDuplicateLooseFiles
 			bytes.NewReader(content), hash, int64(len(content)),
 		)
 		require.NoError(t, err)
-		require.NoError(t, prepared.Discard())
+		require.NoError(t, prepared.Discard(t.Context()))
 		loose, err := ing.Blobs.List()
 		require.NoError(t, err)
 		assert.Len(t, loose, 1)
@@ -1268,7 +1268,7 @@ func TestRejectedUploadCannotDeleteAnotherPreparedUpload(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, result.Added)
 	assert.Equal(t, hash, result.Node.BlobHash)
-	contentReader, err := ing.Blobs.Open(hash)
+	contentReader, err := ing.Blobs.OpenContext(t.Context(), hash)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, contentReader.Close()) }()
 	got, err := io.ReadAll(contentReader)
@@ -1460,7 +1460,7 @@ func TestEnsureSourceDirRejectsPathOutsideWalkRoot(t *testing.T) {
 		return
 	}
 
-	cmd := exec.Command(os.Args[0], "-test.run=^TestEnsureSourceDirRejectsPathOutsideWalkRoot$", "-test.count=1") //nolint:gosec // os.Args[0] is the trusted current test executable.
+	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestEnsureSourceDirRejectsPathOutsideWalkRoot$", "-test.count=1") //nolint:gosec // os.Args[0] is the trusted current test executable.
 	cmd.Env = append(os.Environ(), childEnv+"=1")
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(output))

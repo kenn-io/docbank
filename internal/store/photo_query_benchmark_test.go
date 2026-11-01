@@ -20,7 +20,7 @@ func BenchmarkPhotoBrowse100K(b *testing.B) { benchmarkPhotoBrowse(b, 100000) }
 func benchmarkPhotoBrowse(b *testing.B, assetCount int) {
 	b.Helper()
 	b.StopTimer()
-	s, err := Open(filepath.Join(b.TempDir(), "docbank.db"))
+	s, err := Open(b.Context(), filepath.Join(b.TempDir(), "docbank.db"))
 	require.NoError(b, err)
 	b.Cleanup(func() { require.NoError(b, s.Close()) })
 	ctx := b.Context()
@@ -143,7 +143,7 @@ func benchmarkPhotoBrowse(b *testing.B, assetCount int) {
 // with interleaved two-frame bursts in healthy and stale source folders.
 func BenchmarkPhotoStackMixed100K(b *testing.B) {
 	b.StopTimer()
-	s, err := Open(filepath.Join(b.TempDir(), "docbank.db"))
+	s, err := Open(b.Context(), filepath.Join(b.TempDir(), "docbank.db"))
 	require.NoError(b, err)
 	b.Cleanup(func() { require.NoError(b, s.Close()) })
 	ctx := b.Context()

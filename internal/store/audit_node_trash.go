@@ -33,7 +33,7 @@ func (s *Store) trashAuditedTx(
 	resultingNodes := make(map[int64]Node, len(snapshot.priorNodes))
 	resultingTopology := make(map[int64]audit.Record, len(snapshot.priorNodes))
 	for nodeID := range snapshot.priorNodes {
-		resulting, err := nodeByIDTx(tx, nodeID)
+		resulting, err := nodeByIDTx(ctx, tx, nodeID)
 		if err != nil {
 			return Node{}, "", err
 		}
@@ -121,7 +121,7 @@ func (s *Store) prepareAuditedTrash(
 		if !member {
 			return snapshot, unsupportedAuditedNodeMutation(nodeID)
 		}
-		prior, err := nodeByIDTx(tx, nodeID)
+		prior, err := nodeByIDTx(ctx, tx, nodeID)
 		if err != nil {
 			return snapshot, err
 		}
@@ -135,7 +135,7 @@ func (s *Store) prepareAuditedTrash(
 	slices.Sort(changedIDs)
 	priorNodes := make(map[int64]Node, len(changedIDs))
 	for _, nodeID := range changedIDs {
-		prior, err := nodeByIDTx(tx, nodeID)
+		prior, err := nodeByIDTx(ctx, tx, nodeID)
 		if err != nil {
 			return snapshot, err
 		}

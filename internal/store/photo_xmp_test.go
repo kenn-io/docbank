@@ -333,7 +333,7 @@ func TestPhotoXMPNewerReceiptStatusAndPruneRefusal(t *testing.T) {
 	require.NoError(t, err)
 	changed, _, err := s.ReplaceContent(t.Context(), sc.ID, sc.Revision, fakeHash("e5"), 50, "application/rdf+xml")
 	require.NoError(t, err)
-	_, err = s.db.Exec(`UPDATE photo_change_receipts SET after_json=json_set(after_json,'$.version',2) WHERE operation='xmp_sync'`)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE photo_change_receipts SET after_json=json_set(after_json,'$.version',2) WHERE operation='xmp_sync'`)
 	require.NoError(t, err)
 	assert.Equal(t, PhotoXMPStateUnavailable, xmpState(t, s, raw.ID).State)
 	publishXMPOrientation(t, s, raw.NodeID, fakeHash("ff"))

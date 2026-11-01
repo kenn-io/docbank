@@ -137,7 +137,7 @@ func TestWorkerStopsBeforeMutationBodyWhenAdmissionIsCanceled(t *testing.T) {
 
 func TestWorkerIndexesVerifiedUTF8AndUsesMutationGate(t *testing.T) {
 	dir := t.TempDir()
-	s, err := store.Open(filepath.Join(dir, "docbank.db"))
+	s, err := store.Open(t.Context(), filepath.Join(dir, "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	blobs, err := blob.New(store.NewPackCatalog(s), filepath.Join(dir, "blobs"))
@@ -145,7 +145,7 @@ func TestWorkerIndexesVerifiedUTF8AndUsesMutationGate(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, blobs.Close()) })
 
 	content := "The lighthouse keeps a verified archive.\n"
-	hash, size, err := blobs.Write(strings.NewReader(content))
+	hash, size, err := blobs.WriteContext(t.Context(), strings.NewReader(content))
 	require.NoError(t, err)
 	node, err := s.CreateFile(
 		t.Context(), s.RootID(), "notes.md", hash, size, "text/markdown; charset=utf-8",
@@ -181,7 +181,7 @@ func TestWorkerIndexesVerifiedUTF8AndUsesMutationGate(t *testing.T) {
 
 func TestWorkerRecordsDeterministicFailuresWithoutOpeningOversizeBlob(t *testing.T) {
 	dir := t.TempDir()
-	s, err := store.Open(filepath.Join(dir, "docbank.db"))
+	s, err := store.Open(t.Context(), filepath.Join(dir, "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	blobs, err := blob.New(store.NewPackCatalog(s), filepath.Join(dir, "blobs"))
@@ -206,7 +206,7 @@ func TestWorkerRecordsDeterministicFailuresWithoutOpeningOversizeBlob(t *testing
 
 func TestWorkerRetriesTransientOpenFailure(t *testing.T) {
 	dir := t.TempDir()
-	s, err := store.Open(filepath.Join(dir, "docbank.db"))
+	s, err := store.Open(t.Context(), filepath.Join(dir, "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	blobs, err := blob.New(store.NewPackCatalog(s), filepath.Join(dir, "blobs"))
@@ -214,7 +214,7 @@ func TestWorkerRetriesTransientOpenFailure(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, blobs.Close()) })
 
 	content := "A recoverable nebula record.\n"
-	hash, size, err := blobs.Write(strings.NewReader(content))
+	hash, size, err := blobs.WriteContext(t.Context(), strings.NewReader(content))
 	require.NoError(t, err)
 	_, err = s.CreateFile(t.Context(), s.RootID(), "notes.txt", hash, size, "text/plain")
 	require.NoError(t, err)

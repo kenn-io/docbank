@@ -103,7 +103,7 @@ func registerStorageRegistryRoutes(api huma.API, d Deps, g *gate) {
 		if err := validateStorageNamespace(ctx, d, plan.store.Binding, plan.binding, stores, false); err != nil {
 			return nil, err
 		}
-		err = g.mutate(func() error {
+		err = g.mutate(ctx, func() error {
 			if proof != nil {
 				paths, err := storageProtectionPaths(ctx, d, plan.binding)
 				if err != nil {
@@ -152,7 +152,7 @@ func registerStorageRegistryRoutes(api huma.API, d Deps, g *gate) {
 		StoreID string `path:"store_id"`
 	}) (*storeOutput, error) {
 		var output *storeOutput
-		err := g.mutate(func() error {
+		err := g.mutate(ctx, func() error {
 			if err := d.Store.DetachBlobStore(ctx, in.StoreID); err != nil {
 				return FromStoreError(err)
 			}
@@ -180,7 +180,7 @@ func registerStorageRegistryRoutes(api huma.API, d Deps, g *gate) {
 	}, func(ctx context.Context, in *struct {
 		StoreID string `path:"store_id"`
 	}) (*struct{}, error) {
-		err := g.mutate(func() error {
+		err := g.mutate(ctx, func() error {
 			item, err := d.Store.BlobStoreBySelector(ctx, in.StoreID)
 			if err != nil {
 				return FromStoreError(err)
@@ -414,7 +414,7 @@ func validateStorageNamespace(
 		}
 	}
 	if binding.Kind == "filesystem" {
-		overlap, err := ingest.PathsOverlapContext(ctx, binding.Path, d.VaultRoot)
+		overlap, err := ingest.PathsOverlap(ctx, binding.Path, d.VaultRoot)
 		if err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return NewError(
 				http.StatusUnprocessableEntity, "storage_binding_invalid", err.Error(),
@@ -438,7 +438,7 @@ func validateStorageNamespace(
 			if overlap {
 				return NewError(http.StatusConflict, "storage_namespace_overlap", fmt.Sprintf("binding %q overlaps reserved checkout %s", bindingName, checkoutID))
 			}
-			watchName, watchOverlap, err := ingest.WatchBindingOverlapContext(
+			watchName, watchOverlap, err := ingest.WatchBindingOverlap(
 				ctx, d.Cfg.Watches, binding,
 			)
 			if err != nil {
@@ -474,7 +474,7 @@ func validateStorageNamespace(
 		var overlap bool
 		var err error
 		if binding.Kind == "filesystem" {
-			overlap, err = ingest.PathsOverlap(binding.Path, existingBinding.Path)
+			overlap, err = ingest.PathsOverlap(ctx, binding.Path, existingBinding.Path)
 		} else {
 			overlap, err = storenamespace.S3Overlaps(
 				storageS3Binding(binding), storageS3Binding(existingBinding),

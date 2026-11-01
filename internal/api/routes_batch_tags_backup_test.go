@@ -47,7 +47,7 @@ func TestBatchTagReceiptSurvivesPhysicalBackupRestore(t *testing.T) { //nolint:p
 			require.Equal(t, "result", terminal.Type)
 			require.NotNil(t, terminal.Report)
 			require.True(t, terminal.Report.Proof.ContentVerified)
-			restored, err := store.Open(filepath.Join(target, "docbank.db"), driver)
+			restored, err := store.Open(t.Context(), filepath.Join(target, "docbank.db"), driver)
 			require.NoError(t, err)
 			defer func() { require.NoError(t, restored.Close()) }()
 			before, err := restored.AuditHistory(t.Context(), node.ID, 50, "")

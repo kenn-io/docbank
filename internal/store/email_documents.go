@@ -51,7 +51,7 @@ func (s *Store) publishEmailDocumentsTx(
 		if err != nil {
 			return err
 		}
-		dir, err := liveDirTx(tx, request.DestinationID)
+		dir, err := liveDirTx(ctx, tx, request.DestinationID)
 		if err != nil {
 			return err
 		}
@@ -132,7 +132,7 @@ func validateEmailDocumentReuse(ctx context.Context, tx *sql.Tx, chosen document
 	if documentIdentity(v) != chosen.Child || v.BlobHash != part.Payload.SHA256 || v.Size != part.Payload.Size {
 		return ErrEmailDocumentConflict
 	}
-	node, err := nodeByIDTx(tx, v.NodeID)
+	node, err := nodeByIDTx(ctx, tx, v.NodeID)
 	if err != nil {
 		return err
 	}

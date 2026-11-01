@@ -30,7 +30,7 @@ import (
 func backupTestDeps(t *testing.T, drivers ...sqlite.Driver) Deps {
 	t.Helper()
 	root := t.TempDir()
-	metadata, err := store.Open(filepath.Join(root, "docbank.db"), drivers...)
+	metadata, err := store.Open(t.Context(), filepath.Join(root, "docbank.db"), drivers...)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, metadata.Close()) })
 	dir := filepath.Join(root, "blobs")
@@ -409,7 +409,7 @@ func restoredDeps(t *testing.T, repo *backup.Repo, d Deps) Deps {
 	target := filepath.Join(t.TempDir(), "restored")
 	_, err := backupapp.Restore(t.Context(), repo, "test", backup.RestoreOptions{TargetDir: target})
 	require.NoError(t, err)
-	metadata, err := store.OpenForRestore(filepath.Join(target, "docbank.db"), store.DefaultSQLiteDriver())
+	metadata, err := store.OpenForRestore(t.Context(), filepath.Join(target, "docbank.db"), store.DefaultSQLiteDriver())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, metadata.Close()) })
 	blobs, err := blob.New(store.NewPackCatalog(metadata), filepath.Join(target, "blobs"))

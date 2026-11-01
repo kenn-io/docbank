@@ -28,7 +28,7 @@ import (
 func newPushTestDaemon(t *testing.T, beforeUpload func()) (*daemonconn.Connection, *store.Store) {
 	t.Helper()
 	vault := t.TempDir()
-	s, err := store.Open(filepath.Join(vault, "vault.db"))
+	s, err := store.Open(t.Context(), filepath.Join(vault, "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	blobsDir := filepath.Join(vault, "blobs")

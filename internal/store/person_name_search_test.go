@@ -11,7 +11,7 @@ func TestPersonNameSearchFollowsAuthority(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
 	path := filepath.Join(t.TempDir(), "people.db")
-	s, err := Open(path)
+	s, err := Open(t.Context(), path)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	person, err := s.CreatePerson(ctx, "Anne Smith", "operator")
@@ -29,7 +29,7 @@ func TestPersonNameSearchFollowsAuthority(t *testing.T) {
 
 // BenchmarkPeopleByDisplayNameWordStart measures name-prefix search across 100,000 people.
 func BenchmarkPeopleByDisplayNameWordStart(b *testing.B) {
-	s, err := Open(filepath.Join(b.TempDir(), "people.db"))
+	s, err := Open(b.Context(), filepath.Join(b.TempDir(), "people.db"))
 	require.NoError(b, err)
 	b.Cleanup(func() { require.NoError(b, s.Close()) })
 	_, err = s.db.ExecContext(b.Context(), `WITH RECURSIVE people(i) AS (

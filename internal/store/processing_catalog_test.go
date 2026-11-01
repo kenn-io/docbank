@@ -73,8 +73,8 @@ func TestRenditionCatalogSharesOneBuildAcrossVersionProfilesWithinVault(t *testi
 	assert.Equal(t, catalogBuildID, secondView.Build.ID)
 
 	var buildCount, attachmentCount int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_builds`).Scan(&buildCount))
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_attachments`).Scan(&attachmentCount))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM rendition_builds`).Scan(&buildCount))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM rendition_attachments`).Scan(&attachmentCount))
 	assert.Equal(t, 1, buildCount)
 	assert.Equal(t, 2, attachmentCount)
 }
@@ -115,7 +115,7 @@ func TestRenditionCatalogRejectsCrossVaultAttachment(t *testing.T) {
 	require.ErrorContains(t, err, "vault")
 
 	var count int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_attachments`).Scan(&count))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM rendition_attachments`).Scan(&count))
 	assert.Zero(t, count)
 }
 
@@ -180,7 +180,7 @@ func TestRenditionCatalogRejectsArtifactsForbiddenByAttachmentProfile(t *testing
 			require.ErrorContains(t, err, "artifact role")
 
 			var count int
-			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_attachments`).Scan(&count))
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM rendition_attachments`).Scan(&count))
 			assert.Zero(t, count)
 		})
 	}
@@ -207,7 +207,7 @@ func TestProcessingMetadataRejectsRestoredAttachmentWithForbiddenArtifact(t *tes
 	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
 		return ensureProcessingProfileTx(t.Context(), tx, profile)
 	}))
-	_, err := s.db.Exec(`INSERT INTO rendition_attachments(
+	_, err := s.db.ExecContext(t.Context(), `INSERT INTO rendition_attachments(
 		attachment_id,vault_uid,content_version_id,build_id,profile_fingerprint,
 		retention_disclosure_fingerprint,attachment_policy_fingerprint,
 		consent_fingerprint,rendition_disclosure_fingerprint,trust_boundary,attached_at
@@ -232,8 +232,8 @@ func TestRenditionCatalogRejectsIncompleteArtifactsWithoutPartialStage(t *testin
 	require.ErrorContains(t, err, "artifact")
 
 	var buildCount, artifactCount int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_builds`).Scan(&buildCount))
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_artifacts`).Scan(&artifactCount))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM rendition_builds`).Scan(&buildCount))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM rendition_artifacts`).Scan(&artifactCount))
 	assert.Zero(t, buildCount, "a rejected aggregate must not leave its parent row")
 	assert.Zero(t, artifactCount, "a rejected aggregate must not leave child rows")
 
@@ -274,7 +274,7 @@ func TestRenditionCatalogValidatesEveryArtifactMembership(t *testing.T) {
 			require.Error(t, err)
 
 			var count int
-			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_builds`).Scan(&count))
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM rendition_builds`).Scan(&count))
 			assert.Zero(t, count)
 		})
 	}
@@ -329,7 +329,7 @@ func TestRenditionCatalogRequiresCapturedPolicyMembership(t *testing.T) {
 			require.Error(t, err)
 
 			var count int
-			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_builds`).Scan(&count))
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM rendition_builds`).Scan(&count))
 			assert.Zero(t, count)
 		})
 	}
@@ -388,7 +388,7 @@ func TestRenditionCatalogSupportsCapturedArtifactCardinality(t *testing.T) {
 			require.NoError(t, s.StageRenditionBuild(t.Context(), build))
 
 			var artifacts int
-			require.NoError(t, s.db.QueryRow(
+			require.NoError(t, s.db.QueryRowContext(t.Context(),
 				`SELECT COUNT(*) FROM rendition_artifacts WHERE build_id=?`, build.ID,
 			).Scan(&artifacts))
 			assert.Equal(t, build.DeclaredArtifactCount, artifacts)
@@ -442,7 +442,7 @@ func TestRenditionCatalogRejectsInvalidCapturedArtifactCardinality(t *testing.T)
 			require.Error(t, s.StageRenditionBuild(t.Context(), build))
 
 			var builds int
-			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_builds`).Scan(&builds))
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM rendition_builds`).Scan(&builds))
 			assert.Zero(t, builds)
 		})
 	}
@@ -460,7 +460,7 @@ func TestRenditionCatalogCanonicalizesCapturedArtifactRuleOrder(t *testing.T) {
 	require.NoError(t, s.StageRenditionBuild(t.Context(), build))
 
 	var stored string
-	require.NoError(t, s.db.QueryRow(
+	require.NoError(t, s.db.QueryRowContext(t.Context(),
 		`SELECT captured_artifact_policy_json FROM rendition_builds WHERE build_id=?`, build.ID,
 	).Scan(&stored))
 	assert.JSONEq(t, catalogCapturedPolicy, stored)
@@ -706,7 +706,7 @@ func TestRenditionCatalogInsertOrReuseRejectsImmutableConflicts(t *testing.T) {
 	require.ErrorContains(t, err, "different immutable")
 
 	var providerOperationID string
-	require.NoError(t, s.db.QueryRow(
+	require.NoError(t, s.db.QueryRowContext(t.Context(),
 		`SELECT provider_operation_id FROM rendition_builds WHERE build_id = ?`, build.ID,
 	).Scan(&providerOperationID))
 	assert.Equal(t, build.ProviderOperationID, providerOperationID)
@@ -755,7 +755,7 @@ func TestRenditionCatalogFailedReplacementKeepsOldHead(t *testing.T) {
 		ID: catalogAttachmentSecond, VaultID: s.VaultID(), ContentVersionID: versions[0],
 		BuildID: replacement.ID, Profile: profile, AttachedAt: "2026-08-22T11:01:00.000000000Z",
 	}
-	_, err := s.db.Exec(`CREATE TRIGGER synthetic_reject_rendition_head_update
+	_, err := s.db.ExecContext(t.Context(), `CREATE TRIGGER synthetic_reject_rendition_head_update
 		BEFORE UPDATE ON rendition_heads BEGIN
 			SELECT RAISE(ABORT, 'synthetic head publication failure');
 		END`)
@@ -826,10 +826,10 @@ func seedRenditionCatalogVersions(t *testing.T, s *Store) []string {
 	second, err := s.CreateFile(t.Context(), s.RootID(), "synthetic-source-b.pdf", catalogSourceHash, 20, "application/pdf")
 	require.NoError(t, err)
 	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-		if err := s.EnsureBlobTx(tx, catalogEvidenceBlobHash, int64(len(catalogBlobContents[catalogEvidenceBlobHash]))); err != nil {
+		if err := s.EnsureBlobTx(t.Context(), tx, catalogEvidenceBlobHash, int64(len(catalogBlobContents[catalogEvidenceBlobHash]))); err != nil {
 			return err
 		}
-		return s.EnsureBlobTx(tx, catalogMarkdownBlobHash, int64(len(catalogBlobContents[catalogMarkdownBlobHash])))
+		return s.EnsureBlobTx(t.Context(), tx, catalogMarkdownBlobHash, int64(len(catalogBlobContents[catalogMarkdownBlobHash])))
 	}))
 	return []string{first.CurrentVersionID, second.CurrentVersionID}
 }

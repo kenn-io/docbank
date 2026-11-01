@@ -36,7 +36,7 @@ func TestBackupRepositoryClaimMovesCaptureBetweenInstallations(t *testing.T) {
 	target := filepath.Join(t.TempDir(), "restored")
 	_, err = backupapp.Restore(t.Context(), repo, "test", backup.RestoreOptions{TargetDir: target})
 	require.NoError(t, err)
-	restored, err := store.OpenForRestore(filepath.Join(target, "docbank.db"), store.DefaultSQLiteDriver())
+	restored, err := store.OpenForRestore(t.Context(), filepath.Join(target, "docbank.db"), store.DefaultSQLiteDriver())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	restoredBlobs, err := blob.New(store.NewPackCatalog(restored), filepath.Join(target, "blobs"))

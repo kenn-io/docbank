@@ -51,7 +51,7 @@ func TestLegacyLexicalGenerationIdentityIncludesZeroSegmentBuildMembership(t *te
 	}))
 	secondSource := fakeHash("7b")
 	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		return s.EnsureBlobTx(tx, secondSource, 7)
+		return s.EnsureBlobTx(t.Context(), tx, secondSource, 7)
 	}))
 	second := cloneCatalogBuild(first)
 	second.ID = fakeHash("7c")
@@ -86,11 +86,11 @@ func TestProviderFreeLexicalRebuildReplacesZeroSegmentMembership(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, initial.BuildCount)
 
-	_, err = s.db.Exec(`DELETE FROM rendition_lexical_heads`)
+	_, err = s.db.ExecContext(t.Context(), `DELETE FROM rendition_lexical_heads`)
 	require.NoError(t, err)
 	secondSource := fakeHash("7d")
 	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		return s.EnsureBlobTx(tx, secondSource, 7)
+		return s.EnsureBlobTx(t.Context(), tx, secondSource, 7)
 	}))
 	second := cloneCatalogBuild(first)
 	second.ID = fakeHash("7e")
@@ -148,13 +148,13 @@ func TestMigrateLegacyPlainTextCutsOverExactEligibleRows(t *testing.T) {
 	invalidHash := fakeHash("65")
 	_, err = s.CreateFile(ctx, s.RootID(), "invalid.txt", invalidHash, 1, "text/plain")
 	require.NoError(t, err)
-	_, err = s.db.Exec(`INSERT INTO extracted_text(
+	_, err = s.db.ExecContext(t.Context(), `INSERT INTO extracted_text(
 		blob_hash,extractor,extractor_version,status,error,attempts,text,extracted_at
 	) VALUES(?, 'plain-text', 1, 'ok', NULL, 1, CAST(X'80' AS TEXT), ?)`,
 		invalidHash, legacyMigrationTimestamp)
 	require.NoError(t, err)
 	missingRowHash := fakeHash("66")
-	_, err = s.db.Exec(`INSERT INTO extracted_text(
+	_, err = s.db.ExecContext(t.Context(), `INSERT INTO extracted_text(
 		blob_hash,extractor,extractor_version,status,error,attempts,text,extracted_at
 	) VALUES(?, 'plain-text', 1, 'ok', NULL, 1, 'dangling', ?)`,
 		missingRowHash, legacyMigrationTimestamp)
@@ -191,12 +191,12 @@ func TestMigrateLegacyPlainTextCutsOverExactEligibleRows(t *testing.T) {
 	assert.Empty(t, hits, "unknown extractors must not keep serving from the portable cache")
 
 	var builds, units, segments, attachments, heads, legacyFTS int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_builds`).Scan(&builds))
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_units`).Scan(&units))
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_lexical_segments`).Scan(&segments))
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_attachments`).Scan(&attachments))
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_heads`).Scan(&heads))
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM content_fts`).Scan(&legacyFTS))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM rendition_builds`).Scan(&builds))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM rendition_units`).Scan(&units))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM rendition_lexical_segments`).Scan(&segments))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM rendition_attachments`).Scan(&attachments))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM rendition_heads`).Scan(&heads))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM content_fts`).Scan(&legacyFTS))
 	assert.Equal(t, 1, builds, "a shared blob owns one immutable build")
 	assert.Equal(t, 1, units)
 	assert.Equal(t, 1, segments)
@@ -205,7 +205,7 @@ func TestMigrateLegacyPlainTextCutsOverExactEligibleRows(t *testing.T) {
 	assert.Zero(t, legacyFTS, "the retained portable cache is non-serving")
 
 	var unitID, evidenceUnitID, storedText string
-	require.NoError(t, s.db.QueryRow(`
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `
 		SELECT u.unit_id,u.evidence_unit_id,l.text
 		FROM rendition_units u JOIN rendition_lexical_segments l USING(build_id)
 	`).Scan(&unitID, &evidenceUnitID, &storedText))
@@ -214,14 +214,14 @@ func TestMigrateLegacyPlainTextCutsOverExactEligibleRows(t *testing.T) {
 	assert.Equal(t, []byte(exactText), []byte(storedText), "migration must not normalize Unicode or newlines")
 
 	var sourceHash, providerOperation string
-	require.NoError(t, s.db.QueryRow(`
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `
 		SELECT source_sha256,provider_operation_id FROM rendition_builds
 	`).Scan(&sourceHash, &providerOperation))
 	assert.Equal(t, eligibleHash, sourceHash)
 	assert.Equal(t, "plain-text/legacy-v1", providerOperation)
 
 	var canonicalProfile string
-	require.NoError(t, s.db.QueryRow(`SELECT canonical_profile FROM processing_profiles`).Scan(&canonicalProfile))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT canonical_profile FROM processing_profiles`).Scan(&canonicalProfile))
 	assert.Contains(t, canonicalProfile, `"adapter_contract":"plain-text/legacy-v1"`)
 
 	queued := queuedLegacyHashes(t, s)
@@ -237,7 +237,7 @@ func TestMigrateLegacyPlainTextCutsOverExactEligibleRows(t *testing.T) {
 	}
 
 	var retainedRows int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM extracted_text`).Scan(&retainedRows))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM extracted_text`).Scan(&retainedRows))
 	assert.Equal(t, 6, retainedRows, "portable legacy rows remain recoverable")
 }
 
@@ -249,7 +249,7 @@ func TestMigrateLegacyPlainTextRollsBackOneAtomicCutover(t *testing.T) {
 	seedLegacyMigrationRow(t, s, "atomic.txt", "71", ExtractionResult{
 		Extractor: "plain-text", ExtractorVersion: 1, Status: ExtractionOK, Text: "atomic legacy text",
 	})
-	_, err := s.db.Exec(`
+	_, err := s.db.ExecContext(t.Context(), `
 		CREATE TRIGGER reject_legacy_head BEFORE INSERT ON rendition_heads BEGIN
 			SELECT RAISE(ABORT, 'synthetic legacy head failure');
 		END`)
@@ -263,11 +263,11 @@ func TestMigrateLegacyPlainTextRollsBackOneAtomicCutover(t *testing.T) {
 		"rendition_lexical_segments", "rendition_attachments", "rendition_heads",
 	} {
 		var count int
-		require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM `+table).Scan(&count))
+		require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM `+table).Scan(&count))
 		assert.Zero(t, count, table+" must roll back")
 	}
 	var legacyFTS int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM content_fts`).Scan(&legacyFTS))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM content_fts`).Scan(&legacyFTS))
 	assert.Equal(t, 1, legacyFTS, "legacy serving remains intact when cutover aborts")
 }
 
@@ -281,7 +281,7 @@ func TestMigrateLegacyPlainTextRejectsCorruptStagedProjection(t *testing.T) {
 		Extractor: "plain-text", ExtractorVersion: 1,
 		Status: ExtractionOK, Text: "staged-projection-authority",
 	})
-	_, err := s.db.Exec(`
+	_, err := s.db.ExecContext(t.Context(), `
 		CREATE TRIGGER erase_staged_projection
 		AFTER INSERT ON rendition_lexical_generation_manifests BEGIN
 			DELETE FROM rendition_lexical_index WHERE build_id IN (
@@ -293,9 +293,9 @@ func TestMigrateLegacyPlainTextRejectsCorruptStagedProjection(t *testing.T) {
 	_, err = s.MigrateLegacyPlainText(t.Context())
 	require.ErrorContains(t, err, "has a different immutable manifest")
 	var legacyFTS, lexicalHeads, renditionHeads int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM content_fts`).Scan(&legacyFTS))
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_lexical_heads`).Scan(&lexicalHeads))
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_heads`).Scan(&renditionHeads))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM content_fts`).Scan(&legacyFTS))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM rendition_lexical_heads`).Scan(&lexicalHeads))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM rendition_heads`).Scan(&renditionHeads))
 	assert.Equal(t, 1, legacyFTS, "the prior authority survives rejected publication")
 	assert.Zero(t, lexicalHeads)
 	assert.Zero(t, renditionHeads)
@@ -318,14 +318,14 @@ func TestPostCutoverExtractionPublishesRenditionAuthority(t *testing.T) {
 	}))
 
 	var cached, builds, heads int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM content_fts`).Scan(&cached))
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_builds`).Scan(&builds))
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_heads`).Scan(&heads))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM content_fts`).Scan(&cached))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM rendition_builds`).Scan(&builds))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM rendition_heads`).Scan(&heads))
 	assert.Zero(t, cached, "the portable cache remains fenced")
 	assert.Equal(t, 1, builds)
 	assert.Equal(t, 1, heads)
 	var generationID string
-	require.NoError(t, s.db.QueryRow(`
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `
 		SELECT generation_id FROM rendition_lexical_heads WHERE singleton=1
 	`).Scan(&generationID))
 	assert.NotEqual(t, initial.LexicalGenerationID, generationID)
@@ -339,7 +339,7 @@ func TestPostCutoverExtractionPublishesRenditionAuthority(t *testing.T) {
 func TestPostCutoverIdenticalReExtractionPreservesImmutableRecords(t *testing.T) {
 	t.Parallel()
 	dbPath := filepath.Join(t.TempDir(), "reextract.db")
-	s, err := Open(dbPath)
+	s, err := Open(t.Context(), dbPath)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		if s != nil {
@@ -356,18 +356,18 @@ func TestPostCutoverIdenticalReExtractionPreservesImmutableRecords(t *testing.T)
 		BlobHash: hash, Extractor: "plain-text", ExtractorVersion: 1,
 		Status: ExtractionOK, Text: text,
 	}))
-	_, err = s.db.Exec(`UPDATE extracted_text SET extracted_at=? WHERE blob_hash=?`,
+	_, err = s.db.ExecContext(t.Context(), `UPDATE extracted_text SET extracted_at=? WHERE blob_hash=?`,
 		legacyMigrationTimestamp, hash)
 	require.NoError(t, err)
 	_, err = s.MigrateLegacyPlainText(t.Context())
 	require.NoError(t, err)
 
 	var buildID, completedAt, firstAttachmentID, firstAttachedAt string
-	require.NoError(t, s.db.QueryRow(`
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `
 		SELECT build_id,completed_at FROM rendition_builds
 		WHERE source_sha256=?`, hash,
 	).Scan(&buildID, &completedAt))
-	require.NoError(t, s.db.QueryRow(`
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `
 		SELECT attachment_id,attached_at FROM rendition_attachments
 		WHERE content_version_id=?`, first.CurrentVersionID,
 	).Scan(&firstAttachmentID, &firstAttachedAt))
@@ -391,7 +391,7 @@ func TestPostCutoverIdenticalReExtractionPreservesImmutableRecords(t *testing.T)
 		`SELECT COUNT(*) FROM text_extraction_queue`: &queued,
 		`SELECT COUNT(*) FROM content_fts`:           &cached,
 	} {
-		require.NoError(t, s.db.QueryRow(query).Scan(destination))
+		require.NoError(t, s.db.QueryRowContext(t.Context(), query).Scan(destination))
 	}
 	assert.Equal(t, 1, builds)
 	assert.Equal(t, 2, attachments)
@@ -399,10 +399,10 @@ func TestPostCutoverIdenticalReExtractionPreservesImmutableRecords(t *testing.T)
 	assert.Zero(t, queued)
 	assert.Zero(t, cached)
 	var stableCompletedAt, stableAttachmentID, stableAttachedAt string
-	require.NoError(t, s.db.QueryRow(`
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `
 		SELECT completed_at FROM rendition_builds WHERE build_id=?`, buildID,
 	).Scan(&stableCompletedAt))
-	require.NoError(t, s.db.QueryRow(`
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `
 		SELECT attachment_id,attached_at FROM rendition_attachments
 		WHERE content_version_id=?`, first.CurrentVersionID,
 	).Scan(&stableAttachmentID, &stableAttachedAt))
@@ -410,7 +410,7 @@ func TestPostCutoverIdenticalReExtractionPreservesImmutableRecords(t *testing.T)
 	assert.Equal(t, firstAttachmentID, stableAttachmentID)
 	assert.Equal(t, firstAttachedAt, stableAttachedAt)
 	var secondAttachedAt string
-	require.NoError(t, s.db.QueryRow(`
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `
 		SELECT attached_at FROM rendition_attachments WHERE content_version_id=?`,
 		second.CurrentVersionID,
 	).Scan(&secondAttachedAt))
@@ -423,7 +423,7 @@ func TestPostCutoverIdenticalReExtractionPreservesImmutableRecords(t *testing.T)
 		[]string{hits[0].Path, hits[1].Path})
 	require.NoError(t, s.Close())
 	s = nil
-	s, err = Open(dbPath)
+	s, err = Open(t.Context(), dbPath)
 	require.NoError(t, err)
 	reopened, _, err := s.SearchPage(t.Context(), text, 20)
 	require.NoError(t, err)
@@ -451,7 +451,7 @@ func TestPostCutoverPublicationFailureKeepsExtractionQueued(t *testing.T) {
 		t.Context(), s.RootID(), "waiting.txt", hash, int64(len(text)), "text/plain",
 	)
 	require.NoError(t, err)
-	_, err = s.db.Exec(`
+	_, err = s.db.ExecContext(t.Context(), `
 		CREATE TRIGGER reject_reextraction_head BEFORE INSERT ON rendition_heads BEGIN
 			SELECT RAISE(ABORT, 'synthetic reextraction publication failure');
 		END`)
@@ -463,12 +463,12 @@ func TestPostCutoverPublicationFailureKeepsExtractionQueued(t *testing.T) {
 	})
 	require.ErrorContains(t, err, "synthetic reextraction publication failure")
 	var queued int
-	require.NoError(t, s.db.QueryRow(`
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `
 		SELECT COUNT(*) FROM text_extraction_queue WHERE blob_hash=?`, hash,
 	).Scan(&queued))
 	assert.Equal(t, 1, queued, "failed publication remains retryable")
 	var generationID string
-	require.NoError(t, s.db.QueryRow(`
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `
 		SELECT generation_id FROM rendition_lexical_heads WHERE singleton=1
 	`).Scan(&generationID))
 	assert.Equal(t, initial.LexicalGenerationID, generationID)
@@ -477,13 +477,13 @@ func TestPostCutoverPublicationFailureKeepsExtractionQueued(t *testing.T) {
 	require.Len(t, hits, 1, "the prior lexical generation remains sole serving authority")
 	assert.Equal(t, "/published.txt", hits[0].Path)
 
-	_, err = s.db.Exec(`DROP TRIGGER reject_reextraction_head`)
+	_, err = s.db.ExecContext(t.Context(), `DROP TRIGGER reject_reextraction_head`)
 	require.NoError(t, err)
 	require.NoError(t, s.RecordExtraction(t.Context(), ExtractionResult{
 		BlobHash: hash, Extractor: "plain-text", ExtractorVersion: 1,
 		Status: ExtractionOK, Text: text,
 	}))
-	require.NoError(t, s.db.QueryRow(`
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `
 		SELECT COUNT(*) FROM text_extraction_queue WHERE blob_hash=?`, hash,
 	).Scan(&queued))
 	assert.Zero(t, queued)
@@ -497,7 +497,7 @@ func TestPurgedLegacyDerivativeStaysSuppressedAcrossRestartUntilExplicitAuthoriz
 	// Mutations caught: startup migration/seeding recreates purged portable text;
 	// silently clearing suppression during startup makes purge non-durable.
 	dbPath := filepath.Join(t.TempDir(), "suppressed.db")
-	s, err := Open(dbPath)
+	s, err := Open(t.Context(), dbPath)
 	require.NoError(t, err)
 	const text = "durably-purged-legacy-derivative"
 	hash := fakeHash("7a")
@@ -511,7 +511,7 @@ func TestPurgedLegacyDerivativeStaysSuppressedAcrossRestartUntilExplicitAuthoriz
 	_, err = s.MigrateLegacyPlainText(t.Context())
 	require.NoError(t, err)
 	var buildID string
-	require.NoError(t, s.db.QueryRow(`
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `
 		SELECT build_id FROM rendition_builds WHERE source_sha256=?`, hash).Scan(&buildID))
 	profile, err := legacyPlainTextProfile()
 	require.NoError(t, err)
@@ -521,7 +521,7 @@ func TestPurgedLegacyDerivativeStaysSuppressedAcrossRestartUntilExplicitAuthoriz
 	require.NoError(t, err)
 	require.NoError(t, s.Close())
 
-	s, err = Open(dbPath)
+	s, err = Open(t.Context(), dbPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	require.NoError(t, s.SeedTextExtractionQueue(t.Context(),
@@ -530,7 +530,7 @@ func TestPurgedLegacyDerivativeStaysSuppressedAcrossRestartUntilExplicitAuthoriz
 	require.NoError(t, err)
 	assert.Empty(t, pending)
 	var builds int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_builds`).Scan(&builds))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM rendition_builds`).Scan(&builds))
 	assert.Zero(t, builds)
 
 	require.NoError(t, s.AuthorizeDerivativeRebuild(t.Context(), DerivativeRebuildAuthorization{
@@ -557,7 +557,7 @@ func TestPurgedLegacyDerivativeStaysSuppressedAcrossRestartUntilExplicitAuthoriz
 	assert.Empty(t, pending, "the worker must retire exactly suppressed extraction work")
 	_, err = s.MigrateLegacyPlainText(t.Context())
 	require.NoError(t, err)
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_builds`).Scan(&builds))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM rendition_builds`).Scan(&builds))
 	assert.Zero(t, builds, "a new version sharing the source cannot recreate an exactly suppressed build")
 	_, err = s.ActiveRendition(t.Context(), second.CurrentVersionID, profile.Fingerprint)
 	require.ErrorIs(t, err, ErrNotFound)
@@ -566,7 +566,7 @@ func TestPurgedLegacyDerivativeStaysSuppressedAcrossRestartUntilExplicitAuthoriz
 func TestLegacyMigrationRestartKeepsUnsuppressedVersionSharingPurgedBlob(t *testing.T) {
 	t.Parallel()
 	dbPath := filepath.Join(t.TempDir(), "shared-suppression.db")
-	s, err := Open(dbPath)
+	s, err := Open(t.Context(), dbPath)
 	require.NoError(t, err)
 	const text = "shared-blob-version-specific-suppression"
 	hash := fakeHash("7b")
@@ -591,7 +591,7 @@ func TestLegacyMigrationRestartKeepsUnsuppressedVersionSharingPurgedBlob(t *test
 	require.NoError(t, err)
 	require.NoError(t, s.Close())
 
-	s, err = Open(dbPath)
+	s, err = Open(t.Context(), dbPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	_, err = s.MigrateLegacyPlainText(t.Context())
@@ -719,7 +719,7 @@ func TestLegacyMigrationRejectsUnsupportedNewerExtraction(t *testing.T) {
 func TestOpenMigratesLegacyPlainTextInCurrentSchema(t *testing.T) {
 	t.Parallel()
 	dbPath := filepath.Join(t.TempDir(), "current.db")
-	s, err := Open(dbPath)
+	s, err := Open(t.Context(), dbPath)
 	require.NoError(t, err)
 	seedLegacyMigrationRow(t, s, "current.txt", "74", ExtractionResult{
 		Extractor: "plain-text", ExtractorVersion: 1,
@@ -727,12 +727,12 @@ func TestOpenMigratesLegacyPlainTextInCurrentSchema(t *testing.T) {
 	})
 	require.NoError(t, s.Close())
 
-	s, err = Open(dbPath)
+	s, err = Open(t.Context(), dbPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	var heads, legacyFTS int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_heads`).Scan(&heads))
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM content_fts`).Scan(&legacyFTS))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM rendition_heads`).Scan(&heads))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM content_fts`).Scan(&legacyFTS))
 	assert.Equal(t, 1, heads)
 	assert.Zero(t, legacyFTS)
 	hits, _, err := s.SearchPage(t.Context(), "current-schema-legacy-text", 20)
@@ -757,7 +757,7 @@ func TestMigrateLegacyPlainTextRetryPreservesQueuedWork(t *testing.T) {
 	first, err := s.MigrateLegacyPlainText(t.Context())
 	require.NoError(t, err)
 	const scheduled = "2030-01-02T03:04:05.000000000Z"
-	_, err = s.db.Exec(`UPDATE text_extraction_queue SET next_attempt_at=? WHERE blob_hash=?`, scheduled, hash)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE text_extraction_queue SET next_attempt_at=? WHERE blob_hash=?`, scheduled, hash)
 	require.NoError(t, err)
 
 	second, err := s.MigrateLegacyPlainText(t.Context())
@@ -767,7 +767,7 @@ func TestMigrateLegacyPlainTextRetryPreservesQueuedWork(t *testing.T) {
 	assert.Zero(t, second.MigratedBuilds)
 	assert.Zero(t, second.QueuedBlobs)
 	var stored string
-	require.NoError(t, s.db.QueryRow(
+	require.NoError(t, s.db.QueryRowContext(t.Context(),
 		`SELECT next_attempt_at FROM text_extraction_queue WHERE blob_hash=?`, hash,
 	).Scan(&stored))
 	assert.Equal(t, scheduled, stored)
@@ -775,7 +775,7 @@ func TestMigrateLegacyPlainTextRetryPreservesQueuedWork(t *testing.T) {
 		"rendition_lexical_generations", "rendition_lexical_generation_manifests",
 	} {
 		var count int
-		require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM `+table).Scan(&count))
+		require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM `+table).Scan(&count))
 		assert.Equal(t, 1, count, table)
 	}
 }
@@ -811,7 +811,7 @@ func TestLegacyMigrationSettlesSupersededText(t *testing.T) {
 			require.NoError(t, err)
 			assert.Empty(t, hits)
 			var builds int
-			require.NoError(t, s.db.QueryRow(
+			require.NoError(t, s.db.QueryRowContext(t.Context(),
 				`SELECT count(*) FROM rendition_builds WHERE source_sha256=?`, hash,
 			).Scan(&builds))
 			assert.Equal(t, 1, builds, "retained content keeps its immutable build")
@@ -822,7 +822,7 @@ func TestLegacyMigrationSettlesSupersededText(t *testing.T) {
 func TestLegacyMigrationKeepsTerminalFailuresRetired(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "docbank.db")
-	s, err := Open(path)
+	s, err := Open(t.Context(), path)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	ctx := t.Context()
@@ -852,7 +852,7 @@ func TestLegacyMigrationKeepsTerminalFailuresRetired(t *testing.T) {
 	assert.Empty(t, pending, "publishing new text must not revive unrelated terminal failures")
 
 	require.NoError(t, s.Close())
-	s, err = Open(path)
+	s, err = Open(t.Context(), path)
 	require.NoError(t, err)
 	require.NoError(t, s.SeedTextExtractionQueue(ctx, "plain-text", 1))
 	pending, err = s.PendingTextExtractions(ctx, 10)
@@ -878,7 +878,7 @@ func seedLegacyMigrationRow(
 
 func queuedLegacyHashes(t *testing.T, s *Store) []string {
 	t.Helper()
-	rows, err := s.db.Query(`SELECT blob_hash FROM text_extraction_queue ORDER BY blob_hash`)
+	rows, err := s.db.QueryContext(t.Context(), `SELECT blob_hash FROM text_extraction_queue ORDER BY blob_hash`)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, rows.Close()) }()
 	var hashes []string

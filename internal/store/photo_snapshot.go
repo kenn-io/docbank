@@ -41,7 +41,7 @@ func photoSnapshotPopulation(compiled CompiledQuery, generation string, coverage
 }
 
 // CreatePhotoAlbum copies a caller's complete frozen photo set in one transaction.
-func (s *QuerySnapshotService) CreatePhotoAlbum(ctx context.Context, owner, snapshotID, memberHash, name string, mutate func(func() error) error) (PhotoSet, error) {
+func (s *QuerySnapshotService) CreatePhotoAlbum(ctx context.Context, owner, snapshotID, memberHash, name string, mutate func(context.Context, func() error) error) (PhotoSet, error) {
 	cached, err := s.lookup(owner, snapshotID)
 	if err != nil {
 		return PhotoSet{}, err
@@ -97,7 +97,7 @@ func (s *QuerySnapshotService) CreatePhotoAlbum(ctx context.Context, owner, snap
 	if mutate == nil {
 		err = write()
 	} else {
-		err = mutate(write)
+		err = mutate(ctx, write)
 	}
 	return out, err
 }

@@ -160,7 +160,7 @@ func TestPhotoQualityRejectsInvalidStoredRows(t *testing.T) {
 			t.Parallel()
 			s := newTestStore(t)
 			node := browsePhotoNode(t, s, "stored.jpg", browseHash("stored-quality"), "image/jpeg")
-			_, err := s.db.Exec(`INSERT INTO photo_quality_signals(content_version_id,evaluator_fingerprint,state,`+
+			_, err := s.db.ExecContext(t.Context(), `INSERT INTO photo_quality_signals(content_version_id,evaluator_fingerprint,state,`+
 				photoQualityColumns+`) VALUES(?,?,`+row+`)`, node.CurrentVersionID, fingerprints.Evaluator)
 			require.NoError(t, err)
 			_, err = s.ListPhotoAssets(t.Context(), PhotoBrowseRequest{Query: snapshotTestQuery(t, `{}`)}, nil)

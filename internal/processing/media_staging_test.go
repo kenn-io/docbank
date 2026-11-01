@@ -44,7 +44,7 @@ func TestMediaArtifactStagingReleasesSharedReservation(t *testing.T) {
 	node, err := fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), "quota.wav",
 		written.Hash, written.Size, "audio/wav", processingBlobPhysical(t, written))
 	require.NoError(t, err)
-	service, err := NewService(ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
+	service, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
 		Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(),
 		Principal: "operator:quota", MediaMaxBytes: 64})
 	require.NoError(t, err)

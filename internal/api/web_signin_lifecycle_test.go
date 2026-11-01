@@ -24,7 +24,7 @@ type signInStatus struct {
 
 func signInCall(t *testing.T, s *api.Server, method, path, body, token string, cookie *http.Cookie) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(method, signInOrigin+path, strings.NewReader(body))
+	req := httptest.NewRequestWithContext(t.Context(), method, signInOrigin+path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Origin", signInOrigin)
 	if token != "" {
@@ -78,7 +78,7 @@ func TestWebSignInKeyExchangeScopeAndRestart(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, signInCall(t, s, http.MethodPost, "/api/daemon/web-session", "", token, cookie).Code)
 	// A same-host proxy makes every peer loopback, so the browser scope check
 	// is what keeps sign-in sessions away from server-path ingest.
-	ingest := httptest.NewRequest(http.MethodPost, signInOrigin+"/api/v1/ingest", strings.NewReader(`{}`))
+	ingest := httptest.NewRequestWithContext(t.Context(), http.MethodPost, signInOrigin+"/api/v1/ingest", strings.NewReader(`{}`))
 	ingest.RemoteAddr = "127.0.0.1:40000"
 	ingest.Header.Set("Content-Type", "application/json")
 	ingest.Header.Set("Origin", signInOrigin)
@@ -112,7 +112,7 @@ func TestWebSignInTabLogoutAndAdminRevocation(t *testing.T) {
 	require.Empty(t, logout.Result().Cookies(), "logout must not delete another tab's ambient cookie")
 	require.Equal(t, http.StatusUnauthorized, signInCall(t, s, http.MethodGet, "/api/v1/tags", "", first.Session.Token, cookie).Code)
 	require.Equal(t, http.StatusOK, signInCall(t, s, http.MethodGet, "/api/v1/tags", "", second.Session.Token, cookie).Code)
-	listReq := httptest.NewRequest(http.MethodGet, signInOrigin+"/api/daemon/web-auth/sessions", nil)
+	listReq := httptest.NewRequestWithContext(t.Context(), http.MethodGet, signInOrigin+"/api/daemon/web-auth/sessions", nil)
 	listReq.Header.Set("X-Api-Key", testAPIKey)
 	listed := httptest.NewRecorder()
 	s.Handler().ServeHTTP(listed, listReq)
@@ -122,7 +122,7 @@ func TestWebSignInTabLogoutAndAdminRevocation(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(listed.Body.Bytes(), &records))
 	require.Len(t, records.Items, 1)
-	revoke := httptest.NewRequest(http.MethodDelete, signInOrigin+"/api/daemon/web-auth/sessions/"+records.Items[0].ID, nil)
+	revoke := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, signInOrigin+"/api/daemon/web-auth/sessions/"+records.Items[0].ID, nil)
 	revoke.Header.Set("X-Api-Key", testAPIKey)
 	revoked := httptest.NewRecorder()
 	s.Handler().ServeHTTP(revoked, revoke)
@@ -144,7 +144,7 @@ func TestWebSignInCookieNamesArePortScoped(t *testing.T) {
 	}
 	login := func(s *api.Server, origin string) *http.Cookie {
 		t.Helper()
-		req := httptest.NewRequest(http.MethodPost, origin+"/api/daemon/web-auth/login", strings.NewReader(`{"api_key":"`+testAPIKey+`"}`))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, origin+"/api/daemon/web-auth/login", strings.NewReader(`{"api_key":"`+testAPIKey+`"}`))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Origin", origin)
 		w := httptest.NewRecorder()
@@ -173,7 +173,7 @@ func TestWebSignInHostOriginAndProxyHeaders(t *testing.T) {
 	})
 	s := catalog.Server
 	for _, test := range []struct{ host, origin, site string }{{"evil.example.test", signInOrigin, "same-origin"}, {"archive.example.test", "https://evil.example.test", "cross-site"}, {"archive.example.test", "", "same-origin"}} {
-		req := httptest.NewRequest(http.MethodPost, signInOrigin+"/api/daemon/web-auth/login", strings.NewReader(`{"api_key":"`+testAPIKey+`"}`))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, signInOrigin+"/api/daemon/web-auth/login", strings.NewReader(`{"api_key":"`+testAPIKey+`"}`))
 		req.Host = test.host
 		req.Header.Set("Origin", test.origin)
 		req.Header.Set("Sec-Fetch-Site", test.site)
@@ -185,19 +185,19 @@ func TestWebSignInHostOriginAndProxyHeaders(t *testing.T) {
 		require.Equal(t, http.StatusForbidden, w.Code)
 	}
 	for _, path := range []string{"/health", "/api/v1/tags", "/"} {
-		req := httptest.NewRequest(http.MethodGet, "http://evil.example.test"+path, nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://evil.example.test"+path, nil)
 		req.Header.Set("X-Api-Key", testAPIKey)
 		w := httptest.NewRecorder()
 		s.Handler().ServeHTTP(w, req)
 		require.Equal(t, http.StatusForbidden, w.Code, "a master key never bypasses Host validation")
 	}
-	req := httptest.NewRequest(http.MethodGet, "http://backend.example.test:7777/api/v1/tags", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://backend.example.test:7777/api/v1/tags", nil)
 	req.Header.Set("X-Api-Key", testAPIKey)
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code, "allowed backend authority keeps CLI/API traffic working")
 	status, cookie := loginBrowser(t, s)
-	originless := httptest.NewRequest(http.MethodPost, signInOrigin+"/api/v1/tags", strings.NewReader(`{"name":"originless"}`))
+	originless := httptest.NewRequestWithContext(t.Context(), http.MethodPost, signInOrigin+"/api/v1/tags", strings.NewReader(`{"name":"originless"}`))
 	originless.Header.Set(api.WebSessionHeader, status.Session.Token)
 	originless.AddCookie(cookie)
 	denied := httptest.NewRecorder()
@@ -219,7 +219,7 @@ func TestWebSignInHostGateRequiresPublicOrigin(t *testing.T) {
 		d.Cfg.Server.AllowedHosts = []string{"nas.example.test:7777"}
 	})
 	for _, host := range []string{"127.0.0.1:7777", "localhost:7777", "nas.example.test:7777"} {
-		req := httptest.NewRequest(http.MethodGet, "http://"+host+"/api/v1/tags", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+host+"/api/v1/tags", nil)
 		req.Header.Set("X-Api-Key", testAPIKey)
 		w := httptest.NewRecorder()
 		catalog.Server.Handler().ServeHTTP(w, req)
@@ -235,7 +235,7 @@ func TestWebSignInStatusIsDisabledAwayFromSignInOrigin(t *testing.T) {
 		d.Cfg.Web.AllowedHosts = []string{"backend.example.test:7777"}
 	})
 	status := func(host string) string {
-		req := httptest.NewRequest(http.MethodGet, "http://"+host+"/api/daemon/web-auth", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+host+"/api/daemon/web-auth", nil)
 		w := httptest.NewRecorder()
 		catalog.Server.Handler().ServeHTTP(w, req)
 		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
@@ -254,7 +254,7 @@ func TestWebSignInMatchesBrowserCanonicalIPv6Origin(t *testing.T) {
 		d.Cfg.Web.PublicOrigin = configuredOrigin
 		d.Cfg.Web.TrustPrivateNetwork = true
 	})
-	req := httptest.NewRequest(http.MethodPost, browserOrigin+"/api/daemon/web-auth/login", strings.NewReader(`{"api_key":"`+testAPIKey+`"}`))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, browserOrigin+"/api/daemon/web-auth/login", strings.NewReader(`{"api_key":"`+testAPIKey+`"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Origin", browserOrigin)
 	w := httptest.NewRecorder()
@@ -269,11 +269,11 @@ func TestWebSignInMatchesDottedIPv4Origin(t *testing.T) {
 		d.WebLoginEnabled = true
 		d.Cfg.Web.PublicOrigin = origin
 	})
-	status := httptest.NewRequest(http.MethodGet, origin+"/api/daemon/web-auth", nil)
+	status := httptest.NewRequestWithContext(t.Context(), http.MethodGet, origin+"/api/daemon/web-auth", nil)
 	w := httptest.NewRecorder()
 	catalog.Server.Handler().ServeHTTP(w, status)
 	require.JSONEq(t, `{"enabled":true}`, w.Body.String())
-	req := httptest.NewRequest(http.MethodPost, origin+"/api/daemon/web-auth/login", strings.NewReader(`{"api_key":"`+testAPIKey+`"}`))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, origin+"/api/daemon/web-auth/login", strings.NewReader(`{"api_key":"`+testAPIKey+`"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Origin", origin)
 	w = httptest.NewRecorder()
@@ -290,7 +290,7 @@ func TestWebSignInMatchesBrowserIPv4MappedIPv6Origin(t *testing.T) {
 		d.Cfg.Web.PublicOrigin = configuredOrigin
 		d.Cfg.Web.TrustPrivateNetwork = true
 	})
-	req := httptest.NewRequest(http.MethodPost, browserOrigin+"/api/daemon/web-auth/login", strings.NewReader(`{"api_key":"`+testAPIKey+`"}`))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, browserOrigin+"/api/daemon/web-auth/login", strings.NewReader(`{"api_key":"`+testAPIKey+`"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Origin", browserOrigin)
 	w := httptest.NewRecorder()

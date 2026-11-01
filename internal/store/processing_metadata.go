@@ -1205,7 +1205,7 @@ func verifyRenditionBlobCatalogAuthority(ctx context.Context, tx *sql.Tx, allowM
 		if err := rows.Scan(&hash); err != nil {
 			return fmt.Errorf("scanning processing blob catalog authority: %w", err)
 		}
-		if _, err := requirePhysicalAuthorityTx(tx, hash); err != nil {
+		if _, err := requirePhysicalAuthorityTx(ctx, tx, hash); err != nil {
 			return fmt.Errorf("processing blob %s: %w", hash, err)
 		}
 	}

@@ -100,6 +100,7 @@ func validateRestoreStoreMap(
 }
 
 func prepareRestoreMappings(
+	ctx context.Context,
 	target string,
 	mapping RestoreStoreMap,
 	manifest placementManifest,
@@ -126,7 +127,7 @@ func prepareRestoreMappings(
 			binding: binding,
 		})
 	}
-	if err := validateRestoreNamespaces(target, prepared, protectedFilesystemRoots); err != nil {
+	if err := validateRestoreNamespaces(ctx, target, prepared, protectedFilesystemRoots); err != nil {
 		return nil, err
 	}
 	return prepared, nil
@@ -177,6 +178,7 @@ type restoreNamespace struct {
 }
 
 func validateRestoreNamespaces(
+	ctx context.Context,
 	target string,
 	prepared []preparedRestoreMapping,
 	protectedFilesystemRoots []string,
@@ -227,7 +229,7 @@ func validateRestoreNamespaces(
 			namespace.prefix = item.binding.Prefix
 		}
 		for _, prior := range namespaces {
-			overlaps, overlapErr := restoreNamespacesOverlap(prior, namespace)
+			overlaps, overlapErr := restoreNamespacesOverlap(ctx, prior, namespace)
 			if overlapErr != nil {
 				return fmt.Errorf(
 					"backupapp: comparing target store %q with %q: %w",
@@ -277,12 +279,12 @@ func canonicalS3Endpoint(raw, region string) (string, error) {
 	return storenamespace.CanonicalS3Endpoint(raw, region)
 }
 
-func restoreNamespacesOverlap(first, second restoreNamespace) (bool, error) {
+func restoreNamespacesOverlap(ctx context.Context, first, second restoreNamespace) (bool, error) {
 	if first.kind != second.kind {
 		return false, nil
 	}
 	if first.kind == restoreStoreKindFilesystem {
-		overlaps, err := ingest.PathsOverlap(first.path, second.path)
+		overlaps, err := ingest.PathsOverlap(ctx, first.path, second.path)
 		if errors.Is(err, fs.ErrNotExist) {
 			return false, nil
 		}
@@ -311,7 +313,7 @@ func applyRestorePlacement(
 		return nil
 	}
 	prepared, err := prepareRestoreMappings(
-		target, *options.Map, manifest, options.Bindings,
+		ctx, target, *options.Map, manifest, options.Bindings,
 		options.ProtectedFilesystemRoots,
 	)
 	if err != nil {
@@ -324,7 +326,7 @@ func applyRestorePlacement(
 	if err := config.EnsureStoreBindings(target, restoreBindings); err != nil {
 		return fmt.Errorf("backupapp: provisioning restored store bindings: %w", err)
 	}
-	metadata, err := store.OpenForRestore(databasePath, driver)
+	metadata, err := store.OpenForRestore(ctx, databasePath, driver)
 	if err != nil {
 		return fmt.Errorf("backupapp: opening restored placement catalog: %w", err)
 	}

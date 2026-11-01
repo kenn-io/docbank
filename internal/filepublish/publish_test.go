@@ -61,7 +61,7 @@ func TestRootStageRejectsChangedDestinationIdentity(t *testing.T) {
 			rootPath := destination
 			junction := func(path, target string) {
 				t.Helper()
-				out, err := exec.Command("cmd", "/c", "mklink", "/J", filepath.Clean(filepath.FromSlash(path)), filepath.Clean(filepath.FromSlash(target))).CombinedOutput()
+				out, err := exec.CommandContext(t.Context(), "cmd", "/c", "mklink", "/J", filepath.Clean(filepath.FromSlash(path)), filepath.Clean(filepath.FromSlash(target))).CombinedOutput()
 				require.NoError(t, err, string(out))
 			}
 			if runtime.GOOS == "windows" {

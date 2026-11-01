@@ -190,7 +190,7 @@ func runServe(ctx context.Context) (retErr error) {
 	sigCtx, sigCancel := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer sigCancel()
 
-	s, err := store.Open(layout.DBPath())
+	s, err := store.Open(sigCtx, layout.DBPath())
 	if err != nil {
 		return err
 	}
@@ -199,7 +199,7 @@ func runServe(ctx context.Context) (retErr error) {
 	if err != nil {
 		return err
 	}
-	if err := validateConfiguredWatchStores(cfg, catalogStores); err != nil {
+	if err := validateConfiguredWatchStores(sigCtx, cfg, catalogStores); err != nil {
 		return err
 	}
 	watchNames := make([]string, 0, len(cfg.Watches))
@@ -258,8 +258,9 @@ func runServe(ctx context.Context) (retErr error) {
 	}()
 	jobSupervisor := jobs.New(sigCtx, logger)
 	defer func() {
+		// The bounded drain runs after sigCtx ends, so it must not inherit that cancellation.
 		shutdownCtx, cancel := context.WithTimeout(
-			context.Background(), daemon.JobDrainTimeout)
+			context.WithoutCancel(ctx), daemon.JobDrainTimeout)
 		defer cancel()
 		if err := jobSupervisor.Shutdown(shutdownCtx); err != nil {
 			retErr = errors.Join(retErr, err)
@@ -338,7 +339,7 @@ func runServe(ctx context.Context) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("configuring media origins: %w", err)
 	}
-	processingService, err := processing.NewService(processing.ServiceConfig{
+	processingService, err := processing.NewService(sigCtx, processing.ServiceConfig{
 		Catalog: s, Blobs: blobs, Gate: operationGate, Profiles: processingProfiles,
 		RenditionRuntimes: runtimeRegistry,
 		Principal:         "daemon:operator", Scope: "document-processing", SpoolDirectory: layout.BlobTmpDir(),
@@ -538,7 +539,7 @@ func runServe(ctx context.Context) (retErr error) {
 	for _, watchConfig := range cfg.Watches {
 		watcher, err := ingest.NewWatcher(
 			&ingest.Ingester{Store: s, Blobs: blobs}, layout.Root, watchConfig,
-			operationGate.Mutate, logger,
+			operationGate.MutateContext, logger,
 		)
 		if err != nil {
 			return fmt.Errorf("configuring watch %q: %w", watchConfig.Name, err)
@@ -758,8 +759,9 @@ func serveDaemonHTTP(ctx context.Context, stopCh <-chan struct{}, servers []serv
 	case <-stopCh:
 	}
 	stopJobs()
+	// The bounded drain runs after ctx ends, so it must not inherit that cancellation.
 	shutdownCtx, cancel := context.WithTimeout(
-		context.Background(), daemon.HTTPDrainTimeout)
+		context.WithoutCancel(ctx), daemon.HTTPDrainTimeout)
 	defer cancel()
 	// Drain MCP while its API-backed reads can still complete against the API.
 	// A stalled read has its request context canceled.
@@ -1192,6 +1194,7 @@ func validateConfiguredCheckouts(ctx context.Context, cfg config.Config, stores 
 }
 
 func validateConfiguredWatchStores(
+	ctx context.Context,
 	cfg config.Config, stores []store.BlobStore,
 ) error {
 	for _, item := range stores {
@@ -1203,7 +1206,7 @@ func validateConfiguredWatchStores(
 		if !ok {
 			continue
 		}
-		watchName, overlap, err := ingest.WatchBindingOverlap(cfg.Watches, binding)
+		watchName, overlap, err := ingest.WatchBindingOverlap(ctx, cfg.Watches, binding)
 		if err != nil {
 			return fmt.Errorf(
 				"checking watch sources against filesystem store %q: %w", item.Name, err,

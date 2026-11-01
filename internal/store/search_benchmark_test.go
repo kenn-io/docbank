@@ -14,7 +14,7 @@ import (
 func BenchmarkSearchRevalidation(b *testing.B) {
 	for _, depth := range []int{0, 16} {
 		b.Run(fmt.Sprintf("depth=%d", depth), func(b *testing.B) {
-			s, err := Open(filepath.Join(b.TempDir(), "docbank.db"))
+			s, err := Open(b.Context(), filepath.Join(b.TempDir(), "docbank.db"))
 			require.NoError(b, err)
 			b.Cleanup(func() { require.NoError(b, s.Close()) })
 			ctx := b.Context()
@@ -62,7 +62,7 @@ func BenchmarkSearchRevalidation(b *testing.B) {
 func BenchmarkNameSearch(b *testing.B) {
 	for _, files := range []int{100, 1000, 10000} {
 		b.Run(fmt.Sprintf("matches=%d", files), func(b *testing.B) {
-			s, err := Open(filepath.Join(b.TempDir(), "docbank.db"))
+			s, err := Open(b.Context(), filepath.Join(b.TempDir(), "docbank.db"))
 			require.NoError(b, err)
 			b.Cleanup(func() { require.NoError(b, s.Close()) })
 			for i := range files {

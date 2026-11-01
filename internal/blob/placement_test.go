@@ -92,7 +92,7 @@ func TestPlacementRunnerRejectsDestinationRemovedBeforeCatalogCommit(t *testing.
 	operationID := createPlacementOperation(t, metadata, toPrimary)
 	commitReached := make(chan struct{})
 	cleanupDone := make(chan struct{})
-	runner.Commit = func(commit func() error) error {
+	runner.Commit = func(_ context.Context, commit func() error) error {
 		close(commitReached)
 		<-cleanupDone
 		return commit()
@@ -1017,7 +1017,7 @@ func TestPlacementRunnerHonorsCancellationAtEvacuationFinalization(t *testing.T)
 	require.NoError(t, metadata.BeginBlobStoreEvacuation(t.Context(), secondary.ID))
 	operationID := createStorageOperation(t, metadata, "evacuate", inbound)
 	commits := 0
-	runner.Commit = func(fn func() error) error {
+	runner.Commit = func(_ context.Context, fn func() error) error {
 		commits++
 		if commits == 2 {
 			require.NoError(t, metadata.RequestStorageOperationCancel(
@@ -1056,7 +1056,7 @@ func TestPlacementRunnerEvacuationAdoptsPendingSourceCleanup(t *testing.T) {
 	retireOperationID := createPlacementOperation(t, metadata, retire)
 	cancelled, cancel := context.WithCancel(t.Context())
 	interrupted := runner
-	interrupted.Commit = func(fn func() error) error {
+	interrupted.Commit = func(_ context.Context, fn func() error) error {
 		err := fn()
 		cancel()
 		return err
@@ -1384,7 +1384,7 @@ func TestPlacementRunnerCompletesRecoveryAfterPhysicalPublication(t *testing.T) 
 	)
 	require.NoError(t, err)
 	operationID := createRecoveryOperation(t, metadata, plan)
-	runner.Commit = func(fn func() error) error {
+	runner.Commit = func(_ context.Context, fn func() error) error {
 		require.ErrorIs(t, metadata.RequestStorageOperationCancel(
 			t.Context(), operationID,
 		), store.ErrStorageOperationTerminal)
@@ -1425,7 +1425,7 @@ func placementTestVaultWithSecondaries(
 ) (*store.Store, *Store, PlacementRunner, []store.BlobStore, string) {
 	t.Helper()
 	root := t.TempDir()
-	metadata, err := store.Open(filepath.Join(root, "metadata.db"))
+	metadata, err := store.Open(t.Context(), filepath.Join(root, "metadata.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, metadata.Close()) })
 	bindings := make(map[string]config.StoreBindingConfig, len(names))

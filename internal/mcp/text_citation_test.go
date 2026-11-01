@@ -32,13 +32,13 @@ func newCitationMCPFixture(t *testing.T) (*Server, document.TextCitation) {
 	t.Helper()
 	root := t.TempDir()
 	require.NoError(t, os.Mkdir(filepath.Join(root, "spool"), 0o700))
-	catalog, err := store.Open(filepath.Join(root, "docbank.db"))
+	catalog, err := store.Open(t.Context(), filepath.Join(root, "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(root, "blobs"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, blobs.Close()) })
-	hash, size, err := blobs.Write(strings.NewReader("MIME-Version: 1.0\r\n" +
+	hash, size, err := blobs.WriteContext(t.Context(), strings.NewReader("MIME-Version: 1.0\r\n"+
 		"Content-Type: text/plain; charset=utf-8\r\n\r\n$1,205 aé界🙂z\r\n"))
 	require.NoError(t, err)
 	node, err := catalog.CreateFile(t.Context(), catalog.RootID(),
@@ -70,7 +70,7 @@ func newCitationMCPFixture(t *testing.T) (*Server, document.TextCitation) {
 		RenditionAttachmentID: view.Attachment.ID,
 		BuildID:               view.Build.ID, RenditionSHA256: view.Build.MarkdownChecksum, Start: start, End: start + 3}
 	gate := api.NewOperationGate()
-	service, err := processing.NewService(processing.ServiceConfig{
+	service, err := processing.NewService(t.Context(), processing.ServiceConfig{
 		Catalog: catalog, Blobs: blobs, Gate: gate, SpoolDirectory: filepath.Join(root, "spool")})
 	require.NoError(t, err)
 	cfg := config.Default()

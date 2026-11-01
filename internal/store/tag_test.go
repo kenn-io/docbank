@@ -84,7 +84,7 @@ func TestTagLifecycleAndNodeRevisions(t *testing.T) {
 	assert.Equal(t, twoAfterRename.Revision+1, twoAfterDelete.Revision)
 
 	var assignments int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM node_tags`).Scan(&assignments))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM node_tags`).Scan(&assignments))
 	assert.Zero(t, assignments)
 }
 

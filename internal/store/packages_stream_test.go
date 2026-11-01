@@ -36,7 +36,7 @@ func TestSnapshotSourceBatchChecksOverlappingMembershipInOneQuery(t *testing.T) 
 		var err error
 		ids[i], err = newUUIDv4()
 		require.NoError(t, err)
-		_, err = s.db.Exec(`INSERT INTO ingests(id,started_at,source_kind,source_desc) VALUES(?,?,?,?)`, ids[i], nowRFC3339(), "file", "Synthetic collection")
+		_, err = s.db.ExecContext(t.Context(), `INSERT INTO ingests(id,started_at,source_kind,source_desc) VALUES(?,?,?,?)`, ids[i], nowRFC3339(), "file", "Synthetic collection")
 		require.NoError(t, err)
 	}
 	members := make([]CollectionSnapshotMember, 3)
@@ -50,7 +50,7 @@ func TestSnapshotSourceBatchChecksOverlappingMembershipInOneQuery(t *testing.T) 
 			}
 			provenanceID, err := provenanceIdentity(metadataProvenance{Type: metadataProvenanceType, NodeID: node.ID, IngestID: id, OriginalPath: node.Name})
 			require.NoError(t, err)
-			_, err = s.db.Exec(`INSERT INTO provenance(identity,node_id,ingest_id,original_path) VALUES(?,?,?,?)`, provenanceID, node.ID, id, node.Name)
+			_, err = s.db.ExecContext(t.Context(), `INSERT INTO provenance(identity,node_id,ingest_id,original_path) VALUES(?,?,?,?)`, provenanceID, node.ID, id, node.Name)
 			require.NoError(t, err)
 		}
 		members[i].SourceCollectionIDs = slices.Clone(ids)
@@ -190,7 +190,7 @@ func TestSealCollectionSnapshotStreamValidatesFamilyAcrossBatches(t *testing.T) 
 		var err error
 		sourceIDs[i], err = newUUIDv4()
 		require.NoError(t, err)
-		_, err = s.db.Exec(`INSERT INTO ingests(id,started_at,source_kind,source_desc) VALUES(?,?,?,?)`, sourceIDs[i], nowRFC3339(), "file", "Synthetic batch collection")
+		_, err = s.db.ExecContext(t.Context(), `INSERT INTO ingests(id,started_at,source_kind,source_desc) VALUES(?,?,?,?)`, sourceIDs[i], nowRFC3339(), "file", "Synthetic batch collection")
 		require.NoError(t, err)
 	}
 	content := "Synthetic batch source"
@@ -226,7 +226,7 @@ func TestSealCollectionSnapshotStreamValidatesFamilyAcrossBatches(t *testing.T) 
 			}
 			provenanceID, err := provenanceIdentity(metadataProvenance{Type: metadataProvenanceType, NodeID: node.id, IngestID: sourceID, OriginalPath: node.name})
 			require.NoError(t, err)
-			_, err = tx.Exec(`INSERT INTO provenance(identity,node_id,ingest_id,original_path) VALUES(?,?,?,?)`, provenanceID, node.id, sourceID, node.name)
+			_, err = tx.ExecContext(t.Context(), `INSERT INTO provenance(identity,node_id,ingest_id,original_path) VALUES(?,?,?,?)`, provenanceID, node.id, sourceID, node.name)
 			require.NoError(t, err)
 		}
 	}

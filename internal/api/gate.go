@@ -34,12 +34,6 @@ func NewOperationGate() *OperationGate {
 	}
 }
 
-// Mutate runs fn as an ordinary mutation, excluding maintenance while the
-// complete physical-write and metadata-publication operation is in flight.
-func (g *OperationGate) Mutate(fn func() error) error {
-	return g.MutateContext(context.Background(), fn)
-}
-
 // MutateContext runs a daemon-owned logical mutation on the shared side of
 // the maintenance gate, with cancellation while waiting for admission.
 func (g *OperationGate) MutateContext(ctx context.Context, fn func() error) error {
@@ -58,17 +52,15 @@ func (g *OperationGate) MaintainContext(ctx context.Context, fn func() error) er
 
 // PhysicalMutate serializes a short physical-authority commit with backup
 // preservation without blocking unrelated logical document mutations.
-func (g *OperationGate) PhysicalMutate(fn func() error) error {
-	if err := g.preservation.Acquire(
-		context.Background(), operationGateExclusiveWeight,
-	); err != nil {
+func (g *OperationGate) PhysicalMutate(ctx context.Context, fn func() error) error {
+	if err := g.preservation.Acquire(ctx, operationGateExclusiveWeight); err != nil {
 		return fmt.Errorf("acquiring physical-authority gate: %w", err)
 	}
 	defer g.preservation.Release(operationGateExclusiveWeight)
 	return fn()
 }
 
-func (g *OperationGate) mutate(fn func() error) error {
+func (g *OperationGate) mutate(ctx context.Context, fn func() error) error {
 	g.admission.RLock()
 	if g.maintenance > 0 {
 		g.admission.RUnlock()
@@ -78,7 +70,7 @@ func (g *OperationGate) mutate(fn func() error) error {
 	// Keep admission pinned until the shared side is held. A short backup
 	// freeze can therefore delay this mutation without being mistaken for
 	// maintenance, while newly queued maintenance cannot overtake it.
-	err := g.mu.Acquire(context.Background(), 1)
+	err := g.mu.Acquire(ctx, 1)
 	g.admission.RUnlock()
 	if err != nil {
 		return fmt.Errorf("acquiring route mutation gate: %w", err)

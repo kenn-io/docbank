@@ -24,7 +24,7 @@ import (
 func peopleMCPServer(t *testing.T) (*store.Store, func(string, map[string]any) map[string]any) {
 	t.Helper()
 	vault := t.TempDir()
-	catalog, err := store.Open(filepath.Join(vault, "docbank.db"))
+	catalog, err := store.Open(t.Context(), filepath.Join(vault, "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(vault, "blobs"))

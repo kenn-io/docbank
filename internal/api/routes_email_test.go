@@ -285,7 +285,7 @@ func TestEmailBrowserSessionReadsRetainedMetadataWithoutDecoding(t *testing.T) {
 
 func createEmailVersion(t *testing.T, s *testStore, name, raw string) store.ContentVersion {
 	t.Helper()
-	hash, size, err := s.Blobs.Write(strings.NewReader(raw))
+	hash, size, err := s.Blobs.WriteContext(t.Context(), strings.NewReader(raw))
 	require.NoError(t, err)
 	node, err := s.CreateFile(t.Context(), s.RootID(), name, hash, size, "message/rfc822")
 	require.NoError(t, err)

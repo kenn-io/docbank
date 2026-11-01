@@ -36,7 +36,7 @@ func TestAttachmentNavigationBrowserReadsAreExactAndBounded(t *testing.T) {
 		{http.MethodGet, "/api/v1/versions/not-a-version", false},
 	} {
 		t.Run(test.method+test.path, func(t *testing.T) {
-			assert.Equal(t, test.allowed, webSessionRequestAllowed(httptest.NewRequest(test.method, test.path, nil)))
+			assert.Equal(t, test.allowed, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), test.method, test.path, nil)))
 		})
 	}
 }

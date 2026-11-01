@@ -171,7 +171,7 @@ func TestCollectionQualitySizeBoundariesAndUTCMonth(t *testing.T) {
 		name := fmt.Sprintf("size-%d.pdf", i)
 		node, err := s.IngestFileExact(t.Context(), run, s.RootID(), name, testSHA256([]byte(name)), size, "application/octet-stream", name, "")
 		require.NoError(t, err)
-		_, err = s.db.Exec(`UPDATE nodes SET modified_at=? WHERE id=?`, "2026-03-01T00:30:00+02:00", node.ID)
+		_, err = s.db.ExecContext(t.Context(), `UPDATE nodes SET modified_at=? WHERE id=?`, "2026-03-01T00:30:00+02:00", node.ID)
 		require.NoError(t, err)
 	}
 	got, err := s.CollectionQuality(t.Context(), run.ID(), CoverageSelection{}, []string{"size", "modified_month", "media_family", "text_coverage"})

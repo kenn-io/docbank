@@ -15,7 +15,7 @@ import (
 func TestMediaTranscriptRequiresCanonicalContentVersionID(t *testing.T) {
 	t.Parallel()
 	fixture := newPublicationFixture(t)
-	service, err := NewService(ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
+	service, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
 		Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Principal: "operator:transcript"})
 	require.NoError(t, err)
 	for _, contentVersionID := range []string{
@@ -63,7 +63,7 @@ func TestMediaTranscriptMismatchedContentVersionReturnsStaleWithoutText(t *testi
 	node, err := fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), "call.wav", written.Hash, written.Size,
 		"audio/wav", processingBlobPhysical(t, written))
 	require.NoError(t, err)
-	service, err := NewService(ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
+	service, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
 		Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Principal: "operator:transcript"})
 	require.NoError(t, err)
 	retained, err := service.SubmitSuppliedMedia(t.Context(), SuppliedMediaRequest{
@@ -105,7 +105,7 @@ func newCaptionFixture(t *testing.T, ref string) captionFixture {
 	require.NoError(t, err)
 	name, profile, err := NewSuppliedCaptionProfile(fixture.catalog, fixture.blobs, base.principal)
 	require.NoError(t, err)
-	captions, err := NewService(ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
+	captions, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
 		Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Principal: base.principal,
 		Profiles: map[string]ProfileConfig{name: profile}})
 	require.NoError(t, err)

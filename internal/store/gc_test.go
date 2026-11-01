@@ -68,20 +68,20 @@ func TestLifecycleMetadataRoundTripPreservesDurableRootsAndZeroSegmentMembership
 	assert.Equal(t, 1, rebuilt.BuildCount)
 	assert.Equal(t, lexicalBuildDigest([]string{build.ID}), rebuilt.BuildDigest)
 	var rootedGeneration string
-	require.NoError(t, restored.db.QueryRow(`SELECT target_id FROM current_rendition_roots
+	require.NoError(t, restored.db.QueryRowContext(t.Context(), `SELECT target_id FROM current_rendition_roots
 		WHERE root_id='durable-audit' AND active=1`).Scan(&rootedGeneration))
 	assert.Equal(t, generationID, rootedGeneration)
 
 	var membership int
-	require.NoError(t, restored.db.QueryRow(`
+	require.NoError(t, restored.db.QueryRowContext(t.Context(), `
 		SELECT COUNT(*) FROM rendition_lexical_generation_builds
 		WHERE generation_id=? AND build_id=?`, rebuilt.ID, build.ID).Scan(&membership))
 	assert.Equal(t, 1, membership)
 	var durable, unsafe int
-	require.NoError(t, restored.db.QueryRow(`
+	require.NoError(t, restored.db.QueryRowContext(t.Context(), `
 		SELECT COUNT(*) FROM current_rendition_roots
 		WHERE root_kind IN ('retention','audit')`).Scan(&durable))
-	require.NoError(t, restored.db.QueryRow(`
+	require.NoError(t, restored.db.QueryRowContext(t.Context(), `
 		SELECT COUNT(*) FROM current_rendition_roots
 		WHERE root_kind NOT IN ('retention','audit')`).Scan(&unsafe))
 	assert.Equal(t, 2, durable)
@@ -171,7 +171,7 @@ func TestUnreachableBlobsRetainsStagedBuildSourcesWithoutVersionAttachment(t *te
 	ctx := t.Context()
 	stagedSource := fakeHash("17")
 	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		return s.EnsureBlobTx(tx, stagedSource, 23)
+		return s.EnsureBlobTx(t.Context(), tx, stagedSource, 23)
 	}))
 	build := catalogRenditionBuild(s, catalogProcessingProfile(t, false))
 	build.ID = catalogBuildReplacement
@@ -425,7 +425,7 @@ func TestStageAndRootAPIsPublishNoCollectibleWindow(t *testing.T) {
 	invalid.ID = fakeHash("8c")
 	invalid.SourceSHA256 = fakeHash("19")
 	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		return s.EnsureBlobTx(tx, invalid.SourceSHA256, 19)
+		return s.EnsureBlobTx(t.Context(), tx, invalid.SourceSHA256, 19)
 	}))
 	badRoot := buildRoot
 	badRoot.ID = "atomic-invalid-root"
@@ -520,7 +520,7 @@ func TestDerivativeGCPlanRetainsZeroSegmentBuildThroughGenerationMembership(t *t
 	require.NoError(t, s.StageRenditionBuild(ctx, segmented))
 	zeroSource := fakeHash("18")
 	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		return s.EnsureBlobTx(tx, zeroSource, 18)
+		return s.EnsureBlobTx(t.Context(), tx, zeroSource, 18)
 	}))
 	zero := cloneCatalogBuild(segmented)
 	zero.ID = catalogBuildReplacement
@@ -604,7 +604,7 @@ func checkPurgeDerivativesRemovesCompleteLiveManifestButNeverOriginal(t *testing
 			continue
 		}
 		var count int
-		require.NoError(t, s.db.QueryRow("SELECT COUNT(*) FROM "+table).Scan(&count))
+		require.NoError(t, s.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM "+table).Scan(&count))
 		assert.Zero(t, count, table)
 	}
 	_, err = s.BlobInfo(ctx, catalogSourceHash)
@@ -652,7 +652,7 @@ func TestPurgeDerivativesPreservesLiveContentBlobSharingArtifactHash(t *testing.
 	require.NoError(t, err)
 	assert.Equal(t, []string{catalogMarkdownBlobHash}, report.PhysicalDerivativeBlobsPendingGC)
 	var pending int
-	require.NoError(t, s.db.QueryRow(`SELECT EXISTS(
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT EXISTS(
 		SELECT 1 FROM derivative_blob_purge_pending WHERE blob_hash=?)`,
 		catalogEvidenceBlobHash).Scan(&pending))
 	assert.Zero(t, pending)
@@ -677,11 +677,11 @@ func TestExactNonLegacyPurgePreservesLegacySearchAuthority(t *testing.T) {
 				int64(len(legacyText)), "text/plain")
 			require.NoError(t, err)
 			require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
-				if err := s.EnsureBlobTx(tx, catalogEvidenceBlobHash,
+				if err := s.EnsureBlobTx(t.Context(), tx, catalogEvidenceBlobHash,
 					int64(len(catalogBlobContents[catalogEvidenceBlobHash]))); err != nil {
 					return err
 				}
-				return s.EnsureBlobTx(tx, catalogMarkdownBlobHash,
+				return s.EnsureBlobTx(t.Context(), tx, catalogMarkdownBlobHash,
 					int64(len(catalogBlobContents[catalogMarkdownBlobHash])))
 			}))
 			require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{
@@ -700,7 +700,7 @@ func TestExactNonLegacyPurgePreservesLegacySearchAuthority(t *testing.T) {
 			_, err = s.PurgeDerivatives(ctx, request(attachment))
 			require.NoError(t, err)
 			var searchableVersions int
-			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM text_searchable_versions
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM text_searchable_versions
 				WHERE version_id=?`, node.CurrentVersionID).Scan(&searchableVersions))
 			assert.Equal(t, 1, searchableVersions)
 		})
@@ -764,7 +764,7 @@ func TestPurgeBeforeLegacyExtractionSuppressesQueuedAndRestoredWorkByVersion(t *
 	})
 	require.NoError(t, err)
 	var queued, searchable, suppressions int
-	require.NoError(t, s.db.QueryRow(`SELECT
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT
 		(SELECT COUNT(*) FROM text_extraction_queue WHERE blob_hash=?),
 		(SELECT COUNT(*) FROM text_searchable_versions WHERE version_id IN (?,?)),
 		(SELECT COUNT(*) FROM derivative_purge_suppressions WHERE source_sha256=? AND active=1)`,
@@ -777,7 +777,7 @@ func TestPurgeBeforeLegacyExtractionSuppressesQueuedAndRestoredWorkByVersion(t *
 		ContentVersionIDs: []string{second.CurrentVersionID},
 	})
 	require.NoError(t, err)
-	require.NoError(t, s.db.QueryRow(`SELECT
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT
 		(SELECT COUNT(*) FROM text_extraction_queue WHERE blob_hash=?),
 		(SELECT COUNT(*) FROM text_searchable_versions WHERE version_id IN (?,?)),
 		(SELECT COUNT(*) FROM derivative_purge_suppressions WHERE source_sha256=? AND active=1)`,
@@ -890,7 +890,7 @@ func TestLegacyCacheRemainsUntilHistoricalAndCurrentSharedBlobScopesArePurged(t 
 	require.NoError(t, err)
 	assert.Zero(t, report.RemovedLegacyCacheRows)
 	var extracted int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM extracted_text WHERE blob_hash=?`, hash).Scan(&extracted))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM extracted_text WHERE blob_hash=?`, hash).Scan(&extracted))
 	assert.Equal(t, 1, extracted, "the unsuppressed retained version still owns the shared cache")
 
 	report, err = s.PurgeDerivatives(ctx, PurgeRequest{
@@ -904,7 +904,7 @@ func TestLegacyCacheRemainsUntilHistoricalAndCurrentSharedBlobScopesArePurged(t 
 func assertNoLegacyDerivativeState(t *testing.T, s *Store, hash, text string) {
 	t.Helper()
 	var extracted, legacyFTS, queued int
-	require.NoError(t, s.db.QueryRow(`SELECT
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT
 		(SELECT COUNT(*) FROM extracted_text WHERE blob_hash=?),
 		(SELECT COUNT(*) FROM content_fts WHERE rowid IN (
 			SELECT rowid FROM extracted_text WHERE blob_hash=?)),
@@ -936,14 +936,14 @@ func TestPurgeLegacyBuildRemovesCacheWhenNonLegacyBuildSharesSource(t *testing.T
 	_, err := s.MigrateLegacyPlainText(ctx)
 	require.NoError(t, err)
 	var legacyBuildID string
-	require.NoError(t, s.db.QueryRow(`SELECT build_id FROM rendition_builds
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT build_id FROM rendition_builds
 		WHERE source_sha256=? AND provider_operation_id=?`,
 		catalogSourceHash, legacyPlainTextProvider).Scan(&legacyBuildID))
 
 	_, err = s.PurgeDerivatives(ctx, PurgeRequest{BuildIDs: []string{legacyBuildID}})
 	require.NoError(t, err)
 	var extracted int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM extracted_text WHERE blob_hash=?`,
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM extracted_text WHERE blob_hash=?`,
 		catalogSourceHash).Scan(&extracted))
 	assert.Zero(t, extracted, "a different provider build must not retain the legacy plaintext cache")
 }
@@ -1156,7 +1156,7 @@ func TestPurgeReplacesLexicalHeadWithoutSelectedBuild(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEqual(t, initial.ID, active.ID)
 	var retainedBuildID string
-	require.NoError(t, s.db.QueryRow(`SELECT build_id
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT build_id
 		FROM rendition_lexical_generation_builds WHERE generation_id=?`, active.ID,
 	).Scan(&retainedBuildID))
 	assert.Equal(t, second.ID, retainedBuildID)
@@ -1206,13 +1206,13 @@ func TestPurgeRootedBuildLeavesItPhysicalButRemovesItFromActiveLexicalHead(t *te
 	require.NoError(t, err)
 	assert.Equal(t, []string{selected.ID}, report.RetainedBuildIDs)
 	var selectedBuilds int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_builds WHERE build_id=?`,
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM rendition_builds WHERE build_id=?`,
 		selected.ID).Scan(&selectedBuilds))
 	assert.Equal(t, 1, selectedBuilds, "the exact build pin retains physical authority")
 	active, err := s.ActiveLexicalGeneration(ctx)
 	require.NoError(t, err)
 	var selectedRows int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_lexical_generation_builds
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM rendition_lexical_generation_builds
 		WHERE generation_id=? AND build_id=?`, active.ID, selected.ID).Scan(&selectedRows))
 	assert.Zero(t, selectedRows, "a build-only pin must not preserve active search authority")
 	hits, _, err := s.SearchPage(ctx, "retained", 10)
@@ -1289,7 +1289,7 @@ func TestOrdinaryDerivativeGCReplacesHeadBeforeCollectingUnrootedMemberBuild(t *
 	require.NoError(t, err)
 	assert.Equal(t, 1, report.RemovedBuilds)
 	var orphanBuilds int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_builds WHERE build_id=?`,
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM rendition_builds WHERE build_id=?`,
 		orphan.ID).Scan(&orphanBuilds))
 	assert.Zero(t, orphanBuilds)
 	active, err := s.ActiveLexicalGeneration(ctx)
@@ -1521,7 +1521,7 @@ func TestPurgeDerivativesRollsBackEveryAuthorityOnManifestFailure(t *testing.T) 
 			ContentVersionID: versions[0], ProcessingProfileFingerprint: profile.Fingerprint,
 			AttachmentID: attachment.ID, PublishedAt: "2026-08-23T16:01:00.000000000Z",
 		}, generation.ID))
-	_, err = s.db.Exec(`CREATE TRIGGER fail_derivative_manifest_purge
+	_, err = s.db.ExecContext(t.Context(), `CREATE TRIGGER fail_derivative_manifest_purge
 		BEFORE DELETE ON rendition_artifacts BEGIN
 		SELECT RAISE(ABORT, 'synthetic derivative purge failure'); END`)
 	require.NoError(t, err)
@@ -1535,7 +1535,7 @@ func TestPurgeDerivativesRollsBackEveryAuthorityOnManifestFailure(t *testing.T) 
 	require.NoError(t, err)
 	assert.Equal(t, generation.ID, activeGeneration.ID)
 	var builds, artifacts, attachments, heads, generations, lexicalRows int
-	require.NoError(t, s.db.QueryRow(`SELECT
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT
 		(SELECT COUNT(*) FROM rendition_builds),
 		(SELECT COUNT(*) FROM rendition_artifacts),
 		(SELECT COUNT(*) FROM rendition_attachments),
@@ -1563,7 +1563,7 @@ func TestPurgeDerivativesRecordsAuditedSuppressionAndHonorsExactAuditRoot(t *tes
 	}))
 	otherSource := fakeHash("1a")
 	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		return s.EnsureBlobTx(tx, otherSource, 20)
+		return s.EnsureBlobTx(t.Context(), tx, otherSource, 20)
 	}))
 	other := cloneCatalogBuild(build)
 	other.ID = catalogBuildReplacement
@@ -1577,7 +1577,7 @@ func TestPurgeDerivativesRecordsAuditedSuppressionAndHonorsExactAuditRoot(t *tes
 	}))
 	seedInitialAuditAuthority(t, s, s.RootID())
 	var priorSequence int64
-	require.NoError(t, s.db.QueryRow(`SELECT operation_sequence_high_water
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT operation_sequence_high_water
 		FROM audit_authority WHERE singleton=1`).Scan(&priorSequence))
 
 	report, err := s.PurgeDerivatives(ctx, PurgeRequest{All: true})
@@ -1588,7 +1588,7 @@ func TestPurgeDerivativesRecordsAuditedSuppressionAndHonorsExactAuditRoot(t *tes
 	_, err = s.ActiveRendition(ctx, versions[0], profile.Fingerprint)
 	require.ErrorIs(t, err, ErrNotFound)
 	var builds, attachments, suppressions int
-	require.NoError(t, s.db.QueryRow(`SELECT
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT
 		(SELECT COUNT(*) FROM rendition_builds),
 		(SELECT COUNT(*) FROM rendition_attachments),
 		(SELECT COUNT(*) FROM derivative_purge_suppressions WHERE active=1)`).Scan(
@@ -1596,14 +1596,14 @@ func TestPurgeDerivativesRecordsAuditedSuppressionAndHonorsExactAuditRoot(t *tes
 	assert.Equal(t, []int{1, 0, 5}, []int{builds, attachments, suppressions},
 		"all-version purge also fences both source versions before legacy extraction")
 	var resultingSequence int64
-	require.NoError(t, s.db.QueryRow(`SELECT operation_sequence_high_water
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT operation_sequence_high_water
 		FROM audit_authority WHERE singleton=1`).Scan(&resultingSequence))
 	assert.Equal(t, priorSequence+1, resultingSequence)
 	require.NoError(t, s.ValidateMetadata(ctx), "audited derivative purge must replay exactly")
 	_, err = s.PurgeDerivatives(ctx, PurgeRequest{All: true})
 	require.NoError(t, err)
 	var replaySequence int64
-	require.NoError(t, s.db.QueryRow(`SELECT operation_sequence_high_water
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT operation_sequence_high_water
 		FROM audit_authority WHERE singleton=1`).Scan(&replaySequence))
 	assert.Equal(t, resultingSequence, replaySequence,
 		"idempotent purge must not allocate empty audit history")
@@ -1614,7 +1614,7 @@ func TestPurgeDerivativesRecordsAuditedSuppressionAndHonorsExactAuditRoot(t *tes
 	require.NoError(t, s.AuthorizeDerivativeRebuild(ctx, authorization))
 	require.NoError(t, s.AuthorizeDerivativeRebuild(ctx, authorization))
 	var authorizedSequence int64
-	require.NoError(t, s.db.QueryRow(`SELECT operation_sequence_high_water
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT operation_sequence_high_water
 		FROM audit_authority WHERE singleton=1`).Scan(&authorizedSequence))
 	assert.Equal(t, resultingSequence+1, authorizedSequence,
 		"explicit suppression supersession is one idempotent audited transition")
@@ -1649,7 +1649,7 @@ func TestPurgeDerivativesCollectsUnheadedGenerationOverRetainedBuild(t *testing.
 	assert.Equal(t, 1, report.RemovedLexicalGenerations)
 	assert.Equal(t, 1, report.RemovedLexicalRows)
 	var builds, generations int
-	require.NoError(t, s.db.QueryRow(`SELECT
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT
 		(SELECT COUNT(*) FROM rendition_builds),
 		(SELECT COUNT(*) FROM rendition_lexical_generations)`).Scan(&builds, &generations))
 	assert.Equal(t, 1, builds)
@@ -2129,10 +2129,10 @@ func TestUnreachableBlobs(t *testing.T) {
 	require.NoError(t, err)
 
 	// Replacing the current pointer leaves the original version as a root.
-	_, err = s.db.Exec(`INSERT INTO blobs (hash, size, created_at) VALUES (?, 9, ?)`,
+	_, err = s.db.ExecContext(t.Context(), `INSERT INTO blobs (hash, size, created_at) VALUES (?, 9, ?)`,
 		fakeHash("d4"), "2026-01-01T00:00:00.000000000Z")
 	require.NoError(t, err)
-	_, err = s.db.Exec(
+	_, err = s.db.ExecContext(t.Context(),
 		`INSERT INTO content_versions (
 			version_id, node_id, blob_hash, size, recorded_at, node_revision,
 			introduced_operation_id, transition_kind
@@ -2140,7 +2140,7 @@ func TestUnreachableBlobs(t *testing.T) {
 			'dddddddd-dddd-4ddd-8ddd-dddddddddddd', 'content_replace')`,
 		live.ID, fakeHash("d4"), "2026-01-01T00:00:00.000000000Z")
 	require.NoError(t, err)
-	_, err = s.db.Exec(`UPDATE nodes SET current_version_id =
+	_, err = s.db.ExecContext(t.Context(), `UPDATE nodes SET current_version_id =
 		'44444444-4444-4444-8444-444444444444', revision = 2 WHERE id = ?`, live.ID)
 	require.NoError(t, err)
 
@@ -2161,7 +2161,7 @@ func TestUnreachableBlobs(t *testing.T) {
 	require.NoError(t, err)
 	// Only 'gone' and 'trashed' are in the trash; empty just 'gone' by
 	// deleting it directly (EmptyTrash cutoffs are time-based).
-	_, err = s.db.Exec(`DELETE FROM nodes WHERE id = ?`, gone.ID)
+	_, err = s.db.ExecContext(t.Context(), `DELETE FROM nodes WHERE id = ?`, gone.ID)
 	require.NoError(t, err)
 
 	un, err = s.UnreachableBlobs(ctx)
@@ -2179,10 +2179,10 @@ func TestUnreachableBlobsKeepsRenditionBuildBytesReachable(t *testing.T) {
 
 	// Remove every content-version reference so the rendition build and its
 	// artifacts are the only remaining authority for these three blobs.
-	_, err := s.db.Exec(`DELETE FROM nodes WHERE parent_id IS NOT NULL`)
+	_, err := s.db.ExecContext(t.Context(), `DELETE FROM nodes WHERE parent_id IS NOT NULL`)
 	require.NoError(t, err)
 	orphan := fakeHash("f9")
-	_, err = s.db.Exec(`INSERT INTO blobs(hash,size,created_at) VALUES(?,1,?)`,
+	_, err = s.db.ExecContext(t.Context(), `INSERT INTO blobs(hash,size,created_at) VALUES(?,1,?)`,
 		orphan, "2026-01-01T00:00:00.000000000Z")
 	require.NoError(t, err)
 
@@ -2203,54 +2203,54 @@ func TestDeleteBlobRows(t *testing.T) {
 	ctx := t.Context()
 	packID := pack.NewPackID()
 
-	_, err := s.db.Exec(`INSERT INTO blobs (hash, size, created_at) VALUES (?, 1, ?)`,
+	_, err := s.db.ExecContext(t.Context(), `INSERT INTO blobs (hash, size, created_at) VALUES (?, 1, ?)`,
 		fakeHash("a1"), "2026-01-01T00:00:00Z")
 	require.NoError(t, err)
-	_, err = s.db.Exec(`
+	_, err = s.db.ExecContext(t.Context(), `
 		INSERT INTO blob_packs(store_id,pack_id,entry_count,stored_bytes,created_at)
 		VALUES(?,?,1,32,?)`,
 		s.primaryStoreID, packID, "2026-01-01T00:00:00Z",
 	)
 	require.NoError(t, err)
-	_, err = s.db.Exec(`
+	_, err = s.db.ExecContext(t.Context(), `
 		INSERT INTO blob_pack_entries(
 			blob_hash,store_id,pack_id,pack_offset,stored_len,raw_len,flags,crc32c
 		) VALUES(?,?,?,?,1,1,0,0)`,
 		fakeHash("a1"), s.primaryStoreID, packID, pack.MinEntryOffset,
 	)
 	require.NoError(t, err)
-	_, err = s.db.Exec(`
+	_, err = s.db.ExecContext(t.Context(), `
 		INSERT INTO blob_locations(
 			blob_hash,store_id,generation,kind,stored_size,pack_eligible
 		) VALUES(?,?,?,'packed',1,1)`,
 		fakeHash("a1"), s.primaryStoreID, "30000000-0000-4000-8000-000000000001",
 	)
 	require.NoError(t, err)
-	_, err = s.db.Exec(
+	_, err = s.db.ExecContext(t.Context(),
 		`INSERT INTO extracted_text (blob_hash, extractor, extractor_version, status, attempts, text, extracted_at)
 		 VALUES (?, 'plain-text', 1, 'ok', 1, 'searchable', ?)`,
 		fakeHash("a1"), "2026-01-01T00:00:00Z")
 	require.NoError(t, err)
-	_, err = s.db.Exec(`INSERT INTO content_fts(rowid,blob_hash,extractor,text)
+	_, err = s.db.ExecContext(t.Context(), `INSERT INTO content_fts(rowid,blob_hash,extractor,text)
 		SELECT rowid,blob_hash,extractor,text FROM extracted_text WHERE blob_hash=?`, fakeHash("a1"))
 	require.NoError(t, err)
 
 	require.NoError(t, s.DeleteBlobRows(ctx, []string{fakeHash("a1")}))
 
 	var n int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM blobs`).Scan(&n))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM blobs`).Scan(&n))
 	assert.Equal(t, 0, n)
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM extracted_text`).Scan(&n))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM extracted_text`).Scan(&n))
 	assert.Equal(t, 0, n)
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM content_fts`).Scan(&n))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM content_fts`).Scan(&n))
 	assert.Equal(t, 0, n)
-	require.NoError(t, s.db.QueryRow(
+	require.NoError(t, s.db.QueryRowContext(t.Context(),
 		`SELECT COUNT(*) FROM blob_pack_entries WHERE blob_hash=?`,
 		fakeHash("a1"),
 	).Scan(&n))
 	assert.Equal(t, 1, n, "dead packed entries remain cataloged until repack")
 	var liveEntries int64
-	require.NoError(t, s.db.QueryRow(`
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `
 		SELECT live_entries FROM blob_packs WHERE store_id=? AND pack_id=?`,
 		s.primaryStoreID, packID,
 	).Scan(&liveEntries))
@@ -2305,7 +2305,7 @@ func TestSelectedDerivativePurgeLeavesUnrelatedGarbageForGC(t *testing.T) {
 	assert.Zero(t, report.ExpiredRootsRemoved)
 	assert.NotContains(t, report.PhysicalDerivativeBlobsPendingGC, staged)
 	var builds, generations, activeRoots int
-	require.NoError(t, s.db.QueryRow(`SELECT
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT
  (SELECT COUNT(*) FROM rendition_builds WHERE build_id=?),
  (SELECT COUNT(*) FROM rendition_lexical_generations WHERE generation_id=?),
  (SELECT active FROM current_rendition_roots WHERE root_id='expired-unrelated-worker')`,
@@ -2324,11 +2324,11 @@ func TestSelectedDerivativePurgeLeavesUnrelatedEmbeddingArtifactsForGC(t *testin
 	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	ctx := t.Context()
-	selected := embeddingSetFixture(s, versionID, profile.Fingerprint, "original_file", "optional", "")
+	selected := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint, "original_file", "optional", "")
 	require.NoError(t, s.StageEmbeddingSet(ctx, selected))
 	other, err := s.CreateFile(ctx, s.RootID(), "unrelated.pdf", catalogSourceHash, 20, "application/pdf")
 	require.NoError(t, err)
-	unrelated := embeddingSetFixture(s, other.CurrentVersionID, profile.Fingerprint, "original_file", "optional", "")
+	unrelated := embeddingSetFixture(t.Context(), s, other.CurrentVersionID, profile.Fingerprint, "original_file", "optional", "")
 	require.NoError(t, s.StageEmbeddingSet(ctx, unrelated))
 	_, _, err = s.ReplaceContent(ctx, other.ID, UnconditionalRev, fakeHash("fd"), 20, "application/pdf")
 	require.NoError(t, err)
@@ -2336,7 +2336,7 @@ func TestSelectedDerivativePurgeLeavesUnrelatedEmbeddingArtifactsForGC(t *testin
 	require.NoError(t, err)
 	assert.Equal(t, 1, report.RemovedEmbeddingSets)
 	var remaining int
-	require.NoError(t, s.db.QueryRow(`SELECT
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT
  (SELECT COUNT(*) FROM embedding_sets WHERE embedding_set_id=?) +
  (SELECT COUNT(*) FROM embedding_input_generations WHERE generation_id=?) +
  (SELECT COUNT(*) FROM embedding_vector_sets WHERE vector_set_id=?)`,
@@ -2353,7 +2353,7 @@ func TestAllDerivativePurgeCollectsVectorsAfterVersionPrune(t *testing.T) {
 	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	ctx := t.Context()
-	set := embeddingSetFixture(s, versionID, profile.Fingerprint, "original_file", "optional", "")
+	set := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint, "original_file", "optional", "")
 	require.NoError(t, s.StageEmbeddingSet(ctx, set))
 	version, err := s.ContentVersionByID(ctx, versionID)
 	require.NoError(t, err)
@@ -2417,7 +2417,7 @@ func TestImportedSupersededLexicalGenerationIsCollectedAfterRootRelease(t *testi
 	require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
 	countGeneration := func(id string) int {
 		var count int
-		require.NoError(t, restored.db.QueryRow(
+		require.NoError(t, restored.db.QueryRowContext(t.Context(),
 			`SELECT COUNT(*) FROM rendition_lexical_generations WHERE generation_id=?`, id).Scan(&count))
 		return count
 	}

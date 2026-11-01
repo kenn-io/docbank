@@ -62,7 +62,7 @@ func resolvePhotoXMPOperation(api huma.API) huma.Operation {
 // showing the photo can apply it.
 func resolvePhotoXMP(ctx context.Context, d Deps, g *gate, fileID string, request PhotoXMPResolveRequest) (*photoXMPResolveOutput, error) {
 	out := &photoXMPResolveOutput{Status: http.StatusNoContent}
-	err := g.mutate(func() error {
+	err := g.mutate(ctx, func() error {
 		var err error
 		out.Body, err = processing.ResolvePhotoXMP(ctx, &ingest.Ingester{Store: d.Store, Blobs: d.Blobs}, fileID, request.ConflictID, request.Choice)
 		return FromStoreError(err)
@@ -96,7 +96,7 @@ func registerPhotoAuthoredRoutes(api huma.API, d Deps, g *gate) {
 		body := in.Body
 		request := store.PhotoStackDecision{Responses: body.Responses, BurstGapSeconds: body.BurstGapSeconds, Hidden: body.Hidden, AssetIDs: body.AssetIDs, Targets: body.Targets, Decision: body.Decision, CurrentID: body.CurrentID, SelectedIDs: body.SelectedIDs, SourceMetadataFingerprint: processing.SourceMetadataExtractorFingerprint}
 		var result store.PhotoAuthoredReceipt
-		err := g.mutate(func() error {
+		err := g.mutate(ctx, func() error {
 			var callErr error
 			result, callErr = d.Store.DecidePhotoStack(ctx, request)
 			if errors.Is(callErr, store.ErrStalePhotoStack) {
@@ -133,7 +133,7 @@ func registerPhotoAuthoredRoutes(api huma.API, d Deps, g *gate) {
 	huma.Register(api, huma.Operation{OperationID: "editPhotoAuthored", Method: http.MethodPost, Path: "/api/v1/photos/authored/edit", Summary: "Edit photo fields and keywords atomically", Description: "A no-op returns an empty receipt_id and empty before and after arrays. It creates no receipt and leaves the last real edit undoable."}, func(ctx context.Context, in *struct{ Body PhotoAuthoredEditRequest }) (*struct{ Body store.PhotoAuthoredReceipt }, error) {
 		request := store.PhotoAuthoredBatch{Targets: in.Body.Targets, Patch: in.Body.Patch, RotationDelta: in.Body.RotationDelta, Keywords: in.Body.Keywords}
 		var result store.PhotoAuthoredReceipt
-		err := g.mutate(func() error {
+		err := g.mutate(ctx, func() error {
 			var err error
 			result, err = d.Store.EditPhotoAuthoredBatch(ctx, request)
 			if errors.Is(err, store.ErrPhotoEditReceiptLimit) {
@@ -147,7 +147,7 @@ func registerPhotoAuthoredRoutes(api huma.API, d Deps, g *gate) {
 		ReceiptID string `path:"receipt_id" format:"uuid"`
 	}) (*struct{ Body store.PhotoAuthoredReceipt }, error) {
 		var result store.PhotoAuthoredReceipt
-		err := g.mutate(func() error {
+		err := g.mutate(ctx, func() error {
 			var err error
 			result, err = d.Store.UndoPhotoAuthored(ctx, in.ReceiptID)
 			return FromStoreError(err)

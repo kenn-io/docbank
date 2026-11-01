@@ -40,7 +40,7 @@ import (
 func TestByteFirstPNGRefinementKeepsAnimatedPNGPreviewable(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	catalog, err := store.Open(filepath.Join(root, "docbank.db"))
+	catalog, err := store.Open(t.Context(), filepath.Join(root, "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(root, "blobs"))
@@ -59,7 +59,7 @@ func TestByteFirstPNGRefinementKeepsAnimatedPNGPreviewable(t *testing.T) {
 			node, err := catalog.NodeByPath(t.Context(), "/inbox/animation"+suffix)
 			require.NoError(t, err)
 			require.Equal(t, "image/png", node.MimeType)
-			stored, err := blobs.Open(node.BlobHash)
+			stored, err := blobs.OpenContext(t.Context(), node.BlobHash)
 			require.NoError(t, err)
 			storedBytes, err := io.ReadAll(stored)
 			require.NoError(t, err)

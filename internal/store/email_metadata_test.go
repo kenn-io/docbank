@@ -51,7 +51,7 @@ func TestEmailMetadataRoundTripAndTamper(t *testing.T) {
 			require.Equal(t, []int{0, 0, 0, 0, 0, 0}, emailTableCounts(t, target))
 		})
 	}
-	_, err = s.db.Exec(`UPDATE email_generations SET checksum=?`, fakeHash("e2"))
+	_, err = s.db.ExecContext(t.Context(), `UPDATE email_generations SET checksum=?`, fakeHash("e2"))
 	require.NoError(t, err)
 	require.Error(t, s.ValidateMetadata(t.Context()))
 	require.Error(t, s.ExportMetadata(t.Context(), &bytes.Buffer{}))

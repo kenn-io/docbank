@@ -95,7 +95,7 @@ func TestPhotoEventsTellSubscriberJoiningMidWrite(t *testing.T) {
 	var events <-chan struct{}
 	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
 		events = watchPhotoChanges(t, s)
-		_, err := tx.Exec(`UPDATE nodes SET name='committed.jpg',revision=revision+1 WHERE id=?`, node.ID)
+		_, err := tx.ExecContext(t.Context(), `UPDATE nodes SET name='committed.jpg',revision=revision+1 WHERE id=?`, node.ID)
 		return err
 	}))
 	requirePhotoSignal(t, events, "triggers were not armed for this write")

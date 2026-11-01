@@ -36,7 +36,7 @@ func seedBatesSnapshotWith(t *testing.T, s *testStore, pdfWithPages func(*testin
 	for i, count := range []int{2, 1} {
 		name := []string{"A.pdf", "B.pdf"}[i]
 		// Reservation inspects the real source bytes, so store stampable PDFs.
-		hash, size, err := s.Blobs.Write(bytes.NewReader(pdfWithPages(t, count)))
+		hash, size, err := s.Blobs.WriteContext(t.Context(), bytes.NewReader(pdfWithPages(t, count)))
 		require.NoError(t, err)
 		node, err := s.CreateFile(t.Context(), s.RootID(), name, hash, size, "application/pdf")
 		require.NoError(t, err)

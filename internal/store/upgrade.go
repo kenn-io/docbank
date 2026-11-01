@@ -65,7 +65,7 @@ type releasedStorageSchema struct {
 	version        int
 	release        string
 	backupSuffix   string
-	validate       func(*sql.DB, []string, []string) error
+	validate       func(context.Context, *sql.DB, []string, []string) error
 	exportMetadata func(context.Context, *sql.Tx, io.Writer) error
 	// restoreSourceState copies source state that metadata JSONL does not
 	// carry, such as the physical blob catalog, after the import.
@@ -103,8 +103,8 @@ var releasedStorageSchemas = []releasedStorageSchema{
 	},
 	{
 		version: 28, release: "v0.15.0", backupSuffix: v28BackupSuffix,
-		validate: func(db *sql.DB, _, _ []string) error {
-			return validateReleasedLayout(db, "v0.15.0", schemaV28Layout)
+		validate: func(ctx context.Context, db *sql.DB, _, _ []string) error {
+			return validateReleasedLayout(ctx, db, "v0.15.0", schemaV28Layout)
 		},
 		exportMetadata: func(ctx context.Context, source *sql.Tx, dst io.Writer) error {
 			return exportReleasedMetadataSnapshot(ctx, source, dst, 28)
@@ -114,8 +114,8 @@ var releasedStorageSchemas = []releasedStorageSchema{
 	},
 	{
 		version: 29, release: "v0.15.1", backupSuffix: ".schema-v29.bak",
-		validate: func(db *sql.DB, _, _ []string) error {
-			return validateReleasedLayout(db, "v0.15.1", schemaV29Layout)
+		validate: func(ctx context.Context, db *sql.DB, _, _ []string) error {
+			return validateReleasedLayout(ctx, db, "v0.15.1", schemaV29Layout)
 		},
 		exportMetadata: func(ctx context.Context, source *sql.Tx, dst io.Writer) error {
 			return exportReleasedMetadataSnapshot(ctx, source, dst, 29)
@@ -125,8 +125,8 @@ var releasedStorageSchemas = []releasedStorageSchema{
 	},
 	{
 		version: 41, release: "v0.16.0", backupSuffix: ".schema-v41.bak",
-		validate: func(db *sql.DB, _, _ []string) error {
-			return validateReleasedLayout(db, "v0.16.0", schemaV41Layout)
+		validate: func(ctx context.Context, db *sql.DB, _, _ []string) error {
+			return validateReleasedLayout(ctx, db, "v0.16.0", schemaV41Layout)
 		},
 		exportMetadata: func(ctx context.Context, source *sql.Tx, dst io.Writer) error {
 			return exportReleasedMetadataSnapshot(ctx, source, dst, 41)
@@ -184,11 +184,11 @@ var currentSchemaTables = [...]string{
 // place. v0.9.0 is the sole unversioned released layout. Every later layout
 // carries an explicit schema version and adds a source adapter here only when
 // its physical or logical shape differs from the current schema.
-func prepareReleasedSchemaUpgrade(path string, driver docsqlite.Driver) error {
+func prepareReleasedSchemaUpgrade(ctx context.Context, path string, driver docsqlite.Driver) error {
 	if err := validateReleasedStorageSchemas(); err != nil {
 		return err
 	}
-	if err := recoverInterruptedUpgrade(path, driver); err != nil {
+	if err := recoverInterruptedUpgrade(ctx, path, driver); err != nil {
 		return fmt.Errorf("recovering interrupted database upgrade: %w", err)
 	}
 	info, err := os.Stat(path)
@@ -211,7 +211,7 @@ func prepareReleasedSchemaUpgrade(path string, driver docsqlite.Driver) error {
 	if err != nil {
 		return fmt.Errorf("inspecting database schema with %s: %w", driver.Name(), err)
 	}
-	kind, classifyErr := classifyDatabaseSchema(driver, db)
+	kind, classifyErr := classifyDatabaseSchema(ctx, driver, db)
 	closeErr := db.Close()
 	if classifyErr != nil || closeErr != nil {
 		return errors.Join(classifyErr, closeErr)
@@ -220,7 +220,7 @@ func prepareReleasedSchemaUpgrade(path string, driver docsqlite.Driver) error {
 	case kind.fresh, kind.current:
 		return cleanupStaleUpgradeFiles(path)
 	case kind.source != nil:
-		return cutoverReleasedDatabase(path, driver, *kind.source)
+		return cutoverReleasedDatabase(ctx, path, driver, *kind.source)
 	default:
 		return errors.New("opening database: unsupported schema")
 	}
@@ -259,24 +259,24 @@ func validateReleasedStorageSchemas() error {
 	return nil
 }
 
-func classifyDatabaseSchema(driver docsqlite.Driver, db *sql.DB) (databaseSchema, error) {
-	blobs, err := tableColumns(db, "blobs")
+func classifyDatabaseSchema(ctx context.Context, driver docsqlite.Driver, db *sql.DB) (databaseSchema, error) {
+	blobs, err := queryTableColumns(ctx, db, "blobs")
 	if err != nil {
 		return databaseSchema{}, err
 	}
 	if len(blobs) == 0 {
 		return databaseSchema{fresh: true}, nil
 	}
-	packs, err := tableColumns(db, "blob_packs")
+	packs, err := queryTableColumns(ctx, db, "blob_packs")
 	if err != nil {
 		return databaseSchema{}, err
 	}
-	vaultMetadata, err := tableColumns(db, "vault_metadata")
+	vaultMetadata, err := queryTableColumns(ctx, db, "vault_metadata")
 	if err != nil {
 		return databaseSchema{}, err
 	}
 	if slices.Contains(vaultMetadata, "schema_version") {
-		return classifyVersionedDatabaseSchema(driver, db, blobs, packs, vaultMetadata)
+		return classifyVersionedDatabaseSchema(ctx, driver, db, blobs, packs, vaultMetadata)
 	}
 
 	// v0.9.0 predates the explicit version marker. Match its complete released
@@ -286,7 +286,7 @@ func classifyDatabaseSchema(driver docsqlite.Driver, db *sql.DB) (databaseSchema
 		if source.version != 1 {
 			continue
 		}
-		if err := source.validate(db, blobs, packs); err == nil {
+		if err := source.validate(ctx, db, blobs, packs); err == nil {
 			return databaseSchema{version: source.version, source: source}, nil
 		}
 	}
@@ -297,9 +297,9 @@ func classifyDatabaseSchema(driver docsqlite.Driver, db *sql.DB) (databaseSchema
 }
 
 // classifyVersionedDatabaseSchema accepts only current or supported released layouts.
-func classifyVersionedDatabaseSchema(driver docsqlite.Driver, db *sql.DB, blobs, packs, vaultMetadata []string) (databaseSchema, error) {
+func classifyVersionedDatabaseSchema(ctx context.Context, driver docsqlite.Driver, db *sql.DB, blobs, packs, vaultMetadata []string) (databaseSchema, error) {
 	var version int
-	if err := db.QueryRow(`
+	if err := db.QueryRowContext(ctx, `
 		SELECT schema_version FROM vault_metadata WHERE singleton = 1`).Scan(&version); err != nil {
 		return databaseSchema{}, fmt.Errorf("reading storage schema version: %w", err)
 	}
@@ -310,7 +310,7 @@ func classifyVersionedDatabaseSchema(driver docsqlite.Driver, db *sql.DB, blobs,
 		)
 	}
 	if version == currentStorageSchemaVersion {
-		if err := validateCurrentSchemaColumns(driver, db, blobs, packs, vaultMetadata); err != nil {
+		if err := validateCurrentSchemaColumns(ctx, driver, db, blobs, packs, vaultMetadata); err != nil {
 			return databaseSchema{}, err
 		}
 		return databaseSchema{version: version, current: true}, nil
@@ -320,7 +320,7 @@ func classifyVersionedDatabaseSchema(driver docsqlite.Driver, db *sql.DB, blobs,
 		if source.version != version {
 			continue
 		}
-		if err := source.validate(db, blobs, packs); err != nil {
+		if err := source.validate(ctx, db, blobs, packs); err != nil {
 			return databaseSchema{}, err
 		}
 		return databaseSchema{version: version, source: source}, nil
@@ -332,10 +332,11 @@ func classifyVersionedDatabaseSchema(driver docsqlite.Driver, db *sql.DB, blobs,
 }
 
 func validateCurrentSchemaColumns(
+	ctx context.Context,
 	driver docsqlite.Driver, db *sql.DB,
 	blobs, packs, vaultMetadata []string,
 ) error {
-	wantTables, err := canonicalCurrentSchemaColumns(driver)
+	wantTables, err := canonicalCurrentSchemaColumns(ctx, driver)
 	if err != nil {
 		return fmt.Errorf("deriving current schema columns: %w", err)
 	}
@@ -348,7 +349,7 @@ func validateCurrentSchemaColumns(
 		)
 	}
 	for _, table := range currentSchemaTables[3:] {
-		got, err := tableColumns(db, table)
+		got, err := queryTableColumns(ctx, db, table)
 		if err != nil {
 			return err
 		}
@@ -359,14 +360,14 @@ func validateCurrentSchemaColumns(
 			)
 		}
 	}
-	return validateEmbeddingCatalogSchema(context.Background(), db)
+	return validateEmbeddingCatalogSchema(ctx, db)
 }
 
-func canonicalCurrentSchemaColumns(driver docsqlite.Driver) (map[string][]string, error) {
-	return deriveCurrentSchemaColumns(driver)
+func canonicalCurrentSchemaColumns(ctx context.Context, driver docsqlite.Driver) (map[string][]string, error) {
+	return deriveCurrentSchemaColumns(ctx, driver)
 }
 
-func deriveCurrentSchemaColumns(driver docsqlite.Driver) (columns map[string][]string, err error) {
+func deriveCurrentSchemaColumns(ctx context.Context, driver docsqlite.Driver) (columns map[string][]string, err error) {
 	tempFile, err := os.CreateTemp("", "docbank-current-schema-*.db")
 	if err != nil {
 		return nil, fmt.Errorf("creating temporary database: %w", err)
@@ -392,11 +393,11 @@ func deriveCurrentSchemaColumns(driver docsqlite.Driver) (columns map[string][]s
 	}
 	// Match bootstrap's transaction boundary instead of syncing every schema
 	// statement separately each time an existing vault is opened.
-	tx, err := db.Begin()
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("beginning temporary schema transaction: %w", err)
 	}
-	if _, err := tx.Exec(schemaSQL); err != nil {
+	if _, err := tx.ExecContext(ctx, schemaSQL); err != nil {
 		return nil, errors.Join(
 			fmt.Errorf("applying current schema to temporary database: %w", err), tx.Rollback(),
 		)
@@ -406,7 +407,7 @@ func deriveCurrentSchemaColumns(driver docsqlite.Driver) (columns map[string][]s
 	}
 	columns = make(map[string][]string, len(currentSchemaTables))
 	for _, table := range &currentSchemaTables {
-		columns[table], err = tableColumns(db, table)
+		columns[table], err = queryTableColumns(ctx, db, table)
 		if err != nil {
 			return nil, err
 		}
@@ -415,7 +416,7 @@ func deriveCurrentSchemaColumns(driver docsqlite.Driver) (columns map[string][]s
 	return columns, nil
 }
 
-func validateV2Schema(db *sql.DB, blobs, packs []string) error {
+func validateV2Schema(ctx context.Context, db *sql.DB, blobs, packs []string) error {
 	v2BlobColumns := []string{
 		metadataCreatedAtField, "hash", "loose_encoding", "loose_stored_size",
 		"pack_eligible", metadataSizeField,
@@ -428,7 +429,7 @@ func validateV2Schema(db *sql.DB, blobs, packs []string) error {
 	if !slices.Equal(blobs, v2BlobColumns) || !slices.Equal(packs, v2PackColumns) {
 		return errors.New("not a released schema-v2 database")
 	}
-	index, err := tableColumns(db, "blob_pack_index")
+	index, err := queryTableColumns(ctx, db, "blob_pack_index")
 	if err != nil {
 		return err
 	}
@@ -438,10 +439,10 @@ func validateV2Schema(db *sql.DB, blobs, packs []string) error {
 	if !slices.Equal(index, wantIndex) {
 		return errors.New("not a released schema-v2 database")
 	}
-	return requireV090Tables(db)
+	return requireV090Tables(ctx, db)
 }
 
-func validateV3Schema(db *sql.DB, blobs, packs []string) error {
+func validateV3Schema(ctx context.Context, db *sql.DB, blobs, packs []string) error {
 	v3BlobColumns := []string{metadataCreatedAtField, "hash", metadataSizeField}
 	v3PackColumns := []string{
 		metadataCreatedAtField, "entry_count", "live_entries", "live_raw_bytes",
@@ -459,7 +460,7 @@ func validateV3Schema(db *sql.DB, blobs, packs []string) error {
 		"text_extraction_queue", "text_searchable_versions", "vault_metadata", "watch_sources",
 	}
 	for _, table := range required {
-		columns, err := tableColumns(db, table)
+		columns, err := queryTableColumns(ctx, db, table)
 		if err != nil {
 			return err
 		}
@@ -468,7 +469,7 @@ func validateV3Schema(db *sql.DB, blobs, packs []string) error {
 		}
 	}
 	for _, table := range []string{"processing_profiles", "rendition_builds", "rendition_attachments"} {
-		columns, err := tableColumns(db, table)
+		columns, err := queryTableColumns(ctx, db, table)
 		if err != nil {
 			return err
 		}
@@ -479,20 +480,16 @@ func validateV3Schema(db *sql.DB, blobs, packs []string) error {
 	return nil
 }
 
-func validateV090Schema(db *sql.DB, blobs, packs []string) error {
+func validateV090Schema(ctx context.Context, db *sql.DB, blobs, packs []string) error {
 	v090BlobColumns := []string{metadataCreatedAtField, "hash", metadataSizeField}
 	v090PackColumns := []string{metadataCreatedAtField, "entry_count", "pack_id", "stored_bytes"}
 	if !slices.Equal(blobs, v090BlobColumns) || !slices.Equal(packs, v090PackColumns) {
 		return errors.New("not the released v0.9.0 schema")
 	}
-	return requireV090Tables(db)
+	return requireV090Tables(ctx, db)
 }
 
-func tableColumns(db *sql.DB, table string) ([]string, error) {
-	return queryTableColumns(context.Background(), db, table)
-}
-
-func requireV090Tables(db *sql.DB) error {
+func requireV090Tables(ctx context.Context, db *sql.DB) error {
 	required := []string{
 		"audit_authority", "audit_baselines", "audit_memberships", "audit_records", "audit_scopes",
 		"blob_pack_index", "blobs", "content_versions", "extracted_text", "ingests", "node_tags",
@@ -500,7 +497,7 @@ func requireV090Tables(db *sql.DB) error {
 	}
 	for _, table := range required {
 		var found bool
-		if err := db.QueryRow(`SELECT EXISTS(
+		if err := db.QueryRowContext(ctx, `SELECT EXISTS(
 			SELECT 1 FROM sqlite_master WHERE type='table' AND name=?
 		)`, table).Scan(&found); err != nil {
 			return fmt.Errorf("recognizing v0.9.0 schema table %s: %w", table, err)
@@ -513,6 +510,7 @@ func requireV090Tables(db *sql.DB) error {
 }
 
 func cutoverReleasedDatabase(
+	ctx context.Context,
 	path string, driver docsqlite.Driver, sourceSchema releasedStorageSchema,
 ) (err error) {
 	backupPath := path + sourceSchema.backupSuffix
@@ -539,11 +537,11 @@ func cutoverReleasedDatabase(
 		}
 	}()
 
-	source, err := openReleasedSource(path, driver, sourceSchema)
+	source, err := openReleasedSource(ctx, path, driver, sourceSchema)
 	if err != nil {
 		return err
 	}
-	snapshot, err := source.BeginTx(context.Background(), &sql.TxOptions{ReadOnly: true})
+	snapshot, err := source.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		_ = source.Close()
 		return fmt.Errorf("pinning %s metadata: %w", sourceSchema.release, err)
@@ -552,46 +550,46 @@ func cutoverReleasedDatabase(
 		return errors.Join(snapshot.Rollback(), source.Close())
 	}
 
-	if err := writeUpgradeJSONL(snapshot, jsonlPath, sourceSchema); err != nil {
+	if err := writeUpgradeJSONL(ctx, snapshot, jsonlPath, sourceSchema); err != nil {
 		_ = closeSource()
 		return err
 	}
 	var incarnation *metadataProcessingIncarnation
 	if sourceSchema.keepsProcessingIncarnation {
 		incarnation = &metadataProcessingIncarnation{Type: metadataProcessingIncarnationType}
-		if err := snapshot.QueryRow(`SELECT i.incarnation_id,i.created_at FROM processing_incarnations i
+		if err := snapshot.QueryRowContext(ctx, `SELECT i.incarnation_id,i.created_at FROM processing_incarnations i
 			JOIN current_processing_incarnation c ON c.incarnation_id=i.incarnation_id WHERE c.singleton=1`,
 		).Scan(&incarnation.ID, &incarnation.CreatedAt); err != nil {
 			_ = closeSource()
 			return fmt.Errorf("reading %s processing incarnation: %w", sourceSchema.release, err)
 		}
 	}
-	target, err := openCurrentStore(stagePath, driver, incarnation)
+	target, err := openCurrentStore(ctx, stagePath, driver, incarnation)
 	if err != nil {
 		_ = closeSource()
 		return fmt.Errorf("creating current database for %s upgrade: %w", sourceSchema.release, err)
 	}
-	if err := importUpgradeJSONL(target, jsonlPath, sourceSchema); err != nil {
+	if err := importUpgradeJSONL(ctx, target, jsonlPath, sourceSchema); err != nil {
 		_ = target.Close()
 		_ = closeSource()
 		return err
 	}
-	if err := sourceSchema.restoreSourceState(context.Background(), snapshot, target); err != nil {
+	if err := sourceSchema.restoreSourceState(ctx, snapshot, target); err != nil {
 		_ = target.Close()
 		_ = closeSource()
 		return err
 	}
-	if _, err := target.MigrateLegacyPlainText(context.Background()); err != nil {
+	if _, err := target.MigrateLegacyPlainText(ctx); err != nil {
 		_ = target.Close()
 		_ = closeSource()
 		return fmt.Errorf("migrating %s legacy plain-text authority: %w", sourceSchema.release, err)
 	}
-	if err := target.ValidateMetadata(context.Background()); err != nil {
+	if err := target.ValidateMetadata(ctx); err != nil {
 		_ = target.Close()
 		_ = closeSource()
 		return fmt.Errorf("validating upgraded %s metadata: %w", sourceSchema.release, err)
 	}
-	if err := target.Checkpoint(context.Background()); err != nil {
+	if err := target.Checkpoint(ctx); err != nil {
 		_ = target.Close()
 		_ = closeSource()
 		return fmt.Errorf("checkpointing upgraded %s database: %w", sourceSchema.release, err)
@@ -623,6 +621,7 @@ func cutoverReleasedDatabase(
 }
 
 func openReleasedSource(
+	ctx context.Context,
 	path string, driver docsqlite.Driver, sourceSchema releasedStorageSchema,
 ) (*sql.DB, error) {
 	db, err := driver.Open(path, docsqlite.OpenOptions{
@@ -632,7 +631,7 @@ func openReleasedSource(
 		return nil, fmt.Errorf("opening %s source database: %w", sourceSchema.release, err)
 	}
 	var busy, logFrames, checkpointed int64
-	if err := db.QueryRow(`PRAGMA wal_checkpoint(TRUNCATE)`).Scan(
+	if err := db.QueryRowContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`).Scan(
 		&busy, &logFrames, &checkpointed,
 	); err != nil || busy != 0 || logFrames != 0 {
 		_ = db.Close()
@@ -648,6 +647,7 @@ func openReleasedSource(
 }
 
 func writeUpgradeJSONL(
+	ctx context.Context,
 	snapshot *sql.Tx, path string, sourceSchema releasedStorageSchema,
 ) (err error) {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
@@ -655,7 +655,7 @@ func writeUpgradeJSONL(
 		return fmt.Errorf("creating %s upgrade metadata: %w", sourceSchema.release, err)
 	}
 	defer func() { err = errors.Join(err, f.Close()) }()
-	if err := sourceSchema.exportMetadata(context.Background(), snapshot, f); err != nil {
+	if err := sourceSchema.exportMetadata(ctx, snapshot, f); err != nil {
 		return fmt.Errorf("exporting %s metadata: %w", sourceSchema.release, err)
 	}
 	if err := f.Sync(); err != nil {
@@ -664,12 +664,12 @@ func writeUpgradeJSONL(
 	return nil
 }
 
-func importUpgradeJSONL(target *Store, path string, sourceSchema releasedStorageSchema) error {
+func importUpgradeJSONL(ctx context.Context, target *Store, path string, sourceSchema releasedStorageSchema) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("opening %s upgrade metadata: %w", sourceSchema.release, err)
 	}
-	if err := target.ImportMetadata(context.Background(), f); err != nil {
+	if err := target.ImportMetadata(ctx, f); err != nil {
 		_ = f.Close()
 		return fmt.Errorf("importing %s metadata: %w", sourceSchema.release, err)
 	}
@@ -976,13 +976,13 @@ func queryTableColumns(ctx context.Context, q metadataQuerier, table string) ([]
 	return columns, nil
 }
 
-func validateReleasedLayout(db *sql.DB, release, layout string) error {
+func validateReleasedLayout(ctx context.Context, db *sql.DB, release, layout string) error {
 	var columns map[string][]string
 	if err := json.Unmarshal([]byte(layout), &columns); err != nil {
 		return fmt.Errorf("reading released %s columns: %w", release, err)
 	}
 	for table, want := range columns {
-		got, err := tableColumns(db, table)
+		got, err := queryTableColumns(ctx, db, table)
 		if err != nil {
 			return err
 		}
@@ -1309,7 +1309,7 @@ func publishReleasedUpgrade(path, stagePath, backupPath string) error {
 	return nil
 }
 
-func recoverInterruptedUpgrade(path string, driver docsqlite.Driver) error {
+func recoverInterruptedUpgrade(ctx context.Context, path string, driver docsqlite.Driver) error {
 	_, pathErr := os.Stat(path)
 	if pathErr == nil {
 		return nil
@@ -1352,7 +1352,7 @@ func recoverInterruptedUpgrade(path string, driver docsqlite.Driver) error {
 	if interrupted != nil {
 		backupPath := interrupted.backup
 		stagePath := interrupted.stage
-		if err := validateUpgradeStage(stagePath, driver); err != nil {
+		if err := validateUpgradeStage(ctx, stagePath, driver); err != nil {
 			if renameErr := renameUpgradeFile(backupPath, path); renameErr != nil {
 				return errors.Join(err, renameErr)
 			}
@@ -1393,14 +1393,14 @@ func syncUpgradeDirectory(path string) error {
 	return nil
 }
 
-func validateUpgradeStage(path string, driver docsqlite.Driver) error {
+func validateUpgradeStage(ctx context.Context, path string, driver docsqlite.Driver) error {
 	db, err := driver.Open(path, docsqlite.OpenOptions{
 		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred,
 	})
 	if err != nil {
 		return fmt.Errorf("opening interrupted upgrade staging database: %w", err)
 	}
-	kind, classifyErr := classifyDatabaseSchema(driver, db)
+	kind, classifyErr := classifyDatabaseSchema(ctx, driver, db)
 	closeErr := db.Close()
 	if classifyErr != nil || closeErr != nil {
 		return errors.Join(classifyErr, closeErr)
@@ -1408,17 +1408,17 @@ func validateUpgradeStage(path string, driver docsqlite.Driver) error {
 	if !kind.current {
 		return errors.New("interrupted upgrade staging database does not use the current schema")
 	}
-	store, err := openCurrentStore(path, driver, nil)
+	store, err := openCurrentStore(ctx, path, driver, nil)
 	if err != nil {
 		return fmt.Errorf("opening interrupted upgrade staging store: %w", err)
 	}
-	if _, err := store.MigrateLegacyPlainText(context.Background()); err != nil {
+	if _, err := store.MigrateLegacyPlainText(ctx); err != nil {
 		return errors.Join(
 			fmt.Errorf("migrating interrupted upgrade staging authority: %w", err),
 			store.Close(),
 		)
 	}
-	validateErr := store.ValidateMetadata(context.Background())
+	validateErr := store.ValidateMetadata(ctx)
 	closeErr = store.Close()
 	if validateErr != nil || closeErr != nil {
 		return errors.Join(validateErr, closeErr)

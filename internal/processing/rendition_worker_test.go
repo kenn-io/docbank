@@ -664,7 +664,7 @@ func TestRenditionWorkerQuarantinesSealTimePolicyMismatch(t *testing.T) {
 	assert.Equal(t, store.RenditionFailureTerminal, current.FailureCode)
 	var exported bytes.Buffer
 	require.NoError(t, fixture.catalog.ExportMetadata(t.Context(), &exported))
-	restored, err := store.Open(filepath.Join(t.TempDir(), "restored.db"))
+	restored, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "restored.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	require.NoError(t, restored.ImportMetadata(
