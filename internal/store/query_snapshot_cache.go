@@ -991,18 +991,6 @@ func (s *QuerySnapshotService) stats() snapshotCacheStats {
 	}
 }
 
-// FirstPage reuses an admitted owner-bound snapshot without running its query again.
-func (s *QuerySnapshotService) FirstPage(ctx context.Context, owner, snapshotID string) (SnapshotPage, error) {
-	if err := ctx.Err(); err != nil {
-		return SnapshotPage{}, err
-	}
-	cached, err := s.lookup(owner, snapshotID)
-	if err != nil {
-		return SnapshotPage{}, err
-	}
-	return s.renderPage(&cached, 0)
-}
-
 // PhotoPage binds continuation inputs to the admitted view, including its projection.
 func (s *QuerySnapshotService) PhotoPage(ctx context.Context, owner, id, cursor string, request SnapshotRequest) (SnapshotPage, error) {
 	// Photo snapshots contain Library members only.

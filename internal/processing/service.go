@@ -1094,7 +1094,7 @@ func (service *Service) RunDerivativePurge(ctx context.Context,
 		if err != nil {
 			return err
 		}
-		receipt.ID = stableHash("docbank/derivative-purge-receipt/v1", string(encoded))
+		receipt.ID = store.LengthPrefixedSHA256("docbank/derivative-purge-receipt/v1", string(encoded))
 		return purgeErr
 	})
 	return receipt, err
@@ -1989,21 +1989,17 @@ func (service *Service) chunkEmbeddingGeneration(ctx context.Context, version st
 func directEmbeddingGeneration(version store.ContentVersion, profileFingerprint,
 	embeddingInputFingerprint string, binding document.EmbeddingBindingV1,
 ) store.EmbeddingInputGenerationRecord {
-	id := stableHash("docbank/direct-file-input-generation/v1", version.ID, version.BlobHash,
+	id := store.LengthPrefixedSHA256("docbank/direct-file-input-generation/v1", version.ID, version.BlobHash,
 		profileFingerprint, binding.Name, embeddingInputFingerprint)
 	return store.EmbeddingInputGenerationRecord{ID: id, SourceVersionID: version.ID,
 		ProcessingProfileFingerprint: profileFingerprint,
-		EvidenceFingerprint:          stableHash("docbank/direct-file-evidence/v1", version.BlobHash),
-		TokenizerFingerprint:         stableHash("docbank/direct-file-tokenizer/v1", "none"),
+		EvidenceFingerprint:          store.LengthPrefixedSHA256("docbank/direct-file-evidence/v1", version.BlobHash),
+		TokenizerFingerprint:         store.LengthPrefixedSHA256("docbank/direct-file-tokenizer/v1", "none"),
 		ChunkPolicyFingerprint:       embeddingInputFingerprint,
-		FormatterFingerprint:         stableHash("docbank/direct-file-formatter/v1", binding.DocumentFormatter, binding.ModelInput.Fingerprint),
+		FormatterFingerprint:         store.LengthPrefixedSHA256("docbank/direct-file-formatter/v1", binding.DocumentFormatter, binding.ModelInput.Fingerprint),
 		GenerationChecksum:           version.BlobHash,
 		Inputs:                       []store.EmbeddingInputReference{{ID: version.ID, RenderedChecksum: version.BlobHash}},
 		CreatedAt:                    version.RecordedAt}
-}
-
-func stableHash(values ...string) string {
-	return store.LengthPrefixedSHA256(values...)
 }
 
 func sha256Text(value string) string {

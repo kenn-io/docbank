@@ -250,7 +250,7 @@ func (runtime *ProviderEmbeddingRuntime) ImageGeneration(ctx context.Context, pr
 	if err != nil {
 		return store.EmbeddingInputGenerationRecord{}, document.EmbeddingDescriptor{}, err
 	}
-	generation := store.EmbeddingInputGenerationRecord{ID: store.ImageEmbeddingGenerationID(versionID, profile.Fingerprint, binding.Name, preview), SourceVersionID: versionID, ProcessingProfileFingerprint: profile.Fingerprint, EvidenceFingerprint: preview, TokenizerFingerprint: stableHash("image/no-tokenizer"), ChunkPolicyFingerprint: store.ImageEmbeddingPolicyFingerprint(), FormatterFingerprint: stableHash(binding.DocumentFormatter, binding.ModelInput.Fingerprint), GenerationChecksum: workerHashBytes(data), Inputs: []store.EmbeddingInputReference{{ID: versionID, RenderedChecksum: workerHashBytes(data)}}, CreatedAt: version.RecordedAt}
+	generation := store.EmbeddingInputGenerationRecord{ID: store.ImageEmbeddingGenerationID(versionID, profile.Fingerprint, binding.Name, preview), SourceVersionID: versionID, ProcessingProfileFingerprint: profile.Fingerprint, EvidenceFingerprint: preview, TokenizerFingerprint: store.LengthPrefixedSHA256("image/no-tokenizer"), ChunkPolicyFingerprint: store.ImageEmbeddingPolicyFingerprint(), FormatterFingerprint: store.LengthPrefixedSHA256(binding.DocumentFormatter, binding.ModelInput.Fingerprint), GenerationChecksum: workerHashBytes(data), Inputs: []store.EmbeddingInputReference{{ID: versionID, RenderedChecksum: workerHashBytes(data)}}, CreatedAt: version.RecordedAt}
 	return generation, runtime.provider.Descriptor(), nil
 }
 
