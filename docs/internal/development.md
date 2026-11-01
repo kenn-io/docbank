@@ -305,7 +305,8 @@ pruning preserve retention holds and related catalog state. Derivative cleanup
 covers purge previews, rendition and embedding collection, extracted-text and
 email cleanup, and explicit rebuild authorization. Primary blob packing,
 repacking, bounded GC catalog selection and exact physical cleanup receipts
-also work with PostgreSQL metadata.
+also work with PostgreSQL metadata. Tags, audited bulk tag edits, and saved query
+definition management use the native Store operations on both databases.
 
 A public PostgreSQL-backed vault is not available yet: daemon and embedded
 operations still open SQLite. Grouped photo imports, XMP sidecar writing,
@@ -435,7 +436,11 @@ GRANT UPDATE(state, failure_code, updated_at)
 GRANT INSERT, DELETE, UPDATE(root_kind, target_kind, target_id, fencing_token,
     recorded_at, expires_at, active, released_at)
     ON documents.current_rendition_roots TO docbank_runtime;
-GRANT UPDATE(revision) ON documents.tags TO docbank_runtime;
+GRANT INSERT, DELETE, UPDATE(name, revision) ON documents.tags TO docbank_runtime;
+GRANT INSERT, DELETE ON documents.node_tags TO docbank_runtime;
+GRANT INSERT ON documents.batch_tag_receipts TO docbank_runtime;
+GRANT INSERT, DELETE, UPDATE(name, description, payload, fingerprint, revision, updated_at)
+    ON documents.saved_queries TO docbank_runtime;
 GRANT UPDATE(binding_epoch) ON documents.document_people_state TO docbank_runtime;
 GRANT DELETE ON documents.embedding_input_generations, documents.embedding_vector_sets,
     documents.embedding_vector_spaces, documents.embedding_failures,
@@ -848,6 +853,34 @@ writes during history reads to verify snapshot consistency. These capabilities
 do not expose a public PostgreSQL vault or qualify grouped photo imports, XMP
 sidecar writing, portable metadata import, collection snapshots, reporting,
 backup or restore.
+
+#### Tags and saved definitions
+
+Tag creation, assignment, rename and deletion use the same Store methods on
+both databases, including audited operations and path-based assignment. Tag
+pages retain byte-order sorting, current assignment counts and trash filtering.
+Bulk edits preserve revision fences, atomic changes and immutable replay
+receipts, including replay after a tag is deleted. A bulk preview reads the tag
+and selected nodes from one repeatable-read snapshot.
+
+On PostgreSQL, tag writes refresh affected photo export work in their write
+transaction. Bulk edits and definition changes collect affected assets as a set,
+including sidecars belonging to those photos; SQLite retains its released
+triggers. Tag deletion still refuses definitions referenced by queued or running
+mailbox jobs.
+The job-state index supports that check. Runtime credentials can insert batch
+receipts but cannot update or delete them.
+
+Saved query and highlight definitions retain canonical payloads, optimistic
+revisions, idempotent edits, filtered pages and photo-only selectors. These
+mutations remain unavailable after audit enrollment, as on SQLite. Deleting a
+definition cascades retained run receipts through the definition index; this
+does not qualify saved-query execution or run publication on PostgreSQL.
+
+The `organization` backend scenarios cover native mutations, bulk replay and
+rollback, concurrent saved-definition edits, snapshot consistency and photo
+export effects. Mailbox jobs and settled photo receipts are retained fixtures;
+their producers remain outside this qualification.
 
 #### Shared query qualification
 

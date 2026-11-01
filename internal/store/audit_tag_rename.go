@@ -31,7 +31,7 @@ func (s *Store) renameAuditedTagTx(
 	if err != nil {
 		return Tag{}, err
 	}
-	if err := touchAuditedTagDefinitionNodesTx(ctx, tx, current.ID, priorNodes, recordedAt); err != nil {
+	if err := s.touchAuditedTagDefinitionNodesTx(ctx, tx, current.ID, priorNodes, recordedAt); err != nil {
 		return Tag{}, err
 	}
 	resultingNodes := make([]Node, len(priorNodes))
@@ -55,7 +55,7 @@ type auditedTagCandidate struct {
 	scopeID string
 }
 
-func touchAuditedTagDefinitionNodesTx(
+func (s *Store) touchAuditedTagDefinitionNodesTx(
 	ctx context.Context,
 	tx *sql.Tx, tagID string, audited []Node, recordedAt string,
 ) error {
@@ -63,17 +63,17 @@ func touchAuditedTagDefinitionNodesTx(
 	// scoped mutation commits the operation timestamp; the allocation-only form
 	// deliberately has no timestamp from which replay could derive that field.
 	if _, err := tx.ExecContext(ctx, `UPDATE nodes SET revision=revision+1
-		WHERE id IN (SELECT node_id FROM node_tags WHERE tag_id=?)`, tagID); err != nil {
+		WHERE id IN (SELECT node_id FROM node_tags WHERE tag_id=$1)`, tagID); err != nil {
 		return fmt.Errorf("advancing nodes assigned tag %s: %w", tagID, err)
 	}
 	for _, node := range audited {
 		if _, err := tx.ExecContext(ctx,
-			`UPDATE nodes SET modified_at=? WHERE id=?`, recordedAt, node.ID,
+			`UPDATE nodes SET modified_at=$1 WHERE id=$2`, recordedAt, node.ID,
 		); err != nil {
 			return fmt.Errorf("recording audited tag rename on node %d: %w", node.ID, err)
 		}
 	}
-	return nil
+	return s.refreshTagPhotoWorkTx(ctx, tx, `node_id IN (SELECT node_id FROM node_tags WHERE tag_id=$1)`, tagID)
 }
 
 func auditedTaggedNodesTx(
@@ -84,7 +84,7 @@ func auditedTaggedNodesTx(
 		FROM node_tags assignment
 		JOIN audit_memberships membership ON membership.node_id=assignment.node_id
 		JOIN audit_scopes scope ON scope.scope_id=membership.scope_id
-		WHERE assignment.tag_id=? ORDER BY membership.node_id,scope.scope_id`, tagID)
+		WHERE assignment.tag_id=$1 ORDER BY membership.node_id,scope.scope_id`, tagID)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("listing audited nodes assigned tag %s: %w", tagID, err)
 	}

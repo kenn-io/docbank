@@ -7,9 +7,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestTagLifecycleAndNodeRevisions(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkTagLifecycleAndNodeRevisions(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	one, err := s.Mkdir(ctx, s.RootID(), "one")
 	require.NoError(t, err)
@@ -111,9 +111,9 @@ func TestTagRenameAndDeleteRejectStaleRevision(t *testing.T) {
 	assert.Equal(t, 1, current.AssignmentCount)
 }
 
-func TestTagPagesKeepAssignmentCounts(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkTagPagesKeepAssignmentCounts(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	tags, total, err := s.Tags(ctx, 1, 0)
 	require.NoError(t, err)
@@ -279,9 +279,9 @@ func TestTaggedNodesReturnsRootPath(t *testing.T) {
 	assert.Equal(t, "/", nodes[0].Path)
 }
 
-func TestTaggedNodePagesKeepCurrentMetadataAndTrashCounts(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkTaggedNodePagesKeepCurrentMetadataAndTrashCounts(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	tag, err := s.CreateTag(ctx, "records")
 	require.NoError(t, err)
@@ -336,9 +336,9 @@ func TestTaggedNodePagesKeepCurrentMetadataAndTrashCounts(t *testing.T) {
 	require.Zero(t, total)
 }
 
-func TestTagAssignmentPathUsesCurrentTopology(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkTagAssignmentPathUsesCurrentTopology(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	left, err := s.Mkdir(ctx, s.RootID(), "left")
 	require.NoError(t, err)

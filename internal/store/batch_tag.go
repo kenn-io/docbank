@@ -132,7 +132,7 @@ func (s *Store) BatchTags(ctx context.Context, request BatchTagRequest) (BatchTa
 			return fmt.Errorf("encoding batch tag receipt: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO batch_tag_receipts(
-			operation_id,request_digest,receipt_json) VALUES(?,?,?)`,
+			operation_id,request_digest,receipt_json) VALUES($1,$2,$3)`,
 			request.OperationID, digest, receiptJSON); err != nil {
 			return fmt.Errorf("persisting batch tag receipt %s: %w", request.OperationID, err)
 		}
@@ -153,7 +153,7 @@ func (s *Store) PreviewBatchTags(
 	if err != nil {
 		return BatchTagPreview{}, err
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return BatchTagPreview{}, fmt.Errorf("starting batch tag preview: %w", err)
 	}
@@ -240,12 +240,14 @@ func loadBatchTagTargetsTx(
 ) ([]batchTagTargetState, error) {
 	args := make([]any, 1, len(targets)+1)
 	args[0] = tagID
-	for _, target := range targets {
+	binds := make([]string, len(targets))
+	for i, target := range targets {
 		args = append(args, target.NodeID)
+		binds[i] = fmt.Sprintf("$%d", i+2)
 	}
-	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(targets)), ",")
+	placeholders := strings.Join(binds, ",")
 	rows, err := tx.QueryContext(ctx, `SELECT `+nodeCols+`, nt.node_id IS NOT NULL
-		FROM `+nodeFrom+` LEFT JOIN node_tags nt ON nt.node_id=n.id AND nt.tag_id=?
+		FROM `+nodeFrom+` LEFT JOIN node_tags nt ON nt.node_id=n.id AND nt.tag_id=$1
 		WHERE n.id IN (`+placeholders+`) ORDER BY n.id`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("reading batch tag targets: %w", err)
@@ -305,20 +307,29 @@ func (s *Store) applyBatchTagsTx(
 	if tag.Revision > math.MaxInt64-int64(len(changedIDs)) {
 		return nil, fmt.Errorf("tag %s revision cannot advance by %d: %w", tag.ID, len(changedIDs), ErrInvalidBatchTag)
 	}
-	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(changedIDs)), ",")
-	assignmentSQL := `DELETE FROM node_tags WHERE tag_id=? AND node_id IN (` + placeholders + `)`
+	binds := make([]string, len(changedIDs))
+	for i := range binds {
+		binds[i] = fmt.Sprintf("$%d", i+2)
+	}
+	placeholders := strings.Join(binds, ",")
+	assignmentSQL := `DELETE FROM node_tags WHERE tag_id=$1 AND node_id IN (` + placeholders + `)`
 	if request.Assign {
-		assignmentSQL = `INSERT INTO node_tags(node_id,tag_id) SELECT id,? FROM nodes WHERE id IN (` + placeholders + `)`
+		assignmentSQL = `INSERT INTO node_tags(node_id,tag_id) SELECT id,$1 FROM nodes WHERE id IN (` + placeholders + `)`
 	}
 	if _, err := tx.ExecContext(ctx, assignmentSQL, append([]any{tag.ID}, changedIDs...)...); err != nil {
 		return nil, fmt.Errorf("changing batch tag assignments: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE nodes SET revision=revision+1,modified_at=?
+	if _, err := tx.ExecContext(ctx, `UPDATE nodes SET revision=revision+1,modified_at=$1
 		WHERE id IN (`+placeholders+`)`, append([]any{recordedAt}, changedIDs...)...); err != nil {
 		return nil, fmt.Errorf("advancing batch tag nodes: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE tags SET revision=revision+? WHERE id=?`, len(changedIDs), tag.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE tags SET revision=revision+$1 WHERE id=$2`, len(changedIDs), tag.ID); err != nil {
 		return nil, fmt.Errorf("advancing batch tag: %w", err)
+	}
+	if s.postgresSchema != "" {
+		if err := s.refreshTagPhotoWorkTx(ctx, tx, `node_id IN (`+numberedPlaceholders(len(changedIDs))+`)`, changedIDs...); err != nil {
+			return nil, err
+		}
 	}
 	active, err := auditAuthorityActiveTx(ctx, tx)
 	if err != nil {
@@ -361,7 +372,7 @@ func loadBatchTagReceiptTx(
 	var requestDigest string
 	var receiptJSON []byte
 	err := tx.QueryRowContext(ctx, `SELECT request_digest,receipt_json
-		FROM batch_tag_receipts WHERE operation_id=?`, operationID).Scan(&requestDigest, &receiptJSON)
+		FROM batch_tag_receipts WHERE operation_id=$1`, operationID).Scan(&requestDigest, &receiptJSON)
 	if errors.Is(err, sql.ErrNoRows) {
 		return BatchTagReceiptV1{}, ErrNotFound
 	}
