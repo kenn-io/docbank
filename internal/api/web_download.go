@@ -37,6 +37,7 @@ const (
 	webDownloadErrorPhase   = "error"
 	webPreviewTextMaxBytes  = 16 << 20
 	webPreviewImageMaxBytes = 32 << 20
+	webPreviewPDFMaxBytes   = 64 << 20
 	webPreviewMaxDimension  = 16_384
 	webPreviewMaxPixels     = 40_000_000
 )
@@ -545,6 +546,13 @@ func validateWebPreview(purpose, rawMediaType string, size int64) *Error {
 		if size > webPreviewTextMaxBytes {
 			return NewError(http.StatusRequestEntityTooLarge, "preview_too_large",
 				"text previews are limited to 16 MiB")
+		}
+		return nil
+	}
+	if charset == "" && mediaType == "application/pdf" {
+		if size > webPreviewPDFMaxBytes {
+			return NewError(http.StatusRequestEntityTooLarge, "preview_too_large",
+				"PDF previews are limited to 64 MiB")
 		}
 		return nil
 	}

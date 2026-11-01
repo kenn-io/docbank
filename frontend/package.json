@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "postinstall": "node scripts/patch-embedpdf.mjs",
     "dev": "vp dev",
     "build": "vp build",
     "fmt": "vp fmt",
@@ -18,6 +19,8 @@
     "generate:api": "orval --config orval.config.ts"
   },
   "dependencies": {
+    "@embedpdf/pdfium": "2.15.1",
+    "@embedpdf/svelte-pdf-viewer": "2.15.1",
     "@kenn-io/kit-ui": "git+https://github.com/kenn-io/kit-ui.git#a6bfaffcfb05da95b90600c95daf7272cfaf0196",
     "@lucide/svelte": "1.24.0",
     "@noble/hashes": "^2.2.0",

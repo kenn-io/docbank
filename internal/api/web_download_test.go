@@ -277,6 +277,31 @@ func TestWebPreviewRejectsIneligibleAndOversizedSourcesBeforeStaging(t *testing.
 	})
 }
 
+func TestWebPreviewPDF(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	content := "%PDF-1.7\nsynthetic PDF download bytes\n%%EOF\n"
+	hash, size, err := s.Blobs.Write(strings.NewReader(content))
+	require.NoError(t, err)
+	document, err := s.CreateFile(t.Context(), s.RootID(), "report.pdf", hash, size, "application/pdf")
+	require.NoError(t, err)
+	response := prepareWebDownload(t, ts, "", map[string]any{
+		"node_id": document.ID, "revision": document.Revision,
+		"version_id": document.CurrentVersionID, "blob_hash": document.BlobHash,
+		"size": document.Size, "purpose": "preview",
+	})
+	require.Equal(t, http.StatusOK, response.StatusCode)
+	previewURL := readyWebDownloadURL(t, response)
+	preview, err := ts.Client().Get(ts.URL + previewURL)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, preview.Body.Close()) }()
+	require.Equal(t, http.StatusOK, preview.StatusCode)
+	assert.Equal(t, "application/pdf", preview.Header.Get("Content-Type"))
+	data, err := io.ReadAll(preview.Body)
+	require.NoError(t, err)
+	assert.Equal(t, content, string(data))
+}
+
 func TestWebPreviewTicketCancellationIsOwnerScopedAndSessionRevoked(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)

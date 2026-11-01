@@ -77,7 +77,9 @@ test("keeps inspector tabs stable and tag removal accessible", async ({ page }) 
     await preview.evaluate((element) => element.setAttribute("data-retained", "yes"));
     let requests = 0;
     page.on("request", (request) => {
-      if (/web-download|duplicates|attachments|renditions/.test(request.url())) requests++;
+      // Revisiting Text rechecks its rendition identity, but retains verified content.
+      if (/web-download|duplicates|attachments|renditions\/text\/content/.test(request.url()))
+        requests++;
     });
     let releaseDuplicates!: () => void;
     const pendingDuplicates = new Promise<void>((resolve) => {
@@ -138,6 +140,74 @@ test("keeps inspector tabs stable and tag removal accessible", async ({ page }) 
       const status = JSON.parse(await docbank("daemon", "status", "--json"));
       expect(status.running).toBe(false);
     }
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test("keeps folder metadata and file preview bounds stable while browsing", async ({ page }) => {
+  const workspace = await mkdtemp(path.join(tmpdir(), "docbank-inspector-browsing-"));
+  const docbank = async (...args: string[]) =>
+    (
+      await run(binary, args, {
+        cwd: repository,
+        env: { ...process.env, DOCBANK_HOME: path.join(workspace, "vault") },
+        timeout: 60_000,
+      })
+    ).stdout.trim();
+  try {
+    await mkdir(output!, { recursive: true });
+    const source = path.join(workspace, "Reports");
+    await mkdir(source);
+    await writeFile(path.join(source, "First.txt"), "First synthetic document.\n");
+    await writeFile(path.join(source, "Second.txt"), "Second synthetic document.\n".repeat(30));
+    await docbank("add", source, "--dest", "/");
+    await docbank("tag", "create", "Review");
+    await docbank("tag", "assign", "Review", "/Reports");
+    await page.goto(await docbank("web", "--no-browser"));
+    const folder = page.getByRole("cell", { name: "Reports", exact: true });
+    const inspector = page.getByRole("complementary", { name: "Document inspector" });
+    await folder.click();
+    const tag = inspector.getByRole("button", { name: "Remove tag Review" });
+    await expect(tag).toBeAttached();
+    const tagElement = await tag.elementHandle();
+    await folder.click();
+    expect(await tagElement!.evaluate((element) => element.isConnected)).toBe(true);
+    await folder.dblclick();
+    await page.getByRole("cell", { name: "First.txt", exact: true }).click();
+    const preview = inspector.locator(".original-preview pre");
+    await expect(preview).toHaveText("First synthetic document.");
+    const content = inspector.locator(".tab-content");
+    const details = inspector.locator(".detail-rows");
+    const originalBounds = await content.boundingBox();
+    const originalDetails = await details.boundingBox();
+    let releasePreview!: () => void;
+    const pendingPreview = new Promise<void>((resolve) => {
+      releasePreview = resolve;
+    });
+    await page.route("**/api/daemon/web-download/file?ticket=*", async (route) => {
+      await pendingPreview;
+      await route.continue();
+    });
+    try {
+      await page.getByRole("cell", { name: "Second.txt", exact: true }).click();
+      await expect(inspector.getByRole("status").filter({ hasText: "Verifying" })).toBeVisible();
+      expect((await content.boundingBox())?.height).toBe(originalBounds?.height);
+      expect((await details.boundingBox())?.y).toBe(originalDetails?.y);
+      await page.screenshot({ path: path.join(output!, "file-loading.png") });
+    } finally {
+      releasePreview();
+    }
+    await expect(preview).toContainText("Second synthetic document.");
+    expect((await content.boundingBox())?.height).toBe(originalBounds?.height);
+    expect((await details.boundingBox())?.y).toBe(originalDetails?.y);
+    expect(await content.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(
+      true,
+    );
+    await page.screenshot({ path: path.join(output!, "file-browsing.png") });
+  } finally {
+    await docbank("daemon", "stop");
+    const status = JSON.parse(await docbank("daemon", "status", "--json"));
+    expect(status.running).toBe(false);
     await rm(workspace, { recursive: true, force: true });
   }
 });

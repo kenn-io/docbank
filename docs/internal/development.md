@@ -47,6 +47,25 @@ and needs no running vault. The rendition and embedding bridge schemas remain
 with their independent contracts in `document/bridge/` and
 `document/embeddingbridge/`.
 
+### PDF reader dependency corrections
+
+`npm ci` runs `frontend/scripts/patch-embedpdf.mjs` against EmbedPDF 2.15.1.
+It confines keyboard shortcuts to the viewer element and destroys an
+engine that finishes initializing after the viewer unmounts. Without these
+corrections, a hidden preview can replace copied text with an empty string,
+and switching documents during initialization can leave three workers running.
+The patch rejects an unexpected package version or bundle. Remove it when an
+upstream release supplies both fixes, and rerun the document-reader browser
+proof before changing the pin. The container frontend stage includes the patch
+script and the bundled fallback font.
+
+The PDF rendering CI lane runs `frontend/screenshots/redaction-review.run.mjs`
+against both SQLite builds. It executes the document-reader and redaction-review
+browser cases with synthetic vaults and the built application. Reader cases cover
+activation, clipboard shortcuts, worker cleanup, Markdown form removal, link
+isolation, failed module loading and delayed file details. Selecting PDFs in the
+inspector must not prepare original-file downloads or start PDF workers.
+
 ## Share the Go build cache across worktrees
 
 Make targets and CI compile Go with `-trimpath`, so binaries record

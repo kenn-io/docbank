@@ -22,6 +22,7 @@
   import TechnicalDetails from "./TechnicalDetails.svelte";
   import InspectorHistory from "./InspectorHistory.svelte";
   import CopyValue from "./CopyValue.svelte";
+  import { pdfRedactionAction } from "./documentReader.js";
   import RedactionDrawer from "./RedactionDrawer.svelte";
   import DownloadButton from "./DownloadButton.svelte";
   import type { SelectedSource } from "./selectedSource.js";
@@ -174,23 +175,13 @@
   let protect = $state(false);
   let displayed = $state<{ origin: string; source: SelectedSource; revision: number }>();
   let redacting = $state<{ source: SelectedSource; revision: number }>();
+  const redactionAction = $derived(pdfRedactionAction(source, node, actionsDisabled));
   const canRedact = $derived(
     !snapshot &&
-      node?.kind === "file" &&
-      !node.trashed_at &&
-      source?.kind === "live" &&
-      mediaType(source.mimeType) === "application/pdf" &&
-      (!displayed || displayed.origin !== source.key || displayed.source.key === source.key),
+      redactionAction &&
+      (!displayed || displayed.origin !== source?.key || displayed.source.key === source?.key),
   );
-  const redactionDisabled = $derived(
-    actionsDisabled
-      ? "Refresh this view first"
-      : source?.size === 0
-        ? "An empty PDF cannot be redacted"
-        : (source?.size ?? 0) > 64 * 1024 * 1024
-          ? "PDF redaction supports files up to 64 MiB"
-          : "",
-  );
+  const redactionDisabled = $derived(redactionAction?.disabledReason ?? "");
   const download = $derived(displayed?.origin === source?.key ? displayed : undefined);
   function showSource(next: SelectedSource, revision: number): void {
     if (source) displayed = { origin: source.key, source: next, revision };

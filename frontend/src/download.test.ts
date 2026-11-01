@@ -235,6 +235,33 @@ describe("exact selected-source preview", () => {
     });
   });
 
+  it("publishes verified PDF bytes as a local viewer URL", async () => {
+    const create = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:verified-pdf");
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(ready())
+        .mockResolvedValueOnce(body({ "Content-Type": "application/pdf" })),
+    );
+    const preview = await readVerifiedPreview(
+      "browser-session",
+      { ...source, mimeType: "application/pdf" },
+      11,
+      new AbortController().signal,
+      () => undefined,
+    );
+    expect(preview).toEqual({
+      kind: "pdf",
+      url: "blob:verified-pdf",
+      mediaType: "application/pdf",
+    });
+    expect(create.mock.calls[0]![0]).toBeInstanceOf(Blob);
+    const blob = create.mock.calls[0]![0] as Blob;
+    expect(blob.type).toBe("application/pdf");
+    expect(blob.size).toBe(content.length);
+  });
+
   it("accepts the daemon's current safe filename without changing pinned bytes", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(ready("renamed", "renamed-live.txt")));
 
