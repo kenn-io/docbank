@@ -3,6 +3,7 @@ package docling
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
@@ -619,18 +620,7 @@ func mapEvidence(raw jsontext.Value, family string, first int64, allowBlankRange
 			return document.SourceEvidenceV1{}, nil, false
 		}
 	}
-	var wire struct {
-		SchemaName    string                    `json:"schema_name"`
-		Version       string                    `json:"version"`
-		Texts         []doclingText             `json:"texts"`
-		Pages         map[string]jsontext.Value `json:"pages"`
-		Tables        []jsontext.Value          `json:"tables"`
-		Pictures      []jsontext.Value          `json:"pictures"`
-		KeyValueItems []jsontext.Value          `json:"key_value_items"`
-		FormItems     []jsontext.Value          `json:"form_items"`
-		FieldRegions  []jsontext.Value          `json:"field_regions"`
-		FieldItems    []jsontext.Value          `json:"field_items"`
-	}
+	var wire doclingDocument
 	if len(raw) == 0 || json.Unmarshal(raw, &wire) != nil || wire.SchemaName != "DoclingDocument" ||
 		!supportedDoclingMajor(wire.Version) || len(wire.Pages) == 0 || family != "pdf" {
 		return document.SourceEvidenceV1{}, nil, false
@@ -639,9 +629,18 @@ func mapEvidence(raw jsontext.Value, family string, first int64, allowBlankRange
 	if !natural {
 		return document.SourceEvidenceV1{}, nil, false
 	}
-	indexes, pages, ok := doclingPageTexts(wire.Pages, wire.Texts, first, allowBlankRange)
+	indexes, pages, unmappedTables, ok := doclingPageTexts(&wire, first, allowBlankRange)
 	if !ok {
 		return document.SourceEvidenceV1{}, nil, false
+	}
+	// Text inside pictures and their captions are texts with their own
+	// provenance, so only Docling's descriptions and classifications stay
+	// unmapped.
+	describedPictures := 0
+	for _, picture := range wire.Pictures {
+		if picture.describes() {
+			describedPictures++
+		}
 	}
 	evidence := document.SourceEvidenceV1{
 		ContractVersion: document.SourceEvidenceContractV1, Completeness: document.EvidenceComplete,
@@ -654,17 +653,17 @@ func mapEvidence(raw jsontext.Value, family string, first int64, allowBlankRange
 		})
 	}
 	for _, field := range []struct {
-		name   string
-		values []jsontext.Value
+		name     string
+		unmapped int
 	}{
-		{name: "tables", values: wire.Tables},
-		{name: "pictures", values: wire.Pictures},
-		{name: "key_value_items", values: wire.KeyValueItems},
-		{name: "form_items", values: wire.FormItems},
-		{name: "field_regions", values: wire.FieldRegions},
-		{name: "field_items", values: wire.FieldItems},
+		{name: "tables", unmapped: unmappedTables},
+		{name: "pictures", unmapped: describedPictures},
+		{name: "key_value_items", unmapped: len(wire.KeyValueItems)},
+		{name: "form_items", unmapped: len(wire.FormItems)},
+		{name: "field_regions", unmapped: len(wire.FieldRegions)},
+		{name: "field_items", unmapped: len(wire.FieldItems)},
 	} {
-		if len(field.values) == 0 {
+		if field.unmapped == 0 {
 			continue
 		}
 		evidence.Omissions = append(evidence.Omissions, document.SourceEvidenceOmissionV1{
@@ -677,24 +676,132 @@ func mapEvidence(raw jsontext.Value, family string, first int64, allowBlankRange
 	return evidence, append([]byte(nil), raw...), true
 }
 
+// doclingDocument is the part of a DoclingDocument 1.x that page evidence
+// reads. The tree fields only order tables among texts.
+type doclingDocument struct {
+	SchemaName    string                    `json:"schema_name"`
+	Version       string                    `json:"version"`
+	Pages         map[string]jsontext.Value `json:"pages"`
+	Body          doclingItem               `json:"body"`
+	Furniture     doclingItem               `json:"furniture"`
+	Texts         []doclingText             `json:"texts"`
+	Tables        []doclingTable            `json:"tables"`
+	Groups        []doclingItem             `json:"groups"`
+	Pictures      []doclingItem             `json:"pictures"`
+	KeyValueItems []doclingItem             `json:"key_value_items"`
+	FormItems     []doclingItem             `json:"form_items"`
+	FieldRegions  []jsontext.Value          `json:"field_regions"`
+	FieldItems    []jsontext.Value          `json:"field_items"`
+}
+
+type doclingProvenance struct {
+	PageNo int64 `json:"page_no"`
+}
+
+type doclingRef struct {
+	Ref string `json:"$ref"`
+}
+
 type doclingText struct {
+	Text     string              `json:"text"`
+	Prov     []doclingProvenance `json:"prov"`
+	Children []doclingRef        `json:"children"`
+}
+
+// doclingItem is any node whose own content is not text: the body and
+// furniture roots, groups, pictures, and key-value or form regions.
+type doclingItem struct {
+	Children    []doclingRef     `json:"children"`
+	Annotations []jsontext.Value `json:"annotations"`
+	Meta        jsontext.Value   `json:"meta"`
+}
+
+// describes reports whether Docling attached descriptions, classifications,
+// or other enrichment that no text item carries.
+func (item doclingItem) describes() bool {
+	if len(item.Annotations) != 0 {
+		return true
+	}
+	if len(item.Meta) == 0 {
+		return false
+	}
+	var fields map[string]jsontext.Value
+	if json.Unmarshal(item.Meta, &fields) != nil {
+		return true
+	}
+	for _, value := range fields {
+		if value.Kind() != 'n' {
+			return true
+		}
+	}
+	return false
+}
+
+type doclingTable struct {
+	doclingItem `json:",inline"`
+
+	Prov []doclingProvenance `json:"prov"`
+	Data struct {
+		Grid       [][]doclingCell `json:"grid"`
+		TableCells []doclingCell   `json:"table_cells"`
+	} `json:"data"`
+}
+
+type doclingCell struct {
 	Text string `json:"text"`
-	Prov []struct {
-		PageNo int64 `json:"page_no"`
-	} `json:"prov"`
+}
+
+// markdown renders the table grid as a GitHub-flavored Markdown table, with
+// the first row as its header like Docling's own Markdown. Docling repeats a
+// spanning cell's text in every grid position it covers, so the output stays
+// proportional to the grid it received. It reports false when the grid is
+// missing for nonblank cells or is not rectangular.
+func (table doclingTable) markdown() (string, bool) {
+	nonblank := func(cells []doclingCell) bool {
+		return slices.ContainsFunc(cells, func(cell doclingCell) bool { return strings.TrimSpace(cell.Text) != "" })
+	}
+	grid := table.Data.Grid
+	if !slices.ContainsFunc(grid, nonblank) {
+		return "", !nonblank(table.Data.TableCells)
+	}
+	var text strings.Builder
+	for index, row := range grid {
+		if len(row) != len(grid[0]) {
+			return "", false
+		}
+		if index != 0 {
+			text.WriteByte('\n')
+		}
+		text.WriteByte('|')
+		for _, cell := range row {
+			text.WriteByte(' ')
+			text.WriteString(strings.ReplaceAll(strings.Join(strings.Fields(cell.Text), " "), "|", `\|`))
+			text.WriteString(" |")
+		}
+		if index == 0 {
+			text.WriteString("\n|")
+			for range row {
+				text.WriteString(" --- |")
+			}
+		}
+	}
+	return text.String(), true
 }
 
 // doclingPageTexts builds the page registry contiguous from first and assigns
 // every non-blank text to the single page its provenance names. Blank pages
-// are usable only inside an explicit page range.
+// are usable only inside an explicit page range. A table joins its page as
+// Markdown, after the text that Docling's reading order puts before it, when
+// its provenance names one registered page; other tables with content are
+// counted as unmapped instead of being attached to a guessed page.
 func doclingPageTexts(
-	rawPages map[string]jsontext.Value, texts []doclingText, first int64, allowBlankRange bool,
-) ([]int64, map[int64][]string, bool) {
-	pages := make(map[int64][]string, len(rawPages))
-	for key := range rawPages {
+	wire *doclingDocument, first int64, allowBlankRange bool,
+) ([]int64, map[int64][]string, int, bool) {
+	pages := make(map[int64][]pageItem, len(wire.Pages))
+	for key := range wire.Pages {
 		page, err := strconv.ParseInt(key, 10, 64)
 		if err != nil || page < 1 || strconv.FormatInt(page, 10) != key {
-			return nil, nil, false
+			return nil, nil, 0, false
 		}
 		pages[page] = nil
 	}
@@ -705,33 +812,156 @@ func doclingPageTexts(
 	slices.Sort(indexes)
 	for index, page := range indexes {
 		if page != first+int64(index) {
-			return nil, nil, false
+			return nil, nil, 0, false
 		}
 	}
 	hasMappedText := false
-	for _, text := range texts {
+	for index, text := range wire.Texts {
 		if strings.TrimSpace(text.Text) == "" {
 			continue
 		}
-		if len(text.Prov) == 0 {
-			return nil, nil, false
-		}
-		page := text.Prov[0].PageNo
-		if page < 1 {
-			return nil, nil, false
-		}
-		for _, provenance := range text.Prov {
-			if provenance.PageNo != page {
-				return nil, nil, false
-			}
+		page, ok := singlePage(text.Prov)
+		if !ok {
+			return nil, nil, 0, false
 		}
 		if _, ok := pages[page]; !ok {
-			return nil, nil, false
+			return nil, nil, 0, false
 		}
-		pages[page] = append(pages[page], text.Text)
+		pages[page] = append(pages[page], pageItem{text: text.Text, after: index, table: -1})
 		hasMappedText = true
 	}
-	return indexes, pages, hasMappedText || allowBlankRange
+	unmappedTables := 0
+	anchors := wire.tableAnchors()
+	for index, table := range wire.Tables {
+		text, ok := table.markdown()
+		if ok && text == "" && !table.describes() {
+			continue
+		}
+		page, located := singlePage(table.Prov)
+		if _, registered := pages[page]; !ok || !located || !registered || table.describes() {
+			unmappedTables++
+			continue
+		}
+		pages[page] = append(pages[page], pageItem{text: text, after: anchors[index], table: index})
+		hasMappedText = true
+	}
+	texts := make(map[int64][]string, len(pages))
+	for page, items := range pages {
+		slices.SortFunc(items, func(left, right pageItem) int {
+			return cmp.Or(cmp.Compare(left.after, right.after), cmp.Compare(left.table, right.table))
+		})
+		for _, item := range items {
+			texts[page] = append(texts[page], item.text)
+		}
+	}
+	return indexes, texts, unmappedTables, hasMappedText || allowBlankRange
+}
+
+// pageItem orders a page's texts by their index and puts each table after the
+// text it follows; table is -1 for texts.
+type pageItem struct {
+	text         string
+	after, table int
+}
+
+// singlePage returns the one page every provenance entry names.
+func singlePage(provenance []doclingProvenance) (int64, bool) {
+	if len(provenance) == 0 || provenance[0].PageNo < 1 {
+		return 0, false
+	}
+	for _, entry := range provenance[1:] {
+		if entry.PageNo != provenance[0].PageNo {
+			return 0, false
+		}
+	}
+	return provenance[0].PageNo, true
+}
+
+// tableAnchors walks Docling's reading order from the body, then the
+// furniture, and returns for each table the index of the last text visited
+// before it: -1 before any text, or len(Texts) when no walk reaches it. Each
+// reference is visited once, so cyclic or repeated references end the walk.
+func (wire *doclingDocument) tableAnchors() []int {
+	anchors := make([]int, len(wire.Tables))
+	for index := range anchors {
+		anchors[index] = len(wire.Texts)
+	}
+	reached := make([]bool, len(wire.Tables))
+	visited := make(map[string]struct{})
+	last := -1
+	stack := []string{"#/furniture", "#/body"}
+	for len(stack) != 0 {
+		ref := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		children, collection, index, ok := wire.resolve(ref)
+		if !ok {
+			continue
+		}
+		if _, seen := visited[ref]; seen {
+			continue
+		}
+		visited[ref] = struct{}{}
+		switch collection {
+		case "texts":
+			last = index
+		case "tables":
+			if !reached[index] {
+				anchors[index], reached[index] = last, true
+			}
+		}
+		for _, child := range slices.Backward(children) {
+			stack = append(stack, child.Ref)
+		}
+	}
+	return anchors
+}
+
+// resolve returns the children of one JSON-pointer reference such as
+// "#/texts/3", or false when it names no item of the document.
+func (wire *doclingDocument) resolve(ref string) ([]doclingRef, string, int, bool) {
+	switch ref {
+	case "#/body":
+		return wire.Body.Children, "body", 0, true
+	case "#/furniture":
+		return wire.Furniture.Children, "furniture", 0, true
+	}
+	path, ok := strings.CutPrefix(ref, "#/")
+	if !ok {
+		return nil, "", 0, false
+	}
+	collection, position, ok := strings.Cut(path, "/")
+	index, err := strconv.Atoi(position)
+	if !ok || err != nil || index < 0 || strconv.Itoa(index) != position {
+		return nil, "", 0, false
+	}
+	items := func(values []doclingItem) ([]doclingRef, string, int, bool) {
+		if index >= len(values) {
+			return nil, "", 0, false
+		}
+		return values[index].Children, collection, index, true
+	}
+	switch collection {
+	case "texts":
+		if index >= len(wire.Texts) {
+			return nil, "", 0, false
+		}
+		return wire.Texts[index].Children, collection, index, true
+	case "tables":
+		if index >= len(wire.Tables) {
+			return nil, "", 0, false
+		}
+		return wire.Tables[index].Children, collection, index, true
+	case "groups":
+		return items(wire.Groups)
+	case "pictures":
+		return items(wire.Pictures)
+	case "key_value_items":
+		return items(wire.KeyValueItems)
+	case "form_items":
+		return items(wire.FormItems)
+	default:
+		return nil, "", 0, false
+	}
 }
 
 func supportedDoclingMajor(version string) bool {
