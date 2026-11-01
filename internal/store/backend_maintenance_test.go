@@ -31,7 +31,7 @@ var backendMaintenanceEffects = []backendMaintenance{
  photo_timeline_refresh photo_timeline_file_insert photo_timeline_role_change
  photo_timeline_version_delete photo_timeline_version_change
  photo_timeline_binding_insert photo_timeline_correction_insert`},
-	{"photo export queue", "document_maintenance.go: refreshPhotoAssetWorkTx and refreshNodePhotoWorkTx", "documents/trash/retention contracts; XMP publication remains unqualified", `
+	{"photo export queue", "document_maintenance.go: refreshPhotoAssetWorkTx and refreshNodePhotoWorkTx", "documents/trash/retention/organization contracts; XMP publication remains unqualified", `
  photo_xmp_unsettled_refresh photo_xmp_unsettled_file_insert photo_xmp_unsettled_file_update
  photo_xmp_unsettled_file_delete photo_xmp_unsettled_asset_insert photo_xmp_unsettled_asset_update
  photo_xmp_unsettled_node_update photo_xmp_unsettled_node_insert photo_xmp_unsettled_node_delete
@@ -73,15 +73,15 @@ var backendMaintenanceEffects = []backendMaintenance{
  processing_profiles_immutable_update rendition_builds_immutable_update
  rendition_artifacts_immutable_update rendition_units_immutable_update
  rendition_lexical_segments_immutable_update rendition_attachments_immutable_update`},
-	{"transfer and batch records", "unported: collection snapshots, Bates, packages and batch tag writes", "retained validation does not qualify immutable-record or state-transition writes", `
+	{"transfer and batch records", "unported: collection snapshots, Bates and packages", "retained validation does not qualify immutable-record or state-transition writes", `
  collection_snapshots_immutable_update collection_snapshot_members_immutable_update
  collection_snapshot_representations_immutable_update
  bates_artifacts_immutable_update bates_artifact_pages_immutable_update
  bates_namespaces_immutable_update bates_namespace_cursors_monotone
  bates_allocations_transition_guard bates_page_labels_immutable_update
  package_volumes_immutable_update packages_transition_guard package_records_immutable_update
- package_labels_immutable_update package_import_receipts_immutable_update
- batch_tag_receipts_immutable_update batch_tag_receipts_immutable_delete`},
+ package_labels_immutable_update package_import_receipts_immutable_update`},
+	{"batch tag receipts", "batch_tag.go; runtime INSERT-only grants", "organization contracts; committed receipts survive tag deletion", `batch_tag_receipts_immutable_update batch_tag_receipts_immutable_delete`},
 }
 
 func printBackendMaintenance() {

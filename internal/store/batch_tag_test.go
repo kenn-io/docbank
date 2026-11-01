@@ -120,9 +120,9 @@ func TestBatchTagsRejectsInvalidStructureWithoutWrites(t *testing.T) {
 	assert.Equal(t, node.Revision, unchanged.Revision)
 }
 
-func TestBatchTagsMixedChangesNoOpsAndCallerOrder(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkBatchTagsMixedChangesNoOpsAndCallerOrder(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	first, err := s.Mkdir(ctx, s.RootID(), "first")
 	require.NoError(t, err)
@@ -157,7 +157,7 @@ func TestBatchTagsMixedChangesNoOpsAndCallerOrder(t *testing.T) {
 	require.NoError(t, err)
 	var stored []byte
 	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT receipt_json FROM batch_tag_receipts
-		WHERE operation_id=?`, receipt.OperationID).Scan(&stored))
+		WHERE operation_id=$1`, receipt.OperationID).Scan(&stored))
 	assert.Equal(t, canonical, stored)
 	request.Nodes = []BatchTagTarget{
 		{NodeID: first.ID, Revision: first.Revision},
@@ -168,11 +168,11 @@ func TestBatchTagsMixedChangesNoOpsAndCallerOrder(t *testing.T) {
 	assert.Equal(t, receipt, reorderedReplay)
 }
 
-func TestBatchTagsAcceptsOneAndOneThousandTargets(t *testing.T) {
-	t.Parallel()
+func checkBatchTagsAcceptsOneAndOneThousandTargets(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	for _, count := range []int{1, maxBatchTagTargets} {
 		t.Run(strconv.Itoa(count), func(t *testing.T) {
-			s := newTestStore(t)
+			s := open(t)
 			nodes := createBatchTagDirectories(t, s, count)
 			tag, err := s.CreateTag(t.Context(), "Bounded")
 			require.NoError(t, err)
@@ -201,7 +201,7 @@ func TestBatchTagsAcceptsOneAndOneThousandTargets(t *testing.T) {
 			require.NoError(t, err)
 			assert.Zero(t, removed.AssignmentCount)
 			assert.Equal(t, tag.Revision+2*int64(count), removed.TagRevision)
-			require.NoError(t, s.ValidateMetadata(t.Context()))
+			checkRetentionMetadata(t, s)
 		})
 	}
 }
@@ -511,13 +511,7 @@ func createBatchTagDirectories(t *testing.T, s *Store, count int) []Node {
 	recordedAt := time.Date(2026, time.September, 11, 12, 0, 0, 0, time.UTC).Format(timestampLayout)
 	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
 		for i := range count {
-			row, err := tx.ExecContext(t.Context(), `INSERT INTO nodes(
-				parent_id,name,kind,created_at,modified_at) VALUES(?,?,'dir',?,?)`,
-				s.RootID(), fmt.Sprintf("node-%04d", i), recordedAt, recordedAt)
-			if err != nil {
-				return err
-			}
-			id, err := row.LastInsertId()
+			id, err := s.insertNodeTx(t.Context(), tx, s.RootID(), fmt.Sprintf("node-%04d", i), nodeKindDir, nil, recordedAt)
 			if err != nil {
 				return err
 			}
@@ -532,9 +526,9 @@ func createBatchTagDirectories(t *testing.T, s *Store, count int) []Node {
 	return result
 }
 
-func TestPreviewBatchTagsExactMembershipAndStaleFences(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkPreviewBatchTagsExactMembershipAndStaleFences(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	first, err := s.Mkdir(ctx, s.RootID(), "first")
 	require.NoError(t, err)

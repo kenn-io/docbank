@@ -1308,6 +1308,8 @@ CREATE TABLE {{schema}}.saved_query_runs (
     photos                     BIGINT NOT NULL DEFAULT 0
 );
 
+CREATE INDEX saved_query_runs_definition ON {{schema}}.saved_query_runs(saved_query_id, ran_at DESC);
+
 CREATE TABLE {{schema}}.term_report_history (
     id           TEXT COLLATE "C" PRIMARY KEY NOT NULL,
     parent_id    TEXT COLLATE "C" NOT NULL,
@@ -1649,6 +1651,8 @@ CREATE TABLE {{schema}}.mailbox_jobs (
     claim TEXT COLLATE "C" NOT NULL,
     job_json TEXT COLLATE "C" NOT NULL
 );
+
+CREATE INDEX mailbox_jobs_state ON {{schema}}.mailbox_jobs(state,owner,id);
 
 CREATE TABLE {{schema}}.mailbox_occurrences (
     job_id TEXT COLLATE "C" NOT NULL,

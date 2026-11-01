@@ -123,7 +123,98 @@ var backendSuites = []backendSuite{
 	{name: "photo-editing", postgres: "unqualified", scope: "Grouped import, XMP writing, authored metadata, people/face publication and photo review workflows remain unqualified."},
 	{name: "search", postgres: "unqualified", scope: "Lexical/vector search and query execution remain unqualified; matching metadata columns do not establish ranking or index parity."},
 	{name: "transfer-and-recovery", postgres: "unqualified", scope: "Metadata import/export, portable packages, backup and restore remain unqualified."},
-	{name: "organization-and-delivery", postgres: "unqualified", scope: "Tags, saved queries, photo sets, custodian assignments, snapshots, Bates and delivery jobs remain unqualified."},
+	{name: "organization", postgres: "native operations", scope: "Tags, audited bulk edits and saved definitions; excludes query execution and delivery.", scenarios: []backendScenario{
+		{"BatchTagsMixedChangesNoOpsAndCallerOrder", func(t *testing.T) {
+			t.Helper()
+			checkBatchTagsMixedChangesNoOpsAndCallerOrder(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkBatchTagsMixedChangesNoOpsAndCallerOrder(t, newPostgresQueryStore)
+		}},
+		{"BatchTagsAcceptsOneAndOneThousandTargets", func(t *testing.T) {
+			t.Helper()
+			checkBatchTagsAcceptsOneAndOneThousandTargets(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkBatchTagsAcceptsOneAndOneThousandTargets(t, newPostgresQueryStore)
+		}},
+		{"PreviewBatchTagsExactMembershipAndStaleFences", func(t *testing.T) {
+			t.Helper()
+			checkPreviewBatchTagsExactMembershipAndStaleFences(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPreviewBatchTagsExactMembershipAndStaleFences(t, newPostgresQueryStore)
+		}},
+		{"BatchTagSnapshot", nil, checkBatchTagSnapshotPostgres},
+		{"SavedDefinitionRetainedRuns", nil, checkSavedDefinitionRetainedRunsPostgres},
+		{"TagPhotoReceipts", nil, checkTagPhotoReceiptsPostgres},
+		{"TagMailboxGuard", nil, checkTagMailboxGuardPostgres},
+		{"TagPhotoWork", func(t *testing.T) {
+			t.Helper()
+			checkTagPhotoWork(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkTagPhotoWork(t, newPostgresQueryStore)
+		}},
+		{"AuditedTagWrites", nil, checkAuditedTagWritesPostgres},
+		{"TagLifecycleAndNodeRevisions", func(t *testing.T) {
+			t.Helper()
+			checkTagLifecycleAndNodeRevisions(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkTagLifecycleAndNodeRevisions(t, newPostgresQueryStore)
+		}},
+		{"TagPagesKeepAssignmentCounts", func(t *testing.T) {
+			t.Helper()
+			checkTagPagesKeepAssignmentCounts(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkTagPagesKeepAssignmentCounts(t, newPostgresQueryStore)
+		}},
+		{"TaggedNodePagesKeepCurrentMetadataAndTrashCounts", func(t *testing.T) {
+			t.Helper()
+			checkTaggedNodePagesKeepCurrentMetadataAndTrashCounts(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkTaggedNodePagesKeepCurrentMetadataAndTrashCounts(t, newPostgresQueryStore)
+		}},
+		{"TagAssignmentPathUsesCurrentTopology", func(t *testing.T) {
+			t.Helper()
+			checkTagAssignmentPathUsesCurrentTopology(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkTagAssignmentPathUsesCurrentTopology(t, newPostgresQueryStore)
+		}},
+		{"SavedQueryLifecycleCanonicalizesAndFencesRevisions", func(t *testing.T) {
+			t.Helper()
+			checkSavedQueryLifecycleCanonicalizesAndFencesRevisions(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkSavedQueryLifecycleCanonicalizesAndFencesRevisions(t, newPostgresQueryStore)
+		}},
+		{"SavedQueriesAreBoundedPhotoScopedFilteredAndNameSorted", func(t *testing.T) {
+			t.Helper()
+			checkSavedQueriesAreBoundedPhotoScopedFilteredAndNameSorted(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkSavedQueriesAreBoundedPhotoScopedFilteredAndNameSorted(t, newPostgresQueryStore)
+		}},
+		{"SavedQueryConcurrentSameNameCreateHasOneWinner", func(t *testing.T) {
+			t.Helper()
+			checkSavedQueryConcurrentSameNameCreateHasOneWinner(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkSavedQueryConcurrentSameNameCreateHasOneWinner(t, newPostgresQueryStore)
+		}},
+		{"SavedQueryConcurrentSameRevisionEditHasOneWinner", func(t *testing.T) {
+			t.Helper()
+			checkSavedQueryConcurrentSameRevisionEditHasOneWinner(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkSavedQueryConcurrentSameRevisionEditHasOneWinner(t, newPostgresQueryStore)
+		}},
+	}},
+	{name: "organization-and-delivery", postgres: "unqualified", scope: "Photo sets, custodian assignments, snapshots, Bates and delivery jobs remain unqualified."},
 	{name: "multi-store", postgres: "unqualified", scope: "Placement, evacuation and storage-operation jobs remain unqualified."},
 	{name: "public-vault", postgres: "unqualified", scope: "Daemon and embedded vault opening still use SQLite; there is no public PostgreSQL opener."},
 }

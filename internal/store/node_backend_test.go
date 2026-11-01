@@ -79,7 +79,7 @@ func newPostgresSchemaStore(t *testing.T, setup *sql.DB, cfg pgschema.Config) *S
 		"; GRANT DELETE,UPDATE(state,phase,claim_owner,lease_expires_at,claim_epoch,available_at,selected_waiter_id,authorization_grant_id,authorization_incarnation_id,authorization_revocation_fence,provider_started,provider_resume_handle,execution_snapshot_json,lexical_generation_id,failure_code,updated_at) ON "+schema+".rendition_jobs TO "+quotedRole+
 		"; GRANT UPDATE(state,failure_code,updated_at) ON "+schema+".rendition_job_waiters TO "+quotedRole+
 		"; GRANT INSERT,DELETE,UPDATE(root_kind,target_kind,target_id,fencing_token,recorded_at,expires_at,active,released_at) ON "+schema+".current_rendition_roots TO "+quotedRole+
-		"; GRANT UPDATE(revision) ON "+schema+".tags TO "+quotedRole+
+		"; GRANT INSERT,DELETE,UPDATE(name,revision) ON "+schema+".tags TO "+quotedRole+
 		"; GRANT UPDATE(binding_epoch) ON "+schema+".document_people_state TO "+quotedRole)
 	require.NoError(t, err)
 	_, err = setup.ExecContext(ctx, "GRANT DELETE ON "+schema+".embedding_input_generations,"+schema+".embedding_vector_sets,"+schema+".embedding_vector_spaces,"+schema+".embedding_failures,"+schema+".email_heads,"+schema+".email_part_artifacts,"+schema+".email_generations,"+schema+".email_body_results,"+schema+".rendition_builds,"+schema+".rendition_artifacts,"+schema+".rendition_units,"+schema+".rendition_lexical_segments,"+schema+".rendition_lexical_index,"+schema+".rendition_lexical_heads,"+schema+".rendition_lexical_generations,"+schema+".rendition_lexical_generation_manifests,"+schema+".text_searchable_versions,"+schema+".extracted_text,"+schema+".text_extraction_queue TO "+quotedRole+
@@ -91,6 +91,10 @@ func newPostgresSchemaStore(t *testing.T, setup *sql.DB, cfg pgschema.Config) *S
 		"; GRANT INSERT,UPDATE ON "+schema+".blob_pack_entries TO "+quotedRole+
 		"; GRANT DELETE ON "+schema+".blob_locations TO "+quotedRole+
 		"; GRANT INSERT,DELETE ON "+schema+".gc_loose_retirements,"+schema+".derivative_pack_purge_pending TO "+quotedRole)
+	require.NoError(t, err)
+	_, err = setup.ExecContext(ctx, "GRANT INSERT,DELETE ON "+schema+".node_tags TO "+quotedRole+
+		"; GRANT INSERT ON "+schema+".batch_tag_receipts TO "+quotedRole+
+		"; GRANT INSERT,DELETE,UPDATE(name,description,payload,fingerprint,revision,updated_at) ON "+schema+".saved_queries TO "+quotedRole)
 	require.NoError(t, err)
 	config, err := pgx.ParseConfig(os.Getenv("DOCBANK_TEST_POSTGRES_DSN"))
 	require.NoError(t, err)
