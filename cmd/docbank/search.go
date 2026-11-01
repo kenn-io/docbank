@@ -248,6 +248,8 @@ See docs/usage/search.md.`,
 					} else if automatic.reason != "" {
 						receipt.RequestedMode, receipt.Degradations = "hybrid", []string{automatic.reason}
 						receipt.Profile, receipt.BindingID = automatic.profile, automatic.binding
+					} else if automatic.scope.FenceFingerprint != "" {
+						receipt.FenceFingerprint, receipt.DocumentCount = automatic.scope.FenceFingerprint, new(0)
 					}
 					c.RecordMiss(cmd.Context(), receipt)
 				}

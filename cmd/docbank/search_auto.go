@@ -68,7 +68,7 @@ func tryAutomaticSearch(ctx context.Context, c *daemonconn.Connection, query str
 		return automaticSearchFallback(ctx, err)
 	}
 	if len(scope.Fence.ContentVersionIDs) == 0 {
-		return automaticSearchOutcome{}, nil
+		return automaticSearchOutcome{scope: scope}, nil
 	}
 	fence := api.DocumentSourceFence{VaultUID: scope.Fence.VaultUID, ContentVersionIDs: scope.Fence.ContentVersionIDs}
 	var first automaticSearchOutcome
