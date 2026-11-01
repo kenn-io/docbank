@@ -430,6 +430,11 @@ func TestTrashPageCountsRootsAcrossPhotoAndDirectoryGroups(t *testing.T) {
 
 func TestPhotoTrashEmptyCompleteGroups(t *testing.T) {
 	t.Parallel()
+	checkPhotoTrashEmptyCompleteGroups(t, false)
+}
+
+func checkPhotoTrashEmptyCompleteGroups(t *testing.T, postgres bool) {
+	t.Helper()
 	for _, mode := range []string{"bounded", "live peer", "new peer", "retained peer", "folder"} {
 		t.Run(mode, func(t *testing.T) {
 			s := newTestStore(t)
@@ -453,7 +458,7 @@ func TestPhotoTrashEmptyCompleteGroups(t *testing.T) {
 				require.NoError(t, err)
 			}
 			if mode == "new peer" {
-				_, err := s.db.Exec(`UPDATE nodes SET trashed_at=? WHERE id IN (?, ?)`, time.Now().UTC().Add(-48*time.Hour).Format(timestampLayout), nodes[0].ID, nodes[1].ID)
+				_, err := s.db.Exec(`UPDATE nodes SET trashed_at=$1 WHERE id IN ($2, $3)`, time.Now().UTC().Add(-48*time.Hour).Format(timestampLayout), nodes[0].ID, nodes[1].ID)
 				require.NoError(t, err)
 				age = 24 * time.Hour
 			}
@@ -464,6 +469,9 @@ func TestPhotoTrashEmptyCompleteGroups(t *testing.T) {
 					_, _, err = s.Trash(t.Context(), *node.ParentID, UnconditionalRev)
 					require.NoError(t, err)
 				}
+			}
+			if postgres {
+				s, _ = copyRetentionStore(t, s)
 			}
 			dry, err := s.TrashEmptyBounded(t.Context(), age, 1, false)
 			require.NoError(t, err)

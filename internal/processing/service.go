@@ -136,6 +136,7 @@ type Service struct {
 	runsMu              sync.Mutex
 	runs                int
 	nativePDFOperation  string
+	redactionPreviews   redactionPreviewStore
 	stopping            bool
 	stop                context.CancelFunc
 	drained             chan struct{}
@@ -639,6 +640,7 @@ func NewService(config ServiceConfig) (*Service, error) {
 // Stop rejects new starts and cancels active processing, including work that
 // outlived its initiating request. Workers retain their durable recovery state.
 func (service *Service) Stop() {
+	defer service.RevokeRedactionPreviews("")
 	service.runsMu.Lock()
 	defer service.runsMu.Unlock()
 	if service.stopping {
@@ -725,20 +727,12 @@ func (service *Service) Plan(ctx context.Context, selector Selector) (Plan, erro
 	plan.ConsentState = "active"
 	for _, request := range service.profileConsentRequests(profile) {
 		_, err := service.catalog.AuthorizeProviderOperation(ctx, request)
-		switch {
-		case err == nil:
-		case errors.Is(err, store.ErrProcessingConsentRevoked):
-			plan.ConsentState = "revoked"
-		case errors.Is(err, store.ErrProcessingConsentExpired):
-			if plan.ConsentState != "revoked" {
-				plan.ConsentState = "expired"
-			}
-		case errors.Is(err, store.ErrProcessingConsentRequired):
-			if plan.ConsentState == "active" {
-				plan.ConsentState = "required"
-			}
-		default:
+		state, err := processingConsentState(err)
+		if err != nil {
 			return Plan{}, err
+		}
+		if state == "revoked" || state == "expired" && plan.ConsentState != "revoked" || plan.ConsentState == "active" {
+			plan.ConsentState = state
 		}
 	}
 	plan.ConsentRequired = plan.ConsentState != "active"
@@ -962,6 +956,21 @@ func resultAttachmentID(photo bool, run renditionRun) string {
 		return ""
 	}
 	return run.attachmentID
+}
+
+func processingConsentState(err error) (string, error) {
+	switch {
+	case err == nil:
+		return "active", nil
+	case errors.Is(err, store.ErrProcessingConsentRevoked):
+		return "revoked", nil
+	case errors.Is(err, store.ErrProcessingConsentExpired):
+		return "expired", nil
+	case errors.Is(err, store.ErrProcessingConsentRequired):
+		return "required", nil
+	default:
+		return "", err
+	}
 }
 
 func processingConsentBoundaryError(err error) error {

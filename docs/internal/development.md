@@ -205,20 +205,29 @@ store qualification. Initial and additional audit enrollment work through the
 native preview and commit methods, including complete retained-metadata
 validation. Native directory/file creation, content confirmation, replacement,
 revert, and rename/move also work, including audited mutations and the required
-physical, extraction and photo catalog maintenance.
+physical, extraction and photo catalog maintenance. Document imports, source
+history, watch and push observations, and collection membership and labels also
+work through the native Store methods. Recoverable deletion covers document and
+folder trash, whole photo groups, trash browsing and restore, including audited
+mutations and photo sidecar decisions. Permanent trash emptying and content-version
+pruning preserve retention holds and related catalog state. Derivative cleanup
+covers purge previews, rendition and embedding collection, extracted-text and
+email cleanup, and explicit rebuild authorization.
 
 A public PostgreSQL-backed vault is not available yet: daemon and embedded
-operations still open SQLite. Ingest/provenance publication, trash and purge,
-search, transfer, backup, restore and the complete physical-storage lifecycle
-remain unqualified.
+operations still open SQLite. Grouped photo imports, XMP sidecar writing,
+processing workers, search, transfer, backup recovery and the complete
+physical-storage lifecycle remain unqualified.
 
 `Setup` takes a caller-owned `database/sql` pool authenticated as `SchemaOwner`
 and uses the explicit `Schema` setting. It creates a dedicated schema, canonical
 DDL, a UUIDv4 vault identity, a fresh processing-consent incarnation, the primary
-blob-store identity and ownership epoch, and the root directory in one transaction, under a
-schema-specific PostgreSQL advisory lock. Repeated setup preserves the identity,
-root, primary blob-store identity and epoch, and existing data. Existing empty or unrelated schemas, malformed
-identities and wrong owners are refused rather than repaired.
+blob-store identity and ownership epoch, initial people-state epochs, and the
+root directory in one transaction, under a schema-specific PostgreSQL advisory
+lock. Repeated setup preserves the identity,
+root, primary blob-store identity and epoch, people-state epochs, and existing
+data. Existing empty or unrelated schemas, malformed identities and wrong
+owners are refused rather than repaired.
 
 The catalogs keep vault references as native UUIDs and content-version and
 operation IDs as text, numeric node IDs,
@@ -291,12 +300,62 @@ GRANT UPDATE(live_entries, live_stored_bytes, live_raw_bytes,
     max_live_stored_len, max_live_raw_len) ON documents.blob_packs TO docbank_runtime;
 GRANT INSERT, UPDATE(next_attempt_at) ON documents.text_extraction_queue TO docbank_runtime;
 GRANT INSERT ON documents.text_searchable_versions TO docbank_runtime;
-GRANT INSERT, UPDATE(display_file_id) ON documents.photo_assets TO docbank_runtime;
-GRANT INSERT, UPDATE(asset_id, role, sidecar_of_file_id)
+GRANT INSERT, UPDATE(hidden_at, excluded_at, display_file_id,
+    display_override_file_id, revision, updated_at)
+    ON documents.photo_assets TO docbank_runtime;
+GRANT INSERT, DELETE ON documents.photo_change_receipts TO docbank_runtime;
+GRANT INSERT, UPDATE(asset_id, role, sidecar_of_file_id, source_provenance_identity)
     ON documents.photo_files TO docbank_runtime;
 GRANT INSERT, DELETE ON documents.photo_timeline TO docbank_runtime;
 GRANT INSERT, UPDATE(original_path, original_mtime, folder_key)
     ON documents.photo_source_claims TO docbank_runtime;
+GRANT INSERT, DELETE ON documents.ingests TO docbank_runtime;
+GRANT INSERT ON documents.provenance, documents.provenance_version_bindings
+    TO docbank_runtime;
+GRANT INSERT, UPDATE, DELETE ON documents.collection_labels TO docbank_runtime;
+GRANT INSERT, UPDATE ON documents.watch_sources, documents.push_sources
+    TO docbank_runtime;
+GRANT INSERT, DELETE ON documents.watch_source_absences TO docbank_runtime;
+GRANT DELETE ON documents.document_event_heads, documents.document_event_generations,
+    documents.document_people_heads, documents.document_people TO docbank_runtime;
+GRANT INSERT, UPDATE(revision, reason) ON documents.document_event_dirty
+    TO docbank_runtime;
+GRANT UPDATE(publication_epoch, updated_at)
+    ON documents.document_event_state, documents.document_people_state
+    TO docbank_runtime;
+GRANT DELETE ON documents.rendition_heads, documents.rendition_attachments,
+    documents.rendition_job_waiters, documents.email_attachments,
+    documents.embedding_jobs, documents.embedding_heads, documents.embedding_sets,
+    documents.photo_files TO docbank_runtime;
+GRANT DELETE, UPDATE(state, phase, claim_owner, lease_expires_at, claim_epoch,
+    available_at, selected_waiter_id, authorization_grant_id,
+    authorization_incarnation_id, authorization_revocation_fence,
+    provider_started, provider_resume_handle, execution_snapshot_json,
+    lexical_generation_id, failure_code, updated_at)
+    ON documents.rendition_jobs TO docbank_runtime;
+GRANT UPDATE(state, failure_code, updated_at)
+    ON documents.rendition_job_waiters TO docbank_runtime;
+GRANT INSERT, DELETE, UPDATE(root_kind, target_kind, target_id, fencing_token,
+    recorded_at, expires_at, active, released_at)
+    ON documents.current_rendition_roots TO docbank_runtime;
+GRANT UPDATE(revision) ON documents.tags TO docbank_runtime;
+GRANT UPDATE(binding_epoch) ON documents.document_people_state TO docbank_runtime;
+GRANT DELETE ON documents.embedding_input_generations, documents.embedding_vector_sets,
+    documents.embedding_vector_spaces, documents.embedding_failures,
+    documents.email_heads, documents.email_part_artifacts, documents.email_generations,
+    documents.email_body_results, documents.rendition_builds, documents.rendition_artifacts,
+    documents.rendition_units, documents.rendition_lexical_segments,
+    documents.rendition_lexical_index, documents.rendition_lexical_heads,
+    documents.rendition_lexical_generations, documents.rendition_lexical_generation_manifests,
+    documents.text_searchable_versions, documents.extracted_text,
+    documents.text_extraction_queue TO docbank_runtime;
+GRANT INSERT ON documents.derivative_blob_purge_pending,
+    documents.rendition_lexical_generations, documents.rendition_lexical_generation_builds,
+    documents.rendition_lexical_generation_manifests, documents.rendition_lexical_index
+    TO docbank_runtime;
+GRANT UPDATE(generation_id) ON documents.rendition_lexical_heads TO docbank_runtime;
+GRANT INSERT, UPDATE(purged_at, active, superseded_at, superseding_build_id)
+    ON documents.derivative_purge_suppressions TO docbank_runtime;
 ```
 
 Checksum rows are inserted or compared with the existing value, never updated;
@@ -470,6 +529,14 @@ changes refresh photo export work, including both ends of an unowned sibling
 sidecar move. Reintroducing a blob updates summaries of surviving pack mappings
 and removes its old primary mapping when a new loose receipt replaces it.
 
+Permanent version deletion advances people-binding and event-publication epochs
+before their owning rows disappear through cascades. Pruning refreshes the
+surviving photo's source claims, timeline and export work after deletion. Trash
+emptying collects affected photo identities before removing memberships and
+receipts, repairs the surviving assets, and refreshes paired sidecar work after
+node deletion. These effects share the deletion transaction; a failure retains
+the original versions, jobs, receipts, epochs and node revisions.
+
 !!! info "Planned"
 
     Preserve these effects as the remaining mutation, import, restore and
@@ -482,8 +549,6 @@ and removes its old primary mapping when a new loose receipt replaces it.
     | Change | Required catalog effect |
     | --- | --- |
     | Insert a content version | Remove its blob from `rendition_blob_staging` and `derivative_blob_purge_pending` |
-    | Delete a version with person assertions | Advance `document_people_state.binding_epoch` and its update timestamp before cascades remove those assertions |
-    | Delete a photo's version | Queue its node in `photo_timeline_pending` |
     | Change a photo node's current version | Queue its node when the version changes |
     | Add or remove an audit membership | Queue eligible photo assets associated with that node in `photo_xmp_unsettled` |
     | Add or remove audit authority | Queue every eligible photo asset in `photo_xmp_unsettled` |
@@ -541,6 +606,144 @@ technical metadata and sidecar receipts. Physical cases cover compressed
 receipts, missing authority and dead pack mappings surviving logical collection.
 These are internal Store capabilities; they do not expose a public PostgreSQL
 vault or qualify the remaining storage and recovery lifecycle.
+
+#### Recoverable deletion
+
+Native document and folder trash, photo-group trash, trash browsing and restore
+use the shared Store operations on both engines. Trashing records the original
+parent and name, stamps the live subtree together and preserves bytes and content
+history. Restore preserves node IDs, leaves independently trashed descendants
+alone, and uses the existing parent fallback and smallest free name suffix.
+Audited operations retain their scope restrictions and append the same canonical
+history as other document mutations.
+
+Photo recovery follows connected members across folders, restores original
+parents before children, and keeps sidecar sync history and recorded decisions.
+PostgreSQL refreshes export work inside the mutation transaction after node,
+asset and XMP receipt changes. SQLite keeps its released triggers. A failed final
+receipt write rolls back the nodes, audit advancement and export work together.
+The runtime role can insert photo receipts and delete the superseded XMP sync
+receipt; it has no receipt `UPDATE` grant.
+
+Trash pages count and select grouped photos and ordinary roots from one
+repeatable-read snapshot. Photo reads also request that isolation when assembling
+assets from multiple statements. Backend qualification compares populated photo
+state, receipts and export inputs against SQLite and validates the resulting
+ordinary and audited metadata.
+
+General photo editing, portable backup/restore and public PostgreSQL vault
+opening remain unqualified.
+
+#### Permanent cleanup
+
+`TrashEmpty`, `TrashEmptyBounded` and `PruneContentVersions` use the same native
+operation on both backends. A trash batch completes the last connected photo
+group even when that exceeds its root limit. Live, too-new or retained peers
+hold the group. Email publications, mailbox receipts, snapshots, packages,
+media authority and active photo checkouts preserve their existing retention
+rules; an unrelated trash root can still be deleted. A retained export refuses
+an execution until its authority is released.
+
+Version pruning preserves revert dependencies and photo sidecar history. The
+all-prior selector can install a source-free checkpoint for a current revert.
+A pruning operation that removes history advances the node revision once. Its inventory
+separates shared bytes from loose and packed bytes eligible for later cleanup;
+it does not report physical space reclaimed.
+
+Before deleting a version, cleanup removes its serving attachments, embedding
+sets and worker waiters. Shared rendition jobs retain or reselect remaining
+consumers under current consent. In-flight calls keep their claim; staged work
+can be requeued with a new fencing token. An orphaned ambiguous provider call
+keeps its durable record so cleanup cannot silently authorize a repeat call.
+Immutable derivative generations remain available for later collection.
+
+Receipt lookups must match each backend's expression indexes exactly: retain
+SQLite's text cast and PostgreSQL's JSON operator and `C` collation. Equivalent
+JSON values alone do not preserve indexed lookup plans.
+
+Both destructive operations retain the existing refusal while audit authority
+is active. Dry runs can inspect candidates but do not authorize deletion.
+Physical byte deletion and processing workers remain separate, unqualified
+PostgreSQL operations.
+
+#### Derivative cleanup
+
+`PurgeDerivatives` removes selected derived data through one shared storage
+transaction. Version, attachment and build selectors keep their existing scope;
+`All` selects all derivative authority, while an empty request collects only
+unrooted garbage. Original versions and their bytes remain intact. Unreachable
+derivative blobs enter the pending collection catalog; this operation does not
+delete physical bytes or claim reclaimed space.
+
+Active worker and reader leases, durable roots and retained exports keep their
+existing protection. A purge can revoke a serving head while a reader still
+retains its immutable data. Shared extracted text and email generations survive
+until no remaining version needs them. Email document publication receipts block
+an exact purge and cause a bulk purge to skip the retained inventory.
+
+Purge suppressions and their audit records commit with the removals. Explicit
+rendition and embedding rebuild authorization supersedes only the requested
+suppression. A failure rolls back the entire operation, including head changes,
+replacement lexical generations, audit advancement and pending collection rows.
+
+`DerivativePurgeFingerprint` reads its selected identities in one statement and
+preserves the same compact identity bytes on both backends. `DerivativeGCPlan`
+uses one repeatable-read snapshot for builds, generations and roots, so a lease
+change between queries cannot produce a mixed plan. Execution checks current
+retention again under the writer lock.
+
+Lexical replacement preserves surviving build membership and text. Shared index
+writes allocate their rebuildable row IDs under the store writer lock. SQLite
+continues to maintain its FTS shadow tables through its released triggers;
+PostgreSQL has only the retained lexical catalogs at this stage. Cleanup does
+not qualify PostgreSQL search or processing publication.
+
+#### Imports and source history
+
+Native file imports publish their ingest run, provenance, exact-version binding,
+physical receipt and optional collection label in one storage transaction.
+Planned filesystem imports create their destination directories in that same
+transaction. A rejected label or receipt leaves none of those changes behind.
+Finalizing an empty labeled import creates its requested directories without
+retaining an empty ingest run or label. Repeated observations preserve content
+versions and record membership under the existing source and basename rules.
+
+Watch cursors continue to follow moved nodes. Unchanged source bytes preserve
+independent document edits; changed source bytes update the tracked node. Push
+can adopt a watch cursor, records subsequent observations atomically, and pages
+cursors in byte order. Complete watch inventories record and clear absence
+observations; rebinding a source clears its mark, including on an exact retry.
+Removing a watch clears its observations. These marks do not change archived
+documents or their exported metadata.
+
+Collection listing, member pages, label changes and provenance history use the
+shared queries. Multi-statement collection, provenance and directory-plan reads
+use repeatable-read snapshots. The `embedded:` source-kind prefix is
+case-insensitive on both backends. Caller-supplied evidence stays out of
+operational collections, collection labels and filesystem photo-source
+selection; its stored spelling and provenance remain unchanged.
+
+Provenance corrections append facts rather than replacing them. Ingest runs,
+provenance and version bindings have no runtime `UPDATE` grant. The runtime can
+delete a run only for empty-import finalization; references from retained facts
+prevent deleting a document-bearing run. Existing audit restrictions on labels
+and supported source operations remain unchanged.
+
+On PostgreSQL, observation and correction operations refresh photo source
+claims, dates and export work inside the writer transaction. Binding or
+correcting evidence invalidates derived events and people, schedules event
+recomputation, and advances the publication epochs for removed projections.
+SQLite retains its released trigger ownership, including the event epoch's
+per-head increment. Canonical event tables support this invalidation and its
+cascades; event publication and derivation workers remain unqualified.
+
+Operation tests use canonical setup and the runtime role, validate complete
+metadata and audit replay, and compare derived effects with real SQLite writes.
+They force a late invalidation failure to verify rollback, and commit concurrent
+writes during history reads to verify snapshot consistency. These capabilities
+do not expose a public PostgreSQL vault or qualify grouped photo imports, XMP
+sidecar writing, portable metadata import, collection snapshots, reporting,
+backup or restore.
 
 #### Shared query qualification
 
@@ -631,8 +834,10 @@ The transaction tests cover callback failure, cancellation and commit-time
 constraint failure. Audit qualification also replays native SQLite-generated
 history against PostgreSQL's high-water mark after a failed insert. Complete
 enrollment also runs the full metadata validator described below.
-Native document-write tests also replay history after creation, content changes
-and moves. Other audited mutations and import remain unqualified.
+Native operation tests also replay history after creation, content changes,
+imports, moves, trash and restore. Qualification remains limited to the native
+operations described above; it does not enable every audited mutation or
+portable metadata import.
 
 The native canonical-record insertion helper also uses shared SQL. Its index
 builder rejects zero node IDs, operation sequences and entry counts in Go
@@ -876,11 +1081,13 @@ Go test workflows set `GOTRACEBACK=all` for crashes. When diagnosing a hang, cal
 CLI redaction verification tests run in separate test processes because the PDF worker's 1 GiB RSS ceiling counts all memory in its process. Each child keeps the real PDF checks and the qualified memory limit.
 
 Documentation browser checks use Microsoft's public Playwright image matching the installed `@playwright/test` version.
-Render PDF caches LibreOffice and Poppler installers by runner image, architecture, and workflow recipe.
-A cache miss downloads the packages and their missing dependencies.
-Only `main` pushes save automatically; pull requests only restore.
-Pull requests call `render-pdf.yml` through `render-pdf-pr.yml` with `cache-mode: read`.
-Explicit manual runs can save: dispatch Render PDF twice on the same branch and runner image to qualify cold and warm installs before merge.
+The LibreOffice PDF proof runs in a GHCR image built from `.github/docker/render-pdf/Dockerfile` and tagged by that file's hash.
+The Render PDF image workflow (`render-pdf-image.yml`) publishes missing images on `main` pushes or a manual run from a trusted branch, then runs the proofs.
+Only its publishing job requests `packages: write`. Update the Ubuntu digest to refresh the installed packages.
+Pull requests call `render-pdf.yml` through `render-pdf-pr.yml` with `contents: read` and `cache-mode: read`.
+Image lookup is anonymous. If a recipe's image is missing, publish it with the Render PDF image workflow from a trusted branch containing that Dockerfile, then rerun the proofs.
+The browser proofs still install Poppler, util-linux, and Chromium on their runners.
+The GHCR package must be public so fork pull requests can reuse the image.
 
 Go jobs restore build and module caches through `.github/actions/go-cache-restore`
 by group: Linux CGO, Linux pure-Go, lint (with the golangci-lint analysis

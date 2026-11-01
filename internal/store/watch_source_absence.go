@@ -78,7 +78,7 @@ func watchPresenceChanges(ctx context.Context, q rowsQuerier, watchName string, 
 	rows, err := q.QueryContext(ctx, `SELECT ws.source_ref, a.source_ref IS NOT NULL
  FROM watch_sources ws LEFT JOIN watch_source_absences a
  ON a.watch_name=ws.watch_name AND a.source_ref=ws.source_ref
- WHERE ws.watch_name=?`, watchName)
+ WHERE ws.watch_name=$1`, watchName)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -116,12 +116,12 @@ func (s *Store) ReconcileWatchSourcePresence(ctx context.Context, watchName stri
 			return err
 		}
 		for _, ref := range cleared {
-			if _, err := tx.ExecContext(ctx, `DELETE FROM watch_source_absences WHERE watch_name=? AND source_ref=?`, watchName, ref); err != nil {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM watch_source_absences WHERE watch_name=$1 AND source_ref=$2`, watchName, ref); err != nil {
 				return err
 			}
 		}
 		for _, ref := range recorded {
-			if _, err := tx.ExecContext(ctx, `INSERT INTO watch_source_absences(watch_name,source_ref,absent_since) VALUES(?,?,?)`, watchName, ref, now.UTC().Format(time.RFC3339)); err != nil {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO watch_source_absences(watch_name,source_ref,absent_since) VALUES($1,$2,$3)`, watchName, ref, now.UTC().Format(time.RFC3339)); err != nil {
 				return err
 			}
 		}
@@ -156,7 +156,7 @@ func (s *Store) DeleteWatchSourceAbsencesExcept(ctx context.Context, configured 
 		}
 		for _, name := range names {
 			if !slices.Contains(configured, name) {
-				if _, err := tx.ExecContext(ctx, `DELETE FROM watch_source_absences WHERE watch_name=?`, name); err != nil {
+				if _, err := tx.ExecContext(ctx, `DELETE FROM watch_source_absences WHERE watch_name=$1`, name); err != nil {
 					return err
 				}
 			}

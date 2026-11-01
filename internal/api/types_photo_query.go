@@ -45,8 +45,9 @@ type PhotoPreviewSlots struct {
 }
 
 type PhotoQuality struct {
-	State   string                        `json:"state" enum:"pending,unavailable,ready"`
-	Signals *document.PhotoQualitySignals `json:"signals"`
+	State       string                        `json:"state" enum:"pending,unavailable,ready"`
+	Signals     *document.PhotoQualitySignals `json:"signals"`
+	FaceReports []document.PhotoFaceReport    `json:"face_reports,omitempty" maxItems:"1000"`
 }
 
 type PhotoBrowseRow struct {
@@ -102,8 +103,9 @@ type PhotoMapRow struct {
 
 // PhotoStack is one burst among a page's items.
 type PhotoStack struct {
-	AssetIDs         []string `json:"asset_ids" minItems:"2" maxItems:"500" doc:"Members in ascending capture order."`
-	RepresentativeID string   `json:"representative_id" format:"uuid"`
+	Proposals        []document.PhotoBestShotProposal `json:"proposals,omitempty"`
+	AssetIDs         []string                         `json:"asset_ids" minItems:"2" maxItems:"500" doc:"Members in ascending capture order."`
+	RepresentativeID string                           `json:"representative_id" format:"uuid"`
 }
 
 type PhotoBrowsePage struct {

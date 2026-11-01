@@ -216,8 +216,8 @@ func bumpDocumentEventInputEpochTx(
 
 func markDocumentEventDirtyTx(ctx context.Context, tx *sql.Tx, id, reason string) error {
 	_, err := tx.ExecContext(ctx, `INSERT INTO document_event_dirty(content_version_id,revision,reason)
-		VALUES(?,1,?) ON CONFLICT(content_version_id) DO UPDATE SET
-		revision=revision+1,reason=excluded.reason`, id, reason)
+		VALUES($1,1,$2) ON CONFLICT(content_version_id) DO UPDATE SET
+		revision=document_event_dirty.revision+1,reason=excluded.reason`, id, reason)
 	return err
 }
 

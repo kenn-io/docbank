@@ -203,6 +203,7 @@ type StoreBindingConfig struct {
 // source path form the stable, portable source identity; Source itself is a
 // machine-local location and is intentionally not archive metadata.
 type WatchConfig struct {
+	Profile         string   `toml:"profile"`
 	CaptureOnChange bool     `toml:"capture_on_change"`
 	Name            string   `toml:"name"`
 	Source          string   `toml:"source"`
@@ -764,6 +765,15 @@ func (c Config) Validate() error {
 		return err
 	}
 	for _, watch := range c.Watches {
+		if watch.Profile != "" {
+			profile, err := c.ProcessingProfile(watch.Profile)
+			if err != nil {
+				return fmt.Errorf("watch %q profile: %w", watch.Name, err)
+			}
+			if profile.Document.Rendition == nil || profile.Document.Rendition.AdapterContract == document.VisionAdapterContract {
+				return fmt.Errorf("watch %q profile %q requires an original-document rendition", watch.Name, watch.Profile)
+			}
+		}
 		if err := validateWatch(watch); err != nil {
 			return err
 		}

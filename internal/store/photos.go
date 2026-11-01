@@ -60,7 +60,7 @@ func completePhotoAsset(asset PhotoAsset, settings PhotoSettings) (PhotoAsset, e
 }
 
 func (s *Store) photoReadTx(ctx context.Context, fn func(*sql.Tx) error) error {
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return fmt.Errorf("beginning photo read transaction: %w", err)
 	}
@@ -303,7 +303,7 @@ func writePhotoReceiptTx(ctx context.Context, tx *sql.Tx, receipt photoReceipt) 
 		INSERT INTO photo_change_receipts(
 			receipt_id, operation, asset_id, settings_key, set_id, before_revision,
 			after_revision, before_json, after_json, created_at
-		) VALUES(?,?,?,?,?,?,?,?,?,?)`, receiptID, receipt.Operation, nullablePhotoText(receipt.AssetID),
+		) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, receiptID, receipt.Operation, nullablePhotoText(receipt.AssetID),
 		nullablePhotoText(receipt.SettingsKey), nullablePhotoText(receipt.SetID), receipt.BeforeRevision, receipt.AfterRevision,
 		beforeJSON, afterJSON, nowRFC3339()); err != nil {
 		return fmt.Errorf("recording photo receipt: %w", err)
@@ -398,7 +398,7 @@ func (s *Store) insertPhotoFileTx(ctx context.Context, tx *sql.Tx, member PhotoF
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO photo_files(file_id,asset_id,node_id,role,sidecar_of_file_id,created_at,source_provenance_identity)
 		VALUES($1,$2,$3,$4,$5,$6,(SELECT p.identity FROM provenance p JOIN ingests i ON i.id=p.ingest_id
- WHERE p.node_id=$7 AND i.source_kind NOT LIKE 'embedded:%' AND NOT EXISTS(SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)
+ WHERE p.node_id=$7 AND LOWER(i.source_kind) NOT LIKE 'embedded:%' AND NOT EXISTS(SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)
  ORDER BY `+photoSourceObservedSQL+`,i.started_at,i.id,p.original_path,p.identity LIMIT 1))`, fileID, member.AssetID, member.NodeID, member.Role,
 		nullablePhotoString(member.SidecarOfID), member.CreatedAt, member.NodeID); err != nil {
 		return s.classifyPhotoFileInsertError(err)
@@ -645,8 +645,8 @@ func commitPhotoAssetTx(ctx context.Context, tx *sql.Tx, before, asset PhotoAsse
 	asset.DisplayFileID, asset.DisplaySource = choice.FileID, choice.Source
 	asset.Revision++
 	if _, err := tx.ExecContext(ctx, `
-		UPDATE photo_assets SET hidden_at=?, excluded_at=?, display_file_id=?, display_override_file_id=?,
-			revision=?, updated_at=? WHERE asset_id=?`,
+		UPDATE photo_assets SET hidden_at=$1, excluded_at=$2, display_file_id=$3, display_override_file_id=$4,
+			revision=$5, updated_at=$6 WHERE asset_id=$7`,
 		nullablePhotoString(asset.HiddenAt), nullablePhotoString(asset.ExcludedAt), nullablePhotoString(asset.DisplayFileID),
 		nullablePhotoString(asset.DisplayOverrideFileID), asset.Revision, nowRFC3339(), asset.ID); err != nil {
 		return PhotoAsset{}, fmt.Errorf("updating photo asset %s: %w", asset.ID, err)
@@ -675,7 +675,7 @@ func (s *Store) photoOwnershipError(ctx context.Context, tx *sql.Tx, owner strin
 
 func photoAssetOwningNodeTx(ctx context.Context, tx *sql.Tx, nodeID int64) (string, bool, error) {
 	var assetID string
-	err := tx.QueryRowContext(ctx, `SELECT asset_id FROM photo_files WHERE node_id=? AND asset_id IS NOT NULL`, nodeID).Scan(&assetID)
+	err := tx.QueryRowContext(ctx, `SELECT asset_id FROM photo_files WHERE node_id=$1 AND asset_id IS NOT NULL`, nodeID).Scan(&assetID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", false, nil
 	}
@@ -799,7 +799,7 @@ func (s *Store) DetachPhotoFile(ctx context.Context, assetID string, revision in
 			return false, ErrNotFound
 		}
 		if file.SidecarOfID != nil {
-			if err := recordPhotoXMPDetachedTx(ctx, tx, *file.SidecarOfID, true); err != nil {
+			if err := s.recordPhotoXMPDetachedTx(ctx, tx, *file.SidecarOfID, true); err != nil {
 				return false, err
 			}
 		}
@@ -814,7 +814,7 @@ func (s *Store) DetachPhotoFile(ctx context.Context, assetID string, revision in
 				return false, fmt.Errorf("%w: photo source has dependent sidecars", ErrInvalidPhotoAsset)
 			}
 			if dependents > 0 {
-				if err := recordPhotoXMPDetachedTx(ctx, tx, fileID, true); err != nil {
+				if err := s.recordPhotoXMPDetachedTx(ctx, tx, fileID, true); err != nil {
 					return false, err
 				}
 			}

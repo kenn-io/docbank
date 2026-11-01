@@ -50,6 +50,8 @@ type webDownloadRegistry struct {
 }
 
 type webDownloadTicket struct {
+	previewID       string
+	previewReview   string
 	reportID        string
 	reportFormat    string
 	path            string
@@ -67,7 +69,7 @@ type webDownloadTicket struct {
 }
 
 func (t webDownloadTicket) release() {
-	if t.reportID != "" {
+	if t.reportID != "" || t.previewID != "" {
 		return
 	}
 	if t.releaseArchive != nil {
@@ -419,6 +421,10 @@ func registerWebDownload(
 			return
 		}
 		defer ticket.release()
+		if ticket.previewID != "" {
+			deliverRedactionPreview(w, r, d.Processing, ticket.owner, ticket.previewID, "bundle", 0, ticket.previewReview, ticket.blobHash)
+			return
+		}
 		if ticket.reportID != "" {
 			if reports == nil {
 				writeError(w, NewError(http.StatusGone, "report_unavailable", "This report handle is no longer available."))

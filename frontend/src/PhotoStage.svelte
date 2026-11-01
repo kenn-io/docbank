@@ -1,4 +1,5 @@
 <script lang="ts">
+  import PhotoBestShotBadge from "./PhotoBestShotBadge.svelte";
   import { onDestroy, tick, untrack } from "svelte";
   import type { Photos } from "./photos.svelte.js";
   import type { PhotoBrowseRow } from "./generated/docbank.js";
@@ -12,6 +13,7 @@
   import { APIError } from "./api-transport.js";
   let {
     photo,
+    proposal,
     photos,
     cache,
     view,
@@ -26,6 +28,7 @@
     faces,
   }: {
     photo: PhotoBrowseRow;
+    proposal?: import("./generated/docbank.js").PhotoBestShotProposal;
     photos: Photos;
     cache: PhotoPreviewCache;
     view: PhotoView;
@@ -102,6 +105,7 @@
 
 <div class="photo-stage">
   <div class="image">
+    <div class="best-shot-badge"><PhotoBestShotBadge {proposal} /></div>
     <PhotoLoupeImage
       bind:this={image}
       url={loader.url}
@@ -129,6 +133,12 @@
 </div>
 
 <style>
+  .best-shot-badge {
+    position: absolute;
+    top: var(--space-2);
+    left: var(--space-2);
+    z-index: 2;
+  }
   .photo-stage {
     display: flex;
     flex: 1;

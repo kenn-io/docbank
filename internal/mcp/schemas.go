@@ -708,6 +708,12 @@ func getDocumentSchemas() (schema, schema) {
 		"content_version_id": uuidSchema(),
 	}, "node_id", "content_version_id")
 	output := rootObjectSchema(withPrivateCache(schema{
+		"pdf_facts": objectSchema(schema{
+			"encrypted":             booleanSchema(),
+			"permissions":           arraySchema(stringSchema(255), 16),
+			"signature_field_count": integerSchema(0, 0), "last_signature_covers_file": booleanSchema(),
+			"embedded_file_count": integerSchema(0, 0), "has_javascript": booleanSchema(), "has_launch_actions": booleanSchema(),
+		}),
 		"node_id":            integerSchema(1, 0),
 		"content_version_id": uuidSchema(),
 		"path":               schema{"type": "string", "minLength": 1, "maxLength": maxPathCharacters, "pattern": "^/"},

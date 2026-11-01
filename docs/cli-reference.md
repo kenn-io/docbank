@@ -1846,11 +1846,12 @@ docbank watch list [--json]
 Lists the daemon's effective watched-inbox configuration in stable name order:
 the machine-local source, virtual-tree destination, complete settle window,
 minimum source age (`0s` when disabled), scan interval, exclusion count, and
-current runner state. A waiting watcher shows `idle`; it shows `running` while
+current runner state. The final `PROCESSING` column shows the profile and any consent wait or status error, or `-` without a profile.
+A waiting watcher shows `idle`; it shows `running` while
 ingesting a file. Human output quotes source and destination paths so
 terminal control characters cannot disguise them. `--json` includes the
-complete exclusion rules and the corresponding job record for agents and
-automation.
+complete exclusion rules, the corresponding job record, and optional `processing` status for agents and automation.
+See the [watch API](architecture/http-api.md#background-job-status) for its fields.
 
 This command is inspection only. Edit `config.toml` and restart the daemon to
 change a watch.

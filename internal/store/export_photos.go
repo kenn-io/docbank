@@ -251,7 +251,7 @@ func photoKeywordNames(ctx context.Context, q metadataQuerier, nodeID int64) ([]
 	names := []string{}
 	digest := sha256.New()
 	keywordBytes := 0
-	err := queryRows(ctx, q, `SELECT t.name FROM node_tags nt JOIN tags t ON t.id=nt.tag_id WHERE nt.node_id=? ORDER BY t.name,t.id`, []any{nodeID}, func(rows *sql.Rows) error {
+	err := queryRows(ctx, q, `SELECT t.name FROM node_tags nt JOIN tags t ON t.id=nt.tag_id WHERE nt.node_id=$1 ORDER BY t.name,t.id`, []any{nodeID}, func(rows *sql.Rows) error {
 		var name string
 		if err := rows.Scan(&name); err != nil {
 			return err
