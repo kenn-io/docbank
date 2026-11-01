@@ -7,8 +7,6 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
-
-	"github.com/yuin/goldmark/util"
 )
 
 type Citation struct{ Text, Err, TextSHA256 string }
@@ -28,7 +26,7 @@ type Report struct {
 	UnknownMarkers []int            `json:"unknown_markers"`
 }
 type Answer struct {
-	figures []string
+	figures []normalizedFigure
 	markers []int
 }
 
@@ -43,8 +41,8 @@ const delimiters = "\u2014\u2015[]()<>|*~`=;"
 
 func split(r rune) bool { return unicode.IsSpace(r) || strings.ContainsRune(delimiters, r) }
 
-// trim drops edge punctuation, keeping a sign or decimal point before a digit or currency symbol.
-func trim(rs []rune) string {
+// trimStart keeps signs and decimal points before digits or currency markers.
+func trimStart(rs []rune) int {
 	i := 0
 	for i < len(rs) && edge(rs[i]) {
 		if strings.ContainsRune("-+±.\u2212", rs[i]) && i+1 < len(rs) && (unicode.IsDigit(rs[i+1]) || unicode.Is(unicode.Sc, rs[i+1])) {
@@ -55,11 +53,14 @@ func trim(rs []rune) string {
 		}
 		i++
 	}
-	return strings.TrimRightFunc(string(rs[i:]), edge)
+	return i
 }
 
-func extract(text string) []string {
-	text = string(util.UnescapePunctuations([]byte(text)))
+func trim(rs []rune) string {
+	return strings.TrimRightFunc(string(rs[trimStart(rs):]), edge)
+}
+
+func extractDecoded(text string) []string {
 	figures := []string{}
 	for _, token := range strings.FieldsFunc(text, split) {
 		if value := trim([]rune(token)); strings.ContainsFunc(value, unicode.IsDigit) {
@@ -75,7 +76,7 @@ func Prepare(answer string) (Answer, error) {
 		a.markers = append(a.markers, n)
 		return "\n"
 	})
-	a.figures = extract(answer)
+	a.figures = normalizedFigures(answer)
 	if len(a.figures) > 512 || len(a.markers) > 512 {
 		return Answer{}, errors.New("answer exceeds figure or marker limit")
 	}
@@ -83,13 +84,20 @@ func Prepare(answer string) (Answer, error) {
 }
 func (a Answer) Check(citations []Citation) Report {
 	report := Report{Citations: []CitationResult{}, Figures: []Figure{}, UnknownMarkers: []int{}}
-	values, unavailable := map[string]bool{}, false
+	values, unavailable := map[figureKey]bool{}, false
 	for i, c := range citations {
 		status := c.Err
 		if status == "" {
 			status = "resolved"
-			for _, value := range extract(c.Text) {
-				values[value] = true
+			for _, figure := range normalizedFigures(c.Text) {
+				if figure.kind == "" {
+					values[figureKey{"", figure.text}] = true
+					continue
+				}
+				for _, literal := range extractDecoded(figure.text) {
+					values[figureKey{"", literal}] = true
+				}
+				values[figureKey{figure.kind, figure.value}] = true
 			}
 		} else {
 			unavailable = true
@@ -97,12 +105,22 @@ func (a Answer) Check(citations []Citation) Report {
 		report.Citations = append(report.Citations, CitationResult{Index: i + 1, Status: status, TextSHA256: c.TextSHA256})
 	}
 	missing := false
-	for _, value := range a.figures {
+	for _, figure := range a.figures {
 		status := "found"
-		if !values[value] {
-			status, missing = "missing", true
+		if figure.kind == "" {
+			if !values[figureKey{"", figure.text}] {
+				status = "missing"
+			}
+		} else if !values[figureKey{figure.kind, figure.value}] {
+			for _, literal := range extractDecoded(figure.text) {
+				if !values[figureKey{"", literal}] {
+					status = "missing"
+					break
+				}
+			}
 		}
-		report.Figures = append(report.Figures, Figure{Text: value, Status: status})
+		missing = missing || status == "missing"
+		report.Figures = append(report.Figures, Figure{Text: figure.text, Status: status})
 	}
 	for _, n := range a.markers {
 		if n < 1 || n > len(citations) {
