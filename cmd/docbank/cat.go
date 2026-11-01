@@ -11,12 +11,12 @@ import (
 )
 
 var catCmd = &cobra.Command{
-	Example: `  docbank cat /cases/acme/notes.txt
-  docbank cat id:12 > invoice.pdf`,
+	Example: `  docbank document cat /cases/acme/notes.txt
+  docbank document cat id:12 > invoice.pdf`,
 	Long: `Streams the current version's original bytes. For binary files prefer
-"docbank get" (verified copy on disk); for extracted text of PDFs and Office
-files use "docbank rendition window"; for an older version use
-"docbank versions cat".`,
+"docbank document get" (verified copy on disk); for extracted text of PDFs and
+Office files use "docbank rendition window"; for an older version use
+"docbank document versions cat".`,
 	GroupID: groupDocuments,
 	Use:     "cat <path-or-id>",
 	Short:   "Print a file's original bytes to stdout",
@@ -73,4 +73,4 @@ func (w *catOutput) Write(p []byte) (int, error) {
 	return n, err
 }
 
-func init() { rootCmd.AddCommand(catCmd) }
+func init() { registerGroupedCommand(documentCmd, catCmd, "cat") }

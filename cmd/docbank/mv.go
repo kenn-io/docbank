@@ -30,8 +30,8 @@ type batchMovePlanItem struct {
 }
 
 var mvCmd = &cobra.Command{
-	Example: `  docbank mv id:12 /cases/acme/invoice-2026.pdf
-  docbank mv /inbox/scans /cases/acme/scans --json`,
+	Example: `  docbank document move id:12 /cases/acme/invoice-2026.pdf
+  docbank document move /inbox/scans /cases/acme/scans --json`,
 	Long: `Move or rename one node; id:N stays stable. batch applies a bounded JSON
 reorganization plan atomically when several nodes need to move together.`,
 	GroupID: groupDocuments,
@@ -77,7 +77,7 @@ reorganization plan atomically when several nodes need to move together.`,
 }
 
 var mvBatchCmd = &cobra.Command{
-	Example: `  docbank mv batch moves.json`,
+	Example: `  docbank document move batch moves.json`,
 	Use:     "batch <plan.json|->",
 	Short:   "Apply an all-or-nothing reorganization plan",
 	Long: `Apply one bounded JSON plan as a single metadata transaction.
@@ -173,5 +173,5 @@ func init() {
 	mvCmd.Flags().BoolVar(&mvJSON, "json", false, "print JSON to stdout")
 	mvBatchCmd.Flags().BoolVar(&mvJSON, "json", false, "print JSON to stdout")
 	mvCmd.AddCommand(mvBatchCmd)
-	rootCmd.AddCommand(mvCmd)
+	registerGroupedCommand(documentCmd, mvCmd, "move")
 }

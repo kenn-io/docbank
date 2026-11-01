@@ -159,7 +159,7 @@ NOTICE"
         *":$install_dir:"*) ;;
         *) info "Add ${install_dir} to PATH: export PATH=\"${install_dir}:\$PATH\"" ;;
     esac
-    info "Get started: docbank add ~/Documents --dest /archive"
+    info "Get started: docbank document add ~/Documents --dest /archive"
 }
 
 install_docbank

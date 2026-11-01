@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-21
+last_edited: 2026-10-31
 title: Cite documents in Kata
 description: Quote verified document passages into Kata issues and reopen their evidence with current source status.
 ---
@@ -47,8 +47,8 @@ Restart an existing daemon after changing its connection configuration.
 First inspect the document:
 
 ```bash
-docbank stat /notes/meeting.txt --json
-docbank cat /notes/meeting.txt
+docbank document stat /notes/meeting.txt --json
+docbank document cat /notes/meeting.txt
 ```
 
 Create an issue from a passage:

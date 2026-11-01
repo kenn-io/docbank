@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-22
+last_edited: 2026-10-31
 title: Embed in Go
 description: Run one or more Docbank vaults inside a Go application, each with its own root, using CGO or pure-Go SQLite.
 ---
@@ -610,7 +610,7 @@ filename collision returns `email_document_conflict` and leaves the
 publication uncommitted.
 
 CLI users can [inspect and release blocking receipts](usage/trash-and-gc.md#release-email-attachment-references)
-through the daemon with `docbank email-documents`.
+through the daemon with `docbank email documents`.
 
 The typed client names the principal/scope consent operations
 `GrantScopedProcessingConsent` and `RevokeScopedProcessingConsent` to distinguish

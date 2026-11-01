@@ -28,9 +28,9 @@ var (
 )
 
 var addCmd = &cobra.Command{
-	Example: `  docbank add ./scans --dest /cases/acme
-  docbank add ./mail --include '*.eml' --exclude drafts --preflight
-  docbank add report.pdf --dest /cases/acme --replace --json`,
+	Example: `  docbank document add ./scans --dest /cases/acme
+  docbank document add ./mail --include '*.eml' --exclude drafts --preflight
+  docbank document add report.pdf --dest /cases/acme --replace --json`,
 	Long: `Copy local files or folders into the vault under --dest (default /inbox).
 Missing destination directories are created. Re-adding the same content under
 the same name is skipped. Other name collisions add a suffixed sibling unless
@@ -153,7 +153,7 @@ func init() {
 		"print JSON to stdout (progress suppressed)")
 	addCmd.Flags().StringVar(&addProgress, "progress", "auto",
 		"progress output mode: auto, bar, or plain (suppressed by --json)")
-	rootCmd.AddCommand(addCmd)
+	registerGroupedCommand(documentCmd, addCmd, "add")
 }
 
 type ingestProgressRenderer struct {

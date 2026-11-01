@@ -114,6 +114,16 @@ func downloadReportPacket(ctx context.Context, connection *daemonconn.Connection
 	})
 }
 
+// Follow the invoked spelling so legacy successful text remains compatible.
+func reportCommandPath(cmd *cobra.Command) string {
+	for parent := cmd.Parent(); parent != nil; parent = parent.Parent() {
+		if parent.Name() == "report" || parent.Name() == "search-export" {
+			return parent.CommandPath()
+		}
+	}
+	return "docbank report"
+}
+
 func init() {
 	root := &cobra.Command{
 		Long: `Export per-term hit counts for a date range as an evidence ZIP.
@@ -124,7 +134,7 @@ history lists recorded runs; download saves a retained report.`,
 		Use:     "search-export",
 		Short:   "Export search counts and review saved evidence"}
 	terms := &cobra.Command{
-		Example: `  docbank search-export create --input req.json --output out.zip`,
+		Example: `  docbank report create --input req.json --output out.zip`,
 		Use:     "create",
 		Short:   "Export search counts from the current vault",
 		Args:    cobra.NoArgs}
@@ -135,7 +145,7 @@ history lists recorded runs; download saves a retained report.`,
 	terms.Flags().BoolVar(&overwrite, "overwrite", false, "replace an existing destination")
 	terms.RunE = func(cmd *cobra.Command, _ []string) error {
 		if input == "" || output == "" {
-			return usageError(errors.New("search-export create requires --input and --output"))
+			return usageError(fmt.Errorf("%s create requires --input and --output", reportCommandPath(cmd)))
 		}
 		if _, err := prepareGetDestination(output, overwrite); err != nil {
 			return err
@@ -153,14 +163,14 @@ history lists recorded runs; download saves a retained report.`,
 			return err
 		}
 		if err := writeReportCoverage(cmd.OutOrStdout(), summary); err != nil {
-			return fmt.Errorf("report %s; inspect with docbank search-export show %s: %w",
+			return fmt.Errorf("report %s; inspect with docbank report show %s: %w",
 				summary.ID, summary.ID, err)
 		}
 		if summary.State == "needs_review" {
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "export %s needs date review; run docbank search-export dates %s, then docbank search-export revise %s --choices choices.json --output %s\n",
-				summary.ID, summary.ID, summary.ID, output)
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "export %s needs date review; run %s dates %s, then %s revise %s --choices choices.json --output %s\n",
+				summary.ID, reportCommandPath(cmd), summary.ID, reportCommandPath(cmd), summary.ID, output)
 			if err != nil {
-				return fmt.Errorf("report %s; run docbank search-export dates %s; "+
+				return fmt.Errorf("report %s; run docbank report dates %s; "+
 					"writing review instructions: %w", summary.ID, summary.ID, err)
 			}
 			return nil
@@ -177,7 +187,7 @@ history lists recorded runs; download saves a retained report.`,
 	}
 
 	verify := &cobra.Command{
-		Example: `  docbank search-export verify out.zip`,
+		Example: `  docbank report verify out.zip`,
 		Use:     "verify <report.zip>",
 		Short:   "Check a report packet without opening a vault",
 		Args:    cobra.ExactArgs(1),
@@ -194,7 +204,7 @@ history lists recorded runs; download saves a retained report.`,
 		}}
 
 	csv := &cobra.Command{
-		Example: `  docbank search-export csv out.zip --output counts.csv`,
+		Example: `  docbank report csv out.zip --output counts.csv`,
 		Use:     "csv <report.zip>",
 		Short:   "Extract verified report counts without opening a vault",
 		Args:    cobra.ExactArgs(1)}
@@ -204,7 +214,7 @@ history lists recorded runs; download saves a retained report.`,
 	csv.Flags().BoolVar(&csvOverwrite, "overwrite", false, "replace an existing destination")
 	csv.RunE = func(cmd *cobra.Command, args []string) error {
 		if csvOutput == "" {
-			return usageError(errors.New("search-export csv requires --output"))
+			return usageError(fmt.Errorf("%s csv requires --output", reportCommandPath(cmd)))
 		}
 		return publishReportOutput(csvOutput, csvOverwrite, func(file *os.File) error {
 			packet, err := os.Open(args[0])
@@ -231,7 +241,7 @@ history lists recorded runs; download saves a retained report.`,
 	}
 
 	dates := &cobra.Command{
-		Example: `  docbank search-export dates <report-id>`,
+		Example: `  docbank report dates <report-id>`,
 		Use:     "dates <report-id>",
 		Short:   "Inspect frozen date candidates",
 		Args:    cobra.ExactArgs(1)}
@@ -252,7 +262,7 @@ history lists recorded runs; download saves a retained report.`,
 	}
 
 	revise := &cobra.Command{
-		Example: `  docbank search-export revise <report-id> --choices choices.json --output revised.zip`,
+		Example: `  docbank report revise <report-id> --choices choices.json --output revised.zip`,
 		Use:     "revise <report-id>",
 		Short:   "Apply reviewed dates to a frozen report",
 		Args:    cobra.ExactArgs(1)}
@@ -263,7 +273,7 @@ history lists recorded runs; download saves a retained report.`,
 	revise.Flags().BoolVar(&revisionOverwrite, "overwrite", false, "replace an existing destination")
 	revise.RunE = func(cmd *cobra.Command, args []string) error {
 		if choicesPath == "" || revisionOutput == "" {
-			return usageError(errors.New("search-export revise requires --choices and --output"))
+			return usageError(fmt.Errorf("%s revise requires --choices and --output", reportCommandPath(cmd)))
 		}
 		if _, err := prepareGetDestination(revisionOutput, revisionOverwrite); err != nil {
 			return err
@@ -281,13 +291,13 @@ history lists recorded runs; download saves a retained report.`,
 			return err
 		}
 		if err := writeReportCoverage(cmd.OutOrStdout(), summary); err != nil {
-			return fmt.Errorf("report %s; inspect with docbank search-export show %s: %w",
+			return fmt.Errorf("report %s; inspect with docbank report show %s: %w",
 				summary.ID, summary.ID, err)
 		}
 		if summary.State == "needs_review" {
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "export %s still needs date review; run docbank search-export dates %s\n", summary.ID, summary.ID)
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "export %s still needs date review; run %s dates %s\n", summary.ID, reportCommandPath(cmd), summary.ID)
 			if err != nil {
-				return fmt.Errorf("report %s; run docbank search-export dates %s; "+
+				return fmt.Errorf("report %s; run docbank report dates %s; "+
 					"writing revision status: %w", summary.ID, summary.ID, err)
 			}
 			return nil
@@ -305,5 +315,5 @@ history lists recorded runs; download saves a retained report.`,
 	root.AddCommand(terms, verify, csv, dates, revise)
 	root.AddCommand(newReportShowCommand(), newReportHistoryCommand())
 	root.AddCommand(newReportDownloadCommand(), newReportReleaseCommand())
-	rootCmd.AddCommand(root)
+	registerGroupedCommand(rootCmd, root, "report")
 }

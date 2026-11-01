@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-14
+last_edited: 2026-10-31
 title: HTTP API
 description: The agent-first HTTP API: filesystem-shaped endpoints, revision preconditions, and the daemon's error contract.
 ---
@@ -1882,10 +1882,10 @@ failure, while selected non-regular entries are reported as skipped findings.
 dest: "/inbox", include: [...], exclude: [...], replace: false,
 collection_label: "Review set"}`. It returns an `IngestReport` (`ingest_id`,
 `added`, `skipped`, `excluded`, per-path `failed` entries) and backs
-`docbank add`. `collection_label` is optional. Paths must be
+`docbank document add`. `collection_label` is optional. Paths must be
 **absolute**: the long-lived daemon's working directory is meaningless,
 so a relative path is rejected with `422`. The CLI resolves
-`docbank add`'s arguments to absolute paths before calling, so the command-line
+`docbank document add`'s arguments to absolute paths before calling, so the command-line
 UX still accepts relative and `cwd`-relative sources. Collisions resolve by the
 same suffixing rules as other imports when `replace` is false or omitted.
 

@@ -25,7 +25,7 @@ var helpEnvAssignment = regexp.MustCompile(`^[A-Za-z_][A-Za-z_0-9]*=`)
 
 // Parents whose RunE performs work, rather than just cmd.Help().
 var workParents = map[string]bool{
-	"docbank jobs": true, "docbank mv": true, "docbank package import": true,
+	"docbank jobs": true, "docbank document move": true, "docbank package import": true,
 	"docbank web": true, "docbank web sessions": true,
 }
 
@@ -109,7 +109,7 @@ func TestHelpTreeLint(t *testing.T) {
 			require.NoError(t, err)
 			budget := 2500
 			if cmd == rootCmd {
-				budget = 4636
+				budget = 3600
 			}
 			if cmd == rootCmd || (!cmd.HasSubCommands() && cmd.Name() != "tui") {
 				assert.LessOrEqual(t, len(out), budget, "help byte budget")
@@ -326,9 +326,9 @@ func TestHelpWords(t *testing.T) {
 		bad  bool
 	}{
 		{`docbank search 'merger plan' --json # result`, []string{"docbank", "search", "merger plan", "--json"}, false},
-		{`EDITOR="my editor" docbank edit id:12`, []string{"EDITOR=my editor", "docbank", "edit", "id:12"}, false},
+		{`EDITOR="my editor" docbank document edit id:12`, []string{"EDITOR=my editor", "docbank", "document", "edit", "id:12"}, false},
 		{`docbank search "a\"b" 'a#b'`, []string{"docbank", "search", `a"b`, "a#b"}, false},
-		{`docbank cat <path-or-id> > out.txt`, []string{"docbank", "cat", "<path-or-id>", ">", "out.txt"}, false},
+		{`docbank document cat <path-or-id> > out.txt`, []string{"docbank", "document", "cat", "<path-or-id>", ">", "out.txt"}, false},
 		{"docbank search merger\\\n plan", []string{"docbank", "search", "merger", "plan"}, false},
 		{`docbank search "unfinished`, nil, true},
 	}
@@ -350,9 +350,9 @@ func TestHelpExampleParsing(t *testing.T) {
 		line string
 		path string
 	}{
-		{`docbank cat id:12 > invoice.pdf`, "docbank cat"},
+		{`docbank document cat id:12 > invoice.pdf`, "docbank document cat"},
 		{`docbank search "merger plan" --json`, "docbank search"},
-		{`DOCBANK_HOME=/tmp/scratch docbank info --json`, "docbank info"},
+		{`DOCBANK_HOME=/tmp/scratch docbank vault info --json`, "docbank vault info"},
 		{`docbank rendition window id:12 --version <version-uuid> --profile <profile>`, "docbank rendition window"},
 		{`docbank backup restore --repo ./bk --target ./restored`, "docbank backup restore"},
 	}
@@ -363,7 +363,7 @@ func TestHelpExampleParsing(t *testing.T) {
 			assert.Equal(t, tt.path, cmd.CommandPath())
 		})
 	}
-	for _, line := range []string{`docbank not-real`, `docbank cat id:12 --not-real`, `docbank get id:12`, `docbank backup restore --repo ./bk`, `docbank cat id:12 > out extra`} {
+	for _, line := range []string{`docbank not-real`, `docbank document cat id:12 --not-real`, `docbank document get id:12`, `docbank backup restore --repo ./bk`, `docbank document cat id:12 > out extra`} {
 		t.Run(line, func(t *testing.T) { _, err := checkHelpExample(rootCmd, line); require.Error(t, err) })
 	}
 }

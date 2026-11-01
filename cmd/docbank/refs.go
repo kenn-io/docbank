@@ -22,8 +22,8 @@ var (
 )
 
 var referencesCmd = &cobra.Command{
-	Example: `  docbank stat id:12 --json # blob_hash
-  docbank refs <sha256> --json`,
+	Example: `  docbank document stat id:12 --json # blob_hash
+  docbank document refs <sha256> --json`,
 	GroupID: groupDocuments,
 	Use:     "refs <sha256>",
 	Short:   "Find document versions that retain a content hash",
@@ -93,5 +93,5 @@ func init() {
 		"number of references to skip")
 	referencesCmd.Flags().BoolVar(&referencesJSON, "json", false,
 		"print JSON to stdout")
-	rootCmd.AddCommand(referencesCmd)
+	registerGroupedCommand(documentCmd, referencesCmd, "refs")
 }

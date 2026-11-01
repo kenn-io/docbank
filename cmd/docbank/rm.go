@@ -14,15 +14,15 @@ import (
 var rmJSON bool
 
 var rmCmd = &cobra.Command{
-	Example: `  docbank rm id:12
+	Example: `  docbank document remove id:12
   docbank trash list
-  docbank restore id:12`,
+  docbank document restore id:12`,
 	GroupID: groupDocuments,
 	Use:     "rm <path-or-id>",
 	Short:   "Move a node (and its subtree) to the trash",
-	Long: `Move a node (and its subtree) to recoverable trash. rm never permanently deletes
-metadata or reclaims content; use trash empty, gc, and storage repack as
-separate explicit maintenance steps.`,
+	Long: `Move a node (and its subtree) to recoverable trash. document remove never
+permanently deletes metadata or reclaims content; use trash empty, vault gc,
+and storage repack as separate explicit maintenance steps.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		selector, err := parseNodeSelector(args[0])
@@ -51,14 +51,18 @@ separate explicit maintenance steps.`,
 		if rmJSON {
 			return writeCLIJSON(cmd.OutOrStdout(), n)
 		}
+		restore := "docbank document restore"
+		if cmd.Annotations[legacyCommandReplacement] != "" {
+			restore = "docbank restore"
+		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(),
-			"trashed [%s] %s (restore with: docbank restore %s)\n",
-			formatNodeSelector(n.ID), n.Path, formatNodeSelector(n.ID))
+			"trashed [%s] %s (restore with: %s %s)\n",
+			formatNodeSelector(n.ID), n.Path, restore, formatNodeSelector(n.ID))
 		return nil
 	},
 }
 
 func init() {
 	rmCmd.Flags().BoolVar(&rmJSON, "json", false, "print JSON to stdout")
-	rootCmd.AddCommand(rmCmd)
+	registerGroupedCommand(documentCmd, rmCmd, "remove")
 }

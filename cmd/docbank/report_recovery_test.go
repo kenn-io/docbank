@@ -81,7 +81,7 @@ func TestReportDeliveryErrors(t *testing.T) {
 		code  int
 		hint  string
 	}{
-		{daemonconn.ErrReportReviewRequired, exitGeneral, "search-export dates " + id},
+		{daemonconn.ErrReportReviewRequired, exitGeneral, "report dates " + id},
 		{io.ErrUnexpectedEOF, exitGeneral, "inspect"},
 		{daemonconn.ErrIntegrity, exitIntegrity, "inspect"},
 	} {
@@ -257,7 +257,7 @@ func TestReportCLIKnownResultOutputErrors(t *testing.T) {
 					_, err = verifyReportFile(t.Context(), destination)
 					require.NoError(t, err)
 				} else {
-					require.ErrorContains(t, err, "search-export show "+created.ID)
+					require.ErrorContains(t, err, "report show "+created.ID)
 					require.NoFileExists(t, destination)
 				}
 			})

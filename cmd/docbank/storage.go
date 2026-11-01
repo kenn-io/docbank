@@ -433,7 +433,7 @@ func newStorageRecoveryCommand(
 	kind string, flags *storageRecoveryFlags,
 ) *cobra.Command {
 	command := &cobra.Command{
-		Example: "  docbank stat id:12 --json # blob_hash\n  docbank storage " + kind + " <sha256> --store secondary\n  docbank storage " + kind + " --run --token <preview-token>",
+		Example: "  docbank document stat id:12 --json # blob_hash\n  docbank storage " + kind + " <sha256> --store secondary\n  docbank storage " + kind + " --run --token <preview-token>",
 		Use:     kind + " <blob-hash>",
 		Short:   "Preview, then " + kind + ", one physical blob location",
 		Args:    cobra.MaximumNArgs(1),

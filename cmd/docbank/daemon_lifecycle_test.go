@@ -309,7 +309,7 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	// Protocol 13 predates content reversion. Replace it before the CLI sends
 	// the mutation so an older same-version daemon cannot return 404 after the
 	// operator has selected a historical source.
-	out, err = run(oldBin, "versions", "list", "/inbox/preflight.txt", "--json")
+	out, err = run(oldBin, "document", "versions", "list", "/inbox/preflight.txt", "--json")
 	require.NoError(t, err, out)
 	var versionPage api.ContentVersionPage
 	require.NoError(t, json.Unmarshal([]byte(out), &versionPage))
@@ -403,7 +403,7 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	recs[0].Metadata["protocol_version"] = "23"
 	_, err = daemonconn.RuntimeStore(dir).Write(recs[0])
 	require.NoError(t, err)
-	out, err = run(oldBin, "info", "--json")
+	out, err = run(oldBin, "vault", "info", "--json")
 	require.NoError(t, err, out)
 	assert.Contains(t, out, `"vault_id"`)
 	recs, err = daemonconn.RuntimeStore(dir).List()
@@ -431,7 +431,7 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	// Protocol 33 returned an internal storage-derived path when a trashed node
 	// was inspected by ID. Replace it before stat can present that value as a
 	// live virtual coordinate.
-	out, err = run(oldBin, "rm", "/inbox/protocol-batch.txt", "--json")
+	out, err = run(oldBin, "document", "remove", "/inbox/protocol-batch.txt", "--json")
 	require.NoError(t, err, out)
 	var trashed api.Node
 	require.NoError(t, json.Unmarshal([]byte(out), &trashed))
@@ -443,7 +443,7 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	recs[0].Metadata["protocol_version"] = "33"
 	_, err = daemonconn.RuntimeStore(dir).Write(recs[0])
 	require.NoError(t, err)
-	out, err = run(oldBin, "stat", formatNodeSelector(trashed.ID), "--json")
+	out, err = run(oldBin, "document", "stat", formatNodeSelector(trashed.ID), "--json")
 	require.NoError(t, err, out)
 	var inspected api.Node
 	require.NoError(t, json.Unmarshal([]byte(out), &inspected))

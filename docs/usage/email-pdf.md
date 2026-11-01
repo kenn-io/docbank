@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-05
+last_edited: 2026-10-31
 title: Email PDFs
 description: Render one email version as a verified PDF kept alongside its original EML.
 ---
@@ -10,9 +10,9 @@ Render one EML version as a PDF without changing the original email,
 its attachment documents, or body-search results. No mailbox archive is needed.
 
 ```sh
-docbank versions list /Mail/synthetic.eml
-docbank email-pdf 20000000-0000-4000-8000-000000000001 message.pdf
-docbank email-pdf 20000000-0000-4000-8000-000000000001 letter.pdf --paper Letter
+docbank document versions list /Mail/synthetic.eml
+docbank email pdf 20000000-0000-4000-8000-000000000001 message.pdf
+docbank email pdf 20000000-0000-4000-8000-000000000001 letter.pdf --paper Letter
 ```
 
 The command requests local rendering through the daemon, waits for the existing

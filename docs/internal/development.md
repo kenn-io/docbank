@@ -153,7 +153,7 @@ syntax and arity without executing examples.
 Use a command group at the root, source each ID, and mark required flags.
 Keep descriptions short: at most 12 Long lines for leaves and 20 for parents;
 root help and the TUI key table have explicit exceptions. Root help is limited
-to 4,500 bytes and leaves to 2,500, except the TUI. Only root help has a golden,
+to 3,600 bytes and leaves to 2,500, except the TUI. Only root help has a golden,
 so command examples can improve without maintaining hundreds of snapshots.
 After an intentional root change, review and regenerate it from the repository
 root:
@@ -164,6 +164,20 @@ go test -tags fts5 ./cmd/docbank -run TestRootHelpGolden -update
 
 Keep the CLI reference and guide examples in sync. Error next-step hints belong
 at the CLI process boundary; preserve error prefixes and daemon problem text.
+
+Register file/tree commands under `document`, vault identity and maintenance
+under `vault`, and email operations under `email`. `report` owns search-count
+evidence; leave `search` arguments available for arbitrary query words. Existing
+domain groups keep their names. Use `registerGroupedCommand` after installing
+the command's flags and children when moving another command. It retains a
+hidden root definition for at least one release, with separate Cobra state and
+shared handler flag values. Deprecation notices go to stderr at the process
+boundary before argument parsing, including errors and help; Cobra's built-in
+`Deprecated` field writes to stdout and breaks JSON and raw byte output.
+Keep nested compatibility definitions covered by
+`command_groups_test.go` and update the CLI reference mapping.
+Report text chooses its next-step command from the invoked spelling so the
+canonical path stays discoverable and legacy successful stdout stays compatible.
 
 ### Add a data operation
 

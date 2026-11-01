@@ -61,7 +61,7 @@ sensitive fields. Other callers must enforce their own disclosure boundary.
 The v22 extractor fingerprint queues re-extraction of retained originals of
 every format, including photos and email, through the existing global backfill.
 
-The inspector's PDF section, `docbank stat`, and MCP `get_document` expose
+The inspector's PDF section, `docbank document stat`, and MCP `get_document` expose
 these declared facts. MCP returns them in `pdf_facts`; other source metadata
 remains outside that response. The inspector reads the exact selected content
 version, including saved results whose live document has changed.

@@ -214,13 +214,14 @@ func TestRunProcessErrorHints(t *testing.T) {
 		return runProcess(args, &stdout, &stderr)
 	}
 	assert.Equal(t, exitUsage, run("get", "id:1"))
-	assert.Equal(t, "error: accepts 2 arg(s), received 1", strings.SplitN(stderr.String(), "\n", 2)[0])
+	assert.Contains(t, stderr.String(), "\nerror: accepts 2 arg(s), received 1\n")
 	assert.Contains(t, stderr.String(), "hint: usage: docbank get <path-or-id> <local-file>")
 	assert.Equal(t, 1, strings.Count(stderr.String(), "hint:"))
 	assert.Empty(t, stdout.String())
 	assert.Equal(t, exitNotFound, run("ls", "/missing"))
-	assert.True(t, strings.HasPrefix(stderr.String(), "error: "))
-	assert.Contains(t, stderr.String(), `hint: list paths with "docbank tree" or find by name with "docbank search <name>"`)
+	assert.True(t, strings.HasPrefix(stderr.String(), "Command \"ls\" is deprecated"))
+	assert.Contains(t, stderr.String(), "\nerror: ")
+	assert.Contains(t, stderr.String(), `hint: list paths with "docbank document tree" or find by name with "docbank search <name>"`)
 	assert.Equal(t, exitNotFound, run("stat", "id:999"))
 	assert.NotContains(t, stderr.String(), "hint:")
 	assert.Equal(t, exitSuccess, run("mkdir", "/gone"))
@@ -239,14 +240,14 @@ func TestRunProcessErrorHints(t *testing.T) {
 	assert.Contains(t, stderr.String(), `job ID must be lowercase SHA-256; the job ID is printed by "docbank processing build"`)
 	for _, args := range [][]string{{"rendition", "window", "id:1", "--version", "abc", "--profile", "supplied-captions"}, {"processing", "coverage", "abc", "--profile", "supplied-captions"}} {
 		assert.Equal(t, exitUsage, run(args...))
-		assert.Contains(t, stderr.String(), `version must be a canonical lowercase UUIDv4; use current_version_id from "docbank stat <path-or-id> --json"`)
+		assert.Contains(t, stderr.String(), `version must be a canonical lowercase UUIDv4; use current_version_id from "docbank document stat <path-or-id> --json"`)
 	}
 	assert.Equal(t, exitUsage, run("processing", "plan", "id:1"))
 	assert.Contains(t, stderr.String(), `list profiles with "docbank processing profiles"`)
 	assert.Equal(t, exitUsage, run("search", "term", "--mode", "hybrid"))
 	assert.Contains(t, stderr.String(), `list profiles with "docbank processing profiles"`)
 	assert.Equal(t, exitUsage, run("search", "term", "--mode", "lexical", "--profile", "supplied-captions"))
-	assert.Contains(t, stderr.String(), `use current_version_id from "docbank stat <path-or-id> --json"`)
+	assert.Contains(t, stderr.String(), `use current_version_id from "docbank document stat <path-or-id> --json"`)
 	assert.Equal(t, exitUsage, run("stta"))
 	assert.Contains(t, stderr.String(), "Did you mean")
 	assert.NotContains(t, stderr.String(), "hint:")
@@ -262,7 +263,7 @@ func TestCommandErrorHint(t *testing.T) {
 		started bool
 		want    string
 	}{
-		{"arity", getCmd, errors.New("accepts 2 arg(s), received 1"), exitUsage, false, "hint: usage: docbank get <path-or-id> <local-file> [flags]"},
+		{"arity", getCmd, errors.New("accepts 2 arg(s), received 1"), exitUsage, false, "hint: usage: docbank document get <path-or-id> <local-file> [flags]"},
 		{"root flag", rootCmd, errors.New("unknown flag"), exitUsage, false, `hint: run "docbank --help"`},
 		{"unknown command", nil, errors.New("unknown command"), exitUsage, false, `hint: run "docbank --help"`},
 		{"suggestion", rootCmd, errors.New("unknown command; Did you mean stat?"), exitUsage, false, ""},

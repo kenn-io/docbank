@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-14
+last_edited: 2026-10-31
 title: Searching
 description: Ranked, prefix-matching search over document names and verified text content.
 ---
@@ -163,7 +163,7 @@ matches from ordinary search. Trashed nodes do not appear. Restoring them return
 index immediately.
 
 Text search uses only the current version of each live file. Ordinary search
-does not cover older versions. Read those with `docbank versions`.
+does not cover older versions. Read those with `docbank document versions`.
 
 ## How do I narrow the results?
 

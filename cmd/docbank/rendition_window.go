@@ -25,9 +25,9 @@ type renditionWindowOptions struct {
 
 func newRenditionWindowCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Example: `  docbank stat id:12 # version: <version-uuid>
+		Example: `  docbank document stat id:12 # version: <version-uuid>
   docbank rendition window id:12 --version <version-uuid> --profile <profile>`,
-		Long: `--version is the current version UUID (docbank stat); --profile names the
+		Long: `--version is the current version UUID (document stat); --profile names the
 profile that built it. Prints a continuation command when more text remains.`,
 		Use:   "window <path-or-id>",
 		Short: "Read a bounded slice of a document's derived text",

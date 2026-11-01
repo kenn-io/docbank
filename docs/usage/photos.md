@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-21
+last_edited: 2026-10-31
 title: Photo assets
 description: Group camera files, browse photos, and organize albums in the web app, CLI, or HTTP API.
 ---
@@ -66,7 +66,7 @@ The inspector's name search includes active operator assertions on visible versi
 
 If a name search fails, choose Retry to repeat that page. Completed choices remain available after a later page fails. Create person appears after the search completes.
 
-Use a photo file's `current_version_id` from `docbank stat <path-or-id> --json` to record an observation:
+Use a photo file's `current_version_id` from `docbank document stat <path-or-id> --json` to record an observation:
 
 ```sh
 docbank photos faces create <content-version-id> --box 0.1,0.2,0.3,0.4 --person <person-id>
@@ -829,7 +829,7 @@ Moving rejects preserves the loaded range, browsing position, and surviving sele
 
 HTTP clients preview with `POST /api/v1/photos/rejects/preflight` and `{query, hidden}`, then confirm with `POST /api/v1/photos/rejects/trash` and `{hidden, targets}`. Each target carries `asset_id`, the asset `revision`, and `member_revision`, the sum of the original members' node revisions; sidecar syncing after the preview does not make it stale. Confirmation reads each member once in the writer transaction, checks its revision and every original's reject flag, and moves the reviewed files.
 
-Use `docbank photos assets trash <asset-id>` for the same operation from the CLI. `--revision` binds the action to an inspected asset revision. Ordinary Documents deletion and `docbank rm` still remove the selected file or folder.
+Use `docbank photos assets trash <asset-id>` for the same operation from the CLI. `--revision` binds the action to an inspected asset revision. Ordinary Documents deletion and `docbank document remove` still remove the selected file or folder.
 
 Open **Trash** in either workspace to restore a photo group. Trash lists files, including hidden photos' files, just like Documents. One row represents its independently trashed members and shows how many trashed files restore will recover, including companions inside folders. Restoring any member recovers the complete group. The selected member's revision guards the request; Docbank reads all affected roots in the same transaction. A member inside a trashed folder restores that folder's subtree and the photo's companions elsewhere. Selected destination folders return before their files. Separately trashed unrelated items stay in trash.
 
