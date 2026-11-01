@@ -72,9 +72,11 @@ func amountAt(rs []rune) (int, string) {
 	i, code := currencyAt(rs, i)
 	i = skipSpace(rs, i, false)
 	numberStart := i
-	if _, date := dateAt(rs[i:]); date != "" || i >= len(rs) || (!digit(rs[i]) && (rs[i] != '.' || i+1 >= len(rs) || !digit(rs[i+1]))) {
+	i, date := dateAt(rs[i:])
+	if date != "" || i == 0 && (numberStart >= len(rs) || (!digit(rs[numberStart]) && (rs[numberStart] != '.' || numberStart+1 >= len(rs) || !digit(rs[numberStart+1])))) {
 		return 0, ""
 	}
+	i += numberStart
 	for i < len(rs) && (digit(rs[i]) || separator(rs[i])) {
 		i++
 	}
@@ -89,9 +91,6 @@ func amountAt(rs []rune) (int, string) {
 		i--
 	}
 	numberEnd := i
-	if signed {
-		return i, ""
-	}
 	if code == "" {
 		start := skipSpace(rs, i, false)
 		end, suffix := currencyAt(rs, start)
@@ -106,13 +105,12 @@ func amountAt(rs []rune) (int, string) {
 		end++
 	}
 	token := []rune(strings.TrimFunc(string(rs[start:end]), edge))
-	// A marker after an amount may belong to it or to whatever follows, so the
-	// amount stays literal. The marker remains available to a following amount.
+	// An adjacent marker belongs to this amount, which stays literal.
 	if markerEnd, marker := currencyAt(token, 0); marker != "" && markerEnd == len(token) && strings.TrimFunc(string(rs[i:start]), amountGap) == "" {
-		return i, ""
+		return end, ""
 	}
-	if value := amountValue(string(rs[numberStart:numberEnd])); value != "" {
+	if value := amountValue(string(rs[numberStart:numberEnd])); !signed && value != "" {
 		return i, code + " " + value
 	}
-	return 0, ""
+	return i, ""
 }
