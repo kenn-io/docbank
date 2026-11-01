@@ -482,14 +482,18 @@ func searchDocuments(
 		}
 		output.Results[index] = searchResultOutput{NodeID: item.NodeID,
 			ContentVersionID: item.ContentVersionID, Rank: item.Rank, Score: item.Score,
-			Path: item.Path, Excerpt: item.Excerpt, EvidenceIDs: evidence}
-		// retrieval.(*Searcher).rerank scores and sorts only the candidate prefix.
-		if output.Reranking != nil && output.Reranking.Outcome == "applied" && index < output.Reranking.CandidateCount {
-			score := item.Score
-			output.Results[index].RerankRelevance = &score
-		}
+			Path: item.Path, Excerpt: item.Excerpt, EvidenceIDs: evidence,
+			RerankRelevance: searchRerankRelevance(item, index, output.Reranking)}
 	}
 	return output, documentResourceLinks(result.resolution.Fence.VaultUID, result.documents), nil
+}
+
+// retrieval.(*Searcher).rerank scores and sorts only the candidate prefix.
+func searchRerankRelevance(item api.DocumentSearchResult, index int, reranking *api.DocumentSearchRerankingReceipt) *float64 {
+	if reranking != nil && reranking.Outcome == "applied" && index < reranking.CandidateCount {
+		return &item.Score
+	}
+	return nil
 }
 
 func encodeSearchEvidenceIDs(evidence []api.DocumentEvidenceReference) ([]string, error) {

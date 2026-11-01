@@ -232,15 +232,22 @@ func TestAnswerQuestionEmptyFenceValidatesWithoutSearch(t *testing.T) {
 		t.Run(fmt.Sprintf("binding=%t/rerank=%t", tc.binding, tc.rerank), func(t *testing.T) {
 			f := &answerFakeClient{empty: true}
 			if !tc.binding {
-				f.profiles = []api.ProcessingProfileSummary{{Name: "local"}}
+				f.profiles = []api.ProcessingProfileSummary{{Name: "local", Fingerprint: strings.Repeat("a", 64)}}
 			}
 			session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
-			out, _, err := answerQuestion(t.Context(), session, []byte(fmt.Sprintf(`{"question":"example","rerank":%t}`, tc.rerank)))
+			out, links, err := answerQuestion(t.Context(), session, []byte(fmt.Sprintf(`{"question":"example","rerank":%t}`, tc.rerank)))
 			if err != nil || f.validations != 1 || len(f.requests) != 0 || out.Receipt.SearchExecuted || out.Receipt.ExecutedQuerySHA256 != "" || out.Status != answer.NoMatch || !out.CoverageComplete || len(out.CoverageReasons) != 0 {
 				t.Fatalf("out=%+v err=%v", out, err)
 			}
 			if tc.rerank && (out.Receipt.Reranking == nil || out.Receipt.Reranking.Outcome != "skipped") {
 				t.Fatalf("receipt=%+v", out.Receipt.Reranking)
+			}
+			if !tc.rerank && out.Receipt.Reranking != nil {
+				t.Fatalf("unexpected reranking receipt: %+v", out.Receipt.Reranking)
+			}
+			_, output := answerQuestionSchemas()
+			if _, err := boundedToolSuccess(mustResolveSchema(output), out, links); err != nil {
+				t.Fatal(err)
 			}
 		})
 	}

@@ -694,17 +694,21 @@ func searchDocumentsSchemas() (schema, schema) {
 		"requested_mode":       enumSchema("auto", "lexical", "semantic", "hybrid"),
 		"actual_mode":          enumSchema("lexical", "semantic", "hybrid"),
 		"coverage":             searchCoverageSchema(),
-		"reranking": objectSchema(schema{
-			"outcome":         enumSchema("applied", "skipped", "degraded"),
-			"cause":           stringSchema(64),
-			"candidate_count": integerSchema(0, 1000),
-		}, "outcome", "candidate_count"),
-		"skipped_reasons": arraySchema(stringSchema(64), 64),
-		"results":         arraySchema(result, 100),
-		"truncated":       booleanSchema(),
+		"reranking":            searchRerankingSchema(),
+		"skipped_reasons":      arraySchema(stringSchema(64), 64),
+		"results":              arraySchema(result, 100),
+		"truncated":            booleanSchema(),
 	}), cacheRequired("vault_id", "fence", "fence_fingerprint", "observed_scope_count", "requested_mode",
 		"actual_mode", "coverage", "skipped_reasons", "results", "truncated")...)
 	return input, output
+}
+
+func searchRerankingSchema() schema {
+	return objectSchema(schema{
+		"outcome":         enumSchema("applied", "skipped", "degraded"),
+		"cause":           stringSchema(64),
+		"candidate_count": integerSchema(0, 1000),
+	}, "outcome", "candidate_count")
 }
 
 func getDocumentSchemas() (schema, schema) {
