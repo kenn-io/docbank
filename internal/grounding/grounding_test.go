@@ -14,6 +14,9 @@ func TestGrounding(t *testing.T) {
 		unknownMarkers                             []int
 	}{
 		{"normalized amount and date", "$40 on March 15, 2026 [1]", "40 USD\n2026-03-15", "grounded", "found", []string{"$40", "March 15, 2026"}, []int{}},
+		{"amount after signed figure", "-5 $40", "-5 USD40", "grounded", "found", []string{"-5", "$40"}, []int{}},
+		{"amount after invalid decimal", "1.234 $40", "1.234 USD40", "grounded", "found", []string{"1.234", "$40"}, []int{}},
+		{"amount after rejected punctuated suffix", "CAD30", "-5 USD, 30 CAD", "grounded", "found", []string{"CAD30"}, []int{}},
 		{"literal fallback across currencies", "USD 40", "CAD 40", "grounded", "found", []string{"USD 40"}, []int{}},
 		{"cited plus sign", "5", "+5", "ungrounded", "missing", []string{"5"}, []int{}},
 		{"cited plus-minus sign", "5", "±5", "ungrounded", "missing", []string{"5"}, []int{}},
