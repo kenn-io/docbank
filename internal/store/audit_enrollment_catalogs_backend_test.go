@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"encoding/json/v2"
 	"testing"
 
@@ -9,6 +10,23 @@ import (
 	"go.kenn.io/docbank/internal/pgtest"
 	"go.kenn.io/docbank/internal/store/pgschema"
 )
+
+func TestValidityCatalogsPostgres(t *testing.T) {
+	t.Parallel()
+	s := newPostgresQueryStore(t)
+	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+		high, err := s.auditNodeSequence(t.Context(), tx)
+		if err != nil {
+			return err
+		}
+		return s.validateMetadataState(t.Context(), tx, high)
+	}))
+	plan, err := s.PreviewInitialAudit(t.Context(), s.RootID(), "cli", nil)
+	require.NoError(t, err)
+	status, err := s.EnableInitialAudit(t.Context(), plan)
+	require.NoError(t, err)
+	require.True(t, status.Enabled)
+}
 
 func retainedMetadataCatalogSeeds() map[string]func(*testing.T) *Store {
 	return map[string]func(*testing.T) *Store{
