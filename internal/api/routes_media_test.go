@@ -514,8 +514,16 @@ func TestMediaMultipartRejectsIncompleteEnvelopeBeforeRetention(t *testing.T) {
 	}
 }
 
-func TestMediaRetryClassifiesProcessingErrors(t *testing.T) { //nolint:paralleltest // the two-second consent expiry is measured on the real clock
-	ts, catalog := newTestServer(t, configureMediaTestService(t))
+func TestMediaRetryClassifiesProcessingErrors(t *testing.T) {
+	t.Parallel()
+	// The processing service runs an hour behind the store. The grant route
+	// checks a new expiry against the service clock, and the retry route
+	// checks consent against the store clock, so an expiry between the two is
+	// accepted when granted and already past when the retry is authorized.
+	const serviceLag = time.Hour
+	ts, catalog := newTestServer(t, configureMediaTestServiceWith(t, mediaTestOptions{
+		Clock: func() time.Time { return time.Now().Add(-serviceLag) },
+	}))
 	c := daemonconn.New(ts.URL, testAPIKey)
 	wav := mediatest.WAV()
 	receipt, err := c.SubmitSuppliedMedia(t.Context(), api.MediaSuppliedMetadata{
@@ -551,16 +559,13 @@ func TestMediaRetryClassifiesProcessingErrors(t *testing.T) { //nolint:parallelt
 		t.Run(test.name, func(t *testing.T) {
 			if test.name == "expired" || test.name == "revoked" {
 				grant := api.ProcessingConsentGrantRequest{Selector: selector, PlanFingerprint: plan.Fingerprint}
-				expires := time.Now().Add(2 * time.Second)
 				if test.name == "expired" {
-					grant.ExpiresAt = expires.Format(time.RFC3339Nano)
+					grant.ExpiresAt = time.Now().Add(-serviceLag / 2).Format(time.RFC3339Nano)
 				}
 				_, err := c.API().GrantDocumentProcessingConsent(t.Context(), &apiclient.GrantDocumentProcessingConsentRequestOptions{Body: new(grant)})
 
 				require.NoError(t, err)
-				if test.name == "expired" {
-					time.Sleep(time.Until(expires) + time.Millisecond) //nolint:kennlint // sleeptest: consent expiry is checked against the store's real clock, which has no seam
-				} else {
+				if test.name != "expired" {
 					_, err := c.API().RevokeDocumentProcessingConsent(t.Context())
 
 					require.NoError(t, err)
@@ -759,6 +764,8 @@ type mediaTestOptions struct {
 	LexicalLimit int
 	// Worker receives the rendition worker that the test drives.
 	Worker *renditionTestWorker
+	// Clock replaces the processing service clock.
+	Clock func() time.Time
 }
 
 func configureMediaTestServiceWith(t *testing.T, options mediaTestOptions) func(*api.Deps) {
@@ -783,6 +790,7 @@ func configureMediaTestServiceWith(t *testing.T, options mediaTestOptions) func(
 				InputClasses: []string{"recording_reference"}, RetainedClasses: []string{"recording_bytes"},
 				ReferencePrefixes: []string{"https://recordings.invalid/"}, AcquisitionAvailable: true,
 			}},
+			Clock: options.Clock,
 		})
 		require.NoError(t, err)
 		deps.Processing = service
