@@ -49,11 +49,21 @@ func TestKqueueRenamedDirectoryReleasesFileWatches(t *testing.T) {
 	for i := range 6 {
 		from, to := filepath.Join(root, names[i%2]), filepath.Join(root, names[(i+1)%2])
 		require.NoError(t, os.Rename(from, to))
-		// Wait until kqueue reports the rename and fsnotify drops the old path.
-		require.Eventually(t, func() bool {
+		// fsnotify drops the old path before it delivers the rename, and every
+		// delivered event wakes the notifier, so recheck after each wake.
+		deadline := time.NewTimer(10 * time.Second)
+		for {
 			backend, ok := n.backend.(fsnotifyBackend)
-			return ok && !slices.Contains(backend.watcher.WatchList(), from)
-		}, 10*time.Second, 10*time.Millisecond)
+			if ok && !slices.Contains(backend.watcher.WatchList(), from) {
+				break
+			}
+			select {
+			case <-n.Wake():
+			case <-deadline.C:
+				t.Fatalf("kqueue did not report renaming %s", from)
+			}
+		}
+		deadline.Stop()
 		_ = n.Drain()
 		enroll(names[(i+1)%2])
 	}
