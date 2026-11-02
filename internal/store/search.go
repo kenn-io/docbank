@@ -354,6 +354,8 @@ func boundedExplainedSearchExcerpt(value string) string {
 // descendants of one live directory. ModifiedSince is inclusive and
 // ModifiedBefore is exclusive; both accept absolute RFC3339 timestamps.
 type SearchOptions struct {
+	PDFFilter           string
+	pdfPredicate        compiledQueryFragment
 	SourcePresent       bool
 	VectorSpaceID       string
 	EmbeddingDescriptor *document.EmbeddingDescriptor
@@ -379,7 +381,7 @@ type SearchSelectedBuild struct {
 // SearchNeedsQuery reports whether the normalized options leave an empty FTS
 // query without the tag or time anchor required for a bounded filter page.
 func SearchNeedsQuery(query string, opts SearchOptions) bool {
-	return ftsQuery(query) == "" && opts.TagID == "" &&
+	return ftsQuery(query) == "" && opts.PDFFilter == "" && opts.TagID == "" &&
 		opts.ModifiedSince == "" && opts.ModifiedBefore == ""
 }
 
@@ -2373,6 +2375,13 @@ func (s *Store) NormalizeSearchOptions(ctx context.Context, opts SearchOptions) 
 func (s *Store) normalizeSearchOptionsWithQuerier(
 	ctx context.Context, queryer rowQuerier, opts SearchOptions,
 ) (SearchOptions, error) {
+	if opts.PDFFilter != "" {
+		predicate, err := compilePDFFilter(ctx, opts.PDFFilter)
+		if err != nil {
+			return SearchOptions{}, err
+		}
+		opts.pdfPredicate = predicate
+	}
 	if len(opts.ContentVersionIDs) > MaxSearchSourceFenceIDs {
 		return SearchOptions{}, fmt.Errorf("search source fence exceeds %d content versions",
 			MaxSearchSourceFenceIDs)
@@ -2513,6 +2522,10 @@ func searchFilterSQL(opts SearchOptions) (string, []any) {
 		clauses []string
 		args    []any
 	)
+	if opts.PDFFilter != "" {
+		clauses = append(clauses, "AND ("+opts.pdfPredicate.sql+")")
+		args = append(args, opts.pdfPredicate.args...)
+	}
 	if opts.SourcePresent {
 		clauses = append(clauses, "AND "+sourcePresentSQL)
 	}

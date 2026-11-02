@@ -931,6 +931,7 @@ type SearchReport struct {
 	Hits           []SearchHit   `json:"hits"`
 	Limit          int           `json:"limit"`
 	Truncated      bool          `json:"truncated"`
+	PDFFilter      string        `json:"pdf_filter,omitzero"`
 	SourcePresent  bool          `json:"source_present,omitzero"`
 	TagID          string        `json:"tag_id,omitzero"`
 	MIMEType       string        `json:"mime_type,omitzero"`

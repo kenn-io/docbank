@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-31
+last_edited: 2026-11-01
 title: Searching
 description: Ranked, prefix-matching search over document names and verified text content.
 ---
@@ -38,6 +38,36 @@ search every matching live file without a 4,096-version cap. That cap applies
 to explicit version lists. Empty scopes run a normal search, including query
 and profile validation. These observations do not establish that every unmarked source exists.
 Use `GET /api/v1/duplicates` to find other documents holding the same bytes.
+
+## Find PDFs by recorded evidence
+
+Use `--pdf-filter` with a PDF fact expression, or select **Query syntax** in the web app and enter the expression under **Advanced**. You can save and reopen these queries.
+
+```bash
+docbank search --pdf-filter 'pdf_last_signature_covers_file:false'
+docbank search --pdf-filter 'pdf_embedded_file_count_min:1 OR pdf_has_javascript:true'
+docbank search --pdf-filter 'pdf_permissions:"Print"' --under /cases
+```
+
+| Field | Operand |
+| --- | --- |
+| `pdf_encrypted` | `true` or `false` |
+| `pdf_last_signature_covers_file` | `true` or `false` |
+| `pdf_has_javascript` | `true` or `false` |
+| `pdf_has_launch_actions` | `true` or `false` |
+| `pdf_signature_field_count` | Exact nonnegative count |
+| `pdf_embedded_file_count` | Exact nonnegative count |
+| `pdf_permissions` | One exact, case-sensitive permission label |
+
+Append `_min` or `_max` to either count field for an inclusive bound. Combine fields with `AND`, `OR`, `NOT`, and parentheses. Quote permission labels containing spaces. Labels are Print, Modify, Copy text and graphics, Annotate and fill forms, Fill forms, Extract for accessibility, Assemble, High-quality print flag, and None.
+
+Background extraction may still be recording facts after an import or upgrade.
+
+Only recorded observations match. An unknown observation matches neither `false` nor zero. `NOT` excludes matching documents and can include documents with unknown observations. Only the active evidence for the current file bytes counts. Signature coverage describes the declared byte range, without authenticating the signer. See [PDF evidence](../architecture/source-metadata.md#pdf-evidence) for the facts' limits.
+
+MIME filters narrow the result type. Add `--mime-type application/pdf`, or `mime:application/pdf` in Query syntax, when you want only files labeled as PDFs. Evidence belongs to the bytes, so an alias labeled with a different MIME type can share the same facts. `NOT` can also include non-PDF files with unknown observations; it excludes folders.
+
+The CLI accepts only PDF fields in `--pdf-filter`. It can anchor a search without text and combine with tag, MIME, folder, time, and fuzzy filters. It keeps automatic search lexical and rejects explicit processing-search options and `--similar-to`. HTTP search accepts `pdf_filter` and echoes the expression in its response.
 
 Ordinary lexical output looks like this:
 
@@ -209,7 +239,7 @@ Document queries include current published person links and direct assertions. S
 
 ## Can I search with filters alone?
 
-Yes, when you provide `--tag`, `--modified-since`, or `--modified-before`.
+Yes, when you provide `--tag`, `--modified-since`, `--modified-before`, or `--pdf-filter`.
 These results use newest `modified_at` first and show `filter` in the `MATCH`
 column. The usual result limit still applies.
 

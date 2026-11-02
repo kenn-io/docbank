@@ -173,6 +173,12 @@ func TestDocumentEventEvidenceHashesSourceMetadataAsBlobBytes(t *testing.T) {
 			require.Equal(t, raw, snapshot.MetadataGeneration.CanonicalJSON)
 			require.NoError(t, s.RecordDocumentEventAttempt(t.Context(), target, snapshot.InputsSHA256,
 				"failed", []byte(`[{"code":"source_metadata_corrupt"}]`)))
+
+			_, err = s.db.ExecContext(t.Context(), `UPDATE source_metadata_generations
+				SET canonical_json=?,contract_version='source-metadata/v2' WHERE generation_id=?`, canonical, generation.GenerationID)
+			require.NoError(t, err)
+			_, _, err = s.ActiveSourceMetadata(t.Context(), node.BlobHash)
+			require.ErrorIs(t, err, ErrSourceMetadataCorrupt)
 		})
 	}
 }

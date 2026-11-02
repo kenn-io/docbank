@@ -1011,7 +1011,7 @@ Selecting a photo member restores its whole group. Companions inside trashed fol
 ## docbank search
 
 ```
-docbank search [<query>...] [--tag <name-or-id>] [--mime-type <type/subtype>] [--under <path-or-id>] [--modified-since <timestamp>] [--modified-before <timestamp>] [--source-present] [--fuzzy] [--limit <n>] [--agent | --json]
+docbank search [<query>...] [--tag <name-or-id>] [--mime-type <type/subtype>] [--under <path-or-id>] [--modified-since <timestamp>] [--modified-before <timestamp>] [--source-present] [--pdf-filter <expression>] [--fuzzy] [--limit <n>] [--agent | --json]
 ```
 
 Query words are joined. When a processing profile has a query embedding
@@ -1052,8 +1052,12 @@ inclusive and the upper bound is exclusive. Either may be used alone. When
 both are present, the lower bound must be earlier. Inputs are normalized to
 canonical UTC before the request.
 
+Use `--pdf-filter` for a Boolean expression over recorded PDF facts, such as
+`pdf_embedded_file_count_min:1 OR pdf_has_javascript:true`. See
+[PDF evidence filters](usage/searching.md#find-pdfs-by-recorded-evidence) for fields, permission labels, and unknown observations. MIME filters narrow the result type; add `--mime-type application/pdf` to select only files labeled as PDFs. Background extraction may still be recording facts after an import or upgrade.
+
 The query can be omitted for a bounded filter page when `--tag`,
-`--modified-since`, or `--modified-before` is supplied. These results are
+`--modified-since`, `--modified-before`, or `--pdf-filter` is supplied. These results are
 ordered newest-first by current modification time and show `filter` in the
 `MATCH` column. `--mime-type` and `--under` narrow a query or an anchored
 filter page, but neither is an anchor by itself, so a blank search with only

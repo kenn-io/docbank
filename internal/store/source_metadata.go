@@ -199,8 +199,8 @@ func activeSourceMetadata(
 	if err != nil {
 		return SourceMetadataGeneration{}, document.SourceMetadataV1{}, fmt.Errorf("reading active source metadata: %w", err)
 	}
-	metadata, checksum, err := document.DecodeSourceMetadataV1(generation.CanonicalJSON)
-	if err != nil || checksum != generation.Checksum {
+	metadata, err := document.DecodeSourceMetadataGenerationV1(generation.CanonicalJSON, generation.ContractVersion, generation.Checksum)
+	if err != nil {
 		return SourceMetadataGeneration{}, document.SourceMetadataV1{}, fmt.Errorf(
 			"source metadata generation %s: %w", generation.GenerationID, ErrSourceMetadataCorrupt)
 	}
