@@ -335,23 +335,25 @@ func TestProcessingSearchValidationMatchesSearchQueryAndProfileErrors(t *testing
 	t.Parallel()
 	ts, catalog := newTestServer(t, configureProcessingTestService(t))
 	node := createFileWithContent(t, ts, catalog, "/search-validation.txt", "synthetic search evidence\n")
-	for _, mode := range []string{"auto", "lexical", "semantic", "hybrid"} {
+	for _, mode := range []string{"auto", "lexical"} {
 		response, body := do(t, ts, http.MethodPost, "/api/v1/search/validate", nil,
 			map[string]any{"query": "synthetic", "mode": mode, "profile": "private", "content_first": true})
 		require.Equal(t, http.StatusOK, response.StatusCode, body)
 	}
 
 	for _, test := range []struct {
-		name, query, profile string
+		name, query, mode, profile string
 	}{
-		{name: "whitespace query", query: "   ", profile: "private"},
-		{name: "unconfigured profile", query: "synthetic", profile: "missing"},
+		{name: "whitespace query", query: "   ", mode: "lexical", profile: "private"},
+		{name: "unconfigured profile", query: "synthetic", mode: "lexical", profile: "missing"},
+		{name: "semantic without embeddings", query: "synthetic", mode: "semantic", profile: "private"},
+		{name: "hybrid without embeddings", query: "synthetic", mode: "hybrid", profile: "private"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			validationResponse, validationBody := do(t, ts, http.MethodPost, "/api/v1/search/validate", nil,
-				map[string]any{"query": test.query, "mode": "lexical", "limit": 1, "profile": test.profile, "content_first": true})
+				map[string]any{"query": test.query, "mode": test.mode, "limit": 1, "profile": test.profile, "content_first": true})
 			searchResponse, searchBody := do(t, ts, http.MethodPost, "/api/v1/search", nil,
-				map[string]any{"query": test.query, "mode": "lexical", "limit": 1, "profile": test.profile,
+				map[string]any{"query": test.query, "mode": test.mode, "limit": 1, "profile": test.profile,
 					"content_first": true,
 					"fence": map[string]any{"vault_uid": catalog.VaultID(),
 						"content_version_ids": []string{node.CurrentVersionID}}})
