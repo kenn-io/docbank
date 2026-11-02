@@ -87,7 +87,7 @@ func pageSourceTx(ctx context.Context, q metadataQuerier, b PageBinding) error {
 	}
 	var revision int64
 	var trashed sql.NullString
-	err := q.QueryRowContext(ctx, `SELECT revision,trashed_at FROM nodes WHERE id=?`, b.NodeID).Scan(&revision, &trashed)
+	err := q.QueryRowContext(ctx, `SELECT revision,trashed_at FROM nodes WHERE id=$1`, b.NodeID).Scan(&revision, &trashed)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	}
@@ -97,7 +97,7 @@ func pageSourceTx(ctx context.Context, q metadataQuerier, b PageBinding) error {
 	if revision != b.Revision || trashed.Valid {
 		return ErrPageFenced
 	}
-	version, err := scanContentVersion(q.QueryRowContext(ctx, `SELECT `+contentVersionCols+` FROM content_versions WHERE node_id=? AND version_id=?`, b.NodeID, b.Source.VersionID))
+	version, err := scanContentVersion(q.QueryRowContext(ctx, `SELECT `+contentVersionCols+` FROM content_versions WHERE node_id=$1 AND version_id=$2`, b.NodeID, b.Source.VersionID))
 	if err != nil {
 		return err
 	}
@@ -124,13 +124,13 @@ func (s *Store) QueuePageJob(ctx context.Context, id string, r PageJobRequest) (
 		if err := pageSourceTx(ctx, tx, r.Binding()); err != nil {
 			return err
 		}
-		existing, err := loadPageJob(ctx, tx, `id=?`, id)
+		existing, err := loadPageJob(ctx, tx, `id=$1`, id)
 		replayed, found, err := replayReceipt(existing, err, existing.RequestSHA256 == digest, ErrPageConflict)
 		if err != nil || found {
 			job = replayed
 			return err
 		}
-		existing, err = loadPageJob(ctx, tx, `request_sha256=? AND state IN ('queued','running','completed')`, digest)
+		existing, err = loadPageJob(ctx, tx, `request_sha256=$1 AND state IN ('queued','running','completed')`, digest)
 		if err == nil {
 			job = existing
 			return nil
@@ -139,7 +139,7 @@ func (s *Store) QueuePageJob(ctx context.Context, id string, r PageJobRequest) (
 			return err
 		}
 		var mediaType string
-		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(mime_type,'') FROM content_versions WHERE version_id=?`, r.Source.VersionID).Scan(&mediaType); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(mime_type,'') FROM content_versions WHERE version_id=$1`, r.Source.VersionID).Scan(&mediaType); err != nil {
 			return err
 		}
 		if mediaType == "application/pdf" && r.DPI != 0 && (r.DPI < document.MinPDFPageDPI || r.DPI > document.MaxPDFPageDPI) {
@@ -153,11 +153,11 @@ func (s *Store) QueuePageJob(ctx context.Context, id string, r PageJobRequest) (
 			return ErrPageLimit
 		}
 		now := nowRFC3339()
-		_, err = tx.ExecContext(ctx, `INSERT INTO page_render_jobs(id,node_id,version_id,request_sha256,request_json,state,results_json,failure_code,epoch,token,created_at,updated_at) VALUES(?,?,?,?,?,'queued',?,'',0,'',?,?)`, id, r.NodeID, r.Source.VersionID, digest, request, []byte("[]"), now, now)
+		_, err = tx.ExecContext(ctx, `INSERT INTO page_render_jobs(id,node_id,version_id,request_sha256,request_json,state,results_json,failure_code,epoch,token,created_at,updated_at) VALUES($1,$2,$3,$4,$5,'queued',$6,'',0,'',$7,$8)`, id, r.NodeID, r.Source.VersionID, digest, request, []byte("[]"), now, now)
 		if err != nil {
 			return err
 		}
-		job, err = loadPageJob(ctx, tx, `id=?`, id)
+		job, err = loadPageJob(ctx, tx, `id=$1`, id)
 		return err
 	})
 	return job, err
@@ -233,7 +233,7 @@ func validatePageJob(j PageRenderJob) error {
 }
 
 func (s *Store) PageJob(ctx context.Context, id string, binding PageBinding) (PageRenderJob, error) {
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return PageRenderJob{}, err
 	}
@@ -241,7 +241,7 @@ func (s *Store) PageJob(ctx context.Context, id string, binding PageBinding) (Pa
 	if err := pageSourceTx(ctx, tx, binding); err != nil {
 		return PageRenderJob{}, err
 	}
-	j, err := loadPageJob(ctx, tx, `id=?`, id)
+	j, err := loadPageJob(ctx, tx, `id=$1`, id)
 	if err != nil {
 		return j, err
 	}
@@ -259,7 +259,7 @@ func (s *Store) ClaimPageJob(ctx context.Context) (PageJobClaim, error) {
 			return err
 		}
 		claim.Token = uuid.NewString()
-		err = tx.QueryRowContext(ctx, `UPDATE page_render_jobs SET state='running',epoch=epoch+1,token=?,updated_at=? WHERE id=? AND state='queued' RETURNING epoch`, claim.Token, nowRFC3339(), job.ID).Scan(&claim.Epoch)
+		err = tx.QueryRowContext(ctx, `UPDATE page_render_jobs SET state='running',epoch=epoch+1,token=$1,updated_at=$2 WHERE id=$3 AND state='queued' RETURNING epoch`, claim.Token, nowRFC3339(), job.ID).Scan(&claim.Epoch)
 		if err != nil {
 			return err
 		}
@@ -275,13 +275,13 @@ func pageClaimTx(ctx context.Context, tx *sql.Tx, claim PageJobClaim) (PageRende
 		return PageRenderJob{}, ErrPageFenced
 	}
 	var valid bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM page_render_jobs WHERE id=? AND epoch=? AND token=? AND state='running')`, claim.Job.ID, claim.Epoch, claim.Token).Scan(&valid); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM page_render_jobs WHERE id=$1 AND epoch=$2 AND token=$3 AND state='running')`, claim.Job.ID, claim.Epoch, claim.Token).Scan(&valid); err != nil {
 		return PageRenderJob{}, err
 	}
 	if !valid {
 		return PageRenderJob{}, ErrPageFenced
 	}
-	job, err := loadPageJob(ctx, tx, `id=?`, claim.Job.ID)
+	job, err := loadPageJob(ctx, tx, `id=$1`, claim.Job.ID)
 	if err != nil {
 		return job, err
 	}
@@ -300,7 +300,7 @@ func (s *Store) CheckPageClaim(ctx context.Context, claim PageJobClaim) error {
 
 func (s *Store) RequeuePageJobs(ctx context.Context) error {
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `UPDATE page_render_jobs SET state='queued',epoch=epoch+1,token='',updated_at=? WHERE state='running'`, nowRFC3339())
+		_, err := tx.ExecContext(ctx, `UPDATE page_render_jobs SET state='queued',epoch=epoch+1,token='',updated_at=$1 WHERE state='running'`, nowRFC3339())
 		return err
 	})
 }
@@ -310,14 +310,14 @@ func (s *Store) CancelPageJob(ctx context.Context, id string, binding PageBindin
 		if err := pageSourceTx(ctx, tx, binding); err != nil {
 			return err
 		}
-		job, err := loadPageJob(ctx, tx, `id=?`, id)
+		job, err := loadPageJob(ctx, tx, `id=$1`, id)
 		if err != nil {
 			return err
 		}
 		if job.Request.Binding() != binding {
 			return ErrPageFenced
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE page_render_jobs SET state='canceled',epoch=epoch+1,token='',updated_at=? WHERE id=? AND state IN ('queued','running')`, nowRFC3339(), id)
+		_, err = tx.ExecContext(ctx, `UPDATE page_render_jobs SET state='canceled',epoch=epoch+1,token='',updated_at=$1 WHERE id=$2 AND state IN ('queued','running')`, nowRFC3339(), id)
 		return err
 	})
 }
@@ -325,7 +325,7 @@ func (s *Store) CancelPageJob(ctx context.Context, id string, binding PageBindin
 func (s *Store) FinishPageJob(ctx context.Context, claim PageJobClaim, state, failure string) error {
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		// A stale source still permits retiring this exact claim, but never output.
-		job, err := loadPageJob(ctx, tx, `id=? AND epoch=? AND token=? AND state='running'`, claim.Job.ID, claim.Epoch, claim.Token)
+		job, err := loadPageJob(ctx, tx, `id=$1 AND epoch=$2 AND token=$3 AND state='running'`, claim.Job.ID, claim.Epoch, claim.Token)
 		if errors.Is(err, ErrNotFound) {
 			return ErrPageFenced
 		}
@@ -352,7 +352,7 @@ func (s *Store) FinishPageJob(ctx context.Context, claim PageJobClaim, state, fa
 				return err
 			}
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE page_render_jobs SET state=?,failure_code=?,token='',updated_at=? WHERE id=?`, state, failure, nowRFC3339(), job.ID)
+		_, err = tx.ExecContext(ctx, `UPDATE page_render_jobs SET state=$1,failure_code=$2,token='',updated_at=$3 WHERE id=$4`, state, failure, nowRFC3339(), job.ID)
 		return err
 	})
 }
@@ -375,6 +375,6 @@ func appendPageJobResult(ctx context.Context, tx *sql.Tx, job PageRenderJob, ima
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE page_render_jobs SET results_json=?,updated_at=? WHERE id=?`, results, nowRFC3339(), job.ID)
+	_, err = tx.ExecContext(ctx, `UPDATE page_render_jobs SET results_json=$1,updated_at=$2 WHERE id=$3`, results, nowRFC3339(), job.ID)
 	return err
 }

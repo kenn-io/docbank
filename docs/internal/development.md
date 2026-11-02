@@ -343,11 +343,14 @@ publication, terminal attempts and rebuild receipts also use shared operations.
 Original-file rendition jobs include consent, resumable claims, artifact staging
 and atomic head publication through the same Store. Document embedding jobs
 include reconciliation, consent-bound claims, immutable vector staging, atomic
-publication and coverage reads.
+publication and coverage reads. Email MIME inventories, body renditions,
+attachment child documents, and page-render job publication also use shared
+Store operations.
 
 A public PostgreSQL-backed vault is not available yet: daemon and embedded
 operations still open SQLite. Grouped photo imports, XMP sidecar writing,
-photo-derived processing, extraction, image embedding preparation, page and media workers, search,
+photo-derived processing, extraction, image embedding preparation, email PDF
+rendering and other media workers, search,
 transfer, backup recovery, multi-store placement and storage-operation jobs
 remain unqualified.
 
@@ -516,6 +519,16 @@ GRANT INSERT, UPDATE(failure_code, failed_at, fencing_token, attachment_id)
 GRANT INSERT, UPDATE(state, claim_owner, claim_epoch, claim_count, lease_expires_at,
     available_at, failure_code, receipt_json, updated_at)
     ON documents.embedding_jobs TO docbank_runtime;
+GRANT INSERT ON documents.page_documents, documents.page_frames,
+    documents.page_recipes, documents.page_images, documents.email_generations,
+    documents.email_part_artifacts, documents.email_attachments,
+    documents.email_body_results, documents.email_document_publications,
+    documents.email_document_relations TO docbank_runtime;
+GRANT INSERT, UPDATE(state, results_json, failure_code, epoch, token, updated_at)
+    ON documents.page_render_jobs TO docbank_runtime;
+GRANT INSERT, UPDATE(attachment_id, published_at)
+    ON documents.email_heads TO docbank_runtime;
+GRANT DELETE ON documents.email_document_publications TO docbank_runtime;
 GRANT DELETE ON documents.embedding_input_generations, documents.embedding_vector_sets,
     documents.embedding_vector_spaces, documents.embedding_failures,
     documents.email_heads, documents.email_part_artifacts, documents.email_generations,
@@ -827,8 +840,8 @@ qualified by publication tests.
 The `renditions` backend suite covers this native lifecycle, including provider
 resume, revocation, lease theft, staged-build reuse, failed publication and
 concurrent purge. It does not qualify photo-description or face-detection jobs,
-email/media producers, extraction workers, or public
-PostgreSQL vault opening.
+media producers, extraction workers, or public PostgreSQL vault opening.
+The email and page suites below qualify their own native producers.
 
 #### Document embedding jobs and publication
 
@@ -860,6 +873,44 @@ The `embeddings` backend suite covers native document jobs, artifact publication
 consent, leases, reconciliation, cleanup and coverage. Image preparation, vector
 index construction, ranked retrieval and public PostgreSQL vault opening remain
 unqualified.
+
+#### Email and rendered-page publication
+
+MIME inventory publication retains decoded artifacts, shares a generation across
+identical source bytes, and selects an exact version's inventory in one writer
+transaction. Body publication uses the ordinary rendition publisher: the selected
+MIME body, rendition head and complete lexical generation become visible together.
+A failed publication preserves staging and the prior serving state. Re-observing a
+body build preserves its first completion time; purge suppression prevents a late
+attempt from restoring deleted authority.
+
+Attachment publication creates ordinary child documents and their exact parent
+relations together. It preserves audit history, rejects stale destinations, and
+replays an operation's original receipt. Retained publication receipts protect
+versions from pruning and inventories from purging. Releasing a receipt checks
+mailbox and export references before deleting it. Relation pages report processing
+status for the retained child version, even after the current child changes.
+They use the same rendition-coverage rules as collection queries.
+
+Page jobs keep their operation identity, source revision and claim epoch through
+queueing, restart, cancellation and completion. Frame, recipe and image records
+are immutable. Publishing an image records its physical blob and job result in
+the same transaction; failed result publication leaves neither behind. Completion
+requires every requested page receipt. Canceling a job preserves already published
+pages but fences further writes by its old claim.
+
+Email metadata, target selection, relation pages, page inventories, image reads
+and job views use repeatable-read snapshots. A publication or receipt release
+committed during a read affects the next request. Email target selection retains
+SQLite's exact MIME partial-index expression; PostgreSQL uses its equivalent
+`strpos` predicate and index. No new per-row queries or runtime backend interface
+are introduced.
+
+The `email` and `pages` backend suites exercise these native operations, including
+late-write rollback and concurrent publication. Plain-text extraction, email PDF
+rendering, rendering subprocesses and metadata recovery remain outside these
+suites. They do not enable a public PostgreSQL-backed vault or qualify ranked
+search.
 
 #### Recoverable deletion
 

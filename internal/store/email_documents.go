@@ -247,7 +247,7 @@ func insertEmailDocumentPublication(ctx context.Context, tx *sql.Tx, request doc
 	if len(req) > document.EmailDocumentMaxJSONBytes || len(rec) > document.EmailDocumentMaxJSONBytes {
 		return ErrInvalidEmailDocumentRequest
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO email_document_publications(operation_id,request_digest,parent_version_id,email_attachment_id,request_json,receipt_json) VALUES(?,?,?,?,?,?)`, request.OperationID, receipt.RequestDigest, request.Parent.VersionID, request.AttachmentID, string(req), string(rec)); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO email_document_publications(operation_id,request_digest,parent_version_id,email_attachment_id,request_json,receipt_json) VALUES($1,$2,$3,$4,$5,$6)`, request.OperationID, receipt.RequestDigest, request.Parent.VersionID, request.AttachmentID, string(req), string(rec)); err != nil {
 		return err
 	}
 	for _, r := range receipt.Relations {
@@ -255,7 +255,7 @@ func insertEmailDocumentPublication(ctx context.Context, tx *sql.Tx, request doc
 		if r.Child != nil {
 			child = r.Child.VersionID
 		}
-		if _, err = tx.ExecContext(ctx, `INSERT INTO email_document_relations(operation_id,occurrence_order,child_version_id) VALUES(?,?,?)`, request.OperationID, r.Order, child); err != nil {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO email_document_relations(operation_id,occurrence_order,child_version_id) VALUES($1,$2,$3)`, request.OperationID, r.Order, child); err != nil {
 			return err
 		}
 	}
@@ -279,19 +279,24 @@ func (s *Store) RemoveEmailDocumentPublication(ctx context.Context, operationID,
 			return ErrEmailDocumentConflict
 		}
 		var retained bool
-		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM mailbox_transfer_receipts WHERE document_publication_id=?)`, operationID).Scan(&retained); err != nil {
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM mailbox_transfer_receipts WHERE document_publication_id=$1)`, operationID).Scan(&retained); err != nil {
 			return err
 		}
 		if retained {
 			return ErrMailboxConflict
 		}
-		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM export_documents WHERE json_extract(canonical_json,'$.attachment_inventory.operation_id')=?)`, operationID).Scan(&retained); err != nil {
+		d := metadataJSONDialect{s.postgresSchema != ""}
+		payload := "canonical_json"
+		if d.postgres {
+			payload = "convert_from(canonical_json,'UTF8')"
+		}
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM export_documents WHERE `+d.text(payload, "attachment_inventory.operation_id")+`=$1)`, operationID).Scan(&retained); err != nil {
 			return err
 		}
 		if retained {
 			return bundle.ErrRetained
 		}
-		_, err = tx.ExecContext(ctx, `DELETE FROM email_document_publications WHERE operation_id=?`, operationID)
+		_, err = tx.ExecContext(ctx, `DELETE FROM email_document_publications WHERE operation_id=$1`, operationID)
 		return err
 	})
 }

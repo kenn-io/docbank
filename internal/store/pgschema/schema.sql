@@ -2293,8 +2293,8 @@ CREATE INDEX embedding_sets_vector_space
 
 CREATE INDEX email_body_results_rendition ON {{schema}}.email_body_results(rendition_attachment_id);
 CREATE INDEX email_document_publications_attachment ON {{schema}}.email_document_publications(email_attachment_id);
-CREATE INDEX email_document_publications_version ON {{schema}}.email_document_publications(parent_version_id);
-CREATE INDEX email_document_relations_version ON {{schema}}.email_document_relations(child_version_id);
+CREATE INDEX email_document_publications_parent ON {{schema}}.email_document_publications(parent_version_id);
+CREATE INDEX email_document_relations_child ON {{schema}}.email_document_relations(child_version_id);
 CREATE INDEX custodian_assignments_node ON {{schema}}.custodian_assignments(node_id);
 CREATE INDEX custodian_assignments_version ON {{schema}}.custodian_assignments(content_version_id);
 CREATE INDEX document_people_node ON {{schema}}.document_people(node_id);
@@ -2369,3 +2369,10 @@ CREATE INDEX current_rendition_roots_target
 CREATE INDEX current_rendition_roots_expiry
     ON {{schema}}.current_rendition_roots(expires_at)
     WHERE expires_at IS NOT NULL;
+
+CREATE INDEX page_render_jobs_pending ON {{schema}}.page_render_jobs(state,created_at,id);
+CREATE INDEX page_render_jobs_request ON {{schema}}.page_render_jobs(request_sha256);
+CREATE INDEX email_part_artifacts_blob ON {{schema}}.email_part_artifacts(blob_hash);
+CREATE INDEX email_attachments_generation ON {{schema}}.email_attachments(generation_id);
+CREATE INDEX content_versions_email_mime ON {{schema}}.content_versions(version_id)
+    WHERE strpos(lower(COALESCE(mime_type,'')),'message/rfc822')>0;

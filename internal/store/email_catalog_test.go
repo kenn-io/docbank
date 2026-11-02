@@ -102,16 +102,17 @@ func emailTableCounts(t *testing.T, s *Store) []int {
 	return result
 }
 
-func TestEmailPublicationSharesGenerationAndRetiresStaging(t *testing.T) {
+func checkEmailPublicationSharesGenerationAndRetiresStaging(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	f := newEmailFixture(t, s, "first.eml")
 	first, err := s.PublishEmailGeneration(t.Context(), f.publication)
 	require.NoError(t, err)
 	require.Equal(t, "pending", first.BodySearch.State)
 	for hash := range f.bytes {
 		var n int
-		require.NoError(t, s.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM rendition_blob_staging WHERE blob_hash=?", hash).Scan(&n))
+		require.NoError(t, s.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM rendition_blob_staging WHERE blob_hash=$1", hash).Scan(&n))
 		require.Zero(t, n)
 	}
 	node, err := s.CreateFile(t.Context(), s.RootID(), "second.eml", first.Version.BlobHash, first.Version.Size, "message/rfc822")
@@ -139,12 +140,13 @@ func TestEmailPublicationSharesGenerationAndRetiresStaging(t *testing.T) {
 			require.Equal(t, "sample.bin", r.Filename)
 		}
 	}
-	require.NoError(t, s.ValidateMetadata(t.Context()))
+	checkRetentionMetadata(t, s)
 }
 
-func TestEmailSupersededBeforeBodyPublication(t *testing.T) {
+func checkEmailSupersededBeforeBodyPublication(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	f := newEmailFixture(t, s, "message.eml")
 	_, cursor, err := s.VaultChanges(t.Context(), "", 500)
 	require.NoError(t, err)
@@ -251,9 +253,10 @@ func TestEmailPublicationRollbackPreservesNewStagingAndOldHead(t *testing.T) {
 	require.Zero(t, emailTableCounts(t, s)[5])
 }
 
-func TestEmailMissingStatesAndDeterministicRefusal(t *testing.T) {
+func checkEmailMissingStatesAndDeterministicRefusal(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	f := newEmailFixture(t, s, "pending.eml")
 	v, err := s.EmailMetadata(t.Context(), f.publication.ContentVersionID)
 	require.ErrorIs(t, err, ErrEmailPending)
@@ -279,7 +282,7 @@ func TestEmailMissingStatesAndDeterministicRefusal(t *testing.T) {
 	require.Equal(t, document.EmailVerification("catalog_only"), v.Evidence.Source.Verification)
 	_, err = s.EmailPart(t.Context(), n.CurrentVersionID, v.Generation.ID, "1", "raw_headers")
 	require.ErrorIs(t, err, ErrEmailPartUnavailable)
-	require.NoError(t, s.ValidateMetadata(t.Context()))
+	checkRetentionMetadata(t, s)
 }
 
 func TestEmailPDFAttachmentNotifiesOnce(t *testing.T) {

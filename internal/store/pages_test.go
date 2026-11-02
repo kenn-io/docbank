@@ -39,9 +39,10 @@ func pageStoreImage(t *testing.T, f document.PageFrameV1, r document.PageRecipeV
 	return document.PageImageV1{Contract: document.PageImageContractV1, Source: f.Source, Page: f.Page, FrameSHA256: fh, RecipeSHA256: rh, SHA256: fakeHash("c1"), Size: 10, Width: 144, Height: 288}
 }
 
-func TestPagePublicationFencesClaimsAndPreservesPartialAuthority(t *testing.T) {
+func checkPagePublicationFencesClaimsAndPreservesPartialAuthority(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	request := pageStoreRequest(t, s)
 	operation := uuid.NewString()
 	first, err := s.QueuePageJob(t.Context(), operation, request)
@@ -72,6 +73,11 @@ func TestPagePublicationFencesClaimsAndPreservesPartialAuthority(t *testing.T) {
 	for _, root := range roots {
 		require.NotEqual(t, receipt.SHA256, root.Hash)
 	}
+	// Recovery remains SQLite-only; PostgreSQL publication is checked above.
+	if s.postgresSchema != "" {
+		checkRetentionMetadata(t, s)
+		return
+	}
 	var metadata bytes.Buffer
 	require.NoError(t, s.ExportMetadata(t.Context(), &metadata))
 	restored := newTestStore(t)
@@ -82,9 +88,10 @@ func TestPagePublicationFencesClaimsAndPreservesPartialAuthority(t *testing.T) {
 	require.Len(t, inventory.Images, 1)
 }
 
-func TestPageJobRestartCannotPublishAnOldClaim(t *testing.T) {
+func checkPageJobRestartCannotPublishAnOldClaim(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	request := pageStoreRequest(t, s)
 	_, err := s.QueuePageJob(t.Context(), uuid.NewString(), request)
 	require.NoError(t, err)
@@ -101,11 +108,12 @@ func TestPageJobRestartCannotPublishAnOldClaim(t *testing.T) {
 	require.Error(t, s.FinishPageJob(t.Context(), current, "completed", ""), "completion requires every requested receipt")
 }
 
-func TestPageJobNewOperationRetriesFailedAndCanceledRequests(t *testing.T) {
+func checkPageJobNewOperationRetriesFailedAndCanceledRequests(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, state := range []string{PageJobFailed, "canceled"} {
 		t.Run(state, func(t *testing.T) {
-			s := newTestStore(t)
+			s := open(t)
 			request := pageStoreRequest(t, s)
 			first, err := s.QueuePageJob(t.Context(), uuid.NewString(), request)
 			require.NoError(t, err)
@@ -124,6 +132,9 @@ func TestPageJobNewOperationRetriesFailedAndCanceledRequests(t *testing.T) {
 			require.NotEqual(t, first.ID, next.ID)
 			require.Equal(t, "queued", next.State)
 			require.ErrorIs(t, s.PublishPageFrames(t.Context(), claim, pageStoreFrames(t, request)), ErrPageFenced)
+			if s.postgresSchema != "" {
+				return
+			} // PostgreSQL recovery is not qualified.
 			var metadata bytes.Buffer
 			require.NoError(t, s.ExportMetadata(t.Context(), &metadata))
 			restored := newTestStore(t)
@@ -136,9 +147,10 @@ func TestPageJobNewOperationRetriesFailedAndCanceledRequests(t *testing.T) {
 	}
 }
 
-func TestPageJobStaleCompletionRetiresClaim(t *testing.T) {
+func checkPageJobStaleCompletionRetiresClaim(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	request := pageStoreRequest(t, s)
 	request.Pages = []int{1}
 	job, err := s.QueuePageJob(t.Context(), uuid.NewString(), request)
@@ -149,10 +161,10 @@ func TestPageJobStaleCompletionRetiresClaim(t *testing.T) {
 	require.NoError(t, s.PublishPageFrames(t.Context(), claim, frames))
 	recipe := pageStoreRecipe()
 	require.NoError(t, s.PublishPageImage(t.Context(), claim, pageStoreImage(t, frames[0], recipe), recipe, &BlobPhysical{Encoding: looseEncodingRaw, StoredBytes: 10}))
-	_, err = s.db.ExecContext(t.Context(), `UPDATE nodes SET revision=revision+1 WHERE id=?`, request.NodeID)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE nodes SET revision=revision+1 WHERE id=$1`, request.NodeID)
 	require.NoError(t, err)
 	require.NoError(t, s.FinishPageJob(t.Context(), claim, PageJobCompleted, ""))
-	finished, err := loadPageJob(t.Context(), s.db, `id=?`, job.ID)
+	finished, err := loadPageJob(t.Context(), s.db, `id=$1`, job.ID)
 	require.NoError(t, err)
 	require.Equal(t, PageJobFailed, finished.State)
 	require.Equal(t, "stale_source", finished.FailureCode)
@@ -177,11 +189,12 @@ func TestQueuePageJobRejectsUnsupportedPDFDPI(t *testing.T) {
 	}
 }
 
-func TestPageJobStaleCompletionRetiresOnlyItsOwnedClaim(t *testing.T) {
+func checkPageJobStaleCompletionRetiresOnlyItsOwnedClaim(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, change := range []string{"revision", "head", "trash"} {
 		t.Run(change, func(t *testing.T) {
-			s := newTestStore(t)
+			s := open(t)
 			request := pageStoreRequest(t, s)
 			job, err := s.QueuePageJob(t.Context(), uuid.NewString(), request)
 			require.NoError(t, err)
@@ -195,7 +208,7 @@ func TestPageJobStaleCompletionRetiresOnlyItsOwnedClaim(t *testing.T) {
 			}
 			switch change {
 			case "revision":
-				_, err = s.db.ExecContext(t.Context(), `UPDATE nodes SET revision=revision+1 WHERE id=?`, request.NodeID)
+				_, err = s.db.ExecContext(t.Context(), `UPDATE nodes SET revision=revision+1 WHERE id=$1`, request.NodeID)
 			case "head":
 				_, _, err = s.ReplaceContent(t.Context(), request.NodeID, request.Revision, fakeHash("d1"), 124, "application/pdf")
 			case "trash":
@@ -203,13 +216,13 @@ func TestPageJobStaleCompletionRetiresOnlyItsOwnedClaim(t *testing.T) {
 			}
 			require.NoError(t, err)
 			require.NoError(t, s.FinishPageJob(t.Context(), claim, PageJobCompleted, ""))
-			retired, err := loadPageJob(t.Context(), s.db, `id=?`, job.ID)
+			retired, err := loadPageJob(t.Context(), s.db, `id=$1`, job.ID)
 			require.NoError(t, err)
 			require.Equal(t, "failed", retired.State)
 			require.Equal(t, "stale_source", retired.FailureCode)
 			require.Len(t, retired.Results, 2)
 			var token string
-			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT token FROM page_render_jobs WHERE id=?`, job.ID).Scan(&token))
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT token FROM page_render_jobs WHERE id=$1`, job.ID).Scan(&token))
 			require.Empty(t, token)
 			var active int
 			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT count(*) FROM page_render_jobs WHERE state IN ('queued','running')`).Scan(&active))
@@ -255,9 +268,10 @@ func TestPageJobCompletionDoesNotHideSourceDatabaseFailure(t *testing.T) {
 	require.Equal(t, claim.Token, token)
 }
 
-func TestPageJobsConcurrentIdentityLimitsAndSourceFences(t *testing.T) {
+func checkPageJobsConcurrentIdentityLimitsAndSourceFences(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	request := pageStoreRequest(t, s)
 	var wg sync.WaitGroup
 	ids := make(chan string, 8)
@@ -298,7 +312,7 @@ func TestPageJobsConcurrentIdentityLimitsAndSourceFences(t *testing.T) {
 	require.ErrorIs(t, err, ErrPageLimit)
 	claim, err := s.ClaimPageJob(t.Context())
 	require.NoError(t, err)
-	_, err = s.db.ExecContext(t.Context(), `UPDATE nodes SET revision=revision+1 WHERE id=?`, request.NodeID)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE nodes SET revision=revision+1 WHERE id=$1`, request.NodeID)
 	require.NoError(t, err)
 	require.ErrorIs(t, s.PublishPageFrames(t.Context(), claim, pageStoreFrames(t, request)), ErrPageFenced)
 }
