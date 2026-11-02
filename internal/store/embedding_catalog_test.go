@@ -504,14 +504,13 @@ func embeddingJobTestRequest(tb testing.TB, s *Store, versionID string,
 	record := embeddingSetFixture(tb.Context(), s, versionID, profile.Fingerprint,
 		document.EmbeddingInputOriginalFile, bindingID, "")
 	record.InputGeneration.ID = testSHA256([]byte(generationSeed))
-	binding, _, err := embeddingBindingFromProfile(profile, bindingID)
-	require.NoError(tb, err)
+	binding := workerOptionalEmbeddingBinding(tb, profile)
 	consent := ProviderOperationAuthorizationRequest{
 		Principal: "operator:" + generationSeed, Scope: "embedding:" + bindingID,
 		ProfileFingerprint: profile.Fingerprint, DisclosureFingerprint: binding.DisclosureFingerprint,
 		InputClasses: []string{string(binding.InputKind)}, RetainedArtifactClasses: []string{"embedding_vector_set"},
 	}
-	_, err = s.GrantConsent(tb.Context(), ProcessingConsentGrantRequest{
+	_, err := s.GrantConsent(tb.Context(), ProcessingConsentGrantRequest{
 		Principal: consent.Principal, Scope: consent.Scope, ProfileFingerprint: consent.ProfileFingerprint,
 		DisclosureFingerprint: consent.DisclosureFingerprint, InputClasses: consent.InputClasses,
 		RetainedArtifactClasses: consent.RetainedArtifactClasses,
@@ -521,21 +520,21 @@ func embeddingJobTestRequest(tb testing.TB, s *Store, versionID string,
 		Descriptor: record.VectorSpace.Descriptor, InputGeneration: record.InputGeneration, Authorization: consent}
 }
 
-func workerOptionalEmbeddingBinding(t *testing.T, profile ProcessingProfileRecord) document.EmbeddingBindingV1 {
-	t.Helper()
-	return workerProfileEmbeddingBinding(t, profile, "optional")
+func workerOptionalEmbeddingBinding(tb testing.TB, profile ProcessingProfileRecord) document.EmbeddingBindingV1 {
+	tb.Helper()
+	return workerProfileEmbeddingBinding(tb, profile, "optional")
 }
 
-func workerProfileEmbeddingBinding(t *testing.T, profile ProcessingProfileRecord, name string) document.EmbeddingBindingV1 {
-	t.Helper()
+func workerProfileEmbeddingBinding(tb testing.TB, profile ProcessingProfileRecord, name string) document.EmbeddingBindingV1 {
+	tb.Helper()
 	var canonical document.ProcessingProfileV1
-	require.NoError(t, json.Unmarshal(profile.CanonicalProfile, &canonical))
+	require.NoError(tb, json.Unmarshal(profile.CanonicalProfile, &canonical))
 	for _, binding := range canonical.Embeddings {
 		if binding.Name == name {
 			return binding
 		}
 	}
-	t.Fatalf("embedding binding %q not found", name)
+	tb.Fatalf("embedding binding %q not found", name)
 	return document.EmbeddingBindingV1{}
 }
 
