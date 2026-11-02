@@ -25,18 +25,42 @@ docbank mcp
 # equivalent to: docbank mcp --transport stdio
 ```
 
-An MCP client configuration can launch the same command:
+Print configuration for your client:
 
-```json
-{
-  "mcpServers": {
-    "docbank": {
-      "command": "docbank",
-      "args": ["mcp", "--transport", "stdio"]
-    }
-  }
-}
+```bash
+docbank mcp config --client claude-code
+docbank mcp config --client codex
+# Include the write tools you need:
+docbank mcp config --client codex --allow-processing
 ```
+
+Paste Claude Code's JSON into your project's `.mcp.json`, or merge the
+`docbank` entry into its existing `mcpServers` object. Keep this project's
+`.mcp.json` out of version control because it contains machine-specific paths.
+Paste Codex's TOML into `~/.codex/config.toml`, replacing any existing
+`[mcp_servers.docbank]` entry.
+See the [Claude Code MCP guide](https://code.claude.com/docs/en/mcp) and
+[Codex configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference).
+
+The snippet uses Docbank's absolute launch path, preserving package-manager
+symlinks, and the selected vault's canonical `DOCBANK_HOME`.
+All six `--allow-*` flags carry through to
+stdio arguments. Printing creates no vault, starts no daemon, and leaves
+client files untouched. Your client must support MCP `2026-07-28` and
+`server/discover`; configuration alone cannot add protocol support.
+
+Tested clients are Claude Code 2.1.301 and Codex 0.164.0.
+For Codex, run this once to persist the client's MCP protocol support in
+`config.toml` for either transport:
+
+```bash
+codex features enable mcp_2026_07_28
+```
+
+Then launch with plain `codex`. The generated stdio configuration also sets
+`CODEX_MCP_PROTOCOL_VERSION=2026-07-28` in the server's environment.
+After upgrading Docbank, rerun `docbank mcp config` and replace the saved
+configuration so its protocol selection matches the installed server.
 
 Stdio carries one complete JSON-RPC message per line. Docbank accepts LF or
 CRLF terminators, rejects embedded newlines, and limits the JSON payload before
@@ -62,9 +86,27 @@ machine's secret or process manager, then start the listener:
 docbank mcp --transport http --listen 127.0.0.1:7341
 ```
 
-Configure the client for `http://127.0.0.1:7341/mcp` and
-`Authorization: Bearer <token>`. `--listen` accepts an explicit IPv4 or IPv6 address and port, including
-wildcards. Hostnames and IPv6 zone identifiers are rejected.
+Print the client configuration for that listener:
+
+```bash
+docbank mcp config --client claude-code --transport http --listen 127.0.0.1:7341
+docbank mcp config --client codex --transport http --listen 127.0.0.1:7341
+```
+
+The URL ends in `/mcp`. Claude Code receives an `Authorization` header with
+`Bearer ${DOCBANK_MCP_HTTP_TOKEN}`; Codex receives
+`bearer_token_env_var = "DOCBANK_MCP_HTTP_TOKEN"`. The command reads the
+selected credential binding's variable name and leaves its value unresolved.
+If this shell has no binding, it prints `DOCBANK_MCP_HTTP_TOKEN`, the
+listener's conventional variable. The listener still requires its token.
+Make that variable available to the client too. If the listener reads
+`DOCBANK_MCP_HTTP_TOKEN_FILE`, the client still needs `DOCBANK_MCP_HTTP_TOKEN`
+containing the token itself. A custom binding uses its own variable name.
+
+`--listen` accepts an explicit IPv4 or IPv6 address and port, including
+wildcards. Hostnames and IPv6 zone identifiers are rejected. Printed URLs
+replace wildcard addresses with loopback, and require a nonzero port. HTTP
+write flags belong on the standalone listener's startup command.
 
 The HTTP credential is resolved from its environment binding when the listener
 starts and remains fixed for the hosting process. Restart that process to
@@ -93,6 +135,12 @@ out. With hosting enabled explicitly, invalid credentials or a failed bind stop
 daemon startup. Restart
 the daemon to rotate its bearer. See the [configuration reference](../configuration.md#mcp-http-credential)
 and [container example](containers.md#run-mcp-in-the-same-container).
+
+To connect to the daemon-hosted endpoint, pass its pinned `[server] api_port`
+or separate `[mcp.http] port` as `--listen` when printing configuration. For
+example, `--listen 127.0.0.1:7341` targets the daemon when its API port is
+7341. Start the daemon with the same bearer binding available in its
+environment. Printing configuration leaves the listener's startup to you.
 
 Both transports have the fixed read catalog described below.
 `--allow-processing` adds only guarded processing start.
