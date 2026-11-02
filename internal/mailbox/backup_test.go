@@ -55,7 +55,9 @@ func TestMailboxPortableBackupRetainsSourceChildrenAndTombstone(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, bs.Close()) })
 	_, err = maintenance.GarbageCollect(ctx, restored, bs, maintenance.GCOptions{})
 	require.NoError(t, err)
-	service := Service{Store: restored, Blobs: bs, Spool: t.TempDir()}
+	spool, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	service := Service{Store: restored, Blobs: bs, Spool: spool}
 	sealed, err := restored.MailboxContainer(ctx, c.Owner, c.ID)
 	require.NoError(t, err)
 	reader, err := service.ReaderAt(ctx, sealed)

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -19,7 +20,9 @@ import (
 func decodedHTML(t *testing.T, source, paper string) (HTML, error) {
 	t.Helper()
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(source)))
-	d, err := emailmime.Decode(t.Context(), digest, int64(len(source)), strings.NewReader(source), t.TempDir())
+	spool, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	d, err := emailmime.Decode(t.Context(), digest, int64(len(source)), strings.NewReader(source), spool)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, d.Close()) })
 	return BuildHTML(t.Context(), d.Evidence, paper, func(ctx context.Context, path string, ref document.EmailArtifactRefV1) (io.ReadCloser, error) {
