@@ -69,44 +69,45 @@ func (secrets testSecrets) ResolveSecret(_ context.Context, name string) (string
 }
 
 func TestClientRendersDoclingPagesAndRequestsBothFormats(t *testing.T) {
-	fixture := newFixture(t, "pdf", "application/pdf", "report.pdf", []byte("synthetic PDF bytes"))
-	var polls atomic.Int64
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		switch {
-		case request.Method == http.MethodPost && request.URL.Path == "/v1/convert/file/async":
-			assert.Equal(t, "synthetic-secret", request.Header.Get("X-Api-Key"))
-			assertDoclingSubmission(t, request, fixture.metadata, fixture.source, []string{"md", "json"}, nil)
-			writeJSON(t, response, doclingTask("task-1", "pending"))
-		case request.Method == http.MethodGet && request.URL.Path == "/v1/status/poll/task-1":
-			if polls.Add(1) == 1 {
-				writeJSON(t, response, doclingTask("task-1", "started"))
-				return
+	synctest.Test(t, func(t *testing.T) {
+		fixture := newFixture(t, "pdf", "application/pdf", "report.pdf", []byte("synthetic PDF bytes"))
+		var polls atomic.Int64
+		origin, httpClient := inMemoryServer(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+			switch {
+			case request.Method == http.MethodPost && request.URL.Path == "/v1/convert/file/async":
+				assert.Equal(t, "synthetic-secret", request.Header.Get("X-Api-Key"))
+				assertDoclingSubmission(t, request, fixture.metadata, fixture.source, []string{"md", "json"}, nil)
+				writeJSON(t, response, doclingTask("task-1", "pending"))
+			case request.Method == http.MethodGet && request.URL.Path == "/v1/status/poll/task-1":
+				if polls.Add(1) == 1 {
+					writeJSON(t, response, doclingTask("task-1", "started"))
+					return
+				}
+				writeJSON(t, response, doclingTask("task-1", "success"))
+			case request.Method == http.MethodGet && request.URL.Path == "/v1/result/task-1":
+				writeRecordedJSON(t, response, recordedPagesResponse)
+			default:
+				http.NotFound(response, request)
 			}
-			writeJSON(t, response, doclingTask("task-1", "success"))
-		case request.Method == http.MethodGet && request.URL.Path == "/v1/result/task-1":
-			writeRecordedJSON(t, response, recordedPagesResponse)
-		default:
-			http.NotFound(response, request)
-		}
-	}))
-	t.Cleanup(server.Close)
+		}))
 
-	client := newClient(t, server.URL, fixture.descriptor, testSecrets{"docling-api": "synthetic-secret"}, http.DefaultClient)
-	result, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
-	require.NoError(t, err)
-	require.Len(t, result.Evidence.Units, 2)
-	assert.Equal(t, document.EvidenceComplete, result.Evidence.Completeness)
-	assert.Equal(t, document.EvidenceUnitPage, result.Evidence.UnitKind)
-	assert.Equal(t, "first page", result.Evidence.Units[0].Text)
-	assert.Equal(t, int64(1), result.Evidence.Units[0].Locator.Start)
-	assert.Equal(t, int64(1), result.Evidence.Units[0].Locator.End)
-	assert.Equal(t, "second page", result.Evidence.Units[1].Text)
-	assert.Equal(t, int64(2), result.Evidence.Units[1].Locator.Start)
-	assert.Equal(t, int64(2), result.Evidence.Units[1].Locator.End)
-	assert.Equal(t, "# Synthetic report\n", string(result.ProviderMarkdown))
-	require.Len(t, result.Artifacts, 1)
-	assert.Equal(t, document.EvidenceArtifactStructured, result.Artifacts[0].Role)
-	assert.Equal(t, int64(2), polls.Load())
+		client := newClient(t, origin, fixture.descriptor, testSecrets{"docling-api": "synthetic-secret"}, httpClient)
+		result, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
+		require.NoError(t, err)
+		require.Len(t, result.Evidence.Units, 2)
+		assert.Equal(t, document.EvidenceComplete, result.Evidence.Completeness)
+		assert.Equal(t, document.EvidenceUnitPage, result.Evidence.UnitKind)
+		assert.Equal(t, "first page", result.Evidence.Units[0].Text)
+		assert.Equal(t, int64(1), result.Evidence.Units[0].Locator.Start)
+		assert.Equal(t, int64(1), result.Evidence.Units[0].Locator.End)
+		assert.Equal(t, "second page", result.Evidence.Units[1].Text)
+		assert.Equal(t, int64(2), result.Evidence.Units[1].Locator.Start)
+		assert.Equal(t, int64(2), result.Evidence.Units[1].Locator.End)
+		assert.Equal(t, "# Synthetic report\n", string(result.ProviderMarkdown))
+		require.Len(t, result.Artifacts, 1)
+		assert.Equal(t, document.EvidenceArtifactStructured, result.Artifacts[0].Role)
+		assert.Equal(t, int64(2), polls.Load())
+	})
 }
 
 func TestClientAcceptsProviderFilenameWhenDisclosureIsWithheld(t *testing.T) {
@@ -276,24 +277,25 @@ func TestMapEvidenceNamesUnmappedDoclingContent(t *testing.T) {
 }
 
 func TestClientRejectsChangedTaskIDWhilePolling(t *testing.T) {
-	fixture := newFixture(t, "pdf", "application/pdf", "report.pdf", []byte("synthetic PDF bytes"))
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		switch request.URL.Path {
-		case convertPath:
-			writeJSON(t, response, doclingTask("original", "pending"))
-		case pollPath + "original":
-			writeJSON(t, response, doclingTask("substituted", "success"))
-		default:
-			http.NotFound(response, request)
-		}
-	}))
-	t.Cleanup(server.Close)
-	client := newClient(t, server.URL, fixture.descriptor, nil, http.DefaultClient)
-	_, err := client.Render(t.Context(), fixture.upload(), fixture.authorization)
-	require.Error(t, err)
-	providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
-	require.True(t, ok)
-	assert.Equal(t, document.RenditionErrorMalformedEvidence, providerErr.Code())
+	synctest.Test(t, func(t *testing.T) {
+		fixture := newFixture(t, "pdf", "application/pdf", "report.pdf", []byte("synthetic PDF bytes"))
+		origin, httpClient := inMemoryServer(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+			switch request.URL.Path {
+			case convertPath:
+				writeJSON(t, response, doclingTask("original", "pending"))
+			case pollPath + "original":
+				writeJSON(t, response, doclingTask("substituted", "success"))
+			default:
+				http.NotFound(response, request)
+			}
+		}))
+		client := newClient(t, origin, fixture.descriptor, nil, httpClient)
+		_, err := client.Render(t.Context(), fixture.upload(), fixture.authorization)
+		require.Error(t, err)
+		providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
+		require.True(t, ok)
+		assert.Equal(t, document.RenditionErrorMalformedEvidence, providerErr.Code())
+	})
 }
 
 func TestClientStopsAtAuthorizationExpiryBeforeEgress(t *testing.T) {
@@ -423,7 +425,6 @@ func TestClientStopsAtAuthorizationExpiryBeforeFollowupEgress(t *testing.T) {
 }
 
 func TestClientClassifiesHTTPStatusByOperationBeforeContentType(t *testing.T) {
-	fixture := newFixture(t, "pdf", "application/pdf", "status.pdf", []byte("synthetic PDF bytes"))
 	for _, testCase := range []struct {
 		name      string
 		operation string
@@ -449,38 +450,40 @@ func TestClientClassifiesHTTPStatusByOperationBeforeContentType(t *testing.T) {
 		{name: "oversized submit 503", operation: "submit", status: http.StatusServiceUnavailable, want: document.RenditionErrorAmbiguousSubmission, maxBytes: 8},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-				if testCase.operation == "submit" && request.URL.Path == convertPath ||
-					testCase.operation == "poll" && request.URL.Path == pollPath+"status" ||
-					testCase.operation == "result" && request.URL.Path == resultPath+"status" {
-					response.Header().Set("Content-Type", "text/html")
-					response.WriteHeader(testCase.status)
-					_, err := io.WriteString(response, "provider-private-body")
-					assert.NoError(t, err)
-					return
-				}
-				switch request.URL.Path {
-				case convertPath:
-					if testCase.operation == "poll" {
-						writeJSON(t, response, doclingTask("status", "pending"))
-					} else {
-						writeJSON(t, response, doclingTask("status", "success"))
+			synctest.Test(t, func(t *testing.T) {
+				fixture := newFixture(t, "pdf", "application/pdf", "status.pdf", []byte("synthetic PDF bytes"))
+				origin, httpClient := inMemoryServer(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+					if testCase.operation == "submit" && request.URL.Path == convertPath ||
+						testCase.operation == "poll" && request.URL.Path == pollPath+"status" ||
+						testCase.operation == "result" && request.URL.Path == resultPath+"status" {
+						response.Header().Set("Content-Type", "text/html")
+						response.WriteHeader(testCase.status)
+						_, err := io.WriteString(response, "provider-private-body")
+						assert.NoError(t, err)
+						return
 					}
-				default:
-					http.NotFound(response, request)
+					switch request.URL.Path {
+					case convertPath:
+						if testCase.operation == "poll" {
+							writeJSON(t, response, doclingTask("status", "pending"))
+						} else {
+							writeJSON(t, response, doclingTask("status", "success"))
+						}
+					default:
+						http.NotFound(response, request)
+					}
+				}))
+				client := newClient(t, origin, fixture.descriptor, nil, httpClient)
+				if testCase.maxBytes != 0 {
+					client = newClientWithBounds(t, origin, fixture.descriptor, nil, httpClient, testCase.maxBytes)
 				}
-			}))
-			t.Cleanup(server.Close)
-			client := newClient(t, server.URL, fixture.descriptor, nil, http.DefaultClient)
-			if testCase.maxBytes != 0 {
-				client = newClientWithBounds(t, server.URL, fixture.descriptor, nil, http.DefaultClient, testCase.maxBytes)
-			}
-			_, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
-			require.Error(t, err)
-			providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
-			require.True(t, ok)
-			assert.Equal(t, testCase.want, providerErr.Code())
-			assert.NotContains(t, err.Error(), "provider-private-body")
+				_, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
+				require.Error(t, err)
+				providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
+				require.True(t, ok)
+				assert.Equal(t, testCase.want, providerErr.Code())
+				assert.NotContains(t, err.Error(), "provider-private-body")
+			})
 		})
 	}
 }
@@ -560,31 +563,32 @@ func TestClientClassifiesTotalTimeoutBySubmissionState(t *testing.T) {
 	})
 
 	t.Run("after submission", func(t *testing.T) {
-		fixture := newFixture(t, "pdf", "application/pdf", "timeout.pdf", []byte("synthetic PDF bytes"))
-		var submits, polls atomic.Int64
-		server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-			switch request.URL.Path {
-			case convertPath:
-				submits.Add(1)
-				writeJSON(t, response, doclingTask("timeout", "pending"))
-			case pollPath + "timeout":
-				polls.Add(1)
-			default:
-				http.NotFound(response, request)
-			}
-		}))
-		t.Cleanup(server.Close)
-		client := newClient(t, server.URL, fixture.descriptor, nil, http.DefaultClient)
-		client.totalTimeout = 25 * time.Millisecond //nolint:kennlint // deadlinetest: the total deadline must expire before the first poll of the accepted job
-		client.pollInterval = 50 * time.Millisecond
+		synctest.Test(t, func(t *testing.T) {
+			fixture := newFixture(t, "pdf", "application/pdf", "timeout.pdf", []byte("synthetic PDF bytes"))
+			var submits, polls atomic.Int64
+			origin, httpClient := inMemoryServer(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				switch request.URL.Path {
+				case convertPath:
+					submits.Add(1)
+					writeJSON(t, response, doclingTask("timeout", "pending"))
+				case pollPath + "timeout":
+					polls.Add(1)
+				default:
+					http.NotFound(response, request)
+				}
+			}))
+			client := newClient(t, origin, fixture.descriptor, nil, httpClient)
+			client.totalTimeout = 25 * time.Millisecond
+			client.pollInterval = 50 * time.Millisecond
 
-		_, err := client.Render(t.Context(), fixture.upload(), fixture.authorization)
-		require.Error(t, err)
-		providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
-		require.True(t, ok)
-		assert.Equal(t, document.RenditionErrorAmbiguousSubmission, providerErr.Code())
-		assert.Equal(t, int64(1), submits.Load())
-		assert.Zero(t, polls.Load())
+			_, err := client.Render(t.Context(), fixture.upload(), fixture.authorization)
+			require.Error(t, err)
+			providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
+			require.True(t, ok)
+			assert.Equal(t, document.RenditionErrorAmbiguousSubmission, providerErr.Code())
+			assert.Equal(t, int64(1), submits.Load())
+			assert.Zero(t, polls.Load())
+		})
 	})
 }
 
@@ -621,7 +625,6 @@ func TestClientTreatsUnreadableSuccessfulSubmissionAsAmbiguous(t *testing.T) {
 }
 
 func TestClientRecoversKnownTaskWithoutResubmitting(t *testing.T) {
-	fixture := newFixture(t, "pdf", "application/pdf", "recovery.pdf", []byte("synthetic PDF bytes"))
 	for _, testCase := range []struct {
 		name string
 		path string
@@ -630,42 +633,44 @@ func TestClientRecoversKnownTaskWithoutResubmitting(t *testing.T) {
 		{name: "result", path: resultPath + "recovery"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			var submits, failures atomic.Int64
-			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-				switch request.URL.Path {
-				case convertPath:
-					submits.Add(1)
-					if testCase.name == "poll" {
-						writeJSON(t, response, doclingTask("recovery", "pending"))
-					} else {
-						writeJSON(t, response, doclingTask("recovery", "success"))
-					}
-				case testCase.path:
-					if failures.Add(1) == 1 {
-						response.WriteHeader(http.StatusServiceUnavailable)
-						return
-					}
-					if testCase.name == "poll" {
-						writeJSON(t, response, doclingTask("recovery", "success"))
-					} else {
+			synctest.Test(t, func(t *testing.T) {
+				fixture := newFixture(t, "pdf", "application/pdf", "recovery.pdf", []byte("synthetic PDF bytes"))
+				var submits, failures atomic.Int64
+				origin, httpClient := inMemoryServer(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+					switch request.URL.Path {
+					case convertPath:
+						submits.Add(1)
+						if testCase.name == "poll" {
+							writeJSON(t, response, doclingTask("recovery", "pending"))
+						} else {
+							writeJSON(t, response, doclingTask("recovery", "success"))
+						}
+					case testCase.path:
+						if failures.Add(1) == 1 {
+							response.WriteHeader(http.StatusServiceUnavailable)
+							return
+						}
+						if testCase.name == "poll" {
+							writeJSON(t, response, doclingTask("recovery", "success"))
+						} else {
+							writeJSON(t, response, doclingResultResponse(fixture.metadata.Filename, "# recovery\n", []any{
+								map[string]any{"text": "page", "prov": []any{map[string]any{"page_no": 1}}},
+							}))
+						}
+					case resultPath + "recovery":
 						writeJSON(t, response, doclingResultResponse(fixture.metadata.Filename, "# recovery\n", []any{
 							map[string]any{"text": "page", "prov": []any{map[string]any{"page_no": 1}}},
 						}))
+					default:
+						http.NotFound(response, request)
 					}
-				case resultPath + "recovery":
-					writeJSON(t, response, doclingResultResponse(fixture.metadata.Filename, "# recovery\n", []any{
-						map[string]any{"text": "page", "prov": []any{map[string]any{"page_no": 1}}},
-					}))
-				default:
-					http.NotFound(response, request)
-				}
-			}))
-			t.Cleanup(server.Close)
-			client := newClient(t, server.URL, fixture.descriptor, nil, http.DefaultClient)
-			_, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
-			require.NoError(t, err)
-			assert.Equal(t, int64(1), submits.Load())
-			assert.Equal(t, int64(2), failures.Load())
+				}))
+				client := newClient(t, origin, fixture.descriptor, nil, httpClient)
+				_, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
+				require.NoError(t, err)
+				assert.Equal(t, int64(1), submits.Load())
+				assert.Equal(t, int64(2), failures.Load())
+			})
 		})
 	}
 }
@@ -679,75 +684,77 @@ func TestClientReturnsAmbiguousSubmissionWhenKnownTaskRecoveryExhausts(t *testin
 		{name: "still pending", pollStatus: http.StatusOK},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			fixture := newFixture(t, "pdf", "application/pdf", "recovery.pdf", []byte("synthetic PDF bytes"))
-			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-				switch request.URL.Path {
-				case convertPath:
-					writeJSON(t, response, doclingTask("recovery", "pending"))
-				case pollPath + "recovery":
-					if testCase.pollStatus == http.StatusOK {
+			synctest.Test(t, func(t *testing.T) {
+				fixture := newFixture(t, "pdf", "application/pdf", "recovery.pdf", []byte("synthetic PDF bytes"))
+				origin, httpClient := inMemoryServer(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+					switch request.URL.Path {
+					case convertPath:
 						writeJSON(t, response, doclingTask("recovery", "pending"))
-					} else {
-						response.WriteHeader(testCase.pollStatus)
+					case pollPath + "recovery":
+						if testCase.pollStatus == http.StatusOK {
+							writeJSON(t, response, doclingTask("recovery", "pending"))
+						} else {
+							response.WriteHeader(testCase.pollStatus)
+						}
+					default:
+						http.NotFound(response, request)
 					}
-				default:
-					http.NotFound(response, request)
-				}
-			}))
-			t.Cleanup(server.Close)
-			client := newClient(t, server.URL, fixture.descriptor, nil, http.DefaultClient)
-			_, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
-			require.Error(t, err)
-			providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
-			require.True(t, ok)
-			assert.Equal(t, document.RenditionErrorAmbiguousSubmission, providerErr.Code())
+				}))
+				client := newClient(t, origin, fixture.descriptor, nil, httpClient)
+				_, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
+				require.Error(t, err)
+				providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
+				require.True(t, ok)
+				assert.Equal(t, document.RenditionErrorAmbiguousSubmission, providerErr.Code())
+			})
 		})
 	}
 }
 
 func TestClientReceiptCountsEveryResponseBodyAndRequest(t *testing.T) {
-	fixture := newFixture(t, "pdf", "application/pdf", "usage.pdf", []byte("synthetic PDF bytes"))
-	var outputBytes atomic.Int64
-	var polls atomic.Int64
-	writeCountedJSON := func(t *testing.T, response http.ResponseWriter, value any) {
-		t.Helper()
-		body, err := json.Marshal(value)
-		require.NoError(t, err)
-		body = append(body, '\n')
-		outputBytes.Add(int64(len(body)))
-		response.Header().Set("Content-Type", "application/json")
-		_, err = response.Write(body)
-		require.NoError(t, err)
-	}
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		switch request.URL.Path {
-		case convertPath:
-			writeCountedJSON(t, response, doclingTask("usage", "pending"))
-		case pollPath + "usage":
-			if polls.Add(1) == 1 {
-				body := []byte("temporary provider body")
-				outputBytes.Add(int64(len(body)))
-				response.WriteHeader(http.StatusServiceUnavailable)
-				_, err := response.Write(body)
-				assert.NoError(t, err)
-				return
-			}
-			writeCountedJSON(t, response, doclingTask("usage", "success"))
-		case resultPath + "usage":
-			writeCountedJSON(t, response, doclingResultResponse(fixture.metadata.Filename, "# usage\n", []any{
-				map[string]any{"text": "page", "prov": []any{map[string]any{"page_no": 1}}},
-			}))
-		default:
-			http.NotFound(response, request)
+	synctest.Test(t, func(t *testing.T) {
+		fixture := newFixture(t, "pdf", "application/pdf", "usage.pdf", []byte("synthetic PDF bytes"))
+		var outputBytes atomic.Int64
+		var polls atomic.Int64
+		writeCountedJSON := func(t *testing.T, response http.ResponseWriter, value any) {
+			t.Helper()
+			body, err := json.Marshal(value)
+			require.NoError(t, err)
+			body = append(body, '\n')
+			outputBytes.Add(int64(len(body)))
+			response.Header().Set("Content-Type", "application/json")
+			_, err = response.Write(body)
+			require.NoError(t, err)
 		}
-	}))
-	t.Cleanup(server.Close)
-	client := newClient(t, server.URL, fixture.descriptor, nil, http.DefaultClient)
-	result, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
-	require.NoError(t, err)
-	assert.Equal(t, int64(4), result.Receipt.Usage.Requests)
-	assert.Equal(t, int64(1), result.Receipt.Usage.Retries)
-	assert.Equal(t, outputBytes.Load(), result.Receipt.Usage.OutputBytes)
+		origin, httpClient := inMemoryServer(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+			switch request.URL.Path {
+			case convertPath:
+				writeCountedJSON(t, response, doclingTask("usage", "pending"))
+			case pollPath + "usage":
+				if polls.Add(1) == 1 {
+					body := []byte("temporary provider body")
+					outputBytes.Add(int64(len(body)))
+					response.WriteHeader(http.StatusServiceUnavailable)
+					_, err := response.Write(body)
+					assert.NoError(t, err)
+					return
+				}
+				writeCountedJSON(t, response, doclingTask("usage", "success"))
+			case resultPath + "usage":
+				writeCountedJSON(t, response, doclingResultResponse(fixture.metadata.Filename, "# usage\n", []any{
+					map[string]any{"text": "page", "prov": []any{map[string]any{"page_no": 1}}},
+				}))
+			default:
+				http.NotFound(response, request)
+			}
+		}))
+		client := newClient(t, origin, fixture.descriptor, nil, httpClient)
+		result, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
+		require.NoError(t, err)
+		assert.Equal(t, int64(4), result.Receipt.Usage.Requests)
+		assert.Equal(t, int64(1), result.Receipt.Usage.Retries)
+		assert.Equal(t, outputBytes.Load(), result.Receipt.Usage.OutputBytes)
+	})
 }
 
 type roundTripperFunc func(*http.Request) (*http.Response, error)
@@ -784,6 +791,16 @@ func slowUpload(fixture fixture, delay time.Duration) *testUpload {
 			return nil
 		},
 	}
+}
+
+// inMemoryServer serves handler on Go's in-memory test network. Inside a
+// synctest bubble, poll intervals, retry delays, and deadlines then elapse on
+// the bubble's fake clock instead of the real one.
+func inMemoryServer(t *testing.T, handler http.Handler) (string, *http.Client) {
+	t.Helper()
+	server := httptest.NewTestServer(t, handler)
+	client := server.Client()
+	return server.URL, client
 }
 
 // handlerClient serves requests in memory, so a test can run in a synctest
@@ -1321,10 +1338,11 @@ func newClientWithBounds(t *testing.T, origin string, descriptor document.Rendit
 	if secrets != nil {
 		binding = "docling-api"
 	}
-	// Timeout tests override these normal deadlines explicitly.
+	// Timeout tests override these normal deadlines explicitly. Tests that
+	// poll or retry run in a synctest bubble, so the default poll interval
+	// elapses on fake time.
 	client, err := New(Profile{
 		Origin: origin, Descriptor: descriptor, SecretBinding: binding,
-		PollInterval:    time.Millisecond,
 		MaxPollAttempts: 4, MaxResponseBytes: maxResponseBytes,
 	}, secrets, httpClient)
 	require.NoError(t, err)

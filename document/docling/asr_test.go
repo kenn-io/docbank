@@ -463,7 +463,7 @@ func newASRClient(t *testing.T, origin string, descriptor document.RenditionDesc
 	client, err := NewASR(ASRProfile{
 		Origin: origin, Descriptor: descriptor,
 		RequestTimeout: time.Second, TotalTimeout: 2 * time.Second,
-		PollInterval: time.Millisecond, MaxPollAttempts: 4,
+		MaxPollAttempts:  4,
 		MaxResponseBytes: 1 << 20, MaxDocumentBytes: 1 << 20,
 		MaxTranscriptChars: 100_000,
 	}, nil, http.DefaultClient)
