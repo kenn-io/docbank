@@ -22,26 +22,26 @@
     "@embedpdf/pdfium": "2.15.1",
     "@embedpdf/svelte-pdf-viewer": "2.15.1",
     "@kenn-io/kit-ui": "git+https://github.com/kenn-io/kit-ui.git#c57963cfeed5fc4ebb94ae985f52d41bff43fbc7",
-    "@lucide/svelte": "1.24.0",
+    "@lucide/svelte": "1.61.0",
     "@noble/hashes": "^2.2.0",
     "leaflet": "1.9.4",
     "leaflet.markercluster": "1.5.3",
-    "svelte": "5.56.4",
-    "yaml": "2.8.3"
+    "svelte": "5.57.3",
+    "yaml": "2.9.1"
   },
   "devDependencies": {
     "@playwright/test": "1.64.1",
-    "@sveltejs/vite-plugin-svelte": "7.2.0",
-    "@testing-library/svelte": "5.3.1",
+    "@sveltejs/vite-plugin-svelte": "7.3.1",
+    "@testing-library/svelte": "5.4.2",
     "@tsconfig/svelte": "5.0.8",
-    "@types/leaflet": "1.9.21",
+    "@types/leaflet": "1.9.22",
     "@types/leaflet.markercluster": "1.5.6",
-    "@types/node": "26.0.0",
+    "@types/node": "26.6.5",
     "fake-indexeddb": "6.2.6",
-    "ignore": "7.0.5",
+    "ignore": "7.0.14",
     "jsdom": "29.1.1",
-    "orval": "8.30.0",
-    "svelte-check": "4.7.2",
+    "orval": "8.45.0",
+    "svelte-check": "4.7.7",
     "typescript": "6.0.3",
     "vite": "npm:@voidzero-dev/vite-plus-core@1.4.0",
     "vite-plus": "1.4.0"
@@ -52,5 +52,5 @@
   "engines": {
     "node": ">=24.22.1"
   },
-  "packageManager": "npm@11.17.0"
+  "packageManager": "npm@11.21.1"
 }
