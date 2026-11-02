@@ -270,13 +270,20 @@ func TestSetupCancellationDoesNotPublish(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { _, err := Setup(ctx, db, cfg); done <- err }()
 	// Cancel only after PostgreSQL reports that setup is waiting for our lock.
-	// The timeout bounds a broken test; it does not decide when to cancel.
-	require.Eventually(t, func() bool {
-		var waiting bool
-		err := db.QueryRowContext(t.Context(), `SELECT EXISTS(SELECT 1 FROM pg_stat_activity
-			WHERE datname=current_database() AND wait_event='advisory')`).Scan(&waiting)
-		return err == nil && waiting
-	}, 10*time.Second, 10*time.Millisecond)
+	// PostgreSQL has no notification for a lock waiter, so ask until it
+	// reports one. The timeout bounds a broken test; it does not decide when
+	// to cancel.
+	waitCtx, cancelWait := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancelWait()
+	for waiting := false; !waiting; {
+		select {
+		case err := <-done:
+			t.Fatalf("setup returned while our lock was held: %v", err)
+		default:
+		}
+		require.NoError(t, db.QueryRowContext(waitCtx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity
+			WHERE datname=current_database() AND wait_event='advisory')`).Scan(&waiting))
+	}
 	cancel()
 	require.ErrorIs(t, <-done, context.Canceled)
 	var exists bool

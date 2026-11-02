@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 	"testing/synctest"
@@ -20,6 +21,23 @@ func newTestStore(t *testing.T) *Store {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	return s
+}
+
+// waitForPoolWaiter yields until a caller queues for one of db's connections
+// after waits was read from db.Stats, or until done delivers. database/sql
+// reports a queued caller only through its pool statistics. It returns the
+// delivered value and whether done delivered before any caller queued.
+func waitForPoolWaiter[T any](db *sql.DB, waits int64, done <-chan T) (T, bool) {
+	for db.Stats().WaitCount == waits {
+		select {
+		case got := <-done:
+			return got, true
+		default:
+		}
+		runtime.Gosched()
+	}
+	var zero T
+	return zero, false
 }
 
 func TestStorageMutationDuringReadSnapshot(t *testing.T) {

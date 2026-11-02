@@ -2220,7 +2220,8 @@ func TestPublishCollectsSupersededLexicalGenerationsWithoutCopyingText(t *testin
 // Those must be different locks: with one mutex, a publication in flight and
 // a concurrent purge each wait for the other until SQLite's busy timeout
 // fails the purge.
-func TestPublicationDoesNotDeadlockAgainstDerivativePurge(t *testing.T) { //nolint:paralleltest // proves lock order through a real-time window
+func TestPublicationDoesNotDeadlockAgainstDerivativePurge(t *testing.T) {
+	t.Parallel()
 	s, _ := newRenditionCatalogFixture(t)
 	ctx := t.Context()
 	build := catalogRenditionBuild(s, catalogProcessingProfile(t, false))
@@ -2239,19 +2240,24 @@ func TestPublicationDoesNotDeadlockAgainstDerivativePurge(t *testing.T) { //noli
 		})
 	}()
 	<-inTransaction
+	waits := s.writeDB.Stats().WaitCount
 	purged := make(chan error, 1)
 	go func() {
 		_, err := s.PurgeDerivatives(ctx, PurgeRequest{})
 		purged <- err
 	}()
-	time.Sleep(50 * time.Millisecond) //nolint:kennlint // sleeptest: lets the purge reach SQLite's busy wait on the write lock, which no Go signal reports
+	// Release the publication only once the purge holds whatever it takes
+	// before the write transaction and is queued for the writer connection.
+	if err, finished := waitForPoolWaiter(s.writeDB, waits, purged); finished {
+		t.Fatalf("purge finished while the publication held the writer: %v", err)
+	}
 	close(release)
 
 	for name, done := range map[string]chan error{"publication": published, "purge": purged} {
 		select {
 		case err := <-done:
 			require.NoError(t, err, name)
-		case <-time.After(3 * time.Second):
+		case <-time.After(30 * time.Second):
 			t.Fatalf("%s did not finish; lock ordering deadlock", name)
 		}
 	}
@@ -2260,7 +2266,8 @@ func TestPublicationDoesNotDeadlockAgainstDerivativePurge(t *testing.T) { //noli
 // A standalone lease must not pin a generation that an in-flight publication
 // is about to collect. Acquisition waits for the publication to commit and
 // then pins the new head.
-func TestAcquireLexicalGenerationSerializesWithPublication(t *testing.T) { //nolint:paralleltest // proves lock order through a real-time window
+func TestAcquireLexicalGenerationSerializesWithPublication(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	ctx := t.Context()
 	profile := catalogProcessingProfile(t, false)
@@ -2301,14 +2308,14 @@ func TestAcquireLexicalGenerationSerializesWithPublication(t *testing.T) { //nol
 		err   error
 	}
 	leases := make(chan acquired, 1)
+	waits := s.writeDB.Stats().WaitCount
 	go func() {
 		lease, err := s.AcquireLexicalGeneration(ctx)
 		leases <- acquired{lease: lease, err: err}
 	}()
-	select {
-	case got := <-leases:
+	// The in-flight publication keeps the lease queued for the writer.
+	if got, finished := waitForPoolWaiter(s.writeDB, waits, leases); finished {
 		t.Fatalf("lease acquired %v while a publication was in flight", got)
-	case <-time.After(100 * time.Millisecond): //nolint:kennlint // deadlinetest: the timer shows the event does not happen; the in-flight publication transaction keeps the lease blocked
 	}
 	close(release)
 	require.NoError(t, <-published)

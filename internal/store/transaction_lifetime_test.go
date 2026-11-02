@@ -116,11 +116,15 @@ func (c *blockedBeginConnection) BeginTx(ctx context.Context, _ driver.TxOptions
 	}
 }
 
+// holdTestSQLiteWriter takes SQLite's writer lock on a separate connection and
+// reopens the store's writer pool with NoBusyWait, so a contended BEGIN fails
+// at once instead of waiting out SQLite's wall-clock busy timeout. Run the
+// caller inside synctest.Test so retry backoff uses fake time.
 func holdTestSQLiteWriter(t *testing.T, s *Store) *sql.Tx {
 	t.Helper()
 	require.NoError(t, s.writeDB.Close())
 	var err error
-	s.writeDB, err = s.driver.Open(s.path, docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate, BusyTimeout: 10 * time.Millisecond}) //nolint:kennlint // deadlinetest: the held writer lock must outlast busy attempts to exercise transaction retry and cancellation
+	s.writeDB, err = s.driver.Open(s.path, docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate, BusyTimeout: docsqlite.NoBusyWait})
 	require.NoError(t, err)
 	s.writeDB.SetMaxOpenConns(1)
 	writer, err := s.driver.Open(s.path, docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate})
@@ -136,69 +140,77 @@ func holdTestSQLiteWriter(t *testing.T, s *Store) *sql.Tx {
 	return lock
 }
 
-// retryBeginBound only stops a retry loop that never ends; real SQLite IO under
-// a loaded parallel test run can exceed sub-second budgets.
-const retryBeginBound = 30 * time.Second
-
 func TestStorageTransactionRetryBegin(t *testing.T) {
 	t.Parallel()
 	t.Run("blocks until the writer lock clears", func(t *testing.T) {
-		s := newTestStore(t)
-		lock := holdTestSQLiteWriter(t, s)
-		ctx, cancel := context.WithTimeout(t.Context(), retryBeginBound)
-		defer cancel()
-		done := make(chan error, 1)
-		go func() {
-			done <- s.withStorageTxRetryBegin(ctx, func(*sql.Tx) error {
-				return nil
-			})
-		}()
-		select {
-		case err := <-done:
-			t.Fatalf("transaction returned while the writer lock was held: %v", err)
-		case <-time.After(100 * time.Millisecond): //nolint:kennlint // deadlinetest: Real SQLite contention must outlast the driver's wall-clock busy timeout.
-		}
-		require.NoError(t, lock.Rollback())
-		require.NoError(t, <-done)
+		synctest.Test(t, func(t *testing.T) {
+			s := newTestStore(t)
+			lock := holdTestSQLiteWriter(t, s)
+			done := make(chan error, 1)
+			go func() {
+				done <- s.withStorageTxRetryBegin(t.Context(), func(*sql.Tx) error {
+					return nil
+				})
+			}()
+			// BEGIN has failed busy and the loop is waiting to retry.
+			synctest.Wait()
+			select {
+			case err := <-done:
+				t.Fatalf("transaction returned while the writer lock was held: %v", err)
+			default:
+			}
+			require.NoError(t, lock.Rollback())
+			require.NoError(t, <-done)
+		})
 	})
 	t.Run("callback busy error is not retried", func(t *testing.T) {
-		s := newTestStore(t)
-		lock := holdTestSQLiteWriter(t, s)
-		ctx, cancel := context.WithTimeout(t.Context(), retryBeginBound)
-		defer cancel()
-		// A callback can return a busy error from a statement inside its transaction.
-		_, busyErr := s.writeDB.BeginTx(ctx, nil)
-		require.True(t, s.driver.IsBusy(busyErr), "expected busy error, got %v", busyErr)
-		require.NoError(t, lock.Rollback())
-		calls := 0
-		err := s.withStorageTxRetryBegin(ctx, func(*sql.Tx) error {
-			calls++
-			return busyErr
+		synctest.Test(t, func(t *testing.T) {
+			s := newTestStore(t)
+			lock := holdTestSQLiteWriter(t, s)
+			// A callback can return a busy error from a statement inside its transaction.
+			_, busyErr := s.writeDB.BeginTx(t.Context(), nil)
+			require.True(t, s.driver.IsBusy(busyErr), "expected busy error, got %v", busyErr)
+			require.NoError(t, lock.Rollback())
+			// Fake time ends a retry loop that never stops.
+			ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+			defer cancel()
+			calls := 0
+			err := s.withStorageTxRetryBegin(ctx, func(*sql.Tx) error {
+				calls++
+				return busyErr
+			})
+			require.ErrorIs(t, err, busyErr)
+			require.Equal(t, 1, calls)
 		})
-		require.ErrorIs(t, err, busyErr)
-		require.Equal(t, 1, calls)
 	})
 	t.Run("cancel", func(t *testing.T) {
-		s := newTestStore(t)
-		holdTestSQLiteWriter(t, s)
-		ctx, cancel := context.WithCancel(t.Context())
-		defer cancel()
-		timer := time.AfterFunc(50*time.Millisecond, cancel) //nolint:kennlint // deadlinetest: Exercise cancellation during a real SQLite busy wait.
-		defer timer.Stop()
-		done := make(chan error, 1)
-		go func() {
-			done <- s.withStorageTxRetryBegin(ctx, func(*sql.Tx) error {
-				t.Error("callback ran while another writer held the lock")
-				return nil
-			})
-		}()
-		// The loop has no attempt or time limit, so only cancellation ends it.
-		select {
-		case err := <-done:
-			require.ErrorIs(t, err, context.Canceled)
-		case <-time.After(retryBeginBound):
-			t.Fatal("retry loop kept running after cancellation")
-		}
+		synctest.Test(t, func(t *testing.T) {
+			s := newTestStore(t)
+			holdTestSQLiteWriter(t, s)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			done := make(chan error, 1)
+			go func() {
+				done <- s.withStorageTxRetryBegin(ctx, func(*sql.Tx) error {
+					t.Error("callback ran while another writer held the lock")
+					return nil
+				})
+			}()
+			// The loop has no attempt or time limit, so only cancellation ends it.
+			synctest.Wait()
+			select {
+			case err := <-done:
+				t.Fatalf("retry loop returned before cancellation: %v", err)
+			default:
+			}
+			cancel()
+			select {
+			case err := <-done:
+				require.ErrorIs(t, err, context.Canceled)
+			case <-time.After(time.Minute):
+				t.Fatal("retry loop kept running after cancellation")
+			}
+		})
 	})
 }
 

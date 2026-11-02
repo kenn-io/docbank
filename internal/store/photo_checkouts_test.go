@@ -1101,10 +1101,16 @@ func TestPhotoCheckoutPublicationOrdersEligibilityMutationsAndRecordsCancellatio
 					default:
 					}
 				} else {
-					select {
-					case err := <-changed:
-						t.Fatalf("eligibility changed during installation: %v", err)
-					case <-time.After(50 * time.Millisecond): //nolint:kennlint // deadlinetest: the tree RWMutex has no waiter signal
+					// Trash waits on the tree RWMutex, which synctest cannot see
+					// as durably blocked. A queued writer makes TryRLock fail.
+					for s.photoPublicationTreeMu.TryRLock() {
+						s.photoPublicationTreeMu.RUnlock()
+						select {
+						case err := <-changed:
+							t.Fatalf("eligibility changed during installation: %v", err)
+						default:
+						}
+						runtime.Gosched()
 					}
 				}
 				_, err := s.SetPhotoAssetExcluded(ctx, other.ID, other.Revision, true)
