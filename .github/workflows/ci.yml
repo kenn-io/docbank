@@ -500,6 +500,20 @@ jobs:
         with:
           group: windows-${{ matrix.goarch }}
 
+      # t.TempDir holds every test vault. TEMP defaults to C:, the runner's
+      # network-attached OS disk, whose flushes stall for seconds while other
+      # test packages write. D: is a local disk.
+      - name: Put temporary files on D
+        shell: pwsh
+        run: |
+          if (Test-Path 'D:\') {
+            $path = 'D:\a\_temp\tmp'
+            New-Item -ItemType Directory -Force -Path $path | Out-Null
+            "TEMP=$path", "TMP=$path" >> $env:GITHUB_ENV
+          } else {
+            Write-Warning 'D: is missing; keeping TEMP on the OS disk'
+          }
+
       - name: Check PowerShell installer
         if: matrix.goarch == 'amd64'
         shell: pwsh
