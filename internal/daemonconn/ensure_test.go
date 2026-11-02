@@ -234,6 +234,11 @@ func TestEnsureProbesVaultOwnershipBeforeStarting(t *testing.T) {
 }
 
 func TestEnsureReplacesIncompatibleDaemon(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
 	root, rec := startUnresponsiveRuntime(t)
 	assetID := "00000000-0000-4000-8000-000000000001"
 	fileID := "00000000-0000-4000-8000-000000000010"
@@ -278,10 +283,9 @@ func TestEnsureReplacesIncompatibleDaemon(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	rec.Address = strings.TrimPrefix(server.URL, "http://")
-	protocolVersion, err := strconv.Atoi(daemonProtocolVersion)
-	require.NoError(t, err)
-	rec.Metadata[metaProtocolVersion] = strconv.Itoa(protocolVersion - 1)
-	_, err = RuntimeStore(root).Write(rec)
+	// Main's protocol 112 lacks the changes route, even with the same dev version.
+	rec.Metadata[metaProtocolVersion] = "112"
+	_, err := RuntimeStore(root).Write(rec)
 	require.NoError(t, err)
 	result, err := ensureDaemon(t.Context(), root,
 		func(_ context.Context, _ string) (kitdaemon.RuntimeRecord, error) {
