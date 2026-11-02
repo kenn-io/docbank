@@ -1,0 +1,751 @@
+{
+ "document": {
+  "filename": "agreement.pdf",
+  "md_content": "# Synthetic Supply Agreement\n\n<!-- image -->\n\nThe parties agree to the prices on the next page.\n\n## Schedule 1: Prices\n\nTable 1: Unit prices\n\n| Item | Unit | Price (EUR) |\n|---|---|---|\n| Paper | ream | 4.10 |\n| Toner | cartridge | 62.00 |\n\nPrices exclude delivery.\n",
+  "json_content": {
+   "schema_name": "DoclingDocument",
+   "version": "1.10.0",
+   "name": "document",
+   "origin": {
+    "mimetype": "application/pdf",
+    "binary_hash": 1234567890,
+    "filename": "agreement.pdf",
+    "uri": null
+   },
+   "furniture": {
+    "self_ref": "#/furniture",
+    "parent": null,
+    "children": [],
+    "content_layer": "furniture",
+    "meta": null,
+    "name": "_root_",
+    "label": "unspecified"
+   },
+   "body": {
+    "self_ref": "#/body",
+    "parent": null,
+    "children": [
+     {
+      "$ref": "#/texts/0"
+     },
+     {
+      "$ref": "#/pictures/0"
+     },
+     {
+      "$ref": "#/texts/2"
+     },
+     {
+      "$ref": "#/texts/3"
+     },
+     {
+      "$ref": "#/tables/0"
+     },
+     {
+      "$ref": "#/texts/5"
+     },
+     {
+      "$ref": "#/texts/6"
+     }
+    ],
+    "content_layer": "body",
+    "meta": null,
+    "name": "_root_",
+    "label": "unspecified"
+   },
+   "groups": [],
+   "texts": [
+    {
+     "self_ref": "#/texts/0",
+     "parent": {
+      "$ref": "#/body"
+     },
+     "children": [],
+     "content_layer": "body",
+     "meta": null,
+     "label": "title",
+     "prov": [
+      {
+       "page_no": 1,
+       "bbox": {
+        "l": 72.0,
+        "t": 720.0,
+        "r": 540.0,
+        "b": 700.0,
+        "coord_origin": "BOTTOMLEFT"
+       },
+       "charspan": [
+        0,
+        26
+       ]
+      }
+     ],
+     "orig": "Synthetic Supply Agreement",
+     "text": "Synthetic Supply Agreement",
+     "formatting": null,
+     "hyperlink": null
+    },
+    {
+     "self_ref": "#/texts/1",
+     "parent": {
+      "$ref": "#/pictures/0"
+     },
+     "children": [],
+     "content_layer": "body",
+     "meta": null,
+     "label": "text",
+     "prov": [
+      {
+       "page_no": 1,
+       "bbox": {
+        "l": 72.0,
+        "t": 720.0,
+        "r": 540.0,
+        "b": 700.0,
+        "coord_origin": "BOTTOMLEFT"
+       },
+       "charspan": [
+        0,
+        19
+       ]
+      }
+     ],
+     "orig": "Example Trading Co.",
+     "text": "Example Trading Co.",
+     "formatting": null,
+     "hyperlink": null
+    },
+    {
+     "self_ref": "#/texts/2",
+     "parent": {
+      "$ref": "#/body"
+     },
+     "children": [],
+     "content_layer": "body",
+     "meta": null,
+     "label": "text",
+     "prov": [
+      {
+       "page_no": 1,
+       "bbox": {
+        "l": 72.0,
+        "t": 720.0,
+        "r": 540.0,
+        "b": 700.0,
+        "coord_origin": "BOTTOMLEFT"
+       },
+       "charspan": [
+        0,
+        49
+       ]
+      }
+     ],
+     "orig": "The parties agree to the prices on the next page.",
+     "text": "The parties agree to the prices on the next page.",
+     "formatting": null,
+     "hyperlink": null
+    },
+    {
+     "self_ref": "#/texts/3",
+     "parent": {
+      "$ref": "#/body"
+     },
+     "children": [],
+     "content_layer": "body",
+     "meta": null,
+     "label": "section_header",
+     "prov": [
+      {
+       "page_no": 2,
+       "bbox": {
+        "l": 72.0,
+        "t": 720.0,
+        "r": 540.0,
+        "b": 700.0,
+        "coord_origin": "BOTTOMLEFT"
+       },
+       "charspan": [
+        0,
+        18
+       ]
+      }
+     ],
+     "orig": "Schedule 1: Prices",
+     "text": "Schedule 1: Prices",
+     "formatting": null,
+     "hyperlink": null,
+     "level": 1
+    },
+    {
+     "self_ref": "#/texts/4",
+     "parent": {
+      "$ref": "#/tables/0"
+     },
+     "children": [],
+     "content_layer": "body",
+     "meta": null,
+     "label": "caption",
+     "prov": [
+      {
+       "page_no": 2,
+       "bbox": {
+        "l": 72.0,
+        "t": 720.0,
+        "r": 540.0,
+        "b": 700.0,
+        "coord_origin": "BOTTOMLEFT"
+       },
+       "charspan": [
+        0,
+        20
+       ]
+      }
+     ],
+     "orig": "Table 1: Unit prices",
+     "text": "Table 1: Unit prices",
+     "formatting": null,
+     "hyperlink": null
+    },
+    {
+     "self_ref": "#/texts/5",
+     "parent": {
+      "$ref": "#/body"
+     },
+     "children": [],
+     "content_layer": "body",
+     "meta": null,
+     "label": "text",
+     "prov": [
+      {
+       "page_no": 2,
+       "bbox": {
+        "l": 72.0,
+        "t": 720.0,
+        "r": 540.0,
+        "b": 700.0,
+        "coord_origin": "BOTTOMLEFT"
+       },
+       "charspan": [
+        0,
+        24
+       ]
+      }
+     ],
+     "orig": "Prices exclude delivery.",
+     "text": "Prices exclude delivery.",
+     "formatting": null,
+     "hyperlink": null
+    },
+    {
+     "self_ref": "#/texts/6",
+     "parent": {
+      "$ref": "#/body"
+     },
+     "children": [],
+     "content_layer": "furniture",
+     "meta": null,
+     "label": "page_footer",
+     "prov": [
+      {
+       "page_no": 2,
+       "bbox": {
+        "l": 72.0,
+        "t": 720.0,
+        "r": 540.0,
+        "b": 700.0,
+        "coord_origin": "BOTTOMLEFT"
+       },
+       "charspan": [
+        0,
+        1
+       ]
+      }
+     ],
+     "orig": "2",
+     "text": "2",
+     "formatting": null,
+     "hyperlink": null
+    }
+   ],
+   "pictures": [
+    {
+     "self_ref": "#/pictures/0",
+     "parent": {
+      "$ref": "#/body"
+     },
+     "children": [
+      {
+       "$ref": "#/texts/1"
+      }
+     ],
+     "content_layer": "body",
+     "meta": null,
+     "label": "picture",
+     "prov": [
+      {
+       "page_no": 1,
+       "bbox": {
+        "l": 72.0,
+        "t": 720.0,
+        "r": 540.0,
+        "b": 700.0,
+        "coord_origin": "BOTTOMLEFT"
+       },
+       "charspan": [
+        0,
+        0
+       ]
+      }
+     ],
+     "captions": [],
+     "references": [],
+     "footnotes": [],
+     "image": null,
+     "annotations": []
+    }
+   ],
+   "tables": [
+    {
+     "self_ref": "#/tables/0",
+     "parent": {
+      "$ref": "#/body"
+     },
+     "children": [
+      {
+       "$ref": "#/texts/4"
+      }
+     ],
+     "content_layer": "body",
+     "meta": null,
+     "label": "table",
+     "prov": [
+      {
+       "page_no": 2,
+       "bbox": {
+        "l": 72.0,
+        "t": 720.0,
+        "r": 540.0,
+        "b": 700.0,
+        "coord_origin": "BOTTOMLEFT"
+       },
+       "charspan": [
+        0,
+        0
+       ]
+      }
+     ],
+     "captions": [
+      {
+       "$ref": "#/texts/4"
+      }
+     ],
+     "references": [],
+     "footnotes": [],
+     "image": null,
+     "data": {
+      "table_cells": [
+       {
+        "bbox": {
+         "l": 80.0,
+         "t": 120.0,
+         "r": 220.0,
+         "b": 135.0,
+         "coord_origin": "TOPLEFT"
+        },
+        "row_span": 1,
+        "col_span": 1,
+        "start_row_offset_idx": 0,
+        "end_row_offset_idx": 1,
+        "start_col_offset_idx": 0,
+        "end_col_offset_idx": 1,
+        "text": "Item",
+        "column_header": true,
+        "row_header": false,
+        "row_section": false,
+        "fillable": false
+       },
+       {
+        "bbox": {
+         "l": 230.0,
+         "t": 120.0,
+         "r": 370.0,
+         "b": 135.0,
+         "coord_origin": "TOPLEFT"
+        },
+        "row_span": 1,
+        "col_span": 1,
+        "start_row_offset_idx": 0,
+        "end_row_offset_idx": 1,
+        "start_col_offset_idx": 1,
+        "end_col_offset_idx": 2,
+        "text": "Unit",
+        "column_header": true,
+        "row_header": false,
+        "row_section": false,
+        "fillable": false
+       },
+       {
+        "bbox": {
+         "l": 380.0,
+         "t": 120.0,
+         "r": 520.0,
+         "b": 135.0,
+         "coord_origin": "TOPLEFT"
+        },
+        "row_span": 1,
+        "col_span": 1,
+        "start_row_offset_idx": 0,
+        "end_row_offset_idx": 1,
+        "start_col_offset_idx": 2,
+        "end_col_offset_idx": 3,
+        "text": "Price (EUR)",
+        "column_header": true,
+        "row_header": false,
+        "row_section": false,
+        "fillable": false
+       },
+       {
+        "bbox": {
+         "l": 80.0,
+         "t": 140.0,
+         "r": 220.0,
+         "b": 155.0,
+         "coord_origin": "TOPLEFT"
+        },
+        "row_span": 1,
+        "col_span": 1,
+        "start_row_offset_idx": 1,
+        "end_row_offset_idx": 2,
+        "start_col_offset_idx": 0,
+        "end_col_offset_idx": 1,
+        "text": "Paper",
+        "column_header": false,
+        "row_header": false,
+        "row_section": false,
+        "fillable": false
+       },
+       {
+        "bbox": {
+         "l": 230.0,
+         "t": 140.0,
+         "r": 370.0,
+         "b": 155.0,
+         "coord_origin": "TOPLEFT"
+        },
+        "row_span": 1,
+        "col_span": 1,
+        "start_row_offset_idx": 1,
+        "end_row_offset_idx": 2,
+        "start_col_offset_idx": 1,
+        "end_col_offset_idx": 2,
+        "text": "ream",
+        "column_header": false,
+        "row_header": false,
+        "row_section": false,
+        "fillable": false
+       },
+       {
+        "bbox": {
+         "l": 380.0,
+         "t": 140.0,
+         "r": 520.0,
+         "b": 155.0,
+         "coord_origin": "TOPLEFT"
+        },
+        "row_span": 1,
+        "col_span": 1,
+        "start_row_offset_idx": 1,
+        "end_row_offset_idx": 2,
+        "start_col_offset_idx": 2,
+        "end_col_offset_idx": 3,
+        "text": "4.10",
+        "column_header": false,
+        "row_header": false,
+        "row_section": false,
+        "fillable": false
+       },
+       {
+        "bbox": {
+         "l": 80.0,
+         "t": 160.0,
+         "r": 220.0,
+         "b": 175.0,
+         "coord_origin": "TOPLEFT"
+        },
+        "row_span": 1,
+        "col_span": 1,
+        "start_row_offset_idx": 2,
+        "end_row_offset_idx": 3,
+        "start_col_offset_idx": 0,
+        "end_col_offset_idx": 1,
+        "text": "Toner",
+        "column_header": false,
+        "row_header": false,
+        "row_section": false,
+        "fillable": false
+       },
+       {
+        "bbox": {
+         "l": 230.0,
+         "t": 160.0,
+         "r": 370.0,
+         "b": 175.0,
+         "coord_origin": "TOPLEFT"
+        },
+        "row_span": 1,
+        "col_span": 1,
+        "start_row_offset_idx": 2,
+        "end_row_offset_idx": 3,
+        "start_col_offset_idx": 1,
+        "end_col_offset_idx": 2,
+        "text": "cartridge",
+        "column_header": false,
+        "row_header": false,
+        "row_section": false,
+        "fillable": false
+       },
+       {
+        "bbox": {
+         "l": 380.0,
+         "t": 160.0,
+         "r": 520.0,
+         "b": 175.0,
+         "coord_origin": "TOPLEFT"
+        },
+        "row_span": 1,
+        "col_span": 1,
+        "start_row_offset_idx": 2,
+        "end_row_offset_idx": 3,
+        "start_col_offset_idx": 2,
+        "end_col_offset_idx": 3,
+        "text": "62.00",
+        "column_header": false,
+        "row_header": false,
+        "row_section": false,
+        "fillable": false
+       }
+      ],
+      "num_rows": 3,
+      "num_cols": 3,
+      "orientation": "horizontal",
+      "grid": [
+       [
+        {
+         "bbox": {
+          "l": 80.0,
+          "t": 120.0,
+          "r": 220.0,
+          "b": 135.0,
+          "coord_origin": "TOPLEFT"
+         },
+         "row_span": 1,
+         "col_span": 1,
+         "start_row_offset_idx": 0,
+         "end_row_offset_idx": 1,
+         "start_col_offset_idx": 0,
+         "end_col_offset_idx": 1,
+         "text": "Item",
+         "column_header": true,
+         "row_header": false,
+         "row_section": false,
+         "fillable": false
+        },
+        {
+         "bbox": {
+          "l": 230.0,
+          "t": 120.0,
+          "r": 370.0,
+          "b": 135.0,
+          "coord_origin": "TOPLEFT"
+         },
+         "row_span": 1,
+         "col_span": 1,
+         "start_row_offset_idx": 0,
+         "end_row_offset_idx": 1,
+         "start_col_offset_idx": 1,
+         "end_col_offset_idx": 2,
+         "text": "Unit",
+         "column_header": true,
+         "row_header": false,
+         "row_section": false,
+         "fillable": false
+        },
+        {
+         "bbox": {
+          "l": 380.0,
+          "t": 120.0,
+          "r": 520.0,
+          "b": 135.0,
+          "coord_origin": "TOPLEFT"
+         },
+         "row_span": 1,
+         "col_span": 1,
+         "start_row_offset_idx": 0,
+         "end_row_offset_idx": 1,
+         "start_col_offset_idx": 2,
+         "end_col_offset_idx": 3,
+         "text": "Price (EUR)",
+         "column_header": true,
+         "row_header": false,
+         "row_section": false,
+         "fillable": false
+        }
+       ],
+       [
+        {
+         "bbox": {
+          "l": 80.0,
+          "t": 140.0,
+          "r": 220.0,
+          "b": 155.0,
+          "coord_origin": "TOPLEFT"
+         },
+         "row_span": 1,
+         "col_span": 1,
+         "start_row_offset_idx": 1,
+         "end_row_offset_idx": 2,
+         "start_col_offset_idx": 0,
+         "end_col_offset_idx": 1,
+         "text": "Paper",
+         "column_header": false,
+         "row_header": false,
+         "row_section": false,
+         "fillable": false
+        },
+        {
+         "bbox": {
+          "l": 230.0,
+          "t": 140.0,
+          "r": 370.0,
+          "b": 155.0,
+          "coord_origin": "TOPLEFT"
+         },
+         "row_span": 1,
+         "col_span": 1,
+         "start_row_offset_idx": 1,
+         "end_row_offset_idx": 2,
+         "start_col_offset_idx": 1,
+         "end_col_offset_idx": 2,
+         "text": "ream",
+         "column_header": false,
+         "row_header": false,
+         "row_section": false,
+         "fillable": false
+        },
+        {
+         "bbox": {
+          "l": 380.0,
+          "t": 140.0,
+          "r": 520.0,
+          "b": 155.0,
+          "coord_origin": "TOPLEFT"
+         },
+         "row_span": 1,
+         "col_span": 1,
+         "start_row_offset_idx": 1,
+         "end_row_offset_idx": 2,
+         "start_col_offset_idx": 2,
+         "end_col_offset_idx": 3,
+         "text": "4.10",
+         "column_header": false,
+         "row_header": false,
+         "row_section": false,
+         "fillable": false
+        }
+       ],
+       [
+        {
+         "bbox": {
+          "l": 80.0,
+          "t": 160.0,
+          "r": 220.0,
+          "b": 175.0,
+          "coord_origin": "TOPLEFT"
+         },
+         "row_span": 1,
+         "col_span": 1,
+         "start_row_offset_idx": 2,
+         "end_row_offset_idx": 3,
+         "start_col_offset_idx": 0,
+         "end_col_offset_idx": 1,
+         "text": "Toner",
+         "column_header": false,
+         "row_header": false,
+         "row_section": false,
+         "fillable": false
+        },
+        {
+         "bbox": {
+          "l": 230.0,
+          "t": 160.0,
+          "r": 370.0,
+          "b": 175.0,
+          "coord_origin": "TOPLEFT"
+         },
+         "row_span": 1,
+         "col_span": 1,
+         "start_row_offset_idx": 2,
+         "end_row_offset_idx": 3,
+         "start_col_offset_idx": 1,
+         "end_col_offset_idx": 2,
+         "text": "cartridge",
+         "column_header": false,
+         "row_header": false,
+         "row_section": false,
+         "fillable": false
+        },
+        {
+         "bbox": {
+          "l": 380.0,
+          "t": 160.0,
+          "r": 520.0,
+          "b": 175.0,
+          "coord_origin": "TOPLEFT"
+         },
+         "row_span": 1,
+         "col_span": 1,
+         "start_row_offset_idx": 2,
+         "end_row_offset_idx": 3,
+         "start_col_offset_idx": 2,
+         "end_col_offset_idx": 3,
+         "text": "62.00",
+         "column_header": false,
+         "row_header": false,
+         "row_section": false,
+         "fillable": false
+        }
+       ]
+      ]
+     },
+     "annotations": []
+    }
+   ],
+   "key_value_items": [],
+   "form_items": [],
+   "pages": {
+    "1": {
+     "size": {
+      "width": 595.0,
+      "height": 842.0
+     },
+     "image": null,
+     "page_no": 1
+    },
+    "2": {
+     "size": {
+      "width": 595.0,
+      "height": 842.0
+     },
+     "image": null,
+     "page_no": 2
+    }
+   }
+  },
+  "html_content": null,
+  "text_content": null,
+  "doctags_content": null
+ },
+ "status": "success",
+ "errors": [],
+ "processing_time": 0.42,
+ "timings": {}
+}
