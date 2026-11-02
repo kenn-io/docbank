@@ -216,6 +216,7 @@ func checkRenditionRetryErrorsPostgres(t *testing.T) {
 	} {
 		t.Run(tc.code, func(t *testing.T) {
 			require.Equal(t, tc.retry, s.RenditionJobErrorRetryable(fmt.Errorf("catalog operation: %w", &pgconn.PgError{Code: tc.code})))
+			require.Equal(t, tc.retry, s.RenditionJobErrorRetryable(fmt.Errorf("%w: %w", errCommitTx, &pgconn.PgError{Code: tc.code})))
 		})
 	}
 	require.False(t, s.RenditionJobErrorRetryable(ErrRenditionJobFenced))

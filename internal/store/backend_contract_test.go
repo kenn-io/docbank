@@ -24,6 +24,7 @@ type backendSuite struct {
 var backendSuites = []backendSuite{
 	{name: "renditions", postgres: "native operations", scope: "Original-file consent, jobs, leases, staging, publication and exact text readback; excludes derived-photo jobs and search.", scenarios: []backendScenario{
 		{"RenditionRetryErrors", nil, checkRenditionRetryErrorsPostgres},
+		{"RenditionConnectionFailure", nil, checkRenditionConnectionFailurePostgres},
 		{"RenditionArtifactStaging", func(t *testing.T) { t.Helper(); checkRenditionArtifactStaging(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkRenditionArtifactStaging(t, newPostgresQueryStore) }},
 		{"RenditionReplacementEmbeddings", nil, checkRenditionReplacementEmbeddingsPostgres},
 		{"RenditionSnapshots", nil, checkRenditionSnapshotsPostgres},

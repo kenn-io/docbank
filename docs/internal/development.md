@@ -773,9 +773,11 @@ policy agree. Each version/profile waiter keeps its own consent. Claims,
 renewals, scheduled retries and resumable provider handles keep the existing
 lease and fencing rules. An expired provider call without a durable handle
 requires operator resolution. Worker error classification recognizes PostgreSQL
-serialization failures, deadlocks and lock unavailability; it does not retry
-unknown commit outcomes. Reusing a staged build or restoring a superseded
-head does not repeat provider work.
+serialization failures, deadlocks and lock unavailability. It also retries
+pgx-confirmed safe connection failures before commit, so a disconnected claim
+can resume on a fresh connection. A lost commit response remains fatal unless
+PostgreSQL explicitly reports an aborted transaction. Reusing a staged
+build or restoring a superseded head does not repeat provider work.
 
 Builds, artifacts, evidence units and text segments are immutable records. The
 runtime role may insert them; cleanup may delete them, but no update grant

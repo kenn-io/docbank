@@ -16,6 +16,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/jackc/pgx/v5/pgconn"
+
 	"go.kenn.io/docbank/document"
 )
 
@@ -66,31 +68,29 @@ var (
 	ErrRenditionJobWaiterReselected = errors.New("rendition job waiter authority was reselected")
 )
 
-// RenditionJobErrorRetryable reports whether err is a short-lived catalog
-// contention failure. Workers may retry these errors while their fenced lease
+// RenditionJobErrorRetryable reports whether err is a transient catalog
+// failure that can be retried. Workers may retry these errors while their fenced lease
 // remains live; all other catalog errors require normal state classification.
 func (s *Store) RenditionJobErrorRetryable(err error) bool {
 	if s == nil || err == nil {
 		return false
 	}
-	if errors.Is(err, sql.ErrConnDone) || errors.Is(err, driver.ErrBadConn) {
-		return true
-	}
 	if s.postgresSchema == "" {
-		return s.driver.IsBusy(err)
+		return errors.Is(err, sql.ErrConnDone) || errors.Is(err, driver.ErrBadConn) || s.driver.IsBusy(err)
 	}
-	// Like SQLite busy errors, these abort the database operation. Do not
-	// treat other connection errors as retryable: commit may have succeeded.
 	var state interface{ SQLState() string }
-	if !errors.As(err, &state) {
+	if errors.As(err, &state) {
+		switch state.SQLState() {
+		case "40001", "40P01", "55P03":
+			return true // PostgreSQL has explicitly aborted the transaction.
+		}
+	}
+	// A lost COMMIT response can surface as a retry-safe "conn closed" error
+	// even when the write committed. Only retry it before the commit boundary.
+	if errors.Is(err, errCommitTx) {
 		return false
 	}
-	switch state.SQLState() {
-	case "40001", "40P01", "55P03":
-		return true
-	default:
-		return false
-	}
+	return pgconn.SafeToRetry(err) || errors.Is(err, sql.ErrConnDone) || errors.Is(err, driver.ErrBadConn)
 }
 
 // RenditionJobRequest joins one authorized version/profile waiter to the

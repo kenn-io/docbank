@@ -284,7 +284,10 @@ func (s *Store) Checkpoint(ctx context.Context) error {
 	return nil
 }
 
-var errBeginTx = errors.New("beginning transaction")
+var (
+	errBeginTx  = errors.New("beginning transaction")
+	errCommitTx = errors.New("committing transaction")
+)
 
 // withStorageTx is the transaction primitive for bootstrap, import, audit
 // recording, and physical storage maintenance. User-visible metadata mutations
@@ -377,7 +380,7 @@ func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) (r
 	}
 	changed := capture && photoChanged(ctx, tx)
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("committing transaction: %w", err)
+		return fmt.Errorf("%w: %w", errCommitTx, err)
 	}
 	if dropped {
 		s.photoEvents.installed.Store(false)
