@@ -4,9 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
-	"net/url"
-	"path/filepath"
-	"strings"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -40,11 +38,12 @@ func TestPhotoSearchRevalidationCompilesAfterPublication(t *testing.T) {
 	defer resume()
 	readDB := s.db
 	s.db = sql.OpenDB(photoSearchBeginConnector{
-		driver:  readDB.Driver(),
-		uri:     (&url.URL{Scheme: "file", Path: "/" + strings.TrimPrefix(filepath.ToSlash(s.path), "/"), RawQuery: "mode=rw"}).String(),
-		started: started, release: release,
+		db: readDB, start: sync.OnceFunc(func() { close(started) }), release: release,
 	})
-	t.Cleanup(func() { require.NoError(t, readDB.Close()) })
+	t.Cleanup(func() {
+		require.NoError(t, s.db.Close())
+		require.NoError(t, readDB.Close())
+	})
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	scope := PhotoBrowseRequest{Query: snapshotTestQuery(t, `{}`)}
@@ -85,32 +84,72 @@ func TestPhotoSearchRevalidationCompilesAfterPublication(t *testing.T) {
 }
 
 type photoSearchBeginConnector struct {
-	driver           driver.Driver
-	uri              string
-	started, release chan struct{}
+	db      *sql.DB
+	start   func()
+	release chan struct{}
 }
 
-func (c photoSearchBeginConnector) Driver() driver.Driver { return c.driver }
+func (c photoSearchBeginConnector) Driver() driver.Driver { return c.db.Driver() }
 
-func (c photoSearchBeginConnector) Connect(context.Context) (driver.Conn, error) {
-	conn, err := c.driver.Open(c.uri)
+func (c photoSearchBeginConnector) Connect(ctx context.Context) (driver.Conn, error) {
+	conn, err := c.db.Conn(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return photoSearchBeginConn{Conn: conn, started: c.started, release: c.release}, nil
+	ready := make(chan driver.Conn)
+	rawErr := make(chan error, 1)
+	released, finished := make(chan struct{}), make(chan struct{})
+	// Keep Raw active until the wrapping pool returns the connection. The
+	// underlying connection is valid only for the duration of this callback.
+	go func() {
+		defer close(finished)
+		rawErr <- conn.Raw(func(raw any) error {
+			ready <- raw.(driver.Conn)
+			<-released
+			return nil
+		})
+	}()
+	var raw driver.Conn
+	select {
+	case raw = <-ready:
+	case err := <-rawErr:
+		<-finished
+		return nil, errors.Join(err, conn.Close())
+	}
+	return photoSearchBeginConn{
+		photoSearchDriverConn: raw.(photoSearchDriverConn), start: c.start, release: c.release,
+		close: func() error {
+			close(released)
+			<-finished
+			return errors.Join(<-rawErr, conn.Close())
+		},
+	}, nil
+}
+
+type photoSearchDriverConn interface {
+	driver.Conn
+	driver.ConnBeginTx
+	driver.ConnPrepareContext
+	driver.ExecerContext
+	driver.QueryerContext
+	driver.Pinger
 }
 
 type photoSearchBeginConn struct {
-	driver.Conn
-	started, release chan struct{}
+	photoSearchDriverConn
+	start   func()
+	release chan struct{}
+	close   func() error
 }
 
+func (c photoSearchBeginConn) Close() error { return c.close() }
+
 func (c photoSearchBeginConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
-	close(c.started)
+	c.start()
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case <-c.release:
-		return c.Conn.(driver.ConnBeginTx).BeginTx(ctx, opts)
+		return c.photoSearchDriverConn.BeginTx(ctx, opts)
 	}
 }

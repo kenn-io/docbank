@@ -2896,8 +2896,8 @@ func TestSemanticSearchReadsDoNotWaitForOpenWriter(t *testing.T) {
 				require.Equal(t, 1, got.CompleteDocuments)
 			case "similar-source-fence":
 				now := time.Now().UTC()
-				_, err := s.AcquireSimilarSearchAuthority(ctx, record.ProcessingProfileFingerprint, record.BindingID, "reader", now, time.Minute, SearchOptions{}, SimilarSource{NodeID: version.NodeID, ContentVersionID: version.ID})
-				require.ErrorIs(t, err, ErrInvalidProcessingSourceFence)
+				_, err := s.AcquireSimilarSearchAuthority(ctx, record.ProcessingProfileFingerprint, "binding-without-head", "reader", now, time.Minute, opts, SimilarSource{NodeID: version.NodeID, ContentVersionID: version.ID})
+				require.ErrorIs(t, err, ErrSimilarSourceUnavailable)
 			}
 		})
 	}
