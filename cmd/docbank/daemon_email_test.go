@@ -82,7 +82,8 @@ func TestServeRecoversAbandonedProcessingSpoolBeforeBlobCleanup(t *testing.T) {
 	t.Setenv("DOCBANK_HOME", root)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- runServe(ctx) }()
+	ready := make(chan struct{})
+	go func() { done <- serveDaemon(ctx, func() { close(ready) }) }()
 	t.Cleanup(func() {
 		cancel()
 		select {
@@ -92,10 +93,14 @@ func TestServeRecoversAbandonedProcessingSpoolBeforeBlobCleanup(t *testing.T) {
 			require.FailNow(t, "daemon did not stop after spool recovery")
 		}
 	})
-	require.Eventually(t, func() bool {
-		_, _, ok, findErr := daemonconn.Find(ctx, root)
-		return findErr == nil && ok
-	}, 30*time.Second, 25*time.Millisecond)
+	select {
+	case <-ready:
+	case err := <-done:
+		require.FailNow(t, "daemon exited before becoming ready", "%v", err)
+	}
+	_, _, ok, err := daemonconn.Find(ctx, root)
+	require.NoError(t, err)
+	require.True(t, ok)
 	entries, err := os.ReadDir(layout.BlobTmpDir())
 	require.NoError(t, err)
 	require.Empty(t, entries)

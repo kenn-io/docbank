@@ -327,12 +327,14 @@ const (
 )
 
 // startServe runs the daemon until stop or test cleanup, whichever comes first,
-// and waits for it to exit so TempDir removal never races a live daemon.
+// and waits for it to exit so TempDir removal never races a live daemon. It
+// returns once the daemon reports it is ready to serve.
 func startServe(t *testing.T) (stop func()) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- runServe(ctx) }()
+	ready := make(chan struct{})
+	go func() { done <- serveDaemon(ctx, func() { close(ready) }) }()
 	stop = sync.OnceFunc(func() {
 		cancel()
 		select {
@@ -343,31 +345,30 @@ func startServe(t *testing.T) (stop func()) {
 		}
 	})
 	t.Cleanup(stop)
+	select {
+	case <-ready:
+	case err := <-done:
+		require.FailNow(t, "daemon exited before becoming ready", "%v", err)
+	case <-time.After(daemonStartTimeout):
+		require.FailNow(t, "daemon never became ready")
+	}
 	return stop
 }
 
-// waitForDaemon discovers the daemon through its runtime record like a real
-// client and waits until it serves health checks, since discovery is published
-// before worker registration finishes.
+// waitForDaemon discovers the ready daemon through its runtime record like a
+// real client and checks that it serves health checks.
 func waitForDaemon(t *testing.T, dir string) kitdaemon.RuntimeRecord {
 	t.Helper()
-	healthClient := &http.Client{Timeout: time.Second}
-	var rec kitdaemon.RuntimeRecord
-	require.Eventually(t, func() bool {
-		recs, err := daemonconn.RuntimeStore(dir).List()
-		if err != nil || len(recs) != 1 {
-			return false
-		}
-		rec = recs[0]
-		request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+rec.Address+"/health", nil)
-		require.NoError(t, err)
-		resp, err := healthClient.Do(request)
-		if err != nil {
-			return false
-		}
-		_ = resp.Body.Close()
-		return resp.StatusCode == http.StatusOK
-	}, daemonStartTimeout, 50*time.Millisecond)
+	recs, err := daemonconn.RuntimeStore(dir).List()
+	require.NoError(t, err)
+	require.Len(t, recs, 1)
+	rec := recs[0]
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+rec.Address+"/health", nil)
+	require.NoError(t, err)
+	resp, err := (&http.Client{Timeout: daemonStartTimeout}).Do(request)
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
 	return rec
 }
 

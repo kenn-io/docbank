@@ -126,7 +126,15 @@ func removeWebBootstrap(root string) {
 	}
 }
 
-func runServe(ctx context.Context) (retErr error) {
+func runServe(ctx context.Context) error {
+	return serveDaemon(ctx, nil)
+}
+
+// serveDaemon runs the daemon until ctx ends or a shutdown request arrives.
+// A non-nil ready runs once the runtime record, listeners, and supervised jobs
+// are in place, just before the HTTP servers start; in-process tests use it to
+// learn the daemon is ready without polling.
+func serveDaemon(ctx context.Context, ready func()) (retErr error) {
 	layout, err := home.Resolve()
 	if err != nil {
 		return err
@@ -685,6 +693,9 @@ func runServe(ctx context.Context) (retErr error) {
 
 	if mcpURL != "" {
 		logger.Info("docbank MCP HTTP listening", "url", mcpURL)
+	}
+	if ready != nil {
+		ready()
 	}
 
 	return serveDaemonHTTP(sigCtx, stopCh, servers, drainMCP, func() {

@@ -114,10 +114,9 @@ func setupVaultHome(t *testing.T) string {
 func startTestDaemon(t *testing.T, dir string) {
 	t.Helper()
 	startServe(t)
-	require.Eventually(t, func() bool {
-		_, _, ok, err := daemonconn.Find(t.Context(), dir)
-		return err == nil && ok
-	}, 30*time.Second, 25*time.Millisecond, "test daemon never became ready")
+	_, _, ok, err := daemonconn.Find(t.Context(), dir)
+	require.NoError(t, err)
+	require.True(t, ok, "CLI discovery must find the ready test daemon")
 }
 
 func writeSourceFile(t *testing.T, name, content string) string {

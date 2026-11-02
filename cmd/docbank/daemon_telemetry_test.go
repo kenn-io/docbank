@@ -30,7 +30,8 @@ func startTelemetryTestDaemon(t *testing.T) telemetryTestDaemon {
 	t.Setenv("DOCBANK_HOME", root)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- runServe(ctx) }()
+	ready := make(chan struct{})
+	go func() { done <- serveDaemon(ctx, func() { close(ready) }) }()
 	t.Cleanup(func() {
 		cancel()
 		select {
@@ -40,16 +41,15 @@ func startTelemetryTestDaemon(t *testing.T) telemetryTestDaemon {
 			require.FailNow(t, "daemon did not stop")
 		}
 	})
-	var found telemetryTestDaemon
-	require.Eventually(t, func() bool {
-		rec, _, ok, findErr := daemonconn.Find(ctx, root)
-		if findErr != nil || !ok {
-			return false
-		}
-		found = telemetryTestDaemon{root: root, baseURL: "http://" + rec.Address, apiKey: rec.Metadata["api_key"]}
-		return true
-	}, 30*time.Second, 25*time.Millisecond)
-	return found
+	select {
+	case <-ready:
+	case err := <-done:
+		require.FailNow(t, "daemon exited before becoming ready", "%v", err)
+	}
+	rec, _, ok, err := daemonconn.Find(ctx, root)
+	require.NoError(t, err)
+	require.True(t, ok)
+	return telemetryTestDaemon{root: root, baseURL: "http://" + rec.Address, apiKey: rec.Metadata["api_key"]}
 }
 
 func (d telemetryTestDaemon) do(t *testing.T, method, path, body string) (int, string) {
