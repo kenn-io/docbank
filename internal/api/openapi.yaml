@@ -19302,6 +19302,8 @@ components:
           type: string
         modified_since:
           type: string
+        pdf_filter:
+          type: string
         source_present:
           type: boolean
         tag_id:
@@ -31235,6 +31237,12 @@ paths:
           name: source_present
           schema:
             type: boolean
+        - explode: false
+          in: query
+          name: pdf_filter
+          schema:
+            maxLength: 16384
+            type: string
         - explode: false
           in: query
           name: limit

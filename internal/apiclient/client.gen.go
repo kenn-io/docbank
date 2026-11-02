@@ -13383,6 +13383,7 @@ func (c *Client) Search(ctx context.Context, options *SearchRequestOptions, reqE
 		"mime_type":       {Style: "form", Explode: &[]bool{false}[0]},
 		"modified_before": {Style: "form", Explode: &[]bool{false}[0]},
 		"modified_since":  {Style: "form", Explode: &[]bool{false}[0]},
+		"pdf_filter":      {Style: "form", Explode: &[]bool{false}[0]},
 		"q":               {Style: "form", Explode: &[]bool{false}[0]},
 		"source_present":  {Style: "form", Explode: &[]bool{false}[0]},
 		"tag_id":          {Style: "form", Explode: &[]bool{false}[0]},
@@ -28046,6 +28047,7 @@ type SearchQuery struct {
 	Q              *string `json:"q,omitempty"`
 	Fuzzy          *bool   `json:"fuzzy,omitempty"`
 	SourcePresent  *bool   `json:"source_present,omitempty"`
+	PdfFilter      *string `json:"pdf_filter,omitempty"`
 	Limit          *int64  `json:"limit,omitempty"`
 	TagID          *string `json:"tag_id,omitempty"`
 	MimeType       *string `json:"mime_type,omitempty"`

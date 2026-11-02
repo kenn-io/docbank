@@ -25,6 +25,7 @@ var (
 	searchAgent          bool
 	searchFuzzy          bool
 	searchSourcePresent  bool
+	searchPDFFilter      string
 	searchTag            string
 	searchMIME           string
 	searchUnder          string
@@ -66,7 +67,6 @@ appends matching folders. Filters, --fuzzy, --limit above
 --json prints lexical {hits, limit, truncated} or hybrid processing results
 plus folders.
 --agent prints an OK header and one line per hit.
---fuzzy appends filename/path matches with one typo.
 Explicit processing modes need --profile and --source-version UUIDs.
 See docs/usage/search.md.`,
 	GroupID: groupSearch,
@@ -92,7 +92,7 @@ See docs/usage/search.md.`,
 			if len(args) != 0 {
 				return usageError(errors.New("--similar-to does not accept query text"))
 			}
-			for _, flag := range []string{"mode", "explain", "rerank", "tag", "mime-type", "under", "modified-since", "modified-before", "source-present"} {
+			for _, flag := range []string{"mode", "explain", "rerank", "tag", "mime-type", "under", "modified-since", "modified-before", "source-present", "pdf-filter"} {
 				if cmd.Flags().Changed(flag) {
 					return usageError(fmt.Errorf("--similar-to cannot be combined with --%s", flag))
 				}
@@ -121,6 +121,9 @@ See docs/usage/search.md.`,
 			return usageError(errors.New("--version requires --similar-to"))
 		}
 		if documentSearchFlagsChanged(cmd) {
+			if cmd.Flags().Changed("pdf-filter") {
+				return usageError(errors.New("--mode search cannot be combined with --pdf-filter"))
+			}
 			if cmd.Flags().Changed("source-present") {
 				return usageError(errors.New("--mode search cannot be combined with --source-present"))
 			}
@@ -155,7 +158,7 @@ See docs/usage/search.md.`,
 			return usageError(err)
 		}
 		if searchTag == "" && store.SearchNeedsQuery(strings.Join(args, " "), store.SearchOptions{
-			MIMEType: mimeType, ModifiedSince: modifiedSince, ModifiedBefore: modifiedBefore,
+			PDFFilter: searchPDFFilter, MIMEType: mimeType, ModifiedSince: modifiedSince, ModifiedBefore: modifiedBefore,
 		}) {
 			return usageError(store.ErrSearchQueryRequired)
 		}
@@ -176,6 +179,7 @@ See docs/usage/search.md.`,
 			}
 		}()
 		opts := daemonconn.SearchOptions{
+			PDFFilter:     searchPDFFilter,
 			SourcePresent: searchSourcePresent,
 			Fuzzy:         searchFuzzy,
 			MIMEType:      mimeType, ModifiedSince: modifiedSince, ModifiedBefore: modifiedBefore,
@@ -590,6 +594,7 @@ func writeFolderSearchHits(cmd *cobra.Command, folders []api.SearchHit, separate
 }
 
 func init() {
+	searchCmd.Flags().StringVar(&searchPDFFilter, "pdf-filter", "", "e.g. pdf_has_javascript:true")
 	searchCmd.Flags().BoolVar(&searchSourcePresent, "source-present", false, "exclude documents whose watched source is known to be gone")
 	searchCmd.Flags().StringVar(&searchSimilarTo, "similar-to", "", "find similar files using the stored embedding of id:N or /path")
 	searchCmd.Flags().StringVar(&searchVersion, "version", "", "exact current source version for --similar-to")

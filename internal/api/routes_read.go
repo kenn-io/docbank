@@ -17,6 +17,7 @@ import (
 	"go.kenn.io/kit/pack"
 	"go.kenn.io/kit/packstore"
 
+	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -379,6 +380,7 @@ func registerReadRoutes(api huma.API, d Deps) {
 		Q              string `query:"q"`
 		Fuzzy          bool   `query:"fuzzy"`
 		SourcePresent  bool   `query:"source_present"`
+		PDFFilter      string `query:"pdf_filter" maxLength:"16384"`
 		Limit          int    `query:"limit" default:"50" minimum:"1" maximum:"1000"`
 		TagID          string `query:"tag_id" pattern:"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"`
 		MIMEType       string `query:"mime_type" maxLength:"255"`
@@ -397,6 +399,7 @@ func registerReadRoutes(api huma.API, d Deps) {
 			return nil, NewError(http.StatusUnprocessableEntity, "validation", err.Error())
 		}
 		opts := store.SearchOptions{
+			PDFFilter:     in.PDFFilter,
 			SourcePresent: in.SourcePresent,
 			TagID:         in.TagID, MIMEType: mimeType, UnderNodeID: in.UnderNodeID,
 			ModifiedSince: modifiedSince, ModifiedBefore: modifiedBefore,
@@ -412,13 +415,14 @@ func registerReadRoutes(api huma.API, d Deps) {
 			hits, truncated, err = d.Store.SearchPageWithOptions(ctx, in.Q, in.Limit, opts)
 		}
 		if err != nil {
-			if errors.Is(err, store.ErrFuzzyQuery) {
+			if _, expressionError := errors.AsType[*query.ExpressionError](err); expressionError || errors.Is(err, store.ErrFuzzyQuery) {
 				return nil, NewError(http.StatusUnprocessableEntity, "validation", err.Error())
 			}
 			return nil, FromStoreError(err)
 		}
 		out := &searchOutput{Body: SearchReport{
 			Hits: []SearchHit{}, Limit: in.Limit, Truncated: truncated, Fuzzy: fuzzy,
+			PDFFilter:     in.PDFFilter,
 			SourcePresent: in.SourcePresent, TagID: in.TagID, MIMEType: mimeType, UnderNodeID: in.UnderNodeID,
 			ModifiedSince: modifiedSince, ModifiedBefore: modifiedBefore,
 		}}

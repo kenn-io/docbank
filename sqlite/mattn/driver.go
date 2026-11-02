@@ -38,6 +38,9 @@ func init() {
 		}, true); err != nil {
 			return fmt.Errorf("register photo folder function: %w", err)
 		}
+		if err := conn.RegisterFunc("docbank_source_metadata_json_v1", docsqlite.SourceMetadataJSON, true); err != nil {
+			return fmt.Errorf("register source metadata function: %w", err)
+		}
 		return nil
 	}})
 }
