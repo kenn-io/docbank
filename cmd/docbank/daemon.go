@@ -308,6 +308,36 @@ func runServe(ctx context.Context) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("configuring executable processing profiles: %w", err)
 	}
+
+	choice, err := readLocalText(layout.Root)
+	if err != nil {
+		logger.Warn("read local text selection; indexing remains inactive", "error", err)
+		choice = config.LocalTextConfig{}
+	}
+	baseConfig := cfg
+	candidateProfiles := func(mode string) (map[string]processing.ProfileConfig, config.Config, error) {
+		candidate, err := localTextCandidate(baseConfig, mode)
+		if err != nil {
+			return nil, candidate, err
+		}
+		bundle, err := configureEmbeddingRuntimeBundle(candidate)
+		if err != nil {
+			return nil, candidate, err
+		}
+		profiles, err := executableProcessingProfiles(candidate, bundle)
+		return profiles, candidate, err
+	}
+	if choice.Profile != "" {
+		selected, candidate, err := candidateProfiles(choice.Server)
+		if err == nil {
+			cfg, err = projectLocalTextProfile(cfg, processingProfiles, candidate, choice.Profile, selected[choice.Profile])
+		}
+		if err != nil {
+			logger.Warn("restore local text selection; indexing remains inactive", "profile", choice.Profile, "error", err)
+			choice = config.LocalTextConfig{}
+		}
+	}
+
 	for _, watch := range cfg.Watches {
 		if watch.Profile != "" {
 			if _, ok := processingProfiles[watch.Profile]; !ok {
@@ -349,6 +379,29 @@ func runServe(ctx context.Context) (retErr error) {
 	})
 	if err != nil {
 		return fmt.Errorf("configuring processing service: %w", err)
+	}
+
+	tracker := api.NewActivityTracker()
+	localText := &processing.LocalTextSetup{Service: processingService, Selected: choice.Profile,
+		ActivityBegin: tracker.Begin, ActivityEnd: tracker.End,
+		Startup: localTextStartup,
+		Save: func(name, mode string) error {
+			return saveLocalText(layout.Root, config.LocalTextConfig{Profile: name, Server: mode})
+		},
+	}
+	localText.Candidate = func(mode string) (*processing.Service, error) {
+		profiles, _, err := candidateProfiles(mode)
+		if err != nil {
+			return nil, err
+		}
+		service, err := processing.NewService(sigCtx, processing.ServiceConfig{Catalog: s, Blobs: blobs, Gate: operationGate, Profiles: profiles,
+			Principal: "daemon:operator", Scope: "document-processing", SpoolDirectory: layout.BlobTmpDir(), Lifecycle: sigCtx})
+		return service, err
+	}
+	if choice.Profile != "" {
+		if err := jobSupervisor.Start("embed:local-text", func(ctx context.Context) error { return localText.Backfill(ctx, logger) }); err != nil {
+			return err
+		}
 	}
 	embeddingRuntimeRegistry := processingService.EmbeddingRuntimes()
 	runtimeRegistry.Seal()
@@ -601,7 +654,6 @@ func runServe(ctx context.Context) (retErr error) {
 		}
 	}
 
-	tracker := api.NewActivityTracker()
 	backupScheduleWake := make(chan struct{}, 1)
 	if err := api.StartBackupSchedule(ctx, api.Deps{Store: s, Blobs: blobs, VaultRoot: layout.Root, Cfg: cfg, Gate: operationGate, Logger: logger, Jobs: jobSupervisor, Tracker: tracker, BackupScheduleWake: backupScheduleWake}); err != nil {
 		return fmt.Errorf("starting scheduled backups: %w", err)
@@ -636,7 +688,7 @@ func runServe(ctx context.Context) (retErr error) {
 		BackupScheduleWake: backupScheduleWake,
 		Jobs:               jobSupervisor, Gate: operationGate, WebURL: webURL, BlobRegistry: blobRegistry,
 		WebLoginEnabled: webLoginEnabled, APIAddress: addr,
-		Processing: processingService, EnsureEmail: processing.EnsureEmailTarget,
+		Processing: processingService, LocalText: localText, EnsureEmail: processing.EnsureEmailTarget,
 		PublishEmailDocuments: processing.PublishEmailDocuments,
 		PageRuntime:           pageRuntime,
 		Exports:               exportWorker,
@@ -671,7 +723,7 @@ func runServe(ctx context.Context) (retErr error) {
 	if background && cfg.Server.IdleTimeout.Std() > 0 && len(cfg.Watches) == 0 &&
 		cfg.Storage.PackInterval.Std() == 0 && drainMCP == nil {
 		if err := jobSupervisor.Start("daemon.idle-timeout", func(ctx context.Context) error {
-			idleWatch(ctx, tracker, cfg.Server.IdleTimeout.Std(), logger, stop)
+			idleWatch(ctx, tracker, cfg.Server.IdleTimeout.Std(), logger, localText.Pending, stop)
 			return nil
 		}); err != nil {
 			return fmt.Errorf("starting idle-timeout job: %w", err)
@@ -1259,7 +1311,7 @@ func listenWebOriginWithIdentity(
 // idleWatch exits an auto-started daemon after a fully quiet window so
 // spawned daemons don't accumulate. Foreground `daemon run` never idles out.
 func idleWatch(ctx context.Context, t *api.ActivityTracker, timeout time.Duration,
-	logger *slog.Logger, stop func()) {
+	logger *slog.Logger, pending func(context.Context) (bool, error), stop func()) {
 	jobs.ReportBusy(ctx, false)
 	// Clamp the poll interval: NewTicker panics on a non-positive duration,
 	// and a pathologically small configured timeout must not spin.
@@ -1271,7 +1323,7 @@ func idleWatch(ctx context.Context, t *api.ActivityTracker, timeout time.Duratio
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if t.IdleFor() >= timeout {
+			if t.IdleFor() >= timeout && localTextIdle(ctx, t, timeout, pending, logger) {
 				logger.Info("idle timeout reached, shutting down", "idle", timeout.String())
 				stop()
 				return
@@ -1306,4 +1358,19 @@ func randomHex32() (string, error) {
 		return "", fmt.Errorf("reading random bytes: %w", err)
 	}
 	return hex.EncodeToString(b), nil
+}
+
+// localTextIdle closes the gap between the last lane sweep and idle shutdown.
+func localTextIdle(ctx context.Context, tracker *api.ActivityTracker, timeout time.Duration, pending func(context.Context) (bool, error), logger *slog.Logger) bool {
+	busy, err := pending(ctx)
+	if err != nil {
+		logger.Warn("check local text work before idle shutdown", "error", err)
+		return false
+	}
+	if busy {
+		tracker.Begin()
+		tracker.End()
+		return false
+	}
+	return tracker.IdleFor() >= timeout
 }

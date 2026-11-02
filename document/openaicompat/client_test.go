@@ -804,3 +804,97 @@ func TestSharedAdmissionRejectsBeforeTransport(t *testing.T) {
 	}
 	assert.Zero(t, calls.Load())
 }
+
+func TestManagedServiceMovesPortsWithoutChangingConsentOrVectors(t *testing.T) {
+	t.Parallel()
+	var firstCalls, secondCalls atomic.Int64
+	handler := func(calls *atomic.Int64) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			calls.Add(1)
+			assert.Equal(t, "/v1/embeddings", r.URL.Path)
+			assert.Empty(t, r.Header.Get("Authorization"))
+			var body capturedRequest
+			assert.NoError(t, json.UnmarshalRead(r.Body, &body))
+			assert.Equal(t, []string{"search_document: passage", "search_query: question"}, body.Input)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(successIndexedResponse)
+		})
+	}
+	first := httptest.NewServer(handler(&firstCalls))
+	defer first.Close()
+	second := httptest.NewServer(handler(&secondCalls))
+	defer second.Close()
+	origin := first.URL
+	p := testProfile(t, modelInput(t, document.ModelInputContractConfig{Profile: document.ModelInputProfileNomic}))
+	explicit := newTestClient(t, p, nil, staticSuccessTransport())
+	oldIdentity, err := explicit.VectorIdentity()
+	require.NoError(t, err)
+	p.Origin, p.ManagedService, p.SelectionMode = "", "kit-embed", "local"
+	p.ResolveOrigin = func(context.Context) (string, error) { return origin, nil }
+	p.Descriptor = descriptorFor(t, p)
+	client, err := New(p, nil, &http.Client{})
+	require.NoError(t, err)
+	originalPolicy, err := PolicyFingerprint(p)
+	require.NoError(t, err)
+	for _, endpoint := range []string{first.URL, second.URL} {
+		origin = endpoint
+		_, err := document.ExecuteEmbedding(t.Context(), client, testInputs(), testAuthorization(p.Descriptor))
+		require.NoError(t, err)
+	}
+	require.Equal(t, int64(1), firstCalls.Load())
+	require.Equal(t, int64(1), secondCalls.Load())
+	identity, err := client.VectorIdentity()
+	require.NoError(t, err)
+	assert.Equal(t, oldIdentity, identity)
+	p.ResolveOrigin = func(context.Context) (string, error) { return second.URL, nil }
+	nextPolicy, err := PolicyFingerprint(p)
+	require.NoError(t, err)
+	assert.Equal(t, originalPolicy, nextPolicy)
+	p.SelectionMode = "auto"
+	nextPolicy, err = PolicyFingerprint(p)
+	require.NoError(t, err)
+	assert.NotEqual(t, originalPolicy, nextPolicy)
+}
+
+func TestManagedServiceRejectsInvalidBinding(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		service, mode string
+		resolver      bool
+	}{
+		{"unknown", "local", true}, {"kit-embed", "invalid", true}, {"kit-embed", "local", false},
+	} {
+		t.Run(tc.service+tc.mode, func(t *testing.T) {
+			p := testProfile(t, modelInput(t, document.ModelInputContractConfig{Profile: document.ModelInputProfileNomic}))
+			p.ManagedService, p.SelectionMode = tc.service, tc.mode
+			if tc.resolver {
+				p.ResolveOrigin = func(context.Context) (string, error) { return "http://127.0.0.1:1234", nil }
+			}
+			_, err := New(p, nil, nil)
+			require.ErrorContains(t, err, "managed embeddings require")
+		})
+	}
+}
+
+func TestManagedServiceOriginFailureIsTransientAndCanRetry(t *testing.T) {
+	t.Parallel()
+	failure := errors.New("synthetic server startup failure")
+	p := testProfile(t, modelInput(t, document.ModelInputContractConfig{Profile: document.ModelInputProfileNomic}))
+	p.Origin, p.ManagedService, p.SelectionMode = "", "kit-embed", "local"
+	attempts := 0
+	p.ResolveOrigin = func(context.Context) (string, error) {
+		attempts++
+		if attempts == 1 {
+			return "", failure
+		}
+		return "http://127.0.0.1:1234", nil
+	}
+	p.Descriptor = descriptorFor(t, p)
+	client, err := New(p, nil, &http.Client{Transport: staticSuccessTransport()})
+	require.NoError(t, err)
+	_, err = document.ExecuteEmbedding(t.Context(), client, testInputs(), testAuthorization(p.Descriptor))
+	require.ErrorIs(t, err, ErrTransientResponse)
+	require.ErrorIs(t, err, failure)
+	_, err = document.ExecuteEmbedding(t.Context(), client, testInputs(), testAuthorization(p.Descriptor))
+	require.NoError(t, err)
+}

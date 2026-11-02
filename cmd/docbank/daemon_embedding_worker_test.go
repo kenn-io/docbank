@@ -212,7 +212,7 @@ func syntheticLoopbackOpenAIConfig(t *testing.T, endpoint, environmentName strin
 			ConnectTimeout: config.Duration(time.Second), KeepAlive: config.Duration(time.Second),
 			TLSHandshakeTimeout: config.Duration(time.Second)},
 	}
-	descriptor := configuredEmbeddingDescriptor(profile, contract)
+	descriptor := config.EmbeddingDescriptor(profile, contract)
 	final, _, err := finalizeOpenAIEmbeddingDescriptor(openaicompat.Profile{Origin: endpoint, Descriptor: descriptor,
 		ModelInput: contract, SecretBinding: profile.CredentialBinding, DeploymentEpoch: profile.Runtime.DeploymentEpoch,
 		RequestTimeout: profile.Runtime.RequestTimeout.Std(), MaxBatchItems: profile.MaxBatchItems,

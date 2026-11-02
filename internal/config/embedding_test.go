@@ -121,4 +121,15 @@ api_key = { env = "DOCBANK_TEST_KIT_KEY" }
 	require.NoError(t, err)
 	assert.NotEqual(t, string(wantJSON), string(changedJSON))
 	assert.Contains(t, string(changedJSON), "different-model")
+	managed, err := Default().WithLocalText()
+	require.NoError(t, err)
+	for _, mutate := range []func(*EmbeddingProfileConfig){
+		func(p *EmbeddingProfileConfig) { p.Model = "unsupported" },
+		func(p *EmbeddingProfileConfig) { p.Dimensions = 512 },
+	} {
+		e := managed.EmbeddingProfiles[LocalTextProfile]
+		mutate(&e)
+		_, err := ManagedEmbeddingProfile(e, nil)
+		require.ErrorContains(t, err, "nomic-embed-text with 768 dimensions")
+	}
 }

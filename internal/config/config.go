@@ -279,6 +279,9 @@ type ProviderEgressConfig struct {
 type EmbeddingRuntimeConfig struct {
 	ProviderEgressConfig
 
+	Managed    bool   `toml:"-"`
+	ServerMode string `toml:"-"`
+
 	AdapterContract        string   `toml:"adapter_contract"`
 	ModelRevision          string   `toml:"model_revision"`
 	MinQuerySimilarity     *float64 `toml:"min_query_similarity"`
@@ -440,6 +443,8 @@ type Config struct {
 	RetrievalProfiles  map[string]RetrievalProfileConfig  `toml:"retrieval_profiles"`
 	ProcessingProfiles map[string]ProcessingProfileConfig `toml:"processing_profiles"`
 	Watches            []WatchConfig                      `toml:"watch"`
+
+	EffectiveProfiles map[string]ResolvedProcessingProfile `toml:"-"`
 }
 
 // Default returns the configuration used when config.toml is absent.
@@ -1376,9 +1381,17 @@ func validateEmbeddingProfileConfig(profile EmbeddingProfileConfig, prefix strin
 			runtime.AdapterContract != "docbank-standard-embedding-bridge/v2" {
 			return fmt.Errorf("%s runtime adapter_contract is unsupported", prefix)
 		}
-		parsed, err := validateProviderEgressConfig(runtime.ProviderEgressConfig, prefix)
-		if err != nil {
-			return err
+		parsed := new(url.URL)
+		if ManagedEmbedding(profile) {
+			if _, err := ManagedEmbeddingProfile(profile, nil); err != nil {
+				return fmt.Errorf("%s: %w", prefix, err)
+			}
+		} else {
+			var err error
+			parsed, err = validateProviderEgressConfig(runtime.ProviderEgressConfig, prefix)
+			if err != nil {
+				return err
+			}
 		}
 		if runtime.ModelRevision == "" || runtime.ModelRevision != strings.TrimSpace(runtime.ModelRevision) {
 			return fmt.Errorf("%s runtime model_revision is required", prefix)
@@ -1440,6 +1453,9 @@ func (c Config) EmbeddingModelInput(name string) (document.ModelInputContract, e
 // ProcessingProfile assembles one named portable profile and its deployment
 // retrieval policy without resolving credential references or contacting providers.
 func (c Config) ProcessingProfile(name string) (ResolvedProcessingProfile, error) {
+	if profile, ok := c.EffectiveProfiles[name]; ok {
+		return profile, nil
+	}
 	profile, err := c.assembleProcessingProfile(name)
 	if err != nil {
 		return ResolvedProcessingProfile{}, err
