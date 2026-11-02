@@ -69,7 +69,8 @@ func (r countedReader) Read(p []byte) (int, error) {
 // mismatched-key path — see TestWrongAPIKeyIsRejected).
 func newClient(t *testing.T, clientKey string) (*daemonconn.Connection, *store.Store) {
 	t.Helper()
-	dir := t.TempDir()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
 	s, err := store.Open(t.Context(), filepath.Join(dir, "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = s.Close() })

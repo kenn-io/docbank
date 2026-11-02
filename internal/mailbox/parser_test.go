@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -17,7 +18,8 @@ func TestMailboxDialectOccurrencesAndOversizeRecovery(t *testing.T) {
 	source := separator + "Subject: duplicate\nMessage-ID: <same@example.test>\n\n>From first\n>>From second\n" + separator + "Subject: duplicate\nMessage-ID: <same@example.test>\n\n>From first\n>>From second\n"
 	for _, dialect := range []string{"mboxrd", "mboxo"} {
 		t.Run(dialect, func(t *testing.T) {
-			spool := t.TempDir()
+			spool, err := filepath.EvalSymlinks(t.TempDir())
+			require.NoError(t, err)
 			r, err := NewScanner(strings.NewReader(source), dialect, spool, 128<<20)
 			require.NoError(t, err)
 			var hashes []string
@@ -47,7 +49,8 @@ func TestMailboxDialectOccurrencesAndOversizeRecovery(t *testing.T) {
 			require.Empty(t, files)
 		})
 	}
-	spool := t.TempDir()
+	spool, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
 	r, err := NewScanner(strings.NewReader(separator+"Subject: huge\n\n"+strings.Repeat("x", 200000)+"\n"+separator+"Subject: good\n\nhello\n"), "mboxrd", spool, 100)
 	require.NoError(t, err)
 	first, err := r.Next(t.Context())

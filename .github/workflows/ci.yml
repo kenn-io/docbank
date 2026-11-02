@@ -386,6 +386,39 @@ jobs:
       - name: Save Go caches
         uses: $/.github/actions/go-cache-save
 
+  macos:
+    needs: changes
+    if: *go-changed
+    # Exercises the kqueue watch backend and other darwin-only code paths.
+    name: macOS tests
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Restore Go caches
+        uses: $/.github/actions/go-cache-restore
+        with:
+          group: macos-arm64
+
+      - name: Vet
+        run: go vet -tags fts5 ./...
+
+      - name: Test
+        run: bash scripts/test-go-ci.sh
+
+      - name: Save Go caches
+        uses: $/.github/actions/go-cache-save
+
   lint:
     needs: changes
     if: *go-changed
@@ -421,6 +454,11 @@ jobs:
       - name: Run golangci-lint for Windows
         env:
           GOOS: windows
+        run: ./custom-gcl run ./...
+
+      - name: Run golangci-lint for macOS
+        env:
+          GOOS: darwin
         run: ./custom-gcl run ./...
 
       - name: Save Go caches

@@ -30,7 +30,8 @@ import (
 
 func newCitationMCPFixture(t *testing.T) (*Server, document.TextCitation) {
 	t.Helper()
-	root := t.TempDir()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
 	require.NoError(t, os.Mkdir(filepath.Join(root, "spool"), 0o700))
 	catalog, err := store.Open(t.Context(), filepath.Join(root, "docbank.db"))
 	require.NoError(t, err)

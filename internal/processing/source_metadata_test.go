@@ -729,7 +729,7 @@ func TestExtractSourceMetadataUsesSharedEmailInterpretation(t *testing.T) {
 				"Received: from sender.example.test\r\n\tby receiver.example.test\r\n\r\nbody")
 			digest := sha256.Sum256(payload)
 			decoded, err := emailmime.Decode(t.Context(), hex.EncodeToString(digest[:]),
-				int64(len(payload)), bytes.NewReader(payload), t.TempDir())
+				int64(len(payload)), bytes.NewReader(payload), sourceMetadataTestSpool(t))
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, decoded.Close()) })
 			message := decoded.Evidence.Inventory.Messages[0]
