@@ -81,7 +81,10 @@ func (Driver) Name() string { return "modernc.org/sqlite" }
 
 func (Driver) Open(path string, opts docsqlite.OpenOptions) (*sql.DB, error) {
 	busy := opts.BusyTimeout
-	if busy <= 0 {
+	switch {
+	case busy == docsqlite.NoBusyWait:
+		busy = 0
+	case busy <= 0:
 		busy = 5 * time.Second
 	}
 	query := url.Values{
