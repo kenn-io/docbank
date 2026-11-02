@@ -152,89 +152,96 @@ func (s *Store) ResolveSimilarCandidates(ctx context.Context, profile, binding s
 		if err != nil {
 			return err
 		}
-		filter, args := searchFilterSQL(opts)
-		eligible, err := loadSemanticMemberships(ctx, tx, profile, binding, kind, space, filter, args)
-		if err != nil {
-			return err
-		}
-		byNode := make(map[int64]SemanticSearchCandidate)
-		for _, neighbor := range neighbors {
-			for _, member := range eligible[semanticEligibilityKey{VectorSetID: neighbor.SetID, InputID: neighbor.InputKey, InputChecksum: neighbor.InputChecksum}] {
-				if member.NodeID == source.NodeID {
-					continue
-				}
-				if _, seen := byNode[member.NodeID]; seen {
-					continue
-				}
-				member.VaultID, member.VectorSpaceID, member.InputID, member.Score = s.vaultID, space, neighbor.InputKey, neighbor.Score
-				byNode[member.NodeID] = member
-			}
-		}
-		rows, err := tx.QueryContext(ctx, `WITH `+CurrentContentMembershipCTE+`
-			SELECT node_id,blob_hash FROM (SELECT m.* FROM `+nodeFrom+` JOIN current_content_members m ON n.id=m.node_id
-			WHERE n.id<>? `+filter+`) ORDER BY blob_hash, `+DuplicateRepresentativeOrder,
-			append([]any{source.NodeID}, args...)...)
-		if err != nil {
-			return err
-		}
-		groups := make(map[string]*SimilarSearchCandidate)
-		err = func() (retErr error) {
-			defer func() { retErr = errors.Join(retErr, rows.Close()) }()
-			for rows.Next() {
-				var nodeID int64
-				var hash string
-				if err := rows.Scan(&nodeID, &hash); err != nil {
-					return err
-				}
-				member, ok := byNode[nodeID]
-				if !ok {
-					continue
-				}
-				if group := groups[hash]; group != nil {
-					group.DuplicateCount++
-					if member.Score > group.Score {
-						duplicateCount := group.DuplicateCount
-						*group = SimilarSearchCandidate{SemanticSearchCandidate: member, DuplicateCount: duplicateCount}
-					}
-				} else {
-					groups[hash] = &SimilarSearchCandidate{SemanticSearchCandidate: member}
-				}
-			}
-			return rows.Err()
-		}()
-		if err != nil {
-			return err
-		}
-		for _, group := range groups {
-			result.Candidates = append(result.Candidates, *group)
-		}
-		slices.SortFunc(result.Candidates, func(a, b SimilarSearchCandidate) int {
-			if a.Score > b.Score {
-				return -1
-			}
-			if a.Score < b.Score {
-				return 1
-			}
-			if a.NodeID < b.NodeID {
-				return -1
-			}
-			if a.NodeID > b.NodeID {
-				return 1
-			}
-			return 0
-		})
-		result.Truncated = len(result.Candidates) > limit
-		result.Candidates = result.Candidates[:min(limit, len(result.Candidates))]
-		for i := range result.Candidates {
-			result.Candidates[i].Path, err = pathOf(ctx, tx, result.Candidates[i].NodeID)
-			if err != nil {
-				return err
-			}
-		}
-		return nil
+		return s.similarCandidatesTx(ctx, tx, profile, binding, kind, space, neighbors, limit, opts, source, &result)
 	})
 	if err != nil {
 		return SimilarSearchResolution{}, err
 	}
 	return result, nil
+}
+
+func (s *Store) similarCandidatesTx(ctx context.Context, tx metadataQuerier, profile, binding string,
+	kind document.EmbeddingInputKind, space string, neighbors []vectorindex.Neighbor, limit int,
+	opts SearchOptions, source SimilarSource, result *SimilarSearchResolution,
+) error {
+	filter, args := searchFilterSQL(opts)
+	eligible, err := loadSemanticMemberships(ctx, tx, profile, binding, kind, space, filter, args)
+	if err != nil {
+		return err
+	}
+	byNode := make(map[int64]SemanticSearchCandidate)
+	for _, neighbor := range neighbors {
+		for _, member := range eligible[semanticEligibilityKey{VectorSetID: neighbor.SetID, InputID: neighbor.InputKey, InputChecksum: neighbor.InputChecksum}] {
+			if member.NodeID == source.NodeID {
+				continue
+			}
+			if _, seen := byNode[member.NodeID]; seen {
+				continue
+			}
+			member.VaultID, member.VectorSpaceID, member.InputID, member.Score = s.vaultID, space, neighbor.InputKey, neighbor.Score
+			byNode[member.NodeID] = member
+		}
+	}
+	rows, err := tx.QueryContext(ctx, `WITH `+CurrentContentMembershipCTE+`
+		SELECT node_id,blob_hash FROM (SELECT m.* FROM `+nodeFrom+` JOIN current_content_members m ON n.id=m.node_id
+		WHERE n.id<>? `+filter+`) ORDER BY blob_hash, `+DuplicateRepresentativeOrder,
+		append([]any{source.NodeID}, args...)...)
+	if err != nil {
+		return err
+	}
+	groups := make(map[string]*SimilarSearchCandidate)
+	err = func() (retErr error) {
+		defer func() { retErr = errors.Join(retErr, rows.Close()) }()
+		for rows.Next() {
+			var nodeID int64
+			var hash string
+			if err := rows.Scan(&nodeID, &hash); err != nil {
+				return err
+			}
+			member, ok := byNode[nodeID]
+			if !ok {
+				continue
+			}
+			if group := groups[hash]; group != nil {
+				group.DuplicateCount++
+				if member.Score > group.Score {
+					duplicateCount := group.DuplicateCount
+					*group = SimilarSearchCandidate{SemanticSearchCandidate: member, DuplicateCount: duplicateCount}
+				}
+			} else {
+				groups[hash] = &SimilarSearchCandidate{SemanticSearchCandidate: member}
+			}
+		}
+		return rows.Err()
+	}()
+	if err != nil {
+		return err
+	}
+	for _, group := range groups {
+		result.Candidates = append(result.Candidates, *group)
+	}
+	slices.SortFunc(result.Candidates, func(a, b SimilarSearchCandidate) int {
+		if a.Score > b.Score {
+			return -1
+		}
+		if a.Score < b.Score {
+			return 1
+		}
+		if a.NodeID < b.NodeID {
+			return -1
+		}
+		if a.NodeID > b.NodeID {
+			return 1
+		}
+		return 0
+	})
+	result.Truncated = len(result.Candidates) > limit
+	result.Candidates = result.Candidates[:min(limit, len(result.Candidates))]
+	for i := range result.Candidates {
+		result.Candidates[i].Path, err = pathOf(ctx, tx, result.Candidates[i].NodeID)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }

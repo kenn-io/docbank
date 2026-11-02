@@ -791,30 +791,37 @@ func (s *Store) semanticSearchAuthorityFence(ctx context.Context, profileFingerp
 		if err != nil {
 			return err
 		}
-		filterSQL, filterArgs := searchFilterSQL(opts)
-		eligible, err := loadSemanticEligibility(ctx, tx, profileFingerprint, bindingID,
-			inputKind, vectorSpaceID, filterSQL, filterArgs,
-			opts.CollapsesPhotoDuplicates())
-		if err != nil {
-			return err
-		}
-		annRows = make([]vectorindex.RowIdentity, 0, len(eligible))
-		for key := range eligible {
-			annRows = append(annRows, vectorindex.RowIdentity{SetID: key.VectorSetID,
-				InputKey: key.InputID, InputChecksum: key.InputChecksum})
-		}
-		sort.Slice(annRows, func(left, right int) bool {
-			if annRows[left].SetID != annRows[right].SetID {
-				return annRows[left].SetID < annRows[right].SetID
-			}
-			if annRows[left].InputKey != annRows[right].InputKey {
-				return annRows[left].InputKey < annRows[right].InputKey
-			}
-			return annRows[left].InputChecksum < annRows[right].InputChecksum
-		})
-		return nil
+		annRows, err = semanticANNRowsTx(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID, opts)
+		return err
 	})
 	return source, annRows, err
+}
+
+func semanticANNRowsTx(ctx context.Context, tx metadataQuerier, profileFingerprint, bindingID string,
+	inputKind document.EmbeddingInputKind, vectorSpaceID string, opts SearchOptions,
+) ([]vectorindex.RowIdentity, error) {
+	filterSQL, filterArgs := searchFilterSQL(opts)
+	eligible, err := loadSemanticEligibility(ctx, tx, profileFingerprint, bindingID,
+		inputKind, vectorSpaceID, filterSQL, filterArgs,
+		opts.CollapsesPhotoDuplicates())
+	if err != nil {
+		return nil, err
+	}
+	annRows := make([]vectorindex.RowIdentity, 0, len(eligible))
+	for key := range eligible {
+		annRows = append(annRows, vectorindex.RowIdentity{SetID: key.VectorSetID,
+			InputKey: key.InputID, InputChecksum: key.InputChecksum})
+	}
+	sort.Slice(annRows, func(left, right int) bool {
+		if annRows[left].SetID != annRows[right].SetID {
+			return annRows[left].SetID < annRows[right].SetID
+		}
+		if annRows[left].InputKey != annRows[right].InputKey {
+			return annRows[left].InputKey < annRows[right].InputKey
+		}
+		return annRows[left].InputChecksum < annRows[right].InputChecksum
+	})
+	return annRows, nil
 }
 
 // LiveSearchScopeExists reports whether normalized search filters match a live file.
@@ -889,7 +896,6 @@ func (s *Store) ResolveSemanticCandidates(ctx context.Context, profileFingerprin
 	}
 	var result SemanticSearchResolution
 	err = s.withSearchOptionsTx(ctx, normalized, func(tx *sql.Tx, normalized SearchOptions) error {
-		filterSQL, filterArgs := searchFilterSQL(normalized)
 		current, captureErr := captureVectorIndexSourceTx(ctx, tx, vectorSpaceID)
 		if captureErr != nil {
 			if errors.Is(captureErr, ErrNotFound) {
@@ -901,33 +907,42 @@ func (s *Store) ResolveSemanticCandidates(ctx context.Context, profileFingerprin
 			return ErrVectorIndexSourceStale
 		}
 		result.SourceManifestChecksum = current.ManifestChecksum
-		eligible, loadErr := loadSemanticEligibility(ctx, tx, profileFingerprint, bindingID,
-			inputKind, vectorSpaceID, filterSQL, filterArgs,
-			normalized.CollapsesPhotoDuplicates())
-		if loadErr != nil {
-			return loadErr
-		}
-		result.Candidates, result.Truncated, result.NextNeighbor = reduceSemanticCandidates(s.vaultID, vectorSpaceID,
-			neighbors, limit, eligible, excludedNodes)
-		for index := range result.Candidates {
-			candidate := &result.Candidates[index]
-			candidate.Path, err = pathOf(ctx, tx, candidate.NodeID)
-			if err != nil {
-				return err
-			}
-			if candidate.InputKind == document.EmbeddingInputOriginalFile {
-				candidate.Excerpt, err = searchExcerptByVersionTx(ctx, tx, candidate.ContentVersionID)
-				if err != nil {
-					return err
-				}
-			}
-		}
-		return nil
+		return s.semanticCandidatesTx(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID, neighbors, limit, normalized, excludedNodes, &result)
 	})
 	if err != nil {
 		return SemanticSearchResolution{}, err
 	}
 	return result, nil
+}
+
+func (s *Store) semanticCandidatesTx(ctx context.Context, tx metadataQuerier, profileFingerprint, bindingID string,
+	inputKind document.EmbeddingInputKind, vectorSpaceID string, neighbors []vectorindex.Neighbor, limit int,
+	normalized SearchOptions, excludedNodes map[int64]struct{}, result *SemanticSearchResolution,
+) error {
+	var err error
+	filterSQL, filterArgs := searchFilterSQL(normalized)
+	eligible, loadErr := loadSemanticEligibility(ctx, tx, profileFingerprint, bindingID,
+		inputKind, vectorSpaceID, filterSQL, filterArgs,
+		normalized.CollapsesPhotoDuplicates())
+	if loadErr != nil {
+		return loadErr
+	}
+	result.Candidates, result.Truncated, result.NextNeighbor = reduceSemanticCandidates(s.vaultID, vectorSpaceID,
+		neighbors, limit, eligible, excludedNodes)
+	for index := range result.Candidates {
+		candidate := &result.Candidates[index]
+		candidate.Path, err = pathOf(ctx, tx, candidate.NodeID)
+		if err != nil {
+			return err
+		}
+		if candidate.InputKind == document.EmbeddingInputOriginalFile {
+			candidate.Excerpt, err = searchExcerptByVersionTx(ctx, tx, candidate.ContentVersionID)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func searchExcerptByVersionTx(ctx context.Context, queryer interface {
