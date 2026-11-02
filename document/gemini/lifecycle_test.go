@@ -80,81 +80,88 @@ func TestEmbedInlineSendsOnlyCapabilityProvenExactBytes(t *testing.T) {
 // reordering, resumable-upload contract drift, premature embed, or omitted
 // deletion attempt.
 func TestEmbedFilesAPIUploadsActivatesEmbedsAndDeletes(t *testing.T) {
-	data := geminiTinyPNG(t)
-	profile := geminiDirectTestProfile(t, TransportFilesAPI)
-	record := geminiCapability(t, profile, data, "synthetic.png", "image/png")
-	source := newGeminiLifecycleUpload(data, record)
-	fileName := "files/file-123"
-	fileURI := origin + "/v1beta/" + fileName
-	timeline := newGeminiFileTimeline()
-	processing := geminiFileJSON(record, fileName, fileURI, "PROCESSING", timeline)
-	active := geminiFileJSON(record, fileName, fileURI, "ACTIVE", timeline)
-	sequence := atomic.Int32{}
-	client := newGeminiTestClient(t, profile, syntheticSecrets{"secret:gemini": "synthetic-key"}, roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		step := sequence.Add(1)
-		assert.Equal(t, "synthetic-key", request.Header.Get("X-Goog-Api-Key"))
-		switch step {
-		case 1:
-			require.Equal(t, http.MethodPost, request.Method)
-			assert.Equal(t, filesUploadPath, request.URL.Path)
-			assert.Equal(t, "resumable", request.Header.Get("X-Goog-Upload-Protocol"))
-			assert.Equal(t, "start", request.Header.Get("X-Goog-Upload-Command"))
-			assert.Equal(t, strconv.Itoa(len(data)), request.Header.Get("X-Goog-Upload-Header-Content-Length"))
-			assert.Equal(t, "image/png", request.Header.Get("X-Goog-Upload-Header-Content-Type"))
-			body, err := io.ReadAll(request.Body)
-			require.NoError(t, err)
-			assert.JSONEq(t, `{"file":{}}`, string(body))
-			response := &http.Response{StatusCode: http.StatusOK, Header: make(http.Header),
-				Body: io.NopCloser(strings.NewReader("")), Request: request}
-			response.Header.Set("X-Goog-Upload-Url", origin+"/upload/v1beta/files?upload_id=synthetic-session-123&upload_protocol=resumable")
-			return response, nil
-		case 2:
-			require.Equal(t, http.MethodPost, request.Method)
-			assert.Equal(t, "/upload/v1beta/files", request.URL.Path)
-			assert.Equal(t, "upload_id=synthetic-session-123&upload_protocol=resumable", request.URL.RawQuery)
-			assert.Equal(t, "upload, finalize", request.Header.Get("X-Goog-Upload-Command"))
-			assert.Equal(t, "0", request.Header.Get("X-Goog-Upload-Offset"))
-			assert.Equal(t, int64(len(data)), request.ContentLength)
-			body, err := io.ReadAll(request.Body)
-			require.NoError(t, err)
-			assert.Equal(t, data, body)
-			response := geminiJSONResponse(request, `{"file":`+processing+`}`)
-			response.Header.Set("X-Goog-Upload-Status", "final")
-			return response, nil
-		case 3:
-			require.Equal(t, http.MethodGet, request.Method)
-			assert.Equal(t, "/v1beta/"+fileName, request.URL.Path)
-			return geminiJSONResponse(request, processing), nil
-		case 4:
-			require.Equal(t, http.MethodGet, request.Method)
-			assert.Equal(t, "/v1beta/"+fileName, request.URL.Path)
-			return geminiJSONResponse(request, active), nil
-		case 5:
-			require.Equal(t, http.MethodPost, request.Method)
-			assert.Equal(t, embedPath, request.URL.Path)
-			body, err := io.ReadAll(request.Body)
-			require.NoError(t, err)
-			want := `{"model":"models/gemini-embedding-2","content":{"parts":[{"fileData":{"mimeType":"image/png","fileUri":"` + fileURI + `"}}]},"outputDimensionality":128}`
-			assert.Equal(t, want, string(body))
-			return geminiJSONResponse(request, `{"embedding":{"values":[`+testVectorJSON(128)+`]}}`), nil
-		case 6:
-			require.Equal(t, http.MethodDelete, request.Method)
-			assert.Equal(t, "/v1beta/"+fileName, request.URL.Path)
-			return geminiJSONResponse(request, `{}`), nil
-		default:
-			t.Fatalf("unexpected request %d: %s %s", step, request.Method, request.URL)
-			return nil, errors.New("unreachable lifecycle request")
-		}
-	}))
+	// The bubble runs the poll interval between PROCESSING and ACTIVE on fake
+	// time, so the test can check the client waited exactly one interval.
+	synctest.Test(t, func(t *testing.T) {
+		data := geminiTinyPNG(t)
+		profile := geminiDirectTestProfile(t, TransportFilesAPI)
+		record := geminiCapability(t, profile, data, "synthetic.png", "image/png")
+		source := newGeminiLifecycleUpload(data, record)
+		fileName := "files/file-123"
+		fileURI := origin + "/v1beta/" + fileName
+		timeline := newGeminiFileTimeline()
+		processing := geminiFileJSON(record, fileName, fileURI, "PROCESSING", timeline)
+		active := geminiFileJSON(record, fileName, fileURI, "ACTIVE", timeline)
+		sequence := atomic.Int32{}
+		var firstPoll time.Time
+		client := newGeminiTestClient(t, profile, syntheticSecrets{"secret:gemini": "synthetic-key"}, roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			step := sequence.Add(1)
+			assert.Equal(t, "synthetic-key", request.Header.Get("X-Goog-Api-Key"))
+			switch step {
+			case 1:
+				require.Equal(t, http.MethodPost, request.Method)
+				assert.Equal(t, filesUploadPath, request.URL.Path)
+				assert.Equal(t, "resumable", request.Header.Get("X-Goog-Upload-Protocol"))
+				assert.Equal(t, "start", request.Header.Get("X-Goog-Upload-Command"))
+				assert.Equal(t, strconv.Itoa(len(data)), request.Header.Get("X-Goog-Upload-Header-Content-Length"))
+				assert.Equal(t, "image/png", request.Header.Get("X-Goog-Upload-Header-Content-Type"))
+				body, err := io.ReadAll(request.Body)
+				require.NoError(t, err)
+				assert.JSONEq(t, `{"file":{}}`, string(body))
+				response := &http.Response{StatusCode: http.StatusOK, Header: make(http.Header),
+					Body: io.NopCloser(strings.NewReader("")), Request: request}
+				response.Header.Set("X-Goog-Upload-Url", origin+"/upload/v1beta/files?upload_id=synthetic-session-123&upload_protocol=resumable")
+				return response, nil
+			case 2:
+				require.Equal(t, http.MethodPost, request.Method)
+				assert.Equal(t, "/upload/v1beta/files", request.URL.Path)
+				assert.Equal(t, "upload_id=synthetic-session-123&upload_protocol=resumable", request.URL.RawQuery)
+				assert.Equal(t, "upload, finalize", request.Header.Get("X-Goog-Upload-Command"))
+				assert.Equal(t, "0", request.Header.Get("X-Goog-Upload-Offset"))
+				assert.Equal(t, int64(len(data)), request.ContentLength)
+				body, err := io.ReadAll(request.Body)
+				require.NoError(t, err)
+				assert.Equal(t, data, body)
+				response := geminiJSONResponse(request, `{"file":`+processing+`}`)
+				response.Header.Set("X-Goog-Upload-Status", "final")
+				return response, nil
+			case 3:
+				require.Equal(t, http.MethodGet, request.Method)
+				assert.Equal(t, "/v1beta/"+fileName, request.URL.Path)
+				firstPoll = time.Now()
+				return geminiJSONResponse(request, processing), nil
+			case 4:
+				require.Equal(t, http.MethodGet, request.Method)
+				assert.Equal(t, "/v1beta/"+fileName, request.URL.Path)
+				assert.Equal(t, profile.PollInterval, time.Since(firstPoll))
+				return geminiJSONResponse(request, active), nil
+			case 5:
+				require.Equal(t, http.MethodPost, request.Method)
+				assert.Equal(t, embedPath, request.URL.Path)
+				body, err := io.ReadAll(request.Body)
+				require.NoError(t, err)
+				want := `{"model":"models/gemini-embedding-2","content":{"parts":[{"fileData":{"mimeType":"image/png","fileUri":"` + fileURI + `"}}]},"outputDimensionality":128}`
+				assert.Equal(t, want, string(body))
+				return geminiJSONResponse(request, `{"embedding":{"values":[`+testVectorJSON(128)+`]}}`), nil
+			case 6:
+				require.Equal(t, http.MethodDelete, request.Method)
+				assert.Equal(t, "/v1beta/"+fileName, request.URL.Path)
+				return geminiJSONResponse(request, `{}`), nil
+			default:
+				t.Fatalf("unexpected request %d: %s %s", step, request.Method, request.URL)
+				return nil, errors.New("unreachable lifecycle request")
+			}
+		}))
 
-	execution, err := client.EmbedWithReceipt(t.Context(), directInputs(source), geminiDirectAuthorization(profile.Descriptor, int64(len(data))))
-	require.NoError(t, err)
-	assert.Equal(t, int32(6), sequence.Load())
-	assert.Equal(t, 6, execution.Receipt.RequestCount)
-	assert.Equal(t, 48*time.Hour, execution.Receipt.ProviderRetentionCeiling)
-	assert.Equal(t, int32(1), source.readPasses.Load())
-	assert.Equal(t, int32(1), source.closeCalls.Load())
-	assert.NotContains(t, execution.Receipt.ProviderResponseIDs, fileName)
+		execution, err := client.EmbedWithReceipt(t.Context(), directInputs(source), geminiDirectAuthorization(profile.Descriptor, int64(len(data))))
+		require.NoError(t, err)
+		assert.Equal(t, int32(6), sequence.Load())
+		assert.Equal(t, 6, execution.Receipt.RequestCount)
+		assert.Equal(t, 48*time.Hour, execution.Receipt.ProviderRetentionCeiling)
+		assert.Equal(t, int32(1), source.readPasses.Load())
+		assert.Equal(t, int32(1), source.closeCalls.Load())
+		assert.NotContains(t, execution.Receipt.ProviderResponseIDs, fileName)
+	})
 }
 
 // TestEmbedFilesAPIDeletesAfterValidFinalizeReceiptRejection catches cleanup
