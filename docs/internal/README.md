@@ -17,6 +17,8 @@ contributor guidance and is excluded from the public Zensical site.
 - [Daemon and API design](daemon-api-design.md) — sole vault ownership,
   discovery, authentication, revisions, path operations, maintenance gating,
   and errors.
+- [Typed figures in passage text](conflicting-figures.md) — bounded extraction,
+  exact source spans, normalization and conservative omissions.
 - [Search reports and evidence inspection](search-reports.md) — exact selection,
   frozen evidence, family membership, history, recovery, and bounded reads.
 - [Export bundle design](export-bundles.md) — exact versions, replay, retention,
