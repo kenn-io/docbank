@@ -58,7 +58,8 @@ codex features enable mcp_2026_07_28
 ```
 
 Then launch with plain `codex`. The generated stdio configuration also sets
-`CODEX_MCP_PROTOCOL_VERSION=2026-07-28` in the server's environment.
+`CODEX_MCP_PROTOCOL_VERSION=2026-07-28` for Codex, which reads it to pick the
+protocol version and does not pass it to the server.
 After upgrading Docbank, rerun `docbank mcp config` and replace the saved
 configuration so its protocol selection matches the installed server.
 

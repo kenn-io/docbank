@@ -1447,7 +1447,8 @@ Clients must support MCP `2026-07-28`. With Codex 0.164.0, run
 `codex features enable mcp_2026_07_28` once to persist the client's MCP protocol
 support in `config.toml` for either transport. Then launch with plain `codex`.
 Generated Codex stdio configuration also sets
-`CODEX_MCP_PROTOCOL_VERSION=2026-07-28` for the server.
+`CODEX_MCP_PROTOCOL_VERSION=2026-07-28` for Codex, which reads it to pick the
+protocol version and does not pass it to the server.
 After upgrading Docbank, rerun `docbank mcp config` and replace the saved
 configuration so its protocol selection matches the installed server.
 See the [MCP setup guide](usage/mcp.md#start-the-server).
