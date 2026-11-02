@@ -175,6 +175,7 @@ func TestResolveSemanticCandidatesCollapsesPhotoDuplicatesBeforeLimit(t *testing
 		limit         int
 	}{
 		{name: "one representative before the limit", indexed: "all", wantNodeNames: []string{"duplicate-a.jpg", "distinct.jpg"}, limit: 2},
+		{name: "representative past first prefix", indexed: "late", wantNodeNames: []string{"duplicate-a.jpg"}, limit: 1},
 		{name: "keep the indexed later duplicate", indexed: "later", wantNodeNames: []string{"newer-indexed.jpg"}, limit: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -182,7 +183,7 @@ func TestResolveSemanticCandidatesCollapsesPhotoDuplicatesBeforeLimit(t *testing
 			f := newImageEmbeddingCatalogFixture(t)
 			s, profile := f.s, f.request.Profile
 			var nodes []Node
-			if tc.indexed == "all" {
+			if tc.indexed == "all" || tc.indexed == "late" {
 				for _, file := range []struct{ name, hash string }{
 					{"duplicate-a.jpg", catalogSourceHash},
 					{"duplicate-b.jpg", catalogSourceHash},
@@ -192,6 +193,11 @@ func TestResolveSemanticCandidatesCollapsesPhotoDuplicatesBeforeLimit(t *testing
 						int64(len(catalogBlobContents[file.hash])), "image/jpeg")
 					require.NoError(t, err)
 					nodes = append(nodes, node)
+				}
+				if tc.indexed == "late" {
+					node, err := s.CreateFile(t.Context(), s.RootID(), "duplicate-c.jpg", catalogSourceHash, int64(len(catalogBlobContents[catalogSourceHash])), "image/jpeg")
+					require.NoError(t, err)
+					nodes = []Node{nodes[1], node, nodes[0], nodes[2]}
 				}
 			} else {
 				older, err := s.CreateFile(t.Context(), s.RootID(), "older-unindexed.jpg",
@@ -218,7 +224,7 @@ func TestResolveSemanticCandidatesCollapsesPhotoDuplicatesBeforeLimit(t *testing
 			for index, node := range indexedNodes {
 				record, _ := f.forNode(t, node).publish(t)
 				records = append(records, record)
-				score := []float64{1, 0.99, 0.8}[index]
+				score := 1 - float64(index)/10
 				neighbors = append(neighbors, vectorindex.Neighbor{
 					SetID: record.VectorSet.ID, InputKey: record.InputGeneration.Inputs[0].ID,
 					InputChecksum: record.InputGeneration.Inputs[0].RenderedChecksum, Score: score,
@@ -234,8 +240,12 @@ func TestResolveSemanticCandidatesCollapsesPhotoDuplicatesBeforeLimit(t *testing
 			_, annRows, err := s.semanticSearchAuthorityFence(t.Context(), profile.Fingerprint,
 				records[0].BindingID, records[0].InputKind, records[0].VectorSpace.ID, options, nil)
 			require.NoError(t, err)
-			wantInputKeys := make([]string, 0, len(tc.wantNodeNames))
-			for _, name := range tc.wantNodeNames {
+			authorityNames := tc.wantNodeNames
+			if tc.indexed == "late" {
+				authorityNames = []string{"duplicate-a.jpg", "distinct.jpg"}
+			}
+			wantInputKeys := make([]string, 0, len(authorityNames))
+			for _, name := range authorityNames {
 				for _, node := range indexedNodes {
 					if node.Name == name {
 						wantInputKeys = append(wantInputKeys, node.CurrentVersionID)
@@ -267,7 +277,10 @@ func TestResolveSemanticCandidatesCollapsesPhotoDuplicatesBeforeLimit(t *testing
 				gotIDs[index] = candidate.NodeID
 			}
 			assert.ElementsMatch(t, wantIDs, gotIDs)
-			assert.False(t, resolution.Truncated)
+			assert.Equal(t, tc.indexed == "late", resolution.Truncated)
+			if tc.indexed == "late" {
+				assert.Equal(t, 3, resolution.NextNeighbor)
+			}
 		})
 	}
 }
@@ -2867,4 +2880,101 @@ func TestSearchContentFirstGenerationSources(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestResolveSemanticCandidatesPagesPastIneligibleNeighbors(t *testing.T) {
+	t.Parallel()
+	s, version, profile, _ := newEmbeddingCatalogFixture(t)
+	first, err := s.ContentVersionByID(t.Context(), version)
+	require.NoError(t, err)
+	nodes := []Node{{ID: first.NodeID, CurrentVersionID: version}}
+	for i := range 4 {
+		node, err := s.CreateFile(t.Context(), s.RootID(), fmt.Sprintf("page-%d.txt", i), testSHA256(fmt.Appendf(nil, "page-%d", i)), 20, "text/plain")
+		require.NoError(t, err)
+		nodes = append(nodes, node)
+	}
+	var neighbors []vectorindex.Neighbor
+	var space string
+	for i, node := range nodes {
+		record := embeddingSetFixture(t.Context(), s, node.CurrentVersionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
+		require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
+		require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{FencingToken: 1,
+			Key:   EmbeddingHeadKey{ContentVersionID: node.CurrentVersionID, BindingID: record.BindingID, InputKind: record.InputKind},
+			SetID: record.ID, VectorSpaceID: record.VectorSpace.ID, ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime}))
+		space = record.VectorSpace.ID
+		neighbors = append(neighbors, vectorindex.Neighbor{SetID: record.VectorSet.ID, InputKey: node.CurrentVersionID,
+			InputChecksum: record.InputGeneration.Inputs[0].RenderedChecksum, Score: 1 - float64(i)/10})
+	}
+	_, _, err = s.Trash(t.Context(), nodes[0].ID, UnconditionalRev)
+	require.NoError(t, err)
+	source, err := s.CaptureVectorIndexSource(t.Context(), space)
+	require.NoError(t, err)
+	opts := SearchOptions{ContentVersionIDs: []string{version, nodes[2].CurrentVersionID, nodes[3].CurrentVersionID, nodes[4].CurrentVersionID}}
+	result, err := s.ResolveSemanticCandidates(t.Context(), profile.Fingerprint, "optional", document.EmbeddingInputOriginalFile,
+		space, source.ManifestChecksum, neighbors, 1, opts, map[int64]struct{}{nodes[2].ID: {}})
+	require.NoError(t, err)
+	require.Len(t, result.Candidates, 1)
+	assert.Equal(t, nodes[3].ID, result.Candidates[0].NodeID)
+	assert.True(t, result.Truncated)
+	assert.Equal(t, 4, result.NextNeighbor)
+}
+
+func TestSimilarCandidatesCountUnvisitedCopiesAndKeepBoundaryTies(t *testing.T) {
+	t.Parallel()
+	s, version, profile, _ := newEmbeddingCatalogFixture(t)
+	sourceNode, err := s.ContentVersionByID(t.Context(), version)
+	require.NoError(t, err)
+	// The oldest copy is last among the top-score ties. The low-score copy
+	// lies beyond the stopping prefix but must still count toward the group.
+	var nodes []Node
+	for _, file := range []struct{ name, hash, modified string }{
+		{"old.txt", testSHA256([]byte("copy-group")), "2026-01-01"},
+		{"new.txt", testSHA256([]byte("copy-group")), "2026-01-02"},
+		{"other.txt", testSHA256([]byte("other-group")), "2026-01-01"},
+		{"low.txt", testSHA256([]byte("copy-group")), "2026-01-03"},
+		{"tail.txt", testSHA256([]byte("tail-group")), "2026-01-01"},
+	} {
+		node, err := s.CreateFile(t.Context(), s.RootID(), file.name, file.hash, 20, "text/plain")
+		require.NoError(t, err)
+		_, err = s.db.ExecContext(t.Context(), `UPDATE nodes SET modified_at=? WHERE id=?`, file.modified, node.ID)
+		require.NoError(t, err)
+		nodes = append(nodes, node)
+	}
+	// new, other, old all tie. tail starts below the two strong groups;
+	// low is beyond that stopping point.
+	order := []int{1, 2, 0, 4, 3}
+	var neighbors []vectorindex.Neighbor
+	var space string
+	versions := []string{version}
+	for _, node := range append([]Node{{ID: sourceNode.NodeID, CurrentVersionID: version}}, nodes...) {
+		record := embeddingSetFixture(t.Context(), s, node.CurrentVersionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
+		require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
+		require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{FencingToken: 1,
+			Key:   EmbeddingHeadKey{ContentVersionID: node.CurrentVersionID, BindingID: record.BindingID, InputKind: record.InputKind},
+			SetID: record.ID, VectorSpaceID: record.VectorSpace.ID, ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime}))
+		space = record.VectorSpace.ID
+		if node.ID == sourceNode.NodeID {
+			continue
+		}
+		versions = append(versions, node.CurrentVersionID)
+	}
+	for i, index := range order {
+		node := nodes[index]
+		record := embeddingSetFixture(t.Context(), s, node.CurrentVersionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
+		score := 0.9
+		if i >= 3 {
+			score = 0.5 - float64(i)/10
+		}
+		neighbors = append(neighbors, vectorindex.Neighbor{SetID: record.VectorSet.ID, InputKey: node.CurrentVersionID,
+			InputChecksum: record.InputGeneration.Inputs[0].RenderedChecksum, Score: score})
+	}
+	source, err := s.CaptureVectorIndexSource(t.Context(), space)
+	require.NoError(t, err)
+	result, err := s.ResolveSimilarCandidates(t.Context(), profile.Fingerprint, "optional", document.EmbeddingInputOriginalFile,
+		space, source.ManifestChecksum, neighbors, 1, SearchOptions{ContentVersionIDs: versions}, SimilarSource{NodeID: sourceNode.NodeID, ContentVersionID: version})
+	require.NoError(t, err)
+	require.Len(t, result.Candidates, 1)
+	assert.Equal(t, nodes[0].ID, result.Candidates[0].NodeID)
+	assert.Equal(t, 2, result.Candidates[0].DuplicateCount)
+	assert.True(t, result.Truncated)
 }
