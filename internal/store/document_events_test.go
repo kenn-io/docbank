@@ -153,12 +153,59 @@ func checkPublishDocumentEventsAcceptsCanonicalEmptyProjection(t *testing.T, ope
 	}
 	canonical := mustMarshalDocumentEvents(t, record)
 
-	_, err := s.PublishDocumentEvents(t.Context(), target, fakeHash("f1"),
+	_, cursor, err := s.VaultChanges(t.Context(), "", 500)
+	require.NoError(t, err)
+	_, err = s.PublishDocumentEvents(t.Context(), target, fakeHash("f1"),
 		requireDocumentEventInputsSHA256(t, s, target), canonical)
 	require.NoError(t, err)
 	view, err := s.DocumentEventsForVersion(t.Context(), version.ID)
 	require.NoError(t, err)
 	assert.Equal(t, record, view.Events)
+	changes, _, err := s.VaultChanges(t.Context(), cursor, 500)
+	require.NoError(t, err)
+	require.Len(t, changes, 1)
+	require.Equal(t, "processed", changes[0].Kind)
+	require.Equal(t, version.NodeID, changes[0].NodeID)
+}
+
+func TestPublishDocumentEventsFeedDetectsOutputChanges(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name        string
+		fingerprint string
+		digestSeed  string
+		wantChange  bool
+	}{
+		{name: "epoch-only replay", fingerprint: fakeHash("f1"), digestSeed: "d4", wantChange: false},
+		{name: "checksum change", fingerprint: fakeHash("f2"), digestSeed: "d5", wantChange: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestStore(t)
+			version, target := ingestDocumentEventTarget(t, s, "report.txt", "d4")
+			record := documentEventRecord(t, s.VaultID(), version.ID, "d4")
+			_, err := s.PublishDocumentEvents(t.Context(), target, fakeHash("f1"),
+				requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
+			require.NoError(t, err)
+			_, cursor, err := s.VaultChanges(t.Context(), "", 500)
+			require.NoError(t, err)
+
+			target.InputEpoch = 2
+			record = documentEventRecord(t, s.VaultID(), version.ID, tc.digestSeed)
+			_, err = s.db.ExecContext(t.Context(), `UPDATE document_event_state SET input_epoch=$1,deriver_fingerprint=$2`, target.InputEpoch, tc.fingerprint)
+			require.NoError(t, err)
+			_, err = s.PublishDocumentEvents(t.Context(), target, tc.fingerprint,
+				requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
+			require.NoError(t, err)
+			changes, _, err := s.VaultChanges(t.Context(), cursor, 500)
+			require.NoError(t, err)
+			if tc.wantChange {
+				require.Len(t, changes, 1)
+				require.Equal(t, "processed", changes[0].Kind)
+			} else {
+				require.Empty(t, changes, "epoch-only publications stay silent")
+			}
+		})
+	}
 }
 
 func checkPublishDocumentEventsRetainsActorEvidenceInProjections(t *testing.T, open func(*testing.T) *Store) {

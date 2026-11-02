@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-31
+last_edited: 2026-11-01
 title: Agent integration guide
 description: Connect an agent to Docbank using its OpenAPI contract, authenticated HTTP API, revisions, and dry-run maintenance operations.
 ---
@@ -515,6 +515,40 @@ and then mutate by node ID: an ancestor can move without advancing the target
 node's revision. The path endpoint resolves the path and applies the change in
 one store transaction. Use the ID-addressed form only when the node ID itself
 is the intended target.
+
+## React to vault changes
+
+An API-key client can follow committed changes without comparing repeated vault listings:
+
+```bash
+docbank changes --follow --json
+docbank changes --after CURSOR --follow --json
+```
+
+Each line carries `cursor`, `kind`, `node_id`, and `revision`. Save the cursor after handling the event. A reconnect with `--after` replays subsequent retained events in commit order. Without `--follow`, the command drains the retained history and prints `cursor: CURSOR` on stderr before exiting, even for an empty drain. An empty cursor starts at the oldest retained event. For initial synchronization, save the completion cursor, scan the vault, and replay after that cursor. Continuity starts with a saved cursor; an initial drain covers only the retained window.
+
+| Kind | Meaning |
+| --- | --- |
+| `created` | A file or directory was created. |
+| `version_added` | A content version was replaced, confirmed with new bytes, or reverted. |
+| `moved` | A node changed its name or parent. |
+| `tagged` | The node's tags changed, including a tag rename or deletion. |
+| `trashed` | A node was trashed, including each affected descendant. |
+| `restored` | A node was restored, including each affected descendant. |
+| `processed` | Completed publication of new or changed readable derived output, such as text, source metadata, an email inventory, a terminal email body result, an email PDF, a photo description, or face detection. |
+| `removed` | A node was permanently deleted by package cancellation, failed import cleanup, or trash purge, including each deleted descendant. |
+
+The feed retains the latest 100,000 events. Repeated no-op assignments, deduplicated imports, parent-directory revision bumps, processing failures, invalidation, explicit derivative purge, and embedding-index updates emit nothing. Use job status for processing failures. Extractor fingerprint changes with identical source-metadata facts, dismissed or fully filtered photo descriptions, and unchanged or fully protected face results also emit nothing. Photo authored metadata, including ratings, flags, captions, and color labels, stays silent. Keyword changes using existing tags emit `tagged` events. Manual face/person edits, album and asset organization, display choices, and hide/unhide operations stay silent. Events carry node identity and revision, and an API key can observe file nodes belonging to hidden photos. Browser sessions cannot read this feed.
+
+Email inventory selection and a new terminal body result each emit an event, including when a body changes from pending to unavailable. Republishing the selected inventory or an existing body result stays silent.
+
+Cursors belong to one database incarnation. Restoring a vault creates a new incarnation, and backups omit the feed. An expired, foreign, or future cursor returns HTTP 410 with code `changes_cursor_expired` and a current `cursor`:
+
+1. Save that cursor before starting a fresh vault scan.
+2. Rescan the vault to rebuild your local view.
+3. Resume with `--after` and the saved cursor to include changes made during the scan.
+
+The CLI exits with an error and prints the resume cursor on expiry, including when retention overtakes an active stream. It also reports interrupted drains and later read failures. HTTP streams wrap changes in typed records and end finite drains with a result record carrying the checkpoint cursor. CLI stdout contains only changes. Handle events idempotently, since a scan and replay can overlap. A later node lookup can return 404 if that node has since been removed. See the [HTTP route](../architecture/http-api.md#vault-change-feed) for direct clients.
 
 ## Follow backup progress without scraping a CLI
 

@@ -636,6 +636,7 @@ export interface Error {
   backup_forget?: BackupForgetReport;
   backup_prune?: BackupPruneReport;
   code?: string;
+  cursor?: string;
   detail?: string;
   errors?: string[];
   /** @maxItems 20 */
@@ -9274,6 +9275,11 @@ cursor?: string;
 limit?: number;
 };
 
+export type VaultChangesParams = {
+after?: string;
+follow?: boolean;
+};
+
 export type ListCollectionsParams = {
 /**
  * @minimum 1
@@ -9425,6 +9431,7 @@ export type GetExportJobEventsDefault = {
   backup_forget?: BackupForgetReport;
   backup_prune?: BackupPruneReport;
   code?: string;
+  cursor?: string;
   detail?: string;
   errors?: string[];
   /** @maxItems 20 */
@@ -11846,6 +11853,51 @@ return sessionJSON<BatesPlan>(getPlanBatesStampUrl(),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(batesPlanRequest)
+  }
+);}
+
+
+
+export const getVaultChangesUrl = (params?: VaultChangesParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/changes?${stringifiedParams}` : `/api/v1/changes`
+}
+
+/**
+ * @summary Read resumable vault changes
+ */
+export const vaultChanges = (params?: VaultChangesParams, options?: Parameters<typeof sessionResponse>[1]) => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionResponse<Response>(getVaultChangesUrl(params),
+  {
+    ...options,
+    method: 'GET',
+    headers: { 'Accept': `application/x-ndjson`, ...getHeaders(options?.headers) }
+
   }
 );}
 

@@ -19,6 +19,7 @@ import (
 // "code" extension member. Code is the contract clients branch on; Detail is
 // for humans and may change freely.
 type Error struct {
+	Cursor                   string              `json:"cursor,omitzero"`
 	Redaction                *redaction.Problem  `json:"redaction,omitempty"`
 	BackupForget             *BackupForgetReport `json:"backup_forget,omitempty"`
 	BackupPrune              *BackupPruneReport  `json:"backup_prune,omitempty"`
